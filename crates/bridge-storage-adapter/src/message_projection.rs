@@ -1,16 +1,17 @@
 use std::path::Path;
 
 use agent_room_application::ports::{
-    MatrixBackfillToken, MatrixEventId, MatrixRoomId, MatrixSyncToken, PortFuture,
+    MatrixBackfillToken, MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixUserId, PortFuture,
 };
 use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
-    MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery,
-    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
-    MessageProjectionStoreFailureKind, MessageSyncIssue, MessageTimelineProjectionStore,
+    IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage,
+    MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
+    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageRecoveryBatch,
+    MessageSyncIssue, MessageSyncIssueReason, MessageTimelineProjectionStore,
     MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
     PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
-    ProjectedMessagePreview,
+    ProjectedMessagePreview, ReservedIsolatedEvent, UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -67,10 +68,14 @@ impl SqliteMessageTimelineRepository {
         let mut transaction = begin_write(&self.pool)
             .await
             .map_err(|error| map_sqlx_error(&error))?;
-        for mutation in batch.mutations() {
-            apply_mutation(&mut transaction, mutation, &self.key_cipher).await?;
-        }
-        persist_issues(&mut transaction, batch.next_batch(), batch.issues()).await?;
+        apply_timeline(
+            &mut transaction,
+            batch.next_batch(),
+            batch.mutations(),
+            batch.issues(),
+            &self.key_cipher,
+        )
+        .await?;
         persist_gaps(&mut transaction, batch).await?;
         persist_cursor(&mut transaction, batch).await?;
         transaction
@@ -87,11 +92,15 @@ impl SqliteMessageTimelineRepository {
             .await
             .map_err(|error| map_sqlx_error(&error))?;
         // 补回的事件按时间先后追加在已收到的消息之后；已经记下的事件由事件 ID 去重。
-        for mutation in batch.mutations() {
-            apply_mutation(&mut transaction, mutation, &self.key_cipher).await?;
-        }
         let gap = batch.gap();
-        persist_issues(&mut transaction, &gap.sync_token, batch.issues()).await?;
+        apply_timeline(
+            &mut transaction,
+            &gap.sync_token,
+            batch.mutations(),
+            batch.issues(),
+            &self.key_cipher,
+        )
+        .await?;
         sqlx::query(
             "DELETE FROM message_timeline_gap
              WHERE sync_token = ? AND room_id = ? AND previous_batch = ?",
@@ -178,6 +187,159 @@ impl SqliteMessageTimelineRepository {
             })
             .collect()
     }
+
+    async fn query_undecryptable_sessions(
+        &self,
+        limit: u16,
+    ) -> Result<Vec<IsolatedSession>, MessageProjectionStoreFailure> {
+        let rows = sqlx::query(
+            "SELECT room_id, sender, sender_device, session_id,
+                    MAX(reserved_sequence) AS latest
+             FROM message_sync_issue
+             WHERE reason = 'undecryptable' AND reserved_sequence IS NOT NULL
+               AND sender IS NOT NULL AND session_id IS NOT NULL
+             GROUP BY room_id, sender, sender_device, session_id
+             ORDER BY latest DESC
+             LIMIT ?",
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
+        rows.iter()
+            .map(|row| {
+                Ok(IsolatedSession {
+                    room_id: MatrixRoomId::new(row.get::<String, _>("room_id"))
+                        .map_err(|_| corrupt_projection_failure())?,
+                    session: UndecryptableSession {
+                        sender: MatrixUserId::new(row.get::<String, _>("sender"))
+                            .map_err(|_| corrupt_projection_failure())?,
+                        sender_device: row.get("sender_device"),
+                        session_id: row.get("session_id"),
+                    },
+                })
+            })
+            .collect()
+    }
+
+    async fn query_undecryptable_events(
+        &self,
+        room_id: &MatrixRoomId,
+        session_ids: &[String],
+        after: u64,
+        limit: u16,
+    ) -> Result<Vec<ReservedIsolatedEvent>, MessageProjectionStoreFailure> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted =
+            serde_json::to_string(session_ids).map_err(|_| corrupt_projection_failure())?;
+        let rows = sqlx::query(
+            "SELECT event_id, reserved_sequence FROM message_sync_issue
+             WHERE room_id = ? AND reason = 'undecryptable' AND reserved_sequence > ?
+               AND session_id IN (SELECT value FROM json_each(?))
+             ORDER BY reserved_sequence ASC
+             LIMIT ?",
+        )
+        .bind(room_id.as_str())
+        .bind(i64::try_from(after).map_err(|_| corrupt_projection_failure())?)
+        .bind(&wanted)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
+        rows.iter()
+            .map(|row| {
+                Ok(ReservedIsolatedEvent {
+                    event_id: MatrixEventId::new(row.get::<String, _>("event_id"))
+                        .map_err(|_| corrupt_projection_failure())?,
+                    position: u64::try_from(row.get::<i64, _>("reserved_sequence"))
+                        .map_err(|_| corrupt_projection_failure())?,
+                })
+            })
+            .collect()
+    }
+
+    /// 重读出来的消息写在预留的序号上，再删掉隔离记录；别的原因不收的改记原因，不再占位置。
+    async fn apply_recovery_batch(
+        &self,
+        batch: &MessageRecoveryBatch,
+    ) -> Result<(), MessageProjectionStoreFailure> {
+        let room_id = batch.room_id().as_str();
+        let mut transaction = begin_write(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(&error))?;
+        for mutation in batch.recovered() {
+            let event_id = mutation.event_id().as_str();
+            if mutation.room_id() != batch.room_id() {
+                return Err(corrupt_projection_failure());
+            }
+            let Some(sequence) = reserved_sequence(&mut transaction, room_id, event_id).await?
+            else {
+                continue;
+            };
+            let encoded = EncodedMutation::from_mutation(mutation, &self.key_cipher)?;
+            write_mutation(&mut transaction, mutation, &encoded, sequence).await?;
+            forget_undecryptable(&mut transaction, room_id, event_id).await?;
+        }
+        for issue in batch.reclassified() {
+            let Some(event_id) = &issue.event_id else {
+                continue;
+            };
+            sqlx::query(
+                "UPDATE OR REPLACE message_sync_issue
+                 SET reason = ?, reserved_sequence = NULL, sender = NULL, sender_device = NULL,
+                     session_id = NULL
+                 WHERE room_id = ? AND event_id = ? AND reason = 'undecryptable'",
+            )
+            .bind(issue.reason.as_str())
+            .bind(room_id)
+            .bind(event_id.as_str())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(&error))?;
+        }
+        for event_id in batch.dismissed() {
+            forget_undecryptable(&mut transaction, room_id, event_id.as_str()).await?;
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_sqlx_error(&error))
+    }
+}
+
+async fn reserved_sequence(
+    transaction: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    event_id: &str,
+) -> Result<Option<i64>, MessageProjectionStoreFailure> {
+    sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT MIN(reserved_sequence) FROM message_sync_issue
+         WHERE room_id = ? AND event_id = ? AND reason = 'undecryptable'",
+    )
+    .bind(room_id)
+    .bind(event_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(&error))
+}
+
+async fn forget_undecryptable(
+    transaction: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    event_id: &str,
+) -> Result<(), MessageProjectionStoreFailure> {
+    sqlx::query(
+        "DELETE FROM message_sync_issue
+         WHERE room_id = ? AND event_id = ? AND reason = 'undecryptable'",
+    )
+    .bind(room_id)
+    .bind(event_id)
+    .execute(&mut **transaction)
+    .await
+    .map(|_| ())
+    .map_err(|error| map_sqlx_error(&error))
 }
 
 impl MessageTimelineProjectionStore for SqliteMessageTimelineRepository {
@@ -223,6 +385,33 @@ impl MessageTimelineProjectionStore for SqliteMessageTimelineRepository {
         batch: &'a MessageBackfillBatch,
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
         Box::pin(async move { self.apply_backfill_batch(batch).await })
+    }
+
+    fn undecryptable_sessions(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<IsolatedSession>, MessageProjectionStoreFailure>> {
+        Box::pin(async move { self.query_undecryptable_sessions(limit).await })
+    }
+
+    fn undecryptable_events<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        session_ids: &'a [String],
+        after: u64,
+        limit: u16,
+    ) -> PortFuture<'a, Result<Vec<ReservedIsolatedEvent>, MessageProjectionStoreFailure>> {
+        Box::pin(async move {
+            self.query_undecryptable_events(room_id, session_ids, after, limit)
+                .await
+        })
+    }
+
+    fn apply_recovery<'a>(
+        &'a self,
+        batch: &'a MessageRecoveryBatch,
+    ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
+        Box::pin(async move { self.apply_recovery_batch(batch).await })
     }
 
     fn sync_cursor(
@@ -468,7 +657,7 @@ fn decode_actor(value: &str) -> Result<ProjectedMessageActor, MessageTimelineQue
                 stored.principal_id.as_deref().ok_or_else(corrupt_query)?,
             )?),
             display_name: stored.display_name,
-            matrix_user_id: agent_room_application::ports::MatrixUserId::new(stored.matrix_user_id)
+            matrix_user_id: MatrixUserId::new(stored.matrix_user_id)
                 .map_err(|_| corrupt_query())?,
             avatar_url: stored.avatar_url,
         });
@@ -645,6 +834,27 @@ const fn corrupt_query() -> MessageTimelineQueryFailure {
     query_failure(MessageTimelineQueryFailureKind::Corrupt)
 }
 
+/// 按观察顺序写一批事件：隔离记录插在它前面那些投影之后，解不开的事件就此占住位置。
+async fn apply_timeline(
+    transaction: &mut Transaction<'_, Sqlite>,
+    sync_token: &MatrixSyncToken,
+    mutations: &[MessageProjectionMutation],
+    issues: &[MessageSyncIssue],
+    key_cipher: &MessageProjectionKeyCipher,
+) -> Result<(), MessageProjectionStoreFailure> {
+    let mut issues = issues.iter().peekable();
+    for (index, mutation) in mutations.iter().enumerate() {
+        while let Some(issue) = issues.next_if(|issue| issue.mutations_before <= index) {
+            persist_issue(transaction, sync_token, issue).await?;
+        }
+        apply_mutation(transaction, mutation, key_cipher).await?;
+    }
+    for issue in issues {
+        persist_issue(transaction, sync_token, issue).await?;
+    }
+    Ok(())
+}
+
 async fn apply_mutation(
     transaction: &mut Transaction<'_, Sqlite>,
     mutation: &MessageProjectionMutation,
@@ -652,31 +862,44 @@ async fn apply_mutation(
 ) -> Result<(), MessageProjectionStoreFailure> {
     let encoded = EncodedMutation::from_mutation(mutation, key_cipher)?;
     let sequence = next_sequence(transaction, &encoded.room_id).await?;
-    if insert_event(transaction, &encoded, sequence).await? == 0 {
+    write_mutation(transaction, mutation, &encoded, sequence).await
+}
+
+async fn write_mutation(
+    transaction: &mut Transaction<'_, Sqlite>,
+    mutation: &MessageProjectionMutation,
+    encoded: &EncodedMutation,
+    sequence: i64,
+) -> Result<(), MessageProjectionStoreFailure> {
+    if insert_event(transaction, encoded, sequence).await? == 0 {
         return Ok(());
     }
     match mutation {
         MessageProjectionMutation::Preview(_) => {
-            if insert_current(transaction, &encoded, sequence).await? == 1 {
+            if insert_current(transaction, encoded, sequence).await? == 1 {
                 apply_pending_revisions(transaction, &encoded.room_id, &encoded.message_id).await?;
             }
         }
         MessageProjectionMutation::Revision(_) => {
-            apply_revision(transaction, &encoded, sequence).await?;
+            apply_revision(transaction, encoded, sequence).await?;
         }
     }
     Ok(())
 }
 
+/// 下一个观察序号：已写入的事件和解不开的事件预留的序号都算在内。
 async fn next_sequence(
     transaction: &mut Transaction<'_, Sqlite>,
     room_id: &str,
 ) -> Result<i64, MessageProjectionStoreFailure> {
     sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(MAX(sequence), 0) + 1
-         FROM message_projection_event
-         WHERE room_id = ?",
+        "SELECT MAX(
+            (SELECT COALESCE(MAX(sequence), 0) FROM message_projection_event WHERE room_id = ?),
+            (SELECT COALESCE(MAX(reserved_sequence), 0) FROM message_sync_issue
+             WHERE room_id = ? AND reserved_sequence IS NOT NULL)
+         ) + 1",
     )
+    .bind(room_id)
     .bind(room_id)
     .fetch_one(&mut **transaction)
     .await
@@ -879,12 +1102,18 @@ async fn apply_replacement(
         .content_id
         .as_deref()
         .ok_or_else(corrupt_projection_failure)?;
+    // 找回的旧修订写在它原来的位置；已经换上更新的修订时，不能再用旧的覆盖回去。
     sqlx::query(
         "UPDATE message_current_projection
          SET preview_json = ?, content_json = ?, content_id = ?, last_revision_event_id = ?,
              last_sequence = MAX(last_sequence, ?)
          WHERE room_id = ? AND message_id = ? AND actor_subject_key = ?
-           AND visibility = 'active'",
+           AND visibility = 'active'
+           AND NOT EXISTS (
+               SELECT 1 FROM message_projection_event applied
+               WHERE applied.event_id = message_current_projection.last_revision_event_id
+                 AND applied.sequence > ?
+           )",
     )
     .bind(preview_json)
     .bind(content_json)
@@ -894,6 +1123,7 @@ async fn apply_replacement(
     .bind(revision.room_id)
     .bind(revision.message_id)
     .bind(&revision.actor_subject_key)
+    .bind(revision.sequence)
     .execute(&mut **transaction)
     .await
     .map(|_| ())
@@ -922,31 +1152,65 @@ async fn apply_redaction(
     .map_err(|error| map_sqlx_error(&error))
 }
 
-async fn persist_issues(
+async fn persist_issue(
     transaction: &mut Transaction<'_, Sqlite>,
     sync_token: &MatrixSyncToken,
-    issues: &[MessageSyncIssue],
+    issue: &MessageSyncIssue,
 ) -> Result<(), MessageProjectionStoreFailure> {
-    for issue in issues {
-        sqlx::query(
-            "INSERT OR IGNORE INTO message_sync_issue
-             (sync_token, room_id, event_id, reason)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(sync_token.as_str())
-        .bind(issue.room_id.as_str())
-        .bind(
-            issue
-                .event_id
-                .as_ref()
-                .map_or("", |event_id| event_id.as_str()),
-        )
-        .bind(issue.reason.as_str())
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| map_sqlx_error(&error))?;
+    let room_id = issue.room_id.as_str();
+    let event_id = issue
+        .event_id
+        .as_ref()
+        .map_or("", |event_id| event_id.as_str());
+    let session = issue
+        .session
+        .as_ref()
+        .filter(|_| issue.reason == MessageSyncIssueReason::Undecryptable && !event_id.is_empty());
+    let reserved = match session {
+        Some(_) => reserve_sequence(transaction, room_id, event_id).await?,
+        None => None,
+    };
+    sqlx::query(
+        "INSERT OR IGNORE INTO message_sync_issue
+         (sync_token, room_id, event_id, reason, reserved_sequence, sender, sender_device,
+          session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(sync_token.as_str())
+    .bind(room_id)
+    .bind(event_id)
+    .bind(issue.reason.as_str())
+    .bind(reserved)
+    .bind(session.map(|session| session.sender.as_str()))
+    .bind(session.and_then(|session| session.sender_device.as_deref()))
+    .bind(session.map(|session| session.session_id.as_str()))
+    .execute(&mut **transaction)
+    .await
+    .map(|_| ())
+    .map_err(|error| map_sqlx_error(&error))
+}
+
+/// 给解不开的事件按观察顺序预留一个序号。重复同步到的（已经预留过）或已经写入的不再占。
+async fn reserve_sequence(
+    transaction: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    event_id: &str,
+) -> Result<Option<i64>, MessageProjectionStoreFailure> {
+    let known = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM message_projection_event WHERE event_id = ?)
+             OR EXISTS(SELECT 1 FROM message_sync_issue
+                       WHERE room_id = ? AND event_id = ? AND reserved_sequence IS NOT NULL)",
+    )
+    .bind(event_id)
+    .bind(room_id)
+    .bind(event_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(&error))?;
+    if known {
+        return Ok(None);
     }
-    Ok(())
+    next_sequence(transaction, room_id).await.map(Some)
 }
 
 async fn persist_gaps(

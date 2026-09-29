@@ -21,6 +21,10 @@ use crate::mapping::sender_device_trusted;
 pub(crate) struct SenderTrustUpgrades(BTreeSet<OwnedEventId>);
 
 impl SenderTrustUpgrades {
+    pub(crate) fn insert(&mut self, event_id: OwnedEventId) {
+        self.0.insert(event_id);
+    }
+
     pub(crate) fn contains(&self, event: &TimelineEvent) -> bool {
         event
             .event_id()

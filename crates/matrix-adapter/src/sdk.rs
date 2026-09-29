@@ -682,26 +682,56 @@ impl MatrixGateway for MatrixSdkGateway {
                 .map_err(|error| map_sdk_error(operation, &error))?;
             // 还是解不开：再请一次重发（一小时内同一会话只请求一次）。
             self.note_undecryptable(room.room_id(), std::iter::once(&event));
-            let upgrades = refresh_stale_sender_trust(
-                &self.client,
-                [(room.room_id(), std::slice::from_ref(&event))],
-            )
-            .await;
+            let events = std::slice::from_ref(&event);
+            let mut upgrades =
+                refresh_stale_sender_trust(&self.client, [(room.room_id(), events)]).await;
+            if let Some(requests) = &self.room_key_requests {
+                requests
+                    .trust_vouched_sessions(&self.client, room.room_id(), events, &mut upgrades)
+                    .await;
+            }
             map_timeline_event(&event, operation, &upgrades)
         })
     }
 
-    fn take_rooms_with_recovered_keys(&self) -> Vec<MatrixRoomId> {
+    fn take_recovered_sessions(&self) -> Vec<(MatrixRoomId, String)> {
         self.room_key_requests
             .as_ref()
             .map(|requests| {
                 requests
-                    .take_recovered_rooms()
+                    .take_recovered_sessions()
                     .into_iter()
-                    .filter_map(|room_id| MatrixRoomId::new(room_id.to_string()).ok())
+                    .filter_map(|(room_id, session_id)| {
+                        Some((MatrixRoomId::new(room_id.to_string()).ok()?, session_id))
+                    })
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn request_room_keys(
+        &self,
+        room_id: &MatrixRoomId,
+        sender: &MatrixUserId,
+        sender_device: Option<&str>,
+        session_ids: &[String],
+    ) {
+        let Some(requests) = &self.room_key_requests else {
+            return;
+        };
+        let (Ok(room_id), Ok(sender)) = (
+            RoomId::parse(room_id.as_str()),
+            UserId::parse(sender.as_str()),
+        ) else {
+            return;
+        };
+        requests.request_sessions(
+            &self.client,
+            &room_id,
+            sender,
+            sender_device.map(OwnedDeviceId::from),
+            session_ids,
+        );
     }
 
     fn wake_sync(&self) -> PortFuture<'_, MatrixResult<()>> {

@@ -2,16 +2,18 @@ use std::time::Duration;
 
 use agent_room_application::ports::{
     MatrixBackfillToken, MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId,
+    MatrixUserId,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
         MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewQuery,
         MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailureKind,
-        MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
+        MessageRecoveryBatch, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
         MessageTimelineProjectionStore, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, PendingTimelineGap, ProjectedActorInstanceVerification,
         ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
+        ReservedIsolatedEvent, UndecryptableSession,
     },
 };
 use agent_room_bridge_storage_adapter::{
@@ -79,6 +81,8 @@ async fn 重复同步不制造序号空洞且客户端时间不能改写到达�
             room_id: room_id(),
             event_id: Some(event_id("$isolated:matrix.test")),
             reason: MessageSyncIssueReason::InvalidSignature,
+            mutations_before: 2,
+            session: None,
         }],
         vec![MessageTimelineGap {
             room_id: room_id(),
@@ -631,6 +635,8 @@ async fn 缺口补回后结清_补回的消息排在已收到的之后_已记下
                 room_id: room_id(),
                 event_id: Some(event_id("$broken:matrix.test")),
                 reason: MessageSyncIssueReason::Undecryptable,
+                mutations_before: 1,
+                session: None,
             }],
             vec![
                 MessageTimelineGap {
@@ -690,6 +696,8 @@ async fn 缺口补回后结清_补回的消息排在已收到的之后_已记下
                 room_id: room_id(),
                 event_id: Some(event_id("$forged:matrix.test")),
                 reason: MessageSyncIssueReason::InvalidSignature,
+                mutations_before: 1,
+                session: None,
             }],
         ))
         .await
@@ -709,6 +717,379 @@ async fn 缺口补回后结清_补回的消息排在已收到的之后_已记下
     );
     // 补缺口不动同步游标。
     assert_eq!(current_cursor(&inspector).await.as_deref(), Some("sync-1"));
+}
+
+fn undecryptable(event: &str, session_id: &str, mutations_before: usize) -> MessageSyncIssue {
+    MessageSyncIssue {
+        room_id: room_id(),
+        event_id: Some(event_id(event)),
+        reason: MessageSyncIssueReason::Undecryptable,
+        mutations_before,
+        session: Some(UndecryptableSession {
+            sender: MatrixUserId::new("@_agent_old:matrix.test").expect("用户有效"),
+            sender_device: Some("OLDDEVICE".to_owned()),
+            session_id: session_id.to_owned(),
+        }),
+    }
+}
+
+async fn event_order(inspector: &SqlitePool) -> Vec<(String, i64)> {
+    sqlx::query("SELECT event_id, sequence FROM message_projection_event ORDER BY sequence ASC")
+        .fetch_all(inspector)
+        .await
+        .expect("事件日志可查询")
+        .iter()
+        .map(|row| (row.get("event_id"), row.get("sequence")))
+        .collect()
+}
+
+async fn page_event_ids(
+    store: &SqliteMessageTimelineRepository,
+    query: &MessagePreviewQuery,
+) -> Vec<String> {
+    store
+        .list_previews(query)
+        .await
+        .expect("预览可查询")
+        .previews()
+        .iter()
+        .map(|preview| preview.event_id.as_str().to_owned())
+        .collect()
+}
+
+async fn sync_message(
+    store: &SqliteMessageTimelineRepository,
+    token: &str,
+    event: &str,
+    digest: u8,
+    at: i64,
+) {
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token(token),
+            vec![preview_mutation(
+                event,
+                MessageId::from_uuid(Uuid::now_v7()),
+                owner_actor(),
+                at,
+                "一条消息",
+                digest,
+                u64::try_from(at).ok(),
+            )],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("同步批次可写入");
+}
+
+/// 时间线：加入前的一条（解不开）、加入后的一条、再一条解不开的（另一个会话），之后又来一条。
+async fn sync_around_join(store: &SqliteMessageTimelineRepository) {
+    let first = MessageProjectionBatch::new(
+        sync_token("sync-1"),
+        vec![preview_mutation(
+            "$after-join:matrix.test",
+            MessageId::from_uuid(Uuid::now_v7()),
+            owner_actor(),
+            2_000,
+            "加入后的消息",
+            1,
+            Some(2_000),
+        )],
+        vec![
+            undecryptable("$pre-join:matrix.test", "session-a", 0),
+            undecryptable("$other:matrix.test", "session-b", 1),
+        ],
+        Vec::new(),
+    );
+    store.apply(&first).await.expect("同步批次可写入");
+    // 重复同步到同一批不再占新位置。
+    store.apply(&first).await.expect("重复同步可写入");
+    sync_message(store, "sync-2", "$latest:matrix.test", 2, 3_000).await;
+}
+
+#[tokio::test]
+async fn 解不开的消息按观察顺序占位_按会话查得到() {
+    let (_temporary, store, inspector) = open_store().await;
+    sync_around_join(&store).await;
+    assert_eq!(
+        event_order(&inspector).await,
+        [
+            ("$after-join:matrix.test".to_owned(), 2),
+            ("$latest:matrix.test".to_owned(), 4)
+        ]
+    );
+
+    let sessions = store.undecryptable_sessions(10).await.expect("可查询");
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|isolated| isolated.session.session_id.as_str())
+            .collect::<Vec<_>>(),
+        ["session-b", "session-a"],
+        "最近的会话在前"
+    );
+    assert_eq!(
+        sessions[0].session.sender_device.as_deref(),
+        Some("OLDDEVICE")
+    );
+    assert_eq!(
+        store
+            .undecryptable_events(&room_id(), &["session-a".to_owned()], 0, 10)
+            .await
+            .expect("可查询"),
+        [ReservedIsolatedEvent {
+            event_id: event_id("$pre-join:matrix.test"),
+            position: 1,
+        }]
+    );
+    assert!(
+        store
+            .undecryptable_events(&room_id(), &["session-a".to_owned()], 1, 10)
+            .await
+            .expect("可查询")
+            .is_empty(),
+        "按位置往后翻"
+    );
+}
+
+#[tokio::test]
+async fn 找回的消息写回原位_不当新消息_之后的新消息排在所有占位之后() {
+    let (_temporary, store, inspector) = open_store().await;
+    sync_around_join(&store).await;
+    let pre_join = MessageId::from_uuid(Uuid::now_v7());
+
+    store
+        .apply_recovery(&MessageRecoveryBatch::new(
+            room_id(),
+            vec![preview_mutation(
+                "$pre-join:matrix.test",
+                pre_join,
+                owner_actor(),
+                1_000,
+                "加入前的消息",
+                3,
+                Some(1_000),
+            )],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("找回的消息可写入");
+
+    assert_eq!(
+        event_order(&inspector).await,
+        [
+            ("$pre-join:matrix.test".to_owned(), 1),
+            ("$after-join:matrix.test".to_owned(), 2),
+            ("$latest:matrix.test".to_owned(), 4)
+        ]
+    );
+    assert_eq!(
+        current_message(&inspector, pre_join)
+            .await
+            .get::<i64, _>("first_sequence"),
+        1
+    );
+    // Agent 读到“加入后的消息”之后，收件箱只有更新的；找回的旧消息只出现在历史里。
+    assert_eq!(
+        page_event_ids(
+            &store,
+            &MessagePreviewQuery::after(room_id(), event_id("$after-join:matrix.test"), 10)
+                .expect("游标有效"),
+        )
+        .await,
+        ["$latest:matrix.test"]
+    );
+    assert_eq!(
+        page_event_ids(
+            &store,
+            &MessagePreviewQuery::from_start(room_id(), 10).expect("分页有效")
+        )
+        .await,
+        [
+            "$pre-join:matrix.test",
+            "$after-join:matrix.test",
+            "$latest:matrix.test"
+        ]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT event_id FROM message_sync_issue")
+            .fetch_all(&inspector)
+            .await
+            .expect("可查询"),
+        ["$other:matrix.test"],
+        "找回的那条不再隔离"
+    );
+    sync_message(&store, "sync-3", "$newest:matrix.test", 4, 4_000).await;
+    assert_eq!(
+        event_order(&inspector).await.last(),
+        Some(&("$newest:matrix.test".to_owned(), 5))
+    );
+}
+
+#[tokio::test]
+async fn 找回的旧修订不覆盖已生效的新修订_找回的原消息补上先到的修订() {
+    let (_temporary, store, inspector) = open_store().await;
+    let edited = MessageId::from_uuid(Uuid::now_v7());
+    let recovered_base = MessageId::from_uuid(Uuid::now_v7());
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("sync-1"),
+            vec![
+                preview_mutation(
+                    "$edited:matrix.test",
+                    edited,
+                    owner_actor(),
+                    1_000,
+                    "原文",
+                    1,
+                    Some(1_000),
+                ),
+                replacement_mutation(
+                    "$newer-edit:matrix.test",
+                    edited,
+                    owner_actor(),
+                    "第二次修改",
+                    2,
+                ),
+                replacement_mutation(
+                    "$edit-before-base:matrix.test",
+                    recovered_base,
+                    owner_actor(),
+                    "改过的加入前消息",
+                    3,
+                ),
+            ],
+            vec![
+                undecryptable("$base-before-join:matrix.test", "session-a", 0),
+                undecryptable("$older-edit:matrix.test", "session-a", 1),
+            ],
+            Vec::new(),
+        ))
+        .await
+        .expect("同步批次可写入");
+
+    store
+        .apply_recovery(&MessageRecoveryBatch::new(
+            room_id(),
+            vec![
+                preview_mutation(
+                    "$base-before-join:matrix.test",
+                    recovered_base,
+                    owner_actor(),
+                    500,
+                    "加入前的原文",
+                    4,
+                    Some(500),
+                ),
+                replacement_mutation(
+                    "$older-edit:matrix.test",
+                    edited,
+                    owner_actor(),
+                    "第一次修改",
+                    5,
+                ),
+            ],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("找回的消息可写入");
+
+    let edited_row = current_message(&inspector, edited).await;
+    assert_eq!(edited_row.get::<String, _>("summary"), "第二次修改");
+    assert_eq!(
+        edited_row.get::<String, _>("last_revision_event_id"),
+        "$newer-edit:matrix.test"
+    );
+    let base_row = current_message(&inspector, recovered_base).await;
+    assert_eq!(base_row.get::<String, _>("summary"), "改过的加入前消息");
+    assert_eq!(base_row.get::<i64, _>("first_sequence"), 1);
+}
+
+#[tokio::test]
+async fn 解开后不收的改记原因_不是消息的删掉记录() {
+    let (_temporary, store, inspector) = open_store().await;
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("sync-1"),
+            Vec::new(),
+            vec![
+                undecryptable("$forged:matrix.test", "session-a", 0),
+                undecryptable("$reaction:matrix.test", "session-a", 0),
+                // 功能上线前记下的隔离事件没有会话，不占位置，也不会被重读。
+                MessageSyncIssue {
+                    room_id: room_id(),
+                    event_id: Some(event_id("$legacy:matrix.test")),
+                    reason: MessageSyncIssueReason::Undecryptable,
+                    mutations_before: 0,
+                    session: None,
+                },
+            ],
+            Vec::new(),
+        ))
+        .await
+        .expect("同步批次可写入");
+    assert_eq!(
+        store
+            .undecryptable_events(&room_id(), &["session-a".to_owned()], 0, 10)
+            .await
+            .expect("可查询")
+            .len(),
+        2
+    );
+
+    store
+        .apply_recovery(&MessageRecoveryBatch::new(
+            room_id(),
+            Vec::new(),
+            vec![MessageSyncIssue {
+                room_id: room_id(),
+                event_id: Some(event_id("$forged:matrix.test")),
+                reason: MessageSyncIssueReason::InvalidSignature,
+                mutations_before: 0,
+                session: None,
+            }],
+            vec![event_id("$reaction:matrix.test")],
+        ))
+        .await
+        .expect("重读结果可写入");
+
+    let rows = sqlx::query(
+        "SELECT event_id, reason, reserved_sequence FROM message_sync_issue ORDER BY event_id",
+    )
+    .fetch_all(&inspector)
+    .await
+    .expect("可查询");
+    assert_eq!(
+        rows.iter()
+            .map(|row| (
+                row.get::<String, _>("event_id"),
+                row.get::<String, _>("reason"),
+                row.get::<Option<i64>, _>("reserved_sequence"),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "$forged:matrix.test".to_owned(),
+                "invalid_signature".to_owned(),
+                None
+            ),
+            (
+                "$legacy:matrix.test".to_owned(),
+                "undecryptable".to_owned(),
+                None
+            ),
+        ]
+    );
+    assert!(
+        store
+            .undecryptable_sessions(10)
+            .await
+            .expect("可查询")
+            .is_empty()
+    );
 }
 
 fn preview_mutation(
@@ -867,15 +1248,13 @@ async fn 人类聊天持久化且自报同一账号不能篡改他人消息() {
     let human = ProjectedMessageActor::Human {
         principal_id,
         display_name: "小雨".to_owned(),
-        matrix_user_id: agent_room_application::ports::MatrixUserId::new("@rainy:matrix.test")
-            .expect("用户有效"),
+        matrix_user_id: MatrixUserId::new("@rainy:matrix.test").expect("用户有效"),
         avatar_url: None,
     };
     let impostor = ProjectedMessageActor::Human {
         principal_id,
         display_name: "小雨".to_owned(),
-        matrix_user_id: agent_room_application::ports::MatrixUserId::new("@impostor:matrix.test")
-            .expect("用户有效"),
+        matrix_user_id: MatrixUserId::new("@impostor:matrix.test").expect("用户有效"),
         avatar_url: None,
     };
     let id = MessageId::from_uuid(Uuid::now_v7());
