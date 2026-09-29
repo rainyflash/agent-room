@@ -114,7 +114,7 @@ fn map_timeline(
         .collect()
 }
 
-fn map_timeline_event(
+pub(crate) fn map_timeline_event(
     event: &TimelineEvent,
     operation: MatrixOperation,
     upgrades: &SenderTrustUpgrades,

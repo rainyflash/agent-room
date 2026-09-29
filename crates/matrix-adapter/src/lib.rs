@@ -6,6 +6,7 @@ mod handoff;
 mod mapping;
 mod membership;
 mod provisioning;
+mod room_key_requests;
 mod room_keys;
 mod sdk;
 mod security;
