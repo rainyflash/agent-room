@@ -2,6 +2,7 @@ import type {
   ClientEvent,
   Direction,
   EventStatus,
+  HistoryVisibility,
   MatrixEventEvent,
   SyncState,
 } from 'matrix-js-sdk';
@@ -33,6 +34,9 @@ export const CLIENT_EVENT_RECEIVED_TO_DEVICE_MESSAGE =
   enumValue<ClientEvent.ReceivedToDeviceMessage>('receivedToDeviceMessage');
 
 export const MATRIX_EVENT_DECRYPTED = enumValue<MatrixEventEvent.Decrypted>('Event.decrypted');
+
+export const HISTORY_VISIBILITY_SHARED = enumValue<HistoryVisibility>('shared');
+export const HISTORY_VISIBILITY_WORLD_READABLE = enumValue<HistoryVisibility>('world_readable');
 
 export const CRYPTO_EVENT_DEVICES_UPDATED =
   enumValue<CryptoEvent.DevicesUpdated>('crypto.devicesUpdated');
