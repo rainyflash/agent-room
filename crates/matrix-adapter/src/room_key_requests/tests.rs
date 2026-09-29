@@ -1,8 +1,15 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use agent_room_protocol_conformance::generated::{RoomKeyExport, RoomKeysEvent};
 use matrix_sdk::{
-    deserialized_responses::{TimelineEvent, UnableToDecryptInfo, UnableToDecryptReason},
+    deserialized_responses::{
+        AlgorithmInfo, DecryptedRoomEvent, DeviceLinkProblem, EncryptionInfo, TimelineEvent,
+        UnableToDecryptInfo, UnableToDecryptReason, VerificationLevel, VerificationState,
+    },
     ruma::{OwnedDeviceId, OwnedRoomId, OwnedUserId, RoomId, UserId, serde::Raw},
 };
 use serde_json::json;
@@ -64,7 +71,7 @@ fn answer(request_id: &str, sessions: &[String]) -> RoomKeysEvent {
         schema_version: SCHEMA_VERSION.to_owned(),
         sender_ed25519_key: SENDER_ED25519.to_owned(),
         sender_key: SENDER_CURVE.to_owned(),
-        extensions: std::collections::BTreeMap::new(),
+        extensions: BTreeMap::new(),
     }
 }
 
@@ -281,8 +288,92 @@ fn 导入后点名的会话不再等_房间记为有新密钥_取走一次就清
             .is_err()
     );
 
-    assert_eq!(requester.take_recovered_rooms(), vec![room()]);
-    assert!(requester.take_recovered_rooms().is_empty());
+    assert_eq!(
+        requester.take_recovered_sessions(),
+        vec![(room(), session('a')), (room(), session('b'))]
+    );
+    assert!(requester.take_recovered_sessions().is_empty());
+}
+
+/// 用某个会话解开、SDK 判“来源不安全”的事件。
+fn decrypted_with(sender: &str, session_id: &str, curve25519: &str) -> TimelineEvent {
+    let event = Raw::from_json_string(
+        json!({
+            "type": "io.github.rainyflash.agentroom.message.preview.v1",
+            "event_id": "$decrypted",
+            "room_id": ROOM,
+            "sender": sender,
+            "origin_server_ts": 1,
+            "content": {},
+        })
+        .to_string(),
+    )
+    .expect("事件可以编码");
+    TimelineEvent::from_decrypted(
+        DecryptedRoomEvent {
+            event,
+            encryption_info: Arc::new(EncryptionInfo {
+                sender: UserId::parse(sender).expect("用户标识有效"),
+                sender_device: None,
+                forwarder: None,
+                algorithm_info: AlgorithmInfo::MegolmV1AesSha2 {
+                    curve25519_key: curve25519.to_owned(),
+                    sender_claimed_keys: BTreeMap::new(),
+                    session_id: Some(session_id.to_owned()),
+                },
+                verification_state: VerificationState::Unverified(VerificationLevel::None(
+                    DeviceLinkProblem::InsecureSource,
+                )),
+            }),
+            unsigned_encryption_info: None,
+        },
+        None,
+    )
+}
+
+#[test]
+fn 凭应答导入的会话只替重发它的那台设备的主人担保() {
+    let requester = RoomKeyRequester::default();
+    requester.vouch(&answer("request-4", &[session('a')]), &origin());
+    let device = (
+        UserId::parse(SENDER).expect("用户标识有效"),
+        OwnedDeviceId::from(SENDER_DEVICE),
+    );
+
+    assert_eq!(
+        requester.vouching_device(
+            &room(),
+            &decrypted_with(SENDER, &session('a'), SENDER_CURVE)
+        ),
+        Some(device)
+    );
+    assert_eq!(
+        requester.vouching_device(&room(), &decrypted_with(ME, &session('a'), SENDER_CURVE)),
+        None,
+        "别人用这个会话发的消息不替它担保"
+    );
+    assert_eq!(
+        requester.vouching_device(
+            &room(),
+            &decrypted_with(SENDER, &session('a'), &"x".repeat(43))
+        ),
+        None,
+        "会话的 Curve25519 对不上"
+    );
+    assert_eq!(
+        requester.vouching_device(
+            &room(),
+            &decrypted_with(SENDER, &session('b'), SENDER_CURVE)
+        ),
+        None,
+        "没经应答导入的会话"
+    );
+    let other = RoomId::parse(OTHER_ROOM).expect("房间标识有效");
+    assert_eq!(
+        requester.vouching_device(&other, &decrypted_with(SENDER, &session('a'), SENDER_CURVE)),
+        None,
+        "别的房间"
+    );
 }
 
 #[test]

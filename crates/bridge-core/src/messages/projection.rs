@@ -1,6 +1,6 @@
 use agent_room_application::ports::{
     MatrixBackfillToken, MatrixEventId, MatrixRoomId, MatrixSyncToken, MatrixTransactionId,
-    PortFuture,
+    MatrixUserId, PortFuture,
 };
 use agent_room_domain::{
     ids::{ContentId, MessageId, MessageRevisionId},
@@ -23,7 +23,7 @@ pub enum ProjectedMessageActor {
     Human {
         principal_id: agent_room_domain::ids::PrincipalId,
         display_name: String,
-        matrix_user_id: agent_room_application::ports::MatrixUserId,
+        matrix_user_id: MatrixUserId,
         avatar_url: Option<String>,
     },
 }
@@ -206,6 +206,77 @@ pub struct MessageSyncIssue {
     pub room_id: MatrixRoomId,
     pub event_id: Option<MatrixEventId>,
     pub reason: MessageSyncIssueReason,
+    /// 同一批里排在它前面的投影有几条。存储据此按观察顺序给解不开的事件预留位置。
+    pub mutations_before: usize,
+    /// 解不开时加密内容里记着的会话：凭它请求重发房间密钥，拿到后凭它找出要重读的事件。
+    pub session: Option<UndecryptableSession>,
+}
+
+/// 解不开的加密事件用的会话，以及建这个会话的发送者和设备。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndecryptableSession {
+    pub sender: MatrixUserId,
+    /// 加密内容里点名的发送设备；没有时向这个用户的每台设备请求。
+    pub sender_device: Option<String>,
+    pub session_id: String,
+}
+
+/// 存储里仍隔离为“解不开”、占着预留位置的事件用到的一个会话。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolatedSession {
+    pub room_id: MatrixRoomId,
+    pub session: UndecryptableSession,
+}
+
+/// 隔离为“解不开”的事件和它在消息记录里预留的位置（本机观察顺序，越大越新）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservedIsolatedEvent {
+    pub event_id: MatrixEventId,
+    pub position: u64,
+}
+
+/// 找回房间密钥后重读一个房间里隔离事件的结果，一次写进存储。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageRecoveryBatch {
+    room_id: MatrixRoomId,
+    recovered: Vec<MessageProjectionMutation>,
+    reclassified: Vec<MessageSyncIssue>,
+    dismissed: Vec<MatrixEventId>,
+}
+
+impl MessageRecoveryBatch {
+    pub const fn new(
+        room_id: MatrixRoomId,
+        recovered: Vec<MessageProjectionMutation>,
+        reclassified: Vec<MessageSyncIssue>,
+        dismissed: Vec<MatrixEventId>,
+    ) -> Self {
+        Self {
+            room_id,
+            recovered,
+            reclassified,
+            dismissed,
+        }
+    }
+
+    pub const fn room_id(&self) -> &MatrixRoomId {
+        &self.room_id
+    }
+
+    /// 重读出来、校验通过的消息：写在隔离时预留的位置，并删掉隔离记录。
+    pub fn recovered(&self) -> &[MessageProjectionMutation] {
+        &self.recovered
+    }
+
+    /// 解开了但因别的原因不收（比如签名不对）：改记这个原因，不再占位置。
+    pub fn reclassified(&self) -> &[MessageSyncIssue] {
+        &self.reclassified
+    }
+
+    /// 解开了但不是消息：删掉隔离记录即可。
+    pub fn dismissed(&self) -> &[MatrixEventId] {
+        &self.dismissed
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -357,6 +428,38 @@ pub trait MessageTimelineProjectionStore: Send + Sync {
         &'a self,
         batch: &'a MessageBackfillBatch,
     ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>>;
+
+    /// 仍隔离为“解不开”、占着预留位置的事件用到的会话，最近的在前。
+    ///
+    /// 等应答的请求只记在内存里，Bridge 重启后凭这些重新请求房间密钥。默认没有。
+    fn undecryptable_sessions(
+        &self,
+        limit: u16,
+    ) -> PortFuture<'_, Result<Vec<IsolatedSession>, MessageProjectionStoreFailure>> {
+        let _ = limit;
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// 这个房间里用到这些会话、仍隔离为“解不开”的事件，位置在 `after` 之后，从前往后。默认没有。
+    fn undecryptable_events<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        session_ids: &'a [String],
+        after: u64,
+        limit: u16,
+    ) -> PortFuture<'a, Result<Vec<ReservedIsolatedEvent>, MessageProjectionStoreFailure>> {
+        let _ = (room_id, session_ids, after, limit);
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// 原子写入重读的结果；不改同步游标。默认什么也不做。
+    fn apply_recovery<'a>(
+        &'a self,
+        batch: &'a MessageRecoveryBatch,
+    ) -> PortFuture<'a, Result<(), MessageProjectionStoreFailure>> {
+        let _ = batch;
+        Box::pin(async { Ok(()) })
+    }
 }
 
 const MAXIMUM_PREVIEW_PAGE_SIZE: u16 = 50;

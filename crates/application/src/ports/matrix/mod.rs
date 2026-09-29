@@ -201,8 +201,23 @@ pub trait MatrixGateway: Send + Sync {
         })
     }
 
-    /// 自上次调用以来，导入了别人重发的房间密钥的房间；Bridge 据此重读这些房间里隔离的消息。
-    fn take_rooms_with_recovered_keys(&self) -> Vec<MatrixRoomId> {
+    /// 自上次调用以来导入的、别人重发的会话（房间与会话 ID）；Bridge 据此重读用这些会话加密、
+    /// 当初解不开而隔离的消息。
+    fn take_recovered_sessions(&self) -> Vec<(MatrixRoomId, String)> {
         Vec::new()
+    }
+
+    /// 请发送者那台设备（没点名时是它的每台设备）重发这些会话的房间密钥。
+    ///
+    /// Bridge 重启后，对存储里仍隔离着的“解不开”的消息重新请求；同一会话一小时内只请求一次。
+    /// 默认什么也不做。
+    fn request_room_keys(
+        &self,
+        room_id: &MatrixRoomId,
+        sender: &MatrixUserId,
+        sender_device: Option<&str>,
+        session_ids: &[String],
+    ) {
+        let _ = (room_id, sender, sender_device, session_ids);
     }
 }

@@ -9,6 +9,7 @@ mod model;
 mod outgoing;
 mod ports;
 mod projection;
+mod recovery;
 mod wire;
 
 pub use automation::{
@@ -50,11 +51,13 @@ pub use ports::{
     MessageSubmissionRepository, MessageSubmissionState,
 };
 pub use projection::{
-    MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage, MessagePreviewQuery,
-    MessagePreviewQueryError, MessageProjectionBatch, MessageProjectionMutation,
-    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageSyncIssue,
-    MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
-    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
-    PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
-    ProjectedMessagePreview, ProjectedMessageRevision,
+    IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage,
+    MessagePreviewQuery, MessagePreviewQueryError, MessageProjectionBatch,
+    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
+    MessageRecoveryBatch, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
+    MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
+    MessageTimelineQueryRepository, PendingTimelineGap, ProjectedActorInstanceVerification,
+    ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
+    ReservedIsolatedEvent, UndecryptableSession,
 };
+pub use recovery::{MessageRecoveryOutcome, MessageRecoverySource};

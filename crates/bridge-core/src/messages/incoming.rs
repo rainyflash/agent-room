@@ -42,7 +42,7 @@ use super::{
     MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
     MessageStoreFailure, MessageSubmissionRepository, MessageSyncIssue, MessageSyncIssueReason,
     MessageTimelineGap, MessageTimelineProjectionStore, ProjectedMessageActor,
-    ProjectedMessagePreview, ProjectedMessageRevision,
+    ProjectedMessagePreview, ProjectedMessageRevision, UndecryptableSession,
     wire::{PREVIEW_EVENT_TYPE, REVISION_EVENT_TYPE},
 };
 
@@ -214,8 +214,16 @@ impl MessageSyncService {
     ) -> Result<(), MessageSyncFailure> {
         for event in events {
             if event.event_type().as_str() == UNDECRYPTED_EVENT_TYPE {
-                // 解不开的加密事件也要留下记录，不能悄悄跳过：多半是发送方扣下了房间密钥。
-                issues.push(issue(room_id, event, MessageSyncIssueReason::Undecryptable));
+                // 解不开的加密事件也要留下记录，不能悄悄跳过：多半是还没拿到房间密钥。
+                // 记下会话，找回密钥后按它重读，写回这条事件原来的位置。
+                let mut undecryptable = issue(
+                    room_id,
+                    event,
+                    MessageSyncIssueReason::Undecryptable,
+                    mutations.len(),
+                );
+                undecryptable.session = undecryptable_session(event);
+                issues.push(undecryptable);
                 continue;
             }
             if !is_message_event(event) {
@@ -247,11 +255,16 @@ impl MessageSyncService {
                             mutations.push(mutation);
                         }
                         _ => {
-                            issues.push(issue(room_id, event, authentication_issue(decision)));
+                            issues.push(issue(
+                                room_id,
+                                event,
+                                authentication_issue(decision),
+                                mutations.len(),
+                            ));
                         }
                     }
                 }
-                Err(reason) => issues.push(issue(room_id, event, reason)),
+                Err(reason) => issues.push(issue(room_id, event, reason, mutations.len())),
             }
         }
         Ok(())
@@ -811,12 +824,38 @@ fn issue(
     room_id: &MatrixRoomId,
     event: &MatrixTimelineEvent,
     reason: MessageSyncIssueReason,
+    mutations_before: usize,
 ) -> MessageSyncIssue {
     MessageSyncIssue {
         room_id: room_id.clone(),
         event_id: event.event_id().cloned(),
         reason,
+        mutations_before,
+        session: None,
     }
+}
+
+/// 会话 ID、设备 ID 的长度上限；Matrix 的会话 ID 是 43 个字符，设备 ID 通常十来个。
+const MAX_SESSION_FIELD_BYTES: usize = 255;
+
+/// 解不开的事件的加密内容里记着的会话与发送设备；缺会话 ID 或格式不对时不记。
+fn undecryptable_session(event: &MatrixTimelineEvent) -> Option<UndecryptableSession> {
+    let bounded = |value: &str| !value.is_empty() && value.len() <= MAX_SESSION_FIELD_BYTES;
+    let session_id = event
+        .content()
+        .get("session_id")?
+        .as_str()
+        .filter(|value| bounded(value))?;
+    let sender_device = match event.content().get("device_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(device)) if bounded(device) => Some(device.clone()),
+        Some(_) => return None,
+    };
+    Some(UndecryptableSession {
+        sender: event.sender()?.clone(),
+        sender_device,
+        session_id: session_id.to_owned(),
+    })
 }
 
 #[cfg(test)]

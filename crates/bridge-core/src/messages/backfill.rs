@@ -155,7 +155,7 @@ fn collected(mut newest_first: Vec<MatrixTimelineEvent>, complete: bool) -> GapC
     }
 }
 
-const fn is_transient(failure: MatrixFailure) -> bool {
+pub(super) const fn is_transient(failure: MatrixFailure) -> bool {
     matches!(
         failure.kind(),
         MatrixFailureKind::RateLimited

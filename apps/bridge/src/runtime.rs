@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fmt,
     io::{self, Write as _},
     sync::{
@@ -130,6 +131,7 @@ use agent_room_bridge_storage_adapter::{
 const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
 mod connectivity;
 mod host_sessions;
+mod isolated_messages;
 use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
 const FOUNDATION_AGENT_CAPABILITIES: [&str; 9] = [
     "matrix.security",
@@ -332,6 +334,7 @@ struct AgentSessionRuntime {
     matrix_identity_recovery: MatrixIdentityRecovery,
     /// 断网重连时探 Matrix 服务器，网络一恢复就提前结束退避。
     connectivity: Option<Arc<connectivity::ConnectivityProbe>>,
+    isolated_key_rerequests: isolated_messages::IsolatedKeyRerequests,
 }
 
 const MATRIX_IDENTITY_RECOVERY_UNTOUCHED: u8 = 0;
@@ -445,6 +448,8 @@ struct AgentOnlineSession {
     targeted_handoff_worker: TargetedHandoffWorker,
     presence_projections: Arc<dyn PresenceProjectionRepository>,
     next_batch: Option<MatrixSyncToken>,
+    /// 导入了别人重发的房间密钥、还没重读完的会话。
+    recovered_sessions: BTreeSet<(MatrixRoomId, String)>,
 }
 
 struct HandoffEventWorker {
@@ -839,6 +844,7 @@ async fn compose_agent_session_runtime(
         matrix_identity_recovery: MatrixIdentityRecovery::new(),
         connectivity: connectivity::ConnectivityProbe::new(&config.matrix_homeserver_url)
             .map(Arc::new),
+        isolated_key_rerequests: isolated_messages::IsolatedKeyRerequests::default(),
     })
 }
 
@@ -1092,6 +1098,7 @@ async fn establish_agent_online_once(
         targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
         next_batch: stored_sync_cursor(runtime).await,
+        recovered_sessions: BTreeSet::new(),
     };
     complete_agent_online(runtime, online).await
 }
@@ -1435,6 +1442,7 @@ async fn sync_agent_online(
             tracing::warn!(failure_kind = ?failure.kind(), "补回漏掉的消息失败，下一轮再试");
         }
     }
+    isolated_messages::recover_isolated_messages(runtime, online, full_state).await;
     online
         .status
         .renew()

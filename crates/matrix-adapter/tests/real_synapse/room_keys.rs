@@ -416,8 +416,9 @@ async fn await_recovered_keys(
         if late
             .matrix()
             .gateway()
-            .take_rooms_with_recovered_keys()
-            .contains(room_id)
+            .take_recovered_sessions()
+            .iter()
+            .any(|(recovered_room, _)| recovered_room == room_id)
         {
             return;
         }

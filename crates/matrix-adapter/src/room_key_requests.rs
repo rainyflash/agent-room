@@ -2,8 +2,12 @@
 //!
 //! Agent 加入房间前的消息用的会话没发给它，它解不开。这里记下解不开的事件，攒几秒按房间、
 //! 发送者和发送设备合成一条请求，经 Olm 发给那台设备——对方是 Agent 还是人的网页端、桌面端都行，
-//! 协议和第一期一样。收到应答核对来源后导入，并记下这个房间有新导入的会话，由 Bridge 核心重读
-//! 隔离的消息。导入的会话在 SDK 解密时会按发送设备重新判断信任，设备由主人签名就照常可信。
+//! 协议和第一期一样。收到应答核对来源后导入，并记下新导入的会话，由 Bridge 核心重读用到
+//! 它们的隔离消息。
+//!
+//! SDK 对导入的会话一律判“来源不安全”：它没法证明会话真是那台设备建的。我们导入的会话来自核对
+//! 过的应答——经 Olm 从那台设备送来、设备由主人签名、密钥与应答一致，这正是那个证明——所以
+//! 重读时按那台设备此刻是否仍由主人签名来判信任。
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -19,7 +23,8 @@ use chrono::{SecondsFormat, Utc};
 use matrix_sdk::{
     Client,
     deserialized_responses::{
-        EncryptionInfo, TimelineEvent, TimelineEventKind, UnableToDecryptReason,
+        AlgorithmInfo, DeviceLinkProblem, EncryptionInfo, TimelineEvent, TimelineEventKind,
+        UnableToDecryptReason, VerificationLevel, VerificationState,
     },
     encryption::{Encryption, identities::Device},
     ruma::{
@@ -33,9 +38,13 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::room_keys::{
-    KEYS_PER_MESSAGE, MAX_REQUESTED_SESSIONS, ROOM_KEY_REQUEST_EVENT_TYPE, ROOM_KEYS_EVENT_TYPE,
-    RequestOrigin, SCHEMA_VERSION, is_key_like, random_passphrase, request_origin,
+use crate::{
+    room_keys::{
+        KEYS_PER_MESSAGE, MAX_REQUESTED_SESSIONS, ROOM_KEY_REQUEST_EVENT_TYPE,
+        ROOM_KEYS_EVENT_TYPE, RequestOrigin, SCHEMA_VERSION, is_key_like, random_passphrase,
+        request_origin,
+    },
+    trust::SenderTrustUpgrades,
 };
 
 /// 攒这么久再发：进房间时一批事件同时解不开，合成一条请求。
@@ -46,6 +55,8 @@ const REQUEST_INTERVAL: Duration = Duration::from_hours(1);
 const PENDING_LIFETIME: Duration = Duration::from_hours(7 * 24);
 /// 最多记这么多条等应答的请求，多了先丢最早的。
 const MAX_PENDING_REQUESTS: usize = 1_000;
+/// 最多记这么多个凭应答导入的会话，多了先丢最早的；它们只在导入后马上重读时用得上。
+const MAX_VOUCHED_SESSIONS: usize = 10_000;
 /// 20 个密钥的应答不到 10 KiB；更大的不解析。
 const MAX_ANSWER_ENVELOPE_BYTES: usize = 32 * 1_024;
 /// 导入用的临时导出文件只在本机、用完即删，不需要 50 万轮的口令派生。
@@ -66,6 +77,15 @@ struct PendingRequest {
     sent_at: Instant,
 }
 
+/// 凭核对过的应答导入的会话：由哪个人的哪台设备重发、那台设备的 Curve25519。
+#[derive(Debug, Clone)]
+struct VouchedSession {
+    user: OwnedUserId,
+    device: OwnedDeviceId,
+    curve25519: String,
+    imported_at: Instant,
+}
+
 /// 请求重发、导入应答的状态；每个 Agent 的客户端一份。
 #[derive(Debug, Default)]
 pub(crate) struct RoomKeyRequester {
@@ -73,7 +93,8 @@ pub(crate) struct RoomKeyRequester {
     flush_scheduled: AtomicBool,
     requested_at: Mutex<HashMap<(OwnedRoomId, String), Instant>>,
     pending: Mutex<HashMap<String, PendingRequest>>,
-    recovered_rooms: Mutex<BTreeSet<OwnedRoomId>>,
+    recovered_sessions: Mutex<BTreeSet<(OwnedRoomId, String)>>,
+    vouched: Mutex<HashMap<(OwnedRoomId, String), VouchedSession>>,
 }
 
 impl RoomKeyRequester {
@@ -86,12 +107,48 @@ impl RoomKeyRequester {
             return;
         }
         let (target, session_id) = target_session;
+        self.enqueue(client, target, [session_id]);
+    }
+
+    /// 按存储里记下的发送者和会话直接请求（Bridge 重启后用）；同一会话一小时内只请求一次。
+    pub(crate) fn request_sessions(
+        self: &Arc<Self>,
+        client: &Client,
+        room_id: &RoomId,
+        sender: OwnedUserId,
+        sender_device: Option<OwnedDeviceId>,
+        session_ids: &[String],
+    ) {
+        let now = Instant::now();
+        let fresh = session_ids
+            .iter()
+            .filter(|session_id| is_key_like(session_id))
+            .filter(|session_id| self.first_request_in_interval(room_id, session_id, now))
+            .cloned()
+            .collect::<Vec<_>>();
+        if fresh.is_empty() || client.user_id() == Some(sender.as_ref()) {
+            return;
+        }
+        let target = RequestTarget {
+            room: room_id.to_owned(),
+            sender,
+            device: sender_device,
+        };
+        self.enqueue(client, target, fresh);
+    }
+
+    fn enqueue(
+        self: &Arc<Self>,
+        client: &Client,
+        target: RequestTarget,
+        session_ids: impl IntoIterator<Item = String>,
+    ) {
         self.queued
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(target)
             .or_default()
-            .insert(session_id);
+            .extend(session_ids);
         if !self.flush_scheduled.swap(true, Ordering::AcqRel) {
             let requester = Arc::clone(self);
             let client = client.clone();
@@ -117,11 +174,11 @@ impl RoomKeyRequester {
         true
     }
 
-    /// 自上次取走以来，导入了别人重发的房间密钥的房间。
-    pub(crate) fn take_recovered_rooms(&self) -> Vec<OwnedRoomId> {
+    /// 自上次取走以来导入的、别人重发的会话。
+    pub(crate) fn take_recovered_sessions(&self) -> Vec<(OwnedRoomId, String)> {
         std::mem::take(
             &mut *self
-                .recovered_rooms
+                .recovered_sessions
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner),
         )
@@ -217,6 +274,7 @@ impl RoomKeyRequester {
         let encryption = client.encryption();
         verify_answering_device(&encryption, &origin, &answer).await?;
         let imported = import(&encryption, &answer).await?;
+        self.vouch(&answer, &origin);
         self.settle(&answer);
         tracing::info!(
             room = %request.target.room,
@@ -257,6 +315,86 @@ impl RoomKeyRequester {
         Ok(request.clone())
     }
 
+    /// 记下这些会话是哪台设备经核对过的应答重发的；已经有的会话（导入时被 SDK 丢弃）也记，
+    /// Bridge 重启后重新请求、再次应答时靠它判信任。
+    fn vouch(&self, answer: &RoomKeysEvent, origin: &RequestOrigin) {
+        let Ok(room_id) = RoomId::parse(&answer.room_id) else {
+            return;
+        };
+        let now = Instant::now();
+        let mut vouched = self.vouched.lock().unwrap_or_else(PoisonError::into_inner);
+        vouched.retain(|_, session| now.duration_since(session.imported_at) < PENDING_LIFETIME);
+        for key in &answer.keys {
+            if vouched.len() >= MAX_VOUCHED_SESSIONS
+                && let Some(oldest) = vouched
+                    .iter()
+                    .min_by_key(|(_, session)| session.imported_at)
+                    .map(|(key, _)| key.clone())
+            {
+                vouched.remove(&oldest);
+            }
+            vouched.insert(
+                (room_id.clone(), key.session_id.clone()),
+                VouchedSession {
+                    user: origin.user_id.clone(),
+                    device: origin.device_id.clone(),
+                    curve25519: origin.curve25519.clone(),
+                    imported_at: now,
+                },
+            );
+        }
+    }
+
+    /// 这个事件用的会话是凭核对过的应答导入的、而且由事件发送者那台设备建：返回那台设备。
+    fn vouching_device(
+        &self,
+        room_id: &RoomId,
+        event: &TimelineEvent,
+    ) -> Option<(OwnedUserId, OwnedDeviceId)> {
+        let info = event.encryption_info()?;
+        let AlgorithmInfo::MegolmV1AesSha2 {
+            curve25519_key,
+            session_id: Some(session_id),
+            ..
+        } = &info.algorithm_info
+        else {
+            return None;
+        };
+        let vouched = self.vouched.lock().unwrap_or_else(PoisonError::into_inner);
+        let session = vouched.get(&(room_id.to_owned(), session_id.clone()))?;
+        (session.user == info.sender && session.curve25519 == *curve25519_key)
+            .then(|| (session.user.clone(), session.device.clone()))
+    }
+
+    /// 重读时用：凭核对过的应答导入的会话解开的事件，SDK 判“来源不安全”；重发它的设备此刻
+    /// 仍由主人签名、主人的身份也没变过，就当作可信。
+    pub(crate) async fn trust_vouched_sessions(
+        &self,
+        client: &Client,
+        room_id: &RoomId,
+        events: &[TimelineEvent],
+        upgrades: &mut SenderTrustUpgrades,
+    ) {
+        let encryption = client.encryption();
+        for event in events {
+            let insecure_source = event.encryption_info().is_some_and(|info| {
+                info.verification_state
+                    == VerificationState::Unverified(VerificationLevel::None(
+                        DeviceLinkProblem::InsecureSource,
+                    ))
+            });
+            let (Some(event_id), true) = (event.event_id(), insecure_source) else {
+                continue;
+            };
+            let Some((user, device)) = self.vouching_device(room_id, event) else {
+                continue;
+            };
+            if owner_signed(&encryption, &user, &device).await {
+                upgrades.insert(event_id);
+            }
+        }
+    }
+
     /// 导入成功：点名的会话不再等，房间记为有新密钥。
     fn settle(&self, answer: &RoomKeysEvent) {
         let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
@@ -270,10 +408,15 @@ impl RoomKeyRequester {
         }
         drop(pending);
         if let Ok(room_id) = RoomId::parse(&answer.room_id) {
-            self.recovered_rooms
+            self.recovered_sessions
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .insert(room_id);
+                .extend(
+                    answer
+                        .keys
+                        .iter()
+                        .map(|key| (room_id.clone(), key.session_id.clone())),
+                );
         }
     }
 }
@@ -418,6 +561,23 @@ async fn verify_answering_device(
         return Err("应答设备的密钥与应答里的不一致");
     }
     Ok(())
+}
+
+/// 这台设备此刻由主人签名，主人的身份也没在核对过之后换过（和同步时判可信的标准一致）。
+async fn owner_signed(encryption: &Encryption, user: &UserId, device: &OwnedDeviceId) -> bool {
+    let signed = encryption
+        .get_device(user, device)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|device| device.is_cross_signed_by_owner());
+    signed
+        && !encryption
+            .get_user_identity(user)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|identity| identity.has_verification_violation())
 }
 
 /// matrix-sdk 0.18 只能从加密导出文件导入房间密钥：拼回导出格式、写进临时目录、导入后随目录删掉。
