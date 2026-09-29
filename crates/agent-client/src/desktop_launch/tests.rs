@@ -237,9 +237,11 @@ async fn 拉起后_bridge_报离线就不再干等() {
     assert_eq!(launches.load(Ordering::SeqCst), 1);
 }
 
-/// 用完即删的临时目录。
+/// 用完即删的临时目录。只有找桌面端的用例用得到，而它们只在有桌面端的系统上跑。
+#[cfg(any(windows, target_os = "macos"))]
 struct ScratchDirectory(std::path::PathBuf);
 
+#[cfg(any(windows, target_os = "macos"))]
 impl ScratchDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -251,6 +253,7 @@ impl ScratchDirectory {
     }
 }
 
+#[cfg(any(windows, target_os = "macos"))]
 impl Drop for ScratchDirectory {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
