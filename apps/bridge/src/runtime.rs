@@ -1999,13 +1999,15 @@ async fn poll_agent_online(
         if let Some(failure) = *handoff_failure.borrow() {
             return Some(Err(AgentOnlineFailure::HandoffTransport(failure)));
         }
+        let matrix = Arc::clone(&active.matrix);
         let sync = sync_agent_online(runtime, active, false);
         tokio::pin!(sync);
         tokio::select! {
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow_and_update() {
-                    // 同步包含设备签名与令牌刷新，关闭不能把共享认证取消在半途。
-                    let _ = sync.await;
+                    // 同步包含设备签名与令牌刷新，关闭不能把共享认证取消在半途；
+                    // 但也不必干等长轮询超时（最长 30 秒）：叫醒它，让它马上带着这一批返回。
+                    let ((), _) = tokio::join!(wake_sync(matrix.as_ref()), sync);
                     return None;
                 }
             }
@@ -2021,6 +2023,15 @@ async fn poll_agent_online(
                 return Some(Err(AgentOnlineFailure::HandoffTransport(failure)));
             }
         }
+    }
+}
+
+async fn wake_sync(matrix: &dyn MatrixGateway) {
+    if let Err(failure) = matrix.wake_sync().await {
+        tracing::debug!(
+            failure_kind = ?failure.kind(),
+            "没能叫醒进行中的同步，等它自己超时返回"
+        );
     }
 }
 

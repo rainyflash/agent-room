@@ -21,7 +21,7 @@ use agent_room_bridge_ipc::{
 };
 use tokio::{
     sync::{Mutex, RwLock, watch},
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
     time::Instant,
 };
 use uuid::Uuid;
@@ -480,16 +480,34 @@ impl HostSessionRegistry {
     pub(crate) async fn shutdown(&self) {
         self.closing.store(true, Ordering::Release);
         let entries: Vec<_> = self.sessions.lock().await.values().cloned().collect();
-        // 先拒绝全部新调用，随后逐一排空；其他 Agent 不受单个会话状态污染。
+        // 先拒绝全部新调用，随后一起排空；其他 Agent 不受单个会话状态污染。
+        // 每个会话都要等手上的同步收尾、再发一条离开状态；逐个关会把这些等待加起来，
+        // 五个人物曾让桌面端重启时多等二十多秒。
         for session in &entries {
             session.closing.store(true, Ordering::Release);
         }
-        for session in entries {
-            if let Err(failure) = self.close(&session.id).await {
-                tracing::warn!(
+        let mut stopping = JoinSet::new();
+        for session in &entries {
+            let session = Arc::clone(session);
+            stopping.spawn(async move { session.stop().await });
+        }
+        while let Some(stopped) = stopping.join_next().await {
+            match stopped {
+                Ok(Ok(())) => {}
+                Ok(Err(failure)) => tracing::warn!(
                     error_code = failure.code(),
                     "Bridge 退出时 Agent 会话关闭失败"
-                );
+                ),
+                Err(_) => tracing::warn!("Bridge 退出时 Agent 会话的关闭任务异常结束"),
+            }
+        }
+        let mut sessions = self.sessions.lock().await;
+        for session in &entries {
+            if sessions
+                .get(&session.request.session_key)
+                .is_some_and(|current| Arc::ptr_eq(current, session))
+            {
+                sessions.remove(&session.request.session_key);
             }
         }
     }

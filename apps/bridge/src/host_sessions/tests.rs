@@ -251,6 +251,60 @@ async fn 三个人物并发路由到独立身份且关闭一个不影响其他�
     assert_eq!(factory.stops.load(Ordering::Acquire), 3);
 }
 
+/// 收到关闭后还要忙一会儿的会话：真实的人物要等手上的同步收尾、再发一条离开状态。
+#[derive(Default)]
+struct SlowStopFactory(TestFactory);
+
+const SLOW_STOP: Duration = Duration::from_millis(300);
+
+impl HostSessionFactory for SlowStopFactory {
+    fn prepare(
+        &self,
+        request: IpcOpenHostSessionRequest,
+        shutdown: watch::Receiver<bool>,
+    ) -> PortFuture<'_, Result<PreparedHostSession, BridgeIpcDispatchFailure>> {
+        Box::pin(async move {
+            let prepared = self.0.prepare(request, shutdown).await?;
+            let run = prepared.run;
+            Ok(PreparedHostSession {
+                handler: prepared.handler,
+                run: Box::pin(async move {
+                    run.await;
+                    tokio::time::sleep(SLOW_STOP).await;
+                }),
+            })
+        })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn bridge_退出时各人物一起关_等待不累加() {
+    let factory = Arc::new(SlowStopFactory::default());
+    let registry = HostSessionRegistry::new(factory.clone());
+    let mut ids = Vec::new();
+    for name in ["一", "二", "三", "四", "五"] {
+        ids.push(open(&registry, request(name)).await);
+    }
+    for id in &ids {
+        identity(&registry, id).await;
+    }
+
+    let started = Instant::now();
+    registry.shutdown().await;
+
+    // 逐个关要 5 × 300 毫秒；一起关只要一个会话的收尾时间。
+    assert!(
+        started.elapsed() < SLOW_STOP * 2,
+        "关闭用了 {:?}",
+        started.elapsed()
+    );
+    assert_eq!(factory.0.stops.load(Ordering::Acquire), 5);
+    let IpcResponse::RecoverySessions { sessions } = registry.recovery_sessions().await else {
+        panic!("必须返回恢复会话摘要");
+    };
+    assert!(sessions.is_empty());
+}
+
 #[tokio::test]
 async fn 并发打开同一会话仅初始化一次且名称冲突不会覆盖身份() {
     let factory = Arc::new(TestFactory::default());
