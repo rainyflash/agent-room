@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     num::NonZeroU16,
     sync::{Arc, Mutex, PoisonError},
     time::Duration,
@@ -23,8 +23,8 @@ use matrix_sdk::{
     config::{RequestConfig, SyncSettings, SyncToken},
     room::MessagesOptions,
     ruma::{
-        OwnedDeviceId, OwnedEventId, OwnedTransactionId, OwnedUserId, RoomAliasId, RoomId, UInt,
-        UserId,
+        OwnedDeviceId, OwnedEventId, OwnedTransactionId, OwnedUserId, RoomAliasId, RoomId,
+        TransactionId, UInt, UserId,
         api::client::{
             filter::FilterDefinition,
             receipt::create_receipt::v3::ReceiptType,
@@ -37,10 +37,12 @@ use matrix_sdk::{
                 Request as GetStateEventRequest, StateEventFormat,
             },
             sync::sync_events::v3::Filter as SyncFilter,
+            to_device::send_event_to_device::v3::Request as SendToDeviceRequest,
             uiaa::{MatrixUserIdentifier, UserIdentifier},
         },
         events::{
-            InitialStateEvent, StateEventType, TimelineEventType,
+            AnyToDeviceEventContent, InitialStateEvent, StateEventType, TimelineEventType,
+            ToDeviceEventType,
             receipt::ReceiptThread,
             room::{
                 encryption::RoomEncryptionEventContent,
@@ -50,6 +52,7 @@ use matrix_sdk::{
         },
         room::RoomType,
         serde::Raw,
+        to_device::DeviceIdOrAllDevices,
     },
     store::RoomLoadSettings,
 };
@@ -637,7 +640,41 @@ impl MatrixGateway for MatrixSdkGateway {
             map_backfill(&response, &upgrades)
         })
     }
+
+    fn wake_sync(&self) -> PortFuture<'_, MatrixResult<()>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::Sync;
+            let (Some(user_id), Some(device_id)) = (self.client.user_id(), self.client.device_id())
+            else {
+                return Ok(());
+            };
+            let content = Raw::new(&serde_json::Map::new())
+                .map_err(|_| invalid_response_failure(operation))?
+                .cast_unchecked::<AnyToDeviceEventContent>();
+            let messages = BTreeMap::from([(
+                user_id.to_owned(),
+                BTreeMap::from([(
+                    DeviceIdOrAllDevices::DeviceId(device_id.to_owned()),
+                    content,
+                )]),
+            )]);
+            let request = SendToDeviceRequest::new_raw(
+                ToDeviceEventType::from(SYNC_WAKE_EVENT_TYPE),
+                TransactionId::new(),
+                messages,
+            );
+            self.client
+                .send(request)
+                .await
+                .map(|_| ())
+                .map_err(|error| map_http_error(operation, &error))
+        })
+    }
 }
+
+/// 叫醒这台设备自己的长轮询同步：给自己发一条空的 to-device 消息，服务器随即让进行中的同步带着它返回。
+/// 类型是本项目私有的，收到的还是这台设备，不认识就忽略；没来得及收的留到下次启动时收下，同样忽略。
+const SYNC_WAKE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.sync_wake.v1";
 
 fn event_requires_end_to_end_encryption(event: &MatrixEvent) -> bool {
     event

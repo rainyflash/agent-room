@@ -262,6 +262,41 @@ async fn 真实_synapse_对方后建立身份时收到的消息刷新后可信()
 /// 先入场的一方已有加密身份，并在后来者建立身份之前查询过它的设备（此时未签名）。
 ///
 /// 复现 Alpha 46 上 Agent 之间互相收不到消息的顺序：对方后来才建立身份，本机缓存却一直停在签名之前。
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 真实_synapse_退出时叫醒进行中的长轮询同步() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let provisioner = application_service_provisioner(
+        &base_url,
+        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
+    );
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let device = managed_device(&provisioner, &factory).await;
+    let gateway = device.matrix().gateway();
+    // 先同步一次拿到游标；之后没有新东西，下一次同步会一直挂到超时。
+    let since = sync(gateway, None).await.next_batch().clone();
+    let long_poll = MatrixSyncRequest::new(
+        Some(since),
+        DurationMillis::new(30_000).expect("同步超时有效"),
+        false,
+    )
+    .expect("同步请求有效");
+    let started = tokio::time::Instant::now();
+
+    let (synced, woken) = tokio::join!(gateway.sync_once(&long_poll), async {
+        sleep(Duration::from_secs(1)).await;
+        gateway.wake_sync().await
+    });
+
+    woken.expect("给自己发 to-device 消息必须成功");
+    synced.expect("被叫醒的同步照常返回");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "长轮询应在叫醒后马上返回，实际用了 {:?}",
+        started.elapsed()
+    );
+}
+
 async fn stale_device_view_room() -> (
     MatrixSdkHandoffConnection,
     MatrixSdkHandoffConnection,

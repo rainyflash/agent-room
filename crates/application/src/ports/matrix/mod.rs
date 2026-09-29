@@ -175,4 +175,12 @@ pub trait MatrixGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         request: &'a MatrixBackfillRequest,
     ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>>;
+
+    /// 让这个会话进行中的长轮询同步马上返回。
+    ///
+    /// 退出时用：同步里有加密存储的写入，不能半途取消，但也不必干等它超时（最长 30 秒）。
+    /// 默认什么也不做，调用方照旧等同步自己返回。
+    fn wake_sync(&self) -> PortFuture<'_, MatrixResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
 }
