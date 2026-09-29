@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "83d342197e97fea4444a47d743f28ec9309cbe6d6b2a91d4013814b7939798a7",
-    "pnpm-lock.yaml": "4f1ec9ff06dcd9f7c3a720882c7377c40cafaa3c37b288e242bde3602522a3cb"
+    "pnpm-lock.yaml": "5dc9e2da926ed6e8af9750155008e3e77b28c885ad6577de0c3541cf5579c5d0"
   },
   "dependencies": [
     {
@@ -8667,9 +8667,9 @@
     {
       "ecosystem": "npm",
       "name": "fast-uri",
-      "version": "3.1.6",
+      "version": "3.1.7",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/fast-uri/v/3.1.6"
+      "source": "https://www.npmjs.com/package/fast-uri/v/3.1.7"
     },
     {
       "ecosystem": "npm",
@@ -10053,9 +10053,9 @@
     {
       "ecosystem": "npm",
       "name": "qs",
-      "version": "6.15.3",
+      "version": "6.16.0",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/qs/v/6.15.3"
+      "source": "https://www.npmjs.com/package/qs/v/6.16.0"
     },
     {
       "ecosystem": "npm",
@@ -10767,16 +10767,16 @@
     {
       "ecosystem": "npm",
       "name": "undici",
-      "version": "7.29.0",
+      "version": "7.29.1",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/undici/v/7.29.0"
+      "source": "https://www.npmjs.com/package/undici/v/7.29.1"
     },
     {
       "ecosystem": "npm",
       "name": "undici",
-      "version": "8.10.0",
+      "version": "8.10.2",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/undici/v/8.10.0"
+      "source": "https://www.npmjs.com/package/undici/v/8.10.2"
     },
     {
       "ecosystem": "npm",

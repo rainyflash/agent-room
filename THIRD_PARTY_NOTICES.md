@@ -10,7 +10,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - npm packages: 714
 - Total locked package versions: 1604
 - `Cargo.lock` SHA-256: `83d342197e97fea4444a47d743f28ec9309cbe6d6b2a91d4013814b7939798a7`
-- `pnpm-lock.yaml` SHA-256: `4f1ec9ff06dcd9f7c3a720882c7377c40cafaa3c37b288e242bde3602522a3cb`
+- `pnpm-lock.yaml` SHA-256: `5dc9e2da926ed6e8af9750155008e3e77b28c885ad6577de0c3541cf5579c5d0`
 
 ## License expressions
 
@@ -1311,7 +1311,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [fast-deep-equal](https://www.npmjs.com/package/fast-deep-equal/v/3.1.3) | 3.1.3 | `MIT` |
 | npm | [fast-json-stable-stringify](https://www.npmjs.com/package/fast-json-stable-stringify/v/2.1.0) | 2.1.0 | `MIT` |
 | npm | [fast-levenshtein](https://www.npmjs.com/package/fast-levenshtein/v/2.0.6) | 2.0.6 | `MIT` |
-| npm | [fast-uri](https://www.npmjs.com/package/fast-uri/v/3.1.6) | 3.1.6 | `BSD-3-Clause` |
+| npm | [fast-uri](https://www.npmjs.com/package/fast-uri/v/3.1.7) | 3.1.7 | `BSD-3-Clause` |
 | npm | [fdir](https://www.npmjs.com/package/fdir/v/6.5.0) | 6.5.0 | `MIT` |
 | npm | [file-entry-cache](https://www.npmjs.com/package/file-entry-cache/v/8.0.0) | 8.0.0 | `MIT` |
 | npm | [filelist](https://www.npmjs.com/package/filelist/v/1.0.6) | 1.0.6 | `Apache-2.0` |
@@ -1509,7 +1509,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [pretty-format](https://www.npmjs.com/package/pretty-format/v/27.5.1) | 27.5.1 | `MIT` |
 | npm | [proc-log](https://www.npmjs.com/package/proc-log/v/6.1.0) | 6.1.0 | `ISC` |
 | npm | [punycode](https://www.npmjs.com/package/punycode/v/2.3.1) | 2.3.1 | `MIT` |
-| npm | [qs](https://www.npmjs.com/package/qs/v/6.15.3) | 6.15.3 | `BSD-3-Clause` |
+| npm | [qs](https://www.npmjs.com/package/qs/v/6.16.0) | 6.16.0 | `BSD-3-Clause` |
 | npm | [raw-body](https://www.npmjs.com/package/raw-body/v/3.0.2) | 3.0.2 | `MIT` |
 | npm | [react](https://www.npmjs.com/package/react/v/19.2.8) | 19.2.8 | `MIT` |
 | npm | [react-dom](https://www.npmjs.com/package/react-dom/v/19.2.8) | 19.2.8 | `MIT` |
@@ -1611,8 +1611,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [typescript](https://www.npmjs.com/package/typescript/v/6.0.3) | 6.0.3 | `Apache-2.0` |
 | npm | [typescript-eslint](https://www.npmjs.com/package/typescript-eslint/v/8.67.0) | 8.67.0 | `MIT` |
 | npm | [unbox-primitive](https://www.npmjs.com/package/unbox-primitive/v/1.1.0) | 1.1.0 | `MIT` |
-| npm | [undici](https://www.npmjs.com/package/undici/v/7.29.0) | 7.29.0 | `MIT` |
-| npm | [undici](https://www.npmjs.com/package/undici/v/8.10.0) | 8.10.0 | `MIT` |
+| npm | [undici](https://www.npmjs.com/package/undici/v/7.29.1) | 7.29.1 | `MIT` |
+| npm | [undici](https://www.npmjs.com/package/undici/v/8.10.2) | 8.10.2 | `MIT` |
 | npm | [undici-types](https://www.npmjs.com/package/undici-types/v/7.18.2) | 7.18.2 | `MIT` |
 | npm | [unhomoglyph](https://www.npmjs.com/package/unhomoglyph/v/1.0.6) | 1.0.6 | `MIT` |
 | npm | [unicode-canonical-property-names-ecmascript](https://www.npmjs.com/package/unicode-canonical-property-names-ecmascript/v/2.0.1) | 2.0.1 | `MIT` |
