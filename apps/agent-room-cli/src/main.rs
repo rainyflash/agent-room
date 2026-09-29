@@ -5,7 +5,8 @@ mod profile;
 mod receiver;
 
 use agent_room_agent_client::{
-    BridgeToolClient, LocalBridgeToolClient, MessageReadMode, MessageWait, wait_for_messages,
+    BridgeToolClient, LocalBridgeToolClient, MessageReadMode, MessageWait,
+    launching_desktop_when_absent, wait_for_messages,
 };
 use agent_room_bridge_ipc::{
     IpcCloseHostSessionRequest, IpcListPreviewsRequest, IpcMethod, IpcOpenHostSessionRequest,
@@ -78,11 +79,13 @@ async fn run(cli: Cli) -> CliResult<()> {
     {
         return receiver::doctor(&data_root, service.as_str(), binding).await;
     }
-    let backend =
-        LocalBridgeToolClient::agent_cli(bridge_runtime_root(&data_root), service.clone());
+    let local = LocalBridgeToolClient::agent_cli(bridge_runtime_root(&data_root), service.clone());
+    // 诊断如实报告 Bridge 在不在，不替用户把桌面端拉起来。
     if matches!(&cli.command, Command::Doctor) {
-        return success(call(&backend, IpcMethod::BridgeStatus).await?);
+        return success(call(&local, IpcMethod::BridgeStatus).await?);
     }
+    let backend = launching_desktop_when_absent(local, &data_root, &service);
+    let backend = backend.as_ref();
     if cli.profile.is_some()
         || matches!(
             &cli.command,
@@ -90,7 +93,7 @@ async fn run(cli: Cli) -> CliResult<()> {
         )
     {
         return access::run(
-            &backend,
+            backend,
             &data_root,
             service.as_str(),
             cli.profile,
@@ -98,7 +101,7 @@ async fn run(cli: Cli) -> CliResult<()> {
         )
         .await;
     }
-    run_command(&backend, &data_root, service.as_str(), cli.command).await
+    run_command(backend, &data_root, service.as_str(), cli.command).await
 }
 
 async fn run_command(
