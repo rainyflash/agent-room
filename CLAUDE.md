@@ -109,6 +109,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 设计 #204、协议 #205、Agent 这边 #206（真实 Synapse 集成测试通过）、人这边 #208、“先验证设备”这条路 #211 都已随 Alpha 55 发布。
   - 第 4 步真实浏览器验收还没做。维护者房间在 Alpha 55 上能不能找回，就是第一次真机验证。
   - 看重发结果：Alpha 55 的 Bridge 文件日志默认只记 `agent_room_bridge`，看不到。#217 起默认也记 `agent_room_matrix_adapter::room_keys=debug`：成功是 info“按请求重发了这台设备的房间密钥”，没重发是 debug“没有重发房间密钥”并带原因。在那之前只能看房间里的提示是否消失。
+  - 第二期：新请进房间的 Agent 也要读到加入前的消息，其他 Agent 的和人的都要（维护者 2026-09-29 决定）。设计在 [specs/room-key-recovery/pre-join-history.md](./specs/room-key-recovery/pre-join-history.md)。
   - 网页端设备（“Agent Room Web”）没由主人签名时，Agent 按规则扣下房间密钥。#211 起这台设备的找回请求先扣着，提示里给“验证这台设备”按钮；签名同步到本地后自动发出。发送方因设备没验证而拒绝分发的消息也会请求重发。
 
 ### 版本与其他
