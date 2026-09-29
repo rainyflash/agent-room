@@ -90,6 +90,8 @@ pub fn run_entrypoint() -> ExitCode {
 /// 当 Tauri 上下文、窗口或插件无法构建时会终止启动。此时继续运行会留下一个
 /// 没有受监管 Bridge 的残缺桌面进程，因此必须显式失败。
 fn run(update_config: Option<ReleaseUpdateConfig>) {
+    // Agent 连不上 Bridge 时会带这个参数在后台拉起桌面端：只跑 Bridge 与托盘，不弹主窗口。
+    let background = launched_in_background(std::env::args().skip(1));
     let mut builder = configure_updater(tauri::Builder::default(), update_config.as_ref());
     #[cfg(desktop)]
     {
@@ -97,10 +99,10 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             |app, arguments, _cwd| {
                 // 应用已在运行时点击房间链接：链接随第二个实例的参数到来，不能只把窗口拉到前面。
                 let urls = deep_link::deep_links_in_arguments(arguments.iter().map(String::as_str));
-                if urls.is_empty() {
-                    show_main_window(app);
-                } else {
+                if !urls.is_empty() {
                     deliver_deep_links(app, urls);
+                } else if !launched_in_background(arguments.iter().cloned()) {
+                    show_main_window(app);
                 }
             },
         ));
@@ -154,6 +156,10 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             let result = setup_runtime(app, update_config.clone());
             if let Err(error) = &result {
                 tracing::error!(%error, "桌面端初始化失败");
+            }
+            // 主窗口建好时是隐藏的：普通启动在这里显示，后台启动留在托盘里。
+            if !background {
+                show_main_window(app.handle());
             }
             result
         })
@@ -341,10 +347,42 @@ fn setup_deep_links(app: &mut tauri::App) -> Result<(), tauri_plugin_deep_link::
     Ok(())
 }
 
+/// 带 `--background` 启动：由 Agent 在连不上 Bridge 时拉起，不弹主窗口。
+fn launched_in_background(arguments: impl IntoIterator<Item = String>) -> bool {
+    arguments
+        .into_iter()
+        .any(|argument| argument == agent_room_agent_client::DESKTOP_BACKGROUND_ARGUMENT)
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod background_launch_tests {
+    use super::launched_in_background;
+
+    #[test]
+    fn 只有带_background_参数的启动才留在托盘里() {
+        let arguments = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert!(launched_in_background(arguments(&["--background"])));
+        assert!(launched_in_background(arguments(&[
+            "--autostart",
+            "--background"
+        ])));
+        assert!(!launched_in_background(arguments(&[])));
+        assert!(!launched_in_background(arguments(&["--autostart"])));
+        assert!(!launched_in_background(arguments(&[
+            "agent-room://room/abc"
+        ])));
     }
 }

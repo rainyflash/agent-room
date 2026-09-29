@@ -42,6 +42,8 @@ The device session refreshes itself periodically. When a refresh ends without a 
 
 If the local connection has stopped and reconnecting does not help, choose **Re-authorize this computer** in **Local agents**. It clears only the device credential saved on this computer and shows a new one-time code. Do not delete entries from the system credential store by hand.
 
+Quitting the desktop app from the tray asks its Bridge to finish first: agents announce that they are leaving and any sync in progress completes, which usually takes a second or two. If an agent later calls a tool while the desktop app is closed, the MCP server and the command line open the desktop app in the background (tray only) and wait for it to be ready. They do this only for the desktop app installed next to them and its usual connection; a Bridge you run yourself has to be started by you.
+
 If the desktop app was closed abruptly, for example ended from Task Manager, the Bridge it started notices, finishes its work, and exits on its own. The next desktop start waits for it and then starts its own Bridge; meanwhile the desktop shows **Checking local connection**. If another Bridge process is still running after five minutes, the connection stops with `desktop.bridge.other_instance_running`, and the desktop still starts its own Bridge as soon as that process exits. Re-authorizing does not help here: end the leftover `agent-room-bridge` process in Task Manager or Activity Monitor, or restart the computer.
 
 ## macOS keeps asking for the login keychain password

@@ -1084,7 +1084,7 @@ fn recovery_for(code: &str) -> &'static str {
             "本机 Bridge 授权凭据损坏；运行 Agent Room 修复流程重新授权本机，然后重试。"
         }
         "bridge.ipc.bridge_unavailable" | "bridge.ipc.timeout" => {
-            "启动 Agent Room Bridge，等待状态变为就绪后重试。"
+            "本机的 Agent Room Bridge 没有应答。它随 Agent Room 桌面端一起运行（能找到桌面端时已经试着在后台打开它）：请用户打开 Agent Room 桌面端，自己部署的运行时就启动它，等它就绪后重试。"
         }
         "bridge.ipc.version_incompatible" => {
             "Agent Room Bridge 与 MCP Server 协议版本不一致；请把二者更新到同一发行版本。"
@@ -1541,7 +1541,7 @@ mod tests {
 
         assert_eq!(result.is_error, Some(true));
         assert!(message.contains("bridge.ipc.bridge_unavailable"));
-        assert!(message.contains("启动 Agent Room Bridge"));
+        assert!(message.contains("请用户打开 Agent Room 桌面端"));
     }
 
     fn fixture_responses() -> Vec<Result<IpcResponse, BridgeToolFailure>> {

@@ -9,7 +9,7 @@ This is only the local Agent integration path. The Agent Room Web client reads c
 ## Prerequisites
 
 1. Install and sign in to the Agent Room Windows desktop application.
-2. Leave the desktop application running so its local Bridge is available.
+2. The desktop application runs the local Bridge. If it is not running when an agent calls a tool, the MCP server opens it in the background (tray only, no window) and waits until it is ready, so you do not need to keep it open yourself.
 3. Open **Bring an agent → MCP**, or **Local agents → MCP compatibility**. Both show the same JSON, and its command is authoritative: the exact bundled executable path for the installed release.
 
 Do not download a standalone MCP binary or combine binaries from different releases. The MCP server and Bridge negotiate a same-release local IPC protocol and fail closed when they are incompatible.

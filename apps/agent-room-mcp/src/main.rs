@@ -1,5 +1,6 @@
-use std::{net::SocketAddr, path::PathBuf, process::ExitCode, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, process::ExitCode};
 
+use agent_room_agent_client::launching_desktop_when_absent;
 use agent_room_bridge_local_adapter::{
     BridgeLocationFailure, bridge_data_root_from_environment, bridge_runtime_root,
     secure_storage_service_from_environment,
@@ -47,10 +48,14 @@ async fn run() -> Result<(), String> {
     let data_root = bridge_data_root_from_environment().map_err(format_location_failure)?;
     let secure_storage_service = secure_storage_service_from_environment()
         .map_err(|_| "Bridge 安全存储命名空间无效".to_owned())?;
-    let backend = Arc::new(LocalBridgeToolClient::system_with_secure_storage_service(
-        bridge_runtime_root(&data_root),
-        secure_storage_service,
-    ));
+    let backend = launching_desktop_when_absent(
+        LocalBridgeToolClient::system_with_secure_storage_service(
+            bridge_runtime_root(&data_root),
+            secure_storage_service.clone(),
+        ),
+        &data_root,
+        &secure_storage_service,
+    );
     if let Some(bind) = options.http {
         let public_url = options
             .public_url
