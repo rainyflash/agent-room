@@ -363,7 +363,7 @@ async function ownDeviceSigned(client: MatrixClient): Promise<boolean | null> {
 }
 
 /** 房间里有它发的 Agent 在线状态事件，才是 Agent Room 的 Agent；不看用户 ID 的写法。 */
-function isAgentRoomAgent(client: MatrixClient, roomId: string, userId: string): boolean {
+export function isAgentRoomAgent(client: MatrixClient, roomId: string, userId: string): boolean {
   return (
     client
       .getRoom(roomId)

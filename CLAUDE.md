@@ -110,7 +110,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 第 4 步真实浏览器验收还没做。维护者房间在 Alpha 55 上能不能找回，就是第一次真机验证。
   - 看重发结果：Alpha 55 的 Bridge 文件日志默认只记 `agent_room_bridge`，看不到。#217 起默认也记 `agent_room_matrix_adapter::room_keys=debug`：成功是 info“按请求重发了这台设备的房间密钥”，没重发是 debug“没有重发房间密钥”并带原因。在那之前只能看房间里的提示是否消失。
   - 第二期：新请进房间的 Agent 也要读到加入前的消息，其他 Agent 的和人的都要（维护者 2026-09-29 决定）。设计在 [specs/room-key-recovery/pre-join-history.md](./specs/room-key-recovery/pre-join-history.md)。
-    - Agent 这边分 2a（matrix-adapter 请求与导入）和 2b（Bridge 给解不开的事件预留位置，找回后写回原位）。人这边（第 3 步）还没做，做完之前只有 Agent 发的旧消息能找回。
+    - Agent 这边分 2a（matrix-adapter 请求与导入）和 2b（Bridge 给解不开的事件预留位置，找回后写回原位）。人这边（第 3 步）是网页端的 `MatrixRoomKeyResponder`：只重发这台设备建的会话，只回答此刻在房间里、带在线状态事件、由主人签名的 Agent 设备。
     - 功能上线前隔离的事件没有预留位置，找不回来。
   - 网页端设备（“Agent Room Web”）没由主人签名时，Agent 按规则扣下房间密钥。#211 起这台设备的找回请求先扣着，提示里给“验证这台设备”按钮；签名同步到本地后自动发出。发送方因设备没验证而拒绝分发的消息也会请求重发。
 

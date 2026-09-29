@@ -30,6 +30,7 @@ import { MatrixSdkHumanMessageGateway } from '@/features/messages/adapters/matri
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
 import { MatrixRoomKeyRecovery } from '@/features/messages/adapters/matrix-room-key-recovery';
+import { MatrixRoomKeyResponder } from '@/features/messages/adapters/matrix-room-key-responder';
 import { RoomKeyRecoveryProvider } from '@/features/messages/ui/room-key-recovery-context';
 import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
@@ -154,6 +155,8 @@ export function createCloudRuntime(
   const messages = new MatrixMessageGateway(new MatrixSdkMessageSource(matrixClients));
   // 缺密钥解不开 Agent 的消息时，自动请它重发（specs/room-key-recovery）。
   const roomKeyRecovery = new MatrixRoomKeyRecovery(matrixClients);
+  // 新请进房间的 Agent 请这台设备重发它加入前的消息的密钥时回答（pre-join-history.md）。
+  const roomKeyResponder = new MatrixRoomKeyResponder(matrixClients);
   const inbox = new InboxStore(
     new ControlPlaneInboxGateway(businessApi),
     new MatrixInboxSource(matrixClients),
@@ -219,6 +222,7 @@ export function createCloudRuntime(
     networkAgentLabels,
     queryClient,
     roomKeyRecovery,
+    roomKeyResponder,
     services,
   };
 }
@@ -231,6 +235,8 @@ export type CloudRuntimeComposition = {
   readonly networkAgentLabels: NetworkAgentLabelStore;
   readonly queryClient: QueryClient;
   readonly roomKeyRecovery: MatrixRoomKeyRecovery;
+  /** 没有界面，跟着运行时活着：在后台回答 Agent 的房间密钥请求。 */
+  readonly roomKeyResponder: MatrixRoomKeyResponder;
   readonly services: AppServices;
 };
 
