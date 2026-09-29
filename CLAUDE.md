@@ -112,16 +112,16 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 第二期：新请进房间的 Agent 也要读到加入前的消息，其他 Agent 的和人的都要（维护者 2026-09-29 决定）。设计在 [specs/room-key-recovery/pre-join-history.md](./specs/room-key-recovery/pre-join-history.md)。
     - Agent 这边分 2a（matrix-adapter 请求与导入）和 2b（Bridge 给解不开的事件预留位置，找回后写回原位）。人这边（第 3 步）是网页端的 `MatrixRoomKeyResponder`：只重发这台设备建的会话，只回答此刻在房间里、带在线状态事件、由主人签名的 Agent 设备。
     - 功能上线前隔离的事件没有预留位置，找不回来。
+    - 随 Alpha 56 发布。第一次真机验证要等维护者往有历史的私人房间请一个新 Agent：Bridge 文件日志有 info 级“找回房间密钥后重读了之前解不开的消息”。
   - 网页端设备（“Agent Room Web”）没由主人签名时，Agent 按规则扣下房间密钥。#211 起这台设备的找回请求先扣着，提示里给“验证这台设备”按钮；签名同步到本地后自动发出。发送方因设备没验证而拒绝分发的消息也会请求重发。
 
 ### 版本与其他
 
-- Alpha 56 正在发布：新请进房间的 Agent 读到加入前的消息 #222–#225（Agent 的和人的都行）、Agent 连不上 Bridge 时在后台拉起桌面端 #221、退出桌面端时 Bridge 有序退出 #220、默认文件日志记下房间密钥重发的结果 #217。登录相关代码没变，复用长期验收设备。
-- Alpha 55 已于 2026-09-29 公开，见 [发布记录](./specs/agent-access/alpha55-release.md)。
-  - 包含找回解不开的历史 #206/#208/#211、私人房间一键生成网络 Agent 口令 #207、等消息时的房间权限检查从四个请求减到一个 #210、本地 IPC 失败告警去重 #212、按计划刷新令牌时不再报重连 #213、退出时叫醒同步并一起关闭各人物 #214、fast-uri 等依赖升到已修复版本 #215。
-  - 私人房间的口令改到“接入 Agent”对话框里，是因为维护者看“去房间设置生成口令”一头雾水。
-  - 登录相关代码没变，实机验收复用 Alpha 53 那台长期验收设备，没要设备码。
-  - 候选第一次尝试时 Windows 构建机从 crates.io 下载依赖被连接重置；聚合作业被跳过、没有草稿，直接 `gh run rerun --failed` 即可。
+- Alpha 56 已于 2026-09-29 公开，见 [发布记录](./specs/agent-access/alpha56-release.md)。
+  - 包含新请进房间的 Agent 读到加入前的消息 #222–#225（Agent 的和人的都行）、Agent 连不上 Bridge 时在后台拉起桌面端 #221、退出桌面端时 Bridge 有序退出 #220、默认文件日志记下房间密钥重发的结果 #217。
+  - 登录相关代码没变，实机验收复用 Alpha 53 那台长期验收设备，没要设备码；版本 PR 合并到网页上线约 57 分钟。
+  - 升版本时主检出的 `node_modules` 还是 #215 之前装的，`bump_release_version.py` 刷新许可证清单报缺包；`corepack pnpm@10.28.0 install --frozen-lockfile --force` 后重跑 `python tools/license_inventory.py generate` 即可。
+- Alpha 55（2026-09-29）见 [发布记录](./specs/agent-access/alpha55-release.md)：找回解不开的历史 #206/#208/#211、私人房间一键生成网络 Agent 口令 #207 等。
 - Alpha 54（2026-09-28）见 [发布记录](./specs/agent-access/alpha54-release.md)：一次性密钥积压修复 #201、解不开的消息提示 #202 等。
 - Alpha 53（2026-09-28）见 [发布记录](./specs/agent-access/alpha53-release.md)；长期验收设备是 Alpha 53 那台（当时登录相关代码有变化，重新走了新设备授权）。
 - 网络 Agent 三步都已上线，生产总开关开着。
