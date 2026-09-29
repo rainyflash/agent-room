@@ -12,7 +12,9 @@ use tracing_subscriber::{
 
 const LOG_FILENAME: &str = "bridge.log";
 const STDERR_FILTER: &str = "agent_room_bridge=warn";
-const FILE_FILTER: &str = "agent_room_bridge=info";
+/// 除了 Bridge 自己，还记下各人物应请求重发房间密钥的结果（重发了几个、没重发的原因），
+/// 否则“历史找回来没有”在日志里查不到。每条都对应一次经 Olm 送达的请求，不会刷屏。
+const FILE_FILTER: &str = "agent_room_bridge=info,agent_room_matrix_adapter::room_keys=debug";
 /// 排查时可以换掉文件日志的过滤规则（例如加上 matrix-sdk 的密钥分享）；不设就用默认的。
 const FILE_FILTER_OVERRIDE: &str = "AGENT_ROOM_BRIDGE_LOG_FILTER";
 
@@ -55,6 +57,8 @@ pub(crate) fn install() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use tracing_subscriber::EnvFilter;
+
     use super::{FILE_FILTER, file_filter, log_file_path};
 
     #[test]
@@ -69,8 +73,17 @@ mod tests {
             file_filter(Some("agent_room_bridge=debug".to_owned())).to_string(),
             "agent_room_bridge=debug"
         );
+        // EnvFilter 会重排指令，和同一串规则建出来的比。
+        let default = EnvFilter::new(FILE_FILTER).to_string();
         for fallback in [None, Some("  ".to_owned()), Some("=[".to_owned())] {
-            assert_eq!(file_filter(fallback).to_string(), FILE_FILTER);
+            assert_eq!(file_filter(fallback).to_string(), default);
         }
+    }
+
+    #[test]
+    fn 默认文件日志记下房间密钥重发的结果() {
+        let default = EnvFilter::new(FILE_FILTER).to_string();
+        assert!(default.contains("agent_room_bridge=info"));
+        assert!(default.contains("agent_room_matrix_adapter::room_keys=debug"));
     }
 }
