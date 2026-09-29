@@ -1724,17 +1724,24 @@ async fn run_until_shutdown(
 /// 桌面被强制结束时来不及结束子进程，Windows 上也没有信号可收。留下的 Bridge 继续占着实例锁和
 /// 本机 IPC，下一次启动的桌面既起不了自己的 Bridge，又会把它当成外部 Bridge 接管，而它随时可能退出。
 async fn wait_for_exit_signal(exit_with_supervisor: bool) -> io::Result<()> {
-    let supervisor_exited = async {
+    let supervisor_released = async {
         if exit_with_supervisor {
-            input_closed(io::stdin()).await;
+            supervisor_released(io::stdin()).await
         } else {
-            std::future::pending::<()>().await;
+            std::future::pending().await
         }
     };
     tokio::select! {
         result = operating_system_exit_signal() => result,
-        () = supervisor_exited => {
-            tracing::warn!("监督 Bridge 的桌面已经退出，Bridge 随之有序退出");
+        release = supervisor_released => {
+            match release {
+                SupervisorRelease::ExitRequested => {
+                    tracing::info!("桌面端要退出，Bridge 随之有序退出");
+                }
+                SupervisorRelease::InputClosed => {
+                    tracing::warn!("监督 Bridge 的桌面已经退出，Bridge 随之有序退出");
+                }
+            }
             Ok(())
         }
     }
@@ -1754,22 +1761,50 @@ async fn operating_system_exit_signal() -> io::Result<()> {
     tokio::signal::ctrl_c().await
 }
 
-/// 输入读到结束或读取失败时完成。桌面把标准输入接成自己持有的管道、从不写入，
-/// 桌面进程一退出（包括被强制结束）管道就关闭。
+/// 桌面端要退出时往 Bridge 的标准输入写这一行（桌面端 `bridge_supervisor.rs` 的 `BRIDGE_EXIT_REQUEST`）。
+const SUPERVISOR_EXIT_REQUEST: &str = "exit";
+
+/// 监督 Bridge 的桌面为什么放手。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SupervisorRelease {
+    /// 桌面端正常退出前请 Bridge 先退，自己等着。
+    ExitRequested,
+    /// 管道关了：桌面已经不在（包括被强制结束），或者它是不会写这一行的旧版。
+    InputClosed,
+}
+
+/// 桌面请 Bridge 退出、或者标准输入读到结束和读取失败时完成。桌面把标准输入接成自己持有的管道，
+/// 平时从不写入，桌面进程一退出（包括被强制结束）管道就关闭。
 ///
 /// 阻塞读放在独立线程：运行时关闭时会等 `spawn_blocking` 的任务返回，而桌面还在时这次读取不会返回。
-fn input_closed(mut input: impl io::Read + Send + 'static) -> impl Future<Output = ()> {
-    let (closed, receiver) = oneshot::channel();
+fn supervisor_released(
+    input: impl io::Read + Send + 'static,
+) -> impl Future<Output = SupervisorRelease> {
+    let (released, receiver) = oneshot::channel();
     let watcher = std::thread::Builder::new()
         .name("agent-room-supervisor-watch".to_owned())
         .spawn(move || {
-            let _ = io::copy(&mut input, &mut io::sink());
-            let _ = closed.send(());
+            let mut release = SupervisorRelease::InputClosed;
+            for line in io::BufRead::lines(io::BufReader::new(input)) {
+                match line {
+                    Ok(line) if line.trim() == SUPERVISOR_EXIT_REQUEST => {
+                        release = SupervisorRelease::ExitRequested;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = released.send(release);
         });
     async move {
-        // 看不了输入时不因此退出，照旧只响应操作系统关闭信号。
-        if watcher.is_err() || receiver.await.is_err() {
-            std::future::pending::<()>().await;
+        match watcher {
+            Ok(_) => match receiver.await {
+                Ok(release) => release,
+                // 看不了输入时不因此退出，照旧只响应操作系统关闭信号。
+                Err(_) => std::future::pending().await,
+            },
+            Err(_) => std::future::pending().await,
         }
     }
 }
@@ -3074,9 +3109,9 @@ mod tests {
 
     use super::{
         AgentOnlineFailure, BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader,
-        TargetedHandoffPoller, TargetedHandoffPollingPolicy, input_closed,
+        SupervisorRelease, TargetedHandoffPoller, TargetedHandoffPollingPolicy,
         is_reconnectable_agent_online_failure, spawn_targeted_handoff_worker_with_policy,
-        verification_destination,
+        supervisor_released, verification_destination,
     };
 
     #[test]
@@ -3284,19 +3319,44 @@ mod tests {
     #[tokio::test]
     async fn 监督管道关闭后才触发随桌面退出() {
         let (reader, writer) = std::io::pipe().expect("可创建管道");
-        let closed = input_closed(reader);
-        tokio::pin!(closed);
+        let released = supervisor_released(reader);
+        tokio::pin!(released);
 
         assert!(
-            tokio::time::timeout(Duration::from_millis(200), &mut closed)
+            tokio::time::timeout(Duration::from_millis(200), &mut released)
                 .await
                 .is_err(),
             "桌面还持有管道时 Bridge 不能退出"
         );
         drop(writer);
-        tokio::time::timeout(Duration::from_secs(5), closed)
+        let release = tokio::time::timeout(Duration::from_secs(5), released)
             .await
             .expect("桌面一退出，管道关闭就应触发退出");
+        assert_eq!(release, SupervisorRelease::InputClosed);
+    }
+
+    #[tokio::test]
+    async fn 桌面端写一行_exit_就请_bridge_有序退出_别的内容不算() {
+        use std::io::Write as _;
+
+        let (reader, mut writer) = std::io::pipe().expect("可创建管道");
+        let released = supervisor_released(reader);
+        tokio::pin!(released);
+
+        writer.write_all(b"hello\n").expect("可写入管道");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), &mut released)
+                .await
+                .is_err(),
+            "不认识的内容不能让 Bridge 退出"
+        );
+        // 桌面端还握着管道：只凭这一行就要退出，不等管道关闭。
+        writer.write_all(b"exit\n").expect("可写入管道");
+        let release = tokio::time::timeout(Duration::from_secs(5), released)
+            .await
+            .expect("读到 exit 就应触发退出");
+        assert_eq!(release, SupervisorRelease::ExitRequested);
+        drop(writer);
     }
 
     impl TargetedHandoffPoller for 计数交接轮询器 {

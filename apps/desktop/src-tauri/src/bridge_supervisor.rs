@@ -17,7 +17,7 @@ use tauri_plugin_shell::{
     ShellExt as _,
     process::{CommandChild, CommandEvent},
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use url::Url;
 
 use crate::{
@@ -34,6 +34,11 @@ const SUPERVISOR_CHANNEL: &str = "agent_room_desktop";
 const RUNTIME_CHANGED_EVENT: &str = "desktop://runtime-changed";
 const ACTOR_QUEUE_CAPACITY: usize = 32;
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
+/// 桌面端退出前写给托管 Bridge 的一行（Bridge `runtime.rs` 的 `SUPERVISOR_EXIT_REQUEST`）：
+/// 请它发出各人物的离开状态、让进行中的同步收尾后自己退出，而不是被直接结束。
+const BRIDGE_EXIT_REQUEST: &[u8] = b"exit\n";
+/// 等托管 Bridge 自己退出的上限；到了还没退就直接结束它。平常一两秒就退完。
+const ORDERLY_EXIT_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_AUTHORIZATION_SECONDS: u64 = 30 * 60;
 /// Bridge 拿不到实例锁时的启动失败代码，见 Bridge 的 `BridgeRuntimeError::instance_lock`。
 const INSTANCE_LOCK_HELD_CODE: &str = "bridge.already_running";
@@ -208,9 +213,27 @@ impl BridgeSupervisor {
         let _ = self.input.try_send(ActorInput::Resume);
     }
 
+    /// 桌面端正常退出时用：请托管的 Bridge 有序退出并等它，超时再直接结束。
+    pub(crate) async fn shutdown(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let (done, stopped) = oneshot::channel();
+        if self
+            .input
+            .send(ActorInput::Shutdown { done: Some(done) })
+            .await
+            .is_ok()
+        {
+            // 监督者自己也只等 ORDERLY_EXIT_TIMEOUT；多留一点余量给它收尾。
+            let _ =
+                tokio::time::timeout(ORDERLY_EXIT_TIMEOUT + Duration::from_secs(2), stopped).await;
+        }
+        self.shutdown_now();
+    }
+
+    /// 来不及等的时候用：立刻结束托管的 Bridge。
     pub(crate) fn shutdown_now(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
-        let _ = self.input.try_send(ActorInput::Shutdown);
+        let _ = self.input.try_send(ActorInput::Shutdown { done: None });
         if let Ok(mut child) = self.child.lock()
             && let Some(child) = child.take()
         {
@@ -273,13 +296,16 @@ impl BridgeSupervisorActor {
                 }
                 ActorInput::Reconfigure { config } => self.handle_reconfigure(*config),
                 ActorInput::Resume => self.handle_resume().await,
-                ActorInput::Shutdown => {
+                ActorInput::Shutdown { done } => {
                     self.shutting_down.store(true, Ordering::SeqCst);
-                    self.kill_managed_child();
+                    self.stop_managed_child_orderly().await;
                     self.policy.stop(now_unix_ms());
                     self.authorization = None;
                     self.session = None;
                     self.publish();
+                    if let Some(done) = done {
+                        let _ = done.send(());
+                    }
                     break;
                 }
             }
@@ -727,6 +753,37 @@ impl BridgeSupervisorActor {
             .show();
     }
 
+    /// 请托管的 Bridge 自己退出：写一行退出请求，等这个子进程的退出事件；
+    /// 写不进去（比如它已经退了）或者等不到，就直接结束它。
+    async fn stop_managed_child_orderly(&mut self) {
+        let asked = self.managed_child_active
+            && self
+                .child
+                .lock()
+                .ok()
+                .and_then(|mut child| {
+                    child
+                        .as_mut()
+                        .map(|child| child.write(BRIDGE_EXIT_REQUEST).is_ok())
+                })
+                .unwrap_or(false);
+        if asked {
+            let generation = self.generation;
+            let exited =
+                wait_for_child_exit(&mut self.receiver, generation, ORDERLY_EXIT_TIMEOUT).await;
+            if exited {
+                tracing::info!("托管的 Bridge 已按请求有序退出");
+                if let Ok(mut child) = self.child.lock() {
+                    *child = None;
+                }
+                self.managed_child_active = false;
+                return;
+            }
+            tracing::warn!("托管的 Bridge 没有按时退出，直接结束它");
+        }
+        self.kill_managed_child();
+    }
+
     fn kill_managed_child(&mut self) {
         if let Ok(mut child) = self.child.lock()
             && let Some(child) = child.take()
@@ -851,7 +908,30 @@ enum ActorInput {
         event: CommandEvent,
     },
     Resume,
-    Shutdown,
+    /// 停掉托管的 Bridge 并结束监督；`done` 在收尾之后通知等着的一方。
+    Shutdown {
+        done: Option<oneshot::Sender<()>>,
+    },
+}
+
+/// 退出期间只关心这个子进程的退出事件，别的输入一律不再处理。
+/// 等到了返回 `true`；超时或者输入通道关了返回 `false`。
+async fn wait_for_child_exit(
+    receiver: &mut mpsc::Receiver<ActorInput>,
+    generation: u64,
+    timeout: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        match tokio::time::timeout_at(deadline, receiver.recv()).await {
+            Ok(Some(ActorInput::ProcessEvent {
+                generation: current,
+                event: CommandEvent::Terminated(_),
+            })) if current == generation => return true,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return false,
+        }
+    }
 }
 
 enum ProbeOutcome {
@@ -1056,6 +1136,49 @@ mod tests {
         is_stable_bridge_code, stable_bridge_error_code, supervisor_event,
     };
     use crate::bridge_lifecycle::{BridgeOwnership, BridgeRestartPolicy};
+
+    fn terminated(generation: u64) -> super::ActorInput {
+        super::ActorInput::ProcessEvent {
+            generation,
+            event: tauri_plugin_shell::process::CommandEvent::Terminated(
+                tauri_plugin_shell::process::TerminatedPayload {
+                    code: Some(0),
+                    signal: None,
+                },
+            ),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 退出时只等这一代子进程自己退出_别的输入和旧代的退出都不算() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        sender
+            .send(super::ActorInput::Resume)
+            .await
+            .expect("可以排队");
+        sender
+            .send(super::ActorInput::ProcessEvent {
+                generation: 7,
+                event: tauri_plugin_shell::process::CommandEvent::Stdout(b"line".to_vec()),
+            })
+            .await
+            .expect("可以排队");
+        sender.send(terminated(6)).await.expect("可以排队");
+        sender.send(terminated(7)).await.expect("可以排队");
+
+        assert!(super::wait_for_child_exit(&mut receiver, 7, super::ORDERLY_EXIT_TIMEOUT).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 子进程没按时退出_或者输入通道关了_都返回未退出() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        let started = tokio::time::Instant::now();
+        assert!(!super::wait_for_child_exit(&mut receiver, 3, super::ORDERLY_EXIT_TIMEOUT).await);
+        assert!(started.elapsed() >= super::ORDERLY_EXIT_TIMEOUT);
+
+        drop(sender);
+        assert!(!super::wait_for_child_exit(&mut receiver, 3, super::ORDERLY_EXIT_TIMEOUT).await);
+    }
 
     #[test]
     fn offline_and_reconnecting_are_not_reported_as_starting() {

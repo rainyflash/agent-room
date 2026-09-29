@@ -184,7 +184,8 @@ fn on_run_event(app: &tauri::AppHandle, event: RunEvent) {
                     if let Err(error) = runtime.receivers.shutdown().await {
                         tracing::warn!(error_code = error.code, "接收进程关闭失败");
                     }
-                    runtime.bridge.shutdown_now();
+                    // 请 Bridge 有序退出：各人物发出离开状态，进行中的同步收尾，不在加密存储写到一半时被结束。
+                    runtime.bridge.shutdown().await;
                     app.exit(0);
                 });
             }

@@ -19,6 +19,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 const WAIT_TIMEOUT: Duration = Duration::from_mins(2);
+/// 桌面端正常退出前写给 Bridge 的一行（桌面端 `bridge_supervisor.rs` 的 `BRIDGE_EXIT_REQUEST`）。
+const EXIT_REQUEST: &[u8] = b"exit\n";
 /// 回环上没有服务监听的端口：用例里的 Bridge 不需要联系任何服务。
 const CLOSED_LOOPBACK: &str = "http://127.0.0.1:9";
 
@@ -178,6 +180,15 @@ impl Bridge进程 {
         drop(self.child.stdin.take().expect("标准输入是桌面持有的管道"));
     }
 
+    /// 桌面端正常退出前请 Bridge 先退：往它的标准输入写一行，管道仍由桌面握着。
+    fn request_exit(&mut self) {
+        use std::io::Write as _;
+
+        let stdin = self.child.stdin.as_mut().expect("标准输入是桌面持有的管道");
+        stdin.write_all(EXIT_REQUEST).expect("可写入监督管道");
+        stdin.flush().expect("可写入监督管道");
+    }
+
     fn wait_for_exit(&mut self, timeout: Duration) -> Option<ExitStatus> {
         let deadline = Instant::now() + timeout;
         loop {
@@ -232,6 +243,31 @@ fn 桌面退出后受监督的_bridge_有序退出并让出实例锁() {
         namespace.instance_lock_free(),
         "下一次启动的桌面要能立即起自己的 Bridge"
     );
+}
+
+#[test]
+fn 桌面端请_bridge_退出时它不等管道关闭就有序退出并让出实例锁() {
+    let namespace = 隔离命名空间::new();
+    let mut bridge = namespace.start_bridge(true);
+    bridge.wait_for_output(r#""event":"ready""#);
+
+    bridge.request_exit();
+
+    let status = bridge
+        .wait_for_exit(Duration::from_secs(30))
+        .unwrap_or_else(|| panic!("请它退出后 Bridge 应随之退出\n{}", bridge.output()));
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        status.success(),
+        "应当有序退出：{status}\n{}",
+        bridge.output()
+    );
+    assert!(
+        namespace.instance_lock_free(),
+        "下一次启动的桌面要能立即起自己的 Bridge"
+    );
+    // 管道到现在还开着：退出靠的是这一行，而不是管道关闭。
+    assert!(bridge.child.stdin.is_some());
 }
 
 #[test]
