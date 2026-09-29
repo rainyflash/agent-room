@@ -12,9 +12,11 @@ use tracing_subscriber::{
 
 const LOG_FILENAME: &str = "bridge.log";
 const STDERR_FILTER: &str = "agent_room_bridge=warn";
-/// 除了 Bridge 自己，还记下各人物应请求重发房间密钥的结果（重发了几个、没重发的原因），
-/// 否则“历史找回来没有”在日志里查不到。每条都对应一次经 Olm 送达的请求，不会刷屏。
-const FILE_FILTER: &str = "agent_room_bridge=info,agent_room_matrix_adapter::room_keys=debug";
+/// 除了 Bridge 自己，还记下找回房间密钥两头的过程：各人物应请求重发了什么、没重发的原因
+/// （`room_keys`），以及请别人重发、导入应答（`room_key_requests`）。否则“历史找回来没有”在日志里
+/// 查不到。指令按前缀匹配目标，两个模块要分别写。每条都对应一次经 Olm 送达的请求或应答，不会刷屏。
+const FILE_FILTER: &str = "agent_room_bridge=info,agent_room_matrix_adapter::room_keys=debug,\
+     agent_room_matrix_adapter::room_key_requests=debug";
 /// 排查时可以换掉文件日志的过滤规则（例如加上 matrix-sdk 的密钥分享）；不设就用默认的。
 const FILE_FILTER_OVERRIDE: &str = "AGENT_ROOM_BRIDGE_LOG_FILTER";
 
@@ -57,9 +59,32 @@ pub(crate) fn install() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io,
+        sync::{Arc, Mutex, PoisonError},
+    };
+
     use tracing_subscriber::EnvFilter;
 
     use super::{FILE_FILTER, file_filter, log_file_path};
+
+    /// 把格式化好的日志收进内存，好看哪些条过了过滤规则。
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn 日志文件在数据根的_logs_目录下() {
@@ -81,9 +106,41 @@ mod tests {
     }
 
     #[test]
-    fn 默认文件日志记下房间密钥重发的结果() {
-        let default = EnvFilter::new(FILE_FILTER).to_string();
-        assert!(default.contains("agent_room_bridge=info"));
-        assert!(default.contains("agent_room_matrix_adapter::room_keys=debug"));
+    fn 默认文件日志收下找回房间密钥两头的过程_别的模块照旧不记() {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_env_filter(EnvFilter::new(FILE_FILTER))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "agent_room_matrix_adapter::room_keys", "应答者没有重发");
+            tracing::info!(target: "agent_room_matrix_adapter::room_key_requests", "请求者请求重发");
+            tracing::debug!(target: "agent_room_matrix_adapter::room_key_requests", "请求者没有请求");
+            tracing::info!(target: "agent_room_bridge::runtime::isolated_messages", "Bridge 重读");
+            tracing::debug!(target: "agent_room_bridge::runtime", "Bridge 的调试");
+            tracing::info!(target: "agent_room_matrix_adapter::sdk", "别的模块");
+        });
+        let logged = String::from_utf8(
+            captured
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        )
+        .expect("日志是 UTF-8");
+
+        for kept in [
+            "应答者没有重发",
+            "请求者请求重发",
+            "请求者没有请求",
+            "Bridge 重读",
+        ] {
+            assert!(logged.contains(kept), "{kept} 应该记下：{logged}");
+        }
+        for dropped in ["Bridge 的调试", "别的模块"] {
+            assert!(!logged.contains(dropped), "{dropped} 不该记下：{logged}");
+        }
     }
 }
