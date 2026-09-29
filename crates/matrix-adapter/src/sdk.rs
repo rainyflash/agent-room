@@ -12,7 +12,8 @@ use agent_room_application::ports::{
     MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAccess, MatrixRoomAliasLocalpart,
     MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
     MatrixRoomKind, MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, PortFuture, SecretValue,
+    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent, MatrixUserId,
+    PortFuture, SecretValue,
 };
 use agent_room_bridge_core::handoffs::{
     EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
@@ -65,7 +66,8 @@ use crate::{
     configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
     error::{map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
-    mapping::{map_backfill, map_sync_response},
+    mapping::{map_backfill, map_sync_response, map_timeline_event},
+    room_key_requests::RoomKeyRequester,
     store_recovery::{
         quarantine_invalid_state_cache, quarantine_session_store, recover_query_statistics,
     },
@@ -389,6 +391,23 @@ struct MatrixSdkGateway {
     sync_timeline_limit: NonZeroU16,
     /// 见过已加密的房间。Matrix 不允许关掉加密，所以记住以后不必再问。
     encrypted_rooms: Mutex<HashSet<matrix_sdk::ruma::OwnedRoomId>>,
+    /// Agent 的客户端才有：解不开的事件交给它去请发送设备重发房间密钥。
+    room_key_requests: Option<Arc<RoomKeyRequester>>,
+}
+
+impl MatrixSdkGateway {
+    /// 把一批时间线事件里解不开的交给请求者。
+    fn note_undecryptable<'e>(
+        &self,
+        room_id: &RoomId,
+        events: impl IntoIterator<Item = &'e matrix_sdk::deserialized_responses::TimelineEvent>,
+    ) {
+        if let Some(requests) = &self.room_key_requests {
+            for event in events {
+                requests.note(&self.client, room_id, event);
+            }
+        }
+    }
 }
 
 impl MatrixGateway for MatrixSdkGateway {
@@ -418,6 +437,9 @@ impl MatrixGateway for MatrixSdkGateway {
             // `sync_once` 本身仍可能返回成功。同步边界必须主动读取持久故障标记，
             // 否则 Bridge 会假装在线并永久重试同一组无效密钥。
             reject_recorded_crypto_identity_conflict(&self.client, MatrixOperation::Sync).await?;
+            for (room_id, update) in &response.rooms.joined {
+                self.note_undecryptable(room_id, &update.timeline.events);
+            }
             let upgrades = refresh_stale_sender_trust(
                 &self.client,
                 response
@@ -632,6 +654,7 @@ impl MatrixGateway for MatrixSdkGateway {
                 .messages(options)
                 .await
                 .map_err(|error| map_sdk_error(MatrixOperation::Backfill, &error))?;
+            self.note_undecryptable(room.room_id(), &response.chunk);
             let upgrades = refresh_stale_sender_trust(
                 &self.client,
                 [(room.room_id(), response.chunk.as_slice())],
@@ -639,6 +662,46 @@ impl MatrixGateway for MatrixSdkGateway {
             .await;
             map_backfill(&response, &upgrades)
         })
+    }
+
+    fn fetch_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<MatrixTimelineEvent>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::Backfill;
+            let room = self.room(room_id, operation)?;
+            let event_id: OwnedEventId = event_id
+                .as_str()
+                .try_into()
+                .map_err(|_| invalid_response_failure(operation))?;
+            let event = room
+                .event(&event_id, None)
+                .await
+                .map_err(|error| map_sdk_error(operation, &error))?;
+            // 还是解不开：再请一次重发（一小时内同一会话只请求一次）。
+            self.note_undecryptable(room.room_id(), std::iter::once(&event));
+            let upgrades = refresh_stale_sender_trust(
+                &self.client,
+                [(room.room_id(), std::slice::from_ref(&event))],
+            )
+            .await;
+            map_timeline_event(&event, operation, &upgrades)
+        })
+    }
+
+    fn take_rooms_with_recovered_keys(&self) -> Vec<MatrixRoomId> {
+        self.room_key_requests
+            .as_ref()
+            .map(|requests| {
+                requests
+                    .take_recovered_rooms()
+                    .into_iter()
+                    .filter_map(|room_id| MatrixRoomId::new(room_id.to_string()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn wake_sync(&self) -> PortFuture<'_, MatrixResult<()>> {
@@ -853,7 +916,8 @@ fn connection_from_client(
     operation: MatrixOperation,
     sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixConnection> {
-    let (session, sdk_gateway) = sdk_connection_parts(client, operation, sync_timeline_limit)?;
+    let (session, sdk_gateway) =
+        sdk_connection_parts(client, operation, sync_timeline_limit, None)?;
     Ok(application_connection(session, sdk_gateway))
 }
 
@@ -862,11 +926,16 @@ fn handoff_connection_from_client(
     sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixSdkHandoffConnection> {
     let handoff = Arc::new(MatrixSdkHandoffGateway::attach(client.clone()));
-    // 本机 Bridge 和网络 Agent 网关都从这里打开客户端，应别人设备的请求重发房间密钥也就一起有了。
-    crate::room_keys::attach(&client);
+    // 本机 Bridge 和网络 Agent 网关都从这里打开客户端：应别人设备的请求重发房间密钥，
+    // 以及自己缺密钥时请别人重发，也就一起有了。
+    let room_key_requests = crate::room_keys::attach(&client);
     let security = crate::security::MatrixSdkSecurityGateway::new(client.clone());
-    let (session, sdk_gateway) =
-        sdk_connection_parts(client, MatrixOperation::RestoreSession, sync_timeline_limit)?;
+    let (session, sdk_gateway) = sdk_connection_parts(
+        client,
+        MatrixOperation::RestoreSession,
+        sync_timeline_limit,
+        Some(room_key_requests),
+    )?;
     Ok(MatrixSdkHandoffConnection {
         matrix: application_connection(session, sdk_gateway),
         handoff,
@@ -878,6 +947,7 @@ fn sdk_connection_parts(
     client: Client,
     operation: MatrixOperation,
     sync_timeline_limit: NonZeroU16,
+    room_key_requests: Option<Arc<RoomKeyRequester>>,
 ) -> MatrixResult<(MatrixSession, Arc<MatrixSdkGateway>)> {
     let sdk_session = client
         .matrix_auth()
@@ -890,6 +960,7 @@ fn sdk_connection_parts(
         metadata,
         sync_timeline_limit,
         encrypted_rooms: Mutex::default(),
+        room_key_requests,
     });
     Ok((session, sdk_gateway))
 }

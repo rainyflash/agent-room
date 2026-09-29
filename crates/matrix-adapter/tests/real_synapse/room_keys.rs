@@ -307,3 +307,121 @@ async fn import_keys(human: &Client, room_id: &OwnedRoomId, response: &RoomKeysE
         .expect("人可以导入重发的密钥");
     assert_eq!(result.imported_count, 1);
 }
+
+/// 第二期（`specs/room-key-recovery/pre-join-history.md`）：后加入的 Agent 同步到加入前的消息解不开，
+/// 自己去请发送那台设备重发；导入后按事件 ID 重读，这条消息解得开，而且按发送设备判为可信。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 后加入的_agent_请发送者重发后读到加入前的消息且判为可信() {
+    timeout(Duration::from_mins(5), exercise_pre_join_history())
+        .await
+        .expect("找回加入前消息的场景必须在预算内完成");
+}
+
+async fn exercise_pre_join_history() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let provisioner = application_service_provisioner(
+        &base_url,
+        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
+    );
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let early = managed_device(&provisioner, &factory).await;
+    establish_identity(&early).await;
+    let bystander = managed_device(&provisioner, &factory).await;
+    let early_user = early.matrix().session().metadata().user_id().clone();
+    let bystander_user = bystander.matrix().session().metadata().user_id().clone();
+    // 建房时只邀请早到的一方和一个旁观者：后来者此时既不在房间里也没被邀请，房间密钥不会发给它。
+    let room_id = PrivateRoomMatrixProvisioner::create(
+        &provisioner,
+        &private_room_creation(&early_user, &bystander_user),
+    )
+    .await
+    .expect("Application Service 必须能创建私人房间");
+    join_with_retry(early.matrix().gateway(), &room_id).await;
+    provisioner
+        .set_speaking_batch(
+            &room_id,
+            &[PrivateMatrixSpeakingAssignment::new(early_user, true)],
+        )
+        .await
+        .expect("早到的一方应获得发言能力");
+    sync_until_room(
+        early.matrix().gateway(),
+        &room_id,
+        MatrixRoomSyncKind::Joined,
+    )
+    .await;
+    early
+        .security_gateway_handle()
+        .ensure_room_ready(&room_id)
+        .await
+        .expect("早到的一方可以发送");
+    let sent = send_with_retry(
+        early.matrix().gateway(),
+        &room_id,
+        &message_event(unique_value("before-join"), "后来者加入之前的消息"),
+    )
+    .await;
+
+    let late = managed_device(&provisioner, &factory).await;
+    establish_identity(&late).await;
+    let late_user = late.matrix().session().metadata().user_id().clone();
+    PrivateRoomMatrixGateway::invite(&provisioner, &room_id, &late_user)
+        .await
+        .expect("可以邀请后来者");
+    join_with_retry(late.matrix().gateway(), &room_id).await;
+    let before = late
+        .matrix()
+        .gateway()
+        .fetch_event(&room_id, sent.event_id())
+        .await
+        .expect("后来者可以取到这条消息");
+    assert_eq!(
+        before.event_type().as_str(),
+        "m.room.encrypted",
+        "房间密钥没发给后来者，它本来解不开"
+    );
+
+    await_recovered_keys(&early, &late, &room_id).await;
+    let after = late
+        .matrix()
+        .gateway()
+        .fetch_event(&room_id, sent.event_id())
+        .await
+        .expect("后来者可以重读这条消息");
+    assert_eq!(
+        after.event_type().as_str(),
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        "导入早到一方重发的密钥后，加入前的消息必须解得开"
+    );
+    assert!(after.end_to_end_encrypted());
+    assert!(
+        after.end_to_end_sender_trusted(),
+        "导入的会话要按发送设备判信任：设备由主人签名，就不能被当成不可信隔离"
+    );
+}
+
+/// 两边轮流同步：后来者发出请求，早到的一方收到后应答，后来者收到应答并导入。
+async fn await_recovered_keys(
+    early: &MatrixSdkHandoffConnection,
+    late: &MatrixSdkHandoffConnection,
+    room_id: &MatrixRoomId,
+) {
+    let (mut early_since, mut late_since) = (None, None);
+    for _ in 0..90 {
+        let batch = sync(late.matrix().gateway(), late_since).await;
+        late_since = Some(batch.next_batch().clone());
+        let batch = sync(early.matrix().gateway(), early_since).await;
+        early_since = Some(batch.next_batch().clone());
+        if late
+            .matrix()
+            .gateway()
+            .take_rooms_with_recovered_keys()
+            .contains(room_id)
+        {
+            return;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+    panic!("后来者始终没有导入早到一方重发的房间密钥");
+}

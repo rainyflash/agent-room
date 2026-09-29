@@ -36,31 +36,51 @@ use serde::Deserialize;
 use serde_json::Value;
 use uuid::{Uuid, Variant};
 
+use crate::room_key_requests::RoomKeyRequester;
+
 pub(crate) const ROOM_KEY_REQUEST_EVENT_TYPE: &str =
     "io.github.rainyflash.agentroom.room_keys.request.v1";
 pub(crate) const ROOM_KEYS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.room_keys.v1";
-const SCHEMA_VERSION: &str = "1.0";
+pub(crate) const SCHEMA_VERSION: &str = "1.0";
 /// 100 个会话 ID 加上外层字段不到 6 KiB；更大的请求不解析。
 const MAX_REQUEST_ENVELOPE_BYTES: usize = 16 * 1_024;
-const MAX_REQUESTED_SESSIONS: usize = 100;
+pub(crate) const MAX_REQUESTED_SESSIONS: usize = 100;
 /// 每条应答最多带几个密钥，与协议的上限一致。
-const KEYS_PER_MESSAGE: usize = 20;
+pub(crate) const KEYS_PER_MESSAGE: usize = 20;
 /// 同一台请求设备在同一个房间里，隔多久才再答一次。
 const REPEAT_INTERVAL: Duration = Duration::from_mins(10);
 /// 这台设备每分钟最多答几次。
 const ANSWERS_PER_MINUTE: usize = 20;
 const MINUTE: Duration = Duration::from_mins(1);
 
-/// 在客户端上挂好应答者。收到请求后另起任务处理：导出和读回各要做一次 50 万轮 PBKDF2，
-/// 不能卡住同步。
-pub(crate) fn attach(client: &Client) {
+/// 在客户端上挂好应答者和请求者，返回请求者：同步时要把解不开的事件交给它。
+///
+/// 收到请求后另起任务处理：导出和读回各要做一次 50 万轮 PBKDF2，不能卡住同步。
+/// 收到应答同样另起任务导入。
+pub(crate) fn attach(client: &Client) -> Arc<RoomKeyRequester> {
     let budget = Arc::new(Mutex::new(AnswerBudget::default()));
+    let requester = Arc::new(RoomKeyRequester::default());
+    let answers = Arc::clone(&requester);
     client.add_event_handler(
         move |raw: Raw<AnyToDeviceEvent>,
               encryption_info: Option<EncryptionInfo>,
               client: Client| {
             let budget = Arc::clone(&budget);
+            let answers = Arc::clone(&answers);
             async move {
+                if raw.get_field::<String>("type").ok().flatten().as_deref()
+                    == Some(ROOM_KEYS_EVENT_TYPE)
+                {
+                    tokio::spawn(async move {
+                        if let Err(reason) = answers
+                            .accept(&client, &raw, encryption_info.as_ref())
+                            .await
+                        {
+                            tracing::debug!(reason, "没有导入房间密钥应答");
+                        }
+                    });
+                    return;
+                }
                 let Some((sender, request)) = parse_request(&raw) else {
                     return;
                 };
@@ -85,6 +105,7 @@ pub(crate) fn attach(client: &Client) {
             }
         },
     );
+    requester
 }
 
 /// 通过了格式检查的请求。
@@ -95,12 +116,12 @@ struct RoomKeyRequest {
     session_ids: BTreeSet<String>,
 }
 
-/// 由 Olm 确定的请求来源。
+/// 由 Olm 确定的请求（或应答）来源。
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RequestOrigin {
-    user_id: OwnedUserId,
-    device_id: OwnedDeviceId,
-    curve25519: String,
+pub(crate) struct RequestOrigin {
+    pub(crate) user_id: OwnedUserId,
+    pub(crate) device_id: OwnedDeviceId,
+    pub(crate) curve25519: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,14 +172,14 @@ fn is_uuid_v7(value: &str) -> bool {
 }
 
 /// Megolm 会话 ID 和 Curve25519/Ed25519 公钥都是 32 字节，写成不补齐的 base64 是 43 个字符。
-fn is_key_like(value: &str) -> bool {
+pub(crate) fn is_key_like(value: &str) -> bool {
     value.len() == 43
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/')
 }
 
-fn request_origin(
+pub(crate) fn request_origin(
     sender: &UserId,
     encryption_info: Option<&EncryptionInfo>,
 ) -> Option<RequestOrigin> {
@@ -338,7 +359,7 @@ async fn export_own_sessions(
     Ok(keys)
 }
 
-fn random_passphrase() -> Option<String> {
+pub(crate) fn random_passphrase() -> Option<String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).ok()?;
     Some(STANDARD_NO_PAD.encode(bytes))

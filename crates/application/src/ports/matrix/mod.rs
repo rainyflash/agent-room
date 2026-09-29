@@ -183,4 +183,26 @@ pub trait MatrixGateway: Send + Sync {
     fn wake_sync(&self) -> PortFuture<'_, MatrixResult<()>> {
         Box::pin(async { Ok(()) })
     }
+
+    /// 按事件 ID 重读一条时间线事件，读的时候先试着解密。
+    ///
+    /// Bridge 用它重读当初解不开、后来拿到房间密钥的消息。默认不支持。
+    fn fetch_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<MatrixTimelineEvent>> {
+        let _ = (room_id, event_id);
+        Box::pin(async {
+            Err(MatrixFailure::new(
+                MatrixOperation::Backfill,
+                MatrixFailureKind::NotFound,
+            ))
+        })
+    }
+
+    /// 自上次调用以来，导入了别人重发的房间密钥的房间；Bridge 据此重读这些房间里隔离的消息。
+    fn take_rooms_with_recovered_keys(&self) -> Vec<MatrixRoomId> {
+        Vec::new()
+    }
 }
