@@ -146,17 +146,18 @@ test('连接服务重连时只是告知，不挡复制；重试后提示消失',
   expect(failures).toEqual([]);
 });
 
-test('MCP 只给同一份通用配置：这台电脑的设置和接入对话框都不出现具体应用', async ({ page }) => {
+test('MCP 只给同一份通用配置：设置里的“这台电脑”和接入对话框都不出现具体应用', async ({ page }) => {
   const failures = collectPageFailures(page);
-  await page.goto('/e2e/fixtures/my-agents.html?bridge=authorized');
+  await page.goto('/e2e/fixtures/my-agents.html?bridge=authorized&settings=this-computer');
   const mcpHint = /Add this JSON to the tool’s MCP configuration/u;
-  const thisComputer = page.getByRole('region', { name: 'This computer', exact: true });
-  await thisComputer.getByText('MCP compatibility').click();
-  await expect(thisComputer.getByText(mcpHint)).toBeVisible();
-  await expect(thisComputer.getByText(/agent-room-mcp\.exe/u)).toBeVisible();
-  await expect(thisComputer.getByRole('button', { name: 'Copy JSON' })).toBeVisible();
+  const settings = page.getByRole('region', { name: 'This computer', exact: true });
+  await settings.getByText('MCP compatibility').click();
+  await expect(settings.getByText(mcpHint)).toBeVisible();
+  await expect(settings.getByText(/agent-room-mcp\.exe/u)).toBeVisible();
+  await expect(settings.getByRole('button', { name: 'Copy JSON' })).toBeVisible();
   await expect(page.getByRole('main')).not.toContainText(appNames);
 
+  await page.goto('/e2e/fixtures/my-agents.html?bridge=authorized');
   await page.getByRole('main').getByRole('button', invite).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('radio', { name: /^MCP/u }).click();

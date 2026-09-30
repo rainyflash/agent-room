@@ -20,10 +20,8 @@ const en = {
   'security.agentRecovery.complete':
     'Agent identity and available encrypted room keys have been restored.',
   'security.launcher': 'Security',
-  'security.page.title': 'Security',
   'security.page.subtitle':
     'Verify this Matrix device, inspect account trust, and keep encrypted history recoverable.',
-  'security.action.back': 'Back to room',
   'security.action.refresh': 'Refresh security state',
   'security.action.close': 'Close',
   'security.loading.title': 'Inspecting Matrix security',
@@ -147,7 +145,6 @@ const en = {
   'security.recovery.cancel': 'Cancel',
   'security.verification.title': 'Verify a Matrix device',
   'security.verification.peerTitle': 'Verify a room participant',
-  'security.verification.peerEyebrow': 'Participant verification request',
   'security.verification.peerDetail':
     '{{user}} ({{device}}) wants to verify with you. This is optional: messages already work without it. Compare the codes in their trusted app or Agent host before confirming.',
   'security.verification.peerWaiting':
@@ -169,7 +166,6 @@ const en = {
   'security.verification.match': 'They match',
   'security.verification.mismatch': 'They do not match',
   'security.verification.cancel': 'Cancel verification',
-  'security.verification.incomingEyebrow': 'Trusted device request',
   'security.verification.incomingTitle': 'Verify another signed-in device',
   'security.verification.incomingDetail':
     '{{device}} is asking to compare a one-time security code with this device.',
@@ -214,9 +210,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.agentRecovery.failed': 'Agent 恢复操作未完成。请检查本地 Bridge 与网络连接后重试。',
   'security.agentRecovery.complete': '已恢复 Agent 身份与可用的加密房间密钥。',
   'security.launcher': '安全',
-  'security.page.title': '安全中心',
   'security.page.subtitle': '验证当前 Matrix 设备、检查账户信任状态，并确保加密历史可以恢复。',
-  'security.action.back': '返回房间',
   'security.action.refresh': '刷新安全状态',
   'security.action.close': '关闭',
   'security.loading.title': '正在检查 Matrix 安全状态',
@@ -328,7 +322,6 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.recovery.cancel': '取消',
   'security.verification.title': '验证 Matrix 设备',
   'security.verification.peerTitle': '验证房间参与者',
-  'security.verification.peerEyebrow': '参与者验证请求',
   'security.verification.peerDetail':
     '{{user}}（{{device}}）想与你核对安全码。这是可选的，不核对也能正常收发；请在对方可信应用或 Agent 宿主中核对完整安全码后确认。',
   'security.verification.peerWaiting':
@@ -349,7 +342,6 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.verification.match': '完全一致',
   'security.verification.mismatch': '不一致',
   'security.verification.cancel': '取消验证',
-  'security.verification.incomingEyebrow': '可信设备请求',
   'security.verification.incomingTitle': '验证另一台已登录设备',
   'security.verification.incomingDetail': '{{device}} 正在请求与本设备核对一次性安全代码。',
   'security.verification.accept': '核对代码',

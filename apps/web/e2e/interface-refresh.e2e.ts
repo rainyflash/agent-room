@@ -7,6 +7,7 @@ const surfaces = [
   ['agents', '/e2e/fixtures/account-workspace.html'],
   ['security', '/e2e/fixtures/security-center.html'],
   ['my-agents-desktop', '/e2e/fixtures/my-agents.html'],
+  ['settings-general', '/e2e/fixtures/my-agents.html?settings=general'],
 ] as const;
 
 for (const width of [1440, 390]) {
@@ -38,26 +39,26 @@ for (const width of [1440, 390]) {
       });
     });
   }
-  test(`这台电脑：${String(width)}px 状态、有新版本与自动打开`, async ({ page }, testInfo) => {
+  test(`设置 · 这台电脑：${String(width)}px 有新版本、自动打开与更新`, async ({
+    page,
+  }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/e2e/fixtures/my-agents.html');
-    const section = page.getByRole('region', { name: 'This computer', exact: true });
-    await expect(section).toBeVisible();
+    await page.goto('/e2e/fixtures/my-agents.html?settings=this-computer');
+    await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'This computer: Connected' })).toBeVisible();
-    // 启动后自动查到新版本：顶栏的版本号换成“有新版本”，这一节里给出去安装的入口。
-    await expect(
-      page.getByRole('link', { name: 'Update 0.1.0-alpha.24 ready to install · About & updates' }),
-    ).toHaveText('Update ready');
-    await expect(
-      section.getByRole('link', { name: 'Update 0.1.0-alpha.24 ready to install', exact: true }),
-    ).toBeVisible();
-    await section.getByRole('button', { name: 'Off', exact: true }).click();
-    await expect(section.getByRole('button', { name: 'On', exact: true })).toHaveAttribute(
+    // 启动后自动查到新版本：提示栈里一条去安装，“设置”和“这台电脑”上都有提醒点。
+    await expect(page.getByText('Agent Room 0.1.0-alpha.24 is ready to install')).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Settings.*Update ready/u })).toBeVisible();
+    const content = page.getByRole('region', { name: 'This computer', exact: true });
+    await content.getByRole('button', { name: 'Off', exact: true }).click();
+    await expect(content.getByRole('button', { name: 'On', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
+    await expect(content.getByText('0.1.0-alpha.23 → 0.1.0-alpha.24')).toBeVisible();
+    await expect(content.getByRole('button', { name: 'Install and restart' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     const scan = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
@@ -72,7 +73,7 @@ for (const width of [1440, 390]) {
     await page.screenshot({
       animations: 'disabled',
       fullPage: true,
-      path: testInfo.outputPath(`this-computer-${String(width)}.png`),
+      path: testInfo.outputPath(`settings-this-computer-${String(width)}.png`),
     });
   });
 }

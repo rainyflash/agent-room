@@ -8,6 +8,8 @@ import { I18nextProvider } from 'react-i18next';
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
 import { AppServicesProvider } from '@/app/app-services';
+import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
+import { PersonalWorkspaceProvider } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import { createCloudRuntime } from '@/app/web-app-providers';
 import type {
   BridgeRuntime,
@@ -21,6 +23,10 @@ import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-pr
 import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
 import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
 import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
+import { SettingsLayout, SettingsSectionContent } from '@/features/settings/ui/settings-page';
+import { isSettingsSection } from '@/features/settings/ui/settings-sections';
+import { DesktopUpdateToast } from '@/features/updates/ui/desktop-update-toast';
+import { ToastStack } from '@agent-room/ui-system';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { RouterTestProvider } from '@/test/router-test-provider';
@@ -299,12 +305,26 @@ const gateway: DesktopRuntimeGateway = {
   subscribe: () => ready(() => undefined),
 };
 
+// ?settings=general|this-computer|about 显示设置页的这一节（安全一节有自己的测试页）。
+const settingsSection = new URLSearchParams(location.search).get('settings');
+
 function AuthenticatedMyAgentsFixture() {
   const { snapshot } = useSession();
   const currentPrincipal = snapshot.context.principal;
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   // Match production mounting: account restoration clears private queries before the workspace loads.
   if (!snapshot.matches('ready') || currentPrincipal === null) return null;
+  if (
+    settingsSection !== null &&
+    isSettingsSection(settingsSection) &&
+    settingsSection !== 'security'
+  ) {
+    return (
+      <SettingsLayout section={settingsSection}>
+        <SettingsSectionContent section={settingsSection} />
+      </SettingsLayout>
+    );
+  }
   return (
     <AccountWorkspacePage
       onSelectAgent={setSelectedAgentId}
@@ -377,11 +397,18 @@ async function bootstrapFixture() {
       <RouterTestProvider>
         <QueryClientProvider client={runtime.queryClient}>
           <AppServicesProvider services={services}>
-            <SessionProvider dependencies={sessionDependencies}>
-              <DesktopRuntimeProvider gateway={gateway}>
-                <AuthenticatedMyAgentsFixture />
-              </DesktopRuntimeProvider>
-            </SessionProvider>
+            <AccountPreferencesProvider store={runtime.accountPreferences}>
+              <PersonalWorkspaceProvider store={runtime.personalWorkspace}>
+                <SessionProvider dependencies={sessionDependencies}>
+                  <DesktopRuntimeProvider gateway={gateway}>
+                    <AuthenticatedMyAgentsFixture />
+                    <ToastStack label="Notifications">
+                      <DesktopUpdateToast />
+                    </ToastStack>
+                  </DesktopRuntimeProvider>
+                </SessionProvider>
+              </PersonalWorkspaceProvider>
+            </AccountPreferencesProvider>
           </AppServicesProvider>
         </QueryClientProvider>
       </RouterTestProvider>

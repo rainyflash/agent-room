@@ -1,3 +1,4 @@
+import { Toast } from '@agent-room/ui-system';
 import { Link, useLocation } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -62,16 +63,17 @@ export function InboxNotice() {
   if (!notice || quiet || pathname === '/inbox' || notice.account !== inbox?.snapshot.accountId)
     return null;
   return (
-    <aside className="inbox-notice" role="status">
-      <Link to="/inbox">{t('inbox.new', { count: notice.count })}</Link>
-      <button
-        type="button"
-        onClick={() => {
-          setNotice(null);
-        }}
-      >
-        {t('inbox.dismiss')}
-      </button>
-    </aside>
+    <Toast
+      action={
+        <Link className="ar-button ar-button--compact ar-button--primary" to="/inbox">
+          {t('inbox.openInbox')}
+        </Link>
+      }
+      dismissLabel={t('inbox.dismiss')}
+      onDismiss={() => {
+        setNotice(null);
+      }}
+      title={t('inbox.new', { count: notice.count })}
+    />
   );
 }

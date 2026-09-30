@@ -86,6 +86,15 @@
   font-size: 12px;
   font-weight: 700;
 }
+/* “设置”上的提醒点：有新版本可装。 */
+.app-navigation__dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  background: var(--ar-sunny);
+}
 .app-navigation__links svg {
   width: 17px;
   height: 17px;

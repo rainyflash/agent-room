@@ -18,6 +18,7 @@ import type {
   MatrixVerificationSnapshot,
 } from '@/features/security/domain/matrix-security';
 import { SecurityWorkspace } from '@/features/security/ui/security-page';
+import { SettingsLayout } from '@/features/settings/ui/settings-page';
 import { RouterTestProvider } from '@/test/router-test-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
@@ -249,14 +250,15 @@ async function bootstrapFixture(): Promise<void> {
       <I18nextProvider i18n={i18n}>
         <RouterTestProvider>
           <QueryClientProvider client={queryClient}>
-            <SecurityWorkspace
-              accessManagement={accessManagement}
-              {...(new URLSearchParams(window.location.search).has('agentRecovery')
-                ? { agentRecovery }
-                : {})}
-              gateway={security}
-              onBack={() => undefined}
-            />
+            <SettingsLayout section="security">
+              <SecurityWorkspace
+                accessManagement={accessManagement}
+                {...(new URLSearchParams(window.location.search).has('agentRecovery')
+                  ? { agentRecovery }
+                  : {})}
+                gateway={security}
+              />
+            </SettingsLayout>
           </QueryClientProvider>
         </RouterTestProvider>
       </I18nextProvider>

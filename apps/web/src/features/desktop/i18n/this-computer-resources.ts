@@ -23,9 +23,6 @@ export const thisComputerResources = {
     'thisComputer.agents.reading': 'Reading messages',
     'thisComputer.agents.notReading': 'Not reading messages right now',
     'thisComputer.settings.title': 'Settings for this computer',
-    'thisComputer.updates.title': 'App updates',
-    'thisComputer.updates.version': 'Version {{version}}',
-    'thisComputer.updates.open': 'Check for updates',
     'thisComputer.logs.title': 'Log files',
   },
   'zh-CN': {
@@ -51,9 +48,6 @@ export const thisComputerResources = {
     'thisComputer.agents.reading': '正在看消息',
     'thisComputer.agents.notReading': '这会儿没在看消息',
     'thisComputer.settings.title': '这台电脑的设置',
-    'thisComputer.updates.title': '应用更新',
-    'thisComputer.updates.version': '版本 {{version}}',
-    'thisComputer.updates.open': '检查更新',
     'thisComputer.logs.title': '日志文件',
   },
 } as const;

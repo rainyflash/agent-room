@@ -186,11 +186,7 @@ function renderWorkspace(
     <I18nextProvider i18n={i18n}>
       <RouterTestProvider>
         <QueryClientProvider client={queryClient}>
-          <SecurityWorkspace
-            accessManagement={accessManagement}
-            gateway={gateway}
-            onBack={() => undefined}
-          />
+          <SecurityWorkspace accessManagement={accessManagement} gateway={gateway} />
         </QueryClientProvider>
       </RouterTestProvider>
     </I18nextProvider>,

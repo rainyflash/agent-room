@@ -28,7 +28,8 @@ test('安全中心在桌面端展示真实状态并完成 SAS 确认', async ({ 
   await page.setViewportSize({ height: 1_000, width: 1_440 });
   await page.goto(fixturePath);
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Security' })).toBeVisible();
   await expect(page.getByText('@alice:agent-room.test')).toBeVisible();
   await expect(page.locator('.security-devices__list > li')).toHaveCount(3);
   await expect(page.getByRole('heading', { name: 'Product devices' })).toBeVisible();

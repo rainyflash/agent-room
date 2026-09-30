@@ -1,6 +1,6 @@
 import { Button } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -27,23 +27,18 @@ import {
   type SecurityPostureAction,
 } from '@/features/security/ui/security-posture';
 import { SecurityRecoveryPanel } from '@/features/security/ui/security-recovery-panel';
-import { AppNavigation } from '@/shared/ui/app-navigation';
 import type { AgentRecoveryGateway } from '@/features/security/domain/agent-recovery';
 import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 
 import './security-page.css';
 
-export type SecurityPageProps = {
-  readonly onBack: () => void;
-};
-
-export function SecurityPage({ onBack }: SecurityPageProps) {
+/** “设置 → 安全”：这台设备的签名、你的设备、恢复密钥、已授权的电脑和 Agent。 */
+export function SecuritySettings() {
   const { accessManagement, security, localRuntime } = useAppServices();
   return (
     <SecurityWorkspace
       accessManagement={accessManagement}
       gateway={security}
-      onBack={onBack}
       {...(localRuntime.isAvailable() && localRuntime.agentRecovery
         ? { agentRecovery: localRuntime.agentRecovery }
         : {})}
@@ -55,7 +50,6 @@ export type SecurityWorkspaceProps = {
   readonly agentRecovery?: AgentRecoveryGateway;
   readonly accessManagement: AccessManagementGateway;
   readonly gateway: MatrixSecurityGateway;
-  readonly onBack: () => void;
 };
 
 type ActiveVerification = {
@@ -66,7 +60,6 @@ type ActiveVerification = {
 export function SecurityWorkspace({
   accessManagement,
   gateway,
-  onBack,
   agentRecovery,
 }: SecurityWorkspaceProps) {
   const { t } = useTranslation();
@@ -100,10 +93,10 @@ export function SecurityWorkspace({
   };
 
   return (
-    <main className="security-page" id="main-content">
-      <AppNavigation
-        active="security"
-        actions={
+    <div className="security-page">
+      <div className="security-workspace">
+        <header className="security-page-heading">
+          <p>{t('security.page.subtitle')}</p>
           <button
             aria-label={t('security.action.refresh')}
             className="security-icon-button ar-icon-button"
@@ -116,28 +109,8 @@ export function SecurityWorkspace({
               className={inspection.isFetching ? 'security-spin' : undefined}
             />
           </button>
-        }
-      />
-
-      <div className="security-workspace">
-        <header className="security-page-heading">
-          <div>
-            <ShieldCheck aria-hidden="true" />
-            <h1>{t('security.page.title')}</h1>
-          </div>
-          <Button icon={<ArrowLeft aria-hidden="true" />} onClick={onBack} tone="ghost">
-            {t('security.action.back')}
-          </Button>
-          <p>{t('security.page.subtitle')}</p>
         </header>
 
-        {inspection.data?.ok === true ? (
-          <nav className="security-section-nav" aria-label={t('security.sections')}>
-            <a href="#security-identity">{t('security.section.devices')}</a>
-            <a href="#security-recovery">{t('security.section.recovery')}</a>
-            <a href="#security-access">{t('security.section.access')}</a>
-          </nav>
-        ) : null}
         {inspection.isPending ? (
           <SecurityLoading />
         ) : inspection.data?.ok === false ? (
@@ -225,7 +198,7 @@ export function SecurityWorkspace({
           />
         )}
       </AnimatePresence>
-    </main>
+    </div>
   );
 }
 

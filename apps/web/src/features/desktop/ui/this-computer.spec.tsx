@@ -18,8 +18,10 @@ import { LocalAgentSessions } from '@/features/desktop/ui/local-agent-sessions';
 import { ThisComputerBanner } from '@/features/desktop/ui/this-computer-banner';
 import { ThisComputerSection } from '@/features/desktop/ui/this-computer-section';
 import { ThisComputerStatus } from '@/features/desktop/ui/this-computer-status';
-import { ApplicationAboutPage } from '@/features/updates/ui/application-about-page';
-import { ApplicationVersionLink } from '@/features/updates/ui/application-version-link';
+import { ThisComputerSettings } from '@/features/desktop/ui/this-computer-settings';
+import { ApplicationUpdates } from '@/features/updates/ui/application-updates';
+import { DesktopUpdateToast } from '@/features/updates/ui/desktop-update-toast';
+import { AppNavigation } from '@/shared/ui/app-navigation';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { RouterTestProvider } from '@/test/router-test-provider';
@@ -315,16 +317,27 @@ describe('这台电脑', () => {
     ).toBeVisible();
   });
 
-  it('已连接时说一句能用了；设置里能开关自动打开、打开日志文件夹、复制通用 MCP 配置', async () => {
-    const writeText = vi.fn(() => Promise.resolve(undefined));
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const runtime = gateway(ready);
-    renderDesktop(runtime.value, <ThisComputerSection />);
+  it('已连接时说一句能用了，并给“这台电脑的设置”的入口', async () => {
+    renderDesktop(gateway(ready).value, <ThisComputerSection />);
 
     expect(
       await screen.findByText('Connected. Agents you start on this computer can join rooms.'),
     ).toBeVisible();
-    const autostart = screen.getByRole('button', { name: 'Off' });
+    expect(screen.getByRole('link', { name: 'Settings for this computer' })).toHaveAttribute(
+      'href',
+      '/settings/this-computer',
+    );
+    // 开机启动、日志和 MCP 配置都搬进了“设置”。
+    expect(screen.queryByRole('button', { name: 'Open log folder' })).not.toBeInTheDocument();
+  });
+
+  it('设置里能开关自动打开、打开日志文件夹、复制通用 MCP 配置', async () => {
+    const writeText = vi.fn(() => Promise.resolve(undefined));
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const runtime = gateway(ready);
+    renderDesktop(runtime.value, <ThisComputerSettings />);
+
+    const autostart = await screen.findByRole('button', { name: 'Off' });
     fireEvent.click(autostart);
     expect(await screen.findByRole('button', { name: 'On' })).toHaveAttribute(
       'aria-pressed',
@@ -336,9 +349,7 @@ describe('这台电脑', () => {
     });
     fireEvent.click(screen.getByText('MCP compatibility'));
     expect(screen.getByText(/Add this JSON to the tool’s MCP configuration/u)).toBeVisible();
-    expect(screen.getByRole('region', { name: 'This computer' })).not.toHaveTextContent(
-      /Codex|Claude Code|Cursor/u,
-    );
+    expect(document.body).not.toHaveTextContent(/Codex|Claude Code|Cursor/u);
     fireEvent.click(screen.getByRole('button', { name: 'Copy JSON' }));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
@@ -385,24 +396,36 @@ describe('这台电脑', () => {
 });
 
 describe('应用更新', () => {
-  it('启动后自动按本版所属渠道查一次更新，顶栏的版本号换成“有新版本”', async () => {
+  it('启动后自动按本版所属渠道查一次更新：提示栈里一条去安装，“设置”上一个提醒点', async () => {
     const runtime = gateway(ready, { currentVersion: '0.1.0-alpha.47' });
-    renderDesktop(runtime.value, <ApplicationVersionLink />);
+    renderDesktop(
+      runtime.value,
+      <>
+        <AppNavigation />
+        <DesktopUpdateToast />
+      </>,
+    );
 
     await waitFor(() => {
       expect(runtime.checkUpdate).toHaveBeenCalledWith('testing');
     });
     expect(runtime.checkUpdate).toHaveBeenCalledTimes(1);
-    const link = await screen.findByRole('link', {
-      name: 'Update 0.2.0 ready to install · About & updates',
-    });
-    expect(link).toHaveTextContent('Update ready');
+    expect(await screen.findByText('Agent Room 0.2.0 is ready to install')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Install' })).toHaveAttribute(
+      'href',
+      '/settings/this-computer',
+    );
+    expect(screen.getByRole('link', { name: /Settings.*Update ready/u })).toBeVisible();
+    // 稍后：这个版本不再提醒，“设置”上的点还在。
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+    expect(screen.queryByText('Agent Room 0.2.0 is ready to install')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Settings.*Update ready/u })).toBeVisible();
   });
 
-  it('未授权也能在关于页检查并安装更新，出错后按钮恢复可重试；停机时同样能装', async () => {
+  it('未授权也能检查并安装更新，出错后按钮恢复可重试；停机时同样能装', async () => {
     const runtime = gateway(authorizing);
     runtime.checkUpdate.mockRejectedValueOnce(new Error('transport unavailable'));
-    renderDesktop(runtime.value, <ApplicationAboutPage />);
+    renderDesktop(runtime.value, <ApplicationUpdates />);
     const check = await screen.findByRole('button', { name: 'Check' });
     fireEvent.click(check);
     await waitFor(() => {
@@ -419,7 +442,7 @@ describe('应用更新', () => {
 
     // 升级往往正是修复停机的办法。预发行版跟随测试渠道，启动时已经查过一次。
     const stopped = gateway(halted, { currentVersion: '0.1.0-alpha.47' });
-    renderDesktop(stopped.value, <ApplicationAboutPage />);
+    renderDesktop(stopped.value, <ApplicationUpdates />);
     await waitFor(() => {
       expect(stopped.checkUpdate).toHaveBeenCalledWith('testing');
     });

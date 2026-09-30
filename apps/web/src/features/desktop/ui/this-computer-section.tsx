@@ -1,5 +1,6 @@
 import { Banner, Button, Details } from '@agent-room/ui-system';
-import { ExternalLink, KeyRound, Monitor, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { ExternalLink, KeyRound, Monitor, RefreshCw, RotateCcw, Settings, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalSession } from '@/features/session/ui/session-provider';
@@ -13,12 +14,11 @@ import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalAgentSessions } from './local-agent-sessions';
 import { LocalConnectionNotice } from './local-connection-notice';
 import { ReceptionPanel } from './reception-panel';
-import { ThisComputerSettings } from './this-computer-settings';
 import './this-computer.css';
 
 /**
  * “我的 Agent”里的“这台电脑”一节，只在桌面端出现：连接状态和要做的事、这台电脑上的 Agent、
- * 后台回复，以及这台电脑的设置。原来右下角浮着的“本机 Agent”面板里的东西都在这里。
+ * 后台回复。开机启动、更新、日志和 MCP 配置在“设置 → 这台电脑”，这里放一个入口。
  */
 export function ThisComputerSection() {
   const { t } = useTranslation();
@@ -51,7 +51,18 @@ export function ThisComputerSection() {
           )
         ) : null}
       </div>
-      <ThisComputerSettings />
+      <div className="this-computer__footer">
+        <Link
+          className="ar-button ar-button--compact ar-button--ghost"
+          params={{ section: 'this-computer' }}
+          to="/settings/$section"
+        >
+          <span className="ar-button__icon">
+            <Settings aria-hidden="true" />
+          </span>
+          <span>{t('thisComputer.settings.title')}</span>
+        </Link>
+      </div>
     </section>
   );
 }

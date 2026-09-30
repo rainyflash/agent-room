@@ -702,6 +702,37 @@ summary {
   }
 }
 
+/* 提示栈：右下角一列，最新的在最下面；手机上贴底、占满宽度。 */
+.ar-toast-stack {
+  position: fixed;
+  z-index: 90;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  width: min(420px, calc(100vw - 32px));
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.ar-toast-stack:empty {
+  display: none;
+}
+
+.ar-toast {
+  box-shadow: 0 4px 0 var(--ar-outline);
+  pointer-events: auto;
+}
+
+@media (max-width: 767px) {
+  .ar-toast-stack {
+    right: 16px;
+    bottom: 12px;
+    left: 16px;
+    width: auto;
+  }
+}
+
 /* 详情：沿用折叠的样式，标题用次要文字色，排查信息不抢眼。 */
 .ar-details > summary {
   color: var(--ar-muted);

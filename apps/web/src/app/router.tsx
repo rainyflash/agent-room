@@ -14,6 +14,7 @@ import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby
 import { ConnectionPage } from '@/features/session/ui/connection-page';
 import { LandingPage } from '@/features/landing/ui/landing-page';
 import { useSession } from '@/features/session/ui/session-provider';
+import { isSettingsSection } from '@/features/settings/ui/settings-sections';
 import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
@@ -42,13 +43,9 @@ function lazyPage<Props extends object>(
   };
 }
 
-const ApplicationAboutPage = lazyRouteComponent(
-  () => import('@/features/updates/ui/application-about-page'),
-  'ApplicationAboutPage',
-);
 const InboxPage = lazyPage(async () => (await import('@/features/inbox/ui/inbox-page')).InboxPage);
-const SecurityPage = lazyPage(
-  async () => (await import('@/features/security/ui/security-page')).SecurityPage,
+const SettingsRoute = lazyPage(
+  async () => (await import('@/features/settings/ui/settings-route')).SettingsRoute,
 );
 const GuidePage = lazyRouteComponent(() => import('@/features/guide/ui/guide-page'), 'GuidePage');
 const RoomDirectoryPage = lazyPage(
@@ -64,10 +61,14 @@ const LobbyPage = lazy(async () => {
 });
 
 const rootRoute = createRootRoute({ component: RootLayout });
+// “关于与更新”并进了设置：旧链接转到“设置 → 关于”。
 const aboutRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/about',
-  component: ApplicationAboutPage,
+  beforeLoad: () => {
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- 路由库用抛出 redirect 表示跳转。
+    throw redirect({ params: { section: 'about' }, replace: true, to: '/settings/$section' });
+  },
 });
 
 const guideRoute = createRoute({
@@ -130,6 +131,15 @@ const lobbyInstanceRoute = createRoute({
   component: LobbyInstanceBoundary,
 });
 
+const settingsIndexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  beforeLoad: () => {
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- 路由库用抛出 redirect 表示跳转。
+    throw redirect({ params: { section: 'general' }, replace: true, to: '/settings/$section' });
+  },
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/$section',
@@ -153,6 +163,7 @@ const routeTree = rootRoute.addChildren([
   inboxRoute,
   lobbyRoute,
   lobbyInstanceRoute,
+  settingsIndexRoute,
   settingsRoute,
   adminRoute,
 ]);
@@ -301,25 +312,22 @@ function InboxBoundary() {
 function SettingsBoundary() {
   const { snapshot } = useSession();
   const { section } = settingsRoute.useParams();
-  const navigate = settingsRoute.useNavigate();
-  const valid = routeIdentifierSchema.safeParse(section).success;
-  if (!valid || section !== 'security') {
-    return <RouteUnavailable invalid={!valid} routeLabel={`/settings/${section}`} />;
+  if (!isSettingsSection(section)) {
+    return (
+      <RouteUnavailable
+        invalid={!routeIdentifierSchema.safeParse(section).success}
+        routeLabel={`/settings/${section}`}
+      />
+    );
   }
-  if (snapshot.context.controlStatus !== 'ready' || snapshot.context.connection === null) {
+  // 关于、这台电脑不用登录；通用要账户，安全还要连上 Matrix。
+  const signedIn =
+    snapshot.context.controlStatus === 'ready' && snapshot.context.principal !== null;
+  if (section === 'general' && !signedIn) return <ConnectionPage />;
+  if (section === 'security' && (!signedIn || snapshot.context.connection === null)) {
     return <ConnectionPage />;
   }
-  return (
-    <SecurityPage
-      onBack={() => {
-        if (window.history.length > 1) {
-          window.history.back();
-          return;
-        }
-        void navigate({ to: '/connect' });
-      }}
-    />
-  );
+  return <SettingsRoute section={section} />;
 }
 
 function AdminBoundary() {

@@ -10,7 +10,8 @@ import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conver
 import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
 import { RoomDirectoryPage } from '@/features/room-directory/ui/room-directory-page';
 import { HallActions } from '@/features/room-directory/ui/hall-actions';
-import { ApplicationAboutPage } from '@/features/updates/ui/application-about-page';
+import { SettingsLayout, SettingsSectionContent } from '@/features/settings/ui/settings-page';
+import { isSettingsSection } from '@/features/settings/ui/settings-sections';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 import { BrowserMessageBodyPreparer } from '@/features/messages/adapters/browser-message-body-preparer';
 import { BrowserMessageSubmissionJournal } from '@/features/messages/adapters/browser-message-submission-journal';
@@ -257,6 +258,7 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const settingsSection = /^\/settings\/([\w-]+)$/u.exec(pathname)?.[1] ?? null;
   const match = /\/instance\/(.+)$/u.exec(pathname);
   const current =
     [...rooms.values()].find(
@@ -273,8 +275,12 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
                 publisher={services.messagePublisher}
                 scope={principal.matrixUserId}
               >
-                {pathname === '/about' ? (
-                  <ApplicationAboutPage />
+                {settingsSection !== null &&
+                isSettingsSection(settingsSection) &&
+                settingsSection !== 'security' ? (
+                  <SettingsLayout section={settingsSection}>
+                    <SettingsSectionContent section={settingsSection} />
+                  </SettingsLayout>
                 ) : pathname === '/rooms' || pathname.includes('/fixtures/') ? (
                   <RoomDirectoryPage />
                 ) : (

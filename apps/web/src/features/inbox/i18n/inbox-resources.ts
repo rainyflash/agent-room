@@ -14,8 +14,9 @@ export const inboxResources = {
     'inbox.reply': 'Replies',
     'inbox.direct': 'Direct messages',
     'inbox.handoff': 'Deliveries',
-    'inbox.resumeNotifications': 'Resume notifications',
-    'inbox.quietHour': 'Do not disturb for one hour',
+    'inbox.quietUntil': 'Notifications are paused until {{time}}.',
+    'inbox.quietIndefinite': 'Notifications are paused.',
+    'inbox.quietChange': 'Change in Settings',
     'inbox.failed': 'The inbox could not refresh. Previously loaded items may be out of date.',
     'inbox.loading': 'Loading your inbox…',
     'inbox.limited':
@@ -41,6 +42,7 @@ export const inboxResources = {
     'inbox.notification.title': 'Agent Room',
     'inbox.notification.single': '{{sender}}: {{text}}',
     'inbox.dismiss': 'Dismiss',
+    'inbox.openInbox': 'Open inbox',
   },
   'zh-CN': {
     'inbox.markPageRead': '将已显示内容标记为已查看',
@@ -56,8 +58,9 @@ export const inboxResources = {
     'inbox.reply': '回复我的',
     'inbox.direct': '私信',
     'inbox.handoff': '内容交付',
-    'inbox.resumeNotifications': '恢复提醒',
-    'inbox.quietHour': '勿扰一小时',
+    'inbox.quietUntil': '提醒暂停到 {{time}}。',
+    'inbox.quietIndefinite': '提醒已暂停。',
+    'inbox.quietChange': '去设置里修改',
     'inbox.failed': '收件箱刷新失败，已有记录可能不是最新状态。',
     'inbox.loading': '正在读取收件箱…',
     'inbox.limited': '房间或交付数量超过本次显示范围，可进入各个房间查看其余内容。',
@@ -78,5 +81,6 @@ export const inboxResources = {
     'inbox.notification.title': 'Agent Room',
     'inbox.notification.single': '{{sender}}：{{text}}',
     'inbox.dismiss': '收起',
+    'inbox.openInbox': '打开收件箱',
   },
 } as const;
