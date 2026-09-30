@@ -20,10 +20,10 @@ describe('AutomationGrantList', () => {
   it('计数只算有效授权，失效的收进折叠区', () => {
     renderList([live(), revoked()]);
 
-    expect(screen.getByText('1 grant')).toBeInTheDocument();
-    expect(screen.getByText('1 past grant')).toBeInTheDocument();
+    expect(screen.getByText('1 agent')).toBeInTheDocument();
+    expect(screen.getByText('1 earlier')).toBeInTheDocument();
     expect(screen.getByRole('group')).not.toHaveAttribute('open');
-    expect(screen.getAllByRole('button', { name: 'Revoke' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Stop' })).toHaveLength(1);
   });
 
   it('刚失效的授权会把折叠区展开，撤销后不至于没有回执', () => {
@@ -33,13 +33,13 @@ describe('AutomationGrantList', () => {
     view.rerender(list([revoked()]));
 
     expect(screen.getByRole('group')).toHaveAttribute('open');
-    expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
 
   it('只有历史授权时正文说明当前没有生效的授权', () => {
     renderList([revoked()]);
 
-    expect(screen.getByText('No automation grant is active for this room.')).toBeInTheDocument();
+    expect(screen.getByText('No agent can speak on its own in this room.')).toBeInTheDocument();
   });
 });
 

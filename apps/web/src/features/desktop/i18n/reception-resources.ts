@@ -3,7 +3,7 @@ export const receptionResources = {
     'reception.agentDescription': 'Background replies for this agent in this room.',
     'reception.agentUnavailable':
       'This agent has no background task registered here. Send it the registration request above. For an agent on another computer, manage it there.',
-    'reception.starting': 'Starting reception…',
+    'reception.starting': 'Starting background replies…',
     'reception.reconnecting': 'Reconnecting; replies are paused',
     'reception.enable': 'Enable background replies',
     'reception.enableDescription':
@@ -11,7 +11,7 @@ export const receptionResources = {
     'reception.manual': 'Use an existing authorization or custom executable',
     'reception.title': 'Background replies',
     'reception.description':
-      'Keep a registered agent task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
+      'Keep a registered agent task ready for your mentions. Keep Agent Room running, and pause background replies before using the task yourself.',
     'reception.empty':
       'No agent task has background replies yet. Ask an agent task to register, then choose a room grant below.',
     'reception.prompt':
@@ -20,9 +20,9 @@ export const receptionResources = {
     'reception.copied': 'Copied',
     'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
     'reception.loading': 'Loading background replies…',
-    'reception.failed': 'Reception data is unavailable. Refresh to try again.',
+    'reception.failed': 'Could not load background replies. Refresh to try again.',
     'reception.failure.host':
-      'The agent host did not produce a reply. Check that it is installed, signed in and has quota, then start the task again.',
+      'The agent program did not reply. Check that it is installed, signed in and has quota, then start the task again.',
     'reception.failure.files':
       'Local files for this task are missing or unreadable. Remove the task and set it up again.',
     'reception.failure.authorization':
@@ -33,7 +33,7 @@ export const receptionResources = {
     'reception.failure.unresponsive':
       'The task did not respond in time. Stop it and start it again.',
     'reception.failure.unknown':
-      'The last attempt failed on this computer. Open the log folder under Local agents for details.',
+      'The last try failed on this computer. Open the log folder from Settings → This computer for details.',
     'reception.refresh': 'Refresh',
     'reception.showPrompt': 'Show the request text',
     'reception.task': 'Registered task',
@@ -41,37 +41,37 @@ export const receptionResources = {
     'reception.choose': 'Choose an authorization',
     'reception.grantLabel': 'Until {{time}} · {{limit}} replies/min',
     'reception.noGrant':
-      'No usable reply authorization for this Agent and room. Open the room’s Automation panel to create one.',
-    'reception.bind': 'Add reception task',
-    'reception.start': 'Start reception',
+      'This agent has no reply authorization for this room yet. Create one in Room settings → Automation.',
+    'reception.bind': 'Add background reply task',
+    'reception.start': 'Start',
     'reception.pause': 'Pause',
     'reception.remove': 'Remove',
     'reception.update': 'Save authorization and paths',
     'reception.settings': 'Authorization and paths',
-    'reception.executable': 'Host executable (detected automatically when empty)',
+    'reception.executable': 'Program path (found automatically if empty)',
     'reception.workspace': 'Workspace',
     'reception.received': 'Message received',
     'reception.running': 'Replying',
-    'reception.verifying': 'Verifying room receipt',
-    'reception.replied': 'Reply confirmed in room',
+    'reception.verifying': 'Checking that the reply reached the room',
+    'reception.replied': 'The reply is in the room',
     'reception.needs_review': 'Needs attention',
     'reception.skipped': 'Skipped by owner',
     'reception.waiting': 'Waiting for your mention',
     'reception.paused': 'Paused',
     'reception.pending':
-      'A reply is unconfirmed. Verify checks the room without waking the task. Retry reuses the original message ID.',
-    'reception.verify': 'Verify receipt',
-    'reception.retry': 'Retry reply',
+      'The last reply is not confirmed yet. “Check” only looks at the room and does not wake the task; “Reply again” will not post twice.',
+    'reception.verify': 'Check',
+    'reception.retry': 'Reply again',
     'reception.skip': 'Skip this message',
     'reception.legacyPending':
-      'This older delivery has no correlation ID. Review the room and host task before skipping; automatic retry could duplicate a reply.',
+      'This came from an older version and cannot be confirmed automatically. Look at the room and the task before skipping; retrying automatically could reply twice.',
     'reception.login': 'Sign in to choose your reply authorization.',
   },
   'zh-CN': {
     'reception.agentDescription': '管理这个 Agent 在本房间的后台回复。',
     'reception.agentUnavailable':
       '这个 Agent 尚未在本机登记后台任务。可以把上面的登记请求发给它；在其他电脑运行的 Agent，需要到那台电脑上管理。',
-    'reception.starting': '正在启动接待…',
+    'reception.starting': '正在开启后台回复…',
     'reception.reconnecting': '正在恢复连接，回复暂时中断',
     'reception.enable': '开启后台回复',
     'reception.enableDescription':
@@ -79,7 +79,7 @@ export const receptionResources = {
     'reception.manual': '使用已有授权或指定程序',
     'reception.title': '后台回复',
     'reception.description':
-      '让登记过的 Agent 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
+      '让登记过的 Agent 任务随时接你的提及。电脑和 Agent Room 需要保持运行；自己手动用这个任务前，请先暂停后台回复。',
     'reception.empty': '还没有 Agent 任务开着后台回复。先让 Agent 任务登记，再在下面选择房间授权。',
     'reception.prompt':
       '请登记当前任务，以便 Agent Room 提供后台回复。通过 CLI 接入时，复用已安装程序和本任务的 --profile 执行 register，带上真实 --workspace；支持哪些工具、怎么识别任务，看 register --help。通过 MCP 接入时，使用 agent_room_register_reception，带上本任务 sessionId、准确 hostType 和工作目录。不能猜测任务 ID 或选择最近任务。登记本身不启用自动回复。',
@@ -87,44 +87,47 @@ export const receptionResources = {
     'reception.copied': '已复制',
     'reception.copyFailed': '复制失败，请选中请求文字手动复制。',
     'reception.loading': '正在读取后台回复…',
-    'reception.failed': '暂时无法读取接待信息，请刷新重试。',
-    'reception.failure.host': '宿主没有给出回复。确认它已安装、已登录且有额度，然后重新启动任务。',
+    'reception.failed': '暂时读不到后台回复的信息，请刷新重试。',
+    'reception.failure.host':
+      'Agent 程序没有给出回复。确认它已安装、已登录、还有额度，再重新启动任务。',
     'reception.failure.files': '这个任务的本机文件缺失或读不出来。移除任务后重新登记。',
     'reception.failure.authorization': '回复授权已失效。重新启用后台回复会创建新的授权。',
     'reception.failure.session': '这个 Agent 会话已不可用。请从 Agent 里重新登记任务。',
     'reception.failure.review': '有一条回复在等你审阅，任务才能继续。',
     'reception.failure.unresponsive': '任务没有及时响应。停止后再启动一次。',
-    'reception.failure.unknown': '上次尝试在本机失败。打开「本机 Agent」里的日志文件夹查看详情。',
+    'reception.failure.unknown':
+      '上次尝试在这台电脑上失败了。去“设置 → 这台电脑”打开日志文件夹看看。',
     'reception.refresh': '刷新',
     'reception.showPrompt': '查看登记请求原文',
     'reception.task': '已登记的任务',
     'reception.grant': '回复授权',
     'reception.choose': '选择授权',
     'reception.grantLabel': '有效至 {{time}} · 每分钟 {{limit}} 条',
-    'reception.noGrant': '这个 Agent 在该房间还没有可用的回复授权。请前往房间的“自动化”面板创建。',
-    'reception.bind': '添加接待任务',
-    'reception.start': '开始接待',
+    'reception.noGrant':
+      '这个 Agent 在这个房间还没有可用的回复授权。请在“房间设置 → 自动发言”里创建。',
+    'reception.bind': '添加后台回复任务',
+    'reception.start': '开启',
     'reception.pause': '暂停',
     'reception.remove': '移除',
     'reception.update': '保存授权与路径',
     'reception.settings': '授权与路径',
-    'reception.executable': '宿主程序路径（留空自动识别）',
+    'reception.executable': '程序路径（留空会自动找）',
     'reception.workspace': '工作目录',
     'reception.received': '已收到消息',
     'reception.running': '正在回复',
-    'reception.verifying': '正在核对房间回执',
-    'reception.replied': '已确认回复出现在房间',
+    'reception.verifying': '正在确认回复已发到房间',
+    'reception.replied': '回复已发到房间',
     'reception.needs_review': '需要处理',
     'reception.skipped': '已由你跳过',
     'reception.waiting': '正在等待你的提及',
     'reception.paused': '已暂停',
     'reception.pending':
-      '上一条回复还未确认。“核对回执”只读取房间，不唤醒任务；“重试回复”会复用原消息编号。',
-    'reception.verify': '核对回执',
-    'reception.retry': '重试回复',
+      '上一条回复还没确认发出去。“确认一下”只看房间，不会叫醒任务；“重新回复”不会重复发。',
+    'reception.verify': '确认一下',
+    'reception.retry': '重新回复',
     'reception.skip': '跳过这条消息',
     'reception.legacyPending':
-      '这条旧版投递没有回执关联编号。请先核对房间与宿主任务，再决定跳过；自动重试可能产生重复回复。',
+      '这条是旧版本发的，没法自动确认。先看看房间和任务再决定要不要跳过；自动重试可能会回复两次。',
     'reception.login': '请先登录，再选择你的回复授权。',
   },
 } as const;

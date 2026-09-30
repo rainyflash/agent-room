@@ -13,17 +13,17 @@ test('旧的有效登录直接创建并撤销授权，全程不跳转身份验�
   const dialog = await openRoomSettings(page, 'Automation');
   await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole('heading', { name: /Fixture Codex Agent may publish autonomously/u }),
+    dialog.getByRole('heading', { name: /Fixture Codex Agent may speak on its own/u }),
   ).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Create grant' })).toBeDisabled();
-  await expect(dialog.getByRole('button', { name: 'Verify identity again' })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Allow', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Sign in again' })).toHaveCount(0);
 
   await dialog
     .getByRole('checkbox', {
-      name: 'I understand this Agent can send without per-message approval.',
+      name: 'I understand it will speak without asking me each time.',
     })
     .check();
-  await dialog.getByRole('button', { name: 'Create grant' }).click();
+  await dialog.getByRole('button', { name: 'Allow', exact: true }).click();
 
   await expect(dialog.getByText('Active', { exact: true })).toBeVisible();
   await expect(dialog.getByText('0 / 6 this minute')).toBeVisible();
@@ -33,9 +33,9 @@ test('旧的有效登录直接创建并撤销授权，全程不跳转身份验�
     path: '../../artifacts/browser/task-29/automation-grant-desktop.png',
   });
 
-  await dialog.getByRole('button', { name: 'Revoke' }).click();
-  await expect(dialog.getByText('Revoked', { exact: true })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Revoke' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Stop' }).click();
+  await expect(dialog.getByText('Stopped', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Stop' })).toHaveCount(0);
   await expect(page).toHaveURL(/olderSession=1/u);
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
@@ -48,7 +48,7 @@ test('房间设置的自动发言在窄屏是贴底面板且没有横向溢出',
   await page.goto(`${fixturePath}?olderSession=1`);
 
   const dialog = await openRoomSettings(page, 'Automation');
-  await expect(dialog.getByRole('button', { name: 'Create grant' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Allow', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 

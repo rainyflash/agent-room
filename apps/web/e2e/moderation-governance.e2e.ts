@@ -29,15 +29,13 @@ test('举报不读取受保护正文且房间治理动作可撤销', async ({ pa
   await expect(
     governance.getByText('Open only when you want to inspect the verified bytes.'),
   ).toBeVisible();
-  const caseSelect = governance.getByLabel('Related case ID (optional)');
+  const caseSelect = governance.getByLabel('Which report (optional)');
   await caseSelect.selectOption({ index: 1 });
-  await governance
-    .getByRole('checkbox', { name: /I understand the target and room impact/iu })
-    .check();
+  await governance.getByRole('checkbox', { name: /I understand who this affects/iu }).check();
   await governance.getByRole('button', { name: 'Apply action' }).click();
   await expect(governance.getByRole('img', { name: 'Applied' })).toBeVisible();
-  await governance.getByRole('button', { name: 'Reverse' }).click();
-  await expect(governance.getByRole('img', { name: 'Reversed' })).toBeVisible();
+  await governance.getByRole('button', { name: 'Undo' }).click();
+  await expect(governance.getByRole('img', { name: 'Undone' })).toBeVisible();
 
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
