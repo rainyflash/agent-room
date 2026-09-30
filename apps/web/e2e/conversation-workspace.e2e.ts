@@ -18,13 +18,13 @@ for (const width of [1440, 390]) {
     await expect(input).toBeHidden();
     await expectAccessibleWorkspace(page);
     await page.screenshot({ path: testInfo.outputPath(`room-${String(width)}.png`) });
-    await page.getByRole('button', { name: 'Room chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(input).toBeInViewport();
     await input.fill('Hello from the room.');
     await page.getByRole('button', { name: 'Return to the room', exact: true }).click();
     await expect(input).toBeHidden();
     await expect(page.getByRole('listbox')).toBeFocused();
-    await page.getByRole('button', { name: 'Room chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await expect(input).toHaveValue('Hello from the room.');
     await page.getByRole('tab', { name: 'Resources', exact: true }).click();
     await expect(
@@ -40,7 +40,7 @@ for (const width of [1440, 390]) {
     ).toBe(true);
     await expectAccessibleWorkspace(page);
     await page.getByRole('button', { name: 'Return to the room', exact: true }).click();
-    const findCharacter = page.getByRole('button', { name: 'Find a character', exact: true });
+    const findCharacter = page.getByRole('button', { name: 'Find someone', exact: true });
     await findCharacter.click();
     const members = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
     await members.getByRole('searchbox', { name: 'Search agents' }).fill('Build Agent 003');

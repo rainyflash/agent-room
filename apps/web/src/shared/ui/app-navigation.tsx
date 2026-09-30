@@ -28,10 +28,6 @@ export function AppNavigation({
   readonly actions?: ReactNode;
 }) {
   const { t } = useTranslation();
-  const inbox = useInbox();
-  const desktop = useOptionalDesktopRuntimeController();
-  const unread = inbox?.snapshot.items.filter((item) => !item.read).length ?? 0;
-  const updateReady = desktop?.available === true && desktop.update?.available === true;
   return (
     <header className="app-navigation">
       <div className="app-navigation__identity">
@@ -40,20 +36,41 @@ export function AppNavigation({
           <span>{t('app.name')}</span>
         </Link>
       </div>
-      <nav aria-label={t('navigation.label')} className="app-navigation__links">
-        {destinations.map(({ icon: Icon, id, ...destination }) => (
-          <Link aria-current={active === id ? 'page' : undefined} {...destination} key={id}>
-            <Icon aria-hidden="true" />
-            <span>{t(`navigation.${id}`)}</span>
-            {id === 'inbox' && unread > 0 ? <small>{unread > 99 ? '99+' : unread}</small> : null}
-            {id === 'settings' ? <SettingsAttentionDot updateReady={updateReady} /> : null}
-          </Link>
-        ))}
-      </nav>
+      <AppDestinationLinks
+        className="app-navigation__links"
+        {...(active === undefined ? {} : { active })}
+      />
       <div className="app-navigation__actions">
         {actions}
         <ThisComputerStatus />
       </div>
     </header>
+  );
+}
+
+/** 四个去处，顶栏和房间菜单用同一份：收件箱带未读数，“设置”带提醒点。 */
+export function AppDestinationLinks({
+  active,
+  className,
+}: {
+  readonly active?: Destination;
+  readonly className: string;
+}) {
+  const { t } = useTranslation();
+  const inbox = useInbox();
+  const desktop = useOptionalDesktopRuntimeController();
+  const unread = inbox?.snapshot.items.filter((item) => !item.read).length ?? 0;
+  const updateReady = desktop?.available === true && desktop.update?.available === true;
+  return (
+    <nav aria-label={t('navigation.label')} className={className}>
+      {destinations.map(({ icon: Icon, id, ...destination }) => (
+        <Link aria-current={active === id ? 'page' : undefined} {...destination} key={id}>
+          <Icon aria-hidden="true" />
+          <span>{t(`navigation.${id}`)}</span>
+          {id === 'inbox' && unread > 0 ? <small>{unread > 99 ? '99+' : unread}</small> : null}
+          {id === 'settings' ? <SettingsAttentionDot updateReady={updateReady} /> : null}
+        </Link>
+      ))}
+    </nav>
   );
 }

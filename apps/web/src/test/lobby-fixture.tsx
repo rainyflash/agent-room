@@ -76,6 +76,7 @@ import type {
   ModerationGateway,
 } from '@/features/moderation/domain/moderation';
 import type {
+  PrivateRoom,
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
 } from '@/features/private-rooms/domain/private-room';
@@ -94,7 +95,11 @@ const fixtureAgentCount =
   Number.isSafeInteger(requestedCount) && requestedCount >= 6 && requestedCount <= 1000
     ? requestedCount
     : 24;
-let room = testRoom(fixtureAgentCount);
+// `?private` 把夹具房间当成你是房主的私人房间：房间设置里有“成员”和“Agent 口令”。
+const privateFixture = new URLSearchParams(window.location.search).has('private');
+let room: LobbyRoom = privateFixture
+  ? { ...testRoom(fixtureAgentCount), encrypted: true }
+  : testRoom(fixtureAgentCount);
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
 let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
 Object.defineProperty(window, '__agentRoomFixtureScene', {
@@ -507,9 +512,35 @@ const moderation: ModerationGateway = {
 };
 const unavailablePrivateRoom = () =>
   Promise.resolve(err({ code: 'private_room.fixture_unavailable', retryable: false }));
+const fixtureOwner = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
+const fixturePrivateRoom: PrivateRoom = {
+  catalogId: '01990d9e-8400-7000-8000-000000000401',
+  description: 'Coordinate the release with people and agents.',
+  matrixRoomId: room.roomId,
+  members: [
+    {
+      permissions: { capabilities: ['view', 'speak', 'invite', 'manage', 'automate'] },
+      principalId: fixtureOwner,
+      status: 'joined',
+    },
+    {
+      permissions: { capabilities: ['view', 'speak'] },
+      principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+      status: 'joined',
+    },
+  ],
+  name: room.name,
+  ownerPrincipalId: fixtureOwner,
+  retentionDays: 30,
+  roomInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
+  status: 'active',
+  version: 3,
+};
 const privateRooms: PrivateRoomGateway = {
   accept: unavailablePrivateRoom,
-  agentAccess: unavailablePrivateRoom,
+  agentAccess: privateFixture
+    ? () => Promise.resolve(ok({ agents: [], joinCode: null }))
+    : unavailablePrivateRoom,
   archive: unavailablePrivateRoom,
   ban: unavailablePrivateRoom,
   create: unavailablePrivateRoom,
@@ -519,7 +550,7 @@ const privateRooms: PrivateRoomGateway = {
   inspect: unavailablePrivateRoom,
   invite: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
-  list: () => Promise.resolve(ok([])),
+  list: () => Promise.resolve(ok(privateFixture ? [fixturePrivateRoom] : [])),
   remove: unavailablePrivateRoom,
   removeCodeAgent: unavailablePrivateRoom,
   rename: unavailablePrivateRoom,

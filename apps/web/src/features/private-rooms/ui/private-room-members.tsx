@@ -1,4 +1,4 @@
-import { Button } from '@agent-room/ui-system';
+import { Button, Details } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
@@ -29,13 +29,12 @@ import {
   type PrivateRoomMember,
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
-import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { useNetworkAgentIds } from '@/features/lobby/ui/network-agent-labels';
 import type { Result } from '@/shared/result';
 
-export type PrivateRoomGovernanceProps = {
+export type PrivateRoomMembersProps = {
   readonly coordinator: PrivateRoomCoordinator;
   readonly onExitRoom: () => void;
   readonly principalId: string;
@@ -74,14 +73,18 @@ type RoomCommand = {
   readonly onSuccess?: (room: PrivateRoom) => void;
 };
 
-export function PrivateRoomGovernance({
+/**
+ * 房间设置里的“成员”：房间概况（房主可以改名）、邀请、成员和权限、退出或归档。
+ * Agent 口令是房间设置里单独的一节。
+ */
+export function PrivateRoomMembers({
   coordinator,
   onExitRoom,
   principalId,
   recentlyAuthenticated,
   room,
   rooms,
-}: PrivateRoomGovernanceProps) {
+}: PrivateRoomMembersProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
@@ -113,15 +116,7 @@ export function PrivateRoomGovernance({
   };
 
   return (
-    <section className="private-room-governance" aria-labelledby="private-room-governance-title">
-      <header>
-        <div>
-          <p className="eyebrow">{t('privateRooms.governance.eyebrow')}</p>
-          <h2 id="private-room-governance-title">{t('privateRooms.governance.title')}</h2>
-        </div>
-        <span>{t('privateRooms.governance.version', { version: room.version })}</span>
-      </header>
-
+    <div className="private-room-governance">
       <div className="private-room-governance__summary">
         <div>
           {owner ? (
@@ -136,7 +131,6 @@ export function PrivateRoomGovernance({
           ) : (
             <strong>{room.name}</strong>
           )}
-          <span>{room.catalogId}</span>
         </div>
         <dl>
           <div>
@@ -283,10 +277,6 @@ export function PrivateRoomGovernance({
         </ol>
       </div>
 
-      {canManage && room.status === 'active' ? (
-        <PrivateRoomAgentAccess room={room} rooms={rooms} />
-      ) : null}
-
       {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
       {mutation.isPending ? (
         <p className="private-room-operation" role="status">
@@ -333,7 +323,22 @@ export function PrivateRoomGovernance({
           </Button>
         )}
       </footer>
-    </section>
+
+      <Details summary={t('privateRooms.governance.details')}>
+        <dl className="private-room-details">
+          <div>
+            <dt>{t('privateRooms.governance.roomId')}</dt>
+            <dd>
+              <code>{room.catalogId}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>{t('privateRooms.governance.versionLabel')}</dt>
+            <dd>{room.version}</dd>
+          </div>
+        </dl>
+      </Details>
+    </div>
   );
 }
 

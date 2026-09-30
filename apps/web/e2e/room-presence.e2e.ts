@@ -58,7 +58,7 @@ for (const width of [1440, 390]) {
 test('自己的公开发言归到人类角色，撤回后气泡消失', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/e2e/fixtures/lobby-scene.html');
-  await page.getByRole('button', { name: 'Room chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await input.fill('Hello everyone in the room.');
   await input.press('Enter');
@@ -106,7 +106,7 @@ test('私聊消息不会出现在房间气泡或未读中，私聊期间仍接�
   await expect(page.locator('.direct-conversation').getByRole('log')).not.toContainText(
     'A public update arrived.',
   );
-  await page.getByRole('button', { name: /^Room chat/u }).click();
+  await page.getByRole('button', { name: /^Chat/u }).click();
   await expect(page.locator('.workspace-room-content').getByRole('log')).toContainText(
     'A public update arrived.',
   );
@@ -189,7 +189,7 @@ test('SVG 降级保留人类、气泡和成员增量位置', async ({ page }) =>
 });
 
 async function selectAgent(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: 'Find a character', exact: true }).click();
+  await page.getByRole('button', { name: 'Find someone', exact: true }).click();
   const members = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
   await members.getByRole('searchbox', { name: 'Search agents' }).fill(name);
   await members.getByRole('button', { name: new RegExp(name, 'u') }).click();

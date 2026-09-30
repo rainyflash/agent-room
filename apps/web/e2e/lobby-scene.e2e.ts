@@ -174,9 +174,9 @@ test('手机保留游戏房间，减少动画可暂停角色并手动切换列�
     'data-agent-room-motion',
     'paused',
   );
-  await page.getByRole('button', { name: 'List view', exact: true }).click();
+  await page.getByRole('button', { name: 'List', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Agent roster' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Spatial view' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Scene', exact: true })).toBeEnabled();
   await expectCompleteRosterPages(page, 200);
   await expect(page.locator('canvas')).toHaveCount(0);
   await expect(page.locator('.ar-status-mark--pulse')).toHaveCount(0);
@@ -298,7 +298,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await conversation.getByRole('button', { name: 'Close direct conversation' }).click();
   await expect(conversation).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'List view' }).click();
+  await page.getByRole('button', { name: 'List', exact: true }).click();
   await page.getByRole('button', { name: /Build Agent 001/u }).click();
   await page.getByRole('button', { name: 'Message Agent' }).click();
   await expect(page.locator('.agent-inspector')).toHaveCount(0);

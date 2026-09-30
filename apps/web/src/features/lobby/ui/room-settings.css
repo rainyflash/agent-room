@@ -1,0 +1,39 @@
+/* 房间设置：分节切换在上，每节的内容在对话框里滚动。 */
+.room-settings__state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ar-muted);
+}
+
+.room-settings__section {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.room-settings__section[hidden] {
+  display: none;
+}
+
+.private-room-details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.private-room-details > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.private-room-details dt {
+  color: var(--ar-muted);
+}
+
+.private-room-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

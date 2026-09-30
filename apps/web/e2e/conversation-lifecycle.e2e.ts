@@ -19,7 +19,7 @@ for (const width of [1440, 390]) {
     await direct.getByRole('button', { name: 'Reply to Build Agent 002' }).click();
     const input = direct.getByRole('textbox', { name: 'Message', exact: true });
     await input.fill('Keep this private draft.');
-    await page.getByRole('button', { name: 'Room chat', exact: true }).click();
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
     const publicInput = page
       .locator('.workspace-room-content')
       .getByRole('textbox', { name: 'Message', exact: true });

@@ -10,9 +10,7 @@ test('旧的有效登录直接创建并撤销授权，全程不跳转身份验�
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(`${fixturePath}?olderSession=1`);
 
-  await openRoomSettings(page);
-  await page.getByRole('button', { name: 'Automation' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Automation grants' });
+  const dialog = await openRoomSettings(page, 'Automation');
   await expect(dialog).toBeVisible();
   await expect(
     dialog.getByRole('heading', { name: /Fixture Codex Agent may publish autonomously/u }),
@@ -43,15 +41,14 @@ test('旧的有效登录直接创建并撤销授权，全程不跳转身份验�
   expect(failures).toEqual([]);
 });
 
-test('自动发言授权在窄屏退化为全屏面板且没有横向溢出', async ({ page }) => {
+test('房间设置的自动发言在窄屏是贴底面板且没有横向溢出', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(`${fixturePath}?olderSession=1`);
 
-  await openRoomSettings(page);
-  await page.getByRole('button', { name: 'Automation' }).click();
-  await expect(page.getByRole('dialog', { name: 'Automation grants' })).toBeVisible();
+  const dialog = await openRoomSettings(page, 'Automation');
+  await expect(dialog.getByRole('button', { name: 'Create grant' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 

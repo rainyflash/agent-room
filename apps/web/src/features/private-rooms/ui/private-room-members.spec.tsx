@@ -16,7 +16,8 @@ import type {
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
-import { PrivateRoomGovernance } from './private-room-governance';
+import { PrivateRoomAgentAccess as AgentCodeSection } from './private-room-agent-access';
+import { PrivateRoomMembers } from './private-room-members';
 
 const OWNER = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
 const MEMBER = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
@@ -96,7 +97,10 @@ function gateway(initial: PrivateRoomAgentAccess = { agents: [], joinCode: null 
   return { agentAccess, disableJoinCode, generateJoinCode, removeCodeAgent, rename, value };
 }
 
-/** `networkAgents` 是服务器认定的网络 Agent。 */
+/**
+ * 和房间设置里一样，“成员”和“Agent 口令”两节同时挂着；只有能管理房间的人有口令一节。
+ * `networkAgents` 是服务器认定的网络 Agent。
+ */
 function renderGovernance(
   principalId: string,
   rooms: PrivateRoomGateway,
@@ -116,7 +120,7 @@ function renderGovernance(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient()}>
         <NetworkAgentLabelsProvider store={labels}>
-          <PrivateRoomGovernance
+          <PrivateRoomMembers
             coordinator={{} as PrivateRoomCoordinator}
             onExitRoom={() => undefined}
             principalId={principalId}
@@ -124,6 +128,7 @@ function renderGovernance(
             room={room}
             rooms={rooms}
           />
+          {principalId === OWNER ? <AgentCodeSection room={room} rooms={rooms} /> : null}
         </NetworkAgentLabelsProvider>
       </QueryClientProvider>
     </I18nextProvider>,
@@ -150,7 +155,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('PrivateRoomGovernance', () => {
+describe('私人房间的成员与 Agent 口令', () => {
   it('房主可以改名：名字没变或为空时不能提交', async () => {
     const rooms = gateway();
     renderGovernance(OWNER, rooms.value);
