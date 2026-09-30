@@ -2,7 +2,12 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { z } from 'zod';
-import { collectUnhandledFailures, connectLiveSession } from './support/live-session';
+import {
+  collectUnhandledFailures,
+  connectLiveSession,
+  readMatrixSession,
+} from './support/live-session';
+import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
 
 // import.meta.url 位于 apps/web/e2e-live，验收产物存于仓库根目录。
 const work = new URL('../../../artifacts/private-chat/', import.meta.url);
@@ -44,40 +49,42 @@ test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后
     password,
     expectedDisplayName: 'Local Developer',
   });
-  // 首次同步后自动建立加密身份，不需要去安全中心手动操作。
+  // 首次同步后自动建立加密身份并给这台设备签名，不需要去“设置 → 安全”点“现在设置”。
+  // Matrix ID 在最下面的“账户详情”里（界面翻新 4b 起默认收起）。
+  const accountDetails = page.locator('.security-account-details');
+  const signed = page.getByText('This device is signed by you', { exact: true });
   await expect
     .poll(
       async () => {
         await page.goto('/settings/security');
-        await expect(page.locator('.security-account-line')).toContainText(userId, {
-          timeout: 40_000,
-        });
-        return await page
-          .getByRole('button', { name: 'Establish encrypted identity', exact: true })
-          .count();
+        await accountDetails.locator('summary').click({ timeout: 40_000 });
+        await expect(accountDetails).toContainText(userId, { timeout: 40_000 });
+        return await signed.count();
       },
       { timeout: 60_000 },
     )
-    .toBe(0);
-  const storedSession: unknown = await page.evaluate((): unknown =>
-    JSON.parse(sessionStorage.getItem('agent-room.matrix-session.v1') ?? 'null'),
-  );
-  const { deviceId } = z.object({ deviceId: z.string() }).parse(storedSession);
+    .toBe(1);
+  // 会话存在 IndexedDB 里，sessionStorage 里的旧键登录后就清掉了。
+  const { deviceId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
   await page.goto(`/lobby/${scenario.catalogId}`);
   await expect(page).toHaveURL(/\/instance\//u);
-  await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
+  const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene', exact: true });
+  // 画布对读屏隐藏（aria-hidden），只能在场景里按类名找；它出现说明用的是 Pixi 渲染。
+  const canvas = scene.locator('.lobby-scene__canvas');
+  await expect(canvas).toBeVisible();
   async function openPrivate(): Promise<void> {
-    await page.getByRole('button', { name: 'Find a character', exact: true }).click();
+    await page.getByRole('button', { name: 'Find someone', exact: true }).click();
     const members = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
     await members.getByRole('searchbox', { name: 'Search agents' }).fill(scenario.targetName);
     await members.getByRole('button').filter({ hasText: scenario.targetName }).click();
-    const inspector = page
-      .locator('.agent-inspector')
-      .filter({ has: page.getByRole('heading', { name: scenario.targetName, exact: true }) });
-    await inspector.getByRole('button', { name: 'Message Agent', exact: true }).click();
+    // Agent 详情最上面就是私聊按钮；它不在线时叫“留言”，打开的是同一段私聊。
+    await page
+      .getByRole('complementary', { name: scenario.targetName, exact: true })
+      .getByRole('button', { name: /^(?:Message|Leave a message)$/u })
+      .click();
   }
   await openPrivate();
-  const direct = page.locator('.direct-conversation');
+  const direct = page.getByRole('region', { name: 'Direct messages', exact: true });
   const input = direct.getByRole('textbox', { name: 'Message', exact: true });
   await expect(input).toBeEnabled();
   const inputId = await input.getAttribute('id');
@@ -106,11 +113,15 @@ test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后
     ).toBeVisible();
   }
   await roundtrip('first');
-  const incoming = page.getByRole('dialog', { name: 'Verify a room participant', exact: true });
-  const dialog = page.getByRole('dialog', { name: 'Verify a Matrix device', exact: true });
+  // 对方请求核对时，右下角的提示栈里出现一条提示；接受后才打开核对对话框。
+  const incoming = page
+    .getByRole('region', { name: 'Notifications', exact: true })
+    .getByRole('alert')
+    .filter({ hasText: 'Verify a room participant' });
+  const dialog = page.getByRole('dialog', { name: 'Verify a device', exact: true });
   for (const round of ['mismatch', 'match']) {
     await expect(incoming).toContainText(scenario.targetMatrixUserId, { timeout: 60_000 });
-    await incoming.getByRole('button', { name: 'Review codes' }).click();
+    await incoming.getByRole('button', { name: 'Review codes', exact: true }).click();
     const decimalLine = dialog.getByText(/^Decimal check:/u);
     await expect(decimalLine).toBeVisible({ timeout: 60_000 });
     const decimals = (await decimalLine.innerText()).match(/\d+/gu)?.map(Number);
@@ -143,14 +154,18 @@ test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后
   put('restart-request.json', { ready: true });
   await wait('restarted.json');
   await page.reload();
-  await expect(page.locator('.lobby-scene__canvas')).toBeVisible();
+  await expect(canvas).toBeVisible();
   if ((await input.count()) === 0) await openPrivate();
   await expect(input).toBeEnabled();
   await expect(direct.getByRole('log')).toContainText(scenario.firstReply, { timeout: 40_000 });
   await roundtrip('second');
   await page.screenshot({ path: fileURLToPath(new URL('private-roundtrip.png', work)) });
-  await page.getByRole('button', { name: /^Room chat/u }).click();
-  const publicLog = page.locator('.workspace-room-content').getByRole('log');
+  // 工具栏的“对话”回到房间里的聊天；有未读时名字后面带着条数。
+  await page.getByRole('button', { name: /^Chat/u }).click();
+  const publicLog = page
+    .getByRole('region', { name: 'Conversation', exact: true })
+    .getByRole('log');
+  await expect(publicLog).toBeVisible();
   for (const text of [
     scenario.firstText,
     scenario.firstReply,
