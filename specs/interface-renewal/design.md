@@ -264,3 +264,4 @@
   - 删掉没人用的代码：房间抽屉里给旧滑出面板用的挂载点（`overlay-container`，5b 起房间设置等都是原生对话框，用不上了），一个没人调用的举报列表查询。
   - 暗色模式：首页、连接页、指南、找不到页面、房间（场景、对话、私人房间）、房间列表、我的 Agent、设置（通用、关于、安全）在 1440 和 390 宽下都看过，没有发现看不清或漏换颜色的地方。样式里写死的颜色只剩一处遮罩渐变和一处和白色混合的描边，暗色下都正常。游戏场景按规则保持白天配色。
   - 登录页（Keycloak）仍只用亮色；桌面端回跳页跟随系统。
+  - 和上面写的不一样的地方：“组件”一节列的 Panel、PageHeader、Sheet、Badge、EmptyState、Switch、TextInput、TextArea、Select 没有单独做成 `ui-system` 组件。翻新后这些样子各页只有一两处，都已经用同一套令牌和形状；做成组件看不出区别，以后同一个样子用到第三处时再抽。实际加进 `ui-system` 的是 Dialog、Segmented、Banner、Details、Spinner、CopyBlock、Toast、Field 和按钮的 `send`。
