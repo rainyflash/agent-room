@@ -1,69 +1,107 @@
+/* 桌面端登录后浏览器里的回跳页：和网页端同一套令牌，暗色跟随系统。页面的 CSP 很严，样式和图标都内联。 */
 :root {
-  color: #233039;
-  background: #ffffff;
-  font-family: system-ui, sans-serif;
+  color-scheme: light dark;
+  --ink: #2a2733;
+  --canvas: #fff4dc;
+  --surface: #fffdf7;
+  --muted: #5c5866;
+  --outline: #2a2733;
+  --mint: #bde8d8;
+  --danger-soft: #ffe4dc;
+  color: var(--ink);
+  background: var(--canvas);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f1ece2;
+    --canvas: #131217;
+    --surface: #1e1c24;
+    --muted: #aaa4b4;
+    --outline: #8e879d;
+    --mint: #1f4d43;
+    --danger-soft: #402320;
+  }
 }
 * {
   box-sizing: border-box;
 }
 body {
-  margin: 0;
+  display: flex;
   min-width: 320px;
   min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin: 0;
+  padding: 20px 16px 40px;
+  background: var(--canvas);
 }
 header {
-  min-height: 72px;
-  padding: 20px 40px;
-  border-bottom: 1px solid #dbe3e6;
-  background: #ffffff;
-  color: #233039;
-  font-size: 22px;
+  display: flex;
+  width: min(520px, 100%);
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
   font-weight: 650;
 }
-main {
-  width: min(540px, calc(100% - 40px));
-  margin: 12vh auto 40px;
-  padding: 44px;
-  border: 1px solid #dbe3e6;
-  border-radius: 12px;
-  background: #ffffff;
-}
-.room-mark {
-  width: 56px;
-  height: 56px;
-}
-.room-mark svg {
+header .mark svg {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 30px;
+  height: 30px;
+}
+main {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 14px;
+  margin-top: 8vh;
+  padding: 28px;
+  border: 2.5px solid var(--outline);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: 0 4px 0 var(--outline);
+}
+.status {
+  display: flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--outline);
+  border-radius: 50%;
+  background: var(--mint);
+}
+.status--failed {
+  background: var(--danger-soft);
+}
+.status svg {
+  width: 22px;
+  height: 22px;
 }
 h1 {
-  margin: 24px 0 18px;
-  color: #233039;
-  font-size: 32px;
-  font-weight: 600;
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
   line-height: 1.25;
-  letter-spacing: -0.03em;
 }
 p {
-  color: #5f6e76;
-  font-size: 16px;
-  line-height: 1.8;
-}
-.return-note {
-  margin-top: 28px;
-  padding-top: 22px;
-  border-top: 1px solid #dbe3e6;
-  color: #5f6e76;
-  font-size: 13px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
   line-height: 1.6;
 }
 @media (max-width: 560px) {
   main {
-    padding: 28px;
-    margin-top: 8vh;
+    margin-top: 4vh;
+    padding: 22px 18px;
   }
   h1 {
-    font-size: 26px;
+    font-size: 24px;
   }
 }

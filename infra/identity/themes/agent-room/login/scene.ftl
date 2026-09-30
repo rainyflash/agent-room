@@ -1,10 +1,7 @@
 <#-- Agent Room 的标志和页面右侧的房间场景。场景纯装饰，对读屏隐藏；机器人用 currentColor 上色。 -->
+<#-- 和网页端、桌面端同一个标志：tools/sync-brand-assets.mjs 从 apps/web/public/agent-room-mark.svg 复制过来。 -->
 <#macro logo>
-    <svg class="ar-logo" viewBox="0 0 40 40" aria-hidden="true" focusable="false">
-        <rect x="1.5" y="1.5" width="37" height="37" rx="11" fill="#247A77" stroke="#2A2733" stroke-width="2.5"/>
-        <rect x="10" y="10" width="20" height="20" rx="6" fill="none" stroke="#FFFDF7" stroke-width="3"/>
-        <circle cx="25" cy="25" r="3.2" fill="#BDE8D8"/>
-    </svg>
+    <img class="ar-logo" src="${url.resourcesPath}/img/agent-room-mark.svg" alt="" width="32" height="32"/>
 </#macro>
 
 <#macro bot kind label="" wave=false>

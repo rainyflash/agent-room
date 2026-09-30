@@ -41,19 +41,24 @@
   unicode-range: U+0000-00FF, U+2000-206F;
 }
 
+/* 与 packages/ui-system 的亮色令牌一致；登录页只用亮色（模板里 color-scheme 是 light）。 */
 :root {
   --ar-ink: #2a2733;
+  --ar-paper: #ffffff;
   --ar-canvas: #fff4dc;
   --ar-surface: #fffdf7;
   --ar-surface-muted: #fff6e3;
   --ar-line: #e8d9b8;
   --ar-muted: #5c5866;
   --ar-accent: #247a77;
+  --ar-accent-hover: #1c6562;
   --ar-accent-soft: #eaf5f2;
   --ar-sunny: #ffc53d;
   --ar-sunny-hover: #ffb81f;
-  --ar-coral: #f28b6e;
+  --ar-coral: #f07058;
+  --ar-coral-hover: #f58670;
   --ar-sky: #8ec5f5;
+  --ar-sky-hover: #76b7ef;
   --ar-mint: #bde8d8;
   --ar-leaf: #6cc08b;
   --ar-warning: #895919;
@@ -61,14 +66,20 @@
   --ar-danger: #b23e3a;
   --ar-danger-soft: #ffe4dc;
   --ar-success: #287253;
+  --ar-outline: #2a2733;
+  --ar-outline-width: 2.5px;
+  --ar-outline-thin: 2px;
+  --ar-control-radius: 14px;
+  --ar-panel-radius: 28px;
+  --ar-pill: 999px;
   --ar-font:
     'Fredoka Variable', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB',
     sans-serif;
   --ar-font-display:
     'Fredoka Variable', 'ZCOOL KuaiLe', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --ar-font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
-  --ar-press: 0 4px 0 var(--ar-ink);
-  --ar-press-small: 0 3px 0 var(--ar-ink);
+  --ar-press: 0 4px 0 var(--ar-outline);
+  --ar-press-small: 0 3px 0 var(--ar-outline);
 }
 
 *,
@@ -123,12 +134,12 @@ body {
 
 .ar-topbar {
   display: flex;
-  min-height: 88px;
+  min-height: 72px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 0 clamp(16px, 4vw, 56px);
-  border-bottom: 2px solid var(--ar-line);
+  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
 }
 
 .ar-brand {
@@ -136,14 +147,15 @@ body {
   align-items: center;
   gap: 12px;
   color: var(--ar-ink);
-  font-size: 24px;
+  font-family: var(--ar-font-display);
+  font-size: 22px;
   font-weight: 600;
   text-decoration: none;
 }
 
 .ar-logo {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
 }
 
@@ -151,8 +163,8 @@ body {
   display: flex;
   gap: 4px;
   padding: 4px;
-  border: 2px solid var(--ar-ink);
-  border-radius: 999px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   background: var(--ar-surface);
 }
 
@@ -162,14 +174,14 @@ body {
   align-items: center;
   padding: 0 16px;
   border: 2px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--ar-pill);
   color: var(--ar-ink);
   font-size: 15px;
   text-decoration: none;
 }
 
 .ar-body .ar-locale__item[aria-current='true'] {
-  border-color: var(--ar-ink);
+  border-color: var(--ar-outline);
   background: var(--ar-sunny);
 }
 
@@ -200,10 +212,10 @@ body {
   flex-direction: column;
   gap: 20px;
   padding: 38px 44px;
-  border: 2.5px solid var(--ar-ink);
-  border-radius: 28px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: 0 6px 0 var(--ar-ink);
+  box-shadow: var(--ar-press);
 }
 
 .ar-title {
@@ -240,8 +252,8 @@ body {
   gap: 8px 12px;
   margin-top: -8px;
   padding: 10px 14px;
-  border: 2px solid var(--ar-line);
-  border-radius: 14px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-control-radius);
   background: var(--ar-surface-muted);
 }
 
@@ -268,8 +280,8 @@ body {
 }
 
 .ar-label {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .ar-hint {
@@ -279,14 +291,14 @@ body {
 
 .ar-input {
   width: 100%;
-  min-height: 52px;
-  padding: 0 16px;
-  border: 2px solid var(--ar-ink);
-  border-radius: 14px;
+  min-height: 48px;
+  padding: 0 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
   color: var(--ar-ink);
-  background: #fff;
+  background: var(--ar-paper);
   font-family: inherit;
-  font-size: 17px;
+  font-size: 16px;
   transition: box-shadow 120ms ease;
 }
 
@@ -335,7 +347,7 @@ textarea.ar-input {
   height: 40px;
   place-items: center;
   padding: 0;
-  border: 2px solid var(--ar-ink);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
   color: var(--ar-ink);
   background: var(--ar-surface-muted);
@@ -420,19 +432,19 @@ textarea.ar-input {
 
 .ar-button {
   display: inline-flex;
-  min-height: 52px;
+  min-height: 48px;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 0 24px;
-  border: 2.5px solid var(--ar-ink);
-  border-radius: 999px;
+  gap: 8px;
+  padding: 0 22px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   color: var(--ar-ink);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
+  box-shadow: var(--ar-press-small);
   font-family: inherit;
-  font-size: 17px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.2;
   text-align: center;
   text-decoration: none;
@@ -445,24 +457,22 @@ textarea.ar-input {
 
 .ar-body a.ar-button {
   color: var(--ar-ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ar-button:not(:disabled):active {
-  box-shadow: 0 1px 0 var(--ar-ink);
-  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ar-outline);
+  transform: translateY(2px);
 }
 
 .ar-button:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.5;
   box-shadow: none;
 }
 
 .ar-button--primary {
-  min-height: 56px;
   background: var(--ar-sunny);
-  font-size: 18px;
 }
 
 .ar-button--primary:not(:disabled):hover {
@@ -478,10 +488,9 @@ textarea.ar-input {
 }
 
 .ar-button--compact {
-  min-height: 44px;
-  padding: 0 20px;
-  font-size: 16px;
-  box-shadow: var(--ar-press-small);
+  min-height: 40px;
+  padding: 0 18px;
+  font-size: 15px;
 }
 
 .ar-button__arrow {
@@ -501,7 +510,7 @@ textarea.ar-input {
   align-items: flex-start;
   gap: 10px;
   padding: 12px 16px;
-  border: 2px solid var(--ar-ink);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 16px;
   background: var(--ar-accent-soft);
   font-size: 15px;
@@ -541,7 +550,7 @@ textarea.ar-input {
   display: flex;
   gap: 12px;
   padding: 14px 16px;
-  border: 2px solid var(--ar-ink);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 16px;
   background: var(--ar-warning-soft);
   font-size: 15px;
@@ -568,8 +577,8 @@ textarea.ar-input {
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  border: 2px solid var(--ar-ink);
-  border-radius: 999px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   background: var(--ar-mint);
   font-size: 14px;
   font-weight: 600;
@@ -599,7 +608,7 @@ textarea.ar-input {
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  border: 2px solid var(--ar-ink);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
   background: var(--ar-sunny);
   font-weight: 700;
@@ -611,7 +620,7 @@ textarea.ar-input {
   align-items: center;
   gap: 6px;
   padding: 18px 12px;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 20px;
   background: var(--ar-mint);
   text-align: center;
@@ -655,8 +664,8 @@ textarea.ar-input {
   flex-direction: column;
   gap: 4px;
   padding: 12px 14px;
-  border: 2px solid var(--ar-line);
-  border-radius: 14px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-control-radius);
   background: var(--ar-surface-muted);
 }
 
@@ -682,8 +691,8 @@ textarea.ar-input {
 
 .ar-scopes li {
   padding: 10px 14px;
-  border: 2px solid var(--ar-line);
-  border-radius: 14px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-control-radius);
   background: var(--ar-surface-muted);
 }
 
@@ -698,7 +707,7 @@ textarea.ar-input {
 
 .ar-signup {
   padding-top: 18px;
-  border-top: 2px dashed var(--ar-line);
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
   color: var(--ar-muted);
   font-size: 16px;
 }
@@ -724,10 +733,10 @@ textarea.ar-input {
   position: relative;
   min-height: 560px;
   overflow: hidden;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 32px;
   background: repeating-conic-gradient(#fbe6bc 0% 25%, #fff1d3 0% 50%) 0 0 / 56px 56px;
-  box-shadow: 0 6px 0 var(--ar-ink);
+  box-shadow: var(--ar-press);
   container-type: inline-size;
 }
 
@@ -735,7 +744,7 @@ textarea.ar-input {
   position: absolute;
   inset: 0 0 auto;
   height: 36px;
-  border-bottom: 2.5px solid var(--ar-ink);
+  border-bottom: var(--ar-outline-width) solid var(--ar-outline);
   background: var(--ar-coral);
 }
 
@@ -745,7 +754,7 @@ textarea.ar-input {
   left: 18%;
   width: 21%;
   height: 17px;
-  border: 2px solid var(--ar-ink);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 6px;
   background: #cfe8ff;
 }
@@ -777,10 +786,10 @@ textarea.ar-input {
 
 .ar-bot figcaption {
   padding: 3px 14px;
-  border: 2px solid var(--ar-ink);
-  border-radius: 999px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
   color: var(--ar-ink);
-  background: #fff;
+  background: var(--ar-paper);
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
@@ -805,10 +814,10 @@ textarea.ar-input {
   width: min(360px, 60%);
   margin: 0;
   padding: 14px 18px;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 4px 0 var(--ar-ink);
+  background: var(--ar-paper);
+  box-shadow: var(--ar-press);
   font-size: 18px;
   font-weight: 500;
   line-height: 1.5;
@@ -821,9 +830,9 @@ textarea.ar-input {
   left: 40px;
   width: 16px;
   height: 16px;
-  border-right: 2.5px solid var(--ar-ink);
-  border-bottom: 2.5px solid var(--ar-ink);
-  background: #fff;
+  border-right: var(--ar-outline-width) solid var(--ar-outline);
+  border-bottom: var(--ar-outline-width) solid var(--ar-outline);
+  background: var(--ar-paper);
   transform: rotate(45deg);
 }
 
@@ -833,7 +842,7 @@ textarea.ar-input {
   left: 6%;
   width: 56px;
   height: 56px;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 50%;
   background: var(--ar-leaf);
 }
@@ -844,7 +853,7 @@ textarea.ar-input {
   left: 24%;
   width: 52%;
   height: 22%;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 34px;
   background: repeating-linear-gradient(90deg, #9cccf6 0 22px, var(--ar-surface) 22px 44px);
 }
@@ -879,7 +888,7 @@ textarea.ar-input {
   width: 120px;
   height: 36px;
   place-items: center;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 10px;
   background: var(--ar-sunny);
   font-size: 15px;
@@ -913,7 +922,7 @@ textarea.ar-input {
   left: 68%;
   width: 110px;
   height: 150px;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 55px 55px 12px 12px;
   background: #f07058;
 }
@@ -954,7 +963,7 @@ textarea.ar-input {
   left: 22%;
   width: 56%;
   height: 30px;
-  border: 2.5px solid var(--ar-ink);
+  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: 10px;
   background: #d9a066;
 }
@@ -981,8 +990,10 @@ textarea.ar-input {
 /* ------------------------------------------------------------------ narrow screens */
 
 @media (max-width: 960px) {
+  /* 排成一列时从上往下排：多出来的高度留在底下，不在插画和卡片中间空一大段。 */
   .ar-main {
     grid-template-columns: minmax(0, 1fr);
+    align-content: start;
     gap: 14px;
     padding: 16px;
   }
@@ -996,7 +1007,7 @@ textarea.ar-input {
     justify-self: center;
     border-radius: 24px;
     background-size: 40px 40px;
-    box-shadow: 0 4px 0 var(--ar-ink);
+    box-shadow: var(--ar-press);
   }
 
   .ar-scene__wall {
@@ -1090,7 +1101,7 @@ textarea.ar-input {
     gap: 16px;
     padding: 24px 20px;
     border-radius: 24px;
-    box-shadow: 0 5px 0 var(--ar-ink);
+    box-shadow: var(--ar-press);
   }
 
   .ar-lead {
@@ -1101,7 +1112,7 @@ textarea.ar-input {
 
 @media (max-width: 560px) {
   .ar-topbar {
-    min-height: 68px;
+    min-height: 64px;
   }
 
   .ar-brand {
@@ -1109,8 +1120,8 @@ textarea.ar-input {
   }
 
   .ar-logo {
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
   }
 
   .ar-body .ar-locale__item {
