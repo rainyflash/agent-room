@@ -5,6 +5,7 @@ import {
   CopyBlock,
   Details,
   Dialog,
+  Field,
   Segmented,
   Spinner,
   Toast,
@@ -189,6 +190,37 @@ describe('Details', () => {
     const open = screen.getByText('Details').closest('details');
     expect(closed).not.toHaveAttribute('open');
     expect(open).toHaveAttribute('open');
+  });
+});
+
+describe('Field', () => {
+  it('标签、说明和错误都关联到输入框上；有错误时标成无效', () => {
+    const { rerender } = render(
+      <Field hint="Up to 50." label="Invite people">
+        <textarea />
+      </Field>,
+    );
+    const input = screen.getByRole('textbox', { name: 'Invite people' });
+    expect(input).toHaveAccessibleDescription('Up to 50.');
+    expect(input).not.toHaveAttribute('aria-invalid');
+
+    rerender(
+      <Field error="Each line must be an account ID." hint="Up to 50." label="Invite people">
+        <textarea />
+      </Field>,
+    );
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleDescription('Up to 50. Each line must be an account ID.');
+    expect(screen.getByRole('alert')).toHaveTextContent('Each line must be an account ID.');
+  });
+
+  it('输入框自己带的 id 保留下来', () => {
+    render(
+      <Field label="Name">
+        <input id="room-name" />
+      </Field>,
+    );
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveAttribute('id', 'room-name');
   });
 });
 

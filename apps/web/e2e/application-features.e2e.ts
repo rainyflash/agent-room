@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { applicationVersion } from '../build/runtime-manifest';
 import { readFile } from 'node:fs/promises';
@@ -19,25 +20,27 @@ const png = Buffer.from(
 );
 
 for (const width of [1440, 390]) {
-  test(`创建大厅、切换与版本入口 ${String(width)}`, async ({ page }, testInfo) => {
+  test(`新建房间、换个房间与版本入口 ${String(width)}`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${fixture}&failJoin=1`);
-    await expect(page.getByRole('heading', { name: 'My halls' })).toBeVisible();
-    await page.getByRole('button', { name: 'New hall', exact: true }).click();
-    const dialog = page.getByRole('dialog');
-    await page.getByRole('textbox', { name: 'Hall name', exact: true }).fill('Release workshop');
-    await expect(dialog).toContainText('Only invited members');
+    await expect(page.getByRole('heading', { name: 'Your private rooms' })).toBeVisible();
+    await page.getByRole('button', { name: 'New room', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New room' });
+    await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Release workshop');
+    await expect(dialog).toContainText('Private rooms are invite only');
     const bounds = await dialog.boundingBox();
-    if (bounds === null) throw new Error('Hall dialog is not visible');
+    if (bounds === null) throw new Error('New room dialog is not visible');
     expect(Math.abs(bounds.x + bounds.width / 2 - width / 2)).toBeLessThan(2);
-    expect(Math.abs(bounds.y + bounds.height / 2 - 450)).toBeLessThan(2);
+    if (width >= 768) expect(Math.abs(bounds.y + bounds.height / 2 - 450)).toBeLessThan(2);
+    // 手机上是贴底的面板。
+    else expect(Math.abs(bounds.y + bounds.height - 900)).toBeLessThan(2);
     await page.screenshot({
       path: testInfo.outputPath(`create-${String(width)}.png`),
       fullPage: true,
     });
     await dialog.getByRole('button', { name: 'Create and enter' }).click();
-    await expect(dialog.getByRole('alert')).toContainText('Could not enter');
+    await expect(dialog.getByRole('alert')).toContainText('Could not finish creating the room');
     await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(
@@ -50,17 +53,17 @@ for (const width of [1440, 390]) {
     expect(new Set(evidence.creates).size).toBe(1);
     const input = page.getByRole('textbox', { name: 'Message', exact: true });
     await input.fill('Keep my draft here');
-    await page.getByRole('button', { name: 'Switch hall' }).click();
-    await page.getByRole('searchbox', { name: 'Find a hall' }).fill('Engineering');
+    await page.getByRole('button', { name: 'Switch room' }).click();
+    await page.getByRole('searchbox', { name: 'Search rooms' }).fill('Engineering');
     await page
       .getByRole('dialog')
-      .getByRole('button', { name: /Engineering hall/ })
+      .getByRole('button', { name: /Engineering room/ })
       .click();
     await expect(
-      page.getByRole('heading', { name: 'Engineering hall', exact: true }),
+      page.getByRole('heading', { name: 'Engineering room', exact: true }),
     ).toBeVisible();
     await expect(input).toHaveValue('');
-    await page.getByRole('button', { name: 'Switch hall' }).click();
+    await page.getByRole('button', { name: 'Switch room' }).click();
     await page
       .getByRole('dialog')
       .getByRole('button', { name: /Release workshop/ })
@@ -97,13 +100,13 @@ for (const width of [1440, 390]) {
     await expect(page.locator('.conversation-attachment-picker__file')).toContainText(
       'diagram.png',
     );
-    await page.getByRole('button', { name: 'Switch hall' }).click();
+    await page.getByRole('button', { name: 'Switch room' }).click();
     await page
       .getByRole('dialog')
-      .getByRole('button', { name: /Engineering hall/ })
+      .getByRole('button', { name: /Engineering room/ })
       .click();
     await expect(page.locator('.conversation-attachment-picker__file')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Switch hall' }).click();
+    await page.getByRole('button', { name: 'Switch room' }).click();
     await page
       .getByRole('dialog')
       .getByRole('button', { name: /Design studio/ })
@@ -143,6 +146,38 @@ for (const width of [1440, 390]) {
     });
   });
 }
+
+test('别人的邀请：在“房间”页拒绝，在“换个房间”里加入', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(fixture);
+  const invitations = page.getByRole('list', { name: 'Invitations' });
+  await expect(invitations).toContainText('Research lab');
+  await invitations
+    .getByRole('listitem')
+    .filter({ hasText: 'Budget review' })
+    .getByRole('button', { name: 'Decline' })
+    .click();
+  await expect(invitations).not.toContainText('Budget review');
+  await page.getByRole('link', { name: /Design studio/ }).click();
+  // 还有一个邀请没答复：“换个房间”上带着个数。
+  await page.getByRole('button', { name: /Switch room.*1 invitation/ }).click();
+  const switcher = page.getByRole('dialog', { name: 'Switch room' });
+  await expect(switcher.getByRole('region', { name: 'Public lobbies' })).toContainText(
+    'Global lobby',
+  );
+  const scan = await new AxeBuilder({ page })
+    .include('.ar-dialog')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(scan.violations.map(({ id }) => id)).toEqual([]);
+  await switcher
+    .getByRole('region', { name: 'Invitations' })
+    .getByRole('button', { name: 'Join' })
+    .click();
+  await expect(page.getByRole('heading', { name: 'Research lab', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Switch room', exact: true })).toBeVisible();
+  expect(failures).toEqual([]);
+});
 
 test('刷新恢复附件、清除后不残留本地文件', async ({ page }) => {
   await page.goto(fixture);

@@ -1,56 +1,71 @@
-import { openRoomSettings } from './support/workspace-navigation';
-import { expect, test } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
+
+import { openRoomMenu } from './support/workspace-navigation';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 const fixturePath = '/e2e/fixtures/lobby-scene.html';
 
-test('私人房间三步创建只陈述真实安全边界', async ({ page }) => {
+async function expectAccessibleDialog(page: Page): Promise<void> {
+  const scan = await new AxeBuilder({ page })
+    .include('.ar-dialog')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(
+    scan.violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) })),
+  ).toEqual([]);
+}
+const first = '0198b601-77a2-7f41-b4f4-940f291951b8';
+const second = '0198b601-77a2-7f41-b4f4-940f291951b9';
+
+test('新建房间一屏：保留多久、现在就邀请谁放在更多选项里', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  await openRoomSettings(page);
-  await page.getByRole('button', { name: 'Private rooms' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Private rooms' });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('No private rooms yet');
+  await openRoomMenu(page);
+  await page.getByRole('button', { name: 'New room', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New room' });
+  await expect(dialog).toContainText('Private rooms are invite only');
+  await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Architecture review');
+  await dialog
+    .getByRole('textbox', { name: 'Purpose (optional)' })
+    .fill('Coordinate a bounded design review.');
 
-  await dialog.getByRole('button', { name: 'Create room' }).click();
-  await dialog.getByLabel('Room name').fill('Architecture review');
-  await dialog.getByLabel('Purpose').fill('Coordinate a bounded design review.');
-  await dialog.getByRole('button', { name: 'Continue' }).click();
+  await dialog.getByText('More options').click();
+  await dialog.getByRole('combobox', { name: 'Keep messages for' }).selectOption('30');
+  await dialog
+    .getByRole('textbox', { name: 'Invite people now (optional)' })
+    .fill(`${first}\n${second}`);
+  await dialog.getByRole('checkbox', { name: /Automate/ }).check();
+  await expect(dialog.getByRole('checkbox', { name: /Speak/ })).toBeChecked();
 
-  await expect(dialog.getByText('Invite people')).toBeVisible();
-  await dialog.getByLabel('Automate').check();
-  await expect(dialog.getByLabel('Speak')).toBeChecked();
-  await dialog.getByRole('button', { name: 'Continue' }).click();
-
-  await expect(dialog.getByText('Invite-only access')).toBeVisible();
-  // 私人房间在服务端强制端到端加密；这一步必须如实显示两项保护都已启用。
-  await expect(dialog.getByText('End-to-end encrypted messages')).toBeVisible();
-  await expect(dialog.locator('.private-room-security__state--active')).toHaveCount(2);
-  await expect(dialog).toContainText('Only the protections this room actually has are listed here');
-  await dialog.getByRole('button', { name: 'Create and join' }).click();
+  await dialog.getByRole('button', { name: 'Create and enter' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Could not finish creating the room');
   await expect(dialog).toContainText('private_room.fixture_unavailable');
+  await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toBeDisabled();
+  await expectAccessibleDialog(page);
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 
   await page.screenshot({
     animations: 'disabled',
     fullPage: true,
-    path: '../../artifacts/browser/task-25/private-room-security-truth.png',
+    path: testInfo.outputPath('new-room.png'),
   });
 });
 
-test('私人房间 Sheet 在手机上不产生横向溢出', async ({ page }) => {
+test('新建房间在手机上是底部面板，不产生横向溢出', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
-  await openRoomSettings(page);
-  await page.getByRole('button', { name: 'Private rooms' }).click();
-  await expect(page.getByRole('dialog', { name: 'Private rooms' })).toBeVisible();
+  await openRoomMenu(page);
+  await page.getByRole('button', { name: 'New room', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New room' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByText('More options').click();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });

@@ -28,7 +28,7 @@ import type {
   PrivateRoomFailure,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
-import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-create-flow';
+import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { formatDateTime } from '@/shared/i18n/formatters';
 import { ok, type Result } from '@/shared/result';
 

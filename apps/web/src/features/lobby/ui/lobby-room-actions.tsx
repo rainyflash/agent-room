@@ -11,14 +11,12 @@ export function LobbyRoomActions({
   catalogId,
   roomName,
   principal,
-  onEnterRoom,
   onExitRoom,
   onOpenSecurity,
 }: {
   readonly catalogId: string;
   readonly roomName: string;
   readonly principal: WebSession;
-  readonly onEnterRoom: (catalogId: string, roomId: string) => void;
   readonly onExitRoom: () => void;
   readonly onOpenSecurity: () => void;
 }) {
@@ -55,12 +53,7 @@ export function LobbyRoomActions({
       >
         {t('security.launcher')}
       </Button>
-      <PrivateRoomHub
-        currentCatalogId={catalogId}
-        onEnterRoom={onEnterRoom}
-        onExitRoom={onExitRoom}
-        principal={principal}
-      />
+      <PrivateRoomHub currentCatalogId={catalogId} onExitRoom={onExitRoom} principal={principal} />
     </>
   );
 }

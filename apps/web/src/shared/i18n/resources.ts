@@ -15,7 +15,7 @@ import { moderationResources } from '@/features/moderation/i18n/moderation-resou
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
-import { hallResources } from '@/features/room-directory/i18n/hall-resources';
+import { roomsResources } from '@/features/room-directory/i18n/rooms-resources';
 import { applicationResources } from '@/features/updates/i18n/application-resources';
 import { guideResources } from '@/features/guide/i18n/guide-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
@@ -722,7 +722,7 @@ export const resources = {
       ...settingsResources.en,
       ...privateRoomResources.en,
       ...roomDirectoryResources.en,
-      ...hallResources.en,
+      ...roomsResources.en,
       ...applicationResources.en,
       ...guideResources.en,
       ...securityResources.en,
@@ -1350,7 +1350,7 @@ export const resources = {
       ...settingsResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
-      ...hallResources['zh-CN'],
+      ...roomsResources['zh-CN'],
       ...applicationResources['zh-CN'],
       ...guideResources['zh-CN'],
       ...securityResources['zh-CN'],

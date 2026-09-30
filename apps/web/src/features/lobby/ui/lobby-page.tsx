@@ -69,7 +69,6 @@ function writePanelSize(size: PanelSize): void {
 
 export type LobbyPageProps = {
   readonly catalogId: string;
-  readonly onEnterRoom: (catalogId: string, matrixRoomId: string) => void;
   readonly onExitRoom: () => void;
   readonly onOpenSecurity: () => void;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
@@ -122,7 +121,6 @@ export function LobbyPage(props: LobbyPageProps) {
 
 function ReadyLobby({
   catalogId,
-  onEnterRoom,
   onExitRoom,
   onOpenSecurity,
   onSelectedAgentChange,
@@ -228,7 +226,6 @@ function ReadyLobby({
             catalogId={catalogId}
             roomName={room.name}
             principal={principal}
-            onEnterRoom={onEnterRoom}
             onExitRoom={onExitRoom}
             onOpenSecurity={onOpenSecurity}
           />
