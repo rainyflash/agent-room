@@ -27,10 +27,6 @@ export type MyPrivateRooms = {
   readonly retry: () => void;
 };
 
-export function isInvitedTo(room: PrivateRoom, principalId: string | undefined): boolean {
-  return room.members.find((member) => member.principalId === principalId)?.status === 'invited';
-}
-
 /** 你的私人房间：受邀还没答复的，和已经加入的；归档了的不算。 */
 export function useMyPrivateRooms(): MyPrivateRooms {
   const { privateRooms } = useAppServices();
