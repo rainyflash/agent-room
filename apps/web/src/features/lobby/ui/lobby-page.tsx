@@ -14,6 +14,7 @@ import {
   ReceptionEvidenceProvider,
   useReceptionEvidence,
 } from '@/features/desktop/ui/reception-evidence-context';
+import { hasAutomationDraftFor } from '@/features/automation/ui/automation-settings';
 import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
 import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
@@ -31,7 +32,10 @@ import type { LobbySceneProjection } from '@/features/lobby/domain/scene-project
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
 import { AgentRosterPolicyPanel } from './agent-roster-policy-panel';
 import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
-import { LobbyRoomActions } from '@/features/lobby/ui/lobby-room-actions';
+import {
+  RoomSettingsDialog,
+  type RoomSettingsSection,
+} from '@/features/lobby/ui/room-settings-dialog';
 import {
   LobbySpatialView,
   type LobbySpatialViewHandle,
@@ -142,6 +146,14 @@ function ReadyLobby({
   const { url: downloadUrl } = usePublishedDownload(config);
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
+  // 重新登录回来时，没提交完的自动发言授权要接着填：直接打开房间设置的那一节。
+  const [roomSettings, setRoomSettings] = useState<{
+    readonly section?: RoomSettingsSection;
+  } | null>(() =>
+    principal !== null && hasAutomationDraftFor(principal.principalId, catalogId)
+      ? { section: 'automation' }
+      : null,
+  );
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitation, setInvitation] = useState<ConnectedInvitation | null>(null);
   const [panelSize, setPanelSize] = useState<PanelSize>(readPanelSize);
@@ -218,19 +230,16 @@ function ReadyLobby({
         closeDrawer();
         onSelectedDirectSessionChange(id);
       }}
+      onOpenRoomSettings={
+        principal === null
+          ? null
+          : () => {
+              closeDrawer();
+              setRoomSettings({});
+            }
+      }
       roomName={room.name}
       userName={principal?.displayName ?? null}
-      actions={
-        principal === null ? null : (
-          <LobbyRoomActions
-            catalogId={catalogId}
-            roomName={room.name}
-            principal={principal}
-            onExitRoom={onExitRoom}
-            onOpenSecurity={onOpenSecurity}
-          />
-        )
-      }
     />
   );
   const roster = (
@@ -272,6 +281,7 @@ function ReadyLobby({
       </div>
       <RoomBeacon
         agentCount={attendance.present}
+        privateRoom={room.encrypted === true}
         membersButtonRef={membersButton}
         roomName={room.name}
         onOpenNavigation={() => {
@@ -390,6 +400,18 @@ function ReadyLobby({
           </span>
         </button>
       </nav>
+      {roomSettings === null || principal === null ? null : (
+        <RoomSettingsDialog
+          catalogId={catalogId}
+          initialSection={roomSettings.section}
+          onClose={() => {
+            setRoomSettings(null);
+          }}
+          onExitRoom={onExitRoom}
+          principal={principal}
+          roomName={room.name}
+        />
+      )}
       {inviteOpen ? (
         <AgentInviteDialog
           onConnected={setInvitation}

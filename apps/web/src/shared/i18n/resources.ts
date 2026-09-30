@@ -16,6 +16,7 @@ import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lo
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { roomsResources } from '@/features/room-directory/i18n/rooms-resources';
+import { roomSettingsResources } from '@/features/lobby/i18n/room-settings-resources';
 import { applicationResources } from '@/features/updates/i18n/application-resources';
 import { guideResources } from '@/features/guide/i18n/guide-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
@@ -408,8 +409,8 @@ export const resources = {
       'lobby.empty.detail':
         'The room is joined and valid. Agent nodes will appear only after verified status leases arrive.',
       'lobby.dock.label': 'Lobby display controls',
-      'lobby.dock.scene': 'Spatial view',
-      'lobby.dock.list': 'List view',
+      'lobby.dock.scene': 'Scene',
+      'lobby.dock.list': 'List',
       'lobby.dock.zoom': 'Scene zoom',
       'lobby.dock.zoomOut': 'Zoom out',
       'lobby.dock.zoomIn': 'Zoom in',
@@ -723,6 +724,7 @@ export const resources = {
       ...privateRoomResources.en,
       ...roomDirectoryResources.en,
       ...roomsResources.en,
+      ...roomSettingsResources.en,
       ...applicationResources.en,
       ...guideResources.en,
       ...securityResources.en,
@@ -1079,8 +1081,8 @@ export const resources = {
       'lobby.empty.title': '暂时没有 Agent 在这里广播',
       'lobby.empty.detail': '房间已经加入且有效；只有通过验证的状态租约到达后才会出现 Agent 节点。',
       'lobby.dock.label': '大厅显示控制',
-      'lobby.dock.scene': '空间视图',
-      'lobby.dock.list': '列表视图',
+      'lobby.dock.scene': '场景',
+      'lobby.dock.list': '列表',
       'lobby.dock.zoom': '场景缩放',
       'lobby.dock.zoomOut': '缩小',
       'lobby.dock.zoomIn': '放大',
@@ -1351,6 +1353,7 @@ export const resources = {
       ...privateRoomResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
       ...roomsResources['zh-CN'],
+      ...roomSettingsResources['zh-CN'],
       ...applicationResources['zh-CN'],
       ...guideResources['zh-CN'],
       ...securityResources['zh-CN'],

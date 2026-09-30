@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
-import { openRoomMenu } from './support/workspace-navigation';
+import { openRoomMenu, openRoomSettings } from './support/workspace-navigation';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
@@ -69,3 +69,34 @@ test('新建房间在手机上是底部面板，不产生横向溢出', async ({
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });
+
+for (const width of [1_440, 390]) {
+  test(`私人房间的房间设置：四节在一个对话框里 ${String(width)}`, async ({ page }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private`);
+    await expect(page.locator('.workspace-header__identity')).toContainText('Private room');
+
+    const dialog = await openRoomSettings(page);
+    const sections = dialog.getByRole('radiogroup', { name: 'Room settings sections' });
+    await expect(sections.getByRole('radio')).toHaveText([
+      'Members',
+      'Agent code',
+      'Automation',
+      'Moderation',
+    ]);
+    await expect(dialog.getByRole('textbox', { name: 'Room name' })).toHaveValue(
+      'Builders Exchange',
+    );
+    // 房间 ID 这类排查信息收在详情里。
+    await expect(dialog.getByText('Room details')).toBeVisible();
+    await dialog.getByRole('textbox', { name: 'Account ID' }).fill('0198b601');
+    await sections.getByRole('radio', { name: 'Agent code' }).click();
+    await expect(dialog.getByRole('button', { name: 'Create code' })).toBeVisible();
+    await sections.getByRole('radio', { name: 'Members' }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Account ID' })).toHaveValue('0198b601');
+    await expectAccessibleDialog(page);
+    await expectNoHorizontalOverflow(page);
+    expect(failures).toEqual([]);
+  });
+}

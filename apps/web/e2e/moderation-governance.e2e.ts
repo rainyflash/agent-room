@@ -28,9 +28,7 @@ test('举报不读取受保护正文且房间治理动作可撤销', async ({ pa
     .click();
   await page.getByRole('button', { name: 'Close message details' }).click();
 
-  await openRoomSettings(page);
-  await page.getByRole('button', { name: 'Governance' }).click();
-  const governance = page.getByRole('dialog', { name: /Room governance/u });
+  const governance = await openRoomSettings(page, 'Moderation');
   await expect(
     governance.getByText('Open only when you want to inspect the verified bytes.'),
   ).toBeVisible();

@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 
 export type RoomBeaconProps = {
   readonly agentCount: number;
+  /** 私人房间还是公共大厅，写在房间名上面。 */
+  readonly privateRoom: boolean;
   readonly membersButtonRef: Ref<HTMLButtonElement>;
   readonly roomName: string;
   readonly topic?: string;
@@ -13,6 +15,7 @@ export type RoomBeaconProps = {
 
 export function RoomBeacon({
   agentCount,
+  privateRoom,
   membersButtonRef,
   roomName,
   topic,
@@ -34,7 +37,7 @@ export function RoomBeacon({
         <Hash />
       </div>
       <div className="workspace-header__identity">
-        <span>{t('roomWorkspace.room')}</span>
+        <span>{t(privateRoom ? 'roomWorkspace.privateRoom' : 'roomWorkspace.publicLobby')}</span>
         <h1>{roomName}</h1>
       </div>
       {topic === undefined ? null : <p className="workspace-header__topic">{topic}</p>}

@@ -54,7 +54,11 @@ export function Segmented<Value extends string>({
   };
 
   return (
-    <div aria-label={label} className={classNames('ar-segmented', className)} role="radiogroup">
+    <div
+      aria-label={label}
+      className={classNames('ar-segmented', options.length >= 4 && 'ar-segmented--many', className)}
+      role="radiogroup"
+    >
       {options.map((option, index) => (
         <button
           aria-checked={option.value === value}

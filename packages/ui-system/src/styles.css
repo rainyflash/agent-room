@@ -618,6 +618,13 @@ summary {
     text-align: center;
     white-space: normal;
   }
+
+  /* 四个以上的选项排成两列，每个名字都能完整显示。 */
+  .ar-segmented--many {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-radius: 24px;
+  }
 }
 
 /* 一条提示：图标、标题、说明，至多一个操作。彩色底上一律墨色字。 */

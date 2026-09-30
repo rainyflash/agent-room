@@ -13,7 +13,7 @@ import type {
   ModerationCase,
   ModerationGateway,
 } from '@/features/moderation/domain/moderation';
-import { ModerationHub } from '@/features/moderation/ui/moderation-hub';
+import { ModerationSettings } from '@/features/moderation/ui/moderation-settings';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -28,13 +28,12 @@ beforeAll(async () => {
 
 afterEach(cleanup);
 
-describe('ModerationHub', () => {
+describe('ModerationSettings', () => {
   it('只向当前房间管理者展示显式证据并绑定案件执行动作', async () => {
     const user = userEvent.setup();
     const gateway = authorizedGateway();
-    renderHub(gateway);
+    renderSettings(gateway);
 
-    await user.click(await screen.findByRole('button', { name: 'Governance' }));
     expect(await screen.findByText('Reporter-submitted excerpt')).toBeVisible();
     expect(screen.getByText('Only the reporter chose this preview')).toBeVisible();
 
@@ -65,7 +64,7 @@ describe('ModerationHub', () => {
 
   it('普通成员只读取能力投影且不探测任何受限治理资源', async () => {
     const gateway = unauthorizedGateway();
-    renderHub(gateway);
+    const { container } = renderSettings(gateway);
 
     await waitFor(() => {
       expect(gateway.inspectCapabilities).toHaveBeenCalledOnce();
@@ -73,23 +72,22 @@ describe('ModerationHub', () => {
     expect(gateway.listRoomCases).not.toHaveBeenCalled();
     expect(gateway.listActions).not.toHaveBeenCalled();
     expect(gateway.listAudit).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Governance' })).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
   });
 });
 
-function renderHub(gateway: ModerationGateway) {
+function renderSettings(gateway: ModerationGateway) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
-        <ModerationHub
+        <ModerationSettings
           catalogId={ROOM_ID}
           gateway={gateway}
           onReauthenticate={vi.fn()}
           recentlyAuthenticated
-          roomName="Protocol Garden"
         />
       </QueryClientProvider>
     </I18nextProvider>,

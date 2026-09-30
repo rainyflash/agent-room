@@ -62,7 +62,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/e2e/fixtures/lobby-scene.html?agents=24');
-    await page.getByRole('button', { name: 'List view', exact: true }).click();
+    await page.getByRole('button', { name: 'List', exact: true }).click();
     const roster = page.locator('.list-roster:visible');
     await roster.getByRole('button', { name: /Build Agent 001/u }).click();
     const inspector = page.locator('.agent-inspector');
@@ -82,7 +82,7 @@ for (const width of [1440, 390]) {
     await roster.getByLabel('Filter by project tag').selectOption('Backend');
     await expect(roster.locator('.list-roster__list > li')).toHaveCount(1);
     await page.reload();
-    await page.getByRole('button', { name: 'List view', exact: true }).click();
+    await page.getByRole('button', { name: 'List', exact: true }).click();
     await roster.getByLabel('Your agent collection').selectOption('favorites');
     await roster.getByLabel('Filter by project tag').selectOption('Backend');
     await expect(roster.locator('.list-roster__list > li')).toHaveCount(1);
@@ -305,7 +305,7 @@ test('一千个人物可逐个定位且能通过收藏缩小列表', async ({ pa
   await page.getByRole('button', { name: 'Close Agent details' }).click();
   await expect(scene).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath('large-room.png') });
-  await page.getByRole('button', { name: 'List view', exact: true }).click();
+  await page.getByRole('button', { name: 'List', exact: true }).click();
   await page.getByLabel('Your agent collection').selectOption('favorites');
   await expect(page.locator('.list-roster__list > li')).toHaveCount(1);
   await expectNoHorizontalOverflow(page);

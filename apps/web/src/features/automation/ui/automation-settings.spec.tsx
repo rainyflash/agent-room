@@ -13,7 +13,10 @@ import type {
   AutomationGrantGateway,
   CreateAutomationGrantInput,
 } from '@/features/automation/domain/automation-grant';
-import { AutomationGrantHub } from '@/features/automation/ui/automation-grant-hub';
+import {
+  AutomationSettings,
+  hasAutomationDraftFor,
+} from '@/features/automation/ui/automation-settings';
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
@@ -33,13 +36,12 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-describe('AutomationGrantHub', () => {
+describe('AutomationSettings', () => {
   it('提交失败后保留精确授权草稿，刷新后重新确认即可重试', async () => {
     const user = userEvent.setup();
     const gateway = automationGateway([]);
     gateway.create.mockResolvedValueOnce(err({ code: 'automation.unreachable', retryable: true }));
-    renderHub(gateway.value);
-    await user.click(screen.getByRole('button', { name: 'Automation' }));
+    renderSettings(gateway.value);
     await screen.findByRole('heading', { name: 'New bounded grant' });
     await user.click(screen.getByRole('checkbox', { name: 'New room messages' }));
     await user.click(screen.getByRole('checkbox', { name: 'Replies' }));
@@ -62,8 +64,11 @@ describe('AutomationGrantHub', () => {
       value: { input: { messageKinds: ['reply'], maxTotalMessages: 20 } },
     });
     expect(readAutomationGrantDraft(GRANT_ID)).toEqual(ok(null));
+    // 房间页据此在回来时直接打开房间设置的“自动发言”。
+    expect(hasAutomationDraftFor(AGENT_ID, ROOM_ID)).toBe(true);
+    expect(hasAutomationDraftFor(AGENT_ID, GRANT_ID)).toBe(false);
     cleanup();
-    renderHub(gateway.value);
+    renderSettings(gateway.value);
     await screen.findByRole('heading', { name: 'New bounded grant' });
     expect(screen.getByRole('checkbox', { name: 'Replies' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'New room messages' })).not.toBeChecked();
@@ -94,9 +99,8 @@ describe('AutomationGrantHub', () => {
   it('默认关闭，明确确认影响后才提交精确实例授权', async () => {
     const user = userEvent.setup();
     const gateway = automationGateway([]);
-    renderHub(gateway.value);
+    renderSettings(gateway.value);
 
-    await user.click(screen.getByRole('button', { name: 'Automation' }));
     expect(await screen.findByRole('heading', { name: 'New bounded grant' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
 
@@ -133,9 +137,8 @@ describe('AutomationGrantHub', () => {
   it('权限面板不要求再次验证身份，创建后可直接撤销', async () => {
     const user = userEvent.setup();
     const gateway = automationGateway([]);
-    renderHub(gateway.value);
+    renderSettings(gateway.value);
 
-    await user.click(screen.getByRole('button', { name: 'Automation' }));
     await screen.findByRole('button', { name: 'Create grant' });
     expect(screen.queryByRole('button', { name: 'Verify identity again' })).not.toBeInTheDocument();
     await user.click(
@@ -152,8 +155,7 @@ describe('AutomationGrantHub', () => {
 
   it('公开发言必须保持风险扫描并解释受众范围', async () => {
     const user = userEvent.setup();
-    renderHub(automationGateway([]).value);
-    await user.click(screen.getByRole('button', { name: 'Automation' }));
+    renderSettings(automationGateway([]).value);
     const riskScan = await screen.findByRole('checkbox', {
       name: 'Require a passing risk scan before every autonomous send',
     });
@@ -170,24 +172,21 @@ describe('AutomationGrantHub', () => {
     gateway.value.list = vi.fn(() =>
       Promise.resolve(err({ code: 'automation.unreachable', retryable: true })),
     );
-    const user = userEvent.setup();
-    renderHub(gateway.value);
-
-    await user.click(screen.getByRole('button', { name: 'Automation' }));
+    renderSettings(gateway.value);
 
     expect(await screen.findByText('Automation grants could not be read.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create grant' })).not.toBeInTheDocument();
   });
 });
 
-function renderHub(automation: AutomationGrantGateway) {
+function renderSettings(automation: AutomationGrantGateway) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
-        <AutomationGrantHub
+        <AutomationSettings
           principalId={AGENT_ID}
           accessManagement={accessManagement}
           automation={automation}

@@ -12,7 +12,7 @@ test('禁用动态代码求值时仍使用可交互的 Pixi 房间', async ({ pa
   await page.keyboard.press('Enter');
   await expect(page.getByRole('complementary')).toBeVisible();
   await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
-  await page.getByRole('button', { name: 'Room chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
   await page
     .getByRole('textbox', { name: 'Message', exact: true })
     .fill('The room works with CSP.');

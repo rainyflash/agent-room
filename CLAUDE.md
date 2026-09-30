@@ -124,6 +124,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 浏览器验收里桌面端的“我的 Agent”页用 `e2e/fixtures/my-agents.html`（加 `?browser` 是网页端），`window.__agentRoomFixtureControls.arriveAgent()` 模拟一个 Agent 接走接入对话框挂着的人物。
 - 设置页在 `/settings/<分节>`（通用 / 安全 / 这台电脑 / 关于）；浏览器验收用 `my-agents.html?settings=<分节>`，安全一节用 `security-center.html`。新的浮层提示一律放进根布局的提示栈（`ToastStack` + `Toast`），别再单独 `position: fixed`。
 - “新建房间”“换个房间”只有 `RoomActions`（`features/room-directory`）一个入口组件，房间菜单、“房间”页和夹具都用它。浏览器验收的 `lobby-scene.html?features=1` 里有两个待答复的邀请（Research lab、Budget review），加入和拒绝都能真走一遍。
+- 房间设置是房间页上的一个对话框（`RoomSettingsDialog`），不在房间菜单的抽屉里。`lobby-scene.html?private` 把夹具房间当成你是房主的私人房间，四节都能看到；浏览器验收用 `openRoomSettings(page, '节名')` 打开。
 
 ### 版本与其他
 
