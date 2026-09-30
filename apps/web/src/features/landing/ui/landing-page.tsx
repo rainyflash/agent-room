@@ -1,4 +1,5 @@
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, Download } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
@@ -7,7 +8,6 @@ import { useAppServices } from '@/app/app-services';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
-import { ApplicationVersionLink } from '@/features/updates/ui/application-version-link';
 
 export function LandingPage() {
   const { t } = useTranslation();
@@ -16,37 +16,53 @@ export function LandingPage() {
   const { url: downloadUrl, platform } = usePublishedDownload(config);
   const reduceMotion = useReducedMotion();
   const registrationOpen = config.registrationMode === 'open-email';
+  // 首页不在登录会话里，自己问一下服务器：登录了就直接给“进入房间”，不再显示登录和注册。
+  const session = useQuery({
+    networkMode: 'always',
+    queryFn: async () => await controlPlane.readSession(),
+    queryKey: ['landing', 'session'] as const,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const signedIn = session.data?.ok === true;
+  const signedOut = session.isError || session.data?.ok === false;
   return (
     <main className="landing" id="main-content">
       <header className="landing__topbar">
-        <div className="landing__identity">
-          <Link aria-label={t('app.name')} className="landing__brand" to="/">
-            <img alt="" src="/agent-room-mark.svg" />
-            <span>{t('app.name')}</span>
-          </Link>
-          <ApplicationVersionLink />
-        </div>
+        <Link aria-label={t('app.name')} className="landing__brand" to="/">
+          <img alt="" src="/agent-room-mark.svg" />
+          <span>{t('app.name')}</span>
+        </Link>
         <LanguageControl />
         <div className="landing__account-actions">
-          <button
-            className="ar-button ar-button--default ar-button--ghost"
-            onClick={() => {
-              void controlPlane.beginAuthentication('/connect', 'sign-in');
-            }}
-            type="button"
-          >
-            {t('landing.login')}
-          </button>
-          <button
-            className="ar-button ar-button--default ar-button--primary"
-            disabled={!registrationOpen}
-            onClick={() => {
-              void controlPlane.beginAuthentication('/connect', 'register');
-            }}
-            type="button"
-          >
-            {t(registrationOpen ? 'landing.register' : 'landing.registrationPending')}
-          </button>
+          {signedIn ? (
+            <Link className="ar-button ar-button--default ar-button--primary" to="/rooms">
+              {t('landing.preview')}
+              <ArrowRight aria-hidden="true" />
+            </Link>
+          ) : signedOut ? (
+            <>
+              <button
+                className="ar-button ar-button--default ar-button--ghost"
+                onClick={() => {
+                  void controlPlane.beginAuthentication('/connect', 'sign-in');
+                }}
+                type="button"
+              >
+                {t('landing.login')}
+              </button>
+              <button
+                className="ar-button ar-button--default ar-button--primary"
+                disabled={!registrationOpen}
+                onClick={() => {
+                  void controlPlane.beginAuthentication('/connect', 'register');
+                }}
+                type="button"
+              >
+                {t(registrationOpen ? 'landing.register' : 'landing.registrationPending')}
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
       <section className="landing__hero">
@@ -59,14 +75,21 @@ export function LandingPage() {
           <h1>{t('landing.title')}</h1>
           <p className="landing__lede">{t('landing.description')}</p>
           <div className="landing__primary-actions">
-            <Link
-              className="ar-button ar-button--large ar-button--primary"
-              to="/connect"
-              search={{}}
-            >
-              {t('landing.preview')}
-              <ArrowRight aria-hidden="true" />
-            </Link>
+            {signedIn ? (
+              <Link className="ar-button ar-button--large ar-button--primary" to="/rooms">
+                {t('landing.preview')}
+                <ArrowRight aria-hidden="true" />
+              </Link>
+            ) : (
+              <Link
+                className="ar-button ar-button--large ar-button--primary"
+                to="/connect"
+                search={{}}
+              >
+                {t('landing.preview')}
+                <ArrowRight aria-hidden="true" />
+              </Link>
+            )}
             {downloadUrl === null ? (
               <button
                 className="ar-button ar-button--large ar-button--ghost"

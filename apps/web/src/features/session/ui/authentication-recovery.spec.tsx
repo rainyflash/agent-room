@@ -59,9 +59,9 @@ describe('AuthenticationRecovery', () => {
         <AuthenticationRecovery gateway={gateway} principal={principal} reason="expired" />
       </I18nextProvider>,
     );
-    expect(screen.getByText(/permission change has not been approved/u)).toBeInTheDocument();
+    expect(screen.getByText(/change you were confirming has not been saved/u)).toBeInTheDocument();
     expect(beginAuthentication).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: 'Continue verification' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
     expect(beginAuthentication).toHaveBeenCalledExactlyOnceWith(returnPath);
     expect(logout).not.toHaveBeenCalled();
   });
@@ -86,10 +86,10 @@ describe('AuthenticationRecovery', () => {
         />
       </I18nextProvider>,
     );
-    await userEvent.click(screen.getByRole('button', { name: 'Continue verification' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
     expect(
-      await screen.findByText('Verification could not be opened. Please retry.'),
+      await screen.findByText('The sign-in page could not be opened. Please try again.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Continue verification' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Sign in again' })).toBeEnabled();
   });
 });

@@ -26,17 +26,6 @@
   margin-right: auto;
   font-family: var(--font-display);
 }
-.landing__identity {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-  margin-right: auto;
-}
-.landing__identity .application-version-link {
-  padding: 1px 7px;
-  font-size: 10px;
-}
 .landing__brand img {
   width: 32px;
   height: 32px;

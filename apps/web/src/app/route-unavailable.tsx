@@ -1,44 +1,41 @@
-import { Button } from '@agent-room/ui-system';
-import { ArrowLeft, Construction } from 'lucide-react';
+import { ArrowLeft, Compass } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { LanguageControl } from '@/features/preferences/ui/language-control';
+import { EntryCard, EntryShell } from '@/shared/ui/entry-shell';
 
 export type RouteUnavailableProps = {
   readonly invalid?: boolean;
   readonly routeLabel: string;
 };
 
+/** 链接不对，或者页面还没做：说一句人话，给“回到房间”，地址收进详情。 */
 export function RouteUnavailable({ invalid = false, routeLabel }: RouteUnavailableProps) {
   const { t } = useTranslation();
   return (
-    <main className="boundary-page" id="main-content">
-      <header className="boundary-page__header">
-        <a className="brand-lockup brand-lockup--ink" href="/connect">
-          <img alt="" src="/agent-room-mark.svg" />
-          <span>{t('app.name')}</span>
-        </a>
-        <LanguageControl />
-      </header>
-      <section className="boundary-page__body">
-        <Construction aria-hidden="true" className="boundary-page__icon" />
-        <p className="eyebrow">
-          {invalid ? t('route.invalid.eyebrow') : t('app.notImplemented.eyebrow')}
-        </p>
-        <h1>{invalid ? t('route.invalid.title') : t('app.notImplemented.title')}</h1>
-        <p className="boundary-page__route">{routeLabel}</p>
-        <p>{invalid ? t('route.invalid.description') : t('app.notImplemented.description')}</p>
-        <Button
-          icon={<ArrowLeft aria-hidden="true" />}
-          onClick={() => {
-            window.location.assign('/connect');
-          }}
-          size="large"
-          tone="primary"
-        >
-          {t('app.notImplemented.back')}
-        </Button>
-      </section>
-    </main>
+    <EntryShell>
+      <EntryCard
+        actions={
+          <a className="ar-button ar-button--large ar-button--primary" href="/rooms">
+            <span className="ar-button__icon">
+              <ArrowLeft aria-hidden="true" />
+            </span>
+            <span>{t('entry.backToRooms')}</span>
+          </a>
+        }
+        detail={invalid ? t('route.invalid.description') : t('app.notImplemented.description')}
+        details={
+          <dl>
+            <div>
+              <dt>{t('entry.address')}</dt>
+              <dd>
+                <code>{routeLabel}</code>
+              </dd>
+            </div>
+          </dl>
+        }
+        icon={<Compass />}
+        title={invalid ? t('route.invalid.title') : t('app.notImplemented.title')}
+      />
+    </EntryShell>
   );
 }

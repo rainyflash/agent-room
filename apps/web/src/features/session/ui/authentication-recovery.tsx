@@ -1,9 +1,11 @@
 import { Button } from '@agent-room/ui-system';
+import { LogIn } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { readAutomationGrantDraft } from '@/features/automation/adapters/automation-grant-draft';
 import type { AuthenticationCallbackFailure } from '@/features/session/domain/authentication-callback';
 import type { ControlPlaneGateway, WebSession } from '@/features/session/domain/session';
+import { EntryCard } from '@/shared/ui/entry-shell';
 
 export function AuthenticationRecovery({
   gateway,
@@ -36,21 +38,9 @@ export function AuthenticationRecovery({
   };
 
   return (
-    <main className="connection-workspace" id="main-content">
-      <section
-        className="connection-workspace__stage"
-        aria-labelledby="authentication-recovery-title"
-      >
-        <h1 id="authentication-recovery-title">{t('connection.authenticationRecovery.title')}</h1>
-        <p className="connection-workspace__lede" role="alert">
-          {t(`connection.authenticationRecovery.${reason}`)}
-        </p>
-        {principal === null ? null : (
-          <p>{t('connection.authenticationRecovery.sessionRetained')}</p>
-        )}
-        {saved?.ok === false ? <p role="alert">{t('automation.draft.failed')}</p> : null}
-        {failed ? <p role="alert">{t('connection.authenticationRecovery.retryFailed')}</p> : null}
-        <div className="connection-actions">
+    <EntryCard
+      actions={
+        <>
           <Button disabled={pending} onClick={() => void retry()} size="large" tone="primary">
             {t(
               pending
@@ -70,8 +60,19 @@ export function AuthenticationRecovery({
               {t('connection.authenticationRecovery.return')}
             </Button>
           )}
-        </div>
-      </section>
-    </main>
+        </>
+      }
+      icon={<LogIn />}
+      title={t('connection.authenticationRecovery.title')}
+    >
+      <p className="entry-card__lede" role="alert">
+        {t(`connection.authenticationRecovery.${reason}`)}
+      </p>
+      {principal === null ? null : (
+        <p className="entry-card__lede">{t('connection.authenticationRecovery.sessionRetained')}</p>
+      )}
+      {saved?.ok === false ? <p role="alert">{t('automation.draft.failed')}</p> : null}
+      {failed ? <p role="alert">{t('connection.authenticationRecovery.retryFailed')}</p> : null}
+    </EntryCard>
   );
 }

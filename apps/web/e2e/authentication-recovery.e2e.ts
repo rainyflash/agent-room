@@ -56,19 +56,17 @@ for (const width of [1440, 390]) {
     await expect(page).toHaveTitle('Agent Room');
     await expect(
       page.getByRole('heading', {
-        name: /Identity verification did not finish|这次身份验证未完成/u,
+        name: /Sign-in did not finish|这次登录没有完成/u,
       }),
     ).toBeVisible();
-    await expect(
-      page.getByText(/existing account session is still signed in|原有账户仍然保持登录/u),
-    ).toBeVisible();
+    await expect(page.getByText(/You are still signed in|你仍是登录状态/u)).toBeVisible();
     await expect(page).toHaveURL(/\/connect\?authentication=expired$/u);
     await page.reload();
     await expect(
-      page.getByText(/permission change has not been approved|这次权限变更尚未获批/u),
+      page.getByText(/change you were confirming has not been saved|刚才要确认的改动还没保存/u),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
-    const retry = page.getByRole('button', { name: /Continue verification|继续验证/u });
+    const retry = page.getByRole('button', { name: /Sign in again|重新登录/u });
     await expect(retry).toBeInViewport();
     await page.screenshot({
       path: testInfo.outputPath(`authentication-recovery-${String(width)}.png`),
