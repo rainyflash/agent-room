@@ -33,14 +33,14 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
     { timeout: 40_000 },
   );
   expect(storedMatrixSessionSchema.parse(await readMatrixSession(page)).userId).toBe(firstIdentity);
+  // Matrix ID 在“设置 → 安全”最下面的“账户详情”里（界面翻新 4b 起默认收起）。
+  const accountDetails = page.locator('.security-account-details');
   await page.goto('/settings/security');
-  await expect(page.locator('.security-account-line')).toContainText(firstIdentity, {
-    timeout: 40_000,
-  });
+  await accountDetails.locator('summary').click({ timeout: 40_000 });
+  await expect(accountDetails).toContainText(firstIdentity, { timeout: 40_000 });
   await page.reload();
-  await expect(page.locator('.security-account-line')).toContainText(firstIdentity, {
-    timeout: 40_000,
-  });
+  await accountDetails.locator('summary').click({ timeout: 40_000 });
+  await expect(accountDetails).toContainText(firstIdentity, { timeout: 40_000 });
   expect(failures).toEqual([]);
   expect(authenticationRequests).toEqual([]);
 });
