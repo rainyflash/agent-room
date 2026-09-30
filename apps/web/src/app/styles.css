@@ -1833,8 +1833,7 @@
 }
 .direct-conversation--boundary > svg,
 .direct-conversation__provisioning > svg,
-.direct-conversation .ar-button__icon > .lucide-loader-circle,
-.agent-inspector .ar-button__icon > .lucide-loader-circle {
+.direct-conversation .ar-button__icon > .lucide-loader-circle {
   animation: direct-session-spin 1s steps(8, end) infinite;
 }
 
@@ -2054,18 +2053,6 @@
   position: absolute;
   top: 0.9rem;
   right: 0.9rem;
-}
-
-.agent-inspector__failure {
-  padding: 0.7rem;
-  margin: 0 0 0.8rem;
-  border: 1px solid color-mix(in srgb, var(--color-alert) 32%, transparent);
-  border-radius: 8px;
-  color: color-mix(in srgb, var(--color-alert) 76%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-alert) 7%, transparent);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 @keyframes direct-session-spin {
@@ -3304,137 +3291,6 @@ p.message-dock__headline {
   }
 }
 
-.agent-inspector {
-  position: absolute;
-  z-index: 45;
-  top: 96px;
-  right: 20px;
-  bottom: 82px;
-  width: min(390px, calc(100% - 40px));
-  overflow-y: auto;
-  padding: 1.35rem;
-  border: 1px solid var(--ar-ink-18);
-  border-radius: 10px;
-  color: var(--color-ink);
-  background: var(--color-paper);
-  box-shadow: 0 24px 70px color-mix(in srgb, black 34%, transparent);
-}
-
-.agent-inspector__header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 1.15rem;
-  border-bottom: 1px solid var(--ar-ink-18);
-}
-
-.agent-inspector__header h2 {
-  margin: 0.3rem 0 0;
-  font-size: 1.6rem;
-  font-weight: 680;
-  letter-spacing: -0.045em;
-}
-
-.agent-inspector__origin {
-  display: inline-flex;
-  min-height: 18px;
-  align-items: center;
-  padding: 0.05rem 0.38rem;
-  margin: 0.45rem 0 0;
-  border: 1px solid color-mix(in srgb, var(--color-network) 44%, transparent);
-  border-radius: 999px;
-  color: color-mix(in srgb, var(--color-network) 84%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-network) 9%, transparent);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 620;
-  letter-spacing: 0.02em;
-}
-
-.agent-inspector__status {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0.15rem 0.75rem;
-  padding: 1rem 0;
-  border-bottom: 1px solid var(--ar-ink-09);
-}
-
-.agent-inspector__status .ar-status-mark {
-  grid-row: 1 / 3;
-  background: var(--ar-surface-muted);
-}
-
-.agent-inspector__status strong {
-  font-size: 0.9rem;
-}
-
-.agent-inspector__status > span:last-child {
-  color: var(--ar-ink-48);
-  font-family: var(--font-sans);
-  font-size: 12px;
-}
-
-.agent-inspector__facts {
-  margin: 0;
-}
-
-.agent-inspector__facts > div {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 128px minmax(0, 1fr);
-  gap: 1rem;
-  padding: 0.72rem 0;
-  border-bottom: 1px solid var(--ar-ink-09);
-}
-
-.agent-inspector__facts dt,
-.agent-inspector__facts dd {
-  margin: 0;
-  font-size: 12px;
-}
-
-.agent-inspector__facts dt {
-  color: var(--ar-ink-48);
-}
-
-.agent-inspector__facts dd {
-  overflow-wrap: anywhere;
-  font-family: var(--font-sans);
-  text-align: right;
-}
-
-.agent-inspector__summary {
-  padding: 1rem 0;
-}
-
-.agent-inspector__summary h3 {
-  margin: 0 0 0.5rem;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0;
-}
-
-.agent-inspector__summary p,
-.agent-inspector__notice {
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.55;
-}
-
-.agent-inspector__actions {
-  display: flex;
-  gap: 0.55rem;
-  padding: 0.25rem 0 1rem;
-}
-
-.agent-inspector__notice {
-  padding-top: 1rem;
-  border-top: 1px solid var(--ar-ink-18);
-  color: var(--ar-ink-48);
-}
-
 .list-roster {
   width: min(1240px, calc(100% - 3rem));
   padding: 126px 0 110px;
@@ -3721,8 +3577,7 @@ p.message-dock__headline {
   }
   .direct-conversation--boundary > svg,
   .direct-conversation__provisioning > svg,
-  .direct-conversation .ar-button__icon > .lucide-loader-circle,
-  .agent-inspector .ar-button__icon > .lucide-loader-circle {
+  .direct-conversation .ar-button__icon > .lucide-loader-circle {
     animation: none;
   }
 }
@@ -3730,10 +3585,6 @@ p.message-dock__headline {
 @media (max-width: 1100px) {
   .signal-dock__legend {
     display: none;
-  }
-
-  .agent-inspector {
-    width: min(360px, calc(100% - 40px));
   }
 
   .direct-conversation__header {
@@ -3848,18 +3699,6 @@ p.message-dock__headline {
   .roster-agent__instances {
     grid-column: 3;
     grid-row: 1;
-  }
-
-  .agent-inspector {
-    position: fixed;
-    top: 18%;
-    right: 0;
-    bottom: 48px;
-    left: 0;
-    width: 100%;
-    padding: 1.15rem;
-    border-width: 1px 0 0;
-    border-radius: 0;
   }
 
   .direct-conversation {

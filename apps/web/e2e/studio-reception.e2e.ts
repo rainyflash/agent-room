@@ -87,7 +87,7 @@ test('手机工作室和人物详情可操作，控件不溢出或遮挡', async
   await expect(page.getByRole('complementary')).toContainText('Online · waiting for messages');
   const message = page
     .getByRole('complementary')
-    .getByRole('button', { name: 'Message Agent', exact: true });
+    .getByRole('button', { name: 'Message', exact: true });
   await expect(message).toBeInViewport({ ratio: 1 });
   await page.screenshot({ path: testInfo.outputPath('studio-mobile-inspector.png') });
   await expectNoHorizontalOverflow(page);

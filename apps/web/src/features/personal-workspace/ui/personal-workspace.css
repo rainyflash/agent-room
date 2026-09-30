@@ -1,30 +1,26 @@
 .agent-organization {
   display: grid;
-  gap: 0.65rem;
+  gap: 12px;
   min-width: 0;
-  padding-block: 1rem;
+  padding-block: 14px;
   border-block: var(--ar-outline-thin) dashed var(--ar-line);
 }
-.agent-organization form {
-  display: grid;
-  gap: 0.6rem;
+.agent-organization__favorite {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-.agent-organization label {
+/* 标签输入框和保存按钮一行：按钮对齐输入框底边。 */
+.agent-organization__tags {
   display: grid;
-  gap: 0.4rem;
-  font-weight: 600;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
 }
-.agent-organization input {
-  width: 100%;
-  min-width: 0;
-  padding: 0 1rem;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 22px;
-  background: var(--color-paper);
-  color: inherit;
+.agent-organization__tags > .ar-button {
+  margin-top: 26px;
   min-height: 44px;
 }
-.agent-organization button,
 .personal-sync button {
   display: inline-flex;
   align-items: center;
@@ -37,25 +33,17 @@
   background: var(--ar-surface);
   color: inherit;
   cursor: pointer;
-  white-space: normal;
-  overflow-wrap: anywhere;
   font-weight: 600;
   box-shadow: var(--ar-press-small);
 }
-.agent-organization button:not(:disabled):hover,
 .personal-sync button:not(:disabled):hover {
   background: var(--ar-surface-muted);
 }
 .personal-favorite[aria-pressed='true'] {
   color: var(--ar-accent);
 }
-.personal-favorite svg {
-  width: 1.05rem;
-  height: 1.05rem;
-  flex-shrink: 0;
-}
 .personal-sync,
-.agent-organization small {
+.agent-organization > p {
   color: var(--ar-muted);
   font-size: 0.8rem;
   overflow-wrap: anywhere;

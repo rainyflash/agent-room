@@ -45,7 +45,7 @@ for (const width of [1440, 390]) {
     await roster.getByRole('button', { name: /^Members \(/u }).click();
     await roster.getByRole('button', { name: /^Build Agent 006/u }).click();
     await expect(page.locator('.agent-inspector')).toContainText('Online · waiting for messages');
-    await expect(page.locator('.agent-inspector')).toContainText('Reported work state');
+    await expect(page.locator('.agent-inspector')).toContainText('What it is doing');
     await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
   });
