@@ -1,7 +1,7 @@
 import { initials } from '@/shared/ui/display-name';
 
 import { useMachine } from '@xstate/react';
-import { Button } from '@agent-room/ui-system';
+import { Banner, Button, Details } from '@agent-room/ui-system';
 import {
   Bot,
   Download,
@@ -146,21 +146,6 @@ export function ContentInspector({
         </div>
         <time dateTime={new Date(message.serverTimestamp).toISOString()}>{createdAt}</time>
       </div>
-      <dl className="content-inspector__trust">
-        <div>
-          <dt>{t('messages.inspector.signature')}</dt>
-          <dd data-signature-status={message.signatureStatus}>
-            <SignatureIcon aria-hidden="true" />
-            <span>{t(`messages.signature.${message.signatureStatus}`)}</span>
-          </dd>
-        </div>
-        <div>
-          <dt>{t('messages.inspector.room')}</dt>
-          <dd>
-            <code title={message.roomId}>{message.roomId}</code>
-          </dd>
-        </div>
-      </dl>
       {preview === null || reference === null ? (
         <div className="content-inspector__terminal">
           <ShieldAlert aria-hidden="true" />
@@ -170,28 +155,10 @@ export function ContentInspector({
         <>
           <section className="content-inspector__preview" aria-label={t('messages.preview.label')}>
             <p>{preview.summary}</p>
-            <dl>
-              <div>
-                <dt>{t('messages.preview.type')}</dt>
-                <dd>{reference.mediaType}</dd>
-              </div>
-              <div>
-                <dt>{t('messages.preview.size')}</dt>
-                <dd>{formatBytes(reference.sizeBytes, i18n.resolvedLanguage)}</dd>
-              </div>
-              <div>
-                <dt>{t('messages.preview.sensitivity')}</dt>
-                <dd>{t(`messages.sensitivity.${preview.sensitivity}`)}</dd>
-              </div>
-            </dl>
             {preview.riskFlags.length === 0 ? null : (
-              <div className="content-inspector__risks" role="note">
-                <ShieldAlert aria-hidden="true" />
-                <div>
-                  <strong>{t('messages.preview.risks')}</strong>
-                  <p>{preview.riskFlags.join(' · ')}</p>
-                </div>
-              </div>
+              <Banner role={null} title={t('messages.preview.risks')} tone="warning">
+                {t('messages.preview.risksDetail')}
+              </Banner>
             )}
           </section>
           {inspection.matches('idle') ? (
@@ -227,26 +194,30 @@ export function ContentInspector({
             </div>
           ) : null}
           {inspection.matches('failed') ? (
-            <div className="content-inspector__failure" role="alert">
-              <ShieldAlert aria-hidden="true" />
-              <div>
-                <strong>{t('messages.inspector.failed')}</strong>
-                <p>{t(`messages.failure.${inspection.context.failure?.code ?? 'unknown'}`)}</p>
-                {inspection.context.failure?.correlationId === undefined ? null : (
+            <Banner
+              action={
+                <Button
+                  icon={<RotateCw aria-hidden="true" />}
+                  onClick={() => {
+                    send({ type: 'RETRY' });
+                  }}
+                  size="compact"
+                  tone="quiet"
+                >
+                  {t('messages.inspector.retry')}
+                </Button>
+              }
+              className="content-inspector__failure"
+              title={t('messages.inspector.failed')}
+              tone="danger"
+            >
+              <p>{t(`messages.failure.${inspection.context.failure?.code ?? 'unknown'}`)}</p>
+              {inspection.context.failure?.correlationId === undefined ? null : (
+                <Details summary={t('messages.inspector.details')}>
                   <code>{inspection.context.failure.correlationId}</code>
-                )}
-              </div>
-              <Button
-                icon={<RotateCw aria-hidden="true" />}
-                onClick={() => {
-                  send({ type: 'RETRY' });
-                }}
-                size="compact"
-                tone="quiet"
-              >
-                {t('messages.inspector.retry')}
-              </Button>
-            </div>
+                </Details>
+              )}
+            </Banner>
           ) : null}
           {inspection.matches('ready') && content !== null ? (
             <>
@@ -256,10 +227,7 @@ export function ContentInspector({
               >
                 <header>
                   <FileCheck2 aria-hidden="true" />
-                  <div>
-                    <strong>{t('messages.body.verified')}</strong>
-                    <span>{content.digestSha256.slice(0, 16)}…</span>
-                  </div>
+                  <strong>{t('messages.body.verified')}</strong>
                 </header>
                 {content.mode === 'text' && content.text !== undefined ? (
                   content.mediaType === 'text/markdown' ? (
@@ -335,6 +303,55 @@ export function ContentInspector({
           ) : null}
         </>
       )}
+      <Details className="content-inspector__details" summary={t('messages.inspector.details')}>
+        <dl>
+          <div>
+            <dt>{t('messages.inspector.signature')}</dt>
+            <dd data-signature-status={message.signatureStatus}>
+              <SignatureIcon aria-hidden="true" />
+              <span>{t(`messages.signature.${message.signatureStatus}`)}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>{t('messages.inspector.room')}</dt>
+            <dd>
+              <code>{message.roomId}</code>
+            </dd>
+          </div>
+          {preview === null || reference === null ? null : (
+            <>
+              <div>
+                <dt>{t('messages.preview.type')}</dt>
+                <dd>{reference.mediaType}</dd>
+              </div>
+              <div>
+                <dt>{t('messages.preview.size')}</dt>
+                <dd>{formatBytes(reference.sizeBytes, i18n.resolvedLanguage)}</dd>
+              </div>
+              <div>
+                <dt>{t('messages.preview.sensitivity')}</dt>
+                <dd>{t(`messages.sensitivity.${preview.sensitivity}`)}</dd>
+              </div>
+              {preview.riskFlags.length === 0 ? null : (
+                <div>
+                  <dt>{t('messages.preview.riskCodes')}</dt>
+                  <dd>
+                    <code>{preview.riskFlags.join(' · ')}</code>
+                  </dd>
+                </div>
+              )}
+            </>
+          )}
+          {content === null ? null : (
+            <div>
+              <dt>{t('messages.body.digest')}</dt>
+              <dd>
+                <code>{content.digestSha256}</code>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </Details>
     </motion.aside>
   );
 }

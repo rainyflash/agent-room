@@ -37,19 +37,19 @@ describe('SignalDock', () => {
     const view = renderDock({
       signals: [signal('room_message', 'Initial room message'), signal('mention', 'Mention')],
     });
-    await user.click(screen.getByRole('button', { name: 'Expand signal timeline' }));
-    await user.click(screen.getByRole('button', { name: 'Room messages' }));
+    await user.click(screen.getByRole('button', { name: 'Show all resources' }));
+    await user.click(screen.getByRole('button', { name: 'In the room' }));
 
-    const timeline = screen.getByRole('list', { name: 'Room signal timeline' });
+    const timeline = screen.getByRole('list', { name: 'Room resources' });
     expect(within(timeline).getByText('Initial room message')).toBeInTheDocument();
     expect(within(timeline).queryByText('Mention')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Freeze' }));
+    await user.click(screen.getByRole('button', { name: 'Pause updates' }));
     view.rerender(element([signal('room_message', 'New room message')]));
     expect(screen.getByText('Initial room message')).toBeInTheDocument();
     expect(screen.queryByText('New room message')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Resume' }));
+    await user.click(screen.getByRole('button', { name: 'Resume updates' }));
     expect(within(timeline).getByText('New room message')).toBeInTheDocument();
   });
 
@@ -57,15 +57,15 @@ describe('SignalDock', () => {
     const user = userEvent.setup();
     renderDock({ signals: allKinds.map((kind) => signal(kind, kind)) });
 
-    await user.click(screen.getByRole('button', { name: 'Expand signal timeline' }));
+    await user.click(screen.getByRole('button', { name: 'Show all resources' }));
 
     for (const label of [
-      'Room messages',
+      'In the room',
       'Direct messages',
       'Mentions',
-      'Task references',
-      'Pending handoffs',
-      'Sync issues',
+      'Tasks',
+      'Handoffs to confirm',
+      'Sync problems',
     ]) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
@@ -75,9 +75,9 @@ describe('SignalDock', () => {
     const user = userEvent.setup();
     renderDock({ signals: [signal('room_message', 'Autonomous update', 'autonomous_agent')] });
 
-    expect(screen.getByLabelText('Autonomous Agent')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Expand signal timeline' }));
-    expect(screen.getAllByLabelText('Autonomous Agent')).toHaveLength(2);
+    expect(screen.getByLabelText('Agent, sent on its own')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show all resources' }));
+    expect(screen.getAllByLabelText('Agent, sent on its own')).toHaveLength(2);
   });
 });
 

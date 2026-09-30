@@ -1,9 +1,7 @@
-import { Button } from '@agent-room/ui-system';
-import { CircleAlert, Flag, LoaderCircle, ShieldCheck, X } from 'lucide-react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Banner, Button, Details, Dialog, Field, Spinner } from '@agent-room/ui-system';
+import { Flag, ShieldCheck } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -24,14 +22,15 @@ export type MessageReportControlProps = {
   readonly message: RoomMessageSignal;
 };
 
+/**
+ * 举报一条消息或资料：选原因、写几句说明，愿意的话附上看得到的摘要。只附带消息的标识，
+ * 不读取、不上传解密后的全文。
+ */
 export function MessageReportControl({ catalogId, gateway, message }: MessageReportControlProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const reduceMotion = useReducedMotion();
   const identifiers = useMemo(() => new BrowserUuidV7Factory(), []);
-  const launcherRef = useRef<HTMLButtonElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const descriptionId = useId();
+  const formId = useId();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState<ModerationReason>('other');
   const [description, setDescription] = useState('');
@@ -63,29 +62,8 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
   });
   const result = mutation.data ?? null;
 
-  useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !mutation.isPending) {
-        setOpen(false);
-        launcherRef.current?.focus();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [mutation.isPending, open]);
-
   const close = (): void => {
-    if (mutation.isPending) {
-      return;
-    }
-    setOpen(false);
-    launcherRef.current?.focus();
+    if (!mutation.isPending) setOpen(false);
   };
 
   const begin = (): void => {
@@ -98,171 +76,126 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
 
   return (
     <>
-      <Button
-        icon={<Flag aria-hidden="true" />}
-        onClick={begin}
-        ref={launcherRef}
-        size="compact"
-        tone="ghost"
-      >
+      <Button icon={<Flag aria-hidden="true" />} onClick={begin} size="compact" tone="ghost">
         {t('moderation.report.action')}
       </Button>
-      {createPortal(
-        <AnimatePresence>
-          {open ? (
-            <motion.div
-              animate={{ opacity: 1 }}
-              className="moderation-dialog-overlay"
-              exit={{ opacity: 0 }}
-              initial={{ opacity: 0 }}
-              key="message-report-dialog"
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  close();
-                }
-              }}
-              transition={{ duration: reduceMotion ? 0 : 0.14 }}
+      {open ? (
+        <Dialog
+          className="moderation-report"
+          closeLabel={t('moderation.report.close')}
+          description={t('moderation.report.detail')}
+          footer={
+            result?.ok === true ? (
+              <Button onClick={close}>{t('moderation.report.done')}</Button>
+            ) : (
+              <>
+                <Button disabled={mutation.isPending} onClick={close} tone="quiet">
+                  {t('moderation.report.cancel')}
+                </Button>
+                <Button
+                  disabled={mutation.isPending}
+                  form={formId}
+                  icon={mutation.isPending ? <Spinner /> : <Flag aria-hidden="true" />}
+                  type="submit"
+                >
+                  {t(
+                    mutation.isPending
+                      ? 'moderation.report.submitting'
+                      : 'moderation.report.submit',
+                  )}
+                </Button>
+              </>
+            )
+          }
+          icon={<Flag />}
+          onClose={close}
+          title={t('moderation.report.title')}
+        >
+          {result?.ok === true ? (
+            <Banner
+              className="moderation-report-success"
+              title={t('moderation.report.success')}
+              tone="success"
             >
-              <motion.section
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                aria-labelledby="message-report-title"
-                aria-modal="true"
-                className="moderation-report-dialog"
-                exit={{ opacity: 0, scale: reduceMotion ? 1 : 0.985, y: 8 }}
-                initial={reduceMotion ? false : { opacity: 0, scale: 0.985, y: 18 }}
-                role="dialog"
-                transition={{ damping: 30, stiffness: 360, type: 'spring' }}
-              >
-                <header className="moderation-dialog-header">
-                  <div>
-                    <p className="eyebrow">{t('moderation.report.eyebrow')}</p>
-                    <h2 id="message-report-title">{t('moderation.report.title')}</h2>
-                    <p>{t('moderation.report.detail')}</p>
-                  </div>
-                  <button
-                    aria-label={t('moderation.report.close')}
-                    className="inspector-close ar-icon-button"
-                    disabled={mutation.isPending}
-                    onClick={close}
-                    ref={closeRef}
-                    type="button"
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                </header>
-                {result?.ok === true ? (
-                  <div className="moderation-report-success" role="status">
-                    <ShieldCheck aria-hidden="true" />
-                    <div>
-                      <strong>{t('moderation.report.success')}</strong>
-                      <p>{t('moderation.report.caseId', { id: result.value.caseId })}</p>
-                    </div>
-                    <Button onClick={close} tone="primary">
-                      {t('moderation.report.close')}
-                    </Button>
-                  </div>
-                ) : (
-                  <form
-                    className="moderation-report-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      mutation.mutate();
-                    }}
-                  >
-                    <label>
-                      <span>{t('moderation.report.reason')}</span>
-                      <select
-                        disabled={mutation.isPending}
-                        onChange={(event) => {
-                          setReason(parseReason(event.currentTarget.value));
-                        }}
-                        value={reason}
-                      >
-                        {moderationReasons.map((option) => (
-                          <option key={option} value={option}>
-                            {t(`moderation.reason.${option}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label htmlFor={descriptionId}>
-                      <span>{t('moderation.report.description')}</span>
-                      <textarea
-                        disabled={mutation.isPending}
-                        id={descriptionId}
-                        maxLength={4_096}
-                        onChange={(event) => {
-                          setDescription(event.currentTarget.value);
-                        }}
-                        placeholder={t('moderation.report.descriptionPlaceholder')}
-                        rows={4}
-                        value={description}
-                      />
-                    </label>
-                    <label className="moderation-evidence-choice">
-                      <input
-                        checked={includePreview}
-                        disabled={mutation.isPending || message.preview === null}
-                        onChange={(event) => {
-                          setIncludePreview(event.currentTarget.checked);
-                        }}
-                        type="checkbox"
-                      />
-                      <span>
-                        <strong>{t('moderation.report.includePreview')}</strong>
-                        <small>{t('moderation.report.includePreviewDetail')}</small>
-                      </span>
-                    </label>
-                    {message.endToEndEncrypted ? (
-                      <p className="moderation-encryption-note">
-                        <ShieldCheck aria-hidden="true" />
-                        {t('moderation.report.encrypted')}
-                      </p>
-                    ) : null}
-                    {result?.ok === false ? (
-                      <div className="moderation-inline-failure" role="alert">
-                        <CircleAlert aria-hidden="true" />
-                        <span>
-                          {t('moderation.report.failure', { code: result.error.code })}
-                          {result.error.retryAfterSeconds === undefined
-                            ? ''
-                            : ` ${t('moderation.report.retryAfter', {
-                                count: result.error.retryAfterSeconds,
-                              })}`}
-                        </span>
-                      </div>
-                    ) : null}
-                    <footer className="moderation-dialog-actions">
-                      <Button disabled={mutation.isPending} onClick={close} tone="quiet">
-                        {t('moderation.report.cancel')}
-                      </Button>
-                      <Button
-                        disabled={mutation.isPending}
-                        icon={
-                          mutation.isPending ? (
-                            <LoaderCircle aria-hidden="true" />
-                          ) : (
-                            <Flag aria-hidden="true" />
-                          )
-                        }
-                        tone="primary"
-                        type="submit"
-                      >
-                        {t(
-                          mutation.isPending
-                            ? 'moderation.report.submitting'
-                            : 'moderation.report.submit',
-                        )}
-                      </Button>
-                    </footer>
-                  </form>
-                )}
-              </motion.section>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>,
-        document.body,
-      )}
+              <p>{t('moderation.report.successDetail')}</p>
+              <Details summary={t('moderation.report.details')}>
+                <code>{result.value.caseId}</code>
+              </Details>
+            </Banner>
+          ) : (
+            <form
+              className="moderation-report-form"
+              id={formId}
+              onSubmit={(event) => {
+                event.preventDefault();
+                mutation.mutate();
+              }}
+            >
+              <Field label={t('moderation.report.reason')}>
+                <select
+                  disabled={mutation.isPending}
+                  onChange={(event) => {
+                    setReason(parseReason(event.currentTarget.value));
+                  }}
+                  value={reason}
+                >
+                  {moderationReasons.map((option) => (
+                    <option key={option} value={option}>
+                      {t(`moderation.reason.${option}`)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={t('moderation.report.description')}>
+                <textarea
+                  disabled={mutation.isPending}
+                  maxLength={4_096}
+                  onChange={(event) => {
+                    setDescription(event.currentTarget.value);
+                  }}
+                  placeholder={t('moderation.report.descriptionPlaceholder')}
+                  rows={4}
+                  value={description}
+                />
+              </Field>
+              <label className="moderation-evidence-choice">
+                <input
+                  checked={includePreview}
+                  disabled={mutation.isPending || message.preview === null}
+                  onChange={(event) => {
+                    setIncludePreview(event.currentTarget.checked);
+                  }}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>{t('moderation.report.includePreview')}</strong>
+                  <small>{t('moderation.report.includePreviewDetail')}</small>
+                </span>
+              </label>
+              {message.endToEndEncrypted ? (
+                <p className="moderation-encryption-note">
+                  <ShieldCheck aria-hidden="true" />
+                  {t('moderation.report.encrypted')}
+                </p>
+              ) : null}
+              {result?.ok === false ? (
+                <Banner tone="danger" title={t('moderation.report.failed')}>
+                  {result.error.retryAfterSeconds === undefined ? null : (
+                    <p>
+                      {t('moderation.report.retryAfter', {
+                        count: result.error.retryAfterSeconds,
+                      })}
+                    </p>
+                  )}
+                  <Details summary={t('moderation.report.details')}>
+                    <code>{result.error.code}</code>
+                  </Details>
+                </Banner>
+              ) : null}
+            </form>
+          )}
+        </Dialog>
+      ) : null}
     </>
   );
 }

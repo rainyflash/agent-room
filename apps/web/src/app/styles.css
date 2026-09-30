@@ -20,54 +20,6 @@
   gap: 0.25rem;
 }
 
-.moderation-dialog-overlay {
-  position: fixed;
-  z-index: 120;
-  inset: 0;
-  display: grid;
-  background: var(--ar-backdrop);
-  backdrop-filter: blur(4px);
-}
-
-.moderation-dialog-overlay {
-  place-items: center;
-  padding: 1rem;
-}
-
-.moderation-report-dialog {
-  width: min(560px, 100%);
-  max-height: calc(100svh - 2rem);
-  overflow-y: auto;
-  border: var(--ar-outline-width) solid var(--ar-outline);
-  border-radius: var(--ar-panel-radius);
-  color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: var(--ar-press);
-}
-
-.moderation-dialog-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.25rem;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
-}
-
-.moderation-dialog-header > div {
-  min-width: 0;
-}
-
-.moderation-dialog-header h2 {
-  margin: 0.3rem 0 0;
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1.2;
-  font-family: var(--font-display);
-}
-
-.moderation-dialog-header p:last-child,
 .moderation-action-form header p {
   margin: 0.55rem 0 0;
   color: var(--ar-muted);
@@ -75,14 +27,12 @@
   line-height: 1.5;
 }
 
-.moderation-report-form,
 .moderation-action-form {
   display: grid;
   gap: 1rem;
   padding: 1.25rem;
 }
 
-.moderation-report-form > label,
 .moderation-action-form > label,
 .moderation-action-form__grid > label {
   display: grid;
@@ -94,8 +44,6 @@
   letter-spacing: 0;
 }
 
-.moderation-report-form select,
-.moderation-report-form textarea,
 .moderation-action-form select,
 .moderation-action-form input {
   width: 100%;
@@ -110,18 +58,15 @@
   letter-spacing: 0;
 }
 
-.moderation-report-form select,
 .moderation-action-form select,
 .moderation-action-form input {
   padding: 0 1rem;
 }
 
-.moderation-report-form textarea {
-  min-height: 108px;
-  resize: vertical;
-  padding: 0.75rem 1rem;
-  line-height: 1.5;
-  border-radius: 18px;
+/* 举报对话框里的表单：字段用统一的 Field，这里只排间距。 */
+.moderation-report-form {
+  display: grid;
+  gap: 16px;
 }
 
 .moderation-evidence-choice {
@@ -167,8 +112,7 @@
 
 .moderation-encryption-note,
 .moderation-inline-failure,
-.moderation-boundary,
-.moderation-report-success {
+.moderation-boundary {
   display: flex;
   align-items: flex-start;
   gap: 0.65rem;
@@ -179,8 +123,7 @@
 
 .moderation-encryption-note > svg,
 .moderation-inline-failure > svg,
-.moderation-boundary > svg,
-.moderation-report-success > svg {
+.moderation-boundary > svg {
   width: 17px;
   height: 17px;
   flex: 0 0 auto;
@@ -202,38 +145,6 @@
 
 .moderation-inline-failure > span {
   flex: 1;
-}
-
-.moderation-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.55rem;
-  padding-top: 0.25rem;
-}
-
-.moderation-report-success {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  padding: 1.5rem;
-}
-
-.moderation-report-success > svg {
-  color: var(--ar-success);
-}
-
-.moderation-report-success strong,
-.moderation-report-success p {
-  margin: 0;
-}
-
-.moderation-report-success p {
-  margin-top: 0.3rem;
-  color: var(--ar-ink-48);
-}
-
-.moderation-report-success .ar-button {
-  grid-column: 1 / -1;
-  margin-top: 0.9rem;
 }
 
 .moderation-governance__workspace {
@@ -439,26 +350,8 @@
 }
 
 @media (max-width: 560px) {
-  .moderation-dialog-overlay {
-    padding: 0;
-  }
-
-  .moderation-report-dialog {
-    width: 100%;
-    height: 100svh;
-    max-height: none;
-    border-width: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
-
   .moderation-action-form__grid {
     grid-template-columns: 1fr;
-  }
-
-  .moderation-dialog-actions {
-    align-items: stretch;
-    flex-direction: column-reverse;
   }
 }
 
@@ -2441,9 +2334,7 @@
 .message-signal__meta,
 .message-signal__footer,
 .content-inspector__source,
-.content-inspector__risks,
 .content-inspector__progress,
-.content-inspector__failure,
 .content-inspector__verified > header {
   display: flex;
   align-items: center;
@@ -2875,138 +2766,65 @@ p.message-dock__headline {
   font-size: 12px;
 }
 
-.content-inspector__trust {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  gap: 0.8rem;
-  padding: 0.65rem 1.25rem;
-  margin: 0;
-  border-bottom: 1px solid var(--ar-ink-09);
-  background: var(--ar-ink-04);
-}
-
-.content-inspector__trust > div {
-  min-width: 0;
-}
-
-.content-inspector__trust dt {
-  color: var(--ar-ink-48);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.content-inspector__trust dd {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 0.35rem;
-  margin: 0.25rem 0 0;
-  color: var(--ar-ink-72);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.content-inspector__trust dd > svg {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
-}
-
-.content-inspector__trust dd[data-signature-status='instance_verified'] {
-  color: color-mix(in srgb, var(--color-signal) 58%, var(--color-ink));
-}
-
-.content-inspector__trust dd[data-signature-status='matrix_sender_matched'],
-.content-inspector__trust dd[data-signature-status='revoked_after_event'] {
-  color: color-mix(in srgb, var(--color-alert) 72%, var(--color-ink));
-}
-
-.content-inspector__trust code {
-  display: block;
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .content-inspector__preview {
   padding: 1.05rem 1.25rem;
   border-bottom: 1px solid var(--ar-ink-09);
 }
 
+.content-inspector__preview {
+  display: grid;
+  gap: 0.8rem;
+}
+
 .content-inspector__preview > p {
-  margin: 0 0 0.9rem;
+  margin: 0;
   font-size: 0.82rem;
   line-height: 1.55;
 }
 
-.content-inspector__preview dl {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  padding: 1px;
-  margin: 0;
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--ar-ink-09);
+.content-inspector__failure {
+  margin: 1rem 1.25rem;
 }
 
-.content-inspector__preview dl > div {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.7rem;
-  background: var(--color-paper);
+/* 签名、房间 ID、类型大小、标注和校验值：排查才看，收在最下面的详情里。 */
+.content-inspector__details {
+  margin: 0.5rem 1.25rem 1.25rem;
 }
 
-.content-inspector__preview dt,
-.content-inspector__preview dd {
+.content-inspector__details dl {
+  display: grid;
+  gap: 0.6rem;
   margin: 0;
+}
+
+.content-inspector__details dl > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.content-inspector__details dt {
+  color: var(--ar-muted);
   font-size: 12px;
 }
 
-.content-inspector__preview dt {
-  color: var(--ar-ink-48);
-}
-
-.content-inspector__preview dd {
-  overflow-wrap: anywhere;
-  font-family: var(--font-sans);
-}
-
-.content-inspector__risks {
-  align-items: start;
-  gap: 0.65rem;
-  padding: 0.75rem;
-  margin-top: 0.8rem;
-  border: 1px solid color-mix(in srgb, var(--color-alert) 28%, transparent);
-  border-radius: 10px;
-  color: color-mix(in srgb, var(--color-alert) 76%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-alert) 7%, transparent);
-}
-
-.content-inspector__risks > svg {
-  width: 16px;
-  height: 16px;
-}
-
-.content-inspector__risks strong,
-.content-inspector__risks p {
+.content-inspector__details dd {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   margin: 0;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
-.content-inspector__risks p {
-  margin-top: 0.2rem;
-  font-family: var(--font-sans);
-  overflow-wrap: anywhere;
+.content-inspector__details dd > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
 }
 
 .content-inspector__consent,
 .content-inspector__terminal,
 .content-inspector__progress,
-.content-inspector__failure,
 .content-inspector__attachment {
   padding: 1.1rem 1.25rem;
 }
@@ -3030,7 +2848,6 @@ p.message-dock__headline {
 .content-inspector__consent p,
 .content-inspector__terminal p,
 .content-inspector__progress p,
-.content-inspector__failure p,
 .content-inspector__attachment p {
   margin: 0;
   color: var(--ar-ink-48);
@@ -3044,14 +2861,12 @@ p.message-dock__headline {
   gap: 0.75rem;
 }
 
-.content-inspector__progress,
-.content-inspector__failure {
+.content-inspector__progress {
   align-items: start;
   gap: 0.8rem;
 }
 
-.content-inspector__progress > svg,
-.content-inspector__failure > svg {
+.content-inspector__progress > svg {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
@@ -3062,26 +2877,8 @@ p.message-dock__headline {
   animation: message-progress-spin 1s steps(8, end) infinite;
 }
 
-.content-inspector__progress strong,
-.content-inspector__failure strong {
+.content-inspector__progress strong {
   font-size: 12px;
-}
-
-.content-inspector__failure {
-  color: var(--color-alert);
-  background: var(--ar-danger-soft);
-}
-
-.content-inspector__failure > div {
-  flex: 1;
-}
-
-.content-inspector__failure code {
-  display: block;
-  margin-top: 0.45rem;
-  color: var(--ar-ink-48);
-  font-size: 12px;
-  overflow-wrap: anywhere;
 }
 
 .content-inspector__verified {
@@ -3099,18 +2896,8 @@ p.message-dock__headline {
   height: 18px;
 }
 
-.content-inspector__verified > header div {
-  display: grid;
-  gap: 0.1rem;
-}
-
 .content-inspector__verified > header strong {
   color: var(--color-ink);
-  font-size: 12px;
-}
-
-.content-inspector__verified > header span {
-  font-family: var(--font-sans);
   font-size: 12px;
 }
 
@@ -3802,11 +3589,6 @@ p.message-dock__headline {
 
   .content-inspector__preview dl {
     grid-template-columns: 1fr;
-  }
-
-  .content-inspector__trust {
-    grid-template-columns: 1fr;
-    gap: 0.55rem;
   }
 
   .content-inspector__consent {

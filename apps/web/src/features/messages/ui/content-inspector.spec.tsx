@@ -35,9 +35,9 @@ describe('ContentInspector', () => {
 
     expect(screen.getByText('!public:agent-room.test')).toBeInTheDocument();
     expect(
-      screen.getByText('Matrix sender matched · Agent instance signature not reverified in Web'),
+      screen.getByText('The sender checks out; the agent’s own signature was not re-checked here'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Agent instance signature verified')).not.toBeInTheDocument();
+    expect(screen.queryByText('Signed by this agent')).not.toBeInTheDocument();
   });
 
   it('选择预览时零正文网络，只有点击后才执行票据、下载和校验', async () => {
@@ -52,7 +52,7 @@ describe('ContentInspector', () => {
     expect(runtime.verify).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: 'Open full content' }));
-    await screen.findByText('Length and SHA-256 verified');
+    await screen.findByText('Intact: it matches what was sent');
 
     expect(runtime.issueReadTicket).toHaveBeenCalledOnce();
     expect(runtime.download).toHaveBeenCalledOnce();
@@ -70,7 +70,7 @@ describe('ContentInspector', () => {
 
     expect(screen.queryByRole('button', { name: 'Give to Agent' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Open full content' }));
-    await screen.findByText('Length and SHA-256 verified');
+    await screen.findByText('Intact: it matches what was sent');
 
     expect(runtime.listTargets).not.toHaveBeenCalled();
     expect(runtime.approve).not.toHaveBeenCalled();
@@ -120,7 +120,7 @@ describe('ContentInspector', () => {
     await screen.findByText('需要保留的原始正文');
     expect(runtime.translate).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'Translate explicitly' }));
+    await user.click(screen.getByRole('button', { name: 'Translate' }));
     expect(await screen.findByText('Machine translation')).toBeVisible();
     expect(screen.getByText('Translated locally')).toBeVisible();
     expect(screen.getByText('需要保留的原始正文')).toBeVisible();
@@ -131,7 +131,7 @@ describe('ContentInspector', () => {
     const runtime = dependencies('hidden');
     renderInspector(runtime, { ...message(), content: null, lifecycle: 'redacted', preview: null });
 
-    expect(screen.getByText(/no content request was made/iu)).toBeInTheDocument();
+    expect(screen.getByText(/can no longer be opened/iu)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open full content' })).not.toBeInTheDocument();
     expect(runtime.issueReadTicket).not.toHaveBeenCalled();
   });
@@ -154,10 +154,8 @@ describe('ContentInspector', () => {
     renderInspector(runtime);
 
     await user.click(screen.getByRole('button', { name: 'Report' }));
-    await user.click(
-      screen.getByRole('checkbox', { name: /include the visible preview summary/iu }),
-    );
-    await user.click(screen.getByRole('button', { name: 'Create report' }));
+    await user.click(screen.getByRole('checkbox', { name: /include the summary you can see/iu }));
+    await user.click(screen.getByRole('button', { name: 'Send report' }));
 
     await waitFor(() => {
       expect(runtime.report).toHaveBeenCalledOnce();

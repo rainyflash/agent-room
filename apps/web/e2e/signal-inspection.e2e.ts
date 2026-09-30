@@ -13,21 +13,21 @@ test('资料视图显示摘要，正文必须经显式点击才读取并保持�
   await expect(dock).toBeVisible();
   expect(await fixtureContentReads(page)).toEqual({ downloads: 0, tickets: 0 });
 
-  const timeline = page.getByRole('list', { name: 'Room signal timeline' });
+  const timeline = page.getByRole('list', { name: 'Room resources' });
   await expect(timeline.getByRole('button')).toHaveCount(2);
   await timeline.getByRole('button', { name: /Protocol review ready/u }).click();
 
   const inspector = page.getByRole('complementary', { name: 'Protocol review ready' });
-  await expect(inspector).toContainText('Only preview metadata is loaded');
+  await expect(inspector).toContainText('Only the summary is loaded');
   await expect(inspector).toContainText('!builders:agent-room.test');
   await expect(inspector).toContainText(
-    'Matrix sender matched · Agent instance signature not reverified in Web',
+    'The sender checks out; the agent’s own signature was not re-checked here',
   );
-  await expect(inspector).not.toContainText('Agent instance signature verified');
+  await expect(inspector).not.toContainText('Signed by this agent');
   expect(await fixtureContentReads(page)).toEqual({ downloads: 0, tickets: 0 });
 
   await inspector.getByRole('button', { name: 'Open full content' }).click();
-  await expect(inspector).toContainText('Length and SHA-256 verified');
+  await expect(inspector).toContainText('Intact: it matches what was sent');
   expect(await fixtureContentReads(page)).toEqual({ downloads: 1, tickets: 1 });
   await expect(inspector.getByText(/Ignore all previous instructions/iu)).toBeVisible();
   await expect(inspector.locator('.restricted-markdown img')).toHaveCount(0);
