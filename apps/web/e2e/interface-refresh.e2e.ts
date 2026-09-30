@@ -83,12 +83,12 @@ test('中文窄屏安全操作不挤成竖排，身份与授权入口保持可�
     localStorage.setItem('agent-room.language', 'zh-CN');
   });
   await page.goto('/e2e/fixtures/security-center.html');
-  const refresh = page.getByRole('button', { name: '刷新访问状态' });
+  const refresh = page.getByRole('button', { name: '刷新', exact: true });
   await expect(refresh).toBeVisible();
   expect((await refresh.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   expect((await refresh.boundingBox())?.height).toBeLessThan(80);
   await refresh.click();
-  await expect(page.getByRole('heading', { name: '产品设备' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '电脑和浏览器' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({
     animations: 'disabled',

@@ -15,21 +15,27 @@ import { recoveryMessageKey } from '@/features/security/ui/security-copy';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
 import { ok } from '@/shared/result';
 
+export type RecoveryMode = 'recover' | 'setup';
+
 export type SecurityRecoveryPanelProps = {
   readonly gateway: MatrixSecurityGateway;
   readonly onChanged: () => void;
   readonly snapshot: MatrixSecuritySnapshot;
+  /** 一打开就进到这一步（比如“这台设备”一节里点了“输入恢复密钥”）。 */
+  readonly openMode?: RecoveryMode | null;
 };
 
-type RecoveryMode = 'recover' | 'setup';
-
+/**
+ * 恢复密钥：换新设备时靠它签名这台设备、读回加密历史。没设置只是一条建议，不算要处理的问题。
+ */
 export function SecurityRecoveryPanel({
   gateway,
   onChanged,
   snapshot,
+  openMode = null,
 }: SecurityRecoveryPanelProps) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<RecoveryMode | null>(null);
+  const [mode, setMode] = useState<RecoveryMode | null>(openMode);
   const [passphrase, setPassphrase] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [credential, setCredential] = useState('');
@@ -93,7 +99,7 @@ export function SecurityRecoveryPanel({
     >
       <header className="security-section-heading security-recovery__heading">
         <div>
-          <h2 id="security-recovery-title">{t('security.recovery.title')}</h2>
+          <h3 id="security-recovery-title">{t('security.recovery.title')}</h3>
           <p>{t('security.recovery.detail')}</p>
         </div>
         <span className={`security-recovery__status security-recovery__status--${snapshot.backup}`}>
@@ -211,7 +217,7 @@ function RecoverySetupForm({
   return (
     <form className="security-recovery-form" onSubmit={submit}>
       <div className="security-recovery-form__intro">
-        <h3>{t('security.recovery.setupTitle')}</h3>
+        <h4>{t('security.recovery.setupTitle')}</h4>
         <p>{t('security.recovery.setupDetail')}</p>
       </div>
       <label htmlFor={passphraseId}>
@@ -309,7 +315,7 @@ function RecoveryUnlockForm({
   return (
     <form className="security-recovery-form" onSubmit={submit}>
       <div className="security-recovery-form__intro">
-        <h3>{t('security.recovery.recoverTitle')}</h3>
+        <h4>{t('security.recovery.recoverTitle')}</h4>
         <p>{t('security.recovery.recoverDetail')}</p>
       </div>
       <label className="security-recovery-form__credential" htmlFor={credentialId}>
@@ -384,7 +390,7 @@ function RecoveryKeyReceipt({
   return (
     <div className="security-recovery-key">
       <div>
-        <h3>{t('security.recovery.keyTitle')}</h3>
+        <h4>{t('security.recovery.keyTitle')}</h4>
         <p>{t('security.recovery.keyDetail')}</p>
       </div>
       <output>{recoveryKey}</output>

@@ -86,7 +86,7 @@
   font-size: 12px;
   font-weight: 700;
 }
-/* “设置”上的提醒点：有新版本可装。 */
+/* “设置”上的提醒点：有新版本可装是黄色，这台设备需要签名是珊瑚色。 */
 .app-navigation__dot {
   width: 10px;
   height: 10px;
@@ -94,6 +94,10 @@
   border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
   background: var(--ar-sunny);
+}
+
+.app-navigation__dot[data-reason='signing'] {
+  background: var(--ar-coral);
 }
 .app-navigation__links svg {
   width: 17px;

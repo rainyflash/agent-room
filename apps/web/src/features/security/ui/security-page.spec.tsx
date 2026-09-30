@@ -22,6 +22,8 @@ import { err, ok } from '@/shared/result';
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
+  // jsdom 没有 scrollIntoView；“输入恢复密钥”会滚到恢复密钥一节。
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 beforeEach(() => {
@@ -31,22 +33,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SecurityWorkspace', () => {
-  it('展示真实 Matrix 安全姿态与设备账本', async () => {
-    const gateway = securityGateway(readySnapshot());
+  it('这台设备已由你签名时只说一句；设备列出名字、是不是这台、签没签名，ID 和指纹在详情里', async () => {
+    renderWorkspace(securityGateway(readySnapshot()));
 
-    renderWorkspace(gateway);
-
-    const heading = await screen.findByRole('heading', { name: 'This account is protected' });
-    await waitFor(() => {
-      expect(heading).toBeVisible();
-    });
-    expect(screen.getByText('@alice:agent-room.test')).toBeVisible();
+    await visible(screen.findByText('This device is signed by you'));
     expect(screen.getByText('Alice browser')).toBeVisible();
-    expect(screen.getByText('ED25519 CURRENT FINGERPRINT')).toBeVisible();
-    expect(screen.getAllByText('Verified')).toHaveLength(1);
+    expect(screen.getByText('This device')).toBeVisible();
+    expect(screen.getByText('Signed by you')).toBeVisible();
+    // 排查用的信息默认收起；不再显示加密引擎版本。
+    expect(screen.getByText('ED25519 CURRENT FINGERPRINT')).not.toBeVisible();
+    expect(screen.getByText('@alice:agent-room.test')).not.toBeVisible();
+    expect(screen.queryByText(/Crypto engine/u)).not.toBeInTheDocument();
   });
 
-  it('只能通过官方 SAS 会话确认未验证设备', async () => {
+  it('这台设备要签名时给两条路：用另一台设备核对，走官方 SAS 会话', async () => {
     const user = userEvent.setup();
     const session = verificationSession({
       sas: {
@@ -64,16 +64,19 @@ describe('SecurityWorkspace', () => {
         ...blockedSnapshot(),
         blockers: ['cross_signing_not_ready', 'current_device_unverified'],
         crossSigningReady: false,
+        devices: [...blockedSnapshot().devices, laptop()],
       },
       { beginVerification },
     );
 
     renderWorkspace(gateway);
-    const [verifyButton] = await screen.findAllByRole('button', { name: 'Verify' });
-    if (verifyButton === undefined) throw new Error('缺少验证设备按钮');
-    await user.click(verifyButton);
+    await visible(screen.findByText('This device needs to be signed'));
+    expect(
+      screen.getByText('Either way, the result is the same: this device is signed by you.'),
+    ).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Start verifying' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Verify a Matrix device' });
+    const dialog = await screen.findByRole('dialog', { name: 'Verify a device' });
     await waitFor(() => {
       expect(within(dialog).getByText('🐶')).toBeVisible();
     });
@@ -84,7 +87,38 @@ describe('SecurityWorkspace', () => {
     expect(session.confirm).toHaveBeenCalledOnce();
   });
 
-  it('全新账户先建立交叉签名身份，不把首次设备引向无解的 SAS 请求', async () => {
+  it('另一条路：点“输入恢复密钥”直接打开恢复密钥的输入框；只有一台设备时不能用别的设备核对', async () => {
+    const user = userEvent.setup();
+    renderWorkspace(securityGateway(blockedSnapshot()));
+
+    expect(await screen.findByRole('button', { name: 'Start verifying' })).toBeDisabled();
+    await visible(screen.findByText('You’re not signed in on any other device right now.'));
+    const signing = screen.getByRole('region', { name: 'This device needs to be signed' });
+    await user.click(within(signing).getByRole('button', { name: 'Enter recovery key' }));
+    await visible(screen.findByLabelText('Passphrase or recovery key'));
+  });
+
+  it('别的设备没签名时可以在列表里核对它', async () => {
+    const user = userEvent.setup();
+    const session = verificationSession({ stage: 'waiting' });
+    const beginVerification = vi.fn(() => Promise.resolve(ok(session.value)));
+    const gateway = securityGateway(
+      {
+        ...readySnapshot(),
+        devices: [...readySnapshot().devices, { ...laptop(), trust: 'unverified' as const }],
+      },
+      { beginVerification },
+    );
+
+    renderWorkspace(gateway);
+    await visible(screen.findByText('Not signed'));
+    await user.click(screen.getByRole('button', { name: 'Verify' }));
+    await waitFor(() => {
+      expect(beginVerification).toHaveBeenCalledWith({ targetDeviceId: 'ALICE-LAPTOP' });
+    });
+  });
+
+  it('全新账户先建立加密身份，不把首次设备引向无解的核对', async () => {
     const user = userEvent.setup();
     const establishIdentity = vi.fn(() => Promise.resolve(ok(undefined)));
     const gateway = securityGateway(
@@ -98,10 +132,11 @@ describe('SecurityWorkspace', () => {
     );
 
     renderWorkspace(gateway);
-    await user.click(await screen.findByRole('button', { name: 'Establish encrypted identity' }));
+    await user.click(await screen.findByRole('button', { name: 'Set up now' }));
 
     expect(establishIdentity).toHaveBeenCalledOnce();
     expect(screen.queryByRole('button', { name: 'Verify' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start verifying' })).not.toBeInTheDocument();
   });
 
   it('恢复密钥只在当前界面显示一次且不会写入浏览器存储', async () => {
@@ -111,12 +146,14 @@ describe('SecurityWorkspace', () => {
     const gateway = securityGateway(missingRecoverySnapshot(), { setupRecovery });
 
     const { queryClient } = renderWorkspace(gateway);
-    await user.click(await screen.findByRole('button', { name: 'Set up recovery' }));
+    // 没设置恢复密钥只是一条建议。
+    await visible(screen.findByText('Not set up yet'));
+    await user.click(screen.getByRole('button', { name: 'Set up recovery key' }));
     await user.type(screen.getByLabelText('Recovery passphrase'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Confirm passphrase'), 'correct horse battery staple');
     await user.click(screen.getByRole('button', { name: 'Create recovery' }));
 
-    expect(await screen.findByText(recoveryKey)).toBeVisible();
+    await visible(screen.findByText(recoveryKey));
     expect(setupRecovery).toHaveBeenCalledWith({ passphrase: 'correct horse battery staple' });
     expect(storageValues(window.localStorage)).not.toContain(recoveryKey);
     expect(
@@ -134,7 +171,7 @@ describe('SecurityWorkspace', () => {
     });
   });
 
-  it('分开展示产品设备与 Agent 实例并二次确认级联撤销', async () => {
+  it('已登录的电脑和 Agent 分开列，撤销电脑要确认并说清会断开上面的 Agent', async () => {
     const user = userEvent.setup();
     const revokeProductDevice = vi.fn(() =>
       Promise.resolve(ok({ matrixCleanup: 'pending' as const, pendingAgentInstanceCount: 1 })),
@@ -147,24 +184,44 @@ describe('SecurityWorkspace', () => {
 
     renderWorkspace(securityGateway(readySnapshot()), accessManagement);
 
-    const productDevices = await panelForHeading('Product devices');
-    const agentInstances = await panelForHeading('Agent instances');
-    expect(within(productDevices).getByText('Studio workstation')).toBeVisible();
-    expect(within(agentInstances).getByText('Build agent')).toBeVisible();
-    await user.click(within(productDevices).getByRole('button', { name: 'Revoke device' }));
+    const computers = await panelForHeading('Computers and browsers');
+    const agents = await panelForHeading('Agents');
+    expect(within(computers).getByText('Studio workstation')).toBeVisible();
+    expect(within(agents).getByText('Build agent')).toBeVisible();
+    // 内部 ID 不再列在名字下面。
+    expect(within(computers).queryByText(productDevice().deviceId)).not.toBeInTheDocument();
+    await user.click(within(computers).getByRole('button', { name: 'Revoke' }));
     await waitFor(() => {
-      expect(screen.getByText('Revoke this product device?')).toBeVisible();
+      expect(screen.getByText('Sign out this computer?')).toBeVisible();
     });
-    await user.click(screen.getByRole('button', { name: 'Confirm revocation' }));
+    await user.click(screen.getByRole('button', { name: 'Yes, revoke' }));
 
     await waitFor(() => {
       expect(revokeProductDevice).toHaveBeenCalledWith(productDevice().deviceId);
     });
-    expect(
-      await screen.findByText(/Local access is revoked\. Matrix device cleanup is pending/u),
-    ).toBeVisible();
+    await visible(screen.findByText(/Signed out\. The server is still finishing up/u));
   });
 });
+
+function laptop() {
+  return {
+    current: false,
+    deviceId: 'ALICE-LAPTOP',
+    displayName: 'Alice laptop',
+    fingerprint: 'ED25519 LAPTOP FINGERPRINT',
+    trust: 'signed' as const,
+    userId: '@alice:agent-room.test',
+  };
+}
+
+/** 内容淡入（从透明开始），jsdom 里要等它显示出来。 */
+async function visible(found: Promise<HTMLElement>): Promise<HTMLElement> {
+  const element = await found;
+  await waitFor(() => {
+    expect(element).toBeVisible();
+  });
+  return element;
+}
 
 async function panelForHeading(name: string): Promise<HTMLElement> {
   const heading = await screen.findByRole('heading', { name });

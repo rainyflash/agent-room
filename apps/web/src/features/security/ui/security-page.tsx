@@ -1,4 +1,4 @@
-import { Button } from '@agent-room/ui-system';
+import { Button, Details } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -12,10 +12,10 @@ import {
 } from '@/features/security/data/matrix-security-queries';
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type {
-  MatrixSecurityBlocker,
   MatrixSecurityDevice,
   MatrixSecurityFailure,
   MatrixSecurityGateway,
+  MatrixSecuritySnapshot,
   MatrixVerificationSession,
 } from '@/features/security/domain/matrix-security';
 import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
@@ -23,10 +23,11 @@ import { DeviceVerificationDialog } from '@/features/security/ui/device-verifica
 import { SecurityDeviceLedger } from '@/features/security/ui/security-device-ledger';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
 import {
-  SecurityPosture,
-  type SecurityPostureAction,
-} from '@/features/security/ui/security-posture';
-import { SecurityRecoveryPanel } from '@/features/security/ui/security-recovery-panel';
+  SecurityRecoveryPanel,
+  type RecoveryMode,
+} from '@/features/security/ui/security-recovery-panel';
+import { thisDeviceSigning } from '@/features/security/domain/device-signing';
+import { ThisDeviceSigning } from '@/features/security/ui/this-device-signing';
 import type { AgentRecoveryGateway } from '@/features/security/domain/agent-recovery';
 import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 
@@ -119,62 +120,28 @@ export function SecurityWorkspace({
             onRetry={() => void inspection.refetch()}
           />
         ) : inspection.data?.ok === true ? (
-          <motion.div
-            animate={{ opacity: 1 }}
-            className="security-content"
-            id="security-identity"
-            initial={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-          >
-            <div className="security-account-line">
-              <div>
-                <span>{t('security.identity.label')}</span>
-                <strong>{inspection.data.value.userId}</strong>
-              </div>
-              <code>
-                {t('security.identity.crypto', { version: inspection.data.value.cryptoVersion })}
-              </code>
-            </div>
-            <div className="security-primary-grid">
-              <SecurityPosture
-                primaryAction={postureAction(
-                  inspection.data.value,
-                  establishIdentity.isPending,
-                  () => {
-                    establishIdentity.mutate();
-                  },
-                  beginVerification.isPending,
-                  (device) => {
-                    beginVerification.mutate(device);
-                  },
-                  reviewRecovery,
-                )}
-                snapshot={inspection.data.value}
-              />
-              <SecurityDeviceLedger
-                devices={inspection.data.value.devices}
-                onVerify={(device) => {
-                  beginVerification.mutate(device);
-                }}
-                pendingDeviceId={
-                  beginVerification.isPending ? beginVerification.variables.deviceId : null
-                }
-                verificationAvailable={inspection.data.value.crossSigningIdentityExists}
-                verificationOpen={beginVerification.isPending || verification !== null}
-              />
-            </div>
-            {beginVerification.data?.ok === false ? (
-              <SecurityFailureNotice failure={beginVerification.data.error} />
-            ) : null}
-            {establishIdentity.data?.ok === false ? (
-              <SecurityFailureNotice failure={establishIdentity.data.error} />
-            ) : null}
-            <SecurityRecoveryPanel
-              gateway={gateway}
-              onChanged={refresh}
-              snapshot={inspection.data.value}
-            />
-          </motion.div>
+          <SecurityContent
+            beginVerification={(device) => {
+              beginVerification.mutate(device);
+            }}
+            establishIdentity={() => {
+              establishIdentity.mutate();
+            }}
+            gateway={gateway}
+            identityFailure={
+              establishIdentity.data?.ok === false ? establishIdentity.data.error : null
+            }
+            identityPending={establishIdentity.isPending}
+            onChanged={refresh}
+            snapshot={inspection.data.value}
+            verificationFailure={
+              beginVerification.data?.ok === false ? beginVerification.data.error : null
+            }
+            verificationOpen={beginVerification.isPending || verification !== null}
+            verificationPendingId={
+              beginVerification.isPending ? beginVerification.variables.deviceId : null
+            }
+          />
         ) : (
           <SecurityInspectionFailure
             failure={{ code: 'security.inspection_failed', retryable: true }}
@@ -232,40 +199,97 @@ function SecurityInspectionFailure({ failure, onRetry }: SecurityInspectionFailu
   );
 }
 
-function reviewRecovery(): void {
-  document
-    .querySelector('#security-recovery')
-    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+type SecurityContentProps = {
+  readonly gateway: MatrixSecurityGateway;
+  readonly snapshot: MatrixSecuritySnapshot;
+  readonly identityPending: boolean;
+  readonly identityFailure: MatrixSecurityFailure | null;
+  readonly verificationOpen: boolean;
+  readonly verificationPendingId: string | null;
+  readonly verificationFailure: MatrixSecurityFailure | null;
+  readonly establishIdentity: () => void;
+  readonly beginVerification: (device: MatrixSecurityDevice) => void;
+  readonly onChanged: () => void;
+};
 
-function postureAction(
-  snapshot: {
-    readonly blockers: readonly MatrixSecurityBlocker[];
-    readonly crossSigningIdentityExists: boolean;
-    readonly devices: readonly MatrixSecurityDevice[];
-    readonly kind: 'action_required' | 'blocked' | 'ready';
-  },
-  identityPending: boolean,
-  establishIdentity: () => void,
-  verificationPending: boolean,
-  verify: (device: MatrixSecurityDevice) => void,
-  review: () => void,
-): SecurityPostureAction | null {
-  if (snapshot.kind === 'ready') {
-    return null;
-  }
-  if (!snapshot.crossSigningIdentityExists) {
-    return { kind: 'establish_identity', onSelect: establishIdentity, pending: identityPending };
-  }
+/**
+ * 安全一节的内容：这台设备签没签名（要签就给两条路）、你的设备、恢复密钥；账户的 Matrix ID
+ * 收在最下面的详情里。
+ */
+function SecurityContent({
+  gateway,
+  snapshot,
+  identityPending,
+  identityFailure,
+  verificationOpen,
+  verificationPendingId,
+  verificationFailure,
+  establishIdentity,
+  beginVerification,
+  onChanged,
+}: SecurityContentProps) {
+  const { t } = useTranslation();
+  // 点“输入恢复密钥”时让恢复密钥一节直接打开输入框；每点一次换一个 key 重新打开。
+  const [recoveryRequest, setRecoveryRequest] = useState<{
+    readonly mode: RecoveryMode;
+    readonly key: number;
+  } | null>(null);
+  const signing = thisDeviceSigning(snapshot);
   const currentDevice = snapshot.devices.find((device) => device.current);
-  if (snapshot.blockers.includes('current_device_unverified') && currentDevice !== undefined) {
-    return {
-      kind: 'verify_device',
-      onSelect: () => {
-        verify(currentDevice);
-      },
-      pending: verificationPending,
-    };
-  }
-  return { kind: 'review_recovery', onSelect: review, pending: false };
+  const otherDevices = snapshot.devices.some((device) => !device.current);
+  return (
+    <motion.div
+      animate={{ opacity: 1 }}
+      className="security-content"
+      id="security-identity"
+      initial={{ opacity: 0 }}
+      transition={{ duration: 0.18 }}
+    >
+      <ThisDeviceSigning
+        identityPending={identityPending}
+        onEstablishIdentity={establishIdentity}
+        onUseRecoveryKey={() => {
+          setRecoveryRequest((previous) => ({ mode: 'recover', key: (previous?.key ?? 0) + 1 }));
+          document
+            .querySelector('#security-recovery')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+        onVerifyWithOtherDevice={() => {
+          if (currentDevice !== undefined) beginVerification(currentDevice);
+        }}
+        otherDevices={otherDevices}
+        state={signing}
+        verificationPending={verificationOpen}
+      />
+      {identityFailure === null ? null : <SecurityFailureNotice failure={identityFailure} />}
+      {verificationFailure === null ? null : (
+        <SecurityFailureNotice failure={verificationFailure} />
+      )}
+      <SecurityDeviceLedger
+        devices={snapshot.devices}
+        onVerify={beginVerification}
+        pendingDeviceId={verificationPendingId}
+        thisDeviceSigned={signing === 'signed'}
+        verificationAvailable={snapshot.crossSigningIdentityExists}
+        verificationOpen={verificationOpen}
+      />
+      <SecurityRecoveryPanel
+        gateway={gateway}
+        key={recoveryRequest?.key ?? 0}
+        onChanged={onChanged}
+        openMode={recoveryRequest?.mode ?? null}
+        snapshot={snapshot}
+      />
+      <Details className="security-account-details" summary={t('security.account.details')}>
+        <dl>
+          <div>
+            <dt>{t('security.account.matrixId')}</dt>
+            <dd>
+              <code>{snapshot.userId}</code>
+            </dd>
+          </div>
+        </dl>
+      </Details>
+    </motion.div>
+  );
 }

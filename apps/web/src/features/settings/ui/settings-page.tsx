@@ -8,6 +8,7 @@ import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/deskt
 import { ApplicationAbout } from '@/features/updates/ui/application-about';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 import { GeneralSettings } from './general-settings';
+import { SecurityAttentionDot } from './settings-attention';
 import { settingsSections, type SettingsSection } from './settings-sections';
 import './settings-page.css';
 
@@ -56,6 +57,7 @@ export function SettingsLayout({
                     <span className="sr-only">{t('settings.updateDot')}</span>
                   </span>
                 ) : null}
+                {id === 'security' ? <SecurityAttentionDot /> : null}
               </Link>
             );
           })}
