@@ -14,7 +14,7 @@
     </#if>
     <meta name="color-scheme" content="light">
     <title>${title!}</title>
-    <link rel="icon" href="${url.resourcesPath}/img/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="${url.resourcesPath}/img/agent-room-mark.svg" type="image/svg+xml" />
     <#if properties.styles?has_content>
         <#list properties.styles?split(' ') as style>
             <link href="${url.resourcesPath}/${style}" rel="stylesheet" />

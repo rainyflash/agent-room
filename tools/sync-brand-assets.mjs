@@ -34,4 +34,9 @@ generateIcons(path.join(root, 'apps/web/public/icons'), [
   '512',
 ]);
 await copyFile(source, path.join(desktopIcons, 'agent-room-mark.svg'));
+// 登录页（Keycloak 主题）的标志和标签页图标也用同一个文件。
+await copyFile(
+  source,
+  path.join(root, 'infra/identity/themes/agent-room/login/resources/img/agent-room-mark.svg'),
+);
 process.stdout.write('Brand assets synchronized from apps/web/public/agent-room-mark.svg.\n');

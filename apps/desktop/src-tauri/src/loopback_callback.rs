@@ -197,6 +197,9 @@ async fn read_callback_url(stream: &mut TcpStream, callback_base: &Url) -> Resul
     Ok(callback)
 }
 
+const CHECK_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>"#;
+const ALERT_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>"#;
+
 #[derive(Clone, Copy)]
 enum CallbackResponse {
     Authenticated,
@@ -208,41 +211,42 @@ async fn write_response(
     response: CallbackResponse,
     language: NativeLanguage,
 ) -> io::Result<()> {
-    let (status, title, message, note, lang) = match (response, language) {
+    let (status, title, message, lang) = match (response, language) {
         (CallbackResponse::Authenticated, NativeLanguage::Chinese) => (
             "200 OK",
-            "Agent Room 已连接",
-            "现在可以关闭此页面并返回桌面应用。",
-            "返回桌面应用，继续你的对话。",
+            "已登录 Agent Room",
+            "可以关掉这个页面，回到桌面应用继续。",
             "zh-CN",
         ),
         (CallbackResponse::Rejected, NativeLanguage::Chinese) => (
             "400 Bad Request",
-            "Agent Room 登录失败",
-            "认证回调无效或已过期。请返回 Agent Room 桌面应用重试。",
-            "返回桌面应用重新开始登录。",
+            "这次登录没有完成",
+            "登录链接无效或已经过期。请回到 Agent Room 桌面应用重新登录。",
             "zh-CN",
         ),
         (CallbackResponse::Authenticated, NativeLanguage::English) => (
             "200 OK",
-            "Agent Room connected",
-            "You can close this page and return to the desktop app.",
-            "Return to the desktop app to continue your conversation.",
+            "Signed in to Agent Room",
+            "You can close this page and go back to the desktop app.",
             "en",
         ),
         (CallbackResponse::Rejected, NativeLanguage::English) => (
             "400 Bad Request",
-            "Agent Room sign-in failed",
-            "The sign-in callback is invalid or has expired. Return to the Agent Room desktop app and try again.",
-            "Return to the desktop app to start sign-in again.",
+            "Sign-in did not finish",
+            "This sign-in link is invalid or has expired. Go back to the Agent Room desktop app and sign in again.",
             "en",
         ),
+    };
+    // 和网页端没进房间时的页面一样：细顶栏放标志，下面一张卡片，成功是对勾、失败是提醒。
+    let (status_class, icon) = match response {
+        CallbackResponse::Authenticated => ("status", CHECK_ICON),
+        CallbackResponse::Rejected => ("status status--failed", ALERT_ICON),
     };
     let style = include_str!("ui/auth-return.css").replace("\r\n", "\n");
     let style_hash = STANDARD.encode(Sha256::digest(style.as_bytes()));
     let mark = include_str!("../icons/agent-room-mark.svg");
     let body = format!(
-        r#"<!doctype html><html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header>Agent Room</header><main><div class="room-mark" aria-hidden="true">{mark}</div><h1>{title}</h1><p>{message}</p><div class="return-note">{note}</div></main></body></html>"#
+        r#"<!doctype html><html lang="{lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>{style}</style></head><body><header><span class="mark" aria-hidden="true">{mark}</span><span>Agent Room</span></header><main><div class="{status_class}" aria-hidden="true">{icon}</div><h1>{title}</h1><p>{message}</p></main></body></html>"#
     );
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
@@ -318,8 +322,8 @@ mod tests {
         assert!(!body.contains("one-time-code"));
         // 返回页跟随桌面语言：中文桌面看到中文标题和正文，页面语言标记一致。
         assert!(body.contains(r#"<html lang="zh-CN">"#));
-        assert!(body.contains("<title>Agent Room 已连接</title>"));
-        assert!(body.contains("返回桌面应用，继续你的对话。"));
+        assert!(body.contains("<title>已登录 Agent Room</title>"));
+        assert!(body.contains("可以关掉这个页面，回到桌面应用继续。"));
     }
 
     #[tokio::test]
