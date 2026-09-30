@@ -10,7 +10,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - npm packages: 716
 - Total locked package versions: 1606
 - `Cargo.lock` SHA-256: `1201b923509df8072ce68281d6851ab3422f60640ce46d8b4bd9c7a506451e75`
-- `pnpm-lock.yaml` SHA-256: `874ba669d61779a15325e45706d0071235f55c170bb5e7928f3b236810854272`
+- `pnpm-lock.yaml` SHA-256: `02cb9bafc26ad56a924e31375a52d39294f59b1de794ac2090d243c883bce370`
 
 ## License expressions
 
@@ -1216,7 +1216,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [body-parser](https://www.npmjs.com/package/body-parser/v/2.3.0) | 2.3.0 | `MIT` |
 | npm | [boolbase](https://www.npmjs.com/package/boolbase/v/1.0.0) | 1.0.0 | `ISC` |
 | npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/2.1.7) | 2.1.7 | `MIT` |
-| npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/5.0.9) | 5.0.9 | `MIT` |
+| npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/5.0.12) | 5.0.12 | `MIT` |
 | npm | [browserslist](https://www.npmjs.com/package/browserslist/v/4.29.3) | 4.29.3 | `MIT` |
 | npm | [bs58](https://www.npmjs.com/package/bs58/v/6.0.0) | 6.0.0 | `MIT` |
 | npm | [buffer-from](https://www.npmjs.com/package/buffer-from/v/1.1.2) | 1.1.2 | `MIT` |
@@ -1312,7 +1312,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [fast-deep-equal](https://www.npmjs.com/package/fast-deep-equal/v/3.1.3) | 3.1.3 | `MIT` |
 | npm | [fast-json-stable-stringify](https://www.npmjs.com/package/fast-json-stable-stringify/v/2.1.0) | 2.1.0 | `MIT` |
 | npm | [fast-levenshtein](https://www.npmjs.com/package/fast-levenshtein/v/2.0.6) | 2.0.6 | `MIT` |
-| npm | [fast-uri](https://www.npmjs.com/package/fast-uri/v/3.1.7) | 3.1.7 | `BSD-3-Clause` |
+| npm | [fast-uri](https://www.npmjs.com/package/fast-uri/v/3.1.8) | 3.1.8 | `BSD-3-Clause` |
 | npm | [fdir](https://www.npmjs.com/package/fdir/v/6.5.0) | 6.5.0 | `MIT` |
 | npm | [file-entry-cache](https://www.npmjs.com/package/file-entry-cache/v/8.0.0) | 8.0.0 | `MIT` |
 | npm | [filelist](https://www.npmjs.com/package/filelist/v/1.0.6) | 1.0.6 | `Apache-2.0` |
