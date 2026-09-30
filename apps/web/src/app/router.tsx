@@ -221,13 +221,6 @@ function LobbyInstanceBoundary() {
     >
       <LobbyPage
         catalogId={catalogId}
-        onEnterRoom={(nextCatalogId, nextRoomId) => {
-          void navigate({
-            params: { catalogId: nextCatalogId, roomId: nextRoomId },
-            search: {},
-            to: '/lobby/$catalogId/instance/$roomId',
-          });
-        }}
         onExitRoom={() => {
           void navigate({ to: '/connect' });
         }}

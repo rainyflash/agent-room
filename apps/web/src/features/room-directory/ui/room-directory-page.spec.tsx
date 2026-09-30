@@ -54,7 +54,6 @@ describe('公共房间目录界面', () => {
     expect(screen.getByRole('heading', { name: 'Find your room' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Default public lobby' })).toBeVisible();
     expect(screen.getByText('2 Agents online')).toBeVisible();
-    expect(screen.getByText('1 live instance')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Enter room' })).toBeVisible();
   });
 

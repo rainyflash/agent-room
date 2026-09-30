@@ -9,7 +9,7 @@ import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-pr
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
 import { RoomDirectoryPage } from '@/features/room-directory/ui/room-directory-page';
-import { HallActions } from '@/features/room-directory/ui/hall-actions';
+import { RoomActions } from '@/features/room-directory/ui/room-actions';
 import { SettingsLayout, SettingsSectionContent } from '@/features/settings/ui/settings-page';
 import { isSettingsSection } from '@/features/settings/ui/settings-sections';
 import { AppNavigation } from '@/shared/ui/app-navigation';
@@ -44,7 +44,7 @@ function makeRoom(catalogId: string, name: string): PrivateRoom {
   return {
     catalogId,
     name,
-    description: 'A shared hall for a project',
+    description: 'A shared room for a project',
     matrixRoomId: `!${catalogId}:matrix.test`,
     roomInstanceId: catalogId,
     ownerPrincipalId: principal.principalId,
@@ -60,9 +60,26 @@ function makeRoom(catalogId: string, name: string): PrivateRoom {
     ],
   };
 }
+/** 别人的房间邀请了这位用户：还没答复。 */
+function invitedRoom(catalogId: string, name: string): PrivateRoom {
+  const room = makeRoom(catalogId, name);
+  return {
+    ...room,
+    ownerPrincipalId: '01990d9e-8400-7000-8000-000000000009',
+    members: [
+      {
+        principalId: principal.principalId,
+        status: 'invited',
+        permissions: { capabilities: ['view', 'speak'] },
+      },
+    ],
+  };
+}
 const seededRooms = [
   makeRoom(firstCatalog, 'Design studio'),
-  makeRoom('01990d9e-8400-7000-8000-000000000402', 'Engineering hall'),
+  makeRoom('01990d9e-8400-7000-8000-000000000402', 'Engineering room'),
+  invitedRoom('01990d9e-8400-7000-8000-000000000403', 'Research lab'),
+  invitedRoom('01990d9e-8400-7000-8000-000000000404', 'Budget review'),
 ];
 const rooms = new Map(seededRooms.map((room) => [room.catalogId, room]));
 const uploads = new Map<string, MessageContentUploadRequest>();
@@ -104,6 +121,19 @@ function append(event: HumanMessagePreviewEvent) {
   ];
   for (const listener of listeners) listener();
 }
+function answerInvitation(catalogId: string, status: 'declined' | 'joined') {
+  const room = rooms.get(catalogId);
+  if (room === undefined)
+    return Promise.resolve(err({ code: 'fixture.missing', retryable: false }));
+  const answered: PrivateRoom = {
+    ...room,
+    members: room.members.map((member) =>
+      member.principalId === principal.principalId ? { ...member, status } : member,
+    ),
+  };
+  rooms.set(catalogId, answered);
+  return Promise.resolve(ok(answered));
+}
 function featureServices(base: AppServices): AppServices {
   const unavailable = () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false }));
   const privateRooms: PrivateRoomGateway = {
@@ -118,6 +148,8 @@ function featureServices(base: AppServices): AppServices {
       );
     },
     list: () => Promise.resolve(ok([...rooms.values()])),
+    accept: (id) => answerInvitation(id, 'joined'),
+    decline: (id) => answerInvitation(id, 'declined'),
     inspect: (id) => {
       const room = rooms.get(id);
       return Promise.resolve(
@@ -218,7 +250,7 @@ function featureServices(base: AppServices): AppServices {
           ok([
             {
               catalogId: publicCatalog,
-              name: 'Global hall',
+              name: 'Global lobby',
               description: 'Meet people and agents',
               slug: 'global',
               language: 'en',
@@ -264,7 +296,7 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
     [...rooms.values()].find(
       (room) => room.matrixRoomId === decodeURIComponent(match?.[1] ?? ''),
     ) ?? seededRooms[0];
-  if (current === undefined) throw new Error('Fixture hall is missing');
+  if (current === undefined) throw new Error('Fixture room is missing');
   return (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queries}>
@@ -300,7 +332,7 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
                       }}
                     >
                       <h1>{current.name}</h1>
-                      <HallActions currentCatalogId={current.catalogId} />
+                      <RoomActions currentCatalogId={current.catalogId} />
                     </header>
                     <FeatureConversation room={current} publisher={services.messagePublisher} />
                   </main>

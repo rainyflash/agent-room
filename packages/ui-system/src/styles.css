@@ -768,6 +768,66 @@ summary {
   }
 }
 
+/* 表单字段：标签在上，输入框墨色细描边、纸色底；说明和错误在下面。 */
+.ar-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.ar-field__label {
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.ar-field :is(input, textarea, select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font: inherit;
+  font-size: 0.9375rem;
+}
+
+.ar-field textarea {
+  min-height: 88px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.ar-field :is(input, textarea)::placeholder {
+  color: var(--ar-muted);
+}
+
+.ar-field :is(input, textarea, select):disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ar-field--invalid :is(input, textarea, select) {
+  border-color: var(--color-alert);
+}
+
+.ar-field__hint,
+.ar-field__error {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.ar-field__hint {
+  color: var(--ar-muted);
+}
+
+.ar-field__error {
+  color: var(--color-alert);
+  font-weight: 600;
+}
+
 /* 要发给别人的一段话和复制按钮。 */
 .ar-copy-block {
   display: grid;

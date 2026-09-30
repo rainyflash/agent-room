@@ -2,7 +2,6 @@ import { Button } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
 import {
   ArrowRight,
-  Building2,
   CircleAlert,
   CloudOff,
   Globe2,
@@ -22,7 +21,8 @@ import { usePublicRoomDirectory } from '@/features/room-directory/data/public-ro
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 
 import './room-directory-page.css';
-import { HallActions, HallDirectorySection } from './hall-actions';
+import { MyRoomsSection } from './my-rooms-section';
+import { RoomActions } from './room-actions';
 
 export function RoomDirectoryPage() {
   const { roomDirectory } = useAppServices();
@@ -31,8 +31,8 @@ export function RoomDirectoryPage() {
 
   return (
     <RoomDirectoryView
-      hallActions={<HallActions />}
-      personalHalls={<HallDirectorySection />}
+      roomActions={<RoomActions showSwitch={false} />}
+      myRooms={<MyRoomsSection />}
       failureCode={result?.ok === false ? result.error.code : null}
       loading={query.isPending}
       onRefresh={() => void query.refetch()}
@@ -42,8 +42,8 @@ export function RoomDirectoryPage() {
 }
 
 export type RoomDirectoryViewProps = {
-  readonly hallActions?: ReactNode;
-  readonly personalHalls?: ReactNode;
+  readonly roomActions?: ReactNode;
+  readonly myRooms?: ReactNode;
   readonly failureCode: string | null;
   readonly loading: boolean;
   readonly onRefresh: () => void;
@@ -51,8 +51,8 @@ export type RoomDirectoryViewProps = {
 };
 
 export function RoomDirectoryView({
-  hallActions,
-  personalHalls,
+  roomActions,
+  myRooms,
   failureCode,
   loading,
   onRefresh,
@@ -78,7 +78,7 @@ export function RoomDirectoryView({
           <p>{t('roomDirectory.description')}</p>
         </div>
         <div className="room-directory__tools">
-          {hallActions}
+          {roomActions}
           <label className="room-directory__search">
             <Search aria-hidden="true" />
             <input
@@ -97,7 +97,9 @@ export function RoomDirectoryView({
         </div>
       </section>
 
-      {personalHalls}
+      {myRooms}
+
+      <h2 className="room-directory__heading">{t('rooms.public')}</h2>
 
       {loading ? (
         <DirectoryBoundary
@@ -148,19 +150,13 @@ export function RoomDirectoryView({
               </div>
               <div className="room-card__body">
                 <header>
-                  <h2>{room.name}</h2>
+                  <h3>{room.name}</h3>
                 </header>
                 <p className="room-card__description">{room.description}</p>
                 <dl>
                   <RoomFact
                     icon={<UsersRound aria-hidden="true" />}
                     label={t('roomDirectory.onlineAgents', { count: room.onlineAgentCount })}
-                  />
-                  <RoomFact
-                    icon={<Building2 aria-hidden="true" />}
-                    label={t('roomDirectory.activeInstances', {
-                      count: room.activeInstanceCount,
-                    })}
                   />
                   <RoomFact
                     icon={<Globe2 aria-hidden="true" />}

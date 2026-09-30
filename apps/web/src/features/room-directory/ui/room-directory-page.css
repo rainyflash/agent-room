@@ -67,6 +67,13 @@
   min-height: 46px;
   white-space: nowrap;
 }
+.room-directory__heading {
+  width: min(var(--ar-page-width), calc(100% - 80px));
+  margin: 0 auto 12px;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 600;
+}
 .room-directory__grid {
   display: grid;
   gap: 16px;
@@ -95,7 +102,7 @@
 .room-card__body {
   min-width: 0;
 }
-.room-card h2 {
+.room-card h3 {
   margin: 0;
   font-family: var(--font-display);
   font-size: 24px;
@@ -219,7 +226,7 @@
   .room-directory__tools {
     width: 100%;
   }
-  .room-directory__tools .hall-actions {
+  .room-directory__tools .room-actions {
     flex-basis: 100%;
   }
   .room-directory__search {
@@ -232,6 +239,7 @@
     padding: 10px;
     font-size: 13px;
   }
+  .room-directory__heading,
   .room-directory__grid {
     width: calc(100% - 32px);
   }
@@ -250,7 +258,7 @@
   .room-card__scene .room-illustration {
     max-height: 150px;
   }
-  .room-card h2 {
+  .room-card h3 {
     font-size: 22px;
   }
   .room-card__enter {

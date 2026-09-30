@@ -963,7 +963,6 @@ function LobbyFixture({
                   ) : (
                     <LobbyPage
                       catalogId="01990d9e-8400-7000-8000-000000000401"
-                      onEnterRoom={() => undefined}
                       onExitRoom={() => undefined}
                       onOpenSecurity={() => undefined}
                       view={view}

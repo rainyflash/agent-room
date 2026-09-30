@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
 import type { DirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
-import { HallActions } from '@/features/room-directory/ui/hall-actions';
+import { RoomActions } from '@/features/room-directory/ui/room-actions';
 import { ApplicationVersionLink } from '@/features/updates/ui/application-version-link';
 
 export function WorkspaceNavigation({
@@ -51,7 +51,7 @@ export function WorkspaceNavigation({
         </span>
       </Link>
       <nav className="workspace-navigation__rooms" aria-label={t('roomWorkspace.navigation')}>
-        <HallActions {...(currentCatalogId === undefined ? {} : { currentCatalogId })} />
+        <RoomActions currentCatalogId={currentCatalogId} />
         <p className="workspace-navigation__label">{t('roomWorkspace.spaces')}</p>
         <button
           className="workspace-navigation__room"

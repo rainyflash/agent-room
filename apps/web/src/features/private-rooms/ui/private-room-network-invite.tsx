@@ -14,7 +14,7 @@ import type {
   PrivateRoomFailure,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
-import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-create-flow';
+import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { ok, type Result } from '@/shared/result';
 
 /** 服务器拒绝非管理者查看或生成口令时的错误码。 */

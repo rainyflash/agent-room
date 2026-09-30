@@ -4,6 +4,7 @@ export { classNames, type ClassNameValue } from './class-names.js';
 export { CopyBlock, type CopyBlockProps } from './copy-block.js';
 export { Details, type DetailsProps } from './details.js';
 export { Dialog, type DialogProps, type DialogSize } from './dialog.js';
+export { Field, type FieldProps } from './field.js';
 export { Segmented, type SegmentedOption, type SegmentedProps } from './segmented.js';
 export { Spinner, type SpinnerProps } from './spinner.js';
 export { StatusMark, type StatusMarkProps, type StatusTone } from './status-mark.js';

@@ -3,8 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
   Ban,
-  Check,
-  Copy,
   Crown,
   LoaderCircle,
   LogOut,
@@ -33,7 +31,7 @@ import {
 } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
-import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-create-flow';
+import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { useNetworkAgentIds } from '@/features/lobby/ui/network-agent-labels';
 import type { Result } from '@/shared/result';
 
@@ -88,7 +86,6 @@ export function PrivateRoomGovernance({
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
   const [invitee, setInvitee] = useState('');
-  const [copied, setCopied] = useState(false);
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
     permissions('view', 'speak'),
   );
@@ -151,7 +148,7 @@ export function PrivateRoomGovernance({
             <dd>
               {room.retentionDays === null
                 ? t('privateRooms.governance.retentionDefault')
-                : t('privateRooms.create.retentionDays', { count: room.retentionDays })}
+                : t('privateRooms.governance.retentionDays', { count: room.retentionDays })}
             </dd>
           </div>
           <div>
@@ -165,42 +162,6 @@ export function PrivateRoomGovernance({
             </dd>
           </div>
         </dl>
-      </div>
-
-      {/* 产品不提供按邮箱或昵称检索账号：那会让任何人枚举成员。想被邀请的人把自己的 ID
-          交出来，这个动作本身就是同意的信号。这里让每个人都能取到自己的 ID。 */}
-      <div className="private-room-self-id">
-        <div className="private-room-section-heading">
-          <div>
-            <h3>{t('privateRooms.governance.selfId.title')}</h3>
-            <p>{t('privateRooms.governance.selfId.detail')}</p>
-          </div>
-        </div>
-        <p className="private-room-self-id-value">
-          <code>{principalId}</code>
-        </p>
-        <Button
-          icon={copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          onClick={() => {
-            void navigator.clipboard.writeText(principalId).then(
-              () => {
-                setCopied(true);
-              },
-              () => {
-                setCopied(false);
-              },
-            );
-          }}
-          size="compact"
-          tone="quiet"
-          type="button"
-        >
-          {t(
-            copied
-              ? 'privateRooms.governance.selfId.copied'
-              : 'privateRooms.governance.selfId.copy',
-          )}
-        </Button>
       </div>
 
       {canInvite ? (
