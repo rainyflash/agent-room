@@ -398,10 +398,6 @@
   border-radius: 8px;
 }
 
-.brand-lockup--ink {
-  color: var(--color-ink);
-}
-
 .language-control {
   display: inline-flex;
   min-height: 40px;
@@ -436,7 +432,6 @@
 @media (forced-colors: active) {
   .ar-status-mark,
   .legend-signal,
-  .scene-fallback,
   .roster-agent[aria-pressed='true'] {
     border: 1px solid CanvasText;
     forced-color-adjust: auto;
@@ -1453,122 +1448,8 @@
   cursor: grabbing;
 }
 
-.lobby-scene__svg-zone rect {
-  stroke-width: 1;
-}
-
-.lobby-scene__svg-zone text {
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.lobby-scene__svg-zone--active rect {
-  fill: color-mix(in srgb, var(--color-signal) 2%, transparent);
-  stroke: color-mix(in srgb, var(--color-signal) 24%, transparent);
-}
-
-.lobby-scene__svg-zone--active text {
-  fill: var(--color-signal);
-}
-
-.lobby-scene__svg-zone--attention rect {
-  fill: color-mix(in srgb, var(--color-alert) 2%, transparent);
-  stroke: color-mix(in srgb, var(--color-alert) 24%, transparent);
-}
-
-.lobby-scene__svg-zone--attention text {
-  fill: var(--color-alert);
-}
-
-.lobby-scene__svg-zone--available rect {
-  fill: color-mix(in srgb, var(--color-network) 2%, transparent);
-  stroke: color-mix(in srgb, var(--color-network) 24%, transparent);
-}
-
-.lobby-scene__svg-zone--available text {
-  fill: var(--color-network);
-}
-
 .lobby-scene__svg-agent {
   cursor: pointer;
-}
-
-.lobby-scene__svg-agent-ring {
-  fill: transparent;
-  stroke-width: 3;
-}
-
-.lobby-scene__svg-agent-body {
-  fill: color-mix(in srgb, var(--color-ink) 92%, white);
-}
-
-.lobby-scene__svg-agent-mark,
-.lobby-scene__svg-agent-name {
-  fill: var(--color-paper);
-  font-family: var(--font-sans);
-  pointer-events: none;
-}
-
-.lobby-scene__svg-agent-mark {
-  font-size: 18px;
-  font-weight: 650;
-}
-
-.lobby-scene__svg-agent-name {
-  font-size: 14px;
-  font-weight: 520;
-}
-
-.lobby-scene__svg-agent--working .lobby-scene__svg-agent-ring,
-.lobby-scene__svg-agent--completed .lobby-scene__svg-agent-ring {
-  stroke: var(--color-signal);
-}
-
-.lobby-scene__svg-agent--waiting_input .lobby-scene__svg-agent-ring,
-.lobby-scene__svg-agent--blocked .lobby-scene__svg-agent-ring {
-  stroke: var(--color-alert);
-}
-
-.lobby-scene__svg-agent--idle .lobby-scene__svg-agent-ring {
-  stroke: var(--color-network);
-}
-
-.lobby-scene__svg-agent--offline .lobby-scene__svg-agent-ring {
-  stroke: var(--ar-paper-48);
-}
-
-.lobby-scene__svg-agent[data-selected='true'] .lobby-scene__svg-agent-body {
-  stroke: var(--color-paper);
-  stroke-width: 2;
-}
-
-.empty-lobby {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(440px, calc(100% - 3rem));
-  padding: 1.4rem 1.5rem;
-  border-top: 1px solid var(--ar-line);
-  border-bottom: 1px solid var(--ar-line);
-  background: var(--ar-surface);
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-}
-
-.empty-lobby h1 {
-  margin: 0.45rem 0 0.5rem;
-  font-size: clamp(1.55rem, 3vw, 2.35rem);
-  font-weight: 650;
-  letter-spacing: -0.045em;
-}
-
-.empty-lobby > p:last-child {
-  margin: 0;
-  color: var(--ar-muted);
-  font-size: 0.86rem;
-  line-height: 1.55;
 }
 
 .signal-dock {
@@ -3183,26 +3064,6 @@ p.message-dock__headline {
   font-size: 0.88rem;
 }
 
-.scene-fallback {
-  position: sticky;
-  z-index: 20;
-  top: 94px;
-  display: flex;
-  width: min(1240px, calc(100% - 3rem));
-  min-height: 44px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.45rem 0.7rem 0.45rem 1.1rem;
-  margin: 0 auto -110px;
-  color: var(--color-ink);
-  background: var(--ar-warning-soft);
-  box-shadow: var(--ar-press-small);
-  font-size: 0.75rem;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .automation-spin {
     animation: none;
@@ -3469,11 +3330,5 @@ p.message-dock__headline {
 
   .message-composer__options {
     grid-template-columns: 1fr;
-  }
-
-  .scene-fallback {
-    top: 72px;
-    width: calc(100% - 2rem);
-    margin-bottom: -78px;
   }
 }

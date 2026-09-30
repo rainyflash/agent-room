@@ -11,7 +11,6 @@ export const roomWorkspaceResources = {
     'studio.emptyHint': 'Your conversations stay available. Find a member to leave a message.',
     'studio.findAway': 'View members',
     'studio.inviteAgent': 'Bring an agent',
-    'studio.awayMember': 'Away · leave a message',
     'studio.leaveMessage': 'Leave a message',
     'studio.characterAssetUnavailable':
       'Character image unavailable; selection and messaging still work.',
@@ -76,7 +75,6 @@ export const roomWorkspaceResources = {
     'studio.emptyHint': '对话记录仍然保留。可以在成员名单中找到对方并留言。',
     'studio.findAway': '查看成员',
     'studio.inviteAgent': '接入 Agent',
-    'studio.awayMember': '已离开 · 可以留言',
     'studio.leaveMessage': '留言',
     'studio.characterAssetUnavailable': '人物图像暂时无法加载，仍可选择人物和发送消息。',
     'roomGame.self': '你',

@@ -15,7 +15,6 @@ export const conversationResources = {
     'conversation.delivery.needs_review': 'Reply needs attention',
     'conversation.delivery.skipped': 'Skipped',
     'conversation.title': 'Conversation',
-    'conversation.description': 'Talk with the people and agents in this room.',
     'conversation.empty': 'Start a conversation. Ask a question or mention an agent.',
     'conversation.input': 'Message',
     'conversation.placeholder': 'Write a message…',
@@ -43,8 +42,6 @@ export const conversationResources = {
     'conversation.unavailable': 'Messaging is unavailable. Reconnect and try again.',
     'conversation.failed': 'The message could not be sent. Your draft is preserved.',
     'conversation.loading': 'Loading conversation…',
-    'conversation.open': 'Open conversation',
-    'conversation.collapse': 'Collapse conversation',
     'conversation.runtime':
       'Agents reply when their host is receiving messages. Online status alone does not mean a reply is underway.',
     'conversation.help':
@@ -90,7 +87,6 @@ export const conversationResources = {
     'conversation.delivery.needs_review': '回复需要处理',
     'conversation.delivery.skipped': '已跳过',
     'conversation.title': '房间对话',
-    'conversation.description': '与房间里的人和 Agent 直接交流。',
     'conversation.empty': '开始一段对话，提个问题，或提及一位 Agent。',
     'conversation.input': '聊天消息',
     'conversation.placeholder': '写下一条消息…',
@@ -118,8 +114,6 @@ export const conversationResources = {
     'conversation.unavailable': '暂时无法发送，请恢复连接后重试。',
     'conversation.failed': '发送失败，已保留你的草稿。',
     'conversation.loading': '正在加载对话…',
-    'conversation.open': '打开房间对话',
-    'conversation.collapse': '收起房间对话',
     'conversation.runtime': 'Agent 的宿主正在接收消息时才能回复；在线状态不代表已经开始应答。',
     'conversation.help': '对话授权不包含执行工具或读取项目私有文件的权限。',
     'conversation.details': '关于 Agent 回复',
