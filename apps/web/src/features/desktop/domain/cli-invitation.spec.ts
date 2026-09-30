@@ -1,24 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import {
-  cliInvocation,
-  encodeCliInvitation,
-  readInviteHistory,
-  saveInviteHistory,
-} from './cli-invitation';
+import { cliInvocation, encodeCliInvitation, quoteCliArgument } from './cli-invitation';
 
 const identity = {
   sessionKey: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
   displayName: '中文 Agent 🌱',
   ownerId: 'owner',
-};
-const storage = () => {
-  const entries = new Map<string, string>();
-  return {
-    getItem: (key: string) => entries.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      entries.set(key, value);
-    },
-  };
 };
 
 describe('CLI invitations', () => {
@@ -52,44 +38,9 @@ describe('CLI invitations', () => {
     );
     expect(cliInvocation(null, 'unknown')).toBe('agent-room');
   });
-  it('按账号保存多个人物并迁移明确属于该账号的旧人物，不自动接管', () => {
-    const values = storage();
-    values.setItem('agent-room.agent-invite.codex', JSON.stringify(identity));
-    expect(readInviteHistory(values, 'owner').identities).toEqual([identity]);
-    expect(readInviteHistory(values, 'other').identities).toEqual([]);
-    expect(readInviteHistory(values, null).identities).toEqual([]);
-    const second = { ...identity, sessionKey: '0198b601-77a1-7bb8-83eb-a8fe68c97e45' };
-    expect(saveInviteHistory(values, second)).toBe(true);
-    expect(readInviteHistory(values, 'owner').identities).toEqual([second, identity]);
-    expect(saveInviteHistory(values, identity)).toBe(true);
-    expect(readInviteHistory(values, 'owner').identities).toEqual([identity, second]);
-  });
-  it('损坏和存储失败显式返回，不能覆盖旧记录或伪装保存成功', () => {
-    const values = storage();
-    values.setItem('agent-room.invitations.v2.owner', '{');
-    expect(readInviteHistory(values, 'owner').unavailable).toBe(true);
-    expect(saveInviteHistory(values, identity)).toBe(false);
-    expect(values.getItem('agent-room.invitations.v2.owner')).toBe('{');
-    const broken = {
-      ...storage(),
-      setItem: () => {
-        throw new Error('quota');
-      },
-    };
-    expect(saveInviteHistory(broken, identity)).toBe(false);
-  });
-  it('保存的邀请保留目标房间，避免从其他页面恢复时偷偷改绑', () => {
-    const values = storage();
-    const invited = {
-      ...identity,
-      room: { roomId: '!room:test', roomName: 'Studio', catalogId: identity.sessionKey },
-    };
-    expect(saveInviteHistory(values, invited)).toBe(true);
-    expect(readInviteHistory(values, 'owner').identities[0]).toEqual(invited);
-    const encoded = encodeCliInvitation(invited, invited.room.roomId, invited.room.catalogId);
-    expect(JSON.parse(atob(encoded.replaceAll('-', '+').replaceAll('_', '/')))).toMatchObject({
-      roomId: '!room:test',
-      catalogId: identity.sessionKey,
-    });
+  it('房间名这类参数用单引号：PowerShell 和 POSIX 各按自己的写法转义', () => {
+    expect(quoteCliArgument("Rainy's room", 'windows')).toBe("'Rainy''s room'");
+    expect(quoteCliArgument("Rainy's room", 'linux')).toBe("'Rainy'\"'\"'s room'");
+    expect(quoteCliArgument('game dev', 'unknown')).toBe("'game dev'");
   });
 });

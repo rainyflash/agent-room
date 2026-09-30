@@ -1,6 +1,5 @@
-import { Button } from '@agent-room/ui-system';
-import { AlertTriangle, Check, Copy, Globe } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Banner, CopyBlock, Spinner } from '@agent-room/ui-system';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
@@ -15,14 +14,15 @@ type NetworkInviteRoom = {
 
 type Lobbies =
   | { readonly kind: 'unknown' }
+  | { readonly kind: 'failed' }
   | { readonly kind: 'known'; readonly rooms: readonly PublicRoomSummary[] };
 
 export type NetworkInviteTarget =
   { readonly kind: 'lobby'; readonly name: string | null } | { readonly kind: 'private' };
 
 /**
- * 网络 Agent 能进哪里：当前房间在公开大厅目录里就进这一间；目录里没有它就是私人房间，要凭口令进；
- * 没有房间上下文或还不知道目录时，只说进公开大厅（省略 room 就是默认大厅）。
+ * 网络 Agent 能进哪里：当前房间在公共大厅目录里就进这一间；目录里没有它就是私人房间，要凭口令进；
+ * 没有房间时，或者读不到目录时，只说进公共大厅（不写房间名就是默认大厅）。
  */
 export function networkInviteTarget(
   catalogId: string | undefined,
@@ -34,97 +34,80 @@ export function networkInviteTarget(
 }
 
 /**
- * 只凭网络接入（ADR 0010）：任何能上网的 Agent 读了 `agents.md` 就能自己起名进公开大厅，不装应用、
- * 不用 CLI。这里给一句现成的话让人复制给 Agent；私人房间要口令，就在这里一键生成、复制给 Agent 的话。
+ * 只凭网络接入（ADR 0010）：任何能上网的 Agent 读了 `agents.md` 就能自己起名进来，不装应用、
+ * 不用命令行。给一句现成的话复制给 Agent；私人房间要口令，就在这里一键生成并复制。
  */
-export function NetworkAgentInvite({ room }: { readonly room: NetworkInviteRoom }) {
+export function NetworkAgentInvite({
+  room,
+  onCopied,
+}: {
+  readonly room: NetworkInviteRoom;
+  readonly onCopied?: () => void;
+}) {
   const { t } = useTranslation();
-  const titleId = useId();
   const services = useOptionalAppServices();
   const directory = services?.roomDirectory ?? null;
   const [lobbies, setLobbies] = useState<Lobbies>({ kind: 'unknown' });
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const copyGeneration = useRef(0);
-
   const catalogId = room?.catalogId;
-  // 只有知道当前房间时才需要目录：判断它是不是公开大厅。
+
+  // 只有知道当前房间时才需要目录：判断它是不是公共大厅。
   useEffect(() => {
     if (directory === null || catalogId === undefined) return undefined;
     let active = true;
     void directory.list().then((result) => {
-      if (active && result.ok) setLobbies({ kind: 'known', rooms: result.value });
+      if (!active) return;
+      setLobbies(result.ok ? { kind: 'known', rooms: result.value } : { kind: 'failed' });
     });
     return () => {
       active = false;
     };
   }, [directory, catalogId]);
-  useEffect(
-    () => () => {
-      copyGeneration.current += 1;
-    },
-    [],
-  );
 
   const guide = useNetworkAgentGuideUrl();
+  // 读目录的这一小会儿还不知道是不是私人房间：先别给出进公共大厅的那句话。
+  if (directory !== null && catalogId !== undefined && lobbies.kind === 'unknown') {
+    return (
+      <p className="agent-invite__waiting">
+        <Spinner />
+        {t('agentInvite.network.checking')}
+      </p>
+    );
+  }
   const target = networkInviteTarget(catalogId, lobbies.kind === 'known' ? lobbies.rooms : null);
-  const privateRoom = target.kind === 'private';
+  if (target.kind === 'private') {
+    return services === null || catalogId === undefined ? (
+      <Banner role={null} tone="info">
+        {t('agentInvite.network.privateRoom', { room: room?.roomName ?? '' })}
+      </Banner>
+    ) : (
+      <PrivateRoomNetworkInvite
+        catalogId={catalogId}
+        guide={guide}
+        onCopied={onCopied}
+        roomName={room?.roomName ?? ''}
+        rooms={services.privateRooms}
+      />
+    );
+  }
   const prompt =
-    target.kind === 'lobby' && target.name !== null
-      ? t('agentInvite.network.promptRoom', { guide, room: target.name })
-      : t('agentInvite.network.promptLobby', { guide });
-
-  const copy = async (): Promise<void> => {
-    const generation = ++copyGeneration.current;
-    try {
-      await navigator.clipboard.writeText(prompt);
-      if (generation === copyGeneration.current) setCopyState('copied');
-    } catch {
-      if (generation === copyGeneration.current) setCopyState('failed');
-    }
-  };
-
+    target.name === null
+      ? t('agentInvite.network.promptLobby', { guide })
+      : t('agentInvite.network.promptRoom', { guide, room: target.name });
   return (
-    <section aria-labelledby={titleId} className="agent-invite__network">
-      <h3 id={titleId}>
-        <Globe aria-hidden="true" />
-        {t('agentInvite.network.title')}
-      </h3>
-      {privateRoom ? (
-        services === null || catalogId === undefined ? (
-          <p>{t('agentInvite.network.privateRoom', { room: room?.roomName ?? '' })}</p>
-        ) : (
-          <PrivateRoomNetworkInvite
-            catalogId={catalogId}
-            guide={guide}
-            roomName={room?.roomName ?? ''}
-            rooms={services.privateRooms}
-          />
-        )
-      ) : (
-        <>
-          <p>{t('agentInvite.network.description')}</p>
-          <pre className="agent-invite__network-prompt">{prompt}</pre>
-          <Button
-            icon={
-              copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
-            }
-            onClick={() => void copy()}
-            tone={copyState === 'failed' ? 'alert' : 'quiet'}
-          >
-            {copyState === 'copied'
-              ? t('agentInvite.network.copied')
-              : t('agentInvite.network.copy')}
-          </Button>
-          {copyState === 'failed' ? (
-            <p className="agent-invite__error" role="status">
-              <AlertTriangle aria-hidden="true" />
-              {t('agentInvite.copyFailed')}
-            </p>
-          ) : null}
-          <p className="agent-invite__note">{t('agentInvite.network.note')}</p>
-        </>
-      )}
-    </section>
+    <>
+      {lobbies.kind === 'failed' ? (
+        <p className="agent-invite__note">{t('agentInvite.network.checkFailed')}</p>
+      ) : null}
+      <CopyBlock
+        copiedLabel={t('agentInvite.message.copied')}
+        copyLabel={t('agentInvite.message.copy')}
+        failedLabel={t('agentInvite.message.failed')}
+        onCopied={onCopied}
+        text={prompt}
+        textLabel={t('agentInvite.message.label')}
+      />
+      <p className="agent-invite__note">{t('agentInvite.network.note')}</p>
+    </>
   );
 }
 

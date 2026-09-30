@@ -731,7 +731,7 @@
 }
 
 .workspace-spin {
-  animation: operation-spin 1.1s linear infinite;
+  animation: ar-spin 1.1s linear infinite;
 }
 
 @media (max-width: 1120px) {

@@ -1,482 +1,130 @@
-.agent-invite {
-  width: min(560px, calc(100vw - 24px));
-  max-height: calc(100dvh - 32px);
-  padding: 0;
-  margin: auto;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  border: var(--ar-outline-width) solid var(--ar-outline);
-  border-radius: var(--ar-panel-radius);
-  color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: var(--ar-press);
-}
-.agent-invite::backdrop {
-  background: var(--ar-backdrop);
-  backdrop-filter: blur(3px);
-}
-.agent-invite h2,
-.agent-invite h3,
-.agent-invite p {
-  margin: 0;
-}
-.agent-invite__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: start;
-  padding: 20px 20px 16px;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
-}
-.agent-invite__header h2 {
-  font-family: var(--font-display);
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1.25;
-}
-.agent-invite__header p {
-  margin-top: 6px;
+/*
+ * 接入 Agent 对话框：只管这个对话框自己的排版。外框、分段选择、按钮、复制块和提示条都来自 ui-system。
+ */
+.agent-invite__lead {
+  margin: -4px 0 0;
   color: var(--ar-muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-.agent-invite__mark {
-  display: inline-grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-control-radius);
-  color: var(--color-ink);
-  background: var(--ar-mint);
-}
-.agent-invite__mark svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 2;
-}
-.agent-invite__body,
-.agent-invite__web {
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px 20px 22px;
-}
-.agent-invite__web {
-  display: grid;
-  gap: 12px;
-  justify-items: start;
-}
-.agent-invite__web h3 {
-  font-size: 15px;
-  font-weight: 680;
-}
-.agent-invite__web p {
-  color: var(--ar-muted);
-  font-size: 13px;
-  line-height: 1.65;
-}
-.agent-invite__web .ar-button {
-  text-decoration: none;
+  font-size: 0.875rem;
 }
 
-.agent-invite__body > .agent-invite__web {
-  padding: 0 0 20px;
-  overflow: visible;
-}
-
-.agent-invite__network {
-  display: grid;
-  gap: 10px;
-  justify-items: start;
-  padding: 0 0 20px;
-}
-.agent-invite__network h3 {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 15px;
-  font-weight: 680;
-}
-.agent-invite__network h3 svg {
-  width: 16px;
-  height: 16px;
-  color: var(--color-network);
-}
-.agent-invite__network p {
+.agent-invite__note {
   margin: 0;
   color: var(--ar-muted);
-  font-size: 13px;
-  line-height: 1.65;
-}
-/* 私人房间：生成口令的按钮、给 Agent 的话和说明，排法与公开大厅那一套相同。 */
-.agent-invite__private-code {
-  display: grid;
-  gap: 10px;
-  justify-items: start;
-  width: 100%;
-}
-.agent-invite__network-prompt {
-  width: 100%;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--ar-line);
-  border-radius: 8px;
-  background: var(--ar-surface-muted);
-  /* 这是一句要转给 Agent 的话，不是代码。 */
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.agent-invite__steps > li > p {
-  margin: 0;
-  color: var(--ar-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.agent-invite__restore {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-}
-.agent-invite__restore select {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0 14px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 22px;
-  color: var(--color-ink);
-  background: var(--color-paper);
-}
-.agent-invite__notice {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  margin-bottom: 14px;
-  padding: 12px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 18px;
-  background: var(--ar-danger-soft);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
-.agent-invite__notice svg {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
-  color: var(--color-alert);
-}
 
-.agent-invite__notice > div {
+.agent-invite__private-code {
   display: grid;
-  gap: 10px;
+  min-width: 0;
   justify-items: start;
+  gap: 12px;
 }
 
-.agent-invite__notice p {
-  margin: 0;
+.agent-invite__private-code > .ar-banner {
+  justify-self: stretch;
 }
 
-.agent-invite__notice[data-phase='starting'],
-.agent-invite__notice[data-phase='discovering'] {
-  border-color: var(--ar-line);
-  background: var(--ar-surface-muted);
-}
-.agent-invite__notice[data-phase='starting'] svg,
-.agent-invite__notice[data-phase='discovering'] svg {
+.agent-invite__waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
   color: var(--ar-muted);
+  font-size: 0.875rem;
 }
 
-.agent-invite__steps {
+.agent-invite__arrivals {
   display: grid;
-  gap: 0;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-  counter-reset: invite-step;
-}
-.agent-invite__steps > li {
-  position: relative;
-  display: grid;
-  gap: 10px;
-  padding: 0 0 22px 42px;
-  counter-increment: invite-step;
-}
-.agent-invite__steps > li::before {
-  content: counter(invite-step);
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 999px;
-  background: var(--ar-sunny);
-  color: var(--color-ink);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-}
-.agent-invite__steps > li:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  top: 36px;
-  bottom: 6px;
-  left: 14px;
-  border-left: var(--ar-outline-thin) dashed var(--ar-line);
-}
-.agent-invite__steps h3 {
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: 0;
-}
-.agent-invite__note,
-.agent-invite__name small,
-.agent-invite__status p {
-  color: var(--ar-muted);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-.agent-invite__preview pre {
-  width: 100%;
-  max-height: 260px;
-  margin: 0;
-  padding: 12px 14px;
-  overflow: auto;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 14px;
-  background: var(--ar-surface-muted);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.agent-invite__success,
-.agent-invite__error {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-}
-.agent-invite__success {
-  color: var(--ar-success) !important;
-}
-.agent-invite__error {
-  color: var(--color-alert) !important;
-}
-.agent-invite__error > svg {
-  flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-}
-.agent-invite__success svg {
-  flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-}
-.agent-invite__name {
-  display: grid;
-  gap: 4px;
-}
-.agent-invite__name label {
-  font-size: 12px;
-  font-weight: 600;
-}
-.agent-invite__name input {
-  min-height: 44px;
-  padding: 0 16px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 22px;
-  color: inherit;
-  background: var(--color-paper);
-  font-size: 14px;
-}
-.agent-invite__name input[aria-invalid='true'] {
-  border-color: var(--color-alert);
-}
-.agent-invite__copy {
-  width: 100%;
-  min-height: 48px;
-  font-size: 14px;
-}
-.agent-invite__preview summary {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-  color: var(--ar-muted);
-  font-size: 12.5px;
-  list-style: none;
-}
-.agent-invite__preview summary::-webkit-details-marker {
-  display: none;
-}
-.agent-invite__preview summary svg {
-  width: 14px;
-  height: 14px;
-  transition: transform 160ms ease;
-}
-.agent-invite__preview[open] summary svg {
-  transform: rotate(180deg);
-}
-.agent-invite__preview pre {
-  margin-top: 8px;
-}
-.agent-invite__link {
-  padding: 0;
-  border: 0;
-  color: var(--ar-accent);
-  background: transparent;
-  font: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.agent-invite__status {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 12px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
+  min-width: 0;
+  gap: 12px;
+  padding: 14px 16px;
+  border: var(--ar-outline-thin) dashed var(--ar-line);
   border-radius: 18px;
   background: var(--ar-surface-muted);
-  font-size: 13px;
-}
-.agent-invite__status > div {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-.agent-invite__status strong {
-  font-weight: 650;
-  letter-spacing: 0;
-}
-.agent-invite__status code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-alert);
-  overflow-wrap: anywhere;
-}
-.agent-invite__status > svg {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  stroke-width: 1.8;
-}
-.agent-invite__status[data-kind='ready'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-mint);
-}
-.agent-invite__status[data-kind='ready'] > svg {
-  color: var(--ar-success);
-}
-.agent-invite__status[data-kind='failed'],
-.agent-invite__status[data-kind='unavailable'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-danger-soft);
-}
-.agent-invite__status[data-kind='failed'] > svg {
-  color: var(--color-alert);
-}
-.agent-invite__status[data-kind='closed'] > svg {
-  color: var(--ar-muted);
-}
-.agent-invite__pulse {
-  flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--ar-accent);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ar-accent) 45%, transparent);
-  animation: agent-invite-pulse 1.6s ease-out infinite;
-}
-@keyframes agent-invite-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ar-accent) 45%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 10px color-mix(in srgb, var(--ar-accent) 0%, transparent);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-invite__pulse {
-    animation: none;
-  }
-}
-@media (max-width: 560px) {
-  .agent-invite__steps > li {
-    padding-left: 40px;
-  }
-  .agent-invite__status {
-    flex-wrap: wrap;
-  }
 }
 
-/* 三种接入方式并列：网络接入、MCP、命令行，不按具体 Agent 应用区分。 */
-.agent-invite__methods {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 18px;
-}
-.agent-invite__method {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-content: start;
-  gap: 2px 8px;
-  min-height: 64px;
-  padding: 10px 12px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 16px;
-  color: inherit;
+.agent-invite__arrivals[data-state='arrived'] {
+  border-style: solid;
+  border-color: var(--ar-outline);
   background: var(--ar-surface);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    background-color 120ms ease;
 }
-.agent-invite__method:hover {
-  border-color: var(--ar-outline);
-  background: var(--ar-surface-muted);
+
+.agent-invite__arrivals > p {
+  margin: 0;
+  font-size: 0.875rem;
 }
-.agent-invite__method[aria-checked='true'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-warning-soft);
-  box-shadow: var(--ar-press-small);
+
+.agent-invite__arrivals ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.agent-invite__method > svg {
-  grid-row: span 2;
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
+
+.agent-invite__arrivals li {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
 }
-.agent-invite__method strong {
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: 0;
+
+.agent-invite__arrivals li > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
-.agent-invite__method small {
+
+.agent-invite__arrivals li span,
+.agent-invite__arrivals li code {
   color: var(--ar-muted);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 0.8125rem;
 }
-@media (max-width: 560px) {
-  .agent-invite__methods {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .agent-invite__method {
-    min-height: 0;
-  }
+
+.agent-invite__arrivals li code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.agent-invite__arrivals li > .ar-spinner {
+  margin-top: 3px;
+}
+
+.agent-invite__arrival-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  stroke-width: 2;
+}
+
+.agent-invite__arrivals li[data-state='ready'] .agent-invite__arrival-icon {
+  color: var(--ar-success);
+}
+
+.agent-invite__arrivals li[data-state='failed'] .agent-invite__arrival-icon {
+  color: var(--color-alert);
+}
+
+.agent-invite__arrivals > .ar-button {
+  justify-self: start;
+}
+
+.agent-invite__reply-progress {
+  margin: 4px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.mcp-configuration {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.mcp-configuration > p {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
 }

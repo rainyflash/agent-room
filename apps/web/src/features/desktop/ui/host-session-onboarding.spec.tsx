@@ -54,7 +54,7 @@ it('配置不等于接入：空清单时提供打开接入面板的入口', asyn
   expect(await screen.findByText(/No agent task has opened/u)).toBeVisible();
   expect(screen.queryByRole('dialog')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Bring an agent' }));
-  expect(screen.getByRole('dialog', { name: 'Bring an agent into the room' })).toBeVisible();
+  expect(screen.getByRole('dialog', { name: 'Bring an agent' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   expect(screen.queryByRole('dialog')).toBeNull();
 });

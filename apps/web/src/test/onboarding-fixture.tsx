@@ -1,4 +1,3 @@
-import { readInviteHistory } from '@/features/desktop/domain/cli-invitation';
 import { receptionFixture } from './reception-fixture';
 import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
 import type { SessionDependencies, WebSession } from '@/features/session/domain/session';
@@ -13,6 +12,8 @@ import type {
   BridgeRuntime,
   DesktopAgentTarget,
   DesktopRuntimeGateway,
+  HostSessionDiagnostics,
+  InvitationOffer,
 } from '@/features/desktop/domain/desktop-runtime';
 import { bridgePhaseSchema } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
@@ -25,6 +26,7 @@ import { OnboardingWorkspace } from '@/features/onboarding/ui/onboarding-page';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { RouterTestProvider } from '@/test/router-test-provider';
+import type { OnboardingFixtureControls } from './onboarding-fixture-controls';
 
 const agent = {
   agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
@@ -140,11 +142,34 @@ const fixtureDevices: readonly ProductDevice[] = [
     trustState: 'verified',
   },
 ];
-function inviteSessionKey(): string | null {
-  return (
-    readInviteHistory(window.localStorage, principal.principalId).identities[0]?.sessionKey ?? null
-  );
-}
+// 接入对话框挂在连接服务上的人物；arriveAgent() 让一个新会话接走它。
+let parkedInvitation: InvitationOffer | null = null;
+const arrivedSessions: HostSessionDiagnostics[] = [];
+const fixtureControls: OnboardingFixtureControls = {
+  arriveAgent: () => {
+    const sessionKey = parkedInvitation?.sessionKey ?? null;
+    parkedInvitation = null;
+    arrivedSessions.push({
+      displayName: 'Scout',
+      sessionKey,
+      roomId: '!fixture:matrix.test',
+      session: {
+        sessionId: `0198b601-77a6-7bb8-83eb-a8fe68c97e${String(50 + arrivedSessions.length)}`,
+        state: 'ready',
+        agentId: '0198b601-77a6-7bb8-83eb-a8fe68c97e49',
+        errorCode: null,
+      },
+      lastInboxReadAgoMs: 1_000,
+      lastMessageReceivedAgoMs: null,
+      lastMessageSentAgoMs: null,
+    });
+  },
+  parkedInvitation: () => parkedInvitation?.sessionKey ?? null,
+};
+Object.defineProperty(window, '__agentRoomFixtureControls', {
+  configurable: true,
+  value: fixtureControls,
+});
 
 let autostartEnabled = false;
 const gateway: DesktopRuntimeGateway = {
@@ -191,18 +216,26 @@ const gateway: DesktopRuntimeGateway = {
   },
   openAuthorization: unavailable,
   readLobby: unavailable,
+  offerInvitation: (invitation) => {
+    parkedInvitation = invitation;
+    return ready({ invitation, expiresInMs: 600_000 });
+  },
+  withdrawInvitation: (sessionKey) => {
+    if (parkedInvitation?.sessionKey === sessionKey) parkedInvitation = null;
+    return ready(undefined);
+  },
   // ?host=ready|failed：任务连接诊断，接入面板与后台回复的用例都靠它。
   readHostSessions: () => {
     const state = new URLSearchParams(location.search).get('host');
     if (state === 'failed') return unavailable();
-    return ready(
+    const present: HostSessionDiagnostics[] =
       state === 'ready'
         ? [
             {
               displayName: 'Scout',
               ...(receptionEnabled
                 ? { sessionKey: reception.sessionKey, receptionOffer: reception.offer }
-                : { sessionKey: inviteSessionKey() }),
+                : { sessionKey: null }),
               session: {
                 sessionId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
                 state: 'ready',
@@ -214,8 +247,8 @@ const gateway: DesktopRuntimeGateway = {
               lastMessageSentAgoMs: null,
             },
           ]
-        : [],
-    );
+        : [];
+    return ready([...present, ...arrivedSessions]);
   },
   installUpdate: unavailable,
   checkUpdate: (channel) =>

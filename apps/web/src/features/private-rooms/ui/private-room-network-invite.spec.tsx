@@ -89,7 +89,6 @@ describe('私人房间里请网络 Agent', () => {
     expect(
       screen.getByText(/is a private room, so a network agent needs this room’s code/u),
     ).toBeVisible();
-    expect(screen.getByText(/The button below creates the code/u)).toBeVisible();
     await clickWhenReady('Create code and copy');
 
     expect(await screen.findByText('Copied. Send it to your agent.')).toBeVisible();
@@ -117,7 +116,6 @@ describe('私人房间里请网络 Agent', () => {
 
     expect(await screen.findByText(/Only this room’s managers can create a code/u)).toBeVisible();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
-    expect(screen.queryByText(/The button below/u)).not.toBeInTheDocument();
     expect(rooms.generateJoinCode).not.toHaveBeenCalled();
   });
 
@@ -131,9 +129,10 @@ describe('私人房间里请网络 Agent', () => {
 
     const copyButton = await screen.findByRole('button', { name: 'Copy message for the agent' });
     expect(screen.getByText(new RegExp(CODE, 'u'))).toBeVisible();
-    expect(screen.queryByText(/Copy failed/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Couldn’t copy/u)).not.toBeInTheDocument();
+    expect(screen.queryByText('Copied. Send it to your agent.')).not.toBeInTheDocument();
     fireEvent.click(copyButton);
-    expect(await screen.findByText(/Copy failed. Select the message above/u)).toBeVisible();
+    expect(await screen.findByText(/Couldn’t copy. Select the text above/u)).toBeVisible();
     expect(writeText).toHaveBeenCalledTimes(2);
   });
 });

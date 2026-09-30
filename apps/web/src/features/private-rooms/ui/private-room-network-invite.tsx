@@ -1,6 +1,6 @@
-import { Button } from '@agent-room/ui-system';
+import { Banner, Button, CopyBlock, Spinner } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Copy, KeyRound, LoaderCircle } from 'lucide-react';
+import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -20,49 +20,31 @@ import { ok, type Result } from '@/shared/result';
 /** 服务器拒绝非管理者查看或生成口令时的错误码。 */
 const forbiddenCodes = new Set(['join_code.forbidden', 'private_room.forbidden']);
 
-type CopyState = 'idle' | 'copied' | 'failed';
-
 /**
- * 在「接入 Agent」对话框里请网络 Agent 进私人房间：一个按钮生成口令、把给 Agent 的话复制好。
- * 以前要先绕到房间设置里找「Agent 口令」，维护者看了一头雾水。口令只在生成的那次响应里出现，
- * 所以已经有口令时只能换一个新的；只有房间管理者能生成，服务器会拒绝别人。
+ * 在“接入 Agent”里请网络 Agent 进私人房间：一个按钮生成口令、把给 Agent 的话复制好。
+ * 口令只在生成的那次响应里出现，所以已经有口令时只能换一个新的；只有房间管理者能生成。
  */
 export function PrivateRoomNetworkInvite({
   catalogId,
   guide,
   roomName,
   rooms,
+  onCopied,
 }: {
   readonly catalogId: string;
   readonly guide: string;
   readonly roomName: string;
   readonly rooms: PrivateRoomGateway;
+  readonly onCopied?: (() => void) | undefined;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const access = usePrivateRoomAgentAccess(rooms, catalogId);
   const [generated, setGenerated] = useState<GeneratedJoinCode | null>(null);
-  const [copyState, setCopyState] = useState<CopyState>('idle');
+  const [autoCopied, setAutoCopied] = useState(false);
   const queryKey = privateRoomAgentAccessQueryKey(catalogId);
-
-  const message =
-    generated === null
-      ? null
-      : t('privateRooms.governance.agentAccess.message', {
-          code: generated.code,
-          guide,
-          room: roomName,
-        });
-
-  /** 自动复制失败不算错：有的浏览器等完服务器就不认那次点击了，这时照样给出这段话和复制按钮。 */
-  const copy = async (text: string, manual: boolean): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyState('copied');
-    } catch {
-      setCopyState(manual ? 'failed' : 'idle');
-    }
-  };
+  const messageFor = (code: string) =>
+    t('privateRooms.governance.agentAccess.message', { code, guide, room: roomName });
 
   const mutation = useMutation({
     mutationFn: async () => await rooms.generateJoinCode(catalogId),
@@ -77,15 +59,14 @@ export function PrivateRoomNetworkInvite({
             ? ok({ ...current.value, joinCode: { createdAtUnixMs: result.value.createdAtUnixMs } })
             : current,
       );
-      // 一次点击就复制好。
-      await copy(
-        t('privateRooms.governance.agentAccess.message', {
-          code: result.value.code,
-          guide,
-          room: roomName,
-        }),
-        false,
-      );
+      // 一次点击就复制好。有的浏览器等完服务器就不认那次点击了，这时下面照样有复制按钮。
+      try {
+        await navigator.clipboard.writeText(messageFor(result.value.code));
+        setAutoCopied(true);
+        onCopied?.();
+      } catch {
+        // 不算错。
+      }
       await queryClient.invalidateQueries({ queryKey });
     },
   });
@@ -101,27 +82,22 @@ export function PrivateRoomNetworkInvite({
 
   return (
     <div className="agent-invite__private-code">
-      <p>{t('agentInvite.network.privateRoom', { room: roomName })}</p>
+      <p className="agent-invite__note">
+        {t('agentInvite.network.privateRoom', { room: roomName })}
+      </p>
       {forbidden ? (
-        <p className="agent-invite__note" role="status">
+        <Banner role={null} tone="info">
           {t('agentInvite.network.private.forbidden')}
-        </p>
-      ) : message === null ? (
+        </Banner>
+      ) : generated === null ? (
         <>
-          <p>{t('agentInvite.network.private.howTo')}</p>
           <Button
             disabled={access.isPending || mutation.isPending}
-            icon={
-              mutation.isPending ? (
-                <LoaderCircle aria-hidden="true" className="private-room-spin" />
-              ) : (
-                <KeyRound aria-hidden="true" />
-              )
-            }
+            icon={mutation.isPending ? <Spinner /> : <KeyRound aria-hidden="true" />}
             onClick={() => {
-              setCopyState('idle');
               mutation.mutate();
             }}
+            size="large"
             tone="primary"
           >
             {t(
@@ -136,26 +112,18 @@ export function PrivateRoomNetworkInvite({
         </>
       ) : (
         <>
-          <pre className="agent-invite__network-prompt">{message}</pre>
-          <Button
-            icon={
-              copyState === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />
-            }
-            onClick={() => void copy(message, true)}
-            tone={copyState === 'failed' ? 'alert' : 'quiet'}
-          >
-            {t(
-              copyState === 'copied'
-                ? 'agentInvite.network.private.copied'
-                : 'agentInvite.network.private.copy',
-            )}
-          </Button>
-          {copyState === 'failed' ? (
-            <p className="agent-invite__error" role="status">
-              <AlertTriangle aria-hidden="true" />
-              {t('agentInvite.network.private.copyFailed')}
-            </p>
+          {autoCopied ? (
+            <Banner tone="success">{t('agentInvite.network.private.copied')}</Banner>
           ) : null}
+          <CopyBlock
+            copiedLabel={t('agentInvite.network.private.copied')}
+            copyLabel={t('agentInvite.network.private.copy')}
+            failedLabel={t('agentInvite.message.failed')}
+            onCopied={onCopied}
+            text={messageFor(generated.code)}
+            textLabel={t('agentInvite.message.label')}
+            tone="ghost"
+          />
           <p className="agent-invite__note">{t('agentInvite.network.private.onlyOnce')}</p>
         </>
       )}

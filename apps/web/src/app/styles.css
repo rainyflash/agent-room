@@ -2195,7 +2195,7 @@
 }
 
 .private-room-spin {
-  animation: operation-spin 1s linear infinite;
+  animation: ar-spin 1s linear infinite;
 }
 
 .private-room-governance {
@@ -4638,7 +4638,7 @@ p.message-dock__headline {
 
 .lobby-boundary__spin {
   color: var(--color-network);
-  animation: operation-spin 1.1s linear infinite;
+  animation: ar-spin 1.1s linear infinite;
 }
 
 .lobby-boundary h1 {
