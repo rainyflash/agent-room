@@ -13,7 +13,6 @@ import type { MessageGateway } from '@/features/messages/domain/message';
 import type { MachineTranslationGateway } from '@/features/messages/domain/machine-translation';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
-import type { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import type { PublicRoomDirectoryGateway } from '@/features/room-directory/domain/public-room-directory';
 import type {
   PrivateRoomGateway,
@@ -46,7 +45,6 @@ export type AppServices = {
   readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;
   readonly moderation: ModerationGateway;
-  readonly onboarding: OnboardingCoordinator;
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;

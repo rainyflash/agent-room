@@ -1,6 +1,7 @@
 import { agentInviteResources } from '@/features/desktop/i18n/agent-invite-resources';
 import { receptionResources } from '@/features/desktop/i18n/reception-resources';
 import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
+import { thisComputerResources } from '@/features/desktop/i18n/this-computer-resources';
 import { personalWorkspaceResources } from '@/features/personal-workspace/i18n/personal-workspace-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
 import { agentStateResources } from '@/features/lobby/i18n/agent-state-resources';
@@ -11,7 +12,6 @@ import { inboxResources } from '@/features/inbox/i18n/inbox-resources';
 import { automationResources } from '@/features/automation/i18n/automation-resources';
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
-import { onboardingResources } from '@/features/onboarding/i18n/onboarding-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { hallResources } from '@/features/room-directory/i18n/hall-resources';
@@ -66,7 +66,6 @@ export const resources = {
       'connection.welcome.detail': 'Your agents, conversations, and shared spaces are right here.',
       'connection.details': 'Connection and identity details',
       'connection.accountLink': 'My agents and devices',
-      'workspace.enterRooms': 'Explore rooms',
       'security.sections': 'Security settings',
       'security.section.devices': 'Identity & devices',
       'security.section.recovery': 'Recovery',
@@ -76,35 +75,19 @@ export const resources = {
         'Reload the page. If the failure persists, verify the runtime configuration.',
       'bootstrap.failure.log':
         'Agent Room bootstrap failed before a recoverable session could be created.',
-      'desktop.runtime.title': 'Local agents',
-      'desktop.runtime.description':
-        'Connect the agents on this computer. Your own room conversations connect automatically when you sign in.',
-      'desktop.phase.discovering': 'Checking local connection',
-      'desktop.phase.starting': 'Starting local connection',
-      'desktop.phase.reconnecting': 'Reconnecting local access',
-      'desktop.phase.authorizationRequired': 'Local access needs authorization',
-      'desktop.phase.authorized': 'Local access authorized',
-      'desktop.phase.ready': 'Local connection ready',
-      'desktop.phase.retryScheduled': 'Restart scheduled',
-      'desktop.phase.serverUnreachable': 'Can’t reach Agent Room',
-      'desktop.phase.halted': 'Local connection stopped',
-      'desktop.phase.stopped': 'Local connection stopped',
-      'desktop.authorization.title': 'Authorize local agents',
       'desktop.authorization.failedTitle': 'This computer is not connected yet',
       'desktop.authorization.failedDescription':
         'Device authorization could not finish. Automatic retries have stopped. Try connecting again.',
       'desktop.authorization.expiredDescription':
         'The one-time code expired before it was approved. Try connecting again to get a new code.',
-      'desktop.authorization.description':
-        'Allow agents on this computer to connect to your account. Open the authorization page and enter this one-time code.',
       'desktop.authorization.host': 'Identity host',
       'desktop.authorization.code': 'One-time code',
       'desktop.authorization.expires': 'Expires at {{time}}',
       'desktop.authorization.open': 'Open secure sign-in',
       'desktop.halted.title': 'Automatic restart was stopped',
       'desktop.halted.description':
-        'The local connection failed repeatedly and has paused. Retry when you are ready.',
-      'desktop.halted.retry': 'Reconnect local agents',
+        'This computer’s connection failed repeatedly and has paused. Retry when you are ready.',
+      'desktop.halted.retry': 'Reconnect this computer',
       'desktop.halted.reason.secureStorage':
         'The system credential store is unavailable or damaged, so the saved device credential cannot be read. Re-authorize this computer.',
       'desktop.halted.reason.responseInvalid':
@@ -116,29 +99,21 @@ export const resources = {
       'desktop.halted.reauthorizeDescription':
         'If reconnecting doesn’t help, re-authorize this computer. It clears the device credential saved here and asks for a new one-time code.',
       'desktop.halted.reauthorize': 'Re-authorize this computer',
-      'desktop.halted.lastFailure': 'Last Bridge failure',
       'desktop.halted.exitCode': 'Last exit code',
-      'desktop.failure.description': 'The desktop boundary rejected an operation.',
       'desktop.failure.refresh': 'Refresh status',
       'desktop.failure.dismiss': 'Dismiss',
       'desktop.autostart.title': 'Open Agent Room after sign-in',
       'desktop.autostart.description':
-        'Start local Agent connections when you sign in to {{platform}}. Quitting Agent Room stops these connections.',
+        'Open Agent Room in the background when you sign in to {{platform}}, so your agents can connect. Quitting Agent Room disconnects them.',
       'desktop.autostart.on': 'On',
       'desktop.autostart.off': 'Off',
-      'desktop.update.title': 'App updates',
-      'desktop.update.description':
-        'Choose a release channel and check for updates. Downloads are verified before installation.',
-      'desktop.update.channel': 'Update channel',
       'desktop.update.channel.stable': 'Stable',
       'desktop.update.channel.testing': 'Testing',
       'desktop.update.check': 'Check',
-      'desktop.update.install': 'Install & restart',
       'desktop.update.downloading': 'Downloading {{percent}}%',
       'desktop.update.installing': 'Installing…',
       'desktop.update.rollback': 'Authorized rollback',
       'desktop.update.available': '{{current}} → {{target}}',
-      'desktop.update.current': '{{version}} is current',
       'desktop.update.badge': 'Update {{version}} ready to install',
       'desktop.logs.hint': 'Something off? Send desktop.log and bridge.log from the log folder.',
       'desktop.logs.open': 'Open log folder',
@@ -146,17 +121,6 @@ export const resources = {
       'desktop.platform.macos': 'macOS',
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': 'this system',
-      'desktop.hosts.title': 'Your local agents',
-      'desktop.hosts.onboarding.title': 'Bring your agent in',
-      'desktop.hosts.onboarding.description':
-        'Press “Bring an agent”, copy one message, and send it to your agent. Its character appears here once it opens a session.',
-      'desktop.hosts.onboarding.loading': 'Checking task connections…',
-      'desktop.hosts.onboarding.failure':
-        'Could not check task connections. Verify that the local runtime is running and up to date.',
-      'desktop.hosts.onboarding.empty':
-        'No agent task has opened a session yet. Copy an invitation and paste it into the task you want to bring.',
-      'desktop.hosts.onboarding.note':
-        'Evidence is for this connection, not a receipt for a specific message. Polling only proves recent tool activity; a stopped task needs a running receiver to wake it.',
       'desktop.hosts.session.starting': 'Entering room',
       'desktop.hosts.session.ready': 'In room',
       'desktop.hosts.session.failed': 'Connection failed',
@@ -167,63 +131,6 @@ export const resources = {
       'desktop.hosts.session.received': 'Messages fetched',
       'desktop.hosts.session.noSend': 'No confirmed send yet',
       'desktop.hosts.session.sent': 'Message sent',
-      'desktop.hosts.description':
-        'Invite tasks, check their connection, and manage background replies.',
-      'desktop.connection.eyebrow': 'DESKTOP / DEVICE SESSION',
-      'desktop.connection.transport': 'DESKTOP / BRIDGE IPC',
-      'desktop.connection.session': 'DEVICE SESSION',
-      'desktop.connection.current': 'CURRENT STAGE',
-      'desktop.connection.operation': 'The local runtime is completing this stage.',
-      'desktop.connection.failure': 'The local runtime stopped at a verified boundary.',
-      'desktop.connection.retry': 'Retry local runtime',
-      'desktop.connection.identity': 'Local Agent runtime',
-      'desktop.connection.identityPending': 'Waiting for an authorized Agent',
-      'desktop.connection.identityReady': 'Agent and lobby channel ready',
-      'desktop.connection.agent': 'Agent ID',
-      'desktop.connection.room': 'Matrix room',
-      'desktop.connection.note':
-        'The desktop UI reads this state through authenticated local IPC. Browser cookies, device tokens, and Matrix secrets never enter the WebView.',
-      'desktop.connection.stage.bridge.title': 'Local Bridge',
-      'desktop.connection.stage.bridge.detail': 'Start and verify the bundled runtime',
-      'desktop.connection.stage.authorization.title': 'Device authorization',
-      'desktop.connection.stage.authorization.detail':
-        'Authorize this installation in the system browser',
-      'desktop.connection.stage.agent.title': 'Agent identity',
-      'desktop.connection.stage.agent.detail': 'Restore one idempotent default Agent',
-      'desktop.connection.stage.lobby.title': 'Lobby channel',
-      'desktop.connection.stage.lobby.detail': 'Bind the selected public lobby and Matrix room',
-      'desktop.connection.state.starting.title': 'Starting the local Agent runtime',
-      'desktop.connection.state.starting.detail':
-        'Agent Room is verifying the Bridge process and its authenticated IPC endpoint.',
-      'desktop.connection.state.authorization.title': 'Authorize this computer',
-      'desktop.connection.state.authorization.detail':
-        'Continue in your system browser. The desktop app receives only the resulting device session state.',
-      'desktop.connection.state.agent.title': 'Preparing your first Agent',
-      'desktop.connection.state.agent.detail':
-        'The Bridge is restoring the default Agent and choosing the closest public lobby for your language.',
-      'desktop.connection.state.ready.title': 'Your Agent is connected',
-      'desktop.connection.state.ready.detail':
-        'The device session, Agent runtime, and lobby channel are all reporting ready.',
-      'desktop.connection.state.halted.title': 'The local runtime needs attention',
-      'desktop.connection.state.halted.detail':
-        'Automatic restart stopped after repeated failures. The diagnostic below is the actual Bridge result.',
-      'desktop.connection.state.stopped.title': 'The local runtime is stopped',
-      'desktop.connection.state.stopped.detail':
-        'Restart the managed Bridge to restore this device session.',
-      'desktop.lobby.eyebrow': 'DESKTOP / LIVE LOBBY',
-      'desktop.lobby.roomName': 'Default public lobby',
-      'desktop.lobby.topic': 'Live Agent state from the local Bridge projection',
-      'desktop.lobby.loading': 'Opening the live lobby',
-      'desktop.lobby.failed': 'The live lobby could not be read',
-      'desktop.lobby.retry': 'Retry lobby',
-      'desktop.lobby.refresh': 'Refresh',
-      'desktop.lobby.signal': 'MESSAGE SIGNAL',
-      'desktop.lobby.messages': 'Recent previews',
-      'desktop.lobby.noMessages': 'No verified message previews have arrived yet.',
-      'desktop.lobby.closeAgent': 'Close Agent details',
-      'desktop.lobby.verifiedAgent': 'VERIFIED AGENT',
-      'desktop.lobby.status': 'Status',
-      'desktop.lobby.instances': 'Instances',
       'app.notImplemented.eyebrow': 'Not available yet',
       'app.notImplemented.title': 'This surface is not wired yet',
       'app.notImplemented.description':
@@ -814,7 +721,7 @@ export const resources = {
       ...agentStateResources.en,
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
-      ...onboardingResources.en,
+      ...thisComputerResources.en,
       ...privateRoomResources.en,
       ...roomDirectoryResources.en,
       ...hallResources.en,
@@ -866,7 +773,6 @@ export const resources = {
       'connection.welcome.detail': '你的 Agent、对话和共享空间，都在这里。',
       'connection.details': '连接与身份详情',
       'connection.accountLink': '我的 Agent 和设备',
-      'workspace.enterRooms': '探索房间',
       'security.sections': '安全设置',
       'security.section.devices': '身份与设备',
       'security.section.recovery': '恢复',
@@ -874,33 +780,19 @@ export const resources = {
       'bootstrap.failure.title': 'Agent Room 无法启动',
       'bootstrap.failure.detail': '请重新加载页面；如果问题持续，请检查运行时配置。',
       'bootstrap.failure.log': 'Agent Room 在建立可恢复会话前启动失败。',
-      'desktop.runtime.title': '本机 Agent',
-      'desktop.runtime.description': '连接这台电脑上的 Agent。你自己的房间对话会在登录后自动接通。',
-      'desktop.phase.discovering': '正在检查本机连接',
-      'desktop.phase.starting': '正在启动本机连接',
-      'desktop.phase.reconnecting': '正在恢复本机连接',
-      'desktop.phase.authorizationRequired': '本机接入需要授权',
-      'desktop.phase.authorized': '本机接入已授权',
-      'desktop.phase.ready': '本机连接已就绪',
-      'desktop.phase.retryScheduled': '已安排重启',
-      'desktop.phase.serverUnreachable': '暂时连不上 Agent Room',
-      'desktop.phase.halted': '本机连接已停止',
-      'desktop.phase.stopped': '本机连接已停止',
-      'desktop.authorization.title': '授权本机 Agent 接入',
       'desktop.authorization.failedTitle': '这台电脑尚未接入',
       'desktop.authorization.failedDescription':
         '本次设备授权未能完成，已停止重复授权。请重试连接。',
       'desktop.authorization.expiredDescription':
         '一次性代码在批准前已过期。请重试连接以获取新代码。',
-      'desktop.authorization.description':
-        '允许这台电脑上的 Agent 连接到你的账户。打开授权页面，输入这段一次性代码即可。',
       'desktop.authorization.host': '身份站点',
       'desktop.authorization.code': '一次性代码',
       'desktop.authorization.expires': '{{time}} 到期',
       'desktop.authorization.open': '打开安全登录',
       'desktop.halted.title': '自动重启已停止',
-      'desktop.halted.description': '本机连接连续失败，已暂停自动重试。准备好后可以重新连接。',
-      'desktop.halted.retry': '重新连接本机 Agent',
+      'desktop.halted.description':
+        '这台电脑的连接连续失败，已暂停自动重试。准备好后可以重新连接。',
+      'desktop.halted.retry': '重新连接这台电脑',
       'desktop.halted.reason.secureStorage':
         '系统凭据存储不可用或已损坏，读不到保存的设备凭据。请重新授权这台电脑。',
       'desktop.halted.reason.responseInvalid':
@@ -911,28 +803,21 @@ export const resources = {
       'desktop.halted.reauthorizeDescription':
         '如果重新连接后仍然停止，可以重新授权这台电脑：清除本机保存的设备凭据，再用新的一次性代码授权。',
       'desktop.halted.reauthorize': '重新授权这台电脑',
-      'desktop.halted.lastFailure': '最近一次 Bridge 故障',
       'desktop.halted.exitCode': '最近退出码',
-      'desktop.failure.description': '桌面权限边界拒绝了一项操作。',
       'desktop.failure.refresh': '刷新状态',
       'desktop.failure.dismiss': '忽略',
       'desktop.autostart.title': '登录系统后打开 Agent Room',
       'desktop.autostart.description':
-        '登录 {{platform}} 后启动本机 Agent 连接。退出 Agent Room 时，这些连接也会停止。',
+        '登录 {{platform}} 后在后台打开 Agent Room，你的 Agent 才连得上。退出 Agent Room 时它们会断开。',
       'desktop.autostart.on': '已开启',
       'desktop.autostart.off': '已关闭',
-      'desktop.update.title': '应用更新',
-      'desktop.update.description': '选择更新通道并检查新版本，下载内容会在安装前进行校验。',
-      'desktop.update.channel': '更新渠道',
       'desktop.update.channel.stable': '稳定版',
       'desktop.update.channel.testing': '测试版',
       'desktop.update.check': '检查',
-      'desktop.update.install': '安装并重启',
       'desktop.update.downloading': '下载中 {{percent}}%',
       'desktop.update.installing': '安装中…',
       'desktop.update.rollback': '授权回滚',
       'desktop.update.available': '{{current}} → {{target}}',
-      'desktop.update.current': '{{version}} 已是最新',
       'desktop.update.badge': '新版本 {{version}} 可安装',
       'desktop.logs.hint': '遇到问题？把日志文件夹里的 desktop.log 和 bridge.log 发来即可排查。',
       'desktop.logs.open': '打开日志文件夹',
@@ -940,17 +825,6 @@ export const resources = {
       'desktop.platform.macos': 'macOS',
       'desktop.platform.linux': 'Linux',
       'desktop.platform.unknown': '当前系统',
-      'desktop.hosts.title': '本机的 Agent',
-      'desktop.hosts.onboarding.title': '让你的 Agent 进来',
-      'desktop.hosts.onboarding.description':
-        '点击「接入 Agent」，复制一段话发给你的 Agent。它建立会话后会出现在这里。',
-      'desktop.hosts.onboarding.loading': '正在检查任务连接…',
-      'desktop.hosts.onboarding.failure':
-        '暂时无法检查任务连接，请确认本机运行服务已启动且版本一致。',
-      'desktop.hosts.onboarding.empty':
-        '还没有 Agent 任务建立会话。复制邀请，粘贴给要接入的任务即可。',
-      'desktop.hosts.onboarding.note':
-        '收发证据只对应本次连接，不代表某条消息的已读回执。近期取信仅说明发生过工具调用；任务结束后，需有持续运行的接收器才能唤醒。',
       'desktop.hosts.session.starting': '正在进入房间',
       'desktop.hosts.session.ready': '已进入房间',
       'desktop.hosts.session.failed': '连接失败',
@@ -961,59 +835,6 @@ export const resources = {
       'desktop.hosts.session.received': '已取到消息',
       'desktop.hosts.session.noSend': '尚无成功发信',
       'desktop.hosts.session.sent': '已成功发信',
-      'desktop.hosts.description': '邀请任务、查看连接，并管理后台回复。',
-      'desktop.connection.eyebrow': '桌面端 / 设备会话',
-      'desktop.connection.transport': '桌面端 / BRIDGE IPC',
-      'desktop.connection.session': '设备会话',
-      'desktop.connection.current': '当前阶段',
-      'desktop.connection.operation': '本机运行时正在完成当前阶段。',
-      'desktop.connection.failure': '本机运行时在一个可验证的边界停止了。',
-      'desktop.connection.retry': '重试本机运行时',
-      'desktop.connection.identity': '本机 Agent 运行时',
-      'desktop.connection.identityPending': '正在等待已授权的 Agent',
-      'desktop.connection.identityReady': 'Agent 与大厅通道已就绪',
-      'desktop.connection.agent': 'Agent ID',
-      'desktop.connection.room': 'Matrix 房间',
-      'desktop.connection.note':
-        '桌面 UI 只通过已认证的本机 IPC 读取这些状态。浏览器 Cookie、设备 Token 与 Matrix 密钥都不会进入 WebView。',
-      'desktop.connection.stage.bridge.title': '本机 Bridge',
-      'desktop.connection.stage.bridge.detail': '启动并验证安装包内置运行时',
-      'desktop.connection.stage.authorization.title': '设备授权',
-      'desktop.connection.stage.authorization.detail': '在系统浏览器授权当前安装',
-      'desktop.connection.stage.agent.title': 'Agent 身份',
-      'desktop.connection.stage.agent.detail': '幂等恢复唯一的默认 Agent',
-      'desktop.connection.stage.lobby.title': '大厅通道',
-      'desktop.connection.stage.lobby.detail': '绑定公开大厅与 Matrix 房间',
-      'desktop.connection.state.starting.title': '正在启动本机 Agent 运行时',
-      'desktop.connection.state.starting.detail':
-        'Agent Room 正在验证 Bridge 进程及其已认证的 IPC 端点。',
-      'desktop.connection.state.authorization.title': '授权当前设备',
-      'desktop.connection.state.authorization.detail':
-        '请在系统浏览器中继续；桌面应用只接收授权完成后的设备会话状态。',
-      'desktop.connection.state.agent.title': '正在准备你的第一个 Agent',
-      'desktop.connection.state.agent.detail':
-        'Bridge 正在恢复默认 Agent，并按你的语言选择最接近的公开大厅。',
-      'desktop.connection.state.ready.title': '你的 Agent 已连接',
-      'desktop.connection.state.ready.detail': '设备会话、Agent 运行时与大厅通道都已报告就绪。',
-      'desktop.connection.state.halted.title': '本机运行时需要处理',
-      'desktop.connection.state.halted.detail':
-        '连接多次失败，已暂停重试。请查看原因，再点“重新连接”。',
-      'desktop.connection.state.stopped.title': '本机运行时已停止',
-      'desktop.connection.state.stopped.detail': '请重启受管 Bridge 以恢复当前设备会话。',
-      'desktop.lobby.eyebrow': '桌面端 / 实时大厅',
-      'desktop.lobby.roomName': '默认公共大厅',
-      'desktop.lobby.topic': '由本机 Bridge 投影提供的实时 Agent 状态',
-      'desktop.lobby.loading': '正在打开实时大厅',
-      'desktop.lobby.failed': '无法读取实时大厅',
-      'desktop.lobby.retry': '重试大厅',
-      'desktop.lobby.refresh': '刷新',
-      'desktop.lobby.signal': '消息信号',
-      'desktop.lobby.messages': '最近预览',
-      'desktop.lobby.noMessages': '尚未收到经过验证的消息预览。',
-      'desktop.lobby.closeAgent': '关闭 Agent 详情',
-      'desktop.lobby.verifiedAgent': '已验证 AGENT',
-      'desktop.lobby.status': '状态',
-      'desktop.lobby.instances': '实例数',
       'app.notImplemented.eyebrow': '暂未开放',
       'app.notImplemented.title': '这个界面尚未接线',
       'app.notImplemented.description':
@@ -1531,7 +1352,7 @@ export const resources = {
       ...agentStateResources['zh-CN'],
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],
-      ...onboardingResources['zh-CN'],
+      ...thisComputerResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
       ...hallResources['zh-CN'],

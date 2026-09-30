@@ -75,7 +75,6 @@ import type {
   ModerationCase,
   ModerationGateway,
 } from '@/features/moderation/domain/moderation';
-import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -113,14 +112,6 @@ const desktop = new TauriDesktopRuntimeGateway({
 const roomDirectory = {
   list: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
 };
-const onboarding = new OnboardingCoordinator(
-  {
-    ensureDefaultAgent: () =>
-      Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
-    listAgents: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
-  },
-  roomDirectory,
-);
 const localPreferencesGateway: AccountPreferencesGateway = {
   read: () => Promise.resolve(err({ code: 'preferences.source_unavailable', retryable: true })),
   scope: () => null,
@@ -906,7 +897,6 @@ const services: AppServices = {
     translate: () => Promise.resolve(err({ code: 'unavailable' as const, retryable: false })),
   },
   moderation,
-  onboarding,
   privateRoomMatrix,
   privateRooms,
   roomDirectory,

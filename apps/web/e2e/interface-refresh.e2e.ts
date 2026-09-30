@@ -6,7 +6,7 @@ const surfaces = [
   ['rooms', '/e2e/fixtures/room-directory.html'],
   ['agents', '/e2e/fixtures/account-workspace.html'],
   ['security', '/e2e/fixtures/security-center.html'],
-  ['onboarding', '/e2e/fixtures/onboarding.html?browser'],
+  ['my-agents-desktop', '/e2e/fixtures/my-agents.html'],
 ] as const;
 
 for (const width of [1440, 390]) {
@@ -17,7 +17,7 @@ for (const width of [1440, 390]) {
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(path);
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-      if (name === 'onboarding')
+      if (name === 'my-agents-desktop')
         await expect(page.getByText('Studio companion', { exact: true })).toBeVisible();
       await expect(page.getByRole('navigation', { name: 'Explore Agent Room' })).toBeVisible();
       await expectNoHorizontalOverflow(page);
@@ -38,22 +38,23 @@ for (const width of [1440, 390]) {
       });
     });
   }
-  test(`桌面设置：${String(width)}px 展开、更新与自动启动`, async ({ page }, testInfo) => {
+  test(`这台电脑：${String(width)}px 状态、有新版本与自动打开`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/e2e/fixtures/onboarding.html');
-    const trigger = page.getByRole('button', { name: /Local agents/u });
-    await trigger.click();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    const update = page.getByRole('button', { name: 'Check', exact: true });
-    await update.click();
-    await expect(page.getByText('0.1.0-alpha.23 → 0.1.0-alpha.24')).toBeVisible();
-    // 折叠标题也报告可安装的新版本，窗口收起时一眼可见。
-    await expect(trigger).toHaveAccessibleName(/Update 0\.1\.0-alpha\.24 ready to install/u);
-    const autostart = page.getByRole('button', { name: 'Off', exact: true });
-    await autostart.click();
-    await expect(page.getByRole('button', { name: 'On', exact: true })).toHaveAttribute(
+    await page.goto('/e2e/fixtures/my-agents.html');
+    const section = page.getByRole('region', { name: 'This computer', exact: true });
+    await expect(section).toBeVisible();
+    await expect(page.getByRole('link', { name: 'This computer: Connected' })).toBeVisible();
+    // 启动后自动查到新版本：顶栏的版本号换成“有新版本”，这一节里给出去安装的入口。
+    await expect(
+      page.getByRole('link', { name: 'Update 0.1.0-alpha.24 ready to install · About & updates' }),
+    ).toHaveText('Update ready');
+    await expect(
+      section.getByRole('link', { name: 'Update 0.1.0-alpha.24 ready to install', exact: true }),
+    ).toBeVisible();
+    await section.getByRole('button', { name: 'Off', exact: true }).click();
+    await expect(section.getByRole('button', { name: 'On', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
@@ -71,10 +72,8 @@ for (const width of [1440, 390]) {
     await page.screenshot({
       animations: 'disabled',
       fullPage: true,
-      path: testInfo.outputPath(`desktop-settings-${String(width)}.png`),
+      path: testInfo.outputPath(`this-computer-${String(width)}.png`),
     });
-    await trigger.click();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 }
 test('中文窄屏安全操作不挤成竖排，身份与授权入口保持可用', async ({ page }, testInfo) => {

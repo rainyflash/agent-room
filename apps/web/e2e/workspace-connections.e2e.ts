@@ -2,11 +2,14 @@ import { expect, test, type Page } from '@playwright/test';
 
 const fixturePath = '/e2e/fixtures/account-workspace.html';
 
-test('账号工作区明确展示四层独立连接事实和诊断', async ({ page }) => {
+test('我的 Agent 在详情里展示四层独立连接事实和诊断', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 1_000, width: 1_440 });
   await page.goto(fixturePath);
 
+  // 服务连接这类排查信息收在“设备和连接详情”里，默认收起。
+  await expect(page.getByRole('region', { name: 'Service connections' })).toBeHidden();
+  await page.getByText('Devices and connection details').click();
   const connections = page.getByRole('region', { name: 'Service connections' });
   await expect(connections.getByText('Control plane')).toBeVisible();
   await expect(connections.getByText('Matrix sync')).toBeVisible();
@@ -28,6 +31,7 @@ test('窄屏状态与诊断布局没有横向溢出且可以折叠', async ({ pa
   const diagnostics = page.locator('.workspace-diagnostics');
   await expect(diagnostics).not.toHaveAttribute('open', '');
   await expect(page.getByRole('button', { name: /Release Conductor/u })).toBeInViewport();
+  await page.getByText('Devices and connection details').click();
   await diagnostics.locator('summary').click();
   await expect(diagnostics).toHaveAttribute('open', '');
   await diagnostics.locator('summary').click();

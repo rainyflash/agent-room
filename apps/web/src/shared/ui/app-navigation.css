@@ -152,6 +152,16 @@
   .app-navigation .language-control select {
     max-width: 92px;
   }
+  /* 窄屏上“退出登录”只留图标，名字还在 aria-label 里。 */
+  .app-navigation__sign-out {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+  .app-navigation__sign-out > span:last-child {
+    display: none;
+  }
 }
 @media (max-width: 480px) {
   .app-navigation__links a {

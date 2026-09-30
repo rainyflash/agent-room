@@ -119,6 +119,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 - 2026-09-29 维护者要求“全部翻新”：流程减到必要的几步，全站一套组件，说人话。设计在 [specs/interface-renewal/design.md](./specs/interface-renewal/design.md)，按文档分步交付，进度记在它的“状态”一节。
 - 视觉仍按 [游戏大厅界面重做](./specs/game-lobby-refresh/design.md) 的令牌与形状规则；那次只换了外观，这次改流程、文案和组件。
+- 第 2 步（一屏的“接入 Agent”对话框）和第 3 步（新的“我的 Agent”、这台电脑、去掉浮动面板和 `/onboarding`）要在同一个版本里发布。
+- `/onboarding` 已去掉：桌面端没有默认 Agent 时连接服务照样运行，MCP 和命令行的 Agent 都走本机会话，不依赖默认 Agent。
+- 浏览器验收里桌面端的“我的 Agent”页用 `e2e/fixtures/my-agents.html`（加 `?browser` 是网页端），`window.__agentRoomFixtureControls.arriveAgent()` 模拟一个 Agent 接走接入对话框挂着的人物。
 
 ### 版本与其他
 

@@ -9,17 +9,17 @@ export const receptionResources = {
     'reception.enableDescription':
       'Reply only when you mention this agent in this room. Replies are visible to all room members, including people who join later. New authorizations last {{days}} days, up to 10 replies/minute and 1,000 replies total. Keep the computer and Agent Room running.',
     'reception.manual': 'Use an existing authorization or custom executable',
-    'reception.title': 'Reception tasks',
+    'reception.title': 'Background replies',
     'reception.description':
       'Keep a registered agent task available for your mentions. Keep Agent Room running; pause reception before using the task manually.',
     'reception.empty':
-      'No reception tasks yet. Ask an agent task to register for reception, then choose a room grant below.',
+      'No agent task has background replies yet. Ask an agent task to register, then choose a room grant below.',
     'reception.prompt':
       'Register this exact task for Agent Room background replies. If connected by CLI, use the same installed executable and --profile value to run register with the actual --workspace; register --help lists the supported tools and how the task is recognized. If connected by MCP, use agent_room_register_reception with this task’s sessionId, accurate hostType and workspace. Never guess a task ID or select the latest task. Registration alone must not enable replies.',
     'reception.copy': 'Copy registration request',
     'reception.copied': 'Copied',
     'reception.copyFailed': 'Could not copy. Select the request text and copy it manually.',
-    'reception.loading': 'Loading reception tasks…',
+    'reception.loading': 'Loading background replies…',
     'reception.failed': 'Reception data is unavailable. Refresh to try again.',
     'reception.failure.host':
       'The agent host did not produce a reply. Check that it is installed, signed in and has quota, then start the task again.',
@@ -77,16 +77,16 @@ export const receptionResources = {
     'reception.enableDescription':
       '只响应你在本房间对它的提及，回复对房间内所有成员（包括之后加入的人）可见。新授权有效期 {{days}} 天，每分钟最多 10 条、累计最多 1,000 条。电脑和 Agent Room 需要保持运行。',
     'reception.manual': '使用已有授权或指定程序',
-    'reception.title': '接待任务',
+    'reception.title': '后台回复',
     'reception.description':
       '让登记过的 Agent 任务接收你的提及。电脑和 Agent Room 需要保持运行；手动使用该任务前，请先暂停接待。',
-    'reception.empty': '还没有接待任务。先让 Agent 任务登记接待，再在这里选择房间授权。',
+    'reception.empty': '还没有 Agent 任务开着后台回复。先让 Agent 任务登记，再在下面选择房间授权。',
     'reception.prompt':
       '请登记当前任务，以便 Agent Room 提供后台回复。通过 CLI 接入时，复用已安装程序和本任务的 --profile 执行 register，带上真实 --workspace；支持哪些工具、怎么识别任务，看 register --help。通过 MCP 接入时，使用 agent_room_register_reception，带上本任务 sessionId、准确 hostType 和工作目录。不能猜测任务 ID 或选择最近任务。登记本身不启用自动回复。',
     'reception.copy': '复制登记请求',
     'reception.copied': '已复制',
     'reception.copyFailed': '复制失败，请选中请求文字手动复制。',
-    'reception.loading': '正在读取接待任务…',
+    'reception.loading': '正在读取后台回复…',
     'reception.failed': '暂时无法读取接待信息，请刷新重试。',
     'reception.failure.host': '宿主没有给出回复。确认它已安装、已登录且有额度，然后重新启动任务。',
     'reception.failure.files': '这个任务的本机文件缺失或读不出来。移除任务后重新登记。',

@@ -72,10 +72,10 @@ const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings/$section',
 });
-const onboardingRoute = createRoute({
+const aboutRoute = createRoute({
   component: () => null,
   getParentRoute: () => rootRoute,
-  path: '/onboarding',
+  path: '/about',
 });
 const roomDirectoryRoute = createRoute({
   component: () => null,
@@ -84,25 +84,24 @@ const roomDirectoryRoute = createRoute({
 });
 const router = createRouter({
   history: createMemoryHistory({ initialEntries: ['/workspace'] }),
-  routeTree: rootRoute.addChildren([
-    workspaceRoute,
-    settingsRoute,
-    onboardingRoute,
-    roomDirectoryRoute,
-  ]),
+  routeTree: rootRoute.addChildren([workspaceRoute, settingsRoute, aboutRoute, roomDirectoryRoute]),
 });
 
+// ?agent=<id> 一打开就显示这个 Agent 的详情。
+const requestedAgentId = new URLSearchParams(location.search).get('agent');
+
 function WorkspaceFixture() {
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(primaryAgentId);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(requestedAgentId);
   return (
     <AccountWorkspaceView
+      accountName="Fixture operator"
       connectionHealth={connectionHealth}
       failureCode={null}
       fleet={fleet}
       loading={false}
+      onInvite={() => undefined}
       onRefresh={() => undefined}
       onSelectAgent={setSelectedAgentId}
-      principalDisplayName="Fixture operator"
       selectedAgentId={selectedAgentId}
       {...(new URLSearchParams(location.search).has('deletion')
         ? {

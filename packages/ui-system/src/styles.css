@@ -685,8 +685,11 @@ summary {
 }
 
 .ar-banner__action {
+  display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-self: center;
+  gap: 8px;
 }
 
 @media (max-width: 479px) {

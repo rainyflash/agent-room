@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
 import { useAppServices } from '@/app/app-services';
+import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { useDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import {
   agentInstanceQueryKey,
@@ -12,6 +13,7 @@ import {
 } from '@/features/security/data/access-management-queries';
 import type { MatrixSecuritySnapshot } from '@/features/security/domain/matrix-security';
 import { ReceptionOwnershipPanel } from '@/features/desktop/ui/reception-ownership-panel';
+import { ThisComputerSection } from '@/features/desktop/ui/this-computer-section';
 import type { WebSession } from '@/features/session/domain/session';
 import { useSession } from '@/features/session/ui/session-provider';
 import {
@@ -21,11 +23,12 @@ import {
 import { projectAgentFleet, type FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
+import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 
 import './account-workspace-page.css';
 
 export type AccountWorkspacePageProps = {
-  readonly onSelectAgent: (agentId: string) => void;
+  readonly onSelectAgent: (agentId: string | null) => void;
   readonly principal: WebSession;
   readonly selectedAgentId: string | null;
 };
@@ -39,6 +42,8 @@ export function AccountWorkspacePage({
   const { send } = useSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const { url: downloadUrl } = usePublishedDownload(services.config);
   const agents = useOwnedAgents(services.agentDirectory);
   const devices = useProductDevices(services.accessManagement);
   const instances = useAgentInstances(services.accessManagement);
@@ -147,33 +152,50 @@ export function AccountWorkspacePage({
   };
 
   return (
-    <AccountWorkspaceView
-      agentDeletion={{
-        canDelete: (agent) => agent.agent.agentId !== principal.principalId,
-        failure: deletion.failure,
-        onDelete: (agent) => void deleteAgent(agent),
-        onReauthenticate: () => {
-          void services.controlPlane.beginAuthentication(
-            `${window.location.pathname}${window.location.search}${window.location.hash}`,
-          );
-        },
-        pendingAgentId: deletion.pendingAgentId,
-        recentlyAuthenticated: principal.recentlyAuthenticated,
-      }}
-      connectionHealth={connectionHealth}
-      failureCode={failureCode}
-      fleet={fleet}
-      loading={loading}
-      onRefresh={() => void refresh()}
-      onSelectAgent={onSelectAgent}
-      onSignOut={() => {
-        send({ type: 'LOGOUT' });
-        void navigate({ to: '/connect' });
-      }}
-      principalDisplayName={principal.displayName}
-      selectedAgentId={selectedAgentId}
-      reception={<ReceptionOwnershipPanel />}
-    />
+    <>
+      <AccountWorkspaceView
+        agentDeletion={{
+          canDelete: (agent) => agent.agent.agentId !== principal.principalId,
+          failure: deletion.failure,
+          onDelete: (agent) => void deleteAgent(agent),
+          onReauthenticate: () => {
+            void services.controlPlane.beginAuthentication(
+              `${window.location.pathname}${window.location.search}${window.location.hash}`,
+            );
+          },
+          pendingAgentId: deletion.pendingAgentId,
+          recentlyAuthenticated: principal.recentlyAuthenticated,
+        }}
+        accountName={principal.displayName}
+        connectionHealth={connectionHealth}
+        failureCode={failureCode}
+        fleet={fleet}
+        loading={loading}
+        onInvite={() => {
+          setInviteOpen(true);
+        }}
+        onRefresh={() => void refresh()}
+        onSelectAgent={onSelectAgent}
+        onSignOut={() => {
+          send({ type: 'LOGOUT' });
+          void navigate({ to: '/connect' });
+        }}
+        selectedAgentId={selectedAgentId}
+        thisComputer={<ThisComputerSection />}
+        reception={<ReceptionOwnershipPanel />}
+      />
+      {inviteOpen ? (
+        <AgentInviteDialog
+          downloadUrl={downloadUrl}
+          onClose={() => {
+            setInviteOpen(false);
+            void refresh();
+          }}
+          owner={{ principalId: principal.principalId, displayName: principal.displayName }}
+          room={null}
+        />
+      ) : null}
+    </>
   );
 }
 

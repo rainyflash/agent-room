@@ -1,9 +1,10 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import type { OnboardingFixtureWindow } from '../src/test/onboarding-fixture-controls';
+import type { MyAgentsFixtureWindow } from '../src/test/my-agents-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 const appNames = /Codex|Claude Code|Cursor/u;
+const invite = { name: 'Bring an agent', exact: true } as const;
 
 for (const width of [1440, 390]) {
   test(`接入 Agent 一屏完成：复制一段话，它进来就显示 ${String(width)}px`, async ({
@@ -14,10 +15,10 @@ for (const width of [1440, 390]) {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/e2e/fixtures/onboarding.html');
-    await page.getByRole('button', { name: /Local agents/u }).click();
-    await expect(page.getByText(/No agent task has opened/u)).toBeVisible();
-    await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+    await page.goto('/e2e/fixtures/my-agents.html');
+    // “我的 Agent”页头的主按钮就是接入；这台电脑上还没有 Agent 进来。
+    await expect(page.getByText('No agent on this computer has joined yet.')).toBeVisible();
+    await page.getByRole('main').getByRole('button', invite).click();
     const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
     // 三种通用方式平级，默认网络接入；对话框里不出现任何具体 Agent 应用的名字。
     await expect(dialog.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
@@ -49,12 +50,12 @@ for (const width of [1440, 390]) {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as OnboardingFixtureWindow).__agentRoomFixtureControls.parkedInvitation(),
+          (window as MyAgentsFixtureWindow).__agentRoomFixtureControls.parkedInvitation(),
         ),
       )
       .not.toBeNull();
     await page.evaluate(() => {
-      (window as OnboardingFixtureWindow).__agentRoomFixtureControls.arriveAgent();
+      (window as MyAgentsFixtureWindow).__agentRoomFixtureControls.arriveAgent();
     });
     await expect(dialog.getByText('“Scout” joined')).toBeVisible();
     await expect(dialog.getByText('It’s reading messages.')).toBeVisible();
@@ -63,7 +64,7 @@ for (const width of [1440, 390]) {
     await expect
       .poll(() =>
         page.evaluate(() =>
-          (window as OnboardingFixtureWindow).__agentRoomFixtureControls.parkedInvitation(),
+          (window as MyAgentsFixtureWindow).__agentRoomFixtureControls.parkedInvitation(),
         ),
       )
       .toBeNull();
@@ -95,8 +96,12 @@ for (const width of [1440, 390]) {
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(dialog).toHaveCount(0);
 
-    // 再打开时上次选的命令行还在；已经在的 Scout 不算新来的。
-    await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+    // 它也出现在“这台电脑上的 Agent”里。再打开时上次选的命令行还在；已经在的 Scout 不算新来的。
+    // 列表每 5 秒读一次本机会话。
+    await expect(
+      page.getByRole('region', { name: 'Agents on this computer' }).getByText('Scout'),
+    ).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('main').getByRole('button', invite).click();
     await expect(dialog.getByRole('radio', { name: /^Command line/u })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -110,11 +115,14 @@ for (const width of [1440, 390]) {
 }
 
 test('读不到本机会话时如实说，不伪造空清单', async ({ page }) => {
-  await page.goto('/e2e/fixtures/onboarding.html?host=failed');
-  await page.getByRole('button', { name: /Local agents/u }).click();
-  await expect(page.getByText('fixture.external_action_unavailable')).toBeVisible();
-  await expect(page.getByText(/No agent task has opened/u)).toHaveCount(0);
-  await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+  await page.goto('/e2e/fixtures/my-agents.html?host=failed');
+  const sessions = page.getByRole('region', { name: 'Agents on this computer' });
+  await expect(sessions.getByText('Can’t check this computer’s agents right now.')).toBeVisible();
+  await expect(sessions.getByText('No agent on this computer has joined yet.')).toHaveCount(0);
+  // 错误码收在详情里，要排查时展开。
+  await sessions.getByText('Connection and identity details').click();
+  await expect(sessions.getByText('fixture.external_action_unavailable')).toBeVisible();
+  await page.getByRole('main').getByRole('button', invite).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('radio', { name: /^Command line/u }).click();
   await expect(dialog.getByText('Can’t check this computer’s agents right now.')).toBeVisible();
@@ -124,9 +132,9 @@ test('读不到本机会话时如实说，不伪造空清单', async ({ page }) 
 
 test('连接服务重连时只是告知，不挡复制；重试后提示消失', async ({ page }) => {
   const failures = collectPageFailures(page);
-  await page.goto('/e2e/fixtures/onboarding.html?bridge=reconnecting');
-  await page.getByRole('button', { name: /Local agents/u }).click();
-  await page.getByRole('complementary').getByRole('button', { name: 'Bring an agent' }).click();
+  await page.goto('/e2e/fixtures/my-agents.html?bridge=reconnecting');
+  await expect(page.getByRole('link', { name: 'This computer: Connecting' })).toBeVisible();
+  await page.getByRole('main').getByRole('button', invite).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('radio', { name: /^Command line/u }).click();
   await expect(dialog.getByText(/Reconnecting automatically/u)).toBeVisible();
@@ -138,26 +146,18 @@ test('连接服务重连时只是告知，不挡复制；重试后提示消失',
   expect(failures).toEqual([]);
 });
 
-test('MCP 只给同一份通用配置：首次使用页、本机 Agent 和接入对话框都不出现具体应用', async ({
-  page,
-}) => {
+test('MCP 只给同一份通用配置：这台电脑的设置和接入对话框都不出现具体应用', async ({ page }) => {
   const failures = collectPageFailures(page);
-  await page.goto('/e2e/fixtures/onboarding.html?bridge=authorized');
+  await page.goto('/e2e/fixtures/my-agents.html?bridge=authorized');
   const mcpHint = /Add this JSON to the tool’s MCP configuration/u;
-  const onboarding = page.getByRole('main');
-  await onboarding.getByText('MCP compatibility').click();
-  await expect(onboarding.getByText(mcpHint)).toBeVisible();
-  await expect(onboarding.getByText(/agent-room-mcp\.exe/u)).toBeVisible();
-  await expect(onboarding).not.toContainText(appNames);
+  const thisComputer = page.getByRole('region', { name: 'This computer', exact: true });
+  await thisComputer.getByText('MCP compatibility').click();
+  await expect(thisComputer.getByText(mcpHint)).toBeVisible();
+  await expect(thisComputer.getByText(/agent-room-mcp\.exe/u)).toBeVisible();
+  await expect(thisComputer.getByRole('button', { name: 'Copy JSON' })).toBeVisible();
+  await expect(page.getByRole('main')).not.toContainText(appNames);
 
-  await page.getByRole('button', { name: /Local agents/u }).click();
-  const panel = page.getByRole('complementary');
-  await panel.getByText('MCP compatibility').click();
-  await expect(panel.getByText(mcpHint)).toBeVisible();
-  await expect(panel.getByRole('button', { name: 'Copy JSON' })).toBeVisible();
-  await expect(panel).not.toContainText(appNames);
-
-  await panel.getByRole('button', { name: 'Bring an agent' }).click();
+  await page.getByRole('main').getByRole('button', invite).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('radio', { name: /^MCP/u }).click();
   // 配好的 Agent 只要听到一句“接入 Agent Room”；第一次用才要展开配置。

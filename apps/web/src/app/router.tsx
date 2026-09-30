@@ -3,6 +3,7 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  redirect,
 } from '@tanstack/react-router';
 import { type ComponentProps, type ComponentType, lazy, Suspense, useCallback } from 'react';
 
@@ -50,10 +51,6 @@ const SecurityPage = lazyPage(
   async () => (await import('@/features/security/ui/security-page')).SecurityPage,
 );
 const GuidePage = lazyRouteComponent(() => import('@/features/guide/ui/guide-page'), 'GuidePage');
-const OnboardingPage = lazyRouteComponent(
-  () => import('@/features/onboarding/ui/onboarding-page'),
-  'OnboardingPage',
-);
 const RoomDirectoryPage = lazyPage(
   async () => (await import('@/features/room-directory/ui/room-directory-page')).RoomDirectoryPage,
 );
@@ -98,10 +95,14 @@ const lobbyRoute = createRoute({
   component: LobbyBoundary,
 });
 
+// 首次使用页已经去掉（界面翻新第 3 步）：旧链接转到“我的 Agent”。
 const onboardingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/onboarding',
-  component: OnboardingPage,
+  beforeLoad: () => {
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- 路由库用抛出 redirect 表示跳转。
+    throw redirect({ replace: true, search: {}, to: '/workspace' });
+  },
 });
 
 const workspaceRoute = createRoute({
@@ -268,7 +269,11 @@ function WorkspaceBoundary() {
   return (
     <AccountWorkspacePage
       onSelectAgent={(agentId) => {
-        void navigate({ replace: true, search: { agent: agentId }, to: '/workspace' });
+        void navigate({
+          replace: true,
+          search: agentId === null ? {} : { agent: agentId },
+          to: '/workspace',
+        });
       }}
       principal={principal}
       selectedAgentId={search.agent ?? null}

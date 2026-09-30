@@ -2,6 +2,8 @@ export const applicationResources = {
   en: {
     'application.about': 'About & updates',
     'application.aboutVersion': 'Version {{version}} · About & updates',
+    'application.updateReady': 'Update ready',
+    'application.updateReadyVersion': 'Update {{version}} ready to install · About & updates',
     'application.desktop': 'Desktop app',
     'application.web': 'Web app',
     'application.version': 'Current version',
@@ -27,6 +29,8 @@ export const applicationResources = {
   'zh-CN': {
     'application.about': '关于与更新',
     'application.aboutVersion': '版本 {{version}} · 关于与更新',
+    'application.updateReady': '有新版本',
+    'application.updateReadyVersion': '新版本 {{version}} 可以安装 · 关于与更新',
     'application.desktop': '桌面应用',
     'application.web': '网页应用',
     'application.version': '当前版本',
