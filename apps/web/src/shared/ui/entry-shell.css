@@ -1,0 +1,128 @@
+/* 没进房间时的页面：一条细顶栏，下面一张居中的卡片。连接、进房间、找不到页面、配置出错共用。 */
+.entry-shell {
+  display: flex;
+  min-height: 100svh;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 16px 40px;
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+}
+.entry-shell__topbar {
+  display: flex;
+  width: min(580px, 100%);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.entry-shell__topbar .brand-lockup {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 650;
+}
+.entry-shell__topbar .brand-lockup img {
+  width: 30px;
+  height: 30px;
+}
+.entry-shell__topbar .language-control {
+  color: var(--ar-muted);
+}
+.entry-card {
+  display: grid;
+  width: min(580px, 100%);
+  gap: 18px;
+  padding: 26px 28px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press);
+}
+.entry-card__body {
+  display: grid;
+  gap: 14px;
+}
+.entry-card__icon {
+  display: flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  color: var(--color-ink);
+  background: var(--ar-sky);
+}
+.entry-card__icon svg {
+  width: 22px;
+  height: 22px;
+}
+.entry-card--alert .entry-card__icon {
+  background: var(--ar-danger-soft);
+}
+.entry-card h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(24px, 4vw, 30px);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+.entry-card__body > p {
+  margin: 0;
+}
+.entry-card__lede {
+  color: var(--ar-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.entry-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.entry-card__details {
+  padding-top: 14px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+.entry-card__details dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+.entry-card__details dl > div {
+  display: grid;
+  gap: 2px;
+}
+.entry-card__details dt {
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+.entry-card__details dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.entry-card__details code,
+.entry-card__details ul {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.entry-card__details ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .entry-shell {
+    padding: 12px 12px 24px;
+  }
+  .entry-card {
+    padding: 20px 18px;
+  }
+  .entry-card__actions .ar-button {
+    flex: 1 1 100%;
+  }
+}

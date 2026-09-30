@@ -2,7 +2,6 @@ import type {
   AuthenticationTarget,
   SessionContext,
 } from '@/features/session/domain/session-machine';
-import type { StatusTone } from '@agent-room/ui-system';
 import type { TranslationKey } from '@/shared/i18n/resources';
 
 export type SessionStateName =
@@ -39,9 +38,7 @@ export type ConnectionViewModel = {
   readonly failureKey: TranslationKey | null;
   readonly stages: readonly ConnectionStage[];
   readonly state: SessionStateName;
-  readonly statusKey: TranslationKey;
   readonly titleKey: TranslationKey;
-  readonly tone: StatusTone;
 };
 
 const states = new Set<SessionStateName>([
@@ -142,22 +139,6 @@ const busyStates = new Set<SessionStateName>([
   'syncing',
 ]);
 
-const statusByState: Readonly<Record<SessionStateName, readonly [TranslationKey, StatusTone]>> = {
-  authenticating: ['connection.status.connecting', 'network'],
-  awaitingBrowserNavigation: ['connection.status.connecting', 'network'],
-  invalidating: ['connection.status.connecting', 'network'],
-  booting: ['connection.status.connecting', 'network'],
-  degraded: ['connection.status.degraded', 'alert'],
-  offline: ['connection.status.offline', 'offline'],
-  ready: ['connection.status.live', 'active'],
-  reconnecting: ['connection.status.connecting', 'network'],
-  restoring: ['connection.status.connecting', 'network'],
-  signingOut: ['connection.status.connecting', 'network'],
-  signOutFailed: ['connection.status.actionRequired', 'alert'],
-  syncing: ['connection.status.connecting', 'network'],
-  unauthenticated: ['connection.status.actionRequired', 'network'],
-};
-
 export function sessionStateName(value: unknown): SessionStateName {
   return typeof value === 'string' && states.has(value as SessionStateName)
     ? (value as SessionStateName)
@@ -172,7 +153,6 @@ export function connectionViewModel(
   const currentStage = stageForState(state, context);
   const blocked = state === 'degraded' || state === 'offline' || state === 'signOutFailed';
   const [action, actionKey] = actionForState(state, context);
-  const [statusKey, tone] = statusByState[state];
 
   return {
     action,
@@ -195,9 +175,7 @@ export function connectionViewModel(
       titleKey: stageTitleKey,
     })),
     state,
-    statusKey,
     titleKey,
-    tone,
   };
 }
 

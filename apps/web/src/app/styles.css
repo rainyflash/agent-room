@@ -1,4 +1,5 @@
 @import '../shared/ui/app-navigation.css';
+@import '../shared/ui/entry-shell.css';
 @import '../features/session/ui/connection-workspace.css';
 
 .sr-only {
@@ -430,75 +431,6 @@
 .language-control option {
   color: var(--color-ink);
   background: var(--color-paper);
-}
-
-.boundary-page {
-  min-height: 100svh;
-  color: var(--color-ink);
-  background: var(--ar-canvas);
-}
-
-.boundary-page__header {
-  display: flex;
-  min-height: 78px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem clamp(1.5rem, 5vw, 5rem);
-  border-bottom: 1px solid var(--ar-ink-18);
-}
-
-.boundary-page__body {
-  width: min(900px, calc(100% - 3rem));
-  padding: clamp(4rem, 12vh, 9rem) 0;
-  margin: 0 auto;
-}
-
-.boundary-page__icon {
-  width: 44px;
-  height: 44px;
-  margin-bottom: 2rem;
-  color: var(--color-network);
-  stroke-width: 1.4;
-}
-
-.boundary-page--alert .boundary-page__icon {
-  color: var(--color-alert);
-}
-
-.boundary-page h1 {
-  max-width: 15ch;
-  margin: 0.8rem 0 1.2rem;
-  font-weight: 660;
-  letter-spacing: -0.06em;
-  line-height: 1.2;
-  font-size: var(--ar-page-title);
-}
-
-.boundary-page__body > p:not(.eyebrow, .boundary-page__route) {
-  max-width: 58ch;
-  color: var(--ar-ink-72);
-  font-size: 1.05rem;
-  line-height: 1.55;
-}
-
-.boundary-page__route,
-.configuration-issues {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  color: var(--color-alert);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-}
-
-.boundary-page .ar-button {
-  margin-top: 1.2rem;
-}
-
-.configuration-issues {
-  padding: 1rem 1rem 1rem 2rem;
-  border: 1px solid var(--ar-ink-18);
-  background: color-mix(in srgb, var(--color-alert) 7%, transparent);
-  line-height: 1.7;
 }
 
 @media (forced-colors: active) {
@@ -3271,70 +3203,6 @@ p.message-dock__headline {
   border-radius: var(--ar-pill);
 }
 
-.lobby-boundary {
-  min-height: 100svh;
-  color: var(--color-ink);
-  background: var(--ar-surface);
-}
-
-.lobby-boundary__topbar {
-  display: flex;
-  min-height: 72px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem clamp(1.25rem, 4vw, 4rem);
-  border-bottom: 1px solid var(--ar-ink-18);
-}
-
-.lobby-boundary__body {
-  width: min(880px, calc(100% - 3rem));
-  padding: clamp(5rem, 15vh, 10rem) 0;
-  margin: 0 auto;
-}
-
-.lobby-boundary__icon {
-  width: 42px;
-  height: 42px;
-  margin-bottom: 1.8rem;
-  color: var(--color-alert);
-  stroke-width: 1.35;
-}
-
-.lobby-boundary__spin {
-  color: var(--color-network);
-  animation: ar-spin 1.1s linear infinite;
-}
-
-.lobby-boundary h1 {
-  max-width: 16ch;
-  margin: 0.6rem 0 1rem;
-  font-size: clamp(2.8rem, 7vw, 5.8rem);
-  font-weight: 660;
-  letter-spacing: -0.06em;
-  line-height: 0.96;
-}
-
-.lobby-boundary__body > p:not(.eyebrow) {
-  max-width: 62ch;
-  color: var(--ar-ink-72);
-  font-size: 1rem;
-  line-height: 1.6;
-}
-
-.lobby-boundary__actions {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-top: 1.8rem;
-}
-
-.lobby-boundary__link {
-  color: inherit;
-  font-size: 0.82rem;
-  font-weight: 620;
-  text-underline-offset: 4px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .automation-spin {
     animation: none;
@@ -3348,10 +3216,6 @@ p.message-dock__headline {
   .operation-indicator > span {
     animation: none;
     border-right-color: var(--color-network);
-  }
-
-  .lobby-boundary__spin {
-    animation: none;
   }
 
   .content-inspector__progress > svg {
@@ -3611,14 +3475,5 @@ p.message-dock__headline {
     top: 72px;
     width: calc(100% - 2rem);
     margin-bottom: -78px;
-  }
-
-  .lobby-boundary__actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .lobby-boundary__link {
-    padding: 0.65rem 0;
   }
 }

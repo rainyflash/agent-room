@@ -11,11 +11,11 @@ import {
   sessionStateName,
   type ConnectionAction,
 } from '@/features/session/ui/connection-model';
-import { ConnectionRail } from '@/features/session/ui/connection-rail';
 import { ConnectionWorkspace } from '@/features/session/ui/connection-workspace';
 import { useSession } from '@/features/session/ui/session-provider';
 import { authenticationCallbackFailure } from '@/features/session/domain/authentication-callback';
 import { AuthenticationRecovery } from '@/features/session/ui/authentication-recovery';
+import { EntryShell } from '@/shared/ui/entry-shell';
 
 const eventByAction = {
   login: { type: 'LOGIN' },
@@ -26,7 +26,7 @@ const eventByAction = {
 export function ConnectionPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { controlPlane, localRuntime } = useAppServices();
+  const { controlPlane } = useAppServices();
   const { send, snapshot } = useSession();
   const readiness = useReadiness(controlPlane);
   const state = sessionStateName(snapshot.value);
@@ -72,26 +72,24 @@ export function ConnectionPage() {
   );
   if (callbackFailure !== null) {
     return (
-      <AuthenticationRecovery
-        gateway={controlPlane}
-        principal={snapshot.context.principal}
-        reason={callbackFailure}
-      />
+      <EntryShell>
+        <AuthenticationRecovery
+          gateway={controlPlane}
+          principal={snapshot.context.principal}
+          reason={callbackFailure}
+        />
+      </EntryShell>
     );
   }
 
   return (
-    <div
-      className="connection-shell"
-      data-local-agents={localRuntime.isAvailable() ? 'true' : undefined}
-    >
+    <EntryShell>
       <p aria-atomic="true" aria-live="polite" className="sr-only">
         {t('connection.liveRegion', {
           detail: t(view.detailKey),
           stage: t(view.titleKey),
         })}
       </p>
-      <ConnectionRail stages={view.stages} />
       <ConnectionWorkspace context={snapshot.context} onAction={handleAction} view={view}>
         <DependencyHealthStrip
           matrixConnected={snapshot.context.connection !== null}
@@ -100,6 +98,6 @@ export function ConnectionPage() {
           sessionState={state}
         />
       </ConnectionWorkspace>
-    </div>
+    </EntryShell>
   );
 }

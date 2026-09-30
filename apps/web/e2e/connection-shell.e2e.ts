@@ -38,7 +38,7 @@ test.beforeEach(async ({ baseURL, page }) => {
   });
 });
 
-test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ page }, testInfo) => {
+test('桌面宽度下连接页是一张居中的卡片，五段进度收在详情里', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 1_000, width: 1_440 });
   await page.goto('/connect');
@@ -48,13 +48,10 @@ test('桌面连接舱呈现真实 401 登录态与五段生命周期', async ({ 
   );
   await expect(page.getByRole('button', { name: /Sign in|登录 Agent Room/u })).toBeEnabled();
   await expect(page.locator('.connection-step')).toHaveCount(5);
-  const columns = await page.locator('.connection-shell').evaluate((element) =>
-    getComputedStyle(element)
-      .gridTemplateColumns.split(' ')
-      .map((value) => Number.parseFloat(value)),
-  );
-  expect(columns).toHaveLength(2);
-  expect((columns[0] ?? 0) / ((columns[0] ?? 0) + (columns[1] ?? 0))).toBeCloseTo(0.5, 2);
+  await expect(page.locator('.connection-steps')).toBeHidden();
+  const card = await page.locator('.entry-card').boundingBox();
+  expect(card?.width ?? 0).toBeLessThanOrEqual(580);
+  expect(Math.abs((card?.x ?? 0) + (card?.width ?? 0) / 2 - 720)).toBeLessThanOrEqual(2);
   await expectNoHorizontalOverflow(page);
   await page.keyboard.press('Tab');
   await expect(page.locator('.skip-link')).toBeFocused();
@@ -79,12 +76,11 @@ test('390px 移动布局首屏可操作且连接详情可用键盘展开收起',
   await expect(primaryAction).toBeInViewport({ ratio: 1 });
   const actionBox = await primaryAction.boundingBox();
   expect(actionBox?.height ?? 0).toBeGreaterThanOrEqual(44);
-  const details = page.getByRole('button', { name: /Connection details|连接详情/iu });
-  await expect(details).toHaveAttribute('aria-expanded', 'false');
+  const details = page.locator('.connection-service-details > summary');
+  await expect(details).toHaveText(/Connection details|连接详情/u);
   await expect(page.locator('.connection-steps')).toBeHidden();
   await details.focus();
   await page.keyboard.press('Enter');
-  await expect(details).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('.connection-steps')).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(page.locator('.connection-steps')).toBeHidden();
@@ -102,6 +98,25 @@ test('390px 移动布局首屏可操作且连接详情可用键盘展开收起',
   });
 });
 
+test('没登录时打开房间链接，登录完回到这个房间', async ({ page }) => {
+  const catalogId = '0198b601-77a1-7bb8-83eb-a8fe68c97e46';
+  const started: string[] = [];
+  await page.route(`${apiOrigin}/auth/oidc/start?**`, async (route) => {
+    started.push(new URL(route.request().url()).searchParams.get('returnTo') ?? '');
+    await route.fulfill({
+      body: '<!doctype html><title>Sign-in boundary</title>',
+      contentType: 'text/html',
+      status: 200,
+    });
+  });
+  await page.goto(`/lobby/${catalogId}`);
+  await expect(page).toHaveURL(/\/connect\?/u);
+  expect(new URL(page.url()).searchParams.get('returnTo')).toBe(`/lobby/${catalogId}`);
+  await page.getByRole('button', { name: /Sign in|登录 Agent Room/u }).click();
+  await expect(page).toHaveTitle('Sign-in boundary');
+  expect(started).toEqual([`/lobby/${catalogId}`]);
+});
+
 test('离线刷新与无效深链都给出明确边界', async ({ context, page }) => {
   await page.goto('/connect');
   await context.setOffline(true);
@@ -113,8 +128,14 @@ test('离线刷新与无效深链都给出明确边界', async ({ context, page 
   await context.setOffline(false);
   await page.goto('/lobby/bad%20catalog');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /cannot be resolved|无法解析/u,
+    /page does not exist|页面不存在/u,
   );
+  // 出错页只给“回到房间”，地址收在详情里。
+  await expect(page.getByRole('link', { name: /Back to rooms|回到房间/u })).toHaveAttribute(
+    'href',
+    '/rooms',
+  );
+  await expect(page.getByText('/lobby/bad catalog', { exact: true })).toBeHidden();
 });
 
 function collectPageFailures(page: Page): string[] {

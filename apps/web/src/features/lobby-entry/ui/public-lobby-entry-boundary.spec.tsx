@@ -54,18 +54,64 @@ describe('公开大厅入场边界', () => {
 
     renderBoundary(onEntered);
 
-    expect(
-      await screen.findByRole('heading', { name: 'Preparing the shared room.' }),
-    ).toBeVisible();
-    expect(screen.getByText(/No local Runtime is required/u)).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Setting up the room' })).toBeVisible();
+    expect(screen.getByText(/Nothing to install/u)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Check now' })).toBeEnabled();
     expect(screen.queryByText('lobby.entry_provisioning_busy')).not.toBeInTheDocument();
     expect(enter).toHaveBeenCalledWith(catalogId);
     expect(onEntered).not.toHaveBeenCalled();
   });
+
+  it('进不去时说人话、给“回到房间”，错误码收进详情', async () => {
+    const enter = vi.fn(() =>
+      Promise.resolve(err({ code: 'lobby.entry_catalog_missing', retryable: false })),
+    );
+    vi.mocked(useAppServices).mockReturnValue({
+      lobbyEntry: { enter },
+    } as unknown as ReturnType<typeof useAppServices>);
+    mockSession('ready', principal);
+
+    renderBoundary(vi.fn());
+
+    expect(await screen.findByRole('heading', { name: 'Could not enter the room' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: 'Back to rooms' })).toHaveAttribute('href', '/rooms');
+    expect(screen.getByText('lobby.entry_catalog_missing')).not.toBeVisible();
+    expect(screen.getByText('Details')).toBeVisible();
+  });
+
+  it('没登录时交给路由去登录，不在这里请求进房间', () => {
+    const enter = vi.fn();
+    vi.mocked(useAppServices).mockReturnValue({
+      lobbyEntry: { enter },
+    } as unknown as ReturnType<typeof useAppServices>);
+    mockSession('unauthenticated', null);
+    const onConnectionRequired = vi.fn();
+
+    renderBoundary(vi.fn(), onConnectionRequired);
+
+    expect(onConnectionRequired).toHaveBeenCalledOnce();
+    expect(enter).not.toHaveBeenCalled();
+  });
 });
 
-function renderBoundary(onEntered: (target: PublicLobbyEntryTarget) => void) {
+const principal = {
+  displayName: 'Alice',
+  locale: 'en',
+  matrixUserId: '@alice:matrix.test',
+  principalId: '0198b601-77a3-74f1-b4f4-940f291951b9',
+};
+
+function mockSession(value: string, sessionPrincipal: typeof principal | null) {
+  vi.mocked(useSession).mockReturnValue({
+    snapshot: { context: { principal: sessionPrincipal }, value },
+  } as unknown as ReturnType<typeof useSession>);
+}
+
+function renderBoundary(
+  onEntered: (target: PublicLobbyEntryTarget) => void,
+  onConnectionRequired: () => void = vi.fn(),
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -74,7 +120,7 @@ function renderBoundary(onEntered: (target: PublicLobbyEntryTarget) => void) {
       <QueryClientProvider client={queryClient}>
         <PublicLobbyEntryBoundary
           catalogId={catalogId}
-          onConnectionRequired={vi.fn()}
+          onConnectionRequired={onConnectionRequired}
           onEntered={onEntered}
         />
       </QueryClientProvider>

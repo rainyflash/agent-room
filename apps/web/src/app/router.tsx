@@ -178,9 +178,10 @@ export const router = createRouter({
 function LobbyBoundary() {
   const { catalogId } = lobbyRoute.useParams();
   const navigate = lobbyRoute.useNavigate();
+  // 没登录时先去登录，登录完回到这个房间，而不是停在房间列表。
   const onConnectionRequired = useCallback(() => {
-    void navigate({ replace: true, to: '/connect' });
-  }, [navigate]);
+    void navigate({ replace: true, search: { returnTo: `/lobby/${catalogId}` }, to: '/connect' });
+  }, [catalogId, navigate]);
   const onEntered = useCallback(
     (target: { readonly catalogId: string; readonly matrixRoomId: string }) => {
       void navigate({
@@ -222,7 +223,7 @@ function LobbyInstanceBoundary() {
       <LobbyPage
         catalogId={catalogId}
         onExitRoom={() => {
-          void navigate({ to: '/connect' });
+          void navigate({ to: '/rooms' });
         }}
         onOpenSecurity={() => {
           void navigate({ params: { section: 'security' }, to: '/settings/$section' });

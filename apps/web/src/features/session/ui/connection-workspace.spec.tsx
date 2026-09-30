@@ -57,9 +57,17 @@ it('连接正常时可以主动退出，而不必先进入故障状态', () => {
     </I18nextProvider>,
   );
   expect(screen.getByRole('button', { name: 'Explore rooms' })).toBeEnabled();
+  // 卡片上只说登录的是谁；设备、Matrix ID、五段进度和服务状态都收在“连接详情”里。
+  expect(screen.getByText('Signed in as Operator')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'My agents and devices' })).toHaveAttribute(
+    'href',
+    '/workspace',
+  );
   expect(screen.getByText('TESTDEVICE')).not.toBeVisible();
   expect(screen.getByText('@operator:matrix.test')).not.toBeVisible();
-  fireEvent.click(screen.getByText('Connection and identity details'));
+  expect(screen.getByRole('list', { hidden: true, name: 'Connection progress' })).not.toBeVisible();
+  fireEvent.click(screen.getByText('Connection details'));
+  expect(screen.getByRole('list', { name: 'Connection progress' })).toBeVisible();
   expect(screen.getByText('TESTDEVICE')).toBeVisible();
   expect(screen.getByText('@operator:matrix.test')).toBeVisible();
   // 账户 ID 不必先进某个房间才看得到：邀请你的人需要它。

@@ -36,11 +36,6 @@
   padding-block: 10px;
   min-width: 0;
 }
-.app-navigation__identity .application-version-link {
-  padding: 2px 5px;
-  font-size: 10px;
-  line-height: 1.2;
-}
 .app-navigation__brand img {
   width: 32px;
   height: 32px;
