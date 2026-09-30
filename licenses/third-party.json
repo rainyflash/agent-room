@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "1201b923509df8072ce68281d6851ab3422f60640ce46d8b4bd9c7a506451e75",
-    "pnpm-lock.yaml": "874ba669d61779a15325e45706d0071235f55c170bb5e7928f3b236810854272"
+    "pnpm-lock.yaml": "02cb9bafc26ad56a924e31375a52d39294f59b1de794ac2090d243c883bce370"
   },
   "dependencies": [
     {
@@ -8002,9 +8002,9 @@
     {
       "ecosystem": "npm",
       "name": "brace-expansion",
-      "version": "5.0.9",
+      "version": "5.0.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/brace-expansion/v/5.0.9"
+      "source": "https://www.npmjs.com/package/brace-expansion/v/5.0.12"
     },
     {
       "ecosystem": "npm",
@@ -8674,9 +8674,9 @@
     {
       "ecosystem": "npm",
       "name": "fast-uri",
-      "version": "3.1.7",
+      "version": "3.1.8",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/fast-uri/v/3.1.7"
+      "source": "https://www.npmjs.com/package/fast-uri/v/3.1.8"
     },
     {
       "ecosystem": "npm",
