@@ -29,6 +29,7 @@
 }
 .guide__intro,
 .guide__steps,
+.guide__optional,
 .guide__faq,
 .guide__links {
   max-width: 760px;
@@ -77,11 +78,35 @@
   margin: 0;
   line-height: 1.65;
 }
+/* 桌面应用是可选的：虚线边框的卡片，排在三步后面。 */
+.guide__optional {
+  margin-top: 20px;
+}
+.guide__optional-card {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 20px 22px;
+  border: var(--ar-outline-thin) dashed var(--ar-outline);
+  border-radius: 18px;
+}
+.guide__optional-card h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 21px;
+}
+.guide__optional-card p {
+  margin: 0;
+  line-height: 1.65;
+}
+.guide__optional-card .guide__platform-note {
+  justify-self: stretch;
+  margin-top: 4px;
+}
 .guide__platform-note {
-  margin-top: 12px !important;
   padding: 10px 12px;
   border-radius: 12px;
-  background: var(--ar-canvas);
+  background: var(--ar-surface-muted);
   font-size: 14px;
   color: var(--ar-muted);
 }

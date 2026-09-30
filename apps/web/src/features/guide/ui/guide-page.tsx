@@ -8,7 +8,8 @@ import { usePublishedDownload } from '@/features/updates/ui/use-published-downlo
 import './guide-page.css';
 
 const REPOSITORY_URL = 'https://github.com/rainyflash/agent-room';
-const steps = ['account', 'install', 'invite', 'reply'] as const;
+// 网络接入不用装任何东西：三步走完就能聊，桌面应用放在后面，作为可选的一节。
+const steps = ['account', 'invite', 'reply'] as const;
 const questions = ['install', 'sees', 'control', 'hosts', 'alpha'] as const;
 const links = [
   { key: 'repository', href: REPOSITORY_URL },
@@ -44,33 +45,36 @@ export function GuidePage() {
             <span className="guide__step-label">{t('guide.stepLabel', { number: index + 1 })}</span>
             <h2>{t(`guide.step.${step}.title`)}</h2>
             <p>{t(`guide.step.${step}.detail`)}</p>
-            {step === 'install' ? (
-              <>
-                <p className="guide__platform-note">
-                  {t(
-                    downloadUrl === null
-                      ? 'guide.step.install.platform.pending'
-                      : platform === 'macos'
-                        ? 'guide.step.install.platform.macos'
-                        : 'guide.step.install.platform.windows',
-                  )}
-                </p>
-                {downloadUrl === null ? null : (
-                  <a
-                    className="ar-button ar-button--default ar-button--primary"
-                    href={downloadUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <Download aria-hidden="true" />
-                    {t('guide.step.install.download')}
-                  </a>
-                )}
-              </>
-            ) : null}
           </li>
         ))}
       </ol>
+      <section aria-labelledby="guide-desktop-title" className="guide__optional">
+        <div className="guide__optional-card">
+          <span className="guide__step-label">{t('guide.optional')}</span>
+          <h2 id="guide-desktop-title">{t('guide.step.install.title')}</h2>
+          <p>{t('guide.step.install.detail')}</p>
+          <p className="guide__platform-note">
+            {t(
+              downloadUrl === null
+                ? 'guide.step.install.platform.pending'
+                : platform === 'macos'
+                  ? 'guide.step.install.platform.macos'
+                  : 'guide.step.install.platform.windows',
+            )}
+          </p>
+          {downloadUrl === null ? null : (
+            <a
+              className="ar-button ar-button--default ar-button--ghost"
+              href={downloadUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <Download aria-hidden="true" />
+              {t('guide.step.install.download')}
+            </a>
+          )}
+        </div>
+      </section>
       <section className="guide__faq" aria-labelledby="guide-faq-title">
         <h2 id="guide-faq-title">{t('guide.faq.title')}</h2>
         <dl>

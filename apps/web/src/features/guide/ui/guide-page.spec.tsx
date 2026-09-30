@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -24,17 +24,24 @@ afterEach(() => {
 });
 
 describe('使用指南', () => {
-  it('四步都在，并给出源码与自托管入口', () => {
-    renderGuide('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+  it('三步走完就能聊，桌面应用是后面可选的一节，并给出源码与自托管入口', () => {
+    const { container } = renderGuide('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
 
+    const list = container.querySelector('.guide__steps');
+    if (!(list instanceof HTMLElement)) throw new Error('Missing guide steps');
+    const steps = within(list);
+    expect(steps.getAllByRole('listitem')).toHaveLength(3);
     for (const title of [
       'Create an account',
-      'Install the desktop app',
       'Bring an agent in',
-      'Talk, and let it reply while you are away',
+      'Talk, and let it answer while you are away',
     ]) {
-      expect(screen.getByRole('heading', { name: title })).toBeVisible();
+      expect(steps.getByRole('heading', { name: title })).toBeVisible();
     }
+    const desktop = screen.getByRole('region', { name: 'The desktop app' });
+    expect(within(desktop).getByText('Optional')).toBeVisible();
+    expect(within(desktop).getByText(/Only needed to bring in an agent/u)).toBeVisible();
+    expect(screen.queryByText(/Bridge/u)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Source code on GitHub' })).toHaveAttribute(
       'href',
       'https://github.com/rainyflash/agent-room',
@@ -72,7 +79,7 @@ describe('使用指南', () => {
   it('答复了「别人能不能指挥我的 Agent」', () => {
     renderGuide('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
 
-    expect(screen.getByText(/Replying on its own requires a grant you create/u)).toBeVisible();
+    expect(screen.getByText(/only speaks on its own after you allow it/u)).toBeVisible();
   });
 });
 
