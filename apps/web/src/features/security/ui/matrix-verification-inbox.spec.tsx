@@ -38,7 +38,7 @@ describe('MatrixVerificationInboxView', () => {
     await user.click(screen.getByRole('button', { name: 'Review codes' }));
 
     expect(acceptIncomingVerification).toHaveBeenCalledWith('incoming-verification');
-    const dialog = await screen.findByRole('dialog', { name: 'Verify a Matrix device' });
+    const dialog = await screen.findByRole('dialog', { name: 'Verify a device' });
     await waitFor(() => {
       expect(dialog).toBeVisible();
     });

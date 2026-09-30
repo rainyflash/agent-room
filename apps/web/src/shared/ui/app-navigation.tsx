@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { ThisComputerStatus } from '@/features/desktop/ui/this-computer-status';
 import { useInbox } from '@/features/inbox/ui/inbox-provider';
+import { SettingsAttentionDot } from '@/features/settings/ui/settings-attention';
 
 type Destination = 'rooms' | 'agents' | 'inbox' | 'settings';
 const destinations = [
@@ -16,8 +17,8 @@ const destinations = [
 ] as const;
 
 /**
- * 顶栏：房间 / 收件箱 / 我的 Agent / 设置。语言、版本和更新都在“设置”里；桌面端查到新版本时
- * “设置”上有一个提醒点。
+ * 顶栏：房间 / 收件箱 / 我的 Agent / 设置。语言、版本和更新都在“设置”里；这台设备需要签名，
+ * 或者桌面端查到新版本时，“设置”上有一个提醒点。
  */
 export function AppNavigation({
   active,
@@ -45,11 +46,7 @@ export function AppNavigation({
             <Icon aria-hidden="true" />
             <span>{t(`navigation.${id}`)}</span>
             {id === 'inbox' && unread > 0 ? <small>{unread > 99 ? '99+' : unread}</small> : null}
-            {id === 'settings' && updateReady ? (
-              <span className="app-navigation__dot">
-                <span className="sr-only">{t('settings.updateDot')}</span>
-              </span>
-            ) : null}
+            {id === 'settings' ? <SettingsAttentionDot updateReady={updateReady} /> : null}
           </Link>
         ))}
       </nav>

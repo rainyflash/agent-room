@@ -77,7 +77,7 @@ export function AgentRecoveryPanel({ gateway }: { readonly gateway: AgentRecover
     <section className="security-recovery" aria-labelledby={`${id}-title`}>
       <header className="security-section-heading security-recovery__heading">
         <div>
-          <h2 id={`${id}-title`}>{t('security.agentRecovery.title')}</h2>
+          <h3 id={`${id}-title`}>{t('security.agentRecovery.title')}</h3>
           <p>{t('security.agentRecovery.detail')}</p>
         </div>
         <Button
@@ -146,7 +146,7 @@ export function AgentRecoveryPanel({ gateway }: { readonly gateway: AgentRecover
       )}
       {recoveryKey !== null ? (
         <div className="security-recovery-key" role="status">
-          <h3>{t('security.recovery.keyTitle')}</h3>
+          <h4>{t('security.recovery.keyTitle')}</h4>
           <p>{t('security.recovery.keyDetail')}</p>
           <output aria-label={t('security.recovery.keyTitle')}>{recoveryKey}</output>
           <Button

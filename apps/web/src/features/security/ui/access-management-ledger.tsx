@@ -95,7 +95,7 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
     >
       <header className="security-section-heading security-access__heading">
         <div>
-          <h2 id="security-access-title">{t('security.access.title')}</h2>
+          <h3 id="security-access-title">{t('security.access.title')}</h3>
           <p>{t('security.access.detail')}</p>
         </div>
         <Button
@@ -221,7 +221,6 @@ function ProductDevicePanel({
                 <li key={device.deviceId}>
                   <div className="security-access-list__identity">
                     <strong>{device.label}</strong>
-                    <small>{device.deviceId}</small>
                   </div>
                   <span className={`security-access-status is-${device.trustState}`}>
                     {t(`security.access.deviceState.${device.trustState}`)}
@@ -297,9 +296,6 @@ function AgentInstancePanel({
                 <li key={instance.agentInstanceId}>
                   <div className="security-access-list__identity">
                     <strong>{instance.agentDisplayName}</strong>
-                    <small>
-                      {instance.adapterType} · {instance.matrixDeviceId}
-                    </small>
                   </div>
                   <span className={`security-access-status is-${instance.status}`}>
                     {t(`security.access.instanceState.${instance.status}`)}
@@ -349,7 +345,7 @@ function AccessPanelHeading({ count, detail, icon, title }: AccessPanelHeadingPr
     <header className="security-access-panel__heading">
       <div className="security-access-panel__icon">{icon}</div>
       <div>
-        <h3>{title}</h3>
+        <h4>{title}</h4>
         <p>{detail}</p>
       </div>
       <span>{count.toString().padStart(2, '0')}</span>

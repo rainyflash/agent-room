@@ -69,7 +69,7 @@ describe('Agent 恢复面板', () => {
       Promise.resolve(ok(request.action === 'enable' ? { ...initial, recoveryKey: key } : initial)),
     );
     const queryClient = show(execute);
-    await user.click(await screen.findByRole('button', { name: 'Set up recovery' }));
+    await user.click(await screen.findByRole('button', { name: 'Set up recovery key' }));
     await user.type(screen.getByLabelText('Recovery passphrase'), 'a long test passphrase');
     await user.type(screen.getByLabelText('Confirm passphrase'), 'mismatch');
     expect(screen.getByRole('button', { name: 'Create recovery' })).toBeDisabled();
@@ -128,7 +128,7 @@ describe('Agent 恢复面板', () => {
     show(execute);
     await user.click(await screen.findByRole('button', { name: 'Unlock Agent recovery' }));
     await user.type(screen.getByLabelText('Passphrase or recovery key'), 'wrong credential');
-    await user.click(screen.getByRole('button', { name: 'Recover history' }));
+    await user.click(screen.getByRole('button', { name: 'Use recovery key' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The passphrase or recovery key was rejected.',
     );

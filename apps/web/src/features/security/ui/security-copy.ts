@@ -1,22 +1,8 @@
 import type {
   MatrixBackupState,
-  MatrixDeviceTrust,
-  MatrixSecurityBlocker,
   MatrixSecurityFailure,
-  MatrixSecurityPosture,
 } from '@/features/security/domain/matrix-security';
 import type { TranslationKey } from '@/shared/i18n/resources';
-
-export const blockerMessageKey: Readonly<Record<MatrixSecurityBlocker, TranslationKey>> = {
-  backup_locked: 'security.blocker.backup_locked',
-  backup_missing: 'security.blocker.backup_missing',
-  backup_untrusted: 'security.blocker.backup_untrusted',
-  cross_signing_missing: 'security.blocker.cross_signing_missing',
-  cross_signing_not_ready: 'security.blocker.cross_signing_not_ready',
-  current_device_unverified: 'security.blocker.current_device_unverified',
-  room_unencrypted: 'security.blocker.room_unencrypted',
-  secret_storage_missing: 'security.blocker.secret_storage_missing',
-};
 
 export const failureMessageKey: Readonly<Record<MatrixSecurityFailure['code'], TranslationKey>> = {
   'security.crypto_unavailable': 'security.failure.crypto_unavailable',
@@ -35,28 +21,9 @@ export const failureMessageKey: Readonly<Record<MatrixSecurityFailure['code'], T
   'security.verification_unavailable': 'security.failure.verification_unavailable',
 };
 
-export const trustMessageKey: Readonly<Record<MatrixDeviceTrust, TranslationKey>> = {
-  signed: 'security.trust.signed',
-  unknown: 'security.trust.unknown',
-  unverified: 'security.trust.unverified',
-  verified: 'security.trust.verified',
-};
-
 export const recoveryMessageKey: Readonly<Record<MatrixBackupState, TranslationKey>> = {
   locked: 'security.recovery.locked',
   missing: 'security.recovery.missing',
   ready: 'security.recovery.ready',
   untrusted: 'security.recovery.untrusted',
-};
-
-export const postureTitleKey: Readonly<Record<MatrixSecurityPosture['kind'], TranslationKey>> = {
-  action_required: 'security.posture.action_required.title',
-  blocked: 'security.posture.blocked.title',
-  ready: 'security.posture.ready.title',
-};
-
-export const postureDetailKey: Readonly<Record<MatrixSecurityPosture['kind'], TranslationKey>> = {
-  action_required: 'security.posture.action_required.detail',
-  blocked: 'security.posture.blocked.detail',
-  ready: 'security.posture.ready.detail',
 };
