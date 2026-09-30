@@ -245,6 +245,14 @@ summary {
   background: var(--ar-coral-hover);
 }
 
+.ar-button--send {
+  background: var(--ar-coral);
+}
+
+.ar-button--send:not(:disabled):hover {
+  background: var(--ar-coral-hover);
+}
+
 .ar-button--ghost:not(:disabled):hover,
 .ar-button--quiet:not(:disabled):hover {
   background: var(--ar-surface-muted);

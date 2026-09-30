@@ -295,7 +295,8 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await expect(conversation.locator('.workspace-direct-policy')).toBeVisible();
   await conversation.getByRole('button', { name: 'Unblock' }).click();
   await expect(conversation.locator('.workspace-direct-policy')).toHaveCount(0);
-  await conversation.getByRole('button', { name: 'Close direct conversation' }).click();
+  // 私聊里只剩面板的一个关闭按钮：回到房间。
+  await page.getByRole('button', { name: 'Return to the room', exact: true }).click();
   await expect(conversation).toHaveCount(0);
 
   await page.getByRole('button', { name: 'List', exact: true }).click();

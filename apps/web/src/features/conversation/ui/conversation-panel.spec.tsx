@@ -216,6 +216,18 @@ describe('人与 Agent 直接聊天', () => {
       );
     },
   );
+  it('字数离上限还远时不显示计数，快满了才提醒；发送按钮是珊瑚色', async () => {
+    harness();
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    await waitFor(() => {
+      expect(input).toBeEnabled();
+    });
+    fireEvent.change(input, { target: { value: 'Short question' } });
+    expect(screen.queryByText(/\/ 4000$/u)).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'x'.repeat(3_700) } });
+    expect(screen.getByText('3700 / 4000')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('ar-button--send');
+  });
   it('键盘上 Enter 发送，触屏上 Enter 只换行、由按钮发送', async () => {
     const runtime = harness();
     const user = userEvent.setup();

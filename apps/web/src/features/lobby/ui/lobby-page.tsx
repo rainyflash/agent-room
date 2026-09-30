@@ -512,7 +512,6 @@ function ReadyLobby({
           <DirectConversationDock
             activeCatalogId={selectedDirectSessionId}
             controller={directSessions}
-            onActiveSessionChange={onSelectedDirectSessionChange}
             onOpenSecurity={onOpenSecurity}
             onSelectedMessageChange={onSelectedMessageChange}
             selectedMessageId={selectedMessageId}

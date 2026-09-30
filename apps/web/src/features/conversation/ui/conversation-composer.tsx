@@ -13,6 +13,9 @@ import type { useConversationComposer } from '@/features/conversation/ui/use-con
 
 export type ConversationComposerController = ReturnType<typeof useConversationComposer>;
 
+/** 字数到上限的九成才显示计数。 */
+const nearCharacterLimit = Math.floor(maximumChatCharacters * 0.9);
+
 // Soft keyboards have no Shift key, so on touch screens Enter makes a new line and the button sends.
 function enterSends(): boolean {
   return typeof window.matchMedia !== 'function' || !window.matchMedia('(pointer: coarse)').matches;
@@ -71,6 +74,7 @@ export function ConversationComposer({
   const failed = publication.matches('failed');
   const unavailable = publication.matches('identityUnavailable');
   const keyboardHint = enterSends() ? `chat-${roomId}-keyboard` : undefined;
+  const characters = Array.from(composer.text).length;
   useAutoGrow(input, composer.text);
   return (
     <form
@@ -192,8 +196,19 @@ export function ConversationComposer({
               ))}
           </select>
         </label>
-        <span>{t('conversation.count', { count: Array.from(composer.text).length })}</span>
-        <Button type="submit" disabled={!canSend} icon={<Send aria-hidden="true" />} size="compact">
+        {/* 离上限还远时不显示字数，快满了才提醒。 */}
+        {characters >= nearCharacterLimit ? (
+          <span className="conversation-panel__count">
+            {t('conversation.count', { count: characters })}
+          </span>
+        ) : null}
+        <Button
+          type="submit"
+          disabled={!canSend}
+          icon={<Send aria-hidden="true" />}
+          size="compact"
+          tone="send"
+        >
           {t(submitting ? 'conversation.sending' : 'conversation.send')}
         </Button>
       </div>

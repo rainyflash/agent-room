@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronUp, Copy, Reply } from 'lucide-react';
+import { Check, CheckCheck, ChevronDown, ChevronUp, Copy, Reply } from 'lucide-react';
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
@@ -158,23 +158,7 @@ export function ConversationMessage({
             </button>
           ) : null}
         </div>
-        {own ? (
-          <div
-            className="conversation-message__delivery"
-            aria-label={t('conversation.delivery.title')}
-          >
-            <span>{t('conversation.delivery.sent')}</span>
-            {delivery.length === 0 ? (
-              <span>{t('conversation.delivery.unconfirmed')}</span>
-            ) : (
-              delivery.map((item) => (
-                <span key={item.agentId} data-stage={item.stage}>
-                  {item.name} · {t(`conversation.delivery.${item.stage}`)}
-                </span>
-              ))
-            )}
-          </div>
-        ) : null}
+        {own ? <DeliveryMark delivery={delivery} /> : null}
       </div>
       <div className="conversation-message__actions">
         {chat?.text ? (
@@ -214,5 +198,44 @@ export function ConversationMessage({
         </button>
       </div>
     </article>
+  );
+}
+
+/**
+ * 自己消息下的小标记：没有 Agent 回执时只说“已发送”；一个 Agent 时写它的进度；几个 Agent 时写个数。
+ * 点开列出每个 Agent 的进度。有回复需要你处理时标记变成提醒色。
+ */
+function DeliveryMark({ delivery }: { readonly delivery: readonly AgentDelivery[] }) {
+  const { t } = useTranslation();
+  const [first] = delivery;
+  const summary =
+    first === undefined
+      ? t('conversation.delivery.mark.sent')
+      : delivery.length === 1
+        ? `${first.name} · ${t(`conversation.delivery.${first.stage}`)}`
+        : t('conversation.delivery.mark.agents', { count: delivery.length });
+  const replied = first !== undefined && delivery.every((item) => item.stage === 'replied');
+  return (
+    <details
+      className="conversation-message__delivery"
+      data-attention={delivery.some((item) => item.stage === 'needs_review')}
+    >
+      <summary aria-label={`${t('conversation.delivery.title')}: ${summary}`}>
+        {replied ? <CheckCheck aria-hidden="true" /> : <Check aria-hidden="true" />}
+        <span>{summary}</span>
+      </summary>
+      <ul>
+        <li>{t('conversation.delivery.sent')}</li>
+        {first === undefined ? (
+          <li>{t('conversation.delivery.unconfirmed')}</li>
+        ) : (
+          delivery.map((item) => (
+            <li key={item.agentId} data-stage={item.stage}>
+              {item.name} · {t(`conversation.delivery.${item.stage}`)}
+            </li>
+          ))
+        )}
+      </ul>
+    </details>
   );
 }

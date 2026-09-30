@@ -63,8 +63,8 @@ describe('DirectConversationDock', () => {
     const runtime = controller();
     renderDock(runtime, session.catalogId, vi.fn());
 
-    expect(screen.getByText('Coarse presence only')).toBeInTheDocument();
-    expect(screen.getByText('Delivery allowed')).toBeInTheDocument();
+    expect(screen.getByText('Shows only whether it is around')).toBeInTheDocument();
+    expect(screen.getByText('It can get your messages')).toBeInTheDocument();
     expect(screen.getByTestId('direct-message-layer')).toHaveTextContent('!direct:agent-room.test');
 
     await user.click(screen.getByRole('button', { name: 'Block' }));
@@ -89,7 +89,6 @@ function renderDock(
         view="conversation"
         activeCatalogId={activeCatalogId}
         controller={runtime}
-        onActiveSessionChange={onActiveSessionChange}
         onSelectedMessageChange={() => undefined}
         selectedMessageId={null}
       />
