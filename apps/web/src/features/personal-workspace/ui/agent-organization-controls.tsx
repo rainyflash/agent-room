@@ -1,3 +1,4 @@
+import { Button, Field } from '@agent-room/ui-system';
 import { Star } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -26,38 +27,43 @@ function OrganizationEditor({ agentId }: { readonly agentId: string }) {
   const tags = workspace.snapshot.index.tags.get(agentId) ?? [];
   return (
     <section className="agent-organization" aria-label={t('personal.title')}>
-      <button
-        type="button"
-        className="personal-favorite"
-        aria-pressed={favorite}
-        onClick={() => {
-          const result = workspace.toggleFavorite(agentId);
-          setFeedback(result.ok ? 'saved' : 'unavailable');
-          setUndo(result.ok ? result.value : null);
-        }}
-      >
-        <Star aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} />
-        {t(favorite ? 'personal.unfavorite' : 'personal.favorite')}
-      </button>
-      {undo ? (
-        <button
-          type="button"
+      <div className="agent-organization__favorite">
+        <Button
+          aria-pressed={favorite}
+          className="personal-favorite"
+          icon={<Star aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} />}
           onClick={() => {
-            const result = workspace.undoFavorite(undo);
-            setFeedback(
-              result.ok
-                ? 'saved'
-                : result.error.code === 'workspace.undo_changed'
-                  ? 'undoChanged'
-                  : 'unavailable',
-            );
-            setUndo(null);
+            const result = workspace.toggleFavorite(agentId);
+            setFeedback(result.ok ? 'saved' : 'unavailable');
+            setUndo(result.ok ? result.value : null);
           }}
+          size="compact"
+          tone="quiet"
         >
-          {t('personal.undo')}
-        </button>
-      ) : null}
+          {t(favorite ? 'personal.unfavorite' : 'personal.favorite')}
+        </Button>
+        {undo ? (
+          <Button
+            onClick={() => {
+              const result = workspace.undoFavorite(undo);
+              setFeedback(
+                result.ok
+                  ? 'saved'
+                  : result.error.code === 'workspace.undo_changed'
+                    ? 'undoChanged'
+                    : 'unavailable',
+              );
+              setUndo(null);
+            }}
+            size="compact"
+            tone="quiet"
+          >
+            {t('personal.undo')}
+          </Button>
+        ) : null}
+      </div>
       <form
+        className="agent-organization__tags"
         onSubmit={(event) => {
           event.preventDefault();
           const value = parseProjectTags(draft ?? tags.join(', '));
@@ -70,8 +76,7 @@ function OrganizationEditor({ agentId }: { readonly agentId: string }) {
           if (result.ok) setDraft(null);
         }}
       >
-        <label>
-          {t('personal.tags')}
+        <Field hint={t('personal.tagsHint')} label={t('personal.tags')}>
           <input
             value={draft ?? tags.join(', ')}
             maxLength={400}
@@ -79,9 +84,10 @@ function OrganizationEditor({ agentId }: { readonly agentId: string }) {
               setDraft(event.target.value);
             }}
           />
-        </label>
-        <small>{t('personal.tagsHint')}</small>
-        <button type="submit">{t('personal.saveTags')}</button>
+        </Field>
+        <Button size="compact" tone="quiet" type="submit">
+          {t('personal.saveTags')}
+        </Button>
       </form>
       {feedback ? <p role="status">{t(`personal.${feedback}`)}</p> : null}
       <WorkspaceSyncStatus />

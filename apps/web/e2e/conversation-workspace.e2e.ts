@@ -103,7 +103,7 @@ test('点击真实人物打开私聊，场景继续活动并支持缩放拖动',
   });
   await page.mouse.click(target.x, target.y);
   await expect(page.getByRole('complementary')).toContainText('Build Agent 003');
-  await page.getByRole('button', { name: 'Message Agent', exact: true }).click();
+  await page.getByRole('button', { name: 'Message', exact: true }).click();
   const direct = page.locator('.direct-conversation');
   await expect(direct.getByRole('heading', { name: 'Build Agent 003' })).toBeVisible();
   await direct

@@ -24,7 +24,7 @@ for (const count of [200, 1000]) {
     await locateLastAgent(page, count);
     await expect(page.locator('.room-minimap')).toBeHidden();
     await page.screenshot({ path: testInfo.outputPath('located.png') });
-    await page.getByRole('button', { name: 'Message Agent', exact: true }).click();
+    await page.getByRole('button', { name: 'Message', exact: true }).click();
     await expect(
       page.locator('.direct-conversation').getByRole('textbox', { name: 'Message', exact: true }),
     ).toBeVisible();
@@ -55,7 +55,7 @@ test('手机 1,000 人可浏览附近、折叠地图及搜索发送消息', asyn
   await navigateMap(page);
   await expect(page.locator('.room-crowd-group')).toHaveCount(0);
   await locateLastAgent(page, 1000);
-  const message = page.getByRole('button', { name: 'Message Agent', exact: true });
+  const message = page.getByRole('button', { name: 'Message', exact: true });
   await expect(message).toBeInViewport({ ratio: 1 });
   await page.screenshot({ path: testInfo.outputPath('mobile-located.png') });
   await message.click();

@@ -1,4 +1,4 @@
-import { Button } from '@agent-room/ui-system';
+import { Button, Details } from '@agent-room/ui-system';
 import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -15,6 +15,7 @@ import {
 import { AgentStateLabel } from './agent-state-label';
 import { useIsNetworkAgent, useNetworkAgentLabel } from './network-agent-labels';
 import './agent-roster.css';
+import './agent-inspector.css';
 import { AgentOrganizationControls } from '@/features/personal-workspace/ui/agent-organization-controls';
 
 export type AgentInspectorProps = {
@@ -45,6 +46,10 @@ function offlineDurationKey(group: AgentRosterGroup) {
   }
 }
 
+/**
+ * 人物详情：头像、名字和状态在上；先是能做的事（私聊、屏蔽），再说它能不能回复、在做什么，
+ * 然后是后台回复和收藏。Matrix 身份、在线连接数这些排查信息收在“身份与连接”里。
+ */
 export function AgentInspector({
   hasBackgroundReception = false,
   receptionControls,
@@ -63,6 +68,7 @@ export function AgentInspector({
   const attendance = agentAttendance(agent, observedAtUnixMs);
   const lifecycle = agentLifecycle(agent, observedAtUnixMs);
   const reception = lifecycle.connection === 'online' ? lifecycle.reception : lifecycle.connection;
+  const work = agent.reportedStatus ?? agent.status;
   const lastActive =
     agent.lastActiveAtUnixMs === undefined
       ? null
@@ -82,8 +88,12 @@ export function AgentInspector({
       transition={{ bounce: 0.12, damping: 28, stiffness: 240, type: 'spring' }}
     >
       <header className="agent-inspector__header">
-        <div>
+        <div className="agent-inspector__portrait" aria-hidden="true">
+          <AgentPortrait id={agent.agentId} />
+        </div>
+        <div className="agent-inspector__who">
           <h2 id="agent-inspector-title">{agent.displayName}</h2>
+          <AgentStateLabel agent={agent} now={observedAtUnixMs} />
           {network ? (
             <p className="agent-inspector__origin" title={networkLabel.hint}>
               {networkLabel.label}
@@ -101,21 +111,58 @@ export function AgentInspector({
         </button>
       </header>
       <div className="agent-inspector__body">
-        <div className="agent-inspector__portrait" aria-hidden="true">
-          <AgentPortrait id={agent.agentId} />
-        </div>
-        <div className="agent-inspector__status">
-          <AgentStateLabel agent={agent} now={observedAtUnixMs} />
-          {lastActive === null ? null : (
-            <span>{t('studio.lastConnection', { time: lastActive })}</span>
-          )}
-        </div>
+        {onMessage === undefined && onBlock === undefined ? null : (
+          <div className="agent-inspector__actions">
+            {onMessage === undefined ? null : (
+              <Button
+                disabled={pendingAction !== null}
+                icon={
+                  pendingAction === 'message' ? (
+                    <LoaderCircle aria-hidden="true" />
+                  ) : (
+                    <MessageSquare aria-hidden="true" />
+                  )
+                }
+                onClick={() => {
+                  onMessage(agent.agentId);
+                }}
+                size="compact"
+                tone="primary"
+              >
+                {t(attendance === 'present' ? 'lobby.inspector.message' : 'studio.leaveMessage')}
+              </Button>
+            )}
+            {onBlock === undefined ? null : (
+              <Button
+                disabled={pendingAction !== null}
+                icon={
+                  pendingAction === 'block' ? (
+                    <LoaderCircle aria-hidden="true" />
+                  ) : (
+                    <ShieldBan aria-hidden="true" />
+                  )
+                }
+                onClick={() => {
+                  onBlock(agent.agentId);
+                }}
+                size="compact"
+                tone="quiet"
+              >
+                {t('lobby.inspector.block')}
+              </Button>
+            )}
+          </div>
+        )}
+        {actionFailure === null ? null : (
+          <p className="agent-inspector__failure" role="alert">
+            {t('directSessions.failure', { code: actionFailure })}
+          </p>
+        )}
         <section
           className="agent-reception"
-          aria-label={t('studio.reception')}
+          aria-label={t('agentDetails.reception')}
           data-state={reception}
         >
-          <strong>{t('studio.reception')}</strong>
           <p>
             {t(
               hasBackgroundReception && lifecycle.reception !== 'waiting'
@@ -124,45 +171,53 @@ export function AgentInspector({
             )}
           </p>
         </section>
-        <dl className="agent-lifecycle-facts">
-          {/* 离线且没有报告过工作状态时，「最后工作状态：离线」只是把上面的状态再说一遍。 */}
-          {(agent.reportedStatus ?? agent.status) === 'offline' ? null : (
-            <div>
-              <dt>
-                {t(lifecycle.connection === 'online' ? 'agentState.work' : 'agentState.lastWork')}
-              </dt>
-              <dd>{t(`lobby.status.${agent.reportedStatus ?? agent.status}`)}</dd>
-            </div>
-          )}
-          {lifecycle.connection === 'offline' ? (
-            <div>
-              <dt>{t('agentState.offlineTime')}</dt>
-              <dd>{t(offlineDurationKey(agentRosterGroup(agent, observedAtUnixMs)))}</dd>
-            </div>
-          ) : null}
-          {lifecycle.archiveReason !== null ? (
-            <div>
-              <dt>{t('agentState.rosterView')}</dt>
-              <dd>{t(`agentState.reason.${lifecycle.archiveReason}`)}</dd>
-            </div>
-          ) : null}
-        </dl>
+        {/* 离线又没说过在做什么时，“最后在做：离线”只是把上面的状态再说一遍。 */}
+        {work === 'offline' && agent.summary === undefined ? null : (
+          <section className="agent-inspector__doing" aria-labelledby="agent-inspector-doing">
+            <h3 id="agent-inspector-doing">
+              {t(
+                lifecycle.connection === 'online' ? 'agentDetails.doing' : 'agentDetails.lastDoing',
+              )}
+            </h3>
+            <p>
+              {work === 'offline' ? null : <strong>{t(`lobby.status.${work}`)}</strong>}
+              {agent.summary === undefined ? null : <span>{agent.summary}</span>}
+            </p>
+          </section>
+        )}
+        {lifecycle.connection === 'offline' ||
+        lifecycle.archiveReason !== null ||
+        lastActive !== null ? (
+          <dl className="agent-lifecycle-facts">
+            {lifecycle.connection === 'offline' ? (
+              <div>
+                <dt>{t('agentState.offlineTime')}</dt>
+                <dd>{t(offlineDurationKey(agentRosterGroup(agent, observedAtUnixMs)))}</dd>
+              </div>
+            ) : null}
+            {lastActive === null ? null : (
+              <div>
+                <dt>{t('agentDetails.lastConnection')}</dt>
+                <dd>{lastActive}</dd>
+              </div>
+            )}
+            {lifecycle.archiveReason !== null ? (
+              <div>
+                <dt>{t('agentState.rosterView')}</dt>
+                <dd>{t(`agentState.reason.${lifecycle.archiveReason}`)}</dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
         {receptionControls}
         <AgentOrganizationControls key={agent.agentId} agentId={agent.agentId} />
-        <section className="agent-inspector__summary">
-          <h3>{t('lobby.inspector.summary')}</h3>
-          <p>{agent.summary ?? t('lobby.inspector.noSummary')}</p>
-        </section>
-        <details className="agent-inspector__identity">
-          <summary>{t('roomGame.identityDetails')}</summary>
+        <Details className="agent-inspector__more" summary={t('roomGame.identityDetails')}>
           <dl className="agent-inspector__facts">
             <div>
               <dt>{t('lobby.inspector.matrixIdentity')}</dt>
-              <dd>{agent.matrixUserId}</dd>
-            </div>
-            <div>
-              <dt>{t('lobby.inspector.trust')}</dt>
-              <dd>{t(`lobby.trust.${agent.trust}`)}</dd>
+              <dd>
+                <code>{agent.matrixUserId}</code>
+              </dd>
             </div>
             <div>
               <dt>{t('lobby.inspector.visibility')}</dt>
@@ -174,53 +229,8 @@ export function AgentInspector({
             </div>
           </dl>
           <p className="agent-inspector__notice">{t('lobby.inspector.unverifiedNotice')}</p>
-        </details>
+        </Details>
       </div>
-      {onMessage === undefined && onBlock === undefined ? null : (
-        <div className="agent-inspector__actions">
-          {onMessage === undefined ? null : (
-            <Button
-              disabled={pendingAction !== null}
-              icon={
-                pendingAction === 'message' ? (
-                  <LoaderCircle aria-hidden="true" />
-                ) : (
-                  <MessageSquare aria-hidden="true" />
-                )
-              }
-              onClick={() => {
-                onMessage(agent.agentId);
-              }}
-              tone="primary"
-            >
-              {t(attendance === 'present' ? 'lobby.inspector.message' : 'studio.leaveMessage')}
-            </Button>
-          )}
-          {onBlock === undefined ? null : (
-            <Button
-              disabled={pendingAction !== null}
-              icon={
-                pendingAction === 'block' ? (
-                  <LoaderCircle aria-hidden="true" />
-                ) : (
-                  <ShieldBan aria-hidden="true" />
-                )
-              }
-              onClick={() => {
-                onBlock(agent.agentId);
-              }}
-              tone="alert"
-            >
-              {t('lobby.inspector.block')}
-            </Button>
-          )}
-        </div>
-      )}
-      {actionFailure === null ? null : (
-        <p className="agent-inspector__failure" role="alert">
-          {t('directSessions.failure', { code: actionFailure })}
-        </p>
-      )}
     </motion.aside>
   );
 }

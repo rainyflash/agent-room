@@ -433,26 +433,7 @@
   background: var(--ar-surface);
   box-shadow: 0 5px 0 var(--ar-outline);
 }
-.lobby-game .agent-inspector__header,
-.lobby-game .agent-inspector__actions,
-.lobby-game .agent-inspector__failure {
-  flex-shrink: 0;
-}
-.lobby-game .agent-inspector__body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.lobby-game .agent-inspector__actions {
-  padding: 16px 0 0;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
-  flex-wrap: wrap;
-}
-.lobby-game .agent-inspector__actions > .ar-button {
-  flex: 1 1 auto;
-  white-space: nowrap;
-}
+
 /* 房间面板里，资料详情铺满整个面板（盖住标签栏），像点进一条资料，而不是浮在列表上方的卡片；
    它自带关闭按钮，关掉就回到列表。 */
 .room-panel .content-inspector {
@@ -462,75 +443,6 @@
   border: 0;
   border-radius: 0;
   box-shadow: none;
-}
-.lobby-game .agent-inspector .ar-button {
-  font-size: 13px;
-}
-/* 详情里的危险操作不用整块珊瑚色，避免抢过主操作；文字色在浅底上对比度 4.77。 */
-.lobby-game .agent-inspector .ar-button--alert {
-  background: var(--ar-danger-soft);
-  color: var(--color-alert);
-}
-.lobby-game .agent-inspector__portrait {
-  display: grid;
-  place-items: center;
-  width: 96px;
-  height: 96px;
-  margin: 20px auto;
-  overflow: hidden;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 50%;
-  background: var(--ar-surface-muted);
-}
-.lobby-game .agent-inspector__portrait svg {
-  width: 96px;
-  height: 96px;
-}
-.lobby-game .agent-inspector__identity {
-  border-block: var(--ar-outline-thin) dashed var(--ar-line);
-  margin-block: 18px;
-  padding-block: 14px;
-  color: var(--ar-muted);
-}
-.lobby-game .agent-inspector__identity summary {
-  font-size: 13px;
-  cursor: pointer;
-}
-.lobby-game .agent-inspector__identity .agent-inspector__facts {
-  margin-block: 16px 0;
-}
-.lobby-game .agent-inspector__status {
-  display: flex;
-  flex-wrap: wrap;
-  text-align: center;
-  justify-content: center;
-}
-.lobby-game .agent-inspector__status > span:last-child {
-  display: block;
-  width: 100%;
-  font-size: 13px;
-  color: var(--ar-muted);
-}
-.lobby-game .agent-inspector__summary {
-  margin-top: 16px;
-}
-.agent-reception {
-  padding: 14px 0;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
-  font-size: 13px;
-}
-.agent-reception strong {
-  color: var(--color-ink);
-  font-weight: 600;
-}
-.agent-reception p {
-  color: var(--ar-muted);
-  line-height: 1.8;
-  margin: 6px 0 0;
-}
-.agent-reception[data-state='away'] strong,
-.agent-reception[data-state='reconnecting'] strong {
-  color: var(--color-alert);
 }
 
 /* 列表视图 */
@@ -1035,14 +947,7 @@
     max-height: 100%;
     border-radius: 0;
   }
-  .lobby-game .agent-inspector__portrait {
-    width: 68px;
-    height: 68px;
-  }
-  .lobby-game .agent-inspector__portrait svg {
-    width: 68px;
-    height: 68px;
-  }
+
   .scene-speech {
     width: 175px;
     padding: 8px 10px;

@@ -549,15 +549,7 @@
   font-size: 12px;
   line-height: 1.8;
 }
-.lobby-workspace .agent-inspector .eyebrow,
-.lobby-workspace .agent-inspector__status > span:last-child,
-.lobby-workspace .agent-inspector__facts dt,
-.lobby-workspace .agent-inspector__notice {
-  color: var(--ar-muted);
-}
-.lobby-workspace .agent-inspector .ar-button--alert {
-  color: var(--color-alert);
-}
+
 .workspace-members .list-roster__empty {
   padding: 20px;
   font-size: 12px;

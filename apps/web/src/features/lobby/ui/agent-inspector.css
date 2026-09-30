@@ -1,0 +1,193 @@
+/* 人物详情：头像、名字和状态在上，能做的事紧跟其后，排查信息收在详情里。
+   在房间里的位置和大小由 lobby-game.css 决定。 */
+.agent-inspector {
+  position: absolute;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  color: var(--color-ink);
+}
+
+.agent-inspector__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.agent-inspector__portrait {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  place-items: center;
+  overflow: hidden;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  background: var(--ar-surface-muted);
+}
+
+.agent-inspector__portrait svg {
+  width: 56px;
+  height: 56px;
+}
+
+.agent-inspector__who {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-items: start;
+  gap: 4px;
+}
+
+.agent-inspector__who h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.agent-inspector__who .agent-state-label {
+  font-size: 13px;
+}
+
+.agent-inspector__origin {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 1px 8px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-mint);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-inspector__body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: 14px;
+  padding-top: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.agent-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-inspector__actions > .ar-button {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+.agent-inspector .ar-button__icon > .lucide-loader-circle {
+  animation: ar-spin 900ms linear infinite;
+}
+
+.agent-inspector__failure {
+  margin: 0;
+  padding: 10px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 14px;
+  color: var(--color-ink);
+  background: var(--ar-danger-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agent-reception p {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-inspector__doing {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 16px;
+  background: var(--color-paper);
+}
+
+.agent-inspector__doing h3 {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-inspector__doing p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.agent-inspector__doing strong {
+  font-weight: 650;
+}
+
+.agent-inspector .agent-lifecycle-facts {
+  margin: 0;
+}
+
+.agent-inspector__more > .ar-disclosure__body {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-inspector__facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.agent-inspector__facts > div {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-inspector__facts dt {
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+
+.agent-inspector__facts dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.agent-inspector__notice {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 767px) {
+  .agent-inspector__portrait {
+    width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+  }
+
+  .agent-inspector__portrait svg {
+    width: 48px;
+    height: 48px;
+  }
+}

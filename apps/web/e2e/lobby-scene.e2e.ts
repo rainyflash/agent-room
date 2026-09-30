@@ -300,7 +300,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
 
   await page.getByRole('button', { name: 'List', exact: true }).click();
   await page.getByRole('button', { name: /Build Agent 001/u }).click();
-  await page.getByRole('button', { name: 'Message Agent' }).click();
+  await page.getByRole('button', { name: 'Message', exact: true }).click();
   await expect(page.locator('.agent-inspector')).toHaveCount(0);
   await expect(
     page.locator('.direct-conversation').getByRole('heading', { name: 'Build Agent 001' }),
