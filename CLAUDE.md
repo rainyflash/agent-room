@@ -115,6 +115,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 随 Alpha 56 发布。第一次真机验证要等维护者往有历史的私人房间请一个新 Agent：Bridge 文件日志有 info 级“找回房间密钥后重读了之前解不开的消息”。
   - 网页端设备（“Agent Room Web”）没由主人签名时，Agent 按规则扣下房间密钥。#211 起这台设备的找回请求先扣着，提示里给“验证这台设备”按钮；签名同步到本地后自动发出。发送方因设备没验证而拒绝分发的消息也会请求重发。
 
+### 界面翻新
+
+- 2026-09-29 维护者要求“全部翻新”：流程减到必要的几步，全站一套组件，说人话。设计在 [specs/interface-renewal/design.md](./specs/interface-renewal/design.md)，按文档分步交付，进度记在它的“状态”一节。
+- 视觉仍按 [游戏大厅界面重做](./specs/game-lobby-refresh/design.md) 的令牌与形状规则；那次只换了外观，这次改流程、文案和组件。
+
 ### 版本与其他
 
 - Alpha 56 已于 2026-09-29 公开，见 [发布记录](./specs/agent-access/alpha56-release.md)。
