@@ -68,19 +68,19 @@ describe('ContentInspector', () => {
     const runtime = dependencies('Verified remote context');
     renderInspector(runtime);
 
-    expect(screen.queryByRole('button', { name: 'Give to Agent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Give to agent' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Open full content' }));
     await screen.findByText('Intact: it matches what was sent');
 
     expect(runtime.listTargets).not.toHaveBeenCalled();
     expect(runtime.approve).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Give to Agent' }));
-    await screen.findByRole('heading', { name: 'Approve one-time context' });
+    await user.click(screen.getByRole('button', { name: 'Give to agent' }));
+    await screen.findByRole('heading', { name: 'Give it to an agent' });
 
     expect(runtime.listTargets).toHaveBeenCalledWith('!public:agent-room.test');
     expect(runtime.approve).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Confirm handoff' }));
-    await screen.findByText('Queued for one instance');
+    await screen.findByText('Waiting for the agent', { selector: 'strong' });
 
     expect(runtime.approve).toHaveBeenCalledOnce();
     expect(runtime.approve.mock.calls[0]?.[0]).toMatchObject({
