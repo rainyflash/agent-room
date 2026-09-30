@@ -3,24 +3,29 @@ import { Link } from '@tanstack/react-router';
 import { FolderOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { ApplicationUpdates } from '@/features/updates/ui/application-updates';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { McpConfiguration } from './mcp-configuration';
+import './this-computer.css';
 
 /**
- * 这台电脑的设置：登录后自动打开、应用更新、日志文件夹、MCP 配置。界面翻新第 4 步会把它们
- * 搬进“设置”，在那之前放在“这台电脑”一节里，免得右下角面板拆掉后找不到。
+ * “设置 → 这台电脑”：登录后自动打开、应用更新（只有这一处能装）、日志文件夹、MCP 配置。
+ * 这台电脑的连接状态和接进来的 Agent 在“我的 Agent”里。
  */
 export function ThisComputerSettings() {
   const { t } = useTranslation();
   const controller = useDesktopRuntimeController();
   const snapshot = controller.snapshot;
-  if (snapshot === null) return null;
-  const version = snapshot.currentVersion ?? controller.update?.currentVersion ?? null;
-  const update = controller.update?.available === true ? controller.update : null;
+  if (!controller.available || snapshot === null) return null;
   return (
-    <section aria-labelledby="this-computer-settings-title" className="this-computer__settings">
-      <h3 id="this-computer-settings-title">{t('thisComputer.settings.title')}</h3>
-      <div className="this-computer__row">
+    <div className="settings-rows this-computer-settings">
+      <p className="settings-intro">
+        {t('settings.thisComputer.intro')}{' '}
+        <Link hash="this-computer" search={{}} to="/workspace">
+          {t('settings.thisComputer.agents')}
+        </Link>
+      </p>
+      <div className="settings-row">
         <div>
           <strong>{t('desktop.autostart.title')}</strong>
           <p>
@@ -40,21 +45,10 @@ export function ThisComputerSettings() {
           {snapshot.autostartEnabled ? t('desktop.autostart.on') : t('desktop.autostart.off')}
         </button>
       </div>
-      <div className="this-computer__row">
-        <div>
-          <strong>{t('thisComputer.updates.title')}</strong>
-          {version === null ? null : <p>{t('thisComputer.updates.version', { version })}</p>}
-        </div>
-        <Link
-          className={`ar-button ar-button--compact ${update === null ? 'ar-button--ghost' : 'ar-button--primary'}`}
-          to="/about"
-        >
-          {update === null
-            ? t('thisComputer.updates.open')
-            : t('desktop.update.badge', { version: update.targetVersion })}
-        </Link>
+      <div className="settings-row settings-row--block">
+        <ApplicationUpdates />
       </div>
-      <div className="this-computer__row">
+      <div className="settings-row">
         <div>
           <strong>{t('thisComputer.logs.title')}</strong>
           <p>{t('desktop.logs.hint')}</p>
@@ -71,6 +65,6 @@ export function ThisComputerSettings() {
       <Details summary={t('agentInvite.mode.mcp')}>
         <McpConfiguration configuration={snapshot.manualHostConfiguration} />
       </Details>
-    </section>
+    </div>
   );
 }

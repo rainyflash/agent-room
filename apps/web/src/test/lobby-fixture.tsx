@@ -1045,7 +1045,8 @@ async function bootstrapFixture(): Promise<void> {
   });
   const routes = [
     '/rooms',
-    '/about',
+    '/settings/$section',
+    '/workspace',
     '/lobby/$catalogId',
     '/inbox',
     '/e2e/fixtures/lobby-scene.html',

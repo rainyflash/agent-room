@@ -1,7 +1,6 @@
-import { Button } from '@agent-room/ui-system';
+import { Button, Toast } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Fingerprint, ShieldCheck } from 'lucide-react';
-import { motion } from 'motion/react';
 import { useCallback, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -78,71 +77,58 @@ export function MatrixVerificationInboxView({ gateway }: MatrixVerificationInbox
     return null;
   }
 
+  // 提示栈里一条：谁在请求核对，接受还是拒绝。接受后打开核对对话框。
   return (
-    <motion.aside
-      animate={{ opacity: 1, x: 0, y: 0 }}
-      aria-labelledby="matrix-verification-inbox-title"
-      className="security-verification-inbox"
-      initial={{ opacity: 0, x: 12, y: -8 }}
-      role="dialog"
-      transition={{ damping: 30, stiffness: 360, type: 'spring' }}
+    <Toast
+      action={
+        <>
+          <Button
+            disabled={accept.isPending || decline.isPending}
+            onClick={() => {
+              decline.mutate(incoming);
+            }}
+            size="compact"
+            tone="quiet"
+          >
+            {t('security.verification.decline')}
+          </Button>
+          <Button
+            disabled={accept.isPending || decline.isPending}
+            icon={<ShieldCheck aria-hidden="true" />}
+            onClick={() => {
+              accept.mutate(incoming);
+            }}
+            size="compact"
+            tone="primary"
+          >
+            {t('security.verification.accept')}
+          </Button>
+        </>
+      }
+      className="security-verification-toast"
+      icon={<Fingerprint />}
+      role="alert"
+      title={t(
+        incoming.selfVerification === false
+          ? 'security.verification.peerTitle'
+          : 'security.verification.incomingTitle',
+      )}
+      tone="warning"
     >
-      <div className="security-verification-inbox__icon">
-        <Fingerprint aria-hidden="true" />
-      </div>
-      <div className="security-verification-inbox__copy">
-        <span>
-          {t(
-            incoming.selfVerification === false
-              ? 'security.verification.peerEyebrow'
-              : 'security.verification.incomingEyebrow',
-          )}
-        </span>
-        <h2 id="matrix-verification-inbox-title">
-          {t(
-            incoming.selfVerification === false
-              ? 'security.verification.peerTitle'
-              : 'security.verification.incomingTitle',
-          )}
-        </h2>
-        <p>
-          {t(
-            incoming.selfVerification === false
-              ? 'security.verification.peerDetail'
-              : 'security.verification.incomingDetail',
-            {
-              user: incoming.sourceUserId,
-              device: incoming.sourceDeviceId ?? incoming.sourceUserId,
-            },
-          )}
-        </p>
-      </div>
-      <div className="security-verification-inbox__actions">
-        <Button
-          disabled={accept.isPending || decline.isPending}
-          onClick={() => {
-            decline.mutate(incoming);
-          }}
-          size="compact"
-          tone="quiet"
-        >
-          {t('security.verification.decline')}
-        </Button>
-        <Button
-          disabled={accept.isPending || decline.isPending}
-          icon={<ShieldCheck aria-hidden="true" />}
-          onClick={() => {
-            accept.mutate(incoming);
-          }}
-          size="compact"
-          tone="primary"
-        >
-          {t('security.verification.accept')}
-        </Button>
-      </div>
+      <p>
+        {t(
+          incoming.selfVerification === false
+            ? 'security.verification.peerDetail'
+            : 'security.verification.incomingDetail',
+          {
+            user: incoming.sourceUserId,
+            device: incoming.sourceDeviceId ?? incoming.sourceUserId,
+          },
+        )}
+      </p>
       {accept.data?.ok === false ? <SecurityFailureNotice failure={accept.data.error} /> : null}
       {decline.data?.ok === false ? <SecurityFailureNotice failure={decline.data.error} /> : null}
-    </motion.aside>
+    </Toast>
   );
 }
 

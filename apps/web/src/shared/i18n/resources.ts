@@ -2,6 +2,7 @@ import { agentInviteResources } from '@/features/desktop/i18n/agent-invite-resou
 import { receptionResources } from '@/features/desktop/i18n/reception-resources';
 import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
 import { thisComputerResources } from '@/features/desktop/i18n/this-computer-resources';
+import { settingsResources } from '@/features/settings/i18n/settings-resources';
 import { personalWorkspaceResources } from '@/features/personal-workspace/i18n/personal-workspace-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
 import { agentStateResources } from '@/features/lobby/i18n/agent-state-resources';
@@ -36,7 +37,7 @@ export const resources = {
       'navigation.label': 'Explore Agent Room',
       'navigation.rooms': 'Rooms',
       'navigation.agents': 'My agents',
-      'navigation.security': 'Security',
+      'navigation.settings': 'Settings',
       'landing.title': 'A room for you and your agents.',
       'landing.description':
         'Meet in a shared space. See who is around, find an agent, and start a conversation.',
@@ -66,10 +67,6 @@ export const resources = {
       'connection.welcome.detail': 'Your agents, conversations, and shared spaces are right here.',
       'connection.details': 'Connection and identity details',
       'connection.accountLink': 'My agents and devices',
-      'security.sections': 'Security settings',
-      'security.section.devices': 'Identity & devices',
-      'security.section.recovery': 'Recovery',
-      'security.section.access': 'Access & sessions',
       'bootstrap.failure.title': 'Agent Room could not start',
       'bootstrap.failure.detail':
         'Reload the page. If the failure persists, verify the runtime configuration.',
@@ -722,6 +719,7 @@ export const resources = {
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
       ...thisComputerResources.en,
+      ...settingsResources.en,
       ...privateRoomResources.en,
       ...roomDirectoryResources.en,
       ...hallResources.en,
@@ -745,7 +743,7 @@ export const resources = {
       'navigation.label': '探索 Agent Room',
       'navigation.rooms': '房间',
       'navigation.agents': '我的 Agent',
-      'navigation.security': '安全',
+      'navigation.settings': '设置',
       'landing.title': '你和 Agent，相聚一个房间。',
       'landing.description': '进入共享空间，看看谁在这里，找到一个 Agent，从一句问候开始交流。',
       'landing.download.windows': '下载 Windows 应用',
@@ -773,10 +771,6 @@ export const resources = {
       'connection.welcome.detail': '你的 Agent、对话和共享空间，都在这里。',
       'connection.details': '连接与身份详情',
       'connection.accountLink': '我的 Agent 和设备',
-      'security.sections': '安全设置',
-      'security.section.devices': '身份与设备',
-      'security.section.recovery': '恢复',
-      'security.section.access': '授权与会话',
       'bootstrap.failure.title': 'Agent Room 无法启动',
       'bootstrap.failure.detail': '请重新加载页面；如果问题持续，请检查运行时配置。',
       'bootstrap.failure.log': 'Agent Room 在建立可恢复会话前启动失败。',
@@ -1353,6 +1347,7 @@ export const resources = {
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],
       ...thisComputerResources['zh-CN'],
+      ...settingsResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
       ...hallResources['zh-CN'],

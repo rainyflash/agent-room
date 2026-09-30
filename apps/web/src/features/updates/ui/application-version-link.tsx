@@ -4,7 +4,7 @@ import { applicationVersion } from '../domain/runtime-manifest';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import './application-about.css';
 
-/** 顶栏上的版本号，点开是“关于与更新”。桌面端查到新版本时换成“有新版本”，更新只在那一页装。 */
+/** 首页和房间菜单里的版本号，点开是“设置 → 关于”。桌面端查到新版本时换成“有新版本”，点开去“设置 → 这台电脑”安装。 */
 export function ApplicationVersionLink() {
   const { t } = useTranslation();
   const desktop = useOptionalDesktopRuntimeController();
@@ -19,7 +19,8 @@ export function ApplicationVersionLink() {
       : t('application.aboutVersion', { version });
   return (
     <Link
-      to="/about"
+      params={{ section: update ? 'this-computer' : 'about' }}
+      to="/settings/$section"
       className="application-version-link"
       data-update={update ? 'true' : undefined}
       aria-label={label}

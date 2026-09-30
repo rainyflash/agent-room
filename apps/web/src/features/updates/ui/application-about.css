@@ -1,143 +1,173 @@
+/* 首页和房间菜单里的版本号小标签。 */
 .application-version-link {
-  color: var(--ar-muted);
-  font-size: 0.72rem;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--ar-pill);
-  text-decoration: none;
-  white-space: nowrap;
   display: inline-flex;
   align-self: start;
-  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-pill);
+  color: var(--ar-muted);
   background: var(--ar-surface);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
 }
+
 .application-version-link:hover {
   border-color: var(--ar-outline);
   color: var(--color-ink);
 }
+
 .application-version-link[data-update='true'] {
   border-color: var(--ar-outline);
   color: var(--color-ink);
   background: var(--ar-sunny);
 }
-.application-about {
-  min-height: 100dvh;
-  padding: 0 3.5vw 4rem;
-  background: var(--ar-canvas);
-  color: var(--color-ink);
-}
+
+/* “设置 → 关于”里的卡片。 */
 .application-about__card {
-  max-width: 42rem;
-  margin: 3rem auto 0;
-  padding: 2rem;
+  display: grid;
+  gap: 20px;
+  padding: 24px;
   border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
+  box-shadow: 0 6px 0 var(--ar-outline);
 }
+
 .application-about__card > header {
   display: flex;
-  gap: 1.2rem;
   align-items: center;
+  gap: 16px;
 }
+
 .application-about__card > header img {
-  width: 4.5rem;
-  height: 4.5rem;
+  width: 64px;
+  height: 64px;
 }
-.application-about__card h1 {
-  margin: 0.3rem 0 0.5rem;
-  font-size: 2rem;
+
+.application-about__card h3 {
+  margin: 0 0 6px;
   font-family: var(--font-display);
+  font-size: 1.75rem;
   font-weight: 600;
   letter-spacing: 0;
 }
-.application-about__card header p {
-  margin: 0;
-  color: var(--ar-muted);
-  font-size: 0.85rem;
-}
+
 .application-about__card header span {
   display: flex;
-  gap: 0.4rem;
   align-items: center;
-  font-size: 0.85rem;
+  gap: 6px;
   color: var(--ar-muted);
+  font-size: 0.875rem;
 }
-.application-about svg {
-  width: 1.1rem;
-  height: 1.1rem;
+
+.application-about__card svg {
+  width: 18px;
+  height: 18px;
 }
-.application-about dl {
-  margin: 2rem 0;
+
+.application-about__card dl {
+  margin: 0;
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
-.application-about dl > div {
+
+.application-about__card dl > div {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 0;
+  gap: 16px;
+  padding: 12px 0;
   border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
-.application-about dt {
+
+.application-about__card dt {
   color: var(--ar-muted);
 }
-.application-about dd {
+
+.application-about__card dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.application-about__updates h2 {
-  font-size: 1.15rem;
+
+.application-about__pointer {
+  margin: 0;
+  color: var(--ar-muted);
 }
+
+.application-about__pointer a {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.application-about__card footer {
+  padding-top: 16px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.application-about__card footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ar-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* 应用更新：渠道、检查、安装。桌面端在“这台电脑”，网页端在“关于”。 */
+.application-about__updates h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
 .application-about__updates label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  margin: 1rem 0;
+  gap: 16px;
+  margin: 12px 0;
 }
-.application-about select {
-  padding: 0 1rem;
+
+.application-about__updates select {
+  min-height: 44px;
+  padding: 0 16px;
   border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: var(--ar-pill);
-  background: var(--color-paper);
   color: inherit;
+  background: var(--color-paper);
   font: inherit;
-  min-height: 44px;
 }
+
 .application-about__updates p {
+  margin: 8px 0 0;
   color: var(--ar-muted);
-  line-height: 1.7;
   font-size: 0.9rem;
+  line-height: 1.6;
 }
+
 .application-about__updates [role='alert'] p {
   color: var(--color-alert);
 }
+
+.application-about__updates code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .application-about__buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 1rem 0;
+  gap: 12px;
+  margin: 12px 0 0;
 }
-.application-about footer {
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
-  margin-top: 2rem;
-  padding-top: 1.3rem;
-}
-.application-about footer a {
-  display: inline-flex;
-  gap: 0.5rem;
-  align-items: center;
-  color: var(--ar-accent);
-  text-decoration: none;
-  font-weight: 600;
-}
+
 @media (max-width: 600px) {
   .application-about__card {
-    padding: 1.25rem;
-    margin-top: 1rem;
+    padding: 18px;
   }
-  .application-about__card h1 {
-    font-size: 1.6rem;
+
+  .application-about__card h3 {
+    font-size: 1.5rem;
   }
 }

@@ -66,7 +66,12 @@ for (const width of [1440, 390]) {
       .getByRole('button', { name: /Release workshop/ })
       .click();
     await expect(input).toHaveValue('Keep my draft here');
-    await page.getByRole('link', { name: /Version .*About & updates/ }).click();
+    // 关于与更新并进了设置：顶栏“设置” → “关于”。
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await page
+      .getByRole('navigation', { name: 'Settings sections' })
+      .getByRole('link', { name: 'About' })
+      .click();
     await expect(page.getByRole('heading', { name: 'Application updates' })).toBeVisible();
     await expect(page.getByRole('main')).toContainText(applicationVersion);
     await page.getByRole('button', { name: 'Check', exact: true }).click();

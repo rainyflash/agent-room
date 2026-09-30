@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { Banner, CopyBlock, Details, Dialog, Segmented, Spinner } from '@agent-room/ui-system';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  Banner,
+  CopyBlock,
+  Details,
+  Dialog,
+  Segmented,
+  Spinner,
+  Toast,
+  ToastStack,
+} from '@agent-room/ui-system';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -242,5 +251,35 @@ describe('CopyBlock', () => {
     rerender(<CopyBlock {...labels} hideText text="join" />);
     expect(screen.queryByLabelText('Message for your agent')).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy message' })).toBeEnabled();
+  });
+});
+
+describe('Toast', () => {
+  it('提示栈是一个带名字的区域；一条提示可以带操作，也可以关掉', () => {
+    const onDismiss = vi.fn();
+    render(
+      <ToastStack label="Notifications">
+        <Toast
+          action={<button type="button">Install</button>}
+          dismissLabel="Later"
+          onDismiss={onDismiss}
+          title="Agent Room 0.2.0 is ready to install"
+        />
+        <Toast role="alert" title="Another device wants to verify" tone="warning" />
+      </ToastStack>,
+    );
+    const stack = screen.getByRole('region', { name: 'Notifications' });
+    expect(within(stack).getByRole('status')).toHaveTextContent(
+      'Agent Room 0.2.0 is ready to install',
+    );
+    expect(within(stack).getByRole('alert')).toHaveTextContent('Another device wants to verify');
+    expect(within(stack).getByRole('button', { name: 'Install' })).toBeVisible();
+    fireEvent.click(within(stack).getByRole('button', { name: 'Later' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('没给关闭回调就没有关闭按钮', () => {
+    render(<Toast title="Quiet toast" />);
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });

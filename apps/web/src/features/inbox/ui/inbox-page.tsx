@@ -87,21 +87,17 @@ export function InboxPage() {
               ))}
             </select>
           </label>
-          <button
-            type="button"
-            aria-pressed={quiet}
-            onClick={() => {
-              const result = personal?.change({
-                kind: 'dnd',
-                id: 'global',
-                value: quiet ? 0 : Date.now() + 3600000,
-              });
-              if (!result?.ok) setFeedback('personal.unavailable');
-              setNow(Date.now());
-            }}
-          >
-            {t(quiet ? 'inbox.resumeNotifications' : 'inbox.quietHour')}
-          </button>
+          {/* 暂停提醒在“设置 → 通用”里开关；暂停时这里说一声，给个入口。 */}
+          {quiet ? (
+            <p className="personal-inbox__quiet">
+              {personal?.snapshot.index.doNotDisturbUntil === null
+                ? t('inbox.quietIndefinite')
+                : t('inbox.quietUntil', { time: time.format(quietUntil) })}{' '}
+              <Link params={{ section: 'general' }} to="/settings/$section">
+                {t('inbox.quietChange')}
+              </Link>
+            </p>
+          ) : null}
           <WorkspaceSyncStatus />
           <button
             type="button"

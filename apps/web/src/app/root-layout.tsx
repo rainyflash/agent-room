@@ -1,3 +1,4 @@
+import { ToastStack } from '@agent-room/ui-system';
 import { Outlet, useLocation } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
@@ -9,6 +10,7 @@ import { SessionProvider, useSession } from '@/features/session/ui/session-provi
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { FrontendTelemetryObserver } from '@/features/telemetry/ui/frontend-telemetry-observer';
 import { RuntimeCompatibilityProvider } from '@/features/updates/ui/runtime-compatibility-provider';
+import { DesktopUpdateToast } from '@/features/updates/ui/desktop-update-toast';
 import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 import { InboxNotice } from '@/features/inbox/ui/inbox-notice';
 
@@ -33,25 +35,34 @@ function WebRootLayout({ pathname }: { readonly pathname: string }) {
         <>
           <Outlet />
           <ThisComputerBanner />
+          <ToastStack label={t('toasts.label')}>
+            <DesktopUpdateToast />
+            <UpdatePrompt />
+          </ToastStack>
         </>
       ) : (
         <WebSessionRuntime pathname={pathname} />
       )}
-      <UpdatePrompt />
     </RuntimeCompatibilityProvider>
   );
 }
 
 function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
+  const { t } = useTranslation();
   const { session, telemetry } = useAppServices();
   return (
     <SessionProvider dependencies={session}>
       <FrontendTelemetryObserver gateway={telemetry} />
       <ConversationSessionOutlet />
-      <MatrixVerificationInbox />
-      <InboxNotice />
       {/* “我的 Agent”页自己有“这台电脑”一节，不再重复提示。 */}
       <ThisComputerBanner hidden={pathname === '/workspace'} />
+      {/* 新版本、新消息、别的设备请求核对：右下角一个提示栈，不再互相压住。 */}
+      <ToastStack label={t('toasts.label')}>
+        <MatrixVerificationInbox />
+        <InboxNotice />
+        <DesktopUpdateToast />
+        <UpdatePrompt />
+      </ToastStack>
     </SessionProvider>
   );
 }
