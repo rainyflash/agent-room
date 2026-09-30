@@ -117,7 +117,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 界面翻新
 
-- 2026-09-29 维护者要求“全部翻新”：流程减到必要的几步，全站一套组件，说人话。设计在 [specs/interface-renewal/design.md](./specs/interface-renewal/design.md)，进度记在它的“状态”一节。2026-09-30 七步全部做完（设计 #229，实现 #230–#246），等随 Alpha 57 发布。
+- 2026-09-29 维护者要求“全部翻新”：流程减到必要的几步，全站一套组件，说人话。设计在 [specs/interface-renewal/design.md](./specs/interface-renewal/design.md)，进度记在它的“状态”一节。2026-09-30 七步全部做完（设计 #229，实现 #230–#246），已随 Alpha 57 发布。
 - 视觉仍按 [游戏大厅界面重做](./specs/game-lobby-refresh/design.md) 的令牌与形状规则；那次只换了外观，这次改流程、文案和组件。
 - 以后加界面：先在 `packages/ui-system` 和 `shared/ui` 里找现成组件；用户看得到的说法按设计文档的“用词”一节；排查才看的 ID、错误码收进“详情”。新文案中英文一起加，删功能时顺手删掉只有它用的文案和样式。
 - 第 2 步（一屏的“接入 Agent”对话框）和第 3 步（新的“我的 Agent”、这台电脑、去掉浮动面板和 `/onboarding`）要在同一个版本里发布。
@@ -125,20 +125,23 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 浏览器验收里桌面端的“我的 Agent”页用 `e2e/fixtures/my-agents.html`（加 `?browser` 是网页端），`window.__agentRoomFixtureControls.arriveAgent()` 模拟一个 Agent 接走接入对话框挂着的人物。
 - 设置页在 `/settings/<分节>`（通用 / 安全 / 这台电脑 / 关于）；浏览器验收用 `my-agents.html?settings=<分节>`，安全一节用 `security-center.html`。新的浮层提示一律放进根布局的提示栈（`ToastStack` + `Toast`），别再单独 `position: fixed`。
 - 没进房间时的页面（连接、登录没完成、进大厅、房间打开中或打不开、找不到页面、配置出错）共用 `shared/ui/entry-shell.tsx` 的 `EntryShell` + `EntryCard`：一张居中卡片，错误码和地址收进“详情”，出错给“回到房间”。
-- 界面翻新 6c 改了登录主题（`infra/identity/`）：Alpha 57 的实机验收要新设备授权，发版前提醒维护者准备批准设备码。登录页的标志由 `tools/sync-brand-assets.mjs` 从网页端同步。
+- 登录页的标志由 `tools/sync-brand-assets.mjs` 从网页端同步；`tools/tests/test_brand_consistency.py` 卡着登录主题的颜色令牌和标志不和网页端走偏。
 - “新建房间”“换个房间”只有 `RoomActions`（`features/room-directory`）一个入口组件，房间菜单、“房间”页和夹具都用它。浏览器验收的 `lobby-scene.html?features=1` 里有两个待答复的邀请（Research lab、Budget review），加入和拒绝都能真走一遍。
 - 房间设置是房间页上的一个对话框（`RoomSettingsDialog`），不在房间菜单的抽屉里。`lobby-scene.html?private` 把夹具房间当成你是房主的私人房间，四节都能看到；浏览器验收用 `openRoomSettings(page, '节名')` 打开。
 
 ### 版本与其他
 
-- Alpha 57 正在发布：界面全部翻新（设计 #229，实现 #230–#246：接入 Agent 一屏、我的 Agent 与这台电脑、设置、房间、首页与连接页、登录页和桌面端回跳页、收尾）。6c #245 改了登录主题（`infra/identity/`），实机验收不能复用长期验收设备，要维护者批准一次设备码。
+- Alpha 57 已于 2026-09-30 公开，见 [发布记录](./specs/agent-access/alpha57-release.md)。
+  - 界面全部翻新（设计 #229，实现 #230–#246），另含房间密钥日志 #228 和依赖安全升级 #231、#234。
+  - 6c #245 改了登录主题，实机验收走了一次新设备授权，维护者批准了设备码；长期验收设备换成 Alpha 57 那台（`agent-room.alpha57.acceptance.fresh-device`）。版本 PR 合并到网页上线约 65 分钟。
+  - 真实登录验收只在派发时跑：翻新时改了页面，它在 6c 分支的派发里才红（4b 挪走了 Matrix ID），修复随版本 PR #247 合并。以后改界面，发版前记得派发一次 `suite=session`。
 - Alpha 56 已于 2026-09-29 公开，见 [发布记录](./specs/agent-access/alpha56-release.md)。
   - 包含新请进房间的 Agent 读到加入前的消息 #222–#225（Agent 的和人的都行）、Agent 连不上 Bridge 时在后台拉起桌面端 #221、退出桌面端时 Bridge 有序退出 #220、默认文件日志记下房间密钥重发的结果 #217。
   - 登录相关代码没变，实机验收复用 Alpha 53 那台长期验收设备，没要设备码；版本 PR 合并到网页上线约 57 分钟。
   - 升版本时主检出的 `node_modules` 还是 #215 之前装的，`bump_release_version.py` 刷新许可证清单报缺包；`corepack pnpm@10.28.0 install --frozen-lockfile --force` 后重跑 `python tools/license_inventory.py generate` 即可。
 - Alpha 55（2026-09-29）见 [发布记录](./specs/agent-access/alpha55-release.md)：找回解不开的历史 #206/#208/#211、私人房间一键生成网络 Agent 口令 #207 等。
 - Alpha 54（2026-09-28）见 [发布记录](./specs/agent-access/alpha54-release.md)：一次性密钥积压修复 #201、解不开的消息提示 #202 等。
-- Alpha 53（2026-09-28）见 [发布记录](./specs/agent-access/alpha53-release.md)；长期验收设备是 Alpha 53 那台（当时登录相关代码有变化，重新走了新设备授权）。
+- Alpha 53（2026-09-28）见 [发布记录](./specs/agent-access/alpha53-release.md)；它那次新设备授权的设备一直用到 Alpha 56。
 - 网络 Agent 三步都已上线，生产总开关开着。
 - 桌面“第三层接入”（桌面直接拉起 Agent 会话，不用开终端）以后单独设计。
 - `archive/codex/*` 是 2026-09-05 Codex 时期没合并的实验分支（游戏化大厅、显式 MCP 任务会话等），从维护者本机备份上来，只作存档，不要合并。
