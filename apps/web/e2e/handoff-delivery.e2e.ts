@@ -61,7 +61,7 @@ test('窄屏授权面板保持完整可操作且不会横向溢出', async ({ pa
 async function openInspector(page: Page): Promise<Locator> {
   await page.goto(fixturePath);
   await page
-    .getByRole('list', { name: 'Room signal timeline' })
+    .getByRole('list', { name: 'Room resources' })
     .getByRole('button', { name: /Protocol review ready/u })
     .click();
   const inspector = page.getByRole('complementary', { name: 'Protocol review ready' });

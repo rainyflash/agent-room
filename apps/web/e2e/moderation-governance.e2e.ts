@@ -11,21 +11,18 @@ test('举报不读取受保护正文且房间治理动作可撤销', async ({ pa
   await page.goto(fixturePath);
 
   await page
-    .getByRole('list', { name: 'Room signal timeline' })
+    .getByRole('list', { name: 'Room resources' })
     .getByRole('button', { name: /Protocol review ready/u })
     .click();
   await page.getByRole('button', { name: 'Report' }).click();
-  const report = page.getByRole('dialog', { name: 'Report this event' });
+  const report = page.getByRole('dialog', { name: 'Report this' });
   await report.getByLabel('Context for the reviewer').fill('Explicit browser evidence only');
-  await report.getByRole('checkbox', { name: /Include the visible preview summary/iu }).check();
+  await report.getByRole('checkbox', { name: /Include the summary you can see/iu }).check();
   expect(await fixtureContentReads(page)).toEqual({ downloads: 0, tickets: 0 });
-  await report.getByRole('button', { name: 'Create report' }).click();
-  await expect(report.getByText('Report created')).toBeVisible();
+  await report.getByRole('button', { name: 'Send report' }).click();
+  await expect(report.getByText('Report sent')).toBeVisible();
   expect(await fixtureContentReads(page)).toEqual({ downloads: 0, tickets: 0 });
-  await report
-    .locator('.moderation-report-success')
-    .getByRole('button', { name: 'Close report' })
-    .click();
+  await report.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('button', { name: 'Close message details' }).click();
 
   const governance = await openRoomSettings(page, 'Moderation');
