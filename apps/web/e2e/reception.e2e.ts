@@ -13,11 +13,11 @@ for (const width of [1440, 390]) {
     const card = panel.getByRole('article');
     await expect(card.getByText('Reception Scout')).toBeVisible();
     await expect(card.getByText('Waiting for your mention')).toBeVisible();
-    await card.getByRole('button', { name: 'Take over manually', exact: true }).click();
+    await card.getByRole('button', { name: 'Take over myself', exact: true }).click();
     await expect(card.getByText('Paused', { exact: true })).toBeVisible();
-    await card.getByRole('button', { name: 'Return to background reception' }).click();
+    await card.getByRole('button', { name: 'Hand back to background replies' }).click();
     await expect(card.getByText('Waiting for your mention')).toBeVisible();
-    await card.getByRole('button', { name: 'Take over manually', exact: true }).click();
+    await card.getByRole('button', { name: 'Take over myself', exact: true }).click();
     await expect(card.getByText('Paused', { exact: true })).toBeVisible();
     await card.getByText('Authorization and paths', { exact: true }).click();
     await card.getByLabel('Workspace', { exact: true }).fill('C:/Projects/Studio updated');
@@ -37,9 +37,11 @@ test('未确认回复须核对回执且不能直接移除', async ({ page }, tes
   const panel = page.getByRole('region', { name: 'Background replies' });
   await expect(panel.getByText('receiver.reply_unconfirmed')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
-  await panel.getByRole('button', { name: 'Verify receipt' }).click();
-  await expect(panel.getByText('Reply confirmed in room')).toBeVisible();
-  await expect(panel.getByRole('button', { name: 'Return to background reception' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(panel.getByText('The reply is in the room')).toBeVisible();
+  await expect(
+    panel.getByRole('button', { name: 'Hand back to background replies' }),
+  ).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await panel.screenshot({ path: testInfo.outputPath('reception-reconciled.png') });
   expect(failures).toEqual([]);
@@ -48,11 +50,15 @@ test('未确认回复须核对回执且不能直接移除', async ({ page }, tes
 test('旧版未确认投递禁止自动重试但保留手动处理入口', async ({ page }) => {
   await page.goto('/e2e/fixtures/my-agents.html?host=ready&reception=legacy');
   const panel = page.getByRole('region', { name: 'Background replies' });
-  await expect(panel.getByText(/This older delivery has no correlation ID/u)).toBeVisible();
-  await expect(panel.getByRole('button', { name: 'Retry reply' })).toBeDisabled();
-  await expect(panel.getByRole('button', { name: 'Verify receipt' })).toBeDisabled();
+  await expect(
+    panel.getByText(/This came from an older version and cannot be confirmed automatically/u),
+  ).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Reply again' })).toBeDisabled();
+  await expect(panel.getByRole('button', { name: 'Check', exact: true })).toBeDisabled();
   await panel.getByRole('button', { name: 'Skip this message' }).click();
-  await expect(panel.getByRole('button', { name: 'Return to background reception' })).toBeEnabled();
+  await expect(
+    panel.getByRole('button', { name: 'Hand back to background replies' }),
+  ).toBeEnabled();
 });
 
 test('Claude Code 登记使用相同的接待管理入口', async ({ page }) => {

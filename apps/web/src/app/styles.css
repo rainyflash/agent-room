@@ -263,41 +263,40 @@
 
 .moderation-ledger__row code,
 .moderation-ledger__row span,
-.moderation-ledger__target,
 .moderation-ledger__privacy {
   overflow: hidden;
   margin: 0;
   color: var(--ar-ink-48);
-  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.45;
   text-overflow: ellipsis;
 }
 
-.moderation-ledger__facts {
+.moderation-ledger__description {
+  margin: 0.4rem 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* 每一项的排查信息：消息 ID、举报 ID、错误码。 */
+.moderation-ledger__details {
+  margin-top: 0.4rem;
+  font-size: 12px;
+}
+
+.moderation-ledger__details dl {
   display: grid;
   gap: 0.35rem;
   margin: 0;
 }
 
-.moderation-ledger__facts > div {
-  display: grid;
-  gap: 0.4rem;
-  grid-template-columns: 92px minmax(0, 1fr);
+.moderation-ledger__details dt {
+  color: var(--ar-muted);
 }
 
-.moderation-ledger__facts dt,
-.moderation-ledger__facts dd {
+.moderation-ledger__details dd {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.moderation-ledger__facts dt {
-  color: var(--ar-ink-48);
-}
-
-.moderation-ledger__facts dd {
   overflow-wrap: anywhere;
 }
 

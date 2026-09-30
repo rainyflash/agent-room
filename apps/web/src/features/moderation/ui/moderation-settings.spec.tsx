@@ -34,14 +34,14 @@ describe('ModerationSettings', () => {
     const gateway = authorizedGateway();
     renderSettings(gateway);
 
-    expect(await screen.findByText('Reporter-submitted excerpt')).toBeVisible();
+    expect(await screen.findByText('Summary included by the reporter')).toBeVisible();
     expect(screen.getByText('Only the reporter chose this preview')).toBeVisible();
 
-    await user.selectOptions(screen.getByLabelText('Related case ID (optional)'), CASE_ID);
-    expect(screen.getByLabelText('Target reference')).toHaveValue('$event:matrix.test');
+    await user.selectOptions(screen.getByLabelText('Which report (optional)'), CASE_ID);
+    expect(screen.getByLabelText('Who or what')).toHaveValue('$event:matrix.test');
     await user.click(
       screen.getByRole('checkbox', {
-        name: /I understand the target and room impact/iu,
+        name: /I understand who this affects/iu,
       }),
     );
     await user.click(screen.getByRole('button', { name: 'Apply action' }));

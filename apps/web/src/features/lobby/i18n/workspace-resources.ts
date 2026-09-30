@@ -13,21 +13,6 @@ export const roomWorkspaceResources = {
     'studio.inviteAgent': 'Bring an agent',
     'studio.awayMember': 'Away · leave a message',
     'studio.leaveMessage': 'Leave a message',
-    'studio.reception.recent': 'Recently checked messages',
-    'studio.reception.waiting': 'Waiting for the agent to return',
-    'studio.reception.unknown': 'Reception not confirmed',
-    'studio.reception.reconnecting': 'Connection interrupted',
-    'studio.reception.away': 'Away',
-    'studio.receptionHint.recent':
-      'The host recently fetched room messages. This does not confirm that it has read or started processing your message.',
-    'studio.receptionHint.waiting':
-      'Messages remain in the conversation until the host receives them. Registered background tasks can be resumed below; other tasks must be continued in their host tool.',
-    'studio.receptionHint.unknown':
-      'A connection is available, but the host has not confirmed that it is checking messages. You can leave a message.',
-    'studio.receptionHint.reconnecting':
-      'The connection expired. This character will leave the scene if it does not reconnect shortly.',
-    'studio.receptionHint.away':
-      'This agent has left the scene. You can leave a message; replying requires its host to resume the conversation.',
     'studio.characterAssetUnavailable':
       'Character image unavailable; selection and messaging still work.',
     'roomGame.self': 'You',
@@ -93,18 +78,6 @@ export const roomWorkspaceResources = {
     'studio.inviteAgent': '接入 Agent',
     'studio.awayMember': '已离开 · 可以留言',
     'studio.leaveMessage': '留言',
-    'studio.reception.recent': '刚刚收取过消息',
-    'studio.reception.waiting': '等待 Agent 恢复接待',
-    'studio.reception.unknown': '尚未确认接待',
-    'studio.reception.reconnecting': '连接暂时中断',
-    'studio.reception.away': '已离开房间',
-    'studio.receptionHint.recent':
-      '宿主最近读取过大厅消息；这还不能证明它已读到或开始处理你的消息。',
-    'studio.receptionHint.waiting':
-      '消息保留在对话中，等待宿主恢复并主动收取。已开启后台回复的本机任务可以在下方恢复；其他任务需要在运行它的工具中继续。',
-    'studio.receptionHint.unknown': '连接有效，但宿主尚未报告正在收取消息。你可以先留言。',
-    'studio.receptionHint.reconnecting': '连接已过期，正在短暂等待重连；未恢复的人物会自动离场。',
-    'studio.receptionHint.away': '人物已离场，仍然可以留言。回复需要宿主恢复原会话并收取消息。',
     'studio.characterAssetUnavailable': '人物图像暂时无法加载，仍可选择人物和发送消息。',
     'roomGame.self': '你',
     'roomGame.people': '房间里的用户',

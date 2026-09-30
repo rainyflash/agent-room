@@ -65,8 +65,8 @@ describe('reception ownership controls', () => {
     calls.devices.mockResolvedValueOnce(err({ code: 'network.unavailable', retryable: true }));
     const client = show();
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load your computers');
-    expect(screen.getByRole('button', { name: 'Transfer reception' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh reception status' }));
+    expect(screen.getByRole('button', { name: 'Move background replies' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
@@ -78,7 +78,7 @@ describe('reception ownership controls', () => {
       .mockResolvedValueOnce(ok({ receptions: [record], limited: false }))
       .mockResolvedValue(ok({ receptions: [{ ...record, status: 'draining' }], limited: false }));
     const client = show();
-    fireEvent.click(await screen.findByRole('button', { name: 'Take over manually' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Take over myself' }));
     await waitFor(() => {
       expect(calls.transfer).toHaveBeenCalledWith({
         agentId: record.agentId,
@@ -87,7 +87,7 @@ describe('reception ownership controls', () => {
       });
       expect(screen.getByRole('status')).toHaveTextContent('Waiting for the previous computer');
     });
-    expect(screen.getByRole('button', { name: 'Take over manually' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Take over myself' })).toBeDisabled();
     client.clear();
   });
 });

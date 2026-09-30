@@ -42,21 +42,24 @@ describe('AutomationSettings', () => {
     const gateway = automationGateway([]);
     gateway.create.mockResolvedValueOnce(err({ code: 'automation.unreachable', retryable: true }));
     renderSettings(gateway.value);
-    await screen.findByRole('heading', { name: 'New bounded grant' });
-    await user.click(screen.getByRole('checkbox', { name: 'New room messages' }));
+    await screen.findByRole('heading', { name: 'Let an agent speak on its own' });
+    await user.click(screen.getByRole('checkbox', { name: 'New messages' }));
     await user.click(screen.getByRole('checkbox', { name: 'Replies' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Audience' }), 'any_room_member');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Who it may answer' }),
+      'any_room_member',
+    );
     await user.clear(screen.getByRole('spinbutton', { name: 'Messages per minute' }));
     await user.type(screen.getByRole('spinbutton', { name: 'Messages per minute' }), '3');
-    await user.clear(screen.getByRole('spinbutton', { name: /Maximum total messages/u }));
-    await user.type(screen.getByRole('spinbutton', { name: /Maximum total messages/u }), '20');
-    await user.selectOptions(screen.getByRole('combobox', { name: /Lifetime/u }), '3600');
+    await user.clear(screen.getByRole('spinbutton', { name: /Messages in total/u }));
+    await user.type(screen.getByRole('spinbutton', { name: /Messages in total/u }), '20');
+    await user.selectOptions(screen.getByRole('combobox', { name: /For how long/u }), '3600');
     await user.click(
       screen.getByRole('checkbox', {
-        name: 'I understand this Agent can send without per-message approval.',
+        name: 'I understand it will speak without asking me each time.',
       }),
     );
-    await user.click(screen.getByRole('button', { name: 'Create grant' }));
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
     await screen.findByRole('alert');
     expect(gateway.create).toHaveBeenCalledOnce();
     expect(readAutomationGrantDraft(AGENT_ID)).toMatchObject({
@@ -69,21 +72,23 @@ describe('AutomationSettings', () => {
     expect(hasAutomationDraftFor(AGENT_ID, GRANT_ID)).toBe(false);
     cleanup();
     renderSettings(gateway.value);
-    await screen.findByRole('heading', { name: 'New bounded grant' });
+    await screen.findByRole('heading', { name: 'Let an agent speak on its own' });
     expect(screen.getByRole('checkbox', { name: 'Replies' })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: 'New room messages' })).not.toBeChecked();
-    expect(screen.getByRole('combobox', { name: 'Audience' })).toHaveValue('any_room_member');
+    expect(screen.getByRole('checkbox', { name: 'New messages' })).not.toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Who it may answer' })).toHaveValue(
+      'any_room_member',
+    );
     expect(screen.getByRole('spinbutton', { name: 'Messages per minute' })).toHaveValue(3);
-    expect(screen.getByRole('spinbutton', { name: /Maximum total messages/u })).toHaveValue(20);
-    expect(screen.getByRole('combobox', { name: /Lifetime/u })).toHaveValue('3600');
-    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
+    expect(screen.getByRole('spinbutton', { name: /Messages in total/u })).toHaveValue(20);
+    expect(screen.getByRole('combobox', { name: /For how long/u })).toHaveValue('3600');
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
     expect(gateway.create).toHaveBeenCalledOnce();
     await user.click(
       screen.getByRole('checkbox', {
-        name: 'I understand this Agent can send without per-message approval.',
+        name: 'I understand it will speak without asking me each time.',
       }),
     );
-    await user.click(screen.getByRole('button', { name: 'Create grant' }));
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
     await waitFor(() => {
       expect(gateway.create).toHaveBeenCalledTimes(2);
     });
@@ -101,15 +106,17 @@ describe('AutomationSettings', () => {
     const gateway = automationGateway([]);
     renderSettings(gateway.value);
 
-    expect(await screen.findByRole('heading', { name: 'New bounded grant' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create grant' })).toBeDisabled();
+    expect(
+      await screen.findByRole('heading', { name: 'Let an agent speak on its own' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
 
     await user.click(
       screen.getByRole('checkbox', {
-        name: 'I understand this Agent can send without per-message approval.',
+        name: 'I understand it will speak without asking me each time.',
       }),
     );
-    await user.click(screen.getByRole('button', { name: 'Create grant' }));
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
 
     await waitFor(() => {
       expect(gateway.create).toHaveBeenCalledOnce();
@@ -128,7 +135,7 @@ describe('AutomationSettings', () => {
       requiresRiskScan: true,
       roomCatalogId: ROOM_ID,
     });
-    expect(screen.getByRole('combobox', { name: 'Lifetime' })).toHaveValue(
+    expect(screen.getByRole('combobox', { name: 'For how long' })).toHaveValue(
       String(30 * 24 * 60 * 60),
     );
     expect(await screen.findByText('Local Agent')).toBeInTheDocument();
@@ -139,32 +146,35 @@ describe('AutomationSettings', () => {
     const gateway = automationGateway([]);
     renderSettings(gateway.value);
 
-    await screen.findByRole('button', { name: 'Create grant' });
-    expect(screen.queryByRole('button', { name: 'Verify identity again' })).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Allow' });
+    expect(screen.queryByRole('button', { name: 'Sign in again' })).not.toBeInTheDocument();
     await user.click(
       screen.getByRole('checkbox', {
-        name: 'I understand this Agent can send without per-message approval.',
+        name: 'I understand it will speak without asking me each time.',
       }),
     );
-    await user.click(screen.getByRole('button', { name: 'Create grant' }));
-    await user.click(await screen.findByRole('button', { name: 'Revoke' }));
-    await screen.findByText('Revoked');
+    await user.click(screen.getByRole('button', { name: 'Allow' }));
+    await user.click(await screen.findByRole('button', { name: 'Stop' }));
+    await screen.findByText('Stopped');
     expect(gateway.revoke).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
 
   it('公开发言必须保持风险扫描并解释受众范围', async () => {
     const user = userEvent.setup();
     renderSettings(automationGateway([]).value);
     const riskScan = await screen.findByRole('checkbox', {
-      name: 'Require a passing risk scan before every autonomous send',
+      name: 'Check every message for risks before it is sent',
     });
     await user.click(riskScan);
     expect(riskScan).not.toBeChecked();
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Audience' }), 'any_room_member');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Who it may answer' }),
+      'any_room_member',
+    );
     expect(riskScan).toBeChecked();
     expect(riskScan).toBeDisabled();
-    expect(screen.getByText(/Public lobby replies are visible to everyone/u)).toBeInTheDocument();
+    expect(screen.getByText(/In a public lobby everyone sees replies/u)).toBeInTheDocument();
   });
 
   it('控制平面返回不确定状态时显示失败且不伪造授权', async () => {
@@ -174,8 +184,8 @@ describe('AutomationSettings', () => {
     );
     renderSettings(gateway.value);
 
-    expect(await screen.findByText('Automation grants could not be read.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Create grant' })).not.toBeInTheDocument();
+    expect(await screen.findByText('Could not load automation.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument();
   });
 });
 

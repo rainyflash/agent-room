@@ -1,4 +1,4 @@
-import { Button, StatusMark } from '@agent-room/ui-system';
+import { Button, Details, StatusMark } from '@agent-room/ui-system';
 import { FileWarning, RotateCcw, ScrollText, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -27,20 +27,13 @@ export function ModerationCaseLedger({ cases }: { readonly cases: readonly Moder
               <div className="moderation-ledger__row">
                 <div>
                   <strong>{t(`moderation.reason.${moderationCase.reason}`)}</strong>
-                  <code>{moderationCase.caseId}</code>
+                  <span>{formatter.format(moderationCase.createdAtUnixMs)}</span>
                 </div>
                 <StatusMark label={moderationCase.state} tone="network" />
               </div>
-              <dl className="moderation-ledger__facts">
-                <div>
-                  <dt>{t(`moderation.target.${moderationCase.targetKind}`)}</dt>
-                  <dd>{moderationCase.targetReference}</dd>
-                </div>
-                <div>
-                  <dt>{formatter.format(moderationCase.createdAtUnixMs)}</dt>
-                  <dd>{moderationCase.description}</dd>
-                </div>
-              </dl>
+              {moderationCase.description === '' ? null : (
+                <p className="moderation-ledger__description">{moderationCase.description}</p>
+              )}
               {moderationCase.evidence.reporterSubmittedExcerpt === null ? (
                 <p className="moderation-ledger__privacy">
                   {t('moderation.governance.case.noExcerpt')}
@@ -57,6 +50,15 @@ export function ModerationCaseLedger({ cases }: { readonly cases: readonly Moder
                   {t('moderation.governance.case.encrypted')}
                 </span>
               ) : null}
+              <LedgerDetails
+                facts={[
+                  [
+                    t(`moderation.target.${moderationCase.targetKind}`),
+                    moderationCase.targetReference,
+                  ],
+                  [t('moderation.governance.caseId'), moderationCase.caseId],
+                ]}
+              />
             </li>
           ))}
         </ol>
@@ -101,10 +103,14 @@ export function ModerationActionLedger({
                   tone={action.status === 'applied' ? 'network' : 'offline'}
                 />
               </div>
-              <code className="moderation-ledger__target">{action.targetReference}</code>
-              {action.failureCode === null ? null : (
-                <p className="moderation-ledger__privacy">{action.failureCode}</p>
-              )}
+              <LedgerDetails
+                facts={[
+                  [t(`moderation.target.${action.targetKind}`), action.targetReference],
+                  ...(action.failureCode === null
+                    ? []
+                    : ([[t('moderation.governance.failureCode'), action.failureCode]] as const)),
+                ]}
+              />
               {action.status === 'applied' ? (
                 <Button
                   disabled={!recentlyAuthenticated || pendingActionId !== null}
@@ -160,13 +166,40 @@ export function ModerationAuditLedger({
                   tone={event.outcome === 'allowed' ? 'network' : 'offline'}
                 />
               </div>
-              <code className="moderation-ledger__target">{event.targetReference}</code>
-              <p className="moderation-ledger__privacy">{event.correlationId}</p>
+              <LedgerDetails
+                facts={[
+                  [t('moderation.governance.action.target'), event.targetReference],
+                  [t('moderation.governance.correlation'), event.correlationId],
+                ]}
+              />
             </li>
           ))}
         </ol>
       )}
     </section>
+  );
+}
+
+/** 消息 ID、举报 ID、错误码这些排查信息：收在每一项下面的详情里。 */
+function LedgerDetails({
+  facts,
+}: {
+  readonly facts: readonly (readonly [label: string, value: string])[];
+}) {
+  const { t } = useTranslation();
+  return (
+    <Details className="moderation-ledger__details" summary={t('moderation.governance.details')}>
+      <dl>
+        {facts.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>
+              <code>{value}</code>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Details>
   );
 }
 
