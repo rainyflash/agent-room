@@ -3,6 +3,7 @@
 }
 
 .handoff-panel {
+  container: handoff / inline-size;
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
   color: var(--color-ink);
   background: var(--color-paper);
@@ -10,79 +11,28 @@
 
 .handoff-panel__header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 0.75rem;
   padding: 1rem 1.25rem;
   border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
+.handoff-panel__header p {
+  margin: 0.15rem 0 0;
+  overflow: hidden;
+  color: var(--ar-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .handoff-panel__header h3 {
-  margin: 0.22rem 0 0;
+  margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
   letter-spacing: 0;
   font-family: var(--font-display);
-}
-
-.handoff-panel__cloud-badge > svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 1.8;
-}
-
-.handoff-panel__cloud-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.38rem;
-  padding: 0.25rem 0.7rem;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 999px;
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  letter-spacing: 0;
-  background: var(--ar-sky);
-  font-weight: 600;
-}
-
-.handoff-panel__source {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 0.7rem;
-  padding: 0.75rem 1.25rem;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
-  background: var(--ar-surface-muted);
-}
-
-.handoff-panel__source > svg {
-  width: 18px;
-  height: 18px;
-  color: var(--color-ink);
-  stroke-width: 1.7;
-}
-
-.handoff-panel__source > div {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 0.65rem;
-}
-
-.handoff-panel__source span,
-.handoff-panel__source code {
-  color: var(--ar-ink-48);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.handoff-panel__source strong {
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .handoff-panel__form {
@@ -182,13 +132,6 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.handoff-agent-group > header code,
-.handoff-target__identity code {
-  color: var(--ar-ink-48);
-  font-family: var(--font-mono);
-  font-size: 12px;
 }
 
 .handoff-device-group {
@@ -324,7 +267,6 @@
   border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
-.handoff-panel__authorization > header > span,
 .handoff-fieldset legend,
 .handoff-panel__review dt,
 .handoff-status-facts dt {
@@ -592,6 +534,16 @@
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
+.handoff-panel__status > .ar-details {
+  grid-column: 1 / -1;
+  margin: 0.75rem 1.15rem 1rem;
+}
+
+.handoff-panel__status > .ar-details .handoff-status-facts {
+  padding: 0;
+  border: 0;
+}
+
 .handoff-status-facts code {
   color: var(--ar-ink-48);
   font-family: var(--font-mono);
@@ -611,23 +563,10 @@
   .content-inspector:has(.handoff-panel) {
     width: calc(100% - 2rem);
   }
+}
 
-  .handoff-panel__cloud-badge {
-    display: none;
-  }
-
-  .handoff-panel__header {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .handoff-panel__source > div {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .handoff-panel__source span {
-    grid-column: 1 / -1;
-  }
-
+/* 按面板自己的宽度排成一列：房间右侧的面板比窗口窄得多，两列会被截掉。 */
+@container handoff (max-width: 680px) {
   .handoff-panel__form,
   .handoff-panel__status {
     grid-template-columns: 1fr;

@@ -1,12 +1,10 @@
 import { initials } from '@/shared/ui/display-name';
 
-import { Button, StatusMark, type StatusTone } from '@agent-room/ui-system';
+import { Button, Details, StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { useMachine } from '@xstate/react';
 import {
   ArrowLeft,
   Bot,
-  CircleDot,
-  FileLock2,
   Laptop,
   LoaderCircle,
   RefreshCw,
@@ -137,22 +135,10 @@ export function HandoffPanel({
           <ArrowLeft aria-hidden="true" />
         </button>
         <div>
-          <p className="eyebrow">{t('handoff.eyebrow')}</p>
           <h3 id="handoff-panel-title">{t('handoff.title')}</h3>
+          <p>{message.preview.title}</p>
         </div>
-        <span className="handoff-panel__cloud-badge">
-          <CircleDot aria-hidden="true" />
-          {t('handoff.cloudBadge')}
-        </span>
       </header>
-      <div className="handoff-panel__source">
-        <FileLock2 aria-hidden="true" />
-        <div>
-          <span>{t('handoff.source')}</span>
-          <strong>{message.preview.title}</strong>
-          <code>{message.content.digestSha256.slice(0, 16)}…</code>
-        </div>
-      </div>
       {delivery.matches('resolvingTargets') ? (
         <HandoffProgress
           detail={t('handoff.progress.targetsDetail')}
@@ -176,7 +162,6 @@ export function HandoffPanel({
           />
           <section className="handoff-panel__authorization">
             <header>
-              <span>{t('handoff.authorization.eyebrow')}</span>
               <strong>{t('handoff.authorization.title')}</strong>
               <p>{t('handoff.authorization.detail')}</p>
             </header>
@@ -368,7 +353,6 @@ function TargetDirectory({
               </span>
               <div>
                 <strong>{agent.agentDisplayName}</strong>
-                <code>{shortId(agent.agentId)}</code>
               </div>
             </header>
             {agent.devices.map(({ device, targets: deviceTargets }) => (
@@ -398,7 +382,6 @@ function TargetDirectory({
                     </span>
                     <span className="handoff-target__identity">
                       <strong>{target.adapterType}</strong>
-                      <code>{shortId(target.instanceId)}</code>
                     </span>
                     <span className="handoff-target__state">
                       <strong>
@@ -480,7 +463,6 @@ function HandoffStatusView({
           tone={statusTone[snapshot.status]}
         />
         <div>
-          <p className="eyebrow">{t('handoff.status.eyebrow')}</p>
           <strong>{t(`handoff.status.${snapshot.status}`)}</strong>
           <p>{t(`handoff.statusDetail.${snapshot.status}`)}</p>
         </div>
@@ -512,12 +494,6 @@ function HandoffStatusView({
           </dd>
         </div>
         <div>
-          <dt>{t('handoff.status.handoffId')}</dt>
-          <dd>
-            <code>{snapshot.handoffId}</code>
-          </dd>
-        </div>
-        <div>
           <dt>{t('handoff.review.expiry')}</dt>
           <dd>
             {t('handoff.expiresAt', {
@@ -528,15 +504,25 @@ function HandoffStatusView({
             })}
           </dd>
         </div>
-        {snapshot.failureCode === null ? null : (
+      </dl>
+      <Details summary={t('handoff.status.details')}>
+        <dl className="handoff-status-facts">
           <div>
-            <dt>{t('handoff.status.failureCode')}</dt>
+            <dt>{t('handoff.status.handoffId')}</dt>
             <dd>
-              <code>{snapshot.failureCode}</code>
+              <code>{snapshot.handoffId}</code>
             </dd>
           </div>
-        )}
-      </dl>
+          {snapshot.failureCode === null ? null : (
+            <div>
+              <dt>{t('handoff.status.failureCode')}</dt>
+              <dd>
+                <code>{snapshot.failureCode}</code>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </Details>
       {onQuery === undefined && onRevoke === undefined ? null : (
         <footer className="handoff-panel__status-actions">
           {onQuery === undefined ? null : (

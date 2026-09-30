@@ -61,14 +61,14 @@ describe('HandoffPanel', () => {
     expect(screen.getByText('Research Agent')).toBeInTheDocument();
     expect(screen.getByText('Studio PC')).toBeInTheDocument();
     expect(screen.getByText('Travel PC')).toBeInTheDocument();
-    expect(screen.getByText('Online · deliver now')).toBeInTheDocument();
-    expect(screen.getByText('Offline · queue')).toBeInTheDocument();
+    expect(screen.getByText('Online · gets it now')).toBeInTheDocument();
+    expect(screen.getByText('Offline · gets it later')).toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: /claude-desktop/i }));
-    expect(screen.getByText('Queue until this instance reconnects')).toBeInTheDocument();
+    expect(screen.getByText('When it reconnects')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirm handoff' }));
 
-    await screen.findByText('Queued for one instance');
+    await screen.findByText('Waiting for the agent');
     expect(runtime.approve).toHaveBeenCalledOnce();
     expect(runtime.approve.mock.calls[0]?.[0].target.instanceId).toBe(offlineTarget.instanceId);
   });
