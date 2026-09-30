@@ -64,10 +64,10 @@ test('中英长字符串膨胀和缺失中文分支不会破坏布局', async ({
   await expectNoHorizontalOverflow(page);
   await expect(page.getByRole('button', { name: /Sign in|Retry/u })).toBeVisible();
 
-  const fallback = await removeChineseMessageAndUseFallback(page, 'app.environment');
+  const fallback = await removeChineseMessageAndUseFallback(page, 'app.skipToContent');
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-  expect(fallback).toContain('FEDERATED OPERATIONS LOBBY');
-  await expect(page.locator('body')).not.toContainText('app.environment');
+  expect(fallback).toContain('Skip to main content');
+  await expect(page.locator('body')).not.toContainText('app.skipToContent');
 });
 
 async function installExpandedEnglishCatalog(page: Page): Promise<void> {

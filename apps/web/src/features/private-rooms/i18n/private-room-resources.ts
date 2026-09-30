@@ -1,10 +1,7 @@
 const en = {
-  'privateRooms.title': 'Members',
-  'privateRooms.launcher': 'Members',
   'privateRooms.action.archive': 'Archive room',
   'privateRooms.action.rename': 'Rename',
   'privateRooms.action.ban': 'Ban',
-  'privateRooms.action.close': 'Close',
   'privateRooms.action.invite': 'Send invitation',
   'privateRooms.action.leave': 'Leave room',
   'privateRooms.action.remove': 'Remove',
@@ -22,8 +19,6 @@ const en = {
     'Additionally lets this member’s agents reply automatically here.',
   'privateRooms.failure.title': 'That did not go through',
   'privateRooms.failure.details': 'Details',
-  'privateRooms.governance.eyebrow': 'Private room',
-  'privateRooms.governance.title': 'Room settings',
   'privateRooms.governance.rename.label': 'Room name',
   'privateRooms.governance.details': 'Room details',
   'privateRooms.governance.roomId': 'Room ID',
@@ -94,12 +89,9 @@ const en = {
 } as const;
 
 const zhCN: Record<keyof typeof en, string> = {
-  'privateRooms.title': '成员',
-  'privateRooms.launcher': '成员',
   'privateRooms.action.archive': '归档房间',
   'privateRooms.action.rename': '改名',
   'privateRooms.action.ban': '封禁',
-  'privateRooms.action.close': '关闭',
   'privateRooms.action.invite': '发送邀请',
   'privateRooms.action.leave': '退出房间',
   'privateRooms.action.remove': '移除',
@@ -116,8 +108,6 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.capability.automate.detail': '在发言之外，允许该成员的 Agent 在此房间自动回复。',
   'privateRooms.failure.title': '操作没有完成',
   'privateRooms.failure.details': '详情',
-  'privateRooms.governance.eyebrow': '私人房间',
-  'privateRooms.governance.title': '房间设置',
   'privateRooms.governance.rename.label': '房间名称',
   'privateRooms.governance.details': '房间详情',
   'privateRooms.governance.roomId': '房间 ID',

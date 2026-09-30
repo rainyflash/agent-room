@@ -1,6 +1,5 @@
-import { OverlayContainerProvider } from '@/shared/ui/overlay-container';
 import { X } from 'lucide-react';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export function WorkspaceDrawer({
@@ -16,7 +15,6 @@ export function WorkspaceDrawer({
 }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
-  const [overlayContainer, setOverlayContainer] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     const element = dialog.current;
     if (element === null) return;
@@ -47,8 +45,7 @@ export function WorkspaceDrawer({
       >
         <X aria-hidden="true" />
       </button>
-      <OverlayContainerProvider container={overlayContainer}>{children}</OverlayContainerProvider>
-      <div className="workspace-drawer__overlays" ref={setOverlayContainer} />
+      {children}
     </dialog>
   );
 }

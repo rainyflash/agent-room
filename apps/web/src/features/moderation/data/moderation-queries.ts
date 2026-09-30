@@ -12,16 +12,6 @@ export const moderationRoomCaseListQueryKey = (catalogId: string) =>
 export const moderationCapabilitiesQueryKey = (catalogId: string) =>
   ['control-plane', 'moderation', 'capabilities', catalogId] as const;
 
-export function moderationCaseListQueryOptions(gateway: ModerationGateway) {
-  return queryOptions({
-    queryFn: async () => await gateway.listCases(),
-    queryKey: moderationCaseListQueryKey,
-    networkMode: 'always',
-    retry: false,
-    staleTime: 5_000,
-  });
-}
-
 export function moderationActionListQueryOptions(gateway: ModerationGateway, catalogId: string) {
   return queryOptions({
     queryFn: async () => await gateway.listActions(catalogId),
@@ -60,10 +50,6 @@ export function moderationCapabilitiesQueryOptions(gateway: ModerationGateway, c
     retry: false,
     staleTime: 5_000,
   });
-}
-
-export function useModerationCases(gateway: ModerationGateway, enabled = true) {
-  return useQuery({ ...moderationCaseListQueryOptions(gateway), enabled });
 }
 
 export function useModerationActions(
