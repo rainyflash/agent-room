@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 890
-- npm packages: 714
-- Total locked package versions: 1604
+- npm packages: 716
+- Total locked package versions: 1606
 - `Cargo.lock` SHA-256: `1201b923509df8072ce68281d6851ab3422f60640ce46d8b4bd9c7a506451e75`
-- `pnpm-lock.yaml` SHA-256: `02e7be27474b53e7e4f3f7c2513679df97804da9b2299df6537f6aeb6f11df8a`
+- `pnpm-lock.yaml` SHA-256: `874ba669d61779a15325e45706d0071235f55c170bb5e7928f3b236810854272`
 
 ## License expressions
 
@@ -51,7 +51,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 56 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 766 |
+| `MIT` | 768 |
 | `MIT AND BSD-3-Clause` | 1 |
 | `MIT OR Apache-2.0` | 380 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
@@ -999,6 +999,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@babel/helpers](https://www.npmjs.com/package/@babel/helpers/v/7.29.7) | 7.29.7 | `MIT` |
 | npm | [@babel/parser](https://www.npmjs.com/package/@babel/parser/v/7.29.7) | 7.29.7 | `MIT` |
 | npm | [@babel/parser](https://www.npmjs.com/package/@babel/parser/v/7.29.8) | 7.29.8 | `MIT` |
+| npm | [@babel/parser](https://www.npmjs.com/package/@babel/parser/v/7.29.9) | 7.29.9 | `MIT` |
 | npm | [@babel/parser](https://www.npmjs.com/package/@babel/parser/v/8.0.4) | 8.0.4 | `MIT` |
 | npm | [@babel/plugin-bugfix-firefox-class-in-computed-class-key](https://www.npmjs.com/package/@babel/plugin-bugfix-firefox-class-in-computed-class-key/v/7.29.7) | 7.29.7 | `MIT` |
 | npm | [@babel/plugin-bugfix-safari-class-field-initializer-scope](https://www.npmjs.com/package/@babel/plugin-bugfix-safari-class-field-initializer-scope/v/7.29.7) | 7.29.7 | `MIT` |
@@ -1210,20 +1211,20 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [balanced-match](https://www.npmjs.com/package/balanced-match/v/1.0.2) | 1.0.2 | `MIT` |
 | npm | [balanced-match](https://www.npmjs.com/package/balanced-match/v/4.0.4) | 4.0.4 | `MIT` |
 | npm | [base-x](https://www.npmjs.com/package/base-x/v/5.0.1) | 5.0.1 | `MIT` |
-| npm | [baseline-browser-mapping](https://www.npmjs.com/package/baseline-browser-mapping/v/2.11.19) | 2.11.19 | `Apache-2.0` |
+| npm | [baseline-browser-mapping](https://www.npmjs.com/package/baseline-browser-mapping/v/2.11.26) | 2.11.26 | `Apache-2.0` |
 | npm | [bidi-js](https://www.npmjs.com/package/bidi-js/v/1.0.3) | 1.0.3 | `MIT` |
 | npm | [body-parser](https://www.npmjs.com/package/body-parser/v/2.3.0) | 2.3.0 | `MIT` |
 | npm | [boolbase](https://www.npmjs.com/package/boolbase/v/1.0.0) | 1.0.0 | `ISC` |
-| npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/2.1.4) | 2.1.4 | `MIT` |
+| npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/2.1.7) | 2.1.7 | `MIT` |
 | npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/5.0.9) | 5.0.9 | `MIT` |
-| npm | [browserslist](https://www.npmjs.com/package/browserslist/v/4.28.8) | 4.28.8 | `MIT` |
+| npm | [browserslist](https://www.npmjs.com/package/browserslist/v/4.29.3) | 4.29.3 | `MIT` |
 | npm | [bs58](https://www.npmjs.com/package/bs58/v/6.0.0) | 6.0.0 | `MIT` |
 | npm | [buffer-from](https://www.npmjs.com/package/buffer-from/v/1.1.2) | 1.1.2 | `MIT` |
 | npm | [bytes](https://www.npmjs.com/package/bytes/v/3.1.2) | 3.1.2 | `MIT` |
 | npm | [call-bind](https://www.npmjs.com/package/call-bind/v/1.0.9) | 1.0.9 | `MIT` |
 | npm | [call-bind-apply-helpers](https://www.npmjs.com/package/call-bind-apply-helpers/v/1.0.2) | 1.0.2 | `MIT` |
 | npm | [call-bound](https://www.npmjs.com/package/call-bound/v/1.0.4) | 1.0.4 | `MIT` |
-| npm | [caniuse-lite](https://www.npmjs.com/package/caniuse-lite/v/1.0.30001809) | 1.0.30001809 | `CC-BY-4.0` |
+| npm | [caniuse-lite](https://www.npmjs.com/package/caniuse-lite/v/1.0.30001813) | 1.0.30001813 | `CC-BY-4.0` |
 | npm | [chai](https://www.npmjs.com/package/chai/v/6.2.2) | 6.2.2 | `MIT` |
 | npm | [cheerio](https://www.npmjs.com/package/cheerio/v/1.2.0) | 1.2.0 | `MIT` |
 | npm | [cheerio-select](https://www.npmjs.com/package/cheerio-select/v/2.1.0) | 2.1.0 | `BSD-2-Clause` |
@@ -1272,7 +1273,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [edn-data](https://www.npmjs.com/package/edn-data/v/1.2.2) | 1.2.2 | `MIT` |
 | npm | [ee-first](https://www.npmjs.com/package/ee-first/v/1.1.1) | 1.1.1 | `MIT` |
 | npm | [ejs](https://www.npmjs.com/package/ejs/v/3.1.10) | 3.1.10 | `Apache-2.0` |
-| npm | [electron-to-chromium](https://www.npmjs.com/package/electron-to-chromium/v/1.5.412) | 1.5.412 | `ISC` |
+| npm | [electron-to-chromium](https://www.npmjs.com/package/electron-to-chromium/v/1.5.441) | 1.5.441 | `ISC` |
 | npm | [emoji-regex](https://www.npmjs.com/package/emoji-regex/v/10.6.0) | 10.6.0 | `MIT` |
 | npm | [encodeurl](https://www.npmjs.com/package/encodeurl/v/1.0.2) | 1.0.2 | `MIT` |
 | npm | [encoding-sniffer](https://www.npmjs.com/package/encoding-sniffer/v/0.2.1) | 0.2.1 | `MIT` |
@@ -1372,7 +1373,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [is-bigint](https://www.npmjs.com/package/is-bigint/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [is-boolean-object](https://www.npmjs.com/package/is-boolean-object/v/1.2.2) | 1.2.2 | `MIT` |
 | npm | [is-callable](https://www.npmjs.com/package/is-callable/v/1.2.7) | 1.2.7 | `MIT` |
-| npm | [is-core-module](https://www.npmjs.com/package/is-core-module/v/2.16.2) | 2.16.2 | `MIT` |
+| npm | [is-core-module](https://www.npmjs.com/package/is-core-module/v/2.17.0) | 2.17.0 | `MIT` |
 | npm | [is-data-view](https://www.npmjs.com/package/is-data-view/v/1.0.2) | 1.0.2 | `MIT` |
 | npm | [is-date-object](https://www.npmjs.com/package/is-date-object/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [is-document.all](https://www.npmjs.com/package/is-document.all/v/1.0.0) | 1.0.0 | `MIT` |
@@ -1462,7 +1463,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [nanoid](https://www.npmjs.com/package/nanoid/v/3.3.18) | 3.3.18 | `MIT` |
 | npm | [natural-compare](https://www.npmjs.com/package/natural-compare/v/1.4.0) | 1.4.0 | `MIT` |
 | npm | [negotiator](https://www.npmjs.com/package/negotiator/v/0.6.4) | 0.6.4 | `MIT` |
-| npm | [node-releases](https://www.npmjs.com/package/node-releases/v/2.0.53) | 2.0.53 | `MIT` |
+| npm | [node-releases](https://www.npmjs.com/package/node-releases/v/2.0.57) | 2.0.57 | `MIT` |
 | npm | [node-stream-zip](https://www.npmjs.com/package/node-stream-zip/v/1.16.0) | 1.16.0 | `MIT` |
 | npm | [npm-install-checks](https://www.npmjs.com/package/npm-install-checks/v/8.0.0) | 8.0.0 | `BSD-2-Clause` |
 | npm | [npm-normalize-package-bin](https://www.npmjs.com/package/npm-normalize-package-bin/v/5.0.0) | 5.0.0 | `ISC` |
@@ -1497,6 +1498,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [pathe](https://www.npmjs.com/package/pathe/v/2.0.3) | 2.0.3 | `MIT` |
 | npm | [picocolors](https://www.npmjs.com/package/picocolors/v/1.1.1) | 1.1.1 | `ISC` |
 | npm | [picomatch](https://www.npmjs.com/package/picomatch/v/4.0.5) | 4.0.5 | `MIT` |
+| npm | [picomatch](https://www.npmjs.com/package/picomatch/v/4.0.7) | 4.0.7 | `MIT` |
 | npm | [pixi.js](https://www.npmjs.com/package/pixi.js/v/8.20.0) | 8.20.0 | `MIT` |
 | npm | [playwright](https://www.npmjs.com/package/playwright/v/1.62.1) | 1.62.1 | `Apache-2.0` |
 | npm | [playwright-core](https://www.npmjs.com/package/playwright-core/v/1.62.1) | 1.62.1 | `Apache-2.0` |
@@ -1519,15 +1521,15 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [redent](https://www.npmjs.com/package/redent/v/3.0.0) | 3.0.0 | `MIT` |
 | npm | [reflect.getprototypeof](https://www.npmjs.com/package/reflect.getprototypeof/v/1.0.10) | 1.0.10 | `MIT` |
 | npm | [regenerate](https://www.npmjs.com/package/regenerate/v/1.4.2) | 1.4.2 | `MIT` |
-| npm | [regenerate-unicode-properties](https://www.npmjs.com/package/regenerate-unicode-properties/v/10.2.2) | 10.2.2 | `MIT` |
+| npm | [regenerate-unicode-properties](https://www.npmjs.com/package/regenerate-unicode-properties/v/10.3.0) | 10.3.0 | `MIT` |
 | npm | [regexp.prototype.flags](https://www.npmjs.com/package/regexp.prototype.flags/v/1.5.4) | 1.5.4 | `MIT` |
-| npm | [regexpu-core](https://www.npmjs.com/package/regexpu-core/v/6.4.0) | 6.4.0 | `MIT` |
+| npm | [regexpu-core](https://www.npmjs.com/package/regexpu-core/v/6.5.2) | 6.5.2 | `MIT` |
 | npm | [regjsgen](https://www.npmjs.com/package/regjsgen/v/0.8.0) | 0.8.0 | `MIT` |
-| npm | [regjsparser](https://www.npmjs.com/package/regjsparser/v/0.13.2) | 0.13.2 | `BSD-2-Clause` |
+| npm | [regjsparser](https://www.npmjs.com/package/regjsparser/v/0.13.3) | 0.13.3 | `BSD-2-Clause` |
 | npm | [require-from-string](https://www.npmjs.com/package/require-from-string/v/2.0.2) | 2.0.2 | `MIT` |
 | npm | [resolve](https://www.npmjs.com/package/resolve/v/1.22.12) | 1.22.12 | `MIT` |
 | npm | [rolldown](https://www.npmjs.com/package/rolldown/v/1.2.5) | 1.2.5 | `MIT` |
-| npm | [rollup](https://www.npmjs.com/package/rollup/v/4.62.5) | 4.62.5 | `MIT` |
+| npm | [rollup](https://www.npmjs.com/package/rollup/v/4.63.5) | 4.63.5 | `MIT` |
 | npm | [safe-array-concat](https://www.npmjs.com/package/safe-array-concat/v/1.1.4) | 1.1.4 | `MIT` |
 | npm | [safe-buffer](https://www.npmjs.com/package/safe-buffer/v/5.2.1) | 5.2.1 | `MIT` |
 | npm | [safe-push-apply](https://www.npmjs.com/package/safe-push-apply/v/1.0.0) | 1.0.0 | `MIT` |
@@ -1539,7 +1541,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [sdp-transform](https://www.npmjs.com/package/sdp-transform/v/3.0.0) | 3.0.0 | `MIT` |
 | npm | [semver](https://www.npmjs.com/package/semver/v/6.3.1) | 6.3.1 | `ISC` |
 | npm | [semver](https://www.npmjs.com/package/semver/v/7.8.5) | 7.8.5 | `ISC` |
-| npm | [serialize-javascript](https://www.npmjs.com/package/serialize-javascript/v/7.1.0) | 7.1.0 | `BSD-3-Clause` |
+| npm | [serialize-javascript](https://www.npmjs.com/package/serialize-javascript/v/7.1.2) | 7.1.2 | `BSD-3-Clause` |
 | npm | [seroval](https://www.npmjs.com/package/seroval/v/1.6.3) | 1.6.3 | `MIT` |
 | npm | [seroval-plugins](https://www.npmjs.com/package/seroval-plugins/v/1.6.3) | 1.6.3 | `MIT` |
 | npm | [set-function-length](https://www.npmjs.com/package/set-function-length/v/1.2.2) | 1.2.2 | `MIT` |
@@ -1570,7 +1572,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [stop-iteration-iterator](https://www.npmjs.com/package/stop-iteration-iterator/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [string-width](https://www.npmjs.com/package/string-width/v/7.2.0) | 7.2.0 | `MIT` |
 | npm | [string-width](https://www.npmjs.com/package/string-width/v/8.2.2) | 8.2.2 | `MIT` |
-| npm | [string.prototype.matchall](https://www.npmjs.com/package/string.prototype.matchall/v/4.0.12) | 4.0.12 | `MIT` |
+| npm | [string.prototype.matchall](https://www.npmjs.com/package/string.prototype.matchall/v/4.1.0) | 4.1.0 | `MIT` |
 | npm | [string.prototype.trim](https://www.npmjs.com/package/string.prototype.trim/v/1.2.11) | 1.2.11 | `MIT` |
 | npm | [string.prototype.trimend](https://www.npmjs.com/package/string.prototype.trimend/v/1.0.10) | 1.0.10 | `MIT` |
 | npm | [string.prototype.trimstart](https://www.npmjs.com/package/string.prototype.trimstart/v/1.0.8) | 1.0.8 | `MIT` |
@@ -1586,7 +1588,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [tar](https://www.npmjs.com/package/tar/v/7.5.22) | 7.5.22 | `BlueOak-1.0.0` |
 | npm | [temp-dir](https://www.npmjs.com/package/temp-dir/v/2.0.0) | 2.0.0 | `MIT` |
 | npm | [tempy](https://www.npmjs.com/package/tempy/v/0.6.0) | 0.6.0 | `MIT` |
-| npm | [terser](https://www.npmjs.com/package/terser/v/5.50.0) | 5.50.0 | `BSD-2-Clause` |
+| npm | [terser](https://www.npmjs.com/package/terser/v/5.51.2) | 5.51.2 | `BSD-2-Clause` |
 | npm | [tiny-lru](https://www.npmjs.com/package/tiny-lru/v/11.4.7) | 11.4.7 | `BSD-3-Clause` |
 | npm | [tinybench](https://www.npmjs.com/package/tinybench/v/2.9.0) | 2.9.0 | `MIT` |
 | npm | [tinyexec](https://www.npmjs.com/package/tinyexec/v/1.3.0) | 1.3.0 | `MIT` |
@@ -1606,7 +1608,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [type-is](https://www.npmjs.com/package/type-is/v/2.1.0) | 2.1.0 | `MIT` |
 | npm | [typed-array-buffer](https://www.npmjs.com/package/typed-array-buffer/v/1.0.3) | 1.0.3 | `MIT` |
 | npm | [typed-array-byte-length](https://www.npmjs.com/package/typed-array-byte-length/v/1.0.3) | 1.0.3 | `MIT` |
-| npm | [typed-array-byte-offset](https://www.npmjs.com/package/typed-array-byte-offset/v/1.0.4) | 1.0.4 | `MIT` |
+| npm | [typed-array-byte-offset](https://www.npmjs.com/package/typed-array-byte-offset/v/1.0.5) | 1.0.5 | `MIT` |
 | npm | [typed-array-length](https://www.npmjs.com/package/typed-array-length/v/1.0.8) | 1.0.8 | `MIT` |
 | npm | [typescript](https://www.npmjs.com/package/typescript/v/6.0.3) | 6.0.3 | `Apache-2.0` |
 | npm | [typescript-eslint](https://www.npmjs.com/package/typescript-eslint/v/8.67.0) | 8.67.0 | `MIT` |
@@ -1623,7 +1625,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [universalify](https://www.npmjs.com/package/universalify/v/2.0.1) | 2.0.1 | `MIT` |
 | npm | [unpipe](https://www.npmjs.com/package/unpipe/v/1.0.0) | 1.0.0 | `MIT` |
 | npm | [upath](https://www.npmjs.com/package/upath/v/1.2.0) | 1.2.0 | `MIT` |
-| npm | [update-browserslist-db](https://www.npmjs.com/package/update-browserslist-db/v/1.3.1) | 1.3.1 | `MIT` |
+| npm | [update-browserslist-db](https://www.npmjs.com/package/update-browserslist-db/v/1.3.3) | 1.3.3 | `MIT` |
 | npm | [uri-js](https://www.npmjs.com/package/uri-js/v/4.4.1) | 4.4.1 | `BSD-2-Clause` |
 | npm | [use-isomorphic-layout-effect](https://www.npmjs.com/package/use-isomorphic-layout-effect/v/1.2.1) | 1.2.1 | `MIT` |
 | npm | [use-sync-external-store](https://www.npmjs.com/package/use-sync-external-store/v/1.6.0) | 1.6.0 | `MIT` |
@@ -1646,7 +1648,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [which-boxed-primitive](https://www.npmjs.com/package/which-boxed-primitive/v/1.1.1) | 1.1.1 | `MIT` |
 | npm | [which-builtin-type](https://www.npmjs.com/package/which-builtin-type/v/1.2.1) | 1.2.1 | `MIT` |
 | npm | [which-collection](https://www.npmjs.com/package/which-collection/v/1.0.2) | 1.0.2 | `MIT` |
-| npm | [which-typed-array](https://www.npmjs.com/package/which-typed-array/v/1.1.22) | 1.1.22 | `MIT` |
+| npm | [which-typed-array](https://www.npmjs.com/package/which-typed-array/v/1.1.24) | 1.1.24 | `MIT` |
 | npm | [why-is-node-running](https://www.npmjs.com/package/why-is-node-running/v/2.3.0) | 2.3.0 | `MIT` |
 | npm | [word-wrap](https://www.npmjs.com/package/word-wrap/v/1.2.5) | 1.2.5 | `MIT` |
 | npm | [workbox-background-sync](https://www.npmjs.com/package/workbox-background-sync/v/7.4.1) | 7.4.1 | `MIT` |

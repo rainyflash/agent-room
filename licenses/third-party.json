@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "1201b923509df8072ce68281d6851ab3422f60640ce46d8b4bd9c7a506451e75",
-    "pnpm-lock.yaml": "02e7be27474b53e7e4f3f7c2513679df97804da9b2299df6537f6aeb6f11df8a"
+    "pnpm-lock.yaml": "874ba669d61779a15325e45706d0071235f55c170bb5e7928f3b236810854272"
   },
   "dependencies": [
     {
@@ -6483,6 +6483,13 @@
     {
       "ecosystem": "npm",
       "name": "@babel/parser",
+      "version": "7.29.9",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/@babel/parser/v/7.29.9"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@babel/parser",
       "version": "8.0.4",
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@babel/parser/v/8.0.4"
@@ -7960,9 +7967,9 @@
     {
       "ecosystem": "npm",
       "name": "baseline-browser-mapping",
-      "version": "2.11.19",
+      "version": "2.11.26",
       "license": "Apache-2.0",
-      "source": "https://www.npmjs.com/package/baseline-browser-mapping/v/2.11.19"
+      "source": "https://www.npmjs.com/package/baseline-browser-mapping/v/2.11.26"
     },
     {
       "ecosystem": "npm",
@@ -7988,9 +7995,9 @@
     {
       "ecosystem": "npm",
       "name": "brace-expansion",
-      "version": "2.1.4",
+      "version": "2.1.7",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/brace-expansion/v/2.1.4"
+      "source": "https://www.npmjs.com/package/brace-expansion/v/2.1.7"
     },
     {
       "ecosystem": "npm",
@@ -8002,9 +8009,9 @@
     {
       "ecosystem": "npm",
       "name": "browserslist",
-      "version": "4.28.8",
+      "version": "4.29.3",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/browserslist/v/4.28.8"
+      "source": "https://www.npmjs.com/package/browserslist/v/4.29.3"
     },
     {
       "ecosystem": "npm",
@@ -8051,9 +8058,9 @@
     {
       "ecosystem": "npm",
       "name": "caniuse-lite",
-      "version": "1.0.30001809",
+      "version": "1.0.30001813",
       "license": "CC-BY-4.0",
-      "source": "https://www.npmjs.com/package/caniuse-lite/v/1.0.30001809"
+      "source": "https://www.npmjs.com/package/caniuse-lite/v/1.0.30001813"
     },
     {
       "ecosystem": "npm",
@@ -8394,9 +8401,9 @@
     {
       "ecosystem": "npm",
       "name": "electron-to-chromium",
-      "version": "1.5.412",
+      "version": "1.5.441",
       "license": "ISC",
-      "source": "https://www.npmjs.com/package/electron-to-chromium/v/1.5.412"
+      "source": "https://www.npmjs.com/package/electron-to-chromium/v/1.5.441"
     },
     {
       "ecosystem": "npm",
@@ -9094,9 +9101,9 @@
     {
       "ecosystem": "npm",
       "name": "is-core-module",
-      "version": "2.16.2",
+      "version": "2.17.0",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/is-core-module/v/2.16.2"
+      "source": "https://www.npmjs.com/package/is-core-module/v/2.17.0"
     },
     {
       "ecosystem": "npm",
@@ -9724,9 +9731,9 @@
     {
       "ecosystem": "npm",
       "name": "node-releases",
-      "version": "2.0.53",
+      "version": "2.0.57",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/node-releases/v/2.0.53"
+      "source": "https://www.npmjs.com/package/node-releases/v/2.0.57"
     },
     {
       "ecosystem": "npm",
@@ -9968,6 +9975,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "picomatch",
+      "version": "4.0.7",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/picomatch/v/4.0.7"
+    },
+    {
+      "ecosystem": "npm",
       "name": "pixi.js",
       "version": "8.20.0",
       "license": "MIT",
@@ -10123,9 +10137,9 @@
     {
       "ecosystem": "npm",
       "name": "regenerate-unicode-properties",
-      "version": "10.2.2",
+      "version": "10.3.0",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/regenerate-unicode-properties/v/10.2.2"
+      "source": "https://www.npmjs.com/package/regenerate-unicode-properties/v/10.3.0"
     },
     {
       "ecosystem": "npm",
@@ -10137,9 +10151,9 @@
     {
       "ecosystem": "npm",
       "name": "regexpu-core",
-      "version": "6.4.0",
+      "version": "6.5.2",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/regexpu-core/v/6.4.0"
+      "source": "https://www.npmjs.com/package/regexpu-core/v/6.5.2"
     },
     {
       "ecosystem": "npm",
@@ -10151,9 +10165,9 @@
     {
       "ecosystem": "npm",
       "name": "regjsparser",
-      "version": "0.13.2",
+      "version": "0.13.3",
       "license": "BSD-2-Clause",
-      "source": "https://www.npmjs.com/package/regjsparser/v/0.13.2"
+      "source": "https://www.npmjs.com/package/regjsparser/v/0.13.3"
     },
     {
       "ecosystem": "npm",
@@ -10179,9 +10193,9 @@
     {
       "ecosystem": "npm",
       "name": "rollup",
-      "version": "4.62.5",
+      "version": "4.63.5",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/rollup/v/4.62.5"
+      "source": "https://www.npmjs.com/package/rollup/v/4.63.5"
     },
     {
       "ecosystem": "npm",
@@ -10263,9 +10277,9 @@
     {
       "ecosystem": "npm",
       "name": "serialize-javascript",
-      "version": "7.1.0",
+      "version": "7.1.2",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/serialize-javascript/v/7.1.0"
+      "source": "https://www.npmjs.com/package/serialize-javascript/v/7.1.2"
     },
     {
       "ecosystem": "npm",
@@ -10480,9 +10494,9 @@
     {
       "ecosystem": "npm",
       "name": "string.prototype.matchall",
-      "version": "4.0.12",
+      "version": "4.1.0",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/string.prototype.matchall/v/4.0.12"
+      "source": "https://www.npmjs.com/package/string.prototype.matchall/v/4.1.0"
     },
     {
       "ecosystem": "npm",
@@ -10592,9 +10606,9 @@
     {
       "ecosystem": "npm",
       "name": "terser",
-      "version": "5.50.0",
+      "version": "5.51.2",
       "license": "BSD-2-Clause",
-      "source": "https://www.npmjs.com/package/terser/v/5.50.0"
+      "source": "https://www.npmjs.com/package/terser/v/5.51.2"
     },
     {
       "ecosystem": "npm",
@@ -10732,9 +10746,9 @@
     {
       "ecosystem": "npm",
       "name": "typed-array-byte-offset",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/typed-array-byte-offset/v/1.0.4"
+      "source": "https://www.npmjs.com/package/typed-array-byte-offset/v/1.0.5"
     },
     {
       "ecosystem": "npm",
@@ -10851,9 +10865,9 @@
     {
       "ecosystem": "npm",
       "name": "update-browserslist-db",
-      "version": "1.3.1",
+      "version": "1.3.3",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/update-browserslist-db/v/1.3.1"
+      "source": "https://www.npmjs.com/package/update-browserslist-db/v/1.3.3"
     },
     {
       "ecosystem": "npm",
@@ -11012,9 +11026,9 @@
     {
       "ecosystem": "npm",
       "name": "which-typed-array",
-      "version": "1.1.22",
+      "version": "1.1.24",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/which-typed-array/v/1.1.22"
+      "source": "https://www.npmjs.com/package/which-typed-array/v/1.1.24"
     },
     {
       "ecosystem": "npm",
