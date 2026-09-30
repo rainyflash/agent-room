@@ -3,6 +3,7 @@ import { Compass, Footprints, Inbox, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { ThisComputerStatus } from '@/features/desktop/ui/this-computer-status';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import { useInbox } from '@/features/inbox/ui/inbox-provider';
 import { ApplicationVersionLink } from '@/features/updates/ui/application-version-link';
@@ -45,6 +46,7 @@ export function AppNavigation({
       </nav>
       <div className="app-navigation__actions">
         {actions}
+        <ThisComputerStatus />
         <LanguageControl />
       </div>
     </header>

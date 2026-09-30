@@ -1,0 +1,378 @@
+/* 顶栏里“这台电脑”的小状态：图标、状态点和一个词；窄屏只留图标和点。 */
+.this-computer-status {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.this-computer-status:hover {
+  background: var(--ar-surface-muted);
+}
+
+.this-computer-status > svg {
+  width: 17px;
+  height: 17px;
+}
+
+.this-computer-status__dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  background: var(--ar-sky);
+}
+
+.this-computer-status[data-state='connected'] .this-computer-status__dot {
+  background: var(--ar-success);
+}
+
+.this-computer-status[data-state='authorize'] .this-computer-status__dot {
+  background: var(--ar-sunny);
+}
+
+.this-computer-status[data-state='stopped'] .this-computer-status__dot {
+  background: var(--ar-coral);
+}
+
+@media (max-width: 760px) {
+  .this-computer-status {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0 10px;
+  }
+
+  .this-computer-status__label {
+    display: none;
+  }
+}
+
+/* 所有页面上方的提示：要授权或连接停了才出现。 */
+.this-computer-banner {
+  position: fixed;
+  z-index: 60;
+  top: 84px;
+  left: 50%;
+  width: min(640px, calc(100vw - 32px));
+  transform: translateX(-50%);
+}
+
+.this-computer-banner > .ar-banner {
+  box-shadow: 0 4px 0 var(--ar-outline);
+}
+
+@media (max-width: 760px) {
+  .this-computer-banner {
+    top: 12px;
+  }
+}
+
+/* “我的 Agent”里的“这台电脑”一节。 */
+.this-computer {
+  display: grid;
+  gap: 18px;
+  width: min(var(--ar-page-width), calc(100% - 80px));
+  margin: 0 auto 24px;
+  padding: 24px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  background: var(--ar-surface);
+  box-shadow: 0 6px 0 var(--ar-outline);
+  scroll-margin-top: 96px;
+}
+
+.this-computer__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.this-computer__header > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.this-computer__header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.this-computer__header p {
+  margin: 4px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.9375rem;
+}
+
+.this-computer__icon {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-mint);
+}
+
+.this-computer__icon > svg {
+  width: 22px;
+  height: 22px;
+}
+
+.this-computer__state {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-sky);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.this-computer__state[data-state='connected'] {
+  background: var(--ar-mint);
+}
+
+.this-computer__state[data-state='authorize'] {
+  background: var(--ar-sunny);
+}
+
+.this-computer__state[data-state='stopped'] {
+  background: var(--ar-coral);
+}
+
+.this-computer__muted {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ar-muted);
+}
+
+.this-computer .ar-banner p {
+  margin: 0;
+}
+
+.this-computer .ar-banner p + p,
+.this-computer .ar-banner p + dl,
+.this-computer .ar-banner dl + p,
+.this-computer .ar-banner .ar-details {
+  margin-top: 6px;
+}
+
+.this-computer .ar-banner code {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.this-computer__code {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 8px 0 0;
+}
+
+.this-computer__code dt {
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.this-computer__code dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.this-computer__code .this-computer__user-code {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.this-computer__reauthorize {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.this-computer__columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.this-computer__columns > :only-child {
+  grid-column: 1 / -1;
+}
+
+.local-agent-sessions {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.local-agent-sessions h3,
+.this-computer__settings h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.local-agent-sessions p {
+  margin: 0;
+}
+
+.local-agent-sessions ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.local-agent-sessions li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-surface-muted);
+}
+
+.local-agent-sessions li strong {
+  overflow-wrap: anywhere;
+}
+
+.local-agent-sessions__state {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.local-agent-sessions li .this-computer__muted {
+  font-size: 0.875rem;
+}
+
+.local-agent-sessions li[data-state='failed'] .local-agent-sessions__state {
+  color: var(--color-alert);
+}
+
+.local-agent-sessions code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.this-computer__settings {
+  display: grid;
+  gap: 0;
+  padding-top: 16px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.this-computer__settings > h3 {
+  margin-bottom: 4px;
+}
+
+.this-computer__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.this-computer__row > div {
+  min-width: 0;
+}
+
+.this-computer__row p {
+  margin: 2px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.875rem;
+}
+
+.this-computer__row > .ar-button {
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
+.this-computer__settings > .ar-details {
+  padding-top: 12px;
+}
+
+.this-computer__switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 76px;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.this-computer__switch > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.this-computer__switch[aria-pressed='true'] {
+  background: var(--ar-mint);
+}
+
+.this-computer__switch:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+@media (max-width: 900px) {
+  .this-computer__columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .this-computer {
+    width: calc(100% - 32px);
+    padding: 16px;
+  }
+
+  .this-computer__header {
+    flex-wrap: wrap;
+  }
+
+  .this-computer__row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+}

@@ -2,6 +2,7 @@ import { receptionFixture } from './reception-fixture';
 import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
 import type { SessionDependencies, WebSession } from '@/features/session/domain/session';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 import '@agent-room/ui-system/styles.css';
@@ -17,16 +18,13 @@ import type {
 } from '@/features/desktop/domain/desktop-runtime';
 import { bridgePhaseSchema } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
-import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
-import type { ProductDevice } from '@/features/security/domain/access-management';
-import '@/features/lobby/ui/lobby-game.css';
-import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
-import { OnboardingWorkspace } from '@/features/onboarding/ui/onboarding-page';
+import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
+import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { RouterTestProvider } from '@/test/router-test-provider';
-import type { OnboardingFixtureControls } from './onboarding-fixture-controls';
+import type { MyAgentsFixtureControls } from './my-agents-fixture-controls';
 
 const agent = {
   agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
@@ -55,8 +53,18 @@ const target: DesktopAgentTarget = {
 const requestedPhase = bridgePhaseSchema.safeParse(
   new URLSearchParams(location.search).get('bridge'),
 );
+const phase = requestedPhase.success ? requestedPhase.data : 'ready';
 let bridge: BridgeRuntime = {
-  authorization: null,
+  // ?bridge=authorization_required 时带上设备码，像刚装好还没授权的电脑。
+  authorization:
+    phase === 'authorization_required'
+      ? {
+          expiresAtUnixMs: Date.now() + 600_000,
+          promptId: 'fixture-authorization',
+          userCode: 'ABCD-EFGH',
+          verificationHost: 'identity.fixture.invalid',
+        }
+      : null,
   deviceReauthorizationAvailable: false,
   session: {
     agentId: agent.agentId,
@@ -71,7 +79,7 @@ let bridge: BridgeRuntime = {
     lastExitCode: null,
     nextRetryAtUnixMs: null,
     ownership: 'managed',
-    phase: requestedPhase.success ? requestedPhase.data : 'ready',
+    phase,
   },
 };
 const unavailable = () =>
@@ -97,7 +105,7 @@ const reception = receptionFixture(
 );
 const receptionEnabled = new URLSearchParams(location.search).has('reception');
 // ?ownership=idle|active|unreachable lists receptions this account runs on other computers,
-// the way leftover or remote receptions appear in the local-agent panel.
+// the way leftover or remote receptions appear on My agents.
 const ownershipStatus = new URLSearchParams(location.search).get('ownership');
 const ownershipRecords: readonly ReceptionRecord[] =
   ownershipStatus === null
@@ -142,10 +150,35 @@ const fixtureDevices: readonly ProductDevice[] = [
     trustState: 'verified',
   },
 ];
+// 我的 Agent 列表里的一份连接：Studio companion 在 Studio desktop 上在线。
+const fixtureInstances: readonly AgentInstance[] = [
+  {
+    adapterType: 'agent-room-mcp',
+    agentAvatarContentId: null,
+    agentDisplayName: agent.displayName,
+    agentId: agent.agentId,
+    agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
+    capabilityVersion: '1.0',
+    createdAtUnixMs: 1,
+    device: {
+      deviceId: '0198b601-77a5-74f1-b4f4-940f291951d1',
+      label: 'Studio desktop',
+      platform: 'windows',
+      trustState: 'verified',
+    },
+    lastSeenAtUnixMs: Date.now() - 5_000,
+    matrixDeviceId: 'AR-STUDIO',
+    matrixDeviceRevokedAtUnixMs: null,
+    revokedAtUnixMs: null,
+    status: 'online',
+  },
+];
+// ?agents=none 模拟还没有 Agent 的新账户。
+const fixtureAgents = new URLSearchParams(location.search).get('agents') === 'none' ? [] : [agent];
 // 接入对话框挂在连接服务上的人物；arriveAgent() 让一个新会话接走它。
 let parkedInvitation: InvitationOffer | null = null;
 const arrivedSessions: HostSessionDiagnostics[] = [];
-const fixtureControls: OnboardingFixtureControls = {
+const fixtureControls: MyAgentsFixtureControls = {
   arriveAgent: () => {
     const sessionKey = parkedInvitation?.sessionKey ?? null;
     parkedInvitation = null;
@@ -186,6 +219,8 @@ const gateway: DesktopRuntimeGateway = {
       agentTarget: target,
       autostartEnabled,
       bridge,
+      // 有版本号，启动后才会自动查一次更新（查到 0.1.0-alpha.24）。
+      currentVersion: '0.1.0-alpha.23',
       deepLink: null,
       cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
       manualHostConfiguration: {
@@ -214,7 +249,8 @@ const gateway: DesktopRuntimeGateway = {
     autostartEnabled = enabled;
     return ready(enabled);
   },
-  openAuthorization: unavailable,
+  openAuthorization: () => ready(undefined),
+  openLogs: () => ready(undefined),
   readLobby: unavailable,
   offerInvitation: (invitation) => {
     parkedInvitation = invitation;
@@ -263,12 +299,19 @@ const gateway: DesktopRuntimeGateway = {
   subscribe: () => ready(() => undefined),
 };
 
-function AuthenticatedOnboardingFixture() {
+function AuthenticatedMyAgentsFixture() {
   const { snapshot } = useSession();
   const currentPrincipal = snapshot.context.principal;
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   // Match production mounting: account restoration clears private queries before the workspace loads.
   if (!snapshot.matches('ready') || currentPrincipal === null) return null;
-  return <OnboardingWorkspace principal={currentPrincipal} />;
+  return (
+    <AccountWorkspacePage
+      onSelectAgent={setSelectedAgentId}
+      principal={currentPrincipal}
+      selectedAgentId={selectedAgentId}
+    />
+  );
 }
 
 async function bootstrapFixture() {
@@ -291,17 +334,17 @@ async function bootstrapFixture() {
       list: () => ready({ receptions: ownershipRecords, limited: false }),
       transfer: unavailable,
     },
+    agentDirectory: {
+      listOwnedAgents: () => ready(fixtureAgents),
+      deleteAgent: unavailable,
+    },
     accessManagement: {
-      listProductDevices: () => ready(ownershipRecords.length === 0 ? [] : fixtureDevices),
-      listAgentInstances: unavailable,
+      listProductDevices: () => ready(fixtureDevices),
+      listAgentInstances: () => ready(fixtureAgents.length === 0 ? [] : fixtureInstances),
       revokeAgentInstance: unavailable,
       revokeProductDevice: unavailable,
     },
     automation: { ...runtime.services.automation, list: () => ready([reception.grant]) },
-    onboarding: new OnboardingCoordinator(
-      { listAgents: () => ready([agent]), ensureDefaultAgent: () => ready(agent) },
-      { list: () => ready([lobby]) },
-    ),
   };
   const sessionDependencies: SessionDependencies = {
     ...runtime.services.session,
@@ -328,7 +371,7 @@ async function bootstrapFixture() {
     },
   };
   const element = document.getElementById('root');
-  if (!element) throw new Error('Onboarding fixture root is missing.');
+  if (!element) throw new Error('My agents fixture root is missing.');
   createRoot(element).render(
     <I18nextProvider i18n={i18n}>
       <RouterTestProvider>
@@ -336,15 +379,7 @@ async function bootstrapFixture() {
           <AppServicesProvider services={services}>
             <SessionProvider dependencies={sessionDependencies}>
               <DesktopRuntimeProvider gateway={gateway}>
-                <AuthenticatedOnboardingFixture />
-                {new URLSearchParams(location.search).get('placement') === 'game' ? (
-                  // The lobby's top-left placement, where the panel is narrowest.
-                  <div className="lobby-game">
-                    <DesktopRuntimeSurface placement="game" />
-                  </div>
-                ) : (
-                  <DesktopRuntimeSurface />
-                )}
+                <AuthenticatedMyAgentsFixture />
               </DesktopRuntimeProvider>
             </SessionProvider>
           </AppServicesProvider>

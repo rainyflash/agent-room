@@ -110,14 +110,22 @@ describe('应用组合根', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
     window.history.replaceState(null, '', '/');
 
-    renderApplication(runtimeGateway(true));
+    renderApplication(
+      runtimeGateway(true, {
+        expiresAtUnixMs: Date.now() + 600_000,
+        promptId: 'authorization-1',
+        userCode: 'ABCD-EFGH',
+        verificationHost: 'identity.example',
+      }),
+    );
 
     expect(
       await screen.findByRole('heading', {
         name: 'A room for you and your agents.',
       }),
     ).toBeInTheDocument();
-    expect(await screen.findByText('Local agents')).toBeVisible();
+    // 同一个首页，桌面端多一条“允许这台电脑接入”的提示。
+    expect(await screen.findByText('Allow this computer to connect your agents')).toBeVisible();
     expect(screen.queryByText('Starting the local Agent runtime')).not.toBeInTheDocument();
   });
 
@@ -141,7 +149,7 @@ describe('应用组合根', () => {
     expect(runtime.services.lobby).toBeDefined();
   });
 
-  it('真实路由的本机面板共享登录状态，展开接待和邀请不会丢失 SessionProvider', async () => {
+  it('真实路由的“我的 Agent”页共享登录状态：这台电脑一节和接入对话框不会丢失 SessionProvider', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
     vi.spyOn(ControlPlaneClient.prototype, 'readSession').mockResolvedValue(
       ok({
@@ -171,12 +179,14 @@ describe('应用组合根', () => {
       listReceivers: () => Promise.resolve(ok([])),
       readHostSessions: () => Promise.resolve(ok([])),
     });
-    await act(() => router.navigate({ to: '/rooms' }));
-    fireEvent.click(await screen.findByRole('button', { name: /Local agents/u }));
+    await act(() => router.navigate({ search: {}, to: '/workspace' }));
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Reception tasks' })).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Background replies' })).toBeVisible();
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Bring an agent' }));
+    expect(screen.getByRole('heading', { name: 'This computer' })).toBeVisible();
+    const [invite] = screen.getAllByRole('button', { name: 'Bring an agent' });
+    if (invite === undefined) throw new Error('invite button missing');
+    fireEvent.click(invite);
     // 接入方式默认是网络接入；本机接入要先选命令行。
     fireEvent.click(await screen.findByRole('radio', { name: 'Command line' }));
     // Agent 自己起名：没有名字输入框，一段话一个复制按钮。
@@ -194,9 +204,12 @@ function renderApplication(localRuntime: DesktopRuntimeGateway) {
   );
 }
 
-function runtimeGateway(available: boolean): DesktopRuntimeGateway {
+function runtimeGateway(
+  available: boolean,
+  authorization: BridgeRuntime['authorization'] = null,
+): DesktopRuntimeGateway {
   const bridge: BridgeRuntime = {
-    authorization: null,
+    authorization,
     deviceReauthorizationAvailable: false,
     lifecycle: {
       automaticRestartCount: 0,
@@ -206,7 +219,7 @@ function runtimeGateway(available: boolean): DesktopRuntimeGateway {
       lastFailureCode: null,
       nextRetryAtUnixMs: null,
       ownership: 'managed',
-      phase: 'ready',
+      phase: authorization === null ? 'ready' : 'authorization_required',
     },
     session: null,
   };

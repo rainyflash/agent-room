@@ -34,8 +34,6 @@ import { MatrixRoomKeyResponder } from '@/features/messages/adapters/matrix-room
 import { RoomKeyRecoveryProvider } from '@/features/messages/ui/room-key-recovery-context';
 import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
-import { ControlPlaneOnboardingClient } from '@/features/onboarding/adapters/control-plane-onboarding-client';
-import { OnboardingCoordinator } from '@/features/onboarding/application/onboarding-coordinator';
 import { MatrixAccountPreferencesGateway } from '@/features/preferences/adapters/matrix-account-preferences-gateway';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -110,10 +108,6 @@ export function createCloudRuntime(
     ? new DesktopControlPlaneClient({ controlPlane: browserControlPlane, runtime: localRuntime })
     : browserControlPlane;
   const roomDirectory = new ControlPlanePublicRoomDirectoryClient(businessApi);
-  const onboarding = new OnboardingCoordinator(
-    new ControlPlaneOnboardingClient(businessApi),
-    roomDirectory,
-  );
   const telemetry = new ControlPlaneFrontendTelemetryClient({ baseUrl: config.controlPlaneUrl });
   const matrixClients = new MatrixClientRegistry();
   const secretStorageKeys = new MatrixSecretStorageKeyCache();
@@ -196,7 +190,6 @@ export function createCloudRuntime(
     messages,
     messageTranslation: new BrowserMachineTranslationGateway(),
     moderation: new ControlPlaneModerationClient(businessApi),
-    onboarding,
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms: new ControlPlanePrivateRoomClient(businessApi),
     roomDirectory,

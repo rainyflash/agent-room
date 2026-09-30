@@ -14,8 +14,8 @@ export function RouterTestProvider({ children }: { readonly children: ReactNode 
     return createRouter({
       history: createMemoryHistory({ initialEntries: ['/'] }),
       routeTree: root.addChildren(
-        ['/', '/rooms', '/connect', '/workspace', '/settings/$section', '/onboarding'].map((path) =>
-          createRoute({ getParentRoute: () => root, path }),
+        ['/', '/rooms', '/inbox', '/connect', '/workspace', '/about', '/settings/$section'].map(
+          (path) => createRoute({ getParentRoute: () => root, path }),
         ),
       ),
     });

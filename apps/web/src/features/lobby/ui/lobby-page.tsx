@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
-import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
 import { ReceptionPanel } from '@/features/desktop/ui/reception-panel';
 import { ReceptionOwnershipPanel } from '@/features/desktop/ui/reception-ownership-panel';
 import { InviteReplyProgress } from '@/features/desktop/ui/invite-reply-progress';
@@ -103,10 +102,7 @@ export function LobbyPage(props: LobbyPageProps) {
         scope={props.principal?.matrixUserId ?? null}
       >
         {state.kind !== 'ready' ? (
-          <>
-            <LobbyStateBoundary onRetry={store.retry} state={state} />
-            <DesktopRuntimeSurface />
-          </>
+          <LobbyStateBoundary onRetry={store.retry} state={state} />
         ) : (
           <RoomMessagesProvider store={store.messages}>
             <NetworkAgentRelayProvider relayed={state.room.encrypted === true}>
@@ -335,7 +331,6 @@ function ReadyLobby({
           </button>
         ))}
       </div>
-      <DesktopRuntimeSurface placement="game" />
       <nav className="room-toolbelt" aria-label={t('roomGame.actions')}>
         <button
           type="button"

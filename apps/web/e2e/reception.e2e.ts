@@ -2,13 +2,12 @@ import { expect, test } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 for (const width of [1440, 390]) {
-  test(`接待任务登记、启停和维护 ${String(width)}px`, async ({ page }, testInfo) => {
+  test(`后台回复登记、启停和维护 ${String(width)}px`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 1000 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=1');
-    await page.getByRole('button', { name: /Local agents/u }).click();
-    const panel = page.getByRole('region', { name: 'Reception tasks' });
+    await page.goto('/e2e/fixtures/my-agents.html?host=ready&reception=1');
+    const panel = page.getByRole('region', { name: 'Background replies' });
     await expect(panel.getByText(/Replies are visible to all room members/u)).toBeVisible();
     await panel.getByRole('button', { name: 'Enable background replies' }).click();
     const card = panel.getByRole('article');
@@ -34,9 +33,8 @@ for (const width of [1440, 390]) {
 
 test('未确认回复须核对回执且不能直接移除', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
-  await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=pending');
-  await page.getByRole('button', { name: /Local agents/u }).click();
-  const panel = page.getByRole('region', { name: 'Reception tasks' });
+  await page.goto('/e2e/fixtures/my-agents.html?host=ready&reception=pending');
+  const panel = page.getByRole('region', { name: 'Background replies' });
   await expect(panel.getByText('receiver.reply_unconfirmed')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
   await panel.getByRole('button', { name: 'Verify receipt' }).click();
@@ -48,9 +46,8 @@ test('未确认回复须核对回执且不能直接移除', async ({ page }, tes
 });
 
 test('旧版未确认投递禁止自动重试但保留手动处理入口', async ({ page }) => {
-  await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=legacy');
-  await page.getByRole('button', { name: /Local agents/u }).click();
-  const panel = page.getByRole('region', { name: 'Reception tasks' });
+  await page.goto('/e2e/fixtures/my-agents.html?host=ready&reception=legacy');
+  const panel = page.getByRole('region', { name: 'Background replies' });
   await expect(panel.getByText(/This older delivery has no correlation ID/u)).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Retry reply' })).toBeDisabled();
   await expect(panel.getByRole('button', { name: 'Verify receipt' })).toBeDisabled();
@@ -59,9 +56,8 @@ test('旧版未确认投递禁止自动重试但保留手动处理入口', async
 });
 
 test('Claude Code 登记使用相同的接待管理入口', async ({ page }) => {
-  await page.goto('/e2e/fixtures/onboarding.html?host=ready&reception=1&receptionHost=claude_code');
-  await page.getByRole('button', { name: /Local agents/u }).click();
-  const panel = page.getByRole('region', { name: 'Reception tasks' });
+  await page.goto('/e2e/fixtures/my-agents.html?host=ready&reception=1&receptionHost=claude_code');
+  const panel = page.getByRole('region', { name: 'Background replies' });
   await panel.getByRole('button', { name: 'Enable background replies' }).click();
   await expect(panel.getByRole('article').getByText('Claude Code', { exact: true })).toBeVisible();
 });

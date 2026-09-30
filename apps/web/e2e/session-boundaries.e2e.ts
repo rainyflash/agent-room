@@ -73,6 +73,7 @@ test('Matrix 连接失败时仍能从连接页进入云端工作区和房间目�
   await expect(page).toHaveURL(/\/workspace$/u);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('My agents');
   await expect(page.getByText(principal.displayName, { exact: true })).toBeVisible();
+  await page.getByText('Devices and connection details').click();
   await expect(page.getByRole('region', { name: 'Service connections' })).toBeVisible();
   const documentLoads = await page.evaluate(() => performance.timeOrigin);
   await page.getByRole('link', { name: 'Rooms', exact: true }).click();

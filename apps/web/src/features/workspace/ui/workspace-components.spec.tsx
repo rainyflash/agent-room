@@ -14,15 +14,23 @@ import {
   bridgeWorkspaceStatus,
   projectWorkspaceConnectionHealth,
 } from '@/features/workspace/domain/connection-health';
-import { AgentFleetList } from '@/features/workspace/ui/agent-fleet-list';
-import { AgentInspector } from '@/features/workspace/ui/agent-inspector';
+import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
+import { AgentCardList } from '@/features/workspace/ui/agent-card-list';
+import {
+  AgentDetailsDialog,
+  type AgentDeletionControl,
+} from '@/features/workspace/ui/agent-details-dialog';
 import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
 import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { RouterTestProvider } from '@/test/router-test-provider';
 
 const AGENT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e44';
+const SCOUT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e45';
 const DEVICE_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e47';
+const REMOTE_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e4a';
+const NOW = 1_700_000_020_000;
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
@@ -70,28 +78,33 @@ describe('账号工作区组件', () => {
     expect(screen.getAllByText('Not observed on this client')).toHaveLength(3);
   });
 
-  it('展示当前设备和同一 Agent 的运行实例', () => {
+  it('详情里说清它在哪台设备上、是不是这台电脑，不出现适配器这类内部说法', () => {
     const fleet = fixtureFleet();
     renderWithI18n(
       <>
         <DeviceRail devices={fleet.devices} />
-        <AgentInspector agent={fleet.agents[0] ?? null} />
+        {fleet.agents[0] === undefined ? null : (
+          <AgentDetailsDialog agent={fleet.agents[0]} now={NOW} onClose={() => undefined} />
+        )}
       </>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Registered devices' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Your devices' })).toBeVisible();
     expect(screen.getAllByText('Studio workstation')).toHaveLength(2);
-    expect(screen.getAllByText('This device')).toHaveLength(2);
-    expect(screen.getByRole('heading', { name: 'Build Agent' })).toBeVisible();
-    expect(screen.getByText('codex adapter · capability 1.0')).toBeVisible();
+    expect(screen.getByText('This device')).toBeVisible();
+    const dialog = screen.getByRole('dialog', { name: 'Build Agent' });
+    expect(within(dialog).getByText('This computer')).toBeVisible();
+    expect(within(dialog).getAllByText('Online now').length).toBeGreaterThan(0);
+    expect(dialog).not.toHaveTextContent(/adapter|capability|codex/iu);
   });
 
   it('删除 Agent 先确认，没有最近登录时改为重新登录', async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
     const onReauthenticate = vi.fn();
-    const agent = fixtureFleet().agents[0] ?? null;
-    const control = {
+    const agent = fixtureFleet().agents[0];
+    if (agent === undefined) throw new Error('fixture agent missing');
+    const control: AgentDeletionControl = {
       canDelete: () => true,
       failure: null,
       onDelete,
@@ -99,7 +112,12 @@ describe('账号工作区组件', () => {
       pendingAgentId: null,
       recentlyAuthenticated: true,
     };
-    const view = renderWithI18n(<AgentInspector agent={agent} deletion={control} />);
+    const details = (deletion: AgentDeletionControl) => (
+      <I18nextProvider i18n={i18n}>
+        <AgentDetailsDialog agent={agent} deletion={deletion} now={NOW} onClose={() => undefined} />
+      </I18nextProvider>
+    );
+    const view = render(details(control));
 
     await user.click(screen.getByRole('button', { name: 'Delete agent' }));
     const confirm = screen.getByRole('region', { name: 'Delete agent' });
@@ -108,32 +126,22 @@ describe('账号工作区组件', () => {
     expect(onDelete).toHaveBeenCalledWith(agent);
 
     view.rerender(
-      <I18nextProvider i18n={i18n}>
-        <AgentInspector
-          agent={agent}
-          deletion={{
-            ...control,
-            failure: { agentId: AGENT_ID, code: 'agent.shared_ownership' },
-          }}
-        />
-      </I18nextProvider>,
+      details({ ...control, failure: { agentId: AGENT_ID, code: 'agent.shared_ownership' } }),
     );
     expect(screen.getByRole('alert')).toHaveTextContent('has other owners');
 
-    view.rerender(
-      <I18nextProvider i18n={i18n}>
-        <AgentInspector agent={agent} deletion={{ ...control, recentlyAuthenticated: false }} />
-      </I18nextProvider>,
-    );
+    view.rerender(details({ ...control, recentlyAuthenticated: false }));
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Sign in again' }));
     expect(onReauthenticate).toHaveBeenCalledOnce();
   });
 
   it('默认 Agent 不显示删除入口', () => {
+    const agent = fixtureFleet().agents[0];
+    if (agent === undefined) throw new Error('fixture agent missing');
     renderWithI18n(
-      <AgentInspector
-        agent={fixtureFleet().agents[0] ?? null}
+      <AgentDetailsDialog
+        agent={agent}
         deletion={{
           canDelete: () => false,
           failure: null,
@@ -142,35 +150,81 @@ describe('账号工作区组件', () => {
           pendingAgentId: null,
           recentlyAuthenticated: true,
         }}
+        now={NOW}
+        onClose={() => undefined}
       />,
     );
     expect(screen.queryByRole('button', { name: 'Delete agent' })).not.toBeInTheDocument();
   });
 
-  it('Agent 选择通过回调交给 URL 状态所有者', async () => {
+  it('卡片说在不在线、在哪儿；点开交给 URL 状态所有者', async () => {
     const user = userEvent.setup();
-    const select = vi.fn();
-    const fleet = fixtureFleet();
+    const open = vi.fn();
+    const fleet = projectAgentFleet({
+      agents: [agent(), agent(SCOUT_ID, 'Research Scout')],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [
+        instance(),
+        {
+          ...instance(),
+          agentId: SCOUT_ID,
+          agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e49',
+          device: { ...instance().device, deviceId: REMOTE_ID, label: 'Travel laptop' },
+          lastSeenAtUnixMs: NOW - 3 * 3_600_000,
+          status: 'offline',
+        },
+      ],
+    });
+    renderWithI18n(<AgentCardList agents={fleet.agents} now={NOW} onOpen={open} />);
+
+    const build = screen.getByRole('button', { name: /Build Agent/u });
+    expect(build).toHaveTextContent('Online now');
+    expect(build).toHaveTextContent('On this computer');
+    const scout = screen.getByRole('button', { name: /Research Scout/u });
+    expect(scout).toHaveTextContent('Last online 3 hours ago');
+    expect(scout).toHaveTextContent('On Travel laptop');
+    await user.click(build);
+    expect(open).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  it('还没有 Agent 时给一个接入按钮；页头的主按钮也是接入 Agent', async () => {
+    const user = userEvent.setup();
+    const invite = vi.fn();
     renderWithI18n(
-      <AgentFleetList
-        agents={fleet.agents}
-        onRefresh={() => undefined}
-        onSelectAgent={select}
-        selectedAgentId={null}
-      />,
+      <RouterTestProvider>
+        <AccountWorkspaceView
+          accountName="Ada"
+          connectionHealth={fixtureConnectionHealth()}
+          failureCode={null}
+          fleet={projectAgentFleet({
+            agents: [],
+            currentMatrixDeviceId: null,
+            devices: [],
+            instances: [],
+          })}
+          loading={false}
+          onInvite={invite}
+          onRefresh={() => undefined}
+          onSelectAgent={() => undefined}
+          selectedAgentId={null}
+        />
+      </RouterTestProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: /Build Agent/u }));
-
-    expect(select).toHaveBeenCalledWith(AGENT_ID);
+    expect(screen.getByRole('heading', { name: 'Bring your first agent' })).toBeVisible();
+    const buttons = screen.getAllByRole('button', { name: 'Bring an agent' });
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) await user.click(button);
+    expect(invite).toHaveBeenCalledTimes(2);
+    // 设备和服务连接这类排查信息默认收起。
+    expect(screen.getByRole('region', { name: 'Service connections' })).not.toBeVisible();
   });
 
   it('设备目录为空时给出明确状态', () => {
     renderWithI18n(<DeviceRail devices={[]} />);
 
-    expect(
-      screen.getByText('No product device has been registered for this account.'),
-    ).toBeVisible();
+    expect(screen.getByText('No device has signed in to this account yet.')).toBeVisible();
   });
 });
 
@@ -211,15 +265,15 @@ function fixtureConnectionHealth() {
   });
 }
 
-function agent(): OwnedAgent {
+function agent(agentId = AGENT_ID, displayName = 'Build Agent'): OwnedAgent {
   return {
-    agentId: AGENT_ID,
+    agentId,
     avatarContentId: null,
     description: 'Builds and verifies releases.',
-    displayName: 'Build Agent',
-    matrixUserId: '@_agent_build:matrix.test',
+    displayName,
+    matrixUserId: `@_agent_${agentId.slice(-4)}:matrix.test`,
     registeredAtUnixMs: 1_700_000_000_000,
-    slug: 'build-agent',
+    slug: displayName.toLowerCase().replaceAll(' ', '-'),
     visibility: 'private',
   };
 }

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
-import { DesktopRuntimeSurface } from '@/features/desktop/ui/desktop-runtime-surface';
+import { ThisComputerBanner } from '@/features/desktop/ui/this-computer-banner';
 import { MatrixVerificationInbox } from '@/features/security/ui/matrix-verification-inbox';
 import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
@@ -32,7 +32,7 @@ function WebRootLayout({ pathname }: { readonly pathname: string }) {
       {pathname === '/' ? (
         <>
           <Outlet />
-          <DesktopRuntimeSurface />
+          <ThisComputerBanner />
         </>
       ) : (
         <WebSessionRuntime pathname={pathname} />
@@ -50,11 +50,8 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
       <ConversationSessionOutlet />
       <MatrixVerificationInbox />
       <InboxNotice />
-      {pathname.includes('/instance/') && pathname.startsWith('/lobby/') ? null : (
-        <DesktopRuntimeSurface
-          placement={pathname === '/onboarding' ? 'action-rail-safe' : 'viewport'}
-        />
-      )}
+      {/* “我的 Agent”页自己有“这台电脑”一节，不再重复提示。 */}
+      <ThisComputerBanner hidden={pathname === '/workspace'} />
     </SessionProvider>
   );
 }
