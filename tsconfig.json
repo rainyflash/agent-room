@@ -23,5 +23,5 @@
     "verbatimModuleSyntax": true
   },
   "include": ["eslint.config.mjs", "vitest.config.ts", "packages/**/*.ts", "tools/**/*.ts"],
-  "exclude": ["**/dist/**", "**/node_modules/**"]
+  "exclude": ["**/dist/**", "**/node_modules/**", "packages/ui-system/**"]
 }

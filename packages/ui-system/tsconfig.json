@@ -7,5 +7,6 @@
     "moduleResolution": "Bundler",
     "types": ["react"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["**/dist/**", "**/node_modules/**"]
 }

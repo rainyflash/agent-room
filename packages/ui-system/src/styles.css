@@ -427,6 +427,353 @@ summary {
   }
 }
 
+/* 对话框：原生 <dialog>，墨色粗描边加按压阴影；手机上贴底，成为底部面板。
+   Tailwind 的基础样式把所有元素的外边距清零，原生对话框靠 margin: auto 居中，要写回来。 */
+.ar-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(780px, calc(100dvh - 32px));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  box-shadow: 0 6px 0 var(--ar-outline);
+}
+
+.ar-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.ar-dialog--wide {
+  width: min(760px, calc(100vw - 32px));
+}
+
+/* 旧版 WebKit 的 ::backdrop 不继承 :root 上的变量，退回一层半透明黑。 */
+.ar-dialog::backdrop {
+  background: var(--ar-backdrop, rgb(0 0 0 / 45%));
+}
+
+.ar-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 22px 22px 16px;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.ar-dialog__icon {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-mint);
+}
+
+.ar-dialog__icon > svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+}
+
+.ar-dialog__heading {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ar-dialog__heading h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.ar-dialog__heading p {
+  margin: 4px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.875rem;
+}
+
+.ar-dialog__body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: 16px;
+  padding: 18px 22px 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ar-dialog__footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px 18px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+@media (max-width: 767px) {
+  .ar-dialog {
+    width: 100vw;
+    max-height: calc(100dvh - 24px);
+    margin: auto 0 0;
+    border-width: var(--ar-outline-width) 0 0;
+    border-radius: var(--ar-panel-radius) var(--ar-panel-radius) 0 0;
+    box-shadow: none;
+  }
+
+  .ar-dialog__header {
+    padding: 18px 16px 14px;
+  }
+
+  .ar-dialog__body {
+    padding: 16px;
+  }
+}
+
+/* 分段选择：一行互斥选项，选中的是黄色按下态。 */
+.ar-segmented {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  padding: 4px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  background: var(--ar-surface-muted);
+}
+
+.ar-segmented__option {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 40px;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: var(--ar-outline-thin) solid transparent;
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  background: transparent;
+  font-weight: 600;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.ar-segmented__option:hover {
+  background: var(--ar-surface);
+}
+
+.ar-segmented__option[aria-checked='true'] {
+  border-color: var(--ar-outline);
+  background: var(--ar-sunny);
+  box-shadow: var(--ar-press-small);
+}
+
+.ar-segmented__icon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.ar-segmented__icon > svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2;
+}
+
+.ar-segmented__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .ar-segmented__option {
+    min-height: 44px;
+    padding-inline: 8px;
+  }
+}
+
+/* 手机上三个选项挤一行：去掉装饰图标，放不下的字折成两行，不截断。 */
+@media (max-width: 480px) {
+  .ar-segmented__icon {
+    display: none;
+  }
+
+  .ar-segmented__label {
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+  }
+}
+
+/* 一条提示：图标、标题、说明，至多一个操作。彩色底上一律墨色字。 */
+.ar-banner {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 18px;
+  color: var(--color-ink);
+  background: var(--ar-surface);
+}
+
+.ar-banner--info {
+  background: var(--ar-accent-soft);
+}
+
+.ar-banner--success {
+  background: var(--ar-mint);
+}
+
+.ar-banner--warning {
+  background: var(--ar-warning-soft);
+}
+
+.ar-banner--danger {
+  background: var(--ar-danger-soft);
+}
+
+.ar-banner__icon {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  place-items: center;
+}
+
+.ar-banner__icon > svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2;
+}
+
+.ar-banner__content {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.ar-banner__title {
+  font-weight: 700;
+}
+
+.ar-banner__text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.ar-banner__text p {
+  margin: 0;
+}
+
+.ar-banner__action {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+@media (max-width: 479px) {
+  .ar-banner {
+    flex-wrap: wrap;
+  }
+
+  .ar-banner__action {
+    flex-basis: 100%;
+  }
+}
+
+/* 详情：沿用折叠的样式，标题用次要文字色，排查信息不抢眼。 */
+.ar-details > summary {
+  color: var(--ar-muted);
+}
+
+.ar-details[open] > summary {
+  color: var(--color-ink);
+}
+
+.ar-details code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.ar-spinner {
+  display: inline-grid;
+  width: 1.1em;
+  height: 1.1em;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.ar-spinner > svg {
+  width: 100%;
+  height: 100%;
+  animation: ar-spin 900ms linear infinite;
+}
+
+@keyframes ar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 要发给别人的一段话和复制按钮。 */
+.ar-copy-block {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 10px;
+}
+
+.ar-copy-block__text {
+  width: 100%;
+  max-height: 220px;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 16px;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ar-copy-block__failed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-alert);
+  font-size: 0.8125rem;
+}
+
+.ar-copy-block__failed > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

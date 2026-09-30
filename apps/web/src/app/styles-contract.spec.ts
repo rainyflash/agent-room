@@ -75,6 +75,46 @@ describe('样式表契约', () => {
     expect(missing).toEqual([]);
   });
 
+  it('每个用到的动画都有 @keyframes 定义', () => {
+    // 动画名写错或定义被删掉时不报错，元素只是不动了：operation-spin 就这样让三处加载圈停了很久。
+    const css = stylesheets()
+      .map((sheet) => sheet.css.replace(/\/\*[\s\S]*?\*\//gu, ''))
+      .join('\n');
+    const defined = new Set([...css.matchAll(/@keyframes\s+([\w-]+)/gu)].map(([, name]) => name));
+    const keywords = new Set([
+      'alternate',
+      'alternate-reverse',
+      'backwards',
+      'both',
+      'ease',
+      'ease-in',
+      'ease-in-out',
+      'ease-out',
+      'forwards',
+      'infinite',
+      'inherit',
+      'initial',
+      'linear',
+      'none',
+      'normal',
+      'paused',
+      'reverse',
+      'running',
+      'step-end',
+      'step-start',
+      'unset',
+    ]);
+    const used = [...css.matchAll(/animation(?:-name)?\s*:\s*([^;}]+)/gu)].flatMap(([, value]) =>
+      (value ?? '')
+        .replace(/[\w-]+\([^)]*\)/gu, ' ')
+        .split(/[\s,]+/u)
+        .filter((token) => /^[a-z][\w-]*$/iu.test(token) && !keywords.has(token)),
+    );
+    expect(used.length).toBeGreaterThan(0);
+    const missing = [...new Set(used)].filter((name) => !defined.has(name)).toSorted();
+    expect(missing).toEqual([]);
+  });
+
   it('响应式规则不会被同一文件里后写的无条件规则覆盖', () => {
     // 同一选择器、同一属性：媒体查询里的值写在前面、无条件的值写在后面时，媒体查询永远不生效。
     // 这样的错误让「我的 Agent」和安全页在手机上一直沿用桌面三栏/两栏布局。

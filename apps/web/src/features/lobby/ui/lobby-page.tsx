@@ -410,6 +410,7 @@ function ReadyLobby({
             setInviteOpen(false);
           }}
           owner={owner}
+          presentAgents={room.agents}
           room={{ catalogId, roomId: room.roomId, roomName: room.name }}
         />
       ) : null}

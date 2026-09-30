@@ -1,88 +1,17 @@
-import { z } from 'zod';
-import type { AgentInviteIdentity } from './agent-invite';
-import { agentInviteHosts, inviteIdentityStorageKey, readInviteIdentity } from './agent-invite';
 import type { DesktopRuntimeSnapshot } from './desktop-runtime';
 
-const identitySchema = z
-  .object({
-    sessionKey: z.uuidv7(),
-    // 空名字表示由 Agent 自己起；它接入后面板会把实际的名字补记下来。
-    displayName: z
-      .string()
-      .trim()
-      .refine((value) => Array.from(value).length <= 128)
-      .refine((value) => !/[\p{Cc}]/u.test(value)),
-    ownerId: z.string().nullable(),
-    room: z
-      .object({
-        roomId: z.string().min(1).max(512),
-        roomName: z.string().min(1).max(512),
-        catalogId: z.uuidv7().optional(),
-      })
-      .strict()
-      .transform(({ catalogId, ...value }) => ({
-        ...value,
-        ...(catalogId === undefined ? {} : { catalogId }),
-      }))
-      .nullable()
-      .optional(),
-  })
-  .strict()
-  .transform(({ room, ...value }) => ({ ...value, ...(room === undefined ? {} : { room }) }));
-const historySchema = z.array(identitySchema).max(64);
-const historyKey = (ownerId: string) => `agent-room.invitations.v2.${ownerId}`;
-
-export type InviteHistory = {
-  readonly identities: readonly AgentInviteIdentity[];
-  readonly unavailable: boolean;
+/**
+ * 一个本机人物的身份：`sessionKey` 找回同一个人物，`displayName` 为空时由 Agent 自己起名，
+ * `ownerId` 记下创建它的账号。接入对话框不再管人物；后台回复把任务交回别的电脑时还要用它编邀请。
+ */
+export type CliInvitationIdentity = {
+  readonly sessionKey: string;
+  readonly displayName: string;
+  readonly ownerId: string | null;
 };
 
-export function readInviteHistory(
-  storage: Pick<Storage, 'getItem'>,
-  ownerId: string | null,
-): InviteHistory {
-  if (ownerId === null) return { identities: [], unavailable: false };
-  try {
-    const raw = storage.getItem(historyKey(ownerId));
-    const parsed = raw === null ? [] : historySchema.parse(JSON.parse(raw));
-    const identities = parsed.filter((entry) => entry.ownerId === ownerId);
-    // Previously one identity was saved per tool. Offer those explicitly for restoration;
-    // never pick them automatically for a new task or claim an unowned legacy identity.
-    for (const host of agentInviteHosts) {
-      const legacy = readInviteIdentity(storage, inviteIdentityStorageKey(host), null);
-      if (
-        legacy?.ownerId === ownerId &&
-        !identities.some((entry) => entry.sessionKey === legacy.sessionKey)
-      )
-        identities.push(legacy);
-    }
-    return { identities, unavailable: false };
-  } catch {
-    return { identities: [], unavailable: true };
-  }
-}
-
-export function saveInviteHistory(
-  storage: Pick<Storage, 'getItem' | 'setItem'>,
-  identity: AgentInviteIdentity,
-): boolean {
-  if (identity.ownerId === null) return false;
-  const history = readInviteHistory(storage, identity.ownerId);
-  if (history.unavailable) return false;
-  const entries = [
-    identity,
-    ...history.identities.filter((entry) => entry.sessionKey !== identity.sessionKey),
-  ].slice(0, 64);
-  try {
-    storage.setItem(historyKey(identity.ownerId), JSON.stringify(entries));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function encodeCliInvitation(
-  identity: AgentInviteIdentity,
+  identity: CliInvitationIdentity,
   roomId: string | null,
   catalogId?: string,
 ): string {
@@ -106,9 +35,19 @@ export function cliInvocation(
   platform: DesktopRuntimeSnapshot['platform'],
 ): string {
   if (configuration === null || configuration === undefined) return 'agent-room';
-  const quote = (value: string) =>
-    platform === 'windows'
-      ? `'${value.replaceAll("'", "''")}'`
-      : `'${value.replaceAll("'", "'\"'\"'")}'`;
+  const quote = (value: string) => quoteCliArgument(value, platform);
   return `${platform === 'windows' ? '& ' : ''}${[configuration.command, ...configuration.args].map(quote).join(' ')}`;
+}
+
+/**
+ * 给命令行参数加单引号。PowerShell 和 POSIX shell 都把单引号里的内容当原文，只是转义单引号的写法
+ * 不同；不知道 Agent 在哪种系统上时（网页端）用 POSIX 的写法。
+ */
+export function quoteCliArgument(
+  value: string,
+  platform: DesktopRuntimeSnapshot['platform'],
+): string {
+  return platform === 'windows'
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", "'\"'\"'")}'`;
 }

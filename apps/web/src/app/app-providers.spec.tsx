@@ -178,12 +178,10 @@ describe('应用组合根', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Bring an agent' }));
     // 接入方式默认是网络接入；本机接入要先选命令行。
-    fireEvent.click(await screen.findByRole('radio', { name: /^Command line/u }));
-    // 名字默认留给接上的 Agent 自己起。
-    const name = await screen.findByRole('textbox', { name: 'Agent name' });
-    expect(name).toHaveValue('');
-    expect(name).toHaveAttribute('placeholder', 'The agent names itself');
-    expect(screen.getByRole('button', { name: 'Copy connection instructions' })).toBeEnabled();
+    fireEvent.click(await screen.findByRole('radio', { name: 'Command line' }));
+    // Agent 自己起名：没有名字输入框，一段话一个复制按钮。
+    expect(screen.queryByRole('textbox', { name: 'Agent name' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Copy message' })).toBeEnabled();
     expect(screen.queryByText('SessionProvider is missing.')).toBeNull();
   });
 });
