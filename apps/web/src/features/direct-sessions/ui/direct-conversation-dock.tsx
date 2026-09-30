@@ -1,7 +1,7 @@
 import { initials } from '@/shared/ui/display-name';
 
 import { Button, StatusMark } from '@agent-room/ui-system';
-import { EyeOff, LoaderCircle, RefreshCw, ShieldBan, ShieldCheck, X } from 'lucide-react';
+import { EyeOff, LoaderCircle, RefreshCw, ShieldBan, ShieldCheck } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
@@ -14,7 +14,6 @@ export type DirectConversationDockProps = {
   readonly view: Exclude<RoomWorkspaceView, 'space'>;
   readonly activeCatalogId: string | null;
   readonly controller: DirectSessionController;
-  readonly onActiveSessionChange: (catalogId: string | null) => void;
   readonly onOpenSecurity?: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly selectedMessageId: string | null;
@@ -24,7 +23,6 @@ export function DirectConversationDock({
   view,
   activeCatalogId,
   controller,
-  onActiveSessionChange,
   onOpenSecurity,
   onSelectedMessageChange,
   selectedMessageId,
@@ -53,16 +51,6 @@ export function DirectConversationDock({
             key="missing-direct-session"
             transition={{ damping: 28, stiffness: 300, type: 'spring' }}
           >
-            <button
-              aria-label={t('directSessions.action.close')}
-              className="direct-conversation__close ar-icon-button"
-              onClick={() => {
-                onActiveSessionChange(null);
-              }}
-              type="button"
-            >
-              <X aria-hidden="true" />
-            </button>
             {controller.loading ? (
               <LoaderCircle aria-hidden="true" />
             ) : (
@@ -98,9 +86,6 @@ export function DirectConversationDock({
             view={view}
             controller={controller}
             key={activeSession.catalogId}
-            onClose={() => {
-              onActiveSessionChange(null);
-            }}
             {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
             onSelectedMessageChange={onSelectedMessageChange}
             reduceMotion={reduceMotion === true}
@@ -116,7 +101,6 @@ export function DirectConversationDock({
 function Conversation({
   view,
   controller,
-  onClose,
   onOpenSecurity,
   onSelectedMessageChange,
   reduceMotion,
@@ -125,7 +109,6 @@ function Conversation({
 }: {
   readonly view: Exclude<RoomWorkspaceView, 'space'>;
   readonly controller: DirectSessionController;
-  readonly onClose: () => void;
   readonly onOpenSecurity?: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly reduceMotion: boolean;
@@ -152,7 +135,6 @@ function Conversation({
         <div className="direct-conversation__identity">
           <p className="eyebrow">{t('directSessions.conversation.eyebrow')}</p>
           <h2 id="direct-conversation-title">{session.target.displayName}</h2>
-          <span>{session.target.matrixUserId}</span>
         </div>
         <div className="direct-conversation__policy">
           <span className="direct-conversation__presence">
@@ -205,14 +187,6 @@ function Conversation({
           >
             {t(principalBlocked ? 'directSessions.action.unblock' : 'directSessions.action.block')}
           </Button>
-          <button
-            aria-label={t('directSessions.action.close')}
-            className="direct-conversation__close ar-icon-button"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" />
-          </button>
         </div>
       </header>
       {session.contactPolicy.deliveryAllowed ? null : (

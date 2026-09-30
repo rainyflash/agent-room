@@ -1,4 +1,4 @@
-import { Button } from '@agent-room/ui-system';
+import { Banner, Button } from '@agent-room/ui-system';
 import { ArrowDown, LockKeyhole, Radio, Search, ShieldCheck, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
@@ -516,43 +516,40 @@ function UndecryptableNotice({
     .map((sender) => names.get(sender) ?? sender);
   const others = summary.senders.length - named.length;
   return (
-    <div className="conversation-undecryptable" role="status">
-      <LockKeyhole aria-hidden="true" />
-      <div>
-        <p className="conversation-undecryptable__title">
-          {t('conversation.undecryptable.title', { count: summary.count })}
-        </p>
-        {named.length === 0 ? null : (
-          <p>
-            {others > 0
-              ? t('conversation.undecryptable.sendersMore', {
-                  count: others,
-                  names: named.join(t('conversation.undecryptable.separator')),
-                })
-              : t('conversation.undecryptable.senders', {
-                  names: named.join(t('conversation.undecryptable.separator')),
-                })}
-          </p>
-        )}
-        {summary.reasons.map((reason) => (
-          <p key={reason}>{t(`conversation.undecryptable.reason.${reason}`)}</p>
-        ))}
-        {recovery === 'requested' ? <p>{t('conversation.undecryptable.recovering')}</p> : null}
-        {recovery === 'needs_verification' ? (
-          <p>{t('conversation.undecryptable.verifyFirst')}</p>
-        ) : null}
-        {recovery === 'needs_verification' && onOpenSecurity !== undefined ? (
-          <Button
-            className="conversation-undecryptable__action"
-            icon={<ShieldCheck aria-hidden="true" />}
-            onClick={onOpenSecurity}
-            size="compact"
-          >
+    <Banner
+      action={
+        recovery === 'needs_verification' && onOpenSecurity !== undefined ? (
+          <Button icon={<ShieldCheck aria-hidden="true" />} onClick={onOpenSecurity} size="compact">
             {t('conversation.undecryptable.verify')}
           </Button>
-        ) : null}
-      </div>
-    </div>
+        ) : undefined
+      }
+      className="conversation-undecryptable"
+      icon={<LockKeyhole />}
+      role="status"
+      title={t('conversation.undecryptable.title', { count: summary.count })}
+      tone="warning"
+    >
+      {named.length === 0 ? null : (
+        <p>
+          {others > 0
+            ? t('conversation.undecryptable.sendersMore', {
+                count: others,
+                names: named.join(t('conversation.undecryptable.separator')),
+              })
+            : t('conversation.undecryptable.senders', {
+                names: named.join(t('conversation.undecryptable.separator')),
+              })}
+        </p>
+      )}
+      {summary.reasons.map((reason) => (
+        <p key={reason}>{t(`conversation.undecryptable.reason.${reason}`)}</p>
+      ))}
+      {recovery === 'requested' ? <p>{t('conversation.undecryptable.recovering')}</p> : null}
+      {recovery === 'needs_verification' ? (
+        <p>{t('conversation.undecryptable.verifyFirst')}</p>
+      ) : null}
+    </Banner>
   );
 }
 

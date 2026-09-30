@@ -13,8 +13,12 @@ for (const width of [1440, 390]) {
     await expect(input).toBeEnabled();
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const sent = page.getByRole('article').filter({ hasText: '继续这段讨论，刷新后不要丢失。' });
-    await expect(sent.getByText('Sent to room', { exact: true })).toBeVisible();
-    await expect(sent.getByText('Agent receipt unconfirmed', { exact: true })).toBeVisible();
+    // 自己消息下是一个“已发送”的小标记，点开才看进度。
+    const mark = sent.locator('.conversation-message__delivery');
+    await expect(mark.getByText('Sent', { exact: true })).toBeVisible();
+    await mark.locator('summary').click();
+    await expect(mark.getByText('Sent to room', { exact: true })).toBeVisible();
+    await expect(mark.getByText('No agent has confirmed it yet', { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({ path: testInfo.outputPath(`restored-draft-${String(width)}.png`) });
     expect(failures).toEqual([]);

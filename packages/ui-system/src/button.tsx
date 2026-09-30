@@ -2,7 +2,8 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 import { classNames } from './class-names.js';
 
-export type ButtonTone = 'alert' | 'ghost' | 'network' | 'primary' | 'quiet';
+/** `send` 是发送消息专用的珊瑚色（游戏大厅配色：珊瑚色 = 发送、未读、需要注意）。 */
+export type ButtonTone = 'alert' | 'ghost' | 'network' | 'primary' | 'quiet' | 'send';
 export type ButtonSize = 'compact' | 'default' | 'large';
 
 const toneClass: Readonly<Record<ButtonTone, string>> = {
@@ -11,6 +12,7 @@ const toneClass: Readonly<Record<ButtonTone, string>> = {
   network: 'ar-button--network',
   primary: 'ar-button--primary',
   quiet: 'ar-button--quiet',
+  send: 'ar-button--send',
 };
 
 const sizeClass: Readonly<Record<ButtonSize, string>> = {

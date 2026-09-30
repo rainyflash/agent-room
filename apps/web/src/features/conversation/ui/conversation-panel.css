@@ -233,36 +233,12 @@
   font-size: 13px;
 }
 /* 解不开的加密消息汇总成一条提示，放在记录最前面；房间里没有能读的消息时它就是全部内容。 */
+/* 解不开的消息：用统一的提示条，只留和时间线之间的距离。 */
 .conversation-undecryptable {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
   margin: 8px 0 24px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 12px;
-  padding: 12px 14px;
-  background: var(--ar-warning-soft);
-  color: var(--color-ink);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.conversation-undecryptable > svg {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
-  color: var(--ar-warning);
 }
 .conversation-undecryptable p {
   margin: 0;
-  color: var(--ar-muted);
-}
-.conversation-undecryptable__action {
-  margin-top: 8px;
-}
-.conversation-undecryptable .conversation-undecryptable__title {
-  color: var(--color-ink);
-  font-weight: 600;
 }
 .conversation-day {
   display: flex;
@@ -538,6 +514,12 @@
   gap: 8px;
   padding: 7px 0 0;
 }
+.conversation-panel__tools > .ar-button:last-child {
+  margin-left: auto;
+}
+.conversation-panel__count + .ar-button:last-child {
+  margin-left: 0;
+}
 .conversation-panel__tools > label {
   display: flex;
   min-width: 0;
@@ -560,30 +542,12 @@
   font-size: 12px;
   cursor: pointer;
 }
-.conversation-panel__tools > span {
+.conversation-panel__tools > .conversation-panel__count {
   margin-left: auto;
   color: var(--ar-muted);
   font-family: var(--font-sans);
   font-size: 12px;
   white-space: nowrap;
-}
-.conversation-panel__tools .ar-button {
-  min-height: 40px;
-  padding: 8px 14px;
-  border-color: var(--ar-accent);
-  border-radius: 9px;
-  color: var(--ar-surface);
-  background: var(--ar-accent);
-  font-size: 12px;
-}
-.conversation-panel__tools .ar-button:disabled {
-  color: var(--ar-muted);
-  background: var(--ar-surface-muted);
-  border-color: var(--ar-line);
-  opacity: 0.75;
-}
-.conversation-panel__tools .ar-button:not(:disabled):hover {
-  background: var(--ar-accent-hover);
 }
 .conversation-panel__mentions {
   display: flex;
@@ -734,9 +698,6 @@
     width: 126px;
     font-size: 12px;
   }
-  .conversation-panel__tools .ar-button {
-    min-height: 36px;
-  }
   .conversation-message {
     gap: 9px;
     padding-right: 20px;
@@ -775,14 +736,40 @@
     max-height: 120px;
   }
 }
+/* 自己消息下的小标记：一眼看到发出去了、谁回复了；点开才列出每个 Agent 的进度。 */
 .conversation-message__delivery {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--ar-muted);
   font-size: 11px;
   line-height: 1.5;
+}
+.conversation-message__delivery > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  cursor: pointer;
+}
+.conversation-message__delivery > summary::-webkit-details-marker {
+  display: none;
+}
+.conversation-message__delivery > summary:hover {
+  color: var(--color-ink);
+}
+.conversation-message__delivery > summary > svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.conversation-message__delivery[data-attention='true'] > summary {
+  color: var(--color-alert);
+}
+.conversation-message__delivery > ul {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0 0 0 17px;
+  list-style: none;
 }
 .conversation-message__delivery [data-stage='needs_review'] {
   color: var(--color-alert);
