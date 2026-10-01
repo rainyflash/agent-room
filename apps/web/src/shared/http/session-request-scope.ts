@@ -11,11 +11,13 @@ export class SessionRequestScope {
           : input instanceof Request
             ? input.signal
             : undefined;
-      const signal =
-        requestSignal === undefined || requestSignal === null
-          ? this.#controller.signal
-          : AbortSignal.any([this.#controller.signal, requestSignal]);
-      return fetchImplementation(input, { ...init, signal });
+      if (requestSignal === undefined || requestSignal === null) {
+        return fetchImplementation(input, { ...init, signal: this.#controller.signal });
+      }
+      const combined = eitherSignal(this.#controller.signal, requestSignal);
+      return fetchImplementation(input, { ...init, signal: combined.signal }).finally(
+        combined.release,
+      );
     };
   }
 
@@ -26,4 +28,36 @@ export class SessionRequestScope {
     // This does not roll back writes that the server has already committed.
     previous.abort(new DOMException('The owning session was cleared.', 'AbortError'));
   }
+}
+
+type CombinedSignal = { readonly signal: AbortSignal; readonly release: () => void };
+
+// AbortSignal.any 要 iOS/Safari 17.4、Chrome 116 起才有。旧手机上缺了它，
+// 每个带超时的请求都会在发出前抛错，界面只会说“连不上”。
+function eitherSignal(first: AbortSignal, second: AbortSignal): CombinedSignal {
+  if (typeof AbortSignal.any === 'function') {
+    return { signal: AbortSignal.any([first, second]), release: () => undefined };
+  }
+  const combined = new AbortController();
+  // 请求结束就摘掉监听，免得会话级信号上越挂越多。
+  const listening = new AbortController();
+  const release = () => {
+    listening.abort();
+  };
+  for (const source of [first, second]) {
+    if (source.aborted) {
+      combined.abort(source.reason);
+      release();
+      break;
+    }
+    source.addEventListener(
+      'abort',
+      () => {
+        combined.abort(source.reason);
+        release();
+      },
+      { once: true, signal: listening.signal },
+    );
+  }
+  return { signal: combined.signal, release };
 }
