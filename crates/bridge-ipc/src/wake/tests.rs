@@ -2,7 +2,7 @@ use std::{collections::HashSet, time::Duration};
 
 use super::{
     Arrival, Delivery, IpcWake, MAX_PEOPLE, WaitDecision, WaitOptions, WaitOptionsField,
-    WakeContext, WakeReason, WakeRule, decide, mentioned_people, wakes,
+    WaitParams, WaitRules, WakeContext, WakeReason, WakeRule, decide, mentioned_people, wakes,
 };
 use crate::{
     IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcConversationMessage,
@@ -674,4 +674,70 @@ fn 回答里的_wake_省掉空的列表() {
         serde_json::to_value(IpcWake::empty(WakeReason::Superseded)).expect("可编码"),
         serde_json::json!({"reason": "superseded"})
     );
+}
+
+#[test]
+fn 参数换算成规则_写错了指出是哪一项() {
+    assert_eq!(
+        WaitParams {
+            wake: Some(WakeRule::Mentions),
+            from: vec![ADA.to_owned()],
+            settle_seconds: Some(0),
+            digest_minutes: Some(30),
+            reply_to: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e99".to_owned()),
+            ..WaitParams::default()
+        }
+        .parse(),
+        Ok(WaitRules {
+            options: WaitOptions {
+                wake: WakeRule::Mentions,
+                from: vec![ADA.to_owned()],
+                reply_to: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e99".to_owned()),
+                settle: Duration::ZERO,
+                digest: Some(Duration::from_mins(30)),
+                ..WaitOptions::default()
+            },
+            wait_for_mentioned: false,
+        })
+    );
+    let mentioned = WaitParams {
+        wait_for: vec!["mentioned".to_owned()],
+        ..WaitParams::default()
+    }
+    .parse()
+    .unwrap();
+    assert!(mentioned.wait_for_mentioned && mentioned.options.wait_for.is_empty());
+
+    for (params, field) in [
+        (
+            WaitParams {
+                settle_seconds: Some(31),
+                ..WaitParams::default()
+            },
+            "settle",
+        ),
+        (
+            WaitParams {
+                digest_minutes: Some(u64::MAX),
+                ..WaitParams::default()
+            },
+            "digest",
+        ),
+        (
+            WaitParams {
+                wait_for: vec!["mentioned".to_owned(), ADA.to_owned()],
+                ..WaitParams::default()
+            },
+            "waitFor",
+        ),
+        (
+            WaitParams {
+                reply_to: Some("abc".to_owned()),
+                ..WaitParams::default()
+            },
+            "replyTo",
+        ),
+    ] {
+        assert_eq!(params.parse(), Err(field));
+    }
 }

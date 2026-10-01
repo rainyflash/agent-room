@@ -685,7 +685,12 @@ class Acceptance:
             raise ReleaseFailure("已安装版本恢复出的人物不是升级验收身份。")
         inbox = self.installed_cli("read", "--wait", "0")
         messages = inbox.get("messages", inbox.get("previews"))
-        events = [message["eventId"] for message in messages]
+        # 新版只看一眼时不给自己发的，基线也只记别人发的；旧版输出还没有 fromMe，按作者认。
+        own = identity["agent"]["agentId"]
+        events = [
+            message["eventId"] for message in messages
+            if (message.get("actor") or {}).get("agent", {}).get("agentId") != own
+        ]
         if not events:
             raise ReleaseFailure("升级前需要至少一条真实的未确认投递。")
         self.write_record("upgrade-baseline.json", {

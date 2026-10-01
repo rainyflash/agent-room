@@ -568,6 +568,7 @@ impl AgentRuntimeIpcFacade {
         waiting: bool,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
+        let keep_waiting = request.keep_waiting;
         let (room_id, _) = runtime.message_room(request.room_id).await?;
         let cursor = request
             .before_event_id
@@ -612,7 +613,8 @@ impl AgentRuntimeIpcFacade {
                 .note_inbox_wait(
                     &room_id,
                     self.clock.now(),
-                    waiting && page.previews().is_empty(),
+                    // 读到了消息就算不在等了，除非客户端按规则先不交、接着等。
+                    waiting && (keep_waiting || page.previews().is_empty()),
                 )
                 .await
         {

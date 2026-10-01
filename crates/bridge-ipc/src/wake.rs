@@ -122,6 +122,81 @@ impl WaitOptions {
     }
 }
 
+/// `waitFor` 只写这个时，等上一条点到的人。
+pub const WAIT_FOR_MENTIONED: &str = "mentioned";
+
+/// 三种接入收到的等消息参数；换算成规则都用这一份。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WaitParams {
+    pub wake: Option<WakeRule>,
+    pub from: Vec<String>,
+    pub wait_for: Vec<String>,
+    pub reply_to: Option<String>,
+    pub settle_seconds: Option<u64>,
+    pub digest_minutes: Option<u64>,
+}
+
+/// 换算好的规则。`waitFor` 只写了 `mentioned` 时 `options.wait_for` 空着，由调用方换成
+/// 上一条点到的人。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WaitRules {
+    pub options: WaitOptions,
+    pub wait_for_mentioned: bool,
+}
+
+impl WaitParams {
+    /// 换算成规则并检查范围。
+    ///
+    /// # Errors
+    ///
+    /// 哪一项不对就返回它的名字（`settle`、`digest`、`from`、`waitFor`、`replyTo`），
+    /// 调用方放进错误的 `details.field`。
+    pub fn parse(self) -> Result<WaitRules, &'static str> {
+        let mentioned = self
+            .wait_for
+            .iter()
+            .any(|person| person == WAIT_FOR_MENTIONED);
+        if mentioned && self.wait_for.len() > 1 {
+            return Err("waitFor");
+        }
+        if self
+            .reply_to
+            .as_deref()
+            .is_some_and(|message_id| uuid::Uuid::parse_str(message_id).is_err())
+        {
+            return Err("replyTo");
+        }
+        let digest = match self.digest_minutes {
+            None => None,
+            Some(minutes) if minutes.checked_mul(60).is_some() => {
+                Some(Duration::from_mins(minutes))
+            }
+            Some(_) => return Err("digest"),
+        };
+        let options = WaitOptions {
+            wake: self.wake.unwrap_or_default(),
+            from: self.from,
+            wait_for: if mentioned { Vec::new() } else { self.wait_for },
+            reply_to: self.reply_to,
+            room_id: None,
+            settle: self
+                .settle_seconds
+                .map_or(DEFAULT_SETTLE, Duration::from_secs),
+            digest,
+        };
+        options.validate().map_err(|field| match field {
+            WaitOptionsField::Settle => "settle",
+            WaitOptionsField::Digest => "digest",
+            WaitOptionsField::From => "from",
+            WaitOptionsField::WaitFor => "waitFor",
+        })?;
+        Ok(WaitRules {
+            options,
+            wait_for_mentioned: mentioned,
+        })
+    }
+}
+
 fn people_valid(people: &[String]) -> bool {
     people.len() <= MAX_PEOPLE && people.iter().all(|person| !person.is_empty())
 }

@@ -5,12 +5,12 @@ mod profile;
 mod receiver;
 
 use agent_room_agent_client::{
-    BridgeToolClient, LocalBridgeToolClient, MessageReadMode, MessageWait,
-    launching_desktop_when_absent, wait_for_messages,
+    BridgeToolClient, InboxWaiter, LocalBridgeToolClient, MessageWait, WaitParams, WokenBatch,
+    launching_desktop_when_absent,
 };
 use agent_room_bridge_ipc::{
-    IpcCloseHostSessionRequest, IpcListPreviewsRequest, IpcMethod, IpcOpenHostSessionRequest,
-    IpcPublishStatusRequest, IpcResponse, IpcWorkStatus,
+    IpcCloseHostSessionRequest, IpcMethod, IpcOpenHostSessionRequest, IpcPublishStatusRequest,
+    IpcResponse, IpcWorkStatus,
 };
 use agent_room_bridge_local_adapter::{
     bridge_data_root_from_environment, bridge_runtime_root, secure_storage_service_from_environment,
@@ -219,31 +219,46 @@ async fn read_presence(backend: &dyn BridgeToolClient, args: cli::PresenceArgs) 
 }
 
 async fn read_once(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliResult<()> {
-    match read(backend, args, MessageWait::from_seconds(args.wait)).await? {
-        Some(response) => success(response),
+    let mut waiter = waiter(args)?;
+    match read(backend, &mut waiter, MessageWait::from_seconds(args.wait)).await? {
+        Some(batch) => success(batch.to_json()),
         None => success(json!({"type": "stopped", "afterEventId": args.after})),
     }
 }
 
+/// 按 `read`/`listen` 的参数准备等消息（`specs/agent-reading/waiting.md`）。
+pub(crate) fn waiter(args: &cli::ReadArgs) -> CliResult<InboxWaiter> {
+    let rules = WaitParams {
+        wake: args.wake.map(Into::into),
+        from: args.from.clone(),
+        wait_for: args.wait_for.clone(),
+        reply_to: args.reply_to.clone(),
+        settle_seconds: args.settle,
+        digest_minutes: args.digest,
+    }
+    .parse()
+    .map_err(|field| {
+        let mut failure = CliFailure::validation("agent.inbox.wait_invalid");
+        failure.details.insert("field".to_owned(), field.to_owned());
+        failure
+    })?;
+    Ok(InboxWaiter::new(
+        required(args.session.clone(), "cli.session_required")?,
+        args.room.clone(),
+        args.after.clone(),
+        args.limit,
+        rules,
+    ))
+}
+
+/// 等下一批；按 Ctrl+C 停下时返回空。
 pub(crate) async fn read(
     backend: &dyn BridgeToolClient,
-    args: &cli::ReadArgs,
+    waiter: &mut InboxWaiter,
     wait: MessageWait,
-) -> CliResult<Option<IpcResponse>> {
-    let waiting = wait_for_messages(
-        backend,
-        required(args.session.clone(), "cli.session_required")?,
-        IpcListPreviewsRequest {
-            room_id: args.room.clone(),
-            after_event_id: args.after.clone(),
-            before_event_id: None,
-            limit: args.limit,
-        },
-        MessageReadMode::Inbox,
-        wait,
-    );
+) -> CliResult<Option<WokenBatch>> {
     tokio::select! {
-        result = waiting => Ok(Some(result?)),
+        result = waiter.next(backend, wait) => Ok(Some(result?)),
         signal = tokio::signal::ctrl_c() => {
             signal.map_err(|_| CliFailure::local("cli.signal_failed"))?;
             Ok(None)
@@ -305,22 +320,21 @@ fn chat_request(
     )
 }
 
-async fn listen(backend: &dyn BridgeToolClient, mut args: cli::ReadArgs) -> CliResult<()> {
+async fn listen(backend: &dyn BridgeToolClient, args: cli::ReadArgs) -> CliResult<()> {
     if args.wait == Some(0) {
         return Err(CliFailure::validation("cli.listen_wait_must_be_positive"));
     }
-    // 显式期限只是这一轮等待的窗口，到期后继续在进程内等待，不结束流。
+    // 显式期限只是这一轮等待的窗口，到期后继续在进程内等待，不结束流；攒着的消息跨轮保留。
     let wait = MessageWait::continuous_from_seconds(args.wait);
+    let mut waiter = waiter(&args)?;
+    let mut after = args.after.clone();
     loop {
-        let Some(response) = read(backend, &args, wait).await? else {
-            return success(json!({"type": "stopped", "afterEventId": args.after}));
+        let Some(batch) = read(backend, &mut waiter, wait).await? else {
+            return success(json!({"type": "stopped", "afterEventId": after}));
         };
-        let IpcResponse::MessagePreviews { previews, .. } = &response else {
-            return Err(CliFailure::local("cli.response_invalid"));
-        };
-        if let Some(last) = previews.last() {
-            args.after = Some(last.event_id.clone());
-            success(response)?;
+        if !batch.previews.is_empty() {
+            after.clone_from(&batch.cursor);
+            success(batch.to_json())?;
         }
     }
 }

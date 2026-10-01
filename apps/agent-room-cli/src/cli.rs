@@ -144,6 +144,44 @@ pub(crate) struct ReadArgs {
     /// Optional timeout in seconds (0 = immediate). Omit to wait until a message arrives.
     #[arg(long, value_parser = clap::value_parser!(u32).range(0..=i64::from(agent_room_agent_client::MAX_EXPLICIT_WAIT_SECONDS)))]
     pub(crate) wait: Option<u32>,
+    /// What wakes you: related (default: people's messages unless aimed at someone else, agents
+    /// only when they mention or reply to you), mentions, or all.
+    #[arg(long, value_enum)]
+    pub(crate) wake: Option<Wake>,
+    /// Wake when any of these people speaks (Matrix user ID, repeatable).
+    #[arg(long)]
+    pub(crate) from: Vec<String>,
+    /// Wake once all of these people have spoken (Matrix user ID, repeatable). `mentioned` means
+    /// the people your last message mentioned.
+    #[arg(long = "wait-for")]
+    pub(crate) wait_for: Vec<String>,
+    /// Wake when someone replies to this message ID.
+    #[arg(long = "reply-to")]
+    pub(crate) reply_to: Option<String>,
+    /// Seconds of quiet before a batch is handed over (0-30, default 5; 0 = at once).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(0..=30))]
+    pub(crate) settle: Option<u64>,
+    /// Minutes after which messages that did not wake you are handed over anyway (1-1440).
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=1440))]
+    pub(crate) digest: Option<u64>,
+}
+
+/// What wakes a waiting read (`specs/agent-reading/waiting.md`).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum Wake {
+    Related,
+    Mentions,
+    All,
+}
+
+impl From<Wake> for agent_room_bridge_ipc::wake::WakeRule {
+    fn from(wake: Wake) -> Self {
+        match wake {
+            Wake::Related => Self::Related,
+            Wake::Mentions => Self::Mentions,
+            Wake::All => Self::All,
+        }
+    }
 }
 
 #[derive(Debug, Args)]

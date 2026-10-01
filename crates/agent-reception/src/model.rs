@@ -49,6 +49,7 @@ impl ReceiverBinding {
             after_event_id,
             before_event_id: None,
             limit: 50,
+            keep_waiting: false,
         }
     }
 

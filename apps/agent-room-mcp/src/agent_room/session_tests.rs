@@ -87,6 +87,7 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
                     after_event_id: Some("$last".into()),
                     before_event_id: None,
                     limit: 20,
+                    keep_waiting: false,
                 },
             )),
         },
@@ -118,6 +119,29 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
             )
             .await;
         assert_eq!(invalid["isError"], true);
+    }
+    // 等消息的规则写错了，不问 Bridge，直接指出是哪一项。
+    for (arguments, field) in [
+        (json!({"sessionId":SESSION_A,"settleSeconds":31}), "settle"),
+        (json!({"sessionId":SESSION_A,"digestMinutes":0}), "digest"),
+        (
+            json!({"sessionId":SESSION_A,"waitFor":["mentioned","@ada:example.test"]}),
+            "waitFor",
+        ),
+        (
+            json!({"sessionId":SESSION_A,"replyTo":"not-a-message-id"}),
+            "replyTo",
+        ),
+    ] {
+        let invalid = harness
+            .call("agent_room_wait_for_messages", arguments)
+            .await;
+        assert_eq!(invalid["isError"], true, "{field}");
+        assert_eq!(
+            invalid["structuredContent"]["code"], "agent.inbox.wait_invalid",
+            "{field}"
+        );
+        assert_eq!(invalid["structuredContent"]["details"]["field"], field);
     }
     bridge.assert_finished();
     harness.stop().await;

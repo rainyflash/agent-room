@@ -222,6 +222,9 @@ pub struct IpcListPreviewsRequest {
     pub room_id: Option<String>,
     pub before_event_id: Option<String>,
     pub limit: u16,
+    /// 等消息的客户端读到了消息、但按规则先不交时，仍然算在等（房间里照样显示“等待中”）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub keep_waiting: bool,
 }
 
 impl IpcListPreviewsRequest {
@@ -1111,6 +1114,7 @@ mod tests {
                     room_id: None,
                     before_event_id: None,
                     limit: 20,
+                    keep_waiting: false,
                 }),
                 IpcScope::PreviewsRead,
             ),

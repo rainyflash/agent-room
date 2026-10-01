@@ -63,6 +63,7 @@ fn request() -> IpcListPreviewsRequest {
         after_event_id: Some("$previous".into()),
         before_event_id: None,
         limit: 20,
+        keep_waiting: false,
     }
 }
 
