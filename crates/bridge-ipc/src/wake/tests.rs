@@ -1,7 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use super::{
-    Arrival, Delivery, IpcTyping, IpcWake, MAX_PEOPLE, WaitDecision, WaitOptions, WaitOptionsField,
+    Arrival, Delivery, IpcWake, MAX_PEOPLE, Typist, WaitDecision, WaitOptions, WaitOptionsField,
     WaitParams, WaitRules, WakeContext, WakeReason, WakeRule, decide, decide_with,
     mentioned_people, wakes,
 };
@@ -776,18 +776,34 @@ fn 调用方自己判断哪条叫醒它_防抖照旧() {
     assert_eq!(delivery.wake.event_ids, ["$Ada 在吗:matrix.test"]);
 }
 
-fn typing(room: &str, people: &[&str]) -> IpcTyping {
-    IpcTyping {
+/// 这几个人此刻在这个房间里打字。
+fn typing(room: &str, people: &[&str]) -> Vec<Typist> {
+    people
+        .iter()
+        .map(|&person| Typist {
+            room_id: room.to_owned(),
+            user_id: person.to_owned(),
+            typing: true,
+            at_ms: 0,
+        })
+        .collect()
+}
+
+/// 这个人在这个时刻停下了打字。
+fn stopped(room: &str, person: &str, at_ms: i64) -> Typist {
+    Typist {
         room_id: room.to_owned(),
-        user_ids: people.iter().map(|&person| person.to_owned()).collect(),
+        user_id: person.to_owned(),
+        typing: false,
+        at_ms,
     }
 }
 
-/// 在这几个人此刻打字的情况下判断。
+/// 在这样的打字情况下判断。
 fn decide_typing(
     messages: &[(IpcMessagePreviewSummary, i64)],
     options: &WaitOptions,
-    typists: &[IpcTyping],
+    typists: &[Typist],
     now_ms: i64,
     deadline_ms: Option<i64>,
 ) -> WaitDecision {
@@ -806,10 +822,10 @@ fn decide_typing(
 }
 
 #[test]
-fn 叫醒它的人还在打字就接着等_打完再交_最多_30_秒() {
+fn 叫醒它的人在打字也算没停_停下以后再等防抖_最多_30_秒() {
     let options = WaitOptions::default();
     let messages = [(human(ADA, "在吗"), 0)];
-    let ada_typing = [typing(ROOM, &[ADA])];
+    let ada_typing = typing(ROOM, &[ADA]);
     // 防抖已经到点，Ada 还在打字：等她打完，最晚到第一条之后 30 秒。
     assert_eq!(
         decide_typing(&messages, &options, &ada_typing, 6_000, None),
@@ -817,10 +833,32 @@ fn 叫醒它的人还在打字就接着等_打完再交_最多_30_秒() {
             recheck_at_ms: Some(30_000)
         }
     );
-    // 打字停了，防抖也到点了：交。
-    let delivery = delivered(decide_typing(&messages, &options, &[], 6_000, None));
+    // 第 7 秒停下了：从停下算再等 5 秒，她点了发送的话，话在这段时间里会到。
+    let ada_stopped = [stopped(ROOM, ADA, 7_000)];
+    assert_eq!(
+        decide_typing(&messages, &options, &ada_stopped, 8_000, None),
+        WaitDecision::Wait {
+            recheck_at_ms: Some(12_000)
+        }
+    );
+    let delivery = delivered(decide_typing(
+        &messages,
+        &options,
+        &ada_stopped,
+        12_000,
+        None,
+    ));
     assert_eq!(delivery.picks, [0]);
-    // 一直在打字也只等到上限。
+    // 停下的时间比最后一条早，照常从最后一条算。
+    let delivery = delivered(decide_typing(
+        &messages,
+        &options,
+        &[stopped(ROOM, ADA, -3_000)],
+        5_000,
+        None,
+    ));
+    assert_eq!(delivery.picks, [0]);
+    // 一直在打字、或者停下以后又过了很久，也只等到上限。
     let delivery = delivered(decide_typing(
         &messages,
         &options,
@@ -829,13 +867,13 @@ fn 叫醒它的人还在打字就接着等_打完再交_最多_30_秒() {
         None,
     ));
     assert_eq!(delivery.wake.reason, WakeReason::Messages);
-    // 防抖还没到点时打字停了，照常等到防抖到点。
-    assert_eq!(
-        decide_typing(&messages, &options, &[], 2_000, None),
-        WaitDecision::Wait {
-            recheck_at_ms: Some(5_000)
-        }
-    );
+    delivered(decide_typing(
+        &messages,
+        &options,
+        &[stopped(ROOM, ADA, 28_000)],
+        30_000,
+        None,
+    ));
     // 这次等消息的期限更早，就到期限再看。
     assert_eq!(
         decide_typing(&messages, &options, &ada_typing, 6_000, Some(20_000)),
@@ -850,9 +888,10 @@ fn 只看叫醒它的人在不在这个房间打字() {
     let options = WaitOptions::default();
     let messages = [(human(ADA, "在吗"), 0)];
     for typists in [
-        vec![typing(ROOM, &[BOB])],
-        vec![typing(OTHER_ROOM, &[ADA])],
-        vec![typing(ROOM, &[])],
+        typing(ROOM, &[BOB]),
+        typing(OTHER_ROOM, &[ADA]),
+        vec![stopped(ROOM, BOB, 5_500)],
+        vec![stopped(OTHER_ROOM, ADA, 5_500)],
     ] {
         let delivery = delivered(decide_typing(&messages, &options, &typists, 6_000, None));
         assert_eq!(delivery.picks, [0], "{typists:?}");
@@ -865,7 +904,7 @@ fn 只看叫醒它的人在不在这个房间打字() {
     let delivery = delivered(decide_typing(
         &messages,
         &options,
-        &[typing(ROOM, &[BOB])],
+        &typing(ROOM, &[BOB]),
         6_000,
         None,
     ));
@@ -875,7 +914,7 @@ fn 只看叫醒它的人在不在这个房间打字() {
 #[test]
 fn 不防抖时打字也不等_等齐时等的人在打字照样等() {
     let messages = [(human(ADA, "在吗"), 0)];
-    let ada_typing = [typing(ROOM, &[ADA])];
+    let ada_typing = typing(ROOM, &[ADA]);
     let immediate = WaitOptions {
         settle: Duration::ZERO,
         ..WaitOptions::default()

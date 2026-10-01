@@ -211,17 +211,28 @@ pub struct WakeContext<'a> {
     pub owner: Option<&'a str>,
     /// 只有我和另一个成员的房间。
     pub direct_rooms: &'a HashSet<String>,
-    /// 此刻谁在打字。
-    pub typing: &'a [IpcTyping],
+    /// 谁在打字、谁刚停下。
+    pub typing: &'a [Typist],
 }
 
-/// 此刻在一个房间里打字的人（Matrix 用户 ID）。叫醒它的人还在打字时接着等，
-/// 等他打完或者到防抖的上限。
+/// 此刻在一个房间里打字的人（Matrix 用户 ID），Bridge 等消息时交给客户端。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcTyping {
     pub room_id: String,
     pub user_ids: Vec<String>,
+}
+
+/// 判断时用的“正在输入”：叫醒它的人在打字也算对话没停。还在打就接着等，停下以后再等
+/// 防抖的时间，免得他点了发送、话还没到就先交了；从有事算起同样最多多等 `MAX_SETTLE`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Typist {
+    pub room_id: String,
+    pub user_id: String,
+    /// 此刻还在打字。
+    pub typing: bool,
+    /// 还在打字时是最后一次听说的时刻，停了是发现他停下的时刻（和消息到的时间同一个时钟）。
+    pub at_ms: i64,
 }
 
 /// 一条还没交出去的消息，和它什么时候到的（调用方自己的时钟，Unix 毫秒）。
@@ -377,7 +388,7 @@ pub fn decide_with(
     pending: &[Arrival<'_>],
     options: &WaitOptions,
     wakes: &dyn Fn(&IpcMessagePreviewSummary) -> bool,
-    typing: &[IpcTyping],
+    typing: &[Typist],
     limit: usize,
     now_ms: i64,
     deadline_ms: Option<i64>,
@@ -397,11 +408,13 @@ pub fn decide_with(
     if options.settle.is_zero() || scope.heard.len() >= limit || timed_out {
         return WaitDecision::Deliver(scope.deliver(&trigger.priority, limit, trigger.reason));
     }
-    // 叫醒它的人还在打字就接着等，等他打完；从有事算起同样最多多等 `MAX_SETTLE`。
-    // 打字停了调用方会再问一次（网关的同步、Bridge 挂着等都会因此返回），所以这里只需在上限时再看。
+    // 叫醒它的人在打字也算对话没停：还在打就接着等，停下以后再等 `settle`；从有事算起同样
+    // 最多多等 `MAX_SETTLE`。打字的人变了调用方会再问一次（网关的同步、Bridge 挂着等都会因此
+    // 返回），所以还在打字时只需在上限时再看。
     let cap = trigger.at_ms.saturating_add(millis(MAX_SETTLE));
-    let typing = now_ms < cap && scope.typing(&trigger.priority, typing);
-    let settle_at = scope.settle_at(trigger.at_ms);
+    let (typing_now, stopped_at) = scope.typing(&trigger.priority, typing);
+    let typing = typing_now && now_ms < cap;
+    let settle_at = scope.settle_at(trigger.at_ms, stopped_at);
     if now_ms >= settle_at && !typing {
         return WaitDecision::Deliver(scope.deliver(&trigger.priority, limit, trigger.reason));
     }
@@ -542,25 +555,36 @@ impl<'p, 'a> Scope<'p, 'a> {
         Some(oldest.saturating_add(millis(digest)))
     }
 
-    /// 叫醒它的那几条里，有没有哪条的作者此刻还在同一个房间里打字。
-    fn typing(&self, priority: &[usize], typing: &[IpcTyping]) -> bool {
-        priority.iter().any(|&index| {
-            let preview = self.pending[index].preview;
-            let author = actor_matrix_id(&preview.actor);
-            typing.iter().any(|room| {
-                room.room_id == preview.room_id && room.user_ids.iter().any(|user| user == author)
+    /// 叫醒它的那几条的作者在同一个房间里打字的情况：此刻还有没有人在打，最晚的是几点停下的。
+    fn typing(&self, priority: &[usize], typing: &[Typist]) -> (bool, Option<i64>) {
+        let mut typing_now = false;
+        let mut stopped_at = None;
+        for typist in typing.iter().filter(|typist| {
+            priority.iter().any(|&index| {
+                let preview = self.pending[index].preview;
+                typist.room_id == preview.room_id
+                    && typist.user_id == actor_matrix_id(&preview.actor)
             })
-        })
+        }) {
+            if typist.typing {
+                typing_now = true;
+            } else {
+                stopped_at = stopped_at.max(Some(typist.at_ms));
+            }
+        }
+        (typing_now, stopped_at)
     }
 
-    /// 防抖到点：最后一条消息之后安静了 `settle`，但从有事算起不超过 `MAX_SETTLE`。
-    fn settle_at(&self, triggered_at_ms: i64) -> i64 {
+    /// 防抖到点：最后一条消息（或者叫醒它的人停下打字）之后安静了 `settle`，
+    /// 但从有事算起不超过 `MAX_SETTLE`。
+    fn settle_at(&self, triggered_at_ms: i64, stopped_typing_at_ms: Option<i64>) -> i64 {
         let last = self
             .heard
             .iter()
             .map(|&index| self.arrived_at(index))
             .max()
             .unwrap_or(triggered_at_ms);
+        let last = stopped_typing_at_ms.map_or(last, |stopped| last.max(stopped));
         let quiet = last.saturating_add(millis(self.options.settle.min(MAX_SETTLE)));
         quiet.min(triggered_at_ms.saturating_add(millis(MAX_SETTLE)))
     }

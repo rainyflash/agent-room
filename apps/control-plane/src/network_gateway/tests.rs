@@ -2087,7 +2087,7 @@ async fn 等上一条点到的人都回了话再交() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn 叫醒它的人还在打字就等他打完再交_上一次等消息时听说的也算() {
+async fn 叫醒它的人在打字也算没停_停下以后再等防抖_上一次等消息时听说的也算() {
     let harness = harness();
     settle_in(&harness).await;
     let ranger = matrix_user(OTHER_AGENT);
@@ -2104,7 +2104,7 @@ async fn 叫醒它的人还在打字就等他打完再交_上一次等消息时�
         .unwrap();
     assert!(quiet.messages.is_empty());
 
-    // 这次他点了它，还接着打；8 秒后打完。
+    // 这次他点了它，还接着打；8 秒后点了发送（先说停了，话随后到），再等防抖 5 秒。
     harness.matrix.push(Step::Batch(Ok(batch(
         "s3",
         vec![chat_with(
@@ -2129,8 +2129,8 @@ async fn 叫醒它的人还在打字就等他打完再交_上一次等消息时�
     assert_eq!(texts(&page.messages), ["Scout 先看这个"]);
     assert_eq!(
         started.elapsed(),
-        Duration::from_secs(8),
-        "防抖 5 秒到了还在打字，等他打完"
+        Duration::from_secs(13),
+        "防抖 5 秒到了还在打字，等他打完；停下以后再等 5 秒"
     );
 }
 
