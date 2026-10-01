@@ -40,6 +40,7 @@ impl BridgeIpcRequestHandler for TestHandler {
                 return Ok(IpcResponse::MessagePreviews {
                     previews: vec![],
                     next_cursor: None,
+                    typing: Vec::new(),
                 });
             }
             if matches!(method, IpcMethod::OpenContent(_)) {

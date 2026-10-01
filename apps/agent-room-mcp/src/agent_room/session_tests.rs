@@ -95,6 +95,7 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
         response: Ok(IpcResponse::MessagePreviews {
             previews: vec![],
             next_cursor: None,
+            typing: Vec::new(),
         }),
     }]));
     let mut harness = McpHarness::start(bridge.clone()).await;
@@ -179,6 +180,7 @@ impl BridgeToolClient for WaitingBridge {
                     Ok(IpcResponse::MessagePreviews {
                         previews: vec![],
                         next_cursor: None,
+                        typing: Vec::new(),
                     })
                 }
             }

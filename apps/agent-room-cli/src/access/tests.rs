@@ -92,6 +92,7 @@ impl BridgeToolClient for Bridge {
                 Ok(IpcResponse::MessagePreviews {
                     previews,
                     next_cursor: None,
+                    typing: Vec::new(),
                 })
             });
         }

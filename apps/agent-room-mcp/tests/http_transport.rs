@@ -46,17 +46,20 @@ impl BridgeToolClient for RecordingBridge {
                                 Some(IpcResponse::MessagePreviews {
                                     previews,
                                     next_cursor,
+                                    ..
                                 }) if previews.last().map(|preview| preview.event_id.as_str())
                                     != request.after_event_id.as_deref() =>
                                 {
                                     IpcResponse::MessagePreviews {
                                         previews,
                                         next_cursor,
+                                        typing: Vec::new(),
                                     }
                                 }
                                 _ => IpcResponse::MessagePreviews {
                                     previews: vec![],
                                     next_cursor: None,
+                                    typing: Vec::new(),
                                 },
                             })
                         }
@@ -507,5 +510,6 @@ fn message_page(event: &str) -> IpcResponse {
             mentions_me: false,
         }],
         next_cursor: None,
+        typing: Vec::new(),
     }
 }

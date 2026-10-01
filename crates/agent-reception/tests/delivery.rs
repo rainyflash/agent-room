@@ -207,6 +207,7 @@ impl BridgeToolClient for Bridge {
                     IpcResponse::MessagePreviews {
                         previews,
                         next_cursor: None,
+                        typing: Vec::new(),
                     }
                 }
                 method => panic!("unexpected {}", method.name()),

@@ -236,7 +236,7 @@ pub(crate) struct NetworkGateway {
     /// 重启以后要它直接写 Matrix 用户 ID。
     last_mentions: Mutex<HashMap<NetworkAgentId, Vec<String>>>,
     /// 每个网络 Agent 的房间里此刻谁在打字。
-    typing: typing::TypingRooms,
+    typing: typing::AgentTyping,
 }
 
 impl NetworkGateway {
@@ -255,7 +255,7 @@ impl NetworkGateway {
             polls: LongPolls::default(),
             presence: Arc::default(),
             last_mentions: Mutex::new(HashMap::new()),
-            typing: typing::TypingRooms::default(),
+            typing: typing::AgentTyping::default(),
         }
     }
 

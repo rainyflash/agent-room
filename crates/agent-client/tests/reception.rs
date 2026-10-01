@@ -55,6 +55,7 @@ fn page(messages: Vec<IpcMessagePreviewSummary>) -> IpcResponse {
     IpcResponse::MessagePreviews {
         previews: messages,
         next_cursor: None,
+        typing: Vec::new(),
     }
 }
 fn request() -> IpcListPreviewsRequest {

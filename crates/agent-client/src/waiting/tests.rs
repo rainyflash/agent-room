@@ -4,7 +4,7 @@ use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
     IpcMethod, IpcOwnerSummary, IpcResponse, IpcSelfSummary,
-    wake::{WaitOptions, WaitRules, WakeReason},
+    wake::{IpcTyping, WaitOptions, WaitRules, WakeReason},
 };
 use tokio::time::Instant;
 
@@ -90,6 +90,8 @@ struct Room {
     honors_wait: bool,
     /// `GetSelf` 回答的主人。
     owner: Option<String>,
+    /// 谁在什么时候打字：从第一个时刻起，到第二个时刻停。
+    typists: Vec<(Duration, Duration, String)>,
     calls: Mutex<Vec<(String, bool)>>,
 }
 
@@ -105,6 +107,7 @@ impl Room {
             latency: Duration::ZERO,
             honors_wait: true,
             owner: None,
+            typists: Vec::new(),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -122,6 +125,23 @@ impl Room {
             })
             .map(|(_, preview)| preview.clone())
             .collect()
+    }
+
+    fn typing_now(&self) -> Vec<IpcTyping> {
+        let elapsed = self.started.elapsed();
+        let user_ids: Vec<String> = self
+            .typists
+            .iter()
+            .filter(|(from, until, _)| *from <= elapsed && elapsed < *until)
+            .map(|(_, _, user)| user.clone())
+            .collect();
+        if user_ids.is_empty() {
+            return Vec::new();
+        }
+        vec![IpcTyping {
+            room_id: "!lobby:room.test".to_owned(),
+            user_ids,
+        }]
     }
 
     fn calls(&self) -> Vec<(String, bool)> {
@@ -144,6 +164,7 @@ impl Room {
         IpcResponse::MessagePreviews {
             previews: rest.iter().take(limit).cloned().collect(),
             next_cursor: (rest.len() > limit).then(|| rest[limit - 1].event_id.clone()),
+            typing: self.typing_now(),
         }
     }
 }
@@ -165,15 +186,16 @@ impl BridgeToolClient for Room {
                     .unwrap()
                     .push(("wait_inbox".to_owned(), request.keep_waiting));
                 if let Some(wait_ms) = blocking {
-                    // 像 Bridge 一样挂着等：来了新消息就交，到点空手返回。
+                    // 像 Bridge 一样挂着等：来了新消息就交，打字的人变了或者到点空手返回。
                     let request = request.clone();
                     let latency = self.latency;
                     return Box::pin(async move {
                         let deadline = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+                        let typing = self.typing_now();
                         loop {
                             let page = self.page(&request, false);
                             let empty = matches!(&page, IpcResponse::MessagePreviews { previews, .. } if previews.is_empty());
-                            if !empty || Instant::now() >= deadline {
+                            if !empty || Instant::now() >= deadline || self.typing_now() != typing {
                                 if !latency.is_zero() {
                                     tokio::time::sleep(latency).await;
                                 }
@@ -536,4 +558,60 @@ async fn 只等某人时主人说话照样叫得醒() {
     assert_eq!(texts(&batch.previews), ["先停一下"]);
     assert_eq!(batch.wake.reason, WakeReason::Messages);
     assert_eq!(batch.wake.missing, [ADA], "Ada 还没回");
+}
+
+#[tokio::test(start_paused = true)]
+async fn 叫醒它的人还在打字就晚点交_打完马上交_一直打也只等到上限() {
+    let ada = || preview(ADA, true, "在吗", &[]);
+    let mut room = Room::new(vec![(1_000, ada())]);
+    room.typists = vec![(
+        Duration::from_secs(1),
+        Duration::from_secs(9),
+        ADA.to_owned(),
+    )];
+    let started = Instant::now();
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["在吗"]);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_millis(9_200),
+        "防抖 5 秒到了她还在打字，打完马上交：{elapsed:?}"
+    );
+
+    let mut room = Room::new(vec![(1_000, ada())]);
+    room.typists = vec![(
+        Duration::from_secs(1),
+        Duration::from_mins(2),
+        ADA.to_owned(),
+    )];
+    let started = Instant::now();
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::UntilMessage)
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["在吗"]);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_secs(31) && elapsed < Duration::from_millis(31_200),
+        "从她那句算起最多多等 30 秒：{elapsed:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 别人在打字不等() {
+    let mut room = Room::new(vec![(1_000, preview(ADA, true, "在吗", &[]))]);
+    room.typists = vec![(Duration::ZERO, Duration::from_mins(2), NOVA.to_owned())];
+    let started = Instant::now();
+    waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_secs(6) && elapsed < Duration::from_millis(6_200),
+        "照常防抖 5 秒：{elapsed:?}"
+    );
 }

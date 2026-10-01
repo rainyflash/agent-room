@@ -11,8 +11,8 @@ use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
     limits::INBOX_BLOCK_MILLIS,
     wake::{
-        Arrival, DEFAULT_WAIT_FOR_LIMIT, Delivery, IpcWake, WaitDecision, WaitOptions, WaitRules,
-        WakeContext, WakeReason, decide, decide_with, mentioned_people,
+        Arrival, DEFAULT_WAIT_FOR_LIMIT, Delivery, IpcTyping, IpcWake, WaitDecision, WaitOptions,
+        WaitRules, WakeContext, WakeReason, decide, decide_with, mentioned_people,
     },
 };
 use tokio::time::Instant;
@@ -85,6 +85,8 @@ pub struct InboxWaiter {
     lookup_owner: bool,
     /// 主人的 Matrix 用户 ID；不知道时没有。
     owner: Option<String>,
+    /// 上次取消息时 Bridge 说的此刻在打字的人；旧版 Bridge 不说，就当没人在打字。
+    typing: Vec<IpcTyping>,
 }
 
 type WakeCheck = Box<dyn Fn(&IpcMessagePreviewSummary) -> bool + Send + Sync>;
@@ -113,6 +115,7 @@ impl InboxWaiter {
             wakes: None,
             lookup_owner: false,
             owner: None,
+            typing: Vec::new(),
         }
     }
 
@@ -218,7 +221,7 @@ impl InboxWaiter {
             keep_waiting: false,
             wait_ms: None,
         };
-        let (previews, _) = self
+        let (previews, _, _) = self
             .read_page(backend, IpcMethod::ReadInbox(request), None)
             .await?;
         let cursor = previews
@@ -290,7 +293,8 @@ impl InboxWaiter {
             } else {
                 IpcMethod::ReadInbox(request)
             };
-            let (previews, more) = self.read_page(backend, method, cut_off).await?;
+            let (previews, more, typing) = self.read_page(backend, method, cut_off).await?;
+            self.typing = typing;
             // 挂着等可能等了好几秒：到的时间按这一页回来的时候算。
             let now_ms = self.clock.now_ms();
             for preview in previews {
@@ -373,7 +377,7 @@ impl InboxWaiter {
                 &arrivals,
                 &self.options,
                 wakes.as_ref(),
-                &[],
+                &self.typing,
                 self.limit,
                 now_ms,
                 deadline_ms,
@@ -386,7 +390,7 @@ impl InboxWaiter {
             WakeContext {
                 owner: self.owner.as_deref(),
                 direct_rooms: &direct_rooms,
-                typing: &[],
+                typing: &self.typing,
             },
             self.limit,
             now_ms,
@@ -442,7 +446,7 @@ impl InboxWaiter {
             keep_waiting: false,
             wait_ms: None,
         };
-        let (newest_first, _) = self
+        let (newest_first, _, _) = self
             .read_page(backend, IpcMethod::ListPreviews(request), None)
             .await?;
         let people = mentioned_people(newest_first.iter().find(|preview| preview.from_me));
@@ -489,7 +493,7 @@ impl InboxWaiter {
         backend: &dyn BridgeToolClient,
         method: IpcMethod,
         cut_off: Option<Instant>,
-    ) -> Result<(Vec<IpcMessagePreviewSummary>, bool), BridgeToolFailure> {
+    ) -> Result<(Vec<IpcMessagePreviewSummary>, bool, Vec<IpcTyping>), BridgeToolFailure> {
         let method = IpcMethod::WithSession {
             session_id: self.session_id.clone(),
             method: Box::new(method),
@@ -513,7 +517,8 @@ impl InboxWaiter {
             IpcResponse::MessagePreviews {
                 previews,
                 next_cursor,
-            } => Ok((previews, next_cursor.is_some())),
+                typing,
+            } => Ok((previews, next_cursor.is_some(), typing)),
             _ => Err(failure(
                 "agent.inbox.response_invalid",
                 IpcErrorCategory::Internal,

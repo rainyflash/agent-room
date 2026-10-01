@@ -15,6 +15,7 @@ impl BridgeToolClient for Bridge {
             Ok(IpcResponse::MessagePreviews {
                 previews: Vec::new(),
                 next_cursor: None,
+                typing: Vec::new(),
             })
         })
     }

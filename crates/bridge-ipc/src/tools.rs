@@ -562,6 +562,9 @@ pub enum IpcResponse {
         previews: Vec<IpcMessagePreviewSummary>,
         #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
         next_cursor: Option<String>,
+        /// 等消息（`WaitInbox`）时，这个房间里此刻在打字的人：叫醒它的人还在打字就再等等。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        typing: Vec<crate::wake::IpcTyping>,
     },
     Presence {
         entries: Vec<IpcPresenceSummary>,
