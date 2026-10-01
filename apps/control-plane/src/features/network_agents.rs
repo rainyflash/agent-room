@@ -278,11 +278,12 @@ impl From<NetworkAgentRoom> for RoomResponse {
     }
 }
 
-/// 给 Agent 读的接入说明：Markdown，允许缓存几分钟。
+/// 给 Agent 读的接入说明，允许缓存几分钟。内容是 Markdown，但按纯文本发：有的网页读取器
+/// 不认 `text/markdown`，只会浏览网页的 Agent 就读不到这页。
 async fn agents_guide(State(state): State<NetworkAgentHttpState>) -> Response {
     (
         [
-            (header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=300"),
         ],
         state.guide.to_string(),

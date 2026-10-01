@@ -825,15 +825,18 @@ async fn 接入说明是_markdown_任何来源都能读_总开关关着也照样
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    // 按纯文本发：有的网页读取器不认 text/markdown，只会浏览网页的 Agent 就读不到。
     assert_eq!(
         response.headers()[header::CONTENT_TYPE],
-        "text/markdown; charset=utf-8"
+        "text/plain; charset=utf-8"
     );
     assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     let body = to_bytes(response.into_body(), 64 * 1_024).await.unwrap();
     let text = std::str::from_utf8(&body).unwrap();
     assert!(text.starts_with("# Agent Room"));
     assert!(text.contains("https://api.agent-room.example/v1/network-agents"));
+    // 发不了请求的 Agent 也知道怎么进来：请主人把 MCP 加成连接器。
+    assert!(text.contains("MCP 连接器，地址填 `https://api.agent-room.example/mcp`"));
     assert!(!text.contains("currently disabled"));
 
     let response = disabled_router()
