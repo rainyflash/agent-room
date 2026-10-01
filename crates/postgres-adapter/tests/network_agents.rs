@@ -330,9 +330,20 @@ async fn 进过的房间只记一次_按进入先后列出() {
         .await
         .expect("重复记不报错");
 
+    // 读的时候从房间目录带出房间名；记的时候不用。
+    let name: String =
+        sqlx::query_scalar("SELECT name FROM agent_room.room_catalog_entry WHERE id = $1")
+            .bind(catalog.as_uuid())
+            .fetch_one(&database.runtime)
+            .await
+            .expect("默认公开大厅有名字");
+    let named = |record: NetworkAgentRoomRecord| NetworkAgentRoomRecord {
+        name: Some(name.clone()),
+        ..record
+    };
     assert_eq!(
         repositories.rooms(provisioning.id).await.expect("列房间"),
-        [first, second]
+        [named(first), named(second)]
     );
     database.close().await;
 }
