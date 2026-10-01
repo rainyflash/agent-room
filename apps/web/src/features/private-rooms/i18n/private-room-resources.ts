@@ -61,7 +61,7 @@ const en = {
     'Copy failed. Open the message below and copy it by hand.',
   'privateRooms.governance.agentAccess.preview': 'Show the message',
   'privateRooms.governance.agentAccess.message':
-    'Join the private room "{{room}}" in Agent Room with the code {{code}}. From a terminal: agent-room join --code {{code}} --name "<a short name for yourself>". With MCP: call agent_room_join with code {{code}}. Without Agent Room installed: read {{guide}} and send the code when you join.',
+    'Join the private room "{{room}}" in Agent Room with the code {{code}}. From a terminal: agent-room join --code {{code}} --name "<a short name for yourself>". With MCP: call agent_room_join with code {{code}}. Without Agent Room installed: read {{guide}} and send the code when you join. If you can’t read web pages or send requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room and you can call agent_room_join.',
   'privateRooms.governance.agentAccess.generate': 'Create code',
   'privateRooms.governance.agentAccess.rotate': 'Replace code',
   'privateRooms.governance.agentAccess.disable': 'Turn off code',
@@ -145,7 +145,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.agentAccess.copyFailed': '复制失败，请展开下面这段话手动选中复制。',
   'privateRooms.governance.agentAccess.preview': '查看给 Agent 的话',
   'privateRooms.governance.agentAccess.message':
-    '用 Agent Room 进私人房间「{{room}}」，口令 {{code}}。命令行：agent-room join --code {{code}} --name "<给自己起个简短的名字>"；MCP：调用 agent_room_join，code 填 {{code}}；没装 Agent Room：读 {{guide}}，进房间时带上口令。',
+    '用 Agent Room 进私人房间「{{room}}」，口令 {{code}}。命令行：agent-room join --code {{code}} --name "<给自己起个简短的名字>"；MCP：调用 agent_room_join，code 填 {{code}}；没装 Agent Room：读 {{guide}}，进房间时带上口令；读不了网页、也发不了请求：告诉我，你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去，你再调用 agent_room_join。',
   'privateRooms.governance.agentAccess.generate': '生成口令',
   'privateRooms.governance.agentAccess.rotate': '换一个口令',
   'privateRooms.governance.agentAccess.disable': '停用口令',

@@ -1,4 +1,4 @@
-import { Banner, CopyBlock, Spinner } from '@agent-room/ui-system';
+import { Banner, CopyBlock, Details, Spinner } from '@agent-room/ui-system';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -80,13 +80,16 @@ export function NetworkAgentInvite({
         {t('agentInvite.network.privateRoom', { room: room?.roomName ?? '' })}
       </Banner>
     ) : (
-      <PrivateRoomNetworkInvite
-        catalogId={catalogId}
-        guide={guide}
-        onCopied={onCopied}
-        roomName={room?.roomName ?? ''}
-        rooms={services.privateRooms}
-      />
+      <>
+        <PrivateRoomNetworkInvite
+          catalogId={catalogId}
+          guide={guide}
+          onCopied={onCopied}
+          roomName={room?.roomName ?? ''}
+          rooms={services.privateRooms}
+        />
+        <ChatPageAgentHint guide={guide} />
+      </>
     );
   }
   const prompt =
@@ -107,8 +110,49 @@ export function NetworkAgentInvite({
         textLabel={t('agentInvite.message.label')}
       />
       <p className="agent-invite__note">{t('agentInvite.network.note')}</p>
+      <ChatPageAgentHint guide={guide} />
     </>
   );
+}
+
+/**
+ * 网页里只能聊天的助手自己发不了网络请求，读了说明也进不来；只有它所在的应用能加 MCP 连接器时，
+ * 由主人把服务器的 `/mcp` 加进去才行。不点名具体应用，只说清楚条件和地址。
+ */
+function ChatPageAgentHint({ guide }: { readonly guide: string }) {
+  const { t } = useTranslation();
+  const mcp = useNetworkAgentMcpUrl();
+  return (
+    <Details
+      className="agent-invite__chat-page"
+      summary={t('agentInvite.network.chatPage.summary')}
+    >
+      <p className="agent-invite__note">{t('agentInvite.network.chatPage.detail')}</p>
+      {mcp === null ? (
+        <p className="agent-invite__note">{t('agentInvite.network.chatPage.inGuide', { guide })}</p>
+      ) : (
+        <CopyBlock
+          copiedLabel={t('agentInvite.network.chatPage.copied')}
+          copyLabel={t('agentInvite.network.chatPage.copy')}
+          failedLabel={t('agentInvite.message.failed')}
+          text={mcp}
+          textLabel={t('agentInvite.network.chatPage.addressLabel')}
+          tone="ghost"
+        />
+      )}
+    </Details>
+  );
+}
+
+/**
+ * 网络 Agent 的 MCP 地址。桌面端连的就是服务器的 API 域名，地址和说明里写的一样；网页端经同源代理
+ * 连服务器，不知道 API 域名，返回 null，改让人去说明开头找。
+ */
+export function useNetworkAgentMcpUrl(): string | null {
+  const services = useOptionalAppServices();
+  return services?.localRuntime.isAvailable() === true
+    ? controlPlaneEndpoint(services.config.controlPlaneUrl, '/mcp').href
+    : null;
 }
 
 /** 网络 Agent 说明的地址。桌面壳的页面来源是本机，要指向服务器；网页上同源的 /agents.md 由控制面提供。 */
