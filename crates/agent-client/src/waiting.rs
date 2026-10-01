@@ -9,6 +9,7 @@ use std::{
 
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
+    limits::INBOX_BLOCK_MILLIS,
     wake::{
         Arrival, DEFAULT_WAIT_FOR_LIMIT, Delivery, IpcWake, WaitDecision, WaitOptions, WaitRules,
         WakeContext, WakeReason, decide, decide_with, mentioned_people,
@@ -23,8 +24,10 @@ const HELD_CAPACITY: usize = 200;
 /// 向 Bridge 一次取这么多条；一轮最多取这么多页，剩下的下一轮接着取。
 const FETCH_PAGE: u16 = 50;
 const FETCH_PAGES_PER_ROUND: usize = 8;
-/// 等的时候多久问一次 Bridge。
+/// Bridge 立刻空手返回（不认挂着等）时，最多隔这么久再问一次，别空转。
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// 挂着等的调用多给这么久再截断：Bridge 刚好到点才回时，不能算成超时。
+const BLOCK_GRACE: Duration = Duration::from_secs(2);
 
 /// 交给 Agent 的一批。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,11 +146,19 @@ impl InboxWaiter {
         };
         // 只有到点就得交差的调用，才能把卡住的 Bridge 请求截断；`listen` 只是结束这一轮。
         let cut_off = deadline.filter(|_| !matches!(wait, MessageWait::Continuous(_)));
+        // 第一次不挂着等：先把已经到了的取回来判断。之后没有可交的，就请 Bridge 挂着等。
+        let mut block = Duration::ZERO;
         loop {
             // 到点了就按攒着的交差，不再去取：带着已经过去的期限去取，真的 IPC 一次没就绪就被截断。
             let expired = deadline.is_some_and(|deadline| Instant::now() >= deadline);
             if !expired {
-                self.fetch(backend, true, cut_off).await?;
+                let asked = Instant::now();
+                let added = self.fetch(backend, true, block, cut_off).await?;
+                // 不认挂着等的 Bridge 会立刻空手返回：退回每秒问一次，别空转。
+                let waited = asked.elapsed();
+                if !block.is_zero() && !added && waited < block {
+                    tokio::time::sleep(POLL_INTERVAL.min(block.saturating_sub(waited))).await;
+                }
             }
             let mut decision = self.decide(deadline);
             if matches!(decision, WaitDecision::Deliver(_)) && !expired {
@@ -165,14 +176,16 @@ impl InboxWaiter {
                     return Ok(batch);
                 }
                 WaitDecision::Wait { recheck_at_ms } => {
-                    let mut next = Instant::now() + POLL_INTERVAL;
+                    // 下一次取请 Bridge 挂着等：最多 8 秒，不超过防抖或定时看一眼到点、也不超过期限。
+                    let now = Instant::now();
+                    let mut until_at = now + Duration::from_millis(u64::from(INBOX_BLOCK_MILLIS));
                     if let Some(at_ms) = recheck_at_ms {
-                        next = next.min(Instant::now() + until(self.clock.now_ms(), at_ms));
+                        until_at = until_at.min(now + until(self.clock.now_ms(), at_ms));
                     }
                     if let Some(deadline) = deadline {
-                        next = next.min(deadline);
+                        until_at = until_at.min(deadline);
                     }
-                    tokio::time::sleep_until(next).await;
+                    block = until_at.saturating_duration_since(now);
                 }
             }
         }
@@ -189,6 +202,7 @@ impl InboxWaiter {
             before_event_id: None,
             limit: u16::try_from(self.limit).unwrap_or(FETCH_PAGE),
             keep_waiting: false,
+            wait_ms: None,
         };
         let (previews, _) = self
             .read_page(backend, IpcMethod::ReadInbox(request), None)
@@ -219,38 +233,56 @@ impl InboxWaiter {
         })
     }
 
-    /// 从上次取到的地方接着取，直到取完或者攒满。
+    /// 从上次取到的地方接着取，直到取完或者攒满；`block` 不为零时，第一页请 Bridge 挂着等。
+    /// 返回这次有没有取到新的。
     async fn fetch(
         &mut self,
         backend: &dyn BridgeToolClient,
         keep_waiting: bool,
+        block: Duration,
         cut_off: Option<Instant>,
-    ) -> Result<(), BridgeToolFailure> {
+    ) -> Result<bool, BridgeToolFailure> {
+        let before = self.held.len() + self.dropped;
         let first = !self.fetched_once;
         self.fetched_once = true;
-        let now_ms = self.clock.now_ms();
         let known: HashSet<String> = self
             .held
             .iter()
             .map(|(preview, _)| preview.event_id.clone())
             .collect();
-        for _ in 0..FETCH_PAGES_PER_ROUND {
+        let mut fetched_own = false;
+        for page in 0..FETCH_PAGES_PER_ROUND {
+            let wait_ms = (page == 0 && !block.is_zero())
+                .then(|| u32::try_from(block.as_millis()).unwrap_or(INBOX_BLOCK_MILLIS))
+                .map(|wait| wait.min(INBOX_BLOCK_MILLIS));
             let request = IpcListPreviewsRequest {
                 after_event_id: self.fetched_through.clone(),
                 room_id: self.room_id.clone(),
                 before_event_id: None,
                 limit: FETCH_PAGE,
                 keep_waiting,
+                wait_ms,
             };
+            // 挂着等的那一页多给一点再截断：Bridge 刚好到点才回时不能算成超时。
+            let cut_off = cut_off.map(|cut_off| {
+                if wait_ms.is_some() {
+                    cut_off + BLOCK_GRACE
+                } else {
+                    cut_off
+                }
+            });
             let method = if keep_waiting {
                 IpcMethod::WaitInbox(request)
             } else {
                 IpcMethod::ReadInbox(request)
             };
             let (previews, more) = self.read_page(backend, method, cut_off).await?;
+            // 挂着等可能等了好几秒：到的时间按这一页回来的时候算。
+            let now_ms = self.clock.now_ms();
             for preview in previews {
                 self.fetched_through = Some(preview.event_id.clone());
                 if preview.from_me || known.contains(&preview.event_id) {
+                    fetched_own |= preview.from_me;
                     continue;
                 }
                 // 开始等之前就到了的，按它发出的时间算（不晚于现在），早就安静了的不用再防抖。
@@ -279,7 +311,7 @@ impl InboxWaiter {
             }
             self.dropped += excess;
         }
-        Ok(())
+        Ok(fetched_own || self.held.len() + self.dropped > before)
     }
 
     /// 从交到的地方重读攒着的那些：改过的换成新的，撤回的去掉，到的时间不变。
@@ -294,7 +326,7 @@ impl InboxWaiter {
             .map(|(preview, at_ms)| (preview.event_id, at_ms))
             .collect();
         self.fetched_through.clone_from(&self.held_after);
-        self.fetch(backend, true, cut_off).await?;
+        self.fetch(backend, true, Duration::ZERO, cut_off).await?;
         for (preview, at_ms) in &mut self.held {
             if let Some(original) = arrived.get(&preview.event_id) {
                 *at_ms = *original;
@@ -392,6 +424,7 @@ impl InboxWaiter {
             before_event_id: None,
             limit: FETCH_PAGE,
             keep_waiting: false,
+            wait_ms: None,
         };
         let (newest_first, _) = self
             .read_page(backend, IpcMethod::ListPreviews(request), None)
@@ -412,6 +445,7 @@ impl InboxWaiter {
             before_event_id: None,
             limit: 1,
             keep_waiting: false,
+            wait_ms: None,
         };
         let method = IpcMethod::WithSession {
             session_id: self.session_id.clone(),

@@ -64,6 +64,7 @@ fn request() -> IpcListPreviewsRequest {
         before_event_id: None,
         limit: 20,
         keep_waiting: false,
+        wait_ms: None,
     }
 }
 

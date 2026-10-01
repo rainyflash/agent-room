@@ -225,12 +225,22 @@ pub struct IpcListPreviewsRequest {
     /// 等消息的客户端读到了消息、但按规则先不交时，仍然算在等（房间里照样显示“等待中”）。
     #[serde(default, skip_serializing_if = "is_false")]
     pub keep_waiting: bool,
+    /// 没有新消息时 Bridge 最多挂多久再空手返回（毫秒，最多 8000）；来了新消息立刻返回。
+    /// 只对 `WaitInbox` 有用，省得客户端每秒新开一条连接来问。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u32>,
 }
 
 impl IpcListPreviewsRequest {
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         if self.after_event_id.is_some() && self.before_event_id.is_some() {
             return Err(failure("bridge.ipc.event_cursor_invalid"));
+        }
+        if self
+            .wait_ms
+            .is_some_and(|wait| wait > limits::INBOX_BLOCK_MILLIS)
+        {
+            return Err(failure("bridge.ipc.inbox_wait_invalid"));
         }
         validate_optional_bounded(
             self.after_event_id.as_deref(),
@@ -1115,6 +1125,7 @@ mod tests {
                     before_event_id: None,
                     limit: 20,
                     keep_waiting: false,
+                    wait_ms: None,
                 }),
                 IpcScope::PreviewsRead,
             ),

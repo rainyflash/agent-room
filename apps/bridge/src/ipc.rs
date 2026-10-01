@@ -1602,6 +1602,7 @@ mod tests {
                     before_event_id: None,
                     limit: 20,
                     keep_waiting: false,
+                    wait_ms: None,
                 },
             ))
             .await
@@ -1785,6 +1786,7 @@ mod tests {
                 before_event_id: None,
                 limit: 20,
                 keep_waiting: false,
+                wait_ms: None,
             };
             let mut invalid_request = request.clone();
             invalid_request.limit = 0;
@@ -1888,6 +1890,7 @@ mod tests {
             before_event_id: None,
             limit: 20,
             keep_waiting,
+            wait_ms: None,
         };
         handler
             .dispatch(IpcMethod::WaitInbox(request(true)))
@@ -1904,6 +1907,64 @@ mod tests {
             "读到了消息但还在等：照样显示等待中"
         );
         assert!(events[1].content()["listeningUntil"].is_null());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 等消息时挂着等_来了就交_没有就到点空手返回() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let publisher = Arc::new(记录状态发布器::default());
+        let status = 测试状态发布句柄(identity.clone(), room_id.clone(), publisher.clone());
+        let previews = Arc::new(记录预览查询::default());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::HostSession,
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity,
+                    "DEVICE-1",
+                    room_id.clone(),
+                    ["previews.read"],
+                )
+                .with_status(status),
+            )),
+            previews.clone(),
+            空正文服务(previews.clone()),
+            Arc::new(固定时钟),
+        );
+        let request = agent_room_bridge_ipc::IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting: false,
+            wait_ms: Some(2_000),
+        };
+
+        let started = tokio::time::Instant::now();
+        handler
+            .dispatch(IpcMethod::WaitInbox(request.clone()))
+            .await
+            .expect("没有消息，到点空手返回");
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        let looked = previews.0.lock().expect("查询记录锁可用").len();
+        assert!((8..=10).contains(&looked), "每 250 毫秒看一眼：{looked}");
+        assert!(
+            !publisher.0.lock().expect("状态事件锁可用").is_empty(),
+            "挂着等的时候算在等"
+        );
+
+        previews.1.lock().expect("预览页锁可用").push(测试正文投影(
+            room_id,
+            ContentId::from_uuid(Uuid::now_v7()),
+            Sha256Digest::from_bytes([7; 32]),
+        ));
+        let started = tokio::time::Instant::now();
+        handler
+            .dispatch(IpcMethod::WaitInbox(request))
+            .await
+            .expect("有消息就交");
+        assert_eq!(started.elapsed(), Duration::ZERO, "来了就交，不等到点");
     }
 
     #[tokio::test]

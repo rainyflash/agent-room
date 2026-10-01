@@ -26,6 +26,7 @@ fn request() -> IpcListPreviewsRequest {
         after_event_id: Some("$last:room.test".to_owned()),
         limit: 20,
         keep_waiting: false,
+        wait_ms: None,
     }
 }
 

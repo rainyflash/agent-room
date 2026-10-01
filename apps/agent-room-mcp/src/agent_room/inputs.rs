@@ -123,6 +123,7 @@ impl From<ListPreviewsInput> for IpcListPreviewsRequest {
             before_event_id: input.before_event_id,
             limit: input.limit,
             keep_waiting: false,
+            wait_ms: None,
         }
     }
 }

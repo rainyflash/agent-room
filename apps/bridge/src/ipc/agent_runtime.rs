@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use agent_room_application::ports::{
     Clock, MatrixEventId, MatrixFailureKind, MatrixRoomAccess, MatrixRoomEncryption, MatrixRoomId,
@@ -19,9 +19,9 @@ use agent_room_bridge_core::{
         AutomationAuthorizationDenial, AutomationAuthorizationFailure,
         AutomationAuthorizationFailureKind, MessageBodyProtectionService,
         MessageContentFailureKind, MessageContentReadFailureKind, MessageContentSourceQuery,
-        MessagePreviewQuery, MessagePublicationFailure, MessagePublicationFailureKind,
-        MessagePublicationOutcome, MessagePublicationService, MessageStoreFailureKind,
-        MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
+        MessagePreviewPage, MessagePreviewQuery, MessagePublicationFailure,
+        MessagePublicationFailureKind, MessagePublicationOutcome, MessagePublicationService,
+        MessageStoreFailureKind, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
         MessageTimelineQueryRepository, OpenMessageContentFailure, OpenMessageContentFailureKind,
         OpenMessageContentRequest, OpenMessageContentService, OpenedMessageBody,
         ProjectedMessagePreview, ProtectMessageBodyFailure, ProtectMessageBodyFailureKind,
@@ -74,6 +74,10 @@ use super::{
 use crate::agent_status::AgentStatusPublicationHandle;
 
 const MAXIMUM_HANDOFF_LIFETIME_MILLIS: i64 = 60 * 60 * 1_000;
+/// 挂着等的时候多久看一眼本地消息库。
+const INBOX_BLOCK_POLL: Duration = Duration::from_millis(250);
+/// 挂着等的时候多久报一次“还在等”：比“等待中”10 秒的看门狗短得多。
+const INBOX_WAIT_NOTE_INTERVAL: Duration = Duration::from_secs(4);
 
 fn map_matrix_security_failure(
     failure: agent_room_bridge_core::matrix_security::MatrixSecurityFailure,
@@ -586,11 +590,17 @@ impl AgentRuntimeIpcFacade {
             None => MessagePreviewQuery::new(room_id.clone(), cursor, request.limit),
         }
         .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))?;
+        let block = waiting
+            .then_some(request.wait_ms)
+            .flatten()
+            .map(|wait| Duration::from_millis(u64::from(wait)));
+        let status = runtime
+            .status
+            .as_ref()
+            .filter(|_| self.consumer == AgentRuntimeConsumer::HostSession);
         let page = self
-            .previews
-            .list_previews(&query)
-            .await
-            .map_err(map_preview_query_failure)?;
+            .page_when_ready(&query, block, status, &room_id)
+            .await?;
         let replied = self.replied_messages(&room_id, page.previews()).await;
         let viewer = PreviewViewer {
             agent_id: runtime.identity.agent_id(),
@@ -621,6 +631,46 @@ impl AgentRuntimeIpcFacade {
             tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
         }
         Ok(response)
+    }
+
+    /// 等消息的客户端说了最多挂多久：没有新消息就在这里等，每 250 毫秒看一眼本地消息库，来了
+    /// 立刻交，到点空手返回。省得客户端每秒新开一条连接来问。挂着的时候照样算在等。
+    async fn page_when_ready(
+        &self,
+        query: &MessagePreviewQuery,
+        block: Option<Duration>,
+        status: Option<&Arc<AgentStatusPublicationHandle>>,
+        room_id: &MatrixRoomId,
+    ) -> Result<MessagePreviewPage, BridgeIpcDispatchFailure> {
+        let deadline = block.map(|wait| tokio::time::Instant::now() + wait);
+        let mut noted: Option<tokio::time::Instant> = None;
+        loop {
+            let page = self
+                .previews
+                .list_previews(query)
+                .await
+                .map_err(map_preview_query_failure)?;
+            let now = tokio::time::Instant::now();
+            let Some(deadline) = deadline.filter(|deadline| now < *deadline) else {
+                return Ok(page);
+            };
+            if !page.previews().is_empty() {
+                return Ok(page);
+            }
+            // 挂着等的时候每几秒报一次“还在等”，免得看门狗以为等的进程走了。
+            if let Some(status) = status
+                && noted.is_none_or(|at| now >= at + INBOX_WAIT_NOTE_INTERVAL)
+            {
+                noted = Some(now);
+                if let Err(failure) = status
+                    .note_inbox_wait(room_id, self.clock.now(), true)
+                    .await
+                {
+                    tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
+                }
+            }
+            tokio::time::sleep_until(deadline.min(now + INBOX_BLOCK_POLL)).await;
+        }
     }
 
     /// 这一页里的消息回复了哪些消息：一次取回来，给每条附上被回复那条的开头。读不到时只是少了摘录。

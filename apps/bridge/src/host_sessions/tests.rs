@@ -75,6 +75,7 @@ async fn 诊断不伪造取信证据也不延长空闲寿命() {
             before_event_id: None,
             limit: 20,
             keep_waiting: false,
+            wait_ms: None,
         })
     };
     assert!(

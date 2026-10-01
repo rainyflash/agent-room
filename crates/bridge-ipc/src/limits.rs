@@ -1,6 +1,8 @@
 //! IPC 与 MCP 共同使用的闭合输入上限。
 
 pub const ROOM_ID_BYTES: usize = 512;
+/// 等消息时 Bridge 最多挂这么久（毫秒），在“等待中”10 秒的看门狗以内，也在一次本地调用的期限以内。
+pub const INBOX_BLOCK_MILLIS: u32 = 8_000;
 pub const EVENT_ID_BYTES: usize = 512;
 pub const UUID_TEXT_CHARACTERS: usize = 36;
 pub const TITLE_CHARACTERS: usize = 120;
