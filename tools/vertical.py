@@ -1638,6 +1638,213 @@ def verify_network_agent_workflow(
     return {"token": token, "agentId": agent_id, "replyEventId": reply_event}
 
 
+# 等消息的那一轮用自己的来源地址建网络 Agent，不占别的轮次每小时 5 个的名额。
+WAITING_SOURCES: Final = ("198.51.100.40", "198.51.100.41")
+
+
+def create_waiting_network_agent(name: str, source: str) -> str:
+    """建一个网络 Agent，第一次取消息带回的上下文全部确认掉，返回令牌。"""
+    status, created = network_agent_request(
+        "POST", "", body={"name": name, "room": CATALOG_SLUG}, source=source
+    )
+    if status != 201 or created is None:
+        raise VerticalFailure(f"网络 Agent {name} 创建失败：HTTP {status}。")
+    token = require_text(created.get("token"), "网络 Agent 令牌")
+    acknowledge_network_page(token, network_agent_wait(token, "wait=0&limit=50"))
+    return token
+
+
+def network_agent_wait(token: str, query: str) -> dict[str, object]:
+    status, page = network_agent_request(
+        "GET", f"/me/messages?{query}", token=token, timeout_seconds=90
+    )
+    if status != 200 or page is None:
+        raise VerticalFailure(f"网络 Agent 等消息失败：HTTP {status}（{query}）。")
+    return page
+
+
+def network_page_messages(page: Mapping[str, object]) -> list[dict[str, object]]:
+    messages = page.get("messages")
+    if not isinstance(messages, list):
+        raise VerticalFailure("网络 Agent 的消息列表格式不对。")
+    return [require_object(item, "网络 Agent 收到的消息") for item in messages]
+
+
+def network_page_wake(page: Mapping[str, object]) -> dict[str, object]:
+    return require_object(page.get("wake"), "叫醒原因")
+
+
+def acknowledge_network_page(token: str, page: Mapping[str, object]) -> None:
+    messages = network_page_messages(page)
+    if not messages:
+        return
+    last = require_text(messages[-1].get("eventId"), "事件 ID")
+    status, _ = network_agent_request("POST", "/me/ack", token=token, body={"eventId": last})
+    if status != 200:
+        raise VerticalFailure(f"网络 Agent 确认消息失败：HTTP {status}。")
+
+
+def network_agent_say(token: str, text: str, *, mentions: Sequence[str] = ()) -> str:
+    status, sent = network_agent_request(
+        "POST", "/me/messages", token=token, body={"text": text, "mentions": list(mentions)}
+    )
+    if status != 201 or sent is None or sent.get("status") != "sent":
+        raise VerticalFailure(f"网络 Agent 发言失败：HTTP {status}。")
+    return require_text(sent.get("eventId"), "网络 Agent 发言的事件 ID")
+
+
+def message_author(message: Mapping[str, object]) -> str:
+    actor = require_object(message.get("actor"), "消息作者")
+    agent = actor.get("agent")
+    if isinstance(agent, dict):
+        return require_text(agent.get("matrixUserId"), "Agent 的 Matrix 用户 ID")
+    return require_text(actor.get("matrixUserId"), "作者的 Matrix 用户 ID")
+
+
+def find_network_message(page: Mapping[str, object], event_id: str) -> dict[str, object]:
+    for message in network_page_messages(page):
+        if message.get("eventId") == event_id:
+            return message
+    raise VerticalFailure(f"网络 Agent 没有收到 {event_id}。")
+
+
+def in_background(work: Callable[[], dict[str, object]]) -> Callable[[], dict[str, object]]:
+    """在另一个线程里等消息，主线程接着发；返回取结果的函数。"""
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = work()
+        except Exception as error:  # noqa: BLE001 - 交回主线程再抛
+            outcome["error"] = error
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+
+    def result() -> dict[str, object]:
+        thread.join(timeout=120)
+        if thread.is_alive():
+            raise VerticalFailure("等消息的调用 120 秒还没返回。")
+        error = outcome.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return require_object(outcome.get("value"), "等消息的结果")
+
+    return result
+
+
+def verify_waiting_rules(
+    *, sender_bridge: AuthorizedBridgeRuntime, redactor: LogRedactor
+) -> dict[str, str]:
+    """等消息的规则在真实服务器上走一遍（specs/agent-reading/waiting.md 第 6 步）：Agent 之间没点名
+    不叫醒、连发三条只叫醒一次、等齐两个人、定时看一眼；本机 MCP 也按同样的规则等。"""
+    sender_session = require_bridge_session(sender_bridge)
+    room_id = sender_session["matrixRoomId"]
+    local_agent = sender_session["agentMatrixUserId"]
+    waiter = create_waiting_network_agent("Vertical Waiter", WAITING_SOURCES[0])
+    talker = create_waiting_network_agent("Vertical Talker", WAITING_SOURCES[1])
+
+    # Agent 之间没点名不叫醒：等满时间空手返回，消息留着；只看一眼时有什么给什么。
+    chatter = network_agent_say(talker, "Talker thinking out loud.")
+    page = network_agent_wait(waiter, "wait=6")
+    if network_page_messages(page) or network_page_wake(page).get("reason") != "timeout":
+        raise VerticalFailure(f"别的 Agent 没点名的话叫醒了网络 Agent：{network_page_wake(page)}")
+    page = network_agent_wait(waiter, "wait=0")
+    talker_id = message_author(find_network_message(page, chatter))
+    acknowledge_network_page(waiter, page)
+    hello = network_agent_say(waiter, "Waiter is here.")
+    page = network_agent_wait(talker, "wait=20&wake=all&settle=0")
+    waiter_id = message_author(find_network_message(page, hello))
+    acknowledge_network_page(talker, page)
+
+    # 连发三条点名它的只叫醒一次：等对话停 5 秒再一起交。
+    burst = [
+        network_agent_say(talker, f"Waiter, point {index}.", mentions=[waiter_id])
+        for index in range(1, 4)
+    ]
+    started = time.monotonic()
+    page = network_agent_wait(waiter, "wait=30")
+    wake = network_page_wake(page)
+    delivered = [message.get("eventId") for message in network_page_messages(page)]
+    if wake.get("reason") != "messages" or wake.get("eventIds") != burst or delivered[-3:] != burst:
+        raise VerticalFailure(f"连发三条没有一起交给网络 Agent：{wake}")
+    if time.monotonic() - started < 4:
+        raise VerticalFailure("连发三条之后没有等对话停下就交了。")
+    acknowledge_network_page(waiter, page)
+
+    # 等齐两个人：点名 Talker 和本机 Agent，两个都说了话才交。
+    network_agent_say(
+        waiter, "Talker and local agent, please both answer.", mentions=[talker_id, local_agent]
+    )
+    both = in_background(lambda: network_agent_wait(waiter, "waitFor=mentioned&wait=30"))
+    time.sleep(1)
+    talker_answer = network_agent_say(talker, "Talker answers.")
+    with bridge_mcp_client(sender_bridge, redactor) as transport:
+        client = transport.bind_session(sender_session["sessionId"])
+        local_answer = send_mcp_vertical_message(client, room_id)["eventId"]
+    page = both()
+    wake = network_page_wake(page)
+    delivered = [message.get("eventId") for message in network_page_messages(page)]
+    if (
+        wake.get("reason") != "all_replied"
+        or wake.get("missing", [])
+        or talker_answer not in delivered
+        or local_answer not in delivered
+    ):
+        raise VerticalFailure(f"等齐两个人没有按规则交：{wake}")
+    acknowledge_network_page(waiter, page)
+
+    # 定时看一眼：没叫醒它的消息攒够 1 分钟也交给它看一眼。
+    idle = network_agent_say(talker, "Talker mutters again.")
+    posted = time.monotonic()
+    for _ in range(5):
+        page = network_agent_wait(waiter, "digest=1&wait=30")
+        if network_page_messages(page):
+            break
+    wake = network_page_wake(page)
+    delivered = [message.get("eventId") for message in network_page_messages(page)]
+    if wake.get("reason") != "digest" or idle not in delivered:
+        raise VerticalFailure(f"定时看一眼没有按时交：{wake}")
+    if time.monotonic() - posted < 50:
+        raise VerticalFailure("定时看一眼不到 1 分钟就交了。")
+    acknowledge_network_page(waiter, page)
+
+    # 本机 MCP 也按同样的规则等：别的 Agent 没点名的话不叫醒，点名以后连同之前的一起交。
+    with bridge_mcp_client(sender_bridge, redactor) as transport:
+        client = transport.bind_session(sender_session["sessionId"])
+        newest = client.call_tool(
+            "agent_room_list_previews", {"roomId": room_id, "beforeEventId": None, "limit": 1}
+        )
+        latest = newest.get("previews")
+        if not isinstance(latest, list) or not latest:
+            raise VerticalFailure("本机 Agent 看不到房间里最新的消息。")
+        cursor = require_text(require_object(latest[0], "最新的消息").get("eventId"), "事件 ID")
+        local = in_background(
+            lambda: client.call_tool(
+                "agent_room_wait_for_messages",
+                {"roomId": room_id, "afterEventId": cursor, "limit": 20, "waitSeconds": 60},
+            )
+        )
+        time.sleep(1)
+        aside = network_agent_say(talker, "Talker aside, not for the local agent.")
+        time.sleep(3)
+        named = network_agent_say(talker, "Local agent, your turn.", mentions=[local_agent])
+        page = local()
+    wake = require_object(page.get("wake"), "本机 Agent 的叫醒原因")
+    previews = page.get("previews")
+    if not isinstance(previews, list):
+        raise VerticalFailure("本机 Agent 等到的消息格式不对。")
+    delivered = [require_object(item, "本机 Agent 收到的消息").get("eventId") for item in previews]
+    if wake.get("reason") != "messages" or wake.get("eventIds") != [named] or delivered[-2:] != [aside, named]:
+        raise VerticalFailure(f"本机 Agent 没有按规则等消息：{wake}，收到 {delivered}")
+
+    for token in (waiter, talker):
+        status, _ = network_agent_request("DELETE", "/me", token=token)
+        if status != 204:
+            raise VerticalFailure(f"网络 Agent 停用失败：HTTP {status}。")
+    return {"waiterToken": waiter, "talkerToken": talker}
+
+
 NETWORK_AGENT_MCP: Final = "http://127.0.0.1:8090/mcp"
 
 

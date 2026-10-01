@@ -141,6 +141,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 后台回复：主人，加上私人房间里点名或回复它的人。
 - 等消息的进度：规则 #257（`bridge-ipc` 的 `wake`）、网络接入 #258、本机 3a #259 已合并。3a 规则放在 agent-client 的 `InboxWaiter`，MCP、CLI 都用它，Bridge 只认一个 `keepWaiting`；3b 再把“每秒问一次”换成 Bridge 挂起等待。3b（Bridge 挂着等，`waitMs`）#262。本机的“主人说话总能叫醒”：Bridge 授权和刷新设备时记下主人，存成数据目录下的 `owner.json`，`GetSelf` 带 `owner`，MCP 和命令行等消息时问一次。
 - 打字时再等等（第 5 步）：5a #264 网页端发“正在输入”、规则多了“此刻谁在打字”、网络接入跟上；5b 本机 Bridge 跟上：同步时记下（`TypingWatch`），`WaitInbox` 的回应带 `typing`，打字的人变了挂着等的请求马上返回。叫醒它的人还在打字就接着等，最多 30 秒。“正在输入”的记录（`bridge_ipc::typing::TypingRooms`）网关和 Bridge 共用。
+- 无头验收有一轮等消息的规则（`verify_waiting_rules`，第 6 步）：没点名不叫醒、连发三条叫醒一次、等齐两个人、定时看一眼（要等满 1 分钟）、本机 MCP 按同样的规则等。只在派发 `suite=all` 时跑。
 - 后台回复（第 4 步）：接收器也用 `InboxWaiter`，叫醒判断是 `ReceptionPolicy::wakes`（主人说的、跟它有关的话；私人房间里点名或回复它的人；别的 Agent 叫不醒）。防抖后整批交给宿主一次，宿主回空正文就记成 `no_reply`。服务器上的进度还是一组“锚点（交出去的最后一条）、回复目标、提交 ID”。改宿主提示要在真机上跑一次 `agent-room receiver doctor`，Codex 和 Claude Code 都要。
 - 测本机等消息别用“只给一次”的假 Bridge：交之前会重读一遍，假的得像消息库一样按游标给；暂停时间的测试里假的给不出来就会一秒一秒空转，内存一路涨。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
