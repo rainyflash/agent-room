@@ -163,6 +163,20 @@ async fn serve(
             };
             assert_eq!(session_id, SESSION);
             let waiting = matches!(*method, IpcMethod::WaitInbox(_));
+            if matches!(*method, IpcMethod::GetSelf) {
+                // 等消息前问一次主人是谁。假 Bridge 照实回答（这里没有主人）：原来遇到它就 panic，
+                // CI 上打印回溯要十几秒，连接迟迟不断，把后面的计时全拖乱了。
+                IpcFrameCodec::write(
+                    &mut stream,
+                    &IpcFrame::Response {
+                        correlation_id,
+                        result: self_summary(),
+                    },
+                )
+                .await
+                .unwrap();
+                return;
+            }
             let (IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request)) = *method else {
                 panic!("read must not acknowledge or send")
             };
@@ -191,6 +205,27 @@ async fn serve(
             .await
             .unwrap();
         });
+    }
+}
+
+fn self_summary() -> IpcResponse {
+    use agent_room_bridge_ipc::{IpcAgentSummary, IpcBridgeState, IpcSelfSummary};
+    IpcResponse::SelfSummary {
+        summary: IpcSelfSummary {
+            owner: None,
+            room_catalog_id: None,
+            agent: IpcAgentSummary {
+                agent_id: "01990d9e-8400-7000-8000-000000000002".to_owned(),
+                display_name: "Scout".to_owned(),
+                matrix_user_id: "@scout:agent-room.test".to_owned(),
+                avatar_url: None,
+            },
+            instance_id: "01990d9e-8400-7000-8000-000000000003".to_owned(),
+            matrix_device_id: "DEVICE".to_owned(),
+            room_id: "!lobby:agent-room.test".to_owned(),
+            connection_state: IpcBridgeState::Ready,
+            granted_capabilities: Vec::new(),
+        },
     }
 }
 
