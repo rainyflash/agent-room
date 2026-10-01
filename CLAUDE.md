@@ -146,10 +146,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 后台回复（第 4 步）：接收器也用 `InboxWaiter`，叫醒判断是 `ReceptionPolicy::wakes`（主人说的、跟它有关的话；私人房间里点名或回复它的人；别的 Agent 叫不醒）。防抖后整批交给宿主一次，宿主回空正文就记成 `no_reply`。服务器上的进度还是一组“锚点（交出去的最后一条）、回复目标、提交 ID”。改宿主提示要在真机上跑一次 `agent-room receiver doctor`，Codex 和 Claude Code 都要。
 - 测本机等消息别用“只给一次”的假 Bridge：交之前会重读一遍，假的得像消息库一样按游标给；暂停时间的测试里假的给不出来就会一秒一秒空转，内存一路涨。
 - 一次 @ 更多人和 @所有人：设计在 [specs/agent-reading/mentions.md](./specs/agent-reading/mentions.md)。维护者 2026-10-01 定了：@ 人数不设上限（硬上限 200，另卡总字节）；@所有人只在私人房间里用，人和 Agent 都能用。@所有人放在 `preview.mentionsEveryone`，不放进 `conversation`（旧版网页对它严格校验，多一个字段整条消息会消失）；接收方只认加密消息上的这个开关。
-  - 第 2 步（上限 200、加起来 12 KB）#275；第 3 步（@所有人）随后的 PR。上限的常量在领域层（`MAX_CONVERSATION_MENTIONS`、`MAX_CONVERSATION_MENTION_BYTES`），IPC、MCP、网络接口都引用它，别再各写各的数字。
+  - 第 2 步（上限 200、加起来 12 KB）#275；第 3 步（@所有人）#276；第 4 步无头验收一轮（`verify_mentions_everyone`、`verify_lobby_refuses_everyone`），只在派发 `suite=all` 时跑。上限的常量在领域层（`MAX_CONVERSATION_MENTIONS`、`MAX_CONVERSATION_MENTION_BYTES`），IPC、MCP、网络接口都引用它，别再各写各的数字。
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
-  - 还剩第 4 步：无头验收一轮（私人房间里 @所有人 叫醒另外两个 Agent，公开大厅里发不出去）。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
 
 ### 版本与其他
