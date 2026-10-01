@@ -21,8 +21,12 @@ for (const width of [1440, 390]) {
     await expect(card.getByText('Paused', { exact: true })).toBeVisible();
     await card.getByText('Authorization and paths', { exact: true }).click();
     await card.getByLabel('Workspace', { exact: true }).fill('C:/Projects/Studio updated');
+    const digest = card.getByLabel('Show it messages that did not wake it');
+    await expect(digest).toHaveValue('0');
+    await digest.selectOption({ label: 'Every hour' });
     await card.getByRole('button', { name: 'Save authorization and paths' }).click();
     await expect(card.getByText('C:/Projects/Studio updated', { exact: true })).toBeVisible();
+    await expect(card.getByLabel('Show it messages that did not wake it')).toHaveValue('60');
     await expectNoHorizontalOverflow(page);
     await panel.screenshot({ path: testInfo.outputPath(`reception-${String(width)}.png`) });
     await card.getByRole('button', { name: 'Remove', exact: true }).click();

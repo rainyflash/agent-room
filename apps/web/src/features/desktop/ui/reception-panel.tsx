@@ -11,6 +11,7 @@ import { useAutomationGrantList } from '@/features/automation/data/automation-gr
 import type { AutomationGrant } from '@/features/automation/domain/automation-grant';
 import type { HostSessionDiagnostics } from '../domain/desktop-runtime';
 import {
+  RECEPTION_DIGEST_CHOICES,
   receptionFailureAdvice,
   receptionGrants,
   type ReceiverAction,
@@ -324,6 +325,12 @@ export function ReceptionCard({
   const [grantId, setGrantId] = useState(binding.automationGrantId);
   const [executable, setExecutable] = useState(binding.host.executable);
   const [workspace, setWorkspace] = useState(binding.host.workspace);
+  const [digest, setDigest] = useState(binding.policy.digestMinutes ?? 0);
+  const digestChoices: readonly number[] = RECEPTION_DIGEST_CHOICES.includes(
+    digest as (typeof RECEPTION_DIGEST_CHOICES)[number],
+  )
+    ? RECEPTION_DIGEST_CHOICES
+    : [...RECEPTION_DIGEST_CHOICES, digest];
   const existingGrant = grants.find((grant) => grant.grantId === binding.automationGrantId);
   const allowed = receptionGrants(
     grants,
@@ -450,13 +457,40 @@ export function ReceptionCard({
                 }}
               />
             </label>
+            <label>
+              {t('reception.digest')}
+              <select
+                value={digest}
+                onChange={(event) => {
+                  setDigest(Number(event.target.value));
+                }}
+              >
+                {digestChoices.map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    {minutes === 0
+                      ? t('reception.digestNever')
+                      : minutes === 60
+                        ? t('reception.digestHourly')
+                        : minutes === 1440
+                          ? t('reception.digestDaily')
+                          : t('reception.digestEvery', { minutes })}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="reception-actions">
               <Button
                 size="compact"
                 tone="ghost"
                 disabled={busy || !grantId || !executable || !workspace}
                 onClick={() => {
-                  onAction({ action: 'update', automationGrantId: grantId, executable, workspace });
+                  onAction({
+                    action: 'update',
+                    automationGrantId: grantId,
+                    executable,
+                    workspace,
+                    digestMinutes: digest === 0 ? null : digest,
+                  });
                 }}
               >
                 {t('reception.update')}

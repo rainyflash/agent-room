@@ -358,6 +358,9 @@ pub(crate) enum ReceiverAction {
         automation_grant_id: String,
         executable: Option<PathBuf>,
         workspace: Option<PathBuf>,
+        /// 没叫醒它的消息多久让它看一眼；不给就是从不。
+        #[serde(rename = "digestMinutes", default)]
+        digest_minutes: Option<u64>,
     },
 }
 
@@ -412,12 +415,14 @@ pub(crate) async fn desktop_receiver_action(
                     automation_grant_id,
                     executable,
                     workspace,
+                    digest_minutes,
                 } => {
                     let state = store
                         .load()?
                         .ok_or_else(|| ReceptionFailure::local("receiver.state_missing"))?;
                     let mut binding = state.binding;
                     binding.automation_grant_id = automation_grant_id;
+                    binding.policy.digest_minutes = digest_minutes;
                     if let Some(path) = executable {
                         binding.host.executable = path;
                     }
