@@ -852,6 +852,8 @@ pub struct MatrixTimelineEvent {
     origin_server_timestamp: Option<u64>,
     content: Value,
     encryption: MatrixTimelineEncryption,
+    /// 成员事件之前的成员状态（`unsigned.prev_content.membership`）：分清加入和改昵称。
+    previous_membership: Option<String>,
 }
 
 /// Matrix 时间线事件在 SDK 解密后的传输信任状态。
@@ -898,7 +900,19 @@ impl MatrixTimelineEvent {
             origin_server_timestamp,
             content,
             encryption: MatrixTimelineEncryption::Plaintext,
+            previous_membership: None,
         })
+    }
+
+    /// 成员事件之前的成员状态；服务器没给时没有。
+    #[must_use]
+    pub fn with_previous_membership(mut self, membership: Option<String>) -> Self {
+        self.previous_membership = membership;
+        self
+    }
+
+    pub fn previous_membership(&self) -> Option<&str> {
+        self.previous_membership.as_deref()
     }
 
     #[must_use]

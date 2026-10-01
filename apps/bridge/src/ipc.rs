@@ -1318,10 +1318,11 @@ mod tests {
     }
 
     #[derive(Default)]
-    /// 记下每次预览查询；第二项是每页返回的消息，默认空页。
+    /// 记下每次预览查询；第二项是每页返回的消息，默认空页；第三项是房间名和加入时间。
     struct 记录预览查询(
         Mutex<Vec<MessagePreviewQuery>>,
         Mutex<Vec<ProjectedMessagePreview>>,
+        Mutex<agent_room_bridge_core::messages::MessageRoomContext>,
     );
 
     impl MessageTimelineQueryRepository for 记录预览查询 {
@@ -1351,6 +1352,20 @@ mod tests {
         ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>
         {
             Box::pin(async { Ok(None) })
+        }
+
+        fn room_context<'a>(
+            &'a self,
+            _room_id: &'a MatrixRoomId,
+        ) -> PortFuture<
+            'a,
+            Result<
+                agent_room_bridge_core::messages::MessageRoomContext,
+                MessageTimelineQueryFailure,
+            >,
+        > {
+            let context = self.2.lock().expect("房间信息锁可用").clone();
+            Box::pin(async move { Ok(context) })
         }
     }
 
@@ -2068,6 +2083,56 @@ mod tests {
             panic!("必须返回预览");
         };
         assert!(typing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn 读消息时带上房间名_标出它加入之前的() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let previews = Arc::new(记录预览查询::default());
+        // 测试正文投影是服务器 1 秒收到的；Agent 2 秒才加入。
+        *previews.2.lock().expect("房间信息锁可用") =
+            agent_room_bridge_core::messages::MessageRoomContext {
+                name: Some("项目室".to_owned()),
+                joined_at_ms: Some(2_000),
+            };
+        previews.1.lock().expect("预览页锁可用").push(测试正文投影(
+            room_id.clone(),
+            ContentId::from_uuid(Uuid::now_v7()),
+            Sha256Digest::from_bytes([7; 32]),
+        ));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::HostSession,
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
+                测试_agent_身份(),
+                "DEVICE-1",
+                room_id,
+                ["previews.read"],
+            ))),
+            previews.clone(),
+            空正文服务(previews.clone()),
+            Arc::new(固定时钟),
+        );
+
+        let IpcResponse::MessagePreviews { previews: page, .. } = handler
+            .dispatch(IpcMethod::ReadInbox(
+                agent_room_bridge_ipc::IpcListPreviewsRequest {
+                    after_event_id: None,
+                    room_id: None,
+                    before_event_id: None,
+                    limit: 20,
+                    keep_waiting: false,
+                    wait_ms: None,
+                },
+            ))
+            .await
+            .expect("可以读")
+        else {
+            panic!("必须返回预览");
+        };
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].room_name.as_deref(), Some("项目室"));
+        assert!(page[0].before_join);
     }
 
     #[tokio::test]

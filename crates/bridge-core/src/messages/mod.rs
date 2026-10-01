@@ -10,7 +10,10 @@ mod outgoing;
 mod ports;
 mod projection;
 mod recovery;
+mod room_state;
 mod wire;
+
+pub use room_state::{OwnMembership, RoomName, RoomStateChange, room_state_changes};
 
 pub use automation::{
     AutomationAuthorizationDenial, AutomationAuthorizationFailure,
@@ -54,10 +57,10 @@ pub use projection::{
     IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage,
     MessagePreviewQuery, MessagePreviewQueryError, MessageProjectionBatch,
     MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
-    MessageRecoveryBatch, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
-    MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
-    MessageTimelineQueryRepository, PendingTimelineGap, ProjectedActorInstanceVerification,
-    ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
-    ReservedIsolatedEvent, UndecryptableSession,
+    MessageRecoveryBatch, MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason,
+    MessageTimelineGap, MessageTimelineProjectionStore, MessageTimelineQueryFailure,
+    MessageTimelineQueryFailureKind, MessageTimelineQueryRepository, PendingTimelineGap,
+    ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
+    ProjectedMessageRevision, ReservedIsolatedEvent, UndecryptableSession,
 };
 pub use recovery::{MessageRecoveryOutcome, MessageRecoverySource};

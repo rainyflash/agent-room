@@ -619,6 +619,13 @@ impl MessageTimelineQueryFailure {
     }
 }
 
+/// 读消息时要的房间信息：房间名，和这台 Bridge 上的 Agent 什么时候加入的。不知道就没有。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MessageRoomContext {
+    pub name: Option<String>,
+    pub joined_at_ms: Option<i64>,
+}
+
 pub trait MessageTimelineQueryRepository: Send + Sync {
     /// 从已验证的本地投影读取预览，不触发正文下载。
     fn list_previews<'a>(
@@ -638,6 +645,14 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         room_id: &'a MatrixRoomId,
         message_ids: &'a [MessageId],
     ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>>;
+
+    /// 房间名和加入时间。没记过的房间什么也没有。
+    fn room_context<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<MessageRoomContext, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(MessageRoomContext::default()) })
+    }
 }
 
 #[cfg(test)]

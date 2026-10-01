@@ -8,10 +8,11 @@ use agent_room_bridge_core::messages::{
     IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage,
     MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
     MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageRecoveryBatch,
-    MessageSyncIssue, MessageSyncIssueReason, MessageTimelineProjectionStore,
+    MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineProjectionStore,
     MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
-    PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
-    ProjectedMessagePreview, ReservedIsolatedEvent, UndecryptableSession,
+    OwnMembership, PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
+    ProjectedMessagePreview, ReservedIsolatedEvent, RoomName, RoomStateChange,
+    UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -457,6 +458,80 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
         message_ids: &'a [MessageId],
     ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
         Box::pin(async move { self.query_messages(room_id, message_ids).await })
+    }
+
+    fn room_context<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<MessageRoomContext, MessageTimelineQueryFailure>> {
+        Box::pin(async move {
+            let row = sqlx::query_as::<_, (Option<String>, Option<i64>)>(
+                "SELECT name, joined_at_unix_ms FROM message_room_state WHERE room_id = ?",
+            )
+            .bind(room_id.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_query_sqlx_error(&error))?;
+            Ok(
+                row.map_or_else(MessageRoomContext::default, |(name, joined_at_ms)| {
+                    MessageRoomContext { name, joined_at_ms }
+                }),
+            )
+        })
+    }
+}
+
+impl SqliteMessageTimelineRepository {
+    /// 记下同步里看到的房间名和自己成员状态的变化：真正加入时记下时间，离开时清掉。
+    ///
+    /// # Errors
+    ///
+    /// 本地数据库写不进去时返回失败；调用方只记一条告警，不影响收消息。
+    pub async fn record_room_state(
+        &self,
+        changes: &[RoomStateChange],
+        now: UtcMillis,
+    ) -> Result<(), MessageProjectionStoreFailure> {
+        for change in changes {
+            if let Some(name) = &change.name {
+                let name = match name {
+                    RoomName::Named(name) => Some(name.as_str()),
+                    RoomName::Unnamed => None,
+                };
+                sqlx::query(
+                    "INSERT INTO message_room_state (room_id, name, updated_at_unix_ms)
+                     VALUES (?, ?, ?)
+                     ON CONFLICT(room_id) DO UPDATE SET
+                         name = excluded.name, updated_at_unix_ms = excluded.updated_at_unix_ms",
+                )
+                .bind(change.room_id.as_str())
+                .bind(name)
+                .bind(now.value())
+                .execute(&self.pool)
+                .await
+                .map_err(|error| map_sqlx_error(&error))?;
+            }
+            if let Some(membership) = change.membership {
+                let joined_at_ms = match membership {
+                    OwnMembership::Joined { at_ms } => Some(at_ms),
+                    OwnMembership::Left => None,
+                };
+                sqlx::query(
+                    "INSERT INTO message_room_state (room_id, joined_at_unix_ms, updated_at_unix_ms)
+                     VALUES (?, ?, ?)
+                     ON CONFLICT(room_id) DO UPDATE SET
+                         joined_at_unix_ms = excluded.joined_at_unix_ms,
+                         updated_at_unix_ms = excluded.updated_at_unix_ms",
+                )
+                .bind(change.room_id.as_str())
+                .bind(joined_at_ms)
+                .bind(now.value())
+                .execute(&self.pool)
+                .await
+                .map_err(|error| map_sqlx_error(&error))?;
+            }
+        }
+        Ok(())
     }
 }
 

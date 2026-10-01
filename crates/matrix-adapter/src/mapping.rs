@@ -213,9 +213,16 @@ fn map_raw_event<T>(
         .map_err(|_| invalid_response_failure(operation))?;
     let event_type = MatrixEventType::new(envelope.event_type)
         .map_err(|_| invalid_response_failure(operation))?;
-    let transaction_id = envelope
-        .unsigned
-        .and_then(|value| value.transaction_id)
+    let (transaction_id, previous_membership) =
+        envelope.unsigned.map_or((None, None), |unsigned| {
+            (
+                unsigned.transaction_id,
+                unsigned
+                    .prev_content
+                    .and_then(|previous| previous.membership),
+            )
+        });
+    let transaction_id = transaction_id
         .map(MatrixTransactionId::new)
         .transpose()
         .map_err(|_| invalid_response_failure(operation))?;
@@ -228,6 +235,7 @@ fn map_raw_event<T>(
         envelope.origin_server_timestamp,
         envelope.content,
     )
+    .map(|event| event.with_previous_membership(previous_membership))
     .map_err(|_| invalid_response_failure(operation))
 }
 
@@ -267,6 +275,15 @@ struct EventEnvelope {
 struct EventUnsigned {
     #[serde(default)]
     transaction_id: Option<String>,
+    #[serde(default)]
+    prev_content: Option<PreviousContent>,
+}
+
+/// 状态事件之前的内容：只留成员状态，用来分清加入和改昵称。
+#[derive(Debug, Deserialize)]
+struct PreviousContent {
+    #[serde(default)]
+    membership: Option<String>,
 }
 
 #[cfg(test)]
@@ -336,6 +353,30 @@ mod tests {
             event.transaction_id().expect("事务标识存在").as_str(),
             "txn-stable"
         );
+    }
+
+    #[test]
+    fn 成员事件留着上一个成员状态_分清加入和改昵称() {
+        let raw = |prev: &str| {
+            Raw::<AnySyncTimelineEvent>::from_json_string(format!(
+                r#"{{"type":"m.room.member","state_key":"@scout:example.org","event_id":"$m:example.org","sender":"@scout:example.org","origin_server_ts":1234,"content":{{"membership":"join"}}{prev}}}"#
+            ))
+            .expect("原始事件 JSON 有效")
+        };
+        let renamed = map_raw_event(
+            &raw(r#","unsigned":{"prev_content":{"membership":"join","displayname":"旧名"}}"#),
+            MatrixOperation::Sync,
+        )
+        .expect("事件映射成功");
+        assert_eq!(renamed.previous_membership(), Some("join"));
+        let joined = map_raw_event(
+            &raw(r#","unsigned":{"prev_content":{"membership":"invite"}}"#),
+            MatrixOperation::Sync,
+        )
+        .expect("事件映射成功");
+        assert_eq!(joined.previous_membership(), Some("invite"));
+        let first = map_raw_event(&raw(""), MatrixOperation::Sync).expect("事件映射成功");
+        assert_eq!(first.previous_membership(), None);
     }
 
     #[test]

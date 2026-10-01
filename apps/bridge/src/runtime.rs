@@ -1428,6 +1428,7 @@ async fn sync_agent_online(
         .process(&batch)
         .await
         .map_err(AgentOnlineFailure::MessageSync)?;
+    record_room_state(runtime, online, &batch).await;
     tracing::debug!(
         accepted_events = outcome.accepted_events,
         isolated_events = outcome.isolated_events,
@@ -1469,6 +1470,28 @@ async fn sync_agent_online(
         .map_err(AgentOnlineFailure::Status)?;
     online.next_batch = Some(batch.next_batch().clone());
     Ok(())
+}
+
+/// 记下房间名和自己什么时候加入的：读消息时带上房间名，标出加入之前的。记不下只少了这两项。
+async fn record_room_state(
+    runtime: &AgentSessionRuntime,
+    online: &AgentOnlineSession,
+    batch: &agent_room_application::ports::MatrixSyncBatch,
+) {
+    let changes = agent_room_bridge_core::messages::room_state_changes(
+        batch,
+        online.runtime.identity().matrix_user_id().as_str(),
+    );
+    if changes.is_empty() {
+        return;
+    }
+    if let Err(failure) = runtime
+        .previews
+        .record_room_state(&changes, SystemClock.now())
+        .await
+    {
+        tracing::warn!(failure_kind = ?failure.kind(), "没能记下房间名和加入时间");
+    }
 }
 
 async fn establish_initial_session(
