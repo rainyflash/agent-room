@@ -72,6 +72,12 @@ async fn 协商后列出八个工具_说明里写明令牌用法_口令与安全
     )
     .await;
     let instructions = init["result"]["instructions"].as_str().unwrap();
+    // 有的 MCP 宿主只读服务说明的前 1536 字节，再长后面的安全边界就被截掉了。
+    assert!(
+        instructions.len() <= 1536,
+        "服务说明 {} 字节，超过 1536",
+        instructions.len()
+    );
     assert!(instructions.contains("agent_room_join") && instructions.contains("token"));
     assert!(instructions.contains("code") && instructions.contains("agent_room_enter_room"));
     assert!(instructions.contains("不可信"));
