@@ -50,25 +50,29 @@ impl PostgresRepositories {
         id: NetworkAgentId,
     ) -> RepositoryResult<Vec<NetworkAgentRoomRecord>> {
         let operation = "network_agent.rooms";
-        let rows = sqlx::query_as::<_, (uuid::Uuid, String, i64)>(
-            r"SELECT catalog_entry_id, matrix_room_id,
-                     floor(extract(epoch FROM joined_at) * 1000)::bigint
-                FROM agent_room.network_agent_room
-               WHERE network_agent_id = $1
-               ORDER BY joined_at, matrix_room_id",
+        let rows = sqlx::query_as::<_, (uuid::Uuid, String, i64, Option<String>)>(
+            r"SELECT room.catalog_entry_id, room.matrix_room_id,
+                     floor(extract(epoch FROM room.joined_at) * 1000)::bigint,
+                     catalog.name
+                FROM agent_room.network_agent_room room
+                LEFT JOIN agent_room.room_catalog_entry catalog
+                  ON catalog.id = room.catalog_entry_id
+               WHERE room.network_agent_id = $1
+               ORDER BY room.joined_at, room.matrix_room_id",
         )
         .bind(id.as_uuid())
         .fetch_all(self.pool())
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
         rows.into_iter()
-            .map(|(catalog_id, matrix_room_id, joined_at)| {
+            .map(|(catalog_id, matrix_room_id, joined_at, name)| {
                 Ok(NetworkAgentRoomRecord {
                     catalog_id: RoomCatalogId::from_uuid(catalog_id),
                     matrix_room_id: MatrixRoomReference::new(matrix_room_id)
                         .map_err(|error| map_domain_error(operation, &error))?,
                     joined_at: UtcMillis::new(joined_at)
                         .map_err(|error| map_domain_error(operation, &error))?,
+                    name,
                 })
             })
             .collect()

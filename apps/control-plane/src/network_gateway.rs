@@ -853,6 +853,7 @@ impl NetworkGateway {
                 agent_id: session.agent_id,
                 matrix_user_id: &session.agent_matrix_user_id,
             },
+            &session.rooms,
         ))
     }
 }

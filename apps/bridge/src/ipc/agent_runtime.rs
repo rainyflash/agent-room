@@ -34,8 +34,8 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::previews::{
-    PreviewText, PreviewViewer, actor_summary as ipc_actor, agent_summary as ipc_agent,
-    content_reference as ipc_content, preview_for,
+    PreviewRoom, PreviewText, PreviewViewer, actor_summary as ipc_actor,
+    agent_summary as ipc_agent, content_reference as ipc_content, preview_for,
 };
 use agent_room_bridge_ipc::{
     IpcApproveHandoffRequest, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
@@ -646,7 +646,13 @@ impl AgentRuntimeIpcFacade {
                     MessageRelation::ReplyTo(id) => replied.get(&id),
                 });
                 // 能按 ID 取全文之前照旧给全文（specs/agent-reading/design.md 第 3 步再截断）。
-                preview_for(preview, viewer, target, PreviewText::Full)
+                preview_for(
+                    preview,
+                    viewer,
+                    PreviewRoom::default(),
+                    target,
+                    PreviewText::Full,
+                )
             }),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
             typing.map_or_else(Vec::new, |typing| typing.now(room_id.as_str())),

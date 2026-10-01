@@ -28,6 +28,13 @@ pub struct PreviewViewer<'a> {
     pub matrix_user_id: &'a str,
 }
 
+/// 消息所在的房间：房间名，和读消息的这个 Agent 什么时候加入的（Unix 毫秒）。不知道就没有。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PreviewRoom<'a> {
+    pub name: Option<&'a str>,
+    pub joined_at_ms: Option<i64>,
+}
+
 /// 正文给多少：一批新消息里长正文只给开头，按 ID 取时给全文。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewText {
@@ -35,16 +42,21 @@ pub enum PreviewText {
     Full,
 }
 
-/// 交给某个 Agent 看的预览：标出它自己发的、提到它的，附上被回复那条的开头。
-/// `replied` 是被回复的那条；调用方找不到时传 `None`，只是少了摘录。
+/// 交给某个 Agent 看的预览：标出它自己发的、提到它的、它加入房间之前的，附上房间名和被回复
+/// 那条的开头。`replied` 是被回复的那条；调用方找不到时传 `None`，只是少了摘录。
 pub fn preview_for(
     preview: &ProjectedMessagePreview,
     viewer: PreviewViewer<'_>,
+    room: PreviewRoom<'_>,
     replied: Option<&ProjectedMessagePreview>,
     text: PreviewText,
 ) -> IpcMessagePreviewSummary {
     let mut summary = preview_summary(preview);
     summary.from_me = is_viewer(&preview.actor, viewer);
+    summary.room_name = room.name.map(str::to_owned);
+    summary.before_join = room
+        .joined_at_ms
+        .is_some_and(|joined_at_ms| sent_at_ms(preview) < joined_at_ms);
     let replied_to_viewer = replied.is_some_and(|message| is_viewer(&message.actor, viewer));
     summary.mentions_me = replied_to_viewer
         || summary.conversation.as_ref().is_some_and(|chat| {
@@ -91,6 +103,14 @@ pub fn truncate_preview_value(preview: &mut Value) {
     chat.insert("text".to_owned(), Value::String(leading));
     chat.insert("truncated".to_owned(), Value::Bool(true));
     chat.insert("fullLength".to_owned(), Value::from(length));
+}
+
+/// 发出时间：有服务器收到的时间就用它（和加入时间是同一台服务器的钟），没有才用发送方自己写的。
+fn sent_at_ms(preview: &ProjectedMessagePreview) -> i64 {
+    preview
+        .origin_server_timestamp
+        .and_then(|value| i64::try_from(value).ok())
+        .unwrap_or_else(|| preview.created_at.value())
 }
 
 fn is_viewer(actor: &ProjectedMessageActor, viewer: PreviewViewer<'_>) -> bool {
@@ -163,6 +183,8 @@ pub fn preview_summary(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSu
             .collect(),
         from_me: false,
         mentions_me: false,
+        room_name: None,
+        before_join: false,
     }
 }
 
@@ -259,7 +281,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        BATCH_TEXT_CHARACTERS, PreviewText, PreviewViewer, preview_for, truncate_preview_value,
+        BATCH_TEXT_CHARACTERS, PreviewRoom, PreviewText, PreviewViewer, preview_for,
+        truncate_preview_value,
     };
 
     fn agent(name: &str, matrix_user_id: &str) -> BridgeAgentIdentity {
@@ -314,6 +337,63 @@ mod tests {
     }
 
     #[test]
+    fn 带上房间名_标出加入之前的消息() {
+        let me = agent("Scout", "@scout:matrix.test");
+        let ada = agent("Ada", "@ada:matrix.test");
+        let mut message = chat(&ada, "大家好", Vec::new(), None);
+        let room = |joined_at_ms| PreviewRoom {
+            name: Some("项目室"),
+            joined_at_ms,
+        };
+
+        let before = preview_for(
+            &message,
+            viewer(&me),
+            room(Some(2_000)),
+            None,
+            PreviewText::Batch,
+        );
+        assert_eq!(before.room_name.as_deref(), Some("项目室"));
+        assert!(before.before_join, "服务器 1 秒收到，2 秒才加入");
+        let after = preview_for(
+            &message,
+            viewer(&me),
+            room(Some(1_000)),
+            None,
+            PreviewText::Batch,
+        );
+        assert!(!after.before_join, "同一时刻加入的不算之前");
+        let unknown = preview_for(&message, viewer(&me), room(None), None, PreviewText::Batch);
+        assert!(!unknown.before_join, "不知道什么时候加入的就不标");
+
+        // 没有服务器时间时才用发送方写的时间。
+        message.origin_server_timestamp = None;
+        message.created_at = UtcMillis::new(3_000).expect("时间有效");
+        let claimed = preview_for(
+            &message,
+            viewer(&me),
+            room(Some(2_000)),
+            None,
+            PreviewText::Batch,
+        );
+        assert!(!claimed.before_join);
+
+        let json = serde_json::to_value(&before).expect("能序列化");
+        assert_eq!(json["roomName"], "项目室");
+        assert_eq!(json["beforeJoin"], true);
+        let nameless = preview_for(
+            &message,
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
+        let json = serde_json::to_value(&nameless).expect("能序列化");
+        assert!(json.get("roomName").is_none(), "没有房间名就不写");
+        assert_eq!(json["beforeJoin"], false);
+    }
+
+    #[test]
     fn 标出自己发的和点名自己的() {
         let me = agent("Scout", "@scout:matrix.test");
         let ada = agent("Ada", "@ada:matrix.test");
@@ -321,6 +401,7 @@ mod tests {
         let own = preview_for(
             &chat(&me, "我先看看", Vec::new(), None),
             viewer(&me),
+            PreviewRoom::default(),
             None,
             PreviewText::Batch,
         );
@@ -333,12 +414,27 @@ mod tests {
             vec!["@scout:matrix.test".into()],
             None,
         );
-        let named = preview_for(&named, viewer(&me), None, PreviewText::Batch);
+        let named = preview_for(
+            &named,
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
         assert!(!named.from_me);
         assert!(named.mentions_me);
 
         let others = chat(&ada, "大家好", vec!["@mina:matrix.test".into()], None);
-        assert!(!preview_for(&others, viewer(&me), None, PreviewText::Batch).mentions_me);
+        assert!(
+            !preview_for(
+                &others,
+                viewer(&me),
+                PreviewRoom::default(),
+                None,
+                PreviewText::Batch
+            )
+            .mentions_me
+        );
     }
 
     #[test]
@@ -349,7 +445,13 @@ mod tests {
         let mine = chat(&me, &long_question, Vec::new(), None);
         let reply = chat(&ada, "同意", Vec::new(), Some(mine.message_id));
 
-        let summary = preview_for(&reply, viewer(&me), Some(&mine), PreviewText::Batch);
+        let summary = preview_for(
+            &reply,
+            viewer(&me),
+            PreviewRoom::default(),
+            Some(&mine),
+            PreviewText::Batch,
+        );
         assert!(summary.mentions_me, "回复的是我发的");
         let excerpt = summary.reply_to.expect("附上被回复的那条");
         assert_eq!(excerpt.message_id, mine.message_id.to_string());
@@ -364,7 +466,13 @@ mod tests {
         let lena = agent("Lena", "@lena:matrix.test");
         let hers = chat(&lena, "我来", Vec::new(), None);
         let reply = chat(&ada, "好", Vec::new(), Some(hers.message_id));
-        let summary = preview_for(&reply, viewer(&me), Some(&hers), PreviewText::Batch);
+        let summary = preview_for(
+            &reply,
+            viewer(&me),
+            PreviewRoom::default(),
+            Some(&hers),
+            PreviewText::Batch,
+        );
         assert!(!summary.mentions_me);
         assert_eq!(summary.reply_to.expect("有摘录").excerpt, "我来");
     }
@@ -376,13 +484,25 @@ mod tests {
         let text = "字".repeat(1_500);
         let long = chat(&ada, &text, Vec::new(), None);
 
-        let batch = preview_for(&long, viewer(&me), None, PreviewText::Batch);
+        let batch = preview_for(
+            &long,
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
         let chat_batch = batch.conversation.expect("有正文");
         assert_eq!(chat_batch.text.chars().count(), BATCH_TEXT_CHARACTERS);
         assert!(chat_batch.truncated);
         assert_eq!(chat_batch.full_length, Some(1_500));
 
-        let full = preview_for(&long, viewer(&me), None, PreviewText::Full);
+        let full = preview_for(
+            &long,
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Full,
+        );
         let chat_full = full.conversation.expect("有正文");
         assert_eq!(chat_full.text, text);
         assert!(!chat_full.truncated);
@@ -390,7 +510,13 @@ mod tests {
 
         // 正好 1000 字不截断，JSON 里也不出现这两个字段。
         let exact = chat(&ada, &"字".repeat(BATCH_TEXT_CHARACTERS), Vec::new(), None);
-        let exact = preview_for(&exact, viewer(&me), None, PreviewText::Batch);
+        let exact = preview_for(
+            &exact,
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
         let value = serde_json::to_value(&exact).expect("可编码");
         assert!(value["conversation"].get("truncated").is_none());
         assert!(value["conversation"].get("fullLength").is_none());

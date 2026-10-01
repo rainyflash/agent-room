@@ -122,6 +122,7 @@ impl FakeAgents {
                     catalog_id: RoomCatalogId::from_uuid(Uuid::now_v7()),
                     matrix_room_id: MatrixRoomReference::new((*room).to_owned()).unwrap(),
                     joined_at: UtcMillis::new(1).unwrap(),
+                    name: None,
                 })
                 .collect(),
             quota: Mutex::new(None),
@@ -1135,7 +1136,11 @@ fn harness_in(rooms: &[&str]) -> Harness {
 }
 
 fn build_harness(rooms: &[&str], encrypted_clients: bool) -> Harness {
-    let agents = Arc::new(FakeAgents::in_rooms(rooms));
+    harness_with(FakeAgents::in_rooms(rooms), encrypted_clients)
+}
+
+fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
+    let agents = Arc::new(agents);
     let inbox = Arc::new(MemoryInbox::default());
     let submissions = Arc::new(MemorySubmissions::default());
     let content = Arc::new(FakeContent::default());
@@ -2132,6 +2137,64 @@ async fn 叫醒它的人在打字也算没停_停下以后再等防抖_上一次
         Duration::from_secs(13),
         "防抖 5 秒到了还在打字，等他打完；停下以后再等 5 秒"
     );
+}
+
+/// 换一个服务器收到的时间：测加入前后。
+fn received_at(event: &MatrixTimelineEvent, origin_ms: u64) -> MatrixTimelineEvent {
+    MatrixTimelineEvent::new(
+        event.event_id().cloned(),
+        event.sender().cloned(),
+        event.event_type().clone(),
+        None,
+        None,
+        Some(origin_ms),
+        event.content().clone(),
+    )
+    .unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn 每条消息带上房间名_标出它进房间之前的() {
+    let mut agents = FakeAgents::in_rooms(&[ROOM]);
+    agents.rooms[0].name = Some("大厅".to_owned());
+    agents.rooms[0].joined_at = UtcMillis::new(1_758_600_000_500).unwrap();
+    let harness = harness_with(agents, true);
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s1",
+        vec![
+            received_at(
+                &chat(
+                    "$old:matrix.test",
+                    other(),
+                    Uuid::now_v7(),
+                    "进来之前",
+                    [1; 64],
+                ),
+                1_758_600_000_000,
+            ),
+            received_at(
+                &chat(
+                    "$new:matrix.test",
+                    other(),
+                    Uuid::now_v7(),
+                    "进来之后",
+                    [1; 64],
+                ),
+                1_758_600_001_000,
+            ),
+        ],
+    ))));
+
+    let page = harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
+        .await
+        .unwrap();
+    assert_eq!(texts(&page.messages), ["进来之前", "进来之后"]);
+    assert_eq!(page.messages[0]["roomName"], "大厅");
+    assert_eq!(page.messages[0]["beforeJoin"], true);
+    assert_eq!(page.messages[1]["roomName"], "大厅");
+    assert_eq!(page.messages[1]["beforeJoin"], false);
 }
 
 // ---------- 发言 ----------

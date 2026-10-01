@@ -7,7 +7,8 @@ use std::{
 
 use agent_room_application::ports::{
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, MatrixEventId,
-    MatrixRoomId, MatrixSyncToken, NetworkAgentInboxChange, NetworkAgentInboxMessage, PortFuture,
+    MatrixRoomId, MatrixSyncToken, NetworkAgentInboxChange, NetworkAgentInboxMessage,
+    NetworkAgentRoomRecord, PortFuture,
 };
 use agent_room_bridge_core::{
     agent_verification::{
@@ -20,7 +21,9 @@ use agent_room_bridge_core::{
         ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
-use agent_room_bridge_ipc::previews::{PreviewText, PreviewViewer, preview_for, preview_summary};
+use agent_room_bridge_ipc::previews::{
+    PreviewRoom, PreviewText, PreviewViewer, preview_for, preview_summary,
+};
 use agent_room_domain::{
     ids::{AgentInstanceId, MessageId},
     messages::{MessageRelation, MessageRevisionKind},
@@ -137,6 +140,7 @@ impl AgentInstanceVerificationGateway for InstanceVerification {
 pub(super) fn inbox_changes(
     batch: Option<MessageProjectionBatch>,
     viewer: PreviewViewer<'_>,
+    rooms: &[NetworkAgentRoomRecord],
 ) -> Vec<NetworkAgentInboxChange> {
     let Some(batch) = batch else {
         return Vec::new();
@@ -172,6 +176,7 @@ pub(super) fn inbox_changes(
                     preview: serde_json::to_value(preview_for(
                         preview,
                         viewer,
+                        preview_room(rooms, &preview.room_id),
                         replied,
                         PreviewText::Full,
                     ))
@@ -194,6 +199,20 @@ pub(super) fn inbox_changes(
             },
         })
         .collect()
+}
+
+/// 这条消息所在的房间：房间名和这个网络 Agent 什么时候进来的。不在记录里的房间都不知道。
+fn preview_room<'a>(
+    rooms: &'a [NetworkAgentRoomRecord],
+    room_id: &MatrixRoomId,
+) -> PreviewRoom<'a> {
+    rooms
+        .iter()
+        .find(|room| room.matrix_room_id.as_str() == room_id.as_str())
+        .map_or_else(PreviewRoom::default, |room| PreviewRoom {
+            name: room.name.as_deref(),
+            joined_at_ms: Some(room.joined_at.value()),
+        })
 }
 
 /// 替换修订带来的新预览，只留能改的字段，合并进收件箱里原来那条。
