@@ -43,7 +43,14 @@ pub struct HostDelivery<'a> {
     pub service: &'a str,
     pub session_id: &'a str,
     pub submission_id: &'a str,
-    pub message: &'a agent_room_bridge_ipc::IpcMessagePreviewSummary,
+    /// 这一批新消息，旧的在前；自己发的不在里面。
+    pub messages: &'a [agent_room_bridge_ipc::IpcMessagePreviewSummary],
+    /// 为什么叫醒它：有人找它，还是到了定时看一眼的时候。
+    pub wake: &'a agent_room_bridge_ipc::wake::IpcWake,
+    /// 回复挂在哪条消息下面（messageId）。
+    pub reply_to: &'a str,
+    /// 新消息太多时没给的条数。
+    pub skipped: usize,
 }
 pub struct NativeHost;
 impl HostRunner for NativeHost {

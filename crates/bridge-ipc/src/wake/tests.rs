@@ -2,7 +2,8 @@ use std::{collections::HashSet, time::Duration};
 
 use super::{
     Arrival, Delivery, IpcWake, MAX_PEOPLE, WaitDecision, WaitOptions, WaitOptionsField,
-    WaitParams, WaitRules, WakeContext, WakeReason, WakeRule, decide, mentioned_people, wakes,
+    WaitParams, WaitRules, WakeContext, WakeReason, WakeRule, decide, decide_with,
+    mentioned_people, wakes,
 };
 use crate::{
     IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcConversationMessage,
@@ -740,4 +741,27 @@ fn 参数换算成规则_写错了指出是哪一项() {
     ] {
         assert_eq!(params.parse(), Err(field));
     }
+}
+
+#[test]
+fn 调用方自己判断哪条叫醒它_防抖照旧() {
+    let messages = [(human(BOB, "路过"), 0), (human(ADA, "Ada 在吗"), 1_000)];
+    let only_ada = |preview: &IpcMessagePreviewSummary| matches!(&preview.actor, IpcActorSummary::Human { matrix_user_id, .. } if matrix_user_id == ADA);
+    let options = WaitOptions::default();
+    assert_eq!(
+        decide_with(&arrivals(&messages), &options, &only_ada, 20, 2_000, None),
+        WaitDecision::Wait {
+            recheck_at_ms: Some(6_000)
+        }
+    );
+    let delivery = delivered(decide_with(
+        &arrivals(&messages),
+        &options,
+        &only_ada,
+        20,
+        6_000,
+        None,
+    ));
+    assert_eq!(delivery.picks, [0, 1], "叫醒它的那条连同之前的一起给");
+    assert_eq!(delivery.wake.event_ids, ["$Ada 在吗:matrix.test"]);
 }

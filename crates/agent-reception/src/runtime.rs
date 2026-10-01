@@ -1,15 +1,15 @@
 use crate::{
-    DeliveryRecord, DeliveryStage, ReceiverBinding, ReceiverEvent, ReceiverStart, ReceiverState,
-    ReceiverStore, ReceptionFailure as Failure, ReceptionResult as Result, call, scoped,
+    DeliveryRecord, DeliveryStage, HostReply, ReceiverBinding, ReceiverEvent, ReceiverStart,
+    ReceiverState, ReceiverStore, ReceptionFailure as Failure, ReceptionResult as Result, call,
+    scoped,
 };
 use agent_room_agent_client::{
-    BridgeToolClient, MessageReadMode, MessageWait,
-    reception::{DeliveryDecision, ReceptionCheckpoint},
-    wait_for_messages,
+    BridgeToolClient, BridgeToolFailure, InboxWaiter, MessageWait, WokenBatch,
+    reception::ReceptionCheckpoint,
 };
 use agent_room_bridge_ipc::{
-    IpcBridgeState, IpcCloseHostSessionRequest, IpcHostSessionState, IpcMessagePreviewSummary,
-    IpcMethod, IpcResponse, IpcSelfSummary,
+    IpcActorSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcHostSessionState, IpcMethod,
+    IpcResponse, IpcRoomKind, IpcSelfSummary,
 };
 use std::{path::Path, time::Duration};
 
@@ -196,6 +196,8 @@ async fn receive_connected(
     }
 }
 
+/// 按后台回复的规则等（`specs/agent-reading/waiting.md`「后台回复」）：主人说的、跟它有关的话，
+/// 和私人房间里点名或回复它的，防抖以后合成一批交给宿主。
 async fn poll_inbox(
     context: &ReceiverContext<'_>,
     store: &ReceiverStore,
@@ -203,34 +205,73 @@ async fn poll_inbox(
     summary: &IpcSelfSummary,
     session_id: &str,
 ) -> Result<()> {
-    let binding = state.binding.clone();
+    let private_room = private_room(context.backend, state).await;
     loop {
-        let response = wait_for_messages(
-            context.backend,
+        let policy = state.binding.policy.clone();
+        let rules = policy.wait_rules();
+        let mut waiter = InboxWaiter::new(
             session_id.to_owned(),
-            binding.inbox_request(state.checkpoint.cursor().map(str::to_owned)),
-            MessageReadMode::Inbox,
-            MessageWait::UntilMessage,
+            Some(policy.room_id.clone()),
+            state.checkpoint.cursor().map(str::to_owned),
+            50,
+            rules,
         )
-        .await
-        .map_err(|error| {
-            let mut failure = Failure::from(error);
-            if matches!(
-                failure.code.as_str(),
-                "bridge.host_session.not_found" | "bridge.host_session.closed"
-            ) {
-                failure.retryable = true;
-            }
-            failure
-        })?;
-        let IpcResponse::MessagePreviews { previews, .. } = response else {
-            return Err(Failure::local("receiver.response_invalid"));
-        };
-        for message in previews {
-            tokio::task::yield_now().await;
-            deliver(context, store, state, summary, session_id, &message).await?;
-        }
+        .with_wakes(move |message| policy.wakes(message, private_room));
+        let batch = waiter
+            .next(context.backend, MessageWait::UntilMessage)
+            .await
+            .map_err(session_failure)?;
+        tokio::task::yield_now().await;
+        deliver(context, store, state, summary, session_id, &batch).await?;
     }
+}
+
+/// 会话断了或者被关了，重连就好。
+fn session_failure(error: BridgeToolFailure) -> Failure {
+    let mut failure = Failure::from(error);
+    if matches!(
+        failure.code.as_str(),
+        "bridge.host_session.not_found" | "bridge.host_session.closed"
+    ) {
+        failure.retryable = true;
+    }
+    failure
+}
+
+/// 它在不在私人房间里：私人房间里别人点名它也叫得醒，公开大厅里只认主人。看不出来就当公开大厅。
+async fn private_room(backend: &dyn BridgeToolClient, state: &ReceiverState) -> bool {
+    let Ok(IpcResponse::Rooms { rooms }) = call(backend, IpcMethod::ListRooms).await else {
+        return false;
+    };
+    rooms.iter().any(|room| {
+        room.kind == IpcRoomKind::PrivateRoom
+            && (room.matrix_room_id.as_deref() == Some(state.binding.policy.room_id.as_str())
+                || state.room_catalog_id.as_deref() == Some(room.catalog_id.as_str()))
+    })
+}
+
+/// 回复挂在哪条下面：叫醒它的最后一条；定时看一眼时是最新的一条人说的话，没有就是最新的一条。
+fn reply_target(batch: &WokenBatch) -> Option<String> {
+    batch
+        .wake
+        .event_ids
+        .iter()
+        .rev()
+        .find_map(|event_id| {
+            batch
+                .previews
+                .iter()
+                .find(|message| message.event_id == *event_id)
+        })
+        .or_else(|| {
+            batch
+                .previews
+                .iter()
+                .rev()
+                .find(|message| matches!(message.actor, IpcActorSummary::Human { .. }))
+        })
+        .or_else(|| batch.previews.last())
+        .map(|message| message.message_id.clone())
 }
 
 async fn deliver(
@@ -239,17 +280,17 @@ async fn deliver(
     state: &mut ReceiverState,
     summary: &IpcSelfSummary,
     session_id: &str,
-    message: &IpcMessagePreviewSummary,
+    batch: &WokenBatch,
 ) -> Result<()> {
-    let binding = state.binding.clone();
-    let retry = state
-        .last_delivery
-        .as_ref()
-        .is_some_and(|record| record.event_id == message.event_id);
-    if !prepare_delivery(state, store, message, &summary.agent.matrix_user_id)? {
-        crate::execution::save(context.backend, Some(session_id), store, state).await?;
+    let anchor = batch
+        .cursor
+        .clone()
+        .ok_or_else(|| Failure::local("receiver.batch_invalid"))?;
+    let target = reply_target(batch).ok_or_else(|| Failure::local("receiver.batch_invalid"))?;
+    if recover_previous(context, store, state, summary, session_id).await? {
         return Ok(());
     }
+    begin_batch(state, store, &anchor, &target)?;
     // Persist the original submission on the server before a model can run.
     crate::execution::save(context.backend, Some(session_id), store, state).await?;
     emit_delivery(context, state)?;
@@ -257,60 +298,34 @@ async fn deliver(
         .last_delivery
         .clone()
         .ok_or_else(|| Failure::local("receiver.delivery_missing"))?;
-    if retry {
-        match crate::receipt::verify(
-            context.backend,
-            session_id,
-            &binding,
-            &record,
-            &summary.agent.agent_id,
-            Duration::from_secs(2),
-        )
-        .await
-        {
-            Ok(_) => {
-                reconcile(context, store, state, session_id, &summary.agent.agent_id).await?;
-                return Ok(());
-            }
-            Err(error) if error.code == "receiver.reply_unconfirmed" => {}
-            Err(error) => return Err(error),
-        }
-    }
     change_stage(state, store, DeliveryStage::Running)?;
     emit_delivery(context, state)?;
     let host = context
         .host
         .resume(crate::HostDelivery {
-            binding: &binding.host,
+            binding: &state.binding.host,
             data_root: context.data_root,
             service: context.service,
             session_id,
             submission_id: &record.submission_id,
-            message,
+            messages: &batch.previews,
+            wake: &batch.wake,
+            reply_to: &record.message_id,
+            skipped: batch.skipped,
         })
         .await;
-    let host = match host {
-        Ok(reply) => match call(
-            context.backend,
-            scoped(session_id, reply.into_request(state, &record)?),
-        )
-        .await
-        {
-            Ok(IpcResponse::SentMessage { message })
-                if message.submission_id == record.submission_id =>
-            {
-                Ok(())
-            }
-            Ok(_) => Err(Failure::local("receiver.response_invalid")),
-            Err(error) => Err(error),
-        },
+    let sent = match host {
+        Ok(reply) if reply.is_silent() => {
+            return finish_silently(context, store, state, session_id, &anchor).await;
+        }
+        Ok(reply) => send_reply(context, state, session_id, reply, &record).await,
         Err(error) => Err(error),
     };
     change_stage(state, store, DeliveryStage::Verifying)?;
     emit_delivery(context, state)?;
     let receipt = reconcile(context, store, state, session_id, &summary.agent.agent_id).await;
     if let Err(receipt_error) = receipt {
-        let error = if let Err(mut host_error) = host {
+        let error = if let Err(mut host_error) = sent {
             host_error
                 .details
                 .insert("receiptError".into(), receipt_error.code);
@@ -325,39 +340,115 @@ async fn deliver(
     Ok(())
 }
 
-pub(crate) fn prepare_delivery(
+/// 上一次没交完（主人选了重试，或者中途断了）：先看上次的回复是不是其实已经发出去了。
+/// 发出去了就把上一批收尾，返回 true；没有就照常交这一批，沿用原来的提交 ID 和回复目标。
+async fn recover_previous(
+    context: &ReceiverContext<'_>,
+    store: &ReceiverStore,
+    state: &mut ReceiverState,
+    summary: &IpcSelfSummary,
+    session_id: &str,
+) -> Result<bool> {
+    let Some(previous) = state
+        .last_delivery
+        .clone()
+        .filter(|record| record.stage == DeliveryStage::Received)
+    else {
+        return Ok(false);
+    };
+    let after = state.checkpoint.cursor().map(str::to_owned);
+    match crate::receipt::verify(
+        context.backend,
+        session_id,
+        &state.binding,
+        &previous,
+        &summary.agent.agent_id,
+        Duration::from_secs(2),
+    )
+    .await
+    {
+        Ok(_) => {
+            state.checkpoint = ReceptionCheckpoint::Pending {
+                after_event_id: after,
+                event_id: previous.event_id,
+            };
+            reconcile(context, store, state, session_id, &summary.agent.agent_id).await?;
+            Ok(true)
+        }
+        Err(error) if error.code == "receiver.reply_unconfirmed" => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// 一批要交给宿主了：整批记成待定，锚在交出去的最后一条上。上次没交完的沿用原来的提交 ID
+/// 和回复目标，哪怕上次其实发出去了也不会重复。
+fn begin_batch(
     state: &mut ReceiverState,
     store: &ReceiverStore,
-    message: &IpcMessagePreviewSummary,
-    matrix_user_id: &str,
-) -> Result<bool> {
-    let decision = state
+    anchor: &str,
+    target: &str,
+) -> Result<()> {
+    state
         .checkpoint
-        .prepare(message, &state.binding.policy, matrix_user_id)
+        .begin(anchor)
         .map_err(|_| Failure::local("receiver.pending_review_required"))?;
-    if decision == DeliveryDecision::Skip {
-        store.save(state)?;
-        return Ok(false);
-    }
     let previous = state
         .last_delivery
         .as_ref()
-        .filter(|record| record.event_id == message.event_id);
-    // The identity is stable even if the owner explicitly retries after a failed turn.
-    let submission_id = previous.map_or_else(
-        || uuid::Uuid::now_v7().to_string(),
-        |record| record.submission_id.clone(),
+        .filter(|record| record.stage == DeliveryStage::Received);
+    let (submission_id, message_id) = previous.map_or_else(
+        || (uuid::Uuid::now_v7().to_string(), target.to_owned()),
+        |record| (record.submission_id.clone(), record.message_id.clone()),
     );
     state.last_delivery = Some(DeliveryRecord {
-        event_id: message.event_id.clone(),
-        message_id: message.message_id.clone(),
+        event_id: anchor.to_owned(),
+        message_id,
         submission_id,
         stage: DeliveryStage::Received,
         reply_event_id: None,
         failure: None,
     });
-    store.save(state)?;
-    Ok(true)
+    store.save(state)
+}
+
+async fn send_reply(
+    context: &ReceiverContext<'_>,
+    state: &ReceiverState,
+    session_id: &str,
+    reply: HostReply,
+    record: &DeliveryRecord,
+) -> Result<()> {
+    match call(
+        context.backend,
+        scoped(session_id, reply.into_request(state, record)?),
+    )
+    .await
+    {
+        Ok(IpcResponse::SentMessage { message })
+            if message.submission_id == record.submission_id =>
+        {
+            Ok(())
+        }
+        Ok(_) => Err(Failure::local("receiver.response_invalid")),
+        Err(error) => Err(error),
+    }
+}
+
+/// 宿主看过、觉得不用回：不发消息，这一批算处理完了。
+async fn finish_silently(
+    context: &ReceiverContext<'_>,
+    store: &ReceiverStore,
+    state: &mut ReceiverState,
+    session_id: &str,
+    anchor: &str,
+) -> Result<()> {
+    state
+        .checkpoint
+        .complete(anchor)
+        .map_err(|_| Failure::local("receiver.checkpoint_mismatch"))?;
+    change_stage(state, store, DeliveryStage::NoReply)?;
+    crate::execution::save(context.backend, Some(session_id), store, state).await?;
+    emit_delivery(context, state)
 }
 
 async fn reconcile(

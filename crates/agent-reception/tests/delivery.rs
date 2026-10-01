@@ -14,6 +14,10 @@ mod ownership;
 struct Bridge {
     identity: String,
     source: IpcMessagePreviewSummary,
+    /// 排在 source 前面、一起到的消息。
+    before: Arc<Mutex<Vec<IpcMessagePreviewSummary>>>,
+    /// 房间列表里这个房间是不是私人房间。
+    private_room: bool,
     replies: Arc<Mutex<Vec<IpcMessagePreviewSummary>>>,
     reception: Arc<Mutex<Option<ReceptionRecord>>>,
     outcome: Arc<Mutex<Reply>>,
@@ -47,6 +51,24 @@ impl Bridge {
             provenance: IpcMessageProvenance::AutonomousAgent,
         };
         self.replies.lock().unwrap().push(message);
+    }
+
+    /// 房间列表：设成私人房间时把这个房间列成私人房间。
+    fn rooms(&self) -> IpcResponse {
+        IpcResponse::Rooms {
+            rooms: if self.private_room {
+                vec![IpcRoomSummary {
+                    kind: IpcRoomKind::PrivateRoom,
+                    catalog_id: uuid::Uuid::now_v7().to_string(),
+                    matrix_room_id: Some(self.source.room_id.clone()),
+                    name: "Private".into(),
+                    slug: None,
+                    membership: None,
+                }]
+            } else {
+                vec![]
+            },
+        }
     }
 
     fn control(&self, request: ReceptionRequest) -> IpcResponse {
@@ -170,9 +192,12 @@ impl BridgeToolClient for Bridge {
                         granted_capabilities: vec![],
                     },
                 },
+                IpcMethod::ListRooms => self.rooms(),
                 IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
                     let previews = if request.after_event_id.is_none() {
-                        vec![self.source.clone()]
+                        let mut previews = self.before.lock().unwrap().clone();
+                        previews.push(self.source.clone());
+                        previews
                     } else if request.after_event_id.as_deref() == Some("$input") {
                         self.replies.lock().unwrap().clone()
                     } else {
@@ -197,16 +222,31 @@ enum Reply {
     WrongRelation,
     WrongAgent,
     HostFails,
+    /// 宿主看过，觉得不用回。
+    Silent,
 }
 struct Host {
     bridge: Bridge,
     outcome: Reply,
     calls: AtomicUsize,
+    /// 每次交给宿主的那一批有几条。
+    batches: Mutex<Vec<usize>>,
+}
+impl Host {
+    fn new(bridge: &Bridge, outcome: Reply) -> Self {
+        Self {
+            bridge: bridge.clone(),
+            outcome,
+            calls: AtomicUsize::new(0),
+            batches: Mutex::new(Vec::new()),
+        }
+    }
 }
 impl HostRunner for Host {
     fn resume<'a>(&'a self, delivery: HostDelivery<'a>) -> HostFuture<'a> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::Relaxed);
+            self.batches.lock().unwrap().push(delivery.messages.len());
             let state = ReceiverStore::inspect(delivery.data_root, &delivery.binding.task_id)
                 .unwrap()
                 .unwrap();
@@ -222,11 +262,21 @@ impl HostRunner for Host {
             if matches!(self.outcome, Reply::HostFails) {
                 return Err(ReceptionFailure::local("receiver.host_failed"));
             }
+            if matches!(self.outcome, Reply::Silent) {
+                return Ok(HostReply::silent());
+            }
             HostReply::new("reply content from the host".into())
         })
     }
 }
 fn setup() -> (tempfile::TempDir, ReceiverBinding, Bridge) {
+    setup_with(|_| {})
+}
+
+/// 和 setup 一样，只是先改一改要交给它的那条消息。
+fn setup_with(
+    edit: impl FnOnce(&mut IpcMessagePreviewSummary),
+) -> (tempfile::TempDir, ReceiverBinding, Bridge) {
     let root = tempfile::tempdir().unwrap();
     let id = uuid::Uuid::now_v7().to_string();
     let binding: ReceiverBinding = serde_json::from_value(json!({
@@ -235,12 +285,14 @@ fn setup() -> (tempfile::TempDir, ReceiverBinding, Bridge) {
         "start":{"mode":"beginning"}
     })).unwrap();
     let source = serde_json::from_value(json!({
-        "conversation":{"text":"hello","mentions":["@agent:test"]},"replyToMessageId":null,
+        "conversation":{"text":"hello","mentions":["@agent:test"]},"replyToMessageId":null,"mentionsMe":true,
         "messageId":id,"eventId":"$input","roomId":"!room:test",
         "actor":{"kind":"human","principalId":id,"displayName":"Owner","matrixUserId":"@owner:test","avatarUrl":null},
         "createdAtUnixMs":1,"title":"hello","summary":"hello","content":{"contentId":id,"digestSha256":"0".repeat(64),"mediaType":"text/plain","sizeBytes":5},
         "language":null,"sensitivity":"normal","riskFlags":[]
     })).unwrap();
+    let mut source = source;
+    edit(&mut source);
     ReceiverStore::open(root.path(), &id)
         .unwrap()
         .configure(binding.clone(), "test.receiver")
@@ -251,6 +303,8 @@ fn setup() -> (tempfile::TempDir, ReceiverBinding, Bridge) {
         Bridge {
             identity: id,
             source,
+            before: Arc::default(),
+            private_room: false,
             replies: Arc::default(),
             reception: Arc::default(),
             outcome: Arc::new(Mutex::new(Reply::Valid)),
@@ -267,7 +321,8 @@ async fn receive(
 ) -> ReceptionResult<()> {
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
     let emit = |event| {
-        if matches!(event, ReceiverEvent::Delivery {record} if record.stage == DeliveryStage::Replied)
+        if matches!(event, ReceiverEvent::Delivery {record}
+            if matches!(record.stage, DeliveryStage::Replied | DeliveryStage::NoReply))
         {
             stop.send_replace(true);
         }
@@ -300,11 +355,7 @@ async fn only_a_matching_room_reply_advances_the_cursor() {
         Reply::ValidButSendFails,
     ] {
         let (root, binding, bridge) = setup();
-        let host = Host {
-            bridge: bridge.clone(),
-            outcome,
-            calls: AtomicUsize::new(0),
-        };
+        let host = Host::new(&bridge, outcome);
         let result = receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen).await;
         let saved = ReceiverStore::inspect(root.path(), &binding.host.task_id)
             .unwrap()
@@ -365,11 +416,7 @@ impl BridgeToolClient for DelayedBridge {
 #[tokio::test(start_paused = true)]
 async fn prolonged_network_outage_recovers_without_manual_restart() {
     let (root, binding, bridge) = setup();
-    let host = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Valid,
-        calls: AtomicUsize::new(0),
-    };
+    let host = Host::new(&bridge, Reply::Valid);
     let backend = DelayedBridge {
         inner: bridge,
         ready_at: tokio::time::Instant::now() + std::time::Duration::from_mins(3),
@@ -393,7 +440,7 @@ async fn prolonged_network_outage_recovers_without_manual_restart() {
 impl BridgeToolClient for InterruptedBridge {
     fn invoke(&self, method: IpcMethod) -> BridgeToolFuture<'_> {
         let verifying = matches!(&method, IpcMethod::WithSession { method, .. }
-            if matches!(method.as_ref(), IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$input")));
+            if matches!(method.as_ref(), IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$input") && !request.keep_waiting));
         if verifying && self.failures.fetch_add(1, Ordering::Relaxed) == 0 {
             return Box::pin(async {
                 Err(agent_room_agent_client::BridgeToolFailure::new(
@@ -411,11 +458,7 @@ impl BridgeToolClient for InterruptedBridge {
 #[tokio::test(start_paused = true)]
 async fn network_failure_after_sending_only_reconciles_without_a_second_host_turn() {
     let (root, binding, bridge) = setup();
-    let host = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Valid,
-        calls: AtomicUsize::new(0),
-    };
+    let host = Host::new(&bridge, Reply::Valid);
     let backend = InterruptedBridge {
         inner: bridge,
         failures: AtomicUsize::new(0),
@@ -503,11 +546,7 @@ async fn pause_during_host_execution_keeps_pending_and_releases_the_receiver_loc
 #[tokio::test(start_paused = true)]
 async fn renewal_and_explicit_retry_preserve_identity_and_submission_id() {
     let (root, binding, bridge) = setup();
-    let failed = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Missing,
-        calls: AtomicUsize::new(0),
-    };
+    let failed = Host::new(&bridge, Reply::Missing);
     receive(
         root.path(),
         &binding,
@@ -536,11 +575,7 @@ async fn renewal_and_explicit_retry_preserve_identity_and_submission_id() {
     );
     store.resolve("$input", Resolution::Retry).unwrap();
     drop(store);
-    let replying = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Valid,
-        calls: AtomicUsize::new(0),
-    };
+    let replying = Host::new(&bridge, Reply::Valid);
     receive(
         root.path(),
         &renewed,
@@ -580,11 +615,7 @@ fn lock_paths_and_legacy_state_remain_safe() {
 #[tokio::test(start_paused = true)]
 async fn recovered_receipt_never_starts_another_host_turn() {
     let (root, binding, bridge) = setup();
-    let missing = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Missing,
-        calls: AtomicUsize::new(0),
-    };
+    let missing = Host::new(&bridge, Reply::Missing);
     receive(
         root.path(),
         &binding,
@@ -630,11 +661,7 @@ async fn recovered_receipt_never_starts_another_host_turn() {
 #[tokio::test(start_paused = true)]
 async fn model_content_is_sent_under_the_exact_bound_authority() {
     let (root, binding, bridge) = setup();
-    let host = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Valid,
-        calls: AtomicUsize::new(0),
-    };
+    let host = Host::new(&bridge, Reply::Valid);
     receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
         .await
         .unwrap();
@@ -657,11 +684,7 @@ async fn model_content_is_sent_under_the_exact_bound_authority() {
 #[tokio::test(start_paused = true)]
 async fn failed_host_does_not_send_or_advance_the_pending_delivery() {
     let (root, binding, bridge) = setup();
-    let host = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::HostFails,
-        calls: AtomicUsize::new(0),
-    };
+    let host = Host::new(&bridge, Reply::HostFails);
     let error = receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
         .await
         .unwrap_err();
@@ -674,4 +697,136 @@ async fn failed_host_does_not_send_or_advance_the_pending_delivery() {
         state.checkpoint,
         ReceptionCheckpoint::Pending { .. }
     ));
+}
+
+/// 跑一段时间就停：用来看什么都没叫醒它。
+async fn receive_for(
+    root: &std::path::Path,
+    binding: &ReceiverBinding,
+    bridge: &dyn BridgeToolClient,
+    host: &Host,
+    duration: std::time::Duration,
+) -> ReceptionResult<()> {
+    let emit = |_| Ok(());
+    run(
+        ReceiverContext {
+            backend: bridge,
+            data_root: root,
+            service: "test.receiver",
+            emit: &emit,
+            host,
+            mode: ReceiverMode::Listen,
+        },
+        &binding.host.task_id,
+        tokio::time::sleep(duration),
+    )
+    .await
+}
+
+fn owner_message(bridge: &Bridge, event: &str) -> IpcMessagePreviewSummary {
+    let mut message = bridge.source.clone();
+    message.event_id = event.into();
+    message.message_id = uuid::Uuid::now_v7().to_string();
+    message
+}
+
+#[tokio::test(start_paused = true)]
+async fn 连着的几条合成一次宿主任务_回复挂在叫醒它的最后一条下面() {
+    let (root, binding, bridge) = setup();
+    bridge.before.lock().unwrap().extend([
+        owner_message(&bridge, "$first"),
+        owner_message(&bridge, "$second"),
+    ]);
+    let host = Host::new(&bridge, Reply::Valid);
+    receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
+        .await
+        .unwrap();
+    assert_eq!(*host.batches.lock().unwrap(), [3], "三条只起一次宿主任务");
+    let sent = bridge.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].reply_to_message_id.as_deref(),
+        Some(bridge.source.message_id.as_str())
+    );
+    let saved = ReceiverStore::inspect(root.path(), &binding.host.task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.checkpoint.cursor(), Some("$input"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn 别的_agent_叫不醒它() {
+    let (root, binding, bridge) = setup_with(|message| {
+        message.actor = IpcActorSummary::Agent {
+            agent: IpcAgentSummary {
+                agent_id: uuid::Uuid::now_v7().to_string(),
+                display_name: "Other agent".into(),
+                matrix_user_id: "@other-agent:test".into(),
+                avatar_url: None,
+            },
+            instance_id: uuid::Uuid::now_v7().to_string(),
+            provenance: IpcMessageProvenance::AutonomousAgent,
+        };
+    });
+    let host = Host::new(&bridge, Reply::Valid);
+    receive_for(
+        root.path(),
+        &binding,
+        &bridge,
+        &host,
+        std::time::Duration::from_mins(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(host.calls.load(Ordering::Relaxed), 0);
+    assert!(bridge.sent.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 私人房间里别人点名它叫得醒_公开大厅里叫不醒() {
+    for private_room in [true, false] {
+        let (root, binding, mut bridge) = setup_with(|message| {
+            if let IpcActorSummary::Human { principal_id, .. } = &mut message.actor {
+                *principal_id = uuid::Uuid::now_v7().to_string();
+            }
+        });
+        bridge.private_room = private_room;
+        let host = Host::new(&bridge, Reply::Valid);
+        receive_for(
+            root.path(),
+            &binding,
+            &bridge,
+            &host,
+            std::time::Duration::from_mins(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            host.calls.load(Ordering::Relaxed),
+            usize::from(private_room),
+            "私人房间：{private_room}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn 宿主觉得不用回时不发消息_这一批算处理完() {
+    let (root, binding, bridge) = setup();
+    let host = Host::new(&bridge, Reply::Silent);
+    receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
+        .await
+        .unwrap();
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    assert!(bridge.sent.lock().unwrap().is_empty());
+    let saved = ReceiverStore::inspect(root.path(), &binding.host.task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.checkpoint.cursor(), Some("$input"));
+    assert!(matches!(
+        saved.checkpoint,
+        ReceptionCheckpoint::Ready { .. }
+    ));
+    assert_eq!(saved.last_delivery.unwrap().stage, DeliveryStage::NoReply);
+    let progress = bridge.reception.lock().unwrap().clone().unwrap().progress;
+    assert!(progress.pending.is_none(), "服务器上也不再挂着待定");
 }

@@ -12,11 +12,11 @@ for (const width of [1440, 390]) {
     await panel.getByRole('button', { name: 'Enable background replies' }).click();
     const card = panel.getByRole('article');
     await expect(card.getByText('Reception Scout')).toBeVisible();
-    await expect(card.getByText('Waiting for your mention')).toBeVisible();
+    await expect(card.getByText('Waiting for messages for it')).toBeVisible();
     await card.getByRole('button', { name: 'Take over myself', exact: true }).click();
     await expect(card.getByText('Paused', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Hand back to background replies' }).click();
-    await expect(card.getByText('Waiting for your mention')).toBeVisible();
+    await expect(card.getByText('Waiting for messages for it')).toBeVisible();
     await card.getByRole('button', { name: 'Take over myself', exact: true }).click();
     await expect(card.getByText('Paused', { exact: true })).toBeVisible();
     await card.getByText('Authorization and paths', { exact: true }).click();
@@ -55,7 +55,7 @@ test('旧版未确认投递禁止自动重试但保留手动处理入口', async
   ).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Reply again' })).toBeDisabled();
   await expect(panel.getByRole('button', { name: 'Check', exact: true })).toBeDisabled();
-  await panel.getByRole('button', { name: 'Skip this message' }).click();
+  await panel.getByRole('button', { name: 'Skip these messages' }).click();
   await expect(
     panel.getByRole('button', { name: 'Hand back to background replies' }),
   ).toBeEnabled();

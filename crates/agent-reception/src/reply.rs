@@ -7,16 +7,28 @@ use agent_room_bridge_ipc::{
 use serde::Deserialize;
 
 /// Model output is conversation data. Routing, grants and idempotency stay owned by reception.
+/// 正文为空表示宿主看过这一批，觉得不用回。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostReply {
-    body: String,
+    body: Option<String>,
 }
 
 impl HostReply {
-    /// 回复正文。契约检查据此比对金丝雀；接待本身不读取它。
+    /// 回复正文；不回时是空的。契约检查据此比对金丝雀；接待本身不读取它。
     #[must_use]
     pub fn body(&self) -> &str {
-        &self.body
+        self.body.as_deref().unwrap_or_default()
+    }
+
+    /// 宿主看过、觉得不用回。
+    #[must_use]
+    pub const fn silent() -> Self {
+        Self { body: None }
+    }
+
+    #[must_use]
+    pub const fn is_silent(&self) -> bool {
+        self.body.is_none()
     }
 
     /// # Errors
@@ -24,7 +36,7 @@ impl HostReply {
     pub fn new(body: String) -> Result<Self> {
         agent_room_bridge_core::messages::validate_chat(&body, &[])
             .map_err(|_| Failure::local("receiver.host_reply_invalid"))?;
-        Ok(Self { body })
+        Ok(Self { body: Some(body) })
     }
 
     pub(crate) fn parse(text: &str) -> Result<Self> {
@@ -35,6 +47,9 @@ impl HostReply {
         }
         let reply: ReplyContent = serde_json::from_str(unfenced(text))
             .map_err(|_| Failure::local("receiver.host_reply_invalid"))?;
+        if reply.body.trim().is_empty() {
+            return Ok(Self::silent());
+        }
         Self::new(reply.body)
     }
 
@@ -48,6 +63,9 @@ impl HostReply {
             .as_ref()
             .ok_or_else(|| Failure::local("reception.execution_missing"))?
             .run_id;
+        let body = self
+            .body
+            .ok_or_else(|| Failure::local("receiver.host_reply_silent"))?;
         Ok(IpcMethod::SendReceptionMessage {
             run_id,
             request: IpcSendMessageRequest {
@@ -56,9 +74,9 @@ impl HostReply {
                 submission_id: Some(record.submission_id.clone()),
                 automation_grant_id: Some(state.binding.automation_grant_id.clone()),
                 room_id: state.binding.policy.room_id.clone(),
-                title: self.body.chars().take(120).collect(),
-                summary: self.body.chars().take(280).collect(),
-                body: self.body,
+                title: body.chars().take(120).collect(),
+                summary: body.chars().take(280).collect(),
+                body,
                 media_type: "text/plain".into(),
                 language: None,
                 sensitivity: IpcMessageSensitivity::Normal,
@@ -92,10 +110,16 @@ mod tests {
 
     #[test]
     fn only_valid_reply_content_is_accepted() {
-        assert_eq!(HostReply::parse(r#"{"body":"收到"}"#).unwrap().body, "收到");
+        assert_eq!(
+            HostReply::parse(r#"{"body":"收到"}"#).unwrap().body(),
+            "收到"
+        );
+        // 正文为空：看过了，不用回。
+        for input in [r#"{"body":""}"#, r#"{"body":"  \n "}"#] {
+            assert!(HostReply::parse(input).unwrap().is_silent(), "{input}");
+        }
         for input in [
             "{}",
-            r#"{"body":""}"#,
             r#"{"body":4}"#,
             r#"{"body":"hello","roomId":"!other:test"}"#,
             "not json",
@@ -112,13 +136,13 @@ mod tests {
             "```\n{\"body\":\"收到\"}\n```",
             "\n  ```JSON\r\n{\"body\":\"收到\"}\r\n```\n",
         ] {
-            assert_eq!(HostReply::parse(input).unwrap().body, "收到", "{input:?}");
+            assert_eq!(HostReply::parse(input).unwrap().body(), "收到", "{input:?}");
         }
         // 正文里的代码块原样保留。
         assert_eq!(
             HostReply::parse("```json\n{\"body\":\"用 ```rust``` 包代码\"}\n```")
                 .unwrap()
-                .body,
+                .body(),
             "用 ```rust``` 包代码"
         );
         for input in [

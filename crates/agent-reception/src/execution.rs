@@ -157,7 +157,7 @@ fn restore(state: &mut ReceiverState, progress: &ReceptionProgress) {
     } else if state.last_delivery.as_ref().is_some_and(|record| {
         !matches!(
             record.stage,
-            DeliveryStage::Replied | DeliveryStage::Skipped
+            DeliveryStage::Replied | DeliveryStage::Skipped | DeliveryStage::NoReply
         )
     }) {
         state.last_delivery = None;

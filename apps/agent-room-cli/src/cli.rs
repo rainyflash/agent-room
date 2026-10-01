@@ -88,7 +88,8 @@ pub(crate) enum Command {
         #[arg(long)]
         id: String,
     },
-    /// Wake an explicitly bound Codex or Claude Code task for allowed human mentions.
+    /// Wake an explicitly bound Codex or Claude Code task when its owner talks to it, or when
+    /// someone mentions or replies to it in a private room; messages in a row become one turn.
     Receive {
         #[arg(long)]
         binding: PathBuf,

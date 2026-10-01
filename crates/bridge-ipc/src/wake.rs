@@ -346,8 +346,28 @@ pub fn decide(
     now_ms: i64,
     deadline_ms: Option<i64>,
 ) -> WaitDecision {
+    decide_with(
+        pending,
+        options,
+        &|preview| wakes(preview, options, context),
+        limit,
+        now_ms,
+        deadline_ms,
+    )
+}
+
+/// 和 [`decide`] 一样，只是哪条叫醒它由调用方判断。后台回复有自己的规则：主人和私人房间里
+/// 点名它的人才叫得醒，见 `agent_client::reception`。
+pub fn decide_with(
+    pending: &[Arrival<'_>],
+    options: &WaitOptions,
+    wakes: &dyn Fn(&IpcMessagePreviewSummary) -> bool,
+    limit: usize,
+    now_ms: i64,
+    deadline_ms: Option<i64>,
+) -> WaitDecision {
     let limit = limit.max(1);
-    let scope = Scope::new(pending, options, context);
+    let scope = Scope::new(pending, options, wakes);
     let timed_out = deadline_ms.is_some_and(|deadline| now_ms >= deadline);
     let Some(trigger) = scope.trigger(now_ms) else {
         if timed_out {
@@ -388,7 +408,11 @@ struct Scope<'p, 'a> {
 }
 
 impl<'p, 'a> Scope<'p, 'a> {
-    fn new(pending: &'p [Arrival<'a>], options: &'p WaitOptions, context: WakeContext<'_>) -> Self {
+    fn new(
+        pending: &'p [Arrival<'a>],
+        options: &'p WaitOptions,
+        wakes: &dyn Fn(&IpcMessagePreviewSummary) -> bool,
+    ) -> Self {
         let heard: Vec<usize> = (0..pending.len())
             .filter(|&index| {
                 let preview = pending[index].preview;
@@ -402,7 +426,7 @@ impl<'p, 'a> Scope<'p, 'a> {
         let waking = heard
             .iter()
             .copied()
-            .filter(|&index| wakes(pending[index].preview, options, context))
+            .filter(|&index| wakes(pending[index].preview))
             .collect();
         let speaker = |index: usize| actor_matrix_id(&pending[index].preview.actor);
         let waited: Vec<usize> = heard
