@@ -86,6 +86,8 @@ struct Room {
     redactions: Vec<(Duration, String)>,
     /// 每次调用要花的时间：真的 IPC 第一次轮询不会立刻就绪。
     latency: Duration,
+    /// 认不认挂着等（`waitMs`）：不认的 Bridge 立刻空手返回。
+    honors_wait: bool,
     calls: Mutex<Vec<(String, bool)>>,
 }
 
@@ -99,6 +101,7 @@ impl Room {
                 .collect(),
             redactions: Vec::new(),
             latency: Duration::ZERO,
+            honors_wait: true,
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -148,12 +151,35 @@ impl BridgeToolClient for Room {
             panic!("等消息总是带着会话");
         };
         assert_eq!(session_id, SESSION);
+        let blocking = match &*method {
+            IpcMethod::WaitInbox(request) if self.honors_wait => request.wait_ms,
+            _ => None,
+        };
         let response = match *method {
             IpcMethod::WaitInbox(request) => {
                 self.calls
                     .lock()
                     .unwrap()
                     .push(("wait_inbox".to_owned(), request.keep_waiting));
+                if let Some(wait_ms) = blocking {
+                    // 像 Bridge 一样挂着等：来了新消息就交，到点空手返回。
+                    let request = request.clone();
+                    let latency = self.latency;
+                    return Box::pin(async move {
+                        let deadline = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+                        loop {
+                            let page = self.page(&request, false);
+                            let empty = matches!(&page, IpcResponse::MessagePreviews { previews, .. } if previews.is_empty());
+                            if !empty || Instant::now() >= deadline {
+                                if !latency.is_zero() {
+                                    tokio::time::sleep(latency).await;
+                                }
+                                return Ok::<_, BridgeToolFailure>(page);
+                            }
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                    });
+                }
                 self.page(&request, false)
             }
             IpcMethod::ReadInbox(request) => {
@@ -401,4 +427,46 @@ async fn 一直在丢最早的消息时_定时看一眼照样到点() {
         .unwrap();
     assert_eq!(batch.wake.reason, WakeReason::Digest);
     assert!(batch.skipped > 0, "攒满以后丢掉的算进跳过的");
+}
+
+#[tokio::test(start_paused = true)]
+async fn 请_bridge_挂着等_不用每秒问一次() {
+    let room = Room::new(vec![(20_000, preview(ADA, true, "在吗", &[]))]);
+    let started = Instant::now();
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::from_mins(1)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["在吗"]);
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(25),
+        "消息第 20 秒到，再等对话停 5 秒"
+    );
+    let waits = room
+        .calls()
+        .iter()
+        .filter(|(name, _)| name == "wait_inbox")
+        .count();
+    assert!(waits <= 8, "挂着等，25 秒只问了 {waits} 次，不是每秒一次");
+}
+
+#[tokio::test(start_paused = true)]
+async fn bridge_不认挂着等时退回每秒问一次_不空转() {
+    let mut room = Room::new(vec![(10_000, preview(ADA, true, "在吗", &[]))]);
+    room.honors_wait = false;
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::from_mins(1)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["在吗"]);
+    let waits = room
+        .calls()
+        .iter()
+        .filter(|(name, _)| name == "wait_inbox")
+        .count();
+    assert!(
+        (10..=40).contains(&waits),
+        "大约每秒问一次，问了 {waits} 次"
+    );
 }
