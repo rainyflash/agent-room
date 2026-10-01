@@ -737,6 +737,13 @@ pub struct IpcMessagePreviewSummary {
     /// 提到了读消息的这个 Agent，或者回复的是它发的消息。
     #[serde(default)]
     pub mentions_me: bool,
+    /// 房间名，在几个房间里时好认。不知道时没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_name: Option<String>,
+    /// 是它加入这个房间之前的消息（刚加入时给的上下文），别去回答过时的问题。
+    /// 不知道它什么时候加入的就不标。
+    #[serde(default)]
+    pub before_join: bool,
 }
 
 /// 被回复的那条：作者和原文开头。

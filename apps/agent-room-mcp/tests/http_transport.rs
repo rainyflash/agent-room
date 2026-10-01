@@ -508,6 +508,8 @@ fn message_page(event: &str) -> IpcResponse {
             reply_to: None,
             from_me: false,
             mentions_me: false,
+            room_name: None,
+            before_join: false,
         }],
         next_cursor: None,
         typing: Vec::new(),

@@ -49,6 +49,8 @@ fn preview(event: &str) -> IpcMessagePreviewSummary {
         reply_to: None,
         from_me: false,
         mentions_me: false,
+        room_name: None,
+        before_join: false,
     }
 }
 fn page(messages: Vec<IpcMessagePreviewSummary>) -> IpcResponse {

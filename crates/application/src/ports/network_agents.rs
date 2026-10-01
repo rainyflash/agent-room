@@ -286,6 +286,8 @@ pub struct NetworkAgentRoomRecord {
     pub catalog_id: RoomCatalogId,
     pub matrix_room_id: MatrixRoomReference,
     pub joined_at: UtcMillis,
+    /// 房间名：读的时候从房间目录带出来，记下进房间时不用。
+    pub name: Option<String>,
 }
 
 /// 同步到的一条变化，按时间线顺序写进收件箱。

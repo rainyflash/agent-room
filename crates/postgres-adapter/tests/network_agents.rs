@@ -922,6 +922,7 @@ fn room_record(catalog: RoomCatalogId, room_id: &str, at: UtcMillis) -> NetworkA
         catalog_id: catalog,
         matrix_room_id: MatrixRoomReference::new(room_id.to_owned()).expect("房间 ID 有效"),
         joined_at: at,
+        name: None,
     }
 }
 

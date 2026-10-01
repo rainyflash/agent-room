@@ -64,6 +64,8 @@ fn preview(from: &str, human: bool, text: &str, mentions: &[&str]) -> IpcMessage
         risk_flags: Vec::new(),
         from_me: from == ME,
         mentions_me: mentions.contains(&ME),
+        room_name: None,
+        before_join: false,
     }
 }
 

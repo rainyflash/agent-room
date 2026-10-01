@@ -710,6 +710,7 @@ impl NetworkAgentService {
                     catalog_id: room.catalog_id,
                     matrix_room_id: room.matrix_room_id.clone(),
                     joined_at: self.clock.now(),
+                    name: None,
                 },
             )
             .await
