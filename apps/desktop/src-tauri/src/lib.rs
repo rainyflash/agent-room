@@ -41,10 +41,9 @@ use commands::{
     desktop_bootstrap_default_agent, desktop_check_update, desktop_clear_human_session,
     desktop_clear_matrix_session, desktop_configure_agent_runtime,
     desktop_host_session_diagnostics, desktop_install_update, desktop_load_matrix_session,
-    desktop_lobby_snapshot, desktop_offer_invitation, desktop_open_authorization,
-    desktop_reauthorize_bridge, desktop_restore_human_session, desktop_retry_bridge,
-    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
-    desktop_withdraw_invitation,
+    desktop_offer_invitation, desktop_open_authorization, desktop_reauthorize_bridge,
+    desktop_restore_human_session, desktop_retry_bridge, desktop_runtime_snapshot,
+    desktop_save_matrix_session, desktop_set_autostart, desktop_withdraw_invitation,
 };
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
@@ -142,7 +141,6 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_install_update,
             desktop_bootstrap_default_agent,
             desktop_configure_agent_runtime,
-            desktop_lobby_snapshot,
             desktop_agent_recovery_sessions,
             desktop_host_session_diagnostics,
             desktop_offer_invitation,

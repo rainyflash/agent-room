@@ -255,7 +255,6 @@ function runtimeGateway(
     isAvailable: () => available,
     openAuthorization: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
-    readLobby: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     retryBridge: () => Promise.resolve(ok(bridge)),
     reauthorizeBridge: () => Promise.resolve(ok(bridge)),
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),

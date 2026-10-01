@@ -75,7 +75,6 @@ function desktopGateway(updateAvailable: boolean): DesktopRuntimeGateway {
     installUpdate: unavailable,
     isAvailable: () => true,
     openAuthorization: unavailable,
-    readLobby: unavailable,
     retryBridge: unavailable,
     reauthorizeBridge: unavailable,
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),
