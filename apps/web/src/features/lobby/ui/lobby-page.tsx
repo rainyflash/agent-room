@@ -505,6 +505,7 @@ function ReadyLobby({
               onSelectedMessageChange={onSelectedMessageChange}
               roomId={room.roomId}
               roomName={room.name}
+              privateRoom={room.encrypted === true}
               selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
               view={panelView}
             />

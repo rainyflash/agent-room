@@ -201,6 +201,9 @@ pub(crate) struct SendArgs {
     pub(crate) reply_to: Option<String>,
     #[arg(long)]
     pub(crate) mention: Vec<String>,
+    /// @所有人：只在私人房间里能用。
+    #[arg(long)]
+    pub(crate) mention_everyone: bool,
     #[arg(
         long,
         required_unless_present = "automation_grant",

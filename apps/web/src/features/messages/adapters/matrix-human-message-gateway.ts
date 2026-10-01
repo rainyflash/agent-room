@@ -106,6 +106,9 @@ export class MatrixSdkHumanMessageGateway implements HumanMatrixPublicationGatew
       encrypted = await this.#encrypted(request.roomId);
       if (encrypted !== (request.event.content.encryption !== undefined))
         return err(rejected(false));
+      // @所有人只能发到私人房间：公开大厅不加密，一句话会叫醒整个大厅。
+      if (request.event.preview.mentionsEveryone === true && !encrypted)
+        return err(rejected(false));
       if (encrypted && !(await client.getCrypto()?.isEncryptionEnabledInRoom(request.roomId)))
         return err(unavailable());
       if (encrypted) {

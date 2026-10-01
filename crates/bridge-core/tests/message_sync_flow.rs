@@ -234,6 +234,15 @@ fn backfill_token(value: &str) -> MatrixBackfillToken {
 }
 
 fn human_chat(event_id: &str, text: &str) -> MatrixTimelineEvent {
+    timeline_event(
+        event_id,
+        "io.github.rainyflash.agentroom.message.preview.v2",
+        human_chat_payload(text),
+        None,
+    )
+}
+
+fn human_chat_payload(text: &str) -> Value {
     let mut payload = preview_payload(
         Uuid::now_v7(),
         room_id().as_str(),
@@ -246,12 +255,7 @@ fn human_chat(event_id: &str, text: &str) -> MatrixTimelineEvent {
     payload["preview"]["contentType"] = json!("text/plain");
     payload["content"]["mediaType"] = json!("text/plain");
     payload["preview"]["conversation"] = json!({"text": text, "mentions": []});
-    timeline_event(
-        event_id,
-        "io.github.rainyflash.agentroom.message.preview.v2",
-        payload,
-        None,
-    )
+    payload
 }
 
 fn limited_sync(
@@ -667,6 +671,55 @@ async fn 客户端正文密钥只接受来自_matrix_端到端加密事件() {
         batches[0].issues()[0].reason,
         MessageSyncIssueReason::InvalidEnvelope
     );
+}
+
+#[tokio::test]
+async fn 所有人只认端到端加密的消息() {
+    let fixture = 测试夹具::new();
+    let everyone = |event_id: &str| {
+        let mut payload = human_chat_payload("大家看一下");
+        payload["preview"]["mentionsEveryone"] = json!(true);
+        timeline_event(
+            event_id,
+            "io.github.rainyflash.agentroom.message.preview.v2",
+            payload,
+            None,
+        )
+    };
+    let sync = MatrixSyncBatch::new(
+        MatrixSyncToken::new("everyone-sync").expect("同步游标有效"),
+        vec![MatrixRoomSync::new(
+            room_id(),
+            MatrixRoomSyncKind::Joined,
+            false,
+            None,
+            vec![
+                everyone("$private:matrix.test").with_trusted_end_to_end_encryption(),
+                everyone("$lobby:matrix.test"),
+            ],
+            Vec::new(),
+        )],
+    );
+
+    let outcome = fixture.service().process(&sync).await.expect("能处理");
+
+    assert_eq!(
+        outcome.accepted_events, 2,
+        "公开大厅硬发的照样收下，只是不算 @所有人"
+    );
+    let batches = fixture.projections.batches.lock().expect("投影记录锁可用");
+    let everyone = |index: usize| {
+        let MessageProjectionMutation::Preview(preview) = &batches[0].mutations()[index] else {
+            panic!("应进入预览投影");
+        };
+        preview
+            .preview
+            .conversation()
+            .expect("是聊天")
+            .mentions_everyone()
+    };
+    assert!(everyone(0), "加密消息上的 @所有人 算数");
+    assert!(!everyone(1), "不加密的消息带着这个开关也不算");
 }
 
 #[tokio::test]

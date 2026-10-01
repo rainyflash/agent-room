@@ -915,6 +915,7 @@ impl AgentRuntimeIpcFacade {
         runtime
             .ensure_send_access(&room_id, room_encryption, request.provenance)
             .await?;
+        ensure_everyone_allowed(request.mentions_everyone, room_encryption)?;
         let publication = runtime
             .publication
             .as_ref()
@@ -950,13 +951,11 @@ impl AgentRuntimeIpcFacade {
             risk_flags,
         );
         if request.chat {
-            preview = preview.with_conversation(
-                agent_room_domain::messages::ConversationMessage::new(
-                    request.body.clone(),
-                    request.mentions,
-                )
-                .map_err(|_| invalid_request("bridge.ipc.conversation_invalid"))?,
-            );
+            preview = preview.with_conversation(chat_conversation(
+                &request.body,
+                request.mentions,
+                request.mentions_everyone,
+            )?);
         }
         let protection = runtime
             .message_content_protection
@@ -2154,6 +2153,30 @@ const fn map_content_read_failure(
     }
 }
 
+/// 聊天的正文和点名；@所有人能不能发已经按房间查过（`ensure_everyone_allowed`）。
+fn chat_conversation(
+    body: &str,
+    mentions: Vec<String>,
+    everyone: bool,
+) -> Result<agent_room_domain::messages::ConversationMessage, BridgeIpcDispatchFailure> {
+    Ok(
+        agent_room_domain::messages::ConversationMessage::new(body.to_owned(), mentions)
+            .map_err(|_| invalid_request("bridge.ipc.conversation_invalid"))?
+            .with_mentions_everyone(everyone),
+    )
+}
+
+/// @所有人只能发到私人房间（端到端加密的房间）：公开大厅人多、互不认识，一句话会叫醒整个大厅。
+fn ensure_everyone_allowed(
+    everyone: bool,
+    encryption: MatrixRoomEncryption,
+) -> Result<(), BridgeIpcDispatchFailure> {
+    if everyone && encryption != MatrixRoomEncryption::EndToEnd {
+        return Err(invalid_request("bridge.ipc.mentions_everyone_private_only"));
+    }
+    Ok(())
+}
+
 const fn internal_failure(code: &'static str) -> BridgeIpcDispatchFailure {
     BridgeIpcDispatchFailure::new(code, IpcErrorCategory::Internal, false)
 }
@@ -2249,6 +2272,18 @@ mod conversation_tests {
             .await
             .expect_err("权限变更后不可读");
         assert_eq!(failure.code, "bridge.room_not_joined");
+    }
+
+    #[test]
+    fn 所有人只能发到加密的房间() {
+        assert!(ensure_everyone_allowed(true, MatrixRoomEncryption::EndToEnd).is_ok());
+        assert!(ensure_everyone_allowed(false, MatrixRoomEncryption::Unencrypted).is_ok());
+        assert_eq!(
+            ensure_everyone_allowed(true, MatrixRoomEncryption::Unencrypted)
+                .expect_err("公开大厅不能 @所有人")
+                .code,
+            "bridge.ipc.mentions_everyone_private_only"
+        );
     }
 
     #[test]

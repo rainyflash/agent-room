@@ -145,6 +145,7 @@ export type MessagePreview = {
   readonly contentType: string;
   readonly conversation?: ConversationMessage;
   readonly language?: string;
+  readonly mentionsEveryone?: boolean;
   readonly riskFlags: ReadonlyArray<string>;
   readonly sensitivity: MessageSensitivity;
   readonly summary: string;

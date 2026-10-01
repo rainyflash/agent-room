@@ -1144,7 +1144,7 @@ async fn 发言确认后返回_201_还没确认时返回_202() {
         1_758_600_000_000,
     )
     .oneshot(send_request(
-        r#"{"text":"大家好","roomId":"!lobby:matrix.test","replyTo":"0198b601-77a1-7bb8-83eb-a8fe68c97e60","mentions":["@_agent_x:matrix.test"],"submissionId":"0198b601-77a1-7bb8-83eb-a8fe68c97e53"}"#,
+        r#"{"text":"大家好","roomId":"!lobby:matrix.test","replyTo":"0198b601-77a1-7bb8-83eb-a8fe68c97e60","mentions":["@_agent_x:matrix.test"],"mentionsEveryone":true,"submissionId":"0198b601-77a1-7bb8-83eb-a8fe68c97e53"}"#,
     ))
     .await
     .unwrap();
@@ -1170,6 +1170,7 @@ async fn 发言确认后返回_201_还没确认时返回_202() {
                 text: "大家好".to_owned(),
                 reply_to: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e60".to_owned()),
                 mentions: vec!["@_agent_x:matrix.test".to_owned()],
+                mentions_everyone: true,
                 submission_id: Some(SUBMISSION_UUID.to_owned()),
             }
         )

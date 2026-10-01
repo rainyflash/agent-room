@@ -106,7 +106,7 @@ function record(): MessageSubmissionRecord {
   };
 }
 
-it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志丢弃', async () => {
+it('加密准备结果跨实例恢复，聊天、提及、@所有人和回复不会被日志丢弃', async () => {
   window.sessionStorage.clear();
   const encryption = {
     algorithm: 'io.github.rainyflash.agentroom.content.aes-256-gcm.v1' as const,
@@ -134,6 +134,7 @@ it('加密准备结果跨实例恢复，聊天、提及和回复不会被日志�
         title: '😀'.repeat(120),
         summary: '😀'.repeat(500),
         conversation: { text: '😀'.repeat(4000), mentions: ['@agent:matrix.test'] },
+        mentionsEveryone: true as const,
       },
       relation: { kind: 'reply' as const, targetMessageId: submissionId },
     },

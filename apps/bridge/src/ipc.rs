@@ -2357,6 +2357,7 @@ mod tests {
         let request = IpcSendMessageRequest {
             chat: false,
             mentions: Vec::new(),
+            mentions_everyone: false,
             submission_id: Some(submission_id.clone()),
             automation_grant_id: Some(测试自动授权标识().to_string()),
             room_id: room_id.as_str().to_owned(),

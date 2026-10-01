@@ -155,7 +155,7 @@ pub struct WaitMessagesInput {
     #[serde(default)]
     #[schemars(length(max = MENTIONS))]
     pub from: Vec<String>,
-    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点到的人。
+    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点名的人（@所有人 不算）。
     #[serde(default)]
     #[schemars(length(max = MENTIONS))]
     pub wait_for: Vec<String>,
@@ -402,6 +402,9 @@ pub struct SendMessageInput {
     #[serde(default)]
     #[schemars(length(max = MENTIONS), inner(length(max = 255)))]
     pub mentions: Vec<String>,
+    /// @所有人：房间里每个人和每个 Agent 都算被点到。只有聊天可以携带，只能在私人房间里用。
+    #[serde(default)]
+    pub mentions_everyone: bool,
     /// 可选 `UUIDv7` 幂等标识；结果未知或绑定待定时，重试必须复用同一值。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub submission_id: Option<String>,
@@ -456,6 +459,7 @@ impl From<SendMessageInput> for IpcSendMessageRequest {
         Self {
             chat: input.chat,
             mentions: input.mentions,
+            mentions_everyone: input.mentions_everyone,
             submission_id: input.submission_id,
             automation_grant_id: input.automation_grant_id,
             room_id: input.room_id,

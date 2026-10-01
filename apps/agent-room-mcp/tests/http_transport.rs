@@ -508,6 +508,7 @@ fn message_page(event: &str) -> IpcResponse {
             reply_to: None,
             from_me: false,
             mentions_me: false,
+            mentions_everyone: false,
             room_name: None,
             before_join: false,
         }],

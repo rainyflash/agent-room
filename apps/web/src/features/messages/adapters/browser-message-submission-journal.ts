@@ -55,6 +55,7 @@ const eventSchema = z
     preview: z
       .object({
         conversation: conversationSchema.optional(),
+        mentionsEveryone: z.literal(true).optional(),
         contentType: z
           .string()
           .min(3)
@@ -291,6 +292,7 @@ function freezeRecord(record: z.output<typeof recordSchema>): MessageSubmissionR
     ...(record.event.preview.conversation === undefined
       ? {}
       : { conversation: record.event.preview.conversation }),
+    ...(record.event.preview.mentionsEveryone === true ? { mentionsEveryone: true as const } : {}),
     contentType: record.event.preview.contentType,
     ...(record.event.preview.language === undefined
       ? {}

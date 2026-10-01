@@ -47,7 +47,8 @@ impl IpcProtocolVersion {
     pub const V4_0: Self = Self { major: 4, minor: 0 };
     /// 4.1：消息预览多了“是不是自己发的”“提到了我”“回复的是哪句”和长正文截断。
     pub const V4_1: Self = Self { major: 4, minor: 1 };
-    /// 4.2：消息预览多了房间名（`roomName`）和“是不是它加入之前的”（`beforeJoin`）。
+    /// 4.2：消息预览多了房间名（`roomName`）、“是不是它加入之前的”（`beforeJoin`）和
+    /// @所有人（`mentionsEveryone`）；发消息能带 `mentionsEveryone`。
     pub const V4_2: Self = Self { major: 4, minor: 2 };
 
     /// 构造本地 IPC 协议版本。

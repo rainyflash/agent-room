@@ -189,6 +189,53 @@ describe('工作区对话生命周期', () => {
     });
     expect(storage.read('!a:room.test')).toEqual(ok(null));
   });
+  it('@所有人随草稿保存，发出去的请求带上它，发完清掉', async () => {
+    const values = new Map<string, string>();
+    const storage = new BrowserConversationStorage(
+      {
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => {
+          values.set(key, value);
+        },
+        removeItem: (key) => {
+          values.delete(key);
+        },
+      },
+      '@owner:room.test',
+    );
+    const first = fixture(storage);
+    const a = await open(first.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(a.session.editable).toBe(true);
+    });
+    a.session.changeText('大家看一下');
+    a.session.mentionEveryone();
+    a.session.removeMentionEveryone();
+    expect(a.session.getSnapshot().mentionsEveryone).toBe(false);
+    a.session.mentionEveryone();
+    expect(storage.read('!a:room.test')).toMatchObject({
+      ok: true,
+      value: { mentionsEveryone: true },
+    });
+    first.release();
+    await Promise.resolve();
+
+    const restored = fixture(storage);
+    const b = await open(restored.workspace, '!a:room.test');
+    await vi.waitFor(() => {
+      expect(b.session.editable).toBe(true);
+    });
+    expect(b.session.getSnapshot().mentionsEveryone).toBe(true);
+    b.session.submit();
+    await vi.waitFor(() => {
+      expect(b.session.getSnapshot().publication.matches('published')).toBe(true);
+    });
+    expect(restored.publish.mock.calls[0]?.[0]).toMatchObject({
+      mentionsEveryone: true,
+      conversation: { text: '大家看一下', mentions: [] },
+    });
+    expect(b.session.getSnapshot().mentionsEveryone).toBe(false);
+  });
   it('卸载面板保留私聊草稿、提及，各个房间相互隔离', async () => {
     const { workspace } = fixture();
     const a = await open(workspace, '!a:room.test');

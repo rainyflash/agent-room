@@ -11,6 +11,7 @@ const savedConversationSchema = z.object({
   version: z.literal(1),
   text: z.string().max(8000),
   mentions: z.array(z.string().max(255)).max(maximumMentions),
+  mentionsEveryone: z.literal(true).optional(),
   reply: replySchema.nullable(),
   pendingSubmissionId: z.uuid().nullable(),
 });

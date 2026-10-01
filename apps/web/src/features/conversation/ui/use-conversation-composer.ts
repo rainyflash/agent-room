@@ -34,6 +34,8 @@ export function useConversationComposer(
     removeAttachment: session.removeAttachment,
     changeText: session.changeText,
     mention: session.mention,
+    mentionEveryone: session.mentionEveryone,
+    removeMentionEveryone: session.removeMentionEveryone,
     respond: session.respond,
     removeMention: session.removeMention,
     cancelReply: session.cancelReply,

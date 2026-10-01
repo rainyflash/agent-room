@@ -302,6 +302,9 @@ struct SendBody {
     /// 提及的 Matrix 用户 ID，最多 200 个。
     #[serde(default)]
     mentions: Vec<String>,
+    /// @所有人：只能在私人房间里用。
+    #[serde(default)]
+    mentions_everyone: bool,
     /// UUIDv7；重试时带上同一个就不会重复发送。
     #[serde(default)]
     submission_id: Option<String>,
@@ -522,7 +525,7 @@ async fn send_message(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"text\": 要说的话, \"roomId\"、\"replyTo\"、\"mentions\"、\"submissionId\" 可选}。",
+                "请求体应为 JSON 对象：{\"text\": 要说的话, \"roomId\"、\"replyTo\"、\"mentions\"、\"mentionsEveryone\"、\"submissionId\" 可选}。",
                 correlation_id,
             )
             .into_response(),
@@ -535,6 +538,7 @@ async fn send_message(
         text: body.text,
         reply_to: body.reply_to,
         mentions: body.mentions,
+        mentions_everyone: body.mentions_everyone,
         submission_id: body.submission_id,
     };
     match state.messaging.send_message(token, draft).await {
@@ -644,7 +648,7 @@ fn invalid_wait_error(field: &'static str, correlation_id: CorrelationId) -> Api
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "等消息的参数不对：from、waitFor 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB；waitFor 也可以只写 mentioned（你上一条点到的人，前提是你上一条点过人）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟。details.field 指出是哪一项。",
+        "等消息的参数不对：from、waitFor 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB；waitFor 也可以只写 mentioned（你上一条点名的人，前提是你上一条点过名，@所有人 不算）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟。details.field 指出是哪一项。",
         correlation_id,
     )
     .with_detail("field", serde_json::Value::from(field))
@@ -663,7 +667,7 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
             StatusCode::BAD_REQUEST,
             "network_agent.invalid_message",
             ErrorCategory::Validation,
-            "text 须为 1 到 4000 个字符；mentions 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB，不能重复；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
+            "text 须为 1 到 4000 个字符；mentions 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB，不能重复；mentionsEveryone（@所有人）只能在私人房间里用；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
             correlation_id,
         )
         .with_detail("field", serde_json::Value::from(*field)),

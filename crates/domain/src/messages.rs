@@ -247,6 +247,7 @@ pub struct ConversationMessage {
     text: String,
     mentions: Vec<String>,
     attachment_name: Option<String>,
+    mentions_everyone: bool,
 }
 
 impl ConversationMessage {
@@ -284,7 +285,18 @@ impl ConversationMessage {
             text,
             mentions,
             attachment_name: None,
+            mentions_everyone: false,
         })
+    }
+    /// @所有人。只在端到端加密的房间里算数：发的时候由发送方查房间，收的时候由读消息的一方查
+    /// 这条消息是不是加密的，不算数的不带上（`specs/agent-reading/mentions.md`）。
+    #[must_use]
+    pub const fn with_mentions_everyone(mut self, everyone: bool) -> Self {
+        self.mentions_everyone = everyone;
+        self
+    }
+    pub const fn mentions_everyone(&self) -> bool {
+        self.mentions_everyone
     }
     /// Attaches a display filename to the message's existing content reference.
     ///

@@ -361,6 +361,9 @@ pub struct IpcSendMessageRequest {
     pub chat: bool,
     #[serde(default)]
     pub mentions: Vec<String>,
+    /// @所有人：只有聊天能带，只能发到私人房间（端到端加密的房间）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mentions_everyone: bool,
     pub submission_id: Option<String>,
     pub automation_grant_id: Option<String>,
     pub room_id: String,
@@ -384,7 +387,7 @@ impl IpcSendMessageRequest {
             if self.media_type != "text/plain" {
                 return Err(failure("bridge.ipc.conversation_invalid"));
             }
-        } else if !self.mentions.is_empty() {
+        } else if !self.mentions.is_empty() || self.mentions_everyone {
             return Err(failure("bridge.ipc.conversation_invalid"));
         }
 
@@ -712,6 +715,8 @@ pub struct IpcContentReference {
     pub size_bytes: u64,
 }
 
+// 线上格式直接给 Agent 看：几个互不相干的标记平铺着最好读；`deny_unknown_fields` 也不能和 flatten 一起用。
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcMessagePreviewSummary {
@@ -734,9 +739,12 @@ pub struct IpcMessagePreviewSummary {
     /// 是不是读消息的这个 Agent 自己发的。
     #[serde(default)]
     pub from_me: bool,
-    /// 提到了读消息的这个 Agent，或者回复的是它发的消息。
+    /// 提到了读消息的这个 Agent，或者回复的是它发的消息；私人房间里 @所有人 也算。
     #[serde(default)]
     pub mentions_me: bool,
+    /// 这条 @所有人：私人房间里群发给每个人的，斟酌要不要每条都回。公开大厅里的不算，不标。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mentions_everyone: bool,
     /// 房间名，在几个房间里时好认。不知道时没有。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_name: Option<String>,
@@ -1187,6 +1195,31 @@ mod tests {
     }
 
     #[test]
+    fn 只有聊天能带_所有人() {
+        let document = IpcMethod::SendMessage(IpcSendMessageRequest {
+            chat: false,
+            mentions: Vec::new(),
+            mentions_everyone: true,
+            submission_id: None,
+            automation_grant_id: None,
+            room_id: "!room:matrix.test".to_owned(),
+            title: "长文".to_owned(),
+            summary: "长文摘要".to_owned(),
+            body: "正文".to_owned(),
+            media_type: "text/markdown".to_owned(),
+            language: Some("zh-CN".to_owned()),
+            sensitivity: IpcMessageSensitivity::Normal,
+            risk_flags: Vec::new(),
+            provenance: IpcMessageProvenance::HumanConfirmedAgent,
+            reply_to_message_id: None,
+        });
+        assert_eq!(
+            document.validate().expect_err("长文不能 @所有人").code(),
+            "bridge.ipc.conversation_invalid"
+        );
+    }
+
+    #[test]
     fn 写入方法在进入业务层前拒绝超限或畸形输入() {
         let invalid_status = IpcMethod::PublishStatus(IpcPublishStatusRequest {
             room_id: "!room:matrix.test".to_owned(),
@@ -1214,6 +1247,7 @@ mod tests {
         let invalid_message = IpcMethod::SendMessage(IpcSendMessageRequest {
             chat: false,
             mentions: Vec::new(),
+            mentions_everyone: false,
             submission_id: None,
             automation_grant_id: None,
             room_id: "!room:matrix.test".to_owned(),
@@ -1238,6 +1272,7 @@ mod tests {
         let invalid_reply = IpcMethod::SendMessage(IpcSendMessageRequest {
             chat: false,
             mentions: Vec::new(),
+            mentions_everyone: false,
             submission_id: None,
             automation_grant_id: None,
             room_id: "!room:matrix.test".to_owned(),
@@ -1324,6 +1359,7 @@ mod tests {
         IpcMethod::SendMessage(IpcSendMessageRequest {
             chat: false,
             mentions: Vec::new(),
+            mentions_everyone: false,
             submission_id: None,
             automation_grant_id,
             room_id: "!room:matrix.test".to_owned(),

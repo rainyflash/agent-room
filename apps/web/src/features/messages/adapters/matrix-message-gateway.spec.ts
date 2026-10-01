@@ -116,6 +116,44 @@ describe('MatrixMessageGateway', () => {
     ]);
   });
 
+  it('@所有人只认端到端加密的消息，公开大厅里硬发的不算', () => {
+    const everyone = (eventId: string, id: string, endToEndEncrypted: boolean) => {
+      const event = humanPreviewEvent({ eventId });
+      return {
+        ...event,
+        content: {
+          ...event.content,
+          content: { ...contentReference(), mediaType: 'text/plain' },
+          id,
+          preview: {
+            ...previewContent('大家看一下'),
+            contentType: 'text/plain',
+            conversation: { mentions: [], text: '大家看一下' },
+            mentionsEveryone: true,
+          },
+        },
+        endToEndEncrypted,
+        serverTimestamp: endToEndEncrypted ? 300 : 200,
+      };
+    };
+    const room = snapshot([
+      everyone('$private', '01990d9e-8400-7000-8000-000000000081', true),
+      everyone('$lobby', '01990d9e-8400-7000-8000-000000000082', false),
+    ]);
+    const result = new MatrixMessageGateway(source({ kind: 'ready', room }), () => NOW).read(
+      ROOM_ID,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byEvent = new Map(
+      result.value.messages.map((message) => [message.matrixEventId, message.preview]),
+    );
+    expect(byEvent.get('$private')?.mentionsEveryone).toBe(true);
+    expect(byEvent.get('$lobby')?.conversation?.text).toBe('大家看一下');
+    expect(byEvent.get('$lobby')?.mentionsEveryone).toBeUndefined();
+  });
+
   it('Human v2 不得携带实例签名，Agent v2 必须携带签名', () => {
     const signedHuman = humanPreviewEvent({ eventId: '$signed-human' });
     signedHuman.content = { ...signedHuman.content, signature: 'A'.repeat(43) };

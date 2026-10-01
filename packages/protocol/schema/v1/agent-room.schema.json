@@ -272,7 +272,8 @@
             "pattern": "^[a-z][a-z0-9_]*$"
           }
         },
-        "conversation": { "$ref": "#/$defs/ConversationMessage" }
+        "conversation": { "$ref": "#/$defs/ConversationMessage" },
+        "mentionsEveryone": { "type": "boolean" }
       },
       "additionalProperties": true,
       "maxProperties": 16
