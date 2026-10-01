@@ -561,7 +561,7 @@ async fn 只等某人时主人说话照样叫得醒() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn 叫醒它的人还在打字就晚点交_打完马上交_一直打也只等到上限() {
+async fn 叫醒它的人在打字也算没停_停下以后再等防抖_一直打也只等到上限() {
     let ada = || preview(ADA, true, "在吗", &[]);
     let mut room = Room::new(vec![(1_000, ada())]);
     room.typists = vec![(
@@ -577,8 +577,8 @@ async fn 叫醒它的人还在打字就晚点交_打完马上交_一直打也只
     assert_eq!(texts(&batch.previews), ["在吗"]);
     let elapsed = started.elapsed();
     assert!(
-        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_millis(9_200),
-        "防抖 5 秒到了她还在打字，打完马上交：{elapsed:?}"
+        elapsed >= Duration::from_secs(14) && elapsed < Duration::from_millis(14_200),
+        "防抖 5 秒到了她还在打字，第 9 秒停下以后再等 5 秒：{elapsed:?}"
     );
 
     let mut room = Room::new(vec![(1_000, ada())]);

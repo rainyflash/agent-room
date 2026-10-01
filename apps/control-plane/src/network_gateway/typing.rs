@@ -7,7 +7,7 @@ use std::{
 };
 
 use agent_room_application::ports::MatrixSyncBatch;
-use agent_room_bridge_ipc::{typing::TypingRooms, wake::IpcTyping};
+use agent_room_bridge_ipc::{typing::TypingRooms, wake::Typist};
 use agent_room_domain::ids::NetworkAgentId;
 
 #[derive(Default)]
@@ -16,12 +16,13 @@ pub(super) struct AgentTyping {
 }
 
 impl AgentTyping {
-    /// 记下一次同步带回的“正在输入”；没人打字的 Agent 不留。
+    /// 记下一次同步带回的“正在输入”；什么也没记着的 Agent 不留。
     pub(super) fn record(&self, agent: NetworkAgentId, batch: &MatrixSyncBatch, now_ms: i64) {
-        if batch.rooms().iter().all(|room| room.typing().is_none()) {
+        let mut agents = self.agents.lock().unwrap_or_else(PoisonError::into_inner);
+        if batch.rooms().iter().all(|room| room.typing().is_none()) && !agents.contains_key(&agent)
+        {
             return;
         }
-        let mut agents = self.agents.lock().unwrap_or_else(PoisonError::into_inner);
         let rooms = agents.entry(agent).or_default();
         rooms.record(batch, now_ms);
         if rooms.is_empty() {
@@ -29,13 +30,13 @@ impl AgentTyping {
         }
     }
 
-    /// 此刻还算在打字的。
-    pub(super) fn now(&self, agent: NetworkAgentId, now_ms: i64) -> Vec<IpcTyping> {
+    /// 还在打字的和刚停下的。
+    pub(super) fn typists(&self, agent: NetworkAgentId, now_ms: i64) -> Vec<Typist> {
         self.agents
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&agent)
-            .map(|rooms| rooms.now(None, now_ms))
+            .map(|rooms| rooms.typists(now_ms))
             .unwrap_or_default()
     }
 
@@ -78,18 +79,26 @@ mod tests {
     }
 
     #[test]
-    fn 每个网络_agent_各记各的_停用以后不再记着() {
+    fn 每个网络_agent_各记各的_停下一会儿以后和停用以后不再记着() {
         let typing = AgentTyping::default();
         let agent = NetworkAgentId::from_uuid(Uuid::now_v7());
         let other = NetworkAgentId::from_uuid(Uuid::now_v7());
         typing.record(agent, &ada_typing(&["@ada:matrix.test"]), 1_000);
-        assert_eq!(typing.now(agent, 2_000).len(), 1);
-        assert!(typing.now(other, 2_000).is_empty());
+        assert!(typing.typists(agent, 2_000)[0].typing);
+        assert!(typing.typists(other, 2_000).is_empty());
         typing.record(agent, &ada_typing(&[]), 3_000);
-        assert!(typing.agents.lock().unwrap().is_empty(), "都停了就不留");
+        let stopped = typing.typists(agent, 3_000);
+        assert!(
+            !stopped[0].typing && stopped[0].at_ms == 3_000,
+            "记下停下的时刻"
+        );
+        // 之后的同步没再带回正在输入，停下一分钟以后照样清掉。
+        let quiet = MatrixSyncBatch::new(MatrixSyncToken::new("s2").unwrap(), Vec::new());
+        typing.record(agent, &quiet, 64_000);
+        assert!(typing.agents.lock().unwrap().is_empty());
 
-        typing.record(agent, &ada_typing(&["@bob:matrix.test"]), 4_000);
+        typing.record(agent, &ada_typing(&["@bob:matrix.test"]), 70_000);
         typing.forget(agent);
-        assert!(typing.now(agent, 4_000).is_empty());
+        assert!(typing.typists(agent, 70_000).is_empty());
     }
 }

@@ -454,7 +454,7 @@ impl NetworkGateway {
             peek |= first;
             let now_ms = self.clock.now().value();
             let rules = if peek { &peek_options } else { &options };
-            let typing = self.typing.now(session.network_agent_id, now_ms);
+            let typing = self.typing.typists(session.network_agent_id, now_ms);
             let context = WakeContext {
                 owner: None,
                 direct_rooms: &direct_rooms,

@@ -10,6 +10,7 @@ use std::{
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
     limits::INBOX_BLOCK_MILLIS,
+    typing::TypingRooms,
     wake::{
         Arrival, DEFAULT_WAIT_FOR_LIMIT, Delivery, IpcTyping, IpcWake, WaitDecision, WaitOptions,
         WaitRules, WakeContext, WakeReason, decide, decide_with, mentioned_people,
@@ -85,8 +86,9 @@ pub struct InboxWaiter {
     lookup_owner: bool,
     /// 主人的 Matrix 用户 ID；不知道时没有。
     owner: Option<String>,
-    /// 上次取消息时 Bridge 说的此刻在打字的人；旧版 Bridge 不说，就当没人在打字。
-    typing: Vec<IpcTyping>,
+    /// Bridge 等消息时交来的“正在输入”，记下谁在打、谁什么时候停下；旧版 Bridge 不给，
+    /// 就当没人在打字。
+    typing: TypingRooms,
 }
 
 type WakeCheck = Box<dyn Fn(&IpcMessagePreviewSummary) -> bool + Send + Sync>;
@@ -115,7 +117,7 @@ impl InboxWaiter {
             wakes: None,
             lookup_owner: false,
             owner: None,
-            typing: Vec::new(),
+            typing: TypingRooms::default(),
         }
     }
 
@@ -294,9 +296,11 @@ impl InboxWaiter {
                 IpcMethod::ReadInbox(request)
             };
             let (previews, more, typing) = self.read_page(backend, method, cut_off).await?;
-            self.typing = typing;
             // 挂着等可能等了好几秒：到的时间按这一页回来的时候算。
             let now_ms = self.clock.now_ms();
+            if keep_waiting {
+                self.typing.observe(&typing, now_ms);
+            }
             for preview in previews {
                 self.fetched_through = Some(preview.event_id.clone());
                 if preview.from_me || known.contains(&preview.event_id) {
@@ -372,12 +376,13 @@ impl InboxWaiter {
                 arrived_at_ms: *arrived_at_ms,
             })
             .collect();
+        let typists = self.typing.typists(now_ms);
         if let Some(wakes) = &self.wakes {
             return decide_with(
                 &arrivals,
                 &self.options,
                 wakes.as_ref(),
-                &self.typing,
+                &typists,
                 self.limit,
                 now_ms,
                 deadline_ms,
@@ -390,7 +395,7 @@ impl InboxWaiter {
             WakeContext {
                 owner: self.owner.as_deref(),
                 direct_rooms: &direct_rooms,
-                typing: &self.typing,
+                typing: &typists,
             },
             self.limit,
             now_ms,
