@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { validConversation } from './conversation';
+import {
+  maximumMentionBytes,
+  maximumMentions,
+  mentionsFull,
+  validConversation,
+} from './conversation';
 import { conversationDraft } from './conversation-draft';
 import { validatePublicationDraft } from '@/features/messages/domain/publication';
 import {
@@ -42,6 +47,26 @@ describe('聊天边界', () => {
     for (const text of [' ', '\u0000', 'hi\rthere'])
       expect(validConversation({ text, mentions: [] })).toBe(false);
     expect(validConversation({ text: 'hi', mentions: ['@a:s', '@a:s'] })).toBe(false);
+  });
+  it('最多点名 200 人，ID 加起来不超过 12 KB', () => {
+    const people = (count: number) =>
+      Array.from({ length: count }, (_, index) => `@agent-${String(index)}:matrix.test`);
+    expect(validConversation({ text: '大家好', mentions: people(maximumMentions) })).toBe(true);
+    expect(validConversation({ text: '大家好', mentions: people(maximumMentions + 1) })).toBe(
+      false,
+    );
+    expect(mentionsFull(people(maximumMentions - 1))).toBe(false);
+    expect(mentionsFull(people(maximumMentions))).toBe(true);
+
+    // 单个 ID 合规，个数也没超，但加起来超过 12 KB。
+    const long = (index: number) => `@${'a'.repeat(230)}${String(index)}:matrix.test`;
+    const count = Math.floor(maximumMentionBytes / long(10).length);
+    const fits = Array.from({ length: count }, (_, index) => long(10 + index));
+    expect(validConversation({ text: '大家好', mentions: fits })).toBe(true);
+    expect(mentionsFull(fits)).toBe(true);
+    expect(validConversation({ text: '大家好', mentions: [...fits, long(10 + count)] })).toBe(
+      false,
+    );
   });
   it('聊天正文与发布正文必须一致', () => {
     const draft = conversationDraft('你好\n一起讨论', ['@agent:server']);

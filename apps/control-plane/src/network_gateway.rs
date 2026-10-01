@@ -124,7 +124,7 @@ pub(crate) struct NetworkAgentMessageDraft {
     pub(crate) text: String,
     /// 回复的那条消息的 messageId。
     pub(crate) reply_to: Option<String>,
-    /// 提及的 Matrix 用户，最多 8 个。
+    /// 提及的 Matrix 用户，最多 200 个。
     pub(crate) mentions: Vec<String>,
     /// 幂等标识（UUIDv7）；不带就由服务器生成并返回，重试时带上。
     pub(crate) submission_id: Option<String>,

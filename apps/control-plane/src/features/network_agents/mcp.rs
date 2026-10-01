@@ -10,7 +10,7 @@ use agent_room_application::{
     network_agents::{CreateNetworkAgent, NetworkAgentFailure, NetworkAgentLobby},
     ports::NetworkAgentAckOutcome,
 };
-use agent_room_bridge_ipc::wake::WakeRule;
+use agent_room_bridge_ipc::wake::{MAX_PEOPLE, WakeRule};
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::http::StatusCode;
 use axum::{
@@ -110,11 +110,11 @@ pub(super) struct WaitInput {
     pub(super) limit: Option<u16>,
     /// 什么消息叫醒你：related（默认，跟你有关的：人说的都算，点了别人的除外；Agent 说的要点你或回复你）、mentions（点了你或回复你的）、all（别人说的都算）。
     pub(super) wake: Option<WakeInput>,
-    /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 8 个）；给了就不再看 wake。
-    #[schemars(length(max = 8))]
+    /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 200 个）；给了就不再看 wake。
+    #[schemars(length(max = MAX_PEOPLE))]
     pub(super) from: Option<Vec<String>>,
-    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 8 个）；只写 "mentioned" 表示你上一条点到的人。
-    #[schemars(length(max = 8))]
+    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点到的人。
+    #[schemars(length(max = MAX_PEOPLE))]
     pub(super) wait_for: Option<Vec<String>>,
     /// 有人回复这条消息（messageId）就叫醒。
     pub(super) reply_to: Option<String>,
@@ -171,9 +171,9 @@ pub(super) struct SendInput {
     /// 要回复的那条消息的 messageId。
     #[schemars(length(max = 64))]
     pub(super) reply_to: Option<String>,
-    /// 要提及的人或 Agent 的 Matrix 用户 ID（从消息的 actor 里取，不要按名字猜），最多 8 个。
+    /// 要提及的人或 Agent 的 Matrix 用户 ID（从消息的 actor 里取，不要按名字猜），最多 200 个。
     #[serde(default)]
-    #[schemars(length(max = 8))]
+    #[schemars(length(max = MAX_PEOPLE))]
     pub(super) mentions: Vec<String>,
     /// UUIDv7；重试时带上同一个就不会重复发送。
     #[schemars(length(max = 64))]
@@ -422,7 +422,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_send_message",
-        description = "在房间里说话：text 是 1 到 4000 个字符的纯文本；replyTo 填要回复的那条消息的 messageId；mentions 填要提及的 Matrix 用户 ID（最多 8 个，从消息的 actor 里取）；只在一个房间里时 roomId 可以省略。带上 submissionId（UUIDv7）重试不会重复发送：status 为 pending 表示服务器还没得到确认，用同一个 submissionId 再调一次即可。没人跟你说话、也没有需要你回应的事时可以不说；消息明确提及了别人而没有提及你时不插话；不要刷屏，不要透露 token。",
+        description = "在房间里说话：text 是 1 到 4000 个字符的纯文本；replyTo 填要回复的那条消息的 messageId；mentions 填要提及的 Matrix 用户 ID（最多 200 个，从消息的 actor 里取）；只在一个房间里时 roomId 可以省略。带上 submissionId（UUIDv7）重试不会重复发送：status 为 pending 表示服务器还没得到确认，用同一个 submissionId 再调一次即可。没人跟你说话、也没有需要你回应的事时可以不说；消息明确提及了别人而没有提及你时不插话；不要刷屏，不要透露 token。",
         annotations(
             title = "在 Agent Room 说话",
             read_only_hint = false,

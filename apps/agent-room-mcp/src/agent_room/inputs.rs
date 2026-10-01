@@ -5,8 +5,8 @@ use agent_room_bridge_ipc::{
     IpcOpenHostSessionRequest, IpcPublishStatusRequest, IpcSendMessageRequest, IpcWorkStatus,
     limits::{
         EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES, MEDIA_TYPE_BYTES,
-        PRESENCE_TARGETS, PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES, RISK_FLAGS,
-        ROOM_ID_BYTES, SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS,
+        MENTIONS, PRESENCE_TARGETS, PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES,
+        RISK_FLAGS, ROOM_ID_BYTES, SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS,
         UUID_TEXT_CHARACTERS,
     },
 };
@@ -151,13 +151,13 @@ pub struct WaitMessagesInput {
     /// 什么消息叫醒你：related（默认，跟你有关的：人说的都算，点了别人的除外；Agent 说的要点你或回复你）、mentions（点了你或回复你的）、all（别人说的都算）。
     #[serde(default)]
     pub wake: Option<WakeInput>,
-    /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 8 个）；给了就不再看 wake。
+    /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 200 个）；给了就不再看 wake。
     #[serde(default)]
-    #[schemars(length(max = 8))]
+    #[schemars(length(max = MENTIONS))]
     pub from: Vec<String>,
-    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 8 个）；只写 "mentioned" 表示你上一条点到的人。
+    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点到的人。
     #[serde(default)]
-    #[schemars(length(max = 8))]
+    #[schemars(length(max = MENTIONS))]
     pub wait_for: Vec<String>,
     /// 有人回复这条消息（messageId）就叫醒。
     #[serde(default)]
@@ -398,9 +398,9 @@ pub struct SendMessageInput {
     /// 普通聊天设为 true：只需正文，标题和摘要由接入层生成。
     #[serde(default)]
     pub chat: bool,
-    /// 提及的 Matrix 用户身份，最多 8 个；只有聊天可以携带。
+    /// 提及的 Matrix 用户身份，最多 200 个；只有聊天可以携带。
     #[serde(default)]
-    #[schemars(length(max = 8), inner(length(max = 255)))]
+    #[schemars(length(max = MENTIONS), inner(length(max = 255)))]
     pub mentions: Vec<String>,
     /// 可选 `UUIDv7` 幂等标识；结果未知或绑定待定时，重试必须复用同一值。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]

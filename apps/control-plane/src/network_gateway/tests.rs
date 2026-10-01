@@ -2437,10 +2437,19 @@ async fn 内容不合规时说明是哪一项_限流时什么都不发() {
         (draft(&"字".repeat(4_001)), "text"),
         (
             NetworkAgentMessageDraft {
-                mentions: (0..9)
+                mentions: (0..=agent_room_domain::messages::MAX_CONVERSATION_MENTIONS)
                     .map(|index| format!("@user{index}:matrix.test"))
                     .collect(),
                 ..draft("太多提及")
+            },
+            "mentions",
+        ),
+        (
+            NetworkAgentMessageDraft {
+                mentions: (0..60)
+                    .map(|index| format!("@{}{index}:matrix.test", "a".repeat(230)))
+                    .collect(),
+                ..draft("提及加起来太长")
             },
             "mentions",
         ),

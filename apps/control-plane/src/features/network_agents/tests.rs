@@ -609,7 +609,7 @@ async fn 来源取最后一跳_ipv6_按_64_位网段归并_隔天就对不上() 
 #[tokio::test]
 async fn 请求体不是约定的_json_时说明该怎么写_且不调用用例() {
     let agents = Arc::new(FakeAgents::default());
-    let oversized = format!(r#"{{"name":"{}"}}"#, "x".repeat(25 * 1_024));
+    let oversized = format!(r#"{{"name":"{}"}}"#, "x".repeat(49 * 1_024));
     for body in [
         "not json",
         r#"{"name":"Scout","room":"general","code":"K7P3-Q9XW-2DMA"}"#,
@@ -986,13 +986,17 @@ async fn 等消息可以指定叫醒规则_等谁_防抖和定时看一眼() {
 #[tokio::test]
 async fn 等消息的参数不对时指出是哪一项() {
     let messaging = Arc::new(FakeMessaging::default());
+    let crowd = format!(
+        "?from={}",
+        vec!["@p:matrix.test"; agent_room_bridge_ipc::wake::MAX_PEOPLE + 1].join(",")
+    );
     for (query, field) in [
         ("?settle=31", "settle"),
         ("?digest=0", "digest"),
         ("?digest=999999999999999999", "digest"),
         ("?waitFor=mentioned,@ada:matrix.test", "waitFor"),
         ("?replyTo=abc", "replyTo"),
-        ("?from=a,b,c,d,e,f,g,h,i", "from"),
+        (crowd.as_str(), "from"),
     ] {
         let response = app_with(
             Arc::new(FakeAgents::default()),

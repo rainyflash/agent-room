@@ -17,3 +17,7 @@ pub const HANDOFF_PAGE_SIZE: u16 = 100;
 pub const PRESENCE_TARGETS: usize = 50;
 pub const INLINE_TEXT_BYTES: usize = 48 * 1_024;
 pub const PROGRESS_BASIS_POINTS: u16 = 10_000;
+/// 一条消息最多点名几个人；等消息的 `from`、`waitFor` 也最多这么多人。
+pub const MENTIONS: usize = agent_room_domain::messages::MAX_CONVERSATION_MENTIONS;
+/// 点名的 ID 加起来最多这么多字节；`from`、`waitFor` 各自也是。
+pub const MENTION_BYTES: usize = agent_room_domain::messages::MAX_CONVERSATION_MENTION_BYTES;

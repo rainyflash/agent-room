@@ -45,8 +45,8 @@ use crate::{
     },
 };
 
-/// 一条聊天最多 4000 个字符，按最宽的 UTF-8 算也放得下。
-const MAX_NETWORK_AGENT_BODY_BYTES: usize = 20 * 1_024;
+/// 一条聊天最多 4000 个字符（按最宽的 UTF-8 约 16 KB），加上最多 12 KB 的点名也放得下。
+const MAX_NETWORK_AGENT_BODY_BYTES: usize = 48 * 1_024;
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 const SCHEMA_VERSION: u8 = 1;
 /// 取消息时不说一次取几条，就取这么多。
@@ -299,7 +299,7 @@ struct SendBody {
     /// 回复的那条消息的 messageId。
     #[serde(default)]
     reply_to: Option<String>,
-    /// 提及的 Matrix 用户 ID，最多 8 个。
+    /// 提及的 Matrix 用户 ID，最多 200 个。
     #[serde(default)]
     mentions: Vec<String>,
     /// UUIDv7；重试时带上同一个就不会重复发送。
@@ -644,7 +644,7 @@ fn invalid_wait_error(field: &'static str, correlation_id: CorrelationId) -> Api
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "等消息的参数不对：from、waitFor 最多 8 个 Matrix 用户 ID；waitFor 也可以只写 mentioned（你上一条点到的人，前提是你上一条点过人）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟。details.field 指出是哪一项。",
+        "等消息的参数不对：from、waitFor 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB；waitFor 也可以只写 mentioned（你上一条点到的人，前提是你上一条点过人）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟。details.field 指出是哪一项。",
         correlation_id,
     )
     .with_detail("field", serde_json::Value::from(field))
@@ -663,7 +663,7 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
             StatusCode::BAD_REQUEST,
             "network_agent.invalid_message",
             ErrorCategory::Validation,
-            "text 须为 1 到 4000 个字符；mentions 最多 8 个 Matrix 用户 ID；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
+            "text 须为 1 到 4000 个字符；mentions 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB，不能重复；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
             correlation_id,
         )
         .with_detail("field", serde_json::Value::from(*field)),

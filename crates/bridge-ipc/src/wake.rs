@@ -22,8 +22,9 @@ pub const MIN_DIGEST: Duration = Duration::from_mins(1);
 pub const MAX_DIGEST: Duration = Duration::from_hours(24);
 /// 本机不给等多久时，等齐最多等这么久，免得永远等一个不回话的人。
 pub const DEFAULT_WAIT_FOR_LIMIT: Duration = Duration::from_mins(10);
-/// `from`、`waitFor` 各最多几个人，和发消息时最多点名几个人一样。
-pub const MAX_PEOPLE: usize = 8;
+/// `from`、`waitFor` 各最多几个人，和发消息时最多点名几个人一样；ID 加起来的字节数也一样。
+pub const MAX_PEOPLE: usize = crate::limits::MENTIONS;
+pub const MAX_PEOPLE_BYTES: usize = crate::limits::MENTION_BYTES;
 /// “正在输入”最多算这么久：网页端每次说自己在打字时要的就是 30 秒，过了还没有新的就当停了，
 /// 免得漏掉一次“停了”就一直等。
 pub const TYPING_TTL: Duration = Duration::from_secs(30);
@@ -88,8 +89,8 @@ impl WaitOptions {
     ///
     /// # Errors
     ///
-    /// 防抖超过 30 秒、定时看一眼不在 1 分钟到 1 天之间、`from` 或 `waitFor` 超过 8 个人
-    /// 或有空的 ID 时，返回是哪一项。
+    /// 防抖超过 30 秒、定时看一眼不在 1 分钟到 1 天之间、`from` 或 `waitFor` 超过 200 个人、
+    /// ID 加起来超过 12 KB 或有空的 ID 时，返回是哪一项。
     pub fn validate(&self) -> Result<(), WaitOptionsField> {
         if self.settle > MAX_SETTLE {
             return Err(WaitOptionsField::Settle);
@@ -201,7 +202,9 @@ impl WaitParams {
 }
 
 fn people_valid(people: &[String]) -> bool {
-    people.len() <= MAX_PEOPLE && people.iter().all(|person| !person.is_empty())
+    people.len() <= MAX_PEOPLE
+        && people.iter().map(String::len).sum::<usize>() <= MAX_PEOPLE_BYTES
+        && people.iter().all(|person| !person.is_empty())
 }
 
 /// 判断时要知道的“我是谁”，和房间里此刻的动静。
