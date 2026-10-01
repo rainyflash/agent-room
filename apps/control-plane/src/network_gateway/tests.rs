@@ -1388,14 +1388,96 @@ async fn 第一次不等_带回最近的几条_自己发的不进收件箱_没�
     assert_eq!(*harness.matrix.tokens.lock().unwrap(), ["syt_scout"]);
     assert_eq!(harness.inbox.sync_token().as_deref(), Some("s1"));
 
-    // 没确认，再取还是这一条，不必再问 Matrix。
+    // 没确认，再取还是这一条；同时不等待地问一次 Matrix，新到的照样进收件箱。
     let again = harness
         .gateway
         .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
         .await
         .expect("再取");
     assert_eq!(texts(&again.messages), ["你好"]);
-    assert_eq!(harness.matrix.requests().len(), 1);
+    let requests = harness.matrix.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].since.as_ref().unwrap().as_str(), "s1");
+    assert_eq!(requests[1].timeout_millis, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 还有没确认的也照样把新消息取进收件箱_不会因为积压悄悄丢() {
+    let harness = harness();
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s1",
+        vec![chat(
+            "$one:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "一",
+            [1; 64],
+        )],
+    ))));
+    let first = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .unwrap();
+    assert_eq!(texts(&first.messages), ["一"]);
+
+    // Agent 还在处理第一条时房间里又来了一条：再取时一并取进来，不必等它先确认。原来要等收件箱
+    // 清空才问 Matrix，一个房间里积下的超过一次同步能带回的条数，更早的就悄悄丢了。
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s2",
+        vec![chat(
+            "$two:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "二",
+            [1; 64],
+        )],
+    ))));
+    let started = tokio::time::Instant::now();
+    let again = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .unwrap();
+    assert_eq!(texts(&again.messages), ["一", "二"]);
+    assert_eq!(again.pending, 2);
+    assert_eq!(started.elapsed(), Duration::ZERO, "收件箱里有消息时不等");
+    let requests = harness.matrix.requests();
+    assert_eq!(requests[1].since.as_ref().unwrap().as_str(), "s1");
+    assert_eq!(requests[1].timeout_millis, 0);
+    assert_eq!(requests[1].timeline_limit, 50);
+    assert_eq!(harness.inbox.sync_token().as_deref(), Some("s2"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn 还有没确认的时同步失败_照样先交出已有的() {
+    let harness = harness();
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s1",
+        vec![chat(
+            "$one:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "一",
+            [1; 64],
+        )],
+    ))));
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .unwrap();
+
+    harness.matrix.push(Step::Batch(Err(MatrixFailure::new(
+        MatrixOperation::Sync,
+        MatrixFailureKind::DependencyUnavailable,
+    ))));
+    let again = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .expect("Matrix 暂时不通也先交出收件箱里的");
+    assert_eq!(texts(&again.messages), ["一"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1457,31 +1539,50 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     assert!(empty.messages.is_empty());
     assert_eq!(started.elapsed(), Duration::from_secs(5));
     let requests = harness.matrix.requests();
-    assert_eq!(requests[1].since.as_ref().unwrap().as_str(), "s1");
-    assert_eq!(requests[1].timeout_millis, 5_000);
-    assert_eq!(requests[1].timeline_limit, 50);
+    // requests[1] 是取剩下那条时不等待的那一次同步。
+    assert_eq!(requests[1].timeout_millis, 0);
+    assert_eq!(requests[2].since.as_ref().unwrap().as_str(), "s1");
+    assert_eq!(requests[2].timeout_millis, 5_000);
+    assert_eq!(requests[2].timeline_limit, 50);
 }
 
 #[tokio::test(start_paused = true)]
-async fn 只看一眼时有位置就不问_matrix() {
+async fn 只看一眼也不等待地问一次_matrix_新到的照样取到() {
     let harness = harness();
     harness
         .matrix
         .push(Step::Batch(Ok(batch("s1", Vec::new()))));
-    harness
-        .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
-        .await
-        .unwrap();
-    assert_eq!(harness.matrix.requests().len(), 1, "第一次总要同步一次");
-
     let empty = harness
         .gateway
         .wait_for_messages(TOKEN, Duration::ZERO, 20)
         .await
         .unwrap();
     assert!(empty.messages.is_empty());
-    assert_eq!(harness.matrix.requests().len(), 1);
+    assert_eq!(harness.matrix.requests().len(), 1, "第一次总要同步一次");
+
+    // 原来有了位置以后 wait=0 就不再问 Matrix，只用 wait=0 轮询的 Agent 再也收不到新消息。
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s2",
+        vec![chat(
+            "$late:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "后来的",
+            [1; 64],
+        )],
+    ))));
+    let started = tokio::time::Instant::now();
+    let later = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .await
+        .unwrap();
+    assert_eq!(texts(&later.messages), ["后来的"]);
+    assert_eq!(started.elapsed(), Duration::ZERO);
+    let requests = harness.matrix.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].since.as_ref().unwrap().as_str(), "s1");
+    assert_eq!(requests[1].timeout_millis, 0);
 }
 
 #[tokio::test(start_paused = true)]

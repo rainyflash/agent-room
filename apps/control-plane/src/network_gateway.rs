@@ -392,6 +392,10 @@ impl NetworkGateway {
             presence::WaitAnnouncement::new(&self.presence, &self.matrix, &self.clock, &session);
         let deadline = Instant::now() + wait.min(MAX_WAIT);
         let limit = limit.clamp(1, MAX_PAGE);
+        // 每次取消息至少同步一次。原来收件箱里还有没确认的、或者 wait=0 时就不问 Matrix：
+        // Agent 处理得慢时服务器停着不取，等它确认完，一个房间里积下的超过一次同步能带回的
+        // 条数，更早的就悄悄丢了；只用 wait=0 轮询的 Agent 第一次之后再也收不到新消息。
+        let mut synced = false;
         loop {
             let page = self
                 .inbox
@@ -399,21 +403,23 @@ impl NetworkGateway {
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
             let remaining = deadline.saturating_duration_since(Instant::now());
-            // 第一次同步不等：先把房间里最近的几条拿来当上下文。
             let first = page.sync_token.is_none();
-            if !page.entries.is_empty() || (remaining.is_zero() && !first) {
+            if synced && (!page.entries.is_empty() || remaining.is_zero()) {
                 return Ok(messages(page));
             }
+            // 只有收件箱空着、又还有时间时才等新消息；第一次同步、还有没确认的、或者没时间等时，
+            // 只把已经到了的取回来，不等。第一次同步先把房间里最近的几条拿来当上下文。
+            let block = !first && page.entries.is_empty() && !remaining.is_zero();
             let chunk = remaining.min(SYNC_CHUNK);
-            if !first {
+            if block {
                 waiting.announce().await;
             }
             let request = NetworkAgentSyncRequest {
                 since: page.sync_token.clone(),
-                timeout_millis: if first {
-                    0
-                } else {
+                timeout_millis: if block {
                     u64::try_from(chunk.as_millis()).unwrap_or(u64::MAX)
+                } else {
+                    0
                 },
                 timeline_limit: if first {
                     FIRST_SYNC_TIMELINE_LIMIT
@@ -423,7 +429,12 @@ impl NetworkGateway {
             };
             let started = Instant::now();
             let batch = tokio::select! {
-                result = self.sync(&session, &request) => result?,
+                result = self.sync(&session, &request) => match result {
+                    Ok(batch) => batch,
+                    // 收件箱里已经有消息：这次没取到新的也先把它们交出去，下次再取。
+                    Err(_) if !page.entries.is_empty() => return Ok(messages(page)),
+                    Err(failure) => return Err(failure),
+                },
                 () = poll.superseded() => return Ok(messages(page)),
             };
             let elapsed_ms = started.elapsed().as_millis();
@@ -443,6 +454,17 @@ impl NetworkGateway {
                 })
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+            synced = true;
+            // 网络 Agent 还不补缺口：两次同步之间一个房间来得太多时只收到最近的，先记下来。
+            if !first {
+                for room in batch.rooms().iter().filter(|room| room.timeline_limited()) {
+                    tracing::warn!(
+                        network_agent.id = %session.network_agent_id,
+                        room = ?room.room_id(),
+                        "网络 Agent 两次同步之间这个房间来的消息超过一次能带回的条数，更早的没有取到"
+                    );
+                }
+            }
             tracing::debug!(
                 network_agent.id = %session.network_agent_id,
                 since = ?since,
