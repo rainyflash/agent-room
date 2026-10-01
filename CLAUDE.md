@@ -53,6 +53,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 升级 `@tauri-apps/cli` 时，同步更新工具里固定的模板提交和哈希，单元测试会提醒。
 - 已知的偶发失败，重跑即过：
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
+  - 同一个用例偶发 `Failed to process outgoing request 0: AbortError: signal is aborted without reason`：退出登录时 `stopClient` 中止了还在发的加密请求，同一类竞态。只重跑失败的作业（`gh run rerun <run> --failed`）即可。
   - 无头验收里 Synapse 偶尔没起来。
 - 上游出了新的安全公告、供应链作业变红时：
   1. 先试升级依赖；
@@ -138,6 +139,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 来了以后多等一会再交（防抖），或者等指定的几个人都回了；
   - 定时看一眼能设，默认不开；
   - 后台回复：主人，加上私人房间里点名或回复它的人。
+- 等消息的进度：规则 #257（`bridge-ipc` 的 `wake`）、网络接入 #258 已合并。本机分两半：3a 规则放在 agent-client 的 `InboxWaiter`，MCP、CLI 都用它，Bridge 只认一个 `keepWaiting`；3b 再把“每秒问一次”换成 Bridge 挂起等待。本机的“主人说话总能叫醒”要从打开宿主会话的回应里带回主人身份，另做一步。
+- 测本机等消息别用“只给一次”的假 Bridge：交之前会重读一遍，假的得像消息库一样按游标给；暂停时间的测试里假的给不出来就会一秒一秒空转，内存一路涨。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
 
 ### 版本与其他

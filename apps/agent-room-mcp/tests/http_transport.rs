@@ -39,13 +39,26 @@ impl BridgeToolClient for RecordingBridge {
                 }),
                 IpcMethod::WithSession { session_id, method } if session_id == SESSION => {
                     match *method {
-                        IpcMethod::ReadInbox(_) | IpcMethod::WaitInbox(_) => {
-                            Ok(self.next.lock().unwrap().take().unwrap_or(
-                                IpcResponse::MessagePreviews {
+                        // 像真的消息库一样：消息到了就一直在，按游标给；读过去了才是空的。
+                        IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
+                            let page = self.next.lock().unwrap().clone();
+                            Ok(match page {
+                                Some(IpcResponse::MessagePreviews {
+                                    previews,
+                                    next_cursor,
+                                }) if previews.last().map(|preview| preview.event_id.as_str())
+                                    != request.after_event_id.as_deref() =>
+                                {
+                                    IpcResponse::MessagePreviews {
+                                        previews,
+                                        next_cursor,
+                                    }
+                                }
+                                _ => IpcResponse::MessagePreviews {
                                     previews: vec![],
                                     next_cursor: None,
                                 },
-                            ))
+                            })
                         }
                         _ => Err(BridgeToolFailure::new(
                             "test.unexpected",
@@ -220,7 +233,27 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
     let text = std::str::from_utf8(&bytes).unwrap();
     assert!(text.contains("$next"));
     assert!(!text.contains("notifications/progress"));
-    assert!(bridge.calls.lock().unwrap().iter().all(|method| matches!(method, IpcMethod::WithSession { method, .. } if matches!(method.as_ref(), IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$last")))));
+    let calls = bridge.calls.lock().unwrap();
+    let inner: Vec<&IpcMethod> = calls
+        .iter()
+        .map(|method| match method {
+            IpcMethod::WithSession { method, .. } => method.as_ref(),
+            other => panic!("等消息都带着会话：{other:?}"),
+        })
+        .collect();
+    let (last, holds) = inner.split_last().unwrap();
+    // 等的时候一直算在等；人说的话到了、防抖以后交出去，再告诉 Bridge 不等了。
+    assert!(
+        holds
+            .iter()
+            .all(|method| matches!(method, IpcMethod::WaitInbox(request) if request.keep_waiting))
+    );
+    assert!(
+        matches!(holds[0], IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$last"))
+    );
+    assert!(
+        matches!(last, IpcMethod::ReadInbox(request) if request.after_event_id.as_deref() == Some("$next") && !request.keep_waiting)
+    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -237,8 +237,9 @@ fn message() -> agent_room_bridge_ipc::IpcMessagePreviewSummary {
 #[tokio::test]
 async fn 真实cli进程空闲三十秒零输出收到消息才返回且listen不会输出空批次() {
     let harness = Harness::start();
-    let mut reader = harness.command(&["read"]);
-    let mut listener = harness.command(&["listen", "--wait", "1"]);
+    // 这里测的是阻塞与输出，不是防抖：消息到了就交。
+    let mut reader = harness.command(&["read", "--settle", "0"]);
+    let mut listener = harness.command(&["listen", "--wait", "1", "--settle", "0"]);
     let mut read_output = BufReader::new(reader.stdout.take().unwrap());
     let mut listen_output = BufReader::new(listener.stdout.take().unwrap());
     let mut read_line = String::new();
@@ -318,7 +319,7 @@ async fn 真实cli进程空闲三十秒零输出收到消息才返回且listen�
 async fn 单次等待慢于窗口时listen继续监听且不输出() {
     let harness = Harness::start();
     harness.slow_wait.store(true, Ordering::SeqCst);
-    let mut listener = harness.command(&["listen", "--wait", "1"]);
+    let mut listener = harness.command(&["listen", "--wait", "1", "--settle", "0"]);
     let mut listen_output = BufReader::new(listener.stdout.take().unwrap());
     let mut listen_line = String::new();
     assert!(

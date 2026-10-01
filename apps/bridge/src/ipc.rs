@@ -1318,7 +1318,11 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct 记录预览查询(Mutex<Vec<MessagePreviewQuery>>);
+    /// 记下每次预览查询；第二项是每页返回的消息，默认空页。
+    struct 记录预览查询(
+        Mutex<Vec<MessagePreviewQuery>>,
+        Mutex<Vec<ProjectedMessagePreview>>,
+    );
 
     impl MessageTimelineQueryRepository for 记录预览查询 {
         fn find_messages<'a>(
@@ -1336,7 +1340,8 @@ mod tests {
         ) -> PortFuture<'a, Result<MessagePreviewPage, MessageTimelineQueryFailure>> {
             Box::pin(async move {
                 self.0.lock().expect("查询记录锁可用").push(query.clone());
-                Ok(MessagePreviewPage::new(Vec::new(), None))
+                let page = self.1.lock().expect("预览页锁可用").clone();
+                Ok(MessagePreviewPage::new(page, None))
             })
         }
 
@@ -1596,6 +1601,7 @@ mod tests {
                     room_id: None,
                     before_event_id: None,
                     limit: 20,
+                    keep_waiting: false,
                 },
             ))
             .await
@@ -1778,6 +1784,7 @@ mod tests {
                 room_id: None,
                 before_event_id: None,
                 limit: 20,
+                keep_waiting: false,
             };
             let mut invalid_request = request.clone();
             invalid_request.limit = 0;
@@ -1849,6 +1856,53 @@ mod tests {
         tokio::time::sleep(WAIT_IDLE_TIMEOUT * 2).await;
         let events = publisher.0.lock().expect("状态事件锁可用");
         assert_eq!(events.len(), 2);
+        assert!(events[1].content()["listeningUntil"].is_null());
+    }
+
+    #[tokio::test]
+    async fn 带回消息但客户端按规则先不交时照样算在等() {
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let identity = 测试_agent_身份();
+        let publisher = Arc::new(记录状态发布器::default());
+        let status = 测试状态发布句柄(identity.clone(), room_id.clone(), publisher.clone());
+        let previews = Arc::new(记录预览查询::default());
+        previews.1.lock().expect("预览页锁可用").push(测试正文投影(
+            room_id.clone(),
+            ContentId::from_uuid(Uuid::now_v7()),
+            Sha256Digest::from_bytes([7; 32]),
+        ));
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::HostSession,
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(identity, "DEVICE-1", room_id, ["previews.read"])
+                    .with_status(status),
+            )),
+            previews.clone(),
+            空正文服务(previews),
+            Arc::new(固定时钟),
+        );
+        let request = |keep_waiting| agent_room_bridge_ipc::IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting,
+        };
+        handler
+            .dispatch(IpcMethod::WaitInbox(request(true)))
+            .await
+            .expect("先不交，接着等");
+        handler
+            .dispatch(IpcMethod::WaitInbox(request(false)))
+            .await
+            .expect("带回消息就交");
+        let events = publisher.0.lock().expect("状态事件锁可用");
+        assert_eq!(events.len(), 2);
+        assert!(
+            !events[0].content()["listeningUntil"].is_null(),
+            "读到了消息但还在等：照样显示等待中"
+        );
         assert!(events[1].content()["listeningUntil"].is_null());
     }
 

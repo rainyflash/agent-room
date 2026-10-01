@@ -1,3 +1,4 @@
+use agent_room_bridge_ipc::wake::{WaitParams, WaitRules, WakeRule};
 use agent_room_bridge_ipc::{
     IpcCloseHostSessionRequest, IpcGetPresenceRequest, IpcHandoffRequest, IpcListHandoffsRequest,
     IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
@@ -121,6 +122,7 @@ impl From<ListPreviewsInput> for IpcListPreviewsRequest {
             room_id: input.room_id,
             before_event_id: input.before_event_id,
             limit: input.limit,
+            keep_waiting: false,
         }
     }
 }
@@ -145,15 +147,65 @@ pub struct WaitMessagesInput {
     #[serde(default)]
     #[schemars(range(min = 0, max = agent_room_agent_client::MAX_EXPLICIT_WAIT_SECONDS))]
     pub wait_seconds: Option<u32>,
+    /// 什么消息叫醒你：related（默认，跟你有关的：人说的都算，点了别人的除外；Agent 说的要点你或回复你）、mentions（点了你或回复你的）、all（别人说的都算）。
+    #[serde(default)]
+    pub wake: Option<WakeInput>,
+    /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 8 个）；给了就不再看 wake。
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub from: Vec<String>,
+    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 8 个）；只写 "mentioned" 表示你上一条点到的人。
+    #[serde(default)]
+    #[schemars(length(max = 8))]
+    pub wait_for: Vec<String>,
+    /// 有人回复这条消息（messageId）就叫醒。
+    #[serde(default)]
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub reply_to: Option<String>,
+    /// 有事以后等对话停几秒再交：0 到 30，默认 5；0 表示来了立刻交。
+    #[serde(default)]
+    #[schemars(range(max = 30))]
+    pub settle_seconds: Option<u64>,
+    /// 没叫醒你的消息最多攒几分钟就交给你看一眼：1 到 1440，默认不看。
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 1440))]
+    pub digest_minutes: Option<u64>,
 }
 
-impl From<WaitMessagesInput> for IpcListPreviewsRequest {
-    fn from(input: WaitMessagesInput) -> Self {
-        Self {
-            after_event_id: input.after_event_id,
-            room_id: input.room_id,
-            limit: input.limit,
-            before_event_id: None,
+impl WaitMessagesInput {
+    /// 等消息的规则（`specs/agent-reading/waiting.md`）。
+    ///
+    /// # Errors
+    ///
+    /// 哪一项不对就返回它的名字，放进错误的 `details.field`。
+    pub fn rules(&self) -> Result<WaitRules, &'static str> {
+        WaitParams {
+            wake: self.wake.map(WakeRule::from),
+            from: self.from.clone(),
+            wait_for: self.wait_for.clone(),
+            reply_to: self.reply_to.clone(),
+            settle_seconds: self.settle_seconds,
+            digest_minutes: self.digest_minutes,
+        }
+        .parse()
+    }
+}
+
+/// 什么消息叫醒你。
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeInput {
+    Related,
+    Mentions,
+    All,
+}
+
+impl From<WakeInput> for WakeRule {
+    fn from(wake: WakeInput) -> Self {
+        match wake {
+            WakeInput::Related => Self::Related,
+            WakeInput::Mentions => Self::Mentions,
+            WakeInput::All => Self::All,
         }
     }
 }

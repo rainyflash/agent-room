@@ -81,6 +81,9 @@ impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
 
 fn error_hint(code: &str) -> &'static str {
     match code {
+        "agent.inbox.wait_invalid" => {
+            "A wait option is invalid; details.field names it. --settle is 0-30 seconds, --digest is 1-1440 minutes, --from and --wait-for take up to 8 Matrix user IDs, --wait-for mentioned needs your last message to mention someone, and --reply-to takes a message ID."
+        }
         "cli.profile.reader_busy" => {
             "This profile already has an active reader. Stop that reader before another read/listen. Send and ack remain available during a stream."
         }

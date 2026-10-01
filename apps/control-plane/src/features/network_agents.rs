@@ -18,9 +18,7 @@ use agent_room_application::{
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
-use agent_room_bridge_ipc::wake::{
-    DEFAULT_SETTLE, IpcWake, WaitOptions, WaitOptionsField, WakeRule,
-};
+use agent_room_bridge_ipc::wake::{IpcWake, WaitParams as RuleParams, WakeRule};
 use agent_room_identity_adapter::NetworkSourceDigester;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
@@ -53,8 +51,6 @@ const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 const SCHEMA_VERSION: u8 = 1;
 /// 取消息时不说一次取几条，就取这么多。
 const DEFAULT_PAGE: u16 = 20;
-/// `waitFor` 只写这个时，等上一条点到的人。
-const WAIT_FOR_MENTIONED: &str = "mentioned";
 
 #[derive(Clone)]
 pub(crate) struct NetworkAgentHttpState {
@@ -247,49 +243,20 @@ impl WaitParams {
             Duration::from_secs(seconds).min(MAX_WAIT)
         });
         let limit = self.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
-        let mentioned = self
-            .wait_for
-            .iter()
-            .any(|person| person == WAIT_FOR_MENTIONED);
-        if mentioned && self.wait_for.len() > 1 {
-            return Err("waitFor");
-        }
-        if self
-            .reply_to
-            .as_deref()
-            .is_some_and(|message_id| uuid::Uuid::parse_str(message_id).is_err())
-        {
-            return Err("replyTo");
-        }
-        let digest = match self.digest_minutes {
-            None => None,
-            Some(minutes) if minutes.checked_mul(60).is_some() => {
-                Some(Duration::from_mins(minutes))
-            }
-            Some(_) => return Err("digest"),
-        };
-        let options = WaitOptions {
-            wake: self.wake.unwrap_or_default(),
+        let rules = RuleParams {
+            wake: self.wake,
             from: self.from,
-            wait_for: if mentioned { Vec::new() } else { self.wait_for },
+            wait_for: self.wait_for,
             reply_to: self.reply_to,
-            room_id: None,
-            settle: self
-                .settle_seconds
-                .map_or(DEFAULT_SETTLE, Duration::from_secs),
-            digest,
-        };
-        options.validate().map_err(|field| match field {
-            WaitOptionsField::Settle => "settle",
-            WaitOptionsField::Digest => "digest",
-            WaitOptionsField::From => "from",
-            WaitOptionsField::WaitFor => "waitFor",
-        })?;
+            settle_seconds: self.settle_seconds,
+            digest_minutes: self.digest_minutes,
+        }
+        .parse()?;
         Ok(NetworkAgentWait {
             wait,
             limit,
-            options,
-            wait_for_mentioned: mentioned,
+            options: rules.options,
+            wait_for_mentioned: rules.wait_for_mentioned,
         })
     }
 }

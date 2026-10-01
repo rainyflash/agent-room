@@ -19,8 +19,10 @@ struct Bridge {
     calls: Mutex<Vec<&'static str>>,
     read_started: tokio::sync::Notify,
     finish_read: tokio::sync::Notify,
-    read_pages:
-        Mutex<std::collections::VecDeque<Vec<agent_room_bridge_ipc::IpcMessagePreviewSummary>>>,
+    /// 像真的消息库一样按游标给消息。第一次读会停在 `read_started`/`finish_read` 上，
+    /// 好让用例在读的过程中插进一次确认。
+    read_store: Mutex<Vec<IpcMessagePreviewSummary>>,
+    first_read_done: std::sync::atomic::AtomicBool,
     read_cursors: Mutex<Vec<Option<String>>>,
 }
 impl Bridge {
@@ -49,7 +51,8 @@ impl Bridge {
             calls: Mutex::new(Vec::new()),
             read_started: tokio::sync::Notify::new(),
             finish_read: tokio::sync::Notify::new(),
-            read_pages: Mutex::new(std::collections::VecDeque::new()),
+            read_store: Mutex::new(Vec::new()),
+            first_read_done: std::sync::atomic::AtomicBool::new(false),
             read_cursors: Mutex::new(vec![]),
         }
     }
@@ -63,16 +66,30 @@ impl BridgeToolClient for Bridge {
                 .lock()
                 .unwrap()
                 .push(request.after_event_id.clone());
+            let previews = {
+                let store = self.read_store.lock().unwrap();
+                let start = request.after_event_id.as_ref().map_or(0, |after| {
+                    store
+                        .iter()
+                        .position(|preview| preview.event_id == *after)
+                        .map_or(store.len(), |index| index + 1)
+                });
+                store[start..]
+                    .iter()
+                    .take(usize::from(request.limit))
+                    .cloned()
+                    .collect()
+            };
+            let first = !self
+                .first_read_done
+                .swap(true, std::sync::atomic::Ordering::SeqCst);
             return Box::pin(async move {
-                self.read_started.notify_one();
-                self.finish_read.notified().await;
+                if first {
+                    self.read_started.notify_one();
+                    self.finish_read.notified().await;
+                }
                 Ok(IpcResponse::MessagePreviews {
-                    previews: self
-                        .read_pages
-                        .lock()
-                        .unwrap()
-                        .pop_front()
-                        .unwrap_or_default(),
+                    previews,
                     next_cursor: None,
                 })
             });
@@ -813,6 +830,12 @@ async fn 等待消息期间可确认已处理批次且返回空批次不覆盖�
             after: None,
             limit: 20,
             wait: Some(0),
+            wake: None,
+            from: Vec::new(),
+            wait_for: Vec::new(),
+            reply_to: None,
+            settle: None,
+            digest: None,
         }),
     ));
     let acknowledging = async {
@@ -859,15 +882,18 @@ async fn 并发确认吞掉整批消息时默认read会接着等下一批() {
         after: None,
         limit: 20,
         wait: None,
+        wake: None,
+        from: Vec::new(),
+        wait_for: Vec::new(),
+        reply_to: None,
+        settle: Some(0),
+        digest: None,
     };
     let bridge = Bridge::new();
-    bridge
-        .read_pages
-        .lock()
-        .unwrap()
-        .extend([vec![preview("$handled")], vec![preview("$new")]]);
+    bridge.read_store.lock().unwrap().push(preview("$handled"));
     let reading = read_batch(&bridge, directory.path(), &mut saved, args);
     let delivering = async {
+        // 读到一半，另一个进程确认了这一批。
         bridge.read_started.notified().await;
         let store = ProfileStore::open(directory.path(), &key).unwrap();
         let mut current = store.load().unwrap().unwrap();
@@ -875,23 +901,26 @@ async fn 并发确认吞掉整批消息时默认read会接着等下一批() {
         store.save(&current).unwrap();
         drop(store);
         bridge.finish_read.notify_one();
-        bridge.read_started.notified().await;
-        assert_eq!(
-            *bridge.read_cursors.lock().unwrap(),
-            [None, Some("$handled".into())]
-        );
-        bridge.finish_read.notify_one();
+        // 这一批被确认吞掉以后，接着从它之后等；这时才来了新消息。
+        while !bridge
+            .read_cursors
+            .lock()
+            .unwrap()
+            .contains(&Some("$handled".into()))
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        bridge.read_store.lock().unwrap().push(preview("$new"));
     };
     let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
         tokio::join!(reading, delivering)
     })
     .await
     .unwrap();
-    let IpcResponse::MessagePreviews { previews, .. } = result.unwrap().unwrap() else {
-        panic!("message page")
-    };
+    let batch = result.unwrap().unwrap();
+    let previews = batch["previews"].as_array().unwrap();
     assert_eq!(previews.len(), 1);
-    assert_eq!(previews[0].event_id, "$new");
+    assert_eq!(previews[0]["eventId"], "$new");
     assert_eq!(saved.after_event_id.as_deref(), Some("$handled"));
     assert_eq!(saved.delivered, ["$new"]);
 }
@@ -910,16 +939,10 @@ async fn 并发确认后旧批次不能重新进入待处理队列或倒退游�
             .unwrap()
             .save(&current)
             .unwrap();
-        let mut response = IpcResponse::MessagePreviews {
-            previews: events.iter().map(|id| preview(id)).collect(),
-            next_cursor: None,
-        };
-        let cursor = persist_delivery(directory.path(), &mut before, &mut response)
+        let mut previews: Vec<_> = events.iter().map(|id| preview(id)).collect();
+        persist_delivery(directory.path(), &mut before, &mut previews)
             .await
             .unwrap();
-        let IpcResponse::MessagePreviews { previews, .. } = response else {
-            panic!("消息响应")
-        };
         let has_new = events.contains(&"$three");
         assert_eq!(
             previews
@@ -927,10 +950,6 @@ async fn 并发确认后旧批次不能重新进入待处理队列或倒退游�
                 .map(|message| message.event_id.as_str())
                 .collect::<Vec<_>>(),
             if has_new { vec!["$three"] } else { vec![] }
-        );
-        assert_eq!(
-            cursor.as_deref(),
-            Some(if has_new { "$three" } else { "$two" })
         );
         assert_eq!(before.after_event_id.as_deref(), Some("$two"));
         assert!(before.acknowledge("$one").is_err());
@@ -944,9 +963,9 @@ async fn 并发确认后旧批次不能重新进入待处理队列或倒退游�
     }
 }
 
-fn preview(event: &str) -> agent_room_bridge_ipc::IpcMessagePreviewSummary {
+fn preview(event: &str) -> IpcMessagePreviewSummary {
     use agent_room_bridge_ipc::{IpcActorSummary, IpcContentReference, IpcMessageSensitivity};
-    agent_room_bridge_ipc::IpcMessagePreviewSummary {
+    IpcMessagePreviewSummary {
         event_id: event.into(),
         message_id: uuid::Uuid::now_v7().to_string(),
         room_id: "!room:test.invalid".into(),

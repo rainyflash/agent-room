@@ -84,6 +84,36 @@ fn 收信期限为可选参数并拒绝无效输入() {
         let result: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(result["error"]["code"], "cli.session_required");
     }
+    // 等消息的规则写错了：范围不对由参数解析拦下，组合不对指出是哪一项。
+    for args in [
+        vec!["read", "--settle", "31"],
+        vec!["read", "--digest", "0"],
+        vec!["read", "--wake", "loud"],
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], "cli.arguments_invalid");
+    }
+    for (args, field) in [
+        (
+            vec![
+                "read",
+                "--wait-for",
+                "mentioned",
+                "--wait-for",
+                "@ada:example.test",
+            ],
+            "waitFor",
+        ),
+        (vec!["listen", "--reply-to", "not-a-message-id"], "replyTo"),
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], "agent.inbox.wait_invalid");
+        assert_eq!(result["error"]["details"]["field"], field);
+    }
 }
 
 #[test]
