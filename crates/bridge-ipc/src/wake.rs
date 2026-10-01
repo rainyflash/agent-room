@@ -106,6 +106,16 @@ impl WaitOptions {
         Ok(())
     }
 
+    /// 只看一眼（等 0 秒、或者第一次取消息时）：有什么给什么，不看叫醒规则，也不防抖。
+    pub fn peek(room_id: Option<String>) -> Self {
+        Self {
+            wake: WakeRule::All,
+            room_id,
+            settle: Duration::ZERO,
+            ..Self::default()
+        }
+    }
+
     /// 给了 `from`、`waitFor`、`replyTo` 时只等这些，不再看 `wake`。
     fn narrowed(&self) -> bool {
         !self.from.is_empty() || !self.wait_for.is_empty() || self.reply_to.is_some()

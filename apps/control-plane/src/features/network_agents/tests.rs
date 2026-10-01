@@ -31,9 +31,10 @@ use uuid::Uuid;
 use super::{NetworkAgentHttpState, render_guide, router};
 use crate::network_gateway::{
     NetworkAgentMessageDraft, NetworkAgentMessages, NetworkAgentMessaging, NetworkAgentSentMessage,
-    NetworkGatewayFailure,
+    NetworkAgentWait, NetworkGatewayFailure,
 };
 use agent_room_application::network_agents::NetworkAgentPolicy;
+use agent_room_bridge_ipc::wake::{IpcWake, WaitOptions, WakeReason, WakeRule};
 use agent_room_domain::ids::MessageSubmissionId;
 
 const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
@@ -219,7 +220,7 @@ impl NetworkAgentUseCases for FakeAgents {
 pub(super) struct FakeMessaging {
     agents: Mutex<Option<Arc<FakeAgents>>>,
     pub(super) entered: Mutex<Vec<(String, NetworkAgentRoomRequest, [u8; 32])>>,
-    pub(super) waits: Mutex<Vec<(String, Duration, u16)>>,
+    pub(super) waits: Mutex<Vec<(String, NetworkAgentWait)>>,
     pub(super) acks: Mutex<Vec<(String, String)>>,
     pub(super) drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
     pub(super) disabled: Mutex<Vec<String>>,
@@ -270,13 +271,9 @@ impl NetworkAgentMessaging for FakeMessaging {
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
-        wait: Duration,
-        limit: u16,
+        request: NetworkAgentWait,
     ) -> PortFuture<'a, Result<NetworkAgentMessages, NetworkGatewayFailure>> {
-        self.waits
-            .lock()
-            .unwrap()
-            .push((token.to_owned(), wait, limit));
+        self.waits.lock().unwrap().push((token.to_owned(), request));
         let failure = self.failure.lock().unwrap().clone();
         Box::pin(async move {
             if let Some(failure) = failure {
@@ -286,6 +283,12 @@ impl NetworkAgentMessaging for FakeMessaging {
                 messages: vec![json!({"eventId": "$hello:matrix.test", "title": "你好"})],
                 pending: 3,
                 dropped: 1,
+                wake: IpcWake {
+                    reason: WakeReason::Messages,
+                    event_ids: vec!["$hello:matrix.test".to_owned()],
+                    missing: Vec::new(),
+                },
+                skipped: 2,
             })
         })
     }
@@ -910,6 +913,8 @@ async fn 取消息默认等三十秒取二十条_超出上限按上限算() {
             "messages": [{"eventId": "$hello:matrix.test", "title": "你好"}],
             "pending": 3,
             "dropped": 1,
+            "wake": {"reason": "messages", "eventIds": ["$hello:matrix.test"]},
+            "skipped": 2,
         })
     );
 
@@ -923,20 +928,92 @@ async fn 取消息默认等三十秒取二十条_超出上限按上限算() {
         .await
         .unwrap();
     }
+    let waits = messaging.waits.lock().unwrap();
     assert_eq!(
-        *messaging.waits.lock().unwrap(),
+        waits
+            .iter()
+            .map(|(token, request)| (token.as_str(), request.wait, request.limit))
+            .collect::<Vec<_>>(),
         [
-            (TOKEN.to_owned(), Duration::from_secs(30), 20),
-            (String::new(), Duration::ZERO, 5),
-            (String::new(), Duration::from_secs(30), 50),
+            (TOKEN, Duration::from_secs(30), 20),
+            ("", Duration::ZERO, 5),
+            ("", Duration::from_secs(30), 50),
         ]
     );
+    assert_eq!(
+        waits[0].1.options,
+        WaitOptions::default(),
+        "默认跟它有关的才叫醒"
+    );
+}
+
+#[tokio::test]
+async fn 等消息可以指定叫醒规则_等谁_防抖和定时看一眼() {
+    let messaging = Arc::new(FakeMessaging::default());
+    for query in [
+        "?wake=mentions&from=@ada:matrix.test,%20@bob:matrix.test&settle=0&digest=30\
+         &replyTo=0198b601-77a1-7bb8-83eb-a8fe68c97e99",
+        "?waitFor=mentioned",
+    ] {
+        let response = app_with(
+            Arc::new(FakeAgents::default()),
+            messaging.clone(),
+            1_758_600_000_000,
+        )
+        .oneshot(messages_request(query, Some(TOKEN)))
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{query}");
+    }
+    let waits = messaging.waits.lock().unwrap();
+    assert_eq!(
+        waits[0].1.options,
+        WaitOptions {
+            wake: WakeRule::Mentions,
+            from: vec!["@ada:matrix.test".to_owned(), "@bob:matrix.test".to_owned()],
+            wait_for: Vec::new(),
+            reply_to: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e99".to_owned()),
+            room_id: None,
+            settle: Duration::ZERO,
+            digest: Some(Duration::from_mins(30)),
+        }
+    );
+    assert!(!waits[0].1.wait_for_mentioned);
+    assert!(waits[1].1.wait_for_mentioned, "等上一条点到的人");
+    assert!(waits[1].1.options.wait_for.is_empty());
+}
+
+#[tokio::test]
+async fn 等消息的参数不对时指出是哪一项() {
+    let messaging = Arc::new(FakeMessaging::default());
+    for (query, field) in [
+        ("?settle=31", "settle"),
+        ("?digest=0", "digest"),
+        ("?digest=999999999999999999", "digest"),
+        ("?waitFor=mentioned,@ada:matrix.test", "waitFor"),
+        ("?replyTo=abc", "replyTo"),
+        ("?from=a,b,c,d,e,f,g,h,i", "from"),
+    ] {
+        let response = app_with(
+            Arc::new(FakeAgents::default()),
+            messaging.clone(),
+            1_758_600_000_000,
+        )
+        .oneshot(messages_request(query, Some(TOKEN)))
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "network_agent.invalid_request", "{query}");
+        assert_eq!(body["details"]["field"], field, "{query}");
+    }
+    assert!(messaging.waits.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn 取消息的参数写错时说明该怎么写() {
     let messaging = Arc::new(FakeMessaging::default());
-    for query in ["?wait=soon", "?since=abc", "?limit=-1"] {
+    for query in ["?wait=soon", "?since=abc", "?limit=-1", "?wake=loud"] {
         let response = app_with(
             Arc::new(FakeAgents::default()),
             messaging.clone(),

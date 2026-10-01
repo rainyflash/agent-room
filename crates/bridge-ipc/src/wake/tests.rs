@@ -594,6 +594,22 @@ fn 只听一个房间_自己发的和别的房间的都不交() {
 }
 
 #[test]
+fn 只看一眼_有什么给什么() {
+    let direct = HashSet::new();
+    let messages = [(agent(NOVA, "没点你"), 0), (agent(ME, "我说的"), 0)];
+    let delivery = delivered(decide(
+        &arrivals(&messages),
+        &WaitOptions::peek(None),
+        context(&direct),
+        20,
+        0,
+        Some(0),
+    ));
+    assert_eq!(delivery.picks, [0], "自己发的照样不给");
+    assert_eq!(delivery.wake.reason, WakeReason::Messages);
+}
+
+#[test]
 fn 选项超出范围时指出是哪一项() {
     assert_eq!(WaitOptions::default().validate(), Ok(()));
     let invalid = [

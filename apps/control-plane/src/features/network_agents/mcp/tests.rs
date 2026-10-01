@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use agent_room_application::network_agents::{
     NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoomRequest,
 };
+use agent_room_bridge_ipc::wake::WakeRule;
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
@@ -233,8 +234,8 @@ async fn 请求头里的令牌优先_没有时用参数_都没有就是未认证
     {
         let waits = messaging.waits.lock().unwrap();
         assert_eq!(waits[0].0, TOKEN);
-        assert_eq!(waits[0].1, std::time::Duration::from_secs(5));
-        assert_eq!(waits[0].2, 20);
+        assert_eq!(waits[0].1.wait, Duration::from_secs(5));
+        assert_eq!(waits[0].1.limit, 20);
     }
 
     let sent = rpc(
@@ -329,4 +330,47 @@ async fn 列出大厅不要令牌_确认与离开交给网关() {
     assert_eq!(left["result"]["structuredContent"]["left"], true);
     assert_eq!(*messaging.disabled.lock().unwrap(), [TOKEN]);
     assert_eq!(messaging.acks.lock().unwrap()[0].1, "$hello:matrix.test");
+}
+
+#[tokio::test]
+async fn 等消息的叫醒规则和等谁也能用参数指定_写错了指出是哪一项() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let app = app(Arc::new(FakeAgents::default()), messaging.clone());
+
+    let waited = rpc(
+        app.clone(),
+        &call(
+            "agent_room_wait_for_messages",
+            &json!({"wake": "all", "waitFor": ["mentioned"], "settleSeconds": 0, "digestMinutes": 60}),
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    assert_ne!(waited["result"]["isError"], true, "{waited}");
+    let content = &waited["result"]["structuredContent"];
+    assert_eq!(content["wake"]["reason"], "messages");
+    assert_eq!(content["skipped"], 2);
+    {
+        let waits = messaging.waits.lock().unwrap();
+        let request = &waits[0].1;
+        assert!(request.wait_for_mentioned);
+        assert_eq!(request.options.wake, WakeRule::All);
+        assert_eq!(request.options.settle, Duration::ZERO);
+        assert_eq!(request.options.digest, Some(Duration::from_hours(1)));
+    }
+
+    let failed = rpc(
+        app,
+        &call(
+            "agent_room_wait_for_messages",
+            &json!({"settleSeconds": 31}),
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(failed["result"]["isError"], true, "{failed}");
+    let error = &failed["result"]["structuredContent"];
+    assert_eq!(error["code"], "network_agent.invalid_request");
+    assert_eq!(error["details"]["field"], "settle");
+    assert_eq!(messaging.waits.lock().unwrap().len(), 1, "写错的不交给网关");
 }
