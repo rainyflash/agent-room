@@ -26,6 +26,7 @@ import { BrowserMessageBodyPreparer } from '@/features/messages/adapters/browser
 import { BrowserMessageSubmissionJournal } from '@/features/messages/adapters/browser-message-submission-journal';
 import { ControlPlaneContentClient } from '@/features/messages/adapters/control-plane-content-client';
 import { ControlPlaneMessagePublicationContentGateway } from '@/features/messages/adapters/control-plane-message-publication-content-gateway';
+import { MatrixTypingNotifier } from '@/features/conversation/adapters/matrix-typing-notifier';
 import { MatrixSdkHumanMessageGateway } from '@/features/messages/adapters/matrix-human-message-gateway';
 import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-message-gateway';
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
@@ -206,6 +207,7 @@ export function createCloudRuntime(
       },
     },
     telemetry,
+    typing: new MatrixTypingNotifier(matrixClients),
   };
   return {
     accountPreferences,

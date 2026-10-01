@@ -24,6 +24,7 @@ import type { ControlPlaneGateway, SessionDependencies } from '@/features/sessio
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import type { AgentDirectoryGateway } from '@/features/workspace/domain/agent-directory';
+import type { TypingNotifier } from '@/features/conversation/domain/typing';
 
 export type AppServices = {
   readonly agentRosterPolicy?: import('@/features/lobby/domain/agent-roster-policy').AgentRosterPolicyGateway;
@@ -51,6 +52,8 @@ export type AppServices = {
   readonly security: MatrixSecurityGateway;
   readonly session: SessionDependencies;
   readonly telemetry: FrontendTelemetryGateway;
+  /** 打字时告诉房间里的人“正在输入”；测试和夹具里可以没有。 */
+  readonly typing?: TypingNotifier;
 };
 
 const AppServicesContext = createContext<AppServices | null>(null);

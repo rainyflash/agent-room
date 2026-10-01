@@ -30,6 +30,7 @@ import { ConversationMessage } from '@/features/conversation/ui/conversation-mes
 import { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
 import type { MessageSubmissionIdFactory } from '@/features/messages/adapters/browser-submission-id-factory';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
+import type { TypingNotifier } from '@/features/conversation/domain/typing';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
 import { useReceptionEvidence } from '@/features/desktop/ui/reception-evidence-context';
@@ -56,6 +57,8 @@ export type ConversationPanelProps = {
   readonly participants?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
   readonly roomId: string;
+  /** 打字时告诉房间里的人“正在输入”；不给就不说。 */
+  readonly typing?: TypingNotifier | undefined;
   readonly writesAllowed?: boolean;
   readonly state: 'ready' | 'loading' | 'failed';
   readonly submissionIds?: MessageSubmissionIdFactory;
@@ -77,6 +80,7 @@ export function ConversationPanel({
   participants = emptyParticipants,
   publisher,
   roomId,
+  typing,
   writesAllowed = true,
   state,
   submissionIds,
@@ -491,6 +495,7 @@ export function ConversationPanel({
         canSend={canSend}
         writesAllowed={writesAllowed}
         input={input}
+        typing={typing}
       />
     </section>
   );

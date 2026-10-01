@@ -690,6 +690,8 @@ enum Step {
     Batch(MatrixResult<MatrixSyncBatch>),
     /// 一直等到被通知才返回空批次，模拟 Matrix 长轮询。
     Block(Arc<Notify>),
+    /// 过一会儿才来：长轮询中途房间里有了动静。
+    Later(Duration, MatrixSyncBatch),
 }
 
 /// 按顺序给出同步结果；用完之后按请求的超时等一会儿再返回空批次。发言按事务 ID 去重，
@@ -743,6 +745,10 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
                 Some(Step::Block(notify)) => {
                     notify.notified().await;
                     Ok(batch(&format!("{since}+"), Vec::new()))
+                }
+                Some(Step::Later(delay, later)) => {
+                    tokio::time::sleep(delay).await;
+                    Ok(later)
                 }
                 None => {
                     tokio::time::sleep(Duration::from_millis(timeout)).await;
@@ -1212,6 +1218,29 @@ fn batch(next: &str, events: Vec<MatrixTimelineEvent>) -> MatrixSyncBatch {
         )]
     };
     MatrixSyncBatch::new(MatrixSyncToken::new(next).unwrap(), rooms)
+}
+
+/// 这一段同步里大厅的“正在输入”变了，可以顺带几条消息。
+fn typing_batch(
+    next: &str,
+    typing: &[String],
+    events: Vec<MatrixTimelineEvent>,
+) -> MatrixSyncBatch {
+    let room = MatrixRoomSync::new(
+        MatrixRoomId::new(ROOM).unwrap(),
+        MatrixRoomSyncKind::Joined,
+        false,
+        None,
+        events,
+        Vec::new(),
+    )
+    .with_typing(
+        typing
+            .iter()
+            .map(|user| MatrixUserId::new(user.as_str()).unwrap())
+            .collect(),
+    );
+    MatrixSyncBatch::new(MatrixSyncToken::new(next).unwrap(), vec![room])
 }
 
 fn signature(bytes: [u8; 64]) -> String {
@@ -2055,6 +2084,54 @@ async fn 等上一条点到的人都回了话再交() {
     );
     assert_eq!(page.wake.reason, WakeReason::AllReplied);
     assert!(page.wake.missing.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 叫醒它的人还在打字就等他打完再交_上一次等消息时听说的也算() {
+    let harness = harness();
+    settle_in(&harness).await;
+    let ranger = matrix_user(OTHER_AGENT);
+    // 上一次等消息时听说 Ranger 开始打字，什么也没交。
+    harness.matrix.push(Step::Batch(Ok(typing_batch(
+        "s2",
+        std::slice::from_ref(&ranger),
+        Vec::new(),
+    ))));
+    let quiet = harness
+        .gateway
+        .wait_for_messages(TOKEN, related(Duration::from_secs(1)))
+        .await
+        .unwrap();
+    assert!(quiet.messages.is_empty());
+
+    // 这次他点了它，还接着打；8 秒后打完。
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s3",
+        vec![chat_with(
+            "$named:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "Scout 先看这个",
+            &[matrix_user(OWN_AGENT)],
+            None,
+        )],
+    ))));
+    harness.matrix.push(Step::Later(
+        Duration::from_secs(8),
+        typing_batch("s4", &[], Vec::new()),
+    ));
+    let started = tokio::time::Instant::now();
+    let page = harness
+        .gateway
+        .wait_for_messages(TOKEN, related(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&page.messages), ["Scout 先看这个"]);
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(8),
+        "防抖 5 秒到了还在打字，等他打完"
+    );
 }
 
 // ---------- 发言 ----------

@@ -74,6 +74,7 @@ mod projection;
 mod speaking;
 #[cfg(test)]
 mod tests;
+mod typing;
 
 /// 长轮询最多等这么久。
 pub(crate) const MAX_WAIT: Duration = Duration::from_secs(30);
@@ -234,6 +235,8 @@ pub(crate) struct NetworkGateway {
     /// 每个网络 Agent 上一条发言点到的人，`waitFor=mentioned` 用。只记在这个进程里：
     /// 重启以后要它直接写 Matrix 用户 ID。
     last_mentions: Mutex<HashMap<NetworkAgentId, Vec<String>>>,
+    /// 每个网络 Agent 的房间里此刻谁在打字。
+    typing: typing::TypingRooms,
 }
 
 impl NetworkGateway {
@@ -252,6 +255,7 @@ impl NetworkGateway {
             polls: LongPolls::default(),
             presence: Arc::default(),
             last_mentions: Mutex::new(HashMap::new()),
+            typing: typing::TypingRooms::default(),
         }
     }
 
@@ -354,6 +358,7 @@ impl NetworkGateway {
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         self.presence.forget(session.network_agent_id).await;
+        self.typing.forget(session.network_agent_id);
         self.close_encrypted(session.network_agent_id).await;
         if left
             && self
@@ -430,10 +435,6 @@ impl NetworkGateway {
         let deadline_ms = self.clock.now().value().saturating_add(millis(wait));
         let limit = usize::from(request.limit.clamp(1, MAX_PAGE));
         let direct_rooms = HashSet::new();
-        let context = WakeContext {
-            owner: None,
-            direct_rooms: &direct_rooms,
-        };
         // 每次取消息至少同步一次。原来收件箱里还有没确认的、或者 wait=0 时就不问 Matrix：
         // Agent 处理得慢时服务器停着不取，等它确认完，一个房间里积下的超过一次同步能带回的
         // 条数，更早的就悄悄丢了；只用 wait=0 轮询的 Agent 第一次之后再也收不到新消息。
@@ -453,6 +454,12 @@ impl NetworkGateway {
             peek |= first;
             let now_ms = self.clock.now().value();
             let rules = if peek { &peek_options } else { &options };
+            let typing = self.typing.now(session.network_agent_id, now_ms);
+            let context = WakeContext {
+                owner: None,
+                direct_rooms: &direct_rooms,
+                typing: &typing,
+            };
             let (ready, recheck_at_ms) =
                 match judge(&page, rules, context, limit, now_ms, deadline_ms) {
                     WaitDecision::Deliver(delivery) if synced => {
@@ -495,6 +502,8 @@ impl NetworkGateway {
                 () = poll.superseded() => return Ok(nothing(&page, WakeReason::Superseded)),
             };
             let elapsed_ms = started.elapsed().as_millis();
+            self.typing
+                .record(session.network_agent_id, &batch, self.clock.now().value());
             self.store_batch(&session, page.sync_token, &sync_request, &batch, elapsed_ms)
                 .await?;
             synced = true;

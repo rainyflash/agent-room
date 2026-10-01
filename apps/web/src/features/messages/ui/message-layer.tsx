@@ -56,6 +56,7 @@ export function MessageLayer({
     messageTranslation,
     moderation,
     telemetry,
+    typing,
   } = useAppServices();
   const { state, store } = useRoomMessages(roomId);
   const loadOlder = messageGateway.loadOlder?.bind(messageGateway);
@@ -97,6 +98,7 @@ export function MessageLayer({
             key={`chat:${roomId}`}
             writesAllowed={writesAllowed}
             publisher={messagePublisher}
+            typing={typing}
             roomId={roomId}
             messages={projectedMessages}
             {...(participants === undefined ? {} : { participants })}
