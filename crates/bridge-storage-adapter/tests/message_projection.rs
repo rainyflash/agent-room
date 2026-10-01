@@ -425,6 +425,81 @@ async fn 预览查询按本地到达顺序分页且不读取正文() {
 }
 
 #[tokio::test]
+async fn 按消息_id_取同一个房间里还在的消息_撤回的和找不到的跳过() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let kept = MessageId::from_uuid(Uuid::now_v7());
+    let redacted = MessageId::from_uuid(Uuid::now_v7());
+    let unrelated = MessageId::from_uuid(Uuid::now_v7());
+    let batch = MessageProjectionBatch::new(
+        sync_token("sync-find"),
+        vec![
+            preview_mutation(
+                "$find-kept:matrix.test",
+                kept,
+                owner_actor(),
+                1_700_000_000_001,
+                "还在的",
+                1,
+                Some(10),
+            ),
+            preview_mutation(
+                "$find-redacted:matrix.test",
+                redacted,
+                owner_actor(),
+                1_700_000_000_002,
+                "撤回的",
+                2,
+                Some(20),
+            ),
+            redaction_mutation("$find-redact:matrix.test", redacted, owner_actor()),
+            preview_mutation(
+                "$find-unrelated:matrix.test",
+                unrelated,
+                owner_actor(),
+                1_700_000_000_003,
+                "没要的",
+                3,
+                Some(30),
+            ),
+        ],
+        Vec::new(),
+        Vec::new(),
+    );
+    store.apply(&batch).await.expect("批次可投影");
+
+    let missing = MessageId::from_uuid(Uuid::now_v7());
+    let found = store
+        .find_messages(&room_id(), &[kept, redacted, missing])
+        .await
+        .expect("可以按 ID 读取");
+    assert_eq!(
+        found
+            .iter()
+            .map(|preview| preview.preview.summary().as_str())
+            .collect::<Vec<_>>(),
+        ["还在的"]
+    );
+    assert_eq!(found[0].message_id, kept);
+
+    let other_room = MatrixRoomId::new("!other:matrix.test").expect("房间标识有效");
+    assert!(
+        store
+            .find_messages(&other_room, &[kept])
+            .await
+            .expect("可以按 ID 读取")
+            .is_empty(),
+        "别的房间里查不到这个房间的消息"
+    );
+    assert!(
+        store
+            .find_messages(&room_id(), &[])
+            .await
+            .expect("空列表直接返回")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn 预览查询拒绝不存在的游标() {
     let (_temporary, store, _inspector) = open_store().await;
     let failure = store

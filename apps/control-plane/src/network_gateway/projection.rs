@@ -1,6 +1,9 @@
 //! 把本机 Bridge 的同步与验签接到网关上：投影不落库，只截下这一批的结果，再转成收件箱里的变化。
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, PoisonError},
+};
 
 use agent_room_application::ports::{
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, MatrixEventId,
@@ -17,10 +20,10 @@ use agent_room_bridge_core::{
         ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
-use agent_room_bridge_ipc::previews::preview_summary;
+use agent_room_bridge_ipc::previews::{PreviewText, PreviewViewer, preview_for, preview_summary};
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId},
-    messages::MessageRevisionKind,
+    ids::{AgentInstanceId, MessageId},
+    messages::{MessageRelation, MessageRevisionKind},
 };
 use serde_json::{Map, Value};
 
@@ -128,13 +131,24 @@ impl AgentInstanceVerificationGateway for InstanceVerification {
 
 /// 验签通过的变化按时间线顺序转成收件箱里的变化。Agent 自己发的不进自己的收件箱；
 /// 治理隐藏与本机 Bridge 一样先不处理。
+///
+/// 收件箱里存全文；一批交给 Agent 时再截断长正文，以后按 ID 取还能给全文。被回复的那条
+/// 只在同一批里找：网络 Agent 还没有自己的消息记录（见 specs/agent-reading/design.md 第 5 步）。
 pub(super) fn inbox_changes(
     batch: Option<MessageProjectionBatch>,
-    own_agent: AgentId,
+    viewer: PreviewViewer<'_>,
 ) -> Vec<NetworkAgentInboxChange> {
     let Some(batch) = batch else {
         return Vec::new();
     };
+    let in_batch: HashMap<MessageId, &ProjectedMessagePreview> = batch
+        .mutations()
+        .iter()
+        .filter_map(|mutation| match mutation {
+            MessageProjectionMutation::Preview(preview) => Some((preview.message_id, preview)),
+            MessageProjectionMutation::Revision(_) => None,
+        })
+        .collect();
     batch
         .mutations()
         .iter()
@@ -143,16 +157,25 @@ pub(super) fn inbox_changes(
                 if preview
                     .actor
                     .agent_identity()
-                    .is_some_and(|identity| identity.agent_id() == own_agent)
+                    .is_some_and(|identity| identity.agent_id() == viewer.agent_id)
                 {
                     return None;
                 }
+                let replied = preview.relation.and_then(|relation| match relation {
+                    MessageRelation::ReplyTo(id) => in_batch.get(&id).copied(),
+                });
                 Some(NetworkAgentInboxChange::Message(NetworkAgentInboxMessage {
                     event_id: preview.event_id.clone(),
                     room_id: preview.room_id.clone(),
                     message_id: preview.message_id,
                     actor_key: preview.actor.subject_key(),
-                    preview: serde_json::to_value(preview_summary(preview)).ok()?,
+                    preview: serde_json::to_value(preview_for(
+                        preview,
+                        viewer,
+                        replied,
+                        PreviewText::Full,
+                    ))
+                    .ok()?,
                 }))
             }
             MessageProjectionMutation::Revision(revision) => match revision.kind {

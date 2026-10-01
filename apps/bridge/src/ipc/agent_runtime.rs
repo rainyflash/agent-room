@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agent_room_application::ports::{
     Clock, MatrixEventId, MatrixFailureKind, MatrixRoomAccess, MatrixRoomEncryption, MatrixRoomId,
@@ -34,8 +34,8 @@ use agent_room_bridge_core::{
     },
 };
 use agent_room_bridge_ipc::previews::{
-    actor_summary as ipc_actor, agent_summary as ipc_agent, content_reference as ipc_content,
-    preview_summary as ipc_preview,
+    PreviewText, PreviewViewer, actor_summary as ipc_actor, agent_summary as ipc_agent,
+    content_reference as ipc_content, preview_for,
 };
 use agent_room_bridge_ipc::{
     IpcApproveHandoffRequest, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
@@ -590,8 +590,19 @@ impl AgentRuntimeIpcFacade {
             .list_previews(&query)
             .await
             .map_err(map_preview_query_failure)?;
+        let replied = self.replied_messages(&room_id, page.previews()).await;
+        let viewer = PreviewViewer {
+            agent_id: runtime.identity.agent_id(),
+            matrix_user_id: runtime.identity.matrix_user_id().as_str(),
+        };
         let response = bounded_preview_response(
-            page.previews().iter().map(ipc_preview),
+            page.previews().iter().map(|preview| {
+                let target = preview.relation.and_then(|relation| match relation {
+                    MessageRelation::ReplyTo(id) => replied.get(&id),
+                });
+                // 能按 ID 取全文之前照旧给全文（specs/agent-reading/design.md 第 3 步再截断）。
+                preview_for(preview, viewer, target, PreviewText::Full)
+            }),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
         )?;
         // The desktop reads the same projection, but only the host can attest to receiving it.
@@ -608,6 +619,35 @@ impl AgentRuntimeIpcFacade {
             tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
         }
         Ok(response)
+    }
+
+    /// 这一页里的消息回复了哪些消息：一次取回来，给每条附上被回复那条的开头。读不到时只是少了摘录。
+    async fn replied_messages(
+        &self,
+        room_id: &MatrixRoomId,
+        previews: &[ProjectedMessagePreview],
+    ) -> HashMap<MessageId, ProjectedMessagePreview> {
+        let mut wanted = Vec::new();
+        for preview in previews {
+            if let Some(MessageRelation::ReplyTo(id)) = preview.relation
+                && !wanted.contains(&id)
+            {
+                wanted.push(id);
+            }
+        }
+        if wanted.is_empty() {
+            return HashMap::new();
+        }
+        match self.previews.find_messages(room_id, &wanted).await {
+            Ok(found) => found
+                .into_iter()
+                .map(|message| (message.message_id, message))
+                .collect(),
+            Err(failure) => {
+                tracing::warn!(kind = ?failure.kind(), "could not read replied messages");
+                HashMap::new()
+            }
+        }
     }
 
     pub(super) async fn get_presence(

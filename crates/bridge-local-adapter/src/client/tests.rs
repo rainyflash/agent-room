@@ -60,7 +60,7 @@ async fn delayed_server(
             &IpcFrame::ServerChallenge {
                 challenge_id: SESSION_ID.parse().unwrap(),
                 challenge: URL_SAFE_NO_PAD.encode([9_u8; 32]),
-                selected_version: IpcProtocolVersion::V4_0.into(),
+                selected_version: IpcProtocolVersion::V4_1.into(),
                 granted_scopes: vec![IpcScopeName::from(scope)],
             },
         )
@@ -74,7 +74,7 @@ async fn delayed_server(
             &mut server_stream,
             &IpcFrame::ServerReady {
                 server_instance_id: SESSION_ID.parse().unwrap(),
-                selected_version: IpcProtocolVersion::V4_0.into(),
+                selected_version: IpcProtocolVersion::V4_1.into(),
                 granted_scopes: vec![IpcScopeName::from(scope)],
             },
         )

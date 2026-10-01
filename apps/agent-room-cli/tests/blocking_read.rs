@@ -131,7 +131,7 @@ async fn serve(
                 &IpcFrame::ServerChallenge {
                     challenge_id: SESSION.parse().unwrap(),
                     challenge: URL_SAFE_NO_PAD.encode([9; 32]),
-                    selected_version: IpcProtocolVersion::V4_0.into(),
+                    selected_version: IpcProtocolVersion::V4_1.into(),
                     granted_scopes: requested_scopes.clone(),
                 },
             )
@@ -145,7 +145,7 @@ async fn serve(
                 &mut stream,
                 &IpcFrame::ServerReady {
                     server_instance_id: SESSION.parse().unwrap(),
-                    selected_version: IpcProtocolVersion::V4_0.into(),
+                    selected_version: IpcProtocolVersion::V4_1.into(),
                     granted_scopes: requested_scopes,
                 },
             )
@@ -212,6 +212,8 @@ fn message() -> agent_room_bridge_ipc::IpcMessagePreviewSummary {
             attachment_name: None,
             text: "hello".into(),
             mentions: vec![],
+            truncated: false,
+            full_length: None,
         }),
         reply_to_message_id: None,
         created_at_unix_ms: 1,
@@ -226,6 +228,9 @@ fn message() -> agent_room_bridge_ipc::IpcMessagePreviewSummary {
         language: None,
         sensitivity: IpcMessageSensitivity::Normal,
         risk_flags: vec![],
+        reply_to: None,
+        from_me: false,
+        mentions_me: false,
     }
 }
 
