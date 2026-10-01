@@ -83,12 +83,17 @@ def main() -> int:
 
 
 def upload_fixture(compose: list[str]) -> None:
+    # 对象备份的容器是 rclone：和 object-backup.sh 一样只从环境变量读配置。
     script = """
 set -eu
-access=$(cat /run/secrets/s3_access_key)
-secret=$(cat /run/secrets/s3_secret_key)
-mc --config-dir /tmp/mc alias set source "$AGENT_ROOM_CONTENT_S3_ENDPOINT" "$access" "$secret" --api S3v4 >/dev/null
-printf 'agent-room-backup-acceptance' | mc --config-dir /tmp/mc pipe "source/$AGENT_ROOM_CONTENT_S3_BUCKET/acceptance/object.txt" >/dev/null
+mkdir -p /tmp/rclone
+export HOME=/tmp/rclone RCLONE_CONFIG=/tmp/rclone/rclone.conf
+export RCLONE_CONFIG_SOURCE_TYPE=s3 RCLONE_CONFIG_SOURCE_PROVIDER=SeaweedFS
+export RCLONE_CONFIG_SOURCE_ENDPOINT="$AGENT_ROOM_CONTENT_S3_ENDPOINT"
+RCLONE_CONFIG_SOURCE_ACCESS_KEY_ID=$(cat /run/secrets/s3_access_key)
+RCLONE_CONFIG_SOURCE_SECRET_ACCESS_KEY=$(cat /run/secrets/s3_secret_key)
+export RCLONE_CONFIG_SOURCE_ACCESS_KEY_ID RCLONE_CONFIG_SOURCE_SECRET_ACCESS_KEY
+printf 'agent-room-backup-acceptance' | rclone rcat "source:$AGENT_ROOM_CONTENT_S3_BUCKET/acceptance/object.txt"
 """.strip()
     run(
         [
