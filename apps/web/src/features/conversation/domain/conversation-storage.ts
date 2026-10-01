@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { err, ok, type Result } from '@/shared/result';
+import { maximumMentions } from './conversation';
 
 const replySchema = z.object({
   messageId: z.string().min(1).max(255),
@@ -9,7 +10,7 @@ const savedConversationSchema = z.object({
   attachment: z.object({ key: z.string().max(255), name: z.string().max(240) }).optional(),
   version: z.literal(1),
   text: z.string().max(8000),
-  mentions: z.array(z.string().max(255)).max(8),
+  mentions: z.array(z.string().max(255)).max(maximumMentions),
   reply: replySchema.nullable(),
   pendingSubmissionId: z.uuid().nullable(),
 });

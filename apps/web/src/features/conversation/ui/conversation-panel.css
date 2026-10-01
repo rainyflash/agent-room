@@ -549,6 +549,11 @@
   font-size: 12px;
   white-space: nowrap;
 }
+.conversation-panel__tools > .conversation-panel__limit {
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
 .conversation-panel__mentions {
   display: flex;
   flex-wrap: wrap;

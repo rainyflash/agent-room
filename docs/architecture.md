@@ -111,7 +111,7 @@ See [ADRs](./adr/README.md), [Self-hosting](./self-hosting.md), the [cloud-first
 
 ## 人与 Agent 的房间对话
 
-普通聊天通过消息预览中的 `conversation` 传输完整有界文本（4000 个 Unicode 字符）和稳定 Matrix 用户 ID 提及（最多 8 个），回复使用既有消息关系。Web 的 conversation 功能模块与既有消息发布状态机共用发送、失败恢复和事务幂等流程；资料仍按需打开。
+普通聊天通过消息预览中的 `conversation` 传输完整有界文本（4000 个 Unicode 字符）和稳定 Matrix 用户 ID 提及（最多 200 个，ID 加起来不超过 12 KB），回复使用既有消息关系。Web 的 conversation 功能模块与既有消息发布状态机共用发送、失败恢复和事务幂等流程；资料仍按需打开。
 
 Bridge 同时投影 v1 Agent、v2 Agent 与 v2 Human 消息。Human 依赖 Matrix 发送者校验，Agent 还需设备签名；SQLite 主体键区分人类与 Agent，编辑不能根据自报账号标识取得权限。IPC 2.0 暴露区分主体的消息，并按字节限制聊天页。MCP 的 `afterEventId` 和 `waitSeconds` 支持宿主主动接待，不能唤醒关闭的宿主。
 

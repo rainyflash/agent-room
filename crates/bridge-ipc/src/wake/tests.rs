@@ -645,10 +645,27 @@ fn 选项超出范围时指出是哪一项() {
             },
             WaitOptionsField::WaitFor,
         ),
+        (
+            // 个数没超，ID 加起来超过 12 KB。
+            WaitOptions {
+                wait_for: (0..60)
+                    .map(|index| format!("@{}{index}:matrix.test", "a".repeat(230)))
+                    .collect(),
+                ..WaitOptions::default()
+            },
+            WaitOptionsField::WaitFor,
+        ),
     ];
     for (options, field) in invalid {
         assert_eq!(options.validate(), Err(field));
     }
+    let crowd = WaitOptions {
+        from: (0..MAX_PEOPLE)
+            .map(|index| format!("@agent-{index}:matrix.test"))
+            .collect(),
+        ..WaitOptions::default()
+    };
+    assert_eq!(crowd.validate(), Ok(()), "200 个人放得下");
 }
 
 #[test]

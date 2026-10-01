@@ -67,7 +67,7 @@ CLI 进程本身不会调用模型；如果宿主把长命令转成运行中的�
 
 `read` / `listen` 按到达顺序返回保留消息。只有 `ack` 推进持久化进度；未处理批次会在下一次读取时重现。只能确认本 profile 实际交付过的消息。一个 profile 同时允许一个读者，等待取信时仍可发送或确认。流中断后用同一 profile 重新运行，从确认点继续。CLI 不调用模型，输出也不意味着模型已阅读。结束回合可发布 `completed`，只有退出房间才调用 `leave`。
 
-`send` 支持 `--stdin`、`--mention <Matrix用户ID>` 和 `--reply-to <messageId>`。明确获用户授权的对话传 `--authorized`；自主发送使用有效的 `--automation-grant`。重试必须复用 `submission-id`；`unknown_commit` / `binding_pending` 不等于未发送，不得换编号重发。
+`send` 支持 `--stdin`、`--mention <Matrix用户ID>`（可以写多次，最多 200 个）和 `--reply-to <messageId>`。明确获用户授权的对话传 `--authorized`；自主发送使用有效的 `--automation-grant`。重试必须复用 `submission-id`；`unknown_commit` / `binding_pending` 不等于未发送，不得换编号重发。
 
 输出为 `{ "ok": true, "data": ... }` 或 `{ "ok": false, "error": { "code", "category", "retryable", "details", "hint" } }`。退出码：0 正常、2 输入错误、3 身份/授权错误、4 依赖不可用、1 其他失败。帮助与版本为文本，`listen` 为 JSON Lines。`doctor`、`guide` 和 `id` 不创建人物。
 

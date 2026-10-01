@@ -7,6 +7,8 @@ import './conversation-attachments.css';
 import { useTranslation } from 'react-i18next';
 import {
   maximumChatCharacters,
+  maximumMentions,
+  mentionsFull,
   type ConversationParticipant,
 } from '@/features/conversation/domain/conversation';
 import type { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
@@ -184,7 +186,7 @@ export function ConversationComposer({
           <select
             aria-label={t('conversation.mention')}
             value=""
-            disabled={!canEdit || composer.mentions.length >= 8}
+            disabled={!canEdit || mentionsFull(composer.mentions)}
             onChange={(event) => {
               if (event.target.value) {
                 composer.mention(event.target.value);
@@ -202,6 +204,12 @@ export function ConversationComposer({
               ))}
           </select>
         </label>
+        {/* 点满了 @ 菜单就停用，在旁边说明为什么。 */}
+        {mentionsFull(composer.mentions) ? (
+          <span className="conversation-panel__limit">
+            {t('conversation.mentionLimit', { count: maximumMentions })}
+          </span>
+        ) : null}
         {/* 离上限还远时不显示字数，快满了才提醒。 */}
         {characters >= nearCharacterLimit ? (
           <span className="conversation-panel__count">

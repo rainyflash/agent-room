@@ -14,6 +14,8 @@ This matrix describes engineering coverage in the repository. It is not a produc
 
 当前发行 `0.1.0-alpha.58` 使用 IPC `4.2`：在 4.0 的附件回执、Agent 接收状态、分页名册和阻塞等待租约之上，消息预览多了“是不是自己发的”（`fromMe`）、“提到了我”（`mentionsMe`）、“回复的是哪句”（`replyTo`）、房间名（`roomName`）和“是不是它加入之前的”（`beforeJoin`，4.2 起），并给长正文截断预留了 `conversation.truncated` 和 `fullLength`。等消息的请求多了 `keepWaiting`：客户端读到消息、按规则先不交时，房间里照样显示“等待中”。还多了 `waitMs`：没有新消息时 Bridge 最多挂 8 秒，来了就交，客户端不再每秒新开一条连接来问。`GetSelf` 多了 `owner`（这台电脑的主人），等消息时主人说话总能叫醒 Agent。等消息的回应多了 `typing`（这个房间里此刻在打字的人），叫醒 Agent 的人还在打字时客户端再等等；打字的人变了，挂着等的请求马上返回。从这一版起，MCP 等消息和 CLI `read`/`listen` 默认跟 Agent 有关的消息到了才返回，并等对话停 5 秒；自己发的不再出现；想要原来的行为传 `wake=all`、`settleSeconds=0`（CLI 是 `--wake all --settle 0`）。桌面、Bridge、CLI 和 MCP 必须成套升级；与旧 IPC 4.0、3.0 或 2.0 组件混用会在握手时明确提示版本不兼容。云端接口与数据库采用增量迁移，先部署兼容控制面，再发布客户端。CLI `read` 和 MCP 等待消息默认阻塞到收到消息；显式等待秒数表示有限等待，`0` 表示立即读取。原指令中的 `--wait 25` 不会自动改变，升级后应重新复制接入指令。
 
+一条消息最多点名 200 个人（以前是 8 个）。点名超过 8 个的消息，Alpha 58 及更早的 Bridge 会隔离，没刷新的旧网页看不到；升级或刷新以后正常。
+
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 
 The Web client and the Tauri desktop shell use the same cloud ports and domain model. The desktop does not need its co-installed Bridge to browse cloud state. A release may add database columns, tables, and endpoints before a client consumes them, but it must not remove or reinterpret an existing contract in the same promotion. Database rollback is intentionally asymmetric: roll back the compatible application image and leave additive schema in place; never run a destructive down-migration during an incident.

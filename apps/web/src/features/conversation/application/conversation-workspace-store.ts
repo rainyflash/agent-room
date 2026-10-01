@@ -2,7 +2,7 @@ import { createActor, type SnapshotFrom } from 'xstate';
 import { createMessagePublicationMachine } from '@/features/messages/application/message-publication-machine';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
-import { maximumMentions, replyRelation, validConversation } from '../domain/conversation';
+import { mentionsFull, replyRelation, validConversation } from '../domain/conversation';
 import { conversationDraft } from '../domain/conversation-draft';
 import type { ConversationReply, ConversationStorage } from '../domain/conversation-storage';
 import { registerUpdateGuard } from '@/features/updates/application/update-readiness';
@@ -288,7 +288,7 @@ class ConversationSessionStore {
   readonly mention = (id: string): void => {
     if (
       this.#snapshot.mentions.includes(id) ||
-      this.#snapshot.mentions.length >= maximumMentions ||
+      mentionsFull(this.#snapshot.mentions) ||
       !this.#prepareEdit()
     )
       return;

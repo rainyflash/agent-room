@@ -12,6 +12,11 @@ const MAX_SUMMARY_CHARACTERS: usize = 500;
 const MAX_LANGUAGE_LENGTH: usize = 35;
 const MAX_RISK_FLAG_LENGTH: usize = 64;
 const MAX_RISK_FLAGS: usize = 16;
+/// 一条消息最多点名几个人（`specs/agent-reading/mentions.md`）。
+pub const MAX_CONVERSATION_MENTIONS: usize = 200;
+/// 点名的 Matrix 用户 ID 加起来最多这么多字节。单个 ID 最长 255 字节，只卡个数的话 200 个
+/// 能到 51 KB，会撑破 Matrix 事件、IPC 帧和网络接口的请求体。
+pub const MAX_CONVERSATION_MENTION_BYTES: usize = 12 * 1_024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageProvenance {
@@ -249,7 +254,7 @@ impl ConversationMessage {
     ///
     /// # Errors
     ///
-    /// 空白文本、控制字符、过长文本、重复或无效提及时拒绝。
+    /// 空白文本、控制字符、过长文本、重复或无效提及、提及超过 200 个或加起来超过 12 KB 时拒绝。
     pub fn new(text: String, mentions: Vec<String>) -> DomainResult<Self> {
         let valid_text = !text.trim().is_empty()
             && text.chars().count() <= 4000
@@ -257,7 +262,8 @@ impl ConversationMessage {
                 .chars()
                 .any(|ch| ch.is_control() && ch != '\n' && ch != '\t');
         let unique = mentions.iter().collect::<BTreeSet<_>>();
-        let valid_mentions = mentions.len() <= 8
+        let valid_mentions = mentions.len() <= MAX_CONVERSATION_MENTIONS
+            && mentions.iter().map(String::len).sum::<usize>() <= MAX_CONVERSATION_MENTION_BYTES
             && unique.len() == mentions.len()
             && mentions.iter().all(|id| {
                 id.len() <= 255
@@ -570,6 +576,7 @@ fn language_part_is_valid(index: usize, part: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
+        ConversationMessage, MAX_CONVERSATION_MENTION_BYTES, MAX_CONVERSATION_MENTIONS,
         MessageLanguage, MessageRiskFlag, MessageRiskFlags, MessageSensitivity, MessageSummary,
         MessageTitle,
     };
@@ -600,5 +607,31 @@ mod tests {
             (0..17).map(|index| MessageRiskFlag::new(format!("risk_{index}")).expect("标签有效"));
         assert!(MessageRiskFlags::new(overflow).is_err());
         assert_eq!(MessageSensitivity::Normal.as_str(), "normal");
+    }
+
+    #[test]
+    fn 点名最多_200_个_加起来不超过_12_kb() {
+        let people = |count: usize| {
+            (0..count)
+                .map(|index| format!("@agent-{index}:matrix.test"))
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            ConversationMessage::new("大家好".into(), people(MAX_CONVERSATION_MENTIONS)).is_ok()
+        );
+        assert!(
+            ConversationMessage::new("大家好".into(), people(MAX_CONVERSATION_MENTIONS + 1))
+                .is_err()
+        );
+
+        // 单个 ID 合规，个数也没超，但加起来超过 12 KB。
+        let long = |index: usize| format!("@{}{index}:matrix.test", "a".repeat(230));
+        let count = MAX_CONVERSATION_MENTION_BYTES / long(10).len();
+        let fits = (10..10 + count).map(long).collect::<Vec<_>>();
+        assert!(fits.iter().map(String::len).sum::<usize>() <= MAX_CONVERSATION_MENTION_BYTES);
+        assert!(ConversationMessage::new("大家好".into(), fits.clone()).is_ok());
+        let mut over = fits;
+        over.push(long(10 + count));
+        assert!(ConversationMessage::new("大家好".into(), over).is_err());
     }
 }
