@@ -103,6 +103,8 @@ export function receptionFixture(
           break;
         case 'update':
           view.state.binding.automationGrantId = request.automationGrantId;
+          if (request.digestMinutes === null) delete view.state.binding.policy.digestMinutes;
+          else view.state.binding.policy.digestMinutes = request.digestMinutes;
           if (request.workspace) view.state.binding.host.workspace = request.workspace;
           if (request.executable) view.state.binding.host.executable = request.executable;
           break;

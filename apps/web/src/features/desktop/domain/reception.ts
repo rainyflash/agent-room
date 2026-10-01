@@ -137,7 +137,12 @@ export type ReceiverAction =
       readonly automationGrantId: string;
       readonly executable: string | null;
       readonly workspace: string | null;
+      /** 没叫醒它的消息多久让它看一眼；null 是从不。 */
+      readonly digestMinutes: number | null;
     };
+
+/** 定时看一眼的几档：从不、每小时、每天。 */
+export const RECEPTION_DIGEST_CHOICES = [0, 60, 1440] as const;
 
 export function receptionGrants(
   grants: readonly AutomationGrant[],
