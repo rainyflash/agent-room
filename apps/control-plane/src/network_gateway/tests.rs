@@ -68,8 +68,10 @@ use uuid::Uuid;
 
 use super::{
     EncryptedSessions, EncryptedSpeaker, NetworkAgentCleanupOutcome, NetworkAgentMessageDraft,
-    NetworkAgentMessaging, NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
+    NetworkAgentMessaging, NetworkAgentWait, NetworkGateway, NetworkGatewayDependencies,
+    NetworkGatewayFailure,
 };
+use agent_room_bridge_ipc::wake::{WaitOptions, WakeReason, WakeRule};
 
 const TOKEN: &str = "network-agent-token";
 const ROOM: &str = "!lobby:matrix.test";
@@ -550,7 +552,7 @@ struct InboxState {
     sync_token: Option<MatrixSyncToken>,
     sequence: u64,
     dropped: u64,
-    entries: Vec<(u64, MatrixEventId, MessageId, String, Value)>,
+    entries: Vec<(u64, MatrixEventId, MessageId, String, Value, UtcMillis)>,
 }
 
 impl MemoryInbox {
@@ -578,10 +580,11 @@ impl NetworkAgentInboxStore for MemoryInbox {
                 .iter()
                 .take(usize::from(limit))
                 .map(
-                    |(sequence, event_id, _, _, preview)| NetworkAgentInboxEntry {
+                    |(sequence, event_id, _, _, preview, received_at)| NetworkAgentInboxEntry {
                         sequence: *sequence,
                         event_id: event_id.clone(),
                         preview: preview.clone(),
+                        received_at: *received_at,
                     },
                 )
                 .collect(),
@@ -616,6 +619,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                             message.message_id,
                             message.actor_key.clone(),
                             message.preview.clone(),
+                            append.received_at,
                         ));
                         appended += 1;
                     }
@@ -625,7 +629,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         patch,
                         ..
                     } => {
-                        for (_, _, id, actor, preview) in &mut state.entries {
+                        for (_, _, id, actor, preview, _) in &mut state.entries {
                             if id == message_id && actor == actor_key {
                                 for (key, value) in patch.as_object().unwrap() {
                                     preview[key] = value.clone();
@@ -639,7 +643,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         ..
                     } => state
                         .entries
-                        .retain(|(_, _, id, actor, _)| !(id == message_id && actor == actor_key)),
+                        .retain(|(_, _, id, actor, ..)| !(id == message_id && actor == actor_key)),
                 }
             }
             let capacity = usize::try_from(append.capacity).unwrap();
@@ -1364,6 +1368,30 @@ fn own() -> (&'static str, &'static str) {
     (OWN_AGENT, OWN_INSTANCE)
 }
 
+/// 原来的取法：别人说的都叫醒，来了立刻交。专门测叫醒规则的用例自己写选项。
+fn everything(wait: Duration, limit: u16) -> NetworkAgentWait {
+    NetworkAgentWait {
+        wait,
+        limit,
+        options: WaitOptions {
+            wake: WakeRule::All,
+            settle: Duration::ZERO,
+            ..WaitOptions::default()
+        },
+        wait_for_mentioned: false,
+    }
+}
+
+/// 按默认规则等：跟它有关的才叫醒，等对话停 5 秒再交。
+fn related(wait: Duration) -> NetworkAgentWait {
+    NetworkAgentWait {
+        wait,
+        limit: 20,
+        options: WaitOptions::default(),
+        wait_for_mentioned: false,
+    }
+}
+
 fn texts(messages: &[Value]) -> Vec<&str> {
     messages
         .iter()
@@ -1398,7 +1426,7 @@ async fn 第一次不等_带回最近的几条_自己发的不进收件箱_没�
 
     let first = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .expect("取到消息");
 
@@ -1422,7 +1450,7 @@ async fn 第一次不等_带回最近的几条_自己发的不进收件箱_没�
     // 没确认，再取还是这一条；同时不等待地问一次 Matrix，新到的照样进收件箱。
     let again = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .expect("再取");
     assert_eq!(texts(&again.messages), ["你好"]);
@@ -1447,7 +1475,7 @@ async fn 还有没确认的也照样把新消息取进收件箱_不会因为积�
     ))));
     let first = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
     assert_eq!(texts(&first.messages), ["一"]);
@@ -1467,7 +1495,7 @@ async fn 还有没确认的也照样把新消息取进收件箱_不会因为积�
     let started = tokio::time::Instant::now();
     let again = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
     assert_eq!(texts(&again.messages), ["一", "二"]);
@@ -1495,7 +1523,7 @@ async fn 还有没确认的时同步失败_照样先交出已有的() {
     ))));
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
 
@@ -1505,7 +1533,7 @@ async fn 还有没确认的时同步失败_照样先交出已有的() {
     ))));
     let again = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .expect("Matrix 暂时不通也先交出收件箱里的");
     assert_eq!(texts(&again.messages), ["一"]);
@@ -1549,7 +1577,7 @@ async fn 标出点名自己和回复自己的_附上被回复那条的开头_长
 
     let page = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
     // 自己发的不进收件箱，但同一批里能拿来给回复它的那条附上摘录。
@@ -1584,7 +1612,7 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     ))));
     let first = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
     assert_eq!(texts(&first.messages), ["一", "二"]);
@@ -1599,7 +1627,7 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     );
     let rest = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
     assert_eq!(texts(&rest.messages), ["二"]);
@@ -1625,7 +1653,7 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     let started = tokio::time::Instant::now();
     let empty = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(5), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
         .await
         .unwrap();
     assert!(empty.messages.is_empty());
@@ -1646,7 +1674,7 @@ async fn 只看一眼也不等待地问一次_matrix_新到的照样取到() {
         .push(Step::Batch(Ok(batch("s1", Vec::new()))));
     let empty = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
     assert!(empty.messages.is_empty());
@@ -1666,7 +1694,7 @@ async fn 只看一眼也不等待地问一次_matrix_新到的照样取到() {
     let started = tokio::time::Instant::now();
     let later = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
     assert_eq!(texts(&later.messages), ["后来的"]);
@@ -1721,7 +1749,7 @@ async fn 伪造签名与冒名的事件被隔离_不进收件箱() {
 
     let received = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
 
@@ -1761,7 +1789,7 @@ async fn 作者修改或撤回还没确认的消息_收件箱跟着变_别人不
 
     let received = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
 
@@ -1779,7 +1807,7 @@ async fn 新的长轮询让旧的立刻空手返回() {
         .push(Step::Batch(Ok(batch("s1", Vec::new()))));
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
     let blocked = Arc::new(Notify::new());
@@ -1790,7 +1818,7 @@ async fn 新的长轮询让旧的立刻空手返回() {
         tokio::spawn(async move {
             harness
                 .gateway
-                .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+                .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
                 .await
         })
     };
@@ -1810,7 +1838,7 @@ async fn 新的长轮询让旧的立刻空手返回() {
     ))));
     let new = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
 
@@ -1826,7 +1854,7 @@ async fn 令牌不对按网络_agent_的错误回答_matrix_失败算依赖不�
     assert_eq!(
         harness
             .gateway
-            .wait_for_messages("wrong", Duration::from_secs(1), 20)
+            .wait_for_messages("wrong", everything(Duration::from_secs(1), 20))
             .await
             .unwrap_err(),
         NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
@@ -1849,7 +1877,7 @@ async fn 令牌不对按网络_agent_的错误回答_matrix_失败算依赖不�
     assert_eq!(
         harness
             .gateway
-            .wait_for_messages(TOKEN, Duration::from_secs(1), 20)
+            .wait_for_messages(TOKEN, everything(Duration::from_secs(1), 20))
             .await
             .unwrap_err(),
         NetworkGatewayFailure::Unavailable
@@ -1875,7 +1903,7 @@ async fn 收件箱满了丢掉最早的并告诉_agent_丢了几条() {
 
     let received = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 50)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 50))
         .await
         .unwrap();
 
@@ -1883,6 +1911,150 @@ async fn 收件箱满了丢掉最早的并告诉_agent_丢了几条() {
     assert_eq!(received.pending, 200);
     assert_eq!(received.dropped, 5);
     assert_eq!(received.messages[0]["conversation"]["text"], "第 5 条");
+}
+
+// ---------- 等消息的规则 ----------
+
+/// 第一次取消息只建立同步位置。
+async fn settle_in(harness: &Harness) {
+    harness
+        .matrix
+        .push(Step::Batch(Ok(batch("s1", Vec::new()))));
+    let first = harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
+        .await
+        .unwrap();
+    assert!(first.messages.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 默认跟它有关的消息到了才交_防抖后连同之前的一起给() {
+    let harness = harness();
+    settle_in(&harness).await;
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s2",
+        vec![chat(
+            "$chatter:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "我们俩先聊",
+            [1; 64],
+        )],
+    ))));
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s3",
+        vec![chat_with(
+            "$named:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "Scout 你看呢",
+            &[matrix_user(OWN_AGENT)],
+            None,
+        )],
+    ))));
+
+    let started = tokio::time::Instant::now();
+    let page = harness
+        .gateway
+        .wait_for_messages(TOKEN, related(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&page.messages), ["我们俩先聊", "Scout 你看呢"]);
+    assert_eq!(page.wake.reason, WakeReason::Messages);
+    assert_eq!(page.wake.event_ids, ["$named:matrix.test"]);
+    assert_eq!(page.skipped, 0);
+    assert_eq!(
+        started.elapsed(),
+        Duration::from_secs(5),
+        "等对话停 5 秒再交"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 跟它无关的消息等满时间也不交_留着下次一起给_只看一眼时有什么给什么() {
+    let harness = harness();
+    settle_in(&harness).await;
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s2",
+        vec![chat(
+            "$chatter:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "我们俩先聊",
+            [1; 64],
+        )],
+    ))));
+
+    let page = harness
+        .gateway
+        .wait_for_messages(TOKEN, related(Duration::from_secs(5)))
+        .await
+        .unwrap();
+    assert!(page.messages.is_empty());
+    assert_eq!(page.wake.reason, WakeReason::Timeout);
+    assert_eq!(page.pending, 1, "没叫醒它的留在收件箱里");
+
+    let peek = harness
+        .gateway
+        .wait_for_messages(TOKEN, related(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(texts(&peek.messages), ["我们俩先聊"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 等上一条点到的人都回了话再交() {
+    let harness = harness();
+    let mentioned = NetworkAgentWait {
+        wait_for_mentioned: true,
+        ..related(Duration::from_secs(30))
+    };
+    assert_eq!(
+        harness
+            .gateway
+            .wait_for_messages(TOKEN, mentioned.clone())
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::InvalidWait("waitFor"),
+        "没发过言时说不清等谁"
+    );
+
+    settle_in(&harness).await;
+    harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                mentions: vec![matrix_user(OTHER_AGENT)],
+                ..draft("Ranger 你怎么看？")
+            },
+        )
+        .await
+        .expect("发出去了");
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s2",
+        vec![chat(
+            "$answer:matrix.test",
+            other(),
+            Uuid::now_v7(),
+            "我同意",
+            [1; 64],
+        )],
+    ))));
+
+    let page = harness
+        .gateway
+        .wait_for_messages(TOKEN, mentioned)
+        .await
+        .unwrap();
+    assert_eq!(
+        texts(&page.messages),
+        ["我同意"],
+        "Agent 没点它，但它在等这个人"
+    );
+    assert_eq!(page.wake.reason, WakeReason::AllReplied);
+    assert!(page.wake.missing.is_empty());
 }
 
 // ---------- 发言 ----------
@@ -2236,7 +2408,7 @@ async fn 进过加密房间的_agent_改由加密客户端同步_收件箱照旧
 
     let first = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .expect("取到消息");
 
@@ -2257,7 +2429,7 @@ async fn 进过加密房间的_agent_改由加密客户端同步_收件箱照旧
         .unwrap();
     let next = harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(5), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
         .await
         .unwrap();
     assert!(next.messages.is_empty());
@@ -2283,7 +2455,7 @@ async fn 加密客户端没配置时如实报暂时不可用_不退回轻量客�
     assert_eq!(
         harness
             .gateway
-            .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+            .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
             .await
             .unwrap_err(),
         NetworkGatewayFailure::Unavailable
@@ -2352,7 +2524,7 @@ async fn 凭口令创建时先切到加密客户端建好身份再进房间_之�
     // 用例替身给的会话里没有 encrypted_since：靠网关自己记着，照样走加密客户端。
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(5), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
         .await
         .unwrap();
     assert_eq!(
@@ -2395,7 +2567,7 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         .push(Step::Batch(Ok(batch("s1", Vec::new()))));
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
     let lobby = NetworkAgentRoom {
@@ -2481,7 +2653,7 @@ async fn 切到加密客户端时正在进行的长轮询立刻返回_免得轻�
         .push(Step::Batch(Ok(batch("s1", Vec::new()))));
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
     let blocked = Arc::new(Notify::new());
@@ -2491,7 +2663,7 @@ async fn 切到加密客户端时正在进行的长轮询立刻返回_免得轻�
         tokio::spawn(async move {
             harness
                 .gateway
-                .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+                .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
                 .await
         })
     };
@@ -2700,7 +2872,7 @@ async fn 自己发出去还不确定的_同步时按事务_id_对上() {
 
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
 
@@ -2720,7 +2892,7 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
         .push(Step::Batch(Ok(batch("s1", Vec::new()))));
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::ZERO, 20)
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
         .await
         .unwrap();
     assert!(
@@ -2731,7 +2903,7 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
     let started = tokio::time::Instant::now();
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(30), 20))
         .await
         .unwrap();
     assert_eq!(started.elapsed(), Duration::from_secs(30));
@@ -2767,7 +2939,7 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
     // 紧接着又等：上一次的看门狗看到它还在等，不清除。
     harness
         .gateway
-        .wait_for_messages(TOKEN, Duration::from_secs(5), 20)
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
         .await
         .unwrap();
     assert_eq!(harness.matrix.states.lock().unwrap().len(), 2);

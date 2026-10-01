@@ -23,8 +23,8 @@ use agent_room_application::{
     },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
-        MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, MatrixSyncBatch, MatrixUserId,
-        NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxChange,
+        MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, MatrixSyncBatch, MatrixSyncToken,
+        MatrixUserId, NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxChange,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
         NetworkAgentSubmissionStore, NetworkAgentSyncRequest, PortFuture,
     },
@@ -44,7 +44,13 @@ use agent_room_bridge_core::{
     },
     status::{AgentStatusIntent, HostAgentState},
 };
-use agent_room_bridge_ipc::previews::PreviewViewer;
+use agent_room_bridge_ipc::{
+    IpcMessagePreviewSummary,
+    previews::PreviewViewer,
+    wake::{
+        Arrival, Delivery, IpcWake, WaitDecision, WaitOptions, WakeContext, WakeReason, decide,
+    },
+};
 use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
     ids::{AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
@@ -53,6 +59,7 @@ use agent_room_domain::{
         MessageSensitivity, MessageSummary, MessageTitle,
     },
 };
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::{sync::Notify, time::Instant};
 use uuid::{Uuid, Version};
@@ -95,6 +102,8 @@ pub(crate) enum NetworkGatewayFailure {
     InvalidEvent,
     /// 发言的内容不合规：说明是哪一项。
     InvalidMessage(&'static str),
+    /// 等消息的参数不对：说明是哪一项。
+    InvalidWait(&'static str),
     /// 在不止一个房间里却没说发到哪间。
     RoomRequired,
     /// 不在这个房间里。
@@ -136,6 +145,20 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) pending: u64,
     /// 收件箱满了丢掉的条数，确认之后清零。
     pub(crate) dropped: u64,
+    /// 为什么这时候交：被什么叫醒、叫醒它的是哪几条、等齐时谁还没说话。
+    pub(crate) wake: IpcWake,
+    /// 交出去的最后一条之前没交的条数；确认到最后一条时，它们也算看过。
+    pub(crate) skipped: u64,
+}
+
+/// 一次等消息：最多等多久、一次最多取几条、听什么（`specs/agent-reading/waiting.md`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NetworkAgentWait {
+    pub(crate) wait: Duration,
+    pub(crate) limit: u16,
+    pub(crate) options: WaitOptions,
+    /// `waitFor=mentioned`：等我上一条点到的人。
+    pub(crate) wait_for_mentioned: bool,
 }
 
 /// 网络 Agent 进房间与收发消息的接口；HTTP 接口与远程 MCP 只认这个，便于单独测试。
@@ -155,11 +178,11 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         source_digest: [u8; 32],
     ) -> PortFuture<'a, Result<NetworkAgentRoom, NetworkGatewayFailure>>;
 
+    /// 等消息：按 `request` 的规则等到有事，防抖后交出去；等满时间就空手返回。
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
-        wait: Duration,
-        limit: u16,
+        request: NetworkAgentWait,
     ) -> PortFuture<'a, Result<NetworkAgentMessages, NetworkGatewayFailure>>;
 
     fn acknowledge<'a>(
@@ -208,6 +231,9 @@ pub(crate) struct NetworkGateway {
     switched: Mutex<HashSet<NetworkAgentId>>,
     polls: LongPolls,
     presence: Arc<presence::Presence>,
+    /// 每个网络 Agent 上一条发言点到的人，`waitFor=mentioned` 用。只记在这个进程里：
+    /// 重启以后要它直接写 Matrix 用户 ID。
+    last_mentions: Mutex<HashMap<NetworkAgentId, Vec<String>>>,
 }
 
 impl NetworkGateway {
@@ -225,6 +251,7 @@ impl NetworkGateway {
             switched: Mutex::new(HashSet::new()),
             polls: LongPolls::default(),
             presence: Arc::default(),
+            last_mentions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -248,6 +275,7 @@ impl NetworkGateway {
             None
         };
         let body = chat_body(submission_id, &room, speaker.as_ref(), &draft.text)?;
+        let mentions = draft.mentions.clone();
         let request = chat_request(&session, submission_id, room.clone(), draft, body)?;
         self.agents
             .take_message_quota(session.network_agent_id)
@@ -301,6 +329,10 @@ impl NetworkGateway {
             ) => None,
             Err(failure) => return Err(publication_failure(failure)),
         };
+        self.last_mentions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(session.network_agent_id, mentions);
         Ok(NetworkAgentSentMessage {
             submission: submission_id,
             room: room.as_str().to_owned(),
@@ -376,46 +408,70 @@ impl NetworkGateway {
         }
     }
 
-    /// 取还没确认的消息；没有时最多等 `wait`，期间一有新消息就返回。
+    /// 等消息（`specs/agent-reading/waiting.md`）：按 `request` 的规则等到有事，防抖后交出去；
+    /// 等满时间就空手返回，没叫醒它的消息留在收件箱里。
     async fn wait_internal(
         &self,
         token: &str,
-        wait: Duration,
-        limit: u16,
+        request: NetworkAgentWait,
     ) -> Result<NetworkAgentMessages, NetworkGatewayFailure> {
         let session = self
             .agents
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
+        let options = self.wait_options(&session, &request)?;
+        let peek_options = WaitOptions::peek(None);
         let poll = self.polls.begin(session.network_agent_id);
         let mut waiting =
             presence::WaitAnnouncement::new(&self.presence, &self.matrix, &self.clock, &session);
-        let deadline = Instant::now() + wait.min(MAX_WAIT);
-        let limit = limit.clamp(1, MAX_PAGE);
+        let wait = request.wait.min(MAX_WAIT);
+        let deadline = Instant::now() + wait;
+        let deadline_ms = self.clock.now().value().saturating_add(millis(wait));
+        let limit = usize::from(request.limit.clamp(1, MAX_PAGE));
+        let direct_rooms = HashSet::new();
+        let context = WakeContext {
+            owner: None,
+            direct_rooms: &direct_rooms,
+        };
         // 每次取消息至少同步一次。原来收件箱里还有没确认的、或者 wait=0 时就不问 Matrix：
         // Agent 处理得慢时服务器停着不取，等它确认完，一个房间里积下的超过一次同步能带回的
         // 条数，更早的就悄悄丢了；只用 wait=0 轮询的 Agent 第一次之后再也收不到新消息。
         let mut synced = false;
+        // 等 0 秒、或者第一次取消息（带回房间里最近几条当上下文）时，有什么给什么。
+        let mut peek = wait.is_zero();
         loop {
             let page = self
                 .inbox
-                .pending(session.network_agent_id, limit)
+                .pending(
+                    session.network_agent_id,
+                    u16::try_from(INBOX_CAPACITY).unwrap_or(u16::MAX),
+                )
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
-            let remaining = deadline.saturating_duration_since(Instant::now());
             let first = page.sync_token.is_none();
-            if synced && (!page.entries.is_empty() || remaining.is_zero()) {
-                return Ok(messages(page));
-            }
-            // 只有收件箱空着、又还有时间时才等新消息；第一次同步、还有没确认的、或者没时间等时，
-            // 只把已经到了的取回来，不等。第一次同步先把房间里最近的几条拿来当上下文。
-            let block = !first && page.entries.is_empty() && !remaining.is_zero();
-            let chunk = remaining.min(SYNC_CHUNK);
+            peek |= first;
+            let now_ms = self.clock.now().value();
+            let rules = if peek { &peek_options } else { &options };
+            let (ready, recheck_at_ms) =
+                match judge(&page, rules, context, limit, now_ms, deadline_ms) {
+                    WaitDecision::Deliver(delivery) if synced => {
+                        return Ok(delivered(page, delivery));
+                    }
+                    WaitDecision::Deliver(delivery) => (Some(delivery), None),
+                    WaitDecision::Wait { recheck_at_ms } => (None, recheck_at_ms),
+                };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            // 只在没有可交的、又还有时间时才等新消息，最多等到防抖或定时看一眼到点；
+            // 第一次同步只把房间里最近的几条拿来当上下文，不等。
+            let block = !first && ready.is_none() && !remaining.is_zero();
+            let chunk = recheck_at_ms
+                .map_or(remaining, |at_ms| remaining.min(until(now_ms, at_ms)))
+                .min(SYNC_CHUNK);
             if block {
                 waiting.announce().await;
             }
-            let request = NetworkAgentSyncRequest {
+            let sync_request = NetworkAgentSyncRequest {
                 since: page.sync_token.clone(),
                 timeout_millis: if block {
                     u64::try_from(chunk.as_millis()).unwrap_or(u64::MAX)
@@ -430,55 +486,92 @@ impl NetworkGateway {
             };
             let started = Instant::now();
             let batch = tokio::select! {
-                result = self.sync(&session, &request) => match result {
-                    Ok(batch) => batch,
-                    // 收件箱里已经有消息：这次没取到新的也先把它们交出去，下次再取。
-                    Err(_) if !page.entries.is_empty() => return Ok(messages(page)),
-                    Err(failure) => return Err(failure),
+                result = self.sync(&session, &sync_request) => match (result, ready) {
+                    (Ok(batch), _) => batch,
+                    // 本来就有可交的：这次没同步成也先交出去，下次再取。
+                    (Err(_), Some(delivery)) => return Ok(delivered(page, delivery)),
+                    (Err(failure), None) => return Err(failure),
                 },
-                () = poll.superseded() => return Ok(messages(page)),
+                () = poll.superseded() => return Ok(nothing(&page, WakeReason::Superseded)),
             };
             let elapsed_ms = started.elapsed().as_millis();
-            let changes = self.changes(&session, &batch).await?;
-            let change_count = changes.len();
-            let since = page.sync_token.clone();
-            // 位置对不上说明另一次同步已经写过（例如被取代的旧长轮询），下一轮从新位置接着来。
-            let outcome = self
-                .inbox
-                .append(&NetworkAgentInboxAppend {
-                    id: session.network_agent_id,
-                    expected_sync_token: page.sync_token,
-                    next_sync_token: batch.next_batch().clone(),
-                    changes,
-                    received_at: self.clock.now(),
-                    capacity: INBOX_CAPACITY,
-                })
-                .await
-                .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+            self.store_batch(&session, page.sync_token, &sync_request, &batch, elapsed_ms)
+                .await?;
             synced = true;
-            // 网络 Agent 还不补缺口：两次同步之间一个房间来得太多时只收到最近的，先记下来。
-            if !first {
-                for room in batch.rooms().iter().filter(|room| room.timeline_limited()) {
-                    tracing::warn!(
-                        network_agent.id = %session.network_agent_id,
-                        room = ?room.room_id(),
-                        "网络 Agent 两次同步之间这个房间来的消息超过一次能带回的条数，更早的没有取到"
-                    );
-                }
-            }
-            tracing::debug!(
-                network_agent.id = %session.network_agent_id,
-                since = ?since,
-                next = ?batch.next_batch(),
-                changes = change_count,
-                outcome = ?outcome,
-                timeout_ms = request.timeout_millis,
-                elapsed_ms,
-                rooms = batch.rooms().len(),
-                timeline_events = batch.rooms().iter().map(|room| room.timeline().len()).sum::<usize>(),
-                "网络 Agent 长轮询同步了一段"
-            );
         }
+    }
+
+    /// `waitFor=mentioned` 换成上一条点到的人；没发过言、或者上一条没点人时说不清等谁。
+    fn wait_options(
+        &self,
+        session: &NetworkAgentSession,
+        request: &NetworkAgentWait,
+    ) -> Result<WaitOptions, NetworkGatewayFailure> {
+        let mut options = request.options.clone();
+        if request.wait_for_mentioned {
+            let mentioned = self
+                .last_mentions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&session.network_agent_id)
+                .cloned()
+                .unwrap_or_default();
+            if mentioned.is_empty() {
+                return Err(NetworkGatewayFailure::InvalidWait("waitFor"));
+            }
+            options.wait_for = mentioned;
+        }
+        Ok(options)
+    }
+
+    /// 把一次同步的结果写进收件箱。位置对不上说明另一次同步已经写过（例如被取代的旧长轮询），
+    /// 下一轮从新位置接着来。
+    async fn store_batch(
+        &self,
+        session: &NetworkAgentSession,
+        since: Option<MatrixSyncToken>,
+        request: &NetworkAgentSyncRequest,
+        batch: &MatrixSyncBatch,
+        elapsed_ms: u128,
+    ) -> Result<(), NetworkGatewayFailure> {
+        let first = since.is_none();
+        let changes = self.changes(session, batch).await?;
+        let change_count = changes.len();
+        let outcome = self
+            .inbox
+            .append(&NetworkAgentInboxAppend {
+                id: session.network_agent_id,
+                expected_sync_token: since.clone(),
+                next_sync_token: batch.next_batch().clone(),
+                changes,
+                received_at: self.clock.now(),
+                capacity: INBOX_CAPACITY,
+            })
+            .await
+            .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+        // 网络 Agent 还不补缺口：两次同步之间一个房间来得太多时只收到最近的，先记下来。
+        if !first {
+            for room in batch.rooms().iter().filter(|room| room.timeline_limited()) {
+                tracing::warn!(
+                    network_agent.id = %session.network_agent_id,
+                    room = ?room.room_id(),
+                    "网络 Agent 两次同步之间这个房间来的消息超过一次能带回的条数，更早的没有取到"
+                );
+            }
+        }
+        tracing::debug!(
+            network_agent.id = %session.network_agent_id,
+            since = ?since,
+            next = ?batch.next_batch(),
+            changes = change_count,
+            outcome = ?outcome,
+            timeout_ms = request.timeout_millis,
+            elapsed_ms,
+            rooms = batch.rooms().len(),
+            timeline_events = batch.rooms().iter().map(|room| room.timeline().len()).sum::<usize>(),
+            "网络 Agent 长轮询同步了一段"
+        );
+        Ok(())
     }
 
     /// 起名并进房间。凭口令的私人房间只放行了：先切到加密客户端再进；进不去就停用刚建的人物。
@@ -775,10 +868,9 @@ impl NetworkAgentMessaging for NetworkGateway {
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
-        wait: Duration,
-        limit: u16,
+        request: NetworkAgentWait,
     ) -> PortFuture<'a, Result<NetworkAgentMessages, NetworkGatewayFailure>> {
-        Box::pin(self.wait_internal(token, wait, limit))
+        Box::pin(self.wait_internal(token, request))
     }
 
     fn acknowledge<'a>(
@@ -961,18 +1053,87 @@ fn publication_failure(failure: MessagePublicationFailure) -> NetworkGatewayFail
     }
 }
 
-fn messages(page: NetworkAgentInboxPage) -> NetworkAgentMessages {
+/// 收件箱这一页按等消息的规则判断：交哪些，还是等到几点再看。交的话，下标指向这一页的条目。
+fn judge(
+    page: &NetworkAgentInboxPage,
+    rules: &WaitOptions,
+    context: WakeContext<'_>,
+    limit: usize,
+    now_ms: i64,
+    deadline_ms: i64,
+) -> WaitDecision {
+    let parsed: Vec<(usize, IpcMessagePreviewSummary)> = page
+        .entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            IpcMessagePreviewSummary::deserialize(&entry.preview)
+                .inspect_err(|error| {
+                    tracing::warn!(
+                        event = entry.event_id.as_str(),
+                        %error,
+                        "收件箱里的预览读不出来，等消息时跳过"
+                    );
+                })
+                .ok()
+                .map(|preview| (index, preview))
+        })
+        .collect();
+    let arrivals: Vec<Arrival<'_>> = parsed
+        .iter()
+        .map(|(index, preview)| Arrival {
+            preview,
+            arrived_at_ms: page.entries[*index].received_at.value(),
+        })
+        .collect();
+    match decide(&arrivals, rules, context, limit, now_ms, Some(deadline_ms)) {
+        WaitDecision::Deliver(mut delivery) => {
+            delivery.picks = delivery.picks.iter().map(|&pick| parsed[pick].0).collect();
+            WaitDecision::Deliver(delivery)
+        }
+        wait @ WaitDecision::Wait { .. } => wait,
+    }
+}
+
+fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMessages {
+    let mut previews: Vec<Option<Value>> = page
+        .entries
+        .into_iter()
+        .map(|entry| Some(entry.preview))
+        .collect();
     NetworkAgentMessages {
         // 收件箱里存的是全文。长正文只给开头要等能按 ID 取全文时一起打开
         // （specs/agent-reading/design.md 第 5 步），在那之前照旧给全文。
-        messages: page
-            .entries
-            .into_iter()
-            .map(|entry| entry.preview)
+        messages: delivery
+            .picks
+            .iter()
+            .filter_map(|&index| previews.get_mut(index).and_then(Option::take))
             .collect(),
         pending: page.pending,
         dropped: page.dropped,
+        wake: delivery.wake,
+        skipped: u64::try_from(delivery.skipped).unwrap_or(u64::MAX),
     }
+}
+
+/// 没有要交的，比如被新的等待顶掉。
+fn nothing(page: &NetworkAgentInboxPage, reason: WakeReason) -> NetworkAgentMessages {
+    NetworkAgentMessages {
+        messages: Vec::new(),
+        pending: page.pending,
+        dropped: page.dropped,
+        wake: IpcWake::empty(reason),
+        skipped: 0,
+    }
+}
+
+/// 从现在到某个时刻还有多久；已经过了就是零。
+fn until(now_ms: i64, at_ms: i64) -> Duration {
+    Duration::from_millis(u64::try_from(at_ms.saturating_sub(now_ms)).unwrap_or(0))
+}
+
+fn millis(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
 }
 
 /// 每个网络 Agent 同时只有一次长轮询：新来的登记后通知旧的，旧的立刻空手返回。

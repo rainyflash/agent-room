@@ -18,6 +18,9 @@ use agent_room_application::{
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
+use agent_room_bridge_ipc::wake::{
+    DEFAULT_SETTLE, IpcWake, WaitOptions, WaitOptionsField, WakeRule,
+};
 use agent_room_identity_adapter::NetworkSourceDigester;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
@@ -39,7 +42,8 @@ use crate::{
     error::ApiError,
     features::{authentication::no_store, devices::bearer_secret},
     network_gateway::{
-        MAX_PAGE, MAX_WAIT, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkGatewayFailure,
+        MAX_PAGE, MAX_WAIT, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkAgentWait,
+        NetworkGatewayFailure,
     },
 };
 
@@ -49,6 +53,8 @@ const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 const SCHEMA_VERSION: u8 = 1;
 /// 取消息时不说一次取几条，就取这么多。
 const DEFAULT_PAGE: u16 = 20;
+/// `waitFor` 只写这个时，等上一条点到的人。
+const WAIT_FOR_MENTIONED: &str = "mentioned";
 
 #[derive(Clone)]
 pub(crate) struct NetworkAgentHttpState {
@@ -186,6 +192,118 @@ struct MessagesQuery {
     wait: Option<u64>,
     #[serde(default)]
     limit: Option<u16>,
+    /// 什么消息叫醒你：related（默认，跟你有关的）、mentions（点了你或回复你的）、all。
+    #[serde(default)]
+    wake: Option<WakeRule>,
+    /// 这几个人里有人说话就叫醒：逗号分隔的 Matrix 用户 ID。
+    #[serde(default)]
+    from: Option<String>,
+    /// 这几个人都说过话才叫醒：逗号分隔的 Matrix 用户 ID；只写 mentioned 表示你上一条点到的人。
+    #[serde(default)]
+    wait_for: Option<String>,
+    /// 有人回复这条消息（messageId）就叫醒。
+    #[serde(default)]
+    reply_to: Option<String>,
+    /// 有事以后等对话停几秒再交：0 到 30，默认 5。
+    #[serde(default)]
+    settle: Option<u64>,
+    /// 没叫醒你的消息最多攒几分钟就交给你看一眼：1 到 1440，默认不看。
+    #[serde(default)]
+    digest: Option<u64>,
+}
+
+/// HTTP 接口和远程 MCP 收到的等消息参数（`specs/agent-reading/waiting.md`）。
+#[derive(Debug, Default)]
+struct WaitParams {
+    wait_seconds: Option<u64>,
+    limit: Option<u16>,
+    wake: Option<WakeRule>,
+    from: Vec<String>,
+    wait_for: Vec<String>,
+    reply_to: Option<String>,
+    settle_seconds: Option<u64>,
+    digest_minutes: Option<u64>,
+}
+
+impl From<MessagesQuery> for WaitParams {
+    fn from(query: MessagesQuery) -> Self {
+        Self {
+            wait_seconds: query.wait,
+            limit: query.limit,
+            wake: query.wake,
+            from: people(query.from.as_deref()),
+            wait_for: people(query.wait_for.as_deref()),
+            reply_to: query.reply_to,
+            settle_seconds: query.settle,
+            digest_minutes: query.digest,
+        }
+    }
+}
+
+impl WaitParams {
+    /// 换算成网关的等消息请求；不对时返回是哪一项，放进 `details.field`。
+    fn into_request(self) -> Result<NetworkAgentWait, &'static str> {
+        let wait = self.wait_seconds.map_or(MAX_WAIT, |seconds| {
+            Duration::from_secs(seconds).min(MAX_WAIT)
+        });
+        let limit = self.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+        let mentioned = self
+            .wait_for
+            .iter()
+            .any(|person| person == WAIT_FOR_MENTIONED);
+        if mentioned && self.wait_for.len() > 1 {
+            return Err("waitFor");
+        }
+        if self
+            .reply_to
+            .as_deref()
+            .is_some_and(|message_id| uuid::Uuid::parse_str(message_id).is_err())
+        {
+            return Err("replyTo");
+        }
+        let digest = match self.digest_minutes {
+            None => None,
+            Some(minutes) if minutes.checked_mul(60).is_some() => {
+                Some(Duration::from_mins(minutes))
+            }
+            Some(_) => return Err("digest"),
+        };
+        let options = WaitOptions {
+            wake: self.wake.unwrap_or_default(),
+            from: self.from,
+            wait_for: if mentioned { Vec::new() } else { self.wait_for },
+            reply_to: self.reply_to,
+            room_id: None,
+            settle: self
+                .settle_seconds
+                .map_or(DEFAULT_SETTLE, Duration::from_secs),
+            digest,
+        };
+        options.validate().map_err(|field| match field {
+            WaitOptionsField::Settle => "settle",
+            WaitOptionsField::Digest => "digest",
+            WaitOptionsField::From => "from",
+            WaitOptionsField::WaitFor => "waitFor",
+        })?;
+        Ok(NetworkAgentWait {
+            wait,
+            limit,
+            options,
+            wait_for_mentioned: mentioned,
+        })
+    }
+}
+
+/// 逗号分隔的人，去掉空白和空项。
+fn people(list: Option<&str>) -> Vec<String> {
+    list.map(|list| {
+        list.split(',')
+            .map(str::trim)
+            .filter(|person| !person.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 #[derive(Debug, Serialize)]
@@ -198,6 +316,10 @@ struct MessagesResponse {
     pending: u64,
     /// 收件箱满了丢掉的条数，确认之后清零。
     dropped: u64,
+    /// 为什么这时候交：reason、叫醒你的是哪几条（eventIds）、等齐时谁还没说话（missing）。
+    wake: IpcWake,
+    /// 交出去的最后一条之前没交的条数；确认到最后一条时它们也算看过。
+    skipped: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -473,7 +595,7 @@ async fn send_message(
     }
 }
 
-/// 取还没确认的消息：有就立刻返回，没有就等到来了新消息或等满 `wait` 秒。
+/// 等消息：跟它有关的消息到了、防抖之后交出去；等满 `wait` 秒就空手返回。
 async fn wait_for_messages(
     State(state): State<NetworkAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -486,25 +608,27 @@ async fn wait_for_messages(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "查询参数只有 wait（0 到 30 秒）和 limit（1 到 50 条）。",
+                "查询参数有 wait（0 到 30 秒）、limit（1 到 50 条）、wake（related、mentions、all）、from、waitFor、replyTo、settle（0 到 30 秒）和 digest（1 到 1440 分钟）。",
                 correlation_id,
             )
             .into_response(),
         );
     };
-    let wait = query.wait.map_or(MAX_WAIT, |seconds| {
-        Duration::from_secs(seconds).min(MAX_WAIT)
-    });
-    let limit = query.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+    let request = match WaitParams::from(query).into_request() {
+        Ok(request) => request,
+        Err(field) => return no_store(invalid_wait_error(field, correlation_id).into_response()),
+    };
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
-    match state.messaging.wait_for_messages(token, wait, limit).await {
+    match state.messaging.wait_for_messages(token, request).await {
         Ok(batch) => no_store(
             Json(MessagesResponse {
                 schema_version: SCHEMA_VERSION,
                 messages: batch.messages,
                 pending: batch.pending,
                 dropped: batch.dropped,
+                wake: batch.wake,
+                skipped: batch.skipped,
             })
             .into_response(),
         ),
@@ -547,6 +671,18 @@ fn gateway_failure(failure: &NetworkGatewayFailure, correlation_id: CorrelationI
     no_store(gateway_error(failure, correlation_id).into_response())
 }
 
+/// 等消息的参数不对；HTTP 接口与远程 MCP 共用。
+fn invalid_wait_error(field: &'static str, correlation_id: CorrelationId) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        "network_agent.invalid_request",
+        ErrorCategory::Validation,
+        "等消息的参数不对：from、waitFor 最多 8 个 Matrix 用户 ID；waitFor 也可以只写 mentioned（你上一条点到的人，前提是你上一条点过人）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟。details.field 指出是哪一项。",
+        correlation_id,
+    )
+    .with_detail("field", serde_json::Value::from(field))
+}
+
 /// 网关失败对应的稳定错误码；HTTP 接口与远程 MCP 共用。
 fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId) -> ApiError {
     match failure {
@@ -564,6 +700,7 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
             correlation_id,
         )
         .with_detail("field", serde_json::Value::from(*field)),
+        NetworkGatewayFailure::InvalidWait(field) => invalid_wait_error(field, correlation_id),
         NetworkGatewayFailure::RoomRequired => simple(
             StatusCode::BAD_REQUEST,
             "network_agent.room_required",

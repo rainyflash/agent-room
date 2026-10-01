@@ -346,6 +346,8 @@ pub struct NetworkAgentInboxEntry {
     pub sequence: u64,
     pub event_id: MatrixEventId,
     pub preview: Value,
+    /// 同步进收件箱的时间；等消息时按它防抖、定时看一眼。
+    pub received_at: UtcMillis,
 }
 
 #[derive(Debug, Clone, PartialEq)]

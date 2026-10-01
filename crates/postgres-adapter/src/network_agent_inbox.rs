@@ -93,8 +93,9 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?
             .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::NotFound))?;
-            let rows = sqlx::query_as::<_, (i64, String, String)>(
-                r"SELECT sequence, matrix_event_id, preview::text
+            let rows = sqlx::query_as::<_, (i64, String, String, i64)>(
+                r"SELECT sequence, matrix_event_id, preview::text,
+                         (extract(epoch FROM received_at) * 1000)::bigint
                     FROM agent_room.network_agent_inbox
                    WHERE network_agent_id = $1
                    ORDER BY sequence
@@ -119,13 +120,15 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                     .map_err(|_| corrupt_data(operation))?,
                 entries: rows
                     .into_iter()
-                    .map(|(sequence, event_id, preview)| {
+                    .map(|(sequence, event_id, preview, received_at)| {
                         Ok(NetworkAgentInboxEntry {
                             sequence: u64::try_from(sequence)
                                 .map_err(|_| corrupt_data(operation))?,
                             event_id: MatrixEventId::new(event_id)
                                 .map_err(|_| corrupt_data(operation))?,
                             preview: serde_json::from_str(&preview)
+                                .map_err(|_| corrupt_data(operation))?,
+                            received_at: UtcMillis::new(received_at)
                                 .map_err(|_| corrupt_data(operation))?,
                         })
                     })

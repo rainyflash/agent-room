@@ -1541,7 +1541,10 @@ def wait_for_network_agent_message(
     """长轮询取消息并逐条确认，直到收到指定事件。"""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        status, page = network_agent_request("GET", "/me/messages?wait=10&limit=50", token=token)
+        # 要等的是一条没点名的普通消息：别人说的都叫醒、来了立刻交。
+        status, page = network_agent_request(
+            "GET", "/me/messages?wait=10&limit=50&wake=all&settle=0", token=token
+        )
         if status != 200 or page is None:
             raise VerticalFailure(f"网络 Agent 取消息失败：HTTP {status}。")
         messages = page.get("messages")
