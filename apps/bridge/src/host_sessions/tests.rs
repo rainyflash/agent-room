@@ -134,6 +134,7 @@ impl HostSessionFactory for TestFactory {
             self.starts.fetch_add(1, Ordering::AcqRel);
             let handler = TestHandler {
                 summary: IpcSelfSummary {
+                    owner: None,
                     room_catalog_id: None,
                     agent: IpcAgentSummary {
                         agent_id: request.session_key.clone(),

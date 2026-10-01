@@ -425,6 +425,7 @@ fn self_summary(session_id: &str) -> IpcResponse {
     };
     IpcResponse::SelfSummary {
         summary: IpcSelfSummary {
+            owner: None,
             room_catalog_id: None,
             agent: IpcAgentSummary {
                 agent_id: agent_id.to_owned(),
@@ -794,6 +795,7 @@ impl BridgeToolClient for JoinBridge {
             IpcMethod::WithSession { method, .. } if matches!(*method, IpcMethod::GetSelf) => {
                 Ok(IpcResponse::SelfSummary {
                     summary: IpcSelfSummary {
+                        owner: None,
                         room_catalog_id: None,
                         agent: IpcAgentSummary {
                             agent_id: uuid::Uuid::now_v7().to_string(),

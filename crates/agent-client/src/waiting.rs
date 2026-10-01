@@ -81,6 +81,10 @@ pub struct InboxWaiter {
     clock: WaitClock,
     /// 调用方自己的叫醒判断（后台回复）；没有就按 `wake` 规则。
     wakes: Option<WakeCheck>,
+    /// 开始等时向 Bridge 问一次主人是谁：主人说话总能叫醒它。
+    lookup_owner: bool,
+    /// 主人的 Matrix 用户 ID；不知道时没有。
+    owner: Option<String>,
 }
 
 type WakeCheck = Box<dyn Fn(&IpcMessagePreviewSummary) -> bool + Send + Sync>;
@@ -107,7 +111,16 @@ impl InboxWaiter {
             fetched_once: false,
             clock: WaitClock::start(),
             wakes: None,
+            lookup_owner: false,
+            owner: None,
         }
+    }
+
+    /// 开始等时向 Bridge 问一次主人是谁，主人说话总能叫醒它（MCP 和命令行用）。问不到就当没有主人。
+    #[must_use]
+    pub const fn with_owner_lookup(mut self) -> Self {
+        self.lookup_owner = true;
+        self
     }
 
     /// 哪条叫醒它由调用方判断，防抖、定时看一眼和交哪些照旧（后台回复用）。
@@ -135,6 +148,7 @@ impl InboxWaiter {
         if wait == MessageWait::For(Duration::ZERO) {
             return self.peek(backend).await;
         }
+        self.find_owner(backend).await;
         let started = Instant::now();
         let deadline = match wait {
             MessageWait::UntilMessage => {
@@ -369,7 +383,7 @@ impl InboxWaiter {
             &arrivals,
             &self.options,
             WakeContext {
-                owner: None,
+                owner: self.owner.as_deref(),
                 direct_rooms: &direct_rooms,
             },
             self.limit,
@@ -435,6 +449,20 @@ impl InboxWaiter {
         }
         self.options.wait_for = people;
         Ok(())
+    }
+
+    /// 问一次主人是谁；问不到（旧版 Bridge、还没授权）就当没有主人，照样等。
+    async fn find_owner(&mut self, backend: &dyn BridgeToolClient) {
+        if !std::mem::take(&mut self.lookup_owner) {
+            return;
+        }
+        let method = IpcMethod::WithSession {
+            session_id: self.session_id.clone(),
+            method: Box::new(IpcMethod::GetSelf),
+        };
+        if let Ok(IpcResponse::SelfSummary { summary }) = backend.invoke(method).await {
+            self.owner = summary.owner.map(|owner| owner.matrix_user_id);
+        }
     }
 
     /// 等到了要交的，告诉 Bridge 不在等了；失败了也只是“等待中”晚 10 秒消失。

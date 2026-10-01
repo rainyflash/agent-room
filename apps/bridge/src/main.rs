@@ -3,6 +3,7 @@ mod config;
 mod host_sessions;
 mod ipc;
 mod logging;
+mod owner_record;
 mod runtime;
 mod runtime_files;
 mod secure_storage;

@@ -1,9 +1,9 @@
 use std::{sync::Mutex, time::Duration};
 
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcConversationMessage,
+    IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcMethod, IpcResponse,
+    IpcMethod, IpcOwnerSummary, IpcResponse, IpcSelfSummary,
     wake::{WaitOptions, WaitRules, WakeReason},
 };
 use tokio::time::Instant;
@@ -88,6 +88,8 @@ struct Room {
     latency: Duration,
     /// 认不认挂着等（`waitMs`）：不认的 Bridge 立刻空手返回。
     honors_wait: bool,
+    /// `GetSelf` 回答的主人。
+    owner: Option<String>,
     calls: Mutex<Vec<(String, bool)>>,
 }
 
@@ -102,6 +104,7 @@ impl Room {
             redactions: Vec::new(),
             latency: Duration::ZERO,
             honors_wait: true,
+            owner: None,
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -196,6 +199,26 @@ impl BridgeToolClient for Room {
                     .push(("list_previews".to_owned(), false));
                 self.page(&request, true)
             }
+            IpcMethod::GetSelf => IpcResponse::SelfSummary {
+                summary: IpcSelfSummary {
+                    owner: self.owner.clone().map(|matrix_user_id| IpcOwnerSummary {
+                        principal_id: "owner".to_owned(),
+                        matrix_user_id,
+                    }),
+                    room_catalog_id: None,
+                    agent: IpcAgentSummary {
+                        agent_id: "agent".to_owned(),
+                        display_name: "Scout".to_owned(),
+                        matrix_user_id: ME.to_owned(),
+                        avatar_url: None,
+                    },
+                    instance_id: "instance".to_owned(),
+                    matrix_device_id: "DEVICE".to_owned(),
+                    room_id: "!lobby:room.test".to_owned(),
+                    connection_state: IpcBridgeState::Ready,
+                    granted_capabilities: Vec::new(),
+                },
+            },
             other => panic!("没想到会调 {}", other.name()),
         };
         let latency = self.latency;
@@ -469,4 +492,48 @@ async fn bridge_不认挂着等时退回每秒问一次_不空转() {
         (10..=40).contains(&waits),
         "大约每秒问一次，问了 {waits} 次"
     );
+}
+
+const OWNER: &str = "@owner:room.test";
+
+#[tokio::test(start_paused = true)]
+async fn 主人说话总能叫醒它_点了别人也算() {
+    let mut room = Room::new(vec![(1_000, preview(OWNER, true, "Ada 你来", &[ADA]))]);
+    room.owner = Some(OWNER.to_owned());
+    let batch = waiter(WaitRules::default())
+        .with_owner_lookup()
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["Ada 你来"]);
+    assert_eq!(batch.wake.reason, WakeReason::Messages);
+
+    // 不问主人时，点了别人的不叫醒它。
+    let room = Room::new(vec![(1_000, preview(OWNER, true, "Ada 你来", &[ADA]))]);
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert!(batch.previews.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 只等某人时主人说话照样叫得醒() {
+    let mut room = Room::new(vec![(1_000, preview(OWNER, true, "先停一下", &[]))]);
+    room.owner = Some(OWNER.to_owned());
+    let rules = WaitRules {
+        options: WaitOptions {
+            wait_for: vec![ADA.to_owned()],
+            ..WaitOptions::default()
+        },
+        wait_for_mentioned: false,
+    };
+    let batch = waiter(rules)
+        .with_owner_lookup()
+        .next(&room, MessageWait::UntilMessage)
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["先停一下"]);
+    assert_eq!(batch.wake.reason, WakeReason::Messages);
+    assert_eq!(batch.wake.missing, [ADA], "Ada 还没回");
 }

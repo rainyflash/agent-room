@@ -128,6 +128,8 @@ use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
 };
 
+/// 主人记录文件：数据目录下，只有账号标识，不是凭据。
+const OWNER_RECORD_FILE: &str = "owner.json";
 const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
 mod connectivity;
 mod host_sessions;
@@ -539,12 +541,14 @@ impl Drop for TargetedHandoffWorker {
 
 struct BridgeAgentRuntimeState {
     snapshot: watch::Sender<Option<BridgeAgentRuntimeSnapshot>>,
+    /// 主人记录：每次发布快照时读一次，换了主人也能跟上。
+    owner: Option<Arc<dyn agent_room_bridge_core::ports::BridgeOwnerRecord>>,
 }
 
 impl BridgeAgentRuntimeState {
-    fn new() -> Self {
+    fn new(owner: Option<Arc<dyn agent_room_bridge_core::ports::BridgeOwnerRecord>>) -> Self {
         let (snapshot, _receiver) = watch::channel(None);
-        Self { snapshot }
+        Self { snapshot, owner }
     }
 
     fn publish(&self, online: &AgentOnlineSession) {
@@ -569,7 +573,8 @@ impl BridgeAgentRuntimeState {
             .with_handoff_delivery(online.handoff_delivery.clone())
             .with_handoffs(online.handoffs.clone())
             .with_targeted_handoffs(online.targeted_handoffs.clone())
-            .with_presence(online.presence_projections.clone()),
+            .with_presence(online.presence_projections.clone())
+            .with_owner(self.owner.as_ref().and_then(|record| record.owner())),
         ));
     }
 
@@ -668,17 +673,24 @@ async fn initialize_device_session(
         domain_duration(config.reconnect_maximum_delay)?,
     )
     .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?;
-    let session_service = Arc::new(BridgeSessionService::new(
-        BridgeSessionDependencies {
-            signing_identities: signing_identities.clone(),
-            control_plane: control_plane.clone(),
-            credentials: credentials.clone(),
-            secrets: secrets.clone(),
-            clock: clock.clone(),
-            refresh_attempts: Arc::new(SystemDeviceRefreshAttempts),
-        },
-        BridgeSessionPolicy::new(refresh_lead_time),
-    ));
+    // 主人（授权这台电脑的账号）存成一个小文件，重启以后不用等下一次刷新就认得。
+    let owner_record: Arc<dyn agent_room_bridge_core::ports::BridgeOwnerRecord> = Arc::new(
+        crate::owner_record::FileOwnerRecord::open(config.data_root.join(OWNER_RECORD_FILE)),
+    );
+    let session_service = Arc::new(
+        BridgeSessionService::new(
+            BridgeSessionDependencies {
+                signing_identities: signing_identities.clone(),
+                control_plane: control_plane.clone(),
+                credentials: credentials.clone(),
+                secrets: secrets.clone(),
+                clock: clock.clone(),
+                refresh_attempts: Arc::new(SystemDeviceRefreshAttempts),
+            },
+            BridgeSessionPolicy::new(refresh_lead_time),
+        )
+        .with_owner_record(owner_record.clone()),
+    );
     if config.reset_device_session {
         // 桌面端「重新授权这台电脑」：实例锁已在调用方持有，不会与另一个 Bridge 抢写凭据。
         session_service
@@ -694,7 +706,8 @@ async fn initialize_device_session(
         control_plane,
         credentials,
         secrets,
-    });
+    })
+    .with_owner_record(owner_record);
     let initial_session = establish_initial_session(
         config,
         &session_service,
@@ -793,9 +806,10 @@ async fn compose_agent_session_runtime(
         target.agent_id,
     )
     .await?;
+    let owner = device_session.owner_record();
     let handoffs =
         compose_agent_handoff_services(&http, device_session, &message_services, handoff_stores)?;
-    let state = Arc::new(BridgeAgentRuntimeState::new());
+    let state = Arc::new(BridgeAgentRuntimeState::new(owner));
     let lobby_config = AgentLobbySessionConfig::new(
         target.lobby_catalog_id,
         config.lobby_language.clone(),

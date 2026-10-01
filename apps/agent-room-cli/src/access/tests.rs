@@ -29,6 +29,7 @@ impl Bridge {
     fn new() -> Self {
         Self {
             summary: Mutex::new(IpcSelfSummary {
+                owner: None,
                 room_catalog_id: Some(uuid::Uuid::now_v7().to_string()),
                 agent: IpcAgentSummary {
                     agent_id: uuid::Uuid::now_v7().to_string(),

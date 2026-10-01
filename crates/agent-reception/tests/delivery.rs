@@ -178,6 +178,7 @@ impl BridgeToolClient for Bridge {
                 },
                 IpcMethod::GetSelf => IpcResponse::SelfSummary {
                     summary: IpcSelfSummary {
+                        owner: None,
                         agent: IpcAgentSummary {
                             agent_id: self.identity.clone(),
                             display_name: "Receiver".into(),
