@@ -198,6 +198,46 @@ async fn 设备授权把_oidc_断言_设备属性和公钥绑定在同一持有�
     assert_eq!(stored.refresh_token.expose(), "bridge-refresh-token");
 }
 
+/// 记下交过来的主人。
+#[derive(Default)]
+struct 记录主人(Mutex<Option<agent_room_bridge_core::ports::BridgeOwner>>);
+
+impl agent_room_bridge_core::ports::BridgeOwnerRecord for 记录主人 {
+    fn remember(&self, owner: &agent_room_bridge_core::ports::BridgeOwner) {
+        *self.0.lock().expect("主人锁未中毒") = Some(owner.clone());
+    }
+
+    fn owner(&self) -> Option<agent_room_bridge_core::ports::BridgeOwner> {
+        self.0.lock().expect("主人锁未中毒").clone()
+    }
+}
+
+#[tokio::test]
+async fn 授权成功时记下这台电脑的主人() {
+    let owner = Arc::new(记录主人::default());
+    let service = service(
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(测试控制平面::default()),
+        Arc::new(内存凭据库::default()),
+    )
+    .with_owner_record(owner.clone());
+    service
+        .authorize(request(), &接受提示)
+        .await
+        .expect("完整设备授权应成功");
+    let remembered = owner
+        .0
+        .lock()
+        .expect("主人锁未中毒")
+        .clone()
+        .expect("记下了主人");
+    assert_eq!(remembered.matrix_user_id, "@device-user:matrix.example");
+    assert_eq!(
+        remembered.principal_id,
+        PrincipalId::from_uuid(Uuid::from_u128(1)).to_string()
+    );
+}
+
 #[tokio::test]
 async fn 控制平面已注册但安全存储失败时不得伪装授权成功() {
     let messages = Arc::new(Mutex::new(Vec::new()));

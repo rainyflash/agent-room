@@ -173,3 +173,17 @@ pub trait StatusEventIdentifierFactory: Send + Sync {
     fn event_id(&self) -> uuid::Uuid;
     fn correlation_id(&self) -> uuid::Uuid;
 }
+
+/// 这台电脑上 Bridge 的主人：授权这台设备的账号。等消息时主人说话总能叫醒 Agent
+/// （`specs/agent-reading/waiting.md`）。只有账号标识，不是凭据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeOwner {
+    pub principal_id: String,
+    pub matrix_user_id: String,
+}
+
+/// 记下主人是谁。授权或刷新设备时交过来；记不下来只是少了“主人说话总能叫醒”，不挡授权。
+pub trait BridgeOwnerRecord: Send + Sync {
+    fn remember(&self, owner: &BridgeOwner);
+    fn owner(&self) -> Option<BridgeOwner>;
+}

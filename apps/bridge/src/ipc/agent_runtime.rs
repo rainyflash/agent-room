@@ -43,9 +43,10 @@ use agent_room_bridge_ipc::{
     IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus,
     IpcHandoffSubmission, IpcHumanHandoffSource, IpcListHandoffsRequest, IpcListPreviewsRequest,
     IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
-    IpcOpenedContent, IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest,
-    IpcPublishedStatus, IpcResponse, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage,
-    IpcSubmissionState, IpcWorkStatus, limits::INLINE_TEXT_BYTES,
+    IpcOpenedContent, IpcOwnerSummary, IpcPendingTargetedHandoff, IpcPresenceSummary,
+    IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
+    limits::INLINE_TEXT_BYTES,
 };
 use agent_room_domain::{
     agent_status::AgentWorkStatus,
@@ -150,6 +151,8 @@ fn map_matrix_security_failure(
 
 #[derive(Clone)]
 pub(crate) struct BridgeAgentRuntimeSnapshot {
+    /// 这台电脑上 Bridge 的主人；不知道时没有。
+    owner: Option<agent_room_bridge_core::ports::BridgeOwner>,
     security: Option<Arc<dyn agent_room_bridge_core::matrix_security::MatrixSecurityGateway>>,
     room_authority: Option<Arc<dyn agent_room_application::ports::MatrixRoomAuthorityGateway>>,
     identity: BridgeAgentIdentity,
@@ -174,6 +177,7 @@ impl BridgeAgentRuntimeSnapshot {
         granted_capabilities: impl IntoIterator<Item = &'static str>,
     ) -> Self {
         Self {
+            owner: None,
             security: None,
             room_authority: None,
             identity,
@@ -272,6 +276,15 @@ impl BridgeAgentRuntimeSnapshot {
 
     pub(crate) fn with_status(mut self, status: Arc<AgentStatusPublicationHandle>) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    /// 主人是谁：等消息的客户端据此让主人说话总能叫醒 Agent。
+    pub(crate) fn with_owner(
+        mut self,
+        owner: Option<agent_room_bridge_core::ports::BridgeOwner>,
+    ) -> Self {
+        self.owner = owner;
         self
     }
 
@@ -494,6 +507,10 @@ impl AgentRuntimeIpcFacade {
         let runtime = self.runtime_snapshot()?;
         Ok(IpcResponse::SelfSummary {
             summary: IpcSelfSummary {
+                owner: runtime.owner.as_ref().map(|owner| IpcOwnerSummary {
+                    principal_id: owner.principal_id.clone(),
+                    matrix_user_id: owner.matrix_user_id.clone(),
+                }),
                 room_catalog_id: runtime
                     .publication
                     .as_ref()

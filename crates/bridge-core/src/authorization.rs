@@ -76,6 +76,7 @@ pub struct BridgeAuthorizationService {
     control_plane: Arc<dyn ControlPlaneDeviceGateway>,
     credentials: Arc<dyn DeviceCredentialVault>,
     secrets: Arc<dyn SecretFactory>,
+    owner: Option<Arc<dyn crate::ports::BridgeOwnerRecord>>,
 }
 
 pub struct BridgeAuthorizationDependencies {
@@ -94,7 +95,15 @@ impl BridgeAuthorizationService {
             control_plane: dependencies.control_plane,
             credentials: dependencies.credentials,
             secrets: dependencies.secrets,
+            owner: None,
         }
+    }
+
+    /// 授权成功时记下主人是谁（等消息时主人说话总能叫醒 Agent）。
+    #[must_use]
+    pub fn with_owner_record(mut self, owner: Arc<dyn crate::ports::BridgeOwnerRecord>) -> Self {
+        self.owner = Some(owner);
+        self
     }
 
     /// 完成人类设备授权、设备持有证明、控制平面注册和凭据落库。
@@ -159,6 +168,12 @@ impl BridgeAuthorizationService {
             })
             .await
             .map_err(map_control_plane_failure)?;
+        if let Some(owner) = &self.owner {
+            owner.remember(&crate::ports::BridgeOwner {
+                principal_id: credentials.device.account.principal.id().to_string(),
+                matrix_user_id: credentials.device.account.matrix_user_id.clone(),
+            });
+        }
         let stored = StoredBridgeDeviceCredentials {
             state: BridgeCredentialState::Ready,
             device_id: credentials.device.device_id,

@@ -652,6 +652,9 @@ pub enum IpcRoomMembership {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcSelfSummary {
+    /// 这台电脑上 Bridge 的主人：等消息时主人说话总能叫醒 Agent。不知道时没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<IpcOwnerSummary>,
     #[serde(default)]
     pub room_catalog_id: Option<String>,
     pub agent: IpcAgentSummary,
@@ -660,6 +663,14 @@ pub struct IpcSelfSummary {
     pub room_id: String,
     pub connection_state: IpcBridgeState,
     pub granted_capabilities: Vec<String>,
+}
+
+/// 主人：授权这台电脑的账号。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcOwnerSummary {
+    pub principal_id: String,
+    pub matrix_user_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

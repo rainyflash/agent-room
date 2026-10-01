@@ -248,7 +248,8 @@ pub(crate) fn waiter(args: &cli::ReadArgs) -> CliResult<InboxWaiter> {
         args.after.clone(),
         args.limit,
         rules,
-    ))
+    )
+    .with_owner_lookup())
 }
 
 /// 等下一批；按 Ctrl+C 停下时返回空。

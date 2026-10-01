@@ -266,7 +266,8 @@ impl AgentRoomMcpServer {
             input.after_event_id,
             input.limit,
             rules,
-        );
+        )
+        .with_owner_lookup();
         match waiter.next(self.backend.as_ref(), wait).await {
             Ok(batch) => woken_result(&batch),
             Err(failure) => failure_result(&failure),
@@ -1575,6 +1576,7 @@ mod tests {
         vec![
             Ok(IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
+                    owner: None,
                     room_catalog_id: None,
                     agent: agent(),
                     instance_id: "instance-1".to_owned(),

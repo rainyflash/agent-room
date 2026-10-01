@@ -1572,12 +1572,18 @@ mod tests {
         let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
             super::AgentRuntimeConsumer::Desktop,
             Arc::new(固定状态),
-            Arc::new(固定Agent运行时(BridgeAgentRuntimeSnapshot::new(
-                identity,
-                "DEVICE-1",
-                room_id.clone(),
-                ["self.read", "previews.read"],
-            ))),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    identity,
+                    "DEVICE-1",
+                    room_id.clone(),
+                    ["self.read", "previews.read"],
+                )
+                .with_owner(Some(agent_room_bridge_core::ports::BridgeOwner {
+                    principal_id: "01945c1e-7b5a-7c7f-8a28-2de53f56a9a7".into(),
+                    matrix_user_id: "@owner:matrix.test".into(),
+                })),
+            )),
             previews.clone(),
             空正文服务(previews.clone()),
             Arc::new(固定时钟),
@@ -1593,6 +1599,11 @@ mod tests {
         assert_eq!(summary.agent.display_name, "Codex Agent");
         assert_eq!(summary.matrix_device_id, "DEVICE-1");
         assert_eq!(summary.granted_capabilities, ["self.read", "previews.read"]);
+        assert_eq!(
+            summary.owner.map(|owner| owner.matrix_user_id).as_deref(),
+            Some("@owner:matrix.test"),
+            "等消息的客户端据此让主人说话总能叫醒 Agent"
+        );
 
         let page = handler
             .dispatch(IpcMethod::ListPreviews(

@@ -109,6 +109,7 @@ pub struct BridgeSessionService {
     policy: BridgeSessionPolicy,
     session_lock: Mutex<()>,
     refresh_outcomes: StdMutex<RefreshOutcomeLog>,
+    owner: Option<Arc<dyn crate::ports::BridgeOwnerRecord>>,
 }
 
 pub struct BridgeSessionDependencies {
@@ -158,7 +159,20 @@ impl BridgeSessionService {
             policy,
             session_lock: Mutex::new(()),
             refresh_outcomes: StdMutex::new(RefreshOutcomeLog::default()),
+            owner: None,
         }
+    }
+
+    /// 刷新设备时记下主人是谁（等消息时主人说话总能叫醒 Agent）。
+    #[must_use]
+    pub fn with_owner_record(mut self, owner: Arc<dyn crate::ports::BridgeOwnerRecord>) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
+    /// 主人记录：Agent 运行时据此告诉等消息的客户端主人是谁。
+    pub fn owner_record(&self) -> Option<Arc<dyn crate::ports::BridgeOwnerRecord>> {
+        self.owner.clone()
     }
 
     /// 返回可用的短期访问会话，必要时先完成刷新轮换。
@@ -383,6 +397,12 @@ impl BridgeSessionService {
                 "bridge.session.refresh",
                 BridgeSessionFailureKind::InvalidControlPlaneResponse,
             ));
+        }
+        if let Some(owner) = &self.owner {
+            owner.remember(&crate::ports::BridgeOwner {
+                principal_id: credentials.device.account.principal.id().to_string(),
+                matrix_user_id: credentials.device.account.matrix_user_id.clone(),
+            });
         }
         let replacement = StoredBridgeDeviceCredentials {
             state: BridgeCredentialState::Ready,

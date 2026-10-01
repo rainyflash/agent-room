@@ -241,6 +241,9 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
             other => panic!("等消息都带着会话：{other:?}"),
         })
         .collect();
+    // 先问一次主人是谁（这个假 Bridge 不认，就当没有主人）。
+    let (first, inner) = inner.split_first().unwrap();
+    assert!(matches!(first, IpcMethod::GetSelf));
     let (last, holds) = inner.split_last().unwrap();
     // 等的时候一直算在等；人说的话到了、防抖以后交出去，再告诉 Bridge 不等了。
     assert!(
