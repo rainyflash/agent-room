@@ -449,6 +449,8 @@ struct AgentOnlineSession {
     targeted_handoffs: Arc<TargetedHandoffInboxService>,
     targeted_handoff_worker: TargetedHandoffWorker,
     presence_projections: Arc<dyn PresenceProjectionRepository>,
+    /// 房间里此刻谁在打字：等消息时叫醒它的人还在打字就再等等。
+    typing: Arc<crate::typing::TypingWatch>,
     next_batch: Option<MatrixSyncToken>,
     /// 导入了别人重发的房间密钥、还没重读完的会话。
     recovered_sessions: BTreeSet<(MatrixRoomId, String)>,
@@ -574,6 +576,7 @@ impl BridgeAgentRuntimeState {
             .with_handoffs(online.handoffs.clone())
             .with_targeted_handoffs(online.targeted_handoffs.clone())
             .with_presence(online.presence_projections.clone())
+            .with_typing(online.typing.clone())
             .with_owner(self.owner.as_ref().and_then(|record| record.owner())),
         ));
     }
@@ -1111,6 +1114,7 @@ async fn establish_agent_online_once(
         targeted_handoffs,
         targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
+        typing: Arc::new(crate::typing::TypingWatch::new()),
         next_batch: stored_sync_cursor(runtime).await,
         recovered_sessions: BTreeSet::new(),
     };
@@ -1407,6 +1411,7 @@ async fn sync_agent_online(
         .sync_once(&request)
         .await
         .map_err(AgentOnlineFailure::Matrix)?;
+    online.typing.record(&batch);
     let presence = runtime
         .presence
         .process(&batch, full_state)

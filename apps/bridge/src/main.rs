@@ -7,6 +7,7 @@ mod owner_record;
 mod runtime;
 mod runtime_files;
 mod secure_storage;
+mod typing;
 
 use std::process::ExitCode;
 

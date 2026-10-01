@@ -184,6 +184,7 @@ async fn serve(
                     result: IpcResponse::MessagePreviews {
                         previews,
                         next_cursor: None,
+                        typing: Vec::new(),
                     },
                 },
             )

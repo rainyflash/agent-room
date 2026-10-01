@@ -165,6 +165,8 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     handoffs: Option<Arc<dyn AgentHandoffRuntime>>,
     targeted_handoffs: Option<Arc<dyn AgentTargetedHandoffRuntime>>,
     presence: Option<Arc<dyn PresenceProjectionRepository>>,
+    /// 房间里此刻谁在打字；同步还没开始时没有。
+    typing: Option<Arc<crate::typing::TypingWatch>>,
     room_encryption: MatrixRoomEncryption,
     message_content_protection: Option<Arc<MessageBodyProtectionService>>,
 }
@@ -193,6 +195,7 @@ impl BridgeAgentRuntimeSnapshot {
             handoffs: None,
             targeted_handoffs: None,
             presence: None,
+            typing: None,
             room_encryption: MatrixRoomEncryption::Unencrypted,
             message_content_protection: None,
         }
@@ -336,6 +339,12 @@ impl BridgeAgentRuntimeSnapshot {
 
     pub(crate) fn with_presence(mut self, presence: Arc<dyn PresenceProjectionRepository>) -> Self {
         self.presence = Some(presence);
+        self
+    }
+
+    /// 房间里此刻谁在打字：等消息时交给客户端，打字的人变了让挂着等的请求马上返回。
+    pub(crate) fn with_typing(mut self, typing: Arc<crate::typing::TypingWatch>) -> Self {
+        self.typing = Some(typing);
         self
     }
 }
@@ -615,8 +624,16 @@ impl AgentRuntimeIpcFacade {
             .status
             .as_ref()
             .filter(|_| self.consumer == AgentRuntimeConsumer::HostSession);
+        // 等消息时打字的人变了也马上返回，客户端好重新判断要不要再等等。
+        let typing = runtime.typing.as_ref().filter(|_| waiting);
         let page = self
-            .page_when_ready(&query, block, status, &room_id)
+            .page_when_ready(
+                &query,
+                block,
+                status,
+                &room_id,
+                typing.map(|typing| typing.subscribe()),
+            )
             .await?;
         let replied = self.replied_messages(&room_id, page.previews()).await;
         let viewer = PreviewViewer {
@@ -632,6 +649,7 @@ impl AgentRuntimeIpcFacade {
                 preview_for(preview, viewer, target, PreviewText::Full)
             }),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
+            typing.map_or_else(Vec::new, |typing| typing.now(room_id.as_str())),
         )?;
         // The desktop reads the same projection, but only the host can attest to receiving it.
         if self.consumer == AgentRuntimeConsumer::HostSession
@@ -652,12 +670,14 @@ impl AgentRuntimeIpcFacade {
 
     /// 等消息的客户端说了最多挂多久：没有新消息就在这里等，每 250 毫秒看一眼本地消息库，来了
     /// 立刻交，到点空手返回。省得客户端每秒新开一条连接来问。挂着的时候照样算在等。
+    /// 打字的人变了也空手返回，客户端好重新判断。
     async fn page_when_ready(
         &self,
         query: &MessagePreviewQuery,
         block: Option<Duration>,
         status: Option<&Arc<AgentStatusPublicationHandle>>,
         room_id: &MatrixRoomId,
+        mut typing: Option<tokio::sync::watch::Receiver<u64>>,
     ) -> Result<MessagePreviewPage, BridgeIpcDispatchFailure> {
         let deadline = block.map(|wait| tokio::time::Instant::now() + wait);
         let mut noted: Option<tokio::time::Instant> = None;
@@ -686,7 +706,20 @@ impl AgentRuntimeIpcFacade {
                     tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
                 }
             }
-            tokio::time::sleep_until(deadline.min(now + INBOX_BLOCK_POLL)).await;
+            let next_look = tokio::time::sleep_until(deadline.min(now + INBOX_BLOCK_POLL));
+            match &mut typing {
+                Some(typing) => {
+                    tokio::select! {
+                        () = next_look => {}
+                        changed = typing.changed() => {
+                            if changed.is_ok() {
+                                return Ok(page);
+                            }
+                        }
+                    }
+                }
+                None => next_look.await,
+            }
         }
     }
 
@@ -2123,6 +2156,7 @@ const fn invalid_request(code: &'static str) -> BridgeIpcDispatchFailure {
 fn bounded_preview_response(
     candidates: impl IntoIterator<Item = IpcMessagePreviewSummary>,
     mut next_cursor: Option<String>,
+    typing: Vec<agent_room_bridge_ipc::wake::IpcTyping>,
 ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
     let mut previews: Vec<IpcMessagePreviewSummary> = Vec::new();
     let mut bytes = 0;
@@ -2144,6 +2178,7 @@ fn bounded_preview_response(
     Ok(IpcResponse::MessagePreviews {
         previews,
         next_cursor,
+        typing,
     })
 }
 
@@ -2220,11 +2255,13 @@ mod conversation_tests {
                 ..candidate.clone()
             }),
             None,
+            Vec::new(),
         )
         .expect("自动分页");
         let IpcResponse::MessagePreviews {
             previews,
             next_cursor,
+            ..
         } = &response
         else {
             panic!("必须返回预览");

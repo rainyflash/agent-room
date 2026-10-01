@@ -1622,7 +1622,8 @@ mod tests {
             page,
             IpcResponse::MessagePreviews {
                 previews,
-                next_cursor: None
+                next_cursor: None,
+                ..
             } if previews.is_empty()
         ));
         let queries = previews.0.lock().expect("查询记录锁可用");
@@ -1976,6 +1977,97 @@ mod tests {
             .await
             .expect("有消息就交");
         assert_eq!(started.elapsed(), Duration::ZERO, "来了就交，不等到点");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 等消息时打字的人变了就马上返回_回应里带上谁在打字() {
+        use agent_room_application::ports::{
+            MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixUserId,
+        };
+        let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
+        let previews = Arc::new(记录预览查询::default());
+        let typing = Arc::new(crate::typing::TypingWatch::new());
+        let handler = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::HostSession,
+            Arc::new(固定状态),
+            Arc::new(固定Agent运行时(
+                BridgeAgentRuntimeSnapshot::new(
+                    测试_agent_身份(),
+                    "DEVICE-1",
+                    room_id.clone(),
+                    ["previews.read"],
+                )
+                .with_typing(typing.clone()),
+            )),
+            previews.clone(),
+            空正文服务(previews),
+            Arc::new(固定时钟),
+        );
+        let request = agent_room_bridge_ipc::IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting: false,
+            wait_ms: Some(8_000),
+        };
+        let ada_typing = MatrixSyncBatch::new(
+            MatrixSyncToken::new("s2").expect("同步位置有效"),
+            vec![
+                MatrixRoomSync::new(
+                    room_id.clone(),
+                    MatrixRoomSyncKind::Joined,
+                    false,
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .with_typing(vec![
+                    MatrixUserId::new("@ada:matrix.test").expect("用户标识有效"),
+                ]),
+            ],
+        );
+
+        let started = tokio::time::Instant::now();
+        let (response, ()) = tokio::join!(
+            handler.dispatch(IpcMethod::WaitInbox(request.clone())),
+            async {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                typing.record(&ada_typing);
+            }
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(1), "不等到 8 秒");
+        let IpcResponse::MessagePreviews {
+            previews: page,
+            typing: typists,
+            ..
+        } = response.expect("空手返回")
+        else {
+            panic!("必须返回预览");
+        };
+        assert!(page.is_empty());
+        assert_eq!(
+            typists,
+            [agent_room_bridge_ipc::wake::IpcTyping {
+                room_id: room_id.as_str().to_owned(),
+                user_ids: vec!["@ada:matrix.test".to_owned()],
+            }]
+        );
+
+        // 只读一眼（不是等消息）时不带。
+        let IpcResponse::MessagePreviews { typing, .. } = handler
+            .dispatch(IpcMethod::ReadInbox(
+                agent_room_bridge_ipc::IpcListPreviewsRequest {
+                    wait_ms: None,
+                    ..request
+                },
+            ))
+            .await
+            .expect("可以读")
+        else {
+            panic!("必须返回预览");
+        };
+        assert!(typing.is_empty());
     }
 
     #[tokio::test]
