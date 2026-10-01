@@ -283,31 +283,26 @@ pub(crate) fn scoped(session_id: String, method: IpcMethod) -> IpcMethod {
     }
 }
 
-fn chat_request(
-    session: &str,
-    room: &str,
-    body: String,
-    submission_id: String,
-    reply_to: Option<String>,
-    mentions: Vec<String>,
-    automation_grant_id: Option<String>,
-) -> IpcMethod {
+fn chat_request(args: cli::SendArgs, body: String) -> CliResult<IpcMethod> {
     use agent_room_bridge_ipc::{
         IpcMessageProvenance, IpcMessageSensitivity, IpcSendMessageRequest,
     };
-    let provenance = if automation_grant_id.is_some() {
+    let provenance = if args.automation_grant.is_some() {
         IpcMessageProvenance::AutonomousAgent
     } else {
         IpcMessageProvenance::HumanConfirmedAgent
     };
-    scoped(
-        session.into(),
+    let session = required(args.session, "cli.session_required")?;
+    let room = required(args.room, "cli.room_required")?;
+    Ok(scoped(
+        session,
         IpcMethod::SendMessage(IpcSendMessageRequest {
             chat: true,
-            mentions,
-            submission_id: Some(submission_id),
-            automation_grant_id,
-            room_id: room.into(),
+            mentions: args.mention,
+            mentions_everyone: args.mention_everyone,
+            submission_id: Some(args.submission_id),
+            automation_grant_id: args.automation_grant,
+            room_id: room,
             title: body.chars().take(120).collect(),
             summary: body.chars().take(280).collect(),
             body,
@@ -316,9 +311,9 @@ fn chat_request(
             sensitivity: IpcMessageSensitivity::Normal,
             risk_flags: vec![],
             provenance,
-            reply_to_message_id: reply_to,
+            reply_to_message_id: args.reply_to,
         }),
-    )
+    ))
 }
 
 async fn listen(backend: &dyn BridgeToolClient, args: cli::ReadArgs) -> CliResult<()> {
@@ -340,7 +335,7 @@ async fn listen(backend: &dyn BridgeToolClient, args: cli::ReadArgs) -> CliResul
     }
 }
 
-async fn send(backend: &dyn BridgeToolClient, args: cli::SendArgs) -> CliResult<()> {
+async fn send(backend: &dyn BridgeToolClient, mut args: cli::SendArgs) -> CliResult<()> {
     let body = if args.stdin {
         let mut body = String::new();
         std::io::stdin()
@@ -353,17 +348,10 @@ async fn send(backend: &dyn BridgeToolClient, args: cli::SendArgs) -> CliResult<
         body
     } else {
         args.text
+            .take()
             .ok_or_else(|| CliFailure::validation("cli.text_required"))?
     };
-    let request = chat_request(
-        &required(args.session, "cli.session_required")?,
-        &required(args.room, "cli.room_required")?,
-        body,
-        args.submission_id,
-        args.reply_to,
-        args.mention,
-        args.automation_grant,
-    );
+    let request = chat_request(args, body)?;
     success(call(backend, request).await?)
 }
 

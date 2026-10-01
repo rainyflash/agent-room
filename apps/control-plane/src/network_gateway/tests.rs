@@ -2205,6 +2205,7 @@ fn draft(text: &str) -> NetworkAgentMessageDraft {
         text: text.to_owned(),
         reply_to: None,
         mentions: Vec::new(),
+        mentions_everyone: false,
         submission_id: None,
     }
 }
@@ -2461,6 +2462,14 @@ async fn 内容不合规时说明是哪一项_限流时什么都不发() {
             "mentions",
         ),
         (
+            // 公开大厅不加密，@所有人 发不出去，也不扣发言次数。
+            NetworkAgentMessageDraft {
+                mentions_everyone: true,
+                ..draft("大家好")
+            },
+            "mentionsEveryone",
+        ),
+        (
             NetworkAgentMessageDraft {
                 reply_to: Some("not-a-uuid".to_owned()),
                 ..draft("回复谁？")
@@ -2486,6 +2495,11 @@ async fn 内容不合规时说明是哪一项_限流时什么都不发() {
             "{field}"
         );
     }
+    assert_eq!(
+        *harness.agents.quota_taken.lock().unwrap(),
+        0,
+        "不合规的不扣发言次数"
+    );
 
     *harness.agents.quota.lock().unwrap() = Some(NetworkAgentFailure::rate_limited(
         UtcMillis::new(1_758_600_060_000).unwrap(),
@@ -2881,6 +2895,40 @@ async fn 进过加密房间的_agent_在加密房间里由加密客户端发言_
     );
     assert_ne!(uploads[0].1, "只说给房间里的人".as_bytes(), "存的是密文");
     assert_eq!(*harness.agents.quota_taken.lock().unwrap(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 所有人只能在加密房间里发_公开大厅里拒绝且不扣次数() {
+    let harness = harness();
+    *harness.agents.encrypted_since.lock().unwrap() = Some(UtcMillis::new(1).unwrap());
+    let everyone = NetworkAgentMessageDraft {
+        mentions_everyone: true,
+        ..draft("大家看一下")
+    };
+
+    harness
+        .gateway
+        .send_message(TOKEN, everyone.clone())
+        .await
+        .expect("私人房间里能 @所有人");
+    let events = harness.encrypted.client.sent.lock().unwrap().clone();
+    assert_eq!(events[0].1.content()["preview"]["mentionsEveryone"], true);
+
+    *harness.encrypted.client.encryption.lock().unwrap() = MatrixRoomEncryption::Unencrypted;
+    assert_eq!(
+        harness
+            .gateway
+            .send_message(TOKEN, everyone)
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::InvalidMessage("mentionsEveryone")
+    );
+    assert_eq!(harness.encrypted.client.sent.lock().unwrap().len(), 1);
+    assert_eq!(
+        *harness.agents.quota_taken.lock().unwrap(),
+        1,
+        "拒绝的不扣次数"
+    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -109,9 +109,12 @@ export function ConversationMessage({
                   : t('conversation.referenced')}
               </blockquote>
             )}
-            {chat?.mentions.length ? (
+            {chat?.mentions.length || message.preview?.mentionsEveryone === true ? (
               <div className="conversation-message__mentions">
-                {chat.mentions.map((id) => (
+                {message.preview?.mentionsEveryone === true ? (
+                  <span>{t('conversation.everyoneChip')}</span>
+                ) : null}
+                {chat?.mentions.map((id) => (
                   <span key={id} title={id}>
                     @{names.get(id) ?? id}
                   </span>

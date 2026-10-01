@@ -23,6 +23,8 @@ type ComposerSnapshot = {
   readonly publication: Publication;
   readonly text: string;
   readonly mentions: readonly string[];
+  /** @所有人：只在私人房间的 @ 菜单里给。 */
+  readonly mentionsEveryone: boolean;
   readonly reply: ConversationReply | null;
   readonly draftPersistence: 'saved' | 'unavailable' | 'disabled';
 };
@@ -116,6 +118,7 @@ class ConversationSessionStore {
       publication: this.#actor.getSnapshot(),
       text: draft?.text ?? '',
       mentions: draft?.mentions ?? [],
+      mentionsEveryone: draft?.mentionsEveryone === true,
       reply: draft?.reply ?? null,
       draftPersistence: saved === undefined ? 'disabled' : saved.ok ? 'saved' : 'unavailable',
     });
@@ -135,6 +138,7 @@ class ConversationSessionStore {
             ? {
                 text: '',
                 mentions: [],
+                mentionsEveryone: false,
                 reply: null,
                 attachment: { kind: 'none' as const },
                 attachmentFailure: null,
@@ -170,7 +174,7 @@ class ConversationSessionStore {
     ) {
       const submissionId = this.#restoring;
       this.#restoring = null;
-      const { text, mentions, reply } = this.#snapshot;
+      const { text, mentions, mentionsEveryone, reply } = this.#snapshot;
       this.#actor.send({
         type: 'RESTORE',
         request: {
@@ -179,6 +183,7 @@ class ConversationSessionStore {
             mentions,
             reply === null ? undefined : replyRelation(reply),
             this.#snapshot.attachment.kind === 'ready' ? this.#snapshot.attachment.file : undefined,
+            mentionsEveryone,
           ),
           roomId: this.#roomId,
           submissionId,
@@ -201,6 +206,7 @@ class ConversationSessionStore {
       (this.#snapshot.draftPersistence === 'saved' ||
         (this.#snapshot.text === '' &&
           this.#snapshot.mentions.length === 0 &&
+          !this.#snapshot.mentionsEveryone &&
           this.#snapshot.reply === null &&
           this.#snapshot.publication.context.request === null))
     );
@@ -294,6 +300,13 @@ class ConversationSessionStore {
       return;
     this.#update({ ...this.#snapshot, mentions: [...this.#snapshot.mentions, id] });
   };
+  readonly mentionEveryone = (): void => {
+    if (this.#snapshot.mentionsEveryone || !this.#prepareEdit()) return;
+    this.#update({ ...this.#snapshot, mentionsEveryone: true });
+  };
+  readonly removeMentionEveryone = (): void => {
+    if (this.#prepareEdit()) this.#update({ ...this.#snapshot, mentionsEveryone: false });
+  };
   readonly respond = (reply: RoomMessageSignal): void => {
     if (reply.roomId !== this.#roomId || reply.lifecycle !== 'active' || !this.#prepareEdit())
       return;
@@ -307,6 +320,7 @@ class ConversationSessionStore {
         },
       },
       mentions: [reply.actor.matrixUserId],
+      mentionsEveryone: false,
     });
   };
   readonly removeMention = (id: string): void => {
@@ -321,7 +335,7 @@ class ConversationSessionStore {
   };
   readonly submit = (): void => {
     if (!this.valid || !this.#prepareEdit()) return;
-    const { text, mentions, reply } = this.#snapshot;
+    const { text, mentions, mentionsEveryone, reply } = this.#snapshot;
     this.#actor.send({
       type: 'SUBMIT',
       request: {
@@ -330,6 +344,7 @@ class ConversationSessionStore {
           mentions,
           reply === null ? undefined : replyRelation(reply),
           this.#snapshot.attachment.kind === 'ready' ? this.#snapshot.attachment.file : undefined,
+          mentionsEveryone,
         ),
         roomId: this.#roomId,
         submissionId: this.#ids.next(),
@@ -376,6 +391,7 @@ class ConversationSessionStore {
           version: 1,
           text: snapshot.text,
           mentions: [...snapshot.mentions],
+          ...(snapshot.mentionsEveryone ? { mentionsEveryone: true as const } : {}),
           reply: snapshot.reply,
           pendingSubmissionId,
           ...(snapshot.attachment.kind === 'none'

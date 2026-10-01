@@ -183,6 +183,8 @@ export class HumanMessagePublisher implements MessagePublisher {
       submissionId: request.submissionId,
       summary: request.summary,
       title: request.title,
+      // 没开就不写，已经存下的提交指纹不变。
+      ...(request.mentionsEveryone === true ? { mentionsEveryone: true } : {}),
     });
     const fingerprint = await this.#bodyPreparer.prepare(canonical);
     return fingerprint.ok ? ok(fingerprint.value.digestSha256) : fingerprint;
@@ -275,6 +277,7 @@ function createRecord(
   const eventContent = Object.freeze({ ...content, fetchMode: 'on_demand' as const });
   const preview = Object.freeze({
     ...(request.conversation === undefined ? {} : { conversation: request.conversation }),
+    ...(request.mentionsEveryone === true ? { mentionsEveryone: true as const } : {}),
     contentType: request.mediaType,
     ...(request.language === undefined ? {} : { language: request.language }),
     riskFlags: Object.freeze([...request.riskFlags]),

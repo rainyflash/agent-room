@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -288,6 +288,77 @@ describe('人与 Agent 直接聊天', () => {
     });
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+    });
+  });
+
+  it('私人房间的 @ 菜单里有“所有人”，发出去带上 @所有人；公开大厅里没有这一项', async () => {
+    const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
+      Promise.resolve(
+        ok({
+          kind: 'published' as const,
+          matrixEventId: '$sent',
+          reused: false,
+          submissionId: request.submissionId,
+        }),
+      ),
+    );
+    const publisher: MessagePublisher = {
+      publish,
+      reconcile: (id) =>
+        Promise.resolve(
+          ok({
+            kind: 'published' as const,
+            matrixEventId: '$sent',
+            reused: true,
+            submissionId: id,
+          }),
+        ),
+      resolveIdentity: () =>
+        Promise.resolve(
+          ok({
+            kind: 'human',
+            displayName: 'Rainy',
+            matrixUserId: '@rainy:agent-room.test',
+            principalId: submissionId,
+            source: 'matrix_human_session',
+          }),
+        ),
+    };
+    // 同一个发送编号来源：换一个会重建输入框的状态。
+    const submissionIds = { next: () => submissionId };
+    const view = (privateRoom: boolean) => (
+      <I18nextProvider i18n={i18n}>
+        <ConversationPanel
+          messages={[]}
+          publisher={publisher}
+          roomId={roomId}
+          state="ready"
+          participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
+          submissionIds={submissionIds}
+          privateRoom={privateRoom}
+        />
+      </I18nextProvider>
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(view(false));
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
+    });
+    const menu = () => screen.getByRole('combobox', { name: 'Mention an agent' });
+    expect(within(menu()).queryByRole('option', { name: 'Everyone' })).toBeNull();
+
+    rerender(view(true));
+    await user.selectOptions(menu(), 'Everyone');
+    expect(screen.getByRole('button', { name: 'Remove @everyone' })).toBeInTheDocument();
+    expect(within(menu()).queryByRole('option', { name: 'Everyone' })).toBeNull();
+    await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Please all take a look');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(publish).toHaveBeenCalledOnce();
+    });
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      mentionsEveryone: true,
+      conversation: { text: 'Please all take a look', mentions: [] },
     });
   });
 

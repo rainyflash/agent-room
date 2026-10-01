@@ -80,6 +80,37 @@ describe('personal inbox', () => {
       projectInbox(index, messages, { ...source, isJoined: () => false }, prefs).items,
     ).toEqual([]);
   });
+  it('counts @everyone in a private room as a mention, except for the sender', () => {
+    const base = conversationFixture('everyone');
+    const everyone = conversationFixture('everyone', {
+      preview: base.preview ? { ...base.preview, mentionsEveryone: true } : null,
+    });
+    const mine = conversationFixture('mine', {
+      actor: {
+        kind: 'human',
+        displayName: 'Me',
+        matrixUserId: self,
+        principalId: 'self',
+        provenance: 'human',
+      },
+      preview: base.preview ? { ...base.preview, mentionsEveryone: true } : null,
+    });
+    const messages = {
+      read: () =>
+        ok({
+          roomId,
+          messages: [everyone, mine],
+          observedAtUnixMs: 0,
+          readOnlyFederatedEvents: [],
+        }),
+      subscribe: () => () => undefined,
+    };
+    expect(
+      projectInbox(index, messages, source, workspaceIndex(emptyWorkspace)).items.map(
+        (item) => item.kind,
+      ),
+    ).toEqual(['mention']);
+  });
   it('retains muted items in the inbox, suppresses reminders and respects synchronized read progress', () => {
     const message = conversationFixture('direct');
     const messages = {

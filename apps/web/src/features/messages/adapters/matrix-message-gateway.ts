@@ -133,6 +133,7 @@ const contentSchema = z
 const previewSchema = z
   .looseObject({
     conversation: conversationSchema.optional(),
+    mentionsEveryone: z.boolean().optional(),
     contentType: mediaTypeSchema,
     language: z
       .string()
@@ -605,7 +606,7 @@ function parsePreview(roomId: string, event: MatrixMessageTimelineEvent): Mutabl
     lifecycle: 'active',
     matrixEventId: event.eventId,
     messageId: parsed.data.id,
-    preview: toPreview(parsed.data.preview),
+    preview: toPreview(parsed.data.preview, event.endToEndEncrypted),
     ...(parsed.data.relation === undefined ? {} : { relation: parsed.data.relation }),
     roomId,
     serverTimestamp: event.serverTimestamp,
@@ -635,7 +636,9 @@ function parseRevision(roomId: string, event: MatrixMessageTimelineEvent): Parse
   return {
     ...(parsed.data.content === undefined ? {} : { content: toContent(parsed.data.content) }),
     kind: parsed.data.kind,
-    ...(parsed.data.preview === undefined ? {} : { preview: toPreview(parsed.data.preview) }),
+    ...(parsed.data.preview === undefined
+      ? {}
+      : { preview: toPreview(parsed.data.preview, event.endToEndEncrypted) }),
     sender: actorMatrixUserId(parsed.data),
     targetMessageId: parsed.data.targetMessageId,
   };
@@ -712,7 +715,8 @@ function toContent(content: z.output<typeof contentSchema>): MessageContentRefer
   });
 }
 
-function toPreview(preview: z.output<typeof previewSchema>): MessagePreview {
+/** `encrypted`：这条事件是端到端加密的。@所有人只在加密消息（私人房间和私聊）上算数。 */
+function toPreview(preview: z.output<typeof previewSchema>, encrypted: boolean): MessagePreview {
   return Object.freeze({
     ...(preview.conversation === undefined
       ? {}
@@ -725,6 +729,9 @@ function toPreview(preview: z.output<typeof previewSchema>): MessagePreview {
             mentions: Object.freeze([...preview.conversation.mentions]),
           }),
         }),
+    ...(encrypted && preview.mentionsEveryone === true && preview.conversation !== undefined
+      ? { mentionsEveryone: true as const }
+      : {}),
     contentType: preview.contentType,
     ...(preview.language === undefined ? {} : { language: preview.language }),
     riskFlags: Object.freeze([...preview.riskFlags]),

@@ -24,6 +24,24 @@ describe('MatrixSdkHumanMessageGateway', () => {
     );
   });
 
+  it('@所有人只能发到加密的房间：公开房间里在发出前拒绝', async () => {
+    const sendEvent = vi.fn().mockResolvedValue({ event_id: '$accepted' });
+    const everyone = (base: MatrixPublicationRequest): MatrixPublicationRequest => ({
+      ...base,
+      event: { ...base.event, preview: { ...base.event.preview, mentionsEveryone: true } },
+    });
+
+    const lobby = await new MatrixSdkHumanMessageGateway(source(client(sendEvent))).publish(
+      everyone(request()),
+    );
+    expect(lobby.ok).toBe(false);
+    expect(sendEvent).not.toHaveBeenCalled();
+
+    const privateRoom = await encryptedGateway(sendEvent, {}).publish(everyone(encryptedRequest()));
+    expect(privateRoom).toEqual({ ok: true, value: { matrixEventId: '$accepted' } });
+    expect(sendEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('私聊只上传密文，且无法读取加密状态时不降级', async () => {
     const base = client(vi.fn());
     const encrypted = new MatrixSdkHumanMessageGateway(

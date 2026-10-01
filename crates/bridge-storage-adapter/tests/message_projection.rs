@@ -1563,3 +1563,66 @@ async fn 记下房间名和加入时间_离开清掉_再加入重新记() {
         Some(5_000)
     );
 }
+
+#[tokio::test]
+async fn 记下_所有人_重开以后还在() {
+    let (temporary, store, _) = open_store().await;
+    let human = ProjectedMessageActor::Human {
+        principal_id: agent_room_domain::ids::PrincipalId::from_uuid(Uuid::now_v7()),
+        display_name: "小雨".to_owned(),
+        matrix_user_id: MatrixUserId::new("@rainy:matrix.test").expect("用户有效"),
+        avatar_url: None,
+    };
+    let chat = |event_id: &str, everyone: bool| {
+        let mut mutation = preview_mutation(
+            event_id,
+            MessageId::from_uuid(Uuid::now_v7()),
+            human.clone(),
+            1_000,
+            "大家看一下",
+            1,
+            Some(1_000),
+        );
+        if let MessageProjectionMutation::Preview(message) = &mut mutation {
+            message.preview = message.preview.clone().with_conversation(
+                agent_room_domain::messages::ConversationMessage::new(
+                    "大家看一下".to_owned(),
+                    Vec::new(),
+                )
+                .expect("聊天有效")
+                .with_mentions_everyone(everyone),
+            );
+        }
+        mutation
+    };
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("everyone"),
+            vec![chat("$everyone", true), chat("$plain", false)],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("投影成功");
+    drop(store);
+    let reopened = SqliteMessageTimelineRepository::open(
+        &temporary.path().join("messages.sqlite3"),
+        &MessageProjectionStorageKey::from_bytes([29; 32]),
+    )
+    .await
+    .expect("数据库可重开");
+    let query = MessagePreviewQuery::new(room_id(), None, 20).expect("查询有效");
+    let page = reopened.list_previews(&query).await.expect("读取成功");
+    let everyone = |event_id: &str| {
+        page.previews()
+            .iter()
+            .find(|message| message.event_id.as_str() == event_id)
+            .expect("消息在")
+            .preview
+            .conversation()
+            .expect("是聊天")
+            .mentions_everyone()
+    };
+    assert!(everyone("$everyone"));
+    assert!(!everyone("$plain"));
+}

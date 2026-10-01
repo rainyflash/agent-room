@@ -8,6 +8,7 @@ export function conversationDraft(
   mentions: readonly string[],
   relation?: MessageRelation,
   attachment?: ConversationAttachment,
+  mentionsEveryone = false,
 ): MessagePublicationDraft {
   text = text.trim().length === 0 && attachment !== undefined ? attachment.name : text;
   const summary = Array.from(text.trim().replace(/\s+/gu, ' ')).slice(0, 500).join('');
@@ -24,5 +25,6 @@ export function conversationDraft(
     summary,
     title: attachment?.name ?? Array.from(summary).slice(0, 120).join(''),
     ...(relation === undefined ? {} : { relation }),
+    ...(mentionsEveryone ? { mentionsEveryone: true as const } : {}),
   });
 }

@@ -751,6 +751,65 @@ async fn 回复编辑撤回都符合协议且撤回先切断正文访问() {
     );
 }
 
+#[tokio::test]
+async fn 所有人写在预览这一层_签名覆盖它_没开就不写() {
+    let fixture = 测试夹具::new();
+    let chat = |everyone: bool| {
+        let preview = MessagePreview::new(
+            MessageTitle::new("大家看一下").expect("标题有效"),
+            MessageSummary::new("大家看一下").expect("摘要有效"),
+            ContentMediaType::new("text/plain").expect("媒体类型有效"),
+            None,
+            MessageSensitivity::Normal,
+            MessageRiskFlags::new([]).expect("风险标签集合有效"),
+        )
+        .with_conversation(
+            agent_room_domain::messages::ConversationMessage::new("大家看一下".into(), Vec::new())
+                .expect("聊天有效")
+                .with_mentions_everyone(everyone),
+        );
+        SendMessageRequest::new(
+            MessageSubmissionId::from_uuid(Uuid::now_v7()),
+            room_id(),
+            preview,
+            MessageBody::new(
+                "大家看一下".as_bytes().to_vec(),
+                ContentMediaType::new("text/plain").expect("媒体类型有效"),
+                ContentEncryptionMode::ServerSide,
+                None,
+            )
+            .expect("消息正文有效"),
+            MessageProvenance::AutonomousAgent,
+            None,
+            Some(automation_grant_id()),
+        )
+        .expect("发送请求有效")
+    };
+    fixture.service.send(&chat(true)).await.expect("消息可发布");
+    fixture
+        .service
+        .send(&chat(false))
+        .await
+        .expect("消息可发布");
+
+    let events = fixture.publisher.events();
+    let everyone = events[0].1.content();
+    assert_eq!(everyone["preview"]["mentionsEveryone"], true);
+    assert!(
+        everyone["preview"]["conversation"]
+            .get("mentionsEveryone")
+            .is_none(),
+        "旧版网页严格校验 conversation，开关不能放进去"
+    );
+    assert_protocol_event(everyone);
+    assert_valid_signature(fixture.signer.as_ref(), everyone);
+    assert!(
+        events[1].1.content()["preview"]
+            .get("mentionsEveryone")
+            .is_none()
+    );
+}
+
 fn send_request(
     submission_id: MessageSubmissionId,
     summary: &str,

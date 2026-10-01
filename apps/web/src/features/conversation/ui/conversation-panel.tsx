@@ -67,6 +67,8 @@ export type ConversationPanelProps = {
   /** 找回这些消息走到了哪一步。 */
   readonly recovery?: UndecryptableRecovery;
   readonly variant?: 'room' | 'direct';
+  /** 私人房间：@ 菜单里多一项“所有人”。 */
+  readonly privateRoom?: boolean;
 };
 
 export function ConversationPanel({
@@ -87,6 +89,7 @@ export function ConversationPanel({
   undecryptable,
   recovery = 'idle',
   variant = 'room',
+  privateRoom = false,
 }: ConversationPanelProps) {
   const { t, i18n } = useTranslation();
   const runtime = useRuntimeCompatibility();
@@ -496,6 +499,7 @@ export function ConversationPanel({
         writesAllowed={writesAllowed}
         input={input}
         typing={typing}
+        allowEveryone={privateRoom && variant === 'room'}
       />
     </section>
   );

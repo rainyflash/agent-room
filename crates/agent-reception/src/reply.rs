@@ -71,6 +71,7 @@ impl HostReply {
             request: IpcSendMessageRequest {
                 chat: true,
                 mentions: vec![],
+                mentions_everyone: false,
                 submission_id: Some(record.submission_id.clone()),
                 automation_grant_id: Some(state.binding.automation_grant_id.clone()),
                 room_id: state.binding.policy.room_id.clone(),

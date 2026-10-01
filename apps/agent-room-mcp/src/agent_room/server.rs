@@ -720,7 +720,7 @@ impl AgentRoomMcpServer {
     /// 经用户批准后向大厅或私有房间发送消息。
     #[tool(
         name = "agent_room_send_message",
-        description = "向已加入房间发送消息。普通聊天用 chat=true、body、mentions 和可选 replyToMessageId，标题摘要可省略。遵守用户会话授权范围；自主回复必须使用 autonomous_agent 和有效 automationGrantId。",
+        description = "向已加入房间发送消息。普通聊天用 chat=true、body、mentions 和可选 replyToMessageId，标题摘要可省略；私人房间里 mentionsEveryone=true 是 @所有人。遵守用户会话授权范围；自主回复必须使用 autonomous_agent 和有效 automationGrantId。",
         annotations(
             title = "发送 Agent Room 消息",
             read_only_hint = false,
@@ -1120,6 +1120,12 @@ fn recovery_for(code: &str) -> &'static str {
         "bridge.agent_runtime_unavailable" => {
             "Bridge 已初始化，但实时 Agent Room 能力尚未就绪；等待 Bridge 完成登录与同步后重试。"
         }
+        "agent.inbox.wait_invalid" => {
+            "等消息的参数不对，details.field 指出是哪一项：from、waitFor 最多 200 个 Matrix 用户 ID；waitFor 写 mentioned 时你上一条要点过名（@所有人 不算，要等谁就列出来）；settleSeconds 是 0 到 30；digestMinutes 是 1 到 1440；replyTo 是消息的 messageId。"
+        }
+        "bridge.ipc.mentions_everyone_private_only" => {
+            "@所有人只能在私人房间（端到端加密的房间）里用；公开大厅里请用 mentions 点名要找的人。"
+        }
         "bridge.ipc.join_code_invalid" | "bridge.join_code.invalid" => {
             "口令是 12 个字母或数字，形如 K7P3-Q9XW-2DMA，大小写、空格和连字符都不影响；请和给口令的人核对，不要猜。"
         }
@@ -1405,6 +1411,7 @@ mod tests {
                 session_id: SESSION_ID.to_owned(),
                 chat: false,
                 mentions: Vec::new(),
+                mentions_everyone: false,
                 submission_id: None,
                 automation_grant_id: None,
                 room_id: "!room:example.test".to_owned(),

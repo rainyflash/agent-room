@@ -44,6 +44,7 @@ pub enum PreviewText {
 
 /// 交给某个 Agent 看的预览：标出它自己发的、提到它的、它加入房间之前的，附上房间名和被回复
 /// 那条的开头。`replied` 是被回复的那条；调用方找不到时传 `None`，只是少了摘录。
+/// 私人房间里的 @所有人 对除了发的人以外的每个人都算提到了它。
 pub fn preview_for(
     preview: &ProjectedMessagePreview,
     viewer: PreviewViewer<'_>,
@@ -59,6 +60,7 @@ pub fn preview_for(
         .is_some_and(|joined_at_ms| sent_at_ms(preview) < joined_at_ms);
     let replied_to_viewer = replied.is_some_and(|message| is_viewer(&message.actor, viewer));
     summary.mentions_me = replied_to_viewer
+        || (summary.mentions_everyone && !summary.from_me)
         || summary.conversation.as_ref().is_some_and(|chat| {
             chat.mentions
                 .iter()
@@ -183,6 +185,11 @@ pub fn preview_summary(preview: &ProjectedMessagePreview) -> IpcMessagePreviewSu
             .collect(),
         from_me: false,
         mentions_me: false,
+        // 收的时候已经只认加密消息上的 @所有人，这里拿到的就是算数的。
+        mentions_everyone: preview
+            .preview
+            .conversation()
+            .is_some_and(agent_room_domain::messages::ConversationMessage::mentions_everyone),
         room_name: None,
         before_join: false,
     }
@@ -435,6 +442,50 @@ mod tests {
             )
             .mentions_me
         );
+    }
+
+    #[test]
+    fn 所有人_对除了发的人以外的每个人都算提到了它() {
+        let me = agent("Scout", "@scout:matrix.test");
+        let ada = agent("Ada", "@ada:matrix.test");
+        let mut everyone = chat(&ada, "大家看一下", Vec::new(), None);
+        everyone.preview = everyone.preview.clone().with_conversation(
+            ConversationMessage::new("大家看一下".into(), Vec::new())
+                .expect("对话有效")
+                .with_mentions_everyone(true),
+        );
+
+        let mine = preview_for(
+            &everyone,
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
+        assert!(mine.mentions_me);
+        assert!(mine.mentions_everyone);
+        let json = serde_json::to_value(&mine).expect("能序列化");
+        assert_eq!(json["mentionsEveryone"], true);
+
+        let sender = preview_for(
+            &everyone,
+            viewer(&ada),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
+        assert!(sender.from_me);
+        assert!(!sender.mentions_me, "自己发的不算提到自己");
+
+        let plain = preview_for(
+            &chat(&ada, "大家好", Vec::new(), None),
+            viewer(&me),
+            PreviewRoom::default(),
+            None,
+            PreviewText::Batch,
+        );
+        let json = serde_json::to_value(&plain).expect("能序列化");
+        assert!(json.get("mentionsEveryone").is_none(), "没 @所有人 就不写");
     }
 
     #[test]

@@ -236,6 +236,9 @@ fn preview(value: &MessagePreview) -> WirePreview<'_> {
             text: chat.text(),
             mentions: chat.mentions(),
         }),
+        mentions_everyone: value
+            .conversation()
+            .is_some_and(agent_room_domain::messages::ConversationMessage::mentions_everyone),
         title: value.title().as_str(),
         summary: value.summary().as_str(),
         content_type: value.content_type().as_str(),
@@ -330,6 +333,10 @@ struct WireActor<'a> {
 struct WirePreview<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     conversation: Option<WireConversation<'a>>,
+    /// @所有人放在这一层，不放进 `conversation`：旧版网页严格校验 `conversation`，多一个字段
+    /// 整条消息会消失。没开就不写，已有消息的幂等指纹不变。
+    #[serde(skip_serializing_if = "is_false")]
+    mentions_everyone: bool,
     title: &'a str,
     summary: &'a str,
     content_type: &'a str,
@@ -456,6 +463,11 @@ struct RedactEvent<'a> {
     room_id: &'a str,
     target_message_id: Uuid,
     kind: &'static str,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde 的 skip_serializing_if 只接受引用。
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Serialize)]

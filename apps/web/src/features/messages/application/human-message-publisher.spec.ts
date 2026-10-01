@@ -315,3 +315,28 @@ it('聊天完整文本和引用写入 Matrix，切换账号后禁止恢复旧账
   expect((await publisher.reconcile(submissionId)).ok).toBe(false);
   expect(runtime.matrix.publish).toHaveBeenCalledOnce();
 });
+
+it('@所有人写在预览这一层，不放进 conversation；没开就不写', async () => {
+  const runtime = dependencies();
+  const publisher = new HumanMessagePublisher(runtime.value);
+  const chat = {
+    ...request(),
+    mediaType: 'text/plain' as const,
+    body: '大家看一下',
+    conversation: { text: '大家看一下', mentions: [] },
+  };
+  expect((await publisher.publish({ ...chat, mentionsEveryone: true }, () => undefined)).ok).toBe(
+    true,
+  );
+  const sent = runtime.matrix.publish.mock.calls[0]?.[0];
+  expect(sent?.event.preview.mentionsEveryone).toBe(true);
+  expect(sent?.event.preview.conversation).toEqual({ text: '大家看一下', mentions: [] });
+
+  const plain = dependencies();
+  expect((await new HumanMessagePublisher(plain.value).publish(chat, () => undefined)).ok).toBe(
+    true,
+  );
+  expect(plain.matrix.publish.mock.calls[0]?.[0].event.preview).not.toHaveProperty(
+    'mentionsEveryone',
+  );
+});

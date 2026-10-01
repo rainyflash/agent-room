@@ -126,6 +126,8 @@ pub(crate) struct NetworkAgentMessageDraft {
     pub(crate) reply_to: Option<String>,
     /// 提及的 Matrix 用户，最多 200 个。
     pub(crate) mentions: Vec<String>,
+    /// @所有人：只能发到私人房间（端到端加密的房间）。
+    pub(crate) mentions_everyone: bool,
     /// 幂等标识（UUIDv7）；不带就由服务器生成并返回，重试时带上。
     pub(crate) submission_id: Option<String>,
 }
@@ -278,6 +280,7 @@ impl NetworkGateway {
         } else {
             None
         };
+        everyone_allowed(draft.mentions_everyone, speaker.as_ref())?;
         let body = chat_body(submission_id, &room, speaker.as_ref(), &draft.text)?;
         let mentions = draft.mentions.clone();
         let request = chat_request(&session, submission_id, room.clone(), draft, body)?;
@@ -997,7 +1000,8 @@ fn chat_request(
     ConversationMessage::new("·".to_owned(), draft.mentions.clone())
         .map_err(|_| NetworkGatewayFailure::InvalidMessage("mentions"))?;
     let conversation = ConversationMessage::new(draft.text.clone(), draft.mentions)
-        .map_err(|_| NetworkGatewayFailure::InvalidMessage("text"))?;
+        .map_err(|_| NetworkGatewayFailure::InvalidMessage("text"))?
+        .with_mentions_everyone(draft.mentions_everyone);
     let preview = MessagePreview::new(
         MessageTitle::new(title).map_err(|_| NetworkGatewayFailure::InvalidMessage("text"))?,
         MessageSummary::new(summary).map_err(|_| NetworkGatewayFailure::InvalidMessage("text"))?,
@@ -1032,6 +1036,18 @@ fn chat_request(
         )),
     )
     .map_err(|_| NetworkGatewayFailure::InvalidMessage("text"))
+}
+
+/// @所有人只能发到私人房间（端到端加密的房间）。没进过加密房间的网络 Agent 只在公开大厅说话，
+/// 没有加密客户端替它发；进过的在公开大厅说话时房间也不加密。
+fn everyone_allowed(
+    everyone: bool,
+    speaker: Option<&(EncryptedSpeaker, MatrixRoomEncryption)>,
+) -> Result<(), NetworkGatewayFailure> {
+    if everyone && !matches!(speaker, Some((_, MatrixRoomEncryption::EndToEnd))) {
+        return Err(NetworkGatewayFailure::InvalidMessage("mentionsEveryone"));
+    }
+    Ok(())
 }
 
 fn publication_failure(failure: MessagePublicationFailure) -> NetworkGatewayFailure {

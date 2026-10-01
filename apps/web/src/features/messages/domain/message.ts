@@ -46,6 +46,8 @@ export type MessageContentReference = {
 
 export type MessagePreview = {
   readonly conversation?: ConversationMessage;
+  /** @所有人：只认端到端加密消息上的，公开大厅里有人硬发也不算。 */
+  readonly mentionsEveryone?: true;
   readonly contentType: string;
   readonly language?: string;
   readonly riskFlags: readonly string[];

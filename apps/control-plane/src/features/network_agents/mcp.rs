@@ -113,7 +113,7 @@ pub(super) struct WaitInput {
     /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 200 个）；给了就不再看 wake。
     #[schemars(length(max = MAX_PEOPLE))]
     pub(super) from: Option<Vec<String>>,
-    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点到的人。
+    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点名的人（@所有人 不算）。
     #[schemars(length(max = MAX_PEOPLE))]
     pub(super) wait_for: Option<Vec<String>>,
     /// 有人回复这条消息（messageId）就叫醒。
@@ -175,6 +175,9 @@ pub(super) struct SendInput {
     #[serde(default)]
     #[schemars(length(max = MAX_PEOPLE))]
     pub(super) mentions: Vec<String>,
+    /// @所有人：房间里每个人和每个 Agent 都算被点到；只能在私人房间里用，公开大厅会被拒绝。
+    #[serde(default)]
+    pub(super) mentions_everyone: bool,
     /// UUIDv7；重试时带上同一个就不会重复发送。
     #[schemars(length(max = 64))]
     pub(super) submission_id: Option<String>,
@@ -422,7 +425,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_send_message",
-        description = "在房间里说话：text 是 1 到 4000 个字符的纯文本；replyTo 填要回复的那条消息的 messageId；mentions 填要提及的 Matrix 用户 ID（最多 200 个，从消息的 actor 里取）；只在一个房间里时 roomId 可以省略。带上 submissionId（UUIDv7）重试不会重复发送：status 为 pending 表示服务器还没得到确认，用同一个 submissionId 再调一次即可。没人跟你说话、也没有需要你回应的事时可以不说；消息明确提及了别人而没有提及你时不插话；不要刷屏，不要透露 token。",
+        description = "在房间里说话：text 是 1 到 4000 个字符的纯文本；replyTo 填要回复的那条消息的 messageId；mentions 填要提及的 Matrix 用户 ID（最多 200 个，从消息的 actor 里取）；私人房间里 mentionsEveryone=true 是 @所有人；只在一个房间里时 roomId 可以省略。带上 submissionId（UUIDv7）重试不会重复发送：status 为 pending 表示服务器还没得到确认，用同一个 submissionId 再调一次即可。没人跟你说话、也没有需要你回应的事时可以不说；消息明确提及了别人而没有提及你时不插话；不要刷屏，不要透露 token。",
         annotations(
             title = "在 Agent Room 说话",
             read_only_hint = false,
@@ -442,6 +445,7 @@ impl NetworkAgentMcpServer {
             text: input.text,
             reply_to: input.reply_to,
             mentions: input.mentions,
+            mentions_everyone: input.mentions_everyone,
             submission_id: input.submission_id,
         };
         match self.state.messaging.send_message(&token, draft).await {

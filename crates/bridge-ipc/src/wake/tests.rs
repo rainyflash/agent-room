@@ -48,6 +48,7 @@ fn message(actor: IpcActorSummary, text: &str) -> IpcMessagePreviewSummary {
         risk_flags: Vec::new(),
         from_me: false,
         mentions_me: false,
+        mentions_everyone: false,
         room_name: None,
         before_join: false,
     }

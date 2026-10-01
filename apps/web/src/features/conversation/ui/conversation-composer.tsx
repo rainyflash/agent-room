@@ -17,6 +17,9 @@ import { useTypingNotice } from '@/features/conversation/ui/use-typing-notice';
 
 export type ConversationComposerController = ReturnType<typeof useConversationComposer>;
 
+/** @ 菜单里“所有人”这一项的值；Matrix 用户 ID 都以 @ 开头，撞不上。 */
+const everyoneOption = 'everyone';
+
 /** 字数到上限的九成才显示计数。 */
 const nearCharacterLimit = Math.floor(maximumChatCharacters * 0.9);
 
@@ -61,6 +64,7 @@ export function ConversationComposer({
   writesAllowed,
   input,
   typing,
+  allowEveryone = false,
 }: {
   readonly composer: ConversationComposerController;
   readonly roomId: string;
@@ -71,6 +75,8 @@ export function ConversationComposer({
   readonly input: RefObject<HTMLTextAreaElement | null>;
   /** 打字时告诉房间里的人；不给就不说。 */
   readonly typing?: TypingNotifier | undefined;
+  /** 私人房间里 @ 菜单多一项“所有人”。 */
+  readonly allowEveryone?: boolean;
 }) {
   const { t } = useTranslation();
   const [fileFailure, setFileFailure] = useState<AttachmentFailure | 'oneFile' | null>(null);
@@ -117,8 +123,19 @@ export function ConversationComposer({
           </button>
         </div>
       )}
-      {composer.mentions.length === 0 ? null : (
+      {composer.mentions.length === 0 && !composer.mentionsEveryone ? null : (
         <div className="conversation-panel__mentions">
+          {composer.mentionsEveryone ? (
+            <button
+              type="button"
+              disabled={!canEdit}
+              aria-label={t('conversation.removeEveryone')}
+              onClick={composer.removeMentionEveryone}
+            >
+              {t('conversation.everyoneChip')}
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
           {composer.mentions.map((id) => (
             <button
               type="button"
@@ -188,13 +205,18 @@ export function ConversationComposer({
             value=""
             disabled={!canEdit || mentionsFull(composer.mentions)}
             onChange={(event) => {
-              if (event.target.value) {
-                composer.mention(event.target.value);
+              const value = event.target.value;
+              if (value) {
+                if (value === everyoneOption) composer.mentionEveryone();
+                else composer.mention(value);
                 input.current?.focus();
               }
             }}
           >
             <option value="">{t('conversation.mention')}</option>
+            {allowEveryone && !composer.mentionsEveryone ? (
+              <option value={everyoneOption}>{t('conversation.mentionEveryone')}</option>
+            ) : null}
             {participants
               .filter((participant) => !composer.mentions.includes(participant.matrixUserId))
               .map((participant) => (

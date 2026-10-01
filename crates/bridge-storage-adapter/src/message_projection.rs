@@ -676,6 +676,9 @@ struct StoredActor {
 #[serde(rename_all = "camelCase")]
 struct StoredPreview {
     conversation: Option<StoredConversation>,
+    /// 收的时候已经按“是不是加密消息”判过，记下的就是算数的。
+    #[serde(default)]
+    mentions_everyone: bool,
     title: String,
     summary: String,
     content_type: String,
@@ -831,7 +834,8 @@ fn decode_preview(value: &str) -> Result<MessagePreview, MessageTimelineQueryFai
         result = result.with_conversation(
             agent_room_domain::messages::ConversationMessage::new(chat.text, chat.mentions)
                 .and_then(|value| value.with_attachment_name(chat.attachment_name))
-                .map_err(|_| corrupt_query())?,
+                .map_err(|_| corrupt_query())?
+                .with_mentions_everyone(stored.mentions_everyone),
         );
     }
     Ok(result)
@@ -1466,7 +1470,7 @@ fn encode_actor(actor: &ProjectedMessageActor) -> String {
 }
 
 fn encode_preview(preview: &MessagePreview) -> String {
-    json!({
+    let mut encoded = json!({
         "conversation": preview.conversation().map(|chat| json!({"text": chat.text(), "mentions": chat.mentions(), "attachmentName": chat.attachment_name()})),
         "title": preview.title().as_str(),
         "summary": preview.summary().as_str(),
@@ -1478,8 +1482,14 @@ fn encode_preview(preview: &MessagePreview) -> String {
             .iter()
             .map(MessageRiskFlag::as_str)
             .collect::<Vec<_>>()
-    })
-    .to_string()
+    });
+    if preview
+        .conversation()
+        .is_some_and(agent_room_domain::messages::ConversationMessage::mentions_everyone)
+    {
+        encoded["mentionsEveryone"] = serde_json::Value::Bool(true);
+    }
+    encoded.to_string()
 }
 
 fn encode_content(

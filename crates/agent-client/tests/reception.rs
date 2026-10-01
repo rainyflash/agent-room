@@ -49,6 +49,7 @@ fn preview(event: &str) -> IpcMessagePreviewSummary {
         reply_to: None,
         from_me: false,
         mentions_me: false,
+        mentions_everyone: false,
         room_name: None,
         before_join: false,
     }
@@ -466,6 +467,36 @@ fn 后台回复只有主人和私人房间里点名它的人叫得醒() {
         provenance: IpcMessageProvenance::AutonomousAgent,
     };
     assert!(!policy.wakes(&agent, true));
+}
+
+#[test]
+fn 私人房间里人发的_所有人_叫得醒后台回复_agent_发的叫不醒() {
+    let policy = policy();
+    // 收的时候 @所有人 已经算成提到了它（`mentionsMe`）。
+    let mut everyone = preview("$everyone");
+    everyone.mentions_everyone = true;
+    everyone.mentions_me = true;
+    if let Some(chat) = &mut everyone.conversation {
+        chat.mentions.clear();
+    }
+    if let IpcActorSummary::Human { principal_id, .. } = &mut everyone.actor {
+        *principal_id = "another-person".into();
+    }
+    assert!(policy.wakes(&everyone, true));
+
+    // 别的 Agent 群发也叫不醒：后台回复本来就只认人，免得 Agent 之间一句话互相叫醒。
+    let mut from_agent = everyone;
+    from_agent.actor = IpcActorSummary::Agent {
+        agent: IpcAgentSummary {
+            agent_id: SESSION.into(),
+            display_name: "Other agent".into(),
+            matrix_user_id: "@other-agent:test".into(),
+            avatar_url: None,
+        },
+        instance_id: SESSION.into(),
+        provenance: IpcMessageProvenance::AutonomousAgent,
+    };
+    assert!(!policy.wakes(&from_agent, true));
 }
 
 #[test]

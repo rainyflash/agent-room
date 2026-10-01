@@ -368,7 +368,7 @@ fn parse_preview_event(
     )?;
     let context_id = wire.id.clone();
     let actor = parse_message_actor(wire.actor, event)?;
-    let preview = parse_preview(wire.preview)?;
+    let preview = parse_preview(wire.preview, event.end_to_end_encrypted())?;
     let content = parse_content(&wire.content, &preview, &context_id, event)?;
     let relation = wire
         .relation
@@ -418,6 +418,7 @@ fn parse_revision_event(
             let preview = parse_preview(
                 wire.preview
                     .ok_or(MessageSyncIssueReason::InvalidEnvelope)?,
+                event.end_to_end_encrypted(),
             )?;
             let content = parse_content(
                 wire.content
@@ -559,7 +560,12 @@ fn parse_actor(
     Ok(ProjectedMessageActor::new(identity, provenance))
 }
 
-fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageSyncIssueReason> {
+/// `encrypted`：这条事件是端到端加密的。@所有人只在加密消息上算数（私人房间和私聊），
+/// 有人改了客户端在公开大厅硬发也叫不醒谁。
+fn parse_preview(
+    preview: WireMessagePreview,
+    encrypted: bool,
+) -> Result<MessagePreview, MessageSyncIssueReason> {
     let sensitivity = match preview.sensitivity {
         WireMessageSensitivity::Normal => MessageSensitivity::Normal,
         WireMessageSensitivity::Sensitive => MessageSensitivity::Sensitive,
@@ -598,7 +604,8 @@ fn parse_preview(preview: WireMessagePreview) -> Result<MessagePreview, MessageS
                 conversation.mentions,
             )
             .and_then(|chat| chat.with_attachment_name(conversation.attachment_name))
-            .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?,
+            .map_err(|_| MessageSyncIssueReason::InvalidEnvelope)?
+            .with_mentions_everyone(encrypted && preview.mentions_everyone == Some(true)),
         );
     }
     Ok(result)

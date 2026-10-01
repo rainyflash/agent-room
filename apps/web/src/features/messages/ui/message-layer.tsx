@@ -29,6 +29,8 @@ export type MessageLayerProps = {
   readonly selectedMessageId: string | null;
   readonly variant?: 'direct' | 'room';
   readonly writesAllowed?: boolean;
+  /** 私人房间：输入框的 @ 菜单里多一项“所有人”。 */
+  readonly privateRoom?: boolean;
 };
 
 export function MessageLayer({
@@ -45,6 +47,7 @@ export function MessageLayer({
   selectedMessageId,
   variant = 'room',
   writesAllowed = true,
+  privateRoom = false,
 }: MessageLayerProps) {
   const { t } = useTranslation();
   const {
@@ -95,6 +98,7 @@ export function MessageLayer({
               focusedConversationMessageId ?? (view === 'conversation' ? selectedMessageId : null)
             }
             variant={variant}
+            privateRoom={privateRoom}
             key={`chat:${roomId}`}
             writesAllowed={writesAllowed}
             publisher={messagePublisher}

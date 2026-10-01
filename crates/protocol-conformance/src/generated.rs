@@ -290,6 +290,8 @@ pub struct MessagePreview {
     pub conversation: Option<ConversationMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mentions_everyone: Option<bool>,
     pub risk_flags: Vec<String>,
     pub sensitivity: MessageSensitivity,
     pub summary: String,

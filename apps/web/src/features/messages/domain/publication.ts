@@ -23,6 +23,8 @@ export type MessagePublisherIdentity = {
 
 export type MessagePublicationDraft = {
   readonly conversation?: ConversationMessage;
+  /** @所有人：只有聊天能带，只能发到私人房间（端到端加密的房间）。 */
+  readonly mentionsEveryone?: true;
   readonly relation?: MessageRelation;
   readonly body: string | Uint8Array<ArrayBuffer>;
   readonly language?: string;
@@ -132,6 +134,7 @@ export type HumanMessagePreviewEvent = {
   readonly id: string;
   readonly preview: {
     readonly conversation?: ConversationMessage;
+    readonly mentionsEveryone?: true;
     readonly contentType: PublicationMediaType;
     readonly language?: string;
     readonly riskFlags: readonly string[];
@@ -229,6 +232,9 @@ export function validatePublicationDraft(
         ? draft.body !== draft.conversation.text || draft.mediaType !== 'text/plain'
         : typeof draft.body === 'string'))
   ) {
+    issues.add('conversation_invalid');
+  }
+  if (draft.mentionsEveryone === true && draft.conversation === undefined) {
     issues.add('conversation_invalid');
   }
   if (draft.relation !== undefined && !uuidV7Pattern.test(draft.relation.targetMessageId)) {
