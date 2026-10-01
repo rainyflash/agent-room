@@ -636,6 +636,16 @@ impl AgentRuntimeIpcFacade {
             )
             .await?;
         let replied = self.replied_messages(&room_id, page.previews()).await;
+        // 房间名和加入时间读不出来只是少了这两项。
+        let context = self
+            .previews
+            .room_context(&room_id)
+            .await
+            .unwrap_or_default();
+        let room = PreviewRoom {
+            name: context.name.as_deref(),
+            joined_at_ms: context.joined_at_ms,
+        };
         let viewer = PreviewViewer {
             agent_id: runtime.identity.agent_id(),
             matrix_user_id: runtime.identity.matrix_user_id().as_str(),
@@ -646,13 +656,7 @@ impl AgentRuntimeIpcFacade {
                     MessageRelation::ReplyTo(id) => replied.get(&id),
                 });
                 // 能按 ID 取全文之前照旧给全文（specs/agent-reading/design.md 第 3 步再截断）。
-                preview_for(
-                    preview,
-                    viewer,
-                    PreviewRoom::default(),
-                    target,
-                    PreviewText::Full,
-                )
+                preview_for(preview, viewer, room, target, PreviewText::Full)
             }),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
             typing.map_or_else(Vec::new, |typing| typing.now(room_id.as_str())),

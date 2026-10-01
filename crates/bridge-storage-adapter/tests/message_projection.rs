@@ -1490,3 +1490,76 @@ async fn 增量分页不遗漏突发消息且拒绝跨房间游标() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn 记下房间名和加入时间_离开清掉_再加入重新记() {
+    use agent_room_bridge_core::messages::{
+        MessageRoomContext, MessageTimelineQueryRepository as _, OwnMembership, RoomName,
+        RoomStateChange,
+    };
+    let (_directory, store, _inspector) = open_store().await;
+    let room_id = MatrixRoomId::new("!room:matrix.test").expect("房间标识有效");
+    let now = UtcMillis::new(9_000).expect("时间有效");
+    let named = |name: &str| Some(RoomName::Named(name.to_owned()));
+    let change = |name: Option<RoomName>, membership: Option<OwnMembership>| RoomStateChange {
+        room_id: room_id.clone(),
+        name,
+        membership,
+    };
+    assert_eq!(
+        store.room_context(&room_id).await.expect("可以读"),
+        MessageRoomContext::default(),
+        "没记过的房间什么也没有"
+    );
+
+    store
+        .record_room_state(
+            &[change(
+                named("项目室"),
+                Some(OwnMembership::Joined { at_ms: 1_000 }),
+            )],
+            now,
+        )
+        .await
+        .expect("可以记");
+    assert_eq!(
+        store.room_context(&room_id).await.expect("可以读"),
+        MessageRoomContext {
+            name: Some("项目室".to_owned()),
+            joined_at_ms: Some(1_000),
+        }
+    );
+
+    // 改名不动加入时间；离开清掉加入时间但留着名字。
+    store
+        .record_room_state(&[change(named("新项目室"), None)], now)
+        .await
+        .expect("可以记");
+    store
+        .record_room_state(&[change(None, Some(OwnMembership::Left))], now)
+        .await
+        .expect("可以记");
+    assert_eq!(
+        store.room_context(&room_id).await.expect("可以读"),
+        MessageRoomContext {
+            name: Some("新项目室".to_owned()),
+            joined_at_ms: None,
+        }
+    );
+
+    store
+        .record_room_state(
+            &[change(None, Some(OwnMembership::Joined { at_ms: 5_000 }))],
+            now,
+        )
+        .await
+        .expect("可以记");
+    assert_eq!(
+        store
+            .room_context(&room_id)
+            .await
+            .expect("可以读")
+            .joined_at_ms,
+        Some(5_000)
+    );
+}
