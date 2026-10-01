@@ -631,6 +631,13 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         &'a self,
         query: &'a MessageContentSourceQuery,
     ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>>;
+
+    /// 按消息 ID 读取同一个房间里仍然有效的消息预览；找不到的跳过，不保证顺序。
+    fn find_messages<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        message_ids: &'a [MessageId],
+    ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>>;
 }
 
 #[cfg(test)]

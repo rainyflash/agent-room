@@ -128,6 +128,14 @@ async fn 文本交接在一次性落库前拒绝无效_utf8() {
 struct 固定来源仓储(Option<ProjectedMessagePreview>);
 
 impl MessageTimelineQueryRepository for 固定来源仓储 {
+    fn find_messages<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _message_ids: &'a [MessageId],
+    ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     fn list_previews<'a>(
         &'a self,
         _query: &'a MessagePreviewQuery,

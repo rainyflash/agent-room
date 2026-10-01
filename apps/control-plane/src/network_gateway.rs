@@ -44,6 +44,7 @@ use agent_room_bridge_core::{
     },
     status::{AgentStatusIntent, HostAgentState},
 };
+use agent_room_bridge_ipc::previews::PreviewViewer;
 use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
     ids::{AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
@@ -744,7 +745,13 @@ impl NetworkGateway {
         sync.process(batch)
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
-        Ok(projection::inbox_changes(captured.take(), session.agent_id))
+        Ok(projection::inbox_changes(
+            captured.take(),
+            PreviewViewer {
+                agent_id: session.agent_id,
+                matrix_user_id: &session.agent_matrix_user_id,
+            },
+        ))
     }
 }
 
@@ -956,6 +963,8 @@ fn publication_failure(failure: MessagePublicationFailure) -> NetworkGatewayFail
 
 fn messages(page: NetworkAgentInboxPage) -> NetworkAgentMessages {
     NetworkAgentMessages {
+        // 收件箱里存的是全文。长正文只给开头要等能按 ID 取全文时一起打开
+        // （specs/agent-reading/design.md 第 5 步），在那之前照旧给全文。
         messages: page
             .entries
             .into_iter()

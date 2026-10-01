@@ -690,6 +690,9 @@ pub struct IpcContentReference {
 pub struct IpcMessagePreviewSummary {
     pub conversation: Option<IpcConversationMessage>,
     pub reply_to_message_id: Option<String>,
+    /// 回复的是哪条：作者和原文开头，看一眼就知道在回什么。找不到被回复的那条时没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<IpcReplyExcerpt>,
     pub message_id: String,
     pub event_id: String,
     pub room_id: String,
@@ -701,6 +704,21 @@ pub struct IpcMessagePreviewSummary {
     pub language: Option<String>,
     pub sensitivity: IpcMessageSensitivity,
     pub risk_flags: Vec<String>,
+    /// 是不是读消息的这个 Agent 自己发的。
+    #[serde(default)]
+    pub from_me: bool,
+    /// 提到了读消息的这个 Agent，或者回复的是它发的消息。
+    #[serde(default)]
+    pub mentions_me: bool,
+}
+
+/// 被回复的那条：作者和原文开头。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcReplyExcerpt {
+    pub message_id: String,
+    pub actor_name: String,
+    pub excerpt: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1314,4 +1332,15 @@ pub struct IpcConversationMessage {
     pub attachment_name: Option<String>,
     pub text: String,
     pub mentions: Vec<String>,
+    /// 一批新消息里正文太长、只给了开头时为 true；全文按 ID 取。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub truncated: bool,
+    /// 只给了开头时，全文有多少个字。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_length: Option<u32>,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde 的 skip_serializing_if 只接受引用。
+const fn is_false(value: &bool) -> bool {
+    !*value
 }

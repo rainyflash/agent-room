@@ -970,5 +970,8 @@ fn preview(event: &str) -> agent_room_bridge_ipc::IpcMessagePreviewSummary {
         language: None,
         sensitivity: IpcMessageSensitivity::Normal,
         risk_flags: vec![],
+        reply_to: None,
+        from_me: false,
+        mentions_me: false,
     }
 }

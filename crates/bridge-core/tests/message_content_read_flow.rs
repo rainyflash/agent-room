@@ -208,6 +208,14 @@ async fn 超出附件上限或未声明附件的二进制消息不触发下载()
 struct 固定来源仓储(Option<ProjectedMessagePreview>);
 
 impl MessageTimelineQueryRepository for 固定来源仓储 {
+    fn find_messages<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _message_ids: &'a [MessageId],
+    ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     fn list_previews<'a>(
         &'a self,
         _query: &'a MessagePreviewQuery,

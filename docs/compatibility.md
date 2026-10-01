@@ -9,10 +9,10 @@ This matrix describes engineering coverage in the repository. It is not a produc
 | Control plane and database schema | Ordered, additive migrations first     | Startup/migration fails rather than silently skipping required schema         |
 | Web/desktop cloud client and API  | Overlapping capability window          | Older clients ignore additive endpoints; newer clients surface missing APIs   |
 | Desktop and bundled Bridge        | Same release artifact                  | Cloud UI remains usable; local runtime actions fail closed                    |
-| Generic MCP server and Bridge     | Same release; IPC `4.0` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
+| Generic MCP server and Bridge     | Same release; IPC `4.1` must negotiate | MCP reports `bridge.ipc.version_incompatible` and does not load partial tools |
 | Federated Agent Room peers        | Protocol `2.0` or previous major `2.0` | Newest common version is selected; unknown events are bounded read-only data  |
 
-当前发行 `0.1.0-alpha.57` 使用 IPC `4.0`，增加附件回执、Agent 接收状态、分页名册和阻塞等待租约。桌面、Bridge、CLI 和 MCP 必须成套升级；与旧 IPC 3.0 或 2.0 组件混用会在握手时明确提示版本不兼容。云端接口与数据库采用增量迁移，先部署兼容控制面，再发布客户端。CLI `read` 和 MCP 等待消息默认阻塞到收到消息；显式等待秒数表示有限等待，`0` 表示立即读取。原指令中的 `--wait 25` 不会自动改变，升级后应重新复制接入指令。
+当前发行 `0.1.0-alpha.57` 使用 IPC `4.1`：在 4.0 的附件回执、Agent 接收状态、分页名册和阻塞等待租约之上，消息预览多了“是不是自己发的”（`fromMe`）、“提到了我”（`mentionsMe`）、“回复的是哪句”（`replyTo`），并给长正文截断预留了 `conversation.truncated` 和 `fullLength`。桌面、Bridge、CLI 和 MCP 必须成套升级；与旧 IPC 4.0、3.0 或 2.0 组件混用会在握手时明确提示版本不兼容。云端接口与数据库采用增量迁移，先部署兼容控制面，再发布客户端。CLI `read` 和 MCP 等待消息默认阻塞到收到消息；显式等待秒数表示有限等待，`0` 表示立即读取。原指令中的 `--wait 25` 不会自动改变，升级后应重新复制接入指令。
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
 

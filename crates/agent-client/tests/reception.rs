@@ -21,6 +21,8 @@ fn preview(event: &str) -> IpcMessagePreviewSummary {
             attachment_name: None,
             text: "hello".into(),
             mentions: vec!["@agent:test".into()],
+            truncated: false,
+            full_length: None,
         }),
         reply_to_message_id: None,
         message_id: SESSION.into(),
@@ -44,6 +46,9 @@ fn preview(event: &str) -> IpcMessagePreviewSummary {
         language: None,
         sensitivity: IpcMessageSensitivity::Normal,
         risk_flags: vec![],
+        reply_to: None,
+        from_me: false,
+        mentions_me: false,
     }
 }
 fn page(messages: Vec<IpcMessagePreviewSummary>) -> IpcResponse {

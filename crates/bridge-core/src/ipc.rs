@@ -45,6 +45,8 @@ impl IpcProtocolVersion {
     pub const V2_0: Self = Self { major: 2, minor: 0 };
     pub const V3_0: Self = Self { major: 3, minor: 0 };
     pub const V4_0: Self = Self { major: 4, minor: 0 };
+    /// 4.1：消息预览多了“是不是自己发的”“提到了我”“回复的是哪句”和长正文截断。
+    pub const V4_1: Self = Self { major: 4, minor: 1 };
 
     /// 构造本地 IPC 协议版本。
     ///
@@ -426,6 +428,9 @@ mod tests {
         for (server_version, client_version) in [
             (IpcProtocolVersion::V4_0, IpcProtocolVersion::V3_0),
             (IpcProtocolVersion::V3_0, IpcProtocolVersion::V4_0),
+            // 4.1 的消息预览多了字段，旧组件会拒收：握手时就说清版本不兼容。
+            (IpcProtocolVersion::V4_1, IpcProtocolVersion::V4_0),
+            (IpcProtocolVersion::V4_0, IpcProtocolVersion::V4_1),
         ] {
             let negotiator =
                 IpcHandshakeNegotiator::new([server_version], FoundationIpcScopePolicy)

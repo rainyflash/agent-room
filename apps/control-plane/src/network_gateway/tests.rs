@@ -1268,6 +1268,37 @@ fn chat(
     )
 }
 
+/// 带点名和回复的聊天消息。
+fn chat_with(
+    event_id: &str,
+    from: (&str, &str),
+    message_id: Uuid,
+    text: &str,
+    mentions: &[String],
+    reply_to: Option<Uuid>,
+) -> MatrixTimelineEvent {
+    let mut event = chat(event_id, from, message_id, text, [1; 64]);
+    let mut content = event.content().clone();
+    content["preview"]["conversation"]["mentions"] = json!(mentions);
+    // 标题、摘要有长度上限：长正文只拿开头当标题和摘要，像真实发送方那样。
+    content["preview"]["title"] = json!(text.chars().take(120).collect::<String>());
+    content["preview"]["summary"] = json!(text.chars().take(500).collect::<String>());
+    if let Some(target) = reply_to {
+        content["relation"] = json!({"kind": "reply", "targetMessageId": target});
+    }
+    event = MatrixTimelineEvent::new(
+        event.event_id().cloned(),
+        event.sender().cloned(),
+        event.event_type().clone(),
+        None,
+        None,
+        Some(1_758_600_000_000),
+        content,
+    )
+    .unwrap();
+    event
+}
+
 fn revision(event_id: &str, from: (&str, &str), target: Uuid, kind: &str) -> MatrixTimelineEvent {
     let id = Uuid::now_v7();
     let mut content = json!({
@@ -1478,6 +1509,67 @@ async fn 还有没确认的时同步失败_照样先交出已有的() {
         .await
         .expect("Matrix 暂时不通也先交出收件箱里的");
     assert_eq!(texts(&again.messages), ["一"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 标出点名自己和回复自己的_附上被回复那条的开头_长正文暂时照旧给全文() {
+    let harness = harness();
+    let mine = Uuid::now_v7();
+    let long = "字".repeat(1_500);
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s1",
+        vec![
+            chat("$mine:matrix.test", own(), mine, "我先来", [1; 64]),
+            chat_with(
+                "$reply:matrix.test",
+                other(),
+                Uuid::now_v7(),
+                "同意",
+                &[],
+                Some(mine),
+            ),
+            chat_with(
+                "$named:matrix.test",
+                other(),
+                Uuid::now_v7(),
+                "Scout 你看呢",
+                &[matrix_user(OWN_AGENT)],
+                None,
+            ),
+            chat_with(
+                "$long:matrix.test",
+                other(),
+                Uuid::now_v7(),
+                &long,
+                &[],
+                None,
+            ),
+        ],
+    ))));
+
+    let page = harness
+        .gateway
+        .wait_for_messages(TOKEN, Duration::from_secs(30), 20)
+        .await
+        .unwrap();
+    // 自己发的不进收件箱，但同一批里能拿来给回复它的那条附上摘录。
+    assert_eq!(page.messages.len(), 3);
+    let reply = &page.messages[0];
+    assert_eq!(reply["fromMe"], false);
+    assert_eq!(reply["mentionsMe"], true, "回复的是我发的");
+    assert_eq!(reply["replyTo"]["messageId"], mine.to_string());
+    assert_eq!(reply["replyTo"]["actorName"], "Scout");
+    assert_eq!(reply["replyTo"]["excerpt"], "我先来");
+
+    let named = &page.messages[1];
+    assert_eq!(named["mentionsMe"], true);
+    assert!(named.get("replyTo").is_none());
+
+    // 能按 ID 取全文之前不截断。
+    let long_message = &page.messages[2];
+    assert_eq!(long_message["mentionsMe"], false);
+    assert_eq!(long_message["conversation"]["text"], long.as_str());
+    assert!(long_message["conversation"].get("truncated").is_none());
 }
 
 #[tokio::test(start_paused = true)]

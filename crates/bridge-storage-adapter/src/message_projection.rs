@@ -450,6 +450,14 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
     ) -> PortFuture<'a, Result<Option<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
         Box::pin(async move { self.query_content_source(query).await })
     }
+
+    fn find_messages<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        message_ids: &'a [MessageId],
+    ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_messages(room_id, message_ids).await })
+    }
 }
 
 impl SqliteMessageTimelineRepository {
@@ -517,6 +525,40 @@ impl SqliteMessageTimelineRepository {
         .await
         .map_err(|error| map_query_sqlx_error(&error))?
         .ok_or_else(|| query_failure(MessageTimelineQueryFailureKind::CursorNotFound))
+    }
+
+    async fn query_messages(
+        &self,
+        room_id: &MatrixRoomId,
+        message_ids: &[MessageId],
+    ) -> Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure> {
+        if message_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 一组 ID 编成一个 JSON 数组绑定，SQL 本身保持字面量。
+        let wanted = serde_json::to_string(
+            &message_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|_| corrupt_query())?;
+        sqlx::query(
+            "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE room_id = ? AND visibility = 'active'
+               AND message_id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(room_id.as_str())
+        .bind(wanted)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?
+        .iter()
+        .map(|row| decode_preview_row(row, &self.key_cipher))
+        .collect()
     }
 
     async fn query_content_source(

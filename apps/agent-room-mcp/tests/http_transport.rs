@@ -450,6 +450,8 @@ fn message_page(event: &str) -> IpcResponse {
                 attachment_name: None,
                 text: "hello".into(),
                 mentions: vec![],
+                truncated: false,
+                full_length: None,
             }),
             reply_to_message_id: None,
             created_at_unix_ms: 1,
@@ -464,6 +466,9 @@ fn message_page(event: &str) -> IpcResponse {
             language: None,
             sensitivity: IpcMessageSensitivity::Normal,
             risk_flags: vec![],
+            reply_to: None,
+            from_me: false,
+            mentions_me: false,
         }],
         next_cursor: None,
     }
