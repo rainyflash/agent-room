@@ -131,7 +131,6 @@ function gateway(
     openAuthorization,
     openLogs,
     readHostSessions: () => Promise.resolve(ok(options.sessions ?? [])),
-    readLobby: unavailable,
     retryBridge,
     reauthorizeBridge,
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),

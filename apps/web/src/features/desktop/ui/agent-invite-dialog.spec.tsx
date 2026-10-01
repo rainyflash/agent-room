@@ -88,7 +88,6 @@ function gateway(
     installUpdate: unavailable,
     isAvailable: () => options.available ?? true,
     openAuthorization: unavailable,
-    readLobby: unavailable,
     retryBridge: () => Promise.resolve(ok(runtime)),
     reauthorizeBridge: () => Promise.resolve(ok(runtime)),
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),

@@ -257,7 +257,6 @@ const gateway: DesktopRuntimeGateway = {
   },
   openAuthorization: () => ready(undefined),
   openLogs: () => ready(undefined),
-  readLobby: unavailable,
   offerInvitation: (invitation) => {
     parkedInvitation = invitation;
     return ready({ invitation, expiresInMs: 600_000 });

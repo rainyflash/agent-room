@@ -23,7 +23,6 @@ function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntime
     installUpdate: unused,
     isAvailable: () => true,
     openAuthorization: unused,
-    readLobby: unused,
     retryBridge: unused,
     reauthorizeBridge: unused,
     setAutostart: unused,

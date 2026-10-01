@@ -15,7 +15,6 @@ import {
   type HostSessionDiagnostics,
   pendingInvitationSchema,
   desktopAgentTargetSchema,
-  desktopLobbySnapshotSchema,
   desktopDeepLinkSchema,
   desktopHumanSessionChangedSchema,
   desktopMatrixAuthenticationGrantSchema,
@@ -34,7 +33,6 @@ import {
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
   type DesktopRuntimeSnapshot,
-  type DesktopLobbySnapshot,
   type ReleaseUpdateChannel,
   type ReleaseUpdateCheck,
 } from '@/features/desktop/domain/desktop-runtime';
@@ -57,7 +55,6 @@ const desktopCommands = {
   restoreHumanSession: 'desktop_restore_human_session',
   configureAgentRuntime: 'desktop_configure_agent_runtime',
   installUpdate: 'desktop_install_update',
-  lobbySnapshot: 'desktop_lobby_snapshot',
   offerInvitation: 'desktop_offer_invitation',
   withdrawInvitation: 'desktop_withdraw_invitation',
   reauthorize: 'desktop_reauthorize_bridge',
@@ -300,10 +297,6 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
       },
       desktopAgentTargetSchema,
     );
-  }
-
-  async readLobby(): Promise<Result<DesktopLobbySnapshot, DesktopRuntimeFailure>> {
-    return this.invokeValidated(desktopCommands.lobbySnapshot, {}, desktopLobbySnapshotSchema);
   }
 
   async offerInvitation(
