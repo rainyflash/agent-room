@@ -456,7 +456,7 @@ services:
     networks: [backend]
 
   object-backup:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: rclone/rclone:1.75.1
     profiles: [backup]
     user: '${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}'
     entrypoint: [/bin/sh, /scripts/object-backup.sh]
