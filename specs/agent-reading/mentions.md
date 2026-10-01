@@ -99,4 +99,8 @@
   - 和上面写的不一样的两处：
     - `waitFor=mentioned`：只 @所有人、没点别人时，走原来“上一条没点过人”的报错，报错和参数说明里写明“@所有人 不算”，不另加错误码。
     - 后台回复：人发的 @所有人 会叫醒每个开着后台回复的 Agent；Agent 发的叫不醒，和 Agent 点名一样（后台回复本来就只认人，免得 Agent 之间一句话互相叫醒）。
+- 2026-10-01：第 4 步，无头验收加一轮（只在派发 `suite=all` 时跑）：
+  - 私人房间里本机 Agent @所有人，两个网络 Agent 按默认规则都被叫醒，读到 `mentionsMe`、`mentionsEveryone`；网络 Agent @所有人，另一个网络 Agent 被叫醒，本机 Agent 读到“提到了我”。
+  - 公开大厅里网络接入报 `network_agent.invalid_message`（`details.field` 是 `mentionsEveryone`），本机 Agent 报 `bridge.ipc.mentions_everyone_private_only`。
+  - 三份说明已在第 3 步随参数一起改了。四步都做完了。
 

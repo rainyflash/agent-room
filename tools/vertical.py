@@ -1845,6 +1845,161 @@ def verify_waiting_rules(
     return {"waiterToken": waiter, "talkerToken": talker}
 
 
+# @所有人那一轮用自己的来源地址建网络 Agent，不占别的轮次每小时 5 个的名额。
+EVERYONE_SOURCES: Final = ("198.51.100.27", "198.51.100.42")
+
+
+def everyone_woke(page: Mapping[str, object], event_id: str, who: str) -> None:
+    """按默认规则等的一方被这条 @所有人 叫醒，而且读到“提到了我”“@所有人”。"""
+    wake = network_page_wake(page)
+    if wake.get("reason") != "messages" or event_id not in require_list(wake.get("eventIds")):
+        raise VerticalFailure(f"{who}没有被 @所有人 叫醒：{wake}")
+    message = find_network_message(page, event_id)
+    if message.get("mentionsMe") is not True or message.get("mentionsEveryone") is not True:
+        raise VerticalFailure(f"{who}读到的 @所有人 没有标出提到了它。")
+
+
+def require_list(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise VerticalFailure("叫醒的消息列表格式不对。")
+    return value
+
+
+def send_mcp_everyone(client: McpAgentSession, room_id: str) -> str:
+    """本机 Agent 在私人房间里 @所有人。"""
+    submission_id = new_uuid_v7()
+    response = client.call_tool(
+        "agent_room_send_message",
+        {
+            "submissionId": submission_id,
+            "roomId": room_id,
+            "chat": True,
+            "body": f"Everyone, please take a look ({submission_id[-8:]}).",
+            "mentionsEveryone": True,
+            "provenance": "human_confirmed_agent",
+        },
+    )
+    message = require_object(response.get("message"), "本机 Agent @所有人 的发送结果")
+    if message.get("state") != "submitted":
+        raise VerticalFailure(f"本机 Agent 的 @所有人 没有确定提交：{message.get('state')}。")
+    return require_text(message.get("eventId"), "本机 Agent @所有人 的事件 ID")
+
+
+def verify_mentions_everyone(
+    client: McpAgentSession, *, token: str, room_id: str, code: str
+) -> dict[str, str]:
+    """私人房间里 @所有人（specs/agent-reading/mentions.md 第 4 步）：本机 Agent @所有人 叫醒两个
+    网络 Agent；网络 Agent @所有人 叫醒另一个网络 Agent，本机 Agent 读到“提到了我”。"""
+    status, created = network_agent_request(
+        "POST",
+        "",
+        body={"name": "Vertical Private Net Two", "code": code},
+        source=EVERYONE_SOURCES[0],
+        timeout_seconds=180,
+    )
+    if status != 201 or created is None:
+        raise VerticalFailure(f"第二个网络 Agent 凭口令创建失败：HTTP {status}。")
+    second = require_text(created.get("token"), "第二个网络 Agent 的令牌")
+    second_id = require_text(created.get("agentId"), "第二个网络 Agent 的 Agent ID")
+    drain_network_agent_messages(second)
+    # 新设备要等房间密钥轮到它：先来回一次，确认它解得开本机 Agent 的消息。
+    private_room_round_trip(client, token=second, agent_id=second_id, room_id=room_id)
+
+    # 本机 Agent @所有人：两个网络 Agent 都按默认规则（跟它有关的才叫醒）被叫醒。
+    waits = [
+        in_background(lambda waiter=waiter: network_agent_wait(waiter, "wait=30"))
+        for waiter in (token, second)
+    ]
+    time.sleep(1)
+    local_everyone = send_mcp_everyone(client, room_id)
+    for result, who in zip(waits, ("第一个网络 Agent", "第二个网络 Agent")):
+        page = result()
+        everyone_woke(page, local_everyone, who)
+    for waiter in (token, second):
+        acknowledge_network_page(waiter, network_agent_wait(waiter, "wait=0&limit=50"))
+
+    # 网络 Agent @所有人：另一个网络 Agent 被叫醒，本机 Agent 读到“提到了我”。
+    other = in_background(lambda: network_agent_wait(second, "wait=30"))
+    time.sleep(1)
+    text = f"Everyone, the network agent asks ({local_everyone[-8:]})."
+    status, sent = network_agent_request(
+        "POST",
+        "/me/messages",
+        token=token,
+        body={"roomId": room_id, "text": text, "mentionsEveryone": True},
+    )
+    if status != 201 or sent is None or sent.get("status") != "sent":
+        raise VerticalFailure(f"网络 Agent 在私人房间里 @所有人 没有得到确认：HTTP {status}。")
+    network_everyone = require_text(sent.get("eventId"), "网络 Agent @所有人 的事件 ID")
+    everyone_woke(other(), network_everyone, "第二个网络 Agent")
+    preview = wait_for_mcp_preview(
+        client,
+        room_id=room_id,
+        submission={"eventId": network_everyone, "title": text},
+        timeout_seconds=90,
+    )
+    if preview.get("mentionsMe") is not True or preview.get("mentionsEveryone") is not True:
+        raise VerticalFailure("本机 Agent 读到的 @所有人 没有标出提到了它。")
+    acknowledge_network_page(second, network_agent_wait(second, "wait=0&limit=50"))
+
+    status, _ = network_agent_request("DELETE", "/me", token=second)
+    if status != 204:
+        raise VerticalFailure(f"第二个网络 Agent 停用失败：HTTP {status}。")
+    return {
+        "everyoneToken": second,
+        "localEveryoneEventId": local_everyone,
+        "networkEveryoneEventId": network_everyone,
+    }
+
+
+def verify_lobby_refuses_everyone(
+    *, sender_bridge: AuthorizedBridgeRuntime, redactor: LogRedactor
+) -> dict[str, str]:
+    """公开大厅不加密：网络接入和本机 Agent 都发不出 @所有人，说清楚只能在私人房间用。"""
+    sender_session = require_bridge_session(sender_bridge)
+    room_id = sender_session["matrixRoomId"]
+    token = create_waiting_network_agent("Vertical Lobby Crier", EVERYONE_SOURCES[1])
+    status, refused = network_agent_request(
+        "POST",
+        "/me/messages",
+        token=token,
+        body={"text": "Everyone in the lobby?", "mentionsEveryone": True},
+    )
+    details = refused.get("details") if refused is not None else None
+    if (
+        status != 400
+        or refused is None
+        or refused.get("code") != "network_agent.invalid_message"
+        or not isinstance(details, dict)
+        or details.get("field") != "mentionsEveryone"
+    ):
+        raise VerticalFailure(f"公开大厅里网络 Agent 的 @所有人 没有被拒绝：HTTP {status}。")
+    with bridge_mcp_client(sender_bridge, redactor) as transport:
+        client = transport.bind_session(sender_session["sessionId"])
+        result = client.call_tool_result(
+            "agent_room_send_message",
+            {
+                "submissionId": new_uuid_v7(),
+                "roomId": room_id,
+                "chat": True,
+                "body": "Everyone in the lobby?",
+                "mentionsEveryone": True,
+                "provenance": "human_confirmed_agent",
+            },
+        )
+    structured = result.get("structuredContent")
+    if (
+        result.get("isError") is not True
+        or not isinstance(structured, dict)
+        or structured.get("code") != "bridge.ipc.mentions_everyone_private_only"
+    ):
+        raise VerticalFailure("公开大厅里本机 Agent 的 @所有人 没有被拒绝。")
+    status, _ = network_agent_request("DELETE", "/me", token=token)
+    if status != 204:
+        raise VerticalFailure(f"网络 Agent 停用失败：HTTP {status}。")
+    return {"token": token}
+
+
 NETWORK_AGENT_MCP: Final = "http://127.0.0.1:8090/mcp"
 
 
@@ -2081,6 +2236,7 @@ def verify_private_room_network_agent(
             raise VerticalFailure("网络 Agent 凭口令进了别的房间。")
         drain_network_agent_messages(token)
         first = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+        everyone = verify_mentions_everyone(client, token=token, room_id=room_id, code=code)
 
         # 控制面重启：加密存储还在，网络 Agent 照常解密新消息。
         control_plane.stop()
@@ -2115,6 +2271,7 @@ def verify_private_room_network_agent(
         "firstReplyEventId": first,
         "restartedReplyEventId": restarted,
         "rebuiltReplyEventId": rebuilt,
+        **everyone,
     }
 
 

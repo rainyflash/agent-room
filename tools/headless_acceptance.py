@@ -74,6 +74,7 @@ def accept() -> None:
                 room_id=v.require_bridge_session(sender)["matrixRoomId"]
             )
             waiting = v.verify_waiting_rules(sender_bridge=sender, redactor=redactor)
+            lobby_everyone = v.verify_lobby_refuses_everyone(sender_bridge=sender, redactor=redactor)
             # 放在最后：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
@@ -90,7 +91,9 @@ def accept() -> None:
                 network_mcp["token"],
                 waiting["waiterToken"],
                 waiting["talkerToken"],
+                lobby_everyone["token"],
                 private["token"],
+                private["everyoneToken"],
                 private["code"],
             ),
         )
@@ -101,7 +104,8 @@ def accept() -> None:
         "matrixRecoveryGeneration":recovery, "matrixDeliveryTested":True, "replyMessageId":result["replyMessageId"],
         "networkAgentRoundTrip":True, "networkAgentReplyEventId":network["replyEventId"],
         "networkAgentMcpRoundTrip":True, "networkAgentMcpEventId":network_mcp["eventId"],
-        "waitingRulesVerified":True,
+        "waitingRulesVerified":True, "lobbyRefusesEveryone":True,
+        "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
         "privateRoomSurvivedStoreRebuild":private["rebuiltReplyEventId"],
