@@ -273,7 +273,8 @@ struct EventIdResponse {
     event_id: String,
 }
 
-/// 只要已加入房间里的消息事件：不要状态、回执、输入提示、账户数据和在线信息。
+/// 只要已加入房间里的消息事件和“正在输入”（叫醒它的人还在打字就再等等）：
+/// 不要状态、回执、账户数据和在线信息。
 fn sync_filter(timeline_limit: u16) -> Value {
     json!({
         "presence": { "types": [] },
@@ -281,7 +282,7 @@ fn sync_filter(timeline_limit: u16) -> Value {
         "room": {
             "include_leave": false,
             "state": { "types": [] },
-            "ephemeral": { "types": [] },
+            "ephemeral": { "types": ["m.typing"] },
             "account_data": { "types": [] },
             "timeline": {
                 "limit": timeline_limit.max(1),
@@ -308,6 +309,14 @@ struct SyncRooms {
 struct JoinedRoom {
     #[serde(default)]
     timeline: Timeline,
+    #[serde(default)]
+    ephemeral: Ephemeral,
+}
+
+#[derive(Default, Deserialize)]
+struct Ephemeral {
+    #[serde(default)]
+    events: Vec<Value>,
 }
 
 #[derive(Default, Deserialize)]
@@ -335,7 +344,7 @@ fn sync_batch(response: SyncResponse, operation: MatrixOperation) -> MatrixResul
             .iter()
             .filter_map(timeline_event)
             .collect();
-        rooms.push(MatrixRoomSync::new(
+        let mut synced = MatrixRoomSync::new(
             room_id,
             MatrixRoomSyncKind::Joined,
             room.timeline.limited,
@@ -344,9 +353,30 @@ fn sync_batch(response: SyncResponse, operation: MatrixOperation) -> MatrixResul
                 .and_then(|token| MatrixBackfillToken::new(token).ok()),
             timeline,
             Vec::new(),
-        ));
+        );
+        if let Some(typing) = typing(&room.ephemeral.events) {
+            synced = synced.with_typing(typing);
+        }
+        rooms.push(synced);
     }
     Ok(MatrixSyncBatch::new(next_batch, rooms))
+}
+
+/// 这一段里最后一个 `m.typing`：此刻在打字的人；读不出来的用户 ID 跳过。
+fn typing(events: &[Value]) -> Option<Vec<MatrixUserId>> {
+    events.iter().rev().find_map(|event| {
+        if event.get("type").and_then(Value::as_str) != Some("m.typing") {
+            return None;
+        }
+        let users = event.get("content")?.get("user_ids")?.as_array()?;
+        Some(
+            users
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|user_id| MatrixUserId::new(user_id).ok())
+                .collect(),
+        )
+    })
 }
 
 fn timeline_event(raw: &Value) -> Option<MatrixTimelineEvent> {
@@ -443,12 +473,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 带着_agent_自己的令牌只同步消息事件_长轮询不超过三十秒() {
+    async fn 带着_agent_自己的令牌只同步消息事件和正在输入_长轮询不超过三十秒() {
         let (url, seen) = serve((
             StatusCode::OK,
             json!({
                 "next_batch": "s72595_4483_1934",
-                "rooms": {"join": {"!lobby:matrix.test": {"timeline": {
+                "rooms": {"join": {"!lobby:matrix.test": {
+                "ephemeral": {"events": [
+                    {"type": "m.typing", "content": {"user_ids": ["@ada:matrix.test"]}}
+                ]},
+                "timeline": {
                     "limited": true,
                     "prev_batch": "t392-516_47314_0_7_1_1_1_11444_1",
                     "events": [
@@ -486,6 +520,7 @@ mod tests {
         let filter: Value = serde_json::from_str(&seen.query["filter"]).unwrap();
         assert_eq!(filter["room"]["timeline"]["limit"], 20);
         assert_eq!(filter["room"]["state"]["types"], json!([]));
+        assert_eq!(filter["room"]["ephemeral"]["types"], json!(["m.typing"]));
         assert_eq!(
             filter["room"]["timeline"]["types"][0],
             "io.github.rainyflash.agentroom.message.preview.v1"
@@ -496,6 +531,13 @@ mod tests {
         assert_eq!(room.room_id().as_str(), "!lobby:matrix.test");
         assert!(room.timeline_limited());
         assert!(room.previous_batch().is_some());
+        let typing: Vec<&str> = room
+            .typing()
+            .expect("带回了正在输入")
+            .iter()
+            .map(agent_room_application::ports::MatrixUserId::as_str)
+            .collect();
+        assert_eq!(typing, ["@ada:matrix.test"]);
         // 没有类型的那条被丢掉；缺字段但类型齐全的保留，交给验签那一层隔离。
         assert_eq!(room.timeline().len(), 2);
         let event = &room.timeline()[0];

@@ -10,6 +10,8 @@ import {
   type ConversationParticipant,
 } from '@/features/conversation/domain/conversation';
 import type { useConversationComposer } from '@/features/conversation/ui/use-conversation-composer';
+import type { TypingNotifier } from '@/features/conversation/domain/typing';
+import { useTypingNotice } from '@/features/conversation/ui/use-typing-notice';
 
 export type ConversationComposerController = ReturnType<typeof useConversationComposer>;
 
@@ -56,6 +58,7 @@ export function ConversationComposer({
   canSend,
   writesAllowed,
   input,
+  typing,
 }: {
   readonly composer: ConversationComposerController;
   readonly roomId: string;
@@ -64,6 +67,8 @@ export function ConversationComposer({
   readonly canSend: boolean;
   readonly writesAllowed: boolean;
   readonly input: RefObject<HTMLTextAreaElement | null>;
+  /** 打字时告诉房间里的人；不给就不说。 */
+  readonly typing?: TypingNotifier | undefined;
 }) {
   const { t } = useTranslation();
   const [fileFailure, setFileFailure] = useState<AttachmentFailure | 'oneFile' | null>(null);
@@ -76,6 +81,7 @@ export function ConversationComposer({
   const keyboardHint = enterSends() ? `chat-${roomId}-keyboard` : undefined;
   const characters = Array.from(composer.text).length;
   useAutoGrow(input, composer.text);
+  useTypingNotice(typing, roomId, composer.text, canEdit && !submitting);
   return (
     <form
       className="conversation-panel__composer"

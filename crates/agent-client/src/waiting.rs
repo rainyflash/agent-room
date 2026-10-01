@@ -373,6 +373,7 @@ impl InboxWaiter {
                 &arrivals,
                 &self.options,
                 wakes.as_ref(),
+                &[],
                 self.limit,
                 now_ms,
                 deadline_ms,
@@ -385,6 +386,7 @@ impl InboxWaiter {
             WakeContext {
                 owner: self.owner.as_deref(),
                 direct_rooms: &direct_rooms,
+                typing: &[],
             },
             self.limit,
             now_ms,

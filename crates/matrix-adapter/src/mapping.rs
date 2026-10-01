@@ -6,7 +6,7 @@ use agent_room_application::ports::{
 };
 use matrix_sdk::{
     deserialized_responses::{TimelineEvent, VerificationLevel, VerificationState},
-    ruma::serde::Raw,
+    ruma::{events::AnySyncEphemeralRoomEvent, serde::Raw},
     sync::{RoomUpdates, State, SyncResponse},
 };
 use serde::Deserialize;
@@ -55,17 +55,19 @@ fn map_room_updates(
     );
     for (room_id, update) in &updates.joined {
         let (state_position, state) = map_state(&update.state)?;
-        rooms.push(
-            MatrixRoomSync::new(
-                map_room_id(room_id.as_str())?,
-                MatrixRoomSyncKind::Joined,
-                update.timeline.limited,
-                map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
-                map_timeline(&update.timeline.events, upgrades)?,
-                state,
-            )
-            .with_state_position(state_position),
-        );
+        let mut room = MatrixRoomSync::new(
+            map_room_id(room_id.as_str())?,
+            MatrixRoomSyncKind::Joined,
+            update.timeline.limited,
+            map_optional_backfill_token(update.timeline.prev_batch.as_deref())?,
+            map_timeline(&update.timeline.events, upgrades)?,
+            state,
+        )
+        .with_state_position(state_position);
+        if let Some(typing) = map_typing(&update.ephemeral) {
+            room = room.with_typing(typing);
+        }
+        rooms.push(room);
     }
     for (room_id, update) in &updates.invited {
         rooms.push(MatrixRoomSync::new(
@@ -102,6 +104,30 @@ fn map_room_updates(
         ));
     }
     Ok(rooms)
+}
+
+/// 这一段里最后一个 `m.typing`：此刻在打字的人。先看类型，回执之类的不整个解析；
+/// 读不出来的用户 ID 跳过。
+fn map_typing(ephemeral: &[Raw<AnySyncEphemeralRoomEvent>]) -> Option<Vec<MatrixUserId>> {
+    ephemeral.iter().rev().find_map(|raw| {
+        if raw.get_field::<String>("type").ok().flatten().as_deref() != Some("m.typing") {
+            return None;
+        }
+        let content = raw.get_field::<TypingContent>("content").ok().flatten()?;
+        Some(
+            content
+                .user_ids
+                .into_iter()
+                .filter_map(|user_id| MatrixUserId::new(user_id).ok())
+                .collect(),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+struct TypingContent {
+    #[serde(default)]
+    user_ids: Vec<String>,
 }
 
 fn map_timeline(
@@ -259,7 +285,32 @@ mod tests {
         },
     };
 
-    use super::{MatrixOperation, SenderTrustUpgrades, map_raw_event, map_timeline_event};
+    use super::{
+        MatrixOperation, SenderTrustUpgrades, map_raw_event, map_timeline_event, map_typing,
+    };
+
+    #[test]
+    fn 正在输入取这一段里最后一次的完整名单() {
+        let raw = |json: &str| Raw::from_json_string(json.to_owned()).expect("原始 JSON 有效");
+        let ephemeral = [
+            raw(r#"{"type":"m.typing","content":{"user_ids":["@ada:example.org"]}}"#),
+            raw(r#"{"type":"m.receipt","content":{"$event:example.org":{}}}"#),
+            raw(
+                r#"{"type":"m.typing","content":{"user_ids":["@ada:example.org","@bob:example.org","not a user"]}}"#,
+            ),
+        ];
+        let typing = map_typing(&ephemeral).expect("带回了正在输入");
+        let typing: Vec<&str> = typing
+            .iter()
+            .map(agent_room_application::ports::MatrixUserId::as_str)
+            .collect();
+        assert_eq!(typing, ["@ada:example.org", "@bob:example.org"]);
+
+        let stopped = [raw(r#"{"type":"m.typing","content":{"user_ids":[]}}"#)];
+        assert_eq!(map_typing(&stopped), Some(Vec::new()), "都停了就是空名单");
+        let receipts = [raw(r#"{"type":"m.receipt","content":{}}"#)];
+        assert_eq!(map_typing(&receipts), None, "没变就没有");
+    }
 
     #[test]
     fn 原始事件保留事务标识并剥离无关字段() {

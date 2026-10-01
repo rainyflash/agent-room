@@ -771,6 +771,7 @@ pub struct MatrixRoomSync {
     timeline: Vec<MatrixTimelineEvent>,
     state: Vec<MatrixTimelineEvent>,
     state_position: MatrixRoomStatePosition,
+    typing: Option<Vec<MatrixUserId>>,
 }
 
 impl MatrixRoomSync {
@@ -790,7 +791,20 @@ impl MatrixRoomSync {
             timeline,
             state,
             state_position: MatrixRoomStatePosition::BeforeTimeline,
+            typing: None,
         }
+    }
+
+    /// 这一段同步带回的“正在输入”：此刻在这个房间打字的人，完整名单，可能为空。
+    #[must_use]
+    pub fn with_typing(mut self, typing: Vec<MatrixUserId>) -> Self {
+        self.typing = Some(typing);
+        self
+    }
+
+    /// 这一段同步里“正在输入”变了时，此刻在打字的人；没变就没有。
+    pub fn typing(&self) -> Option<&[MatrixUserId]> {
+        self.typing.as_deref()
     }
 
     #[must_use]

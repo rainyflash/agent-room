@@ -37,6 +37,7 @@ impl ReceptionPolicy {
                 WakeContext {
                     owner: None,
                     direct_rooms: &direct_rooms,
+                    typing: &[],
                 },
             );
         }

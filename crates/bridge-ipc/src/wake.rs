@@ -24,6 +24,9 @@ pub const MAX_DIGEST: Duration = Duration::from_hours(24);
 pub const DEFAULT_WAIT_FOR_LIMIT: Duration = Duration::from_mins(10);
 /// `from`、`waitFor` 各最多几个人，和发消息时最多点名几个人一样。
 pub const MAX_PEOPLE: usize = 8;
+/// “正在输入”最多算这么久：网页端每次说自己在打字时要的就是 30 秒，过了还没有新的就当停了，
+/// 免得漏掉一次“停了”就一直等。
+pub const TYPING_TTL: Duration = Duration::from_secs(30);
 
 /// 什么消息算“有事”。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,13 +204,24 @@ fn people_valid(people: &[String]) -> bool {
     people.len() <= MAX_PEOPLE && people.iter().all(|person| !person.is_empty())
 }
 
-/// 判断时要知道的“我是谁”。
+/// 判断时要知道的“我是谁”，和房间里此刻的动静。
 #[derive(Debug, Clone, Copy)]
 pub struct WakeContext<'a> {
     /// 主人的 Matrix 用户 ID。只有本机 Agent 有主人；主人说话总能叫醒它。
     pub owner: Option<&'a str>,
     /// 只有我和另一个成员的房间。
     pub direct_rooms: &'a HashSet<String>,
+    /// 此刻谁在打字。
+    pub typing: &'a [IpcTyping],
+}
+
+/// 此刻在一个房间里打字的人（Matrix 用户 ID）。叫醒它的人还在打字时接着等，
+/// 等他打完或者到防抖的上限。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcTyping {
+    pub room_id: String,
+    pub user_ids: Vec<String>,
 }
 
 /// 一条还没交出去的消息，和它什么时候到的（调用方自己的时钟，Unix 毫秒）。
@@ -350,6 +364,7 @@ pub fn decide(
         pending,
         options,
         &|preview| wakes(preview, options, context),
+        context.typing,
         limit,
         now_ms,
         deadline_ms,
@@ -362,6 +377,7 @@ pub fn decide_with(
     pending: &[Arrival<'_>],
     options: &WaitOptions,
     wakes: &dyn Fn(&IpcMessagePreviewSummary) -> bool,
+    typing: &[IpcTyping],
     limit: usize,
     now_ms: i64,
     deadline_ms: Option<i64>,
@@ -378,12 +394,22 @@ pub fn decide_with(
             recheck_at_ms: scope.digest_due(),
         };
     };
-    let settle_at = scope.settle_at(trigger.at_ms);
-    if options.settle.is_zero() || scope.heard.len() >= limit || timed_out || now_ms >= settle_at {
+    if options.settle.is_zero() || scope.heard.len() >= limit || timed_out {
         return WaitDecision::Deliver(scope.deliver(&trigger.priority, limit, trigger.reason));
     }
+    // 叫醒它的人还在打字就接着等，等他打完；从有事算起同样最多多等 `MAX_SETTLE`。
+    // 打字停了调用方会再问一次（网关的同步、Bridge 挂着等都会因此返回），所以这里只需在上限时再看。
+    let cap = trigger.at_ms.saturating_add(millis(MAX_SETTLE));
+    let typing = now_ms < cap && scope.typing(&trigger.priority, typing);
+    let settle_at = scope.settle_at(trigger.at_ms);
+    if now_ms >= settle_at && !typing {
+        return WaitDecision::Deliver(scope.deliver(&trigger.priority, limit, trigger.reason));
+    }
+    let recheck_at_ms = if typing { cap } else { settle_at };
     WaitDecision::Wait {
-        recheck_at_ms: Some(deadline_ms.map_or(settle_at, |deadline| deadline.min(settle_at))),
+        recheck_at_ms: Some(
+            deadline_ms.map_or(recheck_at_ms, |deadline| deadline.min(recheck_at_ms)),
+        ),
     }
 }
 
@@ -514,6 +540,17 @@ impl<'p, 'a> Scope<'p, 'a> {
             .map(|&index| self.arrived_at(index))
             .min()?;
         Some(oldest.saturating_add(millis(digest)))
+    }
+
+    /// 叫醒它的那几条里，有没有哪条的作者此刻还在同一个房间里打字。
+    fn typing(&self, priority: &[usize], typing: &[IpcTyping]) -> bool {
+        priority.iter().any(|&index| {
+            let preview = self.pending[index].preview;
+            let author = actor_matrix_id(&preview.actor);
+            typing.iter().any(|room| {
+                room.room_id == preview.room_id && room.user_ids.iter().any(|user| user == author)
+            })
+        })
     }
 
     /// 防抖到点：最后一条消息之后安静了 `settle`，但从有事算起不超过 `MAX_SETTLE`。
