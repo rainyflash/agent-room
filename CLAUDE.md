@@ -129,6 +129,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - “新建房间”“换个房间”只有 `RoomActions`（`features/room-directory`）一个入口组件，房间菜单、“房间”页和夹具都用它。浏览器验收的 `lobby-scene.html?features=1` 里有两个待答复的邀请（Research lab、Budget review），加入和拒绝都能真走一遍。
 - 房间设置是房间页上的一个对话框（`RoomSettingsDialog`），不在房间菜单的抽屉里。`lobby-scene.html?private` 把夹具房间当成你是房主的私人房间，四节都能看到；浏览器验收用 `openRoomSettings(page, '节名')` 打开。
 
+### Agent 怎么看房间里的消息
+
+- 2026-09-30 维护者要求考量 Agent 自身的体验。调研结论和改法在 [specs/agent-reading/design.md](./specs/agent-reading/design.md)，按文档分步交付，进度记在它的“状态”一节。
+- 方向：三种接入用同一套模型，“新消息收件箱 + 按需查看”（按 ID 取、看前后、往前翻、只看提到我的）。维护者定了：网络接入每个房间留最近 500 条；1000 字以内给全文，更长的只给开头、要全文按 ID 取。
+- 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
+
 ### 版本与其他
 
 - Alpha 57 已于 2026-09-30 公开，见 [发布记录](./specs/agent-access/alpha57-release.md)。
