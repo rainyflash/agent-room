@@ -61,6 +61,42 @@ describe('会话 HTTP 请求生命周期', () => {
     await second;
   });
 
+  it('浏览器没有 AbortSignal.any 时请求照样发出，两边取消都生效', async () => {
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+    Reflect.deleteProperty(AbortSignal, 'any');
+    try {
+      const signals: AbortSignal[] = [];
+      const scope = new SessionRequestScope(pendingFetch(signals));
+      const caller = new AbortController();
+      const callerCancelled = expect(
+        scope.fetch('https://api.test/lobbies/public', { signal: caller.signal }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      const sessionCancelled = expect(
+        scope.fetch('https://api.test/private-rooms', { signal: new AbortController().signal }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      expect(signals).toHaveLength(2);
+      caller.abort();
+      await callerCancelled;
+      expect(signals[1]?.aborted).toBe(false);
+      scope.clear();
+      await sessionCancelled;
+
+      const finished = new AbortController();
+      const resolved = new SessionRequestScope(() => Promise.resolve(new Response('{}')));
+      await expect(
+        resolved.fetch('https://api.test/lobbies/public', { signal: finished.signal }),
+      ).resolves.toBeInstanceOf(Response);
+      const alreadyCancelled = new AbortController();
+      alreadyCancelled.abort();
+      const late = new SessionRequestScope(pendingFetch(signals));
+      await expect(
+        late.fetch('https://api.test/lobbies/public', { signal: alreadyCancelled.signal }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      if (original !== undefined) Object.defineProperty(AbortSignal, 'any', original);
+    }
+  });
+
   it('保留 Request 对象的取消信号，并允许 init 显式覆盖', async () => {
     const signals: AbortSignal[] = [];
     const scope = new SessionRequestScope(pendingFetch(signals));
