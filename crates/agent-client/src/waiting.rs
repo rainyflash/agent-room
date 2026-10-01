@@ -11,7 +11,7 @@ use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
     wake::{
         Arrival, DEFAULT_WAIT_FOR_LIMIT, Delivery, IpcWake, WaitDecision, WaitOptions, WaitRules,
-        WakeContext, WakeReason, decide, mentioned_people,
+        WakeContext, WakeReason, decide, decide_with, mentioned_people,
     },
 };
 use tokio::time::Instant;
@@ -68,13 +68,19 @@ pub struct InboxWaiter {
     delivered_through: Option<String>,
     /// 向 Bridge 取到哪一条了。
     fetched_through: Option<String>,
+    /// 攒着的第一条之前是哪一条：交过的、或者攒满以后丢掉的最后一条。重读只读这之后的。
+    held_after: Option<String>,
     /// 取回来还没交的，和本机看到它的时间（Unix 毫秒）。自己发的不留。
     held: Vec<(IpcMessagePreviewSummary, i64)>,
     /// 攒满以后丢掉的最早那些，交的时候算进跳过的。
     dropped: usize,
     fetched_once: bool,
     clock: WaitClock,
+    /// 调用方自己的叫醒判断（后台回复）；没有就按 `wake` 规则。
+    wakes: Option<WakeCheck>,
 }
+
+type WakeCheck = Box<dyn Fn(&IpcMessagePreviewSummary) -> bool + Send + Sync>;
 
 impl InboxWaiter {
     pub fn new(
@@ -91,12 +97,24 @@ impl InboxWaiter {
             options: rules.options,
             wait_for_mentioned: rules.wait_for_mentioned,
             delivered_through: after_event_id.clone(),
-            fetched_through: after_event_id,
+            fetched_through: after_event_id.clone(),
+            held_after: after_event_id,
             held: Vec::new(),
             dropped: 0,
             fetched_once: false,
             clock: WaitClock::start(),
+            wakes: None,
         }
+    }
+
+    /// 哪条叫醒它由调用方判断，防抖、定时看一眼和交哪些照旧（后台回复用）。
+    #[must_use]
+    pub fn with_wakes(
+        mut self,
+        wakes: impl Fn(&IpcMessagePreviewSummary) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.wakes = Some(Box::new(wakes));
+        self
     }
 
     /// 等下一批。`For(0)` 只读一次、有什么给什么；`UntilMessage` 一直等到有事（等齐时最多
@@ -181,6 +199,7 @@ impl InboxWaiter {
             .or_else(|| self.delivered_through.clone());
         self.delivered_through.clone_from(&cursor);
         self.fetched_through.clone_from(&cursor);
+        self.held_after.clone_from(&cursor);
         self.held.clear();
         let previews: Vec<_> = previews
             .into_iter()
@@ -246,10 +265,18 @@ impl InboxWaiter {
                 break;
             }
         }
-        // 攒满了照样取新的，丢掉最早的：不然后来叫醒它的消息进不来。
+        // 攒满了照样取新的，丢掉最早的：不然后来叫醒它的消息进不来。丢掉的最早那条到的时间
+        // 留给剩下最早的一条，定时看一眼才不会因为一直在丢而永远不到点。
         if self.held.len() > HELD_CAPACITY {
             let excess = self.held.len() - HELD_CAPACITY;
-            self.held.drain(..excess);
+            let dropped: Vec<_> = self.held.drain(..excess).collect();
+            self.held_after = dropped.last().map(|(preview, _)| preview.event_id.clone());
+            let oldest_dropped = dropped.iter().map(|(_, at_ms)| *at_ms).min();
+            if let (Some(dropped_at_ms), Some((_, first_at_ms))) =
+                (oldest_dropped, self.held.first_mut())
+            {
+                *first_at_ms = (*first_at_ms).min(dropped_at_ms);
+            }
             self.dropped += excess;
         }
         Ok(())
@@ -266,13 +293,18 @@ impl InboxWaiter {
             .drain(..)
             .map(|(preview, at_ms)| (preview.event_id, at_ms))
             .collect();
-        self.fetched_through.clone_from(&self.delivered_through);
-        self.dropped = 0;
+        self.fetched_through.clone_from(&self.held_after);
         self.fetch(backend, true, cut_off).await?;
         for (preview, at_ms) in &mut self.held {
             if let Some(original) = arrived.get(&preview.event_id) {
                 *at_ms = *original;
             }
+        }
+        // 重读时又丢掉的那几条，到的时间同样留给剩下的第一条。
+        if let (Some(oldest), Some((_, first_at_ms))) =
+            (arrived.values().min(), self.held.first_mut())
+        {
+            *first_at_ms = (*first_at_ms).min(*oldest);
         }
         Ok(())
     }
@@ -290,6 +322,16 @@ impl InboxWaiter {
                 arrived_at_ms: *arrived_at_ms,
             })
             .collect();
+        if let Some(wakes) = &self.wakes {
+            return decide_with(
+                &arrivals,
+                &self.options,
+                wakes.as_ref(),
+                self.limit,
+                now_ms,
+                deadline_ms,
+            );
+        }
         let direct_rooms = HashSet::new();
         decide(
             &arrivals,
@@ -315,9 +357,11 @@ impl InboxWaiter {
         }
         if let Some(last) = previews.last() {
             self.delivered_through = Some(last.event_id.clone());
+            self.held_after.clone_from(&self.delivered_through);
         } else if self.held.is_empty() {
             // 什么都没交、也没攒着别人的：看过的只有自己发的，游标直接跟上。
             self.delivered_through.clone_from(&self.fetched_through);
+            self.held_after.clone_from(&self.delivered_through);
         }
         let skipped = if consumed > 0 {
             delivery.skipped + std::mem::take(&mut self.dropped)

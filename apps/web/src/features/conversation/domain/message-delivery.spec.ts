@@ -89,11 +89,16 @@ describe('message evidence', () => {
       ),
     ).toEqual([]);
   });
-  it('correlates agent, room, message and event, and handles multiple agents independently', () => {
+  it('correlates agent, room and reply target, and handles multiple agents independently', () => {
     const view = receiver();
     expect(messageDelivery(request, [], [view])[0]?.stage).toBe('running');
     expect(messageDelivery({ ...request, roomId: '!other:test' }, [], [view])).toEqual([]);
-    expect(messageDelivery({ ...request, matrixEventId: '$other' }, [], [view])).toEqual([]);
+    expect(messageDelivery({ ...request, messageId: 'other' }, [], [view])).toEqual([]);
+    // A background turn handles a batch: the reply targets the message that woke the agent,
+    // even when a later message anchors the batch.
+    const batch = receiver();
+    if (batch.state.lastDelivery) batch.state.lastDelivery.eventId = '$later';
+    expect(messageDelivery(request, [], [batch])[0]?.stage).toBe('running');
     expect(messageDelivery(request, [reply], [view])[0]?.stage).toBe('replied');
     expect(conversationDeliveries([request, reply], [view]).get(request.messageId)).toEqual(
       messageDelivery(request, [reply], [view]),

@@ -300,6 +300,7 @@ impl ReceiverRuntime {
             policy: ReceptionPolicy {
                 room_id: offer.room_id,
                 allowed_principal_id: request.principal_id,
+                digest_minutes: None,
             },
             automation_grant_id: request.automation_grant_id,
             host: HostBinding {

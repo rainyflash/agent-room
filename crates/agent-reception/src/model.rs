@@ -34,6 +34,13 @@ impl ReceiverBinding {
         }
         validate_task_id(&self.policy.allowed_principal_id)
             .map_err(|_| ReceptionFailure::validation("receiver.principal_invalid"))?;
+        if self
+            .policy
+            .digest_minutes
+            .is_some_and(|minutes| !(1..=1_440).contains(&minutes))
+        {
+            return Err(ReceptionFailure::validation("receiver.digest_invalid"));
+        }
         let cursor = match &self.start {
             ReceiverStart::After { event_id } => Some(event_id.clone()),
             _ => None,
@@ -58,7 +65,9 @@ impl ReceiverBinding {
             && self.session.display_name == other.session.display_name
             && self.host.task_id == other.host.task_id
             && self.host.host_type == other.host.host_type
-            && self.policy == other.policy
+            // 主人可以随时改定时看一眼，房间和主人不能换。
+            && self.policy.room_id == other.policy.room_id
+            && self.policy.allowed_principal_id == other.policy.allowed_principal_id
             && self.start == other.start
     }
 }
@@ -121,6 +130,8 @@ pub enum DeliveryStage {
     Replied,
     NeedsReview,
     Skipped,
+    /// 宿主看过这一批，觉得不用回。
+    NoReply,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

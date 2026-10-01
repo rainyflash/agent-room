@@ -1,12 +1,12 @@
 use agent_room_agent_client::{
     BridgeToolClient, BridgeToolFailure, BridgeToolFuture, MessageReadMode, MessageWait,
-    reception::{CheckpointFailure, DeliveryDecision, ReceptionCheckpoint, ReceptionPolicy},
+    reception::{CheckpointFailure, ReceptionCheckpoint, ReceptionPolicy},
     wait_for_messages,
 };
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcContentReference, IpcConversationMessage, IpcErrorCategory,
-    IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageSensitivity, IpcMethod,
-    IpcResponse,
+    IpcActorSummary, IpcAgentSummary, IpcContentReference, IpcConversationMessage,
+    IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance,
+    IpcMessageSensitivity, IpcMethod, IpcResponse,
 };
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -388,24 +388,15 @@ async fn 持续监听交付慢往返的消息但连接错误仍然终止() {
 }
 
 #[test]
-fn 待处理状态必须在下一条投递前明确完成且可持久化恢复() {
-    let policy = ReceptionPolicy {
-        room_id: "!room:test".into(),
-        allowed_principal_id: SESSION.into(),
-    };
+fn 待处理状态必须在下一批投递前明确完成且可持久化恢复() {
     let mut checkpoint = ReceptionCheckpoint::Ready {
         after_event_id: None,
     };
-    assert_eq!(
-        checkpoint
-            .prepare(&preview("$one"), &policy, "@agent:test")
-            .unwrap(),
-        DeliveryDecision::Deliver
-    );
+    checkpoint.begin("$one").unwrap();
     let serialized = serde_json::to_string(&checkpoint).unwrap();
     let mut restored: ReceptionCheckpoint = serde_json::from_str(&serialized).unwrap();
     assert_eq!(
-        restored.prepare(&preview("$two"), &policy, "@agent:test"),
+        restored.begin("$two"),
         Err(CheckpointFailure::PendingReviewRequired)
     );
     assert_eq!(
@@ -414,38 +405,81 @@ fn 待处理状态必须在下一条投递前明确完成且可持久化恢复()
     );
     restored.complete("$one").unwrap();
     assert_eq!(restored.cursor(), Some("$one"));
-    assert_eq!(
-        restored
-            .prepare(&preview("$one"), &policy, "@agent:test")
-            .unwrap(),
-        DeliveryDecision::Skip
-    );
+}
+
+fn policy() -> ReceptionPolicy {
+    ReceptionPolicy {
+        room_id: "!room:test".into(),
+        allowed_principal_id: SESSION.into(),
+        digest_minutes: None,
+    }
 }
 
 #[test]
-fn 非允许发信人或未提及自身的消息不能启动宿主任务() {
-    let policy = ReceptionPolicy {
-        room_id: "!room:test".into(),
-        allowed_principal_id: SESSION.into(),
-    };
-    let mut message = preview("$test");
-    assert!(policy.accepts(&message, "@agent:test"));
-    assert!(!policy.accepts(&message, "@different:test"));
-    message.room_id = "!other:test".into();
-    assert!(!policy.accepts(&message, "@agent:test"));
-    message.room_id = policy.room_id.clone();
-    if let IpcActorSummary::Human { principal_id, .. } = &mut message.actor {
-        *principal_id = "another-owner".into();
+fn 后台回复只有主人和私人房间里点名它的人叫得醒() {
+    let policy = policy();
+    // 主人说的、跟它有关的话：没点别人也算。
+    let mut owner = preview("$owner");
+    if let Some(chat) = &mut owner.conversation {
+        chat.mentions.clear();
     }
-    assert!(!policy.accepts(&message, "@agent:test"));
-    let mut checkpoint = ReceptionCheckpoint::Ready {
-        after_event_id: None,
+    assert!(policy.wakes(&owner, false));
+    // 主人点了别人、没点它的不算。
+    let mut to_other = owner.clone();
+    if let Some(chat) = &mut to_other.conversation {
+        chat.mentions = vec!["@other:test".into()];
+    }
+    assert!(!policy.wakes(&to_other, false));
+
+    // 别人：私人房间里点名或回复它才算，公开大厅里不算。
+    let mut stranger = preview("$stranger");
+    stranger.mentions_me = true;
+    if let IpcActorSummary::Human { principal_id, .. } = &mut stranger.actor {
+        *principal_id = "another-person".into();
+    }
+    assert!(policy.wakes(&stranger, true));
+    assert!(!policy.wakes(&stranger, false));
+    stranger.mentions_me = false;
+    assert!(!policy.wakes(&stranger, true));
+
+    // 别的房间、自己发的、别的 Agent 都叫不醒它。
+    let mut elsewhere = owner.clone();
+    elsewhere.room_id = "!other:test".into();
+    assert!(!policy.wakes(&elsewhere, false));
+    let mut mine = owner.clone();
+    mine.from_me = true;
+    assert!(!policy.wakes(&mine, false));
+    let mut agent = owner;
+    agent.mentions_me = true;
+    agent.actor = IpcActorSummary::Agent {
+        agent: IpcAgentSummary {
+            agent_id: SESSION.into(),
+            display_name: "Other agent".into(),
+            matrix_user_id: "@other-agent:test".into(),
+            avatar_url: None,
+        },
+        instance_id: SESSION.into(),
+        provenance: IpcMessageProvenance::AutonomousAgent,
     };
-    assert_eq!(
-        checkpoint
-            .prepare(&message, &policy, "@agent:test")
-            .unwrap(),
-        DeliveryDecision::Skip
+    assert!(!policy.wakes(&agent, true));
+}
+
+#[test]
+fn 后台的定时看一眼按主人的设置_旧版存的策略照样能读() {
+    let mut policy = policy();
+    assert_eq!(policy.wait_rules().options.digest, None);
+    policy.digest_minutes = Some(60);
+    let rules = policy.wait_rules();
+    assert_eq!(rules.options.digest, Some(Duration::from_hours(1)));
+    assert_eq!(rules.options.room_id.as_deref(), Some("!room:test"));
+
+    let old: ReceptionPolicy =
+        serde_json::from_str(r#"{"roomId":"!room:test","allowedPrincipalId":"x"}"#).unwrap();
+    assert_eq!(old.digest_minutes, None);
+    assert!(
+        !serde_json::to_string(&old)
+            .unwrap()
+            .contains("digestMinutes"),
+        "没设时不写出来，旧版也读得回去"
     );
-    assert_eq!(checkpoint.cursor(), Some("$test"));
 }

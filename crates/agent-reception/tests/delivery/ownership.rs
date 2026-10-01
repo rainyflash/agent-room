@@ -145,11 +145,7 @@ async fn remote_takeover_cancels_turn_then_releases_with_pending_identity() {
 async fn idle_monitor_never_starts_model_and_close_failure_keeps_execution() {
     for fail_close in [false, true] {
         let (root, binding, bridge) = setup();
-        let host = Host {
-            bridge: bridge.clone(),
-            outcome: Reply::Missing,
-            calls: AtomicUsize::new(0),
-        };
+        let host = Host::new(&bridge, Reply::Missing);
         let transport = ControlledBridge {
             quiet: true,
             fail_close,
@@ -191,11 +187,7 @@ async fn idle_monitor_never_starts_model_and_close_failure_keeps_execution() {
 #[tokio::test(start_paused = true)]
 async fn lost_release_response_resumes_the_same_release_without_another_turn() {
     let (root, binding, bridge) = setup();
-    let host = Host {
-        bridge: bridge.clone(),
-        outcome: Reply::Valid,
-        calls: AtomicUsize::new(0),
-    };
+    let host = Host::new(&bridge, Reply::Valid);
     let transport = ControlledBridge {
         lost_release: true,
         ..ControlledBridge::new(bridge)

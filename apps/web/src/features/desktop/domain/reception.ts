@@ -14,7 +14,15 @@ const delivery = z
     eventId: z.string(),
     messageId: z.uuid(),
     submissionId: z.uuid(),
-    stage: z.enum(['received', 'running', 'verifying', 'replied', 'needs_review', 'skipped']),
+    stage: z.enum([
+      'received',
+      'running',
+      'verifying',
+      'replied',
+      'needs_review',
+      'skipped',
+      'no_reply',
+    ]),
     replyEventId: z.string().nullable(),
     failure: failure.nullable(),
   })
@@ -74,7 +82,13 @@ export const receiverViewSchema = z
                   .optional(),
               })
               .strict(),
-            policy: z.object({ roomId: z.string(), allowedPrincipalId: z.uuid() }).strict(),
+            policy: z
+              .object({
+                roomId: z.string(),
+                allowedPrincipalId: z.uuid(),
+                digestMinutes: z.number().int().min(1).max(1440).optional(),
+              })
+              .strict(),
             automationGrantId: z.uuid(),
             host: z
               .object({

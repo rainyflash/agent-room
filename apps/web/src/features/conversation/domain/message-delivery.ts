@@ -4,7 +4,8 @@ import type { ReceiverView } from '@/features/desktop/domain/reception';
 export type AgentDelivery = {
   readonly agentId: string;
   readonly name: string;
-  readonly stage: 'received' | 'running' | 'verifying' | 'replied' | 'needs_review' | 'skipped';
+  readonly stage:
+    'received' | 'running' | 'verifying' | 'replied' | 'needs_review' | 'skipped' | 'no_reply';
 };
 
 export function conversationDeliveries(
@@ -24,9 +25,10 @@ export function conversationDeliveries(
     const record =
       view.progress?.type === 'delivery' ? view.progress.record : view.state.lastDelivery;
     if (record === null) continue;
-    const group = deliveries.get(record.eventId) ?? [];
+    // 后台回复一次处理一批，回复挂在叫醒它的那条下面：进度跟着那条消息走。
+    const group = deliveries.get(record.messageId) ?? [];
     group.push(view);
-    deliveries.set(record.eventId, group);
+    deliveries.set(record.messageId, group);
   }
   return new Map(
     messages.map((message) => [
@@ -34,7 +36,7 @@ export function conversationDeliveries(
       messageDelivery(
         message,
         replies.get(message.messageId) ?? [],
-        deliveries.get(message.matrixEventId) ?? [],
+        deliveries.get(message.messageId) ?? [],
       ),
     ]),
   );
@@ -52,8 +54,7 @@ export function messageDelivery(
     if (agentId === null || view.state.binding.policy.roomId !== message.roomId) continue;
     const record =
       view.progress?.type === 'delivery' ? view.progress.record : view.state.lastDelivery;
-    if (record?.eventId !== message.matrixEventId || record.messageId !== message.messageId)
-      continue;
+    if (record?.messageId !== message.messageId) continue;
     evidence.set(agentId, {
       agentId,
       name: view.state.binding.session.displayName,

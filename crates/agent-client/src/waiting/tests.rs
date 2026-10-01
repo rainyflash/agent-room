@@ -358,3 +358,47 @@ async fn 攒满以后丢掉最早的_交的时候算进跳过的() {
     assert_eq!(texts(&batch.previews).last(), Some(&"Scout 在吗"));
     assert_eq!(batch.skipped + batch.previews.len(), 251, "一条都没算丢");
 }
+
+#[tokio::test(start_paused = true)]
+async fn 调用方自己判断哪条叫醒它() {
+    let room = Room::new(vec![
+        (0, chatter("闲聊")),
+        (1_000, preview(ADA, true, "在吗", &[])),
+    ]);
+    let only_ada = |message: &IpcMessagePreviewSummary| matches!(&message.actor, IpcActorSummary::Human { matrix_user_id, .. } if matrix_user_id == ADA);
+    let batch = waiter(WaitRules::default())
+        .with_wakes(only_ada)
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["闲聊", "在吗"]);
+    assert_eq!(batch.wake.event_ids, ["$在吗:room.test"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 一直在丢最早的消息时_定时看一眼照样到点() {
+    // 从第 1 秒起每秒来 60 条闲聊，攒满 200 条以后一直在丢。丢掉的最早那条到的时间留给剩下
+    // 最早的一条，20 秒以后照样到点；不留的话最早一条永远只有 3 秒多，等满一分钟也不到点。
+    let messages: Vec<_> = (0..4_000_u64)
+        .map(|index| {
+            (
+                1_000 + index * 1_000 / 60,
+                chatter(&format!("闲聊 {index}")),
+            )
+        })
+        .collect();
+    let room = Room::new(messages);
+    let rules = WaitRules {
+        options: WaitOptions {
+            digest: Some(Duration::from_secs(20)),
+            ..WaitOptions::default()
+        },
+        wait_for_mentioned: false,
+    };
+    let batch = waiter(rules)
+        .next(&room, MessageWait::For(Duration::from_mins(1)))
+        .await
+        .unwrap();
+    assert_eq!(batch.wake.reason, WakeReason::Digest);
+    assert!(batch.skipped > 0, "攒满以后丢掉的算进跳过的");
+}
