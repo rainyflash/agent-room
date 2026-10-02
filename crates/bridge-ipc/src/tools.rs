@@ -46,6 +46,12 @@ pub enum IpcMethod {
     ListPreviews(IpcListPreviewsRequest),
     ReadInbox(IpcListPreviewsRequest),
     WaitInbox(IpcListPreviewsRequest),
+    /// 按 ID 取消息：事件 ID 或消息 ID，最多 20 个，给全文；只给自己在的房间里的。不动收件箱的位置。
+    GetMessages(IpcGetMessagesRequest),
+    /// 一条消息和它前后各几条，早的在前。不动收件箱的位置。
+    MessagesAround(IpcMessagesAroundRequest),
+    /// 往前翻（或从某条往后翻），可以只看某个人、只看提到我的。不动收件箱的位置。
+    RoomHistory(IpcRoomHistoryRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     PublishStatus(IpcPublishStatusRequest),
@@ -81,6 +87,9 @@ impl IpcMethod {
             Self::ListPreviews(_) => "list_previews",
             Self::ReadInbox(_) => "read_inbox",
             Self::WaitInbox(_) => "wait_inbox",
+            Self::GetMessages(_) => "get_messages",
+            Self::MessagesAround(_) => "messages_around",
+            Self::RoomHistory(_) => "room_history",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -110,9 +119,13 @@ impl IpcMethod {
             Self::BootstrapDefaultAgent(_)
             | Self::OfferInvitation(_)
             | Self::WithdrawInvitation(_) => IpcScope::AgentBootstrap,
-            Self::ListPreviews(_) | Self::ReadInbox(_) | Self::WaitInbox(_) | Self::ListRooms => {
-                IpcScope::PreviewsRead
-            }
+            Self::ListPreviews(_)
+            | Self::ReadInbox(_)
+            | Self::WaitInbox(_)
+            | Self::GetMessages(_)
+            | Self::MessagesAround(_)
+            | Self::RoomHistory(_)
+            | Self::ListRooms => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
@@ -187,6 +200,9 @@ impl IpcMethod {
                 }
                 request.validate()
             }
+            Self::GetMessages(request) => request.validate(),
+            Self::MessagesAround(request) => request.validate(),
+            Self::RoomHistory(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),
@@ -262,6 +278,121 @@ impl IpcListPreviewsRequest {
             return Err(failure("bridge.ipc.preview_limit_invalid"));
         }
         Ok(())
+    }
+}
+
+/// 按 ID 取消息（`GetMessages`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcGetMessagesRequest {
+    /// 事件 ID（`$` 开头）或消息 ID（UUIDv7），1 到 20 个。
+    pub ids: Vec<String>,
+}
+
+impl IpcGetMessagesRequest {
+    fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if self.ids.is_empty() || self.ids.len() > limits::MESSAGE_LOOKUP_IDS {
+            return Err(failure("bridge.ipc.message_ids_invalid"));
+        }
+        self.ids
+            .iter()
+            .try_for_each(|id| validate_message_reference(id))
+    }
+}
+
+/// 看前后（`MessagesAround`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcMessagesAroundRequest {
+    /// 哪个房间；不给就是会话所在的房间。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_id: Option<String>,
+    /// 中间那条：事件 ID 或消息 ID。
+    pub id: String,
+    /// 它前面几条，0 到 20。
+    pub before: u16,
+    /// 它后面几条，0 到 20。
+    pub after: u16,
+}
+
+impl IpcMessagesAroundRequest {
+    fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_optional_bounded(
+            self.room_id.as_deref(),
+            limits::ROOM_ID_BYTES,
+            "bridge.ipc.room_id_invalid",
+        )?;
+        validate_message_reference(&self.id)?;
+        if self.before > limits::AROUND_MESSAGES || self.after > limits::AROUND_MESSAGES {
+            return Err(failure("bridge.ipc.around_limit_invalid"));
+        }
+        Ok(())
+    }
+}
+
+/// 往前翻（`RoomHistory`）：不给 `before`、`after` 时从最新的一条往前。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcRoomHistoryRequest {
+    /// 哪个房间；不给就是会话所在的房间。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_id: Option<String>,
+    /// 从这条往前翻（新的在前）：事件 ID 或消息 ID。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
+    /// 从这条往后翻（旧的在前）：事件 ID 或消息 ID。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    /// 最多几条，1 到 50。
+    pub limit: u16,
+    /// 只看某个人：Matrix 用户 ID（`@` 开头），或者名字（不分大小写）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// 只看提到我或回复我的。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mentions_me: bool,
+}
+
+impl IpcRoomHistoryRequest {
+    fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if self.before.is_some() && self.after.is_some() {
+            return Err(failure("bridge.ipc.event_cursor_invalid"));
+        }
+        validate_optional_bounded(
+            self.room_id.as_deref(),
+            limits::ROOM_ID_BYTES,
+            "bridge.ipc.room_id_invalid",
+        )?;
+        if let Some(cursor) = self.before.as_deref().or(self.after.as_deref()) {
+            validate_message_reference(cursor)?;
+        }
+        if !(1..=limits::PREVIEW_PAGE_SIZE).contains(&self.limit) {
+            return Err(failure("bridge.ipc.preview_limit_invalid"));
+        }
+        if let Some(from) = &self.from {
+            validate_bounded(
+                from,
+                limits::MESSAGE_FROM_BYTES,
+                "bridge.ipc.message_from_invalid",
+            )?;
+            if from.trim().is_empty() {
+                return Err(failure("bridge.ipc.message_from_invalid"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// 事件 ID（`$` 开头）或消息 ID（UUIDv7）。
+fn validate_message_reference(id: &str) -> Result<(), IpcMethodValidationFailure> {
+    if id.starts_with('$') {
+        // 和 Matrix 事件 ID 的规则一致：至少 4 个字节，不含空白。
+        if id.len() < 4 || id.chars().any(char::is_whitespace) {
+            return Err(failure("bridge.ipc.message_id_invalid"));
+        }
+        validate_bounded(id, limits::EVENT_ID_BYTES, "bridge.ipc.message_id_invalid")
+    } else {
+        validate_uuid_v7(id, "bridge.ipc.message_id_invalid")
     }
 }
 
@@ -568,6 +699,25 @@ pub enum IpcResponse {
         /// 等消息（`WaitInbox`）时，这个房间里此刻在打字的人：叫醒它的人还在打字就再等等。
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         typing: Vec<crate::wake::IpcTyping>,
+    },
+    /// 按 ID 取到的消息，给全文，按要的顺序。`missing` 是找不到、或不在你所在房间里的；
+    /// `more` 是这次放不下、要再取一次的。
+    Messages {
+        messages: Vec<IpcMessagePreviewSummary>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        missing: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        more: Vec<String>,
+    },
+    /// 房间里的一段消息（看前后、往前翻）。`nextCursor` 是接着翻的位置，没有就是翻到头了。
+    RoomMessages {
+        messages: Vec<IpcMessagePreviewSummary>,
+        #[serde(
+            rename = "nextCursor",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        next_cursor: Option<String>,
     },
     Presence {
         entries: Vec<IpcPresenceSummary>,
@@ -1130,11 +1280,13 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcHandoffPermission,
-        IpcHandoffPurpose, IpcHandoffRequest, IpcListHandoffsRequest, IpcListPreviewsRequest,
-        IpcMessageProvenance, IpcMessageSensitivity, IpcMethod, IpcPublishStatusRequest,
-        IpcSendMessageRequest, IpcWorkStatus,
+        IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcGetMessagesRequest,
+        IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest, IpcListHandoffsRequest,
+        IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity,
+        IpcMessagesAroundRequest, IpcMethod, IpcPublishStatusRequest, IpcResponse,
+        IpcRoomHistoryRequest, IpcSendMessageRequest, IpcWorkStatus,
     };
+    use crate::limits;
 
     #[test]
     fn 每个工具方法映射到独立最小作用域() {
@@ -1192,6 +1344,142 @@ mod tests {
             assert_eq!(method.required_scope(), scope);
             assert!(method.validate().is_ok());
         }
+    }
+
+    #[test]
+    fn 按需查看的参数在进入_bridge_之前校验() {
+        let event = "$message:matrix.test".to_owned();
+        let message = "0198b601-77a1-7bb8-83eb-a8fe68c97e60".to_owned();
+        let code = |method: IpcMethod| {
+            method
+                .validate()
+                .map_err(super::IpcMethodValidationFailure::code)
+        };
+        let get = |ids: Vec<String>| IpcMethod::GetMessages(IpcGetMessagesRequest { ids });
+        assert_eq!(code(get(vec![event.clone(), message.clone()])), Ok(()));
+        assert_eq!(code(get(Vec::new())), Err("bridge.ipc.message_ids_invalid"));
+        assert_eq!(
+            code(get(vec![event.clone(); limits::MESSAGE_LOOKUP_IDS + 1])),
+            Err("bridge.ipc.message_ids_invalid")
+        );
+        for bad in ["abc", "550e8400-e29b-41d4-a716-446655440000", "$"] {
+            assert_eq!(
+                code(get(vec![bad.to_owned()])),
+                Err("bridge.ipc.message_id_invalid"),
+                "{bad}"
+            );
+        }
+
+        let around = |before: u16| {
+            IpcMethod::MessagesAround(IpcMessagesAroundRequest {
+                room_id: None,
+                id: message.clone(),
+                before,
+                after: 0,
+            })
+        };
+        assert_eq!(code(around(limits::AROUND_MESSAGES)), Ok(()));
+        assert_eq!(
+            code(around(limits::AROUND_MESSAGES + 1)),
+            Err("bridge.ipc.around_limit_invalid")
+        );
+
+        let history = IpcRoomHistoryRequest {
+            room_id: None,
+            before: Some(event.clone()),
+            after: None,
+            limit: 20,
+            from: Some("Ada".to_owned()),
+            mentions_me: true,
+        };
+        assert_eq!(code(IpcMethod::RoomHistory(history.clone())), Ok(()));
+        let invalid = [
+            (
+                IpcRoomHistoryRequest {
+                    after: Some(message.clone()),
+                    ..history.clone()
+                },
+                "bridge.ipc.event_cursor_invalid",
+            ),
+            (
+                IpcRoomHistoryRequest {
+                    limit: 0,
+                    ..history.clone()
+                },
+                "bridge.ipc.preview_limit_invalid",
+            ),
+            (
+                IpcRoomHistoryRequest {
+                    limit: limits::PREVIEW_PAGE_SIZE + 1,
+                    ..history.clone()
+                },
+                "bridge.ipc.preview_limit_invalid",
+            ),
+            (
+                IpcRoomHistoryRequest {
+                    from: Some("   ".to_owned()),
+                    ..history.clone()
+                },
+                "bridge.ipc.message_from_invalid",
+            ),
+            (
+                IpcRoomHistoryRequest {
+                    from: Some("名".repeat(100)),
+                    ..history.clone()
+                },
+                "bridge.ipc.message_from_invalid",
+            ),
+        ];
+        for (request, expected) in invalid {
+            assert_eq!(code(IpcMethod::RoomHistory(request)), Err(expected));
+        }
+
+        // 都是读消息的权限，可以在会话里调用。
+        for method in [
+            get(vec![event.clone()]),
+            around(1),
+            IpcMethod::RoomHistory(history),
+        ] {
+            assert_eq!(method.required_scope(), IpcScope::PreviewsRead);
+            let scoped = IpcMethod::WithSession {
+                session_id: "01990d9e-8400-7000-8000-000000000010".to_owned(),
+                method: Box::new(method),
+            };
+            assert_eq!(code(scoped), Ok(()));
+        }
+    }
+
+    #[test]
+    fn 按需查看的线上格式() {
+        let method = serde_json::to_value(IpcMethod::RoomHistory(IpcRoomHistoryRequest {
+            room_id: None,
+            before: None,
+            after: None,
+            limit: 20,
+            from: None,
+            mentions_me: false,
+        }))
+        .expect("能序列化");
+        assert_eq!(method, serde_json::json!({"room_history": {"limit": 20}}));
+        let messages = serde_json::to_value(IpcResponse::Messages {
+            messages: Vec::new(),
+            missing: vec!["$gone:matrix.test".to_owned()],
+            more: Vec::new(),
+        })
+        .expect("能序列化");
+        assert_eq!(
+            messages,
+            serde_json::json!({"type": "messages", "messages": [], "missing": ["$gone:matrix.test"]})
+        );
+        let page = serde_json::to_value(IpcResponse::RoomMessages {
+            messages: Vec::new(),
+            next_cursor: Some("$next:matrix.test".to_owned()),
+        })
+        .expect("能序列化");
+        assert_eq!(
+            page,
+            serde_json::json!({"type": "room_messages", "messages": [], "nextCursor": "$next:matrix.test"})
+        );
     }
 
     #[test]

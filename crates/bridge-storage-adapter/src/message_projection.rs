@@ -5,14 +5,14 @@ use agent_room_application::ports::{
 };
 use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
-    IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewPage,
-    MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
+    IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessageLookupId,
+    MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
     MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageRecoveryBatch,
     MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineProjectionStore,
     MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
-    OwnMembership, PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
-    ProjectedMessagePreview, ReservedIsolatedEvent, RoomName, RoomStateChange,
-    UndecryptableSession,
+    MessagesAround, OwnMembership, PendingTimelineGap, ProjectedActorInstanceVerification,
+    ProjectedMessageActor, ProjectedMessagePreview, ReservedIsolatedEvent, RoomName,
+    RoomStateChange, UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -479,6 +479,23 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
             )
         })
     }
+
+    fn lookup_messages<'a>(
+        &'a self,
+        ids: &'a [MessageLookupId],
+    ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_lookup(ids).await })
+    }
+
+    fn messages_around<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        anchor: &'a MessageLookupId,
+        before: u16,
+        after: u16,
+    ) -> PortFuture<'a, Result<MessagesAround, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_around(room_id, anchor, before, after).await })
+    }
 }
 
 impl SqliteMessageTimelineRepository {
@@ -634,6 +651,126 @@ impl SqliteMessageTimelineRepository {
         .iter()
         .map(|row| decode_preview_row(row, &self.key_cipher))
         .collect()
+    }
+
+    /// 按事件 ID 或消息 ID 找，不限房间。两组 ID 各编成一个 JSON 数组绑定，SQL 本身保持字面量。
+    async fn query_lookup(
+        &self,
+        ids: &[MessageLookupId],
+    ) -> Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut events = Vec::new();
+        let mut messages = Vec::new();
+        for id in ids {
+            match id {
+                MessageLookupId::Event(event) => events.push(event.as_str().to_owned()),
+                MessageLookupId::Message(message) => messages.push(message.to_string()),
+            }
+        }
+        let events = serde_json::to_string(&events).map_err(|_| corrupt_query())?;
+        let messages = serde_json::to_string(&messages).map_err(|_| corrupt_query())?;
+        sqlx::query(
+            "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE visibility = 'active'
+               AND (base_event_id IN (SELECT value FROM json_each(?))
+                    OR message_id IN (SELECT value FROM json_each(?)))",
+        )
+        .bind(events)
+        .bind(messages)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?
+        .iter()
+        .map(|row| decode_preview_row(row, &self.key_cipher))
+        .collect()
+    }
+
+    /// 某一条和它前后各最多几条，按收到的先后排。
+    async fn query_around(
+        &self,
+        room_id: &MatrixRoomId,
+        anchor: &MessageLookupId,
+        before: u16,
+        after: u16,
+    ) -> Result<MessagesAround, MessageTimelineQueryFailure> {
+        let (event, message) = match anchor {
+            MessageLookupId::Event(event) => (Some(event.as_str().to_owned()), None),
+            MessageLookupId::Message(message) => (None, Some(message.to_string())),
+        };
+        let Some(row) = sqlx::query(
+            "SELECT first_sequence, base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE room_id = ? AND visibility = 'active'
+               AND (base_event_id = ? OR message_id = ?)",
+        )
+        .bind(room_id.as_str())
+        .bind(event)
+        .bind(message)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?
+        else {
+            return Ok(MessagesAround::default());
+        };
+        let sequence = row
+            .try_get::<i64, _>("first_sequence")
+            .map_err(|_| corrupt_query())?;
+        let anchor = decode_preview_row(&row, &self.key_cipher)?;
+        let mut earlier = self.neighbours(room_id, sequence, before, true).await?;
+        earlier.reverse();
+        let later = self.neighbours(room_id, sequence, after, false).await?;
+        Ok(MessagesAround {
+            before: earlier,
+            anchor: Some(anchor),
+            after: later,
+        })
+    }
+
+    /// 同一个房间里紧挨着某个位置的几条：`earlier` 时取它之前的（新的在前），否则取之后的（旧的在前）。
+    async fn neighbours(
+        &self,
+        room_id: &MatrixRoomId,
+        sequence: i64,
+        count: u16,
+        earlier: bool,
+    ) -> Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let sql = if earlier {
+            "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE room_id = ? AND visibility = 'active' AND first_sequence < ?
+             ORDER BY first_sequence DESC
+             LIMIT ?"
+        } else {
+            "SELECT base_event_id, room_id, message_id, created_at_unix_ms,
+                    origin_server_timestamp, actor_json, preview_json, content_json,
+                    relation_target_message_id
+             FROM message_current_projection
+             WHERE room_id = ? AND visibility = 'active' AND first_sequence > ?
+             ORDER BY first_sequence ASC
+             LIMIT ?"
+        };
+        sqlx::query(sql)
+            .bind(room_id.as_str())
+            .bind(sequence)
+            .bind(i64::from(count))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| map_query_sqlx_error(&error))?
+            .iter()
+            .map(|row| decode_preview_row(row, &self.key_cipher))
+            .collect()
     }
 
     async fn query_content_source(

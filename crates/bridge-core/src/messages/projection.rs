@@ -619,6 +619,21 @@ impl MessageTimelineQueryFailure {
     }
 }
 
+/// 按 ID 找消息：Matrix 事件 ID（`$` 开头）或消息 ID（UUIDv7）。编辑过的消息只认原来那条的事件 ID。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageLookupId {
+    Event(MatrixEventId),
+    Message(MessageId),
+}
+
+/// 一条消息和它前后的消息，都按这台 Bridge 收到的先后排，早的在前。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MessagesAround {
+    pub before: Vec<ProjectedMessagePreview>,
+    pub anchor: Option<ProjectedMessagePreview>,
+    pub after: Vec<ProjectedMessagePreview>,
+}
+
 /// 读消息时要的房间信息：房间名，和这台 Bridge 上的 Agent 什么时候加入的。不知道就没有。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MessageRoomContext {
@@ -652,6 +667,25 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         _room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, Result<MessageRoomContext, MessageTimelineQueryFailure>> {
         Box::pin(async { Ok(MessageRoomContext::default()) })
+    }
+
+    /// 按 ID 找仍然有效的消息，不限房间；找不到的跳过，不保证顺序。能不能看那个房间由调用方查。
+    fn lookup_messages<'a>(
+        &'a self,
+        _ids: &'a [MessageLookupId],
+    ) -> PortFuture<'a, Result<Vec<ProjectedMessagePreview>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// 同一个房间里某一条之前、之后各最多几条。那一条不在这个房间或已撤回时什么也没有。
+    fn messages_around<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _anchor: &'a MessageLookupId,
+        _before: u16,
+        _after: u16,
+    ) -> PortFuture<'a, Result<MessagesAround, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(MessagesAround::default()) })
     }
 }
 

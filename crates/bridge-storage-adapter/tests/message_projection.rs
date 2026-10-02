@@ -7,13 +7,13 @@ use agent_room_application::ports::{
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     messages::{
-        MessageBackfillBatch, MessageContentSourceQuery, MessagePreviewQuery,
+        MessageBackfillBatch, MessageContentSourceQuery, MessageLookupId, MessagePreviewQuery,
         MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailureKind,
         MessageRecoveryBatch, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineGap,
         MessageTimelineProjectionStore, MessageTimelineQueryFailureKind,
-        MessageTimelineQueryRepository, PendingTimelineGap, ProjectedActorInstanceVerification,
-        ProjectedMessageActor, ProjectedMessagePreview, ProjectedMessageRevision,
-        ReservedIsolatedEvent, UndecryptableSession,
+        MessageTimelineQueryRepository, MessagesAround, PendingTimelineGap,
+        ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
+        ProjectedMessageRevision, ReservedIsolatedEvent, UndecryptableSession,
     },
 };
 use agent_room_bridge_storage_adapter::{
@@ -1625,4 +1625,107 @@ async fn 记下_所有人_重开以后还在() {
     };
     assert!(everyone("$everyone"));
     assert!(!everyone("$plain"));
+}
+
+#[tokio::test]
+async fn 按事件或消息_id_跨房间取_看前后按收到的先后() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let ids: Vec<MessageId> = (0..5)
+        .map(|_| MessageId::from_uuid(Uuid::now_v7()))
+        .collect();
+    let mut mutations: Vec<_> = ids
+        .iter()
+        .zip(0_u8..)
+        .map(|(id, index)| {
+            preview_mutation(
+                &format!("$around-{index}:matrix.test"),
+                *id,
+                owner_actor(),
+                1_700_000_000_000 + i64::from(index),
+                &format!("第 {index} 条"),
+                index + 1,
+                Some(10 + u64::from(index)),
+            )
+        })
+        .collect();
+    let elsewhere = MessageId::from_uuid(Uuid::now_v7());
+    let mut other = preview_mutation(
+        "$elsewhere:matrix.test",
+        elsewhere,
+        owner_actor(),
+        1_700_000_000_100,
+        "别的房间",
+        9,
+        Some(100),
+    );
+    if let MessageProjectionMutation::Preview(message) = &mut other {
+        message.room_id = MatrixRoomId::new("!other:matrix.test").expect("房间标识有效");
+    }
+    mutations.push(other);
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("sync-around"),
+            mutations,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("批次可投影");
+
+    // 按 ID 取：事件 ID、消息 ID 都认，别的房间的也找得到，找不到的跳过。
+    let found = store
+        .lookup_messages(&[
+            MessageLookupId::Event(event_id("$around-1:matrix.test")),
+            MessageLookupId::Message(ids[3]),
+            MessageLookupId::Message(elsewhere),
+            MessageLookupId::Message(MessageId::from_uuid(Uuid::now_v7())),
+        ])
+        .await
+        .expect("可以取");
+    let found: std::collections::BTreeSet<String> = found
+        .iter()
+        .map(|message| message.message_id.to_string())
+        .collect();
+    let wanted: std::collections::BTreeSet<String> = [ids[1], ids[3], elsewhere]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(found, wanted);
+
+    let ids_of = |messages: &[ProjectedMessagePreview]| {
+        messages
+            .iter()
+            .map(|message| message.message_id)
+            .collect::<Vec<_>>()
+    };
+    let around = store
+        .messages_around(&room_id(), &MessageLookupId::Message(ids[2]), 1, 1)
+        .await
+        .expect("可以看前后");
+    assert_eq!(ids_of(&around.before), [ids[1]]);
+    assert_eq!(
+        around.anchor.map(|message| message.message_id),
+        Some(ids[2])
+    );
+    assert_eq!(ids_of(&around.after), [ids[3]]);
+
+    // 前面不够时有多少给多少；后面按收到的先后、早的在前。
+    let start = store
+        .messages_around(
+            &room_id(),
+            &MessageLookupId::Event(event_id("$around-0:matrix.test")),
+            3,
+            2,
+        )
+        .await
+        .expect("可以看前后");
+    assert!(start.before.is_empty());
+    assert_eq!(ids_of(&start.after), [ids[1], ids[2]]);
+
+    // 别的房间的那条不能当这个房间的锚点。
+    let foreign = store
+        .messages_around(&room_id(), &MessageLookupId::Message(elsewhere), 1, 1)
+        .await
+        .expect("可以看前后");
+    assert_eq!(foreign, MessagesAround::default());
 }

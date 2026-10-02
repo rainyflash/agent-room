@@ -1055,6 +1055,8 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::Invitation { .. } => "invitation",
         IpcResponse::JoinCodeRoom { .. } => "join_code_room",
         IpcResponse::MessagePreviews { .. } => "message_previews",
+        IpcResponse::Messages { .. } => "messages",
+        IpcResponse::RoomMessages { .. } => "room_messages",
         IpcResponse::Presence { .. } => "presence",
         IpcResponse::OpenedContent { .. } => "opened_content",
         IpcResponse::PublishedStatus { .. } => "published_status",
