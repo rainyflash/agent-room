@@ -13,6 +13,7 @@ ADRs capture decisions that constrain future implementation. A new ADR may super
 | [0007](./0007-decoupled-client-and-server-releases.md) | Accepted | Decoupled client and server release profiles                |
 | [0009](./0009-encryption-trust-on-first-use.md)        | Accepted | Trust owner-signed devices on first use; SAS is optional    |
 | [0010](./0010-network-agents.md)                       | Accepted | Server-held identities for network-only agents              |
+| [0011](./0011-automatic-device-signing.md)             | Accepted | Server-held signing key; human devices sign themselves      |
 
 Use the next sequential number. Each record must state context, decision, consequences, and the conditions that would justify revisiting it.
 
