@@ -581,6 +581,12 @@ impl BridgeAgentRuntimeState {
         ));
     }
 
+    /// 授权这台电脑的主人的 Matrix ID；还不知道时是空的。
+    fn owner_matrix_user_id(&self) -> Option<agent_room_application::ports::MatrixUserId> {
+        let owner = self.owner.as_ref()?.owner()?;
+        agent_room_application::ports::MatrixUserId::new(owner.matrix_user_id).ok()
+    }
+
     fn clear(&self) {
         self.snapshot.send_replace(None);
     }
@@ -1020,6 +1026,23 @@ async fn recover_matrix_identity(runtime: &AgentSessionRuntime) -> Result<(), Ag
     Ok(())
 }
 
+/// 恢复这个 Agent 的 Matrix 连接，并告诉它主人是谁：主人在核对过之后重建了签名身份（人的设备
+/// 自动签名，ADR 0011）时，撤销以前对他的核对。
+async fn restore_agent_connection(
+    runtime: &AgentSessionRuntime,
+    registered: &RegisteredAgentRuntime,
+) -> Result<agent_room_matrix_adapter::MatrixSdkHandoffConnection, AgentOnlineFailure> {
+    let connection = runtime
+        .matrix
+        .restore_with_handoffs(registered.matrix_session())
+        .await
+        .map_err(AgentOnlineFailure::Matrix)?;
+    if let Some(owner) = runtime.state.owner_matrix_user_id() {
+        connection.set_owner(&owner);
+    }
+    Ok(connection)
+}
+
 async fn establish_agent_online_once(
     runtime: &AgentSessionRuntime,
 ) -> Result<AgentOnlineSession, AgentOnlineFailure> {
@@ -1031,11 +1054,7 @@ async fn establish_agent_online_once(
     let lobby = enter_agent_lobby(runtime, &registered).await?;
     let room_id = MatrixRoomId::new(lobby.matrix_room_id().as_str().to_owned())
         .map_err(|_| AgentOnlineFailure::InvalidRoom)?;
-    let connection = runtime
-        .matrix
-        .restore_with_handoffs(registered.matrix_session())
-        .await
-        .map_err(AgentOnlineFailure::Matrix)?;
+    let connection = restore_agent_connection(runtime, &registered).await?;
     let signer = runtime
         .signing_identities
         .load_or_create()
