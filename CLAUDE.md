@@ -126,7 +126,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 已合并：设计 #289；第 2 步控制面保管钥匙 #290（表 `principal_encryption_key`、`/account/encryption-key`、`/account/encryption-reset`）；第 3 步设备上的自动签名 #291（`ensureDeviceSigned`，进度在 `DeviceSigningStatus`）。
 - 第 4 步 #293 去掉界面上的恢复密钥和核对：安全页只说这台设备“已就绪 / 正在准备 / 出错可重试”，设置上的提醒点只在出错时亮。浏览器验收用 `security-center.html`，加 `?signing=failed` 看出错和重试。
 - 重建签名身份改由应用服务代传新签名公钥（修正第 2、3 步，见上面“代码里的坑”）：网页端在 fetch 外包一层（`cross-signing-upload-route.ts`），把带我们认证标记的上传改送 `POST /account/encryption-reset`。发版部署时候选改了 Synapse 配置会先重启一次 Synapse（`release_deploy.py`）。
-- 第 2 到第 5 步要在同一个版本里发：第 5 步是 Agent 发现主人换了签名身份时自动撤掉旧的核对，不然以前跟主人核对过安全码的 Agent 会整个房间发不出消息。
+- 第 5 步 #294：Agent 发现主人核对过又换了签名身份时，自动撤掉旧的核对、记住新身份（matrix-adapter 的 `AgentOwner`，Bridge 恢复连接时交给它）。不然以前跟主人核对过安全码的 Agent 会整个房间发不出消息。第 2 到第 5 步要在同一个版本里发。
 - 维护者的账户没有密钥存储、没有备份，升级后第一台打开的设备会重建一次签名身份。
 
 ### 界面翻新
