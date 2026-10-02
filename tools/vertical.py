@@ -1158,7 +1158,7 @@ def queue_targeted_handoff_in_browser(
 
 
 def verify_browser_security(environment: Mapping[str, str]) -> None:
-    """在全新 Synapse 中运行三设备交叉签名、SAS 与恢复验收。"""
+    """在全新 Synapse 中验收设备自动签名：两台设备登录即签好，新设备自动读回加密历史。"""
     playwright_environment = os.environ.copy()
     playwright_environment.update(
         {
@@ -3400,9 +3400,9 @@ def security() -> None:
     print(
         json.dumps(
             {
-                "devices": "3",
+                "devices": "2",
                 "logFilesScanned": str(len(scanned_logs)),
-                "scenario": "cross-signing+sas+recovery",
+                "scenario": "automatic-device-signing",
             },
             ensure_ascii=False,
             indent=2,

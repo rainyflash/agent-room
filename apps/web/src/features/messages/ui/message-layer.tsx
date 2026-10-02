@@ -21,8 +21,6 @@ export type MessageLayerProps = {
   readonly participants?: readonly ConversationParticipant[];
   readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
-  /** 打开“安全”页：解不开的消息要先验证这台设备才能找回时，提示里给个按钮。 */
-  readonly onOpenSecurity?: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly roomId: string;
   readonly roomName: string;
@@ -40,7 +38,6 @@ export function MessageLayer({
   participants,
   catalogId,
   onLatestDisplayed,
-  onOpenSecurity,
   onSelectedMessageChange,
   roomId,
   roomName,
@@ -112,7 +109,6 @@ export function MessageLayer({
             {...(state.kind === 'ready' && state.room.undecryptable !== undefined
               ? { recovery, undecryptable: state.room.undecryptable }
               : {})}
-            {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
           />
         </div>
         <section className="message-workspace__resources" hidden={view !== 'resources'}>

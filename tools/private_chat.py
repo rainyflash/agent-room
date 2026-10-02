@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用隔离服务验证原生 Agent 与浏览器无需核对即可加密私聊、可选的 SAS 核对和重连。"""
+"""用隔离服务验证原生 Agent 与浏览器无需核对即可加密私聊，以及重连。"""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ import time
 
 if __package__:
     from . import vertical as v
-    from .mcp_client import McpAgentSession, tool_failure_code
+    from .mcp_client import McpAgentSession
 else:
     import vertical as v
-    from mcp_client import McpAgentSession, tool_failure_code
+    from mcp_client import McpAgentSession
 
 
 WORK = v.ROOT / "artifacts" / "private-chat"
@@ -39,58 +39,6 @@ def security(client: McpAgentSession, request: dict[str, object]) -> dict[str, o
         client.call_tool("agent_room_matrix_security", {"request": request}).get("security"),
         "Matrix 安全状态",
     )
-
-
-def require_failure(result: dict[str, object], code: str) -> None:
-    if result.get("isError") is not True or tool_failure_code(result) != code:
-        raise v.VerticalFailure(f"预期拒绝 {code}，实际为 {tool_failure_code(result)}。")
-
-
-def wait_stage(
-    client: McpAgentSession, flow: dict[str, object], stage: str, browser: v.ManagedProcess
-) -> dict[str, object]:
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        browser.ensure_running()
-        state = security(client, {**flow, "step": {"action": "poll"}})
-        if state.get("stage") == stage:
-            return state
-        if state.get("stage") == "cancelled":
-            raise v.VerticalFailure("SAS 提前取消。")
-        time.sleep(0.4)
-    raise v.VerticalFailure(f"SAS 未达到 {stage}。")
-
-
-def verify_peer(client: McpAgentSession, peer: dict[str, object], browser: v.ManagedProcess) -> None:
-    for round_name in ("mismatch", "match"):
-        started = security(client, {"action": "start", **peer})
-        flow = {"action": "verification", "roomId": peer["roomId"],
-                "userId": peer["userId"], "flowId": started["flowId"]}
-        state = wait_stage(client, flow, "comparing", browser)
-        displayed = wait_file(f"{round_name}-browser.json", browser)
-        if displayed.get("decimals") != state.get("decimals"):
-            raise v.VerticalFailure("两个独立 SDK 展示的 SAS 不一致。")
-        codes = displayed["decimals"]
-        if not isinstance(codes, list) or len(codes) != 3 or not all(type(n) is int for n in codes):
-            raise v.VerticalFailure("SAS 数字结构无效。")
-        require_failure(client.call_tool_result("agent_room_matrix_security", {"request": {
-            **flow, "step": {"action": "confirm", "decimals": codes, "humanConfirmed": False},
-        }}), "bridge.security.confirmation_required")
-        if round_name == "mismatch":
-            different = [1001 if codes[0] == 1000 else 1000, *codes[1:]]
-            require_failure(client.call_tool_result("agent_room_matrix_security", {"request": {
-                **flow, "step": {"action": "confirm", "decimals": different, "humanConfirmed": True},
-            }}), "bridge.security.sas_mismatch")
-            wait_stage(client, flow, "cancelled", browser)
-            wait_file("mismatch-closed.json", browser)
-        else:
-            # 只在隔离测试账号上，自动模拟人类核对两个独立界面的完整数字。
-            write("match-native.json", {"decimals": codes})
-            security(client, {**flow, "step": {
-                "action": "confirm", "decimals": codes, "humanConfirmed": True,
-            }})
-            wait_stage(client, flow, "verified", browser)
-            write("verified.json", {"verified": True})
 
 
 def roundtrip(
@@ -128,10 +76,9 @@ def roundtrip(
 def main() -> None:
     v.configure_console_encoding()
     WORK.mkdir(parents=True, exist_ok=True)
-    for name in ("peer.json", "mismatch-browser.json", "mismatch-closed.json", "match-browser.json",
-                 "match-native.json", "verified.json", "first-sent.json", "first-replied.json",
-                 "restart-request.json", "restarted.json", "second-sent.json", "second-replied.json",
-                 "done.json", "result.json"):
+    for name in ("peer.json", "first-sent.json", "first-replied.json", "restart-request.json",
+                 "restarted.json", "second-sent.json", "second-replied.json", "done.json",
+                 "result.json"):
         (WORK / name).unlink(missing_ok=True)
     environment = v.prepare_environment()
     redactor = v.LogRedactor(environment)
@@ -178,15 +125,12 @@ def main() -> None:
                                  "test", "--config", "apps/web/playwright.private-chat.config.ts"],
                         environment=browser_env, log_path=WORK / "services/browser.log", redactor=redactor,
                     ))
-                    peer = wait_file("peer.json", browser)
-                    # 不核对安全码也能双向收发：设备由主人签名即可，首次见到的身份被记住。
+                    wait_file("peer.json", browser)
+                    # 不核对安全码也能双向收发：人的设备登录后自动由主人签名（ADR 0011），
+                    # 首次见到的身份被记住。
                     roundtrip(client, browser, scenario, "first")
-                    print("Encrypted private chat worked in both directions before any verification.",
+                    print("Encrypted private chat worked in both directions without any verification.",
                           flush=True)
-                    # 核对是可选的更强保证：错码被拒绝，数字一致后才完成。
-                    security(client, {"action": "devices", "roomId": peer["roomId"], "userId": peer["userId"]})
-                    verify_peer(client, peer, browser)
-                    print("Optional SAS: mismatch rejected; matching verification completed.", flush=True)
                     wait_file("restart-request.json", browser)
                 v.close_bridge_session(target, redactor)
                 generation = target.observation.agent_online_generation

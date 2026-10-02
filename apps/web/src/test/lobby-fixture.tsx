@@ -86,6 +86,7 @@ import { AccountPreferencesProvider } from '@/features/preferences/ui/account-pr
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { err, ok } from '@/shared/result';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 import { ApplicationFeaturesFixture } from './application-features-fixture';
@@ -637,19 +638,7 @@ const automation: AutomationGrantGateway = {
   },
 };
 const security: MatrixSecurityGateway = {
-  acceptIncomingVerification: () =>
-    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
-  beginVerification: () =>
-    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
-  declineIncomingVerification: () =>
-    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
-  establishIdentity: () =>
-    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
-  getIncomingVerification: () => null,
   inspect: () => Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
-  recover: () => Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
-  setupRecovery: () =>
-    Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
   subscribe: () => noop,
 };
 let fixtureDirectSessions: readonly DirectSession[] = Object.freeze([testDirectSession(1)]);
@@ -917,6 +906,7 @@ const services: AppServices = {
   contentVerifier,
   controlPlane: fixtureControlPlane,
   directSessionCoordinator,
+  deviceSigning: new DeviceSigningStatus(),
   directSessions,
   handoffs: new FixtureHandoffGateway(),
   lobby,
@@ -995,7 +985,6 @@ function LobbyFixture({
                     <LobbyPage
                       catalogId="01990d9e-8400-7000-8000-000000000401"
                       onExitRoom={() => undefined}
-                      onOpenSecurity={() => undefined}
                       view={view}
                       onViewChange={(nextView) => {
                         if (nextView === 'space') {

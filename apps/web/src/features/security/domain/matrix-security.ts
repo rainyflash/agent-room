@@ -1,18 +1,6 @@
 import type { Result } from '@/shared/result';
 
 export type MatrixDeviceTrust = 'signed' | 'unknown' | 'unverified' | 'verified';
-export type MatrixBackupState = 'locked' | 'missing' | 'ready' | 'untrusted';
-export type MatrixRoomEncryptionState = 'encrypted' | 'not_checked' | 'unencrypted';
-
-export type MatrixSecurityBlocker =
-  | 'backup_locked'
-  | 'backup_missing'
-  | 'backup_untrusted'
-  | 'cross_signing_missing'
-  | 'cross_signing_not_ready'
-  | 'current_device_unverified'
-  | 'room_unencrypted'
-  | 'secret_storage_missing';
 
 export type MatrixSecurityDevice = {
   readonly current: boolean;
@@ -23,197 +11,26 @@ export type MatrixSecurityDevice = {
   readonly userId: string;
 };
 
-export type MatrixSecurityEvidence = {
-  readonly backup: MatrixBackupState;
-  readonly crossSigningIdentityExists: boolean;
-  readonly crossSigningReady: boolean;
-  readonly cryptoVersion: string;
+/**
+ * 你的设备，以及哪台是这台。签名全自动（ADR 0011），这里只读状态，不再有恢复密钥和核对。
+ */
+export type MatrixSecuritySnapshot = {
   readonly currentDeviceId: string;
   readonly devices: readonly MatrixSecurityDevice[];
-  readonly roomEncryption: MatrixRoomEncryptionState;
-  readonly roomId?: string;
-  readonly secretStorageReady: boolean;
   readonly userId: string;
 };
-
-export type MatrixSecurityPosture = {
-  readonly blockers: readonly MatrixSecurityBlocker[];
-  readonly excludedDeviceCount: number;
-  readonly kind: 'action_required' | 'blocked' | 'ready';
-  readonly sendAllowed: boolean;
-};
-
-export type MatrixSecuritySnapshot = MatrixSecurityEvidence & MatrixSecurityPosture;
 
 export type MatrixSecurityFailure = {
   readonly code:
     | 'security.crypto_unavailable'
-    | 'security.identity_bootstrap_failed'
     | 'security.identity_unavailable'
     | 'security.inspection_failed'
-    | 'security.matrix_unavailable'
-    | 'security.recovery_already_configured'
-    | 'security.recovery_credential_invalid'
-    | 'security.recovery_failed'
-    | 'security.recovery_key_missing'
-    | 'security.recovery_key_rejected'
-    | 'security.recovery_setup_failed'
-    | 'security.verification_failed'
-    | 'security.verification_required'
-    | 'security.verification_unavailable';
+    | 'security.matrix_unavailable';
   readonly retryable: boolean;
 };
 
-export type MatrixSecurityInspection = {
-  readonly roomId?: string;
-};
-
 export type MatrixSecurityGateway = {
-  acceptIncomingVerification(
-    requestId: string,
-  ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>>;
-  beginVerification(
-    request?: MatrixVerificationRequest,
-  ): Promise<Result<MatrixVerificationSession, MatrixSecurityFailure>>;
-  declineIncomingVerification(requestId: string): Promise<Result<void, MatrixSecurityFailure>>;
-  establishIdentity(): Promise<Result<void, MatrixSecurityFailure>>;
-  getIncomingVerification(): MatrixIncomingVerification | null;
-  inspect(
-    inspection?: MatrixSecurityInspection,
-  ): Promise<Result<MatrixSecuritySnapshot, MatrixSecurityFailure>>;
-  recover(
-    request: MatrixRecoveryRequest,
-    onProgress?: (progress: MatrixRecoveryProgress) => void,
-  ): Promise<Result<MatrixRecoveryResult, MatrixSecurityFailure>>;
-  setupRecovery(
-    request: MatrixRecoverySetupRequest,
-  ): Promise<Result<MatrixRecoverySetupResult, MatrixSecurityFailure>>;
+  inspect(): Promise<Result<MatrixSecuritySnapshot, MatrixSecurityFailure>>;
+  /** Matrix 客户端换了或者有了新动静（比如这台设备刚签好）时通知，界面据此重读。 */
   subscribe(listener: () => void): () => void;
-};
-
-export type MatrixRecoverySetupRequest = {
-  readonly passphrase: string;
-};
-
-export type MatrixRecoverySetupResult = {
-  readonly recoveryKey: string;
-};
-
-export type MatrixRecoveryRequest = {
-  readonly credential: string;
-};
-
-export type MatrixRecoveryProgress =
-  | { readonly stage: 'fetching' }
-  | {
-      readonly failures: number;
-      readonly imported: number;
-      readonly stage: 'importing';
-      readonly total: number;
-    };
-
-export type MatrixRecoveryResult = {
-  readonly imported: number;
-  readonly total: number;
-};
-
-export type MatrixVerificationRequest = {
-  readonly targetDeviceId?: string;
-  readonly targetUserId?: string;
-  readonly roomId?: string;
-};
-
-export type MatrixIncomingVerification = {
-  readonly selfVerification?: boolean;
-  readonly requestId: string;
-  readonly sourceDeviceId?: string;
-  readonly sourceUserId: string;
-};
-
-export type MatrixVerificationEmoji = {
-  readonly label: string;
-  readonly symbol: string;
-};
-
-export type MatrixVerificationSas = {
-  readonly decimals?: readonly [number, number, number];
-  readonly emojis?: readonly MatrixVerificationEmoji[];
-};
-
-export type MatrixVerificationSnapshot =
-  | {
-      readonly stage: 'cancelled';
-      readonly cancellationCode?: string;
-    }
-  | {
-      readonly failure: MatrixSecurityFailure;
-      readonly stage: 'failed';
-    }
-  | {
-      readonly sas: MatrixVerificationSas;
-      readonly stage: 'comparing' | 'confirming';
-    }
-  | {
-      readonly stage: 'verified';
-    }
-  | {
-      readonly stage: 'waiting';
-      readonly targetDeviceId?: string;
-      readonly transactionId?: string;
-    };
-
-export type MatrixVerificationSession = {
-  activate(): void;
-  cancel(): Promise<Result<void, MatrixSecurityFailure>>;
-  confirm(): Promise<Result<void, MatrixSecurityFailure>>;
-  deactivate(): void;
-  getSnapshot(): MatrixVerificationSnapshot;
-  mismatch(): void;
-  subscribe(listener: () => void): () => void;
-};
-
-export function isValidRecoveryPassphrase(passphrase: string): boolean {
-  return passphrase.length >= 12 && passphrase.length <= 256 && /\S/u.test(passphrase);
-}
-
-const recoveryBlockers = new Set<MatrixSecurityBlocker>([
-  'backup_locked',
-  'backup_missing',
-  'backup_untrusted',
-  'secret_storage_missing',
-]);
-
-export function evaluateMatrixSecurity(evidence: MatrixSecurityEvidence): MatrixSecurityPosture {
-  const currentDevice = evidence.devices.find((device) => device.current);
-  const blockers = Object.freeze([
-    ...(evidence.crossSigningIdentityExists ? [] : (['cross_signing_missing'] as const)),
-    ...(evidence.crossSigningIdentityExists && !evidence.crossSigningReady
-      ? (['cross_signing_not_ready'] as const)
-      : []),
-    // 由你的签名身份签过就能收发（见 device-signing.ts），本机有没有签名私钥不影响。
-    ...(currentDevice?.trust === 'verified' || currentDevice?.trust === 'signed'
-      ? []
-      : (['current_device_unverified'] as const)),
-    ...(evidence.secretStorageReady ? [] : (['secret_storage_missing'] as const)),
-    ...backupBlockers[evidence.backup],
-    ...(evidence.roomEncryption === 'unencrypted' ? (['room_unencrypted'] as const) : []),
-  ] satisfies readonly MatrixSecurityBlocker[]);
-  const excludedDeviceCount = evidence.devices.filter(
-    (device) => !device.current && device.trust !== 'signed' && device.trust !== 'verified',
-  ).length;
-  const sendAllowed = blockers.every((blocker) => recoveryBlockers.has(blocker));
-
-  return Object.freeze({
-    blockers,
-    excludedDeviceCount,
-    kind: sendAllowed ? (blockers.length === 0 ? 'ready' : 'action_required') : 'blocked',
-    sendAllowed,
-  });
-}
-
-const backupBlockers: Readonly<Record<MatrixBackupState, readonly MatrixSecurityBlocker[]>> = {
-  locked: ['backup_locked'],
-  missing: ['backup_missing'],
-  ready: [],
-  untrusted: ['backup_untrusted'],
 };

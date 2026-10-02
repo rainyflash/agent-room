@@ -14,7 +14,6 @@ export type DirectConversationDockProps = {
   readonly view: Exclude<RoomWorkspaceView, 'space'>;
   readonly activeCatalogId: string | null;
   readonly controller: DirectSessionController;
-  readonly onOpenSecurity?: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly selectedMessageId: string | null;
 };
@@ -23,7 +22,6 @@ export function DirectConversationDock({
   view,
   activeCatalogId,
   controller,
-  onOpenSecurity,
   onSelectedMessageChange,
   selectedMessageId,
 }: DirectConversationDockProps) {
@@ -86,7 +84,6 @@ export function DirectConversationDock({
             view={view}
             controller={controller}
             key={activeSession.catalogId}
-            {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
             onSelectedMessageChange={onSelectedMessageChange}
             reduceMotion={reduceMotion === true}
             selectedMessageId={selectedMessageId}
@@ -101,7 +98,6 @@ export function DirectConversationDock({
 function Conversation({
   view,
   controller,
-  onOpenSecurity,
   onSelectedMessageChange,
   reduceMotion,
   selectedMessageId,
@@ -109,7 +105,6 @@ function Conversation({
 }: {
   readonly view: Exclude<RoomWorkspaceView, 'space'>;
   readonly controller: DirectSessionController;
-  readonly onOpenSecurity?: () => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly reduceMotion: boolean;
   readonly selectedMessageId: string | null;
@@ -222,7 +217,6 @@ function Conversation({
             onLatestDisplayed={(matrixEventId) => {
               void controller.markDisplayed(matrixRoomId, matrixEventId);
             }}
-            {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
             onSelectedMessageChange={onSelectedMessageChange}
             roomId={matrixRoomId}
             roomName={session.target.displayName}

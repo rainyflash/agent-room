@@ -74,7 +74,6 @@ function writePanelSize(size: PanelSize): void {
 export type LobbyPageProps = {
   readonly catalogId: string;
   readonly onExitRoom: () => void;
-  readonly onOpenSecurity: () => void;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
   readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -126,7 +125,6 @@ export function LobbyPage(props: LobbyPageProps) {
 function ReadyLobby({
   catalogId,
   onExitRoom,
-  onOpenSecurity,
   onSelectedAgentChange,
   onSelectedDirectSessionChange,
   onSelectedMessageChange,
@@ -501,7 +499,6 @@ function ReadyLobby({
               focusedConversationMessageId={focusedConversationMessageId}
               participants={room.agents}
               catalogId={catalogId}
-              onOpenSecurity={onOpenSecurity}
               onSelectedMessageChange={onSelectedMessageChange}
               roomId={room.roomId}
               roomName={room.name}
@@ -513,7 +510,6 @@ function ReadyLobby({
           <DirectConversationDock
             activeCatalogId={selectedDirectSessionId}
             controller={directSessions}
-            onOpenSecurity={onOpenSecurity}
             onSelectedMessageChange={onSelectedMessageChange}
             selectedMessageId={selectedMessageId}
             view={panelView}

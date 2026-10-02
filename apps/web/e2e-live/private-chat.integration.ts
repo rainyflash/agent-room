@@ -33,7 +33,7 @@ async function wait(name: string): Promise<unknown> {
   return value;
 }
 
-test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后恢复', async ({ page }) => {
+test('无需核对即可双向加密私聊，重启后恢复', async ({ page }) => {
   const raw: unknown = JSON.parse(readFileSync(new URL('input.json', work), 'utf8'));
   const scenario = scenarioSchema.parse(raw);
   const password = process.env.AGENT_ROOM_PRIVATE_CHAT_PASSWORD;
@@ -49,10 +49,10 @@ test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后
     password,
     expectedDisplayName: 'Local Developer',
   });
-  // 首次同步后自动建立加密身份并给这台设备签名，不需要去“设置 → 安全”点“现在设置”。
+  // 登录后自动签好这台设备（ADR 0011），不用输恢复密钥、不用核对。
   // Matrix ID 在最下面的“账户详情”里（界面翻新 4b 起默认收起）。
   const accountDetails = page.locator('.security-account-details');
-  const signed = page.getByText('This device is signed by you', { exact: true });
+  const signed = page.getByText('This device is ready', { exact: true });
   await expect
     .poll(
       async () => {
@@ -113,44 +113,6 @@ test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后
     ).toBeVisible();
   }
   await roundtrip('first');
-  // 对方请求核对时，右下角的提示栈里出现一条提示；接受后才打开核对对话框。
-  const incoming = page
-    .getByRole('region', { name: 'Notifications', exact: true })
-    .getByRole('alert')
-    .filter({ hasText: 'Verify a room participant' });
-  const dialog = page.getByRole('dialog', { name: 'Verify a device', exact: true });
-  for (const round of ['mismatch', 'match']) {
-    await expect(incoming).toContainText(scenario.targetMatrixUserId, { timeout: 60_000 });
-    await incoming.getByRole('button', { name: 'Review codes', exact: true }).click();
-    const decimalLine = dialog.getByText(/^Decimal check:/u);
-    await expect(decimalLine).toBeVisible({ timeout: 60_000 });
-    const decimals = (await decimalLine.innerText()).match(/\d+/gu)?.map(Number);
-    expect(decimals).toHaveLength(3);
-    put(`${round}-browser.json`, { decimals });
-    if (round === 'mismatch') {
-      await expect(dialog).toContainText('Verification cancelled', { timeout: 60_000 });
-      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-      put('mismatch-closed.json', { cancelled: true });
-    } else {
-      const native = z
-        .object({ decimals: z.array(z.number()).length(3) })
-        .parse(await wait('match-native.json'));
-      expect(decimals).toEqual(native.decimals);
-      await page.setViewportSize({ width: 390, height: 844 });
-      await expect(
-        dialog.getByRole('button', { name: 'They match', exact: true }),
-      ).toBeInViewport();
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
-        390,
-      );
-      await page.screenshot({ path: fileURLToPath(new URL('sas-mobile.png', work)) });
-      await dialog.getByRole('button', { name: 'They match', exact: true }).click();
-      await expect(dialog).toContainText('Device verified', { timeout: 60_000 });
-      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-      await page.setViewportSize({ width: 1440, height: 900 });
-    }
-  }
-  await wait('verified.json');
   put('restart-request.json', { ready: true });
   await wait('restarted.json');
   await page.reload();
@@ -182,14 +144,11 @@ test('无需核对即可双向加密私聊，可选 SAS 错码拒绝，重启后
   put('done.json', {
     identityEstablishedAutomatically: true,
     chatWithoutVerification: true,
-    sasMismatchRejected: true,
-    sasMatched: true,
     humanToAgent: true,
     agentToHuman: true,
     replyRelation: true,
     privateAbsentFromPublic: true,
     browserReloadRestored: true,
     pixiRenderer: true,
-    mobileVerification: true,
   });
 });

@@ -55,6 +55,7 @@ import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { readLanguagePreference } from '@/shared/i18n/i18n';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
+import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { ControlPlaneAgentDirectoryClient } from '@/features/workspace/adapters/control-plane-agent-directory-client';
 import { SessionRequestScope } from '@/shared/http/session-request-scope';
@@ -113,6 +114,7 @@ export function createCloudRuntime(
   const telemetry = new ControlPlaneFrontendTelemetryClient({ baseUrl: config.controlPlaneUrl });
   const matrixClients = new MatrixClientRegistry();
   const secretStorageKeys = new MatrixSecretStorageKeyCache();
+  const deviceSigning = new DeviceSigningStatus();
   const matrixCore = new MatrixWebGateway({
     baseUrl: config.matrixHomeserverUrl,
     deviceDisplayName: localRuntime.isAvailable() ? 'Agent Room Desktop' : 'Agent Room Web',
@@ -125,6 +127,7 @@ export function createCloudRuntime(
     secretStorageKeys,
     // 服务器替账户保管签名钥匙，登录后自动签好这台设备（ADR 0011）。
     encryptionKeyEscrow: new ControlPlaneEncryptionKeyEscrow(businessApi),
+    deviceSigning,
     ...(localRuntime.isAvailable() ? { sessionVault: new TauriMatrixSessionVault() } : {}),
   });
   const matrix = new GuardedMatrixGateway(
@@ -186,6 +189,7 @@ export function createCloudRuntime(
     controlPlane,
     directSessionCoordinator,
     directSessions,
+    deviceSigning,
     handoffs: new ControlPlaneHandoffGateway(businessApi),
     lobby,
     lobbyEntry,
@@ -197,7 +201,7 @@ export function createCloudRuntime(
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms: new ControlPlanePrivateRoomClient(businessApi),
     roomDirectory,
-    security: new MatrixSdkSecurityGateway(matrixClients, secretStorageKeys),
+    security: new MatrixSdkSecurityGateway(matrixClients),
     session: {
       browser: new WindowBrowserGateway(),
       controlPlane,

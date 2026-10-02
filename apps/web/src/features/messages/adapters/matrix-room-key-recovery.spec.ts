@@ -254,7 +254,7 @@ describe('请 Agent 重发房间密钥', () => {
     );
 
     await vi.waitFor(() => {
-      expect(recovery.awaitingVerification(ROOM)).toBe(2);
+      expect(recovery.awaitingSigning(ROOM)).toBe(2);
     });
     expect(changed).toHaveBeenCalled();
     expect(recovery.pending(ROOM)).toBe(0);
@@ -263,7 +263,7 @@ describe('请 Agent 重发房间密钥', () => {
     client.emit('crypto.devicesUpdated', [ME], false);
     await new Promise((settle) => setTimeout(settle, 20));
     expect(client.crypto.encryptToDeviceMessages).not.toHaveBeenCalled();
-    expect(recovery.awaitingVerification(ROOM)).toBe(2);
+    expect(recovery.awaitingSigning(ROOM)).toBe(2);
 
     // 在“安全”页恢复了这台设备：签名随设备列表更新到本地。
     client.crypto.ownSigned = true;
@@ -275,7 +275,7 @@ describe('请 Agent 重发房间密钥', () => {
     expect(client.crypto.encryptToDeviceMessages.mock.calls[0]?.[2]).toMatchObject({
       sessionIds: [SESSION_A, SESSION_B],
     });
-    expect(recovery.awaitingVerification(ROOM)).toBe(0);
+    expect(recovery.awaitingSigning(ROOM)).toBe(0);
     expect(recovery.pending(ROOM)).toBe(2);
   });
 
@@ -284,7 +284,7 @@ describe('请 Agent 重发房间密钥', () => {
     client.crypto.ownSigned = false;
     client.emit('Event.decrypted', undecryptable(SESSION_A));
     await vi.waitFor(() => {
-      expect(recovery.awaitingVerification(ROOM)).toBe(1);
+      expect(recovery.awaitingSigning(ROOM)).toBe(1);
     });
 
     client.crypto.ownSigned = true;

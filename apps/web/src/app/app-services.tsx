@@ -23,6 +23,7 @@ import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-se
 import type { ControlPlaneGateway, SessionDependencies } from '@/features/session/domain/session';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
+import type { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import type { AgentDirectoryGateway } from '@/features/workspace/domain/agent-directory';
 import type { TypingNotifier } from '@/features/conversation/domain/typing';
 
@@ -38,6 +39,8 @@ export type AppServices = {
   readonly controlPlane: ControlPlaneGateway & ReadinessGateway;
   readonly directSessionCoordinator: DirectSessionCoordinator;
   readonly directSessions: DirectSessionGateway;
+  /** 这台设备的自动签名走到哪一步了（ADR 0011），安全页和设置上的提醒点读它。 */
+  readonly deviceSigning: DeviceSigningStatus;
   readonly localRuntime: DesktopRuntimeGateway;
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;

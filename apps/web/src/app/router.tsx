@@ -225,9 +225,6 @@ function LobbyInstanceBoundary() {
         onExitRoom={() => {
           void navigate({ to: '/rooms' });
         }}
-        onOpenSecurity={() => {
-          void navigate({ params: { section: 'security' }, to: '/settings/$section' });
-        }}
         onSelectedAgentChange={(agentId) => {
           void navigate({
             replace: true,
