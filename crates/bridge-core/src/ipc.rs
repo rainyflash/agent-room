@@ -50,6 +50,9 @@ impl IpcProtocolVersion {
     /// 4.2：消息预览多了房间名（`roomName`）、“是不是它加入之前的”（`beforeJoin`）和
     /// @所有人（`mentionsEveryone`）；发消息能带 `mentionsEveryone`。
     pub const V4_2: Self = Self { major: 4, minor: 2 };
+    /// 4.3：按需查看——按 ID 取（`GetMessages`）、看前后（`MessagesAround`）、往前翻（`RoomHistory`），
+    /// 回应是新的 `Messages`、`RoomMessages`。旧 Bridge 不认这几个方法，握手时就说清版本不兼容。
+    pub const V4_3: Self = Self { major: 4, minor: 3 };
 
     /// 构造本地 IPC 协议版本。
     ///
@@ -437,6 +440,9 @@ mod tests {
             // 4.2 又多了房间名和“加入之前的”，同样不能混用。
             (IpcProtocolVersion::V4_2, IpcProtocolVersion::V4_1),
             (IpcProtocolVersion::V4_1, IpcProtocolVersion::V4_2),
+            // 4.3 多了按需查看的方法，旧 Bridge 不认，同样不能混用。
+            (IpcProtocolVersion::V4_3, IpcProtocolVersion::V4_2),
+            (IpcProtocolVersion::V4_2, IpcProtocolVersion::V4_3),
         ] {
             let negotiator =
                 IpcHandshakeNegotiator::new([server_version], FoundationIpcScopePolicy)

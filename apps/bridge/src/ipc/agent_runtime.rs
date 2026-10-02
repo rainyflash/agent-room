@@ -74,6 +74,11 @@ use super::{
 };
 use crate::agent_status::AgentStatusPublicationHandle;
 
+mod viewing;
+
+/// 一次回复里消息预览最多这么多字节，给 64 KiB 的 IPC 帧留出信封的余量。
+const PREVIEW_PAGE_BYTES: usize = 48 * 1024;
+
 const MAXIMUM_HANDOFF_LIFETIME_MILLIS: i64 = 60 * 60 * 1_000;
 /// 挂着等的时候多久看一眼本地消息库。
 const INBOX_BLOCK_POLL: Duration = Duration::from_millis(250);
@@ -2198,7 +2203,7 @@ fn bounded_preview_response(
             .map_err(|_| internal_failure("bridge.preview_encoding_failed"))?
             .len()
             + 1;
-        if bytes + size > 48 * 1024 {
+        if bytes + size > PREVIEW_PAGE_BYTES {
             if previews.is_empty() {
                 return Err(invalid_request("bridge.preview_too_large"));
             }

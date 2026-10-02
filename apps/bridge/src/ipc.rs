@@ -259,6 +259,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 }
                 IpcMethod::ReadInbox(request) => self.agent_runtime()?.read_inbox(request).await,
                 IpcMethod::WaitInbox(request) => self.agent_runtime()?.wait_inbox(request).await,
+                view @ (IpcMethod::GetMessages(_)
+                | IpcMethod::MessagesAround(_)
+                | IpcMethod::RoomHistory(_)) => self.agent_runtime()?.view(view).await,
                 IpcMethod::PublishStatus(request) => {
                     self.agent_runtime()?.publish_status(request).await
                 }
@@ -552,7 +555,7 @@ where
     }
 
     let negotiator =
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+        IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
             .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
     let agreement = match negotiator.negotiate(&offer) {
         Ok(value) => value,
@@ -984,6 +987,8 @@ pub(crate) type BridgeIpcResult<T> = Result<T, BridgeIpcFailure>;
 
 #[cfg(test)]
 mod tests {
+    mod viewing;
+
     use std::{
         sync::{Arc, Mutex},
         time::{Duration, Instant},
@@ -2816,7 +2821,7 @@ mod tests {
         let server_task = tokio::spawn(async move { handle_connection(server, &context).await });
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DiagnosticCli,
-            [IpcProtocolVersion::V4_2],
+            [IpcProtocolVersion::V4_3],
             [IpcScope::BridgeStatusRead],
         )
         .expect("测试提议有效");
@@ -2825,7 +2830,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::DiagnosticCli,
-                supported_versions: vec![IpcProtocolVersion::V4_2.into()],
+                supported_versions: vec![IpcProtocolVersion::V4_3.into()],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )
@@ -2833,7 +2838,7 @@ mod tests {
         .expect("客户端问候可发送");
         let (challenge_id, challenge) = read_challenge(&mut client).await;
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                 .expect("测试协商器有效")
                 .negotiate(&offer)
                 .expect("测试提议可协商");
@@ -2898,12 +2903,12 @@ mod tests {
     fn 已认证的_mcp_调用仍必须携带会话且不能借包装扩大权限() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::McpServer,
-            [IpcProtocolVersion::V4_2],
+            [IpcProtocolVersion::V4_3],
             [IpcScope::SelfRead],
         )
         .unwrap();
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap();
@@ -2953,8 +2958,8 @@ mod tests {
         };
         let negotiate = |caller, scope| {
             let offer =
-                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_2], [scope]).unwrap();
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_3], [scope]).unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap()
@@ -3003,11 +3008,11 @@ mod tests {
         let negotiate = |scope| {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::AgentCli,
-                [IpcProtocolVersion::V4_2],
+                [IpcProtocolVersion::V4_3],
                 [scope],
             )
             .unwrap();
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
         };
@@ -3041,12 +3046,12 @@ mod tests {
     fn 桌面读取默认人物的既有调用仍由桌面权限约束() {
         let offer = IpcHandshakeOffer::new(
             IpcCallerKind::DesktopShell,
-            [IpcProtocolVersion::V4_2],
+            [IpcProtocolVersion::V4_3],
             [IpcScope::SelfRead],
         )
         .unwrap();
         let agreement =
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
                 .unwrap();
@@ -3063,12 +3068,12 @@ mod tests {
         ] {
             let offer = IpcHandshakeOffer::new(
                 caller,
-                [IpcProtocolVersion::V4_2],
+                [IpcProtocolVersion::V4_3],
                 [IpcScope::BridgeStatusRead],
             )
             .unwrap();
             let agreement =
-                IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+                IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                     .unwrap()
                     .negotiate(&offer)
                     .unwrap();
@@ -3093,8 +3098,8 @@ mod tests {
             });
         let agreement = |caller, scope| {
             let offer =
-                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_2], [scope]).unwrap();
-            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_2], FoundationIpcScopePolicy)
+                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_3], [scope]).unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_3], FoundationIpcScopePolicy)
                 .unwrap()
                 .negotiate(&offer)
         };
@@ -3183,7 +3188,7 @@ mod tests {
             &IpcFrame::ClientHello {
                 installation_id: installation_id.as_str().to_owned(),
                 caller: IpcCaller::McpServer,
-                supported_versions: vec![IpcProtocolVersion::V4_2.into()],
+                supported_versions: vec![IpcProtocolVersion::V4_3.into()],
                 requested_scopes: vec![IpcScopeName::BridgeStatusRead],
             },
         )
