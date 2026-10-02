@@ -21,12 +21,28 @@ describe('ensureDeviceSigned', () => {
 
     await expect(run(account)).resolves.toBe('established');
 
-    expect(account.crypto.bootstrapCrossSigning).toHaveBeenCalledOnce();
+    // 从头建（连备份一起），第一次上传签名公钥不用交互认证，也不经控制面。
+    expect(account.crypto.resetEncryption).toHaveBeenCalledOnce();
+    expect(account.resetAuth).toEqual([null]);
+    expect(account.crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
     expect(account.crypto.bootstrapSecretStorage).toHaveBeenCalledWith(
-      expect.objectContaining({ setupNewKeyBackup: true, setupNewSecretStorage: true }),
+      expect.objectContaining({ setupNewKeyBackup: false, setupNewSecretStorage: true }),
     );
     expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
     expect(account.escrow.replaceCrossSigningKeys).not.toHaveBeenCalled();
+  });
+
+  it('上次建到一半、本机留着没传上去的私钥：照样从头建，公钥一定传上去', async () => {
+    // 2026-10-02 发布 CI 抓到的：登录后页面马上跳走，公钥没传上去；再打开时
+    // bootstrapCrossSigning 看到本机有私钥就不上传，服务器上一直没有签名身份。
+    const account = fakeAccount({ holdsKeys: true, identity: false, signed: true });
+
+    await expect(run(account)).resolves.toBe('established');
+
+    expect(account.crypto.resetEncryption).toHaveBeenCalledOnce();
+    expect(account.resetAuth).toEqual([null]);
+    expect(account.crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
+    expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
   });
 
   it('手里有私钥、服务器的钥匙对得上：确认密钥存储里有私钥，加载备份钥匙', async () => {

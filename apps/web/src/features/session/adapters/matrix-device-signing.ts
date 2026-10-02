@@ -73,10 +73,11 @@ export async function ensureDeviceSigned(
   }
   // 自己的身份每次都重新查一遍：别的设备重建过签名身份时，本机对不上的旧私钥随之清掉。
   if (!(await crypto.userHasCrossSigningKeys(userId, true))) {
-    await crypto.bootstrapCrossSigning({
-      authUploadDeviceSigningKeys: uploadWithoutAuthentication,
-    });
-    await createSecretStorage(client, crypto, escrow, true);
+    // 服务器上还没有签名身份：从头建，第一次上传不用交互认证。上次建到一半（上传公钥时页面跳走了）
+    // 留下的本机私钥、密钥存储和备份都不沿用：本机有私钥时 bootstrapCrossSigning 会跳过上传，
+    // 服务器上就一直没有签名身份，别的设备也签不上。
+    await crypto.resetEncryption(uploadWithoutAuthentication);
+    await createSecretStorage(client, crypto, escrow, false);
     return 'established';
   }
   const escrowed = await escrow.fetch();

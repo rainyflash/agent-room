@@ -6,7 +6,9 @@ import { join, relative } from 'node:path';
 import {
   collectUnhandledFailures,
   connectLiveSession,
+  interruptFirstSigningUpload,
   readMatrixSession,
+  serverHasSigningIdentity,
 } from './support/live-session';
 import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
@@ -17,6 +19,8 @@ const thisDeviceReady = /^(?:This device is ready|这台设备已就绪)$/u;
 test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }) => {
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
   const failures = collectUnhandledFailures(page);
+  // 账户第一台设备建签名身份时，第一次上传公钥断掉：之后再打开页面也得传上去，别的设备才签得上。
+  await interruptFirstSigningUpload(page);
 
   const firstIdentity = await connectLiveSession(page, {
     expectedDisplayName: 'Local Developer',
@@ -39,6 +43,7 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
   const accountDetails = page.locator('.security-account-details');
   await page.goto('/settings/security');
   await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
+  expect(await serverHasSigningIdentity(page)).toBe(true);
   await accountDetails.locator('summary').click({ timeout: 40_000 });
   await expect(accountDetails).toContainText(firstIdentity, { timeout: 40_000 });
   await page.reload();

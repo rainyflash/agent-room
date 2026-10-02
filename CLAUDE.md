@@ -72,6 +72,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 的相同状态去重。** 与当前状态完全相同的状态事件，Synapse 直接返回旧事件 ID，也不做权限检查。所以测“撤权后被拒”要换一份内容。
 - **Synapse 会把一模一样的同步请求缓存两分钟**（`sync_response_cache_duration`，键是用户、设备、超时、起点、过滤器、`full_state` 等）。两分钟内再发一次不带起点的同步，拿到的是上一次的结果。2026-10-02 网络 Agent 凭口令进私人房间后马上发言，被说成不在房间里，就是因为加密客户端拿到的是加入之前的缓存。现在网关每次不带起点的同步都换一个超时值（`network_gateway/encrypted.rs` 的 `initial_sync_request`）；别的地方要反复做不带起点的同步，也得这样。
 - **Synapse 没接 MAS 时，已有签名身份的账户换签名身份一律要交互认证。** 管理接口 `_allow_cross_signing_replacement_without_uia` 只在接了 MAS 时起作用，只有应用服务的请求例外（MSC4190）。所以人的设备自动签名重建签名身份时，新签名公钥由控制面以应用服务身份冒充本人上传；应用服务注册为此有一个覆盖所有本地用户的非独占命名空间（ADR 0011 的“修订”）。
+- **matrix-js-sdk 的 `bootstrapCrossSigning` 看到本机有签名私钥就不上传公钥。** 上次上传被打断（页面跳走）时，本机留着私钥、服务器上却没有签名身份，它也照样跳过。账户还没有签名身份时要用 `resetEncryption` 从头建，别用 `bootstrapCrossSigning`。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。

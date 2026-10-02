@@ -151,6 +151,46 @@ export async function readMatrixSession(page: Page): Promise<unknown> {
   );
 }
 
+/**
+ * 把这个账户第一次上传签名公钥掐断，像登录后页面马上跳走那样。之后再打开页面，公钥也得传上去：
+ * matrix-js-sdk 看到本机有私钥会跳过上传（2026-10-02 发布 CI 抓到的）。
+ */
+export async function interruptFirstSigningUpload(page: Page): Promise<void> {
+  let interrupted = false;
+  await page.route('**/_matrix/client/v3/keys/device_signing/upload', async (route) => {
+    if (interrupted) {
+      await route.continue();
+      return;
+    }
+    interrupted = true;
+    await route.abort('connectionreset');
+  });
+}
+
+/** 服务器上这个账户有没有签名身份（主签名公钥）：本机说“已就绪”不算，要服务器上真的有。 */
+export async function serverHasSigningIdentity(page: Page): Promise<boolean> {
+  const { accessToken, userId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
+  return await page.evaluate(
+    async ({ homeserver, token, user }) => {
+      const response = await fetch(`${homeserver}/_matrix/client/v3/keys/query`, {
+        body: JSON.stringify({ device_keys: { [user]: [] } }),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      const body: unknown = await response.json();
+      return (
+        typeof body === 'object' &&
+        body !== null &&
+        'master_keys' in body &&
+        typeof body.master_keys === 'object' &&
+        body.master_keys !== null &&
+        user in body.master_keys
+      );
+    },
+    { homeserver: matrixOrigin, token: accessToken, user: userId },
+  );
+}
+
 async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<void> {
   const continueLink = page.getByRole('link', { name: /^Continue$/u });
   await expect
