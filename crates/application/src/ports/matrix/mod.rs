@@ -80,14 +80,61 @@ pub trait MatrixAccountLifecycleGateway: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
-/// 让 Synapse 在接下来一段时间（10 分钟）里允许这个本地账户不经交互认证换签名身份，
-/// 设备上的自动签名重建签名身份时用（ADR 0011）。账户还没有签名身份时 Synapse 答 404，
-/// 那时本来就不需要豁免，实现当作成功。
+/// 替这个本地账户上传新的签名公钥（设备上的自动签名重建签名身份时用，ADR 0011）。
+///
+/// 已有签名身份时换身份，Synapse 要交互认证；没接 MAS 的部署里只有应用服务的请求能免
+/// （MSC4190），所以由控制面以应用服务的身份代传。私钥只在人的设备上，这里只有公钥和签名。
 pub trait MatrixCrossSigningResetGateway: Send + Sync {
-    fn allow_cross_signing_replacement<'a>(
+    fn replace_cross_signing_keys<'a>(
         &'a self,
         user_id: &'a MatrixUserId,
+        keys: &'a MatrixCrossSigningKeys,
     ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
+/// 新的签名公钥：Matrix `keys/device_signing/upload` 的正文，不带交互认证。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixCrossSigningKeys(serde_json::Map<String, serde_json::Value>);
+
+/// 签名公钥不对：不是这几把钥匙、缺主密钥，或者有一把不属于这个账户。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidCrossSigningKeys;
+
+impl MatrixCrossSigningKeys {
+    const KEYS: [&'static str; 3] = ["master_key", "self_signing_key", "user_signing_key"];
+
+    /// 只收主密钥、自签密钥和用户签名密钥，必须有主密钥，每把都要属于 `owner`。
+    ///
+    /// # Errors
+    ///
+    /// 不符合上面任何一条时返回 [`InvalidCrossSigningKeys`]。
+    pub fn new(
+        body: serde_json::Value,
+        owner: &MatrixUserId,
+    ) -> Result<Self, InvalidCrossSigningKeys> {
+        let serde_json::Value::Object(keys) = body else {
+            return Err(InvalidCrossSigningKeys);
+        };
+        let belongs_to_owner = |value: &serde_json::Value| {
+            value
+                .as_object()
+                .and_then(|key| key.get("user_id"))
+                .and_then(serde_json::Value::as_str)
+                == Some(owner.as_str())
+        };
+        if !keys.contains_key("master_key")
+            || keys.iter().any(|(name, value)| {
+                !Self::KEYS.contains(&name.as_str()) || !belongs_to_owner(value)
+            })
+        {
+            return Err(InvalidCrossSigningKeys);
+        }
+        Ok(Self(keys))
+    }
+
+    pub const fn as_json(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.0
+    }
 }
 
 /// 创建或恢复一个与单个 Matrix 设备绑定的客户端。

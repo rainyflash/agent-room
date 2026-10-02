@@ -163,7 +163,7 @@ OIDC 相关部署配置至少包括 issuer URL、client ID、client secret、精
 
 内容服务额外要求私有 S3 端点、桶、区域与独立凭据，受信私网 ClamAV 地址，HMAC 票据 Key ID/Secret，以及稳定 UUIDv7 `AGENT_ROOM_CONTENT_MATRIX_AGENT_ID`。票据密钥不得与 OIDC、Matrix Application Service 或对象存储密钥复用；轮换时必须至少保留旧密钥至既有票据的最大有效期结束。内容授权 Matrix 身份必须保持在每个受管房间中，才能读取当前成员与 Power Level 状态；离开房间后的 state-at-leave 不得用于授权。建房流程必须由该身份创建房间或显式邀请并确认加入，缺失成员关系时内容服务应失败关闭。
 
-账户删除额外要求独立的 `AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET` 和仅后端可见的 `AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN`。前者只派生可重放删除回执；后者只在后端调用内部 Synapse Admin API，用于两件事：生命周期 Worker 擦除账户，以及设备自动签名重建签名身份之前，替已登录的本人开 10 分钟不经交互认证的豁免（[ADR 0011](../../docs/adr/0011-automatic-device-signing.md)）。二者不得复用。设备自动签名替账户保管的签名钥匙，用 `AGENT_ROOM_NETWORK_AGENT_SEAL_KEY` 按用途派生的子密钥封存；没配这把密钥时，自动签名不可用。生产安装通过一次性引导容器生成专用 Synapse 管理员与令牌，公网代理必须封锁整个 `/_synapse/admin/*`。
+账户删除额外要求独立的 `AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET` 和仅后端可见的 `AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN`。前者只派生可重放删除回执，后者只允许生命周期 Worker 调用内部 Synapse Admin API；二者不得复用。设备自动签名（[ADR 0011](../../docs/adr/0011-automatic-device-signing.md)）替账户保管的签名钥匙，用 `AGENT_ROOM_NETWORK_AGENT_SEAL_KEY` 按用途派生的子密钥封存；没配这把密钥时，自动签名不可用。人的设备重建签名身份时，新签名公钥由控制面用应用服务令牌冒充本人上传，所以应用服务注册里有一个覆盖本服务器所有用户的非独占命名空间；Synapse 只在启动时读这份注册，改了就要重启 Synapse（发版部署会自动做）。生产安装通过一次性引导容器生成专用 Synapse 管理员与令牌，公网代理必须封锁整个 `/_synapse/admin/*`。
 
 ### 7.2 密钥管理
 

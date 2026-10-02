@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use agent_room_application::ports::{
-    MatrixAccountLifecycleGateway, MatrixCrossSigningResetGateway, MatrixFailure,
-    MatrixFailureKind, MatrixOperation, MatrixResult, MatrixUserId, PortFuture, SecretValue,
+    MatrixAccountLifecycleGateway, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+    MatrixUserId, PortFuture, SecretValue,
 };
 use reqwest::{Client, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize};
@@ -195,39 +195,6 @@ impl SynapseAccountLifecycleGateway {
         ))
     }
 
-    /// 让这个本地账户在接下来 10 分钟里不经交互认证换签名身份（ADR 0011）。账户还没有签名身份时
-    /// Synapse 答 404 `M_NOT_FOUND`：那时第一次上传本来就不需要交互认证，当作成功。
-    async fn allow_cross_signing_replacement_internal(
-        &self,
-        user_id: &MatrixUserId,
-    ) -> MatrixResult<()> {
-        let operation = MatrixOperation::AllowCrossSigningReplacement;
-        self.ensure_local_user(user_id, operation)?;
-        let mut endpoint = self.user_endpoint("_synapse/admin/v1/users", user_id, operation)?;
-        endpoint
-            .path_segments_mut()
-            .map_err(|()| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))?
-            .push("_allow_cross_signing_replacement_without_uia");
-        let response = self
-            .client
-            .post(endpoint)
-            .bearer_auth(self.admin_access_token.expose())
-            .json(&serde_json::json!({}))
-            .send()
-            .await
-            .map_err(|error| map_transport_error(operation, &error))?;
-        let status = response.status();
-        let body = read_limited_body(response, operation).await?;
-        if status.is_success() {
-            return Ok(());
-        }
-        let error = decode_matrix_error(&body, operation)?;
-        if status == StatusCode::NOT_FOUND && error.errcode == "M_NOT_FOUND" {
-            return Ok(());
-        }
-        Err(map_matrix_error(operation, status, &error))
-    }
-
     async fn require_success(
         &self,
         response: reqwest::Response,
@@ -286,15 +253,6 @@ impl MatrixAccountLifecycleGateway for SynapseAccountLifecycleGateway {
     }
 }
 
-impl MatrixCrossSigningResetGateway for SynapseAccountLifecycleGateway {
-    fn allow_cross_signing_replacement<'a>(
-        &'a self,
-        user_id: &'a MatrixUserId,
-    ) -> PortFuture<'a, MatrixResult<()>> {
-        Box::pin(self.allow_cross_signing_replacement_internal(user_id))
-    }
-}
-
 #[derive(Serialize)]
 struct DeactivateAccountRequest {
     erase: bool,
@@ -315,8 +273,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        MatrixAccountLifecycleGateway, MatrixCrossSigningResetGateway, MatrixFailureKind,
-        MatrixUserId, SecretValue,
+        MatrixAccountLifecycleGateway, MatrixFailureKind, MatrixUserId, SecretValue,
     };
     use axum::{
         Json, Router,
@@ -365,34 +322,6 @@ mod tests {
         assert_eq!(*server.requests.lock().await, 0);
     }
 
-    #[tokio::test]
-    async fn 重建签名身份前用管理员令牌开豁免_账户还没有签名身份也算成功() {
-        for missing in [false, true] {
-            let server = TestServer::start(missing).await;
-            gateway(&server.url)
-                .allow_cross_signing_replacement(
-                    &MatrixUserId::new("@human name:matrix.agent-room.localhost")
-                        .expect("用户有效"),
-                )
-                .await
-                .expect("开了豁免，或者本来就不需要");
-            assert_eq!(*server.requests.lock().await, 1);
-        }
-    }
-
-    #[tokio::test]
-    async fn 远端账户不开豁免() {
-        let server = TestServer::start(false).await;
-        let failure = gateway(&server.url)
-            .allow_cross_signing_replacement(
-                &MatrixUserId::new("@human:remote.example").expect("用户有效"),
-            )
-            .await
-            .expect_err("不得替远端账户开豁免");
-        assert_eq!(failure.kind(), MatrixFailureKind::Forbidden);
-        assert_eq!(*server.requests.lock().await, 0);
-    }
-
     fn gateway(url: &str) -> SynapseAccountLifecycleGateway {
         SynapseAccountLifecycleGateway::new(
             SynapseAccountLifecycleConfiguration::new(
@@ -428,10 +357,6 @@ mod tests {
                 .route(
                     "/_synapse/admin/v1/users/{user_id}/media",
                     delete(delete_media),
-                )
-                .route(
-                    "/_synapse/admin/v1/users/{user_id}/_allow_cross_signing_replacement_without_uia",
-                    post(allow_cross_signing_replacement),
                 )
                 .with_state(state);
             let listener = TcpListener::bind("127.0.0.1:0")
@@ -511,26 +436,6 @@ mod tests {
             StatusCode::OK,
             Json(json!({ "deleted_media": [], "total": 0 })),
         )
-    }
-
-    async fn allow_cross_signing_replacement(
-        State(state): State<Arc<TestState>>,
-        Path(user_id): Path<String>,
-        headers: HeaderMap,
-    ) -> impl IntoResponse {
-        *state.requests.lock().await += 1;
-        assert_admin_request(&headers, &user_id);
-        if state.missing {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "errcode": "M_NOT_FOUND", "error": "No master key found" })),
-            )
-        } else {
-            (
-                StatusCode::OK,
-                Json(json!({ "updatable_without_uia_before_ms": 1_790_000_600_000_i64 })),
-            )
-        }
     }
 
     fn assert_admin_request(headers: &HeaderMap, user_id: &str) {

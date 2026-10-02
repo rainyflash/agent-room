@@ -715,6 +715,13 @@ impl ApiError {
                 "钥匙须为 32 字节；钥匙 ID 为 1 到 255 字节，不含控制字符。",
                 correlation_id,
             ),
+            AccountEncryptionFailure::InvalidCrossSigningKeys => Self::new(
+                StatusCode::BAD_REQUEST,
+                "account.cross_signing_keys_invalid",
+                ErrorCategory::Validation,
+                "只能上传本人的主密钥、自签密钥和用户签名密钥，且必须有主密钥。",
+                correlation_id,
+            ),
             AccountEncryptionFailure::RateLimited { retry_at } => Self::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "account.encryption_reset_rate_limited",

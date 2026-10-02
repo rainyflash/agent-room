@@ -25,13 +25,14 @@ class DeploymentPrepareTests(unittest.TestCase):
         deployment.work = work
         deployment.checkpoint = work / "deployment.json"
         deployment.state = {}
-        digest = {"value": "before-render"}
+        digest = {"value": "before-render", "synapse": "synapse-before"}
         steps = Mock()
         steps.backup.return_value = Mock(backup_id="backup-1")
         # The candidate's renderer changes the configuration, as Alpha 44's realm theme keys did.
         steps.prepare.side_effect = lambda **_: digest.update(value="after-render")
         deployment.runtime = steps
         deployment.configuration_digest = lambda: digest["value"]
+        deployment.synapse_configuration_digest = lambda: digest["synapse"]
         deployment.services = Mock(return_value=SERVICES)
         deployment.compose = Mock()
         deployment.run = Mock(side_effect=lambda *arguments: REVISION if arguments[:2] == ("git", "rev-parse") else "")
@@ -53,6 +54,32 @@ class DeploymentPrepareTests(unittest.TestCase):
             digest["value"] = "changed-by-someone-else"
             with self.assertRaisesRegex(RuntimeError, "配置或密钥变化"):
                 deployment.baseline()
+
+    def test_restarts_synapse_once_when_the_candidate_changes_its_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            deployment, steps, digest = self.deployment(Path(directory))
+            # The candidate adds an application service namespace (ADR 0011).
+            steps.prepare.side_effect = lambda **_: digest.update(value="after-render", synapse="synapse-after")
+            deployment.prepare()
+            self.assertTrue(deployment.state["synapseConfigurationChanged"])
+            deployment.compose.reset_mock()
+            steps.reset_mock()
+
+            deployment.restart_synapse_if_configuration_changed()
+            deployment.restart_synapse_if_configuration_changed()
+            deployment.compose.assert_called_once_with("restart", "synapse")
+            steps.health.assert_called_once_with(timeout_seconds=180)
+            self.assertTrue(deployment.state["synapseRestarted"])
+
+    def test_leaves_synapse_running_when_its_configuration_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            deployment, _, _ = self.deployment(Path(directory))
+            deployment.prepare()
+            self.assertFalse(deployment.state["synapseConfigurationChanged"])
+            deployment.compose.reset_mock()
+
+            deployment.restart_synapse_if_configuration_changed()
+            deployment.compose.assert_not_called()
 
     def test_resumed_deployment_does_not_render_or_back_up_again(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

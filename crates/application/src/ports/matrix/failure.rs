@@ -9,7 +9,7 @@ pub enum MatrixOperation {
     IssueAgentDeviceSession,
     RevokeAgentDeviceSession,
     DeactivateAccount,
-    AllowCrossSigningReplacement,
+    ReplaceCrossSigningKeys,
     Login,
     RestoreSession,
     Sync,
@@ -42,7 +42,7 @@ impl MatrixOperation {
                 | Self::IssueAgentDeviceSession
                 | Self::RevokeAgentDeviceSession
                 | Self::DeactivateAccount
-                | Self::AllowCrossSigningReplacement
+                | Self::ReplaceCrossSigningKeys
                 | Self::Login
                 | Self::RestoreSession
                 | Self::Sync

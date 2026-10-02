@@ -18,6 +18,7 @@ use thiserror::Error;
 mod accounts;
 mod agent_roster;
 mod agent_sessions;
+mod cross_signing;
 mod moderation;
 mod rooms;
 

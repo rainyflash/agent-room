@@ -42,7 +42,9 @@ Matrix 的标准做法是“密钥存储”（secret storage，4S）：账户的
 
 - `GET /account/encryption-key`：`{ keyId, key }`（`key` 是 base64）；没有就 404。
 - `PUT /account/encryption-key`，正文 `{ keyId, key }`：存下（覆盖旧的）。
-- `POST /account/encryption-reset`：请 Synapse 在接下来 10 分钟内允许这个账户不经交互认证换签名身份（Synapse 管理接口 `POST /_synapse/admin/v1/users/{userId}/_allow_cross_signing_replacement_without_uia`，用控制面已有的管理令牌）。只在重建签名身份时用。按主体限流（比如一小时 3 次）。
+- `POST /account/encryption-reset`，正文是新的签名公钥（Matrix `keys/device_signing/upload` 的正文，不带认证）：控制面核对每把公钥都属于本人、必须有主密钥，再以应用服务的身份冒充本人转给 Synapse（应用服务的请求免交互认证，MSC4190）。只在重建签名身份时用。按主体限流（一小时 3 次）。
+
+  原来设想用 Synapse 管理接口开 10 分钟豁免（`_allow_cross_signing_replacement_without_uia`），实测这个豁免只在接了 MAS 时起作用，见“状态”。
 
 ## 设备上怎么做（网页端和桌面端共用一份代码）
 
@@ -59,7 +61,7 @@ Matrix 的标准做法是“密钥存储”（secret storage，4S）：账户的
      2. 签这台设备，加载备份钥匙；
      3. 在后台找回历史。
    - **没要到，或者对不上**（以前设过恢复密钥、服务器不知道；或者谁手里都没有私钥）：**重建一次签名身份**。
-     1. `POST /account/encryption-reset`；
+     1. 新建签名身份，上传新签名公钥的请求改送 `POST /account/encryption-reset`，由控制面代传；
      2. 新建签名身份并签这台设备；
      3. 新建钥匙、密钥存储和密钥备份；
      4. `PUT /account/encryption-key` 交给服务器。
@@ -108,7 +110,7 @@ Matrix 的标准做法是“密钥存储”（secret storage，4S）：账户的
 
 1. **设计**：本文和 ADR 0011，`CLAUDE.md` 的“产品决定”记一条。
 2. **控制面**：
-   - 保管钥匙的表（迁移）、封存的子密钥、三个接口、Synapse 豁免、限流、账户删除时清理；
+   - 保管钥匙的表（迁移）、封存的子密钥、三个接口、应用服务代传签名公钥、限流、账户删除时清理；
    - 测试，包括真实数据库和真实 Synapse 的管理接口。
 3. **设备上的自动签名**：
    - 替换 `ensureFirstEncryptionIdentity`；
@@ -142,3 +144,11 @@ Matrix 的标准做法是“密钥存储”（secret storage，4S）：账户的
   - 设置上的提醒点只在自动签名出错时亮。
   - 发送时这台设备还没签好，提示改成“正在替你签好，过几秒再试”。
   - 手动验收跟着改：`tools/private_chat.py` 去掉可选的安全码核对；`tools/vertical.py` 的浏览器安全验收改成两台设备登录即签好、新设备读回加密历史。
+- 2026-10-02：修正重建签名身份的路子（第 2、3 步一起改）。
+  - 写第 5 步的真实 Synapse 测试时发现：Synapse 1.159 的“10 分钟免认证换签名身份”豁免只在接了 MAS 时起作用；没接 MAS 的部署（我们就是），换签名身份一律要交互认证，只有应用服务的请求例外（MSC4190）。原来的路子在生产上会让重建失败，维护者的账户正好要重建一次。
+  - 改成：设备照旧在本机生成新的签名私钥。matrix-js-sdk 上传新签名公钥时带一个我们自己的认证标记，网页端包在 fetch 外面的一层（`cross-signing-upload-route.ts`）把这一个请求改送 `POST /account/encryption-reset`。控制面核对公钥都属于本人，再以应用服务的身份冒充本人转给 Synapse。
+  - 应用服务注册多了一个覆盖本服务器所有用户的非独占命名空间（生产 `tools/prodops/render.py`，开发 `tools/dev-infra.ps1`）。控制面本来就有 Synapse 管理员令牌，能做的事没变多，ADR 0011 加了“修订”一节。
+  - 删掉了管理员豁免那段代码。`AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN` 又只给删除账户用。
+  - 部署工具 `release_deploy.py`：候选改了 Synapse 的配置时，服务端部署前先重启一次 Synapse，让它读到新的应用服务注册。重启不换容器。
+  - 这次改了 `tools/prodops/render.py`，发布门禁算作登录相关，下次发版要设备码。
+  - 真实 Synapse 测试 `真实_synapse_应用服务替真人换签名身份不用交互认证`：新建一个真人账号，应用服务连续两次替他换签名公钥，服务器上的主密钥换成了第二次的。去掉新命名空间时它失败（Synapse 拒绝冒充），证明这个命名空间是必需的。

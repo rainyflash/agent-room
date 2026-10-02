@@ -368,6 +368,10 @@ namespaces:
   users:
     - exclusive: true
       regex: '^@_agent_[0-9a-f]{{32}}:{server_pattern}$'
+    # 人的设备自动签名重建签名身份时，控制面以应用服务的身份替本人上传新的签名公钥
+    # （ADR 0011）：没接 MAS 的 Synapse 只认应用服务的免交互认证上传。非独占，不占用户名。
+    - exclusive: false
+      regex: '^@[^:]+:{server_pattern}$'
   aliases:
     - exclusive: true
       regex: '^#agent-room-[a-z0-9][a-z0-9._=-]{{0,254}}:{server_pattern}$'
