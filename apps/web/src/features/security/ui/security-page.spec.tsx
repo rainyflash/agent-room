@@ -46,6 +46,24 @@ describe('SecurityWorkspace', () => {
     expect(screen.queryByText(/Crypto engine/u)).not.toBeInTheDocument();
   });
 
+  it('这台设备在服务器上由你签过名、本机没有签名私钥时，也算签好了，不再提示要签名', async () => {
+    renderWorkspace(
+      securityGateway({
+        ...readySnapshot(),
+        crossSigningReady: false,
+        devices: readySnapshot().devices.map((device) => ({
+          ...device,
+          trust: 'signed' as const,
+        })),
+      }),
+    );
+
+    await visible(screen.findByText('This device is signed by you'));
+    expect(
+      screen.queryByRole('region', { name: 'This device needs to be signed' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('这台设备要签名时给两条路：用另一台设备核对，走官方 SAS 会话', async () => {
     const user = userEvent.setup();
     const session = verificationSession({

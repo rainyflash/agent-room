@@ -51,6 +51,15 @@ describe('evaluateMatrixSecurity', () => {
     });
   });
 
+  it('这台设备由你的签名身份签过就能收发，本机没有签名私钥也不算没签名', () => {
+    const base = evidence({ crossSigningReady: false });
+    const signed = evaluateMatrixSecurity({
+      ...base,
+      devices: base.devices.map((device) => ({ ...device, trust: 'signed' as const })),
+    });
+    expect(signed.blockers).not.toContain('current_device_unverified');
+  });
+
   it('区分账户没有交叉签名身份与当前设备尚未取得交叉签名能力', () => {
     expect(
       evaluateMatrixSecurity(

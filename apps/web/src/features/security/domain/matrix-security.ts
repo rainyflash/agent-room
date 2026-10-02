@@ -190,7 +190,10 @@ export function evaluateMatrixSecurity(evidence: MatrixSecurityEvidence): Matrix
     ...(evidence.crossSigningIdentityExists && !evidence.crossSigningReady
       ? (['cross_signing_not_ready'] as const)
       : []),
-    ...(currentDevice?.trust === 'verified' ? [] : (['current_device_unverified'] as const)),
+    // 由你的签名身份签过就能收发（见 device-signing.ts），本机有没有签名私钥不影响。
+    ...(currentDevice?.trust === 'verified' || currentDevice?.trust === 'signed'
+      ? []
+      : (['current_device_unverified'] as const)),
     ...(evidence.secretStorageReady ? [] : (['secret_storage_missing'] as const)),
     ...backupBlockers[evidence.backup],
     ...(evidence.roomEncryption === 'unencrypted' ? (['room_unencrypted'] as const) : []),
