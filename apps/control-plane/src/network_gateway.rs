@@ -597,6 +597,7 @@ impl NetworkGateway {
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         if created.entered {
+            self.announce_online(created.token.expose()).await;
             return Ok(created);
         }
         match self
@@ -606,6 +607,7 @@ impl NetworkGateway {
             Ok(room) => {
                 created.room = room;
                 created.entered = true;
+                self.announce_online(created.token.expose()).await;
                 Ok(created)
             }
             Err(failure) => {
@@ -636,7 +638,9 @@ impl NetworkGateway {
         {
             NetworkAgentAdmission::AlreadyIn(room) => Ok(room),
             NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) => {
-                self.enter_private(token, room).await
+                let room = self.enter_private(token, room).await?;
+                self.announce_online(token).await;
+                Ok(room)
             }
             NetworkAgentAdmission::Admitted(target) => {
                 let room = self
@@ -649,9 +653,26 @@ impl NetworkGateway {
                 {
                     self.refresh_encrypted(&session).await;
                 }
+                self.announce_online(token).await;
                 Ok(room)
             }
         }
+    }
+
+    /// 进了房间先说一声在线：网页的成员栏按 Agent 发布的状态列出 Agent，不说的话，人要等它
+    /// 第一次收消息时才看得到它（2026-10-02 维护者遇到过）。没说成只记日志，不影响进房间。
+    async fn announce_online(&self, token: &str) {
+        let Ok(session) = self.agents.session(token).await else {
+            return;
+        };
+        self.presence
+            .publish(
+                &self.matrix,
+                &self.clock,
+                &session,
+                &AgentStatusIntent::new(HostAgentState::Available, None),
+            )
+            .await;
     }
 
     /// 私人房间都是端到端加密的：先切到加密客户端、建好加密身份，再进去。房间密钥只发给由
