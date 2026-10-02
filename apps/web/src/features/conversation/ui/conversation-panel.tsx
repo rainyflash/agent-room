@@ -1,5 +1,5 @@
-import { Banner, Button } from '@agent-room/ui-system';
-import { ArrowDown, LockKeyhole, Radio, Search, ShieldCheck, UsersRound } from 'lucide-react';
+import { Banner } from '@agent-room/ui-system';
+import { ArrowDown, LockKeyhole, Radio, Search, UsersRound } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   useCallback,
@@ -51,8 +51,6 @@ export type ConversationPanelProps = {
   >;
   readonly focusMessageId?: string | null;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
-  /** 打开“安全”页验证这台设备；不给就不显示按钮，只说要先验证。 */
-  readonly onOpenSecurity?: () => void;
   readonly messages: readonly RoomMessageSignal[];
   readonly participants?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
@@ -77,7 +75,6 @@ export function ConversationPanel({
   onLoadOlder,
   focusMessageId = null,
   onLatestDisplayed,
-  onOpenSecurity,
   messages,
   participants = emptyParticipants,
   publisher,
@@ -385,12 +382,7 @@ export function ConversationPanel({
             <HistoryBoundary history={history} state={historyState} onLoad={loadOlder} />
           ) : null}
           {state === 'ready' && undecryptable !== undefined ? (
-            <UndecryptableNotice
-              summary={undecryptable}
-              names={names}
-              recovery={recovery}
-              onOpenSecurity={onOpenSecurity}
-            />
+            <UndecryptableNotice summary={undecryptable} names={names} recovery={recovery} />
           ) : null}
           {state === 'loading' ? (
             <p className="conversation-panel__boundary">{t('conversation.loading')}</p>
@@ -512,12 +504,10 @@ function UndecryptableNotice({
   summary,
   names,
   recovery,
-  onOpenSecurity,
 }: {
   readonly summary: UndecryptableSummary;
   readonly names: ReadonlyMap<string, string>;
   readonly recovery: UndecryptableRecovery;
-  readonly onOpenSecurity: (() => void) | undefined;
 }) {
   const { t } = useTranslation();
   const named = summary.senders
@@ -526,13 +516,6 @@ function UndecryptableNotice({
   const others = summary.senders.length - named.length;
   return (
     <Banner
-      action={
-        recovery === 'needs_verification' && onOpenSecurity !== undefined ? (
-          <Button icon={<ShieldCheck aria-hidden="true" />} onClick={onOpenSecurity} size="compact">
-            {t('conversation.undecryptable.verify')}
-          </Button>
-        ) : undefined
-      }
       className="conversation-undecryptable"
       icon={<LockKeyhole />}
       role="status"
@@ -555,8 +538,8 @@ function UndecryptableNotice({
         <p key={reason}>{t(`conversation.undecryptable.reason.${reason}`)}</p>
       ))}
       {recovery === 'requested' ? <p>{t('conversation.undecryptable.recovering')}</p> : null}
-      {recovery === 'needs_verification' ? (
-        <p>{t('conversation.undecryptable.verifyFirst')}</p>
+      {recovery === 'awaiting_signing' ? (
+        <p>{t('conversation.undecryptable.awaitingSigning')}</p>
       ) : null}
     </Banner>
   );

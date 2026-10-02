@@ -34,7 +34,6 @@ function harness(
   labels: NetworkAgentLabelStore | null = null,
   undecryptable?: UndecryptableSummary,
   recovery: UndecryptableRecovery = 'idle',
-  onOpenSecurity?: () => void,
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -82,7 +81,6 @@ function harness(
       participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
       submissionIds={{ next: () => submissionId }}
       {...(undecryptable === undefined ? {} : { recovery, undecryptable })}
-      {...(onOpenSecurity === undefined ? {} : { onOpenSecurity })}
     />
   );
   render(
@@ -121,7 +119,7 @@ describe('解不开的加密消息', () => {
     expect(screen.getByText('This device never received their keys.')).toBeInTheDocument();
     expect(
       screen.getByText(
-        "The sender didn't share the keys with this device because it isn't verified yet.",
+        "The sender didn't share the keys with this device because it wasn't signed yet.",
       ),
     ).toBeInTheDocument();
   });
@@ -133,43 +131,26 @@ describe('解不开的加密消息', () => {
       null,
       { count: 3, reasons: ['missing_key'], senders: [agentId] },
       'requested',
-      vi.fn(),
     );
     expect(screen.getByText(/asked to send their keys again/u)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Verify this device' })).not.toBeInTheDocument();
     cleanup();
     harness(false, [], null, { count: 3, reasons: ['missing_key'], senders: [agentId] });
     expect(screen.queryByText(/asked to send their keys again/u)).not.toBeInTheDocument();
   });
 
-  it('要先验证这台设备才能找回时说明原因，按钮直达“安全”页', async () => {
-    const openSecurity = vi.fn();
+  it('这台设备还没签好时说明会自动请重发，不给任何按钮', () => {
     harness(
       false,
       [],
       null,
       { count: 12, reasons: ['withheld'], senders: [agentId] },
-      'needs_verification',
-      openSecurity,
+      'awaiting_signing',
     );
 
-    expect(screen.getByText(/only send keys to verified devices/u)).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Verify this device' }));
-    expect(openSecurity).toHaveBeenCalledOnce();
+    const notice = screen.getByText(/being signed now/u).closest('.conversation-undecryptable');
+    expect(notice).toBeInstanceOf(HTMLElement);
+    expect(within(notice as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByText(/asked to send their keys again/u)).not.toBeInTheDocument();
-  });
-
-  it('没有打开“安全”页的入口时只说要先验证，不放按钮', () => {
-    harness(
-      false,
-      [],
-      null,
-      { count: 12, reasons: ['withheld'], senders: [agentId] },
-      'needs_verification',
-    );
-
-    expect(screen.getByText(/only send keys to verified devices/u)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Verify this device' })).not.toBeInTheDocument();
   });
 
   it('一条也照样提示，发送者都点得出名时不说“其余”', () => {
@@ -187,7 +168,7 @@ describe('人与 Agent 直接聊天', () => {
   it.each([
     [
       'publication.encryption_not_ready',
-      'hasn’t joined your encryption identity',
+      'isn’t ready for encrypted rooms yet',
       'Retry this message',
     ],
     ['publication.identity_changed', 'has a new encryption identity', 'Confirm and send'],

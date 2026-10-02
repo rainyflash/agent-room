@@ -1,4 +1,4 @@
-import { Button, Details } from '@agent-room/ui-system';
+import { Details } from '@agent-room/ui-system';
 import { Laptop, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -7,26 +7,15 @@ import type { MatrixSecurityDevice } from '@/features/security/domain/matrix-sec
 
 export type SecurityDeviceLedgerProps = {
   readonly devices: readonly MatrixSecurityDevice[];
-  /** 这台设备签好没有；它的签名在上面一节处理，这里只列状态。 */
+  /** 这台设备准备好没有（上面一节说的是同一件事）。 */
   readonly thisDeviceSigned: boolean;
-  readonly onVerify: (device: MatrixSecurityDevice) => void;
-  readonly pendingDeviceId: string | null;
-  readonly verificationAvailable: boolean;
-  readonly verificationOpen: boolean;
 };
 
 /**
  * 你的设备：名字、是不是这台、由你签名没有。只有由你签名的设备拿得到加密房间的钥匙；
- * 没签名的别的设备可以在这里核对。指纹和设备 ID 收在详情里。
+ * 每台设备登录后都会自动签好（ADR 0011），这里只列状态。指纹和设备 ID 收在详情里。
  */
-export function SecurityDeviceLedger({
-  devices,
-  thisDeviceSigned,
-  onVerify,
-  pendingDeviceId,
-  verificationAvailable,
-  verificationOpen,
-}: SecurityDeviceLedgerProps) {
+export function SecurityDeviceLedger({ devices, thisDeviceSigned }: SecurityDeviceLedgerProps) {
   const { t } = useTranslation();
   const orderedDevices = [...devices].sort(
     (left, right) => Number(right.current) - Number(left.current),
@@ -46,8 +35,6 @@ export function SecurityDeviceLedger({
         <ol className="security-devices__list">
           {orderedDevices.map((device) => {
             const signed = device.current ? thisDeviceSigned : deviceSignedByYou(device);
-            const verifiable = verificationAvailable && !device.current && !signed;
-            const pending = pendingDeviceId === device.deviceId;
             return (
               <li className={device.current ? 'is-current' : undefined} key={device.deviceId}>
                 <div className="security-device__icon">
@@ -67,18 +54,6 @@ export function SecurityDeviceLedger({
                     {t(signed ? 'security.devices.signed' : 'security.devices.notSigned')}
                   </span>
                 </div>
-                {verifiable ? (
-                  <Button
-                    disabled={verificationOpen}
-                    onClick={() => {
-                      onVerify(device);
-                    }}
-                    size="compact"
-                    tone="ghost"
-                  >
-                    {pending ? `${t('security.devices.verify')}…` : t('security.devices.verify')}
-                  </Button>
-                ) : null}
                 <Details className="security-device__details" summary={t('security.details')}>
                   <dl>
                     <div>

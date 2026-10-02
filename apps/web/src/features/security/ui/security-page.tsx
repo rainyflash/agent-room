@@ -1,44 +1,35 @@
 import { Button, Details } from '@agent-room/ui-system';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
-import { useState } from 'react';
+import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
-import {
-  matrixSecurityQueryKey,
-  useMatrixSecurity,
-} from '@/features/security/data/matrix-security-queries';
+import { useDeviceSigningState } from '@/features/security/data/device-signing-state';
+import { useMatrixSecurity } from '@/features/security/data/matrix-security-queries';
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
+import type { AgentRecoveryGateway } from '@/features/security/domain/agent-recovery';
+import { thisDeviceState } from '@/features/security/domain/device-signing';
 import type {
-  MatrixSecurityDevice,
   MatrixSecurityFailure,
   MatrixSecurityGateway,
   MatrixSecuritySnapshot,
-  MatrixVerificationSession,
 } from '@/features/security/domain/matrix-security';
 import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
-import { DeviceVerificationDialog } from '@/features/security/ui/device-verification-dialog';
+import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 import { SecurityDeviceLedger } from '@/features/security/ui/security-device-ledger';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
-import {
-  SecurityRecoveryPanel,
-  type RecoveryMode,
-} from '@/features/security/ui/security-recovery-panel';
-import { thisDeviceSigning } from '@/features/security/domain/device-signing';
-import { ThisDeviceSigning } from '@/features/security/ui/this-device-signing';
-import type { AgentRecoveryGateway } from '@/features/security/domain/agent-recovery';
-import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
+import { ThisDeviceStatus } from '@/features/security/ui/this-device-status';
+import type { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 
 import './security-page.css';
 
-/** “设置 → 安全”：这台设备的签名、你的设备、恢复密钥、已授权的电脑和 Agent。 */
+/** “设置 → 安全”：这台设备准备好没有、你的设备、已授权的电脑和 Agent。 */
 export function SecuritySettings() {
-  const { accessManagement, security, localRuntime } = useAppServices();
+  const { accessManagement, deviceSigning, security, localRuntime } = useAppServices();
   return (
     <SecurityWorkspace
       accessManagement={accessManagement}
+      deviceSigning={deviceSigning}
       gateway={security}
       {...(localRuntime.isAvailable() && localRuntime.agentRecovery
         ? { agentRecovery: localRuntime.agentRecovery }
@@ -50,48 +41,22 @@ export function SecuritySettings() {
 export type SecurityWorkspaceProps = {
   readonly agentRecovery?: AgentRecoveryGateway;
   readonly accessManagement: AccessManagementGateway;
+  /** 这台设备的自动签名（ADR 0011）：准备中、就绪、出错可重试。 */
+  readonly deviceSigning: DeviceSigningStatus;
   readonly gateway: MatrixSecurityGateway;
-};
-
-type ActiveVerification = {
-  readonly session: MatrixVerificationSession;
-  readonly targetName: string;
 };
 
 export function SecurityWorkspace({
   accessManagement,
+  deviceSigning,
   gateway,
   agentRecovery,
 }: SecurityWorkspaceProps) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const inspection = useMatrixSecurity(gateway);
-  const [verification, setVerification] = useState<ActiveVerification | null>(null);
-  const beginVerification = useMutation({
-    mutationFn: async (device: MatrixSecurityDevice) =>
-      await gateway.beginVerification({ targetDeviceId: device.deviceId }),
-    onSuccess: (result, device) => {
-      if (!result.ok) {
-        return;
-      }
-      setVerification({
-        session: result.value,
-        targetName: device.displayName ?? device.deviceId,
-      });
-    },
-  });
-  const establishIdentity = useMutation({
-    mutationFn: async () => await gateway.establishIdentity(),
-    onSuccess: (result) => {
-      if (result.ok) {
-        void queryClient.invalidateQueries({ queryKey: matrixSecurityQueryKey });
-      }
-    },
-  });
-
-  const refresh = (): void => {
-    void queryClient.invalidateQueries({ queryKey: matrixSecurityQueryKey });
-  };
+  const signing = useDeviceSigningState(deviceSigning);
+  const snapshot = inspection.data?.ok === true ? inspection.data.value : null;
+  const state = thisDeviceState(snapshot, signing);
 
   return (
     <div className="security-page">
@@ -112,6 +77,12 @@ export function SecurityWorkspace({
           </button>
         </header>
 
+        <ThisDeviceStatus
+          onRetry={() => {
+            deviceSigning.retry();
+          }}
+          state={state}
+        />
         {inspection.isPending ? (
           <SecurityLoading />
         ) : inspection.data?.ok === false ? (
@@ -119,52 +90,17 @@ export function SecurityWorkspace({
             failure={inspection.data.error}
             onRetry={() => void inspection.refetch()}
           />
-        ) : inspection.data?.ok === true ? (
-          <SecurityContent
-            beginVerification={(device) => {
-              beginVerification.mutate(device);
-            }}
-            establishIdentity={() => {
-              establishIdentity.mutate();
-            }}
-            gateway={gateway}
-            identityFailure={
-              establishIdentity.data?.ok === false ? establishIdentity.data.error : null
-            }
-            identityPending={establishIdentity.isPending}
-            onChanged={refresh}
-            snapshot={inspection.data.value}
-            verificationFailure={
-              beginVerification.data?.ok === false ? beginVerification.data.error : null
-            }
-            verificationOpen={beginVerification.isPending || verification !== null}
-            verificationPendingId={
-              beginVerification.isPending ? beginVerification.variables.deviceId : null
-            }
-          />
-        ) : (
+        ) : snapshot === null ? (
           <SecurityInspectionFailure
             failure={{ code: 'security.inspection_failed', retryable: true }}
             onRetry={() => void inspection.refetch()}
           />
+        ) : (
+          <SecurityContent snapshot={snapshot} thisDeviceReady={state === 'ready'} />
         )}
         {agentRecovery === undefined ? null : <AgentRecoveryPanel gateway={agentRecovery} />}
         <AccessManagementLedger gateway={accessManagement} />
       </div>
-
-      <AnimatePresence>
-        {verification === null ? null : (
-          <DeviceVerificationDialog
-            key="device-verification"
-            onClose={() => {
-              setVerification(null);
-            }}
-            onVerified={refresh}
-            session={verification.session}
-            targetName={verification.targetName}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }
@@ -199,44 +135,15 @@ function SecurityInspectionFailure({ failure, onRetry }: SecurityInspectionFailu
   );
 }
 
-type SecurityContentProps = {
-  readonly gateway: MatrixSecurityGateway;
-  readonly snapshot: MatrixSecuritySnapshot;
-  readonly identityPending: boolean;
-  readonly identityFailure: MatrixSecurityFailure | null;
-  readonly verificationOpen: boolean;
-  readonly verificationPendingId: string | null;
-  readonly verificationFailure: MatrixSecurityFailure | null;
-  readonly establishIdentity: () => void;
-  readonly beginVerification: (device: MatrixSecurityDevice) => void;
-  readonly onChanged: () => void;
-};
-
-/**
- * 安全一节的内容：这台设备签没签名（要签就给两条路）、你的设备、恢复密钥；账户的 Matrix ID
- * 收在最下面的详情里。
- */
+/** 你的设备，以及收在最下面详情里的 Matrix ID。 */
 function SecurityContent({
-  gateway,
   snapshot,
-  identityPending,
-  identityFailure,
-  verificationOpen,
-  verificationPendingId,
-  verificationFailure,
-  establishIdentity,
-  beginVerification,
-  onChanged,
-}: SecurityContentProps) {
+  thisDeviceReady,
+}: {
+  readonly snapshot: MatrixSecuritySnapshot;
+  readonly thisDeviceReady: boolean;
+}) {
   const { t } = useTranslation();
-  // 点“输入恢复密钥”时让恢复密钥一节直接打开输入框；每点一次换一个 key 重新打开。
-  const [recoveryRequest, setRecoveryRequest] = useState<{
-    readonly mode: RecoveryMode;
-    readonly key: number;
-  } | null>(null);
-  const signing = thisDeviceSigning(snapshot);
-  const currentDevice = snapshot.devices.find((device) => device.current);
-  const otherDevices = snapshot.devices.some((device) => !device.current);
   return (
     <motion.div
       animate={{ opacity: 1 }}
@@ -245,41 +152,7 @@ function SecurityContent({
       initial={{ opacity: 0 }}
       transition={{ duration: 0.18 }}
     >
-      <ThisDeviceSigning
-        identityPending={identityPending}
-        onEstablishIdentity={establishIdentity}
-        onUseRecoveryKey={() => {
-          setRecoveryRequest((previous) => ({ mode: 'recover', key: (previous?.key ?? 0) + 1 }));
-          document
-            .querySelector('#security-recovery')
-            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }}
-        onVerifyWithOtherDevice={() => {
-          if (currentDevice !== undefined) beginVerification(currentDevice);
-        }}
-        otherDevices={otherDevices}
-        state={signing}
-        verificationPending={verificationOpen}
-      />
-      {identityFailure === null ? null : <SecurityFailureNotice failure={identityFailure} />}
-      {verificationFailure === null ? null : (
-        <SecurityFailureNotice failure={verificationFailure} />
-      )}
-      <SecurityDeviceLedger
-        devices={snapshot.devices}
-        onVerify={beginVerification}
-        pendingDeviceId={verificationPendingId}
-        thisDeviceSigned={signing === 'signed'}
-        verificationAvailable={snapshot.crossSigningIdentityExists}
-        verificationOpen={verificationOpen}
-      />
-      <SecurityRecoveryPanel
-        gateway={gateway}
-        key={recoveryRequest?.key ?? 0}
-        onChanged={onChanged}
-        openMode={recoveryRequest?.mode ?? null}
-        snapshot={snapshot}
-      />
+      <SecurityDeviceLedger devices={snapshot.devices} thisDeviceSigned={thisDeviceReady} />
       <Details className="security-account-details" summary={t('security.account.details')}>
         <dl>
           <div>

@@ -4,7 +4,7 @@ import type { RoomKeyRecoveryStatus } from '@/features/messages/adapters/matrix-
 import type { UndecryptableRecovery } from '@/features/messages/domain/message';
 
 const noRecovery: RoomKeyRecoveryStatus = {
-  awaitingVerification: () => 0,
+  awaitingSigning: () => 0,
   pending: () => 0,
   subscribe: () => () => undefined,
 };
@@ -35,5 +35,5 @@ export function useRoomKeyRecovery(roomId: string): UndecryptableRecovery {
 
 function recoveryState(recovery: RoomKeyRecoveryStatus, roomId: string): UndecryptableRecovery {
   if (recovery.pending(roomId) > 0) return 'requested';
-  return recovery.awaitingVerification(roomId) > 0 ? 'needs_verification' : 'idle';
+  return recovery.awaitingSigning(roomId) > 0 ? 'awaiting_signing' : 'idle';
 }

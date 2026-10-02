@@ -23,7 +23,7 @@ test('390px 桌面 Agent 恢复设置可操作且密钥确认后消失', async (
   expect(failures).toEqual([]);
 });
 
-test('安全中心在桌面端展示真实状态并完成 SAS 确认', async ({ page }) => {
+test('安全中心在桌面端说这台设备已就绪，没有恢复密钥和核对', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 1_000, width: 1_440 });
   await page.goto(fixturePath);
@@ -54,26 +54,17 @@ test('安全中心在桌面端展示真实状态并完成 SAS 确认', async ({ 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByText('Disconnect this agent?')).toHaveCount(0);
 
-  // 这台设备已由你签名；没签名的别的设备可以在列表里核对。
-  await expect(page.getByText('This device is signed by you')).toBeVisible();
-  await page.getByRole('button', { name: 'Verify', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Verify a device' });
-  await expect(dialog.locator('.security-sas-emojis > li')).toHaveCount(7);
-  await dialog.getByRole('button', { name: 'They match' }).click();
-  await expect(dialog.getByText('Device verified')).toBeVisible();
+  // 设备登录后自动签好（ADR 0011）：只说已就绪，没有恢复密钥、没有核对按钮。
+  await expect(page.getByText('This device is ready')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Verify', exact: true })).toHaveCount(0);
+  await expect(page.getByText(/recovery key/iu)).toHaveCount(0);
   expect(failures).toEqual([]);
-
-  await page.screenshot({
-    animations: 'disabled',
-    fullPage: true,
-    path: '../../artifacts/browser/task-27/security-verification.png',
-  });
 });
 
-test('390px 安全中心无横向溢出且恢复流程可操作', async ({ page }) => {
+test('390px 安全中心无横向溢出，自动签名出错时点重试就好', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto(fixturePath);
+  await page.goto(`${fixturePath}?signing=failed`);
 
   await expect(page.getByRole('heading', { name: 'Computers and browsers' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
@@ -83,11 +74,13 @@ test('390px 安全中心无横向溢出且恢复流程可操作', async ({ page 
     fullPage: true,
     path: '../../artifacts/browser/task-28/access-mobile.png',
   });
-  await page
-    .getByRole('region', { name: 'Recovery key', exact: true })
-    .getByRole('button', { name: 'Enter recovery key' })
-    .click();
-  await expect(page.getByLabel('Passphrase or recovery key')).toBeVisible();
+  await expect(page.getByText('This device isn’t ready yet')).toBeVisible();
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByText('Getting this device ready')).toBeVisible();
+  await expect(page.getByText('This device is ready')).toBeVisible();
+  await expect(
+    page.locator('.security-devices__list > li.is-current').getByText('Signed by you'),
+  ).toBeVisible();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 

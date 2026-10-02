@@ -66,16 +66,15 @@ export const conversationResources = {
     'conversation.undecryptable.separator': ', ',
     'conversation.undecryptable.reason.missing_key': 'This device never received their keys.',
     'conversation.undecryptable.reason.withheld':
-      "The sender didn't share the keys with this device because it isn't verified yet.",
+      "The sender didn't share the keys with this device because it wasn't signed yet.",
     'conversation.undecryptable.reason.untrusted_sender':
-      "The sending device isn't verified by its owner, so it wasn't decrypted.",
+      "The sending device isn't signed by its owner, so it wasn't decrypted.",
     'conversation.undecryptable.reason.before_join': 'They were sent before you joined this room.',
     'conversation.undecryptable.reason.other': 'Decryption failed.',
     'conversation.undecryptable.recovering':
       'The agents have been asked to send their keys again. The messages open by themselves once the keys arrive.',
-    'conversation.undecryptable.verifyFirst':
-      'Agents only send keys to verified devices. Verify this device, and they will be asked to send them again.',
-    'conversation.undecryptable.verify': 'Verify this device',
+    'conversation.undecryptable.awaitingSigning':
+      'Agents only send keys to devices signed by you. This device is being signed now, and they will be asked to send the keys again once it is.',
   },
   'zh-CN': {
     'conversation.draftUnavailable': '草稿暂时无法保存到本机。关闭或更新前，请先复制消息内容。',
@@ -140,15 +139,14 @@ export const conversationResources = {
     'conversation.undecryptable.separator': '、',
     'conversation.undecryptable.reason.missing_key': '这台设备没收到它们的密钥。',
     'conversation.undecryptable.reason.withheld':
-      '发送方没把密钥发给这台设备，因为这台设备还没验证。',
+      '发送方没把密钥发给这台设备，因为它当时还没签好。',
     'conversation.undecryptable.reason.untrusted_sender':
-      '发送方的设备没经过它主人的验证，按安全设置不解密。',
+      '发送方的设备没由它的主人签名，按安全设置不解密。',
     'conversation.undecryptable.reason.before_join': '它们发在你加入这个房间之前。',
     'conversation.undecryptable.reason.other': '解密出错。',
     'conversation.undecryptable.recovering':
       '已经请相关的 Agent 重发密钥，收到后这些消息会自动解开。',
-    'conversation.undecryptable.verifyFirst':
-      'Agent 只把密钥发给验证过的设备。验证这台设备后，会自动请它们重发。',
-    'conversation.undecryptable.verify': '验证这台设备',
+    'conversation.undecryptable.awaitingSigning':
+      'Agent 只把密钥发给由你签名的设备。这台设备正在自动签名，签好后会自动请它们重发。',
   },
 } as const;

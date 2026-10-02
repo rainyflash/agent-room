@@ -624,7 +624,7 @@ export const resources = {
       'messages.failure.publication.matrix_rejected':
         'Matrix definitively rejected the submission.',
       'messages.failure.publication.encryption_not_ready':
-        'This device hasn’t joined your encryption identity yet. Confirm it from a device where you’re already signed in, or restore it with your recovery key in Security, then retry. Your draft is preserved.',
+        'This device isn’t ready for encrypted rooms yet. Agent Room is signing it for you; try again in a few seconds. Your draft is preserved.',
       'messages.failure.publication.identity_changed':
         'Someone in this conversation has a new encryption identity. That happens after a reinstall or an encryption reset, or if someone is impersonating them. Confirm to trust the new identity and send. Your draft is preserved.',
       'messages.failure.publication.persistence_failed':
@@ -1208,7 +1208,7 @@ export const resources = {
       'messages.failure.publication.content_rejected': '内容服务拒绝了上传或绑定请求。',
       'messages.failure.publication.matrix_rejected': 'Matrix 已明确拒绝本次提交。',
       'messages.failure.publication.encryption_not_ready':
-        '这台设备还没加入你的加密身份。在已登录的设备上确认它，或在安全中心用恢复密钥恢复，然后重试；草稿已保留。',
+        '这台设备还没准备好收发加密消息。Agent Room 正在替你签好它，过几秒再试；草稿已保留。',
       'messages.failure.publication.identity_changed':
         '对话里有人的加密身份变了。重装或重置加密都会这样，也可能是有人冒充。确认后信任新身份并发送；草稿已保留。',
       'messages.failure.publication.persistence_failed': '浏览器无法恢复幂等提交状态。',

@@ -17,7 +17,7 @@ export const roomKeysEventType = 'io.github.rainyflash.agentroom.room_keys.v1';
 
 /**
  * 值得请 Agent 重发的解密失败原因码：#202 归为“没收到密钥”和“发在加入之前”的那几种，
- * 加上发送方拒绝分发的两种。拒绝多半因为这台设备当时还没验证；验证以后再请求，Agent 按同样的规则重新判断。
+ * 加上发送方拒绝分发的两种。拒绝多半因为这台设备当时还没签好；签好以后再请求，Agent 按同样的规则重新判断。
  */
 const recoverableCodes: ReadonlySet<string> = new Set([
   'MEGOLM_UNKNOWN_INBOUND_SESSION_ID',
@@ -72,10 +72,10 @@ type PendingRequest = {
   readonly expiresAt: number;
 };
 
-/** 界面用：某个房间里还在等 Agent 重发的会话有几个，因为这台设备还没验证而扣着没发的又有几个。 */
+/** 界面用：某个房间里还在等 Agent 重发的会话有几个，因为这台设备还没签好而扣着没发的又有几个。 */
 export type RoomKeyRecoveryStatus = {
   pending(roomId: string): number;
-  awaitingVerification(roomId: string): number;
+  awaitingSigning(roomId: string): number;
   subscribe(listener: () => void): () => void;
 };
 
@@ -126,7 +126,7 @@ export class MatrixRoomKeyRecovery implements RoomKeyRecoveryStatus {
     return count;
   }
 
-  awaitingVerification(roomId: string): number {
+  awaitingSigning(roomId: string): number {
     let count = 0;
     for (const request of this.#parked.values()) {
       if (request.roomId === roomId) count += request.sessionIds.size;
@@ -228,7 +228,7 @@ export class MatrixRoomKeyRecovery implements RoomKeyRecoveryStatus {
       await this.#send(client, batches);
       return;
     }
-    // Agent 只回答由主人签名的设备，现在问也白问；先扣着，提示里请用户先验证这台设备。
+    // Agent 只回答由主人签名的设备，现在问也白问；先扣着，登录后的自动签名签好这台设备就发出去。
     for (const [key, batch] of batches) {
       const parked = this.#parked.get(key);
       if (parked === undefined) this.#parked.set(key, batch);

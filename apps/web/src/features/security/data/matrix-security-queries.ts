@@ -5,19 +5,19 @@ import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-se
 
 export const matrixSecurityQueryKey = ['matrix', 'security'] as const;
 
-export function matrixSecurityQueryOptions(gateway: MatrixSecurityGateway, roomId?: string) {
+export function matrixSecurityQueryOptions(gateway: MatrixSecurityGateway) {
   return queryOptions({
-    queryKey: [...matrixSecurityQueryKey, roomId ?? 'account'] as const,
-    queryFn: async () => await gateway.inspect(roomId === undefined ? {} : { roomId }),
+    queryKey: [...matrixSecurityQueryKey, 'account'] as const,
+    queryFn: async () => await gateway.inspect(),
     networkMode: 'always',
     retry: false,
     staleTime: 5_000,
   });
 }
 
-export function useMatrixSecurity(gateway: MatrixSecurityGateway, roomId?: string) {
+export function useMatrixSecurity(gateway: MatrixSecurityGateway) {
   const queryClient = useQueryClient();
-  const query = useQuery(matrixSecurityQueryOptions(gateway, roomId));
+  const query = useQuery(matrixSecurityQueryOptions(gateway));
 
   useEffect(
     () =>

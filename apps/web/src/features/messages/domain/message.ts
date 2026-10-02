@@ -89,7 +89,7 @@ export type ReadOnlyFederatedEvent = {
 
 /**
  * 解不开的原因，按用户能做什么来分：
- * 没收到密钥、发送方不肯给（这台设备还没验证）、发送方设备不可信、消息早于加入、其他。
+ * 没收到密钥、发送方不肯给（这台设备当时还没签好）、发送方设备不可信、消息早于加入、其他。
  */
 export type UndecryptableReason =
   'missing_key' | 'withheld' | 'untrusted_sender' | 'before_join' | 'other';
@@ -105,9 +105,9 @@ export type UndecryptableSummary = {
 
 /**
  * 找回解不开的消息走到了哪一步：已经请 Agent 重发、还在等；
- * 或者这台设备还没由主人签名，Agent 不会回答，要先验证这台设备。
+ * 或者这台设备还没由主人签名（Agent 不会回答），等登录后的自动签名签好再请。
  */
-export type UndecryptableRecovery = 'idle' | 'requested' | 'needs_verification';
+export type UndecryptableRecovery = 'idle' | 'requested' | 'awaiting_signing';
 
 export type MessageRoomProjection = {
   readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };

@@ -5,6 +5,7 @@ const optionalAccountData = new Set([
   'io.github.rainyflash.agentroom.preferences.v1',
   'io.github.rainyflash.agentroom.personal-workspace.v1',
   'm.secret_storage.default_key',
+  'm.megolm_backup.v1',
   'm.cross_signing.master',
   'm.cross_signing.self_signing',
   'm.cross_signing.user_signing',
@@ -20,6 +21,11 @@ export function isExpectedHttpBoundary(status: number, rawUrl: string, method: s
     accountDataType !== undefined && optionalAccountData.has(accountDataType);
   return (
     (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
+    // 全新账户的第一台设备：服务器上还没有替账户保管的签名钥匙（ADR 0011），设备随后新建一把。
+    (status === 404 &&
+      method === 'GET' &&
+      url.origin === apiOrigin &&
+      url.pathname === '/account/encryption-key') ||
     (status === 404 &&
       method === 'GET' &&
       url.origin === matrixOrigin &&

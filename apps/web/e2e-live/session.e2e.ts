@@ -11,6 +11,8 @@ import {
 import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
+/** 登录后自动签好这台设备（ADR 0011）：真实控制面保管钥匙、真实 Synapse 上签名。 */
+const thisDeviceReady = /^(?:This device is ready|这台设备已就绪)$/u;
 
 test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }) => {
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
@@ -36,6 +38,7 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
   // Matrix ID 在“设置 → 安全”最下面的“账户详情”里（界面翻新 4b 起默认收起）。
   const accountDetails = page.locator('.security-account-details');
   await page.goto('/settings/security');
+  await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
   await accountDetails.locator('summary').click({ timeout: 40_000 });
   await expect(accountDetails).toContainText(firstIdentity, { timeout: 40_000 });
   await page.reload();
@@ -69,6 +72,9 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
       password: password ?? '',
       username: username ?? '',
     });
+    // 又一台新设备：账户已有签名身份时，用服务器保管的钥匙自动签上，不用恢复密钥、不用核对。
+    await first.goto('/settings/security');
+    await expect(first.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
     const original = storedMatrixSessionSchema.parse(await readMatrixSession(first));
     await context?.close();
 
