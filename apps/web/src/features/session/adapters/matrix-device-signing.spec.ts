@@ -28,18 +28,21 @@ describe('ensureDeviceSigned', () => {
     expect(account.escrow.allowReset).not.toHaveBeenCalled();
   });
 
-  it('已签好、手里有私钥、服务器的钥匙对得上：只加载备份钥匙', async () => {
-    const account = fakeAccount({ escrowed: 'CURRENT', ready: true });
+  it('手里有私钥、服务器的钥匙对得上：确认密钥存储里有私钥，加载备份钥匙', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT', holdsKeys: true, signed: true });
 
     await expect(run(account)).resolves.toBe('ready');
 
+    // 本机有私钥时 bootstrapCrossSigning({}) 只会把缺的私钥补存进密钥存储，不会重建。
+    expect(account.crypto.bootstrapCrossSigning).toHaveBeenCalledWith({});
     expect(account.crypto.loadSessionBackupPrivateKeyFromSecretStorage).toHaveBeenCalledOnce();
+    expect(account.crypto.crossSignDevice).not.toHaveBeenCalled();
     expect(account.crypto.bootstrapSecretStorage).not.toHaveBeenCalled();
     expect(account.stored).toEqual([]);
   });
 
-  it('已签好、手里有私钥、服务器上没有钥匙：新建一把补交，沿用还在的备份', async () => {
-    const account = fakeAccount({ backupKeyKnown: true, ready: true });
+  it('手里有私钥、服务器上没有钥匙：新建一把补交，沿用还在的备份', async () => {
+    const account = fakeAccount({ backupKeyKnown: true, holdsKeys: true, signed: true });
 
     await expect(run(account)).resolves.toBe('ready');
 
@@ -50,7 +53,16 @@ describe('ensureDeviceSigned', () => {
     expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
   });
 
-  it('没签好、服务器的钥匙对得上：打开密钥存储，签好这台设备，在后台找回历史', async () => {
+  it('手里有私钥、这台设备的签名没传上去：补签', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT', holdsKeys: true });
+
+    await expect(run(account)).resolves.toBe('ready');
+
+    expect(account.crypto.crossSignDevice).toHaveBeenCalledWith(DEVICE);
+    expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
+  });
+
+  it('本机没有私钥、服务器的钥匙对得上：从密钥存储取回私钥，签好这台设备，在后台找回历史', async () => {
     const account = fakeAccount({ escrowed: 'CURRENT' });
 
     await expect(run(account)).resolves.toBe('signed');
@@ -61,11 +73,20 @@ describe('ensureDeviceSigned', () => {
     expect(account.crypto.restoreKeyBackup).toHaveBeenCalledOnce();
     expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
     expect(account.stored).toEqual([]);
+    expect(account.escrowedKey.every((byte) => byte === 0)).toBe(true);
   });
 
-  it('没签好、服务器上没有钥匙（或者对不上）：请服务器开豁免，重建一次签名身份，交新钥匙', async () => {
-    for (const escrowed of [null, 'OLD'] as const) {
-      const account = fakeAccount({ escrowed });
+  it('本机没有私钥、服务器上没有能用的钥匙：请服务器开豁免，重建一次签名身份，交新钥匙', async () => {
+    const cases = [
+      { escrowed: null },
+      { escrowed: 'OLD' },
+      // 签过名也一样：没有私钥、服务器也没有钥匙，就没法签别的设备。
+      { escrowed: null, signed: true },
+      // 钥匙对得上，但密钥存储里没有签名私钥：bootstrapCrossSigning 会去重建，换成开了豁免的重建。
+      { escrowed: 'CURRENT', keysInStorage: false },
+    ] as const;
+    for (const options of cases) {
+      const account = fakeAccount(options);
 
       await expect(run(account)).resolves.toBe('reset');
 
@@ -75,6 +96,7 @@ describe('ensureDeviceSigned', () => {
       expect(account.escrow.allowReset.mock.invocationCallOrder[0]).toBeLessThan(
         account.crypto.resetEncryption.mock.invocationCallOrder[0] ?? 0,
       );
+      expect(account.crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
       expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
       expect(account.unlock).not.toHaveBeenCalledWith('OLD', expect.anything());
     }
@@ -107,19 +129,24 @@ function run(account: ReturnType<typeof fakeAccount>) {
 }
 
 /**
- * 一个假的账户：`identity` 账户有没有签名身份，`ready` 这台设备签好且手里有私钥，`escrowed`
- * 服务器上那把钥匙的 ID（账户现在的密钥存储钥匙是 `CURRENT`），`backupKeyKnown` 本机有没有备份钥匙。
+ * 一个假的账户：`identity` 账户有没有签名身份，`holdsKeys` 本机有没有签名私钥，`signed` 这台设备
+ * 签好没有，`escrowed` 服务器上那把钥匙的 ID（账户现在的密钥存储钥匙是 `CURRENT`），`keysInStorage`
+ * 密钥存储里有没有签名私钥，`backupKeyKnown` 本机有没有备份钥匙。
  */
 function fakeAccount({
   backupKeyKnown = false,
   escrowed = null,
+  holdsKeys = false,
   identity = true,
-  ready = false,
+  keysInStorage = true,
+  signed = false,
 }: {
   readonly backupKeyKnown?: boolean;
   readonly escrowed?: 'CURRENT' | 'OLD' | null;
+  readonly holdsKeys?: boolean;
   readonly identity?: boolean;
-  readonly ready?: boolean;
+  readonly keysInStorage?: boolean;
+  readonly signed?: boolean;
 }) {
   let defaultKey: string | null = identity ? 'CURRENT' : null;
   const generatedKey = new Uint8Array(32).fill(7);
@@ -140,8 +167,18 @@ function fakeAccount({
       Promise.resolve({ keyInfo: {}, privateKey: generatedKey }),
     ),
     crossSignDevice: vi.fn(() => Promise.resolve()),
-    getDeviceVerificationStatus: vi.fn(() => Promise.resolve({ signedByOwner: ready })),
-    isCrossSigningReady: vi.fn(() => Promise.resolve(ready)),
+    getCrossSigningStatus: vi.fn(() =>
+      Promise.resolve({
+        privateKeysCachedLocally: {
+          masterKey: holdsKeys,
+          selfSigningKey: holdsKeys,
+          userSigningKey: holdsKeys,
+        },
+        privateKeysInSecretStorage: identity && keysInStorage,
+        publicKeysOnDevice: identity,
+      }),
+    ),
+    getDeviceVerificationStatus: vi.fn(() => Promise.resolve({ signedByOwner: signed })),
     loadSessionBackupPrivateKeyFromSecretStorage: vi.fn(() => Promise.resolve()),
     resetEncryption: vi.fn(() => Promise.resolve()),
     restoreKeyBackup: vi.fn(() => Promise.resolve({ imported: 0, total: 0 })),

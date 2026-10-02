@@ -1,5 +1,5 @@
 import type { MatrixClient } from 'matrix-js-sdk';
-import type { CryptoApi } from 'matrix-js-sdk/lib/crypto-api/index.js';
+import type { CrossSigningStatus, CryptoApi } from 'matrix-js-sdk/lib/crypto-api/index.js';
 
 import type { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 
@@ -36,8 +36,9 @@ export type DeviceSigningClient = Pick<
  * 登录后让这台设备由账户的签名身份签好（`specs/device-signing/design.md`）。每次启动都可以跑，
  * 每一步都能重复做：
  * 1. 账户还没有签名身份：建立身份、建密钥存储和密钥备份，把钥匙交给服务器；
- * 2. 这台设备已签好、手里有签名私钥：服务器上没有对得上的钥匙就新建一把补交；
- * 3. 否则用服务器上的钥匙打开密钥存储、签好这台设备、找回历史；没有能用的钥匙就重建一次签名身份。
+ * 2. 本机拿着签名私钥：没签好就签上；服务器上没有对得上的钥匙就新建一把补交；
+ * 3. 否则用服务器上的钥匙打开密钥存储、取回签名私钥、签好这台设备、找回历史；没有能用的钥匙
+ *    （或者密钥存储里没有签名私钥）就重建一次签名身份。
  */
 export async function ensureDeviceSigned(
   client: DeviceSigningClient,
@@ -50,6 +51,7 @@ export async function ensureDeviceSigned(
   if (crypto === undefined || userId === null || deviceId === null) {
     throw new Error('Matrix 加密还没有初始化好。');
   }
+  // 自己的身份每次都重新查一遍：别的设备重建过签名身份时，本机对不上的旧私钥随之清掉。
   if (!(await crypto.userHasCrossSigningKeys(userId, true))) {
     await crypto.bootstrapCrossSigning({
       authUploadDeviceSigningKeys: uploadWithoutAuthentication,
@@ -58,28 +60,28 @@ export async function ensureDeviceSigned(
     return 'established';
   }
   const escrowed = await escrow.fetch();
-  const usable = escrowed !== null && (await unlocksAccount(client, escrowed));
-  if (await signedWithPrivateKeys(crypto, userId, deviceId)) {
-    if (usable) {
-      keys.unlock(escrowed.keyId, escrowed.key);
-      await loadBackupKey(crypto);
-    } else {
-      await createSecretStorage(client, crypto, escrow, await needsNewBackup(crypto));
+  try {
+    const usable = escrowed !== null && (await unlocksAccount(client, escrowed));
+    if (usable) keys.unlock(escrowed.keyId, escrowed.key);
+    const status = await crypto.getCrossSigningStatus();
+    if (holdsSigningKeys(status)) {
+      await keepSigned(client, crypto, escrow, usable);
+      return 'ready';
     }
-    return 'ready';
-  }
-  if (usable) {
-    keys.unlock(escrowed.keyId, escrowed.key);
-    // 从密钥存储取回签名私钥，再签这台设备。
-    await crypto.bootstrapCrossSigning({});
-    await crypto.crossSignDevice(deviceId);
-    if (await loadBackupKey(crypto)) {
-      void crypto.restoreKeyBackup().catch(ignoreBackgroundFailure);
+    if (usable && status.privateKeysInSecretStorage) {
+      // 本机没有签名私钥时，这一步从密钥存储取回私钥并签好这台设备。
+      await crypto.bootstrapCrossSigning({});
+      await crypto.crossSignDevice(deviceId);
+      if (await loadBackupKey(crypto)) {
+        void crypto.restoreKeyBackup().catch(ignoreBackgroundFailure);
+      }
+      return 'signed';
     }
-    return 'signed';
+  } finally {
+    escrowed?.key.fill(0);
   }
   await escrow.allowReset();
-  // 新的签名身份（签好这台设备）、新的密钥备份；旧的恢复密钥随之作废。
+  // 新的签名身份（签好这台设备）、新的密钥备份；旧的密钥存储和备份随之作废。
   await crypto.resetEncryption(uploadWithoutAuthentication);
   await createSecretStorage(client, crypto, escrow, false);
   return 'reset';
@@ -92,17 +94,32 @@ async function uploadWithoutAuthentication(
   await makeRequest(null);
 }
 
-/** 这台设备由账户的签名身份签过，本机也拿着签名私钥（还能去签别的设备）。 */
-async function signedWithPrivateKeys(
+/** 本机缓存着三把签名私钥（对不上账户现在签名身份的，在查身份时已经清掉了）。 */
+function holdsSigningKeys(status: CrossSigningStatus): boolean {
+  const cached = status.privateKeysCachedLocally;
+  return cached.masterKey && cached.selfSigningKey && cached.userSigningKey;
+}
+
+/**
+ * 本机拿着签名私钥：这台设备没签好就签上（比如上次的签名没传上去）。服务器上的钥匙对得上就
+ * 确认密钥存储里有签名私钥（缺了只补存，不会重建）并加载备份钥匙；对不上就新建一把补交。
+ */
+async function keepSigned(
+  client: DeviceSigningClient,
   crypto: CryptoApi,
-  userId: string,
-  deviceId: string,
-): Promise<boolean> {
-  const [ready, status] = await Promise.all([
-    crypto.isCrossSigningReady(),
-    crypto.getDeviceVerificationStatus(userId, deviceId),
-  ]);
-  return ready && status?.signedByOwner === true;
+  escrow: EncryptionKeyEscrow,
+  usable: boolean,
+): Promise<void> {
+  const userId = client.getUserId() ?? '';
+  const deviceId = client.getDeviceId() ?? '';
+  const verification = await crypto.getDeviceVerificationStatus(userId, deviceId);
+  if (verification?.signedByOwner !== true) await crypto.crossSignDevice(deviceId);
+  if (usable) {
+    await crypto.bootstrapCrossSigning({});
+    await loadBackupKey(crypto);
+  } else {
+    await createSecretStorage(client, crypto, escrow, await needsNewBackup(crypto));
+  }
 }
 
 /** 服务器上的钥匙能不能打开账户现在的密钥存储。 */
