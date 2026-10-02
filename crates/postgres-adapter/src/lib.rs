@@ -1,3 +1,4 @@
+mod account_encryption;
 mod accounts;
 mod agent_cards;
 mod agent_creation;

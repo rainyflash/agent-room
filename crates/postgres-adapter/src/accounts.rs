@@ -394,6 +394,12 @@ async fn revoke_local_credentials(
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
     }
+    // 服务器替账户保管的签名钥匙（ADR 0011）：账户一提出删除就清掉，谁也不能再凭它签设备。
+    sqlx::query(r"DELETE FROM agent_room.principal_encryption_key WHERE principal_id = $1")
+        .bind(principal_id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 

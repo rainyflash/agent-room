@@ -20,6 +20,7 @@ use agent_room_a2a_adapter::{
     RemoteAgentCardSource, SystemDnsResolver,
 };
 use agent_room_application::{
+    account_encryption::{AccountEncryptionDependencies, AccountEncryptionService},
     account_lifecycle::{
         AccountDeletionWorker, AccountDeletionWorkerDependencies, AccountLifecycleDependencies,
         AccountLifecycleService,
@@ -63,8 +64,8 @@ use agent_room_application::{
 };
 use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{
-    AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant, DiscoveredOidcGateway,
-    Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier,
+    AesGcmAccountEncryptionKeySealer, AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant,
+    DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier,
     Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer, NetworkSourceDigester,
     OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
@@ -373,14 +374,9 @@ async fn build_identity_router(
         repositories.clone(),
         system_runtime.clone(),
     )?;
-    let account_deletion = build_account_deletion_worker(
-        &config.account_lifecycle,
-        &config.dependencies.matrix_base_url,
-        &authentication_config.matrix_server_name,
-        request_timeout,
-        repositories.clone(),
-        system_runtime.clone(),
-    )?;
+    let synapse_accounts = build_synapse_account_gateway(config, request_timeout)?;
+    let account_deletion =
+        build_account_deletion_worker(config, &synapse_accounts, &repositories, &system_runtime)?;
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let agent_dependencies = AgentFeatureDependencies {
@@ -402,7 +398,11 @@ async fn build_identity_router(
         account_state,
         device_state,
         agent_features,
-        content_routes.merge(personal_routes(authentication_config, &agent_dependencies)),
+        content_routes.merge(personal_routes(
+            config,
+            &agent_dependencies,
+            synapse_accounts,
+        )),
     );
     Ok(IdentityRuntime {
         routes,
@@ -415,8 +415,9 @@ async fn build_identity_router(
 }
 
 fn personal_routes(
-    config: &AuthenticationConfig,
+    config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
+    synapse_accounts: Arc<SynapseAccountLifecycleGateway>,
 ) -> Router {
     features::inbox::router(features::inbox::InboxHttpState {
         repository: dependencies.repositories.clone(),
@@ -435,10 +436,15 @@ fn personal_routes(
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
             trusted_origins: features::authentication::TrustedOrigins::new(
-                &config.frontend_origin,
-                &config.desktop_origins,
+                &config.authentication.frontend_origin,
+                &config.authentication.desktop_origins,
             ),
         },
+    ))
+    .merge(account_encryption_routes(
+        config,
+        dependencies,
+        synapse_accounts,
     ))
 }
 
@@ -538,48 +544,73 @@ fn build_account_http_state(
     )
 }
 
-fn build_account_deletion_worker(
-    config: &AccountLifecycleConfig,
-    matrix_base_url: &url::Url,
-    matrix_server_name: &str,
+/// 删除账户的后台任务和设备自动签名（ADR 0011）共用的 Synapse 管理接口客户端。
+fn build_synapse_account_gateway(
+    config: &ControlPlaneConfig,
     request_timeout: Duration,
-    repositories: Arc<PostgresRepositories>,
-    runtime: Arc<SystemRuntime>,
+) -> Result<Arc<SynapseAccountLifecycleGateway>, StartupError> {
+    let invalid =
+        |message: String| StartupError::new("startup.invalid_account_lifecycle_config", message);
+    let token = SecretValue::new(
+        config
+            .account_lifecycle
+            .matrix_admin_access_token
+            .expose()
+            .to_owned(),
+    )
+    .map_err(|_| invalid("Matrix 管理令牌无效".to_owned()))?;
+    let configuration = SynapseAccountLifecycleConfiguration::new(
+        config.dependencies.matrix_base_url.as_str(),
+        config.authentication.matrix_server_name.clone(),
+        token,
+        request_timeout,
+    )
+    .map_err(|error| invalid(error.to_string()))?;
+    Ok(Arc::new(
+        SynapseAccountLifecycleGateway::new(configuration)
+            .map_err(|error| invalid(error.to_string()))?,
+    ))
+}
+
+/// 设备自动签名（ADR 0011）：控制面替账户保管签名钥匙。封存密钥和网络 Agent 共用部署里的同一把，
+/// 没配时三个接口都回答暂时不可用。
+fn account_encryption_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+    matrix: Arc<SynapseAccountLifecycleGateway>,
+) -> Router {
+    let service = Arc::new(AccountEncryptionService::new(
+        AccountEncryptionDependencies {
+            repository: dependencies.repositories.clone(),
+            sealer: Arc::new(AesGcmAccountEncryptionKeySealer::new(
+                config.network_agents.seal_key.as_ref(),
+            )),
+            matrix,
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::account_encryption::router(
+        features::account_encryption::AccountEncryptionHttpState::new(
+            service,
+            dependencies.authentication.clone(),
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+        ),
+    )
+}
+
+fn build_account_deletion_worker(
+    config: &ControlPlaneConfig,
+    matrix: &Arc<SynapseAccountLifecycleGateway>,
+    repositories: &Arc<PostgresRepositories>,
+    runtime: &Arc<SystemRuntime>,
 ) -> Result<account_deletion::AccountDeletionRuntime, StartupError> {
-    let matrix = Arc::new(
-        SynapseAccountLifecycleGateway::new(
-            SynapseAccountLifecycleConfiguration::new(
-                matrix_base_url.as_str(),
-                matrix_server_name.to_owned(),
-                SecretValue::new(config.matrix_admin_access_token.expose().to_owned()).map_err(
-                    |_| {
-                        StartupError::new(
-                            "startup.invalid_account_lifecycle_config",
-                            "Matrix 管理令牌无效".to_owned(),
-                        )
-                    },
-                )?,
-                request_timeout,
-            )
-            .map_err(|error| {
-                StartupError::new(
-                    "startup.invalid_account_lifecycle_config",
-                    error.to_string(),
-                )
-            })?,
-        )
-        .map_err(|error| {
-            StartupError::new(
-                "startup.invalid_account_lifecycle_config",
-                error.to_string(),
-            )
-        })?,
-    );
+    let config = &config.account_lifecycle;
     let worker = Arc::new(AccountDeletionWorker::new(
         AccountDeletionWorkerDependencies {
-            repository: repositories,
-            matrix,
-            clock: runtime,
+            repository: repositories.clone(),
+            matrix: matrix.clone(),
+            clock: runtime.clone(),
             lease_duration: domain_duration(config.lease_duration)?,
             initial_retry_delay: domain_duration(config.retry_initial)?,
             maximum_retry_delay: domain_duration(config.retry_maximum)?,

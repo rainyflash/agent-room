@@ -130,3 +130,47 @@ pub trait AccountDeletionRepository: Send + Sync {
         completed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<AccountDeletionStatus>>;
 }
+
+/// 服务器替账户保管的密钥存储钥匙（ADR 0011），封存后入库。每个主体一份。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredEncryptionKey {
+    /// 账户数据里那把密钥存储钥匙的 ID。
+    pub key_id: String,
+    pub sealed: super::SealedSecret,
+}
+
+pub trait AccountEncryptionKeyRepository: Send + Sync {
+    fn find_encryption_key(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<StoredEncryptionKey>>>;
+
+    /// 存下或覆盖这个主体的钥匙。
+    fn put_encryption_key<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        key: &'a StoredEncryptionKey,
+        updated_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+}
+
+/// AES-256-GCM 封存账户的密钥存储钥匙；附加数据绑定主体，密文挪给别的账户打不开。
+pub trait AccountEncryptionKeySealer: Send + Sync {
+    /// # Errors
+    ///
+    /// 封存密钥没有配置时返回错误。
+    fn seal(
+        &self,
+        principal_id: PrincipalId,
+        plaintext: &[u8],
+    ) -> Result<super::SealedSecret, super::SecretSealingFailure>;
+
+    /// # Errors
+    ///
+    /// 封存密钥没有配置、密文被改过或不属于这个主体时返回错误。
+    fn open(
+        &self,
+        principal_id: PrincipalId,
+        sealed: &super::SealedSecret,
+    ) -> Result<Vec<u8>, super::SecretSealingFailure>;
+}

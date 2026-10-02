@@ -63,7 +63,7 @@ impl NetworkAgentSealKey {
     }
 
     /// 按用途派生的子密钥：封存与来源摘要不共用同一把。
-    fn derive(&self, domain: &[u8]) -> Option<Zeroizing<[u8; 32]>> {
+    pub(crate) fn derive(&self, domain: &[u8]) -> Option<Zeroizing<[u8; 32]>> {
         let mut mac =
             <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(self.bytes.as_slice()).ok()?;
         mac.update(domain);
