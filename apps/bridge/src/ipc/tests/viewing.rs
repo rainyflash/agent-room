@@ -27,11 +27,11 @@ use super::{
     固定状态, 测试_agent_身份, 测试正文投影, 空正文服务,
 };
 
-const ROOM: &str = "!lobby:matrix.test";
+pub(super) const ROOM: &str = "!lobby:matrix.test";
 /// 测试 Agent 自己的 Matrix 用户 ID（`测试_agent_身份`）。
-const ME: &str = "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.test";
+pub(super) const ME: &str = "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.test";
 
-fn human(name: &str, id: &str) -> ProjectedMessageActor {
+pub(super) fn human(name: &str, id: &str) -> ProjectedMessageActor {
     ProjectedMessageActor::Human {
         principal_id: PrincipalId::from_uuid(Uuid::now_v7()),
         display_name: name.to_owned(),
@@ -40,11 +40,11 @@ fn human(name: &str, id: &str) -> ProjectedMessageActor {
     }
 }
 
-fn event(index: u8) -> String {
+pub(super) fn event(index: u8) -> String {
     format!("$view-{index}:matrix.test")
 }
 
-fn chat(
+pub(super) fn chat(
     room: &str,
     index: u8,
     actor: ProjectedMessageActor,
@@ -69,7 +69,7 @@ fn chat(
     message
 }
 
-async fn store_with(
+pub(super) async fn store_with(
     messages: &[ProjectedMessagePreview],
 ) -> (tempfile::TempDir, Arc<SqliteMessageTimelineRepository>) {
     let directory = tempfile::tempdir().expect("临时目录可创建");
@@ -95,7 +95,9 @@ async fn store_with(
     (directory, Arc::new(store))
 }
 
-fn handler(store: Arc<SqliteMessageTimelineRepository>) -> FoundationBridgeIpcRequestHandler {
+pub(super) fn handler(
+    store: Arc<SqliteMessageTimelineRepository>,
+) -> FoundationBridgeIpcRequestHandler {
     FoundationBridgeIpcRequestHandler::with_agent_runtime(
         super::super::AgentRuntimeConsumer::HostSession,
         Arc::new(固定状态),
@@ -111,7 +113,7 @@ fn handler(store: Arc<SqliteMessageTimelineRepository>) -> FoundationBridgeIpcRe
     )
 }
 
-fn event_ids(messages: &[IpcMessagePreviewSummary]) -> Vec<String> {
+pub(super) fn event_ids(messages: &[IpcMessagePreviewSummary]) -> Vec<String> {
     messages
         .iter()
         .map(|message| message.event_id.clone())
@@ -189,6 +191,7 @@ async fn 收件箱里长消息只给开头_按_id_取回全文() {
             limit: 20,
             keep_waiting: false,
             wait_ms: None,
+            from_ack: false,
         }))
         .await
         .expect("可以读收件箱");

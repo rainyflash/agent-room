@@ -222,6 +222,7 @@ impl InboxWaiter {
             limit: u16::try_from(self.limit).unwrap_or(FETCH_PAGE),
             keep_waiting: false,
             wait_ms: None,
+            from_ack: false,
         };
         let (previews, _, _) = self
             .read_page(backend, IpcMethod::ReadInbox(request), None)
@@ -281,6 +282,7 @@ impl InboxWaiter {
                 limit: FETCH_PAGE,
                 keep_waiting,
                 wait_ms,
+                from_ack: false,
             };
             // 挂着等的那一页多给一点再截断：Bridge 刚好到点才回时不能算成超时。
             let cut_off = cut_off.map(|cut_off| {
@@ -450,6 +452,7 @@ impl InboxWaiter {
             limit: FETCH_PAGE,
             keep_waiting: false,
             wait_ms: None,
+            from_ack: false,
         };
         let (newest_first, _, _) = self
             .read_page(backend, IpcMethod::ListPreviews(request), None)
@@ -485,6 +488,7 @@ impl InboxWaiter {
             limit: 1,
             keep_waiting: false,
             wait_ms: None,
+            from_ack: false,
         };
         let method = IpcMethod::WithSession {
             session_id: self.session_id.clone(),

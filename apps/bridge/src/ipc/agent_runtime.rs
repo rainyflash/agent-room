@@ -74,6 +74,7 @@ use super::{
 };
 use crate::agent_status::AgentStatusPublicationHandle;
 
+mod inbox_ack;
 mod viewing;
 
 /// 一次回复里消息预览最多这么多字节，给 64 KiB 的 IPC 帧留出信封的余量。
@@ -610,11 +611,19 @@ impl AgentRuntimeIpcFacade {
             .map(MatrixEventId::new)
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
-        let after = request
+        let mut after = request
             .after_event_id
             .map(MatrixEventId::new)
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
+        // 没给位置就从这个房间的确认位置之后开始；没确认过就从最早一条开始。
+        if after.is_none() && request.from_ack && oldest_first {
+            after = self
+                .previews
+                .inbox_position(&room_id)
+                .await
+                .map_err(map_preview_query_failure)?;
+        }
         let query = match after {
             Some(after) => MessagePreviewQuery::after(room_id.clone(), after, request.limit),
             None if oldest_first => MessagePreviewQuery::from_start(room_id.clone(), request.limit),

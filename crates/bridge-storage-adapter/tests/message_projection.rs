@@ -1729,3 +1729,122 @@ async fn 按事件或消息_id_跨房间取_看前后按收到的先后() {
         .expect("可以看前后");
     assert_eq!(foreign, MessagesAround::default());
 }
+
+/// 收件箱确认用的房间：别人一条、自己一条、别人一条（之后撤回）、别人一条。返回撤回的那条的消息 ID。
+async fn seed_inbox(store: &SqliteMessageTimelineRepository) -> MessageId {
+    let redacted = MessageId::from_uuid(Uuid::now_v7());
+    let message = |event: &str, id: MessageId, actor: ProjectedMessageActor, digest: u8| {
+        preview_mutation(event, id, actor, 1_000, "收件箱", digest, Some(1_000))
+    };
+    let fresh = || MessageId::from_uuid(Uuid::now_v7());
+    store
+        .apply(&MessageProjectionBatch::new(
+            sync_token("inbox-ack"),
+            vec![
+                message("$inbox-a:matrix.test", fresh(), other_actor(), 1),
+                message("$inbox-mine:matrix.test", fresh(), owner_actor(), 2),
+                message("$inbox-b:matrix.test", redacted, other_actor(), 3),
+                message("$inbox-c:matrix.test", fresh(), other_actor(), 4),
+                redaction_mutation("$inbox-redact-b:matrix.test", redacted, other_actor()),
+            ],
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .expect("投影成功");
+    redacted
+}
+
+fn inbox_viewer() -> MatrixUserId {
+    MatrixUserId::new("@消息所有者:matrix.test").expect("用户有效")
+}
+
+#[tokio::test]
+async fn 收件箱确认按房间记_只往前走_只数别人发的_重开以后还在() {
+    let (temporary, store, _inspector) = open_store().await;
+    seed_inbox(&store).await;
+    let me = inbox_viewer();
+    let now = UtcMillis::new(1_700_000_000_000).expect("时间有效");
+    let ack = |event: &'static str| {
+        let store = &store;
+        let me = &me;
+        async move {
+            let acknowledgement = store
+                .acknowledge_inbox(&room_id(), &event_id(event), me, now)
+                .await
+                .expect("可确认");
+            (acknowledgement.acknowledged, acknowledgement.pending)
+        }
+    };
+    assert_eq!(store.inbox_position(&room_id()).await.expect("可读"), None);
+
+    // 确认到自己发的那条：之后只剩 c（b 撤回了，不算）。往回确认不动位置。
+    assert_eq!(ack("$inbox-mine:matrix.test").await, (true, 1));
+    assert_eq!(ack("$inbox-a:matrix.test").await, (false, 1));
+    assert_eq!(
+        store.inbox_position(&room_id()).await.expect("可读"),
+        Some(event_id("$inbox-mine:matrix.test"))
+    );
+    // 收到以后才撤回的那条也能确认到它。
+    assert_eq!(ack("$inbox-b:matrix.test").await, (true, 1));
+    assert_eq!(ack("$inbox-c:matrix.test").await, (true, 0));
+
+    drop(store);
+    let reopened = SqliteMessageTimelineRepository::open(
+        &temporary.path().join("messages.sqlite3"),
+        &MessageProjectionStorageKey::from_bytes([29; 32]),
+    )
+    .await
+    .expect("数据库可重开");
+    assert_eq!(
+        reopened.inbox_position(&room_id()).await.expect("可读"),
+        Some(event_id("$inbox-c:matrix.test"))
+    );
+}
+
+#[tokio::test]
+async fn 收件箱确认按_id_找房间_撤回了的也找得到_别的房间和没有的不能确认() {
+    let (_temporary, store, _inspector) = open_store().await;
+    let redacted = seed_inbox(&store).await;
+    let me = inbox_viewer();
+    let now = UtcMillis::new(1_700_000_000_000).expect("时间有效");
+
+    assert_eq!(
+        store
+            .find_inbox_event(&MessageLookupId::Message(redacted))
+            .await
+            .expect("可读"),
+        Some((room_id(), event_id("$inbox-b:matrix.test")))
+    );
+    assert_eq!(
+        store
+            .find_inbox_event(&MessageLookupId::Event(event_id("$inbox-c:matrix.test")))
+            .await
+            .expect("可读"),
+        Some((room_id(), event_id("$inbox-c:matrix.test")))
+    );
+    assert_eq!(
+        store
+            .find_inbox_event(&MessageLookupId::Event(event_id("$nowhere:matrix.test")))
+            .await
+            .expect("可读"),
+        None
+    );
+
+    let elsewhere = MatrixRoomId::new("!elsewhere:matrix.test").expect("房间有效");
+    for (room, event) in [
+        (&elsewhere, "$inbox-c:matrix.test"),
+        (&room_id(), "$nowhere:matrix.test"),
+    ] {
+        assert_eq!(
+            store
+                .acknowledge_inbox(room, &event_id(event), &me, now)
+                .await
+                .expect_err("不在这个房间")
+                .kind(),
+            MessageTimelineQueryFailureKind::CursorNotFound
+        );
+    }
+    assert_eq!(store.inbox_position(&elsewhere).await.expect("可读"), None);
+    assert_eq!(store.inbox_position(&room_id()).await.expect("可读"), None);
+}

@@ -52,6 +52,8 @@ pub enum IpcMethod {
     MessagesAround(IpcMessagesAroundRequest),
     /// 往前翻（或从某条往后翻），可以只看某个人、只看提到我的。不动收件箱的位置。
     RoomHistory(IpcRoomHistoryRequest),
+    /// 确认收件箱处理到某一条（含）：它和它之前收到的都不再交。位置按房间记，只往前走。
+    AckInbox(IpcAckInboxRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     PublishStatus(IpcPublishStatusRequest),
@@ -90,6 +92,7 @@ impl IpcMethod {
             Self::GetMessages(_) => "get_messages",
             Self::MessagesAround(_) => "messages_around",
             Self::RoomHistory(_) => "room_history",
+            Self::AckInbox(_) => "ack_inbox",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -125,6 +128,8 @@ impl IpcMethod {
             | Self::GetMessages(_)
             | Self::MessagesAround(_)
             | Self::RoomHistory(_)
+            // 确认位置只是这个 Agent 自己读到哪了，和读收件箱同一类权限。
+            | Self::AckInbox(_)
             | Self::ListRooms => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
@@ -193,7 +198,13 @@ impl IpcMethod {
                 method.validate()
             }
             Self::BootstrapDefaultAgent(request) => request.validate(),
-            Self::ListPreviews(request) => request.validate(),
+            Self::ListPreviews(request) => {
+                // 往前翻的页没有确认位置可言。
+                if request.from_ack {
+                    return Err(failure("bridge.ipc.event_cursor_invalid"));
+                }
+                request.validate()
+            }
             Self::ReadInbox(request) | Self::WaitInbox(request) => {
                 if request.before_event_id.is_some() {
                     return Err(failure("bridge.ipc.event_cursor_invalid"));
@@ -203,6 +214,7 @@ impl IpcMethod {
             Self::GetMessages(request) => request.validate(),
             Self::MessagesAround(request) => request.validate(),
             Self::RoomHistory(request) => request.validate(),
+            Self::AckInbox(request) => validate_message_reference(&request.id),
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),
@@ -245,6 +257,10 @@ pub struct IpcListPreviewsRequest {
     /// 只对 `WaitInbox` 有用，省得客户端每秒新开一条连接来问。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<u32>,
+    /// 没给 `afterEventId` 时从这个房间的确认位置之后开始，没确认过就从最早一条开始。给了
+    /// `afterEventId` 就从它之后，不看确认位置。只对 `ReadInbox`、`WaitInbox` 有用。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub from_ack: bool,
 }
 
 impl IpcListPreviewsRequest {
@@ -279,6 +295,14 @@ impl IpcListPreviewsRequest {
         }
         Ok(())
     }
+}
+
+/// 确认收件箱（`AckInbox`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcAckInboxRequest {
+    /// 处理到的最后一条：事件 ID（`$` 开头）或消息 ID（UUIDv7），不用给房间。
+    pub id: String,
 }
 
 /// 按 ID 取消息（`GetMessages`）。
@@ -718,6 +742,16 @@ pub enum IpcResponse {
             skip_serializing_if = "Option::is_none"
         )]
         next_cursor: Option<String>,
+    },
+    /// 确认收件箱的结果。`acknowledged` 为 false 是这一条早就确认过了，位置不往回走；
+    /// `pending` 是这个房间里确认位置之后还有几条别人发的。
+    InboxAcknowledged {
+        #[serde(rename = "roomId")]
+        room_id: String,
+        #[serde(rename = "eventId")]
+        event_id: String,
+        acknowledged: bool,
+        pending: u64,
     },
     Presence {
         entries: Vec<IpcPresenceSummary>,
@@ -1280,11 +1314,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest, IpcGetMessagesRequest,
-        IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest, IpcListHandoffsRequest,
-        IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity,
-        IpcMessagesAroundRequest, IpcMethod, IpcPublishStatusRequest, IpcResponse,
-        IpcRoomHistoryRequest, IpcSendMessageRequest, IpcWorkStatus,
+        IpcAckInboxRequest, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
+        IpcGetMessagesRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
+        IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance,
+        IpcMessageSensitivity, IpcMessagesAroundRequest, IpcMethod, IpcPublishStatusRequest,
+        IpcResponse, IpcRoomHistoryRequest, IpcSendMessageRequest, IpcWorkStatus,
     };
     use crate::limits;
 
@@ -1307,6 +1341,7 @@ mod tests {
                     limit: 20,
                     keep_waiting: false,
                     wait_ms: None,
+                    from_ack: false,
                 }),
                 IpcScope::PreviewsRead,
             ),
@@ -1479,6 +1514,69 @@ mod tests {
         assert_eq!(
             page,
             serde_json::json!({"type": "room_messages", "messages": [], "nextCursor": "$next:matrix.test"})
+        );
+    }
+
+    #[test]
+    fn 收件箱确认的线上格式和校验() {
+        let event = "$done:matrix.test".to_owned();
+        let method = IpcMethod::AckInbox(IpcAckInboxRequest { id: event.clone() });
+        assert_eq!(method.required_scope(), IpcScope::PreviewsRead);
+        assert!(method.validate().is_ok());
+        assert_eq!(
+            serde_json::to_value(&method).expect("能序列化"),
+            serde_json::json!({"ack_inbox": {"id": event}})
+        );
+        let reply = serde_json::to_value(IpcResponse::InboxAcknowledged {
+            room_id: "!room:matrix.test".to_owned(),
+            event_id: event.clone(),
+            acknowledged: true,
+            pending: 3,
+        })
+        .expect("能序列化");
+        assert_eq!(
+            reply,
+            serde_json::json!({
+                "type": "inbox_acknowledged", "roomId": "!room:matrix.test",
+                "eventId": event, "acknowledged": true, "pending": 3,
+            })
+        );
+        for id in ["", "$x", "not-a-uuid"] {
+            let invalid = IpcMethod::AckInbox(IpcAckInboxRequest { id: id.to_owned() });
+            assert_eq!(
+                invalid
+                    .validate()
+                    .map_err(super::IpcMethodValidationFailure::code),
+                Err("bridge.ipc.message_id_invalid"),
+                "{id}"
+            );
+        }
+
+        // 从确认位置开始只对收件箱有用；不带时线上格式不变。
+        let request = |from_ack| IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting: false,
+            wait_ms: None,
+            from_ack,
+        };
+        assert!(IpcMethod::ReadInbox(request(true)).validate().is_ok());
+        assert!(IpcMethod::WaitInbox(request(true)).validate().is_ok());
+        assert_eq!(
+            IpcMethod::ListPreviews(request(true))
+                .validate()
+                .map_err(super::IpcMethodValidationFailure::code),
+            Err("bridge.ipc.event_cursor_invalid")
+        );
+        assert_eq!(
+            serde_json::to_value(IpcMethod::ReadInbox(request(true))).expect("能序列化"),
+            serde_json::json!({"read_inbox": {"afterEventId": null, "roomId": null, "beforeEventId": null, "limit": 20, "fromAck": true}})
+        );
+        assert_eq!(
+            serde_json::to_value(IpcMethod::ReadInbox(request(false))).expect("能序列化"),
+            serde_json::json!({"read_inbox": {"afterEventId": null, "roomId": null, "beforeEventId": null, "limit": 20}})
         );
     }
 

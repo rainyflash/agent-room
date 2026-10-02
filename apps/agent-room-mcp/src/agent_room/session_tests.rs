@@ -89,6 +89,7 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
                     limit: 20,
                     keep_waiting: false,
                     wait_ms: None,
+                    from_ack: false,
                 },
             )),
         },
