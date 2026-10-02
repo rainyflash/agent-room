@@ -398,11 +398,7 @@ async fn build_identity_router(
         account_state,
         device_state,
         agent_features,
-        content_routes.merge(personal_routes(
-            config,
-            &agent_dependencies,
-            synapse_accounts,
-        )),
+        content_routes.merge(personal_routes(config, &agent_dependencies)),
     );
     Ok(IdentityRuntime {
         routes,
@@ -414,11 +410,7 @@ async fn build_identity_router(
     })
 }
 
-fn personal_routes(
-    config: &ControlPlaneConfig,
-    dependencies: &AgentFeatureDependencies,
-    synapse_accounts: Arc<SynapseAccountLifecycleGateway>,
-) -> Router {
+fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDependencies) -> Router {
     features::inbox::router(features::inbox::InboxHttpState {
         repository: dependencies.repositories.clone(),
         authentication: dependencies.authentication.clone(),
@@ -441,11 +433,7 @@ fn personal_routes(
             ),
         },
     ))
-    .merge(account_encryption_routes(
-        config,
-        dependencies,
-        synapse_accounts,
-    ))
+    .merge(account_encryption_routes(config, dependencies))
 }
 
 fn build_authentication_runtime(
@@ -573,11 +561,10 @@ fn build_synapse_account_gateway(
 }
 
 /// 设备自动签名（ADR 0011）：控制面替账户保管签名钥匙。封存密钥和网络 Agent 共用部署里的同一把，
-/// 没配时三个接口都回答暂时不可用。
+/// 没配时取钥匙、存钥匙都回答暂时不可用。重建签名身份时由应用服务代传新的签名公钥。
 fn account_encryption_routes(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
-    matrix: Arc<SynapseAccountLifecycleGateway>,
 ) -> Router {
     let service = Arc::new(AccountEncryptionService::new(
         AccountEncryptionDependencies {
@@ -585,7 +572,7 @@ fn account_encryption_routes(
             sealer: Arc::new(AesGcmAccountEncryptionKeySealer::new(
                 config.network_agents.seal_key.as_ref(),
             )),
-            matrix,
+            matrix: dependencies.matrix_identities.clone(),
             clock: dependencies.system_runtime.clone(),
         },
     ));

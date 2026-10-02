@@ -351,6 +351,9 @@ namespaces:
   users:
     - exclusive: true
       regex: '^@_agent_[0-9a-f]{32}:matrix\.agent-room\.localhost$'
+    # 人的设备重建签名身份时由控制面以应用服务身份代传新的签名公钥（ADR 0011）。
+    - exclusive: false
+      regex: '^@[^:]+:matrix\.agent-room\.localhost$'
   aliases:
     - exclusive: true
       regex: '^#agent-room-[a-z0-9][a-z0-9._=-]{0,254}:matrix\.agent-room\.localhost$'

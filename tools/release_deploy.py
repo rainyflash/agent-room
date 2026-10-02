@@ -63,6 +63,24 @@ class Deployment:
         manifest = {str(path): release.sha256_file(path) for path in paths}
         return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
 
+    def synapse_configuration_digest(self) -> str:
+        directory = self.runtime.paths.generated / "synapse"
+        paths = sorted(path for path in directory.rglob("*") if path.is_file())
+        manifest = {str(path): release.sha256_file(path) for path in paths}
+        return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+
+    def restart_synapse_if_configuration_changed(self) -> None:
+        """Synapse 只在启动时读配置（比如应用服务注册的命名空间）。候选改了它的配置就重启一次。
+
+        重启不换容器，`verify_running` 照样认得它；中断后重跑不会再重启。
+        """
+        if not self.state.get("synapseConfigurationChanged") or self.state.get("synapseRestarted"):
+            return
+        self.compose("restart", "synapse")
+        self.runtime.health(timeout_seconds=180)
+        self.state["synapseRestarted"] = True
+        self.save()
+
     def save(self) -> None:
         atomic_json(self.checkpoint, self.state)
         self.checkpoint.chmod(0o600)
@@ -106,6 +124,7 @@ class Deployment:
             # The backup id is recorded immediately after successful creation.
             # If interrupted before this checkpoint, another backup is safe.
             configuration = self.configuration_digest()
+            synapse_configuration = self.synapse_configuration_digest()
             backup = self.runtime.backup(preserve_configuration=True)
             self.runtime.verify_backup(backup.backup_id)
             if configuration != self.configuration_digest():
@@ -118,6 +137,8 @@ class Deployment:
             self.state = {"revision": self.args.revision, "manifest": self.args.manifest_sha256,
                           "images": self.images, "configurationSha256": rendered,
                           "renderedConfigurationChanged": rendered != configuration,
+                          "synapseConfigurationChanged":
+                              self.synapse_configuration_digest() != synapse_configuration,
                           "backupId": backup.backup_id, "before": before}
             self.save()
         backup_id = self.state.get("backupId")
@@ -181,6 +202,8 @@ class Deployment:
             self.state["migrated"] = True
             self.save()
         self.evidence("database-expanded", [("candidate-migrations", self.images["control-plane"]), ("verified-backup", str(self.state["backupId"]))])
+        # 先让 Synapse 读到候选的配置，新的控制面一起来就能用（比如应用服务代传签名公钥）。
+        self.restart_synapse_if_configuration_changed()
         if not self.state.get("server"):
             self.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "identity", "control-plane")
         if not self.state.get("identityReconciled"):

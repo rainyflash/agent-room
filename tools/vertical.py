@@ -2892,22 +2892,33 @@ def send_mcp_vertical_message(
     submission_id = new_uuid_v7()
     title = f"Task 24 reply {submission_id[-8:]}"
     body = f"Real Agent Room vertical message. Submission: `{submission_id}`."
-    response = client.call_tool(
-        "agent_room_send_message",
-        {
-            "submissionId": submission_id,
-            "roomId": room_id,
-            "title": title,
-            "summary": "Bridge and Codex MCP completed a real message round trip.",
-            "body": body,
-            "mediaType": "text/markdown",
-            "language": "en",
-            "sensitivity": "normal",
-            "riskFlags": [],
-            "provenance": "human_confirmed_agent",
-            "replyToMessageId": None,
-        },
-    )
+    arguments = {
+        "submissionId": submission_id,
+        "roomId": room_id,
+        "title": title,
+        "summary": "Bridge and Codex MCP completed a real message round trip.",
+        "body": body,
+        "mediaType": "text/markdown",
+        "language": "en",
+        "sensitivity": "normal",
+        "riskFlags": [],
+        "provenance": "human_confirmed_agent",
+        "replyToMessageId": None,
+    }
+    # 控制面刚重启时，Bridge 可能还在重连（agent_runtime_unavailable，可重试）；同一个提交 ID 重发是幂等的。
+    deadline = time.monotonic() + 120
+    while True:
+        result = client.call_tool_result("agent_room_send_message", arguments)
+        if result.get("isError") is not True:
+            response = require_object(result.get("structuredContent"), "MCP 消息发送响应")
+            break
+        structured = result.get("structuredContent")
+        retryable = isinstance(structured, dict) and structured.get("retryable") is True
+        if not retryable or time.monotonic() >= deadline:
+            raise VerticalFailure(
+                f"MCP 消息发送失败（错误码 {tool_failure_code(result) or '缺失'}）。"
+            )
+        time.sleep(1)
     if response.get("type") != "sent_message":
         raise VerticalFailure("MCP 消息发送返回了错误响应类型。")
     message = require_object(response.get("message"), "MCP 消息发送结果")

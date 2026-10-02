@@ -83,5 +83,11 @@ test('真实浏览器会话建私人房间并生成 Agent 口令', async ({ page
     `${JSON.stringify({ catalogId: room.catalogId, code, matrixRoomId: room.matrixRoomId }, null, 2)}\n`,
     'utf8',
   );
+  // 登录后自动签好这台设备（ADR 0011）。账户已有签名身份、服务器上却没有钥匙时走“重建签名身份”，
+  // 新签名公钥由控制面以应用服务的身份代传；不管走哪条路，最后都要是“已就绪”。
+  await page.goto('/settings/security');
+  await expect(page.getByText(/^(?:This device is ready|这台设备已就绪)$/u)).toBeVisible({
+    timeout: 60_000,
+  });
   expect(failures).toEqual([]);
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ControlPlaneEncryptionKeyEscrow } from './control-plane-encryption-key-escrow';
+import { CrossSigningUploadFailure } from './matrix-device-signing';
 
 const BASE = 'https://app.agent-room.test/_agent-room/api';
 const KEY = new Uint8Array(32).fill(5);
@@ -32,12 +33,13 @@ describe('ControlPlaneEncryptionKeyEscrow', () => {
     ).rejects.toThrow();
   });
 
-  it('存钥匙用 PUT 送 base64；开豁免用 POST；失败都抛出', async () => {
+  it('存钥匙用 PUT 送 base64；代传签名公钥用 POST 送原样的公钥；失败都抛出', async () => {
     const fetch = respond(204);
     const client = escrow(fetch);
+    const keys = { master_key: { user_id: '@rainy:agent-room.test', usage: ['master'] } };
 
     await client.store({ key: KEY, keyId: 'KEY1' });
-    await client.allowReset();
+    await client.replaceCrossSigningKeys(keys);
 
     const [storeUrl, storeInit] = fetch.mock.calls[0] ?? [];
     expect(href(storeUrl)).toBe(`${BASE}/account/encryption-key`);
@@ -48,10 +50,29 @@ describe('ControlPlaneEncryptionKeyEscrow', () => {
     });
     const [resetUrl, resetInit] = fetch.mock.calls[1] ?? [];
     expect(href(resetUrl)).toBe(`${BASE}/account/encryption-reset`);
-    expect(resetInit?.method).toBe('POST');
+    expect(resetInit).toMatchObject({ credentials: 'include', method: 'POST' });
+    expect(JSON.parse(typeof resetInit?.body === 'string' ? resetInit.body : '')).toEqual(keys);
 
     await expect(escrow(respond(403)).store({ key: KEY, keyId: 'KEY1' })).rejects.toThrow();
-    await expect(escrow(respond(429)).allowReset()).rejects.toThrow();
+  });
+
+  it('代传被拒绝（公钥不对、太勤）不该重试；控制面暂时不可用、连不上可以再试', async () => {
+    for (const [status, retryable] of [
+      [400, false],
+      [429, false],
+      [503, true],
+    ] as const) {
+      const failure = await escrow(respond(status))
+        .replaceCrossSigningKeys({})
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(CrossSigningUploadFailure);
+      expect((failure as CrossSigningUploadFailure).retryable).toBe(retryable);
+    }
+    const offline = vi.fn<typeof globalThis.fetch>(() => Promise.reject(new TypeError('offline')));
+    const failure = await escrow(offline)
+      .replaceCrossSigningKeys({})
+      .catch((error: unknown) => error);
+    expect((failure as CrossSigningUploadFailure).retryable).toBe(true);
   });
 });
 

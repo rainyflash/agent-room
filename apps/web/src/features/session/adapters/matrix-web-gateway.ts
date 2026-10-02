@@ -6,6 +6,7 @@ import { failure } from '@/features/session/adapters/control-plane-client';
 import { IndexedDbMatrixSessionVault } from './indexed-db-matrix-session-vault';
 import { acquireMatrixCryptoLease, type MatrixCryptoLease } from './browser-matrix-lease';
 import { MatrixCryptoStoreCleanup } from './matrix-crypto-store-cleanup';
+import { routeCrossSigningUpload } from './cross-signing-upload-route';
 import { type EncryptionKeyEscrow, ensureDeviceSigned } from './matrix-device-signing';
 import { ensureFirstEncryptionIdentity } from './matrix-encryption-identity';
 import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
@@ -288,6 +289,15 @@ export class MatrixWebGateway implements MatrixGateway {
         baseUrl: this.#baseUrl,
         cryptoCallbacks: this.#secretStorageKeys.callbacks,
         deviceId: session.deviceId,
+        // 重建签名身份时，上传新签名公钥的那一个请求改送控制面代传（ADR 0011）。
+        ...(this.#encryptionKeyEscrow === undefined
+          ? {}
+          : {
+              fetchFn: routeCrossSigningUpload(
+                globalThis.fetch.bind(globalThis),
+                this.#encryptionKeyEscrow,
+              ),
+            }),
         localTimeoutMs: 20_000,
         logger: lifecycleLog.logger,
         ...(session.refreshToken === undefined ? {} : { refreshToken: session.refreshToken }),

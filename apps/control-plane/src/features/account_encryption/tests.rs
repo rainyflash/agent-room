@@ -11,8 +11,9 @@ use agent_room_application::{
     },
     persistence::RepositoryResult,
     ports::{
-        AccountEncryptionKeyRepository, Clock, MatrixCrossSigningResetGateway, MatrixResult,
-        MatrixUserId, PortFuture, SecretValue, StoredEncryptionKey,
+        AccountEncryptionKeyRepository, Clock, MatrixCrossSigningKeys,
+        MatrixCrossSigningResetGateway, MatrixResult, MatrixUserId, PortFuture, SecretValue,
+        StoredEncryptionKey,
     },
 };
 use agent_room_domain::{ids::PrincipalId, time::UtcMillis};
@@ -57,16 +58,31 @@ impl AccountEncryptionKeyRepository for Keys {
 }
 
 #[derive(Default)]
-struct Synapse(Mutex<Vec<String>>);
+struct Synapse(Mutex<Vec<(String, Value)>>);
 
 impl MatrixCrossSigningResetGateway for Synapse {
-    fn allow_cross_signing_replacement<'a>(
+    fn replace_cross_signing_keys<'a>(
         &'a self,
         user_id: &'a MatrixUserId,
+        keys: &'a MatrixCrossSigningKeys,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        self.0.lock().unwrap().push(user_id.as_str().to_owned());
+        self.0.lock().unwrap().push((
+            user_id.as_str().to_owned(),
+            Value::Object(keys.as_json().clone()),
+        ));
         Box::pin(async { Ok(()) })
     }
+}
+
+const RAINY: &str = "@rainy:matrix.agent-room.test";
+
+/// 设备新建的签名公钥（只有公钥和签名）。
+fn signing_keys(user: &str) -> Value {
+    json!({
+        "master_key": { "user_id": user, "usage": ["master"], "keys": { "ed25519:m": "m" } },
+        "self_signing_key": { "user_id": user, "usage": ["self_signing"], "keys": { "ed25519:s": "s" } },
+        "user_signing_key": { "user_id": user, "usage": ["user_signing"], "keys": { "ed25519:u": "u" } },
+    })
 }
 
 struct FixedClock;
@@ -235,12 +251,14 @@ async fn 改动要校验来源_钥匙不对就不收() {
         } else {
             Method::POST
         };
-        let body = path
-            .ends_with("key")
-            .then(|| json!({ "keyId": "KEY1", "key": KEY_BASE64 }));
+        let body = if path.ends_with("key") {
+            json!({ "keyId": "KEY1", "key": KEY_BASE64 })
+        } else {
+            signing_keys(RAINY)
+        };
         let response = app
             .clone()
-            .oneshot(request(method, path, false, body))
+            .oneshot(request(method, path, false, Some(body)))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
@@ -272,7 +290,7 @@ async fn 改动要校验来源_钥匙不对就不收() {
 }
 
 #[tokio::test]
-async fn 重建签名身份前开豁免_一小时第四次挡下并告诉什么时候再来() {
+async fn 重建签名身份时代传新的签名公钥_一小时第四次挡下并告诉什么时候再来() {
     let synapse = Arc::new(Synapse::default());
     let app = app(synapse.clone());
     for _ in 0..3 {
@@ -282,7 +300,7 @@ async fn 重建签名身份前开豁免_一小时第四次挡下并告诉什么�
                 Method::POST,
                 "/account/encryption-reset",
                 true,
-                None,
+                Some(signing_keys(RAINY)),
             ))
             .await
             .unwrap();
@@ -290,7 +308,7 @@ async fn 重建签名身份前开豁免_一小时第四次挡下并告诉什么�
     }
     assert_eq!(
         *synapse.0.lock().unwrap(),
-        vec!["@rainy:matrix.agent-room.test".to_owned(); 3]
+        vec![(RAINY.to_owned(), signing_keys(RAINY)); 3]
     );
 
     let limited = app
@@ -298,7 +316,7 @@ async fn 重建签名身份前开豁免_一小时第四次挡下并告诉什么�
             Method::POST,
             "/account/encryption-reset",
             true,
-            None,
+            Some(signing_keys(RAINY)),
         ))
         .await
         .unwrap();
@@ -309,4 +327,35 @@ async fn 重建签名身份前开豁免_一小时第四次挡下并告诉什么�
         "account.encryption_reset_rate_limited"
     );
     assert_eq!(synapse.0.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn 只代传本人的签名公钥_不收交互认证和别的东西() {
+    let synapse = Arc::new(Synapse::default());
+    let app = app(synapse.clone());
+    let mut with_auth = signing_keys(RAINY);
+    with_auth["auth"] = json!({ "type": "m.login.dummy" });
+    for body in [
+        signing_keys("@someone-else:matrix.agent-room.test"),
+        with_auth,
+        json!({ "self_signing_key": signing_keys(RAINY)["self_signing_key"] }),
+        json!("not an object"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/account/encryption-reset",
+                true,
+                Some(body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body_json(response).await["code"],
+            "account.cross_signing_keys_invalid"
+        );
+    }
+    assert!(synapse.0.lock().unwrap().is_empty());
 }

@@ -4,6 +4,7 @@ use std::{
 };
 
 use agent_room_domain::{ids::PrincipalId, time::UtcMillis};
+use serde_json::json;
 use uuid::Uuid;
 
 use super::{
@@ -14,7 +15,7 @@ use crate::{
     authentication::AuthenticatedPrincipal,
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AccountEncryptionKeyRepository, AccountEncryptionKeySealer, Clock,
+        AccountEncryptionKeyRepository, AccountEncryptionKeySealer, Clock, MatrixCrossSigningKeys,
         MatrixCrossSigningResetGateway, MatrixFailure, MatrixFailureKind, MatrixOperation,
         MatrixResult, MatrixUserId, PortFuture, SealedSecret, SecretSealingFailure,
         StoredEncryptionKey,
@@ -105,22 +106,23 @@ impl AccountEncryptionKeySealer for Sealer {
 
 #[derive(Default)]
 struct Synapse {
-    allowed: Mutex<Vec<String>>,
+    uploaded: Mutex<Vec<(String, MatrixCrossSigningKeys)>>,
     failing: Mutex<bool>,
 }
 
 impl MatrixCrossSigningResetGateway for Synapse {
-    fn allow_cross_signing_replacement<'a>(
+    fn replace_cross_signing_keys<'a>(
         &'a self,
         user_id: &'a MatrixUserId,
+        keys: &'a MatrixCrossSigningKeys,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        self.allowed
+        self.uploaded
             .lock()
             .unwrap()
-            .push(user_id.as_str().to_owned());
+            .push((user_id.as_str().to_owned(), keys.clone()));
         let result = if *self.failing.lock().unwrap() {
             Err(MatrixFailure::new(
-                MatrixOperation::AllowCrossSigningReplacement,
+                MatrixOperation::ReplaceCrossSigningKeys,
                 MatrixFailureKind::DependencyUnavailable,
             ))
         } else {
@@ -181,6 +183,22 @@ fn person(name: &str) -> AuthenticatedPrincipal {
 
 fn key(byte: u8) -> EncryptionKeyBytes {
     EncryptionKeyBytes::new(vec![byte; 32])
+}
+
+/// 设备新建的签名公钥（只有公钥和签名）。
+fn signing_keys(user: &str) -> serde_json::Value {
+    let key = |usage: &str| {
+        json!({
+            "user_id": user,
+            "usage": [usage],
+            "keys": { format!("ed25519:{usage}"): usage },
+        })
+    };
+    json!({
+        "master_key": key("master"),
+        "self_signing_key": key("self_signing"),
+        "user_signing_key": key("user_signing"),
+    })
 }
 
 #[tokio::test]
@@ -280,34 +298,87 @@ async fn 部署没配封存密钥或数据库不可用时说暂时不可用() {
     );
 }
 
+const RAINY: &str = "@rainy:matrix.agent-room.localhost";
+
 #[tokio::test]
-async fn 重建签名身份前请_synapse_开豁免_一小时最多三次() {
+async fn 重建签名身份时替本人代传新的签名公钥_一小时最多三次() {
     let harness = harness();
     let rainy = person("rainy");
 
     for _ in 0..RESETS_PER_HOUR {
-        harness.service.allow_reset(&rainy).await.unwrap();
+        harness
+            .service
+            .replace_cross_signing_keys(&rainy, signing_keys(RAINY))
+            .await
+            .unwrap();
         *harness.clock.0.lock().unwrap() += 60_000;
     }
-    assert_eq!(
-        *harness.synapse.allowed.lock().unwrap(),
-        vec!["@rainy:matrix.agent-room.localhost".to_owned(); RESETS_PER_HOUR]
-    );
-    let Err(AccountEncryptionFailure::RateLimited { retry_at }) =
-        harness.service.allow_reset(&rainy).await
+    {
+        let uploaded = harness.synapse.uploaded.lock().unwrap();
+        assert_eq!(uploaded.len(), RESETS_PER_HOUR);
+        assert!(uploaded.iter().all(|(user, keys)| user == RAINY
+            && keys.as_json().get("master_key") == signing_keys(RAINY).get("master_key")));
+    }
+    let Err(AccountEncryptionFailure::RateLimited { retry_at }) = harness
+        .service
+        .replace_cross_signing_keys(&rainy, signing_keys(RAINY))
+        .await
     else {
         panic!("第四次要被挡下");
     };
     assert_eq!(retry_at.value(), NOW + 3_600_000, "最早那次满一小时后再来");
     assert_eq!(
-        harness.synapse.allowed.lock().unwrap().len(),
+        harness.synapse.uploaded.lock().unwrap().len(),
         RESETS_PER_HOUR
     );
 
     // 别人不受影响；满一小时后又能重建。
-    harness.service.allow_reset(&person("other")).await.unwrap();
+    harness
+        .service
+        .replace_cross_signing_keys(
+            &person("other"),
+            signing_keys("@other:matrix.agent-room.localhost"),
+        )
+        .await
+        .unwrap();
     *harness.clock.0.lock().unwrap() = NOW + 3_600_000;
-    harness.service.allow_reset(&rainy).await.unwrap();
+    harness
+        .service
+        .replace_cross_signing_keys(&rainy, signing_keys(RAINY))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn 签名公钥不是本人的_或者多带了别的东西就不传_也不占次数() {
+    let harness = harness();
+    let rainy = person("rainy");
+    let mut with_auth = signing_keys(RAINY);
+    with_auth["auth"] = json!({ "type": "m.login.dummy" });
+    let mut without_master = signing_keys(RAINY);
+    without_master.as_object_mut().unwrap().remove("master_key");
+    for body in [
+        signing_keys("@someone-else:matrix.agent-room.localhost"),
+        with_auth,
+        without_master,
+        json!(["master_key"]),
+    ] {
+        assert_eq!(
+            harness
+                .service
+                .replace_cross_signing_keys(&rainy, body)
+                .await,
+            Err(AccountEncryptionFailure::InvalidCrossSigningKeys)
+        );
+    }
+    assert!(harness.synapse.uploaded.lock().unwrap().is_empty());
+    for _ in 0..RESETS_PER_HOUR {
+        harness
+            .service
+            .replace_cross_signing_keys(&rainy, signing_keys(RAINY))
+            .await
+            .unwrap();
+    }
 }
 
 #[tokio::test]
@@ -315,7 +386,10 @@ async fn synapse_不可用时说暂时不可用() {
     let harness = harness();
     *harness.synapse.failing.lock().unwrap() = true;
     assert_eq!(
-        harness.service.allow_reset(&person("rainy")).await,
+        harness
+            .service
+            .replace_cross_signing_keys(&person("rainy"), signing_keys(RAINY))
+            .await,
         Err(AccountEncryptionFailure::Unavailable)
     );
 }

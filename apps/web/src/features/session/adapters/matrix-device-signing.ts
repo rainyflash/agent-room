@@ -14,9 +14,29 @@ export type EncryptionKeyEscrow = {
   /** 服务器上还没有就是 `null`。 */
   fetch(): Promise<EscrowedEncryptionKey | null>;
   store(key: EscrowedEncryptionKey): Promise<void>;
-  /** 让 Synapse 在接下来 10 分钟里允许这个账户不经交互认证换签名身份。 */
-  allowReset(): Promise<void>;
+  /**
+   * 重建签名身份时，请控制面以应用服务的身份替本人上传新的签名公钥（Matrix
+   * `keys/device_signing/upload` 的正文，不带认证）。被拒绝时抛 {@link CrossSigningUploadFailure}。
+   */
+  replaceCrossSigningKeys(keys: Readonly<Record<string, unknown>>): Promise<void>;
 };
+
+/** 控制面没能代传新的签名公钥。`retryable`：暂时不可用，可以再试；否则是被拒绝了。 */
+export class CrossSigningUploadFailure extends Error {
+  constructor(
+    readonly retryable: boolean,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CrossSigningUploadFailure';
+  }
+}
+
+/**
+ * 换签名身份要交互认证；没接 MAS 的 Synapse 只认应用服务的免认证上传。matrix-js-sdk 带着这个
+ * 认证标记去上传时，`cross-signing-upload-route.ts` 把这一个请求改送控制面代传。
+ */
+export const CONTROL_PLANE_UPLOAD = 'io.github.rainyflash.agentroom.control_plane_upload';
 
 /**
  * 这一遍做了什么：
@@ -80,18 +100,24 @@ export async function ensureDeviceSigned(
   } finally {
     escrowed?.key.fill(0);
   }
-  await escrow.allowReset();
-  // 新的签名身份（签好这台设备）、新的密钥备份；旧的密钥存储和备份随之作废。
-  await crypto.resetEncryption(uploadWithoutAuthentication);
+  // 新的签名身份（签好这台设备）、新的密钥备份；旧的密钥存储和备份随之作废。新签名公钥由控制面代传。
+  await crypto.resetEncryption(uploadThroughControlPlane);
   await createSecretStorage(client, crypto, escrow, false);
   return 'reset';
 }
 
-/** 首次上传或服务器开了豁免时，上传签名身份不需要交互认证。 */
+/** 账户第一次建立签名身份时，上传不需要交互认证。 */
 async function uploadWithoutAuthentication(
   makeRequest: (authData: null) => Promise<unknown>,
 ): Promise<void> {
   await makeRequest(null);
+}
+
+/** 换签名身份：带上我们的认证标记，上传改由控制面以应用服务的身份代传。 */
+async function uploadThroughControlPlane(
+  makeRequest: (authData: { readonly type: string }) => Promise<unknown>,
+): Promise<void> {
+  await makeRequest({ type: CONTROL_PLANE_UPLOAD });
 }
 
 /** 本机缓存着三把签名私钥（对不上账户现在签名身份的，在查身份时已经清掉了）。 */

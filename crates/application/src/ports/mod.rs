@@ -105,11 +105,12 @@ pub use identity::{
     VerifiedOidcDeviceAssertion, VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
 };
 pub use matrix::{
-    MatrixAcceptedEvent, MatrixAccountLifecycleGateway, MatrixAgentDeviceSessionRequest,
-    MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionRotator,
-    MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
-    MatrixAgentUserRegistration, MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken,
-    MatrixClientFactory, MatrixConnection, MatrixCreateRoom, MatrixCrossSigningResetGateway,
+    InvalidCrossSigningKeys, MatrixAcceptedEvent, MatrixAccountLifecycleGateway,
+    MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
+    MatrixAgentDeviceSessionRotator, MatrixAgentDeviceSessionTarget,
+    MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
+    MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken, MatrixClientFactory,
+    MatrixConnection, MatrixCreateRoom, MatrixCrossSigningKeys, MatrixCrossSigningResetGateway,
     MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind,
     MatrixGateway, MatrixLogin, MatrixOperation, MatrixPowerLevel, MatrixReceipt,
     MatrixReceiptKind, MatrixRecoveryAction, MatrixResult, MatrixRetryPolicy, MatrixRoomAccess,

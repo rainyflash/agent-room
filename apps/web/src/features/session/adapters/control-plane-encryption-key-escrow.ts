@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 
-import type { EncryptionKeyEscrow, EscrowedEncryptionKey } from './matrix-device-signing';
+import {
+  CrossSigningUploadFailure,
+  type EncryptionKeyEscrow,
+  type EscrowedEncryptionKey,
+} from './matrix-device-signing';
 
 const KEY_BYTES = 32;
 /** 控制面说“这个账户还没有钥匙”时的错误码。 */
@@ -43,9 +47,24 @@ export class ControlPlaneEncryptionKeyEscrow implements EncryptionKeyEscrow {
     if (!response.ok) throw new Error(`存钥匙失败：HTTP ${String(response.status)}`);
   }
 
-  async allowReset(): Promise<void> {
-    const response = await this.#request('/account/encryption-reset', { method: 'POST' });
-    if (!response.ok) throw new Error(`没能开始重建签名身份：HTTP ${String(response.status)}`);
+  async replaceCrossSigningKeys(keys: Readonly<Record<string, unknown>>): Promise<void> {
+    let response: Response;
+    try {
+      response = await this.#request('/account/encryption-reset', {
+        body: JSON.stringify(keys),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+    } catch {
+      throw new CrossSigningUploadFailure(true, '连不上控制面，没能代传新的签名公钥。');
+    }
+    if (response.ok) return;
+    // 公钥不对、来源不对、太勤：再试也一样。控制面或 Synapse 暂时不可用：可以再试。
+    const retryable = response.status >= 500;
+    throw new CrossSigningUploadFailure(
+      retryable,
+      `控制面没能代传新的签名公钥：HTTP ${String(response.status)}`,
+    );
   }
 
   async #request(path: string, init: RequestInit): Promise<Response> {

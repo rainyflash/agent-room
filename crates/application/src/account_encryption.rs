@@ -1,5 +1,5 @@
 //! 人的设备自动签名（ADR 0011，`specs/device-signing/design.md`）：控制面替账户保管密钥存储钥匙，
-//! 只交给本人的登录会话；设备要重建签名身份时，先请 Synapse 开 10 分钟豁免。
+//! 只交给本人的登录会话；设备要重建签名身份时，由控制面以应用服务的身份代传新的签名公钥。
 
 use std::{
     collections::HashMap,
@@ -12,7 +12,7 @@ use agent_room_domain::{ids::PrincipalId, time::UtcMillis};
 use crate::{
     authentication::AuthenticatedPrincipal,
     ports::{
-        AccountEncryptionKeyRepository, AccountEncryptionKeySealer, Clock,
+        AccountEncryptionKeyRepository, AccountEncryptionKeySealer, Clock, MatrixCrossSigningKeys,
         MatrixCrossSigningResetGateway, MatrixUserId, StoredEncryptionKey,
     },
 };
@@ -66,6 +66,8 @@ pub struct AccountEncryptionKey {
 pub enum AccountEncryptionFailure {
     /// 钥匙不是 32 字节，或钥匙 ID 不对。
     InvalidKey,
+    /// 新的签名公钥不对：不是那三把钥匙、缺主密钥，或者有一把不属于本人。
+    InvalidCrossSigningKeys,
     /// 重建得太勤：`retry_at` 之后再来。
     RateLimited { retry_at: UtcMillis },
     /// 封存密钥没配，或数据库、Synapse 暂时不可用。
@@ -158,21 +160,25 @@ impl AccountEncryptionService {
             .map_err(|_| AccountEncryptionFailure::Unavailable)
     }
 
-    /// 让 Synapse 在接下来 10 分钟里允许本人不经交互认证换签名身份。
+    /// 替本人上传新的签名公钥（设备重建签名身份时）。已有签名身份时换身份要交互认证，由控制面
+    /// 以应用服务的身份代传就不用；私钥只在人的设备上。
     ///
     /// # Errors
     ///
-    /// 一小时里已经重建过 [`RESETS_PER_HOUR`] 次时返回 `RateLimited`；Synapse 不可用时返回
-    /// `Unavailable`。
-    pub async fn allow_reset(
+    /// 公钥不对时返回 `InvalidCrossSigningKeys`；一小时里已经重建过 [`RESETS_PER_HOUR`] 次时
+    /// 返回 `RateLimited`；Synapse 不可用时返回 `Unavailable`。
+    pub async fn replace_cross_signing_keys(
         &self,
         actor: &AuthenticatedPrincipal,
+        body: serde_json::Value,
     ) -> Result<(), AccountEncryptionFailure> {
-        self.take_reset(actor.principal_id)?;
         let user = MatrixUserId::new(actor.matrix_user_id.clone())
             .map_err(|_| AccountEncryptionFailure::Unavailable)?;
+        let keys = MatrixCrossSigningKeys::new(body, &user)
+            .map_err(|_| AccountEncryptionFailure::InvalidCrossSigningKeys)?;
+        self.take_reset(actor.principal_id)?;
         self.matrix
-            .allow_cross_signing_replacement(&user)
+            .replace_cross_signing_keys(&user, &keys)
             .await
             .map_err(|_| AccountEncryptionFailure::Unavailable)
     }

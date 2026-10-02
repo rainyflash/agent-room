@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 
 import {
+  CONTROL_PLANE_UPLOAD,
   type DeviceSigningClient,
   type EncryptionKeyEscrow,
   type EscrowedEncryptionKey,
@@ -25,7 +26,7 @@ describe('ensureDeviceSigned', () => {
       expect.objectContaining({ setupNewKeyBackup: true, setupNewSecretStorage: true }),
     );
     expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
-    expect(account.escrow.allowReset).not.toHaveBeenCalled();
+    expect(account.escrow.replaceCrossSigningKeys).not.toHaveBeenCalled();
   });
 
   it('手里有私钥、服务器的钥匙对得上：确认密钥存储里有私钥，加载备份钥匙', async () => {
@@ -76,13 +77,13 @@ describe('ensureDeviceSigned', () => {
     expect(account.escrowedKey.every((byte) => byte === 0)).toBe(true);
   });
 
-  it('本机没有私钥、服务器上没有能用的钥匙：请服务器开豁免，重建一次签名身份，交新钥匙', async () => {
+  it('本机没有私钥、服务器上没有能用的钥匙：重建一次签名身份，新签名公钥由控制面代传，交新钥匙', async () => {
     const cases = [
       { escrowed: null },
       { escrowed: 'OLD' },
       // 签过名也一样：没有私钥、服务器也没有钥匙，就没法签别的设备。
       { escrowed: null, signed: true },
-      // 钥匙对得上，但密钥存储里没有签名私钥：bootstrapCrossSigning 会去重建，换成开了豁免的重建。
+      // 钥匙对得上，但密钥存储里没有签名私钥：bootstrapCrossSigning 会去重建，换成由控制面代传的重建。
       { escrowed: 'CURRENT', keysInStorage: false },
     ] as const;
     for (const options of cases) {
@@ -90,12 +91,9 @@ describe('ensureDeviceSigned', () => {
 
       await expect(run(account)).resolves.toBe('reset');
 
-      expect(account.escrow.allowReset).toHaveBeenCalledOnce();
       expect(account.crypto.resetEncryption).toHaveBeenCalledOnce();
-      // 先开豁免，再重建。
-      expect(account.escrow.allowReset.mock.invocationCallOrder[0]).toBeLessThan(
-        account.crypto.resetEncryption.mock.invocationCallOrder[0] ?? 0,
-      );
+      // 换身份的上传带着我们的认证标记，改由控制面以应用服务的身份代传，不弹任何框。
+      expect(account.resetAuth).toEqual([{ type: CONTROL_PLANE_UPLOAD }]);
       expect(account.crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
       expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
       expect(account.unlock).not.toHaveBeenCalledWith('OLD', expect.anything());
@@ -152,6 +150,8 @@ function fakeAccount({
   const generatedKey = new Uint8Array(32).fill(7);
   const escrowedKey = new Uint8Array(32).fill(9);
   const stored: EscrowedEncryptionKey[] = [];
+  /** 重建签名身份时，上传新签名公钥带的认证。 */
+  const resetAuth: unknown[] = [];
   const crypto = {
     bootstrapCrossSigning: vi.fn(() => Promise.resolve()),
     bootstrapSecretStorage: vi.fn(
@@ -180,7 +180,14 @@ function fakeAccount({
     ),
     getDeviceVerificationStatus: vi.fn(() => Promise.resolve({ signedByOwner: signed })),
     loadSessionBackupPrivateKeyFromSecretStorage: vi.fn(() => Promise.resolve()),
-    resetEncryption: vi.fn(() => Promise.resolve()),
+    resetEncryption: vi.fn(
+      async (upload: (makeRequest: (auth: unknown) => Promise<unknown>) => Promise<unknown>) => {
+        await upload((auth) => {
+          resetAuth.push(auth);
+          return Promise.resolve({});
+        });
+      },
+    ),
     restoreKeyBackup: vi.fn(() => Promise.resolve({ imported: 0, total: 0 })),
     userHasCrossSigningKeys: vi.fn(() => Promise.resolve(identity)),
   };
@@ -196,7 +203,7 @@ function fakeAccount({
     },
   } as unknown as DeviceSigningClient;
   const escrow = {
-    allowReset: vi.fn(() => Promise.resolve()),
+    replaceCrossSigningKeys: vi.fn(() => Promise.resolve()),
     fetch: vi.fn(() =>
       Promise.resolve(escrowed === null ? null : { key: escrowedKey, keyId: escrowed }),
     ),
@@ -207,5 +214,5 @@ function fakeAccount({
   } satisfies EncryptionKeyEscrow;
   const keys = new MatrixSecretStorageKeyCache();
   const unlock = vi.spyOn(keys, 'unlock');
-  return { client, crypto, escrow, escrowedKey, generatedKey, keys, stored, unlock };
+  return { client, crypto, escrow, escrowedKey, generatedKey, keys, resetAuth, stored, unlock };
 }
