@@ -618,3 +618,40 @@ async fn 别人在打字不等() {
         "照常防抖 5 秒：{elapsed:?}"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn 只要点我的_只交点我的_别的算跳过_只看一眼也一样() {
+    let rules = || WaitRules {
+        options: WaitOptions {
+            mentions_only: true,
+            wake: agent_room_bridge_ipc::wake::WakeRule::Mentions,
+            settle: Duration::ZERO,
+            ..WaitOptions::default()
+        },
+        wait_for_mentioned: false,
+    };
+    let room = Room::new(vec![
+        (0, chatter("闲聊")),
+        (1_000, named("Scout 看一下")),
+        (1_000, chatter("又闲聊")),
+    ]);
+    let batch = waiter(rules())
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["Scout 看一下"]);
+    assert_eq!(batch.skipped, 1, "前面的闲聊算跳过");
+    assert_eq!(batch.cursor.as_deref(), Some("$Scout 看一下:room.test"));
+
+    let peek = waiter(rules())
+        .next(&room, MessageWait::For(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(texts(&peek.previews), ["Scout 看一下"]);
+    assert_eq!(peek.skipped, 2);
+    assert_eq!(
+        peek.cursor.as_deref(),
+        Some("$又闲聊:room.test"),
+        "看过的都算看过，确认到游标时跳过的也算"
+    );
+}

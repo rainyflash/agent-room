@@ -259,6 +259,13 @@ impl InboxWaiter {
             .into_iter()
             .filter(|preview| !preview.from_me)
             .collect();
+        // 只要点我的：别的算跳过，确认到游标时也算看过。
+        let heard = previews.len();
+        let previews: Vec<_> = previews
+            .into_iter()
+            .filter(|preview| !self.options.mentions_only || preview.mentions_me)
+            .collect();
+        let skipped = heard - previews.len();
         let wake = if previews.is_empty() {
             IpcWake::empty(WakeReason::Timeout)
         } else {
@@ -267,7 +274,7 @@ impl InboxWaiter {
         Ok(WokenBatch {
             previews,
             wake,
-            skipped: 0,
+            skipped,
             remaining: 0,
             cursor,
         })

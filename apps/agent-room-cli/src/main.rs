@@ -247,6 +247,7 @@ pub(crate) fn waiter(args: &cli::ReadArgs) -> CliResult<InboxWaiter> {
         reply_to: args.reply_to.clone(),
         settle_seconds: args.settle,
         digest_minutes: args.digest,
+        mentions_only: args.mentions_only,
     }
     .parse()
     .map_err(|field| {

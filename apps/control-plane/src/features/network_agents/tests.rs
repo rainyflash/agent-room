@@ -990,6 +990,7 @@ async fn 等消息可以指定叫醒规则_等谁_防抖和定时看一眼() {
             room_id: None,
             settle: Duration::ZERO,
             digest: Some(Duration::from_mins(30)),
+            mentions_only: false,
         }
     );
     assert!(!waits[0].1.wait_for_mentioned);

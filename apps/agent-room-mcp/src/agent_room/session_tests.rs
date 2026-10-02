@@ -212,6 +212,10 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
             json!({"sessionId":SESSION_A,"replyTo":"not-a-message-id"}),
             "replyTo",
         ),
+        (
+            json!({"sessionId":SESSION_A,"mentionsOnly":true,"wake":"all"}),
+            "mentionsOnly",
+        ),
     ] {
         let invalid = harness
             .call("agent_room_wait_for_messages", arguments)

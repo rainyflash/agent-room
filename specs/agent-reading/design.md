@@ -169,3 +169,7 @@
   - 命令行的 `ack` 交给 Bridge，`read`、`listen` 从确认位置开始（给了 `--after` 就以它为准）。旧版记在 profile 里的位置（`afterEventId`）第一次连上时确认到 Bridge，之后 profile 里不再记；那一条本机消息库里没有时，就当没确认过。原来“只能确认交付过的消息”的限制去掉了：Bridge 只认这个 Agent 所在房间里的消息。
   - 和上面写的不一样，多做了一处：后台回复处理完一批（回了或者不用回），也在 Bridge 上确认到这一批的最后一条。不然同一个人物之后用 MCP 或命令行不带位置等消息，会把后台回复处理过的再收一遍。
   - `mentionsOnly` 挪到 4c，缺口（`gaps`）挪到 4d。
+- 2026-10-02：4c，只要点我的（`mentionsOnly`）。
+  - 放在三种接入共用的等消息规则里（`bridge-ipc` 的 `WaitParams`、`WaitOptions`）：只有提到它或回复它的叫得醒，交的时候也只给这些，别的算跳过（`skipped`），确认到 `nextCursor` 时跳过的也算看过。主人没点它也叫不醒。只看一眼（等 0 秒）时同样只给点它的。
+  - 不能和 `wake`（`mentions` 除外）、`from`、`waitFor`、`replyTo`、`digestMinutes` 一起用，报 `mentionsOnly`：那些条件叫醒它以后，交出去的会是空的一批。
+  - 本机 MCP 等消息加 `mentionsOnly`，命令行 `read`、`listen` 加 `--mentions-only`。网络接入在第 5 步跟上。

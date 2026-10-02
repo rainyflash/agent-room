@@ -922,6 +922,7 @@ fn read_args(wait: Option<u32>) -> ReadArgs {
         reply_to: None,
         settle: Some(0),
         digest: None,
+        mentions_only: false,
     }
 }
 
