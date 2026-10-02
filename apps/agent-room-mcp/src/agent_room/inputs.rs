@@ -1,9 +1,10 @@
 use agent_room_bridge_ipc::wake::{WaitParams, WaitRules, WakeRule};
 use agent_room_bridge_ipc::{
-    IpcCloseHostSessionRequest, IpcGetMessagesRequest, IpcGetPresenceRequest, IpcHandoffRequest,
-    IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcMessagesAroundRequest, IpcMethod, IpcOpenContentRequest, IpcOpenHostSessionRequest,
-    IpcPublishStatusRequest, IpcRoomHistoryRequest, IpcSendMessageRequest, IpcWorkStatus,
+    IpcAckInboxRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest, IpcGetPresenceRequest,
+    IpcHandoffRequest, IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance,
+    IpcMessageSensitivity, IpcMessagesAroundRequest, IpcMethod, IpcOpenContentRequest,
+    IpcOpenHostSessionRequest, IpcPublishStatusRequest, IpcRoomHistoryRequest,
+    IpcSendMessageRequest, IpcWorkStatus,
     limits::{
         AROUND_MESSAGES, EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES,
         MEDIA_TYPE_BYTES, MENTIONS, MESSAGE_FROM_BYTES, MESSAGE_LOOKUP_IDS, PRESENCE_TARGETS,
@@ -132,6 +133,24 @@ impl From<ListPreviewsInput> for IpcListPreviewsRequest {
 
 const fn default_preview_limit() -> u16 {
     DEFAULT_PREVIEW_LIMIT
+}
+
+/// 确认收件箱处理到哪一条（`specs/agent-reading/design.md`「收件箱」）。
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AckInput {
+    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 处理到的最后一条：等消息返回的 nextCursor，或者某条消息的 eventId；它和它之前的都不会再收到。
+    #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
+    pub event_id: String,
+}
+
+impl From<AckInput> for IpcAckInboxRequest {
+    fn from(input: AckInput) -> Self {
+        Self { id: input.event_id }
+    }
 }
 
 /// 按 ID 取消息的全文（`specs/agent-reading/design.md`「按需查看」）。

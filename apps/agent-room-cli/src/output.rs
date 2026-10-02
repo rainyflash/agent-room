@@ -123,11 +123,6 @@ fn error_hint(code: &str) -> &'static str {
         "cli.profile.busy" => {
             "Another command is using this profile. Wait for it to finish, then retry the same command and submission ID."
         }
-        "cli.profile.event_not_delivered"
-        | "cli.profile.cursor_mismatch"
-        | "cli.profile.ack_required" => {
-            "Use read to receive a batch, handle it, then ack its last handled eventId. Do not skip messages or reset the cursor."
-        }
         "cli.invitation.room_mismatch" | "cli.profile.room_mismatch" => {
             "The connected room differs from the invitation. Check actualRoomId and the selected lobby. Do not report this invitation as successful."
         }

@@ -8,9 +8,9 @@ use agent_room_agent_client::{
     reception::ReceptionCheckpoint,
 };
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcGetMessagesRequest,
-    IpcHostSessionState, IpcMessagePreviewSummary, IpcMethod, IpcResponse, IpcRoomKind,
-    IpcSelfSummary, limits,
+    IpcAckInboxRequest, IpcActorSummary, IpcBridgeState, IpcCloseHostSessionRequest,
+    IpcGetMessagesRequest, IpcHostSessionState, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
+    IpcRoomKind, IpcSelfSummary, limits,
 };
 use std::{path::Path, time::Duration};
 
@@ -505,6 +505,7 @@ async fn finish_silently(
         .checkpoint
         .complete(anchor)
         .map_err(|_| Failure::local("receiver.checkpoint_mismatch"))?;
+    acknowledge_in_bridge(context.backend, session_id, anchor).await;
     change_stage(state, store, DeliveryStage::NoReply)?;
     crate::execution::save(context.backend, Some(session_id), store, state).await?;
     emit_delivery(context, state)
@@ -536,6 +537,7 @@ async fn reconcile(
                 .checkpoint
                 .complete(&record.event_id)
                 .map_err(|_| Failure::local("receiver.checkpoint_mismatch"))?;
+            acknowledge_in_bridge(context.backend, session_id, &record.event_id).await;
             let record = state
                 .last_delivery
                 .as_mut()
@@ -557,6 +559,18 @@ async fn reconcile(
             Err(error)
         }
     }
+}
+
+/// 宿主处理完的这一批在 Bridge 上也算确认了：同一个人物之后用 MCP 或命令行不带位置等消息，
+/// 不会再收到它们。确认失败不要紧，只是之后多看到几条已经处理过的。
+async fn acknowledge_in_bridge(backend: &dyn BridgeToolClient, session_id: &str, anchor: &str) {
+    let method = scoped(
+        session_id,
+        IpcMethod::AckInbox(IpcAckInboxRequest {
+            id: anchor.to_owned(),
+        }),
+    );
+    let _ = call(backend, method).await;
 }
 
 fn change_stage(

@@ -24,8 +24,20 @@ struct Bridge {
     reception: Arc<Mutex<Option<ReceptionRecord>>>,
     outcome: Arc<Mutex<Reply>>,
     sent: Arc<Mutex<Vec<IpcSendMessageRequest>>>,
+    /// 在 Bridge 上确认过的位置。
+    acks: Arc<Mutex<Vec<String>>>,
 }
 impl Bridge {
+    fn acknowledge(&self, event_id: String) -> IpcResponse {
+        self.acks.lock().unwrap().push(event_id.clone());
+        IpcResponse::InboxAcknowledged {
+            room_id: "!room:test".into(),
+            event_id,
+            acknowledged: true,
+            pending: 0,
+        }
+    }
+
     fn publish(&self, request: &IpcSendMessageRequest, outcome: Reply) {
         if matches!(outcome, Reply::Missing) {
             return;
@@ -212,6 +224,7 @@ impl BridgeToolClient for Bridge {
                 },
                 IpcMethod::ListRooms => self.rooms(),
                 IpcMethod::GetMessages(request) => self.lookup(&request.ids),
+                IpcMethod::AckInbox(request) => self.acknowledge(request.id),
                 IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
                     let previews = if request.after_event_id.is_none() {
                         let mut previews = self.before.lock().unwrap().clone();
@@ -340,6 +353,7 @@ fn setup_with(
             reception: Arc::default(),
             outcome: Arc::new(Mutex::new(Reply::Valid)),
             sent: Arc::default(),
+            acks: Arc::default(),
         },
     )
 }
@@ -860,6 +874,8 @@ async fn 宿主觉得不用回时不发消息_这一批算处理完() {
     assert_eq!(saved.last_delivery.unwrap().stage, DeliveryStage::NoReply);
     let progress = bridge.reception.lock().unwrap().clone().unwrap().progress;
     assert!(progress.pending.is_none(), "服务器上也不再挂着待定");
+    // 处理完的这一批在 Bridge 上也算确认了，同一个人物之后不带位置等消息不会再收到。
+    assert_eq!(bridge.acks.lock().unwrap().as_slice(), ["$input"]);
 }
 
 #[tokio::test(start_paused = true)]

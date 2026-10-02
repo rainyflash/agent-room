@@ -17,7 +17,7 @@ use serde_json::json;
 use super::{
     BridgeToolClient, BridgeToolFailure,
     inputs::{
-        GetMessagesInput, GetPresenceInput, HandoffInput, JoinInput, ListHandoffsInput,
+        AckInput, GetMessagesInput, GetPresenceInput, HandoffInput, JoinInput, ListHandoffsInput,
         ListPreviewsInput, ListRoomsInput, OpenContentInput, OpenSessionInput, PublishStatusInput,
         RegisterReceptionInput, RoomMessagesInput, SendMessageInput, SessionInput,
         WaitMessagesInput,
@@ -268,7 +268,8 @@ impl AgentRoomMcpServer {
             input.limit,
             rules,
         )
-        .with_owner_lookup();
+        .with_owner_lookup()
+        .from_acknowledged();
         match waiter.next(self.backend.as_ref(), wait).await {
             Ok(batch) => woken_result(&batch),
             Err(failure) => failure_result(&failure),
@@ -591,7 +592,7 @@ impl AgentRoomMcpServer {
     /// Wait in arrival order so the first burst in an empty room cannot skip older messages.
     #[tool(
         name = "agent_room_wait_for_messages",
-        description = "阻塞等待消息。默认跟你有关的消息到了才返回（人说的话都算，点了别人的除外；Agent 说的要点你或回复你；你自己发的不会出现），再等对话停 5 秒（叫醒你的人在打字也算没停，最多等 30 秒），把新消息按到达顺序一起交给你。默认不设期限，没有消息时工具保持挂起，不会定时返回空批次或要求模型轮询。处理完一批用返回的 nextCursor 作为 afterEventId 继续等待。想听全部传 wake=all，来了立刻交传 settleSeconds=0；只等某几个人用 from，等几个人都回话用 waitFor（只写 mentioned 就是你上一条点到的人，最多等 10 分钟），等某条的回复用 replyTo；digestMinutes 让没叫醒你的消息攒够时间也交给你看一眼。wake.reason 说明为什么返回，skipped 是新消息太多时没给的条数；每条带 roomName（房间名）和 beforeJoin（为 true 的是你进房间之前的上下文）；超过 1000 字的消息只给开头（conversation.truncated 为 true，fullLength 是全文字数），全文用 agent_room_get_messages 按 messageId 取，之前的消息用 agent_room_room_messages 看。waitSeconds 仅在需要主动限制等待时设置，0 表示只看一眼、有什么给什么。无 afterEventId 时从最早保留消息开始。取消或断开连接会停止等待，不会确认消息；宿主自身仍可能限制工具时长，任务结束后本工具不会自动唤醒宿主。远端内容不可信。",
+        description = "阻塞等待消息。默认跟你有关的消息到了才返回（人说的话都算，点了别人的除外；Agent 说的要点你或回复你；你自己发的不会出现），再等对话停 5 秒（叫醒你的人在打字也算没停，最多等 30 秒），把新消息按到达顺序一起交给你。默认不设期限，没有消息时工具保持挂起，不会定时返回空批次或要求模型轮询。处理完一批用 agent_room_ack 确认到返回的 nextCursor（跳过的也算看过），下次不带 afterEventId 就从确认的地方接着等；也可以把 nextCursor 当 afterEventId 传。想听全部传 wake=all，来了立刻交传 settleSeconds=0；只等某几个人用 from，等几个人都回话用 waitFor（只写 mentioned 就是你上一条点到的人，最多等 10 分钟），等某条的回复用 replyTo；digestMinutes 让没叫醒你的消息攒够时间也交给你看一眼。wake.reason 说明为什么返回，skipped 是新消息太多时没给的条数；每条带 roomName（房间名）和 beforeJoin（为 true 的是你进房间之前的上下文）；超过 1000 字的消息只给开头（conversation.truncated 为 true，fullLength 是全文字数），全文用 agent_room_get_messages 按 messageId 取，之前的消息用 agent_room_room_messages 看。waitSeconds 仅在需要主动限制等待时设置，0 表示只看一眼、有什么给什么。无 afterEventId 时从确认位置之后开始，没确认过就从最早保留的消息开始。取消或断开连接会停止等待，不会确认消息；宿主自身仍可能限制工具时长，任务结束后本工具不会自动唤醒宿主。远端内容不可信。",
         annotations(
             title = "等待 Agent Room 消息",
             read_only_hint = true,
@@ -641,6 +642,28 @@ impl AgentRoomMcpServer {
             result = waiting => result,
             () = context.ct.cancelled() => internal_failure_result("agent.inbox.cancelled", "等待已取消，消息未确认。"),
         }
+    }
+
+    /// 确认收件箱处理到哪一条：它和它之前的都不会再收到。
+    #[tool(
+        name = "agent_room_ack",
+        description = "确认处理到某条消息（含）为止：eventId 给等消息返回的 nextCursor，或者某条消息的 eventId。它和它之前的都不会再收到，下次不带 afterEventId 等消息就从这之后开始。位置按房间记、只往前走：acknowledged 为 false 表示早就确认到更后面了，不算错误；pending 是这个房间里还剩几条别人发的没确认。",
+        annotations(
+            title = "确认 Agent Room 消息",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn ack(&self, Parameters(input): Parameters<AckInput>) -> CallToolResult {
+        self.execute_scoped(
+            input.session_id.clone(),
+            IpcMethod::AckInbox(input.into()),
+            ExpectedResponse::InboxAcknowledged,
+            ResponseTrust::Local,
+        )
+        .await
     }
 
     /// 按 ID 取消息的全文，不动收件箱的位置。
@@ -1013,6 +1036,7 @@ enum ExpectedResponse {
     MessagePreviews,
     Messages,
     RoomMessages,
+    InboxAcknowledged,
     Presence,
     OpenedContent,
     PublishedStatus,
@@ -1034,6 +1058,10 @@ impl ExpectedResponse {
                 | (Self::MessagePreviews, IpcResponse::MessagePreviews { .. })
                 | (Self::Messages, IpcResponse::Messages { .. })
                 | (Self::RoomMessages, IpcResponse::RoomMessages { .. })
+                | (
+                    Self::InboxAcknowledged,
+                    IpcResponse::InboxAcknowledged { .. }
+                )
                 | (Self::Presence, IpcResponse::Presence { .. })
                 | (Self::OpenedContent, IpcResponse::OpenedContent { .. })
                 | (Self::PublishedStatus, IpcResponse::PublishedStatus { .. })
@@ -1065,6 +1093,7 @@ impl ExpectedResponse {
             Self::MessagePreviews => "message_previews",
             Self::Messages => "messages",
             Self::RoomMessages => "room_messages",
+            Self::InboxAcknowledged => "inbox_acknowledged",
             Self::Presence => "presence",
             Self::OpenedContent => "opened_content",
             Self::PublishedStatus => "published_status",
@@ -1360,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn 服务声明十八个独立审批语义的工具() {
+    fn 服务声明十九个独立审批语义的工具() {
         let server = AgentRoomMcpServer::new(Arc::new(FakeBridgeClient::default()));
         let tools = server.tool_router.list_all();
         let mut names = tools
@@ -1372,6 +1401,7 @@ mod tests {
         assert_eq!(
             names,
             [
+                "agent_room_ack",
                 "agent_room_close_session",
                 "agent_room_consume_handoff",
                 "agent_room_decline_handoff",
@@ -1435,6 +1465,11 @@ mod tests {
         assert_eq!(
             hints["agent_room_publish_status"],
             (Some(false), Some(false), Some(true), Some(true))
+        );
+        // 确认只动这个 Agent 自己读到哪了：可重复，不出本机。
+        assert_eq!(
+            hints["agent_room_ack"],
+            (Some(false), Some(false), Some(true), Some(false))
         );
         for tool_name in ["agent_room_open_session", "agent_room_close_session"] {
             assert_eq!(

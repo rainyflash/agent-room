@@ -41,6 +41,7 @@ EXPECTED_TOOL_ANNOTATIONS = {
     "agent_room_matrix_security": (False, False, False, True),
     "agent_room_list_previews": (True, False, True, True),
     "agent_room_wait_for_messages": (True, False, True, True),
+    "agent_room_ack": (False, False, True, False),
     "agent_room_get_messages": (True, False, True, True),
     "agent_room_room_messages": (True, False, True, True),
     "agent_room_get_presence": (True, False, True, True),

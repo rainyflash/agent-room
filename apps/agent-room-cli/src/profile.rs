@@ -115,7 +115,9 @@ pub(crate) struct Profile {
     #[serde(default)]
     pub(crate) agent_id: Option<String>,
     pub(crate) room_id: Option<String>,
+    /// 旧版记在档案里的确认位置；连上以后交给 Bridge，之后一直是空的。
     pub(crate) after_event_id: Option<String>,
+    /// 旧版记的已交出、还没确认的消息；不再用。
     pub(crate) delivered: Vec<String>,
 }
 
@@ -141,47 +143,6 @@ impl Profile {
             && task_id != Some(bound.as_str())
         {
             return Err(Failure::validation("cli.profile.task_mismatch"));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn acknowledge(&mut self, event: &str) -> Result<()> {
-        if self.after_event_id.as_deref() == Some(event) {
-            return Ok(());
-        }
-        let index = self
-            .delivered
-            .iter()
-            .position(|id| id == event)
-            .ok_or_else(|| Failure::validation("cli.profile.event_not_delivered"))?;
-        self.after_event_id = Some(event.into());
-        self.delivered.drain(..=index);
-        Ok(())
-    }
-
-    pub(crate) fn acknowledged_since<'a>(&self, before: &'a Self) -> Result<&'a [String]> {
-        if self.after_event_id == before.after_event_id {
-            return Ok(&[]);
-        }
-        let index = before
-            .delivered
-            .iter()
-            .position(|id| Some(id) == self.after_event_id.as_ref())
-            .ok_or_else(|| Failure::validation("cli.profile.cursor_mismatch"))?;
-        Ok(&before.delivered[..=index])
-    }
-
-    pub(crate) fn record_delivery(
-        &mut self,
-        events: impl IntoIterator<Item = String>,
-    ) -> Result<()> {
-        for event in events {
-            if self.after_event_id.as_deref() != Some(&event) && !self.delivered.contains(&event) {
-                self.delivered.push(event);
-            }
-        }
-        if self.delivered.len() > 1000 {
-            return Err(Failure::validation("cli.profile.ack_required"));
         }
         Ok(())
     }
@@ -481,22 +442,22 @@ mod tests {
     }
 
     #[test]
-    fn 新进程恢复身份与未确认消息且拒绝跨任务接管() {
+    fn 新进程恢复身份且拒绝跨任务接管_旧版记的位置照样读得出来() {
         let root = tempfile::tempdir().unwrap();
         let mut profile =
             Profile::new(invitation(), "test", Some(uuid::Uuid::now_v7().to_string()));
         let key = profile.invitation.session_key.clone();
         let reader = ProfileStore::reader_lock(root.path(), &key).unwrap();
         assert!(ProfileStore::reader_lock(root.path(), &key).is_err());
-        profile
-            .record_delivery(["$one".into(), "$two".into()])
-            .unwrap();
+        // 旧版把确认位置和交出去的消息记在档案里；新版读得出来，连上以后交给 Bridge。
+        profile.after_event_id = Some("$one".into());
+        profile.delivered = vec!["$two".into()];
         let store = ProfileStore::open(root.path(), &key).unwrap();
         store.save(&profile).unwrap();
         assert!(ProfileStore::open(root.path(), &key).is_err());
         drop(store);
         let store = ProfileStore::open(root.path(), &key).unwrap();
-        let mut restored = store.load().unwrap().unwrap();
+        let restored = store.load().unwrap().unwrap();
         assert!(
             restored
                 .validate_binding("other", profile.task_id.as_deref())
@@ -508,17 +469,10 @@ mod tests {
                 .validate_binding("test", Some(&uuid::Uuid::now_v7().to_string()))
                 .is_err()
         );
-        assert!(restored.acknowledge("$unseen").is_err());
-        restored.acknowledge("$one").unwrap();
-        restored.acknowledge("$one").unwrap();
+        assert_eq!(restored.after_event_id.as_deref(), Some("$one"));
         assert_eq!(restored.delivered, ["$two"]);
-        store.save(&restored).unwrap();
         drop(reader);
         assert!(ProfileStore::reader_lock(root.path(), &key).is_ok());
-        assert_eq!(
-            store.load().unwrap().unwrap().after_event_id.as_deref(),
-            Some("$one")
-        );
         fs::write(&store.path, b"broken").unwrap();
         assert_eq!(store.load().unwrap_err().code, "cli.profile.corrupt");
     }

@@ -77,6 +77,82 @@ async fn 接待登记使用宿主任务元数据并拒绝错绑或猜测() {
 }
 
 #[tokio::test]
+async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置开始() {
+    let inbox = |after: Option<&str>| IpcMethod::WithSession {
+        session_id: SESSION_A.into(),
+        method: Box::new(IpcMethod::ReadInbox(
+            agent_room_bridge_ipc::IpcListPreviewsRequest {
+                room_id: None,
+                after_event_id: after.map(str::to_owned),
+                before_event_id: None,
+                limit: 20,
+                keep_waiting: false,
+                wait_ms: None,
+                from_ack: true,
+            },
+        )),
+    };
+    let empty = || {
+        Ok(IpcResponse::MessagePreviews {
+            previews: vec![],
+            next_cursor: None,
+            typing: Vec::new(),
+        })
+    };
+    let bridge = Arc::new(ScriptedBridge::new(vec![
+        ExpectedCall {
+            method: IpcMethod::WithSession {
+                session_id: SESSION_A.into(),
+                method: Box::new(IpcMethod::AckInbox(
+                    agent_room_bridge_ipc::IpcAckInboxRequest {
+                        id: "$done:matrix.test".into(),
+                    },
+                )),
+            },
+            response: Ok(IpcResponse::InboxAcknowledged {
+                room_id: "!room:matrix.test".into(),
+                event_id: "$done:matrix.test".into(),
+                acknowledged: true,
+                pending: 2,
+            }),
+        },
+        ExpectedCall {
+            method: inbox(None),
+            response: empty(),
+        },
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+
+    let acknowledged = harness
+        .call(
+            "agent_room_ack",
+            json!({"sessionId":SESSION_A,"eventId":"$done:matrix.test"}),
+        )
+        .await;
+    assert_ne!(acknowledged["isError"], true);
+    let body = &acknowledged["structuredContent"];
+    assert_eq!(body["type"], "inbox_acknowledged");
+    assert_eq!(body["acknowledged"], true);
+    assert_eq!(body["pending"], 2);
+    // 不带位置看一眼：从 Bridge 记的确认位置开始。
+    let waited = harness
+        .call(
+            "agent_room_wait_for_messages",
+            json!({"sessionId":SESSION_A,"waitSeconds":0}),
+        )
+        .await;
+    assert_ne!(waited["isError"], true);
+    // 少了 eventId 不问 Bridge。
+    let invalid = harness
+        .call("agent_room_ack", json!({"sessionId":SESSION_A}))
+        .await;
+    assert_eq!(invalid["isError"], true);
+
+    bridge.assert_finished();
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝历史参数() {
     let bridge = Arc::new(ScriptedBridge::new(vec![ExpectedCall {
         method: IpcMethod::WithSession {
@@ -89,7 +165,8 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
                     limit: 20,
                     keep_waiting: false,
                     wait_ms: None,
-                    from_ack: false,
+                    // 等消息总带着“从确认位置开始”；给了 afterEventId 就以它为准。
+                    from_ack: true,
                 },
             )),
         },
