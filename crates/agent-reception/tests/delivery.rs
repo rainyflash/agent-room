@@ -19,6 +19,8 @@ struct Bridge {
     /// 房间列表里这个房间是不是私人房间。
     private_room: bool,
     replies: Arc<Mutex<Vec<IpcMessagePreviewSummary>>>,
+    /// 按 ID 取时给出的整条消息（全文）。
+    whole: Arc<Mutex<Vec<IpcMessagePreviewSummary>>>,
     reception: Arc<Mutex<Option<ReceptionRecord>>>,
     outcome: Arc<Mutex<Reply>>,
     sent: Arc<Mutex<Vec<IpcSendMessageRequest>>>,
@@ -51,6 +53,21 @@ impl Bridge {
             provenance: IpcMessageProvenance::AutonomousAgent,
         };
         self.replies.lock().unwrap().push(message);
+    }
+
+    /// 按 ID 取：给出备好的整条消息，没备的放进 missing。
+    fn lookup(&self, ids: &[String]) -> IpcResponse {
+        let whole = self.whole.lock().unwrap();
+        let found = |id: &String| whole.iter().find(|message| message.event_id == *id);
+        IpcResponse::Messages {
+            messages: ids.iter().filter_map(found).cloned().collect(),
+            missing: ids
+                .iter()
+                .filter(|id| found(id).is_none())
+                .cloned()
+                .collect(),
+            more: Vec::new(),
+        }
     }
 
     /// 房间列表：设成私人房间时把这个房间列成私人房间。
@@ -194,6 +211,7 @@ impl BridgeToolClient for Bridge {
                     },
                 },
                 IpcMethod::ListRooms => self.rooms(),
+                IpcMethod::GetMessages(request) => self.lookup(&request.ids),
                 IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
                     let previews = if request.after_event_id.is_none() {
                         let mut previews = self.before.lock().unwrap().clone();
@@ -233,6 +251,8 @@ struct Host {
     calls: AtomicUsize,
     /// 每次交给宿主的那一批有几条。
     batches: Mutex<Vec<usize>>,
+    /// 交给宿主的每条消息的正文。
+    texts: Mutex<Vec<String>>,
 }
 impl Host {
     fn new(bridge: &Bridge, outcome: Reply) -> Self {
@@ -241,6 +261,7 @@ impl Host {
             outcome,
             calls: AtomicUsize::new(0),
             batches: Mutex::new(Vec::new()),
+            texts: Mutex::new(Vec::new()),
         }
     }
 }
@@ -249,6 +270,13 @@ impl HostRunner for Host {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::Relaxed);
             self.batches.lock().unwrap().push(delivery.messages.len());
+            self.texts.lock().unwrap().extend(
+                delivery
+                    .messages
+                    .iter()
+                    .filter_map(|message| message.conversation.as_ref())
+                    .map(|chat| chat.text.clone()),
+            );
             let state = ReceiverStore::inspect(delivery.data_root, &delivery.binding.task_id)
                 .unwrap()
                 .unwrap();
@@ -308,6 +336,7 @@ fn setup_with(
             before: Arc::default(),
             private_room: false,
             replies: Arc::default(),
+            whole: Arc::default(),
             reception: Arc::default(),
             outcome: Arc::new(Mutex::new(Reply::Valid)),
             sent: Arc::default(),
@@ -831,4 +860,32 @@ async fn 宿主觉得不用回时不发消息_这一批算处理完() {
     assert_eq!(saved.last_delivery.unwrap().stage, DeliveryStage::NoReply);
     let progress = bridge.reception.lock().unwrap().clone().unwrap().progress;
     assert!(progress.pending.is_none(), "服务器上也不再挂着待定");
+}
+
+#[tokio::test(start_paused = true)]
+async fn 长消息交给宿主之前换回全文_取不回来就给开头() {
+    for found in [true, false] {
+        let (root, binding, bridge) = setup_with(|message| {
+            let chat = message.conversation.as_mut().unwrap();
+            chat.text = "长".repeat(1_000);
+            chat.truncated = true;
+            chat.full_length = Some(1_200);
+        });
+        if found {
+            let mut whole = bridge.source.clone();
+            let chat = whole.conversation.as_mut().unwrap();
+            chat.text = "长".repeat(1_200);
+            chat.truncated = false;
+            chat.full_length = None;
+            bridge.whole.lock().unwrap().push(whole);
+        }
+        let host = Host::new(&bridge, Reply::Valid);
+        receive(root.path(), &binding, &bridge, &host, ReceiverMode::Listen)
+            .await
+            .unwrap();
+        let expected = if found { 1_200 } else { 1_000 };
+        let texts = host.texts.lock().unwrap();
+        assert_eq!(texts.len(), 1);
+        assert_eq!(texts[0].chars().count(), expected, "取到全文：{found}");
+    }
 }

@@ -1,13 +1,14 @@
 use agent_room_bridge_ipc::wake::{WaitParams, WaitRules, WakeRule};
 use agent_room_bridge_ipc::{
-    IpcCloseHostSessionRequest, IpcGetPresenceRequest, IpcHandoffRequest, IpcListHandoffsRequest,
-    IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
-    IpcOpenHostSessionRequest, IpcPublishStatusRequest, IpcSendMessageRequest, IpcWorkStatus,
+    IpcCloseHostSessionRequest, IpcGetMessagesRequest, IpcGetPresenceRequest, IpcHandoffRequest,
+    IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity,
+    IpcMessagesAroundRequest, IpcMethod, IpcOpenContentRequest, IpcOpenHostSessionRequest,
+    IpcPublishStatusRequest, IpcRoomHistoryRequest, IpcSendMessageRequest, IpcWorkStatus,
     limits::{
-        EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES, MEDIA_TYPE_BYTES,
-        MENTIONS, PRESENCE_TARGETS, PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES,
-        RISK_FLAGS, ROOM_ID_BYTES, SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS,
-        UUID_TEXT_CHARACTERS,
+        AROUND_MESSAGES, EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES,
+        MEDIA_TYPE_BYTES, MENTIONS, MESSAGE_FROM_BYTES, MESSAGE_LOOKUP_IDS, PRESENCE_TARGETS,
+        PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES, RISK_FLAGS, ROOM_ID_BYTES,
+        SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS, UUID_TEXT_CHARACTERS,
     },
 };
 use rmcp::schemars;
@@ -130,6 +131,93 @@ impl From<ListPreviewsInput> for IpcListPreviewsRequest {
 
 const fn default_preview_limit() -> u16 {
     DEFAULT_PREVIEW_LIMIT
+}
+
+/// 按 ID 取消息的全文（`specs/agent-reading/design.md`「按需查看」）。
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetMessagesInput {
+    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 1 到 20 个消息的 eventId 或 messageId，不用给房间。
+    #[schemars(
+        length(min = 1, max = MESSAGE_LOOKUP_IDS),
+        inner(length(min = 1, max = EVENT_ID_BYTES))
+    )]
+    pub ids: Vec<String>,
+}
+
+impl From<GetMessagesInput> for IpcGetMessagesRequest {
+    fn from(input: GetMessagesInput) -> Self {
+        Self { ids: input.ids }
+    }
+}
+
+/// 看一条消息的前后，或者往前翻（`specs/agent-reading/design.md`「按需查看」）。
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoomMessagesInput {
+    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// Matrix 房间 ID；省略就是会话所在的房间。
+    #[schemars(length(max = ROOM_ID_BYTES))]
+    pub room_id: Option<String>,
+    /// 看这条（eventId 或 messageId）和它前后的消息，早的在前；不能再给 before、after、from、mentionsMe。
+    #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
+    pub around: Option<String>,
+    /// 从这条往前翻，新的在前；before、after 都不给就从最新的一条往前。
+    #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
+    pub before: Option<String>,
+    /// 从这条往后翻，旧的在前。
+    #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
+    pub after: Option<String>,
+    /// 最多几条，1 到 50，默认 20；给了 around 时前后各一半（每边最多 20 条），另加它本身。
+    #[serde(default = "default_preview_limit")]
+    #[schemars(range(min = 1, max = PREVIEW_PAGE_SIZE))]
+    pub limit: u16,
+    /// 只看某个人：Matrix 用户 ID（`@` 开头），或者名字（不分大小写）。
+    #[schemars(length(min = 1, max = MESSAGE_FROM_BYTES))]
+    pub from: Option<String>,
+    /// 只看提到你或回复你的。
+    #[serde(default)]
+    pub mentions_me: bool,
+}
+
+impl RoomMessagesInput {
+    /// 给了 `around` 就是看前后，否则往前（或往后）翻。
+    ///
+    /// # Errors
+    ///
+    /// 哪一项不对就返回它的名字，放进错误的 `details.field`。
+    pub fn method(self) -> Result<IpcMethod, &'static str> {
+        if !(1..=PREVIEW_PAGE_SIZE).contains(&self.limit) {
+            return Err("limit");
+        }
+        let Some(id) = self.around else {
+            return Ok(IpcMethod::RoomHistory(IpcRoomHistoryRequest {
+                room_id: self.room_id,
+                before: self.before,
+                after: self.after,
+                limit: self.limit,
+                from: self.from,
+                mentions_me: self.mentions_me,
+            }));
+        };
+        if self.before.is_some() || self.after.is_some() || self.from.is_some() || self.mentions_me
+        {
+            return Err("around");
+        }
+        // 前面多给一条：被点名时，前面说了什么通常更要紧。
+        let after = self.limit / 2;
+        Ok(IpcMethod::MessagesAround(IpcMessagesAroundRequest {
+            room_id: self.room_id,
+            id,
+            before: (self.limit - after).min(AROUND_MESSAGES),
+            after: after.min(AROUND_MESSAGES),
+        }))
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

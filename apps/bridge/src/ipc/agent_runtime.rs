@@ -660,8 +660,8 @@ impl AgentRuntimeIpcFacade {
                 let target = preview.relation.and_then(|relation| match relation {
                     MessageRelation::ReplyTo(id) => replied.get(&id),
                 });
-                // 能按 ID 取全文之前照旧给全文（specs/agent-reading/design.md 第 3 步再截断）。
-                preview_for(preview, viewer, room, target, PreviewText::Full)
+                // 长消息只给开头，全文按 ID 取（`GetMessages`）。
+                preview_for(preview, viewer, room, target, PreviewText::Batch)
             }),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
             typing.map_or_else(Vec::new, |typing| typing.now(room_id.as_str())),

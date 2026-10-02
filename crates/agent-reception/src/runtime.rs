@@ -8,8 +8,9 @@ use agent_room_agent_client::{
     reception::ReceptionCheckpoint,
 };
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcHostSessionState, IpcMethod,
-    IpcResponse, IpcRoomKind, IpcSelfSummary,
+    IpcActorSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcGetMessagesRequest,
+    IpcHostSessionState, IpcMessagePreviewSummary, IpcMethod, IpcResponse, IpcRoomKind,
+    IpcSelfSummary, limits,
 };
 use std::{path::Path, time::Duration};
 
@@ -274,6 +275,63 @@ fn reply_target(batch: &WokenBatch) -> Option<String> {
         .map(|message| message.message_id.clone())
 }
 
+/// 收件箱里超过 1000 字的消息只给开头；交给宿主之前按 ID 取回全文，宿主照旧读到整条。
+/// 取不回来的留着开头（带 `truncated`），宿主还能用只读工具按 ID 去取。
+async fn with_full_text(
+    backend: &dyn BridgeToolClient,
+    session_id: &str,
+    messages: &[IpcMessagePreviewSummary],
+) -> Vec<IpcMessagePreviewSummary> {
+    let mut messages = messages.to_vec();
+    let mut pending: Vec<String> = messages
+        .iter()
+        .filter(|message| {
+            message
+                .conversation
+                .as_ref()
+                .is_some_and(|chat| chat.truncated)
+        })
+        .map(|message| message.event_id.clone())
+        .collect();
+    while !pending.is_empty() {
+        let ids: Vec<String> = pending
+            .drain(..pending.len().min(limits::MESSAGE_LOOKUP_IDS))
+            .collect();
+        let Ok(IpcResponse::Messages {
+            messages: whole,
+            more,
+            ..
+        }) = call(
+            backend,
+            scoped(
+                session_id,
+                IpcMethod::GetMessages(IpcGetMessagesRequest { ids }),
+            ),
+        )
+        .await
+        else {
+            break;
+        };
+        // 一条都没取回来就不再问，免得原地打转。
+        if whole.is_empty() {
+            break;
+        }
+        for message in whole {
+            if let Some(slot) = messages
+                .iter_mut()
+                .find(|slot| slot.event_id == message.event_id)
+            {
+                *slot = message;
+            }
+        }
+        // 这次放不下的下一次先取。
+        let mut next = more;
+        next.append(&mut pending);
+        pending = next;
+    }
+    messages
+}
+
 async fn deliver(
     context: &ReceiverContext<'_>,
     store: &ReceiverStore,
@@ -300,6 +358,7 @@ async fn deliver(
         .ok_or_else(|| Failure::local("receiver.delivery_missing"))?;
     change_stage(state, store, DeliveryStage::Running)?;
     emit_delivery(context, state)?;
+    let messages = with_full_text(context.backend, session_id, &batch.previews).await;
     let host = context
         .host
         .resume(crate::HostDelivery {
@@ -308,7 +367,7 @@ async fn deliver(
             service: context.service,
             session_id,
             submission_id: &record.submission_id,
-            messages: &batch.previews,
+            messages: &messages,
             wake: &batch.wake,
             reply_to: &record.message_id,
             skipped: batch.skipped,

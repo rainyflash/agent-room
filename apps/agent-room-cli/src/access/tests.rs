@@ -810,6 +810,64 @@ fn 自动上下文不能覆盖显式的其他会话或房间() {
     assert!(set_scope(&mut session, Some(&mut room), &saved).is_err());
 }
 
+#[test]
+fn 按需查看的命令带上档案的会话和房间() {
+    use clap::Parser as _;
+    let parse = |args: &[&str]| {
+        crate::cli::Cli::try_parse_from(std::iter::once("agent-room").chain(args.iter().copied()))
+            .map(|cli| cli.command)
+    };
+    let mut saved = profile();
+    saved.session_id = Some(uuid::Uuid::now_v7().to_string());
+    saved.room_id = saved.invitation.room_id.clone();
+
+    let mut show = parse(&["show", "--id", "$one", "--id", "$two"]).unwrap();
+    apply_context(&mut show, &saved).unwrap();
+    let Command::Show(args) = show else {
+        panic!("show 是按 ID 取");
+    };
+    let (session, IpcMethod::GetMessages(request)) = args.into_request() else {
+        panic!("show 是按 ID 取");
+    };
+    assert_eq!(session, saved.session_id);
+    assert_eq!(request.ids, ["$one", "$two"]);
+
+    let mut around = parse(&["around", "--id", "$one", "--before", "3"]).unwrap();
+    apply_context(&mut around, &saved).unwrap();
+    let Command::Around(args) = around else {
+        panic!("around 是看前后");
+    };
+    let (_, IpcMethod::MessagesAround(request)) = args.into_request() else {
+        panic!("around 是看前后");
+    };
+    assert_eq!(request.room_id, saved.room_id);
+    assert_eq!((request.before, request.after), (3, 10), "后面默认 10 条");
+
+    let mut history =
+        parse(&["history", "--before", "$one", "--from", "Ada", "--mentions"]).unwrap();
+    apply_context(&mut history, &saved).unwrap();
+    let Command::History(args) = history else {
+        panic!("history 是往前翻");
+    };
+    let (_, IpcMethod::RoomHistory(request)) = args.into_request() else {
+        panic!("history 是往前翻");
+    };
+    assert_eq!(request.room_id, saved.room_id);
+    assert_eq!(request.before.as_deref(), Some("$one"));
+    assert_eq!(request.from.as_deref(), Some("Ada"));
+    assert!(request.mentions_me);
+    assert_eq!(request.limit, 20, "默认 20 条");
+
+    // 一个档案只管一个房间；往哪个方向翻只能选一个。
+    let mut elsewhere = parse(&["history", "--room", "!other:test.invalid"]).unwrap();
+    assert_eq!(
+        apply_context(&mut elsewhere, &saved).unwrap_err().code,
+        "cli.profile.room_mismatch"
+    );
+    assert!(parse(&["history", "--before", "$a", "--after", "$b"]).is_err());
+    assert!(parse(&["around", "--id", "$a", "--after", "21"]).is_err());
+}
+
 #[tokio::test]
 async fn 等待消息期间可确认已处理批次且返回空批次不覆盖并发确认() {
     let directory = tempfile::tempdir().unwrap();

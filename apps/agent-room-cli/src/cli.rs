@@ -1,3 +1,6 @@
+use agent_room_bridge_ipc::{
+    IpcGetMessagesRequest, IpcMessagesAroundRequest, IpcMethod, IpcRoomHistoryRequest,
+};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -73,6 +76,16 @@ pub(crate) enum Command {
     /// Wait continuously; stop with Ctrl+C. A positive --wait only sizes each waiting round.
     /// Persist the last processed eventId in your consumer.
     Listen(ReadArgs),
+    /// Show whole messages by eventId or messageId, in the order given. Long messages in read
+    /// arrive cut short (conversation.truncated); this returns the full text. Does not move your
+    /// read position.
+    Show(ShowArgs),
+    /// Show a message with the messages just before and after it, oldest first. Does not move
+    /// your read position.
+    Around(AroundArgs),
+    /// Page back through the room from the latest message, newest first; pass nextCursor as
+    /// --before to continue. Does not move your read position.
+    History(HistoryArgs),
     /// Send an authorized conversation message with an explicit idempotency key.
     Send(SendArgs),
     /// Publish the current task state.
@@ -165,6 +178,86 @@ pub(crate) struct ReadArgs {
     /// Minutes after which messages that did not wake you are handed over anyway (1-1440).
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=1440))]
     pub(crate) digest: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ShowArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    /// eventId or messageId of a message (repeatable, up to 20). Messages from any room you are
+    /// in; no --room needed.
+    #[arg(long = "id", required = true, num_args = 1..)]
+    pub(crate) ids: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AroundArgs {
+    #[command(flatten)]
+    pub(crate) scope: RoomArgs,
+    /// eventId or messageId of the message in the middle.
+    #[arg(long)]
+    pub(crate) id: String,
+    /// How many earlier messages (0-20).
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(0..=20))]
+    pub(crate) before: u16,
+    /// How many later messages (0-20).
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(0..=20))]
+    pub(crate) after: u16,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct HistoryArgs {
+    #[command(flatten)]
+    pub(crate) scope: RoomArgs,
+    /// Page back from this eventId or messageId (newest first). Omit to start from the latest
+    /// message.
+    #[arg(long, conflicts_with = "after")]
+    pub(crate) before: Option<String>,
+    /// Page forward from this eventId or messageId instead (oldest first); pass nextCursor as
+    /// --after to continue.
+    #[arg(long)]
+    pub(crate) after: Option<String>,
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=50))]
+    pub(crate) limit: u16,
+    /// Only messages from this person: a Matrix user ID, or a display name (case-insensitive).
+    #[arg(long)]
+    pub(crate) from: Option<String>,
+    /// Only messages that mention or reply to you.
+    #[arg(long)]
+    pub(crate) mentions: bool,
+}
+
+impl ShowArgs {
+    pub(crate) fn into_request(self) -> (Option<String>, IpcMethod) {
+        let request = IpcGetMessagesRequest { ids: self.ids };
+        (self.session, IpcMethod::GetMessages(request))
+    }
+}
+
+impl AroundArgs {
+    pub(crate) fn into_request(self) -> (Option<String>, IpcMethod) {
+        let request = IpcMessagesAroundRequest {
+            room_id: self.scope.room,
+            id: self.id,
+            before: self.before,
+            after: self.after,
+        };
+        (self.scope.session, IpcMethod::MessagesAround(request))
+    }
+}
+
+impl HistoryArgs {
+    pub(crate) fn into_request(self) -> (Option<String>, IpcMethod) {
+        let request = IpcRoomHistoryRequest {
+            room_id: self.scope.room,
+            before: self.before,
+            after: self.after,
+            limit: self.limit,
+            from: self.from,
+            mentions_me: self.mentions,
+        };
+        (self.scope.session, IpcMethod::RoomHistory(request))
+    }
 }
 
 /// What wakes a waiting read (`specs/agent-reading/waiting.md`).
