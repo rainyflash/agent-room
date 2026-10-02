@@ -5,6 +5,7 @@ mod error;
 mod handoff;
 mod mapping;
 mod membership;
+mod owner;
 mod provisioning;
 mod room_key_requests;
 mod room_keys;
