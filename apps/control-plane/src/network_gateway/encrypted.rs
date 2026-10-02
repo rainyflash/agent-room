@@ -15,6 +15,11 @@
 //! 发言也由这个客户端发出（3d）：加密房间里正文先用正文密钥加密，事件由客户端用房间密钥加密。
 //! 客户端只能在认识的房间里发言，所以准备好时、进了房间之后都完整同步一次。
 //!
+//! 不带起点的同步每次换一个超时值：Synapse 把一模一样的同步请求的结果缓存两分钟
+//! （`sync_response_cache_duration`，按用户、设备、超时、起点、过滤器等认），刚建身份时那次的结果
+//! 会原样再给一遍，里面还没有刚进的房间。不带起点的同步本来就不等，超时值只用来让请求各不相同。
+//! 2026-10-02 网络 Agent 凭口令进了私人房间，马上发言却被告知不在房间里，就是这个原因。
+//!
 //! 存储丢了或与 Matrix 设备对不上（3e）：隔离旧存储，实例换一台新的 Matrix 设备（Synapse 上旧设备
 //! 连同它的密钥一起删掉），打开新存储，再凭封存的恢复凭据恢复加密身份、从服务器端备份取回
 //! 房间密钥。不沿用旧设备 ID：Synapse 删设备时留着给它的交叉签名，同一 ID 的新设备签不上。
@@ -24,7 +29,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex as StdMutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -61,6 +66,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(40);
 const IDLE_LIFETIME: Duration = Duration::from_mins(10);
 /// 打不开或设备与存储对不上之后，这么久之内直接回答暂时不可用，不反复打开。
 const OPEN_RETRY: Duration = Duration::from_secs(30);
+/// 不带起点的同步轮流用 1 到这么多毫秒的超时值，两分钟内同一个客户端不会发出一模一样的请求。
+const INITIAL_SYNC_TIMEOUTS: u64 = 1_000;
 /// 加密身份或密钥备份没建成，隔这么久再试。
 const IDENTITY_RETRY: Duration = Duration::from_mins(5);
 /// 同一个 Agent 这么久之内只重建一次加密存储：重建会删掉 Matrix 上的设备，不能反复来。
@@ -158,6 +165,8 @@ struct OpenClient {
     /// 拿着这把锁建身份；里面是没建成时下一次可以再试的时刻。
     identity: Mutex<Option<Instant>>,
     identity_ready: AtomicBool,
+    /// 发过几次不带起点的同步，用来给下一次换超时值。
+    initial_syncs: AtomicU64,
     /// 设备与存储对不上（例如存储丢了又新建）：这个客户端不能再用，要换设备重建。
     conflicted: AtomicBool,
     last_used: StdMutex<Instant>,
@@ -199,12 +208,18 @@ impl EncryptedClients {
         session: &NetworkAgentSession,
         request: &NetworkAgentSyncRequest,
     ) -> Result<MatrixSyncBatch, NetworkGatewayFailure> {
-        // matrix-sdk 的超时不接受 0：“只看一眼”按 1 毫秒算。
-        let timeout = DurationMillis::new(request.timeout_millis.max(1))
-            .map_err(|_| NetworkGatewayFailure::Internal)?;
-        let request = MatrixSyncRequest::new(request.since.clone(), timeout, false)
-            .map_err(|_| NetworkGatewayFailure::Internal)?;
         let client = self.client(session).await?;
+        let request = match &request.since {
+            // 第一次取消息还没有同步位置：和别的不带起点的同步一样换个超时值，免得拿到缓存。
+            None => client.initial_sync()?,
+            Some(since) => {
+                // matrix-sdk 的超时不接受 0：“只看一眼”按 1 毫秒算。
+                let timeout = DurationMillis::new(request.timeout_millis.max(1))
+                    .map_err(|_| NetworkGatewayFailure::Internal)?;
+                MatrixSyncRequest::new(Some(since.clone()), timeout, false)
+                    .map_err(|_| NetworkGatewayFailure::Internal)?
+            }
+        };
         tokio::spawn(client.sync(request, true))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?
@@ -215,7 +230,8 @@ impl EncryptedClients {
         session: &NetworkAgentSession,
     ) -> Result<(), NetworkGatewayFailure> {
         let client = self.client(session).await?;
-        tokio::spawn(client.clone().sync(full_sync()?, false))
+        let request = client.initial_sync()?;
+        tokio::spawn(client.clone().sync(request, false))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)??;
         let ready = tokio::spawn(client.establish_now())
@@ -233,7 +249,8 @@ impl EncryptedClients {
         session: &NetworkAgentSession,
     ) -> Result<(), NetworkGatewayFailure> {
         let client = self.client(session).await?;
-        tokio::spawn(client.sync(full_sync()?, false))
+        let request = client.initial_sync()?;
+        tokio::spawn(client.sync(request, false))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?
             .map(|_| ())
@@ -345,7 +362,7 @@ impl EncryptedClients {
             }
             Err(OpenFailure::Failed(failure)) => return Err(failure),
         };
-        let synced = tokio::spawn(client.clone().sync(full_sync()?, false))
+        let synced = tokio::spawn(client.clone().sync(client.initial_sync()?, false))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?;
         if let Err(failure) = synced {
@@ -450,6 +467,7 @@ impl EncryptedClients {
             last_sync: Mutex::new(None),
             identity: Mutex::new(None),
             identity_ready: AtomicBool::new(false),
+            initial_syncs: AtomicU64::new(0),
             conflicted: AtomicBool::new(false),
             last_used: StdMutex::new(Instant::now()),
             drain,
@@ -489,6 +507,11 @@ impl OpenClient {
             .last_used
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Instant::now();
+    }
+
+    /// 下一次不带起点的同步（只看一眼）。
+    fn initial_sync(&self) -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
+        initial_sync_request(self.initial_syncs.fetch_add(1, Ordering::Relaxed))
     }
 
     fn idle_for(&self) -> Duration {
@@ -732,9 +755,11 @@ fn replayable(
         .then(|| batch.clone())
 }
 
-/// 完整同步：不带起点，只看一眼。
-fn full_sync() -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
-    let timeout = DurationMillis::new(1).map_err(|_| NetworkGatewayFailure::Internal)?;
+/// 第 `attempt` 次不带起点的同步。这种同步 Synapse 不等，超时值只用来让请求各不相同，
+/// 躲开它对一模一样的同步请求缓存的结果（见模块说明）。
+fn initial_sync_request(attempt: u64) -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
+    let timeout = DurationMillis::new(1 + attempt % INITIAL_SYNC_TIMEOUTS)
+        .map_err(|_| NetworkGatewayFailure::Internal)?;
     MatrixSyncRequest::new(None, timeout, false).map_err(|_| NetworkGatewayFailure::Internal)
 }
 
@@ -742,7 +767,31 @@ fn full_sync() -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
 mod replay_tests {
     use agent_room_application::ports::{MatrixSyncBatch, MatrixSyncToken};
 
-    use super::replayable;
+    use super::{INITIAL_SYNC_TIMEOUTS, initial_sync_request, replayable};
+
+    #[test]
+    fn 不带起点的同步每次的超时值都不一样_免得拿到_synapse_缓存的结果() {
+        let timeouts: Vec<u64> = (0..INITIAL_SYNC_TIMEOUTS)
+            .map(|attempt| {
+                let request = initial_sync_request(attempt).expect("请求有效");
+                assert!(request.since().is_none(), "不带起点");
+                assert!(!request.full_state());
+                request.timeout().value()
+            })
+            .collect();
+        let distinct: std::collections::HashSet<_> = timeouts.iter().collect();
+        assert_eq!(distinct.len(), timeouts.len(), "一轮之内各不相同");
+        assert_eq!(timeouts.first(), Some(&1));
+        assert_eq!(timeouts.last(), Some(&INITIAL_SYNC_TIMEOUTS), "最多 1 秒");
+        assert_eq!(
+            initial_sync_request(INITIAL_SYNC_TIMEOUTS)
+                .expect("请求有效")
+                .timeout()
+                .value(),
+            1,
+            "轮完从头再来"
+        );
+    }
 
     fn token(value: &str) -> MatrixSyncToken {
         MatrixSyncToken::new(value).expect("同步位置有效")
@@ -791,9 +840,9 @@ mod real_dependency_tests {
             MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
             MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
             MatrixAgentUserRegistration, MatrixCreateRoom, MatrixDeviceId, MatrixEvent,
-            MatrixEventType, MatrixRoomEncryption, MatrixRoomPreset, MatrixRoomVisibility,
-            MatrixTransactionId, MatrixUserId, NetworkAgentSyncRequest, PortFuture, SecretFactory,
-            SecretValue,
+            MatrixEventType, MatrixRoomEncryption, MatrixRoomId, MatrixRoomPreset,
+            MatrixRoomVisibility, MatrixTransactionId, MatrixUserId, NetworkAgentSyncRequest,
+            PortFuture, SecretFactory, SecretValue,
         },
     };
     use agent_room_bridge_core::messages::ProtectMessageBodyRequest;
@@ -1147,5 +1196,94 @@ mod real_dependency_tests {
         assert_eq!(vault.recovery(), Some(credential));
         send_in_new_encrypted_room(&clients, &session).await;
         clients.forget(session.network_agent_id).await;
+    }
+
+    /// 被别人邀请、由别的连接替它加入（像控制面那样，加密客户端自己不知道）之后马上发言。
+    /// 建身份时那次不带起点的同步 Synapse 会缓存两分钟；进房间后的刷新要是发一模一样的请求，
+    /// 拿到的还是加入之前的结果，客户端就不认识这个房间（2026-10-02 生产上遇到）。
+    #[tokio::test]
+    #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
+    async fn 真实_synapse_上由别的连接替它加入别人的加密房间后马上就能发言() {
+        let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
+        let (owner, owner_rotator, owner_device) = network_session(&config).await;
+        let (guest, guest_rotator, guest_device) = network_session(&config).await;
+        let owner_store = tempfile::tempdir().expect("加密存储目录");
+        let guest_store = tempfile::tempdir().expect("加密存储目录");
+        let open = |rotator, device, store: &tempfile::TempDir| {
+            EncryptedClients::new(
+                Arc::new(Vault::new(rotator, device)),
+                Arc::new(SecureSecretFactory),
+                config.dependencies.matrix_base_url.as_str(),
+                store.path().to_path_buf(),
+            )
+            .expect("matrix-sdk 配置有效")
+        };
+        let owner_clients = open(owner_rotator, owner_device, &owner_store);
+        let guest_clients = open(guest_rotator, guest_device, &guest_store);
+        owner_clients
+            .prepare(&owner)
+            .await
+            .expect("房主的加密身份就绪");
+        // 进房间之前先建好身份：这次不带起点的同步，Synapse 会缓存两分钟。
+        guest_clients.prepare(&guest).await.expect("加密身份就绪");
+
+        let room = owner_clients
+            .speaker(&owner)
+            .await
+            .expect("房主发言要用的几样")
+            .matrix
+            .create_room(
+                &MatrixCreateRoom::new(
+                    Some("网络 Agent 被邀请进加密房间".to_owned()),
+                    None,
+                    MatrixRoomVisibility::Private,
+                    MatrixRoomPreset::PrivateChat,
+                    false,
+                    vec![MatrixUserId::new(guest.agent_matrix_user_id.clone()).unwrap()],
+                )
+                .unwrap()
+                .with_end_to_end_encryption(),
+            )
+            .await
+            .expect("房主建加密房间并邀请");
+        join_outside_client(&config, &guest, &room).await;
+
+        guest_clients.refresh(&guest).await.expect("进房间后刷新");
+        guest_clients
+            .speaker(&guest)
+            .await
+            .expect("发言要用的几样")
+            .security
+            .ensure_room_ready(&room)
+            .await
+            .expect("刷新之后就认识刚进的房间");
+        owner_clients.forget(owner.network_agent_id).await;
+        guest_clients.forget(guest.network_agent_id).await;
+    }
+
+    /// 像控制面替 Agent 加入那样，绕开它的加密客户端，直接以它的令牌加入房间。
+    async fn join_outside_client(
+        config: &ControlPlaneConfig,
+        session: &NetworkAgentSession,
+        room: &MatrixRoomId,
+    ) {
+        let base = config
+            .dependencies
+            .matrix_base_url
+            .as_str()
+            .trim_end_matches('/');
+        let room = room.as_str().replace('!', "%21").replace(':', "%3A");
+        let response = reqwest::Client::new()
+            .post(format!("{base}/_matrix/client/v3/rooms/{room}/join"))
+            .bearer_auth(session.matrix_access_token.expose())
+            .json(&json!({}))
+            .send()
+            .await
+            .expect("请求加入");
+        assert!(
+            response.status().is_success(),
+            "加入：HTTP {}",
+            response.status()
+        );
     }
 }
