@@ -80,6 +80,16 @@ pub trait MatrixAccountLifecycleGateway: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
+/// 让 Synapse 在接下来一段时间（10 分钟）里允许这个本地账户不经交互认证换签名身份，
+/// 设备上的自动签名重建签名身份时用（ADR 0011）。账户还没有签名身份时 Synapse 答 404，
+/// 那时本来就不需要豁免，实现当作成功。
+pub trait MatrixCrossSigningResetGateway: Send + Sync {
+    fn allow_cross_signing_replacement<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
 /// 创建或恢复一个与单个 Matrix 设备绑定的客户端。
 pub trait MatrixClientFactory: Send + Sync {
     fn login<'a>(

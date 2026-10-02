@@ -30,9 +30,11 @@ use thiserror::Error;
 use tokio::sync::OnceCell;
 use zeroize::Zeroizing;
 
+mod account_encryption;
 mod device_grant;
 mod network_agents;
 
+pub use account_encryption::AesGcmAccountEncryptionKeySealer;
 pub use device_grant::{
     DiscoveredOidcDeviceGrant, OidcDeviceGrantConfig, OidcDeviceGrantConfigurationError,
 };

@@ -4,19 +4,19 @@ use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
         AccountDeletionRepository, AccountDeletionRequest, AccountDeletionRequestOutcome,
-        AccountDeletionStage, AgentCardSnapshotRepository, AgentCreationClaim,
-        AgentCreationReservation, AgentCreationWorkflow, AgentInstanceManagementRepository,
-        AgentInstanceMatrixCleanupStore, AgentInstanceRegistration,
-        AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
-        AgentInstanceRevocationTransaction, AgentInstanceVerificationRepository,
-        AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
-        AgentRegistration, AgentRepository, AgentRetirementOutcome, AgentRetirementTransaction,
-        ClaimTargetedHandoff, DeviceRevocationOutcome, DeviceRevocationTransaction,
-        DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId, OutboxMessage,
-        PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
-        QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt, SecretDigest,
-        StoredAgentInstanceRegistration, TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
-        TargetedHandoffRequestFingerprint,
+        AccountDeletionStage, AccountEncryptionKeyRepository, AgentCardSnapshotRepository,
+        AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow,
+        AgentInstanceManagementRepository, AgentInstanceMatrixCleanupStore,
+        AgentInstanceRegistration, AgentInstanceRegistrationTransaction,
+        AgentInstanceRevocationOutcome, AgentInstanceRevocationTransaction,
+        AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
+        AgentMembershipTransaction, AgentRegistration, AgentRepository, AgentRetirementOutcome,
+        AgentRetirementTransaction, ClaimTargetedHandoff, DeviceRevocationOutcome,
+        DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId,
+        OutboxMessage, PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
+        QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt, SealedSecret, SecretDigest,
+        StoredAgentInstanceRegistration, StoredEncryptionKey, TargetedHandoffReceiptOutcome,
+        TargetedHandoffRepository, TargetedHandoffRequestFingerprint,
     },
 };
 use agent_room_domain::{
@@ -49,7 +49,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 57] = [
+const EXPECTED_TABLES: [&str; 58] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -96,6 +96,7 @@ const EXPECTED_TABLES: [&str; 57] = [
     "oidc_login_attempt",
     "outbox_event",
     "principal",
+    "principal_encryption_key",
     "private_room_agent_member",
     "private_room_join_code",
     "private_room_membership",
@@ -198,6 +199,8 @@ async fn 账户导出与删除状态机在真实事务中完成() {
         .expect("活动账户必须存在");
     assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
 
+    store_encryption_key_twice(&repositories, principal_id).await;
+
     let job_id = AccountDeletionJobId::from_uuid(Uuid::now_v7());
     let receipt_digest = SecretDigest::from_array([91; 32]);
     let request = AccountDeletionRequest {
@@ -219,6 +222,12 @@ async fn 账户导出与删除状态机在真实事务中完成() {
             .await
             .expect("主体状态应可读");
     assert_eq!(deleting_status, "deleting");
+    assert!(
+        find_encryption_key(&repositories, principal_id)
+            .await
+            .is_none(),
+        "提出删除后钥匙就清掉了"
+    );
 
     let lease_expires_at = test_time()
         .checked_add(DurationMillis::new(30_000).expect("租约有效"))
@@ -275,6 +284,48 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     );
 
     database.close().await;
+}
+
+/// 服务器替账户保管的签名钥匙（ADR 0011）：存、覆盖、读回。
+async fn store_encryption_key_twice(
+    repositories: &PostgresRepositories,
+    principal_id: PrincipalId,
+) {
+    assert!(
+        find_encryption_key(repositories, principal_id)
+            .await
+            .is_none()
+    );
+    for (key_id, byte) in [("OLD", 1_u8), ("NEW", 2)] {
+        AccountEncryptionKeyRepository::put_encryption_key(
+            repositories,
+            principal_id,
+            &StoredEncryptionKey {
+                key_id: key_id.to_owned(),
+                sealed: SealedSecret {
+                    key_version: 1,
+                    bytes: vec![byte; 60],
+                },
+            },
+            test_time(),
+        )
+        .await
+        .expect("钥匙可存");
+    }
+    let stored = find_encryption_key(repositories, principal_id)
+        .await
+        .expect("存过了");
+    assert_eq!(stored.key_id, "NEW", "再存一次就覆盖旧的");
+    assert_eq!(stored.sealed.bytes, vec![2; 60]);
+}
+
+async fn find_encryption_key(
+    repositories: &PostgresRepositories,
+    principal_id: PrincipalId,
+) -> Option<StoredEncryptionKey> {
+    AccountEncryptionKeyRepository::find_encryption_key(repositories, principal_id)
+        .await
+        .expect("钥匙可查")
 }
 
 #[tokio::test]

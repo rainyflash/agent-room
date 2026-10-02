@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use agent_room_application::{
+    account_encryption::AccountEncryptionFailure,
     account_lifecycle::{AccountLifecycleFailure, AccountLifecycleFailureKind},
     agent_cards::{AgentCardManagementFailure, AgentCardManagementFailureKind},
     agent_instance_management::{
@@ -699,6 +700,48 @@ impl ApiError {
         };
         log_agent_access_failure(failure, correlation_id);
         Self::new(status, code, category, message, correlation_id)
+    }
+
+    /// 服务器替账户保管的签名钥匙（ADR 0011）。
+    pub(crate) fn account_encryption(
+        failure: AccountEncryptionFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        match failure {
+            AccountEncryptionFailure::InvalidKey => Self::new(
+                StatusCode::BAD_REQUEST,
+                "account.encryption_key_invalid",
+                ErrorCategory::Validation,
+                "钥匙须为 32 字节；钥匙 ID 为 1 到 255 字节，不含控制字符。",
+                correlation_id,
+            ),
+            AccountEncryptionFailure::RateLimited { retry_at } => Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "account.encryption_reset_rate_limited",
+                ErrorCategory::Transient,
+                "一小时里重建签名身份的次数太多了，请按 Retry-After 等一会儿再试。",
+                correlation_id,
+            )
+            .retry_after_seconds(seconds_until(retry_at)),
+            AccountEncryptionFailure::Unavailable => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "account.encryption_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "暂时没法保管或取回签名钥匙，请稍后再试。",
+                correlation_id,
+            ),
+        }
+    }
+
+    /// 这个账户还没有交给服务器保管的钥匙：设备据此知道该新建一把，旧控制面没有这个接口时不会有这个码。
+    pub(crate) fn account_encryption_key_missing(correlation_id: CorrelationId) -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "account.encryption_key_missing",
+            ErrorCategory::Validation,
+            "这个账户还没有交给服务器保管的签名钥匙。",
+            correlation_id,
+        )
     }
 
     /// 网络 Agent 的调用方多半是模型：消息写明下一步怎么做，找不到房间时列出能进的公开大厅。
