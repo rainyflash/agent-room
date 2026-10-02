@@ -2683,6 +2683,7 @@ async fn 凭口令创建时先切到加密客户端建好身份再进房间_之�
         *harness.agents.entered.lock().unwrap(),
         [NetworkAgentTarget::Private(private_room())]
     );
+    assert_online_announced(&harness);
 
     // 用例替身给的会话里没有 encrypted_since：靠网关自己记着，照样走加密客户端。
     harness
@@ -2757,6 +2758,10 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         .await
         .unwrap();
     assert_eq!(same, lobby);
+    assert!(
+        harness.matrix.states.lock().unwrap().is_empty(),
+        "已经在里面的不用再说"
+    );
     let other = harness
         .gateway
         .enter_room(
@@ -2771,6 +2776,7 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         harness.encrypted.prepared.lock().unwrap().is_empty(),
         "公开大厅不用加密客户端"
     );
+    assert_online_announced(&harness);
 
     let private = harness
         .gateway
@@ -2791,6 +2797,7 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         log[log.len() - 4..],
         ["mark_encrypted", "prepare", "enter", "refresh"]
     );
+    assert_online_announced(&harness);
 
     assert_eq!(
         harness
@@ -3080,6 +3087,29 @@ async fn 自己发出去还不确定的_同步时按事务_id_对上() {
 }
 
 // ---------- 在线状态 ----------
+
+/// 进房间后先说的在线：会话里的每个房间都有一条“空闲”，不说在等消息。同样的状态发布服务只发一次，
+/// 再进一个房间时只在新房间里说。
+fn assert_online_announced(harness: &Harness) {
+    let states = harness.matrix.states.lock().unwrap().clone();
+    let rooms: std::collections::BTreeSet<String> = harness
+        .agents
+        .own_session()
+        .rooms
+        .iter()
+        .map(|room| room.matrix_room_id.as_str().to_owned())
+        .collect();
+    let announced: std::collections::BTreeSet<String> =
+        states.iter().map(|(room, _)| room.clone()).collect();
+    assert_eq!(
+        announced, rooms,
+        "进房间后先在每个房间说一声在线：{states:?}"
+    );
+    for (_, state) in &states {
+        assert_eq!(state["status"], "idle");
+        assert_eq!(state["listeningUntil"], Value::Null, "进来时还没在等消息");
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后清除_停用时先发离线() {
