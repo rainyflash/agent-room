@@ -58,7 +58,7 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) messaging: Arc<dyn NetworkAgentMessaging>,
     pub(crate) sources: Arc<NetworkSourceDigester>,
     pub(crate) clock: Arc<dyn Clock>,
-    /// 启动时渲染好的 `/agents.md`。
+    /// 启动时渲染好的 `/agents.md`（`/agents.txt` 是同一份）。
     pub(crate) guide: Arc<str>,
 }
 
@@ -79,6 +79,9 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
     let mcp = mcp::router(state.clone());
     Router::new()
         .route("/agents.md", get(agents_guide))
+        // 同一份说明。有的网页读取器按网址结尾猜类型、不看响应头，见了 .md 就当 markdown 拒收；
+        // 接入对话框给的是这个地址。
+        .route("/agents.txt", get(agents_guide))
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/rooms", get(rooms))
         .route("/v1/network-agents/me", get(me).delete(disable))

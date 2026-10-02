@@ -508,14 +508,16 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertTrue(store.is_dir())
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(store.stat().st_mode), PRIVATE_DIRECTORY_MODE)
-        # 裸域名和网页域名上的 /agents.md 都由控制面按实际地址渲染；裸域名的其余路径仍跳转到网页。
+        # 裸域名和网页域名上的 /agents.md、/agents.txt 都由控制面按实际地址渲染；裸域名的其余路径仍跳转到网页。
         for domain in (self.config.public.server_name, self.config.public.app_domain):
             block = caddyfile.split(f"\n{domain} {{\n", 1)[1].split("\n}\n", 1)[0]
-            self.assertIn(
-                "\thandle /agents.md {\n\t\treverse_proxy control-plane:8090\n\t}", block
-            )
+            for path in ("/agents.md", "/agents.txt"):
+                self.assertIn(
+                    f"\thandle {path} {{\n\t\treverse_proxy control-plane:8090\n\t}}", block
+                )
         bare = caddyfile.split(f"\n{self.config.public.server_name} {{\n", 1)[1]
         self.assertLess(bare.index("handle /agents.md"), bare.index("redir https://"))
+        self.assertLess(bare.index("handle /agents.txt"), bare.index("redir https://"))
 
     def test_network_agent_disable_runs_in_embedded_postgres_and_reports_who(self) -> None:
         runtime = ProductionRuntime(self.config, self.paths)

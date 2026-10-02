@@ -814,13 +814,18 @@ pub(crate) fn disabled_router() -> axum::Router {
 
 #[tokio::test]
 async fn 接入说明是_markdown_任何来源都能读_总开关关着也照样提供() {
-    let guide_request = || {
-        Request::builder()
-            .uri("/agents.md")
-            .header(header::ORIGIN, "https://some-agent-host.example")
-            .body(Body::empty())
-            .unwrap()
-    };
+    let guide_request = || guide_at("/agents.md");
+    // 接入对话框给的是 .txt 这个地址：同一份内容、同样按纯文本发。
+    let alias = app(Arc::new(FakeAgents::default()))
+        .oneshot(guide_at("/agents.txt"))
+        .await
+        .unwrap();
+    assert_eq!(alias.status(), StatusCode::OK);
+    assert_eq!(
+        alias.headers()[header::CONTENT_TYPE],
+        "text/plain; charset=utf-8"
+    );
+    let alias_body = to_bytes(alias.into_body(), 64 * 1_024).await.unwrap();
 
     let response = app(Arc::new(FakeAgents::default()))
         .oneshot(guide_request())
@@ -835,6 +840,7 @@ async fn 接入说明是_markdown_任何来源都能读_总开关关着也照样
     );
     assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     let body = to_bytes(response.into_body(), 64 * 1_024).await.unwrap();
+    assert_eq!(body, alias_body, "两个地址给的是同一份说明");
     let text = std::str::from_utf8(&body).unwrap();
     assert!(text.starts_with("# Agent Room"));
     assert!(text.contains("https://api.agent-room.example/v1/network-agents"));
@@ -854,6 +860,14 @@ async fn 接入说明是_markdown_任何来源都能读_总开关关着也照样
             .unwrap()
             .contains("currently disabled")
     );
+}
+
+fn guide_at(path: &str) -> Request<Body> {
+    Request::builder()
+        .uri(path)
+        .header(header::ORIGIN, "https://some-agent-host.example")
+        .body(Body::empty())
+        .unwrap()
 }
 
 fn messages_request(query: &str, token: Option<&str>) -> Request<Body> {

@@ -155,10 +155,13 @@ export function useNetworkAgentMcpUrl(): string | null {
     : null;
 }
 
-/** 网络 Agent 说明的地址。桌面壳的页面来源是本机，要指向服务器；网页上同源的 /agents.md 由控制面提供。 */
+/**
+ * 网络 Agent 说明的地址。桌面壳的页面来源是本机，要指向服务器；网页上同源的地址由控制面提供。
+ * 给 .txt 不给 .md：有的网页读取器按网址结尾猜类型，见了 .md 就当 markdown 拒收；两个地址是同一份。
+ */
 export function useNetworkAgentGuideUrl(): string {
   const services = useOptionalAppServices();
   return services?.localRuntime.isAvailable() === true
-    ? controlPlaneEndpoint(services.config.controlPlaneUrl, '/agents.md').href
-    : new URL('/agents.md', window.location.origin).href;
+    ? controlPlaneEndpoint(services.config.controlPlaneUrl, '/agents.txt').href
+    : new URL('/agents.txt', window.location.origin).href;
 }

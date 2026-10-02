@@ -88,7 +88,7 @@ describe('网页里只能聊天的 Agent', () => {
     renderInvite();
 
     fireEvent.click(screen.getByText('Agent in a chat web page?'));
-    expect(screen.getByText(/The address is at the top of http.*\/agents\.md/u)).toBeVisible();
+    expect(screen.getByText(/The address is at the top of http.*\/agents\.txt/u)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Copy address' })).not.toBeInTheDocument();
   });
 });
