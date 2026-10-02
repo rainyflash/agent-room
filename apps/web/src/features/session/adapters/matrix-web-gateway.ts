@@ -6,6 +6,7 @@ import { failure } from '@/features/session/adapters/control-plane-client';
 import { IndexedDbMatrixSessionVault } from './indexed-db-matrix-session-vault';
 import { acquireMatrixCryptoLease, type MatrixCryptoLease } from './browser-matrix-lease';
 import { MatrixCryptoStoreCleanup } from './matrix-crypto-store-cleanup';
+import { type EncryptionKeyEscrow, ensureDeviceSigned } from './matrix-device-signing';
 import { ensureFirstEncryptionIdentity } from './matrix-encryption-identity';
 import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
 import {
@@ -25,6 +26,7 @@ import type {
   MatrixRestoreOutcome,
   SessionFailure,
 } from '@/features/session/domain/session';
+import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -67,6 +69,12 @@ export type MatrixWebGatewayOptions = {
   readonly online?: () => boolean;
   readonly replaceHistory?: (url: string) => void;
   readonly secretStorageKeys?: MatrixSecretStorageKeyCache;
+  /**
+   * 服务器替账户保管的签名钥匙（ADR 0011）。给了就在登录后自动签好这台设备；
+   * 没给（测试、旧的组装）时只像以前一样给第一台设备建立身份。
+   */
+  readonly encryptionKeyEscrow?: EncryptionKeyEscrow;
+  readonly deviceSigning?: DeviceSigningStatus;
   readonly sessionStorage?: Storage;
   readonly sessionVault?: MatrixSessionVault;
   readonly syncTimeoutMs?: number;
@@ -84,6 +92,8 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #online: () => boolean;
   readonly #replaceHistory: (url: string) => void;
   readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
+  readonly #encryptionKeyEscrow: EncryptionKeyEscrow | undefined;
+  readonly #deviceSigning: DeviceSigningStatus;
   readonly #sessionStorage: Storage;
   readonly #sessions: MatrixSessionRepository;
   readonly #clientLogs = new WeakMap<MatrixClient, MatrixLifecycleLogger>();
@@ -114,6 +124,8 @@ export class MatrixWebGateway implements MatrixGateway {
       window.history.replaceState(window.history.state, '', url);
     },
     secretStorageKeys = new MatrixSecretStorageKeyCache(),
+    encryptionKeyEscrow,
+    deviceSigning = new DeviceSigningStatus(),
     sessionStorage = window.sessionStorage,
     sessionVault = new IndexedDbMatrixSessionVault(baseUrl, indexedDB, sessionStorage),
     syncTimeoutMs = 20_000,
@@ -129,6 +141,8 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#online = online;
     this.#replaceHistory = replaceHistory;
     this.#secretStorageKeys = secretStorageKeys;
+    this.#encryptionKeyEscrow = encryptionKeyEscrow;
+    this.#deviceSigning = deviceSigning;
     this.#sessionStorage = sessionStorage;
     this.#sessions = new MatrixSessionRepository(sessionVault);
     this.#syncTimeoutMs = syncTimeoutMs;
@@ -449,9 +463,37 @@ export class MatrixWebGateway implements MatrixGateway {
       this.#onClientActivity,
       () => this.#sessions.failure,
       this.#cryptoCleanup,
+      this.#ensureEncryption,
       this.#clientLogs.get(client),
     );
   }
+
+  /**
+   * 首次同步之后跑一遍：有服务器保管的钥匙就让这台设备自动签好（`specs/device-signing/design.md`），
+   * 没配就只给第一台设备建立身份。失败不挡登录，状态交给界面，界面可以重试。
+   */
+  readonly #ensureEncryption = async (client: MatrixClient): Promise<void> => {
+    const escrow = this.#encryptionKeyEscrow;
+    if (escrow === undefined) {
+      await ensureFirstEncryptionIdentity(client);
+      return;
+    }
+    const attempt = async (): Promise<void> => {
+      this.#deviceSigning.set({ kind: 'working' });
+      try {
+        await ensureDeviceSigned(client, escrow, this.#secretStorageKeys);
+        this.#deviceSigning.set({ kind: 'ready' });
+      } catch {
+        this.#deviceSigning.set({ kind: 'failed' });
+      }
+      // 签好了，依赖安全状态的界面重新读一遍。
+      this.#onClientActivity(client);
+    };
+    this.#deviceSigning.setRetry(() => {
+      void attempt();
+    });
+    await attempt();
+  };
 
   #releaseCryptoLease(): void {
     this.#cryptoLease?.release();
@@ -637,6 +679,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     onClientActivity: (client: MatrixClient) => void,
     persistenceFailure: () => SessionFailure | null,
     cryptoCleanup: MatrixCryptoStoreCleanup,
+    private readonly ensureEncryption: (client: MatrixClient) => Promise<void>,
     private readonly lifecycleLog: MatrixLifecycleLogger | undefined,
   ) {
     this.#client = client;
@@ -720,11 +763,11 @@ class BrowserMatrixConnection implements MatrixConnection {
     });
   }
 
-  /** 首次同步完成后本机设备密钥已上传，此时再为从未建立过身份的账户建立加密身份。 */
+  /** 首次同步完成后本机设备密钥已上传，此时让这台设备签好（全新账户先建立签名身份）。 */
   #ensureEncryptionIdentity(): void {
     if (this.#identityEnsured) return;
     this.#identityEnsured = true;
-    void ensureFirstEncryptionIdentity(this.#client);
+    void this.ensureEncryption(this.#client);
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {
