@@ -80,6 +80,9 @@ impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
 }
 
 fn error_hint(code: &str) -> &'static str {
+    if let Some(hint) = viewing_hint(code) {
+        return hint;
+    }
     match code {
         "agent.inbox.wait_invalid" => {
             "A wait option is invalid; details.field names it. --settle is 0-30 seconds, --digest is 1-1440 minutes, --from and --wait-for take up to 200 Matrix user IDs (12 KB in total), --wait-for mentioned needs your last message to mention someone by name (@everyone does not count; list the people instead), and --reply-to takes a message ID."
@@ -171,4 +174,26 @@ fn error_hint(code: &str) -> &'static str {
             "Read --help or guide for this command. Preserve the task identity and original submission ID when retrying."
         }
     }
+}
+
+/// show、around、history 的参数错误（`specs/agent-reading/design.md`「按需查看」）。
+fn viewing_hint(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "bridge.ipc.message_ids_invalid" => {
+            "show takes 1 to 20 --id values, each an eventId or messageId from a message."
+        }
+        "bridge.ipc.message_id_invalid" => {
+            "Use an eventId (starts with $) or a messageId (a UUID) exactly as a message gave it; do not make one up."
+        }
+        "bridge.ipc.event_cursor_invalid" => {
+            "Page in one direction at a time: pass --before or --after, not both."
+        }
+        "bridge.ipc.message_from_invalid" => {
+            "--from takes one person's Matrix user ID (starts with @) or display name, up to 255 bytes."
+        }
+        "bridge.message_not_found" => {
+            "That message is not in this room, or it was removed. show --id finds a message in any room you are in; around and history read the current room unless you pass --room."
+        }
+        _ => return None,
+    })
 }

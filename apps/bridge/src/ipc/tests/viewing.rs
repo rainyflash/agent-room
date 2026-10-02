@@ -8,8 +8,8 @@ use agent_room_bridge_core::messages::{
     ProjectedMessageActor, ProjectedMessagePreview,
 };
 use agent_room_bridge_ipc::{
-    IpcGetMessagesRequest, IpcMessagePreviewSummary, IpcMessagesAroundRequest, IpcMethod,
-    IpcResponse, IpcRoomHistoryRequest,
+    IpcGetMessagesRequest, IpcListPreviewsRequest, IpcMessagePreviewSummary,
+    IpcMessagesAroundRequest, IpcMethod, IpcResponse, IpcRoomHistoryRequest,
 };
 use agent_room_bridge_storage_adapter::{
     MessageProjectionStorageKey, SqliteMessageTimelineRepository,
@@ -173,6 +173,45 @@ async fn 按_id_取_给全文按要的顺序_别的房间和找不到的放进_m
         "不在的房间里的当作找不到"
     );
     assert!(more.is_empty());
+}
+
+#[tokio::test]
+async fn 收件箱里长消息只给开头_按_id_取回全文() {
+    let ada = human("Ada", "@ada:matrix.test");
+    let (_directory, store) = store_with(&[chat(ROOM, 0, ada, &"长".repeat(1_200), &[])]).await;
+    let handler = handler(store);
+
+    let response = handler
+        .dispatch(IpcMethod::ReadInbox(IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting: false,
+            wait_ms: None,
+        }))
+        .await
+        .expect("可以读收件箱");
+    let IpcResponse::MessagePreviews { previews, .. } = response else {
+        panic!("收件箱必须返回消息预览：{response:?}");
+    };
+    let chat = previews[0].conversation.as_ref().expect("是聊天");
+    assert!(chat.truncated, "收件箱里长消息只给开头");
+    assert_eq!(chat.text.chars().count(), 1_000);
+    assert_eq!(chat.full_length, Some(1_200));
+
+    let IpcResponse::Messages { messages, .. } = handler
+        .dispatch(IpcMethod::GetMessages(IpcGetMessagesRequest {
+            ids: vec![previews[0].message_id.clone()],
+        }))
+        .await
+        .expect("可以按 ID 取")
+    else {
+        panic!("按 ID 取必须返回取到的消息");
+    };
+    let whole = messages[0].conversation.as_ref().expect("是聊天");
+    assert!(!whole.truncated);
+    assert_eq!(whole.text, "长".repeat(1_200));
 }
 
 #[tokio::test]

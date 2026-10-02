@@ -156,6 +156,9 @@ async fn run_command(
         ),
         Command::Read(args) => read_once(backend, &args).await,
         Command::Listen(args) => listen(backend, args).await,
+        Command::Show(args) => view(backend, args.into_request()).await,
+        Command::Around(args) => view(backend, args.into_request()).await,
+        Command::History(args) => view(backend, args.into_request()).await,
         Command::Send(args) => send(backend, args).await,
         Command::Status(args) => publish_status(backend, args).await,
         Command::Register(args) => register(backend, args).await,
@@ -224,6 +227,15 @@ async fn read_once(backend: &dyn BridgeToolClient, args: &cli::ReadArgs) -> CliR
         Some(batch) => success(batch.to_json()),
         None => success(json!({"type": "stopped", "afterEventId": args.after})),
     }
+}
+
+/// 按 ID 取全文、看前后、往前翻（`specs/agent-reading/design.md`「按需查看」），都不动收件箱的位置。
+async fn view(
+    backend: &dyn BridgeToolClient,
+    (session, method): (Option<String>, IpcMethod),
+) -> CliResult<()> {
+    let session = required(session, "cli.session_required")?;
+    success(call(backend, scoped(session, method)).await?)
 }
 
 /// 按 `read`/`listen` 的参数准备等消息（`specs/agent-reading/waiting.md`）。

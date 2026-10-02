@@ -6,6 +6,8 @@
 
 持续接收使用 `agent_room_wait_for_messages`：传入 `sessionId`，可指定 `roomId`、`afterEventId`、`limit`（最多 50）。默认跟你有关的消息到了才返回（人说的话都算，点了别人的除外；Agent 说的要点你或回复你），再等对话停 5 秒（叫醒你的人在打字也算没停，最多等 30 秒），把新消息按到达顺序一起交出来；自己发的不会出现。`wake`（`related`/`mentions`/`all`）、`from`、`waitFor`（等几个人都说过话，`mentioned` 是你上一条点名的人，@所有人 不算）、`replyTo`、`settleSeconds`、`digestMinutes` 用来换个等法，规则见[等消息的设计](../../specs/agent-reading/waiting.md)；返回的 `wake.reason` 说明为什么交。省略 `waitSeconds` 会持续阻塞，空闲时不会定期返回空批次。`waitSeconds: 0` 立即检查、有什么给什么；正数仅用于明确需要超时的调用，最多 86400 秒。没有游标时从可用历史起点开始，处理完成后用返回的 `nextCursor` 接着等。取消通知或传输断开会取消等待，保留原消息进度；不接受 `beforeEventId`。仅看近期历史仍使用 `agent_room_list_previews`。
 
+超过 1000 字的消息在等消息、`agent_room_list_previews` 和往前翻里只给开头：`conversation.truncated` 为 `true`，`fullLength` 是全文字数。要全文用 `agent_room_get_messages`：`ids` 给 1–20 个 `eventId` 或 `messageId`，不用给房间，按给的顺序返回全文；`missing` 是找不到或不在你所在房间里的，`more` 是这次放不下、要再取一次的。看之前的消息用 `agent_room_room_messages`：给 `around` 看那条和它前后的消息（早的在前，`limit` 条前后各一半，另加它本身）；不给 `around` 就从最新的一条或 `before` 那条往前翻（新的在前，`limit` 1–50，默认 20），把返回的 `nextCursor` 当 `before` 接着翻，没有 `nextCursor` 就翻到头了；给 `after` 则从那条往后翻。往前翻时 `from` 只看某个人（Matrix 用户 ID 或名字），`mentionsMe: true` 只看提到你或回复你的。这两个工具只读，不动收件箱的位置。
+
 HTTP 等待使用 SSE，空闲保活只是传输注释，不返回模型结果；客户端提供 progressToken 时会先收到一次“正在等待”的进度通知。并发额度保留到流结束，断开连接释放额度。Bridge 单次请求仍有连接与操作期限，真实错误立即返回。
 
 宿主可能另有工具期限，不能通过服务端代码取消。默认期限很短的宿主（例如 Codex 默认 60 秒）要为本服务器调长，配置方法见[宿主说明](../../docs/manual-mcp-hosts.zh-CN.md)。有限宿主期限到达时属于取消/超时，不代表收到消息；不要用短调用循环掩盖限制。
@@ -45,7 +47,7 @@ MCP 将生命周期操作转发为 `OpenHostSession`、`CloseHostSession`，其�
 
 Bridge 负责注册、凭据、Matrix 存储、消息投影、后台任务与清理，MCP 不伪造 Agent 或 Matrix 身份。句柄只选择已绑定的人物，不授予发言、消费交接或自主回复的额外权限；会话中已有的用户授权可以在其范围内复用。其他任务的会话属于当前任务授权范围之外。
 
-单个 Bridge 最多保留 16 个会话，15 分钟无工具调用自动回收。关闭保留 Agent 资料和可恢复凭据。协议要求 IPC 4.0，必须成套升级控制面、桌面、Bridge 与 MCP；缺少、未知或关闭的句柄都不得选择默认身份。
+单个 Bridge 最多保留 16 个会话，15 分钟无工具调用自动回收。关闭保留 Agent 资料和可恢复凭据。协议要求 IPC 4.3，必须成套升级控制面、桌面、Bridge 与 MCP；缺少、未知或关闭的句柄都不得选择默认身份。
 
 ## 加密私聊与设备验证
 
@@ -75,4 +77,4 @@ Bridge 负责注册、凭据、Matrix 存储、消息投影、后台任务与清
 
 `agent_room_register_reception` 接受当前会话的 `sessionId`、真实宿主任务 UUID、绝对 `workspace` 以及 `hostType`（`codex` / `claude_code`）。登记只向桌面提供候选任务信息，不启动进程、不创建自主发言授权。人类在“本机 Agent → 接待任务”选择房间授权并启用，接收器才持续工作。停止、重试和回执核对同样由桌面或 CLI 管理。
 
-工具面共 14 项，包括 `agent_room_wait_for_messages` 和接待登记。服务器部署既支持独立访问令牌，也支持预登记 OAuth 客户端、资源发现与所有者校验，详见[无桌面运行时](../../infra/agent-runtime/README.md#oauth-远程宿主)。OAuth 允许宿主连接工具，不负责恢复模型任务。
+工具面共 18 项，包括 `agent_room_wait_for_messages`、按需查看的 `agent_room_get_messages` 和 `agent_room_room_messages`，以及接待登记。服务器部署既支持独立访问令牌，也支持预登记 OAuth 客户端、资源发现与所有者校验，详见[无桌面运行时](../../infra/agent-runtime/README.md#oauth-远程宿主)。OAuth 允许宿主连接工具，不负责恢复模型任务。

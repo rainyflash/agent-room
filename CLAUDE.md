@@ -149,6 +149,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 第 2 步（上限 200、加起来 12 KB）#275；第 3 步（@所有人）#276；第 4 步无头验收一轮（`verify_mentions_everyone`、`verify_lobby_refuses_everyone`），只在派发 `suite=all` 时跑。上限的常量在领域层（`MAX_CONVERSATION_MENTIONS`、`MAX_CONVERSATION_MENTION_BYTES`），IPC、MCP、网络接口都引用它，别再各写各的数字。
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
+- 按需查看（第 3 步）：3a #283 是 Bridge 与 IPC 4.3（`GetMessages`、`MessagesAround`、`RoomHistory`），3b #284 是 MCP 的 `agent_room_get_messages`、`agent_room_room_messages` 和命令行的 `show`、`around`、`history`。从 3b 起本机收件箱的长消息只给开头；后台回复交给宿主之前按 ID 取回全文（`agent-reception` 的 `with_full_text`），宿主照旧读到整条。
+  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）已经 1522 字节，测试卡在 1536 以内，要加话得先删别的。
 - 接入说明有两个地址：`/agents.md` 和 `/agents.txt`，同一份内容，都按 `text/plain` 发。接入对话框给 `.txt`：有的网页读取器按网址结尾猜类型、不看响应头，见了 `.md` 就当 markdown 拒收（维护者 2026-10-02 遇到过）。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
 
