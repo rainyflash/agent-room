@@ -38,11 +38,11 @@ Matrix 的标准做法是“密钥存储”（secret storage，4S）：账户的
 
 ## 控制面接口
 
-都在登录会话下，改动类的要校验来源（和账户删除一样）。
+和 `/account/export`、账户删除一样挂在 `/account` 下，都在登录会话下；改动类的要校验来源。
 
-- `GET /v1/me/encryption-key`：`{ keyId, key }`（`key` 是 base64）；没有就 404。
-- `PUT /v1/me/encryption-key`，正文 `{ keyId, key }`：存下（覆盖旧的）。
-- `POST /v1/me/encryption-reset`：请 Synapse 在接下来 10 分钟内允许这个账户不经交互认证换签名身份（Synapse 管理接口 `POST /_synapse/admin/v1/users/{userId}/_allow_cross_signing_replacement_without_uia`，用控制面已有的管理令牌）。只在重建签名身份时用。按主体限流（比如一小时 3 次）。
+- `GET /account/encryption-key`：`{ keyId, key }`（`key` 是 base64）；没有就 404。
+- `PUT /account/encryption-key`，正文 `{ keyId, key }`：存下（覆盖旧的）。
+- `POST /account/encryption-reset`：请 Synapse 在接下来 10 分钟内允许这个账户不经交互认证换签名身份（Synapse 管理接口 `POST /_synapse/admin/v1/users/{userId}/_allow_cross_signing_replacement_without_uia`，用控制面已有的管理令牌）。只在重建签名身份时用。按主体限流（比如一小时 3 次）。
 
 ## 设备上怎么做（网页端和桌面端共用一份代码）
 
@@ -59,10 +59,10 @@ Matrix 的标准做法是“密钥存储”（secret storage，4S）：账户的
      2. 签这台设备，加载备份钥匙；
      3. 在后台找回历史。
    - **没要到，或者对不上**（以前设过恢复密钥、服务器不知道；或者谁手里都没有私钥）：**重建一次签名身份**。
-     1. `POST /encryption-reset`；
+     1. `POST /account/encryption-reset`；
      2. 新建签名身份并签这台设备；
      3. 新建钥匙、密钥存储和密钥备份；
-     4. `PUT` 给服务器。
+     4. `PUT /account/encryption-key` 交给服务器。
 
      之后别的设备打开时，按第 3 步的第一种情况自动签上。
 
