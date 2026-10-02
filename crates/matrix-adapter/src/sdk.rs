@@ -67,6 +67,7 @@ use crate::{
     error::{map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
     mapping::{map_backfill, map_sync_response, map_timeline_event},
+    owner::{AgentOwner, accept_known_owner_identity},
     room_key_requests::RoomKeyRequester,
     store_recovery::{
         quarantine_invalid_state_cache, quarantine_session_store, recover_query_statistics,
@@ -272,6 +273,7 @@ pub struct MatrixSdkHandoffConnection {
     matrix: MatrixConnection,
     handoff: Arc<MatrixSdkHandoffGateway>,
     security: Arc<crate::security::MatrixSdkSecurityGateway>,
+    owner: Arc<AgentOwner>,
 }
 
 impl std::fmt::Debug for MatrixSdkHandoffConnection {
@@ -286,6 +288,22 @@ impl std::fmt::Debug for MatrixSdkHandoffConnection {
 impl MatrixSdkHandoffConnection {
     pub const fn matrix(&self) -> &MatrixConnection {
         &self.matrix
+    }
+
+    /// 底层 Matrix SDK 客户端。只给真实 Synapse 集成测试模拟产品里由人做的步骤，比如核对、
+    /// 重建签名身份。
+    #[doc(hidden)]
+    pub fn sdk_client(&self) -> Client {
+        self.security.client().clone()
+    }
+
+    /// 告诉这个连接 Agent 的主人是谁（本机 Bridge 的主人）。主人在核对过之后换了签名身份
+    /// （人的设备自动签名重建过，ADR 0011）时，撤销以前对他的核对，照常收发。
+    pub fn set_owner(&self, owner: &MatrixUserId) {
+        match UserId::parse(owner.as_str()) {
+            Ok(owner) => self.owner.set(owner),
+            Err(error) => tracing::warn!(%error, "主人的 Matrix ID 无效，不认主人"),
+        }
     }
 
     pub fn matrix_gateway_handle(&self) -> Arc<dyn MatrixGateway> {
@@ -393,6 +411,8 @@ struct MatrixSdkGateway {
     encrypted_rooms: Mutex<HashSet<matrix_sdk::ruma::OwnedRoomId>>,
     /// Agent 的客户端才有：解不开的事件交给它去请发送设备重发房间密钥。
     room_key_requests: Option<Arc<RoomKeyRequester>>,
+    /// Agent 的主人；不知道（或者网络 Agent 没有主人）时是空的。
+    owner: Arc<AgentOwner>,
 }
 
 impl MatrixSdkGateway {
@@ -440,8 +460,11 @@ impl MatrixGateway for MatrixSdkGateway {
             for (room_id, update) in &response.rooms.joined {
                 self.note_undecryptable(room_id, &update.timeline.events);
             }
+            // 主人核对过之后换了签名身份：先撤销旧核对，下面重判时他的消息才可信。
+            accept_known_owner_identity(&self.client, &self.owner).await;
             let upgrades = refresh_stale_sender_trust(
                 &self.client,
+                &self.owner,
                 response
                     .rooms
                     .joined
@@ -657,6 +680,7 @@ impl MatrixGateway for MatrixSdkGateway {
             self.note_undecryptable(room.room_id(), &response.chunk);
             let upgrades = refresh_stale_sender_trust(
                 &self.client,
+                &self.owner,
                 [(room.room_id(), response.chunk.as_slice())],
             )
             .await;
@@ -684,7 +708,8 @@ impl MatrixGateway for MatrixSdkGateway {
             self.note_undecryptable(room.room_id(), std::iter::once(&event));
             let events = std::slice::from_ref(&event);
             let mut upgrades =
-                refresh_stale_sender_trust(&self.client, [(room.room_id(), events)]).await;
+                refresh_stale_sender_trust(&self.client, &self.owner, [(room.room_id(), events)])
+                    .await;
             if let Some(requests) = &self.room_key_requests {
                 requests
                     .trust_vouched_sessions(&self.client, room.room_id(), events, &mut upgrades)
@@ -947,7 +972,7 @@ fn connection_from_client(
     sync_timeline_limit: NonZeroU16,
 ) -> MatrixResult<MatrixConnection> {
     let (session, sdk_gateway) =
-        sdk_connection_parts(client, operation, sync_timeline_limit, None)?;
+        sdk_connection_parts(client, operation, sync_timeline_limit, None, Arc::default())?;
     Ok(application_connection(session, sdk_gateway))
 }
 
@@ -959,17 +984,20 @@ fn handoff_connection_from_client(
     // 本机 Bridge 和网络 Agent 网关都从这里打开客户端：应别人设备的请求重发房间密钥，
     // 以及自己缺密钥时请别人重发，也就一起有了。
     let room_key_requests = crate::room_keys::attach(&client);
-    let security = crate::security::MatrixSdkSecurityGateway::new(client.clone());
+    let owner = Arc::new(AgentOwner::default());
+    let security = crate::security::MatrixSdkSecurityGateway::new(client.clone(), owner.clone());
     let (session, sdk_gateway) = sdk_connection_parts(
         client,
         MatrixOperation::RestoreSession,
         sync_timeline_limit,
         Some(room_key_requests),
+        owner.clone(),
     )?;
     Ok(MatrixSdkHandoffConnection {
         matrix: application_connection(session, sdk_gateway),
         handoff,
         security,
+        owner,
     })
 }
 
@@ -978,6 +1006,7 @@ fn sdk_connection_parts(
     operation: MatrixOperation,
     sync_timeline_limit: NonZeroU16,
     room_key_requests: Option<Arc<RoomKeyRequester>>,
+    owner: Arc<AgentOwner>,
 ) -> MatrixResult<(MatrixSession, Arc<MatrixSdkGateway>)> {
     let sdk_session = client
         .matrix_auth()
@@ -991,6 +1020,7 @@ fn sdk_connection_parts(
         sync_timeline_limit,
         encrypted_rooms: Mutex::default(),
         room_key_requests,
+        owner,
     });
     Ok((session, sdk_gateway))
 }

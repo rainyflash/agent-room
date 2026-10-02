@@ -39,6 +39,8 @@ const TEST_SYNC_TIMEOUT_MILLIS: u64 = 100;
 
 #[path = "real_synapse/cross_signing_upload.rs"]
 mod cross_signing_upload;
+#[path = "real_synapse/owner_identity.rs"]
+mod owner_identity;
 #[path = "real_synapse/recovery.rs"]
 mod recovery;
 #[path = "real_synapse/room_keys.rs"]

@@ -26,6 +26,8 @@ use matrix_sdk::{
 use matrix_sdk_base::crypto::SasState;
 use tokio::sync::Mutex;
 
+use crate::owner::{AgentOwner, accept_owner_identity};
+
 const MAX_VERIFICATIONS: usize = 16;
 mod recovery;
 const VERIFICATION_LIFETIME: Duration = Duration::from_mins(10);
@@ -39,17 +41,23 @@ struct ActiveVerification {
 /// 复用 Agent 的加密 Store 和 Matrix 会话；IPC 只获得公钥状态及一次性 SAS 数字。
 pub(crate) struct MatrixSdkSecurityGateway {
     client: Client,
+    owner: Arc<AgentOwner>,
     active: Mutex<BTreeMap<(String, String), ActiveVerification>>,
     operation: Mutex<()>,
 }
 
 impl MatrixSdkSecurityGateway {
-    pub(crate) fn new(client: Client) -> Arc<Self> {
+    pub(crate) fn new(client: Client, owner: Arc<AgentOwner>) -> Arc<Self> {
         Arc::new(Self {
             client,
+            owner,
             active: Mutex::new(BTreeMap::new()),
             operation: Mutex::new(()),
         })
+    }
+
+    pub(crate) const fn client(&self) -> &Client {
+        &self.client
     }
 
     async fn identity(&self) -> Result<MatrixSecurityResult, MatrixSecurityFailure> {
@@ -448,11 +456,18 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
                 if member.user_id() == own {
                     continue;
                 }
-                let identity = crypto
+                let Some(identity) = crypto
                     .request_user_identity(member.user_id())
                     .await
-                    .map_err(|_| MatrixSecurityFailure::Unavailable)?;
-                if identity.is_some_and(|identity| identity.has_verification_violation()) {
+                    .map_err(|_| MatrixSecurityFailure::Unavailable)?
+                else {
+                    continue;
+                };
+                if !identity.has_verification_violation() {
+                    continue;
+                }
+                // 主人重建了签名身份（ADR 0011）：撤销以前的核对，照常发送。别人仍要重新核对。
+                if !(self.owner.is(member.user_id()) && accept_owner_identity(&identity).await) {
                     return Err(MatrixSecurityFailure::IdentityChanged);
                 }
             }

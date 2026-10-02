@@ -14,7 +14,10 @@ use matrix_sdk::{
     ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, RoomId},
 };
 
-use crate::mapping::sender_device_trusted;
+use crate::{
+    mapping::sender_device_trusted,
+    owner::{AgentOwner, accept_owner_identity},
+};
 
 /// 刷新后确认由主人签名的事件。映射时视为可信。
 #[derive(Debug, Default)]
@@ -42,9 +45,11 @@ struct Candidate {
 /// 对可能因缓存过时而判为不可信的事件，刷新发送者并重新判定。
 ///
 /// 只处理「设备未签名」和「设备未知」：发送者不符、核对后又换了身份等是真实问题，不做刷新。
+/// 例外是主人核对过之后换了身份（设备自动签名重建过，见 `owner.rs`）：撤销旧核对后重判。
 /// 刷新失败时维持原判定，照常隔离。
 pub(crate) async fn refresh_stale_sender_trust<'a>(
     client: &Client,
+    owner: &AgentOwner,
     rooms: impl IntoIterator<Item = (&'a RoomId, &'a [TimelineEvent])>,
 ) -> SenderTrustUpgrades {
     let mut candidates = Vec::new();
@@ -53,7 +58,9 @@ pub(crate) async fn refresh_stale_sender_trust<'a>(
             let Some(info) = event.encryption_info() else {
                 continue;
             };
-            if !possibly_stale(&info.verification_state) {
+            let rejudge = possibly_stale(&info.verification_state)
+                || (owner.is(&info.sender) && owner_changed_identity(&info.verification_state));
+            if !rejudge {
                 continue;
             }
             let (Some(event_id), Some(session_id)) = (event.event_id(), info.session_id()) else {
@@ -77,7 +84,11 @@ pub(crate) async fn refresh_stale_sender_trust<'a>(
         .collect::<BTreeSet<_>>();
     for sender in &senders {
         // 刷新失败时下面按缓存重判，结果与原判定相同，事件照常隔离。
-        let _ = client.encryption().request_user_identity(sender).await;
+        if let Ok(Some(identity)) = client.encryption().request_user_identity(sender).await
+            && owner.is(sender)
+        {
+            accept_owner_identity(&identity).await;
+        }
     }
     for candidate in candidates {
         let Some(room) = client.get_room(&candidate.room_id) else {
@@ -92,6 +103,13 @@ pub(crate) async fn refresh_stale_sender_trust<'a>(
         }
     }
     upgrades
+}
+
+const fn owner_changed_identity(state: &VerificationState) -> bool {
+    matches!(
+        state,
+        VerificationState::Unverified(VerificationLevel::VerificationViolation)
+    )
 }
 
 const fn possibly_stale(state: &VerificationState) -> bool {
