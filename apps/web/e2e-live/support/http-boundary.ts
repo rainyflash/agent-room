@@ -26,6 +26,11 @@ export function isExpectedHttpBoundary(status: number, rawUrl: string, method: s
       method === 'GET' &&
       url.origin === apiOrigin &&
       url.pathname === '/account/encryption-key') ||
+    // 重建签名身份时 matrix-js-sdk 顺手删掉“脱水设备”；账户没有时 Synapse 回 404，SDK 也当作正常。
+    (status === 404 &&
+      (method === 'GET' || method === 'DELETE') &&
+      url.origin === matrixOrigin &&
+      url.pathname === '/_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device') ||
     (status === 404 &&
       method === 'GET' &&
       url.origin === matrixOrigin &&
