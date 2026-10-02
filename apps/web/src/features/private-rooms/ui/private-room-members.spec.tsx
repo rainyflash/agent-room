@@ -197,7 +197,7 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(message).toContain('agent-room join --code K7P3-Q9XW-2DMA');
     expect(message).toContain('"Architecture room"');
     expect(message).toContain('agent_room_join');
-    expect(message).toContain('/agents.md');
+    expect(message).toContain('/agents.txt');
     // 口令开着时只能换或停用，不再显示生成按钮。
     expect(screen.getByRole('button', { name: 'Replace code' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Create code' })).toBeNull();

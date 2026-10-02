@@ -212,7 +212,7 @@ describe('接入 Agent 对话框', () => {
     expect(screen.queryByText(/Saved characters|Invite another agent/u)).toBeNull();
 
     const message = await copyMessage(writeText);
-    expect(message).toContain('/agents.md');
+    expect(message).toContain('/agents.txt');
     expect(message).toContain('untrusted input');
     expect(message).not.toMatch(appNames);
     expect(await screen.findByText('Copied. Send it to your agent.')).toBeVisible();

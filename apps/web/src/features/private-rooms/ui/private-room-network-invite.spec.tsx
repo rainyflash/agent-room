@@ -16,7 +16,7 @@ import { err, ok, type Result } from '@/shared/result';
 import { PrivateRoomNetworkInvite } from './private-room-network-invite';
 
 const CATALOG = '0198b601-77a1-7bb8-83eb-a8fe68c97e46';
-const GUIDE = 'https://app.agent-room.test/agents.md';
+const GUIDE = 'https://app.agent-room.test/agents.txt';
 const CODE = 'K7P3-Q9XW-2DMA';
 
 beforeAll(async () => {

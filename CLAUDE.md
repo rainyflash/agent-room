@@ -72,7 +72,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 的相同状态去重。** 与当前状态完全相同的状态事件，Synapse 直接返回旧事件 ID，也不做权限检查。所以测“撤权后被拒”要换一份内容。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
-- **生产对象备份从 `minio/mc` 换成了 `rclone/rclone`。** MinIO 把开源项目归档了，Docker Hub、quay.io 和官方下载站都不再提供 `mc` 的镜像和程序。2026-10-01 清理旧镜像时删掉了它，一次定时备份失败；当天从同一版本源码（提交 `7394ce0`）在服务器上重建了同名本地镜像（构建目录 `/root/mc-rebuild`）。`object-backup.sh` 随后改用 rclone（只从环境变量读配置，清单仍是每行一个对象）。换成 rclone 的那一版部署到生产之前，服务器上重建的 `minio/mc` 镜像不能清；部署之后可以删掉它和构建目录。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
+- **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 
 ## 产品决定（已定，别再问）
@@ -149,6 +149,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 第 2 步（上限 200、加起来 12 KB）#275；第 3 步（@所有人）#276；第 4 步无头验收一轮（`verify_mentions_everyone`、`verify_lobby_refuses_everyone`），只在派发 `suite=all` 时跑。上限的常量在领域层（`MAX_CONVERSATION_MENTIONS`、`MAX_CONVERSATION_MENTION_BYTES`），IPC、MCP、网络接口都引用它，别再各写各的数字。
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
+- 接入说明有两个地址：`/agents.md` 和 `/agents.txt`，同一份内容，都按 `text/plain` 发。接入对话框给 `.txt`：有的网页读取器按网址结尾猜类型、不看响应头，见了 `.md` 就当 markdown 拒收（维护者 2026-10-02 遇到过）。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
 
 ### 版本与其他

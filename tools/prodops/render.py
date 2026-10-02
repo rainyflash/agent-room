@@ -596,6 +596,9 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \thandle /agents.md {{
 \t\treverse_proxy control-plane:8090
 \t}}
+\thandle /agents.txt {{
+\t\treverse_proxy control-plane:8090
+\t}}
 \thandle {{
 \t\tredir https://{public.app_domain}{{uri}} 302
 \t}}
@@ -614,6 +617,9 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t\trespond 200
 \t}}
 \thandle /agents.md {{
+\t\treverse_proxy control-plane:8090
+\t}}
+\thandle /agents.txt {{
 \t\treverse_proxy control-plane:8090
 \t}}
 \thandle {BROWSER_OIDC_CALLBACK_PATH} {{
