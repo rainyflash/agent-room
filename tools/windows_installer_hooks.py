@@ -9,6 +9,15 @@
 - 桌面端被结束 3 秒后才放开：静默安装退出码 0、四个程序全部换新；静默卸载退出码 0、四个程序都删掉。
 - 一直占着：静默安装和静默卸载都中止，退出码 2，安装目录一个文件都没动。
 
+再模拟桌面端已经退出、它的 WebView 浏览器进程还开着本机数据（占着 lockfile），检查：
+
+- 3 秒后放开：安装器等它放开才换文件，退出码 0、四个程序全部换新。
+- 一直开着：中止，退出码 2，挪开的桌面端程序挪回原处，安装目录一个文件都没动。
+
+钩子还在等的时候，再从外面看一眼：换文件期间的标记要被安装器独占（新版桌面端看到就退出）；
+桌面端程序已挪开时，从安装目录启动它要失败（Agent 拉不起旧版）。装完、卸完、中止后都不许留下
+挪开的程序和标记。
+
 钩子会结束当前用户所有同名进程，所以用真实程序名只在 GitHub 托管的一次性 Runner 上跑。
 本机检查加 --isolated：把钩子里的四个程序名换成 arqa-*，不碰已装的 Agent Room。
 """
@@ -23,12 +32,13 @@ import locale
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from typing import Final
+from typing import Final, Literal
 import urllib.request
 import zipfile
 
@@ -39,9 +49,12 @@ from tools.windows_installer_acceptance import (
     CLI_EXECUTABLE,
     DESKTOP_EXECUTABLE,
     INSTALLER_ABORTED_EXIT_CODE,
+    INSTALLER_MARKER,
     MCP_EXECUTABLE,
     ExecutableImageHold,
     WindowsInstallerAcceptanceFailure,
+    desktop_relaunch_problem,
+    marker_problem,
     sha256_file,
     wait_for_process_exit,
 )
@@ -110,6 +123,22 @@ PLACEHOLDER_STARTUP_SECONDS: Final = 0.5
 PLACEHOLDER_EXIT_GRACE_SECONDS: Final = 5.0
 # 预期目录里只要求存在、不比内容的文件（卸载器由 WriteUninstaller 现写）。
 ANY_CONTENT: Final = "*"
+# 钩子停 Agent Room 之前把桌面端程序挪到“程序名 + 这个后缀”（hooks.nsh 的 AGENT_ROOM_PARKED_DESKTOP）。
+PARKED_SUFFIX: Final = ".old"
+# 精简安装器的 BUNDLEID 前缀。每次检查再加一段随机后缀，钩子只会到这个目录里看 WebView 的本机数据。
+HARNESS_BUNDLE_PREFIX: Final = "dev.agent-room.installer-hooks-check"
+
+# 场景里占着的是桌面端程序的映像，还是 WebView 的本机数据。
+DESKTOP_IMAGE: Final = "desktop-image"
+WEBVIEW_DATA: Final = "webview-data"
+HeldResource = Literal["desktop-image", "webview-data"]
+
+# CreateFileW 的参数：WebView2 的浏览器进程就是这样开着本机数据目录里的 lockfile。
+GENERIC_WRITE: Final = 0x4000_0000
+FILE_SHARE_READ: Final = 0x0000_0001
+CREATE_ALWAYS: Final = 2
+FILE_ATTRIBUTE_NORMAL: Final = 0x0000_0080
+FILE_FLAG_DELETE_ON_CLOSE: Final = 0x0400_0000
 
 
 class InstallerHooksCheckFailure(WindowsInstallerAcceptanceFailure):
@@ -142,8 +171,9 @@ class Scenario:
     key: str
     label: str
     uninstall: bool
-    # 桌面端被结束后，映像再占多少秒才放开；None 表示一直占到安装器退出。
+    # 桌面端被结束后，再占多少秒才放开；None 表示一直占到安装器退出。
     release_after_seconds: float | None
+    held: HeldResource = DESKTOP_IMAGE
 
 
 SCENARIOS: Final = (
@@ -153,7 +183,15 @@ SCENARIOS: Final = (
         False,
         IMAGE_RELEASE_DELAY_SECONDS,
     ),
+    Scenario(
+        "install-webview-late-release",
+        f"覆盖安装，桌面端已退出、WebView 还开着本机数据 {IMAGE_RELEASE_DELAY_SECONDS:g} 秒",
+        False,
+        IMAGE_RELEASE_DELAY_SECONDS,
+        WEBVIEW_DATA,
+    ),
     Scenario("install-held", "运行中覆盖安装，映像一直被占着", False, None),
+    Scenario("install-webview-held", "覆盖安装，桌面端已退出、WebView 一直开着本机数据", False, None, WEBVIEW_DATA),
     Scenario(
         "uninstall-late-release",
         f"运行中卸载，桌面端退出 {IMAGE_RELEASE_DELAY_SECONDS:g} 秒后才放开映像",
@@ -188,8 +226,10 @@ class InstallerRun:
     exit_code: int
     output: str
     seconds: float
-    # 映像放开那一刻安装器是否还在等；一直占着时没有这一刻，为 None。
+    # 放开那一刻安装器是否还在等；一直占着时没有这一刻，为 None。
     running_when_released: bool | None
+    # 安装器还在等的时候从外面看到的问题（桌面端还能启动、标记没被独占）。
+    midway_problems: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,6 +405,7 @@ def harness_defines(
     images: RuntimeImages,
     payload_dir: Path,
     installer: Path,
+    bundle_id: str,
 ) -> dict[str, str]:
     return {
         "HARNESS_HOOKS": str(hooks),
@@ -375,8 +416,15 @@ def harness_defines(
         "HARNESS_BRIDGE": Path(images.bridge).stem,
         "HARNESS_MCP": Path(images.mcp).stem,
         "HARNESS_CLI": Path(images.cli).stem,
+        "HARNESS_BUNDLEID": bundle_id,
         "HARNESS_OUTFILE": str(installer),
     }
+
+
+def webview_lockfile(local_app_data: Path, bundle_id: str) -> Path:
+    """WebView2 的浏览器进程开着本机数据时一直占着的文件，钩子按同样的路径去查。"""
+
+    return local_app_data / bundle_id / "EBWebView" / "lockfile"
 
 
 def referenced_executables(source: str) -> frozenset[str]:
@@ -471,19 +519,20 @@ def scenario_problems(
     differences: list[str],
     survivors: list[str],
 ) -> list[str]:
-    problems: list[str] = []
+    problems: list[str] = list(run.midway_problems)
+    held = "WebView 的本机数据" if scenario.held == WEBVIEW_DATA else "映像"
     if scenario.release_after_seconds is None:
         if run.exit_code != INSTALLER_ABORTED_EXIT_CODE:
             problems.append(
-                f"映像一直被占着，应中止并返回 {INSTALLER_ABORTED_EXIT_CODE}，实际退出码 {run.exit_code}。"
+                f"{held}一直被占着，应中止并返回 {INSTALLER_ABORTED_EXIT_CODE}，实际退出码 {run.exit_code}。"
             )
         if not run.output:
             problems.append("静默中止时没有把原因写到标准输出。")
     else:
         if run.running_when_released is False:
-            problems.append("映像还没放开安装器就结束了，没有等到程序能写再动文件。")
+            problems.append(f"{held}还没放开安装器就结束了，没有等它放开再动文件。")
         if run.exit_code != 0:
-            problems.append(f"映像放开后应顺利完成（退出码 0），实际退出码 {run.exit_code}。")
+            problems.append(f"{held}放开后应顺利完成（退出码 0），实际退出码 {run.exit_code}。")
     if differences:
         problems.append(f"安装目录与预期不符：{'；'.join(differences)}。")
     if survivors:
@@ -496,10 +545,23 @@ def decode_output(output: bytes) -> str:
     return output.decode(locale.getencoding(), errors="replace").strip()
 
 
-def start_placeholders(directory: Path, images: RuntimeImages) -> list[subprocess.Popen[bytes]]:
+def running_images(scenario: Scenario, images: RuntimeImages) -> tuple[str, ...]:
+    """场景开始时在运行的占位程序。
+
+    WebView 还开着本机数据的场景里，桌面端已经退出（WebView 的浏览器进程还没退干净），只剩三个 sidecar。
+    这时钩子能把桌面端程序挪开，检查也就看得到 Agent 拉不起它。桌面端占位程序在运行时挪不开：
+    NSIS 编出来的程序一直以不许删改的方式开着自己，真正的桌面端没有这个问题。
+    """
+
+    if scenario.held == WEBVIEW_DATA:
+        return (images.bridge, images.mcp, images.cli)
+    return images.names()
+
+
+def start_placeholders(directory: Path, names: tuple[str, ...]) -> list[subprocess.Popen[bytes]]:
     processes: list[subprocess.Popen[bytes]] = []
     try:
-        for image in images.names():
+        for image in names:
             processes.append(
                 subprocess.Popen(
                     (str(directory / image),),
@@ -509,7 +571,7 @@ def start_placeholders(directory: Path, images: RuntimeImages) -> list[subproces
                 )
             )
         time.sleep(PLACEHOLDER_STARTUP_SECONDS)
-        exited = [image for image, process in zip(images.names(), processes) if process.poll() is not None]
+        exited = [image for image, process in zip(names, processes) if process.poll() is not None]
         if exited:
             raise InstallerHooksCheckFailure(f"占位程序没能保持运行：{'、'.join(exited)}。")
     except BaseException:
@@ -525,8 +587,8 @@ def stop_placeholders(processes: list[subprocess.Popen[bytes]]) -> None:
             process.wait(timeout=30)
 
 
-def surviving_placeholders(processes: list[subprocess.Popen[bytes]], images: RuntimeImages) -> list[str]:
-    """安装器退出后还在运行的占位程序。钩子应当已经把四个都结束了。"""
+def surviving_placeholders(processes: list[subprocess.Popen[bytes]], names: tuple[str, ...]) -> list[str]:
+    """安装器退出后还在运行的占位程序。钩子应当已经把它们都结束了。"""
 
     deadline = time.monotonic() + PLACEHOLDER_EXIT_GRACE_SECONDS
     for process in processes:
@@ -534,30 +596,99 @@ def surviving_placeholders(processes: list[subprocess.Popen[bytes]], images: Run
             process.wait(timeout=max(0.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             pass
-    return [image for image, process in zip(images.names(), processes) if process.poll() is None]
+    return [image for image, process in zip(names, processes) if process.poll() is None]
 
 
-def run_while_desktop_image_is_held(
-    command: str,
-    desktop_image: Path,
-    desktop: subprocess.Popen[bytes],
-    release_after_seconds: float | None,
-) -> InstallerRun:
-    """占住桌面端映像运行安装器或卸载器。
+class WebViewDataHold:
+    """像 WebView2 的浏览器进程那样开着本机数据目录里的 lockfile：写、只共享读、关掉就删。
 
-    release_after_seconds 为 None 时一直占到它退出；否则等钩子结束桌面端，再占这么多秒才放开，
-    并记下放开那一刻它是否还在等。
+    浏览器进程开着本机数据时一直这样占着它。钩子看到它被占着，就要等到放开再换文件，不然新版
+    桌面端一启动就和还没退干净的浏览器进程抢同一份数据。
     """
 
-    with ExecutableImageHold(desktop_image) as hold:
+    def __init__(self, path: Path) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        create_file.restype = wintypes.HANDLE
+        self._close_handle = kernel32.CloseHandle
+        self._close_handle.argtypes = (wintypes.HANDLE,)
+        self._close_handle.restype = wintypes.BOOL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = create_file(
+            str(path),
+            GENERIC_WRITE,
+            FILE_SHARE_READ,
+            None,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE,
+            None,
+        )
+        if handle is None or handle == ctypes.c_void_p(-1).value:
+            raise InstallerHooksCheckFailure(f"无法占用 {path}（错误 {ctypes.get_last_error()}）。")
+        self._handle: int | None = handle
+
+    def release(self) -> None:
+        if self._handle is not None:
+            self._close_handle(self._handle)
+            self._handle = None
+
+    def __enter__(self) -> WebViewDataHold:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.release()
+
+
+def midway_problems(directory: Path, images: RuntimeImages, *, desktop_parked: bool) -> list[str]:
+    """钩子还在等 Agent Room 退干净时，从外面看到的问题。
+
+    desktop_parked 为真时，桌面端程序应已被挪开：从安装目录启动它必须失败。
+    """
+
+    found = [marker_problem(directory / INSTALLER_MARKER)]
+    if desktop_parked:
+        found.append(desktop_relaunch_problem(directory / images.desktop))
+    return [problem for problem in found if problem is not None]
+
+
+def run_while_held(
+    command: str,
+    hold: ExecutableImageHold | WebViewDataHold,
+    stopped: tuple[subprocess.Popen[bytes], str],
+    release_after_seconds: float | None,
+    midway: Callable[[], list[str]] = list,
+) -> InstallerRun:
+    """占着桌面端映像或 WebView 的本机数据运行安装器或卸载器。
+
+    release_after_seconds 为 None 时一直占到它退出；否则等钩子结束 stopped 这个占位程序，再占这么多秒才放开，
+    并记下放开那一刻它是否还在等。还在等的话，放开之前先用 midway 从外面看一眼。
+    """
+
+    process, label = stopped
+    with hold:
         started = time.monotonic()
         installer = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             running_when_released: bool | None = None
+            seen_midway: list[str] = []
             if release_after_seconds is not None:
-                wait_for_process_exit(desktop, "桌面端占位程序")
+                wait_for_process_exit(process, label)
                 time.sleep(release_after_seconds)
                 running_when_released = installer.poll() is None
+                if running_when_released:
+                    seen_midway = midway()
                 hold.release()
             output, _ = installer.communicate(timeout=INSTALLER_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired as error:
@@ -567,7 +698,9 @@ def run_while_desktop_image_is_held(
                 installer.kill()
                 installer.communicate()
         seconds = time.monotonic() - started
-    return InstallerRun(installer.returncode, decode_output(output), seconds, running_when_released)
+    return InstallerRun(
+        installer.returncode, decode_output(output), seconds, running_when_released, tuple(seen_midway)
+    )
 
 
 def install_placeholders_cleanly(
@@ -599,6 +732,7 @@ def run_scenario(
     images: RuntimeImages,
     payloads: Payloads,
     root: Path,
+    webview_lock: Path,
 ) -> ScenarioResult:
     directory = root / scenario.key
     current = payloads.current_digests
@@ -611,15 +745,19 @@ def run_scenario(
             shutil.copytree(payloads.previous, directory)
             command = install_command(installer, directory)
         before = snapshot(directory)
-        processes = start_placeholders(directory, images)
+        names = running_images(scenario, images)
+        processes = start_placeholders(directory, names)
         try:
-            run = run_while_desktop_image_is_held(
+            webview = scenario.held == WEBVIEW_DATA
+            hold = WebViewDataHold(webview_lock) if webview else ExecutableImageHold(directory / images.desktop)
+            run = run_while_held(
                 command,
-                directory / images.desktop,
-                processes[0],
+                hold,
+                (processes[0], f"{names[0]} 占位程序"),
                 scenario.release_after_seconds,
+                lambda: midway_problems(directory, images, desktop_parked=webview),
             )
-            survivors = surviving_placeholders(processes, images)
+            survivors = surviving_placeholders(processes, names)
         finally:
             stop_placeholders(processes)
         differences = directory_differences(
@@ -654,27 +792,35 @@ def check(hooks: Path, cache_dir: Path, isolated: bool) -> list[ScenarioResult]:
     verify_hooks_cover_runtime(source)
     images = ISOLATED_IMAGES if isolated else PRODUCT_IMAGES
     print(f"检查 {hooks}，程序名用{'隔离的 arqa-*' if isolated else '真实的 agent-room-*'}。", flush=True)
+    # 钩子到 %LOCALAPPDATA%\<BUNDLEID>\EBWebView 下看 WebView 的本机数据。检查用一个只属于这次的
+    # BUNDLEID，碰不到已装的 Agent Room 的数据，跑完连目录一起删掉。
+    bundle_id = f"{HARNESS_BUNDLE_PREFIX}-{secrets.token_hex(4)}"
+    bundle_data = Path(os.environ["LOCALAPPDATA"]) / bundle_id
     with tempfile.TemporaryDirectory(prefix="agent-room-installer-hooks-", ignore_cleanup_errors=True) as temporary:
-        work_dir = Path(temporary)
-        toolchain = prepare_toolchain(cache_dir, work_dir)
-        if isolated:
-            hooks = work_dir / "hooks.nsh"
-            hooks.write_text(rename_runtime_images(source, images), encoding="utf-8")
-        payloads = build_payloads(toolchain, images, work_dir)
-        installer = work_dir / "installer-hooks-harness.exe"
-        compile_nsis(
-            toolchain,
-            HARNESS_SCRIPT,
-            harness_defines(hooks, toolchain, images, payloads.current, installer),
-            work_dir,
-        )
-        print("编译通过：钩子和精简安装器没有任何警告。", flush=True)
-        scenarios = work_dir / "scenarios"
-        scenarios.mkdir()
-        results: list[ScenarioResult] = []
-        for scenario in SCENARIOS:
-            results.append(run_scenario(scenario, installer, images, payloads, scenarios))
-            print_result(results[-1])
+        try:
+            work_dir = Path(temporary)
+            toolchain = prepare_toolchain(cache_dir, work_dir)
+            if isolated:
+                hooks = work_dir / "hooks.nsh"
+                hooks.write_text(rename_runtime_images(source, images), encoding="utf-8")
+            payloads = build_payloads(toolchain, images, work_dir)
+            installer = work_dir / "installer-hooks-harness.exe"
+            compile_nsis(
+                toolchain,
+                HARNESS_SCRIPT,
+                harness_defines(hooks, toolchain, images, payloads.current, installer, bundle_id),
+                work_dir,
+            )
+            print("编译通过：钩子和精简安装器没有任何警告。", flush=True)
+            scenarios = work_dir / "scenarios"
+            scenarios.mkdir()
+            results: list[ScenarioResult] = []
+            webview_lock = webview_lockfile(bundle_data.parent, bundle_id)
+            for scenario in SCENARIOS:
+                results.append(run_scenario(scenario, installer, images, payloads, scenarios, webview_lock))
+                print_result(results[-1])
+        finally:
+            shutil.rmtree(bundle_data, ignore_errors=True)
     return results
 
 

@@ -51,6 +51,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 它按路径触发，不是必需检查，红了同样不能合。
   - 本机跑要加 `--isolated`；不加会拒绝运行，免得结束正在用的 Agent Room。
   - 升级 `@tauri-apps/cli` 时，同步更新工具里固定的模板提交和哈希，单元测试会提醒。
+  - 占位程序是 NSIS 编出来的，运行时一直以不许删改的方式开着自己，所以运行中挪不开。“桌面端挪开”这条路要在桌面端已退出的场景（WebView 还开着本机数据）里查；真正的桌面端运行时能改名，候选上的真实安装验收会查。
 - 已知的偶发失败，重跑即过：
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
   - 同一个用例偶发 `Failed to process outgoing request 0: AbortError: signal is aborted without reason`：退出登录时 `stopClient` 中止了还在发的加密请求，同一类竞态。只重跑失败的作业（`gh run rerun <run> --failed`）即可。
@@ -75,6 +76,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 没接 MAS 时，已有签名身份的账户换签名身份一律要交互认证。** 管理接口 `_allow_cross_signing_replacement_without_uia` 只在接了 MAS 时起作用，只有应用服务的请求例外（MSC4190）。所以人的设备自动签名重建签名身份时，新签名公钥由控制面以应用服务身份冒充本人上传；应用服务注册为此有一个覆盖所有本地用户的非独占命名空间（ADR 0011 的“修订”）。
 - **matrix-js-sdk 的 `bootstrapCrossSigning` 看到本机有签名私钥就不上传公钥。** 上次上传被打断（页面跳走）时，本机留着私钥、服务器上却没有签名身份，它也照样跳过。账户还没有签名身份时要用 `resetEncryption` 从头建，别用 `bootstrapCrossSigning`。
 - **本机加密存储丢了的设备只能换设备号。** Agent 的加密库遇到“同一个设备号换了签名公钥”一律不认（matrix-sdk-crypto 的 `SigningKeyChanged`），这台设备再也拿不到房间密钥，消息全都解不开。所以网页端和桌面端恢复会话时，加密库起来以前先问服务器这台设备记着的签名公钥，起来以后跟本机的比（`deviceKeysReplaced`），对不上就注销这台设备、重新登录拿新设备号。只在本机加密库持久保存时比：放在内存里的每次都是一套新密钥。
+- **升级时别让桌面端在换文件的当口启动。** Agent 的 MCP 和命令行连不上 Bridge 会在后台拉起桌面端（#221）。安装器停 Agent Room 的当口被拉起的旧版，会和正在退出的 WebView 抢同一份本机数据（推测 Chromium 打不开就整库删掉重建），升级后网页存储（加密库、登录）被清空：Alpha 57、62 都遇到过。所以安装器钩子：
+  - 先在安装目录占住标记 `installer-running.lock`（不许别人打开、关掉就删），再把桌面端程序改名为 `agent-room-desktop.exe.old`，然后才结束进程；
+  - 等到四个进程都退出、程序都能写、`%LOCALAPPDATA%\dev.agent-room.desktop\EBWebView\lockfile` 也放开了才换文件；
+  - 装完删掉挪开的程序、放开标记；没装成就挪回原处。
+  - 桌面端启动时看到标记被占着就直接退出（`installer_marker.rs`）。改安装流程时这几样别拆。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
@@ -139,7 +145,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 房间页“消息还没接通”换成同一套说法，按钮真的去重连；
     - 桌面端再开始一次登录时，还在等的那次让位，不用再等满 15 分钟；
     - 夹具 `my-agents.html?matrix=signin|failed` 能看这两种提示。
-  - 还要做：安装期间别让旧版被拉起、等 WebView 完全退出再装。
+  - 安装器这边 #315 做了：
+    - 停 Agent Room 前先占住标记、把桌面端程序挪开，Agent 拉不起旧版；
+    - 等 WebView 放开本机数据再换文件；
+    - 新版桌面端看到标记就退出（见上面“代码里的坑”）。
+    - 钩子是新版安装器带的，从 Alpha 62 升上去那次就生效。升级后桌面端还掉登录的话，先看 `desktop.log` 里安装那几秒有没有“桌面端启动”或“安装器正在换”。
 
 ### 界面翻新
 

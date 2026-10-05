@@ -2,8 +2,8 @@
 ;
 ; 顺序照 Tauri 2.11.1 的 NSIS 模板（tauri-bundler 的 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi）：
 ; 先包含头文件、模板的 utils.nsh 和我们的钩子，再定义 INSTALLMODE 等常量、!addplugindir；
-; 安装段是 SetOutPath、钩子、模板的 CheckIfAppIsRunning、写四个程序；
-; 卸载段是钩子、CheckIfAppIsRunning、删四个程序。
+; 安装段是 SetOutPath、PRE 钩子、模板的 CheckIfAppIsRunning、写四个程序、写卸载器、POST 钩子；
+; 卸载段是 PRE 钩子、CheckIfAppIsRunning、删四个程序、删卸载器和安装目录、POST 钩子。
 ; 页面、WebView2、注册表、快捷方式这些与钩子无关的部分都省掉了，所以它不写注册表，不碰已装的 Agent Room。
 ;
 ; 参数都由检查工具用 -D 传入。名字带 HARNESS_ 前缀，免得和钩子或模板里的名字撞上：
@@ -12,6 +12,7 @@
 ;   HARNESS_PLUGINS_DIR   nsis_tauri_utils.dll 所在目录，即模板的 ADDITIONALPLUGINSPATH
 ;   HARNESS_PAYLOAD_DIR   要装进去的四个占位程序
 ;   HARNESS_DESKTOP、HARNESS_BRIDGE、HARNESS_MCP、HARNESS_CLI  四个程序名，不带 .exe
+;   HARNESS_BUNDLEID      模板的 BUNDLEID：钩子到 $LOCALAPPDATA 下的这个目录里看 WebView 是否还开着本机数据
 ;   HARNESS_OUTFILE       输出的安装器
 
 Unicode true
@@ -36,6 +37,7 @@ SetCompressor /SOLID "lzma"
 !define VERSION "0.0.0"
 !define INSTALLMODE "currentUser"
 !define MAINBINARYNAME "${HARNESS_DESKTOP}"
+!define BUNDLEID "${HARNESS_BUNDLEID}"
 !define OUTFILE "${HARNESS_OUTFILE}"
 !define ARCH "x64"
 !define ADDITIONALPLUGINSPATH "${HARNESS_PLUGINS_DIR}"
@@ -81,6 +83,11 @@ Section Install
   File /a "/oname=${HARNESS_CLI}.exe" "${HARNESS_PAYLOAD_DIR}\${HARNESS_CLI}.exe"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; 模板在写完注册表和快捷方式之后、安装段末尾展开它。
+  !ifmacrodef NSIS_HOOK_POSTINSTALL
+    !insertmacro NSIS_HOOK_POSTINSTALL
+  !endif
 SectionEnd
 
 Function un.onInit
@@ -106,4 +113,9 @@ Section Uninstall
 
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
+
+  ; 模板在删完注册表和本机数据之后、卸载段末尾展开它。
+  !ifmacrodef NSIS_HOOK_POSTUNINSTALL
+    !insertmacro NSIS_HOOK_POSTUNINSTALL
+  !endif
 SectionEnd

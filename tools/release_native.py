@@ -15,7 +15,8 @@ INSTALLER_CHECKS = frozenset({
     "desktopLaunch", "managedBridgeLaunch", "mcpLaunch",
     "lockedImageInstallAborted", "lockedImageInstallLeftFilesUnchanged", "runningUpgrade",
     "upgradeStoppedDesktop", "upgradeStoppedBridge", "upgradeStoppedMcp",
-    "upgradeWaitedForImageRelease", "upgradeReplacedRuntimeFiles",
+    "upgradeWaitedForImageRelease", "upgradeKeptDesktopFromStarting", "upgradeHeldInstallerMarker",
+    "upgradeReplacedRuntimeFiles",
     "postUpgradeDesktopLaunch", "postUpgradeBridgeLaunch", "postUpgradeMcpLaunch",
     "silentUninstall", "uninstallStoppedRuntime", "installFilesRemoved",
 })

@@ -15,12 +15,15 @@ import zipfile
 
 from tools.windows_installer_acceptance import WindowsInstallerAcceptanceFailure
 from tools.windows_installer_hooks import (
+    DESKTOP_IMAGE,
     HARNESS_SCRIPT,
     HOOKS,
     IMAGE_RELEASE_DELAY_SECONDS,
+    INSTALLER_MARKER,
     INSTALLER_TIMEOUT_SECONDS,
     ISOLATED_IMAGES,
     NSIS_ARCHIVE_ROOT,
+    PARKED_SUFFIX,
     PINNED_FILES,
     PLACEHOLDER_SCRIPT,
     PRODUCT_IMAGES,
@@ -29,6 +32,7 @@ from tools.windows_installer_hooks import (
     TAURI_TEMPLATE_COMMIT,
     TEMPLATE_ENGLISH,
     TEMPLATE_UTILS,
+    WEBVIEW_DATA,
     InstallerHooksCheckFailure,
     InstallerRun,
     PinnedFile,
@@ -41,21 +45,26 @@ from tools.windows_installer_hooks import (
     harness_defines,
     install_command,
     makensis_command,
+    midway_problems,
     obtain,
     pinned_mismatch,
     referenced_executables,
     rename_runtime_images,
     require_disposable_runner,
-    run_while_desktop_image_is_held,
+    running_images,
+    run_while_held,
     scenario_problems,
     uninstall_command,
     verify_hooks_cover_runtime,
+    webview_lockfile,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "windows-installer-hooks.yml"
 DESKTOP = ROOT / "apps" / "desktop"
+DESKTOP_MARKER_SOURCE = DESKTOP / "src-tauri" / "src" / "installer_marker.rs"
+PARKED_DESKTOP = f"{PRODUCT_IMAGES.desktop}{PARKED_SUFFIX}"
 TOOLCHAIN = Toolchain(Path("nsis") / "makensis.exe", Path("plugins"), Path("template"))
 PREVIOUS = {name: f"previous {name}" for name in PRODUCT_IMAGES.names()}
 CURRENT = {name: f"current {name}" for name in PRODUCT_IMAGES.names()}
@@ -99,7 +108,8 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
     def test_install_section_stops_the_runtime_before_writing_the_main_program_first(self) -> None:
         lines = section(HARNESS_SCRIPT.read_text(encoding="utf-8"), "Install")
 
-        # 与 Tauri 2.11.1 模板的安装段同序：钩子、模板的 CheckIfAppIsRunning，然后先写主程序再写 sidecar。
+        # 与 Tauri 2.11.1 模板的安装段同序：PRE 钩子、模板的 CheckIfAppIsRunning，然后先写主程序再写 sidecar，
+        # 段末才是 POST 钩子。
         order = positions(
             lines,
             (
@@ -111,6 +121,7 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
                 'File /a "/oname=${HARNESS_MCP}.exe"',
                 'File /a "/oname=${HARNESS_CLI}.exe"',
                 'WriteUninstaller "$INSTDIR\\uninstall.exe"',
+                "!insertmacro NSIS_HOOK_POSTINSTALL",
             ),
         )
         self.assertEqual(order, sorted(order))
@@ -129,6 +140,9 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
                 'Delete "$INSTDIR\\${HARNESS_BRIDGE}.exe"',
                 'Delete "$INSTDIR\\${HARNESS_MCP}.exe"',
                 'Delete "$INSTDIR\\${HARNESS_CLI}.exe"',
+                'Delete "$INSTDIR\\uninstall.exe"',
+                'RMDir "$INSTDIR"',
+                "!insertmacro NSIS_HOOK_POSTUNINSTALL",
             ),
         )
         self.assertEqual(order, sorted(order))
@@ -145,7 +159,9 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
         self.assertFalse([line for line in lines if line.startswith("AllowSkipFiles")])
 
     def test_every_harness_parameter_is_passed_to_makensis(self) -> None:
-        defines = harness_defines(Path("hooks.nsh"), TOOLCHAIN, PRODUCT_IMAGES, Path("payload"), Path("out.exe"))
+        defines = harness_defines(
+            Path("hooks.nsh"), TOOLCHAIN, PRODUCT_IMAGES, Path("payload"), Path("out.exe"), "dev.agent-room.check"
+        )
 
         used = set(re.findall(r"\$\{(HARNESS_[A-Z_]+)\}", HARNESS_SCRIPT.read_text(encoding="utf-8")))
         self.assertEqual(used, set(defines))
@@ -177,6 +193,41 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
             [f"{Path(sidecar).name}.exe" for sidecar in sidecars],
             [PRODUCT_IMAGES.bridge, PRODUCT_IMAGES.mcp, PRODUCT_IMAGES.cli],
         )
+
+    def test_hooks_park_the_desktop_and_hold_the_marker_before_stopping_anything(self) -> None:
+        source = HOOKS.read_text(encoding="utf-8")
+        stop = source[source.index("!macro AGENT_ROOM_STOP_RUNTIME") :]
+        stop = stop[: stop.index("!macroend")]
+
+        # 挪开的名字、标记名与检查和桌面端一致：桌面端看到这个标记被占着就退出。
+        self.assertIn(f'!define AGENT_ROOM_PARKED_DESKTOP "{PARKED_DESKTOP}"', source)
+        self.assertIn(f'!define AGENT_ROOM_INSTALLER_MARKER "{INSTALLER_MARKER}"', source)
+        self.assertIn(
+            f'const INSTALLER_MARKER: &str = "{INSTALLER_MARKER}";',
+            DESKTOP_MARKER_SOURCE.read_text(encoding="utf-8"),
+        )
+        # 先占标记、挪开桌面端，再结束进程；等待里也查挪开的程序和 WebView 的 lockfile。
+        self.assertLess(stop.index("AGENT_ROOM_HOLD_INSTALLER_MARKER"), stop.index("taskkill.exe"))
+        self.assertLess(stop.index("AGENT_ROOM_PARK_DESKTOP"), stop.index("taskkill.exe"))
+        self.assertIn('AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\\${AGENT_ROOM_PARKED_DESKTOP}"', stop)
+        self.assertIn('AGENT_ROOM_MARK_IF_LOCKED "$LOCALAPPDATA\\${BUNDLEID}\\EBWebView\\lockfile"', stop)
+        self.assertEqual(
+            webview_lockfile(Path("Local"), "dev.agent-room.check"),
+            Path("Local") / "dev.agent-room.check" / "EBWebView" / "lockfile",
+        )
+        # 装完、卸完删掉挪开的程序、放开标记；没装成、没卸成时挪回原处。
+        for hook in ("!macro NSIS_HOOK_POSTINSTALL", "!macro NSIS_HOOK_POSTUNINSTALL"):
+            body = source[source.index(hook) :]
+            body = body[: body.index("!macroend")]
+            with self.subTest(hook=hook):
+                self.assertIn('Delete "$INSTDIR\\${AGENT_ROOM_PARKED_DESKTOP}"', body)
+                self.assertIn("AGENT_ROOM_RELEASE_INSTALLER_MARKER", body)
+        for callback in ("Function .onInstFailed", "Function un.onUninstFailed"):
+            body = source[source.index(callback) :]
+            body = body[: body.index("FunctionEnd")]
+            with self.subTest(callback=callback):
+                self.assertIn("AGENT_ROOM_RESTORE_DESKTOP", body)
+                self.assertIn("AGENT_ROOM_RELEASE_INSTALLER_MARKER", body)
 
     def test_hooks_stop_exactly_the_four_runtime_programs(self) -> None:
         source = HOOKS.read_text(encoding="utf-8")
@@ -303,6 +354,8 @@ class IsolationTests(unittest.TestCase):
 
         self.assertEqual(referenced_executables(renamed), frozenset(ISOLATED_IMAGES.names()))
         self.assertIn('"$SYSDIR\\taskkill.exe"', renamed)
+        # 挪开的桌面端程序名跟着换，本机检查时也碰不到已装的 Agent Room。
+        self.assertIn(f'!define AGENT_ROOM_PARKED_DESKTOP "{ISOLATED_IMAGES.desktop}{PARKED_SUFFIX}"', renamed)
         self.assertEqual(
             rename_runtime_images('/IM agent-room.exe; "AGENT-ROOM-MCP.EXE"; my-agent-room.exe', ISOLATED_IMAGES),
             '/IM arqa.exe; "arqa-mcp.exe"; my-agent-room.exe',
@@ -320,9 +373,18 @@ class IsolationTests(unittest.TestCase):
 class ScenarioTests(unittest.TestCase):
     def test_scenarios_cover_install_and_uninstall_with_late_and_held_images(self) -> None:
         self.assertEqual(
-            {(candidate.uninstall, candidate.release_after_seconds) for candidate in SCENARIOS},
-            {(False, IMAGE_RELEASE_DELAY_SECONDS), (False, None), (True, IMAGE_RELEASE_DELAY_SECONDS), (True, None)},
+            {(candidate.uninstall, candidate.release_after_seconds, candidate.held) for candidate in SCENARIOS},
+            {
+                (False, IMAGE_RELEASE_DELAY_SECONDS, DESKTOP_IMAGE),
+                (False, None, DESKTOP_IMAGE),
+                (True, IMAGE_RELEASE_DELAY_SECONDS, DESKTOP_IMAGE),
+                (True, None, DESKTOP_IMAGE),
+                # 桌面端已退出、WebView 还开着本机数据：晚放开要等，一直不放开要中止并把桌面端挪回来。
+                (False, IMAGE_RELEASE_DELAY_SECONDS, WEBVIEW_DATA),
+                (False, None, WEBVIEW_DATA),
+            },
         )
+        self.assertEqual(len({candidate.key for candidate in SCENARIOS}), len(SCENARIOS))
         timeout = re.search(r"!define AGENT_ROOM_STOP_TIMEOUT_MS (\d+)", HOOKS.read_text(encoding="utf-8"))
         assert timeout is not None
         # 晚放开的映像要在钩子等待上限之内；一直占着时，检查要等得到钩子超时中止。
@@ -350,8 +412,54 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(differences, ["agent-room-desktop.exe 是上一版，应为新版"])
         problems = scenario_problems(late, InstallerRun(0, "", 4.3, False), differences, [])
         self.assertEqual(len(problems), 2)
-        self.assertIn("没有等到程序能写", problems[0])
+        self.assertIn("映像还没放开安装器就结束了", problems[0])
         self.assertIn("agent-room-desktop.exe 是上一版", problems[1])
+
+        # 装完不许留下挪开的旧桌面端和标记。
+        leftovers = {**installed, PARKED_DESKTOP: PREVIOUS[PRODUCT_IMAGES.desktop], INSTALLER_MARKER: "marker"}
+        self.assertEqual(
+            directory_differences(expected, leftovers, LABELS),
+            [f"多出 {PARKED_DESKTOP}", f"多出 {INSTALLER_MARKER}"],
+        )
+
+    def test_problems_seen_while_the_installer_waits_are_reported_first(self) -> None:
+        late = scenario("install-late-release")
+        seen = ("钩子停 Agent Room 期间没有标记，新版桌面端会在换文件的当口照常启动。",)
+
+        problems = scenario_problems(late, InstallerRun(0, "", 4.4, True, seen), [], [])
+
+        self.assertEqual(problems, list(seen))
+
+    def test_webview_scenarios_wait_for_it_and_put_the_desktop_back_when_it_never_lets_go(self) -> None:
+        late = scenario("install-webview-late-release")
+        self.assertEqual(
+            expected_after(late, PREVIOUS, CURRENT, PRODUCT_IMAGES),
+            {**CURRENT, "uninstall.exe": "*"},
+        )
+        problems = scenario_problems(late, InstallerRun(0, "", 0.9, False), [], [])
+        self.assertEqual(problems, ["WebView 的本机数据还没放开安装器就结束了，没有等它放开再动文件。"])
+
+        held = scenario("install-webview-held")
+        expected = expected_after(held, PREVIOUS, CURRENT, PRODUCT_IMAGES)
+        self.assertEqual(expected, PREVIOUS)
+        aborted = InstallerRun(2, "Agent Room is still running or its files are in use", 22.5, None)
+        self.assertEqual(scenario_problems(held, aborted, directory_differences(expected, PREVIOUS, LABELS), []), [])
+        # 中止后桌面端程序还在挪开的名字下：用户就没有桌面端可用了。
+        parked = {name: digest for name, digest in PREVIOUS.items() if name != PRODUCT_IMAGES.desktop}
+        parked[PARKED_DESKTOP] = PREVIOUS[PRODUCT_IMAGES.desktop]
+        self.assertEqual(
+            directory_differences(expected, parked, LABELS),
+            [f"缺少 {PRODUCT_IMAGES.desktop}", f"多出 {PARKED_DESKTOP}"],
+        )
+        problems = "\n".join(scenario_problems(held, InstallerRun(0, "", 1.0, None), [], []))
+        self.assertIn("WebView 的本机数据一直被占着，应中止并返回 2，实际退出码 0", problems)
+
+    def test_desktop_is_not_running_while_only_its_webview_still_holds_the_data(self) -> None:
+        self.assertEqual(
+            running_images(scenario("install-webview-late-release"), PRODUCT_IMAGES),
+            (PRODUCT_IMAGES.bridge, PRODUCT_IMAGES.mcp, PRODUCT_IMAGES.cli),
+        )
+        self.assertEqual(running_images(scenario("install-late-release"), PRODUCT_IMAGES), PRODUCT_IMAGES.names())
 
     def test_held_install_must_abort_and_leave_every_file_alone(self) -> None:
         held = scenario("install-held")
@@ -384,7 +492,7 @@ class ScenarioTests(unittest.TestCase):
         )
 
 
-class ImageHoldTests(unittest.TestCase):
+class HoldTests(unittest.TestCase):
     def run_held(
         self,
         installer: MagicMock,
@@ -394,52 +502,71 @@ class ImageHoldTests(unittest.TestCase):
     ) -> tuple[InstallerRun, MagicMock, MagicMock]:
         steps = MagicMock()
         steps.popen.return_value = installer
-        steps.hold.return_value.__enter__.return_value = steps.held
+        steps.midway.return_value = ["标记没有被安装器独占，桌面端看不出安装器正在换文件。"]
         if wait_exit is not None:
             steps.wait_exit = wait_exit
-        desktop = MagicMock()
-        with patch("tools.windows_installer_hooks.ExecutableImageHold", steps.hold), patch(
-            "tools.windows_installer_hooks.subprocess.Popen", steps.popen
-        ), patch("tools.windows_installer_hooks.wait_for_process_exit", steps.wait_exit), patch(
-            "tools.windows_installer_hooks.time.sleep", steps.sleep
-        ):
-            run = run_while_desktop_image_is_held("setup.exe /S", Path("agent-room-desktop.exe"), desktop, release_after)
-        return run, steps, desktop
+        first = MagicMock()
+        with patch("tools.windows_installer_hooks.subprocess.Popen", steps.popen), patch(
+            "tools.windows_installer_hooks.wait_for_process_exit", steps.wait_exit
+        ), patch("tools.windows_installer_hooks.time.sleep", steps.sleep):
+            run = run_while_held(
+                "setup.exe /S", steps.hold, (first, "agent-room-desktop.exe 占位程序"), release_after, steps.midway
+            )
+        return run, steps, first
 
-    def test_image_is_released_only_after_the_desktop_is_gone(self) -> None:
+    @staticmethod
+    def steps_taken(steps: MagicMock) -> list[object]:
+        return [entry for entry in steps.mock_calls if not entry[0].startswith(("popen().", "hold.__"))]
+
+    def test_hold_is_released_only_after_the_runtime_is_stopped_and_looked_at_midway(self) -> None:
         installer = MagicMock(returncode=0)
         installer.poll.side_effect = [None, 0]
         installer.communicate.return_value = (b"", None)
 
-        run, steps, desktop = self.run_held(installer, IMAGE_RELEASE_DELAY_SECONDS)
+        run, steps, first = self.run_held(installer, IMAGE_RELEASE_DELAY_SECONDS)
 
         self.assertEqual(
-            [entry for entry in steps.mock_calls if not entry[0].startswith(("hold().", "popen()."))],
+            self.steps_taken(steps),
             [
-                call.hold(Path("agent-room-desktop.exe")),
                 call.popen(
                     "setup.exe /S",
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                 ),
-                call.wait_exit(desktop, "桌面端占位程序"),
+                call.wait_exit(first, "agent-room-desktop.exe 占位程序"),
                 call.sleep(IMAGE_RELEASE_DELAY_SECONDS),
-                call.held.release(),
+                call.midway(),
+                call.hold.release(),
             ],
         )
         self.assertEqual((run.exit_code, run.running_when_released), (0, True))
+        self.assertEqual(run.midway_problems, ("标记没有被安装器独占，桌面端看不出安装器正在换文件。",))
+        steps.hold.__enter__.assert_called_once_with()
+        steps.hold.__exit__.assert_called_once()
         installer.kill.assert_not_called()
 
-    def test_held_image_is_kept_until_the_installer_exits(self) -> None:
+    def test_nothing_is_looked_at_midway_once_the_installer_has_already_finished(self) -> None:
+        installer = MagicMock(returncode=0)
+        installer.poll.return_value = 0
+        installer.communicate.return_value = (b"", None)
+
+        run, steps, _first = self.run_held(installer, IMAGE_RELEASE_DELAY_SECONDS)
+
+        steps.midway.assert_not_called()
+        steps.hold.release.assert_called_once_with()
+        self.assertEqual((run.running_when_released, run.midway_problems), (False, ()))
+
+    def test_held_resource_is_kept_until_the_installer_exits(self) -> None:
         installer = MagicMock(returncode=2)
         installer.poll.return_value = 2
         installer.communicate.return_value = (b"no files were changed\r\n", None)
 
-        run, steps, _desktop = self.run_held(installer, None)
+        run, steps, _first = self.run_held(installer, None)
 
         steps.wait_exit.assert_not_called()
-        steps.held.release.assert_not_called()
+        steps.midway.assert_not_called()
+        steps.hold.release.assert_not_called()
         self.assertEqual((run.exit_code, run.output, run.running_when_released), (2, "no files were changed", None))
 
     def test_installer_is_killed_when_the_desktop_never_exits(self) -> None:
@@ -460,6 +587,17 @@ class ImageHoldTests(unittest.TestCase):
         with self.assertRaisesRegex(InstallerHooksCheckFailure, f"{INSTALLER_TIMEOUT_SECONDS} 秒内没有退出"):
             self.run_held(installer, None)
         installer.kill.assert_called_once_with()
+
+
+class MidwayTests(unittest.TestCase):
+    def test_relaunch_is_only_checked_once_the_desktop_has_been_moved_aside(self) -> None:
+        with patch("tools.windows_installer_hooks.marker_problem", return_value=None), patch(
+            "tools.windows_installer_hooks.desktop_relaunch_problem", return_value="还能启动"
+        ) as relaunch:
+            self.assertEqual(midway_problems(Path("install"), PRODUCT_IMAGES, desktop_parked=False), [])
+            relaunch.assert_not_called()
+            self.assertEqual(midway_problems(Path("install"), PRODUCT_IMAGES, desktop_parked=True), ["还能启动"])
+            relaunch.assert_called_once_with(Path("install") / PRODUCT_IMAGES.desktop)
 
 
 class WorkflowTests(unittest.TestCase):

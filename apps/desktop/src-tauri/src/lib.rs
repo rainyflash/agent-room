@@ -13,6 +13,7 @@ mod desktop_command_surface;
 mod desktop_config;
 mod human_session;
 mod installer_acceptance;
+mod installer_marker;
 mod logging;
 use logging::desktop_open_logs;
 mod loopback_callback;
@@ -65,6 +66,12 @@ use tauri_plugin_deep_link::DeepLinkExt as _;
 pub fn run_entrypoint() -> ExitCode {
     match installer_acceptance::launch_mode(std::env::args_os().skip(1)) {
         installer_acceptance::DesktopLaunchMode::Interactive => {
+            // 安装器正在换程序文件：这时被 Agent 拉起来，会占住还没换的程序、和正在退出的 WebView
+            // 抢同一份本机数据。什么都不碰，等安装器装完再由它或 Agent 重新拉起。
+            if installer_marker::installer_running_beside_current_executable() {
+                installer_marker::log_skipped_start();
+                return ExitCode::SUCCESS;
+            }
             let update_config = match ReleaseUpdateConfig::from_build() {
                 Ok(config) => config,
                 Err(failure) => {
