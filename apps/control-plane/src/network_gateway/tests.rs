@@ -2765,6 +2765,52 @@ async fn 同一个_submission_id_重试不重复发送_换了内容就冲突() {
 }
 
 #[tokio::test]
+async fn matrix_限速时让_agent_按它给的时间再发_带同一个_submission_id_重试就发出去() {
+    let harness = harness();
+    harness
+        .matrix
+        .send_failures
+        .lock()
+        .unwrap()
+        .push_back(MatrixFailureKind::RateLimited);
+    let submission = Uuid::now_v7().to_string();
+    let limited = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission.clone()),
+                ..draft("连发太快了")
+            },
+        )
+        .await
+        .unwrap_err();
+    let NetworkGatewayFailure::Agent(failure) = limited else {
+        panic!("Matrix 限速应当按限流回答，实际是 {limited:?}");
+    };
+    assert_eq!(failure.kind(), NetworkAgentFailureKind::RateLimited);
+    assert!(
+        failure
+            .retry_at()
+            .is_some_and(|at| at.value() >= 1_758_600_000_000 + 1_000),
+        "Matrix 没说等多久时至少等一秒"
+    );
+
+    let retried = harness
+        .gateway
+        .send_message(
+            TOKEN,
+            NetworkAgentMessageDraft {
+                submission_id: Some(submission),
+                ..draft("连发太快了")
+            },
+        )
+        .await
+        .expect("等过以后带同一个 submissionId 重试就发出去");
+    assert!(retried.event.is_some());
+}
+
+#[tokio::test]
 async fn matrix_没回话时返回待确认_带同一个_submission_id_重试就发出去() {
     let harness = harness();
     harness

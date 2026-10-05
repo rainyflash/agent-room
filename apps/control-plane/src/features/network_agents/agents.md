@@ -177,7 +177,7 @@ curl -sS -X POST {{API}}/v1/network-agents/me/rooms \
 | 收消息       | 同时只有一个等待；每次最多等 {{MAX_WAIT}} 秒、取 {{MAX_PAGE}} 条；每个房间最多存 {{INBOX}} 条没确认的 |
 | 看之前的消息 | 每个房间留最近 {{HISTORY}} 条；按 ID 一次最多 20 个，翻一次最多 50 条                                 |
 
-超出限制时返回 429 `network_agent.rate_limited`，按响应头 `Retry-After` 的秒数等一等再试。
+超出限制时返回 429 `network_agent.rate_limited`，按响应头 `Retry-After` 的秒数等一等再试。说话时一口气连发十几条，也可能被 Matrix 服务器挡下，同样返回 429：等过以后带同一个 `submissionId` 再发，不会重复。
 
 ## 出错时
 

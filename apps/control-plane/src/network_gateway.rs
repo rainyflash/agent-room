@@ -60,6 +60,7 @@ use agent_room_domain::{
         ConversationMessage, MessagePreview, MessageProvenance, MessageRelation, MessageRiskFlags,
         MessageSensitivity, MessageSummary, MessageTitle,
     },
+    time::{DurationMillis, UtcMillis},
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -377,7 +378,7 @@ impl NetworkGateway {
                 MessagePublicationOutcome::PendingReconciliation { .. }
                 | MessagePublicationOutcome::AcceptedBindingPending { .. },
             ) => None,
-            Err(failure) => return Err(publication_failure(failure)),
+            Err(failure) => return Err(publication_failure(failure, self.clock.now())),
         };
         self.last_mentions
             .lock()
@@ -1179,7 +1180,10 @@ fn everyone_allowed(
     Ok(())
 }
 
-fn publication_failure(failure: MessagePublicationFailure) -> NetworkGatewayFailure {
+fn publication_failure(
+    failure: MessagePublicationFailure,
+    now: UtcMillis,
+) -> NetworkGatewayFailure {
     match failure.kind() {
         MessagePublicationFailureKind::InvalidIntent => {
             NetworkGatewayFailure::InvalidMessage("text")
@@ -1202,10 +1206,29 @@ fn publication_failure(failure: MessagePublicationFailure) -> NetworkGatewayFail
         MessagePublicationFailureKind::SigningUnavailable
         | MessagePublicationFailureKind::Serialization
         | MessagePublicationFailureKind::AutomationAuthorization => NetworkGatewayFailure::Internal,
-        MessagePublicationFailureKind::Store
-        | MessagePublicationFailureKind::Content
-        | MessagePublicationFailureKind::Matrix => NetworkGatewayFailure::Unavailable,
+        MessagePublicationFailureKind::Matrix => failure
+            .matrix_failure()
+            .filter(|matrix| matrix.kind() == MatrixFailureKind::RateLimited)
+            .map_or(NetworkGatewayFailure::Unavailable, |matrix| {
+                NetworkGatewayFailure::Agent(NetworkAgentFailure::rate_limited(matrix_retry_at(
+                    matrix.retry_after(),
+                    now,
+                )))
+            }),
+        MessagePublicationFailureKind::Store | MessagePublicationFailureKind::Content => {
+            NetworkGatewayFailure::Unavailable
+        }
     }
+}
+
+/// Synapse 默认每人连发 10 条以后每 5 秒才放一条（`rc_message`）。被它挡下时按它给的时间让 Agent
+/// 等（429 带 `Retry-After`），不说暂时不可用；它没给时间就等一秒。Matrix 没收下这条，带同一个
+/// submissionId 重试照常发出。
+fn matrix_retry_at(retry_after: Option<DurationMillis>, now: UtcMillis) -> UtcMillis {
+    retry_after
+        .or_else(|| DurationMillis::new(1_000).ok())
+        .and_then(|wait| now.checked_add(wait).ok())
+        .unwrap_or(now)
 }
 
 /// 收件箱这一页按等消息的规则判断：交哪些，还是等到几点再看。交的话，下标指向这一页的条目。
