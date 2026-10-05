@@ -330,7 +330,7 @@ pub struct NetworkAgentInboxAppend {
     pub next_sync_token: MatrixSyncToken,
     pub changes: Vec<NetworkAgentInboxChange>,
     pub received_at: UtcMillis,
-    /// 最多保留这么多条没确认的；再多就丢掉最早的并计数。
+    /// 每个房间最多保留这么多条没确认的；再多就丢掉这个房间最早的并计数。
     pub capacity: u32,
 }
 
@@ -339,7 +339,7 @@ pub enum NetworkAgentInboxAppendOutcome {
     Applied {
         appended: u32,
     },
-    /// 位置已被另一次同步推进，这批没写。
+    /// 位置已被另一次同步推进，或者这个网络 Agent 已经停用，这批没写。
     Stale,
 }
 
@@ -373,12 +373,14 @@ pub enum NetworkAgentAckOutcome {
 
 /// 网络 Agent 的收件箱：只有显式确认才往前走。
 pub trait NetworkAgentInboxStore: Send + Sync {
-    /// 读还没确认的前 `limit` 条，以及当前同步位置。
-    fn pending(
-        &self,
+    /// 读还没确认的前 `limit` 条，以及当前同步位置。给了 `room` 就只读这个房间的，
+    /// `pending` 也只算这个房间的。
+    fn pending<'a>(
+        &'a self,
         id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
         limit: u16,
-    ) -> PortFuture<'_, RepositoryResult<NetworkAgentInboxPage>>;
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentInboxPage>>;
 
     /// 原子写入一次同步的结果并推进同步位置。
     fn append<'a>(
@@ -386,11 +388,13 @@ pub trait NetworkAgentInboxStore: Send + Sync {
         append: &'a NetworkAgentInboxAppend,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentInboxAppendOutcome>>;
 
-    /// 确认到这一条（含）为止，确认过的从收件箱删掉。
+    /// 确认到这一条（含）为止，确认过的从收件箱删掉。不给 `room` 就是所有房间里在它之前到的；
+    /// 给了就只是这个房间里的（只读一个房间时用），`pending` 也只算这个房间的。
     fn acknowledge<'a>(
         &'a self,
         id: NetworkAgentId,
         event_id: &'a MatrixEventId,
+        room: Option<&'a MatrixRoomId>,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>>;
 }
 

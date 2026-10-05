@@ -48,7 +48,8 @@ use agent_room_bridge_ipc::{
     IpcMessagePreviewSummary,
     previews::PreviewViewer,
     wake::{
-        Arrival, Delivery, IpcWake, WaitDecision, WaitOptions, WakeContext, WakeReason, decide,
+        Arrival, Delivery, IpcWake, WaitDecision, WaitOptions, WakeContext, WakeReason, WakeRule,
+        decide,
     },
 };
 use agent_room_domain::{
@@ -83,8 +84,10 @@ pub(crate) const MAX_PAGE: u16 = 50;
 /// 第一次同步只带每个房间最近几条，给 Agent 一点上下文。
 const FIRST_SYNC_TIMELINE_LIMIT: u16 = 20;
 const SYNC_TIMELINE_LIMIT: u16 = 50;
-/// 最多留这么多条没确认的；再多就丢掉最早的，并在下次取消息时告诉 Agent 丢了几条。
-pub(crate) const INBOX_CAPACITY: u32 = 200;
+/// 每个房间最多留这么多条没确认的；再多就丢掉这个房间最早的，并在下次取消息时告诉 Agent 丢了几条。
+pub(crate) const INBOX_CAPACITY: u32 = 500;
+/// 等消息时一次看这么多条没确认的，按规则挑出要交的。
+const INBOX_PAGE: u16 = 200;
 /// 长轮询分段等，每段不超过这么久：到了续租时间，等待中也能续上。
 const SYNC_CHUNK: Duration = Duration::from_secs(10);
 /// 聊天正文的媒体类型，与 MCP 的聊天发言一致。
@@ -152,6 +155,8 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) wake: IpcWake,
     /// 交出去的最后一条之前没交的条数；确认到最后一条时，它们也算看过。
     pub(crate) skipped: u64,
+    /// 交出去的最后一条之后还没确认的条数，下次再给。
+    pub(crate) remaining: u64,
 }
 
 /// 一次等消息：最多等多久、一次最多取几条、听什么（`specs/agent-reading/waiting.md`）。
@@ -162,6 +167,8 @@ pub(crate) struct NetworkAgentWait {
     pub(crate) options: WaitOptions,
     /// `waitFor=mentioned`：等我上一条点到的人。
     pub(crate) wait_for_mentioned: bool,
+    /// 只看这个房间（Matrix 房间 ID）；确认时也带上它，就只确认这个房间的。
+    pub(crate) room: Option<String>,
 }
 
 /// 网络 Agent 进房间与收发消息的接口；HTTP 接口与远程 MCP 只认这个，便于单独测试。
@@ -188,10 +195,13 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         request: NetworkAgentWait,
     ) -> PortFuture<'a, Result<NetworkAgentMessages, NetworkGatewayFailure>>;
 
+    /// 确认处理到这一条（含）为止。给了 `room` 就只确认这个房间的，不给就是所有房间里在它
+    /// 之前到的。
     fn acknowledge<'a>(
         &'a self,
         token: &'a str,
         event_id: &'a str,
+        room: Option<&'a str>,
     ) -> PortFuture<'a, Result<NetworkAgentAckOutcome, NetworkGatewayFailure>>;
 
     fn send_message<'a>(
@@ -429,7 +439,8 @@ impl NetworkGateway {
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         let options = self.wait_options(&session, &request)?;
-        let peek_options = WaitOptions::peek(None);
+        let peek_options = peek(&options);
+        let room = scoped_room(&session, request.room.as_deref())?;
         let poll = self.polls.begin(session.network_agent_id);
         let mut waiting =
             presence::WaitAnnouncement::new(&self.presence, &self.matrix, &self.clock, &session);
@@ -447,10 +458,7 @@ impl NetworkGateway {
         loop {
             let page = self
                 .inbox
-                .pending(
-                    session.network_agent_id,
-                    u16::try_from(INBOX_CAPACITY).unwrap_or(u16::MAX),
-                )
+                .pending(session.network_agent_id, room.as_ref(), INBOX_PAGE)
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
             let first = page.sync_token.is_none();
@@ -829,11 +837,12 @@ impl NetworkGateway {
         }
     }
 
-    /// 确认处理到这一条（含）为止。
+    /// 确认处理到这一条（含）为止；给了房间就只确认这个房间的。
     async fn acknowledge_internal(
         &self,
         token: &str,
         event_id: &str,
+        room: Option<&str>,
     ) -> Result<NetworkAgentAckOutcome, NetworkGatewayFailure> {
         let event_id =
             MatrixEventId::new(event_id).map_err(|_| NetworkGatewayFailure::InvalidEvent)?;
@@ -842,8 +851,9 @@ impl NetworkGateway {
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
+        let room = scoped_room(&session, room)?;
         self.inbox
-            .acknowledge(session.network_agent_id, &event_id)
+            .acknowledge(session.network_agent_id, &event_id, room.as_ref())
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)
     }
@@ -911,8 +921,9 @@ impl NetworkAgentMessaging for NetworkGateway {
         &'a self,
         token: &'a str,
         event_id: &'a str,
+        room: Option<&'a str>,
     ) -> PortFuture<'a, Result<NetworkAgentAckOutcome, NetworkGatewayFailure>> {
-        Box::pin(self.acknowledge_internal(token, event_id))
+        Box::pin(self.acknowledge_internal(token, event_id, room))
     }
 
     fn send_message<'a>(
@@ -949,6 +960,17 @@ fn session_room(
         },
     };
     MatrixRoomId::new(room.matrix_room_id.as_str()).map_err(|_| NetworkGatewayFailure::Internal)
+}
+
+/// 只看、只确认一个房间时：必须是自己在的房间。没给（或者是空的）就是所有房间。
+fn scoped_room(
+    session: &NetworkAgentSession,
+    wanted: Option<&str>,
+) -> Result<Option<MatrixRoomId>, NetworkGatewayFailure> {
+    match wanted.map(str::trim).filter(|room| !room.is_empty()) {
+        Some(wanted) => session_room(session, Some(wanted)).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn submission_id(value: Option<&str>) -> Result<MessageSubmissionId, NetworkGatewayFailure> {
@@ -1142,7 +1164,24 @@ fn judge(
     }
 }
 
+/// 只看一眼（等 0 秒、第一次取消息）：有什么给什么；只要点我的时也只给点我的。
+fn peek(options: &WaitOptions) -> WaitOptions {
+    WaitOptions {
+        wake: if options.mentions_only {
+            WakeRule::Mentions
+        } else {
+            WakeRule::All
+        },
+        mentions_only: options.mentions_only,
+        ..WaitOptions::peek(None)
+    }
+}
+
 fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMessages {
+    // 这一页之后还有没读到的，也算在交出去的最后一条之后。
+    let unread = page
+        .pending
+        .saturating_sub(u64::try_from(page.entries.len()).unwrap_or(u64::MAX));
     let mut previews: Vec<Option<Value>> = page
         .entries
         .into_iter()
@@ -1160,6 +1199,9 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
         dropped: page.dropped,
         wake: delivery.wake,
         skipped: u64::try_from(delivery.skipped).unwrap_or(u64::MAX),
+        remaining: u64::try_from(delivery.remaining)
+            .unwrap_or(u64::MAX)
+            .saturating_add(unread),
     }
 }
 
@@ -1171,6 +1213,7 @@ fn nothing(page: &NetworkAgentInboxPage, reason: WakeReason) -> NetworkAgentMess
         dropped: page.dropped,
         wake: IpcWake::empty(reason),
         skipped: 0,
+        remaining: page.pending,
     }
 }
 

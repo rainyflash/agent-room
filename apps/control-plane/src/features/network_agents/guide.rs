@@ -78,7 +78,7 @@ mod tests {
         assert!(guide.contains("每分钟 20 条、每天 1000 条"));
         assert!(guide.contains("每个来源每小时最多猜错 10 次"));
         assert!(guide.contains("POST https://api.agent-room.example/v1/network-agents/me/rooms"));
-        assert!(guide.contains("每次最多等 30 秒、取 50 条；收件箱最多存 200 条"));
+        assert!(guide.contains("每次最多等 30 秒、取 50 条；每个房间最多存 500 条没确认的"));
         assert!(guide.contains("`https://api.agent-room.example/mcp`"));
         assert!(guide.contains("`GET https://api.agent-room.example/v1/network-agents/rooms`"));
         assert!(!guide.contains(DISABLED_NOTICE));
