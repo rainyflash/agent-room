@@ -42,6 +42,8 @@ INSTALLER_ABORTED_EXIT_CODE: Final = 2
 # 桌面端，又远短于钩子等待进程退出的 20 秒上限。
 IMAGE_RELEASE_DELAY_SECONDS: Final = 5.0
 LOAD_LIBRARY_AS_IMAGE_RESOURCE: Final = 0x20
+# 换文件期间安装器在安装目录里独占的标记（hooks.nsh 的 AGENT_ROOM_INSTALLER_MARKER，桌面端 installer_marker.rs）。
+INSTALLER_MARKER: Final = "installer-running.lock"
 INSTALLER_REGISTRATION_KEYS: Final = (
     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Agent Room",
     r"HKCU\Software\agent-room\Agent Room",
@@ -541,17 +543,49 @@ def verify_install_aborts_while_image_is_held(
     verify_runtime_digests(layout, unchanged, "安装器中止后")
 
 
+def desktop_relaunch_problem(desktop: Path) -> str | None:
+    """像 Agent 的 MCP 和命令行那样从安装目录启动桌面端。钩子停 Agent Room 期间这一步必须失败。"""
+    try:
+        launched = subprocess.Popen(
+            (str(desktop),),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return None
+    launched.kill()
+    launched.wait(timeout=30)
+    return "钩子停 Agent Room 期间，桌面端还能从安装目录启动，Agent 会把旧版拉起来。"
+
+
+def marker_problem(marker: Path) -> str | None:
+    """换文件期间的标记要被安装器独占：桌面端打开它时碰上共享冲突，才知道安装器正在换文件。"""
+    try:
+        with marker.open("rb"):
+            pass
+    except FileNotFoundError:
+        return "钩子停 Agent Room 期间没有标记，新版桌面端会在换文件的当口照常启动。"
+    except PermissionError:
+        return None
+    return "标记没有被安装器独占，桌面端看不出安装器正在换文件。"
+
+
 def upgrade_while_image_is_released_late(
     install: Sequence[str],
     layout: InstalledLayout,
     runtime: RunningRuntime,
 ) -> None:
-    """运行中升级：桌面端被结束后映像又多占几秒才放开，安装器要一直等到能写再覆盖。"""
+    """运行中升级：桌面端被结束后映像又多占几秒才放开，安装器要一直等到能写再覆盖。
+
+    安装器还在等的时候从外面看一眼：桌面端程序已被挪开、Agent 拉不起它，换文件期间的标记被安装器独占。
+    """
     with ExecutableImageHold(layout.desktop) as hold:
         upgrade = start_captured(install)
         try:
             wait_for_process_exit(runtime.desktop, "桌面端")
             time.sleep(IMAGE_RELEASE_DELAY_SECONDS)
+            found = (desktop_relaunch_problem(layout.desktop), marker_problem(layout.root / INSTALLER_MARKER))
             hold.release()
             finish_checked(upgrade, "运行中原地升级", timeout_seconds=300)
         finally:
@@ -559,6 +593,9 @@ def upgrade_while_image_is_released_late(
                 upgrade.kill()
                 upgrade.communicate()
     wait_for_runtime_exit(runtime, "")
+    problems = [problem for problem in found if problem is not None]
+    if problems:
+        raise WindowsInstallerAcceptanceFailure(f"运行中原地升级时：{'；'.join(problems)}")
 
 
 def accept(installer: Path, expected_version: str, report: Path, launch_timeout_seconds: int) -> None:
@@ -633,6 +670,8 @@ def accept(installer: Path, expected_version: str, report: Path, launch_timeout_
                     "upgradeStoppedBridge": True,
                     "upgradeStoppedMcp": True,
                     "upgradeWaitedForImageRelease": True,
+                    "upgradeKeptDesktopFromStarting": True,
+                    "upgradeHeldInstallerMarker": True,
                     "upgradeReplacedRuntimeFiles": True,
                     "postUpgradeDesktopLaunch": True,
                     "postUpgradeBridgeLaunch": True,

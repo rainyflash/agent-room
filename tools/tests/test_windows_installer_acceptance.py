@@ -11,13 +11,16 @@ from unittest.mock import MagicMock, call, patch
 
 from tools.windows_installer_acceptance import (
     IMAGE_RELEASE_DELAY_SECONDS,
+    INSTALLER_MARKER,
     ExecutableImageHold,
     RunningRuntime,
     WindowsInstallerAcceptanceFailure,
     acceptance_environment,
+    desktop_relaunch_problem,
     ensure_clean_install_registration,
     installed_desktop_version,
     mark_runtime_as_previous_build,
+    marker_problem,
     runtime_digests,
     upgrade_while_image_is_released_late,
     verify_cli_version,
@@ -87,7 +90,7 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
         self.assertNotIn("Sleep 750", source)
         for image in RUNTIME_IMAGES:
             self.assertIn(f'!insertmacro AGENT_ROOM_KILL_IF_RUNNING "{image}"', source)
-            self.assertIn(f'!insertmacro AGENT_ROOM_MARK_IF_LOCKED "{image}"', source)
+            self.assertIn(f'!insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\\{image}"', source)
         self.assertIn("nsis_tauri_utils::FindProcessCurrentUser", source)
         self.assertIn("nsis_tauri_utils::KillProcessCurrentUser", source)
         # 与 File 同样的写权限和共享方式，只开已有文件；只把共享冲突和锁冲突当作仍被占用。
@@ -301,11 +304,12 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
         hold.assert_called_once_with(layout.desktop)
         run.assert_called_once_with(install, timeout_seconds=300)
 
-    def test_running_upgrade_releases_the_image_only_after_the_desktop_is_gone(self) -> None:
+    def run_late_upgrade(self, relaunch: str | None, marker: str | None) -> tuple[MagicMock, MagicMock, MagicMock]:
         steps = MagicMock()
+        steps.relaunch.return_value = relaunch
+        steps.marker.return_value = marker
         runtime = RunningRuntime(desktop=MagicMock(), mcp=MagicMock(), bridge_pid=42)
         layout = MagicMock()
-        install = ("setup.exe", "/S")
         upgrade = MagicMock()
         upgrade.poll.return_value = 0
         steps.start.return_value = upgrade
@@ -316,22 +320,58 @@ class WindowsInstallerAcceptanceTests(unittest.TestCase):
             "tools.windows_installer_acceptance.time.sleep", steps.sleep
         ), patch("tools.windows_installer_acceptance.finish_checked", steps.finish), patch(
             "tools.windows_installer_acceptance.wait_for_runtime_exit", steps.wait_runtime
+        ), patch("tools.windows_installer_acceptance.desktop_relaunch_problem", steps.relaunch), patch(
+            "tools.windows_installer_acceptance.marker_problem", steps.marker
         ):
-            upgrade_while_image_is_released_late(install, layout, runtime)
+            upgrade_while_image_is_released_late(("setup.exe", "/S"), layout, runtime)
+        return steps, layout, upgrade
 
+    def test_running_upgrade_releases_the_image_only_after_the_desktop_is_gone(self) -> None:
+        steps, layout, upgrade = self.run_late_upgrade(None, None)
+
+        runtime = steps.wait_runtime.call_args.args[0]
         self.assertEqual(
             [entry for entry in steps.mock_calls if not entry[0].startswith(("hold().", "start()."))],
             [
                 call.hold(layout.desktop),
-                call.start(install),
+                call.start(("setup.exe", "/S")),
                 call.wait_exit(runtime.desktop, "桌面端"),
                 call.sleep(IMAGE_RELEASE_DELAY_SECONDS),
+                # 安装器还在等映像放开：这时看 Agent 拉不拉得起桌面端、标记是否被安装器独占。
+                call.relaunch(layout.desktop),
+                call.marker(layout.root / INSTALLER_MARKER),
                 call.held.release(),
                 call.finish(upgrade, "运行中原地升级", timeout_seconds=300),
                 call.wait_runtime(runtime, ""),
             ],
         )
         upgrade.kill.assert_not_called()
+
+    def test_running_upgrade_fails_when_the_desktop_could_start_midway(self) -> None:
+        with self.assertRaisesRegex(WindowsInstallerAcceptanceFailure, "运行中原地升级时：桌面端还能启动；没有标记"):
+            self.run_late_upgrade("桌面端还能启动", "没有标记")
+
+    def test_desktop_that_cannot_be_started_from_the_install_directory_is_fine(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(desktop_relaunch_problem(Path(directory) / "agent-room-desktop.exe"))
+
+    def test_desktop_that_still_starts_is_reported_and_stopped_again(self) -> None:
+        launched = MagicMock()
+        with patch("tools.windows_installer_acceptance.subprocess.Popen", return_value=launched):
+            problem = desktop_relaunch_problem(Path("install") / "agent-room-desktop.exe")
+
+        self.assertIn("桌面端还能从安装目录启动", problem or "")
+        launched.kill.assert_called_once_with()
+        launched.wait.assert_called_once_with(timeout=30)
+
+    def test_marker_must_exist_and_be_held_by_the_installer_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / INSTALLER_MARKER
+            self.assertIn("没有标记", marker_problem(marker) or "")
+            marker.write_bytes(b"")
+            self.assertIn("没有被安装器独占", marker_problem(marker) or "")
+            with patch.object(Path, "open", side_effect=PermissionError(13, "sharing violation")):
+                self.assertIsNone(marker_problem(marker))
 
 
 if __name__ == "__main__":
