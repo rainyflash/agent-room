@@ -211,4 +211,13 @@
   - 下一步：第 6 步（三份说明统一说法、后台回复的宿主提示加上 `gaps`、无头验收加一轮）。
 - 2026-10-05：第 6 步拆成 6a（无头验收）和 6b（三份说明统一说法、后台回复的宿主提示加上 `gaps`）。6a：`tools/headless_acceptance.py` 加一轮 `verify_reading_and_backlog`，只在派发 `suite=all` 时跑。
   - 被点名后看出回复的是哪句：长消息在收件箱里只给开头，回复带着被回复那条的开头；按 ID 取回全文、看前后、往前翻（接着翻用 `nextCursor`）、只看某个人、只看提到我的，远程 MCP 的两个工具也走一遍。记笔记的网络 Agent 回复自己刚发的长消息，`replyTo` 用发言时返回的 `submissionId`：它就是那条的 `messageId`。自己发的要等下一次取消息、同步过以后才进它的消息记录，刚发完马上按 ID 取会落进 `missing`（第一次派发就卡在这里）。
-  - 积压：读的网络 Agent 不来取时，三个网络 Agent 各说 20 条（每分钟上限 20），一共 60 条，超过一次同步能带回的 50 条；回来以后按先后一条不少，没有缺口，也没丢。
+  - 积压：读的网络 Agent 不来取时，六个网络 Agent 各说 10 条，一共 60 条，超过一次同步能带回的 50 条；回来以后按先后一条不少，没有缺口，也没丢。每人只说 10 条：Synapse 默认每人连发 10 条以后每 5 秒才放一条（`rc_message`），第二次派发时发到第 11 条就被挡下，控制面报了暂时不可用（503）。
+- 2026-10-05：6b，三份说明一个说法，后台回复的宿主提示加上 `gaps`。
+  - 本机 MCP 的服务说明原来让 Agent 先用 `agent_room_list_previews` 看消息，现在和远程 MCP、`agents.md`、`agent-room guide` 一个说法：用 `agent_room_wait_for_messages` 等消息，处理完用 `agent_room_ack` 确认；之前的消息用 `agent_room_room_messages` 翻，全文用 `agent_room_get_messages` 按 ID 取。为了放得下，别的句子删了些字，意思没变；现在 1535 字节，仍在 1536 以内，开头还是“安全边界”（发版的 MCP 门禁认这个）。MCP 的 README 里“看近期历史仍用 `agent_room_list_previews`”改成指向 `agent_room_room_messages`。
+  - 远程 MCP 的服务说明、两边等消息工具的说明和 `agent-room guide` 在前面几步已经跟上，这次没改。
+  - `agents.md` 和远程 MCP 的工具说明补了 6a 第一次派发碰到的两件事：发言返回的 `submissionId` 就是这条的 `messageId`，回复自己刚发的直接用它；自己发的要等下一次取消息、同步过以后才进消息记录，之前按 ID 取会落进 `missing`、翻房间也看不到。本机 Bridge 一直在同步，没有这个问题。
+  - 后台回复交给宿主的这一批带上 `gaps`（有才给，形状和等消息一样），提示里加一句：`afterEventId` 之后、`beforeEventId` 之前的消息取不到，别当成对话是连着的。没有缺口时交给宿主的数据和原来一样，只是提示里多了这一句。
+  - `receiver doctor` 查的是宿主怎么调用（命令行参数、沙箱里读附件、回复格式），用它自己的提示，和回复提示共用 `run_turn`；这次没动 `run_turn`，所以它查不出这句话的差别。Alpha 62 实机验收照常用 Claude Code 跑一次；Codex 没有额度，这次跑不了。
+  - 和上面写的不一样：`undecryptable_before_join` 没做。网络 Agent 凭口令进私人房间以后，加入前的加密消息它解不开，网关同步时不出声地跳过，Agent 只看到加入以后的和 `beforeJoin` 标出的上下文。要报这一段，得先在同步时认出解不开的事件；要让它读到，得先定网络 Agent 能不能拿到加入前的房间密钥（那样服务器也能读到加入前的消息，超出维护者接受的“发给它的消息”）。等维护者定了再做。
+  - 网络 Agent 发得太快被 Synapse 挡下时，控制面现在回的是暂时不可用（503），没说要等多久；改成 429 带 `Retry-After` 另开一个 PR。
+  - 第 6 步做完：6a 是无头验收，6b 是这次。
