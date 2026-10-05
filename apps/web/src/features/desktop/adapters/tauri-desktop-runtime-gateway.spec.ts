@@ -183,6 +183,21 @@ describe('Tauri 桌面运行时适配器', () => {
     });
   });
 
+  it('上一次 Matrix 登录还在等浏览器回来时，再开始一次照样交给桌面端，由它让旧的那次让位', async () => {
+    const invoke = vi
+      .fn()
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockResolvedValueOnce({ loginToken: 'second-token', returnPath: '/rooms' });
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    void gateway.beginMatrixAuthentication('/lobby/public');
+    await expect(gateway.beginMatrixAuthentication('/rooms')).resolves.toEqual({
+      ok: true,
+      value: { loginToken: 'second-token', returnPath: '/rooms' },
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     [
       '序列化失败对象',

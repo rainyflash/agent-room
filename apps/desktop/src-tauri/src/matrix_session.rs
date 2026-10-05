@@ -1,14 +1,9 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
 use tauri_plugin_opener::OpenerExt as _;
+use tokio::sync::watch;
 use url::Url;
 
 use crate::{
@@ -23,17 +18,21 @@ const MAX_LOGIN_TOKEN_LENGTH: usize = 4_096;
 #[derive(Clone)]
 pub(crate) struct MatrixSessionRuntime {
     matrix_base_url: Url,
-    authentication_active: Arc<AtomicBool>,
+    attempts: AuthenticationAttempts,
 }
 
 impl MatrixSessionRuntime {
     pub(crate) fn system(config: &DesktopBridgeConfig) -> Self {
         Self {
             matrix_base_url: config.matrix_base_url(),
-            authentication_active: Arc::new(AtomicBool::new(false)),
+            attempts: AuthenticationAttempts::default(),
         }
     }
 
+    /// 打开系统浏览器去 Matrix 登录，等回环回调带回登录令牌。
+    ///
+    /// 同一时间只等一次。又开始一次登录时（人关掉了登录页、点了“重新开始登录”），还在等的那次
+    /// 立刻以 `authentication_superseded` 结束、放掉它的回环端口，由新的一次接手，不用等它超时。
     pub(crate) async fn begin_authentication(
         &self,
         app: &AppHandle,
@@ -45,11 +44,17 @@ impl MatrixSessionRuntime {
                 false,
             ));
         }
-        let _lease =
-            AuthenticationLease::acquire(&self.authentication_active).ok_or_else(|| {
-                MatrixSessionFailure::new("desktop.matrix_session.authentication_pending", false)
-            })?;
-        let result = self.receive_authentication_grant(app, return_path).await;
+        let mut attempt = self.attempts.start();
+        let outcome = tokio::select! {
+            result = self.receive_authentication_grant(app, return_path) => Some(result),
+            () = attempt.superseded() => None,
+        };
+        let Some(result) = outcome else {
+            return Err(MatrixSessionFailure::new(
+                "desktop.matrix_session.authentication_superseded",
+                true,
+            ));
+        };
         focus_main_window(app);
         result
     }
@@ -113,22 +118,48 @@ impl MatrixSessionFailure {
     }
 }
 
-struct AuthenticationLease<'a> {
-    active: &'a AtomicBool,
+/// 第几次登录：每开始一次加一，还在等的那次看到它变了就让位给新的一次。
+#[derive(Clone)]
+struct AuthenticationAttempts {
+    generation: Arc<watch::Sender<u64>>,
 }
 
-impl<'a> AuthenticationLease<'a> {
-    fn acquire(active: &'a AtomicBool) -> Option<Self> {
-        active
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .ok()
-            .map(|_| Self { active })
+impl Default for AuthenticationAttempts {
+    fn default() -> Self {
+        Self {
+            generation: Arc::new(watch::channel(0).0),
+        }
     }
 }
 
-impl Drop for AuthenticationLease<'_> {
-    fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
+impl AuthenticationAttempts {
+    fn start(&self) -> AuthenticationAttempt {
+        let mut generation = 0;
+        self.generation.send_modify(|value| {
+            *value = value.wrapping_add(1);
+            generation = *value;
+        });
+        AuthenticationAttempt {
+            generation,
+            newer: self.generation.subscribe(),
+        }
+    }
+}
+
+struct AuthenticationAttempt {
+    generation: u64,
+    newer: watch::Receiver<u64>,
+}
+
+impl AuthenticationAttempt {
+    /// 又开始了更新的一次登录时返回；没有就一直等下去，由调用方自己的超时收尾。
+    async fn superseded(&mut self) {
+        while self.newer.changed().await.is_ok() {
+            if *self.newer.borrow_and_update() != self.generation {
+                return;
+            }
+        }
+        std::future::pending::<()>().await;
     }
 }
 
@@ -194,8 +225,37 @@ type MatrixSessionResult<TValue> = Result<TValue, MatrixSessionFailure>;
 
 #[cfg(test)]
 mod tests {
-    use super::{matrix_sso_url, parse_authentication_grant};
+    use std::time::Duration;
+
+    use super::{AuthenticationAttempts, matrix_sso_url, parse_authentication_grant};
     use url::Url;
+
+    #[tokio::test(start_paused = true)]
+    async fn 又开始一次登录时还在等的那次立刻让位_最新的一次接着等() {
+        let attempts = AuthenticationAttempts::default();
+        let mut first = attempts.start();
+        let mut second = attempts.start();
+
+        tokio::time::timeout(Duration::from_secs(1), first.superseded())
+            .await
+            .expect("旧的一次应当让位");
+        assert!(
+            tokio::time::timeout(Duration::from_mins(1), second.superseded())
+                .await
+                .is_err(),
+            "最新的一次不该让位"
+        );
+
+        let mut third = attempts.start();
+        tokio::time::timeout(Duration::from_secs(1), second.superseded())
+            .await
+            .expect("第三次开始后第二次也让位");
+        assert!(
+            tokio::time::timeout(Duration::from_mins(1), third.superseded())
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn sso_入口只把随机回环地址交给_matrix() {

@@ -294,7 +294,12 @@ export function createSessionMachine(dependencies: SessionDependencies) {
             actions: 'setUnexpectedFailure',
           },
         },
-        on: { OFFLINE: 'offline', RETRY: 'booting' },
+        // 人点了“重新开始登录”：按交互方式重来。还按自动方式的话，上一次没走完的登录留下的记号
+        // 会把这次挡成“登录被打断”，要再点一次“重新连接”才真的重来。
+        on: {
+          OFFLINE: 'offline',
+          RETRY: { target: 'booting', actions: 'interactiveAuthentication' },
+        },
       },
       awaitingBrowserNavigation: {
         after: {
@@ -303,7 +308,10 @@ export function createSessionMachine(dependencies: SessionDependencies) {
             target: 'degraded',
           },
         },
-        on: { OFFLINE: 'offline', RETRY: 'booting' },
+        on: {
+          OFFLINE: 'offline',
+          RETRY: { target: 'booting', actions: 'interactiveAuthentication' },
+        },
       },
       restoring: {
         entry: assign({ connection: null }),

@@ -100,7 +100,6 @@ const nativeTransport: TauriDesktopTransport = {
 export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
   readonly agentRecovery: TauriAgentRecoveryGateway;
   private humanAuthenticationPending = false;
-  private matrixAuthenticationPending = false;
 
   constructor(private readonly transport: TauriDesktopTransport = nativeTransport) {
     this.agentRecovery = new TauriAgentRecoveryGateway(transport);
@@ -128,22 +127,18 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     }
   }
 
+  /**
+   * 再开始一次时不拦：桌面端让还在等浏览器回来的那次以 `authentication_superseded` 结束，
+   * 由新的一次接手。人关掉了登录页、点了“重新开始登录”，不用等旧的那次超时。
+   */
   async beginMatrixAuthentication(
     returnPath: string,
   ): Promise<Result<DesktopMatrixAuthenticationGrant, DesktopRuntimeFailure>> {
-    if (this.matrixAuthenticationPending) {
-      return err({ code: 'desktop.matrix_session.authentication_pending', retryable: false });
-    }
-    this.matrixAuthenticationPending = true;
-    try {
-      return await this.invokeValidated(
-        desktopCommands.beginMatrixAuthentication,
-        { returnPath },
-        desktopMatrixAuthenticationGrantSchema,
-      );
-    } finally {
-      this.matrixAuthenticationPending = false;
-    }
+    return await this.invokeValidated(
+      desktopCommands.beginMatrixAuthentication,
+      { returnPath },
+      desktopMatrixAuthenticationGrantSchema,
+    );
   }
 
   async clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>> {
