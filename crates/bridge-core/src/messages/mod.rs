@@ -54,13 +54,13 @@ pub use ports::{
     MessageSubmissionRepository, MessageSubmissionState,
 };
 pub use projection::{
-    IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessageLookupId,
-    MessagePreviewPage, MessagePreviewQuery, MessagePreviewQueryError, MessageProjectionBatch,
-    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
-    MessageRecoveryBatch, MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason,
-    MessageTimelineGap, MessageTimelineProjectionStore, MessageTimelineQueryFailure,
-    MessageTimelineQueryFailureKind, MessageTimelineQueryRepository, MessagesAround,
-    PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
+    InboxAcknowledgement, IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery,
+    MessageLookupId, MessagePreviewPage, MessagePreviewQuery, MessagePreviewQueryError,
+    MessageProjectionBatch, MessageProjectionMutation, MessageProjectionStoreFailure,
+    MessageProjectionStoreFailureKind, MessageRecoveryBatch, MessageRoomContext, MessageSyncIssue,
+    MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
+    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
+    MessagesAround, PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
     ProjectedMessagePreview, ProjectedMessageRevision, ReservedIsolatedEvent, UndecryptableSession,
 };
 pub use recovery::{MessageRecoveryOutcome, MessageRecoverySource};

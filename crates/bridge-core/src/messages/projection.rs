@@ -641,6 +641,15 @@ pub struct MessageRoomContext {
     pub joined_at_ms: Option<i64>,
 }
 
+/// 收件箱确认到一条以后的样子（`specs/agent-reading/design.md` 第 4 步）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InboxAcknowledgement {
+    /// 位置往前走了；这条在原来的位置上或更早时不动，是 false。
+    pub acknowledged: bool,
+    /// 这个房间里位置之后还有几条别人发的、没撤回的。
+    pub pending: u64,
+}
+
 pub trait MessageTimelineQueryRepository: Send + Sync {
     /// 从已验证的本地投影读取预览，不触发正文下载。
     fn list_previews<'a>(
@@ -686,6 +695,40 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         _after: u16,
     ) -> PortFuture<'a, Result<MessagesAround, MessageTimelineQueryFailure>> {
         Box::pin(async { Ok(MessagesAround::default()) })
+    }
+
+    /// 按 ID 找一条消息在哪个房间、原来那条的事件 ID 是什么；撤回了的也算。找不到就没有。
+    /// 确认收件箱时用：能不能看那个房间由调用方查。
+    fn find_inbox_event<'a>(
+        &'a self,
+        _id: &'a MessageLookupId,
+    ) -> PortFuture<'a, Result<Option<(MatrixRoomId, MatrixEventId)>, MessageTimelineQueryFailure>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// 这个房间的收件箱确认到哪一条了；没确认过就没有。
+    fn inbox_position<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<Option<MatrixEventId>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    /// 确认收件箱处理到这一条（含）：它和它之前收到的都处理完了。位置只往前走。`viewer` 是这个
+    /// Agent 的 Matrix 用户 ID，数还剩几条时不算它自己发的。这一条不在这个房间里时报 `CursorNotFound`。
+    fn acknowledge_inbox<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _event_id: &'a MatrixEventId,
+        _viewer: &'a MatrixUserId,
+        _now: UtcMillis,
+    ) -> PortFuture<'a, Result<InboxAcknowledgement, MessageTimelineQueryFailure>> {
+        Box::pin(async {
+            Err(MessageTimelineQueryFailure::new(
+                MessageTimelineQueryFailureKind::Unavailable,
+            ))
+        })
     }
 }
 

@@ -296,7 +296,7 @@ async fn visible_messages(
 }
 
 /// 事件 ID（`$` 开头）或消息 ID（UUIDv7）。IPC 已经校验过格式。
-fn lookup_id(id: &str) -> Result<MessageLookupId, BridgeIpcDispatchFailure> {
+pub(super) fn lookup_id(id: &str) -> Result<MessageLookupId, BridgeIpcDispatchFailure> {
     if id.starts_with('$') {
         MatrixEventId::new(id)
             .map(MessageLookupId::Event)
@@ -340,7 +340,7 @@ fn wanted_by(summary: &IpcMessagePreviewSummary, request: &IpcRoomHistoryRequest
     }
 }
 
-fn message_not_found() -> BridgeIpcDispatchFailure {
+pub(super) fn message_not_found() -> BridgeIpcDispatchFailure {
     BridgeIpcDispatchFailure::new(
         "bridge.message_not_found",
         IpcErrorCategory::Validation,

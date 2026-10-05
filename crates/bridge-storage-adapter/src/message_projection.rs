@@ -5,14 +5,14 @@ use agent_room_application::ports::{
 };
 use agent_room_bridge_core::agent_identity::BridgeAgentIdentity;
 use agent_room_bridge_core::messages::{
-    IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery, MessageLookupId,
-    MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch, MessageProjectionMutation,
-    MessageProjectionStoreFailure, MessageProjectionStoreFailureKind, MessageRecoveryBatch,
-    MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason, MessageTimelineProjectionStore,
-    MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
-    MessagesAround, OwnMembership, PendingTimelineGap, ProjectedActorInstanceVerification,
-    ProjectedMessageActor, ProjectedMessagePreview, ReservedIsolatedEvent, RoomName,
-    RoomStateChange, UndecryptableSession,
+    InboxAcknowledgement, IsolatedSession, MessageBackfillBatch, MessageContentSourceQuery,
+    MessageLookupId, MessagePreviewPage, MessagePreviewQuery, MessageProjectionBatch,
+    MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
+    MessageRecoveryBatch, MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason,
+    MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
+    MessageTimelineQueryRepository, MessagesAround, OwnMembership, PendingTimelineGap,
+    ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
+    ReservedIsolatedEvent, RoomName, RoomStateChange, UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -39,6 +39,8 @@ use crate::{
         MessageProjectionStorageKey,
     },
 };
+
+mod inbox;
 
 #[derive(Clone)]
 pub struct SqliteMessageTimelineRepository {
@@ -495,6 +497,31 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
         after: u16,
     ) -> PortFuture<'a, Result<MessagesAround, MessageTimelineQueryFailure>> {
         Box::pin(async move { self.query_around(room_id, anchor, before, after).await })
+    }
+
+    fn find_inbox_event<'a>(
+        &'a self,
+        id: &'a MessageLookupId,
+    ) -> PortFuture<'a, Result<Option<(MatrixRoomId, MatrixEventId)>, MessageTimelineQueryFailure>>
+    {
+        Box::pin(async move { self.query_inbox_event(id).await })
+    }
+
+    fn inbox_position<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, Result<Option<MatrixEventId>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_inbox_position(room_id).await })
+    }
+
+    fn acknowledge_inbox<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_id: &'a MatrixEventId,
+        viewer: &'a MatrixUserId,
+        now: UtcMillis,
+    ) -> PortFuture<'a, Result<InboxAcknowledgement, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.write_inbox_ack(room_id, event_id, viewer, now).await })
     }
 }
 

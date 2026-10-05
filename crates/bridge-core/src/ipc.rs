@@ -53,6 +53,9 @@ impl IpcProtocolVersion {
     /// 4.3：按需查看——按 ID 取（`GetMessages`）、看前后（`MessagesAround`）、往前翻（`RoomHistory`），
     /// 回应是新的 `Messages`、`RoomMessages`。旧 Bridge 不认这几个方法，握手时就说清版本不兼容。
     pub const V4_3: Self = Self { major: 4, minor: 3 };
+    /// 4.4：收件箱的确认位置由 Bridge 按房间记——确认（`AckInbox`），读收件箱、等消息能从确认
+    /// 位置开始（`fromAck`）。旧 Bridge 不认，握手时就说清版本不兼容。
+    pub const V4_4: Self = Self { major: 4, minor: 4 };
 
     /// 构造本地 IPC 协议版本。
     ///
@@ -443,6 +446,9 @@ mod tests {
             // 4.3 多了按需查看的方法，旧 Bridge 不认，同样不能混用。
             (IpcProtocolVersion::V4_3, IpcProtocolVersion::V4_2),
             (IpcProtocolVersion::V4_2, IpcProtocolVersion::V4_3),
+            // 4.4 多了收件箱的确认位置，旧 Bridge 不认，同样不能混用。
+            (IpcProtocolVersion::V4_4, IpcProtocolVersion::V4_3),
+            (IpcProtocolVersion::V4_3, IpcProtocolVersion::V4_4),
         ] {
             let negotiator =
                 IpcHandshakeNegotiator::new([server_version], FoundationIpcScopePolicy)

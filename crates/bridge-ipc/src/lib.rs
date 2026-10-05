@@ -39,14 +39,14 @@ pub use authentication::{
 pub use client::{IpcClientCredentials, IpcClientFailure, IpcClientFailureKind, IpcClientSession};
 pub use codec::{IpcFrameCodec, IpcProtocolFailure, IpcProtocolFailureKind};
 pub use tools::{
-    IpcActorSummary, IpcAgentArchiveReason, IpcAgentConnection, IpcAgentLifecycle,
-    IpcAgentReception, IpcAgentSummary, IpcApproveHandoffRequest, IpcBootstrapDefaultAgentRequest,
-    IpcBridgeState, IpcConsumedHandoff, IpcConsumedTargetedHandoff, IpcContentReference,
-    IpcConversationMessage, IpcDeclinedHandoff, IpcDeclinedTargetedHandoff,
-    IpcDefaultAgentBootstrap, IpcGetMessagesRequest, IpcGetPresenceRequest, IpcHandoffPermission,
-    IpcHandoffPurpose, IpcHandoffRequest, IpcHandoffStatus, IpcHandoffSubmission,
-    IpcHumanHandoffSource, IpcListHandoffsRequest, IpcListPreviewsRequest,
-    IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
+    IpcAckInboxRequest, IpcActorSummary, IpcAgentArchiveReason, IpcAgentConnection,
+    IpcAgentLifecycle, IpcAgentReception, IpcAgentSummary, IpcApproveHandoffRequest,
+    IpcBootstrapDefaultAgentRequest, IpcBridgeState, IpcConsumedHandoff,
+    IpcConsumedTargetedHandoff, IpcContentReference, IpcConversationMessage, IpcDeclinedHandoff,
+    IpcDeclinedTargetedHandoff, IpcDefaultAgentBootstrap, IpcGetMessagesRequest,
+    IpcGetPresenceRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
+    IpcHandoffStatus, IpcHandoffSubmission, IpcHumanHandoffSource, IpcListHandoffsRequest,
+    IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
     IpcMessagesAroundRequest, IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest,
     IpcOpenedAttachment, IpcOpenedContent, IpcOwnerSummary, IpcPendingTargetedHandoff,
     IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus, IpcReplyExcerpt, IpcResponse,
