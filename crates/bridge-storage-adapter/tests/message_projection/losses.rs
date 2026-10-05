@@ -25,21 +25,34 @@ fn message(event: &str, at: i64) -> MessageProjectionMutation {
     )
 }
 
-/// 同步一批；`gap` 是这次有没有缺口、有的话往回翻的令牌（`None` 表示没法往回补）。
+/// 这次同步这个房间有没有缺口。
+#[derive(Clone, Copy)]
+enum Gap {
+    No,
+    /// 有，能从这个令牌往回补。
+    Token(&'static str),
+    /// 有，但没给往回翻的令牌。
+    NoToken,
+}
+
+/// 同步一批。
 async fn sync(
     store: &SqliteMessageTimelineRepository,
     token: &str,
     messages: Vec<MessageProjectionMutation>,
-    gap: Option<Option<&str>>,
+    gap_kind: Gap,
 ) {
-    let gaps = gap
-        .map(|previous| MessageTimelineGap {
-            room_id: room_id(),
-            previous_batch: previous
-                .map(|token| MatrixBackfillToken::new(token).expect("回填游标有效")),
-        })
-        .into_iter()
-        .collect();
+    let gap = |previous_batch| MessageTimelineGap {
+        room_id: room_id(),
+        previous_batch,
+    };
+    let gaps = match gap_kind {
+        Gap::No => Vec::new(),
+        Gap::Token(token) => vec![gap(Some(
+            MatrixBackfillToken::new(token).expect("回填游标有效"),
+        ))],
+        Gap::NoToken => vec![gap(None)],
+    };
     store
         .apply(&MessageProjectionBatch::new(
             sync_token(token),
@@ -88,14 +101,14 @@ async fn 往回补没接上时记下丢了的一段_读到它后面那条时才�
         &store,
         "sync-1",
         vec![message("$old:matrix.test", 1_000)],
-        None,
+        Gap::No,
     )
     .await;
     sync(
         &store,
         "sync-2",
         vec![message("$latest:matrix.test", 5_000)],
-        Some(Some("backfill-gap")),
+        Gap::Token("backfill-gap"),
     )
     .await;
     backfill(&store, vec![message("$missed:matrix.test", 4_000)], false).await;
@@ -119,7 +132,7 @@ async fn 一条也没补回来时_丢的一段挂在当时同步来的第一条�
         &store,
         "sync-1",
         vec![message("$old:matrix.test", 1_000)],
-        None,
+        Gap::No,
     )
     .await;
     sync(
@@ -129,7 +142,7 @@ async fn 一条也没补回来时_丢的一段挂在当时同步来的第一条�
             message("$first:matrix.test", 5_000),
             message("$second:matrix.test", 6_000),
         ],
-        Some(Some("backfill-gap")),
+        Gap::Token("backfill-gap"),
     )
     .await;
     backfill(&store, Vec::new(), false).await;
@@ -151,14 +164,14 @@ async fn 接上了不算丢_没法往回补的一段同步时就记下() {
         &store,
         "sync-1",
         vec![message("$old:matrix.test", 1_000)],
-        None,
+        Gap::No,
     )
     .await;
     sync(
         &store,
         "sync-2",
         vec![message("$latest:matrix.test", 5_000)],
-        Some(Some("backfill-gap")),
+        Gap::Token("backfill-gap"),
     )
     .await;
     backfill(&store, vec![message("$missed:matrix.test", 4_000)], true).await;
@@ -173,7 +186,7 @@ async fn 接上了不算丢_没法往回补的一段同步时就记下() {
         &store,
         "sync-3",
         vec![message("$after-gap:matrix.test", 9_000)],
-        Some(None),
+        Gap::NoToken,
     )
     .await;
     assert!(store.pending_gaps(16).await.expect("可查询").is_empty());
