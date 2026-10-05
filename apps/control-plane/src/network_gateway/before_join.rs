@@ -5,21 +5,28 @@
 //! 加入时间只认这一批里亲眼看到的加入事件，和本机记加入时间是同一套（`room_state_changes`，改昵称、
 //! 换头像不算）。刚进的房间第一次同步带回最近一段，里面服务器早于加入收到、又解不开的事件就是这一段；
 //! 之后的同步只有新到的，看不到加入事件，也就不会再报。
+//!
+//! 报的时候带上这次加入的时间：存储重建后从头同步会再看到同一次加入，收件箱认得出是同一次，不再说；
+//! 被移出以后又凭口令进来是更晚的一次，离开那段同样解不开，再说一次。
 
 use std::collections::HashMap;
 
-use agent_room_application::ports::{MatrixRoomId, MatrixRoomSyncKind, MatrixSyncBatch};
+use agent_room_application::ports::{
+    MatrixRoomId, MatrixRoomSyncKind, MatrixSyncBatch, MatrixTimelineEvent,
+    NetworkAgentBeforeJoinGap,
+};
 use agent_room_bridge_core::messages::{OwnMembership, is_undecryptable, room_state_changes};
+use agent_room_domain::time::UtcMillis;
 
-/// 这一批里看到它加入、加入之前又有解不开的加密消息的房间。
+/// 这一批里看到它加入、加入之前又有解不开的加密消息的房间，和这次加入的时间。
 pub(super) fn undecryptable_before_join(
     batch: &MatrixSyncBatch,
     own_user_id: &str,
-) -> Vec<MatrixRoomId> {
-    let joined: HashMap<MatrixRoomId, i64> = room_state_changes(batch, own_user_id)
+) -> Vec<NetworkAgentBeforeJoinGap> {
+    let joined: HashMap<MatrixRoomId, UtcMillis> = room_state_changes(batch, own_user_id)
         .into_iter()
         .filter_map(|change| match change.membership? {
-            OwnMembership::Joined { at_ms } => Some((change.room_id, at_ms)),
+            OwnMembership::Joined { at_ms } => Some((change.room_id, UtcMillis::new(at_ms).ok()?)),
             OwnMembership::Left => None,
         })
         .collect();
@@ -27,19 +34,25 @@ pub(super) fn undecryptable_before_join(
         .rooms()
         .iter()
         .filter(|room| room.kind() == MatrixRoomSyncKind::Joined)
-        .filter(|room| {
-            joined.get(room.room_id()).is_some_and(|&joined_at_ms| {
-                room.timeline().iter().any(|event| {
-                    is_undecryptable(event)
-                        && event
-                            .origin_server_timestamp()
-                            .and_then(|at| i64::try_from(at).ok())
-                            .is_some_and(|at_ms| at_ms < joined_at_ms)
+        .filter_map(|room| {
+            let joined_at = *joined.get(room.room_id())?;
+            room.timeline()
+                .iter()
+                .any(|event| is_undecryptable(event) && sent_before(event, joined_at))
+                .then(|| NetworkAgentBeforeJoinGap {
+                    room_id: room.room_id().clone(),
+                    joined_at,
                 })
-            })
         })
-        .map(|room| room.room_id().clone())
         .collect()
+}
+
+/// 服务器早于这个时间收到的。
+fn sent_before(event: &MatrixTimelineEvent, at: UtcMillis) -> bool {
+    event
+        .origin_server_timestamp()
+        .and_then(|sent| i64::try_from(sent).ok())
+        .is_some_and(|sent| sent < at.value())
 }
 
 #[cfg(test)]
@@ -112,15 +125,34 @@ mod tests {
         )
     }
 
+    /// 自己离开或被移出。
+    fn left(event_id: &str, at: u64) -> MatrixTimelineEvent {
+        timeline_event(
+            event_id,
+            "m.room.member",
+            Some(ME),
+            json!({"membership": "leave"}),
+            at,
+        )
+        .with_previous_membership(Some("join".to_owned()))
+    }
+
     fn rooms(batch: &MatrixSyncBatch) -> Vec<String> {
         undecryptable_before_join(batch, ME)
             .iter()
-            .map(|room| room.as_str().to_owned())
+            .map(|gap| gap.room_id.as_str().to_owned())
+            .collect()
+    }
+
+    fn joined_at(batch: &MatrixSyncBatch) -> Vec<i64> {
+        undecryptable_before_join(batch, ME)
+            .iter()
+            .map(|gap| gap.joined_at.value())
             .collect()
     }
 
     #[test]
-    fn 看到自己加入_之前有解不开的就报这个房间() {
+    fn 看到自己加入_之前有解不开的就报这个房间和加入时间() {
         let batch = sync(
             MatrixRoomSyncKind::Joined,
             vec![
@@ -129,6 +161,23 @@ mod tests {
             ],
         );
         assert_eq!(rooms(&batch), [ROOM]);
+        assert_eq!(joined_at(&batch), [i64::try_from(JOINED_AT).unwrap()]);
+    }
+
+    #[test]
+    fn 离开以后又进来_按后一次加入算() {
+        let rejoined = JOINED_AT + 3_000;
+        let batch = sync(
+            MatrixRoomSyncKind::Joined,
+            vec![
+                membership("$join:matrix.test", Some("invite"), JOINED_AT),
+                left("$kicked:matrix.test", JOINED_AT + 1_000),
+                locked("$while-away:matrix.test", JOINED_AT + 2_000),
+                membership("$rejoin:matrix.test", Some("leave"), rejoined),
+            ],
+        );
+        assert_eq!(rooms(&batch), [ROOM], "不在的时候别人说的也解不开");
+        assert_eq!(joined_at(&batch), [i64::try_from(rejoined).unwrap()]);
     }
 
     #[test]

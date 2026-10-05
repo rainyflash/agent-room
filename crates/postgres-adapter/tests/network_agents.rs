@@ -8,13 +8,13 @@ use agent_room_application::{
     ports::{
         AgentInstanceManagementRepository, MatrixEventId, MatrixRoomId, MatrixSyncToken,
         MatrixTransactionId, NetworkAgentAckOutcome, NetworkAgentActivation,
-        NetworkAgentBeginOutcome, NetworkAgentGapReason, NetworkAgentHistoryDirection,
-        NetworkAgentHistoryFilter, NetworkAgentHistorySender, NetworkAgentInboxAppend,
-        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
-        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentLookup,
-        NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
-        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        NetworkAgentBeforeJoinGap, NetworkAgentBeginOutcome, NetworkAgentGapReason,
+        NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
+        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
+        NetworkAgentInboxMessage, NetworkAgentInboxPage, NetworkAgentInboxStore,
+        NetworkAgentLookup, NetworkAgentMessageActor, NetworkAgentMessageHistory,
+        NetworkAgentMessageRef, NetworkAgentProvisioning, NetworkAgentRecord,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
         NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
@@ -886,7 +886,7 @@ async fn 补不回来的一段记在后面那条上_读收件箱时一起给_确
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
-async fn 加入之前解不开的一段挂到这个房间之后第一条消息上_每个房间只说一次() {
+async fn 加入之前解不开的一段挂到这个房间之后第一条消息上_每次加入只说一次() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let provisioning = provisioning(&unique_name("Latecomer"), time(0));
@@ -897,14 +897,9 @@ async fn 加入之前解不开的一段挂到这个房间之后第一条消息�
         .record_room(id, &room_record(catalog, den().as_str(), time(10)))
         .await
         .expect("记房间");
-    let before_join = NetworkAgentTimelineGap {
-        after_event_id: None,
-        reason: NetworkAgentGapReason::UndecryptableBeforeJoin,
-    };
-
     // 刚进来的那次同步里只有解不开的旧消息，没有能挂的：先记在房间上。没记过的房间不管。
     let mut first = append(id, None, "s1", Vec::new(), 10);
-    first.undecryptable_before_join = vec![den(), lobby()];
+    first.undecryptable_before_join = vec![joined_at(den(), 10), joined_at(lobby(), 10)];
     repositories.append(&first).await.expect("写入");
     assert!(
         repositories
@@ -946,10 +941,10 @@ async fn 加入之前解不开的一段挂到这个房间之后第一条消息�
         ["$hello:matrix.test", "$again:matrix.test"],
         "自己发的不进收件箱，也不挂"
     );
-    assert_eq!(page.entries[0].gaps, [before_join.clone(), too_many]);
+    assert_eq!(page.entries[0].gaps, [before_join_gap(), too_many]);
     assert!(page.entries[1].gaps.is_empty());
 
-    // 说过就不再说：又见到一次也不挂到新消息上。
+    // 说过就不再说：同一次加入又见到（比如存储重建后从头同步）也不挂到新消息上。
     let mut again = append(
         id,
         Some("s2"),
@@ -957,11 +952,11 @@ async fn 加入之前解不开的一段挂到这个房间之后第一条消息�
         vec![said("$later:matrix.test", &den())],
         10,
     );
-    again.undecryptable_before_join = vec![den()];
+    again.undecryptable_before_join = vec![joined_at(den(), 10)];
     repositories.append(&again).await.expect("写入");
     let page = repositories.pending(id, None, 10).await.expect("读");
-    assert_eq!(page.entries[0].gaps.first(), Some(&before_join));
-    assert!(page.entries[2].gaps.is_empty(), "每个房间只说一次");
+    assert_eq!(page.entries[0].gaps.first(), Some(&before_join_gap()));
+    assert!(page.entries[2].gaps.is_empty(), "这次加入只说一次");
 
     // 确认带着它的那条，这一段也跟着交过了。
     repositories
@@ -974,6 +969,59 @@ async fn 加入之前解不开的一段挂到这个房间之后第一条消息�
         .expect("确认");
     let page = repositories.pending(id, None, 10).await.expect("读");
     assert!(page.entries.iter().all(|entry| entry.gaps.is_empty()));
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 被移出以后又凭口令进来是更晚的一次加入_不在的那段再说一次() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Returner"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let catalog = default_lobby(&database.runtime).await;
+    repositories
+        .record_room(id, &room_record(catalog, den().as_str(), time(10)))
+        .await
+        .expect("记房间");
+    let mut first = append(id, None, "s1", vec![said("$hello:matrix.test", &den())], 10);
+    first.undecryptable_before_join = vec![joined_at(den(), 10)];
+    repositories.append(&first).await.expect("写入");
+
+    // 又进来一次：不在的时候别人说的同样解不开，挂到这之后的第一条上。
+    let mut rejoined = append(
+        id,
+        Some("s1"),
+        "s2",
+        vec![said("$back:matrix.test", &den())],
+        10,
+    );
+    rejoined.undecryptable_before_join = vec![joined_at(den(), 5_000)];
+    repositories.append(&rejoined).await.expect("写入");
+    // 更早的那次加入又被同步到，不算新的。
+    let mut stale = append(
+        id,
+        Some("s2"),
+        "s3",
+        vec![said("$after:matrix.test", &den())],
+        10,
+    );
+    stale.undecryptable_before_join = vec![joined_at(den(), 10)];
+    repositories.append(&stale).await.expect("写入");
+
+    let page = repositories.pending(id, None, 10).await.expect("读");
+    assert_eq!(
+        event_ids(&page),
+        [
+            "$hello:matrix.test",
+            "$back:matrix.test",
+            "$after:matrix.test"
+        ]
+    );
+    assert_eq!(page.entries[0].gaps, [before_join_gap()]);
+    assert_eq!(page.entries[1].gaps, [before_join_gap()]);
+    assert!(page.entries[2].gaps.is_empty(), "更早的那次加入已经说过");
     database.close().await;
 }
 
@@ -1533,6 +1581,22 @@ fn room_record(catalog: RoomCatalogId, room_id: &str, at: UtcMillis) -> NetworkA
         matrix_room_id: MatrixRoomReference::new(room_id.to_owned()).expect("房间 ID 有效"),
         joined_at: at,
         name: None,
+    }
+}
+
+/// 这一批里看到它在 `at` 加入这个房间，加入之前有解不开的。
+fn joined_at(room: MatrixRoomId, at: i64) -> NetworkAgentBeforeJoinGap {
+    NetworkAgentBeforeJoinGap {
+        room_id: room,
+        joined_at: time(at),
+    }
+}
+
+/// 交出时带的那一段：加入之前的解不开。
+fn before_join_gap() -> NetworkAgentTimelineGap {
+    NetworkAgentTimelineGap {
+        after_event_id: None,
+        reason: NetworkAgentGapReason::UndecryptableBeforeJoin,
     }
 }
 

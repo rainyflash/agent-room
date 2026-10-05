@@ -6,7 +6,7 @@
 //! Agent 自己发的也在，按需查看时从那里读（见 `network_agent_history.rs`）。
 //!
 //! 凭口令进的私人房间里加入之前解不开的一段，先记在房间上（`before_join_gap_status`），再挂到这个
-//! 房间之后第一条进收件箱的消息上；每个房间只说一次。
+//! 房间之后第一条进收件箱的消息上；每次加入只说一次。
 
 use std::collections::HashSet;
 
@@ -334,7 +334,7 @@ fn inbox_entry(
 }
 
 /// 加入之前解不开、还没告诉 Agent 的房间（`before_join_gap_status = 'pending'`）。这一批新见到的
-/// 先记上；挂到这个房间第一条进收件箱的消息上以后改记 `reported`，以后不再说。
+/// 先记上；挂到这个房间第一条进收件箱的消息上以后改记 `reported`，这次加入不再说。
 struct BeforeJoinGaps {
     pending: HashSet<String>,
     reported: Vec<String>,
@@ -350,20 +350,19 @@ impl BeforeJoinGaps {
             pending: HashSet::new(),
             reported: Vec::new(),
         };
-        if !append.undecryptable_before_join.is_empty() {
-            let rooms: Vec<&str> = append
-                .undecryptable_before_join
-                .iter()
-                .map(MatrixRoomId::as_str)
-                .collect();
+        // 同一次加入再同步到（比如存储重建后从头同步）不再记；更晚的一次加入重新记。
+        for gap in &append.undecryptable_before_join {
             sqlx::query(
                 r"UPDATE agent_room.network_agent_room
-                     SET before_join_gap_status = 'pending'
-                   WHERE network_agent_id = $1 AND matrix_room_id = ANY($2)
-                     AND before_join_gap_status IS NULL",
+                     SET before_join_gap_status = 'pending',
+                         before_join_gap_joined_at_ms = $3
+                   WHERE network_agent_id = $1 AND matrix_room_id = $2
+                     AND (before_join_gap_joined_at_ms IS NULL
+                          OR before_join_gap_joined_at_ms < $3)",
             )
             .bind(append.id.as_uuid())
-            .bind(&rooms)
+            .bind(gap.room_id.as_str())
+            .bind(gap.joined_at.value())
             .execute(&mut **transaction)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;

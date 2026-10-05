@@ -117,7 +117,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - Bridge 文件日志的过滤规则可以用 `AGENT_ROOM_BRIDGE_LOG_FILTER` 换掉。
 - 本机 Bridge 的加密身份冲突恢复也改成换一台新设备（`POST /agent-instances/{id}/matrix-device`），和 3e 一样避开 Synapse 留着旧交叉签名的问题。旧的 `/matrix-session`（同一设备重签）只为旧版 Bridge 保留。
 - 加入前解不开的一段 #316：网关同步时看到 Agent 自己加入，服务器早于加入收到、又解不开的就是这一段，挂在这个房间之后第一条进收件箱的消息上（`gaps` 的 `undecryptable_before_join`，没有 `afterEventId`）。
-  - 记在两列新列里（`network_agent_room.before_join_gap_status`、`network_agent_inbox.before_join_gap`），不写进 `gap_reason`：旧版控制面读到不认识的原因，整个收件箱都读不出来。
+  - 每次加入只说一次：房间上记着说到了哪一次加入（服务器收到加入的时间）。被移出以后又凭口令进来是新的一次，再说一次。
+  - 记在新加的列里（`network_agent_room` 的 `before_join_gap_status`、`before_join_gap_joined_at_ms`，`network_agent_inbox.before_join_gap`），不写进 `gap_reason`：旧版控制面读到不认识的原因，整个收件箱都读不出来。
   - 私人房间那轮无头验收也查它：网络 Agent 进来之前本机 Agent 先说一句，它收到的第一条要带着这一段；发送方 Bridge 日志里不能有应它的请求重发房间密钥的记录。
   - Alpha 56 到 Alpha 62 期间网络 Agent 请来的加入前房间密钥，还留在服务器保管的加密存储和备份里。清不清由维护者定，还没动。
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -31,13 +31,13 @@ use agent_room_application::{
         MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
         MatrixRoomSync, MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent,
         MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent,
-        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentGapReason,
-        NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
-        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-        NetworkAgentInboxEntry, NetworkAgentInboxPage, NetworkAgentInboxStore,
-        NetworkAgentMatrixGateway, NetworkAgentMessageActor, NetworkAgentMessageHistory,
-        NetworkAgentMessageRef, NetworkAgentRoomRecord, NetworkAgentStoredMessage,
-        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentBeforeJoinGap,
+        NetworkAgentGapReason, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
+        NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+        NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
+        NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
+        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentRoomRecord,
+        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentSyncRequest, NetworkAgentTimelineGap, PortFuture, SecretValue,
     },
@@ -560,9 +560,8 @@ struct InboxState {
     entries: Vec<InboxRow>,
     /// 消息记录：确认过的、自己发的也在，每个房间各自限额。
     history: Vec<HistoryRow>,
-    /// 加入之前解不开、还没挂到消息上的房间，和已经说过的房间。
-    owed_before_join: HashSet<MatrixRoomId>,
-    told_before_join: HashSet<MatrixRoomId>,
+    /// 加入之前解不开的一段：哪一次加入（服务器收到加入的时间），说过没有。
+    before_join: HashMap<MatrixRoomId, (UtcMillis, bool)>,
 }
 
 struct HistoryRow {
@@ -617,6 +616,31 @@ impl InboxRow {
 impl InboxState {
     fn pending(&self, room: Option<&MatrixRoomId>) -> u64 {
         u64::try_from(self.entries.iter().filter(|row| row.in_scope(room)).count()).unwrap()
+    }
+
+    /// 和数据库一样：同一次加入不再记，更晚的一次重新记。
+    fn owe_before_join(&mut self, gaps: &[NetworkAgentBeforeJoinGap]) {
+        for gap in gaps {
+            let newer = self
+                .before_join
+                .get(&gap.room_id)
+                .is_none_or(|(joined_at, _)| *joined_at < gap.joined_at);
+            if newer {
+                self.before_join
+                    .insert(gap.room_id.clone(), (gap.joined_at, false));
+            }
+        }
+    }
+
+    /// 欠着加入之前那一段的房间，挂到第一条进收件箱的消息上，这次加入只说一次。
+    fn tell_before_join(&mut self, room: &MatrixRoomId) -> bool {
+        match self.before_join.get_mut(room) {
+            Some((_, told)) if !*told => {
+                *told = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// 消息记录里每个房间只留最近的几条。
@@ -699,11 +723,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
         let mut state = self.state.lock().unwrap();
         let outcome = if state.sync_token == append.expected_sync_token {
             let mut appended = 0;
-            for room in &append.undecryptable_before_join {
-                if !state.told_before_join.contains(room) {
-                    state.owed_before_join.insert(room.clone());
-                }
-            }
+            state.owe_before_join(&append.undecryptable_before_join);
             for change in &append.changes {
                 match change {
                     NetworkAgentInboxChange::Message(message) => {
@@ -732,11 +752,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         if message.from_me {
                             continue;
                         }
-                        // 欠着加入之前那一段的房间，挂到第一条进收件箱的消息上，只说一次。
-                        let before_join = state.owed_before_join.remove(&message.room_id);
-                        if before_join {
-                            state.told_before_join.insert(message.room_id.clone());
-                        }
+                        let before_join = state.tell_before_join(&message.room_id);
                         state.entries.push(InboxRow {
                             sequence,
                             event_id: message.event_id.clone(),
