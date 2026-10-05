@@ -191,7 +191,54 @@ export async function serverHasSigningIdentity(page: Page): Promise<boolean> {
   );
 }
 
-async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<void> {
+/**
+ * 删掉这个浏览器里的本机加密库，像浏览器清掉了本站存储那样，返回删掉的库名。先换到同源的空白页，
+ * 应用关掉加密库的连接，删除才做得完；空白页由路由给出，调用的测试要挡住 Service Worker，免得它换成应用。
+ */
+export async function deleteLocalCryptoStores(page: Page): Promise<string[]> {
+  await page.route('**/e2e-blank', async (route) => {
+    await route.fulfill({ body: '<!doctype html><title>blank</title>', contentType: 'text/html' });
+  });
+  await page.goto('/e2e-blank');
+  return await page.evaluate(async () => {
+    const names = (await indexedDB.databases())
+      .map((database) => database.name ?? '')
+      .filter((name) => name.startsWith('agent-room-crypto-'));
+    for (const name of names) {
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(name);
+        request.onsuccess = () => {
+          resolve();
+        };
+        request.onerror = () => {
+          reject(new Error(`删不掉 ${name}`, { cause: request.error }));
+        };
+      });
+    }
+    return names;
+  });
+}
+
+/** 服务器上这个账户现在有哪些传过密钥的设备。 */
+export async function serverDeviceIds(page: Page): Promise<string[]> {
+  const { accessToken, userId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
+  return await page.evaluate(
+    async ({ homeserver, token, user }) => {
+      const response = await fetch(`${homeserver}/_matrix/client/v3/keys/query`, {
+        body: JSON.stringify({ device_keys: { [user]: [] } }),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      const body = (await response.json()) as {
+        device_keys?: Record<string, Record<string, unknown>>;
+      };
+      return Object.keys(body.device_keys?.[user] ?? {});
+    },
+    { homeserver: matrixOrigin, token: accessToken, user: userId },
+  );
+}
+
+export async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<void> {
   const continueLink = page.getByRole('link', { name: /^Continue$/u });
   await expect
     .poll(

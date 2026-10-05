@@ -52,6 +52,15 @@ const whoAmISchema = z.looseObject({
   user_id: z.string().regex(/^@[^:]+:.+$/u),
 });
 
+const keysQuerySchema = z.looseObject({
+  device_keys: z
+    .record(
+      z.string(),
+      z.record(z.string(), z.looseObject({ keys: z.record(z.string(), z.string()) })),
+    )
+    .optional(),
+});
+
 // Matrix 规范允许省略刷新令牌和有效期，SDK 42 的返回类型却把它们标成必填。
 type MatrixRefreshResponse = {
   readonly access_token: string;
@@ -68,6 +77,8 @@ export type MatrixWebGatewayOptions = {
   readonly onClientActivity?: (client: MatrixClient) => void;
   readonly onClientChange?: (client: MatrixClient | null) => void;
   readonly online?: () => boolean;
+  /** 请浏览器别在空间紧张时清掉本站数据；默认用 `navigator.storage.persist()`。 */
+  readonly persistStorage?: () => Promise<boolean>;
   readonly replaceHistory?: (url: string) => void;
   readonly secretStorageKeys?: MatrixSecretStorageKeyCache;
   /**
@@ -91,6 +102,8 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #onClientActivity: (client: MatrixClient) => void;
   readonly #onClientChange: (client: MatrixClient | null) => void;
   readonly #online: () => boolean;
+  readonly #persistStorage: () => Promise<boolean>;
+  #storagePersistenceRequested = false;
   readonly #replaceHistory: (url: string) => void;
   readonly #secretStorageKeys: MatrixSecretStorageKeyCache;
   readonly #encryptionKeyEscrow: EncryptionKeyEscrow | undefined;
@@ -121,6 +134,7 @@ export class MatrixWebGateway implements MatrixGateway {
     onClientActivity = ignoreClientActivity,
     onClientChange = ignoreClientChange,
     online = () => window.navigator.onLine,
+    persistStorage = requestPersistentStorage,
     replaceHistory = (url) => {
       window.history.replaceState(window.history.state, '', url);
     },
@@ -140,6 +154,7 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#onClientActivity = onClientActivity;
     this.#onClientChange = onClientChange;
     this.#online = online;
+    this.#persistStorage = persistStorage;
     this.#replaceHistory = replaceHistory;
     this.#secretStorageKeys = secretStorageKeys;
     this.#encryptionKeyEscrow = encryptionKeyEscrow;
@@ -355,12 +370,19 @@ export class MatrixWebGateway implements MatrixGateway {
         return err(failure('identity', 'matrix.identity_mismatch', false, false));
       }
 
+      const persistent = this.#indexedDB !== undefined;
+      // 加密库起来以前先记下服务器上这台设备的签名公钥，起来以后跟本机的比。
+      // 只在本机加密库持久保存时比：存在内存里的每次都是一套新密钥。
+      const recorded = persistent
+        ? await recordedDeviceSigningKey(client, session.userId, session.deviceId)
+        : undefined;
+      if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
       try {
         const cryptoApi = await import('matrix-js-sdk/lib/crypto-api/index.js');
         await initializeMatrixCrypto(client, {
           databasePrefix: matrixCryptoDatabasePrefix(session.userId, session.deviceId),
           isolationMode: new cryptoApi.OnlySignedDevicesIsolationMode(),
-          persistent: this.#indexedDB !== undefined,
+          persistent,
         });
       } catch {
         return err(failure('matrix', 'matrix.crypto_initialization_failed', !this.#online(), true));
@@ -369,11 +391,16 @@ export class MatrixWebGateway implements MatrixGateway {
       if (attempt !== this.#restoreAttempt) {
         return err(supersededMatrixSession());
       }
+      if (await deviceKeysReplaced(client, recorded)) {
+        return await this.#retireDevice(client, lifecycleLog, session);
+      }
+      if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
       const connection = this.#createConnection(client, sdk.ClientEvent.Sync, sdk.SyncState);
       this.#activeConnection = connection;
       this.#cryptoLease = lease;
       this.#onClientChange(client);
       connected = true;
+      if (persistent) this.#requestPersistentStorage();
       return ok({
         connection,
         kind: 'connected',
@@ -504,6 +531,37 @@ export class MatrixWebGateway implements MatrixGateway {
     });
     await attempt();
   };
+
+  /**
+   * 本机加密存储丢过，加密库用同一个设备号新建了一套密钥。Agent 的加密库不认“同一设备号换了密钥”，
+   * 这台设备再也拿不到房间密钥，消息全都解不开。注销它（服务器上连设备一起删掉），清掉本机的会话和存储，
+   * 让界面重新登录、换一个新设备号；新设备照常自动签名、找回历史。
+   */
+  async #retireDevice(
+    client: MatrixClient,
+    lifecycleLog: MatrixLifecycleLogger,
+    session: StoredMatrixSession,
+  ): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
+    lifecycleLog.beginShutdown();
+    try {
+      await client.logout(true);
+    } catch {
+      // 服务器上留下这台旧设备也不影响新设备；本机照样清掉，免得接着用它。
+    }
+    client.stopClient();
+    const prefix = matrixCryptoDatabasePrefix(session.userId, session.deviceId);
+    if (!(await clearDeviceStores(client, prefix, this.#cryptoCleanup))) {
+      this.#cryptoCleanup.defer(prefix);
+    }
+    const cleared = await this.#sessions.clear();
+    return cleared.ok ? ok({ kind: 'authentication-required' }) : cleared;
+  }
+
+  #requestPersistentStorage(): void {
+    if (this.#storagePersistenceRequested) return;
+    this.#storagePersistenceRequested = true;
+    void this.#persistStorage().catch(() => false);
+  }
 
   #releaseCryptoLease(): void {
     this.#cryptoLease?.release();
@@ -655,6 +713,50 @@ export async function initializeMatrixCrypto(
   crypto.setDeviceIsolationMode(initialization.isolationMode);
 }
 
+/** 服务器上记着的这台设备的签名公钥。新设备还没传过密钥时没有；问不到也当没有，不挡恢复。 */
+export async function recordedDeviceSigningKey(
+  client: Pick<MatrixClient, 'downloadKeysForUsers'>,
+  userId: string,
+  deviceId: string,
+): Promise<string | undefined> {
+  try {
+    const response = keysQuerySchema.safeParse(await client.downloadKeysForUsers([userId]));
+    if (!response.success) return undefined;
+    return response.data.device_keys?.[userId]?.[deviceId]?.keys[`ed25519:${deviceId}`];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 本机加密库的签名公钥和它起来以前服务器上记着的不一样：本机加密存储丢过，加密库用同一个设备号
+ * 新建了一套密钥。服务器上没记着（新设备）或者本机的读不出来时不算。
+ */
+export async function deviceKeysReplaced(
+  client: Pick<MatrixClient, 'getCrypto'>,
+  recorded: string | undefined,
+): Promise<boolean> {
+  if (recorded === undefined) return false;
+  try {
+    const own = await client.getCrypto()?.getOwnDeviceKeys();
+    return own !== undefined && own.ed25519 !== recorded;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 请浏览器别在空间紧张时清掉本站数据：本机加密存储一丢，这台设备就只能换个设备号重新登录。
+ * 已经是持久的就不再请求；浏览器不支持时什么也不做。
+ */
+async function requestPersistentStorage(): Promise<boolean> {
+  const storage = (globalThis.navigator as Navigator | undefined)?.storage as
+    Partial<StorageManager> | undefined;
+  if (storage?.persist === undefined) return false;
+  if ((await storage.persisted?.()) === true) return true;
+  return await storage.persist();
+}
+
 function ignoreClientChange(client: MatrixClient | null): void {
   void client;
 }
@@ -797,24 +899,12 @@ class BrowserMatrixConnection implements MatrixConnection {
     this.#client.stopClient();
     if (!this.#storesCleared) {
       const prefix = matrixCryptoDatabasePrefix(this.userId, this.deviceId);
-      const clearing = this.#client.clearStores({ cryptoDatabasePrefix: prefix });
-      const outcome = await settleWithin(clearing, CRYPTO_STORE_CLEAR_WAIT_MS);
-      if (outcome === 'failed') {
+      if (!(await clearDeviceStores(this.#client, prefix, this.#cryptoCleanup))) {
         return remoteResult.ok
           ? err(failure('browser', 'browser.matrix_cache_clear_failed', false, true))
           : remoteResult;
       }
       this.#storesCleared = true;
-      if (outcome === 'pending') {
-        // 加密库仍被停下的 Rust 加密模块占着：删除会在它放手后自己完成；页面要是先关了，下次启动再删。
-        this.#cryptoCleanup.defer(prefix);
-        void clearing.then(
-          () => {
-            this.#cryptoCleanup.done(prefix);
-          },
-          () => undefined,
-        );
-      }
     }
     return remoteResult;
   }
@@ -884,6 +974,30 @@ async function settleWithin(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 删掉同步缓存和这台设备的本机加密库，删除失败时返回 false。加密库仍被停下的 Rust 加密模块占着时不一直等：
+ * 删除会在它放手后自己完成；页面要是先关了，下次启动再删（见 {@link MatrixCryptoStoreCleanup}）。
+ */
+async function clearDeviceStores(
+  client: MatrixClient,
+  prefix: string,
+  cleanup: MatrixCryptoStoreCleanup,
+): Promise<boolean> {
+  const clearing = client.clearStores({ cryptoDatabasePrefix: prefix });
+  const outcome = await settleWithin(clearing, CRYPTO_STORE_CLEAR_WAIT_MS);
+  if (outcome === 'failed') return false;
+  if (outcome === 'pending') {
+    cleanup.defer(prefix);
+    void clearing.then(
+      () => {
+        cleanup.done(prefix);
+      },
+      () => undefined,
+    );
+  }
+  return true;
 }
 
 function matrixCryptoDatabasePrefix(userId: string, deviceId: string): string {
