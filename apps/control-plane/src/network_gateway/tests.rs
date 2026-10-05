@@ -1772,7 +1772,7 @@ async fn 还有没确认的时同步失败_照样先交出已有的() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn 标出点名自己和回复自己的_附上被回复那条的开头_长正文暂时照旧给全文() {
+async fn 标出点名自己和回复自己的_附上被回复那条的开头_长正文只给开头() {
     let harness = harness();
     let mine = Uuid::now_v7();
     let long = "字".repeat(1_500);
@@ -1825,11 +1825,21 @@ async fn 标出点名自己和回复自己的_附上被回复那条的开头_长
     assert_eq!(named["mentionsMe"], true);
     assert!(named.get("replyTo").is_none());
 
-    // 能按 ID 取全文之前不截断。
+    // 超过 1000 字只给开头，全文按 ID 取。
     let long_message = &page.messages[2];
     assert_eq!(long_message["mentionsMe"], false);
-    assert_eq!(long_message["conversation"]["text"], long.as_str());
-    assert!(long_message["conversation"].get("truncated").is_none());
+    assert_eq!(
+        long_message["conversation"]["text"],
+        "字".repeat(1_000).as_str()
+    );
+    assert_eq!(long_message["conversation"]["truncated"], true);
+    assert_eq!(long_message["conversation"]["fullLength"], 1_500);
+    let full = harness
+        .gateway
+        .get_messages(TOKEN, vec!["$long:matrix.test".to_owned()])
+        .await
+        .unwrap();
+    assert_eq!(full.messages[0]["conversation"]["text"], long.as_str());
 }
 
 #[tokio::test(start_paused = true)]

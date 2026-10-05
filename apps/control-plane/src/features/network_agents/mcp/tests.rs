@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::super::tests::{FakeAgents, FakeMessaging, TOKEN, app_with};
-use crate::network_gateway::NetworkGatewayFailure;
+use crate::network_gateway::{NetworkAgentRoomQuery, NetworkGatewayFailure};
 
 const NOW: i64 = 1_758_600_000_000;
 
@@ -58,7 +58,7 @@ async fn rpc(app: axum::Router, body: &Value, bearer: Option<&str>) -> Value {
 }
 
 #[tokio::test]
-async fn 协商后列出八个工具_说明里写明令牌用法_口令与安全边界() {
+async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全边界() {
     let app = app(
         Arc::new(FakeAgents::default()),
         Arc::new(FakeMessaging::default()),
@@ -82,6 +82,8 @@ async fn 协商后列出八个工具_说明里写明令牌用法_口令与安全
     assert!(instructions.contains("agent_room_join") && instructions.contains("token"));
     assert!(instructions.contains("code") && instructions.contains("agent_room_enter_room"));
     assert!(instructions.contains("不可信"));
+    assert!(instructions.contains("agent_room_room_messages"));
+    assert!(instructions.contains("agent_room_get_messages"));
 
     let list = rpc(
         app,
@@ -101,14 +103,30 @@ async fn 协商后列出八个工具_说明里写明令牌用法_口令与安全
         [
             "agent_room_ack",
             "agent_room_enter_room",
+            "agent_room_get_messages",
             "agent_room_get_self",
             "agent_room_join",
             "agent_room_leave",
             "agent_room_list_rooms",
+            "agent_room_room_messages",
             "agent_room_send_message",
             "agent_room_wait_for_messages",
         ]
     );
+    let viewing = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|tool| {
+            matches!(
+                tool["name"].as_str(),
+                Some("agent_room_get_messages" | "agent_room_room_messages")
+            )
+        });
+    for tool in viewing {
+        assert_eq!(tool["annotations"]["readOnlyHint"], true, "{tool}");
+        assert_eq!(tool["annotations"]["idempotentHint"], true, "{tool}");
+    }
 }
 
 #[tokio::test]
@@ -405,4 +423,114 @@ async fn 等消息的叫醒规则和等谁也能用参数指定_写错了指出�
         assert_eq!(error["details"]["field"], field);
     }
     assert_eq!(messaging.waits.lock().unwrap().len(), 2, "写错的不交给网关");
+}
+
+#[tokio::test]
+async fn 按_id_取和翻房间交给网关_有消息时先提醒内容不可信() {
+    let messaging = Arc::new(FakeMessaging::default());
+
+    let found = rpc(
+        app(Arc::new(FakeAgents::default()), messaging.clone()),
+        &call(
+            "agent_room_get_messages",
+            &json!({"ids": ["$hello:matrix.test", "$gone:matrix.test"]}),
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    let result = &found["result"];
+    assert_ne!(result["isError"], true, "{found}");
+    assert_eq!(
+        result["structuredContent"]["messages"][0]["eventId"],
+        "$hello:matrix.test"
+    );
+    assert_eq!(
+        result["structuredContent"]["missing"],
+        json!(["$gone:matrix.test"])
+    );
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("不可信")
+    );
+    assert_eq!(
+        messaging.lookups.lock().unwrap()[0],
+        (
+            TOKEN.to_owned(),
+            vec![
+                "$hello:matrix.test".to_owned(),
+                "$gone:matrix.test".to_owned()
+            ]
+        )
+    );
+
+    let page = rpc(
+        app(Arc::new(FakeAgents::default()), messaging.clone()),
+        &call(
+            "agent_room_room_messages",
+            &json!({"roomId": "!lobby:matrix.test", "around": "$hello:matrix.test"}),
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    let result = &page["result"];
+    assert_ne!(result["isError"], true, "{page}");
+    assert_eq!(
+        result["structuredContent"]["nextCursor"],
+        "$earlier:matrix.test"
+    );
+    let views = messaging.views.lock().unwrap();
+    assert_eq!(views[0].1.room.as_deref(), Some("!lobby:matrix.test"));
+    assert_eq!(
+        views[0].1.query,
+        NetworkAgentRoomQuery::Around {
+            id: "$hello:matrix.test".to_owned(),
+            before: 10,
+            after: 10,
+        }
+    );
+}
+
+#[tokio::test]
+async fn 翻房间的参数写错了指出是哪一项_不问网关() {
+    let messaging = Arc::new(FakeMessaging::default());
+    for (arguments, field) in [
+        (json!({"around": "$a:matrix.test", "from": "Ada"}), "around"),
+        (
+            json!({"before": "$a:matrix.test", "after": "$b:matrix.test"}),
+            "after",
+        ),
+        (json!({"limit": 0}), "limit"),
+    ] {
+        let response = rpc(
+            app(Arc::new(FakeAgents::default()), messaging.clone()),
+            &call("agent_room_room_messages", &arguments),
+            Some(TOKEN),
+        )
+        .await;
+        let result = &response["result"];
+        assert_eq!(result["isError"], true, "{arguments}");
+        assert_eq!(
+            result["structuredContent"]["code"],
+            "network_agent.invalid_request"
+        );
+        assert_eq!(result["structuredContent"]["details"]["field"], field);
+    }
+    assert!(messaging.views.lock().unwrap().is_empty());
+
+    let failing = FakeMessaging::failing(NetworkGatewayFailure::MessageNotFound);
+    let response = rpc(
+        app(Arc::new(FakeAgents::default()), failing),
+        &call(
+            "agent_room_room_messages",
+            &json!({"around": "$a:matrix.test"}),
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(
+        response["result"]["structuredContent"]["code"],
+        "network_agent.message_not_found"
+    );
 }

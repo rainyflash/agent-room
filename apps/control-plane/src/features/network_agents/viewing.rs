@@ -19,8 +19,8 @@ use crate::{
     network_gateway::{NetworkAgentRoomMessagesRequest, NetworkAgentRoomQuery},
 };
 
-/// 看前后、往前翻默认给几条。
-const DEFAULT_VIEW_LIMIT: u16 = 20;
+/// 看前后、往前翻默认给几条；HTTP 接口与远程 MCP 共用。
+pub(super) const DEFAULT_VIEW_LIMIT: u16 = 20;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

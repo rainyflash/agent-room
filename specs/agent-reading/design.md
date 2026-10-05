@@ -198,3 +198,7 @@
   - HTTP 加 `GET /v1/network-agents/me/messages/lookup?ids=…`（按 ID 取，1 到 20 个，逗号隔开，给全文，`missing` 是找不到或不在所在房间里的）和 `GET /v1/network-agents/me/rooms/{roomId}/messages`（`around`、`before`、`after`、`limit`、`from`、`mentionsMe`，参数和本机 MCP 的 `agent_room_room_messages` 一样，长消息只给开头）。房间里找不到 `around`、`before`、`after` 给的那条时报 `network_agent.message_not_found`。
   - 和上面写的不一样：翻页的路径用 `roomId` 当路径的一段，不另起 `room` 参数；收件箱的长消息截断留到 5b-2，和远程 MCP 的两个工具一起打开，免得用 MCP 的 Agent 一时取不回全文。
   - 5b-2：远程 MCP 加 `agent_room_get_messages`、`agent_room_room_messages`，收件箱打开长消息截断。
+- 2026-10-05：5b-2，远程 MCP 的两个查看工具，收件箱打开长消息截断。
+  - 远程 MCP 加 `agent_room_get_messages`（`ids`）和 `agent_room_room_messages`（`roomId`、`around`、`before`、`after`、`limit`、`from`、`mentionsMe`），参数和本机 MCP 同名，只是没有 `sessionId`、多一个可选的 `token`；参数不对时报 `network_agent.invalid_request`，`details.field` 指出是哪一项，不问网关。服务说明加了一句怎么看之前的消息，现在 1254 字节，仍在 1536 以内。
+  - 网络接入的收件箱和等消息打开长消息截断：超过 1000 字只给开头（`conversation.truncated`、`fullLength`），全文按 ID 取。消息记录里存的照旧是全文。
+  - 下一步：5c（同步时一次来得太多就往回补，补不回来的报 `gaps`）。
