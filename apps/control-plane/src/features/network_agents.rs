@@ -253,6 +253,7 @@ impl WaitParams {
             reply_to: self.reply_to,
             settle_seconds: self.settle_seconds,
             digest_minutes: self.digest_minutes,
+            mentions_only: false,
         }
         .parse()?;
         Ok(NetworkAgentWait {

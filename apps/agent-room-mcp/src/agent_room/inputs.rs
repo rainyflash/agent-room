@@ -279,6 +279,9 @@ pub struct WaitMessagesInput {
     #[serde(default)]
     #[schemars(range(min = 1, max = 1440))]
     pub digest_minutes: Option<u64>,
+    /// 只给提到你或回复你的（主人说的也一样），别的算跳过、条数在 skipped 里；不能和 wake、from、waitFor、replyTo、digestMinutes 一起用。
+    #[serde(default)]
+    pub mentions_only: bool,
 }
 
 impl WaitMessagesInput {
@@ -295,6 +298,7 @@ impl WaitMessagesInput {
             reply_to: self.reply_to.clone(),
             settle_seconds: self.settle_seconds,
             digest_minutes: self.digest_minutes,
+            mentions_only: self.mentions_only,
         }
         .parse()
     }

@@ -954,3 +954,99 @@ fn 不防抖时打字也不等_等齐时等的人在打字照样等() {
     let delivery = delivered(decide_typing(&messages, &wait_for, &[], 6_000, None));
     assert_eq!(delivery.wake.reason, WakeReason::AllReplied);
 }
+
+#[test]
+fn 只要点我的_只交点我或回复我的_别的算跳过_主人没点我也叫不醒() {
+    let options = WaitParams {
+        mentions_only: true,
+        settle_seconds: Some(0),
+        ..WaitParams::default()
+    }
+    .parse()
+    .expect("只要点我的可以单独用")
+    .options;
+    assert_eq!(options.wake, WakeRule::Mentions);
+    let direct = HashSet::new();
+    let owner_plain = human(OWNER, "主人随口一说");
+    assert!(
+        !wakes(&owner_plain, &options, context(&direct)),
+        "只要点我的时，主人没点我也不叫醒"
+    );
+
+    let pending = [
+        (human(ADA, "大家早"), 1_000),
+        (mentioning(human(BOB, "scout 看下"), &[ME]), 1_100),
+        (human(ADA, "顺便说一句"), 1_200),
+        (replying(agent(NOVA, "回你"), "m-mine", Some(ME)), 1_300),
+        (human(BOB, "还有"), 1_400),
+    ];
+    let delivery = delivered(decide(
+        &arrivals(&pending),
+        &options,
+        context(&direct),
+        20,
+        5_000,
+        None,
+    ));
+    // 只给点我的和回复我的；它们之间、之前没点我的算跳过，之后的还没看。
+    assert_eq!(delivery.picks, [1, 3]);
+    assert_eq!(delivery.skipped, 2);
+    assert_eq!(delivery.remaining, 1);
+    assert_eq!(delivery.wake.reason, WakeReason::Messages);
+
+    // 只有没点我的：一直等，不会交出空的一批。
+    let quiet = [(human(ADA, "大家早"), 1_000), (owner_plain, 1_100)];
+    assert!(matches!(
+        decide(
+            &arrivals(&quiet),
+            &options,
+            context(&direct),
+            20,
+            60_000,
+            None
+        ),
+        WaitDecision::Wait { .. }
+    ));
+}
+
+#[test]
+fn 只要点我的不能和别的叫醒条件一起用() {
+    for params in [
+        WaitParams {
+            wake: Some(WakeRule::All),
+            ..WaitParams::default()
+        },
+        WaitParams {
+            from: vec![ADA.to_owned()],
+            ..WaitParams::default()
+        },
+        WaitParams {
+            wait_for: vec![ADA.to_owned()],
+            ..WaitParams::default()
+        },
+        WaitParams {
+            reply_to: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e99".to_owned()),
+            ..WaitParams::default()
+        },
+        WaitParams {
+            digest_minutes: Some(30),
+            ..WaitParams::default()
+        },
+    ] {
+        let params = WaitParams {
+            mentions_only: true,
+            ..params
+        };
+        assert_eq!(params.parse().map(|_| ()), Err("mentionsOnly"));
+    }
+    // 写明 wake=mentions 不冲突。
+    assert!(
+        WaitParams {
+            wake: Some(WakeRule::Mentions),
+            mentions_only: true,
+            ..WaitParams::default()
+        }
+        .parse()
+        .is_ok()
+    );
+}

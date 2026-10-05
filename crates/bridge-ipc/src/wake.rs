@@ -59,6 +59,8 @@ pub struct WaitOptions {
     pub settle: Duration,
     /// 没叫醒它的消息，最早那条攒到这么久就交给它看一眼。
     pub digest: Option<Duration>,
+    /// 只给提到我或回复我的：只有它们叫得醒，交的时候也只给它们，别的算跳过。主人说的也一样。
+    pub mentions_only: bool,
 }
 
 impl Default for WaitOptions {
@@ -71,6 +73,7 @@ impl Default for WaitOptions {
             room_id: None,
             settle: DEFAULT_SETTLE,
             digest: None,
+            mentions_only: false,
         }
     }
 }
@@ -138,6 +141,8 @@ pub struct WaitParams {
     pub reply_to: Option<String>,
     pub settle_seconds: Option<u64>,
     pub digest_minutes: Option<u64>,
+    /// 只给提到我或回复我的；不能和别的叫醒条件、定时看一眼一起用。
+    pub mentions_only: bool,
 }
 
 /// 换算好的规则。`waitFor` 只写了 `mentioned` 时 `options.wait_for` 空着，由调用方换成
@@ -153,9 +158,19 @@ impl WaitParams {
     ///
     /// # Errors
     ///
-    /// 哪一项不对就返回它的名字（`settle`、`digest`、`from`、`waitFor`、`replyTo`），
-    /// 调用方放进错误的 `details.field`。
+    /// 哪一项不对就返回它的名字（`settle`、`digest`、`from`、`waitFor`、`replyTo`、
+    /// `mentionsOnly`），调用方放进错误的 `details.field`。
     pub fn parse(self) -> Result<WaitRules, &'static str> {
+        // 只要点我的时，叫醒的只能是点我的：别的叫醒条件、定时看一眼都会交出空的一批。
+        if self.mentions_only
+            && (self.wake.is_some_and(|wake| wake != WakeRule::Mentions)
+                || !self.from.is_empty()
+                || !self.wait_for.is_empty()
+                || self.reply_to.is_some()
+                || self.digest_minutes.is_some())
+        {
+            return Err("mentionsOnly");
+        }
         let mentioned = self
             .wait_for
             .iter()
@@ -178,7 +193,11 @@ impl WaitParams {
             Some(_) => return Err("digest"),
         };
         let options = WaitOptions {
-            wake: self.wake.unwrap_or_default(),
+            wake: if self.mentions_only {
+                WakeRule::Mentions
+            } else {
+                self.wake.unwrap_or_default()
+            },
             from: self.from,
             wait_for: if mentioned { Vec::new() } else { self.wait_for },
             reply_to: self.reply_to,
@@ -187,6 +206,7 @@ impl WaitParams {
                 .settle_seconds
                 .map_or(DEFAULT_SETTLE, Duration::from_secs),
             digest,
+            mentions_only: self.mentions_only,
         };
         options.validate().map_err(|field| match field {
             WaitOptionsField::Settle => "settle",
@@ -315,7 +335,7 @@ pub fn wakes(
         return false;
     }
     let actor = actor_matrix_id(&preview.actor);
-    if context.owner == Some(actor) {
+    if context.owner == Some(actor) && !options.mentions_only {
         return true;
     }
     if options.narrowed() {
@@ -595,6 +615,9 @@ impl<'p, 'a> Scope<'p, 'a> {
     fn deliver(&self, priority: &[usize], limit: usize, reason: WakeReason) -> Delivery {
         let picks = if reason == WakeReason::Timeout && priority.is_empty() {
             Vec::new()
+        } else if self.options.mentions_only {
+            // 只给叫醒它的（提到它或回复它的），旧的在前；别的算跳过。
+            priority.iter().copied().take(limit).collect()
         } else {
             select(&self.heard, priority, limit)
         };

@@ -178,6 +178,10 @@ pub(crate) struct ReadArgs {
     /// Minutes after which messages that did not wake you are handed over anyway (1-1440).
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=1440))]
     pub(crate) digest: Option<u64>,
+    /// Only hand over messages that mention or reply to you; the rest count as skipped. Cannot
+    /// be combined with --wake, --from, --wait-for, --reply-to or --digest.
+    #[arg(long = "mentions-only")]
+    pub(crate) mentions_only: bool,
 }
 
 #[derive(Debug, Args)]
