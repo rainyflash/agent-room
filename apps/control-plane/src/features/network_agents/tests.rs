@@ -30,8 +30,9 @@ use uuid::Uuid;
 
 use super::{NetworkAgentHttpState, render_guide, router};
 use crate::network_gateway::{
-    NetworkAgentMessageDraft, NetworkAgentMessages, NetworkAgentMessaging, NetworkAgentSentMessage,
-    NetworkAgentWait, NetworkGatewayFailure,
+    NetworkAgentFoundMessages, NetworkAgentMessageDraft, NetworkAgentMessages,
+    NetworkAgentMessaging, NetworkAgentRoomMessages, NetworkAgentRoomMessagesRequest,
+    NetworkAgentSentMessage, NetworkAgentWait, NetworkGatewayFailure,
 };
 use agent_room_application::network_agents::NetworkAgentPolicy;
 use agent_room_bridge_ipc::wake::{IpcWake, WaitOptions, WakeReason, WakeRule};
@@ -222,6 +223,8 @@ pub(super) struct FakeMessaging {
     pub(super) entered: Mutex<Vec<(String, NetworkAgentRoomRequest, [u8; 32])>>,
     pub(super) waits: Mutex<Vec<(String, NetworkAgentWait)>>,
     pub(super) acks: Mutex<Vec<(String, String, Option<String>)>>,
+    pub(super) lookups: Mutex<Vec<(String, Vec<String>)>>,
+    pub(super) views: Mutex<Vec<(String, NetworkAgentRoomMessagesRequest)>>,
     pub(super) drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
     pub(super) disabled: Mutex<Vec<String>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
@@ -313,6 +316,47 @@ impl NetworkAgentMessaging for FakeMessaging {
                     Ok(NetworkAgentAckOutcome::Acknowledged { pending: 2 })
                 }
                 None => Ok(NetworkAgentAckOutcome::NotPending { pending: 3 }),
+            }
+        })
+    }
+
+    fn get_messages<'a>(
+        &'a self,
+        token: &'a str,
+        ids: Vec<String>,
+    ) -> PortFuture<'a, Result<NetworkAgentFoundMessages, NetworkGatewayFailure>> {
+        let missing = ids
+            .iter()
+            .filter(|id| id.as_str() != "$hello:matrix.test")
+            .cloned()
+            .collect();
+        self.lookups.lock().unwrap().push((token.to_owned(), ids));
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move {
+            match failure {
+                Some(failure) => Err(failure),
+                None => Ok(NetworkAgentFoundMessages {
+                    messages: vec![json!({"eventId": "$hello:matrix.test", "title": "你好"})],
+                    missing,
+                }),
+            }
+        })
+    }
+
+    fn room_messages<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentRoomMessagesRequest,
+    ) -> PortFuture<'a, Result<NetworkAgentRoomMessages, NetworkGatewayFailure>> {
+        self.views.lock().unwrap().push((token.to_owned(), request));
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move {
+            match failure {
+                Some(failure) => Err(failure),
+                None => Ok(NetworkAgentRoomMessages {
+                    messages: vec![json!({"eventId": "$earlier:matrix.test"})],
+                    next_cursor: Some("$earlier:matrix.test".to_owned()),
+                }),
             }
         })
     }
@@ -1369,3 +1413,5 @@ async fn 不带令牌也能列出能进的公开大厅_标出默认的那间() {
     assert_eq!(disabled.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body_json(disabled).await["code"], "network_agent.disabled");
 }
+
+mod viewing;

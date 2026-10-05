@@ -295,14 +295,14 @@ pub struct NetworkAgentRoomRecord {
 pub enum NetworkAgentInboxChange {
     /// 验签通过的新消息；同一事件重复同步到时只留第一次。
     Message(NetworkAgentInboxMessage),
-    /// 作者改了还没确认的那条：用新字段覆盖预览里的同名字段。
+    /// 作者改了一条：收件箱和消息记录里的都用新字段覆盖预览里的同名字段。
     Replace {
         room_id: MatrixRoomId,
         message_id: MessageId,
         actor_key: String,
         patch: Value,
     },
-    /// 作者撤回了还没确认的那条：直接从收件箱拿掉。
+    /// 作者撤回了一条：从收件箱和消息记录里都拿掉。
     Redact {
         room_id: MatrixRoomId,
         message_id: MessageId,
@@ -310,6 +310,7 @@ pub enum NetworkAgentInboxChange {
     },
 }
 
+/// 一条新消息：记进这个房间的消息记录；不是它自己发的才进收件箱。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkAgentInboxMessage {
     pub event_id: MatrixEventId,
@@ -317,8 +318,21 @@ pub struct NetworkAgentInboxMessage {
     pub message_id: MessageId,
     /// 作者的稳定标识（Agent ID 或 `human:<Matrix 用户>`），修订只认同一作者。
     pub actor_key: String,
+    /// 只看某个人时用来比对的作者。
+    pub actor: NetworkAgentMessageActor,
+    /// 它自己发的：只记进消息记录，不进收件箱。
+    pub from_me: bool,
+    /// 提到它或回复它的；只看提到我的时用。
+    pub mentions_me: bool,
     /// 与 CLI、MCP 看到的形状一致的消息预览。
     pub preview: Value,
+}
+
+/// 消息的作者：Matrix 用户 ID，和转成小写的名字（只看某个人时不分大小写）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentMessageActor {
+    pub matrix_user_id: String,
+    pub name_folded: String,
 }
 
 /// 一次同步的结果：从 `expected_sync_token` 同步到 `next_sync_token`。
@@ -332,6 +346,8 @@ pub struct NetworkAgentInboxAppend {
     pub received_at: UtcMillis,
     /// 每个房间最多保留这么多条没确认的；再多就丢掉这个房间最早的并计数。
     pub capacity: u32,
+    /// 每个房间的消息记录留最近这么多条（确认过的、它自己发的也算），更早的删掉。
+    pub history_capacity: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,6 +412,71 @@ pub trait NetworkAgentInboxStore: Send + Sync {
         event_id: &'a MatrixEventId,
         room: Option<&'a MatrixRoomId>,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>>;
+}
+
+/// 按 ID 取消息时给的：事件 ID 或者消息 ID。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkAgentMessageRef {
+    Event(MatrixEventId),
+    Message(MessageId),
+}
+
+/// 消息记录里的一条。
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkAgentStoredMessage {
+    /// 到达的先后，和收件箱同一个编号。
+    pub sequence: u64,
+    pub event_id: MatrixEventId,
+    pub room_id: MatrixRoomId,
+    pub message_id: MessageId,
+    /// 存的是全文。
+    pub preview: Value,
+}
+
+/// 在一个房间的消息记录里往哪边翻。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentHistoryDirection {
+    /// 编号比它小的（不给就是从最新的一条起），新的在前。
+    Before(Option<u64>),
+    /// 编号比它大的，旧的在前。
+    After(u64),
+}
+
+/// 翻消息记录时只要哪些。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetworkAgentHistoryFilter {
+    /// 只看某个人：给 Matrix 用户 ID 就比 ID，否则比转成小写的名字。
+    pub from: Option<NetworkAgentHistorySender>,
+    /// 只看提到它或回复它的。
+    pub mentions_me: bool,
+}
+
+/// 只看某个人时比对的：Matrix 用户 ID，或者转成小写的名字。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkAgentHistorySender {
+    MatrixUserId(String),
+    NameFolded(String),
+}
+
+/// 网络 Agent 的消息记录（`specs/agent-reading/design.md` 第 5 步“按需查看”）：每个房间留最近的
+/// 几百条，确认过的、它自己发的也在。写入随收件箱的 [`NetworkAgentInboxStore::append`] 一起做。
+pub trait NetworkAgentMessageHistory: Send + Sync {
+    /// 按事件 ID 或消息 ID 取，所有房间里找；找不到的不返回，顺序不定。
+    fn messages_by_id<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        refs: &'a [NetworkAgentMessageRef],
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentStoredMessage>>>;
+
+    /// 一个房间里从某处往前或往后翻，按 `filter` 挑出最多 `limit` 条。
+    fn room_messages<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a MatrixRoomId,
+        direction: NetworkAgentHistoryDirection,
+        filter: &'a NetworkAgentHistoryFilter,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentStoredMessage>>>;
 }
 
 /// 一次同步请求。服务器最多等 `timeout_millis` 就返回，哪怕没有新消息；0 表示立即返回。

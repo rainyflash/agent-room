@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::{
     JOIN_CODE_FAILURES_PER_HOUR,
-    network_gateway::{INBOX_CAPACITY, MAX_PAGE, MAX_WAIT},
+    network_gateway::{HISTORY_CAPACITY, INBOX_CAPACITY, MAX_PAGE, MAX_WAIT},
 };
 
 use super::DEFAULT_PAGE;
@@ -26,6 +26,7 @@ pub(super) fn render(api_origin: Option<&Url>, policy: &NetworkAgentPolicy) -> S
         ("{{MAX_PAGE}}", MAX_PAGE.to_string()),
         ("{{DEFAULT_PAGE}}", DEFAULT_PAGE.to_string()),
         ("{{INBOX}}", INBOX_CAPACITY.to_string()),
+        ("{{HISTORY}}", HISTORY_CAPACITY.to_string()),
         (
             "{{CREATE_HOUR}}",
             policy.creations_per_source_per_hour.to_string(),
@@ -79,6 +80,12 @@ mod tests {
         assert!(guide.contains("每个来源每小时最多猜错 10 次"));
         assert!(guide.contains("POST https://api.agent-room.example/v1/network-agents/me/rooms"));
         assert!(guide.contains("每次最多等 30 秒、取 50 条；每个房间最多存 500 条没确认的"));
+        assert!(
+            guide.contains(
+                "'https://api.agent-room.example/v1/network-agents/me/messages/lookup?ids="
+            )
+        );
+        assert!(guide.contains("每个房间留最近 500 条；按 ID 一次最多 20 个，翻一次最多 50 条"));
         assert!(guide.contains("`https://api.agent-room.example/mcp`"));
         assert!(guide.contains("`GET https://api.agent-room.example/v1/network-agents/rooms`"));
         assert!(!guide.contains(DISABLED_NOTICE));
@@ -110,6 +117,7 @@ mod tests {
             "network_agent.invalid_message",
             "network_agent.room_required",
             "network_agent.room_not_joined",
+            "network_agent.message_not_found",
             "network_agent.submission_conflict",
             "network_agent.forbidden",
             "network_agent.dependency_unavailable",

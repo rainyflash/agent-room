@@ -15,6 +15,7 @@ mod handoffs;
 mod inbox;
 mod migrations;
 mod moderation;
+mod network_agent_history;
 mod network_agent_inbox;
 mod network_agent_submissions;
 mod network_agents;

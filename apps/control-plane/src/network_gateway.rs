@@ -26,7 +26,8 @@ use agent_room_application::{
         MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, MatrixSyncBatch, MatrixSyncToken,
         MatrixUserId, NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxChange,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
-        NetworkAgentSubmissionStore, NetworkAgentSyncRequest, PortFuture,
+        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentSubmissionStore,
+        NetworkAgentSyncRequest, PortFuture,
     },
 };
 use agent_room_bridge_core::{
@@ -36,7 +37,7 @@ use agent_room_bridge_core::{
     },
     matrix_security::MatrixSecurityFailure,
     messages::{
-        MessageBody, MessageEventPublisher, MessagePublicationDependencies,
+        MessageBody, MessageEventPublisher, MessageProjectionBatch, MessagePublicationDependencies,
         MessagePublicationFailure, MessagePublicationFailureKind, MessagePublicationOutcome,
         MessagePublicationService, MessageStoreFailureKind, MessageSyncDependencies,
         MessageSyncService, ProtectMessageBodyFailureKind, ProtectMessageBodyRequest,
@@ -67,6 +68,10 @@ use uuid::{Uuid, Version};
 
 pub(crate) use cleanup::NetworkAgentCleanupOutcome;
 pub(crate) use encrypted::{EncryptedClients, EncryptedSessions, EncryptedSpeaker};
+pub(crate) use viewing::{
+    NetworkAgentFoundMessages, NetworkAgentRoomMessages, NetworkAgentRoomMessagesRequest,
+    NetworkAgentRoomQuery,
+};
 
 mod cleanup;
 mod encrypted;
@@ -76,6 +81,7 @@ mod speaking;
 #[cfg(test)]
 mod tests;
 mod typing;
+mod viewing;
 
 /// 长轮询最多等这么久。
 pub(crate) const MAX_WAIT: Duration = Duration::from_secs(30);
@@ -86,6 +92,9 @@ const FIRST_SYNC_TIMELINE_LIMIT: u16 = 20;
 const SYNC_TIMELINE_LIMIT: u16 = 50;
 /// 每个房间最多留这么多条没确认的；再多就丢掉这个房间最早的，并在下次取消息时告诉 Agent 丢了几条。
 pub(crate) const INBOX_CAPACITY: u32 = 500;
+/// 消息记录每个房间留最近这么多条（确认过的、它自己发的也算），按需查看时能翻到这么远
+/// （维护者 2026-09-30 定）。
+pub(crate) const HISTORY_CAPACITY: u32 = 500;
 /// 等消息时一次看这么多条没确认的，按规则挑出要交的。
 const INBOX_PAGE: u16 = 200;
 /// 长轮询分段等，每段不超过这么久：到了续租时间，等待中也能续上。
@@ -108,6 +117,10 @@ pub(crate) enum NetworkGatewayFailure {
     InvalidMessage(&'static str),
     /// 等消息的参数不对：说明是哪一项。
     InvalidWait(&'static str),
+    /// 按需查看的参数不对：说明是哪一项。
+    InvalidLookup(&'static str),
+    /// 这个房间的消息记录里没有这一条（看前后、翻页的位置）。
+    MessageNotFound,
     /// 在不止一个房间里却没说发到哪间。
     RoomRequired,
     /// 不在这个房间里。
@@ -204,6 +217,20 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         room: Option<&'a str>,
     ) -> PortFuture<'a, Result<NetworkAgentAckOutcome, NetworkGatewayFailure>>;
 
+    /// 按 ID 取消息的全文，不动收件箱。
+    fn get_messages<'a>(
+        &'a self,
+        token: &'a str,
+        ids: Vec<String>,
+    ) -> PortFuture<'a, Result<NetworkAgentFoundMessages, NetworkGatewayFailure>>;
+
+    /// 看一条消息的前后，或者往前（往后）翻，不动收件箱。
+    fn room_messages<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentRoomMessagesRequest,
+    ) -> PortFuture<'a, Result<NetworkAgentRoomMessages, NetworkGatewayFailure>>;
+
     fn send_message<'a>(
         &'a self,
         token: &'a str,
@@ -220,6 +247,7 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
 pub(crate) struct NetworkGatewayDependencies {
     pub(crate) agents: Arc<dyn NetworkAgentUseCases>,
     pub(crate) inbox: Arc<dyn NetworkAgentInboxStore>,
+    pub(crate) history: Arc<dyn NetworkAgentMessageHistory>,
     pub(crate) submissions: Arc<dyn NetworkAgentSubmissionStore>,
     pub(crate) matrix: Arc<dyn NetworkAgentMatrixGateway>,
     pub(crate) content: Arc<dyn ContentUseCases>,
@@ -233,6 +261,7 @@ pub(crate) struct NetworkGatewayDependencies {
 pub(crate) struct NetworkGateway {
     agents: Arc<dyn NetworkAgentUseCases>,
     inbox: Arc<dyn NetworkAgentInboxStore>,
+    history: Arc<dyn NetworkAgentMessageHistory>,
     submissions: Arc<dyn NetworkAgentSubmissionStore>,
     matrix: Arc<dyn NetworkAgentMatrixGateway>,
     content: Arc<dyn ContentUseCases>,
@@ -256,6 +285,7 @@ impl NetworkGateway {
         Self {
             agents: dependencies.agents,
             inbox: dependencies.inbox,
+            history: dependencies.history,
             submissions: dependencies.submissions,
             matrix: dependencies.matrix,
             content: dependencies.content,
@@ -566,6 +596,7 @@ impl NetworkGateway {
                 changes,
                 received_at: self.clock.now(),
                 capacity: INBOX_CAPACITY,
+                history_capacity: HISTORY_CAPACITY,
             })
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
@@ -881,14 +912,56 @@ impl NetworkGateway {
         sync.process(batch)
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+        let projected = captured.take();
+        let stored = self.stored_replies(session, projected.as_ref()).await;
         Ok(projection::inbox_changes(
-            captured.take(),
+            projected,
             PreviewViewer {
                 agent_id: session.agent_id,
                 matrix_user_id: &session.agent_matrix_user_id,
             },
             &session.rooms,
+            &stored,
         ))
+    }
+
+    /// 被回复的那条不在这一批里时，去消息记录里找。找不到、读不出来只是少了摘录。
+    async fn stored_replies(
+        &self,
+        session: &NetworkAgentSession,
+        batch: Option<&MessageProjectionBatch>,
+    ) -> projection::StoredReplies {
+        let targets = batch.map(projection::reply_targets).unwrap_or_default();
+        if targets.is_empty() {
+            return projection::StoredReplies::new();
+        }
+        let refs: Vec<NetworkAgentMessageRef> = targets
+            .iter()
+            .map(|(_, id)| NetworkAgentMessageRef::Message(*id))
+            .collect();
+        let found = match self
+            .history
+            .messages_by_id(session.network_agent_id, &refs)
+            .await
+        {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(
+                    network_agent.id = %session.network_agent_id,
+                    error = ?error,
+                    "网络 Agent 的消息记录读不出来，这一批回复的是哪条只能先不写"
+                );
+                return projection::StoredReplies::new();
+            }
+        };
+        found
+            .into_iter()
+            .filter_map(|message| {
+                let summary: IpcMessagePreviewSummary =
+                    serde_json::from_value(message.preview).ok()?;
+                Some(((message.room_id, message.message_id), summary))
+            })
+            .collect()
     }
 }
 
@@ -924,6 +997,22 @@ impl NetworkAgentMessaging for NetworkGateway {
         room: Option<&'a str>,
     ) -> PortFuture<'a, Result<NetworkAgentAckOutcome, NetworkGatewayFailure>> {
         Box::pin(self.acknowledge_internal(token, event_id, room))
+    }
+
+    fn get_messages<'a>(
+        &'a self,
+        token: &'a str,
+        ids: Vec<String>,
+    ) -> PortFuture<'a, Result<NetworkAgentFoundMessages, NetworkGatewayFailure>> {
+        Box::pin(self.get_messages_internal(token, ids))
+    }
+
+    fn room_messages<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentRoomMessagesRequest,
+    ) -> PortFuture<'a, Result<NetworkAgentRoomMessages, NetworkGatewayFailure>> {
+        Box::pin(self.room_messages_internal(token, request))
     }
 
     fn send_message<'a>(
