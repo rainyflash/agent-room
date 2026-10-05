@@ -5,7 +5,12 @@ import { describe, expect, it } from 'vitest';
 import type { MatrixClient } from 'matrix-js-sdk';
 import type { CryptoApi, DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js';
 
-import { initializeMatrixCrypto, MatrixWebGateway } from './matrix-web-gateway';
+import {
+  deviceKeysReplaced,
+  initializeMatrixCrypto,
+  MatrixWebGateway,
+  recordedDeviceSigningKey,
+} from './matrix-web-gateway';
 import { BrowserMatrixSessionVault } from './browser-matrix-session-vault';
 
 describe('MatrixWebGateway', () => {
@@ -142,6 +147,63 @@ describe('MatrixWebGateway', () => {
         persistent: true,
       }),
     ).rejects.toThrow('Matrix Rust Crypto 初始化完成后仍不可用。');
+  });
+});
+
+describe('本机加密存储丢过的设备', () => {
+  const userId = '@tester:matrix.test';
+  const deviceId = 'DEVICE';
+
+  function serverKeys(response: unknown): Pick<MatrixClient, 'downloadKeysForUsers'> {
+    return {
+      downloadKeysForUsers: (users: string[]) => {
+        expect(users).toEqual([userId]);
+        return response instanceof Error
+          ? Promise.reject(response)
+          : Promise.resolve(response as Awaited<ReturnType<MatrixClient['downloadKeysForUsers']>>);
+      },
+    };
+  }
+
+  function localKeys(ed25519: string | Error): Pick<MatrixClient, 'getCrypto'> {
+    const crypto = {
+      getOwnDeviceKeys: () =>
+        ed25519 instanceof Error
+          ? Promise.reject(ed25519)
+          : Promise.resolve({ ed25519, curve25519: 'curve' }),
+    } as Pick<CryptoApi, 'getOwnDeviceKeys'>;
+    return { getCrypto: () => crypto as CryptoApi };
+  }
+
+  it('从服务器读出这台设备记着的签名公钥', async () => {
+    const response = {
+      device_keys: {
+        [userId]: {
+          [deviceId]: { keys: { [`ed25519:${deviceId}`]: 'old', [`curve25519:${deviceId}`]: 'c' } },
+          OTHER: { keys: { 'ed25519:OTHER': 'other' } },
+        },
+      },
+      failures: {},
+    };
+    await expect(recordedDeviceSigningKey(serverKeys(response), userId, deviceId)).resolves.toBe(
+      'old',
+    );
+  });
+
+  it('新设备服务器上还没有密钥、或者问不到时当没记着', async () => {
+    const otherDevice = { device_keys: { [userId]: { OTHER: { keys: {} } } }, failures: {} };
+    for (const response of [otherDevice, { failures: {} }, new Error('网络中断')]) {
+      await expect(
+        recordedDeviceSigningKey(serverKeys(response), userId, deviceId),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it('本机的签名公钥和服务器上记着的不一样才算换过密钥', async () => {
+    await expect(deviceKeysReplaced(localKeys('new'), 'old')).resolves.toBe(true);
+    await expect(deviceKeysReplaced(localKeys('old'), 'old')).resolves.toBe(false);
+    await expect(deviceKeysReplaced(localKeys('new'), undefined)).resolves.toBe(false);
+    await expect(deviceKeysReplaced(localKeys(new Error('读不出')), 'old')).resolves.toBe(false);
   });
 });
 

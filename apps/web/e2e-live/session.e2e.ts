@@ -6,8 +6,11 @@ import { join, relative } from 'node:path';
 import {
   collectUnhandledFailures,
   connectLiveSession,
+  continueThroughMatrixConsentWhenRequired,
+  deleteLocalCryptoStores,
   interruptFirstSigningUpload,
   readMatrixSession,
+  serverDeviceIds,
   serverHasSigningIdentity,
 } from './support/live-session';
 import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
@@ -119,4 +122,40 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
     );
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+test.describe('本机加密库丢了', () => {
+  // 删库用的空白页由路由给出，不能让 Service Worker 换成应用。
+  test.use({ serviceWorkers: 'block' });
+
+  test('再打开时自动换一个新设备号并签好，旧设备从服务器上删掉', async ({ page }) => {
+    test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
+    test.setTimeout(180_000);
+    const failures = collectUnhandledFailures(page);
+    await connectLiveSession(page, {
+      expectedDisplayName: 'Local Developer',
+      password: password ?? '',
+      username: username ?? '',
+    });
+    await page.goto('/settings/security');
+    await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
+    const lost = storedMatrixSessionSchema.parse(await readMatrixSession(page));
+    expect(await serverDeviceIds(page)).toContain(lost.deviceId);
+
+    // 加密库没了、会话还在：再打开时加密库会用同一个设备号新建一套密钥，Agent 不认。
+    expect(await deleteLocalCryptoStores(page)).not.toEqual([]);
+    await page.goto('/connect');
+    await continueThroughMatrixConsentWhenRequired(page);
+    await expect(page).toHaveURL(/\/rooms$/u, { timeout: 40_000 });
+
+    const replaced = storedMatrixSessionSchema.parse(await readMatrixSession(page));
+    expect(replaced.userId).toBe(lost.userId);
+    expect(replaced.deviceId).not.toBe(lost.deviceId);
+    await page.goto('/settings/security');
+    await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
+    const devices = await serverDeviceIds(page);
+    expect(devices).toContain(replaced.deviceId);
+    expect(devices).not.toContain(lost.deviceId);
+    expect(failures).toEqual([]);
+  });
 });

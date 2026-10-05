@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ICreateClientOpts } from 'matrix-js-sdk';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CRYPTO_STORE_CLEAR_WAIT_MS, MatrixWebGateway } from './matrix-web-gateway';
 import type { MatrixSessionVault, StoredMatrixSession } from '../domain/matrix-session-vault';
@@ -20,6 +20,8 @@ const sdk = vi.hoisted(() => ({
   clearStores: vi.fn(),
   initializeCrypto:
     vi.fn<(options: { cryptoDatabasePrefix: string; useIndexedDB: boolean }) => Promise<void>>(),
+  downloadKeys: vi.fn<(users: string[]) => Promise<unknown>>(),
+  ownDeviceKeys: vi.fn<() => Promise<{ ed25519: string; curve25519: string }>>(),
 }));
 
 vi.mock('matrix-js-sdk', () => ({
@@ -33,7 +35,12 @@ vi.mock('matrix-js-sdk', () => ({
       logout: sdk.logout,
       whoami: () => sdk.whoami(options),
       initRustCrypto: sdk.initializeCrypto,
-      getCrypto: () => ({ setTrustCrossSignedDevices: vi.fn(), setDeviceIsolationMode: vi.fn() }),
+      downloadKeysForUsers: sdk.downloadKeys,
+      getCrypto: () => ({
+        setTrustCrossSignedDevices: vi.fn(),
+        setDeviceIsolationMode: vi.fn(),
+        getOwnDeviceKeys: sdk.ownDeviceKeys,
+      }),
       getDeviceId: () => options.deviceId,
       getUserId: () => options.userId,
       getSyncState: () => 'PREPARED',
@@ -45,6 +52,10 @@ vi.mock('matrix-js-sdk', () => ({
     };
   },
   MemoryStore: class {
+    startup = vi.fn();
+    deleteAllData = vi.fn();
+  },
+  IndexedDBStore: class {
     startup = vi.fn();
     deleteAllData = vi.fn();
   },
@@ -91,6 +102,37 @@ function gateway(vault: MatrixSessionVault) {
   });
 }
 
+/** 本机加密库持久保存的网关，和真的浏览器、桌面端一样：有 IndexedDB，有跨窗口的锁。 */
+function persistentGateway(
+  vault: MatrixSessionVault,
+  persistStorage = vi.fn(() => Promise.resolve(true)),
+) {
+  const locks = {
+    request: (name: string, _options: unknown, granted: (lock: Lock) => Promise<unknown>) =>
+      granted({ mode: 'exclusive', name }),
+  };
+  vi.stubGlobal('navigator', { locks, onLine: true });
+  return new MatrixWebGateway({
+    baseUrl: 'https://matrix.test',
+    indexedDB: {} as IDBFactory,
+    persistStorage,
+    sessionVault: vault,
+    url: () => new URL('https://tauri.localhost/connect'),
+  });
+}
+
+/** 服务器上记着的这台设备的签名公钥。 */
+function recordedKeys(ed25519: string) {
+  return {
+    device_keys: {
+      [session.userId]: {
+        [session.deviceId]: { keys: { [`ed25519:${session.deviceId}`]: ed25519 } },
+      },
+    },
+    failures: {},
+  };
+}
+
 describe('Matrix 网关持久会话生命周期', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -98,6 +140,8 @@ describe('Matrix 网关持久会话生命周期', () => {
     sdk.logout.mockReset().mockResolvedValue(undefined);
     sdk.clearStores.mockReset().mockResolvedValue(undefined);
     sdk.initializeCrypto.mockReset().mockResolvedValue(undefined);
+    sdk.downloadKeys.mockReset().mockResolvedValue({ device_keys: {}, failures: {} });
+    sdk.ownDeviceKeys.mockReset().mockResolvedValue({ ed25519: 'local-key', curve25519: 'local' });
     sdk.loginFlows.mockReset().mockResolvedValue({ flows: [{ type: 'm.login.sso' }] });
     sessionStorage.clear();
     localStorage.clear();
@@ -115,6 +159,10 @@ describe('Matrix 网关持久会话生命周期', () => {
       refresh_token: 'rotated-refresh',
       expires_in_ms: 60_000,
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('从连接页重新授权仍保留最初房间深链', async () => {
@@ -446,5 +494,68 @@ describe('Matrix 网关持久会话生命周期', () => {
 
     await expect(matrix.logout()).resolves.toEqual(ok(undefined));
     expect(sdk.clearStores).toHaveBeenCalledOnce();
+  });
+
+  it('本机加密存储丢过、同一个设备号换了密钥时注销这台设备，清掉本机会话，要求重新登录', async () => {
+    sdk.downloadKeys.mockResolvedValue(recordedKeys('recorded-key'));
+    sdk.ownDeviceKeys.mockResolvedValue({ ed25519: 'replaced-key', curve25519: 'local' });
+    const vault = storage();
+    const persistStorage = vi.fn(() => Promise.resolve(true));
+
+    await expect(persistentGateway(vault, persistStorage).restore(session.userId)).resolves.toEqual(
+      ok({ kind: 'authentication-required' }),
+    );
+
+    // 服务器上的是加密库起来以前问的：起来以后它可能已经把新密钥传上去了。
+    const queried = sdk.downloadKeys.mock.invocationCallOrder[0];
+    const initialized = sdk.initializeCrypto.mock.invocationCallOrder[0];
+    if (queried === undefined || initialized === undefined) throw new Error('两步都要做');
+    expect(queried).toBeLessThan(initialized);
+    expect(sdk.initializeCrypto.mock.calls[0]?.[0].useIndexedDB).toBe(true);
+    expect(sdk.logout).toHaveBeenCalledExactlyOnceWith(true);
+    expect(sdk.clearStores).toHaveBeenCalledExactlyOnceWith({
+      cryptoDatabasePrefix: sdk.initializeCrypto.mock.calls[0]?.[0].cryptoDatabasePrefix,
+    });
+    await expect(vault.load()).resolves.toEqual(ok(null));
+    expect(persistStorage).not.toHaveBeenCalled();
+  });
+
+  it('密钥对得上时照常连上，并请浏览器持久保存本站数据（只请求一次）', async () => {
+    sdk.downloadKeys.mockResolvedValue(recordedKeys('local-key'));
+    const persistStorage = vi.fn(() => Promise.resolve(true));
+    const matrix = persistentGateway(storage(), persistStorage);
+
+    for (let round = 0; round < 2; round += 1) {
+      await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+        ok: true,
+        value: { kind: 'connected' },
+      });
+    }
+    expect(sdk.logout).not.toHaveBeenCalled();
+    expect(persistStorage).toHaveBeenCalledOnce();
+  });
+
+  it('新设备服务器上还没有密钥，或者问不到时照常连上', async () => {
+    sdk.downloadKeys.mockRejectedValueOnce(new Error('网络中断'));
+    const matrix = persistentGateway(storage());
+    for (let round = 0; round < 2; round += 1) {
+      await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+        ok: true,
+        value: { kind: 'connected' },
+      });
+    }
+    expect(sdk.downloadKeys).toHaveBeenCalledTimes(2);
+    expect(sdk.logout).not.toHaveBeenCalled();
+  });
+
+  it('本机加密库只放在内存里时不比密钥：每次起来都是一套新的', async () => {
+    sdk.downloadKeys.mockResolvedValue(recordedKeys('recorded-key'));
+    sdk.ownDeviceKeys.mockResolvedValue({ ed25519: 'replaced-key', curve25519: 'local' });
+    await expect(gateway(storage()).restore(session.userId)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'connected' },
+    });
+    expect(sdk.downloadKeys).not.toHaveBeenCalled();
+    expect(sdk.logout).not.toHaveBeenCalled();
   });
 });
