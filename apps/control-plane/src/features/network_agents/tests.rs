@@ -221,7 +221,7 @@ pub(super) struct FakeMessaging {
     agents: Mutex<Option<Arc<FakeAgents>>>,
     pub(super) entered: Mutex<Vec<(String, NetworkAgentRoomRequest, [u8; 32])>>,
     pub(super) waits: Mutex<Vec<(String, NetworkAgentWait)>>,
-    pub(super) acks: Mutex<Vec<(String, String)>>,
+    pub(super) acks: Mutex<Vec<(String, String, Option<String>)>>,
     pub(super) drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
     pub(super) disabled: Mutex<Vec<String>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
@@ -289,6 +289,7 @@ impl NetworkAgentMessaging for FakeMessaging {
                     missing: Vec::new(),
                 },
                 skipped: 2,
+                remaining: 4,
             })
         })
     }
@@ -297,11 +298,13 @@ impl NetworkAgentMessaging for FakeMessaging {
         &'a self,
         token: &'a str,
         event_id: &'a str,
+        room: Option<&'a str>,
     ) -> PortFuture<'a, Result<NetworkAgentAckOutcome, NetworkGatewayFailure>> {
-        self.acks
-            .lock()
-            .unwrap()
-            .push((token.to_owned(), event_id.to_owned()));
+        self.acks.lock().unwrap().push((
+            token.to_owned(),
+            event_id.to_owned(),
+            room.map(str::to_owned),
+        ));
         let failure = self.failure.lock().unwrap().clone();
         Box::pin(async move {
             match failure {
@@ -929,6 +932,7 @@ async fn 取消息默认等三十秒取二十条_超出上限按上限算() {
             "dropped": 1,
             "wake": {"reason": "messages", "eventIds": ["$hello:matrix.test"]},
             "skipped": 2,
+            "remaining": 4,
         })
     );
 
@@ -959,6 +963,28 @@ async fn 取消息默认等三十秒取二十条_超出上限按上限算() {
         WaitOptions::default(),
         "默认跟它有关的才叫醒"
     );
+    assert_eq!(waits[0].1.room, None, "默认看所有房间");
+}
+
+#[tokio::test]
+async fn 可以只看一个房间_只要点我的() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging.clone(),
+        1_758_600_000_000,
+    )
+    .oneshot(messages_request(
+        "?roomId=!lobby:matrix.test&mentionsOnly=true",
+        Some(TOKEN),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let waits = messaging.waits.lock().unwrap();
+    assert_eq!(waits[0].1.room.as_deref(), Some("!lobby:matrix.test"));
+    assert!(waits[0].1.options.mentions_only);
+    assert_eq!(waits[0].1.options.wake, WakeRule::Mentions);
 }
 
 #[tokio::test]
@@ -1012,6 +1038,7 @@ async fn 等消息的参数不对时指出是哪一项() {
         ("?waitFor=mentioned,@ada:matrix.test", "waitFor"),
         ("?replyTo=abc", "replyTo"),
         (crowd.as_str(), "from"),
+        ("?mentionsOnly=true&wake=all", "mentionsOnly"),
     ] {
         let response = app_with(
             Arc::new(FakeAgents::default()),
@@ -1032,7 +1059,13 @@ async fn 等消息的参数不对时指出是哪一项() {
 #[tokio::test]
 async fn 取消息的参数写错时说明该怎么写() {
     let messaging = Arc::new(FakeMessaging::default());
-    for query in ["?wait=soon", "?since=abc", "?limit=-1", "?wake=loud"] {
+    for query in [
+        "?wait=soon",
+        "?since=abc",
+        "?limit=-1",
+        "?wake=loud",
+        "?mentionsOnly=maybe",
+    ] {
         let response = app_with(
             Arc::new(FakeAgents::default()),
             messaging.clone(),
@@ -1080,6 +1113,19 @@ async fn 确认到某条为止_不在收件箱里的也不报错() {
         json!({"schemaVersion": 1, "acknowledged": false, "pending": 3})
     );
 
+    // 只读一个房间时只确认这个房间的。
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging.clone(),
+        1_758_600_000_000,
+    )
+    .oneshot(ack_request(
+        r#"{"eventId":"$hello:matrix.test","roomId":"!lobby:matrix.test"}"#,
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
     for body in ["", r#"{"event":"$x:matrix.test"}"#] {
         let response = app_with(
             Arc::new(FakeAgents::default()),
@@ -1091,7 +1137,17 @@ async fn 确认到某条为止_不在收件箱里的也不报错() {
         .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
     }
-    assert_eq!(messaging.acks.lock().unwrap().len(), 2);
+    let acks = messaging.acks.lock().unwrap();
+    assert_eq!(
+        acks.iter()
+            .map(|(_, event, room)| (event.as_str(), room.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("$hello:matrix.test", None),
+            ("$old:matrix.test", None),
+            ("$hello:matrix.test", Some("!lobby:matrix.test")),
+        ]
+    );
 }
 
 #[tokio::test]

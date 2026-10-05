@@ -542,7 +542,8 @@ impl ContentUseCases for FakeContent {
     }
 }
 
-/// 与 Postgres 实现同样语义的收件箱：按到达编号，确认到哪条就删到哪条。
+/// 与 Postgres 实现同样语义的收件箱：按到达编号，确认到哪条就删到哪条；可以只读、只确认
+/// 一个房间的，每个房间各自限额。
 #[derive(Default)]
 struct MemoryInbox {
     state: Mutex<InboxState>,
@@ -553,7 +554,45 @@ struct InboxState {
     sync_token: Option<MatrixSyncToken>,
     sequence: u64,
     dropped: u64,
-    entries: Vec<(u64, MatrixEventId, MessageId, String, Value, UtcMillis)>,
+    entries: Vec<InboxRow>,
+}
+
+struct InboxRow {
+    sequence: u64,
+    event_id: MatrixEventId,
+    room_id: MatrixRoomId,
+    message_id: MessageId,
+    actor_key: String,
+    preview: Value,
+    received_at: UtcMillis,
+}
+
+impl InboxRow {
+    fn in_scope(&self, room: Option<&MatrixRoomId>) -> bool {
+        room.is_none_or(|room| *room == self.room_id)
+    }
+}
+
+impl InboxState {
+    fn pending(&self, room: Option<&MatrixRoomId>) -> u64 {
+        u64::try_from(self.entries.iter().filter(|row| row.in_scope(room)).count()).unwrap()
+    }
+
+    /// 一个房间里超过上限时丢掉这个房间最早的。
+    fn trim(&mut self, capacity: u32) {
+        let capacity = usize::try_from(capacity).unwrap();
+        let mut kept: HashMap<MatrixRoomId, usize> = HashMap::new();
+        let mut dropped = 0;
+        for index in (0..self.entries.len()).rev() {
+            let count = kept.entry(self.entries[index].room_id.clone()).or_default();
+            *count += 1;
+            if *count > capacity {
+                self.entries.remove(index);
+                dropped += 1;
+            }
+        }
+        self.dropped += dropped;
+    }
 }
 
 impl MemoryInbox {
@@ -568,28 +607,28 @@ impl MemoryInbox {
 }
 
 impl NetworkAgentInboxStore for MemoryInbox {
-    fn pending(
-        &self,
+    fn pending<'a>(
+        &'a self,
         _id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
         limit: u16,
-    ) -> PortFuture<'_, RepositoryResult<NetworkAgentInboxPage>> {
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentInboxPage>> {
         let state = self.state.lock().unwrap();
         let page = NetworkAgentInboxPage {
             sync_token: state.sync_token.clone(),
             entries: state
                 .entries
                 .iter()
+                .filter(|row| row.in_scope(room))
                 .take(usize::from(limit))
-                .map(
-                    |(sequence, event_id, _, _, preview, received_at)| NetworkAgentInboxEntry {
-                        sequence: *sequence,
-                        event_id: event_id.clone(),
-                        preview: preview.clone(),
-                        received_at: *received_at,
-                    },
-                )
+                .map(|row| NetworkAgentInboxEntry {
+                    sequence: row.sequence,
+                    event_id: row.event_id.clone(),
+                    preview: row.preview.clone(),
+                    received_at: row.received_at,
+                })
                 .collect(),
-            pending: u64::try_from(state.entries.len()).unwrap(),
+            pending: state.pending(room),
             dropped: state.dropped,
         };
         Box::pin(async move { Ok(page) })
@@ -608,20 +647,21 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         if state
                             .entries
                             .iter()
-                            .any(|(_, event_id, ..)| *event_id == message.event_id)
+                            .any(|row| row.event_id == message.event_id)
                         {
                             continue;
                         }
                         state.sequence += 1;
                         let sequence = state.sequence;
-                        state.entries.push((
+                        state.entries.push(InboxRow {
                             sequence,
-                            message.event_id.clone(),
-                            message.message_id,
-                            message.actor_key.clone(),
-                            message.preview.clone(),
-                            append.received_at,
-                        ));
+                            event_id: message.event_id.clone(),
+                            room_id: message.room_id.clone(),
+                            message_id: message.message_id,
+                            actor_key: message.actor_key.clone(),
+                            preview: message.preview.clone(),
+                            received_at: append.received_at,
+                        });
                         appended += 1;
                     }
                     NetworkAgentInboxChange::Replace {
@@ -630,10 +670,10 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         patch,
                         ..
                     } => {
-                        for (_, _, id, actor, preview, _) in &mut state.entries {
-                            if id == message_id && actor == actor_key {
+                        for row in &mut state.entries {
+                            if row.message_id == *message_id && row.actor_key == *actor_key {
                                 for (key, value) in patch.as_object().unwrap() {
-                                    preview[key] = value.clone();
+                                    row.preview[key] = value.clone();
                                 }
                             }
                         }
@@ -642,17 +682,12 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         message_id,
                         actor_key,
                         ..
-                    } => state
-                        .entries
-                        .retain(|(_, _, id, actor, ..)| !(id == message_id && actor == actor_key)),
+                    } => state.entries.retain(|row| {
+                        !(row.message_id == *message_id && row.actor_key == *actor_key)
+                    }),
                 }
             }
-            let capacity = usize::try_from(append.capacity).unwrap();
-            if state.entries.len() > capacity {
-                let excess = state.entries.len() - capacity;
-                state.entries.drain(..excess);
-                state.dropped += u64::try_from(excess).unwrap();
-            }
+            state.trim(append.capacity);
             state.sync_token = Some(append.next_sync_token.clone());
             NetworkAgentInboxAppendOutcome::Applied { appended }
         } else {
@@ -665,22 +700,25 @@ impl NetworkAgentInboxStore for MemoryInbox {
         &'a self,
         _id: NetworkAgentId,
         event_id: &'a MatrixEventId,
+        room: Option<&'a MatrixRoomId>,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>> {
         let mut state = self.state.lock().unwrap();
         let sequence = state
             .entries
             .iter()
-            .find(|(_, id, ..)| id == event_id)
-            .map(|(sequence, ..)| *sequence);
+            .find(|row| row.event_id == *event_id && row.in_scope(room))
+            .map(|row| row.sequence);
         let outcome = if let Some(sequence) = sequence {
-            state.entries.retain(|(entry, ..)| *entry > sequence);
+            state
+                .entries
+                .retain(|row| row.sequence > sequence || !row.in_scope(room));
             state.dropped = 0;
             NetworkAgentAckOutcome::Acknowledged {
-                pending: u64::try_from(state.entries.len()).unwrap(),
+                pending: state.pending(room),
             }
         } else {
             NetworkAgentAckOutcome::NotPending {
-                pending: u64::try_from(state.entries.len()).unwrap(),
+                pending: state.pending(room),
             }
         };
         Box::pin(async move { Ok(outcome) })
@@ -1248,6 +1286,42 @@ fn typing_batch(
     MatrixSyncBatch::new(MatrixSyncToken::new(next).unwrap(), vec![room])
 }
 
+/// 几个房间的一次同步。
+fn rooms_batch(next: &str, rooms: Vec<(&str, Vec<MatrixTimelineEvent>)>) -> MatrixSyncBatch {
+    MatrixSyncBatch::new(
+        MatrixSyncToken::new(next).unwrap(),
+        rooms
+            .into_iter()
+            .map(|(room, events)| {
+                MatrixRoomSync::new(
+                    MatrixRoomId::new(room).unwrap(),
+                    MatrixRoomSyncKind::Joined,
+                    false,
+                    None,
+                    events,
+                    Vec::new(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// 同一条消息，改成在另一个房间里发的。
+fn in_room(event: &MatrixTimelineEvent, room: &str) -> MatrixTimelineEvent {
+    let mut content = event.content().clone();
+    content["roomId"] = json!(room);
+    MatrixTimelineEvent::new(
+        event.event_id().cloned(),
+        event.sender().cloned(),
+        event.event_type().clone(),
+        None,
+        None,
+        Some(1_758_600_000_000),
+        content,
+    )
+    .unwrap()
+}
+
 fn signature(bytes: [u8; 64]) -> String {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.encode(bytes)
@@ -1413,6 +1487,7 @@ fn everything(wait: Duration, limit: u16) -> NetworkAgentWait {
             ..WaitOptions::default()
         },
         wait_for_mentioned: false,
+        room: None,
     }
 }
 
@@ -1423,6 +1498,7 @@ fn related(wait: Duration) -> NetworkAgentWait {
         limit: 20,
         options: WaitOptions::default(),
         wait_for_mentioned: false,
+        room: None,
     }
 }
 
@@ -1654,7 +1730,7 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     assert_eq!(
         harness
             .gateway
-            .acknowledge(TOKEN, "$one:matrix.test")
+            .acknowledge(TOKEN, "$one:matrix.test", None)
             .await
             .unwrap(),
         NetworkAgentAckOutcome::Acknowledged { pending: 1 }
@@ -1669,7 +1745,7 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     assert_eq!(
         harness
             .gateway
-            .acknowledge(TOKEN, "$two:matrix.test")
+            .acknowledge(TOKEN, "$two:matrix.test", None)
             .await
             .unwrap(),
         NetworkAgentAckOutcome::Acknowledged { pending: 0 }
@@ -1678,7 +1754,7 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     assert_eq!(
         harness
             .gateway
-            .acknowledge(TOKEN, "$two:matrix.test")
+            .acknowledge(TOKEN, "$two:matrix.test", None)
             .await
             .unwrap(),
         NetworkAgentAckOutcome::NotPending { pending: 0 }
@@ -1698,6 +1774,140 @@ async fn 确认之后不再收到_没有新消息时等满给的时间再空手�
     assert_eq!(requests[2].since.as_ref().unwrap().as_str(), "s1");
     assert_eq!(requests[2].timeout_millis, 5_000);
     assert_eq!(requests[2].timeline_limit, 50);
+}
+
+/// 大厅里三条（最后一条点了我），二号房里一条。
+fn two_rooms(harness: &Harness) {
+    harness.matrix.push(Step::Batch(Ok(rooms_batch(
+        "s1",
+        vec![
+            (
+                ROOM,
+                vec![
+                    chat(
+                        "$l1:matrix.test",
+                        other(),
+                        Uuid::now_v7(),
+                        "大厅一",
+                        [1; 64],
+                    ),
+                    chat(
+                        "$l2:matrix.test",
+                        other(),
+                        Uuid::now_v7(),
+                        "大厅二",
+                        [1; 64],
+                    ),
+                    chat_with(
+                        "$l3:matrix.test",
+                        other(),
+                        Uuid::now_v7(),
+                        "Scout 你看呢",
+                        &[matrix_user(OWN_AGENT)],
+                        None,
+                    ),
+                ],
+            ),
+            (
+                SECOND_ROOM,
+                vec![in_room(
+                    &chat(
+                        "$s1:matrix.test",
+                        other(),
+                        Uuid::now_v7(),
+                        "二号房",
+                        [1; 64],
+                    ),
+                    SECOND_ROOM,
+                )],
+            ),
+        ],
+    ))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn 可以只看只确认一个房间_remaining_是交出去的之后还没确认的() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    two_rooms(&harness);
+    let second_only = NetworkAgentWait {
+        room: Some(SECOND_ROOM.to_owned()),
+        ..everything(Duration::from_secs(30), 20)
+    };
+    let first = harness
+        .gateway
+        .wait_for_messages(TOKEN, second_only)
+        .await
+        .unwrap();
+    assert_eq!(texts(&first.messages), ["二号房"]);
+    assert_eq!((first.pending, first.remaining), (1, 0));
+    // 只确认二号房的：大厅里更早到的还在。
+    assert_eq!(
+        harness
+            .gateway
+            .acknowledge(TOKEN, "$s1:matrix.test", Some(SECOND_ROOM))
+            .await
+            .unwrap(),
+        NetworkAgentAckOutcome::Acknowledged { pending: 0 }
+    );
+
+    let one = harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 1))
+        .await
+        .unwrap();
+    assert_eq!(texts(&one.messages), ["大厅一"]);
+    assert_eq!((one.pending, one.remaining), (3, 2));
+    assert_eq!(
+        harness
+            .gateway
+            .acknowledge(TOKEN, "$l3:matrix.test", None)
+            .await
+            .unwrap(),
+        NetworkAgentAckOutcome::Acknowledged { pending: 0 }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 只看一眼时只要点我的也只给点我的_不在的房间不能只看只确认() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    two_rooms(&harness);
+    let mentions = NetworkAgentWait {
+        options: WaitOptions {
+            wake: WakeRule::Mentions,
+            mentions_only: true,
+            ..WaitOptions::default()
+        },
+        ..everything(Duration::ZERO, 20)
+    };
+    let named = harness
+        .gateway
+        .wait_for_messages(TOKEN, mentions)
+        .await
+        .unwrap();
+    // 前面没点我的两条算跳过；二号房那条在它之后，下次再给。
+    assert_eq!(texts(&named.messages), ["Scout 你看呢"]);
+    assert_eq!((named.skipped, named.remaining), (2, 1));
+
+    let elsewhere = NetworkAgentWait {
+        room: Some("!elsewhere:matrix.test".to_owned()),
+        ..everything(Duration::ZERO, 20)
+    };
+    assert_eq!(
+        harness
+            .gateway
+            .wait_for_messages(TOKEN, elsewhere)
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::RoomNotJoined
+    );
+    assert_eq!(
+        harness
+            .gateway
+            .acknowledge(TOKEN, "$l3:matrix.test", Some("!elsewhere:matrix.test"))
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::RoomNotJoined
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -1898,7 +2108,7 @@ async fn 令牌不对按网络_agent_的错误回答_matrix_失败算依赖不�
     assert_eq!(
         harness
             .gateway
-            .acknowledge(TOKEN, "not an event id")
+            .acknowledge(TOKEN, "not an event id", None)
             .await
             .unwrap_err(),
         NetworkGatewayFailure::InvalidEvent
@@ -1920,9 +2130,9 @@ async fn 令牌不对按网络_agent_的错误回答_matrix_失败算依赖不�
 }
 
 #[tokio::test(start_paused = true)]
-async fn 收件箱满了丢掉最早的并告诉_agent_丢了几条() {
+async fn 一个房间满了丢掉这个房间最早的并告诉_agent_丢了几条() {
     let harness = harness();
-    let events = (0..205)
+    let events = (0..505)
         .map(|index| {
             chat(
                 &format!("$m{index}:matrix.test"),
@@ -1942,9 +2152,11 @@ async fn 收件箱满了丢掉最早的并告诉_agent_丢了几条() {
         .unwrap();
 
     assert_eq!(received.messages.len(), 50);
-    assert_eq!(received.pending, 200);
+    assert_eq!(received.pending, 500);
     assert_eq!(received.dropped, 5);
     assert_eq!(received.messages[0]["conversation"]["text"], "第 5 条");
+    // 一次只看最早的 200 条：没看到的 300 条也算在之后还没确认的里。
+    assert_eq!(received.remaining, 450);
 }
 
 // ---------- 等消息的规则 ----------
@@ -2587,7 +2799,7 @@ async fn 进过加密房间的_agent_改由加密客户端同步_收件箱照旧
     // 否则会把发给这台设备的房间密钥一并跳过去。
     harness
         .gateway
-        .acknowledge(TOKEN, "$secret:matrix.test")
+        .acknowledge(TOKEN, "$secret:matrix.test", None)
         .await
         .unwrap();
     let next = harness

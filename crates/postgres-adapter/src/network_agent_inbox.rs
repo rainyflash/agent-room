@@ -1,12 +1,14 @@
 //! 网络 Agent 的房间与收件箱（ADR 0010，2-收发）：同步结果按到达顺序编号写入，
-//! 只有 Agent 显式确认才往前走；确认过的直接删掉。
+//! 只有 Agent 显式确认才往前走；确认过的直接删掉。可以只读、只确认一个房间的
+//! （`specs/agent-reading/design.md` 第 5 步）。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        MatrixEventId, MatrixSyncToken, NetworkAgentAckOutcome, NetworkAgentInboxAppend,
-        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxEntry,
-        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentRoomRecord, PortFuture,
+        MatrixEventId, MatrixRoomId, MatrixSyncToken, NetworkAgentAckOutcome,
+        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
+        NetworkAgentInboxEntry, NetworkAgentInboxPage, NetworkAgentInboxStore,
+        NetworkAgentRoomRecord, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -14,7 +16,7 @@ use agent_room_domain::{
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
-use sqlx::{Postgres, Transaction};
+use sqlx::{PgExecutor, Postgres, Transaction};
 
 use crate::{
     PostgresRepositories,
@@ -80,13 +82,15 @@ impl PostgresRepositories {
 }
 
 impl NetworkAgentInboxStore for PostgresRepositories {
-    fn pending(
-        &self,
+    fn pending<'a>(
+        &'a self,
         id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
         limit: u16,
-    ) -> PortFuture<'_, RepositoryResult<NetworkAgentInboxPage>> {
+    ) -> PortFuture<'a, RepositoryResult<NetworkAgentInboxPage>> {
         Box::pin(async move {
             let operation = "network_agent.inbox_pending";
+            let room = room.map(MatrixRoomId::as_str);
             let (sync_token, dropped) = sqlx::query_as::<_, (Option<String>, i64)>(
                 r"SELECT sync_token, dropped_messages
                     FROM agent_room.network_agent
@@ -102,21 +106,17 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                          (extract(epoch FROM received_at) * 1000)::bigint
                     FROM agent_room.network_agent_inbox
                    WHERE network_agent_id = $1
+                     AND ($3::text IS NULL OR matrix_room_id = $3)
                    ORDER BY sequence
                    LIMIT $2",
             )
             .bind(id.as_uuid())
             .bind(i64::from(limit))
+            .bind(room)
             .fetch_all(self.pool())
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
-            let pending: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM agent_room.network_agent_inbox WHERE network_agent_id = $1",
-            )
-            .bind(id.as_uuid())
-            .fetch_one(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let pending = count_pending(self.pool(), id, room, operation).await?;
             Ok(NetworkAgentInboxPage {
                 sync_token: sync_token
                     .map(MatrixSyncToken::new)
@@ -137,7 +137,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                         })
                     })
                     .collect::<RepositoryResult<_>>()?,
-                pending: u64::try_from(pending).map_err(|_| corrupt_data(operation))?,
+                pending,
                 dropped: u64::try_from(dropped).map_err(|_| corrupt_data(operation))?,
             })
         })
@@ -154,23 +154,26 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                 .begin()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
-            // 锁住这个网络 Agent：同一时间只有一次同步能写，位置对不上就作废。
-            let (sync_token, mut sequence) = sqlx::query_as::<_, (Option<String>, i64)>(
-                r"SELECT sync_token, inbox_sequence
-                    FROM agent_room.network_agent
-                   WHERE id = $1
-                   FOR UPDATE",
-            )
-            .bind(append.id.as_uuid())
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?
-            .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::NotFound))?;
-            if sync_token.as_deref()
-                != append
-                    .expected_sync_token
-                    .as_ref()
-                    .map(MatrixSyncToken::as_str)
+            // 锁住这个网络 Agent：同一时间只有一次同步能写，位置对不上就作废。停用以后不再写：
+            // 停用前就开始的长轮询可能这时才同步完，它的消息在记下离开房间时和别的一起删掉。
+            let (sync_token, mut sequence, disabled) =
+                sqlx::query_as::<_, (Option<String>, i64, bool)>(
+                    r"SELECT sync_token, inbox_sequence, status = 'disabled'
+                        FROM agent_room.network_agent
+                       WHERE id = $1
+                       FOR UPDATE",
+                )
+                .bind(append.id.as_uuid())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?
+                .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::NotFound))?;
+            if disabled
+                || sync_token.as_deref()
+                    != append
+                        .expected_sync_token
+                        .as_ref()
+                        .map(MatrixSyncToken::as_str)
             {
                 return Ok(NetworkAgentInboxAppendOutcome::Stale);
             }
@@ -207,9 +210,11 @@ impl NetworkAgentInboxStore for PostgresRepositories {
         &'a self,
         id: NetworkAgentId,
         event_id: &'a MatrixEventId,
+        room: Option<&'a MatrixRoomId>,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>> {
         Box::pin(async move {
             let operation = "network_agent.inbox_acknowledge";
+            let room = room.map(MatrixRoomId::as_str);
             let mut transaction = self
                 .pool()
                 .begin()
@@ -226,47 +231,47 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::NotFound))?;
             let sequence: Option<i64> = sqlx::query_scalar(
                 r"SELECT sequence FROM agent_room.network_agent_inbox
-                   WHERE network_agent_id = $1 AND matrix_event_id = $2",
+                   WHERE network_agent_id = $1 AND matrix_event_id = $2
+                     AND ($3::text IS NULL OR matrix_room_id = $3)",
             )
             .bind(id.as_uuid())
             .bind(event_id.as_str())
+            .bind(room)
             .fetch_optional(&mut *transaction)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
             if let Some(sequence) = sequence {
                 sqlx::query(
                     r"DELETE FROM agent_room.network_agent_inbox
-                       WHERE network_agent_id = $1 AND sequence <= $2",
+                       WHERE network_agent_id = $1 AND sequence <= $2
+                         AND ($3::text IS NULL OR matrix_room_id = $3)",
                 )
                 .bind(id.as_uuid())
                 .bind(sequence)
+                .bind(room)
                 .execute(&mut *transaction)
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
+                // 只确认一个房间时，别的房间还有更早的没确认：整体的位置不动。
                 sqlx::query(
                     r"UPDATE agent_room.network_agent
-                         SET acked_sequence = greatest(acked_sequence, $2),
+                         SET acked_sequence = CASE WHEN $3::text IS NULL
+                                 THEN greatest(acked_sequence, $2) ELSE acked_sequence END,
                              dropped_messages = 0
                        WHERE id = $1",
                 )
                 .bind(id.as_uuid())
                 .bind(sequence)
+                .bind(room)
                 .execute(&mut *transaction)
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             }
-            let pending: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM agent_room.network_agent_inbox WHERE network_agent_id = $1",
-            )
-            .bind(id.as_uuid())
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let pending = count_pending(&mut *transaction, id, room, operation).await?;
             transaction
                 .commit()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
-            let pending = u64::try_from(pending).map_err(|_| corrupt_data(operation))?;
             Ok(if sequence.is_some() {
                 NetworkAgentAckOutcome::Acknowledged { pending }
             } else {
@@ -358,21 +363,25 @@ async fn apply_change(
     Ok(false)
 }
 
-/// 没确认的超过上限时丢掉最早的，返回丢了几条。
+/// 一个房间里没确认的超过上限时丢掉这个房间最早的，返回一共丢了几条。
 async fn trim_to_capacity(
     transaction: &mut Transaction<'_, Postgres>,
     append: &NetworkAgentInboxAppend,
     operation: &'static str,
 ) -> RepositoryResult<i64> {
     let dropped = sqlx::query(
-        r"DELETE FROM agent_room.network_agent_inbox
-           WHERE network_agent_id = $1
-             AND sequence IN (
-                 SELECT sequence FROM agent_room.network_agent_inbox
-                  WHERE network_agent_id = $1
-                  ORDER BY sequence DESC
-                 OFFSET $2
-             )",
+        r"DELETE FROM agent_room.network_agent_inbox inbox
+           USING (
+               SELECT sequence
+                 FROM (SELECT sequence,
+                              row_number() OVER (
+                                  PARTITION BY matrix_room_id ORDER BY sequence DESC
+                              ) AS newer
+                         FROM agent_room.network_agent_inbox
+                        WHERE network_agent_id = $1) ranked
+                WHERE ranked.newer > $2
+           ) excess
+           WHERE inbox.network_agent_id = $1 AND inbox.sequence = excess.sequence",
     )
     .bind(append.id.as_uuid())
     .bind(i64::from(append.capacity))
@@ -381,4 +390,24 @@ async fn trim_to_capacity(
     .map_err(|error| map_sqlx_error(operation, &error))?
     .rows_affected();
     i64::try_from(dropped).map_err(|_| corrupt_data(operation))
+}
+
+/// 还没确认的条数；给了房间就只算这个房间的。
+async fn count_pending<'e>(
+    executor: impl PgExecutor<'e>,
+    id: NetworkAgentId,
+    room: Option<&str>,
+    operation: &'static str,
+) -> RepositoryResult<u64> {
+    let pending: i64 = sqlx::query_scalar(
+        r"SELECT count(*) FROM agent_room.network_agent_inbox
+           WHERE network_agent_id = $1
+             AND ($2::text IS NULL OR matrix_room_id = $2)",
+    )
+    .bind(id.as_uuid())
+    .bind(room)
+    .fetch_one(executor)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    u64::try_from(pending).map_err(|_| corrupt_data(operation))
 }

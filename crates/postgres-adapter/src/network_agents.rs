@@ -480,13 +480,19 @@ impl NetworkAgentStore for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "network_agent.mark_rooms_left";
-            // 同一条语句里把它在私人房间的 Agent 成员记为已移出，房主不必再手动移出。
+            // 同一条语句里把它在私人房间的 Agent 成员记为已移出，房主不必再手动移出；
+            // 收件箱里留下的消息也删掉。停用以后收件箱不再写入，这时删得干净。
             sqlx::query(
                 r"WITH left_rooms AS (
                       UPDATE agent_room.network_agent
                          SET rooms_left_at = greatest(disabled_at, to_timestamp($2::double precision / 1000.0))
                        WHERE id = $1 AND status = 'disabled' AND rooms_left_at IS NULL
-                   RETURNING agent_id, rooms_left_at
+                   RETURNING id, agent_id, rooms_left_at
+                  ),
+                  forgotten AS (
+                      DELETE FROM agent_room.network_agent_inbox inbox
+                       USING left_rooms
+                       WHERE inbox.network_agent_id = left_rooms.id
                   )
                   UPDATE agent_room.private_room_agent_member member
                      SET membership_status = 'removed',

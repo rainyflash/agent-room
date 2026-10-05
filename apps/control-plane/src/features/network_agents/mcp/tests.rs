@@ -325,11 +325,24 @@ async fn 列出大厅不要令牌_确认与离开交给网关() {
     )
     .await;
     assert_eq!(acked["result"]["structuredContent"]["acknowledged"], true);
+    let room_acked = rpc(
+        app.clone(),
+        &call(
+            "agent_room_ack",
+            &json!({"eventId": "$hello:matrix.test", "roomId": "!lobby:matrix.test"}),
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(room_acked["result"]["structuredContent"]["pending"], 2);
 
     let left = rpc(app, &call("agent_room_leave", &json!({})), Some(TOKEN)).await;
     assert_eq!(left["result"]["structuredContent"]["left"], true);
     assert_eq!(*messaging.disabled.lock().unwrap(), [TOKEN]);
-    assert_eq!(messaging.acks.lock().unwrap()[0].1, "$hello:matrix.test");
+    let acks = messaging.acks.lock().unwrap();
+    assert_eq!(acks[0].1, "$hello:matrix.test");
+    assert_eq!(acks[0].2, None);
+    assert_eq!(acks[1].2.as_deref(), Some("!lobby:matrix.test"));
 }
 
 #[tokio::test]
@@ -350,6 +363,7 @@ async fn 等消息的叫醒规则和等谁也能用参数指定_写错了指出�
     let content = &waited["result"]["structuredContent"];
     assert_eq!(content["wake"]["reason"], "messages");
     assert_eq!(content["skipped"], 2);
+    assert_eq!(content["remaining"], 4);
     {
         let waits = messaging.waits.lock().unwrap();
         let request = &waits[0].1;
@@ -359,18 +373,36 @@ async fn 等消息的叫醒规则和等谁也能用参数指定_写错了指出�
         assert_eq!(request.options.digest, Some(Duration::from_hours(1)));
     }
 
-    let failed = rpc(
-        app,
+    let scoped = rpc(
+        app.clone(),
         &call(
             "agent_room_wait_for_messages",
-            &json!({"settleSeconds": 31}),
+            &json!({"roomId": "!lobby:matrix.test", "mentionsOnly": true}),
         ),
         Some(TOKEN),
     )
     .await;
-    assert_eq!(failed["result"]["isError"], true, "{failed}");
-    let error = &failed["result"]["structuredContent"];
-    assert_eq!(error["code"], "network_agent.invalid_request");
-    assert_eq!(error["details"]["field"], "settle");
-    assert_eq!(messaging.waits.lock().unwrap().len(), 1, "写错的不交给网关");
+    assert_ne!(scoped["result"]["isError"], true, "{scoped}");
+    {
+        let waits = messaging.waits.lock().unwrap();
+        assert_eq!(waits[1].1.room.as_deref(), Some("!lobby:matrix.test"));
+        assert!(waits[1].1.options.mentions_only);
+    }
+
+    for (arguments, field) in [
+        (json!({"settleSeconds": 31}), "settle"),
+        (json!({"mentionsOnly": true, "wake": "all"}), "mentionsOnly"),
+    ] {
+        let failed = rpc(
+            app.clone(),
+            &call("agent_room_wait_for_messages", &arguments),
+            Some(TOKEN),
+        )
+        .await;
+        assert_eq!(failed["result"]["isError"], true, "{failed}");
+        let error = &failed["result"]["structuredContent"];
+        assert_eq!(error["code"], "network_agent.invalid_request");
+        assert_eq!(error["details"]["field"], field);
+    }
+    assert_eq!(messaging.waits.lock().unwrap().len(), 2, "写错的不交给网关");
 }

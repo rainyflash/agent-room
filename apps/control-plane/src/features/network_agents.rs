@@ -209,6 +209,12 @@ struct MessagesQuery {
     /// 没叫醒你的消息最多攒几分钟就交给你看一眼：1 到 1440，默认不看。
     #[serde(default)]
     digest: Option<u64>,
+    /// 只看这个房间（消息里的 roomId）。
+    #[serde(default)]
+    room_id: Option<String>,
+    /// 只给提到你或回复你的，别的算跳过。
+    #[serde(default)]
+    mentions_only: Option<bool>,
 }
 
 /// HTTP 接口和远程 MCP 收到的等消息参数（`specs/agent-reading/waiting.md`）。
@@ -222,6 +228,8 @@ struct WaitParams {
     reply_to: Option<String>,
     settle_seconds: Option<u64>,
     digest_minutes: Option<u64>,
+    room_id: Option<String>,
+    mentions_only: bool,
 }
 
 impl From<MessagesQuery> for WaitParams {
@@ -235,6 +243,8 @@ impl From<MessagesQuery> for WaitParams {
             reply_to: query.reply_to,
             settle_seconds: query.settle,
             digest_minutes: query.digest,
+            room_id: query.room_id,
+            mentions_only: query.mentions_only.unwrap_or(false),
         }
     }
 }
@@ -253,7 +263,7 @@ impl WaitParams {
             reply_to: self.reply_to,
             settle_seconds: self.settle_seconds,
             digest_minutes: self.digest_minutes,
-            mentions_only: false,
+            mentions_only: self.mentions_only,
         }
         .parse()?;
         Ok(NetworkAgentWait {
@@ -261,6 +271,7 @@ impl WaitParams {
             limit,
             options: rules.options,
             wait_for_mentioned: rules.wait_for_mentioned,
+            room: self.room_id,
         })
     }
 }
@@ -291,6 +302,8 @@ struct MessagesResponse {
     wake: IpcWake,
     /// 交出去的最后一条之前没交的条数；确认到最后一条时它们也算看过。
     skipped: u64,
+    /// 交出去的最后一条之后还没确认的条数，下次再给。
+    remaining: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,6 +342,9 @@ struct SentResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AckBody {
     event_id: String,
+    /// 只确认这个房间的：用 roomId 取消息时，确认也带上它。
+    #[serde(default)]
+    room_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -583,7 +599,7 @@ async fn wait_for_messages(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "查询参数有 wait（0 到 30 秒）、limit（1 到 50 条）、wake（related、mentions、all）、from、waitFor、replyTo、settle（0 到 30 秒）和 digest（1 到 1440 分钟）。",
+                "查询参数有 wait（0 到 30 秒）、limit（1 到 50 条）、wake（related、mentions、all）、from、waitFor、replyTo、settle（0 到 30 秒）、digest（1 到 1440 分钟）、roomId 和 mentionsOnly（true 或 false）。",
                 correlation_id,
             )
             .into_response(),
@@ -604,6 +620,7 @@ async fn wait_for_messages(
                 dropped: batch.dropped,
                 wake: batch.wake,
                 skipped: batch.skipped,
+                remaining: batch.remaining,
             })
             .into_response(),
         ),
@@ -623,7 +640,11 @@ async fn acknowledge(
     };
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
-    match state.messaging.acknowledge(token, &body.event_id).await {
+    match state
+        .messaging
+        .acknowledge(token, &body.event_id, body.room_id.as_deref())
+        .await
+    {
         Ok(outcome) => {
             let (acknowledged, pending) = match outcome {
                 NetworkAgentAckOutcome::Acknowledged { pending } => (true, pending),
@@ -652,7 +673,7 @@ fn invalid_wait_error(field: &'static str, correlation_id: CorrelationId) -> Api
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "等消息的参数不对：from、waitFor 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB；waitFor 也可以只写 mentioned（你上一条点名的人，前提是你上一条点过名，@所有人 不算）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟。details.field 指出是哪一项。",
+        "等消息的参数不对：from、waitFor 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB；waitFor 也可以只写 mentioned（你上一条点名的人，前提是你上一条点过名，@所有人 不算）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟；mentionsOnly 不能和 wake（mentions 除外）、from、waitFor、replyTo、digest 一起用。details.field 指出是哪一项。",
         correlation_id,
     )
     .with_detail("field", serde_json::Value::from(field))
