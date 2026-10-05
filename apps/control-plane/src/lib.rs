@@ -933,6 +933,7 @@ fn build_network_agent_routes(
         network_gateway::NetworkGatewayDependencies {
             agents: agents.clone(),
             inbox: dependencies.repositories.clone(),
+            history: dependencies.repositories.clone(),
             submissions: dependencies.repositories.clone(),
             matrix: Arc::new(matrix),
             content: dependencies.content.clone(),

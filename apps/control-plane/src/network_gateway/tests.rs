@@ -31,10 +31,12 @@ use agent_room_application::{
         MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId, MatrixRoomSync,
         MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
         MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
-        NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+        NetworkAgentAckOutcome, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
+        NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
-        NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentRoomRecord,
-        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
+        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentRoomRecord,
+        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentSyncRequest, PortFuture, SecretValue,
     },
@@ -555,6 +557,30 @@ struct InboxState {
     sequence: u64,
     dropped: u64,
     entries: Vec<InboxRow>,
+    /// 消息记录：确认过的、自己发的也在，每个房间各自限额。
+    history: Vec<HistoryRow>,
+}
+
+struct HistoryRow {
+    stored: NetworkAgentStoredMessage,
+    actor_key: String,
+    actor: NetworkAgentMessageActor,
+    mentions_me: bool,
+}
+
+impl HistoryRow {
+    fn wanted(&self, filter: &NetworkAgentHistoryFilter) -> bool {
+        (!filter.mentions_me || self.mentions_me)
+            && match &filter.from {
+                None => true,
+                Some(NetworkAgentHistorySender::MatrixUserId(user)) => {
+                    self.actor.matrix_user_id == *user
+                }
+                Some(NetworkAgentHistorySender::NameFolded(name)) => {
+                    self.actor.name_folded == *name
+                }
+            }
+    }
 }
 
 struct InboxRow {
@@ -576,6 +602,21 @@ impl InboxRow {
 impl InboxState {
     fn pending(&self, room: Option<&MatrixRoomId>) -> u64 {
         u64::try_from(self.entries.iter().filter(|row| row.in_scope(room)).count()).unwrap()
+    }
+
+    /// 消息记录里每个房间只留最近的几条。
+    fn trim_history(&mut self, capacity: u32) {
+        let capacity = usize::try_from(capacity).unwrap();
+        let mut kept: HashMap<MatrixRoomId, usize> = HashMap::new();
+        for index in (0..self.history.len()).rev() {
+            let count = kept
+                .entry(self.history[index].stored.room_id.clone())
+                .or_default();
+            *count += 1;
+            if *count > capacity {
+                self.history.remove(index);
+            }
+        }
     }
 
     /// 一个房间里超过上限时丢掉这个房间最早的。
@@ -644,15 +685,31 @@ impl NetworkAgentInboxStore for MemoryInbox {
             for change in &append.changes {
                 match change {
                     NetworkAgentInboxChange::Message(message) => {
+                        // 和数据库一样先记进消息记录：记过的是重复的，收件箱也不再写。
                         if state
-                            .entries
+                            .history
                             .iter()
-                            .any(|row| row.event_id == message.event_id)
+                            .any(|row| row.stored.event_id == message.event_id)
                         {
                             continue;
                         }
                         state.sequence += 1;
                         let sequence = state.sequence;
+                        state.history.push(HistoryRow {
+                            stored: NetworkAgentStoredMessage {
+                                sequence,
+                                event_id: message.event_id.clone(),
+                                room_id: message.room_id.clone(),
+                                message_id: message.message_id,
+                                preview: message.preview.clone(),
+                            },
+                            actor_key: message.actor_key.clone(),
+                            actor: message.actor.clone(),
+                            mentions_me: message.mentions_me,
+                        });
+                        if message.from_me {
+                            continue;
+                        }
                         state.entries.push(InboxRow {
                             sequence,
                             event_id: message.event_id.clone(),
@@ -677,17 +734,30 @@ impl NetworkAgentInboxStore for MemoryInbox {
                                 }
                             }
                         }
+                        for row in &mut state.history {
+                            if row.stored.message_id == *message_id && row.actor_key == *actor_key {
+                                for (key, value) in patch.as_object().unwrap() {
+                                    row.stored.preview[key] = value.clone();
+                                }
+                            }
+                        }
                     }
                     NetworkAgentInboxChange::Redact {
                         message_id,
                         actor_key,
                         ..
-                    } => state.entries.retain(|row| {
-                        !(row.message_id == *message_id && row.actor_key == *actor_key)
-                    }),
+                    } => {
+                        state.entries.retain(|row| {
+                            !(row.message_id == *message_id && row.actor_key == *actor_key)
+                        });
+                        state.history.retain(|row| {
+                            !(row.stored.message_id == *message_id && row.actor_key == *actor_key)
+                        });
+                    }
                 }
             }
             state.trim(append.capacity);
+            state.trim_history(append.history_capacity);
             state.sync_token = Some(append.next_sync_token.clone());
             NetworkAgentInboxAppendOutcome::Applied { appended }
         } else {
@@ -722,6 +792,57 @@ impl NetworkAgentInboxStore for MemoryInbox {
             }
         };
         Box::pin(async move { Ok(outcome) })
+    }
+}
+
+impl NetworkAgentMessageHistory for MemoryInbox {
+    fn messages_by_id<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        refs: &'a [NetworkAgentMessageRef],
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentStoredMessage>>> {
+        let state = self.state.lock().unwrap();
+        let found = state
+            .history
+            .iter()
+            .filter(|row| {
+                refs.iter().any(|reference| match reference {
+                    NetworkAgentMessageRef::Event(event) => row.stored.event_id == *event,
+                    NetworkAgentMessageRef::Message(id) => row.stored.message_id == *id,
+                })
+            })
+            .map(|row| row.stored.clone())
+            .collect();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn room_messages<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        room: &'a MatrixRoomId,
+        direction: NetworkAgentHistoryDirection,
+        filter: &'a NetworkAgentHistoryFilter,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentStoredMessage>>> {
+        let state = self.state.lock().unwrap();
+        let in_room = state
+            .history
+            .iter()
+            .filter(|row| row.stored.room_id == *room && row.wanted(filter));
+        let picked: Vec<NetworkAgentStoredMessage> = match direction {
+            NetworkAgentHistoryDirection::Before(before) => in_room
+                .rev()
+                .filter(|row| before.is_none_or(|before| row.stored.sequence < before))
+                .take(usize::from(limit))
+                .map(|row| row.stored.clone())
+                .collect(),
+            NetworkAgentHistoryDirection::After(after) => in_room
+                .filter(|row| row.stored.sequence > after)
+                .take(usize::from(limit))
+                .map(|row| row.stored.clone())
+                .collect(),
+        };
+        Box::pin(async move { Ok(picked) })
     }
 }
 
@@ -1190,6 +1311,7 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
     let gateway = NetworkGateway::new(NetworkGatewayDependencies {
         agents: agents.clone(),
         inbox: inbox.clone(),
+        history: inbox.clone(),
         submissions: submissions.clone(),
         matrix: matrix.clone(),
         content: content.clone(),
@@ -3399,3 +3521,5 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
     assert_eq!(offline["status"], "offline");
     assert_eq!(offline["listeningUntil"], Value::Null);
 }
+
+mod viewing;

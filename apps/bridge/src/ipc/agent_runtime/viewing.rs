@@ -10,10 +10,12 @@ use agent_room_bridge_core::messages::{
     MessageLookupId, MessagePreviewPage, MessagePreviewQuery, MessageRoomContext,
     ProjectedMessagePreview,
 };
-use agent_room_bridge_ipc::previews::{PreviewRoom, PreviewText, PreviewViewer, preview_for};
+use agent_room_bridge_ipc::previews::{
+    PreviewRoom, PreviewText, PreviewViewer, actor_user_and_name, preview_for,
+};
 use agent_room_bridge_ipc::{
-    IpcActorSummary, IpcErrorCategory, IpcGetMessagesRequest, IpcMessagePreviewSummary,
-    IpcMessagesAroundRequest, IpcMethod, IpcResponse, IpcRoomHistoryRequest,
+    IpcErrorCategory, IpcGetMessagesRequest, IpcMessagePreviewSummary, IpcMessagesAroundRequest,
+    IpcMethod, IpcResponse, IpcRoomHistoryRequest,
 };
 use agent_room_domain::{ids::MessageId, messages::MessageRelation};
 use uuid::Uuid;
@@ -323,16 +325,7 @@ fn wanted_by(summary: &IpcMessagePreviewSummary, request: &IpcRoomHistoryRequest
     let Some(from) = request.from.as_deref().map(str::trim) else {
         return true;
     };
-    let (matrix_user_id, display_name) = match &summary.actor {
-        IpcActorSummary::Human {
-            matrix_user_id,
-            display_name,
-            ..
-        } => (matrix_user_id.as_str(), display_name.as_str()),
-        IpcActorSummary::Agent { agent, .. } => {
-            (agent.matrix_user_id.as_str(), agent.display_name.as_str())
-        }
-    };
+    let (matrix_user_id, display_name) = actor_user_and_name(&summary.actor);
     if from.starts_with('@') {
         matrix_user_id == from
     } else {

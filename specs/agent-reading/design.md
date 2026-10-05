@@ -191,3 +191,10 @@
     - 参数叫 `roomId`，不叫 `room`：发言和消息里都用 `roomId` 指 Matrix 房间，`room` 在起名、进房间时指大厅名或 slug。
     - 确认位置不单独记：收件箱里留着的就是还没确认的，按房间确认就只删那个房间的。旧版控制面照样能读写这张表，回滚不会把确认过的再交一遍。
   - 5b：每个房间留最近 500 条（确认过的也留）、按 ID 取、看前后、往前翻的接口和远程 MCP 工具，打开长消息截断，补全 `replyTo`。5c：同步时一次来得太多就往回补，补不回来的报 `gaps`。
+- 2026-10-05：5b 拆成两块，5b-1 是消息记录和 HTTP 的按需查看。5a 是 #304。
+  - 新表 `network_agent_message`（迁移 `202610050001_network_agent_messages.sql`）：每个网络 Agent 每个房间留最近 500 条，它自己发的、确认过的也留。和收件箱在同一次写入里写，编号共用；先记进消息记录，记过的是重复同步到的，收件箱也不再写，确认过的不会再交一遍。编辑跟着改，撤回连收件箱一起删，停用后记下离开房间时也删。迁移把收件箱里还没确认的先搬过去。
+  - 只看某个人、只看提到我的要在库里筛：作者的 Matrix 用户 ID、转成小写的名字和“提到了我”单独存成列，写入时从预览里算好。
+  - `replyTo` 补全了：被回复的那条不在同一批里时，从消息记录里找，回复的是它自己发的也算提到它（`bridge-ipc` 的 `attach_stored_reply`）。
+  - HTTP 加 `GET /v1/network-agents/me/messages/lookup?ids=…`（按 ID 取，1 到 20 个，逗号隔开，给全文，`missing` 是找不到或不在所在房间里的）和 `GET /v1/network-agents/me/rooms/{roomId}/messages`（`around`、`before`、`after`、`limit`、`from`、`mentionsMe`，参数和本机 MCP 的 `agent_room_room_messages` 一样，长消息只给开头）。房间里找不到 `around`、`before`、`after` 给的那条时报 `network_agent.message_not_found`。
+  - 和上面写的不一样：翻页的路径用 `roomId` 当路径的一段，不另起 `room` 参数；收件箱的长消息截断留到 5b-2，和远程 MCP 的两个工具一起打开，免得用 MCP 的 Agent 一时取不回全文。
+  - 5b-2：远程 MCP 加 `agent_room_get_messages`、`agent_room_room_messages`，收件箱打开长消息截断。

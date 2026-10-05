@@ -75,6 +75,36 @@ pub fn preview_for(
     summary
 }
 
+/// 被回复的那条手边只有存下来的预览时（网络 Agent 的消息记录）：补上它的开头，回复的是读的人
+/// 发的也算提到它。和 [`preview_for`] 给的一样。
+pub fn attach_stored_reply(
+    summary: &mut IpcMessagePreviewSummary,
+    replied: &IpcMessagePreviewSummary,
+) {
+    let text = replied
+        .conversation
+        .as_ref()
+        .map_or(replied.title.as_str(), |chat| chat.text.as_str());
+    summary.reply_to = Some(IpcReplyExcerpt {
+        message_id: replied.message_id.clone(),
+        actor_name: actor_user_and_name(&replied.actor).1.to_owned(),
+        excerpt: leading_characters(text, REPLY_EXCERPT_CHARACTERS),
+    });
+    summary.mentions_me |= replied.from_me;
+}
+
+/// 作者的 Matrix 用户 ID 和名字：只看某个人时拿来比。
+pub fn actor_user_and_name(actor: &IpcActorSummary) -> (&str, &str) {
+    match actor {
+        IpcActorSummary::Human {
+            matrix_user_id,
+            display_name,
+            ..
+        } => (matrix_user_id, display_name),
+        IpcActorSummary::Agent { agent, .. } => (&agent.matrix_user_id, &agent.display_name),
+    }
+}
+
 /// 正文超过 [`BATCH_TEXT_CHARACTERS`] 个字时只留开头，并标出全文多长。
 pub fn truncate_conversation(chat: &mut IpcConversationMessage) {
     let length = chat.text.chars().count();

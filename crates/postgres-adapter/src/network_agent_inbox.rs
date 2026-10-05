@@ -1,14 +1,17 @@
 //! 网络 Agent 的房间与收件箱（ADR 0010，2-收发）：同步结果按到达顺序编号写入，
 //! 只有 Agent 显式确认才往前走；确认过的直接删掉。可以只读、只确认一个房间的
 //! （`specs/agent-reading/design.md` 第 5 步）。
+//!
+//! 同一次写入也记进消息记录（`network_agent_message`）：每个房间留最近几百条，确认过的、
+//! Agent 自己发的也在，按需查看时从那里读（见 `network_agent_history.rs`）。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         MatrixEventId, MatrixRoomId, MatrixSyncToken, NetworkAgentAckOutcome,
         NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-        NetworkAgentInboxEntry, NetworkAgentInboxPage, NetworkAgentInboxStore,
-        NetworkAgentRoomRecord, PortFuture,
+        NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
+        NetworkAgentInboxStore, NetworkAgentRoomRecord, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -184,6 +187,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                 }
             }
             let dropped = trim_to_capacity(&mut transaction, append, operation).await?;
+            trim_history(&mut transaction, append, operation).await?;
             sqlx::query(
                 r"UPDATE agent_room.network_agent
                      SET sync_token = $2,
@@ -281,7 +285,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
     }
 }
 
-/// 按时间线顺序写入一条变化；新消息真的写进去了（不是重复的）才返回 `true`。
+/// 按时间线顺序写入一条变化；新消息真的进了收件箱（不是重复的、不是自己发的）才返回 `true`。
 async fn apply_change(
     transaction: &mut Transaction<'_, Postgres>,
     append: &NetworkAgentInboxAppend,
@@ -294,6 +298,14 @@ async fn apply_change(
             let next = sequence
                 .checked_add(1)
                 .ok_or_else(|| corrupt_data(operation))?;
+            // 先记进消息记录：记过的是重复同步到的，收件箱也不再写，确认过的不会再交一遍。
+            if !record_message(transaction, append, message, next, operation).await? {
+                return Ok(false);
+            }
+            *sequence = next;
+            if message.from_me {
+                return Ok(false);
+            }
             let inserted = sqlx::query(
                 r"INSERT INTO agent_room.network_agent_inbox (
                       network_agent_id, sequence, matrix_event_id, matrix_room_id,
@@ -315,10 +327,7 @@ async fn apply_change(
             .execute(&mut **transaction)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
-            if inserted.rows_affected() == 1 {
-                *sequence = next;
-                return Ok(true);
-            }
+            return Ok(inserted.rows_affected() == 1);
         }
         NetworkAgentInboxChange::Replace {
             room_id,
@@ -326,41 +335,89 @@ async fn apply_change(
             actor_key,
             patch,
         } => {
-            sqlx::query(
+            // 收件箱和消息记录里的同一条一起改。
+            for statement in [
                 r"UPDATE agent_room.network_agent_inbox
                      SET preview = preview || $5::jsonb
                    WHERE network_agent_id = $1 AND matrix_room_id = $2
                      AND message_id = $3 AND actor_key = $4",
-            )
-            .bind(append.id.as_uuid())
-            .bind(room_id.as_str())
-            .bind(message_id.as_uuid())
-            .bind(actor_key)
-            .bind(patch.to_string())
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
+                r"UPDATE agent_room.network_agent_message
+                     SET preview = preview || $5::jsonb
+                   WHERE network_agent_id = $1 AND matrix_room_id = $2
+                     AND message_id = $3 AND actor_key = $4",
+            ] {
+                sqlx::query(statement)
+                    .bind(append.id.as_uuid())
+                    .bind(room_id.as_str())
+                    .bind(message_id.as_uuid())
+                    .bind(actor_key)
+                    .bind(patch.to_string())
+                    .execute(&mut **transaction)
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+            }
         }
         NetworkAgentInboxChange::Redact {
             room_id,
             message_id,
             actor_key,
         } => {
-            sqlx::query(
+            for statement in [
                 r"DELETE FROM agent_room.network_agent_inbox
                    WHERE network_agent_id = $1 AND matrix_room_id = $2
                      AND message_id = $3 AND actor_key = $4",
-            )
-            .bind(append.id.as_uuid())
-            .bind(room_id.as_str())
-            .bind(message_id.as_uuid())
-            .bind(actor_key)
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
+                r"DELETE FROM agent_room.network_agent_message
+                   WHERE network_agent_id = $1 AND matrix_room_id = $2
+                     AND message_id = $3 AND actor_key = $4",
+            ] {
+                sqlx::query(statement)
+                    .bind(append.id.as_uuid())
+                    .bind(room_id.as_str())
+                    .bind(message_id.as_uuid())
+                    .bind(actor_key)
+                    .execute(&mut **transaction)
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+            }
         }
     }
     Ok(false)
+}
+
+/// 记进消息记录；这个事件已经记过时返回 `false`。
+async fn record_message(
+    transaction: &mut Transaction<'_, Postgres>,
+    append: &NetworkAgentInboxAppend,
+    message: &NetworkAgentInboxMessage,
+    sequence: i64,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let recorded = sqlx::query(
+        r"INSERT INTO agent_room.network_agent_message (
+              network_agent_id, sequence, matrix_event_id, matrix_room_id, message_id,
+              actor_key, actor_matrix_user_id, actor_name_folded, mentions_me, preview,
+              received_at
+          ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
+              to_timestamp($11::double precision / 1000.0)
+          )
+          ON CONFLICT (network_agent_id, matrix_event_id) DO NOTHING",
+    )
+    .bind(append.id.as_uuid())
+    .bind(sequence)
+    .bind(message.event_id.as_str())
+    .bind(message.room_id.as_str())
+    .bind(message.message_id.as_uuid())
+    .bind(&message.actor_key)
+    .bind(&message.actor.matrix_user_id)
+    .bind(&message.actor.name_folded)
+    .bind(message.mentions_me)
+    .bind(message.preview.to_string())
+    .bind(append.received_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(recorded.rows_affected() == 1)
 }
 
 /// 一个房间里没确认的超过上限时丢掉这个房间最早的，返回一共丢了几条。
@@ -390,6 +447,50 @@ async fn trim_to_capacity(
     .map_err(|error| map_sqlx_error(operation, &error))?
     .rows_affected();
     i64::try_from(dropped).map_err(|_| corrupt_data(operation))
+}
+
+/// 这次写到的房间，消息记录只留最近的 `history_capacity` 条，更早的删掉。
+async fn trim_history(
+    transaction: &mut Transaction<'_, Postgres>,
+    append: &NetworkAgentInboxAppend,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    let mut rooms: Vec<&str> = append
+        .changes
+        .iter()
+        .filter_map(|change| match change {
+            NetworkAgentInboxChange::Message(message) => Some(message.room_id.as_str()),
+            NetworkAgentInboxChange::Replace { .. } | NetworkAgentInboxChange::Redact { .. } => {
+                None
+            }
+        })
+        .collect();
+    rooms.sort_unstable();
+    rooms.dedup();
+    if rooms.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        r"DELETE FROM agent_room.network_agent_message message
+           USING (
+               SELECT sequence
+                 FROM (SELECT sequence,
+                              row_number() OVER (
+                                  PARTITION BY matrix_room_id ORDER BY sequence DESC
+                              ) AS newer
+                         FROM agent_room.network_agent_message
+                        WHERE network_agent_id = $1 AND matrix_room_id = ANY($3)) ranked
+                WHERE ranked.newer > $2
+           ) excess
+           WHERE message.network_agent_id = $1 AND message.sequence = excess.sequence",
+    )
+    .bind(append.id.as_uuid())
+    .bind(i64::from(append.history_capacity))
+    .bind(&rooms)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(())
 }
 
 /// 还没确认的条数；给了房间就只算这个房间的。

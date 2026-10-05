@@ -8,7 +8,7 @@ use std::{
 use agent_room_application::ports::{
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, MatrixEventId,
     MatrixRoomId, MatrixSyncToken, NetworkAgentInboxChange, NetworkAgentInboxMessage,
-    NetworkAgentRoomRecord, PortFuture,
+    NetworkAgentMessageActor, NetworkAgentRoomRecord, PortFuture,
 };
 use agent_room_bridge_core::{
     agent_verification::{
@@ -21,8 +21,12 @@ use agent_room_bridge_core::{
         ProjectedMessagePreview, ProjectedMessageRevision,
     },
 };
-use agent_room_bridge_ipc::previews::{
-    PreviewRoom, PreviewText, PreviewViewer, preview_for, preview_summary,
+use agent_room_bridge_ipc::{
+    IpcMessagePreviewSummary,
+    previews::{
+        PreviewRoom, PreviewText, PreviewViewer, actor_user_and_name, attach_stored_reply,
+        preview_for, preview_summary,
+    },
 };
 use agent_room_domain::{
     ids::{AgentInstanceId, MessageId},
@@ -132,56 +136,79 @@ impl AgentInstanceVerificationGateway for InstanceVerification {
     }
 }
 
-/// 验签通过的变化按时间线顺序转成收件箱里的变化。Agent 自己发的不进自己的收件箱；
-/// 治理隐藏与本机 Bridge 一样先不处理。
-///
-/// 收件箱里存全文；一批交给 Agent 时再截断长正文，以后按 ID 取还能给全文。被回复的那条
-/// 只在同一批里找：网络 Agent 还没有自己的消息记录（见 specs/agent-reading/design.md 第 5 步）。
-pub(super) fn inbox_changes(
-    batch: Option<MessageProjectionBatch>,
-    viewer: PreviewViewer<'_>,
-    rooms: &[NetworkAgentRoomRecord],
-) -> Vec<NetworkAgentInboxChange> {
-    let Some(batch) = batch else {
-        return Vec::new();
-    };
-    let in_batch: HashMap<MessageId, &ProjectedMessagePreview> = batch
+/// 消息记录里找来的被回复的那几条，按房间和消息 ID 找。
+pub(super) type StoredReplies = HashMap<(MatrixRoomId, MessageId), IpcMessagePreviewSummary>;
+
+/// 这一批里回复的、却不在这一批里的那几条：要去消息记录里找。
+pub(super) fn reply_targets(batch: &MessageProjectionBatch) -> Vec<(MatrixRoomId, MessageId)> {
+    let in_batch = batch_previews(batch);
+    let mut targets: Vec<(MatrixRoomId, MessageId)> = batch
+        .mutations()
+        .iter()
+        .filter_map(|mutation| match mutation {
+            MessageProjectionMutation::Preview(preview) => match preview.relation? {
+                MessageRelation::ReplyTo(id) => {
+                    (!in_batch.contains_key(&id)).then(|| (preview.room_id.clone(), id))
+                }
+            },
+            MessageProjectionMutation::Revision(_) => None,
+        })
+        .collect();
+    targets.sort_by(|left, right| {
+        (left.0.as_str(), left.1.as_uuid()).cmp(&(right.0.as_str(), right.1.as_uuid()))
+    });
+    targets.dedup();
+    targets
+}
+
+fn batch_previews(batch: &MessageProjectionBatch) -> HashMap<MessageId, &ProjectedMessagePreview> {
+    batch
         .mutations()
         .iter()
         .filter_map(|mutation| match mutation {
             MessageProjectionMutation::Preview(preview) => Some((preview.message_id, preview)),
             MessageProjectionMutation::Revision(_) => None,
         })
-        .collect();
+        .collect()
+}
+
+/// 验签通过的变化按时间线顺序转成收件箱里的变化。Agent 自己发的只记进消息记录，不进自己的
+/// 收件箱；治理隐藏与本机 Bridge 一样先不处理。
+///
+/// 存的都是全文；一批交给 Agent 时再截断长正文，按 ID 取还能给全文。被回复的那条先在同一批里
+/// 找，找不到再用消息记录里的（`stored`，见 specs/agent-reading/design.md 第 5 步）。
+pub(super) fn inbox_changes(
+    batch: Option<MessageProjectionBatch>,
+    viewer: PreviewViewer<'_>,
+    rooms: &[NetworkAgentRoomRecord],
+    stored: &StoredReplies,
+) -> Vec<NetworkAgentInboxChange> {
+    let Some(batch) = batch else {
+        return Vec::new();
+    };
+    let in_batch = batch_previews(&batch);
     batch
         .mutations()
         .iter()
         .filter_map(|mutation| match mutation {
             MessageProjectionMutation::Preview(preview) => {
-                if preview
-                    .actor
-                    .agent_identity()
-                    .is_some_and(|identity| identity.agent_id() == viewer.agent_id)
-                {
-                    return None;
-                }
-                let replied = preview.relation.and_then(|relation| match relation {
-                    MessageRelation::ReplyTo(id) => in_batch.get(&id).copied(),
+                let target = preview.relation.map(|relation| match relation {
+                    MessageRelation::ReplyTo(id) => id,
                 });
-                Some(NetworkAgentInboxChange::Message(NetworkAgentInboxMessage {
-                    event_id: preview.event_id.clone(),
-                    room_id: preview.room_id.clone(),
-                    message_id: preview.message_id,
-                    actor_key: preview.actor.subject_key(),
-                    preview: serde_json::to_value(preview_for(
-                        preview,
-                        viewer,
-                        preview_room(rooms, &preview.room_id),
-                        replied,
-                        PreviewText::Full,
-                    ))
-                    .ok()?,
-                }))
+                let mut summary = preview_for(
+                    preview,
+                    viewer,
+                    preview_room(rooms, &preview.room_id),
+                    target.and_then(|id| in_batch.get(&id).copied()),
+                    PreviewText::Full,
+                );
+                if summary.reply_to.is_none()
+                    && let Some(replied) =
+                        target.and_then(|id| stored.get(&(preview.room_id.clone(), id)))
+                {
+                    attach_stored_reply(&mut summary, replied);
+                }
+                inbox_message(preview, summary)
             }
             MessageProjectionMutation::Revision(revision) => match revision.kind {
                 MessageRevisionKind::Replace => Some(NetworkAgentInboxChange::Replace {
@@ -199,6 +226,26 @@ pub(super) fn inbox_changes(
             },
         })
         .collect()
+}
+
+fn inbox_message(
+    preview: &ProjectedMessagePreview,
+    summary: IpcMessagePreviewSummary,
+) -> Option<NetworkAgentInboxChange> {
+    let (matrix_user_id, name) = actor_user_and_name(&summary.actor);
+    Some(NetworkAgentInboxChange::Message(NetworkAgentInboxMessage {
+        event_id: preview.event_id.clone(),
+        room_id: preview.room_id.clone(),
+        message_id: preview.message_id,
+        actor_key: preview.actor.subject_key(),
+        actor: NetworkAgentMessageActor {
+            matrix_user_id: matrix_user_id.to_owned(),
+            name_folded: name.to_lowercase(),
+        },
+        from_me: summary.from_me,
+        mentions_me: summary.mentions_me,
+        preview: serde_json::to_value(summary).ok()?,
+    }))
 }
 
 /// 这条消息所在的房间：房间名和这个网络 Agent 什么时候进来的。不在记录里的房间都不知道。

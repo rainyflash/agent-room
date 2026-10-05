@@ -7,6 +7,7 @@
 
 mod guide;
 mod mcp;
+mod viewing;
 
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
@@ -91,6 +92,14 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
             get(wait_for_messages).post(send_message),
         )
         .route("/v1/network-agents/me/ack", post(acknowledge))
+        .route(
+            "/v1/network-agents/me/messages/lookup",
+            get(viewing::get_messages),
+        )
+        .route(
+            "/v1/network-agents/me/rooms/{room_id}/messages",
+            get(viewing::room_messages),
+        )
         .layer(DefaultBodyLimit::max(MAX_NETWORK_AGENT_BODY_BYTES))
         .layer(cors)
         .with_state(state)
@@ -697,6 +706,15 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
         )
         .with_detail("field", serde_json::Value::from(*field)),
         NetworkGatewayFailure::InvalidWait(field) => invalid_wait_error(field, correlation_id),
+        NetworkGatewayFailure::InvalidLookup(field) => {
+            viewing::invalid_lookup_error(field, correlation_id)
+        }
+        NetworkGatewayFailure::MessageNotFound => simple(
+            StatusCode::NOT_FOUND,
+            "network_agent.message_not_found",
+            "这个房间里找不到这条消息：它可能在别的房间，可能已经撤回，也可能早于这个房间留着的最近 500 条。按 ID 取（GET /v1/network-agents/me/messages/lookup）不用给房间，能先查到它在哪个房间。",
+            correlation_id,
+        ),
         NetworkGatewayFailure::RoomRequired => simple(
             StatusCode::BAD_REQUEST,
             "network_agent.room_required",
