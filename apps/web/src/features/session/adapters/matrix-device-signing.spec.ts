@@ -136,10 +136,53 @@ describe('ensureDeviceSigned', () => {
 
     expect(account.generatedKey.every((byte) => byte === 0)).toBe(true);
   });
+
+  it('叫停以后做完手头这一步就停下，不再往下发请求，取到的钥匙照样抹掉', async () => {
+    // 2026-10-05 真实登录验收抓到的：恢复会话后签名还在跑，人点了退出，令牌作废以后它接着读
+    // 账户数据，Synapse 回 401。
+    const account = fakeAccount({ escrowed: 'CURRENT', holdsKeys: true, signed: true });
+    const stop = new AbortController();
+    account.escrow.fetch.mockImplementation(() => {
+      stop.abort(new DOMException('退出登录', 'AbortError'));
+      return Promise.resolve({ key: account.escrowedKey, keyId: 'CURRENT' });
+    });
+
+    await expect(run(account, stop.signal)).rejects.toThrow('退出登录');
+
+    expect(account.unlock).not.toHaveBeenCalled();
+    expect(account.crypto.getCrossSigningStatus).not.toHaveBeenCalled();
+    expect(account.escrowedKey.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it('签到一半叫停：这一步做完就停，不再上传签名、不再找回历史', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT' });
+    const stop = new AbortController();
+    account.crypto.bootstrapCrossSigning.mockImplementation(() => {
+      stop.abort(new DOMException('退出登录', 'AbortError'));
+      return Promise.resolve();
+    });
+
+    await expect(run(account, stop.signal)).rejects.toThrow('退出登录');
+
+    expect(account.crypto.crossSignDevice).not.toHaveBeenCalled();
+    expect(account.crypto.restoreKeyBackup).not.toHaveBeenCalled();
+    expect(account.escrowedKey.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it('开始前就叫停了：一个请求也不发', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT' });
+    const stop = new AbortController();
+    stop.abort();
+
+    await expect(run(account, stop.signal)).rejects.toThrow();
+
+    expect(account.crypto.userHasCrossSigningKeys).not.toHaveBeenCalled();
+    expect(account.escrow.fetch).not.toHaveBeenCalled();
+  });
 });
 
-function run(account: ReturnType<typeof fakeAccount>) {
-  return ensureDeviceSigned(account.client, account.escrow, account.keys);
+function run(account: ReturnType<typeof fakeAccount>, signal?: AbortSignal) {
+  return ensureDeviceSigned(account.client, account.escrow, account.keys, signal);
 }
 
 /**

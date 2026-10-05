@@ -3,8 +3,14 @@
 import type { ICreateClientOpts } from 'matrix-js-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CRYPTO_STORE_CLEAR_WAIT_MS, MatrixWebGateway } from './matrix-web-gateway';
+import type { DeviceSigningOutcome, ensureDeviceSigned } from './matrix-device-signing';
+import {
+  CRYPTO_STORE_CLEAR_WAIT_MS,
+  MatrixWebGateway,
+  SIGNING_STOP_WAIT_MS,
+} from './matrix-web-gateway';
 import type { MatrixSessionVault, StoredMatrixSession } from '../domain/matrix-session-vault';
+import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { err, ok } from '@/shared/result';
 
 const sdk = vi.hoisted(() => ({
@@ -63,6 +69,14 @@ vi.mock('matrix-js-sdk', () => ({
   SyncState: { Prepared: 'PREPARED', Syncing: 'SYNCING' },
   SSOAction: { LOGIN: 'login' },
 }));
+const signing = vi.hoisted(() => ({
+  ensure: vi.fn<typeof ensureDeviceSigned>(),
+}));
+
+vi.mock('./matrix-device-signing', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ensureDeviceSigned: signing.ensure,
+}));
 vi.mock('matrix-js-sdk/lib/crypto-api/index.js', () => ({
   OnlySignedDevicesIsolationMode: class {
     readonly kind = 'signed-only';
@@ -119,6 +133,30 @@ function persistentGateway(
     sessionVault: vault,
     url: () => new URL('https://tauri.localhost/connect'),
   });
+}
+
+/** 服务器替账户保管签名钥匙的网关：首次同步之后自动签名。 */
+function signingGateway(vault: MatrixSessionVault, deviceSigning: DeviceSigningStatus) {
+  return new MatrixWebGateway({
+    baseUrl: 'https://matrix.test',
+    deviceSigning,
+    encryptionKeyEscrow: {
+      fetch: vi.fn(() => Promise.resolve(null)),
+      replaceCrossSigningKeys: vi.fn(() => Promise.resolve()),
+      store: vi.fn(() => Promise.resolve()),
+    },
+    sessionVault: vault,
+  });
+}
+
+/** 恢复会话、等首次同步完成，这时自动签名开始跑；返回叫停它用的信号。 */
+async function startSigning(matrix: MatrixWebGateway): Promise<AbortSignal> {
+  const restored = await matrix.restore(session.userId);
+  if (!restored.ok || restored.value.kind !== 'connected') throw new Error('测试必须先连上');
+  await expect(restored.value.connection.waitUntilPrepared()).resolves.toEqual(ok(undefined));
+  const stop = signing.ensure.mock.calls[0]?.[3];
+  if (stop === undefined) throw new Error('自动签名必须带着叫停用的信号');
+  return stop;
 }
 
 /** 服务器上记着的这台设备的签名公钥。 */
@@ -557,5 +595,48 @@ describe('Matrix 网关持久会话生命周期', () => {
     });
     expect(sdk.downloadKeys).not.toHaveBeenCalled();
     expect(sdk.logout).not.toHaveBeenCalled();
+  });
+
+  it('退出时先叫停还在跑的自动签名，等它停下才撤销令牌；叫停不算签名失败', async () => {
+    // 令牌作废以后签名流程再读账户数据只会拿到 401（2026-10-05 真实登录验收抓到的）。
+    const running = Promise.withResolvers<DeviceSigningOutcome>();
+    signing.ensure.mockReturnValueOnce(running.promise);
+    const vault = storage();
+    const status = new DeviceSigningStatus();
+    const matrix = signingGateway(vault, status);
+    const stop = await startSigning(matrix);
+    expect(stop.aborted).toBe(false);
+
+    const loggingOut = matrix.logout();
+    await vi.waitFor(() => {
+      expect(vault.clear).toHaveBeenCalledOnce();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stop.aborted).toBe(true);
+    expect(sdk.logout).not.toHaveBeenCalled();
+
+    running.reject(stop.reason);
+    await expect(loggingOut).resolves.toEqual(ok(undefined));
+    expect(sdk.logout).toHaveBeenCalledOnce();
+    expect(status.getSnapshot().kind).not.toBe('failed');
+    // 退出以后界面上的“重试”也不会再跑一遍。
+    status.retry();
+    expect(signing.ensure).toHaveBeenCalledOnce();
+  });
+
+  it('自动签名一直停不下来时，退出最多等一会就照常撤销令牌', async () => {
+    signing.ensure.mockReturnValueOnce(new Promise(() => undefined));
+    const matrix = signingGateway(storage(), new DeviceSigningStatus());
+    await startSigning(matrix);
+
+    vi.useFakeTimers();
+    try {
+      const logout = matrix.logout();
+      await vi.advanceTimersByTimeAsync(SIGNING_STOP_WAIT_MS);
+      await expect(logout).resolves.toEqual(ok(undefined));
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(sdk.logout).toHaveBeenCalledOnce();
   });
 });
