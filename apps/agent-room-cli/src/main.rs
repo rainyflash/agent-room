@@ -261,7 +261,8 @@ pub(crate) fn waiter(args: &cli::ReadArgs) -> CliResult<InboxWaiter> {
         args.limit,
         rules,
     )
-    .with_owner_lookup())
+    .with_owner_lookup()
+    .from_acknowledged())
 }
 
 /// 等下一批；按 Ctrl+C 停下时返回空。

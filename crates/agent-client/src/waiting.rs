@@ -89,6 +89,17 @@ pub struct InboxWaiter {
     /// Bridge 等消息时交来的“正在输入”，记下谁在打、谁什么时候停下；旧版 Bridge 不给，
     /// 就当没人在打字。
     typing: TypingRooms,
+    /// 没给位置时从哪里开始。
+    start: Start,
+}
+
+/// 没给位置时从哪里开始读。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Start {
+    /// 从最早一条（后台回复：它有服务器上的进度）。
+    Earliest,
+    /// 从 Bridge 记的确认位置之后（MCP 和命令行）。
+    Acknowledged,
 }
 
 type WakeCheck = Box<dyn Fn(&IpcMessagePreviewSummary) -> bool + Send + Sync>;
@@ -118,7 +129,16 @@ impl InboxWaiter {
             lookup_owner: false,
             owner: None,
             typing: TypingRooms::default(),
+            start: Start::Earliest,
         }
+    }
+
+    /// 没给位置时从这个房间的确认位置之后开始，没确认过就从最早一条开始（MCP 和命令行用）。
+    /// 后台回复用服务器上的进度，不用它。
+    #[must_use]
+    pub const fn from_acknowledged(mut self) -> Self {
+        self.start = Start::Acknowledged;
+        self
     }
 
     /// 开始等时向 Bridge 问一次主人是谁，主人说话总能叫醒它（MCP 和命令行用）。问不到就当没有主人。
@@ -222,7 +242,7 @@ impl InboxWaiter {
             limit: u16::try_from(self.limit).unwrap_or(FETCH_PAGE),
             keep_waiting: false,
             wait_ms: None,
-            from_ack: false,
+            from_ack: self.start == Start::Acknowledged,
         };
         let (previews, _, _) = self
             .read_page(backend, IpcMethod::ReadInbox(request), None)
@@ -282,7 +302,7 @@ impl InboxWaiter {
                 limit: FETCH_PAGE,
                 keep_waiting,
                 wait_ms,
-                from_ack: false,
+                from_ack: self.start == Start::Acknowledged,
             };
             // 挂着等的那一页多给一点再截断：Bridge 刚好到点才回时不能算成超时。
             let cut_off = cut_off.map(|cut_off| {
@@ -488,7 +508,7 @@ impl InboxWaiter {
             limit: 1,
             keep_waiting: false,
             wait_ms: None,
-            from_ack: false,
+            from_ack: self.start == Start::Acknowledged,
         };
         let method = IpcMethod::WithSession {
             session_id: self.session_id.clone(),

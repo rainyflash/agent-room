@@ -27,6 +27,7 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_get_self",
     "agent_room_list_previews",
     "agent_room_wait_for_messages",
+    "agent_room_ack",
     "agent_room_get_messages",
     "agent_room_room_messages",
     "agent_room_register_reception",

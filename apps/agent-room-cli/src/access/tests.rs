@@ -2,7 +2,8 @@ use super::*;
 use agent_room_agent_client::{BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcHostSessionState, IpcHostSessionSummary, IpcInvitationOffer,
-    IpcOpenHostSessionRequest, IpcRedeemJoinCodeRequest, IpcRoomMembership,
+    IpcMessagePreviewSummary, IpcOpenHostSessionRequest, IpcRedeemJoinCodeRequest,
+    IpcRoomMembership,
 };
 use std::{collections::BTreeMap, sync::Mutex};
 
@@ -24,6 +25,9 @@ struct Bridge {
     read_store: Mutex<Vec<IpcMessagePreviewSummary>>,
     first_read_done: std::sync::atomic::AtomicBool,
     read_cursors: Mutex<Vec<Option<String>>>,
+    /// 收到的确认，和 Bridge 记下的确认位置（只往前走）。
+    acks: Mutex<Vec<String>>,
+    ack_position: Mutex<Option<String>>,
 }
 impl Bridge {
     fn new() -> Self {
@@ -55,6 +59,8 @@ impl Bridge {
             read_store: Mutex::new(Vec::new()),
             first_read_done: std::sync::atomic::AtomicBool::new(false),
             read_cursors: Mutex::new(vec![]),
+            acks: Mutex::new(Vec::new()),
+            ack_position: Mutex::new(None),
         }
     }
 }
@@ -67,20 +73,7 @@ impl BridgeToolClient for Bridge {
                 .lock()
                 .unwrap()
                 .push(request.after_event_id.clone());
-            let previews = {
-                let store = self.read_store.lock().unwrap();
-                let start = request.after_event_id.as_ref().map_or(0, |after| {
-                    store
-                        .iter()
-                        .position(|preview| preview.event_id == *after)
-                        .map_or(store.len(), |index| index + 1)
-                });
-                store[start..]
-                    .iter()
-                    .take(usize::from(request.limit))
-                    .cloned()
-                    .collect()
-            };
+            let previews = self.page(request);
             let first = !self
                 .first_read_done
                 .swap(true, std::sync::atomic::Ordering::SeqCst);
@@ -95,6 +88,12 @@ impl BridgeToolClient for Bridge {
                     typing: Vec::new(),
                 })
             });
+        }
+        if let IpcMethod::WithSession { method, .. } = &method
+            && let IpcMethod::AckInbox(request) = method.as_ref()
+        {
+            let response = self.acknowledge(&request.id);
+            return Box::pin(async move { response });
         }
         if !matches!(method, IpcMethod::WithSession { .. }) {
             self.calls.lock().unwrap().push(method.name());
@@ -162,6 +161,55 @@ impl BridgeToolClient for Bridge {
 const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
 
 impl Bridge {
+    /// 像真的消息库一样按游标给；没给位置、要从确认位置开始时，从记下的确认位置之后给。
+    fn page(
+        &self,
+        request: &agent_room_bridge_ipc::IpcListPreviewsRequest,
+    ) -> Vec<IpcMessagePreviewSummary> {
+        let store = self.read_store.lock().unwrap();
+        let after = request.after_event_id.clone().or_else(|| {
+            request
+                .from_ack
+                .then(|| self.ack_position.lock().unwrap().clone())
+                .flatten()
+        });
+        let start = after.as_ref().map_or(0, |after| {
+            store
+                .iter()
+                .position(|preview| preview.event_id == *after)
+                .map_or(store.len(), |index| index + 1)
+        });
+        store[start..]
+            .iter()
+            .take(usize::from(request.limit))
+            .cloned()
+            .collect()
+    }
+
+    /// 和 Bridge 一样：消息库里有这一条才能确认，位置只往前走，回还剩几条。
+    fn acknowledge(&self, event: &str) -> std::result::Result<IpcResponse, BridgeToolFailure> {
+        self.acks.lock().unwrap().push(event.to_owned());
+        let store = self.read_store.lock().unwrap();
+        let Some(index) = store.iter().position(|preview| preview.event_id == event) else {
+            return Err(refusal("bridge.message_not_found"));
+        };
+        let mut position = self.ack_position.lock().unwrap();
+        let current = position
+            .as_ref()
+            .and_then(|at| store.iter().position(|preview| &preview.event_id == at));
+        let acknowledged = current.is_none_or(|current| index > current);
+        if acknowledged {
+            *position = Some(event.to_owned());
+        }
+        let through = current.map_or(index, |current| current.max(index));
+        Ok(IpcResponse::InboxAcknowledged {
+            room_id: "!room:test.invalid".into(),
+            event_id: event.to_owned(),
+            acknowledged,
+            pending: u64::try_from(store.len() - through - 1).unwrap(),
+        })
+    }
+
     /// 和 Bridge 一样忽略大小写、空白和连字符比较口令。
     fn code_room(&self, code: &str) -> std::result::Result<IpcResponse, BridgeToolFailure> {
         let normalized: String = code
@@ -740,24 +788,17 @@ fn profile() -> Profile {
 }
 
 #[tokio::test]
-async fn 重启产生新会话句柄但保留人物与消息进度() {
+async fn 重启产生新会话句柄但保留人物() {
     let directory = tempfile::tempdir().unwrap();
     let mut saved = profile();
     let store = ProfileStore::open(directory.path(), &saved.invitation.session_key).unwrap();
     let bridge = Bridge::new();
     let first = connect(&bridge, &store, &mut saved).await.unwrap();
     let first_session = saved.session_id.clone();
-    saved
-        .record_delivery(["$one".into(), "$two".into()])
-        .unwrap();
-    saved.acknowledge("$one").unwrap();
-    store.save(&saved).unwrap();
     let mut restored = store.load().unwrap().unwrap();
     let second = connect(&bridge, &store, &mut restored).await.unwrap();
     assert_eq!(first.agent, second.agent);
     assert_ne!(first_session, restored.session_id);
-    assert_eq!(restored.after_event_id.as_deref(), Some("$one"));
-    assert_eq!(restored.delivered, ["$two"]);
     assert_eq!(
         bridge.opened.lock().unwrap().as_slice(),
         [saved.invitation.request(), saved.invitation.request()]
@@ -868,43 +909,170 @@ fn 按需查看的命令带上档案的会话和房间() {
     assert!(parse(&["around", "--id", "$a", "--after", "21"]).is_err());
 }
 
-#[tokio::test]
-async fn 等待消息期间可确认已处理批次且返回空批次不覆盖并发确认() {
+fn read_args(wait: Option<u32>) -> ReadArgs {
+    ReadArgs {
+        session: None,
+        room: None,
+        after: None,
+        limit: 20,
+        wait,
+        wake: None,
+        from: Vec::new(),
+        wait_for: Vec::new(),
+        reply_to: None,
+        settle: Some(0),
+        digest: None,
+    }
+}
+
+/// 存好档案，消息库里放上这几条，第一次读不要停。
+fn prepared(saved: &Profile, events: &[&str]) -> (tempfile::TempDir, Bridge) {
     let directory = tempfile::tempdir().unwrap();
-    let mut saved = profile();
-    saved.record_delivery(["$handled".into()]).unwrap();
-    let key = saved.invitation.session_key.clone();
-    ProfileStore::open(directory.path(), &key)
+    ProfileStore::open(directory.path(), &saved.invitation.session_key)
         .unwrap()
-        .save(&saved)
+        .save(saved)
         .unwrap();
     let bridge = Bridge::new();
+    bridge
+        .first_read_done
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    bridge
+        .read_store
+        .lock()
+        .unwrap()
+        .extend(events.iter().map(|event| preview(event)));
+    (directory, bridge)
+}
+
+fn load(directory: &Path, key: &str) -> Profile {
+    ProfileStore::open(directory, key)
+        .unwrap()
+        .load()
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn 旧版档案里的确认位置第一次连上时交给_bridge_之后从那里接着读() {
+    let mut saved = profile();
+    saved.after_event_id = Some("$one".into());
+    saved.delivered = vec!["$two".into()];
+    let key = saved.invitation.session_key.clone();
+    let (directory, bridge) = prepared(&saved, &["$one", "$two", "$three"]);
+
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(key.clone()),
+        Command::Read(read_args(Some(0))),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(bridge.acks.lock().unwrap().as_slice(), ["$one"]);
+    // 读的时候没带位置：Bridge 从确认位置之后给，没确认的那条照样在。
+    assert_eq!(bridge.read_cursors.lock().unwrap().first(), Some(&None));
+    let moved = load(directory.path(), &key);
+    assert_eq!(moved.after_event_id, None);
+    assert!(moved.delivered.is_empty());
+
+    // 搬过一次就不再搬。
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(key),
+        Command::Read(read_args(Some(0))),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bridge.acks.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn 旧版位置在消息库里找不到时当没确认过_不挡读消息() {
+    let mut saved = profile();
+    saved.after_event_id = Some("$gone".into());
+    let key = saved.invitation.session_key.clone();
+    let (directory, bridge) = prepared(&saved, &["$one"]);
+
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(key.clone()),
+        Command::Read(read_args(Some(0))),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(bridge.acks.lock().unwrap().as_slice(), ["$gone"]);
+    assert_eq!(load(directory.path(), &key).after_event_id, None);
+}
+
+#[tokio::test]
+async fn 确认交给_bridge_只往前走_找不到的报出来() {
+    let saved = profile();
+    let key = saved.invitation.session_key.clone();
+    let (directory, bridge) = prepared(&saved, &["$one", "$two", "$three"]);
+    let ack = |event: &str| {
+        run(
+            &bridge,
+            directory.path(),
+            "test",
+            Some(key.clone()),
+            Command::Ack {
+                event: event.to_owned(),
+            },
+        )
+    };
+
+    ack("$two").await.unwrap();
+    ack("$one").await.unwrap();
+    assert_eq!(
+        bridge.ack_position.lock().unwrap().as_deref(),
+        Some("$two"),
+        "往回确认不动位置"
+    );
+    assert_eq!(
+        ack("$nowhere").await.unwrap_err().code,
+        "bridge.message_not_found"
+    );
+    assert_eq!(
+        bridge.acks.lock().unwrap().as_slice(),
+        ["$two", "$one", "$nowhere"]
+    );
+}
+
+#[tokio::test]
+async fn 等消息的时候可以确认_确认不占档案的写锁() {
+    let saved = profile();
+    let key = saved.invitation.session_key.clone();
+    let (directory, bridge) = prepared(&saved, &["$one"]);
+    bridge
+        .first_read_done
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     let reading = Box::pin(run(
         &bridge,
         directory.path(),
         "test",
         Some(key.clone()),
-        Command::Read(ReadArgs {
-            session: None,
-            room: None,
-            after: None,
-            limit: 20,
-            wait: Some(0),
-            wake: None,
-            from: Vec::new(),
-            wait_for: Vec::new(),
-            reply_to: None,
-            settle: None,
-            digest: None,
-        }),
+        Command::Read(read_args(Some(0))),
     ));
     let acknowledging = async {
         bridge.read_started.notified().await;
-        let store = ProfileStore::open(directory.path(), &key).expect("取信等待不能占用进度写锁");
-        let mut current = store.load().unwrap().unwrap();
-        current.acknowledge("$handled").unwrap();
-        store.save(&current).unwrap();
-        drop(store);
+        Box::pin(run(
+            &bridge,
+            directory.path(),
+            "test",
+            Some(key.clone()),
+            Command::Ack {
+                event: "$one".into(),
+            },
+        ))
+        .await
+        .unwrap();
         bridge.finish_read.notify_one();
     };
     let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
@@ -913,114 +1081,7 @@ async fn 等待消息期间可确认已处理批次且返回空批次不覆盖�
     .await
     .unwrap();
     result.unwrap();
-    assert_eq!(
-        ProfileStore::open(directory.path(), &key)
-            .unwrap()
-            .load()
-            .unwrap()
-            .unwrap()
-            .after_event_id
-            .as_deref(),
-        Some("$handled")
-    );
-}
-
-#[tokio::test]
-async fn 并发确认吞掉整批消息时默认read会接着等下一批() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut saved = profile();
-    saved.session_id = Some(uuid::Uuid::now_v7().to_string());
-    saved.record_delivery(["$handled".into()]).unwrap();
-    let key = saved.invitation.session_key.clone();
-    ProfileStore::open(directory.path(), &key)
-        .unwrap()
-        .save(&saved)
-        .unwrap();
-    let args = ReadArgs {
-        session: saved.session_id.clone(),
-        room: None,
-        after: None,
-        limit: 20,
-        wait: None,
-        wake: None,
-        from: Vec::new(),
-        wait_for: Vec::new(),
-        reply_to: None,
-        settle: Some(0),
-        digest: None,
-    };
-    let bridge = Bridge::new();
-    bridge.read_store.lock().unwrap().push(preview("$handled"));
-    let reading = read_batch(&bridge, directory.path(), &mut saved, args);
-    let delivering = async {
-        // 读到一半，另一个进程确认了这一批。
-        bridge.read_started.notified().await;
-        let store = ProfileStore::open(directory.path(), &key).unwrap();
-        let mut current = store.load().unwrap().unwrap();
-        current.acknowledge("$handled").unwrap();
-        store.save(&current).unwrap();
-        drop(store);
-        bridge.finish_read.notify_one();
-        // 这一批被确认吞掉以后，接着从它之后等；这时才来了新消息。
-        while !bridge
-            .read_cursors
-            .lock()
-            .unwrap()
-            .contains(&Some("$handled".into()))
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        bridge.read_store.lock().unwrap().push(preview("$new"));
-    };
-    let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
-        tokio::join!(reading, delivering)
-    })
-    .await
-    .unwrap();
-    let batch = result.unwrap().unwrap();
-    let previews = batch["previews"].as_array().unwrap();
-    assert_eq!(previews.len(), 1);
-    assert_eq!(previews[0]["eventId"], "$new");
-    assert_eq!(saved.after_event_id.as_deref(), Some("$handled"));
-    assert_eq!(saved.delivered, ["$new"]);
-}
-
-#[tokio::test]
-async fn 并发确认后旧批次不能重新进入待处理队列或倒退游标() {
-    for events in [vec!["$one"], vec!["$one", "$two", "$three"], vec!["$three"]] {
-        let directory = tempfile::tempdir().unwrap();
-        let mut before = profile();
-        before
-            .record_delivery(["$one".into(), "$two".into()])
-            .unwrap();
-        let mut current = before.clone();
-        current.acknowledge("$two").unwrap();
-        ProfileStore::open(directory.path(), &before.invitation.session_key)
-            .unwrap()
-            .save(&current)
-            .unwrap();
-        let mut previews: Vec<_> = events.iter().map(|id| preview(id)).collect();
-        persist_delivery(directory.path(), &mut before, &mut previews)
-            .await
-            .unwrap();
-        let has_new = events.contains(&"$three");
-        assert_eq!(
-            previews
-                .iter()
-                .map(|message| message.event_id.as_str())
-                .collect::<Vec<_>>(),
-            if has_new { vec!["$three"] } else { vec![] }
-        );
-        assert_eq!(before.after_event_id.as_deref(), Some("$two"));
-        assert!(before.acknowledge("$one").is_err());
-        let restored = ProfileStore::open(directory.path(), &before.invitation.session_key)
-            .unwrap()
-            .load()
-            .unwrap()
-            .unwrap();
-        assert_eq!(restored.delivered, before.delivered);
-        assert_eq!(restored.after_event_id, before.after_event_id);
-    }
+    assert_eq!(bridge.ack_position.lock().unwrap().as_deref(), Some("$one"));
 }
 
 fn preview(event: &str) -> IpcMessagePreviewSummary {

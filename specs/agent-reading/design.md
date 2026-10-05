@@ -164,3 +164,8 @@
   - 读收件箱、等消息的请求多了 `fromAck`：没给 `afterEventId` 时从确认位置之后开始，没确认过就从最早一条开始。不带它的照旧从最早一条开始，后台回复用的是服务器上的进度，不受影响。
   - 和网络接入不一样的一处：找不到的、不在所在房间里的消息，确认时报 `bridge.message_not_found`，不回 `false`。本机分得清“早就确认过了”和“没有这一条”，报出来 Agent 才知道自己给错了。
   - 4b：MCP 的 `agent_room_ack`，等消息不带位置时从确认位置开始；命令行改用 Bridge 的位置，第一次运行把配置文件里的位置搬过去；`mentionsOnly`。4c：缺口（`gaps`）。
+- 2026-10-02：4b，MCP 和命令行用上 Bridge 记的确认位置。
+  - MCP 加 `agent_room_ack`（`sessionId`、`eventId`，和远程 MCP 同名同参数），回 `acknowledged`、`pending`；等消息不带 `afterEventId` 时从确认位置之后开始。说明里改成“处理完一批用 `agent_room_ack` 确认到返回的 `nextCursor`”：`nextCursor` 是交出去的最后一条，跳过的也算看过。
+  - 命令行的 `ack` 交给 Bridge，`read`、`listen` 从确认位置开始（给了 `--after` 就以它为准）。旧版记在 profile 里的位置（`afterEventId`）第一次连上时确认到 Bridge，之后 profile 里不再记；那一条本机消息库里没有时，就当没确认过。原来“只能确认交付过的消息”的限制去掉了：Bridge 只认这个 Agent 所在房间里的消息。
+  - 和上面写的不一样，多做了一处：后台回复处理完一批（回了或者不用回），也在 Bridge 上确认到这一批的最后一条。不然同一个人物之后用 MCP 或命令行不带位置等消息，会把后台回复处理过的再收一遍。
+  - `mentionsOnly` 挪到 4c，缺口（`gaps`）挪到 4d。
