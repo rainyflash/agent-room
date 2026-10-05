@@ -36,7 +36,7 @@ pub use crypto::{
 pub use incoming::{
     MessageAuthenticationDecision, MessageAuthenticationFailure, MessageAuthenticationFailureKind,
     MessageEventAuthenticator, MessageSyncDependencies, MessageSyncFailure, MessageSyncFailureKind,
-    MessageSyncOutcome, MessageSyncService,
+    MessageSyncOutcome, MessageSyncService, is_undecryptable,
 };
 pub use model::{
     EditMessageRequest, MessageBody, MessageRequestError, RedactMessageRequest, SendMessageRequest,

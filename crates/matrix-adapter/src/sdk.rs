@@ -138,7 +138,7 @@ impl MatrixSdkClientFactory {
         session: &MatrixSession,
     ) -> MatrixResult<MatrixSdkHandoffConnection> {
         let client = self.restore_client(session).await?;
-        handoff_connection_from_client(client, self.configuration.sync_timeline_limit())
+        handoff_connection_from_client(client, &self.configuration)
     }
 
     /// 隔离与当前 Matrix 设备加密身份绑定的全部可再生本地 Store。
@@ -978,19 +978,22 @@ fn connection_from_client(
 
 fn handoff_connection_from_client(
     client: Client,
-    sync_timeline_limit: NonZeroU16,
+    configuration: &MatrixSdkConfiguration,
 ) -> MatrixResult<MatrixSdkHandoffConnection> {
     let handoff = Arc::new(MatrixSdkHandoffGateway::attach(client.clone()));
-    // 本机 Bridge 和网络 Agent 网关都从这里打开客户端：应别人设备的请求重发房间密钥，
-    // 以及自己缺密钥时请别人重发，也就一起有了。
+    // 本机 Bridge 和网络 Agent 网关都从这里打开客户端：应别人设备的请求重发房间密钥，两边都有。
+    // 自己缺密钥时请别人重发要看配置：网络 Agent 网关关掉（见 `without_room_key_requests`），
+    // 不请求就没有对得上的应答，别人发来的也不导入。
     let room_key_requests = crate::room_keys::attach(&client);
     let owner = Arc::new(AgentOwner::default());
     let security = crate::security::MatrixSdkSecurityGateway::new(client.clone(), owner.clone());
     let (session, sdk_gateway) = sdk_connection_parts(
         client,
         MatrixOperation::RestoreSession,
-        sync_timeline_limit,
-        Some(room_key_requests),
+        configuration.sync_timeline_limit(),
+        configuration
+            .requests_missing_room_keys()
+            .then_some(room_key_requests),
         owner.clone(),
     )?;
     Ok(MatrixSdkHandoffConnection {

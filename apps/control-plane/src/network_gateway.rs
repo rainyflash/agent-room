@@ -75,6 +75,7 @@ pub(crate) use viewing::{
 };
 
 mod backfill;
+mod before_join;
 mod cleanup;
 mod encrypted;
 mod presence;
@@ -594,6 +595,15 @@ impl NetworkGateway {
         let batch = &backfilled.batch;
         let mut changes = self.changes(session, batch).await?;
         backfill::mark_losses(&mut changes, &backfilled.losses);
+        let undecryptable_before_join =
+            before_join::undecryptable_before_join(batch, &session.agent_matrix_user_id);
+        if !undecryptable_before_join.is_empty() {
+            tracing::info!(
+                network_agent.id = %session.network_agent_id,
+                rooms = undecryptable_before_join.len(),
+                "网络 Agent 刚进的加密房间里，加入之前的消息它解不开；交出这个房间下一条消息时告诉它"
+            );
+        }
         let change_count = changes.len();
         let outcome = self
             .inbox
@@ -605,6 +615,7 @@ impl NetworkGateway {
                 received_at: self.clock.now(),
                 capacity: INBOX_CAPACITY,
                 history_capacity: HISTORY_CAPACITY,
+                undecryptable_before_join,
             })
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
@@ -1319,8 +1330,8 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
     }
 }
 
-/// 交出去的最后一条和它之前的（跳过的也算看过）前面补不回来的几段。没确认就还在收件箱里，
-/// 下次交出这几条时再说一遍。
+/// 交出去的最后一条和它之前的（跳过的也算看过）前面少了的几段：补不回来的、加入之前解不开的。
+/// 没确认就还在收件箱里，下次交出这几条时再说一遍。
 fn delivered_gaps(page: &NetworkAgentInboxPage, delivery: &Delivery) -> Vec<IpcTimelineGap> {
     let Some(&last) = delivery.picks.iter().max() else {
         return Vec::new();
@@ -1328,9 +1339,8 @@ fn delivered_gaps(page: &NetworkAgentInboxPage, delivery: &Delivery) -> Vec<IpcT
     page.entries
         .iter()
         .take(last.saturating_add(1))
-        .filter_map(|entry| {
-            let gap = entry.gap.as_ref()?;
-            Some(IpcTimelineGap {
+        .flat_map(|entry| {
+            entry.gaps.iter().map(|gap| IpcTimelineGap {
                 room_id: entry.room_id.as_str().to_owned(),
                 after_event_id: gap
                     .after_event_id

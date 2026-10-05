@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -31,15 +31,15 @@ use agent_room_application::{
         MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
         MatrixRoomSync, MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent,
         MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent,
-        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentHistoryDirection,
-        NetworkAgentHistoryFilter, NetworkAgentHistorySender, NetworkAgentInboxAppend,
-        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxEntry,
-        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
-        NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
-        NetworkAgentRoomRecord, NetworkAgentStoredMessage, NetworkAgentSubmissionClaim,
-        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
-        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
-        NetworkAgentTimelineGap, PortFuture, SecretValue,
+        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentGapReason,
+        NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
+        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
+        NetworkAgentInboxEntry, NetworkAgentInboxPage, NetworkAgentInboxStore,
+        NetworkAgentMatrixGateway, NetworkAgentMessageActor, NetworkAgentMessageHistory,
+        NetworkAgentMessageRef, NetworkAgentRoomRecord, NetworkAgentStoredMessage,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+        NetworkAgentSyncRequest, NetworkAgentTimelineGap, PortFuture, SecretValue,
     },
 };
 use agent_room_bridge_core::{
@@ -560,6 +560,9 @@ struct InboxState {
     entries: Vec<InboxRow>,
     /// 消息记录：确认过的、自己发的也在，每个房间各自限额。
     history: Vec<HistoryRow>,
+    /// 加入之前解不开、还没挂到消息上的房间，和已经说过的房间。
+    owed_before_join: HashSet<MatrixRoomId>,
+    told_before_join: HashSet<MatrixRoomId>,
 }
 
 struct HistoryRow {
@@ -593,11 +596,21 @@ struct InboxRow {
     preview: Value,
     received_at: UtcMillis,
     gap: Option<NetworkAgentTimelineGap>,
+    before_join: bool,
 }
 
 impl InboxRow {
     fn in_scope(&self, room: Option<&MatrixRoomId>) -> bool {
         room.is_none_or(|room| *room == self.room_id)
+    }
+
+    /// 和数据库读出来的一样：加入之前解不开的在前，补不回来的在后。
+    fn gaps(&self) -> Vec<NetworkAgentTimelineGap> {
+        let before_join = self.before_join.then_some(NetworkAgentTimelineGap {
+            after_event_id: None,
+            reason: NetworkAgentGapReason::UndecryptableBeforeJoin,
+        });
+        before_join.into_iter().chain(self.gap.clone()).collect()
     }
 }
 
@@ -670,7 +683,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                     room_id: row.room_id.clone(),
                     preview: row.preview.clone(),
                     received_at: row.received_at,
-                    gap: row.gap.clone(),
+                    gaps: row.gaps(),
                 })
                 .collect(),
             pending: state.pending(room),
@@ -686,6 +699,11 @@ impl NetworkAgentInboxStore for MemoryInbox {
         let mut state = self.state.lock().unwrap();
         let outcome = if state.sync_token == append.expected_sync_token {
             let mut appended = 0;
+            for room in &append.undecryptable_before_join {
+                if !state.told_before_join.contains(room) {
+                    state.owed_before_join.insert(room.clone());
+                }
+            }
             for change in &append.changes {
                 match change {
                     NetworkAgentInboxChange::Message(message) => {
@@ -714,6 +732,11 @@ impl NetworkAgentInboxStore for MemoryInbox {
                         if message.from_me {
                             continue;
                         }
+                        // 欠着加入之前那一段的房间，挂到第一条进收件箱的消息上，只说一次。
+                        let before_join = state.owed_before_join.remove(&message.room_id);
+                        if before_join {
+                            state.told_before_join.insert(message.room_id.clone());
+                        }
                         state.entries.push(InboxRow {
                             sequence,
                             event_id: message.event_id.clone(),
@@ -723,6 +746,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                             preview: message.preview.clone(),
                             received_at: append.received_at,
                             gap: message.gap.clone(),
+                            before_join,
                         });
                         appended += 1;
                     }
@@ -3652,4 +3676,5 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
 }
 
 mod backfill;
+mod before_join;
 mod viewing;

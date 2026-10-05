@@ -213,7 +213,7 @@ impl MessageSyncService {
         issues: &mut Vec<MessageSyncIssue>,
     ) -> Result<(), MessageSyncFailure> {
         for event in events {
-            if event.event_type().as_str() == UNDECRYPTED_EVENT_TYPE {
+            if is_undecryptable(event) {
                 // 解不开的加密事件也要留下记录，不能悄悄跳过：多半是还没拿到房间密钥。
                 // 记下会话，找回密钥后按它重读，写回这条事件原来的位置。
                 let mut undecryptable = issue(
@@ -801,6 +801,11 @@ fn bounded_object(
 
 /// SDK 解不开时保留的原始事件类型。
 const UNDECRYPTED_EVENT_TYPE: &str = "m.room.encrypted";
+
+/// SDK 解不开、原样留下的加密事件：多半是还没拿到房间密钥，或者密钥被扣下。
+pub fn is_undecryptable(event: &MatrixTimelineEvent) -> bool {
+    event.event_type().as_str() == UNDECRYPTED_EVENT_TYPE
+}
 
 fn is_message_event(event: &MatrixTimelineEvent) -> bool {
     matches!(

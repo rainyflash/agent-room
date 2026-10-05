@@ -4,6 +4,11 @@
 //!
 //! 同一次写入也记进消息记录（`network_agent_message`）：每个房间留最近几百条，确认过的、
 //! Agent 自己发的也在，按需查看时从那里读（见 `network_agent_history.rs`）。
+//!
+//! 凭口令进的私人房间里加入之前解不开的一段，先记在房间上（`before_join_gap_status`），再挂到这个
+//! 房间之后第一条进收件箱的消息上；每个房间只说一次。
+
+use std::collections::HashSet;
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
@@ -108,7 +113,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             let rows = sqlx::query_as::<_, InboxRow>(
                 r"SELECT sequence, matrix_event_id, matrix_room_id, preview::text,
                          (extract(epoch FROM received_at) * 1000)::bigint,
-                         gap_reason, gap_after_event_id
+                         before_join_gap, gap_reason, gap_after_event_id
                     FROM agent_room.network_agent_inbox
                    WHERE network_agent_id = $1
                      AND ($3::text IS NULL OR matrix_room_id = $3)
@@ -171,12 +176,25 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             {
                 return Ok(NetworkAgentInboxAppendOutcome::Stale);
             }
+            let mut before_join = BeforeJoinGaps::load(&mut transaction, append, operation).await?;
             let mut appended = 0_u32;
             for change in &append.changes {
-                if apply_change(&mut transaction, append, change, &mut sequence, operation).await? {
+                if apply_change(
+                    &mut transaction,
+                    append,
+                    change,
+                    &mut sequence,
+                    &mut before_join,
+                    operation,
+                )
+                .await?
+                {
                     appended = appended.saturating_add(1);
                 }
             }
+            before_join
+                .record_reported(&mut transaction, append, operation)
+                .await?;
             let dropped = trim_to_capacity(&mut transaction, append, operation).await?;
             trim_history(&mut transaction, append, operation).await?;
             sqlx::query(
@@ -276,35 +294,131 @@ impl NetworkAgentInboxStore for PostgresRepositories {
     }
 }
 
-/// 收件箱的一行：编号、事件、房间、预览、收到的时间、前面少的一段（原因、之前最后一条）。
+/// 收件箱的一行：编号、事件、房间、预览、收到的时间、前面有没有加入之前解不开的一段、
+/// 前面补不回来的一段（原因、之前最后一条）。
 type InboxRow = (
     i64,
     String,
     String,
     String,
     i64,
+    bool,
     Option<String>,
     Option<String>,
 );
 
 fn inbox_entry(
-    (sequence, event_id, room_id, preview, received_at, gap_reason, gap_after): InboxRow,
+    (sequence, event_id, room_id, preview, received_at, before_join, gap_reason, gap_after): InboxRow,
 ) -> Option<NetworkAgentInboxEntry> {
-    let gap = match gap_reason {
-        Some(reason) => Some(NetworkAgentTimelineGap {
+    let mut gaps = Vec::new();
+    if before_join {
+        gaps.push(NetworkAgentTimelineGap {
+            after_event_id: None,
+            reason: NetworkAgentGapReason::UndecryptableBeforeJoin,
+        });
+    }
+    if let Some(reason) = gap_reason {
+        gaps.push(NetworkAgentTimelineGap {
             after_event_id: gap_after.map(MatrixEventId::new).transpose().ok()?,
             reason: NetworkAgentGapReason::parse(&reason)?,
-        }),
-        None => None,
-    };
+        });
+    }
     Some(NetworkAgentInboxEntry {
         sequence: u64::try_from(sequence).ok()?,
         event_id: MatrixEventId::new(event_id).ok()?,
         room_id: MatrixRoomId::new(room_id).ok()?,
         preview: serde_json::from_str(&preview).ok()?,
         received_at: UtcMillis::new(received_at).ok()?,
-        gap,
+        gaps,
     })
+}
+
+/// 加入之前解不开、还没告诉 Agent 的房间（`before_join_gap_status = 'pending'`）。这一批新见到的
+/// 先记上；挂到这个房间第一条进收件箱的消息上以后改记 `reported`，以后不再说。
+struct BeforeJoinGaps {
+    pending: HashSet<String>,
+    reported: Vec<String>,
+}
+
+impl BeforeJoinGaps {
+    async fn load(
+        transaction: &mut Transaction<'_, Postgres>,
+        append: &NetworkAgentInboxAppend,
+        operation: &'static str,
+    ) -> RepositoryResult<Self> {
+        let mut gaps = Self {
+            pending: HashSet::new(),
+            reported: Vec::new(),
+        };
+        if !append.undecryptable_before_join.is_empty() {
+            let rooms: Vec<&str> = append
+                .undecryptable_before_join
+                .iter()
+                .map(MatrixRoomId::as_str)
+                .collect();
+            sqlx::query(
+                r"UPDATE agent_room.network_agent_room
+                     SET before_join_gap_status = 'pending'
+                   WHERE network_agent_id = $1 AND matrix_room_id = ANY($2)
+                     AND before_join_gap_status IS NULL",
+            )
+            .bind(append.id.as_uuid())
+            .bind(&rooms)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+        }
+        // 这一批没有要进收件箱的消息，就没处可挂，不用读。
+        let for_inbox = append.changes.iter().any(|change| {
+            matches!(change, NetworkAgentInboxChange::Message(message) if !message.from_me)
+        });
+        if for_inbox {
+            let pending: Vec<String> = sqlx::query_scalar(
+                r"SELECT matrix_room_id FROM agent_room.network_agent_room
+                   WHERE network_agent_id = $1 AND before_join_gap_status = 'pending'",
+            )
+            .bind(append.id.as_uuid())
+            .fetch_all(&mut **transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            gaps.pending.extend(pending);
+        }
+        Ok(gaps)
+    }
+
+    /// 这个房间还欠着加入之前那一段。
+    fn owes(&self, room_id: &MatrixRoomId) -> bool {
+        self.pending.contains(room_id.as_str())
+    }
+
+    /// 已经挂到这个房间的一条消息上了。
+    fn told(&mut self, room_id: &MatrixRoomId) {
+        if self.pending.remove(room_id.as_str()) {
+            self.reported.push(room_id.as_str().to_owned());
+        }
+    }
+
+    async fn record_reported(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        append: &NetworkAgentInboxAppend,
+        operation: &'static str,
+    ) -> RepositoryResult<()> {
+        if self.reported.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            r"UPDATE agent_room.network_agent_room
+                 SET before_join_gap_status = 'reported'
+               WHERE network_agent_id = $1 AND matrix_room_id = ANY($2)",
+        )
+        .bind(append.id.as_uuid())
+        .bind(&self.reported)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+        Ok(())
+    }
 }
 
 /// 按时间线顺序写入一条变化；新消息真的进了收件箱（不是重复的、不是自己发的）才返回 `true`。
@@ -313,6 +427,7 @@ async fn apply_change(
     append: &NetworkAgentInboxAppend,
     change: &NetworkAgentInboxChange,
     sequence: &mut i64,
+    before_join: &mut BeforeJoinGaps,
     operation: &'static str,
 ) -> RepositoryResult<bool> {
     match change {
@@ -328,7 +443,13 @@ async fn apply_change(
             if message.from_me {
                 return Ok(false);
             }
-            return insert_inbox(transaction, append, message, next, operation).await;
+            let owed = before_join.owes(&message.room_id);
+            let inserted =
+                insert_inbox(transaction, append, message, next, owed, operation).await?;
+            if inserted && owed {
+                before_join.told(&message.room_id);
+            }
+            return Ok(inserted);
         }
         NetworkAgentInboxChange::Replace {
             room_id,
@@ -385,22 +506,24 @@ async fn apply_change(
     Ok(false)
 }
 
-/// 写进收件箱；前面少了一段补不回来的，记在这一条上。
+/// 写进收件箱；前面少了一段补不回来的、或者加入之前解不开的（`before_join`），记在这一条上。
 async fn insert_inbox(
     transaction: &mut Transaction<'_, Postgres>,
     append: &NetworkAgentInboxAppend,
     message: &NetworkAgentInboxMessage,
     sequence: i64,
+    before_join: bool,
     operation: &'static str,
 ) -> RepositoryResult<bool> {
     let gap = message.gap.as_ref();
     let inserted = sqlx::query(
         r"INSERT INTO agent_room.network_agent_inbox (
               network_agent_id, sequence, matrix_event_id, matrix_room_id,
-              message_id, actor_key, preview, received_at, gap_reason, gap_after_event_id
+              message_id, actor_key, preview, received_at, gap_reason, gap_after_event_id,
+              before_join_gap
           ) VALUES (
               $1, $2, $3, $4, $5, $6, $7::jsonb,
-              to_timestamp($8::double precision / 1000.0), $9, $10
+              to_timestamp($8::double precision / 1000.0), $9, $10, $11
           )
           ON CONFLICT (network_agent_id, matrix_event_id) DO NOTHING",
     )
@@ -414,6 +537,7 @@ async fn insert_inbox(
     .bind(append.received_at.value())
     .bind(gap.map(|gap| gap.reason.as_str()))
     .bind(gap.and_then(|gap| gap.after_event_id.as_ref().map(MatrixEventId::as_str)))
+    .bind(before_join)
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;

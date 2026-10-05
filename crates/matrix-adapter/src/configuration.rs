@@ -19,6 +19,8 @@ pub struct MatrixSdkConfiguration {
     homeserver_url: Url,
     request_timeout: Duration,
     sync_timeline_limit: NonZeroU16,
+    /// 自己缺房间密钥时请发送那台设备重发（`specs/room-key-recovery/pre-join-history.md`）。
+    request_missing_room_keys: bool,
 }
 
 impl MatrixSdkConfiguration {
@@ -41,7 +43,18 @@ impl MatrixSdkConfiguration {
             homeserver_url,
             request_timeout,
             sync_timeline_limit: DEFAULT_SYNC_TIMELINE_LIMIT,
+            request_missing_room_keys: true,
         })
+    }
+
+    /// 不请别的设备重发自己缺的房间密钥；应别人的请求重发自己建的照旧。
+    ///
+    /// 网络 Agent 的加密存储在服务器上：请来的加入之前的房间密钥会让服务器读到加入之前的消息，
+    /// 超出 ADR 0010 接受的“服务器读得到发给它的消息”（维护者 2026-10-05 定，不给）。
+    #[must_use]
+    pub const fn without_room_key_requests(mut self) -> Self {
+        self.request_missing_room_keys = false;
+        self
     }
 
     /// 覆盖单次同步允许返回的最大时间线事件数。
@@ -70,6 +83,10 @@ impl MatrixSdkConfiguration {
 
     pub const fn sync_timeline_limit(&self) -> NonZeroU16 {
         self.sync_timeline_limit
+    }
+
+    pub const fn requests_missing_room_keys(&self) -> bool {
+        self.request_missing_room_keys
     }
 }
 
@@ -224,6 +241,22 @@ mod tests {
             configuration
                 .with_sync_timeline_limit(NonZeroU16::new(1_001).expect("测试值非零"))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn 默认缺房间密钥时请别人重发_网络_agent_网关关掉() {
+        let configuration =
+            MatrixSdkConfiguration::new("https://matrix.example.org", Duration::from_secs(10))
+                .expect("配置有效");
+        assert!(
+            configuration.requests_missing_room_keys(),
+            "本机 Bridge 照旧请求"
+        );
+        assert!(
+            !configuration
+                .without_room_key_requests()
+                .requests_missing_room_keys()
         );
     }
 
