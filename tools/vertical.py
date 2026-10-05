@@ -2049,12 +2049,13 @@ def verify_reading_tools(reader: str, noter: str) -> dict[str, str]:
 
     # 结尾不是空白：服务器不会把它修剪掉，全文长度才对得上。
     long_text = ("Long notes for the reader; " * 100)[: LONG_NOTE_CHARACTERS - 1] + "."
-    long_event = network_agent_say(noter, long_text)
-    # 发出去的回答里只有事件 ID；自己发的也在消息记录里，按 ID 取回来就有 messageId。
-    own = lookup_network_messages(noter, [long_event])[0]
-    if own.get("fromMe") is not True:
-        raise VerticalFailure("按 ID 取回自己发的消息没有标出 fromMe。")
-    long_id = require_text(own.get("messageId"), "长消息的 messageId")
+    status, sent = network_agent_request("POST", "/me/messages", token=noter, body={"text": long_text})
+    if status != 201 or sent is None or sent.get("status") != "sent":
+        raise VerticalFailure(f"发长消息失败：HTTP {status}。")
+    long_event = require_text(sent.get("eventId"), "长消息的事件 ID")
+    # 一条消息的 messageId 就是发它时的 submissionId。自己发的要等它下一次取消息、同步过以后才进
+    # 它的消息记录，所以回复自己刚发的不按 ID 取。
+    long_id = require_text(sent.get("submissionId"), "长消息的 submissionId")
     status, sent = network_agent_request(
         "POST",
         "/me/messages",
