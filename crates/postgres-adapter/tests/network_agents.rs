@@ -8,17 +8,18 @@ use agent_room_application::{
     ports::{
         AgentInstanceManagementRepository, MatrixEventId, MatrixRoomId, MatrixSyncToken,
         MatrixTransactionId, NetworkAgentAckOutcome, NetworkAgentActivation,
-        NetworkAgentBeginOutcome, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
-        NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
-        NetworkAgentInboxChange, NetworkAgentInboxMessage, NetworkAgentInboxPage,
-        NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentMessageActor,
-        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentProvisioning,
-        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
-        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
-        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentBeginOutcome, NetworkAgentGapReason, NetworkAgentHistoryDirection,
+        NetworkAgentHistoryFilter, NetworkAgentHistorySender, NetworkAgentInboxAppend,
+        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxMessage,
+        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentLookup,
+        NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
+        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
-        PrincipalRegistration, PrivateRoomAgentAccessStore, PrivateRoomSnapshot, PrivateRoomStore,
-        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
+        PrivateRoomSnapshot, PrivateRoomStore, RateWindowDecision, RateWindowPolicy, SealedSecret,
+        SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -807,6 +808,84 @@ async fn 消息记录留着确认过的和自己发的_按_id_取_重复同步�
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 补不回来的一段记在后面那条上_读收件箱时一起给_确认后跟着删掉() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Mender"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let lobby = lobby();
+    let gap = NetworkAgentTimelineGap {
+        after_event_id: Some(MatrixEventId::new("$last-seen:matrix.test").expect("事件 ID 有效")),
+        reason: NetworkAgentGapReason::TooMany,
+    };
+    let NetworkAgentInboxChange::Message(mut after_gap) = said("$after-gap:matrix.test", &lobby)
+    else {
+        unreachable!("said 给的是消息");
+    };
+    after_gap.gap = Some(gap.clone());
+    let NetworkAgentInboxChange::Message(mut unknown_start) = said("$den-gap:matrix.test", &den())
+    else {
+        unreachable!("said 给的是消息");
+    };
+    unknown_start.gap = Some(NetworkAgentTimelineGap {
+        after_event_id: None,
+        reason: NetworkAgentGapReason::TooMany,
+    });
+    let changes = vec![
+        NetworkAgentInboxChange::Message(after_gap),
+        said("$next:matrix.test", &lobby),
+        NetworkAgentInboxChange::Message(unknown_start),
+    ];
+    repositories
+        .append(&append(id, None, "s1", changes, 10))
+        .await
+        .expect("写入");
+
+    let page = repositories.pending(id, None, 10).await.expect("读");
+    assert_eq!(
+        event_ids(&page),
+        [
+            "$after-gap:matrix.test",
+            "$next:matrix.test",
+            "$den-gap:matrix.test"
+        ]
+    );
+    assert_eq!(page.entries[0].room_id, lobby);
+    assert_eq!(page.entries[0].gap, Some(gap));
+    assert_eq!(page.entries[1].gap, None);
+    assert_eq!(page.entries[2].room_id, den());
+    assert_eq!(
+        page.entries[2].gap,
+        Some(NetworkAgentTimelineGap {
+            after_event_id: None,
+            reason: NetworkAgentGapReason::TooMany,
+        }),
+        "之前最后一条读不出来时只有原因"
+    );
+
+    repositories
+        .acknowledge(
+            id,
+            &MatrixEventId::new("$after-gap:matrix.test").expect("事件 ID 有效"),
+            Some(&lobby),
+        )
+        .await
+        .expect("确认");
+    let page = repositories
+        .pending(id, Some(&lobby), 10)
+        .await
+        .expect("读");
+    assert_eq!(event_ids(&page), ["$next:matrix.test"]);
+    assert_eq!(
+        page.entries[0].gap, None,
+        "带着它的那条确认了，这一段也就交过了"
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 按房间往前往后翻_可以只看某个人_只看提到我的() {
     use NetworkAgentHistoryDirection::{After, Before};
 
@@ -1421,6 +1500,7 @@ fn message_in(
         },
         from_me: false,
         mentions_me: false,
+        gap: None,
         preview: json!({
             "eventId": event_id,
             "messageId": message_id.to_string(),

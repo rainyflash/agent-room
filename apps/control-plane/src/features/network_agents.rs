@@ -19,7 +19,10 @@ use agent_room_application::{
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
-use agent_room_bridge_ipc::wake::{IpcWake, WaitParams as RuleParams, WakeRule};
+use agent_room_bridge_ipc::{
+    IpcTimelineGap,
+    wake::{IpcWake, WaitParams as RuleParams, WakeRule},
+};
 use agent_room_identity_adapter::NetworkSourceDigester;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
@@ -313,6 +316,10 @@ struct MessagesResponse {
     skipped: u64,
     /// 交出去的最后一条之后还没确认的条数，下次再给。
     remaining: u64,
+    /// 这些消息前面补不回来的几段（一次来得太多）：`roomId`、`afterEventId`（之前最后一条）、
+    /// `beforeEventId`（那段之后的第一条）、`reason`。没有时不给。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    gaps: Vec<IpcTimelineGap>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -630,6 +637,7 @@ async fn wait_for_messages(
                 wake: batch.wake,
                 skipped: batch.skipped,
                 remaining: batch.remaining,
+                gaps: batch.gaps,
             })
             .into_response(),
         ),

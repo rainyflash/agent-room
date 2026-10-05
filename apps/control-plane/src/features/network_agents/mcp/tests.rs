@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use agent_room_application::network_agents::{
     NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoomRequest,
 };
-use agent_room_bridge_ipc::wake::WakeRule;
+use agent_room_bridge_ipc::{IpcTimelineGap, wake::WakeRule};
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
@@ -532,5 +532,47 @@ async fn 翻房间的参数写错了指出是哪一项_不问网关() {
     assert_eq!(
         response["result"]["structuredContent"]["code"],
         "network_agent.message_not_found"
+    );
+}
+
+#[tokio::test]
+async fn 等消息时交出去的消息前面有补不回来的一段就一起给_没有就不给() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let app = app(Arc::new(FakeAgents::default()), messaging.clone());
+    let plain = rpc(
+        app.clone(),
+        &call("agent_room_wait_for_messages", &json!({"waitSeconds": 0})),
+        Some(TOKEN),
+    )
+    .await;
+    assert!(plain["result"]["structuredContent"].get("gaps").is_none());
+
+    *messaging.gaps.lock().unwrap() = vec![IpcTimelineGap {
+        room_id: "!lobby:matrix.test".to_owned(),
+        after_event_id: None,
+        before_event_id: "$hello:matrix.test".to_owned(),
+        reason: "too_many".to_owned(),
+    }];
+    let gapped = rpc(
+        app,
+        &call("agent_room_wait_for_messages", &json!({"waitSeconds": 0})),
+        Some(TOKEN),
+    )
+    .await;
+    let result = &gapped["result"];
+    assert_eq!(
+        result["structuredContent"]["gaps"],
+        json!([{
+            "roomId": "!lobby:matrix.test",
+            "beforeEventId": "$hello:matrix.test",
+            "reason": "too_many",
+        }])
+    );
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("安全提示"),
+        "有消息时先提醒内容不可信"
     );
 }

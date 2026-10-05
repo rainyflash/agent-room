@@ -46,7 +46,7 @@ use agent_room_bridge_core::{
     status::{AgentStatusIntent, HostAgentState},
 };
 use agent_room_bridge_ipc::{
-    IpcMessagePreviewSummary,
+    IpcMessagePreviewSummary, IpcTimelineGap,
     previews::{PreviewViewer, truncate_preview_value},
     wake::{
         Arrival, Delivery, IpcWake, WaitDecision, WaitOptions, WakeContext, WakeReason, WakeRule,
@@ -73,6 +73,7 @@ pub(crate) use viewing::{
     NetworkAgentRoomQuery,
 };
 
+mod backfill;
 mod cleanup;
 mod encrypted;
 mod presence;
@@ -170,6 +171,8 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) skipped: u64,
     /// 交出去的最后一条之后还没确认的条数，下次再给。
     pub(crate) remaining: u64,
+    /// 交出去的这些消息前面补不回来的几段：一次来得太多、往回补到上限还没接上。
+    pub(crate) gaps: Vec<IpcTimelineGap>,
 }
 
 /// 一次等消息：最多等多久、一次最多取几条、听什么（`specs/agent-reading/waiting.md`）。
@@ -534,7 +537,7 @@ impl NetworkGateway {
             };
             let started = Instant::now();
             let batch = tokio::select! {
-                result = self.sync(&session, &sync_request) => match (result, ready) {
+                result = self.sync_and_backfill(&session, &sync_request, first) => match (result, ready) {
                     (Ok(batch), _) => batch,
                     // 本来就有可交的：这次没同步成也先交出去，下次再取。
                     (Err(_), Some(delivery)) => return Ok(delivered(page, delivery)),
@@ -543,8 +546,11 @@ impl NetworkGateway {
                 () = poll.superseded() => return Ok(nothing(&page, WakeReason::Superseded)),
             };
             let elapsed_ms = started.elapsed().as_millis();
-            self.typing
-                .record(session.network_agent_id, &batch, self.clock.now().value());
+            self.typing.record(
+                session.network_agent_id,
+                &batch.batch,
+                self.clock.now().value(),
+            );
             self.store_batch(&session, page.sync_token, &sync_request, &batch, elapsed_ms)
                 .await?;
             synced = true;
@@ -581,11 +587,12 @@ impl NetworkGateway {
         session: &NetworkAgentSession,
         since: Option<MatrixSyncToken>,
         request: &NetworkAgentSyncRequest,
-        batch: &MatrixSyncBatch,
+        backfilled: &backfill::Backfilled,
         elapsed_ms: u128,
     ) -> Result<(), NetworkGatewayFailure> {
-        let first = since.is_none();
-        let changes = self.changes(session, batch).await?;
+        let batch = &backfilled.batch;
+        let mut changes = self.changes(session, batch).await?;
+        backfill::mark_losses(&mut changes, &backfilled.losses);
         let change_count = changes.len();
         let outcome = self
             .inbox
@@ -600,16 +607,6 @@ impl NetworkGateway {
             })
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
-        // 网络 Agent 还不补缺口：两次同步之间一个房间来得太多时只收到最近的，先记下来。
-        if !first {
-            for room in batch.rooms().iter().filter(|room| room.timeline_limited()) {
-                tracing::warn!(
-                    network_agent.id = %session.network_agent_id,
-                    room = ?room.room_id(),
-                    "网络 Agent 两次同步之间这个房间来的消息超过一次能带回的条数，更早的没有取到"
-                );
-            }
-        }
         tracing::debug!(
             network_agent.id = %session.network_agent_id,
             since = ?since,
@@ -1271,6 +1268,7 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
     let unread = page
         .pending
         .saturating_sub(u64::try_from(page.entries.len()).unwrap_or(u64::MAX));
+    let gaps = delivered_gaps(&page, &delivery);
     let mut previews: Vec<Option<Value>> = page
         .entries
         .into_iter()
@@ -1294,7 +1292,32 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
         remaining: u64::try_from(delivery.remaining)
             .unwrap_or(u64::MAX)
             .saturating_add(unread),
+        gaps,
     }
+}
+
+/// 交出去的最后一条和它之前的（跳过的也算看过）前面补不回来的几段。没确认就还在收件箱里，
+/// 下次交出这几条时再说一遍。
+fn delivered_gaps(page: &NetworkAgentInboxPage, delivery: &Delivery) -> Vec<IpcTimelineGap> {
+    let Some(&last) = delivery.picks.iter().max() else {
+        return Vec::new();
+    };
+    page.entries
+        .iter()
+        .take(last.saturating_add(1))
+        .filter_map(|entry| {
+            let gap = entry.gap.as_ref()?;
+            Some(IpcTimelineGap {
+                room_id: entry.room_id.as_str().to_owned(),
+                after_event_id: gap
+                    .after_event_id
+                    .as_ref()
+                    .map(|event| event.as_str().to_owned()),
+                before_event_id: entry.event_id.as_str().to_owned(),
+                reason: gap.reason.as_str().to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// 没有要交的，比如被新的等待顶掉。
@@ -1306,6 +1329,7 @@ fn nothing(page: &NetworkAgentInboxPage, reason: WakeReason) -> NetworkAgentMess
         wake: IpcWake::empty(reason),
         skipped: 0,
         remaining: page.pending,
+        gaps: Vec::new(),
     }
 }
 

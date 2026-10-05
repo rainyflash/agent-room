@@ -17,9 +17,10 @@ use serde_json::Value;
 use crate::{
     persistence::RepositoryResult,
     ports::{
-        MatrixAcceptedEvent, MatrixEvent, MatrixEventId, MatrixResult, MatrixRoomId,
-        MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken, MatrixTransactionId, PortFuture,
-        PrincipalRegistration, SecretDigest, SecretGenerationFailure, SecretValue,
+        MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixEvent, MatrixEventId,
+        MatrixResult, MatrixRoomId, MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken,
+        MatrixTransactionId, PortFuture, PrincipalRegistration, SecretDigest,
+        SecretGenerationFailure, SecretValue,
     },
 };
 
@@ -326,6 +327,38 @@ pub struct NetworkAgentInboxMessage {
     pub mentions_me: bool,
     /// 与 CLI、MCP 看到的形状一致的消息预览。
     pub preview: Value,
+    /// 这条之前少了一段补不回来的消息；交出这条时一起告诉 Agent。
+    pub gap: Option<NetworkAgentTimelineGap>,
+}
+
+/// 时间线上补不回来的一段：在 `after_event_id`（之前最后一条）和带着它的那条消息之间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentTimelineGap {
+    /// 这个房间之前记下的最后一条；读不出来时没有。
+    pub after_event_id: Option<MatrixEventId>,
+    pub reason: NetworkAgentGapReason,
+}
+
+/// 为什么补不回来。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentGapReason {
+    /// 两次同步之间一个房间来得太多，往回补到上限还没接上。
+    TooMany,
+}
+
+impl NetworkAgentGapReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TooMany => "too_many",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "too_many" => Some(Self::TooMany),
+            _ => None,
+        }
+    }
 }
 
 /// 消息的作者：Matrix 用户 ID，和转成小写的名字（只看某个人时不分大小写）。
@@ -363,9 +396,12 @@ pub enum NetworkAgentInboxAppendOutcome {
 pub struct NetworkAgentInboxEntry {
     pub sequence: u64,
     pub event_id: MatrixEventId,
+    pub room_id: MatrixRoomId,
     pub preview: Value,
     /// 同步进收件箱的时间；等消息时按它防抖、定时看一眼。
     pub received_at: UtcMillis,
+    /// 这条之前少了一段补不回来的消息。
+    pub gap: Option<NetworkAgentTimelineGap>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -519,6 +555,14 @@ pub trait NetworkAgentMatrixGateway: Send + Sync {
         access_token: &'a SecretValue,
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, MatrixResult<()>>;
+
+    /// 从同步给的往回翻令牌往回读一页 Agent Room 的消息事件，新的在前；补同步时漏掉的一段。
+    fn backfill<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>>;
 }
 
 /// 网络 Agent 发出的一次提交是哪一种。

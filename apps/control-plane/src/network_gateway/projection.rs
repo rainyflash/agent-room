@@ -245,6 +245,8 @@ fn inbox_message(
         from_me: summary.from_me,
         mentions_me: summary.mentions_me,
         preview: serde_json::to_value(summary).ok()?,
+        // 补不回来的一段在存之前由往回补那一步标上（`backfill::mark_losses`）。
+        gap: None,
     }))
 }
 
