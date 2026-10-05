@@ -47,7 +47,7 @@ use agent_room_bridge_core::{
 };
 use agent_room_bridge_ipc::{
     IpcMessagePreviewSummary,
-    previews::PreviewViewer,
+    previews::{PreviewViewer, truncate_preview_value},
     wake::{
         Arrival, Delivery, IpcWake, WaitDecision, WaitOptions, WakeContext, WakeReason, WakeRule,
         decide,
@@ -1277,12 +1277,15 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
         .map(|entry| Some(entry.preview))
         .collect();
     NetworkAgentMessages {
-        // 收件箱里存的是全文。长正文只给开头要等能按 ID 取全文时一起打开
-        // （specs/agent-reading/design.md 第 5 步），在那之前照旧给全文。
+        // 收件箱里存的是全文；交出去时长正文只给开头，要全文按 ID 取（和本机一样）。
         messages: delivery
             .picks
             .iter()
             .filter_map(|&index| previews.get_mut(index).and_then(Option::take))
+            .map(|mut preview| {
+                truncate_preview_value(&mut preview);
+                preview
+            })
             .collect(),
         pending: page.pending,
         dropped: page.dropped,
