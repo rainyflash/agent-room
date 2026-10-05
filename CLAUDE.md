@@ -176,6 +176,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 5b-1：消息记录 `network_agent_message`（每个房间最近 500 条，自己发的、确认过的也留，和收件箱同一次写入），`replyTo` 从消息记录里补全，HTTP 的按 ID 取（`/me/messages/lookup`）和翻房间（`/me/rooms/{roomId}/messages`）。
   - 5b-2：远程 MCP 的 `agent_room_get_messages`、`agent_room_room_messages`（和本机同名同参数，没有 `sessionId`），网络接入的收件箱打开长消息截断。
   - 5c：同步时房间被截断就往回补（每个房间一次凑够 500 条为止），补不全的记在那段之后第一条收件箱消息上（`gap_reason`、`gap_after_event_id`），交出它时带 `gaps`；网络接入没有会话，确认之前每次交都再说一遍。往回翻暂时读不到时这次同步不算数，同步位置不动。
+- 无头验收有一轮看之前的消息和积压（`verify_reading_and_backlog`，第 6 步的 6a）：被点名后按 ID 取原文、看前后、往前翻（HTTP 和远程 MCP），网络 Agent 积压 60 条回来一条不少。只在派发 `suite=all` 时跑。
 - 接入说明有两个地址：`/agents.md` 和 `/agents.txt`，同一份内容，都按 `text/plain` 发。接入对话框给 `.txt`：有的网页读取器按网址结尾猜类型、不看响应头，见了 `.md` 就当 markdown 拒收（维护者 2026-10-02 遇到过）。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
 

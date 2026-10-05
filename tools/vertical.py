@@ -23,6 +23,7 @@ import threading
 import time
 from typing import Final, Protocol, TextIO
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 import uuid
 
@@ -1998,6 +1999,181 @@ def verify_lobby_refuses_everyone(
     if status != 204:
         raise VerticalFailure(f"网络 Agent 停用失败：HTTP {status}。")
     return {"token": token}
+
+
+# 看之前的消息和积压的那一轮用自己的来源地址建网络 Agent：一个读的、一个记笔记的、三个闲聊的。
+READING_SOURCES: Final = (
+    "198.51.100.50",
+    "198.51.100.51",
+    "198.51.100.52",
+    "198.51.100.53",
+    "198.51.100.54",
+)
+# 每个网络 Agent 每分钟最多发 20 条：三个人各说 20 条，超过一次同步能带回的 50 条。
+BACKLOG_PER_CHATTER: Final = 20
+LONG_NOTE_CHARACTERS: Final = 1_500
+
+
+def network_agent_get(token: str, path: str) -> dict[str, object]:
+    status, body = network_agent_request("GET", path, token=token)
+    if status != 200 or body is None:
+        raise VerticalFailure(f"网络 Agent 读 {path.split('?')[0]} 失败：HTTP {status}。")
+    return body
+
+
+def network_event_ids(page: Mapping[str, object]) -> list[str]:
+    return [
+        require_text(message.get("eventId"), "事件 ID") for message in network_page_messages(page)
+    ]
+
+
+def lookup_network_messages(token: str, ids: Sequence[str]) -> list[dict[str, object]]:
+    joined = ",".join(quote(item, safe="") for item in ids)
+    page = network_agent_get(token, f"/me/messages/lookup?ids={joined}")
+    if page.get("missing"):
+        raise VerticalFailure(f"按 ID 取消息有找不到的：{page.get('missing')}。")
+    return network_page_messages(page)
+
+
+def room_messages_path(room_id: str, query: str) -> str:
+    return f"/me/rooms/{quote(room_id, safe='')}/messages?{query}"
+
+
+def verify_reading_tools(reader: str, noter: str) -> dict[str, str]:
+    """被点名后看出回复的是哪句，按 ID 取回原文全文、看前后、往前翻、只看某个人和提到我的；
+    HTTP 和远程 MCP 都走一遍。"""
+    hello = network_agent_say(reader, "Reader is here.")
+    page = network_agent_wait(noter, "wait=20&wake=all&settle=0")
+    reader_id = message_author(find_network_message(page, hello))
+    acknowledge_network_page(noter, page)
+
+    # 结尾不是空白：服务器不会把它修剪掉，全文长度才对得上。
+    long_text = ("Long notes for the reader; " * 100)[: LONG_NOTE_CHARACTERS - 1] + "."
+    long_event = network_agent_say(noter, long_text)
+    # 发出去的回答里只有事件 ID；自己发的也在消息记录里，按 ID 取回来就有 messageId。
+    own = lookup_network_messages(noter, [long_event])[0]
+    if own.get("fromMe") is not True:
+        raise VerticalFailure("按 ID 取回自己发的消息没有标出 fromMe。")
+    long_id = require_text(own.get("messageId"), "长消息的 messageId")
+    status, sent = network_agent_request(
+        "POST",
+        "/me/messages",
+        token=noter,
+        body={"text": "Reader, see my notes above.", "replyTo": long_id, "mentions": [reader_id]},
+    )
+    if status != 201 or sent is None or sent.get("status") != "sent":
+        raise VerticalFailure(f"回复长消息失败：HTTP {status}。")
+    reply_event = require_text(sent.get("eventId"), "回复的事件 ID")
+
+    # 默认规则：点名它的叫醒它，长消息只给开头，回复带着被回复那条的开头。
+    page = network_agent_wait(reader, "wait=30")
+    if network_event_ids(page) != [long_event, reply_event]:
+        raise VerticalFailure(f"读的人收到的不是长消息和回复：{network_event_ids(page)}。")
+    truncated, reply = network_page_messages(page)
+    conversation = require_object(truncated.get("conversation"), "长消息的正文")
+    if (
+        conversation.get("truncated") is not True
+        or conversation.get("fullLength") != LONG_NOTE_CHARACTERS
+        or len(require_text(conversation.get("text"), "长消息的开头")) != 1_000
+    ):
+        raise VerticalFailure("收件箱里的长消息没有只给开头。")
+    replied = require_object(reply.get("replyTo"), "回复的是哪句")
+    excerpt = require_text(replied.get("excerpt"), "被回复那条的开头")
+    if (
+        reply.get("mentionsMe") is not True
+        or reply.get("replyToMessageId") != long_id
+        or not long_text.startswith(excerpt)
+    ):
+        raise VerticalFailure("回复没有标出点名和被回复那条的开头。")
+    room_id = require_text(reply.get("roomId"), "房间 ID")
+    noter_id = message_author(reply)
+
+    full = lookup_network_messages(reader, [long_id])[0]
+    if require_object(full.get("conversation"), "全文").get("text") != long_text:
+        raise VerticalFailure("按 ID 取回的不是全文。")
+    around = network_agent_get(
+        reader, room_messages_path(room_id, f"around={quote(reply_event, safe='')}&limit=2")
+    )
+    if network_event_ids(around) != [long_event, reply_event]:
+        raise VerticalFailure(f"看前后给的不对：{network_event_ids(around)}。")
+    newest = network_agent_get(reader, room_messages_path(room_id, "limit=1"))
+    cursor = require_text(newest.get("nextCursor"), "往前翻的位置")
+    older = network_agent_get(
+        reader, room_messages_path(room_id, f"before={quote(cursor, safe='')}&limit=2")
+    )
+    if network_event_ids(newest) != [reply_event] or network_event_ids(older) != [long_event, hello]:
+        raise VerticalFailure("往前翻给的不对。")
+    if network_page_messages(older)[1].get("fromMe") is not True:
+        raise VerticalFailure("往前翻时自己发的没有标出 fromMe。")
+    from_noter = network_agent_get(
+        reader, room_messages_path(room_id, f"from={quote(noter_id, safe='')}&limit=5")
+    )
+    named = network_agent_get(reader, room_messages_path(room_id, "mentionsMe=true&limit=5"))
+    if network_event_ids(from_noter) != [reply_event, long_event] or network_event_ids(named) != [reply_event]:
+        raise VerticalFailure("只看某个人、只看提到我的给的不对。")
+
+    # 远程 MCP 的两个工具给的一样。
+    looked_up = network_agent_mcp_content(
+        network_agent_mcp_call("agent_room_get_messages", {"ids": [long_id]}, token=reader),
+        "远程 MCP 按 ID 取",
+    )
+    if network_page_messages(looked_up)[0].get("conversation", {}).get("text") != long_text:
+        raise VerticalFailure("远程 MCP 按 ID 取回的不是全文。")
+    viewed = network_agent_mcp_content(
+        network_agent_mcp_call(
+            "agent_room_room_messages",
+            {"roomId": room_id, "around": reply_event, "limit": 2},
+            token=reader,
+        ),
+        "远程 MCP 看前后",
+    )
+    if network_event_ids(viewed) != [long_event, reply_event]:
+        raise VerticalFailure("远程 MCP 看前后给的不对。")
+    acknowledge_network_page(reader, page)
+    return {"longEventId": long_event, "replyEventId": reply_event}
+
+
+def verify_backlog_not_lost(reader: str, chatters: Sequence[str]) -> list[str]:
+    """读的人不来取时房间里积了超过一次同步能带回的 50 条：回来以后一条不少、按先后、没有缺口。"""
+    sent: list[str] = []
+    for index, chatter in enumerate(chatters, start=1):
+        sent.extend(
+            network_agent_say(chatter, f"Backlog {index}-{number:02d}.")
+            for number in range(1, BACKLOG_PER_CHATTER + 1)
+        )
+    received: list[str] = []
+    for _ in range(4):
+        page = network_agent_wait(reader, "wait=0&limit=50&wake=all&settle=0")
+        if page.get("gaps") or page.get("dropped"):
+            raise VerticalFailure(f"积压的消息报了缺口或丢了：{page.get('gaps')}，{page.get('dropped')}。")
+        received.extend(network_event_ids(page))
+        acknowledge_network_page(reader, page)
+        if not page.get("remaining"):
+            break
+    expected = set(sent)
+    backlog = [event for event in received if event in expected]
+    if backlog != sent:
+        missing = len(expected - set(received))
+        raise VerticalFailure(f"积压的 {len(sent)} 条没有按先后全部收到：少了 {missing} 条。")
+    return sent
+
+
+def verify_reading_and_backlog() -> dict[str, object]:
+    """按需查看和积压在真实服务器上走一遍（specs/agent-reading/design.md 第 6 步）。"""
+    reader = create_waiting_network_agent("Vertical Reader", READING_SOURCES[0])
+    noter = create_waiting_network_agent("Vertical Noter", READING_SOURCES[1])
+    chatters = [
+        create_waiting_network_agent(f"Vertical Chatter {index}", source)
+        for index, source in enumerate(READING_SOURCES[2:], start=1)
+    ]
+    reading = verify_reading_tools(reader, noter)
+    backlog = verify_backlog_not_lost(reader, chatters)
+    tokens = [reader, noter, *chatters]
+    for token in tokens:
+        status, _ = network_agent_request("DELETE", "/me", token=token)
+        if status != 204:
+            raise VerticalFailure(f"网络 Agent 停用失败：HTTP {status}。")
+    return {"tokens": tokens, "backlogMessages": len(backlog), **reading}
 
 
 NETWORK_AGENT_MCP: Final = "http://127.0.0.1:8090/mcp"

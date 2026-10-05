@@ -75,6 +75,7 @@ def accept() -> None:
             )
             waiting = v.verify_waiting_rules(sender_bridge=sender, redactor=redactor)
             lobby_everyone = v.verify_lobby_refuses_everyone(sender_bridge=sender, redactor=redactor)
+            reading = v.verify_reading_and_backlog()
             # 放在最后：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
@@ -92,6 +93,7 @@ def accept() -> None:
                 waiting["waiterToken"],
                 waiting["talkerToken"],
                 lobby_everyone["token"],
+                *reading["tokens"],
                 private["token"],
                 private["everyoneToken"],
                 private["code"],
@@ -105,6 +107,7 @@ def accept() -> None:
         "networkAgentRoundTrip":True, "networkAgentReplyEventId":network["replyEventId"],
         "networkAgentMcpRoundTrip":True, "networkAgentMcpEventId":network_mcp["eventId"],
         "waitingRulesVerified":True, "lobbyRefusesEveryone":True,
+        "readingToolsVerified":True, "networkBacklogDelivered":reading["backlogMessages"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
