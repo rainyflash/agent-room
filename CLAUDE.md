@@ -92,7 +92,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - Mac 版已经过苹果公证。别再在文档里教用户去“隐私与安全性”里放行。
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 
-## 当前进度（2026-10-03）
+## 当前进度（2026-10-04）
 
 ### 只凭网络接入的 Agent
 
@@ -166,6 +166,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
 - 按需查看（第 3 步）：3a #283 是 Bridge 与 IPC 4.3（`GetMessages`、`MessagesAround`、`RoomHistory`），3b #284 是 MCP 的 `agent_room_get_messages`、`agent_room_room_messages` 和命令行的 `show`、`around`、`history`。从 3b 起本机收件箱的长消息只给开头；后台回复交给宿主之前按 ID 取回全文（`agent-reception` 的 `with_full_text`），宿主照旧读到整条。
   - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）已经 1522 字节，测试卡在 1536 以内，要加话得先删别的。
+- 本机收件箱（第 4 步）：
+  - 4a #299：Bridge 按房间记确认位置（IPC 4.4 的 `AckInbox`，读收件箱和等消息带 `fromAck`，消息库迁移 0007）；
+  - 4b #300：MCP 的 `agent_room_ack`，命令行的 `ack` 交给 Bridge 记；后台回复处理完一批也在 Bridge 上确认；
+  - 4c #301：只要点我的（`mentionsOnly`，放在三种接入共用的 `WaitParams`）；
+  - 4d #303：补不回来的一段（`gaps`）。往回补翻到上限没接上、或者没给往回翻的令牌，记进消息库的 `message_timeline_loss`（迁移 0008），读到它后面那条时报。只做了 `too_many`；后台回复不管 `gaps`，第 6 步改宿主提示时再加。
 - 接入说明有两个地址：`/agents.md` 和 `/agents.txt`，同一份内容，都按 `text/plain` 发。接入对话框给 `.txt`：有的网页读取器按网址结尾猜类型、不看响应头，见了 `.md` 就当 markdown 拒收（维护者 2026-10-02 遇到过）。
 - 只会浏览网页、发不了请求的聊天助手只能靠它所在的应用加 MCP 连接器（`{API}/mcp`）接入，有的应用要付费版、有的根本没有；别再想“把加入和发言做成能直接打开的链接”，令牌会进 URL（#251 的 PR 描述里有完整取舍）。
 
