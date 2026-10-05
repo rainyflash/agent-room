@@ -37,6 +37,8 @@ const MATRIX_RETURN_PATH_KEY = 'agent-room.matrix-return-path.v1';
  * 删除会一直被挡住；过了这个时间就先完成退出，删除请求留给浏览器自己完成（见 {@link MatrixCryptoStoreCleanup}）。
  */
 export const CRYPTO_STORE_CLEAR_WAIT_MS = 5_000;
+/** 退出登录时等自动签名做完手头这一步，最多等这么久。 */
+export const SIGNING_STOP_WAIT_MS = 5_000;
 const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
 const MAX_LOGIN_TOKEN_LENGTH = 4_096;
 
@@ -507,22 +509,28 @@ export class MatrixWebGateway implements MatrixGateway {
 
   /**
    * 首次同步之后跑一遍：有服务器保管的钥匙就让这台设备自动签好（`specs/device-signing/design.md`），
-   * 没配就只给第一台设备建立身份。失败不挡登录，状态交给界面，界面可以重试。
+   * 没配就只给第一台设备建立身份。失败不挡登录，状态交给界面，界面可以重试。`signal` 中止
+   * （退出登录、断开）后做完手头这一步就停下，不算失败。
    */
-  readonly #ensureEncryption = async (client: MatrixClient): Promise<void> => {
+  readonly #ensureEncryption = async (client: MatrixClient, signal: AbortSignal): Promise<void> => {
     const escrow = this.#encryptionKeyEscrow;
     if (escrow === undefined) {
       await ensureFirstEncryptionIdentity(client);
       return;
     }
+    // 每次都重新读：等待的时候可能被叫停了。
+    const stopped = (): boolean => signal.aborted;
     const attempt = async (): Promise<void> => {
+      if (stopped()) return;
       this.#deviceSigning.set({ kind: 'working' });
       try {
-        await ensureDeviceSigned(client, escrow, this.#secretStorageKeys);
+        await ensureDeviceSigned(client, escrow, this.#secretStorageKeys, signal);
         this.#deviceSigning.set({ kind: 'ready' });
       } catch {
+        if (stopped()) return;
         this.#deviceSigning.set({ kind: 'failed' });
       }
+      if (stopped()) return;
       // 签好了，依赖安全状态的界面重新读一遍。
       this.#onClientActivity(client);
     };
@@ -781,6 +789,9 @@ class BrowserMatrixConnection implements MatrixConnection {
   #identityEnsured = false;
   #revoked = false;
   #storesCleared = false;
+  /** 正在跑的自动签名；退出登录前先叫停它、等它停下。 */
+  #encryption: Promise<void> | null = null;
+  readonly #stopEncryption = new AbortController();
 
   constructor(
     client: MatrixClient,
@@ -791,7 +802,7 @@ class BrowserMatrixConnection implements MatrixConnection {
     onClientActivity: (client: MatrixClient) => void,
     persistenceFailure: () => SessionFailure | null,
     cryptoCleanup: MatrixCryptoStoreCleanup,
-    private readonly ensureEncryption: (client: MatrixClient) => Promise<void>,
+    private readonly ensureEncryption: (client: MatrixClient, signal: AbortSignal) => Promise<void>,
     private readonly lifecycleLog: MatrixLifecycleLogger | undefined,
   ) {
     this.#client = client;
@@ -808,6 +819,7 @@ class BrowserMatrixConnection implements MatrixConnection {
   }
 
   disconnect(): void {
+    this.#stopEncryption.abort();
     this.#stopObservingActivity();
     stopMatrixClient(this.#client, this.lifecycleLog);
   }
@@ -879,11 +891,14 @@ class BrowserMatrixConnection implements MatrixConnection {
   #ensureEncryptionIdentity(): void {
     if (this.#identityEnsured) return;
     this.#identityEnsured = true;
-    void this.ensureEncryption(this.#client);
+    this.#encryption = this.ensureEncryption(this.#client, this.#stopEncryption.signal);
   }
 
   async logout(): Promise<Result<void, SessionFailure>> {
     this.lifecycleLog?.beginShutdown();
+    // 自动签名还在跑时先叫停，等它做完手头这一步：令牌作废以后它再发的请求都会被拒绝（401）。
+    this.#stopEncryption.abort();
+    if (this.#encryption !== null) await settleWithin(this.#encryption, SIGNING_STOP_WAIT_MS);
     let remoteResult: Result<void, SessionFailure> = ok(undefined);
     if (!this.#revoked) {
       try {

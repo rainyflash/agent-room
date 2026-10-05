@@ -59,11 +59,15 @@ export type DeviceSigningClient = Pick<
  * 2. 本机拿着签名私钥：没签好就签上；服务器上没有对得上的钥匙就新建一把补交；
  * 3. 否则用服务器上的钥匙打开密钥存储、取回签名私钥、签好这台设备、找回历史；没有能用的钥匙
  *    （或者密钥存储里没有签名私钥）就重建一次签名身份。
+ *
+ * `signal` 中止后做完手头这一步就停下（抛出中止的原因）：退出登录前先叫停它，免得令牌作废以后
+ * 它还接着发请求。
  */
 export async function ensureDeviceSigned(
   client: DeviceSigningClient,
   escrow: EncryptionKeyEscrow,
   keys: MatrixSecretStorageKeyCache,
+  signal?: AbortSignal,
 ): Promise<DeviceSigningOutcome> {
   const crypto = client.getCrypto();
   const userId = client.getUserId();
@@ -71,8 +75,10 @@ export async function ensureDeviceSigned(
   if (crypto === undefined || userId === null || deviceId === null) {
     throw new Error('Matrix 加密还没有初始化好。');
   }
+  const step = <T>(work: Promise<T>): Promise<T> => continueUnlessStopped(work, signal);
+  signal?.throwIfAborted();
   // 自己的身份每次都重新查一遍：别的设备重建过签名身份时，本机对不上的旧私钥随之清掉。
-  if (!(await crypto.userHasCrossSigningKeys(userId, true))) {
+  if (!(await step(crypto.userHasCrossSigningKeys(userId, true)))) {
     // 服务器上还没有签名身份：从头建，第一次上传不用交互认证。上次建到一半（上传公钥时页面跳走了）
     // 留下的本机私钥、密钥存储和备份都不沿用：本机有私钥时 bootstrapCrossSigning 会跳过上传，
     // 服务器上就一直没有签名身份，别的设备也签不上。
@@ -82,18 +88,20 @@ export async function ensureDeviceSigned(
   }
   const escrowed = await escrow.fetch();
   try {
-    const usable = escrowed !== null && (await unlocksAccount(client, escrowed));
+    // 取到的钥匙不管停没停都要抹掉，所以在这里才看叫停没有。
+    signal?.throwIfAborted();
+    const usable = escrowed !== null && (await step(unlocksAccount(client, escrowed)));
     if (usable) keys.unlock(escrowed.keyId, escrowed.key);
-    const status = await crypto.getCrossSigningStatus();
+    const status = await step(crypto.getCrossSigningStatus());
     if (holdsSigningKeys(status)) {
-      await keepSigned(client, crypto, escrow, usable);
+      await keepSigned(client, crypto, escrow, usable, step);
       return 'ready';
     }
     if (usable && status.privateKeysInSecretStorage) {
       // 本机没有签名私钥时，这一步从密钥存储取回私钥并签好这台设备。
-      await crypto.bootstrapCrossSigning({});
-      await crypto.crossSignDevice(deviceId);
-      if (await loadBackupKey(crypto)) {
+      await step(crypto.bootstrapCrossSigning({}));
+      await step(crypto.crossSignDevice(deviceId));
+      if (await step(loadBackupKey(crypto))) {
         void crypto.restoreKeyBackup().catch(ignoreBackgroundFailure);
       }
       return 'signed';
@@ -105,6 +113,16 @@ export async function ensureDeviceSigned(
   await crypto.resetEncryption(uploadThroughControlPlane);
   await createSecretStorage(client, crypto, escrow, false);
   return 'reset';
+}
+
+/** 等这一步做完；这时已经叫停了就不再往下走。 */
+async function continueUnlessStopped<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  const result = await work;
+  signal?.throwIfAborted();
+  return result;
 }
 
 /** 账户第一次建立签名身份时，上传不需要交互认证。 */
@@ -136,16 +154,17 @@ async function keepSigned(
   crypto: CryptoApi,
   escrow: EncryptionKeyEscrow,
   usable: boolean,
+  step: <T>(work: Promise<T>) => Promise<T>,
 ): Promise<void> {
   const userId = client.getUserId() ?? '';
   const deviceId = client.getDeviceId() ?? '';
-  const verification = await crypto.getDeviceVerificationStatus(userId, deviceId);
-  if (verification?.signedByOwner !== true) await crypto.crossSignDevice(deviceId);
+  const verification = await step(crypto.getDeviceVerificationStatus(userId, deviceId));
+  if (verification?.signedByOwner !== true) await step(crypto.crossSignDevice(deviceId));
   if (usable) {
-    await crypto.bootstrapCrossSigning({});
+    await step(crypto.bootstrapCrossSigning({}));
     await loadBackupKey(crypto);
   } else {
-    await createSecretStorage(client, crypto, escrow, await needsNewBackup(crypto));
+    await createSecretStorage(client, crypto, escrow, await step(needsNewBackup(crypto)));
   }
 }
 
