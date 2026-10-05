@@ -35,7 +35,10 @@ use crate::network_gateway::{
     NetworkAgentSentMessage, NetworkAgentWait, NetworkGatewayFailure,
 };
 use agent_room_application::network_agents::NetworkAgentPolicy;
-use agent_room_bridge_ipc::wake::{IpcWake, WaitOptions, WakeReason, WakeRule};
+use agent_room_bridge_ipc::{
+    IpcTimelineGap,
+    wake::{IpcWake, WaitOptions, WakeReason, WakeRule},
+};
 use agent_room_domain::ids::MessageSubmissionId;
 
 const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
@@ -227,6 +230,8 @@ pub(super) struct FakeMessaging {
     pub(super) views: Mutex<Vec<(String, NetworkAgentRoomMessagesRequest)>>,
     pub(super) drafts: Mutex<Vec<(String, NetworkAgentMessageDraft)>>,
     pub(super) disabled: Mutex<Vec<String>>,
+    /// 等消息时一起交出去的补不回来的几段。
+    pub(super) gaps: Mutex<Vec<IpcTimelineGap>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -278,6 +283,7 @@ impl NetworkAgentMessaging for FakeMessaging {
     ) -> PortFuture<'a, Result<NetworkAgentMessages, NetworkGatewayFailure>> {
         self.waits.lock().unwrap().push((token.to_owned(), request));
         let failure = self.failure.lock().unwrap().clone();
+        let gaps = self.gaps.lock().unwrap().clone();
         Box::pin(async move {
             if let Some(failure) = failure {
                 return Err(failure);
@@ -293,6 +299,7 @@ impl NetworkAgentMessaging for FakeMessaging {
                 },
                 skipped: 2,
                 remaining: 4,
+                gaps,
             })
         })
     }
@@ -1029,6 +1036,36 @@ async fn 可以只看一个房间_只要点我的() {
     assert_eq!(waits[0].1.room.as_deref(), Some("!lobby:matrix.test"));
     assert!(waits[0].1.options.mentions_only);
     assert_eq!(waits[0].1.options.wake, WakeRule::Mentions);
+}
+
+#[tokio::test]
+async fn 交出去的消息前面有补不回来的一段时一起给() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.gaps.lock().unwrap() = vec![IpcTimelineGap {
+        room_id: "!lobby:matrix.test".to_owned(),
+        after_event_id: Some("$last:matrix.test".to_owned()),
+        before_event_id: "$hello:matrix.test".to_owned(),
+        reason: "too_many".to_owned(),
+    }];
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        messaging,
+        1_758_600_000_000,
+    )
+    .oneshot(messages_request("", Some(TOKEN)))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await["gaps"],
+        json!([{
+            "roomId": "!lobby:matrix.test",
+            "afterEventId": "$last:matrix.test",
+            "beforeEventId": "$hello:matrix.test",
+            "reason": "too_many",
+        }])
+    );
 }
 
 #[tokio::test]

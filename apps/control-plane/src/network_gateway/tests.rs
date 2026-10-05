@@ -25,20 +25,21 @@ use agent_room_application::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRecord,
         AgentInstanceVerificationRepository, Clock, ContentAccessMode, ContentAccessPolicy,
         DeviceSignature, MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest,
-        MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType,
-        MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixPowerLevel,
-        MatrixReceipt, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomAuthority,
-        MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId, MatrixRoomSync,
-        MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch,
-        MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
-        NetworkAgentAckOutcome, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
-        NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
-        NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
-        NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
-        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentRoomRecord,
-        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
-        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
-        NetworkAgentSyncRequest, PortFuture, SecretValue,
+        MatrixBackfillToken, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId,
+        MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation,
+        MatrixPowerLevel, MatrixReceipt, MatrixResult, MatrixRoomAliasLocalpart,
+        MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
+        MatrixRoomSync, MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent,
+        MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent,
+        MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentHistoryDirection,
+        NetworkAgentHistoryFilter, NetworkAgentHistorySender, NetworkAgentInboxAppend,
+        NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange, NetworkAgentInboxEntry,
+        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
+        NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
+        NetworkAgentRoomRecord, NetworkAgentStoredMessage, NetworkAgentSubmissionClaim,
+        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
+        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
+        NetworkAgentTimelineGap, PortFuture, SecretValue,
     },
 };
 use agent_room_bridge_core::{
@@ -591,6 +592,7 @@ struct InboxRow {
     actor_key: String,
     preview: Value,
     received_at: UtcMillis,
+    gap: Option<NetworkAgentTimelineGap>,
 }
 
 impl InboxRow {
@@ -665,8 +667,10 @@ impl NetworkAgentInboxStore for MemoryInbox {
                 .map(|row| NetworkAgentInboxEntry {
                     sequence: row.sequence,
                     event_id: row.event_id.clone(),
+                    room_id: row.room_id.clone(),
                     preview: row.preview.clone(),
                     received_at: row.received_at,
+                    gap: row.gap.clone(),
                 })
                 .collect(),
             pending: state.pending(room),
@@ -718,6 +722,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                             actor_key: message.actor_key.clone(),
                             preview: message.preview.clone(),
                             received_at: append.received_at,
+                            gap: message.gap.clone(),
                         });
                         appended += 1;
                     }
@@ -866,6 +871,10 @@ struct ScriptedMatrix {
     states: Mutex<Vec<(String, Value)>>,
     left: Mutex<Vec<String>>,
     leave_fails: Mutex<bool>,
+    /// 往回翻的结果，按顺序给出；给完之后都是“翻到了房间最早的历史”。
+    backfills: Mutex<VecDeque<MatrixResult<MatrixBackfillPage>>>,
+    /// 往回翻过的房间、令牌和条数。
+    backfilled: Mutex<Vec<(String, String, u16)>>,
 }
 
 impl ScriptedMatrix {
@@ -880,6 +889,46 @@ impl ScriptedMatrix {
     fn sent(&self) -> Vec<(MatrixRoomId, MatrixEvent)> {
         self.sent.lock().unwrap().clone()
     }
+
+    fn backfill_with(&self, page: MatrixResult<MatrixBackfillPage>) {
+        self.backfills.lock().unwrap().push_back(page);
+    }
+
+    fn backfilled(&self) -> Vec<(String, String, u16)> {
+        self.backfilled.lock().unwrap().clone()
+    }
+}
+
+/// 往回翻一页：`events` 新的在前；没有 `end` 就是翻到了房间最早的历史。
+fn backfill_page(
+    start: &str,
+    end: Option<&str>,
+    events: Vec<MatrixTimelineEvent>,
+) -> MatrixBackfillPage {
+    MatrixBackfillPage::new(
+        MatrixBackfillToken::new(start).unwrap(),
+        end.map(|token| MatrixBackfillToken::new(token).unwrap()),
+        events,
+    )
+}
+
+/// 照着往回翻的请求记一笔、按顺序给出下一页。
+fn next_backfill(
+    queue: &Mutex<VecDeque<MatrixResult<MatrixBackfillPage>>>,
+    seen: &Mutex<Vec<(String, String, u16)>>,
+    room_id: &MatrixRoomId,
+    request: &MatrixBackfillRequest,
+) -> MatrixResult<MatrixBackfillPage> {
+    seen.lock().unwrap().push((
+        room_id.as_str().to_owned(),
+        request.from().as_str().to_owned(),
+        request.limit().get(),
+    ));
+    queue
+        .lock()
+        .unwrap()
+        .pop_front()
+        .unwrap_or_else(|| Ok(backfill_page(request.from().as_str(), None, Vec::new())))
 }
 
 impl NetworkAgentMatrixGateway for ScriptedMatrix {
@@ -978,6 +1027,17 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
         };
         Box::pin(async move { result })
     }
+
+    fn backfill<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
+        assert_eq!(access_token.expose(), "syt_scout");
+        let page = next_backfill(&self.backfills, &self.backfilled, room_id, request);
+        Box::pin(async move { page })
+    }
 }
 
 /// 验签查到的实例：另一个 Agent 与自己的实例都登记过。
@@ -1036,6 +1096,9 @@ struct FakeEncrypted {
     idle: Mutex<usize>,
     /// 与用例替身共用，看先后。
     log: Arc<Mutex<Vec<String>>>,
+    /// 往回翻的结果，按顺序给出；给完之后都是“翻到了房间最早的历史”。
+    backfills: Mutex<VecDeque<MatrixResult<MatrixBackfillPage>>>,
+    backfilled: Mutex<Vec<(String, String, u16)>>,
 }
 
 impl FakeEncrypted {
@@ -1067,6 +1130,16 @@ impl EncryptedSessions for FakeEncrypted {
             tokio::time::sleep(Duration::from_millis(timeout)).await;
             Ok(batch(&since, Vec::new()))
         })
+    }
+
+    fn backfill<'a>(
+        &'a self,
+        _session: &'a NetworkAgentSession,
+        room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
+        let page = next_backfill(&self.backfills, &self.backfilled, room_id, request);
+        Box::pin(async move { page })
     }
 
     fn prepare<'a>(
@@ -3532,4 +3605,5 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
     assert_eq!(offline["listeningUntil"], Value::Null);
 }
 
+mod backfill;
 mod viewing;

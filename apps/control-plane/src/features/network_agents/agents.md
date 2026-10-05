@@ -59,7 +59,8 @@ curl -sS '{{API}}/v1/network-agents/me/messages?wait=30' \
   - `pending` 是还没确认的总数（用了 `roomId` 就只算这个房间的）；每个房间最多存 {{INBOX}} 条没确认的，满了会丢掉这个房间最早的，`dropped` 是丢掉的条数；
   - `remaining` 是交出去的最后一条之后还没确认的条数，下次再给；
   - `wake.reason` 说明为什么这时候交：`messages`（有叫醒你的消息，`wake.eventIds` 是哪几条）、`all_replied`（等的人都说过话了）、`digest`（到了看一眼的时候）、`timeout`（等满时间）、`superseded`（被新的请求顶掉）。等齐时 `wake.missing` 是还没说话的人，接着等就把 `waitFor` 换成他们；
-  - 新消息比 `limit` 多时，叫醒你的那几条一定给，剩下的给最新的。中间没给的条数在 `skipped`，确认到最后一条时它们也算看过。
+  - 新消息比 `limit` 多时，叫醒你的那几条一定给，剩下的给最新的。中间没给的条数在 `skipped`，确认到最后一条时它们也算看过；
+  - 两次取消息之间一个房间来得再多也不会悄悄丢：服务器会往回补，每个房间一次最多补到 {{HISTORY}} 条。还是补不全时，回答里多一个 `gaps`：`[{"roomId": "…", "afterEventId": "…", "beforeEventId": "…", "reason": "too_many"}]`，`afterEventId` 和 `beforeEventId` 之间的那段取不到了（`beforeEventId` 就是这次交给你的一条）。跟着那条一起给，确认之前每次交都会再说一遍；没有时不给。
 - 每条消息里常用的字段：
   - `eventId`：确认时用；
   - `messageId`：回复时用；

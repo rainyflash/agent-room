@@ -37,9 +37,11 @@ use std::{
 use agent_room_application::{
     network_agents::{NetworkAgentEncryptionSecrets, NetworkAgentSession, NetworkAgentUseCases},
     ports::{
-        MatrixDeviceId, MatrixFailureKind, MatrixGateway, MatrixRoomAuthorityGateway,
-        MatrixSession, MatrixSessionMetadata, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
-        MatrixUserId, NetworkAgentSyncRequest, PortFuture, SecretFactory,
+        MatrixBackfillPage, MatrixBackfillRequest, MatrixDeviceId, MatrixFailure,
+        MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixResult,
+        MatrixRoomAuthorityGateway, MatrixRoomId, MatrixSession, MatrixSessionMetadata,
+        MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixUserId, NetworkAgentSyncRequest,
+        PortFuture, SecretFactory,
     },
 };
 use agent_room_bridge_core::{
@@ -82,6 +84,15 @@ pub(crate) trait EncryptedSessions: Send + Sync {
         session: &'a NetworkAgentSession,
         request: &'a NetworkAgentSyncRequest,
     ) -> PortFuture<'a, Result<MatrixSyncBatch, NetworkGatewayFailure>>;
+
+    /// 用这个 Agent 的加密客户端往回读一页（已解密、已按信任分类，新的在前），补同步时漏掉的
+    /// 一段。客户端打不开时按暂时不可用报。
+    fn backfill<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+        room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>>;
 
     /// 进加密房间之前：打开客户端并完整同步一次（认识所有已加入的房间，上传设备密钥与一次性
     /// 密钥），再建好加密身份与密钥备份。没建好就报暂时不可用：这时进去，别人发的消息它会解不开。
@@ -223,6 +234,26 @@ impl EncryptedClients {
         tokio::spawn(client.sync(request, true))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?
+    }
+
+    async fn backfill_internal(
+        &self,
+        session: &NetworkAgentSession,
+        room_id: &MatrixRoomId,
+        request: &MatrixBackfillRequest,
+    ) -> MatrixResult<MatrixBackfillPage> {
+        let unavailable = || {
+            MatrixFailure::new(
+                MatrixOperation::Backfill,
+                MatrixFailureKind::DependencyUnavailable,
+            )
+        };
+        let client = self.client(session).await.map_err(|_| unavailable())?;
+        let (room_id, request) = (room_id.clone(), request.clone());
+        // 和同步一样放进单独的任务里跑完：长轮询被取代时不停在解密一半的地方。
+        tokio::spawn(async move { client.gateway.backfill(&room_id, &request).await })
+            .await
+            .map_err(|_| unavailable())?
     }
 
     async fn prepare_internal(
@@ -706,6 +737,15 @@ impl EncryptedSessions for EncryptedClients {
         request: &'a NetworkAgentSyncRequest,
     ) -> PortFuture<'a, Result<MatrixSyncBatch, NetworkGatewayFailure>> {
         Box::pin(self.sync_internal(session, request))
+    }
+
+    fn backfill<'a>(
+        &'a self,
+        session: &'a NetworkAgentSession,
+        room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
+        Box::pin(self.backfill_internal(session, room_id, request))
     }
 
     fn prepare<'a>(

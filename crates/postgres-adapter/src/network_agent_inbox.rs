@@ -9,9 +9,10 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         MatrixEventId, MatrixRoomId, MatrixSyncToken, NetworkAgentAckOutcome,
-        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-        NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
-        NetworkAgentInboxStore, NetworkAgentRoomRecord, PortFuture,
+        NetworkAgentGapReason, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+        NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
+        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentRoomRecord,
+        NetworkAgentTimelineGap, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -104,9 +105,10 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?
             .ok_or_else(|| RepositoryError::new(operation, RepositoryErrorKind::NotFound))?;
-            let rows = sqlx::query_as::<_, (i64, String, String, i64)>(
-                r"SELECT sequence, matrix_event_id, preview::text,
-                         (extract(epoch FROM received_at) * 1000)::bigint
+            let rows = sqlx::query_as::<_, InboxRow>(
+                r"SELECT sequence, matrix_event_id, matrix_room_id, preview::text,
+                         (extract(epoch FROM received_at) * 1000)::bigint,
+                         gap_reason, gap_after_event_id
                     FROM agent_room.network_agent_inbox
                    WHERE network_agent_id = $1
                      AND ($3::text IS NULL OR matrix_room_id = $3)
@@ -127,18 +129,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                     .map_err(|_| corrupt_data(operation))?,
                 entries: rows
                     .into_iter()
-                    .map(|(sequence, event_id, preview, received_at)| {
-                        Ok(NetworkAgentInboxEntry {
-                            sequence: u64::try_from(sequence)
-                                .map_err(|_| corrupt_data(operation))?,
-                            event_id: MatrixEventId::new(event_id)
-                                .map_err(|_| corrupt_data(operation))?,
-                            preview: serde_json::from_str(&preview)
-                                .map_err(|_| corrupt_data(operation))?,
-                            received_at: UtcMillis::new(received_at)
-                                .map_err(|_| corrupt_data(operation))?,
-                        })
-                    })
+                    .map(|row| inbox_entry(row).ok_or_else(|| corrupt_data(operation)))
                     .collect::<RepositoryResult<_>>()?,
                 pending,
                 dropped: u64::try_from(dropped).map_err(|_| corrupt_data(operation))?,
@@ -285,6 +276,37 @@ impl NetworkAgentInboxStore for PostgresRepositories {
     }
 }
 
+/// 收件箱的一行：编号、事件、房间、预览、收到的时间、前面少的一段（原因、之前最后一条）。
+type InboxRow = (
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+);
+
+fn inbox_entry(
+    (sequence, event_id, room_id, preview, received_at, gap_reason, gap_after): InboxRow,
+) -> Option<NetworkAgentInboxEntry> {
+    let gap = match gap_reason {
+        Some(reason) => Some(NetworkAgentTimelineGap {
+            after_event_id: gap_after.map(MatrixEventId::new).transpose().ok()?,
+            reason: NetworkAgentGapReason::parse(&reason)?,
+        }),
+        None => None,
+    };
+    Some(NetworkAgentInboxEntry {
+        sequence: u64::try_from(sequence).ok()?,
+        event_id: MatrixEventId::new(event_id).ok()?,
+        room_id: MatrixRoomId::new(room_id).ok()?,
+        preview: serde_json::from_str(&preview).ok()?,
+        received_at: UtcMillis::new(received_at).ok()?,
+        gap,
+    })
+}
+
 /// 按时间线顺序写入一条变化；新消息真的进了收件箱（不是重复的、不是自己发的）才返回 `true`。
 async fn apply_change(
     transaction: &mut Transaction<'_, Postgres>,
@@ -306,28 +328,7 @@ async fn apply_change(
             if message.from_me {
                 return Ok(false);
             }
-            let inserted = sqlx::query(
-                r"INSERT INTO agent_room.network_agent_inbox (
-                      network_agent_id, sequence, matrix_event_id, matrix_room_id,
-                      message_id, actor_key, preview, received_at
-                  ) VALUES (
-                      $1, $2, $3, $4, $5, $6, $7::jsonb,
-                      to_timestamp($8::double precision / 1000.0)
-                  )
-                  ON CONFLICT (network_agent_id, matrix_event_id) DO NOTHING",
-            )
-            .bind(append.id.as_uuid())
-            .bind(next)
-            .bind(message.event_id.as_str())
-            .bind(message.room_id.as_str())
-            .bind(message.message_id.as_uuid())
-            .bind(&message.actor_key)
-            .bind(message.preview.to_string())
-            .bind(append.received_at.value())
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            return Ok(inserted.rows_affected() == 1);
+            return insert_inbox(transaction, append, message, next, operation).await;
         }
         NetworkAgentInboxChange::Replace {
             room_id,
@@ -382,6 +383,41 @@ async fn apply_change(
         }
     }
     Ok(false)
+}
+
+/// 写进收件箱；前面少了一段补不回来的，记在这一条上。
+async fn insert_inbox(
+    transaction: &mut Transaction<'_, Postgres>,
+    append: &NetworkAgentInboxAppend,
+    message: &NetworkAgentInboxMessage,
+    sequence: i64,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let gap = message.gap.as_ref();
+    let inserted = sqlx::query(
+        r"INSERT INTO agent_room.network_agent_inbox (
+              network_agent_id, sequence, matrix_event_id, matrix_room_id,
+              message_id, actor_key, preview, received_at, gap_reason, gap_after_event_id
+          ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7::jsonb,
+              to_timestamp($8::double precision / 1000.0), $9, $10
+          )
+          ON CONFLICT (network_agent_id, matrix_event_id) DO NOTHING",
+    )
+    .bind(append.id.as_uuid())
+    .bind(sequence)
+    .bind(message.event_id.as_str())
+    .bind(message.room_id.as_str())
+    .bind(message.message_id.as_uuid())
+    .bind(&message.actor_key)
+    .bind(message.preview.to_string())
+    .bind(append.received_at.value())
+    .bind(gap.map(|gap| gap.reason.as_str()))
+    .bind(gap.and_then(|gap| gap.after_event_id.as_ref().map(MatrixEventId::as_str)))
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(inserted.rows_affected() == 1)
 }
 
 /// 记进消息记录；这个事件已经记过时返回 `false`。

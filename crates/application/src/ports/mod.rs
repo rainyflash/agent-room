@@ -20,16 +20,17 @@ mod runtime;
 pub use inbox::{InboxHandoff, InboxRoom, PersonalInboxIndex, PersonalInboxRepository};
 pub use network_agents::{
     GeneratedSigningKey, NetworkAgentAckOutcome, NetworkAgentActivation, NetworkAgentBeginOutcome,
-    NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
-    NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-    NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
-    NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLookup, NetworkAgentMatrixGateway,
-    NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
-    NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-    NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
-    NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
-    NetworkAgentSubmissionKind, NetworkAgentSubmissionRecord, NetworkAgentSubmissionState,
-    NetworkAgentSubmissionStore, NetworkAgentSyncRequest, RateWindowDecision, RateWindowPolicy,
+    NetworkAgentGapReason, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
+    NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+    NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
+    NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLookup,
+    NetworkAgentMatrixGateway, NetworkAgentMessageActor, NetworkAgentMessageHistory,
+    NetworkAgentMessageRef, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
+    NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
+    NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
+    NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
+    NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+    NetworkAgentSyncRequest, NetworkAgentTimelineGap, RateWindowDecision, RateWindowPolicy,
     SealedSecret, SecretSealingFailure,
 };
 use std::{future::Future, pin::Pin};

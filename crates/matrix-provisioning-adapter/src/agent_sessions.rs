@@ -4,11 +4,11 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixAcceptedEvent, MatrixBackfillToken, MatrixEvent, MatrixEventId, MatrixEventType,
-    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomSync,
-    MatrixRoomSyncKind, MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
-    MatrixTransactionId, MatrixUserId, NetworkAgentMatrixGateway, NetworkAgentSyncRequest,
-    PortFuture, SecretValue,
+    MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken,
+    MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixOperation,
+    MatrixResult, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind, MatrixStateEvent,
+    MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
+    NetworkAgentMatrixGateway, NetworkAgentSyncRequest, PortFuture, SecretValue,
 };
 use reqwest::{Client, Url, redirect::Policy};
 use serde::Deserialize;
@@ -20,7 +20,7 @@ use crate::{
     validate_homeserver_url,
 };
 
-/// 一次同步最多读这么多字节；时间线按条数限量，正常远小于这个数。
+/// 一次同步（或往回翻一页）最多读这么多字节；时间线按条数限量，正常远小于这个数。
 const MAX_SYNC_RESPONSE_BYTES: usize = 4 * 1_024 * 1_024;
 /// 长轮询最多等这么久，与网络 Agent 接口的上限一致。
 const MAX_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -199,6 +199,42 @@ impl MatrixAgentSessionClient {
         MatrixEventId::new(accepted.event_id).map_err(|_| invalid_response(operation))
     }
 
+    async fn backfill_internal(
+        &self,
+        access_token: &SecretValue,
+        room_id: &MatrixRoomId,
+        request: &MatrixBackfillRequest,
+    ) -> MatrixResult<MatrixBackfillPage> {
+        let operation = MatrixOperation::Backfill;
+        let mut url = self.room_endpoint(room_id, &["messages"], operation)?;
+        url.query_pairs_mut()
+            .append_pair("dir", "b")
+            .append_pair("from", request.from().as_str())
+            .append_pair("limit", &request.limit().get().to_string())
+            .append_pair("filter", &json!({"types": MESSAGE_EVENT_TYPES}).to_string());
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(access_token.expose())
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_body_within(response, operation, MAX_SYNC_RESPONSE_BYTES).await?;
+        if !status.is_success() {
+            let error = decode_matrix_error(&body, operation)?;
+            return Err(map_matrix_error(operation, status, &error));
+        }
+        let page: MessagesResponse = decode_json(&body, operation)?;
+        Ok(MatrixBackfillPage::new(
+            MatrixBackfillToken::new(page.start).map_err(|_| invalid_response(operation))?,
+            // 翻到房间最早的历史时没有 end。
+            page.end
+                .and_then(|token| MatrixBackfillToken::new(token).ok()),
+            page.chunk.iter().filter_map(timeline_event).collect(),
+        ))
+    }
+
     async fn leave_internal(
         &self,
         access_token: &SecretValue,
@@ -266,11 +302,30 @@ impl NetworkAgentMatrixGateway for MatrixAgentSessionClient {
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(self.leave_internal(access_token, room_id))
     }
+
+    fn backfill<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        request: &'a MatrixBackfillRequest,
+    ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
+        Box::pin(self.backfill_internal(access_token, room_id, request))
+    }
 }
 
 #[derive(Deserialize)]
 struct EventIdResponse {
     event_id: String,
+}
+
+/// `/rooms/{roomId}/messages` 的回答：`chunk` 新的在前。
+#[derive(Deserialize)]
+struct MessagesResponse {
+    start: String,
+    #[serde(default)]
+    end: Option<String>,
+    #[serde(default)]
+    chunk: Vec<Value>,
 }
 
 /// 只要已加入房间里的消息事件和“正在输入”（叫醒它的人还在打字就再等等）：
@@ -405,9 +460,11 @@ fn timeline_event(raw: &Value) -> Option<MatrixTimelineEvent> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use std::num::NonZeroU16;
+
     use agent_room_application::ports::{
-        MatrixFailureKind, MatrixSyncToken, NetworkAgentMatrixGateway as _,
-        NetworkAgentSyncRequest, SecretValue,
+        MatrixBackfillRequest, MatrixBackfillToken, MatrixFailureKind, MatrixSyncToken,
+        NetworkAgentMatrixGateway as _, NetworkAgentSyncRequest, SecretValue,
     };
     use axum::{
         Json, Router,
@@ -435,6 +492,7 @@ mod tests {
         let state = (seen.clone(), Arc::new(response));
         let app = Router::new()
             .route("/_matrix/client/v3/sync", get(sync))
+            .route("/_matrix/client/v3/rooms/{room_id}/messages", get(sync))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -580,6 +638,108 @@ mod tests {
             .expect_err("令牌失效");
 
         assert_eq!(failure.kind(), MatrixFailureKind::Unauthenticated);
+    }
+
+    fn backfill_request(from: &str) -> MatrixBackfillRequest {
+        MatrixBackfillRequest::new(
+            MatrixBackfillToken::new(from).unwrap(),
+            NonZeroU16::new(100).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn 往回翻一页_带着_agent_自己的令牌只读消息事件_新的在前() {
+        let (url, seen) = serve((
+            StatusCode::OK,
+            json!({
+                "start": "t392-516_47314",
+                "end": "t380-500_47000",
+                "chunk": [
+                    {
+                        "event_id": "$newer:matrix.test",
+                        "sender": "@ada:matrix.test",
+                        "type": "io.github.rainyflash.agentroom.message.preview.v2",
+                        "origin_server_ts": 1_758_600_000_002_u64,
+                        "content": {"schemaVersion": "1.0"}
+                    },
+                    {
+                        "event_id": "$older:matrix.test",
+                        "sender": "@ada:matrix.test",
+                        "type": "io.github.rainyflash.agentroom.message.preview.v2",
+                        "origin_server_ts": 1_758_600_000_001_u64,
+                        "content": {"schemaVersion": "1.0"}
+                    },
+                    {"event_id": "$untyped:matrix.test", "content": {}}
+                ]
+            }),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+
+        let page = client
+            .backfill(&token(), &room(), &backfill_request("t392-516_47314"))
+            .await
+            .expect("读到一页");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.authorization.as_deref(),
+            Some("Bearer syt_network_agent")
+        );
+        assert_eq!(seen.query["dir"], "b");
+        assert_eq!(seen.query["from"], "t392-516_47314");
+        assert_eq!(seen.query["limit"], "100");
+        let filter: Value = serde_json::from_str(&seen.query["filter"]).unwrap();
+        assert_eq!(
+            filter["types"][0],
+            "io.github.rainyflash.agentroom.message.preview.v1"
+        );
+        assert_eq!(page.start().as_str(), "t392-516_47314");
+        assert_eq!(
+            page.end().map(MatrixBackfillToken::as_str),
+            Some("t380-500_47000")
+        );
+        let events: Vec<&str> = page
+            .events()
+            .iter()
+            .map(|event| event.event_id().unwrap().as_str())
+            .collect();
+        assert_eq!(events, ["$newer:matrix.test", "$older:matrix.test"]);
+    }
+
+    #[tokio::test]
+    async fn 翻到房间最早的历史时没有下一页的令牌() {
+        let (url, _) = serve((StatusCode::OK, json!({"start": "t1", "chunk": []}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+
+        let page = client
+            .backfill(&token(), &room(), &backfill_request("t1"))
+            .await
+            .expect("读到一页");
+
+        assert!(page.end().is_none());
+        assert!(page.events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn 往回翻时不让读了映射为没有权限() {
+        let (url, _) = serve((
+            StatusCode::FORBIDDEN,
+            json!({"errcode": "M_FORBIDDEN", "error": "not in room"}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+
+        let failure = client
+            .backfill(&token(), &room(), &backfill_request("t1"))
+            .await
+            .expect_err("不让读");
+
+        assert_eq!(failure.kind(), MatrixFailureKind::Forbidden);
     }
 
     /// 发言与离开的模拟服务器：记下方法、路径（未解码）与请求体，按预设回答。
