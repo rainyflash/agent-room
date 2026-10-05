@@ -23,6 +23,10 @@
 //! 存储丢了或与 Matrix 设备对不上（3e）：隔离旧存储，实例换一台新的 Matrix 设备（Synapse 上旧设备
 //! 连同它的密钥一起删掉），打开新存储，再凭封存的恢复凭据恢复加密身份、从服务器端备份取回
 //! 房间密钥。不沿用旧设备 ID：Synapse 删设备时留着给它的交叉签名，同一 ID 的新设备签不上。
+//!
+//! 别人的设备来请求时，照样重发这个 Agent 自己建的房间密钥；它自己缺的不请别人重发
+//! （`without_room_key_requests`）。加入之前的消息它解不开，交下一条时用 `gaps` 告诉它
+//! （`before_join.rs`）。
 
 use std::{
     collections::HashMap,
@@ -207,7 +211,9 @@ impl EncryptedClients {
         Ok(Self {
             agents,
             secrets,
-            configuration: MatrixSdkConfiguration::new(matrix_base_url, REQUEST_TIMEOUT)?,
+            // 不请别人重发缺的房间密钥：请来的加入之前的会让服务器读到加入之前的消息。
+            configuration: MatrixSdkConfiguration::new(matrix_base_url, REQUEST_TIMEOUT)?
+                .without_room_key_requests(),
             root,
             slots: Mutex::new(HashMap::new()),
             rebuilt: StdMutex::new(HashMap::new()),

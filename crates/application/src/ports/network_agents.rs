@@ -327,14 +327,15 @@ pub struct NetworkAgentInboxMessage {
     pub mentions_me: bool,
     /// 与 CLI、MCP 看到的形状一致的消息预览。
     pub preview: Value,
-    /// 这条之前少了一段补不回来的消息；交出这条时一起告诉 Agent。
+    /// 这条之前少了一段补不回来的消息（`too_many`）；交出这条时一起告诉 Agent。加入之前解不开的
+    /// 那段不记在这里，见 [`NetworkAgentInboxAppend::undecryptable_before_join`]。
     pub gap: Option<NetworkAgentTimelineGap>,
 }
 
 /// 时间线上补不回来的一段：在 `after_event_id`（之前最后一条）和带着它的那条消息之间。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkAgentTimelineGap {
-    /// 这个房间之前记下的最后一条；读不出来时没有。
+    /// 这个房间之前记下的最后一条；读不出来、或者前面什么都没有（加入之前的那段）时没有。
     pub after_event_id: Option<MatrixEventId>,
     pub reason: NetworkAgentGapReason,
 }
@@ -344,18 +345,22 @@ pub struct NetworkAgentTimelineGap {
 pub enum NetworkAgentGapReason {
     /// 两次同步之间一个房间来得太多，往回补到上限还没接上。
     TooMany,
+    /// 凭口令进的加密房间里，加入之前的消息它拿不到房间密钥，解不开。
+    UndecryptableBeforeJoin,
 }
 
 impl NetworkAgentGapReason {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::TooMany => "too_many",
+            Self::UndecryptableBeforeJoin => "undecryptable_before_join",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "too_many" => Some(Self::TooMany),
+            "undecryptable_before_join" => Some(Self::UndecryptableBeforeJoin),
             _ => None,
         }
     }
@@ -381,6 +386,9 @@ pub struct NetworkAgentInboxAppend {
     pub capacity: u32,
     /// 每个房间的消息记录留最近这么多条（确认过的、它自己发的也算），更早的删掉。
     pub history_capacity: u32,
+    /// 这一批里看到它加入、加入之前又有解不开的加密消息的房间。这一段记在这个房间之后第一条
+    /// 进收件箱的消息上（这一批没有就等下一批），每个房间只说一次。
+    pub undecryptable_before_join: Vec<MatrixRoomId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,8 +408,8 @@ pub struct NetworkAgentInboxEntry {
     pub preview: Value,
     /// 同步进收件箱的时间；等消息时按它防抖、定时看一眼。
     pub received_at: UtcMillis,
-    /// 这条之前少了一段补不回来的消息。
-    pub gap: Option<NetworkAgentTimelineGap>,
+    /// 这条之前少了的几段：加入之前解不开的在前，补不回来的在后。
+    pub gaps: Vec<NetworkAgentTimelineGap>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

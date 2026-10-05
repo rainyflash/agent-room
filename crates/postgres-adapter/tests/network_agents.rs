@@ -852,15 +852,15 @@ async fn 补不回来的一段记在后面那条上_读收件箱时一起给_确
         ]
     );
     assert_eq!(page.entries[0].room_id, lobby);
-    assert_eq!(page.entries[0].gap, Some(gap));
-    assert_eq!(page.entries[1].gap, None);
+    assert_eq!(page.entries[0].gaps, [gap]);
+    assert!(page.entries[1].gaps.is_empty());
     assert_eq!(page.entries[2].room_id, den());
     assert_eq!(
-        page.entries[2].gap,
-        Some(NetworkAgentTimelineGap {
+        page.entries[2].gaps,
+        [NetworkAgentTimelineGap {
             after_event_id: None,
             reason: NetworkAgentGapReason::TooMany,
-        }),
+        }],
         "之前最后一条读不出来时只有原因"
     );
 
@@ -877,10 +877,103 @@ async fn 补不回来的一段记在后面那条上_读收件箱时一起给_确
         .await
         .expect("读");
     assert_eq!(event_ids(&page), ["$next:matrix.test"]);
-    assert_eq!(
-        page.entries[0].gap, None,
+    assert!(
+        page.entries[0].gaps.is_empty(),
         "带着它的那条确认了，这一段也就交过了"
     );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 加入之前解不开的一段挂到这个房间之后第一条消息上_每个房间只说一次() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Latecomer"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let catalog = default_lobby(&database.runtime).await;
+    repositories
+        .record_room(id, &room_record(catalog, den().as_str(), time(10)))
+        .await
+        .expect("记房间");
+    let before_join = NetworkAgentTimelineGap {
+        after_event_id: None,
+        reason: NetworkAgentGapReason::UndecryptableBeforeJoin,
+    };
+
+    // 刚进来的那次同步里只有解不开的旧消息，没有能挂的：先记在房间上。没记过的房间不管。
+    let mut first = append(id, None, "s1", Vec::new(), 10);
+    first.undecryptable_before_join = vec![den(), lobby()];
+    repositories.append(&first).await.expect("写入");
+    assert!(
+        repositories
+            .pending(id, None, 10)
+            .await
+            .expect("读")
+            .entries
+            .is_empty()
+    );
+
+    // 之后第一条进收件箱的挂上它；同一条还缺一段补不回来的，加入之前那段排在前面。
+    let too_many = NetworkAgentTimelineGap {
+        after_event_id: Some(MatrixEventId::new("$mine:matrix.test").expect("事件 ID 有效")),
+        reason: NetworkAgentGapReason::TooMany,
+    };
+    let NetworkAgentInboxChange::Message(mut hello) = said("$hello:matrix.test", &den()) else {
+        unreachable!("said 给的是消息");
+    };
+    hello.gap = Some(too_many.clone());
+    let changes = vec![
+        authored(
+            "$mine:matrix.test",
+            &den(),
+            MessageId::from_uuid(Uuid::now_v7()),
+            "Latecomer",
+            true,
+            false,
+        ),
+        NetworkAgentInboxChange::Message(hello),
+        said("$again:matrix.test", &den()),
+    ];
+    repositories
+        .append(&append(id, Some("s1"), "s2", changes, 10))
+        .await
+        .expect("写入");
+    let page = repositories.pending(id, None, 10).await.expect("读");
+    assert_eq!(
+        event_ids(&page),
+        ["$hello:matrix.test", "$again:matrix.test"],
+        "自己发的不进收件箱，也不挂"
+    );
+    assert_eq!(page.entries[0].gaps, [before_join.clone(), too_many]);
+    assert!(page.entries[1].gaps.is_empty());
+
+    // 说过就不再说：又见到一次也不挂到新消息上。
+    let mut again = append(
+        id,
+        Some("s2"),
+        "s3",
+        vec![said("$later:matrix.test", &den())],
+        10,
+    );
+    again.undecryptable_before_join = vec![den()];
+    repositories.append(&again).await.expect("写入");
+    let page = repositories.pending(id, None, 10).await.expect("读");
+    assert_eq!(page.entries[0].gaps.first(), Some(&before_join));
+    assert!(page.entries[2].gaps.is_empty(), "每个房间只说一次");
+
+    // 确认带着它的那条，这一段也跟着交过了。
+    repositories
+        .acknowledge(
+            id,
+            &MatrixEventId::new("$hello:matrix.test").expect("事件 ID 有效"),
+            None,
+        )
+        .await
+        .expect("确认");
+    let page = repositories.pending(id, None, 10).await.expect("读");
+    assert!(page.entries.iter().all(|entry| entry.gaps.is_empty()));
     database.close().await;
 }
 
@@ -1576,6 +1669,7 @@ fn append(
         received_at: time(40),
         capacity,
         history_capacity: 500,
+        undecryptable_before_join: Vec::new(),
     }
 }
 

@@ -221,3 +221,9 @@
   - 和上面写的不一样：`undecryptable_before_join` 没做。网络 Agent 凭口令进私人房间以后，加入前的加密消息它解不开，网关同步时不出声地跳过，Agent 只看到加入以后的和 `beforeJoin` 标出的上下文。要报这一段，得先在同步时认出解不开的事件；要让它读到，得先定网络 Agent 能不能拿到加入前的房间密钥（那样服务器也能读到加入前的消息，超出维护者接受的“发给它的消息”）。等维护者定了再做。
   - 网络 Agent 发得太快被 Synapse 挡下时，控制面现在回的是暂时不可用（503），没说要等多久；改成 429 带 `Retry-After` 另开一个 PR。
   - 第 6 步做完：6a 是无头验收，6b 是这次。
+- 2026-10-05：维护者定了 `undecryptable_before_join`：只告诉网络 Agent 这一段解不开，不给它加入前的房间密钥（#316）。
+  - 怎么认：同步到的一批里看到它自己加入（`room_state_changes`，和本机记加入时间是同一套），服务器早于加入收到、又解不开的事件（`m.room.encrypted`，bridge-core 的 `is_undecryptable`）就是这一段。之后的同步看不到加入事件，不会再报。
+  - 挂在哪：和 `too_many` 一样，挂在这个房间之后第一条进收件箱的消息上，没有 `afterEventId`，确认之前每次交都说。这一批没有能挂的（刚进来只有旧消息），先记在房间上（`network_agent_room.before_join_gap_status`），等下一条；每个房间只说一次。同一条前面两段都有时，加入前的在前。
+  - 收件箱另起一列 `before_join_gap`，不写进 `gap_reason`：旧版控制面读到不认识的原因会当成数据坏了，回滚以后整个收件箱都读不出来。迁移 `202610050003_network_agent_before_join_gap.sql`。
+  - 查的时候发现，网络 Agent 从 Alpha 56 起一直在请别的设备重发加入前的房间密钥：[加入前的消息](../room-key-recovery/pre-join-history.md)的请求者挂在共用的打开客户端处。这次一并关掉，见那份文档的状态。
+  - 无头验收的私人房间一轮加了三处：网络 Agent 进来之前本机 Agent 先说一句；网络 Agent 收到的第一条带着这一段；本机 Bridge 的日志里没有应它的请求重发房间密钥的记录。

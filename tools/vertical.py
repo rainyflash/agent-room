@@ -1277,10 +1277,12 @@ def start_authorized_bridge(
         public_lobby_catalog_id=catalog_id,
         secure_storage_service=secure_storage_service,
     )
-    # 验收出错时要看本机 Bridge 把房间密钥分给了哪些设备。
+    # 验收出错时要看本机 Bridge 把房间密钥分给了哪些设备；私人房间那一轮还要看它有没有应谁的请求
+    # 重发房间密钥（`room_keys`）。
     bridge_environment["AGENT_ROOM_BRIDGE_LOG_FILTER"] = (
         "agent_room_bridge=info,matrix_sdk_crypto=info,"
-        "matrix_sdk_crypto::session_manager=debug,matrix_sdk_crypto::identities=debug"
+        "matrix_sdk_crypto::session_manager=debug,matrix_sdk_crypto::identities=debug,"
+        "agent_room_matrix_adapter::room_keys=debug"
     )
     if vault:
         if os.name != "posix":
@@ -1537,9 +1539,13 @@ def network_agent_request(
 
 
 def wait_for_network_agent_message(
-    token: str, event_id: str, *, timeout_seconds: float
+    token: str,
+    event_id: str,
+    *,
+    timeout_seconds: float,
+    gaps: list[object] | None = None,
 ) -> dict[str, object]:
-    """长轮询取消息并逐条确认，直到收到指定事件。"""
+    """长轮询取消息并逐条确认，直到收到指定事件。给了 `gaps` 就把一路上说过的缺口都记进去。"""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         # 要等的是一条没点名的普通消息：别人说的都叫醒、来了立刻交。
@@ -1548,6 +1554,8 @@ def wait_for_network_agent_message(
         )
         if status != 200 or page is None:
             raise VerticalFailure(f"网络 Agent 取消息失败：HTTP {status}。")
+        if gaps is not None:
+            gaps.extend(page.get("gaps") or [])
         messages = page.get("messages")
         if not isinstance(messages, list):
             raise VerticalFailure("网络 Agent 的消息列表格式不对。")
@@ -2329,7 +2337,12 @@ def network_agent_store_path(agent_id: str) -> Path:
 
 
 def private_room_round_trip(
-    client: McpAgentSession, *, token: str, agent_id: str, room_id: str
+    client: McpAgentSession,
+    *,
+    token: str,
+    agent_id: str,
+    room_id: str,
+    gaps: list[object] | None = None,
 ) -> str:
     """本机 Agent 在私人房间里发一条，网络 Agent 解密收到并回复，本机 Agent 验签后看到回复。"""
     # 房间密钥只分给身份已就绪的设备；网络 Agent 刚进来或刚重建时可能还没轮到，没收到就再发一条。
@@ -2337,7 +2350,9 @@ def private_room_round_trip(
     for _ in range(4):
         message = send_mcp_vertical_message(client, room_id)
         try:
-            received = wait_for_network_agent_message(token, message["eventId"], timeout_seconds=60)
+            received = wait_for_network_agent_message(
+                token, message["eventId"], timeout_seconds=60, gaps=gaps
+            )
             break
         except VerticalFailure:
             continue
@@ -2401,6 +2416,9 @@ def verify_private_room_network_agent(
         identity = wait_for_session_identity(client, timeout_seconds=180)
         if identity["matrixRoomId"] != room_id:
             raise VerticalFailure("本机 Agent 的会话不在口令对应的私人房间里。")
+        # 网络 Agent 进来之前先说一句：它解不开，也不请别人重发（服务器不该读到加入之前的消息）；
+        # 交出它读得到的第一条时用 gaps 告诉它前面有一段解不开。
+        send_mcp_vertical_message(client, room_id)
 
         status, created = network_agent_request(
             "POST",
@@ -2415,8 +2433,13 @@ def verify_private_room_network_agent(
         agent_id = require_text(created.get("agentId"), "网络 Agent 的 Agent ID")
         if require_object(created.get("room"), "网络 Agent 进的房间").get("matrixRoomId") != room_id:
             raise VerticalFailure("网络 Agent 凭口令进了别的房间。")
-        drain_network_agent_messages(token)
-        first = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+        gaps: list[object] = []
+        drain_network_agent_messages(token, gaps=gaps)
+        first = private_room_round_trip(
+            client, token=token, agent_id=agent_id, room_id=room_id, gaps=gaps
+        )
+        require_before_join_gap(gaps, room_id)
+        require_no_room_key_requests(sender_bridge, room_id)
         everyone = verify_mentions_everyone(client, token=token, room_id=room_id, code=code)
 
         # 控制面重启：加密存储还在，网络 Agent 照常解密新消息。
@@ -2531,11 +2554,37 @@ def print_bridge_key_sharing(
     print("==== Bridge 日志结束 ====")
 
 
-def drain_network_agent_messages(token: str) -> None:
-    """第一次取消息只建立同步位置并带回最近的上下文，全部确认掉。"""
+def require_before_join_gap(gaps: list[object], room_id: str) -> None:
+    """网络 Agent 读到的第一条前面，要说清加入之前的那段它解不开（没有 afterEventId）。"""
+    for item in gaps:
+        gap = require_object(item, "网络 Agent 收到的缺口")
+        if gap.get("roomId") == room_id and gap.get("reason") == "undecryptable_before_join":
+            if "afterEventId" in gap:
+                raise VerticalFailure("加入之前解不开的那段不该带 afterEventId。")
+            return
+    raise VerticalFailure("网络 Agent 进私人房间后，没被告知加入之前的消息解不开。")
+
+
+def require_no_room_key_requests(runtime: AuthorizedBridgeRuntime, room_id: str) -> None:
+    """网络 Agent 不请别人重发缺的房间密钥：本机 Bridge 不该在私人房间里收到它的请求。"""
+    log_root = Path(runtime.environment.get("AGENT_ROOM_BRIDGE_DATA_DIR", "")) / "logs"
+    logs = [path for path in (log_root / "bridge.log.1", log_root / "bridge.log") if path.is_file()]
+    if not logs:
+        raise VerticalFailure(f"找不到 {runtime.display_name} 的 Bridge 日志。")
+    for path in logs:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            # 应请求重发了（info）和没重发（debug）都算收到了请求。
+            if "重发" in line and "房间密钥" in line and room_id in line:
+                raise VerticalFailure("网络 Agent 还在请本机 Agent 重发房间密钥。")
+
+
+def drain_network_agent_messages(token: str, *, gaps: list[object] | None = None) -> None:
+    """第一次取消息只建立同步位置并带回最近的上下文，全部确认掉。给了 `gaps` 就记下说过的缺口。"""
     status, first = network_agent_request("GET", "/me/messages?wait=0&limit=50", token=token)
     if status != 200 or first is None:
         raise VerticalFailure(f"网络 Agent 第一次取消息失败：HTTP {status}。")
+    if gaps is not None:
+        gaps.extend(first.get("gaps") or [])
     context = first.get("messages")
     if isinstance(context, list) and context:
         last = require_object(context[-1], "网络 Agent 收到的消息")

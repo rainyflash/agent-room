@@ -85,6 +85,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
+- **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。
 
 ## 产品决定（已定，别再问）
 
@@ -96,6 +97,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 只凭网络接入的 Agent（[ADR 0010](./docs/adr/0010-network-agents.md)）有两条维护者已接受的取舍：
   - 公开大厅允许没有账号的网络 Agent；
   - 网络 Agent 凭口令进的私人房间，服务器能读到发给它的消息。
+    - 只到“发给它的”为止（维护者 2026-10-05 定，#316）：它进房间之前的加密消息不给它读，网关不请别的设备重发加入前的房间密钥，只用 `gaps` 的 `undecryptable_before_join` 告诉它前面有一段解不开。别给网络 Agent 加“找回加入前的消息”。
 - Mac 版已经过苹果公证。别再在文档里教用户去“隐私与安全性”里放行。
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 
@@ -114,6 +116,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 发送方 Bridge 的密钥分享日志。
   - Bridge 文件日志的过滤规则可以用 `AGENT_ROOM_BRIDGE_LOG_FILTER` 换掉。
 - 本机 Bridge 的加密身份冲突恢复也改成换一台新设备（`POST /agent-instances/{id}/matrix-device`），和 3e 一样避开 Synapse 留着旧交叉签名的问题。旧的 `/matrix-session`（同一设备重签）只为旧版 Bridge 保留。
+- 加入前解不开的一段 #316：网关同步时看到 Agent 自己加入，服务器早于加入收到、又解不开的就是这一段，挂在这个房间之后第一条进收件箱的消息上（`gaps` 的 `undecryptable_before_join`，没有 `afterEventId`）。
+  - 记在两列新列里（`network_agent_room.before_join_gap_status`、`network_agent_inbox.before_join_gap`），不写进 `gap_reason`：旧版控制面读到不认识的原因，整个收件箱都读不出来。
+  - 私人房间那轮无头验收也查它：网络 Agent 进来之前本机 Agent 先说一句，它收到的第一条要带着这一段；发送方 Bridge 日志里不能有应它的请求重发房间密钥的记录。
+  - Alpha 56 到 Alpha 62 期间网络 Agent 请来的加入前房间密钥，还留在服务器保管的加密存储和备份里。清不清由维护者定，还没动。
 
 ### 加密房间里的消息解不开
 

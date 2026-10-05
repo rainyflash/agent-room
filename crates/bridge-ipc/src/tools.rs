@@ -666,8 +666,9 @@ impl IpcApproveHandoffRequest {
     }
 }
 
-/// 时间线上补不回来的一段：同步时一次来得太多，往回补也没接上。`beforeEventId` 这条前面少了消息，
-/// `afterEventId` 是之前最后一条（房间里原来没消息时没有）。`reason` 现在只有 `too_many`。
+/// 时间线上少了的一段。`beforeEventId` 这条前面少了消息，`afterEventId` 是之前最后一条（房间里
+/// 原来没消息时没有）。`reason` 是 `too_many`（同步时一次来得太多，往回补也没接上）；网络接入还有
+/// `undecryptable_before_join`（凭口令进的私人房间里加入之前的消息解不开，没有 `afterEventId`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcTimelineGap {
