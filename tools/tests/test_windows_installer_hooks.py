@@ -203,7 +203,7 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
         self.assertIn(f'!define AGENT_ROOM_PARKED_DESKTOP "{PARKED_DESKTOP}"', source)
         self.assertIn(f'!define AGENT_ROOM_INSTALLER_MARKER "{INSTALLER_MARKER}"', source)
         self.assertIn(
-            f'pub(crate) const INSTALLER_MARKER: &str = "{INSTALLER_MARKER}";',
+            f'const INSTALLER_MARKER: &str = "{INSTALLER_MARKER}";',
             DESKTOP_MARKER_SOURCE.read_text(encoding="utf-8"),
         )
         # 先占标记、挪开桌面端，再结束进程；等待里也查挪开的程序和 WebView 的 lockfile。

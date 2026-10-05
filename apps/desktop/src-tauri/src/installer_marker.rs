@@ -8,7 +8,8 @@
 use std::path::Path;
 
 /// 与 `windows/hooks.nsh` 的 `AGENT_ROOM_INSTALLER_MARKER` 是同一个名字。
-pub(crate) const INSTALLER_MARKER: &str = "installer-running.lock";
+#[cfg(any(windows, test))]
+const INSTALLER_MARKER: &str = "installer-running.lock";
 
 /// 别的进程正以不共享的方式开着这个文件。
 #[cfg(windows)]
