@@ -666,6 +666,18 @@ impl IpcApproveHandoffRequest {
     }
 }
 
+/// 时间线上补不回来的一段：同步时一次来得太多，往回补也没接上。`beforeEventId` 这条前面少了消息，
+/// `afterEventId` 是之前最后一条（房间里原来没消息时没有）。`reason` 现在只有 `too_many`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcTimelineGap {
+    pub room_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_event_id: Option<String>,
+    pub before_event_id: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
@@ -723,6 +735,9 @@ pub enum IpcResponse {
         /// 等消息（`WaitInbox`）时，这个房间里此刻在打字的人：叫醒它的人还在打字就再等等。
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         typing: Vec<crate::wake::IpcTyping>,
+        /// 这一页里哪几条前面少了一段补不回来的消息（`specs/agent-reading/design.md` 第 4 步）。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        gaps: Vec<IpcTimelineGap>,
     },
     /// 按 ID 取到的消息，给全文，按要的顺序。`missing` 是找不到、或不在你所在房间里的；
     /// `more` 是这次放不下、要再取一次的。
@@ -1318,7 +1333,7 @@ mod tests {
         IpcGetMessagesRequest, IpcHandoffPermission, IpcHandoffPurpose, IpcHandoffRequest,
         IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance,
         IpcMessageSensitivity, IpcMessagesAroundRequest, IpcMethod, IpcPublishStatusRequest,
-        IpcResponse, IpcRoomHistoryRequest, IpcSendMessageRequest, IpcWorkStatus,
+        IpcResponse, IpcRoomHistoryRequest, IpcSendMessageRequest, IpcTimelineGap, IpcWorkStatus,
     };
     use crate::limits;
 
@@ -1515,6 +1530,39 @@ mod tests {
             page,
             serde_json::json!({"type": "room_messages", "messages": [], "nextCursor": "$next:matrix.test"})
         );
+    }
+
+    #[test]
+    fn 补不回来的一段的线上格式_没有时不出现() {
+        let page = |gaps| IpcResponse::MessagePreviews {
+            previews: Vec::new(),
+            next_cursor: None,
+            typing: Vec::new(),
+            gaps,
+        };
+        let gap = IpcTimelineGap {
+            room_id: "!room:matrix.test".to_owned(),
+            after_event_id: None,
+            before_event_id: "$first:matrix.test".to_owned(),
+            reason: "too_many".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(page(vec![gap.clone()])).expect("能序列化"),
+            json!({
+                "type": "message_previews", "previews": [],
+                "gaps": [{"roomId": "!room:matrix.test", "beforeEventId": "$first:matrix.test", "reason": "too_many"}],
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(page(Vec::new())).expect("能序列化"),
+            json!({"type": "message_previews", "previews": []})
+        );
+        let parsed: IpcResponse = serde_json::from_value(json!({
+            "type": "message_previews", "previews": [],
+            "gaps": [{"roomId": "!room:matrix.test", "beforeEventId": "$first:matrix.test", "reason": "too_many"}],
+        }))
+        .expect("能解析");
+        assert_eq!(parsed, page(vec![gap]));
     }
 
     #[test]

@@ -100,3 +100,58 @@ async fn 不在的房间里的和找不到的不能确认() {
         assert_eq!(failure.code, "bridge.message_not_found");
     }
 }
+
+#[tokio::test]
+async fn 读到补不回来的那一段后面那条时_回应里带上缺口() {
+    use agent_room_application::ports::{MatrixRoomId, MatrixSyncToken};
+    use agent_room_bridge_core::messages::{
+        MessageProjectionBatch, MessageProjectionMutation, MessageTimelineGap,
+        MessageTimelineProjectionStore as _,
+    };
+    use agent_room_bridge_ipc::IpcTimelineGap;
+
+    let ada = human("Ada", "@ada:matrix.test");
+    let (_directory, store) = store_with(&[chat(ROOM, 0, ada.clone(), "离线前", &[])]).await;
+    // 离线回来这次同步一次来得太多，又没法往回补：第 2 条前面少了一段。
+    store
+        .apply(&MessageProjectionBatch::new(
+            MatrixSyncToken::new("after-offline").expect("同步游标有效"),
+            [
+                chat(ROOM, 2, ada.clone(), "回来后第一条", &[]),
+                chat(ROOM, 3, ada, "回来后第二条", &[]),
+            ]
+            .into_iter()
+            .map(MessageProjectionMutation::Preview)
+            .collect(),
+            Vec::new(),
+            vec![MessageTimelineGap {
+                room_id: MatrixRoomId::new(ROOM).expect("房间标识有效"),
+                previous_batch: None,
+            }],
+        ))
+        .await
+        .expect("同步批次可写入");
+    let handler = handler(store);
+
+    let gaps = |response| match response {
+        IpcResponse::MessagePreviews { gaps, .. } => gaps,
+        other => panic!("收件箱必须返回消息预览：{other:?}"),
+    };
+    let expected = IpcTimelineGap {
+        room_id: ROOM.to_owned(),
+        after_event_id: Some(event(0)),
+        before_event_id: event(2),
+        reason: "too_many".to_owned(),
+    };
+    let first = handler
+        .dispatch(inbox(None, true))
+        .await
+        .expect("可以读收件箱");
+    assert_eq!(gaps(first), [expected]);
+    // 这一页里没有它后面那条：不带。
+    let later = handler
+        .dispatch(inbox(Some(event(2)), true))
+        .await
+        .expect("可以读收件箱");
+    assert!(gaps(later).is_empty());
+}

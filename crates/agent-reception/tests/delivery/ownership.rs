@@ -33,6 +33,7 @@ impl BridgeToolClient for ControlledBridge {
                     previews: vec![],
                     next_cursor: None,
                     typing: Vec::new(),
+                    gaps: Vec::new(),
                 });
             }
             if matches!(plain, IpcMethod::CloseHostSession(_)) && self.fail_close {

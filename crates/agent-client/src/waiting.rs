@@ -9,6 +9,7 @@ use std::{
 
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
+    IpcTimelineGap,
     limits::INBOX_BLOCK_MILLIS,
     typing::TypingRooms,
     wake::{
@@ -42,6 +43,8 @@ pub struct WokenBatch {
     pub remaining: usize,
     /// 下次从这一条之后接着等：交出去的最后一条，或者已经看过的自己发的那几条之后。
     pub cursor: Option<String>,
+    /// 这一批里哪几条前面少了一段补不回来的消息（同步时一次来得太多）。
+    pub gaps: Vec<IpcTimelineGap>,
 }
 
 impl WokenBatch {
@@ -57,8 +60,19 @@ impl WokenBatch {
         if let Some(cursor) = &self.cursor {
             value["nextCursor"] = serde_json::Value::from(cursor.as_str());
         }
+        if !self.gaps.is_empty() {
+            value["gaps"] = serde_json::json!(self.gaps);
+        }
         value
     }
+}
+
+/// Bridge 给的一页。
+struct InboxPage {
+    previews: Vec<IpcMessagePreviewSummary>,
+    more: bool,
+    typing: Vec<IpcTyping>,
+    gaps: Vec<IpcTimelineGap>,
 }
 
 /// 在一个房间里等消息。一次性的读每次新建；`listen` 一直用同一个。
@@ -91,6 +105,10 @@ pub struct InboxWaiter {
     typing: TypingRooms,
     /// 没给位置时从哪里开始。
     start: Start,
+    /// Bridge 报来、还没交出去的缺口：它后面那条交出去（或者看过）时一起交。
+    gaps: Vec<IpcTimelineGap>,
+    /// 交过的缺口（房间、后面那条），重读时不再交。
+    reported_gaps: HashSet<(String, String)>,
 }
 
 /// 没给位置时从哪里开始读。
@@ -130,6 +148,8 @@ impl InboxWaiter {
             owner: None,
             typing: TypingRooms::default(),
             start: Start::Earliest,
+            gaps: Vec::new(),
+            reported_gaps: HashSet::new(),
         }
     }
 
@@ -244,9 +264,11 @@ impl InboxWaiter {
             wait_ms: None,
             from_ack: self.start == Start::Acknowledged,
         };
-        let (previews, _, _) = self
+        let InboxPage { previews, gaps, .. } = self
             .read_page(backend, IpcMethod::ReadInbox(request), None)
             .await?;
+        self.note_gaps(gaps);
+        let gaps = self.release_gaps(&HashSet::new());
         let cursor = previews
             .last()
             .map(|preview| preview.event_id.clone())
@@ -277,6 +299,7 @@ impl InboxWaiter {
             skipped,
             remaining: 0,
             cursor,
+            gaps,
         })
     }
 
@@ -324,12 +347,18 @@ impl InboxWaiter {
             } else {
                 IpcMethod::ReadInbox(request)
             };
-            let (previews, more, typing) = self.read_page(backend, method, cut_off).await?;
+            let InboxPage {
+                previews,
+                more,
+                typing,
+                gaps,
+            } = self.read_page(backend, method, cut_off).await?;
             // 挂着等可能等了好几秒：到的时间按这一页回来的时候算。
             let now_ms = self.clock.now_ms();
             if keep_waiting {
                 self.typing.observe(&typing, now_ms);
             }
+            self.note_gaps(gaps);
             for preview in previews {
                 self.fetched_through = Some(preview.event_id.clone());
                 if preview.from_me || known.contains(&preview.event_id) {
@@ -454,13 +483,47 @@ impl InboxWaiter {
         } else {
             delivery.skipped
         };
+        let still_held: HashSet<String> = self
+            .held
+            .iter()
+            .map(|(preview, _)| preview.event_id.clone())
+            .collect();
+        let gaps = self.release_gaps(&still_held);
         WokenBatch {
             previews,
             wake: delivery.wake,
             skipped,
             remaining: delivery.remaining,
             cursor: self.delivered_through.clone(),
+            gaps,
         }
+    }
+
+    /// 记下 Bridge 报来的缺口；交过的、已经记着的不再记（重读时 Bridge 会再报一遍）。
+    fn note_gaps(&mut self, gaps: Vec<IpcTimelineGap>) {
+        for gap in gaps {
+            let key = (gap.room_id.clone(), gap.before_event_id.clone());
+            let pending = self
+                .gaps
+                .iter()
+                .any(|known| known.room_id == key.0 && known.before_event_id == key.1);
+            if !pending && !self.reported_gaps.contains(&key) {
+                self.gaps.push(gap);
+            }
+        }
+    }
+
+    /// 后面那条已经不在攒着的里面（交出去了、看过了，或者是自己发的）的缺口，交出去。
+    fn release_gaps(&mut self, still_held: &HashSet<String>) -> Vec<IpcTimelineGap> {
+        let (ready, waiting) = std::mem::take(&mut self.gaps)
+            .into_iter()
+            .partition::<Vec<_>, _>(|gap| !still_held.contains(&gap.before_event_id));
+        self.gaps = waiting;
+        for gap in &ready {
+            self.reported_gaps
+                .insert((gap.room_id.clone(), gap.before_event_id.clone()));
+        }
+        ready
     }
 
     /// `waitFor` 写了 `mentioned`：换成我上一条点到的人。只找一次。
@@ -481,9 +544,10 @@ impl InboxWaiter {
             wait_ms: None,
             from_ack: false,
         };
-        let (newest_first, _, _) = self
+        let newest_first = self
             .read_page(backend, IpcMethod::ListPreviews(request), None)
-            .await?;
+            .await?
+            .previews;
         let people = mentioned_people(newest_first.iter().find(|preview| preview.from_me));
         if people.is_empty() {
             return Err(invalid("waitFor"));
@@ -529,7 +593,7 @@ impl InboxWaiter {
         backend: &dyn BridgeToolClient,
         method: IpcMethod,
         cut_off: Option<Instant>,
-    ) -> Result<(Vec<IpcMessagePreviewSummary>, bool, Vec<IpcTyping>), BridgeToolFailure> {
+    ) -> Result<InboxPage, BridgeToolFailure> {
         let method = IpcMethod::WithSession {
             session_id: self.session_id.clone(),
             method: Box::new(method),
@@ -554,7 +618,13 @@ impl InboxWaiter {
                 previews,
                 next_cursor,
                 typing,
-            } => Ok((previews, next_cursor.is_some(), typing)),
+                gaps,
+            } => Ok(InboxPage {
+                previews,
+                more: next_cursor.is_some(),
+                typing,
+                gaps,
+            }),
             _ => Err(failure(
                 "agent.inbox.response_invalid",
                 IpcErrorCategory::Internal,

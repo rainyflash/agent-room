@@ -173,3 +173,13 @@
   - 放在三种接入共用的等消息规则里（`bridge-ipc` 的 `WaitParams`、`WaitOptions`）：只有提到它或回复它的叫得醒，交的时候也只给这些，别的算跳过（`skipped`），确认到 `nextCursor` 时跳过的也算看过。主人没点它也叫不醒。只看一眼（等 0 秒）时同样只给点它的。
   - 不能和 `wake`（`mentions` 除外）、`from`、`waitFor`、`replyTo`、`digestMinutes` 一起用，报 `mentionsOnly`：那些条件叫醒它以后，交出去的会是空的一批。
   - 本机 MCP 等消息加 `mentionsOnly`，命令行 `read`、`listen` 加 `--mentions-only`。网络接入在第 5 步跟上。
+- 2026-10-04：4d，收件箱报出补不回来的一段（`gaps`）。
+  - Bridge 同步时一个房间的时间线被截断（`limited`），本来就会往回补，最多翻 5 页、每页 100 条。翻到上限还没接上已有的消息，或者根本没给往回翻的令牌，更早的那部分就补不回来了：记进本地消息库的新表 `message_timeline_loss`（迁移 0008），标出它在哪两条之间。缺口原来只记往回翻的令牌，现在同步时顺手记下两头：这次同步以前最后一条（`afterEventId`）和这次来的第一条（`beforeEventId`）。
+  - 读收件箱、等消息读到丢了的那段后面那条（`beforeEventId`）时，回应里带上 `gaps`：`{roomId, afterEventId, beforeEventId, reason}`。等消息时它跟后面那条一起交；那条被跳过（自己发的、`mentionsOnly` 时没点它的）也照样交，交过的不再交。往前翻、看前后不带。
+  - 和上面写的不一样：
+    - 只做了 `too_many`。`offline_too_long` 本机用不上：Bridge 离线多久都从上次的位置接着同步，漏掉的都按 `limited` 往回补。`undecryptable_before_join` 本机有[加入前的消息](../room-key-recovery/pre-join-history.md)去找回，网络接入第 5 步再看。
+    - 补回来的消息在收件箱里排在同步来的后面（按这台 Bridge 收到的先后），所以 `beforeEventId` 是补回来的最早一条；一条也没补回来时才是同步来的第一条。
+    - 升级前记下、还没补完的缺口没有两头，补不完时只有补回了消息才报。
+    - 后台回复不管 `gaps`：改宿主提示要在真机上跑 `receiver doctor`，留到第 6 步和三份说明一起改。
+  - IPC 4.4 还没发布，`gaps` 直接加在 4.4 的 `MessagePreviews` 上，版本号不变。
+  - 下一步：第 5 步（网络）。

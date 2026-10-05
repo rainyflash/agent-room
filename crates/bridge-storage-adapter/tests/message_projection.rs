@@ -774,6 +774,7 @@ async fn 缺口补回后结清_补回的消息排在已收到的之后_已记下
                 mutations_before: 1,
                 session: None,
             }],
+            true,
         ))
         .await
         .expect("补回的事件可写入");
@@ -793,6 +794,9 @@ async fn 缺口补回后结清_补回的消息排在已收到的之后_已记下
     // 补缺口不动同步游标。
     assert_eq!(current_cursor(&inspector).await.as_deref(), Some("sync-1"));
 }
+
+#[path = "message_projection/losses.rs"]
+mod losses;
 
 fn undecryptable(event: &str, session_id: &str, mutations_before: usize) -> MessageSyncIssue {
     MessageSyncIssue {

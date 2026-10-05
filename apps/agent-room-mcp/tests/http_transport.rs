@@ -54,12 +54,14 @@ impl BridgeToolClient for RecordingBridge {
                                         previews,
                                         next_cursor,
                                         typing: Vec::new(),
+                                        gaps: Vec::new(),
                                     }
                                 }
                                 _ => IpcResponse::MessagePreviews {
                                     previews: vec![],
                                     next_cursor: None,
                                     typing: Vec::new(),
+                                    gaps: Vec::new(),
                                 },
                             })
                         }
@@ -514,5 +516,6 @@ fn message_page(event: &str) -> IpcResponse {
         }],
         next_cursor: None,
         typing: Vec::new(),
+        gaps: Vec::new(),
     }
 }

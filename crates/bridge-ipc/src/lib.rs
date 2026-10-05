@@ -51,7 +51,7 @@ pub use tools::{
     IpcOpenedAttachment, IpcOpenedContent, IpcOwnerSummary, IpcPendingTargetedHandoff,
     IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus, IpcReplyExcerpt, IpcResponse,
     IpcRoomHistoryRequest, IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary,
-    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcTimelineGap, IpcWorkStatus,
 };
 pub use wire::{
     IpcCaller, IpcErrorCategory, IpcFrame, IpcScopeName, IpcVersion, client_offer_from_frame,
