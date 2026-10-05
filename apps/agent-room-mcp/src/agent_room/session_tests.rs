@@ -97,6 +97,7 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
             previews: vec![],
             next_cursor: None,
             typing: Vec::new(),
+            gaps: Vec::new(),
         })
     };
     let bridge = Arc::new(ScriptedBridge::new(vec![
@@ -174,6 +175,7 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
             previews: vec![],
             next_cursor: None,
             typing: Vec::new(),
+            gaps: Vec::new(),
         }),
     }]));
     let mut harness = McpHarness::start(bridge.clone()).await;
@@ -263,6 +265,7 @@ impl BridgeToolClient for WaitingBridge {
                         previews: vec![],
                         next_cursor: None,
                         typing: Vec::new(),
+                        gaps: Vec::new(),
                     })
                 }
             }

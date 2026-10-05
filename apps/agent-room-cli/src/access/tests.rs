@@ -86,6 +86,7 @@ impl BridgeToolClient for Bridge {
                     previews,
                     next_cursor: None,
                     typing: Vec::new(),
+                    gaps: Vec::new(),
                 })
             });
         }

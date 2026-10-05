@@ -41,6 +41,7 @@ impl BridgeIpcRequestHandler for TestHandler {
                     previews: vec![],
                     next_cursor: None,
                     typing: Vec::new(),
+                    gaps: Vec::new(),
                 });
             }
             if matches!(method, IpcMethod::OpenContent(_)) {

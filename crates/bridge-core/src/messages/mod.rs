@@ -61,6 +61,7 @@ pub use projection::{
     MessageSyncIssueReason, MessageTimelineGap, MessageTimelineProjectionStore,
     MessageTimelineQueryFailure, MessageTimelineQueryFailureKind, MessageTimelineQueryRepository,
     MessagesAround, PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
-    ProjectedMessagePreview, ProjectedMessageRevision, ReservedIsolatedEvent, UndecryptableSession,
+    ProjectedMessagePreview, ProjectedMessageRevision, ReservedIsolatedEvent, TimelineLoss,
+    TimelineLossReason, UndecryptableSession,
 };
 pub use recovery::{MessageRecoveryOutcome, MessageRecoverySource};

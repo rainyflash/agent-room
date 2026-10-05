@@ -300,19 +300,27 @@ pub struct MessageBackfillBatch {
     gap: PendingTimelineGap,
     mutations: Vec<MessageProjectionMutation>,
     issues: Vec<MessageSyncIssue>,
+    complete: bool,
 }
 
 impl MessageBackfillBatch {
+    /// `complete` 为 false：翻到上限还没接上已有的消息，更早的那部分补不回来了，要记成丢了的一段。
     pub const fn new(
         gap: PendingTimelineGap,
         mutations: Vec<MessageProjectionMutation>,
         issues: Vec<MessageSyncIssue>,
+        complete: bool,
     ) -> Self {
         Self {
             gap,
             mutations,
             issues,
+            complete,
         }
+    }
+
+    pub const fn complete(&self) -> bool {
+        self.complete
     }
 
     pub const fn gap(&self) -> &PendingTimelineGap {
@@ -325,6 +333,34 @@ impl MessageBackfillBatch {
 
     pub fn issues(&self) -> &[MessageSyncIssue] {
         &self.issues
+    }
+}
+
+/// 时间线上补不回来的一段：同步时一次来得太多，往回补也没接上（`specs/agent-reading/design.md`
+/// 第 4 步的 `gaps`）。在 `after_event_id`（之前最后一条，没有就是房间里原来没消息）和
+/// `before_event_id`（之后第一条）之间少了消息。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimelineLoss {
+    pub after_event_id: Option<MatrixEventId>,
+    pub before_event_id: MatrixEventId,
+    pub reason: TimelineLossReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelineLossReason {
+    /// 一次来得太多，超出了能往回补的范围。
+    TooMany,
+}
+
+impl TimelineLossReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TooMany => "too_many",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        (value == "too_many").then_some(Self::TooMany)
     }
 }
 
@@ -705,6 +741,15 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
     ) -> PortFuture<'a, Result<Option<(MatrixRoomId, MatrixEventId)>, MessageTimelineQueryFailure>>
     {
         Box::pin(async { Ok(None) })
+    }
+
+    /// 这些消息里，哪几条前面少了一段补不回来的（`before_event_id` 是其中一条）。默认没有。
+    fn inbox_gaps<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _event_ids: &'a [MatrixEventId],
+    ) -> PortFuture<'a, Result<Vec<TimelineLoss>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     /// 这个房间的收件箱确认到哪一条了；没确认过就没有。

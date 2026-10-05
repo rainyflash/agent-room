@@ -45,7 +45,7 @@ use agent_room_bridge_ipc::{
     IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity, IpcOpenContentRequest,
     IpcOpenedContent, IpcOwnerSummary, IpcPendingTargetedHandoff, IpcPresenceSummary,
     IpcPublishStatusRequest, IpcPublishedStatus, IpcResponse, IpcSelfSummary,
-    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcWorkStatus,
+    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcTimelineGap, IpcWorkStatus,
     limits::INLINE_TEXT_BYTES,
 };
 use agent_room_domain::{
@@ -664,6 +664,11 @@ impl AgentRuntimeIpcFacade {
             agent_id: runtime.identity.agent_id(),
             matrix_user_id: runtime.identity.matrix_user_id().as_str(),
         };
+        let gaps = if oldest_first {
+            self.inbox_gaps(&room_id, page.previews()).await
+        } else {
+            Vec::new()
+        };
         let response = bounded_preview_response(
             page.previews().iter().map(|preview| {
                 let target = preview.relation.and_then(|relation| match relation {
@@ -674,6 +679,7 @@ impl AgentRuntimeIpcFacade {
             }),
             page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
             typing.map_or_else(Vec::new, |typing| typing.now(room_id.as_str())),
+            gaps,
         )?;
         // The desktop reads the same projection, but only the host can attest to receiving it.
         if self.consumer == AgentRuntimeConsumer::HostSession
@@ -772,6 +778,34 @@ impl AgentRuntimeIpcFacade {
             Err(failure) => {
                 tracing::warn!(kind = ?failure.kind(), "could not read replied messages");
                 HashMap::new()
+            }
+        }
+    }
+
+    /// 这一页里哪几条前面少了一段补不回来的消息（`specs/agent-reading/design.md` 第 4 步）。
+    /// 读不到时只是少了这一项。
+    async fn inbox_gaps(
+        &self,
+        room_id: &MatrixRoomId,
+        previews: &[ProjectedMessagePreview],
+    ) -> Vec<IpcTimelineGap> {
+        let events = previews
+            .iter()
+            .map(|preview| preview.event_id.clone())
+            .collect::<Vec<_>>();
+        match self.previews.inbox_gaps(room_id, &events).await {
+            Ok(losses) => losses
+                .into_iter()
+                .map(|loss| IpcTimelineGap {
+                    room_id: room_id.as_str().to_owned(),
+                    after_event_id: loss.after_event_id.map(|event| event.as_str().to_owned()),
+                    before_event_id: loss.before_event_id.as_str().to_owned(),
+                    reason: loss.reason.as_str().to_owned(),
+                })
+                .collect(),
+            Err(failure) => {
+                tracing::warn!(kind = ?failure.kind(), "could not read inbox gaps");
+                Vec::new()
             }
         }
     }
@@ -2200,10 +2234,12 @@ const fn invalid_request(code: &'static str) -> BridgeIpcDispatchFailure {
 }
 
 // 以序列化后的字节分页，为 64 KiB IPC 帧留下信封余量；不能按条数假设聊天很短。
+// 缺口只给这一页里真的交出去的那几条前面的。
 fn bounded_preview_response(
     candidates: impl IntoIterator<Item = IpcMessagePreviewSummary>,
     mut next_cursor: Option<String>,
     typing: Vec<agent_room_bridge_ipc::wake::IpcTyping>,
+    mut gaps: Vec<IpcTimelineGap>,
 ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
     let mut previews: Vec<IpcMessagePreviewSummary> = Vec::new();
     let mut bytes = 0;
@@ -2222,10 +2258,16 @@ fn bounded_preview_response(
         bytes += size;
         previews.push(preview);
     }
+    gaps.retain(|gap| {
+        previews
+            .iter()
+            .any(|preview| preview.event_id == gap.before_event_id)
+    });
     Ok(IpcResponse::MessagePreviews {
         previews,
         next_cursor,
         typing,
+        gaps,
     })
 }
 
@@ -2314,6 +2356,7 @@ mod conversation_tests {
                 ..candidate.clone()
             }),
             None,
+            Vec::new(),
             Vec::new(),
         )
         .expect("自动分页");

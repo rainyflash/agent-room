@@ -12,7 +12,7 @@ use agent_room_bridge_core::messages::{
     MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
     MessageTimelineQueryRepository, MessagesAround, OwnMembership, PendingTimelineGap,
     ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
-    ReservedIsolatedEvent, RoomName, RoomStateChange, UndecryptableSession,
+    ReservedIsolatedEvent, RoomName, RoomStateChange, TimelineLoss, UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -41,6 +41,7 @@ use crate::{
 };
 
 mod inbox;
+mod losses;
 
 #[derive(Clone)]
 pub struct SqliteMessageTimelineRepository {
@@ -71,6 +72,8 @@ impl SqliteMessageTimelineRepository {
         let mut transaction = begin_write(&self.pool)
             .await
             .map_err(|error| map_sqlx_error(&error))?;
+        // 缺口的两头要在写入这次的消息以前看：之前最后一条才是对的。
+        losses::persist_gaps(&mut transaction, batch).await?;
         apply_timeline(
             &mut transaction,
             batch.next_batch(),
@@ -79,7 +82,6 @@ impl SqliteMessageTimelineRepository {
             &self.key_cipher,
         )
         .await?;
-        persist_gaps(&mut transaction, batch).await?;
         persist_cursor(&mut transaction, batch).await?;
         transaction
             .commit()
@@ -104,6 +106,7 @@ impl SqliteMessageTimelineRepository {
             &self.key_cipher,
         )
         .await?;
+        losses::record_truncated_backfill(&mut transaction, batch).await?;
         sqlx::query(
             "DELETE FROM message_timeline_gap
              WHERE sync_token = ? AND room_id = ? AND previous_batch = ?",
@@ -512,6 +515,14 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, Result<Option<MatrixEventId>, MessageTimelineQueryFailure>> {
         Box::pin(async move { self.query_inbox_position(room_id).await })
+    }
+
+    fn inbox_gaps<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_ids: &'a [MatrixEventId],
+    ) -> PortFuture<'a, Result<Vec<TimelineLoss>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.query_inbox_gaps(room_id, event_ids).await })
     }
 
     fn acknowledge_inbox<'a>(
@@ -1496,30 +1507,6 @@ async fn reserve_sequence(
         return Ok(None);
     }
     next_sequence(transaction, room_id).await.map(Some)
-}
-
-async fn persist_gaps(
-    transaction: &mut Transaction<'_, Sqlite>,
-    batch: &MessageProjectionBatch,
-) -> Result<(), MessageProjectionStoreFailure> {
-    for gap in batch.gaps() {
-        sqlx::query(
-            "INSERT OR IGNORE INTO message_timeline_gap
-             (sync_token, room_id, previous_batch)
-             VALUES (?, ?, ?)",
-        )
-        .bind(batch.next_batch().as_str())
-        .bind(gap.room_id.as_str())
-        .bind(
-            gap.previous_batch
-                .as_ref()
-                .map_or("", |token| token.as_str()),
-        )
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| map_sqlx_error(&error))?;
-    }
-    Ok(())
 }
 
 async fn persist_cursor(

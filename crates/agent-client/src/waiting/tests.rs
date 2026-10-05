@@ -3,7 +3,7 @@ use std::{sync::Mutex, time::Duration};
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcMethod, IpcOwnerSummary, IpcResponse, IpcSelfSummary,
+    IpcMethod, IpcOwnerSummary, IpcResponse, IpcSelfSummary, IpcTimelineGap,
     wake::{IpcTyping, WaitOptions, WaitRules, WakeReason},
 };
 use tokio::time::Instant;
@@ -95,6 +95,8 @@ struct Room {
     owner: Option<String>,
     /// 谁在什么时候打字：从第一个时刻起，到第二个时刻停。
     typists: Vec<(Duration, Duration, String)>,
+    /// 补不回来的那几段：读到它后面那条时一起给，和 Bridge 一样。
+    gaps: Vec<IpcTimelineGap>,
     calls: Mutex<Vec<(String, bool)>>,
 }
 
@@ -111,6 +113,7 @@ impl Room {
             honors_wait: true,
             owner: None,
             typists: Vec::new(),
+            gaps: Vec::new(),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -164,10 +167,22 @@ impl Room {
         });
         let rest = &visible[start..];
         let limit = usize::from(request.limit);
+        let previews: Vec<_> = rest.iter().take(limit).cloned().collect();
+        let gaps = self
+            .gaps
+            .iter()
+            .filter(|gap| {
+                previews
+                    .iter()
+                    .any(|preview| preview.event_id == gap.before_event_id)
+            })
+            .cloned()
+            .collect();
         IpcResponse::MessagePreviews {
-            previews: rest.iter().take(limit).cloned().collect(),
+            previews,
             next_cursor: (rest.len() > limit).then(|| rest[limit - 1].event_id.clone()),
             typing: self.typing_now(),
+            gaps,
         }
     }
 }
@@ -654,4 +669,61 @@ async fn 只要点我的_只交点我的_别的算跳过_只看一眼也一样()
         Some("$又闲聊:room.test"),
         "看过的都算看过，确认到游标时跳过的也算"
     );
+}
+
+fn lost_before(event: &str) -> IpcTimelineGap {
+    IpcTimelineGap {
+        room_id: "!lobby:room.test".to_owned(),
+        after_event_id: Some("$很早以前:room.test".to_owned()),
+        before_event_id: event.to_owned(),
+        reason: "too_many".to_owned(),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn 补不回来的一段跟它后面那条一起交_那条还攒着时不交_交过不再交() {
+    let mut room = Room::new(vec![
+        (1_000, chatter("离线时到的")),
+        (12_000, named("Scout？")),
+    ]);
+    room.gaps = vec![lost_before("$离线时到的:room.test")];
+    let mut waiter = waiter(WaitRules::default());
+    let first = waiter
+        .next(&room, MessageWait::Continuous(Duration::from_secs(10)))
+        .await
+        .unwrap();
+    assert!(first.previews.is_empty());
+    assert!(first.gaps.is_empty(), "后面那条还攒着，缺口跟它一起交");
+
+    let second = waiter
+        .next(&room, MessageWait::Continuous(Duration::from_secs(10)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&second.previews), ["离线时到的", "Scout？"]);
+    assert_eq!(second.gaps, [lost_before("$离线时到的:room.test")]);
+    let shown = second.to_json();
+    assert_eq!(shown["gaps"][0]["beforeEventId"], "$离线时到的:room.test");
+    assert_eq!(shown["gaps"][0]["reason"], "too_many");
+
+    let third = waiter
+        .next(&room, MessageWait::Continuous(Duration::from_secs(10)))
+        .await
+        .unwrap();
+    assert!(third.gaps.is_empty(), "交过的不再交");
+    assert!(
+        third.to_json().get("gaps").is_none(),
+        "没有缺口时不出现这一项"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 只看一眼时缺口跟着读到的那页一起给_后面那条是自己发的也给() {
+    let mut room = Room::new(vec![(0, mine("我离线前说的", &[])), (0, chatter("闲聊"))]);
+    room.gaps = vec![lost_before("$我离线前说的:room.test")];
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["闲聊"]);
+    assert_eq!(batch.gaps, [lost_before("$我离线前说的:room.test")]);
 }

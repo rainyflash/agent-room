@@ -95,7 +95,7 @@ impl MessageSyncService {
                 outcome.truncated_gaps += 1;
             }
             self.projections
-                .apply_backfill(&MessageBackfillBatch::new(gap, mutations, issues))
+                .apply_backfill(&MessageBackfillBatch::new(gap, mutations, issues, complete))
                 .await
                 .map_err(MessageSyncFailure::projection_store)?;
             outcome.filled_gaps += 1;
