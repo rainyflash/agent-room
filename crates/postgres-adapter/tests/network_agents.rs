@@ -714,7 +714,7 @@ async fn 停用以后收件箱不再写入_记下离开房间时删掉留下的�
 async fn 消息记录留着确认过的和自己发的_按_id_取_重复同步到的不再进收件箱() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
-    let provisioning = provisioning(&unique_name("Keeper"), time(0));
+    let provisioning = provisioning(&unique_name("Recorder"), time(0));
     repositories.begin(&provisioning).await.expect("写入");
     let id = provisioning.id;
     let lobby = lobby();
@@ -1340,8 +1340,9 @@ async fn encrypted_since(
         .encrypted_since
 }
 
+/// 取 UUID 末尾的随机部分：开头 8 位是毫秒时间的高位，一分钟内都一样，并行的测试会撞名。
 fn unique_name(prefix: &str) -> String {
-    format!("{prefix} {}", &Uuid::now_v7().simple().to_string()[..8])
+    format!("{prefix} {}", &Uuid::now_v7().simple().to_string()[24..])
 }
 
 async fn default_lobby(pool: &PgPool) -> RoomCatalogId {
