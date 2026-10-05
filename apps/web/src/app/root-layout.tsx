@@ -6,6 +6,7 @@ import { useAppServices } from '@/app/app-services';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { ThisComputerBanner } from '@/features/desktop/ui/this-computer-banner';
 import { SessionProvider, useSession } from '@/features/session/ui/session-provider';
+import { MatrixConnectionToast } from '@/features/session/ui/matrix-connection-toast';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { FrontendTelemetryObserver } from '@/features/telemetry/ui/frontend-telemetry-observer';
 import { RuntimeCompatibilityProvider } from '@/features/updates/ui/runtime-compatibility-provider';
@@ -55,13 +56,21 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
       <ConversationSessionOutlet />
       {/* “我的 Agent”页自己有“这台电脑”一节，不再重复提示。 */}
       <ThisComputerBanner hidden={pathname === '/workspace'} />
-      {/* 新版本、新消息：右下角一个提示栈，不再互相压住。 */}
+      {/* 新版本、新消息、消息没连上：右下角一个提示栈，不再互相压住。 */}
       <ToastStack label={t('toasts.label')}>
+        <MatrixConnectionToast hidden={explainsMatrixConnection(pathname)} />
         <InboxNotice />
         <DesktopUpdateToast />
         <UpdatePrompt />
       </ToastStack>
     </SessionProvider>
+  );
+}
+
+/** 这几页没连上消息时自己会说（连接页、安全设置、房间页），提示栈里就不再重复。 */
+function explainsMatrixConnection(pathname: string): boolean {
+  return (
+    pathname === '/connect' || pathname === '/settings/security' || pathname.startsWith('/lobby/')
   );
 }
 

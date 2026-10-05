@@ -26,6 +26,7 @@ import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-
 import { SettingsLayout, SettingsSectionContent } from '@/features/settings/ui/settings-page';
 import { isSettingsSection } from '@/features/settings/ui/settings-sections';
 import { DesktopUpdateToast } from '@/features/updates/ui/desktop-update-toast';
+import { MatrixConnectionToast } from '@/features/session/ui/matrix-connection-toast';
 import { ToastStack } from '@agent-room/ui-system';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
@@ -94,6 +95,9 @@ function ready<T>(value: T) {
   return Promise.resolve(ok(value));
 }
 const desktop = !new URLSearchParams(location.search).has('browser');
+// ?matrix=signin 停在“等浏览器里登录完”，?matrix=failed 停在“浏览器登录页等太久没回来”，
+// 看消息没连上时提示栈里的那一条。
+const matrixState = new URLSearchParams(location.search).get('matrix');
 const principal: WebSession = {
   authenticatedAtUnixMs: 1,
   expiresAtUnixMs: 1_900_000_000_000,
@@ -312,7 +316,10 @@ function AuthenticatedMyAgentsFixture() {
   const currentPrincipal = snapshot.context.principal;
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   // Match production mounting: account restoration clears private queries before the workspace loads.
-  if (!snapshot.matches('ready') || currentPrincipal === null) return null;
+  // 停在消息没连上时（?matrix=），生产上页面只看控制面，照样显示。
+  const mounted =
+    matrixState === null ? snapshot.matches('ready') : snapshot.context.controlStatus === 'ready';
+  if (!mounted || currentPrincipal === null) return null;
   if (
     settingsSection !== null &&
     isSettingsSection(settingsSection) &&
@@ -374,19 +381,33 @@ async function bootstrapFixture() {
     },
     matrix: {
       disconnect: () => undefined,
-      beginAuthentication: () => ready({ kind: 'session-established' }),
+      beginAuthentication: () =>
+        matrixState === 'signin'
+          ? new Promise(() => undefined)
+          : matrixState === 'failed'
+            ? Promise.resolve(
+                err({
+                  boundary: 'matrix' as const,
+                  code: 'desktop.matrix_session.loopback_timeout',
+                  offline: false,
+                  retryable: true,
+                }),
+              )
+            : ready({ kind: 'session-established' as const }),
       logout: () => ready(undefined),
       restore: () =>
-        ready({
-          kind: 'connected',
-          connection: {
-            deviceId: 'FIXTURE',
-            userId: principal.matrixUserId,
-            disconnect: () => undefined,
-            observe: () => () => undefined,
-            waitUntilPrepared: () => ready(undefined),
-          },
-        }),
+        matrixState === 'signin' || matrixState === 'failed'
+          ? ready({ kind: 'authentication-required' as const })
+          : ready({
+              kind: 'connected',
+              connection: {
+                deviceId: 'FIXTURE',
+                userId: principal.matrixUserId,
+                disconnect: () => undefined,
+                observe: () => () => undefined,
+                waitUntilPrepared: () => ready(undefined),
+              },
+            }),
     },
   };
   const element = document.getElementById('root');
@@ -402,6 +423,7 @@ async function bootstrapFixture() {
                   <DesktopRuntimeProvider gateway={gateway}>
                     <AuthenticatedMyAgentsFixture />
                     <ToastStack label="Notifications">
+                      <MatrixConnectionToast hidden={false} />
                       <DesktopUpdateToast />
                     </ToastStack>
                   </DesktopRuntimeProvider>

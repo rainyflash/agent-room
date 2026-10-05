@@ -433,6 +433,37 @@ describe('Web 会话状态机', () => {
     actor.stop();
   });
 
+  it('浏览器里的登录还没回来时点“重新开始登录”，按交互方式重来，不被上一次的记号挡住', async () => {
+    let restores = 0;
+    const beginAuthentication = vi
+      .fn<MatrixGateway['beginAuthentication']>()
+      // 第一次一直等着浏览器回来（人关掉了登录页）。
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockResolvedValue(ok({ kind: 'session-established' }));
+    const runtime = dependencies({
+      matrix: {
+        beginAuthentication,
+        restore: () => {
+          restores += 1;
+          return restores < 3
+            ? Promise.resolve(ok({ kind: 'authentication-required' }))
+            : Promise.resolve(ok({ connection: connection(), kind: 'connected' }));
+        },
+      },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('authenticating'));
+
+    actor.send({ type: 'RETRY' });
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    expect(beginAuthentication.mock.calls.map(([, mode]) => mode)).toEqual([
+      'automatic',
+      'interactive',
+    ]);
+    actor.stop();
+  });
+
   it('控制面健康恢复不会掩盖 Matrix 故障', async () => {
     const matrixFailure: SessionFailure = {
       boundary: 'matrix',

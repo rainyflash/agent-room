@@ -41,6 +41,7 @@ import {
   type LobbySpatialViewHandle,
 } from '@/features/lobby/ui/lobby-spatial-view';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
+import { MatrixConnectionCard } from '@/features/session/ui/matrix-connection-card';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
@@ -104,7 +105,14 @@ export function LobbyPage(props: LobbyPageProps) {
         scope={props.principal?.matrixUserId ?? null}
       >
         {state.kind !== 'ready' ? (
-          <LobbyStateBoundary onRetry={store.retry} state={state} />
+          state.kind === 'failed' && state.code === 'lobby.matrix_unavailable' ? (
+            // 消息没连上时照会话的状态说、按钮交给会话；连上以后房间自己打开。
+            <MatrixConnectionCard
+              fallback={<LobbyStateBoundary onRetry={store.retry} state={state} />}
+            />
+          ) : (
+            <LobbyStateBoundary onRetry={store.retry} state={state} />
+          )
         ) : (
           <RoomMessagesProvider store={store.messages}>
             <NetworkAgentRelayProvider relayed={state.room.encrypted === true}>

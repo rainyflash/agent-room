@@ -104,6 +104,8 @@ const stateCopy: Readonly<
 
 const failureCopy: Readonly<Record<string, TranslationKey>> = {
   'matrix.authentication_interrupted': 'connection.state.failure.connectionInterrupted',
+  // 桌面端开的浏览器登录页 15 分钟没回来：和上面一样，点“重新连接”再开一次。
+  'desktop.matrix_session.loopback_timeout': 'connection.state.failure.connectionInterrupted',
   'browser.session_storage_unavailable': 'connection.state.failure.browserVaultUnavailable',
   'browser.session_storage_corrupt': 'connection.state.failure.matrixVaultCorrupt',
   'browser.session_lock_unavailable': 'connection.state.failure.browserVaultUnavailable',
