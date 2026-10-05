@@ -371,6 +371,7 @@ async fn deliver(
             wake: &batch.wake,
             reply_to: &record.message_id,
             skipped: batch.skipped,
+            gaps: &batch.gaps,
         })
         .await;
     let sent = match host {

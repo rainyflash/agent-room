@@ -51,6 +51,8 @@ pub struct HostDelivery<'a> {
     pub reply_to: &'a str,
     /// 新消息太多时没给的条数。
     pub skipped: usize,
+    /// 这一批前面补不回来的几段：同步时一次来得太多，往回补到上限还没接上。
+    pub gaps: &'a [agent_room_bridge_ipc::IpcTimelineGap],
 }
 pub struct NativeHost;
 impl HostRunner for NativeHost {
