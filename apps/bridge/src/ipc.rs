@@ -393,6 +393,11 @@ impl BridgeIpcServer {
         let listener = options
             .create_tokio()
             .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Bind))?;
+        // 收紧失败时监听器随之丢弃，套接字文件也一起删掉。
+        #[cfg(unix)]
+        endpoint
+            .restrict_socket_to_owner()
+            .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Bind))?;
         Ok(Self {
             listener,
             installation_id,
@@ -919,10 +924,10 @@ fn private_windows_sddl(session_sid: &str) -> String {
     format!("D:P(A;;GA;;;{session_sid})(A;;GA;;;SY)")
 }
 
+/// 不用 interprocess 的 `mode()`：它在绑定前对 socket 调 `fchmod()`，macOS 不支持，
+/// 监听器就一直建不起来。权限在绑定后由 `restrict_socket_to_owner` 收紧。
 #[cfg(unix)]
 fn private_listener_options(endpoint: &LocalIpcEndpoint) -> BridgeIpcResult<ListenerOptions<'_>> {
-    use interprocess::os::unix::local_socket::ListenerOptionsExt as _;
-
     Ok(ListenerOptions::new()
         .name(
             endpoint
@@ -930,8 +935,7 @@ fn private_listener_options(endpoint: &LocalIpcEndpoint) -> BridgeIpcResult<List
                 .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::InvalidEndpoint))?,
         )
         .reclaim_name(true)
-        .try_overwrite(false)
-        .mode(0o600))
+        .try_overwrite(false))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3246,6 +3250,15 @@ mod tests {
             Arc::new(FoundationBridgeIpcRequestHandler::new(Arc::new(固定状态))),
         )
         .expect("首个私有端点可创建");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
+
+            let socket = std::fs::metadata(paths.runtime_root().join("bridge.sock"))
+                .expect("套接字文件存在");
+            assert!(socket.file_type().is_socket());
+            assert_eq!(socket.permissions().mode() & 0o777, 0o600);
+        }
 
         let Err(second) = BridgeIpcServer::bind(
             &paths,

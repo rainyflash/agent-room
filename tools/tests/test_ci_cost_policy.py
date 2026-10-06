@@ -42,7 +42,7 @@ class CiCostPolicyTests(unittest.TestCase):
     def test_deep_validation_only_runs_when_explicitly_dispatched(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
-        for name in ("supply-chain", "integration"):
+        for name in ("supply-chain", "integration", "macos-runtime"):
             with self.subTest(job=name):
                 condition = job_condition(workflow, name)
                 # 允许继续收窄（例如只在 suite=all 时运行），但不得放宽到 push 或 pull_request。
@@ -115,6 +115,16 @@ class CiCostPolicyTests(unittest.TestCase):
         self.assertNotIn("  bridge-platforms:", workflow)
         self.assertNotIn("  desktop-platforms:", workflow)
         self.assertIn("shared-key: windows-runtime", workflow)
+
+    def test_macos_runtime_checks_run_natively_on_one_standard_runner(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        steps = [line.strip() for line in job_lines(workflow, "macos-runtime")]
+
+        # Linux 上的测试抓不到 macOS 不支持的系统调用，要在 Mac 上真跑一遍和 Windows 相同的门禁。
+        self.assertEqual(workflow.count("runs-on: macos-"), 1)
+        self.assertIn("runs-on: macos-latest", steps)
+        self.assertIn("shared-key: macos-runtime", steps)
+        self.assertIn("run: node tools/desktop.mjs native-check", steps)
 
     def test_release_builds_keep_their_own_compile_cache(self) -> None:
         release = RELEASE_CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
