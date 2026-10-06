@@ -1,5 +1,5 @@
 //! 凭口令进的私人房间里，加入之前的消息解不开：交出这个房间下一条消息时用 `gaps` 告诉 Agent
-//! （`undecryptable_before_join`），只说一次。
+//! （`undecryptable_before_join`），每次加入只说一次。
 
 use std::time::Duration;
 
@@ -67,19 +67,30 @@ fn locked(event_id: &str, at: u64) -> MatrixTimelineEvent {
     .unwrap()
 }
 
-/// 它自己凭口令进来的那条成员事件。
-fn joined() -> MatrixTimelineEvent {
+/// 它自己的成员事件：`membership` 是这次的，`previous` 是上一个。
+fn own_member(
+    event_id: &str,
+    membership: &str,
+    previous: Option<&str>,
+    at: u64,
+) -> MatrixTimelineEvent {
     let me = matrix_user(OWN_AGENT);
     MatrixTimelineEvent::new(
-        Some(MatrixEventId::new("$join:matrix.test").unwrap()),
+        Some(MatrixEventId::new(event_id).unwrap()),
         Some(MatrixUserId::new(me.clone()).unwrap()),
         MatrixEventType::new("m.room.member").unwrap(),
         Some(me),
         None,
-        Some(JOINED_AT),
-        json!({"membership": "join", "displayname": "Scout"}),
+        Some(at),
+        json!({"membership": membership, "displayname": "Scout"}),
     )
     .unwrap()
+    .with_previous_membership(previous.map(str::to_owned))
+}
+
+/// 它自己凭口令进来的那条成员事件。
+fn joined() -> MatrixTimelineEvent {
+    own_member("$join:matrix.test", "join", None, JOINED_AT)
 }
 
 /// 加入以后别人在私人房间里说的一句，正文就是事件 ID。
@@ -152,7 +163,56 @@ async fn 进来时只有解不开的旧消息_等到下一条才说_确认之前
         .push_back(Ok(private_batch("e3", vec![said("$next:matrix.test")])));
     let later = take(&harness).await;
     assert_eq!(event_ids(&later.messages), ["$next:matrix.test"]);
-    assert!(later.gaps.is_empty(), "每个房间只说一次");
+    assert!(later.gaps.is_empty(), "这次加入只说一次");
+}
+
+#[tokio::test(start_paused = true)]
+async fn 被移出以后又凭口令进来_不在的那段再说一次() {
+    let harness = joined_private(vec![
+        private_batch(
+            "e1",
+            vec![
+                locked("$early:matrix.test", JOINED_AT - 1_000),
+                joined(),
+                said("$hello:matrix.test"),
+            ],
+        ),
+        private_batch(
+            "e2",
+            vec![
+                own_member(
+                    "$kicked:matrix.test",
+                    "leave",
+                    Some("join"),
+                    JOINED_AT + 1_000,
+                ),
+                locked("$while-away:matrix.test", JOINED_AT + 2_000),
+                own_member(
+                    "$rejoin:matrix.test",
+                    "join",
+                    Some("leave"),
+                    JOINED_AT + 3_000,
+                ),
+                said("$back:matrix.test"),
+            ],
+        ),
+    ]);
+
+    let first = take(&harness).await;
+    assert_eq!(first.gaps, [before_join("$hello:matrix.test")]);
+    harness
+        .gateway
+        .acknowledge(TOKEN, "$hello:matrix.test", None)
+        .await
+        .unwrap();
+
+    let second = take(&harness).await;
+    assert_eq!(event_ids(&second.messages), ["$back:matrix.test"]);
+    assert_eq!(
+        second.gaps,
+        [before_join("$back:matrix.test")],
+        "不在的时候别人说的也解不开"
+    );
 }
 
 #[tokio::test(start_paused = true)]

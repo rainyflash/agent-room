@@ -387,8 +387,17 @@ pub struct NetworkAgentInboxAppend {
     /// 每个房间的消息记录留最近这么多条（确认过的、它自己发的也算），更早的删掉。
     pub history_capacity: u32,
     /// 这一批里看到它加入、加入之前又有解不开的加密消息的房间。这一段记在这个房间之后第一条
-    /// 进收件箱的消息上（这一批没有就等下一批），每个房间只说一次。
-    pub undecryptable_before_join: Vec<MatrixRoomId>,
+    /// 进收件箱的消息上（这一批没有就等下一批），每次加入只说一次。
+    pub undecryptable_before_join: Vec<NetworkAgentBeforeJoinGap>,
+}
+
+/// 刚进的房间里，加入之前有一段它解不开。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentBeforeJoinGap {
+    pub room_id: MatrixRoomId,
+    /// 服务器收到这次加入的时间。同一次加入再同步到也不再说；被移出以后又凭口令进来是新的一次，
+    /// 离开那段同样解不开，再说一次。
+    pub joined_at: UtcMillis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
