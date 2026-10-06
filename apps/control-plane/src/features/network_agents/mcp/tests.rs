@@ -11,7 +11,7 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use super::super::tests::{FakeAgents, FakeMessaging, TOKEN, app_with};
+use super::super::tests::{FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with};
 use crate::network_gateway::{NetworkAgentRoomQuery, NetworkGatewayFailure};
 
 const NOW: i64 = 1_758_600_000_000;
@@ -81,6 +81,7 @@ async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全
     );
     assert!(instructions.contains("agent_room_join") && instructions.contains("token"));
     assert!(instructions.contains("code") && instructions.contains("agent_room_enter_room"));
+    assert!(instructions.contains("房间号") && instructions.contains("敲门"));
     assert!(instructions.contains("不可信"));
     assert!(instructions.contains("agent_room_room_messages"));
     assert!(instructions.contains("agent_room_get_messages"));
@@ -224,6 +225,81 @@ async fn 凭口令起名_再进一个房间_大厅与口令只能给一个() {
     }
     assert_eq!(agents.created().len(), 1, "写错的不交给网关");
     assert_eq!(messaging.entered.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn 拿房间号起名和再进一个房间都是敲门_第一段话说等管理者放行() {
+    let agents = Arc::new(FakeAgents::default());
+    let messaging = Arc::new(FakeMessaging::default());
+
+    let joined = rpc(
+        app(agents.clone(), messaging.clone()),
+        &call(
+            "agent_room_join",
+            &json!({"name": "Scout", "room": PRIVATE_CATALOG_UUID}),
+        ),
+        None,
+    )
+    .await;
+    let result = &joined["result"];
+    assert_ne!(result["isError"], true, "{joined}");
+    assert_eq!(result["structuredContent"]["token"], TOKEN);
+    assert_eq!(result["structuredContent"]["knock"]["status"], "waiting");
+    assert!(result["structuredContent"].get("room").is_none());
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("已敲门") && text.contains("保存 token"),
+        "{text}"
+    );
+
+    let address = format!("https://agentroom.chat/lobby/{PRIVATE_CATALOG_UUID}");
+    let entered = rpc(
+        app(agents.clone(), messaging.clone()),
+        &call(
+            "agent_room_enter_room",
+            &json!({"token": TOKEN, "room": address}),
+        ),
+        None,
+    )
+    .await;
+    let result = &entered["result"];
+    assert_ne!(result["isError"], true, "{entered}");
+    assert_eq!(
+        result["structuredContent"]["knock"]["catalogId"],
+        PRIVATE_CATALOG_UUID
+    );
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("已敲门")
+    );
+    assert_eq!(
+        messaging.entered.lock().unwrap()[0].1,
+        NetworkAgentRoomRequest::Lobby(Some(address)),
+        "房间网址原样交给网关"
+    );
+
+    *messaging.declined.lock().unwrap() = true;
+    let declined = rpc(
+        app(agents, messaging),
+        &call(
+            "agent_room_enter_room",
+            &json!({"token": TOKEN, "room": PRIVATE_CATALOG_UUID}),
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(
+        declined["result"]["structuredContent"]["knock"]["status"],
+        "declined"
+    );
+    assert!(
+        declined["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("没让你进")
+    );
 }
 
 #[tokio::test]

@@ -1,12 +1,16 @@
-//! 私人房间的 Agent 口令：房主或管理员生成、更换、停用口令，查看并移出凭口令进来的 Agent；
-//! Agent 凭口令以“Agent 成员”身份加入。口令不改变任何人的成员资格，只决定 Agent 能否入场。
+//! 私人房间的 Agent 口令与敲门：房主或管理员生成、更换、停用口令，放行或拒绝敲门的 Agent，查看并
+//! 移出进来的 Agent；Agent 凭口令或经放行以“Agent 成员”身份加入。口令和敲门不改变任何人的成员资格，
+//! 只决定 Agent 能否入场（`specs/network-agents/knock.md`）。
 
 use std::{fmt::Write as _, sync::Arc};
 
 use agent_room_domain::{
     DomainError,
     ids::{AgentId, RoomCatalogId},
-    join_codes::{PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
+    join_codes::{
+        PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
+        PrivateRoomJoinCode,
+    },
     private_rooms::{PrivateRoomMembershipStatus, PrivateRoomPermissions},
     rooms::MatrixRoomReference,
     time::UtcMillis,
@@ -18,11 +22,18 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, MatrixFailure, MatrixFailureKind,
-        MatrixRoomId, PortFuture, PrivateRoomAgentAccessStore, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
-        SecretFactory,
+        MatrixRoomId, PortFuture, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
+        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
+        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
     },
 };
+
+/// 在等的敲门有效这么久（毫秒），再敲一次就从那时重新算。
+pub const AGENT_KNOCK_TTL_MILLIS: i64 = 60 * 60 * 1_000;
+/// 一个房间同时在等的敲门最多这么多个，满了要等最早那个作废。
+pub const MAX_WAITING_AGENT_KNOCKS: u32 = 5;
+/// Agent 查看自己敲过的门时，看这么久以内的（毫秒）。
+const AGENT_KNOCK_HISTORY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentAccessFailureKind {
@@ -120,6 +131,41 @@ pub struct RedeemJoinCode {
     pub code: String,
 }
 
+/// Agent 拿房间号敲门：调用的设备所属账号必须能为这个 Agent 注册实例（网络 Agent 用它自己的网络设备）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnockOnRoom {
+    pub actor: AuthenticatedDevice,
+    pub agent_id: AgentId,
+    pub catalog_id: RoomCatalogId,
+}
+
+/// 敲门的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KnockResult {
+    /// 已经是这个房间的 Agent 成员（凭口令进来过，或放行时没进成）：直接进，不用敲门。
+    Member(RedeemedRoom),
+    /// 记下了，等管理者放行。
+    Waiting(PrivateRoomAgentKnockRecord),
+    /// 以前没让进：不再打扰管理者。
+    Declined(PrivateRoomAgentKnockRecord),
+}
+
+/// 管理者对一次敲门的回答：放行或不让进。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerKnock {
+    pub actor: AuthenticatedPrincipal,
+    pub catalog_id: RoomCatalogId,
+    pub agent_id: AgentId,
+}
+
+/// 放行了：Agent 已记为这个房间的 Agent 成员，敲门还在等。接着由网关替它进房间，进去了再
+/// `complete_knock`；没进成时管理者再点一次，或 Agent 自己再敲一次，都会接着进。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedKnock {
+    pub room: RedeemedRoom,
+    pub agent: PrivateRoomAgentMemberRecord,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentAccessView {
     pub join_code: Option<PrivateRoomJoinCodeRecord>,
@@ -158,6 +204,35 @@ pub trait PrivateRoomAgentAccessUseCases: Send + Sync {
     fn resolve(&self, request: ResolveJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>>;
 
     fn redeem(&self, request: RedeemJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>>;
+
+    /// 房间号对应的私人房间在使用中、收 Agent。敲门之前先核对，房间不对时什么都不建。
+    fn knockable(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>>;
+
+    /// Agent 拿房间号敲门。已经是 Agent 成员的直接进；在等的再敲从现在重新算；以前没让进的不再
+    /// 打扰管理者；房间里在等的满了按限流回答。
+    fn knock(&self, request: KnockOnRoom) -> PortFuture<'_, AgentAccessResult<KnockResult>>;
+
+    /// 这个 Agent 一天以内敲过的门，不论结果，先敲的在前。
+    fn knocks_of(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>>;
+
+    /// 房间里在等的敲门，先敲的在前；只有管理者看得到。
+    fn waiting_knocks(
+        &self,
+        request: InspectAgentAccess,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>>;
+
+    /// 放行：把敲门的 Agent 记为 Agent 成员。敲门这时还在等，进去了再 `complete_knock`。
+    fn admit_knock(&self, request: AnswerKnock)
+    -> PortFuture<'_, AgentAccessResult<AdmittedKnock>>;
+
+    /// 放行的 Agent 进去了：把敲门记为放进来了。
+    fn complete_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>>;
+
+    /// 不让进；原本就不在等也算成功。
+    fn decline_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>>;
 }
 
 pub struct PrivateRoomAgentAccessDependencies {
@@ -329,11 +404,172 @@ impl PrivateRoomAgentAccessService {
                 record.catalog_id,
                 request.agent_id,
                 record.permissions,
+                PrivateRoomAgentJoinedVia::Code,
                 self.clock.now(),
             )
             .await
             .map_err(|error| repository(OPERATION, &error))?;
         Ok(redeemed_room(&snapshot))
+    }
+
+    async fn knock_internal(&self, request: KnockOnRoom) -> AgentAccessResult<KnockResult> {
+        const OPERATION: &str = "private_room.agent_knock.knock";
+        let now = self.clock.now();
+        if request.actor.access_token_expires_at <= now {
+            return Err(AgentAccessFailure::new(
+                OPERATION,
+                AgentAccessFailureKind::Forbidden,
+            ));
+        }
+        let memberships = self
+            .memberships
+            .find_memberships(request.agent_id)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?
+            .ok_or_else(|| AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::NotFound))?;
+        // 和凭口令一样：能给这个 Agent 注册实例的人，才能带它敲门。
+        memberships
+            .ensure_can_register_instance(request.actor.account.principal.id())
+            .map_err(|error| domain(OPERATION, &error))?;
+        let snapshot = self.knock_target(request.catalog_id, OPERATION).await?;
+        let member = self
+            .access
+            .agent_member(request.catalog_id, request.agent_id)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?;
+        if member.is_some_and(|member| member.status == PrivateRoomAgentMemberStatus::Joined) {
+            return Ok(KnockResult::Member(redeemed_room(&snapshot)));
+        }
+        let expires_at = UtcMillis::new(now.value().saturating_add(AGENT_KNOCK_TTL_MILLIS))
+            .map_err(|error| domain(OPERATION, &error))?;
+        match self
+            .access
+            .knock(
+                request.catalog_id,
+                request.agent_id,
+                now,
+                expires_at,
+                MAX_WAITING_AGENT_KNOCKS,
+            )
+            .await
+            .map_err(|error| repository(OPERATION, &error))?
+        {
+            PrivateRoomAgentKnockOutcome::Waiting(record) => Ok(KnockResult::Waiting(record)),
+            PrivateRoomAgentKnockOutcome::Declined(record) => Ok(KnockResult::Declined(record)),
+            PrivateRoomAgentKnockOutcome::RoomFull { retry_at } => {
+                Err(AgentAccessFailure::rate_limited(OPERATION, retry_at))
+            }
+        }
+    }
+
+    async fn knocks_of_internal(
+        &self,
+        agent_id: AgentId,
+    ) -> AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>> {
+        const OPERATION: &str = "private_room.agent_knock.of_agent";
+        let since = UtcMillis::new((self.clock.now().value() - AGENT_KNOCK_HISTORY_MILLIS).max(0))
+            .map_err(|error| domain(OPERATION, &error))?;
+        self.access
+            .agent_knocks(agent_id, since)
+            .await
+            .map_err(|error| repository(OPERATION, &error))
+    }
+
+    async fn waiting_knocks_internal(
+        &self,
+        request: InspectAgentAccess,
+    ) -> AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>> {
+        const OPERATION: &str = "private_room.agent_knock.waiting";
+        self.managed_room(&request.actor, request.catalog_id, OPERATION)
+            .await?;
+        self.access
+            .waiting_knocks(request.catalog_id, self.clock.now())
+            .await
+            .map_err(|error| repository(OPERATION, &error))
+    }
+
+    async fn admit_knock_internal(&self, request: AnswerKnock) -> AgentAccessResult<AdmittedKnock> {
+        const OPERATION: &str = "private_room.agent_knock.admit";
+        let snapshot = self
+            .managed_room(&request.actor, request.catalog_id, OPERATION)
+            .await?;
+        let now = self.clock.now();
+        // 只放行还在等的：作废了、Agent 停用了的都看不到，也放不进来。
+        let waiting = self
+            .access
+            .waiting_knocks(request.catalog_id, now)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?
+            .into_iter()
+            .any(|knock| knock.agent_id == request.agent_id);
+        if !waiting {
+            return Err(AgentAccessFailure::new(
+                OPERATION,
+                AgentAccessFailureKind::NotFound,
+            ));
+        }
+        self.access
+            .admit_agent(
+                request.catalog_id,
+                request.agent_id,
+                PrivateRoomPermissions::AGENT_MEMBER,
+                PrivateRoomAgentJoinedVia::Knock,
+                now,
+            )
+            .await
+            .map_err(|error| repository(OPERATION, &error))?;
+        let agent = self
+            .access
+            .agent_member(request.catalog_id, request.agent_id)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?
+            .ok_or_else(|| AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::Internal))?;
+        Ok(AdmittedKnock {
+            room: redeemed_room(&snapshot),
+            agent,
+        })
+    }
+
+    async fn decide_knock(
+        &self,
+        request: AnswerKnock,
+        status: PrivateRoomAgentKnockStatus,
+        operation: &'static str,
+    ) -> AgentAccessResult<()> {
+        self.managed_room(&request.actor, request.catalog_id, operation)
+            .await?;
+        self.access
+            .decide_knock(
+                request.catalog_id,
+                request.agent_id,
+                status,
+                request.actor.principal_id,
+                self.clock.now(),
+            )
+            .await
+            .map_err(|error| repository(operation, &error))?;
+        Ok(())
+    }
+
+    /// 敲门的房间：使用中的私人房间。不存在、不是私人房间、已归档的都说找不到，不说是哪一种。
+    async fn knock_target(
+        &self,
+        catalog_id: RoomCatalogId,
+        operation: &'static str,
+    ) -> AgentAccessResult<PrivateRoomSnapshot> {
+        let snapshot = self
+            .rooms
+            .find_by_catalog(catalog_id)
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
+        if !snapshot.room().admits_agent_member(true) {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::NotFound,
+            ));
+        }
+        Ok(snapshot)
     }
 
     /// 设备有效、没被限流、口令格式对且存在、房间还在使用中。格式不对多半是抄错，不算一次猜测；
@@ -477,6 +713,55 @@ impl PrivateRoomAgentAccessUseCases for PrivateRoomAgentAccessService {
 
     fn redeem(&self, request: RedeemJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>> {
         Box::pin(self.redeem_internal(request))
+    }
+
+    fn knockable(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>> {
+        Box::pin(async move {
+            self.knock_target(catalog_id, "private_room.agent_knock.check")
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn knock(&self, request: KnockOnRoom) -> PortFuture<'_, AgentAccessResult<KnockResult>> {
+        Box::pin(self.knock_internal(request))
+    }
+
+    fn knocks_of(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(self.knocks_of_internal(agent_id))
+    }
+
+    fn waiting_knocks(
+        &self,
+        request: InspectAgentAccess,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(self.waiting_knocks_internal(request))
+    }
+
+    fn admit_knock(
+        &self,
+        request: AnswerKnock,
+    ) -> PortFuture<'_, AgentAccessResult<AdmittedKnock>> {
+        Box::pin(self.admit_knock_internal(request))
+    }
+
+    fn complete_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        Box::pin(self.decide_knock(
+            request,
+            PrivateRoomAgentKnockStatus::Admitted,
+            "private_room.agent_knock.complete",
+        ))
+    }
+
+    fn decline_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        Box::pin(self.decide_knock(
+            request,
+            PrivateRoomAgentKnockStatus::Declined,
+            "private_room.agent_knock.decline",
+        ))
     }
 }
 

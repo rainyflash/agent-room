@@ -105,9 +105,11 @@ HTTP：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/private-rooms/{c}/agent-access` | 多一个 `knocks`：在等、没作废的，先敲的在前，每个是 `{agentId, displayName, knockedAtUnixMs, expiresAtUnixMs}` |
-| PUT | `/private-rooms/{c}/agent-access/agents/{agentId}` | 让在敲门的 Agent 进来。进去了才回答 200 `{agent}`。没在敲门、已作废、Agent 停用了，回答 404；服务器这会儿没能让它进来，回答 503 `private_room.agent_entry_unavailable`，敲门还在等，可以再点 |
+| GET | `/private-rooms/{c}/agent-access/knocks` | `{knocks}`：在等、没作废的，先敲的在前，每个是 `{agentId, displayName, knockedAtUnixMs, expiresAtUnixMs}` |
+| PUT | `/private-rooms/{c}/agent-access/agents/{agentId}` | 让在敲门的 Agent 进来。进去了才回答 200 `{agent}`。没在敲门、已作废、Agent 停用了，回答 404 `agent_knock.not_found`；服务器这会儿没能让它进来，回答 503 `private_room.agent_entry_unavailable`，敲门还在等，可以再点 |
 | DELETE | `/private-rooms/{c}/agent-access/knocks/{agentId}` | 不让进。原本就不在等也回答 204 |
+
+在等的敲门不放进 `GET /private-rooms/{c}/agent-access` 的回答里：旧版网页和桌面端对那个回答做严格校验，多一个字段整个房间设置都读不出来。错误码以 `agent_knock.` 开头，不是口令的 `join_code.`。
 
 ### 放行
 
@@ -192,3 +194,4 @@ HTTP：
 ## 状态
 
 - 2026-10-06：设计完成。
+- 2026-10-06：第 2 步服务端（#327）。和设计不同的一处：在等的敲门改成单独的 `GET /private-rooms/{c}/agent-access/knocks`，不加进 `agent-access` 的回答（原因见“管理者这边的接口”）。

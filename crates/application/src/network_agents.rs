@@ -5,7 +5,8 @@
 //! 走的同一套用例（建宿主 Agent、登记实例、进大厅、凭口令进私人房间），只是由服务器代表这台设备。
 //!
 //! 私人房间都是端到端加密的：口令对了只放行，由网关先让这个 Agent 的加密客户端就绪，再调用
-//! `enter` 进去（第 3 步）。
+//! `enter` 进去（第 3 步）。拿房间号进私人房间是敲门（`specs/network-agents/knock.md`）：管理者
+//! 放行后由网关按 Agent 取它的会话、调用 `enter_admitted` 替它进去。
 
 use std::sync::Arc;
 
@@ -17,6 +18,7 @@ use agent_room_domain::{
         AgentCreationRequestId, AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId,
         DeviceId, NetworkAgentId, PrincipalId, RoomCatalogId,
     },
+    join_codes::{PrivateRoomAgentKnockStatus, parse_room_number},
     network_agents::{NetworkAgentName, NetworkAgentStatus},
     rooms::{MatrixRoomReference, RoomSlug},
     time::{DurationMillis, UtcMillis},
@@ -36,12 +38,13 @@ use crate::{
         NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
-        NetworkAgentStore, PortFuture, PrincipalAccount, PrincipalRegistration, RateWindowDecision,
-        RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
+        NetworkAgentStore, PortFuture, PrincipalAccount, PrincipalRegistration,
+        PrivateRoomAgentKnockRecord, RateWindowDecision, RateWindowPolicy, RoomDirectory,
+        RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, PrivateRoomAgentAccessUseCases,
-        RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
+        AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
+        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -73,11 +76,13 @@ pub struct NetworkAgentPolicy {
     pub max_live_agents: u64,
     pub messages_per_minute: u32,
     pub messages_per_day: u32,
+    /// 每个来源每小时最多敲几次私人房间的门（拿房间号建人物也算一次）。
+    pub knocks_per_source_per_hour: u32,
 }
 
 impl NetworkAgentPolicy {
     /// 设计文档里的初始值：每个来源每小时建 5 个、每天 20 个，全站同时 500 个；
-    /// 每个网络 Agent 每分钟发 20 条、每天 1000 条。
+    /// 每个网络 Agent 每分钟发 20 条、每天 1000 条；每个来源每小时敲 10 次门。
     pub const fn default_limits(enabled: bool) -> Self {
         Self {
             enabled,
@@ -86,13 +91,16 @@ impl NetworkAgentPolicy {
             max_live_agents: 500,
             messages_per_minute: 20,
             messages_per_day: 1_000,
+            knocks_per_source_per_hour: 10,
         }
     }
 }
 
-/// 要进的房间：公开大厅按名字或 slug（省略就是默认公开大厅），私人房间凭口令。
+/// 要进的房间：公开大厅按名字或 slug（省略就是默认公开大厅），私人房间凭口令或拿房间号敲门。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkAgentRoomRequest {
+    /// 公开大厅的名字或 slug，或者房间号（私人房间网址的最后一段，也收整段网址）：房间号是公开
+    /// 大厅的就直接进，是私人房间的就敲门。
     Lobby(Option<String>),
     /// 房主或管理员给的 Agent 口令。私人房间都是端到端加密的。
     Code(String),
@@ -122,17 +130,58 @@ pub struct CreatedNetworkAgent {
     pub display_name: String,
     /// 只在这一次返回；库里只存摘要。
     pub token: SecretValue,
-    pub room: NetworkAgentRoom,
-    /// 公开大厅已经进了；凭口令的私人房间只放行了还没进，由网关让它的加密客户端就绪后再进。
-    pub entered: bool,
+    pub placement: NetworkAgentPlacement,
+}
+
+/// 新建的网络 Agent 在哪儿。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkAgentPlacement {
+    /// 进了公开大厅。
+    Entered(NetworkAgentRoom),
+    /// 凭口令放行了私人房间，还没进：由网关让它的加密客户端就绪后再进。
+    Admitted(NetworkAgentRoom),
+    /// 敲了私人房间的门，等管理者放行；还不在任何房间里。
+    Knocked(NetworkAgentKnock),
+}
+
+/// 敲私人房间的门的情况。放进来以后它就在那个房间里，不再列在这里。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentKnock {
+    pub catalog_id: RoomCatalogId,
+    pub status: NetworkAgentKnockStatus,
+    pub knocked_at: UtcMillis,
+    /// 在等的到这一刻作废。
+    pub expires_at: UtcMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentKnockStatus {
+    /// 在等管理者放行。
+    Waiting,
+    /// 管理者没让进。
+    Declined,
+    /// 一直没人回答，作废了；还想进就再敲一次。
+    Expired,
+}
+
+impl NetworkAgentKnockStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting",
+            Self::Declined => "declined",
+            Self::Expired => "expired",
+        }
+    }
 }
 
 /// 已有的网络 Agent 要再进一个房间时，先放行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkAgentAdmission {
-    /// 已经在这个公开大厅里：原样返回。
+    /// 已经在这个房间里：原样返回。
     AlreadyIn(NetworkAgentRoom),
     Admitted(NetworkAgentTarget),
+    /// 敲了私人房间的门，等管理者放行。
+    Knocked(NetworkAgentKnock),
 }
 
 /// 放行了、还没进的房间。
@@ -140,7 +189,7 @@ pub enum NetworkAgentAdmission {
 pub enum NetworkAgentTarget {
     /// 公开大厅：进哪一间由大厅分配。
     Lobby(RoomCatalogId),
-    /// 凭口令放行的私人房间，端到端加密。
+    /// 凭口令或经管理者放行的私人房间，端到端加密。
     Private(NetworkAgentRoom),
 }
 
@@ -152,6 +201,8 @@ pub struct NetworkAgentView {
     pub created_at: UtcMillis,
     /// 所在的房间，先进的在前。
     pub rooms: Vec<NetworkAgentRoom>,
+    /// 一天以内敲过、还没放进来的门：在等的、没让进的、作废的。
+    pub knocks: Vec<NetworkAgentKnock>,
 }
 
 /// 网关代网络 Agent 收发时用的身份、Matrix 会话与签名种子。只在进程内传递，调试输出里不出现秘密。
@@ -311,8 +362,9 @@ pub trait NetworkAgentUseCases: Send + Sync {
     /// 能进的公开大厅；总开关关着时回答“已关闭”。
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>>;
 
-    /// 已有的网络 Agent 再进一个房间，先放行：公开大厅已经在里面就原样返回；口令猜错按来源计数，
-    /// 对了就记为那个私人房间的 Agent 成员。放行之后由 `enter` 进去。
+    /// 已有的网络 Agent 再进一个房间，先放行：已经在里面就原样返回；口令猜错按来源计数，对了就记为
+    /// 那个私人房间的 Agent 成员；拿私人房间的房间号就敲门，已经是 Agent 成员的直接放行。放行之后
+    /// 由 `enter` 进去。
     fn admit<'a>(
         &'a self,
         token: &'a str,
@@ -326,6 +378,20 @@ pub trait NetworkAgentUseCases: Send + Sync {
         token: &'a str,
         target: NetworkAgentTarget,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>>;
+
+    /// 管理者放行敲门以后，网关替它进房间时用：按 Agent 取它的会话（不用令牌，不记活动）。
+    /// 只对生效中的网络 Agent；不是网络 Agent 或已停用时回答未认证。
+    fn session_of_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentSession>>;
+
+    /// 替网络 Agent 进管理者放行了的私人房间，并记下来。重复进同一个房间不出错。
+    fn enter_admitted(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentRoom>>;
 
     /// 记下第一次进加密房间的时刻（已经记过的不改），返回记下的那一刻。
     fn mark_encrypted(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<UtcMillis>>;
@@ -395,11 +461,21 @@ pub struct NetworkAgentService {
     matrix_server_name: String,
 }
 
-/// 创建时要进的房间，建人物之前就核对好：口令不对时什么都不建。
+/// 创建时要进的房间，建人物之前就核对好：口令不对、房间号不对时什么都不建。
 enum CreationTarget {
     Lobby(RoomCatalogId),
     /// 口令已经核对过；建好人物后以它的网络设备兑换。
     Private(String),
+    /// 私人房间已经核对过在使用中；建好人物后以它的网络设备敲门。
+    Knock(RoomCatalogId),
+}
+
+/// 按名字、slug 或房间号认出的房间。
+#[derive(Debug, Clone, Copy)]
+enum Place {
+    Lobby(RoomCatalogId),
+    /// 不是公开大厅的房间号：当作私人房间，敲门时再核对。
+    Private(RoomCatalogId),
 }
 
 impl NetworkAgentService {
@@ -515,13 +591,12 @@ impl NetworkAgentService {
             .activate_and_enter(&provisioning, instance_key.public_key, target, now)
             .await
         {
-            Ok((agent_id, room, entered)) => Ok(CreatedNetworkAgent {
+            Ok((agent_id, placement)) => Ok(CreatedNetworkAgent {
                 network_agent_id: id,
                 agent_id,
                 display_name: provisioning.display_name,
                 token,
-                room,
-                entered,
+                placement,
             }),
             Err(failure) => {
                 let _released = self.store.disable(id, self.clock.now()).await;
@@ -531,14 +606,14 @@ impl NetworkAgentService {
     }
 
     /// 以这台网络设备的身份建 Agent、登记实例、保存 Matrix 会话，生效后进大厅；
-    /// 凭口令的只放行（记为私人房间的 Agent 成员），返回的 `bool` 表示进没进。
+    /// 凭口令的只放行（记为私人房间的 Agent 成员），拿房间号的敲门。
     async fn activate_and_enter(
         &self,
         provisioning: &NetworkAgentProvisioning,
         instance_public_key: [u8; 32],
         target: CreationTarget,
         now: UtcMillis,
-    ) -> NetworkAgentResult<(AgentId, NetworkAgentRoom, bool)> {
+    ) -> NetworkAgentResult<(AgentId, NetworkAgentPlacement)> {
         let id = provisioning.id;
         let actor = network_actor(&provisioning.principal, provisioning.device.id(), now)?;
         // 两步都按网络 Agent 的 ID 幂等：重试回到同一个 Agent 与实例。
@@ -588,31 +663,53 @@ impl NetworkAgentService {
             .await
             .map_err(repository)?;
 
-        match target {
+        let agent_id = agent.agent.id();
+        let placement = match target {
             CreationTarget::Lobby(catalog) => {
                 let room = self
-                    .enter_room(&actor, agent.agent.id(), agent_instance_id, catalog, None)
+                    .enter_room(&actor, agent_id, agent_instance_id, catalog, None)
                     .await?;
                 self.record_room(id, &room).await?;
-                Ok((agent.agent.id(), room, true))
+                NetworkAgentPlacement::Entered(room)
             }
             CreationTarget::Private(code) => {
-                let room = self.redeem(actor, agent.agent.id(), code).await?;
-                Ok((agent.agent.id(), room, false))
+                NetworkAgentPlacement::Admitted(self.redeem(actor, agent_id, code).await?)
             }
-        }
+            CreationTarget::Knock(catalog_id) => {
+                match self.knock(actor, agent_id, catalog_id, now).await? {
+                    NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) => {
+                        NetworkAgentPlacement::Admitted(room)
+                    }
+                    NetworkAgentAdmission::Knocked(knock) => NetworkAgentPlacement::Knocked(knock),
+                    NetworkAgentAdmission::AlreadyIn(_)
+                    | NetworkAgentAdmission::Admitted(NetworkAgentTarget::Lobby(_)) => {
+                        return Err(internal());
+                    }
+                }
+            }
+        };
+        Ok((agent_id, placement))
     }
 
-    /// 要进的房间先核对好：大厅要存在，口令要对（猜错计在来源上）。
+    /// 要进的房间先核对好：大厅要存在，口令要对（猜错计在来源上），敲门的私人房间要在使用中
+    /// （敲门计在来源上）。
     async fn creation_target(
         &self,
         room: NetworkAgentRoomRequest,
         source_digest: &[u8; 32],
     ) -> NetworkAgentResult<CreationTarget> {
         match room {
-            NetworkAgentRoomRequest::Lobby(room) => {
-                Ok(CreationTarget::Lobby(self.lobby(room.as_deref()).await?))
-            }
+            NetworkAgentRoomRequest::Lobby(room) => match self.place(room.as_deref()).await? {
+                Place::Lobby(catalog) => Ok(CreationTarget::Lobby(catalog)),
+                Place::Private(catalog) => {
+                    self.access
+                        .knockable(catalog)
+                        .await
+                        .map_err(knock_failure)?;
+                    self.take_knock(source_digest).await?;
+                    Ok(CreationTarget::Knock(catalog))
+                }
+            },
             NetworkAgentRoomRequest::Code(code) => {
                 self.resolve_code(&code, source_digest).await?;
                 Ok(CreationTarget::Private(code))
@@ -635,7 +732,8 @@ impl NetworkAgentService {
             .map_err(repository)?;
         match room {
             NetworkAgentRoomRequest::Lobby(room) => {
-                let catalog = self.lobby(room.as_deref()).await?;
+                let place = self.place(room.as_deref()).await?;
+                let (Place::Lobby(catalog) | Place::Private(catalog)) = place;
                 let joined = self
                     .store
                     .rooms(record.id)
@@ -643,10 +741,19 @@ impl NetworkAgentService {
                     .map_err(repository)?
                     .into_iter()
                     .find(|room| room.catalog_id == catalog);
-                Ok(match joined {
-                    Some(room) => NetworkAgentAdmission::AlreadyIn(self.named(room).await?),
-                    None => NetworkAgentAdmission::Admitted(NetworkAgentTarget::Lobby(catalog)),
-                })
+                if let Some(room) = joined {
+                    return Ok(NetworkAgentAdmission::AlreadyIn(self.named(room).await?));
+                }
+                match place {
+                    Place::Lobby(catalog) => Ok(NetworkAgentAdmission::Admitted(
+                        NetworkAgentTarget::Lobby(catalog),
+                    )),
+                    Place::Private(catalog) => {
+                        self.take_knock(&source_digest).await?;
+                        self.knock(self.actor_of(&record, now)?, agent_id, catalog, now)
+                            .await
+                    }
+                }
             }
             NetworkAgentRoomRequest::Code(code) => {
                 // 先按来源核对，猜错计在来源上；对了再以它自己的网络设备兑换。已经在里面时
@@ -668,11 +775,30 @@ impl NetworkAgentService {
         target: NetworkAgentTarget,
     ) -> NetworkAgentResult<NetworkAgentRoom> {
         let record = self.authenticated(token).await?;
+        self.enter_as(&record, target).await
+    }
+
+    async fn enter_admitted_internal(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> NetworkAgentResult<NetworkAgentRoom> {
+        let record = self.active_by_agent(agent_id).await?;
+        self.enter_as(&record, NetworkAgentTarget::Private(room))
+            .await
+    }
+
+    /// 以这个网络 Agent 的网络设备进房间，并记下来。
+    async fn enter_as(
+        &self,
+        record: &NetworkAgentRecord,
+        target: NetworkAgentTarget,
+    ) -> NetworkAgentResult<NetworkAgentRoom> {
         let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
         else {
             return Err(internal());
         };
-        let actor = self.actor_of(&record, self.clock.now())?;
+        let actor = self.actor_of(record, self.clock.now())?;
         let room = match target {
             NetworkAgentTarget::Lobby(catalog) => {
                 self.enter_room(&actor, agent_id, agent_instance_id, catalog, None)
@@ -715,6 +841,43 @@ impl NetworkAgentService {
             )
             .await
             .map_err(repository)
+    }
+
+    /// 以这个网络 Agent 的网络设备敲门：已经是 Agent 成员的直接放行。
+    async fn knock(
+        &self,
+        actor: AuthenticatedDevice,
+        agent_id: AgentId,
+        catalog_id: RoomCatalogId,
+        now: UtcMillis,
+    ) -> NetworkAgentResult<NetworkAgentAdmission> {
+        let result = self
+            .access
+            .knock(KnockOnRoom {
+                actor,
+                agent_id,
+                catalog_id,
+            })
+            .await
+            .map_err(knock_failure)?;
+        Ok(match result {
+            KnockResult::Member(room) => {
+                NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(private_room(room)))
+            }
+            KnockResult::Waiting(record) | KnockResult::Declined(record) => {
+                NetworkAgentAdmission::Knocked(knock_view(&record, now).ok_or_else(internal)?)
+            }
+        })
+    }
+
+    /// 敲门按来源计数：每小时有上限，超了告诉 Agent 什么时候能再敲。
+    async fn take_knock(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
+        self.take(
+            &format!("knock:{}", hex(source)),
+            3_600_000,
+            self.policy.knocks_per_source_per_hour,
+        )
+        .await
     }
 
     /// 核对口令：猜错按来源计数，与本机设备分开计。
@@ -789,17 +952,61 @@ impl NetworkAgentService {
         for room in self.store.rooms(record.id).await.map_err(repository)? {
             rooms.push(self.named(room).await?);
         }
+        let now = self.clock.now();
+        let knocks = self
+            .access
+            .knocks_of(agent_id)
+            .await
+            .map_err(|_| dependency())?
+            .iter()
+            .filter(|knock| !rooms.iter().any(|room| room.catalog_id == knock.catalog_id))
+            .filter_map(|knock| knock_view(knock, now))
+            .collect();
         Ok(NetworkAgentView {
             network_agent_id: record.id,
             agent_id,
             display_name: record.display_name,
             created_at: record.created_at,
             rooms,
+            knocks,
         })
     }
 
     async fn session_internal(&self, token: &str) -> NetworkAgentResult<NetworkAgentSession> {
         let record = self.authenticated(token).await?;
+        self.store
+            .record_activity(record.id, self.clock.now())
+            .await
+            .map_err(repository)?;
+        self.open_session(record).await
+    }
+
+    async fn session_of_agent_internal(
+        &self,
+        agent_id: AgentId,
+    ) -> NetworkAgentResult<NetworkAgentSession> {
+        let record = self.active_by_agent(agent_id).await?;
+        self.open_session(record).await
+    }
+
+    /// 生效中的网络 Agent：按 Agent 找，不是网络 Agent 或已停用时回答未认证。
+    async fn active_by_agent(&self, agent_id: AgentId) -> NetworkAgentResult<NetworkAgentRecord> {
+        if !self.policy.enabled {
+            return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
+        }
+        self.store
+            .find_by_agent(agent_id)
+            .await
+            .map_err(repository)?
+            .filter(|record| record.status == NetworkAgentStatus::Active)
+            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))
+    }
+
+    /// 解开封存的 Matrix 会话与签名种子，连同所在的房间交给网关。
+    async fn open_session(
+        &self,
+        record: NetworkAgentRecord,
+    ) -> NetworkAgentResult<NetworkAgentSession> {
         let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
         else {
             return Err(internal());
@@ -811,10 +1018,6 @@ impl NetworkAgentService {
             .open_secret(record.id, NetworkAgentSecretKind::InstanceSigningSeed)
             .await?;
         let rooms = self.store.rooms(record.id).await.map_err(repository)?;
-        self.store
-            .record_activity(record.id, self.clock.now())
-            .await
-            .map_err(repository)?;
         Ok(self.session_of(
             record,
             (agent_id, agent_instance_id),
@@ -1121,6 +1324,26 @@ impl NetworkAgentService {
             .collect())
     }
 
+    /// 认出要进的房间：房间号是公开大厅的就进那间，不是的当作私人房间（敲门时再核对）；别的按公开
+    /// 大厅的名字或 slug 找。
+    async fn place(&self, wanted: Option<&str>) -> NetworkAgentResult<Place> {
+        let Some(catalog) = wanted.and_then(parse_room_number) else {
+            return self.lobby(wanted).await.map(Place::Lobby);
+        };
+        let lobbies = self
+            .directory
+            .list_public(&RoomDirectoryQuery::default())
+            .await
+            .map_err(repository)?;
+        Ok(
+            if lobbies.iter().any(|entry| entry.catalog.id() == catalog) {
+                Place::Lobby(catalog)
+            } else {
+                Place::Private(catalog)
+            },
+        )
+    }
+
     /// 按名字或 slug 找公开大厅：先精确，再忽略大小写；不给名字就是默认公开大厅。
     async fn lobby(&self, wanted: Option<&str>) -> NetworkAgentResult<RoomCatalogId> {
         let lobbies = self
@@ -1318,6 +1541,21 @@ impl NetworkAgentUseCases for NetworkAgentService {
         Box::pin(self.enter_internal(token, target))
     }
 
+    fn session_of_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentSession>> {
+        Box::pin(self.session_of_agent_internal(agent_id))
+    }
+
+    fn enter_admitted(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentRoom>> {
+        Box::pin(self.enter_admitted_internal(agent_id, room))
+    }
+
     fn mark_encrypted(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<UtcMillis>> {
         Box::pin(async move {
             self.store
@@ -1386,6 +1624,40 @@ fn network_actor(
             .checked_add(DurationMillis::new(ACTOR_LIFETIME_MILLIS).map_err(|_| internal())?)
             .map_err(|_| internal())?,
     })
+}
+
+/// 给 Agent 看的敲门：放进来了的不列（它已经在房间里），在等的过了期算作废。
+fn knock_view(record: &PrivateRoomAgentKnockRecord, now: UtcMillis) -> Option<NetworkAgentKnock> {
+    let status = match record.status {
+        PrivateRoomAgentKnockStatus::Admitted => return None,
+        PrivateRoomAgentKnockStatus::Declined => NetworkAgentKnockStatus::Declined,
+        PrivateRoomAgentKnockStatus::Waiting if record.expires_at <= now => {
+            NetworkAgentKnockStatus::Expired
+        }
+        PrivateRoomAgentKnockStatus::Waiting => NetworkAgentKnockStatus::Waiting,
+    };
+    Some(NetworkAgentKnock {
+        catalog_id: record.catalog_id,
+        status,
+        knocked_at: record.knocked_at,
+        expires_at: record.expires_at,
+    })
+}
+
+/// 敲门的房间不对（不存在、不是私人房间、已归档）时，和找不到公开大厅一样回答。
+fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
+    match failure.kind() {
+        AgentAccessFailureKind::NotFound
+        | AgentAccessFailureKind::Conflict
+        | AgentAccessFailureKind::InvalidRequest => NetworkAgentFailure::room_not_found(Vec::new()),
+        AgentAccessFailureKind::RateLimited => failure
+            .retry_at()
+            .map_or_else(dependency, NetworkAgentFailure::rate_limited),
+        AgentAccessFailureKind::DependencyUnavailable | AgentAccessFailureKind::UnknownCommit => {
+            dependency()
+        }
+        AgentAccessFailureKind::Forbidden | AgentAccessFailureKind::Internal => internal(),
+    }
 }
 
 fn private_room(room: RedeemedRoom) -> NetworkAgentRoom {

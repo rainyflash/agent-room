@@ -16,9 +16,10 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentMatrixDevice, NetworkAgentPendingExit, NetworkAgentResult,
-        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget,
-        NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
+        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
+        NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -70,9 +71,9 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::{
-    EncryptedSessions, EncryptedSpeaker, NetworkAgentCleanupOutcome, NetworkAgentMessageDraft,
-    NetworkAgentMessaging, NetworkAgentWait, NetworkGateway, NetworkGatewayDependencies,
-    NetworkGatewayFailure,
+    AdmittedAgentEntry, EncryptedSessions, EncryptedSpeaker, NetworkAgentCleanupOutcome,
+    NetworkAgentEntry, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkAgentWait,
+    NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
 };
 use agent_room_bridge_ipc::wake::{WaitOptions, WakeReason, WakeRule};
 
@@ -163,21 +164,24 @@ impl FakeAgents {
 }
 
 impl NetworkAgentUseCases for FakeAgents {
-    /// 凭口令创建：只放行了私人房间，还没进。
+    /// 凭口令创建：只放行了私人房间，还没进。拿房间号创建：只敲了门。
     fn create(
         &self,
         request: CreateNetworkAgent,
     ) -> PortFuture<'_, NetworkAgentResult<CreatedNetworkAgent>> {
         self.log.lock().unwrap().push("create".to_owned());
-        assert!(matches!(request.room, NetworkAgentRoomRequest::Code(_)));
+        let placement = match request.room {
+            NetworkAgentRoomRequest::Code(_) => NetworkAgentPlacement::Admitted(private_room()),
+            NetworkAgentRoomRequest::Lobby(Some(_)) => NetworkAgentPlacement::Knocked(knock()),
+            NetworkAgentRoomRequest::Lobby(None) => unreachable!("网关测试只建私人房间的"),
+        };
         Box::pin(async move {
             Ok(CreatedNetworkAgent {
                 network_agent_id: network_agent_id(),
                 agent_id: agent(OWN_AGENT),
                 display_name: request.name,
                 token: SecretValue::new(TOKEN).unwrap(),
-                room: private_room(),
-                entered: false,
+                placement,
             })
         })
     }
@@ -203,6 +207,35 @@ impl NetworkAgentUseCases for FakeAgents {
             ))
         };
         Box::pin(async move { result })
+    }
+
+    /// 按 Agent 取会话：只认自己，停用过的不认。
+    fn session_of_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentSession>> {
+        self.log.lock().unwrap().push("session_of_agent".to_owned());
+        let result = if agent_id == agent(OWN_AGENT) && self.disabled.lock().unwrap().is_empty() {
+            Ok(self.own_session())
+        } else {
+            Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::Unauthorized,
+            ))
+        };
+        Box::pin(async move { result })
+    }
+
+    fn enter_admitted(
+        &self,
+        _agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentRoom>> {
+        self.log.lock().unwrap().push("enter_admitted".to_owned());
+        self.entered
+            .lock()
+            .unwrap()
+            .push(NetworkAgentTarget::Private(room.clone()));
+        Box::pin(async move { Ok(room) })
     }
 
     fn take_message_quota(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
@@ -1471,6 +1504,23 @@ fn private_room() -> NetworkAgentRoom {
         catalog_id: RoomCatalogId::from_uuid(uuid(PRINCIPAL)),
         matrix_room_id: MatrixRoomReference::new(PRIVATE_ROOM.to_owned()).unwrap(),
         name: "项目室".to_owned(),
+    }
+}
+
+fn knock() -> NetworkAgentKnock {
+    NetworkAgentKnock {
+        catalog_id: private_room().catalog_id,
+        status: NetworkAgentKnockStatus::Waiting,
+        knocked_at: UtcMillis::new(1_000).unwrap(),
+        expires_at: UtcMillis::new(3_601_000).unwrap(),
+    }
+}
+
+/// 进去了的房间；敲门的不算。
+fn entered(entry: NetworkAgentEntry) -> NetworkAgentRoom {
+    match entry {
+        NetworkAgentEntry::Entered(room) => room,
+        NetworkAgentEntry::Knocked(knock) => panic!("只敲了门：{knock:?}"),
     }
 }
 
@@ -3171,8 +3221,10 @@ async fn 凭口令创建时先切到加密客户端建好身份再进房间_之�
         .await
         .expect("创建成功");
 
-    assert!(created.entered);
-    assert_eq!(created.room, private_room());
+    assert_eq!(
+        created.placement,
+        NetworkAgentPlacement::Entered(private_room())
+    );
     assert_eq!(
         harness.agents.log(),
         ["create", "mark_encrypted", "prepare", "enter", "refresh"],
@@ -3260,20 +3312,22 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         .enter_room(TOKEN, NetworkAgentRoomRequest::Lobby(None), [1; 32])
         .await
         .unwrap();
-    assert_eq!(same, lobby);
+    assert_eq!(same, NetworkAgentEntry::Entered(lobby));
     assert!(
         harness.matrix.states.lock().unwrap().is_empty(),
         "已经在里面的不用再说"
     );
-    let other = harness
-        .gateway
-        .enter_room(
-            TOKEN,
-            NetworkAgentRoomRequest::Lobby(Some("rust-night".to_owned())),
-            [1; 32],
-        )
-        .await
-        .unwrap();
+    let other = entered(
+        harness
+            .gateway
+            .enter_room(
+                TOKEN,
+                NetworkAgentRoomRequest::Lobby(Some("rust-night".to_owned())),
+                [1; 32],
+            )
+            .await
+            .unwrap(),
+    );
     assert_eq!(other.matrix_room_id.as_str(), SECOND_ROOM);
     assert!(
         harness.encrypted.prepared.lock().unwrap().is_empty(),
@@ -3281,15 +3335,17 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
     );
     assert_online_announced(&harness);
 
-    let private = harness
-        .gateway
-        .enter_room(
-            TOKEN,
-            NetworkAgentRoomRequest::Code("K7P3-Q9XW-2DMA".to_owned()),
-            [1; 32],
-        )
-        .await
-        .unwrap();
+    let private = entered(
+        harness
+            .gateway
+            .enter_room(
+                TOKEN,
+                NetworkAgentRoomRequest::Code("K7P3-Q9XW-2DMA".to_owned()),
+                [1; 32],
+            )
+            .await
+            .unwrap(),
+    );
     assert_eq!(private, private_room());
     assert_eq!(
         *harness.encrypted.prepared.lock().unwrap(),
@@ -3315,6 +3371,115 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
             NetworkAgentFailureKind::CodeInvalid
         ))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 拿房间号只敲门_不切加密客户端_也不说在线() {
+    let harness = harness();
+    let created = harness
+        .gateway
+        .create(CreateNetworkAgent {
+            name: "Sol".to_owned(),
+            room: NetworkAgentRoomRequest::Lobby(Some(private_room().catalog_id.to_string())),
+            source_digest: [1; 32],
+        })
+        .await
+        .expect("敲门成功");
+    assert_eq!(created.placement, NetworkAgentPlacement::Knocked(knock()));
+
+    harness
+        .agents
+        .admissions
+        .lock()
+        .unwrap()
+        .push_back(Ok(NetworkAgentAdmission::Knocked(knock())));
+    let again = harness
+        .gateway
+        .enter_room(
+            TOKEN,
+            NetworkAgentRoomRequest::Lobby(Some(private_room().catalog_id.to_string())),
+            [1; 32],
+        )
+        .await
+        .unwrap();
+    assert_eq!(again, NetworkAgentEntry::Knocked(knock()));
+
+    assert!(harness.encrypted.prepared.lock().unwrap().is_empty());
+    assert!(harness.agents.entered.lock().unwrap().is_empty());
+    assert!(
+        harness.matrix.states.lock().unwrap().is_empty(),
+        "不在房间里，不说在线"
+    );
+    assert!(harness.agents.disabled.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 放行后替它进房间_和凭口令一样先切到加密客户端建好身份_进了说在线() {
+    let harness = harness();
+
+    let room = harness
+        .gateway
+        .enter_admitted(agent(OWN_AGENT), private_room())
+        .await
+        .expect("替它进去了");
+
+    assert_eq!(room, private_room());
+    assert_eq!(
+        harness.agents.log(),
+        [
+            "session_of_agent",
+            "mark_encrypted",
+            "prepare",
+            "enter_admitted",
+            "session_of_agent",
+            "refresh",
+        ],
+        "身份建好之前不进；进了以后同步一次"
+    );
+    assert_eq!(
+        *harness.agents.entered.lock().unwrap(),
+        [NetworkAgentTarget::Private(private_room())]
+    );
+    assert_online_announced(&harness);
+
+    // 之后它自己收消息也走加密客户端。
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
+        .await
+        .unwrap();
+    assert!(harness.matrix.requests().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 放行时它已停用或加密客户端没就绪_回答失败_不进房间_也不停用它() {
+    let harness = harness();
+    assert_eq!(
+        harness
+            .gateway
+            .enter_admitted(agent(OTHER_AGENT), private_room())
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+            NetworkAgentFailureKind::Unauthorized
+        ))
+    );
+    assert!(harness.encrypted.prepared.lock().unwrap().is_empty());
+
+    *harness.encrypted.prepare_failure.lock().unwrap() = Some(NetworkGatewayFailure::Unavailable);
+    assert_eq!(
+        harness
+            .gateway
+            .enter_admitted(agent(OWN_AGENT), private_room())
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::Unavailable
+    );
+    assert!(harness.agents.entered.lock().unwrap().is_empty());
+    assert!(
+        harness.agents.disabled.lock().unwrap().is_empty(),
+        "放行没进成，敲门还在等，不停用它"
     );
 }
 

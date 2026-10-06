@@ -10,22 +10,23 @@ use agent_room_application::{
         DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
         RevokedDevice,
     },
+    network_agents::{NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoom},
     ports::{
-        MatrixUserId, PortFuture, PrincipalAccount, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, SecretFactory, SecretValue,
+        MatrixUserId, PortFuture, PrincipalAccount, PrivateRoomAgentKnockRecord,
+        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, SecretFactory, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, AgentAccessView,
-        GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller, ManageJoinCode,
-        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
-        ResolveJoinCode,
+        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
+        AgentAccessView, AnswerKnock, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller,
+        KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomAgentAccessUseCases, RedeemJoinCode,
+        RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
     },
 };
 use agent_room_domain::{
     devices::Device,
     identity::Principal,
     ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId},
-    join_codes::{PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
+    join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     private_rooms::PrivateRoomPermissions,
     rooms::MatrixRoomReference,
     time::UtcMillis,
@@ -43,6 +44,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::{PrivateRoomAgentHttpDependencies, PrivateRoomAgentHttpState, router};
+use crate::network_gateway::{AdmittedAgentEntry, NetworkGatewayFailure};
 
 const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 const OWNER_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
@@ -56,6 +58,27 @@ struct FakeAccess {
     redeemed: Mutex<Option<RedeemJoinCode>>,
     resolved: Mutex<Option<ResolveJoinCode>>,
     redeem_failure: Mutex<Option<AgentAccessFailureKind>>,
+    /// 回答敲门时用例回答的失败。
+    knock_failure: Mutex<Option<AgentAccessFailureKind>>,
+}
+
+/// 网关替身：记下替谁进了哪个房间，按预设成功或失败。
+#[derive(Default)]
+struct FakeEntry {
+    entered: Mutex<Vec<(AgentId, NetworkAgentRoom)>>,
+    failure: Mutex<Option<NetworkGatewayFailure>>,
+}
+
+impl AdmittedAgentEntry for FakeEntry {
+    fn enter_admitted(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> PortFuture<'_, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+        self.entered.lock().unwrap().push((agent_id, room.clone()));
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(room), Err) })
+    }
 }
 
 impl FakeAccess {
@@ -82,17 +105,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
                     created_by: owner_id(),
                     created_at: time(1_700_000_000_000),
                 }),
-                agents: vec![PrivateRoomAgentMemberRecord {
-                    catalog_id: request.catalog_id,
-                    agent_id: agent_id(),
-                    display_name: "Scout".to_owned(),
-                    matrix_user_id: MatrixUserId::new("@_agent_scout:matrix.test").unwrap(),
-                    owner_display_name: Some("Bob".to_owned()),
-                    status: PrivateRoomAgentMemberStatus::Joined,
-                    permissions: PrivateRoomPermissions::AGENT_MEMBER,
-                    joined_at: time(1_700_000_100_000),
-                    status_changed_at: time(1_700_000_100_000),
-                }],
+                agents: vec![member_record(request.catalog_id)],
             })
         })
     }
@@ -142,6 +155,103 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
             }
             Ok(room())
         })
+    }
+
+    fn knockable(&self, _catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>> {
+        unreachable!("敲门由网络 Agent 的接口做")
+    }
+
+    fn knock(&self, _request: KnockOnRoom) -> PortFuture<'_, AgentAccessResult<KnockResult>> {
+        unreachable!("敲门由网络 Agent 的接口做")
+    }
+
+    fn knocks_of(
+        &self,
+        _agent_id: AgentId,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        unreachable!("敲门由网络 Agent 的接口做")
+    }
+
+    fn waiting_knocks(
+        &self,
+        request: InspectAgentAccess,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        self.record(format!("knocks:{}", request.catalog_id));
+        let failure = *self.knock_failure.lock().unwrap();
+        Box::pin(async move {
+            if let Some(kind) = failure {
+                return Err(AgentAccessFailure::new("test.knocks", kind));
+            }
+            Ok(vec![knock_record()])
+        })
+    }
+
+    fn admit_knock(
+        &self,
+        request: AnswerKnock,
+    ) -> PortFuture<'_, AgentAccessResult<AdmittedKnock>> {
+        self.record(format!("admit:{}:{}", request.catalog_id, request.agent_id));
+        let failure = *self.knock_failure.lock().unwrap();
+        Box::pin(async move {
+            if let Some(kind) = failure {
+                return Err(AgentAccessFailure::new("test.admit", kind));
+            }
+            Ok(AdmittedKnock {
+                room: room(),
+                agent: PrivateRoomAgentMemberRecord {
+                    owner_display_name: None,
+                    ..member_record(request.catalog_id)
+                },
+            })
+        })
+    }
+
+    fn complete_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        self.record(format!(
+            "complete:{}:{}",
+            request.catalog_id, request.agent_id
+        ));
+        Box::pin(async { Ok(()) })
+    }
+
+    fn decline_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        self.record(format!(
+            "decline:{}:{}",
+            request.catalog_id, request.agent_id
+        ));
+        let failure = *self.knock_failure.lock().unwrap();
+        Box::pin(async move {
+            match failure {
+                Some(kind) => Err(AgentAccessFailure::new("test.decline", kind)),
+                None => Ok(()),
+            }
+        })
+    }
+}
+
+fn member_record(catalog_id: RoomCatalogId) -> PrivateRoomAgentMemberRecord {
+    PrivateRoomAgentMemberRecord {
+        catalog_id,
+        agent_id: agent_id(),
+        display_name: "Scout".to_owned(),
+        matrix_user_id: MatrixUserId::new("@_agent_scout:matrix.test").unwrap(),
+        owner_display_name: Some("Bob".to_owned()),
+        status: PrivateRoomAgentMemberStatus::Joined,
+        permissions: PrivateRoomPermissions::AGENT_MEMBER,
+        joined_at: time(1_700_000_100_000),
+        status_changed_at: time(1_700_000_100_000),
+    }
+}
+
+fn knock_record() -> PrivateRoomAgentKnockRecord {
+    PrivateRoomAgentKnockRecord {
+        catalog_id: catalog_id(),
+        agent_id: agent_id(),
+        display_name: "Sol".to_owned(),
+        status: PrivateRoomAgentKnockStatus::Waiting,
+        knocked_at: time(1_700_000_300_000),
+        expires_at: time(1_700_003_900_000),
+        decided_at: None,
     }
 }
 
@@ -447,13 +557,173 @@ async fn 兑换失败映射成稳定错误码_限流带重试时间() {
     assert!(access.redeemed.lock().unwrap().is_none());
 }
 
+#[tokio::test]
+async fn 管理者看在敲门的_单独一个接口() {
+    let access = Arc::new(FakeAccess::default());
+    let response = app(access.clone(), Arc::default())
+        .oneshot(web(Method::GET, "/agent-access/knocks", false))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        json_of(response).await,
+        json!({"knocks": [{
+            "agentId": AGENT_UUID,
+            "displayName": "Sol",
+            "knockedAtUnixMs": 1_700_000_300_000_i64,
+            "expiresAtUnixMs": 1_700_003_900_000_i64,
+        }]})
+    );
+    assert_eq!(access.calls(), [format!("knocks:{CATALOG_UUID}")]);
+
+    *access.knock_failure.lock().unwrap() = Some(AgentAccessFailureKind::Forbidden);
+    let response = app(access, Arc::default())
+        .oneshot(web(Method::GET, "/agent-access/knocks", false))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_of(response).await["code"], "agent_knock.forbidden");
+}
+
+#[tokio::test]
+async fn 让它进来要可信来源_网关替它进房间_进去了才记为放进来了() {
+    let access = Arc::new(FakeAccess::default());
+    let entry = Arc::new(FakeEntry::default());
+    let path = format!("/agent-access/agents/{AGENT_UUID}");
+    let refused = app_with_entry(access.clone(), Arc::default(), entry.clone())
+        .oneshot(web(Method::PUT, &path, false))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert!(access.calls().is_empty());
+
+    let response = app_with_entry(access.clone(), Arc::default(), entry.clone())
+        .oneshot(web(Method::PUT, &path, true))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = json_of(response).await;
+    assert_eq!(body["agent"]["agentId"], AGENT_UUID);
+    assert_eq!(body["agent"]["status"], "joined");
+    assert_eq!(body["agent"]["ownerDisplayName"], Value::Null);
+    assert_eq!(
+        access.calls(),
+        [
+            format!("admit:{CATALOG_UUID}:{AGENT_UUID}"),
+            format!("complete:{CATALOG_UUID}:{AGENT_UUID}"),
+        ]
+    );
+    let entered = entry.entered.lock().unwrap().clone();
+    assert_eq!(entered.len(), 1);
+    assert_eq!(entered[0].0, agent_id());
+    assert_eq!(entered[0].1.catalog_id, catalog_id());
+    assert_eq!(entered[0].1.matrix_room_id.as_str(), "!project:matrix.test");
+    assert_eq!(entered[0].1.name, "项目室");
+}
+
+#[tokio::test]
+async fn 网关没让它进去时敲门还在等_它停用了就和没在敲门一样() {
+    let path = format!("/agent-access/agents/{AGENT_UUID}");
+    for (failure, status, code) in [
+        (
+            NetworkGatewayFailure::Unavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "private_room.agent_entry_unavailable",
+        ),
+        (
+            NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::DependencyUnavailable,
+            )),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "private_room.agent_entry_unavailable",
+        ),
+        (
+            NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::Unauthorized,
+            )),
+            StatusCode::NOT_FOUND,
+            "agent_knock.not_found",
+        ),
+    ] {
+        let access = Arc::new(FakeAccess::default());
+        let entry = Arc::new(FakeEntry::default());
+        *entry.failure.lock().unwrap() = Some(failure);
+        let response = app_with_entry(access.clone(), Arc::default(), entry)
+            .oneshot(web(Method::PUT, &path, true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{code}");
+        assert_eq!(json_of(response).await["code"], code);
+        assert_eq!(
+            access.calls(),
+            [format!("admit:{CATALOG_UUID}:{AGENT_UUID}")],
+            "没进去就不记为放进来了"
+        );
+    }
+}
+
+#[tokio::test]
+async fn 敲门不在了回答_404_不让进回答_204() {
+    let access = Arc::new(FakeAccess::default());
+    let entry = Arc::new(FakeEntry::default());
+    *access.knock_failure.lock().unwrap() = Some(AgentAccessFailureKind::NotFound);
+    let response = app_with_entry(access.clone(), Arc::default(), entry.clone())
+        .oneshot(web(
+            Method::PUT,
+            &format!("/agent-access/agents/{AGENT_UUID}"),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_of(response).await["code"], "agent_knock.not_found");
+    assert!(entry.entered.lock().unwrap().is_empty(), "不找网关");
+
+    let access = Arc::new(FakeAccess::default());
+    let path = format!("/agent-access/knocks/{AGENT_UUID}");
+    let refused = app(access.clone(), Arc::default())
+        .oneshot(web(Method::DELETE, &path, false))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert!(access.calls().is_empty());
+    let declined = app(access.clone(), Arc::default())
+        .oneshot(web(Method::DELETE, &path, true))
+        .await
+        .unwrap();
+    assert_eq!(declined.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        access.calls(),
+        [format!("decline:{CATALOG_UUID}:{AGENT_UUID}")]
+    );
+
+    *access.knock_failure.lock().unwrap() = Some(AgentAccessFailureKind::Forbidden);
+    let forbidden = app(access, Arc::default())
+        .oneshot(web(Method::DELETE, &path, true))
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_of(forbidden).await["code"], "agent_knock.forbidden");
+}
+
 fn app(access: Arc<FakeAccess>, devices: Arc<FakeDevices>) -> axum::Router {
+    app_with_entry(access, devices, Arc::default())
+}
+
+fn app_with_entry(
+    access: Arc<FakeAccess>,
+    devices: Arc<FakeDevices>,
+    entry: Arc<FakeEntry>,
+) -> axum::Router {
     let state = PrivateRoomAgentHttpState::new(
         PrivateRoomAgentHttpDependencies {
             access,
             authentication: Arc::new(FakeAuthentication),
             devices,
             secrets: Arc::new(SecureSecretFactory),
+            entry,
         },
         &Url::parse(FRONTEND_ORIGIN).unwrap(),
         &crate::config::DesktopOrigins::for_tests(),

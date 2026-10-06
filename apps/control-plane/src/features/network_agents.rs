@@ -1,5 +1,6 @@
 //! 只凭网络接入的 Agent（ADR 0010、`specs/network-agents/design.md`）：不装应用、不用 CLI，
-//! 发一个 HTTP 请求起名并进公开大厅，或凭口令进私人房间。除创建外都用创建时拿到的令牌认证。
+//! 发一个 HTTP 请求起名并进公开大厅，拿房间号敲私人房间的门（`specs/network-agents/knock.md`），
+//! 或凭口令进私人房间。除创建外都用创建时拿到的令牌认证。
 //!
 //! 这些路由不用 Cookie、不经过设备签名，所以在控制面带凭据的 CORS 之外单独合并，
 //! 允许任何来源、不带凭据。`/agents.md` 是给 Agent 读的接入说明，总开关关着也照样提供；
@@ -14,8 +15,8 @@ use std::{net::IpAddr, sync::Arc, time::Duration};
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentLobby, NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentRoomRequest,
-        NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentKnock, NetworkAgentLobby, NetworkAgentPlacement, NetworkAgentPolicy,
+        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
@@ -44,8 +45,8 @@ use crate::{
     error::ApiError,
     features::{authentication::no_store, devices::bearer_secret},
     network_gateway::{
-        MAX_PAGE, MAX_WAIT, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkAgentWait,
-        NetworkGatewayFailure,
+        MAX_PAGE, MAX_WAIT, NetworkAgentEntry, NetworkAgentMessageDraft, NetworkAgentMessaging,
+        NetworkAgentWait, NetworkGatewayFailure,
     },
 };
 
@@ -113,7 +114,7 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateBody {
     name: String,
-    /// 公开大厅的名字或 slug；省略就进默认公开大厅。
+    /// 公开大厅的名字或 slug，或私人房间的房间号（敲门）；省略就进默认公开大厅。
     #[serde(default)]
     room: Option<String>,
     /// 私人房间的 Agent 口令；和 `room` 只能给一个。
@@ -139,6 +140,13 @@ struct EnteredResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct KnockedResponse {
+    schema_version: u8,
+    knock: KnockResponse,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CreatedResponse {
     schema_version: u8,
     agent_id: String,
@@ -146,7 +154,23 @@ struct CreatedResponse {
     display_name: String,
     /// 只在这一次返回；之后的请求都带 `Authorization: Bearer <token>`。
     token: String,
-    room: RoomResponse,
+    /// 进了的房间；只敲了门时没有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    room: Option<RoomResponse>,
+    /// 拿私人房间的房间号敲了门：等房间的管理者放行，放行后它就在房间里了。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    knock: Option<KnockResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnockResponse {
+    catalog_id: String,
+    /// waiting（在等）、declined（没让进）、expired（作废，还想进就再敲一次）。
+    status: &'static str,
+    knocked_at_unix_ms: i64,
+    /// 在等的到这一刻作废。
+    expires_at_unix_ms: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -193,6 +217,9 @@ struct MeResponse {
     display_name: String,
     created_at_unix_ms: i64,
     rooms: Vec<RoomResponse>,
+    /// 一天以内敲过、还没放进来的门；没有时不给。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    knocks: Vec<KnockResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -374,12 +401,30 @@ struct AckResponse {
 
 impl From<CreatedNetworkAgent> for CreatedResponse {
     fn from(created: CreatedNetworkAgent) -> Self {
+        let (room, knock) = match created.placement {
+            NetworkAgentPlacement::Entered(room) | NetworkAgentPlacement::Admitted(room) => {
+                (Some(RoomResponse::from(room)), None)
+            }
+            NetworkAgentPlacement::Knocked(knock) => (None, Some(KnockResponse::from(knock))),
+        };
         Self {
             schema_version: SCHEMA_VERSION,
             agent_id: created.agent_id.to_string(),
             display_name: created.display_name,
             token: created.token.expose().to_owned(),
-            room: RoomResponse::from(created.room),
+            room,
+            knock,
+        }
+    }
+}
+
+impl From<NetworkAgentKnock> for KnockResponse {
+    fn from(knock: NetworkAgentKnock) -> Self {
+        Self {
+            catalog_id: knock.catalog_id.to_string(),
+            status: knock.status.as_str(),
+            knocked_at_unix_ms: knock.knocked_at.value(),
+            expires_at_unix_ms: knock.expires_at.value(),
         }
     }
 }
@@ -392,6 +437,7 @@ impl From<NetworkAgentView> for MeResponse {
             display_name: view.display_name,
             created_at_unix_ms: view.created_at.value(),
             rooms: view.rooms.into_iter().map(RoomResponse::from).collect(),
+            knocks: view.knocks.into_iter().map(KnockResponse::from).collect(),
         }
     }
 }
@@ -434,7 +480,7 @@ async fn create(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"name\": 名字, \"room\": 可选的公开大厅名, \"code\": 可选的私人房间口令}；room 与 code 只能给一个。",
+                "请求体应为 JSON 对象：{\"name\": 名字, \"room\": 可选的公开大厅名或私人房间的房间号, \"code\": 可选的私人房间口令}；room 与 code 只能给一个。",
                 correlation_id,
             )
             .into_response(),
@@ -453,7 +499,8 @@ async fn create(
     }
 }
 
-/// 已有的网络 Agent 再进一个房间：公开大厅按名字或 slug，私人房间凭口令；已经在那个大厅里就原样返回。
+/// 已有的网络 Agent 再进一个房间：公开大厅按名字或 slug，私人房间凭口令；已经在里面就原样返回。
+/// 拿私人房间的房间号是敲门：已经是那个房间的 Agent 成员就直接进，否则回答 202 和 `knock`。
 async fn enter_room(
     State(state): State<NetworkAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -469,7 +516,7 @@ async fn enter_room(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"room\": 公开大厅名} 或 {\"code\": 私人房间口令}，只能给一个。",
+                "请求体应为 JSON 对象：{\"room\": 公开大厅名或私人房间的房间号} 或 {\"code\": 私人房间口令}，只能给一个。",
                 correlation_id,
             )
             .into_response(),
@@ -482,12 +529,22 @@ async fn enter_room(
         .enter_room(token, room, state.source_digest(&headers))
         .await
     {
-        Ok(room) => no_store(
+        Ok(NetworkAgentEntry::Entered(room)) => no_store(
             Json(EnteredResponse {
                 schema_version: SCHEMA_VERSION,
                 room: RoomResponse::from(room),
             })
             .into_response(),
+        ),
+        Ok(NetworkAgentEntry::Knocked(knock)) => no_store(
+            (
+                StatusCode::ACCEPTED,
+                Json(KnockedResponse {
+                    schema_version: SCHEMA_VERSION,
+                    knock: KnockResponse::from(knock),
+                }),
+            )
+                .into_response(),
         ),
         Err(failure) => gateway_failure(&failure, correlation_id),
     }

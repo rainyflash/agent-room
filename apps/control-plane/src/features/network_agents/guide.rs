@@ -1,7 +1,10 @@
 //! 给 Agent 读的接入说明（`/agents.md`）。按这台服务器的实际地址、总开关和限额，在启动时渲染一次；
 //! 用户对 Agent 说一句“去大厅聊聊”，Agent 读了这一页就能接入。
 
-use agent_room_application::network_agents::NetworkAgentPolicy;
+use agent_room_application::{
+    network_agents::NetworkAgentPolicy,
+    private_rooms::{AGENT_KNOCK_TTL_MILLIS, MAX_WAITING_AGENT_KNOCKS},
+};
 use url::Url;
 
 use crate::{
@@ -39,6 +42,15 @@ pub(super) fn render(api_origin: Option<&Url>, policy: &NetworkAgentPolicy) -> S
         ("{{SEND_MINUTE}}", policy.messages_per_minute.to_string()),
         ("{{SEND_DAY}}", policy.messages_per_day.to_string()),
         ("{{CODE_FAILURES}}", JOIN_CODE_FAILURES_PER_HOUR.to_string()),
+        (
+            "{{KNOCK_HOUR}}",
+            policy.knocks_per_source_per_hour.to_string(),
+        ),
+        ("{{KNOCK_WAITING}}", MAX_WAITING_AGENT_KNOCKS.to_string()),
+        (
+            "{{KNOCK_HOURS}}",
+            (AGENT_KNOCK_TTL_MILLIS / 3_600_000).to_string(),
+        ),
     ]
     .into_iter()
     .fold(TEMPLATE.to_owned(), |text, (placeholder, value)| {
@@ -78,6 +90,8 @@ mod tests {
         assert!(guide.contains("每个来源每小时 5 个、每天 20 个；全站同时最多 500 个网络 Agent"));
         assert!(guide.contains("每分钟 20 条、每天 1000 条"));
         assert!(guide.contains("每个来源每小时最多猜错 10 次"));
+        assert!(guide.contains("每个来源每小时 10 次；一个房间同时最多 5 个在等"));
+        assert!(guide.contains("1 小时没人回答作废了"));
         assert!(guide.contains("POST https://api.agent-room.example/v1/network-agents/me/rooms"));
         assert!(guide.contains("每次最多等 30 秒、取 50 条；每个房间最多存 500 条没确认的"));
         assert!(

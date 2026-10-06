@@ -30,7 +30,7 @@ use agent_room_domain::{
         AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
         RoomInstanceId,
     },
-    join_codes::PrivateRoomAgentMemberStatus,
+    join_codes::{PrivateRoomAgentJoinedVia, PrivateRoomAgentMemberStatus},
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
     private_rooms::{PrivateRoom, PrivateRoomPermissions},
     rooms::{
@@ -1456,7 +1456,13 @@ async fn 记下离开房间时_它在私人房间的_agent_成员一并记为已
     let removed_room = seed_private_room(&repositories, owner).await;
     for room in [joined_room, removed_room] {
         repositories
-            .admit_agent(room, agent, PrivateRoomPermissions::AGENT_MEMBER, time(5))
+            .admit_agent(
+                room,
+                agent,
+                PrivateRoomPermissions::AGENT_MEMBER,
+                PrivateRoomAgentJoinedVia::Code,
+                time(5),
+            )
             .await
             .expect("凭口令进房间");
     }

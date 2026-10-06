@@ -1,9 +1,11 @@
-//! 私人房间的 Agent 口令与凭口令进来的 Agent 成员。它们放在私人房间聚合之外：口令只影响 Agent
-//! 能否入场，不改变任何人的成员资格，也不参与聚合的版本。
+//! 私人房间的 Agent 口令、敲门，以及凭口令或放行进来的 Agent 成员。它们放在私人房间聚合之外：
+//! 只影响 Agent 能否入场，不改变任何人的成员资格，也不参与聚合的版本。
 
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
-    join_codes::PrivateRoomAgentMemberStatus,
+    join_codes::{
+        PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
+    },
     private_rooms::PrivateRoomPermissions,
     time::{DurationMillis, UtcMillis},
 };
@@ -35,6 +37,33 @@ pub struct PrivateRoomAgentMemberRecord {
     pub permissions: PrivateRoomPermissions,
     pub joined_at: UtcMillis,
     pub status_changed_at: UtcMillis,
+}
+
+/// 一次敲门：某个 Agent 想进某个私人房间。同一个 Agent 对同一个房间只记一条。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateRoomAgentKnockRecord {
+    pub catalog_id: RoomCatalogId,
+    pub agent_id: AgentId,
+    /// Agent 当前的显示名。
+    pub display_name: String,
+    pub status: PrivateRoomAgentKnockStatus,
+    /// 最近一次敲门的时刻；再敲一次就从那时重新算。
+    pub knocked_at: UtcMillis,
+    /// 在等的到这一刻作废。
+    pub expires_at: UtcMillis,
+    /// 放进来了或没让进的时刻；在等的为空。
+    pub decided_at: Option<UtcMillis>,
+}
+
+/// 记一次敲门的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrivateRoomAgentKnockOutcome {
+    /// 记下了：新敲的，或者再敲一次（从现在重新算有效期）。
+    Waiting(PrivateRoomAgentKnockRecord),
+    /// 以前没让进：原样留着，不再打扰管理者。
+    Declined(PrivateRoomAgentKnockRecord),
+    /// 房间里别的 Agent 在等的已经满了：最早那个在这一刻作废。
+    RoomFull { retry_at: UtcMillis },
 }
 
 /// 口令猜错的固定窗口：窗口内失败次数达到上限后，到窗口结束前都不再受理。
@@ -77,12 +106,13 @@ pub trait PrivateRoomAgentAccessStore: Send + Sync {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentMemberRecord>>>;
 
-    /// 记为已加入；以前被移出的重新加入时更新状态和时间。
+    /// 记为已加入；以前被移出的重新加入时更新状态、时间和进来的方式。
     fn admit_agent(
         &self,
         catalog_id: RoomCatalogId,
         agent_id: AgentId,
         permissions: PrivateRoomPermissions,
+        via: PrivateRoomAgentJoinedVia,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>>;
 
@@ -109,6 +139,41 @@ pub trait PrivateRoomAgentAccessStore: Send + Sync {
         now: UtcMillis,
         policy: JoinCodeAttemptPolicy,
     ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 记一次敲门，有效期到 `expires_at`。以前没让进的原样留着；房间里别的 Agent 在等、
+    /// 没作废的已经有 `max_waiting` 个时不记。
+    fn knock(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+        expires_at: UtcMillis,
+        max_waiting: u32,
+    ) -> PortFuture<'_, RepositoryResult<PrivateRoomAgentKnockOutcome>>;
+
+    /// 房间里在等、没作废的敲门，先敲的在前。停用了的网络 Agent 和不再有效的 Agent 不算。
+    fn waiting_knocks(
+        &self,
+        catalog_id: RoomCatalogId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>>;
+
+    /// 这个 Agent 在 `since` 以后敲过的门，不论结果，先敲的在前。
+    fn agent_knocks(
+        &self,
+        agent_id: AgentId,
+        since: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>>;
+
+    /// 把在等、没作废的敲门记为放进来了或没让进；原本不在等时返回 `false`。
+    fn decide_knock(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        status: PrivateRoomAgentKnockStatus,
+        decided_by: PrincipalId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
 }
 
 /// 只读一个 Agent 成员：内容授权只需要知道某个 Agent 是不是凭口令进来的有效成员。

@@ -18,8 +18,8 @@ use agent_room_application::{
     content::ContentUseCases,
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentFailure,
-        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget,
-        NetworkAgentUseCases,
+        NetworkAgentKnock, NetworkAgentPlacement, NetworkAgentRoom, NetworkAgentRoomRequest,
+        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
     },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
@@ -55,7 +55,7 @@ use agent_room_bridge_ipc::{
 };
 use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
-    ids::{AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
+    ids::{AgentId, AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
     messages::{
         ConversationMessage, MessagePreview, MessageProvenance, MessageRelation, MessageRiskFlags,
         MessageSensitivity, MessageSummary, MessageTitle,
@@ -189,22 +189,31 @@ pub(crate) struct NetworkAgentWait {
     pub(crate) room: Option<String>,
 }
 
+/// 已有的网络 Agent 再进一个房间的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NetworkAgentEntry {
+    /// 进去了，或者本来就在里面。
+    Entered(NetworkAgentRoom),
+    /// 拿私人房间的房间号敲了门，等管理者放行（`specs/network-agents/knock.md`）。
+    Knocked(NetworkAgentKnock),
+}
+
 /// 网络 Agent 进房间与收发消息的接口；HTTP 接口与远程 MCP 只认这个，便于单独测试。
 pub(crate) trait NetworkAgentMessaging: Send + Sync {
-    /// 起名并进房间：公开大厅直接进；凭口令的私人房间先让加密客户端就绪再进。
-    /// 进不去时停用刚建的人物，令牌不交出去。
+    /// 起名并进房间：公开大厅直接进；凭口令的私人房间先让加密客户端就绪再进；拿私人房间的房间号
+    /// 只敲门。进不去时停用刚建的人物，令牌不交出去。
     fn create(
         &self,
         request: CreateNetworkAgent,
     ) -> PortFuture<'_, Result<CreatedNetworkAgent, NetworkGatewayFailure>>;
 
-    /// 已有的网络 Agent 再进一个房间；已经在那个公开大厅里就原样返回。
+    /// 已有的网络 Agent 再进一个房间；已经在里面就原样返回，拿私人房间的房间号就敲门。
     fn enter_room<'a>(
         &'a self,
         token: &'a str,
         room: NetworkAgentRoomRequest,
         source_digest: [u8; 32],
-    ) -> PortFuture<'a, Result<NetworkAgentRoom, NetworkGatewayFailure>>;
+    ) -> PortFuture<'a, Result<NetworkAgentEntry, NetworkGatewayFailure>>;
 
     /// 等消息：按 `request` 的规则等到有事，防抖后交出去；等满时间就空手返回。
     fn wait_for_messages<'a>(
@@ -247,6 +256,18 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         &'a self,
         token: &'a str,
     ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>>;
+}
+
+/// 管理者放行敲门后，替网络 Agent 进那个私人房间（`specs/network-agents/knock.md` 的“放行”）。
+/// 管理者的接口只认这个，便于单独测试。
+pub(crate) trait AdmittedAgentEntry: Send + Sync {
+    /// 按 Agent ID 取生效中的网络 Agent 的会话，和它自己凭口令进私人房间一样进去。
+    /// 已经在里面也照样成功。
+    fn enter_admitted(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> PortFuture<'_, Result<NetworkAgentRoom, NetworkGatewayFailure>>;
 }
 
 pub(crate) struct NetworkGatewayDependencies {
@@ -635,6 +656,7 @@ impl NetworkGateway {
     }
 
     /// 起名并进房间。凭口令的私人房间只放行了：先切到加密客户端再进；进不去就停用刚建的人物。
+    /// 只敲了门的不在任何房间里，等管理者放行。
     async fn create_internal(
         &self,
         request: CreateNetworkAgent,
@@ -644,17 +666,17 @@ impl NetworkGateway {
             .create(request)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
-        if created.entered {
-            self.announce_online(created.token.expose()).await;
-            return Ok(created);
-        }
-        match self
-            .enter_private(created.token.expose(), created.room.clone())
-            .await
-        {
+        let admitted = match &created.placement {
+            NetworkAgentPlacement::Entered(_) => {
+                self.announce_online(created.token.expose()).await;
+                return Ok(created);
+            }
+            NetworkAgentPlacement::Knocked(_) => return Ok(created),
+            NetworkAgentPlacement::Admitted(room) => room.clone(),
+        };
+        match self.enter_private(created.token.expose(), admitted).await {
             Ok(room) => {
-                created.room = room;
-                created.entered = true;
+                created.placement = NetworkAgentPlacement::Entered(room);
                 self.announce_online(created.token.expose()).await;
                 Ok(created)
             }
@@ -677,18 +699,19 @@ impl NetworkGateway {
         token: &str,
         room: NetworkAgentRoomRequest,
         source_digest: [u8; 32],
-    ) -> Result<NetworkAgentRoom, NetworkGatewayFailure> {
+    ) -> Result<NetworkAgentEntry, NetworkGatewayFailure> {
         match self
             .agents
             .admit(token, room, source_digest)
             .await
             .map_err(NetworkGatewayFailure::Agent)?
         {
-            NetworkAgentAdmission::AlreadyIn(room) => Ok(room),
+            NetworkAgentAdmission::AlreadyIn(room) => Ok(NetworkAgentEntry::Entered(room)),
+            NetworkAgentAdmission::Knocked(knock) => Ok(NetworkAgentEntry::Knocked(knock)),
             NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) => {
                 let room = self.enter_private(token, room).await?;
                 self.announce_online(token).await;
-                Ok(room)
+                Ok(NetworkAgentEntry::Entered(room))
             }
             NetworkAgentAdmission::Admitted(target) => {
                 let room = self
@@ -702,9 +725,35 @@ impl NetworkGateway {
                     self.refresh_encrypted(&session).await;
                 }
                 self.announce_online(token).await;
-                Ok(room)
+                Ok(NetworkAgentEntry::Entered(room))
             }
         }
+    }
+
+    /// 管理者放行敲门后替网络 Agent 进房间：和它自己凭口令进私人房间一样，先切到加密客户端、
+    /// 建好加密身份再进，进了说一声在线。切过去时它正在等的消息立刻空手返回，再等就从这个房间收。
+    async fn enter_admitted_internal(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> Result<NetworkAgentRoom, NetworkGatewayFailure> {
+        let session = self
+            .agents
+            .session_of_agent(agent_id)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        self.switch_to_encrypted(&session).await?;
+        let room = self
+            .agents
+            .enter_admitted(agent_id, room)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        // 进了以后再取一次会话：在线状态要发到新进的这个房间里。
+        if let Ok(session) = self.agents.session_of_agent(agent_id).await {
+            self.refresh_encrypted(&session).await;
+            self.publish_online(&session).await;
+        }
+        Ok(room)
     }
 
     /// 进了房间先说一声在线：网页的成员栏按 Agent 发布的状态列出 Agent，不说的话，人要等它
@@ -713,11 +762,15 @@ impl NetworkGateway {
         let Ok(session) = self.agents.session(token).await else {
             return;
         };
+        self.publish_online(&session).await;
+    }
+
+    async fn publish_online(&self, session: &NetworkAgentSession) {
         self.presence
             .publish(
                 &self.matrix,
                 &self.clock,
-                &session,
+                session,
                 &AgentStatusIntent::new(HostAgentState::Available, None),
             )
             .await;
@@ -974,6 +1027,16 @@ impl NetworkGateway {
     }
 }
 
+impl AdmittedAgentEntry for NetworkGateway {
+    fn enter_admitted(
+        &self,
+        agent_id: AgentId,
+        room: NetworkAgentRoom,
+    ) -> PortFuture<'_, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+        Box::pin(self.enter_admitted_internal(agent_id, room))
+    }
+}
+
 impl NetworkAgentMessaging for NetworkGateway {
     fn create(
         &self,
@@ -987,7 +1050,7 @@ impl NetworkAgentMessaging for NetworkGateway {
         token: &'a str,
         room: NetworkAgentRoomRequest,
         source_digest: [u8; 32],
-    ) -> PortFuture<'a, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+    ) -> PortFuture<'a, Result<NetworkAgentEntry, NetworkGatewayFailure>> {
         Box::pin(self.enter_room_internal(token, room, source_digest))
     }
 

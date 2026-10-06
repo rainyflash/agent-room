@@ -966,6 +966,21 @@ mod real_dependency_tests {
             unreachable!("只测加密客户端")
         }
 
+        fn session_of_agent(
+            &self,
+            _agent_id: AgentId,
+        ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentSession>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn enter_admitted(
+            &self,
+            _agent_id: AgentId,
+            _room: NetworkAgentRoom,
+        ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentRoom>> {
+            unreachable!("只测加密客户端")
+        }
+
         fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>> {
             unreachable!("只测加密客户端")
         }
