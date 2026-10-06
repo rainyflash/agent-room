@@ -560,14 +560,11 @@ pub struct SendMessageInput {
 
 impl From<SendMessageInput> for IpcSendMessageRequest {
     fn from(input: SendMessageInput) -> Self {
-        let summary: String = input
-            .body
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(500)
-            .collect();
+        let (title, summary) = if input.chat {
+            Self::chat_title_and_summary(&input.body)
+        } else {
+            (input.title, input.summary)
+        };
         Self {
             chat: input.chat,
             mentions: input.mentions,
@@ -575,12 +572,8 @@ impl From<SendMessageInput> for IpcSendMessageRequest {
             submission_id: input.submission_id,
             automation_grant_id: input.automation_grant_id,
             room_id: input.room_id,
-            title: if input.chat {
-                summary.chars().take(120).collect()
-            } else {
-                input.title
-            },
-            summary: if input.chat { summary } else { input.summary },
+            title,
+            summary,
             body: input.body,
             media_type: input.media_type,
             language: input.language,

@@ -159,6 +159,13 @@ impl BridgeToolClient for Bridge {
             Ok(match method {
                 IpcMethod::ReceptionControl(request) => self.control(request),
                 IpcMethod::SendReceptionMessage { run_id, request } => {
+                    // 和真的 Bridge 一样先过校验：标题、摘要里带换行的发不出去。
+                    IpcMethod::SendReceptionMessage {
+                        run_id,
+                        request: request.clone(),
+                    }
+                    .validate()
+                    .expect("回复要过得了 Bridge 的校验");
                     assert_eq!(
                         run_id,
                         self.reception.lock().unwrap().as_ref().unwrap().run_id
@@ -309,7 +316,8 @@ impl HostRunner for Host {
             if matches!(self.outcome, Reply::Silent) {
                 return Ok(HostReply::silent());
             }
-            HostReply::new("reply content from the host".into())
+            // 宿主的回复常常分好几行。
+            HostReply::new("reply content\nfrom the host".into())
         })
     }
 }
@@ -717,7 +725,8 @@ async fn model_content_is_sent_under_the_exact_bound_authority() {
         sent[0].automation_grant_id.as_deref(),
         Some(binding.automation_grant_id.as_str())
     );
-    assert_eq!(sent[0].body, "reply content from the host");
+    assert_eq!(sent[0].body, "reply content\nfrom the host");
+    assert_eq!(sent[0].title, "reply content from the host");
     assert_eq!(sent[0].provenance, IpcMessageProvenance::AutonomousAgent);
     assert_eq!(sent[0].room_id, binding.policy.room_id);
     assert_eq!(

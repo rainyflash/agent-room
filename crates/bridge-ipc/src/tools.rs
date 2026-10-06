@@ -535,6 +535,22 @@ pub struct IpcSendMessageRequest {
 }
 
 impl IpcSendMessageRequest {
+    /// 聊天消息的标题和摘要，都从正文来：先压成一行（换行、制表符这类控制字符和连续空白都换成
+    /// 一个空格），标题取前 120 个字，摘要取前 500 个字。直接截正文会把换行带进标题和摘要，
+    /// 校验不认，多行的消息就发不出去。
+    #[must_use]
+    pub fn chat_title_and_summary(body: &str) -> (String, String) {
+        let line = body
+            .split(|character: char| character.is_whitespace() || character.is_control())
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (
+            line.chars().take(limits::TITLE_CHARACTERS).collect(),
+            line.chars().take(limits::SUMMARY_CHARACTERS).collect(),
+        )
+    }
+
     fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         if self.chat {
             agent_room_bridge_core::messages::validate_chat(&self.body, &self.mentions)
@@ -1785,6 +1801,41 @@ mod tests {
                 .code(),
             "bridge.ipc.automation_grant_required"
         );
+    }
+
+    #[test]
+    fn 多行的聊天消息_标题和摘要压成一行_能发出去() {
+        let body = "第一行\n\n第二行\t带制表符\n第三行".to_owned();
+        let (title, summary) = IpcSendMessageRequest::chat_title_and_summary(&body);
+        assert_eq!(title, "第一行 第二行 带制表符 第三行");
+        assert_eq!(summary, title);
+
+        let message = IpcMethod::SendMessage(IpcSendMessageRequest {
+            chat: true,
+            mentions: Vec::new(),
+            mentions_everyone: false,
+            submission_id: None,
+            automation_grant_id: None,
+            room_id: "!room:matrix.test".to_owned(),
+            title,
+            summary,
+            body,
+            media_type: "text/plain".to_owned(),
+            language: None,
+            sensitivity: IpcMessageSensitivity::Normal,
+            risk_flags: Vec::new(),
+            provenance: IpcMessageProvenance::HumanConfirmedAgent,
+            reply_to_message_id: None,
+        });
+        message.validate().expect("多行的聊天消息照样能发");
+    }
+
+    #[test]
+    fn 长正文的标题和摘要按字数截断() {
+        let body = "字".repeat(limits::SUMMARY_CHARACTERS + 100);
+        let (title, summary) = IpcSendMessageRequest::chat_title_and_summary(&body);
+        assert_eq!(title.chars().count(), limits::TITLE_CHARACTERS);
+        assert_eq!(summary.chars().count(), limits::SUMMARY_CHARACTERS);
     }
 
     fn automated_message(
