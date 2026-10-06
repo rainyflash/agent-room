@@ -127,10 +127,9 @@ impl FoundationBridgeIpcRequestHandler {
         }
     }
 
+    /// 只有带着默认 Agent 启动时才有；没有默认 Agent 时，问它的请求都得到 [`no_default_agent`]。
     fn agent_runtime(&self) -> Result<&AgentRuntimeIpcFacade, BridgeIpcDispatchFailure> {
-        self.agent_runtime
-            .as_ref()
-            .ok_or_else(agent_runtime_unavailable)
+        self.agent_runtime.as_ref().ok_or_else(no_default_agent)
     }
     /// 附件下载目录必须与接待端授予宿主读取权限的目录一致。
     pub(crate) fn with_attachment_directory(mut self, directory: std::path::PathBuf) -> Self {
@@ -330,11 +329,23 @@ const fn agent_runtime_unavailable() -> BridgeIpcDispatchFailure {
     )
 }
 
+/// 这台电脑没有默认 Agent。去掉 `/onboarding` 以后这是常态：Agent 都走本机会话，桌面端照样每 2 秒
+/// 探一次 Bridge、问一次 `get_self`，得到这个回答就当作“已授权”。所以它是预料之中的，不记告警；
+/// 对调用方仍是 `bridge.agent_runtime_unavailable`。
+const fn no_default_agent() -> BridgeIpcDispatchFailure {
+    BridgeIpcDispatchFailure {
+        expected: true,
+        ..agent_runtime_unavailable()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BridgeIpcDispatchFailure {
     code: &'static str,
     category: IpcErrorCategory,
     retryable: bool,
+    /// 预料之中的回答，不是出了问题：只记 debug，不记告警。
+    expected: bool,
 }
 
 impl BridgeIpcDispatchFailure {
@@ -353,6 +364,7 @@ impl BridgeIpcDispatchFailure {
             code,
             category,
             retryable,
+            expected: false,
         }
     }
 }
@@ -485,6 +497,9 @@ const IPC_FAILURE_LOG_WINDOW: Duration = Duration::from_mins(10);
 /// 桌面端每 2 秒探一次 Bridge；默认人物没在跑时，探测里的 `get_self` 每次都失败。原来每次一条告警，
 /// 一天四万多条，日志轮转一次只剩几天，真正的告警也被冲掉。现在同样的失败每个窗口只记一条，
 /// 下一条带上中间省掉的次数；省掉的仍按 debug 级别记。
+///
+/// 这台电脑根本没有默认 Agent 时（[`no_default_agent`]），这个回答是预料之中的：只按 debug 记，
+/// 不记告警，也不占窗口。同一个错误码真出了问题（比如独立人物正在重连），照样马上记告警。
 #[derive(Default)]
 struct IpcFailureLog {
     windows: Mutex<HashMap<(&'static str, &'static str), IpcFailureWindow>>,
@@ -496,8 +511,18 @@ struct IpcFailureWindow {
 }
 
 impl IpcFailureLog {
-    /// 这次失败要不要记告警；要记时给出上次记下以后省掉的次数。
-    fn admit(&self, method: &'static str, code: &'static str, now: Instant) -> Option<u64> {
+    /// 这次失败要不要记告警；要记时给出上次记下以后省掉的次数。预料之中的回答从不记告警，
+    /// 也不算进省掉的次数。
+    fn admit(
+        &self,
+        method: &'static str,
+        failure: BridgeIpcDispatchFailure,
+        now: Instant,
+    ) -> Option<u64> {
+        if failure.expected {
+            return None;
+        }
+        let code = failure.code;
         let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(window) = windows.get_mut(&(method, code)) else {
             windows.insert(
@@ -707,12 +732,7 @@ where
                     failure.retryable,
                 )
                 .await?;
-                log_request_failure(
-                    &context.failure_log,
-                    method_name,
-                    failure.code,
-                    Instant::now(),
-                );
+                log_request_failure(&context.failure_log, method_name, failure, Instant::now());
             }
         }
     }
@@ -721,10 +741,11 @@ where
 fn log_request_failure(
     log: &IpcFailureLog,
     method: &'static str,
-    code: &'static str,
+    failure: BridgeIpcDispatchFailure,
     now: Instant,
 ) {
-    if let Some(suppressed) = log.admit(method, code, now) {
+    let code = failure.code;
+    if let Some(suppressed) = log.admit(method, failure, now) {
         tracing::warn!(
             event = "bridge_ipc_request",
             method,
@@ -732,6 +753,14 @@ fn log_request_failure(
             code,
             suppressed,
             "本地 IPC 请求失败"
+        );
+    } else if failure.expected {
+        tracing::debug!(
+            event = "bridge_ipc_request",
+            method,
+            result = "error",
+            code,
+            "本地 IPC 请求失败（预料之中，比如这台电脑没有默认 Agent）"
         );
     } else {
         tracing::debug!(
@@ -1087,12 +1116,12 @@ mod tests {
 
     use super::{
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcContext,
-        BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
-        BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler, IpcFailureLog,
+        BridgeIpcDispatchFailure, BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer,
+        BridgeStatusReader, BridgeStatusSnapshot, FoundationBridgeIpcRequestHandler, IpcFailureLog,
         agent_runtime::{
             AgentHandoffDeliveryRuntime, AgentHandoffRuntime, AgentTargetedHandoffRuntime,
         },
-        authorize_method, handle_connection,
+        agent_runtime_unavailable, authorize_method, handle_connection, no_default_agent,
     };
 
     struct 固定状态;
@@ -3156,7 +3185,7 @@ mod tests {
     fn 同样的请求失败十分钟内只记一条告警_再记时带上省掉的次数() {
         let log = IpcFailureLog::default();
         let start = Instant::now();
-        let unavailable = "bridge.agent_runtime_unavailable";
+        let unavailable = agent_runtime_unavailable();
 
         assert_eq!(log.admit("get_self", unavailable, start), Some(0));
         // 桌面端每 2 秒探一次：十分钟里另外 299 次都不记告警。
@@ -3166,10 +3195,12 @@ mod tests {
         }
         // 别的方法、别的错误码各记各的。
         assert_eq!(log.admit("wait_inbox", unavailable, start), Some(0));
-        assert_eq!(
-            log.admit("get_self", "bridge.room_authority_unavailable", start),
-            Some(0)
+        let room_authority = BridgeIpcDispatchFailure::new(
+            "bridge.room_authority_unavailable",
+            IpcErrorCategory::DependencyUnavailable,
+            true,
         );
+        assert_eq!(log.admit("get_self", room_authority, start), Some(0));
 
         let next_window = start + Duration::from_mins(10);
         assert_eq!(log.admit("get_self", unavailable, next_window), Some(299));
@@ -3181,6 +3212,80 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn 没有默认_agent_的回答从不记告警_也不占同一个错误码的告警窗口() {
+        let log = IpcFailureLog::default();
+        let start = Instant::now();
+
+        // 桌面端每 2 秒探一次，过了十分钟还在探：一条告警也不记。
+        for probe in 0..=300 {
+            let now = start + Duration::from_secs(probe * 2);
+            assert_eq!(log.admit("get_self", no_default_agent(), now), None);
+            assert_eq!(log.admit("wait_inbox", no_default_agent(), now), None);
+        }
+        // 同一个错误码真出了问题（比如独立人物正在重连），照样马上记告警，前面那些不算省掉的。
+        let reconnecting = start + Duration::from_secs(601);
+        assert_eq!(
+            log.admit("get_self", agent_runtime_unavailable(), reconnecting),
+            Some(0)
+        );
+    }
+
+    struct 还没上线的Agent运行时;
+
+    impl BridgeAgentRuntimeReader for 还没上线的Agent运行时 {
+        fn read_agent_runtime(&self) -> Option<BridgeAgentRuntimeSnapshot> {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn 没有默认_agent_时照旧回答_agent_runtime_unavailable_只是标成预料之中() {
+        let onboarding = Arc::new(BridgeOnboardingService::new(Arc::new(固定首次引导 {
+            agent_id: AgentId::from_uuid(Uuid::now_v7()),
+            lobby_id: RoomCatalogId::from_uuid(Uuid::now_v7()),
+        })));
+        // `runtime.rs` 没有默认 Agent 时就这样建处理器。
+        let without_default =
+            FoundationBridgeIpcRequestHandler::with_onboarding(Arc::new(固定状态), onboarding);
+        // 有默认 Agent、只是它还没上线：真的暂时不可用，照常按告警去重记。
+        let previews = Arc::new(记录预览查询::default());
+        let not_online = FoundationBridgeIpcRequestHandler::with_agent_runtime(
+            super::AgentRuntimeConsumer::Desktop,
+            Arc::new(固定状态),
+            Arc::new(还没上线的Agent运行时),
+            previews.clone(),
+            空正文服务(previews),
+            Arc::new(固定时钟),
+        );
+        let wait = IpcMethod::WaitInbox(agent_room_bridge_ipc::IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting: true,
+            wait_ms: None,
+            from_ack: true,
+        });
+
+        for method in [IpcMethod::GetSelf, wait] {
+            let failure = without_default.dispatch(method.clone()).await.unwrap_err();
+            assert!(failure.expected);
+            // 桌面端认这个回答，当作“已授权”：回给调用方的和原来一样。
+            assert_eq!(
+                BridgeIpcDispatchFailure {
+                    expected: false,
+                    ..failure
+                },
+                agent_runtime_unavailable()
+            );
+            assert_eq!(
+                not_online.dispatch(method).await.unwrap_err(),
+                agent_runtime_unavailable()
+            );
+        }
     }
 
     #[tokio::test]
