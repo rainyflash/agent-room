@@ -19,7 +19,7 @@ The installer is the only file normal users need. Everything else on the GitHub 
 
 > **Alpha, not a stable support promise.** Windows x86-64 and macOS Apple silicon builds ship as signed public prereleases on a testing track, so expect rough edges and frequent updates. See [known limitations](./docs/known-limitations.md).
 
-The current release, `0.1.0-alpha.63`, gives agents more context when they read: every message carries its room name and marks what was said before the agent joined, so it does not answer stale questions. A message can mention up to 200 people, and in private rooms people and agents can mention everyone at once; public lobbies do not allow it. `0.1.0-alpha.58` taught agents when to speak up: by default only messages that concern them wake them, they wait for the conversation to pause before answering, and someone who is still typing counts as still talking.
+The current release, `0.1.0-alpha.64`, lets an agent that connects over the network ask to join a private room with just the room number: it knocks, and the room owner or a manager lets it in from the web, so the room code never has to be handed to a chat assistant. `0.1.0-alpha.59` gave agents more context when they read: every message carries its room name and marks what was said before the agent joined, so it does not answer stale questions. A message can mention up to 200 people, and in private rooms people and agents can mention everyone at once; public lobbies do not allow it. `0.1.0-alpha.58` taught agents when to speak up: by default only messages that concern them wake them, they wait for the conversation to pause before answering, and someone who is still typing counts as still talking.
 
 ## Agent access
 

@@ -75,6 +75,7 @@ BOOTSTRAP_RESULT: Final = VERTICAL_ROOT / "bootstrap.json"
 CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 TARGETED_HANDOFF_RESULT: Final = VERTICAL_ROOT / "targeted-handoff.json"
 PRIVATE_ROOM_RESULT: Final = VERTICAL_ROOT / "private-room.json"
+KNOCK_RESULT: Final = VERTICAL_ROOT / "private-room-knock.json"
 NETWORK_AGENT_STORE_ROOT: Final = VERTICAL_ROOT / "network-agents"
 PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
@@ -2326,6 +2327,95 @@ def create_private_room_with_code(*, environment: Mapping[str, str]) -> dict[str
     return result
 
 
+def admit_knock_in_browser(
+    *, environment: Mapping[str, str], catalog_id: str, agent_id: str
+) -> None:
+    """房主用真实网页会话看在敲门的、放这个网络 Agent 进来；服务器在这次请求里替它进房间。"""
+    KNOCK_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    KNOCK_RESULT.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_PRIVATE_ROOM_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_VERTICAL_KNOCK_AGENT_ID": agent_id,
+            "AGENT_ROOM_VERTICAL_KNOCK_RESULT": str(KNOCK_RESULT),
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "private-room-agent-knock.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
+    try:
+        result = read_string_object(KNOCK_RESULT)
+    finally:
+        KNOCK_RESULT.unlink(missing_ok=True)
+    if result.get("agentId") != agent_id or result.get("status") != "joined":
+        raise VerticalFailure("房主放进来的不是敲门的那个网络 Agent。")
+
+
+def network_agent_rooms(token: str) -> tuple[list[str], list[dict[str, object]]]:
+    """网络 Agent 查看自己：在哪些房间（Matrix 房间 ID）、还有哪些门在等。"""
+    status, me = network_agent_request("GET", "/me", token=token)
+    if status != 200 or me is None:
+        raise VerticalFailure(f"网络 Agent 查看自己失败：HTTP {status}。")
+    rooms = me.get("rooms")
+    if not isinstance(rooms, list):
+        raise VerticalFailure("网络 Agent 查看自己时没有 rooms。")
+    knocks = me.get("knocks", [])
+    if not isinstance(knocks, list):
+        raise VerticalFailure("网络 Agent 查看自己时 knocks 不是列表。")
+    return (
+        [require_text(require_object(room, "房间").get("matrixRoomId"), "房间") for room in rooms],
+        [require_object(knock, "敲门") for knock in knocks],
+    )
+
+
+def verify_private_room_knock(
+    client: McpAgentSession, *, environment: Mapping[str, str], room: Mapping[str, str]
+) -> dict[str, str]:
+    """网络 Agent 拿房间号敲门，房主放行后它在房间里，与本机 Agent 加密收发（specs/network-agents/knock.md）。"""
+    catalog_id, room_id = room["catalogId"], room["matrixRoomId"]
+    status, created = network_agent_request(
+        "POST",
+        "",
+        body={"name": "Vertical Knocking Scout", "room": catalog_id},
+        source="198.51.100.28",
+    )
+    if status != 201 or created is None:
+        raise VerticalFailure(f"网络 Agent 拿房间号敲门失败：HTTP {status}。")
+    if "room" in created:
+        raise VerticalFailure("拿房间号只该敲门，不该直接进房间。")
+    knock = require_object(created.get("knock"), "网络 Agent 敲的门")
+    if knock.get("status") != "waiting" or knock.get("catalogId") != catalog_id:
+        raise VerticalFailure("网络 Agent 敲的门不对，或者不在等。")
+    token = require_text(created.get("token"), "敲门的网络 Agent 令牌")
+    agent_id = require_text(created.get("agentId"), "敲门的网络 Agent 的 Agent ID")
+    rooms, knocks = network_agent_rooms(token)
+    if room_id in rooms or [item.get("status") for item in knocks] != ["waiting"]:
+        raise VerticalFailure("没放行之前，网络 Agent 不该在房间里，门该在等。")
+
+    admit_knock_in_browser(environment=environment, catalog_id=catalog_id, agent_id=agent_id)
+    rooms, knocks = network_agent_rooms(token)
+    if room_id not in rooms or knocks:
+        raise VerticalFailure("放行以后，网络 Agent 该在房间里，门不该还在等。")
+    drain_network_agent_messages(token)
+    reply = private_room_round_trip(client, token=token, agent_id=agent_id, room_id=room_id)
+
+    status, _ = network_agent_request("DELETE", "/me", token=token)
+    if status != 204:
+        raise VerticalFailure(f"敲门进来的网络 Agent 停用失败：HTTP {status}。")
+    return {"knockToken": token, "knockReplyEventId": reply}
+
+
 def network_agent_store_path(agent_id: str) -> Path:
     """网络 Agent 的加密存储目录；目录按网络 Agent 自己的 ID 命名，不是 Agent ID。"""
     require_uuid_v7(agent_id, "网络 Agent 的 Agent ID")
@@ -2402,7 +2492,8 @@ def verify_private_room_network_agent(
     environment: Mapping[str, str],
     redactor: LogRedactor,
 ) -> dict[str, str]:
-    """网络 Agent 凭口令进私人房间，与本机 Agent 加密收发；控制面重启后、存储删掉重建后都照常。"""
+    """网络 Agent 凭口令进私人房间，与本机 Agent 加密收发；控制面重启后、存储删掉重建后都照常。
+    另一个网络 Agent 拿房间号敲门、房主放行后，也能在这个房间里加密收发。"""
     room = create_private_room_with_code(environment=environment)
     code, room_id = room["code"], room["matrixRoomId"]
     with bridge_mcp_client(sender_bridge, redactor) as transport:
@@ -2441,6 +2532,7 @@ def verify_private_room_network_agent(
         require_before_join_gap(gaps, room_id)
         require_no_room_key_requests(sender_bridge, room_id)
         everyone = verify_mentions_everyone(client, token=token, room_id=room_id, code=code)
+        knocked = verify_private_room_knock(client, environment=environment, room=room)
 
         # 控制面重启：加密存储还在，网络 Agent 照常解密新消息。
         control_plane.stop()
@@ -2476,6 +2568,7 @@ def verify_private_room_network_agent(
         "restartedReplyEventId": restarted,
         "rebuiltReplyEventId": rebuilt,
         **everyone,
+        **knocked,
     }
 
 
