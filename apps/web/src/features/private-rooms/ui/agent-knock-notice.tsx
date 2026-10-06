@@ -33,5 +33,7 @@ export function AgentKnockNotice({ pathname }: { readonly pathname: string }) {
   if (room === undefined) return null;
   const manages =
     room.ownerPrincipalId === principalId || allows(memberFor(room, principalId), 'manage');
-  return manages ? <PrivateRoomAgentKnockToasts catalogId={catalogId} rooms={privateRooms} /> : null;
+  return manages ? (
+    <PrivateRoomAgentKnockToasts catalogId={catalogId} rooms={privateRooms} />
+  ) : null;
 }

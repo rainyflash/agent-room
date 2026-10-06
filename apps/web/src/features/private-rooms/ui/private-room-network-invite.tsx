@@ -65,10 +65,9 @@ export function PrivateRoomNetworkInvite({
   return (
     <div className="agent-invite__private-code">
       <p className="agent-invite__note">
-        {t(
-          manager ? 'agentInvite.network.privateRoom' : 'agentInvite.network.privateRoomMember',
-          { room: roomName },
-        )}
+        {t(manager ? 'agentInvite.network.privateRoom' : 'agentInvite.network.privateRoomMember', {
+          room: roomName,
+        })}
       </p>
       <CopyBlock
         copiedLabel={t('agentInvite.message.copied')}

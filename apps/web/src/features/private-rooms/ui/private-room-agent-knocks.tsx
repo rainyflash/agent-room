@@ -161,7 +161,9 @@ export function PrivateRoomAgentKnocks({
                       <Bot aria-hidden="true" />
                     </span>
                     <div>
-                      <strong>{t('privateRooms.knock.knocking', { name: knock.displayName })}</strong>
+                      <strong>
+                        {t('privateRooms.knock.knocking', { name: knock.displayName })}
+                      </strong>
                       <small>
                         {admitting
                           ? t('privateRooms.knock.admitting', { name: knock.displayName })
