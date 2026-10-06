@@ -5,7 +5,7 @@ use std::{
 
 use agent_room_bridge_local_adapter::SystemCredentialStore;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use cookie::{Cookie, SameSite, time::OffsetDateTime};
+use cookie::Cookie;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -18,6 +18,7 @@ use crate::{
         MIN_RANDOM_VALUE_LENGTH, generate_random_url_safe_value, is_valid_random_url_safe_value,
         is_valid_return_path,
     },
+    control_plane_proxy::DESKTOP_SESSION_COOKIE,
     desktop_config::DesktopBridgeConfig,
     loopback_callback::{LoopbackCallbackFailure, LoopbackCallbackListener},
 };
@@ -25,7 +26,6 @@ use crate::{
 pub(crate) const HUMAN_SESSION_CHANGED_EVENT: &str = "desktop://human-session-changed";
 pub(crate) const HUMAN_SESSION_FAILED_EVENT: &str = "desktop://human-session-failed";
 
-const DESKTOP_SESSION_COOKIE: &str = "__Secure-agent-room-desktop-session";
 const PENDING_AUTHENTICATION_ACCOUNT: &str = "human-authentication-pending-v1";
 const HUMAN_SESSION_ACCOUNT: &str = "human-session-v1";
 const PENDING_AUTHENTICATION_TTL: Duration = Duration::from_mins(15);
@@ -179,6 +179,8 @@ pub(crate) fn forget_stored_session(config: &DesktopBridgeConfig) -> HumanSessio
     vault.delete_session()
 }
 
+/// 人的云端登录只在原生层：存在系统凭据库，恢复后记在内存里，由控制面代发
+/// （`control_plane_proxy`）带上。`WebView` 里没有它，macOS 的 `WKWebView` 也不会替跨站请求带 Cookie。
 #[derive(Clone)]
 pub(crate) struct HumanSessionRuntime {
     control_plane_url: Url,
@@ -186,6 +188,7 @@ pub(crate) struct HumanSessionRuntime {
     http: Client,
     vault: Arc<dyn HumanSessionVault>,
     operation_gate: Arc<Mutex<()>>,
+    active: Arc<Mutex<Option<PersistedHumanSession>>>,
 }
 
 impl HumanSessionRuntime {
@@ -202,6 +205,7 @@ impl HumanSessionRuntime {
                 config.human_session_storage_service(),
             )),
             operation_gate: Arc::new(Mutex::new(())),
+            active: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -273,7 +277,6 @@ impl HumanSessionRuntime {
 
     pub(crate) async fn complete_authentication(
         &self,
-        app: &AppHandle,
         callback: HumanAuthenticationCallback,
     ) -> HumanSessionResult<HumanSessionChanged> {
         let pending = {
@@ -305,8 +308,8 @@ impl HumanSessionRuntime {
                 .map_err(|_| state_unavailable())?;
             self.vault.write_session(&persisted)?;
             self.vault.delete_pending()?;
+            self.set_active(Some(persisted))?;
         }
-        self.install_cookie(app, &persisted)?;
         Ok(HumanSessionChanged {
             return_path: pending.return_path,
             session: exchange.session,
@@ -318,16 +321,17 @@ impl HumanSessionRuntime {
             .operation_gate
             .lock()
             .map_err(|_| state_unavailable())?;
+        self.forget_webview_cookie(app);
         let Some(session) = self.vault.load_session()? else {
-            self.delete_cookie(app)?;
+            self.set_active(None)?;
             return Ok(false);
         };
         if validate_persisted_session(&session, now_unix_ms()?).is_err() {
             self.vault.delete_session()?;
-            self.delete_cookie(app)?;
+            self.set_active(None)?;
             return Ok(false);
         }
-        self.install_cookie(app, &session)?;
+        self.set_active(Some(session))?;
         Ok(true)
     }
 
@@ -336,9 +340,26 @@ impl HumanSessionRuntime {
             .operation_gate
             .lock()
             .map_err(|_| state_unavailable())?;
+        self.set_active(None)?;
         self.vault.delete_session()?;
         self.vault.delete_pending()?;
-        self.delete_cookie(app)
+        self.forget_webview_cookie(app);
+        Ok(())
+    }
+
+    /// 控制面代发时带的登录。没登录或已过期就是 `None`，请求照发，由控制面回“没登录”。
+    pub(crate) fn session_secret(&self) -> HumanSessionResult<Option<String>> {
+        let active = self.active.lock().map_err(|_| state_unavailable())?;
+        let now = now_unix_ms()?;
+        Ok(active
+            .as_ref()
+            .filter(|session| validate_persisted_session(session, now).is_ok())
+            .map(|session| session.session_secret.clone()))
+    }
+
+    fn set_active(&self, session: Option<PersistedHumanSession>) -> HumanSessionResult<()> {
+        *self.active.lock().map_err(|_| state_unavailable())? = session;
+        Ok(())
     }
 
     async fn exchange(
@@ -371,57 +392,23 @@ impl HumanSessionRuntime {
             .map_err(|_| HumanSessionFailure::new("desktop.human_session.exchange_invalid", false))
     }
 
-    fn install_cookie(
-        &self,
-        app: &AppHandle,
-        session: &PersistedHumanSession,
-    ) -> HumanSessionResult<()> {
-        let window = app.get_webview_window("main").ok_or_else(|| {
-            HumanSessionFailure::new("desktop.human_session.window_missing", true)
-        })?;
-        window
-            .set_cookie(self.cookie(session)?)
-            .map_err(|_| HumanSessionFailure::new("desktop.human_session.cookie_failed", true))
-    }
-
-    fn delete_cookie(&self, app: &AppHandle) -> HumanSessionResult<()> {
-        let Some(window) = app.get_webview_window("main") else {
-            return Ok(());
+    /// Alpha 63 及以前把登录写进了 `WebView` 的 Cookie；现在 `WebView` 里不该有它，见到就删。
+    /// 删不掉也不影响登录：`WebView` 已经不直接请求控制面。
+    fn forget_webview_cookie(&self, app: &AppHandle) {
+        let (Some(window), Some(domain)) = (
+            app.get_webview_window("main"),
+            self.control_plane_url.host_str(),
+        ) else {
+            return;
         };
-        window
-            .delete_cookie(self.cookie_identity()?)
-            .map_err(|_| HumanSessionFailure::new("desktop.human_session.cookie_failed", true))
-    }
-
-    fn cookie(&self, session: &PersistedHumanSession) -> HumanSessionResult<Cookie<'static>> {
-        let expires = OffsetDateTime::from_unix_timestamp(session.expires_at_unix_ms / 1_000)
-            .map_err(|_| HumanSessionFailure::new("desktop.human_session.expiry_invalid", false))?;
-        Ok(Cookie::build((
-            DESKTOP_SESSION_COOKIE.to_owned(),
-            session.session_secret.clone(),
-        ))
-        .domain(self.cookie_domain()?)
-        .path("/")
-        .secure(true)
-        .http_only(true)
-        .same_site(SameSite::None)
-        .expires(expires)
-        .build())
-    }
-
-    fn cookie_identity(&self) -> HumanSessionResult<Cookie<'static>> {
-        Ok(Cookie::build(DESKTOP_SESSION_COOKIE.to_owned())
-            .domain(self.cookie_domain()?)
+        let cookie = Cookie::build(DESKTOP_SESSION_COOKIE.to_owned())
+            .domain(domain.to_owned())
             .path("/")
             .secure(true)
-            .build())
-    }
-
-    fn cookie_domain(&self) -> HumanSessionResult<String> {
-        self.control_plane_url
-            .host_str()
-            .map(str::to_owned)
-            .ok_or_else(|| HumanSessionFailure::new("desktop.human_session.url_invalid", false))
+            .build();
+        if window.delete_cookie(cookie).is_err() {
+            tracing::debug!("没能删掉 WebView 里旧版留下的登录 Cookie");
+        }
     }
 
     fn cancel_pending_if_current(&self, client_state: &str) -> HumanSessionResult<()> {
@@ -464,7 +451,7 @@ pub(crate) async fn complete_authentication_callback(
     callback: HumanSessionResult<HumanAuthenticationCallback>,
 ) -> bool {
     let result = match callback {
-        Ok(callback) => sessions.complete_authentication(app, callback).await,
+        Ok(callback) => sessions.complete_authentication(callback).await,
         Err(failure) => Err(failure),
     };
     let authenticated = match result {
@@ -686,8 +673,11 @@ impl HumanSessionFailure {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::{
-        HumanAuthenticationCallback, PendingAuthentication, authentication_callback,
+        HumanAuthenticationCallback, HumanSessionResult, HumanSessionRuntime, HumanSessionVault,
+        PendingAuthentication, PersistedHumanSession, authentication_callback, now_unix_ms,
         parse_authentication_callback, parse_loopback_authentication_callback, pkce_challenge,
         validate_pending, validate_return_path,
     };
@@ -785,6 +775,64 @@ mod tests {
         assert!(validate_return_path("/workspace?tab=agents").is_ok());
         assert!(validate_return_path("//evil.example").is_err());
         assert!(validate_return_path("https://evil.example").is_err());
+    }
+
+    struct EmptyVault;
+
+    impl HumanSessionVault for EmptyVault {
+        fn load_pending(&self) -> HumanSessionResult<Option<PendingAuthentication>> {
+            Ok(None)
+        }
+        fn write_pending(&self, _: &PendingAuthentication) -> HumanSessionResult<()> {
+            Ok(())
+        }
+        fn delete_pending(&self) -> HumanSessionResult<()> {
+            Ok(())
+        }
+        fn load_session(&self) -> HumanSessionResult<Option<PersistedHumanSession>> {
+            Ok(None)
+        }
+        fn write_session(&self, _: &PersistedHumanSession) -> HumanSessionResult<()> {
+            Ok(())
+        }
+        fn delete_session(&self) -> HumanSessionResult<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn 代发只带没过期的登录() {
+        let url = Url::parse("https://api.example.test/").expect("测试 URL 有效");
+        let sessions = HumanSessionRuntime {
+            control_plane_url: url.clone(),
+            browser_control_plane_url: url,
+            http: reqwest::Client::new(),
+            vault: Arc::new(EmptyVault),
+            operation_gate: Arc::new(Mutex::new(())),
+            active: Arc::new(Mutex::new(None)),
+        };
+        assert_eq!(sessions.session_secret().expect("可读"), None);
+
+        let now = now_unix_ms().expect("系统时间有效");
+        let secret = "abcdefghijklmnopqrstuvwxyzABCDEF0123456789";
+        sessions
+            .set_active(Some(PersistedHumanSession {
+                session_secret: secret.to_owned(),
+                expires_at_unix_ms: now + 60_000,
+            }))
+            .expect("可记下登录");
+        assert_eq!(
+            sessions.session_secret().expect("可读").as_deref(),
+            Some(secret)
+        );
+
+        sessions
+            .set_active(Some(PersistedHumanSession {
+                session_secret: secret.to_owned(),
+                expires_at_unix_ms: now - 1,
+            }))
+            .expect("可记下登录");
+        assert_eq!(sessions.session_secret().expect("可读"), None);
     }
 }
 

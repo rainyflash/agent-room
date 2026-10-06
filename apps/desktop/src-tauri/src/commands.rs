@@ -1,7 +1,10 @@
 use agent_room_host_adapters::{HostConfigurator, ManualHostConfiguration};
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{
+    AppHandle, State, Webview,
+    ipc::{Request as IpcRequest, Response as IpcResponse},
+};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
@@ -11,6 +14,9 @@ use crate::{
         LocalBridgeBootstrapGateway, bind_agent_runtime, bootstrap_agent_target,
     },
     bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
+    control_plane_proxy::{
+        ControlPlaneProxy, ControlPlaneProxyFailure, request_frame, webview_origin,
+    },
     deep_link::{DeepLinkInbox, DeepLinkTarget},
     desktop_config::{DesktopBridgeConfig, DesktopConfigFailure},
     human_session::{DesktopAuthenticationIntent, HumanSessionFailure, HumanSessionRuntime},
@@ -149,6 +155,12 @@ impl From<HumanSessionFailure> for DesktopCommandFailure {
     }
 }
 
+impl From<ControlPlaneProxyFailure> for DesktopCommandFailure {
+    fn from(failure: ControlPlaneProxyFailure) -> Self {
+        Self::new(failure.code(), failure.retryable())
+    }
+}
+
 impl From<MatrixSessionFailure> for DesktopCommandFailure {
     fn from(failure: MatrixSessionFailure) -> Self {
         Self::new(failure.code(), failure.retryable())
@@ -212,7 +224,7 @@ pub(crate) fn desktop_clear_human_session(
     Ok(sessions.clear(&app)?)
 }
 
-/// 只返回是否恢复成功，登录 Secret 始终留在系统凭据库和 `HttpOnly` Cookie 边界。
+/// 只返回是否恢复成功，登录 Secret 始终留在原生层。
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn desktop_restore_human_session(
@@ -220,6 +232,32 @@ pub(crate) fn desktop_restore_human_session(
     sessions: State<'_, HumanSessionRuntime>,
 ) -> Result<bool, DesktopCommandFailure> {
     Ok(sessions.restore(&app)?)
+}
+
+/// 前端发往控制面的请求由这里代发：带上登录和窗口自己的 Origin，回答原样交回。
+/// macOS 的 `WKWebView` 不替跨站请求带 Cookie，`WebView` 因此不直接请求控制面。
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_control_plane_request(
+    webview: Webview,
+    sessions: State<'_, HumanSessionRuntime>,
+    proxy: State<'_, ControlPlaneProxy>,
+    request: IpcRequest<'_>,
+) -> Result<IpcResponse, DesktopCommandFailure> {
+    let frame = request_frame(request.body()).ok_or_else(|| {
+        DesktopCommandFailure::new("desktop.control_plane.request_invalid", false)
+    })?;
+    let origin = webview
+        .url()
+        .ok()
+        .as_ref()
+        .and_then(webview_origin)
+        .ok_or_else(|| {
+            DesktopCommandFailure::new("desktop.control_plane.origin_unavailable", false)
+        })?;
+    let secret = sessions.session_secret()?;
+    let response = proxy.forward(&frame, &origin, secret.as_deref()).await?;
+    Ok(IpcResponse::new(response))
 }
 
 #[tauri::command]

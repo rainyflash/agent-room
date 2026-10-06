@@ -227,6 +227,24 @@ export type DesktopRuntimeFailure = {
   readonly retryable: boolean;
 };
 
+/**
+ * 发往控制面的一个请求。桌面端由原生层带上登录代发：macOS 的 WKWebView 不替跨站请求带
+ * Cookie，WebView 因此不直接请求控制面，登录也一直留在原生层。
+ */
+export type DesktopControlPlaneRequest = {
+  readonly method: string;
+  /** 相对控制面根地址的路径，可带查询，比如 `auth/session`。 */
+  readonly path: string;
+  readonly headers: readonly (readonly [string, string])[];
+  readonly body: Uint8Array<ArrayBuffer>;
+};
+
+export type DesktopControlPlaneResponse = {
+  readonly status: number;
+  readonly headers: readonly (readonly [string, string])[];
+  readonly body: Uint8Array<ArrayBuffer>;
+};
+
 export const desktopHumanSessionChangedSchema = z
   .object({
     returnPath: z.string().min(1).max(2_048),
@@ -292,6 +310,10 @@ export type DesktopRuntimeGateway = {
   ): Promise<Result<DesktopMatrixAuthenticationGrant, DesktopRuntimeFailure>>;
   clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>>;
   restoreHumanSession(): Promise<Result<boolean, DesktopRuntimeFailure>>;
+  /** 由原生层带上登录，代发一个控制面请求。 */
+  sendControlPlaneRequest(
+    request: DesktopControlPlaneRequest,
+  ): Promise<Result<DesktopControlPlaneResponse, DesktopRuntimeFailure>>;
   snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>>;
   retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   reauthorizeBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;

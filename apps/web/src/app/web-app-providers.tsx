@@ -45,6 +45,7 @@ import { ControlPlaneAccessManagementClient } from '@/features/security/adapters
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DesktopControlPlaneClient } from '@/features/session/adapters/desktop-control-plane-client';
+import { desktopControlPlaneFetch } from '@/features/session/adapters/desktop-control-plane-fetch';
 import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
 import { GuardedMatrixGateway } from '@/features/session/adapters/guarded-matrix-gateway';
 import { ControlPlaneEncryptionKeyEscrow } from '@/features/session/adapters/control-plane-encryption-key-escrow';
@@ -103,15 +104,25 @@ export function createCloudRuntime(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { refetchOnWindowFocus: true, retry: false } },
   });
-  const privateRequests = new SessionRequestScope();
+  // 桌面端发往控制面的请求一律由原生层带上登录代发：macOS 的 WKWebView 不替跨站请求带 Cookie。
+  const controlPlaneFetch = localRuntime.isAvailable()
+    ? desktopControlPlaneFetch(config.controlPlaneUrl, localRuntime)
+    : globalThis.fetch.bind(globalThis);
+  const privateRequests = new SessionRequestScope(controlPlaneFetch);
   const businessApi = { baseUrl: config.controlPlaneUrl, fetch: privateRequests.fetch };
   // Authentication must remain usable while private requests are being cancelled.
-  const browserControlPlane = new ControlPlaneClient({ baseUrl: config.controlPlaneUrl });
+  const browserControlPlane = new ControlPlaneClient({
+    baseUrl: config.controlPlaneUrl,
+    fetch: controlPlaneFetch,
+  });
   const controlPlane = localRuntime.isAvailable()
     ? new DesktopControlPlaneClient({ controlPlane: browserControlPlane, runtime: localRuntime })
     : browserControlPlane;
   const roomDirectory = new ControlPlanePublicRoomDirectoryClient(businessApi);
-  const telemetry = new ControlPlaneFrontendTelemetryClient({ baseUrl: config.controlPlaneUrl });
+  const telemetry = new ControlPlaneFrontendTelemetryClient({
+    baseUrl: config.controlPlaneUrl,
+    fetch: controlPlaneFetch,
+  });
   const matrixClients = new MatrixClientRegistry();
   const secretStorageKeys = new MatrixSecretStorageKeyCache();
   const deviceSigning = new DeviceSigningStatus();

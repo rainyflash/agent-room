@@ -27,6 +27,8 @@ import {
   type DesktopRuntimeEventHandlers,
   type DesktopAgentTarget,
   type DesktopAuthenticationIntent,
+  type DesktopControlPlaneRequest,
+  type DesktopControlPlaneResponse,
   type DesktopHumanSessionChanged,
   type DesktopMatrixAuthenticationGrant,
   type DesktopNotification,
@@ -38,6 +40,10 @@ import {
 } from '@/features/desktop/domain/desktop-runtime';
 import { err, ok, type Result } from '@/shared/result';
 import { commandFailureSchema, normalizeCommandFailure } from '@/shared/desktop/command-failure';
+import {
+  decodeControlPlaneResponse,
+  encodeControlPlaneRequest,
+} from './control-plane-request-frame';
 
 const desktopCommands = {
   agentRecovery: 'desktop_agent_recovery',
@@ -53,6 +59,7 @@ const desktopCommands = {
   checkUpdate: 'desktop_check_update',
   clearHumanSession: 'desktop_clear_human_session',
   restoreHumanSession: 'desktop_restore_human_session',
+  controlPlaneRequest: 'desktop_control_plane_request',
   configureAgentRuntime: 'desktop_configure_agent_runtime',
   installUpdate: 'desktop_install_update',
   offerInvitation: 'desktop_offer_invitation',
@@ -76,9 +83,10 @@ type DesktopEventName =
 
 export type TauriDesktopTransport = {
   readonly available: () => boolean;
+  /** 字节数组作为原始正文发出，命令里读到的是同样的字节。 */
   readonly invoke: (
     command: DesktopCommand,
-    arguments_: Record<string, unknown>,
+    arguments_: Record<string, unknown> | Uint8Array,
   ) => Promise<unknown>;
   readonly listen: (
     eventName: DesktopEventName,
@@ -154,6 +162,26 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
   async restoreHumanSession(): Promise<Result<boolean, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.restoreHumanSession, {}, z.boolean());
+  }
+
+  async sendControlPlaneRequest(
+    request: DesktopControlPlaneRequest,
+  ): Promise<Result<DesktopControlPlaneResponse, DesktopRuntimeFailure>> {
+    if (!this.transport.available()) {
+      return err({ code: 'desktop.runtime.unavailable', retryable: false });
+    }
+    try {
+      const raw = await this.transport.invoke(
+        desktopCommands.controlPlaneRequest,
+        encodeControlPlaneRequest(request),
+      );
+      const response = decodeControlPlaneResponse(raw);
+      return response === null
+        ? err({ code: 'desktop.command.invalid_response', retryable: true })
+        : ok(response);
+    } catch (error: unknown) {
+      return err(normalizeCommandFailure(error, 'desktop.command.failed'));
+    }
   }
 
   async snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>> {

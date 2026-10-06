@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Agent Room 主窗口只可读取桌面状态，并执行闭合的 Bridge 恢复操作。",
+  "description": "Agent Room 主窗口只可读取桌面状态、执行闭合的 Bridge 恢复操作，并经原生层带上登录代发控制面请求。",
   "windows": ["main"],
   "platforms": ["windows", "macOS", "linux"],
   "permissions": [
@@ -14,6 +14,7 @@
     "allow-desktop-clear-matrix-session",
     "allow-desktop-clear-human-session",
     "allow-desktop-restore-human-session",
+    "allow-desktop-control-plane-request",
     "allow-desktop-runtime-snapshot",
     "allow-desktop-retry-bridge",
     "allow-desktop-reauthorize-bridge",

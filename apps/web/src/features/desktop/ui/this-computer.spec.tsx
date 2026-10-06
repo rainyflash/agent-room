@@ -125,6 +125,8 @@ function gateway(
     checkUpdate,
     clearHumanSession: () => Promise.resolve(ok(undefined)),
     restoreHumanSession: () => Promise.resolve(ok(true)),
+    sendControlPlaneRequest: () =>
+      Promise.resolve(ok({ status: 204, headers: [], body: new Uint8Array() })),
     configureAgentRuntime: (target) => Promise.resolve(ok(target)),
     installUpdate,
     isAvailable: () => true,

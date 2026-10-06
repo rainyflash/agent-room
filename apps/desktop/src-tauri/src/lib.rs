@@ -5,6 +5,7 @@ mod bridge_supervisor;
 #[cfg(test)]
 mod capability_tests;
 mod commands;
+mod control_plane_proxy;
 #[cfg(all(test, windows))]
 mod credential_store_test_support;
 mod deep_link;
@@ -40,12 +41,13 @@ use commands::{
     DesktopRuntime, desktop_agent_recovery, desktop_agent_recovery_sessions,
     desktop_begin_human_authentication, desktop_begin_matrix_authentication,
     desktop_bootstrap_default_agent, desktop_check_update, desktop_clear_human_session,
-    desktop_clear_matrix_session, desktop_configure_agent_runtime,
+    desktop_clear_matrix_session, desktop_configure_agent_runtime, desktop_control_plane_request,
     desktop_host_session_diagnostics, desktop_install_update, desktop_load_matrix_session,
     desktop_offer_invitation, desktop_open_authorization, desktop_reauthorize_bridge,
     desktop_restore_human_session, desktop_retry_bridge, desktop_runtime_snapshot,
     desktop_save_matrix_session, desktop_set_autostart, desktop_withdraw_invitation,
 };
+use control_plane_proxy::ControlPlaneProxy;
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
 use human_session::HumanSessionRuntime;
@@ -136,6 +138,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_clear_matrix_session,
             desktop_clear_human_session,
             desktop_restore_human_session,
+            desktop_control_plane_request,
             desktop_runtime_snapshot,
             desktop_retry_bridge,
             desktop_reauthorize_bridge,
@@ -266,6 +269,10 @@ fn setup_user_sessions(app: &tauri::App, config: &DesktopBridgeConfig) -> Result
         .map_err(|failure| format!("桌面人类会话初始化失败 [{}]", failure.code()))?;
     // 由前端启动时的 restore 命令恢复，保证请求顺序并把存储故障呈现为可恢复界面。
     app.manage(human_sessions);
+    // 前端发往控制面的请求都经它带上登录发出，WebView 里没有登录 Cookie。
+    let control_plane = ControlPlaneProxy::new(config.control_plane_url())
+        .map_err(|failure| format!("控制面代发初始化失败 [{}]", failure.code()))?;
+    app.manage(control_plane);
     app.manage(MatrixSessionRuntime::system(config));
     app.manage(MatrixCredentialRuntime::system(config));
     Ok(())

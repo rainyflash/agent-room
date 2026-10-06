@@ -64,6 +64,58 @@ describe('Tauri 桌面运行时适配器', () => {
     await expect(gateway.readHostSessions()).resolves.toEqual({ ok: true, value: payload });
   });
 
+  it('控制面请求编成一段字节交给原生命令，回答按同样的格式解开', async () => {
+    const head = new TextEncoder().encode(
+      JSON.stringify({ headers: [['content-type', 'application/json']], status: 200 }),
+    );
+    const body = new TextEncoder().encode('{"ok":true}');
+    const frame = new Uint8Array(4 + head.byteLength + body.byteLength);
+    new DataView(frame.buffer).setUint32(0, head.byteLength);
+    frame.set(head, 4);
+    frame.set(body, 4 + head.byteLength);
+    const invoke = vi.fn().mockResolvedValue(frame.buffer);
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    await expect(
+      gateway.sendControlPlaneRequest({
+        body: new Uint8Array(),
+        headers: [['accept', 'application/json']],
+        method: 'GET',
+        path: 'auth/session',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { body, headers: [['content-type', 'application/json']], status: 200 },
+    });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(
+      'desktop_control_plane_request',
+      expect.any(Uint8Array),
+    );
+  });
+
+  it('控制面请求的回答不成格式算无效回答，原生层的失败原样交回', async () => {
+    const request = { body: new Uint8Array(), headers: [], method: 'GET', path: 'agents' };
+    const garbled = new TauriDesktopRuntimeGateway(
+      transport({ invoke: vi.fn().mockResolvedValue({ status: 200 }) }),
+    );
+    await expect(garbled.sendControlPlaneRequest(request)).resolves.toEqual({
+      error: { code: 'desktop.command.invalid_response', retryable: true },
+      ok: false,
+    });
+
+    const offline = new TauriDesktopRuntimeGateway(
+      transport({
+        invoke: vi
+          .fn()
+          .mockRejectedValue({ code: 'desktop.control_plane.unavailable', retryable: true }),
+      }),
+    );
+    await expect(offline.sendControlPlaneRequest(request)).resolves.toEqual({
+      error: { code: 'desktop.control_plane.unavailable', retryable: true },
+      ok: false,
+    });
+  });
+
   it('浏览器模式拒绝原生命令而不尝试调用传输层', async () => {
     const invoke = vi.fn();
     const gateway = new TauriDesktopRuntimeGateway(transport({ available: () => false, invoke }));
