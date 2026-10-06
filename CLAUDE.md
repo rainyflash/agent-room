@@ -87,7 +87,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **macOS 不让给还没绑定的 socket 设权限。** interprocess 的 `ListenerOptionsExt::mode` 在绑定前调 `fchmod()`，Linux 支持，macOS 一律返回 EINVAL。Bridge 从第一版起就用它，每台 Mac 授权完都报 `bridge.ipc_bind_failed`、建不起本地连接，Linux 和 Windows 的测试照样全过。#320 起绑定后再用 `restrict_socket_to_owner` 收紧到 0600（运行目录先验过 0700），别再用 `mode()`。
-- **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
+- **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（#325，命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
@@ -222,8 +222,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 升级由那台 Mac 上的 Claude Code 按房间里的步骤做，维护者在 Mac 上同意；
   - Bridge 两秒内 Authorized，用的是之前保存的授权；`runtime/bridge.sock` 是 `srw-------`；
   - 命令行 `doctor` 立即 `ready`，钥匙串没弹窗。
-- 启动时 `bridge.log` 有一条 `get_self` 回 `bridge.agent_runtime_unavailable` 的 WARN 是正常的：还没有默认 Agent 时，桌面端问“默认 Agent 是谁”就是这个回答，Windows 上也一样。
-- 2026-10-06 Bridge 通了以后，桌面端界面第一次走到“在应用里登录账户”，结果登录完回来还是欢迎页：Bridge 授权和应用里的账户登录是两件事，那台 Mac 以前从没走到这一步。原因是 WKWebView 不带跨站 Cookie（见上面“代码里的坑”），服务器日志里 `/auth/desktop/exchange` 是 200、紧接着两次 `/auth/session` 都是 401。修复是桌面端发往控制面的请求改由原生层代发，下一版发布后请那台 Mac 上的 Claude Code 再装一次验证。在那之前，那台 Mac 上用 MCP、命令行接入的 Agent 不受影响，维护者聊天先用浏览器版。
+- 还没有默认 Agent 时，桌面端问“默认 Agent 是谁”（`get_self`）得到 `bridge.agent_runtime_unavailable` 是正常的，Windows 上也一样。Alpha 63 及以前的 `bridge.log` 里因此有 WARN（启动时一条，之后每十分钟一条）；#324 起只按 debug 记。
+- 2026-10-06 Bridge 通了以后，桌面端界面第一次走到“在应用里登录账户”，结果登录完回来还是欢迎页：Bridge 授权和应用里的账户登录是两件事，那台 Mac 以前从没走到这一步。原因是 WKWebView 不带跨站 Cookie（见上面“代码里的坑”），服务器日志里 `/auth/desktop/exchange` 是 200、紧接着两次 `/auth/session` 都是 401。修复 #325：桌面端发往控制面的请求改由原生层代发，下一版发布后请那台 Mac 上的 Claude Code 再装一次验证。在那之前，那台 Mac 上用 MCP、命令行接入的 Agent 不受影响，维护者聊天先用浏览器版。
 - 之后在 Mac 上接入 Agent、后台回复，还可能碰到别的 Mac 专属问题，排查照上面的办法。
 
 ### 版本与其他
