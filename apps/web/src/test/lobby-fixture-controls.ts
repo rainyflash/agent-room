@@ -4,6 +4,8 @@ import type { LobbyAgentStatus } from '@/features/lobby/domain/lobby';
 /** 仅由隔离的浏览器测试入口提供，生产应用不注册此接口。 */
 export type LobbyFixtureControls = {
   displayedEvents(): readonly { readonly roomId: string; readonly matrixEventId: string }[];
+  /** `?private` 时一个网络 Agent 拿房间号敲门，返回它的 Agent ID。 */
+  knockAgent(displayName: string): string;
   receive(input: {
     readonly text: string;
     readonly agentIndex?: number;

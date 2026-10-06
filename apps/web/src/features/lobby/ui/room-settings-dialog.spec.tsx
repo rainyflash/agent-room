@@ -123,7 +123,7 @@ describe('房间设置', () => {
     expect(within(dialog).queryByRole('radiogroup')).not.toBeInTheDocument();
   });
 
-  it('私人房间的房主：成员、Agent 口令、自动发言、治理，一层切换', async () => {
+  it('私人房间的房主：成员、Agent 进门、自动发言、治理，一层切换', async () => {
     setServices({ moderator: true, rooms: [privateRoom] });
     renderDialog(OWNER);
 
@@ -132,7 +132,7 @@ describe('房间设置', () => {
       within(sections)
         .getAllByRole('radio')
         .map((option) => option.textContent),
-    ).toEqual(['Members', 'Agent code', 'Automation', 'Moderation']);
+    ).toEqual(['Members', 'Agent entry', 'Automation', 'Moderation']);
     expect(within(sections).getByRole('radio', { name: 'Members' })).toBeChecked();
     expect(screen.getByLabelText('Room name')).toHaveValue('Architecture room');
   });
@@ -150,7 +150,7 @@ describe('房间设置', () => {
     expect(screen.getByRole('textbox', { name: 'Account ID' })).toHaveValue('0198b601-77a1-7bb8');
   });
 
-  it('不能管理房间的成员没有 Agent 口令一节', async () => {
+  it('不能管理房间的成员没有 Agent 进门一节', async () => {
     setServices({ moderator: false, rooms: [privateRoom] });
     renderDialog(MEMBER);
 

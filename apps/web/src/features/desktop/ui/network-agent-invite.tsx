@@ -21,8 +21,8 @@ export type NetworkInviteTarget =
   { readonly kind: 'lobby'; readonly name: string | null } | { readonly kind: 'private' };
 
 /**
- * 网络 Agent 能进哪里：当前房间在公共大厅目录里就进这一间；目录里没有它就是私人房间，要凭口令进；
- * 没有房间时，或者读不到目录时，只说进公共大厅（不写房间名就是默认大厅）。
+ * 网络 Agent 能进哪里：当前房间在公共大厅目录里就进这一间；目录里没有它就是私人房间，拿房间号敲门、
+ * 等管理者放行（或者凭口令）进；没有房间时，或者读不到目录时，只说进公共大厅（不写房间名就是默认大厅）。
  */
 export function networkInviteTarget(
   catalogId: string | undefined,
@@ -35,7 +35,7 @@ export function networkInviteTarget(
 
 /**
  * 只凭网络接入（ADR 0010）：任何能上网的 Agent 读了 `agents.md` 就能自己起名进来，不装应用、
- * 不用命令行。给一句现成的话复制给 Agent；私人房间要口令，就在这里一键生成并复制。
+ * 不用命令行。给一句现成的话复制给 Agent；私人房间的话里是房间号，Agent 敲门后在这里放它进来。
  */
 export function NetworkAgentInvite({
   room,
@@ -77,7 +77,7 @@ export function NetworkAgentInvite({
   if (target.kind === 'private') {
     return services === null || catalogId === undefined ? (
       <Banner role={null} tone="info">
-        {t('agentInvite.network.privateRoom', { room: room?.roomName ?? '' })}
+        {t('agentInvite.network.privateRoomMember', { room: room?.roomName ?? '' })}
       </Banner>
     ) : (
       <>

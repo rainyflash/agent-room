@@ -1,14 +1,18 @@
 import { z } from 'zod';
 
 import {
+  admittedAgentSchema,
   generatedJoinCodeSchema,
   privateRoomAgentAccessSchema,
+  privateRoomAgentKnocksSchema,
   privateRoomListSchema,
   privateRoomSchema,
   type CreatePrivateRoomInput,
   type GeneratedJoinCode,
   type PrivateRoom,
   type PrivateRoomAgentAccess,
+  type PrivateRoomAgentKnock,
+  type PrivateRoomAgentMember,
   type PrivateRoomFailure,
   type PrivateRoomGateway,
   type PrivateRoomInvitationInput,
@@ -17,6 +21,9 @@ import {
 } from '@/features/private-rooms/domain/private-room';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
+
+/** 放行时服务器替 Agent 进房间：第一次进加密房间要开加密存储、建身份，比平常的请求慢。 */
+const ADMIT_TIMEOUT_MS = 45_000;
 
 const errorEnvelopeSchema = z.looseObject({
   code: z.string().min(1),
@@ -144,6 +151,36 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     );
   }
 
+  async agentKnocks(
+    catalogId: string,
+  ): Promise<Result<readonly PrivateRoomAgentKnock[], PrivateRoomFailure>> {
+    const response = await this.#request(
+      `${this.#agentAccessPath(catalogId)}/knocks`,
+      { method: 'GET' },
+      privateRoomAgentKnocksSchema,
+    );
+    return response.ok ? ok(response.value.knocks) : response;
+  }
+
+  async admitKnock(
+    catalogId: string,
+    agentId: string,
+  ): Promise<Result<PrivateRoomAgentMember, PrivateRoomFailure>> {
+    const response = await this.#request(
+      `${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`,
+      { method: 'PUT' },
+      admittedAgentSchema,
+      ADMIT_TIMEOUT_MS,
+    );
+    return response.ok ? ok(response.value.agent) : response;
+  }
+
+  declineKnock(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#send(`${this.#agentAccessPath(catalogId)}/knocks/${encodeURIComponent(agentId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   generateJoinCode(catalogId: string): Promise<Result<GeneratedJoinCode, PrivateRoomFailure>> {
     return this.#request(
       `${this.#agentAccessPath(catalogId)}/code`,
@@ -188,29 +225,36 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     path: string,
     init: RequestInit,
     schema: z.ZodType<T>,
+    timeoutMs = this.#timeoutMs,
   ): Promise<Result<T, PrivateRoomFailure>> {
-    return this.#exchange(path, init, async (response) => {
-      const parsed = schema.safeParse(await response.json());
-      return parsed.success
-        ? ok(parsed.data)
-        : err({ code: 'private_room.invalid_response', retryable: false });
-    });
+    return this.#exchange(
+      path,
+      init,
+      async (response) => {
+        const parsed = schema.safeParse(await response.json());
+        return parsed.success
+          ? ok(parsed.data)
+          : err({ code: 'private_room.invalid_response', retryable: false });
+      },
+      timeoutMs,
+    );
   }
 
   /** Writes that answer 204 without a body. */
   #send(path: string, init: RequestInit): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#exchange(path, init, () => Promise.resolve(ok(undefined)));
+    return this.#exchange(path, init, () => Promise.resolve(ok(undefined)), this.#timeoutMs);
   }
 
   async #exchange<T>(
     path: string,
     init: RequestInit,
     read: (response: Response) => Promise<Result<T, PrivateRoomFailure>>,
+    timeoutMs: number,
   ): Promise<Result<T, PrivateRoomFailure>> {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => {
       controller.abort();
-    }, this.#timeoutMs);
+    }, timeoutMs);
     try {
       const headers = new Headers(init.headers);
       headers.set('Accept', 'application/json');

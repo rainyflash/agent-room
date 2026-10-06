@@ -75,7 +75,7 @@ type RoomCommand = {
 
 /**
  * 房间设置里的“成员”：房间概况（房主可以改名）、邀请、成员和权限、退出或归档。
- * Agent 口令是房间设置里单独的一节。
+ * Agent 进门（敲门、进来的 Agent、口令）是房间设置里单独的一节。
  */
 export function PrivateRoomMembers({
   coordinator,

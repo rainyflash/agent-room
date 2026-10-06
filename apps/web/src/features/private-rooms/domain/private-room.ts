@@ -50,7 +50,7 @@ export const privateRoomListSchema = z.object({ rooms: z.array(privateRoomSchema
 
 const unixMillisSchema = z.number().int().nonnegative();
 
-/// 凭口令进来的 Agent：它是房间的 Agent 成员，主人并不因此成为房间成员。
+/// 凭口令或经管理者放行进来的 Agent：它是房间的 Agent 成员，主人并不因此成为房间成员。
 const agentMemberSchema = z
   .object({
     agentId: z.uuid(),
@@ -70,6 +70,23 @@ export const privateRoomAgentAccessSchema = z
   })
   .strict();
 
+/// 拿房间号敲门、等管理者放行的网络 Agent，先敲的在前；一小时没人回答就作废。
+const agentKnockSchema = z
+  .object({
+    agentId: z.uuid(),
+    displayName: z.string().min(1),
+    expiresAtUnixMs: unixMillisSchema,
+    knockedAtUnixMs: unixMillisSchema,
+  })
+  .strict();
+
+export const privateRoomAgentKnocksSchema = z
+  .object({ knocks: z.array(agentKnockSchema) })
+  .strict();
+
+/// 放行后服务器替它进了房间，回答它现在的 Agent 成员记录。
+export const admittedAgentSchema = z.object({ agent: agentMemberSchema }).strict();
+
 /// 口令只在生成的那次响应里出现：12 位 Crockford Base32，分三组。
 export const generatedJoinCodeSchema = z
   .object({
@@ -81,6 +98,7 @@ export const generatedJoinCodeSchema = z
 export type PrivateRoom = z.infer<typeof privateRoomSchema>;
 export type PrivateRoomAgentAccess = z.infer<typeof privateRoomAgentAccessSchema>;
 export type PrivateRoomAgentMember = z.infer<typeof agentMemberSchema>;
+export type PrivateRoomAgentKnock = z.infer<typeof agentKnockSchema>;
 export type GeneratedJoinCode = z.infer<typeof generatedJoinCodeSchema>;
 export type PrivateRoomMember = z.infer<typeof memberSchema>;
 export type PrivateRoomPermissions = z.infer<typeof permissionsSchema>;
@@ -110,8 +128,19 @@ export type TransferPrivateRoomOwnershipInput = {
 
 export type PrivateRoomGateway = {
   accept(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
-  /** Join code status and the agents that came in with it; needs the manage permission. */
+  /** Join code status and the agents that came in with it or were let in; needs the manage permission. */
   agentAccess(catalogId: string): Promise<Result<PrivateRoomAgentAccess, PrivateRoomFailure>>;
+  /** Network agents knocking with the room number, oldest first; needs the manage permission. */
+  agentKnocks(
+    catalogId: string,
+  ): Promise<Result<readonly PrivateRoomAgentKnock[], PrivateRoomFailure>>;
+  /** Lets a knocking agent in. The server enters the room for it before answering. */
+  admitKnock(
+    catalogId: string,
+    agentId: string,
+  ): Promise<Result<PrivateRoomAgentMember, PrivateRoomFailure>>;
+  /** Turns a knocking agent away; it stays turned away from this room. */
+  declineKnock(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>>;
   archive(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   ban(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   create(
@@ -131,7 +160,7 @@ export type PrivateRoomGateway = {
   leave(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   list(): Promise<Result<readonly PrivateRoom[], PrivateRoomFailure>>;
   remove(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
-  /** Removes an agent that joined with the code; it needs a newer code to come back. */
+  /** Removes an agent that came in with the code or was let in; it needs a newer code or a new knock to come back. */
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>>;
   /** Only the owner may rename; the Matrix room name follows. */
   rename(catalogId: string, name: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;

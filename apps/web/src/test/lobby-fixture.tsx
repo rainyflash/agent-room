@@ -1,6 +1,7 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
+import { ToastStack } from '@agent-room/ui-system';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createMemoryHistory,
@@ -77,9 +78,12 @@ import type {
 } from '@/features/moderation/domain/moderation';
 import type {
   PrivateRoom,
+  PrivateRoomAgentKnock,
+  PrivateRoomAgentMember,
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
 } from '@/features/private-rooms/domain/private-room';
+import { PrivateRoomAgentKnockToasts } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -96,8 +100,10 @@ const fixtureAgentCount =
   Number.isSafeInteger(requestedCount) && requestedCount >= 6 && requestedCount <= 1000
     ? requestedCount
     : 24;
-// `?private` 把夹具房间当成你是房主的私人房间：房间设置里有“成员”和“Agent 口令”。
+// `?private` 把夹具房间当成你是房主的私人房间：房间设置里有“成员”和“Agent 进门”。
 const privateFixture = new URLSearchParams(window.location.search).has('private');
+// `?private&knock` 里一个网络 Agent（Sol）拿房间号在敲门，房间页的提示栈和接入对话框都能放它进来。
+const knockFixture = privateFixture && new URLSearchParams(window.location.search).has('knock');
 let room: LobbyRoom = privateFixture
   ? { ...testRoom(fixtureAgentCount), encrypted: true }
   : testRoom(fixtureAgentCount);
@@ -115,8 +121,12 @@ const desktop = new TauriDesktopRuntimeGateway({
   },
   listen: () => Promise.resolve(() => undefined),
 });
+// 私人房间不在公开大厅目录里：接入对话框据此走“拿房间号敲门”。
 const roomDirectory = {
-  list: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
+  list: () =>
+    Promise.resolve(
+      privateFixture ? ok([]) : err({ code: 'fixture.unavailable', retryable: false }),
+    ),
 };
 const localPreferencesGateway: AccountPreferencesGateway = {
   read: () => Promise.resolve(err({ code: 'preferences.source_unavailable', retryable: true })),
@@ -294,6 +304,11 @@ const inboxStore = new InboxStore(
 );
 const fixtureControls: LobbyFixtureControls = {
   displayedEvents: () => [...displayedEvents],
+  knockAgent: (displayName) => {
+    const knock = fixtureKnock(displayName);
+    fixtureKnocks = [...fixtureKnocks, knock];
+    return knock.agentId;
+  },
   receive: (input) => {
     const agent = room.agents[input.agentIndex ?? 0];
     if (agent === undefined) throw new Error('测试发言引用了不存在的 Agent');
@@ -513,6 +528,54 @@ const moderation: ModerationGateway = {
 };
 const unavailablePrivateRoom = () =>
   Promise.resolve(err({ code: 'private_room.fixture_unavailable', retryable: false }));
+let fixtureKnocks: readonly PrivateRoomAgentKnock[] = knockFixture ? [fixtureKnock('Sol')] : [];
+let fixtureRoomAgents: readonly PrivateRoomAgentMember[] = [];
+
+function fixtureKnock(displayName: string): PrivateRoomAgentKnock {
+  const knockedAtUnixMs = Date.now();
+  return {
+    agentId: crypto.randomUUID(),
+    displayName,
+    expiresAtUnixMs: knockedAtUnixMs + 3_600_000,
+    knockedAtUnixMs,
+  };
+}
+
+/** 放行：从敲门的挪进房间里的 Agent。它已经不在敲门时和服务器一样回答 404。 */
+function answerFixtureKnock(agentId: string, admit: boolean): PrivateRoomAgentMember | null {
+  const knock = fixtureKnocks.find((candidate) => candidate.agentId === agentId);
+  if (knock === undefined) return null;
+  fixtureKnocks = fixtureKnocks.filter((candidate) => candidate.agentId !== agentId);
+  const now = Date.now();
+  const member: PrivateRoomAgentMember = {
+    agentId,
+    displayName: knock.displayName,
+    joinedAtUnixMs: now,
+    ownerDisplayName: null,
+    status: 'joined',
+    statusChangedAtUnixMs: now,
+  };
+  if (admit) {
+    fixtureRoomAgents = [...fixtureRoomAgents, member];
+    // 和服务器一样：放行后替它进房间、说在线，它出现在房间里。
+    const agent: LobbyAgent = {
+      ...testAgent(room.agents.length + 500),
+      agentId,
+      displayName: knock.displayName,
+      status: 'idle',
+    };
+    room = {
+      ...room,
+      agents: [...room.agents, agent],
+      joinedMemberIds: [...(room.joinedMemberIds ?? []), agent.matrixUserId],
+    };
+    updateFixtureScene();
+    for (const listener of lobbyListeners) listener();
+  }
+  return member;
+}
+
+const knockGone = () => Promise.resolve(err({ code: 'agent_knock.not_found', retryable: false }));
 const fixtureOwner = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
 const fixturePrivateRoom: PrivateRoom = {
   catalogId: '01990d9e-8400-7000-8000-000000000401',
@@ -539,13 +602,26 @@ const fixturePrivateRoom: PrivateRoom = {
 };
 const privateRooms: PrivateRoomGateway = {
   accept: unavailablePrivateRoom,
+  admitKnock: privateFixture
+    ? (_catalogId, agentId) => {
+        const member = answerFixtureKnock(agentId, true);
+        return member === null ? knockGone() : Promise.resolve(ok(member));
+      }
+    : unavailablePrivateRoom,
   agentAccess: privateFixture
-    ? () => Promise.resolve(ok({ agents: [], joinCode: null }))
+    ? () => Promise.resolve(ok({ agents: [...fixtureRoomAgents], joinCode: null }))
+    : unavailablePrivateRoom,
+  agentKnocks: privateFixture
+    ? () => Promise.resolve(ok([...fixtureKnocks]))
     : unavailablePrivateRoom,
   archive: unavailablePrivateRoom,
   ban: unavailablePrivateRoom,
   create: unavailablePrivateRoom,
   decline: unavailablePrivateRoom,
+  declineKnock: privateFixture
+    ? (_catalogId, agentId) =>
+        answerFixtureKnock(agentId, false) === null ? knockGone() : Promise.resolve(ok(undefined))
+    : unavailablePrivateRoom,
   disableJoinCode: unavailablePrivateRoom,
   generateJoinCode: unavailablePrivateRoom,
   inspect: unavailablePrivateRoom,
@@ -982,54 +1058,65 @@ function LobbyFixture({
                   {inboxMode ? (
                     <InboxPage />
                   ) : (
-                    <LobbyPage
-                      catalogId="01990d9e-8400-7000-8000-000000000401"
-                      onExitRoom={() => undefined}
-                      view={view}
-                      onViewChange={(nextView) => {
-                        if (nextView === 'space') {
+                    <>
+                      <LobbyPage
+                        catalogId="01990d9e-8400-7000-8000-000000000401"
+                        onExitRoom={() => undefined}
+                        view={view}
+                        onViewChange={(nextView) => {
+                          if (nextView === 'space') {
+                            setSelectedDirectSessionId(null);
+                            setSelectedMessageId(null);
+                          }
+                          updateView(nextView);
+                        }}
+                        onOpenRoomPanel={(nextView) => {
                           setSelectedDirectSessionId(null);
+                          setSelectedAgentId(null);
                           setSelectedMessageId(null);
-                        }
-                        updateView(nextView);
-                      }}
-                      onOpenRoomPanel={(nextView) => {
-                        setSelectedDirectSessionId(null);
-                        setSelectedAgentId(null);
-                        setSelectedMessageId(null);
-                        updateView(nextView);
-                      }}
-                      onSelectedAgentChange={(id) => {
-                        setSelectedAgentId(id);
-                        if (id !== null) {
-                          setSelectedDirectSessionId(null);
+                          updateView(nextView);
+                        }}
+                        onSelectedAgentChange={(id) => {
+                          setSelectedAgentId(id);
+                          if (id !== null) {
+                            setSelectedDirectSessionId(null);
+                            setSelectedMessageId(null);
+                            updateView('space');
+                          }
+                        }}
+                        onSelectedDirectSessionChange={(id) => {
+                          setSelectedDirectSessionId(id);
+                          setSelectedAgentId(null);
                           setSelectedMessageId(null);
-                          updateView('space');
-                        }
-                      }}
-                      onSelectedDirectSessionChange={(id) => {
-                        setSelectedDirectSessionId(id);
-                        setSelectedAgentId(null);
-                        setSelectedMessageId(null);
-                        updateView(id === null ? 'space' : 'conversation');
-                      }}
-                      onSelectedMessageChange={setSelectedMessageId}
-                      principal={{
-                        authenticatedAtUnixMs: Date.now(),
-                        displayName: 'Fixture operator',
-                        expiresAtUnixMs: Date.now() + 60_000,
-                        locale: 'en',
-                        matrixUserId: '@fixture:matrix.test',
-                        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
-                        recentlyAuthenticated: !new URLSearchParams(window.location.search).has(
-                          'olderSession',
-                        ),
-                      }}
-                      roomId={room.roomId}
-                      selectedAgentId={selectedAgentId}
-                      selectedDirectSessionId={selectedDirectSessionId}
-                      selectedMessageId={selectedMessageId}
-                    />
+                          updateView(id === null ? 'space' : 'conversation');
+                        }}
+                        onSelectedMessageChange={setSelectedMessageId}
+                        principal={{
+                          authenticatedAtUnixMs: Date.now(),
+                          displayName: 'Fixture operator',
+                          expiresAtUnixMs: Date.now() + 60_000,
+                          locale: 'en',
+                          matrixUserId: '@fixture:matrix.test',
+                          principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+                          recentlyAuthenticated: !new URLSearchParams(window.location.search).has(
+                            'olderSession',
+                          ),
+                        }}
+                        roomId={room.roomId}
+                        selectedAgentId={selectedAgentId}
+                        selectedDirectSessionId={selectedDirectSessionId}
+                        selectedMessageId={selectedMessageId}
+                      />
+                      {privateFixture ? (
+                        // 和根布局一样：管理者开着私人房间时，敲门挂在提示栈里。
+                        <ToastStack label="Notifications">
+                          <PrivateRoomAgentKnockToasts
+                            catalogId={fixturePrivateRoom.catalogId}
+                            rooms={privateRooms}
+                          />
+                        </ToastStack>
+                      ) : null}
+                    </>
                   )}
                 </DesktopRuntimeProvider>
               </InboxProvider>
