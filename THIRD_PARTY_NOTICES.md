@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 890
-- npm packages: 716
-- Total locked package versions: 1606
+- npm packages: 717
+- Total locked package versions: 1607
 - `Cargo.lock` SHA-256: `63c503a4c109473a1f263956c63fb26639923079a250109f7015cc5b63fac5dd`
-- `pnpm-lock.yaml` SHA-256: `02cb9bafc26ad56a924e31375a52d39294f59b1de794ac2090d243c883bce370`
+- `pnpm-lock.yaml` SHA-256: `16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877`
 
 ## License expressions
 
@@ -51,7 +51,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 56 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 768 |
+| `MIT` | 769 |
 | `MIT AND BSD-3-Clause` | 1 |
 | `MIT OR Apache-2.0` | 380 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
@@ -1234,7 +1234,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [common-ancestor-path](https://www.npmjs.com/package/common-ancestor-path/v/1.0.1) | 1.0.1 | `ISC` |
 | npm | [common-tags](https://www.npmjs.com/package/common-tags/v/1.8.2) | 1.8.2 | `MIT` |
 | npm | [compressible](https://www.npmjs.com/package/compressible/v/2.0.18) | 2.0.18 | `MIT` |
-| npm | [compression](https://www.npmjs.com/package/compression/v/1.8.1) | 1.8.1 | `MIT` |
+| npm | [compression](https://www.npmjs.com/package/compression/v/1.8.2) | 1.8.2 | `MIT` |
 | npm | [connect](https://www.npmjs.com/package/connect/v/3.7.0) | 3.7.0 | `MIT` |
 | npm | [content-type](https://www.npmjs.com/package/content-type/v/2.1.0) | 2.1.0 | `MIT` |
 | npm | [content-type](https://www.npmjs.com/package/content-type/v/3.1.1) | 3.1.1 | `MIT` |
@@ -1261,6 +1261,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [define-properties](https://www.npmjs.com/package/define-properties/v/1.2.1) | 1.2.1 | `MIT` |
 | npm | [depd](https://www.npmjs.com/package/depd/v/2.0.0) | 2.0.0 | `MIT` |
 | npm | [dequal](https://www.npmjs.com/package/dequal/v/2.0.3) | 2.0.3 | `MIT` |
+| npm | [destroy](https://www.npmjs.com/package/destroy/v/1.2.0) | 1.2.0 | `MIT` |
 | npm | [detect-libc](https://www.npmjs.com/package/detect-libc/v/2.1.2) | 2.1.2 | `Apache-2.0` |
 | npm | [dom-accessibility-api](https://www.npmjs.com/package/dom-accessibility-api/v/0.5.16) | 0.5.16 | `MIT` |
 | npm | [dom-accessibility-api](https://www.npmjs.com/package/dom-accessibility-api/v/0.6.3) | 0.6.3 | `MIT` |
@@ -1559,7 +1560,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [smob](https://www.npmjs.com/package/smob/v/1.6.2) | 1.6.2 | `MIT` |
 | npm | [source-map](https://www.npmjs.com/package/source-map/v/0.6.1) | 0.6.1 | `BSD-3-Clause` |
 | npm | [source-map](https://www.npmjs.com/package/source-map/v/0.8.0) | 0.8.0 | `BSD-3-Clause` |
-| npm | [source-map-js](https://www.npmjs.com/package/source-map-js/v/1.2.1) | 1.2.1 | `BSD-3-Clause` |
+| npm | [source-map-js](https://www.npmjs.com/package/source-map-js/v/1.2.2) | 1.2.2 | `BSD-3-Clause` |
 | npm | [source-map-support](https://www.npmjs.com/package/source-map-support/v/0.5.21) | 0.5.21 | `MIT` |
 | npm | [spdx-exceptions](https://www.npmjs.com/package/spdx-exceptions/v/2.5.0) | 2.5.0 | `CC-BY-3.0` |
 | npm | [spdx-expression-parse](https://www.npmjs.com/package/spdx-expression-parse/v/4.0.0) | 4.0.0 | `MIT` |
