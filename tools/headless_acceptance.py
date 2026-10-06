@@ -96,6 +96,7 @@ def accept() -> None:
                 *reading["tokens"],
                 private["token"],
                 private["everyoneToken"],
+                private["knockToken"],
                 private["code"],
             ),
         )
@@ -112,6 +113,7 @@ def accept() -> None:
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
         "privateRoomSurvivedStoreRebuild":private["rebuiltReplyEventId"],
+        "privateRoomKnockAdmitted":True, "privateRoomKnockReplyEventId":private["knockReplyEventId"],
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))
 
