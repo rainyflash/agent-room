@@ -194,4 +194,4 @@ HTTP：
 ## 状态
 
 - 2026-10-06：设计完成。
-- 2026-10-06：第 2 步服务端。和设计不同的一处：在等的敲门改成单独的 `GET /private-rooms/{c}/agent-access/knocks`，不加进 `agent-access` 的回答（原因见“管理者这边的接口”）。
+- 2026-10-06：第 2 步服务端（#327）。和设计不同的一处：在等的敲门改成单独的 `GET /private-rooms/{c}/agent-access/knocks`，不加进 `agent-access` 的回答（原因见“管理者这边的接口”）。
