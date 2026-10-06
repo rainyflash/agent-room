@@ -66,6 +66,7 @@ impl HostReply {
         let body = self
             .body
             .ok_or_else(|| Failure::local("receiver.host_reply_silent"))?;
+        let (title, summary) = IpcSendMessageRequest::chat_title_and_summary(&body);
         Ok(IpcMethod::SendReceptionMessage {
             run_id,
             request: IpcSendMessageRequest {
@@ -75,8 +76,8 @@ impl HostReply {
                 submission_id: Some(record.submission_id.clone()),
                 automation_grant_id: Some(state.binding.automation_grant_id.clone()),
                 room_id: state.binding.policy.room_id.clone(),
-                title: body.chars().take(120).collect(),
-                summary: body.chars().take(280).collect(),
+                title,
+                summary,
                 body,
                 media_type: "text/plain".into(),
                 language: None,

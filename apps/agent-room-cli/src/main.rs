@@ -308,6 +308,13 @@ fn chat_request(args: cli::SendArgs, body: String) -> CliResult<IpcMethod> {
     };
     let session = required(args.session, "cli.session_required")?;
     let room = required(args.room, "cli.room_required")?;
+    // Windows 上从文件或 PowerShell 传进来的多行正文是 CRLF，消息里不收回车，统一成换行。
+    let body = if body.contains('\r') {
+        body.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        body
+    };
+    let (title, summary) = IpcSendMessageRequest::chat_title_and_summary(&body);
     Ok(scoped(
         session,
         IpcMethod::SendMessage(IpcSendMessageRequest {
@@ -317,8 +324,8 @@ fn chat_request(args: cli::SendArgs, body: String) -> CliResult<IpcMethod> {
             submission_id: Some(args.submission_id),
             automation_grant_id: args.automation_grant,
             room_id: room,
-            title: body.chars().take(120).collect(),
-            summary: body.chars().take(280).collect(),
+            title,
+            summary,
             body,
             media_type: "text/plain".into(),
             language: None,
@@ -438,4 +445,40 @@ async fn publish_status(backend: &dyn BridgeToolClient, args: cli::StatusArgs) -
         )
         .await?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_room_bridge_ipc::IpcMethod;
+
+    use super::{chat_request, cli};
+
+    #[test]
+    fn 多行的消息也能发_回车换行统一成换行_标题和摘要压成一行() {
+        let args = cli::SendArgs {
+            session: Some("0198b601-77a1-7bb8-83eb-a8fe68c97e47".into()),
+            room: Some("!room:matrix.test".into()),
+            text: None,
+            stdin: true,
+            submission_id: "0198b601-77a1-7bb8-83eb-a8fe68c97e48".into(),
+            reply_to: None,
+            mention: Vec::new(),
+            mention_everyone: false,
+            authorized: true,
+            automation_grant: None,
+        };
+
+        let method =
+            chat_request(args, "先看日志：\r\n1. desktop.log\r\n2. bridge.log".into()).unwrap();
+
+        method.validate().expect("多行的消息照样能发");
+        let IpcMethod::WithSession { method, .. } = method else {
+            panic!("发消息带着会话");
+        };
+        let IpcMethod::SendMessage(request) = *method else {
+            panic!("是发消息");
+        };
+        assert_eq!(request.body, "先看日志：\n1. desktop.log\n2. bridge.log");
+        assert_eq!(request.title, "先看日志： 1. desktop.log 2. bridge.log");
+    }
 }
