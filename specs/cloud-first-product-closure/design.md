@@ -88,9 +88,9 @@ Matrix 设备 SSO 与控制面会话是两条隔离链路。浏览器版继续�
 - OIDC Provider PKCE 与桌面客户端 PKCE 是两条独立校验链，不得复用 verifier。
 - Control Plane 只持久化一次性 code 的摘要和 PKCE challenge；code 只在深链中出现一次，交换后原子消费。
 - 桌面长期会话与 Bridge 设备令牌使用不同的系统凭据命名空间，任何一方都不能读取另一方凭据。
-- Tauri 将桌面会话写入 API 域的 `Secure + HttpOnly + SameSite=None` 专用 Cookie；前端 JavaScript 不接触会话秘密。
+- 桌面会话只留在原生层：前端发往控制面的请求交给 Tauri 命令 `desktop_control_plane_request` 代发，由它带上 `__Secure-agent-room-desktop-session` Cookie 和窗口自己的 Origin；前端 JavaScript 不接触会话秘密。（2026-10-06 修订：原先把会话写进 WebView 的 API 域 Cookie，macOS 的 WKWebView 默认挡跨站 Cookie，请求带不上它，Mac 上登录完界面仍是未登录。）
 - API 只接受显式配置的 Web Origin 与桌面 Origin，禁止 `*`、Origin 反射或通过关闭凭据校验规避 CORS。
-- 桌面启动时从系统凭据存储恢复人类会话；登出时先撤销云端会话，再清除凭据和 WebView Cookie。
+- 桌面启动时从系统凭据存储恢复人类会话；登出时先撤销云端会话，再清除凭据（连同旧版留在 WebView 里的 Cookie）。
 - state 不匹配、code 过期、code 重放、PKCE 不匹配均失败关闭，并且不会创建长期会话。
 
 在该协议完成前，桌面端保留本机 Runtime 管理能力，但不得把 Bridge Agent 会话伪装成人类云端会话。

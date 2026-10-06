@@ -221,6 +221,7 @@ const gateway: DesktopRuntimeGateway = {
   beginMatrixAuthentication: unavailable,
   clearHumanSession: unavailable,
   restoreHumanSession: unavailable,
+  sendControlPlaneRequest: unavailable,
   bootstrapDefaultAgent: () => ready(target),
   configureAgentRuntime: (next) => ready(next),
   isAvailable: () => desktop,

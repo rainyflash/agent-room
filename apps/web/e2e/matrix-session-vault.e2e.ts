@@ -12,58 +12,88 @@ for (const boundary of ['human', 'matrix'] as const) {
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text());
     });
-    await page.addInitScript((boundary) => {
-      let loads = 0;
-      let authorizations = 0;
-      Object.defineProperty(window, 'isTauri', { value: true });
-      Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
-        value: { unregisterListener: () => undefined },
-      });
-      Object.defineProperty(window, '__TAURI_INTERNALS__', {
-        value: {
-          transformCallback: () => 1,
-          unregisterCallback: () => undefined,
-          invoke: (command: string) => {
-            if (command === 'plugin:event|listen') return Promise.resolve(1);
-            if (command === 'plugin:event|unlisten') return Promise.resolve();
-            if (command === 'desktop_begin_matrix_authentication') {
-              document.documentElement.dataset.matrixAuthorizations = String(++authorizations);
-              // Leave the external authorization open so the UI can expose its pending state.
-              return new Promise<never>(() => undefined);
-            }
-            if (command === 'desktop_restore_human_session') {
-              if (boundary === 'matrix' || loads++ > 0) return Promise.resolve(true);
+    await page.addInitScript(
+      ({ apiOrigin, boundary }) => {
+        let loads = 0;
+        let authorizations = 0;
+        Object.defineProperty(window, 'isTauri', { value: true });
+        Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+          value: { unregisterListener: () => undefined },
+        });
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          value: {
+            transformCallback: () => 1,
+            unregisterCallback: () => undefined,
+            invoke: (command: string, payload: unknown) => {
+              if (command === 'plugin:event|listen') return Promise.resolve(1);
+              if (command === 'desktop_control_plane_request') {
+                // 像原生层那样代发：解开请求，发给（被下面拦截的）控制面，再把回答编回去。
+                const frame = payload as Uint8Array;
+                const length = new DataView(frame.buffer, frame.byteOffset).getUint32(0);
+                const head = JSON.parse(
+                  new TextDecoder().decode(frame.subarray(4, 4 + length)),
+                ) as {
+                  readonly headers: [string, string][];
+                  readonly method: string;
+                  readonly path: string;
+                };
+                return fetch(`${apiOrigin}/${head.path}`, {
+                  body: ['GET', 'HEAD'].includes(head.method) ? null : frame.slice(4 + length),
+                  headers: head.headers,
+                  method: head.method,
+                }).then(async (response) => {
+                  const answer = new TextEncoder().encode(
+                    JSON.stringify({ headers: [...response.headers], status: response.status }),
+                  );
+                  const body = new Uint8Array(await response.arrayBuffer());
+                  const encoded = new Uint8Array(4 + answer.byteLength + body.byteLength);
+                  new DataView(encoded.buffer).setUint32(0, answer.byteLength);
+                  encoded.set(answer, 4);
+                  encoded.set(body, 4 + answer.byteLength);
+                  return encoded.buffer;
+                });
+              }
+              if (command === 'plugin:event|unlisten') return Promise.resolve();
+              if (command === 'desktop_begin_matrix_authentication') {
+                document.documentElement.dataset.matrixAuthorizations = String(++authorizations);
+                // Leave the external authorization open so the UI can expose its pending state.
+                return new Promise<never>(() => undefined);
+              }
+              if (command === 'desktop_restore_human_session') {
+                if (boundary === 'matrix' || loads++ > 0) return Promise.resolve(true);
+                return Promise.reject(
+                  new Error(
+                    JSON.stringify({
+                      code: 'desktop.human_session.vault_unavailable',
+                      retryable: true,
+                    }),
+                  ),
+                );
+              }
+              if (command === 'desktop_load_matrix_session') {
+                ++loads;
+                return boundary === 'matrix' && loads === 1
+                  ? Promise.reject(
+                      new Error(
+                        JSON.stringify({
+                          code: 'desktop.matrix_session.vault_unavailable',
+                          retryable: true,
+                        }),
+                      ),
+                    )
+                  : Promise.resolve(null);
+              }
               return Promise.reject(
                 new Error(
-                  JSON.stringify({
-                    code: 'desktop.human_session.vault_unavailable',
-                    retryable: true,
-                  }),
+                  JSON.stringify({ code: 'desktop.test.runtime_unavailable', retryable: true }),
                 ),
               );
-            }
-            if (command === 'desktop_load_matrix_session') {
-              ++loads;
-              return boundary === 'matrix' && loads === 1
-                ? Promise.reject(
-                    new Error(
-                      JSON.stringify({
-                        code: 'desktop.matrix_session.vault_unavailable',
-                        retryable: true,
-                      }),
-                    ),
-                  )
-                : Promise.resolve(null);
-            }
-            return Promise.reject(
-              new Error(
-                JSON.stringify({ code: 'desktop.test.runtime_unavailable', retryable: true }),
-              ),
-            );
+            },
           },
-        },
-      });
-    }, boundary);
+        });
+      },
+      { apiOrigin, boundary },
+    );
     await page.route(`${apiOrigin}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname;
       const headers = {

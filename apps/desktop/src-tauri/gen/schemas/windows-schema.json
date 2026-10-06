@@ -609,6 +609,12 @@
           "markdownDescription": "Enables the desktop_configure_agent_runtime command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_control_plane_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-control-plane-request",
+          "markdownDescription": "Enables the desktop_control_plane_request command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_host_session_diagnostics command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-host-session-diagnostics",
@@ -769,6 +775,12 @@
           "type": "string",
           "const": "deny-desktop-configure-agent-runtime",
           "markdownDescription": "Denies the desktop_configure_agent_runtime command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_control_plane_request command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-control-plane-request",
+          "markdownDescription": "Denies the desktop_control_plane_request command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_host_session_diagnostics command without any pre-configured scope.",

@@ -19,6 +19,8 @@ function runtime(overrides: Partial<DesktopRuntimeGateway> = {}): DesktopRuntime
     checkUpdate: unused,
     clearHumanSession: () => Promise.resolve(ok(undefined)),
     restoreHumanSession: () => Promise.resolve(ok(true)),
+    sendControlPlaneRequest: () =>
+      Promise.resolve(ok({ status: 204, headers: [], body: new Uint8Array() })),
     configureAgentRuntime: unused,
     installUpdate: unused,
     isAvailable: () => true,

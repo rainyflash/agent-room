@@ -82,6 +82,54 @@ describe('应用组合根', () => {
     }
   });
 
+  it('桌面端发往控制面的请求都交给原生层代发，清理会话照样取消私人请求', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const requests: string[] = [];
+    const answers: (() => void)[] = [];
+    const sendControlPlaneRequest = vi.fn<DesktopRuntimeGateway['sendControlPlaneRequest']>(
+      (request) =>
+        new Promise((resolve) => {
+          requests.push(`${request.method} ${request.path}`);
+          answers.push(() => {
+            resolve(
+              ok({
+                body: new TextEncoder().encode(
+                  JSON.stringify({
+                    checkedAtUnixMs: 1,
+                    correlationId: '018c251e-7b5a-7c7f-8a28-2de53f56a9a3',
+                    dependencies: [],
+                    service: 'control-plane',
+                    status: 'ready',
+                    version: 'test',
+                  }),
+                ),
+                headers: [['content-type', 'application/json']],
+                status: 200,
+              }),
+            );
+          });
+        }),
+    );
+    const runtime = createCloudRuntime(config, {
+      ...runtimeGateway(true),
+      sendControlPlaneRequest,
+    });
+
+    const listed = runtime.services.agentDirectory.listOwnedAgents();
+    const readiness = runtime.services.controlPlane.readReadiness();
+    await vi.waitFor(() => {
+      expect(requests).toEqual(['GET agents', 'GET health/ready']);
+    });
+    runtime.services.session.privateState.clear();
+    answers.forEach((answer) => {
+      answer();
+    });
+
+    await expect(listed).resolves.toMatchObject({ ok: false });
+    await expect(readiness).resolves.toMatchObject({ ok: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('云端服务始终存在，本机 Runtime 仅作为同一个服务图中的可选能力', () => {
     const localRuntime = runtimeGateway(false);
 
@@ -248,6 +296,8 @@ function runtimeGateway(
     checkUpdate: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     clearHumanSession: () => Promise.resolve(ok(undefined)),
     restoreHumanSession: () => Promise.resolve(ok(true)),
+    sendControlPlaneRequest: () =>
+      Promise.resolve(ok({ status: 204, headers: [], body: new Uint8Array() })),
     configureAgentRuntime: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     installUpdate: () =>
