@@ -221,7 +221,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 升级由那台 Mac 上的 Claude Code 按房间里的步骤做，维护者在 Mac 上同意；
   - Bridge 两秒内 Authorized，用的是之前保存的授权；`runtime/bridge.sock` 是 `srw-------`；
   - 命令行 `doctor` 立即 `ready`，钥匙串没弹窗。
-- 启动时 `bridge.log` 有一条 `get_self` 回 `bridge.agent_runtime_unavailable` 的 WARN 是正常的：还没有默认 Agent 时，桌面端问“默认 Agent 是谁”就是这个回答，Windows 上也一样。
+- 还没有默认 Agent 时，桌面端问“默认 Agent 是谁”（`get_self`）得到 `bridge.agent_runtime_unavailable` 是正常的，Windows 上也一样。Alpha 63 及以前的 `bridge.log` 里因此有 WARN（启动时一条，之后每十分钟一条）；#324 起只按 debug 记。
 - 之后在 Mac 上接入 Agent、后台回复，还可能碰到别的 Mac 专属问题，排查照上面的办法。
 
 ### 版本与其他
