@@ -22,7 +22,7 @@ from tools import release, release_acceptance, release_promotion, release_native
 from tools.release_ci import validate_repository, workspace_version
 
 CI_JOBS = frozenset({
-    "格式、类型与测试", "Windows 客户端运行时原生检查", "Web 真实浏览器验收",
+    "格式、类型与测试", "Windows 客户端运行时原生检查", "macOS 客户端运行时原生检查", "Web 真实浏览器验收",
     "供应链与物料清单", "真实网页登录与会话恢复", "PostgreSQL、Matrix、对象存储与协议集成",
     "Linux Agent 运行时镜像与 HTTPS MCP 验收", "Linux 无桌面凭据恢复与 Matrix 真实收发",
 })

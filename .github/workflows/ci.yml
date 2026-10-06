@@ -263,6 +263,37 @@ jobs:
       - name: 运行与候选构建一致的桌面接入门禁
         run: node tools/desktop.mjs native-check
 
+  macos-runtime:
+    name: macOS 客户端运行时原生检查
+    # Linux 上能用的系统调用 macOS 不一定支持：Bridge 曾在绑定前对 socket 调 fchmod，
+    # 每台 Mac 都建不起本地连接，Linux 和 Windows 上的测试照样全过。
+    # macOS 编译慢，只在派发 suite=all 时跑（发布调度跑的就是它）。
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'all' }}
+    # 公开仓库的标准 macOS runner 不计费；更大规格的 runner 即使公开仓库也要付费，不要改。
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: 恢复 macOS Runtime 编译缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: macos-runtime
+          add-job-id-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: 安装 Node 依赖
+        run: corepack pnpm@10.28.0 install --frozen-lockfile
+      - name: 构建桌面专用 Web 产物
+        run: corepack pnpm@10.28.0 --filter @agent-room/web build:desktop
+      - name: 运行与 Windows 相同的桌面接入门禁
+        run: node tools/desktop.mjs native-check
+
   web-browser:
     name: Web 真实浏览器验收
     # 浏览器验收不依赖 Rust 检查的产物；不再串行等待 quality，PR 反馈可提前约 11 分钟。

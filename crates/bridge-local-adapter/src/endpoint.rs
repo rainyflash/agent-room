@@ -97,6 +97,22 @@ impl LocalIpcEndpoint {
         fs::remove_file(path)
     }
 
+    /// 监听器建好以后，把 Unix Socket 收紧到只有自己能连。
+    ///
+    /// 不能在建监听器时让 interprocess 设权限：它在绑定前对 socket 调 `fchmod()`，
+    /// Linux 支持，macOS 一律返回 EINVAL，Bridge 就永远建不起监听器。
+    /// 绑定后再改不会被别人钻空子：调用方的运行目录已经验过只有自己能进。
+    ///
+    /// # Errors
+    /// 改不了权限时返回 I/O 错误。
+    #[cfg(unix)]
+    pub fn restrict_socket_to_owner(&self) -> io::Result<()> {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(&self.platform_path, fs::Permissions::from_mode(0o600))
+    }
+
     /// 转换为当前操作系统的命名管道或 Unix Socket 名称。
     ///
     /// # Errors
@@ -206,6 +222,29 @@ mod tests {
                 symbolic
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_套接字收紧到只有自己能连() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = LocalIpcEndpoint::from_installation(
+            directory.path(),
+            &IpcInstallationId::new("test_owner_only").unwrap(),
+        );
+        let _listener = std::os::unix::net::UnixListener::bind(&endpoint.platform_path).unwrap();
+        std::fs::set_permissions(
+            &endpoint.platform_path,
+            std::fs::Permissions::from_mode(0o777),
+        )
+        .unwrap();
+
+        endpoint.restrict_socket_to_owner().unwrap();
+
+        let metadata = std::fs::metadata(&endpoint.platform_path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 
     #[test]
