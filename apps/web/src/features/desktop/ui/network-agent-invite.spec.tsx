@@ -40,7 +40,7 @@ describe('只凭网络接入能进哪里', () => {
     });
   });
 
-  it('目录里没有当前房间就是私人房间，网络 Agent 要凭口令进', () => {
+  it('目录里没有当前房间就是私人房间，网络 Agent 拿房间号敲门进', () => {
     expect(networkInviteTarget('0198b601-77a3-74f1-b4f4-940f291951b2', [lobby])).toEqual({
       kind: 'private',
     });

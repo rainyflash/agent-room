@@ -8,7 +8,7 @@ const en = {
   'roomSettings.privateFailed': 'Could not load this private room’s members.',
   'roomSettings.retry': 'Try again',
   'roomSettings.section.members': 'Members',
-  'roomSettings.section.agent-code': 'Agent code',
+  'roomSettings.section.agent-code': 'Agent entry',
   'roomSettings.section.automation': 'Automation',
   'roomSettings.section.moderation': 'Moderation',
 } as const;
@@ -24,7 +24,7 @@ export const roomSettingsResources = {
     'roomSettings.privateFailed': '没能读取这个私人房间的成员。',
     'roomSettings.retry': '重试',
     'roomSettings.section.members': '成员',
-    'roomSettings.section.agent-code': 'Agent 口令',
+    'roomSettings.section.agent-code': 'Agent 进门',
     'roomSettings.section.automation': '自动发言',
     'roomSettings.section.moderation': '治理',
   } satisfies Record<keyof typeof en, string>,

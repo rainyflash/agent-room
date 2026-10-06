@@ -28,6 +28,7 @@ import type {
   PrivateRoomFailure,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
+import { PrivateRoomAgentKnocks } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { formatDateTime } from '@/shared/i18n/formatters';
 import { ok, type Result } from '@/shared/result';
@@ -42,8 +43,9 @@ type AccessChange = {
 type AccessCommand = () => Promise<Result<AccessChange, PrivateRoomFailure>>;
 
 /**
- * 房间设置里的「Agent 口令」：生成、更换、停用口令，移出凭口令进来的 Agent。
- * 口令只在生成的那次响应里出现，记在这个面板里；关掉面板就看不到了，忘了就换一个。
+ * 房间设置里的「Agent 进门」：在敲门的 Agent（让它进来或不让进）；生成、更换、停用口令；
+ * 移出凭口令或经放行进来的 Agent。口令只在生成的那次响应里出现，记在这个面板里；关掉面板就看不到了，
+ * 忘了就换一个。
  */
 export function PrivateRoomAgentAccess({
   room,
@@ -149,12 +151,24 @@ export function PrivateRoomAgentAccess({
     <div className="private-room-agent-access">
       <div className="private-room-section-heading">
         <div>
-          <h3>{t('privateRooms.governance.agentAccess.title')}</h3>
-          <p>{t('privateRooms.governance.agentAccess.detail')}</p>
+          <h3>{t('privateRooms.knock.title')}</h3>
+          <p>{t('privateRooms.knock.detail')}</p>
+        </div>
+      </div>
+      <PrivateRoomAgentKnocks
+        catalogId={room.catalogId}
+        emptySpinner={false}
+        emptyText={t('privateRooms.knock.none')}
+        rooms={rooms}
+      />
+
+      <div className="private-room-section-heading">
+        <div>
+          <h3>{t('privateRooms.governance.agentAccess.agents')}</h3>
+          <p>{t('privateRooms.governance.agentAccess.removeDetail')}</p>
         </div>
         {view === null ? null : <span>{joined.length}</span>}
       </div>
-
       {access.data?.ok === false ? <PrivateRoomFailureNotice failure={access.data.error} /> : null}
       {access.isPending ? (
         <p className="private-room-operation" role="status">
@@ -162,6 +176,35 @@ export function PrivateRoomAgentAccess({
           {t('privateRooms.governance.agentAccess.loading')}
         </p>
       ) : null}
+      {view === null ? null : joined.length === 0 ? (
+        <p className="private-room-agent-access__status">
+          {t('privateRooms.governance.agentAccess.noAgents')}
+        </p>
+      ) : (
+        <ol
+          aria-label={t('privateRooms.governance.agentAccess.agents')}
+          className="private-room-agent-access__agents"
+        >
+          {joined.map((agent) => (
+            <CodeAgentRow
+              agent={agent}
+              disabled={mutation.isPending}
+              key={agent.agentId}
+              language={i18n.resolvedLanguage}
+              onRemove={() => {
+                remove(agent.agentId);
+              }}
+            />
+          ))}
+        </ol>
+      )}
+
+      <div className="private-room-section-heading">
+        <div>
+          <h3>{t('privateRooms.governance.agentAccess.title')}</h3>
+          <p>{t('privateRooms.governance.agentAccess.detail')}</p>
+        </div>
+      </div>
 
       {view === null ? null : (
         <>
@@ -293,34 +336,6 @@ export function PrivateRoomAgentAccess({
             <p className="private-room-agent-access__status">
               {t('privateRooms.governance.agentAccess.rotateDetail')}
             </p>
-          )}
-
-          {joined.length === 0 ? (
-            <p className="private-room-agent-access__status">
-              {t('privateRooms.governance.agentAccess.noAgents')}
-            </p>
-          ) : (
-            <>
-              <ol
-                aria-label={t('privateRooms.governance.agentAccess.agents')}
-                className="private-room-agent-access__agents"
-              >
-                {joined.map((agent) => (
-                  <CodeAgentRow
-                    agent={agent}
-                    disabled={mutation.isPending}
-                    key={agent.agentId}
-                    language={i18n.resolvedLanguage}
-                    onRemove={() => {
-                      remove(agent.agentId);
-                    }}
-                  />
-                ))}
-              </ol>
-              <p className="private-room-agent-access__status">
-                {t('privateRooms.governance.agentAccess.removeDetail')}
-              </p>
-            </>
           )}
         </>
       )}

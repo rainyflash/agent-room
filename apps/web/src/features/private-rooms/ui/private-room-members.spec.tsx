@@ -11,6 +11,7 @@ import type { PrivateRoomCoordinator } from '@/features/private-rooms/applicatio
 import type {
   PrivateRoom,
   PrivateRoomAgentAccess,
+  PrivateRoomAgentKnock,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -49,8 +50,11 @@ const room: PrivateRoom = {
 const AGENT = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
 const CREATED = Date.UTC(2026, 8, 23, 6, 0);
 
-/** 和服务器一样记着口令状态：生成、停用、移出之后再查看拿到的是新状态。 */
-function gateway(initial: PrivateRoomAgentAccess = { agents: [], joinCode: null }) {
+/** 和服务器一样记着口令状态和敲门：生成、停用、移出、放行之后再查看拿到的是新状态。 */
+function gateway(
+  initial: PrivateRoomAgentAccess = { agents: [], joinCode: null },
+  waiting: readonly PrivateRoomAgentKnock[] = [],
+) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   const rename = vi.fn((_catalogId: string, name: string) =>
     Promise.resolve(ok({ ...room, name })),
@@ -75,13 +79,35 @@ function gateway(initial: PrivateRoomAgentAccess = { agents: [], joinCode: null 
     };
     return Promise.resolve(ok(undefined));
   });
+  let knocks = waiting;
+  const agentKnocks = vi.fn(() => Promise.resolve(ok(knocks)));
+  const admitKnock = vi.fn((_catalogId: string, agentId: string) => {
+    const knock = knocks.find((candidate) => candidate.agentId === agentId);
+    if (knock === undefined) {
+      return Promise.resolve(err({ code: 'agent_knock.not_found', retryable: false }));
+    }
+    knocks = knocks.filter((candidate) => candidate.agentId !== agentId);
+    const agent = {
+      agentId,
+      displayName: knock.displayName,
+      joinedAtUnixMs: CREATED + 120_000,
+      ownerDisplayName: null,
+      status: 'joined' as const,
+      statusChangedAtUnixMs: CREATED + 120_000,
+    };
+    access = { ...access, agents: [...access.agents, agent] };
+    return Promise.resolve(ok(agent));
+  });
   const value: PrivateRoomGateway = {
     accept: unavailable,
+    admitKnock,
     agentAccess,
+    agentKnocks,
     archive: unavailable,
     ban: unavailable,
     create: unavailable,
     decline: unavailable,
+    declineKnock: unavailable,
     disableJoinCode,
     generateJoinCode,
     inspect: unavailable,
@@ -94,11 +120,20 @@ function gateway(initial: PrivateRoomAgentAccess = { agents: [], joinCode: null 
     transferOwnership: unavailable,
     updatePermissions: unavailable,
   };
-  return { agentAccess, disableJoinCode, generateJoinCode, removeCodeAgent, rename, value };
+  return {
+    admitKnock,
+    agentAccess,
+    agentKnocks,
+    disableJoinCode,
+    generateJoinCode,
+    removeCodeAgent,
+    rename,
+    value,
+  };
 }
 
 /**
- * 和房间设置里一样，“成员”和“Agent 口令”两节同时挂着；只有能管理房间的人有口令一节。
+ * 和房间设置里一样，“成员”和“Agent 进门”两节同时挂着；只有能管理房间的人有“Agent 进门”一节。
  * `networkAgents` 是服务器认定的网络 Agent。
  */
 function renderGovernance(
@@ -253,7 +288,7 @@ describe('私人房间的成员与 Agent 口令', () => {
       joinCode: { createdAtUnixMs: CREATED },
     });
     renderGovernance(OWNER, rooms.value);
-    const list = await screen.findByRole('list', { name: 'Agents that joined with the code' });
+    const list = await screen.findByRole('list', { name: 'Agents in this room' });
     expect(list).toHaveTextContent('Scout');
     expect(list).toHaveTextContent('Agent of Mina');
     expect(list).not.toHaveTextContent('Gone');
@@ -261,7 +296,35 @@ describe('私人房间的成员与 Agent 口令', () => {
     await waitFor(() => {
       expect(rooms.removeCodeAgent).toHaveBeenCalledWith(room.catalogId, AGENT);
     });
-    expect(await screen.findByText('No agent has joined with the code yet.')).toBeVisible();
+    expect(
+      await screen.findByText('No agent has come in with the code or been let in yet.'),
+    ).toBeVisible();
+  });
+
+  it('在敲门的 Agent 列在最前面；放它进来后挪进“进来的 Agent”', async () => {
+    const rooms = gateway({ agents: [], joinCode: null }, [
+      {
+        agentId: AGENT,
+        displayName: 'Sol',
+        expiresAtUnixMs: CREATED + 3_600_000,
+        knockedAtUnixMs: CREATED,
+      },
+    ]);
+    renderGovernance(OWNER, rooms.value);
+
+    const knocks = await screen.findByRole('list', { name: 'Agents knocking' });
+    expect(knocks).toHaveTextContent('Sol is knocking');
+    expect(
+      await screen.findByText('No agent has come in with the code or been let in yet.'),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Let Sol in' }));
+
+    expect(await screen.findByText('Sol is in')).toBeVisible();
+    expect(rooms.admitKnock).toHaveBeenCalledWith(room.catalogId, AGENT);
+    expect(await screen.findByRole('list', { name: 'Agents in this room' })).toHaveTextContent(
+      'Sol',
+    );
+    expect(screen.queryByRole('list', { name: 'Agents knocking' })).toBeNull();
   });
 
   it('口令一节提示网络 Agent 由服务器代收发', async () => {
@@ -293,5 +356,6 @@ describe('私人房间的成员与 Agent 口令', () => {
     renderGovernance(MEMBER, rooms.value);
     expect(screen.queryByRole('heading', { name: 'Agent code' })).toBeNull();
     expect(rooms.agentAccess).not.toHaveBeenCalled();
+    expect(rooms.agentKnocks).not.toHaveBeenCalled();
   });
 });

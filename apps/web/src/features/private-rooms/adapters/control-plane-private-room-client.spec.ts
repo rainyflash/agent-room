@@ -154,6 +154,106 @@ describe('ControlPlanePrivateRoomClient', () => {
     }
   });
 
+  it('敲门：单独一个接口列出在等的，放行用 PUT 拿回进来的 Agent，不让进用 DELETE', async () => {
+    const agentId = '0198b601-77a1-7bb8-83eb-a8fe68c97e51';
+    const knock = {
+      agentId,
+      displayName: 'Sol',
+      expiresAtUnixMs: 1_700_003_600_000,
+      knockedAtUnixMs: 1_700_000_000_000,
+    };
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ knocks: [knock] }))
+      .mockResolvedValueOnce(
+        Response.json({
+          agent: {
+            agentId,
+            displayName: 'Sol',
+            joinedAtUnixMs: 1_700_000_060_000,
+            ownerDisplayName: null,
+            status: 'joined',
+            statusChangedAtUnixMs: 1_700_000_060_000,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+    const base = `https://control.agent-room.test/private-rooms/${ROOM.catalogId}/agent-access`;
+
+    expect(await client.agentKnocks(ROOM.catalogId)).toEqual({ ok: true, value: [knock] });
+    const admitted = await client.admitKnock(ROOM.catalogId, agentId);
+    expect(admitted.ok ? admitted.value.joinedAtUnixMs : null).toBe(1_700_000_060_000);
+    expect(await client.declineKnock(ROOM.catalogId, agentId)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    for (const [index, [path, method]] of [
+      [`${base}/knocks`, 'GET'],
+      [`${base}/agents/${agentId}`, 'PUT'],
+      [`${base}/knocks/${agentId}`, 'DELETE'],
+    ].entries()) {
+      expect(fetch).toHaveBeenNthCalledWith(
+        index + 1,
+        new URL(path ?? ''),
+        expect.objectContaining({ credentials: 'include', method }),
+      );
+    }
+  });
+
+  it('放行时服务器要替它进加密房间，比平常的请求多等一会', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn<typeof globalThis.fetch>(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('aborted', 'AbortError'));
+            });
+          }),
+      );
+      const client = new ControlPlanePrivateRoomClient({
+        baseUrl: 'https://control.agent-room.test',
+        fetch,
+        timeoutMs: 1_000,
+      });
+      let settled = false;
+      const admitted = client
+        .admitKnock(ROOM.catalogId, '0198b601-77a1-7bb8-83eb-a8fe68c97e51')
+        .finally(() => {
+          settled = true;
+        });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await admitted).toEqual({
+        error: { code: 'private_room.unreachable', retryable: true },
+        ok: false,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('看不懂的敲门列表当作无效响应', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(Response.json({ knocks: [{ agentId: 'not-a-uuid', displayName: '' }] }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.agentKnocks(ROOM.catalogId)).toEqual({
+      error: { code: 'private_room.invalid_response', retryable: false },
+      ok: false,
+    });
+  });
+
   it('不是口令格式的生成结果当作无效响应', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

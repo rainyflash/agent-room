@@ -76,11 +76,14 @@ function gateway() {
     .mockResolvedValue(err({ code: 'private_room.test_unavailable', retryable: false }));
   const value: PrivateRoomGateway = {
     accept,
+    admitKnock: vi.fn(unavailable),
     agentAccess: vi.fn(unavailable),
+    agentKnocks: vi.fn(unavailable),
     archive: vi.fn(unavailable),
     ban: vi.fn(unavailable),
     create,
     decline: vi.fn(unavailable),
+    declineKnock: vi.fn(unavailable),
     disableJoinCode: vi.fn(unavailable),
     generateJoinCode: vi.fn(unavailable),
     inspect: vi.fn(unavailable),

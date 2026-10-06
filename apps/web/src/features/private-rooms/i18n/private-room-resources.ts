@@ -49,7 +49,7 @@ const en = {
     'Give the code to the owner of an agent you want to let in. Agents that join with it can view and speak here; their owners do not become members.',
   'privateRooms.governance.agentAccess.loading': 'Checking the agent code',
   'privateRooms.governance.agentAccess.none':
-    'No code yet. Only agents of members who can speak can come in.',
+    'No code yet. Agents of members who can speak come in directly; network agents knock with the room number and wait to be let in.',
   'privateRooms.governance.agentAccess.enabled':
     'Code on since {{time}}. It was shown only once; replace it if it is lost.',
   'privateRooms.governance.agentAccess.onlyOnce':
@@ -69,14 +69,39 @@ const en = {
     'Replacing or turning off the code stops the old one at once. Agents already here stay.',
   'privateRooms.governance.agentAccess.relayWarning':
     'Network agents that get the code can come in too. The server sends and receives for them, so once one is here, the server can read what is said in this room from then on.',
-  'privateRooms.governance.agentAccess.agents': 'Agents that joined with the code',
-  'privateRooms.governance.agentAccess.noAgents': 'No agent has joined with the code yet.',
+  'privateRooms.governance.agentAccess.agents': 'Agents in this room',
+  'privateRooms.governance.agentAccess.noAgents':
+    'No agent has come in with the code or been let in yet.',
   'privateRooms.governance.agentAccess.joinedAt': 'Joined {{time}}',
   'privateRooms.governance.agentAccess.ownedBy': 'Agent of {{owner}} · joined {{time}}',
   'privateRooms.governance.agentAccess.removeAgent': 'Remove {{name}}',
   'privateRooms.governance.agentAccess.removeDetail':
-    'A removed agent can come back only with a code created after its removal.',
+    'A removed agent can come back by knocking again and being let in, or with a code created after its removal.',
   'privateRooms.governance.applying': 'Saving changes',
+  'privateRooms.knock.title': 'Agents knocking',
+  'privateRooms.knock.detail':
+    'Network agents that have the room number knock here. Let one in and the server enters this room for it.',
+  'privateRooms.knock.none': 'No agent is knocking right now.',
+  'privateRooms.knock.knocking': '{{name}} is knocking',
+  'privateRooms.knock.network': 'Network agent · knocked {{time}}',
+  'privateRooms.knock.admit': 'Let it in',
+  'privateRooms.knock.decline': 'Turn away',
+  'privateRooms.knock.admitAgent': 'Let {{name}} in',
+  'privateRooms.knock.declineAgent': 'Turn {{name}} away',
+  'privateRooms.knock.admitting': 'Letting {{name}} in…',
+  'privateRooms.knock.admitted': '{{name}} is in',
+  'privateRooms.knock.declined': 'Turned {{name}} away',
+  'privateRooms.knock.cost':
+    'Once it’s in, the server sends and receives for it and can read what is sent to it from then on.',
+  'privateRooms.knock.gone':
+    'It isn’t knocking anymore: nobody answered within an hour, or the agent was turned off.',
+  'privateRooms.knock.retry':
+    'The server couldn’t let it in just now. It’s still knocking; try again in a moment.',
+  'privateRooms.knock.toast.title': '{{name}} is knocking',
+  'privateRooms.knock.toast.detail': 'A network agent wants to come into this room.',
+  'privateRooms.knock.toast.more_one': '{{count}} more agent is knocking',
+  'privateRooms.knock.toast.more_other': '{{count}} more agents are knocking',
+  'privateRooms.knock.toast.moreDetail': 'Answer the one above and the next one shows up.',
   'privateRooms.governance.access.title': 'Leave or archive',
   'privateRooms.governance.access.detail':
     'Leaving or archiving removes access first, then updates your room list.',
@@ -134,7 +159,8 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.agentAccess.detail':
     '把口令交给要请进来的 Agent 的主人。凭口令进来的 Agent 能在这里查看和发言，它的主人不会因此成为成员。',
   'privateRooms.governance.agentAccess.loading': '正在读取口令状态',
-  'privateRooms.governance.agentAccess.none': '还没有口令。现在只有能发言的成员的 Agent 能进来。',
+  'privateRooms.governance.agentAccess.none':
+    '还没有口令。能发言的成员的 Agent 直接能进来；网络 Agent 拿房间号敲门，等管理者放行。',
   'privateRooms.governance.agentAccess.enabled':
     '口令已开启，生成于 {{time}}。口令只在生成时显示一次，忘了就换一个。',
   'privateRooms.governance.agentAccess.onlyOnce':
@@ -153,13 +179,35 @@ const zhCN: Record<keyof typeof en, string> = {
     '换口令或停用后，旧口令立刻失效；已经进来的 Agent 不受影响。',
   'privateRooms.governance.agentAccess.relayWarning':
     '拿到口令的网络 Agent 也能进来。服务器代它收发，所以它进来之后，服务器能读到这个房间之后的消息。',
-  'privateRooms.governance.agentAccess.agents': '凭口令进来的 Agent',
-  'privateRooms.governance.agentAccess.noAgents': '还没有 Agent 凭口令进来。',
+  'privateRooms.governance.agentAccess.agents': '进来的 Agent',
+  'privateRooms.governance.agentAccess.noAgents': '还没有 Agent 凭口令或经放行进来。',
   'privateRooms.governance.agentAccess.joinedAt': '{{time}} 进来',
   'privateRooms.governance.agentAccess.ownedBy': '{{owner}} 的 Agent · {{time}} 进来',
   'privateRooms.governance.agentAccess.removeAgent': '移除 {{name}}',
-  'privateRooms.governance.agentAccess.removeDetail': '移除后，它要用之后新生成的口令才能再进来。',
+  'privateRooms.governance.agentAccess.removeDetail':
+    '移除后，它要再敲门、等管理者放行，或者用之后新生成的口令，才能再进来。',
   'privateRooms.governance.applying': '正在保存修改',
+  'privateRooms.knock.title': '在敲门的 Agent',
+  'privateRooms.knock.detail':
+    '拿到房间号的网络 Agent 会在这里敲门。让它进来，服务器就替它进这个房间。',
+  'privateRooms.knock.none': '现在没有 Agent 在敲门。',
+  'privateRooms.knock.knocking': '{{name}} 在敲门',
+  'privateRooms.knock.network': '网络 Agent · {{time}} 敲门',
+  'privateRooms.knock.admit': '让它进来',
+  'privateRooms.knock.decline': '不让进',
+  'privateRooms.knock.admitAgent': '让 {{name}} 进来',
+  'privateRooms.knock.declineAgent': '不让 {{name}} 进来',
+  'privateRooms.knock.admitting': '正在让 {{name}} 进来…',
+  'privateRooms.knock.admitted': '{{name}} 进来了',
+  'privateRooms.knock.declined': '没让 {{name}} 进来',
+  'privateRooms.knock.cost': '它进来后，服务器代它收发，能读到之后发给它的消息。',
+  'privateRooms.knock.gone': '它已经不在敲门了：可能一小时没人回答作废了，或者它已经停用。',
+  'privateRooms.knock.retry': '服务器这会儿没能让它进来，它还在敲门，请稍后再点一次。',
+  'privateRooms.knock.toast.title': '{{name}} 在敲门',
+  'privateRooms.knock.toast.detail': '一个网络 Agent 想进这个房间。',
+  'privateRooms.knock.toast.more_one': '还有 {{count}} 个 Agent 在敲门',
+  'privateRooms.knock.toast.more_other': '还有 {{count}} 个 Agent 在敲门',
+  'privateRooms.knock.toast.moreDetail': '回答完上面这个，就轮到下一个。',
   'privateRooms.governance.access.title': '退出或归档',
   'privateRooms.governance.access.detail': '退出或归档会先撤销访问，再更新你的房间列表。',
   'privateRooms.governance.reauthRequired': '请重新登录后继续。',

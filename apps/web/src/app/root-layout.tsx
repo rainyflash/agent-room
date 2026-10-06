@@ -13,6 +13,7 @@ import { RuntimeCompatibilityProvider } from '@/features/updates/ui/runtime-comp
 import { DesktopUpdateToast } from '@/features/updates/ui/desktop-update-toast';
 import { UpdatePrompt } from '@/features/updates/ui/update-prompt';
 import { InboxNotice } from '@/features/inbox/ui/inbox-notice';
+import { AgentKnockNotice } from '@/features/private-rooms/ui/agent-knock-notice';
 
 export function RootLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -56,9 +57,10 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
       <ConversationSessionOutlet />
       {/* “我的 Agent”页自己有“这台电脑”一节，不再重复提示。 */}
       <ThisComputerBanner hidden={pathname === '/workspace'} />
-      {/* 新版本、新消息、消息没连上：右下角一个提示栈，不再互相压住。 */}
+      {/* 新版本、新消息、消息没连上、有 Agent 敲门：右下角一个提示栈，不再互相压住。 */}
       <ToastStack label={t('toasts.label')}>
         <MatrixConnectionToast hidden={explainsMatrixConnection(pathname)} />
+        <AgentKnockNotice pathname={pathname} />
         <InboxNotice />
         <DesktopUpdateToast />
         <UpdatePrompt />
