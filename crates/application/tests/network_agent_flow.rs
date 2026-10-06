@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -14,9 +14,10 @@ use agent_room_application::{
         RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
     },
     network_agents::{
-        CreateNetworkAgent, NetworkAgentAdmission, NetworkAgentDependencies,
-        NetworkAgentFailureKind, NetworkAgentPendingExit, NetworkAgentPolicy,
-        NetworkAgentRoomRequest, NetworkAgentService, NetworkAgentTarget, NetworkAgentUseCases,
+        CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentDependencies,
+        NetworkAgentFailureKind, NetworkAgentKnockStatus, NetworkAgentPendingExit,
+        NetworkAgentPlacement, NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentRoomRequest,
+        NetworkAgentService, NetworkAgentTarget, NetworkAgentUseCases,
     },
     persistence::RepositoryResult,
     ports::{
@@ -25,16 +26,17 @@ use agent_room_application::{
         NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
-        NetworkAgentStore, PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
-        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
-        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
-        SecretValue, StoredAgentInstanceRegistration,
+        NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PublicLobbyDirectoryEntry,
+        PublicLobbyObservationRoom, RateWindowDecision, RateWindowPolicy, RegisteredAgent,
+        RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory,
+        SecretGenerationFailure, SecretSealingFailure, SecretValue,
+        StoredAgentInstanceRegistration,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, AgentAccessView,
-        GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller, ManageJoinCode,
-        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
-        ResolveJoinCode,
+        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
+        AgentAccessView, AnswerKnock, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller,
+        KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomAgentAccessUseCases, RedeemJoinCode,
+        RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -50,6 +52,7 @@ use agent_room_domain::{
         HandoffId, LoginAttemptId, NetworkAgentId, OutboxEventId, PrincipalId, RoomCatalogId,
         RoomInstanceId, RoomReservationId, WebSessionId,
     },
+    join_codes::PrivateRoomAgentKnockStatus,
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
@@ -192,6 +195,20 @@ impl NetworkAgentStore for MemoryStore {
             .unwrap()
             .iter()
             .find(|agent| agent.record.id == id)
+            .map(|agent| agent.record.clone());
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn find_by_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>> {
+        let found = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|agent| agent.record.agent_id == Some(agent_id))
             .map(|agent| agent.record.clone());
         Box::pin(async move { Ok(found) })
     }
@@ -651,10 +668,15 @@ impl AgentLobbyEntryUseCases for ScriptedLobbies {
 
 /// 私人房间的口令：`CODE` 对得上；`REMOVED` 是被移出后拿来的旧口令（能看不能进）；
 /// `LIMITED` 表示这个来源猜错到了上限；其余都不对。
+/// 敲门：只有 `catalog_id(9)` 是私人房间；`members` 里的已经是 Agent 成员，`declined` 里的没让进过。
 #[derive(Default)]
 struct FakeAccess {
     resolved: Mutex<Vec<(JoinCodeCaller, String)>>,
     redeemed: Mutex<Vec<(AgentId, DeviceId, String)>>,
+    knocked: Mutex<Vec<(AgentId, DeviceId, RoomCatalogId)>>,
+    knocks: Mutex<Vec<PrivateRoomAgentKnockRecord>>,
+    members: Mutex<HashSet<AgentId>>,
+    declined: Mutex<HashSet<AgentId>>,
 }
 
 impl PrivateRoomAgentAccessUseCases for FakeAccess {
@@ -719,6 +741,95 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
             request.code,
         ));
         Box::pin(async move { result })
+    }
+
+    fn knockable(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>> {
+        let result = if catalog_id == private_catalog() {
+            Ok(())
+        } else {
+            Err(AgentAccessFailure::new(
+                "test.knockable",
+                AgentAccessFailureKind::NotFound,
+            ))
+        };
+        Box::pin(async move { result })
+    }
+
+    fn knock(&self, request: KnockOnRoom) -> PortFuture<'_, AgentAccessResult<KnockResult>> {
+        self.knocked.lock().unwrap().push((
+            request.agent_id,
+            request.actor.device_id,
+            request.catalog_id,
+        ));
+        let result = if request.catalog_id != private_catalog() {
+            Err(AgentAccessFailure::new(
+                "test.knock",
+                AgentAccessFailureKind::NotFound,
+            ))
+        } else if self.members.lock().unwrap().contains(&request.agent_id) {
+            Ok(KnockResult::Member(private_redeemed()))
+        } else {
+            let declined = self.declined.lock().unwrap().contains(&request.agent_id);
+            let record = PrivateRoomAgentKnockRecord {
+                catalog_id: request.catalog_id,
+                agent_id: request.agent_id,
+                display_name: "Scout".to_owned(),
+                status: if declined {
+                    PrivateRoomAgentKnockStatus::Declined
+                } else {
+                    PrivateRoomAgentKnockStatus::Waiting
+                },
+                knocked_at: UtcMillis::new(START).unwrap(),
+                expires_at: UtcMillis::new(START + HOUR).unwrap(),
+                decided_at: declined.then(|| UtcMillis::new(START).unwrap()),
+            };
+            let mut knocks = self.knocks.lock().unwrap();
+            knocks.retain(|knock| knock.agent_id != request.agent_id);
+            knocks.push(record.clone());
+            Ok(if declined {
+                KnockResult::Declined(record)
+            } else {
+                KnockResult::Waiting(record)
+            })
+        };
+        Box::pin(async move { result })
+    }
+
+    fn knocks_of(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        let found = self
+            .knocks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|knock| knock.agent_id == agent_id)
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn waiting_knocks(
+        &self,
+        _request: InspectAgentAccess,
+    ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        unreachable!("网络 Agent 不看别人敲门")
+    }
+
+    fn admit_knock(
+        &self,
+        _request: AnswerKnock,
+    ) -> PortFuture<'_, AgentAccessResult<AdmittedKnock>> {
+        unreachable!("网络 Agent 不放行")
+    }
+
+    fn complete_knock(&self, _request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        unreachable!("网络 Agent 不放行")
+    }
+
+    fn decline_knock(&self, _request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        unreachable!("网络 Agent 不放行")
     }
 }
 
@@ -959,8 +1070,7 @@ impl Harness {
         &self,
         name: &str,
         room: Option<&str>,
-    ) -> Result<agent_room_application::network_agents::CreatedNetworkAgent, NetworkAgentFailureKind>
-    {
+    ) -> Result<CreatedNetworkAgent, NetworkAgentFailureKind> {
         self.create_from(name, room, [1; 32]).await
     }
 
@@ -969,8 +1079,7 @@ impl Harness {
         name: &str,
         room: Option<&str>,
         source_digest: [u8; 32],
-    ) -> Result<agent_room_application::network_agents::CreatedNetworkAgent, NetworkAgentFailureKind>
-    {
+    ) -> Result<CreatedNetworkAgent, NetworkAgentFailureKind> {
         self.service
             .create(CreateNetworkAgent {
                 name: name.to_owned(),
@@ -985,8 +1094,7 @@ impl Harness {
         &self,
         name: &str,
         code: &str,
-    ) -> Result<agent_room_application::network_agents::CreatedNetworkAgent, NetworkAgentFailureKind>
-    {
+    ) -> Result<CreatedNetworkAgent, NetworkAgentFailureKind> {
         self.service
             .create(CreateNetworkAgent {
                 name: name.to_owned(),
@@ -1081,6 +1189,14 @@ fn registered_agent(agent_id: AgentId, display_name: &str) -> RegisteredAgent {
     }
 }
 
+/// 新建时进了的或放行了的房间；只敲了门的没有。
+fn room_of(created: &CreatedNetworkAgent) -> &NetworkAgentRoom {
+    match &created.placement {
+        NetworkAgentPlacement::Entered(room) | NetworkAgentPlacement::Admitted(room) => room,
+        NetworkAgentPlacement::Knocked(knock) => panic!("只敲了门：{knock:?}"),
+    }
+}
+
 fn sealed_text(sealed: &SealedSecret) -> String {
     String::from_utf8(sealed.bytes.clone()).unwrap()
 }
@@ -1095,8 +1211,8 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
 
     assert_eq!(created.display_name, "Scout");
     assert_eq!(created.token.expose(), "token-1");
-    assert_eq!(created.room.catalog_id, catalog_id(2));
-    assert_eq!(created.room.name, "Agent Room 大厅");
+    assert_eq!(room_of(&created).catalog_id, catalog_id(2));
+    assert_eq!(room_of(&created).name, "Agent Room 大厅");
 
     let record = harness.store.only();
     assert_eq!(record.status, NetworkAgentStatus::Active);
@@ -1158,7 +1274,7 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     assert_eq!(me.display_name, "Scout");
     assert_eq!(me.agent_id, created.agent_id);
     // 进过的大厅记在它名下，查看自己时带着房间名。
-    assert_eq!(me.rooms, std::slice::from_ref(&created.room));
+    assert_eq!(me.rooms, std::slice::from_ref(room_of(&created)));
 
     // 网关收发时取出的会话：Matrix 令牌是解封后的原文。
     let session = harness.service.session("token-1").await.expect("会话");
@@ -1179,7 +1295,10 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     );
     assert_eq!(session.rooms.len(), 1);
     assert_eq!(session.rooms[0].catalog_id, catalog_id(2));
-    assert_eq!(session.rooms[0].matrix_room_id, created.room.matrix_room_id);
+    assert_eq!(
+        session.rooms[0].matrix_room_id,
+        room_of(&created).matrix_room_id
+    );
 }
 
 #[tokio::test]
@@ -1443,11 +1562,11 @@ async fn 按名字或短名找公开大厅_忽略大小写_找不到时列出候
     let harness = Harness::generous();
 
     let exact = harness.create("A", Some("Rust 夜谈")).await.unwrap();
-    assert_eq!(exact.room.catalog_id, catalog_id(1));
+    assert_eq!(room_of(&exact).catalog_id, catalog_id(1));
     let slug = harness.create("B", Some("RUST-NIGHT")).await.unwrap();
-    assert_eq!(slug.room.catalog_id, catalog_id(1));
+    assert_eq!(room_of(&slug).catalog_id, catalog_id(1));
     let lowered = harness.create("C", Some("general")).await.unwrap();
-    assert_eq!(lowered.room.catalog_id, catalog_id(3));
+    assert_eq!(room_of(&lowered).catalog_id, catalog_id(3));
 
     let failure = harness
         .service
@@ -1738,8 +1857,8 @@ async fn 大厅正在准备房间时按给的时间等_容量变了就换目录�
         harness.lobbies.catalogs(),
         [catalog_id(2), catalog_id(2), catalog_id(3)]
     );
-    assert_eq!(created.room.catalog_id, catalog_id(3));
-    assert_eq!(created.room.name, "General");
+    assert_eq!(room_of(&created).catalog_id, catalog_id(3));
+    assert_eq!(room_of(&created).name, "General");
 }
 
 #[tokio::test]
@@ -1798,10 +1917,13 @@ async fn 凭口令创建_先按来源核对口令_建好人物后以它的网络
         .await
         .expect("创建成功");
 
-    assert!(!created.entered, "私人房间要等网关准备好加密客户端再进");
-    assert_eq!(created.room.catalog_id, catalog_id(9));
-    assert_eq!(created.room.matrix_room_id.as_str(), PRIVATE_ROOM);
-    assert_eq!(created.room.name, "项目室");
+    assert!(
+        matches!(created.placement, NetworkAgentPlacement::Admitted(_)),
+        "私人房间要等网关准备好加密客户端再进"
+    );
+    assert_eq!(room_of(&created).catalog_id, catalog_id(9));
+    assert_eq!(room_of(&created).matrix_room_id.as_str(), PRIVATE_ROOM);
+    assert_eq!(room_of(&created).name, "项目室");
     assert!(harness.lobbies.catalogs().is_empty(), "不进大厅");
     assert_eq!(
         *harness.access.resolved.lock().unwrap(),
@@ -1823,11 +1945,11 @@ async fn 凭口令创建_先按来源核对口令_建好人物后以它的网络
         .service
         .enter(
             created.token.expose(),
-            NetworkAgentTarget::Private(created.room.clone()),
+            NetworkAgentTarget::Private(room_of(&created).clone()),
         )
         .await
         .expect("进私人房间");
-    assert_eq!(room, created.room);
+    assert_eq!(&room, room_of(&created));
     let requests = harness.lobbies.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].catalog_id, catalog_id(9));
@@ -1896,7 +2018,7 @@ async fn 已有的网络_agent_再进公开大厅_已经在里面就原样返回
         .unwrap();
     assert_eq!(
         again,
-        NetworkAgentAdmission::AlreadyIn(created.room.clone())
+        NetworkAgentAdmission::AlreadyIn(room_of(&created).clone())
     );
 
     let admitted = harness
@@ -2054,4 +2176,267 @@ async fn 加密存储重建时换一台设备_封存新的访问令牌_停用的
         NetworkAgentFailureKind::Unauthorized
     );
     assert_eq!(harness.agents.rotations.lock().unwrap().len(), 1);
+}
+
+/// 敲门用的私人房间：只在 `FakeAccess` 里，不在公开大厅目录里。
+fn private_catalog() -> RoomCatalogId {
+    catalog_id(9)
+}
+
+fn knock_on_private() -> NetworkAgentRoomRequest {
+    NetworkAgentRoomRequest::Lobby(Some(private_catalog().to_string()))
+}
+
+#[tokio::test]
+async fn 拿房间号创建_先核对房间_建好人物后以它的网络设备敲门_不进任何房间() {
+    let harness = Harness::enabled();
+    let address = format!("https://agentroom.chat/lobby/{}", private_catalog());
+    let created = harness.create("Scout", Some(&address)).await.unwrap();
+    let NetworkAgentPlacement::Knocked(knock) = &created.placement else {
+        panic!("拿私人房间的房间号是敲门：{:?}", created.placement);
+    };
+    assert_eq!(knock.catalog_id, private_catalog());
+    assert_eq!(knock.status, NetworkAgentKnockStatus::Waiting);
+    assert_eq!(knock.expires_at, UtcMillis::new(START + HOUR).unwrap());
+    assert!(
+        harness.lobbies.requests.lock().unwrap().is_empty(),
+        "不进大厅"
+    );
+    assert!(
+        harness.store.rooms.lock().unwrap().is_empty(),
+        "不在任何房间里"
+    );
+    let record = harness.store.only();
+    assert_eq!(record.status, NetworkAgentStatus::Active);
+    assert_eq!(
+        harness.access.knocked.lock().unwrap().clone(),
+        [(created.agent_id, record.device_id, private_catalog())],
+        "以它自己的网络设备敲门"
+    );
+
+    let view = harness.service.me(created.token.expose()).await.unwrap();
+    assert!(view.rooms.is_empty());
+    assert_eq!(view.knocks, std::slice::from_ref(knock));
+    // 一直没人回答就作废。
+    harness.runtime.advance(HOUR);
+    let view = harness.service.me(created.token.expose()).await.unwrap();
+    assert_eq!(view.knocks[0].status, NetworkAgentKnockStatus::Expired);
+}
+
+#[tokio::test]
+async fn 房间号不对时什么都不建_是公开大厅的就直接进() {
+    let harness = Harness::enabled();
+    let unknown = catalog_id(404).to_string();
+    assert_eq!(
+        harness.create("Scout", Some(&unknown)).await.err(),
+        Some(NetworkAgentFailureKind::RoomNotFound)
+    );
+    assert!(
+        harness.store.agents.lock().unwrap().is_empty(),
+        "房间号不对什么都不建"
+    );
+    assert!(harness.access.knocked.lock().unwrap().is_empty());
+
+    let lobby = harness
+        .create("Scout", Some(&catalog_id(1).to_string()))
+        .await
+        .unwrap();
+    assert!(matches!(lobby.placement, NetworkAgentPlacement::Entered(_)));
+    assert_eq!(room_of(&lobby).catalog_id, catalog_id(1));
+    assert!(harness.access.knocked.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn 已有的网络_agent_拿房间号敲门_成员直接放行_没让进的照实说_在里面的原样返回() {
+    let harness = Harness::enabled();
+    let created = harness.create("Scout", None).await.unwrap();
+    let token = created.token.expose();
+
+    let knocked = harness
+        .service
+        .admit(token, knock_on_private(), [3; 32])
+        .await
+        .unwrap();
+    let NetworkAgentAdmission::Knocked(knock) = knocked else {
+        panic!("敲门：{knocked:?}");
+    };
+    assert_eq!(knock.status, NetworkAgentKnockStatus::Waiting);
+
+    harness
+        .access
+        .declined
+        .lock()
+        .unwrap()
+        .insert(created.agent_id);
+    let declined = harness
+        .service
+        .admit(token, knock_on_private(), [3; 32])
+        .await
+        .unwrap();
+    assert!(
+        matches!(&declined, NetworkAgentAdmission::Knocked(knock) if knock.status == NetworkAgentKnockStatus::Declined),
+        "{declined:?}"
+    );
+    harness.access.declined.lock().unwrap().clear();
+
+    harness
+        .access
+        .members
+        .lock()
+        .unwrap()
+        .insert(created.agent_id);
+    let admitted = harness
+        .service
+        .admit(token, knock_on_private(), [3; 32])
+        .await
+        .unwrap();
+    let NetworkAgentAdmission::Admitted(target) = admitted else {
+        panic!("已经是 Agent 成员的直接放行：{admitted:?}");
+    };
+    let room = harness.service.enter(token, target).await.unwrap();
+    assert_eq!(room.matrix_room_id.as_str(), PRIVATE_ROOM);
+    assert_eq!(
+        harness
+            .service
+            .admit(token, knock_on_private(), [3; 32])
+            .await
+            .unwrap(),
+        NetworkAgentAdmission::AlreadyIn(NetworkAgentRoom {
+            name: String::new(),
+            ..room
+        }),
+        "已经在里面：原样返回"
+    );
+    let view = harness.service.me(token).await.unwrap();
+    assert!(view.knocks.is_empty(), "进来以后不再列这扇门");
+}
+
+#[tokio::test]
+async fn 敲门每个来源每小时十次_拿房间号建人物也算() {
+    let harness = Harness::generous();
+    let address = private_catalog().to_string();
+    for index in 0..10 {
+        harness
+            .create_from(&format!("Scout {index}"), Some(&address), [7; 32])
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        harness
+            .create_from("Scout 10", Some(&address), [7; 32])
+            .await
+            .err(),
+        Some(NetworkAgentFailureKind::RateLimited)
+    );
+    let created = harness.create_from("Other", None, [8; 32]).await.unwrap();
+    for _ in 0..10 {
+        harness
+            .service
+            .admit(created.token.expose(), knock_on_private(), [8; 32])
+            .await
+            .unwrap();
+    }
+    let limited = harness
+        .service
+        .admit(created.token.expose(), knock_on_private(), [8; 32])
+        .await
+        .unwrap_err();
+    assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
+    assert!(limited.retry_at().is_some());
+    harness
+        .service
+        .admit(created.token.expose(), knock_on_private(), [9; 32])
+        .await
+        .expect("别的来源不受影响");
+}
+
+#[tokio::test]
+async fn 放行后按_agent_取会话替它进房间_不记活动_停用的不行() {
+    let harness = Harness::enabled();
+    let created = harness
+        .create("Scout", Some(&private_catalog().to_string()))
+        .await
+        .unwrap();
+    harness.runtime.advance(60_000);
+    let session = harness
+        .service
+        .session_of_agent(created.agent_id)
+        .await
+        .unwrap();
+    assert_eq!(session.agent_id, created.agent_id);
+    assert!(session.rooms.is_empty());
+    assert_eq!(
+        harness.store.only().last_active_at,
+        UtcMillis::new(START).unwrap(),
+        "替它进房间不算它的活动"
+    );
+
+    let room = harness
+        .service
+        .enter_admitted(
+            created.agent_id,
+            NetworkAgentRoom {
+                catalog_id: private_catalog(),
+                matrix_room_id: MatrixRoomReference::new(PRIVATE_ROOM.to_owned()).unwrap(),
+                name: "项目室".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(room.matrix_room_id.as_str(), PRIVATE_ROOM);
+    assert_eq!(room.name, "项目室");
+    let request = harness
+        .lobbies
+        .requests
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        request.target_room.map(|room| room.as_str().to_owned()),
+        Some(PRIVATE_ROOM.to_owned()),
+        "指名进那个私人房间"
+    );
+    let session = harness
+        .service
+        .session_of_agent(created.agent_id)
+        .await
+        .unwrap();
+    assert_eq!(session.rooms.len(), 1);
+
+    let stranger = AgentId::from_uuid(Uuid::from_u128(0x0198_b601_0000_7000_8000_0000_00ff_0000));
+    assert_eq!(
+        harness
+            .service
+            .session_of_agent(stranger)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Unauthorized,
+        "不是网络 Agent"
+    );
+    harness
+        .service
+        .disable(created.token.expose())
+        .await
+        .unwrap();
+    assert_eq!(
+        harness
+            .service
+            .session_of_agent(created.agent_id)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Unauthorized
+    );
+    assert_eq!(
+        harness
+            .service
+            .enter_admitted(created.agent_id, room)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::Unauthorized
+    );
 }

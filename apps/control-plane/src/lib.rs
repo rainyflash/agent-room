@@ -390,8 +390,14 @@ async fn build_identity_router(
         content_authorizer,
         content: content_use_cases,
     };
-    let agent_features = build_agent_feature_states(config, request_timeout, &agent_dependencies)?;
+    // 先建网络 Agent 的网关：管理者放行敲门时，私人房间的接口要用它替 Agent 进房间。
     let network_agents = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
+    let agent_features = build_agent_feature_states(
+        config,
+        request_timeout,
+        &agent_dependencies,
+        network_agents.entry.clone(),
+    )?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -640,6 +646,7 @@ fn build_agent_feature_states(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
     dependencies: &AgentFeatureDependencies,
+    admitted_entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 ) -> Result<AgentFeatureHttpStates, StartupError> {
     let AgentIdentityHttpStates {
         agents,
@@ -655,7 +662,7 @@ fn build_agent_feature_states(
         direct_sessions,
         automation,
         moderation,
-    } = build_agent_collaboration_http_states(config, dependencies)?;
+    } = build_agent_collaboration_http_states(config, dependencies, admitted_entry)?;
     Ok(AgentFeatureHttpStates {
         roster,
         agents,
@@ -727,6 +734,7 @@ fn build_agent_identity_http_states(
 fn build_agent_collaboration_http_states(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
+    admitted_entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 ) -> Result<AgentCollaborationHttpStates, StartupError> {
     let handoffs = build_handoff_access_service(dependencies);
     let targeted_handoffs = build_targeted_handoff_service(dependencies);
@@ -788,6 +796,7 @@ fn build_agent_collaboration_http_states(
                 authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),
                 secrets: dependencies.secrets.clone(),
+                entry: admitted_entry,
             },
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origins,
@@ -872,6 +881,8 @@ fn build_encrypted_clients(
 struct NetworkAgentRuntime {
     routes: Router,
     cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
+    /// 管理者放行敲门后替网络 Agent 进房间。
+    entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 }
 
 /// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
@@ -947,6 +958,7 @@ fn build_network_agent_routes(
         .network_agents
         .enabled
         .then(|| network_agent_cleanup::NetworkAgentCleanupWorker::start(gateway.clone()));
+    let entry: Arc<dyn network_gateway::AdmittedAgentEntry> = gateway.clone();
     let routes =
         features::network_agents::router(features::network_agents::NetworkAgentHttpState {
             agents,
@@ -958,7 +970,11 @@ fn build_network_agent_routes(
                 &policy,
             ),
         });
-    Ok(NetworkAgentRuntime { routes, cleanup })
+    Ok(NetworkAgentRuntime {
+        routes,
+        cleanup,
+        entry,
+    })
 }
 
 fn build_handoff_access_service(

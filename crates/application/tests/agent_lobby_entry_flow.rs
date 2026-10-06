@@ -11,10 +11,10 @@ use agent_room_application::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
         JoinCodeAttemptPolicy, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
         PrincipalAccount, PrivateMatrixMembership, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentAccessStore, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, RoomAllocationMode,
-        RoomAllocationStore, RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome,
-        SecretDigest,
+        PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord,
+        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway,
+        PrivateRoomSnapshot, PrivateRoomStore, RoomAllocationMode, RoomAllocationStore,
+        RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome, SecretDigest,
     },
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningOperation, LobbyProvisioningOutcome,
@@ -27,7 +27,9 @@ use agent_room_domain::{
         AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId,
         RoomReservationId,
     },
-    join_codes::PrivateRoomAgentMemberStatus,
+    join_codes::{
+        PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
+    },
     private_rooms::{PrivateRoom, PrivateRoomCapability, PrivateRoomPermissions},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
@@ -297,6 +299,7 @@ impl PrivateRoomAgentAccessStore for 固定口令成员仓储 {
         _catalog_id: RoomCatalogId,
         _agent_id: AgentId,
         _permissions: PrivateRoomPermissions,
+        _via: PrivateRoomAgentJoinedVia,
         _now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async { unreachable!("入场不兑换口令") })
@@ -324,6 +327,40 @@ impl PrivateRoomAgentAccessStore for 固定口令成员仓储 {
         _policy: JoinCodeAttemptPolicy,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async { unreachable!("入场不限流口令") })
+    }
+    fn knock(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _agent_id: AgentId,
+        _now: UtcMillis,
+        _expires_at: UtcMillis,
+        _max_waiting: u32,
+    ) -> PortFuture<'_, RepositoryResult<PrivateRoomAgentKnockOutcome>> {
+        Box::pin(async { unreachable!("入场不敲门") })
+    }
+    fn waiting_knocks(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(async { unreachable!("入场不看敲门") })
+    }
+    fn agent_knocks(
+        &self,
+        _agent_id: AgentId,
+        _since: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(async { unreachable!("入场不看敲门") })
+    }
+    fn decide_knock(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _agent_id: AgentId,
+        _status: PrivateRoomAgentKnockStatus,
+        _decided_by: PrincipalId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("入场不回答敲门") })
     }
 }
 

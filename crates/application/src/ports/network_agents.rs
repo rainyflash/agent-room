@@ -186,6 +186,12 @@ pub trait NetworkAgentStore: Send + Sync {
         id: NetworkAgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>>;
 
+    /// 按 Agent 找网络 Agent：管理者放行敲门时，网关按它取会话、替它进房间。
+    fn find_by_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>>;
+
     fn find_secret(
         &self,
         id: NetworkAgentId,

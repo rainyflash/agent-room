@@ -1,19 +1,22 @@
-//! 私人房间的 Agent 口令、凭口令进来的 Agent 成员，以及猜口令的固定窗口计数。
+//! 私人房间的 Agent 口令、敲门、凭口令或放行进来的 Agent 成员，以及猜口令的固定窗口计数。
 
 use agent_room_application::{
-    persistence::RepositoryResult,
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         JoinCodeAttemptPolicy, MatrixUserId, PortFuture, PrivateRoomAgentAccessStore,
-        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, SecretDigest,
+        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, SecretDigest,
     },
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
-    join_codes::PrivateRoomAgentMemberStatus,
+    join_codes::{
+        PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
+    },
     private_rooms::PrivateRoomPermissions,
     time::UtcMillis,
 };
-use sqlx::postgres::PgRow;
+use sqlx::{Postgres, Transaction, postgres::PgRow};
 
 use crate::{
     PostgresRepositories,
@@ -53,6 +56,28 @@ const AGENT_MEMBER_QUERY: &str = r"
            LIMIT 1
       ) owner ON true
      WHERE member.catalog_entry_id = $1";
+
+/// 敲门连同 Agent 当前的名字。
+const KNOCK_QUERY: &str = r"
+    SELECT knock.catalog_entry_id,
+           knock.agent_id,
+           agent.display_name,
+           knock.knock_status,
+           floor(extract(epoch FROM knock.knocked_at) * 1000)::bigint AS knocked_at_ms,
+           floor(extract(epoch FROM knock.expires_at) * 1000)::bigint AS expires_at_ms,
+           floor(extract(epoch FROM knock.decided_at) * 1000)::bigint AS decided_at_ms
+      FROM agent_room.private_room_agent_knock knock
+      JOIN agent_room.agent agent ON agent.id = knock.agent_id";
+
+/// 只算还能放进来的：Agent 有效，是网络 Agent 的还没停用。
+const LIVE_KNOCKER: &str = r"
+       AND agent.lifecycle_state = 'active'
+       AND NOT EXISTS (
+           SELECT 1
+             FROM agent_room.network_agent network
+            WHERE network.agent_id = knock.agent_id
+              AND network.status <> 'active'
+       )";
 
 impl PrivateRoomAgentAccessStore for PostgresRepositories {
     fn join_code(
@@ -179,16 +204,17 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
         catalog_id: RoomCatalogId,
         agent_id: AgentId,
         permissions: PrivateRoomPermissions,
+        via: PrivateRoomAgentJoinedVia,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "private_room.agent_member.admit";
-            // 已加入的保持原来的状态时间；以前被移出的重新加入时从现在算起。
+            // 已加入的保持原来的状态时间和进来的方式；以前被移出的重新加入时从现在算起。
             sqlx::query(
                 r"INSERT INTO agent_room.private_room_agent_member
                       (catalog_entry_id, agent_id, membership_status, permission_bits,
                        joined_via, created_at, status_changed_at)
-                  VALUES ($1, $2, 'joined', $3, 'code',
+                  VALUES ($1, $2, 'joined', $3, $5,
                           to_timestamp($4::double precision / 1000.0),
                           to_timestamp($4::double precision / 1000.0))
                   ON CONFLICT (catalog_entry_id, agent_id) DO UPDATE
@@ -199,12 +225,18 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
                              ELSE greatest(EXCLUDED.status_changed_at,
                                            private_room_agent_member.status_changed_at)
                          END,
+                         joined_via = CASE
+                             WHEN private_room_agent_member.membership_status = 'joined'
+                             THEN private_room_agent_member.joined_via
+                             ELSE EXCLUDED.joined_via
+                         END,
                          membership_status = 'joined'",
             )
             .bind(catalog_id.as_uuid())
             .bind(agent_id.as_uuid())
             .bind(i16::from(permissions.bits()))
             .bind(now.value())
+            .bind(via.as_str())
             .execute(self.pool())
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -317,6 +349,263 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
             Ok(())
         })
     }
+
+    fn knock(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+        expires_at: UtcMillis,
+        max_waiting: u32,
+    ) -> PortFuture<'_, RepositoryResult<PrivateRoomAgentKnockOutcome>> {
+        Box::pin(async move {
+            let operation = "private_room.agent_knock.knock";
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let outcome = record_knock(
+                &mut transaction,
+                KnockAttempt {
+                    catalog_id,
+                    agent_id,
+                    now,
+                    expires_at,
+                    max_waiting,
+                },
+                operation,
+            )
+            .await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(outcome)
+        })
+    }
+
+    fn waiting_knocks(
+        &self,
+        catalog_id: RoomCatalogId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(async move {
+            let operation = "private_room.agent_knock.waiting";
+            let query = format!(
+                "{KNOCK_QUERY}
+                  WHERE knock.catalog_entry_id = $1
+                    AND knock.knock_status = 'waiting'
+                    AND knock.expires_at > to_timestamp($2::double precision / 1000.0)
+                    {LIVE_KNOCKER}
+                  ORDER BY knock.knocked_at, knock.agent_id"
+            );
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(catalog_id.as_uuid())
+                .bind(now.value())
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_knock(row, operation))
+                .collect()
+        })
+    }
+
+    fn agent_knocks(
+        &self,
+        agent_id: AgentId,
+        since: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(async move {
+            let operation = "private_room.agent_knock.of_agent";
+            let query = format!(
+                "{KNOCK_QUERY}
+                  WHERE knock.agent_id = $1
+                    AND knock.knocked_at >= to_timestamp($2::double precision / 1000.0)
+                  ORDER BY knock.knocked_at, knock.catalog_entry_id"
+            );
+            let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(agent_id.as_uuid())
+                .bind(since.value())
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_knock(row, operation))
+                .collect()
+        })
+    }
+
+    fn decide_knock(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        status: PrivateRoomAgentKnockStatus,
+        decided_by: PrincipalId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let operation = "private_room.agent_knock.decide";
+            if status == PrivateRoomAgentKnockStatus::Waiting {
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Constraint,
+                ));
+            }
+            let result = sqlx::query(
+                r"UPDATE agent_room.private_room_agent_knock
+                     SET knock_status = $3,
+                         decided_at = greatest(knocked_at,
+                                               to_timestamp($5::double precision / 1000.0)),
+                         decided_by_principal_id = $4
+                   WHERE catalog_entry_id = $1
+                     AND agent_id = $2
+                     AND knock_status = 'waiting'",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(agent_id.as_uuid())
+            .bind(status.as_str())
+            .bind(decided_by.as_uuid())
+            .bind(now.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(result.rows_affected() > 0)
+        })
+    }
+}
+
+/// 要记的一次敲门。
+struct KnockAttempt {
+    catalog_id: RoomCatalogId,
+    agent_id: AgentId,
+    now: UtcMillis,
+    expires_at: UtcMillis,
+    max_waiting: u32,
+}
+
+/// 同一个房间的敲门排队记：锁住房间那一行，数在等的和写入之间不让别的敲门插进来。
+async fn record_knock(
+    transaction: &mut Transaction<'_, Postgres>,
+    attempt: KnockAttempt,
+    operation: &'static str,
+) -> RepositoryResult<PrivateRoomAgentKnockOutcome> {
+    let room = sqlx::query(
+        r"SELECT 1 FROM agent_room.private_room_state
+           WHERE catalog_entry_id = $1
+             FOR UPDATE",
+    )
+    .bind(attempt.catalog_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if room.is_none() {
+        return Err(RepositoryError::new(
+            operation,
+            RepositoryErrorKind::NotFound,
+        ));
+    }
+    let existing = find_knock(transaction, attempt.catalog_id, attempt.agent_id, operation).await?;
+    if let Some(record) = existing
+        && record.status == PrivateRoomAgentKnockStatus::Declined
+    {
+        return Ok(PrivateRoomAgentKnockOutcome::Declined(record));
+    }
+    let count_query = format!(
+        "SELECT count(*) AS waiting,
+                floor(extract(epoch FROM min(knock.expires_at)) * 1000)::bigint AS earliest_ms
+           FROM agent_room.private_room_agent_knock knock
+           JOIN agent_room.agent agent ON agent.id = knock.agent_id
+          WHERE knock.catalog_entry_id = $1
+            AND knock.agent_id <> $2
+            AND knock.knock_status = 'waiting'
+            AND knock.expires_at > to_timestamp($3::double precision / 1000.0)
+            {LIVE_KNOCKER}"
+    );
+    let row = sqlx::query(sqlx::AssertSqlSafe(count_query))
+        .bind(attempt.catalog_id.as_uuid())
+        .bind(attempt.agent_id.as_uuid())
+        .bind(attempt.now.value())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let waiting: i64 = decode_column(&row, "waiting", operation)?;
+    if waiting >= i64::from(attempt.max_waiting) {
+        let earliest: Option<i64> = decode_column(&row, "earliest_ms", operation)?;
+        let retry_at = earliest.unwrap_or_else(|| attempt.expires_at.value());
+        return UtcMillis::new(retry_at)
+            .map(|retry_at| PrivateRoomAgentKnockOutcome::RoomFull { retry_at })
+            .map_err(|error| map_domain_error(operation, &error));
+    }
+    // 在等的再敲、放进来过又被移出的再敲，都从现在重新算。
+    sqlx::query(
+        r"INSERT INTO agent_room.private_room_agent_knock
+              (catalog_entry_id, agent_id, knock_status, knocked_at, expires_at)
+          VALUES ($1, $2, 'waiting',
+                  to_timestamp($3::double precision / 1000.0),
+                  to_timestamp($4::double precision / 1000.0))
+          ON CONFLICT (catalog_entry_id, agent_id) DO UPDATE
+             SET knock_status = 'waiting',
+                 knocked_at = EXCLUDED.knocked_at,
+                 expires_at = EXCLUDED.expires_at,
+                 decided_at = NULL,
+                 decided_by_principal_id = NULL
+           WHERE private_room_agent_knock.knock_status <> 'declined'",
+    )
+    .bind(attempt.catalog_id.as_uuid())
+    .bind(attempt.agent_id.as_uuid())
+    .bind(attempt.now.value())
+    .bind(attempt.expires_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let record = find_knock(transaction, attempt.catalog_id, attempt.agent_id, operation)
+        .await?
+        .ok_or_else(|| corrupt_data(operation))?;
+    Ok(match record.status {
+        PrivateRoomAgentKnockStatus::Declined => PrivateRoomAgentKnockOutcome::Declined(record),
+        _ => PrivateRoomAgentKnockOutcome::Waiting(record),
+    })
+}
+
+async fn find_knock(
+    transaction: &mut Transaction<'_, Postgres>,
+    catalog_id: RoomCatalogId,
+    agent_id: AgentId,
+    operation: &'static str,
+) -> RepositoryResult<Option<PrivateRoomAgentKnockRecord>> {
+    let query = format!("{KNOCK_QUERY} WHERE knock.catalog_entry_id = $1 AND knock.agent_id = $2");
+    let row = sqlx::query(sqlx::AssertSqlSafe(query))
+        .bind(catalog_id.as_uuid())
+        .bind(agent_id.as_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    row.map(|row| decode_knock(&row, operation)).transpose()
+}
+
+fn decode_knock(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<PrivateRoomAgentKnockRecord> {
+    let catalog_id: uuid::Uuid = decode_column(row, "catalog_entry_id", operation)?;
+    let agent_id: uuid::Uuid = decode_column(row, "agent_id", operation)?;
+    let status: String = decode_column(row, "knock_status", operation)?;
+    let knocked_at: i64 = decode_column(row, "knocked_at_ms", operation)?;
+    let expires_at: i64 = decode_column(row, "expires_at_ms", operation)?;
+    let decided_at: Option<i64> = decode_column(row, "decided_at_ms", operation)?;
+    let millis =
+        |value: i64| UtcMillis::new(value).map_err(|error| map_domain_error(operation, &error));
+    Ok(PrivateRoomAgentKnockRecord {
+        catalog_id: RoomCatalogId::from_uuid(catalog_id),
+        agent_id: AgentId::from_uuid(agent_id),
+        display_name: decode_column(row, "display_name", operation)?,
+        status: PrivateRoomAgentKnockStatus::parse(&status).map_err(|_| corrupt_data(operation))?,
+        knocked_at: millis(knocked_at)?,
+        expires_at: millis(expires_at)?,
+        decided_at: decided_at.map(millis).transpose()?,
+    })
 }
 
 fn decode_join_code(

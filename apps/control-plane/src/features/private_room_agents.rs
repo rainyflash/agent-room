@@ -1,16 +1,20 @@
 //! 私人房间的 Agent 口令：房主或管理员在网页上查看、生成、停用口令并移出凭口令进来的 Agent；
 //! 本机 Agent 用设备签名的请求凭口令加入。口令本身只在生成的那次响应里出现。
+//!
+//! 敲门（`specs/network-agents/knock.md`）：管理者在这里看谁在敲门，让它进来或不让进。
+//! 让它进来时网关在这次请求里替它进房间，进去了才回答。
 
 use std::sync::Arc;
 
 use agent_room_application::{
     authentication::{AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
-    ports::{PrivateRoomAgentMemberRecord, SecretFactory},
+    network_agents::{NetworkAgentFailureKind, NetworkAgentRoom},
+    ports::{PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, SecretFactory},
     private_rooms::{
-        AgentAccessView, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller, ManageJoinCode,
-        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
-        ResolveJoinCode,
+        AgentAccessFailure, AgentAccessResult, AgentAccessView, AnswerKnock, GeneratedJoinCode,
+        InspectAgentAccess, JoinCodeCaller, ManageJoinCode, PrivateRoomAgentAccessUseCases,
+        RedeemJoinCode, RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
     },
 };
 use agent_room_domain::ids::{AgentId, RoomCatalogId};
@@ -34,6 +38,7 @@ use crate::{
         devices::authenticate_signed_device_request,
         resource_ids::parse_uuid_v7,
     },
+    network_gateway::{AdmittedAgentEntry, NetworkGatewayFailure},
 };
 
 const MAX_AGENT_ACCESS_BODY_BYTES: usize = 4 * 1_024;
@@ -44,6 +49,7 @@ pub(crate) struct PrivateRoomAgentHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
+    entry: Arc<dyn AdmittedAgentEntry>,
     trusted_origins: TrustedOrigins,
 }
 
@@ -52,6 +58,8 @@ pub(crate) struct PrivateRoomAgentHttpDependencies {
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
+    /// 放行敲门时替网络 Agent 进房间。
+    pub(crate) entry: Arc<dyn AdmittedAgentEntry>,
 }
 
 impl PrivateRoomAgentHttpState {
@@ -65,6 +73,7 @@ impl PrivateRoomAgentHttpState {
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
+            entry: dependencies.entry,
             trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
         }
     }
@@ -79,7 +88,15 @@ pub(crate) fn router(state: PrivateRoomAgentHttpState) -> Router {
         )
         .route(
             "/private-rooms/{catalog_id}/agent-access/agents/{agent_id}",
-            delete(remove_agent),
+            put(admit_knock).delete(remove_agent),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/agent-access/knocks",
+            get(waiting_knocks),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/agent-access/knocks/{agent_id}",
+            delete(decline_knock),
         )
         .route("/join-codes/resolve", post(resolve))
         .route("/agents/{agent_id}/join-codes/redeem", post(redeem))
@@ -110,6 +127,29 @@ struct AgentMemberResponse {
     status: &'static str,
     joined_at_unix_ms: i64,
     status_changed_at_unix_ms: i64,
+}
+
+/// 在等、没作废的敲门，先敲的在前。单独一个接口：旧版网页严格校验 `agent-access` 的回答，
+/// 多一个字段整个房间设置都读不出来。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnocksResponse {
+    knocks: Vec<KnockResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnockResponse {
+    agent_id: String,
+    display_name: String,
+    knocked_at_unix_ms: i64,
+    expires_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdmittedResponse {
+    agent: AgentMemberResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,6 +198,17 @@ impl From<PrivateRoomAgentMemberRecord> for AgentMemberResponse {
             status: record.status.as_str(),
             joined_at_unix_ms: record.joined_at.value(),
             status_changed_at_unix_ms: record.status_changed_at.value(),
+        }
+    }
+}
+
+impl From<PrivateRoomAgentKnockRecord> for KnockResponse {
+    fn from(record: PrivateRoomAgentKnockRecord) -> Self {
+        Self {
+            agent_id: record.agent_id.to_string(),
+            display_name: record.display_name,
+            knocked_at_unix_ms: record.knocked_at.value(),
+            expires_at_unix_ms: record.expires_at.value(),
         }
     }
 }
@@ -286,6 +337,156 @@ async fn remove_agent(
     )
 }
 
+/// 在等、没作废的敲门；只有管理者看得到。
+async fn waiting_knocks(
+    State(state): State<PrivateRoomAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Ok(catalog_id) = parse_uuid_v7(&catalog).map(RoomCatalogId::from_uuid) else {
+        return invalid_resource(correlation_id);
+    };
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .access
+        .waiting_knocks(InspectAgentAccess { actor, catalog_id })
+        .await
+    {
+        Ok(knocks) => no_store(
+            (
+                StatusCode::OK,
+                Json(KnocksResponse {
+                    knocks: knocks.into_iter().map(KnockResponse::from).collect(),
+                }),
+            )
+                .into_response(),
+        ),
+        Err(failure) => knock_failure(failure, correlation_id),
+    }
+}
+
+/// 让在敲门的 Agent 进来：记为这个房间的 Agent 成员，网关替它进房间，进去了才把敲门记为
+/// 放进来了。网关没让它进去时敲门还在等，管理者可以再点一次。
+async fn admit_knock(
+    State(state): State<PrivateRoomAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((catalog, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    let Ok(agent_id) = parse_uuid_v7(&agent).map(AgentId::from_uuid) else {
+        return invalid_resource(correlation_id);
+    };
+    let (actor, catalog_id) =
+        match write_context(&state, &headers, &jar, &catalog, correlation_id).await {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    let answer = AnswerKnock {
+        actor,
+        catalog_id,
+        agent_id,
+    };
+    let admitted = match state.access.admit_knock(answer.clone()).await {
+        Ok(admitted) => admitted,
+        Err(failure) => return knock_failure(failure, correlation_id),
+    };
+    let room = NetworkAgentRoom {
+        catalog_id: admitted.room.catalog_id,
+        matrix_room_id: admitted.room.matrix_room_id,
+        name: admitted.room.name,
+    };
+    if let Err(failure) = state.entry.enter_admitted(agent_id, room).await {
+        return entry_failure(&failure, correlation_id);
+    }
+    if let Err(failure) = state.access.complete_knock(answer).await {
+        // 它已经进去了：敲门还显示在等，再点一次会原样走完，不影响它在房间里。
+        tracing::warn!(
+            correlation.id = %correlation_id.as_uuid(),
+            failure = ?failure.kind(),
+            "放行的 Agent 进了房间，敲门没记成放进来了"
+        );
+    }
+    no_store(
+        (
+            StatusCode::OK,
+            Json(AdmittedResponse {
+                agent: AgentMemberResponse::from(admitted.agent),
+            }),
+        )
+            .into_response(),
+    )
+}
+
+/// 不让进：之后它再敲还是不让进，不再打扰管理者。原本就不在等也回答成功。
+async fn decline_knock(
+    State(state): State<PrivateRoomAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((catalog, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    let Ok(agent_id) = parse_uuid_v7(&agent).map(AgentId::from_uuid) else {
+        return invalid_resource(correlation_id);
+    };
+    let (actor, catalog_id) =
+        match write_context(&state, &headers, &jar, &catalog, correlation_id).await {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    match state
+        .access
+        .decline_knock(AnswerKnock {
+            actor,
+            catalog_id,
+            agent_id,
+        })
+        .await
+    {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => knock_failure(failure, correlation_id),
+    }
+}
+
+fn knock_failure(failure: AgentAccessFailure, correlation_id: CorrelationId) -> Response {
+    no_store(ApiError::agent_knock(failure, correlation_id).into_response())
+}
+
+/// 网关没能替它进房间。Agent 这时停用了就和没在敲门一样；别的都是暂时的，敲门还在等。
+fn entry_failure(failure: &NetworkGatewayFailure, correlation_id: CorrelationId) -> Response {
+    tracing::warn!(
+        correlation.id = %correlation_id.as_uuid(),
+        failure = ?failure,
+        "放行的 Agent 没能进房间，敲门还在等"
+    );
+    let error = match failure {
+        NetworkGatewayFailure::Agent(failure)
+            if failure.kind() == NetworkAgentFailureKind::Unauthorized =>
+        {
+            ApiError::agent_knock_gone(correlation_id)
+        }
+        _ => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "private_room.agent_entry_unavailable",
+            ErrorCategory::DependencyUnavailable,
+            "服务器这会儿没能让它进来，它还在敲门，请稍后再点一次。",
+            correlation_id,
+        ),
+    };
+    no_store(error.into_response())
+}
+
 /// 只查看口令对应的房间，不让任何 Agent 加入；接入方据此选定人物后再兑换。
 async fn resolve(
     State(state): State<PrivateRoomAgentHttpState>,
@@ -373,7 +574,7 @@ async fn signed_code(
 }
 
 fn room_response(
-    result: agent_room_application::private_rooms::AgentAccessResult<RedeemedRoom>,
+    result: AgentAccessResult<RedeemedRoom>,
     correlation_id: CorrelationId,
 ) -> Response {
     match result {
@@ -417,10 +618,7 @@ async fn write_context(
     Ok((actor, catalog_id))
 }
 
-fn empty(
-    result: agent_room_application::private_rooms::AgentAccessResult<()>,
-    correlation_id: CorrelationId,
-) -> Response {
+fn empty(result: AgentAccessResult<()>, correlation_id: CorrelationId) -> Response {
     match result {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(failure) => no_store(ApiError::agent_access(failure, correlation_id).into_response()),

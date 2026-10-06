@@ -702,6 +702,71 @@ impl ApiError {
         Self::new(status, code, category, message, correlation_id)
     }
 
+    /// 管理者回答敲门（`specs/network-agents/knock.md`）：错误码以 `agent_knock.` 开头。
+    pub(crate) fn agent_knock(failure: AgentAccessFailure, correlation_id: CorrelationId) -> Self {
+        let (status, code, category, message) = match failure.kind() {
+            AgentAccessFailureKind::NotFound => {
+                log_agent_access_failure(failure, correlation_id);
+                return Self::agent_knock_gone(correlation_id);
+            }
+            AgentAccessFailureKind::InvalidRequest => (
+                StatusCode::BAD_REQUEST,
+                "agent_knock.invalid",
+                ErrorCategory::Validation,
+                "回答敲门的请求无效。",
+            ),
+            AgentAccessFailureKind::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "agent_knock.forbidden",
+                ErrorCategory::Authorization,
+                "只有房间的管理者能看到和回答敲门。",
+            ),
+            AgentAccessFailureKind::Conflict => (
+                StatusCode::CONFLICT,
+                "agent_knock.conflict",
+                ErrorCategory::Conflict,
+                "房间已归档或状态已经变化。",
+            ),
+            AgentAccessFailureKind::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "agent_knock.rate_limited",
+                ErrorCategory::Transient,
+                "太频繁了，请稍后再试。",
+            ),
+            AgentAccessFailureKind::DependencyUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_knock.dependency_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "暂时没法回答敲门，请稍后再试。",
+            ),
+            AgentAccessFailureKind::UnknownCommit => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_knock.unknown_commit",
+                ErrorCategory::UnknownCommit,
+                "操作提交状态未知，请刷新后确认。",
+            ),
+            AgentAccessFailureKind::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "agent_knock.internal",
+                ErrorCategory::Transient,
+                "回答敲门时发生内部错误。",
+            ),
+        };
+        log_agent_access_failure(failure, correlation_id);
+        Self::new(status, code, category, message, correlation_id)
+    }
+
+    /// 要回答的敲门不在了：作废了、没让进过、它停用了，或者房间不对。
+    pub(crate) fn agent_knock_gone(correlation_id: CorrelationId) -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "agent_knock.not_found",
+            ErrorCategory::Validation,
+            "这个 Agent 没在敲门：可能一小时没人回答已经作废、没让进过，或者它已经停用。",
+            correlation_id,
+        )
+    }
+
     /// 服务器替账户保管的签名钥匙（ADR 0011）。
     pub(crate) fn account_encryption(
         failure: AccountEncryptionFailure,
@@ -780,7 +845,7 @@ impl ApiError {
                     StatusCode::NOT_FOUND,
                     "network_agent.room_not_found",
                     ErrorCategory::Validation,
-                    "没有这个公开大厅；details.rooms 列出了能进的大厅，省略 room 就进默认大厅。",
+                    "没有这个公开大厅或私人房间；details.rooms 列出了能进的公开大厅，省略 room 就进默认大厅。私人房间的房间号是房间网址里 /lobby/ 后面那一段，请找房间里的人要。",
                     correlation_id,
                 );
                 error.envelope.details.insert(

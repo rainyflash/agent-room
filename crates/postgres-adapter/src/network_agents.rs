@@ -182,6 +182,24 @@ impl NetworkAgentStore for PostgresRepositories {
         })
     }
 
+    fn find_by_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<NetworkAgentRecord>>> {
+        Box::pin(async move {
+            let operation = "network_agent.find_by_agent";
+            let query = format!(
+                "SELECT {RECORD_COLUMNS} FROM agent_room.network_agent WHERE agent_id = $1"
+            );
+            let row = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(agent_id.as_uuid())
+                .fetch_optional(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|row| decode_record(&row, operation)).transpose()
+        })
+    }
+
     fn find_secret(
         &self,
         id: NetworkAgentId,
