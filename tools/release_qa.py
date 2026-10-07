@@ -150,7 +150,6 @@ class Acceptance:
         self.migration = release_acceptance.SERVER_MIGRATIONS.get(self.version)
         self.room_id = self.config["room"]["roomId"]
         self.catalog_id = self.config["room"]["catalogId"]
-        self.api = self.config["controlPlaneUrl"].rstrip("/")
         desktop = self.config["desktop"]
         self.desktop_executable = ntpath.normpath(desktop["executable"])
         self.origin = desktop.get("origin", "http://tauri.localhost")
@@ -476,7 +475,7 @@ class Acceptance:
         identity = self.joined()["identity"]
         payload = grant_payload(self.cli("id")["id"], identity)
         self.save("grant-input.json", payload)
-        result = self.page("create-grant.js", create_grant_js(self.api, self.version, payload))
+        result = self.page("create-grant.js", create_grant_js(self.version, payload))
         grant = result["grant"]
         if grant["status"] != "active" or grant["messageKinds"] != ["reply"] or grant["agentInstanceId"] != identity["instanceId"]:
             raise ReleaseFailure("验收授权不是只针对这个实例的回复授权。")
@@ -521,14 +520,14 @@ class Acceptance:
         for number in (1, 2):
             attachment = canary_path if number == 2 else None
             self.path(f"send-message-{number}.js").write_text(
-                send_message_js(number, messages[number], recipient, self.room_id, attachment), encoding="utf-8")
+                send_message_js(number, messages[number], recipient, attachment), encoding="utf-8")
         target = {"agentId": identity["agent"]["agentId"], "catalogId": identity["roomCatalogId"], "nextDeviceId": None}
         for action in ("read", "takeover"):
-            self.path(f"{action}-reception.js").write_text(reception_js(self.api, action, target), encoding="utf-8")
+            self.path(f"{action}-reception.js").write_text(reception_js(action, target), encoding="utf-8")
         canary = canary_path.read_text(encoding="utf-8").strip()
         self.path("verify-visible-replies.js").write_text(verify_replies_js(self.agent_name, canary), encoding="utf-8")
         grant_id = load(self.path("authorization.private.json"))["grant"]["grantId"]
-        self.path("revoke-grant.js").write_text(revoke_grant_js(self.api, grant_id), encoding="utf-8")
+        self.path("revoke-grant.js").write_text(revoke_grant_js(grant_id), encoding="utf-8")
 
     def receiver_events(self) -> list[dict[str, Any]]:
         path = self.path("receiver.private.jsonl")
@@ -562,9 +561,48 @@ class Acceptance:
                 if r.get("ok") and (r.get("data") or {}).get("type") == "delivery"
                 and r["data"]["record"].get("stage") in ("replied", "failed", "skipped")]
 
+    def received_event_ids(self) -> list[str]:
+        """Event IDs the receiver has taken in, oldest first, each once."""
+        received = [r["data"]["record"]["eventId"] for r in self.receiver_events()
+                    if r.get("ok") and (r.get("data") or {}).get("type") == "delivery"
+                    and r["data"]["record"].get("stage") == "received"]
+        return list(dict.fromkeys(received))
+
+    def confirm_delivery(self, number: int) -> dict[str, Any]:
+        """What the receiver actually got for QA message `number`, decrypted: text, sender, room, mention, attachment.
+
+        Since #325 the desktop publishes through the native layer, out of CDP's sight, so this stands in for the
+        publication receipt the page used to catch."""
+        deadline = time.time() + 90
+        while len(received := self.received_event_ids()) < number:
+            if time.time() > deadline:
+                raise ReleaseFailure(f"第 {number} 条消息 90 秒内没有送到接收端。")
+            time.sleep(2)
+        if len(received) != number:
+            raise ReleaseFailure(f"接收端收到了验收以外的消息：{received}")
+        event_id = received[-1]
+        messages = self.cli("--profile", self.joined()["profileId"], "show", "--id", event_id)["messages"]
+        if len(messages) != 1:
+            raise ReleaseFailure(f"按 ID 取第 {number} 条消息没有得到唯一一条：{len(messages)}")
+        message = messages[0]
+        conversation = message.get("conversation") or {}
+        attachment = conversation.get("attachmentName")
+        sender = load(self.path("authorization.private.json"))["principalId"]
+        if (message["eventId"] != event_id or message["roomId"] != self.room_id
+                or message["actor"].get("principalId") != sender
+                or conversation.get("text") != message_texts(self.label)[number]
+                or message.get("mentionsMe") is not True
+                or attachment != (self.canary_name if number == 2 else None)):
+            raise ReleaseFailure(f"接收端解开的第 {number} 条消息与发出的不符：{message}")
+        return {"scenarioMessage": number, "eventId": event_id, "contentId": message["content"]["contentId"],
+                "attachmentSent": attachment is not None, "confirmationSource": "decrypted-receiver-message",
+                "observedAtUnixSeconds": int(time.time())}
+
     def send(self, number: int) -> None:
-        result = self.page(f"send-message-{number}.js", self.path(f"send-message-{number}.js").read_text(encoding="utf-8"))
-        self.save(f"incoming-{number}.json", result)
+        # The page skips sending a message that already shows; skip it as well once the receiver has it.
+        if len(self.received_event_ids()) < number:
+            self.page(f"send-message-{number}.js", self.path(f"send-message-{number}.js").read_text(encoding="utf-8"))
+        self.save(f"incoming-{number}.json", self.confirm_delivery(number))
         deadline = time.time() + (240 if number == 1 else 300)
         while time.time() < deadline:
             settled = self.settled_deliveries()
@@ -774,7 +812,7 @@ class Acceptance:
         if self.migration:
             self.migrated_session()
             return
-        result = self.page("capture-native-session.js", native_session_js(self.origin, self.api, self.version))
+        result = self.page("capture-native-session.js", native_session_js(self.origin, self.version))
         if not (result.get("loginRestored") and result.get("bridgeReady")):
             raise ReleaseFailure(f"升级后登录或 Bridge 没有恢复：{result}")
         self.write_record("native-session-restoration.json", result)
@@ -782,7 +820,7 @@ class Acceptance:
     def migrated_session(self) -> None:
         """The upgraded app must hold no login on the new server; then the owner signs in there anew."""
         initial = self.work / "migrated-session-initial.json"
-        script = migrated_session_js(self.origin, self.api, self.version)
+        script = migrated_session_js(self.origin, self.version)
         if not initial.exists():
             observed = self.page("observe-migrated-session.js", script)
             if observed["signedIn"]:
@@ -1103,26 +1141,54 @@ def fill(template: str, values: dict[str, str]) -> str:
     return template
 
 
-def create_grant_js(api: str, version: str, payload: dict[str, Any]) -> str:
+# #325 起桌面端的登录只在原生层，WebView 里的 fetch 带不上它，请求控制面得到 401。验收和应用一样，
+# 把控制面请求交给原生层代发（`desktop_control_plane_request`）。帧和 control_plane_proxy.rs、
+# control-plane-request-frame.ts 一致：开头 4 字节大端长度，接着这么长的 JSON 头，剩下的是正文。
+# 路径相对桌面端配置的控制面根地址，不带开头的 /。
+NATIVE_CONTROL_PLANE_JS = r"""const controlPlane = async (path, {method = 'GET', headers = {}, body} = {}) => {
+      const encoder = new TextEncoder();
+      const payload = body === undefined ? new Uint8Array() : encoder.encode(JSON.stringify(body));
+      const sent = Object.entries(headers);
+      if (body !== undefined) sent.push(['content-type', 'application/json']);
+      const head = encoder.encode(JSON.stringify({method, path, headers: sent}));
+      const frame = new Uint8Array(4 + head.byteLength + payload.byteLength);
+      new DataView(frame.buffer).setUint32(0, head.byteLength);
+      frame.set(head, 4);
+      frame.set(payload, 4 + head.byteLength);
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Control-plane request timed out: ' + path)), 15000);
+      });
+      const raw = await Promise.race([
+        window.__TAURI_INTERNALS__.invoke('desktop_control_plane_request', frame), timeout,
+      ]).finally(() => clearTimeout(timer));
+      // 走自定义协议时交回 ArrayBuffer，退回消息通道时是数字数组。
+      const bytes = raw instanceof ArrayBuffer ? new Uint8Array(raw) : Uint8Array.from(raw);
+      const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+      const {status} = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length)));
+      const text = new TextDecoder().decode(bytes.subarray(4 + length));
+      return {status, ok: status >= 200 && status < 300, json: async () => JSON.parse(text)};
+    };"""
+
+
+def create_grant_js(version: str, payload: dict[str, Any]) -> str:
     return fill("""async page => {
   return await page.evaluate(async payload => {
-    const base = @@API@@;
-    const readiness = await fetch(base + "/health/ready");
+    @@NATIVE@@
+    const readiness = await controlPlane('health/ready');
     const health = await readiness.json();
     if (!readiness.ok || health.version !== @@VERSION@@) throw new Error("Candidate server is not running");
-    const response = await fetch(base + "/auth/session", {credentials: "include"});
+    const response = await controlPlane('auth/session');
     const session = await response.json();
     if (!response.ok || typeof session.principalId !== "string") throw new Error("Owner session not restored");
-    const created = await fetch(base + "/automation-grants", {
-      method: "POST", credentials: "include", headers: {
-        "Content-Type": "application/json", "Idempotency-Key": payload.grantId
-      }, body: JSON.stringify(payload.input)
+    const created = await controlPlane('automation-grants', {
+      method: 'POST', headers: {'Idempotency-Key': payload.grantId}, body: payload.input,
     });
     const grant = await created.json();
     if (!created.ok) throw new Error("QA grant failed: " + JSON.stringify(grant));
     return {principalId: session.principalId, grant, observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
   }, @@PAYLOAD@@);
-}""", {"API": json.dumps(api), "VERSION": json.dumps(version), "PAYLOAD": json.dumps(payload)})
+}""", {"NATIVE": NATIVE_CONTROL_PLANE_JS, "VERSION": json.dumps(version), "PAYLOAD": json.dumps(payload)})
 
 
 def message_texts(label: str) -> dict[int, str]:
@@ -1132,47 +1198,47 @@ def message_texts(label: str) -> dict[int, str]:
     }
 
 
-def send_message_js(number: int, text: str, recipient: str, room: str, attachment: Path | None) -> str:
+def send_message_js(number: int, text: str, recipient: str, attachment: Path | None) -> str:
+    """Send one QA message through the real composer and wait until it shows in the conversation.
+
+    Its publication (`PUT …/event-binding`) goes through the native layer since #325, out of CDP's sight, so
+    `Acceptance.confirm_delivery` checks what the receiver actually got. A message that already shows is not
+    sent again, so a rerun after a timeout cannot post it twice."""
     attach = "" if attachment is None else (
         "await page.getByLabel(" + js_name("attach") + ").setInputFiles(" + json.dumps(str(attachment)) + ");" + chr(10)
-        + "      await page.getByText(" + json.dumps(attachment.name) + ", {exact: true}).waitFor();")
+        + "        await page.getByText(" + json.dumps(attachment.name) + ", {exact: true}).waitFor();")
     return fill("""async page => {
-      const input = page.getByRole('textbox', {name: @@INPUT@@});
-      if (await input.inputValue() !== '') throw new Error('Preserve the existing draft');
-      await page.getByRole('combobox', {name: @@MENTION@@}).selectOption(@@RECIPIENT@@);
-      await input.fill(@@MESSAGE@@);
-      @@ATTACH_STEP@@
-      const responsePromise = page.waitForResponse(response => {
-        if (response.request().method() !== 'PUT' || !response.url().endsWith('/event-binding')) return false;
-        const body = response.request().postDataJSON();
-        return body.matrixRoomId === @@ROOM@@;
-      }, {timeout: 45000});
-      await page.getByRole('button', {name: @@SEND@@}).click();
-      const response = await responsePromise;
-      const receipt = await response.json();
-      if (!response.ok() || receipt.matrixRoomId !== @@ROOM@@ || !receipt.matrixEventId.startsWith('$')) {
-        throw new Error('Message publication was not confirmed: ' + response.status());
+      const sent = page.getByRole('log', {name: @@LOG@@})
+        .locator('article:not([data-actor-kind="agent"])').filter({hasText: @@MESSAGE@@});
+      if (await sent.count() === 0) {
+        const input = page.getByRole('textbox', {name: @@INPUT@@});
+        if (await input.inputValue() !== '') throw new Error('Preserve the existing draft');
+        await page.getByRole('combobox', {name: @@MENTION@@}).selectOption(@@RECIPIENT@@);
+        await input.fill(@@MESSAGE@@);
+        @@ATTACH_STEP@@
+        await page.getByRole('button', {name: @@SEND@@}).click();
       }
-      await input.waitFor({state: 'visible'});
-      return {scenarioMessage: @@NUMBER@@, eventId: receipt.matrixEventId, contentId: receipt.contentId,
-        attachmentSent: @@HAS_ATTACHMENT@@, observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
+      await sent.first().waitFor({state: 'visible', timeout: 45000});
+      if (await sent.count() !== 1) throw new Error('The QA message is not shown exactly once');
+      return {scenarioMessage: @@NUMBER@@, attachmentSent: @@HAS_ATTACHMENT@@, visibleQaMessageConfirmed: true,
+        observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
     }""", {
-        "INPUT": js_name("input"), "MENTION": js_name("mention"), "SEND": js_name("send"),
-        "RECIPIENT": json.dumps(recipient), "MESSAGE": json.dumps(text), "ROOM": json.dumps(room),
+        "LOG": js_name("log"), "INPUT": js_name("input"), "MENTION": js_name("mention"), "SEND": js_name("send"),
+        "RECIPIENT": json.dumps(recipient), "MESSAGE": json.dumps(text),
         "NUMBER": str(number), "HAS_ATTACHMENT": "true" if attachment is not None else "false",
         "ATTACH_STEP": attach,
     })
 
 
-def reception_js(api: str, action: str, target: dict[str, Any]) -> str:
-    endpoint = "/receptions" if action == "read" else "/receptions/transfer"
-    init = "" if action == "read" else "method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(input)"
+def reception_js(action: str, target: dict[str, Any]) -> str:
+    endpoint = "receptions" if action == "read" else "receptions/transfer"
+    init = "{}" if action == "read" else "{method: 'POST', body: input}"
     pick = ("body.receptions.find(item => item.agentId === input.agentId && item.catalogId === input.catalogId)"
             if action == "read" else "body")
     return fill("""async page => {
       return await page.evaluate(async input => {
-        const response = await fetch(@@BASE@@ + @@ENDPOINT@@, {credentials: 'include', cache: 'no-store',
-          signal: AbortSignal.timeout(15000), @@INIT@@});
+        @@NATIVE@@
+        const response = await controlPlane(@@ENDPOINT@@, @@INIT@@);
         const body = await response.json();
         if (!response.ok) throw new Error('Reception action failed: ' + response.status);
         const record = @@PICK@@;
@@ -1181,7 +1247,7 @@ def reception_js(api: str, action: str, target: dict[str, Any]) -> str:
         }
         return {record, observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
       }, @@PAYLOAD@@);
-    }""", {"BASE": json.dumps(api), "ENDPOINT": json.dumps(endpoint), "INIT": init, "PICK": pick,
+    }""", {"NATIVE": NATIVE_CONTROL_PLANE_JS, "ENDPOINT": json.dumps(endpoint), "INIT": init, "PICK": pick,
            "PAYLOAD": json.dumps(target)})
 
 
@@ -1209,26 +1275,25 @@ def verify_replies_js(agent_name: str, canary: str) -> str:
 }""", {"LOG": js_name("log"), "AGENT_NAME": json.dumps(agent_name), "CANARY": json.dumps(canary)})
 
 
-def revoke_grant_js(api: str, grant_id: str) -> str:
+def revoke_grant_js(grant_id: str) -> str:
     return fill("""async page => {
   return await page.evaluate(async id => {
-    const response = await fetch(@@BASE@@ + '/automation-grants/' + id,
-      {method: 'DELETE', credentials: 'include', signal: AbortSignal.timeout(15000)});
+    @@NATIVE@@
+    const response = await controlPlane('automation-grants/' + id, {method: 'DELETE'});
     if (!response.ok) throw new Error('Test grant cleanup failed: ' + response.status);
     return {revoked: true, observedAtUnixSeconds: Math.floor(Date.now()/1000)};
   }, @@GRANT_ID@@);
-}""", {"BASE": json.dumps(api), "GRANT_ID": json.dumps(grant_id)})
+}""", {"NATIVE": NATIVE_CONTROL_PLANE_JS, "GRANT_ID": json.dumps(grant_id)})
 
 
-def native_session_js(origin: str, api: str, version: str) -> str:
+def native_session_js(origin: str, version: str) -> str:
     return fill("""async page => {
   return await page.evaluate(async () => {
+    @@NATIVE@@
     if (location.origin !== @@ORIGIN@@) throw new Error('Expected the installed desktop application');
     const runtime = await window.__TAURI_INTERNALS__.invoke('desktop_runtime_snapshot');
     if (runtime.currentVersion !== @@VERSION@@) throw new Error('The installed candidate is not running');
-    const response = await fetch(@@API@@ + '/auth/session', {
-      credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(15000),
-    });
+    const response = await controlPlane('auth/session');
     const session = await response.json();
     const loginRestored = response.status === 200 && typeof session.principalId === 'string';
     const bridgePhase = runtime.bridge.lifecycle.phase;
@@ -1238,19 +1303,18 @@ def native_session_js(origin: str, api: str, version: str) -> str:
       httpSessionStatus: response.status, updatesConfigured: runtime.updatesConfigured,
       observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
   });
-}""", {"ORIGIN": json.dumps(origin), "API": json.dumps(api), "VERSION": json.dumps(version)})
+}""", {"NATIVE": NATIVE_CONTROL_PLANE_JS, "ORIGIN": json.dumps(origin), "VERSION": json.dumps(version)})
 
 
-def migrated_session_js(origin: str, api: str, version: str) -> str:
+def migrated_session_js(origin: str, version: str) -> str:
     """Observe, without failing, whether the upgraded app is signed in to the new server and its Bridge is ready."""
     return fill("""async page => {
   return await page.evaluate(async () => {
+    @@NATIVE@@
     if (location.origin !== @@ORIGIN@@) throw new Error('Expected the installed desktop application');
     const runtime = await window.__TAURI_INTERNALS__.invoke('desktop_runtime_snapshot');
     if (runtime.currentVersion !== @@VERSION@@) throw new Error('The installed candidate is not running');
-    const response = await fetch(@@API@@ + '/auth/session', {
-      credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(15000),
-    });
+    const response = await controlPlane('auth/session');
     const session = response.status === 200 ? await response.json() : null;
     const signedIn = session !== null && typeof session.principalId === 'string';
     const bridgePhase = runtime.bridge.lifecycle.phase;
@@ -1258,7 +1322,7 @@ def migrated_session_js(origin: str, api: str, version: str) -> str:
     return {currentVersion: runtime.currentVersion, signedIn, httpSessionStatus: response.status, bridgePhase,
       bridgeReady, updatesConfigured: runtime.updatesConfigured, observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
   });
-}""", {"ORIGIN": json.dumps(origin), "API": json.dumps(api), "VERSION": json.dumps(version)})
+}""", {"NATIVE": NATIVE_CONTROL_PLANE_JS, "ORIGIN": json.dumps(origin), "VERSION": json.dumps(version)})
 
 
 def goto_room_js(target: str) -> str:

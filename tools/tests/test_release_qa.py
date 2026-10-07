@@ -171,12 +171,12 @@ class ReleaseQaHelpers(unittest.TestCase):
             release_qa.fill("a", {"X": "1"})
 
     def test_message_with_attachment_is_fully_filled(self):
-        source = release_qa.send_message_js(2, "第二条", "@agent:example", "!room:example", Path("C:/qa/alpha41-attachment.txt"))
+        source = release_qa.send_message_js(2, "第二条", "@agent:example", Path("C:/qa/alpha41-attachment.txt"))
         self.assertNotRegex(source, r"@@[A-Z_]+@@")
         self.assertIn("setInputFiles", source)
         self.assertIn("attachmentSent: true", source)
         self.assertIn(release_qa.js_name("send"), source)
-        without = release_qa.send_message_js(1, "第一条", "@agent:example", "!room:example", None)
+        without = release_qa.send_message_js(1, "第一条", "@agent:example", None)
         self.assertNotIn("setInputFiles", without)
         self.assertIn("attachmentSent: false", without)
 
@@ -267,16 +267,16 @@ check({getByRole: () => locator(texts)}).then(
         identity = {"agent": {"agentId": "a", "matrixUserId": "@a:example"}, "instanceId": "i", "roomCatalogId": "c"}
         target = {"agentId": "a", "catalogId": "c", "nextDeviceId": None}
         sources = [
-            release_qa.create_grant_js("https://api.example", VERSION, release_qa.grant_payload("g", identity)),
-            release_qa.send_message_js(1, "一", "@a:example", "!r:example", None),
-            release_qa.send_message_js(2, "二", "@a:example", "!r:example", Path("C:/qa/alpha41-attachment.txt")),
-            release_qa.reception_js("https://api.example", "read", target),
-            release_qa.reception_js("https://api.example", "takeover", target),
+            release_qa.create_grant_js(VERSION, release_qa.grant_payload("g", identity)),
+            release_qa.send_message_js(1, "一", "@a:example", None),
+            release_qa.send_message_js(2, "二", "@a:example", Path("C:/qa/alpha41-attachment.txt")),
+            release_qa.reception_js("read", target),
+            release_qa.reception_js("takeover", target),
             release_qa.verify_replies_js("Alpha 41 实机验收 Claude Code", "ALPHA41-ABC"),
-            release_qa.revoke_grant_js("https://api.example", "g"),
+            release_qa.revoke_grant_js("g"),
             release_qa.goto_room_js("http://tauri.localhost/lobby/c/instance/r?view=conversation"),
-            release_qa.native_session_js("http://tauri.localhost", "https://api.example", VERSION),
-            release_qa.migrated_session_js("http://tauri.localhost", "https://api.example", VERSION),
+            release_qa.native_session_js("http://tauri.localhost", VERSION),
+            release_qa.migrated_session_js("http://tauri.localhost", VERSION),
         ]
         check = ("const s = require('fs').readFileSync(0, 'utf8');"
                  "if (typeof (0, eval)('(' + s.trim() + ')') !== 'function') process.exit(3);")
@@ -285,12 +285,211 @@ check({getByRole: () => locator(texts)}).then(
                 result = subprocess.run(["node", "-e", check], input=source, capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    # A fake desktop page: `desktop_control_plane_request` decodes the frame the way control_plane_proxy.rs
+    # does and answers from argv; WebView fetch throws, because the desktop's login lives only in the native
+    # layer since #325.
+    NATIVE_HARNESS = r"""
+const run = (0, eval)('(' + require('fs').readFileSync(0, 'utf8').trim() + ')');
+const answers = JSON.parse(process.argv[1]);
+const requests = [];
+globalThis.fetch = () => { throw new Error('WebView fetch carries no login'); };
+globalThis.location = {origin: 'http://tauri.localhost'};
+globalThis.window = {__TAURI_INTERNALS__: {invoke: async (command, frame) => {
+  if (command === 'desktop_runtime_snapshot') return answers.runtime;
+  if (command !== 'desktop_control_plane_request') throw new Error('unexpected command ' + command);
+  const length = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0);
+  const head = JSON.parse(new TextDecoder().decode(frame.subarray(4, 4 + length)));
+  const body = new TextDecoder().decode(frame.subarray(4 + length));
+  requests.push({...head, body: body === '' ? null : JSON.parse(body)});
+  const answer = answers[head.method + ' ' + head.path];
+  if (!answer) throw new Error('unexpected request ' + head.method + ' ' + head.path);
+  const responseHead = new TextEncoder().encode(JSON.stringify({status: answer.status, headers: []}));
+  const responseBody = new TextEncoder().encode(answer.body === null ? '' : JSON.stringify(answer.body));
+  const out = new Uint8Array(4 + responseHead.byteLength + responseBody.byteLength);
+  new DataView(out.buffer).setUint32(0, responseHead.byteLength);
+  out.set(responseHead, 4);
+  out.set(responseBody, 4 + responseHead.byteLength);
+  // The custom protocol answers with an ArrayBuffer, the message-channel fallback with an array of numbers.
+  return requests.length % 2 === 1 ? out.buffer : Array.from(out);
+}}};
+run({evaluate: (fn, arg) => fn(arg)}).then(
+  (result) => { process.stdout.write(JSON.stringify({result, requests})); },
+  (error) => { process.stdout.write('ERROR ' + error.message); process.exitCode = 4; });
+"""
+
+    def run_native(self, source: str, answers: dict) -> tuple[int, str]:
+        result = subprocess.run(["node", "-e", self.NATIVE_HARNESS, json.dumps(answers)], input=source,
+                                capture_output=True, text=True, encoding="utf-8")
+        return result.returncode, result.stdout + result.stderr
+
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page functions")
+    def test_control_plane_requests_go_through_the_native_layer(self):
+        identity = {"agent": {"agentId": "a", "matrixUserId": "@a:example"}, "instanceId": "i", "roomCatalogId": "c"}
+        payload = release_qa.grant_payload("g", identity)
+        code, out = self.run_native(release_qa.create_grant_js(VERSION, payload), {
+            "GET health/ready": {"status": 200, "body": {"version": VERSION}},
+            "GET auth/session": {"status": 200, "body": {"principalId": "owner"}},
+            "POST automation-grants": {"status": 201, "body": {"grantId": "g", "status": "active"}},
+        })
+        self.assertEqual(code, 0, out)
+        output = json.loads(out)
+        self.assertEqual(output["result"]["principalId"], "owner")
+        self.assertEqual(output["requests"], [
+            {"method": "GET", "path": "health/ready", "headers": [], "body": None},
+            {"method": "GET", "path": "auth/session", "headers": [], "body": None},
+            {"method": "POST", "path": "automation-grants",
+             "headers": [["Idempotency-Key", "g"], ["content-type", "application/json"]], "body": payload["input"]},
+        ])
+
+        target = {"agentId": "a", "catalogId": "c", "nextDeviceId": None}
+        code, out = self.run_native(release_qa.reception_js("takeover", target), {
+            "POST receptions/transfer": {"status": 200, "body": {"agentId": "a", "catalogId": "c", "status": "idle"}},
+        })
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["requests"][0]["body"], target)
+
+        code, out = self.run_native(release_qa.revoke_grant_js("g"),
+                                    {"DELETE automation-grants/g": {"status": 204, "body": None}})
+        self.assertEqual((code, json.loads(out)["result"]["revoked"]), (0, True), out)
+
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page functions")
+    def test_restored_login_is_checked_through_the_native_layer(self):
+        runtime = {"currentVersion": VERSION, "updatesConfigured": True,
+                   "bridge": {"lifecycle": {"phase": "authorized"}, "authorization": None}}
+        source = release_qa.native_session_js("http://tauri.localhost", VERSION)
+        code, out = self.run_native(source, {
+            "runtime": runtime, "GET auth/session": {"status": 200, "body": {"principalId": "owner"}}})
+        self.assertEqual(code, 0, out)
+        self.assertEqual((json.loads(out)["result"]["loginRestored"], json.loads(out)["result"]["httpSessionStatus"]),
+                         (True, 200))
+        code, out = self.run_native(source, {
+            "runtime": runtime, "GET auth/session": {"status": 401, "body": {"code": "auth.session_required"}}})
+        self.assertEqual(code, 4, out)
+        self.assertIn('"loginRestored":false', out)
+
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page function")
+    def test_a_message_already_shown_is_not_sent_again(self):
+        source = release_qa.send_message_js(1, "第一条", "@agent:example", None)
+        harness = r"""
+const send = (0, eval)('(' + require('fs').readFileSync(0, 'utf8').trim() + ')');
+const state = JSON.parse(process.argv[1]);
+const actions = [];
+const sent = {
+  locator: () => sent,
+  filter: () => sent,
+  count: async () => state.shown,
+  first: () => ({waitFor: async () => { if (state.shown === 0) throw new Error('Timeout 45000ms exceeded'); }}),
+};
+const page = {
+  getByRole: (role) => ({
+    log: sent,
+    textbox: {inputValue: async () => state.draft, fill: async (text) => { actions.push('fill ' + text); }},
+    combobox: {selectOption: async (value) => { actions.push('mention ' + value); }},
+    button: {click: async () => { actions.push('send'); state.shown += 1; }},
+  })[role],
+};
+send(page).then(
+  (result) => { process.stdout.write(JSON.stringify({result, actions})); },
+  (error) => { process.stdout.write('ERROR ' + error.message); process.exitCode = 4; });
+"""
+
+        def run(state):
+            return subprocess.run(["node", "-e", harness, json.dumps(state)], input=source,
+                                  capture_output=True, text=True, encoding="utf-8")
+
+        fresh = run({"shown": 0, "draft": ""})
+        self.assertEqual(fresh.returncode, 0, fresh.stdout + fresh.stderr)
+        self.assertEqual(json.loads(fresh.stdout)["actions"], ["mention @agent:example", "fill 第一条", "send"])
+        shown = run({"shown": 1, "draft": ""})
+        self.assertEqual(shown.returncode, 0, shown.stdout + shown.stderr)
+        self.assertEqual(json.loads(shown.stdout)["actions"], [])
+        self.assertIn("Preserve the existing draft", run({"shown": 0, "draft": "别动我的草稿"}).stdout)
+        self.assertIn("not shown exactly once", run({"shown": 2, "draft": ""}).stdout)
+
     def test_grant_is_bounded_to_one_instance_and_replies(self):
         payload = release_qa.grant_payload("id", {"agent": {"agentId": "a"}, "instanceId": "i", "roomCatalogId": "c"})
         grant = payload["input"]
         self.assertEqual((grant["agentInstanceId"], grant["messageKinds"]), ("i", ["reply"]))
         self.assertEqual((grant["lifetimeSeconds"], grant["maxTotalMessages"]), (3600, 5))
         self.assertTrue(grant["requiresRiskScan"])
+
+
+class ConfirmDeliveryTests(unittest.TestCase):
+    """Since #325 publication is out of CDP's sight: the receiver's decrypted copy stands in for the receipt."""
+
+    def acceptance(self, event_ids: list[str], shown: dict[str, list[dict]]):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        qa = Path(temporary.name)
+        (qa / "authorization.private.json").write_text(json.dumps({"principalId": "owner"}), encoding="utf-8")
+        (qa / "joined.private.json").write_text(json.dumps({"profileId": "profile"}), encoding="utf-8")
+        acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+        acceptance.qa = qa
+        acceptance.room_id = "!room:example"
+        acceptance.label = "Alpha 41"
+        acceptance.canary_name = "alpha41-attachment.txt"
+        events = [{"ok": True, "data": {"type": "delivery", "record": {"stage": stage, "eventId": event}}}
+                  for event in event_ids for stage in ("received", "running", "replied")]
+        acceptance.receiver_events = lambda: events
+        acceptance.cli = mock.Mock(side_effect=lambda *args, **_: {"messages": shown.get(args[-1], [])})
+        return acceptance
+
+    @staticmethod
+    def message(number: int, event: str, **changes):
+        message = {"eventId": event, "roomId": "!room:example", "actor": {"principalId": "owner"},
+                   "conversation": {"text": release_qa.message_texts("Alpha 41")[number], "mentions": []},
+                   "mentionsMe": True, "content": {"contentId": f"content-{event}"}}
+        if number == 2:
+            message["conversation"]["attachmentName"] = "alpha41-attachment.txt"
+        message.update(changes)
+        return message
+
+    def test_records_the_decrypted_message_the_receiver_got(self):
+        first = self.acceptance(["$one"], {"$one": [self.message(1, "$one")]}).confirm_delivery(1)
+        self.assertEqual((first["eventId"], first["contentId"], first["attachmentSent"]),
+                         ("$one", "content-$one", False))
+        acceptance = self.acceptance(["$one", "$two"], {"$two": [self.message(2, "$two")]})
+        second = acceptance.confirm_delivery(2)
+        self.assertEqual((second["eventId"], second["contentId"], second["attachmentSent"]),
+                         ("$two", "content-$two", True))
+        acceptance.cli.assert_called_with("--profile", "profile", "show", "--id", "$two")
+
+    def test_rejects_a_copy_that_differs_from_what_was_sent(self):
+        wrong = {
+            "text": {"conversation": {"text": "别的话", "mentions": []}},
+            "room": {"roomId": "!other:example"},
+            "sender": {"actor": {"principalId": "someone-else"}},
+            "mention": {"mentionsMe": False},
+            "attachment": {"conversation": {"text": release_qa.message_texts("Alpha 41")[1], "mentions": [],
+                                            "attachmentName": "alpha41-attachment.txt"}},
+        }
+        for name, changes in wrong.items():
+            with self.subTest(name):
+                acceptance = self.acceptance(["$one"], {"$one": [self.message(1, "$one", **changes)]})
+                with self.assertRaises(release_qa.ReleaseFailure):
+                    acceptance.confirm_delivery(1)
+        missing = self.message(2, "$two")
+        del missing["conversation"]["attachmentName"]
+        acceptance = self.acceptance(["$one", "$two"], {"$two": [missing]})
+        with self.assertRaises(release_qa.ReleaseFailure):
+            acceptance.confirm_delivery(2)
+
+    def test_an_extra_delivery_or_none_at_all_fails(self):
+        acceptance = self.acceptance(["$one", "$stray"], {"$stray": [self.message(1, "$stray")]})
+        with self.assertRaisesRegex(release_qa.ReleaseFailure, "验收以外"):
+            acceptance.confirm_delivery(1)
+        acceptance = self.acceptance([], {})
+        with mock.patch.object(release_qa.time, "time", side_effect=[0, 0, 91]), \
+                mock.patch.object(release_qa.time, "sleep"):
+            with self.assertRaisesRegex(release_qa.ReleaseFailure, "90 秒内"):
+                acceptance.confirm_delivery(1)
+
+    def test_a_message_the_receiver_already_has_is_not_sent_again(self):
+        acceptance = self.acceptance(["$one"], {"$one": [self.message(1, "$one")]})
+        acceptance.page = mock.Mock()
+        acceptance.send(1)
+        acceptance.page.assert_not_called()
+        self.assertEqual(json.loads((acceptance.qa / "incoming-1.json").read_text(encoding="utf-8"))["eventId"], "$one")
 
 
 class AssembleReportsTests(unittest.TestCase):
