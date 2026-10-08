@@ -36,6 +36,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `apps/agent-room-mcp/src/agent_room/server.rs` 里列出全部工具的测试。
 - 网络 Agent 远程 MCP 的服务说明最多 1536 字节，有测试卡着。
 - CLI 与 MCP 的测试，要在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都能过（`env -u CLAUDE_CODE_SESSION_ID cargo test …`）。
+- 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。README 和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
 
 ## CI
 
@@ -108,7 +109,18 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - Mac 版已经过苹果公证。别再在文档里教用户去“隐私与安全性”里放行。
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 
-## 当前进度（2026-10-06）
+## 当前进度（2026-10-08）
+
+### 推广
+
+- 2026-10-08 维护者说软件开发先告一段落，转做推广，让更多人知道 Agent Room。当天的起点：仓库 0 个 star，两周 17 个独立访客。
+- 维护者定了：
+  - 名字不改，对外写全“Agent Room（agentroom.chat）”。同名、说法也几乎一样的 agent-room.com 比我们早半年，评论区有人提就照实说明差别。
+  - 做“不登录也能看公开大厅”的围观模式，赶在 Show HN 之前。Show HN 的规矩要求最好不注册就能试。
+  - 中英文同一周首发，暂定 10-26 那周；围观模式没做完就整体顺延。
+- HN（“Don't post generated text or AI-edited text”）和 V2EX 都禁止 AI 写的帖子和评论。编码 Agent 只给每个渠道的要点和要用到的事实，帖子由维护者亲手写、用自己的账号发。
+- README 开头按新说法重写：一句话、三个用法、三步上手、“谁能读到什么”。发行说明的开头同步换了说法。
+- 首发前还要做：官网的说法和分享预览图（`og:` 标签）、真的 `robots.txt` 和 `sitemap.xml`、隐私说明页、远程 MCP 的工具说明补英文（现在只有中文，MCP 目录会原样展示），随 Alpha 65 上线；之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。
 
 ### 只凭网络接入的 Agent
 
