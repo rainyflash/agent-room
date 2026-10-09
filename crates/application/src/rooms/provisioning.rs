@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agent_room_domain::{
     DomainError,
     ids::{RoomInstanceId, RoomProvisioningJobId, RoomProvisioningLeaseId},
+    moderation::{ModerationAction, ModerationActionKind},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogKind, RoomCatalogVisibility,
         RoomInstance, RoomInstanceFields, RoomInstanceState, RoomRegion,
@@ -15,9 +16,10 @@ use crate::{
     ports::{
         Clock, MatrixCreateRoom, MatrixEventType, MatrixFailure, MatrixFailureKind,
         MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind, MatrixRoomPreset,
-        MatrixRoomVisibility, RoomProvisioningClaim, RoomProvisioningClaimOutcome,
-        RoomProvisioningFailureCode, RoomProvisioningGateway, RoomProvisioningJob,
-        RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget,
+        MatrixRoomVisibility, ModerationEffectGateway, ModerationEffectTarget,
+        RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
+        RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
+        RoomProvisioningTarget, StandingModerationSource,
     },
 };
 
@@ -87,6 +89,8 @@ pub enum LobbyProvisioningFailureStage {
     ResolveInstance,
     CheckpointInstance,
     AttachInstance,
+    /// 开始接人之前补上这个大厅生效的禁言、封禁：读不到要补的是 `Store`，补不上是 `Matrix`。
+    CarryOverModeration,
     CompleteInstance,
 }
 
@@ -114,6 +118,10 @@ pub type LobbyProvisioningResult<T> = Result<T, LobbyProvisioningFailure>;
 pub struct LobbyProvisioningDependencies {
     pub store: Arc<dyn RoomProvisioningStore>,
     pub matrix: Arc<dyn RoomProvisioningGateway>,
+    /// 新分片要补上的禁言、封禁从哪里读。
+    pub moderation: Arc<dyn StandingModerationSource>,
+    /// 补的时候和管理员落治理用同一套 Matrix 效果。
+    pub moderation_effects: Arc<dyn ModerationEffectGateway>,
     pub identifiers: Arc<dyn LobbyProvisioningIdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -121,6 +129,8 @@ pub struct LobbyProvisioningDependencies {
 pub struct LobbyProvisioningService {
     store: Arc<dyn RoomProvisioningStore>,
     matrix: Arc<dyn RoomProvisioningGateway>,
+    moderation: Arc<dyn StandingModerationSource>,
+    moderation_effects: Arc<dyn ModerationEffectGateway>,
     identifiers: Arc<dyn LobbyProvisioningIdentifierFactory>,
     clock: Arc<dyn Clock>,
     policy: LobbyProvisioningPolicy,
@@ -134,6 +144,8 @@ impl LobbyProvisioningService {
         Self {
             store: dependencies.store,
             matrix: dependencies.matrix,
+            moderation: dependencies.moderation,
+            moderation_effects: dependencies.moderation_effects,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
             policy,
@@ -257,6 +269,7 @@ impl LobbyProvisioningService {
             .await?;
         self.attach_instance(&job, &space_id, &matrix_room_id)
             .await?;
+        self.carry_over_moderation(&job, &matrix_room_id).await?;
         let room =
             build_room_instance(&job, matrix_room_id).map_err(LobbyProvisioningFailure::Invalid)?;
         let room = self
@@ -370,6 +383,48 @@ impl LobbyProvisioningService {
         Ok(())
     }
 
+    /// 新分片开始接人之前，补上这个大厅此刻仍生效的禁言和封禁：人下次进大厅可能被分到这里，不补
+    /// 的话他在这儿照常说话、照常进来。补在发布实例之前，补不上就和建房间失败一样放掉租约，分片
+    /// 不接人；下一个进大厅的人接着建，Matrix 房间已经记下不再重建，补过的再补一遍什么也不变。
+    async fn carry_over_moderation(
+        &self,
+        job: &RoomProvisioningJob,
+        matrix_room_id: &MatrixRoomReference,
+    ) -> LobbyProvisioningResult<()> {
+        const STAGE: LobbyProvisioningFailureStage =
+            LobbyProvisioningFailureStage::CarryOverModeration;
+        let now = self.clock.now();
+        let standing = self
+            .moderation
+            .standing_person_actions(job.catalog().id(), now)
+            .await
+            .map_err(|source| store_failure(STAGE, source))?;
+        let room = MatrixRoomId::new(matrix_room_id.as_str().to_owned())
+            .map_err(|_| invalid_matrix_reference())?;
+        for item in standing
+            .iter()
+            .filter(|item| carries_over(&item.action, now))
+        {
+            let target = ModerationEffectTarget {
+                matrix_room_id: room.clone(),
+                room_kind: job.catalog().kind(),
+                target: item.action.target().clone(),
+                target_matrix_user_id: Some(item.target_matrix_user_id.clone()),
+            };
+            if let Err(source) = self.moderation_effects.apply(&item.action, &target).await {
+                return Err(self
+                    .release_matrix_failure(
+                        job,
+                        RoomProvisioningFailureCode::ModerationCarryOver,
+                        STAGE,
+                        source,
+                    )
+                    .await);
+            }
+        }
+        Ok(())
+    }
+
     async fn release_matrix_failure(
         &self,
         job: &RoomProvisioningJob,
@@ -408,6 +463,14 @@ fn validate_catalog(catalog: &RoomCatalog) -> Result<(), DomainError> {
         });
     }
     Ok(())
+}
+
+/// 只补管人、一直生效到撤销或到期的两种：禁言和封禁。踢出是一次性的，隐藏只管消息所在的分片。
+fn carries_over(action: &ModerationAction, now: UtcMillis) -> bool {
+    matches!(
+        action.kind(),
+        ModerationActionKind::Mute | ModerationActionKind::Ban
+    ) && action.is_effective_at(now)
 }
 
 fn ensure_job_kind(
