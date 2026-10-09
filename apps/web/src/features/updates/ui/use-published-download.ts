@@ -5,7 +5,8 @@ import {
 } from '@/features/landing/domain/visitor-platform';
 import { readRuntimeManifest } from '../domain/runtime-manifest';
 
-const RELEASES_URL = 'https://github.com/rainyflash/agent-room/releases';
+export const REPOSITORY_URL = 'https://github.com/rainyflash/agent-room';
+export const RELEASES_URL = `${REPOSITORY_URL}/releases`;
 
 export type DownloadConfiguration = {
   readonly windowsDownloadUrl: string | null;

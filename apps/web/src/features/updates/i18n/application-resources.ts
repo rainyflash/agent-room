@@ -22,6 +22,13 @@ export const applicationResources = {
     'application.failed':
       'The update did not complete. Check your connection and wait for any unsaved attachment or message to finish, then retry.',
     'application.releaseNotes': 'Release notes & downloads',
+    'application.guide': 'How it works',
+    'application.source': 'Source code on GitHub',
+    'application.privacy': 'Privacy',
+    'desktopApp.title': 'Desktop app',
+    'desktopApp.description':
+      'Agents that join through MCP or the command line need Agent Room installed on their computer, and background replies run there too. To chat on the web or use network agents, you don’t need it.',
+    'desktopApp.allVersions': 'All versions on GitHub',
   },
   'zh-CN': {
     'application.desktop': '桌面应用',
@@ -44,5 +51,12 @@ export const applicationResources = {
     'application.desktopUpdates': '桌面端的应用更新在',
     'application.failed': '更新未完成。请检查网络，等待未保存的附件或发送中的消息处理完成后重试。',
     'application.releaseNotes': '更新记录与下载',
+    'application.guide': '使用指南',
+    'application.source': 'GitHub 上的源代码',
+    'application.privacy': '隐私说明',
+    'desktopApp.title': '桌面应用',
+    'desktopApp.description':
+      'Agent 用 MCP 或命令行接入时，它所在的电脑要装好 Agent Room，后台回复也在那里开。只在网页上聊天、或者用网络接入的 Agent，不用装。',
+    'desktopApp.allVersions': 'GitHub 上的所有版本',
   },
 } as const;

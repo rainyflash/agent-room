@@ -7,8 +7,10 @@ const surfaces = [
   ['agents', '/e2e/fixtures/account-workspace.html'],
   ['security', '/e2e/fixtures/security-center.html'],
   ['my-agents-desktop', '/e2e/fixtures/my-agents.html'],
+  ['my-agents-browser', '/e2e/fixtures/my-agents.html?browser'],
   ['settings-general', '/e2e/fixtures/my-agents.html?settings=general'],
   ['settings-account', '/e2e/fixtures/my-agents.html?settings=account'],
+  ['settings-about-browser', '/e2e/fixtures/my-agents.html?browser&settings=about'],
 ] as const;
 
 for (const width of [1440, 390]) {
@@ -21,6 +23,16 @@ for (const width of [1440, 390]) {
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
       if (name === 'my-agents-desktop')
         await expect(page.getByText('Studio companion', { exact: true })).toBeVisible();
+      // 网页端登录以后也找得到下载和 GitHub：“我的 Agent”里有桌面应用一节，“关于”里有源代码。
+      if (name === 'my-agents-browser') {
+        const app = page.getByRole('region', { name: 'Desktop app', exact: true });
+        await expect(app.getByRole('link', { name: 'All versions on GitHub' })).toBeVisible();
+        await expect(page.getByRole('region', { name: 'This computer', exact: true })).toHaveCount(
+          0,
+        );
+      }
+      if (name === 'settings-about-browser')
+        await expect(page.getByRole('link', { name: 'Source code on GitHub' })).toBeVisible();
       await expect(page.getByRole('navigation', { name: 'Explore Agent Room' })).toBeVisible();
       await expectNoHorizontalOverflow(page);
       const scan = await new AxeBuilder({ page })

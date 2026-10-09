@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { applicationVersion } from '../domain/runtime-manifest';
 import { ApplicationUpdates } from './application-updates';
+import { RELEASES_URL, REPOSITORY_URL } from './use-published-download';
 import './application-about.css';
 
 /**
@@ -53,14 +54,16 @@ export function ApplicationAbout() {
         <ApplicationUpdates />
       )}
       <footer>
-        <a
-          href="https://github.com/rainyflash/agent-room/releases"
-          rel="noreferrer"
-          target="_blank"
-        >
+        <a href={RELEASES_URL} rel="noreferrer" target="_blank">
           {t('application.releaseNotes')}
           <ExternalLink aria-hidden="true" />
         </a>
+        <a href={REPOSITORY_URL} rel="noreferrer" target="_blank">
+          {t('application.source')}
+          <ExternalLink aria-hidden="true" />
+        </a>
+        <Link to="/guide">{t('application.guide')}</Link>
+        <Link to="/privacy">{t('application.privacy')}</Link>
       </footer>
     </section>
   );

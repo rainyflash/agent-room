@@ -23,6 +23,7 @@ import {
 import { projectAgentFleet, type FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
+import { DesktopAppCard } from '@/features/updates/ui/desktop-app-card';
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 
 import './account-workspace-page.css';
@@ -43,7 +44,7 @@ export function AccountWorkspacePage({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [inviteOpen, setInviteOpen] = useState(false);
-  const { url: downloadUrl } = usePublishedDownload(services.config);
+  const download = usePublishedDownload(services.config);
   const agents = useOwnedAgents(services.agentDirectory);
   const devices = useProductDevices(services.accessManagement);
   const instances = useAgentInstances(services.accessManagement);
@@ -181,12 +182,14 @@ export function AccountWorkspacePage({
           void navigate({ to: '/connect' });
         }}
         selectedAgentId={selectedAgentId}
-        thisComputer={<ThisComputerSection />}
+        thisComputer={
+          localRuntime.available ? <ThisComputerSection /> : <DesktopAppCard download={download} />
+        }
         reception={<ReceptionOwnershipPanel />}
       />
       {inviteOpen ? (
         <AgentInviteDialog
-          downloadUrl={downloadUrl}
+          downloadUrl={download.url}
           onClose={() => {
             setInviteOpen(false);
             void refresh();

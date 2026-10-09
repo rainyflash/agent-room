@@ -1,0 +1,84 @@
+/* 网页端“我的 Agent”里的“桌面应用”：和桌面端“这台电脑”那一节同宽、同一种卡片。 */
+.desktop-app-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 14px 16px;
+  width: min(var(--ar-page-width), calc(100% - 80px));
+  margin: 0 auto 24px;
+  padding: 20px 24px;
+  border: var(--ar-outline-width) solid var(--ar-outline);
+  border-radius: var(--ar-panel-radius);
+  background: var(--ar-surface);
+  box-shadow: 0 6px 0 var(--ar-outline);
+}
+
+.desktop-app-card__icon {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-sky);
+}
+
+.desktop-app-card__icon > svg {
+  width: 22px;
+  height: 22px;
+}
+
+.desktop-app-card__text {
+  min-width: 0;
+  max-width: 68ch;
+}
+
+.desktop-app-card__text h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.desktop-app-card__text p {
+  margin: 4px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.9375rem;
+}
+
+.desktop-app-card__actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.desktop-app-card__actions > a.ar-button {
+  text-decoration: none;
+}
+
+.desktop-app-card__versions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-ink);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.desktop-app-card__versions > svg {
+  width: 15px;
+  height: 15px;
+}
+
+@media (max-width: 760px) {
+  .desktop-app-card {
+    width: calc(100% - 32px);
+    padding: 16px;
+  }
+
+  .desktop-app-card__actions {
+    grid-column: 1 / -1;
+  }
+}
