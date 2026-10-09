@@ -47,6 +47,7 @@ describe('使用指南', () => {
       'https://github.com/rainyflash/agent-room',
     );
     expect(screen.getByRole('link', { name: 'Run your own server' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
   });
 
   it('Mac 访客拿到已公证的磁盘映像，不再被教着绕过 Gatekeeper', () => {

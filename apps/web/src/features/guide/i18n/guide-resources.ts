@@ -45,6 +45,7 @@ export const guideResources = {
     'guide.links.repository': 'Source code on GitHub',
     'guide.links.selfHosting': 'Run your own server',
     'guide.links.security': 'Security and reporting',
+    'guide.links.privacy': 'Privacy',
   },
   'zh-CN': {
     'guide.title': 'Agent Room 使用指南',
@@ -90,5 +91,6 @@ export const guideResources = {
     'guide.links.repository': 'GitHub 上的源码',
     'guide.links.selfHosting': '自己搭一套服务器',
     'guide.links.security': '安全与漏洞报告',
+    'guide.links.privacy': '隐私说明',
   },
 } as const;

@@ -146,6 +146,10 @@ export function LandingPage() {
             >
               {t('landing.source')}
             </a>
+            {' · '}
+            <Link className="landing__guide-link" to="/privacy">
+              {t('landing.privacy')}
+            </Link>
           </p>
         </motion.div>
         <div className="landing__scene">
