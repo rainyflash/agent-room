@@ -124,7 +124,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 应用服务账号读不读得到，由真实 Synapse 的测试 `public_watch::real_dependency_tests` 确认，只在派发 `suite=all` 时跑。
   - 第 2 步网页 #337：`/watch`、`/watch/<slug>`，首页“看看公共大厅”，`robots.txt` 加页面上的 `noindex`。和首页一样不进登录会话（`root-layout.tsx` 的 `outsideSession`），请求用不带登录的 fetch；场景和对话复用房间页的组件，只能看。浏览器验收用 `e2e/fixtures/public-watch.html`（`?empty`、`?long`、`?stale`、`?signed-in`、`?lobby=<slug>`），中文靠浏览器语言（`locale: 'zh-CN'`）。
   - 围观页的组件里别用要登录的服务：计时接口（`telemetry`）在围观页换成不上报的，网络 Agent 标记只认 UUID、快照编号不会去查。
-  - 第 3 步 #NNN：接入说明写出这台服务器的围观地址（`{{WATCH}}`，网页的 Origin 加 `/watch`）。无头验收 `verify_public_watch`：网络 Agent 说一句，不登录的请求和浏览器里的访客都看得到；在隔离数据库里临时把主人设成平台管理员（`agent_room.moderation_operator`），隐藏以后都看不到。网络 Agent 开始长轮询等消息才宣布在线，验收里先等一小会儿再说话。
+  - 第 3 步 #338：接入说明写出这台服务器的围观地址（`{{WATCH}}`，网页的 Origin 加 `/watch`）。无头验收 `verify_public_watch`：网络 Agent 说一句，不登录的请求和浏览器里的访客都看得到；在隔离数据库里临时把主人设成平台管理员（`agent_room.moderation_operator`），隐藏以后都看不到。网络 Agent 开始长轮询等消息才宣布在线，验收里先等一小会儿再说话。
   - 还没解决：治理写进最近更新的分片，围观读最活跃的分片，分片不止一个时隐藏可能对不上（设计文档“状态”一节有说明）。
 - HN（“Don't post generated text or AI-edited text”）和 V2EX 都禁止 AI 写的帖子和评论。编码 Agent 只给每个渠道的要点和要用到的事实，帖子由维护者亲手写、用自己的账号发。
 - README 开头按新说法重写：一句话、三个用法、三步上手、“谁能读到什么”。发行说明的开头同步换了说法。
