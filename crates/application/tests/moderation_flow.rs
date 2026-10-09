@@ -11,8 +11,8 @@ use agent_room_application::{
     moderation::{
         ApplyModerationAction, InspectModerationCapabilities, ListModerationAudit,
         ListRoomModerationCases, ModerationDependencies, ModerationExpiryOutcome,
-        ModerationExpiryRetry, ModerationExpiryUseCases, ModerationFailureKind, ModerationService,
-        ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
+        ModerationExpiryRetry, ModerationExpiryUseCases, ModerationFailureKind, ModerationResult,
+        ModerationService, ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -1626,6 +1626,155 @@ async fn 他的_matrix_账号没了以后到期不动_matrix_照样记成解除(
 }
 
 #[tokio::test]
+async fn 撤回禁言时同一个人还有别的禁言在生效_不放人_在每个分片上确保禁着() {
+    let fixture = Fixture::new();
+    fixture
+        .authority
+        .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+    let first = apply(&fixture, mute(2, None)).await;
+    let second = apply(&fixture, mute(2, None)).await;
+    let applied_before = fixture.effects.applied_rooms().len();
+
+    let reversed = reverse(&fixture, &first).await.expect("撤回应成功");
+
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert!(
+        fixture.effects.reversed_rooms().is_empty(),
+        "另一条禁言还在生效，不能撤掉发言权"
+    );
+    assert_eq!(
+        fixture.effects.applied_rooms()[applied_before..],
+        ["!busy:matrix.test", "!quiet:matrix.test"],
+        "把还生效的那条在每个分片上再落一次"
+    );
+    assert_eq!(
+        status_of(&fixture, &second),
+        ModerationActionStatus::Applied
+    );
+    assert!(
+        fixture.mutes.held.lock().expect("锁表可用").is_empty(),
+        "做完把锁放掉"
+    );
+}
+
+#[tokio::test]
+async fn 撤回禁言时私人房间里他此刻没有发言权_不还给他() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, None)).await;
+    // 禁言期间房主在房间设置里关掉了他的发言权。
+    *fixture.mutes.may_speak.lock().expect("发言权锁可用") = false;
+
+    let reversed = reverse(&fixture, &action).await.expect("撤回应成功");
+
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert!(fixture.effects.reversed_rooms().is_empty());
+}
+
+#[tokio::test]
+async fn 撤回禁言时有一条禁言正在落_回冲突什么也不动() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, None)).await;
+    let applied_before = fixture.effects.applied_rooms().len();
+    landing_mute(&fixture, 2);
+
+    let failure = reverse(&fixture, &action)
+        .await
+        .expect_err("有一条正在落时定不下来");
+
+    assert_eq!(failure.kind(), ModerationFailureKind::Conflict);
+    assert!(fixture.effects.reversed_rooms().is_empty());
+    assert_eq!(fixture.effects.applied_rooms().len(), applied_before);
+    assert_eq!(
+        status_of(&fixture, &action),
+        ModerationActionStatus::Applied
+    );
+    assert!(
+        !fixture
+            .repository
+            .audit_actions(action.id())
+            .iter()
+            .any(|audit| audit.starts_with("moderation.action.reverse")),
+        "什么也没做，不写撤回的审计"
+    );
+    assert!(
+        fixture.mutes.held.lock().expect("锁表可用").is_empty(),
+        "定不下来也把锁放掉"
+    );
+}
+
+#[tokio::test]
+async fn 撤回禁言时别处拿着他的禁言锁_回冲突_放掉以后能撤回() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, None)).await;
+    fixture.mutes.hold(action.target());
+
+    let failure = reverse(&fixture, &action)
+        .await
+        .expect_err("别处正在处理这个人");
+    assert_eq!(failure.kind(), ModerationFailureKind::Conflict);
+    assert!(fixture.effects.reversed_rooms().is_empty());
+    assert_eq!(
+        status_of(&fixture, &action),
+        ModerationActionStatus::Applied
+    );
+
+    fixture.mutes.release(action.target());
+    let reversed = reverse(&fixture, &action).await.expect("放掉以后能撤回");
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert_eq!(fixture.effects.reversed_rooms(), ["!room:matrix.test"]);
+}
+
+#[tokio::test]
+async fn 撤回禁言时_matrix_没撤成_记下撤回失败_放掉锁() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, None)).await;
+    *fixture.effects.failure.lock().expect("副作用锁可用") = Some(MatrixFailure::new(
+        MatrixOperation::Ban,
+        MatrixFailureKind::DependencyUnavailable,
+    ));
+
+    let failure = reverse(&fixture, &action).await.expect_err("Matrix 没撤成");
+
+    assert_eq!(failure.kind(), ModerationFailureKind::DependencyUnavailable);
+    assert_eq!(
+        status_of(&fixture, &action),
+        ModerationActionStatus::Applied
+    );
+    assert!(
+        fixture
+            .repository
+            .audit_actions(action.id())
+            .contains(&"moderation.action.reverse_failed".to_owned())
+    );
+    assert!(fixture.mutes.held.lock().expect("锁表可用").is_empty());
+}
+
+#[tokio::test]
+async fn 撤回禁言时动完再看一眼又多了一条正在落的禁言_确保禁着再记成撤回() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, None)).await;
+    // 管理员刚撤，另一个管理员又禁了他：他那条先记成正在落，再去动 Matrix。
+    let landing = pending_mute(2, time(NOW));
+    let repository = fixture.repository.clone();
+    fixture.mutes.between_reads(move || {
+        repository.actions.lock().expect("动作锁可用").push(landing);
+    });
+
+    let reversed = reverse(&fixture, &action)
+        .await
+        .expect("撤回不叫管理员等下一轮");
+
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert_eq!(fixture.effects.reversed_rooms(), ["!room:matrix.test"]);
+    let calls = fixture.calls.lock().expect("调用锁可用").clone();
+    assert_eq!(
+        calls.iter().rev().find(|call| call.starts_with("effect_")),
+        Some(&"effect_apply"),
+        "正在落的那条当它会生效，最后落在 Matrix 上的是禁言"
+    );
+}
+
+#[tokio::test]
 async fn 限时隐藏到期时回到消息所在的分片撤() {
     let fixture = Fixture::new();
     fixture
@@ -1723,6 +1872,20 @@ async fn apply(fixture: &Fixture, request: ApplyModerationAction) -> ModerationA
         .apply_action(request)
         .await
         .expect("治理动作应成功")
+}
+
+async fn reverse(
+    fixture: &Fixture,
+    action: &ModerationAction,
+) -> ModerationResult<ModerationAction> {
+    fixture
+        .service
+        .reverse_action(ReverseModerationAction {
+            actor: actor(true),
+            action_id: action.id(),
+            impact_acknowledged: true,
+        })
+        .await
 }
 
 async fn expire(fixture: &Fixture) -> ModerationExpiryOutcome {
