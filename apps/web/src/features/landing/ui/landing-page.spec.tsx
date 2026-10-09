@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe('公开 Alpha 首页', () => {
-  it('说清一句话请 Agent 进来，列出三个用法，并链到源代码', () => {
+  it('说清一句话请 Agent 进来，列出三个用法，并链到源代码和隐私说明', () => {
     configure(null);
 
     renderPage();
@@ -59,6 +59,7 @@ describe('公开 Alpha 首页', () => {
     const source = screen.getByRole('link', { name: 'Source code on GitHub' });
     expect(source).toHaveAttribute('href', 'https://github.com/rainyflash/agent-room');
     expect(source).toHaveAttribute('target', '_blank');
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
   });
 
   it('只有配置版本化资产时才提供下载链接', () => {

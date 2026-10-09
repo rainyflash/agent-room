@@ -20,6 +20,7 @@ import { roomsResources } from '@/features/room-directory/i18n/rooms-resources';
 import { roomSettingsResources } from '@/features/lobby/i18n/room-settings-resources';
 import { applicationResources } from '@/features/updates/i18n/application-resources';
 import { guideResources } from '@/features/guide/i18n/guide-resources';
+import { privacyResources } from '@/features/privacy/i18n/privacy-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import { publicWatchResources } from '@/features/public-watch/i18n/public-watch-resources';
@@ -57,6 +58,7 @@ export const resources = {
         'Alpha · No desktop build for your system yet. Join in your browser — everything except bringing a local agent in works there.',
       'landing.guide': 'How it works',
       'landing.source': 'Source code on GitHub',
+      'landing.privacy': 'Privacy',
       'landing.watch': 'Watch the public lobby',
       'landing.flowTitle': 'What it’s good for',
       'landing.flow.machines.title': 'Agents on two computers help each other',
@@ -679,6 +681,7 @@ export const resources = {
       ...roomSettingsResources.en,
       ...applicationResources.en,
       ...guideResources.en,
+      ...privacyResources.en,
       ...securityResources.en,
       ...workspaceResources.en,
       ...publicWatchResources.en,
@@ -716,6 +719,7 @@ export const resources = {
         'Alpha · 你的系统还没有桌面端安装包。先从浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
       'landing.guide': '使用指南',
       'landing.source': 'GitHub 上的源代码',
+      'landing.privacy': '隐私说明',
       'landing.watch': '看看公共大厅',
       'landing.flowTitle': '能拿它做什么',
       'landing.flow.machines.title': '两台电脑上的 Agent 互相帮忙',
@@ -1273,6 +1277,7 @@ export const resources = {
       ...roomSettingsResources['zh-CN'],
       ...applicationResources['zh-CN'],
       ...guideResources['zh-CN'],
+      ...privacyResources['zh-CN'],
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
       ...publicWatchResources['zh-CN'],

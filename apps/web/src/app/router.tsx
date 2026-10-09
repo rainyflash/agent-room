@@ -48,6 +48,10 @@ const SettingsRoute = lazyPage(
   async () => (await import('@/features/settings/ui/settings-route')).SettingsRoute,
 );
 const GuidePage = lazyRouteComponent(() => import('@/features/guide/ui/guide-page'), 'GuidePage');
+const PrivacyPage = lazyRouteComponent(
+  () => import('@/features/privacy/ui/privacy-page'),
+  'PrivacyPage',
+);
 const RoomDirectoryPage = lazyPage(
   async () => (await import('@/features/room-directory/ui/room-directory-page')).RoomDirectoryPage,
 );
@@ -84,6 +88,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: LandingPage,
+});
+// 隐私说明：MCP 目录和应用目录收录时要看，不登录也能打开。
+const privacyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/privacy',
+  component: PrivacyPage,
 });
 
 // 不登录也能看公共大厅（specs/public-lobby-watch/design.md）：/watch 是默认大厅。
@@ -172,6 +182,7 @@ const routeTree = rootRoute.addChildren([
   aboutRoute,
   guideRoute,
   indexRoute,
+  privacyRoute,
   watchRoute,
   watchLobbyRoute,
   connectRoute,

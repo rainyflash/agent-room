@@ -96,6 +96,9 @@ export function GuidePage() {
               </a>
             </li>
           ))}
+          <li>
+            <Link to="/privacy">{t('guide.links.privacy')}</Link>
+          </li>
         </ul>
       </section>
     </main>
