@@ -24,6 +24,8 @@ pub(super) const CONTENT_COLUMNS: &str = r"
     content.scan_state AS content_scan_state,
     content.lifecycle_state AS content_lifecycle_state,
     floor(extract(epoch FROM content.expires_at) * 1000)::bigint AS content_expires_at_ms,
+    floor(extract(epoch FROM content.retention_expires_at) * 1000)::bigint
+        AS content_retention_expires_at_ms,
     floor(extract(epoch FROM content.created_at) * 1000)::bigint AS content_created_at_ms,
     floor(extract(epoch FROM content.deleted_at) * 1000)::bigint AS content_deleted_at_ms";
 
@@ -75,6 +77,11 @@ pub(super) fn decode_content(
         lifecycle_state: ContentLifecycleState::try_from(lifecycle_state.as_str())
             .map_err(|_| corrupt_data(operation))?,
         expires_at: decode_optional_time(row, "content_expires_at_ms", operation)?,
+        retention_expires_at: decode_optional_time(
+            row,
+            "content_retention_expires_at_ms",
+            operation,
+        )?,
         created_at: decode_time(row, "content_created_at_ms", operation)?,
         deleted_at: decode_optional_time(row, "content_deleted_at_ms", operation)?,
     })

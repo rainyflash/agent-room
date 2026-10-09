@@ -150,6 +150,24 @@ export type ModerationReason = (typeof moderationReasons)[number];
 export type ModerationActionKind = (typeof moderationActionKinds)[number];
 export type ModerationCase = z.output<typeof moderationCaseSchema>;
 export type ModerationAction = z.output<typeof moderationActionSchema>;
+/** 台账上显示的状态：比服务器给的多一个“到期解除”。 */
+export type ModerationActionDisplayStatus = ModerationAction['status'] | 'expired';
+
+/**
+ * 到了期限、由服务器自动解除的动作，服务器也记成 `reversed`：旧版网页严格校验状态，多一种状态
+ * 整个台账都读不出来。撤销时间不早于到期时间的就是到期解除的。
+ */
+export function moderationActionDisplayStatus(
+  action: ModerationAction,
+): ModerationActionDisplayStatus {
+  const { expiresAtUnixMs, reversedAtUnixMs, status } = action;
+  return status === 'reversed' &&
+    expiresAtUnixMs !== null &&
+    reversedAtUnixMs !== null &&
+    reversedAtUnixMs >= expiresAtUnixMs
+    ? 'expired'
+    : status;
+}
 export type ModerationAuditEvent = z.output<typeof moderationAuditEventSchema>;
 export type ModerationCapabilities = z.output<typeof moderationCapabilitiesSchema>;
 export type SubmitModerationReportInput = z.input<typeof submitModerationReportInputSchema>;

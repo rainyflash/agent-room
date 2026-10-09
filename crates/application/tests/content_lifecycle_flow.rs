@@ -174,6 +174,42 @@ async fn 回收批次区分孤儿与过期对象且单项失败不阻塞其余�
     assert_eq!(object_store.deleted_count(), 3);
 }
 
+#[tokio::test]
+async fn 过了房间保留期的正文按过期回收_不当成孤儿() {
+    let owner = PrincipalId::from_uuid(Uuid::now_v7());
+    // 客户端声明的到期时间还没到，房间保留期先到了。
+    let past_retention = content_with_retention(
+        owner,
+        ContentLifecycleState::Active,
+        Some(time(50_000)),
+        Some(time(9_000)),
+    );
+    let repository = Arc::new(MemoryLifecycleRepository::new([past_retention.clone()]));
+    // 让一个不存在的对象删除失败，等于这批都能删。
+    let unrelated = ContentId::from_uuid(Uuid::now_v7());
+    let object_store = Arc::new(RecordingObjectStore::failing(unrelated));
+    let service = CleanupContentService::new(CleanupContentDependencies {
+        clock: Arc::new(FixedClock),
+        repository: repository.clone(),
+        object_store: object_store.clone(),
+        policy: CleanupContentPolicy::new(1_000, 20).expect("回收策略有效"),
+    });
+
+    let outcome = service.run().await.expect("批次查询成功");
+
+    assert_eq!(outcome.deleted, 1);
+    assert!(outcome.failures.is_empty());
+    assert_eq!(
+        repository.transition_targets(),
+        vec![ContentLifecycleState::Expired]
+    );
+    assert_eq!(
+        repository.state(past_retention.id()),
+        ContentLifecycleState::Deleted
+    );
+    assert_eq!(object_store.deleted_count(), 1);
+}
+
 struct FixedClock;
 
 impl Clock for FixedClock {
@@ -464,6 +500,15 @@ fn content(
     state: ContentLifecycleState,
     expires_at: Option<UtcMillis>,
 ) -> ContentObject {
+    content_with_retention(owner_principal_id, state, expires_at, None)
+}
+
+fn content_with_retention(
+    owner_principal_id: PrincipalId,
+    state: ContentLifecycleState,
+    expires_at: Option<UtcMillis>,
+    retention_expires_at: Option<UtcMillis>,
+) -> ContentObject {
     let content_id = ContentId::from_uuid(Uuid::now_v7());
     let mut content = ContentObject::begin_upload(ContentObjectFields {
         id: content_id,
@@ -477,6 +522,7 @@ fn content(
         scan_state: ContentScanState::Clean,
         lifecycle_state: ContentLifecycleState::Uploading,
         expires_at,
+        retention_expires_at,
         created_at: time(1_000),
         deleted_at: None,
     })

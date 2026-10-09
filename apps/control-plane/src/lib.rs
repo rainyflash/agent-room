@@ -5,6 +5,7 @@ mod content_runtime;
 mod correlation;
 mod error;
 mod features;
+mod moderation_expiry;
 mod network_agent_cleanup;
 mod network_gateway;
 mod observability;
@@ -124,6 +125,7 @@ struct IdentityRuntime {
     content_cleanup: content_cleanup::ContentCleanupWorker,
     account_deletion: account_deletion::AccountDeletionRuntime,
     operational_metrics: operational_metrics::OperationalMetricsRuntime,
+    moderation_expiry: moderation_expiry::ModerationExpiryWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -215,6 +217,7 @@ pub async fn run() -> Result<(), StartupError> {
         content_cleanup,
         account_deletion,
         operational_metrics,
+        moderation_expiry,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -239,6 +242,7 @@ pub async fn run() -> Result<(), StartupError> {
     content_cleanup.shutdown().await;
     account_deletion.shutdown().await;
     operational_metrics.shutdown().await;
+    moderation_expiry.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -350,28 +354,26 @@ async fn build_identity_router(
         &authentication_config.frontend_origin,
         &authentication_config.desktop_origins,
     );
-    let content_runtime =
-        content_runtime::initialize(content_runtime::ContentRuntimeDependencies {
-            config: &config.content,
-            matrix_base_url: config.dependencies.matrix_base_url.as_str(),
-            matrix_request_timeout: request_timeout,
-            repositories: repositories.clone(),
-            system_runtime: system_runtime.clone(),
-            authentication: service.clone(),
-            devices: devices.clone(),
-            secrets: secrets.clone(),
-            matrix_identities: matrix_identities.clone(),
-            frontend_origin: &authentication_config.frontend_origin,
-            desktop_origins: &authentication_config.desktop_origins,
-        })
-        .await?;
     let content_runtime::ContentRuntime {
         routes: content_routes,
         cleanup: content_cleanup,
         matrix_authority,
         authorizer: content_authorizer,
         use_cases: content_use_cases,
-    } = content_runtime;
+    } = content_runtime::initialize(content_runtime::ContentRuntimeDependencies {
+        config: &config.content,
+        matrix_base_url: config.dependencies.matrix_base_url.as_str(),
+        matrix_request_timeout: request_timeout,
+        repositories: repositories.clone(),
+        system_runtime: system_runtime.clone(),
+        authentication: service.clone(),
+        devices: devices.clone(),
+        secrets: secrets.clone(),
+        matrix_identities: matrix_identities.clone(),
+        frontend_origin: &authentication_config.frontend_origin,
+        desktop_origins: &authentication_config.desktop_origins,
+    })
+    .await?;
     let account_lifecycle = build_account_lifecycle_service(
         &config.account_lifecycle,
         repositories.clone(),
@@ -415,6 +417,7 @@ async fn build_identity_router(
         content_cleanup,
         account_deletion,
         operational_metrics,
+        moderation_expiry: start_moderation_expiry(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -541,6 +544,13 @@ fn start_operational_metrics(
         config.observability.operational_sample_interval,
     )
     .map_err(|error| StartupError::new("startup.invalid_observability_config", error.to_string()))
+}
+
+/// 治理动作到期自动解除，用自己的一份治理服务。
+fn start_moderation_expiry(
+    dependencies: &AgentFeatureDependencies,
+) -> moderation_expiry::ModerationExpiryWorker {
+    moderation_expiry::ModerationExpiryWorker::start(build_moderation_management(dependencies))
 }
 
 fn build_frontend_telemetry_state(
@@ -1109,10 +1119,13 @@ fn build_private_room_agent_access(
     ))
 }
 
+/// 网页上的治理接口和到期自动解除的定时任务各用一个，读写的是同一套。
 fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<ModerationService> {
     Arc::new(ModerationService::new(ModerationDependencies {
         repository: dependencies.repositories.clone(),
         authority: dependencies.repositories.clone(),
+        expiry: dependencies.repositories.clone(),
+        mutes: dependencies.repositories.clone(),
         effects: dependencies.matrix_identities.clone(),
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
@@ -1222,8 +1235,11 @@ fn build_lobby_provisioning(
         .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
     Ok(Arc::new(LobbyProvisioningService::new(
         LobbyProvisioningDependencies {
-            store: repositories,
-            matrix,
+            store: repositories.clone(),
+            matrix: matrix.clone(),
+            // 新分片开始接人之前补上这个大厅生效的禁言、封禁，和管理员落治理走同一套 Matrix 效果。
+            moderation: repositories,
+            moderation_effects: matrix,
             identifiers: system_runtime.clone(),
             clock: system_runtime,
         },

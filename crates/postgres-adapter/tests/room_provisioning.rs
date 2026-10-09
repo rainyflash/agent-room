@@ -203,6 +203,75 @@ async fn 释放失败任务后可立即续作同一任务() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 补治理失败放掉的分片任务记下原因_接手时还是同一个_matrix_房间() {
+    let database = TestDatabase::connect().await;
+    let catalog_id = seed_catalog(&database.runtime, true).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let room_instance_id = RoomInstanceId::from_uuid(Uuid::now_v7());
+    let target = RoomProvisioningTarget::Instance {
+        room_instance_id,
+        region: None,
+    };
+    let first_job = expect_claimed(
+        RoomProvisioningStore::claim(
+            &repositories,
+            &provisioning_claim(
+                catalog_id,
+                target.clone(),
+                instance_alias(room_instance_id),
+                0,
+                60_000,
+            ),
+        )
+        .await
+        .expect("分片声明应成功"),
+    );
+    let matrix_room_id = MatrixRoomReference::new("!carry-over:matrix.test").expect("房间有效");
+    RoomProvisioningStore::checkpoint_matrix_room(
+        &repositories,
+        &first_job,
+        &matrix_room_id,
+        test_time(10),
+    )
+    .await
+    .expect("分片断点应保存");
+    RoomProvisioningStore::release(
+        &repositories,
+        &first_job,
+        RoomProvisioningFailureCode::ModerationCarryOver,
+        test_time(20),
+    )
+    .await
+    .expect("补治理失败的原因库里认得");
+    assert_eq!(
+        provisioning_failure(&database.runtime, first_job.job_id())
+            .await
+            .as_deref(),
+        Some("moderation_carry_over")
+    );
+
+    let resumed = expect_claimed(
+        RoomProvisioningStore::claim(
+            &repositories,
+            &provisioning_claim(
+                catalog_id,
+                target,
+                MatrixRoomAliasLocalpart::new("unused-instance-alias").expect("备用别名有效"),
+                21,
+                60_000,
+            ),
+        )
+        .await
+        .expect("放掉租约后马上能接手"),
+    );
+    assert_eq!(resumed.job_id(), first_job.job_id());
+    assert_eq!(resumed.matrix_room_id(), Some(&matrix_room_id));
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 发布空间和实例后后续声明直接复用现有资源() {
     let database = TestDatabase::connect().await;
     let catalog_id = seed_catalog(&database.runtime, false).await;

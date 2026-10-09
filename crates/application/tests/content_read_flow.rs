@@ -554,6 +554,7 @@ fn active_content(owner_principal_id: PrincipalId, payload: &[u8]) -> ContentObj
         scan_state: ContentScanState::Clean,
         lifecycle_state: ContentLifecycleState::Uploading,
         expires_at: Some(time(500_000)),
+        retention_expires_at: None,
         created_at: time(500),
         deleted_at: None,
     })

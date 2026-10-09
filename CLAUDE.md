@@ -77,6 +77,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 的相同状态去重。** 与当前状态完全相同的状态事件，Synapse 直接返回旧事件 ID，也不做权限检查。所以测“撤权后被拒”要换一份内容。
 - **Synapse 不让踢已封禁的人，也不让解封没封着的人**，都回 403 `M_BAD_STATE`。治理在公开大厅的每个分片上踢人、撤销封禁（#345），各分片里这个人的处境可能不一样，所以 `kick` 跳过已封禁的、`unban` 只解真封着的，先读成员状态再动手。
 - **公开大厅和私人房间的发言权不是一套。** 公开大厅用 `public_chat` 预设，`events_default` 是 0，谁都能说；私人房间按成员给发言级别（`events_default` 10）。`PrivateRoomMatrixGateway::set_speaking` 会把整套私人房间的门槛写进去，用在公开大厅等于把所有人禁言。#345 之前治理的禁言就这样用在公开大厅上；现在公开大厅只把这个人压到门槛下一级（`matrix-provisioning-adapter` 的 `moderation.rs`）。
+- **治理动作的状态别加新值。** 网页对动作状态严格校验（`moderationActionSchema` 的 `z.enum` 加 `.strict()`），台账整个列表一起读，旧版桌面端多看到一种状态，整个台账都读不出来。所以限时动作到期由控制面自动解除（#350，`moderation_expiry.rs`，每 30 秒一轮）时也记成 `reversed`，`reversed_at` 不早于 `expires_at`，审计记 `moderation.action.expired`；网页按 `reversed_at >= expires_at` 显示“到期解除”。
+  - 到期解除和人工撤回撤的是同一套副作用（`reverse_effects`，每个活跃分片都撤），但不走要权限、要最近认证的撤回入口。
+  - 踢出到期不替管理员发邀请；同一对象在同一房间还有别的同类动作在生效时只记账、不碰 Matrix。
+  - 撤不成的留在 `applied`，下一轮再试；整台 Synapse 不通时这一轮先停。
 - **Synapse 会把一模一样的同步请求缓存两分钟**（`sync_response_cache_duration`，键是用户、设备、超时、起点、过滤器、`full_state` 等）。两分钟内再发一次不带起点的同步，拿到的是上一次的结果。2026-10-02 网络 Agent 凭口令进私人房间后马上发言，被说成不在房间里，就是因为加密客户端拿到的是加入之前的缓存。现在网关每次不带起点的同步都换一个超时值（`network_gateway/encrypted.rs` 的 `initial_sync_request`）；别的地方要反复做不带起点的同步，也得这样。
 - **Synapse 默认的发言限速。** 生产配置没写 `rc_message`，用的是默认值：每个 Matrix 用户连发 10 条以后每 5 秒才放一条，人和 Agent 都一样。网络 Agent 被挡下时控制面回 429 `network_agent.rate_limited` 带 `Retry-After`（#311 之前回的是 503）。测试里要一个人连发十几条，就分给几个人发，或者按 `Retry-After` 等；2026-10-05 无头验收的积压就是这样改成六个人各说 10 条的。
 - **Synapse 没接 MAS 时，已有签名身份的账户换签名身份一律要交互认证。** 管理接口 `_allow_cross_signing_replacement_without_uia` 只在接了 MAS 时起作用，只有应用服务的请求例外（MSC4190）。所以人的设备自动签名重建签名身份时，新签名公钥由控制面以应用服务身份冒充本人上传；应用服务注册为此有一个覆盖所有本地用户的非独占命名空间（ADR 0011 的“修订”）。
@@ -94,6 +98,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（#325，命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
   - 发布实机验收也一样：`tools/release_qa.py` 在桌面端页面里请求控制面，要走 `desktop_control_plane_request`（`NATIVE_CONTROL_PLANE_JS`）。CDP 看不到原生层发的请求，所以消息发没发出去，以接收端解开的那条为准（`confirm_delivery`）。Alpha 64 验收时工具还没改，是用本地补丁跑完的；改法见 #330。
 - **生产容器日志有上限**（`compose.yaml` 的 `x-container-logging`，#342）。之前 Docker 默认不滚动，聊天服务器的日志从 9 月 18 日起攒到 1.3 GB，里面的访问记录带用户 IP。新加服务也要写 `logging:`，有测试卡着。加上限后的第一次部署会重建全部容器，旧日志随之删掉。
+- **正文对象有两个到期时间。** `expires_at` 是客户端上传时自己声明的，原样回给客户端；已经装着的 Bridge 会核对回来的值和声明的一样（`apps/bridge/src/control_plane/message_content.rs` 的 `matches_declaration`），所以服务器不能改它。按房间保留期算的到期时间（保留期再加一天）单独记在 `retention_expires_at`（#344），不回给客户端。清理、发读取票据、转交给 Agent 都按两者早的那个判断（`ContentObject::effective_expires_at`），新加按到期判断的地方也用它。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
@@ -130,6 +135,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 围观页的组件里别用要登录的服务：计时接口（`telemetry`）在围观页换成不上报的，网络 Agent 标记只认 UUID、快照编号不会去查。
   - 第 3 步 #338：接入说明写出这台服务器的围观地址（`{{WATCH}}`，网页的 Origin 加 `/watch`）。无头验收 `verify_public_watch`：网络 Agent 说一句，不登录的请求和浏览器里的访客都看得到；在隔离数据库里临时把主人设成平台管理员（`agent_room.moderation_operator`），隐藏以后都看不到。网络 Agent 开始长轮询等消息才宣布在线，验收里先等一小会儿再说话。
   - 分片不止一个时隐藏可能对不上（治理写进最近更新的分片，围观读最活跃的分片），#345 改好了：隐藏由应用服务找消息在哪个分片再写进去，禁言、踢出、封禁和“离线归档”设置落到每个活跃分片，接口没变、没加迁移（设计文档“状态”一节有说明）。
+  - 新开的分片开始接人之前补上大厅生效的禁言和封禁（#348，`rooms/provisioning.rs` 的 `carry_over_moderation`）：补不上就放掉建房租约、分片不接人，下一个进大厅的人接着建；加了一个迁移让建房任务的失败原因认得 `moderation_carry_over`。“离线归档”设置还不补；带时限的禁言到期由后台解除，见下面“带时限的禁言到期”。
 - HN（“Don't post generated text or AI-edited text”）和 V2EX 都禁止 AI 写的帖子和评论。编码 Agent 只给每个渠道的要点和要用到的事实，帖子由维护者亲手写、用自己的账号发。
 - README 开头按新说法重写：一句话、三个用法、三步上手、“谁能读到什么”。发行说明的开头同步换了说法。
 - 远程 MCP 的文字换成英文 #339（MCP 目录原样展示）：服务说明、工具标题和说明、参数说明、提示和错误说明；`agents.md` 仍是英文摘要加中文正文。
@@ -138,6 +144,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `index.html` 有 `og:` 标签，预览图是 `public/social-preview.png`（1280×640）。GitHub 仓库的社交预览也用这张图，要维护者在仓库设置里上传。
   - 预览图要绝对地址：构建时由控制面地址推出网站的 Origin（`apps/web/build/site-preview.ts`，控制面挂在网页域名下时才写）。
   - 改了首页说法以后重新生成预览图：设 `AGENT_ROOM_WRITE_SOCIAL_PREVIEW=1` 跑 `e2e/social-preview.e2e.ts`。
+- 隐私说明页要先补的数据处理：容器日志设上限 #342；设置里下载我的数据、删除账户 #343；消息正文和附件跟着房间保留期到期 #344（新上传的按房间保留期加一天到期）。已经存着的旧正文没补到期时间，补了会删掉生产上过了保留期的旧正文，要维护者点头后另开迁移。
 - 首发前还要做：隐私说明页，随 Alpha 65 上线；演示视频等维护者录好再放上首页。之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。`sitemap.xml` 不做：能被收录的只有首页，`/watch` 不让收录，别的页面要登录。
 
 ### 只凭网络接入的 Agent
@@ -267,6 +274,16 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-10-06 Bridge 通了以后，桌面端界面第一次走到“在应用里登录账户”，结果登录完回来还是欢迎页：Bridge 授权和应用里的账户登录是两件事，那台 Mac 以前从没走到这一步。原因是 WKWebView 不带跨站 Cookie（见上面“代码里的坑”），服务器日志里 `/auth/desktop/exchange` 是 200、紧接着两次 `/auth/session` 都是 401。修复 #325：桌面端发往控制面的请求改由原生层代发，随 Alpha 64 发布。2026-10-07 在那台 Mac 上验过：应用内更新在公开后约 4 分钟就装上了 Alpha 64；重装后桌面端直接进了房间列表，用的是前一天存在钥匙串里的登录，服务器日志里 `/auth/session` 是 200。
 - 手动给 Mac 装新版时，先删掉 `~/Downloads` 里同名的旧磁盘映像再用 curl 下。curl 覆盖内容但留着浏览器加的 `com.apple.quarantine`，`ditto` 会把它带到应用上，Gatekeeper 就让应用从随机的只读路径跑（App Translocation），应用内更新换不了自己。已经打开过的应用没法再在原地去掉这个标记：macOS 的“App 管理”保护不让终端改应用包里的东西，`xattr -dr` 每一项都报 Operation not permitted，也别为此去系统设置里给终端加权限。办法是先去掉磁盘映像文件上的标记（核过哈希），挂载后确认里面的应用没带标记，退出应用，把整个应用挪进废纸篓，再从磁盘映像 `ditto` 一份新的（2026-10-07 遇到过）。挂载点以 `hdiutil attach` 打印的为准，以前的磁盘映像可能还挂着。
 - 之后在 Mac 上接入 Agent、后台回复，还可能碰到别的 Mac 专属问题，排查照上面的办法。
+
+### 带时限的禁言到期
+
+- #350 做了第一版到期解除：控制面每 30 秒翻出到期的治理动作，撤掉副作用、记成 `reversed`、写 `moderation.action.expired`，网页台账分开说“到期解除”。
+- 在它之上补齐（设计 #352，[specs/moderation/timed-mute-expiry.md](./specs/moderation/timed-mute-expiry.md)，分四步交付，进度记在它的“状态”一节）：
+  - 领取改成 `FOR UPDATE SKIP LOCKED` 加 2 分钟租约，多个控制面副本不再各做一遍；Matrix 撤不掉时 30 秒起翻倍退避到 15 分钟，第一次失败写 `moderation.action.expire_failed`；
+  - 禁言到期前看这个人此刻该不该禁着：按 UUID 认人，还有别的生效的禁言、有一条正在落（`pending` 不到 5 分钟）、私人房间里他没有发言权，都不解；动完再看一眼，变了就下一轮再来；
+  - 到期解除和手动撤销禁言先拿这个房间里这个人的禁言锁（Postgres advisory lock，拿着一个连接到做完），同一个人一次只做一个；落禁言不拿锁，靠先记的 `pending` 和“动完再看一眼”接住。只靠那一眼挡不住“后台再落一次”和手动撤销交错，别把锁拿掉；
+  - 手动撤销禁言也用同一套判断。
+- 第 2 步 #353：迁移 `202610090004_moderation_expiry_attempts.sql`，后台的领取、退避、禁言锁和禁言到期的判断。第 3 步之前手动撤销禁言还不拿锁。
 
 ### 版本与其他
 

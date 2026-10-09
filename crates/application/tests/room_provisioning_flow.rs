@@ -4,12 +4,14 @@ use std::{
 };
 
 use agent_room_application::{
-    persistence::RepositoryResult,
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, PortFuture, RoomProvisioningClaim,
+        MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixUserId,
+        ModerationEffectGateway, ModerationEffectTarget, PortFuture, RoomProvisioningClaim,
         RoomProvisioningClaimOutcome, RoomProvisioningFailureCode, RoomProvisioningGateway,
-        RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
+        RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore, StandingModeration,
+        StandingModerationSource,
     },
     rooms::{
         LobbyProvisioningDependencies, LobbyProvisioningFailure, LobbyProvisioningFailureStage,
@@ -18,7 +20,14 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
-    ids::{RoomCatalogId, RoomInstanceId, RoomProvisioningJobId, RoomProvisioningLeaseId},
+    ids::{
+        ModerationActionId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
+        RoomProvisioningLeaseId,
+    },
+    moderation::{
+        ModerationAction, ModerationActionKind, ModerationActionStatus, ModerationReason,
+        ModerationTarget, ModerationTargetKind,
+    },
     rooms::{
         MatrixRoomReference, RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus,
         RoomCatalogVisibility, RoomInstance, RoomLanguage, RoomRegion, RoomSlug,
@@ -60,13 +69,17 @@ enum StoreCall {
     CompleteSpace(String),
     CompleteInstance(String),
     Release(RoomProvisioningKind, RoomProvisioningFailureCode),
+    /// 补到新分片上的治理（动作、房间、被管的人）。和存储调用记在同一条时间线上，看得出它在发布
+    /// 实例（开始接人）之前。
+    CarryOver(ModerationActionKind, String, String),
 }
 
 struct 测试Store {
     catalog: Mutex<RoomCatalog>,
     calls: Mutex<Vec<StoreCall>>,
     busy_kind: Option<RoomProvisioningKind>,
-    checkpoints: Vec<(RoomProvisioningKind, MatrixRoomReference)>,
+    /// 和真的存储一样记得住断点：建房失败放掉租约以后，下一次接手同一个 Matrix 房间。
+    checkpoints: Mutex<Vec<(RoomProvisioningKind, MatrixRoomReference)>>,
 }
 
 impl 测试Store {
@@ -75,7 +88,7 @@ impl 测试Store {
             catalog: Mutex::new(catalog),
             calls: Mutex::new(Vec::new()),
             busy_kind: None,
-            checkpoints: Vec::new(),
+            checkpoints: Mutex::new(Vec::new()),
         }
     }
 
@@ -84,8 +97,8 @@ impl 测试Store {
         self
     }
 
-    fn with_checkpoint(mut self, kind: RoomProvisioningKind, room_id: &str) -> Self {
-        self.checkpoints.push((
+    fn with_checkpoint(self, kind: RoomProvisioningKind, room_id: &str) -> Self {
+        self.checkpoints.lock().expect("断点锁可用").push((
             kind,
             MatrixRoomReference::new(room_id).expect("断点房间标识有效"),
         ));
@@ -96,8 +109,14 @@ impl 测试Store {
         self.calls.lock().expect("调用记录锁可用").clone()
     }
 
+    fn record(&self, call: StoreCall) {
+        self.calls.lock().expect("调用记录锁可用").push(call);
+    }
+
     fn checkpoint(&self, kind: RoomProvisioningKind) -> Option<MatrixRoomReference> {
         self.checkpoints
+            .lock()
+            .expect("断点锁可用")
             .iter()
             .find(|(candidate, _)| *candidate == kind)
             .map(|(_, room_id)| room_id.clone())
@@ -148,6 +167,10 @@ impl RoomProvisioningStore for 测试Store {
                     job.target().kind(),
                     matrix_room_id.as_str().to_owned(),
                 ));
+            self.checkpoints
+                .lock()
+                .expect("断点锁可用")
+                .push((job.target().kind(), matrix_room_id.clone()));
             Ok(())
         })
     }
@@ -306,6 +329,102 @@ impl RoomProvisioningGateway for 测试Matrix {
                 });
             self.attach_result.clone()
         })
+    }
+}
+
+/// 这个大厅的治理记录和落治理的 Matrix 效果。补上的治理记在建房存储的时间线上。
+struct 测试治理 {
+    store: Arc<测试Store>,
+    standing: RepositoryResult<Vec<StandingModeration>>,
+    /// 下一次落治理时失败一次。
+    failure: Mutex<Option<MatrixFailure>>,
+    queries: Mutex<Vec<(RoomCatalogId, UtcMillis)>>,
+}
+
+impl 测试治理 {
+    fn new(store: Arc<测试Store>, standing: Vec<StandingModeration>) -> Self {
+        Self {
+            store,
+            standing: Ok(standing),
+            failure: Mutex::new(None),
+            queries: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn unreadable(store: Arc<测试Store>, failure: RepositoryError) -> Self {
+        Self {
+            standing: Err(failure),
+            ..Self::new(store, Vec::new())
+        }
+    }
+
+    fn failing_once(self, failure: MatrixFailure) -> Self {
+        *self.failure.lock().expect("失败设置锁可用") = Some(failure);
+        self
+    }
+
+    fn queries(&self) -> Vec<(RoomCatalogId, UtcMillis)> {
+        self.queries.lock().expect("查询记录锁可用").clone()
+    }
+}
+
+impl StandingModerationSource for 测试治理 {
+    fn standing_person_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>> {
+        Box::pin(async move {
+            self.queries
+                .lock()
+                .expect("查询记录锁可用")
+                .push((room_catalog_id, now));
+            self.standing.clone()
+        })
+    }
+}
+
+impl ModerationEffectGateway for 测试治理 {
+    fn apply<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        target: &'a ModerationEffectTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            assert_eq!(&target.target, action.target(), "补的是这条治理管的人");
+            // 公开大厅的禁言只压低这个人；按私人房间那套会把整个大厅禁言。
+            assert_eq!(target.room_kind, RoomCatalogKind::PublicLobby);
+            if let Some(failure) = self.failure.lock().expect("失败设置锁可用").take() {
+                return Err(failure);
+            }
+            self.store.record(StoreCall::CarryOver(
+                action.kind(),
+                target.matrix_room_id.as_str().to_owned(),
+                target
+                    .target_matrix_user_id
+                    .as_ref()
+                    .expect("管人的治理带着 Matrix 账号")
+                    .as_str()
+                    .to_owned(),
+            ));
+            Ok(())
+        })
+    }
+
+    fn reverse<'a>(
+        &'a self,
+        _action: &'a ModerationAction,
+        _target: &'a ModerationEffectTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        panic!("新分片只补生效的治理，不撤销任何东西")
+    }
+
+    fn contains_event<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<bool>> {
+        panic!("隐藏不补到新分片，用不着找消息")
     }
 }
 
@@ -470,16 +589,266 @@ async fn 已有建房租约时返回明确重试时间且不触碰_matrix() {
     assert!(matrix.calls().is_empty());
 }
 
+#[tokio::test]
+async fn 新分片开始接人之前补上这个大厅生效的封禁和禁言() {
+    use ModerationActionKind::{Ban, Mute};
+    use ModerationActionStatus::Applied;
+    let catalog = lobby_with_space();
+    let store = Arc::new(测试Store::new(catalog.clone()));
+    let matrix = Arc::new(测试Matrix::new(vec![Ok(matrix_room(
+        "!instance:matrix.test",
+    ))]));
+    let moderation = Arc::new(测试治理::new(
+        store.clone(),
+        vec![
+            standing(Ban, Applied, None, "@banned:matrix.test"),
+            // 禁言到第 20 秒：此刻还没到期。
+            standing(Mute, Applied, Some(20_000), "@muted:matrix.test"),
+        ],
+    ));
+    let outcome = service_with(store.clone(), matrix, moderation.clone())
+        .provision(request(catalog.clone()))
+        .await
+        .expect("补上治理后应发布实例");
+
+    assert!(matches!(outcome, LobbyProvisioningOutcome::Ready(_)));
+    assert_eq!(
+        moderation.queries(),
+        [(catalog.id(), UtcMillis::new(10_000).expect("测试时间有效"))],
+        "按这个大厅、此刻的时间读要补的治理"
+    );
+    assert_eq!(
+        store.calls(),
+        [
+            StoreCall::Claim(RoomProvisioningKind::Instance),
+            StoreCall::Checkpoint(
+                RoomProvisioningKind::Instance,
+                "!instance:matrix.test".to_owned()
+            ),
+            carried(Ban, "@banned:matrix.test"),
+            carried(Mute, "@muted:matrix.test"),
+            StoreCall::CompleteInstance("!instance:matrix.test".to_owned()),
+        ],
+        "补在发布实例（开始接人）之前"
+    );
+}
+
+#[tokio::test]
+async fn 已撤销_已过期和没落成的不补_踢出和隐藏也不补() {
+    use ModerationActionKind::{Ban, Hide, Kick, Mute};
+    use ModerationActionStatus::{Applied, Failed, Pending, Reversed};
+    let catalog = lobby_with_space();
+    let store = Arc::new(测试Store::new(catalog.clone()));
+    let matrix = Arc::new(测试Matrix::new(vec![Ok(matrix_room(
+        "!instance:matrix.test",
+    ))]));
+    let moderation = Arc::new(测试治理::new(
+        store.clone(),
+        vec![
+            standing(Ban, Reversed, None, "@forgiven:matrix.test"),
+            // 禁言到第 5 秒就到期了，此刻是第 10 秒。
+            standing(Mute, Applied, Some(5_000), "@expired:matrix.test"),
+            standing(Ban, Failed, None, "@failed:matrix.test"),
+            standing(Ban, Pending, None, "@pending:matrix.test"),
+            standing(Kick, Applied, None, "@kicked:matrix.test"),
+            standing(Hide, Applied, None, "@author:matrix.test"),
+            standing(Ban, Applied, None, "@banned:matrix.test"),
+        ],
+    ));
+    service_with(store.clone(), matrix, moderation)
+        .provision(request(catalog))
+        .await
+        .expect("补上治理后应发布实例");
+
+    let carried_over: Vec<StoreCall> = store
+        .calls()
+        .into_iter()
+        .filter(|call| matches!(call, StoreCall::CarryOver(..)))
+        .collect();
+    assert_eq!(
+        carried_over,
+        [carried(Ban, "@banned:matrix.test")],
+        "只补此刻还生效的禁言和封禁"
+    );
+}
+
+#[tokio::test]
+async fn 补不上时放掉建房租约_不发布实例_下一个进大厅的人接着补() {
+    use ModerationActionKind::Ban;
+    let catalog = lobby_with_space();
+    let store = Arc::new(测试Store::new(catalog.clone()));
+    let matrix = Arc::new(测试Matrix::new(vec![Ok(matrix_room(
+        "!instance:matrix.test",
+    ))]));
+    let matrix_failure = MatrixFailure::new(
+        MatrixOperation::Ban,
+        MatrixFailureKind::DependencyUnavailable,
+    );
+    let moderation = Arc::new(
+        测试治理::new(
+            store.clone(),
+            vec![standing(
+                Ban,
+                ModerationActionStatus::Applied,
+                None,
+                "@banned:matrix.test",
+            )],
+        )
+        .failing_once(matrix_failure),
+    );
+    let service = service_with(store.clone(), matrix.clone(), moderation);
+
+    let failure = service
+        .provision(request(catalog.clone()))
+        .await
+        .expect_err("补不上治理不得发布实例");
+    assert_eq!(
+        failure,
+        LobbyProvisioningFailure::Matrix {
+            stage: LobbyProvisioningFailureStage::CarryOverModeration,
+            source: matrix_failure,
+        }
+    );
+    assert_eq!(
+        store.calls().last(),
+        Some(&StoreCall::Release(
+            RoomProvisioningKind::Instance,
+            RoomProvisioningFailureCode::ModerationCarryOver
+        )),
+        "和建房间失败一样放掉租约，别人马上能接着建"
+    );
+
+    service
+        .provision(request(catalog))
+        .await
+        .expect("下一次接着建应成功");
+    assert_eq!(
+        store.calls()[3..],
+        [
+            StoreCall::Claim(RoomProvisioningKind::Instance),
+            carried(Ban, "@banned:matrix.test"),
+            StoreCall::CompleteInstance("!instance:matrix.test".to_owned()),
+        ],
+        "接手同一个 Matrix 房间，补上以后才发布"
+    );
+    assert_eq!(
+        matrix
+            .calls()
+            .iter()
+            .filter(|call| matches!(call, MatrixCall::Create { .. }))
+            .count(),
+        1,
+        "Matrix 房间已经记下，不再重建"
+    );
+}
+
+#[tokio::test]
+async fn 读不到要补的治理时不发布实例() {
+    let catalog = lobby_with_space();
+    let store = Arc::new(测试Store::new(catalog.clone()));
+    let matrix = Arc::new(测试Matrix::new(vec![Ok(matrix_room(
+        "!instance:matrix.test",
+    ))]));
+    let unavailable = RepositoryError::new(
+        "moderation.standing_person_actions",
+        RepositoryErrorKind::Unavailable,
+    );
+    let moderation = Arc::new(测试治理::unreadable(store.clone(), unavailable.clone()));
+    let failure = service_with(store.clone(), matrix, moderation)
+        .provision(request(catalog))
+        .await
+        .expect_err("不知道该补什么时不得发布实例");
+
+    assert_eq!(
+        failure,
+        LobbyProvisioningFailure::Store {
+            stage: LobbyProvisioningFailureStage::CarryOverModeration,
+            source: unavailable,
+        }
+    );
+    assert!(
+        !store
+            .calls()
+            .iter()
+            .any(|call| matches!(call, StoreCall::CompleteInstance(_))),
+    );
+}
+
 fn service(store: Arc<测试Store>, matrix: Arc<测试Matrix>) -> LobbyProvisioningService {
+    let moderation = Arc::new(测试治理::new(store.clone(), Vec::new()));
+    service_with(store, matrix, moderation)
+}
+
+fn service_with(
+    store: Arc<测试Store>,
+    matrix: Arc<测试Matrix>,
+    moderation: Arc<测试治理>,
+) -> LobbyProvisioningService {
     LobbyProvisioningService::new(
         LobbyProvisioningDependencies {
             store,
             matrix,
+            moderation: moderation.clone(),
+            moderation_effects: moderation,
             identifiers: Arc::new(测试标识),
             clock: Arc::new(测试时钟),
         },
         LobbyProvisioningPolicy::new(DurationMillis::new(30_000).expect("租约时长有效"))
             .expect("租约策略有效"),
+    )
+}
+
+/// 已经建好 Space 的公开大厅：建房从分片开始。
+fn lobby_with_space() -> RoomCatalog {
+    public_catalog(
+        RoomCatalogId::from_uuid(Uuid::now_v7()),
+        Some(MatrixRoomReference::new("!space:matrix.test").expect("Space 标识有效")),
+    )
+}
+
+/// 一条治理记录：第 1 秒做的，到期时间和状态由测试给。此刻是第 10 秒。
+fn standing(
+    kind: ModerationActionKind,
+    status: ModerationActionStatus,
+    expires_at: Option<i64>,
+    matrix_user_id: &str,
+) -> StandingModeration {
+    let time = |value| UtcMillis::new(value).expect("测试时间有效");
+    let target = if kind == ModerationActionKind::Hide {
+        ModerationTarget::new(ModerationTargetKind::Event, "$spam:matrix.test")
+    } else {
+        ModerationTarget::new(
+            ModerationTargetKind::Principal,
+            PrincipalId::from_uuid(Uuid::now_v7()).to_string(),
+        )
+    }
+    .expect("治理目标有效");
+    let action = ModerationAction::restore(
+        ModerationActionId::from_uuid(Uuid::now_v7()),
+        None,
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        RoomCatalogId::from_uuid(Uuid::now_v7()),
+        kind,
+        target,
+        ModerationReason::Harassment,
+        time(1_000),
+        expires_at.map(time),
+        status,
+        (status == ModerationActionStatus::Failed).then(|| "matrix.unavailable".to_owned()),
+        (status == ModerationActionStatus::Reversed).then(|| time(2_000)),
+    )
+    .expect("治理记录有效");
+    StandingModeration {
+        action,
+        target_matrix_user_id: MatrixUserId::new(matrix_user_id).expect("Matrix 账号有效"),
+    }
+}
+
+fn carried(kind: ModerationActionKind, matrix_user_id: &str) -> StoreCall {
+    StoreCall::CarryOver(
+        kind,
+        "!instance:matrix.test".to_owned(),
+        matrix_user_id.to_owned(),
     )
 }
 

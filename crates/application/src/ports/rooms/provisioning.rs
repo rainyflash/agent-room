@@ -67,6 +67,8 @@ pub enum RoomProvisioningFailureCode {
     MatrixCreate,
     MatrixResolve,
     SpaceAttach,
+    /// 新分片开始接人之前没能补上这个大厅生效的禁言、封禁。
+    ModerationCarryOver,
 }
 
 impl RoomProvisioningFailureCode {
@@ -75,6 +77,7 @@ impl RoomProvisioningFailureCode {
             Self::MatrixCreate => "matrix_create",
             Self::MatrixResolve => "matrix_resolve",
             Self::SpaceAttach => "space_attach",
+            Self::ModerationCarryOver => "moderation_carry_over",
         }
     }
 }

@@ -10,8 +10,8 @@ use agent_room_application::{
     ports::{
         AgentLobbyAccessRepository, Clock, MatrixCreateRoom, MatrixEventId, MatrixFailure,
         MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId,
-        MatrixRoomKind, PortFuture, RoomAllocationEvidence, RoomAllocationMode,
-        RoomMembershipGateway, RoomProvisioningGateway,
+        MatrixRoomKind, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
+        RoomAllocationEvidence, RoomAllocationMode, RoomMembershipGateway, RoomProvisioningGateway,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyOutcome, EnterLobbyService, JoinLobbyDependencies,
@@ -25,6 +25,7 @@ use agent_room_domain::{
         AgentId, AgentInstanceId, DeviceId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
         RoomProvisioningLeaseId, RoomReservationId,
     },
+    moderation::ModerationAction,
     rooms::MatrixRoomReference,
     time::{DurationMillis, UtcMillis},
 };
@@ -85,6 +86,8 @@ enum MatrixCall {
     CreateSpace,
     CreateInstance,
     Attach,
+    /// 新分片开始接人之前补的禁言、封禁。
+    CarryOverModeration,
     Join,
     Leave,
 }
@@ -161,6 +164,38 @@ impl RoomProvisioningGateway for 测试Matrix {
                 )
             })
         })
+    }
+}
+
+impl ModerationEffectGateway for 测试Matrix {
+    fn apply<'a>(
+        &'a self,
+        _action: &'a ModerationAction,
+        _target: &'a ModerationEffectTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .expect("Matrix 调用锁可用")
+                .push(MatrixCall::CarryOverModeration);
+            Ok(())
+        })
+    }
+
+    fn reverse<'a>(
+        &'a self,
+        _action: &'a ModerationAction,
+        _target: &'a ModerationEffectTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        panic!("建分片只补生效的治理，不撤销")
+    }
+
+    fn contains_event<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<bool>> {
+        panic!("建分片用不着找消息")
     }
 }
 
@@ -312,8 +347,11 @@ fn service(pool: PgPool, matrix: Arc<测试Matrix>) -> EnterLobbyService {
     ));
     let provisioning = Arc::new(LobbyProvisioningService::new(
         LobbyProvisioningDependencies {
-            store: repositories,
-            matrix,
+            store: repositories.clone(),
+            matrix: matrix.clone(),
+            // 真的去库里读要补的治理；这个大厅没人被禁言、封禁，一条也不补。
+            moderation: repositories,
+            moderation_effects: matrix,
             identifiers: runtime.clone(),
             clock: runtime,
         },
