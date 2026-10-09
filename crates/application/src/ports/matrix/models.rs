@@ -1,6 +1,8 @@
 use std::{fmt, num::NonZeroU16, sync::Arc};
 
-use agent_room_domain::{DomainError, DomainResult, time::DurationMillis};
+use agent_room_domain::{
+    DomainError, DomainResult, agent_lifecycle::MatrixPresenceState, time::DurationMillis,
+};
 use serde_json::Value;
 
 use crate::ports::SecretValue;
@@ -971,15 +973,62 @@ impl MatrixTimelineEvent {
     }
 }
 
+/// 一个人的 Matrix 在线状态：同步里的 `m.presence`，或者问到的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixUserPresence {
+    user_id: MatrixUserId,
+    state: MatrixPresenceState,
+    last_active_ago_ms: Option<u64>,
+}
+
+impl MatrixUserPresence {
+    pub const fn new(
+        user_id: MatrixUserId,
+        state: MatrixPresenceState,
+        last_active_ago_ms: Option<u64>,
+    ) -> Self {
+        Self {
+            user_id,
+            state,
+            last_active_ago_ms,
+        }
+    }
+
+    pub const fn user_id(&self) -> &MatrixUserId {
+        &self.user_id
+    }
+
+    pub const fn state(&self) -> MatrixPresenceState {
+        self.state
+    }
+
+    /// 服务器说的“多久之前有过动作”（毫秒，可以是 0），相对于拿到它的那一刻。
+    pub const fn last_active_ago_ms(&self) -> Option<u64> {
+        self.last_active_ago_ms
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixSyncBatch {
     next_batch: MatrixSyncToken,
     rooms: Vec<MatrixRoomSync>,
+    presence: Vec<MatrixUserPresence>,
 }
 
 impl MatrixSyncBatch {
     pub const fn new(next_batch: MatrixSyncToken, rooms: Vec<MatrixRoomSync>) -> Self {
-        Self { next_batch, rooms }
+        Self {
+            next_batch,
+            rooms,
+            presence: Vec::new(),
+        }
+    }
+
+    /// 这一段同步带回的在线状态：同在一个房间的人里，这段时间变了的（首次同步是不离线的）。
+    #[must_use]
+    pub fn with_presence(mut self, presence: Vec<MatrixUserPresence>) -> Self {
+        self.presence = presence;
+        self
     }
 
     pub const fn next_batch(&self) -> &MatrixSyncToken {
@@ -988,6 +1037,10 @@ impl MatrixSyncBatch {
 
     pub fn rooms(&self) -> &[MatrixRoomSync] {
         &self.rooms
+    }
+
+    pub fn presence(&self) -> &[MatrixUserPresence] {
+        &self.presence
     }
 
     /// 用发送设备可见的 `unsigned.transaction_id` 对账未知提交。

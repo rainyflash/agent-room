@@ -1739,6 +1739,7 @@ mod tests {
                 last_polled_at: None,
                 listening_until: None,
                 reception_known: false,
+                card: false,
             }),
             queries: Mutex::new(Vec::new()),
         });

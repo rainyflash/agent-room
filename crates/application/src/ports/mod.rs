@@ -123,7 +123,7 @@ pub use matrix::{
     MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixRoomVisibility,
     MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch,
     MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEncryption, MatrixTimelineEvent,
-    MatrixTransactionId, MatrixUserId, MatrixValueError,
+    MatrixTransactionId, MatrixUserId, MatrixUserPresence, MatrixValueError,
 };
 pub use moderation::{
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,

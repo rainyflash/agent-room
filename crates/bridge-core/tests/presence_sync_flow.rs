@@ -1,12 +1,16 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::BTreeSet,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use agent_room_application::ports::{
-    Clock, DeviceProofVerifier, DeviceSignature, MatrixEventId, MatrixEventType, MatrixRoomId,
-    MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken,
-    MatrixTimelineEvent, MatrixUserId, PortFuture,
+    Clock, DeviceProofVerifier, DeviceSignature, MatrixEventId, MatrixEventType, MatrixFailure,
+    MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomStatePosition,
+    MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
+    MatrixUserId, MatrixUserPresence, PortFuture,
 };
 use agent_room_bridge_core::{
     agent_verification::{
@@ -14,13 +18,14 @@ use agent_room_bridge_core::{
         AgentEventAuthenticationFailureKind, AgentEventAuthenticator,
     },
     presence::{
-        PresenceLeasePolicy, PresenceProjectionBatch, PresenceProjectionFailure,
-        PresenceProjectionRepository, PresenceQuery, PresenceRoomProjectionMode,
-        PresenceSyncDependencies, PresenceSyncFailureKind, PresenceSyncIssueReason,
-        PresenceSyncService,
+        MatrixPresenceReader, PresenceLeasePolicy, PresenceProjectionBatch,
+        PresenceProjectionFailure, PresenceProjectionRepository, PresenceQuery,
+        PresenceRoomProjectionMode, PresenceSyncDependencies, PresenceSyncFailureKind,
+        PresenceSyncIssueReason, PresenceSyncService,
     },
 };
 use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState,
     agent_status::AgentWorkStatus,
     devices::DevicePublicSigningKey,
     ids::{AgentId, AgentInstanceId},
@@ -136,10 +141,17 @@ impl 测试夹具 {
     }
 
     fn service(&self) -> PresenceSyncService {
+        self.service_with(self.projections.clone())
+    }
+
+    fn service_with(
+        &self,
+        projections: Arc<dyn PresenceProjectionRepository>,
+    ) -> PresenceSyncService {
         PresenceSyncService::new(
             PresenceSyncDependencies {
                 authenticator: self.authenticator.clone(),
-                projections: self.projections.clone(),
+                projections,
                 clock: Arc::new(固定时钟),
             },
             PresenceLeasePolicy::new(
@@ -148,6 +160,93 @@ impl 测试夹具 {
             )
             .expect("Presence 策略有效"),
         )
+    }
+}
+
+/// 还没拿到在线状态的人；记下一个（问到或没问到）就不再给它。
+#[derive(Default)]
+struct 待问仓库 {
+    pending: Mutex<BTreeSet<MatrixUserId>>,
+    recorded: Mutex<Vec<(String, Option<MatrixPresenceState>)>>,
+}
+
+impl PresenceProjectionRepository for 待问仓库 {
+    fn apply<'a>(
+        &'a self,
+        _batch: &'a PresenceProjectionBatch,
+    ) -> PortFuture<'a, Result<(), PresenceProjectionFailure>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn list<'a>(
+        &'a self,
+        _query: &'a PresenceQuery,
+    ) -> PortFuture<
+        'a,
+        Result<
+            Vec<agent_room_bridge_core::presence::PresenceObservation>,
+            PresenceProjectionFailure,
+        >,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn presence_wanted(
+        &self,
+        _now: UtcMillis,
+        limit: usize,
+    ) -> PortFuture<'_, Result<Vec<MatrixUserId>, PresenceProjectionFailure>> {
+        let wanted = self
+            .pending
+            .lock()
+            .unwrap()
+            .iter()
+            .take(limit)
+            .cloned()
+            .collect();
+        Box::pin(async { Ok(wanted) })
+    }
+
+    fn record_fetched_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+        presence: Option<&'a MatrixUserPresence>,
+        _fetched_at: UtcMillis,
+    ) -> PortFuture<'a, Result<(), PresenceProjectionFailure>> {
+        self.pending.lock().unwrap().remove(user_id);
+        self.recorded.lock().unwrap().push((
+            user_id.as_str().to_owned(),
+            presence.map(MatrixUserPresence::state),
+        ));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// 名字里带 `down` 的问不到，其余都在线。
+#[derive(Default)]
+struct 在线状态服务器 {
+    asked: Mutex<Vec<String>>,
+}
+
+impl MatrixPresenceReader for 在线状态服务器 {
+    fn read_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        self.asked.lock().unwrap().push(user_id.as_str().to_owned());
+        let answer = if user_id.as_str().contains("down") {
+            Err(MatrixFailure::new(
+                MatrixOperation::ReadPresence,
+                MatrixFailureKind::DependencyUnavailable,
+            ))
+        } else {
+            Ok(MatrixUserPresence::new(
+                user_id.clone(),
+                MatrixPresenceState::Online,
+                Some(0),
+            ))
+        };
+        Box::pin(async move { answer })
     }
 }
 
@@ -440,6 +539,104 @@ async fn 撤销前的可信历史状态被强制降级为离线() {
     let presence = &batches[0].rooms()[0].presences()[0];
     assert_eq!(presence.status(), AgentWorkStatus::Offline);
     assert_eq!(presence.lease_expires_at(), presence.observed_at());
+}
+
+#[tokio::test]
+async fn 名片和同步带回的在线状态一起进投影() {
+    let fixture = 测试夹具::new();
+    let mut card = status_payload("idle", NOW_RFC3339, EXPIRY_RFC3339);
+    card["liveness"] = json!("presence");
+    sign_payload(&fixture.signing_key, &mut card);
+    let lease = signed_status_event(
+        &fixture.signing_key,
+        "$lease:matrix.test",
+        "working",
+        NOW_RFC3339,
+        EXPIRY_RFC3339,
+        3,
+    );
+    let mut unknown = status_payload("idle", NOW_RFC3339, EXPIRY_RFC3339);
+    unknown["liveness"] = json!("heartbeat");
+    sign_payload(&fixture.signing_key, &mut unknown);
+    let online = MatrixUserPresence::new(
+        MatrixUserId::new(ACTOR_MATRIX_ID).unwrap(),
+        MatrixPresenceState::Online,
+        Some(0),
+    );
+    let sync = sync_with_state(vec![
+        membership_event("join"),
+        status_timeline_event("$card:matrix.test", card, 2),
+        status_timeline_event("$unknown:matrix.test", unknown, 4),
+    ])
+    .with_presence(vec![online.clone()]);
+
+    let outcome = fixture
+        .service()
+        .process(&sync, true)
+        .await
+        .expect("同步成功");
+    assert_eq!(outcome.accepted_statuses(), 1);
+    assert_eq!(
+        outcome.issues()[0].reason,
+        PresenceSyncIssueReason::InvalidEnvelope,
+        "不认识的在线方式整条作废"
+    );
+    {
+        let batches = fixture.projections.batches.lock().unwrap();
+        assert!(batches[0].rooms()[0].presences()[0].is_card());
+        let update = batches[0].presence().expect("带着在线状态");
+        assert!(update.full_state());
+        assert_eq!(update.observed_at().value(), NOW_UNIX_MS);
+        assert_eq!(update.users(), [online]);
+    }
+
+    fixture
+        .service()
+        .process(&sync_with_state(vec![lease]), false)
+        .await
+        .expect("同步成功");
+    let batches = fixture.projections.batches.lock().unwrap();
+    assert!(
+        !batches[1].rooms()[0].presences()[0].is_card(),
+        "没有 liveness 的照租约"
+    );
+    assert!(!batches[1].presence().unwrap().full_state());
+}
+
+#[tokio::test]
+async fn 同步里没带的名片_agent_各问一次_问不到的这一轮不再问() {
+    let fixture = 测试夹具::new();
+    let projections = Arc::new(待问仓库::default());
+    {
+        let mut pending = projections.pending.lock().unwrap();
+        for index in 0..40 {
+            let name = if index % 10 == 0 { "down" } else { "agent" };
+            pending.insert(MatrixUserId::new(format!("@{name}{index:02}:matrix.test")).unwrap());
+        }
+    }
+    let server = 在线状态服务器::default();
+
+    let asked = fixture
+        .service_with(projections.clone())
+        .fetch_missing_presence(&server)
+        .await
+        .expect("投影可用");
+
+    assert_eq!(asked, 40, "一轮最多问 32 个，问完接着问剩下的");
+    let mut asked = server.asked.lock().unwrap().clone();
+    asked.sort();
+    asked.dedup();
+    assert_eq!(asked.len(), 40, "每人只问一次");
+    let recorded = projections.recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 40);
+    assert_eq!(
+        recorded
+            .iter()
+            .filter(|(user, state)| user.contains("down") == state.is_none())
+            .count(),
+        40,
+        "问不到的记成没问到，问到的记下在线"
+    );
 }
 
 fn sync_with_state(state: Vec<MatrixTimelineEvent>) -> MatrixSyncBatch {

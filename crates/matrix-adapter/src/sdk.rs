@@ -13,7 +13,7 @@ use agent_room_application::ports::{
     MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
     MatrixRoomKind, MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent, MatrixUserId,
-    PortFuture, SecretValue,
+    MatrixUserPresence, PortFuture, SecretValue,
 };
 use agent_room_bridge_core::handoffs::{
     EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
@@ -28,6 +28,7 @@ use matrix_sdk::{
         TransactionId, UInt, UserId,
         api::client::{
             filter::FilterDefinition,
+            presence::get_presence::v3::Request as GetPresenceRequest,
             receipt::create_receipt::v3::ReceiptType,
             room::{
                 Visibility,
@@ -66,7 +67,7 @@ use crate::{
     configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
     error::{map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
-    mapping::{map_backfill, map_sync_response, map_timeline_event},
+    mapping::{map_backfill, map_presence_state, map_sync_response, map_timeline_event},
     owner::{AgentOwner, accept_known_owner_identity},
     room_key_requests::RoomKeyRequester,
     store_recovery::{
@@ -716,6 +717,31 @@ impl MatrixGateway for MatrixSdkGateway {
                     .await;
             }
             map_timeline_event(&event, operation, &upgrades)
+        })
+    }
+
+    fn user_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::ReadPresence;
+            let request = GetPresenceRequest::new(parse_user_id(user_id, operation)?);
+            let response = self
+                .client
+                .send(request)
+                .await
+                .map_err(|error| map_http_error(operation, &error))?;
+            let state = map_presence_state(response.presence.as_str())
+                .ok_or_else(|| invalid_response_failure(operation))?;
+            let last_active_ago = response
+                .last_active_ago
+                .and_then(|ago| u64::try_from(ago.as_millis()).ok());
+            Ok(MatrixUserPresence::new(
+                user_id.clone(),
+                state,
+                last_active_ago,
+            ))
         })
     }
 

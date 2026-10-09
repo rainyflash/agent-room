@@ -2,11 +2,15 @@ use agent_room_application::ports::{
     MatrixBackfillPage, MatrixBackfillToken, MatrixEventId, MatrixEventType, MatrixFailure,
     MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, MatrixRoomStatePosition,
     MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent,
-    MatrixTransactionId, MatrixUserId,
+    MatrixTransactionId, MatrixUserId, MatrixUserPresence,
 };
+use agent_room_domain::agent_lifecycle::MatrixPresenceState;
 use matrix_sdk::{
     deserialized_responses::{TimelineEvent, VerificationLevel, VerificationState},
-    ruma::{events::AnySyncEphemeralRoomEvent, serde::Raw},
+    ruma::{
+        events::{AnySyncEphemeralRoomEvent, presence::PresenceEvent},
+        serde::Raw,
+    },
     sync::{RoomUpdates, State, SyncResponse},
 };
 use serde::Deserialize;
@@ -23,7 +27,39 @@ pub(crate) fn map_sync_response(
     let next_batch = MatrixSyncToken::new(response.next_batch.clone())
         .map_err(|_| invalid_response_failure(MatrixOperation::Sync))?;
     let rooms = map_room_updates(&response.rooms, upgrades)?;
-    Ok(MatrixSyncBatch::new(next_batch, rooms))
+    Ok(MatrixSyncBatch::new(next_batch, rooms).with_presence(map_presence(&response.presence)))
+}
+
+/// 同步里的 `m.presence`。只认三种标准状态；读不出来的跳过，不让整次同步失败。
+fn map_presence(events: &[Raw<PresenceEvent>]) -> Vec<MatrixUserPresence> {
+    events
+        .iter()
+        .filter_map(|raw| {
+            let sender = raw.get_field::<String>("sender").ok().flatten()?;
+            let content = raw.get_field::<PresenceContent>("content").ok().flatten()?;
+            Some(MatrixUserPresence::new(
+                MatrixUserId::new(sender).ok()?,
+                map_presence_state(&content.presence)?,
+                content.last_active_ago,
+            ))
+        })
+        .collect()
+}
+
+pub(crate) fn map_presence_state(value: &str) -> Option<MatrixPresenceState> {
+    match value {
+        "online" => Some(MatrixPresenceState::Online),
+        "unavailable" => Some(MatrixPresenceState::Unavailable),
+        "offline" => Some(MatrixPresenceState::Offline),
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+struct PresenceContent {
+    presence: String,
+    #[serde(default)]
+    last_active_ago: Option<u64>,
 }
 
 pub(crate) fn map_backfill(
@@ -303,8 +339,54 @@ mod tests {
     };
 
     use super::{
-        MatrixOperation, SenderTrustUpgrades, map_raw_event, map_timeline_event, map_typing,
+        MatrixOperation, SenderTrustUpgrades, map_presence, map_raw_event, map_timeline_event,
+        map_typing,
     };
+    use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+
+    #[test]
+    fn 在线状态只认三种标准状态_读不出来的跳过() {
+        let raw = |json: &str| Raw::from_json_string(json.to_owned()).expect("原始 JSON 有效");
+        let events = [
+            raw(
+                r#"{"type":"m.presence","sender":"@ada:example.org","content":{"presence":"online","last_active_ago":0,"currently_active":true}}"#,
+            ),
+            raw(
+                r#"{"type":"m.presence","sender":"@bob:example.org","content":{"presence":"unavailable"}}"#,
+            ),
+            raw(
+                r#"{"type":"m.presence","sender":"@cy:example.org","content":{"presence":"offline","last_active_ago":1200000}}"#,
+            ),
+            raw(
+                r#"{"type":"m.presence","sender":"@dee:example.org","content":{"presence":"busy"}}"#,
+            ),
+            raw(r#"{"type":"m.presence","sender":"not a user","content":{"presence":"online"}}"#),
+            raw(r#"{"type":"m.presence","sender":"@eve:example.org","content":{}}"#),
+        ];
+        let presence = map_presence(&events);
+        let presence: Vec<_> = presence
+            .iter()
+            .map(|entry| {
+                (
+                    entry.user_id().as_str(),
+                    entry.state(),
+                    entry.last_active_ago_ms(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            presence,
+            [
+                ("@ada:example.org", MatrixPresenceState::Online, Some(0)),
+                ("@bob:example.org", MatrixPresenceState::Unavailable, None),
+                (
+                    "@cy:example.org",
+                    MatrixPresenceState::Offline,
+                    Some(1_200_000)
+                ),
+            ]
+        );
+    }
 
     #[test]
     fn 正在输入取这一段里最后一次的完整名单() {
