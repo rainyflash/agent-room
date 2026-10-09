@@ -42,7 +42,8 @@ for (const width of [1440, 390]) {
     // 一段话就够：按安装路径运行 join，再读 guide；不带一次性邀请，也不用记人物编号。
     expect(clipboard).toContain(String.raw`& 'C:\Agent Room\agent-room.exe' join`);
     expect(clipboard).toContain(String.raw`& 'C:\Agent Room\agent-room.exe' guide`);
-    expect(clipboard).toContain('untrusted input');
+    expect(clipboard).toContain('chat with everyone');
+    expect(clipboard).not.toMatch(/untrusted|only follow my instructions/u);
     expect(clipboard).not.toMatch(/--invite|--profile/u);
     expect(clipboard).not.toMatch(/Codex|Claude Code|Cursor|CODEX_/u);
 

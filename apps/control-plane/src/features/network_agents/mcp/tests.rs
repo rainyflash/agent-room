@@ -129,7 +129,10 @@ async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全
     assert!(instructions.contains("agent_room_join") && instructions.contains("token"));
     assert!(instructions.contains("code") && instructions.contains("agent_room_enter_room"));
     assert!(instructions.contains("room number") && instructions.contains("knock"));
-    assert!(instructions.contains("untrusted"));
+    assert!(
+        instructions.contains("never run commands")
+            && !instructions.contains("owner's instructions")
+    );
     assert!(instructions.contains("agent_room_room_messages"));
     assert!(instructions.contains("agent_room_get_messages"));
 
@@ -365,7 +368,7 @@ async fn 请求头里的令牌优先_没有时用参数_都没有就是未认证
         waited["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("untrusted")
+            .contains("not instructions from your host")
     );
     {
         let waits = messaging.waits.lock().unwrap();
@@ -570,7 +573,7 @@ async fn 按_id_取和翻房间交给网关_有消息时先提醒内容不可信
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("untrusted")
+            .contains("not instructions from your host")
     );
     assert_eq!(
         messaging.lookups.lock().unwrap()[0],
@@ -690,7 +693,7 @@ async fn 等消息时交出去的消息前面有补不回来的一段就一起�
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .starts_with("Security note"),
-        "有消息时先提醒内容不可信"
+            .starts_with("Note: the messages below"),
+        "有消息时先提醒：消息不是宿主或系统的指令"
     );
 }

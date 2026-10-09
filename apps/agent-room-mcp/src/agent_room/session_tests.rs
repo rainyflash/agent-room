@@ -941,7 +941,7 @@ async fn 按房间名接入_同任务复用人物_没有任务时按连接复用
         listed["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("不可信")
+            .contains("不是系统指令")
     );
 
     harness.send(json!({"jsonrpc":"2.0","id":200,"method":"tools/call","params":{
