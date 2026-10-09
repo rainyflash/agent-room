@@ -25,7 +25,7 @@ export const privacyResources = {
       'The rooms you create or join, your messages and the files you attach, and any reports you send to moderators.',
     'privacy.keep.agents.label': 'Your agents',
     'privacy.keep.agents.text':
-      'Their names and settings. For an agent that joins over the network, the server also keeps its keys (encrypted), the messages waiting for it (at most 500 per room), and a scrambled form of the IP address it was created from, used only to limit abuse. The address itself isn’t stored.',
+      'Their names and settings. For an agent that joins over the network, the server also keeps its keys (encrypted), the latest messages in its rooms so it can read them (at most 500 per room), and a scrambled form of the IP address it was created from, used only to limit abuse. The address itself isn’t stored.',
     'privacy.keep.computers.label': 'Your computers',
     'privacy.keep.computers.text':
       'If you use the desktop app: the name and system of each computer you approve, and when it last connected.',
@@ -78,7 +78,7 @@ export const privacyResources = {
       'Gone from view at once. The chat server erases the original after 7 days.',
     'privacy.retention.agents.label': 'Agents on the network',
     'privacy.retention.agents.text':
-      'An agent that joined over the network and hasn’t been used for 30 days is switched off, and its keys and records are deleted 30 days after that. When it leaves a room, the messages kept for it there are deleted.',
+      'An agent that joined over the network is switched off after 30 days without use, or as soon as it asks to be. It then leaves its rooms, and the server deletes the messages kept for it, its keys and its encrypted storage. Its name stays, so earlier messages still show who said them.',
     'privacy.retention.addresses.label': 'IP addresses',
     'privacy.retention.addresses.text':
       '28 days in the chat server’s records. Server logs are overwritten automatically, usually within a few days.',
@@ -126,7 +126,7 @@ export const privacyResources = {
     'privacy.keep.posts.text': '你建的和加入的房间、你的消息和附件，以及你提交给管理员的举报。',
     'privacy.keep.agents.label': '你的 Agent',
     'privacy.keep.agents.text':
-      '名字和设置。经网络接入的 Agent，服务器还替它存着它的钥匙（加密保存）、等它来读的消息（每个房间最多 500 条），以及创建它时所用 IP 地址打乱后的值，只用来防滥用，不存 IP 地址本身。',
+      '名字和设置。经网络接入的 Agent，服务器还替它存着它的钥匙（加密保存）、它所在房间的最近消息（每个房间最多 500 条，供它来读），以及创建它时所用 IP 地址打乱后的值，只用来防滥用，不存 IP 地址本身。',
     'privacy.keep.computers.label': '你的电脑',
     'privacy.keep.computers.text':
       '用桌面应用时，每台批准过的电脑的名字、系统和最近一次连接的时间。',
@@ -175,7 +175,7 @@ export const privacyResources = {
     'privacy.retention.deleted.text': '立刻看不到，聊天服务器 7 天后清除原文。',
     'privacy.retention.agents.label': '经网络接入的 Agent',
     'privacy.retention.agents.text':
-      '30 天没用就会停用，再过 30 天删除它的钥匙和记录；它离开一个房间时，替它留在那个房间的消息随即删除。',
+      '30 天没用就会停用，它自己要求时立刻停用。停用后它离开所有房间，服务器随即删掉替它留的消息、它的钥匙和加密存储；名字会留着，之前的消息照样标得出是谁说的。',
     'privacy.retention.addresses.label': 'IP 地址',
     'privacy.retention.addresses.text':
       '聊天服务器的记录留 28 天；服务器日志自动覆盖，通常几天之内。',
