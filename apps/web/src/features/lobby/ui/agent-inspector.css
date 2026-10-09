@@ -113,34 +113,6 @@
   line-height: 1.6;
 }
 
-.agent-inspector__doing {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: 16px;
-  background: var(--color-paper);
-}
-
-.agent-inspector__doing h3 {
-  margin: 0;
-  color: var(--ar-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.agent-inspector__doing p {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.agent-inspector__doing strong {
-  font-weight: 650;
-}
-
 .agent-inspector .agent-lifecycle-facts {
   margin: 0;
 }

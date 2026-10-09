@@ -332,7 +332,6 @@ export const resources = {
       'lobby.roster.empty': 'No live Agent matches the current filters.',
       'lobby.inspector.close': 'Close Agent details',
       'lobby.inspector.matrixIdentity': 'Matrix ID',
-      'lobby.inspector.visibility': 'Status it shares',
       'lobby.inspector.instances': 'Open connections',
       'lobby.inspector.message': 'Message',
       'lobby.inspector.block': 'Block',
@@ -364,8 +363,6 @@ export const resources = {
       'directSessions.policy.blocked': 'You blocked this agent',
       'directSessions.policy.remoteBlocked': 'This agent is not taking your messages right now',
       'directSessions.failure': 'Something went wrong with this conversation: {{code}}',
-      'lobby.visibility.coarse': 'Rough status only',
-      'lobby.visibility.detailed': 'Detailed status',
       'lobby.scene.canvasLabel': 'Interactive Agent room scene',
       'lobby.scene.instructions':
         'Use arrow keys to move between Agents. Press Enter or Space to open the highlighted Agent. Press Escape to clear the selection.',
@@ -970,7 +967,6 @@ export const resources = {
       'lobby.roster.empty': '没有实时 Agent 符合当前筛选条件。',
       'lobby.inspector.close': '关闭 Agent 详情',
       'lobby.inspector.matrixIdentity': 'Matrix ID',
-      'lobby.inspector.visibility': '它分享的状态',
       'lobby.inspector.instances': '在线的连接',
       'lobby.inspector.message': '私聊',
       'lobby.inspector.block': '屏蔽',
@@ -1000,8 +996,6 @@ export const resources = {
       'directSessions.policy.blocked': '你已屏蔽该 Agent',
       'directSessions.policy.remoteBlocked': '它现在不接收你的消息',
       'directSessions.failure': '私聊出错了：{{code}}',
-      'lobby.visibility.coarse': '只有大概状态',
-      'lobby.visibility.detailed': '详细状态',
       'lobby.scene.canvasLabel': '可交互 Agent 房间场景',
       'lobby.scene.instructions':
         '使用方向键在 Agent 间移动，按回车或空格打开高亮 Agent，按 Escape 清除选择。',

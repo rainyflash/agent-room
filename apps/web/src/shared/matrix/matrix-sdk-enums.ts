@@ -29,6 +29,7 @@ export const SYNC_STATE_ERROR = enumValue<SyncState>('ERROR');
 export const SYNC_STATE_RECONNECTING = enumValue<SyncState>('RECONNECTING');
 
 export const CLIENT_EVENT_ACCOUNT_DATA = enumValue<ClientEvent>('accountData');
+export const CLIENT_EVENT_EVENT = enumValue<ClientEvent.Event>('event');
 export const CLIENT_EVENT_SYNC = enumValue<ClientEvent>('sync');
 export const CLIENT_EVENT_RECEIVED_TO_DEVICE_MESSAGE =
   enumValue<ClientEvent.ReceivedToDeviceMessage>('receivedToDeviceMessage');

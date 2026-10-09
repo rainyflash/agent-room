@@ -11,13 +11,16 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { filterLobbyAgents } from '@/features/lobby/domain/agent-roster';
-import {
-  lobbyAgentStatuses,
-  type LobbyAgent,
-  type LobbyAgentStatus,
-} from '@/features/lobby/domain/lobby';
+import type { LobbyAgent } from '@/features/lobby/domain/lobby';
 import { AgentPortrait } from './room-illustration';
-import { agentLifecycle, agentRosterGroup, agentRosterGroups } from '../domain/agent-attendance';
+import {
+  agentLifecycle,
+  agentRosterGroup,
+  agentRosterGroups,
+  agentStateKey,
+  agentStateKeys,
+  type AgentStateKey,
+} from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
 import { useNetworkAgentIds, useNetworkAgentLabel } from './network-agent-labels';
 import './agent-roster.css';
@@ -60,7 +63,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
       () => projectTags(agents, personal?.snapshot.index ?? null),
       [agents, personal?.snapshot.index],
     );
-    const [status, setStatus] = useState<LobbyAgentStatus | 'all'>('all');
+    const [state, setState] = useState<AgentStateKey | 'all'>('all');
     const [archiveView, setArchiveView] = useState(false);
     const [page, setPage] = useState(0);
     const archivedCount = agents.filter(
@@ -71,10 +74,11 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
         organizeAgents(
           filterLobbyAgents(
             agents.filter(
-              (agent) => agentLifecycle(agent, observedAtUnixMs).archived === archiveView,
+              (agent) =>
+                agentLifecycle(agent, observedAtUnixMs).archived === archiveView &&
+                (state === 'all' || agentStateKey(agent, observedAtUnixMs) === state),
             ),
             deferredQuery,
-            status,
           ),
           personal?.snapshot.index ?? null,
           collection,
@@ -83,14 +87,14 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
           (a, b) =>
             agentRosterGroups.indexOf(agentRosterGroup(a, observedAtUnixMs)) -
               agentRosterGroups.indexOf(agentRosterGroup(b, observedAtUnixMs)) ||
-            (agentLifecycle(a, observedAtUnixMs).connection === 'offline'
-              ? (b.lastActiveAtUnixMs ?? 0) - (a.lastActiveAtUnixMs ?? 0)
-              : 0),
+            // 离线的按离线时刻排，最近离线的在前。名片的时间是进房间那一刻，不能拿来排。
+            (agentLifecycle(b, observedAtUnixMs).offlineSinceUnixMs ?? 0) -
+              (agentLifecycle(a, observedAtUnixMs).offlineSinceUnixMs ?? 0),
         ),
       [
         agents,
         deferredQuery,
-        status,
+        state,
         personal?.snapshot.index,
         collection,
         projectTag,
@@ -167,20 +171,18 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
               onChange={(event) => {
                 const value = event.currentTarget.value;
                 setPage(0);
-                if (value === 'all') setStatus(value);
+                if (value === 'all') setState(value);
                 else {
-                  const found = lobbyAgentStatuses.find((item) => item === value);
-                  if (found) setStatus(found);
+                  const found = agentStateKeys.find((item) => item === value);
+                  if (found) setState(found);
                 }
               }}
-              value={status}
+              value={state}
             >
               <option value="all">{t('lobby.status.all')}</option>
-              {(
-                ['working', 'waiting_input', 'blocked', 'idle', 'completed', 'offline'] as const
-              ).map((agentStatus) => (
-                <option key={agentStatus} value={agentStatus}>
-                  {t(`lobby.status.${agentStatus}`)}
+              {agentStateKeys.map((key) => (
+                <option key={key} value={key}>
+                  {t(`agentState.${key}`)}
                 </option>
               ))}
             </select>
@@ -262,7 +264,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   }}
                   type="button"
                 >
-                  <span className={`roster-agent__signal roster-agent__signal--${agent.status}`}>
+                  <span className="roster-agent__signal">
                     <AgentPortrait id={agent.agentId} />
                   </span>
                   <span className="roster-agent__identity">
@@ -281,10 +283,9 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                       ) : null}
                     </strong>
                     <AgentStateLabel agent={agent} now={observedAtUnixMs} />
-                    <span className="roster-agent__work">{t(`lobby.status.${agent.status}`)}</span>
                   </span>
+                  {/* 名单上只说在不在等消息，不再说工作状态和任务摘要（specs/agent-liveness）。 */}
                   <span className="roster-agent__summary">
-                    {agent.summary ?? t(`lobby.status.${agent.status}`)}
                     {(personal?.snapshot.index.tags.get(agent.agentId)?.length ?? 0) > 0 ? (
                       <span className="roster-agent__tags">
                         {personal?.snapshot.index.tags.get(agent.agentId)?.join(' · ')}

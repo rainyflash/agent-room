@@ -1,5 +1,5 @@
 import type { Result } from '@/shared/result';
-import type { AgentLifecycle } from '@agent-room/protocol';
+import type { AgentLifecycle, MatrixPresenceObservation } from '@agent-room/protocol';
 
 export const lobbyAgentStatuses = [
   'offline',
@@ -23,11 +23,18 @@ export type LobbyAgent = {
   readonly status: LobbyAgentStatus;
   readonly statusExpiresAtUnixMs: number;
   readonly reportedStatus?: LobbyAgentStatus;
+  /** 状态事件的时间；名片就是写名片的时间，不是上次连接。 */
   readonly lastActiveAtUnixMs?: number;
   readonly lastPolledAtUnixMs?: number;
   readonly listeningUntilUnixMs?: number | null;
+  /**
+   * `presence`：状态事件只是名片，在不在线、在不在等消息看 Matrix 的在线状态
+   * （`specs/agent-liveness/design.md`）。不写就是旧的租约写法。
+   */
+  readonly liveness?: 'presence';
+  /** 名片 Agent 的 Matrix 在线状态；还没拿到就不写。 */
+  readonly presence?: MatrixPresenceObservation;
   readonly lifecycle?: AgentLifecycle;
-  readonly summary?: string;
   readonly trust: LobbyAgentTrust;
   readonly visibility: LobbyAgentVisibility;
 };

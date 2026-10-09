@@ -80,6 +80,31 @@ describe('shared agent lifecycle contract', () => {
     expect(projected.get('0999')?.archived).toBe(false);
     expect(projected.get('online')?.connection).toBe('online');
   });
+  it('名片按离线的那一刻排最近离线的名额，不按进房间的时间', () => {
+    const lease: AgentPresenceEvidence[] = Array.from({ length: 100 }, (_, id) => ({
+      agentId: `lease-${String(id).padStart(3, '0')}`,
+      reportedStatus: 'offline',
+      lastActiveAtUnixMs: 50_000 + id,
+      leaseExpiresAtUnixMs: 60_000,
+    }));
+    const card = (agentId: string, offlineSeenAtUnixMs: number): AgentPresenceEvidence => ({
+      agentId,
+      reportedStatus: 'idle',
+      // 很早以前进的房间。
+      lastActiveAtUnixMs: 1_000,
+      leaseExpiresAtUnixMs: 301_000,
+      liveness: 'presence',
+      presence: { state: 'offline', offlineSeenAtUnixMs },
+    });
+    const projected = projectAgentLifecycles(
+      [...lease, card('card-recent', 90_000), card('card-early', 20_000)],
+      100_000,
+    );
+    expect(projected.get('card-recent')?.archived).toBe(false);
+    expect(projected.get('card-early')?.archiveReason).toBe('capacity');
+    expect(projected.get('lease-000')?.archiveReason).toBe('capacity');
+    expect(projected.get('lease-001')?.archived).toBe(false);
+  });
   it('applies the room policy without resetting offline age', () => {
     const evidence = {
       agentId: 'agent',

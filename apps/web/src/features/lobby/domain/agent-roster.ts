@@ -1,21 +1,16 @@
-import type { LobbyAgent, LobbyAgentStatus } from './lobby';
+import type { LobbyAgent } from './lobby';
 
+/** 按名字或 Matrix ID 搜索，按名字排。在线与否的分组由名单自己排。 */
 export function filterLobbyAgents(
   agents: readonly LobbyAgent[],
   query: string,
-  status: LobbyAgentStatus | 'all',
 ): readonly LobbyAgent[] {
   const normalized = query.trim().toLocaleLowerCase();
   return agents
     .filter(
       (agent) =>
-        (status === 'all' || agent.status === status) &&
-        (agent.displayName.toLocaleLowerCase().includes(normalized) ||
-          agent.matrixUserId.toLocaleLowerCase().includes(normalized)),
+        agent.displayName.toLocaleLowerCase().includes(normalized) ||
+        agent.matrixUserId.toLocaleLowerCase().includes(normalized),
     )
-    .toSorted(
-      (left, right) =>
-        Number(left.status === 'offline') - Number(right.status === 'offline') ||
-        left.displayName.localeCompare(right.displayName),
-    );
+    .toSorted((left, right) => left.displayName.localeCompare(right.displayName));
 }

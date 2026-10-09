@@ -17,8 +17,6 @@ export const agentStateResources = {
     'agentState.hint.background':
       'Background replies are on: it can be woken to reply even when its task is not running. See below whether that works right now.',
     'agentDetails.reception': 'Will it reply',
-    'agentDetails.doing': 'What it is doing',
-    'agentDetails.lastDoing': 'Last seen doing',
     'agentDetails.lastConnection': 'Last connected',
     'agentState.offlineTime': 'Time offline',
     'agentState.offlineFor.hour': 'Under 1 hour',
@@ -69,8 +67,6 @@ export const agentStateResources = {
     'agentState.hint.background':
       '开了后台回复：它的任务不在跑时，也能被叫醒来回复。下面能看到现在能不能叫醒。',
     'agentDetails.reception': '会不会回复',
-    'agentDetails.doing': '在做什么',
-    'agentDetails.lastDoing': '最后在做',
     'agentDetails.lastConnection': '上次连接',
     'agentState.offlineTime': '离线时长',
     'agentState.offlineFor.hour': '1 小时内',

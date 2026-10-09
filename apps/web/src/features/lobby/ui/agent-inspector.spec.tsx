@@ -12,10 +12,16 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
 const NOW = Date.UTC(2026, 8, 30, 8, 0);
 
-const base: LobbyAgent = {
+const identity = {
   agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
   displayName: 'Scout',
   instanceIds: ['a', 'b'],
+  matrixUserId: '@scout:agent-room.test',
+  trust: 'unknown',
+} as const;
+
+const base: LobbyAgent = {
+  ...identity,
   lastActiveAtUnixMs: NOW - 60_000,
   lifecycle: {
     archiveReason: null,
@@ -24,14 +30,23 @@ const base: LobbyAgent = {
     offlineSinceUnixMs: null,
     reception: 'waiting',
   },
-  matrixUserId: '@scout:agent-room.test',
   status: 'working',
   statusExpiresAtUnixMs: NOW + 60_000,
-  trust: 'unknown',
   visibility: 'detailed',
 };
 
-const online: LobbyAgent = { ...base, summary: 'Reviewing the release checklist' };
+const online: LobbyAgent = base;
+
+/** 写名片的 Agent：在线与否看 Matrix 的在线状态，名片是一周前进房间时写的。 */
+const card: LobbyAgent = {
+  ...identity,
+  lastActiveAtUnixMs: NOW - 7 * 86_400_000 + 3_600_000,
+  liveness: 'presence',
+  presence: { state: 'online' },
+  status: 'idle',
+  statusExpiresAtUnixMs: NOW - 7 * 86_400_000 + 3_600_000 + 300_000,
+  visibility: 'coarse',
+};
 
 const offline: LobbyAgent = {
   ...base,
@@ -73,7 +88,7 @@ function renderInspector(agent: LobbyAgent) {
 }
 
 describe('人物详情', () => {
-  it('先是私聊和屏蔽，再说它会不会回复、在做什么', () => {
+  it('先是私聊和屏蔽，再说它会不会回复；不说工作状态', () => {
     const { onBlock, onMessage } = renderInspector(online);
 
     const panel = screen.getByRole('complementary', { name: 'Scout' });
@@ -89,9 +104,8 @@ describe('人物详情', () => {
     expect(within(panel).getByRole('region', { name: 'Will it reply' })).toHaveTextContent(
       'It is waiting for new messages and will see yours right away.',
     );
-    const doing = within(panel).getByRole('region', { name: 'What it is doing' });
-    expect(doing).toHaveTextContent('Working');
-    expect(doing).toHaveTextContent('Reviewing the release checklist');
+    expect(panel).not.toHaveTextContent('Working');
+    expect(panel).not.toHaveTextContent('Status it shares');
   });
 
   it('不再写死“信任：未验证”；Matrix ID 和连接数收在“身份与连接”里', () => {
@@ -105,14 +119,37 @@ describe('人物详情', () => {
     expect(details).toHaveTextContent('Open connections2');
   });
 
-  it('离线又没说过在做什么时，不重复“离线”，只说离线多久', () => {
+  it('离线时不重复“离线”，只说离线多久', () => {
     renderInspector(offline);
 
     expect(screen.getByRole('button', { name: 'Leave a message' })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'What it is doing' })).not.toBeInTheDocument();
     expect(screen.getByText('Time offline').nextElementSibling).toHaveTextContent('1–24 hours');
     expect(screen.getByRole('region', { name: 'Will it reply' })).toHaveTextContent(
       'It is offline.',
+    );
+  });
+
+  it('名片在线时不把进房间的时间当成上次连接', () => {
+    renderInspector(card);
+
+    expect(screen.getByRole('region', { name: 'Will it reply' })).toHaveTextContent(
+      'It is waiting for new messages and will see yours right away.',
+    );
+    expect(screen.queryByText('Last connected')).not.toBeInTheDocument();
+  });
+
+  it('名片离线时，上次连接是它离线的那一刻', () => {
+    const offlineAt = NOW - 30 * 60_000;
+    renderInspector({ ...card, presence: { state: 'offline', offlineSeenAtUnixMs: offlineAt } });
+
+    expect(screen.getByText('Time offline').nextElementSibling).toHaveTextContent('Under 1 hour');
+    expect(screen.getByText('Last connected').nextElementSibling).toHaveTextContent(
+      new Intl.DateTimeFormat('en', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(offlineAt),
     );
   });
 });

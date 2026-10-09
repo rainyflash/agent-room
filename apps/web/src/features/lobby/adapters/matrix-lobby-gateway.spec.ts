@@ -1,3 +1,4 @@
+import type { MatrixPresenceObservation } from '@agent-room/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MatrixLobbyGateway } from './matrix-lobby-gateway';
@@ -72,7 +73,6 @@ describe('MatrixLobbyGateway', () => {
           archived: false,
           archiveReason: null,
         },
-        summary: '等待仓库权限',
         trust: 'unknown',
         visibility: 'detailed',
       },
@@ -270,6 +270,71 @@ describe('MatrixLobbyGateway', () => {
     });
   });
 
+  it.each([
+    [{ state: 'online' }, 'online', 'waiting', 'idle'],
+    [{ state: 'unavailable' }, 'online', 'on_resume', 'idle'],
+    [{ state: 'offline' }, 'offline', 'unavailable', 'offline'],
+    [undefined, 'offline', 'unavailable', 'offline'],
+  ] as const)(
+    '名片不看租约，按 Matrix 在线状态判断：%o',
+    (presence, connection, reception, status) => {
+      const room = {
+        ...snapshot([cardState('1')]),
+        ...(presence === undefined ? {} : { presence: new Map([[MATRIX_USER_ID, presence]]) }),
+      };
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+        room.roomId,
+      );
+      if (!result.ok) throw new Error(result.error.code);
+      expect(result.value.agents).toHaveLength(1);
+      expect(result.value.agents[0]).toMatchObject({
+        liveness: 'presence',
+        status,
+        lifecycle: { connection, reception },
+      });
+      expect(result.value.agents[0]?.presence).toEqual(presence);
+    },
+  );
+
+  it('离线的名片从看到它离线的那一刻算，没看到就用上次活动，都不早于名片', () => {
+    const read = (presence: MatrixPresenceObservation) => {
+      const room = {
+        ...snapshot([cardState('1')]),
+        presence: new Map([[MATRIX_USER_ID, presence]]),
+      };
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+        room.roomId,
+      );
+      if (!result.ok) throw new Error(result.error.code);
+      return result.value.agents[0]?.lifecycle?.offlineSinceUnixMs;
+    };
+    expect(read({ state: 'offline', offlineSeenAtUnixMs: NOW - 60_000 })).toBe(NOW - 60_000);
+    expect(read({ state: 'offline', lastActiveAtUnixMs: NOW - 3_600_000 })).toBe(NOW - 3_600_000);
+    expect(read({ state: 'offline', lastActiveAtUnixMs: 0 })).toBe(CARD_CREATED_AT);
+  });
+
+  it('同一个 Agent 的旧租约实例过期了、名片在线时，以名片为准', () => {
+    const expired = statusState({
+      createdAt: '2026-08-24T15:50:00.000Z',
+      instanceSuffix: '1',
+      leaseExpiresAt: '2026-08-24T15:55:00.000Z',
+      status: 'working',
+    });
+    const room = {
+      ...snapshot([expired, cardState('2')]),
+      presence: new Map([[MATRIX_USER_ID, { state: 'online' } as const]]),
+    };
+    const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+      room.roomId,
+    );
+    if (!result.ok) throw new Error(result.error.code);
+    expect(result.value.agents[0]).toMatchObject({
+      instanceIds: ['01990d9e-8400-7000-8000-000000000012'],
+      liveness: 'presence',
+      lifecycle: { connection: 'online', reception: 'waiting' },
+    });
+  });
+
   it('离线实例和发布时刻之后的收取时间不能证明仍在接待', () => {
     const room = snapshot([
       statusState({
@@ -292,6 +357,35 @@ describe('MatrixLobbyGateway', () => {
     expect(result.value.agents[0]?.lastPolledAtUnixMs).toBeUndefined();
   });
 });
+
+/** 名片是四天前进房间时写的，租约是名义上的 5 分钟。 */
+const CARD_CREATED_AT = Date.parse('2026-08-20T16:00:00.000Z');
+
+/** 名片：只说“这是谁”，必填的几项照旧带上，好让旧版也认得。 */
+function cardState(instanceSuffix: string): MatrixLobbyStateEvent & { content: unknown } {
+  const instanceId = `01990d9e-8400-7000-8000-00000000001${instanceSuffix}`;
+  return {
+    content: {
+      actor: {
+        agent: { agentId: AGENT_ID, displayName: '构建助手', matrixUserId: MATRIX_USER_ID },
+        instanceId,
+        provenance: 'autonomous_agent',
+      },
+      correlationId: '01990d9e-8400-7000-8000-000000000090',
+      createdAt: new Date(CARD_CREATED_AT).toISOString(),
+      eventType: 'io.github.rainyflash.agentroom.agent.status.v1',
+      id: `01990d9e-8400-7000-8000-00000000002${instanceSuffix}`,
+      leaseExpiresAt: new Date(CARD_CREATED_AT + 300_000).toISOString(),
+      liveness: 'presence',
+      schemaVersion: '1.0',
+      signature: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      status: 'idle',
+      visibility: 'coarse',
+    },
+    sender: MATRIX_USER_ID,
+    stateKey: instanceId,
+  };
+}
 
 function source(read: MatrixLobbySourceRead): MatrixLobbySource {
   return {
