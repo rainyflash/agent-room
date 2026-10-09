@@ -417,7 +417,7 @@ impl ModerationService {
         const OPERATION: &str = "moderation.reverse_action";
         let now = self.clock.now();
         require_recent_actor(&request.actor, now, request.impact_acknowledged, OPERATION)?;
-        let mut action = self
+        let action = self
             .repository
             .find_action(request.action_id)
             .await
@@ -435,6 +435,10 @@ impl ModerationService {
                 OPERATION,
             )
             .await?;
+        // 撤禁言先看这个人此刻该不该禁着：还有别的禁言在生效时不解，私人房间看他此刻的发言权。
+        if action.kind() == ModerationActionKind::Mute {
+            return self.reverse_mute(action, OPERATION).await;
+        }
         // 撤销照当下的分片重新找：隐藏回到消息所在的分片，管人的动作在每个活跃分片上撤。
         let rooms = self
             .effect_rooms(&context, action.kind(), action.target(), OPERATION)
@@ -444,26 +448,43 @@ impl ModerationService {
             .await
             .is_err()
         {
-            let audit = self.action_audit(
-                &action,
-                "moderation.action.reverse_failed",
-                ModerationAuditOutcome::Failed,
-                self.identifiers.moderation_audit_event_id(),
-                self.clock.now(),
-                OPERATION,
-            )?;
-            self.repository
-                .append_audit(&audit)
-                .await
-                .map_err(|error| repository_failure(OPERATION, &error))?;
-            return Err(failure(
-                OPERATION,
-                ModerationFailureKind::DependencyUnavailable,
-            ));
+            return Err(self.reverse_failed(&action, OPERATION).await);
         }
+        self.record_reversed(action, OPERATION).await
+    }
+
+    /// 撤回时 Matrix 没撤成：写一条 `moderation.action.reverse_failed`，照实报依赖不可用。
+    pub(super) async fn reverse_failed(
+        &self,
+        action: &ModerationAction,
+        operation: &'static str,
+    ) -> ModerationFailure {
+        let audit = match self.action_audit(
+            action,
+            "moderation.action.reverse_failed",
+            ModerationAuditOutcome::Failed,
+            self.identifiers.moderation_audit_event_id(),
+            self.clock.now(),
+            operation,
+        ) {
+            Ok(audit) => audit,
+            Err(failure) => return failure,
+        };
+        match self.repository.append_audit(&audit).await {
+            Ok(()) => failure(operation, ModerationFailureKind::DependencyUnavailable),
+            Err(error) => repository_failure(operation, &error),
+        }
+    }
+
+    /// 副作用撤完以后记成撤回，写 `moderation.action.reversed`。
+    pub(super) async fn record_reversed(
+        &self,
+        mut action: ModerationAction,
+        operation: &'static str,
+    ) -> ModerationResult<ModerationAction> {
         action
             .reverse(self.clock.now())
-            .map_err(|_| failure(OPERATION, ModerationFailureKind::Conflict))?;
+            .map_err(|_| failure(operation, ModerationFailureKind::Conflict))?;
         let correlation_id = self.identifiers.moderation_audit_event_id();
         let audit = self.action_audit(
             &action,
@@ -471,11 +492,11 @@ impl ModerationService {
             ModerationAuditOutcome::Allowed,
             correlation_id,
             self.clock.now(),
-            OPERATION,
+            operation,
         )?;
         match self.repository.finalize_action(&action, &audit).await {
             Ok(reversed) => Ok(reversed),
-            Err(error) => self.ended_meanwhile(action.id(), &error, OPERATION).await,
+            Err(error) => self.ended_meanwhile(action.id(), &error, operation).await,
         }
     }
 
