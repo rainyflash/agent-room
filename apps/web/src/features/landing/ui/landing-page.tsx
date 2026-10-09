@@ -5,6 +5,7 @@ import { ArrowRight, Download, Eye, Laptop, MessagesSquare, Smartphone } from 'l
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
+import { AccountDeletedNotice } from '@/features/account/ui/account-deleted-notice';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
@@ -73,6 +74,7 @@ export function LandingPage() {
           ) : null}
         </div>
       </header>
+      <AccountDeletedNotice />
       <section className="landing__hero">
         <motion.div
           className="landing__copy"

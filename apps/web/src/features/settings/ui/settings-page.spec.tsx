@@ -132,7 +132,7 @@ function renderSettings(node: ReactNode, gateway?: DesktopRuntimeGateway) {
 }
 
 describe('设置', () => {
-  it('网页端分通用、安全、关于三节；当前一节标成当前页', () => {
+  it('网页端分通用、账户、安全、关于四节；当前一节标成当前页', () => {
     renderSettings(
       <SettingsLayout section="general">
         <SettingsSectionContent section="general" />
@@ -144,7 +144,7 @@ describe('设置', () => {
       within(nav)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['General', 'Security', 'About']);
+    ).toEqual(['General', 'Account', 'Security', 'About']);
     expect(within(nav).getByRole('link', { name: 'General' })).toHaveAttribute(
       'aria-current',
       'page',
