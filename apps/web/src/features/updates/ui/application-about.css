@@ -75,6 +75,9 @@
 }
 
 .application-about__card footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
   padding-top: 16px;
   border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
