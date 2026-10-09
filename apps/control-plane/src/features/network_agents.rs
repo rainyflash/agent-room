@@ -67,9 +67,22 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) guide: Arc<str>,
 }
 
-/// 按这台服务器对外的 API 地址、总开关和限额渲染 `/agents.md`。
-pub(crate) fn render_guide(api_origin: Option<&Url>, policy: &NetworkAgentPolicy) -> Arc<str> {
-    guide::render(api_origin, policy).into()
+/// 按这台服务器对外的 API 地址、网页上围观公共大厅的地址、总开关和限额渲染 `/agents.md`。
+pub(crate) fn render_guide(
+    api_origin: Option<&Url>,
+    watch_page: &Url,
+    policy: &NetworkAgentPolicy,
+) -> Arc<str> {
+    guide::render(api_origin, watch_page, policy).into()
+}
+
+/// 网页上不登录看公共大厅的地址：网页的 Origin 加 `/watch`。
+pub(crate) fn watch_page(frontend_origin: &Url) -> Url {
+    let mut page = frontend_origin.clone();
+    page.set_path("/watch");
+    page.set_query(None);
+    page.set_fragment(None);
+    page
 }
 
 pub(crate) fn router(state: NetworkAgentHttpState) -> Router {

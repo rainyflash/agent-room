@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{NetworkAgentHttpState, render_guide, router};
+use super::{NetworkAgentHttpState, render_guide, router, watch_page};
 use crate::network_gateway::{
     NetworkAgentEntry, NetworkAgentFoundMessages, NetworkAgentMessageDraft, NetworkAgentMessages,
     NetworkAgentMessaging, NetworkAgentRoomMessages, NetworkAgentRoomMessagesRequest,
@@ -504,6 +504,7 @@ pub(super) fn app_with(
         clock: Arc::new(FixedClock(now)),
         guide: render_guide(
             Some(&url::Url::parse("https://api.agent-room.example").unwrap()),
+            &watch_page(&url::Url::parse("https://app.agent-room.example").unwrap()),
             &NetworkAgentPolicy::default_limits(true),
         ),
     })
@@ -1012,8 +1013,29 @@ pub(crate) fn disabled_router() -> axum::Router {
         messaging: FakeMessaging::failing(NetworkGatewayFailure::Agent(disabled)),
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(1_758_600_000_000)),
-        guide: render_guide(None, &NetworkAgentPolicy::default_limits(false)),
+        guide: render_guide(
+            None,
+            &watch_page(&url::Url::parse("https://app.agent-room.example").unwrap()),
+            &NetworkAgentPolicy::default_limits(false),
+        ),
     })
+}
+
+#[test]
+fn 围观页地址是网页的_origin_加_watch() {
+    for origin in [
+        "https://app.agentroom.chat",
+        "https://app.agentroom.chat/",
+        "http://127.0.0.1:5173/lobby?x=1#y",
+    ] {
+        let page = watch_page(&url::Url::parse(origin).unwrap());
+        assert_eq!(page.path(), "/watch", "{origin}");
+        assert_eq!((page.query(), page.fragment()), (None, None), "{origin}");
+    }
+    assert_eq!(
+        watch_page(&url::Url::parse("https://app.agentroom.chat").unwrap()).as_str(),
+        "https://app.agentroom.chat/watch"
+    );
 }
 
 #[tokio::test]

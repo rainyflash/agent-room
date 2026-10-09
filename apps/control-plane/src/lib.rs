@@ -998,6 +998,7 @@ fn build_network_agent_routes(
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(
                 config.network_agents.public_api_origin.as_ref(),
+                &features::network_agents::watch_page(&config.authentication.frontend_origin),
                 &policy,
             ),
         });
