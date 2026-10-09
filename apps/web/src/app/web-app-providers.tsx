@@ -35,6 +35,7 @@ import { MatrixRoomKeyResponder } from '@/features/messages/adapters/matrix-room
 import { RoomKeyRecoveryProvider } from '@/features/messages/ui/room-key-recovery-context';
 import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
+import { ControlPlaneAccountClient } from '@/features/account/adapters/control-plane-account-client';
 import { MatrixAccountPreferencesGateway } from '@/features/preferences/adapters/matrix-account-preferences-gateway';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -190,6 +191,7 @@ export function createCloudRuntime(
     new BrowserDirectBlockRegistry(window.localStorage),
   );
   const services: AppServices = {
+    account: new ControlPlaneAccountClient(businessApi),
     receptionOwnership: new ReceptionOwnershipClient(businessApi),
     accessManagement: new ControlPlaneAccessManagementClient(businessApi),
     agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),

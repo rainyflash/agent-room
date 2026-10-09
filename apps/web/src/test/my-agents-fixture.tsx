@@ -309,7 +309,7 @@ const gateway: DesktopRuntimeGateway = {
   subscribe: () => ready(() => undefined),
 };
 
-// ?settings=general|this-computer|about 显示设置页的这一节（安全一节有自己的测试页）。
+// ?settings=general|account|this-computer|about 显示设置页的这一节（安全一节有自己的测试页）。
 const settingsSection = new URLSearchParams(location.search).get('settings');
 
 function AuthenticatedMyAgentsFixture() {
@@ -357,6 +357,10 @@ async function bootstrapFixture() {
   );
   const services = {
     ...runtime.services,
+    account: {
+      exportData: () => ready({ fileName: 'agent-room-account-fixture.json', json: '{}\n' }),
+      requestDeletion: () => ready(undefined),
+    },
     receptionOwnership: {
       list: () => ready({ receptions: ownershipRecords, limited: false }),
       transfer: unavailable,

@@ -8,6 +8,7 @@ const surfaces = [
   ['security', '/e2e/fixtures/security-center.html'],
   ['my-agents-desktop', '/e2e/fixtures/my-agents.html'],
   ['settings-general', '/e2e/fixtures/my-agents.html?settings=general'],
+  ['settings-account', '/e2e/fixtures/my-agents.html?settings=account'],
 ] as const;
 
 for (const width of [1440, 390]) {
@@ -39,6 +40,27 @@ for (const width of [1440, 390]) {
       });
     });
   }
+  test(`设置 · 账户：${String(width)}px 删除账户要勾选并输入 DELETE`, async ({ page }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    // 网页端：桌面端夹具会弹“有新版本”的提示，在手机宽度上盖住按钮。
+    await page.goto('/e2e/fixtures/my-agents.html?browser&settings=account');
+    const content = page.getByRole('region', { name: 'Account', exact: true });
+    await expect(content.getByRole('button', { name: 'Download', exact: true })).toBeVisible();
+    await content.getByRole('button', { name: 'Delete account…' }).click();
+    const confirm = content.getByRole('button', { name: 'Delete my account' });
+    await expect(confirm).toBeDisabled();
+    await content.getByRole('checkbox').check();
+    await content.getByRole('textbox', { name: 'Type DELETE to confirm' }).fill('DELETE');
+    await expect(confirm).toBeEnabled();
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(scan.violations.map(({ id }) => id)).toEqual([]);
+    expect(failures).toEqual([]);
+  });
   test(`设置 · 这台电脑：${String(width)}px 有新版本、自动打开与更新`, async ({
     page,
   }, testInfo) => {

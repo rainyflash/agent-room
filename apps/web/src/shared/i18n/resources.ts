@@ -1,3 +1,4 @@
+import { accountResources } from '@/features/account/i18n/account-resources';
 import { agentInviteResources } from '@/features/desktop/i18n/agent-invite-resources';
 import { receptionResources } from '@/features/desktop/i18n/reception-resources';
 import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
@@ -656,6 +657,7 @@ export const resources = {
         'The network is offline. This request was not queued for blind replay.',
       'pwa.writeBlocked.update_required':
         'A newer runtime is waiting. Apply it before sending with the current protocol.',
+      ...accountResources.en,
       ...automationResources.en,
       ...agentInviteResources.en,
       ...receptionResources.en,
@@ -1249,6 +1251,7 @@ export const resources = {
       'pwa.writeBlocked.title': '只读安全模式',
       'pwa.writeBlocked.offline': '网络离线；本次请求不会进入不可控的盲目重放队列。',
       'pwa.writeBlocked.update_required': '有新版运行时等待激活；请先更新，再使用当前协议发送。',
+      ...accountResources['zh-CN'],
       ...automationResources['zh-CN'],
       ...agentInviteResources['zh-CN'],
       ...receptionResources['zh-CN'],

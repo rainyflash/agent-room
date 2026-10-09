@@ -1,0 +1,4 @@
+.account-deleted-notice {
+  width: min(1120px, calc(100% - 32px));
+  margin: 16px auto 0;
+}

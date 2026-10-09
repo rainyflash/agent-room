@@ -1,0 +1,54 @@
+/* 下载和删除的说明可能换行，按钮不挤到说明里；展开的删除确认占满一整行。 */
+.settings-row--stack {
+  flex-wrap: wrap;
+}
+
+.account-deletion {
+  display: grid;
+  flex: 1 1 100%;
+  gap: 12px;
+  min-width: 0;
+}
+
+.account-deletion .ar-banner p {
+  margin: 0 0 6px;
+}
+
+.account-deletion .ar-field {
+  max-width: 360px;
+}
+
+.account-deletion__acknowledge {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+
+.account-deletion__acknowledge input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.account-deletion__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-deletion > p[role='alert'] {
+  margin: 0;
+  color: var(--color-alert);
+}
+
+/* 窄屏上设置的每一行改成竖排（settings-page.css），这时不能再换行，否则确认框会排到右边去。 */
+@media (max-width: 760px) {
+  .settings-row--stack {
+    flex-wrap: nowrap;
+  }
+
+  .account-deletion {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+}

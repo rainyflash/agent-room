@@ -1,8 +1,9 @@
 import { Link } from '@tanstack/react-router';
-import { Info, Monitor, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Info, Monitor, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { AccountSettings } from '@/features/account/ui/account-settings';
 import { ThisComputerSettings } from '@/features/desktop/ui/this-computer-settings';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { ApplicationAbout } from '@/features/updates/ui/application-about';
@@ -14,13 +15,14 @@ import './settings-page.css';
 
 const sectionPresentation = {
   general: { icon: SlidersHorizontal, label: 'settings.section.general' },
+  account: { icon: UserRound, label: 'settings.section.account' },
   security: { icon: ShieldCheck, label: 'settings.section.security' },
   'this-computer': { icon: Monitor, label: 'settings.section.thisComputer' },
   about: { icon: Info, label: 'settings.section.about' },
 } as const;
 
 /**
- * 设置只有一个家：通用、安全、这台电脑（只在桌面端）、关于。左边（手机上是上方）选分节，
+ * 设置只有一个家：通用、账户、安全、这台电脑（只在桌面端）、关于。左边（手机上是上方）选分节，
  * 右边是这一节的内容。
  */
 export function SettingsLayout({
@@ -80,6 +82,8 @@ export function SettingsSectionContent({
   switch (section) {
     case 'general':
       return <GeneralSettings />;
+    case 'account':
+      return <AccountSettings />;
     case 'this-computer':
       return <ThisComputerSettings />;
     case 'about':
