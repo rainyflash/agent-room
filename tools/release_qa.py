@@ -33,6 +33,11 @@ the long-lived acceptance device, and later releases reuse it without a device c
 unless login code changes (`release_acceptance.reuse_blocker`). `start` also creates the Claude Code host
 session named in `qa-host.json` when it does not exist yet.
 
+The runner acts as the QA character outside any host task (`Acceptance.character_env`): the host task is
+registered with `register --task-id` and named in the binding, so a release can move to a fresh host task
+after a failed `doctor` (archive `qa-host.json`, `registered.private.json` and `binding.private.json`, then
+`run` again) and the next release can reuse the long-lived device with its own task.
+
 The release directory holds the verified candidate (`candidate/`, `verified-candidate.json`,
 `ci-verification.json`) and the host description (`qa-host.json`). `upgrade` writes
 `upgrade-baseline.json`, `installed-verification.json`, `native-session-restoration.json` and
@@ -177,6 +182,17 @@ class Acceptance:
             env["ANTHROPIC_MODEL"] = self.host["model"]
         return env
 
+    def character_env(self) -> dict[str, str]:
+        """Commands the runner issues as the QA character, outside the host task.
+
+        The CLI binds a profile to the host task it joins from (`CODEX_THREAD_ID`) and refuses it in any other
+        task (`cli.profile.task_mismatch`). The runner is not that task, so its characters join unbound. One bound
+        by an earlier runner (Alpha 64-66 with a Codex host) keeps its own task, recorded as `profileTaskId`."""
+        env = {key: value for key, value in self.host_env().items() if key != "CODEX_THREAD_ID"}
+        if self.character_task:
+            env["CODEX_THREAD_ID"] = self.character_task
+        return env
+
     def bridge_env(self) -> dict[str, str]:
         return dict(
             self.host_env(),
@@ -192,7 +208,9 @@ class Acceptance:
 
     def cli(self, *args: str, timeout: int = 60) -> Any:
         command = [self.executable("agent-cli"), "--data-root", str(self.data), "--connection", self.service, *args]
-        result = subprocess.run(command, env=self.host_env(), capture_output=True, encoding="utf-8",
+        # `receiver` commands run the host itself (doctor, inspect); everything else speaks as the character.
+        env = self.host_env() if args and args[0] == "receiver" else self.character_env()
+        result = subprocess.run(command, env=env, capture_output=True, encoding="utf-8",
                                 timeout=timeout, creationflags=NO_WINDOW)
         try:
             envelope = json.loads(result.stdout)
@@ -254,6 +272,7 @@ class Acceptance:
         self.service = f"agent-room.{self.slug}.acceptance.fresh-device"
         self.data = self.qa / "bridge-data"
         self.device_label = f"{self.label} fresh-device acceptance"
+        self.character_task = None
 
     def apply_device(self, decision: dict[str, Any]) -> None:
         if decision["mode"] != "reused":
@@ -264,6 +283,7 @@ class Acceptance:
         self.service = record["service"]
         self.device_label = record["label"]
         self.agent_name = record["agentName"]
+        self.character_task = record.get("profileTaskId")
 
     def device_mode(self) -> str:
         decision = self.path("device-mode.json")
@@ -281,6 +301,7 @@ class Acceptance:
                                                            self.metadata["revision"], int(time.time()))
             except ReleaseFailure as failure:
                 blocker = str(failure)
+            blocker = blocker or self.character_task_blocker(record)
             decision = {"mode": "reused", "record": record} if blocker is None else {"mode": "fresh", "reason": blocker}
         self.save("device-mode.json", decision)
         return decision
@@ -295,6 +316,7 @@ class Acceptance:
         record = {"schemaVersion": 1, "dataDir": str(self.data.resolve()), "service": self.service,
                   "label": self.device_label, "profileId": joined["profileId"],
                   "agentId": joined["identity"]["agent"]["agentId"], "agentName": self.agent_name,
+                  "profileTaskId": self.character_task,
                   "freshAuthorization": {"version": self.version, "revision": self.metadata["revision"],
                                          "capturedAtUnixSeconds": first["observedAtUnixSeconds"]}}
         self.device_record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + NEWLINE, encoding="utf-8")
@@ -333,6 +355,15 @@ class Acceptance:
             return None
         pending = [event for event in events if event.get("event") == "authorization_required"]
         return pending[-1] if pending else None
+
+    def character_task_blocker(self, record: dict[str, Any]) -> str | None:
+        """A character bound to one Codex task registers only that task (`cli.profile.task_mismatch` otherwise).
+
+        A Claude Code host still can: its registration reads the task from `--task-id`, not `CODEX_THREAD_ID`."""
+        bound = record.get("profileTaskId")
+        if bound and self.host_type == "codex" and self.host["taskId"] != bound:
+            return f"长期验收设备的人物绑在 Codex 任务 {bound} 上，这次的宿主任务不同，登记不上。"
+        return None
 
     def start(self) -> int:
         self.qa.mkdir(exist_ok=True)

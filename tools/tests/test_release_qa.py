@@ -123,6 +123,68 @@ class ReleaseQaHelpers(unittest.TestCase):
             with self.assertRaisesRegex(release_qa.ReleaseFailure, "邀请"):
                 acceptance.invitation()
 
+    def test_character_commands_run_outside_the_host_task(self):
+        # Alpha 66: the character joined inside the first Codex task, so the fresh task after a failed doctor
+        # could not use it any more (cli.profile.task_mismatch).
+        acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+        acceptance.host_type, acceptance.host = "codex", {"taskId": "task-now"}
+        acceptance.data, acceptance.service, acceptance.character_task = Path("data"), "svc", None
+        acceptance.executable = lambda name: f"{name}.exe"
+        seen = []
+
+        def run(command, *, env, **_):
+            seen.append((command[5], env.get("CODEX_THREAD_ID")))
+            return subprocess.CompletedProcess(command, 0, stdout='{"ok": true, "data": {}}', stderr="")
+
+        with mock.patch.object(release_qa.subprocess, "run", side_effect=run), \
+                mock.patch.dict(release_qa.os.environ, {"CODEX_THREAD_ID": "operator-task"}):
+            acceptance.cli("--profile", "p", "show")
+            acceptance.cli("receiver", "doctor")
+            acceptance.character_task = "task-joined"
+            acceptance.cli("--profile", "p", "resume")
+        self.assertEqual(seen, [("--profile", None), ("receiver", "task-now"), ("--profile", "task-joined")])
+
+    def test_a_character_bound_to_another_codex_task_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.work, acceptance.qa = work, work / "fresh-device-qa"
+            acceptance.qa.mkdir()
+            acceptance.metadata = {"revision": "d" * 40}
+            acceptance.device_record_path = work / "acceptance-device.json"
+            record = {"dataDir": str(work / "device"), "service": "svc", "label": "Long-lived", "profileId": "p",
+                      "agentId": "a", "agentName": "发布验收 Codex", "profileTaskId": "task-then"}
+            acceptance.device_record_path.write_text(json.dumps(record), encoding="utf-8")
+            decisions = []
+            for host_type, task in (("codex", "task-now"), ("codex", "task-then"), ("claude_code", "session")):
+                acceptance.host_type, acceptance.host = host_type, {"taskId": task}
+                with mock.patch.object(release_qa.release_acceptance, "reuse_blocker", return_value=None):
+                    decisions.append(acceptance.decide_device())
+                (acceptance.qa / "device-mode.json").unlink()
+            self.assertEqual([decision["mode"] for decision in decisions], ["fresh", "reused", "reused"])
+            self.assertIn("task-then", decisions[0]["reason"])
+            acceptance.apply_device(decisions[2])
+            self.assertEqual(acceptance.character_task, "task-then")
+
+    def test_a_fresh_character_is_remembered_unbound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.work, acceptance.qa = work, work / "fresh-device-qa"
+            acceptance.qa.mkdir()
+            acceptance.host_type, acceptance.label, acceptance.slug = "codex", "Alpha 67", "alpha67"
+            acceptance.version, acceptance.metadata = "0.1.0-alpha.67", {"revision": "e" * 40}
+            acceptance.device_record_path = work / "acceptance-device.json"
+            acceptance.use_fresh_device()
+            (acceptance.qa / "joined.private.json").write_text(
+                json.dumps({"profileId": "p", "identity": {"agent": {"agentId": "a"}}}), encoding="utf-8")
+            (work / "usability-evidence-first-device.json").write_text(
+                json.dumps({"observedAtUnixSeconds": 1}), encoding="utf-8")
+            acceptance.remember_device()
+            remembered = json.loads(acceptance.device_record_path.read_text(encoding="utf-8"))
+            self.assertIsNone(remembered["profileTaskId"])
+            self.assertEqual(remembered["agentName"], "发布验收 Codex")
+
     def test_baseline_is_recorded_once_and_reused(self):
         with tempfile.TemporaryDirectory() as directory:
             acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)

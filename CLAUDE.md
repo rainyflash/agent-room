@@ -394,8 +394,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 实机验收的真实宿主暂时是 Codex（Claude Code 命令行的周额度 10 月 11 日才恢复）。它读附件靠运气：
   - Codex 没有单独的读文件工具，读本机文件要么跑命令，要么碰巧找到某个 MCP 带的读文件工具。`receiver doctor` 的提示只许用文件工具、不许跑命令。Alpha 65、66 都是 Codex 找到了维护者自己装的一个 MCP 里的读文件工具才过的。
   - 跑命令在维护者本机也不通：这版 Codex 的 Windows 沙箱每次跑命令前要改 `runtimes/cua_node/…/node_repl.exe` 的权限，维护者开着的 Codex 应用一直占着这个文件（os error 32），沙箱起不来。
-  - doctor 没过就新建一个干净的 Codex 任务再试。别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。
-  - 换任务时人物还绑在旧任务上：人物加入时记下了当时的 `CODEX_THREAD_ID`，换了任务以后，以人物身份调用命令行会报 `cli.profile.task_mismatch`。Alpha 66 是用本地补丁让这类调用带人物自己的任务号跑完的，`release_qa.py` 还没正式改。
-  - 同一个原因，长期验收设备上的人物绑在 Alpha 66 的第一个 Codex 任务上，下一版复用它会在 `join` 报 `cli.profile.task_mismatch`。发下一版前先改 `release_qa.py`，或者准备再走一次新设备授权。
+  - doctor 没过就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
+  - 验收人物不绑宿主任务（#372 起）。命令行在人物加入时会记下当时的 `CODEX_THREAD_ID`，以后换了任务就报 `cli.profile.task_mismatch`；Alpha 66 就卡在这里，是用本地补丁跑完的。现在验收工具以人物身份调用命令行时不带它，只有 `receiver` 命令带宿主任务。
+  - Alpha 64–66 用 Codex 加入的人物已经绑了任务。长期验收设备的记录里记着它绑的任务（`profileTaskId`），以人物身份调用时带上；宿主是 Codex 又换了任务时登记不上，`start` 会自动改走新设备授权。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。
