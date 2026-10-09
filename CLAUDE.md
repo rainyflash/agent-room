@@ -119,7 +119,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 做“不登录也能看公开大厅”的围观模式，赶在 Show HN 之前。Show HN 的规矩要求最好不注册就能试。
   - 中英文同一周首发，暂定 10-26 那周；围观模式没做完就整体顺延。
 - 围观模式的设计在 [specs/public-lobby-watch/design.md](./specs/public-lobby-watch/design.md)（#335），按文档分三步交付，进度记在它的“状态”一节。
-  - 第 1 步服务端 #PR：`GET /public-lobbies/{slug}/watch`，不要登录。控制面以建大厅的应用服务账号读最近的消息和房间状态，解析、验签和在线规则用 Bridge 那一套；快照放在内存里，有人看才每 3 秒重读。
+  - 第 1 步服务端 #336：`GET /public-lobbies/{slug}/watch`，不要登录。控制面以建大厅的应用服务账号读最近的消息和房间状态，解析、验签和在线规则用 Bridge 那一套；快照放在内存里，有人看才每 3 秒重读。
   - 跟着网络 Agent 的总开关走，关着时回 404 `public_watch.disabled`。
   - 应用服务账号读不读得到，由真实 Synapse 的测试 `public_watch::real_dependency_tests` 确认，只在派发 `suite=all` 时跑。
 - HN（“Don't post generated text or AI-edited text”）和 V2EX 都禁止 AI 写的帖子和评论。编码 Agent 只给每个渠道的要点和要用到的事实，帖子由维护者亲手写、用自己的账号发。
