@@ -6,7 +6,9 @@ use serde_json::Value;
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixUserId, PortFuture, SecretDigest, SecretGenerationFailure, SecretValue};
+use super::{
+    MatrixUserId, OidcResult, PortFuture, SecretDigest, SecretGenerationFailure, SecretValue,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccountExportSnapshot {
@@ -68,9 +70,25 @@ pub struct AccountDeletionClaim {
     pub job_id: AccountDeletionJobId,
     pub principal_id: PrincipalId,
     pub matrix_user_id: MatrixUserId,
+    pub sign_in_account: SignInAccount,
     pub stage: AccountDeletionStage,
     pub attempt_count: u16,
     pub version: i64,
+}
+
+/// 登录服务里的账户：OIDC 签发方和用户号（Keycloak 里用户号就是用户 ID）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInAccount {
+    pub issuer: String,
+    pub subject: String,
+}
+
+/// 删除账户时删掉登录服务里的账户：邮箱、昵称和密码散列都存在那里。
+///
+/// 实现只删本部署签发方的账户，别的签发方（比如网络 Agent 的 `urn:agent-room:network-agent`）
+/// 当作没有可删的。账户已经不在也算成功：任务重试、备份恢复后重放都会再调一次。
+pub trait SignInAccountRemoval: Send + Sync {
+    fn remove<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>>;
 }
 
 pub trait AccountDeletionReceiptIssuer: Send + Sync {

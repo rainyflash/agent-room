@@ -134,6 +134,9 @@ function Write-Environment {
     if (-not $current.ContainsKey('KEYCLOAK_MATRIX_CLIENT_SECRET')) {
       $missingValues.KEYCLOAK_MATRIX_CLIENT_SECRET = New-RandomSecret
     }
+    if (-not $current.ContainsKey('KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET')) {
+      $missingValues.KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET = New-RandomSecret
+    }
     if (-not $current.ContainsKey('KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_ID')) {
       $missingValues.KEYCLOAK_BOOTSTRAP_ADMIN_CLIENT_ID = 'agent-room-bootstrap'
     }
@@ -173,6 +176,7 @@ function Write-Environment {
     KEYCLOAK_LOCAL_ADMIN_CLIENT_SECRET = New-RandomSecret
     KEYCLOAK_CLIENT_SECRET = New-RandomSecret
     KEYCLOAK_MATRIX_CLIENT_SECRET = New-RandomSecret
+    KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET = New-RandomSecret
     SYNAPSE_REGISTRATION_SECRET = New-RandomSecret
     SYNAPSE_APPSERVICE_TOKEN = New-RandomSecret
     SYNAPSE_APPSERVICE_HS_TOKEN = New-RandomSecret
@@ -687,6 +691,55 @@ function Sync-KeycloakClients {
     webOrigins = @()
   })
   Assert-KeycloakStringSet -Name 'Matrix 回调地址' -Actual $matrixClient.redirectUris -Expected $matrixRedirectUris
+
+  # 删除账户时控制面用它删 Keycloak 里的登录账户：只开服务账号，只有 realm-management 的 manage-users。
+  $accountAdminClient = Sync-KeycloakClient -Realm 'agent-room' -Headers $headers -Expected ([ordered]@{
+    clientId = 'agent-room-account-admin'
+    name = 'Agent Room account deletion'
+    enabled = $true
+    publicClient = $false
+    secret = $environment.KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET
+    protocol = 'openid-connect'
+    standardFlowEnabled = $false
+    implicitFlowEnabled = $false
+    directAccessGrantsEnabled = $false
+    serviceAccountsEnabled = $true
+    redirectUris = @()
+    webOrigins = @()
+  })
+  Grant-KeycloakManageUsers -Headers $headers -Client $accountAdminClient
+}
+
+function Grant-KeycloakManageUsers {
+  param(
+    [Parameter(Mandatory)][hashtable]$Headers,
+    [Parameter(Mandatory)]$Client
+  )
+
+  $realmUrl = 'http://127.0.0.1:18080/admin/realms/agent-room'
+  $serviceAccount = Invoke-RestMethod `
+    -Method Get `
+    -Uri "$realmUrl/clients/$($Client.id)/service-account-user" `
+    -Headers $Headers
+  $management = Find-KeycloakClient -Realm 'agent-room' -Headers $Headers -ClientId 'realm-management'
+  if ($null -eq $management) {
+    throw '本地 Keycloak 的 agent-room 领域里没有 realm-management 客户端。'
+  }
+  $mappingsUrl = "$realmUrl/users/$($serviceAccount.id)/role-mappings/clients/$($management.id)"
+  $mapped = @(Invoke-RestMethod -Method Get -Uri $mappingsUrl -Headers $Headers)
+  if (@($mapped | Where-Object { $_.name -ceq 'manage-users' }).Count -gt 0) {
+    return
+  }
+  $role = Invoke-RestMethod `
+    -Method Get `
+    -Uri "$realmUrl/clients/$($management.id)/roles/manage-users" `
+    -Headers $Headers
+  Invoke-RestMethod `
+    -Method Post `
+    -Uri $mappingsUrl `
+    -Headers $Headers `
+    -ContentType 'application/json' `
+    -Body (ConvertTo-Json -InputObject @($role) -Depth 8) | Out-Null
 }
 
 function Test-HttpEndpoint {

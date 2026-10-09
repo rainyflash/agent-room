@@ -11,8 +11,8 @@ use crate::{
     ports::{
         AccountDeletionReceiptIssuer, AccountDeletionRepository, AccountDeletionRequest,
         AccountDeletionRequestOutcome, AccountDeletionStatus, AccountExportSnapshot, Clock,
-        MatrixAccountLifecycleGateway, MatrixFailure, MatrixFailureKind, MatrixUserId, PortFuture,
-        SecretValue,
+        MatrixAccountLifecycleGateway, MatrixFailure, MatrixFailureKind, MatrixUserId, OidcFailure,
+        OidcFailureKind, PortFuture, SecretValue, SignInAccountRemoval,
     },
 };
 
@@ -267,6 +267,7 @@ pub enum AccountDeletionWorkerOutcome {
 pub struct AccountDeletionWorkerDependencies {
     pub repository: Arc<dyn AccountDeletionRepository>,
     pub matrix: Arc<dyn MatrixAccountLifecycleGateway>,
+    pub sign_in: Arc<dyn SignInAccountRemoval>,
     pub clock: Arc<dyn Clock>,
     pub lease_duration: DurationMillis,
     pub initial_retry_delay: DurationMillis,
@@ -276,6 +277,7 @@ pub struct AccountDeletionWorkerDependencies {
 pub struct AccountDeletionWorker {
     repository: Arc<dyn AccountDeletionRepository>,
     matrix: Arc<dyn MatrixAccountLifecycleGateway>,
+    sign_in: Arc<dyn SignInAccountRemoval>,
     clock: Arc<dyn Clock>,
     lease_duration: DurationMillis,
     initial_retry_delay: DurationMillis,
@@ -287,6 +289,7 @@ impl AccountDeletionWorker {
         Self {
             repository: dependencies.repository,
             matrix: dependencies.matrix,
+            sign_in: dependencies.sign_in,
             clock: dependencies.clock,
             lease_duration: dependencies.lease_duration,
             initial_retry_delay: dependencies.initial_retry_delay,
@@ -298,7 +301,7 @@ impl AccountDeletionWorker {
     ///
     /// # Errors
     ///
-    /// 持久化、Matrix 擦除或时间计算无法安全完成时返回失败。
+    /// 持久化或时间计算无法安全完成时返回失败；登录服务或 Matrix 暂时失败时排队重试。
     pub async fn run_once(&self) -> AccountLifecycleResult<AccountDeletionWorkerOutcome> {
         const OPERATION: &str = "account.worker.run_once";
         let now = self.clock.now();
@@ -318,11 +321,7 @@ impl AccountDeletionWorker {
             claim.stage,
             crate::ports::AccountDeletionStage::FederatedDeactivation
         ) {
-            if let Err(failure) = self
-                .matrix
-                .deactivate_and_erase(&claim.matrix_user_id)
-                .await
-            {
+            if let Err(failure_code) = self.close_external_accounts(&claim).await {
                 let retry_at = now
                     .checked_add(self.retry_delay(claim.attempt_count))
                     .map_err(|_| {
@@ -332,7 +331,7 @@ impl AccountDeletionWorker {
                         )
                     })?;
                 self.repository
-                    .schedule_retry(&claim, matrix_failure_code(failure), retry_at, now)
+                    .schedule_retry(&claim, failure_code, retry_at, now)
                     .await
                     .map_err(|error| repository_failure(OPERATION, &error))?;
                 return Ok(AccountDeletionWorkerOutcome::Retrying(claim.job_id));
@@ -349,6 +348,21 @@ impl AccountDeletionWorker {
             .await
             .map_err(|error| repository_failure(OPERATION, &error))?;
         Ok(AccountDeletionWorkerOutcome::Completed(claim.job_id))
+    }
+
+    /// 先删登录服务里的账户（之后就登录不了），再停用并擦除聊天账户。两步都能重放，失败时返回失败码。
+    async fn close_external_accounts(
+        &self,
+        claim: &crate::ports::AccountDeletionClaim,
+    ) -> Result<(), &'static str> {
+        self.sign_in
+            .remove(&claim.sign_in_account)
+            .await
+            .map_err(sign_in_failure_code)?;
+        self.matrix
+            .deactivate_and_erase(&claim.matrix_user_id)
+            .await
+            .map_err(matrix_failure_code)
     }
 
     fn retry_delay(&self, completed_attempts: u16) -> DurationMillis {
@@ -412,6 +426,17 @@ fn repository_failure(
         }
     };
     AccountLifecycleFailure::new(operation, kind)
+}
+
+const fn sign_in_failure_code(failure: OidcFailure) -> &'static str {
+    match failure.kind() {
+        OidcFailureKind::DependencyUnavailable => "identity.unavailable",
+        OidcFailureKind::ProviderRejected => "identity.rejected",
+        OidcFailureKind::InvalidConfiguration => "identity.invalid_configuration",
+        OidcFailureKind::InvalidIdentityToken => "identity.invalid_token",
+        OidcFailureKind::AuthorizationExpired => "identity.authorization_expired",
+        OidcFailureKind::PromptUnavailable => "identity.prompt_unavailable",
+    }
 }
 
 fn matrix_failure_code(failure: MatrixFailure) -> &'static str {

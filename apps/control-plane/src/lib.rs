@@ -67,8 +67,9 @@ use agent_room_domain::time::DurationMillis;
 use agent_room_identity_adapter::{
     AesGcmAccountEncryptionKeySealer, AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant,
     DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier,
-    Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer, NetworkSourceDigester,
-    OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
+    Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer, KeycloakAccountRemovalConfig,
+    KeycloakSignInAccountRemoval, NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig,
+    SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixAgentSessionClient, MatrixApplicationServiceConfiguration,
@@ -628,11 +629,13 @@ fn build_account_deletion_worker(
     repositories: &Arc<PostgresRepositories>,
     runtime: &Arc<SystemRuntime>,
 ) -> Result<account_deletion::AccountDeletionRuntime, StartupError> {
+    let sign_in = build_sign_in_account_removal(config)?;
     let config = &config.account_lifecycle;
     let worker = Arc::new(AccountDeletionWorker::new(
         AccountDeletionWorkerDependencies {
             repository: repositories.clone(),
             matrix: matrix.clone(),
+            sign_in,
             clock: runtime.clone(),
             lease_duration: domain_duration(config.lease_duration)?,
             initial_retry_delay: domain_duration(config.retry_initial)?,
@@ -647,6 +650,39 @@ fn build_account_deletion_worker(
             )
         },
     )
+}
+
+/// 删除账户时删掉 Keycloak 里的登录账户：邮箱、昵称和密码散列都在那里。
+fn build_sign_in_account_removal(
+    config: &ControlPlaneConfig,
+) -> Result<Arc<KeycloakSignInAccountRemoval>, StartupError> {
+    let lifecycle = &config.account_lifecycle;
+    let client_secret = SecretValue::new(
+        lifecycle
+            .keycloak_account_admin_client_secret
+            .expose()
+            .to_owned(),
+    )
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_account_lifecycle_config",
+            "删除账户用的 Keycloak 客户端密钥无效".to_owned(),
+        )
+    })?;
+    KeycloakSignInAccountRemoval::new(KeycloakAccountRemovalConfig {
+        internal_url: lifecycle.keycloak_internal_url.to_string(),
+        issuer_url: config.authentication.issuer_url.to_string(),
+        client_id: lifecycle.keycloak_account_admin_client_id.clone(),
+        client_secret,
+        request_timeout: config.dependencies.timeout,
+    })
+    .map(Arc::new)
+    .map_err(|error| {
+        StartupError::new(
+            "startup.invalid_account_lifecycle_config",
+            error.to_string(),
+        )
+    })
 }
 
 fn build_account_lifecycle_service(

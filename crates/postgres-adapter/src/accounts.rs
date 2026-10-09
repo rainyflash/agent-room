@@ -3,7 +3,7 @@ use agent_room_application::{
     ports::{
         AccountDeletionClaim, AccountDeletionRepository, AccountDeletionRequest,
         AccountDeletionRequestOutcome, AccountDeletionStage, AccountDeletionStatus,
-        AccountExportSnapshot, MatrixUserId, PortFuture, SecretDigest,
+        AccountExportSnapshot, MatrixUserId, PortFuture, SecretDigest, SignInAccount,
     },
 };
 use agent_room_domain::{
@@ -440,10 +440,10 @@ async fn claim_due(
             failure_code = NULL,
             updated_at = to_timestamp($1::double precision / 1000.0),
             version = job.version + 1
-        FROM candidate
-        WHERE job.id = candidate.id
-        RETURNING job.id, job.principal_id, job.matrix_user_id, job.stage,
-                  job.attempt_count, job.version",
+        FROM candidate, agent_room.principal AS principal
+        WHERE job.id = candidate.id AND principal.id = job.principal_id
+        RETURNING job.id, job.principal_id, job.matrix_user_id, principal.oidc_issuer,
+                  principal.oidc_subject, job.stage, job.attempt_count, job.version",
     )
     .bind(now.value())
     .bind(lease_expires_at.value())
@@ -460,11 +460,14 @@ async fn record_federated_deactivation(
 ) -> RepositoryResult<AccountDeletionClaim> {
     const OPERATION: &str = "account_deletion.record_federated_deactivation";
     let row = sqlx::query(
-        r"UPDATE agent_room.account_deletion_job
+        r"UPDATE agent_room.account_deletion_job AS job
           SET stage = 'local_erasure', lease_expires_at = NULL, failure_code = NULL,
-              updated_at = to_timestamp($3::double precision / 1000.0), version = version + 1
-          WHERE id = $1 AND version = $2 AND stage = 'federated_deactivation'
-          RETURNING id, principal_id, matrix_user_id, stage, attempt_count, version",
+              updated_at = to_timestamp($3::double precision / 1000.0), version = job.version + 1
+          FROM agent_room.principal AS principal
+          WHERE job.id = $1 AND job.version = $2 AND job.stage = 'federated_deactivation'
+            AND principal.id = job.principal_id
+          RETURNING job.id, job.principal_id, job.matrix_user_id, principal.oidc_issuer,
+                    principal.oidc_subject, job.stage, job.attempt_count, job.version",
     )
     .bind(claim.job_id.as_uuid())
     .bind(claim.version)
@@ -731,6 +734,14 @@ fn decode_claim(row: &PgRow, operation: &'static str) -> RepositoryResult<Accoun
     let matrix_user_id: String = row
         .try_get("matrix_user_id")
         .map_err(|error| map_sqlx_error(operation, &error))?;
+    let sign_in_account = SignInAccount {
+        issuer: row
+            .try_get("oidc_issuer")
+            .map_err(|error| map_sqlx_error(operation, &error))?,
+        subject: row
+            .try_get("oidc_subject")
+            .map_err(|error| map_sqlx_error(operation, &error))?,
+    };
     Ok(AccountDeletionClaim {
         job_id: AccountDeletionJobId::from_uuid(
             row.try_get("id")
@@ -742,6 +753,7 @@ fn decode_claim(row: &PgRow, operation: &'static str) -> RepositoryResult<Accoun
         ),
         matrix_user_id: MatrixUserId::new(matrix_user_id)
             .map_err(|_| RepositoryError::new(operation, RepositoryErrorKind::CorruptData))?,
+        sign_in_account,
         stage: decode_stage(row, operation)?,
         attempt_count: u16::try_from(attempt_count)
             .map_err(|_| RepositoryError::new(operation, RepositoryErrorKind::CorruptData))?,

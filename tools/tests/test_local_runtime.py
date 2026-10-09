@@ -17,6 +17,7 @@ from tools.local_runtime import (
 REQUIRED_VALUES = {
     "AGENT_ROOM_DB_RUNTIME_PASSWORD": "runtime-password",
     "KEYCLOAK_CLIENT_SECRET": "oidc-secret",
+    "KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET": "account-admin-secret",
     "SYNAPSE_APPSERVICE_TOKEN": "appservice-token",
     "S3_ACCESS_KEY": "access-key",
     "S3_SECRET_KEY": "storage-secret",
