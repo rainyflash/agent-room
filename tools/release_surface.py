@@ -392,11 +392,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "publish":
             if args.channel is None:
                 raise ReleaseSurfaceFailure("publish 命令必须显式提供 channel。")
+            # testing 渠道的 Alpha 就是给用户下载的版本，也发成正式 Release 并标为 Latest。
+            # 标成预发布的话 GitHub 不会把它当 Latest：2026-08 到 2026-10 的 Latest 一直是通道指针
+            # channel-testing，首页侧栏和发行列表都看不出哪个是最新版。
             gateway.publish_release(
                 args.repository,
                 plan.release_id,
                 plan.tag,
-                prerelease=args.channel != "stable",
+                prerelease=False,
             )
         else:
             json.dump(plan_document(plan), sys.stdout, ensure_ascii=False, indent=2)
