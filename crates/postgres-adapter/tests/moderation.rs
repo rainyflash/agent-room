@@ -802,6 +802,54 @@ async fn 禁言锁同一个房间里同一个人一次只有一个拿得到() {
 
     database.close().await;
 }
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 读一个人的禁言_账号删了照样给出_matrix_账号_分片都不接人时给空的() {
+    let database = TestDatabase::connect().await;
+    let pool = &database.runtime;
+    let repositories = PostgresRepositories::new(pool.clone());
+    let target_id = seed_principal(pool, "standing-deleted").await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    seed_public_lobby(pool, catalog_id, &[("closing", "active", "1", 1)]).await;
+    sqlx::query("UPDATE agent_room.principal SET status = 'deleted' WHERE id = $1")
+        .bind(target_id.as_uuid())
+        .execute(pool)
+        .await
+        .expect("可以把被禁言的账号标成已删除");
+    sqlx::query(
+        "UPDATE agent_room.room_instance SET state = 'draining'          WHERE catalog_entry_id = $1 AND state = 'active'",
+    )
+    .bind(catalog_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("可以让分片都不再接人");
+
+    let standing = mute_standing(&repositories, catalog_id, &person(target_id))
+        .await
+        .expect("目录存在");
+    assert!(standing.matrix_room_ids.is_empty(), "没有活跃分片时给空的");
+    assert_eq!(
+        standing
+            .target_matrix_user_id
+            .as_ref()
+            .map(MatrixUserId::as_str),
+        Some(matrix_user(pool, target_id).await.as_str()),
+        "账号删了照样给出它的 Matrix 账号"
+    );
+    let stranger = person(PrincipalId::from_uuid(Uuid::now_v7()));
+    assert!(
+        mute_standing(&repositories, catalog_id, &stranger)
+            .await
+            .expect("目录存在")
+            .target_matrix_user_id
+            .is_none(),
+        "没有这个人就没有 Matrix 账号"
+    );
+
+    database.close().await;
+}
+
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 到期解除拿到全部活跃分片_账号删了也照样给出它的_matrix_账号() {

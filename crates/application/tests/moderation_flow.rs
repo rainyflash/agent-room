@@ -498,6 +498,8 @@ struct FakeMutes {
     repository: Arc<FakeRepository>,
     authority: Arc<FakeAuthority>,
     may_speak: Mutex<bool>,
+    /// 他的 Matrix 账号没了。
+    account_gone: Mutex<bool>,
     /// 正拿着的锁。
     held: Arc<Mutex<HashSet<String>>>,
     between_reads: Mutex<Option<BetweenReads>>,
@@ -555,9 +557,8 @@ impl ModerationMuteLedger for FakeMutes {
         let standing = ModerationMuteStanding {
             room_kind: *self.authority.room_kind.lock().expect("房间类别锁可用"),
             matrix_room_ids: self.authority.rooms.lock().expect("分片锁可用").clone(),
-            target_matrix_user_id: Some(
-                MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效"),
-            ),
+            target_matrix_user_id: (!*self.account_gone.lock().expect("账号锁可用"))
+                .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效")),
             may_speak: *self.may_speak.lock().expect("发言权锁可用"),
             mutes,
         };
@@ -754,6 +755,7 @@ impl Fixture {
             repository: repository.clone(),
             authority: authority.clone(),
             may_speak: Mutex::new(true),
+            account_gone: Mutex::new(false),
             held: Arc::new(Mutex::new(HashSet::new())),
             between_reads: Mutex::new(None),
         });
@@ -1596,6 +1598,22 @@ async fn 房间关了以后到期照样记成解除() {
     let action = apply(&fixture, mute(2, Some(HOUR))).await;
     // 比如房主删了账户，私人房间跟着归档，没有活跃分片了。
     fixture.authority.rooms.lock().expect("分片锁可用").clear();
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(expire(&fixture).await.expired, 1);
+
+    assert!(fixture.effects.reversed_rooms().is_empty());
+    assert_eq!(
+        status_of(&fixture, &action),
+        ModerationActionStatus::Reversed
+    );
+}
+
+#[tokio::test]
+async fn 他的_matrix_账号没了以后到期不动_matrix_照样记成解除() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, Some(HOUR))).await;
+    *fixture.mutes.account_gone.lock().expect("账号锁可用") = true;
 
     fixture.runtime.advance(HOUR);
     assert_eq!(expire(&fixture).await.expired, 1);
