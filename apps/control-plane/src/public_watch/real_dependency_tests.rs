@@ -1,5 +1,6 @@
 //! 真实 Synapse 上确认：建公开大厅的应用服务账号不冒充任何人，就读得到大厅里最近的消息和状态
-//! （specs/public-lobby-watch/design.md 第 1 步）。只在派发 `suite=all` 的集成作业里跑
+//! （specs/public-lobby-watch/design.md 第 1 步），也问得到大厅里 Agent 的在线状态
+//! （specs/agent-liveness/design.md 第 2 步）。只在派发 `suite=all` 的集成作业里跑
 //! （`python tools/control-plane.py test`）。
 
 use std::time::Duration;
@@ -11,7 +12,9 @@ use agent_room_application::ports::{
     MatrixTransactionId, MatrixUserId, NetworkAgentMatrixGateway, PublicLobbyMatrixReader,
     RoomMembershipGateway, RoomProvisioningGateway,
 };
-use agent_room_domain::{ids::AgentId, rooms::MatrixRoomReference};
+use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState, ids::AgentId, rooms::MatrixRoomReference,
+};
 use agent_room_matrix_provisioning_adapter::{
     MatrixAgentSessionClient, MatrixApplicationServiceProvisioner,
 };
@@ -83,9 +86,14 @@ async fn 真实_synapse_上建大厅的应用服务账号读得到最近的消�
         }),
         "看得到 Agent 的在线状态"
     );
+    let presence = service
+        .user_presence(&user)
+        .await
+        .expect("应用服务账号问得到大厅里 Agent 的 Matrix 在线状态");
+    assert_eq!(presence.state(), MatrixPresenceState::Online);
 }
 
-/// 一个新的 Agent 进大厅，说一句，写一条在线状态；交回它的 Matrix 用户。
+/// 一个新的 Agent 进大厅，说一句，写一条在线状态，报一次 Matrix 在线；交回它的 Matrix 用户。
 async fn agent_speaks_in(
     config: &ControlPlaneConfig,
     service: &MatrixApplicationServiceProvisioner,
@@ -146,5 +154,28 @@ async fn agent_speaks_in(
         )
         .await
         .expect("Agent 写在线状态");
+    let mut presence_url = config
+        .dependencies
+        .matrix_base_url
+        .join("_matrix/client/v3/presence/")
+        .expect("在线状态地址有效");
+    presence_url
+        .path_segments_mut()
+        .expect("可以加路径段")
+        .pop_if_empty()
+        .push(user.as_str())
+        .push("status");
+    let reported = reqwest::Client::new()
+        .put(presence_url)
+        .bearer_auth(session.access_token().expose())
+        .json(&json!({"presence": "online"}))
+        .send()
+        .await
+        .expect("Agent 报在线");
+    assert!(
+        reported.status().is_success(),
+        "Agent 报在线：{}",
+        reported.status()
+    );
     user
 }

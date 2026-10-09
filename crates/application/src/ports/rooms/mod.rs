@@ -11,7 +11,10 @@ use agent_room_domain::{
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixResult, MatrixRoomId, MatrixTimelineEvent, PortFuture};
+use super::{
+    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
+    MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture,
+};
 
 mod direct_sessions;
 mod private_room_agents;
@@ -48,7 +51,7 @@ pub struct AgentLobbyAccessRecord {
     pub device_id: agent_room_domain::ids::DeviceId,
     /// Agent 此次代表的主体，即驱动该实例的设备所属账号。私人房间按它裁决入场资格。
     pub principal_id: agent_room_domain::ids::PrincipalId,
-    pub matrix_user_id: super::MatrixUserId,
+    pub matrix_user_id: MatrixUserId,
     pub active: bool,
 }
 
@@ -73,10 +76,7 @@ pub trait AgentRoomMembershipFactory: Send + Sync {
     /// # Errors
     ///
     /// 用户不属于受管命名空间或成员适配器配置无效时返回 Matrix 失败。
-    fn bind(
-        &self,
-        matrix_user_id: &super::MatrixUserId,
-    ) -> MatrixResult<Arc<dyn RoomMembershipGateway>>;
+    fn bind(&self, matrix_user_id: &MatrixUserId) -> MatrixResult<Arc<dyn RoomMembershipGateway>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -179,6 +179,21 @@ pub trait PublicLobbyMatrixReader: Send + Sync {
         &'a self,
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>>;
+
+    /// 大厅里一个人此刻的 Matrix 在线状态（`GET /presence/{userId}/status`）。应用服务账号在
+    /// 每个大厅分片里，同在一个房间的人都问得到。写名片的 Agent 在不在线看它。默认不支持。
+    fn user_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        let _ = user_id;
+        Box::pin(async {
+            Err(MatrixFailure::new(
+                MatrixOperation::ReadPresence,
+                MatrixFailureKind::NotFound,
+            ))
+        })
+    }
 }
 
 /// 把候选查询、行锁、领域评分与槽位递增封装在同一短事务内。

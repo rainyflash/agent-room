@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use agent_room_application::{
@@ -9,12 +12,13 @@ use agent_room_application::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRecord,
         AgentInstanceVerificationRepository, Clock, DeviceSignature, MatrixEventId,
         MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
-        MatrixRoomId, MatrixTimelineEvent, MatrixUserId, NetworkAgentLookup, PortFuture,
-        PublicLobbyDirectoryEntry, PublicLobbyMatrixReader, PublicLobbyObservationRoom,
+        MatrixRoomId, MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, NetworkAgentLookup,
+        PortFuture, PublicLobbyDirectoryEntry, PublicLobbyMatrixReader, PublicLobbyObservationRoom,
         RoomDirectory, RoomDirectoryQuery,
     },
 };
 use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState,
     agents::AgentInstancePublicSigningKey,
     ids::{AgentId, AgentInstanceId, RoomCatalogId, RoomInstanceId},
     rooms::{
@@ -89,11 +93,24 @@ struct FakeReader {
     lobby: Mutex<Lobby>,
     failing: Mutex<bool>,
     reads: AtomicUsize,
+    /// 各人的 Matrix 在线状态；没有的问了回 403。
+    presence: Mutex<HashMap<String, MatrixPresenceState>>,
+    presence_asks: Mutex<Vec<String>>,
 }
 
 impl FakeReader {
     fn set(&self, lobby: Lobby) {
         *self.lobby.lock().unwrap() = lobby;
+    }
+
+    fn set_presence(&self, user: &str, state: MatrixPresenceState) {
+        self.presence.lock().unwrap().insert(user.to_owned(), state);
+    }
+
+    fn presence_asks(&self) -> Vec<String> {
+        let mut asks = self.presence_asks.lock().unwrap().clone();
+        asks.sort();
+        asks
     }
 
     fn fail(&self, failing: bool) {
@@ -131,6 +148,26 @@ impl PublicLobbyMatrixReader for FakeReader {
         assert_eq!(room_id.as_str(), ROOM);
         let state = self.answer(|lobby| lobby.state.clone());
         Box::pin(async move { state })
+    }
+
+    fn user_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        self.presence_asks
+            .lock()
+            .unwrap()
+            .push(user_id.as_str().to_owned());
+        let answer = self
+            .presence
+            .lock()
+            .unwrap()
+            .get(user_id.as_str())
+            .map(|state| MatrixUserPresence::new(user_id.clone(), *state, Some(30_000)))
+            .ok_or_else(|| {
+                MatrixFailure::new(MatrixOperation::ReadPresence, MatrixFailureKind::Forbidden)
+            });
+        Box::pin(async move { answer })
     }
 }
 
@@ -540,6 +577,30 @@ fn status_as(agent: &Agent, work: &str) -> MatrixTimelineEvent {
     )
 }
 
+/// 名片：三天前进大厅时写的，在不在线看 Matrix 的在线状态。
+fn card(agent: &Agent) -> MatrixTimelineEvent {
+    timeline_event(
+        &format!("$card-{}:matrix.test", agent.instance_id.simple()),
+        &agent.matrix_user(),
+        "io.github.rainyflash.agentroom.agent.status.v1",
+        Some(&agent.instance_id.to_string()),
+        3 * 86_400,
+        json!({
+            "schemaVersion": "1.0",
+            "eventType": "io.github.rainyflash.agentroom.agent.status.v1",
+            "id": Uuid::now_v7(),
+            "createdAt": "2026-10-17T08:00:00.000Z",
+            "actor": agent.actor(),
+            "correlationId": Uuid::now_v7(),
+            "status": "idle",
+            "visibility": "coarse",
+            "leaseExpiresAt": "2026-10-17T08:05:00.000Z",
+            "liveness": "presence",
+            "signature": signature([1; 64]),
+        }),
+    )
+}
+
 fn member(user: &str, membership: &str) -> MatrixTimelineEvent {
     timeline_event(
         &format!("$member-{}:matrix.test", Uuid::now_v7().simple()),
@@ -873,6 +934,96 @@ async fn 不在大厅里的_过期的_没签对的在线状态都不算在线() 
         .collect();
 
     assert_eq!(names, ["Present"]);
+}
+
+fn participant_names(view: &Value) -> Vec<&str> {
+    let mut names: Vec<&str> = view["participants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|person| person["name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+#[tokio::test]
+async fn 写名片的_agent_按在线状态算在线_名片写得多早都不算过期() {
+    let waiting = Agent::new("Waiting");
+    let resting = Agent::new("Resting");
+    let gone = Agent::new("Gone");
+    let unknown = Agent::new("Unknown");
+    let departed = Agent::new("Departed");
+    let harness = Setup::new(&[&waiting, &resting, &gone, &unknown, &departed]).build();
+    let mut state = room_state(&[
+        waiting.matrix_user(),
+        resting.matrix_user(),
+        gone.matrix_user(),
+        unknown.matrix_user(),
+    ]);
+    state.push(member(&departed.matrix_user(), "leave"));
+    for agent in [&waiting, &resting, &gone, &unknown, &departed] {
+        state.push(card(agent));
+    }
+    harness.reader.set(Lobby {
+        events: Vec::new(),
+        state,
+    });
+    harness
+        .reader
+        .set_presence(&waiting.matrix_user(), MatrixPresenceState::Online);
+    harness
+        .reader
+        .set_presence(&resting.matrix_user(), MatrixPresenceState::Unavailable);
+    harness
+        .reader
+        .set_presence(&gone.matrix_user(), MatrixPresenceState::Offline);
+    harness
+        .reader
+        .set_presence(&departed.matrix_user(), MatrixPresenceState::Online);
+
+    let view = harness.view("default").await;
+
+    assert_eq!(participant_names(&view), ["Resting", "Waiting"]);
+    let mut asked = vec![
+        waiting.matrix_user(),
+        resting.matrix_user(),
+        gone.matrix_user(),
+        unknown.matrix_user(),
+    ];
+    asked.sort();
+    assert_eq!(harness.reader.presence_asks(), asked, "离开大厅的不问");
+}
+
+#[tokio::test]
+async fn 在线状态问过的十五秒内不再问() {
+    let scout = Agent::new("Scout");
+    let harness = Setup::new(&[&scout]).build();
+    let mut state = room_state(&[scout.matrix_user()]);
+    state.push(card(&scout));
+    harness.reader.set(Lobby {
+        events: Vec::new(),
+        state,
+    });
+    harness
+        .reader
+        .set_presence(&scout.matrix_user(), MatrixPresenceState::Online);
+
+    assert_eq!(participant_names(&harness.view("default").await), ["Scout"]);
+    harness
+        .reader
+        .set_presence(&scout.matrix_user(), MatrixPresenceState::Offline);
+    harness.clock.advance(3_000);
+    assert_eq!(
+        participant_names(&harness.view("default").await),
+        ["Scout"],
+        "重读了快照，在线状态还用 15 秒内问到的"
+    );
+    assert_eq!(harness.reader.presence_asks().len(), 1);
+
+    harness.clock.advance(12_000);
+    assert!(participant_names(&harness.view("default").await).is_empty());
+    assert_eq!(harness.reader.presence_asks().len(), 2);
 }
 
 #[tokio::test]

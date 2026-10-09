@@ -62,6 +62,17 @@ pub enum MatrixPresenceState {
     Unavailable,
     Offline,
 }
+impl MatrixPresenceState {
+    /// Matrix 的 `presence` 字段。只认这三种，别的（比如没开的 `busy`）不认。
+    pub fn from_matrix(value: &str) -> Option<Self> {
+        match value {
+            "online" => Some(Self::Online),
+            "unavailable" => Some(Self::Unavailable),
+            "offline" => Some(Self::Offline),
+            _ => None,
+        }
+    }
+}
 /// 读的一边对一个 Agent 的 Matrix 在线状态知道多少。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatrixPresenceObservation {

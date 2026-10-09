@@ -2,12 +2,14 @@
 //! 里最近的消息和当前状态。
 //!
 //! 请求不带 `user_id`，用的就是应用服务自己的账号：每个大厅分片都是它建的，它一直在里面，不冒充
-//! 任何人。公开大厅不加密，读到的就是明文事件。
+//! 任何人。公开大厅不加密，读到的就是明文事件。写名片的 Agent 在不在线，也以它的身份问
+//! （同在大厅里才问得到）。
 
 use agent_room_application::ports::{
-    MatrixOperation, MatrixResult, MatrixRoomId, MatrixTimelineEvent, PortFuture,
-    PublicLobbyMatrixReader,
+    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
+    MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture, PublicLobbyMatrixReader,
 };
+use agent_room_domain::agent_lifecycle::MatrixPresenceState;
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -25,6 +27,8 @@ const MAX_MESSAGES_LIMIT: u16 = 100;
 const MAX_MESSAGES_RESPONSE_BYTES: usize = 4 * 1_024 * 1_024;
 /// 房间状态最多读这么多字节。每个进过大厅的 Agent 实例都留着一条在线状态，日积月累，给足余量。
 const MAX_STATE_RESPONSE_BYTES: usize = 16 * 1_024 * 1_024;
+/// 一个人的在线状态只有几个字段。
+const MAX_PRESENCE_RESPONSE_BYTES: usize = 16 * 1_024;
 
 impl MatrixApplicationServiceProvisioner {
     async fn recent_messages_internal(
@@ -84,6 +88,36 @@ impl MatrixApplicationServiceProvisioner {
         Ok(state.iter().filter_map(timeline_event).collect())
     }
 
+    async fn user_presence_internal(
+        &self,
+        user_id: &MatrixUserId,
+    ) -> MatrixResult<MatrixUserPresence> {
+        let operation = MatrixOperation::ReadPresence;
+        let url = endpoint_with_segments(
+            &self.homeserver_url,
+            &[
+                "_matrix",
+                "client",
+                "v3",
+                "presence",
+                user_id.as_str(),
+                "status",
+            ],
+            operation,
+        )?;
+        let body = self
+            .read_as_service(url, operation, MAX_PRESENCE_RESPONSE_BYTES)
+            .await?;
+        let answer: PresenceAnswer = decode_json(&body, operation)?;
+        let state = MatrixPresenceState::from_matrix(&answer.presence)
+            .ok_or_else(|| MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse))?;
+        Ok(MatrixUserPresence::new(
+            user_id.clone(),
+            state,
+            answer.last_active_ago,
+        ))
+    }
+
     /// 以应用服务自己的账号发一个 GET，成功时交回不超过 `limit` 字节的正文。
     async fn read_as_service(
         &self,
@@ -123,6 +157,13 @@ impl PublicLobbyMatrixReader for MatrixApplicationServiceProvisioner {
     ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>> {
         Box::pin(self.current_state_internal(room_id))
     }
+
+    fn user_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        Box::pin(self.user_presence_internal(user_id))
+    }
 }
 
 /// `/rooms/{roomId}/messages` 的回答里只用得到 `chunk`。
@@ -130,6 +171,14 @@ impl PublicLobbyMatrixReader for MatrixApplicationServiceProvisioner {
 struct MessagesPage {
     #[serde(default)]
     chunk: Vec<Value>,
+}
+
+/// `/presence/{userId}/status` 的回答里只用得到这两样。
+#[derive(Deserialize)]
+struct PresenceAnswer {
+    presence: String,
+    #[serde(default)]
+    last_active_ago: Option<u64>,
 }
 
 #[cfg(test)]
@@ -141,8 +190,10 @@ mod tests {
     };
 
     use agent_room_application::ports::{
-        MatrixFailureKind, MatrixOperation, MatrixRoomId, PublicLobbyMatrixReader as _, SecretValue,
+        MatrixFailureKind, MatrixOperation, MatrixRoomId, MatrixUserId,
+        PublicLobbyMatrixReader as _, SecretValue,
     };
+    use agent_room_domain::agent_lifecycle::MatrixPresenceState;
     use axum::{
         Json, Router,
         extract::{Path, Query, State},
@@ -329,6 +380,93 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.requests[0].0, "!lobby:matrix.test/state");
         assert!(!seen.requests[0].1.contains_key("user_id"));
+    }
+
+    /// 按用户给出预设的在线状态，记下问的是谁、带的什么认证头。
+    async fn serve_presence(
+        answers: Vec<(&'static str, StatusCode, Value)>,
+    ) -> (String, Arc<Mutex<Seen>>) {
+        type PresenceState = (
+            Arc<Mutex<Seen>>,
+            Arc<Vec<(&'static str, StatusCode, Value)>>,
+        );
+        async fn respond(
+            State((seen, answers)): State<PresenceState>,
+            Path(user_id): Path<String>,
+            headers: HeaderMap,
+        ) -> impl IntoResponse {
+            seen.lock().unwrap().requests.push((
+                user_id.clone(),
+                QueryParams::new(),
+                headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned),
+            ));
+            let (_, status, body) = answers
+                .iter()
+                .find(|(user, _, _)| *user == user_id)
+                .cloned()
+                .unwrap_or(("", StatusCode::FORBIDDEN, json!({"errcode": "M_FORBIDDEN"})));
+            (status, Json(body))
+        }
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let app = Router::new()
+            .route("/_matrix/client/v3/presence/{user_id}/status", get(respond))
+            .with_state((seen.clone(), Arc::new(answers)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("可以监听本机端口");
+        let address = listener.local_addr().expect("有本机地址");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("测试服务器运行");
+        });
+        (format!("http://{address}"), seen)
+    }
+
+    #[tokio::test]
+    async fn 以应用服务自己的账号问大厅里的人的在线状态() {
+        let (url, seen) = serve_presence(vec![
+            (
+                "@_agent_x:matrix.test",
+                StatusCode::OK,
+                json!({"presence": "unavailable", "last_active_ago": 42_000, "currently_active": false}),
+            ),
+            (
+                "@_agent_y:matrix.test",
+                StatusCode::OK,
+                json!({"presence": "busy"}),
+            ),
+        ])
+        .await;
+        let reader = reader(&url);
+
+        let presence = reader
+            .user_presence(&MatrixUserId::new("@_agent_x:matrix.test").unwrap())
+            .await
+            .expect("问得到在线状态");
+        assert_eq!(presence.state(), MatrixPresenceState::Unavailable);
+        assert_eq!(presence.last_active_ago_ms(), Some(42_000));
+        assert_eq!(presence.user_id().as_str(), "@_agent_x:matrix.test");
+
+        let unknown = reader
+            .user_presence(&MatrixUserId::new("@_agent_y:matrix.test").unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(unknown.kind(), MatrixFailureKind::InvalidResponse);
+        let stranger = reader
+            .user_presence(&MatrixUserId::new("@stranger:matrix.test").unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(stranger.kind(), MatrixFailureKind::Forbidden);
+        assert_eq!(stranger.operation(), MatrixOperation::ReadPresence);
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.requests[0].0, "@_agent_x:matrix.test");
+        assert_eq!(
+            seen.requests[0].2.as_deref(),
+            Some("Bearer application-service-secret")
+        );
     }
 
     #[tokio::test]

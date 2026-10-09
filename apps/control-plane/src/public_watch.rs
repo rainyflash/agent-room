@@ -82,6 +82,8 @@ pub(crate) struct PublicWatch {
     network_agents: Arc<dyn NetworkAgentLookup>,
     clock: Arc<dyn Clock>,
     authenticator: Arc<AgentInstanceMessageAuthenticator>,
+    /// 写名片的 Agent 的在线状态，问过的留 15 秒。
+    presence: reading::PresenceCache,
     keys: view::Keys,
     lobbies: tokio::sync::Mutex<DirectoryCache>,
     slots: Mutex<HashMap<RoomCatalogId, Arc<LobbySlot>>>,
@@ -108,6 +110,10 @@ impl PublicWatch {
         Ok(Self {
             enabled: dependencies.enabled,
             directory: dependencies.directory,
+            presence: reading::PresenceCache::new(
+                dependencies.reader.clone(),
+                dependencies.clock.clone(),
+            ),
             reader: dependencies.reader,
             network_agents: dependencies.network_agents,
             clock: dependencies.clock,
@@ -257,11 +263,13 @@ impl PublicWatch {
         let mutations = reading::verified_messages(self.authenticator.clone(), &room_id, events)
             .await
             .map_err(RefreshFailure::Reading)?;
+        let presence = self.presence.observe(&reading::card_senders(&state)).await;
         let online = reading::online_agents(
             self.authenticator.clone(),
             self.clock.clone(),
             &room_id,
             state,
+            &presence,
             now,
         )
         .await
