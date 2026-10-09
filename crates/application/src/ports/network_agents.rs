@@ -268,6 +268,20 @@ pub trait NetworkAgentStore: Send + Sync {
         id: NetworkAgentId,
         at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>>;
+
+    /// 已经离开所有房间、钥匙还没删的停用网络 Agent，最早离开的在前。
+    fn pending_key_deletions(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentId>>>;
+
+    /// 删掉它封存的秘密和发言限流记录，抹掉创建时的来源摘要，记下删的时间。
+    /// 只对已离开房间的生效，删过的不改。
+    fn delete_keys(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>>;
 }
 
 /// 定时清理的界线：最后活动早于 `idle_before` 的生效中网络 Agent，以及创建早于

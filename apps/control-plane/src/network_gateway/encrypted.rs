@@ -121,6 +121,11 @@ pub(crate) trait EncryptedSessions: Send + Sync {
     /// 停用后关掉它的客户端。
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()>;
 
+    /// 停用并离开所有房间以后，关掉客户端、删掉服务器上替它存的加密存储（里面有房间密钥）。
+    /// 本来就没有也算删好了。
+    fn remove_store(&self, id: NetworkAgentId)
+    -> PortFuture<'_, Result<(), NetworkGatewayFailure>>;
+
     /// 关掉闲置太久的客户端，返回关了几个。
     fn evict_idle(&self) -> PortFuture<'_, usize>;
 }
@@ -518,6 +523,11 @@ impl EncryptedClients {
         }
     }
 
+    async fn remove_store_internal(&self, id: NetworkAgentId) -> Result<(), NetworkGatewayFailure> {
+        self.forget_internal(id).await;
+        remove_agent_dir(&self.root, id).await
+    }
+
     async fn evict_idle_internal(&self) -> usize {
         let slots: Vec<Slot> = self.slots.lock().await.values().cloned().collect();
         let mut closed = 0;
@@ -779,14 +789,42 @@ impl EncryptedSessions for EncryptedClients {
         Box::pin(self.forget_internal(id))
     }
 
+    fn remove_store(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, Result<(), NetworkGatewayFailure>> {
+        Box::pin(self.remove_store_internal(id))
+    }
+
     fn evict_idle(&self) -> PortFuture<'_, usize> {
         Box::pin(self.evict_idle_internal())
     }
 }
 
+/// 服务器替这个 Agent 存东西的目录，删存储时整个删掉。
+fn agent_dir(root: &Path, id: NetworkAgentId) -> PathBuf {
+    root.join(id.to_string())
+}
+
 /// 这个 Agent 的加密存储目录。
 fn store_dir(root: &Path, id: NetworkAgentId) -> PathBuf {
-    root.join(id.to_string()).join("matrix-store")
+    agent_dir(root, id).join("matrix-store")
+}
+
+/// 删掉服务器替这个 Agent 存的整个目录；本来就没有也算删好了。
+async fn remove_agent_dir(root: &Path, id: NetworkAgentId) -> Result<(), NetworkGatewayFailure> {
+    match tokio::fs::remove_dir_all(agent_dir(root, id)).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            tracing::warn!(
+                network_agent.id = %id,
+                error = %error,
+                "删不掉停用的网络 Agent 的加密存储，下一轮再试"
+            );
+            Err(NetworkGatewayFailure::Unavailable)
+        }
+    }
 }
 
 /// 从同一位置再同步时直接给上次的结果，免得 SDK 把同一段 to-device 消息再处理一遍。
@@ -867,6 +905,38 @@ mod replay_tests {
         let moved_on = (Some(token("s1")), batch("s2"));
         assert!(replayable(Some(&moved_on), Some(&token("s2"))).is_none());
         assert!(replayable(None, Some(&token("s1"))).is_none());
+    }
+}
+
+#[cfg(test)]
+mod store_removal_tests {
+    use agent_room_domain::ids::NetworkAgentId;
+    use uuid::Uuid;
+
+    use super::{remove_agent_dir, store_dir};
+
+    #[tokio::test]
+    async fn 删掉这个_agent_的整个目录_别人的不动_本来就没有也算删好了() {
+        let root = tempfile::tempdir().expect("存储根目录");
+        let gone = NetworkAgentId::from_uuid(Uuid::now_v7());
+        let kept = NetworkAgentId::from_uuid(Uuid::now_v7());
+        for id in [gone, kept] {
+            let store = store_dir(root.path(), id);
+            std::fs::create_dir_all(&store).expect("建存储目录");
+            std::fs::write(store.join("matrix-sdk-crypto.sqlite3"), b"keys").expect("写存储");
+        }
+
+        remove_agent_dir(root.path(), gone).await.expect("删掉了");
+
+        assert!(!root.path().join(gone.to_string()).exists());
+        assert!(
+            store_dir(root.path(), kept)
+                .join("matrix-sdk-crypto.sqlite3")
+                .exists()
+        );
+        remove_agent_dir(root.path(), gone)
+            .await
+            .expect("本来就没有也算删好了");
     }
 }
 
@@ -993,6 +1063,17 @@ mod real_dependency_tests {
         }
 
         fn mark_rooms_left(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn pending_key_deletions(
+            &self,
+            _limit: u32,
+        ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentId>>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn delete_keys(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
             unreachable!("只测加密客户端")
         }
 

@@ -1,8 +1,10 @@
 //! 定时清理（ADR 0010 的治理）：停用 30 天没活动的与卡在创建中的网络 Agent，再替已停用、
 //! 还没离开房间的网络 Agent 离开。后者包括运维停用的、闲置停用的，以及自己停用时没离开成的。
+//! 离开了所有房间的，删掉服务器替它存的加密存储和钥匙（停用不能撤回，以后用不上了）。
 //! 顺带关掉闲置太久的加密客户端。
 
 use agent_room_application::network_agents::{NetworkAgentFailure, NetworkAgentPendingExit};
+use agent_room_domain::ids::NetworkAgentId;
 
 use super::NetworkGateway;
 
@@ -19,6 +21,8 @@ pub(crate) struct NetworkAgentCleanupOutcome {
     pub(crate) abandoned: usize,
     /// 有房间没离开成、下一轮再试的。
     pub(crate) retrying: usize,
+    /// 删掉了加密存储和钥匙的。
+    pub(crate) keys_deleted: usize,
     /// 关掉的闲置加密客户端。
     pub(crate) closed: usize,
 }
@@ -55,9 +59,24 @@ impl NetworkGateway {
                 }
             }
         }
+        for id in self.agents.pending_key_deletions(EXIT_BATCH).await? {
+            // 先删存储再删钥匙：存储没删掉时钥匙留着，下一轮还会再来删。
+            if self.remove_store(id).await {
+                self.agents.delete_keys(id).await?;
+                outcome.keys_deleted += 1;
+            }
+        }
         if let Some(encrypted) = &self.encrypted {
             outcome.closed = encrypted.evict_idle().await;
         }
         Ok(outcome)
+    }
+
+    /// 删掉服务器上替它存的加密存储；没配加密客户端的就没有存储，当作删好了。
+    async fn remove_store(&self, id: NetworkAgentId) -> bool {
+        match &self.encrypted {
+            Some(encrypted) => encrypted.remove_store(id).await.is_ok(),
+            None => true,
+        }
     }
 }

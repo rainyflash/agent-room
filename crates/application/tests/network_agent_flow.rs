@@ -81,6 +81,8 @@ struct StoredAgent {
     secrets: Vec<(NetworkAgentSecretKind, SealedSecret)>,
     /// 停用后离开了所有房间（或从没进过）。
     rooms_left: bool,
+    /// 离开房间以后删了钥匙。
+    keys_deleted: bool,
 }
 
 #[derive(Default)]
@@ -146,6 +148,7 @@ impl NetworkAgentStore for MemoryStore {
                 device_trust: provisioning.device.trust_state(),
                 secrets: provisioning.secrets.clone(),
                 rooms_left: false,
+                keys_deleted: false,
             });
             NetworkAgentBeginOutcome::Created
         };
@@ -401,6 +404,48 @@ impl NetworkAgentStore for MemoryStore {
             agent.record.id == id && agent.record.status == NetworkAgentStatus::Disabled
         }) {
             agent.rooms_left = true;
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn pending_key_deletions(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentId>>> {
+        let pending = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|agent| {
+                agent.record.status == NetworkAgentStatus::Disabled
+                    && agent.rooms_left
+                    && !agent.keys_deleted
+            })
+            .take(usize::try_from(limit).unwrap())
+            .map(|agent| agent.record.id)
+            .collect();
+        Box::pin(async move { Ok(pending) })
+    }
+
+    fn delete_keys(
+        &self,
+        id: NetworkAgentId,
+        _at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let mut agents = self.agents.lock().unwrap();
+        if let Some(agent) = agents.iter_mut().find(|agent| {
+            agent.record.id == id
+                && agent.record.status == NetworkAgentStatus::Disabled
+                && agent.rooms_left
+        }) {
+            agent.secrets.clear();
+            agent.keys_deleted = true;
+            let simple = id.as_uuid().simple().to_string();
+            self.windows
+                .lock()
+                .unwrap()
+                .retain(|bucket, _| !bucket.starts_with("send:") || !bucket.ends_with(&simple));
         }
         Box::pin(async { Ok(()) })
     }
@@ -1393,6 +1438,26 @@ async fn 三十天没活动的自动停用_有活动就不算闲置_停用后等
         .await
         .unwrap();
     assert!(harness.service.pending_exits(10).await.unwrap().is_empty());
+    assert_keys_deleted_after_exit(&harness, idle.network_agent_id).await;
+}
+
+/// 离开房间以后等着删钥匙；删了以后封存的秘密一个不剩，也不再等着删。
+async fn assert_keys_deleted_after_exit(harness: &Harness, id: NetworkAgentId) {
+    assert_eq!(
+        harness.service.pending_key_deletions(10).await.unwrap(),
+        [id]
+    );
+    assert!(harness.store.with(id, |agent| !agent.secrets.is_empty()));
+    harness.service.delete_keys(id).await.unwrap();
+    assert!(harness.store.with(id, |agent| agent.secrets.is_empty()));
+    assert!(
+        harness
+            .service
+            .pending_key_deletions(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
