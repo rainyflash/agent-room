@@ -468,18 +468,14 @@ struct HandoffEventWorker {
 impl AgentOnlineSession {
     async fn disconnect(&mut self) {
         self.stop_workers().await;
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            self.status.publish(HostAgentState::Disconnected),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {}
+        // 没报出去也不要紧：租约到期或者 Synapse 约 30 秒后，别人照样看到它离线。
+        match tokio::time::timeout(Duration::from_secs(5), self.status.disconnect()).await {
+            Ok(Ok(())) => {}
             Ok(Err(failure)) => {
-                tracing::warn!(failure_kind = ?failure.kind(), "人物退出状态发布失败，将由租约到期回收");
+                tracing::warn!(failure_kind = ?failure.kind(), "人物退出状态发布失败");
             }
             Err(_) => {
-                tracing::warn!("人物退出状态发布超时，将由租约到期回收");
+                tracing::warn!("人物退出状态发布超时");
             }
         }
     }
@@ -1066,7 +1062,7 @@ async fn establish_agent_online_once(
     let matrix = connection.matrix_gateway_handle();
     let handoff_transport = connection.handoff_transport_handle();
     let handoff_events = connection.handoff_event_source_handle();
-    let status = Arc::new(AgentStatusPublicationHandle::new(
+    let status = Arc::new(AgentStatusPublicationHandle::with_presence(
         AgentStatusPublicationService::new(
             AgentStatusPublicationDependencies {
                 identity: registered.identity().clone(),
@@ -1079,6 +1075,7 @@ async fn establish_agent_online_once(
         ),
         AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
         HostAgentState::Available,
+        matrix.clone(),
     ));
     let publication = Arc::new(MessagePublicationService::new(
         MessagePublicationDependencies {
@@ -1431,7 +1428,8 @@ async fn sync_agent_online(
 ) -> Result<(), AgentOnlineFailure> {
     let request =
         MatrixSyncRequest::new(online.next_batch.clone(), runtime.sync_timeout, full_state)
-            .map_err(|_| AgentOnlineFailure::InvalidRoom)?;
+            .map_err(|_| AgentOnlineFailure::InvalidRoom)?
+            .with_presence(online.status.sync_presence().await);
     let batch = online
         .matrix
         .sync_once(&request)
@@ -1492,7 +1490,7 @@ async fn sync_agent_online(
     isolated_messages::recover_isolated_messages(runtime, online, full_state).await;
     online
         .status
-        .renew()
+        .renew(&runtime.presence)
         .await
         .map_err(AgentOnlineFailure::Status)?;
     online.next_batch = Some(batch.next_batch().clone());

@@ -29,7 +29,10 @@ use matrix_sdk::{
         TransactionId, UInt, UserId,
         api::client::{
             filter::FilterDefinition,
-            presence::get_presence::v3::Request as GetPresenceRequest,
+            presence::{
+                get_presence::v3::Request as GetPresenceRequest,
+                set_presence::v3::Request as SetPresenceRequest,
+            },
             receipt::create_receipt::v3::ReceiptType,
             room::{
                 Visibility,
@@ -53,6 +56,7 @@ use matrix_sdk::{
                 power_levels::RoomPowerLevelsEventContent,
             },
         },
+        presence::PresenceState,
         room::RoomType,
         serde::Raw,
         to_device::DeviceIdOrAllDevices,
@@ -449,7 +453,8 @@ impl MatrixGateway for MatrixSdkGateway {
                 .token(token)
                 .timeout(Duration::from_millis(request.timeout().value()))
                 .filter(sync_filter(self.sync_timeline_limit))
-                .full_state(request.full_state());
+                .full_state(request.full_state())
+                .set_presence(map_presence_state(request.presence()));
             let response = self
                 .client
                 .sync_once(settings)
@@ -743,6 +748,21 @@ impl MatrixGateway for MatrixSdkGateway {
                 state,
                 last_active_ago,
             ))
+        })
+    }
+
+    fn report_presence(&self, presence: MatrixPresenceState) -> PortFuture<'_, MatrixResult<()>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::ReportPresence;
+            let request = SetPresenceRequest::new(
+                parse_user_id(self.metadata.user_id(), operation)?,
+                map_presence_state(presence),
+            );
+            self.client
+                .send(request)
+                .await
+                .map(|_| ())
+                .map_err(|error| map_http_error(operation, &error))
         })
     }
 
@@ -1263,6 +1283,14 @@ fn map_creation_content(kind: MatrixRoomKind) -> MatrixResult<Option<Raw<Creatio
     Raw::new(&content)
         .map(Some)
         .map_err(|_| invalid_response_failure(MatrixOperation::CreateRoom))
+}
+
+const fn map_presence_state(value: MatrixPresenceState) -> PresenceState {
+    match value {
+        MatrixPresenceState::Online => PresenceState::Online,
+        MatrixPresenceState::Unavailable => PresenceState::Unavailable,
+        MatrixPresenceState::Offline => PresenceState::Offline,
+    }
 }
 
 const fn map_receipt_type(value: MatrixReceiptKind) -> ReceiptType {

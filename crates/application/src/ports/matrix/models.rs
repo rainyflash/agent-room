@@ -711,10 +711,12 @@ pub struct MatrixSyncRequest {
     since: Option<MatrixSyncToken>,
     timeout: DurationMillis,
     full_state: bool,
+    presence: MatrixPresenceState,
 }
 
 impl MatrixSyncRequest {
-    /// 创建一次有界长轮询同步请求。
+    /// 创建一次有界长轮询同步请求。同步时报自己在线，和 Matrix SDK 不设时一样；要报离开或
+    /// 不报，用 [`Self::with_presence`]。
     ///
     /// # Errors
     ///
@@ -734,7 +736,16 @@ impl MatrixSyncRequest {
             since,
             timeout,
             full_state,
+            presence: MatrixPresenceState::Online,
         })
+    }
+
+    /// 这次同步顺带报的在线状态（`set_presence`）。Synapse 在同步开始时把这台设备改成这个
+    /// 状态，会盖掉之前 `PUT` 报的；报离线等于这次同步不算在线（`specs/agent-liveness/design.md`）。
+    #[must_use]
+    pub const fn with_presence(mut self, presence: MatrixPresenceState) -> Self {
+        self.presence = presence;
+        self
     }
 
     pub const fn since(&self) -> Option<&MatrixSyncToken> {
@@ -747,6 +758,10 @@ impl MatrixSyncRequest {
 
     pub const fn full_state(&self) -> bool {
         self.full_state
+    }
+
+    pub const fn presence(&self) -> MatrixPresenceState {
+        self.presence
     }
 }
 

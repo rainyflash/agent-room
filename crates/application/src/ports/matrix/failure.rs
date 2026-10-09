@@ -37,6 +37,8 @@ pub enum MatrixOperation {
     ReadRoomEvent,
     /// 问一个人的 Matrix 在线状态。
     ReadPresence,
+    /// 报自己的 Matrix 在线状态。
+    ReportPresence,
 }
 
 impl MatrixOperation {
@@ -71,6 +73,7 @@ impl MatrixOperation {
                 | Self::ReadRoomState
                 | Self::ReadRoomEvent
                 | Self::ReadPresence
+                | Self::ReportPresence
         )
     }
 }

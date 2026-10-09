@@ -308,6 +308,10 @@ impl AgentStatusPublicationService {
         }
     }
 
+    pub const fn identity(&self) -> &AgentStatusIdentity {
+        &self.identity
+    }
+
     /// 在首次发布、状态变化、可见性变化、开始或结束等待、续租到期时写入 Matrix 房间状态。
     ///
     /// # Errors
@@ -381,12 +385,89 @@ impl AgentStatusPublicationService {
         })
     }
 
+    /// 写一张名片（`liveness: "presence"`）：只说这是哪个 Agent，在不在线、在不在等消息去看
+    /// Matrix 的在线状态，不续租。旧版读的一边要的必填项照旧带上：`idle`、`coarse`、从此刻起的
+    /// 名义租约（`specs/agent-liveness/design.md`）。
+    ///
+    /// # Errors
+    ///
+    /// 标识、签名、序列化或 Matrix 发布失败时返回稳定错误。
+    pub async fn publish_card(
+        &self,
+        target: &AgentStatusRoomTarget,
+    ) -> StatusPublicationResult<MatrixEventId> {
+        let snapshot =
+            AgentStatusSnapshot::new(AgentWorkStatus::Idle, AgentStatusVisibility::Coarse, None)
+                .map_err(|_| {
+                    StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent)
+                })?;
+        let lease = AgentStatusLease::issue(
+            self.identity.agent_instance_id(),
+            snapshot,
+            self.clock.now(),
+            self.policy.lifetime,
+        )
+        .map_err(|_| StatusPublicationFailure::new(StatusPublicationFailureKind::InvalidIntent))?;
+        let mut content = self.unsigned_content(&lease, |_| Ok(()))?;
+        let Some(object) = content.as_object_mut() else {
+            return Err(StatusPublicationFailure::new(
+                StatusPublicationFailureKind::Serialization,
+            ));
+        };
+        // 名片不说在不在等：旧版读到 `listeningUntil` 会当成知道它在不在等。
+        object.remove("listeningUntil");
+        object.insert("liveness".to_owned(), Value::String("presence".to_owned()));
+        let event = self.signed_state_event(content)?;
+        self.publisher
+            .publish(target.room_id(), &event)
+            .await
+            .map_err(StatusPublicationFailure::matrix)
+    }
+
+    /// 名片不续租。还在用旧接口发状态的宿主问起来，就回名义上的租约：从此刻起算。
+    ///
+    /// # Errors
+    ///
+    /// 租约时长加上此刻超出时间范围时返回配置错误。
+    pub fn card_outcome(&self) -> StatusPublicationResult<StatusPublicationOutcome> {
+        let lease_expires_at =
+            self.clock
+                .now()
+                .checked_add(self.policy.lifetime)
+                .map_err(|_| {
+                    StatusPublicationFailure::new(
+                        StatusPublicationFailureKind::InvalidConfiguration,
+                    )
+                })?;
+        Ok(StatusPublicationOutcome::NotDue {
+            renew_at: lease_expires_at,
+            lease_expires_at,
+        })
+    }
+
     fn state_event(
         &self,
         lease: &AgentStatusLease,
         last_polled_at: Option<UtcMillis>,
         waiting: Option<WaitingWindow>,
     ) -> StatusPublicationResult<MatrixStateEvent> {
+        let content = self.unsigned_content(lease, |unsigned| {
+            unsigned.last_polled_at = last_polled_at.map(rfc3339).transpose()?;
+            if let Some(window) = waiting {
+                unsigned.listening_until = Some(rfc3339(window.listening_until)?);
+                unsigned.waiting_until = Some(rfc3339(window.waiting_until)?);
+            }
+            Ok(())
+        })?;
+        self.signed_state_event(content)
+    }
+
+    /// 还没签名的状态内容，`fill` 补上租约写法才有的等待字段。
+    fn unsigned_content(
+        &self,
+        lease: &AgentStatusLease,
+        fill: impl FnOnce(&mut UnsignedStatusEvent<'_>) -> StatusPublicationResult<()>,
+    ) -> StatusPublicationResult<Value> {
         let event_id = self.identifiers.event_id();
         let correlation_id = self.identifiers.correlation_id();
         if event_id.get_version() != Some(Version::SortRand)
@@ -398,14 +479,12 @@ impl AgentStatusPublicationService {
         }
         let mut unsigned =
             UnsignedStatusEvent::new(&self.identity, lease, event_id, correlation_id)?;
-        unsigned.last_polled_at = last_polled_at.map(rfc3339).transpose()?;
-        if let Some(window) = waiting {
-            unsigned.listening_until = Some(rfc3339(window.listening_until)?);
-            unsigned.waiting_until = Some(rfc3339(window.waiting_until)?);
-        }
-        let mut content = serde_json::to_value(unsigned).map_err(|_| {
-            StatusPublicationFailure::new(StatusPublicationFailureKind::Serialization)
-        })?;
+        fill(&mut unsigned)?;
+        serde_json::to_value(unsigned)
+            .map_err(|_| StatusPublicationFailure::new(StatusPublicationFailureKind::Serialization))
+    }
+
+    fn signed_state_event(&self, mut content: Value) -> StatusPublicationResult<MatrixStateEvent> {
         let canonical = serde_jcs::to_vec(&content).map_err(|_| {
             StatusPublicationFailure::new(StatusPublicationFailureKind::Serialization)
         })?;

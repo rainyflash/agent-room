@@ -1,16 +1,31 @@
-use std::sync::{Arc, Weak};
-
-use agent_room_application::ports::MatrixRoomId;
-use agent_room_bridge_core::status::{
-    AgentStatusIntent, AgentStatusPublicationService, AgentStatusRoomTarget, HostAgentState,
-    StatusPublicationOutcome, StatusPublicationResult, WAIT_IDLE_TIMEOUT,
+use std::{
+    sync::{Arc, Weak},
+    time::Duration,
 };
-use agent_room_domain::time::UtcMillis;
+
+use agent_room_application::ports::{MatrixFailureKind, MatrixGateway, MatrixRoomId};
+use agent_room_bridge_core::{
+    presence::{PresenceSyncService, ProjectedAgentPresence},
+    status::{
+        AgentStatusIdentity, AgentStatusIntent, AgentStatusPublicationService,
+        AgentStatusRoomTarget, HostAgentState, StatusPublicationOutcome, StatusPublicationResult,
+        WAIT_IDLE_TIMEOUT,
+    },
+};
+use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
 use tokio::{sync::Mutex, time::Instant};
 use uuid::Uuid;
 
+/// 等完以后还报“在线”（在等消息）的时间：处理一条消息就在在线和离开之间来回跳不好看
+/// （`specs/agent-liveness/design.md`）。
+const WAITING_DEBOUNCE: Duration = Duration::from_mins(1);
+/// 报完在线、读回自己还是离线，有这么多次才当服务器没开在线状态，改回写租约。
+const PRESENCE_MISSES_BEFORE_LEASE: u8 = 2;
+
 pub(crate) struct AgentStatusPublicationHandle {
     target: AgentStatusRoomTarget,
+    /// 报 Matrix 在线状态用。没有就一直照旧写租约。
+    matrix: Option<Arc<dyn MatrixGateway>>,
     state: Mutex<AgentStatusPublicationState>,
 }
 
@@ -20,30 +35,112 @@ struct AgentStatusPublicationState {
     /// 最近一次空手而归的 `WaitInbox`。等待的进程被杀或取消后就不会再来，看门狗据此清除等待。
     last_wait_at: Option<Instant>,
     watchdog_running: bool,
+    liveness: Liveness,
+}
+
+/// 在不在线怎么告诉别人。
+enum Liveness {
+    /// 照旧写租约：没有 Matrix 网关，或者服务器没开在线状态。
+    Lease,
+    /// 进房间时写一张名片，在不在线、在不在等消息报 Matrix 的在线状态。
+    Presence(PresenceReporting),
+}
+
+#[derive(Default)]
+struct PresenceReporting {
+    /// 这次连上以后，房间里已经有一样的名片（看到的或者自己写的）。
+    card_in_place: bool,
+    /// 报完在线读回过自己的在线状态：服务器确实开着。
+    confirmed: bool,
+    /// 报完在线、读回自己还是离线（或者服务器不接这两个接口）的次数。
+    misses: u8,
+    /// 最近一次在等消息，哪个房间都算：Matrix 的在线状态按 Agent 算。
+    waited_at: Option<Instant>,
+    /// 上一次报出去（`PUT` 或同步带）的在线状态。
+    reported: Option<MatrixPresenceState>,
+}
+
+impl PresenceReporting {
+    /// 此刻该报的：在等消息、或者刚等完不到一分钟报在线，别的时候报离开。
+    fn wanted(&self, now: Instant) -> MatrixPresenceState {
+        if self
+            .waited_at
+            .is_some_and(|at| now.duration_since(at) < WAITING_DEBOUNCE)
+        {
+            MatrixPresenceState::Online
+        } else {
+            MatrixPresenceState::Unavailable
+        }
+    }
 }
 
 impl AgentStatusPublicationHandle {
+    /// 一直写租约。产品里都用 [`Self::with_presence`]，租约只在服务器没开在线状态时退回去用。
+    #[cfg(test)]
     pub(crate) fn new(
         service: AgentStatusPublicationService,
         target: AgentStatusRoomTarget,
         initial_state: HostAgentState,
     ) -> Self {
+        Self::build(service, target, initial_state, None)
+    }
+
+    /// 写名片、报 Matrix 在线状态；读回发现服务器没开在线状态，就改回写租约。
+    pub(crate) fn with_presence(
+        service: AgentStatusPublicationService,
+        target: AgentStatusRoomTarget,
+        initial_state: HostAgentState,
+        matrix: Arc<dyn MatrixGateway>,
+    ) -> Self {
+        Self::build(service, target, initial_state, Some(matrix))
+    }
+
+    fn build(
+        service: AgentStatusPublicationService,
+        target: AgentStatusRoomTarget,
+        initial_state: HostAgentState,
+        matrix: Option<Arc<dyn MatrixGateway>>,
+    ) -> Self {
+        let liveness = if matrix.is_some() {
+            Liveness::Presence(PresenceReporting::default())
+        } else {
+            Liveness::Lease
+        };
         Self {
             target,
+            matrix,
             state: Mutex::new(AgentStatusPublicationState {
                 service,
                 intent: AgentStatusIntent::new(initial_state, None),
                 last_wait_at: None,
                 watchdog_running: false,
+                liveness,
             }),
         }
     }
 
+    /// 这次同步顺带报的在线状态。写租约时照旧报在线，和 Matrix SDK 不设时一样。
+    pub(crate) async fn sync_presence(&self) -> MatrixPresenceState {
+        let mut state = self.state.lock().await;
+        match &mut state.liveness {
+            Liveness::Lease => MatrixPresenceState::Online,
+            Liveness::Presence(reporting) => {
+                let wanted = reporting.wanted(Instant::now());
+                reporting.reported = Some(wanted);
+                wanted
+            }
+        }
+    }
+
+    /// 宿主报的工作状态。写名片的不再发：名片不随工作状态变，在不在线看 Matrix 的在线状态。
     pub(crate) async fn publish(
         &self,
         host_state: HostAgentState,
     ) -> StatusPublicationResult<StatusPublicationOutcome> {
         let mut state = self.state.lock().await;
+        if matches!(state.liveness, Liveness::Presence(_)) {
+            return state.service.card_outcome();
+        }
         let connected = host_state != HostAgentState::Disconnected;
         let intent = AgentStatusIntent::new(host_state, None)
             .with_last_polled_at(state.intent.last_polled_at().filter(|_| connected))
@@ -56,16 +153,73 @@ impl AgentStatusPublicationHandle {
         Ok(outcome)
     }
 
-    pub(crate) async fn renew(&self) -> StatusPublicationResult<StatusPublicationOutcome> {
-        let mut state = self.state.lock().await;
-        let intent = state.intent.clone();
-        state
-            .service
-            .publish_if_due(&self.target, &intent, status_entropy())
-            .await
+    /// 正常退出，同步已经停了。写名片的报一次离线，别人马上看到，不用等 Synapse 那 30 秒；
+    /// 写租约的发一条离线。
+    pub(crate) async fn disconnect(&self) -> StatusPublicationResult<()> {
+        let presence = matches!(self.state.lock().await.liveness, Liveness::Presence(_));
+        if presence {
+            self.report(MatrixPresenceState::Offline).await;
+            return Ok(());
+        }
+        self.publish(HostAgentState::Disconnected).await.map(|_| ())
     }
 
-    /// 宿主收件后记下读取时间与是否仍在等待。开始、结束等待各发一次状态；等待期间不按轮询重发，
+    /// 每次同步之后调用。写名片的：还没确认服务器开着在线状态就确认一次，确认了才写名片
+    /// （没开的话写了名片，别人只会看到它离线）；房间里已经有一样的就不写，之后也不再写。
+    /// 写租约的：到点续租。
+    pub(crate) async fn renew(
+        &self,
+        presence: &PresenceSyncService,
+    ) -> StatusPublicationResult<()> {
+        let mut state = self.state.lock().await;
+        let state = &mut *state;
+        if let Liveness::Presence(reporting) = &mut state.liveness
+            && !reporting.confirmed
+        {
+            match self
+                .confirm_presence(reporting.wanted(Instant::now()))
+                .await
+            {
+                Some(true) => reporting.confirmed = true,
+                Some(false) => reporting.misses += 1,
+                None => {}
+            }
+            if reporting.misses >= PRESENCE_MISSES_BEFORE_LEASE {
+                tracing::warn!("服务器没开 Matrix 在线状态，改回写租约");
+                state.liveness = Liveness::Lease;
+            }
+        }
+        match &mut state.liveness {
+            Liveness::Presence(reporting) if !reporting.confirmed || reporting.card_in_place => {
+                Ok(())
+            }
+            Liveness::Presence(reporting) => {
+                let identity = state.service.identity();
+                // 读不出本机投影只是多写一张，名片照样是对的。
+                let existing = presence
+                    .projected_instance(self.target.room_id(), identity.agent_instance_id())
+                    .await
+                    .ok()
+                    .flatten();
+                if !existing.is_some_and(|existing| same_card(&existing, identity)) {
+                    state.service.publish_card(&self.target).await?;
+                }
+                reporting.card_in_place = true;
+                Ok(())
+            }
+            Liveness::Lease => {
+                let intent = state.intent.clone();
+                state
+                    .service
+                    .publish_if_due(&self.target, &intent, status_entropy())
+                    .await
+                    .map(|_| ())
+            }
+        }
+    }
+
+    /// 宿主收件后记下读取时间与是否仍在等待。写名片的：哪个房间里等着都算在等，刚开始等就
+    /// 马上报在线。写租约的：只认大厅里的，开始、结束等待各发一次状态；等待期间不按轮询重发，
     /// 由看门狗在 [`WAIT_IDLE_TIMEOUT`] 内没再等时清除。
     pub(crate) async fn note_inbox_wait(
         self: &Arc<Self>,
@@ -73,20 +227,37 @@ impl AgentStatusPublicationHandle {
         at: UtcMillis,
         waiting: bool,
     ) -> StatusPublicationResult<()> {
-        // A private-room fetch cannot advertise reception in the public lobby.
-        if room_id != self.target.room_id() {
-            return Ok(());
-        }
         let mut state = self.state.lock().await;
-        state.intent = state
-            .intent
-            .clone()
-            .with_last_polled_at(Some(at))
-            .with_waiting(waiting);
-        state.last_wait_at = waiting.then(Instant::now);
-        if waiting && !state.watchdog_running {
-            state.watchdog_running = true;
-            tokio::spawn(watch_abandoned_wait(Arc::downgrade(self)));
+        let mut report_online = false;
+        if let Liveness::Presence(reporting) = &mut state.liveness
+            && waiting
+        {
+            reporting.waited_at = Some(Instant::now());
+            if reporting.reported != Some(MatrixPresenceState::Online) {
+                reporting.reported = Some(MatrixPresenceState::Online);
+                report_online = true;
+            }
+        }
+        // A private-room fetch cannot advertise reception in the public lobby.
+        if room_id == self.target.room_id() {
+            state.intent = state
+                .intent
+                .clone()
+                .with_last_polled_at(Some(at))
+                .with_waiting(waiting);
+            state.last_wait_at = waiting.then(Instant::now);
+            if waiting && !state.watchdog_running {
+                state.watchdog_running = true;
+                tokio::spawn(watch_abandoned_wait(Arc::downgrade(self)));
+            }
+        }
+        if matches!(state.liveness, Liveness::Presence(_)) || room_id != self.target.room_id() {
+            // 放开锁再报：报得慢也不挡同步。
+            drop(state);
+            if report_online {
+                self.report(MatrixPresenceState::Online).await;
+            }
+            return Ok(());
         }
         let intent = state.intent.clone();
         state
@@ -95,10 +266,68 @@ impl AgentStatusPublicationHandle {
             .await?;
         Ok(())
     }
+
+    /// 报一次此刻该报的状态，再读回自己的。读回来不是离线，就是服务器开着在线状态
+    /// （`Some(true)`）；还是离线，或者服务器不接这两个接口，就是没开（`Some(false)`）。
+    /// 限速、超时、断网就是不知道（`None`），下一次同步之后再试。
+    async fn confirm_presence(&self, wanted: MatrixPresenceState) -> Option<bool> {
+        let matrix = self.matrix.as_ref()?;
+        let read = match matrix.report_presence(wanted).await {
+            Ok(()) => matrix.user_presence(matrix.metadata().user_id()).await,
+            Err(failure) => Err(failure),
+        };
+        match read {
+            Ok(presence) => Some(presence.state() != MatrixPresenceState::Offline),
+            Err(failure) if presence_unsupported(failure.kind()) => Some(false),
+            Err(failure) => {
+                tracing::debug!(
+                    failure_kind = ?failure.kind(),
+                    operation = ?failure.operation(),
+                    "没确认服务器开没开 Matrix 在线状态，下次同步后再确认"
+                );
+                None
+            }
+        }
+    }
+
+    /// 马上报一次在线状态。报不出去（多半是限速）也不要紧，下一次同步会带上。
+    async fn report(&self, presence: MatrixPresenceState) {
+        let Some(matrix) = &self.matrix else {
+            return;
+        };
+        if let Err(failure) = matrix.report_presence(presence).await {
+            tracing::debug!(
+                failure_kind = ?failure.kind(),
+                presence = ?presence,
+                "没报出去 Matrix 在线状态，下一次同步会带上"
+            );
+        }
+    }
+}
+
+/// 服务器不接报或读在线状态的接口，再试也一样。
+const fn presence_unsupported(kind: MatrixFailureKind) -> bool {
+    matches!(
+        kind,
+        MatrixFailureKind::NotFound
+            | MatrixFailureKind::Forbidden
+            | MatrixFailureKind::UnsupportedVersion
+    )
+}
+
+/// 房间里已有的那条就是这个实例此刻的名片：内容里的身份都没变，用不着再写。
+fn same_card(existing: &ProjectedAgentPresence, identity: &AgentStatusIdentity) -> bool {
+    let projected = existing.identity();
+    existing.is_card()
+        && projected.agent_id() == identity.agent_id()
+        && projected.agent_instance_id() == identity.agent_instance_id()
+        && projected.display_name() == identity.display_name()
+        && projected.matrix_user_id() == identity.matrix_user_id()
 }
 
 /// 等待的进程被杀、被取消时不会告诉 Bridge，只是不再来 `WaitInbox`。隔了 [`WAIT_IDLE_TIMEOUT`]
-/// 还没来就清除等待，不让“持续等待消息”一直挂到 `waitingUntil`。
+/// 还没来就清除等待，不让“持续等待消息”一直挂到 `waitingUntil`。写名片时不用发什么：在线
+/// 状态按最近一次等消息算，过了一分钟自己变“离开”。
 async fn watch_abandoned_wait(handle: Weak<AgentStatusPublicationHandle>) {
     loop {
         let Some(handle) = handle.upgrade() else {
@@ -119,6 +348,9 @@ async fn watch_abandoned_wait(handle: Weak<AgentStatusPublicationHandle>) {
         state.intent = state.intent.clone().with_waiting(false);
         state.last_wait_at = None;
         state.watchdog_running = false;
+        if matches!(state.liveness, Liveness::Presence(_)) {
+            return;
+        }
         let intent = state.intent.clone();
         // 没发出去也不要紧：下一次续租按清除后的意图重发。
         if let Err(failure) = state
@@ -136,3 +368,6 @@ fn status_entropy() -> u64 {
     let bytes = Uuid::now_v7().into_bytes();
     u64::from_le_bytes(bytes[8..].try_into().expect("UUID 后八字节长度固定"))
 }
+
+#[cfg(test)]
+mod tests;

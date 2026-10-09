@@ -62,6 +62,25 @@ impl PresenceProjectionRepository for InMemoryPresenceProjectionRepository {
         Box::pin(ready(result))
     }
 
+    fn projected_instance<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        instance_id: AgentInstanceId,
+    ) -> PortFuture<'a, Result<Option<ProjectedAgentPresence>, PresenceProjectionFailure>> {
+        let result = self
+            .state
+            .read()
+            .map_err(|_| corrupt_projection())
+            .map(|state| {
+                state
+                    .rooms
+                    .get(room_id)
+                    .and_then(|room| room.instances.get(&instance_id))
+                    .cloned()
+            });
+        Box::pin(ready(result))
+    }
+
     fn record_fetched_presence<'a>(
         &'a self,
         user_id: &'a MatrixUserId,

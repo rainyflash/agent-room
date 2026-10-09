@@ -1,11 +1,13 @@
-//! Matrix 在线状态（`specs/agent-liveness/design.md` 第 2 步）。读的一边靠的几件事在真实
+//! Matrix 在线状态（`specs/agent-liveness/design.md`）。读的一边（第 2 步）靠的几件事在真实
 //! Synapse 上成立：同步里带回同房间的人的在线和离开，`GET /presence` 问得到，停止同步约
-//! 30 秒后服务器自己改成离线，首次同步不带离线的人。
+//! 30 秒后服务器自己改成离线，首次同步不带离线的人。写的一边（第 3 步）靠的：同步带的
+//! 在线状态算数、盖掉之前报的，报了马上看得到。
 
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixGateway, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, MatrixUserPresence,
+    MatrixFailureKind, MatrixGateway, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken,
+    MatrixUserId, MatrixUserPresence,
 };
 use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::DurationMillis};
 use matrix_sdk::ruma::{
@@ -124,10 +126,123 @@ async fn 真实_synapse_不同房间的人问不到在线状态() {
         .user_presence(&stranger_id)
         .await
         .expect_err("没有同在一个房间就问不到");
-    assert_eq!(
-        failure.kind(),
-        agent_room_application::ports::MatrixFailureKind::Forbidden
+    assert_eq!(failure.kind(), MatrixFailureKind::Forbidden);
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 真实_synapse_同步带的在线状态盖掉报的_报了马上看得到() {
+    use MatrixPresenceState::{Offline, Online, Unavailable};
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let provisioner = application_service_provisioner(
+        &base_url,
+        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
     );
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let watcher = managed_device(&provisioner, &factory).await;
+    let agent = managed_device(&provisioner, &factory).await;
+    let watching = watcher.matrix().gateway();
+    let reporting = agent.matrix().gateway();
+    let agent_id = reporting.metadata().user_id().clone();
+    let room_id = create_room_with_retry(watching, &room_request()).await;
+    invite_with_retry(watching, &room_id, &agent_id).await;
+    join_with_retry(reporting, &room_id).await;
+    let mut since = None;
+
+    // 没在等消息的 Bridge：同步带“离开”。
+    watch_until(watching, &mut since, &agent_id, Unavailable, || {
+        sync_reporting(reporting, Unavailable)
+    })
+    .await;
+
+    // 开始等消息：马上报在线，不等下一次同步。
+    report(reporting, Online).await;
+    watch_until(watching, &mut since, &agent_id, Online, || async {}).await;
+
+    // 不再等了：下一次算数的同步带“离开”，盖掉报的在线。Synapse 10 秒只认一次同步带的
+    // 在线状态，被限速的那几次不算。
+    watch_until(watching, &mut since, &agent_id, Unavailable, || {
+        sync_reporting(reporting, Unavailable)
+    })
+    .await;
+
+    // 正常退出报离线：马上看得到。服务器自己判离线要等最后一次算数的同步之后 30 秒。
+    report(reporting, Offline).await;
+    let reported_at = Instant::now();
+    watch_until(watching, &mut since, &agent_id, Offline, || async {}).await;
+    assert!(
+        reported_at.elapsed() < Duration::from_secs(10),
+        "报了离线要马上看得到，不是等服务器超时"
+    );
+}
+
+/// Agent 同步一次，带上这种在线状态。
+async fn sync_reporting(gateway: &dyn MatrixGateway, presence: MatrixPresenceState) {
+    let request = MatrixSyncRequest::new(
+        None,
+        DurationMillis::new(FRESH_SYNC_TIMEOUT_MILLIS).expect("同步超时有效"),
+        false,
+    )
+    .expect("同步请求有效")
+    .with_presence(presence);
+    gateway
+        .sync_once(&request)
+        .await
+        .expect("真实 Synapse 同步必须成功");
+}
+
+/// 报一次在线状态。Synapse 每个用户 10 秒只认一次，被限速就按它说的等一会儿再报。
+async fn report(gateway: &dyn MatrixGateway, presence: MatrixPresenceState) {
+    let deadline = Instant::now() + CHANGE_WITHIN;
+    loop {
+        match gateway.report_presence(presence).await {
+            Ok(()) => return,
+            Err(failure) if failure.kind() == MatrixFailureKind::RateLimited => {
+                assert!(Instant::now() < deadline, "{CHANGE_WITHIN:?} 内一直被限速");
+                let wait = failure
+                    .retry_after()
+                    .map_or(Duration::from_secs(1), |wait| {
+                        Duration::from_millis(wait.value())
+                    });
+                sleep(wait).await;
+            }
+            Err(failure) => panic!("报在线状态失败：{failure:?}"),
+        }
+    }
+}
+
+/// 每一轮先做一次 `act`，再接着增量同步，直到同步里带回这个人的这种在线状态。
+async fn watch_until<F, Fut>(
+    gateway: &dyn MatrixGateway,
+    since: &mut Option<MatrixSyncToken>,
+    user_id: &MatrixUserId,
+    state: MatrixPresenceState,
+    mut act: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let deadline = Instant::now() + CHANGE_WITHIN;
+    loop {
+        act().await;
+        let batch = sync(gateway, since.clone()).await;
+        *since = Some(batch.next_batch().clone());
+        if batch
+            .presence()
+            .iter()
+            .rev()
+            .find(|presence| presence.user_id() == user_id)
+            .is_some_and(|presence| presence.state() == state)
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{CHANGE_WITHIN:?} 内同步里没带回 {} 的 {state:?}",
+            user_id.as_str()
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
 }
 
 /// 真的重新做一次不带起点的同步，不拿 Synapse 缓存的前一次回答。

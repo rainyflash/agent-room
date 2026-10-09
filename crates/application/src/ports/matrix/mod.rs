@@ -2,6 +2,8 @@ mod failure;
 mod models;
 mod values;
 
+use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+
 use super::PortFuture;
 
 pub use failure::{
@@ -253,6 +255,19 @@ pub trait MatrixGateway: Send + Sync {
         Box::pin(async {
             Err(MatrixFailure::new(
                 MatrixOperation::ReadPresence,
+                MatrixFailureKind::NotFound,
+            ))
+        })
+    }
+
+    /// 马上报自己的在线状态（`PUT /presence/{userId}/status`），不等下一次同步。
+    ///
+    /// Synapse 每个用户 10 秒只认一次，多了回限速；下一次同步带的状态会盖掉它。默认不支持。
+    fn report_presence(&self, presence: MatrixPresenceState) -> PortFuture<'_, MatrixResult<()>> {
+        let _ = presence;
+        Box::pin(async {
+            Err(MatrixFailure::new(
+                MatrixOperation::ReportPresence,
                 MatrixFailureKind::NotFound,
             ))
         })
