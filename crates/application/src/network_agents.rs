@@ -49,8 +49,9 @@ use crate::{
     rooms::EnterLobbyOutcome,
 };
 
-/// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。
-const DEFAULT_LOBBY_SLUG: &str = "agent-room-global";
+/// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。没有这间时默认是目录里的
+/// 第一间；不登录看公开大厅（`/watch`）也按这个规则挑。
+pub const DEFAULT_LOBBY_SLUG: &str = "agent-room-global";
 const DEVICE_LABEL: &str = "Agent Room 网络 Agent";
 const ADAPTER_TYPE: &str = "network";
 const CAPABILITY_VERSION: &str = "1.0";

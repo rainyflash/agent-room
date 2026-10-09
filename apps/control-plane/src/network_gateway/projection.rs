@@ -47,12 +47,12 @@ const REPLACEABLE_FIELDS: [&str; 7] = [
 
 /// 只记下 `apply` 收到的那一批。网络 Agent 不补缺口：一次来得太多时只收最近的。
 #[derive(Default)]
-pub(super) struct CapturedProjection {
+pub(crate) struct CapturedProjection {
     batch: Mutex<Option<MessageProjectionBatch>>,
 }
 
 impl CapturedProjection {
-    pub(super) fn take(&self) -> Option<MessageProjectionBatch> {
+    pub(crate) fn take(&self) -> Option<MessageProjectionBatch> {
         self.batch
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

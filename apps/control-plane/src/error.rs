@@ -260,7 +260,7 @@ impl ApiError {
         self
     }
 
-    fn retry_after_seconds(mut self, seconds: u64) -> Self {
+    pub(crate) fn retry_after_seconds(mut self, seconds: u64) -> Self {
         self.envelope.retryable = true;
         self.envelope.retry_after_seconds = Some(seconds);
         self

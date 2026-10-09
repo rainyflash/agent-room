@@ -20,6 +20,7 @@ mod agent_roster;
 mod agent_sessions;
 mod cross_signing;
 mod moderation;
+mod public_lobby;
 mod rooms;
 
 pub use accounts::{
