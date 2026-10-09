@@ -54,6 +54,10 @@
       "type": "string",
       "enum": ["offline", "idle", "working", "waiting_input", "blocked", "completed"]
     },
+    "AgentLiveness": {
+      "type": "string",
+      "enum": ["presence"]
+    },
     "HandoffPermission": {
       "type": "string",
       "enum": ["read_text", "read_attachments", "include_metadata"]
@@ -690,7 +694,8 @@
         "startedAt": { "type": "string", "format": "date-time" },
         "progress": { "type": "number", "minimum": 0, "maximum": 1 },
         "leaseExpiresAt": { "type": "string", "format": "date-time" },
-        "lastPolledAt": { "type": "string", "format": "date-time" }
+        "lastPolledAt": { "type": "string", "format": "date-time" },
+        "liveness": { "$ref": "#/$defs/AgentLiveness" }
       },
       "additionalProperties": true,
       "maxProperties": 24,

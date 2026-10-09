@@ -55,14 +55,41 @@ impl AgentArchiveReason {
         }
     }
 }
+/// Matrix 自带的在线状态（presence），按用户算。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixPresenceState {
+    Online,
+    Unavailable,
+    Offline,
+}
+/// 读的一边对一个 Agent 的 Matrix 在线状态知道多少。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatrixPresenceObservation {
+    pub state: MatrixPresenceState,
+    /// 亲眼看到它从在线或离开变成离线的时刻。
+    pub offline_seen_at: Option<i64>,
+    /// 在线状态里的“上次活动”：拿到时的时刻减去 `last_active_ago`。
+    pub last_active_at: Option<i64>,
+}
+/// 在不在线从哪里看。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentLiveness {
+    /// 旧写法：状态事件自带租约，按租约判断。
+    Lease,
+    /// 名片（`liveness: "presence"`）：状态事件只说是谁，在不在线、在不在等消息都看
+    /// Matrix 的在线状态；还没拿到就是 `None`。
+    Presence(Option<MatrixPresenceObservation>),
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentPresenceEvidence {
     pub reported_status: AgentWorkStatus,
     pub lease_expires_at: i64,
+    /// 状态事件的时间；名片就是写名片的时间。
     pub last_active_at: i64,
     pub last_polled_at: Option<i64>,
     pub listening_until: Option<i64>,
     pub reception_known: bool,
+    pub liveness: AgentLiveness,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentLifecycle {
@@ -73,6 +100,21 @@ pub struct AgentLifecycle {
 }
 impl AgentPresenceEvidence {
     pub fn lifecycle(self, now: i64, archive_after_days: u16) -> AgentLifecycle {
+        let (connection, reception, offline_since) = match self.liveness {
+            AgentLiveness::Lease => self.lease_state(now),
+            AgentLiveness::Presence(observation) => self.presence_state(observation, now),
+        };
+        AgentLifecycle {
+            connection,
+            reception,
+            offline_since,
+            archive_reason: offline_since
+                .filter(|since| now - since >= i64::from(archive_after_days) * 86_400_000)
+                .map(|_| AgentArchiveReason::Expired),
+        }
+    }
+
+    fn lease_state(self, now: i64) -> (AgentConnection, AgentReception, Option<i64>) {
         let connection = if self.reported_status == AgentWorkStatus::Offline {
             AgentConnection::Offline
         } else if now < self.lease_expires_at {
@@ -98,13 +140,40 @@ impl AgentPresenceEvidence {
         } else {
             AgentReception::Unknown
         };
-        AgentLifecycle {
-            connection,
-            reception,
-            offline_since,
-            archive_reason: offline_since
-                .filter(|since| now - since >= i64::from(archive_after_days) * 86_400_000)
-                .map(|_| AgentArchiveReason::Expired),
+        (connection, reception, offline_since)
+    }
+
+    /// 名片按在线状态判断：在线就是在等消息，离开是连着没在等，离线或还没拿到都算离线。
+    /// 不看名片里的工作状态和租约，也没有“重连中”：Synapse 自己已经等了约 30 秒才说离线。
+    fn presence_state(
+        self,
+        observation: Option<MatrixPresenceObservation>,
+        now: i64,
+    ) -> (AgentConnection, AgentReception, Option<i64>) {
+        match observation.map(|observed| observed.state) {
+            Some(MatrixPresenceState::Online) => {
+                (AgentConnection::Online, AgentReception::Waiting, None)
+            }
+            Some(MatrixPresenceState::Unavailable) => {
+                (AgentConnection::Online, AgentReception::OnResume, None)
+            }
+            Some(MatrixPresenceState::Offline) | None => {
+                // 看到它变离线的，从那一刻算；没看到就用在线状态里的上次活动，但不早于
+                // 名片本身（写名片时它一定在）。都不晚于现在。
+                let since = observation
+                    .and_then(|observed| observed.offline_seen_at)
+                    .unwrap_or_else(|| {
+                        observation
+                            .and_then(|observed| observed.last_active_at)
+                            .map_or(self.last_active_at, |at| at.max(self.last_active_at))
+                    })
+                    .min(now);
+                (
+                    AgentConnection::Offline,
+                    AgentReception::Unavailable,
+                    Some(since),
+                )
+            }
         }
     }
 }

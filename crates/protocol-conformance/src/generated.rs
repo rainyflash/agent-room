@@ -33,6 +33,12 @@ pub struct AgentActor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentLiveness {
+    #[serde(rename = "presence")]
+    Presence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentProvenance {
     #[serde(rename = "human_confirmed_agent")]
     HumanConfirmedAgent,
@@ -63,6 +69,8 @@ pub struct AgentStatusEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_polled_at: Option<String>,
     pub lease_expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<AgentLiveness>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<f64>,
     pub schema_version: String,

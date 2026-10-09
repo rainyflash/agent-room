@@ -15,6 +15,8 @@ export type AgentActor = {
   readonly provenance: AgentProvenance;
 } & Readonly<Record<string, unknown>>;
 
+export type AgentLiveness = "presence";
+
 export type AgentProvenance = "human_confirmed_agent" | "autonomous_agent";
 
 export type AgentRef = {
@@ -32,6 +34,7 @@ export type AgentStatusEvent = {
   readonly id: string;
   readonly lastPolledAt?: string;
   readonly leaseExpiresAt: string;
+  readonly liveness?: AgentLiveness;
   readonly progress?: number;
   readonly schemaVersion: "1.0";
   readonly signature: string;

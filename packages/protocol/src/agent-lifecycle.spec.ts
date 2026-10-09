@@ -5,7 +5,34 @@ import {
   evaluateAgentLifecycle,
   projectAgentLifecycles,
   type AgentPresenceEvidence,
+  type MatrixPresenceState,
 } from './agent-lifecycle.js';
+
+type PresenceCase = {
+  readonly state: string;
+  readonly offlineSeenAt: number | null;
+  readonly lastActive: number | null;
+} | null;
+
+/** 夹具里的名片用例：`liveness` 和它拿到的在线状态。 */
+function cardEvidence(entry: object): Partial<AgentPresenceEvidence> {
+  if (!('liveness' in entry) || entry.liveness !== 'presence') return {};
+  const presence = ('presence' in entry ? entry.presence : null) as PresenceCase;
+  return {
+    liveness: 'presence',
+    ...(presence === null
+      ? {}
+      : {
+          presence: {
+            state: presence.state as MatrixPresenceState,
+            ...(presence.offlineSeenAt === null
+              ? {}
+              : { offlineSeenAtUnixMs: presence.offlineSeenAt }),
+            ...(presence.lastActive === null ? {} : { lastActiveAtUnixMs: presence.lastActive }),
+          },
+        }),
+  };
+}
 
 describe('shared agent lifecycle contract', () => {
   it('matches the cross-language policy', () => {
@@ -22,6 +49,7 @@ describe('shared agent lifecycle contract', () => {
         ...('legacy' in entry && entry.legacy
           ? {}
           : { listeningUntilUnixMs: entry.listeningUntil }),
+        ...cardEvidence(entry),
       },
       entry.now,
     );
