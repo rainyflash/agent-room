@@ -78,7 +78,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 会把一模一样的同步请求缓存两分钟**（`sync_response_cache_duration`，键是用户、设备、超时、起点、过滤器、`full_state` 等）。两分钟内再发一次不带起点的同步，拿到的是上一次的结果。2026-10-02 网络 Agent 凭口令进私人房间后马上发言，被说成不在房间里，就是因为加密客户端拿到的是加入之前的缓存。现在网关每次不带起点的同步都换一个超时值（`network_gateway/encrypted.rs` 的 `initial_sync_request`）；别的地方要反复做不带起点的同步，也得这样。
 - **Synapse 默认的发言限速。** 生产配置没写 `rc_message`，用的是默认值：每个 Matrix 用户连发 10 条以后每 5 秒才放一条，人和 Agent 都一样。网络 Agent 被挡下时控制面回 429 `network_agent.rate_limited` 带 `Retry-After`（#311 之前回的是 503）。测试里要一个人连发十几条，就分给几个人发，或者按 `Retry-After` 等；2026-10-05 无头验收的积压就是这样改成六个人各说 10 条的。
 - **Synapse 没接 MAS 时，已有签名身份的账户换签名身份一律要交互认证。** 管理接口 `_allow_cross_signing_replacement_without_uia` 只在接了 MAS 时起作用，只有应用服务的请求例外（MSC4190）。所以人的设备自动签名重建签名身份时，新签名公钥由控制面以应用服务身份冒充本人上传；应用服务注册为此有一个覆盖所有本地用户的非独占命名空间（ADR 0011 的“修订”）。
-- **删除账户连 Keycloak 里的登录账户一起删**（[设计](./specs/account-deletion/sign-in-account.md)）。删除任务先删 Keycloak 用户，再停用聊天账户，最后匿名化本地记录。控制面用只开服务账号的客户端 `agent-room-account-admin`（realm-management 的 `manage-users`）经内部地址删；生产由每次部署的身份同步建好它，本地和 CI 由 `dev-infra.ps1` 同步。只删签发方是本部署的账户，网络 Agent 没有登录账户。
+- **删除账户连 Keycloak 里的登录账户一起删**（#346，[设计](./specs/account-deletion/sign-in-account.md)）。删除任务先删 Keycloak 用户，再停用聊天账户，最后匿名化本地记录。控制面用只开服务账号的客户端 `agent-room-account-admin`（realm-management 的 `manage-users`）经内部地址删；生产由每次部署的身份同步建好它，本地和 CI 由 `dev-infra.ps1` 同步。只删签发方是本部署的账户，网络 Agent 没有登录账户。
 - **matrix-js-sdk 的 `bootstrapCrossSigning` 看到本机有签名私钥就不上传公钥。** 上次上传被打断（页面跳走）时，本机留着私钥、服务器上却没有签名身份，它也照样跳过。账户还没有签名身份时要用 `resetEncryption` 从头建，别用 `bootstrapCrossSigning`。
 - **本机加密存储丢了的设备只能换设备号。** Agent 的加密库遇到“同一个设备号换了签名公钥”一律不认（matrix-sdk-crypto 的 `SigningKeyChanged`），这台设备再也拿不到房间密钥，消息全都解不开。所以网页端和桌面端恢复会话时，加密库起来以前先问服务器这台设备记着的签名公钥，起来以后跟本机的比（`deviceKeysReplaced`），对不上就注销这台设备、重新登录拿新设备号。只在本机加密库持久保存时比：放在内存里的每次都是一套新密钥。
 - **升级时别让桌面端在换文件的当口启动。** Agent 的 MCP 和命令行连不上 Bridge 会在后台拉起桌面端（#221）。安装器停 Agent Room 的当口被拉起的旧版，会和正在退出的 WebView 抢同一份本机数据（推测 Chromium 打不开就整库删掉重建），升级后网页存储（加密库、登录）被清空：Alpha 57、62 都遇到过。所以安装器钩子：
@@ -264,7 +264,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- 下一版（Alpha 65）改了登录相关代码：删除账户时删掉 Keycloak 里的登录账户，动了 `render.py`、身份同步脚本和 `crates/identity-adapter/`。实机验收要维护者批准一次设备码，发版前先约好时间。
+- 下一版（Alpha 65）改了登录相关代码：删除账户时删掉 Keycloak 里的登录账户（#346），动了 `render.py`、身份同步脚本和 `crates/identity-adapter/`。实机验收要维护者批准一次设备码，发版前先约好时间。
 - Alpha 64 已于 2026-10-06 公开，见 [发布记录](./specs/agent-access/alpha64-release.md)。
   - 网络 Agent 拿房间号敲门、管理者在网页上放行（#326–#329）；Mac 上登录完还停在欢迎页的修复 #325（发往控制面的请求改由原生层代发）；没有默认 Agent 时桌面端探测不再记告警 #324。
   - 没改登录相关代码，实机验收复用 Alpha 61 那台长期验收设备，没要设备码。本机桌面端升级后经原生层查登录是 200，#325 这条路第一次在装好的应用上跑通。
