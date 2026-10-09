@@ -5,7 +5,7 @@ use agent_room_application::{
     ports::{
         ContentAccessMode, ContentAccessPolicy, ContentEventBinding, ContentLifecycleTransition,
         ContentRepository, ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint,
-        MatrixEventId, MatrixRoomId, ReclaimableContentQuery,
+        MatrixEventId, MatrixRoomId, ReclaimableContentQuery, RoomRetentionLookup,
     },
 };
 use agent_room_domain::{
@@ -227,10 +227,149 @@ async fn 回收查询同时发现卡死上传_到期内容和未绑定事件的�
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 按房间保留期的到期时间存得下_过了保留期才进回收() {
+    let database = TestDatabase::connect().await;
+    let owner = seed_principal(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let claim = upload_claim_expiring(
+        owner,
+        ContentUploadRequestId::from_uuid(Uuid::now_v7()),
+        41,
+        None,
+        Some(time(5_000)),
+    );
+    let content_id = claim.content.id();
+    ContentRepository::claim_upload(&repositories, &claim)
+        .await
+        .expect("声明成功");
+    ContentRepository::record_scan(
+        &repositories,
+        content_id,
+        ContentScanState::Clean,
+        time(2_000),
+    )
+    .await
+    .expect("扫描成功");
+    ContentRepository::activate(&repositories, content_id, time(3_000))
+        .await
+        .expect("激活成功");
+    // 绑定了消息事件，不会被当成没发出去的对象回收，只剩保留期这一条路。
+    ContentRepository::bind_event(
+        &repositories,
+        &ContentEventBinding {
+            content_id,
+            matrix_room_id: claim.access_policy.matrix_room_id().clone(),
+            matrix_event_id: MatrixEventId::new(format!("$event-{content_id}:matrix.test"))
+                .expect("事件 ID 有效"),
+            bound_at: time(4_000),
+        },
+    )
+    .await
+    .expect("绑定成功");
+
+    let stored = ContentRepository::find_content(&repositories, content_id)
+        .await
+        .expect("内容可读")
+        .expect("内容存在");
+    assert_eq!(stored.expires_at(), None);
+    assert_eq!(stored.retention_expires_at(), Some(time(5_000)));
+    assert!(
+        !reclaimable_ids(&repositories, time(4_999))
+            .await
+            .contains(&content_id)
+    );
+    assert!(
+        reclaimable_ids(&repositories, time(5_000))
+            .await
+            .contains(&content_id)
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房间保留期按聊天房间查到目录上的设置() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let week = seed_archived_lobby(&database.migration, Some(7)).await;
+    let unset = seed_archived_lobby(&database.migration, None).await;
+    let unknown = MatrixRoomId::new(format!("!unknown-{}:matrix.test", Uuid::now_v7().simple()))
+        .expect("房间 ID 有效");
+
+    for (room, expected) in [(week, Some(7)), (unset, None), (unknown, None)] {
+        let days = RoomRetentionLookup::retention_days(&repositories, &room)
+            .await
+            .expect("保留期可查");
+        assert_eq!(days, expected, "{room:?}");
+    }
+
+    database.close().await;
+}
+
+async fn reclaimable_ids(repositories: &PostgresRepositories, now: UtcMillis) -> Vec<ContentId> {
+    ContentRepository::list_reclaimable(
+        repositories,
+        &ReclaimableContentQuery {
+            now,
+            orphaned_before: time(1_000),
+            limit: 200,
+        },
+    )
+    .await
+    .expect("回收查询成功")
+    .iter()
+    .map(ContentObject::id)
+    .collect()
+}
+
+/// 归档、不公开的大厅：私人房间要连带成员和状态记录，这里只要目录上的保留期；归档了也不会被
+/// 别的测试当成可进的公共大厅。
+async fn seed_archived_lobby(pool: &PgPool, retention_days: Option<i32>) -> MatrixRoomId {
+    let catalog_id = Uuid::now_v7();
+    let room = MatrixRoomId::new(format!("!retention-{}:matrix.test", catalog_id.simple()))
+        .expect("房间 ID 有效");
+    sqlx::query(
+        r"INSERT INTO agent_room.room_catalog_entry (
+               id, kind, name, visibility, retention_days, status, created_at, updated_at
+           ) VALUES ($1, 'public_lobby', '保留期测试大厅', 'unlisted', $2, 'archived',
+                     statement_timestamp(), statement_timestamp())",
+    )
+    .bind(catalog_id)
+    .bind(retention_days)
+    .execute(pool)
+    .await
+    .expect("房间目录写入成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.room_instance (
+               id, catalog_entry_id, matrix_room_id, state, created_at, updated_at
+           ) VALUES ($1, $2, $3, 'archived', statement_timestamp(), statement_timestamp())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(catalog_id)
+    .bind(room.as_str())
+    .execute(pool)
+    .await
+    .expect("房间实例写入成功");
+    room
+}
+
 fn upload_claim(
     owner: PrincipalId,
     request_id: ContentUploadRequestId,
     marker: u8,
+) -> ContentUploadClaim {
+    upload_claim_expiring(owner, request_id, marker, Some(time(9_000)), None)
+}
+
+fn upload_claim_expiring(
+    owner: PrincipalId,
+    request_id: ContentUploadRequestId,
+    marker: u8,
+    expires_at: Option<UtcMillis>,
+    retention_expires_at: Option<UtcMillis>,
 ) -> ContentUploadClaim {
     let content_id = ContentId::from_uuid(Uuid::now_v7());
     let created_at = time(1_000);
@@ -247,7 +386,8 @@ fn upload_claim(
         encryption_mode: ContentEncryptionMode::ServerSide,
         scan_state: ContentScanState::Pending,
         lifecycle_state: ContentLifecycleState::Uploading,
-        expires_at: Some(time(9_000)),
+        expires_at,
+        retention_expires_at,
         created_at,
         deleted_at: None,
     })

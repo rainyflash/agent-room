@@ -20,7 +20,7 @@ use agent_room_application::{
         MatrixAgentUserRegistration, MatrixClientFactory, MatrixDeviceId, MatrixFailure,
         MatrixFailureKind, MatrixOperation, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
         MatrixRoomId, MatrixUserId, PortFuture, PrivateContentObjectStore, RoomMembershipGateway,
-        SecretFactory, SecretValue,
+        RoomRetentionLookup, SecretFactory, SecretValue,
     },
 };
 use agent_room_content_adapter::{
@@ -77,6 +77,7 @@ struct ContentApplication {
 struct ContentApplicationDependencies<'a> {
     config: &'a ContentConfig,
     repository: Arc<dyn ContentRepository>,
+    retention: Arc<dyn RoomRetentionLookup>,
     system_runtime: Arc<SystemRuntime>,
     object_store: Arc<dyn PrivateContentObjectStore>,
     scanner: Arc<dyn ContentScanner>,
@@ -119,6 +120,7 @@ pub(crate) async fn initialize(
     let application = build_content_application(ContentApplicationDependencies {
         config: dependencies.config,
         repository,
+        retention: dependencies.repositories.clone(),
         system_runtime: dependencies.system_runtime,
         object_store,
         scanner,
@@ -164,6 +166,7 @@ fn build_content_application(
                 as Arc<dyn ContentStorageKeyFactory>,
             repository: dependencies.repository.clone(),
             authorizer: dependencies.authorizer.clone(),
+            retention: dependencies.retention,
         },
     ));
     let complete_upload = Arc::new(CompleteContentUploadService::new(

@@ -373,7 +373,7 @@ impl CleanupContentService {
         let target = match candidate.lifecycle_state() {
             ContentLifecycleState::Active
                 if candidate
-                    .expires_at()
+                    .effective_expires_at()
                     .is_some_and(|expires_at| expires_at <= now) =>
             {
                 Some(ContentLifecycleState::Expired)

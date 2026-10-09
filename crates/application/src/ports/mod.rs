@@ -77,7 +77,7 @@ pub use content::{
     ContentStreamResult, ContentTicketFailure, ContentTicketFailureKind, ContentTicketResult,
     ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint, ObjectStoreFailure,
     ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
-    PrivateContentObjectStore, ReclaimableContentQuery,
+    PrivateContentObjectStore, ReclaimableContentQuery, RoomRetentionLookup,
 };
 pub use devices::{
     DEVICE_REFRESH_REPLAY_SALT_LENGTH, DerivedDeviceTokens, DeviceProofNonceStore,

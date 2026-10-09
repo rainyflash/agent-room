@@ -429,6 +429,7 @@ mod tests {
             scan_state: ContentScanState::Pending,
             lifecycle_state: ContentLifecycleState::Uploading,
             expires_at: None,
+            retention_expires_at: None,
             created_at: UtcMillis::new(1).expect("时间有效"),
             deleted_at: None,
         })

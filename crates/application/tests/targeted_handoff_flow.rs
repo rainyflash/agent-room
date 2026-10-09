@@ -583,6 +583,7 @@ impl Fixture {
             scan_state: ContentScanState::Clean,
             lifecycle_state: ContentLifecycleState::Active,
             expires_at: Some(time(NOW + 86_400_000)),
+            retention_expires_at: None,
             created_at: time(NOW - 1_000),
             deleted_at: None,
         })
