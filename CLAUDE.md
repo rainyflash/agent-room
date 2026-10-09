@@ -95,6 +95,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 桌面端启动时看到标记被占着就直接退出（`installer_marker.rs`）。改安装流程时这几样别拆。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
+- **网页加密库的锁同一个页面里也会抢。** 每台设备的加密库由一把 Web Locks 锁守着，拿锁只等 1 秒，等不到就报“已在另一个窗口打开”。睡眠醒来、网络断了又连上时会接连恢复会话，上一次还拿着锁，2026-10-09 维护者的 Mac 就因此停住。现在新的一次先叫停上一次、等它放开锁（`RESTORE_HANDOFF_WAIT_MS`），等不到报 `matrix.restore_stuck`。改恢复流程时，被取代的那次也要尽快收尾、放开锁。
 - **macOS 不让给还没绑定的 socket 设权限。** interprocess 的 `ListenerOptionsExt::mode` 在绑定前调 `fchmod()`，Linux 支持，macOS 一律返回 EINVAL。Bridge 从第一版起就用它，每台 Mac 授权完都报 `bridge.ipc_bind_failed`、建不起本地连接，Linux 和 Windows 的测试照样全过。#320 起绑定后再用 `restrict_socket_to_owner` 收紧到 0600（运行目录先验过 0700），别再用 `mode()`。
 - **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（#325，命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
   - 发布实机验收也一样：`tools/release_qa.py` 在桌面端页面里请求控制面，要走 `desktop_control_plane_request`（`NATIVE_CONTROL_PLANE_JS`）。CDP 看不到原生层发的请求，所以消息发没发出去，以接收端解开的那条为准（`confirm_delivery`）。Alpha 64 验收时工具还没改，是用本地补丁跑完的；改法见 #330。

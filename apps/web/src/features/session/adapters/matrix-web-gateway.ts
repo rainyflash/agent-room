@@ -39,6 +39,11 @@ const MATRIX_RETURN_PATH_KEY = 'agent-room.matrix-return-path.v1';
 export const CRYPTO_STORE_CLEAR_WAIT_MS = 5_000;
 /** 退出登录时等自动签名做完手头这一步，最多等这么久。 */
 export const SIGNING_STOP_WAIT_MS = 5_000;
+/**
+ * 同一个页面里接连重连（比如睡眠醒来、网络断了又连上）时，上一次恢复可能还拿着加密库的锁。新的这次先叫停它，
+ * 等它收尾放开锁，最多等这么久；它卡在本机存储或加密模块里一直不结束，就报“卡住了”，不当成另一个窗口占着。
+ */
+export const RESTORE_HANDOFF_WAIT_MS = 30_000;
 const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
 const MAX_LOGIN_TOKEN_LENGTH = 4_096;
 
@@ -122,6 +127,8 @@ export class MatrixWebGateway implements MatrixGateway {
   #pendingLogout: BrowserMatrixConnection | null = null;
   #pendingRevocation: StoredMatrixSession | null = null;
   readonly #pendingRestores = new Set<Promise<Result<MatrixRestoreOutcome, SessionFailure>>>();
+  /** 还在恢复中、没交出去的客户端；被取代时叫停它们，好让那次恢复尽快收尾、放开加密库的锁。 */
+  readonly #restoringClients = new Set<MatrixClient>();
   #logoutInProgress = false;
   #freshAuthenticationReturnPath: string | undefined;
 
@@ -236,6 +243,9 @@ export class MatrixWebGateway implements MatrixGateway {
       return err(failure('matrix', 'matrix.logout_incomplete', false, true));
     }
     const attempt = ++this.#restoreAttempt;
+    // 这里还没进集合的只有这一次；之前的都已被取代，可能还拿着加密库的锁。
+    const earlier = [...this.#pendingRestores];
+    this.#stopRestoringClients();
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
     this.#cryptoLease?.release();
@@ -291,6 +301,13 @@ export class MatrixWebGateway implements MatrixGateway {
     try {
       const session = sessionResult.value;
       if (this.#indexedDB !== undefined) {
+        // 锁要是还在本页被取代的那次手里，等它放开，别报成另一个窗口占着。
+        if (
+          (await settleWithin(Promise.allSettled(earlier), RESTORE_HANDOFF_WAIT_MS)) === 'pending'
+        ) {
+          return err(failure('matrix', 'matrix.restore_stuck', false, true));
+        }
+        if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
         const acquired = await acquireMatrixCryptoLease(
           `agent-room.matrix:${JSON.stringify([this.#baseUrl, session.userId, session.deviceId])}`,
           navigator.locks,
@@ -355,6 +372,7 @@ export class MatrixWebGateway implements MatrixGateway {
         verificationMethods: [MATRIX_SAS_VERIFICATION_METHOD],
       });
       candidate = client;
+      this.#restoringClients.add(client);
       this.#clientLogs.set(client, lifecycleLog);
       await store.startup();
       const whoAmI = whoAmISchema.safeParse(await client.whoami());
@@ -424,6 +442,7 @@ export class MatrixWebGateway implements MatrixGateway {
       }
       return err(failure('matrix', 'matrix.restore_failed', !this.#online(), true));
     } finally {
+      if (candidate !== undefined) this.#restoringClients.delete(candidate);
       if (!connected && candidate !== undefined) {
         stopMatrixClient(candidate, this.#clientLogs.get(candidate));
         this.#retainClientForLogout(candidate, sdk.ClientEvent.Sync, sdk.SyncState, lease);
@@ -434,6 +453,7 @@ export class MatrixWebGateway implements MatrixGateway {
 
   disconnect(): void {
     ++this.#restoreAttempt;
+    this.#stopRestoringClients();
     this.#activeConnection?.disconnect();
     this.#activeConnection = null;
     this.#cryptoLease?.release();
@@ -574,6 +594,13 @@ export class MatrixWebGateway implements MatrixGateway {
   #releaseCryptoLease(): void {
     this.#cryptoLease?.release();
     this.#cryptoLease = null;
+  }
+
+  /** 被取代的恢复停下手里的请求，随即失败收尾，放开加密库的锁；收尾时它自己从集合里退出。 */
+  #stopRestoringClients(): void {
+    for (const client of this.#restoringClients) {
+      stopMatrixClient(client, this.#clientLogs.get(client));
+    }
   }
 
   #retainClientForLogout(

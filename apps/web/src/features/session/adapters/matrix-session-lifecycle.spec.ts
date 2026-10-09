@@ -7,6 +7,7 @@ import type { DeviceSigningOutcome, ensureDeviceSigned } from './matrix-device-s
 import {
   CRYPTO_STORE_CLEAR_WAIT_MS,
   MatrixWebGateway,
+  RESTORE_HANDOFF_WAIT_MS,
   SIGNING_STOP_WAIT_MS,
 } from './matrix-web-gateway';
 import type { MatrixSessionVault, StoredMatrixSession } from '../domain/matrix-session-vault';
@@ -120,11 +121,11 @@ function gateway(vault: MatrixSessionVault) {
 function persistentGateway(
   vault: MatrixSessionVault,
   persistStorage = vi.fn(() => Promise.resolve(true)),
-) {
-  const locks = {
+  locks: Pick<LockManager, 'request'> = {
     request: (name: string, _options: unknown, granted: (lock: Lock) => Promise<unknown>) =>
       granted({ mode: 'exclusive', name }),
-  };
+  } as Pick<LockManager, 'request'>,
+) {
   vi.stubGlobal('navigator', { locks, onLine: true });
   return new MatrixWebGateway({
     baseUrl: 'https://matrix.test',
@@ -133,6 +134,52 @@ function persistentGateway(
     sessionVault: vault,
     url: () => new URL('https://tauri.localhost/connect'),
   });
+}
+
+/** 和浏览器一样同一时间只给一个持有者的锁：拿着的放开以前，别人只能排队，排队时信号中止就放弃。 */
+function exclusiveLocks(): Pick<LockManager, 'request'> {
+  const held = new Set<string>();
+  const queues = new Map<string, (() => void)[]>();
+  const request = (
+    name: string,
+    options: LockOptions,
+    granted: (lock: Lock | null) => Promise<unknown>,
+  ): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const run = (): void => {
+        held.add(name);
+        void granted({ mode: 'exclusive', name })
+          .then(resolve, reject)
+          .finally(() => {
+            held.delete(name);
+            queues.get(name)?.shift()?.();
+          });
+      };
+      if (!held.has(name)) {
+        run();
+        return;
+      }
+      const queue = queues.get(name) ?? [];
+      queues.set(name, queue);
+      const signal = options.signal;
+      const abandon = (): void => {
+        queue.splice(queue.indexOf(enter), 1);
+        reject(new DOMException('等锁时被中止', 'AbortError'));
+      };
+      const enter = (): void => {
+        signal?.removeEventListener('abort', abandon);
+        run();
+      };
+      signal?.addEventListener('abort', abandon, { once: true });
+      queue.push(enter);
+    });
+  return { request } as Pick<LockManager, 'request'>;
+}
+
+/** 别的窗口拿着这台设备加密库的锁，一直不放。 */
+function heldByAnotherWindow(locks: Pick<LockManager, 'request'>): void {
+  const name = `agent-room.matrix:${JSON.stringify(['https://matrix.test', session.userId, session.deviceId])}`;
+  void locks.request(name, {}, () => new Promise(() => undefined));
 }
 
 /** 服务器替账户保管签名钥匙的网关：首次同步之后自动签名。 */
@@ -638,5 +685,65 @@ describe('Matrix 网关持久会话生命周期', () => {
       vi.useRealTimers();
     }
     expect(sdk.logout).toHaveBeenCalledOnce();
+  });
+
+  it('同一个页面里接着重连时先叫停上一次，等它放开加密库的锁再连上，不报成另一个窗口', async () => {
+    // 2026-10-09 维护者的 Mac：上一次恢复还卡在请求上拿着锁，新的一次只等 1 秒就说“已在另一个窗口打开”。
+    const stalled = Promise.withResolvers<unknown>();
+    const asked = Promise.withResolvers<undefined>();
+    sdk.whoami.mockImplementationOnce(() => {
+      asked.resolve(undefined);
+      return stalled.promise;
+    });
+    sdk.abort.mockImplementationOnce(() => {
+      stalled.reject(new DOMException('signal is aborted without reason', 'AbortError'));
+    });
+    const matrix = persistentGateway(storage(), undefined, exclusiveLocks());
+    const first = matrix.restore(session.userId);
+    await asked.promise;
+
+    await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: 'connected' },
+    });
+    await expect(first).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.session_superseded' },
+    });
+    expect(sdk.abort).toHaveBeenCalled();
+  });
+
+  it('上一次卡在本机加密模块里一直不放开锁时，等一会报卡住了，不说是另一个窗口', async () => {
+    sdk.initializeCrypto.mockReturnValueOnce(new Promise(() => undefined));
+    const matrix = persistentGateway(storage(), undefined, exclusiveLocks());
+    void matrix.restore(session.userId);
+    await vi.waitFor(() => {
+      expect(sdk.initializeCrypto).toHaveBeenCalledOnce();
+    });
+
+    vi.useFakeTimers();
+    try {
+      const second = matrix.restore(session.userId);
+      await vi.advanceTimersByTimeAsync(RESTORE_HANDOFF_WAIT_MS);
+      await expect(second).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'matrix.restore_stuck' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(sdk.initializeCrypto).toHaveBeenCalledOnce();
+  });
+
+  it('真有另一个窗口拿着这台设备的加密库时，照旧请用户去那个窗口', async () => {
+    const locks = exclusiveLocks();
+    heldByAnotherWindow(locks);
+    const matrix = persistentGateway(storage(), undefined, locks);
+
+    await expect(matrix.restore(session.userId)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'matrix.session_in_use' },
+    });
+    expect(sdk.whoami).not.toHaveBeenCalled();
   });
 });
