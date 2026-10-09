@@ -1,0 +1,142 @@
+/*
+ * 围观页：沿用房间页的游戏大厅外观（lobby-game.css）和几何约定，这里只补它没有的几样：
+ * 顶栏左边回首页的标志、右边的登录和注册，对话面板底部的“进去说话”，以及只读消息里的提示。
+ */
+
+.public-watch__home {
+  display: grid;
+  flex: 0 0 44px;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-sunny);
+  box-shadow: var(--ar-press-small);
+}
+.public-watch__home img {
+  width: 26px;
+  height: 26px;
+}
+.public-watch__home:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
+}
+.public-watch .workspace-header__identity {
+  flex: 0 1 auto;
+}
+.public-watch__account {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.public-watch__account .ar-button {
+  white-space: nowrap;
+}
+
+/* 对话面板：标题、只读的对话、底部一行说明和“进去说话”。 */
+.public-watch__panel-title {
+  margin: 0;
+  padding-left: 4px;
+  font-size: 15px;
+  font-weight: 650;
+}
+.public-watch__stale {
+  flex: 0 0 auto;
+  margin: 10px 12px 0;
+}
+.public-watch__content {
+  display: flex;
+  flex-direction: column;
+}
+.public-watch__content .conversation-panel__timeline {
+  padding: 12px 4px 12px;
+}
+.public-watch__content [data-focused='true'] .conversation-message {
+  border-radius: 14px;
+  background: var(--ar-warning-soft);
+}
+.public-watch__content [data-message-key]:focus {
+  outline: none;
+}
+.public-watch__content [data-message-key]:focus-visible .conversation-message {
+  outline: 3px solid var(--ar-accent);
+  outline-offset: -3px;
+}
+.public-watch__withheld {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 14px;
+  font-style: italic;
+}
+.public-watch__note {
+  margin: 6px 0 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+.public-watch__attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 3px 10px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-pill);
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+.public-watch__attachment svg {
+  width: 14px;
+  height: 14px;
+}
+.public-watch__footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+.public-watch__footer p {
+  flex: 1 1 180px;
+  min-width: 0;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 顶栏放得下时“谁都能看到”写在顶栏上，放不下就写在对话面板底部。 */
+@media (max-width: 1099px) {
+  .public-watch .workspace-header__topic {
+    display: none;
+  }
+}
+@media (min-width: 1100px) {
+  .public-watch__footer-notice {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .public-watch__home {
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+  }
+  .public-watch__language {
+    display: none;
+  }
+  .public-watch__toolbelt {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 479px) {
+  .public-watch__sign-in {
+    display: none;
+  }
+}

@@ -51,6 +51,10 @@ const GuidePage = lazyRouteComponent(() => import('@/features/guide/ui/guide-pag
 const RoomDirectoryPage = lazyPage(
   async () => (await import('@/features/room-directory/ui/room-directory-page')).RoomDirectoryPage,
 );
+// 围观页带着大厅场景（Pixi），打开时再下载。
+const PublicWatchPage = lazyPage(
+  async () => (await import('@/features/public-watch/ui/public-watch-page')).PublicWatchPage,
+);
 const AccountWorkspacePage = lazyPage(
   async () => (await import('@/features/workspace/ui/account-workspace-page')).AccountWorkspacePage,
 );
@@ -80,6 +84,18 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: LandingPage,
+});
+
+// 不登录也能看公共大厅（specs/public-lobby-watch/design.md）：/watch 是默认大厅。
+const watchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/watch',
+  component: WatchBoundary,
+});
+const watchLobbyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/watch/$slug',
+  component: WatchLobbyBoundary,
 });
 
 const connectRoute = createRoute({
@@ -156,6 +172,8 @@ const routeTree = rootRoute.addChildren([
   aboutRoute,
   guideRoute,
   indexRoute,
+  watchRoute,
+  watchLobbyRoute,
   connectRoute,
   onboardingRoute,
   workspaceRoute,
@@ -174,6 +192,15 @@ export const router = createRouter({
     <RouteUnavailable invalid routeLabel={window.location.pathname} />
   ),
 });
+
+function WatchBoundary() {
+  return <PublicWatchPage slug={null} />;
+}
+
+function WatchLobbyBoundary() {
+  const { slug } = watchLobbyRoute.useParams();
+  return <PublicWatchPage slug={slug} />;
+}
 
 function LobbyBoundary() {
   const { catalogId } = lobbyRoute.useParams();

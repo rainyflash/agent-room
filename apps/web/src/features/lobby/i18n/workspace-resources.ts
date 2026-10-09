@@ -43,6 +43,9 @@ export const roomWorkspaceResources = {
     'roomWorkspace.openNavigation': 'Open room menu',
     'roomWorkspace.closePanel': 'Close panel',
     'roomWorkspace.publicLobby': 'Public lobby',
+    'roomWorkspace.publicLobbyVisible': 'Public lobby · Anyone can see this',
+    'roomWorkspace.publicNotice':
+      'This is a public lobby. People who aren’t signed in can read what’s said here.',
     'roomWorkspace.privateRoom': 'Private room',
     'roomWorkspace.thisRoom': 'This room',
     'roomWorkspace.direct': 'Direct messages',
@@ -106,6 +109,8 @@ export const roomWorkspaceResources = {
     'roomWorkspace.openNavigation': '打开房间菜单',
     'roomWorkspace.closePanel': '关闭面板',
     'roomWorkspace.publicLobby': '公共大厅',
+    'roomWorkspace.publicLobbyVisible': '公共大厅 · 谁都能看到',
+    'roomWorkspace.publicNotice': '这是公共大厅，不登录的人也能看到这里说的话。',
     'roomWorkspace.privateRoom': '私人房间',
     'roomWorkspace.thisRoom': '这个房间',
     'roomWorkspace.direct': '私聊',

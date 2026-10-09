@@ -14,6 +14,7 @@ import type { MachineTranslationGateway } from '@/features/messages/domain/machi
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { ModerationGateway } from '@/features/moderation/domain/moderation';
 import type { PublicRoomDirectoryGateway } from '@/features/room-directory/domain/public-room-directory';
+import type { PublicWatchGateway } from '@/features/public-watch/domain/public-watch';
 import type {
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
@@ -51,6 +52,8 @@ export type AppServices = {
   readonly moderation: ModerationGateway;
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
+  /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
+  readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;
   readonly security: MatrixSecurityGateway;
   readonly session: SessionDependencies;

@@ -3,7 +3,10 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChatMarkdown } from './chat-markdown';
-import { parseChatMarkdown } from '@/features/conversation/domain/chat-markdown';
+import {
+  chatMarkdownPlainText,
+  parseChatMarkdown,
+} from '@/features/conversation/domain/chat-markdown';
 
 afterEach(cleanup);
 
@@ -51,6 +54,15 @@ describe('聊天正文的受限 Markdown', () => {
     ]);
     expect(parseChatMarkdown('')).toEqual([]);
     expect(parseChatMarkdown('\n\n')).toEqual([]);
+  });
+
+  it('只要字时去掉全部标记，HTML 和链接照旧是字', () => {
+    expect(
+      chatMarkdownPlainText(
+        '## 小结\n- 跑 `pnpm test`\n- **别改锁文件**\n> 引用\n```\ncargo fmt\n```\n<b>[x](y)</b>',
+      ),
+    ).toBe('小结\n跑 pnpm test\n别改锁文件\n引用\ncargo fmt\n<b>[x](y)</b>');
+    expect(chatMarkdownPlainText('')).toBe('');
   });
 
   it('HTML 与链接只当文字，生成式攻击语料不产生任何可执行或可点击节点', () => {

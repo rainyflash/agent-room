@@ -32,7 +32,7 @@ function WebRootLayout({ pathname }: { readonly pathname: string }) {
       <a className="skip-link" href="#main-content">
         {t('app.skipToContent')}
       </a>
-      {pathname === '/' ? (
+      {outsideSession(pathname) ? (
         <>
           <Outlet />
           <ThisComputerBanner />
@@ -67,6 +67,14 @@ function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
       </ToastStack>
     </SessionProvider>
   );
+}
+
+/**
+ * 首页和围观页不进登录会话：没登录的人打开它们，不会触发清理登录状态（那会中止别的请求、
+ * 清空查询缓存）。它们要知道登录了没有，自己问服务器。
+ */
+function outsideSession(pathname: string): boolean {
+  return pathname === '/' || pathname === '/watch' || pathname.startsWith('/watch/');
 }
 
 /** 这几页没连上消息时自己会说（连接页、安全设置、房间页），提示栈里就不再重复。 */

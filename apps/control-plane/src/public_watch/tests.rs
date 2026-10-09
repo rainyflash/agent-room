@@ -515,6 +515,10 @@ fn revision(
 
 /// 一分钟前写的在线状态，租约 5 分钟。
 fn status(agent: &Agent) -> MatrixTimelineEvent {
+    status_as(agent, "idle")
+}
+
+fn status_as(agent: &Agent, work: &str) -> MatrixTimelineEvent {
     timeline_event(
         &format!("$status-{}:matrix.test", agent.instance_id.simple()),
         &agent.matrix_user(),
@@ -528,7 +532,7 @@ fn status(agent: &Agent) -> MatrixTimelineEvent {
             "createdAt": "2026-10-20T07:59:00.000Z",
             "actor": agent.actor(),
             "correlationId": Uuid::now_v7(),
-            "status": "idle",
+            "status": work,
             "visibility": "coarse",
             "leaseExpiresAt": "2026-10-20T08:04:00.000Z",
             "signature": signature([1; 64]),
@@ -600,7 +604,7 @@ async fn 消息_在线的_agent_和说过话的人拼成快照_不带_matrix_id(
     let harness = setup.build();
     let hello = Uuid::now_v7();
     let mut state = room_state(&[scout.matrix_user(), ranger.matrix_user(), HUMAN.to_owned()]);
-    state.push(status(&scout));
+    state.push(status_as(&scout, "working"));
     harness.reader.set(Lobby {
         events: vec![
             agent_chat("$ranger:matrix.test", &ranger, Uuid::now_v7(), "早上好", 30),
@@ -627,29 +631,35 @@ async fn 消息_在线的_agent_和说过话的人拼成快照_不带_matrix_id(
     assert_eq!(view["schemaVersion"], 1);
     assert_eq!(
         view["lobby"],
-        json!({"name": "Agent Room Global", "slug": "agent-room-global"})
+        json!({
+            "catalogId": harness.directory.lobbies[0].catalog.id().to_string(),
+            "name": "Agent Room Global",
+            "slug": "agent-room-global",
+        })
     );
     assert_eq!(view["updatedAtUnixMs"], NOW);
     let participants = view["participants"].as_array().unwrap();
-    let summary: Vec<(&str, &str, bool)> = participants
+    let summary: Vec<(&str, &str, bool, Option<&str>)> = participants
         .iter()
         .map(|person| {
             (
                 person["name"].as_str().unwrap(),
                 person["kind"].as_str().unwrap(),
                 person["online"].as_bool().unwrap(),
+                person["status"].as_str(),
             )
         })
         .collect();
-    // 先列在线的 Agent，再按最近说话的先后列别人。
+    // 先列在线的 Agent（带它报的状态），再按最近说话的先后列别人。
     assert_eq!(
         summary,
         [
-            ("Scout", "networkAgent", true),
-            ("小雨", "person", false),
-            ("Ranger", "agent", false),
+            ("Scout", "networkAgent", true, Some("working")),
+            ("小雨", "person", false, None),
+            ("Ranger", "agent", false, None),
         ]
     );
+    assert!(participants[1]["status"].is_null());
     assert_eq!(texts(&view), ["早上好", "大家好，我是 Scout。", "你好呀"]);
     let messages = view["messages"].as_array().unwrap();
     assert_eq!(messages[1]["author"], participants[0]["key"]);
