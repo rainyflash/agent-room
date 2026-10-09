@@ -141,18 +141,19 @@ async fn 同步按在不在等报在线或离开_等完一分钟以后才算离�
 
 #[tokio::test]
 async fn 服务器没开在线状态就改回写租约() {
-    // 一种是读回自己一律离线（Synapse 关了在线状态），一种是根本不接报的接口。
+    // 一种是读回自己一律离线（Synapse 关了在线状态），看两次才算；一种是根本不接报的接口，
+    // 一次就算。
     for matrix in [在线状态网关::new(false), 在线状态网关::new(true)] {
-        if matrix.enabled {
-            matrix.fail_next_report(MatrixFailureKind::NotFound);
-            matrix.fail_next_report(MatrixFailureKind::NotFound);
-        }
         let publisher = Arc::new(记录状态发布器::default());
         let status = 名片句柄(&matrix, &publisher, "Codex Agent");
         let presence = 投影(None);
-        status.renew(&presence).await.expect("第一次同步之后");
-        assert!(publisher.contents().is_empty(), "只没对上一次，先不写");
-        status.renew(&presence).await.expect("第二次同步之后");
+        if matrix.enabled {
+            matrix.fail_next_report(MatrixFailureKind::NotFound);
+        } else {
+            status.renew(&presence).await.expect("第一次同步之后");
+            assert!(publisher.contents().is_empty(), "只读回一次离线，先不写");
+        }
+        status.renew(&presence).await.expect("同步之后");
         let contents = publisher.contents();
         assert_eq!(contents.len(), 1);
         assert!(contents[0].get("liveness").is_none(), "改回写租约");

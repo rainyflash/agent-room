@@ -13,6 +13,7 @@ pub mod onboarding;
 pub mod ports;
 pub mod presence;
 pub mod presence_roster;
+pub mod presence_support;
 pub mod presence_tracker;
 pub mod reconnect;
 pub mod room_directory;

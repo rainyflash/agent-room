@@ -3,9 +3,10 @@ use std::{
     time::Duration,
 };
 
-use agent_room_application::ports::{MatrixFailureKind, MatrixGateway, MatrixRoomId};
+use agent_room_application::ports::{MatrixGateway, MatrixResult, MatrixRoomId, PortFuture};
 use agent_room_bridge_core::{
     presence::{PresenceSyncService, ProjectedAgentPresence},
+    presence_support::{OwnPresence, PresenceSupport},
     status::{
         AgentStatusIdentity, AgentStatusIntent, AgentStatusPublicationService,
         AgentStatusRoomTarget, HostAgentState, StatusPublicationOutcome, StatusPublicationResult,
@@ -19,8 +20,6 @@ use uuid::Uuid;
 /// 等完以后还报“在线”（在等消息）的时间：处理一条消息就在在线和离开之间来回跳不好看
 /// （`specs/agent-liveness/design.md`）。
 const WAITING_DEBOUNCE: Duration = Duration::from_mins(1);
-/// 报完在线、读回自己还是离线，有这么多次才当服务器没开在线状态，改回写租约。
-const PRESENCE_MISSES_BEFORE_LEASE: u8 = 2;
 
 pub(crate) struct AgentStatusPublicationHandle {
     target: AgentStatusRoomTarget,
@@ -50,10 +49,8 @@ enum Liveness {
 struct PresenceReporting {
     /// 这次连上以后，房间里已经有一样的名片（看到的或者自己写的）。
     card_in_place: bool,
-    /// 报完在线读回过自己的在线状态：服务器确实开着。
-    confirmed: bool,
-    /// 报完在线、读回自己还是离线（或者服务器不接这两个接口）的次数。
-    misses: u8,
+    /// 服务器开没开在线状态。确认开着才写名片。
+    support: PresenceSupport,
     /// 最近一次在等消息，哪个房间都算：Matrix 的在线状态按 Agent 算。
     waited_at: Option<Instant>,
     /// 上一次报出去（`PUT` 或同步带）的在线状态。
@@ -174,23 +171,29 @@ impl AgentStatusPublicationHandle {
         let mut state = self.state.lock().await;
         let state = &mut *state;
         if let Liveness::Presence(reporting) = &mut state.liveness
-            && !reporting.confirmed
+            && let Some(matrix) = &self.matrix
         {
-            match self
-                .confirm_presence(reporting.wanted(Instant::now()))
+            let wanted = reporting.wanted(Instant::now());
+            if let Some(failure) = reporting
+                .support
+                .probe(&OwnMatrixPresence(matrix.as_ref()), wanted)
                 .await
             {
-                Some(true) => reporting.confirmed = true,
-                Some(false) => reporting.misses += 1,
-                None => {}
+                tracing::debug!(
+                    failure_kind = ?failure.kind(),
+                    operation = ?failure.operation(),
+                    "没确认服务器开没开 Matrix 在线状态，下次同步后再确认"
+                );
             }
-            if reporting.misses >= PRESENCE_MISSES_BEFORE_LEASE {
+            if reporting.support == PresenceSupport::Disabled {
                 tracing::warn!("服务器没开 Matrix 在线状态，改回写租约");
                 state.liveness = Liveness::Lease;
             }
         }
         match &mut state.liveness {
-            Liveness::Presence(reporting) if !reporting.confirmed || reporting.card_in_place => {
+            Liveness::Presence(reporting)
+                if reporting.support != PresenceSupport::Enabled || reporting.card_in_place =>
+            {
                 Ok(())
             }
             Liveness::Presence(reporting) => {
@@ -267,29 +270,6 @@ impl AgentStatusPublicationHandle {
         Ok(())
     }
 
-    /// 报一次此刻该报的状态，再读回自己的。读回来不是离线，就是服务器开着在线状态
-    /// （`Some(true)`）；还是离线，或者服务器不接这两个接口，就是没开（`Some(false)`）。
-    /// 限速、超时、断网就是不知道（`None`），下一次同步之后再试。
-    async fn confirm_presence(&self, wanted: MatrixPresenceState) -> Option<bool> {
-        let matrix = self.matrix.as_ref()?;
-        let read = match matrix.report_presence(wanted).await {
-            Ok(()) => matrix.user_presence(matrix.metadata().user_id()).await,
-            Err(failure) => Err(failure),
-        };
-        match read {
-            Ok(presence) => Some(presence.state() != MatrixPresenceState::Offline),
-            Err(failure) if presence_unsupported(failure.kind()) => Some(false),
-            Err(failure) => {
-                tracing::debug!(
-                    failure_kind = ?failure.kind(),
-                    operation = ?failure.operation(),
-                    "没确认服务器开没开 Matrix 在线状态，下次同步后再确认"
-                );
-                None
-            }
-        }
-    }
-
     /// 马上报一次在线状态。报不出去（多半是限速）也不要紧，下一次同步会带上。
     async fn report(&self, presence: MatrixPresenceState) {
         let Some(matrix) = &self.matrix else {
@@ -305,14 +285,22 @@ impl AgentStatusPublicationHandle {
     }
 }
 
-/// 服务器不接报或读在线状态的接口，再试也一样。
-const fn presence_unsupported(kind: MatrixFailureKind) -> bool {
-    matches!(
-        kind,
-        MatrixFailureKind::NotFound
-            | MatrixFailureKind::Forbidden
-            | MatrixFailureKind::UnsupportedVersion
-    )
+/// 用这个 Agent 自己的 Matrix 会话报、读它的在线状态。
+struct OwnMatrixPresence<'a>(&'a dyn MatrixGateway);
+
+impl OwnPresence for OwnMatrixPresence<'_> {
+    fn report(&self, presence: MatrixPresenceState) -> PortFuture<'_, MatrixResult<()>> {
+        self.0.report_presence(presence)
+    }
+
+    fn read(&self) -> PortFuture<'_, MatrixResult<MatrixPresenceState>> {
+        Box::pin(async move {
+            self.0
+                .user_presence(self.0.metadata().user_id())
+                .await
+                .map(|presence| presence.state())
+        })
+    }
 }
 
 /// 房间里已有的那条就是这个实例此刻的名片：内容里的身份都没变，用不着再写。
