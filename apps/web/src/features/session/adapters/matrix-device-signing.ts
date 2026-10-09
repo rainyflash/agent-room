@@ -1,5 +1,6 @@
 import type { MatrixClient } from 'matrix-js-sdk';
 import type { CrossSigningStatus, CryptoApi } from 'matrix-js-sdk/lib/crypto-api/index.js';
+import { z } from 'zod';
 
 import type { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 
@@ -49,13 +50,20 @@ export type DeviceSigningOutcome = 'established' | 'ready' | 'signed' | 'reset';
 
 export type DeviceSigningClient = Pick<
   MatrixClient,
-  'getCrypto' | 'getDeviceId' | 'getUserId' | 'secretStorage'
+  'downloadKeysForUsers' | 'getCrypto' | 'getDeviceId' | 'getUserId' | 'secretStorage'
 >;
+
+/** `keys/query` 回答里各账户的主签名公钥。 */
+const masterKeysSchema = z.looseObject({
+  master_keys: z
+    .record(z.string(), z.looseObject({ keys: z.record(z.string(), z.string()) }))
+    .optional(),
+});
 
 /**
  * 登录后让这台设备由账户的签名身份签好（`specs/device-signing/design.md`）。每次启动都可以跑，
  * 每一步都能重复做：
- * 1. 账户还没有签名身份：建立身份、建密钥存储和密钥备份，把钥匙交给服务器；
+ * 1. 服务器上账户还没有签名身份：建立身份、建密钥存储和密钥备份，把钥匙交给服务器；
  * 2. 本机拿着签名私钥：没签好就签上；服务器上没有对得上的钥匙就新建一把补交；
  * 3. 否则用服务器上的钥匙打开密钥存储、取回签名私钥、签好这台设备、找回历史；没有能用的钥匙
  *    （或者密钥存储里没有签名私钥）就重建一次签名身份。
@@ -77,11 +85,13 @@ export async function ensureDeviceSigned(
   }
   const step = <T>(work: Promise<T>): Promise<T> => continueUnlessStopped(work, signal);
   signal?.throwIfAborted();
-  // 自己的身份每次都重新查一遍：别的设备重建过签名身份时，本机对不上的旧私钥随之清掉。
-  if (!(await step(crypto.userHasCrossSigningKeys(userId, true)))) {
+  // 自己的身份每次都重新查一遍：别的设备重建过签名身份时，本机对不上的旧私钥随之清掉。可它对自己的
+  // 账户答的是本机记着的身份，上次在本机建好、公钥没传上去的也算有，所以还要直接问服务器。
+  const known = await step(crypto.userHasCrossSigningKeys(userId, true));
+  if (!known || !(await step(serverHasSigningIdentity(client, userId)))) {
     // 服务器上还没有签名身份：从头建，第一次上传不用交互认证。上次建到一半（上传公钥时页面跳走了）
-    // 留下的本机私钥、密钥存储和备份都不沿用：本机有私钥时 bootstrapCrossSigning 会跳过上传，
-    // 服务器上就一直没有签名身份，别的设备也签不上。
+    // 留下的本机身份、私钥、密钥存储和备份都不沿用：本机有私钥时 bootstrapCrossSigning 会跳过上传；
+    // 照着本机记着的身份往下走，又会说“已就绪”。服务器上就一直没有签名身份，别的设备也签不上。
     await crypto.resetEncryption(uploadWithoutAuthentication);
     await createSecretStorage(client, crypto, escrow, false);
     return 'established';
@@ -123,6 +133,18 @@ async function continueUnlessStopped<T>(
   const result = await work;
   signal?.throwIfAborted();
   return result;
+}
+
+/**
+ * 服务器上这个账户有没有签名身份（主签名公钥）。问不到或者回答不对就抛错，不能当成没有：
+ * 当成没有就会从头重建，把账户的密钥存储和备份都删掉。
+ */
+async function serverHasSigningIdentity(
+  client: DeviceSigningClient,
+  userId: string,
+): Promise<boolean> {
+  const response = masterKeysSchema.parse(await client.downloadKeysForUsers([userId]));
+  return Object.keys(response.master_keys?.[userId]?.keys ?? {}).length > 0;
 }
 
 /** 账户第一次建立签名身份时，上传不需要交互认证。 */

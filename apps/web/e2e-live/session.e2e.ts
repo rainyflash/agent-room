@@ -23,13 +23,15 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
   const failures = collectUnhandledFailures(page);
   // 账户第一台设备建签名身份时，第一次上传公钥断掉：之后再打开页面也得传上去，别的设备才签得上。
-  await interruptFirstSigningUpload(page);
+  const signingUploadInterrupted = await interruptFirstSigningUpload(page);
 
   const firstIdentity = await connectLiveSession(page, {
     expectedDisplayName: 'Local Developer',
     password: password ?? '',
     username: username ?? '',
   });
+  // 确实断在了某一页上，再往下换页面。
+  await expect.poll(signingUploadInterrupted, { timeout: 40_000 }).toBe(true);
 
   const authenticationRequests: string[] = [];
   page.on('request', (request) => {
