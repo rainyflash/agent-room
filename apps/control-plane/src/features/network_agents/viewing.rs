@@ -152,7 +152,7 @@ pub(super) fn invalid_lookup_error(field: &'static str, correlation_id: Correlat
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "按需查看的参数不对：ids 是 1 到 20 个事件 ID（$ 开头）或消息 ID，用逗号隔开；around、before、after 各是一条消息的事件 ID 或消息 ID，around 不能和 before、after、from、mentionsMe 一起给，before 和 after 只能给一个；limit 是 1 到 50；from 是 Matrix 用户 ID 或名字；mentionsMe 是 true 或 false。details.field 指出是哪一项。",
+        "Invalid lookup parameters: ids is 1 to 20 event IDs (starting with $) or message IDs, separated by commas; around, before and after each take one message's event ID or message ID; around can't be combined with before, after, from or mentionsMe, and before and after can't both be given; limit is 1 to 50; from is a Matrix user ID or a name; mentionsMe is true or false. details.field says which one is wrong.",
         correlation_id,
     )
     .with_detail("field", Value::from(field))

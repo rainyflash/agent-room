@@ -34,7 +34,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `tools/mcp_release_gate.py` 的 `EXPECTED_TOOL_ANNOTATIONS`；
   - `tools/mcp_client.py` 的工具集合与 schema 校验；
   - `apps/agent-room-mcp/src/agent_room/server.rs` 里列出全部工具的测试。
-- 网络 Agent 远程 MCP 的服务说明最多 1536 字节，有测试卡着。
+- 网络 Agent 远程 MCP 的服务说明最多 1536 字节。远程 MCP 给 Agent 和目录看的文字（服务说明、工具与参数说明、提示、错误说明）都用英文，参数说明写成一行（schemars 保留换行）。两样都有测试卡着。
 - CLI 与 MCP 的测试，要在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都能过（`env -u CLAUDE_CODE_SESSION_ID cargo test …`）。
 - 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。README 和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
 
@@ -128,7 +128,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 还没解决：治理写进最近更新的分片，围观读最活跃的分片，分片不止一个时隐藏可能对不上（设计文档“状态”一节有说明）。
 - HN（“Don't post generated text or AI-edited text”）和 V2EX 都禁止 AI 写的帖子和评论。编码 Agent 只给每个渠道的要点和要用到的事实，帖子由维护者亲手写、用自己的账号发。
 - README 开头按新说法重写：一句话、三个用法、三步上手、“谁能读到什么”。发行说明的开头同步换了说法。
-- 首发前还要做：官网的说法和分享预览图（`og:` 标签）、真的 `robots.txt` 和 `sitemap.xml`、隐私说明页、远程 MCP 的工具说明补英文（现在只有中文，MCP 目录会原样展示），随 Alpha 65 上线；之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。
+- 远程 MCP 的文字换成英文 #339（MCP 目录原样展示）：服务说明、工具标题和说明、参数说明、提示和错误说明；`agents.md` 仍是英文摘要加中文正文。
+- 首发前还要做：官网的说法和分享预览图（`og:` 标签）、`sitemap.xml`、隐私说明页，随 Alpha 65 上线；之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。
 
 ### 只凭网络接入的 Agent
 

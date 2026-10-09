@@ -826,26 +826,26 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "network_agent.disabled",
                 ErrorCategory::DependencyUnavailable,
-                "这台服务器没有开放网络 Agent 接入。",
+                "This server doesn't accept network agents.",
             ),
             NetworkAgentFailureKind::InvalidName => (
                 StatusCode::BAD_REQUEST,
                 "network_agent.name_invalid",
                 ErrorCategory::Validation,
-                "名字须为 1 到 64 个字符、不含控制字符，也不能用平台或管理者的名字。",
+                "The name must be 1 to 64 characters with no control characters, and can't pass for the platform or an administrator (such as Agent Room, System or Admin).",
             ),
             NetworkAgentFailureKind::NameUnavailable => (
                 StatusCode::CONFLICT,
                 "network_agent.name_unavailable",
                 ErrorCategory::Conflict,
-                "同名的网络 Agent 太多了，请换个名字。",
+                "Too many network agents already use this name; pick another one.",
             ),
             NetworkAgentFailureKind::RoomNotFound => {
                 let mut error = Self::new(
                     StatusCode::NOT_FOUND,
                     "network_agent.room_not_found",
                     ErrorCategory::Validation,
-                    "没有这个公开大厅或私人房间；details.rooms 列出了能进的公开大厅，省略 room 就进默认大厅。私人房间的房间号是房间网址里 /lobby/ 后面那一段，请找房间里的人要。",
+                    "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it.",
                     correlation_id,
                 );
                 error.envelope.details.insert(
@@ -859,14 +859,14 @@ impl ApiError {
                 StatusCode::NOT_FOUND,
                 "network_agent.code_invalid",
                 ErrorCategory::Validation,
-                "口令不对、已更换或已停用；请向房间的主人或管理员要一个新的 Agent 口令。",
+                "The code is wrong, was replaced or was turned off; ask the room's owner or a manager for a new Agent code.",
             ),
             NetworkAgentFailureKind::RateLimited => {
                 let error = Self::new(
                     StatusCode::TOO_MANY_REQUESTS,
                     "network_agent.rate_limited",
                     ErrorCategory::Transient,
-                    "太频繁了，请按 Retry-After 等一会儿再试。",
+                    "Too many requests; wait as long as Retry-After says, then try again.",
                     correlation_id,
                 );
                 log_network_agent_failure(failure, correlation_id);
@@ -879,25 +879,25 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "network_agent.capacity_reached",
                 ErrorCategory::Transient,
-                "同时在线的网络 Agent 已满，请稍后再试。",
+                "Too many network agents are online on this server right now; try again later.",
             ),
             NetworkAgentFailureKind::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "network_agent.unauthorized",
                 ErrorCategory::Authentication,
-                "令牌缺失、不对或已停用；请带上创建时拿到的 Authorization: Bearer <token>，或重新创建。",
+                "The token is missing, wrong or no longer active. Send the Authorization: Bearer <token> you got when you joined, or join again.",
             ),
             NetworkAgentFailureKind::DependencyUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "network_agent.dependency_unavailable",
                 ErrorCategory::DependencyUnavailable,
-                "服务器的依赖暂时不可用，请稍后用同样的请求重试。",
+                "Something this server depends on is temporarily unavailable; retry the same request later.",
             ),
             NetworkAgentFailureKind::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "network_agent.internal",
                 ErrorCategory::Transient,
-                "网络 Agent 服务发生内部错误。",
+                "The network agent service hit an internal error.",
             ),
         };
         log_network_agent_failure(failure, correlation_id);

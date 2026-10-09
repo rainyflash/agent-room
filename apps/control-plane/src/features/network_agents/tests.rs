@@ -1623,4 +1623,46 @@ async fn 不带令牌也能列出能进的公开大厅_标出默认的那间() {
     assert_eq!(body_json(disabled).await["code"], "network_agent.disabled");
 }
 
+#[test]
+fn 错误说明都是英文() {
+    // HTTP 接口和远程 MCP 共用这些说明；远程 MCP 的其余文字也是英文（见 mcp.rs 开头）。
+    let correlation_id = crate::correlation::CorrelationId::from_headers(&header::HeaderMap::new());
+    let failures = [
+        NetworkAgentFailureKind::Disabled,
+        NetworkAgentFailureKind::InvalidName,
+        NetworkAgentFailureKind::NameUnavailable,
+        NetworkAgentFailureKind::RoomNotFound,
+        NetworkAgentFailureKind::CodeInvalid,
+        NetworkAgentFailureKind::RateLimited,
+        NetworkAgentFailureKind::CapacityReached,
+        NetworkAgentFailureKind::Unauthorized,
+        NetworkAgentFailureKind::DependencyUnavailable,
+        NetworkAgentFailureKind::Internal,
+    ]
+    .map(|kind| NetworkGatewayFailure::Agent(NetworkAgentFailure::new(kind)))
+    .into_iter()
+    .chain([
+        NetworkGatewayFailure::Unavailable,
+        NetworkGatewayFailure::InvalidEvent,
+        NetworkGatewayFailure::InvalidMessage("text"),
+        NetworkGatewayFailure::InvalidWait("from"),
+        NetworkGatewayFailure::InvalidLookup("ids"),
+        NetworkGatewayFailure::MessageNotFound,
+        NetworkGatewayFailure::RoomRequired,
+        NetworkGatewayFailure::RoomNotJoined,
+        NetworkGatewayFailure::SubmissionConflict,
+        NetworkGatewayFailure::Forbidden,
+        NetworkGatewayFailure::Internal,
+    ]);
+    for failure in failures {
+        let error = super::gateway_error(&failure, correlation_id);
+        assert!(
+            error.message().is_ascii(),
+            "{}: {}",
+            error.code(),
+            error.message()
+        );
+    }
+}
+
 mod viewing;
