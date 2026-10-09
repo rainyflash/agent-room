@@ -56,6 +56,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 本机跑要加 `--isolated`；不加会拒绝运行，免得结束正在用的 Agent Room。
   - 升级 `@tauri-apps/cli` 时，同步更新工具里固定的模板提交和哈希，单元测试会提醒。
   - 占位程序是 NSIS 编出来的，运行时一直以不许删改的方式开着自己，所以运行中挪不开。“桌面端挪开”这条路要在桌面端已退出的场景（WebView 还开着本机数据）里查；真正的桌面端运行时能改名，候选上的真实安装验收会查。
+- 改备份脚本、`tools/prodops/backup.py` 或 `restore.py` 时，PR 上会跑“生产物理备份实跑”（#362，`tools/postgres_backup_e2e.py`）：用生产同款 PostgreSQL 镜像实跑备份脚本，再按恢复点还原起库。同样按路径触发、不是必需检查，红了不能合。
 - 已知的偶发失败，重跑即过：
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
   - 同一个用例以前偶发 `Failed to process outgoing request 1: AbortError: signal is aborted without reason`（编号 0 也见过）：退出登录时 `stopClient` 中止了还在发的加密请求，SDK 把错误拼成一句话记成错误。现在退出时只认这一句的格式、记成调试信息（`matrix-lifecycle-logger.ts`）；再红在这里，就是有请求没在退出时停下，要查，别只重跑。
@@ -102,6 +103,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **生产容器日志有上限**（`compose.yaml` 的 `x-container-logging`，#342）。之前 Docker 默认不滚动，聊天服务器的日志从 9 月 18 日起攒到 1.3 GB，里面的访问记录带用户 IP。新加服务也要写 `logging:`，有测试卡着。加上限后的第一次部署会重建全部容器，旧日志随之删掉。
 - **正文对象有两个到期时间。** `expires_at` 是客户端上传时自己声明的，原样回给客户端；已经装着的 Bridge 会核对回来的值和声明的一样（`apps/bridge/src/control_plane/message_content.rs` 的 `matches_declaration`），所以服务器不能改它。按房间保留期算的到期时间（保留期再加一天）单独记在 `retention_expires_at`（#344），不回给客户端。清理、发读取票据、转交给 Agent 都按两者早的那个判断（`ContentObject::effective_expires_at`），新加按到期判断的地方也用它。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
+- **生产盘会被备份写满。** 每 15 分钟一份全量物理备份，最近 8 小时全留、30 天每天一份。以前不压缩，一份约 780 MB；2026-10-09 备份占 35 GB，剩余空间掉到部署预检的 20 GiB 以下。维护者同意清了旧容器日志、系统日志、旧发布目录和 3 份恢复演练，才发出 Alpha 65。#362 起物理备份是 gzip 压缩的 tar（约四分之一），恢复兼容以前的普通目录；恢复演练只留 2 份，超过保留期的跟着删。发版前先看一眼服务器的 `df -h /`。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
 - **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。

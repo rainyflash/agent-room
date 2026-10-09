@@ -27,19 +27,26 @@ mkdir -p "$target"
 export PGSSLMODE="$AGENT_ROOM_DB_TLS_MODE"
 export PGPASSWORD
 PGPASSWORD=$(read_secret /run/secrets/postgres_bootstrap_password)
+# 每 15 分钟一份全量，普通目录格式约是压缩后的 4 倍，几周就会把生产盘写满（2026-10-09 实测
+# 698 MB 压到 167 MB）。直接写成 gzip 压缩的 tar，不在盘上留未压缩的中间目录。
 pg_basebackup \
   --host "$AGENT_ROOM_DB_HOST" \
   --port "$AGENT_ROOM_DB_PORT" \
   --username agent_room_bootstrap \
   --pgdata "$base" \
-  --format plain \
+  --format tar \
+  --compress client-gzip:1 \
   --wal-method stream \
   --checkpoint fast \
   --manifest-checksums SHA256 \
   --no-password
-pg_verifybackup --exit-on-error "$base"
+# tar 格式里的 WAL pg_verifybackup 读不了，只能加 --no-parse-wal；WAL 在下面复制归档以后另查。
+pg_verifybackup --exit-on-error --format tar --no-parse-wal "$base"
+[ -s "$base/base.tar.gz" ] || fail "缺少压缩的基础备份"
+[ -s "$base/pg_wal.tar.gz" ] || fail "缺少基础备份期间的流式 WAL"
 
-start_wal=$(sed -n 's/^START WAL LOCATION: .* (file \([0-9A-F]\{24\}\))$/\1/p' "$base/backup_label")
+start_wal=$(tar -xzOf "$base/base.tar.gz" backup_label |
+  sed -n 's/^START WAL LOCATION: .* (file \([0-9A-F]\{24\}\))$/\1/p')
 printf '%s' "$start_wal" | grep -Eq '^[0-9A-F]{24}$' || fail "基础备份起始 WAL 无效"
 
 restore_name=$(printf 'agent_room_%s' "$AGENT_ROOM_BACKUP_ID" | tr 'TZ-' '___')
@@ -90,6 +97,18 @@ done
 [ "$copied_wal" -gt 0 ] || fail "没有复制任何恢复所需 WAL"
 [ -s "$target/wal/$start_wal" ] || fail "缺少基础备份起始 WAL"
 [ -s "$target/wal/$wal_file" ] || fail "缺少恢复点末端 WAL"
+
+# 照 pg_verifybackup 解析 WAL 的做法：清单里每个 WAL 区间用 pg_waldump 读一遍。
+# 读的是恢复时 restore_command 真正取用的这份归档副本。
+wal_ranges=$(sed -n 's|^.*"Timeline": \([0-9]\{1,\}\), "Start-LSN": "\([0-9A-F]\{1,8\}/[0-9A-F]\{1,8\}\)", "End-LSN": "\([0-9A-F]\{1,8\}/[0-9A-F]\{1,8\}\)".*$|\1 \2 \3|p' "$base/backup_manifest")
+[ -n "$wal_ranges" ] || fail "基础备份清单没有 WAL 区间"
+while read -r timeline start_lsn end_lsn; do
+  pg_waldump --quiet --path="$target/wal" --timeline="$timeline" --start="$start_lsn" --end="$end_lsn" ||
+    fail "归档 WAL 解析失败（时间线 $timeline）"
+done <<EOF
+$wal_ranges
+EOF
+
 cat >"$target/restore-point.json" <<EOF
 {
   "name": "$restore_name",
