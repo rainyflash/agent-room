@@ -39,20 +39,11 @@ fn map_presence(events: &[Raw<PresenceEvent>]) -> Vec<MatrixUserPresence> {
             let content = raw.get_field::<PresenceContent>("content").ok().flatten()?;
             Some(MatrixUserPresence::new(
                 MatrixUserId::new(sender).ok()?,
-                map_presence_state(&content.presence)?,
+                MatrixPresenceState::from_matrix(&content.presence)?,
                 content.last_active_ago,
             ))
         })
         .collect()
-}
-
-pub(crate) fn map_presence_state(value: &str) -> Option<MatrixPresenceState> {
-    match value {
-        "online" => Some(MatrixPresenceState::Online),
-        "unavailable" => Some(MatrixPresenceState::Unavailable),
-        "offline" => Some(MatrixPresenceState::Offline),
-        _ => None,
-    }
 }
 
 #[derive(Deserialize)]

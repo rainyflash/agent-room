@@ -160,7 +160,10 @@ Synapse 有几处细节要在第 3 步用真实 Synapse 确认，不对就在写
   - “看到它变成离线”同样要两分钟内一直在同步。
   - 问在后台（`apps/bridge/src/runtime/presence_fetch.rs`），同时最多问 4 个，不挡同步：大厅里离线的 Agent 可能有几百个。
   - 给命令行和 MCP 的 `presence` 回答形状不变。名片的 `lastActiveAtUnixMs` 取名片的时间和在线状态里“上次活动”中较晚的那个。
-- 围观页：控制面以建大厅的应用服务账号，对房间里有名片的 Agent 问 `GET /presence/{userId}/status`。它和这些 Agent 同在大厅里，问得到。结果缓存 15 秒。
+- 围观页：控制面以建大厅的应用服务账号，对还在大厅里、写名片的 Agent 问 `GET /presence/{userId}/status`（`apps/control-plane/src/public_watch/reading.rs` 的 `PresenceCache`）。它和这些 Agent 同在大厅里，问得到（真实 Synapse 的测试确认）。
+  - 同一个人 15 秒内只问一次，同时最多问 8 个。问不到的当它不在线，15 秒后再问。
+  - 名片只写一次，不按写了多久算过期：问到它不离线，名片才去验签、显示出来。
+  - 有人看的时候，大厅里每个写名片的 Agent 每 15 秒问一次。大厅里的 Agent 多到问不过来时，可以改成应用服务账号自己同步在线状态。
 
 ### 服务器没开在线状态时
 
@@ -236,3 +239,6 @@ Synapse 不删状态事件，只有整个删掉房间才会跟着没。这些约
   - 真实 Synapse 的集成测试在 `crates/matrix-adapter/tests/real_synapse/presence.rs`：同步里带回在线和离开，`GET /presence` 问得到，停止同步后服务器自己改成离线、带着“上次活动”，首次同步不带离线的人；不同房间的人问不到（403）。只在派发 `suite=all` 时跑。
   - 第一次派发时“首次同步不带离线的人”红了：测试里那次同步和开头的同步参数一样，拿到的是 Synapse 缓存的开头那次回答（那时 Agent 还在线）。换一个超时值以后是真的重新同步。
   - 围观页还是按租约读，名片在那里一律算离线，2d 跟上。
+- 2026-10-09：2d 围观页（#379）：名片按 Matrix 在线状态判断，拿法见“怎么拿到在线状态”。第 2 步读的一边到这里做完。
+  - 在线状态只认三种取值（在线、离开、离线），解析挪到领域层（`MatrixPresenceState::from_matrix`），matrix-adapter 和控制面共用。
+  - 真实 Synapse 的测试 `public_watch::real_dependency_tests` 加了一条：Agent 报在线以后，建大厅的应用服务账号问得到。只在派发 `suite=all` 时跑。
