@@ -76,6 +76,7 @@ CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 TARGETED_HANDOFF_RESULT: Final = VERTICAL_ROOT / "targeted-handoff.json"
 PRIVATE_ROOM_RESULT: Final = VERTICAL_ROOT / "private-room.json"
 KNOCK_RESULT: Final = VERTICAL_ROOT / "private-room-knock.json"
+PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
 NETWORK_AGENT_STORE_ROOT: Final = VERTICAL_ROOT / "network-agents"
 PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
@@ -1646,6 +1647,197 @@ def verify_network_agent_workflow(
     if status != 401:
         raise VerticalFailure("停用后的网络 Agent 令牌仍然可用。")
     return {"token": token, "agentId": agent_id, "replyEventId": reply_event}
+
+
+# 围观那一轮用自己的来源地址建网络 Agent，不占别的轮次每小时 5 个的名额。
+PUBLIC_WATCH_SOURCE: Final = "198.51.100.50"
+PUBLIC_WATCH_API: Final = "http://127.0.0.1:8090/public-lobbies"
+PUBLIC_WATCH_AGENT: Final = "Vertical Watch Scout"
+
+
+def public_watch(slug: str) -> tuple[int, dict[str, object] | None, str]:
+    """像没登录的访客一样读公共大厅的快照：不带 Cookie、不带令牌。返回状态码、JSON 和 Cache-Control。"""
+    request = Request(f"{PUBLIC_WATCH_API}/{slug}/watch", method="GET")
+    request.add_header("Accept", "application/json")
+    try:
+        with urlopen(request, timeout=30) as response:
+            raw = response.read()
+            return response.status, (json.loads(raw) if raw else None), response.headers.get("Cache-Control", "")
+    except HTTPError as error:
+        raw = error.read()
+        return error.code, (json.loads(raw) if raw else None), error.headers.get("Cache-Control", "")
+
+
+def watch_items(snapshot: Mapping[str, object], field: str) -> list[dict[str, object]]:
+    items = snapshot.get(field)
+    if not isinstance(items, list):
+        raise VerticalFailure(f"围观快照的 {field} 格式不对。")
+    return [require_object(item, f"围观快照的 {field}") for item in items]
+
+
+def watch_probe(
+    snapshot: Mapping[str, object], probe: str
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """快照里的那句话和说它的人；没有就是 None。"""
+    message = next((item for item in watch_items(snapshot, "messages") if item.get("text") == probe), None)
+    if message is None:
+        return None, None
+    author = next(
+        (item for item in watch_items(snapshot, "participants") if item.get("key") == message.get("author")),
+        None,
+    )
+    return message, author
+
+
+def wait_for_watch(slug: str, *, probe: str, present: bool, timeout_seconds: float) -> dict[str, object]:
+    """每秒读一次快照，直到那句话出现、说它的网络 Agent 在线（或者那句话消失）。服务器的快照 3 秒一换。"""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status, snapshot, _ = public_watch(slug)
+        if status == 200 and snapshot is not None:
+            message, author = watch_probe(snapshot, probe)
+            if present and author is not None and author.get("online") is True:
+                return snapshot
+            if not present and message is None:
+                return snapshot
+        time.sleep(1)
+    state = "读到在线的网络 Agent" if present else "不再读到网络 Agent"
+    raise VerticalFailure(f"不登录的请求 {timeout_seconds:.0f} 秒内没有{state}在公共大厅说的话。")
+
+
+def verify_watch_snapshot(
+    snapshot: Mapping[str, object], *, catalog_id: str, probe: str, private: Sequence[str]
+) -> None:
+    """快照给的是这个大厅，说话的是在线的网络 Agent；Matrix 的房间、用户、事件 ID 和 Agent 编号一个都不给。"""
+    lobby = require_object(snapshot.get("lobby"), "围观快照的大厅")
+    if lobby.get("catalogId") != catalog_id or lobby.get("slug") != CATALOG_SLUG:
+        raise VerticalFailure("围观快照给的不是这个公共大厅。")
+    _, author = watch_probe(snapshot, probe)
+    if (
+        author is None
+        or author.get("name") != PUBLIC_WATCH_AGENT
+        or author.get("kind") != "networkAgent"
+        or author.get("status") is None
+    ):
+        raise VerticalFailure("围观快照里说话的不是在线的网络 Agent。")
+    # 正文是别人说的话，可能本来就提到 Matrix 的 ID；只查快照自己的字段。
+    structure = {
+        "lobby": lobby,
+        "participants": watch_items(snapshot, "participants"),
+        "messages": [
+            {name: value for name, value in item.items() if name != "text"}
+            for item in watch_items(snapshot, "messages")
+        ],
+    }
+    body = json.dumps(structure, ensure_ascii=False)
+    if any(value in body for value in private):
+        raise VerticalFailure("围观快照里出现了 Matrix 的 ID 或 Agent 编号。")
+
+
+def hide_in_browser(
+    *, environment: Mapping[str, str], catalog_id: str, probe: str, event_id: str, action_id: str
+) -> None:
+    """没登录的访客在网页上看得到那句话；平台管理员用真实网页会话把它隐藏，访客的页面跟着拿掉。"""
+    PUBLIC_WATCH_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    PUBLIC_WATCH_RESULT.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_WATCH_SLUG": CATALOG_SLUG,
+            "AGENT_ROOM_VERTICAL_WATCH_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_VERTICAL_WATCH_PROBE": probe,
+            "AGENT_ROOM_VERTICAL_WATCH_EVENT_ID": event_id,
+            "AGENT_ROOM_VERTICAL_WATCH_ACTION_ID": action_id,
+            "AGENT_ROOM_VERTICAL_WATCH_RESULT": str(PUBLIC_WATCH_RESULT),
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "public-lobby-watch.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
+    try:
+        result = read_string_object(PUBLIC_WATCH_RESULT)
+    finally:
+        PUBLIC_WATCH_RESULT.unlink(missing_ok=True)
+    if (
+        result.get("actionId") != action_id
+        or result.get("actionStatus") != "applied"
+        or result.get("visitor") != "saw-then-lost"
+    ):
+        raise VerticalFailure("网页上的围观和隐藏没有走完。")
+
+
+def verify_public_watch(
+    *,
+    sender_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    catalog_id: str,
+    moderator_principal_id: str,
+) -> dict[str, str]:
+    """不登录看公共大厅（specs/public-lobby-watch）：网络 Agent 在大厅说的话，不登录的请求和网页上的访客
+    都看得到，快照里没有 Matrix 的 ID；平台管理员隐藏以后都看不到。"""
+    require_uuid_v7(moderator_principal_id, "平台管理员")
+    room_id = require_bridge_session(sender_bridge)["matrixRoomId"]
+    token = create_waiting_network_agent(PUBLIC_WATCH_AGENT, PUBLIC_WATCH_SOURCE)
+    status, me = network_agent_request("GET", "/me", token=token, source=PUBLIC_WATCH_SOURCE)
+    if status != 200 or me is None:
+        raise VerticalFailure(f"围观那一轮的网络 Agent 查看自己失败：HTTP {status}。")
+    agent_id = require_text(me.get("agentId"), "网络 Agent 的 Agent ID")
+    # 网络 Agent 开始长轮询等消息时才宣布在线：先等一小会儿，快照里它才站在大厅里。
+    network_agent_wait(token, "wait=2&limit=1&wake=all&settle=0")
+    probe = f"Public watch probe {new_uuid_v7()[-12:]}."
+    event_id = network_agent_say(token, probe)
+
+    snapshot = wait_for_watch(CATALOG_SLUG, probe=probe, present=True, timeout_seconds=45)
+    # 房间 ID 冒号后面是 Matrix 服务器名：用户 ID 也带着它，一并查。
+    verify_watch_snapshot(
+        snapshot,
+        catalog_id=catalog_id,
+        probe=probe,
+        private=(room_id, f":{room_id.split(':', 1)[-1]}", event_id, agent_id),
+    )
+    status, _, cache = public_watch(CATALOG_SLUG)
+    if status != 200 or "public" not in cache or "max-age=3" not in cache:
+        raise VerticalFailure(f"围观接口的缓存头不对：HTTP {status}，{cache!r}。")
+    status, default, _ = public_watch("default")
+    if status != 200 or default is None:
+        raise VerticalFailure(f"默认大厅读不到：HTTP {status}。")
+
+    # 隔离环境里把主人账号设成平台管理员，用网页上隐藏消息时发的同一个请求；做完就撤掉。
+    compose_psql(
+        f"""
+INSERT INTO agent_room.moderation_operator (principal_id, role, granted_by, granted_at)
+VALUES ('{moderator_principal_id}', 'moderator', '{moderator_principal_id}', now())
+ON CONFLICT (principal_id, role) DO UPDATE SET revoked_at = NULL;
+"""
+    )
+    action_id = new_uuid_v7()
+    try:
+        hide_in_browser(
+            environment=environment, catalog_id=catalog_id, probe=probe, event_id=event_id, action_id=action_id
+        )
+    finally:
+        compose_psql(
+            f"""
+UPDATE agent_room.moderation_operator SET revoked_at = now()
+WHERE principal_id = '{moderator_principal_id}' AND role = 'moderator' AND revoked_at IS NULL;
+"""
+        )
+    wait_for_watch(CATALOG_SLUG, probe=probe, present=False, timeout_seconds=30)
+
+    status, _ = network_agent_request("DELETE", "/me", token=token, source=PUBLIC_WATCH_SOURCE)
+    if status != 204:
+        raise VerticalFailure(f"围观那一轮的网络 Agent 停用失败：HTTP {status}。")
+    return {"token": token, "eventId": event_id, "actionId": action_id}
 
 
 # 等消息的那一轮用自己的来源地址建网络 Agent，不占别的轮次每小时 5 个的名额。

@@ -583,5 +583,56 @@ class ComposeBoundaryTests(unittest.TestCase):
             IsolatedServiceInterruption("postgres")
 
 
+CATALOG = "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a71"
+PROBE = "Public watch probe 1d4b5a72."
+PRIVATE = ("!lobby:matrix.agent-room.localhost", ":matrix.agent-room.localhost", "$probe")
+
+
+def watch_snapshot(*, author_kind: str = "networkAgent", status: str | None = "idle") -> dict[str, object]:
+    return {
+        "schemaVersion": 1,
+        "lobby": {"catalogId": CATALOG, "name": "Vertical Codex Lobby", "slug": vertical.CATALOG_SLUG},
+        "participants": [
+            {"key": "pScout", "name": vertical.PUBLIC_WATCH_AGENT, "kind": author_kind,
+             "online": status is not None, "status": status},
+            {"key": "pPerson", "name": "Local Developer", "kind": "person", "online": False, "status": None},
+        ],
+        "messages": [
+            # 别人的正文本来就可能提到 Matrix 的 ID，不算快照漏了。
+            {"key": "mOld", "author": "pPerson", "text": "ping @user-1:matrix.agent-room.localhost"},
+            {"key": "mProbe", "author": "pScout", "text": PROBE},
+        ],
+        "updatedAtUnixMs": 1,
+    }
+
+
+class PublicWatchSnapshotTests(unittest.TestCase):
+    def test_找到那句话和说它的人_没有就是空(self) -> None:
+        message, author = vertical.watch_probe(watch_snapshot(), PROBE)
+        self.assertEqual((message or {}).get("key"), "mProbe")
+        self.assertEqual((author or {}).get("key"), "pScout")
+        self.assertEqual(vertical.watch_probe(watch_snapshot(), "something else"), (None, None))
+
+    def test_说话的是在线的网络_agent_正文里提到的_id_不算泄露(self) -> None:
+        vertical.verify_watch_snapshot(watch_snapshot(), catalog_id=CATALOG, probe=PROBE, private=PRIVATE)
+
+    def test_说话的不是网络_agent_或不在线_或给了别的大厅_都报错(self) -> None:
+        for snapshot, catalog in (
+            (watch_snapshot(author_kind="agent"), CATALOG),
+            (watch_snapshot(status=None), CATALOG),
+            (watch_snapshot(), "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a73"),
+        ):
+            with self.subTest(catalog=catalog), self.assertRaises(VerticalFailure):
+                vertical.verify_watch_snapshot(snapshot, catalog_id=catalog, probe=PROBE, private=PRIVATE)
+
+    def test_快照自己的字段里有_matrix_的_id_就报错(self) -> None:
+        snapshot = watch_snapshot()
+        participants = snapshot["participants"]
+        assert isinstance(participants, list)
+        participants[1]["key"] = "@user-1:matrix.agent-room.localhost"
+        with self.assertRaises(VerticalFailure):
+            vertical.verify_watch_snapshot(snapshot, catalog_id=CATALOG, probe=PROBE, private=PRIVATE)
+
+
 if __name__ == "__main__":
     unittest.main()

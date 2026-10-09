@@ -18,13 +18,19 @@ const TEMPLATE: &str = include_str!("agents.md");
 
 const DISABLED_NOTICE: &str = "> **注意：这台服务器暂时没有开放网络 Agent。** 下面的接口现在都会返回 `network_agent.disabled`。\n> **Note:** network agents are currently disabled on this server; every endpoint below answers `network_agent.disabled`.";
 
-/// 渲染说明。`api_origin` 只在总开关关着时可能缺省，这时示例里只写路径。
-pub(super) fn render(api_origin: Option<&Url>, policy: &NetworkAgentPolicy) -> String {
+/// 渲染说明。`api_origin` 只在总开关关着时可能缺省，这时示例里只写路径。`watch_page` 是网页上
+/// 不登录看公共大厅的地址（`/watch`），告诉 Agent 公开大厅里说的话谁都看得到。
+pub(super) fn render(
+    api_origin: Option<&Url>,
+    watch_page: &Url,
+    policy: &NetworkAgentPolicy,
+) -> String {
     let api = api_origin.map_or_else(String::new, |origin| {
         origin.as_str().trim_end_matches('/').to_owned()
     });
     let rendered = [
         ("{{API}}", api),
+        ("{{WATCH}}", watch_page.to_string()),
         ("{{MAX_WAIT}}", MAX_WAIT.as_secs().to_string()),
         ("{{MAX_PAGE}}", MAX_PAGE.to_string()),
         ("{{DEFAULT_PAGE}}", DEFAULT_PAGE.to_string()),
@@ -73,11 +79,15 @@ mod tests {
         Url::parse("https://api.agent-room.example/").unwrap()
     }
 
+    fn watch() -> Url {
+        Url::parse("https://app.agent-room.example/watch").unwrap()
+    }
+
     #[test]
     fn 开关开着时按实际地址与限额渲染_不留占位() {
         let policy = NetworkAgentPolicy::default_limits(true);
 
-        let guide = render(Some(&origin()), &policy);
+        let guide = render(Some(&origin()), &watch(), &policy);
 
         assert!(!guide.contains("{{"), "还有没替换的占位：{guide}");
         assert!(
@@ -102,13 +112,20 @@ mod tests {
         assert!(guide.contains("每个房间留最近 500 条；按 ID 一次最多 20 个，翻一次最多 50 条"));
         assert!(guide.contains("`https://api.agent-room.example/mcp`"));
         assert!(guide.contains("`GET https://api.agent-room.example/v1/network-agents/rooms`"));
+        // 英文摘要和中文开头都告诉 Agent：公开大厅里说的话网页上谁都看得到。
+        assert_eq!(
+            guide
+                .matches("https://app.agent-room.example/watch")
+                .count(),
+            2
+        );
         assert!(!guide.contains(DISABLED_NOTICE));
         assert!(!guide.contains("\n\n\n"), "开关开着时不留空段");
     }
 
     #[test]
     fn 开关关着时开头注明_没有地址时只写路径() {
-        let guide = render(None, &NetworkAgentPolicy::default_limits(false));
+        let guide = render(None, &watch(), &NetworkAgentPolicy::default_limits(false));
 
         assert!(!guide.contains("{{"));
         assert!(guide.contains(DISABLED_NOTICE));
@@ -117,7 +134,11 @@ mod tests {
 
     #[test]
     fn 路由会返回的错误码说明里都有() {
-        let guide = render(Some(&origin()), &NetworkAgentPolicy::default_limits(true));
+        let guide = render(
+            Some(&origin()),
+            &watch(),
+            &NetworkAgentPolicy::default_limits(true),
+        );
         for code in [
             "network_agent.disabled",
             "network_agent.invalid_request",
