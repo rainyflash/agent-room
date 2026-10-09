@@ -5,7 +5,10 @@ import json
 import os
 import base64
 from pathlib import Path
+import re
+import shutil
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -96,6 +99,47 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertIn('name=${source##*/}', script)
         self.assertIn('[ "$name" \\< "$start_wal" ]', script)
         self.assertIn('[ "$name" \\> "$wal_file" ]', script)
+
+    def test_physical_backup_is_compressed_and_archived_wal_is_parsed(self) -> None:
+        script = (ROOT / "infra" / "production" / "postgres-base-backup.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--format tar", script)
+        self.assertIn("--compress client-gzip:1", script)
+        self.assertNotIn("--format plain", script)
+        self.assertIn("pg_verifybackup --exit-on-error --format tar --no-parse-wal", script)
+        self.assertIn('pg_waldump --quiet --path="$target/wal"', script)
+
+    @unittest.skipUnless(shutil.which("sed"), "需要 sed")
+    def test_wal_ranges_are_read_from_the_backup_manifest(self) -> None:
+        script = (ROOT / "infra" / "production" / "postgres-base-backup.sh").read_text(
+            encoding="utf-8"
+        )
+        expression = re.search(r"wal_ranges=\$\(sed -n '([^']+)' ", script)
+        assert expression is not None
+        # 照 PostgreSQL 18 backup_manifest.c 的写法：区间之间用 ",\n" 隔开。
+        manifest = (
+            '{ "PostgreSQL-Backup-Manifest-Version": 2,\n'
+            '"Files": [\n{ "Path": "backup_label", "Size": 225 }\n],\n'
+            '"WAL-Ranges": [\n'
+            '{ "Timeline": 1, "Start-LSN": "0/9000028", "End-LSN": "0/9000158" },\n'
+            '{ "Timeline": 2, "Start-LSN": "1A/0000F0A8", "End-LSN": "1A/1000000" }\n'
+            '],\n"Manifest-Checksum": "00"}\n'
+        )
+
+        result = subprocess.run(
+            ["sed", "-n", expression.group(1)],
+            input=manifest,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["1 0/9000028 0/9000158", "2 1A/0000F0A8 1A/1000000"],
+        )
 
     def test_unknown_configuration_is_rejected(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

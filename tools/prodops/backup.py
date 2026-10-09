@@ -529,6 +529,9 @@ def _require_restore_contract(manifest: BackupManifest) -> None:
         required.update({"postgres/base/backup_manifest", "postgres/restore-point.json"})
         if not any(path.startswith("postgres/wal/") for path in paths):
             raise BackupError("内置数据库备份缺少归档 WAL。")
+        # 压缩的物理备份（tar 格式）要带上备份期间流式取到的 WAL；以前的普通目录格式没有这两个文件。
+        if "postgres/base/base.tar.gz" in paths:
+            required.add("postgres/base/pg_wal.tar.gz")
     else:
         required.add("database/provider-pitr-evidence.json")
     missing = sorted(required - paths)

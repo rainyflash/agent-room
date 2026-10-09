@@ -119,11 +119,12 @@ class NativeReleaseTests(unittest.TestCase):
     def test_candidate_backup_does_not_regenerate_configuration_or_keys(self):
         runtime = ProductionRuntime(Mock(), Mock())
         repository = Mock()
-        with patch.object(ProductionRuntime, "prepare") as prepare, patch.object(ProductionRuntime, "validate_compose"), patch.object(ProductionRuntime, "prepare_backup_repository", return_value=repository), patch("tools.prodops.runtime.BackupCoordinator") as coordinator:
+        with patch.object(ProductionRuntime, "prepare") as prepare, patch.object(ProductionRuntime, "validate_compose"), patch.object(ProductionRuntime, "prepare_backup_repository", return_value=repository), patch("tools.prodops.runtime.BackupCoordinator") as coordinator, patch("tools.prodops.runtime.restore_drill_root"), patch("tools.prodops.runtime.prune_expired_restore_drills") as prune_drills:
             result = runtime.backup(preserve_configuration=True)
             prepare.assert_not_called()
             self.assertEqual(result, coordinator.return_value.create.return_value)
             repository.require_headroom.assert_called_once()
+            prune_drills.assert_called_once()
             runtime.backup()
             prepare.assert_called_once_with(generate_signing_key=True)
 

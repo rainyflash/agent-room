@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import io
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -15,6 +17,8 @@ from tools.prodops.restore import (
     RestoreDrillCoordinator,
     RestoreDrillError,
     _prune_restore_drills,
+    materialize_base_backup,
+    prune_expired_restore_drills,
 )
 from tools.prodops.secrets import SecretStore
 
@@ -176,6 +180,108 @@ class RestoreDrillRetentionTests(unittest.TestCase):
             _prune_restore_drills(root, keep=drills[-1])
 
             self.assertTrue(unrelated.is_file())
+
+    def test_所恢复的备份超过保留期的演练目录跟着删(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            expired = root / "20260901T120000000000Z-abcdef12-20260902T080000Z"
+            recent = root / "20260920T120000000000Z-abcdef12-20260920T130000Z"
+            unrelated = root / "manual-copy"
+            for path in (expired, recent, unrelated):
+                path.mkdir()
+                (path / "payload").write_bytes(b"x")
+
+            removed = prune_expired_restore_drills(
+                root, 30, datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
+            )
+
+            self.assertEqual(removed, (expired.name,))
+            self.assertFalse(expired.exists())
+            self.assertTrue(recent.is_dir())
+            self.assertTrue(unrelated.is_dir())
+
+    def test_还没有演练目录时什么都不做(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "restore-drills"
+
+            self.assertEqual(prune_expired_restore_drills(missing, 30, START), ())
+
+
+class BaseBackupMaterializationTests(unittest.TestCase):
+    """物理备份 2026-10-09 起改成 gzip 压缩的 tar；保留期内以前的普通目录也要能恢复。"""
+
+    def test_tar_格式解成数据目录并把流式_WAL_放进_pg_wal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "base"
+            write_tar_gz(
+                source / "base.tar.gz",
+                {
+                    "backup_label": b"START WAL LOCATION: 0/9000028\n",
+                    "PG_VERSION": b"18\n",
+                    "global/pg_control": b"control",
+                    "pg_wal/": None,
+                },
+            )
+            write_tar_gz(source / "pg_wal.tar.gz", {"000000010000000000000009": b"wal"})
+            write(source / "backup_manifest", b"{}")
+            target = root / "restored"
+
+            materialize_base_backup(source, target)
+
+            self.assertEqual((target / "PG_VERSION").read_bytes(), b"18\n")
+            self.assertEqual((target / "global" / "pg_control").read_bytes(), b"control")
+            self.assertEqual(
+                (target / "pg_wal" / "000000010000000000000009").read_bytes(), b"wal"
+            )
+
+    def test_以前的普通目录格式照旧整份复制(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "base"
+            write(source / "PG_VERSION", b"18\n")
+            write(source / "pg_wal" / "000000010000000000000009", b"wal")
+            target = root / "restored"
+
+            materialize_base_backup(source, target)
+
+            self.assertEqual((target / "PG_VERSION").read_bytes(), b"18\n")
+            self.assertTrue((target / "pg_wal" / "000000010000000000000009").is_file())
+
+    def test_tar_格式缺流式_WAL_时拒绝(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "base"
+            write_tar_gz(source / "base.tar.gz", {"PG_VERSION": b"18\n"})
+
+            with self.assertRaisesRegex(RestoreDrillError, "pg_wal.tar.gz"):
+                materialize_base_backup(source, root / "restored")
+
+    def test_压缩包里越出数据目录的条目被拒绝(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "base"
+            write_tar_gz(source / "base.tar.gz", {"../escape": b"x"})
+            write_tar_gz(source / "pg_wal.tar.gz", {"000000010000000000000009": b"wal"})
+
+            with self.assertRaisesRegex(RestoreDrillError, "解不开"):
+                materialize_base_backup(source, root / "restored")
+            self.assertFalse((root / "escape").exists())
+
+
+def write_tar_gz(path: Path, members: dict[str, bytes | None]) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tarfile.open(path, "w:gz") as archive:
+        for name, content in members.items():
+            info = tarfile.TarInfo(name.rstrip("/"))
+            if content is None:
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o700
+                archive.addfile(info)
+                continue
+            info.size = len(content)
+            info.mode = 0o600
+            archive.addfile(info, io.BytesIO(content))
 
 
 def write(path: Path, content: bytes) -> None:

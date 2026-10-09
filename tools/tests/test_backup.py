@@ -93,6 +93,46 @@ class BackupCoordinatorTests(unittest.TestCase):
         self.assertIn("agent_room_backup_last_success_timestamp_seconds", metrics)
         self.assertIn("agent_room_backup_rpo_target_seconds 900", metrics)
 
+    def test_compressed_physical_backup_is_accepted_with_its_streamed_wal(self) -> None:
+        class CompressedCapture(FakeBackupCapture):
+            def capture_backup_payload(self, backup_id: str) -> None:
+                super().capture_backup_payload(backup_id)
+                base = self.repository / f".partial-{backup_id}" / "postgres" / "base"
+                write(base / "base.tar.gz", b"base")
+                write(base / "pg_wal.tar.gz", b"wal")
+
+        repository = BackupRepository(self.repository_path)
+        manifest = BackupCoordinator(
+            self.config,
+            self.paths,
+            CompressedCapture(self.repository_path),
+            repository,
+            clock=lambda: FIXED_NOW,
+        ).create()
+
+        self.assertIn(
+            "postgres/base/pg_wal.tar.gz", {artifact.path for artifact in manifest.artifacts}
+        )
+        self.assertEqual(repository.verify(manifest.backup_id), manifest)
+
+    def test_compressed_physical_backup_without_streamed_wal_is_rejected(self) -> None:
+        class MissingWalCapture(FakeBackupCapture):
+            def capture_backup_payload(self, backup_id: str) -> None:
+                super().capture_backup_payload(backup_id)
+                base = self.repository / f".partial-{backup_id}" / "postgres" / "base"
+                write(base / "base.tar.gz", b"base")
+
+        coordinator = BackupCoordinator(
+            self.config,
+            self.paths,
+            MissingWalCapture(self.repository_path),
+            BackupRepository(self.repository_path),
+            clock=lambda: FIXED_NOW,
+        )
+
+        with self.assertRaisesRegex(BackupError, "pg_wal.tar.gz"):
+            coordinator.create()
+
     def test_tampered_artifact_is_rejected(self) -> None:
         repository = BackupRepository(self.repository_path)
         manifest = BackupCoordinator(

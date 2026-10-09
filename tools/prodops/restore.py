@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
-from typing import Callable, Protocol
+import tarfile
+from typing import Callable, Final, Protocol
 
 from .backup import BackupError, BackupManifest, BackupRepository
 from .config import DeploymentConfig
@@ -21,9 +23,11 @@ class RestoreDrillError(RuntimeError):
     """表示隔离恢复没有达到可用性或完整性门禁。"""
 
 
-# 每次演练留下一份完整的隔离恢复副本，体积与一次备份相当。报告摘要已写入备份摘要与发行记录，
+# 每次演练留下一份完整的隔离恢复副本，比一份未压缩的备份还大。报告摘要已写入备份摘要与发行记录，
 # 旧目录本身没有留存价值；不清理会持续占用与备份同量级的磁盘，最终触发生产安装的余量门禁。
-RETAINED_RESTORE_DRILLS = 5
+# 2026-10-09 起只留最近 2 份：那天生产盘不够发版，维护者同意把演练目录清到 2 份。
+RETAINED_RESTORE_DRILLS = 2
+RESTORE_DRILL_NAME: Final = re.compile(r"^([0-9]{8}T[0-9]{12}Z)-[0-9a-f]{8}-[0-9]{8}T[0-9]{6}Z$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +123,63 @@ def _prune_restore_drills(root: Path, *, keep: Path) -> tuple[str, ...]:
     return tuple(removed)
 
 
+def restore_drill_root(paths: DeploymentPaths) -> Path:
+    return paths.state / "restore-drills"
+
+
+def prune_expired_restore_drills(root: Path, retention_days: int, now: datetime) -> tuple[str, ...]:
+    """删掉所恢复的备份已经超过保留期的演练目录。
+
+    演练目录是备份还原出来的完整副本。隐私说明承诺删掉的东西 30 天内从备份里消失；发版慢下来时，
+    “只留最近几次”留下的副本会比备份活得久，所以定时备份顺手按备份时间清。认不出名字的目录不碰。
+    """
+
+    if not root.is_dir():
+        return ()
+    cutoff = now - timedelta(days=retention_days)
+    removed: list[str] = []
+    for path in sorted(root.iterdir(), key=lambda item: item.name):
+        match = RESTORE_DRILL_NAME.fullmatch(path.name)
+        if match is None or path.is_symlink() or not path.is_dir():
+            continue
+        backed_up_at = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S%fZ").replace(tzinfo=UTC)
+        if backed_up_at >= cutoff:
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            continue
+        removed.append(path.name)
+    return tuple(removed)
+
+
+def materialize_base_backup(source: Path, target: Path) -> None:
+    """把物理备份还原成 PostgreSQL 数据目录。
+
+    现在的物理备份是 pg_basebackup 的 tar 格式加 gzip：base.tar.gz 是数据目录，pg_wal.tar.gz
+    是备份期间流式取到的 WAL。2026-10-09 以前的备份是普通目录，保留期内两种都要能恢复。
+    """
+
+    archive = source / "base.tar.gz"
+    if not archive.exists():
+        shutil.copytree(source, target, symlinks=True)
+        return
+    wal_archive = source / "pg_wal.tar.gz"
+    for path in (archive, wal_archive):
+        if path.is_symlink() or not path.is_file():
+            raise RestoreDrillError(f"tar 格式的物理备份缺少 {path.name}。")
+    target.mkdir(mode=0o700)
+    wal_directory = target / "pg_wal"
+    try:
+        with tarfile.open(archive, "r:gz") as stream:
+            stream.extractall(target, filter="data")
+        wal_directory.mkdir(mode=0o700, exist_ok=True)
+        with tarfile.open(wal_archive, "r:gz") as stream:
+            stream.extractall(wal_directory, filter="data")
+    except (tarfile.TarError, EOFError) as error:
+        raise RestoreDrillError(f"物理备份解不开：{error}") from error
+
+
 @dataclass(slots=True)
 class RestoreDrillCoordinator:
     config: DeploymentConfig
@@ -191,7 +252,7 @@ class RestoreDrillCoordinator:
         return target
 
     def _create_drill_directory(self, backup_id: str, started: datetime) -> Path:
-        root = self.paths.state / "restore-drills"
+        root = restore_drill_root(self.paths)
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         suffix = started.strftime("%Y%m%dT%H%M%SZ")
         path = root / f"{backup_id}-{suffix}"

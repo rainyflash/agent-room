@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,9 @@ from .restore import (
     RestoreDrillCoordinator,
     RestoreDrillReport,
     RestoreDrillError,
+    materialize_base_backup,
+    prune_expired_restore_drills,
+    restore_drill_root,
 )
 from .secrets import SecretStore
 
@@ -199,10 +203,7 @@ class ProductionRuntime:
             self.prepare(generate_signing_key=True)
         self.validate_compose()
         repository = self.prepare_backup_repository()
-        repository.prune(
-            self.config.backup.retention_days,
-            self.config.backup.recent_retention_hours,
-        )
+        self._prune_expired(repository)
         repository.require_headroom()
         coordinator = BackupCoordinator(self.config, self.paths, self, repository)
         manifest = coordinator.create()
@@ -216,10 +217,20 @@ class ProductionRuntime:
     def prune_backups(self) -> tuple[str, ...]:
         repository = BackupRepository(Path(self.config.backup.repository))
         repository.prepare()
-        return repository.prune(
+        return self._prune_expired(repository)
+
+    def _prune_expired(self, repository: BackupRepository) -> tuple[str, ...]:
+        removed = repository.prune(
             self.config.backup.retention_days,
             self.config.backup.recent_retention_hours,
         )
+        # 恢复演练目录是备份还原出来的副本，跟备份守同一个保留期。
+        prune_expired_restore_drills(
+            restore_drill_root(self.paths),
+            self.config.backup.retention_days,
+            datetime.now(UTC),
+        )
+        return removed
 
     def restore_drill(self, backup_id: str) -> RestoreDrillReport:
         repository = BackupRepository(Path(self.config.backup.repository))
@@ -278,7 +289,7 @@ class ProductionRuntime:
         wal_target = drill_directory / "wal"
         if target.exists():
             raise RestoreDrillError("隔离 PostgreSQL 恢复目录已存在。")
-        shutil.copytree(source, target, symlinks=True)
+        materialize_base_backup(source, target)
         shutil.copytree(backup_directory / "postgres" / "wal", wal_target, symlinks=True)
         (target / "recovery.signal").touch(mode=0o600)
         auto_config = target / "postgresql.auto.conf"
