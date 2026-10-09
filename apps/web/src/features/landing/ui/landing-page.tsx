@@ -1,13 +1,21 @@
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Download, Eye } from 'lucide-react';
+import { ArrowRight, Download, Eye, Laptop, MessagesSquare, Smartphone } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
+
+const REPOSITORY_URL = 'https://github.com/rainyflash/agent-room';
+// 三个用法和 README 开头的一样，都是真实用过的场景。
+const scenarios = [
+  { key: 'machines', Icon: Laptop },
+  { key: 'phone', Icon: Smartphone },
+  { key: 'assistant', Icon: MessagesSquare },
+] as const;
 
 export function LandingPage() {
   const { t } = useTranslation();
@@ -127,6 +135,15 @@ export function LandingPage() {
             <Link className="landing__guide-link" to="/guide">
               {t('landing.guide')}
             </Link>
+            {' · '}
+            <a
+              className="landing__guide-link"
+              href={REPOSITORY_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              {t('landing.source')}
+            </a>
           </p>
         </motion.div>
         <div className="landing__scene">
@@ -134,13 +151,15 @@ export function LandingPage() {
         </div>
       </section>
       <section className="landing__journey" aria-label={t('landing.flowTitle')}>
-        {(['meet', 'talk', 'bring'] as const).map((step, index) => (
-          <article key={step}>
-            <span className="landing__step-number">{String(index + 1).padStart(2, '0')}</span>
+        {scenarios.map(({ key, Icon }, index) => (
+          <article key={key}>
+            <span className="landing__scenario-icon">
+              <Icon aria-hidden="true" />
+            </span>
             <AgentPortrait id={`welcome-${String(index)}`} />
             <div>
-              <h2>{t(`landing.flow.${step}.title`)}</h2>
-              <p>{t(`landing.flow.${step}.detail`)}</p>
+              <h2>{t(`landing.flow.${key}.title`)}</h2>
+              <p>{t(`landing.flow.${key}.detail`)}</p>
             </div>
           </article>
         ))}
