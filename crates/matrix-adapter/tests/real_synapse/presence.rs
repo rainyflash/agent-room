@@ -4,8 +4,10 @@
 
 use std::time::Duration;
 
-use agent_room_application::ports::{MatrixGateway, MatrixUserId, MatrixUserPresence};
-use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+use agent_room_application::ports::{
+    MatrixGateway, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, MatrixUserPresence,
+};
+use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::DurationMillis};
 use matrix_sdk::ruma::{
     UserId, api::client::presence::set_presence::v3::Request as SetPresenceRequest,
     presence::PresenceState,
@@ -20,6 +22,9 @@ use super::{
 /// 服务器约 30 秒没见到同步就改成离线，再加上它每隔几秒才检查一次。
 const OFFLINE_WITHIN: Duration = Duration::from_secs(90);
 const CHANGE_WITHIN: Duration = Duration::from_secs(20);
+/// 和 `sync` 用的超时值不一样：Synapse 把两分钟内一模一样的同步请求的回答缓存起来，
+/// 超时值一样的不带起点的同步拿到的是前面那次的回答。
+const FRESH_SYNC_TIMEOUT_MILLIS: u64 = 101;
 
 #[tokio::test]
 #[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
@@ -84,7 +89,7 @@ async fn 真实_synapse_同步带回同房间的人的在线状态_停止同步�
     );
 
     // 首次同步只带不离线的人；离线的问得到。
-    let fresh = sync(watching, None).await;
+    let fresh = fresh_sync(watching).await;
     assert!(
         fresh
             .presence()
@@ -125,7 +130,22 @@ async fn 真实_synapse_不同房间的人问不到在线状态() {
     );
 }
 
-/// 接着同步，直到同步里带回这个人的这种在线状态。
+/// 真的重新做一次不带起点的同步，不拿 Synapse 缓存的前一次回答。
+async fn fresh_sync(gateway: &dyn MatrixGateway) -> MatrixSyncBatch {
+    let request = MatrixSyncRequest::new(
+        None,
+        DurationMillis::new(FRESH_SYNC_TIMEOUT_MILLIS).expect("同步超时有效"),
+        false,
+    )
+    .expect("同步请求有效");
+    gateway
+        .sync_once(&request)
+        .await
+        .expect("真实 Synapse 同步必须成功")
+}
+
+/// 接着同步，直到同步里带回这个人的这种在线状态。头一次不带起点，可能拿到 Synapse 缓存的
+/// 前一次回答，接着的增量同步会带上那之后的变化。
 async fn synced_presence(
     gateway: &dyn MatrixGateway,
     user_id: &MatrixUserId,
