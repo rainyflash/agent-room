@@ -1,15 +1,26 @@
 //! 定时清理（ADR 0010 的治理）：停用 30 天没活动的与卡在创建中的网络 Agent，再替已停用、
 //! 还没离开房间的网络 Agent 离开。后者包括运维停用的、闲置停用的，以及自己停用时没离开成的。
 //! 离开了所有房间的，删掉服务器替它存的加密存储和钥匙（停用不能撤回，以后用不上了）。
-//! 顺带关掉闲置太久的加密客户端。
+//! 顺带关掉闲置太久的加密客户端。另有一项单独按时做：删掉过了房间保留期的消息副本。
 
-use agent_room_application::network_agents::{NetworkAgentFailure, NetworkAgentPendingExit};
+use agent_room_application::{
+    network_agents::{NetworkAgentFailure, NetworkAgentPendingExit},
+    persistence::RepositoryResult,
+    ports::NetworkAgentMessageRetention,
+};
 use agent_room_domain::ids::NetworkAgentId;
 
 use super::NetworkGateway;
 
 /// 每轮最多替这么多个网络 Agent 离开房间。
 const EXIT_BATCH: u32 = 20;
+
+/// 消息副本留多久：房间目录上没设保留期的，按聊天服务器的默认保留期（30 天）；到期后多留一天，
+/// 等聊天服务器每天那次清理先删掉原来的事件，免得往回补时又补回来。和正文对象一样。
+const MESSAGE_RETENTION: NetworkAgentMessageRetention = NetworkAgentMessageRetention {
+    default_days: 30,
+    grace_days: 1,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct NetworkAgentCleanupOutcome {
@@ -70,6 +81,13 @@ impl NetworkGateway {
             outcome.closed = encrypted.evict_idle().await;
         }
         Ok(outcome)
+    }
+
+    /// 删掉所有网络 Agent 过了房间保留期的收件箱和消息记录，返回删了几条。
+    pub(crate) async fn prune_expired_messages(&self) -> RepositoryResult<u64> {
+        self.inbox
+            .prune_expired(self.clock.now(), MESSAGE_RETENTION)
+            .await
     }
 
     /// 删掉服务器上替它存的加密存储；没配加密客户端的就没有存储，当作删好了。

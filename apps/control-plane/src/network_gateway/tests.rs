@@ -37,10 +37,11 @@ use agent_room_application::{
         NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
         NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
-        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentRoomRecord,
-        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
-        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
-        NetworkAgentSyncRequest, NetworkAgentTimelineGap, PortFuture, SecretValue,
+        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
+        NetworkAgentRoomRecord, NetworkAgentStoredMessage, NetworkAgentSubmissionClaim,
+        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
+        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
+        NetworkAgentTimelineGap, PortFuture, SecretValue,
     },
 };
 use agent_room_bridge_core::{
@@ -609,6 +610,8 @@ impl ContentUseCases for FakeContent {
 #[derive(Default)]
 struct MemoryInbox {
     state: Mutex<InboxState>,
+    /// 删过了保留期的副本时问的时间和留多久；按什么删由 Postgres 的测试管。
+    pruned: Mutex<Vec<(UtcMillis, NetworkAgentMessageRetention)>>,
 }
 
 #[derive(Default)]
@@ -653,6 +656,7 @@ struct InboxRow {
     actor_key: String,
     preview: Value,
     received_at: UtcMillis,
+    sent_at: UtcMillis,
     gap: Option<NetworkAgentTimelineGap>,
     before_join: bool,
 }
@@ -820,6 +824,7 @@ impl NetworkAgentInboxStore for MemoryInbox {
                             actor_key: message.actor_key.clone(),
                             preview: message.preview.clone(),
                             received_at: append.received_at,
+                            sent_at: message.sent_at,
                             gap: message.gap.clone(),
                             before_join,
                         });
@@ -896,6 +901,15 @@ impl NetworkAgentInboxStore for MemoryInbox {
             }
         };
         Box::pin(async move { Ok(outcome) })
+    }
+
+    fn prune_expired(
+        &self,
+        now: UtcMillis,
+        retention: NetworkAgentMessageRetention,
+    ) -> PortFuture<'_, RepositoryResult<u64>> {
+        self.pruned.lock().unwrap().push((now, retention));
+        Box::pin(async { Ok(0) })
     }
 }
 
@@ -2745,6 +2759,56 @@ async fn 每条消息带上房间名_标出它进房间之前的() {
     assert_eq!(page.messages[0]["beforeJoin"], true);
     assert_eq!(page.messages[1]["roomName"], "大厅");
     assert_eq!(page.messages[1]["beforeJoin"], false);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 消息副本记下服务器收到它的时间_不是网关同步到它的时间() {
+    const TEN_DAYS: u64 = 10 * 24 * 60 * 60 * 1_000;
+    let harness = harness();
+    harness.matrix.push(Step::Batch(Ok(batch(
+        "s1",
+        vec![received_at(
+            &chat(
+                "$old:matrix.test",
+                other(),
+                Uuid::now_v7(),
+                "十天前说的",
+                [1; 64],
+            ),
+            1_758_600_000_000 - TEN_DAYS,
+        )],
+    ))));
+
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::ZERO, 20))
+        .await
+        .unwrap();
+
+    let state = harness.inbox.state.lock().unwrap();
+    let [row] = state.entries.as_slice() else {
+        panic!("收到一条：{}", state.entries.len());
+    };
+    assert_eq!(row.sent_at.value(), 1_757_736_000_000);
+    assert!(row.received_at.value() >= 1_758_600_000_000);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 删过了保留期的消息副本_没设保留期的按三十天_到期后多留一天() {
+    let harness = harness();
+
+    harness.gateway.prune_expired_messages().await.unwrap();
+
+    assert_eq!(
+        *harness.inbox.pruned.lock().unwrap(),
+        [(
+            UtcMillis::new(1_758_600_000_000).unwrap(),
+            NetworkAgentMessageRetention {
+                default_days: 30,
+                grace_days: 1,
+            }
+        )]
+    );
 }
 
 // ---------- 发言 ----------

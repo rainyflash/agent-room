@@ -13,9 +13,10 @@ use agent_room_application::{
         NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
         NetworkAgentInboxMessage, NetworkAgentInboxPage, NetworkAgentInboxStore,
         NetworkAgentLookup, NetworkAgentMessageActor, NetworkAgentMessageHistory,
-        NetworkAgentMessageRef, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
-        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentMessageRef, NetworkAgentMessageRetention, NetworkAgentProvisioning,
+        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
+        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
         PrivateRoomSnapshot, PrivateRoomStore, RateWindowDecision, RateWindowPolicy, SealedSecret,
@@ -1580,10 +1581,88 @@ async fn 离开房间以后删掉秘密与发言限流_抹掉来源摘要_删过
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 过了房间保留期的副本删掉_按发出的时间算_没设保留期的按默认_没确认的计进丢弃() {
+    const DAY: i64 = 24 * 60 * 60 * 1_000;
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Keeper"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let (_, weekly) =
+        seed_private_room_kept(&repositories, provisioning.principal.principal.id(), 7).await;
+    let unlisted = MatrixRoomId::new(format!("!unlisted{}:matrix.test", Uuid::now_v7().simple()))
+        .expect("房间 ID 有效");
+    // 之前存的没记发出的时间，按收到的时间算。
+    let mut legacy = append(
+        id,
+        None,
+        "s1",
+        vec![said("$legacy:matrix.test", &weekly)],
+        50,
+    );
+    legacy.received_at = time(-9 * DAY);
+    repositories.append(&legacy).await.expect("写入");
+    forget_sent_at(&database.runtime, id).await;
+    let changes = vec![
+        sent(said("$weekly-old:matrix.test", &weekly), time(-9 * DAY)),
+        sent(
+            said("$weekly-grace:matrix.test", &weekly),
+            time(-15 * DAY / 2),
+        ),
+        sent(said("$default-old:matrix.test", &unlisted), time(-32 * DAY)),
+        sent(
+            said("$default-grace:matrix.test", &unlisted),
+            time(-61 * DAY / 2),
+        ),
+    ];
+    repositories
+        .append(&append(id, Some("s1"), "s2", changes, 50))
+        .await
+        .expect("写入");
+    let retention = NetworkAgentMessageRetention {
+        default_days: 30,
+        grace_days: 1,
+    };
+
+    assert_eq!(
+        repositories
+            .prune_expired(time(0), retention)
+            .await
+            .expect("删"),
+        6,
+        "收件箱和消息记录各三条"
+    );
+
+    let kept = ["$weekly-grace:matrix.test", "$default-grace:matrix.test"];
+    let page = repositories.pending(id, None, 50).await.expect("读收件箱");
+    assert_eq!(event_ids(&page), kept);
+    assert_eq!(page.dropped, 3, "没确认就删掉的计进丢弃");
+    assert_eq!(recorded_event_ids(&database.runtime, id).await, kept);
+    assert_eq!(
+        repositories
+            .prune_expired(time(0), retention)
+            .await
+            .expect("再删一次"),
+        0
+    );
+    database.close().await;
+}
+
 async fn seed_private_room(
     repositories: &PostgresRepositories,
     owner: PrincipalId,
 ) -> RoomCatalogId {
+    seed_private_room_kept(repositories, owner, 30).await.0
+}
+
+/// 保留期 `retention_days` 天的私人房间，返回目录条目和 Matrix 房间。
+async fn seed_private_room_kept(
+    repositories: &PostgresRepositories,
+    owner: PrincipalId,
+    retention_days: u16,
+) -> (RoomCatalogId, MatrixRoomId) {
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
     let catalog = RoomCatalog::new(
         catalog_id,
@@ -1596,7 +1675,7 @@ async fn seed_private_room(
             matrix_space_id: None,
             owner_principal_id: Some(owner),
             visibility: RoomCatalogVisibility::Private,
-            retention_days: Some(30),
+            retention_days: Some(retention_days),
             status: RoomCatalogStatus::Active,
         },
     )
@@ -1620,13 +1699,15 @@ async fn seed_private_room(
         },
     )
     .expect("私人实例有效");
+    let matrix_room_id =
+        MatrixRoomId::new(instance.matrix_room_id().as_str()).expect("房间 ID 有效");
     let snapshot =
         PrivateRoomSnapshot::new(catalog, instance, PrivateRoom::create(catalog_id, owner))
             .expect("私人房间快照有效");
     PrivateRoomStore::create(repositories, &snapshot, time(0))
         .await
         .expect("创建房间");
-    catalog_id
+    (catalog_id, matrix_room_id)
 }
 
 async fn encrypted_since(
@@ -1738,6 +1819,7 @@ fn message_in(
         },
         from_me: false,
         mentions_me: false,
+        sent_at: time(0),
         gap: None,
         preview: json!({
             "eventId": event_id,
@@ -2066,6 +2148,41 @@ async fn key_deletion(pool: &PgPool, id: NetworkAgentId) -> (Option<UtcMillis>, 
         deleted_at.map(|at| UtcMillis::new(at).expect("时间有效")),
         digest,
     )
+}
+
+/// 改成在 `at` 发出的。
+fn sent(change: NetworkAgentInboxChange, at: UtcMillis) -> NetworkAgentInboxChange {
+    let NetworkAgentInboxChange::Message(mut message) = change else {
+        unreachable!("只改消息");
+    };
+    message.sent_at = at;
+    NetworkAgentInboxChange::Message(message)
+}
+
+/// 像加这一列之前存的那样，抹掉发出的时间。
+async fn forget_sent_at(pool: &PgPool, id: NetworkAgentId) {
+    for table in ["network_agent_inbox", "network_agent_message"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE agent_room.{table} SET sent_at = NULL WHERE network_agent_id = $1"
+        )))
+        .bind(id.as_uuid())
+        .execute(pool)
+        .await
+        .expect("抹掉发出的时间");
+    }
+}
+
+/// 消息记录里还有的，按先后。
+async fn recorded_event_ids(pool: &PgPool, id: NetworkAgentId) -> Vec<String> {
+    sqlx::query_scalar(
+        r"SELECT matrix_event_id FROM agent_room.network_agent_message
+           WHERE network_agent_id = $1
+           ORDER BY sequence",
+    )
+    .bind(id.as_uuid())
+    .fetch_all(pool)
+    .await
+    .expect("读消息记录")
 }
 
 fn time(offset: i64) -> UtcMillis {

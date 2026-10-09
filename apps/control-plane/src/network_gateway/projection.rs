@@ -25,12 +25,13 @@ use agent_room_bridge_ipc::{
     IpcMessagePreviewSummary,
     previews::{
         PreviewRoom, PreviewText, PreviewViewer, actor_user_and_name, attach_stored_reply,
-        preview_for, preview_summary,
+        preview_for, preview_summary, sent_at_ms,
     },
 };
 use agent_room_domain::{
     ids::{AgentInstanceId, MessageId},
     messages::{MessageRelation, MessageRevisionKind},
+    time::UtcMillis,
 };
 use serde_json::{Map, Value};
 
@@ -245,6 +246,7 @@ fn inbox_message(
         from_me: summary.from_me,
         mentions_me: summary.mentions_me,
         preview: serde_json::to_value(summary).ok()?,
+        sent_at: UtcMillis::new(sent_at_ms(preview)).unwrap_or(preview.created_at),
         // 补不回来的一段在存之前由往回补那一步标上（`backfill::mark_losses`）。
         gap: None,
     }))

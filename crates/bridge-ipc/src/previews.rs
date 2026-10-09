@@ -138,7 +138,7 @@ pub fn truncate_preview_value(preview: &mut Value) {
 }
 
 /// 发出时间：有服务器收到的时间就用它（和加入时间是同一台服务器的钟），没有才用发送方自己写的。
-fn sent_at_ms(preview: &ProjectedMessagePreview) -> i64 {
+pub fn sent_at_ms(preview: &ProjectedMessagePreview) -> i64 {
     preview
         .origin_server_timestamp
         .and_then(|value| i64::try_from(value).ok())

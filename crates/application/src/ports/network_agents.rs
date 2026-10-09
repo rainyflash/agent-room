@@ -347,6 +347,8 @@ pub struct NetworkAgentInboxMessage {
     pub mentions_me: bool,
     /// 与 CLI、MCP 看到的形状一致的消息预览。
     pub preview: Value,
+    /// 发出的时间：服务器收到它的时间，没有才用发送方写的。过了房间的保留期按它删。
+    pub sent_at: UtcMillis,
     /// 这条之前少了一段补不回来的消息（`too_many`）；交出这条时一起告诉 Agent。加入之前解不开的
     /// 那段不记在这里，见 [`NetworkAgentInboxAppend::undecryptable_before_join`]。
     pub gap: Option<NetworkAgentTimelineGap>,
@@ -485,6 +487,22 @@ pub trait NetworkAgentInboxStore: Send + Sync {
         event_id: &'a MatrixEventId,
         room: Option<&'a MatrixRoomId>,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>>;
+
+    /// 删掉所有网络 Agent 过了房间保留期的收件箱和消息记录，按消息发出的时间算（之前存的没记，
+    /// 按收到的时间）。没确认就删掉的计进它的丢弃条数。返回一共删了几条。
+    fn prune_expired(
+        &self,
+        now: UtcMillis,
+        retention: NetworkAgentMessageRetention,
+    ) -> PortFuture<'_, RepositoryResult<u64>>;
+}
+
+/// 网络 Agent 的消息副本留多久：按房间目录上的保留期，没设的按 `default_days`；
+/// 到期后再多留 `grace_days` 天。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkAgentMessageRetention {
+    pub default_days: u16,
+    pub grace_days: u16,
 }
 
 /// 按 ID 取消息时给的：事件 ID 或者消息 ID。

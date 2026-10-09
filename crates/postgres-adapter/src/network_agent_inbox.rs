@@ -7,6 +7,8 @@
 //!
 //! 凭口令进的私人房间里加入之前解不开的一段，先记在房间上（`before_join_gap_status`），再挂到这个
 //! 房间之后第一条进收件箱的消息上；每次加入只说一次。
+//!
+//! 过了房间保留期的收件箱和消息记录，由定时清理按消息发出的时间删掉（`prune_expired`）。
 
 use std::collections::HashSet;
 
@@ -16,8 +18,8 @@ use agent_room_application::{
         MatrixEventId, MatrixRoomId, MatrixSyncToken, NetworkAgentAckOutcome,
         NetworkAgentGapReason, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
-        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentRoomRecord,
-        NetworkAgentTimelineGap, PortFuture,
+        NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMessageRetention,
+        NetworkAgentRoomRecord, NetworkAgentTimelineGap, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -292,6 +294,107 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             })
         })
     }
+
+    fn prune_expired(
+        &self,
+        now: UtcMillis,
+        retention: NetworkAgentMessageRetention,
+    ) -> PortFuture<'_, RepositoryResult<u64>> {
+        Box::pin(async move {
+            let operation = "network_agent.inbox_prune_expired";
+            let statement = format!(
+                "SELECT network_agent_id FROM agent_room.network_agent_inbox AS entry
+                  WHERE {EXPIRED_COPY}
+                 UNION
+                 SELECT network_agent_id FROM agent_room.network_agent_message AS entry
+                  WHERE {EXPIRED_COPY}"
+            );
+            // 拼进去的只有本文件里的常量。
+            let agents: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(statement))
+                .bind(now.value())
+                .bind(i32::from(retention.default_days))
+                .bind(i32::from(retention.grace_days))
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let mut pruned = 0;
+            for agent in agents {
+                pruned += prune_agent_copies(self, agent, now, retention, operation).await?;
+            }
+            Ok(pruned)
+        })
+    }
+}
+
+/// 过了房间保留期的副本（表的别名是 `entry`）：按发出的时间算，之前存的没记就按收到的时间；
+/// 保留期取房间目录上的，没设或查不到的按默认，再多留几天。
+/// `$1` 是现在（毫秒），`$2` 是默认的天数，`$3` 是多留的天数。
+const EXPIRED_COPY: &str = r"coalesce(entry.sent_at, entry.received_at)
+    < to_timestamp($1::double precision / 1000.0) - make_interval(days => $3 + coalesce((
+          SELECT max(catalog.retention_days)
+            FROM agent_room.room_instance AS instance
+            JOIN agent_room.room_catalog_entry AS catalog
+              ON catalog.id = instance.catalog_entry_id
+           WHERE instance.matrix_room_id = entry.matrix_room_id
+      ), $2))";
+
+/// 删掉一个网络 Agent 过了保留期的副本，返回删了几条；收件箱里没确认就删掉的计进丢弃条数。
+async fn prune_agent_copies(
+    repositories: &PostgresRepositories,
+    agent: uuid::Uuid,
+    now: UtcMillis,
+    retention: NetworkAgentMessageRetention,
+    operation: &'static str,
+) -> RepositoryResult<u64> {
+    let mut transaction = repositories
+        .pool()
+        .begin()
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    // 与写入、确认同一把锁，先锁网络 Agent 再动收件箱，避免互相等待。
+    sqlx::query("SELECT id FROM agent_room.network_agent WHERE id = $1 FOR UPDATE")
+        .bind(agent)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let mut pruned = [0; 2];
+    for (index, table) in ["network_agent_inbox", "network_agent_message"]
+        .into_iter()
+        .enumerate()
+    {
+        let statement = format!(
+            "DELETE FROM agent_room.{table} AS entry
+              WHERE entry.network_agent_id = $4 AND {EXPIRED_COPY}"
+        );
+        // 拼进去的只有表名和本文件里的常量。
+        pruned[index] = sqlx::query(sqlx::AssertSqlSafe(statement))
+            .bind(now.value())
+            .bind(i32::from(retention.default_days))
+            .bind(i32::from(retention.grace_days))
+            .bind(agent)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?
+            .rows_affected();
+    }
+    let [inbox, messages] = pruned;
+    if inbox > 0 {
+        sqlx::query(
+            r"UPDATE agent_room.network_agent
+                 SET dropped_messages = dropped_messages + $2
+               WHERE id = $1",
+        )
+        .bind(agent)
+        .bind(i64::try_from(inbox).map_err(|_| corrupt_data(operation))?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(inbox + messages)
 }
 
 /// 收件箱的一行：编号、事件、房间、预览、收到的时间、前面有没有加入之前解不开的一段、
@@ -519,10 +622,11 @@ async fn insert_inbox(
         r"INSERT INTO agent_room.network_agent_inbox (
               network_agent_id, sequence, matrix_event_id, matrix_room_id,
               message_id, actor_key, preview, received_at, gap_reason, gap_after_event_id,
-              before_join_gap
+              before_join_gap, sent_at
           ) VALUES (
               $1, $2, $3, $4, $5, $6, $7::jsonb,
-              to_timestamp($8::double precision / 1000.0), $9, $10, $11
+              to_timestamp($8::double precision / 1000.0), $9, $10, $11,
+              to_timestamp($12::double precision / 1000.0)
           )
           ON CONFLICT (network_agent_id, matrix_event_id) DO NOTHING",
     )
@@ -537,6 +641,7 @@ async fn insert_inbox(
     .bind(gap.map(|gap| gap.reason.as_str()))
     .bind(gap.and_then(|gap| gap.after_event_id.as_ref().map(MatrixEventId::as_str)))
     .bind(before_join)
+    .bind(message.sent_at.value())
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -555,10 +660,11 @@ async fn record_message(
         r"INSERT INTO agent_room.network_agent_message (
               network_agent_id, sequence, matrix_event_id, matrix_room_id, message_id,
               actor_key, actor_matrix_user_id, actor_name_folded, mentions_me, preview,
-              received_at
+              received_at, sent_at
           ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
-              to_timestamp($11::double precision / 1000.0)
+              to_timestamp($11::double precision / 1000.0),
+              to_timestamp($12::double precision / 1000.0)
           )
           ON CONFLICT (network_agent_id, matrix_event_id) DO NOTHING",
     )
@@ -573,6 +679,7 @@ async fn record_message(
     .bind(message.mentions_me)
     .bind(message.preview.to_string())
     .bind(append.received_at.value())
+    .bind(message.sent_at.value())
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
