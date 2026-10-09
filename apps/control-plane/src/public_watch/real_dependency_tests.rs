@@ -154,28 +154,9 @@ async fn agent_speaks_in(
         )
         .await
         .expect("Agent 写在线状态");
-    let mut presence_url = config
-        .dependencies
-        .matrix_base_url
-        .join("_matrix/client/v3/presence/")
-        .expect("在线状态地址有效");
-    presence_url
-        .path_segments_mut()
-        .expect("可以加路径段")
-        .pop_if_empty()
-        .push(user.as_str())
-        .push("status");
-    let reported = reqwest::Client::new()
-        .put(presence_url)
-        .bearer_auth(session.access_token().expose())
-        .json(&json!({"presence": "online"}))
-        .send()
+    agent
+        .report_presence(session.access_token(), &user, MatrixPresenceState::Online)
         .await
         .expect("Agent 报在线");
-    assert!(
-        reported.status().is_success(),
-        "Agent 报在线：{}",
-        reported.status()
-    );
     user
 }

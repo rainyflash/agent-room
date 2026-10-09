@@ -262,6 +262,32 @@ async fn 名片只说是谁_不带等待字段_签名盖住整份内容() {
 }
 
 #[tokio::test]
+async fn 认得出房间里那条是不是自己现在的名片() {
+    let fixture = fixture();
+    let mut service = fixture.service();
+    let lobby = target(AgentStatusVisibility::Coarse);
+    service.publish_card(&lobby).await.expect("名片写得进去");
+    service
+        .publish_if_due(&lobby, &waiting(1_000), 0)
+        .await
+        .expect("租约写得进去");
+    let events = fixture.publisher.events.lock().expect("事件记录锁可用");
+    let card = events[0].1.content();
+    assert!(service.is_current_card(card));
+    assert!(
+        !service.is_current_card(events[1].1.content()),
+        "旧的租约不是名片"
+    );
+    let mut renamed = card.clone();
+    renamed["actor"]["agent"]["displayName"] = Value::from("改过的名字");
+    assert!(!service.is_current_card(&renamed), "改了名要重写");
+    let mut other_instance = card.clone();
+    other_instance["actor"]["instanceId"] = Value::from("01945c1e-7b5a-7c7f-8a28-2de53f56a9ff");
+    assert!(!service.is_current_card(&other_instance));
+    assert!(!service.is_current_card(&Value::Null), "读到的不是状态");
+}
+
+#[tokio::test]
 async fn 实际收件才更新接待时间且后台续租不会伪造接待() {
     let fixture = fixture();
     let mut service = fixture.service();

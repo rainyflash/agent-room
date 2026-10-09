@@ -7,9 +7,10 @@ use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixBackfillToken,
     MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixOperation,
     MatrixResult, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind, MatrixStateEvent,
-    MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId, MatrixUserId,
-    NetworkAgentMatrixGateway, NetworkAgentSyncRequest, PortFuture, SecretValue,
+    MatrixStateKey, MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixTransactionId,
+    MatrixUserId, NetworkAgentMatrixGateway, NetworkAgentSyncRequest, PortFuture, SecretValue,
 };
+use agent_room_domain::agent_lifecycle::MatrixPresenceState;
 use reqwest::{Client, Url, redirect::Policy};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -84,8 +85,9 @@ impl MatrixAgentSessionClient {
             let mut query = url.query_pairs_mut();
             query.append_pair("filter", &sync_filter(request.timeline_limit).to_string());
             query.append_pair("timeout", &timeout.to_string());
-            // Agent Room 用自己的状态事件表达在线，同步本身不该把 Matrix 用户标成在线。
-            query.append_pair("set_presence", "offline");
+            // 在不在线、在不在等消息看 Matrix 的在线状态（`specs/agent-liveness/design.md`）；
+            // `offline` 是不报，Synapse 不把这种同步算作在线。
+            query.append_pair("set_presence", request.presence.as_matrix());
             if let Some(since) = &request.since {
                 query.append_pair("since", since.as_str());
             }
@@ -235,6 +237,108 @@ impl MatrixAgentSessionClient {
         ))
     }
 
+    async fn report_presence_internal(
+        &self,
+        access_token: &SecretValue,
+        user_id: &MatrixUserId,
+        presence: MatrixPresenceState,
+    ) -> MatrixResult<()> {
+        let operation = MatrixOperation::ReportPresence;
+        let url = self.presence_endpoint(user_id, operation)?;
+        let response = self
+            .client
+            .put(url)
+            .bearer_auth(access_token.expose())
+            .json(&json!({ "presence": presence.as_matrix() }))
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if !status.is_success() {
+            let error = decode_matrix_error(&body, operation)?;
+            return Err(map_matrix_error(operation, status, &error));
+        }
+        Ok(())
+    }
+
+    async fn own_presence_internal(
+        &self,
+        access_token: &SecretValue,
+        user_id: &MatrixUserId,
+    ) -> MatrixResult<MatrixPresenceState> {
+        let operation = MatrixOperation::ReadPresence;
+        let url = self.presence_endpoint(user_id, operation)?;
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(access_token.expose())
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if !status.is_success() {
+            let error = decode_matrix_error(&body, operation)?;
+            return Err(map_matrix_error(operation, status, &error));
+        }
+        let presence: PresenceResponse = decode_json(&body, operation)?;
+        MatrixPresenceState::from_matrix(&presence.presence)
+            .ok_or_else(|| invalid_response(operation))
+    }
+
+    async fn state_event_internal(
+        &self,
+        access_token: &SecretValue,
+        room_id: &MatrixRoomId,
+        event_type: &MatrixEventType,
+        state_key: &MatrixStateKey,
+    ) -> MatrixResult<Option<Value>> {
+        let operation = MatrixOperation::ReadRoomState;
+        let url = self.room_endpoint(
+            room_id,
+            &["state", event_type.as_str(), state_key.as_str()],
+            operation,
+        )?;
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(access_token.expose())
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if status.is_success() {
+            return decode_json(&body, operation).map(Some);
+        }
+        let error = decode_matrix_error(&body, operation)?;
+        let failure = map_matrix_error(operation, status, &error);
+        // 房间里还没有这条状态。
+        if failure.kind() == MatrixFailureKind::NotFound {
+            return Ok(None);
+        }
+        Err(failure)
+    }
+
+    /// `/presence/{userId}/status`，用户 ID 按路径段编码。
+    fn presence_endpoint(
+        &self,
+        user_id: &MatrixUserId,
+        operation: MatrixOperation,
+    ) -> MatrixResult<Url> {
+        let mut url = self
+            .homeserver_url
+            .join("_matrix/client/v3/presence/")
+            .map_err(|_| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))?;
+        url.path_segments_mut()
+            .map_err(|()| MatrixFailure::new(operation, MatrixFailureKind::InvalidConfiguration))?
+            .pop_if_empty()
+            .push(user_id.as_str())
+            .push("status");
+        Ok(url)
+    }
+
     async fn leave_internal(
         &self,
         access_token: &SecretValue,
@@ -311,11 +415,44 @@ impl NetworkAgentMatrixGateway for MatrixAgentSessionClient {
     ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>> {
         Box::pin(self.backfill_internal(access_token, room_id, request))
     }
+
+    fn report_presence<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        user_id: &'a MatrixUserId,
+        presence: MatrixPresenceState,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(self.report_presence_internal(access_token, user_id, presence))
+    }
+
+    fn own_presence<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>> {
+        Box::pin(self.own_presence_internal(access_token, user_id))
+    }
+
+    fn state_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event_type: &'a MatrixEventType,
+        state_key: &'a MatrixStateKey,
+    ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
+        Box::pin(self.state_event_internal(access_token, room_id, event_type, state_key))
+    }
 }
 
 #[derive(Deserialize)]
 struct EventIdResponse {
     event_id: String,
+}
+
+/// `GET /presence/{userId}/status` 的回答，只要 `presence`。
+#[derive(Deserialize)]
+struct PresenceResponse {
+    presence: String,
 }
 
 /// `/rooms/{roomId}/messages` 的回答：`chunk` 新的在前。
@@ -523,6 +660,7 @@ mod tests {
             since: since.map(|token| MatrixSyncToken::new(token).unwrap()),
             timeout_millis: 45_000,
             timeline_limit: 20,
+            presence: agent_room_domain::agent_lifecycle::MatrixPresenceState::Online,
         }
     }
 
@@ -574,7 +712,10 @@ mod tests {
         );
         assert_eq!(seen.query["since"], "s72594_4483_1934");
         assert_eq!(seen.query["timeout"], "30000");
-        assert_eq!(seen.query["set_presence"], "offline");
+        assert_eq!(
+            seen.query["set_presence"], "online",
+            "同步带上这次该报的在线状态"
+        );
         let filter: Value = serde_json::from_str(&seen.query["filter"]).unwrap();
         assert_eq!(filter["room"]["timeline"]["limit"], 20);
         assert_eq!(filter["room"]["state"]["types"], json!([]));
@@ -880,6 +1021,135 @@ mod tests {
         assert_eq!(
             client.leave(&token(), &room()).await.unwrap_err().kind(),
             MatrixFailureKind::DependencyUnavailable
+        );
+    }
+
+    fn agent() -> agent_room_application::ports::MatrixUserId {
+        agent_room_application::ports::MatrixUserId::new(
+            "@_agent_0198b60177a17bb883eba8fe68c97e44:matrix.test",
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn 以_agent_自己的身份报和读它的在线状态() {
+        use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+        let path = "/_matrix/client/v3/presence/@_agent_0198b60177a17bb883eba8fe68c97e44:matrix.test/status";
+        let (url, seen) = serve_writes((StatusCode::OK, json!({}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        client
+            .report_presence(&token(), &agent(), MatrixPresenceState::Unavailable)
+            .await
+            .expect("报成了");
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [(
+                "PUT".to_owned(),
+                path.to_owned(),
+                json!({"presence": "unavailable"})
+            )]
+        );
+
+        let (url, seen) = serve_writes((
+            StatusCode::OK,
+            json!({"presence": "online", "last_active_ago": 420}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            client
+                .own_presence(&token(), &agent())
+                .await
+                .expect("读到了"),
+            MatrixPresenceState::Online
+        );
+        assert_eq!(seen.lock().unwrap()[0].0, "GET");
+        assert_eq!(seen.lock().unwrap()[0].1, path);
+
+        // 没开的 busy 这些不认。
+        let (url, _) = serve_writes((StatusCode::OK, json!({"presence": "busy"}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            client
+                .own_presence(&token(), &agent())
+                .await
+                .unwrap_err()
+                .kind(),
+            MatrixFailureKind::InvalidResponse
+        );
+
+        // Synapse 10 秒只认一次：限速照实交回去，带着要等多久。
+        let (url, _) = serve_writes((
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"errcode": "M_LIMIT_EXCEEDED", "error": "Too Many Requests", "retry_after_ms": 2_000}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        let failure = client
+            .report_presence(&token(), &agent(), MatrixPresenceState::Online)
+            .await
+            .unwrap_err();
+        assert_eq!(failure.kind(), MatrixFailureKind::RateLimited);
+    }
+
+    #[tokio::test]
+    async fn 读房间里的一条状态_没有就是没有() {
+        let event_type = agent_room_application::ports::MatrixEventType::new(
+            "io.github.rainyflash.agentroom.agent.status.v1",
+        )
+        .unwrap();
+        let state_key = agent_room_application::ports::MatrixStateKey::new(
+            "0198b601-77a1-7bb8-83eb-a8fe68c97e45",
+        )
+        .unwrap();
+        let (url, seen) = serve_writes((StatusCode::OK, json!({"liveness": "presence"}))).await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            client
+                .state_event(&token(), &room(), &event_type, &state_key)
+                .await
+                .expect("读到了"),
+            Some(json!({"liveness": "presence"}))
+        );
+        assert_eq!(
+            seen.lock().unwrap()[0].1,
+            "/_matrix/client/v3/rooms/!lobby:matrix.test/state/io.github.rainyflash.agentroom.agent.status.v1/0198b601-77a1-7bb8-83eb-a8fe68c97e45"
+        );
+
+        let (url, _) = serve_writes((
+            StatusCode::NOT_FOUND,
+            json!({"errcode": "M_NOT_FOUND", "error": "Event not found."}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            client
+                .state_event(&token(), &room(), &event_type, &state_key)
+                .await
+                .expect("没有不算错"),
+            None
+        );
+
+        let (url, _) = serve_writes((
+            StatusCode::FORBIDDEN,
+            json!({"errcode": "M_FORBIDDEN", "error": "not in room"}),
+        ))
+        .await;
+        let client =
+            MatrixAgentSessionClient::new(&url, std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            client
+                .state_event(&token(), &room(), &event_type, &state_key)
+                .await
+                .unwrap_err()
+                .kind(),
+            MatrixFailureKind::Forbidden
         );
     }
 

@@ -72,6 +72,15 @@ impl MatrixPresenceState {
             _ => None,
         }
     }
+
+    /// 写进 `presence` 字段、同步的 `set_presence` 的值。
+    pub const fn as_matrix(self) -> &'static str {
+        match self {
+            Self::Online => "online",
+            Self::Unavailable => "unavailable",
+            Self::Offline => "offline",
+        }
+    }
 }
 /// 读的一边对一个 Agent 的 Matrix 在线状态知道多少。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

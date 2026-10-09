@@ -56,7 +56,9 @@ use agent_room_bridge_core::{
     },
     messages::MessageBodyProtectionService,
 };
-use agent_room_domain::{ids::NetworkAgentId, time::DurationMillis};
+use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState, ids::NetworkAgentId, time::DurationMillis,
+};
 use agent_room_matrix_adapter::{
     MatrixSdkClientFactory, MatrixSdkConfiguration, MatrixSdkConfigurationError,
     MatrixSdkStoreConfiguration,
@@ -231,6 +233,7 @@ impl EncryptedClients {
         request: &NetworkAgentSyncRequest,
     ) -> Result<MatrixSyncBatch, NetworkGatewayFailure> {
         let client = self.client(session).await?;
+        let presence = request.presence;
         let request = match &request.since {
             // 第一次取消息还没有同步位置：和别的不带起点的同步一样换个超时值，免得拿到缓存。
             None => client.initial_sync()?,
@@ -241,7 +244,9 @@ impl EncryptedClients {
                 MatrixSyncRequest::new(Some(since.clone()), timeout, false)
                     .map_err(|_| NetworkGatewayFailure::Internal)?
             }
-        };
+        }
+        // 等消息时的同步才报在线状态。
+        .with_presence(presence);
         tokio::spawn(client.sync(request, true))
             .await
             .map_err(|_| NetworkGatewayFailure::Internal)?
@@ -840,11 +845,14 @@ fn replayable(
 }
 
 /// 第 `attempt` 次不带起点的同步。这种同步 Synapse 不等，超时值只用来让请求各不相同，
-/// 躲开它对一模一样的同步请求缓存的结果（见模块说明）。
+/// 躲开它对一模一样的同步请求缓存的结果（见模块说明）。进房间、发言前的这种同步不报在线
+/// 状态（`offline` 是不报）：在不在线跟着等消息走，不跟着这些同步走。
 fn initial_sync_request(attempt: u64) -> Result<MatrixSyncRequest, NetworkGatewayFailure> {
     let timeout = DurationMillis::new(1 + attempt % INITIAL_SYNC_TIMEOUTS)
         .map_err(|_| NetworkGatewayFailure::Internal)?;
-    MatrixSyncRequest::new(None, timeout, false).map_err(|_| NetworkGatewayFailure::Internal)
+    MatrixSyncRequest::new(None, timeout, false)
+        .map(|request| request.with_presence(MatrixPresenceState::Offline))
+        .map_err(|_| NetworkGatewayFailure::Internal)
 }
 
 #[cfg(test)]
@@ -963,6 +971,7 @@ mod real_dependency_tests {
     };
     use agent_room_bridge_core::messages::ProtectMessageBodyRequest;
     use agent_room_domain::{
+        agent_lifecycle::MatrixPresenceState,
         content::{ContentEncryptionMode, ContentMediaType},
         ids::{AgentId, AgentInstanceId, MessageSubmissionId, NetworkAgentId, PrincipalId},
         time::UtcMillis,
@@ -1318,6 +1327,7 @@ mod real_dependency_tests {
                     since: None,
                     timeout_millis: 0,
                     timeline_limit: 20,
+                    presence: MatrixPresenceState::Online,
                 },
             )
             .await

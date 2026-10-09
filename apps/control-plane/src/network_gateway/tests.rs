@@ -31,7 +31,7 @@ use agent_room_application::{
         MatrixPowerLevel, MatrixReceipt, MatrixResult, MatrixRoomAliasLocalpart,
         MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
         MatrixRoomSync, MatrixRoomSyncKind, MatrixSessionMetadata, MatrixStateEvent,
-        MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent,
+        MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixSyncToken, MatrixTimelineEvent,
         MatrixTransactionId, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentBeforeJoinGap,
         NetworkAgentGapReason, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
         NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
@@ -53,6 +53,7 @@ use agent_room_bridge_core::{
     status::WAIT_IDLE_TIMEOUT,
 };
 use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState,
     agents::AgentInstancePublicSigningKey,
     content::{
         ContentEncryptionMode, ContentLifecycleState, ContentObject, ContentObjectFields,
@@ -988,6 +989,8 @@ struct ScriptedMatrix {
     backfills: Mutex<VecDeque<MatrixResult<MatrixBackfillPage>>>,
     /// 往回翻过的房间、令牌和条数。
     backfilled: Mutex<Vec<(String, String, u16)>>,
+    /// 报过的 Matrix 在线状态。`None` 是这台假服务器不接在线状态的接口，网关照旧写租约。
+    presence: Mutex<Option<Vec<MatrixPresenceState>>>,
 }
 
 impl ScriptedMatrix {
@@ -1005,6 +1008,15 @@ impl ScriptedMatrix {
 
     fn backfill_with(&self, page: MatrixResult<MatrixBackfillPage>) {
         self.backfills.lock().unwrap().push_back(page);
+    }
+
+    /// 开着在线状态：报的记下来，读回自己时答最后报的那个。
+    fn enable_presence(&self) {
+        *self.presence.lock().unwrap() = Some(Vec::new());
+    }
+
+    fn reported_presence(&self) -> Vec<MatrixPresenceState> {
+        self.presence.lock().unwrap().clone().unwrap_or_default()
     }
 
     fn backfilled(&self) -> Vec<(String, String, u16)> {
@@ -1150,6 +1162,68 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
         assert_eq!(access_token.expose(), "syt_scout");
         let page = next_backfill(&self.backfills, &self.backfilled, room_id, request);
         Box::pin(async move { page })
+    }
+
+    fn report_presence<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        user_id: &'a MatrixUserId,
+        presence: MatrixPresenceState,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        assert_eq!(access_token.expose(), "syt_scout");
+        assert_eq!(user_id.as_str(), matrix_user(OWN_AGENT));
+        let result = match self.presence.lock().unwrap().as_mut() {
+            Some(reported) => {
+                reported.push(presence);
+                Ok(())
+            }
+            None => Err(MatrixFailure::new(
+                MatrixOperation::ReportPresence,
+                MatrixFailureKind::NotFound,
+            )),
+        };
+        Box::pin(async move { result })
+    }
+
+    fn own_presence<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>> {
+        assert_eq!(access_token.expose(), "syt_scout");
+        assert_eq!(user_id.as_str(), matrix_user(OWN_AGENT));
+        let result = match self.presence.lock().unwrap().as_ref() {
+            Some(reported) => Ok(reported
+                .last()
+                .copied()
+                .unwrap_or(MatrixPresenceState::Offline)),
+            None => Err(MatrixFailure::new(
+                MatrixOperation::ReadPresence,
+                MatrixFailureKind::NotFound,
+            )),
+        };
+        Box::pin(async move { result })
+    }
+
+    /// 房间里这条状态最新的内容，和 Synapse 一样：写过的里面最后一条。
+    fn state_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        _event_type: &'a MatrixEventType,
+        state_key: &'a MatrixStateKey,
+    ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
+        assert_eq!(access_token.expose(), "syt_scout");
+        assert_eq!(state_key.as_str(), OWN_INSTANCE);
+        let latest = self
+            .states
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(room, _)| room == room_id.as_str())
+            .map(|(_, content)| content.clone());
+        Box::pin(async move { Ok(latest) })
     }
 }
 
@@ -1534,6 +1608,24 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
         matrix,
         encrypted,
     }
+}
+
+/// 同样的依赖再建一个网关：控制面重启了，进程里记着的都没了，库里和 Matrix 上的还在。
+fn restarted(harness: &Harness) -> NetworkGateway {
+    NetworkGateway::new(NetworkGatewayDependencies {
+        agents: harness.agents.clone(),
+        inbox: harness.inbox.clone(),
+        history: harness.inbox.clone(),
+        submissions: harness.submissions.clone(),
+        matrix: harness.matrix.clone(),
+        content: harness.content.clone(),
+        verification: Arc::new(KnownInstances),
+        signatures: Arc::new(FakeSignatures),
+        clock: Arc::new(TokioClock {
+            started: tokio::time::Instant::now(),
+        }),
+        encrypted: Some(harness.encrypted.clone() as Arc<dyn EncryptedSessions>),
+    })
 }
 
 fn uuid(value: &str) -> Uuid {
@@ -4044,4 +4136,5 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
 
 mod backfill;
 mod before_join;
+mod presence;
 mod viewing;
