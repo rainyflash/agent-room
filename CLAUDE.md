@@ -266,8 +266,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 带时限的禁言到期
 
-- 2026-10-09 发现带时限的禁言到期以后没人去撤：记录上按到期时间算不生效，Matrix 里一直禁着；#348 建新分片按到期算、不补，同一个人旧分片里禁着、新分片里能说。设计在 [specs/moderation/timed-mute-expiry.md](./specs/moderation/timed-mute-expiry.md)，按文档分四步交付，进度记在它的“状态”一节。
-- 定了：控制面后台每 15 秒领到期的禁言（租约加退避，多实例安全）；撤之前看这个人此刻该不该禁着（还有别的生效的禁言、有一条正在落、私人房间里他没有发言权，都不解），动完再看一眼，变了就下一轮再来。记录沿用 `reversed`，审计写 `moderation.action.expired`；不加新状态，接口不加字段（网页对治理动作 `.strict()` 校验）。
+- #350 做了第一版到期解除：控制面每 30 秒翻出到期的治理动作，撤掉副作用、记成 `reversed`、写 `moderation.action.expired`，网页台账分开说“到期解除”。
+- 在它之上补齐（设计 #352，[specs/moderation/timed-mute-expiry.md](./specs/moderation/timed-mute-expiry.md)，分四步交付，进度记在它的“状态”一节）：
+  - 领取改成 `FOR UPDATE SKIP LOCKED` 加 2 分钟租约，多个控制面副本不再各做一遍；Matrix 撤不掉时 30 秒起翻倍退避到 15 分钟，第一次失败写 `moderation.action.expire_failed`；
+  - 禁言到期前看这个人此刻该不该禁着：按 UUID 认人，还有别的生效的禁言、有一条正在落（`pending` 不到 5 分钟）、私人房间里他没有发言权，都不解；动完再看一眼，变了就下一轮再来；
+  - 手动撤销禁言也用同一套判断。
 
 ### 版本与其他
 
