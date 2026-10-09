@@ -160,6 +160,7 @@ dependencies = [
  "agent-room-protocol-conformance",
  "base64 0.22.1",
  "chrono",
+ "futures-util",
  "jsonschema",
  "proptest",
  "serde",

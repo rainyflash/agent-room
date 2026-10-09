@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
+use agent_room_application::ports::MatrixUserId;
 use agent_room_domain::{
     agent_lifecycle::{
-        AgentArchiveReason, AgentConnection, AgentRosterPolicy, RECENT_OFFLINE_LIMIT,
+        AgentArchiveReason, AgentConnection, AgentPresenceEvidence, AgentRosterPolicy,
+        MatrixPresenceObservation, RECENT_OFFLINE_LIMIT,
     },
     agent_status::AgentWorkStatus,
     ids::AgentId,
@@ -49,10 +51,21 @@ pub fn paginate_roster(
 }
 
 /// Collapse sessions into stable identities before applying the room-wide archive rule.
+/// 写名片的 Agent 在这里拿不到 Matrix 在线状态，按离线算。
 pub fn project_roster<'a>(
     presences: impl IntoIterator<Item = &'a ProjectedAgentPresence>,
     now: UtcMillis,
     policy: AgentRosterPolicy,
+) -> Vec<PresenceObservation> {
+    project_roster_with_presence(presences, now, policy, |_| None)
+}
+
+/// 同 [`project_roster`]，写名片的 Agent 按 `matrix_presence` 给的在线状态判断。
+pub fn project_roster_with_presence<'a>(
+    presences: impl IntoIterator<Item = &'a ProjectedAgentPresence>,
+    now: UtcMillis,
+    policy: AgentRosterPolicy,
+    matrix_presence: impl Fn(&MatrixUserId) -> Option<MatrixPresenceObservation>,
 ) -> Vec<PresenceObservation> {
     let mut groups: BTreeMap<AgentId, Vec<&ProjectedAgentPresence>> = BTreeMap::new();
     for presence in presences {
@@ -61,60 +74,89 @@ pub fn project_roster<'a>(
             .or_default()
             .push(presence);
     }
-    let mut entries = Vec::with_capacity(groups.len());
-    for instances in groups.values_mut() {
-        instances.sort_by_key(|presence| std::cmp::Reverse(priority(presence, now)));
-        let primary = instances[0];
-        let mut evidence = primary.evidence();
-        evidence.last_active_at = instances
-            .iter()
-            .map(|instance| instance.published_at().value())
-            .max()
-            .unwrap_or(evidence.last_active_at);
-        evidence.last_polled_at = instances
-            .iter()
-            .filter(|instance| {
-                instance
-                    .evidence()
-                    .lifecycle(now.value(), policy.archive_after_days())
-                    .connection
-                    == AgentConnection::Online
-            })
-            .filter_map(|instance| instance.last_polled_at().map(UtcMillis::value))
-            .max();
-        evidence.listening_until = instances
-            .iter()
-            .filter(|instance| {
-                instance
-                    .evidence()
-                    .lifecycle(now.value(), policy.archive_after_days())
-                    .connection
-                    == AgentConnection::Online
-            })
-            .filter_map(|instance| instance.listening_until().map(UtcMillis::value))
-            .max();
-        evidence.reception_known = instances.iter().any(|instance| {
-            instance.evidence().reception_known
-                && instance
-                    .evidence()
-                    .lifecycle(now.value(), policy.archive_after_days())
-                    .connection
-                    == AgentConnection::Online
+    let mut entries = groups
+        .into_values()
+        .map(|instances| {
+            let instances = instances
+                .into_iter()
+                .map(|presence| {
+                    let observed = matrix_presence(presence.identity().matrix_user_id());
+                    (presence, observed)
+                })
+                .collect();
+            project_agent(instances, now, policy)
+        })
+        .collect::<Vec<_>>();
+    archive_beyond_capacity(&mut entries);
+    entries
+}
+
+type ObservedInstance<'a> = (
+    &'a ProjectedAgentPresence,
+    Option<MatrixPresenceObservation>,
+);
+
+fn project_agent(
+    mut instances: Vec<ObservedInstance<'_>>,
+    now: UtcMillis,
+    policy: AgentRosterPolicy,
+) -> PresenceObservation {
+    let days = policy.archive_after_days();
+    let online = |(instance, observed): &&ObservedInstance<'_>| {
+        instance
+            .evidence_with(*observed)
+            .lifecycle(now.value(), days)
+            .connection
+            == AgentConnection::Online
+    };
+    instances.sort_by_key(|(presence, observed)| {
+        std::cmp::Reverse(priority(presence, presence.evidence_with(*observed), now))
+    });
+    let (primary, primary_observed) = instances[0];
+    let mut evidence = primary.evidence_with(primary_observed);
+    evidence.last_active_at = instances
+        .iter()
+        .map(|(instance, _)| instance.published_at().value())
+        .max()
+        .unwrap_or(evidence.last_active_at);
+    evidence.last_polled_at = instances
+        .iter()
+        .filter(online)
+        .filter_map(|(instance, _)| instance.last_polled_at().map(UtcMillis::value))
+        .max();
+    evidence.listening_until = instances
+        .iter()
+        .filter(online)
+        .filter_map(|(instance, _)| instance.listening_until().map(UtcMillis::value))
+        .max();
+    evidence.reception_known = instances
+        .iter()
+        .filter(online)
+        .any(|(instance, _)| instance.evidence().reception_known);
+    let lifecycle = evidence.lifecycle(now.value(), days);
+    let status = if lifecycle.connection == AgentConnection::Online {
+        primary.status()
+    } else {
+        AgentWorkStatus::Offline
+    };
+    let mut entry = PresenceObservation::new(primary.clone(), status, now);
+    entry.lifecycle = lifecycle;
+    // 名片的时间是进房间那一刻；在线状态里有更晚的“上次活动”就用它。
+    entry.last_active_at = primary_observed
+        .filter(|_| primary.is_card())
+        .and_then(|observed| observed.last_active_at)
+        .map_or(evidence.last_active_at, |at| {
+            at.max(evidence.last_active_at)
         });
-        let lifecycle = evidence.lifecycle(now.value(), policy.archive_after_days());
-        let status = if lifecycle.connection == AgentConnection::Online {
-            primary.status()
-        } else {
-            AgentWorkStatus::Offline
-        };
-        let mut entry = PresenceObservation::new(primary.clone(), status, now);
-        entry.lifecycle = lifecycle;
-        entry.last_active_at = evidence.last_active_at;
-        entry.last_polled_at = evidence.last_polled_at;
-        entry.listening_until = evidence.listening_until;
-        entry.archive_after_days = policy.archive_after_days();
-        entries.push(entry);
-    }
+    entry.last_polled_at = evidence.last_polled_at;
+    entry.listening_until = evidence.listening_until;
+    entry.archive_after_days = days;
+    entry
+}
+
+/// 最近离线的只留 100 个，其余收进“以前来过的”。按最后一次见到它排：名片的时间是进房间
+/// 那一刻，不是最后一次见到，所以名片按离线的那一刻排。
+fn archive_beyond_capacity(entries: &mut [PresenceObservation]) {
     let mut offline = entries
         .iter_mut()
         .filter(|entry| {
@@ -123,19 +165,30 @@ pub fn project_roster<'a>(
         })
         .collect::<Vec<_>>();
     offline.sort_by_key(|entry| {
+        let last_seen = if entry.presence().is_card() {
+            entry
+                .lifecycle
+                .offline_since
+                .unwrap_or(entry.last_active_at)
+        } else {
+            entry.last_active_at
+        };
         (
-            std::cmp::Reverse(entry.last_active_at),
+            std::cmp::Reverse(last_seen),
             entry.presence().identity().agent_id(),
         )
     });
     for entry in offline.into_iter().skip(RECENT_OFFLINE_LIMIT) {
         entry.lifecycle.archive_reason = Some(AgentArchiveReason::Capacity);
     }
-    entries
 }
 
-fn priority(presence: &ProjectedAgentPresence, now: UtcMillis) -> (u8, u8, i64, String) {
-    let connection = presence.evidence().lifecycle(now.value(), 7).connection;
+fn priority(
+    presence: &ProjectedAgentPresence,
+    evidence: AgentPresenceEvidence,
+    now: UtcMillis,
+) -> (u8, u8, i64, String) {
+    let connection = evidence.lifecycle(now.value(), 7).connection;
     let tier = match connection {
         AgentConnection::Online => 2,
         AgentConnection::Reconnecting => 1,

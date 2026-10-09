@@ -134,6 +134,7 @@ const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
 mod connectivity;
 mod host_sessions;
 mod isolated_messages;
+mod presence_fetch;
 use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
 const FOUNDATION_AGENT_CAPABILITIES: [&str; 9] = [
     "matrix.security",
@@ -449,6 +450,8 @@ struct AgentOnlineSession {
     targeted_handoffs: Arc<TargetedHandoffInboxService>,
     targeted_handoff_worker: TargetedHandoffWorker,
     presence_projections: Arc<dyn PresenceProjectionRepository>,
+    /// 后台补问同步里没带的、写名片的 Agent 的 Matrix 在线状态。
+    presence_fetch: presence_fetch::PresenceFetchWorker,
     /// 房间里此刻谁在打字：等消息时叫醒它的人还在打字就再等等。
     typing: Arc<crate::typing::TypingWatch>,
     next_batch: Option<MatrixSyncToken>,
@@ -482,6 +485,7 @@ impl AgentOnlineSession {
     }
 
     async fn stop_workers(&mut self) {
+        self.presence_fetch.stop();
         self.handoff_worker.shutdown.send_replace(true);
         self.targeted_handoff_worker.shutdown.send_replace(true);
         let (handoff, targeted) = tokio::join!(
@@ -1117,6 +1121,8 @@ async fn establish_agent_online_once(
             instance_id: registered.identity().agent_instance_id(),
         },
     );
+    let presence_fetch =
+        presence_fetch::PresenceFetchWorker::spawn(runtime.presence.clone(), matrix.clone());
     let online = AgentOnlineSession {
         security: connection.security_gateway_handle(),
         room_authority: connection.room_authority_gateway_handle(),
@@ -1133,6 +1139,7 @@ async fn establish_agent_online_once(
         targeted_handoffs,
         targeted_handoff_worker,
         presence_projections: runtime.presence_projections.clone(),
+        presence_fetch,
         typing: Arc::new(crate::typing::TypingWatch::new()),
         next_batch: stored_sync_cursor(runtime).await,
         recovered_sessions: BTreeSet::new(),
@@ -1442,6 +1449,7 @@ async fn sync_agent_online(
         isolated_events = presence.issues().len(),
         "Agent Matrix Presence 投影已刷新"
     );
+    online.presence_fetch.wake();
     let outcome = runtime
         .messages
         .process(&batch)

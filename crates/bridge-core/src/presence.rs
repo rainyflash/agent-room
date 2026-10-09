@@ -4,21 +4,26 @@ use std::{
 };
 
 use agent_room_application::ports::{
-    Clock, DeviceSignature, MatrixEventId, MatrixRoomId, MatrixRoomStatePosition,
-    MatrixRoomSyncKind, MatrixSyncBatch, MatrixTimelineEvent, MatrixUserId, PortFuture,
+    Clock, DeviceSignature, MatrixEventId, MatrixGateway, MatrixResult, MatrixRoomId,
+    MatrixRoomStatePosition, MatrixRoomSyncKind, MatrixSyncBatch, MatrixTimelineEvent,
+    MatrixUserId, MatrixUserPresence, PortFuture,
 };
 use agent_room_domain::{
-    agent_lifecycle::{AgentLifecycle, AgentLiveness, AgentPresenceEvidence, AgentRosterPolicy},
+    agent_lifecycle::{
+        AgentLifecycle, AgentLiveness, AgentPresenceEvidence, AgentRosterPolicy,
+        MatrixPresenceObservation,
+    },
     agent_status::{AgentTaskSummary, AgentWorkStatus},
     ids::{AgentId, AgentInstanceId},
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_protocol_conformance::generated::{
-    AgentStatusEvent, AgentStatusVisibility as WireStatusVisibility,
+    AgentLiveness as WireLiveness, AgentStatusEvent, AgentStatusVisibility as WireStatusVisibility,
     AgentWorkStatus as WireWorkStatus, Provenance,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::DateTime;
+use futures_util::{StreamExt as _, stream};
 use serde_json::Value;
 use uuid::{Uuid, Version};
 
@@ -28,6 +33,7 @@ use crate::{
         AgentEventAuthenticationDecision, AgentEventAuthenticationFailure,
         AgentEventAuthenticationFailureKind, AgentEventAuthenticator,
     },
+    presence_tracker::MatrixPresenceUpdate,
 };
 
 pub const AGENT_STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1";
@@ -35,6 +41,10 @@ pub use agent_room_application::agent_roster::AGENT_ROSTER_POLICY_EVENT_TYPE;
 const ROOM_MEMBER_EVENT_TYPE: &str = "m.room.member";
 const MAXIMUM_PRESENCE_TARGETS: usize = 50;
 const MAXIMUM_STATUS_EVENTS_PER_ROOM: usize = 20_000;
+/// 同时最多问几个人的在线状态。
+const PRESENCE_FETCH_CONCURRENCY: usize = 4;
+/// 一轮最多问几个人；问完再看还有没有没拿到的。
+const PRESENCE_FETCH_BATCH: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresenceLeasePolicyError {
@@ -88,6 +98,7 @@ pub struct ProjectedAgentPresence {
     last_polled_at: Option<UtcMillis>,
     listening_until: Option<UtcMillis>,
     reception_known: bool,
+    card: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +114,8 @@ pub struct ProjectedAgentPresenceFields {
     pub last_polled_at: Option<UtcMillis>,
     pub listening_until: Option<UtcMillis>,
     pub reception_known: bool,
+    /// 名片（`liveness: "presence"`）：在不在线、在不在等消息看 Matrix 的在线状态。
+    pub card: bool,
 }
 
 impl ProjectedAgentPresence {
@@ -120,6 +133,7 @@ impl ProjectedAgentPresence {
             last_polled_at: fields.last_polled_at,
             listening_until: fields.listening_until,
             reception_known: fields.reception_known,
+            card: fields.card,
         }
     }
 
@@ -160,7 +174,19 @@ impl ProjectedAgentPresence {
     pub const fn listening_until(&self) -> Option<UtcMillis> {
         self.listening_until
     }
+    /// 名片：只说是谁，在不在线看 Matrix 的在线状态。
+    pub const fn is_card(&self) -> bool {
+        self.card
+    }
+    /// 判断在不在线用的证据。名片还没拿到在线状态时按离线算。
     pub fn evidence(&self) -> AgentPresenceEvidence {
+        self.evidence_with(None)
+    }
+    /// 带上这个 Agent 的 Matrix 在线状态；不是名片的照租约判断，用不到它。
+    pub fn evidence_with(
+        &self,
+        presence: Option<MatrixPresenceObservation>,
+    ) -> AgentPresenceEvidence {
         AgentPresenceEvidence {
             reported_status: self.status,
             lease_expires_at: self.lease_expires_at.value(),
@@ -168,7 +194,11 @@ impl ProjectedAgentPresence {
             last_polled_at: self.last_polled_at.map(UtcMillis::value),
             listening_until: self.listening_until.map(UtcMillis::value),
             reception_known: self.reception_known,
-            liveness: AgentLiveness::Lease,
+            liveness: if self.card {
+                AgentLiveness::Presence(presence)
+            } else {
+                AgentLiveness::Lease
+            },
         }
     }
 
@@ -311,15 +341,30 @@ impl PresenceRoomProjection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresenceProjectionBatch {
     rooms: Vec<PresenceRoomProjection>,
+    presence: Option<MatrixPresenceUpdate>,
 }
 
 impl PresenceProjectionBatch {
     pub const fn new(rooms: Vec<PresenceRoomProjection>) -> Self {
-        Self { rooms }
+        Self {
+            rooms,
+            presence: None,
+        }
+    }
+
+    /// 这次同步带回的 Matrix 在线状态。
+    #[must_use]
+    pub fn with_presence(mut self, presence: MatrixPresenceUpdate) -> Self {
+        self.presence = Some(presence);
+        self
     }
 
     pub fn rooms(&self) -> &[PresenceRoomProjection] {
         &self.rooms
+    }
+
+    pub const fn presence(&self) -> Option<&MatrixPresenceUpdate> {
+        self.presence.as_ref()
     }
 }
 
@@ -402,6 +447,45 @@ pub trait PresenceProjectionRepository: Send + Sync {
         &'a self,
         query: &'a PresenceQuery,
     ) -> PortFuture<'a, Result<Vec<PresenceObservation>, PresenceProjectionFailure>>;
+
+    /// 写名片、还在房间里、却还没拿到在线状态的人，最多 `limit` 个：同步里没带，要另外去问。
+    /// 问失败的过一会儿才再给。默认没有。
+    fn presence_wanted(
+        &self,
+        now: UtcMillis,
+        limit: usize,
+    ) -> PortFuture<'_, Result<Vec<MatrixUserId>, PresenceProjectionFailure>> {
+        let _ = (now, limit);
+        Box::pin(std::future::ready(Ok(Vec::new())))
+    }
+
+    /// 记下问到的在线状态，`None` 是没问到。默认不记。
+    fn record_fetched_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+        presence: Option<&'a MatrixUserPresence>,
+        fetched_at: UtcMillis,
+    ) -> PortFuture<'a, Result<(), PresenceProjectionFailure>> {
+        let _ = (user_id, presence, fetched_at);
+        Box::pin(std::future::ready(Ok(())))
+    }
+}
+
+/// 问一个人的 Matrix 在线状态。任何 [`MatrixGateway`] 都能问。
+pub trait MatrixPresenceReader: Send + Sync {
+    fn read_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>>;
+}
+
+impl<T: MatrixGateway + ?Sized> MatrixPresenceReader for T {
+    fn read_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        self.user_presence(user_id)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -617,8 +701,11 @@ impl PresenceSyncService {
             );
         }
 
+        let batch = PresenceProjectionBatch::new(room_updates).with_presence(
+            MatrixPresenceUpdate::new(observed_at, full_state, sync.presence().to_vec()),
+        );
         self.projections
-            .apply(&PresenceProjectionBatch::new(room_updates))
+            .apply(&batch)
             .await
             .map_err(PresenceSyncFailure::projection)?;
         Ok(PresenceSyncOutcome {
@@ -626,6 +713,40 @@ impl PresenceSyncService {
             membership_changes,
             issues,
         })
+    }
+
+    /// 问同步里没带的、写名片的 Agent 的在线状态，同时最多问几个，问到没有要问的为止。
+    /// 问失败的记下来，过一会儿再问，这一轮不再问它。返回问了几个人。
+    ///
+    /// # Errors
+    ///
+    /// 本机投影不可用时返回错误。
+    pub async fn fetch_missing_presence<M: MatrixPresenceReader + ?Sized>(
+        &self,
+        matrix: &M,
+    ) -> Result<usize, PresenceProjectionFailure> {
+        let mut asked = 0;
+        loop {
+            let wanted = self
+                .projections
+                .presence_wanted(self.clock.now(), PRESENCE_FETCH_BATCH)
+                .await?;
+            if wanted.is_empty() {
+                return Ok(asked);
+            }
+            asked += wanted.len();
+            let mut answers = stream::iter(wanted)
+                .map(|user_id| async move {
+                    let answer = matrix.read_presence(&user_id).await;
+                    (user_id, answer)
+                })
+                .buffer_unordered(PRESENCE_FETCH_CONCURRENCY);
+            while let Some((user_id, answer)) = answers.next().await {
+                self.projections
+                    .record_fetched_presence(&user_id, answer.as_ref().ok(), self.clock.now())
+                    .await?;
+            }
+        }
     }
 
     async fn authenticate(
@@ -771,6 +892,7 @@ fn parse_status(
     )?;
     let reception_known = wire.extensions.contains_key("listeningUntil")
         || wire.extensions.contains_key("waitingUntil");
+    let card = wire.liveness == Some(WireLiveness::Presence);
     let listening_until = listening_until.max(waiting_until);
     let claimed_expiry = parse_time(&wire.lease_expires_at)?;
     let effective_expiry = evaluate_lease(created_at, claimed_expiry, observed_at, policy)?;
@@ -788,6 +910,7 @@ fn parse_status(
             last_polled_at,
             listening_until,
             reception_known,
+            card,
         }),
         origin_server_timestamp,
         canonical_event,

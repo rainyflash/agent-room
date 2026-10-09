@@ -15,7 +15,7 @@ pub use models::{
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomStatePosition, MatrixRoomSync,
     MatrixRoomSyncKind, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
     MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEncryption,
-    MatrixTimelineEvent,
+    MatrixTimelineEvent, MatrixUserPresence,
 };
 pub use values::{
     MatrixAgentLocalpart, MatrixBackfillToken, MatrixDeviceId, MatrixEventId, MatrixEventType,
@@ -239,6 +239,23 @@ pub trait MatrixGateway: Send + Sync {
     /// 默认什么也不做，调用方照旧等同步自己返回。
     fn wake_sync(&self) -> PortFuture<'_, MatrixResult<()>> {
         Box::pin(async { Ok(()) })
+    }
+
+    /// 问一个人此刻的 Matrix 在线状态（`GET /presence/{userId}/status`）。
+    ///
+    /// 首次同步只带不离线的人，接着同步只带变了的人；写名片的 Agent 没拿到的各问一次
+    /// （`specs/agent-liveness/design.md`）。默认不支持。
+    fn user_presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixUserPresence>> {
+        let _ = user_id;
+        Box::pin(async {
+            Err(MatrixFailure::new(
+                MatrixOperation::ReadPresence,
+                MatrixFailureKind::NotFound,
+            ))
+        })
     }
 
     /// 按事件 ID 重读一条时间线事件，读的时候先试着解密。
