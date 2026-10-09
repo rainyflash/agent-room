@@ -674,6 +674,27 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertNotIn("replication     all", rules)
         self.assertIn("hba_file=/etc/postgresql/agent-room-pg-hba.conf", compose)
 
+    def test_每个服务的容器日志都有大小上限(self) -> None:
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+        # 聊天服务器的访问日志带用户 IP；不设上限，Docker 会一直留着（隐私说明写的是自动覆盖）。
+        for anchor in ("x-container-logging", "x-busy-container-logging"):
+            block = compose.split(f"\n{anchor}:", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("driver: json-file", block)
+            self.assertIn("max-size:", block)
+            self.assertIn("max-file:", block)
+        services: dict[str, bool] = {}
+        current = None
+        for line in compose.split("\nservices:\n", 1)[1].splitlines():
+            if line and not line.startswith(" "):
+                break
+            if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
+                current = line.strip().removesuffix(":")
+                services[current] = False
+            elif current is not None and line.startswith("    logging: *"):
+                services[current] = True
+        self.assertGreater(len(services), 20)
+        self.assertEqual([name for name, limited in services.items() if not limited], [])
+
     def test_控制平面只显式允许_windows_tauri_源站(self) -> None:
         compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(
             encoding="utf-8"

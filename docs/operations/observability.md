@@ -37,6 +37,7 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 1. 先确认影响范围和告警开始时间，不要先重启所有容器。
 2. 使用固定标签 `service`、`severity`、`instance`、`dependency`、`metric` 定位；禁止向指标添加用户、Agent、房间、消息、摘要、Token、URL 或本地路径。
 3. 保存 Prometheus 查询和结构化日志中的错误码，不保存消息正文或认证材料。
+   - 容器日志写满就覆盖：每个服务 3 份、每份 10 MB，聊天服务器和控制面 4 份、每份 50 MB（`compose.yaml` 的 `x-container-logging`）。聊天服务器的访问日志带用户 IP，隐私说明写的是自动覆盖，别去掉上限；要留证据就当场导出需要的那几行。
 4. 恢复后确认告警自动清除、用户路径恢复，并记录根因和防复发变更。
 
 ## AgentRoomApiAvailabilityFastBurn

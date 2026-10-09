@@ -4,6 +4,21 @@ x-common-security: &common-security
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 
+# 容器日志写在主机的 Docker 目录里，默认不滚动、一直留着；聊天服务器的访问日志还带着用户的 IP。
+# 每个服务都设上限，写满就覆盖最旧的（隐私说明写的是“服务器日志自动覆盖”）。
+x-container-logging: &container-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+
+# 聊天服务器和控制面一天写几十 MB，多留一些，排查和发版验收时还翻得到最近一两天。
+x-busy-container-logging: &busy-container-logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: '4'
+
 x-control-plane-runtime: &control-plane-runtime
   image: ${AGENT_ROOM_CONTROL_PLANE_IMAGE:-agent-room-control-plane:local}
   build:
@@ -25,6 +40,7 @@ x-identity-registration-reconcile: &identity-registration-reconcile
 
 services:
   postgres:
+    logging: *container-logging
     profiles: [embedded-database]
     image: postgres:18.6-alpine
     environment:
@@ -69,6 +85,7 @@ services:
     networks: [backend]
 
   identity:
+    logging: *container-logging
     build:
       context: ../..
       dockerfile: infra/production/Containerfile.identity
@@ -113,6 +130,7 @@ services:
     networks: [backend]
 
   identity-registration-close:
+    logging: *container-logging
     <<: [*identity-registration-reconcile, *common-security]
     environment:
       AGENT_ROOM_IDENTITY_REGISTRATION_MODE: closed
@@ -123,6 +141,7 @@ services:
     secrets: [keycloak_admin_password]
 
   identity-registration-open:
+    logging: *container-logging
     <<: [*identity-registration-reconcile, *common-security]
     environment:
       AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
@@ -140,6 +159,7 @@ services:
     secrets: [keycloak_admin_password, identity_smtp_password]
 
   object-store:
+    logging: *container-logging
     profiles: [embedded-object-store]
     image: ghcr.io/chrislusf/seaweedfs:4.44
     command:
@@ -160,6 +180,7 @@ services:
     networks: [backend]
 
   content-scanner:
+    logging: *container-logging
     image: clamav/clamav:1.5.4
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/data/clamav:/var/lib/clamav
@@ -173,6 +194,7 @@ services:
     networks: [backend]
 
   redis:
+    logging: *container-logging
     profiles: [workers]
     image: redis:8.2.2-alpine
     command: [redis-server, --save, '', --appendonly, 'no']
@@ -188,6 +210,7 @@ services:
     networks: [backend]
 
   synapse:
+    logging: *busy-container-logging
     image: matrixdotorg/synapse:v1.159.0
     environment:
       PYTHONPATH: /config
@@ -213,6 +236,7 @@ services:
     networks: [backend]
 
   telemetry:
+    logging: *container-logging
     profiles: [telemetry]
     image: otel/opentelemetry-collector-contrib:0.159.0
     command: [--config=/etc/otelcol/config.yaml]
@@ -230,6 +254,7 @@ services:
     networks: [backend]
 
   prometheus:
+    logging: *container-logging
     profiles: [telemetry]
     image: prom/prometheus:v3.13.1
     command:
@@ -250,6 +275,7 @@ services:
     networks: [backend]
 
   alertmanager:
+    logging: *container-logging
     profiles: [telemetry]
     image: prom/alertmanager:v0.33.1
     command:
@@ -266,6 +292,7 @@ services:
     networks: [backend]
 
   blackbox:
+    logging: *container-logging
     profiles: [telemetry]
     image: prom/blackbox-exporter:v0.28.0
     command: [--config.file=/etc/blackbox/blackbox.yaml]
@@ -278,6 +305,7 @@ services:
     networks: [backend]
 
   postgres-exporter:
+    logging: *container-logging
     profiles: [telemetry]
     image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
     environment:
@@ -293,6 +321,7 @@ services:
     networks: [backend]
 
   recovery-metrics:
+    logging: *container-logging
     profiles: [telemetry]
     image: quay.io/prometheus/node-exporter:v1.12.1
     command:
@@ -308,6 +337,7 @@ services:
     networks: [backend]
 
   grafana:
+    logging: *container-logging
     profiles: [telemetry]
     image: grafana/grafana:13.1.0
     environment:
@@ -329,6 +359,7 @@ services:
     networks: [backend]
 
   migrate:
+    logging: *container-logging
     <<: [*control-plane-runtime, *common-security]
     profiles: [migration]
     entrypoint: [/usr/local/bin/agent-room-migrate]
@@ -340,6 +371,7 @@ services:
     networks: [backend]
 
   object-store-init:
+    logging: *container-logging
     <<: [*control-plane-runtime, *common-security]
     profiles: [provisioning]
     entrypoint: [/usr/local/bin/agent-room-provision-bucket]
@@ -356,6 +388,7 @@ services:
     networks: [backend]
 
   synapse-admin-bootstrap:
+    logging: *container-logging
     image: matrixdotorg/synapse:v1.159.0
     profiles: [provisioning]
     entrypoint: [python, /scripts/synapse-admin-bootstrap.py]
@@ -374,6 +407,7 @@ services:
     networks: [backend]
 
   backup-permissions:
+    logging: *container-logging
     image: postgres:18.6-alpine
     profiles: [backup]
     user: '0:0'
@@ -387,6 +421,7 @@ services:
     networks: [backend]
 
   database-backup:
+    logging: *container-logging
     image: postgres:18.6-alpine
     profiles: [backup]
     user: '${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}'
@@ -414,6 +449,7 @@ services:
     networks: [backend]
 
   postgres-base-backup:
+    logging: *container-logging
     image: postgres:18.6-alpine
     profiles: [backup]
     user: '0:0'
@@ -433,6 +469,7 @@ services:
     networks: [backend]
 
   backup-ownership:
+    logging: *container-logging
     image: postgres:18.6-alpine
     profiles: [backup]
     user: '0:0'
@@ -456,6 +493,7 @@ services:
     networks: [backend]
 
   object-backup:
+    logging: *container-logging
     image: rclone/rclone:1.75.1
     profiles: [backup]
     user: '${AGENT_ROOM_HOST_UID:-0}:${AGENT_ROOM_HOST_GID:-0}'
@@ -473,6 +511,7 @@ services:
     networks: [backend]
 
   control-plane:
+    logging: *busy-container-logging
     <<: [*control-plane-runtime, *common-security]
     environment:
       AGENT_ROOM_BIND_ADDRESS: 0.0.0.0:8090
@@ -543,6 +582,7 @@ services:
     networks: [backend]
 
   gateway:
+    logging: *container-logging
     build:
       context: ../..
       dockerfile: infra/production/Containerfile.web
