@@ -293,7 +293,7 @@ impl TargetedHandoffService {
                 .matrix_event_id()
                 .is_none_or(|event| event.as_str() != request.source_event_id.as_str())
             || content
-                .expires_at()
+                .effective_expires_at()
                 .is_some_and(|expires_at| expires_at < request.expires_at)
         {
             return Err(failure(

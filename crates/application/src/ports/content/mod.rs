@@ -156,6 +156,15 @@ pub trait ContentScanner: Send + Sync {
     ) -> PortFuture<'a, ContentScanResult<ContentScanState>>;
 }
 
+/// 房间的消息保留期。聊天服务器按它删消息，存成对象的正文和附件也跟着到期。
+pub trait RoomRetentionLookup: Send + Sync {
+    /// 房间建的时候选的保留期（天）；没选过或不是我们建的房间返回 `None`，按服务器默认算。
+    fn retention_days<'a>(
+        &'a self,
+        matrix_room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, RepositoryResult<Option<u16>>>;
+}
+
 /// 使用加密安全随机源生成与用户、房间和原文件名无关的对象键。
 pub trait ContentStorageKeyFactory: Send + Sync {
     /// 为内容生成不透明私有对象键。

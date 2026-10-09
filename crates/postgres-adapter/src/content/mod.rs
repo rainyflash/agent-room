@@ -2,7 +2,8 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         ContentAccessPolicy, ContentEventBinding, ContentLifecycleTransition, ContentRepository,
-        ContentUploadClaim, ContentUploadClaimOutcome, PortFuture, ReclaimableContentQuery,
+        ContentUploadClaim, ContentUploadClaimOutcome, MatrixRoomId, PortFuture,
+        ReclaimableContentQuery, RoomRetentionLookup,
     },
 };
 use agent_room_domain::{
@@ -28,6 +29,33 @@ mod rate_limit;
 pub use rate_limit::{
     ContentDownloadLimitPolicy, ContentDownloadLimitPolicyError, PostgresContentDownloadLimiter,
 };
+
+impl RoomRetentionLookup for PostgresRepositories {
+    fn retention_days<'a>(
+        &'a self,
+        matrix_room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, RepositoryResult<Option<u16>>> {
+        Box::pin(async move {
+            let operation = "content.room_retention";
+            // 公共大厅可能有好几个分片，同一个目录条目，保留期一样。
+            let days: Option<Option<i32>> = sqlx::query_scalar(
+                r"SELECT catalog.retention_days
+                  FROM agent_room.room_instance AS instance
+                  JOIN agent_room.room_catalog_entry AS catalog
+                    ON catalog.id = instance.catalog_entry_id
+                  WHERE instance.matrix_room_id = $1
+                  LIMIT 1",
+            )
+            .bind(matrix_room_id.as_str())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            days.flatten()
+                .map(|days| u16::try_from(days).map_err(|_| constraint(operation)))
+                .transpose()
+        })
+    }
+}
 
 impl ContentRepository for PostgresRepositories {
     fn claim_upload<'a>(
@@ -273,10 +301,18 @@ impl PostgresRepositories {
                   )
                   OR (
                       content.lifecycle_state = 'active'
+                      AND content.retention_expires_at
+                          <= to_timestamp($2::double precision / 1000.0)
+                  )
+                  OR (
+                      content.lifecycle_state = 'active'
                       AND policy.matrix_event_id IS NULL
                       AND content.updated_at <= to_timestamp($1::double precision / 1000.0)
                   )
-               ORDER BY COALESCE(content.expires_at, content.updated_at), content.id
+               ORDER BY COALESCE(
+                   LEAST(content.expires_at, content.retention_expires_at),
+                   content.updated_at
+               ), content.id
                LIMIT $3"
         );
         sqlx::query(sqlx::AssertSqlSafe(statement))
@@ -358,10 +394,11 @@ async fn insert_content(
         r"INSERT INTO agent_room.content_object (
                id, owner_principal_id, storage_key, sha256_digest, byte_length,
                media_type, encryption_mode, scan_state, lifecycle_state,
-               expires_at, created_at, deleted_at, updated_at, version
+               expires_at, retention_expires_at, created_at, deleted_at, updated_at, version
            ) VALUES (
                $1, $2, $3, $4, $5, $6, $7, $8, $9,
                to_timestamp($10::double precision / 1000.0),
+               to_timestamp($12::double precision / 1000.0),
                to_timestamp($11::double precision / 1000.0),
                NULL,
                to_timestamp($11::double precision / 1000.0),
@@ -379,6 +416,7 @@ async fn insert_content(
     .bind(content.lifecycle_state().as_str())
     .bind(content.expires_at().map(UtcMillis::value))
     .bind(content.created_at().value())
+    .bind(content.retention_expires_at().map(UtcMillis::value))
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;

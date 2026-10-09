@@ -1331,6 +1331,7 @@ mod tests {
             scan_state,
             lifecycle_state,
             expires_at: None,
+            retention_expires_at: None,
             created_at: time(1_700_000_000_000),
             deleted_at: None,
         })

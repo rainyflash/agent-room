@@ -140,7 +140,7 @@ impl IssueContentReadTicketService {
             .checked_add(self.lifetime.duration())
             .map_err(IssueContentReadTicketFailure::Domain)?;
         let expires_at = content
-            .expires_at()
+            .effective_expires_at()
             .map_or(configured_expiry, |content_expiry| {
                 content_expiry.min(configured_expiry)
             });

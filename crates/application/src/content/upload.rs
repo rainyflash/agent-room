@@ -7,7 +7,7 @@ use agent_room_domain::{
         ContentObject, ContentObjectFields, ContentScanState, Sha256Digest,
     },
     ids::{AgentId, ContentId, ContentUploadRequestId, PrincipalId},
-    time::UtcMillis,
+    time::{DurationMillis, UtcMillis},
 };
 use sha2::{Digest, Sha256};
 
@@ -20,9 +20,15 @@ use crate::{
         ContentRepository, ContentScanFailure, ContentScanner, ContentStorageKeyFactory,
         ContentStorageKeyGenerationFailure, ContentUploadClaim, ContentUploadClaimOutcome,
         ContentUploadFingerprint, IdentifierFactory, MatrixRoomId, ObjectStoreFailure,
-        PrivateContentObjectStore,
+        PrivateContentObjectStore, RoomRetentionLookup,
     },
 };
+
+/// 聊天服务器的默认保留期（`render.py` 里 `retention.default_policy`），房间没选过时按它算。
+const DEFAULT_ROOM_RETENTION_DAYS: u16 = 30;
+/// 聊天服务器每天清一次过期消息；正文和附件多留一天，消息还在的时候总读得到。
+const RETENTION_GRACE_DAYS: u64 = 1;
+const DAY_MILLIS: u64 = 86_400_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginContentUploadRequest {
@@ -80,6 +86,7 @@ pub struct BeginContentUploadDependencies {
     pub storage_keys: Arc<dyn ContentStorageKeyFactory>,
     pub repository: Arc<dyn ContentRepository>,
     pub authorizer: Arc<dyn ContentMembershipAuthorizer>,
+    pub retention: Arc<dyn RoomRetentionLookup>,
 }
 
 pub struct BeginContentUploadService {
@@ -88,6 +95,7 @@ pub struct BeginContentUploadService {
     storage_keys: Arc<dyn ContentStorageKeyFactory>,
     repository: Arc<dyn ContentRepository>,
     authorizer: Arc<dyn ContentMembershipAuthorizer>,
+    retention: Arc<dyn RoomRetentionLookup>,
 }
 
 impl BeginContentUploadService {
@@ -98,6 +106,7 @@ impl BeginContentUploadService {
             storage_keys: dependencies.storage_keys,
             repository: dependencies.repository,
             authorizer: dependencies.authorizer,
+            retention: dependencies.retention,
         }
     }
 
@@ -112,6 +121,9 @@ impl BeginContentUploadService {
     ) -> BeginContentUploadResult<BeginContentUploadOutcome> {
         self.ensure_room_membership(&request).await?;
         let created_at = self.clock.now();
+        let retention_expires_at = self
+            .retention_expiry(&request.matrix_room_id, created_at)
+            .await?;
         let content_id = self.identifiers.content_id();
         let storage_key = self
             .storage_keys
@@ -133,6 +145,7 @@ impl BeginContentUploadService {
             scan_state,
             lifecycle_state: ContentLifecycleState::Uploading,
             expires_at: request.expires_at,
+            retention_expires_at: Some(retention_expires_at),
             created_at,
             deleted_at: None,
         })
@@ -169,6 +182,25 @@ impl BeginContentUploadService {
                 access_policy,
             },
         })
+    }
+
+    /// 正文和附件跟着房间的保留期到期：保留期再加一天，等聊天服务器先删掉这条消息。
+    async fn retention_expiry(
+        &self,
+        matrix_room_id: &MatrixRoomId,
+        created_at: UtcMillis,
+    ) -> BeginContentUploadResult<UtcMillis> {
+        let days = self
+            .retention
+            .retention_days(matrix_room_id)
+            .await
+            .map_err(BeginContentUploadFailure::Repository)?
+            .unwrap_or(DEFAULT_ROOM_RETENTION_DAYS);
+        let lifetime = DurationMillis::new((u64::from(days) + RETENTION_GRACE_DAYS) * DAY_MILLIS)
+            .map_err(BeginContentUploadFailure::Domain)?;
+        created_at
+            .checked_add(lifetime)
+            .map_err(BeginContentUploadFailure::Domain)
     }
 
     async fn ensure_room_membership(

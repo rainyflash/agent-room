@@ -229,6 +229,8 @@ async fn insert_targeted_handoff(
               AND content.media_type = $11
               AND (content.expires_at IS NULL OR content.expires_at >=
                   to_timestamp($16::double precision / 1000.0))
+              AND (content.retention_expires_at IS NULL OR content.retention_expires_at >=
+                  to_timestamp($16::double precision / 1000.0))
               AND policy.matrix_room_id = $5
               AND policy.matrix_event_id = $6
               AND policy.revoked_at IS NULL
