@@ -236,6 +236,7 @@ pub(crate) fn desktop_restore_human_session(
 
 /// 前端发往控制面的请求由这里代发：带上登录和窗口自己的 Origin，回答原样交回。
 /// macOS 的 `WKWebView` 不替跨站请求带 Cookie，`WebView` 因此不直接请求控制面。
+/// 控制面说带去的登录无效时，删掉本机这份；界面拿到同一个 401，照旧让人重新登录。
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) async fn desktop_control_plane_request(
@@ -257,7 +258,16 @@ pub(crate) async fn desktop_control_plane_request(
         })?;
     let secret = sessions.session_secret()?;
     let response = proxy.forward(&frame, &origin, secret.as_deref()).await?;
-    Ok(IpcResponse::new(response))
+    if response.session_rejected()
+        && let Some(secret) = secret.as_deref()
+        && let Err(failure) = sessions.forget_rejected(secret)
+    {
+        tracing::warn!(
+            error_code = failure.code(),
+            "控制面说登录无效，本机这份没删掉"
+        );
+    }
+    Ok(IpcResponse::new(response.into_frame()))
 }
 
 #[tauri::command]

@@ -300,7 +300,7 @@ impl HumanSessionRuntime {
             session_secret: exchange.session_secret,
             expires_at_unix_ms: exchange.session.expires_at_unix_ms,
         };
-        validate_persisted_session(&persisted, now_unix_ms()?)?;
+        validate_persisted_session(&persisted)?;
         {
             let _guard = self
                 .operation_gate
@@ -326,7 +326,8 @@ impl HumanSessionRuntime {
             self.set_active(None)?;
             return Ok(false);
         };
-        if validate_persisted_session(&session, now_unix_ms()?).is_err() {
+        // 本机记着的到期时间不作数：用着的登录服务器会续，过没过期由控制面说了算（`forget_rejected`）。
+        if validate_persisted_session(&session).is_err() {
             self.vault.delete_session()?;
             self.set_active(None)?;
             return Ok(false);
@@ -347,14 +348,33 @@ impl HumanSessionRuntime {
         Ok(())
     }
 
-    /// 控制面代发时带的登录。没登录或已过期就是 `None`，请求照发，由控制面回“没登录”。
+    /// 控制面代发时带的登录。没登录就是 `None`，请求照发，由控制面回“没登录”。
+    /// 本机记着的到期时间不看：用着的登录服务器会续，过期了控制面回 401，再由 `forget_rejected` 删。
     pub(crate) fn session_secret(&self) -> HumanSessionResult<Option<String>> {
         let active = self.active.lock().map_err(|_| state_unavailable())?;
-        let now = now_unix_ms()?;
         Ok(active
             .as_ref()
-            .filter(|session| validate_persisted_session(session, now).is_ok())
+            .filter(|session| validate_persisted_session(session).is_ok())
             .map(|session| session.session_secret.clone()))
+    }
+
+    /// 控制面说代发时带去的登录无效（401 `authentication.invalid_session`）：过期了或被撤销了，
+    /// 删掉本机这份，界面照旧让人重新登录。等回答的工夫里重新登录过的话，新的那份不动。
+    pub(crate) fn forget_rejected(&self, rejected_secret: &str) -> HumanSessionResult<()> {
+        let _guard = self
+            .operation_gate
+            .lock()
+            .map_err(|_| state_unavailable())?;
+        let mut active = self.active.lock().map_err(|_| state_unavailable())?;
+        if active
+            .as_ref()
+            .is_none_or(|session| session.session_secret != rejected_secret)
+        {
+            return Ok(());
+        }
+        self.vault.delete_session()?;
+        *active = None;
+        Ok(())
     }
 
     fn set_active(&self, session: Option<PersistedHumanSession>) -> HumanSessionResult<()> {
@@ -570,9 +590,9 @@ fn validate_pending(
     Ok(())
 }
 
-fn validate_persisted_session(session: &PersistedHumanSession, now: i64) -> HumanSessionResult<()> {
-    if session.expires_at_unix_ms <= now
-        || session.session_secret.len() < MIN_RANDOM_VALUE_LENGTH
+/// 只看登录的样子对不对。到期时间照写进本机（降级回旧版也读得出来），但这里不看它。
+fn validate_persisted_session(session: &PersistedHumanSession) -> HumanSessionResult<()> {
+    if session.session_secret.len() < MIN_RANDOM_VALUE_LENGTH
         || session.session_secret.len() > 1_024
         || session.session_secret.chars().any(char::is_control)
     {
@@ -673,13 +693,16 @@ impl HumanSessionFailure {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use super::{
         HumanAuthenticationCallback, HumanSessionResult, HumanSessionRuntime, HumanSessionVault,
         PendingAuthentication, PersistedHumanSession, authentication_callback, now_unix_ms,
         parse_authentication_callback, parse_loopback_authentication_callback, pkce_challenge,
-        validate_pending, validate_return_path,
+        validate_pending, validate_persisted_session, validate_return_path,
     };
     use url::Url;
 
@@ -777,7 +800,10 @@ mod tests {
         assert!(validate_return_path("https://evil.example").is_err());
     }
 
-    struct EmptyVault;
+    #[derive(Default)]
+    struct EmptyVault {
+        deleted_sessions: AtomicUsize,
+    }
 
     impl HumanSessionVault for EmptyVault {
         fn load_pending(&self) -> HumanSessionResult<Option<PendingAuthentication>> {
@@ -796,18 +822,20 @@ mod tests {
             Ok(())
         }
         fn delete_session(&self) -> HumanSessionResult<()> {
+            self.deleted_sessions.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
     }
 
     #[test]
-    fn 代发只带没过期的登录() {
+    fn 本机记着的到期时间过了照样带着登录_控制面说无效才删() {
         let url = Url::parse("https://api.example.test/").expect("测试 URL 有效");
+        let vault = Arc::new(EmptyVault::default());
         let sessions = HumanSessionRuntime {
             control_plane_url: url.clone(),
             browser_control_plane_url: url,
             http: reqwest::Client::new(),
-            vault: Arc::new(EmptyVault),
+            vault: vault.clone(),
             operation_gate: Arc::new(Mutex::new(())),
             active: Arc::new(Mutex::new(None)),
         };
@@ -818,21 +846,44 @@ mod tests {
         sessions
             .set_active(Some(PersistedHumanSession {
                 session_secret: secret.to_owned(),
-                expires_at_unix_ms: now + 60_000,
+                expires_at_unix_ms: now - 1,
             }))
             .expect("可记下登录");
         assert_eq!(
             sessions.session_secret().expect("可读").as_deref(),
-            Some(secret)
+            Some(secret),
+            "用着的登录服务器会续，本机记着的到期时间不作数"
         );
 
         sessions
-            .set_active(Some(PersistedHumanSession {
-                session_secret: secret.to_owned(),
-                expires_at_unix_ms: now - 1,
-            }))
-            .expect("可记下登录");
+            .forget_rejected("an-earlier-secret-replaced-by-signing-in-again")
+            .expect("可处理");
+        assert_eq!(
+            sessions.session_secret().expect("可读").as_deref(),
+            Some(secret),
+            "被拒的不是现在这份，不删"
+        );
+        assert_eq!(vault.deleted_sessions.load(Ordering::SeqCst), 0);
+
+        sessions.forget_rejected(secret).expect("可处理");
         assert_eq!(sessions.session_secret().expect("可读"), None);
+        assert_eq!(vault.deleted_sessions.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn 恢复登录只看样子不看本机记着的到期时间() {
+        let long_expired = PersistedHumanSession {
+            session_secret: "abcdefghijklmnopqrstuvwxyzABCDEF0123456789".to_owned(),
+            expires_at_unix_ms: 1,
+        };
+        assert!(validate_persisted_session(&long_expired).is_ok());
+        for secret in ["short", "abcdefghijklmnopqrstuvwxyz\nABCDEF0123456789"] {
+            let malformed = PersistedHumanSession {
+                session_secret: secret.to_owned(),
+                expires_at_unix_ms: i64::MAX,
+            };
+            assert!(validate_persisted_session(&malformed).is_err());
+        }
     }
 }
 
