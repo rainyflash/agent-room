@@ -293,10 +293,9 @@ async fn 按房间保留期的到期时间存得下_过了保留期才进回收(
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 房间保留期按聊天房间查到目录上的设置() {
     let database = TestDatabase::connect().await;
-    let owner = seed_principal(&database.runtime).await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
-    let week = seed_private_room(&database.migration, owner, Some(7)).await;
-    let unset = seed_private_room(&database.migration, owner, None).await;
+    let week = seed_archived_lobby(&database.migration, Some(7)).await;
+    let unset = seed_archived_lobby(&database.migration, None).await;
     let unknown = MatrixRoomId::new(format!("!unknown-{}:matrix.test", Uuid::now_v7().simple()))
         .expect("房间 ID 有效");
 
@@ -326,23 +325,19 @@ async fn reclaimable_ids(repositories: &PostgresRepositories, now: UtcMillis) ->
     .collect()
 }
 
-async fn seed_private_room(
-    pool: &PgPool,
-    owner: PrincipalId,
-    retention_days: Option<i32>,
-) -> MatrixRoomId {
+/// 归档、不公开的大厅：私人房间要连带成员和状态记录，这里只要目录上的保留期；归档了也不会被
+/// 别的测试当成可进的公共大厅。
+async fn seed_archived_lobby(pool: &PgPool, retention_days: Option<i32>) -> MatrixRoomId {
     let catalog_id = Uuid::now_v7();
     let room = MatrixRoomId::new(format!("!retention-{}:matrix.test", catalog_id.simple()))
         .expect("房间 ID 有效");
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
-               id, kind, name, owner_principal_id, visibility, retention_days, status,
-               created_at, updated_at
-           ) VALUES ($1, 'private_room', '保留期测试房间', $2, 'private', $3, 'active',
+               id, kind, name, visibility, retention_days, status, created_at, updated_at
+           ) VALUES ($1, 'public_lobby', '保留期测试大厅', 'unlisted', $2, 'archived',
                      statement_timestamp(), statement_timestamp())",
     )
     .bind(catalog_id)
-    .bind(owner.as_uuid())
     .bind(retention_days)
     .execute(pool)
     .await
@@ -350,7 +345,7 @@ async fn seed_private_room(
     sqlx::query(
         r"INSERT INTO agent_room.room_instance (
                id, catalog_entry_id, matrix_room_id, state, created_at, updated_at
-           ) VALUES ($1, $2, $3, 'active', statement_timestamp(), statement_timestamp())",
+           ) VALUES ($1, $2, $3, 'archived', statement_timestamp(), statement_timestamp())",
     )
     .bind(Uuid::now_v7())
     .bind(catalog_id)
