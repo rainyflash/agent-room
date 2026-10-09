@@ -253,6 +253,8 @@ export const resources = {
         'Your room is connected in another window. Use that window, or close it and retry here.',
       'connection.state.failure.sessionChanged':
         'Your sign-in changed in another window. Retry to load the current session.',
+      'connection.state.failure.restoreStuck':
+        'The last connection attempt got stuck. Reload the page, or quit Agent Room completely and open it again.',
       'connection.state.failure.matrixLogin': 'Your conversations could not connect. Please retry.',
       'connection.state.failure.matrixCrypto':
         'Encrypted conversations could not start. Please retry without clearing this device’s data.',
@@ -902,6 +904,8 @@ export const resources = {
         '你已在另一个窗口打开 Agent Room。请用那个窗口，或者关掉它再在这里重试。',
       'connection.state.failure.sessionChanged':
         '登录状态已在另一个窗口更新，请重试以读取当前会话。',
+      'connection.state.failure.restoreStuck':
+        '上一次连接卡住了。请刷新页面，或者完全退出 Agent Room 再打开。',
       'connection.state.failure.matrixLogin': '暂时无法接通你的对话，请重新连接。',
       'connection.state.failure.matrixCrypto':
         '加密对话未能启动。请重试，不要清除这台设备上的数据。',

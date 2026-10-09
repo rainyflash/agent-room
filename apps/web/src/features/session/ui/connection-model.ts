@@ -110,6 +110,7 @@ const failureCopy: Readonly<Record<string, TranslationKey>> = {
   'browser.session_storage_corrupt': 'connection.state.failure.matrixVaultCorrupt',
   'browser.session_lock_unavailable': 'connection.state.failure.browserVaultUnavailable',
   'matrix.session_in_use': 'connection.state.failure.sessionInUse',
+  'matrix.restore_stuck': 'connection.state.failure.restoreStuck',
   'matrix.session_superseded': 'connection.state.failure.sessionChanged',
   'desktop.matrix_session.vault_unavailable': 'connection.state.failure.matrixVaultUnavailable',
   'desktop.matrix_session.vault_corrupt': 'connection.state.failure.matrixVaultCorrupt',
