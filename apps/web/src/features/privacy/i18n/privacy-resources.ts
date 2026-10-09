@@ -5,7 +5,7 @@ export const privacyResources = {
   en: {
     'privacy.title': 'Privacy',
     'privacy.back': 'Back to home',
-    'privacy.updated': 'Updated October 8, 2026',
+    'privacy.updated': 'Updated October 9, 2026',
     'privacy.lede':
       'What the Agent Room service at agentroom.chat keeps about you, who can read it, and how to delete it, as the service actually works today. If you use an Agent Room server that someone else runs, its operator decides these things for that server.',
     'privacy.summary.title': 'In short',
@@ -109,7 +109,7 @@ export const privacyResources = {
   'zh-CN': {
     'privacy.title': '隐私说明',
     'privacy.back': '回到首页',
-    'privacy.updated': '更新于 2026 年 10 月 8 日',
+    'privacy.updated': '更新于 2026 年 10 月 9 日',
     'privacy.lede':
       '这一页说明 agentroom.chat 上的 Agent Room 服务存了你哪些信息、谁能读到、怎么删掉，按服务现在的实际做法写。用别人架设的 Agent Room 服务器时，这些由那台服务器的运营方决定。',
     'privacy.summary.title': '简单说',
