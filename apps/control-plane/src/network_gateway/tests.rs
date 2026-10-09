@@ -99,10 +99,12 @@ struct FakeAgents {
     quota: Mutex<Option<NetworkAgentFailure>>,
     quota_taken: Mutex<u32>,
     disabled: Mutex<Vec<String>>,
-    /// 定时清理：停用了几个闲置的、待离开的有哪些、记为已离开的有哪些。
+    /// 定时清理：停用了几个闲置的、待离开的有哪些、记为已离开的有哪些、删了钥匙的有哪些。
+    /// 记为已离开、还没删钥匙的，就等着删钥匙。
     stale: Mutex<usize>,
     exits: Mutex<Vec<NetworkAgentPendingExit>>,
     rooms_left: Mutex<Vec<NetworkAgentId>>,
+    keys_deleted: Mutex<Vec<NetworkAgentId>>,
     /// 进过加密房间的时刻；有值时网关改用加密客户端同步。记入库（`mark_encrypted`）不改它：
     /// 切过去之前取的会话里本来就没有，网关得靠自己记着。
     encrypted_since: Mutex<Option<UtcMillis>>,
@@ -135,6 +137,7 @@ impl FakeAgents {
             stale: Mutex::new(0),
             exits: Mutex::new(Vec::new()),
             rooms_left: Mutex::new(Vec::new()),
+            keys_deleted: Mutex::new(Vec::new()),
             encrypted_since: Mutex::new(None),
             log: Arc::new(Mutex::new(Vec::new())),
             admissions: Mutex::new(VecDeque::new()),
@@ -277,6 +280,28 @@ impl NetworkAgentUseCases for FakeAgents {
 
     fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
         self.rooms_left.lock().unwrap().push(id);
+        Box::pin(async { Ok(()) })
+    }
+
+    fn pending_key_deletions(
+        &self,
+        _limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentId>>> {
+        let deleted = self.keys_deleted.lock().unwrap().clone();
+        let pending = self
+            .rooms_left
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|id| !deleted.contains(id))
+            .copied()
+            .collect();
+        Box::pin(async move { Ok(pending) })
+    }
+
+    fn delete_keys(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        self.log.lock().unwrap().push("delete_keys".to_owned());
+        self.keys_deleted.lock().unwrap().push(id);
         Box::pin(async { Ok(()) })
     }
 
@@ -1165,6 +1190,9 @@ struct FakeEncrypted {
     /// 发言用的加密客户端替身。
     client: Arc<FakeClient>,
     forgotten: Mutex<Vec<NetworkAgentId>>,
+    /// 删掉了加密存储的；`remove_fails` 为真时删不掉。
+    removed: Mutex<Vec<NetworkAgentId>>,
+    remove_fails: Mutex<bool>,
     /// 下一轮清理时关掉几个闲置的。
     idle: Mutex<usize>,
     /// 与用例替身共用，看先后。
@@ -1252,6 +1280,20 @@ impl EncryptedSessions for FakeEncrypted {
     fn forget(&self, id: NetworkAgentId) -> PortFuture<'_, ()> {
         self.forgotten.lock().unwrap().push(id);
         Box::pin(async {})
+    }
+
+    fn remove_store(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, Result<(), NetworkGatewayFailure>> {
+        self.log.lock().unwrap().push("remove_store".to_owned());
+        let result = if *self.remove_fails.lock().unwrap() {
+            Err(NetworkGatewayFailure::Unavailable)
+        } else {
+            self.removed.lock().unwrap().push(id);
+            Ok(())
+        };
+        Box::pin(async move { result })
     }
 
     fn evict_idle(&self) -> PortFuture<'_, usize> {
@@ -3201,6 +3243,7 @@ async fn 停用与定时清理时关掉加密客户端_闲置的也关掉() {
         NetworkAgentCleanupOutcome {
             left: 1,
             abandoned: 1,
+            keys_deleted: 2,
             closed: 2,
             ..NetworkAgentCleanupOutcome::default()
         }
@@ -3676,6 +3719,7 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
             left: 0,
             abandoned: 1,
             retrying: 1,
+            keys_deleted: 1,
             closed: 0,
         }
     );
@@ -3693,6 +3737,7 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
         second,
         NetworkAgentCleanupOutcome {
             left: 1,
+            keys_deleted: 1,
             ..NetworkAgentCleanupOutcome::default()
         }
     );
@@ -3704,6 +3749,82 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
         harness.gateway.clean_up().await.unwrap(),
         NetworkAgentCleanupOutcome::default()
     );
+}
+
+#[tokio::test]
+async fn 离开房间以后先删加密存储再删钥匙_存储删不掉时钥匙留着下轮再删() {
+    let harness = harness();
+    *harness.agents.exits.lock().unwrap() = vec![NetworkAgentPendingExit::Session(Box::new(
+        harness.agents.own_session(),
+    ))];
+    *harness.encrypted.remove_fails.lock().unwrap() = true;
+
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            left: 1,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert!(
+        harness.agents.keys_deleted.lock().unwrap().is_empty(),
+        "存储没删掉，钥匙留着"
+    );
+
+    *harness.encrypted.remove_fails.lock().unwrap() = false;
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            keys_deleted: 1,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert_eq!(
+        *harness.encrypted.removed.lock().unwrap(),
+        [network_agent_id()]
+    );
+    assert_eq!(
+        *harness.agents.keys_deleted.lock().unwrap(),
+        [network_agent_id()]
+    );
+    let steps: Vec<String> = harness
+        .agents
+        .log()
+        .into_iter()
+        .filter(|step| step == "remove_store" || step == "delete_keys")
+        .collect();
+    assert_eq!(
+        steps,
+        ["remove_store", "remove_store", "delete_keys"],
+        "先删存储再删钥匙"
+    );
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome::default(),
+        "删过的不再删"
+    );
+}
+
+#[tokio::test]
+async fn 没开加密客户端时_离开房间以后直接删钥匙() {
+    let harness = build_harness(&[ROOM], false);
+    *harness.agents.exits.lock().unwrap() = vec![NetworkAgentPendingExit::Session(Box::new(
+        harness.agents.own_session(),
+    ))];
+
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            left: 1,
+            keys_deleted: 1,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert_eq!(
+        *harness.agents.keys_deleted.lock().unwrap(),
+        [network_agent_id()]
+    );
+    assert!(harness.encrypted.removed.lock().unwrap().is_empty());
 }
 
 #[tokio::test(start_paused = true)]

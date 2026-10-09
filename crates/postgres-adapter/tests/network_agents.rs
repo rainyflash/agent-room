@@ -1505,6 +1505,81 @@ async fn 记下离开房间时_它在私人房间的_agent_成员一并记为已
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 离开房间以后删掉秘密与发言限流_抹掉来源摘要_删过的不再改() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let id = activated_agent(&database.runtime, &repositories, "Shredder").await;
+    repositories
+        .put_secret(
+            id,
+            NetworkAgentSecretKind::MatrixStorePassphrase,
+            &sealed(7),
+            time(5),
+        )
+        .await
+        .expect("封存");
+    let own = send_buckets(id);
+    let stranger = send_buckets(NetworkAgentId::from_uuid(Uuid::now_v7()));
+    let policy = RateWindowPolicy {
+        window: DurationMillis::new(HOUR).expect("一小时"),
+        limit: 10,
+    };
+    for bucket in own.iter().chain(&stranger) {
+        repositories
+            .take(bucket, time(5), policy)
+            .await
+            .expect("计数");
+    }
+
+    repositories.disable(id, time(10)).await.expect("停用");
+    repositories
+        .delete_keys(id, time(15))
+        .await
+        .expect("还没离开房间");
+    assert!(!awaits_key_deletion(&repositories, id).await);
+    assert_eq!(
+        secret_count(&database.runtime, id).await,
+        4,
+        "还没离开房间时不删"
+    );
+
+    repositories
+        .mark_rooms_left(id, time(20))
+        .await
+        .expect("记下已离开");
+    assert!(awaits_key_deletion(&repositories, id).await);
+    repositories
+        .delete_keys(id, time(30))
+        .await
+        .expect("删钥匙");
+
+    assert!(!awaits_key_deletion(&repositories, id).await);
+    assert_eq!(secret_count(&database.runtime, id).await, 0);
+    let all: Vec<String> = own.iter().chain(&stranger).cloned().collect();
+    assert_eq!(
+        remaining_buckets(&database.runtime, &all).await,
+        stranger,
+        "只删它自己的发言限流"
+    );
+    assert_eq!(
+        key_deletion(&database.runtime, id).await,
+        (Some(time(30)), vec![0; 32])
+    );
+
+    repositories
+        .delete_keys(id, time(40))
+        .await
+        .expect("再删一次");
+    assert_eq!(
+        key_deletion(&database.runtime, id).await.0,
+        Some(time(30)),
+        "删过的不改"
+    );
+    database.close().await;
+}
+
 async fn seed_private_room(
     repositories: &PostgresRepositories,
     owner: PrincipalId,
@@ -1908,6 +1983,89 @@ async fn seed_agent_instance(
     .expect("Agent 实例应创建");
     transaction.commit().await.expect("提交");
     (agent, instance)
+}
+
+/// 建一个生效的网络 Agent：有实例，停用后要等着替它离开房间。
+async fn activated_agent(
+    pool: &PgPool,
+    repositories: &PostgresRepositories,
+    name: &str,
+) -> NetworkAgentId {
+    let provisioning = provisioning(&unique_name(name), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let (agent, instance) = seed_agent_instance(
+        pool,
+        provisioning.principal.principal.id(),
+        provisioning.device.id(),
+    )
+    .await;
+    repositories
+        .activate(&NetworkAgentActivation {
+            id: provisioning.id,
+            agent_id: agent,
+            agent_instance_id: instance,
+            matrix_access_token: sealed(5),
+            activated_at: time(0),
+        })
+        .await
+        .expect("生效");
+    provisioning.id
+}
+
+/// 它的发言限流桶，按名字排好。
+fn send_buckets(id: NetworkAgentId) -> Vec<String> {
+    let simple = id.as_uuid().simple();
+    vec![
+        format!("send:day:{simple}"),
+        format!("send:minute:{simple}"),
+    ]
+}
+
+async fn awaits_key_deletion(repositories: &PostgresRepositories, id: NetworkAgentId) -> bool {
+    repositories
+        .pending_key_deletions(1_000)
+        .await
+        .expect("待删钥匙")
+        .contains(&id)
+}
+
+async fn secret_count(pool: &PgPool, id: NetworkAgentId) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.network_agent_secret WHERE network_agent_id = $1",
+    )
+    .bind(id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("数秘密")
+}
+
+async fn remaining_buckets(pool: &PgPool, buckets: &[String]) -> Vec<String> {
+    sqlx::query_scalar(
+        r"SELECT bucket FROM agent_room.network_agent_rate_window
+           WHERE bucket = ANY($1)
+           ORDER BY bucket",
+    )
+    .bind(buckets)
+    .fetch_all(pool)
+    .await
+    .expect("读限流桶")
+}
+
+/// 删钥匙的时间与来源摘要。
+async fn key_deletion(pool: &PgPool, id: NetworkAgentId) -> (Option<UtcMillis>, Vec<u8>) {
+    let (deleted_at, digest): (Option<i64>, Vec<u8>) = sqlx::query_as(
+        r"SELECT (extract(epoch FROM keys_deleted_at) * 1000)::bigint, source_digest
+            FROM agent_room.network_agent
+           WHERE id = $1",
+    )
+    .bind(id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("读网络 Agent");
+    (
+        deleted_at.map(|at| UtcMillis::new(at).expect("时间有效")),
+        digest,
+    )
 }
 
 fn time(offset: i64) -> UtcMillis {

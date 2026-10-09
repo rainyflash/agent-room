@@ -533,6 +533,65 @@ impl NetworkAgentStore for PostgresRepositories {
             Ok(())
         })
     }
+
+    fn pending_key_deletions(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentId>>> {
+        Box::pin(async move {
+            let operation = "network_agent.pending_key_deletions";
+            let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+                r"SELECT id FROM agent_room.network_agent
+                   WHERE status = 'disabled' AND rooms_left_at IS NOT NULL
+                     AND keys_deleted_at IS NULL
+                   ORDER BY rooms_left_at, id
+                   LIMIT $1",
+            )
+            .bind(i64::from(limit))
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(ids.into_iter().map(NetworkAgentId::from_uuid).collect())
+        })
+    }
+
+    fn delete_keys(
+        &self,
+        id: NetworkAgentId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "network_agent.delete_keys";
+            // 发言限流的桶名是 `send:minute:<ID>`、`send:day:<ID>`（ID 不带连字符）。
+            sqlx::query(
+                r"WITH purged AS (
+                      UPDATE agent_room.network_agent
+                         SET keys_deleted_at = greatest(rooms_left_at, to_timestamp($2::double precision / 1000.0)),
+                             source_digest = decode(repeat('00', 32), 'hex')
+                       WHERE id = $1 AND status = 'disabled' AND rooms_left_at IS NOT NULL
+                         AND keys_deleted_at IS NULL
+                   RETURNING id
+                  ),
+                  forgotten_limits AS (
+                      DELETE FROM agent_room.network_agent_rate_window window_row
+                       USING purged
+                       WHERE window_row.bucket IN (
+                           'send:minute:' || replace(purged.id::text, '-', ''),
+                           'send:day:' || replace(purged.id::text, '-', '')
+                       )
+                  )
+                  DELETE FROM agent_room.network_agent_secret secret
+                   USING purged
+                   WHERE secret.network_agent_id = purged.id",
+            )
+            .bind(id.as_uuid())
+            .bind(at.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(())
+        })
+    }
 }
 
 impl NetworkAgentLookup for PostgresRepositories {

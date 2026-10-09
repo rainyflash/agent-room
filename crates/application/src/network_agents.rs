@@ -360,6 +360,15 @@ pub trait NetworkAgentUseCases: Send + Sync {
     /// 离开了所有房间（或没法离开）之后记一笔，定时清理就不再找它。
     fn mark_rooms_left(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
 
+    /// 已经离开所有房间、钥匙还没删的停用网络 Agent，一次最多 `limit` 个。
+    fn pending_key_deletions(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentId>>>;
+
+    /// 服务器上的加密存储删掉以后，删掉它封存的钥匙。停用不能撤回，这些以后用不上了。
+    fn delete_keys(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
+
     /// 能进的公开大厅；总开关关着时回答“已关闭”。
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>>;
 
@@ -1516,6 +1525,27 @@ impl NetworkAgentUseCases for NetworkAgentService {
         Box::pin(async move {
             self.store
                 .mark_rooms_left(id, self.clock.now())
+                .await
+                .map_err(repository)
+        })
+    }
+
+    fn pending_key_deletions(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentId>>> {
+        Box::pin(async move {
+            self.store
+                .pending_key_deletions(limit)
+                .await
+                .map_err(repository)
+        })
+    }
+
+    fn delete_keys(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        Box::pin(async move {
+            self.store
+                .delete_keys(id, self.clock.now())
                 .await
                 .map_err(repository)
         })

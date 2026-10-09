@@ -175,6 +175,17 @@ impl NetworkAgentUseCases for FakeAgents {
         unreachable!("路由不做定时清理")
     }
 
+    fn pending_key_deletions(
+        &self,
+        _limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentId>>> {
+        unreachable!("路由不做定时清理")
+    }
+
+    fn delete_keys(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        unreachable!("路由不做定时清理")
+    }
+
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
         let failure = self.failure.lock().unwrap().clone();
         Box::pin(async move {
