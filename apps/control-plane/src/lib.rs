@@ -64,7 +64,7 @@ use agent_room_application::{
         LobbyProvisioningPolicy, LobbyProvisioningService,
     },
 };
-use agent_room_domain::time::DurationMillis;
+use agent_room_domain::time::{DurationMillis, SlidingLifetime};
 use agent_room_identity_adapter::{
     AesGcmAccountEncryptionKeySealer, AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant,
     DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier,
@@ -1462,9 +1462,19 @@ fn authentication_policy(
 fn device_authorization_policy(
     config: &AuthenticationConfig,
 ) -> Result<DeviceAuthorizationPolicy, StartupError> {
+    let refresh_lifetime = SlidingLifetime::new(
+        domain_duration(config.device_refresh_token_ttl)?,
+        domain_duration(config.sign_in_max_lifetime)?,
+    )
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_device_authentication_config",
+            "设备授权的空闲时限不能长于最长时限".to_owned(),
+        )
+    })?;
     DeviceAuthorizationPolicy::new(
         domain_duration(config.device_access_token_ttl)?,
-        domain_duration(config.device_refresh_token_ttl)?,
+        refresh_lifetime,
         domain_duration(config.device_proof_maximum_age)?,
         domain_duration(config.allowed_clock_skew)?,
         domain_duration(config.device_authorization_maximum_age)?,

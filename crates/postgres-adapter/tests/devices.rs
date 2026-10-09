@@ -14,11 +14,13 @@ use agent_room_domain::{
         DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId, DeviceRefreshTokenId,
         DeviceTokenFamilyId, OutboxEventId, PrincipalId,
     },
-    time::UtcMillis,
+    time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
+
+const DAY: i64 = 24 * 60 * 60 * 1_000;
 
 struct TestDatabase {
     migration: PgPool,
@@ -356,6 +358,100 @@ async fn 换一个尝试号重放已轮换的令牌仍提交泄露撤销() {
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 换令牌时令牌组和新刷新令牌一起续期且只往后挪() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let registration = registration(81, 82);
+    let stored = register(&repositories, &registration).await;
+    let device_id = stored.device.id();
+
+    // 第 20 天换一次：从这次起再给 30 天。
+    let first = replacement(83, 84, 20 * DAY);
+    let renewed = rotated_expiry(
+        rotate(
+            &repositories,
+            &registration.session.refresh_token_digest,
+            &first,
+        )
+        .await,
+    );
+    assert_eq!(renewed, test_time(50 * DAY));
+    assert_eq!(
+        stored_expiries(&database.runtime, device_id, &first.refresh_token_digest).await,
+        (renewed, renewed)
+    );
+
+    // 第 49 天再换，最长时限只有 60 天：续到注册后第 60 天为止。
+    let second = DeviceTokenReplacement {
+        refresh_lifetime: lifetime(30 * DAY, 60 * DAY),
+        ..replacement(85, 86, 49 * DAY)
+    };
+    let capped = rotated_expiry(rotate(&repositories, &first.refresh_token_digest, &second).await);
+    assert_eq!(capped, test_time(60 * DAY));
+
+    // 第 55 天换，空闲时限只有一小时：算出来比现在的到期时间早，到期时间不动。
+    let third = DeviceTokenReplacement {
+        refresh_lifetime: lifetime(60 * 60 * 1_000, 60 * DAY),
+        ..replacement(87, 88, 55 * DAY)
+    };
+    let unchanged =
+        rotated_expiry(rotate(&repositories, &second.refresh_token_digest, &third).await);
+    assert_eq!(unchanged, test_time(60 * DAY));
+    assert_eq!(
+        stored_expiries(&database.runtime, device_id, &third.refresh_token_digest).await,
+        (unchanged, unchanged)
+    );
+
+    delete_device_events(&database.runtime, device_id).await;
+    database.close().await;
+}
+
+fn rotated_expiry(outcome: DeviceRefreshOutcome) -> UtcMillis {
+    let DeviceRefreshOutcome::Rotated {
+        session,
+        refresh_token_expires_at,
+    } = outcome
+    else {
+        panic!("还能轮换的令牌应换成功，实际为 {outcome:?}");
+    };
+    assert_eq!(session.family.expires_at(), refresh_token_expires_at);
+    refresh_token_expires_at
+}
+
+/// 库里这台设备令牌组的到期时间，以及指定刷新令牌的到期时间。
+async fn stored_expiries(
+    pool: &PgPool,
+    device_id: DeviceId,
+    refresh_token_digest: &SecretDigest,
+) -> (UtcMillis, UtcMillis) {
+    let (family, refresh): (i64, i64) = sqlx::query_as(
+        r"SELECT floor(extract(epoch FROM family.expires_at) * 1000)::bigint,
+                 floor(extract(epoch FROM refresh.expires_at) * 1000)::bigint
+           FROM agent_room.device_token_family AS family
+           JOIN agent_room.device_refresh_token AS refresh ON refresh.family_id = family.id
+           WHERE family.device_id = $1 AND refresh.secret_digest = $2",
+    )
+    .bind(device_id.as_uuid())
+    .bind(refresh_token_digest.as_bytes().as_slice())
+    .fetch_one(pool)
+    .await
+    .expect("可读取令牌组和刷新令牌的到期时间");
+    (
+        UtcMillis::new(family).expect("令牌组到期时间有效"),
+        UtcMillis::new(refresh).expect("刷新令牌到期时间有效"),
+    )
+}
+
+fn lifetime(idle: i64, maximum: i64) -> SlidingLifetime {
+    SlidingLifetime::new(
+        DurationMillis::new(u64::try_from(idle).expect("时长为正")).expect("时长有效"),
+        DurationMillis::new(u64::try_from(maximum).expect("时长为正")).expect("时长有效"),
+    )
+    .expect("寿命有效")
+}
+
 async fn register(
     repositories: &PostgresRepositories,
     registration: &RegistrationFixture,
@@ -476,6 +572,7 @@ fn replacement(access_digest: u8, refresh_digest: u8, offset: i64) -> DeviceToke
         refresh_token_id: DeviceRefreshTokenId::from_uuid(Uuid::now_v7()),
         refresh_token_digest: SecretDigest::from_array([refresh_digest; 32]),
         issued_at: test_time(offset),
+        refresh_lifetime: lifetime(30 * DAY, 365 * DAY),
         replay: None,
     }
 }

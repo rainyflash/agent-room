@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering},
     },
 };
 
@@ -37,11 +37,12 @@ use agent_room_domain::{
         DeviceTokenFamilyId, HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId,
         RoomInstanceId, RoomReservationId, WebSessionId,
     },
-    time::{DurationMillis, UtcMillis},
+    time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
 use uuid::Uuid;
 
 const NOW: i64 = 1_700_000_000_000;
+const DAY: i64 = 24 * 60 * 60 * 1_000;
 
 #[derive(Default)]
 struct MemoryDeviceStore {
@@ -192,6 +193,12 @@ impl DeviceSessionStore for MemoryDeviceStore {
             let session = state.session.as_mut().ok_or_else(|| {
                 RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
             })?;
+            session
+                .family
+                .renew(replacement.refresh_lifetime, replacement.issued_at)
+                .map_err(|_| {
+                    RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
+                })?;
             session.access_token_expires_at = replacement.access_token_expires_at;
             Ok(DeviceRefreshOutcome::Rotated {
                 refresh_token_expires_at: session.family.expires_at(),
@@ -416,6 +423,21 @@ struct StaticClock;
 impl Clock for StaticClock {
     fn now(&self) -> UtcMillis {
         time(NOW)
+    }
+}
+
+/// 测试里手动往前拨的时钟，用来走过几十天、几百天。
+struct SteppingClock(AtomicI64);
+
+impl SteppingClock {
+    fn set(&self, value: i64) {
+        self.0.store(value, Ordering::SeqCst);
+    }
+}
+
+impl Clock for SteppingClock {
+    fn now(&self) -> UtcMillis {
+        time(self.0.load(Ordering::SeqCst))
     }
 }
 
@@ -758,11 +780,22 @@ async fn refresh(
     refresh_token: &SecretValue,
     attempt_id: Option<DeviceRefreshAttemptId>,
 ) -> Result<DeviceCredentials, DeviceAuthorizationFailure> {
-    let proof = proof(
+    refresh_at(service, device_id, refresh_token, attempt_id, time(NOW)).await
+}
+
+async fn refresh_at(
+    service: &DeviceAuthorizationService,
+    device_id: DeviceId,
+    refresh_token: &SecretValue,
+    attempt_id: Option<DeviceRefreshAttemptId>,
+    issued_at: UtcMillis,
+) -> Result<DeviceCredentials, DeviceAuthorizationFailure> {
+    let proof = proof_at(
         device_id,
         "POST",
         "/auth/devices/refresh",
         "nonce-0000000003",
+        issued_at,
     );
     service
         .refresh_device_session(RefreshDeviceSession {
@@ -782,6 +815,77 @@ fn assert_device_compromised(store: &MemoryDeviceStore) {
     let session = state.session.as_ref().expect("会话仍保留审计状态");
     assert_eq!(session.device.trust_state(), DeviceTrustState::Revoked);
     assert!(!session.family.allows_rotation(time(NOW)));
+}
+
+#[tokio::test]
+async fn 一直在用的设备授权每换一次令牌就续三十天但最长一年() {
+    let clock = Arc::new(SteppingClock(AtomicI64::new(NOW)));
+    let (service, store, secrets, _, _) = service_with_clock(true, clock.clone());
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    assert_eq!(credentials.refresh_token_expires_at, time(NOW + 30 * DAY));
+
+    let device_id = credentials.device.device_id;
+    let mut refresh_token = credentials.refresh_token;
+    for day in (20..=360).step_by(20) {
+        clock.set(NOW + day * DAY);
+        let renewed = refresh_at(
+            &service,
+            device_id,
+            &refresh_token,
+            Some(attempt_id()),
+            time(NOW + day * DAY),
+        )
+        .await
+        .expect("一直在用就一直能续");
+        assert_eq!(
+            renewed.refresh_token_expires_at,
+            time(NOW + (day + 30).min(365) * DAY),
+            "第 {day} 天换令牌后的到期时间"
+        );
+        refresh_token = renewed.refresh_token;
+    }
+    {
+        let state = store.state.lock().expect("测试设备仓储锁不得中毒");
+        let family = &state.session.as_ref().expect("会话存在").family;
+        assert_eq!(family.expires_at(), time(NOW + 365 * DAY));
+    }
+
+    clock.set(NOW + 365 * DAY);
+    let capped = refresh_at(
+        &service,
+        device_id,
+        &refresh_token,
+        Some(attempt_id()),
+        time(NOW + 365 * DAY),
+    )
+    .await
+    .expect_err("从批准设备码起满一年，不管用得多勤都要重新批准");
+    assert_eq!(capped.kind(), DeviceAuthorizationFailureKind::InvalidToken);
+}
+
+#[tokio::test]
+async fn 连续三十天没换过令牌的设备授权过期() {
+    let clock = Arc::new(SteppingClock(AtomicI64::new(NOW)));
+    let (service, _, secrets, _, _) = service_with_clock(true, clock.clone());
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+
+    clock.set(NOW + 30 * DAY);
+    let expired = refresh_at(
+        &service,
+        credentials.device.device_id,
+        &credentials.refresh_token,
+        Some(attempt_id()),
+        time(NOW + 30 * DAY),
+    )
+    .await
+    .expect_err("连续三十天没用就过期");
+    assert_eq!(expired.kind(), DeviceAuthorizationFailureKind::InvalidToken);
 }
 
 #[tokio::test]
@@ -917,15 +1021,19 @@ async fn 设备撤销先关闭本地边界并在重复请求时收敛_matrix_清
     );
 }
 
-fn service(
-    valid_proof: bool,
-) -> (
+type TestService = (
     DeviceAuthorizationService,
     Arc<MemoryDeviceStore>,
     Arc<SequentialSecrets>,
     Arc<ToggleProofVerifier>,
     Arc<ToggleMatrixRevoker>,
-) {
+);
+
+fn service(valid_proof: bool) -> TestService {
+    service_with_clock(valid_proof, Arc::new(StaticClock))
+}
+
+fn service_with_clock(valid_proof: bool, clock: Arc<dyn Clock>) -> TestService {
     let store = Arc::new(MemoryDeviceStore::default());
     let secrets = Arc::new(SequentialSecrets::default());
     let proof_verifier = Arc::new(ToggleProofVerifier(AtomicBool::new(valid_proof)));
@@ -946,11 +1054,15 @@ fn service(
             secrets: secrets.clone(),
             refresh_tokens: Arc::new(TestRefreshTokens::default()),
             identifiers: Arc::new(TestIdentifiers),
-            clock: Arc::new(StaticClock),
+            clock,
         },
         DeviceAuthorizationPolicy::new(
             duration(5 * 60 * 1_000),
-            duration(30 * 24 * 60 * 60 * 1_000),
+            SlidingLifetime::new(
+                duration(30 * 24 * 60 * 60 * 1_000),
+                duration(365 * 24 * 60 * 60 * 1_000),
+            )
+            .expect("寿命有效"),
             duration(60_000),
             duration(30_000),
             duration(10 * 60 * 1_000),
@@ -992,9 +1104,19 @@ fn registration_with_times(
 }
 
 fn proof(device_id: DeviceId, method: &str, target: &str, nonce: &str) -> DeviceRequestProof {
+    proof_at(device_id, method, target, nonce, time(NOW))
+}
+
+fn proof_at(
+    device_id: DeviceId,
+    method: &str,
+    target: &str,
+    nonce: &str,
+    issued_at: UtcMillis,
+) -> DeviceRequestProof {
     let payload = DeviceRequestProofPayload::new(
         device_id,
-        time(NOW),
+        issued_at,
         SecretValue::new(nonce).expect("nonce 有效"),
         method.to_owned(),
         target.to_owned(),

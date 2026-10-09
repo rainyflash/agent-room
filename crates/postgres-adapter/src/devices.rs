@@ -635,6 +635,7 @@ async fn persist_refresh_replacement(
         .sequence
         .checked_add(1)
         .ok_or_else(|| corrupt_data(operation))?;
+    let family = renew_token_family(transaction, &locked.family, replacement, operation).await?;
     insert_access_token(
         transaction,
         locked.device.id(),
@@ -653,7 +654,7 @@ async fn persist_refresh_replacement(
         &replacement.refresh_token_digest,
         next_sequence,
         replacement.issued_at,
-        locked.family.expires_at(),
+        family.expires_at(),
         operation,
     )
     .await?;
@@ -672,9 +673,40 @@ async fn persist_refresh_replacement(
     Ok(StoredDeviceSession {
         account: locked.account.clone(),
         device: locked.device.clone(),
-        family: locked.family.clone(),
+        family,
         access_token_expires_at: replacement.access_token_expires_at,
     })
+}
+
+/// 换一次令牌就算这台设备用了一次：令牌组的到期时间按规则往后续，只往后挪，
+/// 最长到批准设备码那一刻加最长时限。调用方已经锁住这一行并确认它还能轮换。
+async fn renew_token_family(
+    transaction: &mut Transaction<'_, Postgres>,
+    locked: &DeviceTokenFamily,
+    replacement: &DeviceTokenReplacement,
+    operation: &'static str,
+) -> RepositoryResult<DeviceTokenFamily> {
+    let mut family = locked.clone();
+    family
+        .renew(replacement.refresh_lifetime, replacement.issued_at)
+        .map_err(|_| corrupt_data(operation))?;
+    if family.expires_at() == locked.expires_at() {
+        return Ok(family);
+    }
+    let renewed = sqlx::query(
+        r"UPDATE agent_room.device_token_family
+           SET expires_at = to_timestamp($2::double precision / 1000.0)
+           WHERE id = $1 AND state = 'active'",
+    )
+    .bind(family.id().as_uuid())
+    .bind(family.expires_at().value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if renewed.rows_affected() != 1 {
+        return Err(corrupt_data(operation));
+    }
+    Ok(family)
 }
 
 async fn revoke_device_transaction(
