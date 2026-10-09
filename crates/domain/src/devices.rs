@@ -1,7 +1,7 @@
 use crate::{
     DomainError, DomainResult,
     ids::{DeviceId, DeviceTokenFamilyId, PrincipalId},
-    time::UtcMillis,
+    time::{SlidingLifetime, UtcMillis},
 };
 
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
@@ -509,6 +509,29 @@ impl DeviceTokenFamily {
         matches!(self.state, DeviceTokenFamilyState::Active) && now < self.expires_at
     }
 
+    /// 这组令牌在 `now` 用了一次：到期时间按 `lifetime` 续，只往后挪。
+    ///
+    /// 起算时刻是这组令牌的创建时间，也就是批准设备码、注册这台设备的那一刻，
+    /// 所以不管换多少次令牌，最长也只到创建时间加最长时限。
+    ///
+    /// # Errors
+    ///
+    /// 这组令牌已经不能再轮换（撤销、泄露或已过期）时返回非法转换错误；时间溢出时返回溢出错误。
+    pub fn renew(&mut self, lifetime: SlidingLifetime, now: UtcMillis) -> DomainResult<()> {
+        if !self.allows_rotation(now) {
+            return Err(DomainError::InvalidTransition {
+                entity: "device_token_family",
+                from: "inactive",
+                to: "renewed",
+            });
+        }
+        let renewed = lifetime.renewed_until(self.created_at, now)?;
+        if renewed > self.expires_at {
+            self.expires_at = renewed;
+        }
+        Ok(())
+    }
+
     /// 正常撤销 Token 族，重复撤销保持首次时间。
     ///
     /// # Errors
@@ -572,7 +595,7 @@ mod tests {
     };
     use crate::{
         ids::{DeviceId, DeviceTokenFamilyId, PrincipalId},
-        time::UtcMillis,
+        time::{DurationMillis, SlidingLifetime, UtcMillis},
     };
 
     #[test]
@@ -630,6 +653,49 @@ mod tests {
     }
 
     #[test]
+    fn 令牌族用着就续但不越过创建时间加最长时限() {
+        let mut family = family_created_at(time(DAY));
+        family.renew(lifetime(), time(20 * DAY)).expect("续期有效");
+        assert_eq!(family.expires_at(), time(50 * DAY));
+
+        for day in (40..=360).step_by(20) {
+            family
+                .renew(lifetime(), time(day * DAY))
+                .expect("一直在用就一直能续");
+        }
+        assert_eq!(family.expires_at(), time(366 * DAY));
+        assert!(family.allows_rotation(time(366 * DAY - 1)));
+        assert!(!family.allows_rotation(time(366 * DAY)));
+    }
+
+    #[test]
+    fn 令牌族续期只往后挪() {
+        let mut family = family_created_at(time(DAY));
+        family.renew(lifetime(), time(20 * DAY)).expect("续期有效");
+        family
+            .renew(lifetime(), time(10 * DAY))
+            .expect("时钟回拨也不缩短");
+        assert_eq!(family.expires_at(), time(50 * DAY));
+    }
+
+    #[test]
+    fn 失效的令牌族不能续期() {
+        let mut expired = family_created_at(time(DAY));
+        assert!(expired.renew(lifetime(), time(31 * DAY)).is_err());
+        assert_eq!(expired.expires_at(), time(31 * DAY));
+
+        let mut revoked = family_created_at(time(DAY));
+        revoked.revoke(time(2 * DAY)).expect("撤销有效");
+        assert!(revoked.renew(lifetime(), time(3 * DAY)).is_err());
+
+        let mut compromised = family_created_at(time(DAY));
+        compromised
+            .mark_compromised(time(2 * DAY))
+            .expect("泄露状态有效");
+        assert!(compromised.renew(lifetime(), time(3 * DAY)).is_err());
+    }
+
+    #[test]
     fn 设备公钥严格要求_ed25519_长度() {
         assert!(DevicePublicSigningKey::new(vec![7; 31]).is_err());
         assert!(DevicePublicSigningKey::new(vec![7; 32]).is_ok());
@@ -646,6 +712,26 @@ mod tests {
             time(1_000),
         )
         .expect("测试设备有效")
+    }
+
+    const DAY: i64 = 24 * 60 * 60 * 1_000;
+
+    fn family_created_at(created_at: UtcMillis) -> DeviceTokenFamily {
+        DeviceTokenFamily::new(
+            DeviceTokenFamilyId::from_uuid(Uuid::from_u128(3)),
+            DeviceId::from_uuid(Uuid::from_u128(2)),
+            created_at,
+            time(created_at.value() + 30 * DAY),
+        )
+        .expect("Token 族有效")
+    }
+
+    fn lifetime() -> SlidingLifetime {
+        SlidingLifetime::new(
+            DurationMillis::new(30 * 24 * 60 * 60 * 1_000).expect("时长有效"),
+            DurationMillis::new(365 * 24 * 60 * 60 * 1_000).expect("时长有效"),
+        )
+        .expect("寿命有效")
     }
 
     fn time(value: i64) -> UtcMillis {

@@ -5,7 +5,7 @@ use agent_room_domain::{
         Device, DevicePlatform, DevicePublicSigningKey, DeviceTokenFamily, DeviceTrustState,
     },
     ids::{DeviceId, DeviceRefreshAttemptId, PrincipalId},
-    time::{DurationMillis, UtcMillis},
+    time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
 
 use crate::{
@@ -32,7 +32,8 @@ const MAX_PROOF_NONCE_LENGTH: usize = 256;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceAuthorizationPolicy {
     access_token_ttl: DurationMillis,
-    refresh_token_ttl: DurationMillis,
+    /// 这台电脑的授权：连续多久没换过令牌就过期，从批准设备码起最长多久。
+    refresh_lifetime: SlidingLifetime,
     proof_maximum_age: DurationMillis,
     allowed_clock_skew: DurationMillis,
     device_authorization_maximum_age: DurationMillis,
@@ -47,14 +48,14 @@ impl DeviceAuthorizationPolicy {
     /// 生命周期顺序或 Matrix 服务名不满足安全边界时返回配置错误。
     pub fn new(
         access_token_ttl: DurationMillis,
-        refresh_token_ttl: DurationMillis,
+        refresh_lifetime: SlidingLifetime,
         proof_maximum_age: DurationMillis,
         allowed_clock_skew: DurationMillis,
         device_authorization_maximum_age: DurationMillis,
         matrix_server_name: impl Into<String>,
     ) -> Result<Self, DeviceAuthorizationConfigurationError> {
         let matrix_server_name = matrix_server_name.into();
-        if access_token_ttl >= refresh_token_ttl {
+        if access_token_ttl >= refresh_lifetime.idle() {
             return Err(DeviceAuthorizationConfigurationError::InvalidTokenLifetimes);
         }
         if matrix_server_name.is_empty()
@@ -66,7 +67,7 @@ impl DeviceAuthorizationPolicy {
         }
         Ok(Self {
             access_token_ttl,
-            refresh_token_ttl,
+            refresh_lifetime,
             proof_maximum_age,
             allowed_clock_skew,
             device_authorization_maximum_age,
@@ -468,8 +469,10 @@ impl DeviceAuthorizationService {
         let access_token_expires_at = now
             .checked_add(self.policy.access_token_ttl)
             .map_err(|_| internal_failure("device.register"))?;
-        let refresh_token_expires_at = now
-            .checked_add(self.policy.refresh_token_ttl)
+        let refresh_token_expires_at = self
+            .policy
+            .refresh_lifetime
+            .renewed_until(now, now)
             .map_err(|_| internal_failure("device.register"))?;
         let family = DeviceTokenFamily::new(
             self.identifiers.device_token_family_id(),
@@ -573,6 +576,7 @@ impl DeviceAuthorizationService {
             refresh_token_id: self.identifiers.device_refresh_token_id(),
             refresh_token_digest: self.secrets.digest(tokens.refresh_token.expose()),
             issued_at: now,
+            refresh_lifetime: self.policy.refresh_lifetime,
             replay,
         };
         let outcome = self
@@ -1047,7 +1051,7 @@ mod tests {
     use crate::ports::{DeviceSignature, SecretDigest, SecretValue};
     use agent_room_domain::{
         ids::DeviceId,
-        time::{DurationMillis, UtcMillis},
+        time::{DurationMillis, SlidingLifetime, UtcMillis},
     };
     use uuid::Uuid;
 
@@ -1076,10 +1080,11 @@ mod tests {
     #[test]
     fn 策略拒绝访问令牌活得不比刷新令牌短的配置() {
         let duration = DurationMillis::new(60_000).expect("时长有效");
+        let lifetime = SlidingLifetime::new(duration, duration).expect("寿命有效");
         assert!(
             DeviceAuthorizationPolicy::new(
                 duration,
-                duration,
+                lifetime,
                 duration,
                 duration,
                 duration,

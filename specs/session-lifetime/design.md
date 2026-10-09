@@ -167,3 +167,8 @@
 ## 状态
 
 - 2026-10-09：设计。
+- 2026-10-09：设计合并（#364）。
+- 2026-10-09：第 2 步，这台电脑的授权换令牌时续期。
+  - 领域层加了 `SlidingLifetime`（`renewed_until` 算续到哪天）和 `DeviceTokenFamily::renew`（只往后挪，失效的不能续）。
+  - 换令牌时应用层把寿命交给仓储（`DeviceTokenReplacement::refresh_lifetime`），仓储在同一个事务里续令牌组，新刷新令牌也用续过的时间。
+  - 新设置 `AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS` 先用在设备授权上，第 3 步账户登录也用它。

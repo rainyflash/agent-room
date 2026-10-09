@@ -6,7 +6,7 @@ use agent_room_domain::{
         AgentInstanceId, DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId,
         DeviceRefreshTokenId, OutboxEventId, PrincipalId,
     },
-    time::UtcMillis,
+    time::{SlidingLifetime, UtcMillis},
 };
 
 use crate::persistence::RepositoryResult;
@@ -100,6 +100,9 @@ pub struct DeviceTokenReplacement {
     pub refresh_token_id: DeviceRefreshTokenId,
     pub refresh_token_digest: SecretDigest,
     pub issued_at: UtcMillis,
+    /// 换一次令牌就算这台设备用了一次：仓储在同一个事务里按它把令牌组的到期时间往后续
+    /// （`DeviceTokenFamily::renew`），新刷新令牌也用续过的时间。
+    pub refresh_lifetime: SlidingLifetime,
     /// 旧客户端不带尝试号，轮换后无法重放；新客户端带尝试号，同一尝试可安全重试。
     pub replay: Option<DeviceRefreshReplay>,
 }

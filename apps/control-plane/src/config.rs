@@ -22,6 +22,9 @@ const DEFAULT_RECENT_AUTHENTICATION_MILLIS: u64 = 5 * 60 * 1_000;
 const DEFAULT_CLOCK_SKEW_MILLIS: u64 = 60 * 1_000;
 const DEFAULT_DEVICE_ACCESS_TOKEN_TTL_MILLIS: u64 = 15 * 60 * 1_000;
 const DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
+// 账户登录和这台电脑的授权用着就续，从真正认证起最长一年。浏览器的 Cookie 最长只认 400 天。
+const DEFAULT_SIGN_IN_MAX_LIFETIME_MILLIS: u64 = 365 * 24 * 60 * 60 * 1_000;
+const MAX_SIGN_IN_MAX_LIFETIME_MILLIS: u64 = 400 * 24 * 60 * 60 * 1_000;
 const DEFAULT_DEVICE_PROOF_MAXIMUM_AGE_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS: u64 = 10 * 60 * 1_000;
 // Windows 的 WebView2 从 http://tauri.localhost 提供应用，macOS 的 WKWebView 用自定义
@@ -125,7 +128,10 @@ pub(crate) struct AuthenticationConfig {
     pub(crate) recent_authentication_window: Duration,
     pub(crate) allowed_clock_skew: Duration,
     pub(crate) device_access_token_ttl: Duration,
+    /// 这台电脑的授权连续多久没换过令牌就过期。
     pub(crate) device_refresh_token_ttl: Duration,
+    /// 账户登录和这台电脑的授权从真正认证起最长多久，不短于两个空闲时限。
+    pub(crate) sign_in_max_lifetime: Duration,
     pub(crate) device_proof_maximum_age: Duration,
     pub(crate) device_authorization_maximum_age: Duration,
 }
@@ -516,7 +522,7 @@ fn read_dependency_config(
 fn read_authentication_config(
     source: &impl EnvironmentSource,
 ) -> Result<AuthenticationConfig, ConfigError> {
-    Ok(AuthenticationConfig {
+    let config = AuthenticationConfig {
         issuer_url: parse_http_url(
             "AGENT_ROOM_OIDC_ISSUER_URL",
             &read_required_text(source, "AGENT_ROOM_OIDC_ISSUER_URL")?,
@@ -577,6 +583,12 @@ fn read_authentication_config(
             DEFAULT_DEVICE_REFRESH_TOKEN_TTL_MILLIS,
             60 * 60 * 1_000..=90 * 24 * 60 * 60 * 1_000,
         )?,
+        sign_in_max_lifetime: read_bounded_duration(
+            source,
+            "AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS",
+            DEFAULT_SIGN_IN_MAX_LIFETIME_MILLIS,
+            60 * 60 * 1_000..=MAX_SIGN_IN_MAX_LIFETIME_MILLIS,
+        )?,
         device_proof_maximum_age: read_bounded_duration(
             source,
             "AGENT_ROOM_DEVICE_PROOF_MAXIMUM_AGE_MS",
@@ -589,7 +601,22 @@ fn read_authentication_config(
             DEFAULT_DEVICE_AUTHORIZATION_MAXIMUM_AGE_MILLIS,
             5 * 60 * 1_000..=30 * 60 * 1_000,
         )?,
-    })
+    };
+    validate_sign_in_lifetimes(&config)?;
+    Ok(config)
+}
+
+/// 最长时限是“不管用得多勤也得重新认证”的那一天，不能比连续不用就过期的时限还短。
+fn validate_sign_in_lifetimes(config: &AuthenticationConfig) -> Result<(), ConfigError> {
+    if config.sign_in_max_lifetime < config.web_session_ttl
+        || config.sign_in_max_lifetime < config.device_refresh_token_ttl
+    {
+        return Err(ConfigError::invalid(
+            "AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS",
+            "不能短于登录和设备授权的空闲时限",
+        ));
+    }
+    Ok(())
 }
 
 fn read_observability_config(
@@ -1092,6 +1119,48 @@ mod tests {
         assert_eq!(
             custom.authentication.recent_authentication_window,
             config.authentication.recent_authentication_window
+        );
+    }
+
+    #[test]
+    fn 登录和设备授权默认最长一年且不能短于空闲时限() {
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+        assert_eq!(
+            config.authentication.sign_in_max_lifetime,
+            std::time::Duration::from_hours(365 * 24)
+        );
+        assert_eq!(
+            config.authentication.device_refresh_token_ttl,
+            std::time::Duration::from_hours(30 * 24)
+        );
+
+        for (name, value) in [
+            ("AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS", "3600000"),
+            ("AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS", "34560000001"),
+        ] {
+            let mut environment = valid_environment();
+            environment.0.insert(name, value.to_owned());
+            assert!(
+                matches!(
+                    ControlPlaneConfig::from_source(&environment),
+                    Err(ConfigError::Invalid {
+                        name: "AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS",
+                        ..
+                    })
+                ),
+                "{value} 应被拒绝"
+            );
+        }
+
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS",
+            "2592000000".to_owned(),
+        );
+        let same = ControlPlaneConfig::from_source(&environment).expect("最长时限等于空闲时限有效");
+        assert_eq!(
+            same.authentication.sign_in_max_lifetime,
+            std::time::Duration::from_hours(30 * 24)
         );
     }
 
