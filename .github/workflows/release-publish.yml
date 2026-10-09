@@ -151,7 +151,8 @@ jobs:
           if gh release view "$CHANNEL_TAG" >/dev/null 2>&1; then
             gh release upload "$CHANNEL_TAG" candidate/release.signed.json --clobber
           else
-            gh release create "$CHANNEL_TAG" candidate/release.signed.json --title "Agent Room $CHANNEL channel" --notes "Mutable channel pointer; authenticity and monotonicity are enforced by the signed manifest."
+            # 通道指针只给应用自动更新读，不是一个版本：建成预发布，别抢走正式版本的 Latest。
+            gh release create "$CHANNEL_TAG" candidate/release.signed.json --prerelease --latest=false --title "Agent Room $CHANNEL channel" --notes "Mutable channel pointer; authenticity and monotonicity are enforced by the signed manifest."
           fi
       - name: 记录客户端发布阶段
         env:

@@ -146,7 +146,7 @@ target/release/agent-room-release-tool sign \
 - 使用已修补并显式锁定的 Cosign 3.1.3，以精确 GitHub Workflow OIDC 身份验证所有本地 Sigstore bundle；
 - 对 `full` 候选的三个 OCI 产物复核“已签 manifest 摘要 = 发布 URL digest”，再从 GHCR 探测该精确 digest 可达，拒绝可变标签、摘要错配或已删除镜像；`client` 候选不包含 OCI 产物；
 - 要求晋级记录恰好处于 `compatible-server`；
-- 以 prerelease 公开版本，再更新 `channel-testing` 的签名根清单；
+- 以正式 Release 公开版本并标为 Latest（版本号照旧带 alpha），再更新 `channel-testing` 的签名根清单；通道指针是预发布，不会被标成 Latest；
 - 追加并上传 `clients-published` 晋级证据。
 
 任一步失败都不会推进客户端本地可信序号。桌面端先写入 pending 安装记录，只有目标版本真正启动后才提交序号；下载中断、进程终止或安装失败仍可重试。客户端拒绝过期清单、篡改包、重复序号、跨渠道清单和未指明来源版本的降级。

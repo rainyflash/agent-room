@@ -358,3 +358,5 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `artifacts/releases/` 下的私有输入（不入库）；
   - 维护者亲自批准的设备码（绝不能替他批准）。
 - 云端 Agent 只改代码、合并 PR，发版由维护者在本机发起。
+- 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
+- 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。

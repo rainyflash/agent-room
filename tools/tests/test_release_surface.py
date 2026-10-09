@@ -11,6 +11,7 @@ from tools.release_surface import (
     build_plan,
     installer_name,
     macos_image_name,
+    main,
 )
 
 
@@ -193,6 +194,31 @@ class ReleaseSurfaceTests(unittest.TestCase):
                 "prerelease=true",
             )
         )
+
+    def test_testing渠道的版本也发成正式版并标为latest(self) -> None:
+        release = {"id": 42, "tag_name": self.tag}
+        assets = [{"id": 1, "name": self.installer, "label": None}]
+        with (
+            patch.object(GhCliReleaseGateway, "get_release", return_value=release),
+            patch.object(GhCliReleaseGateway, "list_assets", return_value=assets),
+            patch.object(GhCliReleaseGateway, "publish_release") as publish,
+        ):
+            exit_code = main(
+                [
+                    "publish",
+                    "--repository",
+                    self.repository,
+                    "--tag",
+                    self.tag,
+                    "--version",
+                    self.version,
+                    "--channel",
+                    "testing",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        publish.assert_called_once_with(self.repository, 42, self.tag, prerelease=False)
 
     @patch.object(GhCliReleaseGateway, "_run", return_value="")
     def test_stable版本发布并设置latest(self, request) -> None:
