@@ -996,6 +996,9 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
+  publicWatch: {
+    read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
+  },
   roomDirectory,
   security,
   session: {

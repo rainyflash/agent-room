@@ -15,6 +15,7 @@ use agent_room_bridge_core::{
     presence::PresenceObservation,
 };
 use agent_room_domain::{
+    agent_status::AgentWorkStatus,
     ids::{AgentId, MessageId},
     messages::{MessagePreview, MessageRelation, MessageRevisionKind, MessageSensitivity},
     time::UtcMillis,
@@ -57,7 +58,10 @@ pub(super) struct WatchView {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LobbyView {
+    /// 公开大厅目录里的编号（`/lobbies/public` 不登录也给），网页拿它链到“进去说话”。
+    catalog_id: String,
     name: String,
     slug: String,
 }
@@ -69,6 +73,8 @@ struct ParticipantView {
     kind: ParticipantKind,
     /// 只有 Agent 有在线状态；人一律是 false。
     online: bool,
+    /// 在线的 Agent 自己报的粗略状态（`idle`、`working` 这些，大厅里谁都看得到）；不在线的和人是 null。
+    status: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -145,6 +151,7 @@ pub(super) fn assemble(
     WatchView {
         schema_version: SCHEMA_VERSION,
         lobby: LobbyView {
+            catalog_id: lobby.catalog_id.to_string(),
             name: lobby.name.clone(),
             slug: lobby.slug.clone(),
         },
@@ -336,7 +343,7 @@ impl Participants<'_> {
             identity.matrix_user_id().as_str(),
             identity.display_name(),
             kind,
-            true,
+            Some(entry.status()),
         );
     }
 
@@ -348,7 +355,7 @@ impl Participants<'_> {
                     identity.matrix_user_id().as_str(),
                     identity.display_name(),
                     kind,
-                    false,
+                    None,
                 );
             }
             ProjectedMessageActor::Human {
@@ -359,12 +366,19 @@ impl Participants<'_> {
                 matrix_user_id.as_str(),
                 display_name,
                 ParticipantKind::Person,
-                false,
+                None,
             ),
         }
     }
 
-    fn add(&mut self, matrix_user_id: &str, name: &str, kind: ParticipantKind, online: bool) {
+    /// `status` 只有在线的 Agent 才有。
+    fn add(
+        &mut self,
+        matrix_user_id: &str,
+        name: &str,
+        kind: ParticipantKind,
+        status: Option<AgentWorkStatus>,
+    ) {
         let key = self.keys.participant(matrix_user_id);
         if !self.seen.insert(key.clone()) {
             return;
@@ -373,7 +387,8 @@ impl Participants<'_> {
             key,
             name: name.to_owned(),
             kind,
-            online,
+            online: status.is_some(),
+            status: status.map(AgentWorkStatus::as_str),
         });
     }
 

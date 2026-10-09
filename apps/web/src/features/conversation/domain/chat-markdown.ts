@@ -119,3 +119,26 @@ export function parseInline(text: string): readonly MarkdownInline[] {
       return { kind: 'text', text: piece } as const;
     });
 }
+
+/** 只要字：头顶气泡这种一行的地方不渲染 Markdown，标记符号也别露出来。 */
+export function chatMarkdownPlainText(source: string): string {
+  return parseChatMarkdown(source)
+    .map((block) => {
+      switch (block.kind) {
+        case 'code':
+          return block.text;
+        case 'heading':
+          return inlineText(block.inline);
+        case 'list':
+          return block.items.map(inlineText).join('\n');
+        case 'quote':
+        case 'paragraph':
+          return block.lines.map(inlineText).join('\n');
+      }
+    })
+    .join('\n');
+}
+
+function inlineText(inline: readonly MarkdownInline[]): string {
+  return inline.map((piece) => piece.text).join('');
+}

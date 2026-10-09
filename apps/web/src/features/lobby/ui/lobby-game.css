@@ -96,7 +96,10 @@
   color: var(--color-ink);
 }
 .lobby-game .workspace-header__identity > span {
+  overflow: hidden;
   margin-bottom: 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--ar-muted);
   font-size: 12px;
   font-weight: 600;

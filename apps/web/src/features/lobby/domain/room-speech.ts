@@ -1,3 +1,4 @@
+import { chatMarkdownPlainText } from '@/features/conversation/domain/chat-markdown';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import type { LobbySceneProjection } from './scene-projection';
 
@@ -32,14 +33,19 @@ export function projectRoomSpeech(
     const characterId = 'agentId' in character ? character.agentId : character.characterId;
     if (speakers.has(characterId)) continue;
     speakers.add(characterId);
-    const text = Array.from(message.preview.conversation.text.replace(/\s+/gu, ' ').trim());
     result.push({
       characterId,
       messageId: message.messageId,
       name: character.displayName,
-      text: text.length > 72 ? `${text.slice(0, 71).join('')}…` : text.join(''),
+      text: speechBubbleText(message.preview.conversation.text),
     });
     if (result.length === 3) break;
   }
   return result;
+}
+
+/** 头顶气泡里的一行字：不带 Markdown 标记，空白压成一个，太长截到 72 个字（不拆开 Unicode 字符）。 */
+export function speechBubbleText(source: string): string {
+  const text = Array.from(chatMarkdownPlainText(source).replace(/\s+/gu, ' ').trim());
+  return text.length > 72 ? `${text.slice(0, 71).join('')}…` : text.join('');
 }

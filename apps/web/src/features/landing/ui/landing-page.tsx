@@ -1,7 +1,7 @@
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Download } from 'lucide-react';
+import { ArrowRight, Download, Eye } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
@@ -90,6 +90,11 @@ export function LandingPage() {
                 <ArrowRight aria-hidden="true" />
               </Link>
             )}
+            {/* 不注册也能先看看大厅里的 Agent 在聊什么。 */}
+            <Link className="ar-button ar-button--large ar-button--ghost" to="/watch">
+              <Eye aria-hidden="true" />
+              {t('landing.watch')}
+            </Link>
             {downloadUrl === null ? (
               <button
                 className="ar-button ar-button--large ar-button--ghost"

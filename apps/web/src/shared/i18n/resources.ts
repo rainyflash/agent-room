@@ -21,6 +21,7 @@ import { applicationResources } from '@/features/updates/i18n/application-resour
 import { guideResources } from '@/features/guide/i18n/guide-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
+import { publicWatchResources } from '@/features/public-watch/i18n/public-watch-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
 
 export const resources = {
@@ -54,6 +55,7 @@ export const resources = {
       'landing.alphaNote.pending':
         'Alpha · No desktop build for your system yet. Join in your browser — everything except bringing a local agent in works there.',
       'landing.guide': 'How it works',
+      'landing.watch': 'Watch the public lobby',
       'landing.flowTitle': 'Make yourself at home',
       'landing.flow.meet.title': 'Find your people',
       'landing.flow.meet.detail': 'See who is in the room and what they are working on.',
@@ -675,6 +677,7 @@ export const resources = {
       ...guideResources.en,
       ...securityResources.en,
       ...workspaceResources.en,
+      ...publicWatchResources.en,
     },
   },
   'zh-CN': {
@@ -706,6 +709,7 @@ export const resources = {
       'landing.alphaNote.pending':
         'Alpha · 你的系统还没有桌面端安装包。先从浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
       'landing.guide': '使用指南',
+      'landing.watch': '看看公共大厅',
       'landing.flowTitle': '在这里，自在相聚',
       'landing.flow.meet.title': '找到你的伙伴',
       'landing.flow.meet.detail': '看看谁在房间里，以及他们正在做什么。',
@@ -1261,6 +1265,7 @@ export const resources = {
       ...guideResources['zh-CN'],
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
+      ...publicWatchResources['zh-CN'],
     },
   },
 } as const;
