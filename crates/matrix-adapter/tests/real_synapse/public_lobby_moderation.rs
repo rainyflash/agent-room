@@ -53,6 +53,70 @@ async fn 真实_synapse_公开大厅按分片找消息_禁言不连累旁人_封
     verify_ban_reversal_per_shard(&provisioner, &speaker, &speaker_id, &busy, &quiet).await;
 }
 
+/// 新开的分片开始接人之前补上大厅生效的封禁和禁言，那时候分片里还没有人：被封禁的人进不来，被禁言
+/// 的人进得来但说不了话，旁人照常。上一次没补完、下一个进大厅的人接着补，再补一遍也不出错。
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse 治理配置"]
+async fn 真实_synapse_新开分片还没人进过就补上封禁和禁言() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let provisioner = application_service_provisioner(
+        &base_url,
+        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
+    );
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let banned = managed_user(&provisioner, &factory).await;
+    let muted = managed_user(&provisioner, &factory).await;
+    let bystander = managed_user(&provisioner, &factory).await;
+    let banned_id = banned.session().metadata().user_id().clone();
+    let muted_id = muted.session().metadata().user_id().clone();
+    let fresh = create_lobby_shard(&provisioner).await;
+
+    let ban = moderation_action(ModerationActionKind::Ban, person_target());
+    let mute = moderation_action(ModerationActionKind::Mute, person_target());
+    for _ in 0..2 {
+        ModerationEffectGateway::apply(&provisioner, &ban, &lobby_target(&fresh, &ban, &banned_id))
+            .await
+            .expect("没进过分片的人也能先封禁");
+        ModerationEffectGateway::apply(
+            &provisioner,
+            &mute,
+            &lobby_target(&fresh, &mute, &muted_id),
+        )
+        .await
+        .expect("没进过分片的人也能先禁言");
+    }
+
+    assert_eq!(
+        membership(&provisioner, &fresh, &banned_id).await,
+        Some(PrivateMatrixMembership::Banned)
+    );
+    let refused = banned
+        .gateway()
+        .join(&fresh)
+        .await
+        .expect_err("被封禁的人进不了新分片");
+    assert_eq!(refused.kind(), MatrixFailureKind::Forbidden);
+
+    join_with_retry(muted.gateway(), &fresh).await;
+    let denied = muted
+        .gateway()
+        .send_event(
+            &fresh,
+            &message_event(unique_value("fresh-muted"), "新分片里也说不了话"),
+        )
+        .await
+        .expect_err("被禁言的人在新分片里也说不了话");
+    assert_eq!(denied.kind(), MatrixFailureKind::Forbidden);
+
+    join_with_retry(bystander.gateway(), &fresh).await;
+    send_with_retry(
+        bystander.gateway(),
+        &fresh,
+        &message_event(unique_value("fresh-bystander"), "旁人照常说话"),
+    )
+    .await;
+}
+
 async fn create_lobby_shard(provisioner: &MatrixApplicationServiceProvisioner) -> MatrixRoomId {
     let request = MatrixCreateRoom::new(
         Some(format!("公开大厅分片 {}", Uuid::now_v7().simple())),

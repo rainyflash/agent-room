@@ -1222,8 +1222,11 @@ fn build_lobby_provisioning(
         .map_err(|error| StartupError::new("startup.invalid_lobby_config", error.to_string()))?;
     Ok(Arc::new(LobbyProvisioningService::new(
         LobbyProvisioningDependencies {
-            store: repositories,
-            matrix,
+            store: repositories.clone(),
+            matrix: matrix.clone(),
+            // 新分片开始接人之前补上这个大厅生效的禁言、封禁，和管理员落治理走同一套 Matrix 效果。
+            moderation: repositories,
+            moderation_effects: matrix,
             identifiers: system_runtime.clone(),
             clock: system_runtime,
         },

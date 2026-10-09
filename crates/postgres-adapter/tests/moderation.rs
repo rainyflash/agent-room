@@ -1,9 +1,9 @@
-use std::env;
+use std::{cell::Cell, env};
 
 use agent_room_application::ports::{
     MatrixRoomId, ModerationActionReservationOutcome, ModerationAuthority, ModerationReportPolicy,
     ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
-    PrivateRoomSnapshot, PrivateRoomStore,
+    PrivateRoomSnapshot, PrivateRoomStore, StandingModerationSource,
 };
 use agent_room_domain::{
     ids::{
@@ -237,6 +237,210 @@ async fn 公开大厅的治理拿到全部活跃分片_最活跃的在前() {
     );
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 新开分片要补的只有此刻生效的禁言和封禁() {
+    use ModerationActionKind::{Ban, Kick, Mute};
+    let database = TestDatabase::connect().await;
+    let pool = &database.runtime;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let other_lobby = RoomCatalogId::from_uuid(Uuid::now_v7());
+    seed_public_lobby(pool, catalog_id, &[("live", "active", "1", 1)]).await;
+    seed_public_lobby(pool, other_lobby, &[("other", "active", "1", 1)]).await;
+    let moderator = seed_principal(pool, "carry-moderator").await;
+    let lobby = Ledger::new(pool, moderator, catalog_id);
+    let banned = seed_principal(pool, "banned").await;
+    let muted = seed_principal(pool, "muted").await;
+    let shouting = seed_principal(pool, "shouting").await;
+    let expired = seed_principal(pool, "expired").await;
+    let forgiven = seed_principal(pool, "forgiven").await;
+    let failed = seed_principal(pool, "failed").await;
+    let pending = seed_principal(pool, "pending").await;
+
+    lobby.record(Ban, banned, Ending::Applied, None).await;
+    // 禁言到 `time(500)`，读的时候是 `time(100)`：还没到期。
+    lobby
+        .record(Mute, muted, Ending::Applied, Some(time(500)))
+        .await;
+    // 引用不是规范写法（大写）也认得出是谁：治理当初就是按 UUID 解析放行的。
+    lobby
+        .record_reference(Ban, &shouting.to_string().to_uppercase())
+        .await;
+    lobby
+        .record(Mute, expired, Ending::Applied, Some(time(50)))
+        .await;
+    lobby.record(Ban, forgiven, Ending::Reversed, None).await;
+    lobby.record(Ban, failed, Ending::Failed, None).await;
+    lobby.record(Ban, pending, Ending::Pending, None).await;
+    lobby.record(Kick, banned, Ending::Applied, None).await;
+    lobby.hide("$spam:matrix.test").await;
+    Ledger::new(pool, moderator, other_lobby)
+        .record(Ban, muted, Ending::Applied, None)
+        .await;
+
+    let standing = StandingModerationSource::standing_person_actions(
+        &PostgresRepositories::new(pool.clone()),
+        catalog_id,
+        time(100),
+    )
+    .await
+    .expect("要补的治理应可读取");
+    let found: Vec<(ModerationActionKind, String)> = standing
+        .iter()
+        .map(|item| {
+            (
+                item.action.kind(),
+                item.target_matrix_user_id.as_str().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (Ban, matrix_user(pool, banned).await),
+            (Mute, matrix_user(pool, muted).await),
+            (Ban, matrix_user(pool, shouting).await),
+        ],
+        "只有此刻生效的禁言和封禁，先做的在前；踢出、隐藏和别的大厅的都不算"
+    );
+
+    database.close().await;
+}
+
+/// 治理动作最后落成什么样。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ending {
+    Applied,
+    Reversed,
+    Failed,
+    Pending,
+}
+
+/// 往一个大厅里记治理：按真实的预留、落下、撤销走一遍写进库。
+struct Ledger {
+    repositories: PostgresRepositories,
+    moderator: PrincipalId,
+    catalog_id: RoomCatalogId,
+    /// 下一步在 `time(这个数)` 做，一步比一步晚一毫秒，都早于读的时候 `time(100)`。
+    next: Cell<i64>,
+}
+
+impl Ledger {
+    fn new(pool: &PgPool, moderator: PrincipalId, catalog_id: RoomCatalogId) -> Self {
+        Self {
+            repositories: PostgresRepositories::new(pool.clone()),
+            moderator,
+            catalog_id,
+            next: Cell::new(10),
+        }
+    }
+
+    fn tick(&self) -> UtcMillis {
+        let offset = self.next.get();
+        self.next.set(offset + 1);
+        time(offset)
+    }
+
+    async fn record(
+        &self,
+        kind: ModerationActionKind,
+        target: PrincipalId,
+        ending: Ending,
+        expires_at: Option<UtcMillis>,
+    ) {
+        let target = ModerationTarget::new(ModerationTargetKind::Principal, target.to_string())
+            .expect("主体目标有效");
+        let mut action = self.reserve(kind, target, expires_at).await;
+        match ending {
+            Ending::Pending => {}
+            Ending::Failed => {
+                action
+                    .mark_failed("matrix.unavailable")
+                    .expect("动作可记成失败");
+                self.finalize(&action, "moderation.action.failed").await;
+            }
+            Ending::Applied | Ending::Reversed => {
+                action.mark_applied().expect("动作可记成已落下");
+                self.finalize(&action, "moderation.action.applied").await;
+                if ending == Ending::Reversed {
+                    action.reverse(self.tick()).expect("动作可撤销");
+                    self.finalize(&action, "moderation.action.reversed").await;
+                }
+            }
+        }
+    }
+
+    /// 一条已经落下、引用照原样写的管人治理。
+    async fn record_reference(&self, kind: ModerationActionKind, reference: &str) {
+        let target = ModerationTarget::new(ModerationTargetKind::Principal, reference)
+            .expect("主体目标有效");
+        let mut action = self.reserve(kind, target, None).await;
+        action.mark_applied().expect("动作可记成已落下");
+        self.finalize(&action, "moderation.action.applied").await;
+    }
+
+    /// 一条已经落下的隐藏：管的是消息，不是人。
+    async fn hide(&self, event_id: &str) {
+        let target =
+            ModerationTarget::new(ModerationTargetKind::Event, event_id).expect("事件目标有效");
+        let mut hide = self.reserve(ModerationActionKind::Hide, target, None).await;
+        hide.mark_applied().expect("隐藏可记成已落下");
+        self.finalize(&hide, "moderation.action.applied").await;
+    }
+
+    async fn reserve(
+        &self,
+        kind: ModerationActionKind,
+        target: ModerationTarget,
+        expires_at: Option<UtcMillis>,
+    ) -> ModerationAction {
+        let action = ModerationAction::reserve(
+            ModerationActionId::from_uuid(Uuid::now_v7()),
+            None,
+            self.moderator,
+            self.catalog_id,
+            kind,
+            target,
+            ModerationReason::Harassment,
+            self.tick(),
+            expires_at,
+        )
+        .expect("治理动作有效");
+        let requested = action_audit(
+            &action,
+            "moderation.action.requested",
+            ModerationAuditOutcome::Allowed,
+        );
+        ModerationRepository::reserve_action(&self.repositories, &action, &requested)
+            .await
+            .expect("动作预留应成功");
+        action
+    }
+
+    async fn finalize(&self, action: &ModerationAction, code: &str) {
+        let outcome = if action.status() == ModerationActionStatus::Failed {
+            ModerationAuditOutcome::Failed
+        } else {
+            ModerationAuditOutcome::Allowed
+        };
+        ModerationRepository::finalize_action(
+            &self.repositories,
+            action,
+            &action_audit(action, code, outcome),
+        )
+        .await
+        .expect("动作终态应提交");
+    }
+}
+
+async fn matrix_user(pool: &PgPool, principal: PrincipalId) -> String {
+    sqlx::query_scalar("SELECT matrix_user_id FROM agent_room.principal WHERE id = $1")
+        .bind(principal.as_uuid())
+        .fetch_one(pool)
+        .await
+        .expect("主体的 Matrix 账号应可读取")
 }
 
 fn room_ids(context: &ModerationRoomContext) -> Vec<&str> {
