@@ -174,6 +174,7 @@ impl AgentStatusPublicationHandle {
             && let Some(matrix) = &self.matrix
         {
             let wanted = reporting.wanted(Instant::now());
+            let unknown = matches!(reporting.support, PresenceSupport::Unknown { .. });
             if let Some(failure) = reporting
                 .support
                 .probe(&OwnMatrixPresence(matrix.as_ref()), wanted)
@@ -184,6 +185,10 @@ impl AgentStatusPublicationHandle {
                     operation = ?failure.operation(),
                     "没确认服务器开没开 Matrix 在线状态，下次同步后再确认"
                 );
+            }
+            // 探的时候已经报过了：紧接着开始等消息时不用再报（10 秒内再报会被限速）。
+            if unknown && reporting.support == PresenceSupport::Enabled {
+                reporting.reported = Some(wanted);
             }
             if reporting.support == PresenceSupport::Disabled {
                 tracing::warn!("服务器没开 Matrix 在线状态，改回写租约");
