@@ -50,7 +50,15 @@ function consoleLogger(namespace: string): Logger {
   };
 }
 
+/**
+ * Rust 加密的外发请求失败时，SDK 把错误拼进一句话里再记，没有错误对象可看
+ * （`Failed to process outgoing request 1: AbortError: signal is aborted without reason`）。
+ * 字符串只认这一句：只是提到 AbortError 的话不算取消。
+ */
+const OUTGOING_REQUEST_ABORT = /^Failed to process outgoing request \d+: AbortError: /u;
+
 function isAbortError(value: unknown): boolean {
+  if (typeof value === 'string') return OUTGOING_REQUEST_ABORT.test(value);
   return (
     typeof value === 'object' && value !== null && 'name' in value && value.name === 'AbortError'
   );

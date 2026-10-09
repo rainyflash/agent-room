@@ -56,6 +56,21 @@ describe('Matrix shutdown logging', () => {
     expect(output.debug).not.toHaveBeenCalled();
   });
 
+  it('退出时中止的加密外发请求，SDK 拼成一句话记的，也只记成调试信息', () => {
+    // 真实网页登录验收偶发红在这里：退出登录时 stopClient 中止了还在发的 keys/query。
+    const output = sink();
+    const lifecycle = new MatrixLifecycleLogger(output);
+    const crypto = lifecycle.logger.getChild('[Rust crypto]');
+    const message =
+      'Failed to process outgoing request 1: AbortError: signal is aborted without reason';
+    crypto.error(message);
+    expect(output.error).toHaveBeenCalledWith(message);
+    lifecycle.beginShutdown();
+    crypto.error(message);
+    expect(output.debug).toHaveBeenCalledWith(message);
+    expect(output.error).toHaveBeenCalledOnce();
+  });
+
   it('does not change another client or a string that merely mentions AbortError', () => {
     const output = sink();
     const first = new MatrixLifecycleLogger(output);

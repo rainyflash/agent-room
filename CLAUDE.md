@@ -58,7 +58,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 占位程序是 NSIS 编出来的，运行时一直以不许删改的方式开着自己，所以运行中挪不开。“桌面端挪开”这条路要在桌面端已退出的场景（WebView 还开着本机数据）里查；真正的桌面端运行时能改名，候选上的真实安装验收会查。
 - 已知的偶发失败，重跑即过：
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
-  - 同一个用例偶发 `Failed to process outgoing request 0: AbortError: signal is aborted without reason`：退出登录时 `stopClient` 中止了还在发的加密请求，同一类竞态。只重跑失败的作业（`gh run rerun <run> --failed`）即可。
+  - 同一个用例以前偶发 `Failed to process outgoing request 1: AbortError: signal is aborted without reason`（编号 0 也见过）：退出登录时 `stopClient` 中止了还在发的加密请求，SDK 把错误拼成一句话记成错误。现在退出时只认这一句的格式、记成调试信息（`matrix-lifecycle-logger.ts`）；再红在这里，就是有请求没在退出时停下，要查，别只重跑。
   - 无头验收里 Synapse 偶尔没起来。
 - 上游出了新的安全公告、供应链作业变红时：
   1. 先试升级依赖；
