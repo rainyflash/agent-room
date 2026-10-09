@@ -117,7 +117,9 @@ async fn 真实_synapse_新开分片还没人进过就补上封禁和禁言() {
     .await;
 }
 
-async fn create_lobby_shard(provisioner: &MatrixApplicationServiceProvisioner) -> MatrixRoomId {
+pub(super) async fn create_lobby_shard(
+    provisioner: &MatrixApplicationServiceProvisioner,
+) -> MatrixRoomId {
     let request = MatrixCreateRoom::new(
         Some(format!("公开大厅分片 {}", Uuid::now_v7().simple())),
         Some("真实 Synapse 公开大厅治理验收".to_owned()),

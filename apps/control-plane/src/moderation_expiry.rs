@@ -1,5 +1,5 @@
-//! 治理动作到期自动解除：与 HTTP 服务共同存活、共同关闭，每 30 秒一轮，互不重叠。没撤成的动作保持
-//! 已生效，下一轮再试。
+//! 治理动作到期自动解除：与 HTTP 服务共同存活、共同关闭，每 30 秒一轮，互不重叠。动作一个一个地领，
+//! 多个副本不会同时做同一个；没撤成的保持已生效，往后退避再试。
 
 use std::{sync::Arc, time::Duration};
 
@@ -71,7 +71,7 @@ fn report(outcome: &ModerationExpiryOutcome) {
         tracing::warn!(
             moderation_action.id = %retry.action_id,
             code = retry.failure_code,
-            "到期的治理动作这一轮没解除成，下一轮再试"
+            "到期的治理动作这一轮没解除成，往后退避再试"
         );
     }
 }

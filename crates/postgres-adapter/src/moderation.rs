@@ -4,7 +4,8 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
-        ModerationExpiryCursor, ModerationExpiryRepository, ModerationReportPolicy,
+        ModerationExpiryClaim, ModerationExpiryRepository, ModerationExpiryReschedule,
+        ModerationMuteLedger, ModerationMuteLock, ModerationMuteStanding, ModerationReportPolicy,
         ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
         StandingModeration, StandingModerationSource,
     },
@@ -147,13 +148,20 @@ impl ModerationRepository for PostgresRepositories {
 }
 
 impl ModerationExpiryRepository for PostgresRepositories {
-    fn list_due_actions(
+    fn claim_due_action(
         &self,
         now: UtcMillis,
-        after: Option<ModerationExpiryCursor>,
-        limit: u16,
-    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationAction>>> {
-        Box::pin(async move { list_due_actions(&self.pool, now, after, limit).await })
+        lease_until: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Option<ModerationExpiryClaim>>> {
+        Box::pin(async move { claim_due_action(&self.pool, now, lease_until).await })
+    }
+
+    fn reschedule_expiry<'a>(
+        &'a self,
+        claim: &'a ModerationExpiryClaim,
+        reschedule: ModerationExpiryReschedule,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move { reschedule_expiry(&self.pool, claim, reschedule).await })
     }
 
     fn has_other_effective_action<'a>(
@@ -169,6 +177,24 @@ impl ModerationExpiryRepository for PostgresRepositories {
         action: &'a ModerationAction,
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>> {
         Box::pin(async move { expiry_room(&self.pool, action).await })
+    }
+}
+
+impl ModerationMuteLedger for PostgresRepositories {
+    fn mute_standing<'a>(
+        &'a self,
+        room_catalog_id: RoomCatalogId,
+        target: &'a ModerationTarget,
+    ) -> PortFuture<'a, RepositoryResult<Option<ModerationMuteStanding>>> {
+        Box::pin(async move { mute_standing(&self.pool, room_catalog_id, target).await })
+    }
+
+    fn try_lock_mutes<'a>(
+        &'a self,
+        room_catalog_id: RoomCatalogId,
+        target: &'a ModerationTarget,
+    ) -> PortFuture<'a, RepositoryResult<Option<Box<dyn ModerationMuteLock>>>> {
+        Box::pin(async move { try_lock_mutes(&self.pool, room_catalog_id, target).await })
     }
 }
 
@@ -621,36 +647,83 @@ async fn list_room_actions(
         .collect()
 }
 
-async fn list_due_actions(
+/// 领一个到期的动作，同一条语句里设好租约、次数加一。别的实例正在领的（行锁着）跳过。
+async fn claim_due_action(
     pool: &PgPool,
     now: UtcMillis,
-    after: Option<ModerationExpiryCursor>,
-    limit: u16,
-) -> RepositoryResult<Vec<ModerationAction>> {
-    let operation = "moderation.list_due_actions";
+    lease_until: UtcMillis,
+) -> RepositoryResult<Option<ModerationExpiryClaim>> {
+    let operation = "moderation.claim_due_action";
     let statement = format!(
-        "SELECT {ACTION_COLUMNS}
-           FROM agent_room.moderation_action
-           WHERE status = 'applied'
-             AND expires_at <= to_timestamp($1::double precision / 1000.0)
-             AND (
-               $2::bigint IS NULL
-               OR (expires_at, id) > (to_timestamp($2::double precision / 1000.0), $3::uuid)
-             )
-           ORDER BY expires_at ASC, id ASC
-           LIMIT $4"
+        "WITH candidate AS (
+             SELECT id
+             FROM agent_room.moderation_action
+             WHERE status = 'applied'
+               AND expires_at <= to_timestamp($1::double precision / 1000.0)
+               AND (
+                 expiry_next_attempt_at IS NULL
+                 OR expiry_next_attempt_at <= to_timestamp($1::double precision / 1000.0)
+               )
+             ORDER BY expires_at ASC, id ASC
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED
+         )
+         UPDATE agent_room.moderation_action
+         SET expiry_attempts = expiry_attempts + 1,
+             expiry_next_attempt_at = to_timestamp($2::double precision / 1000.0)
+         FROM candidate
+         WHERE moderation_action.id = candidate.id
+         RETURNING {ACTION_COLUMNS},
+                   moderation_action.expiry_attempts,
+                   moderation_action.expiry_failure_code"
     );
-    let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
+    let row = sqlx::query(sqlx::AssertSqlSafe(statement))
         .bind(now.value())
-        .bind(after.map(|cursor| cursor.expires_at.value()))
-        .bind(after.map(|cursor| cursor.action_id.as_uuid()))
-        .bind(i64::from(limit))
-        .fetch_all(pool)
+        .bind(lease_until.value())
+        .fetch_optional(pool)
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
-    rows.iter()
-        .map(|row| decode_action(row, operation))
-        .collect()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let attempts: i32 = decode_column(&row, "expiry_attempts", operation)?;
+    Ok(Some(ModerationExpiryClaim {
+        action: decode_action(&row, operation)?,
+        attempt: u32::try_from(attempts).map_err(|_| corrupt_data(operation))?,
+        previous_failure_code: decode_column(&row, "expiry_failure_code", operation)?,
+    }))
+}
+
+/// 排下次只在还是已生效、领过的次数还是领到时那个数时写：别的实例接手以后，前一个改不动。
+async fn reschedule_expiry(
+    pool: &PgPool,
+    claim: &ModerationExpiryClaim,
+    reschedule: ModerationExpiryReschedule,
+) -> RepositoryResult<bool> {
+    let operation = "moderation.reschedule_expiry";
+    let (at, deferred, failure_code) = match reschedule {
+        ModerationExpiryReschedule::Retry { at, failure_code } => (at, false, Some(failure_code)),
+        ModerationExpiryReschedule::Defer { at } => (at, true, None),
+    };
+    let attempt = i32::try_from(claim.attempt)
+        .map_err(|_| RepositoryError::new(operation, RepositoryErrorKind::Constraint))?;
+    // 定不下来的那次不算领过：次数退回去，失败码照旧留着。
+    let updated = sqlx::query(
+        r"UPDATE agent_room.moderation_action
+           SET expiry_next_attempt_at = to_timestamp($3::double precision / 1000.0),
+               expiry_attempts = CASE WHEN $4 THEN expiry_attempts - 1 ELSE expiry_attempts END,
+               expiry_failure_code = CASE WHEN $4 THEN expiry_failure_code ELSE $5 END
+           WHERE id = $1 AND status = 'applied' AND expiry_attempts = $2",
+    )
+    .bind(claim.action.id().as_uuid())
+    .bind(attempt)
+    .bind(at.value())
+    .bind(deferred)
+    .bind(failure_code)
+    .execute(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(updated.rows_affected() == 1)
 }
 
 async fn has_other_effective_action(
@@ -659,31 +732,30 @@ async fn has_other_effective_action(
     now: UtcMillis,
 ) -> RepositoryResult<bool> {
     let operation = "moderation.has_other_effective_action";
-    sqlx::query_scalar(
-        r"SELECT EXISTS (
-             SELECT 1
-             FROM agent_room.moderation_action AS other
-             WHERE other.room_catalog_id = $1
-               AND other.action_type = $2
-               AND other.target_kind = $3
-               AND other.target_reference = $4
-               AND other.id <> $5
-               AND other.status = 'applied'
-               AND (
-                 other.expires_at IS NULL
-                 OR other.expires_at > to_timestamp($6::double precision / 1000.0)
-               )
-           )",
+    let references: Vec<String> = sqlx::query_scalar(
+        r"SELECT target_reference
+           FROM agent_room.moderation_action
+           WHERE room_catalog_id = $1
+             AND action_type = $2
+             AND target_kind = $3
+             AND id <> $4
+             AND status = 'applied'
+             AND (
+               expires_at IS NULL
+               OR expires_at > to_timestamp($5::double precision / 1000.0)
+             )",
     )
     .bind(action.room_catalog_id().as_uuid())
     .bind(action.kind().as_str())
     .bind(action.target().kind().as_str())
-    .bind(action.target().reference())
     .bind(action.id().as_uuid())
     .bind(now.value())
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|error| map_sqlx_error(operation, &error))
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(references
+        .iter()
+        .any(|reference| same_target(action.target(), reference)))
 }
 
 /// 到期解除要撤到哪。和 [`inspect_room_authority`] 拿的是同一组分片（同样最活跃的在前），但不看谁在
@@ -739,6 +811,160 @@ async fn expiry_room(
             .transpose()
             .map_err(|_| corrupt_data(operation))?,
     }))
+}
+
+/// 一个人在一个房间里此刻的禁言情况。和 [`expiry_room`] 一样不看目录和账号的状态；私人房间里他受邀
+/// 或者已经加入、权限里开着发言（第 2 位）才算能说话。
+async fn mute_standing(
+    pool: &PgPool,
+    room_catalog_id: RoomCatalogId,
+    target: &ModerationTarget,
+) -> RepositoryResult<Option<ModerationMuteStanding>> {
+    let operation = "moderation.mute_standing";
+    let row = sqlx::query(
+        r"SELECT catalog.kind,
+                  ARRAY(
+                    SELECT room.matrix_room_id
+                    FROM agent_room.room_instance AS room
+                    WHERE room.catalog_entry_id = catalog.id AND room.state = 'active'
+                    ORDER BY room.activity_score DESC,
+                             room.member_count_projection DESC,
+                             room.id ASC
+                  ) AS matrix_room_ids,
+                  target.matrix_user_id AS target_matrix_user_id,
+                  EXISTS (
+                    SELECT 1 FROM agent_room.private_room_membership AS membership
+                    WHERE membership.catalog_entry_id = catalog.id
+                      AND membership.principal_id = $2
+                      AND membership.membership_status IN ('invited', 'joined')
+                      AND (membership.permission_bits & 2) = 2
+                  ) AS member_may_speak
+           FROM agent_room.room_catalog_entry AS catalog
+           LEFT JOIN agent_room.principal AS target ON target.id = $2
+           WHERE catalog.id = $1",
+    )
+    .bind(room_catalog_id.as_uuid())
+    .bind(principal_reference(target))
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let catalog_kind: String = decode_column(&row, "kind", operation)?;
+    let room_kind =
+        RoomCatalogKind::try_from(catalog_kind.as_str()).map_err(|_| corrupt_data(operation))?;
+    let matrix_room_ids: Vec<String> = decode_column(&row, "matrix_room_ids", operation)?;
+    let target_matrix_user: Option<String> =
+        decode_column(&row, "target_matrix_user_id", operation)?;
+    let member_may_speak: bool = decode_column(&row, "member_may_speak", operation)?;
+    Ok(Some(ModerationMuteStanding {
+        room_kind,
+        matrix_room_ids: matrix_room_ids
+            .into_iter()
+            .map(MatrixRoomId::new)
+            .collect::<Result<_, _>>()
+            .map_err(|_| corrupt_data(operation))?,
+        target_matrix_user_id: target_matrix_user
+            .map(MatrixUserId::new)
+            .transpose()
+            .map_err(|_| corrupt_data(operation))?,
+        may_speak: room_kind != RoomCatalogKind::PrivateRoom || member_may_speak,
+        mutes: person_mutes(pool, room_catalog_id, target, operation).await?,
+    }))
+}
+
+/// 这个房间里这个人已经落下和正在落的禁言，先做的在前。按房间读出来再按 UUID 挑：引用的写法不一定
+/// 规范，不能拿文本比；一个房间的治理动作不多。
+async fn person_mutes(
+    pool: &PgPool,
+    room_catalog_id: RoomCatalogId,
+    target: &ModerationTarget,
+    operation: &'static str,
+) -> RepositoryResult<Vec<ModerationAction>> {
+    let statement = format!(
+        "SELECT {ACTION_COLUMNS}
+           FROM agent_room.moderation_action
+           WHERE room_catalog_id = $1
+             AND action_type = 'mute'
+             AND status IN ('applied', 'pending')
+           ORDER BY starts_at ASC, id ASC"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
+        .bind(room_catalog_id.as_uuid())
+        .fetch_all(pool)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let mutes = rows
+        .iter()
+        .map(|row| decode_action(row, operation))
+        .collect::<RepositoryResult<Vec<_>>>()?;
+    Ok(mutes
+        .into_iter()
+        .filter(|mute| same_target(target, mute.target().reference()))
+        .collect())
+}
+
+/// 拿着禁言锁的事务。锁是事务级的 advisory lock：提交、回滚或者连接断了都会放掉。
+struct PostgresMuteLock {
+    transaction: Transaction<'static, Postgres>,
+}
+
+impl ModerationMuteLock for PostgresMuteLock {
+    fn release(self: Box<Self>) -> PortFuture<'static, ()> {
+        Box::pin(async move {
+            // 事务里只拿了锁、什么也没写，提交不成也不要紧：连接一断，锁就放了。
+            let _ = self.transaction.commit().await;
+        })
+    }
+}
+
+async fn try_lock_mutes(
+    pool: &PgPool,
+    room_catalog_id: RoomCatalogId,
+    target: &ModerationTarget,
+) -> RepositoryResult<Option<Box<dyn ModerationMuteLock>>> {
+    let operation = "moderation.lock_mutes";
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let locked: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(mute_lock_key(room_catalog_id, target))
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+    if !locked {
+        transaction
+            .rollback()
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+        return Ok(None);
+    }
+    Ok(Some(Box::new(PostgresMuteLock { transaction })))
+}
+
+/// 禁言锁按房间和人算，人按 UUID 认：同一个人写法不一样也是同一把锁。
+fn mute_lock_key(room_catalog_id: RoomCatalogId, target: &ModerationTarget) -> String {
+    let person = principal_reference(target)
+        .map_or_else(|| target.reference().to_owned(), |id| id.to_string());
+    format!("agent_room.moderation_mute:{room_catalog_id}:{person}")
+}
+
+/// 管人的目标解析成 UUID。落治理时就是解析成 UUID 才放行的，写法不一定规范（大写、不带横线）。
+fn principal_reference(target: &ModerationTarget) -> Option<uuid::Uuid> {
+    (target.kind() == ModerationTargetKind::Principal)
+        .then(|| uuid::Uuid::parse_str(target.reference()).ok())
+        .flatten()
+}
+
+/// 这个引用是不是指 `target`：管人的按 UUID 比，别的按原文比。
+fn same_target(target: &ModerationTarget, reference: &str) -> bool {
+    match principal_reference(target) {
+        Some(person) => uuid::Uuid::parse_str(reference).is_ok_and(|other| other == person),
+        None => target.reference() == reference,
+    }
 }
 
 /// 新开分片要补的禁言和封禁：已经落下、没撤销、没到期的，先做的在前。

@@ -1125,6 +1125,7 @@ fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<M
         repository: dependencies.repositories.clone(),
         authority: dependencies.repositories.clone(),
         expiry: dependencies.repositories.clone(),
+        mutes: dependencies.repositories.clone(),
         effects: dependencies.matrix_identities.clone(),
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
