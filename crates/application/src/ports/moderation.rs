@@ -101,6 +101,40 @@ pub struct ModerationRoomContext {
     pub target_matrix_user_id: Option<MatrixUserId>,
 }
 
+/// 翻到期动作时停在哪：上一页最后一个动作的到期时间和 ID。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModerationExpiryCursor {
+    pub expires_at: UtcMillis,
+    pub action_id: ModerationActionId,
+}
+
+/// 到期自动解除用的读取。这是系统自己做的，没有登录的人，也不看谁有权限，所以和
+/// [`ModerationAuthority`] 分开。
+pub trait ModerationExpiryRepository: Send + Sync {
+    /// 已生效、到期时间不晚于 `now` 的动作，按到期时间和 ID 排，从 `after` 之后取最多 `limit` 个。
+    fn list_due_actions(
+        &self,
+        now: UtcMillis,
+        after: Option<ModerationExpiryCursor>,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationAction>>>;
+
+    /// 同一个房间里、同一个对象上，还有没有别的同类动作在生效：已生效，没有期限或者 `now` 时还没到期。
+    fn has_other_effective_action<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>>;
+
+    /// 撤掉这个动作的副作用要落到哪：房间类别、此刻全部活跃分片（最活跃的在前，房间已经关了就是空的），
+    /// 以及被管的人的 Matrix 账号（账号停用、删除了也照样给）。不看权限，`role` 总是
+    /// [`ModerationRole::None`]。目录不存在时为 `None`。
+    fn expiry_room<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+    ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>>;
+}
+
 /// 每次治理或审计读取前重新读取当前房间与平台权限。
 pub trait ModerationAuthority: Send + Sync {
     fn may_report<'a>(

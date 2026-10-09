@@ -1,22 +1,26 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicI64, Ordering},
+    },
 };
 
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     moderation::{
         ApplyModerationAction, InspectModerationCapabilities, ListModerationAudit,
-        ListRoomModerationCases, ModerationDependencies, ModerationFailureKind, ModerationService,
+        ListRoomModerationCases, ModerationDependencies, ModerationExpiryOutcome,
+        ModerationExpiryRetry, ModerationExpiryUseCases, ModerationFailureKind, ModerationService,
         ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
     },
-    persistence::RepositoryResult,
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
         MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
-        ModerationEffectGateway, ModerationEffectTarget, ModerationIdentifierFactory,
-        ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
-        ModerationRoomContext, PortFuture,
+        ModerationEffectGateway, ModerationEffectTarget, ModerationExpiryCursor,
+        ModerationExpiryRepository, ModerationIdentifierFactory, ModerationReportPolicy,
+        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -33,12 +37,21 @@ use uuid::Uuid;
 
 const NOW: i64 = 1_700_000_000_000;
 
-#[derive(Clone)]
-struct TestRuntime;
+/// 从 `NOW` 起走的时钟，测到期时往后拨。
+#[derive(Default)]
+struct TestRuntime {
+    elapsed: AtomicI64,
+}
+
+impl TestRuntime {
+    fn advance(&self, milliseconds: i64) {
+        self.elapsed.fetch_add(milliseconds, Ordering::SeqCst);
+    }
+}
 
 impl Clock for TestRuntime {
     fn now(&self) -> UtcMillis {
-        time(NOW)
+        time(NOW + self.elapsed.load(Ordering::SeqCst))
     }
 }
 
@@ -62,6 +75,8 @@ struct FakeRepository {
     audits: Mutex<Vec<ModerationAuditEvent>>,
     calls: Arc<Mutex<Vec<&'static str>>>,
     rate_limit_at: Mutex<Option<UtcMillis>>,
+    /// 下一次落终态之前，别处（另一个管理员、到期解除）已经在这个时间把动作撤掉了。
+    reversed_elsewhere_at: Mutex<Option<UtcMillis>>,
 }
 
 impl FakeRepository {
@@ -72,7 +87,29 @@ impl FakeRepository {
             audits: Mutex::new(Vec::new()),
             calls,
             rate_limit_at: Mutex::new(None),
+            reversed_elsewhere_at: Mutex::new(None),
         }
+    }
+
+    fn action(&self, action_id: ModerationActionId) -> ModerationAction {
+        self.actions
+            .lock()
+            .expect("动作锁可用")
+            .iter()
+            .find(|action| action.id() == action_id)
+            .cloned()
+            .expect("动作已经预留")
+    }
+
+    fn audit_actions(&self, action_id: ModerationActionId) -> Vec<String> {
+        let target = self.action(action_id).target().clone();
+        self.audits
+            .lock()
+            .expect("审计锁可用")
+            .iter()
+            .filter(|event| event.target == target)
+            .map(|event| event.action.clone())
+            .collect()
     }
 }
 
@@ -168,6 +205,7 @@ impl ModerationRepository for FakeRepository {
         Box::pin(async move { Ok(action) })
     }
 
+    /// 和真实仓库一样只认 待执行→已生效/失败、已生效→已撤销；一模一样的终态原样交回。
     fn finalize_action<'a>(
         &'a self,
         action: &'a ModerationAction,
@@ -179,10 +217,40 @@ impl ModerationRepository for FakeRepository {
             .iter_mut()
             .find(|stored| stored.id() == action.id())
             .expect("动作已经预留");
-        *stored = action.clone();
-        self.audits.lock().expect("审计锁可用").push(audit.clone());
-        let finalized = action.clone();
-        Box::pin(async move { Ok(finalized) })
+        if let Some(at) = self
+            .reversed_elsewhere_at
+            .lock()
+            .expect("撤销锁可用")
+            .take()
+        {
+            stored.reverse(at).expect("别处撤掉的是已生效的动作");
+        }
+        let unchanged = stored.status() == action.status()
+            && stored.failure_code() == action.failure_code()
+            && stored.reversed_at() == action.reversed_at();
+        let valid = matches!(
+            (stored.status(), action.status()),
+            (
+                ModerationActionStatus::Pending,
+                ModerationActionStatus::Applied | ModerationActionStatus::Failed
+            ) | (
+                ModerationActionStatus::Applied,
+                ModerationActionStatus::Reversed
+            )
+        );
+        let result = if unchanged {
+            Ok(stored.clone())
+        } else if valid {
+            *stored = action.clone();
+            self.audits.lock().expect("审计锁可用").push(audit.clone());
+            Ok(action.clone())
+        } else {
+            Err(RepositoryError::new(
+                "moderation.finalize_action",
+                RepositoryErrorKind::Conflict,
+            ))
+        };
+        Box::pin(async move { result })
     }
 
     fn list_room_actions(
@@ -282,6 +350,74 @@ impl ModerationAuthority for FakeAuthority {
     ) -> PortFuture<'_, RepositoryResult<ModerationRole>> {
         let role = *self.platform_role.lock().expect("平台角色锁可用");
         Box::pin(async move { Ok(role) })
+    }
+}
+
+/// 到期解除读的是同一份动作和房间：动作从仓库里挑；分片和房间类别照治理上下文给，不看角色。
+struct FakeExpiry {
+    repository: Arc<FakeRepository>,
+    authority: Arc<FakeAuthority>,
+}
+
+impl ModerationExpiryRepository for FakeExpiry {
+    fn list_due_actions(
+        &self,
+        now: UtcMillis,
+        after: Option<ModerationExpiryCursor>,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationAction>>> {
+        let mut due: Vec<ModerationAction> = self
+            .repository
+            .actions
+            .lock()
+            .expect("动作锁可用")
+            .iter()
+            .filter(|action| action.is_due_at(now))
+            .filter(|action| {
+                after.is_none_or(|cursor| {
+                    (action.expires_at(), action.id()) > (Some(cursor.expires_at), cursor.action_id)
+                })
+            })
+            .cloned()
+            .collect();
+        due.sort_by_key(|action| (action.expires_at(), action.id()));
+        due.truncate(usize::from(limit));
+        Box::pin(async move { Ok(due) })
+    }
+
+    fn has_other_effective_action<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        let covered = self
+            .repository
+            .actions
+            .lock()
+            .expect("动作锁可用")
+            .iter()
+            .any(|other| {
+                other.id() != action.id()
+                    && other.room_catalog_id() == action.room_catalog_id()
+                    && other.kind() == action.kind()
+                    && other.target() == action.target()
+                    && other.is_effective_at(now)
+            });
+        Box::pin(async move { Ok(covered) })
+    }
+
+    fn expiry_room<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+    ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>> {
+        let context = ModerationRoomContext {
+            role: ModerationRole::None,
+            room_kind: *self.authority.room_kind.lock().expect("房间类别锁可用"),
+            matrix_room_ids: self.authority.rooms.lock().expect("分片锁可用").clone(),
+            target_matrix_user_id: (action.target().kind() == ModerationTargetKind::Principal)
+                .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效")),
+        };
+        Box::pin(async move { Ok(Some(context)) })
     }
 }
 
@@ -412,6 +548,7 @@ struct Fixture {
     repository: Arc<FakeRepository>,
     authority: Arc<FakeAuthority>,
     effects: Arc<FakeEffects>,
+    runtime: Arc<TestRuntime>,
     calls: Arc<Mutex<Vec<&'static str>>>,
 }
 
@@ -430,13 +567,17 @@ impl Fixture {
             calls: calls.clone(),
             ..FakeEffects::default()
         });
-        let runtime = Arc::new(TestRuntime);
+        let runtime = Arc::new(TestRuntime::default());
         let service = ModerationService::new(ModerationDependencies {
             repository: repository.clone(),
             authority: authority.clone(),
+            expiry: Arc::new(FakeExpiry {
+                repository: repository.clone(),
+                authority: authority.clone(),
+            }),
             effects: effects.clone(),
             identifiers: runtime.clone(),
-            clock: runtime,
+            clock: runtime.clone(),
             report_policy: ModerationReportPolicy {
                 maximum_reports: 5,
                 window: DurationMillis::new(600_000).expect("窗口有效"),
@@ -447,6 +588,7 @@ impl Fixture {
             repository,
             authority,
             effects,
+            runtime,
             calls,
         }
     }
@@ -838,6 +980,337 @@ async fn 有分片落不成时动作记成失败_照实报依赖不可用() {
     let stored = fixture.repository.actions.lock().expect("动作锁可用");
     assert_eq!(stored[0].status(), ModerationActionStatus::Failed);
     assert_eq!(stored[0].failure_code(), Some("matrix.unavailable"));
+}
+
+const HOUR: i64 = 3_600_000;
+const EXPIRED: &str = "moderation.action.expired";
+
+#[tokio::test]
+async fn 到期的禁言自动解除_每个活跃分片都撤到并留下审计() {
+    let fixture = Fixture::new();
+    fixture
+        .authority
+        .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+    let action = apply(&fixture, mute(2, Some(HOUR))).await;
+
+    fixture.runtime.advance(HOUR);
+    let outcome = expire(&fixture).await;
+
+    assert_eq!(outcome.expired, 1);
+    assert!(outcome.retrying.is_empty());
+    assert_eq!(
+        fixture.effects.reversed_rooms(),
+        ["!busy:matrix.test", "!quiet:matrix.test"]
+    );
+    let expired = fixture.repository.action(action.id());
+    assert_eq!(expired.status(), ModerationActionStatus::Reversed);
+    // 撤销时间不早于到期时间：网页台账据此说“到期解除”，不说“已撤回”。
+    assert_eq!(expired.reversed_at(), Some(time(NOW + HOUR)));
+    assert_eq!(
+        fixture.repository.audit_actions(action.id()),
+        [
+            "moderation.action.requested",
+            "moderation.action.applied",
+            EXPIRED
+        ]
+    );
+
+    assert_eq!(expire(&fixture).await.expired, 0, "解除过的不再解除");
+    assert_eq!(fixture.effects.reversed_rooms().len(), 2);
+}
+
+#[tokio::test]
+async fn 没到期的和没有期限的都不动() {
+    let fixture = Fixture::new();
+    let later = apply(&fixture, mute(2, Some(2 * HOUR))).await;
+    let indefinite = apply(&fixture, mute(4, None)).await;
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(
+        expire(&fixture).await,
+        ModerationExpiryOutcome::default(),
+        "一小时后两个都还在生效"
+    );
+    assert!(fixture.effects.reversed_rooms().is_empty());
+
+    fixture.runtime.advance(365 * 24 * HOUR);
+    assert_eq!(expire(&fixture).await.expired, 1);
+    assert_eq!(
+        status_of(&fixture, &later),
+        ModerationActionStatus::Reversed
+    );
+    assert_eq!(
+        status_of(&fixture, &indefinite),
+        ModerationActionStatus::Applied,
+        "没有期限的一直不动"
+    );
+    assert_eq!(fixture.effects.reversed_rooms().len(), 1);
+}
+
+#[tokio::test]
+async fn 撤不成时保持生效_下一轮再试() {
+    let fixture = Fixture::new();
+    fixture
+        .authority
+        .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+    let first = apply(&fixture, mute(2, Some(HOUR))).await;
+    let second = apply(&fixture, mute(4, Some(2 * HOUR))).await;
+    *fixture.effects.failing_room.lock().expect("副作用锁可用") =
+        Some(matrix_room("!quiet:matrix.test"));
+
+    fixture.runtime.advance(2 * HOUR);
+    let outcome = expire(&fixture).await;
+    assert_eq!(outcome.expired, 0);
+    // 聊天服务器连不上，这一轮到此为止：第二个不用再试。
+    assert_eq!(
+        outcome.retrying,
+        [ModerationExpiryRetry {
+            action_id: first.id(),
+            failure_code: "matrix.unavailable",
+        }]
+    );
+    assert_eq!(
+        fixture.effects.reversed_rooms(),
+        ["!busy:matrix.test", "!quiet:matrix.test"]
+    );
+    for action in [&first, &second] {
+        assert_eq!(status_of(&fixture, action), ModerationActionStatus::Applied);
+        assert!(
+            !fixture
+                .repository
+                .audit_actions(action.id())
+                .contains(&EXPIRED.to_owned())
+        );
+    }
+
+    *fixture.effects.failing_room.lock().expect("副作用锁可用") = None;
+    let retried = expire(&fixture).await;
+    assert_eq!(retried.expired, 2);
+    assert!(retried.retrying.is_empty());
+    for action in [&first, &second] {
+        assert_eq!(
+            status_of(&fixture, action),
+            ModerationActionStatus::Reversed
+        );
+    }
+    // 重来的这一轮，两个动作都在每个分片上撤了一遍。
+    assert_eq!(
+        fixture.effects.reversed_rooms()[2..],
+        [
+            "!busy:matrix.test",
+            "!quiet:matrix.test",
+            "!busy:matrix.test",
+            "!quiet:matrix.test"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 只是撤不了这一个时接着撤别的() {
+    let fixture = Fixture::new();
+    let first = apply(&fixture, mute(2, Some(HOUR))).await;
+    let second = apply(&fixture, mute(4, Some(HOUR))).await;
+    *fixture.effects.failure.lock().expect("副作用锁可用") = Some(MatrixFailure::new(
+        MatrixOperation::UpdatePowerLevels,
+        MatrixFailureKind::Forbidden,
+    ));
+
+    fixture.runtime.advance(HOUR);
+    let outcome = expire(&fixture).await;
+
+    assert_eq!(outcome.expired, 0);
+    assert_eq!(
+        outcome.retrying,
+        [first.id(), second.id()].map(|action_id| ModerationExpiryRetry {
+            action_id,
+            failure_code: "matrix.forbidden",
+        })
+    );
+}
+
+#[tokio::test]
+async fn 同一个人还有别的禁言在生效时只记解除_不放人() {
+    let fixture = Fixture::new();
+    let short = apply(&fixture, mute(2, Some(HOUR))).await;
+    let indefinite = apply(&fixture, mute(2, None)).await;
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(expire(&fixture).await.expired, 1);
+
+    assert!(
+        fixture.effects.reversed_rooms().is_empty(),
+        "另一条禁言还在生效，不能撤掉发言权"
+    );
+    assert_eq!(
+        status_of(&fixture, &short),
+        ModerationActionStatus::Reversed
+    );
+    assert_eq!(
+        status_of(&fixture, &indefinite),
+        ModerationActionStatus::Applied
+    );
+}
+
+#[tokio::test]
+async fn 踢出到期只记解除_不替管理员发邀请() {
+    let fixture = Fixture::new();
+    let kick = apply(
+        &fixture,
+        ApplyModerationAction {
+            kind: ModerationActionKind::Kick,
+            expires_at: Some(time(NOW + HOUR)),
+            ..action_request()
+        },
+    )
+    .await;
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(expire(&fixture).await.expired, 1);
+
+    assert!(fixture.effects.reversed_rooms().is_empty());
+    assert_eq!(status_of(&fixture, &kick), ModerationActionStatus::Reversed);
+}
+
+#[tokio::test]
+async fn 房间关了以后到期照样记成解除() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, Some(HOUR))).await;
+    // 比如房主删了账户，私人房间跟着归档，没有活跃分片了。
+    fixture.authority.rooms.lock().expect("分片锁可用").clear();
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(expire(&fixture).await.expired, 1);
+
+    assert!(fixture.effects.reversed_rooms().is_empty());
+    assert_eq!(
+        status_of(&fixture, &action),
+        ModerationActionStatus::Reversed
+    );
+}
+
+#[tokio::test]
+async fn 限时隐藏到期时回到消息所在的分片撤() {
+    let fixture = Fixture::new();
+    fixture
+        .authority
+        .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+    fixture.effects.put_event("!quiet:matrix.test", SPAM_EVENT);
+    apply(
+        &fixture,
+        ApplyModerationAction {
+            expires_at: Some(time(NOW + HOUR)),
+            ..hide_request(SPAM_EVENT)
+        },
+    )
+    .await;
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(expire(&fixture).await.expired, 1);
+
+    assert_eq!(fixture.effects.reversed_rooms(), ["!quiet:matrix.test"]);
+}
+
+#[tokio::test]
+async fn 一轮能翻过好几页() {
+    let fixture = Fixture::new();
+    for target in 10..71 {
+        apply(&fixture, mute(target, Some(HOUR))).await;
+    }
+
+    fixture.runtime.advance(HOUR);
+    assert_eq!(expire(&fixture).await.expired, 61);
+    assert_eq!(expire(&fixture).await, ModerationExpiryOutcome::default());
+}
+
+#[tokio::test]
+async fn 管理员撤回时刚好到期解除了_交回已经解除的记录() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, Some(1_000))).await;
+    fixture.runtime.advance(2_000);
+    // 管理员点撤回的同时，定时任务先一步在到期那一刻把它解除了。
+    *fixture
+        .repository
+        .reversed_elsewhere_at
+        .lock()
+        .expect("撤销锁可用") = Some(time(NOW + 1_000));
+
+    let reversed = fixture
+        .service
+        .reverse_action(ReverseModerationAction {
+            actor: actor(true),
+            action_id: action.id(),
+            impact_acknowledged: true,
+        })
+        .await
+        .expect("已经解除了就照实交回，不报冲突");
+
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert_eq!(reversed.reversed_at(), Some(time(NOW + 1_000)));
+    assert!(
+        !fixture
+            .repository
+            .audit_actions(action.id())
+            .contains(&"moderation.action.reversed".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn 到期解除时管理员刚好撤回了_这一轮不算解除() {
+    let fixture = Fixture::new();
+    let action = apply(&fixture, mute(2, Some(HOUR))).await;
+    fixture.runtime.advance(HOUR + 1_000);
+    *fixture
+        .repository
+        .reversed_elsewhere_at
+        .lock()
+        .expect("撤销锁可用") = Some(time(NOW + HOUR));
+
+    assert_eq!(expire(&fixture).await, ModerationExpiryOutcome::default());
+
+    assert_eq!(
+        status_of(&fixture, &action),
+        ModerationActionStatus::Reversed
+    );
+    assert!(
+        !fixture
+            .repository
+            .audit_actions(action.id())
+            .contains(&EXPIRED.to_owned())
+    );
+}
+
+async fn apply(fixture: &Fixture, request: ApplyModerationAction) -> ModerationAction {
+    fixture
+        .service
+        .apply_action(request)
+        .await
+        .expect("治理动作应成功")
+}
+
+async fn expire(fixture: &Fixture) -> ModerationExpiryOutcome {
+    fixture
+        .service
+        .expire_due_actions()
+        .await
+        .expect("到期解除应跑完")
+}
+
+fn status_of(fixture: &Fixture, action: &ModerationAction) -> ModerationActionStatus {
+    fixture.repository.action(action.id()).status()
+}
+
+/// 禁言一个人：`expires_in` 是从 `NOW` 起过多久到期，`None` 是不限时。
+fn mute(target: u128, expires_in: Option<i64>) -> ApplyModerationAction {
+    ApplyModerationAction {
+        kind: ModerationActionKind::Mute,
+        target: ModerationTarget::new(
+            ModerationTargetKind::Principal,
+            PrincipalId::from_uuid(Uuid::from_u128(target)).to_string(),
+        )
+        .expect("目标有效"),
+        expires_at: expires_in.map(|offset| time(NOW + offset)),
+        ..action_request()
+    }
 }
 
 fn hide_request(event: &str) -> ApplyModerationAction {

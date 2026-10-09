@@ -2,10 +2,11 @@ import { Button, Details, StatusMark } from '@agent-room/ui-system';
 import { FileWarning, RotateCcw, ScrollText, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import type {
-  ModerationAction,
-  ModerationAuditEvent,
-  ModerationCase,
+import {
+  moderationActionDisplayStatus,
+  type ModerationAction,
+  type ModerationAuditEvent,
+  type ModerationCase,
 } from '@/features/moderation/domain/moderation';
 
 export function ModerationCaseLedger({ cases }: { readonly cases: readonly ModerationCase[] }) {
@@ -97,9 +98,10 @@ export function ModerationActionLedger({
                 <div>
                   <strong>{t(`moderation.kind.${action.kind}`)}</strong>
                   <span>{formatter.format(action.startsAtUnixMs)}</span>
+                  <ActionExpiry action={action} formatter={formatter} />
                 </div>
                 <StatusMark
-                  label={t(`moderation.status.${action.status}`)}
+                  label={t(`moderation.status.${moderationActionDisplayStatus(action)}`)}
                   tone={action.status === 'applied' ? 'network' : 'offline'}
                 />
               </div>
@@ -178,6 +180,28 @@ export function ModerationAuditLedger({
       )}
     </section>
   );
+}
+
+/** 限时的动作：生效中的说什么时候自动解除，到期解除了的说是哪个时候到期的。 */
+function ActionExpiry({
+  action,
+  formatter,
+}: {
+  readonly action: ModerationAction;
+  readonly formatter: Intl.DateTimeFormat;
+}) {
+  const { t } = useTranslation();
+  if (action.expiresAtUnixMs === null) {
+    return null;
+  }
+  const time = formatter.format(action.expiresAtUnixMs);
+  if (action.status === 'applied') {
+    return <span>{t('moderation.governance.action.endsAt', { time })}</span>;
+  }
+  if (moderationActionDisplayStatus(action) === 'expired') {
+    return <span>{t('moderation.governance.action.expiredAt', { time })}</span>;
+  }
+  return null;
 }
 
 /** 消息 ID、举报 ID、错误码这些排查信息：收在每一项下面的详情里。 */

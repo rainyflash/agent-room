@@ -1,7 +1,8 @@
 use std::env;
 
 use agent_room_application::ports::{
-    MatrixRoomId, ModerationActionReservationOutcome, ModerationAuthority, ModerationReportPolicy,
+    MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
+    ModerationExpiryCursor, ModerationExpiryRepository, ModerationReportPolicy,
     ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
     PrivateRoomSnapshot, PrivateRoomStore,
 };
@@ -237,6 +238,269 @@ async fn 公开大厅的治理拿到全部活跃分片_最活跃的在前() {
     );
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 到期解除只挑已生效又到了期限的动作_按到期时间一页一页地翻() {
+    let database = TestDatabase::connect().await;
+    let moderator = seed_principal(&database.runtime, "expiry-moderator").await;
+    let first = person(seed_principal(&database.runtime, "expiry-first").await);
+    let second = person(seed_principal(&database.runtime, "expiry-second").await);
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    seed_public_lobby(
+        &database.runtime,
+        catalog_id,
+        &[("expiry", "active", "1", 1)],
+    )
+    .await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let room = (&repositories, moderator, catalog_id);
+    let early = applied_action(room, ModerationActionKind::Mute, &first, Some(time(1_000))).await;
+    let tied = applied_action(room, ModerationActionKind::Mute, &second, Some(time(1_000))).await;
+    let late = applied_action(room, ModerationActionKind::Mute, &first, Some(time(5_000))).await;
+    applied_action(room, ModerationActionKind::Ban, &second, None).await;
+    reserved_action(room, ModerationActionKind::Mute, &second, Some(time(1_000))).await;
+
+    // 两秒时到期的只有已生效的那两个，同一时刻到期的按 ID 排；没到期的、没期限的、还没生效的都不算。
+    assert_eq!(
+        due_in_room(&repositories, catalog_id, time(2_000)).await,
+        [early.id(), tied.id()]
+    );
+    assert_eq!(
+        due_page_by_page(&repositories, catalog_id, time(10_000)).await,
+        [early.id(), tied.id(), late.id()],
+        "一页一个地翻，顺序一样，一个不落"
+    );
+
+    // 同一个人身上还有一条五秒才到期的禁言在生效；另一个人身上只有封禁和还没生效的禁言，都不算。
+    assert!(has_other_effective(&repositories, &early, time(2_000)).await);
+    assert!(!has_other_effective(&repositories, &tied, time(2_000)).await);
+    assert!(
+        !has_other_effective(&repositories, &late, time(6_000)).await,
+        "到了期限的那条不算还在生效"
+    );
+
+    let mut expired = early.clone();
+    expired.expire(time(2_000)).expect("到期的动作可以解除");
+    let stored = ModerationRepository::finalize_action(
+        &repositories,
+        &expired,
+        &action_audit(
+            &expired,
+            "moderation.action.expired",
+            ModerationAuditOutcome::Allowed,
+        ),
+    )
+    .await
+    .expect("到期解除应能落库");
+    assert_eq!(stored.status(), ModerationActionStatus::Reversed);
+    assert_eq!(stored.reversed_at(), Some(time(2_000)));
+    assert_eq!(
+        due_in_room(&repositories, catalog_id, time(10_000)).await,
+        [tied.id(), late.id()]
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 到期解除拿到全部活跃分片_账号删了也照样给出它的_matrix_账号() {
+    let database = TestDatabase::connect().await;
+    let moderator = seed_principal(&database.runtime, "expiry-room-moderator").await;
+    let target_id = seed_principal(&database.runtime, "expiry-room-target").await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let shards = seed_public_lobby(
+        &database.runtime,
+        catalog_id,
+        &[
+            ("quiet", "active", "1.5", 3),
+            ("busy", "active", "9.25", 40),
+            ("broken", "failed", "99", 0),
+        ],
+    )
+    .await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let room = (&repositories, moderator, catalog_id);
+    let target = person(target_id);
+    let mute = applied_action(room, ModerationActionKind::Mute, &target, Some(time(1_000))).await;
+    sqlx::query("UPDATE agent_room.principal SET status = 'deleted' WHERE id = $1")
+        .bind(target_id.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .expect("可以把被禁言的账号标成已删除");
+
+    let context = expiry_room(&repositories, &mute).await;
+    assert_eq!(context.role, ModerationRole::None);
+    assert_eq!(context.room_kind, RoomCatalogKind::PublicLobby);
+    assert_eq!(room_ids(&context), [shards[1].as_str(), shards[0].as_str()]);
+    let target_user = format!(
+        "@expiry-room-target-{}:matrix.test",
+        target_id.as_uuid().simple()
+    );
+    assert_eq!(
+        context
+            .target_matrix_user_id
+            .as_ref()
+            .map(MatrixUserId::as_str),
+        Some(target_user.as_str())
+    );
+    assert!(
+        ModerationAuthority::inspect_room(&repositories, moderator, catalog_id, &target)
+            .await
+            .expect("治理上下文应可读取")
+            .is_none(),
+        "治理接口只认活跃账号，到期解除不受这个限制"
+    );
+
+    let event = ModerationTarget::new(ModerationTargetKind::Event, "$expiry:matrix.test")
+        .expect("事件目标有效");
+    let hide = applied_action(room, ModerationActionKind::Hide, &event, Some(time(1_000))).await;
+    let hidden = expiry_room(&repositories, &hide).await;
+    assert_eq!(room_ids(&hidden), [shards[1].as_str(), shards[0].as_str()]);
+    assert!(hidden.target_matrix_user_id.is_none());
+
+    sqlx::query(
+        "UPDATE agent_room.room_instance SET state = 'draining' \
+         WHERE catalog_entry_id = $1 AND state = 'active'",
+    )
+    .bind(catalog_id.as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("可以让分片都不再接人");
+    assert!(
+        expiry_room(&repositories, &mute)
+            .await
+            .matrix_room_ids
+            .is_empty(),
+        "没有活跃分片时给空的，由应用层记成解除"
+    );
+
+    database.close().await;
+}
+
+/// 治理动作落在哪：仓库、做动作的人、房间。
+type ActionRoom<'a> = (&'a PostgresRepositories, PrincipalId, RoomCatalogId);
+
+/// 预留一个从零时开始的治理动作，还没生效。
+async fn reserved_action(
+    (repositories, actor, catalog_id): ActionRoom<'_>,
+    kind: ModerationActionKind,
+    target: &ModerationTarget,
+    expires_at: Option<UtcMillis>,
+) -> ModerationAction {
+    let action = ModerationAction::reserve(
+        ModerationActionId::from_uuid(Uuid::now_v7()),
+        None,
+        actor,
+        catalog_id,
+        kind,
+        target.clone(),
+        ModerationReason::Spam,
+        time(0),
+        expires_at,
+    )
+    .expect("治理动作有效");
+    ModerationRepository::reserve_action(
+        repositories,
+        &action,
+        &action_audit(
+            &action,
+            "moderation.action.requested",
+            ModerationAuditOutcome::Allowed,
+        ),
+    )
+    .await
+    .expect("动作预留应成功");
+    action
+}
+
+async fn applied_action(
+    room: ActionRoom<'_>,
+    kind: ModerationActionKind,
+    target: &ModerationTarget,
+    expires_at: Option<UtcMillis>,
+) -> ModerationAction {
+    let mut action = reserved_action(room, kind, target, expires_at).await;
+    action.mark_applied().expect("动作应进入已应用状态");
+    ModerationRepository::finalize_action(
+        room.0,
+        &action,
+        &action_audit(
+            &action,
+            "moderation.action.applied",
+            ModerationAuditOutcome::Allowed,
+        ),
+    )
+    .await
+    .expect("已应用终态应提交")
+}
+
+/// 这个房间里到期的动作。别的用例在同一个库里留下的动作不算。
+async fn due_in_room(
+    repositories: &PostgresRepositories,
+    catalog_id: RoomCatalogId,
+    now: UtcMillis,
+) -> Vec<ModerationActionId> {
+    ModerationExpiryRepository::list_due_actions(repositories, now, None, 200)
+        .await
+        .expect("到期动作应可读取")
+        .iter()
+        .filter(|action| action.room_catalog_id() == catalog_id)
+        .map(ModerationAction::id)
+        .collect()
+}
+
+/// 一页一个地翻完全部到期的动作，挑出这个房间的。
+async fn due_page_by_page(
+    repositories: &PostgresRepositories,
+    catalog_id: RoomCatalogId,
+    now: UtcMillis,
+) -> Vec<ModerationActionId> {
+    let mut found = Vec::new();
+    let mut after = None;
+    loop {
+        let page = ModerationExpiryRepository::list_due_actions(repositories, now, after, 1)
+            .await
+            .expect("到期动作应可一页一页地读");
+        let Some(action) = page.first() else {
+            return found;
+        };
+        assert_eq!(page.len(), 1);
+        if action.room_catalog_id() == catalog_id {
+            found.push(action.id());
+        }
+        after = Some(ModerationExpiryCursor {
+            expires_at: action.expires_at().expect("到期的动作有期限"),
+            action_id: action.id(),
+        });
+    }
+}
+
+async fn has_other_effective(
+    repositories: &PostgresRepositories,
+    action: &ModerationAction,
+    now: UtcMillis,
+) -> bool {
+    ModerationExpiryRepository::has_other_effective_action(repositories, action, now)
+        .await
+        .expect("同类动作应可查询")
+}
+
+async fn expiry_room(
+    repositories: &PostgresRepositories,
+    action: &ModerationAction,
+) -> ModerationRoomContext {
+    ModerationExpiryRepository::expiry_room(repositories, action)
+        .await
+        .expect("到期解除的房间应可读取")
+        .expect("目录存在")
+}
+
+fn person(principal_id: PrincipalId) -> ModerationTarget {
+    ModerationTarget::new(ModerationTargetKind::Principal, principal_id.to_string())
+        .expect("主体目标有效")
 }
 
 fn room_ids(context: &ModerationRoomContext) -> Vec<&str> {

@@ -618,6 +618,33 @@ impl ModerationAction {
         }
     }
 
+    /// 到期解除：系统撤掉留在房间里的副作用以后，把到了期限的动作记成已撤销，撤销时间就是解除的时间。
+    ///
+    /// 和人工撤回是同一个状态，不另加一种：网页对状态严格校验，旧版客户端多看到一种状态，整个台账都
+    /// 读不出来。撤销时间不早于到期时间的，就是到期解除的。
+    ///
+    /// # Errors
+    ///
+    /// 动作没有生效、没有期限或者还没到期时返回错误。
+    pub fn expire(&mut self, at: UtcMillis) -> DomainResult<bool> {
+        match self.status {
+            ModerationActionStatus::Applied if self.is_due_at(at) => {
+                self.status = ModerationActionStatus::Reversed;
+                self.reversed_at = Some(at);
+                Ok(true)
+            }
+            ModerationActionStatus::Reversed => Ok(false),
+            ModerationActionStatus::Applied => Err(validation(
+                "moderation_action_expires_at",
+                "没有期限或者还没到期的动作不能到期解除",
+            )),
+            ModerationActionStatus::Pending | ModerationActionStatus::Failed => Err(invariant(
+                "moderation_action",
+                "只有已生效的动作可以到期解除",
+            )),
+        }
+    }
+
     pub const fn id(&self) -> ModerationActionId {
         self.id
     }
@@ -669,6 +696,12 @@ impl ModerationAction {
     pub fn is_effective_at(&self, now: UtcMillis) -> bool {
         self.status == ModerationActionStatus::Applied
             && self.expires_at.is_none_or(|expires_at| now < expires_at)
+    }
+
+    /// 已经生效、到了期限、还没解除：该由系统撤掉了。
+    pub fn is_due_at(&self, now: UtcMillis) -> bool {
+        self.status == ModerationActionStatus::Applied
+            && self.expires_at.is_some_and(|expires_at| expires_at <= now)
     }
 }
 
@@ -857,11 +890,62 @@ mod tests {
     }
 
     #[test]
+    fn 只有已生效又到了期限的动作能到期解除() {
+        let mut action = mute(Some(time(10_000)));
+        assert!(action.expire(time(20_000)).is_err(), "还没生效的不能解除");
+        action.mark_applied().expect("可应用");
+
+        assert!(!action.is_due_at(time(9_999)));
+        assert!(action.expire(time(9_999)).is_err(), "没到期的不能解除");
+        assert_eq!(action.status(), ModerationActionStatus::Applied);
+
+        assert!(action.is_due_at(time(10_000)));
+        assert!(action.expire(time(10_500)).expect("到期就能解除"));
+        assert_eq!(action.status(), ModerationActionStatus::Reversed);
+        assert_eq!(action.reversed_at(), Some(time(10_500)));
+        assert!(!action.is_due_at(time(11_000)));
+        assert!(!action.expire(time(11_000)).expect("解除过的不再变"));
+        assert_eq!(action.reversed_at(), Some(time(10_500)));
+
+        let mut indefinite = mute(None);
+        indefinite.mark_applied().expect("可应用");
+        assert!(!indefinite.is_due_at(time(i64::MAX)));
+        assert!(
+            indefinite.expire(time(i64::MAX)).is_err(),
+            "没有期限的不会到期"
+        );
+
+        let mut failed = mute(Some(time(10_000)));
+        failed.mark_failed("matrix.unavailable").expect("可记失败");
+        assert!(!failed.is_due_at(time(20_000)));
+        assert!(
+            failed.expire(time(20_000)).is_err(),
+            "失败的动作没什么可解除"
+        );
+    }
+
+    #[test]
     fn 房间管理者不能读取受限审计而审计角色不能执行治理() {
         assert!(ModerationRole::RoomManager.allows(ModerationActionKind::Hide));
         assert!(!ModerationRole::RoomManager.can_read_audit());
         assert!(!ModerationRole::AuditReader.allows(ModerationActionKind::Ban));
         assert!(ModerationRole::AuditReader.can_read_audit());
+    }
+
+    fn mute(expires_at: Option<UtcMillis>) -> ModerationAction {
+        ModerationAction::reserve(
+            ModerationActionId::from_uuid(Uuid::now_v7()),
+            None,
+            principal_id(),
+            room_id(),
+            ModerationActionKind::Mute,
+            ModerationTarget::new(ModerationTargetKind::Principal, principal_id().to_string())
+                .expect("目标有效"),
+            ModerationReason::Spam,
+            time(1_000),
+            expires_at,
+        )
+        .expect("动作有效")
     }
 
     fn principal_id() -> PrincipalId {

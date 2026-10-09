@@ -126,8 +126,9 @@ pub use matrix::{
 };
 pub use moderation::{
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
-    ModerationEffectTarget, ModerationIdentifierFactory, ModerationReportPolicy,
-    ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
+    ModerationEffectTarget, ModerationExpiryCursor, ModerationExpiryRepository,
+    ModerationIdentifierFactory, ModerationReportPolicy, ModerationReportSubmissionOutcome,
+    ModerationRepository, ModerationRoomContext,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{
