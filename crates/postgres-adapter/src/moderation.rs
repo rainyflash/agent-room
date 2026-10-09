@@ -4,8 +4,9 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
-        ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
-        ModerationRoomContext, PortFuture, StandingModeration, StandingModerationSource,
+        ModerationExpiryCursor, ModerationExpiryRepository, ModerationReportPolicy,
+        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
+        StandingModeration, StandingModerationSource,
     },
 };
 use agent_room_domain::{
@@ -142,6 +143,32 @@ impl ModerationRepository for PostgresRepositories {
         limit: u16,
     ) -> PortFuture<'_, RepositoryResult<Vec<ModerationAuditEvent>>> {
         Box::pin(async move { list_audit(&self.pool, room_catalog_id, limit).await })
+    }
+}
+
+impl ModerationExpiryRepository for PostgresRepositories {
+    fn list_due_actions(
+        &self,
+        now: UtcMillis,
+        after: Option<ModerationExpiryCursor>,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationAction>>> {
+        Box::pin(async move { list_due_actions(&self.pool, now, after, limit).await })
+    }
+
+    fn has_other_effective_action<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move { has_other_effective_action(&self.pool, action, now).await })
+    }
+
+    fn expiry_room<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+    ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>> {
+        Box::pin(async move { expiry_room(&self.pool, action).await })
     }
 }
 
@@ -592,6 +619,126 @@ async fn list_room_actions(
     rows.iter()
         .map(|row| decode_action(row, operation))
         .collect()
+}
+
+async fn list_due_actions(
+    pool: &PgPool,
+    now: UtcMillis,
+    after: Option<ModerationExpiryCursor>,
+    limit: u16,
+) -> RepositoryResult<Vec<ModerationAction>> {
+    let operation = "moderation.list_due_actions";
+    let statement = format!(
+        "SELECT {ACTION_COLUMNS}
+           FROM agent_room.moderation_action
+           WHERE status = 'applied'
+             AND expires_at <= to_timestamp($1::double precision / 1000.0)
+             AND (
+               $2::bigint IS NULL
+               OR (expires_at, id) > (to_timestamp($2::double precision / 1000.0), $3::uuid)
+             )
+           ORDER BY expires_at ASC, id ASC
+           LIMIT $4"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
+        .bind(now.value())
+        .bind(after.map(|cursor| cursor.expires_at.value()))
+        .bind(after.map(|cursor| cursor.action_id.as_uuid()))
+        .bind(i64::from(limit))
+        .fetch_all(pool)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    rows.iter()
+        .map(|row| decode_action(row, operation))
+        .collect()
+}
+
+async fn has_other_effective_action(
+    pool: &PgPool,
+    action: &ModerationAction,
+    now: UtcMillis,
+) -> RepositoryResult<bool> {
+    let operation = "moderation.has_other_effective_action";
+    sqlx::query_scalar(
+        r"SELECT EXISTS (
+             SELECT 1
+             FROM agent_room.moderation_action AS other
+             WHERE other.room_catalog_id = $1
+               AND other.action_type = $2
+               AND other.target_kind = $3
+               AND other.target_reference = $4
+               AND other.id <> $5
+               AND other.status = 'applied'
+               AND (
+                 other.expires_at IS NULL
+                 OR other.expires_at > to_timestamp($6::double precision / 1000.0)
+               )
+           )",
+    )
+    .bind(action.room_catalog_id().as_uuid())
+    .bind(action.kind().as_str())
+    .bind(action.target().kind().as_str())
+    .bind(action.target().reference())
+    .bind(action.id().as_uuid())
+    .bind(now.value())
+    .fetch_one(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))
+}
+
+/// 到期解除要撤到哪。和 [`inspect_room_authority`] 拿的是同一组分片（同样最活跃的在前），但不看谁在
+/// 问、不看目录和账号的状态：房间关了就给空的分片，账号停用、删除了也照样给它的 Matrix 账号。
+async fn expiry_room(
+    pool: &PgPool,
+    action: &ModerationAction,
+) -> RepositoryResult<Option<ModerationRoomContext>> {
+    let operation = "moderation.expiry_room";
+    let target_principal_id = if action.target().kind() == ModerationTargetKind::Principal {
+        uuid::Uuid::parse_str(action.target().reference()).ok()
+    } else {
+        None
+    };
+    let row = sqlx::query(
+        r"SELECT catalog.kind,
+                  ARRAY(
+                    SELECT room.matrix_room_id
+                    FROM agent_room.room_instance AS room
+                    WHERE room.catalog_entry_id = catalog.id AND room.state = 'active'
+                    ORDER BY room.activity_score DESC,
+                             room.member_count_projection DESC,
+                             room.id ASC
+                  ) AS matrix_room_ids,
+                  target.matrix_user_id AS target_matrix_user_id
+           FROM agent_room.room_catalog_entry AS catalog
+           LEFT JOIN agent_room.principal AS target ON target.id = $2
+           WHERE catalog.id = $1",
+    )
+    .bind(action.room_catalog_id().as_uuid())
+    .bind(target_principal_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let catalog_kind: String = decode_column(&row, "kind", operation)?;
+    let matrix_room_ids: Vec<String> = decode_column(&row, "matrix_room_ids", operation)?;
+    let target_matrix_user: Option<String> =
+        decode_column(&row, "target_matrix_user_id", operation)?;
+    Ok(Some(ModerationRoomContext {
+        role: ModerationRole::None,
+        room_kind: RoomCatalogKind::try_from(catalog_kind.as_str())
+            .map_err(|_| corrupt_data(operation))?,
+        matrix_room_ids: matrix_room_ids
+            .into_iter()
+            .map(MatrixRoomId::new)
+            .collect::<Result<_, _>>()
+            .map_err(|_| corrupt_data(operation))?,
+        target_matrix_user_id: target_matrix_user
+            .map(MatrixUserId::new)
+            .transpose()
+            .map_err(|_| corrupt_data(operation))?,
+    }))
 }
 
 /// 新开分片要补的禁言和封禁：已经落下、没撤销、没到期的，先做的在前。

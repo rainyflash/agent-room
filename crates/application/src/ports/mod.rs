@@ -126,9 +126,9 @@ pub use matrix::{
 };
 pub use moderation::{
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
-    ModerationEffectTarget, ModerationIdentifierFactory, ModerationReportPolicy,
-    ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
-    StandingModeration, StandingModerationSource,
+    ModerationEffectTarget, ModerationExpiryCursor, ModerationExpiryRepository,
+    ModerationIdentifierFactory, ModerationReportPolicy, ModerationReportSubmissionOutcome,
+    ModerationRepository, ModerationRoomContext, StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{

@@ -433,6 +433,12 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `expires_at` | timestamptz? | 可空 |
 | `reversed_at` | timestamptz? | 可空 |
 
+到期解除：控制面每 30 秒找一次 `status = 'applied'`、`expires_at` 已到的动作，像人工撤回一样在房间的每个活跃分片上解除，状态记成 `reversed`，`reversed_at` 不早于 `expires_at`，审计记 `moderation.action.expired`。
+
+- 不另加 `expired` 状态：旧版网页严格校验状态，多一种整个台账都读不出来。网页按 `reversed_at >= expires_at` 显示“到期解除”。
+- 只记账、不碰 Matrix 的几种：踢出到期（不替管理员把人请回来）；同一对象在同一房间还有别的同类动作在生效；房间没有活跃分片了；查不到对象的账户记录；隐藏的消息哪个分片里都没有了。
+- Matrix 暂时不通时动作留在 `applied`，下一轮再试；整台聊天服务器不通时这一轮先停。
+
 ### 7.4 `audit_event`
 
 审计表采用追加写，业务代码无更新和删除权限。

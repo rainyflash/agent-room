@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
-    ids::AuditEventId,
+    ids::{AuditEventId, ModerationActionId},
     moderation::{
         ModerationAction, ModerationActionKind, ModerationActionStatus, ModerationAuditEvent,
         ModerationAuditOutcome, ModerationCase, ModerationTarget,
@@ -13,8 +13,9 @@ use crate::{
     ports::{
         Clock, MatrixEventId, MatrixFailure, MatrixResult, MatrixRoomId,
         ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
-        ModerationEffectTarget, ModerationIdentifierFactory, ModerationReportPolicy,
-        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
+        ModerationEffectTarget, ModerationExpiryRepository, ModerationIdentifierFactory,
+        ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
+        ModerationRoomContext, PortFuture,
     },
 };
 
@@ -72,6 +73,8 @@ pub trait ModerationUseCases: Send + Sync {
 pub struct ModerationDependencies {
     pub repository: Arc<dyn ModerationRepository>,
     pub authority: Arc<dyn ModerationAuthority>,
+    /// 到期自动解除用的读取，不看权限。
+    pub expiry: Arc<dyn ModerationExpiryRepository>,
     pub effects: Arc<dyn ModerationEffectGateway>,
     pub identifiers: Arc<dyn ModerationIdentifierFactory>,
     pub clock: Arc<dyn Clock>,
@@ -79,11 +82,12 @@ pub struct ModerationDependencies {
 }
 
 pub struct ModerationService {
-    repository: Arc<dyn ModerationRepository>,
+    pub(super) repository: Arc<dyn ModerationRepository>,
     authority: Arc<dyn ModerationAuthority>,
+    pub(super) expiry: Arc<dyn ModerationExpiryRepository>,
     effects: Arc<dyn ModerationEffectGateway>,
-    identifiers: Arc<dyn ModerationIdentifierFactory>,
-    clock: Arc<dyn Clock>,
+    pub(super) identifiers: Arc<dyn ModerationIdentifierFactory>,
+    pub(super) clock: Arc<dyn Clock>,
     report_policy: ModerationReportPolicy,
 }
 
@@ -92,6 +96,7 @@ impl ModerationService {
         Self {
             repository: dependencies.repository,
             authority: dependencies.authority,
+            expiry: dependencies.expiry,
             effects: dependencies.effects,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
@@ -319,7 +324,7 @@ impl ModerationService {
     /// 这个动作落到哪些分片。公开大厅人多了会分成好几个分片，每个是一个 Matrix 房间：隐藏写进
     /// 消息所在的那一个；禁言、踢出、封禁管的是人，每个活跃分片都要落，不然换个分片照样说话、
     /// 照样进来。
-    async fn effect_rooms(
+    pub(super) async fn effect_rooms(
         &self,
         context: &ModerationRoomContext,
         kind: ModerationActionKind,
@@ -386,7 +391,9 @@ impl ModerationService {
         Ok(())
     }
 
-    async fn reverse_effects(
+    /// 撤回和到期解除共用：一个分片一个分片地撤，哪个没撤成就停下交回它的失败。这些撤销都能重放，
+    /// 下次再撤时已经撤了的分片什么也不变。
+    pub(super) async fn reverse_effects(
         &self,
         action: &ModerationAction,
         context: &ModerationRoomContext,
@@ -462,10 +469,31 @@ impl ModerationService {
             self.clock.now(),
             OPERATION,
         )?;
-        self.repository
-            .finalize_action(&action, &audit)
-            .await
-            .map_err(|error| repository_failure(OPERATION, &error))
+        match self.repository.finalize_action(&action, &audit).await {
+            Ok(reversed) => Ok(reversed),
+            Err(error) => self.ended_meanwhile(action.id(), &error, OPERATION).await,
+        }
+    }
+
+    /// 撤回落库时动作已经被撤掉了：多半是刚好到期、定时任务先一步解除了，或者另一个管理员同时点了
+    /// 撤回。已经撤销的就照实交回当前记录，不当成冲突报给管理员。
+    async fn ended_meanwhile(
+        &self,
+        action_id: ModerationActionId,
+        error: &RepositoryError,
+        operation: &'static str,
+    ) -> ModerationResult<ModerationAction> {
+        if error.kind() == RepositoryErrorKind::Conflict
+            && let Some(current) = self
+                .repository
+                .find_action(action_id)
+                .await
+                .map_err(|error| repository_failure(operation, &error))?
+            && current.status() == ModerationActionStatus::Reversed
+        {
+            return Ok(current);
+        }
+        Err(repository_failure(operation, error))
     }
 
     async fn list_room_actions_internal(
@@ -570,7 +598,7 @@ impl ModerationService {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn action_audit(
+    pub(super) fn action_audit(
         &self,
         action: &ModerationAction,
         audit_action: &'static str,
@@ -718,7 +746,10 @@ fn require_recent_actor(
     }
 }
 
-fn repository_failure(operation: &'static str, error: &RepositoryError) -> ModerationFailure {
+pub(super) fn repository_failure(
+    operation: &'static str,
+    error: &RepositoryError,
+) -> ModerationFailure {
     let kind = match error.kind() {
         RepositoryErrorKind::Conflict => ModerationFailureKind::Conflict,
         RepositoryErrorKind::Forbidden => ModerationFailureKind::Forbidden,
@@ -731,7 +762,7 @@ fn repository_failure(operation: &'static str, error: &RepositoryError) -> Moder
     failure(operation, kind)
 }
 
-fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
+pub(super) fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
     match failure.kind() {
         crate::ports::MatrixFailureKind::InvalidConfiguration => "matrix.invalid_configuration",
         crate::ports::MatrixFailureKind::Unauthenticated => "matrix.unauthenticated",
@@ -752,6 +783,9 @@ fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
     }
 }
 
-const fn failure(operation: &'static str, kind: ModerationFailureKind) -> ModerationFailure {
+pub(super) const fn failure(
+    operation: &'static str,
+    kind: ModerationFailureKind,
+) -> ModerationFailure {
     ModerationFailure::new(operation, kind)
 }
