@@ -11,7 +11,7 @@
 use std::{borrow::Cow, time::Duration};
 
 use reqwest::{
-    Client, Method,
+    Client, Method, StatusCode,
     header::{self, HeaderMap, HeaderName, HeaderValue},
     redirect,
 };
@@ -24,6 +24,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
 const MAX_HEAD_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_HEADERS: usize = 64;
 pub(crate) const DESKTOP_SESSION_COOKIE: &str = "__Secure-agent-room-desktop-session";
+/// 控制面说带去的登录过期了或被撤销了。
+const INVALID_SESSION_CODE: &str = "authentication.invalid_session";
 
 /// 这些请求头由这里决定，前端交来的一律不转：登录和 Origin 由原生层带，其余是连接层的事。
 const REQUEST_HEADERS_SET_HERE: &[&str] = &[
@@ -77,6 +79,30 @@ struct ProxyResponseHead {
     headers: Vec<(String, String)>,
 }
 
+/// 控制面错误回答里这里要看的那一项，别的不管。
+#[derive(Deserialize)]
+struct ErrorCode {
+    code: String,
+}
+
+/// 代发回来的回答：编好的一段字节，外加控制面是不是说带去的登录无效。
+#[derive(Debug)]
+pub(crate) struct ForwardedResponse {
+    frame: Vec<u8>,
+    session_rejected: bool,
+}
+
+impl ForwardedResponse {
+    /// 带了登录去，控制面回 401 `authentication.invalid_session`。
+    pub(crate) const fn session_rejected(&self) -> bool {
+        self.session_rejected
+    }
+
+    pub(crate) fn into_frame(self) -> Vec<u8> {
+        self.frame
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ControlPlaneProxyFailure {
     code: &'static str,
@@ -125,7 +151,7 @@ impl ControlPlaneProxy {
         frame: &[u8],
         origin: &str,
         session_secret: Option<&str>,
-    ) -> Result<Vec<u8>, ControlPlaneProxyFailure> {
+    ) -> Result<ForwardedResponse, ControlPlaneProxyFailure> {
         let (head, body) = decode_request(frame)?;
         let request = self.build_request(&head, body, origin, session_secret)?;
         let response = self
@@ -133,12 +159,16 @@ impl ControlPlaneProxy {
             .execute(request)
             .await
             .map_err(|_| unavailable())?;
+        let status = response.status();
         let head = ProxyResponseHead {
-            status: response.status().as_u16(),
+            status: status.as_u16(),
             headers: response_headers(response.headers()),
         };
         let body = response.bytes().await.map_err(|_| unavailable())?;
-        encode_frame(&head, &body)
+        Ok(ForwardedResponse {
+            frame: encode_frame(&head, &body)?,
+            session_rejected: session_secret.is_some() && rejects_session(status, &body),
+        })
     }
 
     fn build_request(
@@ -242,6 +272,13 @@ fn encode_frame(
     frame.extend_from_slice(&head);
     frame.extend_from_slice(body);
     Ok(frame)
+}
+
+/// 控制面说这份登录无效：401，错误码 `authentication.invalid_session`。
+fn rejects_session(status: StatusCode, body: &[u8]) -> bool {
+    status == StatusCode::UNAUTHORIZED
+        && serde_json::from_slice::<ErrorCode>(body)
+            .is_ok_and(|error| error.code == INVALID_SESSION_CODE)
 }
 
 fn proxy_method(method: &str) -> Result<Method, ControlPlaneProxyFailure> {

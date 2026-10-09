@@ -1,3 +1,4 @@
+use reqwest::StatusCode;
 use serde_json::json;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -7,8 +8,8 @@ use tokio::{
 use url::Url;
 
 use super::{
-    ControlPlaneProxy, ProxyResponseHead, decode_request, request_frame, request_headers,
-    response_headers, webview_origin,
+    ControlPlaneProxy, ProxyResponseHead, decode_request, rejects_session, request_frame,
+    request_headers, response_headers, webview_origin,
 };
 
 fn proxy(base: &str) -> ControlPlaneProxy {
@@ -149,7 +150,8 @@ async fn 代发时带上登录和窗口_origin_回答原样交回且不交出_co
     );
     assert!(raw.ends_with("{\"a\":1}"));
 
-    let (head, body) = split_response(&response);
+    assert!(!response.session_rejected());
+    let (head, body) = split_response(&response.into_frame());
     assert_eq!(head.status, 201);
     assert!(
         head.headers
@@ -193,13 +195,62 @@ async fn 没登录时不带_cookie_get_不带正文_跳转原样交回() {
     assert!(!headers.iter().any(|line| line.starts_with("cookie")));
     assert!(headers.contains(&"origin: http://tauri.localhost".to_owned()));
     assert!(!raw.contains("ignored"));
-    let (head, body) = split_response(&response);
+    let (head, body) = split_response(&response.into_frame());
     assert_eq!(head.status, 302);
     assert!(head.headers.contains(&(
         "location".to_owned(),
         "https://elsewhere.example/".to_owned()
     )));
     assert!(body.is_empty());
+}
+
+#[tokio::test]
+async fn 带去的登录被说无效时告诉调用方_没带登录时不算() {
+    const REJECTED: &str = concat!(
+        "HTTP/1.1 401 Unauthorized\r\n",
+        "Content-Type: application/json\r\n",
+        "Content-Length: 41\r\n",
+        "\r\n",
+        "{\"code\":\"authentication.invalid_session\"}",
+    );
+    let request = frame(
+        &json!({ "method": "GET", "path": "auth/session", "headers": [] }),
+        b"",
+    );
+
+    let (base, server) = serve_once(REJECTED).await;
+    let response = proxy(base.as_str())
+        .forward(&request, "tauri://localhost", Some("desktop-secret"))
+        .await
+        .expect("代发成功");
+    server.await.expect("服务端正常结束");
+    assert!(response.session_rejected());
+    let (head, body) = split_response(&response.into_frame());
+    assert_eq!(head.status, 401, "回答照样原样交回前端");
+    assert_eq!(body, b"{\"code\":\"authentication.invalid_session\"}");
+
+    let (base, server) = serve_once(REJECTED).await;
+    let response = proxy(base.as_str())
+        .forward(&request, "tauri://localhost", None)
+        .await
+        .expect("代发成功");
+    server.await.expect("服务端正常结束");
+    assert!(!response.session_rejected(), "没带登录去，说的不是本机这份");
+}
+
+#[test]
+fn 只有_401_而且错误码是登录无效才算登录被拒() {
+    let invalid =
+        br#"{"category":"authentication","code":"authentication.invalid_session","retryable":false}"#;
+    assert!(rejects_session(StatusCode::UNAUTHORIZED, invalid));
+    assert!(!rejects_session(StatusCode::FORBIDDEN, invalid));
+    assert!(!rejects_session(StatusCode::OK, invalid));
+    assert!(!rejects_session(
+        StatusCode::UNAUTHORIZED,
+        br#"{"code":"authentication.reauthentication_required"}"#
+    ));
+    assert!(!rejects_session(StatusCode::UNAUTHORIZED, b"not json"));
+    assert!(!rejects_session(StatusCode::UNAUTHORIZED, b""));
 }
 
 #[tokio::test]
