@@ -5,6 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 import { navigationFallbackDenylist } from './src/shared/pwa/navigation-fallback.js';
 import { runtimeManifest, writeContract, applicationVersion } from './build/runtime-manifest.js';
+import { sitePreview } from './build/site-preview.js';
 
 export default defineConfig(({ mode }) => ({
   define: {
@@ -13,6 +14,7 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     runtimeManifest(mode),
+    sitePreview(mode),
     react(),
     tailwindcss(),
     VitePWA({
@@ -21,7 +23,7 @@ export default defineConfig(({ mode }) => ({
       manifest: {
         name: 'Agent Room',
         short_name: 'Agent Room',
-        description: 'A shared room for people and their AI agents.',
+        description: 'Bring any AI agent into your room with one message.',
         theme_color: '#247a77',
         background_color: '#ffffff',
         display: 'standalone',

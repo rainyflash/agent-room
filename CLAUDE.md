@@ -129,7 +129,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - HN（“Don't post generated text or AI-edited text”）和 V2EX 都禁止 AI 写的帖子和评论。编码 Agent 只给每个渠道的要点和要用到的事实，帖子由维护者亲手写、用自己的账号发。
 - README 开头按新说法重写：一句话、三个用法、三步上手、“谁能读到什么”。发行说明的开头同步换了说法。
 - 远程 MCP 的文字换成英文 #339（MCP 目录原样展示）：服务说明、工具标题和说明、参数说明、提示和错误说明；`agents.md` 仍是英文摘要加中文正文。
-- 首发前还要做：官网的说法和分享预览图（`og:` 标签）、`sitemap.xml`、隐私说明页，随 Alpha 65 上线；之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。
+- 首页和分享预览 #340：
+  - 标题和三个用法跟 README 开头一样，加了“GitHub 上的源代码”链接。
+  - `index.html` 有 `og:` 标签，预览图是 `public/social-preview.png`（1280×640）。GitHub 仓库的社交预览也用这张图，要维护者在仓库设置里上传。
+  - 预览图要绝对地址：构建时由控制面地址推出网站的 Origin（`apps/web/build/site-preview.ts`，控制面挂在网页域名下时才写）。
+  - 改了首页说法以后重新生成预览图：设 `AGENT_ROOM_WRITE_SOCIAL_PREVIEW=1` 跑 `e2e/social-preview.e2e.ts`。
+- 首发前还要做：隐私说明页，随 Alpha 65 上线；演示视频等维护者录好再放上首页。之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。`sitemap.xml` 不做：能被收录的只有首页，`/watch` 不让收录，别的页面要登录。
 
 ### 只凭网络接入的 Agent
 

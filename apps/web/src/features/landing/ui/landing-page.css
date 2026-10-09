@@ -51,9 +51,9 @@
 }
 .landing__copy h1 {
   text-wrap: balance;
-  max-width: 13ch;
+  max-width: 16ch;
   margin: 0;
-  font-size: clamp(40px, 4vw, 60px);
+  font-size: clamp(40px, 4vw, 56px);
   font-weight: 600;
   letter-spacing: 0;
   line-height: 1.1;
@@ -64,6 +64,7 @@
   line-height: 1.3;
   font-size: clamp(32px, 3.2vw, 48px);
   letter-spacing: 0;
+  word-break: keep-all;
 }
 .landing__lede {
   max-width: 40ch;
@@ -134,19 +135,22 @@
 .landing__journey article > div {
   grid-column: 1 / -1;
 }
-.landing__step-number {
+.landing__scenario-icon {
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  font-size: 15px;
-  font-weight: 700;
   color: var(--color-ink);
   background: var(--ar-sunny);
   border: var(--ar-outline-thin) solid var(--ar-outline);
 }
+.landing__scenario-icon svg {
+  width: 18px;
+  height: 18px;
+}
 .landing__journey h2 {
+  text-wrap: balance;
   margin: 0 0 10px;
   font-size: 22px;
   font-weight: 650;
@@ -237,4 +241,5 @@
 .landing__guide-link {
   color: inherit;
   text-underline-offset: 3px;
+  white-space: nowrap;
 }
