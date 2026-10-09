@@ -15,8 +15,9 @@ use agent_room_application::{
         DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId,
         OutboxMessage, PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
         QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt, SealedSecret, SecretDigest,
-        StoredAgentInstanceRegistration, StoredEncryptionKey, TargetedHandoffReceiptOutcome,
-        TargetedHandoffRepository, TargetedHandoffRequestFingerprint,
+        SignInAccount, StoredAgentInstanceRegistration, StoredEncryptionKey,
+        TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
+        TargetedHandoffRequestFingerprint,
     },
 };
 use agent_room_domain::{
@@ -240,6 +241,12 @@ async fn 账户导出与删除状态机在真实事务中完成() {
             .expect("应能领取删除任务")
             .expect("应有到期删除任务");
     assert_eq!(claimed.stage, AccountDeletionStage::FederatedDeactivation);
+    // 删除任务带着登录服务里的账户，工作流先删它再停用聊天账户。
+    let sign_in_account = SignInAccount {
+        issuer: registration.oidc_issuer.clone(),
+        subject: registration.oidc_subject.clone(),
+    };
+    assert_eq!(claimed.sign_in_account, sign_in_account);
     let local_claim = AccountDeletionRepository::record_federated_deactivation(
         &repositories,
         &claimed,
@@ -248,6 +255,7 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     .await
     .expect("Matrix 停用结果应被记录");
     assert_eq!(local_claim.stage, AccountDeletionStage::LocalErasure);
+    assert_eq!(local_claim.sign_in_account, sign_in_account);
     let completed =
         AccountDeletionRepository::finalize_local(&repositories, &local_claim, test_time())
             .await

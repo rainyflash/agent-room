@@ -19,6 +19,10 @@ from urllib.request import Request, urlopen
 
 REALM: Final = "agent-room"
 WEB_CLIENT_ID: Final = "agent-room-web"
+# 删除账户时控制面用它删 Keycloak 里的登录账户：只开服务账号，只给 realm-management 的 manage-users。
+ACCOUNT_ADMIN_CLIENT_ID: Final = "agent-room-account-admin"
+REALM_MANAGEMENT_CLIENT_ID: Final = "realm-management"
+ACCOUNT_ADMIN_ROLE: Final = "manage-users"
 ADMIN_USERNAME: Final = "agent-room-admin"
 REQUEST_TIMEOUT_SECONDS: Final = 20
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
@@ -138,33 +142,148 @@ def load_realm(base_url: str, token: str) -> dict[str, object]:
     return realm
 
 
-def load_web_client(base_url: str, token: str) -> dict[str, object]:
-    raw = request(
-        f"{base_url}/admin/realms/{quote(REALM, safe='')}/clients"
-        f"?clientId={quote(WEB_CLIENT_ID, safe='')}",
-        token=token,
-    )
+def realm_admin_url(base_url: str, *segments: str) -> str:
+    path = "/".join(quote(segment, safe="") for segment in (REALM, *segments))
+    return f"{base_url}/admin/realms/{path}"
+
+
+def load_json(raw: bytes, label: str) -> object:
     try:
-        clients = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as error:
-        raise ReconcileError("Keycloak Web Client 响应不是有效 JSON。") from error
-    if not isinstance(clients, list) or len(clients) != 1 or not isinstance(clients[0], dict):
-        raise ReconcileError("Keycloak Web Client 不存在或不唯一。")
-    client_id = clients[0].get("id")
-    if not isinstance(client_id, str) or not client_id:
-        raise ReconcileError("Keycloak Web Client 缺少内部 ID。")
-    detail_raw = request(
-        f"{base_url}/admin/realms/{quote(REALM, safe='')}/clients/"
-        f"{quote(client_id, safe='')}",
-        token=token,
+        raise ReconcileError(f"Keycloak {label}响应不是有效 JSON。") from error
+
+
+def find_client(base_url: str, token: str, client_id: str, label: str) -> dict[str, object] | None:
+    """按 clientId 找客户端详情；没有返回 None，不唯一时报错。"""
+    clients = load_json(
+        request(
+            f"{realm_admin_url(base_url, 'clients')}?clientId={quote(client_id, safe='')}",
+            token=token,
+        ),
+        label,
     )
-    try:
-        client = json.loads(detail_raw)
-    except json.JSONDecodeError as error:
-        raise ReconcileError("Keycloak Web Client 详情不是有效 JSON。") from error
-    if not isinstance(client, dict) or client.get("id") != client_id:
-        raise ReconcileError("Keycloak Web Client 详情结构无效。")
+    if not isinstance(clients, list) or not all(isinstance(item, dict) for item in clients):
+        raise ReconcileError(f"Keycloak {label}响应结构无效。")
+    if not clients:
+        return None
+    if len(clients) != 1:
+        raise ReconcileError(f"Keycloak {label}不唯一。")
+    internal_id = clients[0].get("id")
+    if not isinstance(internal_id, str) or not internal_id:
+        raise ReconcileError(f"Keycloak {label}缺少内部 ID。")
+    client = load_json(
+        request(realm_admin_url(base_url, "clients", internal_id), token=token),
+        f"{label}详情",
+    )
+    if not isinstance(client, dict) or client.get("id") != internal_id:
+        raise ReconcileError(f"Keycloak {label}详情结构无效。")
     return client
+
+
+def load_web_client(base_url: str, token: str) -> dict[str, object]:
+    client = find_client(base_url, token, WEB_CLIENT_ID, "Web Client ")
+    if client is None:
+        raise ReconcileError("Keycloak Web Client 不存在或不唯一。")
+    return client
+
+
+def apply_account_admin_client_policy(
+    client: dict[str, object], *, secret: str
+) -> dict[str, object]:
+    """删除账户用的客户端只能拿服务账号令牌：不能登录、不能用密码换令牌、没有回调地址。"""
+    updated = copy.deepcopy(client)
+    updated.update(
+        {
+            "clientId": ACCOUNT_ADMIN_CLIENT_ID,
+            "name": "Agent Room account deletion",
+            "enabled": True,
+            "protocol": "openid-connect",
+            "publicClient": False,
+            "bearerOnly": False,
+            "clientAuthenticatorType": "client-secret",
+            "secret": secret,
+            "serviceAccountsEnabled": True,
+            "standardFlowEnabled": False,
+            "implicitFlowEnabled": False,
+            "directAccessGrantsEnabled": False,
+            "redirectUris": [],
+            "webOrigins": [],
+        }
+    )
+    attributes = updated.get("attributes")
+    attributes = dict(attributes) if isinstance(attributes, dict) else {}
+    attributes["oauth2.device.authorization.grant.enabled"] = "false"
+    updated["attributes"] = attributes
+    return updated
+
+
+def reconcile_account_admin_client(base_url: str, token: str, secret: str) -> None:
+    """建好删除账户用的客户端，同步密钥，给它的服务账号 manage-users。"""
+    label = "删除账户客户端"
+    existing = find_client(base_url, token, ACCOUNT_ADMIN_CLIENT_ID, label)
+    if existing is None:
+        request(
+            realm_admin_url(base_url, "clients"),
+            method="POST",
+            token=token,
+            body=json.dumps(apply_account_admin_client_policy({}, secret=secret)).encode("utf-8"),
+            content_type="application/json",
+        )
+        existing = find_client(base_url, token, ACCOUNT_ADMIN_CLIENT_ID, label)
+        if existing is None:
+            raise ReconcileError("Keycloak 删除账户客户端创建后仍找不到。")
+    else:
+        request(
+            realm_admin_url(base_url, "clients", str(existing["id"])),
+            method="PUT",
+            token=token,
+            body=json.dumps(apply_account_admin_client_policy(existing, secret=secret)).encode(
+                "utf-8"
+            ),
+            content_type="application/json",
+        )
+    service_user = load_json(
+        request(
+            realm_admin_url(base_url, "clients", str(existing["id"]), "service-account-user"),
+            token=token,
+        ),
+        "删除账户客户端的服务账号",
+    )
+    if not isinstance(service_user, dict) or not isinstance(service_user.get("id"), str):
+        raise ReconcileError("Keycloak 删除账户客户端没有服务账号。")
+    management = find_client(base_url, token, REALM_MANAGEMENT_CLIENT_ID, "realm-management ")
+    if management is None:
+        raise ReconcileError("Keycloak 领域里没有 realm-management 客户端。")
+    mappings_url = realm_admin_url(
+        base_url,
+        "users",
+        service_user["id"],
+        "role-mappings",
+        "clients",
+        str(management["id"]),
+    )
+    mapped = load_json(request(mappings_url, token=token), "服务账号角色")
+    if not isinstance(mapped, list):
+        raise ReconcileError("Keycloak 服务账号角色响应结构无效。")
+    if any(isinstance(role, dict) and role.get("name") == ACCOUNT_ADMIN_ROLE for role in mapped):
+        return
+    role = load_json(
+        request(
+            realm_admin_url(base_url, "clients", str(management["id"]), "roles", ACCOUNT_ADMIN_ROLE),
+            token=token,
+        ),
+        f"{ACCOUNT_ADMIN_ROLE} 角色",
+    )
+    if not isinstance(role, dict) or role.get("name") != ACCOUNT_ADMIN_ROLE:
+        raise ReconcileError(f"Keycloak 找不到 {ACCOUNT_ADMIN_ROLE} 角色。")
+    request(
+        mappings_url,
+        method="POST",
+        token=token,
+        body=json.dumps([role]).encode("utf-8"),
+        content_type="application/json",
+    )
 
 
 def apply_web_client_policy(
@@ -379,6 +498,14 @@ def reconcile() -> None:
             web_client,
             redirect_url=redirect_url,
             frontend_origin=frontend_origin,
+        ),
+    )
+    reconcile_account_admin_client(
+        base_url,
+        token,
+        read_secret(
+            require_environment("AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET_FILE"),
+            "删除账户客户端",
         ),
     )
     if mode == "closed":

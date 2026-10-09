@@ -37,6 +37,17 @@ from tools.prodops.secrets import (
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "infra" / "production" / "deployment.example.json"
+
+
+def _load_keycloak_reconcile():
+    script = ROOT / "infra" / "production" / "keycloak-registration-reconcile.py"
+    specification = importlib.util.spec_from_file_location(
+        "agent_room_keycloak_registration_reconcile", script
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 EXTERNAL_EXAMPLE = ROOT / "infra" / "production" / "deployment.external.example.json"
 SCHEMA = ROOT / "infra" / "production" / "deployment.schema.json"
 
@@ -441,6 +452,99 @@ class ProductionRenderingTests(unittest.TestCase):
             web_client["redirectUris"],
             [f"{self.config.public.app_origin}/connect/finalize"],
         )
+
+    def test_删除账户用的客户端只开服务账号_只有_manage_users(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        realm = json.loads(
+            self.paths.generated.joinpath("keycloak", "realm-agent-room.json").read_text(encoding="utf-8")
+        )
+        client = next(
+            client for client in realm["clients"] if client["clientId"] == "agent-room-account-admin"
+        )
+        self.assertEqual(client["secret"], self.secrets.read("keycloak_account_admin_client_secret"))
+        self.assertTrue(client["serviceAccountsEnabled"])
+        self.assertFalse(client["publicClient"])
+        for flow in ("standardFlowEnabled", "implicitFlowEnabled", "directAccessGrantsEnabled"):
+            self.assertFalse(client[flow], flow)
+        self.assertEqual(client["redirectUris"], [])
+        self.assertEqual(
+            realm["users"],
+            [
+                {
+                    "username": "service-account-agent-room-account-admin",
+                    "enabled": True,
+                    "serviceAccountClientId": "agent-room-account-admin",
+                    "clientRoles": {"realm-management": ["manage-users"]},
+                }
+            ],
+        )
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+        control_plane = compose.split("\n  control-plane:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("AGENT_ROOM_KEYCLOAK_INTERNAL_URL: http://identity:8080", control_plane)
+        self.assertIn(
+            "AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET_FILE: "
+            "/run/secrets/keycloak_account_admin_client_secret",
+            control_plane,
+        )
+        self.assertIn("- keycloak_account_admin_client_secret", control_plane)
+
+    def test_身份同步建好删除账户客户端_同步密钥_只授权一次(self) -> None:
+        module = _load_keycloak_reconcile()
+        clients: dict[str, dict[str, object]] = {}
+        mapped: list[dict[str, object]] = []
+        calls: list[tuple[str, str]] = []
+
+        def fake_request(
+            url: str,
+            *,
+            method: str = "GET",
+            token: str | None = None,
+            body: bytes | None = None,
+            content_type: str | None = None,
+        ) -> bytes:
+            del content_type
+            self.assertEqual(token, "admin-token")
+            path = url.split("/admin/realms/agent-room/", 1)[1]
+            calls.append((method, path))
+            if method == "GET" and path.startswith("clients?clientId="):
+                client_id = path.split("=", 1)[1]
+                if client_id == "realm-management":
+                    return json.dumps([{"id": "rm"}]).encode()
+                return json.dumps([{"id": "aa"}] if client_id in clients else []).encode()
+            if path == "clients/rm":
+                return json.dumps({"id": "rm", "clientId": "realm-management"}).encode()
+            if method == "GET" and path == "clients/aa":
+                return json.dumps(clients["agent-room-account-admin"]).encode()
+            if method in {"POST", "PUT"} and path in {"clients", "clients/aa"}:
+                assert body is not None
+                representation = json.loads(body)
+                representation["id"] = "aa"
+                clients[representation["clientId"]] = representation
+                return b""
+            if path == "clients/aa/service-account-user":
+                return json.dumps({"id": "sa"}).encode()
+            if path == "clients/rm/roles/manage-users":
+                return json.dumps({"id": "role", "name": "manage-users"}).encode()
+            if path == "users/sa/role-mappings/clients/rm":
+                if method == "POST":
+                    assert body is not None
+                    mapped.extend(json.loads(body))
+                    return b""
+                return json.dumps(mapped).encode()
+            raise AssertionError(f"没想到的请求：{method} {path}")
+
+        with patch.object(module, "request", fake_request):
+            module.reconcile_account_admin_client("http://identity:8080", "admin-token", "secret-1")
+            module.reconcile_account_admin_client("http://identity:8080", "admin-token", "secret-2")
+
+        client = clients["agent-room-account-admin"]
+        self.assertEqual(client["secret"], "secret-2")
+        self.assertTrue(client["serviceAccountsEnabled"])
+        for flow in ("standardFlowEnabled", "implicitFlowEnabled", "directAccessGrantsEnabled"):
+            self.assertFalse(client[flow], flow)
+        self.assertEqual([role["name"] for role in mapped], ["manage-users"])
+        self.assertEqual(calls.count(("POST", "clients")), 1)
+        self.assertEqual(calls.count(("PUT", "clients/aa")), 1)
 
     def test_browser_control_plane_uses_same_origin_gateway_without_removing_machine_api(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)

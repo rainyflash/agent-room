@@ -43,6 +43,8 @@ const DEFAULT_ACCOUNT_DELETION_INTERVAL_MILLIS: u64 = 5_000;
 const DEFAULT_ACCOUNT_DELETION_LEASE_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_ACCOUNT_DELETION_RETRY_INITIAL_MILLIS: u64 = 30_000;
 const DEFAULT_ACCOUNT_DELETION_RETRY_MAXIMUM_MILLIS: u64 = 60 * 60 * 1_000;
+/// 删除账户时删 Keycloak 用户用的客户端：只开服务账号，有 realm-management 的 manage-users。
+const DEFAULT_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_ID: &str = "agent-room-account-admin";
 const MAX_TEXT_LENGTH: usize = 1_024;
 
 trait EnvironmentSource {
@@ -137,6 +139,10 @@ pub(crate) struct AgentIdentityConfig {
 pub(crate) struct AccountLifecycleConfig {
     pub(crate) matrix_admin_access_token: SecretValue,
     pub(crate) receipt_secret: SecretValue,
+    /// 控制面到 Keycloak 的内部地址；删除账户时经它删掉登录账户。
+    pub(crate) keycloak_internal_url: Url,
+    pub(crate) keycloak_account_admin_client_id: String,
+    pub(crate) keycloak_account_admin_client_secret: SecretValue,
     pub(crate) worker_interval: Duration,
     pub(crate) lease_duration: Duration,
     pub(crate) retry_initial: Duration,
@@ -304,6 +310,26 @@ fn read_account_lifecycle_config(
         receipt_secret: SecretValue(read_required_secret(
             source,
             "AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET",
+        )?),
+        keycloak_internal_url: parse_http_url(
+            "AGENT_ROOM_KEYCLOAK_INTERNAL_URL",
+            &read_required_text(source, "AGENT_ROOM_KEYCLOAK_INTERNAL_URL")?,
+        )?,
+        keycloak_account_admin_client_id: read_optional(
+            source,
+            "AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_ID",
+        )
+        .map_or_else(
+            || Ok(DEFAULT_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_ID.to_owned()),
+            |value| {
+                let value = value.trim().to_owned();
+                validate_text("AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_ID", &value)?;
+                Ok(value)
+            },
+        )?,
+        keycloak_account_admin_client_secret: SecretValue(read_required_secret(
+            source,
+            "AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET",
         )?),
         worker_interval: read_bounded_duration(
             source,
@@ -945,6 +971,14 @@ mod tests {
             (
                 "AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN",
                 "local-matrix-admin-token".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_KEYCLOAK_INTERNAL_URL",
+                "http://127.0.0.1:18080".to_owned(),
+            ),
+            (
+                "AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET",
+                "local-account-admin-secret".to_owned(),
             ),
             (
                 "AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET",

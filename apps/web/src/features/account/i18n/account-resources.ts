@@ -14,7 +14,7 @@ export const accountResources = {
     'settings.account.deleteOpen': 'Delete account…',
     'settings.account.deleteTitle': 'Delete your account?',
     'settings.account.deleteRemoved':
-      'Your files and message texts are deleted, your chat account is closed, your computers lose access, and private rooms and agents that only you own are closed.',
+      'Your sign-in (email address, nickname and password), your files and message texts are deleted, your chat account is closed, your computers lose access, and private rooms and agents that only you own are closed.',
     'settings.account.deleteKept':
       'People and agents in your rooms keep what they already received, other Matrix servers keep their copies, and backups keep everything for up to 30 days.',
     'settings.account.deleteSignIn': 'For your safety, sign in again before deleting your account.',
@@ -46,7 +46,7 @@ export const accountResources = {
     'settings.account.deleteOpen': '删除账户…',
     'settings.account.deleteTitle': '确定删除账户？',
     'settings.account.deleteRemoved':
-      '你的文件和消息正文会删除，聊天账户会关闭，电脑的授权失效，只有你拥有的私人房间和 Agent 会关闭。',
+      '你的登录账户（邮箱、昵称和密码）、文件和消息正文会删除，聊天账户会关闭，电脑的授权失效，只有你拥有的私人房间和 Agent 会关闭。',
     'settings.account.deleteKept':
       '房间里的人和 Agent 已经收到的会留在他们那里，其他 Matrix 服务器上的副本也删不掉，备份最多再留 30 天。',
     'settings.account.deleteSignIn': '为了安全，删除账户前请重新登录一次。',

@@ -136,9 +136,10 @@ services:
       AGENT_ROOM_IDENTITY_REGISTRATION_MODE: closed
       AGENT_ROOM_KEYCLOAK_INTERNAL_URL: http://identity:8080
       AGENT_ROOM_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
+      AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET_FILE: /run/secrets/keycloak_account_admin_client_secret
       AGENT_ROOM_OIDC_REDIRECT_URL: https://${AGENT_ROOM_APP_DOMAIN}${AGENT_ROOM_BROWSER_OIDC_CALLBACK_PATH}
       AGENT_ROOM_FRONTEND_ORIGIN: https://${AGENT_ROOM_APP_DOMAIN}
-    secrets: [keycloak_admin_password]
+    secrets: [keycloak_admin_password, keycloak_account_admin_client_secret]
 
   identity-registration-open:
     logging: *container-logging
@@ -147,6 +148,7 @@ services:
       AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
       AGENT_ROOM_KEYCLOAK_INTERNAL_URL: http://identity:8080
       AGENT_ROOM_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
+      AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET_FILE: /run/secrets/keycloak_account_admin_client_secret
       AGENT_ROOM_OIDC_REDIRECT_URL: https://${AGENT_ROOM_APP_DOMAIN}${AGENT_ROOM_BROWSER_OIDC_CALLBACK_PATH}
       AGENT_ROOM_FRONTEND_ORIGIN: https://${AGENT_ROOM_APP_DOMAIN}
       AGENT_ROOM_SMTP_HOST: ${AGENT_ROOM_SMTP_HOST:-}
@@ -156,7 +158,7 @@ services:
       AGENT_ROOM_SMTP_USERNAME: ${AGENT_ROOM_SMTP_USERNAME:-}
       AGENT_ROOM_SMTP_ENCRYPTION: ${AGENT_ROOM_SMTP_ENCRYPTION:-}
       AGENT_ROOM_SMTP_PASSWORD_FILE: /run/secrets/identity_smtp_password
-    secrets: [keycloak_admin_password, identity_smtp_password]
+    secrets: [keycloak_admin_password, keycloak_account_admin_client_secret, identity_smtp_password]
 
   object-store:
     logging: *container-logging
@@ -525,6 +527,9 @@ services:
       AGENT_ROOM_MATRIX_APPSERVICE_TOKEN_FILE: /run/secrets/synapse_appservice_token
       AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN_FILE: /run/secrets/synapse_lifecycle_admin_token
       AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET_FILE: /run/secrets/account_deletion_receipt_secret
+      # 删除账户时经内部地址删掉 Keycloak 里的登录账户。
+      AGENT_ROOM_KEYCLOAK_INTERNAL_URL: http://identity:8080
+      AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET_FILE: /run/secrets/keycloak_account_admin_client_secret
       AGENT_ROOM_OBJECT_STORE_HEALTH_URL: ${AGENT_ROOM_OBJECT_STORE_HEALTH_URL}
       AGENT_ROOM_DEPENDENCY_TIMEOUT_MS: '5000'
       AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
@@ -565,6 +570,7 @@ services:
       - network_agent_seal_key
       - content_ticket_secret
       - keycloak_web_client_secret
+      - keycloak_account_admin_client_secret
       - s3_access_key
       - s3_secret_key
       - synapse_appservice_token
@@ -639,6 +645,8 @@ secrets:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_admin_password
   keycloak_web_client_secret:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_web_client_secret
+  keycloak_account_admin_client_secret:
+    file: ${AGENT_ROOM_STATE_DIR}/secrets/keycloak_account_admin_client_secret
   synapse_appservice_token:
     file: ${AGENT_ROOM_STATE_DIR}/secrets/synapse_appservice_token
   synapse_registration_secret:

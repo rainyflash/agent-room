@@ -23,6 +23,8 @@ SECRET_NAMES: Final = (
     "keycloak_admin_password",
     "keycloak_web_client_secret",
     "keycloak_matrix_client_secret",
+    # 删除账户时控制面用它删 Keycloak 里的登录账户（只开服务账号，只有 manage-users）。
+    "keycloak_account_admin_client_secret",
     "synapse_registration_secret",
     "synapse_lifecycle_admin_password",
     "synapse_appservice_token",

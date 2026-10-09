@@ -13,8 +13,9 @@ use agent_room_application::{
         AccountDeletionClaim, AccountDeletionReceiptIssuer, AccountDeletionRepository,
         AccountDeletionRequest, AccountDeletionRequestOutcome, AccountDeletionStage,
         AccountDeletionStatus, AccountExportSnapshot, Clock, MatrixAccountLifecycleGateway,
-        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixUserId, PortFuture,
-        SecretDigest, SecretGenerationFailure, SecretValue,
+        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixUserId, OidcFailure,
+        OidcFailureKind, OidcResult, PortFuture, SecretDigest, SecretGenerationFailure,
+        SecretValue, SignInAccount, SignInAccountRemoval,
     },
 };
 use agent_room_domain::{
@@ -184,9 +185,23 @@ impl AccountDeletionRepository for FakeRepository {
     }
 }
 
+/// 两个外部账户按什么顺序关掉。
+type Steps = Arc<Mutex<Vec<&'static str>>>;
+
 struct FakeMatrix {
     outcome: MatrixResult<()>,
     calls: Mutex<Vec<MatrixUserId>>,
+    steps: Steps,
+}
+
+impl FakeMatrix {
+    fn new(outcome: MatrixResult<()>, steps: &Steps) -> Self {
+        Self {
+            outcome,
+            calls: Mutex::new(Vec::new()),
+            steps: steps.clone(),
+        }
+    }
 }
 
 impl MatrixAccountLifecycleGateway for FakeMatrix {
@@ -199,6 +214,36 @@ impl MatrixAccountLifecycleGateway for FakeMatrix {
                 .lock()
                 .expect("测试锁不得中毒")
                 .push(user_id.clone());
+            self.steps.lock().expect("测试锁不得中毒").push("matrix");
+            self.outcome
+        })
+    }
+}
+
+struct FakeSignIn {
+    outcome: OidcResult<()>,
+    calls: Mutex<Vec<SignInAccount>>,
+    steps: Steps,
+}
+
+impl FakeSignIn {
+    fn new(outcome: OidcResult<()>, steps: &Steps) -> Self {
+        Self {
+            outcome,
+            calls: Mutex::new(Vec::new()),
+            steps: steps.clone(),
+        }
+    }
+}
+
+impl SignInAccountRemoval for FakeSignIn {
+    fn remove<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .expect("测试锁不得中毒")
+                .push(account.clone());
+            self.steps.lock().expect("测试锁不得中毒").push("sign_in");
             self.outcome
         })
     }
@@ -320,14 +365,16 @@ async fn matrix_失败时指数退避且不得提前擦除本地数据() {
         AccountDeletionStage::FederatedDeactivation,
         2,
     ));
-    let matrix = Arc::new(FakeMatrix {
-        outcome: Err(MatrixFailure::new(
+    let steps = Steps::default();
+    let matrix = Arc::new(FakeMatrix::new(
+        Err(MatrixFailure::new(
             MatrixOperation::DeactivateAccount,
             MatrixFailureKind::Timeout,
         )),
-        calls: Mutex::new(Vec::new()),
-    });
-    let worker = worker(repository.clone(), matrix);
+        &steps,
+    ));
+    let sign_in = Arc::new(FakeSignIn::new(Ok(()), &steps));
+    let worker = worker(repository.clone(), matrix, sign_in);
 
     assert_eq!(
         worker.run_once().await.expect("退避调度应成功"),
@@ -345,7 +392,7 @@ async fn matrix_失败时指数退避且不得提前擦除本地数据() {
 }
 
 #[tokio::test]
-async fn 删除工作流先停用_matrix_再完成本地匿名化() {
+async fn 登录服务暂时不可用时退避重试_聊天账户和本地数据都不动() {
     let status = queued_status();
     let repository = Arc::new(FakeRepository::new(status.clone()));
     *repository.claim.lock().expect("测试锁不得中毒") = Some(claim(
@@ -353,17 +400,62 @@ async fn 删除工作流先停用_matrix_再完成本地匿名化() {
         AccountDeletionStage::FederatedDeactivation,
         1,
     ));
-    let matrix = Arc::new(FakeMatrix {
-        outcome: Ok(()),
-        calls: Mutex::new(Vec::new()),
-    });
-    let worker = worker(repository.clone(), matrix.clone());
+    let steps = Steps::default();
+    let matrix = Arc::new(FakeMatrix::new(Ok(()), &steps));
+    let sign_in = Arc::new(FakeSignIn::new(
+        Err(OidcFailure::new(OidcFailureKind::DependencyUnavailable)),
+        &steps,
+    ));
+    let worker = worker(repository.clone(), matrix.clone(), sign_in);
+
+    assert_eq!(
+        worker.run_once().await.expect("退避调度应成功"),
+        AccountDeletionWorkerOutcome::Retrying(status.job_id)
+    );
+    assert_eq!(
+        repository
+            .retries
+            .lock()
+            .expect("测试锁不得中毒")
+            .as_slice(),
+        &[("identity.unavailable".to_owned(), time(NOW + 5_000))]
+    );
+    assert!(matrix.calls.lock().expect("测试锁不得中毒").is_empty());
+    assert_eq!(
+        *repository.federated_records.lock().expect("测试锁不得中毒"),
+        0
+    );
+    assert_eq!(*repository.finalizations.lock().expect("测试锁不得中毒"), 0);
+}
+
+#[tokio::test]
+async fn 删除工作流先删登录账户_再停用_matrix_最后本地匿名化() {
+    let status = queued_status();
+    let repository = Arc::new(FakeRepository::new(status.clone()));
+    *repository.claim.lock().expect("测试锁不得中毒") = Some(claim(
+        status.job_id,
+        AccountDeletionStage::FederatedDeactivation,
+        1,
+    ));
+    let steps = Steps::default();
+    let matrix = Arc::new(FakeMatrix::new(Ok(()), &steps));
+    let sign_in = Arc::new(FakeSignIn::new(Ok(()), &steps));
+    let worker = worker(repository.clone(), matrix.clone(), sign_in.clone());
 
     assert_eq!(
         worker.run_once().await.expect("完整删除应成功"),
         AccountDeletionWorkerOutcome::Completed(status.job_id)
     );
     assert_eq!(matrix.calls.lock().expect("测试锁不得中毒").len(), 1);
+    assert_eq!(
+        sign_in.calls.lock().expect("测试锁不得中毒").as_slice(),
+        &[sign_in_account()]
+    );
+    // 先删登录账户：之后就登录不了，再停用聊天账户。
+    assert_eq!(
+        steps.lock().expect("测试锁不得中毒").as_slice(),
+        &["sign_in", "matrix"]
+    );
     assert_eq!(
         *repository.federated_records.lock().expect("测试锁不得中毒"),
         1
@@ -379,10 +471,15 @@ fn service(repository: Arc<FakeRepository>) -> AccountLifecycleService {
     })
 }
 
-fn worker(repository: Arc<FakeRepository>, matrix: Arc<FakeMatrix>) -> AccountDeletionWorker {
+fn worker(
+    repository: Arc<FakeRepository>,
+    matrix: Arc<FakeMatrix>,
+    sign_in: Arc<FakeSignIn>,
+) -> AccountDeletionWorker {
     AccountDeletionWorker::new(AccountDeletionWorkerDependencies {
         repository,
         matrix,
+        sign_in,
         clock: Arc::new(FixedClock),
         lease_duration: duration(30_000),
         initial_retry_delay: duration(5_000),
@@ -425,9 +522,17 @@ fn claim(
         principal_id: PrincipalId::from_uuid(Uuid::now_v7()),
         matrix_user_id: MatrixUserId::new("@alice:matrix.agent-room.localhost".to_owned())
             .expect("测试 MXID 有效"),
+        sign_in_account: sign_in_account(),
         stage,
         attempt_count,
         version: 1,
+    }
+}
+
+fn sign_in_account() -> SignInAccount {
+    SignInAccount {
+        issuer: "https://identity.agent-room.localhost/realms/agent-room".to_owned(),
+        subject: "0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d".to_owned(),
     }
 }
 

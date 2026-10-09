@@ -93,6 +93,11 @@ def control_plane_runtime_environment(
             "AGENT_ROOM_ACCOUNT_DELETION_RECEIPT_SECRET": required_value(
                 values, "ACCOUNT_DELETION_RECEIPT_SECRET"
             ),
+            # 删除账户时经它删掉本地 Keycloak 里的登录账户（dev-infra.ps1 建的客户端）。
+            "AGENT_ROOM_KEYCLOAK_INTERNAL_URL": "http://127.0.0.1:18080",
+            "AGENT_ROOM_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET": required_value(
+                values, "KEYCLOAK_ACCOUNT_ADMIN_CLIENT_SECRET"
+            ),
             "AGENT_ROOM_OBJECT_STORE_HEALTH_URL": (
                 "http://127.0.0.1:19333/cluster/status"
             ),

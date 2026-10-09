@@ -39,7 +39,7 @@ pub use accounts::{
     AccountDeletionClaim, AccountDeletionReceiptIssuer, AccountDeletionRepository,
     AccountDeletionRequest, AccountDeletionRequestOutcome, AccountDeletionStage,
     AccountDeletionStatus, AccountEncryptionKeyRepository, AccountEncryptionKeySealer,
-    AccountExportSnapshot, StoredEncryptionKey,
+    AccountExportSnapshot, SignInAccount, SignInAccountRemoval, StoredEncryptionKey,
 };
 pub use agent_cards::{
     AgentCardFetchFailure, AgentCardFetchFailureKind, AgentCardFetchResult,

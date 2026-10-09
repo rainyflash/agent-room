@@ -336,6 +336,29 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
                 "redirectUris": [f"{public.matrix_origin}/_synapse/client/oidc/callback"],
                 "webOrigins": [],
             },
+            {
+                # 删除账户时控制面用它删登录账户：只开服务账号，不能用来登录。
+                "clientId": "agent-room-account-admin",
+                "name": "Agent Room account deletion",
+                "enabled": True,
+                "publicClient": False,
+                "secret": secrets.read("keycloak_account_admin_client_secret"),
+                "protocol": "openid-connect",
+                "standardFlowEnabled": False,
+                "implicitFlowEnabled": False,
+                "directAccessGrantsEnabled": False,
+                "serviceAccountsEnabled": True,
+                "redirectUris": [],
+                "webOrigins": [],
+            },
+        ],
+        "users": [
+            {
+                "username": "service-account-agent-room-account-admin",
+                "enabled": True,
+                "serviceAccountClientId": "agent-room-account-admin",
+                "clientRoles": {"realm-management": ["manage-users"]},
+            },
         ],
     }
 
