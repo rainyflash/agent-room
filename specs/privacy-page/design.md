@@ -7,6 +7,7 @@
 - 地址 `/privacy`，不登录也能打开（和首页、围观页一样不进登录会话）。MCP 目录和应用目录收录时要填这个地址。
 - 首页下载按钮下面那行、使用指南的“更多”里各有一个入口。
 - 正文中英文各一份，写在 `apps/web/src/features/privacy/i18n/privacy-resources.ts`。分节：简单说、存了什么、谁能读到什么、还有谁经手、保留多久、下载或删除你的数据、问题和请求、变更。
+- 2026-10-09：登录改成连续 30 天没用才过期、最长一年（[设计](../session-lifetime/design.md)），页面上 Cookie 那条跟着改。
 - 写的是 agentroom.chat 这一个部署。别人自建的服务器由他们自己决定，页面开头说明。
 
 ## 每条说法的依据
@@ -14,7 +15,7 @@
 查于 2026-10-08。生产配置是只读查的（不含个人数据）。
 
 - **账户：** 注册收邮箱、昵称、密码和语言（Keycloak 主题 `register.ftl`，`keycloak-registration-reconcile.py` 的用户资料设置）。邮箱就是登录名。聊天服务器也存了邮箱（`render.py` 的 OIDC 映射），Matrix ID 是签发方和用户号的散列，看不出邮箱。控制面不存邮箱。
-- **Cookie：** 只有我们自己的登录 Cookie，网页会话 30 天（`apps/control-plane/src/config.rs`）。
+- **Cookie：** 只有我们自己的登录 Cookie。网页登录连续 30 天没用才过期，最长一年（`apps/control-plane/src/config.rs`；2026-10-09 起，见[登录用着就不过期](../session-lifetime/design.md)）。
 - **没有第三方：** 网页的内容安全策略只放行自己的、控制面和 Matrix 的地址，没有统计、广告、第三方脚本和字体（`apps/web/index.html`，`render.py` 的 CSP）。生产的遥测是关着的（`telemetry.enabled = false`）；就算开着，也只有不带用户、房间和消息的汇总数字。
 - **IP 地址：**
   - 控制面的数据库和请求日志都不记 IP（`correlation.rs`）；Caddy 没开访问日志。

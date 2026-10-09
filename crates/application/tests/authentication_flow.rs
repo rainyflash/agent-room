@@ -34,13 +34,14 @@ use agent_room_domain::{
         HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
         RoomReservationId, WebSessionId,
     },
-    time::{DurationMillis, UtcMillis},
+    time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 const NOW: i64 = 1_700_000_000_000;
+const DAY: i64 = 24 * 60 * 60 * 1_000;
 const STATE: &str = "state-token";
 
 struct TestClock(AtomicI64);
@@ -213,6 +214,8 @@ struct IdentityState {
         HashMap<SecretDigest, (DesktopAuthorizationCodeRegistration, PrincipalAccount)>,
     sessions: HashMap<SecretDigest, StoredWebSession>,
     last_registration: Option<PrincipalRegistration>,
+    /// 续期写库的次数，用来确认一小时之内不重复写。
+    extensions: usize,
 }
 
 #[derive(Default)]
@@ -410,6 +413,26 @@ impl WebSessionStore for InMemoryIdentity {
                 .sessions
                 .remove(secret_digest)
                 .is_some())
+        })
+    }
+
+    fn extend(
+        &self,
+        session_id: WebSessionId,
+        expires_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let mut state = self.0.lock().expect("测试锁可用");
+            state.extensions += 1;
+            let Some(session) = state
+                .sessions
+                .values_mut()
+                .find(|session| session.id == session_id && session.expires_at < expires_at)
+            else {
+                return Ok(false);
+            };
+            session.expires_at = expires_at;
+            Ok(true)
         })
     }
 }
@@ -847,6 +870,162 @@ async fn 近期认证会过期_普通会话继续_登出后立即失效() {
 }
 
 #[tokio::test]
+async fn 一直在用的登录每用一次续三十天_一小时内不重复写库_最长一年() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let completion = harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("登录成功");
+    assert_eq!(
+        completion.principal.expires_at,
+        time(NOW + 365 * DAY),
+        "接口回最晚到什么时候"
+    );
+    assert_eq!(
+        session_expiry(&harness, &completion.session_secret),
+        time(NOW + 30 * DAY)
+    );
+
+    harness.clock.set(NOW + 30 * 60 * 1_000);
+    authenticate(&harness, &completion.session_secret)
+        .await
+        .expect("刚登录不久，登录有效");
+    assert_eq!(extensions(&harness), 0, "离上次续不到一小时，不写库");
+
+    for day in (20..=360).step_by(20) {
+        harness.clock.set(NOW + day * DAY);
+        let principal = authenticate(&harness, &completion.session_secret)
+            .await
+            .expect("一直在用就一直有效");
+        assert_eq!(principal.expires_at, time(NOW + 365 * DAY));
+        assert_eq!(
+            session_expiry(&harness, &completion.session_secret),
+            time(NOW + (day + 30).min(365) * DAY),
+            "第 {day} 天用过以后的到期时间"
+        );
+    }
+    assert_eq!(
+        extensions(&harness),
+        17,
+        "第 360 天已经续到最晚那天，不再写库"
+    );
+
+    harness.clock.set(NOW + 365 * DAY);
+    let failure = authenticate(&harness, &completion.session_secret)
+        .await
+        .expect_err("从输密码起满一年，不管用得多勤都要重新登录");
+    assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
+}
+
+#[tokio::test]
+async fn 连续三十天没用的登录过期() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let completion = harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("登录成功");
+
+    harness.clock.set(NOW + 30 * DAY - 1);
+    authenticate(&harness, &completion.session_secret)
+        .await
+        .expect("差一毫秒满三十天，登录还有效");
+    harness.clock.set(NOW + 60 * DAY);
+    let failure = authenticate(&harness, &completion.session_secret)
+        .await
+        .expect_err("又是三十天没用，登录过期");
+    assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
+}
+
+#[tokio::test]
+async fn 用网页登录换来的桌面登录继承认证时间_最晚那天不往后推() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let web = harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("Web 登录应完成");
+    // 第 340 天才换：换来的登录建的时候给满 30 天，库里的空闲到期（第 370 天）晚于最晚那天。
+    for day in (20..=340).step_by(20) {
+        harness.clock.set(NOW + day * DAY);
+        authenticate(&harness, &web.session_secret)
+            .await
+            .expect("网页一直在用");
+    }
+
+    let verifier = "w".repeat(43);
+    let challenge =
+        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
+            .expect("PKCE challenge 有效");
+    let desktop = harness
+        .service
+        .authorize_desktop_session(AuthorizeDesktopSession {
+            session_secret: &web.session_secret,
+            client_state: DesktopClientState::new("b".repeat(43)).expect("桌面 state 有效"),
+            code_challenge: challenge,
+            return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+        })
+        .await
+        .expect("有效 Web 会话可签发桌面授权码");
+    let exchanged = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: desktop.authorization_code.expose(),
+            pkce_verifier: &verifier,
+        })
+        .await
+        .expect("桌面授权码可换成登录");
+    assert_eq!(exchanged.principal.authenticated_at, time(NOW));
+    assert_eq!(
+        exchanged.principal.expires_at,
+        time(NOW + 365 * DAY),
+        "最晚那天跟着网页那次输密码走，不从换的那天重新算"
+    );
+
+    for day in [350, 360] {
+        harness.clock.set(NOW + day * DAY);
+        authenticate(&harness, &exchanged.session_secret)
+            .await
+            .expect("桌面登录一直在用");
+    }
+    harness.clock.set(NOW + 365 * DAY);
+    let failure = authenticate(&harness, &exchanged.session_secret)
+        .await
+        .expect_err("到了网页那次输密码满一年，桌面登录也要重新登录");
+    assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
+}
+
+async fn authenticate(
+    harness: &Harness,
+    session_secret: &SecretValue,
+) -> agent_room_application::authentication::AuthenticationResult<
+    agent_room_application::authentication::AuthenticatedPrincipal,
+> {
+    harness
+        .service
+        .authenticate(session_secret, AuthenticationRequirement::ActiveSession)
+        .await
+}
+
+fn session_expiry(harness: &Harness, session_secret: &SecretValue) -> UtcMillis {
+    let digest = TestSecrets::default().digest(session_secret.expose());
+    harness
+        .storage
+        .0
+        .lock()
+        .expect("测试锁可用")
+        .sessions
+        .get(&digest)
+        .expect("登录存在")
+        .expires_at
+}
+
+fn extensions(harness: &Harness) -> usize {
+    harness.storage.0.lock().expect("测试锁可用").extensions
+}
+
+#[tokio::test]
 async fn 主体暂停后已有会话不能继续认证() {
     let harness = Harness::new(valid_identity(Some(time(NOW))));
     let redirect = harness.begin(ProfileImportConsent::default()).await;
@@ -888,7 +1067,11 @@ fn valid_identity(authenticated_at: Option<UtcMillis>) -> VerifiedOidcIdentity {
 fn policy() -> AuthenticationPolicy {
     AuthenticationPolicy::new(
         duration(600_000),
-        duration(28_800_000),
+        SlidingLifetime::new(
+            duration(30 * 24 * 60 * 60 * 1_000),
+            duration(365 * 24 * 60 * 60 * 1_000),
+        )
+        .expect("登录寿命有效"),
         duration(300_000),
         duration(60_000),
         "matrix.agent-room.test",

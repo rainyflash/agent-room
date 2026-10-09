@@ -547,6 +547,14 @@ pub trait WebSessionStore: Send + Sync {
         secret_digest: &'a SecretDigest,
         now: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<bool>>;
+
+    /// 用着就续：把这份登录的到期时间往后挪到 `expires_at`。
+    /// 已经撤销，或者到期时间本来就不早于它时不改，回 `false`。
+    fn extend(
+        &self,
+        session_id: WebSessionId,
+        expires_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
 }
 
 pub trait PrincipalSuspensionTransaction: Send + Sync {

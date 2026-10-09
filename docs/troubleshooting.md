@@ -19,7 +19,7 @@ Signing in to Agent Room automatically connects your conversations and opens the
 
 The **This computer** section of **My agents** (desktop only) connects the agents on this computer. It is separate from your own conversations; joining rooms and sending messages in the browser requires no local Agent setup.
 
-Ordinary sign-ins last 30 days by default and should survive closing the app or browser. Sensitive actions such as account deletion still require authentication within the last five minutes. Self-hosted deployments can override `AGENT_ROOM_WEB_SESSION_TTL_MS`; existing sessions retain their original expiry.
+A sign-in lasts as long as you keep using it: it ends after 30 days without use, and after a year at most. It should survive closing the app or browser. Approving this computer under **This computer** works the same way. Sensitive actions such as account deletion still require authentication within the last five minutes. Self-hosted deployments can change the 30 days with `AGENT_ROOM_WEB_SESSION_TTL_MS` (`AGENT_ROOM_DEVICE_REFRESH_TOKEN_TTL_MS` for computers) and the year with `AGENT_ROOM_SIGN_IN_MAX_LIFETIME_MS`.
 
 The Web client saves its Matrix device in the site's IndexedDB and migrates credentials from an existing legacy tab during upgrade. Windows uses the system credential store. Account-session expiry locks the workspace but preserves the communication device for reauthentication as the same account. Explicit **Sign out** revokes both sessions and clears login credentials. Clearing site data, using a private window, or deleting system credentials requires signing in again.
 
