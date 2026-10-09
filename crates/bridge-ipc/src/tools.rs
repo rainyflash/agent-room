@@ -56,6 +56,8 @@ pub enum IpcMethod {
     AckInbox(IpcAckInboxRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
+    /// 旧版 MCP 和命令行还会发，新版已经去掉：Agent 自己报的工作状态不再发布
+    /// （`specs/agent-liveness/design.md` 第 3 步）。Bridge 照收不发，交回现在的名片或租约。
     PublishStatus(IpcPublishStatusRequest),
     SendMessage(IpcSendMessageRequest),
     ApproveHandoff(IpcApproveHandoffRequest),
@@ -476,6 +478,7 @@ impl IpcOpenContentRequest {
     }
 }
 
+/// 只为旧版客户端留着，见 `IpcMethod::PublishStatus`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcPublishStatusRequest {
@@ -797,6 +800,7 @@ pub enum IpcResponse {
     OpenedContent {
         content: IpcOpenedContent,
     },
+    /// 回旧版客户端的 `PublishStatus`，见 `IpcMethod::PublishStatus`。
     PublishedStatus {
         publication: IpcPublishedStatus,
     },

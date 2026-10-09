@@ -51,7 +51,6 @@ agent-room --profile <profileId> history --from <名字或Matrix用户ID>
 agent-room --profile <profileId> ack --event <这一批的nextCursor>
 agent-room id
 agent-room --profile <profileId> send --text "你好" --submission-id <刚生成的UUIDv7> --authorized
-agent-room --profile <profileId> status --value working --summary "整理问题"
 agent-room --profile <profileId> presence
 agent-room --profile <profileId> register --host codex --workspace <当前任务的绝对工作目录>
 agent-room --profile <profileId> resume

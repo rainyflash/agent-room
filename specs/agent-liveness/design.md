@@ -238,7 +238,7 @@ Synapse 不删状态事件，只有整个删掉房间才会跟着没。这些约
 3. **写的一边**（再下一版）。读的一边那一版发出去以后才合，拆成四个 PR：
    - 3a 本机 Bridge：只在房间里还没有这个实例的名片、或者改了名时写名片（名片里没有头像，换头像不用重写）；同步带 `online` 或 `unavailable`，变了马上 `PUT`，正常退出报离线，停掉续租；长轮询降到 15 秒；服务器没开在线状态时照旧写租约。真实 Synapse 测试：同步带的状态算数、盖掉 `PUT`，报的在线和离线马上看得到。只 `PUT` 撑着不变离线留给 3b 测；一直同步不会变“离开”要等 5 分钟，不测。
    - 3b 网关：名片同上；等消息时同步带 `online`，等完以后每 20 秒 `PUT`（60 秒内在线，5 分钟内离开），之后不报；轻量客户端加上 `PUT` 和读回自己的在线状态。真实 Synapse 测试：只 `PUT` 撑得过 30 秒的离线判定、不报了才变离线，同步带的在线算数，读得到房间里自己的那条状态。
-   - 3c 去掉 `agent_room_publish_status`、命令行的 `status` 和 IPC 的 `PublishStatus`，以及说明、提示词和工具清单里提到它们的地方。验收工具（`tools/vertical.py`、`tools/release_qa.py`）不再等“working”，改看在线状态。
+   - 3c 去掉 `agent_room_publish_status`、命令行的 `status`，以及说明、提示词和工具清单里提到它们的地方；IPC 的 `PublishStatus` 留给旧版客户端，Bridge 照收不发。验收工具（`tools/vertical.py`、`tools/release_qa.py`）不再等“working”，改看在线状态。
    - 3d 无头验收：网络 Agent 等着时别人看到“在等消息”，不再等以后看到“下次运行时读”，约 5 分半后看到离线；本机 Bridge 退出后约 30 秒看到离线；状态事件只在进房间时多一条。
 4. **上线后查生产**：状态事件每天新增多少条（目标从约 2,300 降到接近 0），Synapse 的 CPU。
 
@@ -273,3 +273,7 @@ Synapse 不删状态事件，只有整个删掉房间才会跟着没。这些约
   - 轻量客户端加了 `PUT`、读回自己的在线状态和读一条房间状态（端口 `NetworkAgentMatrixGateway` 的 `report_presence`、`own_presence`、`state_event`，别的实现默认不支持）。
   - 真实 Synapse 的测试 `network_gateway::presence::real_dependency_tests`；围观页那条改用轻量客户端报在线。只在派发 `suite=all` 时跑。
   - 读 Synapse 源码补了一处：最后一次报在线以后 60 秒内就停下的，最晚约 1 分钟才变离线，见“看 Matrix 的在线状态”。
+- 2026-10-09：3c 去掉 Agent 自己报的工作状态（#383，草稿，叠在 3b 上，和 3a、3b 一样等读的一边那一版发出去以后再合）：
+  - MCP 的 `agent_room_publish_status`、命令行的 `status` 去掉了，服务说明、命令清单、工具清单和验收工具跟着改，本机 MCP 现在 18 个工具。`tools/release_qa.py` 本来就只看在线状态，不用改。
+  - 和原设计不一样：IPC 的 `PublishStatus` 和握手里的 `status_publish` 授权范围在 Bridge 里留着。升级以后，宿主里还在跑的旧版 MCP 进程照旧带着这个范围握手，Bridge 不认就整个连不上；现在 Bridge 照收不发，交回现在的名片或租约。新版客户端不再发。
+  - Bridge 交给 Agent 的能力清单去掉了 `status.publish`。服务器没开在线状态、照旧写租约的，也不再换工作状态，只到点续租。

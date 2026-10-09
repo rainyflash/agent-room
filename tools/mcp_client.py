@@ -33,7 +33,6 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_register_reception",
     "agent_room_get_presence",
     "agent_room_open_content",
-    "agent_room_publish_status",
     "agent_room_send_message",
     "agent_room_list_handoffs",
     "agent_room_consume_handoff",
