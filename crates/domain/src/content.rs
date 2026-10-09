@@ -245,6 +245,9 @@ pub struct ContentObjectFields {
     pub scan_state: ContentScanState,
     pub lifecycle_state: ContentLifecycleState,
     pub expires_at: Option<UtcMillis>,
+    /// 按房间保留期算的到期时间：聊天服务器删掉这条消息以后，正文和附件也该删了。只给清理任务和读取
+    /// 判断用；客户端看到的仍是它自己声明的 `expires_at`，旧版 Bridge 会核对那个值。
+    pub retention_expires_at: Option<UtcMillis>,
     pub created_at: UtcMillis,
     pub deleted_at: Option<UtcMillis>,
 }
@@ -314,6 +317,18 @@ impl ContentObject {
 
     pub const fn expires_at(&self) -> Option<UtcMillis> {
         self.fields.expires_at
+    }
+
+    pub const fn retention_expires_at(&self) -> Option<UtcMillis> {
+        self.fields.retention_expires_at
+    }
+
+    /// 声明的到期时间和按保留期算的到期时间，取早的那个。清理、发读取票据、转交给 Agent 都按它判断。
+    pub fn effective_expires_at(&self) -> Option<UtcMillis> {
+        match (self.fields.expires_at, self.fields.retention_expires_at) {
+            (Some(declared), Some(retention)) => Some(declared.min(retention)),
+            (declared, retention) => declared.or(retention),
+        }
     }
 
     pub const fn created_at(&self) -> UtcMillis {
@@ -409,7 +424,7 @@ impl ContentObject {
     ///
     /// 未配置到期时间、尚未到期或已撤回/删除时返回错误。
     pub fn expire(&mut self, now: UtcMillis) -> DomainResult<()> {
-        let Some(expires_at) = self.fields.expires_at else {
+        let Some(expires_at) = self.effective_expires_at() else {
             return Err(DomainError::InvariantViolation {
                 entity: "content_object",
                 rule: "无到期时间的内容不能由保留任务过期",
@@ -465,8 +480,7 @@ impl ContentObject {
         self.fields.lifecycle_state == ContentLifecycleState::Active
             && self.fields.scan_state.allows_read()
             && self
-                .fields
-                .expires_at
+                .effective_expires_at()
                 .is_none_or(|expires_at| now < expires_at)
     }
 }
@@ -478,6 +492,15 @@ fn validate_fields(fields: &ContentObjectFields) -> DomainResult<()> {
     {
         return Err(DomainError::Validation {
             field: "content_expires_at",
+            reason: "必须晚于创建时间",
+        });
+    }
+    if fields
+        .retention_expires_at
+        .is_some_and(|expires_at| expires_at <= fields.created_at)
+    {
+        return Err(DomainError::Validation {
+            field: "content_retention_expires_at",
             reason: "必须晚于创建时间",
         });
     }
@@ -610,6 +633,32 @@ mod tests {
         ContentObject::begin_upload(fields).expect("测试内容有效")
     }
 
+    #[test]
+    fn 过了房间保留期的正文读不到_清理任务可以让它过期() {
+        let mut content = ContentObject::restore(ContentObjectFields {
+            scan_state: ContentScanState::Clean,
+            lifecycle_state: ContentLifecycleState::Active,
+            retention_expires_at: Some(time(5_000)),
+            ..base_fields()
+        })
+        .expect("测试内容有效");
+
+        assert!(content.is_readable_at(time(4_999)));
+        assert!(!content.is_readable_at(time(5_000)));
+        assert!(content.expire(time(4_999)).is_err());
+        content.expire(time(5_000)).expect("过了保留期可以过期");
+        assert_eq!(content.lifecycle_state(), ContentLifecycleState::Expired);
+    }
+
+    #[test]
+    fn 按保留期算的到期时间必须晚于创建时间() {
+        let fields = ContentObjectFields {
+            retention_expires_at: Some(time(1_000)),
+            ..base_fields()
+        };
+        assert!(ContentObject::begin_upload(fields).is_err());
+    }
+
     fn base_fields() -> ContentObjectFields {
         ContentObjectFields {
             id: ContentId::from_uuid(Uuid::now_v7()),
@@ -623,6 +672,7 @@ mod tests {
             scan_state: ContentScanState::Pending,
             lifecycle_state: ContentLifecycleState::Uploading,
             expires_at: None,
+            retention_expires_at: None,
             created_at: time(1_000),
             deleted_at: None,
         }

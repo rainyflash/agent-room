@@ -495,6 +495,7 @@ fn content_object(request: &BeginContentUploadRequest) -> ContentObject {
         },
         lifecycle_state: ContentLifecycleState::Uploading,
         expires_at: None,
+        retention_expires_at: None,
         created_at: UtcMillis::new(1).unwrap(),
         deleted_at: None,
     })

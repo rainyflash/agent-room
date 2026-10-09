@@ -135,6 +135,25 @@ pub trait ModerationExpiryRepository: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>>;
 }
 
+/// 新开的公开大厅分片开始接人之前要补上的一条治理：此刻仍生效的禁言或封禁，和被管的人的 Matrix
+/// 账号。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandingModeration {
+    pub action: ModerationAction,
+    pub target_matrix_user_id: MatrixUserId,
+}
+
+/// 新开的公开大厅分片要补上哪些治理。禁言、封禁管的是人，一直生效到撤销或到期；踢出是一次性的，
+/// 隐藏只管消息所在的那个分片，都不用补。
+pub trait StandingModerationSource: Send + Sync {
+    /// 这个目录此刻仍生效的禁言和封禁（已经落下、没撤销、没到期），先做的在前。
+    fn standing_person_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>>;
+}
+
 /// 每次治理或审计读取前重新读取当前房间与平台权限。
 pub trait ModerationAuthority: Send + Sync {
     fn may_report<'a>(

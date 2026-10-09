@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
         ModerationExpiryCursor, ModerationExpiryRepository, ModerationReportPolicy,
         ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
+        StandingModeration, StandingModerationSource,
     },
 };
 use agent_room_domain::{
@@ -195,6 +198,16 @@ impl ModerationAuthority for PostgresRepositories {
         principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<ModerationRole>> {
         Box::pin(async move { platform_role(&self.pool, principal_id).await })
+    }
+}
+
+impl StandingModerationSource for PostgresRepositories {
+    fn standing_person_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>> {
+        Box::pin(async move { standing_person_actions(&self.pool, room_catalog_id, now).await })
     }
 }
 
@@ -726,6 +739,68 @@ async fn expiry_room(
             .transpose()
             .map_err(|_| corrupt_data(operation))?,
     }))
+}
+
+/// 新开分片要补的禁言和封禁：已经落下、没撤销、没到期的，先做的在前。
+///
+/// 被管的人按 UUID 找 Matrix 账号。引用是落治理时由 `inspect_room_authority` 解析成 UUID 才放行
+/// 的，写法不一定是规范形式（大写、不带横线），不能拿文本去和 `principal.id` 连。找不到人的不补：
+/// 没有 Matrix 账号也就无从禁言、封禁。
+async fn standing_person_actions(
+    pool: &PgPool,
+    room_catalog_id: RoomCatalogId,
+    now: UtcMillis,
+) -> RepositoryResult<Vec<StandingModeration>> {
+    let operation = "moderation.standing_person_actions";
+    let statement = format!(
+        "SELECT {ACTION_COLUMNS}
+           FROM agent_room.moderation_action
+           WHERE room_catalog_id = $1
+             AND status = 'applied'
+             AND action_type IN ('mute', 'ban')
+             AND (expires_at IS NULL
+                  OR expires_at > to_timestamp($2::double precision / 1000.0))
+           ORDER BY starts_at, id"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
+        .bind(room_catalog_id.as_uuid())
+        .bind(now.value())
+        .fetch_all(pool)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let actions = rows
+        .iter()
+        .map(|row| decode_action(row, operation))
+        .collect::<RepositoryResult<Vec<_>>>()?;
+    let targets: Vec<Option<uuid::Uuid>> = actions
+        .iter()
+        .map(|action| uuid::Uuid::parse_str(action.target().reference()).ok())
+        .collect();
+    let principal_ids: Vec<uuid::Uuid> = targets.iter().flatten().copied().collect();
+    let matrix_users: HashMap<uuid::Uuid, String> = sqlx::query_as::<_, (uuid::Uuid, String)>(
+        "SELECT id, matrix_user_id FROM agent_room.principal WHERE id = ANY($1)",
+    )
+    .bind(&principal_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?
+    .into_iter()
+    .collect();
+    actions
+        .into_iter()
+        .zip(targets)
+        .filter_map(|(action, target)| {
+            let matrix_user_id = matrix_users.get(&target?)?;
+            Some(
+                MatrixUserId::new(matrix_user_id.clone())
+                    .map(|target_matrix_user_id| StandingModeration {
+                        action,
+                        target_matrix_user_id,
+                    })
+                    .map_err(|_| corrupt_data(operation)),
+            )
+        })
+        .collect()
 }
 
 async fn insert_audit(pool: &PgPool, audit: &ModerationAuditEvent) -> RepositoryResult<()> {

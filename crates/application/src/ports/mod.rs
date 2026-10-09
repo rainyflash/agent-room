@@ -77,7 +77,7 @@ pub use content::{
     ContentStreamResult, ContentTicketFailure, ContentTicketFailureKind, ContentTicketResult,
     ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint, ObjectStoreFailure,
     ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
-    PrivateContentObjectStore, ReclaimableContentQuery,
+    PrivateContentObjectStore, ReclaimableContentQuery, RoomRetentionLookup,
 };
 pub use devices::{
     DEVICE_REFRESH_REPLAY_SALT_LENGTH, DerivedDeviceTokens, DeviceProofNonceStore,
@@ -128,7 +128,7 @@ pub use moderation::{
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
     ModerationEffectTarget, ModerationExpiryCursor, ModerationExpiryRepository,
     ModerationIdentifierFactory, ModerationReportPolicy, ModerationReportSubmissionOutcome,
-    ModerationRepository, ModerationRoomContext,
+    ModerationRepository, ModerationRoomContext, StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
 pub use outbox::{

@@ -22,7 +22,7 @@ use agent_room_application::{
         ContentStorageKeyFactory, ContentStorageKeyGenerationResult, ContentUploadClaim,
         ContentUploadClaimOutcome, ContentUploadFingerprint, MatrixRoomId, ObjectStoreFailure,
         ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
-        PortFuture, PrivateContentObjectStore, ReclaimableContentQuery,
+        PortFuture, PrivateContentObjectStore, ReclaimableContentQuery, RoomRetentionLookup,
     },
 };
 use agent_room_domain::{
@@ -67,6 +67,48 @@ async fn 重复上传声明返回同一内容而冲突声明被拒绝() {
         BeginContentUploadFailure::Repository(error)
             if error.kind() == RepositoryErrorKind::Conflict
     ));
+}
+
+#[tokio::test]
+async fn 正文跟着房间保留期到期_客户端声明的到期时间不变() {
+    const DAY: i64 = 86_400_000;
+    for (retention_days, lifetime_days) in [(None, 31), (Some(7), 8), (Some(365), 366)] {
+        let repository = Arc::new(MemoryContentRepository::default());
+        let service = begin_service_with_retention(
+            Arc::clone(&repository),
+            Arc::new(FixedRetention(Ok(retention_days))),
+        );
+
+        let outcome = service
+            .begin(upload_request(b"hello", ContentEncryptionMode::ServerSide))
+            .await
+            .expect("声明成功");
+
+        let content = outcome_content(&outcome);
+        // 旧版 Bridge 核对回来的 expires_at 是不是它声明的那个，所以不能改。
+        assert_eq!(content.expires_at(), Some(time(9_000)));
+        assert_eq!(
+            content.retention_expires_at(),
+            Some(time(1_000 + lifetime_days * DAY))
+        );
+    }
+}
+
+#[tokio::test]
+async fn 查不到房间保留期时不建上传() {
+    let repository = Arc::new(MemoryContentRepository::default());
+    let service = begin_service_with_retention(
+        Arc::clone(&repository),
+        Arc::new(FixedRetention(Err(RepositoryErrorKind::Unavailable))),
+    );
+
+    let failure = service
+        .begin(upload_request(b"hello", ContentEncryptionMode::ServerSide))
+        .await
+        .expect_err("保留期查不到");
+
+    assert!(matches!(failure, BeginContentUploadFailure::Repository(_)));
+    assert_eq!(repository.content_count(), 0);
 }
 
 #[tokio::test]
@@ -255,6 +297,21 @@ fn begin_service_with_authorizer(
         storage_keys: Arc::new(TestStorageKeys),
         repository,
         authorizer,
+        retention: Arc::new(FixedRetention(Ok(None))),
+    })
+}
+
+fn begin_service_with_retention(
+    repository: Arc<MemoryContentRepository>,
+    retention: Arc<dyn RoomRetentionLookup>,
+) -> BeginContentUploadService {
+    BeginContentUploadService::new(BeginContentUploadDependencies {
+        clock: Arc::new(FixedClock),
+        identifiers: Arc::new(RandomContentIdentifiers),
+        storage_keys: Arc::new(TestStorageKeys),
+        repository,
+        authorizer: Arc::new(FixedAuthorizer(ContentAuthorizationDecision::Allowed)),
+        retention,
     })
 }
 
@@ -329,6 +386,20 @@ impl ContentMembershipAuthorizer for FixedAuthorizer {
         _request: &'a ContentAuthorizationRequest,
     ) -> PortFuture<'a, ContentAuthorizationResult<ContentAuthorizationDecision>> {
         Box::pin(async move { Ok(self.0) })
+    }
+}
+
+struct FixedRetention(Result<Option<u16>, RepositoryErrorKind>);
+
+impl RoomRetentionLookup for FixedRetention {
+    fn retention_days<'a>(
+        &'a self,
+        _matrix_room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, RepositoryResult<Option<u16>>> {
+        Box::pin(async move {
+            self.0
+                .map_err(|kind| repository_error("content.room_retention", kind))
+        })
     }
 }
 

@@ -185,6 +185,7 @@ fn content(payload: &[u8], storage_key: Option<ContentStorageKey>) -> ContentObj
         scan_state: ContentScanState::Pending,
         lifecycle_state: ContentLifecycleState::Uploading,
         expires_at: None,
+        retention_expires_at: None,
         created_at: UtcMillis::new(1_000).expect("时间有效"),
         deleted_at: None,
     })
