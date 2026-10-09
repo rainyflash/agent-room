@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CLIENT_EVENT_ACCOUNT_DATA,
+  CLIENT_EVENT_EVENT,
   CLIENT_EVENT_SYNC,
   DIRECTION_BACKWARD,
   DIRECTION_FORWARD,
@@ -26,6 +27,7 @@ describe('matrix-sdk-enums', () => {
     expect(SYNC_STATE_ERROR).toBe(SyncState.Error);
     expect(SYNC_STATE_RECONNECTING).toBe(SyncState.Reconnecting);
     expect(CLIENT_EVENT_ACCOUNT_DATA).toBe(ClientEvent.AccountData);
+    expect(CLIENT_EVENT_EVENT).toBe(ClientEvent.Event);
     expect(CLIENT_EVENT_SYNC).toBe(ClientEvent.Sync);
   });
 });

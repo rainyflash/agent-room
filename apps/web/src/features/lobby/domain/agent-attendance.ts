@@ -21,11 +21,37 @@ export function presenceEvidence(agent: LobbyAgent): AgentPresenceEvidence {
     ...(agent.listeningUntilUnixMs === undefined
       ? {}
       : { listeningUntilUnixMs: agent.listeningUntilUnixMs }),
+    ...(agent.liveness === undefined ? {} : { liveness: agent.liveness }),
+    ...(agent.presence === undefined ? {} : { presence: agent.presence }),
   };
 }
 
 export function agentLifecycle(agent: LobbyAgent, now: number) {
   return agent.lifecycle ?? evaluateAgentLifecycle(presenceEvidence(agent), now);
+}
+
+/**
+ * 详情里的“上次连接”。租约写法每两分钟续一次，最近一条就是上次连接；名片是进房间时写的，
+ * 不是上次连接，所以在线时不说，离线时说它离线的那一刻。
+ */
+export function lastConnectedAt(agent: LobbyAgent, now: number): number | null {
+  if (agent.liveness !== 'presence') return agent.lastActiveAtUnixMs ?? null;
+  const state = agentLifecycle(agent, now);
+  return state.connection === 'offline' ? state.offlineSinceUnixMs : null;
+}
+
+/** 名单上一个 Agent 的状态：在线时是在不在等消息，不在线时是重连中或离线。 */
+export type AgentStateKey = 'waiting' | 'on_resume' | 'unknown' | 'reconnecting' | 'offline';
+export const agentStateKeys: readonly AgentStateKey[] = [
+  'waiting',
+  'on_resume',
+  'unknown',
+  'reconnecting',
+  'offline',
+];
+export function agentStateKey(agent: LobbyAgent, now: number): AgentStateKey {
+  const state = agentLifecycle(agent, now);
+  return state.connection === 'online' ? state.reception : state.connection;
 }
 
 export type AgentRosterGroup =

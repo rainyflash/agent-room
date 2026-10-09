@@ -3,6 +3,8 @@ import {
   agentConnection,
   agentLifecyclePolicy,
   projectAgentLifecycles,
+  type AgentPresenceEvidence,
+  type MatrixPresenceObservation,
 } from '@agent-room/protocol';
 import { presenceEvidence } from '../domain/agent-attendance';
 import { agentRosterPolicySchema } from '../domain/agent-roster-policy';
@@ -55,6 +57,7 @@ const statusEventSchema = z
     id: uuidV7Schema,
     leaseExpiresAt: z.iso.datetime({ offset: true }),
     lastPolledAt: z.iso.datetime({ offset: true }).optional(),
+    liveness: z.literal('presence').optional(),
     listeningUntil: z.iso.datetime({ offset: true }).nullable().optional(),
     waitingUntil: z.iso.datetime({ offset: true }).nullable().optional(),
     progress: z.number().min(0).max(1).optional(),
@@ -109,6 +112,8 @@ type AgentCandidate = {
   readonly createdAtUnixMs: number;
   readonly event: ParsedStatusEvent;
   readonly expiresAtUnixMs: number;
+  /** 名片才有：这个 Agent 的 Matrix 在线状态，还没拿到就没有。 */
+  readonly presence?: MatrixPresenceObservation;
   readonly status: LobbyAgentStatus;
 };
 
@@ -185,11 +190,25 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
     if (!lease.ok) {
       continue;
     }
-    const candidate: AgentCandidate = Object.freeze({
+    const presence =
+      event.liveness === 'presence'
+        ? room.presence?.get(event.actor.agent.matrixUserId)
+        : undefined;
+    const observed = {
       createdAtUnixMs: Date.parse(event.createdAt),
       event,
       expiresAtUnixMs: lease.value.effectiveExpiresAtUnixMs,
-      status: lease.value.status,
+      ...(presence === undefined ? {} : { presence }),
+    };
+    const candidate: AgentCandidate = Object.freeze({
+      ...observed,
+      // 名片没有工作状态，租约也是名义上的：连着就算空闲，断了算离线。
+      status:
+        event.liveness === 'presence'
+          ? agentConnection(candidateEvidence(observed), observedAtUnixMs) === 'online'
+            ? 'idle'
+            : 'offline'
+          : lease.value.status,
     });
     const existing = candidatesByAgent.get(event.actor.agent.agentId);
     if (existing === undefined) {
@@ -279,26 +298,28 @@ function aggregateAgent(
           : {}
         : { listeningUntilUnixMs: Math.max(...waitDeadlines) }),
       statusExpiresAtUnixMs: representative.expiresAtUnixMs,
-      ...(event.visibility === 'detailed' && event.taskSummary !== undefined
-        ? { summary: event.taskSummary }
-        : {}),
+      ...(event.liveness === undefined ? {} : { liveness: event.liveness }),
+      ...(representative.presence === undefined ? {} : { presence: representative.presence }),
       trust: 'unknown',
       visibility: event.visibility,
     }),
   ];
 }
 
+function candidateEvidence(candidate: Omit<AgentCandidate, 'status'>): AgentPresenceEvidence {
+  return {
+    agentId: candidate.event.actor.agent.agentId,
+    reportedStatus: candidate.event.status,
+    leaseExpiresAtUnixMs: candidate.expiresAtUnixMs,
+    lastActiveAtUnixMs: candidate.createdAtUnixMs,
+    ...(candidate.event.liveness === undefined ? {} : { liveness: candidate.event.liveness }),
+    ...(candidate.presence === undefined ? {} : { presence: candidate.presence }),
+  };
+}
+
 function compareCandidates(left: AgentCandidate, right: AgentCandidate, now: number): number {
   const tier = (candidate: AgentCandidate) => {
-    const connection = agentConnection(
-      {
-        agentId: candidate.event.actor.agent.agentId,
-        reportedStatus: candidate.event.status,
-        leaseExpiresAtUnixMs: candidate.expiresAtUnixMs,
-        lastActiveAtUnixMs: candidate.createdAtUnixMs,
-      },
-      now,
-    );
+    const connection = agentConnection(candidateEvidence(candidate), now);
     return connection === 'online' ? 2 : connection === 'reconnecting' ? 1 : 0;
   };
   const connectionDifference = tier(right) - tier(left);

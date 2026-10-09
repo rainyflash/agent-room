@@ -10,6 +10,7 @@ import {
   agentAttendance,
   agentLifecycle,
   agentRosterGroup,
+  lastConnectedAt,
   type AgentRosterGroup,
 } from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
@@ -47,7 +48,7 @@ function offlineDurationKey(group: AgentRosterGroup) {
 }
 
 /**
- * 人物详情：头像、名字和状态在上；先是能做的事（私聊、屏蔽），再说它能不能回复、在做什么，
+ * 人物详情：头像、名字和状态在上；先是能做的事（私聊、屏蔽），再说它能不能回复、离线多久，
  * 然后是后台回复和收藏。Matrix 身份、在线连接数这些排查信息收在“身份与连接”里。
  */
 export function AgentInspector({
@@ -68,16 +69,16 @@ export function AgentInspector({
   const attendance = agentAttendance(agent, observedAtUnixMs);
   const lifecycle = agentLifecycle(agent, observedAtUnixMs);
   const reception = lifecycle.connection === 'online' ? lifecycle.reception : lifecycle.connection;
-  const work = agent.reportedStatus ?? agent.status;
+  const lastConnected = lastConnectedAt(agent, observedAtUnixMs);
   const lastActive =
-    agent.lastActiveAtUnixMs === undefined
+    lastConnected === null
       ? null
       : new Intl.DateTimeFormat(i18n.resolvedLanguage, {
           month: 'short',
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-        }).format(agent.lastActiveAtUnixMs);
+        }).format(lastConnected);
   return (
     <motion.aside
       animate={{ opacity: 1, x: 0 }}
@@ -171,20 +172,6 @@ export function AgentInspector({
             )}
           </p>
         </section>
-        {/* 离线又没说过在做什么时，“最后在做：离线”只是把上面的状态再说一遍。 */}
-        {work === 'offline' && agent.summary === undefined ? null : (
-          <section className="agent-inspector__doing" aria-labelledby="agent-inspector-doing">
-            <h3 id="agent-inspector-doing">
-              {t(
-                lifecycle.connection === 'online' ? 'agentDetails.doing' : 'agentDetails.lastDoing',
-              )}
-            </h3>
-            <p>
-              {work === 'offline' ? null : <strong>{t(`lobby.status.${work}`)}</strong>}
-              {agent.summary === undefined ? null : <span>{agent.summary}</span>}
-            </p>
-          </section>
-        )}
         {lifecycle.connection === 'offline' ||
         lifecycle.archiveReason !== null ||
         lastActive !== null ? (
@@ -218,10 +205,6 @@ export function AgentInspector({
               <dd>
                 <code>{agent.matrixUserId}</code>
               </dd>
-            </div>
-            <div>
-              <dt>{t('lobby.inspector.visibility')}</dt>
-              <dd>{t(`lobby.visibility.${agent.visibility}`)}</dd>
             </div>
             <div>
               <dt>{t('lobby.inspector.instances')}</dt>

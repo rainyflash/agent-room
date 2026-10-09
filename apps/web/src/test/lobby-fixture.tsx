@@ -102,6 +102,8 @@ const fixtureAgentCount =
     : 24;
 // `?private` 把夹具房间当成你是房主的私人房间：房间设置里有“成员”和“Agent 进门”。
 const privateFixture = new URLSearchParams(window.location.search).has('private');
+// `?cards`：Agent 都写名片，在不在线看 Matrix 的在线状态：依次是在等消息、下次运行时读、离线。
+const cardFixture = new URLSearchParams(window.location.search).has('cards');
 // `?private&knock` 里一个网络 Agent（Sol）拿房间号在敲门，房间页的提示栈和接入对话框都能放它进来。
 const knockFixture = privateFixture && new URLSearchParams(window.location.search).has('knock');
 let room: LobbyRoom = privateFixture
@@ -1211,7 +1213,7 @@ function testAgent(index: number, agentCount = fixtureAgentCount): LobbyAgent {
         ? 'idle'
         : requestedStatus;
   const detailed = index % 3 !== 0;
-  return Object.freeze({
+  const identity = {
     agentId: `01990d9e-8400-7000-8000-${String(index + 1).padStart(12, '0')}`,
     displayName:
       agentCount === 6
@@ -1221,15 +1223,42 @@ function testAgent(index: number, agentCount = fixtureAgentCount): LobbyAgent {
       index % 7 === 0 ? [`instance-${suffix}-a`, `instance-${suffix}-b`] : [`instance-${suffix}`],
     ),
     matrixUserId: `@build-agent-${suffix}:agent-room.test`,
+  };
+  if (cardFixture) return cardAgent(identity, index);
+  return Object.freeze({
+    ...identity,
     status,
     lastActiveAtUnixMs: Date.now() - (status === 'offline' ? 600_000 : 0),
     ...(status === 'idle'
       ? { lastPolledAtUnixMs: Date.now(), listeningUntilUnixMs: Date.now() + 15_000 }
       : {}),
     statusExpiresAtUnixMs: Date.now() + 300_000,
-    ...(detailed ? { summary: `Validating workspace slice ${suffix}` } : {}),
     trust: index % 5 === 0 ? 'verified' : 'unknown',
     visibility: detailed ? 'detailed' : 'coarse',
+  });
+}
+
+/** 名片是三天前进房间时写的；离线的那个 20 分钟前被看到离线。 */
+function cardAgent(
+  identity: Pick<LobbyAgent, 'agentId' | 'displayName' | 'instanceIds' | 'matrixUserId'>,
+  index: number,
+): LobbyAgent {
+  const presence =
+    index % 3 === 0
+      ? ({ state: 'online' } as const)
+      : index % 3 === 1
+        ? ({ state: 'unavailable' } as const)
+        : ({ state: 'offline', offlineSeenAtUnixMs: Date.now() - 20 * 60_000 } as const);
+  const cardWrittenAt = Date.now() - 3 * 86_400_000;
+  return Object.freeze({
+    ...identity,
+    lastActiveAtUnixMs: cardWrittenAt,
+    liveness: 'presence',
+    presence,
+    status: presence.state === 'offline' ? 'offline' : 'idle',
+    statusExpiresAtUnixMs: cardWrittenAt + 300_000,
+    trust: 'unknown',
+    visibility: 'coarse',
   });
 }
 

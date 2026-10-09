@@ -73,11 +73,16 @@ describe('ListModeRoster', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('2 / 4')).toBeVisible();
   });
-  it('按名称搜索、按状态筛选并只选择真实 Agent', async () => {
+  it('按名称搜索、按在不在等消息筛选并只选择真实 Agent', async () => {
+    const now = 1_700_000_000_000;
     const user = userEvent.setup();
     const onSelectAgent = vi.fn();
     renderRoster({
-      agents: [agent('alpha', 'working'), agent('beta', 'blocked'), agent('gamma', 'idle')],
+      agents: [
+        { ...agent('alpha', 'working'), lastPolledAtUnixMs: now, listeningUntilUnixMs: now + 9000 },
+        { ...agent('beta', 'blocked'), lastPolledAtUnixMs: now, listeningUntilUnixMs: null },
+        agent('gamma', 'idle'),
+      ],
       onSelectAgent,
       selectedAgentId: null,
     });
@@ -87,12 +92,63 @@ describe('ListModeRoster', () => {
     expect(screen.queryByRole('button', { name: /Alpha/u })).not.toBeInTheDocument();
 
     await user.clear(screen.getByRole('searchbox', { name: 'Search agents' }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by status' }), 'working');
+    const filter = screen.getByRole('combobox', { name: 'Filter by status' });
+    expect(within(filter).queryByRole('option', { name: 'Working' })).not.toBeInTheDocument();
+    await user.selectOptions(filter, 'Online · waiting for messages');
     expect(screen.getByRole('button', { name: /Alpha/u })).toBeVisible();
     expect(screen.queryByRole('button', { name: /Beta/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Gamma/u })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Alpha/u }));
     expect(onSelectAgent).toHaveBeenCalledWith('alpha');
+  });
+
+  it('名单上只说在不在等消息，不说工作状态和任务摘要', () => {
+    const now = 1_700_000_000_000;
+    renderRoster({
+      agents: [
+        { ...agent('alpha', 'working'), lastPolledAtUnixMs: now, listeningUntilUnixMs: now + 9000 },
+      ],
+      onSelectAgent: vi.fn(),
+      selectedAgentId: null,
+    });
+
+    const row = screen.getByRole('button', { name: /Alpha/u });
+    expect(row).toHaveTextContent('Online · waiting for messages');
+    expect(row).not.toHaveTextContent('Working');
+  });
+
+  it('写名片的 Agent 按 Matrix 在线状态分组，离线的按离线时刻排', () => {
+    const now = 1_700_000_000_000;
+    const card = (agentId: string, presence: LobbyAgent['presence']): LobbyAgent => ({
+      ...agent(agentId, 'idle'),
+      // 名片是很久以前进房间时写的，租约早就过了。
+      lastActiveAtUnixMs: now - 3 * 86_400_000,
+      statusExpiresAtUnixMs: now - 3 * 86_400_000 + 300_000,
+      liveness: 'presence',
+      ...(presence === undefined ? {} : { presence }),
+    });
+    renderRoster({
+      agents: [
+        card('waiter', { state: 'online' }),
+        card('worker', { state: 'unavailable' }),
+        card('early', { state: 'offline', offlineSeenAtUnixMs: now - 50 * 60_000 }),
+        card('late', { state: 'offline', offlineSeenAtUnixMs: now - 5 * 60_000 }),
+      ],
+      onSelectAgent: vi.fn(),
+      selectedAgentId: null,
+    });
+
+    const rows = screen.getAllByRole('button', { name: /^(Waiter|Worker|Early|Late)/u });
+    expect(rows.map((row) => row.querySelector('strong')?.textContent)).toEqual([
+      'Waiter',
+      'Worker',
+      'Late',
+      'Early',
+    ]);
+    expect(screen.getByRole('heading', { name: 'Online · waiting for messages' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Online · reads on next run' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Offline · under 1 hour' })).toBeVisible();
   });
 
   it('抽屉关闭时可把焦点还给已选中的列表项', () => {

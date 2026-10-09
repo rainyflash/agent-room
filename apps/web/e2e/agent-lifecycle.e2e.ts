@@ -45,11 +45,33 @@ for (const width of [1440, 390]) {
     await roster.getByRole('button', { name: /^Members \(/u }).click();
     await roster.getByRole('button', { name: /^Build Agent 006/u }).click();
     await expect(page.locator('.agent-inspector')).toContainText('Online · waiting for messages');
-    await expect(page.locator('.agent-inspector')).toContainText('What it is doing');
+    // 工作状态和任务摘要不再显示（specs/agent-liveness）。
+    await expect(page.locator('.agent-inspector')).not.toContainText('What it is doing');
     await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
   });
 }
+
+test('Agents that only write a card follow their Matrix presence', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  // 名片都是三天前进房间时写的：依次在等消息、下次运行时读、20 分钟前离线。
+  await page.goto('/e2e/fixtures/lobby-scene.html?agents=24&cards');
+  await page.getByRole('button', { name: 'View agents', exact: true }).click();
+  const roster = page.locator('.workspace-members .list-roster');
+  for (const name of [
+    'Online · waiting for messages',
+    'Online · reads on next run',
+    'Offline · under 1 hour',
+  ]) {
+    await expect(roster.getByRole('heading', { name })).toBeVisible();
+  }
+  await expect(roster.getByRole('button', { name: 'Archived (0)' })).toBeVisible();
+  await roster.getByRole('button', { name: /^Build Agent 003/u }).click();
+  const inspector = page.locator('.agent-inspector');
+  await expect(inspector).toContainText('Under 1 hour');
+  await expect(inspector).toContainText('Last connected');
+  expect(failures).toEqual([]);
+});
 
 test('Room managers can change the shared archive rule and keep the same identities', async ({
   page,

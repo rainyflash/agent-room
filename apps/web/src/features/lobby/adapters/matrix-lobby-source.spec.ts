@@ -9,6 +9,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { MatrixSdkLobbySource, matrixAgentStatusEventType } from './matrix-lobby-source';
+import type { AgentPresenceSource } from './matrix-presence-tracker';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 describe('MatrixSdkLobbySource', () => {
@@ -73,6 +74,50 @@ describe('MatrixSdkLobbySource', () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
+  it('只为还在房间里、写名片的 Agent 读在线状态', () => {
+    const card = { eventType: matrixAgentStatusEventType, liveness: 'presence' };
+    const registry = new MatrixClientRegistry();
+    registry.replace(matrixClient(matrixRoom(matrixState(card))).value);
+    const presence = presenceSource();
+
+    const read = new MatrixSdkLobbySource(registry, presence).read('!public:agent-room.test');
+
+    expect(presence.observe).toHaveBeenCalledWith(['@a:agent-room.test']);
+    expect(read.kind === 'ready' && read.room.presence).toEqual(
+      new Map([['@a:agent-room.test', { state: 'online' }]]),
+    );
+  });
+
+  it('旧的租约写法和已经离开房间的人不读在线状态', () => {
+    const lease = { eventType: matrixAgentStatusEventType };
+    const card = { eventType: matrixAgentStatusEventType, liveness: 'presence' };
+    const presence = presenceSource();
+    for (const room of [
+      matrixRoom(matrixState(lease)),
+      matrixRoom(matrixState(card), 'join', ['@z:agent-room.test']),
+    ]) {
+      const registry = new MatrixClientRegistry();
+      registry.replace(matrixClient(room).value);
+      const read = new MatrixSdkLobbySource(registry, presence).read('!public:agent-room.test');
+      expect(read.kind === 'ready' && read.room.presence).toBeUndefined();
+    }
+    expect(presence.observe).not.toHaveBeenCalled();
+  });
+
+  it('问到在线状态时也通知快照订阅者', () => {
+    const registry = new MatrixClientRegistry();
+    const presence = presenceSource();
+    const source = new MatrixSdkLobbySource(registry, presence);
+    const listener = vi.fn();
+
+    const unsubscribe = source.subscribe('!public:agent-room.test', listener);
+    presence.notify();
+    unsubscribe();
+    presence.notify();
+
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('没有客户端与未加入房间时不会伪造空大厅', () => {
     const registry = new MatrixClientRegistry();
     const source = new MatrixSdkLobbySource(registry);
@@ -110,14 +155,17 @@ function matrixState(statusContent: unknown, encrypted = false): RoomState {
   } as unknown as RoomState;
 }
 
-function matrixRoom(state: RoomState, membership = 'join'): Room {
+function matrixRoom(
+  state: RoomState,
+  membership = 'join',
+  members = ['@z:agent-room.test', '@a:agent-room.test'],
+): Room {
   const timeline = {
     getState: () => state,
   } as unknown as EventTimeline;
   return {
     getMyMembership: () => membership,
-    getJoinedMembers: () =>
-      [{ userId: '@z:agent-room.test' }, { userId: '@a:agent-room.test' }] as RoomMember[],
+    getJoinedMembers: () => members.map((userId) => ({ userId })) as RoomMember[],
     getLiveTimeline: () => timeline,
     name: '  公开大厅  ',
   } as unknown as Room;
@@ -131,4 +179,24 @@ function matrixClient(room: Room | null): {
       getRoom: () => room,
     } as unknown as MatrixClient,
   };
+}
+
+/** 谁都当成在线；`notify` 模拟问到了新的在线状态。 */
+function presenceSource() {
+  const listeners = new Set<() => void>();
+  const source = {
+    observe: vi.fn((userIds: readonly string[]) => {
+      return new Map(userIds.map((userId) => [userId, { state: 'online' } as const]));
+    }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    notify: () => {
+      for (const listener of listeners) listener();
+    },
+  } satisfies AgentPresenceSource & { notify(): void };
+  return source;
 }

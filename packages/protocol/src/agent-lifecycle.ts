@@ -125,14 +125,18 @@ export function projectAgentLifecycles(
   const result = new Map(
     agents.map((agent) => [agent.agentId, evaluateAgentLifecycle(agent, now, archiveAfterDays)]),
   );
+  // 最近离线的名额按最后一次见到它排：租约写法是最后一条状态事件的时间；名片是进房间时写的，
+  // 按它离线的那一刻排。
+  const lastSeen = (agent: AgentPresenceEvidence): number =>
+    agent.liveness === 'presence'
+      ? (result.get(agent.agentId)?.offlineSinceUnixMs ?? agent.lastActiveAtUnixMs)
+      : agent.lastActiveAtUnixMs;
   const offline = agents
     .filter((agent) => {
       const state = result.get(agent.agentId);
       return state?.connection === 'offline' && !state.archived;
     })
-    .toSorted(
-      (a, b) => b.lastActiveAtUnixMs - a.lastActiveAtUnixMs || a.agentId.localeCompare(b.agentId),
-    );
+    .toSorted((a, b) => lastSeen(b) - lastSeen(a) || a.agentId.localeCompare(b.agentId));
   for (const agent of offline.slice(agentLifecyclePolicy.recentOfflineLimit)) {
     const state = result.get(agent.agentId);
     if (state) result.set(agent.agentId, { ...state, archived: true, archiveReason: 'capacity' });

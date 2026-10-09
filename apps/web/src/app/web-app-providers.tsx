@@ -20,6 +20,7 @@ import { NetworkAgentLabelStore } from '@/features/lobby/application/network-age
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { ControlPlaneAgentRosterPolicy } from '@/features/lobby/adapters/control-plane-agent-roster-policy';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
+import { MatrixPresenceTracker } from '@/features/lobby/adapters/matrix-presence-tracker';
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
 import { BrowserMachineTranslationGateway } from '@/features/messages/adapters/browser-machine-translation-gateway';
 import { BrowserMessageBodyPreparer } from '@/features/messages/adapters/browser-message-body-preparer';
@@ -158,7 +159,10 @@ export function createCloudRuntime(
     new MatrixWorkspaceGateway(matrixClients),
     new BrowserWorkspaceCache(window.localStorage),
   );
-  const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients));
+  // 写名片的 Agent 在不在线、在不在等消息看 Matrix 的在线状态（specs/agent-liveness）。
+  const lobby = new MatrixLobbyGateway(
+    new MatrixSdkLobbySource(matrixClients, new MatrixPresenceTracker(matrixClients)),
+  );
   const networkAgentLabels = new NetworkAgentLabelStore(
     new ControlPlaneNetworkAgentLookup(businessApi),
   );
