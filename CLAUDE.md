@@ -271,6 +271,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 手动给 Mac 装新版时，先删掉 `~/Downloads` 里同名的旧磁盘映像再用 curl 下。curl 覆盖内容但留着浏览器加的 `com.apple.quarantine`，`ditto` 会把它带到应用上，Gatekeeper 就让应用从随机的只读路径跑（App Translocation），应用内更新换不了自己。已经打开过的应用没法再在原地去掉这个标记：macOS 的“App 管理”保护不让终端改应用包里的东西，`xattr -dr` 每一项都报 Operation not permitted，也别为此去系统设置里给终端加权限。办法是先去掉磁盘映像文件上的标记（核过哈希），挂载后确认里面的应用没带标记，退出应用，把整个应用挪进废纸篓，再从磁盘映像 `ditto` 一份新的（2026-10-07 遇到过）。挂载点以 `hdiutil attach` 打印的为准，以前的磁盘映像可能还挂着。
 - 之后在 Mac 上接入 Agent、后台回复，还可能碰到别的 Mac 专属问题，排查照上面的办法。
 
+### 带时限的禁言到期
+
+- #350 做了第一版到期解除：控制面每 30 秒翻出到期的治理动作，撤掉副作用、记成 `reversed`、写 `moderation.action.expired`，网页台账分开说“到期解除”。
+- 在它之上补齐（设计 #352，[specs/moderation/timed-mute-expiry.md](./specs/moderation/timed-mute-expiry.md)，分四步交付，进度记在它的“状态”一节）：
+  - 领取改成 `FOR UPDATE SKIP LOCKED` 加 2 分钟租约，多个控制面副本不再各做一遍；Matrix 撤不掉时 30 秒起翻倍退避到 15 分钟，第一次失败写 `moderation.action.expire_failed`；
+  - 禁言到期前看这个人此刻该不该禁着：按 UUID 认人，还有别的生效的禁言、有一条正在落（`pending` 不到 5 分钟）、私人房间里他没有发言权，都不解；动完再看一眼，变了就下一轮再来；
+  - 到期解除和手动撤销禁言先拿这个房间里这个人的禁言锁（Postgres advisory lock，拿着一个连接到做完），同一个人一次只做一个；落禁言不拿锁，靠先记的 `pending` 和“动完再看一眼”接住。只靠那一眼挡不住“后台再落一次”和手动撤销交错，别把锁拿掉；
+  - 手动撤销禁言也用同一套判断。
+
 ### 版本与其他
 
 - 下一版（Alpha 65）改了登录相关代码：删除账户时删掉 Keycloak 里的登录账户（#346），动了 `render.py`、身份同步脚本和 `crates/identity-adapter/`。实机验收要维护者批准一次设备码，发版前先约好时间。
