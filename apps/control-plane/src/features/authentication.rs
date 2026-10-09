@@ -7,10 +7,11 @@ use agent_room_application::{
         CompleteLogin, DesktopLoginCompletion, ExchangeDesktopAuthorization, LoginCompletion,
     },
     ports::{
-        DesktopClientState, LoginDelivery, PkceCodeChallenge, ProfileImportConsent, SafeReturnPath,
-        SecretValue,
+        Clock, DesktopClientState, LoginDelivery, PkceCodeChallenge, ProfileImportConsent,
+        SafeReturnPath, SecretValue,
     },
 };
+use agent_room_domain::time::UtcMillis;
 use axum::{
     Json, Router,
     extract::{
@@ -43,12 +44,13 @@ const LOOPBACK_CALLBACK_PATH: &str = "/auth/callback";
 #[derive(Clone)]
 pub(crate) struct AuthenticationHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
+    /// 算登录 Cookie 还剩多久。
+    clock: Arc<dyn Clock>,
     frontend_origin: Url,
     issuer: Url,
     trusted_origins: TrustedOrigins,
     login_failure_redirect: String,
     login_cookie_ttl: CookieDuration,
-    session_cookie_ttl: CookieDuration,
 }
 
 impl AuthenticationHttpState {
@@ -59,11 +61,11 @@ impl AuthenticationHttpState {
     /// 浏览器/桌面地址不是纯 Origin，或 Cookie 生命周期无法安全转换时返回配置错误。
     pub(crate) fn new(
         authentication: Arc<dyn AuthenticationUseCases>,
+        clock: Arc<dyn Clock>,
         issuer: Url,
         frontend_origin: Url,
         desktop_origins: &crate::config::DesktopOrigins,
         login_cookie_ttl: Duration,
-        session_cookie_ttl: Duration,
     ) -> Result<Self, AuthenticationHttpConfigurationError> {
         if frontend_origin.path() != "/"
             || frontend_origin.query().is_some()
@@ -77,15 +79,14 @@ impl AuthenticationHttpState {
             .map_err(|_| AuthenticationHttpConfigurationError::FrontendOrigin)?
             .to_string();
         let login_cookie_ttl = cookie_duration(login_cookie_ttl)?;
-        let session_cookie_ttl = cookie_duration(session_cookie_ttl)?;
         Ok(Self {
             authentication,
+            clock,
             frontend_origin,
             issuer,
             trusted_origins,
             login_failure_redirect,
             login_cookie_ttl,
-            session_cookie_ttl,
         })
     }
 }
@@ -446,10 +447,10 @@ async fn complete_login(
                     ApiError::invalid_request("authentication.unsafe_return_path", correlation_id),
                 );
             };
-            let jar = jar.add(expired_cookie(LOGIN_COOKIE)).add(secure_cookie(
-                SESSION_COOKIE,
+            let jar = jar.add(expired_cookie(LOGIN_COOKIE)).add(session_cookie(
                 completion.session_secret.expose(),
-                state.session_cookie_ttl,
+                completion.principal.expires_at,
+                state.clock.now(),
             ));
             no_store((jar, Redirect::to(destination.as_str())).into_response())
         }
@@ -531,7 +532,15 @@ async fn current_session(
         .authenticate(&session_secret, AuthenticationRequirement::ActiveSession)
         .await
     {
-        Ok(principal) => no_store(Json(SessionResponse::from(principal)).into_response()),
+        Ok(principal) => {
+            let jar = renewed_session_jar(
+                jar,
+                &session_secret,
+                principal.expires_at,
+                state.clock.now(),
+            );
+            no_store((jar, Json(SessionResponse::from(principal))).into_response())
+        }
         Err(failure) => {
             let clear_cookie = matches!(
                 failure.kind(),
@@ -588,6 +597,31 @@ fn secure_cookie(name: &'static str, value: &str, max_age: CookieDuration) -> Co
         .same_site(SameSite::Lax)
         .max_age(max_age)
         .build()
+}
+
+/// 网页登录的 Cookie 留到这份登录最晚能用到的那天（`expires_at`）；连续多久没用由服务器把关，
+/// 到时回 401 并清掉它。用 `Max-Age` 而不是 `Expires`，浏览器所在电脑的时钟不准也不会提前丢掉。
+fn session_cookie(value: &str, expires_at: UtcMillis, now: UtcMillis) -> Cookie<'static> {
+    let remaining = expires_at.value().saturating_sub(now.value()).max(0);
+    secure_cookie(
+        SESSION_COOKIE,
+        value,
+        CookieDuration::milliseconds(remaining),
+    )
+}
+
+/// 网页每次打开都会问 `/auth/session`：用的是网页 Cookie 时，按剩下的时长再发一次，
+/// 改动上线前登录的人的 Cookie 也就跟着续上了。桌面应用经原生层代发、用的是桌面 Cookie，不续发。
+fn renewed_session_jar(
+    jar: CookieJar,
+    secret: &SecretValue,
+    expires_at: UtcMillis,
+    now: UtcMillis,
+) -> CookieJar {
+    if jar.get(DESKTOP_SESSION_COOKIE).is_some() || jar.get(SESSION_COOKIE).is_none() {
+        return jar;
+    }
+    jar.add(session_cookie(secret.expose(), expires_at, now))
 }
 
 fn with_desktop_callback_cookie(
@@ -796,7 +830,7 @@ mod tests {
             CompleteLogin, DesktopLoginCompletion, DesktopSessionCompletion,
             ExchangeDesktopAuthorization, LoginCompletion, LoginRedirect, WebLoginCompletion,
         },
-        ports::{LoginDelivery, PortFuture, SafeReturnPath, SecretValue},
+        ports::{Clock, LoginDelivery, PortFuture, SafeReturnPath, SecretValue},
     };
     use agent_room_domain::{ids::PrincipalId, time::UtcMillis};
     use axum::{
@@ -951,14 +985,27 @@ mod tests {
         }
     }
 
+    struct FixedClock(UtcMillis);
+
+    impl Clock for FixedClock {
+        fn now(&self) -> UtcMillis {
+            self.0
+        }
+    }
+
+    /// 时钟停在测试登录完成的那一刻：`principal()` 最晚还能用 8 小时。
     fn test_router(fake: Arc<FakeAuthentication>) -> axum::Router {
+        test_router_at(fake, 1_700_000_000_000)
+    }
+
+    fn test_router_at(fake: Arc<FakeAuthentication>, now: i64) -> axum::Router {
         let state = AuthenticationHttpState::new(
             fake,
+            Arc::new(FixedClock(time(now))),
             Url::parse("https://identity.example").expect("OIDC issuer 有效"),
             Url::parse("https://app.agent-room.test").expect("前端 Origin 有效"),
             &crate::config::DesktopOrigins::for_tests(),
             Duration::from_mins(10),
-            Duration::from_hours(8),
         )
         .expect("HTTP 认证配置有效");
         router(state).layer(middleware::from_fn(crate::correlation::attach))
@@ -1402,6 +1449,49 @@ mod tests {
             assert_eq!(json["principalId"], "0198b601-77a1-7bb8-83eb-a8fe68c97e42");
             assert_eq!(json["recentlyAuthenticated"], true);
         }
+    }
+
+    #[tokio::test]
+    async fn 问会话时网页_cookie_按剩下的时长续发_桌面_cookie_不发() {
+        // 登录完成一小时后再问：这份登录最晚还剩 7 小时。
+        let web = test_router_at(Arc::new(FakeAuthentication::default()), 1_700_003_600_000)
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/session")
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(web.status(), StatusCode::OK);
+        let cookies = set_cookies(&web);
+        assert_eq!(cookies.len(), 1, "{cookies:?}");
+        assert!(
+            cookies[0].starts_with("__Host-agent-room-session=session-secret")
+                && cookies[0].contains("Path=/")
+                && cookies[0].contains("HttpOnly")
+                && cookies[0].contains("SameSite=Lax")
+                && cookies[0].contains("Secure")
+                && cookies[0].contains("Max-Age=25200"),
+            "{cookies:?}"
+        );
+
+        let desktop = test_router(Arc::new(FakeAuthentication::default()))
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/session")
+                    .header(
+                        header::COOKIE,
+                        "__Secure-agent-room-desktop-session=session-secret",
+                    )
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(desktop.status(), StatusCode::OK);
+        assert!(set_cookies(&desktop).is_empty());
     }
 
     #[tokio::test]

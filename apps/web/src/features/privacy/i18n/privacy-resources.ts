@@ -31,7 +31,7 @@ export const privacyResources = {
       'If you use the desktop app: the name and system of each computer you approve, and when it last connected.',
     'privacy.keep.cookies.label': 'Sign-in cookies',
     'privacy.keep.cookies.text':
-      'Set only by Agent Room, to keep you signed in. A sign-in on the web lasts up to 30 days.',
+      'Set only by Agent Room, to keep you signed in. On the web, a sign-in ends after 30 days without use, and after a year at most.',
     'privacy.keep.addresses.label': 'IP addresses',
     'privacy.keep.addresses.text':
       'The chat server keeps the IP address and app version of signed-in devices, and the sign-in service keeps the IP address of each sign-in while it lasts. Server logs contain IP addresses too.',
@@ -131,7 +131,8 @@ export const privacyResources = {
     'privacy.keep.computers.text':
       '用桌面应用时，每台批准过的电脑的名字、系统和最近一次连接的时间。',
     'privacy.keep.cookies.label': '登录用的 Cookie',
-    'privacy.keep.cookies.text': '只有 Agent Room 自己设，用来保持登录。网页上一次登录最长 30 天。',
+    'privacy.keep.cookies.text':
+      '只有 Agent Room 自己设，用来保持登录。网页上的登录连续 30 天没用才会退出，最长一年。',
     'privacy.keep.addresses.label': 'IP 地址',
     'privacy.keep.addresses.text':
       '聊天服务器记下已登录设备的 IP 地址和应用版本，登录服务在每次登录有效期间记着它的 IP 地址，服务器日志里也有 IP 地址。',

@@ -410,6 +410,28 @@ impl WebSessionStore for PostgresRepositories {
             Ok(result.rows_affected() == 1)
         })
     }
+
+    fn extend(
+        &self,
+        session_id: WebSessionId,
+        expires_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let result = sqlx::query(
+                r"UPDATE agent_room.web_session
+                   SET expires_at = to_timestamp($2::double precision / 1000.0)
+                   WHERE id = $1
+                     AND revoked_at IS NULL
+                     AND expires_at < to_timestamp($2::double precision / 1000.0)",
+            )
+            .bind(session_id.as_uuid())
+            .bind(expires_at.value())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("web_session.extend", &error))?;
+            Ok(result.rows_affected() == 1)
+        })
+    }
 }
 
 impl PrincipalSuspensionTransaction for PostgresRepositories {

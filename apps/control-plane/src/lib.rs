@@ -335,7 +335,7 @@ async fn build_identity_router(
         &system_runtime,
         &secrets,
     )?;
-    let state = build_authentication_http_state(service.clone(), authentication_config)?;
+    let state = build_authentication_http_state(&service, &system_runtime, authentication_config)?;
     let telemetry_state = build_frontend_telemetry_state(config, service.clone(), metrics.clone());
     let devices = build_device_authorization(
         authentication_config,
@@ -1248,16 +1248,17 @@ fn build_lobby_provisioning(
 }
 
 fn build_authentication_http_state(
-    service: Arc<AuthenticationService>,
+    service: &Arc<AuthenticationService>,
+    system_runtime: &Arc<SystemRuntime>,
     config: &AuthenticationConfig,
 ) -> Result<AuthenticationHttpState, StartupError> {
     AuthenticationHttpState::new(
-        service,
+        service.clone(),
+        system_runtime.clone(),
         config.issuer_url.clone(),
         config.frontend_origin.clone(),
         &config.desktop_origins,
         config.login_attempt_ttl,
-        config.web_session_ttl,
     )
     .map_err(|error| StartupError::new("startup.invalid_authentication_config", error.to_string()))
 }
@@ -1444,9 +1445,19 @@ fn build_device_oidc(
 fn authentication_policy(
     config: &AuthenticationConfig,
 ) -> Result<AuthenticationPolicy, StartupError> {
+    let session_lifetime = SlidingLifetime::new(
+        domain_duration(config.web_session_ttl)?,
+        domain_duration(config.sign_in_max_lifetime)?,
+    )
+    .map_err(|_| {
+        StartupError::new(
+            "startup.invalid_authentication_config",
+            "登录的空闲时限不能长于最长时限".to_owned(),
+        )
+    })?;
     AuthenticationPolicy::new(
         domain_duration(config.login_attempt_ttl)?,
-        domain_duration(config.web_session_ttl)?,
+        session_lifetime,
         domain_duration(config.recent_authentication_window)?,
         domain_duration(config.allowed_clock_skew)?,
         config.matrix_server_name.clone(),

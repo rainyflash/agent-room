@@ -17,6 +17,8 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+const DAY: i64 = 24 * 60 * 60 * 1_000;
+
 struct TestDatabase {
     migration: PgPool,
     runtime: PgPool,
@@ -423,6 +425,64 @@ async fn 有效_web_会话可原子签发桌面授权码() {
     .await
     .expect("撤销会话只返回空结果");
     assert!(rejected.is_none());
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 登录续期只往后挪_撤销以后不再续() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let session_id = WebSessionId::from_uuid(Uuid::now_v7());
+    let principal = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example",
+        &format!("extend-{}", Uuid::now_v7()),
+        "续期主体",
+    );
+    let session = session_registration(session_id, 61);
+    LoginCompletionTransaction::complete(&repositories, &principal, &session)
+        .await
+        .expect("会话应建立");
+
+    assert!(
+        WebSessionStore::extend(&repositories, session_id, test_time(30 * DAY))
+            .await
+            .expect("续期应返回结果"),
+        "往后挪应生效"
+    );
+    let found =
+        WebSessionStore::find_active(&repositories, &session.secret_digest, test_time(29 * DAY))
+            .await
+            .expect("可查询会话")
+            .expect("续过以后第 29 天还有效");
+    assert_eq!(found.expires_at, test_time(30 * DAY));
+
+    assert!(
+        !WebSessionStore::extend(&repositories, session_id, test_time(DAY))
+            .await
+            .expect("续期应返回结果"),
+        "往前挪不改"
+    );
+    WebSessionStore::revoke(&repositories, &session.secret_digest, test_time(DAY))
+        .await
+        .expect("撤销成功");
+    assert!(
+        !WebSessionStore::extend(&repositories, session_id, test_time(60 * DAY))
+            .await
+            .expect("续期应返回结果"),
+        "撤销以后不再续"
+    );
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT floor(extract(epoch FROM expires_at) * 1000)::bigint
+           FROM agent_room.web_session WHERE id = $1",
+    )
+    .bind(session_id.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("可读取会话到期时间");
+    assert_eq!(stored, test_time(30 * DAY).value());
 
     database.close().await;
 }

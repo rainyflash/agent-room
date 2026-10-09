@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_room_domain::{
     ids::PrincipalId,
-    time::{DurationMillis, UtcMillis},
+    time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest as _, Sha256};
@@ -22,11 +22,14 @@ use crate::{
 };
 
 const MAX_AUTHORIZATION_VALUE_LENGTH: usize = 4_096;
+/// 一份登录续过以后，一小时之内再用就不再写库。
+const MAX_SESSION_RENEWAL_STEP_MILLIS: u64 = 60 * 60 * 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticationPolicy {
     login_attempt_ttl: DurationMillis,
-    web_session_ttl: DurationMillis,
+    /// 账户登录：连续多久没用就过期，从真正认证起最长多久。
+    session_lifetime: SlidingLifetime,
     recent_authentication_window: DurationMillis,
     allowed_clock_skew: DurationMillis,
     matrix_server_name: String,
@@ -40,7 +43,7 @@ impl AuthenticationPolicy {
     /// Matrix 服务名包含路径、控制字符或长度超限时返回配置错误。
     pub fn new(
         login_attempt_ttl: DurationMillis,
-        web_session_ttl: DurationMillis,
+        session_lifetime: SlidingLifetime,
         recent_authentication_window: DurationMillis,
         allowed_clock_skew: DurationMillis,
         matrix_server_name: impl Into<String>,
@@ -56,15 +59,21 @@ impl AuthenticationPolicy {
 
         Ok(Self {
             login_attempt_ttl,
-            web_session_ttl,
+            session_lifetime,
             recent_authentication_window,
             allowed_clock_skew,
             matrix_server_name,
         })
     }
 
-    pub const fn web_session_ttl(&self) -> DurationMillis {
-        self.web_session_ttl
+    pub const fn session_lifetime(&self) -> SlidingLifetime {
+        self.session_lifetime
+    }
+
+    /// 续过一次以后，至少要往后挪这么多才再写库：一小时，空闲时限更短时取它的十分之一。
+    fn session_renewal_step(&self) -> i64 {
+        let step = (self.session_lifetime.idle().value() / 10).min(MAX_SESSION_RENEWAL_STEP_MILLIS);
+        i64::try_from(step).unwrap_or(i64::MAX)
     }
 }
 
@@ -466,8 +475,11 @@ impl AuthenticationService {
             .secrets
             .generate()
             .map_err(|_| internal_failure("authentication.exchange_desktop_authorization"))?;
-        let expires_at = now
-            .checked_add(self.policy.web_session_ttl)
+        // 换来的登录继承原来那份的认证时间；最晚那天由认证时按它卡住（`authenticate_internal`）。
+        let expires_at = self
+            .policy
+            .session_lifetime
+            .renewed_until(now, now)
             .map_err(|_| internal_failure("authentication.exchange_desktop_authorization"))?;
         let session_registration = DesktopSessionRegistration {
             id: self.identifiers.web_session_id(),
@@ -540,8 +552,10 @@ impl AuthenticationService {
         now: UtcMillis,
         operation: &'static str,
     ) -> AuthenticationResult<WebSessionRegistration> {
-        let expires_at = now
-            .checked_add(self.policy.web_session_ttl)
+        let expires_at = self
+            .policy
+            .session_lifetime
+            .renewed_until(authenticated_at, now)
             .map_err(|_| internal_failure(operation))?;
         Ok(WebSessionRegistration {
             id: self.identifiers.web_session_id(),
@@ -576,6 +590,7 @@ impl AuthenticationService {
                 AuthenticationFailureKind::PrincipalSuspended,
             ));
         }
+        self.renew_session(&session, now).await?;
         let principal = session_view(&session, now, &self.policy);
         if matches!(requirement, AuthenticationRequirement::RecentAuthentication)
             && !principal.recently_authenticated
@@ -586,6 +601,39 @@ impl AuthenticationService {
             ));
         }
         Ok(principal)
+    }
+
+    /// 这份登录在 `now` 用了一次：到了最晚那天就不再认它；否则按规则往后续，
+    /// 一小时之内续过就不再写库。写库失败就当这次认证失败，不悄悄吞掉。
+    async fn renew_session(
+        &self,
+        session: &StoredWebSession,
+        now: UtcMillis,
+    ) -> AuthenticationResult<()> {
+        let operation = "authentication.authenticate";
+        let lifetime = self.policy.session_lifetime;
+        let latest = lifetime
+            .latest(session.authenticated_at)
+            .map_err(|_| internal_failure(operation))?;
+        if now >= latest {
+            return Err(AuthenticationFailure::new(
+                operation,
+                AuthenticationFailureKind::InvalidSession,
+            ));
+        }
+        let renewed = lifetime
+            .renewed_until(session.authenticated_at, now)
+            .map_err(|_| internal_failure(operation))?;
+        if renewed.value().saturating_sub(session.expires_at.value())
+            < self.policy.session_renewal_step()
+        {
+            return Ok(());
+        }
+        self.sessions
+            .extend(session.id, renewed)
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?;
+        Ok(())
     }
 
     async fn logout_internal(&self, session_secret: &SecretValue) -> AuthenticationResult<()> {
@@ -721,13 +769,20 @@ fn session_view(
         .authenticated_at
         .checked_add(policy.recent_authentication_window)
         .and_then(|value| value.checked_add(policy.allowed_clock_skew));
+    // 回“最晚到什么时候”，不回会续的那个：桌面端把它存在本机，过了就自己删登录；
+    // 连续多久没用由服务器把关，到时回 401。到了最晚那天认证时一定拒绝（`renew_session`），
+    // 所以哪怕库里的空闲到期更晚（换来的桌面登录快满一年时会这样），也回最晚那天。
+    let latest = policy
+        .session_lifetime
+        .latest(session.authenticated_at)
+        .unwrap_or(session.expires_at);
     AuthenticatedPrincipal {
         principal_id: session.account.principal.id(),
         matrix_user_id: session.account.matrix_user_id.clone(),
         display_name: session.account.display_name.clone(),
         locale: session.account.locale.clone(),
         authenticated_at: session.authenticated_at,
-        expires_at: session.expires_at,
+        expires_at: latest,
         recently_authenticated: recent_until.is_ok_and(|deadline| now <= deadline),
     }
 }
@@ -776,7 +831,11 @@ mod tests {
     fn policy() -> AuthenticationPolicy {
         AuthenticationPolicy::new(
             agent_room_domain::time::DurationMillis::new(600_000).expect("时长有效"),
-            agent_room_domain::time::DurationMillis::new(28_800_000).expect("时长有效"),
+            agent_room_domain::time::SlidingLifetime::new(
+                agent_room_domain::time::DurationMillis::new(28_800_000).expect("时长有效"),
+                agent_room_domain::time::DurationMillis::new(28_800_000).expect("时长有效"),
+            )
+            .expect("寿命有效"),
             agent_room_domain::time::DurationMillis::new(300_000).expect("时长有效"),
             agent_room_domain::time::DurationMillis::new(60_000).expect("时长有效"),
             "matrix.example.test",
