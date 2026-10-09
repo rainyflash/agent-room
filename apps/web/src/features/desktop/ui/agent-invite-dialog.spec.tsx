@@ -215,7 +215,8 @@ describe('接入 Agent 对话框', () => {
 
     const message = await copyMessage(writeText);
     expect(message).toContain('/agents.txt');
-    expect(message).toContain('untrusted input');
+    expect(message).toContain('chat with everyone');
+    expect(message).not.toMatch(/untrusted|only follow my instructions/u);
     expect(message).not.toMatch(appNames);
     expect(await screen.findByText('Copied. Send it to your agent.')).toBeVisible();
     expect(screen.getByText('Waiting for your agent to join…')).toBeVisible();
