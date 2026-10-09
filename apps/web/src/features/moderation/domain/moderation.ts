@@ -150,23 +150,47 @@ export type ModerationReason = (typeof moderationReasons)[number];
 export type ModerationActionKind = (typeof moderationActionKinds)[number];
 export type ModerationCase = z.output<typeof moderationCaseSchema>;
 export type ModerationAction = z.output<typeof moderationActionSchema>;
-/** 台账上显示的状态：比服务器给的多一个“到期解除”。 */
-export type ModerationActionDisplayStatus = ModerationAction['status'] | 'expired';
+/** 台账上显示的状态：比服务器给的多“正在解除”和“到期解除”。 */
+export type ModerationActionDisplayStatus = ModerationAction['status'] | 'ending' | 'expired';
 
 /**
  * 到了期限、由服务器自动解除的动作，服务器也记成 `reversed`：旧版网页严格校验状态，多一种状态
- * 整个台账都读不出来。撤销时间不早于到期时间的就是到期解除的。
+ * 整个台账都读不出来。撤销时间不早于到期时间的就是到期解除的。过了期限、服务器还没解除的（比如
+ * 聊天服务器撤不掉，后台在往后退避再试）是正在解除。
  */
 export function moderationActionDisplayStatus(
   action: ModerationAction,
+  now: number,
 ): ModerationActionDisplayStatus {
   const { expiresAtUnixMs, reversedAtUnixMs, status } = action;
-  return status === 'reversed' &&
-    expiresAtUnixMs !== null &&
-    reversedAtUnixMs !== null &&
-    reversedAtUnixMs >= expiresAtUnixMs
+  if (expiresAtUnixMs === null) {
+    return status;
+  }
+  if (status === 'applied' && expiresAtUnixMs <= now) {
+    return 'ending';
+  }
+  return status === 'reversed' && reversedAtUnixMs !== null && reversedAtUnixMs >= expiresAtUnixMs
     ? 'expired'
     : status;
+}
+
+/** 已生效的动作里下一个什么时候到期，没有就是 `null`。台账到那一刻改说“正在解除”。 */
+export function nextModerationExpiry(
+  actions: readonly ModerationAction[],
+  now: number,
+): number | null {
+  let next: number | null = null;
+  for (const { expiresAtUnixMs, status } of actions) {
+    if (
+      status === 'applied' &&
+      expiresAtUnixMs !== null &&
+      expiresAtUnixMs > now &&
+      (next === null || expiresAtUnixMs < next)
+    ) {
+      next = expiresAtUnixMs;
+    }
+  }
+  return next;
 }
 export type ModerationAuditEvent = z.output<typeof moderationAuditEventSchema>;
 export type ModerationCapabilities = z.output<typeof moderationCapabilitiesSchema>;
