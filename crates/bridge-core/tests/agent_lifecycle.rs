@@ -1,6 +1,7 @@
 use agent_room_domain::{
     agent_lifecycle::{
-        AgentPresenceEvidence, DEFAULT_ARCHIVE_AFTER_DAYS, RECENT_OFFLINE_LIMIT,
+        AgentLiveness, AgentPresenceEvidence, DEFAULT_ARCHIVE_AFTER_DAYS,
+        MatrixPresenceObservation, MatrixPresenceState, RECENT_OFFLINE_LIMIT,
         RECEPTION_FRESHNESS_MS, RECONNECT_GRACE_MS, WAITING_LEASE_MS,
     },
     agent_status::AgentWorkStatus,
@@ -38,6 +39,36 @@ struct Case {
     reception: String,
     offline_since: Option<i64>,
     archived: bool,
+    #[serde(default)]
+    liveness: Option<String>,
+    #[serde(default)]
+    presence: Option<PresenceCase>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PresenceCase {
+    state: String,
+    offline_seen_at: Option<i64>,
+    last_active: Option<i64>,
+}
+
+fn liveness(case: &Case) -> AgentLiveness {
+    match case.liveness.as_deref() {
+        None => AgentLiveness::Lease,
+        Some("presence") => AgentLiveness::Presence(case.presence.as_ref().map(|presence| {
+            MatrixPresenceObservation {
+                state: match presence.state.as_str() {
+                    "online" => MatrixPresenceState::Online,
+                    "unavailable" => MatrixPresenceState::Unavailable,
+                    "offline" => MatrixPresenceState::Offline,
+                    _ => panic!("unexpected presence in fixture"),
+                },
+                offline_seen_at: presence.offline_seen_at,
+                last_active_at: presence.last_active,
+            }
+        })),
+        Some(_) => panic!("unexpected liveness in fixture"),
+    }
 }
 
 #[test]
@@ -72,6 +103,7 @@ fn rust_and_web_share_the_same_state_boundaries() {
             last_polled_at: case.polled,
             listening_until: case.listening_until,
             reception_known: !case.legacy,
+            liveness: liveness(&case),
         }
         .lifecycle(case.now, DEFAULT_ARCHIVE_AFTER_DAYS);
         assert_eq!(result.connection.as_str(), case.connection, "{}", case.name);

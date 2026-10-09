@@ -137,6 +137,173 @@
       "reception": "waiting",
       "offlineSince": null,
       "archived": false
+    },
+    {
+      "name": "card online is waiting, its nominal lease ignored",
+      "now": 900000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "online",
+        "offlineSeenAt": null,
+        "lastActive": 890000
+      },
+      "connection": "online",
+      "offlineSince": null,
+      "archived": false,
+      "reception": "waiting"
+    },
+    {
+      "name": "card unavailable reads on resume, its work status ignored",
+      "now": 900000,
+      "status": "working",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "unavailable",
+        "offlineSeenAt": null,
+        "lastActive": 890000
+      },
+      "connection": "online",
+      "offlineSince": null,
+      "archived": false,
+      "reception": "on_resume"
+    },
+    {
+      "name": "card seen going offline counts from then",
+      "now": 900000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "offline",
+        "offlineSeenAt": 850000,
+        "lastActive": 800000
+      },
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 850000,
+      "archived": false
+    },
+    {
+      "name": "card offline without a seen change uses last activity",
+      "now": 900000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "offline",
+        "offlineSeenAt": null,
+        "lastActive": 800000
+      },
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 800000,
+      "archived": false
+    },
+    {
+      "name": "card last activity is never before the card",
+      "now": 900000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "offline",
+        "offlineSeenAt": null,
+        "lastActive": 5000
+      },
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 10000,
+      "archived": false
+    },
+    {
+      "name": "card without presence yet is offline since the card",
+      "now": 900000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": null,
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 10000,
+      "archived": false
+    },
+    {
+      "name": "card offline time is never in the future",
+      "now": 900000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "offline",
+        "offlineSeenAt": 950000,
+        "lastActive": 940000
+      },
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 900000,
+      "archived": false
+    },
+    {
+      "name": "card just before seven day archive",
+      "now": 604809999,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "offline",
+        "offlineSeenAt": 10000,
+        "lastActive": 10000
+      },
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 10000,
+      "archived": false
+    },
+    {
+      "name": "card seven day archive boundary",
+      "now": 604810000,
+      "status": "idle",
+      "lastActive": 10000,
+      "expires": 310000,
+      "polled": null,
+      "listeningUntil": null,
+      "liveness": "presence",
+      "presence": {
+        "state": "offline",
+        "offlineSeenAt": 10000,
+        "lastActive": 10000
+      },
+      "connection": "offline",
+      "reception": "unavailable",
+      "offlineSince": 10000,
+      "archived": true
     }
   ]
 }

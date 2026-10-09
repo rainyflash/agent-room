@@ -8,7 +8,7 @@ use agent_room_application::ports::{
     MatrixRoomSyncKind, MatrixSyncBatch, MatrixTimelineEvent, MatrixUserId, PortFuture,
 };
 use agent_room_domain::{
-    agent_lifecycle::{AgentLifecycle, AgentPresenceEvidence, AgentRosterPolicy},
+    agent_lifecycle::{AgentLifecycle, AgentLiveness, AgentPresenceEvidence, AgentRosterPolicy},
     agent_status::{AgentTaskSummary, AgentWorkStatus},
     ids::{AgentId, AgentInstanceId},
     time::{DurationMillis, UtcMillis},
@@ -168,6 +168,7 @@ impl ProjectedAgentPresence {
             last_polled_at: self.last_polled_at.map(UtcMillis::value),
             listening_until: self.listening_until.map(UtcMillis::value),
             reception_known: self.reception_known,
+            liveness: AgentLiveness::Lease,
         }
     }
 
