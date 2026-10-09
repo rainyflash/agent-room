@@ -2,10 +2,11 @@ use std::path::{Path, PathBuf};
 
 /// Verified attachment downloads share one private directory under the Bridge data root.
 ///
-/// A confined reception host inspects attachments with its own read-only file tool, so the Bridge
-/// and the receiver must agree on one directory: the receiver grants the host read access to
-/// exactly this path and nothing else. Keeping it under the Bridge data root also keeps it
-/// owner-only, unlike a predictable name inside a shared system temporary directory.
+/// A confined reception host inspects attachments with its own read-only file tool (or, without
+/// one, a command that only prints the file inside its read-only sandbox), so the Bridge and the
+/// receiver must agree on one directory: the receiver grants the host read access to exactly this
+/// path and nothing else. Keeping it under the Bridge data root also keeps it owner-only, unlike a
+/// predictable name inside a shared system temporary directory.
 #[must_use]
 pub fn attachment_directory(data_root: &Path) -> PathBuf {
     data_root.join("attachments")
