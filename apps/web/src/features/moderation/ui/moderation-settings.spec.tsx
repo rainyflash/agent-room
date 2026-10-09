@@ -86,6 +86,37 @@ describe('ModerationSettings', () => {
     expect(gateway.reverseAction).toHaveBeenCalledWith(ACTION_ID);
   });
 
+  it('到了期限不用刷新就改说正在解除，正在解除时隔 15 秒再读一次台账', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const mute: ModerationAction = {
+        ...appliedAction(),
+        expiresAtUnixMs: Date.now() + 60_000,
+        kind: 'mute',
+        startsAtUnixMs: Date.now() - 1_000,
+        targetKind: 'principal',
+        targetReference: ACTOR_ID,
+      };
+      const gateway = {
+        ...authorizedGateway(),
+        listActions: vi.fn(() => Promise.resolve(ok([mute]))),
+      } satisfies ModerationGateway;
+      renderSettings(gateway);
+      expect(await screen.findByRole('img', { name: 'Applied' })).toBeVisible();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await screen.findByRole('img', { name: 'Ending' })).toBeVisible();
+
+      const reads = gateway.listActions.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(15_000);
+      await waitFor(() => {
+        expect(gateway.listActions.mock.calls.length).toBeGreaterThan(reads);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('普通成员只读取能力投影且不探测任何受限治理资源', async () => {
     const gateway = unauthorizedGateway();
     const { container } = renderSettings(gateway);

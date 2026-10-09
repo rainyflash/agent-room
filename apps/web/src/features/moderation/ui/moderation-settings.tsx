@@ -221,6 +221,6 @@ function useLedgerClock(actions: readonly ModerationAction[] | null): number {
     return () => {
       clearTimeout(timer);
     };
-  }, [next]);
+  }, [next, now]);
   return now;
 }
