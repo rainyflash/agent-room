@@ -190,7 +190,6 @@ export function ModerationAuditLedger({
   );
 }
 
-/** 限时的动作：生效中的说什么时候自动解除，到期解除了的说是哪个时候到期的。 */
 /** 限时的动作写什么时候到期：还没到写“自动解除”，过了（正在解除、到期解除）写“到期”。 */
 function ActionExpiry({
   action,
