@@ -62,6 +62,30 @@ describe('ModerationSettings', () => {
     );
   });
 
+  it('撤回禁言回冲突时说清楚过一会儿再点，不说读不到治理信息', async () => {
+    const user = userEvent.setup();
+    const mute: ModerationAction = {
+      ...appliedAction(),
+      kind: 'mute',
+      targetKind: 'principal',
+      targetReference: ACTOR_ID,
+    };
+    const gateway = {
+      ...authorizedGateway(),
+      listActions: vi.fn(() => Promise.resolve(ok([mute]))),
+      reverseAction: vi.fn(() =>
+        Promise.resolve(err({ code: 'moderation.conflict', retryable: false } as const)),
+      ),
+    } satisfies ModerationGateway;
+    renderSettings(gateway);
+
+    await user.click(await screen.findByRole('button', { name: 'Undo' }));
+
+    expect(await screen.findByText(/^Can’t undo right now/u)).toBeVisible();
+    expect(screen.queryByText(/Could not load moderation/u)).toBeNull();
+    expect(gateway.reverseAction).toHaveBeenCalledWith(ACTION_ID);
+  });
+
   it('普通成员只读取能力投影且不探测任何受限治理资源', async () => {
     const gateway = unauthorizedGateway();
     const { container } = renderSettings(gateway);

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import {
   moderationActionDisplayStatus,
   type ModerationAction,
+  type ModerationActionDisplayStatus,
   type ModerationAuditEvent,
   type ModerationCase,
 } from '@/features/moderation/domain/moderation';
@@ -70,11 +71,14 @@ export function ModerationCaseLedger({ cases }: { readonly cases: readonly Moder
 
 export function ModerationActionLedger({
   actions,
+  now,
   onReverse,
   pendingActionId,
   recentlyAuthenticated,
 }: {
   readonly actions: readonly ModerationAction[];
+  /** 按这个时刻算哪些过了期限。 */
+  readonly now: number;
   readonly onReverse: (actionId: string) => void;
   readonly pendingActionId: string | null;
   readonly recentlyAuthenticated: boolean;
@@ -92,46 +96,50 @@ export function ModerationActionLedger({
         <p className="moderation-ledger__empty">{t('moderation.governance.actionsEmpty')}</p>
       ) : (
         <ol>
-          {actions.map((action) => (
-            <li key={action.actionId}>
-              <div className="moderation-ledger__row">
-                <div>
-                  <strong>{t(`moderation.kind.${action.kind}`)}</strong>
-                  <span>{formatter.format(action.startsAtUnixMs)}</span>
-                  <ActionExpiry action={action} formatter={formatter} />
+          {actions.map((action) => {
+            const status = moderationActionDisplayStatus(action, now);
+            return (
+              <li key={action.actionId}>
+                <div className="moderation-ledger__row">
+                  <div>
+                    <strong>{t(`moderation.kind.${action.kind}`)}</strong>
+                    <span>{formatter.format(action.startsAtUnixMs)}</span>
+                    <ActionExpiry action={action} formatter={formatter} status={status} />
+                  </div>
+                  <StatusMark
+                    label={t(`moderation.status.${status}`)}
+                    pulse={status === 'ending'}
+                    tone={action.status === 'applied' ? 'network' : 'offline'}
+                  />
                 </div>
-                <StatusMark
-                  label={t(`moderation.status.${moderationActionDisplayStatus(action)}`)}
-                  tone={action.status === 'applied' ? 'network' : 'offline'}
+                <LedgerDetails
+                  facts={[
+                    [t(`moderation.target.${action.targetKind}`), action.targetReference],
+                    ...(action.failureCode === null
+                      ? []
+                      : ([[t('moderation.governance.failureCode'), action.failureCode]] as const)),
+                  ]}
                 />
-              </div>
-              <LedgerDetails
-                facts={[
-                  [t(`moderation.target.${action.targetKind}`), action.targetReference],
-                  ...(action.failureCode === null
-                    ? []
-                    : ([[t('moderation.governance.failureCode'), action.failureCode]] as const)),
-                ]}
-              />
-              {action.status === 'applied' ? (
-                <Button
-                  disabled={!recentlyAuthenticated || pendingActionId !== null}
-                  icon={<RotateCcw aria-hidden="true" />}
-                  onClick={() => {
-                    onReverse(action.actionId);
-                  }}
-                  size="compact"
-                  tone="quiet"
-                >
-                  {t(
-                    pendingActionId === action.actionId
-                      ? 'moderation.governance.action.reversing'
-                      : 'moderation.governance.action.reverse',
-                  )}
-                </Button>
-              ) : null}
-            </li>
-          ))}
+                {action.status === 'applied' ? (
+                  <Button
+                    disabled={!recentlyAuthenticated || pendingActionId !== null}
+                    icon={<RotateCcw aria-hidden="true" />}
+                    onClick={() => {
+                      onReverse(action.actionId);
+                    }}
+                    size="compact"
+                    tone="quiet"
+                  >
+                    {t(
+                      pendingActionId === action.actionId
+                        ? 'moderation.governance.action.reversing'
+                        : 'moderation.governance.action.reverse',
+                    )}
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       )}
     </section>
@@ -183,22 +191,25 @@ export function ModerationAuditLedger({
 }
 
 /** 限时的动作：生效中的说什么时候自动解除，到期解除了的说是哪个时候到期的。 */
+/** 限时的动作写什么时候到期：还没到写“自动解除”，过了（正在解除、到期解除）写“到期”。 */
 function ActionExpiry({
   action,
   formatter,
+  status,
 }: {
   readonly action: ModerationAction;
   readonly formatter: Intl.DateTimeFormat;
+  readonly status: ModerationActionDisplayStatus;
 }) {
   const { t } = useTranslation();
   if (action.expiresAtUnixMs === null) {
     return null;
   }
   const time = formatter.format(action.expiresAtUnixMs);
-  if (action.status === 'applied') {
+  if (status === 'applied') {
     return <span>{t('moderation.governance.action.endsAt', { time })}</span>;
   }
-  if (moderationActionDisplayStatus(action) === 'expired') {
+  if (status === 'ending' || status === 'expired') {
     return <span>{t('moderation.governance.action.expiredAt', { time })}</span>;
   }
   return null;
