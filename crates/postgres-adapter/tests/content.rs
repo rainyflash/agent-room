@@ -17,9 +17,14 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use tokio::task::JoinSet;
 use uuid::Uuid;
+
+/// 已经存着的正文补设到期时间的迁移；测试在事务里重跑它，看完就回滚，别的测试看不到。
+const RETENTION_BACKFILL: &str =
+    include_str!("../../../infra/migrations/202610090003_content_retention_backfill.sql");
+const DAY: i64 = 24 * 60 * 60 * 1_000;
 
 struct TestDatabase {
     migration: PgPool,
@@ -307,6 +312,107 @@ async fn 房间保留期按聊天房间查到目录上的设置() {
     }
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 补设已经存着的正文到期时间_按房间保留期再多留一天_查不到的按三十天_设过的不动() {
+    let database = TestDatabase::connect().await;
+    let owner = seed_principal(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let week = seed_archived_lobby(&database.migration, Some(7)).await;
+    let weekly = bound_content(&repositories, owner, 51, Some(week), None).await;
+    let unlisted = bound_content(&repositories, owner, 52, None, None).await;
+    let already = bound_content(&repositories, owner, 53, None, Some(time(5_000))).await;
+
+    let mut transaction = database.migration.begin().await.expect("开事务");
+    sqlx::raw_sql(RETENTION_BACKFILL)
+        .execute(&mut *transaction)
+        .await
+        .expect("补设成功");
+
+    // 上传的时间都是 time(1_000)。
+    assert_eq!(
+        retention_expiry(&mut transaction, weekly).await,
+        Some(time(1_000 + 8 * DAY))
+    );
+    assert_eq!(
+        retention_expiry(&mut transaction, unlisted).await,
+        Some(time(1_000 + 31 * DAY))
+    );
+    assert_eq!(
+        retention_expiry(&mut transaction, already).await,
+        Some(time(5_000)),
+        "设过的不动"
+    );
+    transaction.rollback().await.expect("回滚");
+
+    database.close().await;
+}
+
+/// 上传、扫描、激活并绑定到消息事件的正文。给了 `room` 就放在那个房间，不给就放在目录里查不到的房间。
+async fn bound_content(
+    repositories: &PostgresRepositories,
+    owner: PrincipalId,
+    marker: u8,
+    room: Option<MatrixRoomId>,
+    retention_expires_at: Option<UtcMillis>,
+) -> ContentId {
+    let mut claim = upload_claim_expiring(
+        owner,
+        ContentUploadRequestId::from_uuid(Uuid::now_v7()),
+        marker,
+        None,
+        retention_expires_at,
+    );
+    let content_id = claim.content.id();
+    if let Some(room) = room {
+        claim.access_policy =
+            ContentAccessPolicy::new(content_id, room, ContentAccessMode::RoomMember, time(1_000));
+    }
+    ContentRepository::claim_upload(repositories, &claim)
+        .await
+        .expect("声明成功");
+    ContentRepository::record_scan(
+        repositories,
+        content_id,
+        ContentScanState::Clean,
+        time(2_000),
+    )
+    .await
+    .expect("扫描成功");
+    ContentRepository::activate(repositories, content_id, time(3_000))
+        .await
+        .expect("激活成功");
+    ContentRepository::bind_event(
+        repositories,
+        &ContentEventBinding {
+            content_id,
+            matrix_room_id: claim.access_policy.matrix_room_id().clone(),
+            matrix_event_id: MatrixEventId::new(format!("$event-{content_id}:matrix.test"))
+                .expect("事件 ID 有效"),
+            bound_at: time(4_000),
+        },
+    )
+    .await
+    .expect("绑定成功");
+    content_id
+}
+
+async fn retention_expiry(
+    transaction: &mut Transaction<'_, Postgres>,
+    content_id: ContentId,
+) -> Option<UtcMillis> {
+    let millis: Option<i64> = sqlx::query_scalar(
+        r"SELECT floor(extract(epoch FROM retention_expires_at) * 1000)::bigint
+            FROM agent_room.content_object
+           WHERE id = $1",
+    )
+    .bind(content_id.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .expect("读到期时间");
+    millis.map(time)
 }
 
 async fn reclaimable_ids(repositories: &PostgresRepositories, now: UtcMillis) -> Vec<ContentId> {
