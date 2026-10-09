@@ -12,12 +12,18 @@ use agent_room_domain::{
     agent_lifecycle::AgentRosterPolicy,
     ids::{PrincipalId, RoomCatalogId},
     moderation::{ModerationRole, ModerationTarget},
+    rooms::RoomCatalogKind,
     time::UtcMillis,
 };
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-struct Authority(ModerationRole);
+struct Authority(ModerationRole, Vec<&'static str>);
+impl Authority {
+    fn one_room(role: ModerationRole) -> Self {
+        Self(role, vec!["!managed:room.test"])
+    }
+}
 impl ModerationAuthority for Authority {
     fn may_report<'a>(
         &'a self,
@@ -36,7 +42,12 @@ impl ModerationAuthority for Authority {
         Box::pin(async {
             Ok(Some(ModerationRoomContext {
                 role: self.0,
-                matrix_room_id: MatrixRoomId::new("!managed:room.test").unwrap(),
+                room_kind: RoomCatalogKind::PublicLobby,
+                matrix_room_ids: self
+                    .1
+                    .iter()
+                    .map(|room| MatrixRoomId::new(*room).unwrap())
+                    .collect(),
                 target_matrix_user_id: None,
             }))
         })
@@ -98,8 +109,11 @@ async fn only_current_room_managers_may_change_the_shared_policy_without_reauthe
         (ModerationRole::RoomManager, 1000, false),
     ] {
         let publisher = Arc::new(Publisher::default());
-        let service =
-            AgentRosterService::new(Arc::new(Authority(role)), publisher.clone(), Arc::new(Now));
+        let service = AgentRosterService::new(
+            Arc::new(Authority::one_room(role)),
+            publisher.clone(),
+            Arc::new(Now),
+        );
         let result = service
             .update(
                 actor(expires),
@@ -122,7 +136,7 @@ async fn publication_failure_never_reports_the_rule_as_saved() {
         ..Publisher::default()
     });
     let service = AgentRosterService::new(
-        Arc::new(Authority(ModerationRole::RoomManager)),
+        Arc::new(Authority::one_room(ModerationRole::RoomManager)),
         publisher.clone(),
         Arc::new(Now),
     );
@@ -141,4 +155,32 @@ async fn publication_failure_never_reports_the_rule_as_saved() {
     assert!(publisher.writes.lock().unwrap().is_empty());
     assert!(AgentRosterPolicy::new(0).is_none());
     assert!(AgentRosterPolicy::new(365).is_none());
+}
+
+#[tokio::test]
+async fn public_lobby_rules_reach_every_active_shard() {
+    let publisher = Arc::new(Publisher::default());
+    let service = AgentRosterService::new(
+        Arc::new(Authority(
+            ModerationRole::PlatformModerator,
+            vec!["!busy:room.test", "!quiet:room.test"],
+        )),
+        publisher.clone(),
+        Arc::new(Now),
+    );
+    service
+        .update(
+            actor(2000),
+            RoomCatalogId::from_uuid(Uuid::now_v7()),
+            AgentRosterPolicy::new(30).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        *publisher.writes.lock().unwrap(),
+        [
+            ("!busy:room.test".to_owned(), 30),
+            ("!quiet:room.test".to_owned(), 30)
+        ]
+    );
 }

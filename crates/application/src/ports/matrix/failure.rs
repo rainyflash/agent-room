@@ -33,6 +33,8 @@ pub enum MatrixOperation {
     InspectRoomAuthority,
     /// 读房间当前的全部状态（不登录看公开大厅）。
     ReadRoomState,
+    /// 按事件 ID 读房间里的一条事件（治理找消息在哪个分片）。
+    ReadRoomEvent,
 }
 
 impl MatrixOperation {
@@ -65,6 +67,7 @@ impl MatrixOperation {
                 | Self::Backfill
                 | Self::InspectRoomAuthority
                 | Self::ReadRoomState
+                | Self::ReadRoomEvent
         )
     }
 }

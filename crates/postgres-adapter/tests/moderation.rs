@@ -1,8 +1,9 @@
 use std::env;
 
 use agent_room_application::ports::{
-    ModerationActionReservationOutcome, ModerationAuthority, ModerationReportPolicy,
-    ModerationReportSubmissionOutcome, ModerationRepository, PrivateRoomSnapshot, PrivateRoomStore,
+    MatrixRoomId, ModerationActionReservationOutcome, ModerationAuthority, ModerationReportPolicy,
+    ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
+    PrivateRoomSnapshot, PrivateRoomStore,
 };
 use agent_room_domain::{
     ids::{
@@ -167,6 +168,129 @@ async fn 治理权限动作撤销和审计访问都读取当前事实() {
     assert!(missing.is_none());
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 公开大厅的治理拿到全部活跃分片_最活跃的在前() {
+    let database = TestDatabase::connect().await;
+    let moderator = seed_principal(&database.runtime, "lobby-moderator").await;
+    let target = seed_principal(&database.runtime, "lobby-target").await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let shards = seed_public_lobby(
+        &database.runtime,
+        catalog_id,
+        &[
+            ("quiet", "active", "1.5", 3),
+            ("busy", "active", "9.25", 40),
+            ("broken", "failed", "99", 0),
+            ("tied", "active", "1.5", 7),
+        ],
+    )
+    .await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let person = ModerationTarget::new(ModerationTargetKind::Principal, target.to_string())
+        .expect("主体目标有效");
+    // 和围观选分片一样：先比活跃度，再比人数；没在用的分片不算。
+    let expected = [shards[1].as_str(), shards[3].as_str(), shards[0].as_str()];
+
+    let ordinary = ModerationAuthority::inspect_room(&repositories, moderator, catalog_id, &person)
+        .await
+        .expect("公开大厅的治理上下文应可读取")
+        .expect("有活跃分片的公开大厅应存在");
+    assert_eq!(ordinary.role, ModerationRole::None);
+    assert_eq!(ordinary.room_kind, RoomCatalogKind::PublicLobby);
+    assert_eq!(room_ids(&ordinary), expected);
+    assert!(ordinary.target_matrix_user_id.is_some());
+
+    sqlx::query(
+        r"INSERT INTO agent_room.moderation_operator (
+               principal_id, role, granted_by, granted_at
+           ) VALUES ($1, 'moderator', $1, now())",
+    )
+    .bind(moderator.as_uuid())
+    .execute(&database.migration)
+    .await
+    .expect("运维账号可授予平台管理员");
+    let moderating =
+        ModerationAuthority::inspect_room(&repositories, moderator, catalog_id, &person)
+            .await
+            .expect("平台管理员的治理上下文应可读取")
+            .expect("有活跃分片的公开大厅应存在");
+    assert_eq!(moderating.role, ModerationRole::PlatformModerator);
+    assert_eq!(room_ids(&moderating), expected);
+
+    sqlx::query(
+        "UPDATE agent_room.room_instance SET state = 'draining' \
+         WHERE catalog_entry_id = $1 AND state = 'active'",
+    )
+    .bind(catalog_id.as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("可以让分片都不再接人");
+    assert!(
+        ModerationAuthority::inspect_room(&repositories, moderator, catalog_id, &person)
+            .await
+            .expect("没有活跃分片也是业务结果")
+            .is_none(),
+        "没有活跃分片时和以前一样当作找不到"
+    );
+
+    database.close().await;
+}
+
+fn room_ids(context: &ModerationRoomContext) -> Vec<&str> {
+    context
+        .matrix_room_ids
+        .iter()
+        .map(MatrixRoomId::as_str)
+        .collect()
+}
+
+/// 建一个公开大厅和它的分片：（名字、状态、活跃度、人数），交回各分片的 Matrix 房间 ID。
+async fn seed_public_lobby(
+    pool: &PgPool,
+    catalog_id: RoomCatalogId,
+    shards: &[(&str, &str, &str, i32)],
+) -> Vec<String> {
+    let suffix = catalog_id.as_uuid().simple().to_string();
+    sqlx::query(
+        r"INSERT INTO agent_room.room_catalog_entry (
+              id, kind, slug, name, language, visibility, status, created_at, updated_at
+          ) VALUES (
+              $1, 'public_lobby', $2, '治理分片测试大厅', 'zh-CN', 'public', 'active',
+              to_timestamp(1700000000), to_timestamp(1700000000)
+          )",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(format!("moderation-{}", &suffix[..24]))
+    .execute(pool)
+    .await
+    .expect("公开大厅目录应创建");
+    let mut matrix_room_ids = Vec::with_capacity(shards.len());
+    for (name, state, activity, members) in shards {
+        let matrix_room_id = format!("!{name}-{suffix}:matrix.test");
+        sqlx::query(
+            r"INSERT INTO agent_room.room_instance (
+                  id, catalog_entry_id, matrix_room_id, member_count_projection,
+                  activity_score, state, created_at, updated_at
+              ) VALUES (
+                  $1, $2, $3, $4, $5::numeric, $6,
+                  to_timestamp(1700000000), to_timestamp(1700000000)
+              )",
+        )
+        .bind(Uuid::now_v7())
+        .bind(catalog_id.as_uuid())
+        .bind(&matrix_room_id)
+        .bind(members)
+        .bind(activity)
+        .bind(state)
+        .execute(pool)
+        .await
+        .expect("公开大厅分片应创建");
+        matrix_room_ids.push(matrix_room_id);
+    }
+    matrix_room_ids
 }
 
 async fn apply_and_reverse_action(

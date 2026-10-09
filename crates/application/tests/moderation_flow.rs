@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
@@ -9,8 +12,8 @@ use agent_room_application::{
     },
     persistence::RepositoryResult,
     ports::{
-        Clock, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-        MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
+        Clock, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+        MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
         ModerationEffectGateway, ModerationEffectTarget, ModerationIdentifierFactory,
         ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
         ModerationRoomContext, PortFuture,
@@ -23,6 +26,7 @@ use agent_room_domain::{
         ModerationCase, ModerationEvidence, ModerationReason, ModerationRole, ModerationTarget,
         ModerationTargetKind,
     },
+    rooms::RoomCatalogKind,
     time::{DurationMillis, UtcMillis},
 };
 use uuid::Uuid;
@@ -226,6 +230,18 @@ struct FakeAuthority {
     may_report: bool,
     room_role: Mutex<ModerationRole>,
     platform_role: Mutex<ModerationRole>,
+    room_kind: Mutex<RoomCatalogKind>,
+    rooms: Mutex<Vec<MatrixRoomId>>,
+}
+
+impl FakeAuthority {
+    /// 换成平台管理员看一个分成这些分片的公开大厅。
+    fn public_lobby(&self, rooms: &[&str]) {
+        *self.room_role.lock().expect("房间角色锁可用") = ModerationRole::PlatformModerator;
+        *self.room_kind.lock().expect("房间类别锁可用") = RoomCatalogKind::PublicLobby;
+        *self.rooms.lock().expect("分片锁可用") =
+            rooms.iter().map(|room| matrix_room(room)).collect();
+    }
 }
 
 impl ModerationAuthority for FakeAuthority {
@@ -246,13 +262,15 @@ impl ModerationAuthority for FakeAuthority {
         target: &'a ModerationTarget,
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>> {
         let role = *self.room_role.lock().expect("房间角色锁可用");
+        let room_kind = *self.room_kind.lock().expect("房间类别锁可用");
+        let matrix_room_ids = self.rooms.lock().expect("分片锁可用").clone();
         let target_matrix_user_id = (target.kind() == ModerationTargetKind::Principal)
             .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效"));
         Box::pin(async move {
             Ok(Some(ModerationRoomContext {
                 role,
-                matrix_room_id: MatrixRoomId::new("!room:matrix.test")
-                    .expect("测试 Matrix 房间有效"),
+                room_kind,
+                matrix_room_ids,
                 target_matrix_user_id,
             }))
         })
@@ -267,40 +285,124 @@ impl ModerationAuthority for FakeAuthority {
     }
 }
 
+#[derive(Default)]
 struct FakeEffects {
     calls: Arc<Mutex<Vec<&'static str>>>,
     failure: Mutex<Option<MatrixFailure>>,
+    /// 只在这个分片上失败。
+    failing_room: Mutex<Option<MatrixRoomId>>,
+    applied: Mutex<Vec<ModerationEffectTarget>>,
+    reversed: Mutex<Vec<ModerationEffectTarget>>,
+    /// 每个分片里有哪些事件。
+    events: Mutex<HashMap<String, Vec<String>>>,
+    /// 读不了的分片。
+    unreadable_rooms: Mutex<Vec<MatrixRoomId>>,
+    /// 按先后记下问过哪些分片。
+    lookups: Mutex<Vec<String>>,
+}
+
+impl FakeEffects {
+    fn result_in(&self, room: &MatrixRoomId) -> MatrixResult<()> {
+        if self.failing_room.lock().expect("副作用锁可用").as_ref() == Some(room) {
+            return Err(MatrixFailure::new(
+                MatrixOperation::Ban,
+                MatrixFailureKind::DependencyUnavailable,
+            ));
+        }
+        self.failure
+            .lock()
+            .expect("副作用锁可用")
+            .map_or(Ok(()), Err)
+    }
+
+    fn put_event(&self, room: &str, event: &str) {
+        self.events
+            .lock()
+            .expect("事件锁可用")
+            .entry(room.to_owned())
+            .or_default()
+            .push(event.to_owned());
+    }
+
+    fn applied_rooms(&self) -> Vec<String> {
+        rooms_of(&self.applied.lock().expect("副作用锁可用"))
+    }
+
+    fn reversed_rooms(&self) -> Vec<String> {
+        rooms_of(&self.reversed.lock().expect("副作用锁可用"))
+    }
+
+    fn looked_up(&self) -> Vec<String> {
+        self.lookups.lock().expect("查找锁可用").clone()
+    }
+}
+
+fn rooms_of(targets: &[ModerationEffectTarget]) -> Vec<String> {
+    targets
+        .iter()
+        .map(|target| target.matrix_room_id.as_str().to_owned())
+        .collect()
 }
 
 impl ModerationEffectGateway for FakeEffects {
     fn apply<'a>(
         &'a self,
         _action: &'a ModerationAction,
-        _target: &'a ModerationEffectTarget,
+        target: &'a ModerationEffectTarget,
     ) -> PortFuture<'a, MatrixResult<()>> {
         self.calls.lock().expect("调用锁可用").push("effect_apply");
-        let result = self
-            .failure
+        self.applied
             .lock()
             .expect("副作用锁可用")
-            .map_or(Ok(()), Err);
+            .push(target.clone());
+        let result = self.result_in(&target.matrix_room_id);
         Box::pin(async move { result })
     }
 
     fn reverse<'a>(
         &'a self,
         _action: &'a ModerationAction,
-        _target: &'a ModerationEffectTarget,
+        target: &'a ModerationEffectTarget,
     ) -> PortFuture<'a, MatrixResult<()>> {
         self.calls
             .lock()
             .expect("调用锁可用")
             .push("effect_reverse");
-        let result = self
-            .failure
+        self.reversed
             .lock()
             .expect("副作用锁可用")
-            .map_or(Ok(()), Err);
+            .push(target.clone());
+        let result = self.result_in(&target.matrix_room_id);
+        Box::pin(async move { result })
+    }
+
+    fn contains_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<bool>> {
+        self.lookups
+            .lock()
+            .expect("查找锁可用")
+            .push(room_id.as_str().to_owned());
+        let result = if self
+            .unreadable_rooms
+            .lock()
+            .expect("分片锁可用")
+            .contains(room_id)
+        {
+            Err(MatrixFailure::new(
+                MatrixOperation::ReadRoomEvent,
+                MatrixFailureKind::Timeout,
+            ))
+        } else {
+            Ok(self
+                .events
+                .lock()
+                .expect("事件锁可用")
+                .get(room_id.as_str())
+                .is_some_and(|events| events.iter().any(|event| event == event_id.as_str())))
+        };
         Box::pin(async move { result })
     }
 }
@@ -321,10 +423,12 @@ impl Fixture {
             may_report: true,
             room_role: Mutex::new(ModerationRole::RoomManager),
             platform_role: Mutex::new(ModerationRole::None),
+            room_kind: Mutex::new(RoomCatalogKind::PrivateRoom),
+            rooms: Mutex::new(vec![matrix_room("!room:matrix.test")]),
         });
         let effects = Arc::new(FakeEffects {
             calls: calls.clone(),
-            failure: Mutex::new(None),
+            ..FakeEffects::default()
         });
         let runtime = Arc::new(TestRuntime);
         let service = ModerationService::new(ModerationDependencies {
@@ -535,6 +639,226 @@ async fn 治理和撤销要求近期认证及明确影响确认() {
             .expect("动作锁可用")
             .is_empty()
     );
+}
+
+const SPAM_EVENT: &str = "$spam:matrix.test";
+
+#[tokio::test]
+async fn 公开大厅有好几个分片时隐藏写进消息所在的分片_撤销也回到那里() {
+    let fixture = Fixture::new();
+    fixture.authority.public_lobby(&[
+        "!busy:matrix.test",
+        "!quiet:matrix.test",
+        "!new:matrix.test",
+    ]);
+    fixture.effects.put_event("!quiet:matrix.test", SPAM_EVENT);
+
+    let action = fixture
+        .service
+        .apply_action(hide_request(SPAM_EVENT))
+        .await
+        .expect("隐藏应成功");
+    assert_eq!(action.status(), ModerationActionStatus::Applied);
+    assert_eq!(fixture.effects.applied_rooms(), ["!quiet:matrix.test"]);
+    // 最活跃的分片先问，找到就不再往下问。
+    assert_eq!(
+        fixture.effects.looked_up(),
+        ["!busy:matrix.test", "!quiet:matrix.test"]
+    );
+
+    let reversed = fixture
+        .service
+        .reverse_action(ReverseModerationAction {
+            actor: actor(true),
+            action_id: action.id(),
+            impact_acknowledged: true,
+        })
+        .await
+        .expect("撤销隐藏应成功");
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert_eq!(fixture.effects.reversed_rooms(), ["!quiet:matrix.test"]);
+}
+
+#[tokio::test]
+async fn 消息不在任何分片里时说找不到_不预留动作也不落副作用() {
+    let fixture = Fixture::new();
+    fixture
+        .authority
+        .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+
+    let failure = fixture
+        .service
+        .apply_action(hide_request(SPAM_EVENT))
+        .await
+        .expect_err("哪个分片里都没有的消息不能隐藏");
+    assert_eq!(failure.kind(), ModerationFailureKind::NotFound);
+    assert_eq!(
+        fixture.effects.looked_up(),
+        ["!busy:matrix.test", "!quiet:matrix.test"]
+    );
+    assert!(fixture.calls.lock().expect("调用锁可用").is_empty());
+    assert!(
+        fixture
+            .repository
+            .actions
+            .lock()
+            .expect("动作锁可用")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn 有分片读不了时别处找到照样隐藏_都没找到就报依赖不可用() {
+    let fixture = Fixture::new();
+    fixture
+        .authority
+        .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+    fixture
+        .effects
+        .unreadable_rooms
+        .lock()
+        .expect("分片锁可用")
+        .push(matrix_room("!busy:matrix.test"));
+
+    let failure = fixture
+        .service
+        .apply_action(hide_request(SPAM_EVENT))
+        .await
+        .expect_err("读不了又没找到时不能当成没有");
+    assert_eq!(failure.kind(), ModerationFailureKind::DependencyUnavailable);
+    assert!(
+        fixture
+            .repository
+            .actions
+            .lock()
+            .expect("动作锁可用")
+            .is_empty()
+    );
+
+    fixture.effects.put_event("!quiet:matrix.test", SPAM_EVENT);
+    fixture
+        .service
+        .apply_action(hide_request(SPAM_EVENT))
+        .await
+        .expect("别的分片里找到了就照样隐藏");
+    assert_eq!(fixture.effects.applied_rooms(), ["!quiet:matrix.test"]);
+}
+
+#[tokio::test]
+async fn 只有一个分片时隐藏不用找_直接写进去() {
+    let fixture = Fixture::new();
+    fixture.authority.public_lobby(&["!only:matrix.test"]);
+
+    fixture
+        .service
+        .apply_action(hide_request(SPAM_EVENT))
+        .await
+        .expect("只有一个分片时照旧直接隐藏");
+    assert!(fixture.effects.looked_up().is_empty());
+    assert_eq!(fixture.effects.applied_rooms(), ["!only:matrix.test"]);
+}
+
+#[tokio::test]
+async fn 禁言踢出封禁落到每个活跃分片_撤销也在每个分片上撤() {
+    for kind in [
+        ModerationActionKind::Mute,
+        ModerationActionKind::Kick,
+        ModerationActionKind::Ban,
+    ] {
+        let fixture = Fixture::new();
+        fixture
+            .authority
+            .public_lobby(&["!busy:matrix.test", "!quiet:matrix.test"]);
+
+        let action = fixture
+            .service
+            .apply_action(person_request(kind))
+            .await
+            .expect("管人的治理应成功");
+        assert_eq!(
+            fixture.effects.applied_rooms(),
+            ["!busy:matrix.test", "!quiet:matrix.test"],
+            "{kind:?} 要落到每个分片"
+        );
+        assert!(
+            fixture
+                .effects
+                .applied
+                .lock()
+                .expect("副作用锁可用")
+                .iter()
+                .all(|target| target.room_kind == RoomCatalogKind::PublicLobby
+                    && target
+                        .target_matrix_user_id
+                        .as_ref()
+                        .map(MatrixUserId::as_str)
+                        == Some("@target:matrix.test"))
+        );
+        assert!(fixture.effects.looked_up().is_empty());
+
+        fixture
+            .service
+            .reverse_action(ReverseModerationAction {
+                actor: actor(true),
+                action_id: action.id(),
+                impact_acknowledged: true,
+            })
+            .await
+            .expect("撤销应成功");
+        assert_eq!(
+            fixture.effects.reversed_rooms(),
+            ["!busy:matrix.test", "!quiet:matrix.test"],
+            "{kind:?} 要在每个分片上撤"
+        );
+    }
+}
+
+#[tokio::test]
+async fn 有分片落不成时动作记成失败_照实报依赖不可用() {
+    let fixture = Fixture::new();
+    fixture.authority.public_lobby(&[
+        "!busy:matrix.test",
+        "!quiet:matrix.test",
+        "!new:matrix.test",
+    ]);
+    *fixture.effects.failing_room.lock().expect("副作用锁可用") =
+        Some(matrix_room("!quiet:matrix.test"));
+
+    let failure = fixture
+        .service
+        .apply_action(person_request(ModerationActionKind::Ban))
+        .await
+        .expect_err("没落全不能说成功");
+    assert_eq!(failure.kind(), ModerationFailureKind::DependencyUnavailable);
+    // 落不成就停下，剩下的分片等管理员再做一次：已经落了的分片那时什么也不变。
+    assert_eq!(
+        fixture.effects.applied_rooms(),
+        ["!busy:matrix.test", "!quiet:matrix.test"]
+    );
+    let stored = fixture.repository.actions.lock().expect("动作锁可用");
+    assert_eq!(stored[0].status(), ModerationActionStatus::Failed);
+    assert_eq!(stored[0].failure_code(), Some("matrix.unavailable"));
+}
+
+fn hide_request(event: &str) -> ApplyModerationAction {
+    ApplyModerationAction {
+        kind: ModerationActionKind::Hide,
+        target: ModerationTarget::new(ModerationTargetKind::Event, event).expect("事件目标有效"),
+        expires_at: None,
+        ..action_request()
+    }
+}
+
+fn person_request(kind: ModerationActionKind) -> ApplyModerationAction {
+    ApplyModerationAction {
+        kind,
+        expires_at: None,
+        ..action_request()
+    }
+}
+
+fn matrix_room(room: &str) -> MatrixRoomId {
+    MatrixRoomId::new(room).expect("测试 Matrix 房间有效")
 }
 
 fn report_request() -> SubmitModerationReport {

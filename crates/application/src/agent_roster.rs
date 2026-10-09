@@ -64,9 +64,16 @@ impl AgentRosterService {
         if !room.role.can_moderate_room() {
             return Err(failure(ModerationFailureKind::Forbidden));
         }
-        self.publisher
-            .publish(&room.matrix_room_id, policy)
-            .await
-            .map_err(|_| failure(ModerationFailureKind::DependencyUnavailable))
+        if room.matrix_room_ids.is_empty() {
+            return Err(failure(ModerationFailureKind::NotFound));
+        }
+        // 规则管的是整个房间：公开大厅分成好几个分片时，每个分片都写一份。
+        for matrix_room in &room.matrix_room_ids {
+            self.publisher
+                .publish(matrix_room, policy)
+                .await
+                .map_err(|_| failure(ModerationFailureKind::DependencyUnavailable))?;
+        }
+        Ok(())
     }
 }

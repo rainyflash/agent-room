@@ -299,9 +299,11 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
+            // 封禁的人也已经不在房间里，Synapse 也不让踢（M_BAD_STATE）：一并跳过，治理在每个分片上
+            // 踢人时不会因为他在某个分片里早被封禁而失败。
             if matches!(
                 PrivateRoomMatrixGateway::membership(self, room_id, user_id).await?,
-                None | Some(PrivateMatrixMembership::Left)
+                None | Some(PrivateMatrixMembership::Left | PrivateMatrixMembership::Banned)
             ) {
                 return Ok(());
             }
@@ -739,7 +741,7 @@ async fn send_membership_action(
     expect_empty_success(response, operation).await
 }
 
-async fn read_power_levels(
+pub(crate) async fn read_power_levels(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
     operation: MatrixOperation,
@@ -773,7 +775,7 @@ async fn read_power_levels(
 }
 
 /// Agent 每次重连都会重新确认发言权；内容没变时不写，免得每次入场都给房间多一条权限状态事件。
-async fn write_power_levels_if_changed(
+pub(crate) async fn write_power_levels_if_changed(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
     original: &Map<String, Value>,

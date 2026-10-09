@@ -21,6 +21,7 @@ use agent_room_domain::{
         ModerationAction, ModerationActionKind, ModerationReason, ModerationTarget,
         ModerationTargetKind,
     },
+    rooms::RoomCatalogKind,
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_matrix_adapter::{
@@ -41,6 +42,8 @@ const TEST_SYNC_TIMEOUT_MILLIS: u64 = 100;
 mod cross_signing_upload;
 #[path = "real_synapse/owner_identity.rs"]
 mod owner_identity;
+#[path = "real_synapse/public_lobby_moderation.rs"]
+mod public_lobby_moderation;
 #[path = "real_synapse/recovery.rs"]
 mod recovery;
 #[path = "real_synapse/room_keys.rs"]
@@ -441,6 +444,7 @@ async fn 真实_synapse_治理隐藏和禁言均可撤销() {
     let hide_action = moderation_action(ModerationActionKind::Hide, hide_target.clone());
     let hide_effect = ModerationEffectTarget {
         matrix_room_id: scenario.room_id.clone(),
+        room_kind: RoomCatalogKind::PrivateRoom,
         target: hide_target,
         target_matrix_user_id: None,
     };
@@ -465,6 +469,7 @@ async fn 真实_synapse_治理隐藏和禁言均可撤销() {
     let mute_action = moderation_action(ModerationActionKind::Mute, mute_target.clone());
     let mute_effect = ModerationEffectTarget {
         matrix_room_id: scenario.room_id.clone(),
+        room_kind: RoomCatalogKind::PrivateRoom,
         target: mute_target,
         target_matrix_user_id: Some(scenario.member_user_id.clone()),
     };

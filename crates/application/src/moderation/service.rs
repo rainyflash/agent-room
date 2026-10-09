@@ -3,18 +3,18 @@ use std::sync::Arc;
 use agent_room_domain::{
     ids::AuditEventId,
     moderation::{
-        ModerationAction, ModerationActionStatus, ModerationAuditEvent, ModerationAuditOutcome,
-        ModerationCase,
+        ModerationAction, ModerationActionKind, ModerationActionStatus, ModerationAuditEvent,
+        ModerationAuditOutcome, ModerationCase, ModerationTarget,
     },
 };
 
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, MatrixFailure, ModerationActionReservationOutcome, ModerationAuthority,
-        ModerationEffectGateway, ModerationEffectTarget, ModerationIdentifierFactory,
-        ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
-        ModerationRoomContext, PortFuture,
+        Clock, MatrixEventId, MatrixFailure, MatrixResult, MatrixRoomId,
+        ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
+        ModerationEffectTarget, ModerationIdentifierFactory, ModerationReportPolicy,
+        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
     },
 };
 
@@ -105,7 +105,7 @@ impl ModerationService {
     ) -> ModerationResult<ModerationCapabilities> {
         const OPERATION: &str = "moderation.inspect_capabilities";
         require_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let target = agent_room_domain::moderation::ModerationTarget::new(
+        let target = ModerationTarget::new(
             agent_room_domain::moderation::ModerationTargetKind::Room,
             request.room_catalog_id.to_string(),
         )
@@ -227,7 +227,11 @@ impl ModerationService {
             .await?;
         self.require_matching_case(request.case_id, &request.target, OPERATION)
             .await?;
-        let mut action = ModerationAction::reserve(
+        // 先找好落到哪些分片再预留：消息不在这个房间里时直接说找不到，不留一条失败的动作。
+        let rooms = self
+            .effect_rooms(&context, request.kind, &request.target, OPERATION)
+            .await?;
+        let action = ModerationAction::reserve(
             request.action_id,
             request.case_id,
             request.actor.principal_id,
@@ -248,7 +252,7 @@ impl ModerationService {
             now,
             OPERATION,
         )?;
-        action = match self
+        let action = match self
             .repository
             .reserve_action(&action, &requested_audit)
             .await
@@ -257,47 +261,142 @@ impl ModerationService {
             ModerationActionReservationOutcome::Reserved(action) => action,
             ModerationActionReservationOutcome::Existing(existing) => return Ok(existing),
         };
-        let target = effect_target(&context, action.target().clone());
-        match self.effects.apply(&action, &target).await {
+        let applied = self.apply_effects(&action, &context, &rooms).await;
+        self.finish_applied(action, applied, correlation_id, OPERATION)
+            .await
+    }
+
+    /// 记下副作用的结果：每个分片都落了就是已应用；有一个没落就记成失败，照实报依赖不可用。
+    async fn finish_applied(
+        &self,
+        mut action: ModerationAction,
+        applied: MatrixResult<()>,
+        correlation_id: AuditEventId,
+        operation: &'static str,
+    ) -> ModerationResult<ModerationAction> {
+        match applied {
             Ok(()) => {
                 action
                     .mark_applied()
-                    .map_err(|_| failure(OPERATION, ModerationFailureKind::Internal))?;
+                    .map_err(|_| failure(operation, ModerationFailureKind::Internal))?;
                 let audit = self.action_audit(
                     &action,
                     "moderation.action.applied",
                     ModerationAuditOutcome::Allowed,
                     correlation_id,
                     self.clock.now(),
-                    OPERATION,
+                    operation,
                 )?;
                 self.repository
                     .finalize_action(&action, &audit)
                     .await
-                    .map_err(|error| repository_failure(OPERATION, &error))
+                    .map_err(|error| repository_failure(operation, &error))
             }
             Err(matrix_failure) => {
                 action
                     .mark_failed(matrix_failure_code(matrix_failure))
-                    .map_err(|_| failure(OPERATION, ModerationFailureKind::Internal))?;
+                    .map_err(|_| failure(operation, ModerationFailureKind::Internal))?;
                 let audit = self.action_audit(
                     &action,
                     "moderation.action.failed",
                     ModerationAuditOutcome::Failed,
                     correlation_id,
                     self.clock.now(),
-                    OPERATION,
+                    operation,
                 )?;
                 self.repository
                     .finalize_action(&action, &audit)
                     .await
-                    .map_err(|error| repository_failure(OPERATION, &error))?;
+                    .map_err(|error| repository_failure(operation, &error))?;
                 Err(failure(
-                    OPERATION,
+                    operation,
                     ModerationFailureKind::DependencyUnavailable,
                 ))
             }
         }
+    }
+
+    /// 这个动作落到哪些分片。公开大厅人多了会分成好几个分片，每个是一个 Matrix 房间：隐藏写进
+    /// 消息所在的那一个；禁言、踢出、封禁管的是人，每个活跃分片都要落，不然换个分片照样说话、
+    /// 照样进来。
+    async fn effect_rooms(
+        &self,
+        context: &ModerationRoomContext,
+        kind: ModerationActionKind,
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> ModerationResult<Vec<MatrixRoomId>> {
+        if context.matrix_room_ids.is_empty() {
+            return Err(failure(operation, ModerationFailureKind::NotFound));
+        }
+        match kind {
+            ModerationActionKind::Hide => Ok(vec![
+                self.event_room(&context.matrix_room_ids, target, operation)
+                    .await?,
+            ]),
+            ModerationActionKind::Mute | ModerationActionKind::Kick | ModerationActionKind::Ban => {
+                Ok(context.matrix_room_ids.clone())
+            }
+        }
+    }
+
+    /// 消息在哪个分片。只有一个分片时不用找；有好几个时以应用服务账号挨个问，最活跃的先问。都说
+    /// 没有就是找不到；有分片问不了、别的又都没有时照实报依赖不可用，不当成没有。
+    async fn event_room(
+        &self,
+        rooms: &[MatrixRoomId],
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> ModerationResult<MatrixRoomId> {
+        if let [only] = rooms {
+            return Ok(only.clone());
+        }
+        let event_id = MatrixEventId::new(target.reference())
+            .map_err(|_| failure(operation, ModerationFailureKind::NotFound))?;
+        let mut unavailable = false;
+        for room in rooms {
+            match self.effects.contains_event(room, &event_id).await {
+                Ok(true) => return Ok(room.clone()),
+                Ok(false) => {}
+                Err(_) => unavailable = true,
+            }
+        }
+        Err(failure(
+            operation,
+            if unavailable {
+                ModerationFailureKind::DependencyUnavailable
+            } else {
+                ModerationFailureKind::NotFound
+            },
+        ))
+    }
+
+    /// 一个分片一个分片地落，哪个没落成就停下交回它的失败。已经落了的不撤：这些副作用都能重放，
+    /// 管理员再做一次时，已经落了的分片什么也不变。
+    async fn apply_effects(
+        &self,
+        action: &ModerationAction,
+        context: &ModerationRoomContext,
+        rooms: &[MatrixRoomId],
+    ) -> MatrixResult<()> {
+        for room in rooms {
+            let target = effect_target(context, room, action.target().clone());
+            self.effects.apply(action, &target).await?;
+        }
+        Ok(())
+    }
+
+    async fn reverse_effects(
+        &self,
+        action: &ModerationAction,
+        context: &ModerationRoomContext,
+        rooms: &[MatrixRoomId],
+    ) -> MatrixResult<()> {
+        for room in rooms {
+            let target = effect_target(context, room, action.target().clone());
+            self.effects.reverse(action, &target).await?;
+        }
+        Ok(())
     }
 
     async fn reverse_action_internal(
@@ -325,8 +424,15 @@ impl ModerationService {
                 OPERATION,
             )
             .await?;
-        let target = effect_target(&context, action.target().clone());
-        if self.effects.reverse(&action, &target).await.is_err() {
+        // 撤销照当下的分片重新找：隐藏回到消息所在的分片，管人的动作在每个活跃分片上撤。
+        let rooms = self
+            .effect_rooms(&context, action.kind(), action.target(), OPERATION)
+            .await?;
+        if self
+            .reverse_effects(&action, &context, &rooms)
+            .await
+            .is_err()
+        {
             let audit = self.action_audit(
                 &action,
                 "moderation.action.reverse_failed",
@@ -382,7 +488,7 @@ impl ModerationService {
         room_catalog_id: agent_room_domain::ids::RoomCatalogId,
         operation: &'static str,
     ) -> ModerationResult<()> {
-        let target = agent_room_domain::moderation::ModerationTarget::new(
+        let target = ModerationTarget::new(
             agent_room_domain::moderation::ModerationTargetKind::Room,
             room_catalog_id.to_string(),
         )
@@ -426,8 +532,8 @@ impl ModerationService {
         &self,
         actor: &crate::authentication::AuthenticatedPrincipal,
         room_catalog_id: agent_room_domain::ids::RoomCatalogId,
-        target: &agent_room_domain::moderation::ModerationTarget,
-        kind: agent_room_domain::moderation::ModerationActionKind,
+        target: &ModerationTarget,
+        kind: ModerationActionKind,
         operation: &'static str,
     ) -> ModerationResult<ModerationRoomContext> {
         let context = self
@@ -445,7 +551,7 @@ impl ModerationService {
     async fn require_matching_case(
         &self,
         case_id: Option<agent_room_domain::ids::ModerationCaseId>,
-        target: &agent_room_domain::moderation::ModerationTarget,
+        target: &ModerationTarget,
         operation: &'static str,
     ) -> ModerationResult<()> {
         let Some(case_id) = case_id else {
@@ -552,7 +658,7 @@ fn audit_event(
     correlation_id: AuditEventId,
     actor: &crate::authentication::AuthenticatedPrincipal,
     action: &'static str,
-    target: agent_room_domain::moderation::ModerationTarget,
+    target: ModerationTarget,
     outcome: ModerationAuditOutcome,
     reason: Option<agent_room_domain::moderation::ModerationReason>,
     room_catalog_id: Option<agent_room_domain::ids::RoomCatalogId>,
@@ -575,10 +681,12 @@ fn audit_event(
 
 fn effect_target(
     context: &ModerationRoomContext,
-    target: agent_room_domain::moderation::ModerationTarget,
+    room: &MatrixRoomId,
+    target: ModerationTarget,
 ) -> ModerationEffectTarget {
     ModerationEffectTarget {
-        matrix_room_id: context.matrix_room_id.clone(),
+        matrix_room_id: room.clone(),
+        room_kind: context.room_kind,
         target,
         target_matrix_user_id: context.target_matrix_user_id.clone(),
     }
