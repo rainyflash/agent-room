@@ -57,6 +57,60 @@ async fn rpc(app: axum::Router, body: &Value, bearer: Option<&str>) -> Value {
         .unwrap_or_else(|| panic!("没有 JSON-RPC 响应：{text}"))
 }
 
+fn initialize() -> Value {
+    json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {},
+        "clientInfo": {"name": "test", "version": "1"}}})
+}
+
+fn list_tools() -> Value {
+    json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+}
+
+/// 收集 JSON 里带中文的字符串，连同它在哪儿。
+fn chinese_strings(value: &Value, path: &str, found: &mut Vec<String>) {
+    match value {
+        Value::String(text) if text.chars().any(is_chinese) => {
+            found.push(format!("{path}: {text}"));
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                chinese_strings(item, &format!("{path}[{index}]"), found);
+            }
+        }
+        Value::Object(fields) => {
+            for (key, item) in fields {
+                chinese_strings(item, &format!("{path}.{key}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_chinese(character: char) -> bool {
+    matches!(
+        character,
+        '\u{3000}'..='\u{303f}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'
+    )
+}
+
+#[tokio::test]
+async fn 目录和宿主读到的服务说明_工具与参数说明都是英文() {
+    // MCP 目录把这些原样展示给用户，用户多半读英文；参数说明来自输入结构的文档注释。
+    let app = app(
+        Arc::new(FakeAgents::default()),
+        Arc::new(FakeMessaging::default()),
+    );
+
+    let init = rpc(app.clone(), &initialize(), None).await;
+    let list = rpc(app, &list_tools(), None).await;
+
+    let mut found = Vec::new();
+    chinese_strings(&init["result"], "initialize", &mut found);
+    chinese_strings(&list["result"], "tools/list", &mut found);
+    assert!(found.is_empty(), "还有中文：\n{}", found.join("\n"));
+}
+
 #[tokio::test]
 async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全边界() {
     let app = app(
@@ -64,14 +118,7 @@ async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全
         Arc::new(FakeMessaging::default()),
     );
 
-    let init = rpc(
-        app.clone(),
-        &json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {},
-            "clientInfo": {"name": "test", "version": "1"}}}),
-        None,
-    )
-    .await;
+    let init = rpc(app.clone(), &initialize(), None).await;
     let instructions = init["result"]["instructions"].as_str().unwrap();
     // 有的 MCP 宿主只读服务说明的前 1536 字节，再长后面的安全边界就被截掉了。
     assert!(
@@ -81,17 +128,12 @@ async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全
     );
     assert!(instructions.contains("agent_room_join") && instructions.contains("token"));
     assert!(instructions.contains("code") && instructions.contains("agent_room_enter_room"));
-    assert!(instructions.contains("房间号") && instructions.contains("敲门"));
-    assert!(instructions.contains("不可信"));
+    assert!(instructions.contains("room number") && instructions.contains("knock"));
+    assert!(instructions.contains("untrusted"));
     assert!(instructions.contains("agent_room_room_messages"));
     assert!(instructions.contains("agent_room_get_messages"));
 
-    let list = rpc(
-        app,
-        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
-        None,
-    )
-    .await;
+    let list = rpc(app, &list_tools(), None).await;
     let mut names: Vec<&str> = list["result"]["tools"]
         .as_array()
         .unwrap()
@@ -149,7 +191,7 @@ async fn 起名进大厅返回令牌_来源按转发地址算() {
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("保存 token")
+            .contains("Save the token")
     );
     let created = agents.created();
     assert_eq!(created.len(), 1);
@@ -248,7 +290,7 @@ async fn 拿房间号起名和再进一个房间都是敲门_第一段话说等�
     assert!(result["structuredContent"].get("room").is_none());
     let text = result["content"][0]["text"].as_str().unwrap();
     assert!(
-        text.starts_with("已敲门") && text.contains("保存 token"),
+        text.starts_with("Knocked") && text.contains("Save the token"),
         "{text}"
     );
 
@@ -272,7 +314,7 @@ async fn 拿房间号起名和再进一个房间都是敲门_第一段话说等�
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .starts_with("已敲门")
+            .starts_with("Knocked")
     );
     assert_eq!(
         messaging.entered.lock().unwrap()[0].1,
@@ -298,7 +340,7 @@ async fn 拿房间号起名和再进一个房间都是敲门_第一段话说等�
         declined["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("没让你进")
+            .contains("didn't let you in")
     );
 }
 
@@ -323,7 +365,7 @@ async fn 请求头里的令牌优先_没有时用参数_都没有就是未认证
         waited["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("不可信")
+            .contains("untrusted")
     );
     {
         let waits = messaging.waits.lock().unwrap();
@@ -528,7 +570,7 @@ async fn 按_id_取和翻房间交给网关_有消息时先提醒内容不可信
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("不可信")
+            .contains("untrusted")
     );
     assert_eq!(
         messaging.lookups.lock().unwrap()[0],
@@ -648,7 +690,7 @@ async fn 等消息时交出去的消息前面有补不回来的一段就一起�
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .starts_with("安全提示"),
+            .starts_with("Security note"),
         "有消息时先提醒内容不可信"
     );
 }

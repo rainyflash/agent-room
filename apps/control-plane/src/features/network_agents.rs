@@ -493,7 +493,7 @@ async fn create(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"name\": 名字, \"room\": 可选的公开大厅名或私人房间的房间号, \"code\": 可选的私人房间口令}；room 与 code 只能给一个。",
+                "The request body must be a JSON object: {\"name\": your name, \"room\": optional public lobby name or private room number, \"code\": optional private room Agent code}. Give room or code, not both.",
                 correlation_id,
             )
             .into_response(),
@@ -529,7 +529,7 @@ async fn enter_room(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"room\": 公开大厅名或私人房间的房间号} 或 {\"code\": 私人房间口令}，只能给一个。",
+                "The request body must be a JSON object: {\"room\": a public lobby name or private room number} or {\"code\": a private room Agent code}, not both.",
                 correlation_id,
             )
             .into_response(),
@@ -631,7 +631,7 @@ async fn send_message(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "请求体应为 JSON 对象：{\"text\": 要说的话, \"roomId\"、\"replyTo\"、\"mentions\"、\"mentionsEveryone\"、\"submissionId\" 可选}。",
+                "The request body must be a JSON object: {\"text\": what to say}, optionally with \"roomId\", \"replyTo\", \"mentions\", \"mentionsEveryone\" and \"submissionId\".",
                 correlation_id,
             )
             .into_response(),
@@ -685,7 +685,7 @@ async fn wait_for_messages(
                 StatusCode::BAD_REQUEST,
                 "network_agent.invalid_request",
                 ErrorCategory::Validation,
-                "查询参数有 wait（0 到 30 秒）、limit（1 到 50 条）、wake（related、mentions、all）、from、waitFor、replyTo、settle（0 到 30 秒）、digest（1 到 1440 分钟）、roomId 和 mentionsOnly（true 或 false）。",
+                "Query parameters are wait (0 to 30 seconds), limit (1 to 50 messages), wake (related, mentions or all), from, waitFor, replyTo, settle (0 to 30 seconds), digest (1 to 1440 minutes), roomId and mentionsOnly (true or false).",
                 correlation_id,
             )
             .into_response(),
@@ -760,7 +760,7 @@ fn invalid_wait_error(field: &'static str, correlation_id: CorrelationId) -> Api
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "等消息的参数不对：from、waitFor 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB；waitFor 也可以只写 mentioned（你上一条点名的人，前提是你上一条点过名，@所有人 不算）；replyTo 是消息的 messageId；settle 是 0 到 30 秒；digest 是 1 到 1440 分钟；mentionsOnly 不能和 wake（mentions 除外）、from、waitFor、replyTo、digest 一起用。details.field 指出是哪一项。",
+        "Invalid wait parameters: from and waitFor take up to 200 Matrix user IDs, 12 KB in total; waitFor can also be just mentioned (the people your last message mentioned, if it mentioned anyone; @everyone doesn't count); replyTo is a message's messageId; settle is 0 to 30 seconds; digest is 1 to 1440 minutes; mentionsOnly can't be combined with wake (except mentions), from, waitFor, replyTo or digest. details.field says which one is wrong.",
         correlation_id,
     )
     .with_detail("field", serde_json::Value::from(field))
@@ -779,7 +779,7 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
             StatusCode::BAD_REQUEST,
             "network_agent.invalid_message",
             ErrorCategory::Validation,
-            "text 须为 1 到 4000 个字符；mentions 最多 200 个 Matrix 用户 ID、加起来不超过 12 KB，不能重复；mentionsEveryone（@所有人）只能在私人房间里用；replyTo 与 submissionId 须为 UUIDv7。details.field 指出是哪一项。",
+            "text must be 1 to 4000 characters; mentions takes up to 200 distinct Matrix user IDs, 12 KB in total; mentionsEveryone (@everyone) only works in private rooms; replyTo and submissionId must be UUIDv7s. details.field says which one is wrong.",
             correlation_id,
         )
         .with_detail("field", serde_json::Value::from(*field)),
@@ -790,31 +790,31 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
         NetworkGatewayFailure::MessageNotFound => simple(
             StatusCode::NOT_FOUND,
             "network_agent.message_not_found",
-            "这个房间里找不到这条消息：它可能在别的房间，可能已经撤回，也可能早于这个房间留着的最近 500 条。按 ID 取（GET /v1/network-agents/me/messages/lookup）不用给房间，能先查到它在哪个房间。",
+            "That message isn't in this room: it may be in another room, may have been deleted, or may be older than the latest 500 messages kept for the room. Looking it up by ID (GET /v1/network-agents/me/messages/lookup, or agent_room_get_messages over MCP) needs no room and tells you which room it is in.",
             correlation_id,
         ),
         NetworkGatewayFailure::RoomRequired => simple(
             StatusCode::BAD_REQUEST,
             "network_agent.room_required",
-            "你在不止一个房间里，请用 roomId 指明发到哪间；GET /v1/network-agents/me 列出了你所在的房间。",
+            "You are in more than one room; say which one with roomId. GET /v1/network-agents/me (agent_room_get_self over MCP) lists the rooms you are in.",
             correlation_id,
         ),
         NetworkGatewayFailure::RoomNotJoined => simple(
             StatusCode::NOT_FOUND,
             "network_agent.room_not_joined",
-            "你不在这个房间里；GET /v1/network-agents/me 列出了你所在的房间。",
+            "You are not in this room. GET /v1/network-agents/me (agent_room_get_self over MCP) lists the rooms you are in.",
             correlation_id,
         ),
         NetworkGatewayFailure::SubmissionConflict => simple(
             StatusCode::CONFLICT,
             "network_agent.submission_conflict",
-            "这个 submissionId 已经用来发过别的内容；发新消息请换一个或省略它。",
+            "This submissionId was already used for different content; for a new message, use a new one or leave it out.",
             correlation_id,
         ),
         NetworkGatewayFailure::Forbidden => simple(
             StatusCode::FORBIDDEN,
             "network_agent.forbidden",
-            "服务器拒绝了这条发言，可能你已经不在这个房间里。",
+            "The server refused this message; you may no longer be in this room.",
             correlation_id,
         ),
         NetworkGatewayFailure::Internal => ApiError::network_agent(
@@ -847,7 +847,7 @@ fn invalid_event_error(correlation_id: CorrelationId) -> ApiError {
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "请求体应为 JSON 对象：{\"eventId\": 收到的消息里的 eventId}。",
+        "The request body must be a JSON object: {\"eventId\": the eventId of a message you received}.",
         correlation_id,
     )
 }
