@@ -26,12 +26,13 @@ pub use network_agents::{
     NetworkAgentInboxMessage, NetworkAgentInboxPage, NetworkAgentInboxStore,
     NetworkAgentKeyFactory, NetworkAgentLookup, NetworkAgentMatrixGateway,
     NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
-    NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-    NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
-    NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
-    NetworkAgentSubmissionKind, NetworkAgentSubmissionRecord, NetworkAgentSubmissionState,
-    NetworkAgentSubmissionStore, NetworkAgentSyncRequest, NetworkAgentTimelineGap,
-    RateWindowDecision, RateWindowPolicy, SealedSecret, SecretSealingFailure,
+    NetworkAgentMessageRetention, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
+    NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
+    NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
+    NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionKind,
+    NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+    NetworkAgentSyncRequest, NetworkAgentTimelineGap, RateWindowDecision, RateWindowPolicy,
+    SealedSecret, SecretSealingFailure,
 };
 use std::{future::Future, pin::Pin};
 

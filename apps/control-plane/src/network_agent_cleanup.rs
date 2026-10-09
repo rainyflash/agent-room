@@ -1,13 +1,18 @@
-//! 与 HTTP 服务共同存活、共同关闭的网络 Agent 定时清理：每分钟一轮，互不重叠。
-//! 只在总开关打开时启动。
+//! 与 HTTP 服务共同存活、共同关闭的网络 Agent 定时清理：每分钟一轮，互不重叠；
+//! 过了房间保留期的消息副本启动时删一次，之后每小时一次。只在总开关打开时启动。
 
 use std::{sync::Arc, time::Duration};
 
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{
+    sync::oneshot,
+    task::JoinHandle,
+    time::{MissedTickBehavior, interval},
+};
 
 use crate::network_gateway::{NetworkAgentCleanupOutcome, NetworkGateway};
 
 const INTERVAL: Duration = Duration::from_mins(1);
+const PRUNE_INTERVAL: Duration = Duration::from_hours(1);
 
 pub(crate) struct NetworkAgentCleanupWorker {
     stop: Option<oneshot::Sender<()>>,
@@ -40,8 +45,11 @@ impl NetworkAgentCleanupWorker {
 }
 
 async fn run_worker(gateway: Arc<NetworkGateway>, mut stop_requested: oneshot::Receiver<()>) {
+    let mut prune = interval(PRUNE_INTERVAL);
+    prune.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = prune.tick() => prune_expired(&gateway).await,
             () = tokio::time::sleep(INTERVAL) => match gateway.clean_up().await {
                 Ok(outcome) if outcome == NetworkAgentCleanupOutcome::default() => {}
                 Ok(outcome) => tracing::info!(
@@ -62,4 +70,15 @@ async fn run_worker(gateway: Arc<NetworkGateway>, mut stop_requested: oneshot::R
         }
     }
     tracing::info!("网络 Agent 定时清理已停止");
+}
+
+async fn prune_expired(gateway: &NetworkGateway) {
+    match gateway.prune_expired_messages().await {
+        Ok(0) => {}
+        Ok(pruned) => tracing::info!(pruned, "删掉了过了房间保留期的网络 Agent 消息副本"),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "这次没删成过了房间保留期的网络 Agent 消息副本，一小时后再来"
+        ),
+    }
 }
