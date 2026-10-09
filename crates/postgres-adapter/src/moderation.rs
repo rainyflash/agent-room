@@ -13,6 +13,7 @@ use agent_room_domain::{
         ModerationAuditOutcome, ModerationCase, ModerationCaseState, ModerationEvidence,
         ModerationReason, ModerationRole, ModerationTarget, ModerationTargetKind,
     },
+    rooms::RoomCatalogKind,
     time::UtcMillis,
 };
 use serde_json::{Value, json};
@@ -720,9 +721,18 @@ async fn inspect_room_authority(
     } else {
         None
     };
+    // 公开大厅人多了会分成好几个活跃分片：全都交出去，由治理按动作决定落到哪些。最活跃的在前，
+    // 和围观、登录的人看大厅选分片（`find_public_observation_room`）的顺序一样。
     let row = sqlx::query(
         r"SELECT catalog.kind,
-                  room.matrix_room_id,
+                  ARRAY(
+                    SELECT room.matrix_room_id
+                    FROM agent_room.room_instance AS room
+                    WHERE room.catalog_entry_id = catalog.id AND room.state = 'active'
+                    ORDER BY room.activity_score DESC,
+                             room.member_count_projection DESC,
+                             room.id ASC
+                  ) AS matrix_room_ids,
                   target.matrix_user_id AS target_matrix_user_id,
                   EXISTS (
                     SELECT 1 FROM agent_room.moderation_operator AS operator
@@ -738,13 +748,9 @@ async fn inspect_room_authority(
                       AND (membership.permission_bits & 8) = 8
                   ) AS is_room_manager
            FROM agent_room.room_catalog_entry AS catalog
-           JOIN agent_room.room_instance AS room
-             ON room.catalog_entry_id = catalog.id AND room.state = 'active'
            LEFT JOIN agent_room.principal AS target
              ON target.id = $3 AND target.status = 'active'
-           WHERE catalog.id = $2 AND catalog.status = 'active'
-           ORDER BY room.updated_at DESC, room.id DESC
-           LIMIT 1",
+           WHERE catalog.id = $2 AND catalog.status = 'active'",
     )
     .bind(principal_id.as_uuid())
     .bind(room_catalog_id.as_uuid())
@@ -755,25 +761,35 @@ async fn inspect_room_authority(
     let Some(row) = row else {
         return Ok(None);
     };
+    let matrix_room_ids: Vec<String> = decode_column(&row, "matrix_room_ids", operation)?;
+    if matrix_room_ids.is_empty() {
+        return Ok(None);
+    }
     let target_matrix_user: Option<String> =
         decode_column(&row, "target_matrix_user_id", operation)?;
     if target.kind() == ModerationTargetKind::Principal && target_matrix_user.is_none() {
         return Ok(None);
     }
     let catalog_kind: String = decode_column(&row, "kind", operation)?;
+    let room_kind =
+        RoomCatalogKind::try_from(catalog_kind.as_str()).map_err(|_| corrupt_data(operation))?;
     let is_platform_moderator: bool = decode_column(&row, "is_platform_moderator", operation)?;
     let is_room_manager: bool = decode_column(&row, "is_room_manager", operation)?;
     let role = if is_platform_moderator {
         ModerationRole::PlatformModerator
-    } else if catalog_kind == "private_room" && is_room_manager {
+    } else if room_kind == RoomCatalogKind::PrivateRoom && is_room_manager {
         ModerationRole::RoomManager
     } else {
         ModerationRole::None
     };
-    let matrix_room_id: String = decode_column(&row, "matrix_room_id", operation)?;
     Ok(Some(ModerationRoomContext {
         role,
-        matrix_room_id: MatrixRoomId::new(matrix_room_id).map_err(|_| corrupt_data(operation))?,
+        room_kind,
+        matrix_room_ids: matrix_room_ids
+            .into_iter()
+            .map(MatrixRoomId::new)
+            .collect::<Result<_, _>>()
+            .map_err(|_| corrupt_data(operation))?,
         target_matrix_user_id: target_matrix_user
             .map(MatrixUserId::new)
             .transpose()

@@ -3,12 +3,13 @@ use agent_room_domain::{
     moderation::{
         ModerationAction, ModerationAuditEvent, ModerationCase, ModerationRole, ModerationTarget,
     },
+    rooms::RoomCatalogKind,
     time::{DurationMillis, UtcMillis},
 };
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixResult, MatrixRoomId, MatrixUserId, PortFuture};
+use super::{MatrixEventId, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModerationReportPolicy {
@@ -93,7 +94,10 @@ pub trait ModerationRepository: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModerationRoomContext {
     pub role: ModerationRole,
-    pub matrix_room_id: MatrixRoomId,
+    pub room_kind: RoomCatalogKind,
+    /// 这个目录此刻全部活跃分片的 Matrix 房间，至少一个，最活跃的在前（和围观、登录的人看大厅选的
+    /// 是同一个）。私人房间和私聊只有一个；公开大厅人多了会分成好几个分片。
+    pub matrix_room_ids: Vec<MatrixRoomId>,
     pub target_matrix_user_id: Option<MatrixUserId>,
 }
 
@@ -119,9 +123,12 @@ pub trait ModerationAuthority: Send + Sync {
     ) -> PortFuture<'_, RepositoryResult<ModerationRole>>;
 }
 
+/// 治理落在哪一个 Matrix 房间（分片）上。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModerationEffectTarget {
     pub matrix_room_id: MatrixRoomId,
+    /// 公开大厅谁都能说话、谁都能进，私人房间按成员的发言权管、只能受邀进：禁言和撤销按它来。
+    pub room_kind: RoomCatalogKind,
     pub target: ModerationTarget,
     pub target_matrix_user_id: Option<MatrixUserId>,
 }
@@ -139,6 +146,13 @@ pub trait ModerationEffectGateway: Send + Sync {
         action: &'a ModerationAction,
         target: &'a ModerationEffectTarget,
     ) -> PortFuture<'a, MatrixResult<()>>;
+
+    /// 这个房间里有没有这条事件（以建房间的应用服务账号读）。只读，用来找消息在哪个分片。
+    fn contains_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<bool>>;
 }
 
 pub trait ModerationIdentifierFactory: Send + Sync {
