@@ -14,8 +14,8 @@ use crate::{
         Clock, MatrixEventId, MatrixFailure, MatrixResult, MatrixRoomId,
         ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
         ModerationEffectTarget, ModerationExpiryRepository, ModerationIdentifierFactory,
-        ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
-        ModerationRoomContext, PortFuture,
+        ModerationMuteLedger, ModerationReportPolicy, ModerationReportSubmissionOutcome,
+        ModerationRepository, ModerationRoomContext, PortFuture,
     },
 };
 
@@ -75,6 +75,8 @@ pub struct ModerationDependencies {
     pub authority: Arc<dyn ModerationAuthority>,
     /// 到期自动解除用的读取，不看权限。
     pub expiry: Arc<dyn ModerationExpiryRepository>,
+    /// 结束禁言之前读这个人此刻的禁言情况，同一个人一次只做一个。
+    pub mutes: Arc<dyn ModerationMuteLedger>,
     pub effects: Arc<dyn ModerationEffectGateway>,
     pub identifiers: Arc<dyn ModerationIdentifierFactory>,
     pub clock: Arc<dyn Clock>,
@@ -85,6 +87,7 @@ pub struct ModerationService {
     pub(super) repository: Arc<dyn ModerationRepository>,
     authority: Arc<dyn ModerationAuthority>,
     pub(super) expiry: Arc<dyn ModerationExpiryRepository>,
+    pub(super) mutes: Arc<dyn ModerationMuteLedger>,
     effects: Arc<dyn ModerationEffectGateway>,
     pub(super) identifiers: Arc<dyn ModerationIdentifierFactory>,
     pub(super) clock: Arc<dyn Clock>,
@@ -97,6 +100,7 @@ impl ModerationService {
             repository: dependencies.repository,
             authority: dependencies.authority,
             expiry: dependencies.expiry,
+            mutes: dependencies.mutes,
             effects: dependencies.effects,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
@@ -378,7 +382,7 @@ impl ModerationService {
 
     /// 一个分片一个分片地落，哪个没落成就停下交回它的失败。已经落了的不撤：这些副作用都能重放，
     /// 管理员再做一次时，已经落了的分片什么也不变。
-    async fn apply_effects(
+    pub(super) async fn apply_effects(
         &self,
         action: &ModerationAction,
         context: &ModerationRoomContext,

@@ -1,6 +1,7 @@
 mod expiry;
 mod failure;
 mod models;
+mod mutes;
 mod service;
 
 pub use expiry::{ModerationExpiryOutcome, ModerationExpiryRetry, ModerationExpiryUseCases};
