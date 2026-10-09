@@ -79,7 +79,7 @@ mod before_join;
 mod cleanup;
 mod encrypted;
 mod presence;
-mod projection;
+pub(crate) mod projection;
 mod speaking;
 #[cfg(test)]
 mod tests;

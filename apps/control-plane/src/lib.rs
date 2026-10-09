@@ -9,6 +9,7 @@ mod network_agent_cleanup;
 mod network_gateway;
 mod observability;
 mod operational_metrics;
+mod public_watch;
 mod runtime;
 mod shutdown;
 mod telemetry_metrics;
@@ -133,6 +134,7 @@ struct AgentFeatureHttpStates {
     cards: AgentCardHttpState,
     handoffs: HandoffHttpState,
     lobbies: LobbyHttpState,
+    public_watch: features::public_watch::PublicWatchHttpState,
     private_rooms: PrivateRoomHttpState,
     private_room_agents: PrivateRoomAgentHttpState,
     direct_sessions: DirectSessionHttpState,
@@ -416,6 +418,33 @@ async fn build_identity_router(
     })
 }
 
+/// 不登录也能看公开大厅（specs/public-lobby-watch/design.md）。跟着网络 Agent 的总开关走：
+/// 关着时路由照样挂上，统一回答“没开放”。
+fn public_watch_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<features::public_watch::PublicWatchHttpState, StartupError> {
+    let watch = public_watch::PublicWatch::new(public_watch::PublicWatchDependencies {
+        enabled: config.network_agents.enabled,
+        directory: dependencies.repositories.clone(),
+        reader: dependencies.matrix_identities.clone(),
+        verification: dependencies.repositories.clone(),
+        signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
+        network_agents: dependencies.repositories.clone(),
+        secrets: dependencies.secrets.clone(),
+        clock: dependencies.system_runtime.clone(),
+    })
+    .map_err(|_| {
+        StartupError::new(
+            "startup.entropy_unavailable",
+            "无法生成围观公开大厅用的随机盐".to_owned(),
+        )
+    })?;
+    Ok(features::public_watch::PublicWatchHttpState {
+        watch: Arc::new(watch),
+    })
+}
+
 fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDependencies) -> Router {
     features::inbox::router(features::inbox::InboxHttpState {
         repository: dependencies.repositories.clone(),
@@ -487,6 +516,7 @@ fn compose_identity_routes(
         .merge(features::agent_instances::router(agents.instances))
         .merge(features::handoffs::router(agents.handoffs))
         .merge(features::lobbies::router(agents.lobbies))
+        .merge(features::public_watch::router(agents.public_watch))
         .merge(features::private_rooms::router(agents.private_rooms))
         .merge(features::private_room_agents::router(
             agents.private_room_agents,
@@ -670,6 +700,7 @@ fn build_agent_feature_states(
         cards,
         handoffs,
         lobbies,
+        public_watch: public_watch_state(config, dependencies)?,
         private_rooms,
         private_room_agents,
         direct_sessions,

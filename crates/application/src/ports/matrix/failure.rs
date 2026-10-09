@@ -31,6 +31,8 @@ pub enum MatrixOperation {
     SendReceipt,
     Backfill,
     InspectRoomAuthority,
+    /// 读房间当前的全部状态（不登录看公开大厅）。
+    ReadRoomState,
 }
 
 impl MatrixOperation {
@@ -62,6 +64,7 @@ impl MatrixOperation {
                 | Self::SendReceipt
                 | Self::Backfill
                 | Self::InspectRoomAuthority
+                | Self::ReadRoomState
         )
     }
 }

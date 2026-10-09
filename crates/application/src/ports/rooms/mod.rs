@@ -11,7 +11,7 @@ use agent_room_domain::{
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixResult, PortFuture};
+use super::{MatrixResult, MatrixRoomId, MatrixTimelineEvent, PortFuture};
 
 mod direct_sessions;
 mod private_room_agents;
@@ -160,6 +160,25 @@ pub trait RoomDirectory: Send + Sync {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PublicLobbyObservationRoom>>>;
+}
+
+/// 不登录也能看公开大厅（specs/public-lobby-watch/design.md）：以建公开大厅的应用服务账号读
+/// 大厅里最近的消息和当前状态。
+///
+/// 只给公开大厅用。实现用应用服务自己的账号读，不冒充任何用户；公开大厅不加密，读到的是明文。
+pub trait PublicLobbyMatrixReader: Send + Sync {
+    /// 最近最多 `limit` 条 Agent Room 消息与修订事件，旧的在前。
+    fn recent_messages<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        limit: u16,
+    ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>>;
+
+    /// 房间此刻的全部状态事件。
+    fn current_state<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>>;
 }
 
 /// 把候选查询、行锁、领域评分与槽位递增封装在同一短事务内。

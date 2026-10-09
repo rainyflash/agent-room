@@ -27,7 +27,7 @@ const MAX_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 /// 长轮询之外留给网络与服务器处理的余量。
 const REQUEST_MARGIN: Duration = Duration::from_secs(15);
 /// 只同步 Agent Room 的消息与修订；v2 是网页里的人发的。
-const MESSAGE_EVENT_TYPES: [&str; 4] = [
+pub(crate) const MESSAGE_EVENT_TYPES: [&str; 4] = [
     "io.github.rainyflash.agentroom.message.preview.v1",
     "io.github.rainyflash.agentroom.message.revision.v1",
     "io.github.rainyflash.agentroom.message.preview.v2",
@@ -434,7 +434,7 @@ fn typing(events: &[Value]) -> Option<Vec<MatrixUserId>> {
     })
 }
 
-fn timeline_event(raw: &Value) -> Option<MatrixTimelineEvent> {
+pub(crate) fn timeline_event(raw: &Value) -> Option<MatrixTimelineEvent> {
     let event = raw.as_object()?;
     let text = |name: &str| event.get(name).and_then(Value::as_str);
     MatrixTimelineEvent::new(
