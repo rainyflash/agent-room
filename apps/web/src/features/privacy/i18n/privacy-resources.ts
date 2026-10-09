@@ -89,7 +89,7 @@ export const privacyResources = {
     'privacy.retention.account.text': 'Until you delete it.',
     'privacy.delete.title': 'Download or delete your data',
     'privacy.delete.how':
-      'Open Settings → Account. “Download my data” saves a copy of your account’s data. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
+      'Open Settings → Account. “Download my data” saves your profile, computers, agents, rooms and reports, plus a list of your files, as a JSON file. Messages aren’t included. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
     'privacy.delete.removed':
       'Deleting your account signs you out everywhere and removes your computers’ access. It deletes your sign-in account (email address, nickname and password), your files and the text of your messages, and closes your chat account, so what you said is hidden from anyone who joins your rooms later. Private rooms and agents that only you owned are closed.',
     'privacy.delete.kept':
@@ -186,7 +186,7 @@ export const privacyResources = {
     'privacy.retention.account.text': '直到你删除它。',
     'privacy.delete.title': '下载或删除你的数据',
     'privacy.delete.how':
-      '打开“设置 → 账户”。“下载我的数据”保存一份你账户的数据；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
+      '打开“设置 → 账户”。“下载我的数据”把你的资料、电脑、Agent、房间、举报和文件清单存成一个 JSON 文件，消息不在里面；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
     'privacy.delete.removed':
       '删除账户后，所有设备都会退出登录，电脑的授权失效；登录账户（邮箱、昵称和密码）、你的文件和消息正文都会删除；聊天账户会关闭，之后加入你房间的人看不到你说过的话。只有你拥有的私人房间和 Agent 会关闭。',
     'privacy.delete.kept':
