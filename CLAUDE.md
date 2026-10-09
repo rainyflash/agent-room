@@ -91,7 +91,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（#325，命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
   - 发布实机验收也一样：`tools/release_qa.py` 在桌面端页面里请求控制面，要走 `desktop_control_plane_request`（`NATIVE_CONTROL_PLANE_JS`）。CDP 看不到原生层发的请求，所以消息发没发出去，以接收端解开的那条为准（`confirm_delivery`）。Alpha 64 验收时工具还没改，是用本地补丁跑完的；改法见 #330。
 - **生产容器日志有上限**（`compose.yaml` 的 `x-container-logging`，#342）。之前 Docker 默认不滚动，聊天服务器的日志从 9 月 18 日起攒到 1.3 GB，里面的访问记录带用户 IP。新加服务也要写 `logging:`，有测试卡着。加上限后的第一次部署会重建全部容器，旧日志随之删掉。
-- **正文对象有两个到期时间。** `expires_at` 是客户端上传时自己声明的，原样回给客户端；已经装着的 Bridge 会核对回来的值和声明的一样（`apps/bridge/src/control_plane/message_content.rs` 的 `matches_declaration`），所以服务器不能改它。按房间保留期算的到期时间（保留期再加一天）单独记在 `retention_expires_at`，不回给客户端。清理、发读取票据、转交给 Agent 都按两者早的那个判断（`ContentObject::effective_expires_at`），新加按到期判断的地方也用它。
+- **正文对象有两个到期时间。** `expires_at` 是客户端上传时自己声明的，原样回给客户端；已经装着的 Bridge 会核对回来的值和声明的一样（`apps/bridge/src/control_plane/message_content.rs` 的 `matches_declaration`），所以服务器不能改它。按房间保留期算的到期时间（保留期再加一天）单独记在 `retention_expires_at`（#344），不回给客户端。清理、发读取票据、转交给 Agent 都按两者早的那个判断（`ContentObject::effective_expires_at`），新加按到期判断的地方也用它。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
@@ -136,7 +136,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `index.html` 有 `og:` 标签，预览图是 `public/social-preview.png`（1280×640）。GitHub 仓库的社交预览也用这张图，要维护者在仓库设置里上传。
   - 预览图要绝对地址：构建时由控制面地址推出网站的 Origin（`apps/web/build/site-preview.ts`，控制面挂在网页域名下时才写）。
   - 改了首页说法以后重新生成预览图：设 `AGENT_ROOM_WRITE_SOCIAL_PREVIEW=1` 跑 `e2e/social-preview.e2e.ts`。
-- 隐私说明页要先补的数据处理：容器日志设上限 #342；设置里下载我的数据、删除账户 #343；消息正文和附件跟着房间保留期到期（新上传的按房间保留期加一天到期）。已经存着的旧正文没补到期时间，补了会删掉生产上过了保留期的旧正文，要维护者点头后另开迁移。
+- 隐私说明页要先补的数据处理：容器日志设上限 #342；设置里下载我的数据、删除账户 #343；消息正文和附件跟着房间保留期到期 #344（新上传的按房间保留期加一天到期）。已经存着的旧正文没补到期时间，补了会删掉生产上过了保留期的旧正文，要维护者点头后另开迁移。
 - 首发前还要做：隐私说明页，随 Alpha 65 上线；演示视频等维护者录好再放上首页。之后提交官方 MCP Registry、Glama、Smithery 和 Claude 的应用目录。`sitemap.xml` 不做：能被收录的只有首页，`/watch` 不让收录，别的页面要登录。
 
 ### 只凭网络接入的 Agent
