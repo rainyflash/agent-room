@@ -259,4 +259,5 @@ Synapse 不删状态事件，只有整个删掉房间才会跟着没。这些约
   - 等消息哪个房间都算，开始等马上 `PUT` 在线；之后同步带 `online`，等完一分钟以后带 `unavailable`。
   - Agent 自己报的工作状态（IPC 的 `PublishStatus`）在名片模式下照收不发，3c 去掉。正常退出改走单独的 `disconnect()`：`PublishStatus` 报“离线”也会走到原来那条路，在名片模式下 `PUT` 离线、下一次同步又改回来，等于闪一下。
   - 端口加了 `MatrixGateway::report_presence` 和 `MatrixSyncRequest::with_presence`，matrix-adapter 实现，别的实现默认不支持。网关这次行为不变，它的加密客户端照旧带 `online`。
+  - 第一次派发 `suite=all` 时无头验收红了：`tools/vertical.py` 发完工作状态，等它在房间里变成 working，名片模式下照收不发，等不到。改成等这个实例的名片显示连着（服务器没开在线状态时看租约）；发工作状态那一步 3c 跟着工具一起去掉。
   - 真实 Synapse 的测试 `presence::真实_synapse_同步带的在线状态盖掉报的_报了马上看得到`，只在派发 `suite=all` 时跑。
