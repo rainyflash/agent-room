@@ -1401,6 +1401,16 @@ fn build_matrix_identity_provisioner(
     Ok(matrix_identities)
 }
 
+/// 真实 Synapse 测试用的 Application Service 客户端。几个测试同时跑、Synapse 又刚起来时，头几次注册
+/// 和建房可能超过运行时默认的 2 秒（2026-10-10 派发的集成作业里注册超时过一次），测试给足时间。
+#[cfg(test)]
+pub(crate) fn real_dependency_identity_provisioner(
+    config: &ControlPlaneConfig,
+) -> Arc<MatrixApplicationServiceProvisioner> {
+    build_matrix_identity_provisioner(config, Duration::from_secs(30))
+        .expect("Application Service 配置有效")
+}
+
 fn build_web_oidc(
     config: &AuthenticationConfig,
     request_timeout: Duration,
