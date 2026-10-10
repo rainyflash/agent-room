@@ -424,6 +424,17 @@ impl AgentStatusPublicationService {
             .map_err(StatusPublicationFailure::matrix)
     }
 
+    /// 房间里读到的这条状态就是这个实例此刻的名片：是名片，身份（ID、名字、Matrix ID、实例）
+    /// 都没变，用不着再写。不验签：能改这条状态的人随时都能再改，验了也挡不住。
+    pub fn is_current_card(&self, content: &Value) -> bool {
+        let actor = &content["actor"];
+        content["liveness"] == "presence"
+            && actor["agent"]["agentId"] == self.identity.agent_id().to_string()
+            && actor["agent"]["displayName"] == self.identity.display_name()
+            && actor["agent"]["matrixUserId"] == self.identity.matrix_user_id().as_str()
+            && actor["instanceId"] == self.identity.agent_instance_id().to_string()
+    }
+
     /// 名片不续租。还在用旧接口发状态的宿主问起来，就回名义上的租约：从此刻起算。
     ///
     /// # Errors

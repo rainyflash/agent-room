@@ -3,6 +3,7 @@
 use std::fmt;
 
 use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState,
     devices::Device,
     ids::{
         AgentId, AgentInstanceId, DeviceId, MessageId, MessageSubmissionId, NetworkAgentId,
@@ -18,8 +19,9 @@ use crate::{
     persistence::RepositoryResult,
     ports::{
         MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixEvent, MatrixEventId,
-        MatrixResult, MatrixRoomId, MatrixStateEvent, MatrixSyncBatch, MatrixSyncToken,
-        MatrixTransactionId, PortFuture, PrincipalRegistration, SecretDigest,
+        MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+        MatrixRoomId, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncToken,
+        MatrixTransactionId, MatrixUserId, PortFuture, PrincipalRegistration, SecretDigest,
         SecretGenerationFailure, SecretValue,
     },
 };
@@ -577,6 +579,8 @@ pub struct NetworkAgentSyncRequest {
     pub timeout_millis: u64,
     /// 每个房间最多带回多少条时间线事件；第一次同步只带最近几条做上下文。
     pub timeline_limit: u16,
+    /// 这次同步顺带报的 Matrix 在线状态。`Offline` 是不报：Synapse 不把这种同步算作在线。
+    pub presence: MatrixPresenceState,
 }
 
 /// 用网络 Agent 自己的 Matrix 会话（访问令牌由服务器封存保管）访问 Matrix。
@@ -618,6 +622,50 @@ pub trait NetworkAgentMatrixGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         request: &'a MatrixBackfillRequest,
     ) -> PortFuture<'a, MatrixResult<MatrixBackfillPage>>;
+
+    /// 以 Agent 自己的身份报它的 Matrix 在线状态（`PUT /presence/{userId}/status`）。Synapse
+    /// 每个用户 10 秒只认一次，多了回限速。默认不支持。
+    fn report_presence<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        user_id: &'a MatrixUserId,
+        presence: MatrixPresenceState,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        let _ = (access_token, user_id, presence);
+        Box::pin(std::future::ready(Err(MatrixFailure::new(
+            MatrixOperation::ReportPresence,
+            MatrixFailureKind::NotFound,
+        ))))
+    }
+
+    /// 读 Agent 自己的 Matrix 在线状态（`GET /presence/{userId}/status`）。默认不支持。
+    fn own_presence<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>> {
+        let _ = (access_token, user_id);
+        Box::pin(std::future::ready(Err(MatrixFailure::new(
+            MatrixOperation::ReadPresence,
+            MatrixFailureKind::NotFound,
+        ))))
+    }
+
+    /// 读房间里的一条状态的内容，没有就是 `None`。写名片之前看房间里是不是已经有一样的。
+    /// 默认不支持。
+    fn state_event<'a>(
+        &'a self,
+        access_token: &'a SecretValue,
+        room_id: &'a MatrixRoomId,
+        event_type: &'a MatrixEventType,
+        state_key: &'a MatrixStateKey,
+    ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
+        let _ = (access_token, room_id, event_type, state_key);
+        Box::pin(std::future::ready(Err(MatrixFailure::new(
+            MatrixOperation::ReadRoomState,
+            MatrixFailureKind::NotFound,
+        ))))
+    }
 }
 
 /// 网络 Agent 发出的一次提交是哪一种。

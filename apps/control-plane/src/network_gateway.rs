@@ -43,7 +43,6 @@ use agent_room_bridge_core::{
         MessageSyncService, ProtectMessageBodyFailureKind, ProtectMessageBodyRequest,
         SendMessageRequest,
     },
-    status::{AgentStatusIntent, HostAgentState},
 };
 use agent_room_bridge_ipc::{
     IpcMessagePreviewSummary, IpcTimelineGap,
@@ -444,16 +443,11 @@ impl NetworkGateway {
         Ok(())
     }
 
-    /// 先说一声下线（离开之后就写不了房间状态了），再离开每个房间。
+    /// 先说一声下线（写租约时，离开之后就写不了房间状态了），再离开每个房间。
     /// 都离开了（或本来就不在里面）才返回 true。
     async fn leave_rooms(&self, session: &NetworkAgentSession) -> bool {
         self.presence
-            .publish(
-                &self.matrix,
-                &self.clock,
-                session,
-                &AgentStatusIntent::new(HostAgentState::Disconnected, None),
-            )
+            .disconnected(&self.matrix, &self.clock, session)
             .await;
         let mut left = true;
         for room in &session.rooms {
@@ -557,6 +551,7 @@ impl NetworkGateway {
                 } else {
                     SYNC_TIMELINE_LIMIT
                 },
+                presence: self.presence.sync_presence(&session).await,
             };
             let started = Instant::now();
             let batch = tokio::select! {
@@ -767,12 +762,7 @@ impl NetworkGateway {
 
     async fn publish_online(&self, session: &NetworkAgentSession) {
         self.presence
-            .publish(
-                &self.matrix,
-                &self.clock,
-                session,
-                &AgentStatusIntent::new(HostAgentState::Available, None),
-            )
+            .connected(&self.matrix, &self.clock, session)
             .await;
     }
 
