@@ -993,6 +993,10 @@ struct ScriptedMatrix {
     backfilled: Mutex<Vec<(String, String, u16)>>,
     /// 报过的 Matrix 在线状态。`None` 是这台假服务器不接在线状态的接口，网关照旧写租约。
     presence: Mutex<Option<Vec<MatrixPresenceState>>>,
+    /// 开着在线状态时，按顺序给出每次报的结果（比如被限速）；给完以后都报得上。
+    presence_reports: Mutex<VecDeque<Result<(), MatrixFailureKind>>>,
+    /// 开着在线状态时，按顺序给出每次读回自己的答案；给完以后答最后报上的那个。
+    presence_reads: Mutex<VecDeque<MatrixPresenceState>>,
 }
 
 impl ScriptedMatrix {
@@ -1176,8 +1180,12 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
         assert_eq!(user_id.as_str(), matrix_user(OWN_AGENT));
         let result = match self.presence.lock().unwrap().as_mut() {
             Some(reported) => {
-                reported.push(presence);
-                Ok(())
+                if let Some(Err(kind)) = self.presence_reports.lock().unwrap().pop_front() {
+                    Err(MatrixFailure::new(MatrixOperation::ReportPresence, kind))
+                } else {
+                    reported.push(presence);
+                    Ok(())
+                }
             }
             None => Err(MatrixFailure::new(
                 MatrixOperation::ReportPresence,
@@ -1195,9 +1203,12 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
         assert_eq!(access_token.expose(), "syt_scout");
         assert_eq!(user_id.as_str(), matrix_user(OWN_AGENT));
         let result = match self.presence.lock().unwrap().as_ref() {
-            Some(reported) => Ok(reported
-                .last()
-                .copied()
+            Some(reported) => Ok(self
+                .presence_reads
+                .lock()
+                .unwrap()
+                .pop_front()
+                .or_else(|| reported.last().copied())
                 .unwrap_or(MatrixPresenceState::Offline)),
             None => Err(MatrixFailure::new(
                 MatrixOperation::ReadPresence,

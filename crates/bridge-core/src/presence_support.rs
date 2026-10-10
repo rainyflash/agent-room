@@ -33,9 +33,13 @@ impl Default for PresenceSupport {
 }
 
 impl PresenceSupport {
-    /// 还不知道就探一次：报此刻该报的，再读回自己的。读回来不是离线就是开着；还是离线，两次
-    /// 才算没开；服务器不接这两个接口（404、403、版本不支持），一次就算没开。限速、超时、断网
-    /// 只是这次不知道，把错交回去记日志，下次再探。已经知道了就什么都不做。
+    /// 还不知道就探一次：报此刻该报的，再读回自己的。读回来不是离线就是开着；报了、读回来还是
+    /// 离线，两次才算没开；服务器不接这两个接口（404、403、版本不支持），一次就算没开。
+    ///
+    /// 报不出去（限速、超时、断网）也照样读：之前报的或者同步带的已经记上了，读回来不是离线
+    /// 就看得出开着。Synapse 每个用户 10 秒只认一次报，刚进房间就接着开始等消息的，第二次探
+    /// 总是被限速。没报成时读回离线说明不了什么，不算数。还是不知道就把错交回去记日志，下次
+    /// 再探。已经知道了就什么都不做。
     pub async fn probe(
         &mut self,
         own: &dyn OwnPresence,
@@ -44,12 +48,19 @@ impl PresenceSupport {
         let Self::Unknown { offline_reads } = *self else {
             return None;
         };
-        let read = match own.report(wanted).await {
-            Ok(()) => own.read().await,
-            Err(failure) => Err(failure),
+        let unreported = match own.report(wanted).await {
+            Ok(()) => None,
+            Err(failure) if unsupported(failure.kind()) => {
+                *self = Self::Disabled;
+                return None;
+            }
+            Err(failure) => Some(failure),
         };
-        match read {
+        match own.read().await {
             Ok(MatrixPresenceState::Offline) => {
+                if unreported.is_some() {
+                    return unreported;
+                }
                 let offline_reads = offline_reads.saturating_add(1);
                 *self = if offline_reads >= OFFLINE_READS_BEFORE_DISABLED {
                     Self::Disabled
@@ -66,7 +77,7 @@ impl PresenceSupport {
                 *self = Self::Disabled;
                 None
             }
-            Err(failure) => Some(failure),
+            Err(failure) => Some(unreported.unwrap_or(failure)),
         }
     }
 }
@@ -165,6 +176,7 @@ mod tests {
         }
         let own = 脚本::new([
             Err(MatrixFailureKind::RateLimited),
+            Err(MatrixFailureKind::Timeout),
             Ok(Online),
             Err(MatrixFailureKind::Timeout),
             Ok(Online),
@@ -173,7 +185,8 @@ mod tests {
         let mut support = PresenceSupport::default();
         assert_eq!(
             探(&mut support, &own).await,
-            Some(MatrixFailureKind::RateLimited)
+            Some(MatrixFailureKind::RateLimited),
+            "报不出去、读也超时：交回报的那个错"
         );
         assert_eq!(
             探(&mut support, &own).await,
@@ -182,6 +195,39 @@ mod tests {
         );
         assert_eq!(support, PresenceSupport::default());
         探(&mut support, &own).await;
+        assert_eq!(support, PresenceSupport::Enabled);
+    }
+
+    #[tokio::test]
+    async fn 报不出去也读回来看_不是离线就是开着_离线不算数() {
+        // 被限速、读回离线：说明不了什么，不算一次。
+        let own = 脚本::new([
+            Err(MatrixFailureKind::RateLimited),
+            Ok(Offline),
+            Ok(Online),
+            Ok(Offline),
+            Err(MatrixFailureKind::RateLimited),
+            Ok(Offline),
+        ]);
+        let mut support = PresenceSupport::default();
+        assert_eq!(
+            探(&mut support, &own).await,
+            Some(MatrixFailureKind::RateLimited)
+        );
+        assert_eq!(support, PresenceSupport::default());
+        探(&mut support, &own).await;
+        assert_eq!(support, PresenceSupport::Unknown { offline_reads: 1 });
+        探(&mut support, &own).await;
+        assert_eq!(
+            support,
+            PresenceSupport::Unknown { offline_reads: 1 },
+            "报了读回离线才算数"
+        );
+
+        // 被限速、读回来是之前报的或者同步带的：开着。
+        let own = 脚本::new([Err(MatrixFailureKind::RateLimited), Ok(Unavailable)]);
+        let mut support = PresenceSupport::Unknown { offline_reads: 1 };
+        assert_eq!(探(&mut support, &own).await, None);
         assert_eq!(support, PresenceSupport::Enabled);
     }
 }
