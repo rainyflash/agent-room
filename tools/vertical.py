@@ -3585,10 +3585,17 @@ def wait_for_mcp_preview(
 ) -> dict[str, object]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        response = client.call_tool(
-            "agent_room_list_previews",
-            {"roomId": room_id, "beforeEventId": None, "limit": 20},
-        )
+        try:
+            response = client.call_tool(
+                "agent_room_list_previews",
+                {"roomId": room_id, "beforeEventId": None, "limit": 20},
+            )
+        except McpToolFailure as error:
+            # 控制面刚重启时，Bridge 验签拿不到材料会整个重连一次（agent_runtime_unavailable，可重试）。
+            if not error.retryable:
+                raise
+            time.sleep(0.4)
+            continue
         if response.get("type") != "message_previews":
             raise VerticalFailure("MCP 消息预览返回了错误响应类型。")
         previews = response.get("previews")

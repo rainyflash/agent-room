@@ -7,9 +7,9 @@ use agent_room_domain::agent_lifecycle::MatrixPresenceState::{Offline, Online, U
 use serde_json::Value;
 
 use super::{
-    Harness, NetworkAgentAdmission, NetworkAgentMessaging as _, NetworkAgentRoomRequest,
-    NetworkAgentTarget, OTHER_AGENT, ROOM, RoomCatalogId, SECOND_ROOM, Step, TOKEN, batch, entered,
-    everything, harness, harness_in, restarted, uuid,
+    Harness, NetworkAgentAdmission, NetworkAgentMessaging as _, NetworkAgentPendingExit,
+    NetworkAgentRoomRequest, NetworkAgentTarget, OTHER_AGENT, ROOM, RoomCatalogId, SECOND_ROOM,
+    Step, TOKEN, batch, entered, everything, harness, harness_in, restarted, uuid,
 };
 
 fn states(harness: &Harness) -> Vec<(String, Value)> {
@@ -208,4 +208,55 @@ async fn 旧的租约换成名片_控制面重启以后房间里已经有一样�
         .await
         .unwrap();
     assert_eq!(states(&harness).len(), 4, "房间里已经有一样的名片");
+}
+
+#[tokio::test(start_paused = true)]
+async fn 读不出房间里的那条就先不写名片_下次等消息时再看() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    harness.matrix.enable_presence();
+    peek_first(&harness).await;
+    *harness.matrix.state_read_fails.lock().unwrap() = true;
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
+        .await
+        .unwrap();
+    assert!(states(&harness).is_empty(), "不知道房间里有没有就先不写");
+
+    *harness.matrix.state_read_fails.lock().unwrap() = false;
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
+        .await
+        .unwrap();
+    let written = states(&harness);
+    assert_eq!(written.len(), 2, "下次等消息时补上：{written:?}");
+    assert_cards(&written);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 控制面重启以后的定时清理替它离开_房间里是名片就不补写_只报离线() {
+    let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    harness.matrix.enable_presence();
+    peek_first(&harness).await;
+    harness
+        .gateway
+        .wait_for_messages(TOKEN, everything(Duration::from_secs(5), 20))
+        .await
+        .unwrap();
+    assert_eq!(states(&harness).len(), 2, "每个房间一张名片");
+
+    // 停用时没离开成，控制面重启以后由定时清理替它离开：这个进程还没探过开没开在线状态。
+    let gateway = restarted(&harness);
+    *harness.agents.exits.lock().unwrap() = vec![NetworkAgentPendingExit::Session(Box::new(
+        harness.agents.own_session(),
+    ))];
+    gateway.clean_up().await.unwrap();
+
+    assert_eq!(
+        states(&harness).len(),
+        2,
+        "名片只写一次，不补“已离线”的租约"
+    );
+    assert_eq!(harness.matrix.reported_presence().last(), Some(&Offline));
 }

@@ -260,6 +260,25 @@ pub trait MatrixGateway: Send + Sync {
         })
     }
 
+    /// 读房间里的一条状态的内容（`GET /rooms/{房间}/state/{类型}/{state key}`），没有就是 `None`。
+    ///
+    /// 写名片前问服务器房间里是不是已经有一样的：本机投影会把同一个 Agent 离线的几个实例并成
+    /// 一张，看不准（`specs/agent-liveness/design.md`）。默认不支持。
+    fn state_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_type: &'a MatrixEventType,
+        state_key: &'a MatrixStateKey,
+    ) -> PortFuture<'a, MatrixResult<Option<serde_json::Value>>> {
+        let _ = (room_id, event_type, state_key);
+        Box::pin(async {
+            Err(MatrixFailure::new(
+                MatrixOperation::ReadRoomState,
+                MatrixFailureKind::NotFound,
+            ))
+        })
+    }
+
     /// 马上报自己的在线状态（`PUT /presence/{userId}/status`），不等下一次同步。
     ///
     /// Synapse 每个用户 10 秒只认一次，多了回限速；下一次同步带的状态会盖掉它。默认不支持。

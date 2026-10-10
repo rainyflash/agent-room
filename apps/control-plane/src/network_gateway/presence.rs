@@ -210,8 +210,8 @@ impl Presence {
     }
 
     /// 停用、离开房间之前：报离线，不再报。服务器没开在线状态时写一条“已离线”的租约（离开
-    /// 之后就写不了房间状态了）。这个进程还没探过开没开（比如停用以后的定时清理）就两样都做：
-    /// 读的一边不管看租约还是看在线状态，都看到它离线。
+    /// 之后就写不了房间状态了）。这个进程还没探过开没开（比如控制面重启以后的定时清理）：两样
+    /// 都做，但只在房间里是它的租约时补“已离线”，是名片就不写，名片只写一次。
     pub(super) async fn disconnected(
         &self,
         matrix: &Arc<dyn NetworkAgentMatrixGateway>,
@@ -222,12 +222,14 @@ impl Presence {
             return;
         };
         let mut agent = agent.lock().await;
-        if agent.support != PresenceSupport::Enabled {
-            let intent = AgentStatusIntent::new(HostAgentState::Disconnected, None);
-            publish_in_rooms(&mut agent.service, session, &intent).await;
-        }
-        if agent.support == PresenceSupport::Disabled {
-            return;
+        match agent.support {
+            PresenceSupport::Disabled => {
+                let intent = AgentStatusIntent::new(HostAgentState::Disconnected, None);
+                publish_in_rooms(&mut agent.service, session, &intent).await;
+                return;
+            }
+            PresenceSupport::Unknown { .. } => agent.close_leases(session).await,
+            PresenceSupport::Enabled => {}
         }
         agent.reporting.waited_at = None;
         agent.reporting.connected_until = None;
@@ -439,14 +441,23 @@ impl AgentPresence {
             if self.reporting.cards.contains(&room_id) {
                 continue;
             }
-            // 读不出来只是多写一张，名片照样是对的。
-            let existing = self
+            // 读不出来这次先不写，下次等消息时再看：多写一张就多一条永久记录。
+            let existing = match self
                 .own
                 .matrix
                 .state_event(&self.own.access_token, &room_id, &event_type, &state_key)
                 .await
-                .ok()
-                .flatten();
+            {
+                Ok(existing) => existing,
+                Err(failure) => {
+                    tracing::debug!(
+                        network_agent.id = %session.network_agent_id,
+                        failure = ?failure.kind(),
+                        "没读到房间里网络 Agent 的名片，下次再看"
+                    );
+                    continue;
+                }
+            };
             if !existing.is_some_and(|content| self.service.is_current_card(&content)) {
                 let target =
                     AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse);
@@ -460,6 +471,44 @@ impl AgentPresence {
                 }
             }
             self.reporting.cards.insert(room_id);
+        }
+    }
+
+    /// 还不知道服务器开没开在线状态时停用：房间里是它的租约，就补一条“已离线”的租约，免得
+    /// 租约到期前还显示在线；是名片、什么都没有或者读不出来就不写：名片看在线状态，离开房间以后
+    /// 它也就不在成员里了。
+    async fn close_leases(&mut self, session: &NetworkAgentSession) {
+        let Ok(event_type) = MatrixEventType::new(AGENT_STATUS_EVENT_TYPE) else {
+            return;
+        };
+        let state_key = MatrixStateKey::from_agent_instance_id(session.agent_instance_id);
+        let intent = AgentStatusIntent::new(HostAgentState::Disconnected, None);
+        for room in &session.rooms {
+            let Ok(room_id) = MatrixRoomId::new(room.matrix_room_id.as_str()) else {
+                continue;
+            };
+            let lease = matches!(
+                self.own
+                    .matrix
+                    .state_event(&self.own.access_token, &room_id, &event_type, &state_key)
+                    .await,
+                Ok(Some(content)) if content.get("liveness").is_none()
+            );
+            if !lease {
+                continue;
+            }
+            let target = AgentStatusRoomTarget::new(room_id, AgentStatusVisibility::Coarse);
+            if let Err(failure) = self
+                .service
+                .publish_if_due(&target, &intent, entropy())
+                .await
+            {
+                tracing::warn!(
+                    network_agent.id = %session.network_agent_id,
+                    failure = ?failure.kind(),
+                    "网络 Agent 的在线状态没发出去"
+                );
+            }
         }
     }
 

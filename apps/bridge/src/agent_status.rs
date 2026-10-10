@@ -3,14 +3,16 @@ use std::{
     time::Duration,
 };
 
-use agent_room_application::ports::{MatrixGateway, MatrixResult, MatrixRoomId, PortFuture};
+use agent_room_application::ports::{
+    MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation,
+    MatrixResult, MatrixRoomId, MatrixStateKey, PortFuture,
+};
 use agent_room_bridge_core::{
-    presence::{PresenceSyncService, ProjectedAgentPresence},
+    presence::AGENT_STATUS_EVENT_TYPE,
     presence_support::{OwnPresence, PresenceSupport},
     status::{
-        AgentStatusIdentity, AgentStatusIntent, AgentStatusPublicationService,
-        AgentStatusRoomTarget, HostAgentState, StatusPublicationOutcome, StatusPublicationResult,
-        WAIT_IDLE_TIMEOUT,
+        AgentStatusIntent, AgentStatusPublicationService, AgentStatusRoomTarget, HostAgentState,
+        StatusPublicationOutcome, StatusPublicationResult, WAIT_IDLE_TIMEOUT,
     },
 };
 use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
@@ -165,10 +167,7 @@ impl AgentStatusPublicationHandle {
     /// 每次同步之后调用。写名片的：还没确认服务器开着在线状态就确认一次，确认了才写名片
     /// （没开的话写了名片，别人只会看到它离线）；房间里已经有一样的就不写，之后也不再写。
     /// 写租约的：到点续租。
-    pub(crate) async fn renew(
-        &self,
-        presence: &PresenceSyncService,
-    ) -> StatusPublicationResult<()> {
+    pub(crate) async fn renew(&self) -> StatusPublicationResult<()> {
         let mut state = self.state.lock().await;
         let state = &mut *state;
         if let Liveness::Presence(reporting) = &mut state.liveness
@@ -203,15 +202,24 @@ impl AgentStatusPublicationHandle {
                 Ok(())
             }
             Liveness::Presence(reporting) => {
-                let identity = state.service.identity();
-                // 读不出本机投影只是多写一张，名片照样是对的。
-                let existing = presence
-                    .projected_instance(self.target.room_id(), identity.agent_instance_id())
-                    .await
-                    .ok()
-                    .flatten();
-                if !existing.is_some_and(|existing| same_card(&existing, identity)) {
-                    state.service.publish_card(&self.target).await?;
+                let Some(matrix) = &self.matrix else {
+                    return Ok(());
+                };
+                // 问服务器，不看本机投影：投影把同一个 Agent 离线的几个实例并成一张，刚连上、还没
+                // 拿到自己的在线状态时，自己的名片可能就被并掉了。读不出来这次先不写，下次同步后
+                // 再看：多写一张就多一条永久记录。
+                match card_in_room(matrix.as_ref(), &self.target, &state.service).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        state.service.publish_card(&self.target).await?;
+                    }
+                    Err(failure) => {
+                        tracing::debug!(
+                            failure_kind = ?failure.kind(),
+                            "没读到房间里的名片，下次同步后再看"
+                        );
+                        return Ok(());
+                    }
                 }
                 reporting.card_in_place = true;
                 Ok(())
@@ -309,14 +317,23 @@ impl OwnPresence for OwnMatrixPresence<'_> {
     }
 }
 
-/// 房间里已有的那条就是这个实例此刻的名片：内容里的身份都没变，用不着再写。
-fn same_card(existing: &ProjectedAgentPresence, identity: &AgentStatusIdentity) -> bool {
-    let projected = existing.identity();
-    existing.is_card()
-        && projected.agent_id() == identity.agent_id()
-        && projected.agent_instance_id() == identity.agent_instance_id()
-        && projected.display_name() == identity.display_name()
-        && projected.matrix_user_id() == identity.matrix_user_id()
+/// 房间里这个实例的那条状态就是它此刻的名片：内容里的身份都没变，用不着再写。
+async fn card_in_room(
+    matrix: &dyn MatrixGateway,
+    target: &AgentStatusRoomTarget,
+    service: &AgentStatusPublicationService,
+) -> MatrixResult<bool> {
+    let event_type = MatrixEventType::new(AGENT_STATUS_EVENT_TYPE).map_err(|_| {
+        MatrixFailure::new(
+            MatrixOperation::ReadRoomState,
+            MatrixFailureKind::InvalidConfiguration,
+        )
+    })?;
+    let state_key = MatrixStateKey::from_agent_instance_id(service.identity().agent_instance_id());
+    let content = matrix
+        .state_event(target.room_id(), &event_type, &state_key)
+        .await?;
+    Ok(content.is_some_and(|content| service.is_current_card(&content)))
 }
 
 /// 等待的进程被杀、被取消时不会告诉 Bridge，只是不再来 `WaitInbox`。隔了 [`WAIT_IDLE_TIMEOUT`]

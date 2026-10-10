@@ -1489,7 +1489,7 @@ async fn sync_agent_online(
     isolated_messages::recover_isolated_messages(runtime, online, full_state).await;
     online
         .status
-        .renew(&runtime.presence)
+        .renew()
         .await
         .map_err(AgentOnlineFailure::Status)?;
     online.next_batch = Some(batch.next_batch().clone());

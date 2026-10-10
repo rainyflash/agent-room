@@ -469,17 +469,6 @@ pub trait PresenceProjectionRepository: Send + Sync {
         let _ = (user_id, presence, fetched_at);
         Box::pin(std::future::ready(Ok(())))
     }
-
-    /// 这个房间里这个实例此刻投影着的那条状态（名片或租约），没有就是 `None`。写名片前看
-    /// 房间里是不是已经有一样的。默认不知道，当作没有。
-    fn projected_instance<'a>(
-        &'a self,
-        room_id: &'a MatrixRoomId,
-        instance_id: AgentInstanceId,
-    ) -> PortFuture<'a, Result<Option<ProjectedAgentPresence>, PresenceProjectionFailure>> {
-        let _ = (room_id, instance_id);
-        Box::pin(std::future::ready(Ok(None)))
-    }
 }
 
 /// 问一个人的 Matrix 在线状态。任何 [`MatrixGateway`] 都能问。
@@ -724,21 +713,6 @@ impl PresenceSyncService {
             membership_changes,
             issues,
         })
-    }
-
-    /// 这个房间里这个实例此刻投影着的那条状态，写名片前用它看房间里已经有没有一样的。
-    ///
-    /// # Errors
-    ///
-    /// 本机投影不可用时返回错误。
-    pub async fn projected_instance(
-        &self,
-        room_id: &MatrixRoomId,
-        instance_id: AgentInstanceId,
-    ) -> Result<Option<ProjectedAgentPresence>, PresenceProjectionFailure> {
-        self.projections
-            .projected_instance(room_id, instance_id)
-            .await
     }
 
     /// 问同步里没带的、写名片的 Agent 的在线状态，同时最多问几个，问到没有要问的为止。
