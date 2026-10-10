@@ -164,17 +164,8 @@ pub async fn verify_host_contract(
     std::fs::create_dir_all(&directory)
         .map_err(|_| CliFailure::local("receiver.attachment_directory_failed"))?;
     let canary = format!("agent-room-contract-{}", uuid::Uuid::now_v7());
-    // 前缀、后缀和目录都与 Bridge 下载真实附件时一致，沙箱按同样的条件判断。
-    let mut file = tempfile::Builder::new()
-        .prefix("agent-room-attachment-")
-        .suffix(".txt")
-        .tempfile_in(&directory)
-        .map_err(|_| CliFailure::local("receiver.attachment_directory_failed"))?;
-    file.write_all(canary.as_bytes())
-        .and_then(|()| file.flush())
-        .map_err(|_| CliFailure::local("receiver.attachment_directory_failed"))?;
-    let path = file
-        .path()
+    let attachment = write_canary(&directory, &canary)?;
+    let path = attachment
         .to_str()
         .ok_or_else(|| CliFailure::validation("receiver.attachment_directory_invalid"))?;
     let prompt = contract_prompt(path);
@@ -189,6 +180,23 @@ pub async fn verify_host_contract(
         attachment_readable: true,
         reply_contract_honored: true,
     })
+}
+
+/// 写好验证码附件，只留路径（离开契约检查时删掉）。
+///
+/// 前缀、后缀和目录都与 Bridge 下载真实附件时一致，沙箱按同样的条件判断。写完就关掉句柄：
+/// Windows 上开着可写句柄时，只许别人一起读的打开方式（比如 .NET 的 File.ReadAllText）会因为
+/// 共享冲突失败，检查就冤枉了宿主（Alpha 67 实机验收）。
+fn write_canary(directory: &Path, canary: &str) -> CliResult<tempfile::TempPath> {
+    let mut file = tempfile::Builder::new()
+        .prefix("agent-room-attachment-")
+        .suffix(".txt")
+        .tempfile_in(directory)
+        .map_err(|_| CliFailure::local("receiver.attachment_directory_failed"))?;
+    file.write_all(canary.as_bytes())
+        .and_then(|()| file.flush())
+        .map_err(|_| CliFailure::local("receiver.attachment_directory_failed"))?;
+    Ok(file.into_temp_path())
 }
 
 /// 契约检查让宿主读的那一轮：和后台回复读附件同一个说法。
@@ -308,7 +316,7 @@ mod tests {
 
     use super::{
         ATTACHMENT_FALLBACK, HostBinding, contract_prompt, delivery_payload, reception_prompt,
-        verify_host_contract,
+        verify_host_contract, write_canary,
     };
     use crate::HostDelivery;
 
@@ -333,6 +341,30 @@ mod tests {
 
         assert_eq!(failure.code, "receiver.task_id_invalid");
         assert!(!agent_room_bridge_ipc::attachment_directory(temporary.path()).exists());
+    }
+
+    #[test]
+    fn 验证码附件写完就关掉句柄_离开检查时删掉() {
+        let directory = tempfile::tempdir().unwrap();
+        let attachment = write_canary(directory.path(), "agent-room-contract-x").unwrap();
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            // .NET 的 File.ReadAllText 这样打开：只读，只许别人一起读。别人开着可写句柄就打不开。
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(0x0000_0001);
+        }
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut options.open(&attachment).expect("不再开着可写句柄"),
+            &mut text,
+        )
+        .unwrap();
+        assert_eq!(text, "agent-room-contract-x");
+        let path = attachment.to_path_buf();
+        drop(attachment);
+        assert!(!path.exists());
     }
 
     #[test]

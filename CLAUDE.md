@@ -107,6 +107,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 - **去掉 IPC 方法或授权范围时，Bridge 那边要留着。** MCP 和命令行在握手时带上要用的授权范围（`IpcScopeName`，报文里是名字）。升级以后，宿主里还在跑的旧版 MCP 进程照旧带着旧的范围握手，Bridge 不认这个名字就整个连不上，所有工具都失败。所以去掉工具只从新版客户端里去掉，Bridge 照旧认旧的范围和请求，收下以后照收不发；3c 去掉 `agent_room_publish_status` 就是这样做的（`IpcMethod::PublishStatus`）。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
+- **交给宿主读的文件，写完就关掉句柄**（#389）。Windows 上只要有人开着可写句柄，.NET 的 `File.ReadAllText` 就打不开（“文件正由另一进程使用”），因为它只许别人一起读；Codex 读附件用的正是它。Bridge 的附件缓存和 doctor 的验证码附件都只留 `TempPath`。新加交给宿主的文件也这样做，别让 `NamedTempFile` 一直开着。
 - **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。
 
 ## 产品决定（已定，别再问）
