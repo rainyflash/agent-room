@@ -373,6 +373,15 @@ async fn 单次等待慢于窗口时listen继续监听且不输出() {
         listener.try_wait().unwrap()
     );
     assert_eq!(listener.try_wait().unwrap(), None, "一次慢往返不能终止监听");
+    // 等它真的又问过一次再放消息。原来放了消息以后才数问过几次：CI 上进程起得慢，那次慢往返
+    // 开始得晚，睡完正好赶上放消息，直接把消息带了回去，一共只问了两次。
+    timeout(Duration::from_secs(10), async {
+        while harness.reads.load(Ordering::SeqCst) <= 2 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("慢往返之后窗口照常继续轮询");
     harness.message_available.store(true, Ordering::SeqCst);
     timeout(
         Duration::from_secs(5),
@@ -384,10 +393,6 @@ async fn 单次等待慢于窗口时listen继续监听且不输出() {
     let value: Value = serde_json::from_str(&listen_line).unwrap();
     assert_eq!(value["ok"], true);
     assert_eq!(value["data"]["previews"][0]["eventId"], "$next");
-    assert!(
-        harness.reads.load(Ordering::SeqCst) > 2,
-        "慢往返之后窗口照常继续轮询"
-    );
     listener.kill().await.unwrap();
     listener.wait().await.unwrap();
 }
