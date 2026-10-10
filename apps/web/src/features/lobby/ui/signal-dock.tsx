@@ -89,11 +89,6 @@ export function SignalDock({
           </Button>
         </div>
       ) : null}
-      <div className="signal-dock__legend" aria-label={t('lobby.dock.legend')}>
-        <span className="legend-signal legend-signal--active">{t('lobby.zone.active')}</span>
-        <span className="legend-signal legend-signal--attention">{t('lobby.zone.attention')}</span>
-        <span className="legend-signal legend-signal--available">{t('lobby.zone.available')}</span>
-      </div>
     </nav>
   );
 }

@@ -13,7 +13,6 @@ function character(index: number, kind: SceneCharacter['kind'] = 'agent'): Scene
     displayName: `角色 ${String(index)}`,
     kind,
     isSelf: false,
-    status: kind === 'human' ? 'present' : 'idle',
     radius: 26,
     x: 0,
     y: 0,
@@ -155,20 +154,15 @@ describe('场景共享角色纹理', () => {
       generation,
       pixi.RenderTexture.create({ width: 1536, height: 1024 }),
     );
-    const statuses = [
-      'idle',
-      'working',
-      'completed',
-      'waiting_input',
-      'blocked',
-      'offline',
-    ] as const;
+    const availabilities = ['waiting', 'on_resume', 'unknown', 'reconnecting', 'offline'] as const;
     const sprites: pixi.Sprite[] = [];
     for (const kind of ['agent', 'human'] as const) {
       for (let index = 0; index < 200; index += 1) {
         const node: SceneCharacter = {
           ...character(index, kind),
-          status: kind === 'human' ? 'present' : (statuses[index % statuses.length] ?? 'idle'),
+          ...(kind === 'human'
+            ? {}
+            : { availability: availabilities[index % availabilities.length] ?? 'waiting' }),
         };
         sprites.push(cache.createBody(node));
         const parts = cache.createParts(node, index % 2 === 0);
@@ -178,9 +172,9 @@ describe('场景共享角色纹理', () => {
       }
     }
 
-    // 四种机器人、一种人类标记、四种指示部件和七种状态点，不随人数增长。
-    expect(generation.generateTexture).toHaveBeenCalledTimes(16);
-    expect(new Set(sprites.map((sprite) => sprite.texture)).size).toBe(16);
+    // 四种机器人、一种人类标记、两种指示部件和三种颜色的圆点，不随人数增长。
+    expect(generation.generateTexture).toHaveBeenCalledTimes(10);
+    expect(new Set(sprites.map((sprite) => sprite.texture)).size).toBe(10);
     const textures = [...new Set(sprites.map((sprite) => sprite.texture))];
     const releases = textures.map((texture) => vi.spyOn(texture, 'destroy'));
     const sources = textures.map((texture) => texture.source);
@@ -193,27 +187,29 @@ describe('场景共享角色纹理', () => {
     expect(() => cache.createParts(character(0), false)).toThrow('角色纹理缓存已销毁。');
   });
 
-  it('相同状态共享完整气泡纹理，不同符号区分且每个 Sprite 独立', () => {
+  it('颜色相同的圆点共享纹理，每个 Sprite 独立', () => {
     const generation = renderer();
     const cache = new CharacterTextureCache(
       pixi,
       generation,
       pixi.RenderTexture.create({ width: 1536, height: 1024 }),
     );
-    const waiting = cache.createParts({ ...character(0), status: 'waiting_input' }, true);
-    const alsoWaiting = cache.createParts({ ...character(3), status: 'waiting_input' }, true);
-    const blocked = cache.createParts({ ...character(1), status: 'blocked' }, true);
-    const idle = cache.createParts(character(2), false);
+    const waiting = cache.createParts({ ...character(0), availability: 'waiting' }, true);
+    const alsoWaiting = cache.createParts({ ...character(3), availability: 'waiting' }, true);
+    const reconnecting = cache.createParts({ ...character(1), availability: 'reconnecting' }, true);
+    const offline = cache.createParts({ ...character(4), availability: 'offline' }, false);
+    const onResume = cache.createParts({ ...character(2), availability: 'on_resume' }, false);
+    const human = cache.createParts(character(5, 'human'), false);
 
-    expect(waiting.shadow).not.toBe(blocked.shadow);
-    expect(waiting.shadow.texture).toBe(blocked.shadow.texture);
-    expect(waiting.bubble?.texture).toBe(alsoWaiting.bubble?.texture);
-    expect(waiting.bubble?.texture).not.toBe(blocked.bubble?.texture);
-    expect(waiting.selectionRing?.texture).toBe(blocked.selectionRing?.texture);
-    expect(waiting.marker.texture).not.toBe(blocked.marker.texture);
-    expect(idle.bubble).toBeNull();
-    expect(idle.selectionRing).toBeNull();
-    for (const parts of [waiting, alsoWaiting, blocked, idle]) {
+    expect(waiting.marker).not.toBe(alsoWaiting.marker);
+    expect(waiting.marker.texture).toBe(alsoWaiting.marker.texture);
+    expect(waiting.marker.texture).not.toBe(reconnecting.marker.texture);
+    expect(reconnecting.marker.texture).toBe(offline.marker.texture);
+    expect(onResume.marker.texture).toBe(human.marker.texture);
+    expect(onResume.marker.texture).not.toBe(waiting.marker.texture);
+    expect(waiting.selectionRing?.texture).toBe(reconnecting.selectionRing?.texture);
+    expect(onResume.selectionRing).toBeNull();
+    for (const parts of [waiting, alsoWaiting, reconnecting, offline, onResume, human]) {
       for (const sprite of Object.values(parts)) sprite?.destroy();
     }
     cache.destroy();

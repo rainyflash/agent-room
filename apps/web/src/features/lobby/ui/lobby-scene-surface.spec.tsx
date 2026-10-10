@@ -65,10 +65,7 @@ describe('LobbySceneSurface', () => {
     const onSelectAgent = vi.fn();
     const view = render(
       <LobbySceneSurface
-        labels={{
-          canvas: 'Agent spatial view',
-          zones: { active: 'Active', attention: 'Attention', available: 'Available' },
-        }}
+        labels={{ canvas: 'Agent spatial view' }}
         languageKey="en"
         onSelectAgent={onSelectAgent}
         onZoomChange={vi.fn()}

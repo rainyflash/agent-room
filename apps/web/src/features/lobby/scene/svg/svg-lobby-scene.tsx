@@ -18,15 +18,15 @@ import {
 } from '../../domain/scene-projection';
 import { ViewportController, type CameraSnapshot } from '../viewport-controller';
 import {
+  characterDimmed,
+  characterFill,
   characterShadow,
   estimatedTextWidth,
   humanMarker,
   nameplate,
   sceneInk,
   selectionRing,
-  statusBadgeFill,
   statusSticker,
-  statusStickerFill,
 } from '../scene-style';
 import { RoomPlan } from './room-plan';
 import { roomHome } from '../../domain/room-map';
@@ -350,7 +350,7 @@ function SvgCharacter({
           />
         </g>
       ) : null}
-      <g opacity={node.status === 'offline' ? 0.56 : 1}>
+      <g opacity={characterDimmed(node) ? 0.56 : 1}>
         {node.kind === 'human' ? (
           <g>
             <polygon points="-28,-32 -14,-57 14,-57 28,-32 14,-7 -14,-7" fill={humanMarker.fill} />
@@ -363,33 +363,11 @@ function SvgCharacter({
           cx="30"
           cy="-70"
           r="4.5"
-          fill={statusStickerFill[node.status]}
+          fill={characterFill(node)}
           stroke={sceneInk}
           strokeWidth="2"
         />
       </g>
-      {node.status === 'waiting_input' || node.status === 'blocked' ? (
-        <g>
-          <rect
-            x="25"
-            y="-106"
-            width="23"
-            height="23"
-            rx="8"
-            fill={statusBadgeFill[node.status]}
-            stroke={sceneInk}
-            strokeWidth="2"
-          />
-          <text
-            x="37"
-            y="-90"
-            textAnchor="middle"
-            style={{ fill: sceneInk, fontSize: 19, fontWeight: 700 }}
-          >
-            {node.status === 'blocked' ? '!' : '?'}
-          </text>
-        </g>
-      ) : null}
       <rect x="-38" y="-92" width="76" height="132" fill="transparent" />
     </>
   );
@@ -442,7 +420,7 @@ function SvgCharacterLabels({
             width={statusWidth}
             height={statusSticker.height}
             rx={statusSticker.height / 2}
-            fill={statusStickerFill[node.status]}
+            fill={characterFill(node)}
             stroke={statusSticker.stroke}
             strokeWidth={statusSticker.strokeWidth}
           />

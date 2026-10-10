@@ -8,7 +8,6 @@ const person = (id: string, x = 0): SceneCharacter => ({
   displayName: '张小明的设计助手',
   kind: 'agent',
   isSelf: false,
-  status: 'idle',
   radius: 27,
   x,
   y: 0,
@@ -35,7 +34,7 @@ describe('room character labels', () => {
       ...person(id, x),
       displayName: 'Ada',
     });
-    const status = () => 'Waiting for input · Reads next run';
+    const status = () => 'Reads next run';
     expect([...visibleCharacterLabels([short('a', 0), short('b', 150)], null, true)]).toEqual([
       'a',
       'b',

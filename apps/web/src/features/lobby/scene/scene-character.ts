@@ -1,8 +1,11 @@
-import type { LobbyAgentStatus } from '../domain/lobby';
 import type { FloorPoint, RoomFloor } from '../domain/room-floor';
 import type { LobbySceneProjection, LobbyViewport } from '../domain/scene-projection';
-import { agentReception, agentLifecycle, type AgentReception } from '../domain/agent-attendance';
-import type { AgentReceptionState } from '@agent-room/protocol';
+import {
+  agentReception,
+  agentStateKey,
+  type AgentReception,
+  type AgentStateKey,
+} from '../domain/agent-attendance';
 
 export type SceneCharacter = {
   readonly characterId: string;
@@ -10,9 +13,9 @@ export type SceneCharacter = {
   readonly displayName: string;
   readonly kind: 'agent' | 'human';
   readonly isSelf: boolean;
-  readonly status: LobbyAgentStatus | 'present';
   readonly reception?: AgentReception;
-  readonly availability?: AgentReceptionState | 'reconnecting' | 'offline';
+  /** 名牌下的贴纸和头顶圆点看它：在不在等消息，或者重连中、离线。人没有。 */
+  readonly availability?: AgentStateKey;
   readonly radius: number;
   readonly roamingRadius?: number;
   readonly floorPosition?: FloorPoint;
@@ -32,12 +35,7 @@ export function sceneCharacters(
       kind: 'agent',
       isSelf: false,
       reception: agentReception(node, scene.observedAtUnixMs),
-      availability:
-        agentLifecycle(node, scene.observedAtUnixMs).connection === 'online'
-          ? agentLifecycle(node, scene.observedAtUnixMs).reception
-          : agentLifecycle(node, scene.observedAtUnixMs).connection === 'reconnecting'
-            ? 'reconnecting'
-            : 'offline',
+      availability: agentStateKey(node, scene.observedAtUnixMs),
       floor: { width: scene.world.width, depth: scene.world.height },
     })),
     ...(scene.humans ?? []).map((human): SceneCharacter => ({
@@ -47,7 +45,6 @@ export function sceneCharacters(
           ? `${selfLabel} · ${human.displayName}`
           : human.displayName,
       kind: 'human',
-      status: 'present',
       roamingRadius: 0,
     })),
   ];

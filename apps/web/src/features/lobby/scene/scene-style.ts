@@ -1,4 +1,5 @@
-import type { LobbyAgentStatus } from '@/features/lobby/domain/lobby';
+import type { AgentStateKey } from '@/features/lobby/domain/agent-attendance';
+import type { SceneCharacter } from './scene-character';
 
 /**
  * 游戏大厅场景的颜色、描边与名牌几何。Pixi 与无 WebGL 的 SVG 回退共用这一份，
@@ -21,20 +22,28 @@ export const selectionRing = {
   innerWidth: 3,
 } as const;
 
-export const statusBadgeFill = { waiting_input: '#ffb199', blocked: '#ffd27a' } as const;
-
 export const humanMarker = { fill: sceneInk, mark: '#ffffff' } as const;
 
-/** 状态贴纸与头顶圆点共用的底色：彩色底上只放墨色字，对比度都在 8:1 以上。 */
-export const statusStickerFill: Readonly<Record<LobbyAgentStatus | 'present', string>> = {
-  present: '#ffffff',
-  working: '#bde8d8',
-  idle: '#ffffff',
-  completed: '#bde8d8',
-  waiting_input: '#ffb199',
-  blocked: '#ffd27a',
+/**
+ * 状态贴纸与头顶圆点共用的底色：在等消息是薄荷绿，重连中和离线是灰，别的白底，人也是白底。
+ * 彩色底上只放墨色字，对比度都在 8:1 以上。
+ */
+const availabilityFill: Readonly<Record<AgentStateKey, string>> = {
+  waiting: '#bde8d8',
+  on_resume: '#ffffff',
+  unknown: '#ffffff',
+  reconnecting: '#e9e4da',
   offline: '#e9e4da',
 };
+
+export function characterFill(node: Pick<SceneCharacter, 'availability'>): string {
+  return node.availability === undefined ? '#ffffff' : availabilityFill[node.availability];
+}
+
+/** 重连中、离线的人物画淡一些；名牌和贴纸不跟着变淡，灰色贴纸已经说明了，名字要保持可读。 */
+export function characterDimmed(node: Pick<SceneCharacter, 'availability'>): boolean {
+  return node.availability === 'reconnecting' || node.availability === 'offline';
+}
 
 /** 名牌在人物脚下；标签避让在 character-labels.ts 里预留了 y + 8 到 y + 66 的高度。 */
 export const nameplate = {

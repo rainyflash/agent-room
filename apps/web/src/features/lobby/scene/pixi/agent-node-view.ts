@@ -5,12 +5,13 @@ import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection'
 import type { CharacterPose } from '../character-motion';
 import type { CharacterParts } from './character-texture-cache';
 import {
+  characterDimmed,
+  characterFill,
   estimatedTextWidth,
   nameplate,
   sceneFont,
   sceneInk,
   statusSticker,
-  statusStickerFill,
 } from '../scene-style';
 
 type PixiModule = typeof import('pixi.js');
@@ -62,9 +63,8 @@ export function createAgentNodeView(
     body.addChild(options.walkingBody);
   }
   character.addChild(body);
-  if (node.status === 'offline') character.alpha = 0.56;
+  if (characterDimmed(node)) character.alpha = 0.56;
   character.addChild(parts.marker);
-  if (parts.bubble !== null) character.addChild(parts.bubble);
   // 名牌与状态贴纸。胶囊宽度按字形估算，与 SVG 回退完全一致；
   // 字体加载完成后场景会整体重建一次，让画布文字换成真正的字体。
   // 它们不随离线人物一起变淡：离线已经由灰色贴纸说明，名字要保持可读。
@@ -98,7 +98,7 @@ export function createAgentNodeView(
       fontWeight: statusSticker.fontWeight,
       paddingX: statusSticker.paddingX,
       height: statusSticker.height,
-      fill: statusStickerFill[node.status],
+      fill: characterFill(node),
       strokeWidth: statusSticker.strokeWidth,
     });
     status.position.set(0, nameplate.top + nameplate.height + statusSticker.gap);
