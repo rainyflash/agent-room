@@ -1,9 +1,6 @@
 use std::{
     fmt::Write as _,
-    sync::{
-        Arc, Mutex, MutexGuard, PoisonError,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::{Duration, SystemTime},
 };
 
@@ -71,7 +68,6 @@ impl ReleaseUpdateRuntime {
                 notice,
                 watch: Mutex::default(),
                 checking: tokio::sync::Mutex::new(()),
-                installing: AtomicBool::new(false),
             })),
         })
     }
@@ -151,9 +147,8 @@ struct ReleaseUpdateService {
     state: ReleaseUpdateStateStore,
     notice: UpdateNotice,
     watch: Mutex<UpdateWatch>,
-    /// 同一时间只查一次；手动检查排队等，自动检查碰上就跳过。安装时也拿着它。
+    /// 同一时间只查一次；手动检查排队等，自动检查碰上就跳过。安装时也拿着它，装的时候不查。
     checking: tokio::sync::Mutex<()>,
-    installing: AtomicBool,
 }
 
 /// 检查的记录：上次什么时候查的（自动检查据此判断该不该查）、结果、托盘上挂着哪个版本。
@@ -177,9 +172,6 @@ impl ReleaseUpdateService {
 
     /// 离上次检查满了 `interval` 就按这一版所属的渠道查一次。正在安装、或者别的检查正在跑，就不查。
     async fn check_if_due(&self, interval: Duration) {
-        if self.installing.load(Ordering::Acquire) {
-            return;
-        }
         let Ok(_checking) = self.checking.try_lock() else {
             return;
         };
@@ -303,10 +295,7 @@ impl ReleaseUpdateService {
             ));
         }
         let _checking = self.checking.lock().await;
-        self.installing.store(true, Ordering::Release);
-        let failure = self.download_and_install(channel, expected_sequence).await;
-        self.installing.store(false, Ordering::Release);
-        failure
+        self.download_and_install(channel, expected_sequence).await
     }
 
     async fn download_and_install(
