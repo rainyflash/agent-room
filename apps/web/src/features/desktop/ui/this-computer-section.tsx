@@ -113,13 +113,7 @@ function ThisComputerConnection() {
           }
           tone="danger"
         >
-          <p>
-            {t(
-              failure.code === 'desktop.update.draft_unsaved'
-                ? 'conversation.draftUnavailable'
-                : 'thisComputer.failure',
-            )}
-          </p>
+          <p>{t('thisComputer.failure')}</p>
           <Details summary={t('connection.details')}>
             <code>{failure.code}</code>
           </Details>

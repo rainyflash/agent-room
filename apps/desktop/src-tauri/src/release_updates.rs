@@ -1,26 +1,36 @@
 use std::{
     fmt::Write as _,
-    sync::Arc,
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime},
 };
 
 use agent_room_release_manifest::{
-    ArtifactKind, ReleaseArtifact, ReleaseChannel, ReleaseInspection, SignedReleaseManifest,
-    VerifiedRelease, inspect_release,
+    ArtifactKind, ReleaseArtifact, ReleaseChannel, ReleaseInspection, ReleaseManifestError,
+    SignedReleaseManifest, VerifiedRelease, inspect_release,
 };
 use futures_util::StreamExt as _;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tauri::{AppHandle, Emitter as _, Manager as _};
+use tauri_plugin_notification::NotificationExt as _;
 use tauri_plugin_updater::{Update, UpdaterExt as _};
 use url::Url;
 
 use crate::{
+    native_language,
     release_update_config::ReleaseUpdateConfig,
     release_update_state::{ReleaseUpdateStateFailure, ReleaseUpdateStateStore},
+    release_update_watch::{
+        AUTOMATIC_INTERVAL, FIRST_CHECK_DELAY, ReleaseUpdateStatus, SCHEDULE_TICK, UpdateNotice,
+        WINDOW_RECHECK_AFTER, app_translocated, available_notification, due,
+    },
 };
 
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+const UPDATE_STATUS_EVENT: &str = "desktop://update-status";
 
 #[derive(Clone)]
 pub(crate) struct ReleaseUpdateRuntime {
@@ -35,12 +45,12 @@ impl ReleaseUpdateRuntime {
         let Some(config) = config else {
             return Ok(Self { service: None });
         };
-        let state_root = app
+        let data_root = app
             .path()
             .app_data_dir()
-            .map_err(|_| ReleaseUpdateFailure::state("desktop.update.data_path_failed"))?
-            .join("release-trust");
-        let state = ReleaseUpdateStateStore::new(state_root);
+            .map_err(|_| ReleaseUpdateFailure::state("desktop.update.data_path_failed"))?;
+        let notice = UpdateNotice::new(data_root.join("update-notified"));
+        let state = ReleaseUpdateStateStore::new(data_root.join("release-trust"));
         let current_version = app.package_info().version.to_string();
         state
             .reconcile_installation(&current_version)
@@ -58,6 +68,10 @@ impl ReleaseUpdateRuntime {
                 config,
                 current_version,
                 state,
+                notice,
+                watch: Mutex::default(),
+                checking: tokio::sync::Mutex::new(()),
+                installing: AtomicBool::new(false),
             })),
         })
     }
@@ -66,11 +80,14 @@ impl ReleaseUpdateRuntime {
         self.service.is_some()
     }
 
+    /// 手动检查（设置里的按钮），渠道由人选。结果和自动检查记在同一处。
     pub(crate) async fn check(
         &self,
         channel: ReleaseChannel,
     ) -> Result<ReleaseUpdateCheck, ReleaseUpdateFailure> {
-        self.service()?.check(channel).await
+        let service = self.service()?;
+        let _checking = service.checking.lock().await;
+        service.check_now(channel, CheckOrigin::Manual).await
     }
 
     pub(crate) async fn install(
@@ -79,6 +96,44 @@ impl ReleaseUpdateRuntime {
         expected_sequence: u64,
     ) -> Result<(), ReleaseUpdateFailure> {
         self.service()?.install(channel, expected_sequence).await
+    }
+
+    /// 应用开着就定时查：启动 30 秒后第一次，之后每 4 小时。按墙上时间判断，睡醒以后几分钟内就查。
+    pub(crate) fn start_schedule(&self) {
+        let Some(service) = self.service.clone() else {
+            return;
+        };
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(FIRST_CHECK_DELAY).await;
+            loop {
+                service.check_if_due(AUTOMATIC_INTERVAL).await;
+                tokio::time::sleep(SCHEDULE_TICK).await;
+            }
+        });
+    }
+
+    /// 窗口重新打开了：离上次检查超过 1 小时就马上查。
+    pub(crate) fn window_shown(&self) {
+        let Some(service) = self.service.clone() else {
+            return;
+        };
+        tauri::async_runtime::spawn(async move {
+            service.check_if_due(WINDOW_RECHECK_AFTER).await;
+        });
+    }
+
+    /// 上次检查的结果，网页加载时随快照一起拿。
+    pub(crate) fn status(&self) -> Option<ReleaseUpdateStatus> {
+        self.service
+            .as_deref()
+            .and_then(|service| service.watch().status.clone())
+    }
+
+    /// 已知可以装的新版本，托盘菜单重建时用。
+    pub(crate) fn available_version(&self) -> Option<String> {
+        self.service
+            .as_deref()
+            .and_then(|service| service.watch().tray_version.clone())
     }
 
     fn service(&self) -> Result<&ReleaseUpdateService, ReleaseUpdateFailure> {
@@ -94,10 +149,121 @@ struct ReleaseUpdateService {
     config: ReleaseUpdateConfig,
     current_version: String,
     state: ReleaseUpdateStateStore,
+    notice: UpdateNotice,
+    watch: Mutex<UpdateWatch>,
+    /// 同一时间只查一次；手动检查排队等，自动检查碰上就跳过。安装时也拿着它。
+    checking: tokio::sync::Mutex<()>,
+    installing: AtomicBool,
+}
+
+/// 检查的记录：上次什么时候查的（自动检查据此判断该不该查）、结果、托盘上挂着哪个版本。
+#[derive(Default)]
+struct UpdateWatch {
+    last_attempt: Option<SystemTime>,
+    status: Option<ReleaseUpdateStatus>,
+    tray_version: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckOrigin {
+    Automatic,
+    Manual,
 }
 
 impl ReleaseUpdateService {
-    async fn check(
+    fn watch(&self) -> MutexGuard<'_, UpdateWatch> {
+        self.watch.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// 离上次检查满了 `interval` 就按这一版所属的渠道查一次。正在安装、或者别的检查正在跑，就不查。
+    async fn check_if_due(&self, interval: Duration) {
+        if self.installing.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(_checking) = self.checking.try_lock() else {
+            return;
+        };
+        if !due(self.watch().last_attempt, SystemTime::now(), interval) {
+            return;
+        }
+        let channel = default_channel(&self.current_version);
+        let _ = self.check_now(channel, CheckOrigin::Automatic).await;
+    }
+
+    /// 查一次并记下结果。调用方要拿着 `checking`。
+    async fn check_now(
+        &self,
+        channel: ReleaseChannel,
+        origin: CheckOrigin,
+    ) -> Result<ReleaseUpdateCheck, ReleaseUpdateFailure> {
+        self.watch().last_attempt = Some(SystemTime::now());
+        let outcome = self.inspect(channel).await;
+        self.record(origin, channel, &outcome);
+        outcome
+    }
+
+    /// 记下结果、告诉界面、写一行日志；可装的版本变了就重建托盘菜单，新版本第一次查到时提醒。
+    fn record(
+        &self,
+        origin: CheckOrigin,
+        channel: ReleaseChannel,
+        outcome: &Result<ReleaseUpdateCheck, ReleaseUpdateFailure>,
+    ) {
+        let automatic = origin == CheckOrigin::Automatic;
+        match outcome {
+            Ok(check) if check.available => {
+                tracing::info!(target_version = %check.target_version, automatic, "查到桌面端新版本");
+            }
+            Ok(_) => tracing::debug!(automatic, "桌面端已是最新版本"),
+            Err(failure) => {
+                tracing::warn!(error_code = failure.code(), automatic, "检查桌面端更新没成");
+            }
+        }
+        let (status, tray_changed) = {
+            let mut watch = self.watch();
+            let status = ReleaseUpdateStatus::after(
+                watch.status.as_ref(),
+                channel_name(channel),
+                outcome,
+                now_unix_millis(),
+            );
+            let version = status.available_version().map(str::to_owned);
+            let tray_changed = watch.tray_version != version;
+            watch.tray_version = version;
+            watch.status = Some(status.clone());
+            (status, tray_changed)
+        };
+        let _ = self.app.emit(UPDATE_STATUS_EVENT, &status);
+        if tray_changed {
+            native_language::refresh_tray_menu(&self.app, status.available_version());
+        }
+        if let Some(version) = status.available_version() {
+            self.announce(origin, version);
+        }
+    }
+
+    /// 每个版本只提醒一次。手动查到的、或者窗口正开在前台，人已经看到了，只记下不发通知。
+    fn announce(&self, origin: CheckOrigin, version: &str) {
+        if !self.notice.claim(version)
+            || origin == CheckOrigin::Manual
+            || main_window_in_front(&self.app)
+        {
+            return;
+        }
+        let (title, body) = available_notification(native_language::language(&self.app), version);
+        if let Err(error) = self
+            .app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+        {
+            tracing::warn!(%error, "新版本的系统通知没发出去");
+        }
+    }
+
+    async fn inspect(
         &self,
         channel: ReleaseChannel,
     ) -> Result<ReleaseUpdateCheck, ReleaseUpdateFailure> {
@@ -124,7 +290,26 @@ impl ReleaseUpdateService {
         }
     }
 
+    /// 装好就重启，不会返回；返回的都是没装成。装的时候不让自动检查插进来。
     async fn install(
+        &self,
+        channel: ReleaseChannel,
+        expected_sequence: u64,
+    ) -> Result<(), ReleaseUpdateFailure> {
+        // 在只读位置运行时换不了自己，下载前就说清楚。
+        if app_translocated() {
+            return Err(ReleaseUpdateFailure::policy(
+                "desktop.update.app_translocated",
+            ));
+        }
+        let _checking = self.checking.lock().await;
+        self.installing.store(true, Ordering::Release);
+        let failure = self.download_and_install(channel, expected_sequence).await;
+        self.installing.store(false, Ordering::Release);
+        failure
+    }
+
+    async fn download_and_install(
         &self,
         channel: ReleaseChannel,
         expected_sequence: u64,
@@ -175,7 +360,7 @@ impl ReleaseUpdateService {
             &trust_state,
             now_unix_seconds()?,
         )
-        .map_err(|_| ReleaseUpdateFailure::policy("desktop.update.manifest_rejected"))?;
+        .map_err(|error| ReleaseUpdateFailure::policy(manifest_failure_code(&error)))?;
         let ReleaseInspection::Update(verified) = inspection else {
             let ReleaseInspection::Current(manifest) = inspection else {
                 unreachable!("发布检查只有当前版本和更新版本")
@@ -332,7 +517,7 @@ struct PreparedUpdate {
     verified: VerifiedRelease,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReleaseUpdateCheck {
     available: bool,
@@ -341,6 +526,36 @@ pub(crate) struct ReleaseUpdateCheck {
     target_version: String,
     sequence: u64,
     rollback: bool,
+}
+
+impl ReleaseUpdateCheck {
+    pub(crate) const fn available(&self) -> bool {
+        self.available
+    }
+
+    pub(crate) fn target_version(&self) -> &str {
+        &self.target_version
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(available: bool, current: &str, target: &str) -> Self {
+        Self {
+            available,
+            channel: "testing",
+            current_version: current.to_owned(),
+            target_version: target.to_owned(),
+            sequence: 1,
+            rollback: false,
+        }
+    }
+}
+
+/// 清单过期单给一个错误码：两次发版隔了一周以上就会这样，下次发版就好，不是故障。
+const fn manifest_failure_code(error: &ReleaseManifestError) -> &'static str {
+    match error {
+        ReleaseManifestError::Expired => "desktop.update.manifest_expired",
+        _ => "desktop.update.manifest_rejected",
+    }
 }
 
 fn select_artifact(
@@ -385,6 +600,30 @@ fn now_unix_seconds() -> Result<u64, ReleaseUpdateFailure> {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .map_err(|_| ReleaseUpdateFailure::state("desktop.update.clock_invalid"))
+}
+
+fn now_unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// 自动检查走这一版所属的渠道，和网页层以前的规则一样：版本号带 `-` 的是测试版。
+pub(crate) fn default_channel(version: &str) -> ReleaseChannel {
+    if version.contains('-') {
+        ReleaseChannel::Testing
+    } else {
+        ReleaseChannel::Stable
+    }
+}
+
+/// 主窗口开着、又在前台：窗口里的提示人已经看得到，不用再发系统通知。
+fn main_window_in_front(app: &AppHandle) -> bool {
+    app.get_webview_window("main").is_some_and(|window| {
+        window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
+    })
 }
 
 const fn channel_name(channel: ReleaseChannel) -> &'static str {
@@ -445,6 +684,11 @@ impl ReleaseUpdateFailure {
     pub(crate) const fn retryable(self) -> bool {
         self.retryable
     }
+
+    #[cfg(test)]
+    pub(crate) const fn for_tests(code: &'static str, retryable: bool) -> Self {
+        Self { code, retryable }
+    }
 }
 
 #[cfg(test)]
@@ -498,6 +742,24 @@ mod tests {
                 .expect_err("篡改摘要必须失败")
                 .code(),
             "desktop.update.artifact_digest_mismatch"
+        );
+    }
+
+    #[test]
+    fn 自动检查按版本号定渠道() {
+        assert_eq!(default_channel("0.1.0-alpha.67"), ReleaseChannel::Testing);
+        assert_eq!(default_channel("1.0.0"), ReleaseChannel::Stable);
+    }
+
+    #[test]
+    fn 清单过期单给一个错误码() {
+        assert_eq!(
+            manifest_failure_code(&ReleaseManifestError::Expired),
+            "desktop.update.manifest_expired"
+        );
+        assert_eq!(
+            manifest_failure_code(&ReleaseManifestError::InvalidSignature),
+            "desktop.update.manifest_rejected"
         );
     }
 

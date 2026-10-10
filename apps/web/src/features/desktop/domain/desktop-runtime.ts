@@ -106,6 +106,40 @@ export type DesktopNotification = {
   readonly body: string;
 };
 
+export const releaseUpdateChannelSchema = z.enum(['stable', 'testing']);
+export type ReleaseUpdateChannel = z.infer<typeof releaseUpdateChannelSchema>;
+
+/** A prerelease (alpha, beta, rc) came from the testing channel; only plain versions follow stable. */
+export function defaultReleaseChannel(version: string): ReleaseUpdateChannel {
+  return version.includes('-') ? 'testing' : 'stable';
+}
+
+export const releaseUpdateCheckSchema = z
+  .object({
+    available: z.boolean(),
+    channel: releaseUpdateChannelSchema,
+    currentVersion: z.string().min(1).max(64),
+    targetVersion: z.string().min(1).max(64),
+    sequence: z.number().int().nonnegative(),
+    rollback: z.boolean(),
+  })
+  .strict();
+export type ReleaseUpdateCheck = z.infer<typeof releaseUpdateCheckSchema>;
+
+/**
+ * 原生层上次检查更新的结果：什么时候、按哪个渠道查的，最近一次查成的结果，最近这次没查成的原因。
+ * 没查成时 `check` 留着上一次查成的，已经知道的新版本不会因为网络断一下就不见了。
+ */
+export const releaseUpdateStatusSchema = z
+  .object({
+    checkedAtUnixMs: z.number().int().nonnegative(),
+    channel: releaseUpdateChannelSchema,
+    check: releaseUpdateCheckSchema.nullable(),
+    failure: z.object({ code: diagnosticCodeSchema, retryable: z.boolean() }).strict().nullable(),
+  })
+  .strict();
+export type ReleaseUpdateStatus = z.infer<typeof releaseUpdateStatusSchema>;
+
 export const desktopRuntimeSnapshotSchema = z
   .object({
     bridge: bridgeRuntimeSchema,
@@ -113,6 +147,10 @@ export const desktopRuntimeSnapshotSchema = z
     platform: z.enum(['windows', 'macos', 'linux', 'unknown']),
     deepLink: desktopDeepLinkSchema.nullable(),
     updatesConfigured: z.boolean(),
+    // 原生层上次检查更新的结果，还没查过时为 null。
+    updateStatus: releaseUpdateStatusSchema.nullable().optional(),
+    // macOS 上应用没在“应用程序”文件夹里、在只读位置运行，更新换不了自己。
+    appTranslocated: z.boolean().optional(),
     currentVersion: z.string().min(1).max(64).optional(),
     agentTarget: desktopAgentTargetSchema.nullable(),
     cliConfiguration: z
@@ -140,26 +178,6 @@ export type BridgePhase = z.infer<typeof bridgePhaseSchema>;
 export type DesktopDeepLink = z.infer<typeof desktopDeepLinkSchema>;
 export type DesktopRuntimeSnapshot = z.infer<typeof desktopRuntimeSnapshotSchema>;
 export type ManualHostConfiguration = DesktopRuntimeSnapshot['manualHostConfiguration'];
-
-export const releaseUpdateChannelSchema = z.enum(['stable', 'testing']);
-export type ReleaseUpdateChannel = z.infer<typeof releaseUpdateChannelSchema>;
-
-/** A prerelease (alpha, beta, rc) came from the testing channel; only plain versions follow stable. */
-export function defaultReleaseChannel(version: string): ReleaseUpdateChannel {
-  return version.includes('-') ? 'testing' : 'stable';
-}
-
-export const releaseUpdateCheckSchema = z
-  .object({
-    available: z.boolean(),
-    channel: releaseUpdateChannelSchema,
-    currentVersion: z.string().min(1).max(64),
-    targetVersion: z.string().min(1).max(64),
-    sequence: z.number().int().nonnegative(),
-    rollback: z.boolean(),
-  })
-  .strict();
-export type ReleaseUpdateCheck = z.infer<typeof releaseUpdateCheckSchema>;
 
 export const hostSessionDiagnosticsSchema = z
   .object({
@@ -289,6 +307,10 @@ export type DesktopRuntimeEventHandlers = {
   readonly onFailure: (failure: DesktopRuntimeFailure) => void;
   readonly onRuntimeChanged: (runtime: BridgeRuntime) => void;
   readonly onUpdateProgress?: (progress: ReleaseUpdateProgress) => void;
+  /** 原生层查完一次更新（自动的、手动的都算）。 */
+  readonly onUpdateStatus?: (status: ReleaseUpdateStatus) => void;
+  /** 托盘菜单里点了“更新到 X…”。 */
+  readonly onUpdateRequested?: () => void;
 };
 
 export type DesktopRuntimeGateway = {

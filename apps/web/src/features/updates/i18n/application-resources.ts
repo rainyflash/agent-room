@@ -14,10 +14,15 @@ export const applicationResources = {
       'Automatic updates are not configured for this build. Get the published installer from the release page below.',
     'application.checking': 'Checking…',
     'application.installing': 'Downloading and installing…',
-    'application.install': 'Install and restart',
+    'application.install': 'Update and restart',
     'application.webAvailable': 'A new web version is available.',
     'application.current': 'You are up to date.',
     'application.checkedAt': 'Checked at {{time}}.',
+    'application.lastCheck.current': 'Last checked {{time}}: you’re up to date.',
+    'application.lastCheck.expired':
+      'Last checked {{time}}: new versions can’t be looked up right now. This clears up with the next release.',
+    'application.lastCheck.failed':
+      'Last checked {{time}}: the check didn’t go through. Agent Room tries again in a few hours, or you can check now.',
     'application.desktopUpdates': 'Desktop app updates are under',
     'application.failed':
       'The update did not complete. Check your connection and wait for any unsaved attachment or message to finish, then retry.',
@@ -44,10 +49,14 @@ export const applicationResources = {
     'application.unconfigured': '这个构建未配置自动升级，可以从下方的发布页下载安装包。',
     'application.checking': '正在检查…',
     'application.installing': '正在下载并安装…',
-    'application.install': '安装并重启',
+    'application.install': '更新并重启',
     'application.webAvailable': '有新的网页版可以更新。',
     'application.current': '当前已是最新版本。',
     'application.checkedAt': '{{time}} 检查过。',
+    'application.lastCheck.current': '上次检查：{{time}}，已是最新版本。',
+    'application.lastCheck.expired': '上次检查：{{time}}，暂时查不到新版本，下次发版以后就好。',
+    'application.lastCheck.failed':
+      '上次检查：{{time}}，没查成。过几个小时会自动再查，也可以现在点“检查”。',
     'application.desktopUpdates': '桌面端的应用更新在',
     'application.failed': '更新未完成。请检查网络，等待未保存的附件或发送中的消息处理完成后重试。',
     'application.releaseNotes': '更新记录与下载',

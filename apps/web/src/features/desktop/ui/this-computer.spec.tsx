@@ -3,15 +3,18 @@
 import '@testing-library/jest-dom/vitest';
 
 import { I18nextProvider } from 'react-i18next';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type {
   BridgeRuntime,
+  DesktopRuntimeEventHandlers,
   DesktopRuntimeGateway,
   DesktopRuntimeSnapshot,
   HostSessionDiagnostics,
+  ReleaseUpdateCheck,
+  ReleaseUpdateStatus,
 } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { LocalAgentSessions } from '@/features/desktop/ui/local-agent-sessions';
@@ -65,11 +68,39 @@ const halted: BridgeRuntime = {
   deviceReauthorizationAvailable: true,
 };
 
-function snapshot(bridge: BridgeRuntime, currentVersion?: string): DesktopRuntimeSnapshot {
+const availableUpdate: ReleaseUpdateCheck = {
+  available: true,
+  channel: 'testing',
+  currentVersion: '0.1.0',
+  rollback: false,
+  sequence: 8,
+  targetVersion: '0.2.0',
+};
+
+function updateStatus(overrides: Partial<ReleaseUpdateStatus> = {}): ReleaseUpdateStatus {
+  return {
+    channel: 'testing',
+    check: availableUpdate,
+    checkedAtUnixMs: Date.now() - 60_000,
+    failure: null,
+    ...overrides,
+  };
+}
+
+function snapshot(
+  bridge: BridgeRuntime,
+  options: {
+    readonly currentVersion?: string;
+    readonly updateStatus?: ReleaseUpdateStatus | null;
+    readonly appTranslocated?: boolean;
+  } = {},
+): DesktopRuntimeSnapshot {
   return {
     autostartEnabled: false,
     bridge,
-    ...(currentVersion === undefined ? {} : { currentVersion }),
+    ...(options.currentVersion === undefined ? {} : { currentVersion: options.currentVersion }),
+    updateStatus: options.updateStatus ?? null,
+    appTranslocated: options.appTranslocated ?? false,
     deepLink: null,
     cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
     manualHostConfiguration: {
@@ -89,6 +120,8 @@ function gateway(
   options: {
     readonly currentVersion?: string;
     readonly sessions?: readonly HostSessionDiagnostics[];
+    readonly updateStatus?: ReleaseUpdateStatus | null;
+    readonly appTranslocated?: boolean;
   } = {},
 ) {
   const unavailable = () =>
@@ -116,8 +149,11 @@ function gateway(
       }),
     ),
   );
-  const installUpdate = vi.fn(() => Promise.resolve(ok(undefined)));
+  const installUpdate = vi.fn<DesktopRuntimeGateway['installUpdate']>(() =>
+    Promise.resolve(ok(undefined)),
+  );
   const openLogs = vi.fn(() => Promise.resolve(ok(undefined)));
+  const events: { handlers: DesktopRuntimeEventHandlers | null } = { handlers: null };
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: unavailable,
     beginMatrixAuthentication: unavailable,
@@ -136,11 +172,15 @@ function gateway(
     retryBridge,
     reauthorizeBridge,
     setAutostart: (enabled) => Promise.resolve(ok(enabled)),
-    snapshot: () => Promise.resolve(ok(snapshot(bridge, options.currentVersion))),
-    subscribe: () => Promise.resolve(ok(() => undefined)),
+    snapshot: () => Promise.resolve(ok(snapshot(bridge, options))),
+    subscribe: (handlers) => {
+      events.handlers = handlers;
+      return Promise.resolve(ok(() => undefined));
+    },
   };
   return {
     checkUpdate,
+    events,
     installUpdate,
     openAuthorization,
     openLogs,
@@ -397,8 +437,16 @@ describe('这台电脑', () => {
 });
 
 describe('应用更新', () => {
-  it('启动后自动按本版所属渠道查一次更新：提示栈里一条去安装，“设置”上一个提醒点', async () => {
-    const runtime = gateway(ready, { currentVersion: '0.1.0-alpha.47' });
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.useRealTimers();
+  });
+
+  it('原生层查到新版本：提示栈里一条，点一下就更新并重启，“设置”上一个提醒点；网页自己不查', async () => {
+    const runtime = gateway(ready, {
+      currentVersion: '0.1.0-alpha.47',
+      updateStatus: updateStatus(),
+    });
     renderDesktop(
       runtime.value,
       <>
@@ -407,49 +455,152 @@ describe('应用更新', () => {
       </>,
     );
 
-    await waitFor(() => {
-      expect(runtime.checkUpdate).toHaveBeenCalledWith('testing');
-    });
-    expect(runtime.checkUpdate).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('Agent Room 0.2.0 is ready to install')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Install' })).toHaveAttribute(
-      'href',
-      '/settings/this-computer',
-    );
     expect(screen.getByRole('link', { name: /Settings.*Update ready/u })).toBeVisible();
-    // 稍后：这个版本不再提醒，“设置”上的点还在。
-    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
-    expect(screen.queryByText('Agent Room 0.2.0 is ready to install')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Settings.*Update ready/u })).toBeVisible();
+    expect(runtime.checkUpdate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Update and restart' }));
+    await waitFor(() => {
+      expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
+    });
   });
 
-  it('未授权也能检查并安装更新，出错后按钮恢复可重试；停机时同样能装', async () => {
+  it('“稍后”记住这个版本 24 小时，到点再提醒；更新的版本马上提醒', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const runtime = gateway(ready, { updateStatus: updateStatus() });
+    renderDesktop(
+      runtime.value,
+      <>
+        <AppNavigation />
+        <DesktopUpdateToast />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Later' }));
+    expect(screen.queryByText('Agent Room 0.2.0 is ready to install')).not.toBeInTheDocument();
+    // “设置”上的点还在。
+    expect(screen.getByRole('link', { name: /Settings.*Update ready/u })).toBeVisible();
+    act(() => {
+      vi.advanceTimersByTime(24 * 60 * 60 * 1_000);
+    });
+    expect(await screen.findByText('Agent Room 0.2.0 is ready to install')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+    act(() => {
+      runtime.events.handlers?.onUpdateStatus?.(
+        updateStatus({
+          check: { ...availableUpdate, sequence: 9, targetVersion: '0.3.0' },
+          checkedAtUnixMs: Date.now(),
+        }),
+      );
+    });
+    expect(await screen.findByText('Agent Room 0.3.0 is ready to install')).toBeVisible();
+  });
+
+  it('托盘菜单点了“更新到 X…”：网页照常先看草稿再装，被“稍后”收起的提示出来显示进度', async () => {
+    const runtime = gateway(ready, { updateStatus: updateStatus() });
+    runtime.installUpdate.mockImplementationOnce(() => new Promise(() => undefined));
+    renderDesktop(runtime.value, <DesktopUpdateToast />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Later' }));
+    act(() => {
+      runtime.events.handlers?.onUpdateRequested?.();
+    });
+    await waitFor(() => {
+      expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
+    });
+    act(() => {
+      runtime.events.handlers?.onUpdateProgress?.({
+        phase: 'downloading',
+        downloadedBytes: 21,
+        totalBytes: 42,
+      });
+    });
+    expect(await screen.findByRole('button', { name: 'Downloading 50%' })).toBeDisabled();
+  });
+
+  it('装不上时提示里说一声，错误码收进详情，可以再点一次', async () => {
+    const runtime = gateway(ready, { updateStatus: updateStatus() });
+    runtime.installUpdate.mockResolvedValueOnce(
+      err({ code: 'desktop.update.download_failed', retryable: true }),
+    );
+    renderDesktop(runtime.value, <DesktopUpdateToast />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Update and restart' }));
+    expect(
+      await screen.findByText('The update didn’t install. Check your connection and try again.'),
+    ).toBeVisible();
+    expect(screen.getByText('desktop.update.download_failed')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'Update and restart' })).toBeEnabled();
+  });
+
+  it('Mac 上应用在只读位置运行：不给更新按钮，说清楚先拖进“应用程序”文件夹', async () => {
+    const runtime = gateway(ready, { appTranslocated: true, updateStatus: updateStatus() });
+    renderDesktop(
+      runtime.value,
+      <>
+        <DesktopUpdateToast />
+        <ApplicationUpdates />
+      </>,
+    );
+    expect(await screen.findByText('Agent Room 0.2.0 is ready to install')).toBeVisible();
+    expect(
+      screen.getAllByText(/Move it into the Applications folder, then open it from there/u),
+    ).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Update and restart' })).not.toBeInTheDocument();
+  });
+
+  it('设置里写上次检查：已是最新、没查成（错误码收进详情）、清单过期不当成故障', async () => {
+    const current = gateway(ready, {
+      updateStatus: updateStatus({ check: { ...availableUpdate, available: false } }),
+    });
+    renderDesktop(current.value, <ApplicationUpdates />);
+    expect(await screen.findByText(/^Last checked .+: you’re up to date\.$/u)).toBeVisible();
+    cleanup();
+
+    const offline = gateway(ready, {
+      updateStatus: updateStatus({
+        check: null,
+        failure: { code: 'desktop.update.manifest_network', retryable: true },
+      }),
+    });
+    renderDesktop(offline.value, <ApplicationUpdates />);
+    expect(await screen.findByText(/the check didn’t go through/u)).toBeVisible();
+    expect(screen.getByText('desktop.update.manifest_network')).not.toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    cleanup();
+
+    const expired = gateway(ready, {
+      updateStatus: updateStatus({
+        check: null,
+        failure: { code: 'desktop.update.manifest_expired', retryable: false },
+      }),
+    });
+    renderDesktop(expired.value, <ApplicationUpdates />);
+    expect(await screen.findByText(/This clears up with the next release\./u)).toBeVisible();
+    expect(screen.queryByText('desktop.update.manifest_expired')).not.toBeInTheDocument();
+  });
+
+  it('未授权也能检查并安装更新，没查成后按钮恢复可重试；停机时同样能装', async () => {
     const runtime = gateway(authorizing);
     runtime.checkUpdate.mockRejectedValueOnce(new Error('transport unavailable'));
     renderDesktop(runtime.value, <ApplicationUpdates />);
     const check = await screen.findByRole('button', { name: 'Check' });
     fireEvent.click(check);
-    await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('The update did not complete');
-    });
+    expect(await screen.findByText(/the check didn’t go through/u)).toBeVisible();
+    expect(screen.getByText('desktop.update.check_failed')).not.toBeVisible();
     expect(check).toBeEnabled();
     fireEvent.click(check);
-    fireEvent.click(await screen.findByRole('button', { name: 'Install and restart' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Update and restart' }));
     await waitFor(() => {
       expect(runtime.installUpdate).toHaveBeenCalledWith('testing', 8);
     });
     expect(runtime.openAuthorization).not.toHaveBeenCalled();
     cleanup();
 
-    // 升级往往正是修复停机的办法。预发行版跟随测试渠道，启动时已经查过一次。
-    const stopped = gateway(halted, { currentVersion: '0.1.0-alpha.47' });
+    // 升级往往正是修复停机的办法：原生层上次查到的新版本，打开设置就能装。
+    const stopped = gateway(halted, { updateStatus: updateStatus() });
     renderDesktop(stopped.value, <ApplicationUpdates />);
-    await waitFor(() => {
-      expect(stopped.checkUpdate).toHaveBeenCalledWith('testing');
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Install and restart' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Update and restart' }));
     await waitFor(() => {
       expect(stopped.installUpdate).toHaveBeenCalledWith('testing', 8);
     });
+    expect(stopped.checkUpdate).not.toHaveBeenCalled();
   });
 });

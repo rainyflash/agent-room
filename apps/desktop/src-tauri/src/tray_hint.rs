@@ -7,11 +7,10 @@ use tauri_plugin_notification::NotificationExt as _;
 
 use crate::{
     bridge_lifecycle::BridgePhase,
-    native_language::{self, NativeLanguage},
+    native_language::{self, NativeLanguage, TRAY_ID},
 };
 
 const MARKER_FILENAME: &str = "tray-hint-shown";
-const TRAY_ID: &str = "agent-room";
 
 /// 记住「已经提醒过窗口只是隐藏到托盘」。
 pub(crate) struct TrayHint {

@@ -20,6 +20,7 @@ import {
   desktopMatrixAuthenticationGrantSchema,
   releaseUpdateCheckSchema,
   releaseUpdateProgressSchema,
+  releaseUpdateStatusSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
   type InvitationOffer,
@@ -79,7 +80,9 @@ type DesktopEventName =
   | 'desktop://human-session-changed'
   | 'desktop://human-session-failed'
   | 'desktop://runtime-changed'
-  | 'desktop://update-progress';
+  | 'desktop://update-progress'
+  | 'desktop://update-requested'
+  | 'desktop://update-status';
 
 export type TauriDesktopTransport = {
   readonly available: () => boolean;
@@ -346,8 +349,8 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     if (!this.transport.available()) {
       return err({ code: 'desktop.runtime.unavailable', retryable: false });
     }
-    try {
-      const removeRuntimeListener = await this.transport.listen(
+    const listeners: readonly (readonly [DesktopEventName, (payload: unknown) => void])[] = [
+      [
         'desktop://runtime-changed',
         (payload) => {
           const parsed = bridgeRuntimeSchema.safeParse(payload);
@@ -357,37 +360,47 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
           }
           handlers.onFailure({ code: 'desktop.event.invalid_runtime', retryable: true });
         },
-      );
-      try {
-        const removeDeepLinkListener = await this.transport.listen(
-          'desktop://deep-link',
-          (payload) => {
-            const parsed = desktopDeepLinkSchema.safeParse(payload);
-            if (parsed.success) {
-              handlers.onDeepLink(parsed.data);
-              return;
-            }
-            handlers.onFailure({ code: 'desktop.event.invalid_deep_link', retryable: false });
-          },
-        );
-        // Progress is best effort: a malformed event is ignored rather than reported.
-        const removeProgressListener = await this.transport.listen(
-          'desktop://update-progress',
-          (payload) => {
-            const parsed = releaseUpdateProgressSchema.safeParse(payload);
-            if (parsed.success) handlers.onUpdateProgress?.(parsed.data);
-          },
-        );
-        return ok(() => {
-          removeProgressListener();
-          removeDeepLinkListener();
-          removeRuntimeListener();
-        });
-      } catch (error: unknown) {
-        removeRuntimeListener();
-        return err(normalizeCommandFailure(error, 'desktop.event.subscribe_failed'));
+      ],
+      [
+        'desktop://deep-link',
+        (payload) => {
+          const parsed = desktopDeepLinkSchema.safeParse(payload);
+          if (parsed.success) {
+            handlers.onDeepLink(parsed.data);
+            return;
+          }
+          handlers.onFailure({ code: 'desktop.event.invalid_deep_link', retryable: false });
+        },
+      ],
+      // Progress and update status are best effort: a malformed event is ignored rather than
+      // reported, and the next check sends the status again.
+      [
+        'desktop://update-progress',
+        (payload) => {
+          const parsed = releaseUpdateProgressSchema.safeParse(payload);
+          if (parsed.success) handlers.onUpdateProgress?.(parsed.data);
+        },
+      ],
+      [
+        'desktop://update-status',
+        (payload) => {
+          const parsed = releaseUpdateStatusSchema.safeParse(payload);
+          if (parsed.success) handlers.onUpdateStatus?.(parsed.data);
+        },
+      ],
+      ['desktop://update-requested', () => handlers.onUpdateRequested?.()],
+    ];
+    const removers: (() => void)[] = [];
+    const removeAll = () => {
+      for (const remove of removers.splice(0).reverse()) remove();
+    };
+    try {
+      for (const [eventName, listener] of listeners) {
+        removers.push(await this.transport.listen(eventName, listener));
       }
+      return ok(removeAll);
     } catch (error: unknown) {
+      removeAll();
       return err(normalizeCommandFailure(error, 'desktop.event.subscribe_failed'));
     }
   }

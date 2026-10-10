@@ -123,6 +123,8 @@ export const resources = {
       'desktop.update.installing': 'Installing…',
       'desktop.update.rollback': 'Authorized rollback',
       'desktop.update.available': '{{current}} → {{target}}',
+      'desktop.update.translocated':
+        'Agent Room can’t update itself from where it is now. Move it into the Applications folder, then open it from there.',
       'desktop.logs.hint': 'Something off? Send desktop.log and bridge.log from the log folder.',
       'desktop.logs.open': 'Open log folder',
       'desktop.platform.windows': 'Windows',
@@ -770,6 +772,8 @@ export const resources = {
       'desktop.update.installing': '安装中…',
       'desktop.update.rollback': '授权回滚',
       'desktop.update.available': '{{current}} → {{target}}',
+      'desktop.update.translocated':
+        '在现在这个位置没法更新。先把 Agent Room 拖进“应用程序”文件夹，再从那里打开。',
       'desktop.logs.hint': '遇到问题？把日志文件夹里的 desktop.log 和 bridge.log 发来即可排查。',
       'desktop.logs.open': '打开日志文件夹',
       'desktop.platform.windows': 'Windows',
