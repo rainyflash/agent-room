@@ -35,8 +35,7 @@ const OFFLINE_WITHIN: Duration = Duration::from_secs(90);
 #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
 async fn 真实_synapse_上网络_agent_只靠定时报在线状态撑着_不报才变离线_同步带的算数() {
     let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
-    let service = crate::build_matrix_identity_provisioner(&config, config.dependencies.timeout)
-        .expect("Application Service 配置有效");
+    let service = crate::real_dependency_identity_provisioner(&config);
     let room = service
         .create_room(
             &MatrixCreateRoom::new(

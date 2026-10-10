@@ -1191,9 +1191,7 @@ mod real_dependency_tests {
         Arc<dyn MatrixAgentDeviceSessionRotator>,
         MatrixAgentDeviceSessionRequest,
     ) {
-        let identities =
-            crate::build_matrix_identity_provisioner(config, config.dependencies.timeout)
-                .expect("Application Service 配置有效");
+        let identities = crate::real_dependency_identity_provisioner(config);
         let agent_id = AgentId::from_uuid(Uuid::now_v7());
         let instance_id = AgentInstanceId::from_uuid(Uuid::now_v7());
         let user_id = identities

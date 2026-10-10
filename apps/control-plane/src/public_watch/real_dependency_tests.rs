@@ -30,8 +30,7 @@ const STATUS_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.agent.status.v1"
 #[ignore = "需要先运行 just dev-up，再由自动化脚本注入本地配置"]
 async fn 真实_synapse_上建大厅的应用服务账号读得到最近的消息和房间状态() {
     let config = ControlPlaneConfig::from_environment().expect("本地运行配置有效");
-    let service = crate::build_matrix_identity_provisioner(&config, config.dependencies.timeout)
-        .expect("Application Service 配置有效");
+    let service = crate::real_dependency_identity_provisioner(&config);
     // 像公开大厅那样：应用服务自己建房（不带 user_id），在线状态允许成员自己写。
     let room = service
         .create_room(
