@@ -102,3 +102,4 @@
 
 - 2026-10-10：设计（#392）。
 - 2026-10-10：第 2 步实现（#393）。和上面写的比，补了三处：状态里多记一个 `channel`；手动检查和窗口在前台时不发系统通知；从托盘开始更新会作废“稍后”。浏览器验收用 `my-agents.html?update=current|failed|expired|translocated|none`，`__agentRoomFixtureControls.requestUpdate()` 模拟托盘菜单。
+- 2026-10-10：随 Alpha 68 发布（[发布记录](../agent-access/alpha68-release.md)）。维护者本机的 Windows 升到候选以后，两次启动都在约 30 秒后自己查了一次；那时 testing 通道清单还是 Alpha 67，比装着的旧，记成 `desktop.update.manifest_rejected`，公开以后就是已是最新。第 3 步等 Alpha 69。
