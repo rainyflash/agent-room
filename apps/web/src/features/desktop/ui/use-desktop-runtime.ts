@@ -5,8 +5,8 @@ import { useTranslation } from 'react-i18next';
 
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
 import { err, type Result } from '@/shared/result';
+import { newerUpdateStatus, updateStatusAfterCheck } from '@/features/desktop/domain/update-status';
 import {
-  defaultReleaseChannel,
   parseLobbyDeepLinkRoute,
   type BridgeRuntime,
   type InvitationOffer,
@@ -21,6 +21,7 @@ import {
   type ReleaseUpdateChannel,
   type ReleaseUpdateCheck,
   type ReleaseUpdateProgress,
+  type ReleaseUpdateStatus,
 } from '@/features/desktop/domain/desktop-runtime';
 
 const defaultGateway = new TauriDesktopRuntimeGateway();
@@ -41,9 +42,13 @@ export type DesktopRuntimeController = {
   readonly busy: DesktopOperation | null;
   readonly failure: DesktopRuntimeFailure | null;
   readonly snapshot: DesktopRuntimeSnapshot | null;
+  /** 最近一次查成的结果，`updateStatus.check` 的简写。 */
   readonly update: ReleaseUpdateCheck | null;
+  /** 原生层上次检查更新的结果，自动的、手动的都算；还没查过时为 null。 */
+  readonly updateStatus?: ReleaseUpdateStatus | null;
   readonly updateBusy?: 'checking' | 'installing' | null;
   readonly updateProgress?: ReleaseUpdateProgress | null;
+  /** 上次安装没成的原因。检查没成的原因在 `updateStatus.failure`。 */
   readonly updateFailure?: DesktopRuntimeFailure | null;
   readonly readHostSessions: () => Promise<
     Result<readonly HostSessionDiagnostics[], DesktopRuntimeFailure>
@@ -90,11 +95,16 @@ export function useDesktopRuntime(
     };
   }, [available, gateway, i18n.resolvedLanguage]);
   const [busy, setBusy] = useState<DesktopOperation | null>(null);
-  const [update, setUpdate] = useState<ReleaseUpdateCheck | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<ReleaseUpdateStatus | null>(null);
+  const update = updateStatus?.check ?? null;
   const [updateBusy, setUpdateBusy] = useState<'checking' | 'installing' | null>(null);
   const [updateFailure, setUpdateFailure] = useState<DesktopRuntimeFailure | null>(null);
   const [updateProgress, setUpdateProgress] = useState<ReleaseUpdateProgress | null>(null);
   const updateInFlight = useRef(false);
+  // 托盘菜单的请求经事件进来，订阅只建一次，所以经 ref 拿到最新的安装；检查经 ref 读上次的结果。
+  const installUpdateRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const updateStatusRef = useRef<ReleaseUpdateStatus | null>(null);
+  updateStatusRef.current = updateStatus;
   const readHostSessions = useCallback(
     () =>
       gateway.readHostSessions?.() ??
@@ -145,6 +155,7 @@ export function useDesktopRuntime(
     const result = await gateway.snapshot();
     if (result.ok) {
       setSnapshot(result.value);
+      setUpdateStatus((previous) => newerUpdateStatus(previous, result.value.updateStatus ?? null));
       setFailure(null);
       if (result.value.deepLink !== null) {
         applyDeepLink(result.value.deepLink);
@@ -185,6 +196,13 @@ export function useDesktopRuntime(
         onUpdateProgress: (progress) => {
           if (!disposed) setUpdateProgress(progress);
         },
+        onUpdateStatus: (status) => {
+          if (!disposed) setUpdateStatus((previous) => newerUpdateStatus(previous, status));
+        },
+        // 托盘菜单“更新到 X…”：和点提示上的按钮一样，先看草稿再装。
+        onUpdateRequested: () => {
+          if (!disposed) void installUpdateRef.current();
+        },
       })
       .then((subscription) => {
         if (!subscription.ok) {
@@ -213,16 +231,8 @@ export function useDesktopRuntime(
         ...result.value,
         bridge: latestRuntime ?? result.value.bridge,
       });
-      // Nobody clicks "check for updates" on their own: look once per launch on the channel this
-      // build came from, and only surface a result. Failures (offline, no manifest) stay silent here.
-      if (result.value.updatesConfigured && result.value.currentVersion !== undefined) {
-        void gateway
-          .checkUpdate(defaultReleaseChannel(result.value.currentVersion))
-          .then((check) => {
-            if (!disposed && check.ok) setUpdate(check.value);
-          })
-          .catch(() => undefined);
-      }
+      // 更新由原生层定时查（启动 30 秒后第一次，之后每 4 小时），这里只接它上次查的结果。
+      setUpdateStatus((previous) => newerUpdateStatus(previous, result.value.updateStatus ?? null));
       if (result.value.deepLink !== null) {
         applyDeepLink(result.value.deepLink);
       }
@@ -301,6 +311,7 @@ export function useDesktopRuntime(
     [gateway],
   );
 
+  // 检查和安装的结果只在更新的提示和“设置 → 这台电脑”里说，不进这台电脑连接的报错。
   const checkUpdate = useCallback(
     async (channel: ReleaseUpdateChannel): Promise<void> => {
       if (updateInFlight.current) return;
@@ -309,18 +320,16 @@ export function useDesktopRuntime(
       setBusy('update-check');
       setUpdateFailure(null);
       try {
-        const result = await gateway.checkUpdate(channel);
-        setUpdate(result.ok ? result.value : null);
-        setUpdateFailure(result.ok ? null : result.error);
-        setFailure(result.ok ? null : result.error);
-      } catch {
-        const error: DesktopRuntimeFailure = {
-          code: 'desktop.update.check_failed',
-          retryable: true,
-        };
-        setUpdate(null);
-        setUpdateFailure(error);
-        setFailure(error);
+        const result = await gateway
+          .checkUpdate(channel)
+          .catch(() => err({ code: 'desktop.update.check_failed', retryable: true }));
+        const checked = updateStatusAfterCheck(
+          updateStatusRef.current,
+          channel,
+          result,
+          Date.now(),
+        );
+        setUpdateStatus((previous) => newerUpdateStatus(previous, checked));
       } finally {
         updateInFlight.current = false;
         setUpdateBusy(null);
@@ -333,12 +342,7 @@ export function useDesktopRuntime(
   const installUpdate = useCallback(async (): Promise<void> => {
     if (!update?.available || updateInFlight.current) return;
     if (!prepareForUpdate()) {
-      const error: DesktopRuntimeFailure = {
-        code: 'desktop.update.draft_unsaved',
-        retryable: true,
-      };
-      setUpdateFailure(error);
-      setFailure(error);
+      setUpdateFailure({ code: 'desktop.update.draft_unsaved', retryable: true });
       return;
     }
     updateInFlight.current = true;
@@ -349,20 +353,15 @@ export function useDesktopRuntime(
     try {
       const result = await gateway.installUpdate(update.channel, update.sequence);
       setUpdateFailure(result.ok ? null : result.error);
-      setFailure(result.ok ? null : result.error);
     } catch {
-      const error: DesktopRuntimeFailure = {
-        code: 'desktop.update.install_failed',
-        retryable: true,
-      };
-      setUpdateFailure(error);
-      setFailure(error);
+      setUpdateFailure({ code: 'desktop.update.install_failed', retryable: true });
     } finally {
       updateInFlight.current = false;
       setUpdateBusy(null);
       setBusy(null);
     }
   }, [gateway, update]);
+  installUpdateRef.current = installUpdate;
 
   const configureAgentRuntime = useCallback(
     async (target: DesktopAgentTarget): Promise<void> => {
@@ -405,6 +404,7 @@ export function useDesktopRuntime(
     failure,
     snapshot,
     update,
+    updateStatus,
     updateBusy,
     updateProgress,
     updateFailure,

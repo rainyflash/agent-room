@@ -134,6 +134,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-10-10 维护者说 Mac 上还是很老的版本，从来没弹出过更新提醒。原因：网页只在页面加载时查一次，关窗只是藏进托盘、应用一直开着，之后发的版本就查不到；查到了也只在窗口里说，出错不说；Mac 上点程序坞图标打不开藏起来的窗口（没处理 `RunEvent::Reopen`）。
 - 设计在 [specs/desktop-update/design.md](./specs/desktop-update/design.md)（#392），进度记在它的“状态”一节。要点：原生层每 4 小时查一次，醒来、开窗时补查；查到新版本发一次系统通知、托盘菜单加一项、提示上直接“更新并重启”；设置里看得到上次检查的结果；不自动安装。
 - 已经装着的旧版只在页面加载时查一次，要重启一次或手动“检查更新”才装得上新版。
+- 实现 #393：原生层的规则在 `release_update_watch.rs`（什么时候查、检查结果、每个版本只提醒一次、只读位置），定时任务、通知和托盘在 `release_updates.rs`。网页不再自己查，只接原生层的 `updateStatus`（快照和 `desktop://update-status` 事件）。
+  - 托盘“更新到 X…”只发 `desktop://update-requested`，安装由网页走（先看有没有没发出去的草稿），别让原生层直接装。
+  - 托盘菜单要跟着语言和可装的版本一起重建（`native_language::refresh_tray_menu`）；改语言时别把更新那一项丢了。
+  - 检查和安装没成都不进“这台电脑”连接的报错，只在更新的提示和“设置 → 这台电脑”里说。
+  - 浏览器验收用 `my-agents.html?update=current|failed|expired|translocated|none`，`requestUpdate()` 模拟托盘菜单（`e2e/desktop-update.e2e.ts`）。
+- 第 3 步要等下一版发出以后，在维护者的 Mac 和 Windows 上看：开着不动，4 小时内收到通知；点“更新并重启”能装上。
 
 ### 登录用着就不过期
 

@@ -7,6 +7,8 @@ export type MyAgentsFixtureControls = {
   arriveAgent(): void;
   /** 接入对话框此刻挂在连接服务上的人物；没挂着时为 null。 */
   parkedInvitation(): string | null;
+  /** 像在托盘菜单里点了“更新到 X…”。 */
+  requestUpdate(): void;
 };
 export type MyAgentsFixtureWindow = Window &
   typeof globalThis & {

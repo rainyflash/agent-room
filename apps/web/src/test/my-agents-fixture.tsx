@@ -14,9 +14,12 @@ import { createCloudRuntime } from '@/app/web-app-providers';
 import type {
   BridgeRuntime,
   DesktopAgentTarget,
+  DesktopRuntimeEventHandlers,
   DesktopRuntimeGateway,
   HostSessionDiagnostics,
   InvitationOffer,
+  ReleaseUpdateCheck,
+  ReleaseUpdateStatus,
 } from '@/features/desktop/domain/desktop-runtime';
 import { bridgePhaseSchema } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
@@ -185,6 +188,37 @@ const fixtureInstances: readonly AgentInstance[] = [
 ];
 // ?agents=none 模拟还没有 Agent 的新账户。
 const fixtureAgents = new URLSearchParams(location.search).get('agents') === 'none' ? [] : [agent];
+// ?update=current|failed|expired|translocated|none 看更新的几种情况：已是最新、没查成、
+// 通道清单过期、Mac 上应用在只读位置运行、还没查过。不带时上次检查查到了 0.1.0-alpha.24。
+const updateState = new URLSearchParams(location.search).get('update');
+const fixtureUpdate: ReleaseUpdateCheck = {
+  available: updateState !== 'current',
+  channel: 'testing',
+  currentVersion: '0.1.0-alpha.23',
+  rollback: false,
+  sequence: updateState === 'current' ? 23 : 24,
+  targetVersion: updateState === 'current' ? '0.1.0-alpha.23' : '0.1.0-alpha.24',
+};
+const updateFailureCode =
+  updateState === 'failed'
+    ? 'desktop.update.manifest_network'
+    : updateState === 'expired'
+      ? 'desktop.update.manifest_expired'
+      : null;
+const updateStatus: ReleaseUpdateStatus | null =
+  updateState === 'none'
+    ? null
+    : {
+        channel: 'testing',
+        checkedAtUnixMs: Date.now() - 5 * 60_000,
+        check: updateFailureCode === null ? fixtureUpdate : null,
+        failure:
+          updateFailureCode === null
+            ? null
+            : { code: updateFailureCode, retryable: updateState === 'failed' },
+      };
+// 订阅时交来的处理函数：托盘菜单的请求和下载进度都经它送进页面。
+let runtimeHandlers: DesktopRuntimeEventHandlers | null = null;
 // 接入对话框挂在连接服务上的人物；arriveAgent() 让一个新会话接走它。
 let parkedInvitation: InvitationOffer | null = null;
 const arrivedSessions: HostSessionDiagnostics[] = [];
@@ -208,6 +242,9 @@ const fixtureControls: MyAgentsFixtureControls = {
     });
   },
   parkedInvitation: () => parkedInvitation?.sessionKey ?? null,
+  requestUpdate: () => {
+    runtimeHandlers?.onUpdateRequested?.();
+  },
 };
 Object.defineProperty(window, '__agentRoomFixtureControls', {
   configurable: true,
@@ -230,8 +267,9 @@ const gateway: DesktopRuntimeGateway = {
       agentTarget: target,
       autostartEnabled,
       bridge,
-      // 有版本号，启动后才会自动查一次更新（查到 0.1.0-alpha.24）。
       currentVersion: '0.1.0-alpha.23',
+      updateStatus,
+      appTranslocated: updateState === 'translocated',
       deepLink: null,
       cliConfiguration: { command: 'C:\\Agent Room\\agent-room.exe', args: [] },
       manualHostConfiguration: {
@@ -240,7 +278,7 @@ const gateway: DesktopRuntimeGateway = {
         serverName: 'agent_room',
         transport: 'stdio',
       },
-      platform: 'windows',
+      platform: updateState === 'translocated' ? 'macos' : 'windows',
       updatesConfigured: true,
     }),
   retryBridge: () => {
@@ -296,17 +334,25 @@ const gateway: DesktopRuntimeGateway = {
         : [];
     return ready([...present, ...arrivedSessions]);
   },
-  installUpdate: unavailable,
+  // 下载到一半停住：真的装好了桌面端会重启，页面看不到结果。
+  installUpdate: () => {
+    runtimeHandlers?.onUpdateProgress?.({
+      phase: 'downloading',
+      downloadedBytes: 21_000_000,
+      totalBytes: 42_000_000,
+    });
+    return new Promise(() => undefined);
+  },
   checkUpdate: (channel) =>
-    ready({
-      available: true,
-      channel,
-      currentVersion: '0.1.0-alpha.23',
-      targetVersion: '0.1.0-alpha.24',
-      rollback: false,
-      sequence: 24,
-    }),
-  subscribe: () => ready(() => undefined),
+    updateFailureCode === null
+      ? ready({ ...fixtureUpdate, channel })
+      : Promise.resolve(err({ code: updateFailureCode, retryable: updateState === 'failed' })),
+  subscribe: (handlers) => {
+    runtimeHandlers = handlers;
+    return ready(() => {
+      if (runtimeHandlers === handlers) runtimeHandlers = null;
+    });
+  },
 };
 
 // ?settings=general|account|this-computer|about 显示设置页的这一节（安全一节有自己的测试页）。

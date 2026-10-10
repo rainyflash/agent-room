@@ -324,4 +324,70 @@ describe('Tauri 桌面运行时适配器', () => {
     }
     expect(listeners.size).toBe(0);
   });
+
+  it('原生层的更新状态和托盘的更新请求送进页面，坏的状态丢掉不报错', async () => {
+    const listeners = new Map<string, (payload: unknown) => void>();
+    const listen: TauriDesktopTransport['listen'] = (eventName, listener) => {
+      listeners.set(eventName, listener);
+      return Promise.resolve(() => {
+        listeners.delete(eventName);
+      });
+    };
+    const onFailure = vi.fn();
+    const onUpdateStatus = vi.fn();
+    const onUpdateRequested = vi.fn();
+    const gateway = new TauriDesktopRuntimeGateway(transport({ listen }));
+    const result = await gateway.subscribe({
+      onDeepLink: vi.fn(),
+      onFailure,
+      onRuntimeChanged: vi.fn(),
+      onUpdateRequested,
+      onUpdateStatus,
+    });
+    expect(result.ok).toBe(true);
+
+    const status = {
+      channel: 'testing',
+      checkedAtUnixMs: 1_760_000_000_000,
+      check: {
+        available: true,
+        channel: 'testing',
+        currentVersion: '0.1.0-alpha.67',
+        rollback: false,
+        sequence: 68,
+        targetVersion: '0.1.0-alpha.68',
+      },
+      failure: null,
+    };
+    listeners.get('desktop://update-status')?.(status);
+    expect(onUpdateStatus).toHaveBeenCalledWith(status);
+    listeners.get('desktop://update-status')?.({ ...status, failure: { code: 'Bad Code' } });
+    expect(onUpdateStatus).toHaveBeenCalledTimes(1);
+    expect(onFailure).not.toHaveBeenCalled();
+    listeners.get('desktop://update-requested')?.(null);
+    expect(onUpdateRequested).toHaveBeenCalledTimes(1);
+    if (result.ok) result.value();
+    expect(listeners.size).toBe(0);
+  });
+
+  it('有一个事件订阅不上时，已经订上的都撤掉', async () => {
+    const listeners = new Map<string, (payload: unknown) => void>();
+    const listen: TauriDesktopTransport['listen'] = (eventName, listener) => {
+      if (eventName === 'desktop://update-status') {
+        return Promise.reject(new Error('listen failed'));
+      }
+      listeners.set(eventName, listener);
+      return Promise.resolve(() => {
+        listeners.delete(eventName);
+      });
+    };
+    const gateway = new TauriDesktopRuntimeGateway(transport({ listen }));
+    const result = await gateway.subscribe({
+      onDeepLink: vi.fn(),
+      onFailure: vi.fn(),
+      onRuntimeChanged: vi.fn(),
+    });
+    expect(result.ok).toBe(false);
+    expect(listeners.size).toBe(0);
+  });
 });

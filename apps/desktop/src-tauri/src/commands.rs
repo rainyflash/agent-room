@@ -22,6 +22,7 @@ use crate::{
     human_session::{DesktopAuthenticationIntent, HumanSessionFailure, HumanSessionRuntime},
     matrix_credentials::{MatrixCredentialRuntime, StoredMatrixSession},
     matrix_session::{MatrixAuthenticationGrant, MatrixSessionFailure, MatrixSessionRuntime},
+    release_update_watch::{ReleaseUpdateStatus, app_translocated},
     release_updates::{
         ReleaseUpdateCheck, ReleaseUpdateFailure, ReleaseUpdateRuntime, parse_channel,
     },
@@ -47,6 +48,10 @@ pub(crate) struct DesktopRuntimeSnapshot {
     platform: &'static str,
     deep_link: Option<DeepLinkTarget>,
     updates_configured: bool,
+    /// 原生层上次检查更新的结果；网页晚一步加载也拿得到。还没查过时为空。
+    update_status: Option<ReleaseUpdateStatus>,
+    /// macOS 上应用在只读位置运行（没拖进“应用程序”文件夹），更新换不了自己。
+    app_translocated: bool,
     agent_target: Option<DesktopAgentTarget>,
     manual_host_configuration: ManualHostConfiguration,
     cli_configuration: Option<CliConfiguration>,
@@ -443,6 +448,8 @@ pub(crate) fn desktop_runtime_snapshot(
         platform: current_platform(),
         deep_link: deep_links.latest(),
         updates_configured: runtime.updates.configured(),
+        update_status: runtime.updates.status(),
+        app_translocated: app_translocated(),
         agent_target: runtime.targets.current()?,
         manual_host_configuration: runtime.hosts.manual_configuration(),
         cli_configuration: installed_cli()?,

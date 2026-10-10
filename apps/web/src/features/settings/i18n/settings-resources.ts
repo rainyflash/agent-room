@@ -25,8 +25,9 @@ export const settingsResources = {
     'settings.updateDot': 'Update ready',
     'toasts.label': 'Notifications',
     'toasts.update.title': 'Agent Room {{version}} is ready to install',
-    'toasts.update.open': 'Install',
+    'toasts.update.install': 'Update and restart',
     'toasts.update.later': 'Later',
+    'toasts.update.failed': 'The update didn’t install. Check your connection and try again.',
   },
   'zh-CN': {
     'settings.title': '设置',
@@ -51,8 +52,9 @@ export const settingsResources = {
     'settings.thisComputer.agents': '查看接在这里的 Agent',
     'settings.updateDot': '有新版本',
     'toasts.label': '通知',
-    'toasts.update.title': 'Agent Room {{version}} 可以安装了',
-    'toasts.update.open': '去安装',
+    'toasts.update.title': '新版本 {{version}} 可以安装了',
+    'toasts.update.install': '更新并重启',
     'toasts.update.later': '稍后',
+    'toasts.update.failed': '更新没装上。检查网络后再试一次。',
   },
 } as const;

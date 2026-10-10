@@ -27,6 +27,7 @@ use notifications::desktop_notify;
 mod receiver_runtime;
 mod release_update_config;
 mod release_update_state;
+mod release_update_watch;
 mod release_updates;
 mod runtime_target;
 mod server_move;
@@ -57,7 +58,7 @@ use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
-use tauri::{Manager as _, RunEvent, tray::TrayIconBuilder};
+use tauri::{Emitter as _, Manager as _, RunEvent, tray::TrayIconBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_deep_link::DeepLinkExt as _;
 
@@ -110,7 +111,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
                 if !urls.is_empty() {
                     deliver_deep_links(app, urls);
                 } else if !launched_in_background(arguments.iter().cloned()) {
-                    show_main_window(app);
+                    reopen_main_window(app);
                 }
             },
         ));
@@ -205,6 +206,12 @@ fn on_run_event(app: &tauri::AppHandle, event: RunEvent) {
             }
         }
         RunEvent::Exit => app.state::<DesktopRuntime>().bridge.shutdown_now(),
+        // 关窗只是藏起来：窗口藏着时点程序坞图标，要把它拿出来，和托盘“打开”一样。
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } if !has_visible_windows => reopen_main_window(app),
         _ => {}
     }
 }
@@ -261,6 +268,7 @@ fn setup_runtime(
     });
     setup_tray(app)?;
     setup_deep_links(app)?;
+    app.state::<DesktopRuntime>().updates.start_schedule();
     Ok(())
 }
 
@@ -320,8 +328,9 @@ fn match_window_to_system_theme(app: &tauri::App) {
 }
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
-    let menu = native_language::tray_menu(app.handle(), native_language::language(app.handle()))?;
-    let mut tray = TrayIconBuilder::with_id("agent-room")
+    let menu =
+        native_language::tray_menu(app.handle(), native_language::language(app.handle()), None)?;
+    let mut tray = TrayIconBuilder::with_id(native_language::TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .tooltip("Agent Room");
@@ -329,10 +338,15 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.on_menu_event(|app, event| match event.id().as_ref() {
-        "open" => show_main_window(app),
+        "open" => reopen_main_window(app),
+        // 原生层不直接装：网页先看有没有没发出去的草稿，再走安装。
+        native_language::UPDATE_MENU_ID => {
+            show_main_window(app);
+            let _ = app.emit(UPDATE_REQUESTED_EVENT, ());
+        }
         "retry" => {
             let _ = app.state::<DesktopRuntime>().bridge.retry();
-            show_main_window(app);
+            reopen_main_window(app);
         }
         "quit" => {
             app.state::<DesktopRuntime>().bridge.shutdown_now();
@@ -366,11 +380,22 @@ fn launched_in_background(arguments: impl IntoIterator<Item = String>) -> bool {
         .any(|argument| argument == agent_room_agent_client::DESKTOP_BACKGROUND_ARGUMENT)
 }
 
+/// 托盘菜单“更新到 X…”：叫网页开始更新。
+const UPDATE_REQUESTED_EVENT: &str = "desktop://update-requested";
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+/// 人把藏起来的窗口叫回来：离上次检查更新超过 1 小时就顺便查一次。启动时第一次显示不算。
+fn reopen_main_window(app: &tauri::AppHandle) {
+    show_main_window(app);
+    if let Some(runtime) = app.try_state::<DesktopRuntime>() {
+        runtime.updates.window_shown();
     }
 }
 

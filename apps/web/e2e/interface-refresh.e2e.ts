@@ -82,7 +82,7 @@ for (const width of [1440, 390]) {
     await page.goto('/e2e/fixtures/my-agents.html?settings=this-computer');
     await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'This computer: Connected' })).toBeVisible();
-    // 启动后自动查到新版本：提示栈里一条去安装，“设置”和“这台电脑”上都有提醒点。
+    // 原生层查到新版本：提示栈里一条，“设置”和“这台电脑”上都有提醒点。
     await expect(page.getByText('Agent Room 0.1.0-alpha.24 is ready to install')).toBeVisible();
     await expect(page.getByRole('link', { name: /^Settings.*Update ready/u })).toBeVisible();
     const content = page.getByRole('region', { name: 'This computer', exact: true });
@@ -92,7 +92,7 @@ for (const width of [1440, 390]) {
       'true',
     );
     await expect(content.getByText('0.1.0-alpha.23 → 0.1.0-alpha.24')).toBeVisible();
-    await expect(content.getByRole('button', { name: 'Install and restart' })).toBeVisible();
+    await expect(content.getByRole('button', { name: 'Update and restart' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     const scan = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
