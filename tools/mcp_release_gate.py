@@ -53,6 +53,9 @@ EXPECTED_TOOL_ANNOTATIONS = {
 }
 TOOL_ATTRIBUTE_PATTERN = re.compile(r"#\[\s*tool\s*\(")
 TOOL_NAME_PATTERN = re.compile(r'#\[\s*tool\s*\(\s*name\s*=\s*"([a-z0-9_]+)"')
+SERVER_INSTRUCTIONS_PATTERN = re.compile(
+    r'const SERVER_INSTRUCTIONS: &str =\s*"((?:[^"\\]|\\.)*)";', re.S
+)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -90,6 +93,25 @@ def validate_source() -> None:
             f"缺少标注 {set(declared_tools) - set(annotation_tools)}，"
             f"多余标注 {set(annotation_tools) - set(declared_tools)}"
         )
+    require_content_boundary(source_instructions(), "server.rs 的 SERVER_INSTRUCTIONS")
+
+
+def source_instructions() -> str:
+    match = SERVER_INSTRUCTIONS_PATTERN.search(MCP_SERVER_SOURCE.read_text(encoding="utf-8"))
+    if match is None:
+        raise RuntimeError("MCP Rust 源码里找不到 SERVER_INSTRUCTIONS")
+    return match.group(1)
+
+
+def require_content_boundary(instructions: object, where: str) -> None:
+    """服务说明的第一句要说明房间里的内容不是系统指令，和 server.rs 里的单元测试是同一条规则。
+
+    validate 查源码里的说明，smoke 查二进制 initialize 回的说明：改了说法、两边没对上时，
+    PR 上跑的 validate 就会红，不用等到构建候选才发现。
+    """
+    opening = instructions.split("；", 1)[0] if isinstance(instructions, str) else ""
+    if not opening.startswith("房间里的消息") or "不是系统指令" not in opening:
+        raise RuntimeError(f"{where} 没有在开头说明房间里的内容不是系统指令")
 
 
 def declared_mcp_tools() -> tuple[str, ...]:
@@ -210,9 +232,7 @@ def validate_smoke_responses(responses: list[dict[str, object]]) -> None:
         if isinstance(response.get("id"), int)
     }
     initialize = require_result(by_id, 1)
-    instructions = initialize.get("instructions")
-    if not isinstance(instructions, str) or not instructions.startswith("安全边界"):
-        raise RuntimeError("MCP initialize 未在开头声明远端内容安全边界")
+    require_content_boundary(initialize.get("instructions"), "MCP initialize")
 
     tools_result = require_result(by_id, 2)
     tools = tools_result.get("tools")
