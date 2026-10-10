@@ -7,13 +7,14 @@ use std::{
 
 use agent_room_application::ports::{
     MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest, MatrixClientFactory,
-    MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure,
-    MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation, MatrixPowerLevel,
-    MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAccess, MatrixRoomAliasLocalpart,
-    MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomEncryption, MatrixRoomId,
-    MatrixRoomKind, MatrixRoomPreset, MatrixRoomVisibility, MatrixSession, MatrixSessionMetadata,
-    MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest, MatrixTimelineEvent, MatrixUserId,
-    MatrixUserPresence, PortFuture, SecretValue,
+    MatrixConnection, MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId,
+    MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixLogin, MatrixOperation,
+    MatrixPowerLevel, MatrixReceipt, MatrixReceiptKind, MatrixResult, MatrixRoomAccess,
+    MatrixRoomAliasLocalpart, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
+    MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind, MatrixRoomPreset, MatrixRoomVisibility,
+    MatrixSession, MatrixSessionMetadata, MatrixStateEvent, MatrixStateKey, MatrixSyncBatch,
+    MatrixSyncRequest, MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture,
+    SecretValue,
 };
 use agent_room_bridge_core::handoffs::{
     EncryptedHandoffToDeviceEventSource, EncryptedHandoffToDeviceGateway,
@@ -763,6 +764,25 @@ impl MatrixGateway for MatrixSdkGateway {
                 .await
                 .map(|_| ())
                 .map_err(|error| map_http_error(operation, &error))
+        })
+    }
+
+    fn state_event<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        event_type: &'a MatrixEventType,
+        state_key: &'a MatrixStateKey,
+    ) -> PortFuture<'a, MatrixResult<Option<serde_json::Value>>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::ReadRoomState;
+            get_state_content::<serde_json::Value>(
+                &self.client,
+                parse_room_id(room_id, operation)?,
+                StateEventType::from(event_type.as_str()),
+                state_key.as_str().to_owned(),
+                operation,
+            )
+            .await
         })
     }
 

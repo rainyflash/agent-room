@@ -7,26 +7,19 @@ use std::{
 
 use agent_room_application::ports::{
     Clock, DeviceSignature, MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest,
-    MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixFailure, MatrixFailureKind,
-    MatrixGateway, MatrixOperation, MatrixReceipt, MatrixResult, MatrixRoomAliasLocalpart,
-    MatrixRoomId, MatrixSessionMetadata, MatrixStateEvent, MatrixSyncBatch, MatrixSyncRequest,
-    MatrixUserId, MatrixUserPresence, PortFuture,
+    MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
+    MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixReceipt, MatrixResult,
+    MatrixRoomAliasLocalpart, MatrixRoomId, MatrixSessionMetadata, MatrixStateEvent,
+    MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, MatrixUserPresence,
+    PortFuture,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
-    agent_verification::{
-        AgentEventAuthenticationDecision, AgentEventAuthenticationFailure, AgentEventAuthenticator,
-    },
     ports::{
         AgentStatusStatePublisher, BridgeCredentialResult, DeviceSigningIdentity,
         StatusEventIdentifierFactory,
     },
-    presence::{
-        PresenceLeasePolicy, PresenceObservation, PresenceProjectionBatch,
-        PresenceProjectionFailure, PresenceProjectionRepository, PresenceQuery,
-        PresenceSyncDependencies, PresenceSyncService, ProjectedAgentPresence,
-        ProjectedAgentPresenceFields,
-    },
+    presence::AGENT_STATUS_EVENT_TYPE,
     status::{
         AgentStatusLeasePolicy, AgentStatusPublicationDependencies, AgentStatusPublicationService,
         AgentStatusRoomTarget, HostAgentState,
@@ -34,12 +27,12 @@ use agent_room_bridge_core::{
 };
 use agent_room_domain::{
     agent_lifecycle::MatrixPresenceState::{self, Offline, Online, Unavailable},
-    agent_status::{AgentStatusVisibility, AgentWorkStatus},
+    agent_status::AgentStatusVisibility,
     devices::DevicePublicSigningKey,
     ids::{AgentId, AgentInstanceId},
     time::{DurationMillis, UtcMillis},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::AgentStatusPublicationHandle;
@@ -49,15 +42,14 @@ async fn 确认服务器开着在线状态以后才写名片_只写一次() {
     let matrix = 在线状态网关::new(true);
     let publisher = Arc::new(记录状态发布器::default());
     let status = 名片句柄(&matrix, &publisher, "Codex Agent");
-    let presence = 投影(None);
 
     // 第一次报就被限速：不知道开没开，先不写。
     matrix.fail_next_report(MatrixFailureKind::RateLimited);
-    status.renew(&presence).await.expect("第一次同步之后");
+    status.renew().await.expect("第一次同步之后");
     assert!(publisher.contents().is_empty(), "还没确认就不写名片");
 
     for _ in 0..3 {
-        status.renew(&presence).await.expect("之后的同步");
+        status.renew().await.expect("之后的同步");
     }
     let contents = publisher.contents();
     assert_eq!(contents.len(), 1, "名片只写一次");
@@ -72,17 +64,45 @@ async fn 确认服务器开着在线状态以后才写名片_只写一次() {
 #[tokio::test]
 async fn 房间里已经有一样的名片就不写_改了名或者还是租约就写() {
     for (existing, writes) in [
-        (Some(已有的(身份("Codex Agent"), true)), 0),
-        (Some(已有的(身份("Old Name"), true)), 1),
-        (Some(已有的(身份("Codex Agent"), false)), 1),
+        (Some(房间里的("Codex Agent", true)), 0),
+        (Some(房间里的("Old Name", true)), 1),
+        (Some(房间里的("Codex Agent", false)), 1),
         (None, 1),
     ] {
         let matrix = 在线状态网关::new(true);
+        *matrix.room_state.lock().expect("锁可用") = existing;
         let publisher = Arc::new(记录状态发布器::default());
         let status = 名片句柄(&matrix, &publisher, "Codex Agent");
-        status.renew(&投影(existing)).await.expect("同步之后");
+        status.renew().await.expect("同步之后");
         assert_eq!(publisher.contents().len(), writes);
+        status.renew().await.expect("下一次同步");
+        assert_eq!(publisher.contents().len(), writes, "这次连上以后只看一次");
+        assert_eq!(*matrix.state_reads.lock().expect("锁可用"), 1);
     }
+}
+
+#[tokio::test]
+async fn 读不出房间里的那条就这次先不写_下次同步再看() {
+    let matrix = 在线状态网关::new(true);
+    let publisher = Arc::new(记录状态发布器::default());
+    let status = 名片句柄(&matrix, &publisher, "Codex Agent");
+
+    matrix
+        .state_failures
+        .lock()
+        .expect("锁可用")
+        .push(MatrixFailureKind::Timeout);
+    status.renew().await.expect("读不出来不算同步失败");
+    assert!(publisher.contents().is_empty(), "不知道有没有就先不写");
+
+    *matrix.room_state.lock().expect("锁可用") = Some(房间里的("Codex Agent", true));
+    status.renew().await.expect("下一次同步");
+    assert!(publisher.contents().is_empty(), "房间里已经有了");
+
+    // 重连以后是新的句柄：照样先问服务器，不重写。
+    let reconnected = 名片句柄(&matrix, &publisher, "Codex Agent");
+    reconnected.renew().await.expect("重连以后的第一次同步");
+    assert!(publisher.contents().is_empty());
 }
 
 #[tokio::test(start_paused = true)]
@@ -146,14 +166,13 @@ async fn 服务器没开在线状态就改回写租约() {
     for matrix in [在线状态网关::new(false), 在线状态网关::new(true)] {
         let publisher = Arc::new(记录状态发布器::default());
         let status = 名片句柄(&matrix, &publisher, "Codex Agent");
-        let presence = 投影(None);
         if matrix.enabled {
             matrix.fail_next_report(MatrixFailureKind::NotFound);
         } else {
-            status.renew(&presence).await.expect("第一次同步之后");
+            status.renew().await.expect("第一次同步之后");
             assert!(publisher.contents().is_empty(), "只读回一次离线，先不写");
         }
-        status.renew(&presence).await.expect("同步之后");
+        status.renew().await.expect("同步之后");
         let contents = publisher.contents();
         assert_eq!(contents.len(), 1);
         assert!(contents[0].get("liveness").is_none(), "改回写租约");
@@ -180,7 +199,7 @@ async fn 正常退出报离线_旧版客户端报的工作状态照收不发() {
     let matrix = 在线状态网关::new(true);
     let publisher = Arc::new(记录状态发布器::default());
     let status = 名片句柄(&matrix, &publisher, "Codex Agent");
-    status.renew(&投影(None)).await.expect("同步之后写名片");
+    status.renew().await.expect("同步之后写名片");
 
     status.acknowledge().await.expect("旧版客户端报离线");
     status.acknowledge().await.expect("旧版客户端报在忙");
@@ -245,37 +264,25 @@ fn 时刻(millis: i64) -> UtcMillis {
     UtcMillis::new(millis).expect("测试时间有效")
 }
 
-/// 本机投影里这个实例在大厅里的那条：名片（`card`）或者旧的租约。
-fn 已有的(identity: BridgeAgentIdentity, card: bool) -> ProjectedAgentPresence {
-    ProjectedAgentPresence::from_verified_fields(ProjectedAgentPresenceFields {
-        event_id: MatrixEventId::new("$card:matrix.test").expect("事件标识有效"),
-        room_id: 大厅(),
-        identity,
-        status: AgentWorkStatus::Idle,
-        observed_at: 时刻(1_000),
-        lease_expires_at: 时刻(301_000),
-        origin_server_timestamp: 1_000,
-        published_at: 时刻(1_000),
-        last_polled_at: None,
-        listening_until: None,
-        reception_known: false,
-        card,
-    })
-}
-
-fn 投影(existing: Option<ProjectedAgentPresence>) -> PresenceSyncService {
-    PresenceSyncService::new(
-        PresenceSyncDependencies {
-            authenticator: Arc::new(不验签),
-            projections: Arc::new(投影仓库(existing)),
-            clock: Arc::new(固定时钟),
+/// 服务器上这个实例在大厅里的那条状态：名片（`card`）或者旧的租约。
+fn 房间里的(name: &str, card: bool) -> Value {
+    let mut content = json!({
+        "actor": {
+            "agent": {
+                "agentId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a3",
+                "displayName": name,
+                "matrixUserId": "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.test",
+            },
+            "instanceId": "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4",
+            "provenance": "autonomous_agent",
         },
-        PresenceLeasePolicy::new(
-            DurationMillis::new(300_000).expect("租约上限有效"),
-            DurationMillis::new(30_000).expect("时钟偏差有效"),
-        )
-        .expect("租约策略有效"),
-    )
+        "status": "idle",
+        "leaseExpiresAt": "1970-01-01T00:05:01Z",
+    });
+    if card {
+        content["liveness"] = json!("presence");
+    }
+    content
 }
 
 /// 只管在线状态的 Matrix：记下报成功的在线状态，读回自己时开着就答最后报的那个。
@@ -285,6 +292,10 @@ struct 在线状态网关 {
     enabled: bool,
     report_failures: Mutex<Vec<MatrixFailureKind>>,
     reported: Mutex<Vec<MatrixPresenceState>>,
+    /// 服务器上这个实例在大厅里的那条状态。
+    room_state: Mutex<Option<Value>>,
+    state_failures: Mutex<Vec<MatrixFailureKind>>,
+    state_reads: Mutex<usize>,
 }
 
 impl 在线状态网关 {
@@ -298,6 +309,9 @@ impl 在线状态网关 {
             enabled,
             report_failures: Mutex::new(Vec::new()),
             reported: Mutex::new(Vec::new()),
+            room_state: Mutex::new(None),
+            state_failures: Mutex::new(Vec::new()),
+            state_reads: Mutex::new(0),
         })
     }
 
@@ -410,48 +424,26 @@ impl MatrixGateway for 在线状态网关 {
             })
         })
     }
-}
 
-struct 投影仓库(Option<ProjectedAgentPresence>);
-
-impl PresenceProjectionRepository for 投影仓库 {
-    fn apply<'a>(
+    fn state_event<'a>(
         &'a self,
-        _batch: &'a PresenceProjectionBatch,
-    ) -> PortFuture<'a, Result<(), PresenceProjectionFailure>> {
-        unreachable!("测试不处理同步")
-    }
-
-    fn list<'a>(
-        &'a self,
-        _query: &'a PresenceQuery,
-    ) -> PortFuture<'a, Result<Vec<PresenceObservation>, PresenceProjectionFailure>> {
-        unreachable!("测试不列成员")
-    }
-
-    fn projected_instance<'a>(
-        &'a self,
-        _room_id: &'a MatrixRoomId,
-        _instance_id: AgentInstanceId,
-    ) -> PortFuture<'a, Result<Option<ProjectedAgentPresence>, PresenceProjectionFailure>> {
-        let existing = self.0.clone();
-        Box::pin(async move { Ok(existing) })
-    }
-}
-
-struct 不验签;
-
-impl AgentEventAuthenticator for 不验签 {
-    fn authenticate<'a>(
-        &'a self,
-        _agent_id: AgentId,
-        _instance_id: AgentInstanceId,
-        _observed_at: UtcMillis,
-        _canonical_event: &'a [u8],
-        _signature: &'a DeviceSignature,
-    ) -> PortFuture<'a, Result<AgentEventAuthenticationDecision, AgentEventAuthenticationFailure>>
-    {
-        unreachable!("测试不验签")
+        room_id: &'a MatrixRoomId,
+        event_type: &'a MatrixEventType,
+        state_key: &'a MatrixStateKey,
+    ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
+        assert_eq!(room_id, &大厅());
+        assert_eq!(event_type.as_str(), AGENT_STATUS_EVENT_TYPE);
+        assert_eq!(state_key.as_str(), "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4");
+        *self.state_reads.lock().expect("锁可用") += 1;
+        let failure = {
+            let mut failures = self.state_failures.lock().expect("锁可用");
+            (!failures.is_empty()).then(|| failures.remove(0))
+        };
+        let result = match failure {
+            Some(kind) => Err(MatrixFailure::new(MatrixOperation::ReadRoomState, kind)),
+            None => Ok(self.room_state.lock().expect("锁可用").clone()),
+        };
+        Box::pin(async move { result })
     }
 }
 

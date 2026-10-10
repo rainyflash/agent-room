@@ -983,6 +983,8 @@ struct ScriptedMatrix {
     sent: Mutex<Vec<(MatrixRoomId, MatrixEvent)>>,
     send_failures: Mutex<VecDeque<MatrixFailureKind>>,
     states: Mutex<Vec<(String, Value)>>,
+    /// 读房间里的那条状态时一律失败。
+    state_read_fails: Mutex<bool>,
     left: Mutex<Vec<String>>,
     leave_fails: Mutex<bool>,
     /// 往回翻的结果，按顺序给出；给完之后都是“翻到了房间最早的历史”。
@@ -1215,6 +1217,14 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
     ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
         assert_eq!(access_token.expose(), "syt_scout");
         assert_eq!(state_key.as_str(), OWN_INSTANCE);
+        if *self.state_read_fails.lock().unwrap() {
+            return Box::pin(async {
+                Err(MatrixFailure::new(
+                    MatrixOperation::ReadRoomState,
+                    MatrixFailureKind::Timeout,
+                ))
+            });
+        }
         let latest = self
             .states
             .lock()
@@ -3859,6 +3869,13 @@ async fn 进过加密房间的_agent_在公开大厅也由加密客户端发出_
 #[tokio::test]
 async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离开成的下轮再试() {
     let harness = harness_in(&[ROOM, SECOND_ROOM]);
+    // 服务器没开在线状态：房间里是它以前写的租约。
+    harness
+        .matrix
+        .states
+        .lock()
+        .unwrap()
+        .extend([ROOM, SECOND_ROOM].map(|room| (room.to_owned(), json!({ "status": "idle" }))));
     let lost = NetworkAgentId::from_uuid(Uuid::now_v7());
     *harness.agents.stale.lock().unwrap() = 2;
     *harness.agents.exits.lock().unwrap() = vec![
@@ -3883,8 +3900,11 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
     assert_eq!(*harness.agents.rooms_left.lock().unwrap(), [lost]);
     let states = harness.matrix.states.lock().unwrap().clone();
     assert!(
-        states.iter().all(|(_, state)| state["status"] == "offline") && states.len() == 2,
-        "离开前先在每个房间发“已离线”：{states:?}"
+        states[2..]
+            .iter()
+            .all(|(_, state)| state["status"] == "offline")
+            && states.len() == 4,
+        "房间里是它的租约：离开前先在每个房间补“已离线”：{states:?}"
     );
 
     *harness.matrix.leave_fails.lock().unwrap() = false;

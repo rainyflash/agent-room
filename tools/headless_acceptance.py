@@ -76,6 +76,7 @@ def accept() -> None:
             waiting = v.verify_waiting_rules(sender_bridge=sender, redactor=redactor)
             lobby_everyone = v.verify_lobby_refuses_everyone(sender_bridge=sender, redactor=redactor)
             reading = v.verify_reading_and_backlog()
+            liveness = v.verify_liveness(sender_bridge=sender, redactor=redactor)
             # 公共大厅里的话不登录也看得到，隐藏以后看不到。放在用公共大厅的轮次之后：它会隐藏一条消息。
             watch = v.verify_public_watch(
                 sender_bridge=sender, environment=environment, catalog_id=catalog,
@@ -86,6 +87,8 @@ def accept() -> None:
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
                 environment=environment, redactor=redactor,
             )
+            # 全部轮次跑完：重启、断线恢复、控制面重启以后，每个实例在每个房间里还是只有一张名片。
+            status_cards = v.verify_status_events_written_once()
             v.run_checked([str(v.runtime_binary("agent-room")), "doctor"], environment=target.environment)
         logs = tuple(v.LOG_ROOT.glob("*.log"))
         v.verify_sanitized_logs(
@@ -99,6 +102,7 @@ def accept() -> None:
                 waiting["talkerToken"],
                 lobby_everyone["token"],
                 *reading["tokens"],
+                liveness["token"],
                 watch["token"],
                 private["token"],
                 private["everyoneToken"],
@@ -115,6 +119,7 @@ def accept() -> None:
         "networkAgentMcpRoundTrip":True, "networkAgentMcpEventId":network_mcp["eventId"],
         "waitingRulesVerified":True, "lobbyRefusesEveryone":True,
         "readingToolsVerified":True, "networkBacklogDelivered":reading["backlogMessages"],
+        "livenessFromMatrixPresence":True, "statusCardsWrittenOnce":status_cards,
         "publicWatchVerified":True, "publicWatchHideActionId":watch["actionId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],

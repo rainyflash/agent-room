@@ -782,7 +782,7 @@ def initialize_isolated_dependencies() -> None:
     )
 
 
-def compose_psql(sql: str) -> str:
+def compose_psql(sql: str, *, database: str = "agent_room") -> str:
     command = [
         executable("docker"),
         "compose",
@@ -801,7 +801,7 @@ def compose_psql(sql: str) -> str:
         "--tuples-only",
         "--no-align",
         "--username=agent_room_bootstrap",
-        "--dbname=agent_room",
+        f"--dbname={database}",
     ]
     completed = subprocess.run(
         command,
@@ -2045,6 +2045,107 @@ def verify_waiting_rules(
         if status != 204:
             raise VerticalFailure(f"网络 Agent 停用失败：HTTP {status}。")
     return {"waiterToken": waiter, "talkerToken": talker}
+
+
+# 在线状态那一轮的网络 Agent 用自己的来源地址，不占别的轮次每小时 5 个的名额。
+LIVENESS_SOURCE: Final = "198.51.100.60"
+AGENT_STATUS_EVENT_TYPE: Final = "io.github.rainyflash.agentroom.agent.status.v1"
+
+
+def wait_for_reception(
+    observer: McpAgentSession,
+    *,
+    room_id: str,
+    agent_id: str,
+    reception: str,
+    timeout_seconds: float,
+) -> None:
+    """等房间里的本机 Agent 看到这个 Agent 连着，在不在等消息是 reception（`waiting`、`on_resume`）。"""
+    deadline = time.monotonic() + timeout_seconds
+    seen: object = None
+    while time.monotonic() < deadline:
+        response = observer.call_tool(
+            "agent_room_get_presence", {"roomId": room_id, "agentIds": [agent_id]}
+        )
+        entries = response.get("entries")
+        if response.get("type") != "presence" or not isinstance(entries, list):
+            raise VerticalFailure("MCP Presence 返回的格式不对。")
+        for item in entries:
+            entry = require_object(item, "MCP Presence 状态")
+            if require_object(entry.get("agent"), "MCP Presence Agent 身份").get("agentId") != agent_id:
+                continue
+            seen = entry.get("lifecycle")
+            if (
+                isinstance(seen, dict)
+                and seen.get("connection") == "online"
+                and seen.get("reception") == reception
+            ):
+                return
+        time.sleep(1)
+    raise VerticalFailure(
+        f"{timeout_seconds:.0f} 秒内本机 Agent 没看到网络 Agent 变成 {reception}：最后看到的是 {seen}。"
+    )
+
+
+def verify_liveness(
+    *, sender_bridge: AuthorizedBridgeRuntime, redactor: LogRedactor
+) -> dict[str, str]:
+    """在不在线、在不在等消息看 Matrix 的在线状态（specs/agent-liveness/design.md 第 3 步）：网络 Agent
+    进了大厅、还没等消息时，房间里的本机 Agent 看到它“下次运行时读”；它等消息时看到“在等消息”；
+    等完约 1 分钟后又是“下次运行时读”。"""
+    sender_session = require_bridge_session(sender_bridge)
+    room_id = sender_session["matrixRoomId"]
+    token = create_waiting_network_agent("Vertical Liveness Scout", LIVENESS_SOURCE)
+    status, me = network_agent_request("GET", "/me", token=token, source=LIVENESS_SOURCE)
+    if status != 200 or me is None:
+        raise VerticalFailure(f"在线状态那一轮的网络 Agent 查看自己失败：HTTP {status}。")
+    agent_id = require_text(me.get("agentId"), "网络 Agent 的 Agent ID")
+    with bridge_mcp_client(sender_bridge, redactor) as transport:
+        observer = transport.bind_session(sender_session["sessionId"])
+        wait_for_reception(
+            observer, room_id=room_id, agent_id=agent_id, reception="on_resume", timeout_seconds=60
+        )
+        # 等完 60 秒内还算在等，所以等 10 秒就够看到“在等消息”，不用一直挂着。
+        waiting = in_background(lambda: network_agent_wait(token, "wait=10&limit=1"))
+        wait_for_reception(
+            observer, room_id=room_id, agent_id=agent_id, reception="waiting", timeout_seconds=45
+        )
+        waiting()
+        # 之后网关每 20 秒报一次，过了那 60 秒就报“离开”。
+        wait_for_reception(
+            observer, room_id=room_id, agent_id=agent_id, reception="on_resume", timeout_seconds=150
+        )
+    status, _ = network_agent_request("DELETE", "/me", token=token, source=LIVENESS_SOURCE)
+    if status != 204:
+        raise VerticalFailure(f"在线状态那一轮的网络 Agent 停用失败：HTTP {status}。")
+    return {"token": token, "agentId": agent_id}
+
+
+def verify_status_events_written_once() -> int:
+    """每个 Agent 实例在每个房间里只写过一条状态事件（名片）：本机 Bridge 重启、崩溃、断线恢复，控制面
+    重启、网络 Agent 的存储重建以后都没有重写。以前每 2 分钟续一次租约就是一条，Synapse 从不删
+    （specs/agent-liveness/design.md）。交回写过名片的“实例 × 房间”有多少个。"""
+    counted = compose_psql(
+        "SELECT count(*) || ' ' || coalesce(max(written), 0) FROM ("
+        " SELECT count(*) AS written FROM state_events"
+        f" WHERE type = '{AGENT_STATUS_EVENT_TYPE}'"
+        " GROUP BY room_id, state_key) AS cards;",
+        database="synapse",
+    )
+    instances, most = (int(value) for value in counted.split())
+    if instances == 0:
+        raise VerticalFailure("房间里一条 Agent 状态事件都没有，名片没写进去。")
+    if most != 1:
+        repeated = compose_psql(
+            "SELECT room_id || ' ' || state_key || ' ' || count(*) FROM state_events"
+            f" WHERE type = '{AGENT_STATUS_EVENT_TYPE}'"
+            " GROUP BY room_id, state_key HAVING count(*) > 1 ORDER BY count(*) DESC LIMIT 5;",
+            database="synapse",
+        )
+        raise VerticalFailure(
+            f"有 Agent 实例在同一个房间里写了 {most} 条状态事件，名片应该只写一次：{repeated}"
+        )
+    return instances
 
 
 # @所有人那一轮用自己的来源地址建网络 Agent，不占别的轮次每小时 5 个的名额。
@@ -3484,10 +3585,17 @@ def wait_for_mcp_preview(
 ) -> dict[str, object]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        response = client.call_tool(
-            "agent_room_list_previews",
-            {"roomId": room_id, "beforeEventId": None, "limit": 20},
-        )
+        try:
+            response = client.call_tool(
+                "agent_room_list_previews",
+                {"roomId": room_id, "beforeEventId": None, "limit": 20},
+            )
+        except McpToolFailure as error:
+            # 控制面刚重启时，Bridge 验签拿不到材料会整个重连一次（agent_runtime_unavailable，可重试）。
+            if not error.retryable:
+                raise
+            time.sleep(0.4)
+            continue
         if response.get("type") != "message_previews":
             raise VerticalFailure("MCP 消息预览返回了错误响应类型。")
         previews = response.get("previews")
