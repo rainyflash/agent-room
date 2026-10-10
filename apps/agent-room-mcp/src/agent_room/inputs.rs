@@ -3,13 +3,12 @@ use agent_room_bridge_ipc::{
     IpcAckInboxRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest, IpcGetPresenceRequest,
     IpcHandoffRequest, IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance,
     IpcMessageSensitivity, IpcMessagesAroundRequest, IpcMethod, IpcOpenContentRequest,
-    IpcOpenHostSessionRequest, IpcPublishStatusRequest, IpcRoomHistoryRequest,
-    IpcSendMessageRequest, IpcWorkStatus,
+    IpcOpenHostSessionRequest, IpcRoomHistoryRequest, IpcSendMessageRequest,
     limits::{
         AROUND_MESSAGES, EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES,
         MEDIA_TYPE_BYTES, MENTIONS, MESSAGE_FROM_BYTES, MESSAGE_LOOKUP_IDS, PRESENCE_TARGETS,
-        PREVIEW_PAGE_SIZE, PROGRESS_BASIS_POINTS, RISK_FLAG_BYTES, RISK_FLAGS, ROOM_ID_BYTES,
-        SUMMARY_CHARACTERS, TASK_SUMMARY_CHARACTERS, TITLE_CHARACTERS, UUID_TEXT_CHARACTERS,
+        PREVIEW_PAGE_SIZE, RISK_FLAG_BYTES, RISK_FLAGS, ROOM_ID_BYTES, SUMMARY_CHARACTERS,
+        TITLE_CHARACTERS, UUID_TEXT_CHARACTERS,
     },
 };
 use rmcp::schemars;
@@ -413,60 +412,6 @@ impl From<OpenContentInput> for IpcOpenContentRequest {
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkStatusInput {
-    Offline,
-    Idle,
-    Working,
-    WaitingInput,
-    Blocked,
-    Completed,
-}
-
-impl From<WorkStatusInput> for IpcWorkStatus {
-    fn from(status: WorkStatusInput) -> Self {
-        match status {
-            WorkStatusInput::Offline => Self::Offline,
-            WorkStatusInput::Idle => Self::Idle,
-            WorkStatusInput::Working => Self::Working,
-            WorkStatusInput::WaitingInput => Self::WaitingInput,
-            WorkStatusInput::Blocked => Self::Blocked,
-            WorkStatusInput::Completed => Self::Completed,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PublishStatusInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
-    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
-    pub session_id: String,
-    /// Matrix 房间 ID。
-    #[schemars(length(max = ROOM_ID_BYTES))]
-    pub room_id: String,
-    /// 要发布的工作状态。
-    pub status: WorkStatusInput,
-    /// 不含敏感细节的任务摘要。
-    #[schemars(length(max = TASK_SUMMARY_CHARACTERS))]
-    pub task_summary: Option<String>,
-    /// 进度基点，0 到 10000；10000 表示 100%。
-    #[schemars(range(min = 0, max = PROGRESS_BASIS_POINTS))]
-    pub progress_basis_points: Option<u16>,
-}
-
-impl From<PublishStatusInput> for IpcPublishStatusRequest {
-    fn from(input: PublishStatusInput) -> Self {
-        Self {
-            room_id: input.room_id,
-            status: input.status.into(),
-            task_summary: input.task_summary,
-            progress_basis_points: input.progress_basis_points,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum MessageSensitivityInput {
     Normal,
     Sensitive,
@@ -613,7 +558,7 @@ mod tests {
 
     use super::{
         GetPresenceInput, HandoffInput, ListHandoffsInput, ListPreviewsInput, OpenContentInput,
-        OpenSessionInput, PublishStatusInput, SendMessageInput, SessionInput,
+        OpenSessionInput, SendMessageInput, SessionInput,
     };
 
     #[test]
@@ -641,7 +586,6 @@ mod tests {
             validate_if_parsed::<ListPreviewsInput, _>(&bytes, |input| IpcMethod::ListPreviews(input.into()));
             validate_if_parsed::<GetPresenceInput, _>(&bytes, |input| IpcMethod::GetPresence(input.into()));
             validate_if_parsed::<OpenContentInput, _>(&bytes, |input| IpcMethod::OpenContent(input.into()));
-            validate_if_parsed::<PublishStatusInput, _>(&bytes, |input| IpcMethod::PublishStatus(input.into()));
             validate_if_parsed::<SendMessageInput, _>(&bytes, |input| IpcMethod::SendMessage(input.into()));
             validate_if_parsed::<ListHandoffsInput, _>(&bytes, |input| IpcMethod::ListHandoffs(input.into()));
             validate_if_parsed::<HandoffInput, _>(&bytes, |input| IpcMethod::ConsumeHandoff(input.into()));

@@ -105,6 +105,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **生产盘会被备份写满。** 每 15 分钟一份全量物理备份，最近 8 小时全留、30 天每天一份。以前不压缩，一份约 780 MB；2026-10-09 备份占 35 GB，剩余空间掉到部署预检的 20 GiB 以下。维护者同意清了旧容器日志、系统日志、旧发布目录和 3 份恢复演练，才发出 Alpha 65。#362 起物理备份是 gzip 压缩的 tar（约四分之一），恢复兼容以前的普通目录；恢复演练只留 2 份，超过保留期的跟着删。发版前先看一眼服务器的 `df -h /`。库本身长得快，根子是 Agent 在线状态的续租，见下面“Agent 在线状态不再攒永久记录”。
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
+- **去掉 IPC 方法或授权范围时，Bridge 那边要留着。** MCP 和命令行在握手时带上要用的授权范围（`IpcScopeName`，报文里是名字）。升级以后，宿主里还在跑的旧版 MCP 进程照旧带着旧的范围握手，Bridge 不认这个名字就整个连不上，所有工具都失败。所以去掉工具只从新版客户端里去掉，Bridge 照旧认旧的范围和请求，收下以后照收不发；3c 去掉 `agent_room_publish_status` 就是这样做的（`IpcMethod::PublishStatus`）。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
 - **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。
 
@@ -152,7 +153,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 围观页（`public_watch/reading.rs`）以建大厅的应用服务账号问写名片的 Agent 的在线状态，同一个人 15 秒内只问一次。名片只写一次：筛掉过期状态事件的地方，别把名片也按写了多久筛掉。
   - 名片的时间是进房间那一刻，不是上次连接：别拿它显示“上次连接”或给离线的排先后，用离线的那一刻。
 - 设计 #369（维护者 2026-10-09 同意），同一天维护者问“在线状态的变化记下来有什么用”，改成只写名片，维护者同意（#374）。读的一边拆成 2a 共用规则（#376）、2b 网页（#377）、2c 本机 Bridge（#378）、2d 围观页（#379）。
-- 写的一边（第 3 步）等读的一边那一版（Alpha 67）发出去以后才合，PR 先开成草稿：3a 本机 Bridge（#381）、3b 网关（#382，叠在 3a 上）、3c 去掉 Agent 自己报的工作状态、3d 无头验收。
+- 写的一边（第 3 步）等读的一边那一版（Alpha 67）发出去以后才合，PR 先开成草稿：3a 本机 Bridge（#381）、3b 网关（#382，叠在 3a 上）、3c 去掉 Agent 自己报的工作状态（#383，叠在 3b 上）、3d 无头验收。
   - 细节按 Synapse 1.159 的源码定（#380）：同步会盖掉 `PUT` 报的在线状态，所以同步本身要带 `online` 或 `unavailable`（matrix-sdk 不设时带 `online`）；同步带的和 `PUT` 各自每个用户 10 秒只认一次，被限速的同步不算数，所以本机长轮询降到 15 秒。
   - 服务器开没开在线状态，靠报一次再读回自己的来判断，没开就照旧写租约。
   - 网关只在网络 Agent 等消息时替它同步，等完以后的 5 分钟靠每 20 秒 `PUT` 一次撑着：只 `PUT` 不同步的设备，30 秒没动静就变离线。加密客户端准备、刷新时的同步带 `offline`，不算数。
@@ -290,7 +291,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
 - 按需查看（第 3 步）：3a #283 是 Bridge 与 IPC 4.3（`GetMessages`、`MessagesAround`、`RoomHistory`），3b #284 是 MCP 的 `agent_room_get_messages`、`agent_room_room_messages` 和命令行的 `show`、`around`、`history`。从 3b 起本机收件箱的长消息只给开头；后台回复交给宿主之前按 ID 取回全文（`agent-reception` 的 `with_full_text`），宿主照旧读到整条。
-  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）已经 1535 字节，测试卡在 1536 以内，要加话得先删别的。
+  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）已经 1519 字节，测试卡在 1536 以内，要加话得先删别的。
 - 本机收件箱（第 4 步）：
   - 4a #299：Bridge 按房间记确认位置（IPC 4.4 的 `AckInbox`，读收件箱和等消息带 `fromAck`，消息库迁移 0007）；
   - 4b #300：MCP 的 `agent_room_ack`，命令行的 `ack` 交给 Bridge 记；后台回复处理完一批也在 Bridge 上确认；

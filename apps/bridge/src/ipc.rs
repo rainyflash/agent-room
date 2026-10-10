@@ -2183,7 +2183,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 公共大厅状态发布只暴露粗粒度状态并返回真实租约() {
+    async fn 旧版客户端报的工作状态照收不发_只回现在的租约() {
         let room_id = MatrixRoomId::new("!lobby:matrix.test").expect("房间标识有效");
         let identity = 测试_agent_身份();
         let publisher = Arc::new(记录状态发布器::default());
@@ -2197,7 +2197,7 @@ mod tests {
                     identity,
                     "DEVICE-1",
                     room_id.clone(),
-                    ["status.publish"],
+                    ["presence.read"],
                 )
                 .with_status(status),
             )),
@@ -2223,8 +2223,8 @@ mod tests {
                     && publication.lease_expires_at_unix_ms == 301_000
         ));
         let events = publisher.0.lock().expect("状态事件锁可用");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].content()["status"], "working");
+        assert_eq!(events.len(), 1, "还没有租约，先写一条");
+        assert_eq!(events[0].content()["status"], "idle", "报的工作状态不发");
         assert_eq!(events[0].content()["visibility"], "coarse");
         assert!(events[0].content().get("taskSummary").is_none());
         assert!(events[0].content().get("progress").is_none());

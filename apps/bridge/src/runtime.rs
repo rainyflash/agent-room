@@ -136,13 +136,12 @@ mod host_sessions;
 mod isolated_messages;
 mod presence_fetch;
 use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
-const FOUNDATION_AGENT_CAPABILITIES: [&str; 9] = [
+const FOUNDATION_AGENT_CAPABILITIES: [&str; 8] = [
     "matrix.security",
     "self.read",
     "previews.read",
     "presence.read",
     "content.read",
-    "status.publish",
     "message.send",
     "handoff.consume",
     "handoff.decline",

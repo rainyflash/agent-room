@@ -88,8 +88,6 @@ pub(crate) enum Command {
     History(HistoryArgs),
     /// Send an authorized conversation message with an explicit idempotency key.
     Send(SendArgs),
-    /// Publish the current task state.
-    Status(StatusArgs),
     /// Register this exact task for desktop background replies. Does not enable replies.
     Register(RegisterArgs),
     /// Inspect the participants in the current room.
@@ -309,28 +307,6 @@ pub(crate) struct SendArgs {
     pub(crate) authorized: bool,
     #[arg(long)]
     pub(crate) automation_grant: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub(crate) enum WorkStatus {
-    Offline,
-    Idle,
-    Working,
-    WaitingInput,
-    Blocked,
-    Completed,
-}
-
-#[derive(Debug, Args)]
-pub(crate) struct StatusArgs {
-    #[arg(long)]
-    pub(crate) session: Option<String>,
-    #[arg(long)]
-    pub(crate) room: Option<String>,
-    #[arg(long, value_enum)]
-    pub(crate) value: WorkStatus,
-    #[arg(long)]
-    pub(crate) summary: Option<String>,
 }
 
 #[derive(Debug, Args)]

@@ -289,7 +289,6 @@ class VerticalSessionTests(unittest.TestCase):
 
         helper_results = {
             "active_room_for_agent": {"matrixRoomId": ROOM_ID, "roomInstanceId": SESSION_KEY},
-            "verify_mcp_status_publication": None,
             "wait_for_mcp_presence": None,
             "send_mcp_vertical_message": {"eventId": "$message", "body": "test"},
             "wait_for_mcp_preview": {"messageId": TASK_AGENT, "content": {"contentId": TASK_AGENT}},
@@ -314,7 +313,7 @@ class VerticalSessionTests(unittest.TestCase):
         self.assertEqual(result["senderAgentId"], SENDER_AGENT)
         self.assertEqual(helpers["send_mcp_vertical_message"].call_args.args[0].session_id, SESSION_B)
         for name in (
-            "verify_mcp_status_publication", "wait_for_mcp_presence",
+            "wait_for_mcp_presence",
             "wait_for_mcp_preview", "verify_mcp_opened_content",
             "wait_for_mcp_handoff_consumption", "send_mcp_vertical_reply",
         ):

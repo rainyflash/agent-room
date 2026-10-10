@@ -176,22 +176,16 @@ async fn 服务器没开在线状态就改回写租约() {
 }
 
 #[tokio::test]
-async fn 正常退出报离线_宿主报的工作状态不再发() {
+async fn 正常退出报离线_旧版客户端报的工作状态照收不发() {
     let matrix = 在线状态网关::new(true);
     let publisher = Arc::new(记录状态发布器::default());
     let status = 名片句柄(&matrix, &publisher, "Codex Agent");
     status.renew(&投影(None)).await.expect("同步之后写名片");
 
-    status
-        .publish(HostAgentState::Disconnected)
-        .await
-        .expect("宿主报离线");
-    status
-        .publish(HostAgentState::Running)
-        .await
-        .expect("宿主报在忙");
+    status.acknowledge().await.expect("旧版客户端报离线");
+    status.acknowledge().await.expect("旧版客户端报在忙");
     assert_eq!(publisher.contents().len(), 1, "只有名片");
-    assert_eq!(matrix.reported(), [Unavailable], "宿主说离线不算退出");
+    assert_eq!(matrix.reported(), [Unavailable], "报的工作状态不算退出");
 
     status.disconnect().await.expect("正常退出");
     assert_eq!(matrix.reported(), [Unavailable, Offline]);

@@ -28,10 +28,7 @@ use agent_room_bridge_core::{
         ProtectMessageBodyRequest, SendMessageRequest,
     },
     presence::{PresenceProjectionFailureKind, PresenceProjectionRepository, PresenceQuery},
-    status::{
-        HostAgentState, StatusPublicationFailure, StatusPublicationFailureKind,
-        StatusPublicationOutcome,
-    },
+    status::{StatusPublicationFailure, StatusPublicationFailureKind, StatusPublicationOutcome},
 };
 use agent_room_bridge_ipc::previews::{
     PreviewRoom, PreviewText, PreviewViewer, actor_summary as ipc_actor,
@@ -866,6 +863,7 @@ impl AgentRuntimeIpcFacade {
         })
     }
 
+    /// 旧版客户端还会发：照收不发，交回现在的名片或租约，见 `AgentStatusPublicationHandle::acknowledge`。
     pub(super) async fn publish_status(
         &self,
         request: IpcPublishStatusRequest,
@@ -874,7 +872,7 @@ impl AgentRuntimeIpcFacade {
         let room_id = requested_room(Some(request.room_id), &runtime.room_id)?;
         let status = runtime.status.ok_or_else(agent_runtime_unavailable)?;
         let outcome = status
-            .publish(host_status(request.status))
+            .acknowledge()
             .await
             .map_err(map_status_publication_failure)?;
         let lease_expires_at_unix_ms = match outcome {
@@ -1404,17 +1402,6 @@ const fn ipc_handoff_permission(permission: HandoffPermission) -> IpcHandoffPerm
         HandoffPermission::ReadText => IpcHandoffPermission::ReadText,
         HandoffPermission::ReadAttachments => IpcHandoffPermission::ReadAttachments,
         HandoffPermission::IncludeMetadata => IpcHandoffPermission::IncludeMetadata,
-    }
-}
-
-const fn host_status(status: IpcWorkStatus) -> HostAgentState {
-    match status {
-        IpcWorkStatus::Offline => HostAgentState::Disconnected,
-        IpcWorkStatus::Idle => HostAgentState::Available,
-        IpcWorkStatus::Working => HostAgentState::Running,
-        IpcWorkStatus::WaitingInput => HostAgentState::AwaitingInput,
-        IpcWorkStatus::Blocked => HostAgentState::Blocked,
-        IpcWorkStatus::Completed => HostAgentState::Succeeded,
     }
 }
 

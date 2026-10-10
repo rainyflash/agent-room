@@ -2927,7 +2927,6 @@ def verify_mcp_workflow(
         for field in ("agentId", "agentInstanceId", "agentMatrixUserId"):
             if sender_identity[field] == identity[field]:
                 raise VerticalFailure(f"两个任务错误地共用了 {field}。")
-        verify_mcp_status_publication(client, room["matrixRoomId"])
         wait_for_mcp_presence(
             client,
             room_id=room["matrixRoomId"],
@@ -3335,26 +3334,6 @@ def verify_mcp_identity_response(
     }
 
 
-def verify_mcp_status_publication(client: McpAgentSession, room_id: str) -> None:
-    response = client.call_tool(
-        "agent_room_publish_status",
-        {
-            "roomId": room_id,
-            "status": "working",
-            "taskSummary": "Task 24 vertical verification",
-            "progressBasisPoints": 5_000,
-        },
-    )
-    if response.get("type") != "published_status":
-        raise VerticalFailure("MCP 状态发布返回了错误响应类型。")
-    publication = require_object(response.get("publication"), "MCP 状态发布结果")
-    if publication.get("roomId") != room_id or publication.get("status") != "working":
-        raise VerticalFailure("MCP 状态发布结果与请求不一致。")
-    lease_expiry = publication.get("leaseExpiresAtUnixMs")
-    if not isinstance(lease_expiry, int) or lease_expiry <= int(time.time() * 1_000):
-        raise VerticalFailure("MCP 状态发布没有返回有效租约。")
-
-
 def wait_for_mcp_presence(
     client: McpAgentSession,
     *,
@@ -3365,8 +3344,8 @@ def wait_for_mcp_presence(
 ) -> dict[str, object]:
     """等待这个实例的名片经过 Matrix 同步、验签投影后可读，并且显示连着。
 
-    名片模式下 Agent 自己报的工作状态照收不发（specs/agent-liveness/design.md 第 3 步），
-    所以只看连没连着：服务器开着在线状态时看 Matrix 的在线状态，没开时看租约。"""
+    Agent 自己报的工作状态去掉了（specs/agent-liveness/design.md 第 3 步），所以只看连没连着：
+    服务器开着在线状态时看 Matrix 的在线状态，没开时看租约。"""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         response = client.call_tool(

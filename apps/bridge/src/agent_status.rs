@@ -129,25 +129,19 @@ impl AgentStatusPublicationHandle {
         }
     }
 
-    /// 宿主报的工作状态。写名片的不再发：名片不随工作状态变，在不在线看 Matrix 的在线状态。
-    pub(crate) async fn publish(
-        &self,
-        host_state: HostAgentState,
-    ) -> StatusPublicationResult<StatusPublicationOutcome> {
+    /// 旧版客户端（MCP 和命令行）还会发 `PublishStatus`：照收不发，交回现在的名片或租约。
+    /// Agent 自己报的工作状态去掉了（`specs/agent-liveness/design.md` 第 3 步），写租约的也只到点
+    /// 续租，不换状态。
+    pub(crate) async fn acknowledge(&self) -> StatusPublicationResult<StatusPublicationOutcome> {
         let mut state = self.state.lock().await;
+        let state = &mut *state;
         if matches!(state.liveness, Liveness::Presence(_)) {
             return state.service.card_outcome();
         }
-        let connected = host_state != HostAgentState::Disconnected;
-        let intent = AgentStatusIntent::new(host_state, None)
-            .with_last_polled_at(state.intent.last_polled_at().filter(|_| connected))
-            .with_waiting(connected && state.intent.waiting());
-        let outcome = state
+        state
             .service
-            .publish_if_due(&self.target, &intent, status_entropy())
-            .await?;
-        state.intent = intent;
-        Ok(outcome)
+            .publish_if_due(&self.target, &state.intent, status_entropy())
+            .await
     }
 
     /// 正常退出，同步已经停了。写名片的报一次离线，别人马上看到，不用等 Synapse 那 30 秒；
@@ -158,7 +152,14 @@ impl AgentStatusPublicationHandle {
             self.report(MatrixPresenceState::Offline).await;
             return Ok(());
         }
-        self.publish(HostAgentState::Disconnected).await.map(|_| ())
+        let mut state = self.state.lock().await;
+        let intent = AgentStatusIntent::new(HostAgentState::Disconnected, None);
+        state
+            .service
+            .publish_if_due(&self.target, &intent, status_entropy())
+            .await?;
+        state.intent = intent;
+        Ok(())
     }
 
     /// 每次同步之后调用。写名片的：还没确认服务器开着在线状态就确认一次，确认了才写名片

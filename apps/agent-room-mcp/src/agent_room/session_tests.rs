@@ -606,10 +606,6 @@ async fn 未绑定参数在真实工具边界被拒绝且没有默认身份回�
         ),
         ("agent_room_open_content", json!({"contentId": SESSION_KEY})),
         (
-            "agent_room_publish_status",
-            json!({"roomId": "!room:example.test", "status": "idle"}),
-        ),
-        (
             "agent_room_send_message",
             json!({"chat": true, "roomId": "!room:example.test", "body": "测试", "provenance": "human_confirmed_agent"}),
         ),

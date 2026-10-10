@@ -9,14 +9,13 @@ use agent_room_agent_client::{
     launching_desktop_when_absent,
 };
 use agent_room_bridge_ipc::{
-    IpcCloseHostSessionRequest, IpcMethod, IpcOpenHostSessionRequest, IpcPublishStatusRequest,
-    IpcResponse, IpcWorkStatus,
+    IpcCloseHostSessionRequest, IpcMethod, IpcOpenHostSessionRequest, IpcResponse,
 };
 use agent_room_bridge_local_adapter::{
     bridge_data_root_from_environment, bridge_runtime_root, secure_storage_service_from_environment,
 };
 use clap::Parser;
-use cli::{Cli, Command, SessionCommand, WorkStatus};
+use cli::{Cli, Command, SessionCommand};
 use output::{CliFailure, CliResult, success, write_json};
 use serde_json::json;
 use std::{io::Read as _, process::ExitCode};
@@ -160,7 +159,6 @@ async fn run_command(
         Command::Around(args) => view(backend, args.into_request()).await,
         Command::History(args) => view(backend, args.into_request()).await,
         Command::Send(args) => send(backend, args).await,
-        Command::Status(args) => publish_status(backend, args).await,
         Command::Register(args) => register(backend, args).await,
         Command::Presence(args) => read_presence(backend, args).await,
         Command::Content { scope, id } => success(
@@ -415,31 +413,6 @@ async fn register(backend: &dyn BridgeToolClient, args: cli::RegisterArgs) -> Cl
                     host_type,
                     task_id,
                     workspace,
-                }),
-            ),
-        )
-        .await?,
-    )
-}
-async fn publish_status(backend: &dyn BridgeToolClient, args: cli::StatusArgs) -> CliResult<()> {
-    let status = match args.value {
-        WorkStatus::Offline => IpcWorkStatus::Offline,
-        WorkStatus::Idle => IpcWorkStatus::Idle,
-        WorkStatus::Working => IpcWorkStatus::Working,
-        WorkStatus::WaitingInput => IpcWorkStatus::WaitingInput,
-        WorkStatus::Blocked => IpcWorkStatus::Blocked,
-        WorkStatus::Completed => IpcWorkStatus::Completed,
-    };
-    success(
-        call(
-            backend,
-            scoped(
-                required(args.session, "cli.session_required")?,
-                IpcMethod::PublishStatus(IpcPublishStatusRequest {
-                    room_id: required(args.room, "cli.room_required")?,
-                    status,
-                    task_summary: args.summary,
-                    progress_basis_points: None,
                 }),
             ),
         )
