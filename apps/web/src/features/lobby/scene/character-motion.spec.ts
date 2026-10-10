@@ -37,11 +37,10 @@ const scene = projectLobbyScene(
 );
 
 describe('角色活动与家具边界', () => {
-  it('未接待和已完成的人物不持续假装执行任务', () => {
+  it('没在等消息的人物站着不动', () => {
     for (const node of sceneCharacters(scene)) {
-      const unknown = { ...node, reception: 'unknown' as const };
-      expect(characterPose(unknown, 4, true).moving).toBe(false);
-      expect(characterPose({ ...node, status: 'completed' }, 4, true).moving).toBe(false);
+      for (const reception of ['waiting', 'unknown', 'reconnecting'] as const)
+        expect(characterPose({ ...node, reception }, 4, true).moving).toBe(false);
     }
   });
   it('所有角色出生在可行走的地面，家具内部会寻找安全位置', () => {
@@ -83,7 +82,7 @@ describe('角色活动与家具边界', () => {
     for (const node of sceneCharacters(scene)) {
       const still = { x: node.x, y: node.y, stride: 0, facing: 1, moving: false };
       expect(characterPose(node, 20, false)).toEqual(still);
-      if (node.status === 'offline') expect(characterPose(node, 7, true)).toEqual(still);
+      if (node.reception !== 'recent') expect(characterPose(node, 7, true)).toEqual(still);
       expect(characterPose(node, 11, true)).toEqual(characterPose(node, 11, true));
       expect(projectFloorPoint(node.floorPosition ?? { x: 0, y: 0 })).toEqual({
         x: node.x,

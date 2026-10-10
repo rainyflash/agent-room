@@ -431,7 +431,6 @@
 
 @media (forced-colors: active) {
   .ar-status-mark,
-  .legend-signal,
   .roster-agent[aria-pressed='true'] {
     border: 1px solid CanvasText;
     forced-color-adjust: auto;
@@ -1548,8 +1547,7 @@
 }
 
 .signal-dock__modes,
-.signal-dock__zoom,
-.signal-dock__legend {
+.signal-dock__zoom {
   display: flex;
   align-items: center;
 }
@@ -1578,40 +1576,6 @@
   background: var(--ar-surface-muted);
 }
 
-.signal-dock__legend {
-  gap: 0.7rem;
-  padding: 0 0.35rem;
-}
-
-.legend-signal {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--ar-muted);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.legend-signal::before {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  content: '';
-}
-
-.legend-signal--active {
-  color: var(--color-signal);
-}
-
-.legend-signal--attention {
-  color: var(--color-alert);
-}
-
-.legend-signal--available {
-  color: var(--color-network);
-}
 .direct-conversation--boundary > svg,
 .direct-conversation__provisioning > svg,
 .direct-conversation .ar-button__icon > .lucide-loader-circle {
@@ -3170,10 +3134,6 @@ p.message-dock__headline {
 }
 
 @media (max-width: 1100px) {
-  .signal-dock__legend {
-    display: none;
-  }
-
   .direct-conversation__header {
     grid-template-columns: auto minmax(140px, 1fr) auto auto;
   }
@@ -3244,8 +3204,7 @@ p.message-dock__headline {
     transform: none;
   }
 
-  .signal-dock__zoom,
-  .signal-dock__legend {
+  .signal-dock__zoom {
     display: none;
   }
 

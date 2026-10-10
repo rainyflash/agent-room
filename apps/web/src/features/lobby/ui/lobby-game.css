@@ -177,9 +177,6 @@
   z-index: 15;
   backdrop-filter: none;
 }
-.lobby-game .signal-dock__legend {
-  display: none;
-}
 .lobby-game .signal-dock__modes {
   gap: 4px;
   padding-right: 8px;

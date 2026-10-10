@@ -1,11 +1,10 @@
 import type { Container, Graphics, Renderer, Sprite, Texture } from 'pixi.js';
 import {
+  characterFill,
   characterShadow,
   humanMarker,
   sceneInk,
   selectionRing,
-  statusBadgeFill,
-  statusStickerFill,
 } from '../scene-style';
 import { characterFoot, characterSize, characterVariant, spriteCell } from '../studio-assets';
 import type { SceneCharacter } from '../scene-character';
@@ -20,7 +19,6 @@ type CharacterTexture = {
 export type CharacterParts = {
   readonly shadow: Sprite;
   readonly marker: Sprite;
-  readonly bubble: Sprite | null;
   readonly selectionRing: Sprite | null;
 };
 
@@ -29,8 +27,6 @@ const partBuilders = {
     new pixi.Graphics()
       .ellipse(0, 1, 21, 8)
       .fill({ color: characterShadow.color, alpha: characterShadow.alpha }),
-  waitingBubble: (pixi: PixiModule) => statusBubble(pixi, 'waiting_input'),
-  blockedBubble: (pixi: PixiModule) => statusBubble(pixi, 'blocked'),
   // 墨色外圈垫底、晴黄内圈压上：在浅色地砖上也一眼能看出选中了谁。
   selectionRing: (pixi: PixiModule) =>
     new pixi.Graphics()
@@ -39,22 +35,6 @@ const partBuilders = {
       .ellipse(0, 1, 30, 13)
       .stroke({ color: selectionRing.inner, width: selectionRing.innerWidth }),
 } satisfies Readonly<Record<string, (pixi: PixiModule) => Graphics>>;
-
-function statusBubble(pixi: PixiModule, status: 'waiting_input' | 'blocked'): Graphics {
-  const graphic = new pixi.Graphics()
-    .roundRect(25, -106, 23, 23, 8)
-    .fill(statusBadgeFill[status])
-    .stroke({ color: sceneInk, width: 2 });
-  if (status === 'blocked') {
-    graphic.moveTo(37, -101).lineTo(37, -94);
-  } else {
-    graphic
-      .moveTo(33, -98)
-      .bezierCurveTo(33, -103, 42, -103, 42, -98)
-      .bezierCurveTo(42, -96, 37, -96, 37, -93);
-  }
-  return graphic.stroke({ color: sceneInk, width: 2 }).circle(37, -89, 1.2).fill(sceneInk);
-}
 
 /** 纹理由场景统一释放；每个角色仅拥有自己的 Sprite。 */
 export class CharacterTextureCache {
@@ -116,21 +96,17 @@ export class CharacterTextureCache {
   createParts(node: SceneCharacter, selected: boolean): CharacterParts {
     // 先生成完整纹理组，失败时不会留下尚未交给视图管理的 Sprite。
     const shadow = this.#partTexture('shadow');
-    const marker = this.#texture(`marker:${node.status}`, () =>
+    const fill = characterFill(node);
+    const marker = this.#texture(`marker:${fill}`, () =>
       new this.#pixi.Graphics()
         .circle(30, -70, 4.5)
-        .fill(statusStickerFill[node.status])
+        .fill(fill)
         .stroke({ color: sceneInk, width: 2 }),
     );
-    const bubble =
-      node.status === 'waiting_input' || node.status === 'blocked'
-        ? this.#partTexture(node.status === 'blocked' ? 'blockedBubble' : 'waitingBubble')
-        : null;
     const selectionRing = selected ? this.#partTexture('selectionRing') : null;
     return {
       shadow: this.#partSprite(shadow),
       marker: this.#partSprite(marker),
-      bubble: bubble === null ? null : this.#partSprite(bubble),
       selectionRing: selectionRing === null ? null : this.#partSprite(selectionRing),
     };
   }

@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
 import type { LobbyAgentNodeProjection } from '@/features/lobby/domain/scene-projection';
-import { AgentStateLabel } from './agent-state-label';
+import { agentStateKey } from '../domain/agent-attendance';
 
 export type SceneSemanticRosterProps = {
   readonly activeAgentId: string | null;
@@ -29,9 +29,8 @@ export function SceneSemanticRoster({
         >
           {t('lobby.agent.accessibility', {
             name: node.displayName,
-            status: t(`lobby.status.${node.status}`),
+            state: t(`agentState.${agentStateKey(node, now)}`),
           })}
-          <AgentStateLabel agent={node} now={now} />
         </div>
       ))}
     </>
@@ -61,9 +60,8 @@ export function SceneSelectionAnnouncement({
           ? t('lobby.scene.noActiveAgent')
           : t('lobby.scene.activeAgent', {
               name: activeAgent.displayName,
-              status: t(`lobby.status.${activeAgent.status}`),
+              state: t(`agentState.${agentStateKey(activeAgent, now)}`),
             })}
-        {activeAgent !== null && <AgentStateLabel agent={activeAgent} now={now} />}
       </p>
     </div>
   );

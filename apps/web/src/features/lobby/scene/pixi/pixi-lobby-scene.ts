@@ -426,7 +426,7 @@ class PixiLobbyScene implements LobbySceneHandle {
       const selected = node.characterId === this.#projection.selectedAgentId;
       const signature = [
         node.displayName,
-        node.status,
+        node.availability,
         node.kind,
         node.radius,
         detail,

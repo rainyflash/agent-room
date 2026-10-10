@@ -56,20 +56,6 @@ export function LobbySpatialView({
         reconnecting: t('lobby.nameplate.reconnecting'),
         offline: t('lobby.nameplate.offline'),
       },
-      statuses: {
-        idle: t('lobby.status.idle'),
-        working: t('lobby.status.working'),
-        waiting_input: t('lobby.status.waiting_input'),
-        blocked: t('lobby.status.blocked'),
-        completed: t('lobby.status.completed'),
-        offline: t('lobby.status.offline'),
-        present: t('roomGame.self'),
-      },
-      zones: {
-        active: t('lobby.zone.active'),
-        attention: t('lobby.zone.attention'),
-        available: t('lobby.zone.available'),
-      },
     }),
     [languageKey, t],
   );

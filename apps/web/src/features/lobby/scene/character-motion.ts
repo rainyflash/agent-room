@@ -17,7 +17,7 @@ export type CharacterPose = {
 export function characterCanRoam(
   node: SceneCharacter,
 ): node is SceneCharacter & { readonly floorPosition: FloorPoint } {
-  return node.floorPosition !== undefined && node.status === 'idle' && node.reception === 'recent';
+  return node.floorPosition !== undefined && node.reception === 'recent';
 }
 
 export function characterPose(

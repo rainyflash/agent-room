@@ -6,12 +6,9 @@ import {
 } from './room-layout';
 import type { RoomHuman } from './room-participants';
 import { projectFloorPoint, type FloorPoint } from './room-floor';
-import type { LobbyAgent, LobbyAgentStatus, LobbyRoom } from './lobby';
+import type { LobbyAgent, LobbyRoom } from './lobby';
 import { agentAttendance } from './agent-attendance';
 
-export const lobbyZoneIds = ['active', 'attention', 'available'] as const;
-
-export type LobbyZoneId = (typeof lobbyZoneIds)[number];
 export type LobbySceneDetail = 'distant' | 'medium' | 'near';
 
 export type LobbyWorld = {
@@ -26,17 +23,12 @@ export type LobbyBounds = {
   readonly y: number;
 };
 
-export type LobbyZoneProjection = LobbyBounds & {
-  readonly id: LobbyZoneId;
-};
-
 export type LobbyAgentNodeProjection = LobbyAgent & {
   readonly radius: number;
   readonly roamingRadius?: number;
   readonly floorPosition?: FloorPoint;
   readonly x: number;
   readonly y: number;
-  readonly zoneId: LobbyZoneId;
 };
 
 export type LobbyHumanNodeProjection = RoomHuman & {
@@ -57,37 +49,11 @@ export type LobbySceneProjection = {
   readonly selectedAgentId: string | null;
   readonly topic?: string;
   readonly world: LobbyWorld;
-  readonly zones: readonly LobbyZoneProjection[];
 };
 
 export type LobbyViewport = LobbyBounds & {
   readonly zoom: number;
 };
-
-function zonesForWorld(world: LobbyWorld): Readonly<Record<LobbyZoneId, LobbyZoneProjection>> {
-  const width = world.width - 380;
-  const height = world.height - 420;
-  return {
-    active: { id: 'active', x: 180, y: 240, width: width * 0.48, height: height * 0.48 },
-    attention: {
-      id: 'attention',
-      x: 180 + width * 0.52,
-      y: 240,
-      width: width * 0.48,
-      height: height * 0.48,
-    },
-    available: { id: 'available', x: 180, y: 260 + height * 0.52, width, height: height * 0.48 },
-  };
-}
-
-const ZONE_BY_STATUS: Readonly<Record<LobbyAgentStatus, LobbyZoneId>> = Object.freeze({
-  blocked: 'attention',
-  completed: 'available',
-  idle: 'available',
-  offline: 'available',
-  waiting_input: 'attention',
-  working: 'active',
-});
 
 export function projectLobbyScene(
   room: LobbyRoom,
@@ -100,7 +66,6 @@ export function projectLobbyScene(
   );
   const floorPlan = floorForOccupants(presentAgents.length + humans.length, options.previous);
   const world = Object.freeze({ width: floorPlan.width, height: floorPlan.depth });
-  const zones = zonesForWorld(world);
   const requests = [
     ...presentAgents.map((agent) => ({
       id: agent.agentId,
@@ -121,16 +86,10 @@ export function projectLobbyScene(
       return [
         Object.freeze({
           ...agent,
-          reportedStatus: agent.reportedStatus ?? agent.status,
-          status:
-            agentAttendance(agent, room.observedAtUnixMs) === 'reconnecting'
-              ? 'offline'
-              : agent.status,
           radius: presentAgents.length <= 24 ? 34 : 26,
           floorPosition: floor,
           roamingRadius: roamingRadius(),
           ...projectFloorPoint(floor),
-          zoneId: ZONE_BY_STATUS[agent.status],
         }),
       ];
     });
@@ -161,7 +120,6 @@ export function projectLobbyScene(
       : null,
     ...(room.topic === undefined ? {} : { topic: room.topic }),
     world,
-    zones: Object.freeze(lobbyZoneIds.map((zoneId) => Object.freeze(zones[zoneId]))),
   });
 }
 

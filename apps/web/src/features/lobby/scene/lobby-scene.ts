@@ -1,33 +1,24 @@
 import type { SceneFrame, SceneCharacter } from './scene-character';
-import type { LobbyAgentStatus } from '../domain/lobby';
-import type { LobbySceneProjection, LobbyZoneId } from '@/features/lobby/domain/scene-projection';
+import type { AgentStateKey } from '../domain/agent-attendance';
+import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 
 export type LobbySceneLabels = {
   readonly canvas: string;
   readonly self?: string;
-  readonly statuses?: Readonly<Record<LobbyAgentStatus | 'present', string>>;
-  readonly availability?: Readonly<
-    Partial<Record<NonNullable<SceneCharacter['availability']>, string>>
-  >;
-  readonly zones: Readonly<Record<LobbyZoneId, string>>;
+  readonly availability?: Readonly<Partial<Record<AgentStateKey, string>>>;
 };
 
 /**
- * 名牌只放一行大白话：任务状态在前，接待能力确定时再补一句。接待未知时不写，
- * 免得把「还不知道」说成一种状态；离线和重连本身就是状态，直接替换。
+ * 名牌下只放一行大白话：在不在等消息，重连中、离线就直接说。接待未知时不写，
+ * 免得把「还不知道」说成一种状态。
  */
 export function characterStatusLabel(
   node: SceneCharacter,
   labels: LobbySceneLabels,
 ): string | undefined {
-  const status = labels.statuses?.[node.status];
   const availability = node.availability;
-  if (availability === undefined || availability === 'unknown') return status;
-  const reception = labels.availability?.[availability];
-  if (reception === undefined) return status;
-  if (availability === 'offline' || availability === 'reconnecting' || status === undefined)
-    return reception;
-  return `${status} · ${reception}`;
+  if (availability === undefined || availability === 'unknown') return undefined;
+  return labels.availability?.[availability];
 }
 
 export type LobbySceneCallbacks = {

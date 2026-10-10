@@ -23,26 +23,14 @@ describe('大厅场景投影', () => {
     expect(first.nodes.every((node) => Object.isFrozen(node))).toBe(true);
   });
 
-  it('状态决定主题区且失效选中项不会泄漏到投影', () => {
+  it('离线的不进场景，失效选中项不会泄漏到投影', () => {
     const projection = projectLobbyScene(
-      room([
-        agent(1, 'working'),
-        agent(2, 'blocked'),
-        agent(3, 'waiting_input'),
-        agent(4, 'idle'),
-        agent(5, 'offline'),
-      ]),
+      room([agent(1, 'working'), agent(4, 'idle'), agent(5, 'offline')]),
       'missing-agent',
     );
 
     expect(projection.selectedAgentId).toBeNull();
-    expect(Object.fromEntries(projection.nodes.map((node) => [node.status, node.zoneId]))).toEqual({
-      blocked: 'attention',
-      idle: 'available',
-      waiting_input: 'attention',
-      working: 'active',
-    });
-    expect(projection.nodes.some((node) => node.agentId === 'agent-005')).toBe(false);
+    expect(projection.nodes.map((node) => node.agentId)).toEqual(['agent-001', 'agent-004']);
   });
 
   it('按视口裁剪节点并按缩放只返回三个闭合层级', () => {
@@ -68,24 +56,6 @@ describe('大厅场景投影', () => {
     expect(sceneDetailForRoom(25, 0.3)).toBe('distant');
   });
 
-  it('主题区共享同一世界坐标系且互不重叠', () => {
-    const projection = projectLobbyScene(room([]), null);
-    const pairs = projection.zones.flatMap((zone, index) =>
-      projection.zones.slice(index + 1).map((other) => [zone, other] as const),
-    );
-
-    expect(pairs.every(([left, right]) => !boundsOverlap(left, right))).toBe(true);
-    expect(
-      projection.zones.every(
-        (zone) =>
-          zone.x >= 0 &&
-          zone.y >= 0 &&
-          zone.x + zone.width <= projection.world.width &&
-          zone.y + zone.height <= projection.world.height,
-      ),
-    ).toBe(true);
-  });
-
   it('方向导航优先前进方向并在边界稳定停留', () => {
     const base = agent(0);
     const nodes = [
@@ -93,7 +63,7 @@ describe('大厅场景投影', () => {
       { ...base, agentId: 'right-near', x: 180, y: 110 },
       { ...base, agentId: 'right-off-axis', x: 150, y: 260 },
       { ...base, agentId: 'left', x: 20, y: 100 },
-    ].map((node) => ({ ...node, radius: 24, zoneId: 'active' as const }));
+    ].map((node) => ({ ...node, radius: 24 }));
 
     expect(nextAgentInDirection(nodes, 'center', 'right')).toBe('right-near');
     expect(nextAgentInDirection(nodes, 'center', 'left')).toBe('left');
@@ -135,21 +105,4 @@ function statusAt(index: number): LobbyAgentStatus {
     'completed',
   ];
   return statuses[index % statuses.length] ?? 'offline';
-}
-
-function boundsOverlap(
-  left: { readonly height: number; readonly width: number; readonly x: number; readonly y: number },
-  right: {
-    readonly height: number;
-    readonly width: number;
-    readonly x: number;
-    readonly y: number;
-  },
-): boolean {
-  return !(
-    left.x + left.width <= right.x ||
-    right.x + right.width <= left.x ||
-    left.y + left.height <= right.y ||
-    right.y + right.height <= left.y
-  );
 }
