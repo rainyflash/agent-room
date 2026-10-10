@@ -6,6 +6,10 @@
 //! 等消息时替它同步，Synapse 30 秒没动静就判离线）；5 分钟后不再报，Synapse 改成离线。停用时
 //! 报离线。
 //!
+//! 开没开在线状态，进房间和开始等消息时探（报一次再读回自己的）。探不出来的（刚进房间读回离线、
+//! 紧接着开始等时被限速），心跳那一拍改成再探一次，确认了补上名片：只等一次消息就不再来的
+//! Agent，不能等它下次来才确认。
+//!
 //! 服务器没开在线状态时照旧写租约：长轮询开始等待时宣布“等待消息”，等待期间跟着连接租约续；
 //! 一次长轮询结束后 10 秒内没开始下一次就清除等待；停止轮询后按租约转为离线；停用时先发“已离线”。
 //!
@@ -130,6 +134,8 @@ struct AgentPresence {
     /// 写租约时：最近一次宣布在等待的时间，清除等待时当作最近读取时间。
     last_waited_at: Option<UtcMillis>,
     reporting: Reporting,
+    /// 最近一次进房间或开始等消息时的会话：心跳里才确认服务器开着在线状态时，照它补名片。
+    session: Option<NetworkAgentSession>,
 }
 
 /// 报在线状态时记着的。
@@ -199,6 +205,7 @@ impl Presence {
             return;
         };
         let mut agent = shared.lock().await;
+        agent.session = Some(session.clone());
         if agent.uses_lease(Unavailable).await {
             let intent = AgentStatusIntent::new(HostAgentState::Available, None);
             publish_in_rooms(&mut agent.service, session, &intent).await;
@@ -263,6 +270,7 @@ impl Presence {
     ) -> Option<u64> {
         let shared = self.agent(matrix, clock, session).await?;
         let mut agent = shared.lock().await;
+        agent.session = Some(session.clone());
         agent.wait_generation += 1;
         let generation = agent.wait_generation;
         if agent.uses_lease(Online).await {
@@ -382,6 +390,7 @@ impl Presence {
             wait_generation: 0,
             last_waited_at: None,
             reporting: Reporting::default(),
+            session: None,
         }));
         agents.insert(
             session.network_agent_id,
@@ -410,7 +419,7 @@ impl AgentPresence {
                 "没确认服务器开没开 Matrix 在线状态，下次再确认"
             );
         }
-        // 探的时候已经报过了，不用马上再报（10 秒内再报会被限速）。
+        // 探的时候已经报过了（或者刚被限速），不用马上再报（10 秒内再报会被限速）。
         if unknown && self.support == PresenceSupport::Enabled {
             self.reporting.reported = Some(wanted);
         }
@@ -512,6 +521,17 @@ impl AgentPresence {
         }
     }
 
+    /// 心跳时还不知道服务器开没开在线状态（进房间时读回离线、紧接着开始等时被限速）：再探
+    /// 一次。开着就补上名片；没开就写一条“在线”的租约，之后按租约来。
+    async fn confirm(&mut self, session: &NetworkAgentSession, wanted: MatrixPresenceState) {
+        if self.uses_lease(wanted).await {
+            let intent = AgentStatusIntent::new(HostAgentState::Available, None);
+            publish_in_rooms(&mut self.service, session, &intent).await;
+            return;
+        }
+        self.place_cards(session).await;
+    }
+
     /// 此刻该报的和上次报的不一样就马上报，并且接着每 20 秒报一次。
     async fn report_change(&mut self, shared: &SharedPresence) {
         let wanted = self.reporting.wanted(Instant::now());
@@ -530,7 +550,8 @@ impl AgentPresence {
 }
 
 /// 网关只在等消息时替它同步，其余时候每 20 秒报一次，免得 Synapse 30 秒没动静就判它离线。
-/// 该报的成了“不报”（5 分钟到了），或者停用了，就停下。
+/// 还不知道服务器开没开在线状态时，这一拍改成再探一次（探的时候也报了）。该报的成了“不报”
+/// （5 分钟到了），或者停用了、探出来没开，就停下。
 async fn heartbeat(agent: Weak<Mutex<AgentPresence>>) {
     loop {
         tokio::time::sleep(HEARTBEAT).await;
@@ -542,6 +563,16 @@ async fn heartbeat(agent: Weak<Mutex<AgentPresence>>) {
         if wanted == Offline || presence.support == PresenceSupport::Disabled {
             presence.reporting.heartbeat = false;
             return;
+        }
+        if matches!(presence.support, PresenceSupport::Unknown { .. })
+            && let Some(session) = presence.session.clone()
+        {
+            presence.confirm(&session, wanted).await;
+            if presence.support == PresenceSupport::Disabled {
+                presence.reporting.heartbeat = false;
+                return;
+            }
+            continue;
         }
         presence.reporting.reported = Some(wanted);
         let own = presence.own.clone();
