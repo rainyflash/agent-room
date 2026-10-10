@@ -195,6 +195,73 @@ async fn 首次发布后重复调用不会制造续租风暴() {
 }
 
 #[tokio::test]
+async fn 名片只说是谁_不带等待字段_签名盖住整份内容() {
+    let fixture = fixture();
+    let service = fixture.service();
+
+    service
+        .publish_card(&target(AgentStatusVisibility::Detailed))
+        .await
+        .expect("名片写得进去");
+
+    let events = fixture.publisher.events.lock().expect("事件记录锁可用");
+    assert_eq!(events.len(), 1);
+    let event = &events[0].1;
+    let content = event.content();
+    assert_eq!(event.state_key().as_str(), instance_id().to_string());
+    assert_eq!(content["liveness"], "presence");
+    assert_eq!(content["status"], "idle");
+    assert_eq!(
+        content["visibility"], "coarse",
+        "房间要详细的，名片也不带详情"
+    );
+    assert_eq!(content["createdAt"], "1970-01-01T00:00:01.000Z");
+    assert_eq!(
+        content["leaseExpiresAt"], "1970-01-01T00:05:01.000Z",
+        "旧版读的一边要的名义租约"
+    );
+    for absent in [
+        "listeningUntil",
+        "waitingUntil",
+        "lastPolledAt",
+        "taskSummary",
+        "startedAt",
+        "progress",
+    ] {
+        assert!(content.get(absent).is_none(), "名片不带 {absent}");
+    }
+    assert_eq!(content["actor"]["agent"]["displayName"], "构建助手");
+    assert_protocol_event(content);
+
+    let mut unsigned = content.clone();
+    unsigned
+        .as_object_mut()
+        .expect("事件内容是对象")
+        .remove("signature");
+    let canonical = serde_jcs::to_vec(&unsigned).expect("载荷可规范化");
+    assert_eq!(
+        fixture
+            .signer
+            .messages
+            .lock()
+            .expect("签名记录锁可用")
+            .as_slice(),
+        [canonical],
+        "签名盖住 liveness"
+    );
+    drop(events);
+
+    assert_eq!(
+        service.card_outcome().expect("名义租约算得出"),
+        StatusPublicationOutcome::NotDue {
+            renew_at: time(301_000),
+            lease_expires_at: time(301_000),
+        },
+        "旧接口问起来，回从此刻起的名义租约"
+    );
+}
+
+#[tokio::test]
 async fn 实际收件才更新接待时间且后台续租不会伪造接待() {
     let fixture = fixture();
     let mut service = fixture.service();

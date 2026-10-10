@@ -3363,7 +3363,10 @@ def wait_for_mcp_presence(
     expected_instance_id: str,
     timeout_seconds: float,
 ) -> dict[str, object]:
-    """等待发布事件经过 Matrix 同步、验签和租约投影后重新可读。"""
+    """等待这个实例的名片经过 Matrix 同步、验签投影后可读，并且显示连着。
+
+    名片模式下 Agent 自己报的工作状态照收不发（specs/agent-liveness/design.md 第 3 步），
+    所以只看连没连着：服务器开着在线状态时看 Matrix 的在线状态，没开时看租约。"""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         response = client.call_tool(
@@ -3385,19 +3388,15 @@ def wait_for_mcp_presence(
                 continue
             if entry.get("roomId") != room_id:
                 raise VerticalFailure("MCP Presence 返回了错误房间的状态。")
-            lease_expiry = entry.get("leaseExpiresAtUnixMs")
             observed_at = entry.get("observedAtUnixMs")
             if not isinstance(observed_at, int):
                 raise VerticalFailure("MCP Presence 缺少有效观察时间。")
-            if (
-                entry.get("status") == "working"
-                and isinstance(lease_expiry, int)
-                and lease_expiry > int(time.time() * 1_000)
-            ):
+            lifecycle = entry.get("lifecycle")
+            if isinstance(lifecycle, dict) and lifecycle.get("connection") == "online":
                 return entry
         time.sleep(0.4)
     raise VerticalFailure(
-        f"已发布状态未在 {timeout_seconds:.0f} 秒内经过 Matrix 验签投影重新可读。"
+        f"Agent 的名片未在 {timeout_seconds:.0f} 秒内经过 Matrix 验签投影显示连着。"
     )
 
 

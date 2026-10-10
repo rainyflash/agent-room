@@ -15,7 +15,9 @@ const DEFAULT_AUTHORIZATION_TIMEOUT_MILLIS: u64 = 10 * 60 * 1_000;
 const DEFAULT_REFRESH_LEAD_MILLIS: u64 = 2 * 60 * 1_000;
 const DEFAULT_RECONNECT_INITIAL_MILLIS: u64 = 1_000;
 const DEFAULT_RECONNECT_MAXIMUM_MILLIS: u64 = 60_000;
-const DEFAULT_MATRIX_SYNC_TIMEOUT_MILLIS: u64 = 30_000;
+/// 长轮询 15 秒：Synapse 10 秒里只认一次同步带的在线状态，被限速的那次要是挂满 30 秒，
+/// Agent 可能被判离线又马上回来（`specs/agent-liveness/design.md`）。
+const DEFAULT_MATRIX_SYNC_TIMEOUT_MILLIS: u64 = 15_000;
 const MAX_TEXT_LENGTH: usize = 1_024;
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
 
@@ -403,7 +405,7 @@ mod tests {
         assert_eq!(config.refresh_lead_time.as_millis(), 120_000);
         assert_eq!(config.reconnect_initial_delay.as_millis(), 1_000);
         assert_eq!(config.reconnect_maximum_delay.as_millis(), 60_000);
-        assert_eq!(config.matrix_sync_timeout.as_millis(), 30_000);
+        assert_eq!(config.matrix_sync_timeout.as_millis(), 15_000);
         assert!(!config.import_oidc_profile);
         assert!(
             !config.reset_device_session,
