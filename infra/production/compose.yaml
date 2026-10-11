@@ -438,6 +438,8 @@ services:
     entrypoint: [/bin/sh, /scripts/database-backup.sh]
     environment:
       AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      # full：全量；point：只打恢复点的那几次（specs/backups/design.md）。
+      AGENT_ROOM_BACKUP_KIND: ${AGENT_ROOM_BACKUP_KIND:-full}
       AGENT_ROOM_DB_HOST: ${AGENT_ROOM_DB_HOST}
       AGENT_ROOM_DB_PORT: ${AGENT_ROOM_DB_PORT}
       AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
@@ -533,6 +535,8 @@ services:
     entrypoint: [/bin/sh, /scripts/object-backup.sh]
     environment:
       AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      # full：全量；point：只打恢复点的那几次（specs/backups/design.md）。
+      AGENT_ROOM_BACKUP_KIND: ${AGENT_ROOM_BACKUP_KIND:-full}
       AGENT_ROOM_CONTENT_S3_ENDPOINT: ${AGENT_ROOM_CONTENT_S3_ENDPOINT}
       AGENT_ROOM_CONTENT_S3_BUCKET: ${AGENT_ROOM_CONTENT_S3_BUCKET}
     secrets: [s3_access_key, s3_secret_key]

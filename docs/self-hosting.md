@@ -120,10 +120,10 @@ sudo python3 tools/self_host.py backup-schedule-verify \
   --state-dir /var/lib/agent-room
 ```
 
-Create and verify an on-demand backup:
+Create and verify an on-demand full backup. Without `--full`, `backup` does what the timer does: a full backup on the first run of each UTC day, otherwise only a restore point.
 
 ```bash
-sudo python3 tools/self_host.py backup \
+sudo python3 tools/self_host.py backup --full \
   --config /etc/agent-room/deployment.json \
   --state-dir /var/lib/agent-room
 
@@ -135,7 +135,7 @@ sudo python3 tools/self_host.py backup-verify \
 
 Use `restore-drill` to prove an isolated recovery. With `--backup-id` it restores that backup; `--restore-point NAME` or `--target-time 2026-10-11T09:20:00Z` restores to a named restore point or to a moment between restore points; with none of them it restores to the latest verified restore point. A backup stored only on the application host is not disaster recovery.
 
-Size the backup volume before enabling the timer. Every backup within `recentRetentionHours` is kept in full, so the recent set alone costs roughly `recentRetentionHours * 60 / rpoMinutes` backups; older ones are thinned to one per day up to `retentionDays`. With the defaults, a 15-minute RPO keeps 96 full backups for the first day. Lower `recentRetentionHours` when the host has limited disk: the RPO is unchanged, only the window of fine-grained restore points shrinks. Restore drills are kept for the two most recent runs; each one stores a complete isolated copy, so treat their space as comparable to a backup.
+Size the backup volume before enabling the timer. With embedded PostgreSQL, the first run of each UTC day makes a full backup and every other run only records a restore point: the WAL in between is kept compressed, and objects are synced into one mirror. Full backups from the last 7 days are kept, then the earliest one of each ISO week up to `retentionDays`, so expect about ten full backups, `retentionDays` of compressed WAL, and one copy of the object store plus the objects removed during that period. With an external database every run is a full backup: every backup within `recentRetentionHours` is kept, so the recent set alone costs roughly `recentRetentionHours * 60 / rpoMinutes` backups, and older ones are thinned to one per day up to `retentionDays`. Lower `recentRetentionHours` when the host has limited disk: the RPO is unchanged, only the window of fine-grained restore points shrinks. Restore drills are kept for the two most recent runs; each one stores a complete isolated copy, so treat their space as comparable to a backup.
 
 ## Upgrade and stop
 
