@@ -243,7 +243,10 @@ class ProductionRuntime:
         )
         return removed
 
-    def restore_drill(self, target: RestoreTarget | None = None) -> RestoreDrillReport:
+    def restore_drill(self, target: RestoreTarget | str | None = None) -> RestoreDrillReport:
+        # 发版的本机脚本直接给部署前那套快照的 ID（`restore_drill(backup_id)`），照旧收下。
+        if isinstance(target, str):
+            target = RestoreTarget(backup_id=target)
         repository = BackupRepository(Path(self.config.backup.repository))
         coordinator = RestoreDrillCoordinator(
             self.config,

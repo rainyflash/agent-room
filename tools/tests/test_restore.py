@@ -9,6 +9,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.prodops.backup import BackupCoordinator, BackupRepository
 from tools.prodops.config import load_deployment_config
@@ -31,6 +32,7 @@ from tools.prodops.restore import (
     restore_drill_root,
 )
 from tools.prodops.restore_point import RestorePoint, restore_point_name
+from tools.prodops.runtime import ProductionRuntime
 from tools.prodops.secrets import SecretStore
 from tools.prodops.wal_store import WalAnchor, WalPoint, WalStore
 
@@ -158,6 +160,13 @@ class RestoreDrillTests(unittest.TestCase):
         # 按快照恢复只用它自带的 WAL，停在它自己的恢复点。
         self.assertEqual(backend.recovery, RecoveryTarget(name="agent_room_point", lsn="0/16B6C50"))
         self.assertEqual(backend.wal, ["000000010000000000000001"])
+
+    def test_runtime_still_takes_a_plain_backup_id(self) -> None:
+        # 发版的本机脚本直接给部署前那套快照的 ID。
+        with patch.object(RestoreDrillCoordinator, "run") as run:
+            ProductionRuntime(self.config, self.paths).restore_drill(self.manifest.backup_id)
+
+        run.assert_called_once_with(RestoreTarget(backup_id=self.manifest.backup_id))
 
     def test_by_default_the_drill_replays_kept_wal_to_the_latest_restore_point(self) -> None:
         report = self.drill().run()
