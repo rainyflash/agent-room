@@ -102,6 +102,54 @@
 .app-navigation__actions {
   justify-content: flex-end;
 }
+/* 右边的按钮不换行，放不下时按下面的规则收成图标。 */
+.app-navigation__actions > * {
+  white-space: nowrap;
+}
+/* 网页上的 GitHub 和下载应用：链接做成按钮的样子，GitHub 只放标志。 */
+.app-navigation__external {
+  text-decoration: none;
+}
+.app-navigation__external--github {
+  min-width: 44px;
+  padding-inline: 10px;
+}
+/*
+ * 右边放不下时：先把“退出登录”收成图标，再窄一些下载也收成图标；平板宽度上名字也收起来，
+ * 只留标志。收起来的字读屏照样读得到。往顶栏加东西前，中英文都在各个宽度上量一遍，
+ * 别让名字或四个去处被挤（interface-refresh.e2e.ts 的“网页顶栏”会查）。
+ */
+@media (max-width: 1260px) {
+  .app-navigation__sign-out {
+    min-width: 44px;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+  .app-navigation__sign-out > span:last-child {
+    display: none;
+  }
+}
+@media (max-width: 1140px) {
+  .app-navigation__external--download {
+    min-width: 44px;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+  /* 下载的名字来自这段字：只是看不见，读屏照样读。 */
+  .app-navigation__external--download > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+@media (min-width: 761px) and (max-width: 1000px) {
+  .app-navigation__brand > span {
+    display: none;
+  }
+}
 .app-navigation .language-control select {
   max-width: 125px;
   min-height: 44px;
@@ -160,15 +208,10 @@
   .app-navigation .language-control select {
     max-width: 92px;
   }
-  /* 窄屏上“退出登录”只留图标，名字还在 aria-label 里。 */
+  /* 窄屏上右边的图标按钮都给够手指点的高度。 */
+  .app-navigation__external,
   .app-navigation__sign-out {
-    min-width: 44px;
     min-height: 44px;
-    justify-content: center;
-    padding-inline: 10px;
-  }
-  .app-navigation__sign-out > span:last-child {
-    display: none;
   }
 }
 @media (max-width: 480px) {
