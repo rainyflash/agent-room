@@ -102,7 +102,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **macOS 不让给还没绑定的 socket 设权限。** interprocess 的 `ListenerOptionsExt::mode` 在绑定前调 `fchmod()`，Linux 支持，macOS 一律返回 EINVAL。Bridge 从第一版起就用它，每台 Mac 授权完都报 `bridge.ipc_bind_failed`、建不起本地连接，Linux 和 Windows 的测试照样全过。#320 起绑定后再用 `restrict_socket_to_owner` 收紧到 0600（运行目录先验过 0700），别再用 `mode()`。
 - **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（#325，命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
   - 发布实机验收也一样：`tools/release_qa.py` 在桌面端页面里请求控制面，要走 `desktop_control_plane_request`（`NATIVE_CONTROL_PLANE_JS`）。CDP 看不到原生层发的请求，所以消息发没发出去，以接收端解开的那条为准（`confirm_delivery`）。Alpha 64 验收时工具还没改，是用本地补丁跑完的；改法见 #330。
-- **生产容器日志有上限**（`compose.yaml` 的 `x-container-logging`，#342）。之前 Docker 默认不滚动，聊天服务器的日志从 9 月 18 日起攒到 1.3 GB，里面的访问记录带用户 IP。新加服务也要写 `logging:`，有测试卡着。上限要等容器重建才生效，可发版部署只重建控制面、身份服务和网关（`verify_running` 有意钉住其它容器）。Alpha 65 发完后单独重建了 Synapse（先确认备份服务空闲，约 20 秒）；内容扫描、对象存储和 PostgreSQL 还是旧的日志配置，下次重建时再核对。
+- **生产容器日志有上限**（`compose.yaml` 的 `x-container-logging`，#342）。之前 Docker 默认不滚动，聊天服务器的日志从 9 月 18 日起攒到 1.3 GB，里面的访问记录带用户 IP。新加服务也要写 `logging:`，有测试卡着。上限要等容器重建才生效，可发版部署只重建控制面、身份服务和网关（`verify_running` 有意钉住其它容器）。Alpha 65 发完后单独重建了 Synapse（先确认备份服务空闲，约 20 秒）；内容扫描和对象存储还是旧的日志配置，下次重建时再核对（PostgreSQL 在 Alpha 69 发完后重建时补上了）。
 - **正文对象有两个到期时间。** `expires_at` 是客户端上传时自己声明的，原样回给客户端；已经装着的 Bridge 会核对回来的值和声明的一样（`apps/bridge/src/control_plane/message_content.rs` 的 `matches_declaration`），所以服务器不能改它。按房间保留期算的到期时间（保留期再加一天）单独记在 `retention_expires_at`（#344），不回给客户端。清理、发读取票据、转交给 Agent 都按两者早的那个判断（`ContentObject::effective_expires_at`），新加按到期判断的地方也用它。
 - **生产对象备份用 `rclone/rclone`**（#271，Alpha 59 起）。MinIO 把开源项目归档了，`minio/mc` 的镜像和程序都已下架；Alpha 58 时临时重建的同名镜像和 `/root/mc-rebuild` 已在 Alpha 59 上线后删掉。`object-backup` 这类按需运行的容器平时没有容器在用，`docker image prune -a` 会把它们的镜像一起删掉，清镜像时要排除。
 - **生产盘会被备份写满。** 每 15 分钟一份全量物理备份，最近 8 小时全留、30 天每天一份。以前不压缩，一份约 780 MB；2026-10-09 备份占 35 GB，剩余空间掉到部署预检的 20 GiB 以下。维护者同意清了旧容器日志、系统日志、旧发布目录和 3 份恢复演练，才发出 Alpha 65。#362 起物理备份是 gzip 压缩的 tar（约四分之一），恢复兼容以前的普通目录；恢复演练只留 2 份，超过保留期的跟着删。发版前先看一眼服务器的 `df -h /`。库本身长得快，根子是 Agent 在线状态的续租，见下面“Agent 在线状态不再攒永久记录”。
@@ -128,7 +128,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
 
-## 当前进度（2026-10-10）
+## 当前进度（2026-10-11）
 
 ### 桌面端自动更新
 
@@ -187,7 +187,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 对象只传新的，被删的留 30 天；开 `wal_compression=zstd`，`checkpoint_timeout` 改 15 分钟。
   - 放到异地（rclone 加密远端放到 Akamai 另一个机房的对象存储，生产盘只留一天）是第 3 步，维护者 2026-10-10 说数据还不多、暂时不租存储空间，先不做。没配异地时备份全部留在生产盘上。
 - 维护者 2026-10-10 同意了设计。第 2 步只在生产盘上做，拆成：2a-1 WAL 一直留着（#397）、2a-2 对象增量同步（#398）、2a-3a 按恢复点名字和时间恢复的演练（#399）、2a-3b 每天一份全量和新的保留规则（#400）、2a-3c 指标和告警（#401）。2b 的文档已跟着改完。
-  - 2a-1 上线后要单独重建一次 PostgreSQL 容器：归档命令、`wal_compression`、`checkpoint_timeout` 写在启动参数里，发版部署不重建它。先确认备份空闲。
+  - 2a 随 Alpha 69 上线（2026-10-11）。归档命令、`wal_compression`、`checkpoint_timeout` 写在 PostgreSQL 的启动参数里，发版部署不重建它；当天 08:05Z 单独重建过一次（停 7.6 秒，`artifacts/releases/alpha69/recreate_postgres_settings.py`）。以后改这几项也要这样，先确认备份空闲、离下一轮定时备份还有 5 分钟以上。
+  - 读备份清单只看路径字面，别碰文件系统；仓库大小按清单算。以前的快照每套几千上万个工件（生产上共 30 万个），逐个 `resolve` 或 `lstat` 会让每次备份多跑好几分钟（#403）。
   - `wal-store/restore-points.log` 是 WAL 接成的链。接不上时这次备份算失败、RPO 告警；修不回来就把它改名留档，下一次从当次的快照重新接起（运维手册 AgentRoomBackupRpoBreached 一节）。
   - 2a-2 起对象不再整份复制进每套快照：`rclone sync` 到仓库的 `objects/mirror/`，被删、被覆盖的旧版本挪进 `objects/removed/<UTC 日期>/`，那一天过了保留期整个删掉。快照只带同步完镜像的清单（路径、大小、SHA-256），恢复演练照清单从镜像和快照那天及以后挪走的旧版本里取，对不上就失败。之前的快照自带 `objects/data/`，照旧从里面取。
   - 2a-3b 起定时备份每个 UTC 日第一次做全量（带 `retention.json` 标记），别的时候只取删除墓碑合并进台账、打恢复点、同步对象（脚本的 `AGENT_ROOM_BACKUP_KIND=point`）；还没有恢复点记录时也做全量。`backup --full` 和发版部署前的备份马上做一份全量。没有标记的旧快照照旧规则到期删，别提前删。
@@ -368,7 +369,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 69 正在发布：备份改成每天一份全量、中间的 WAL 一直留着（设计 #373，实现 #397–#401）。最近三周以上任意时刻都能恢复（上线三周以后才满），对象只传新的，全量超过 26 小时没更新就告警；上线后单独重建一次 PostgreSQL 容器。这一版也用来看桌面端自动更新的第 3 步：开着的 Alpha 68 应该 4 小时内收到通知。Alpha 66 以来没改登录相关代码，实机验收复用 Alpha 66 那台长期验收设备，宿主留在人物绑着的 Codex 任务上。
+- Alpha 69 已于 2026-10-11 公开，见 [发布记录](./specs/agent-access/alpha69-release.md)。
+  - 备份改成持续归档（设计 #373，实现 #397–#401）：每天一份全量、中间的 WAL 一直留着，对象只传新的，全量 26 小时没更新就告警；隐私说明页的备份说法跟着改了。
+  - 部署前那份全量由新代码做，`release_deploy.py` 五分半没有输出，本机到服务器的 SSH 被路上的设备掐断（服务器 sshd 不发保活）。部署在服务器上照样跑完，确认以后从部署之后接着走（`resume_after_deploy.py`）。
+  - 上线后定时备份一次要 6 分钟、4 分半 CPU：读清单时每个工件都拿主机根目录 `resolve`（以前就有，2a 多读了三遍），算仓库大小又把整个仓库逐个 `lstat`。修正 #403 随下一版。
+  - 网页上线后 08:05Z 单独重建了 PostgreSQL（停 7.6 秒），新的归档命令、`wal_compression`、`checkpoint_timeout` 和日志上限都生效了。
+  - 没改登录相关代码，复用 Alpha 66 那台长期验收设备，宿主留在人物绑着的 Codex 任务上，没要设备码；doctor 一次通过。版本 PR #402 合并到网页上线约 1 小时 16 分钟，其中约 13 分钟在等定时备份。
 - Alpha 68 已于 2026-10-10 公开，见 [发布记录](./specs/agent-access/alpha68-release.md)。
   - 桌面端自动更新（设计 #392，实现 #393）：应用开着就每 4 小时查一次，查到新版本发一次系统通知、托盘菜单里能直接更新，提示上一步“更新并重启”，设置里写上次检查的结果；Mac 上点程序坞图标能把藏着的窗口拿出来。已经装着的旧版只在页面加载时查一次，要重启一次或手动“检查”才装得上这一版。
   - 没改登录相关代码，复用 Alpha 66 那台长期验收设备，宿主留在人物绑着的 Codex 任务上，没要设备码；doctor 一次通过。
@@ -455,5 +461,6 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 验收人物不绑宿主任务（#372 起）。命令行在人物加入时会记下当时的 `CODEX_THREAD_ID`，以后换了任务就报 `cli.profile.task_mismatch`；Alpha 66 就卡在这里，是用本地补丁跑完的。现在验收工具以人物身份调用命令行时不带它，只有 `receiver` 命令带宿主任务。
   - Alpha 64–66 用 Codex 加入的人物已经绑了任务。长期验收设备的记录里记着它绑的任务（`profileTaskId`），以人物身份调用时带上；宿主是 Codex 又换了任务时登记不上，`start` 会自动改走新设备授权。所以复用长期验收设备时，宿主就用它绑着的那个任务：Alpha 67 第二个候选换了新任务，多批准了一次设备码；最终候选换回原来的任务，就不用批准。
 - 本机的发布脚本每版从上一版的发布目录派生。Alpha 67 补了两处，派生时别丢：切换生产源码的脚本只核对“生产现在跑的提交是这个候选的祖先”，不再写死上一版的提交（同一版的候选部署过又被取代时，生产跑的是那个候选）；`publish_chain.sh` 上传验收报告前，先把服务器候选目录里的四份部署记录拷回本机（`fetch_deploy_records.sh`）。
+- 远程命令长时间不出声时，SSH 会被路上的设备掐断：服务器的 sshd 不发保活（`ClientAliveInterval 0`）。Alpha 69 部署前的全量五分半没有输出，`deploy_remote.py` 退出码 255，部署在服务器上照样跑完。Alpha 69 起 `run_remote.py` 和 `deploy_remote.py` 的 ssh 带 `ServerAliveInterval=20`，派生时别丢。再遇到断线，先只读看服务器上的 `release_deploy.py` 还在不在、检查点（`deployment_status.py`）到了哪一步，等它自己跑完，别重跑部署。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。
