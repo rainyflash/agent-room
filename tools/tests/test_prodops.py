@@ -111,6 +111,57 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertIn("pg_verifybackup --exit-on-error --format tar --no-parse-wal", script)
         self.assertIn('pg_waldump --quiet --path="$target/wal"', script)
 
+    def test_archive_command_publishes_only_complete_segments(self) -> None:
+        compose = (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")
+        match = re.search(r"^      - archive_command=(.+)$", compose, re.MULTILINE)
+        assert match is not None
+        command = match.group(1)
+
+        # 先写临时文件、落盘再改名；同名的已经在了，内容一样才算归档过。
+        self.assertIn("cp %p /archive/.%f.partial && sync /archive/.%f.partial", command)
+        self.assertIn("mv /archive/.%f.partial /archive/%f", command)
+        self.assertIn("then cmp -s %p /archive/%f;", command)
+        self.assertIn("      - wal_compression=zstd\n", compose)
+        self.assertIn("      - checkpoint_timeout=15min\n", compose)
+
+    def test_wal_archive_deletes_originals_only_after_reading_storing_and_recording(self) -> None:
+        script = (ROOT / "infra" / "production" / "postgres-wal-archive.sh").read_text(encoding="utf-8")
+        order = [
+            script.index("pg_waldump --quiet"),
+            script.index('gzip -dc "$partial" | cmp -s - "$path"'),
+            script.index('mv "$partial" "$store/$file.gz"'),
+            script.index('mv "$partial" "$log"'),
+            script.index('sync -f "$log"'),
+            script.index('rm -f "$path"'),
+        ]
+
+        self.assertEqual(order, sorted(order))
+        self.assertIn('[ "$(stat -c %s "$archive/$file")" = "$segment_size" ]', script)
+        self.assertIn('[ "$file" \\> "$wal_file" ] || rm -f "$path"', script)
+
+    @unittest.skipUnless(shutil.which("sh"), "需要 sh")
+    def test_wal_archive_computes_segment_names_like_postgres(self) -> None:
+        script = (ROOT / "infra" / "production" / "postgres-wal-archive.sh").read_text(encoding="utf-8")
+        functions = "\n".join(
+            re.search(rf"^{name}\(\) \{{\n.*?^\}}$", script, re.MULTILINE | re.DOTALL).group(0)
+            for name in ("segment_number", "segment_name", "name_number")
+        )
+        program = (
+            "timeline=00000001\nsegment_size=16777216\nper_log=256\n"
+            + functions
+            + '\nsegment_name "$(segment_number 0/16B6C50)"; echo'
+            + '\nsegment_name "$(segment_number 1A/FF000028)"; echo'
+            + "\nname_number 000000010000001A000000FF\n"
+        )
+
+        result = subprocess.run(["sh", "-c", program], capture_output=True, text=True, check=True)
+
+        # 和 PostgreSQL 的 XLByteToSeg、XLogFileName 一样：16 MB 一段，每 4 GB 256 段。
+        self.assertEqual(
+            result.stdout.split(),
+            ["000000010000000000000001", "000000010000001A000000FF", str(0x1A * 256 + 0xFF)],
+        )
+
     @unittest.skipUnless(shutil.which("sed"), "需要 sed")
     def test_wal_ranges_are_read_from_the_backup_manifest(self) -> None:
         script = (ROOT / "infra" / "production" / "postgres-base-backup.sh").read_text(

@@ -18,6 +18,12 @@ class RestorePointError(ValueError):
     """表示恢复点元数据缺失、损坏或不符合恢复契约。"""
 
 
+def restore_point_name(backup_id: str) -> str:
+    """备份脚本给一次备份打的恢复点名字：ID 里的 T、Z、- 换成下划线。"""
+
+    return "agent_room_" + backup_id.translate(str.maketrans("TZ-", "___"))
+
+
 @dataclass(frozen=True, slots=True)
 class RestorePoint:
     name: str

@@ -28,6 +28,13 @@ class RestoreDrillError(RuntimeError):
 # 2026-10-09 起只留最近 2 份：那天生产盘不够发版，维护者同意把演练目录清到 2 份。
 RETAINED_RESTORE_DRILLS = 2
 RESTORE_DRILL_NAME: Final = re.compile(r"^([0-9]{8}T[0-9]{12}Z)-[0-9a-f]{8}-[0-9]{8}T[0-9]{6}Z$")
+# 恢复时 PostgreSQL 按段名要 WAL：全量自带的是原样的段，一直留着的是 gzip 压缩过的，两种都认；
+# 都没有就失败，PostgreSQL 当成 WAL 到头了。
+RESTORE_COMMAND: Final = (
+    "if [ -f /wal/%f ]; then cp /wal/%f %p; "
+    "elif [ -f /wal/%f.gz ]; then gunzip -c /wal/%f.gz > %p; "
+    "else exit 1; fi"
+)
 
 
 @dataclass(frozen=True, slots=True)

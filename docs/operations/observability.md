@@ -84,6 +84,8 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 检查 `agent-room-backup.timer`、最近服务日志、仓库空间、WAL 归档和 `metrics/backup.prom`。不要在失败时先清理旧备份；先保证至少一个已验证恢复点仍在。补做备份后运行摘要验证，确认年龄低于配置 RPO。
 
+内置 PostgreSQL 的“最近成功”是最近一个核对过的 WAL 恢复点（`wal-store/restore-points.log` 的最后一行）。快照做完、WAL 却接不上时，这次备份算失败：服务日志里是“WAL 读不通”“缺少 WAL 段”或“时间线变了”。先查宿主归档目录（`wal/`）和 `wal-store/` 缺了哪段、盘是否写满；归档目录里没收的段都还在，修好以后下一次备份会接着收。确认修不回来时，把 `restore-points.log` 改名留档，下一次备份从当次的快照重新接起；断开以前的时刻只能按各自的快照恢复。
+
 ## AgentRoomRestoreDrillStale
 
 选择最近已验证备份执行隔离恢复演练，核对数据库、对象、Synapse signing key、OIDC Realm、投影重建和删除账本重放。成功报告和 `metrics/restore.prom` 必须由同一次演练生成。
