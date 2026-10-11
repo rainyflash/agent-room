@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import secrets
 import shutil
@@ -30,6 +30,7 @@ SET_WAL_SEGMENT: Final = re.compile(r"^postgres/wal/([0-9A-F]{24})(?:\.gz)?$")
 # 对象的镜像在 objects/mirror，同步时被删掉、被覆盖的旧版本按天放在 objects/removed/<日期>。
 OBJECT_BACKUPS: Final = "objects"
 REMOVAL_DAY: Final = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+LOCK_NAME: Final = ".backup.lock"
 LOCK_STALE_AFTER: Final = timedelta(hours=24)
 MINIMUM_BACKUP_HEADROOM_BYTES: Final = 2 * 1024 * 1024 * 1024
 MANIFEST_NAME: Final = "manifest.json"
@@ -244,6 +245,8 @@ class PublishedBackup:
     created_at: datetime
     # 带保留标记的每日全量；以前每 15 分钟一套的、外部数据库的都没有。
     daily_full: bool
+    # 清单里记着的工件字节数加起来。发布了的快照不再改，算仓库大小时不用逐个去看里面的文件。
+    artifact_bytes: int
 
     @classmethod
     def of(cls, manifest: BackupManifest) -> "PublishedBackup":
@@ -251,6 +254,7 @@ class PublishedBackup:
             manifest.backup_id,
             _parse_utc(manifest.created_at),
             any(artifact.path == RETENTION_MARKER for artifact in manifest.artifacts),
+            sum(artifact.byte_length for artifact in manifest.artifacts),
         )
 
 
@@ -629,12 +633,12 @@ class BackupCoordinator:
 
     def _report_success(self, last_success: datetime) -> None:
         # 只在成功时写：失败的那几次靠“最近成功”变旧叫人，归档积压也由它报。
+        backups = self.repository.published()
         lines = [
             f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
             f"agent_room_backup_rpo_target_seconds {self.config.backup.rpo_minutes * 60}",
-            f"agent_room_backup_repository_bytes {_repository_bytes(self.repository.root)}",
+            f"agent_room_backup_repository_bytes {_repository_bytes(self.repository.root, backups)}",
         ]
-        backups = self.repository.published()
         if backups:
             lines.append(
                 f"agent_room_backup_last_full_timestamp_seconds {backups[-1].created_at.timestamp():.3f}"
@@ -684,11 +688,25 @@ class BackupCoordinator:
         _write_json(staging / "database" / "provider-pitr-evidence.json", evidence)
 
 
-def _repository_bytes(root: Path) -> int:
-    """仓库里常规文件加起来多大。读不了的目录（比如归 PostgreSQL 的归档目录）跳过，不让备份失败。"""
+def _repository_bytes(root: Path, backups: tuple[PublishedBackup, ...]) -> int:
+    """仓库里常规文件加起来多大，不算指标文件和仓库锁。
 
+    发布了的快照按清单记着的字节数算，再加上清单：以前的快照每套都带着整份对象和数据库的散文件，
+    整个仓库几十万个文件，冷缓存下逐个 `lstat` 要读几分钟磁盘元数据（Alpha 69 上线那天每次备份因此
+    多跑五分钟以上）。别的目录（WAL 仓库、对象镜像、归档目录）逐个看；读不了的跳过，不让备份失败。
+    """
+
+    published = {backup.backup_id for backup in backups}
     total = 0
-    for directory, _, files in os.walk(root):
+    for backup in backups:
+        try:
+            total += backup.artifact_bytes + os.lstat(root / backup.backup_id / MANIFEST_NAME).st_size
+        except OSError:
+            continue
+    for directory, children, files in os.walk(root):
+        if Path(directory) == root:
+            children[:] = [name for name in children if name not in published and name != "metrics"]
+            files = [name for name in files if name != LOCK_NAME]
         for name in files:
             try:
                 status = os.lstat(os.path.join(directory, name))
@@ -799,7 +817,7 @@ def _load_provider_evidence(path: Path, now: datetime, required_rpo: int) -> dic
 @contextmanager
 def _repository_lock(root: Path, now: datetime) -> Iterator[None]:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lock = root / ".backup.lock"
+    lock = root / LOCK_NAME
     if lock.exists():
         modified = datetime.fromtimestamp(lock.stat().st_mtime, UTC)
         if now - modified <= LOCK_STALE_AFTER:
@@ -833,10 +851,25 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _safe_child(root: Path, relative: str) -> Path:
-    logical = PurePosixPath(relative)
-    if logical.is_absolute() or ".." in logical.parts or "\\" in relative or not logical.parts:
+def _require_safe_relative(relative: str) -> None:
+    """只看字面：不是绝对路径，不带 `..`、反斜杠和空字节，也不能只有 `.` 和 `/`。
+
+    读清单时只做这一步，不碰文件系统，也不建路径对象：每套快照有上万个工件，每个都要过一遍。
+    """
+
+    parts = relative.split("/")
+    if (
+        relative.startswith("/")
+        or "\\" in relative
+        or "\x00" in relative
+        or ".." in parts
+        or all(part in ("", ".") for part in parts)
+    ):
         raise BackupError("备份工件路径不是安全的相对 POSIX 路径。")
+
+
+def _safe_child(root: Path, relative: str) -> Path:
+    _require_safe_relative(relative)
     path = (root / relative).resolve()
     try:
         path.relative_to(root)
@@ -850,7 +883,9 @@ def _parse_artifact(value: object) -> BackupArtifact:
     if set(source) != {"path", "byteLength", "sha256"}:
         raise BackupError("备份工件字段不完整或包含未知字段。")
     path = _text(source.get("path"), "path")
-    _safe_child(Path("/").resolve(), path)
+    # 以前这里拿主机的根目录 resolve 一遍，每个工件都按层 lstat：生产上 55 套快照 30 万个工件，读一遍
+    # 清单要将近一分钟 CPU。有没有越出快照目录，核对快照时（verify）照着真正的目录再查。
+    _require_safe_relative(path)
     byte_length = _integer(source.get("byteLength"), "byteLength")
     if byte_length < 0:
         raise BackupError("备份工件长度不能为负数。")
