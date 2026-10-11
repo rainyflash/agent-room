@@ -4,12 +4,14 @@
 单元测试碰不到真实的 pg_basebackup、pg_verifybackup 和 pg_waldump。改备份脚本或恢复代码时，
 这里在一次性 Docker 环境里走一遍：照生产 compose 的设置开着 WAL 归档的库 →
 postgres-base-backup.sh → postgres-wal-archive.sh 接着收两次 → 收到坏段时停下、什么都不删 →
-materialize_base_backup → 按全量自己的恢复点、按之后一直留着的 WAL 的恢复点各起一次库，
-确认到达恢复点、数据一条不少。只在 Linux 上跑。
+照恢复演练的做法（plan_restore、stage_wal、恢复设置）起库：按全量自己的恢复点、按之后一直留着的
+WAL 的恢复点、按两次提交之间的某一刻各起一次，确认停在目标上、数据一条不多一条不少；目标之后再也
+没有提交时，PostgreSQL 停不下来、直接退出，说得清为什么。只在 Linux 上跑。
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import gzip
 import hashlib
 import json
@@ -22,7 +24,15 @@ import sys
 import tempfile
 import time
 
-from prodops.restore import RESTORE_COMMAND, materialize_base_backup
+from prodops.restore import (
+    BaseCandidate,
+    RestoreDrillError,
+    RestorePlan,
+    RestoreTarget,
+    materialize_base_backup,
+    plan_restore,
+    stage_wal,
+)
 from prodops.restore_point import RestorePoint
 from prodops.wal_store import WalAnchor, WalStore
 
@@ -41,7 +51,9 @@ POINT_IDS = (
 USER = "agent_room_bootstrap"
 SEGMENT_BYTES = 16 * 1024 * 1024
 ROWS_BEFORE_BACKUP = 200_500
-ROWS_BEFORE_SECOND_POINT = 201_500
+ROWS_AT_MOMENT = 201_500
+ROWS_BEFORE_SECOND_POINT = 201_600
+RESTORES = ("full", "point", "time", "quiet")
 
 
 class DrillFailure(RuntimeError):
@@ -114,7 +126,9 @@ def production_settings() -> list[str]:
 
 def start_source(name: str, repository: Path, password: Path) -> str:
     container = f"{name}-source"
-    options = [part for setting in production_settings() for part in ("-c", setting)]
+    # 按时间恢复要确定两次提交之间没有别的提交：关掉自动清理，免得它的统计在中途提交。
+    settings = [*production_settings(), "autovacuum=off"]
+    options = [part for setting in settings for part in ("-c", setting)]
     docker(
         "run", "-d", "--name", container,
         "-e", f"POSTGRES_USER={USER}", "-e", "POSTGRES_PASSWORD_FILE=/run/secrets/password",
@@ -253,24 +267,35 @@ def broken_segment_is_refused(source: str, repository: Path, password: Path, anc
         raise DrillFailure("坏段被收进了仓库。")
 
 
-def restore(name: str, physical: Path, wal_sources: list[Path], target: str, lsn: str, expected_rows: int,
-            work: Path) -> dict[str, object]:
+def between_commits(source: str) -> datetime:
+    """两次提交之间的一刻：前后各隔一秒，按时间恢复停在这里。时间取源库的钟，和提交时间同一个钟。"""
+
+    time.sleep(1)
+    moment = datetime.fromtimestamp(float(sql(source, "postgres", "SELECT extract(epoch FROM clock_timestamp())")), UTC)
+    time.sleep(1)
+    return moment
+
+
+def running(container: str) -> bool:
+    return docker("inspect", "--format", "{{.State.Running}}", container, capture=True).strip() == "true"
+
+
+def container_logs(container: str) -> str:
+    return docker("logs", container, capture=True) + _stderr_logs(container)
+
+
+def start_restored(name: str, physical: Path, store: WalStore, plan: RestorePlan, work: Path) -> str:
+    """照恢复演练：快照解成数据目录，放好要用的 WAL，写恢复设置，拷进卷以后以只读 WAL 起库。"""
+
     work.mkdir(mode=0o700)
     data = work / "data"
     materialize_base_backup(physical / "base", data)
     wal = work / "wal"
-    wal.mkdir()
-    for source in wal_sources:
-        for path in source.iterdir():
-            if len(path.name.removesuffix(".gz")) == 24 and not path.name.endswith(".sha256"):
-                shutil.copyfile(path, wal / path.name)
+    stage_wal(physical / "wal", store, plan.wal, wal)
     (data / "recovery.signal").touch(mode=0o600)
     with (data / "postgresql.auto.conf").open("a", encoding="utf-8", newline="\n") as stream:
-        stream.write(f"restore_command = '{RESTORE_COMMAND}'\n")
-        stream.write(f"recovery_target_name = '{target}'\n")
-        stream.write("recovery_target_action = 'promote'\n")
+        stream.writelines(f"{line}\n" for line in plan.recovery.settings())
 
-    # 照 runtime.restore_database：拷进卷、交给 postgres 用户，再以只读 WAL 起库。
     for volume in (f"{name}-data", f"{name}-wal"):
         docker("volume", "create", volume, capture=True)
     docker(
@@ -290,23 +315,48 @@ def restore(name: str, physical: Path, wal_sources: list[Path], target: str, lsn
         "-c", "unix_socket_directories=/tmp",
         capture=True,
     )
+    return restored
+
+
+def restore(
+    name: str, physical: Path, store: WalStore, plan: RestorePlan, expected_rows: int, work: Path
+) -> dict[str, object]:
+    restored = start_restored(name, physical, store, plan, work)
     wait_until(
-        "恢复的库提升为主库",
-        lambda: try_sql(restored, "postgres", "SELECT NOT pg_is_in_recovery()", socket="/tmp") == "t",
+        "恢复的库提升为主库或者退出",
+        lambda: not running(restored)
+        or try_sql(restored, "postgres", "SELECT NOT pg_is_in_recovery()", socket="/tmp") == "t",
         180,
     )
-    replayed = sql(
-        restored, "postgres",
-        f"SELECT coalesce(pg_last_wal_replay_lsn() >= '{lsn}'::pg_lsn, false)", socket="/tmp",
-    )
-    logs = docker("logs", restored, capture=True) + _stderr_logs(restored)
-    reached = replayed == "t" or f'restore point "{target}"' in logs
+    logs = container_logs(restored)
+    if not running(restored):
+        raise DrillFailure(f"恢复的库没起来：{plan.recovery.unreachable(logs) or logs.strip()[-2000:]}")
+    replayed = "f"
+    if plan.recovery.lsn is not None:
+        replayed = sql(
+            restored, "postgres",
+            f"SELECT coalesce(pg_last_wal_replay_lsn() >= '{plan.recovery.lsn}'::pg_lsn, false)", socket="/tmp",
+        )
+    target = plan.recovery.time_text or plan.recovery.name
+    if not plan.recovery.reached(logs, replayed_past_lsn=replayed == "t"):
+        raise DrillFailure(f"恢复的库没有停在 {target}。")
     rows = int(sql(restored, "agent_room", "SELECT count(*) FROM messages", socket="/tmp"))
-    if not reached:
-        raise DrillFailure(f"恢复的库没有到达恢复点 {target}。")
     if rows != expected_rows:
         raise DrillFailure(f"恢复到 {target} 后 messages 有 {rows} 行，应为 {expected_rows}。")
-    return {"restorePoint": target, "reachedRestorePoint": True, "rows": rows}
+    return {"target": target, "walFromStore": list(plan.wal), "rows": rows}
+
+
+def restore_without_a_later_commit(
+    name: str, physical: Path, store: WalStore, plan: RestorePlan, work: Path
+) -> dict[str, object]:
+    """目标之后、放进来的 WAL 里再没有提交：PostgreSQL 读完 WAL 停不下来，直接退出。"""
+
+    restored = start_restored(name, physical, store, plan, work)
+    wait_until("恢复的库退出", lambda: not running(restored), 180)
+    explanation = plan.recovery.unreachable(container_logs(restored))
+    if explanation is None or f"--restore-point {plan.recovery.next_point}" not in explanation:
+        raise DrillFailure(f"按时间停不下来时没说清楚：{explanation}")
+    return {"target": plan.recovery.time_text, "refused": explanation}
 
 
 def drill(name: str, root: Path) -> dict[str, object]:
@@ -342,30 +392,45 @@ def drill(name: str, root: Path) -> dict[str, object]:
     archive_point(source, repository, password, 0, anchor)
     check_store(store, ["anchor", "point"])
     sql(source, "agent_room", "INSERT INTO messages SELECT g, 'second' FROM generate_series(200501, 201500) g")
+    moment = between_commits(source)
+    sql(source, "agent_room", "INSERT INTO messages SELECT g, 'third' FROM generate_series(201501, 201600) g")
+    # 从这一刻到下一个恢复点再没有提交。
+    quiet = between_commits(source)
     archive_point(source, repository, password, 1, anchor)
     check_store(store, ["anchor", "point", "point"])
     second = store.points()[-1]
-    sql(source, "agent_room", "INSERT INTO messages SELECT g, 'after' FROM generate_series(201501, 201800) g")
+    sql(source, "agent_room", "INSERT INTO messages SELECT g, 'after' FROM generate_series(201601, 201800) g")
     broken_segment_is_refused(source, repository, password, anchor)
+
+    candidates = (BaseCandidate(BACKUP_ID, point),)
+
+    def plan(target: RestoreTarget) -> RestorePlan:
+        return plan_restore(target, candidates, store)
 
     evidence: dict[str, object] = {"files": dict(files), "walStore": list(store.segments())}
     evidence["fromFull"] = restore(
-        f"{name}-full", physical, [physical / "wal"], point.name, point.lsn, ROWS_BEFORE_BACKUP,
+        f"{name}-full", physical, store, plan(RestoreTarget(restore_point=point.name)), ROWS_BEFORE_BACKUP,
         root / "restore-full",
     )
-    evidence["fromWalStore"] = restore(
-        f"{name}-store", physical, [physical / "wal", store.root], second.name, second.lsn,
-        ROWS_BEFORE_SECOND_POINT, root / "restore-store",
+    evidence["toRestorePoint"] = restore(
+        f"{name}-point", physical, store, plan(RestoreTarget(restore_point=second.name)), ROWS_BEFORE_SECOND_POINT,
+        root / "restore-point",
+    )
+    evidence["toTime"] = restore(
+        f"{name}-time", physical, store, plan(RestoreTarget(time=moment)), ROWS_AT_MOMENT, root / "restore-time",
+    )
+    evidence["noCommitAfterTime"] = restore_without_a_later_commit(
+        f"{name}-quiet", physical, store, plan(RestoreTarget(time=quiet)), root / "restore-quiet",
     )
     return evidence
 
 
 def cleanup(name: str) -> None:
-    containers = [f"{name}-source", f"{name}-full-restored", f"{name}-store-restored"]
+    containers = [f"{name}-source", *(f"{name}-{kind}-restored" for kind in RESTORES)]
     for container in containers:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
-    for restore_name in (f"{name}-full", f"{name}-store"):
-        for volume in (f"{restore_name}-data", f"{restore_name}-wal"):
+    for kind in RESTORES:
+        for volume in (f"{name}-{kind}-data", f"{name}-{kind}-wal"):
             subprocess.run(["docker", "volume", "rm", "-f", volume], capture_output=True, check=False)
 
 
@@ -378,8 +443,8 @@ def main() -> int:
         root = Path(temporary)
         try:
             evidence = drill(name, root)
-        except DrillFailure as error:
-            for container in (f"{name}-source", f"{name}-full-restored", f"{name}-store-restored"):
+        except (DrillFailure, RestoreDrillError) as error:
+            for container in (f"{name}-source", *(f"{name}-{kind}-restored" for kind in RESTORES)):
                 subprocess.run(["docker", "logs", "--tail", "40", container], check=False)
             print(f"物理备份实跑失败：{error}", file=sys.stderr)
             return 1

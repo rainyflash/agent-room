@@ -14,6 +14,7 @@ import tempfile
 
 from prodops.config import DeploymentConfig
 from prodops.render import DeploymentPaths
+from prodops.restore import RestoreTarget
 from prodops.runtime import ProductionRuntime
 
 
@@ -55,7 +56,7 @@ def main() -> int:
             run([*compose, "up", "--detach", "--wait", "synapse", "identity"])
             upload_fixture(compose)
             manifest = runtime.backup()
-            report = runtime.restore_drill(manifest.backup_id)
+            report = runtime.restore_drill(RestoreTarget(backup_id=manifest.backup_id))
             if report.object_count < 1:
                 raise RuntimeError("恢复演练没有验证测试对象。")
             evidence = {

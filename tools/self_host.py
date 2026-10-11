@@ -71,8 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
         lifecycle = subcommands.add_parser(command)
         lifecycle.add_argument("--config", type=Path, required=True)
         lifecycle.add_argument("--state-dir", type=Path, required=True)
-        if command in {"backup-verify", "restore-drill"}:
+        if command == "backup-verify":
             lifecycle.add_argument("--backup-id", required=True)
+        if command == "restore-drill":
+            # 三样最多给一样；都不给就恢复到最近一个核对过的恢复点。
+            lifecycle.add_argument("--backup-id")
+            lifecycle.add_argument("--restore-point")
+            lifecycle.add_argument("--target-time", help="要带时区，比如 2026-10-11T09:20:00Z")
     return parser
 
 
@@ -118,9 +123,10 @@ def run_lifecycle(arguments: argparse.Namespace) -> int:
         "--state-dir",
         str(arguments.state_dir),
     ]
-    backup_id = getattr(arguments, "backup_id", None)
-    if backup_id is not None:
-        command.extend(("--backup-id", backup_id))
+    for option in ("backup_id", "restore_point", "target_time"):
+        value = getattr(arguments, option, None)
+        if value is not None:
+            command.extend((f"--{option.replace('_', '-')}", value))
     return subprocess.run(command, cwd=ROOT, check=False).returncode
 
 
