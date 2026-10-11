@@ -43,6 +43,18 @@ RCLONE_CONFIG_SOURCE_SECRET_ACCESS_KEY=$(cat /run/secrets/s3_secret_key)
 export RCLONE_CONFIG_SOURCE_ACCESS_KEY_ID RCLONE_CONFIG_SOURCE_SECRET_ACCESS_KEY
 """
 
+# 照 render.py 生成的 s3.json，只有控制面那一个身份。钥匙在容器里随机生成，和 s3.json 一起写进卷。
+KEYS = r"""
+umask 022
+access=$(head -c 10 /dev/urandom | od -An -tx1 | tr -d ' \n')
+secret=$(head -c 30 /dev/urandom | od -An -tx1 | tr -d ' \n')
+printf '%s' "$access" >/keys/s3_access_key
+printf '%s' "$secret" >/keys/s3_secret_key
+printf '{"identities":[{"name":"agent-room-control-plane","credentials":[{"accessKey":"%s","secretKey":"%s"}],' \
+  "$access" "$secret" >/keys/s3.json
+printf '"actions":["Admin","Read","Write","List","Tagging"]}]}' >>/keys/s3.json
+"""
+
 
 class DrillFailure(RuntimeError):
     pass
@@ -59,8 +71,8 @@ def docker(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def rclone(store: str, secrets_directory: Path, *arguments: str, script: str) -> subprocess.CompletedProcess[str]:
-    """照 compose 的 object-backup 起 rclone 容器：宿主用户、根目录只读、密钥按文件挂进去。"""
+def rclone(store: str, keys: str, *arguments: str, script: str) -> subprocess.CompletedProcess[str]:
+    """照 compose 的 object-backup 起 rclone 容器：宿主用户、根目录只读、钥匙按文件挂在 /run/secrets。"""
 
     return docker(
         "run",
@@ -73,9 +85,7 @@ def rclone(store: str, secrets_directory: Path, *arguments: str, script: str) ->
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,size=64m",
         "-v",
-        f"{secrets_directory / 's3_access_key'}:/run/secrets/s3_access_key:ro",
-        "-v",
-        f"{secrets_directory / 's3_secret_key'}:/run/secrets/s3_secret_key:ro",
+        f"{keys}:/run/secrets:ro",
         *arguments,
         "--entrypoint",
         "/bin/sh",
@@ -85,23 +95,13 @@ def rclone(store: str, secrets_directory: Path, *arguments: str, script: str) ->
     )
 
 
-def start_store(name: str, root: Path) -> tuple[str, Path]:
-    secrets_directory = root / "secrets"
-    secrets_directory.mkdir()
-    access_key, secret_key = secrets.token_hex(10), secrets.token_urlsafe(30)
-    (secrets_directory / "s3_access_key").write_text(access_key, encoding="utf-8")
-    (secrets_directory / "s3_secret_key").write_text(secret_key, encoding="utf-8")
-    config = root / "seaweedfs"
-    config.mkdir()
-    # 照 render.py 生成的 s3.json：只有控制面那一个身份。
-    identity = {
-        "name": "agent-room-control-plane",
-        "credentials": [{"accessKey": access_key, "secretKey": secret_key}],
-        "actions": ["Admin", "Read", "Write", "List", "Tagging"],
-    }
-    (config / "s3.json").write_text(json.dumps({"identities": [identity]}), encoding="utf-8")
-    for path in (*secrets_directory.iterdir(), config / "s3.json"):
-        path.chmod(0o644)
+def start_store(name: str) -> tuple[str, str]:
+    """起一个一次性的对象存储。访问钥匙在容器里随机生成、写进 Docker 卷，测试本身不经手。"""
+
+    keys = f"{name}-keys"
+    generated = docker("run", "--rm", "-v", f"{keys}:/keys", "--entrypoint", "/bin/sh", RCLONE, "-ec", KEYS)
+    if generated.returncode != 0:
+        raise DrillFailure(f"生成对象存储的访问钥匙失败：{generated.stderr.strip()[-2000:]}")
     store = f"{name}-store"
     started = docker(
         "run",
@@ -109,7 +109,7 @@ def start_store(name: str, root: Path) -> tuple[str, Path]:
         "--name",
         store,
         "-v",
-        f"{config}:/config:ro",
+        f"{keys}:/config:ro",
         "-v",
         f"{name}-data:/data",
         SEAWEEDFS,
@@ -130,34 +130,32 @@ def start_store(name: str, root: Path) -> tuple[str, Path]:
     )
     deadline = time.monotonic() + 120
     while True:
-        ready = rclone(store, secrets_directory, script=probe)
+        ready = rclone(store, keys, script=probe)
         if ready.returncode == 0:
-            return store, secrets_directory
+            return store, keys
         if time.monotonic() > deadline:
             raise DrillFailure(f"对象存储 120 秒内没准备好：{ready.stderr.strip()[-2000:]}")
         time.sleep(2)
 
 
-def change_objects(
-    store: str, secrets_directory: Path, written: dict[str, bytes], deleted: tuple[str, ...] = ()
-) -> None:
+def change_objects(store: str, keys: str, written: dict[str, bytes], deleted: tuple[str, ...] = ()) -> None:
     lines = [RCLONE_ENVIRONMENT]
     lines.extend(f"rclone deletefile 'source:{BUCKET}/{key}'" for key in deleted)
     lines.extend(
         f"printf '%s' '{content.decode()}' | rclone rcat 'source:{BUCKET}/{key}'"
         for key, content in written.items()
     )
-    result = rclone(store, secrets_directory, script="\n".join(lines))
+    result = rclone(store, keys, script="\n".join(lines))
     if result.returncode != 0:
         raise DrillFailure(f"改对象失败：{result.stderr.strip()[-2000:]}")
 
 
-def run_backup(store: str, secrets_directory: Path, repository: Path, backup_id: str) -> Path:
+def run_backup(store: str, keys: str, repository: Path, backup_id: str) -> Path:
     """跑生产的 object-backup.sh，返回这套快照的清单。"""
 
     result = rclone(
         store,
-        secrets_directory,
+        keys,
         "-v",
         f"{repository}:/backup",
         "-v",
@@ -198,22 +196,17 @@ def drill(name: str, root: Path) -> dict[str, object]:
     repository.mkdir()
     objects = repository / "objects"
     mirror = objects / "mirror"
-    store, secrets_directory = start_store(name, root)
+    store, keys = start_store(name)
     started_on = datetime.now(UTC).date()
 
-    change_objects(store, secrets_directory, BEFORE)
-    first = run_backup(store, secrets_directory, repository, FIRST)
+    change_objects(store, keys, BEFORE)
+    first = run_backup(store, keys, repository, FIRST)
     expect("第一次同步后的镜像", files(mirror), BEFORE)
     expect("第一套快照的清单", sorted(entry.path for entry in read_object_inventory(first)), sorted(BEFORE))
     unchanged = (mirror / "attachments" / "03").stat().st_ino
 
-    change_objects(
-        store,
-        secrets_directory,
-        {key: AFTER[key] for key in ("content/02", "content/04")},
-        ("content/01",),
-    )
-    second = run_backup(store, secrets_directory, repository, SECOND)
+    change_objects(store, keys, {key: AFTER[key] for key in ("content/02", "content/04")}, ("content/01",))
+    second = run_backup(store, keys, repository, SECOND)
     expect("第二次同步后的镜像", files(mirror), AFTER)
     expect("没变的对象重新下载了", (mirror / "attachments" / "03").stat().st_ino, unchanged)
     removed = {
@@ -237,7 +230,7 @@ def drill(name: str, root: Path) -> dict[str, object]:
 
 def cleanup(name: str) -> None:
     docker("rm", "-f", f"{name}-store")
-    docker("volume", "rm", "-f", f"{name}-data")
+    docker("volume", "rm", "-f", f"{name}-data", f"{name}-keys")
 
 
 def main() -> int:
