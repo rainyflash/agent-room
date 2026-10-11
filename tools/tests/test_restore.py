@@ -20,7 +20,9 @@ from tools.prodops.restore import (
     materialize_base_backup,
     prune_expired_restore_drills,
 )
+from tools.prodops.restore_point import restore_point_name
 from tools.prodops.secrets import SecretStore
+from tools.prodops.wal_store import WalAnchor, WalPoint, WalStore
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +48,16 @@ class RestoreFixtureCapture:
             b'"lastRequiredWal":"000000010000000000000001"}',
         )
         write(staging / "postgres" / "wal" / "000000010000000000000001", b"wal")
+
+    def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
+        store = WalStore(self.repository / "wal-store")
+        write(store.root / "000000010000000000000002.gz", b"wal")
+        store._write(
+            (
+                WalPoint(START, "anchor", anchor.name, anchor.lsn, anchor.segment, anchor.backup_id),
+                WalPoint(START, "point", restore_point_name(point_id), "0/2000000", "000000010000000000000002", None),
+            )
+        )
 
 
 class FakeRestoreBackend:

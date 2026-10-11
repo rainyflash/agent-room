@@ -56,7 +56,15 @@ services:
       - -c
       - archive_timeout=${AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS:-900}s
       - -c
-      - archive_command=test ! -f /archive/%f && cp %p /archive/%f
+      # 先写临时文件、落盘再改名，归档目录里只会出现完整的段。同名的已经在了，内容一样才算归档过：
+      # 崩溃以后 PostgreSQL 会把归档过、还没来得及记下的段再归档一次。
+      - archive_command=if test -f /archive/%f; then cmp -s %p /archive/%f; else cp %p /archive/.%f.partial && sync /archive/.%f.partial && mv /archive/.%f.partial /archive/%f; fi
+      - -c
+      # WAL 里大部分是整页镜像（specs/backups/design.md），先压缩再写；检查点从 5 分钟一次改成
+      # 15 分钟一次，整页镜像跟着少。改了要重建 PostgreSQL 容器才生效，发版部署不重建它。
+      - wal_compression=zstd
+      - -c
+      - checkpoint_timeout=15min
       - -c
       - hba_file=/etc/postgresql/agent-room-pg-hba.conf
     secrets:
@@ -466,6 +474,29 @@ services:
       - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
       - ${AGENT_ROOM_BACKUP_REPOSITORY}/wal:/archive:ro
       - ./postgres-base-backup.sh:/scripts/postgres-base-backup.sh:ro
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
+    networks: [backend]
+
+  postgres-wal-archive:
+    logging: *container-logging
+    image: postgres:18.6-alpine
+    profiles: [backup]
+    user: '0:0'
+    entrypoint: [/bin/sh, /scripts/postgres-wal-archive.sh]
+    environment:
+      AGENT_ROOM_BACKUP_ID: ${AGENT_ROOM_BACKUP_ID:-unset}
+      AGENT_ROOM_WAL_ANCHOR: ${AGENT_ROOM_WAL_ANCHOR:-}
+      AGENT_ROOM_DB_HOST: ${AGENT_ROOM_DB_HOST}
+      AGENT_ROOM_DB_PORT: ${AGENT_ROOM_DB_PORT}
+      AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
+      AGENT_ROOM_HOST_UID: ${AGENT_ROOM_HOST_UID:-0}
+      AGENT_ROOM_HOST_GID: ${AGENT_ROOM_HOST_GID:-0}
+    secrets: [postgres_bootstrap_password]
+    volumes:
+      # 归档目录是仓库里的 wal/，和 wal-store/ 在同一个挂载里，核对时硬链接、收好以后删原文件。
+      - ${AGENT_ROOM_BACKUP_REPOSITORY}:/backup
+      - ./postgres-wal-archive.sh:/scripts/postgres-wal-archive.sh:ro
     read_only: true
     tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
     networks: [backend]

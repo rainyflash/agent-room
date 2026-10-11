@@ -21,6 +21,7 @@ from .config import DeploymentConfig
 from .network_agents import disable_statement
 from .render import DeploymentPaths, render_deployment
 from .restore import (
+    RESTORE_COMMAND,
     DatabaseRestoreEvidence,
     RestoreDrillCoordinator,
     RestoreDrillReport,
@@ -30,6 +31,7 @@ from .restore import (
     restore_drill_root,
 )
 from .secrets import SecretStore
+from .wal_store import WalAnchor
 
 
 ROOT: Final = Path(__file__).resolve().parents[2]
@@ -206,9 +208,7 @@ class ProductionRuntime:
         self._prune_expired(repository)
         repository.require_headroom()
         coordinator = BackupCoordinator(self.config, self.paths, self, repository)
-        manifest = coordinator.create()
-        repository.prune_archived_wal(manifest)
-        return manifest
+        return coordinator.create()
 
     def verify_backup(self, backup_id: str) -> BackupManifest:
         repository = BackupRepository(Path(self.config.backup.repository))
@@ -257,6 +257,22 @@ class ProductionRuntime:
         self._run([*common, "object-backup"], capture=True)
         self._run([*common, "backup-ownership"], capture=True)
 
+    def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
+        self._run(
+            [
+                *self.compose_command(),
+                "run",
+                "--rm",
+                "--no-deps",
+                "--env",
+                f"AGENT_ROOM_BACKUP_ID={point_id}",
+                "--env",
+                f"AGENT_ROOM_WAL_ANCHOR={anchor.environment_value}",
+                "postgres-wal-archive",
+            ],
+            capture=True,
+        )
+
     def restore_database(
         self,
         backup_directory: Path,
@@ -294,7 +310,7 @@ class ProductionRuntime:
         (target / "recovery.signal").touch(mode=0o600)
         auto_config = target / "postgresql.auto.conf"
         with auto_config.open("a", encoding="utf-8", newline="\n") as stream:
-            stream.write("restore_command = 'cp /wal/%f %p'\n")
+            stream.write(f"restore_command = '{RESTORE_COMMAND}'\n")
             stream.write(f"recovery_target_name = '{restore_point_name}'\n")
             stream.write("recovery_target_action = 'promote'\n")
 

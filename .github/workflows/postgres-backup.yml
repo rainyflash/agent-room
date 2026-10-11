@@ -1,25 +1,33 @@
 name: 生产物理备份实跑
 
-# 物理备份脚本只在生产的定时备份和发版的恢复演练里真跑，单元测试碰不到真实的 pg_basebackup、
-# pg_verifybackup 和 pg_waldump。改到备份脚本或恢复代码时，在 PR 上用生产同款 PostgreSQL 镜像
-# 实跑一遍备份，再还原、按恢复点起库，确认数据一条不少。
+# 物理备份和 WAL 归档脚本只在生产的定时备份和发版的恢复演练里真跑，单元测试碰不到真实的
+# pg_basebackup、pg_verifybackup 和 pg_waldump。改到备份脚本、归档设置或恢复代码时，在 PR 上用
+# 生产同款 PostgreSQL 镜像实跑一遍备份和归档，再还原、按恢复点起库，确认数据一条不少。
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - '.github/workflows/postgres-backup.yml'
+      - 'infra/production/compose.yaml'
       - 'infra/production/postgres-base-backup.sh'
+      - 'infra/production/postgres-wal-archive.sh'
       - 'tools/postgres_backup_e2e.py'
       - 'tools/prodops/backup.py'
       - 'tools/prodops/restore.py'
+      - 'tools/prodops/restore_point.py'
+      - 'tools/prodops/wal_store.py'
   push:
     branches: [main]
     paths:
       - '.github/workflows/postgres-backup.yml'
+      - 'infra/production/compose.yaml'
       - 'infra/production/postgres-base-backup.sh'
+      - 'infra/production/postgres-wal-archive.sh'
       - 'tools/postgres_backup_e2e.py'
       - 'tools/prodops/backup.py'
       - 'tools/prodops/restore.py'
+      - 'tools/prodops/restore_point.py'
+      - 'tools/prodops/wal_store.py'
 
 permissions:
   contents: read
@@ -33,7 +41,7 @@ env:
 
 jobs:
   backup:
-    name: 实跑物理备份并按恢复点还原
+    name: 实跑物理备份和 WAL 归档并按恢复点还原
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -41,5 +49,5 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
         with:
           persist-credentials: false
-      - name: 实跑物理备份并按恢复点还原
+      - name: 实跑物理备份和 WAL 归档并按恢复点还原
         run: python3 tools/postgres_backup_e2e.py

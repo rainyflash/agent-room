@@ -17,13 +17,15 @@ from uuid import UUID
 
 from .config import DeploymentConfig
 from .render import DeploymentPaths
-from .restore_point import RestorePoint, RestorePointError, WAL_SEGMENT
+from .restore_point import RestorePoint, RestorePointError, restore_point_name
+from .wal_store import WAL_STORE, WalAnchor, WalPoint, WalStore, WalStoreError
 
 
 BACKUP_SCHEMA_VERSION: Final = 1
 BACKUP_ID: Final = re.compile(r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}$")
 SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
-WAL_BACKUP_MARKER: Final = re.compile(r"^([0-9A-F]{24})\.[0-9A-F]{8}\.backup$")
+# 全量里自带的 WAL：原样的段，或者压缩过的段。
+SET_WAL_SEGMENT: Final = re.compile(r"^postgres/wal/([0-9A-F]{24})(?:\.gz)?$")
 LOCK_STALE_AFTER: Final = timedelta(hours=24)
 MINIMUM_BACKUP_HEADROOM_BYTES: Final = 2 * 1024 * 1024 * 1024
 MANIFEST_NAME: Final = "manifest.json"
@@ -38,6 +40,12 @@ class BackupError(RuntimeError):
 class BackupCapture(Protocol):
     def capture_backup_payload(self, backup_id: str) -> None:
         """把外部依赖快照写入指定的临时备份目录。"""
+
+    def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
+        """打一个恢复点，把接着上一个恢复点读通了的 WAL 段收进仓库，记下这个恢复点。
+
+        还没有恢复点记录时从 `anchor` 这套全量的恢复点接起。
+        """
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -225,6 +233,7 @@ class BackupRepository:
         resolved.mkdir(mode=0o700, parents=True, exist_ok=True)
         _restrict_directory(resolved)
         (resolved / "wal").mkdir(mode=0o750, exist_ok=True)
+        (resolved / WAL_STORE).mkdir(mode=0o700, exist_ok=True)
         metrics = resolved / "metrics"
         metrics.mkdir(mode=0o755, exist_ok=True)
         metrics.chmod(0o755)
@@ -378,38 +387,30 @@ class BackupRepository:
             )
         return required
 
-    def prune_archived_wal(self, manifest: BackupManifest) -> tuple[str, ...]:
-        if manifest.database_mode != "embedded":
-            return ()
-        try:
-            restore_point = RestorePoint.load(
-                self.root / manifest.backup_id / "postgres" / "restore-point.json"
-            )
-        except RestorePointError as error:
-            raise BackupError(str(error)) from error
-        last_required_wal = restore_point.last_required_wal
-        wal_directory = (self.root / "wal").resolve()
-        try:
-            wal_directory.relative_to(self.root.resolve())
-        except ValueError as error:
-            raise BackupError("归档 WAL 目录越过备份仓库。") from error
-        if not wal_directory.is_dir():
-            return ()
+    @property
+    def wal_store(self) -> WalStore:
+        return WalStore(self.root / WAL_STORE)
 
-        removed: list[str] = []
-        for path in sorted(wal_directory.iterdir(), key=lambda item: item.name):
-            if path.is_symlink() or not path.is_file():
-                raise BackupError(f"归档 WAL 中包含不安全条目：{path.name}。")
-            marker = WAL_BACKUP_MARKER.fullmatch(path.name)
-            if WAL_SEGMENT.fullmatch(path.name):
-                segment = path.name
-            else:
-                segment = marker.group(1) if marker else None
-            if segment is None or segment > last_required_wal:
+    def prune_wal_store(self) -> tuple[str, ...]:
+        """一直留着的 WAL 只留最老的那套全量以后的：从它恢复到之后任意一刻都要用到。"""
+
+        starts: list[str] = []
+        for path in self.root.iterdir():
+            if not path.is_dir() or not BACKUP_ID.fullmatch(path.name):
                 continue
-            path.unlink()
-            removed.append(path.name)
-        return tuple(removed)
+            segments = [
+                match.group(1)
+                for artifact in self.load(path.name).artifacts
+                if (match := SET_WAL_SEGMENT.fullmatch(artifact.path))
+            ]
+            if segments:
+                starts.append(min(segments))
+        if not starts:
+            return ()
+        try:
+            return self.wal_store.prune(min(starts))
+        except WalStoreError as error:
+            raise BackupError(str(error)) from error
 
     def _remove_stale_partials(self, now: datetime) -> None:
         cutoff = now - LOCK_STALE_AFTER
@@ -455,17 +456,46 @@ class BackupCoordinator:
                 _require_restore_contract(manifest)
                 self.repository.publish(manifest)
                 self.repository.verify(backup_id)
-                self.repository.write_metric_snapshot(
-                    "backup",
-                    (
-                        f"agent_room_backup_last_success_timestamp_seconds {created_at.timestamp():.3f}",
-                        f"agent_room_backup_rpo_target_seconds {manifest.rpo_minutes * 60}",
-                    ),
-                )
-                return manifest
             except BaseException:
                 shutil.rmtree(staging, ignore_errors=True)
                 raise
+            # 这套全量已经发布、核对过。WAL 接不上时它照样能用，但这一次算失败、不更新“最近成功”，
+            # 好让 RPO 告警叫人来看。
+            last_success = created_at
+            if manifest.database_mode == "embedded":
+                last_success = self._archive_wal(manifest).created_at
+                self.repository.prune_wal_store()
+            self.repository.write_metric_snapshot(
+                "backup",
+                (
+                    f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
+                    f"agent_room_backup_rpo_target_seconds {manifest.rpo_minutes * 60}",
+                ),
+            )
+            return manifest
+
+    def _archive_wal(self, manifest: BackupManifest) -> WalPoint:
+        try:
+            restore_point = RestorePoint.load(
+                self.repository.root / manifest.backup_id / "postgres" / "restore-point.json"
+            )
+        except RestorePointError as error:
+            raise BackupError(str(error)) from error
+        point_id = _new_backup_id(self.clock().astimezone(UTC))
+        anchor = WalAnchor(
+            manifest.backup_id,
+            restore_point.name,
+            restore_point.lsn,
+            restore_point.last_required_wal,
+        )
+        self.capture.archive_wal(point_id, anchor)
+        try:
+            latest = self.repository.wal_store.latest()
+        except WalStoreError as error:
+            raise BackupError(str(error)) from error
+        if latest is None or latest.name != restore_point_name(point_id):
+            raise BackupError("WAL 归档没有记下这次的恢复点。")
+        return latest
 
     def _copy_identity_artifacts(self, staging: Path) -> None:
         identity = staging / "identity"
