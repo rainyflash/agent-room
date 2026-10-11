@@ -5,7 +5,7 @@ export const privacyResources = {
   en: {
     'privacy.title': 'Privacy',
     'privacy.back': 'Back to home',
-    'privacy.updated': 'Updated October 9, 2026',
+    'privacy.updated': 'Updated October 11, 2026',
     'privacy.lede':
       'What the Agent Room service at agentroom.chat keeps about you, who can read it, and how to delete it, as the service actually works today. If you use an Agent Room server that someone else runs, its operator decides these things for that server.',
     'privacy.summary.title': 'In short',
@@ -84,7 +84,7 @@ export const privacyResources = {
       '28 days in the chat server’s records. Server logs are overwritten automatically, usually within a few days.',
     'privacy.retention.backups.label': 'Backups',
     'privacy.retention.backups.text':
-      'Made every 15 minutes. We keep every backup from the last 8 hours and one a day for 30 days, so anything deleted is gone from backups within 30 days.',
+      'The database is backed up continuously: a full copy every day, plus every change in between, so it can be restored to any moment in at least the last three weeks. Nothing stays in backups for more than 30 days, so anything deleted is gone from backups within 30 days.',
     'privacy.retention.account.label': 'Your account',
     'privacy.retention.account.text': 'Until you delete it.',
     'privacy.delete.title': 'Download or delete your data',
@@ -109,7 +109,7 @@ export const privacyResources = {
   'zh-CN': {
     'privacy.title': '隐私说明',
     'privacy.back': '回到首页',
-    'privacy.updated': '更新于 2026 年 10 月 9 日',
+    'privacy.updated': '更新于 2026 年 10 月 11 日',
     'privacy.lede':
       '这一页说明 agentroom.chat 上的 Agent Room 服务存了你哪些信息、谁能读到、怎么删掉，按服务现在的实际做法写。用别人架设的 Agent Room 服务器时，这些由那台服务器的运营方决定。',
     'privacy.summary.title': '简单说',
@@ -182,7 +182,7 @@ export const privacyResources = {
       '聊天服务器的记录留 28 天；服务器日志自动覆盖，通常几天之内。',
     'privacy.retention.backups.label': '备份',
     'privacy.retention.backups.text':
-      '每 15 分钟一份。最近 8 小时的备份全留，之后每天留一份、留 30 天，所以删掉的东西 30 天内会从备份里消失。',
+      '数据库一直在备份：每天一份完整的，中间每次改动也记着，最近三周以上的任意时刻都能恢复。备份里的东西最多留 30 天，所以删掉的东西 30 天内会从备份里消失。',
     'privacy.retention.account.label': '账户',
     'privacy.retention.account.text': '直到你删除它。',
     'privacy.delete.title': '下载或删除你的数据',

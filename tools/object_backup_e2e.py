@@ -2,9 +2,9 @@
 """用生产同款 SeaweedFS 和 rclone 镜像实跑对象增量备份，再照恢复演练的做法按清单取回。
 
 对象备份脚本只在生产的定时备份里真跑，单元测试碰不到真实的 rclone。改对象备份或恢复代码时，
-这里在一次性 Docker 环境里走一遍：存几个对象 → object-backup.sh → 删一个、改一个、加一个 →
-再跑一次 → 没变的不重新下载，被删、被改的旧版本挪进当天的目录 → 两套快照都能照各自的清单
-一个不少地取回。只在 Linux 上跑。
+这里在一次性 Docker 环境里走一遍：存几个对象 → object-backup.sh 做全量 → 删一个、改一个、加一个 →
+只打恢复点的那次只同步、不写快照 → 再做一次全量 → 没变的不重新下载，被删、被改的旧版本挪进当天的
+目录 → 两套快照都能照各自的清单一个不少地取回。只在 Linux 上跑。
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ RCLONE = "rclone/rclone:1.75.1"
 SCRIPT = ROOT / "infra" / "production" / "object-backup.sh"
 BUCKET = "agent-room-content"
 FIRST = "20261011T090000000000Z-0123abcd"
-SECOND = "20261011T091500000000Z-0123abce"
+POINT = "20261011T091500000000Z-0123abce"
+SECOND = "20261011T093000000000Z-0123abcf"
 BEFORE = {"content/01": b"first", "content/02": b"second", "attachments/03": b"third"}
 AFTER = {"content/02": b"second, edited", "attachments/03": b"third", "content/04": b"fourth"}
 # 和 object-backup.sh 一样只从环境变量读 rclone 配置。
@@ -150,8 +151,8 @@ def change_objects(store: str, keys: str, written: dict[str, bytes], deleted: tu
         raise DrillFailure(f"改对象失败：{result.stderr.strip()[-2000:]}")
 
 
-def run_backup(store: str, keys: str, repository: Path, backup_id: str) -> Path:
-    """跑生产的 object-backup.sh，返回这套快照的清单。"""
+def run_backup(store: str, keys: str, repository: Path, backup_id: str, kind: str = "full") -> Path:
+    """跑生产的 object-backup.sh，返回这套快照的清单；只打恢复点的那几次（point）不写快照。"""
 
     result = rclone(
         store,
@@ -163,6 +164,8 @@ def run_backup(store: str, keys: str, repository: Path, backup_id: str) -> Path:
         "-e",
         f"AGENT_ROOM_BACKUP_ID={backup_id}",
         "-e",
+        f"AGENT_ROOM_BACKUP_KIND={kind}",
+        "-e",
         "AGENT_ROOM_CONTENT_S3_ENDPOINT=http://127.0.0.1:8333",
         "-e",
         f"AGENT_ROOM_CONTENT_S3_BUCKET={BUCKET}",
@@ -170,6 +173,8 @@ def run_backup(store: str, keys: str, repository: Path, backup_id: str) -> Path:
     )
     if result.returncode != 0:
         raise DrillFailure(f"对象备份失败：{result.stderr.strip()[-2000:]}")
+    if kind == "point" and (repository / f".partial-{backup_id}").exists():
+        raise DrillFailure("只打恢复点的那次也写了快照。")
     snapshot = repository / f".partial-{backup_id}" / "objects"
     if (snapshot / "data").exists():
         raise DrillFailure("快照里还在整份复制对象。")
@@ -206,8 +211,10 @@ def drill(name: str, root: Path) -> dict[str, object]:
     unchanged = (mirror / "attachments" / "03").stat().st_ino
 
     change_objects(store, keys, {key: AFTER[key] for key in ("content/02", "content/04")}, ("content/01",))
+    run_backup(store, keys, repository, POINT, "point")
+    expect("只打恢复点那次同步后的镜像", files(mirror), AFTER)
     second = run_backup(store, keys, repository, SECOND)
-    expect("第二次同步后的镜像", files(mirror), AFTER)
+    expect("第二次全量后的镜像", files(mirror), AFTER)
     expect("没变的对象重新下载了", (mirror / "attachments" / "03").stat().st_ino, unchanged)
     removed = {
         f"{day.name}/{key}": content

@@ -23,10 +23,17 @@ case "${AGENT_ROOM_BACKUP_ID:-}" in
   *) fail "备份 ID 格式无效" ;;
 esac
 
+# 全量记下同步完镜像的清单；只打恢复点的时候紧跟着恢复点同步一次，不记清单。
+kind="${AGENT_ROOM_BACKUP_KIND:-full}"
+case "$kind" in
+  full | point) ;;
+  *) fail "备份种类无效" ;;
+esac
+
 target="/backup/.partial-${AGENT_ROOM_BACKUP_ID}/objects"
 mirror=/backup/objects/mirror
 removed="/backup/objects/removed/$(date -u +%Y-%m-%d)"
-mkdir -p "$target" "$mirror" /tmp/rclone
+mkdir -p "$mirror" /tmp/rclone
 
 # rclone 只从环境变量读配置：不写配置文件，密钥不出现在命令行里。根目录只读，缓存放 /tmp。
 export HOME=/tmp/rclone XDG_CACHE_HOME=/tmp/rclone/cache RCLONE_CONFIG=/tmp/rclone/rclone.conf
@@ -42,7 +49,9 @@ export RCLONE_CONFIG_SOURCE_ACCESS_KEY_ID RCLONE_CONFIG_SOURCE_SECRET_ACCESS_KEY
 # 不用再一个个去问。
 rclone sync "source:$AGENT_ROOM_CONTENT_S3_BUCKET" "$mirror" --backup-dir "$removed" \
   --fast-list --use-server-modtime
+[ "$kind" = full ] || exit 0
 
+mkdir -p "$target"
 # 清单每行一个对象（rclone lsjson 每项一行，去掉首尾的方括号和行尾逗号）。列的是同步完的镜像，
 # 不是对象存储：列和同步之间被删掉的对象不会出现在清单里却取不回来。
 rclone lsjson --recursive --files-only --no-mimetype --hash --hash-type sha256 "$mirror" >"$target/.inventory.json"

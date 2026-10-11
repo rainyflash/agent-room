@@ -16,7 +16,7 @@ from typing import Final
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .backup import BackupCoordinator, BackupManifest, BackupRepository
+from .backup import BackupCoordinator, BackupManifest, BackupRepository, BackupRun
 from .config import DeploymentConfig
 from .network_agents import disable_statement
 from .render import DeploymentPaths, render_deployment
@@ -202,14 +202,23 @@ class ProductionRuntime:
         return repository
 
     def backup(self, *, preserve_configuration: bool = False) -> BackupManifest:
+        """马上做一份全量，部署前用。"""
+
+        return self._backup_coordinator(preserve_configuration=preserve_configuration).create()
+
+    def scheduled_backup(self, *, full: bool = False) -> BackupRun:
+        """定时备份：每个 UTC 日第一次做全量，别的时候只打恢复点；`full` 时马上做一份全量。"""
+
+        return self._backup_coordinator(preserve_configuration=False).run(full=full)
+
+    def _backup_coordinator(self, *, preserve_configuration: bool) -> BackupCoordinator:
         if not preserve_configuration:
             self.prepare(generate_signing_key=True)
         self.validate_compose()
         repository = self.prepare_backup_repository()
         self._prune_expired(repository)
         repository.require_headroom()
-        coordinator = BackupCoordinator(self.config, self.paths, self, repository)
-        return coordinator.create()
+        return BackupCoordinator(self.config, self.paths, self, repository)
 
     def verify_backup(self, backup_id: str) -> BackupManifest:
         repository = BackupRepository(Path(self.config.backup.repository))
@@ -245,35 +254,38 @@ class ProductionRuntime:
         return coordinator.run(target)
 
     def capture_backup_payload(self, backup_id: str) -> None:
-        common = [
+        job = self._backup_job(backup_id, "full")
+        self._run([*job, "database-backup"], capture=True)
+        if self.config.database.mode == "embedded":
+            self._run([*job, "postgres-base-backup"], capture=True)
+        self._run([*job, "object-backup"], capture=True)
+        self._run([*job, "backup-ownership"], capture=True)
+
+    def capture_account_deletions(self, point_id: str) -> None:
+        self._run([*self._backup_job(point_id, "point"), "database-backup"], capture=True)
+
+    def sync_objects(self, point_id: str) -> None:
+        self._run([*self._backup_job(point_id, "point"), "object-backup"], capture=True)
+
+    def archive_wal(self, point_id: str, anchor: WalAnchor | None) -> None:
+        job = self._backup_job(point_id, "point")
+        if anchor is not None:
+            job.extend(("--env", f"AGENT_ROOM_WAL_ANCHOR={anchor.environment_value}"))
+        self._run([*job, "postgres-wal-archive"], capture=True)
+
+    def _backup_job(self, backup_id: str, kind: str) -> list[str]:
+        """`kind` 是 full（全量）或 point（只打恢复点的那几次），见 database-backup.sh 和 object-backup.sh。"""
+
+        return [
             *self.compose_command(),
             "run",
             "--rm",
             "--no-deps",
             "--env",
             f"AGENT_ROOM_BACKUP_ID={backup_id}",
+            "--env",
+            f"AGENT_ROOM_BACKUP_KIND={kind}",
         ]
-        self._run([*common, "database-backup"], capture=True)
-        if self.config.database.mode == "embedded":
-            self._run([*common, "postgres-base-backup"], capture=True)
-        self._run([*common, "object-backup"], capture=True)
-        self._run([*common, "backup-ownership"], capture=True)
-
-    def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
-        self._run(
-            [
-                *self.compose_command(),
-                "run",
-                "--rm",
-                "--no-deps",
-                "--env",
-                f"AGENT_ROOM_BACKUP_ID={point_id}",
-                "--env",
-                f"AGENT_ROOM_WAL_ANCHOR={anchor.environment_value}",
-                "postgres-wal-archive",
-            ],
-            capture=True,
-        )
 
     def restore_database(
         self,

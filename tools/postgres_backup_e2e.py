@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """用生产同款 PostgreSQL 镜像实跑物理备份和 WAL 归档脚本，再按恢复演练的做法还原、起库。
 
-单元测试碰不到真实的 pg_basebackup、pg_verifybackup 和 pg_waldump。改备份脚本或恢复代码时，
-这里在一次性 Docker 环境里走一遍：照生产 compose 的设置开着 WAL 归档的库 →
-postgres-base-backup.sh → postgres-wal-archive.sh 接着收两次 → 收到坏段时停下、什么都不删 →
+单元测试碰不到真实的 pg_dump、pg_basebackup、pg_verifybackup 和 pg_waldump。改备份脚本或恢复代码时，
+这里在一次性 Docker 环境里走一遍：照生产 compose 的设置开着 WAL 归档的库 → database-backup.sh 做全量
+（三个库的逻辑导出和删除墓碑）→ postgres-base-backup.sh → postgres-wal-archive.sh 接着收两次，中间
+database-backup.sh 只取删除墓碑一次（不做全量的那几次）→ 收到坏段时停下、什么都不删 →
 照恢复演练的做法（plan_restore、stage_wal、恢复设置）起库：按全量自己的恢复点、按之后一直留着的
 WAL 的恢复点、按两次提交之间的某一刻各起一次，确认停在目标上、数据一条不多一条不少；目标之后再也
 没有提交时，PostgreSQL 停不下来、直接退出，说得清为什么。只在 Linux 上跑。
@@ -24,6 +25,7 @@ import sys
 import tempfile
 import time
 
+from prodops.backup import ACCOUNT_DELETION_ARTIFACT, AccountDeletionLedger
 from prodops.restore import (
     BaseCandidate,
     RestoreDrillError,
@@ -42,6 +44,7 @@ IMAGE = "postgres:18.6-alpine"
 COMPOSE = ROOT / "infra" / "production" / "compose.yaml"
 SCRIPT = ROOT / "infra" / "production" / "postgres-base-backup.sh"
 ARCHIVE_SCRIPT = ROOT / "infra" / "production" / "postgres-wal-archive.sh"
+DATABASE_SCRIPT = ROOT / "infra" / "production" / "database-backup.sh"
 BACKUP_ID = "20261009T090000000000Z-0123abcd"
 POINT_IDS = (
     "20261009T091500000000Z-0123abc1",
@@ -49,6 +52,9 @@ POINT_IDS = (
     "20261009T094500000000Z-0123abc3",
 )
 USER = "agent_room_bootstrap"
+# 做完的删除任务进墓碑，没做完的不进。
+DELETED_JOB = "019d2b8c-9100-7000-8000-000000000001"
+PENDING_JOB = "019d2b8c-9100-7000-8000-000000000003"
 SEGMENT_BYTES = 16 * 1024 * 1024
 ROWS_BEFORE_BACKUP = 200_500
 ROWS_AT_MOMENT = 201_500
@@ -177,6 +183,56 @@ def run_backup(source: str, repository: Path, password: Path) -> None:
         "-e", f"AGENT_ROOM_BACKUP_ID={BACKUP_ID}", *database_environment(),
         "--entrypoint", "/bin/sh", IMAGE, "/scripts/postgres-base-backup.sh",
     )
+
+
+def seed_account_deletions(source: str) -> None:
+    """database-backup.sh 要的另外两个库，和控制面删除任务表里它读的那几列。"""
+
+    for database in ("synapse", "keycloak"):
+        sql(source, "postgres", f"CREATE DATABASE {database}")
+    sql(source, "agent_room", "CREATE SCHEMA agent_room")
+    sql(source, "agent_room",
+        "CREATE TABLE agent_room.account_deletion_job (id uuid PRIMARY KEY, principal_id uuid NOT NULL, "
+        "matrix_user_id text NOT NULL, stage text NOT NULL, completed_at timestamptz)")
+    sql(source, "agent_room",
+        "INSERT INTO agent_room.account_deletion_job VALUES "
+        f"('{DELETED_JOB}', '019d2b8c-9100-7000-8000-000000000002', '@deleted:agent-room.example', "
+        "'completed', '2026-10-09T08:00:00Z'), "
+        f"('{PENDING_JOB}', '019d2b8c-9100-7000-8000-000000000004', '@pending:agent-room.example', "
+        "'queued', NULL)")
+
+
+def run_database_backup(source: str, repository: Path, password: Path, backup_id: str, kind: str) -> Path:
+    """照 compose 的 database-backup：宿主用户、根目录只读；三个库的口令都是源库的那一个。"""
+
+    passwords = [
+        part
+        for name in ("agent_room_db_migration_password", "synapse_db_password", "keycloak_db_password")
+        for part in ("-v", f"{password}:/run/secrets/{name}:ro")
+    ]
+    docker(
+        "run", "--rm", "--network", f"container:{source}", "--user", f"{os.getuid()}:{os.getgid()}",
+        "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+        "-v", f"{repository}:/backup", *passwords,
+        "-v", f"{DATABASE_SCRIPT}:/scripts/database-backup.sh:ro",
+        "-e", f"AGENT_ROOM_BACKUP_ID={backup_id}", "-e", f"AGENT_ROOM_BACKUP_KIND={kind}",
+        *database_environment(),
+        "-e", "AGENT_ROOM_DB_NAME=agent_room", "-e", f"AGENT_ROOM_DB_MIGRATION_USER={USER}",
+        "-e", "SYNAPSE_DB_NAME=synapse", "-e", f"SYNAPSE_DB_USER={USER}",
+        "-e", "KEYCLOAK_DB_NAME=keycloak", "-e", f"KEYCLOAK_DB_USER={USER}",
+        "--entrypoint", "/bin/sh", IMAGE, "/scripts/database-backup.sh",
+        capture=True,
+    )
+    return repository / f".partial-{backup_id}"
+
+
+def deletions_in(staging: Path) -> list[str]:
+    """照备份代码读删除墓碑：读得通、只有做完的那一条。"""
+
+    entries = [entry.job_id for entry in AccountDeletionLedger.load(staging / ACCOUNT_DELETION_ARTIFACT).entries]
+    if entries != [DELETED_JOB]:
+        raise DrillFailure(f"删除墓碑是 {entries}，应只有做完的 {DELETED_JOB}。")
+    return entries
 
 
 def run_archive(
@@ -369,6 +425,13 @@ def drill(name: str, root: Path) -> dict[str, object]:
     docker("run", "--rm", "-v", f"{repository / 'wal'}:/archive", "--entrypoint", "/bin/sh", IMAGE,
            "-c", "chown 70:70 /archive && chmod 0700 /archive")
     source = start_source(name, repository, password)
+    seed_account_deletions(source)
+    # 全量先做三个库的逻辑导出和删除墓碑，再做物理全量，和定时备份的顺序一样。
+    full = run_database_backup(source, repository, password, BACKUP_ID, "full")
+    dumps = sorted(path.name for path in (full / "database").iterdir())
+    if dumps != ["README.txt", "agent-room.dump", "keycloak.dump", "synapse.dump"]:
+        raise DrillFailure(f"全量的逻辑导出是 {dumps}。")
+    deletions_in(full)
     run_backup(source, repository, password)
     # 照 BackupRepository.publish：核对完的全量从临时目录改名成正式目录。归档目录还归源库所有。
     hand_back(repository / f".partial-{BACKUP_ID}")
@@ -391,6 +454,11 @@ def drill(name: str, root: Path) -> dict[str, object]:
     store = WalStore(repository / "wal-store")
     archive_point(source, repository, password, 0, anchor)
     check_store(store, ["anchor", "point"])
+    # 不做全量的那几次：只取删除墓碑合并进台账，不做逻辑导出，然后照常打恢复点。
+    checkpoint = run_database_backup(source, repository, password, POINT_IDS[1], "point")
+    if (checkpoint / "database").exists():
+        raise DrillFailure("只打恢复点的那次也做了逻辑导出。")
+    deletions_in(checkpoint)
     sql(source, "agent_room", "INSERT INTO messages SELECT g, 'second' FROM generate_series(200501, 201500) g")
     moment = between_commits(source)
     sql(source, "agent_room", "INSERT INTO messages SELECT g, 'third' FROM generate_series(201501, 201600) g")
@@ -407,7 +475,12 @@ def drill(name: str, root: Path) -> dict[str, object]:
     def plan(target: RestoreTarget) -> RestorePlan:
         return plan_restore(target, candidates, store)
 
-    evidence: dict[str, object] = {"files": dict(files), "walStore": list(store.segments())}
+    evidence: dict[str, object] = {
+        "files": dict(files),
+        "logicalDumps": dumps,
+        "deletionLedger": deletions_in(checkpoint),
+        "walStore": list(store.segments()),
+    }
     evidence["fromFull"] = restore(
         f"{name}-full", physical, store, plan(RestoreTarget(restore_point=point.name)), ROWS_BEFORE_BACKUP,
         root / "restore-full",

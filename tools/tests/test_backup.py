@@ -11,10 +11,12 @@ import unittest
 from unittest.mock import patch
 
 from tools.prodops.backup import (
+    RETENTION_MARKER,
     BackupCoordinator,
     BackupError,
     BackupManifest,
     BackupRepository,
+    BackupRun,
 )
 from tools.prodops.config import BackupConfig, load_deployment_config
 from tools.prodops.render import DeploymentPaths, render_deployment
@@ -35,7 +37,10 @@ class FakeBackupCapture:
         self.repository = repository
         self.embedded = embedded
         self.start_segment = start_segment
-        self.archived: list[tuple[str, WalAnchor]] = []
+        self.archived: list[tuple[str, WalAnchor | None]] = []
+        self.synced: list[str] = []
+        # 只打恢复点的那几次取到的删除墓碑。
+        self.deletions: list[dict[str, str]] = []
 
     def capture_backup_payload(self, backup_id: str) -> None:
         staging = self.repository / f".partial-{backup_id}"
@@ -61,21 +66,35 @@ class FakeBackupCapture:
             write(staging / "postgres" / "wal" / start, b"wal")
             write(staging / "postgres" / "wal" / last, b"wal")
 
-    def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
+    def capture_account_deletions(self, point_id: str) -> None:
+        write(
+            self.repository / f".partial-{point_id}" / "privacy" / "account-deletions.json",
+            (json.dumps({"schemaVersion": 1, "entries": self.deletions}) + "\n").encode(),
+        )
+
+    def archive_wal(self, point_id: str, anchor: WalAnchor | None) -> None:
         self.archived.append((point_id, anchor))
         store = WalStore(self.repository / "wal-store")
         points = list(store.points())
         created_at = datetime.strptime(point_id[:22], "%Y%m%dT%H%M%S%fZ").replace(tzinfo=UTC)
         if not points:
+            if anchor is None:
+                raise RuntimeError("还没有恢复点记录，也没有给出从哪套全量接起")
             points.append(
                 WalPoint(created_at, "anchor", anchor.name, anchor.lsn, anchor.segment, anchor.backup_id)
             )
-        # 恢复点打在这套全量之后，所在的段排在链的末尾和全量自带的段后面。
-        stored = segment(max(segment_number(points[-1].segment), segment_number(anchor.segment)) + 1)
+        # 恢复点打在链的末尾之后；做了全量的那次，还要在全量自带的段后面。
+        after = segment_number(points[-1].segment)
+        if anchor is not None:
+            after = max(after, segment_number(anchor.segment))
+        stored = segment(after + 1)
         write(store.root / f"{stored}.gz", b"wal")
         write(store.root / f"{stored}.gz.sha256", b"digest")
         points.append(WalPoint(created_at, "point", restore_point_name(point_id), "0/2000000", stored, None))
         store._write(tuple(points))
+
+    def sync_objects(self, point_id: str) -> None:
+        self.synced.append(point_id)
 
 
 def segment(number: int) -> str:
@@ -108,6 +127,40 @@ class BackupCoordinatorTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def run_backup(
+        self, capture: FakeBackupCapture, moment: datetime, *, full: bool = False, config=None
+    ) -> BackupRun:
+        """照定时器那样跑一次：今天做没做过全量由仓库决定。"""
+
+        return BackupCoordinator(
+            config or self.config,
+            self.paths,
+            capture,
+            BackupRepository(self.repository_path),
+            clock=lambda: moment,
+        ).run(full=full)
+
+    def external(self, observed_at: datetime):
+        evidence_path = Path(self.temporary.name) / "provider.json"
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "provider": "测试云",
+                    "cluster": "cluster-1",
+                    "observedAt": observed_at.isoformat(),
+                    "continuousRecoveryEnabled": True,
+                    "rpoMinutes": 5,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return replace(
+            self.config,
+            database=replace(self.config.database, mode="external"),
+            backup=replace(self.config.backup, provider_pitr_evidence_file=evidence_path.as_posix()),
+        )
 
     def test_backup_is_atomically_published_and_verified(self) -> None:
         repository = BackupRepository(self.repository_path)
@@ -196,6 +249,111 @@ class BackupCoordinatorTests(unittest.TestCase):
                 BackupRepository(self.repository_path),
                 clock=lambda: FIXED_NOW,
             ).create()
+
+    def test_first_run_of_a_utc_day_is_a_full_and_later_runs_only_add_restore_points(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        capture = FakeBackupCapture(self.repository_path)
+        midnight = datetime(2026, 8, 25, 0, 5, tzinfo=UTC)
+
+        first = self.run_backup(capture, midnight)
+        later = self.run_backup(capture, midnight + timedelta(minutes=15))
+
+        self.assertIn(RETENTION_MARKER, {artifact.path for artifact in first.full.artifacts})
+        self.assertIsNone(later.full)
+        self.assertEqual([backup.backup_id for backup in repository.published()], [first.full.backup_id])
+        # 只打恢复点的那次不给接起的全量，接着记录的最后一行往下读；对象紧跟着同步，不留临时目录。
+        point_id, anchor = capture.archived[-1]
+        self.assertIsNone(anchor)
+        self.assertEqual(later.point.name, restore_point_name(point_id))
+        self.assertEqual(capture.synced, [point_id])
+        self.assertEqual([point.kind for point in repository.wal_store.points()], ["anchor", "point", "point"])
+        self.assertEqual(list(self.repository_path.glob(".partial-*")), [])
+        metrics = (self.repository_path / "metrics" / "backup.prom").read_text(encoding="utf-8")
+        self.assertIn(
+            f"agent_room_backup_last_success_timestamp_seconds {later.point.created_at.timestamp():.3f}",
+            metrics,
+        )
+
+    def test_the_next_utc_day_starts_with_a_full_and_a_full_can_be_forced(self) -> None:
+        capture = FakeBackupCapture(self.repository_path)
+        evening = datetime(2026, 8, 24, 23, 50, tzinfo=UTC)
+
+        runs = [
+            self.run_backup(capture, evening),
+            self.run_backup(capture, evening + timedelta(minutes=15)),
+            self.run_backup(capture, evening + timedelta(minutes=30)),
+            self.run_backup(capture, evening + timedelta(minutes=45), full=True),
+        ]
+
+        self.assertEqual([run.full is not None for run in runs], [True, True, False, True])
+        self.assertTrue(all(run.point is not None for run in runs))
+        self.assertEqual(len(capture.synced), 1)
+
+    def test_runs_stay_full_until_the_wal_is_picked_up(self) -> None:
+        class BrokenWal(FakeBackupCapture):
+            def archive_wal(self, point_id: str, anchor: WalAnchor | None) -> None:
+                raise RuntimeError("WAL 读不通")
+
+        with self.assertRaisesRegex(RuntimeError, "读不通"):
+            self.run_backup(BrokenWal(self.repository_path), FIXED_NOW)
+        capture = FakeBackupCapture(self.repository_path)
+
+        # 今天已经有一份全量了，可还没有恢复点记录，只打恢复点接不起来：再做一份，从它接起。
+        retried = self.run_backup(capture, FIXED_NOW + timedelta(minutes=15))
+
+        [(_, anchor)] = capture.archived
+        self.assertEqual(anchor.backup_id, retried.full.backup_id)
+        self.assertEqual(len(BackupRepository(self.repository_path).published()), 2)
+
+    def test_point_runs_merge_account_deletions_into_the_ledger(self) -> None:
+        capture = FakeBackupCapture(self.repository_path)
+        self.run_backup(capture, FIXED_NOW)
+        entry = {
+            "jobId": "019d2b8c-9100-7000-8000-000000000001",
+            "principalId": "019d2b8c-9100-7000-8000-000000000002",
+            "matrixUserId": "@deleted:agent-room.example",
+            "completedAt": "2026-08-25T12:40:00Z",
+        }
+        capture.deletions.append(entry)
+
+        run = self.run_backup(capture, FIXED_NOW + timedelta(minutes=15))
+
+        self.assertIsNone(run.full)
+        ledger = BackupRepository(self.repository_path).load_account_deletion_ledger()
+        self.assertEqual([item.job_id for item in ledger.entries], [entry["jobId"]])
+
+    def test_point_run_that_cannot_sync_objects_is_not_a_success(self) -> None:
+        class BrokenSync(FakeBackupCapture):
+            def sync_objects(self, point_id: str) -> None:
+                raise RuntimeError("对象存储连不上")
+
+        capture = BrokenSync(self.repository_path)
+        full = self.run_backup(capture, FIXED_NOW)
+
+        with self.assertRaisesRegex(RuntimeError, "连不上"):
+            self.run_backup(capture, FIXED_NOW + timedelta(minutes=15))
+
+        metrics = (self.repository_path / "metrics" / "backup.prom").read_text(encoding="utf-8")
+        self.assertIn(
+            f"agent_room_backup_last_success_timestamp_seconds {full.point.created_at.timestamp():.3f}",
+            metrics,
+        )
+        self.assertFalse((self.repository_path / ".backup.lock").exists())
+
+    def test_external_database_backs_up_in_full_every_time(self) -> None:
+        external = self.external(FIXED_NOW)
+        capture = FakeBackupCapture(self.repository_path, embedded=False)
+
+        runs = [
+            self.run_backup(capture, moment, config=external)
+            for moment in (FIXED_NOW, FIXED_NOW + timedelta(minutes=15))
+        ]
+
+        self.assertTrue(all(run.full is not None and run.point is None for run in runs))
+        backups = BackupRepository(self.repository_path).published()
+        self.assertEqual(len(backups), 2)
+        self.assertFalse(any(backup.daily_full for backup in backups))
+        self.assertEqual((capture.archived, capture.synced), ([], []))
 
     def test_compressed_physical_backup_is_accepted_with_its_streamed_wal(self) -> None:
         class CompressedCapture(FakeBackupCapture):
@@ -385,12 +543,59 @@ class BackupCoordinatorTests(unittest.TestCase):
             repository,
             clock=lambda: FIXED_NOW - timedelta(hours=2),
         ).create()
+        # 以前每 15 分钟一套的、外部数据库的：没有保留标记。
+        for manifest in (expired, older_daily, retained_daily, recent):
+            as_old_format(self.repository_path, manifest.backup_id)
 
         removed = repository.prune(7, 24, now=FIXED_NOW)
 
         self.assertEqual(set(removed), {expired.backup_id, older_daily.backup_id})
         self.assertTrue((self.repository_path / retained_daily.backup_id).is_dir())
         self.assertTrue((self.repository_path / recent.backup_id).is_dir())
+
+    def test_daily_fulls_keep_the_last_week_and_then_the_first_of_each_iso_week(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        capture = FakeBackupCapture(self.repository_path)
+        created: dict[str, str] = {}
+        for day in range(35):
+            moment = datetime(2026, 7, 22, 0, 5, tzinfo=UTC) + timedelta(days=day)
+            created[moment.date().isoformat()] = BackupCoordinator(
+                self.config, self.paths, capture, repository, clock=lambda moment=moment: moment
+            ).create().backup_id
+
+        repository.prune(30, now=FIXED_NOW)
+
+        kept = sorted(day for day, backup_id in created.items() if (self.repository_path / backup_id).is_dir())
+        # 8 月 25 日是周二。8 月 19 日起这 7 天的都留；更早、30 天以内的每周留周一那份；7 月 26 日以前的删掉。
+        self.assertEqual(
+            kept,
+            ["2026-07-27", "2026-08-03", "2026-08-10", "2026-08-17"]
+            + [f"2026-08-{day}" for day in range(19, 26)],
+        )
+
+    def test_old_snapshots_keep_their_own_rule_next_to_daily_fulls(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        capture = FakeBackupCapture(self.repository_path)
+
+        def create(moment: datetime) -> str:
+            return BackupCoordinator(
+                self.config, self.paths, capture, repository, clock=lambda: moment
+            ).create().backup_id
+
+        expired = create(FIXED_NOW - timedelta(days=40))
+        morning = create(FIXED_NOW - timedelta(days=10, hours=4))
+        daily = create(FIXED_NOW - timedelta(days=10, hours=2))
+        evening = create(FIXED_NOW - timedelta(days=10))
+        newest = create(FIXED_NOW)
+        for backup_id in (expired, morning, evening):
+            as_old_format(self.repository_path, backup_id)
+
+        removed = repository.prune(30, 8, now=FIXED_NOW)
+
+        # 没有保留标记的照旧每天留最新的一套、过了 30 天才删；同一天的每日全量按自己的规则留。
+        self.assertEqual(set(removed), {expired, morning})
+        for backup_id in (daily, evening, newest):
+            self.assertTrue((self.repository_path / backup_id).is_dir())
 
     def test_wal_store_keeps_wal_from_the_oldest_retained_full_on(self) -> None:
         repository = BackupRepository(self.repository_path)
@@ -528,6 +733,16 @@ class BackupCoordinatorTests(unittest.TestCase):
 def write(path: Path, content: bytes) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.write_bytes(content)
+
+
+def as_old_format(repository: Path, backup_id: str) -> None:
+    """改成没有保留标记的样子，像 2a-3b 以前每 15 分钟一套的。"""
+
+    directory = repository / backup_id
+    (directory / RETENTION_MARKER).unlink()
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    manifest["artifacts"] = [item for item in manifest["artifacts"] if item["path"] != RETENTION_MARKER]
+    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 if __name__ == "__main__":

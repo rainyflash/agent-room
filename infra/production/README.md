@@ -69,16 +69,27 @@ Secret 只通过 Compose Secret 文件挂载。父目录保持 `0700`，单个�
 - 停用某个网络 Agent（例如刷屏的）：写它的网络 Agent ID、Agent ID 或名字。令牌立即作废，控制面约一分钟内替它离开所有房间。30 天没有活动的网络 Agent 会自动停用。
 
 ```bash
-python3 tools/production.py network-agent-disable \n  --config /etc/agent-room/deployment.json \n  --state-dir /var/lib/agent-room \n  --network-agent '<ID 或名字>'
+python3 tools/production.py network-agent-disable \
+  --config /etc/agent-room/deployment.json \
+  --state-dir /var/lib/agent-room \
+  --network-agent '<ID 或名字>'
 ```
 
 ## 自动备份与恢复演练
 
-`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm 和对象清单的一致性备份，对象本身增量同步进仓库里的一份镜像（见下）。每个物理快照只封装从基础备份起点到恢复点的必要 WAL 区间。`backup.recentRetentionHours`（默认 24）内保留全部高频快照，此后到 `retentionDays` 期限内每个 UTC 日保留最新一份。创建快照前还会按上一份快照体积执行磁盘余量门禁。
+`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期跑一次定时备份（[specs/backups/design.md](../../specs/backups/design.md)）：
 
-WAL 一直留着（[specs/backups/design.md](../../specs/backups/design.md)）：每次备份做完快照，再打一个恢复点、切一次 WAL，把从上一个恢复点到这个恢复点之间的段用 `pg_waldump` 接着读一遍（`postgres-wal-archive.sh`）。读通了才 gzip 压缩、解压回来比一遍、记下 SHA-256，放进仓库的 `wal-store/`，往 `wal-store/restore-points.log` 记一行，最后才删宿主归档里的原文件；读不通就停下、什么都不删，这次备份算失败。第一次从当次的快照接起。`wal-store/` 只留保留下来的最老一份快照起点以后的段。归档命令先写临时文件、落盘再改名；PostgreSQL 还开了 `wal_compression=zstd`、`checkpoint_timeout=15min`。这几项写在 compose 的启动参数里，改了要重建 PostgreSQL 容器才生效，发版部署不重建它。
+- 每个 UTC 日第一次做一份全量快照：三个数据库的逻辑导出、物理快照、Synapse signing key、OIDC Realm 和对象清单。每个物理快照只封装从基础备份起点到恢复点的必要 WAL 区间。
+- 别的时候不读整库：只取删除墓碑合并进台账，打一个恢复点（见下），再把对象同步进镜像。
+- `backup --full` 马上做一份全量；发版部署前也先做一份。外部数据库每次都是全量。
+- 全量快照最近 7 天的全留，更早的每个 ISO 周留最早的一份，超过 `retentionDays` 的删掉，最新的一份一定留着。
+- 以前每次都做的快照和外部数据库的快照没有 `retention.json` 标记，照旧规则到期删：`backup.recentRetentionHours`（默认 24）内全留，此后到 `retentionDays` 期限内每个 UTC 日保留最新一份。
 
-对象只传新的：每次备份由 `object-backup.sh` 用 `rclone sync` 把对象桶同步到仓库的 `objects/mirror/`，没变的不重新下载；同步时被删掉或被覆盖的旧版本挪进 `objects/removed/<UTC 日期>/`，那一天过了 `retentionDays` 整个目录删掉，所以删掉的对象在备份里留不过保留期。每套快照只带一份清单（`objects/source-inventory.ndjson`：同步完镜像里每个对象的路径、大小和 SHA-256）。恢复演练照清单先在镜像里、再在快照那天及以后挪走的旧版本里找，大小和 SHA-256 都对上才算，找不到就失败。改成增量同步以前的快照自己带着全部对象（`objects/data/`），照旧从里面取。
+创建快照、打恢复点前都按上一份快照体积执行磁盘余量门禁。
+
+WAL 一直留着（[specs/backups/design.md](../../specs/backups/design.md)）：每次定时备份打一个恢复点（做全量的那次在快照做完以后）、切一次 WAL，把从上一个恢复点到这个恢复点之间的段用 `pg_waldump` 接着读一遍（`postgres-wal-archive.sh`）。读通了才 gzip 压缩、解压回来比一遍、记下 SHA-256，放进仓库的 `wal-store/`，往 `wal-store/restore-points.log` 记一行，最后才删宿主归档里的原文件；读不通就停下、什么都不删，这次备份算失败。第一次从当次的快照接起。`wal-store/` 只留保留下来的最老一份快照起点以后的段。归档命令先写临时文件、落盘再改名；PostgreSQL 还开了 `wal_compression=zstd`、`checkpoint_timeout=15min`。这几项写在 compose 的启动参数里，改了要重建 PostgreSQL 容器才生效，发版部署不重建它。
+
+对象只传新的：每次定时备份都由 `object-backup.sh` 用 `rclone sync` 把对象桶同步到仓库的 `objects/mirror/`（只打恢复点的那几次紧跟在恢复点之后），没变的不重新下载；同步时被删掉或被覆盖的旧版本挪进 `objects/removed/<UTC 日期>/`，那一天过了 `retentionDays` 整个目录删掉，所以删掉的对象在备份里留不过保留期。每份全量快照只带一份清单（`objects/source-inventory.ndjson`：同步完镜像里每个对象的路径、大小和 SHA-256）。恢复演练照清单先在镜像里、再在快照那天及以后挪走的旧版本里找，大小和 SHA-256 都对上才算，找不到就失败。改成增量同步以前的快照自己带着全部对象（`objects/data/`），照旧从里面取。
 
 物理快照是 `pg_basebackup` 的 tar 格式加 gzip（`postgres/base/base.tar.gz` 和备份期间流式取到的 `pg_wal.tar.gz`），约为普通目录格式的四分之一；`pg_verifybackup` 逐个核对压缩包里文件的校验和，WAL 用 `pg_waldump` 对快照里的归档区间另行解析。恢复时先解包，2026-10-09 以前的普通目录格式快照照样能恢复。改备份脚本或恢复代码时，PR 上会跑“生产备份实跑”（数据库是 `tools/postgres_backup_e2e.py`，对象是 `tools/object_backup_e2e.py`），也可以在装了 Docker 的 Linux 上直接运行它们。
 
@@ -107,6 +118,7 @@ sudo python3 tools/production.py backup-schedule-verify \
 手工备份、摘要核验、保留清理和隔离恢复演练：
 
 ```bash
+# 和定时器一样：今天还没有全量就做一份，有了就只打恢复点；加 --full 马上做一份全量。
 sudo python3 tools/production.py backup --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 sudo python3 tools/production.py backup-verify --backup-id BACKUP_ID --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 sudo python3 tools/production.py restore-drill --backup-id BACKUP_ID --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
