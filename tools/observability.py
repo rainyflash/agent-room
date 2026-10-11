@@ -51,6 +51,7 @@ EXPECTED_ALERTS: Final = frozenset(
         "AgentRoomBridgeAvailabilityLow",
         "AgentRoomPostgresExporterDown",
         "AgentRoomBackupRpoBreached",
+        "AgentRoomBackupFullStale",
         "AgentRoomRestoreDrillStale",
         "AgentRoomRestoreRtoExceeded",
     }
@@ -148,7 +149,7 @@ def main() -> int:
             write_report(evidence)
             print(f"故障演练通过，证据已写入：{REPORT}")
         else:
-            print("观测契约、13 个分页告警模拟与仪表盘查询均通过。")
+            print(f"观测契约、{len(EXPECTED_ALERTS)} 个分页告警模拟与仪表盘查询均通过。")
     except (
         DeploymentConfigError,
         ObservabilityError,

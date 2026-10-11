@@ -137,6 +137,17 @@ groups:
           impact: 故障时的数据丢失窗口超过承诺值
           diagnostic: 检查定时器、备份仓库空间和 PostgreSQL 归档
           runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombackuprpobreached
+      - alert: AgentRoomBackupFullStale
+        expr: time() - agent_room_backup_last_full_timestamp_seconds > 93600
+        for: 30m
+        labels:
+          severity: warning
+          service: agent-room
+        annotations:
+          summary: 超过 26 小时没有新的全量备份
+          impact: 恢复要从更早的全量重放更多 WAL，恢复时间变长
+          diagnostic: 检查 UTC 零点后第一次定时备份的日志、磁盘余量和逻辑导出
+          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombackupfullstale
       - alert: AgentRoomRestoreDrillStale
         expr: time() - agent_room_restore_drill_last_success_timestamp_seconds > 604800
         for: 30m

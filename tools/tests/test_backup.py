@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import unittest
@@ -273,6 +274,21 @@ class BackupCoordinatorTests(unittest.TestCase):
             f"agent_room_backup_last_success_timestamp_seconds {later.point.created_at.timestamp():.3f}",
             metrics,
         )
+
+    def test_metrics_report_the_latest_full_and_the_repository_size(self) -> None:
+        capture = FakeBackupCapture(self.repository_path)
+        midnight = datetime(2026, 8, 25, 0, 5, tzinfo=UTC)
+        full = self.run_backup(capture, midnight).full
+        self.run_backup(capture, midnight + timedelta(minutes=15))
+
+        metrics = (self.repository_path / "metrics" / "backup.prom").read_text(encoding="utf-8")
+        # 只打恢复点的那次照样报最近一份全量的时间：26 小时没有新的全量就告警。
+        self.assertIn(f"agent_room_backup_last_full_timestamp_seconds {midnight.timestamp():.3f}", metrics)
+        size = re.search(r"^agent_room_backup_repository_bytes ([0-9]+)$", metrics, re.MULTILINE)
+        published = sum(
+            path.stat().st_size for path in (self.repository_path / full.backup_id).rglob("*") if path.is_file()
+        )
+        self.assertGreater(int(size.group(1)), published)
 
     def test_the_next_utc_day_starts_with_a_full_and_a_full_can_be_forced(self) -> None:
         capture = FakeBackupCapture(self.repository_path)
