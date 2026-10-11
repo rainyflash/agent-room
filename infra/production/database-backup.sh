@@ -20,8 +20,15 @@ case "${AGENT_ROOM_BACKUP_ID:-}" in
   *) fail "备份 ID 格式无效" ;;
 esac
 
+# 每天第一次是全量：三个库的逻辑导出加删除墓碑（specs/backups/design.md）。别的时候只打恢复点，这里只取
+# 删除墓碑，合并进仓库根目录的台账，免得从备份恢复以后把这期间删掉的账户又带回来。
+kind="${AGENT_ROOM_BACKUP_KIND:-full}"
+case "$kind" in
+  full | point) ;;
+  *) fail "备份种类无效" ;;
+esac
+
 target="/backup/.partial-${AGENT_ROOM_BACKUP_ID}/database"
-mkdir -p "$target"
 
 dump_database() {
   database="$1"
@@ -41,21 +48,24 @@ dump_database() {
 }
 
 export PGSSLMODE="$AGENT_ROOM_DB_TLS_MODE"
-dump_database "$AGENT_ROOM_DB_NAME" "$AGENT_ROOM_DB_MIGRATION_USER" \
-  /run/secrets/agent_room_db_migration_password agent-room.dump
-PGPASSWORD=$(read_secret /run/secrets/synapse_db_password) \
-  pg_dump \
-    --host "$AGENT_ROOM_DB_HOST" \
-    --port "$AGENT_ROOM_DB_PORT" \
-    --username "$SYNAPSE_DB_USER" \
-    --dbname "$SYNAPSE_DB_NAME" \
-    --format custom \
-    --compress zstd:6 \
-    --exclude-table-data public.e2e_one_time_keys_json \
-    --no-password \
-    --file "$target/synapse.dump"
-dump_database "$KEYCLOAK_DB_NAME" "$KEYCLOAK_DB_USER" \
-  /run/secrets/keycloak_db_password keycloak.dump
+if [ "$kind" = full ]; then
+  mkdir -p "$target"
+  dump_database "$AGENT_ROOM_DB_NAME" "$AGENT_ROOM_DB_MIGRATION_USER" \
+    /run/secrets/agent_room_db_migration_password agent-room.dump
+  PGPASSWORD=$(read_secret /run/secrets/synapse_db_password) \
+    pg_dump \
+      --host "$AGENT_ROOM_DB_HOST" \
+      --port "$AGENT_ROOM_DB_PORT" \
+      --username "$SYNAPSE_DB_USER" \
+      --dbname "$SYNAPSE_DB_NAME" \
+      --format custom \
+      --compress zstd:6 \
+      --exclude-table-data public.e2e_one_time_keys_json \
+      --no-password \
+      --file "$target/synapse.dump"
+  dump_database "$KEYCLOAK_DB_NAME" "$KEYCLOAK_DB_USER" \
+    /run/secrets/keycloak_db_password keycloak.dump
+fi
 
 privacy_target="/backup/.partial-${AGENT_ROOM_BACKUP_ID}/privacy"
 mkdir -p "$privacy_target"
@@ -80,8 +90,10 @@ PGPASSWORD=$(read_secret /run/secrets/agent_room_db_migration_password) \
     ) FROM agent_room.account_deletion_job WHERE stage = 'completed'" \
     >"$privacy_target/account-deletions.json"
 
-cat >"$target/README.txt" <<'EOF'
+if [ "$kind" = full ]; then
+  cat >"$target/README.txt" <<'EOF'
 三个自定义格式归档分别是 Agent Room、Synapse 和 Keycloak 的权威逻辑快照。
 Synapse 的一次性 E2EE 密钥表按官方恢复建议排除；Keycloak CLI 在线导出不是权威备份。
 privacy/account-deletions.json 是恢复前必须重放的最小删除墓碑，不含显示资料或消息正文。
 EOF
+fi

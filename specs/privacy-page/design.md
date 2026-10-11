@@ -8,6 +8,7 @@
 - 首页下载按钮下面那行、使用指南的“更多”里各有一个入口。
 - 正文中英文各一份，写在 `apps/web/src/features/privacy/i18n/privacy-resources.ts`。分节：简单说、存了什么、谁能读到什么、还有谁经手、保留多久、下载或删除你的数据、问题和请求、变更。
 - 2026-10-09：登录改成连续 30 天没用才过期、最长一年（[设计](../session-lifetime/design.md)），页面上 Cookie 那条跟着改。
+- 2026-10-11：备份改成每天一份全量、中间一直留着 WAL（[设计](../backups/design.md)），页面上备份那条换成设计里维护者看过的说法。
 - 写的是 agentroom.chat 这一个部署。别人自建的服务器由他们自己决定，页面开头说明。
 
 ## 每条说法的依据
@@ -26,7 +27,7 @@
 - **私人房间读得到：** 服务器保管每个账户签名和找回历史用的钥匙（[ADR 0011](../../docs/adr/0011-automatic-device-signing.md)），网络 Agent 的钥匙也在服务器上（[ADR 0010](../../docs/adr/0010-network-agents.md)）。README 开头已经这么说。
 - **围观页：** 不登录可见最近 50 条、名字和 Agent 在线状态，`robots.txt` 挡住、页面带 `noindex`（`public_watch/view.rs`）。
 - **保留期：** 聊天服务器默认 30 天，私人房间建的时候可选 7、30、90、365 天，每天清一次（`render.py` 的 `retention`，新建房间对话框）。删掉的消息原文上游默认留 7 天。
-- **备份：** 生产配置每 15 分钟一份，最近 8 小时全留，之后每天一份留 30 天（`backup.rpoMinutes`、`recentRetentionHours`、`retentionDays`）。
+- **备份：** 每个 UTC 日第一次定时备份做全量，之后每 15 分钟打一个恢复点，WAL 一直留着；对象增量同步到镜像，被删、被覆盖的旧版本按天放（`backup.py` 的 `BackupCoordinator.run`，`object-backup.sh`）。全量最近 7 天的全留，更早的每周留一份，超过 30 天的删掉；WAL 只留最老那份全量以后的，挪走的对象那一天过了 30 天就删（`backup.rpoMinutes`、`retentionDays`）。所以能恢复的范围从最老的全量（23 到 30 天前）到最近一个恢复点，“三周以上”从新做法上线三周以后才成立。以前每 15 分钟一套的照旧规则（8 小时全留、每天一份）30 天内删完。
 - **删除账户：** 控制面的 `DELETE /account` 要求刚登录过、输入 DELETE。之后撤销会话和设备、注销聊天账户并擦除（`erase: true`）、删掉他的媒体和存储对象、只归他的私人房间和 Agent 换成“已删除”占位、账户记录匿名化（`crates/postgres-adapter/src/accounts.rs`）。备份里留一份不含名字和邮箱的删除清单，恢复后据此再删（`account-deletion-replay.sh`）。
 - **经手的服务：** 主机和邮件服务商仓库里没写，页面上的 Akamai（Linode）和 Resend 来自迁移到 agentroom.chat 时的记录，等维护者确认。GitHub 托管下载和更新文件；聊天服务器把 matrix.org 当公钥查询服务器；联邦是开着的。
 

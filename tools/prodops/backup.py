@@ -34,6 +34,12 @@ MINIMUM_BACKUP_HEADROOM_BYTES: Final = 2 * 1024 * 1024 * 1024
 MANIFEST_NAME: Final = "manifest.json"
 ACCOUNT_DELETION_ARTIFACT: Final = "privacy/account-deletions.json"
 ACCOUNT_DELETION_LEDGER_NAME: Final = "ACCOUNT_DELETION_LEDGER.json"
+# 内置数据库每天一份的全量带着这个标记，按新的规则留（specs/backups/design.md）。以前每 15 分钟一套的
+# 没有，照旧的规则到期删。标记是一个工件、不是清单里的新字段：旧版工具照样读得了清单，回退也不会读坏仓库。
+RETENTION_MARKER: Final = "retention.json"
+DAILY_FULL_RETENTION: Final = {"schemaVersion": 1, "policy": "daily-full"}
+# 每天一份的全量：最近这几天的都留，更早的每个 ISO 周留最早的一份。
+RECENT_FULL_DAYS: Final = 7
 
 
 class BackupError(RuntimeError):
@@ -44,11 +50,17 @@ class BackupCapture(Protocol):
     def capture_backup_payload(self, backup_id: str) -> None:
         """把外部依赖快照写入指定的临时备份目录。"""
 
-    def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
+    def capture_account_deletions(self, point_id: str) -> None:
+        """不做全量的那几次：只把删除墓碑写进 `.partial-<point_id>/privacy/account-deletions.json`。"""
+
+    def archive_wal(self, point_id: str, anchor: WalAnchor | None) -> None:
         """打一个恢复点，把接着上一个恢复点读通了的 WAL 段收进仓库，记下这个恢复点。
 
-        还没有恢复点记录时从 `anchor` 这套全量的恢复点接起。
+        还没有恢复点记录时从 `anchor` 这套全量的恢复点接起；不做全量的那几次没有 `anchor`。
         """
+
+    def sync_objects(self, point_id: str) -> None:
+        """不做全量的那几次：把对象存储同步到仓库里的镜像，不记清单。"""
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -226,6 +238,30 @@ class BackupManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class PublishedBackup:
+    backup_id: str
+    created_at: datetime
+    # 带保留标记的每日全量；以前每 15 分钟一套的、外部数据库的都没有。
+    daily_full: bool
+
+    @classmethod
+    def of(cls, manifest: BackupManifest) -> "PublishedBackup":
+        return cls(
+            manifest.backup_id,
+            _parse_utc(manifest.created_at),
+            any(artifact.path == RETENTION_MARKER for artifact in manifest.artifacts),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BackupRun:
+    """一次定时备份做了什么：一份全量（之后打的恢复点），或者只打了一个恢复点。"""
+
+    full: BackupManifest | None
+    point: WalPoint | None
+
+
+@dataclass(frozen=True, slots=True)
 class BackupRepository:
     root: Path
 
@@ -331,6 +367,18 @@ class BackupRepository:
         _require_restore_contract(manifest)
         return manifest
 
+    def published(self) -> tuple[PublishedBackup, ...]:
+        """发布了的每一套，从早到晚。"""
+
+        if not self.root.is_dir():
+            return ()
+        backups = [
+            PublishedBackup.of(self.load(path.name))
+            for path in self.root.iterdir()
+            if path.is_dir() and BACKUP_ID.fullmatch(path.name)
+        ]
+        return tuple(sorted(backups, key=lambda item: item.created_at))
+
     def prune(
         self,
         retention_days: int,
@@ -338,38 +386,42 @@ class BackupRepository:
         *,
         now: datetime | None = None,
     ) -> tuple[str, ...]:
+        """删掉过了保留期的，最新的一套一定留着。
+
+        每天一份的全量：最近 7 天的都留，更早的每个 ISO 周留最早的一份（一般是周一的），超过
+        `retention_days` 天的删掉。以前每 15 分钟一套的和外部数据库的照旧：最近
+        `recent_retention_hours` 小时的都留，更早的每天留最新的一套，超过 `retention_days` 天的删掉。
+        """
+
         if not 7 <= retention_days <= 365:
             raise BackupError("备份保留天数必须在 7–365 之间。")
         if not 1 <= recent_retention_hours <= 168:
             raise BackupError("近期高频备份保留小时数必须在 1–168 之间。")
         reference = now or datetime.now(UTC)
-        manifests: list[BackupManifest] = []
-        for path in self.root.iterdir():
-            if path.is_dir() and BACKUP_ID.fullmatch(path.name):
-                manifests.append(self.load(path.name))
-        manifests.sort(key=lambda item: _parse_utc(item.created_at), reverse=True)
-        removed: list[str] = []
+        backups = self.published()
         cutoff = reference - timedelta(days=retention_days)
-        recent_cutoff = reference - timedelta(hours=recent_retention_hours)
-        retained_days = {
-            _parse_utc(manifest.created_at).date()
-            for manifest in manifests
-            if _parse_utc(manifest.created_at) >= recent_cutoff
-        }
-        for manifest in manifests[1:]:
-            created_at = _parse_utc(manifest.created_at)
-            if created_at >= recent_cutoff:
-                continue
-            if created_at >= cutoff and created_at.date() not in retained_days:
-                retained_days.add(created_at.date())
+        kept = {backups[-1].backup_id} if backups else set()
+        kept |= _daily_fulls_to_keep(
+            [backup for backup in backups if backup.daily_full],
+            cutoff,
+            reference - timedelta(days=RECENT_FULL_DAYS),
+        )
+        kept |= _snapshots_to_keep(
+            [backup for backup in backups if not backup.daily_full],
+            cutoff,
+            reference - timedelta(hours=recent_retention_hours),
+        )
+        removed: list[str] = []
+        for backup in backups:
+            if backup.backup_id in kept:
                 continue
             try:
-                shutil.rmtree(self.root / manifest.backup_id)
+                shutil.rmtree(self.root / backup.backup_id)
             except FileNotFoundError:
                 # 计划任务与人工运维可能同时触发清理；另一进程已经删除目标时，
                 # 当前清理已经达到期望终态，不应让完整备份流程失败。
                 continue
-            removed.append(manifest.backup_id)
+            removed.append(backup.backup_id)
         self._remove_stale_partials(reference)
         return tuple(removed)
 
@@ -448,6 +500,36 @@ class BackupRepository:
                 shutil.rmtree(path)
 
 
+def _daily_fulls_to_keep(
+    fulls: list[PublishedBackup], cutoff: datetime, recent_cutoff: datetime
+) -> set[str]:
+    kept: set[str] = set()
+    weeks: set[tuple[int, int]] = set()
+    for full in sorted(fulls, key=lambda item: item.created_at):
+        if full.created_at >= recent_cutoff:
+            kept.add(full.backup_id)
+        elif full.created_at >= cutoff:
+            week = full.created_at.isocalendar()
+            if (week.year, week.week) not in weeks:
+                weeks.add((week.year, week.week))
+                kept.add(full.backup_id)
+    return kept
+
+
+def _snapshots_to_keep(
+    snapshots: list[PublishedBackup], cutoff: datetime, recent_cutoff: datetime
+) -> set[str]:
+    kept: set[str] = set()
+    days = {snapshot.created_at.date() for snapshot in snapshots if snapshot.created_at >= recent_cutoff}
+    for snapshot in sorted(snapshots, key=lambda item: item.created_at, reverse=True):
+        if snapshot.created_at >= recent_cutoff:
+            kept.add(snapshot.backup_id)
+        elif snapshot.created_at >= cutoff and snapshot.created_at.date() not in days:
+            days.add(snapshot.created_at.date())
+            kept.add(snapshot.backup_id)
+    return kept
+
+
 @dataclass(slots=True)
 class BackupCoordinator:
     config: DeploymentConfig
@@ -456,7 +538,54 @@ class BackupCoordinator:
     repository: BackupRepository
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
+    def run(self, *, full: bool = False) -> BackupRun:
+        """定时备份（specs/backups/design.md）：每个 UTC 日第一次做全量，别的时候只打恢复点。"""
+
+        if full or self._needs_full():
+            return BackupRun(*self._create_full())
+        return BackupRun(None, self.checkpoint())
+
     def create(self) -> BackupManifest:
+        """马上做一份全量，比如部署前。"""
+
+        return self._create_full()[0]
+
+    def checkpoint(self) -> WalPoint:
+        """不做全量的那几次：删除墓碑合并进台账，打一个恢复点，再把对象同步到镜像。"""
+
+        created_at = self.clock().astimezone(UTC)
+        point_id = _new_backup_id(created_at)
+        with _repository_lock(self.repository.root, created_at):
+            # 台账每次都合并：按时间恢复到更早的时候，之后删掉的账户靠它再删一次。
+            staging = self.repository.create_staging(point_id)
+            try:
+                self.capture.capture_account_deletions(point_id)
+                deletions = AccountDeletionLedger.load(staging / ACCOUNT_DELETION_ARTIFACT)
+                self.repository.merge_account_deletion_ledger(deletions)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            point = self._archive_wal(point_id, None)
+            # 对象紧跟在恢复点之后同步：恢复到这个点要用的对象，要么还在镜像里，要么在之后挪走的旧版本里。
+            # 同步不成就不算成功，RPO 告警会叫人来看。
+            self.capture.sync_objects(point_id)
+            self.repository.prune_wal_store()
+            self._report_success(point.created_at)
+            return point
+
+    def _needs_full(self) -> bool:
+        """外部数据库每次都是全量。内置的每个 UTC 日第一次做全量，WAL 还没接起来时也做，从它接起。"""
+
+        if self.config.database.mode != "embedded":
+            return True
+        try:
+            if self.repository.wal_store.latest() is None:
+                return True
+        except WalStoreError as error:
+            raise BackupError(str(error)) from error
+        today = self.clock().astimezone(UTC).date()
+        return all(backup.created_at.date() != today for backup in self.repository.published())
+
+    def _create_full(self) -> tuple[BackupManifest, WalPoint | None]:
         created_at = self.clock().astimezone(UTC)
         backup_id = _new_backup_id(created_at)
         with _repository_lock(self.repository.root, created_at):
@@ -467,6 +596,8 @@ class BackupCoordinator:
                 deletion_snapshot = AccountDeletionLedger.load(staging / ACCOUNT_DELETION_ARTIFACT)
                 self.repository.merge_account_deletion_ledger(deletion_snapshot)
                 self._copy_provider_evidence(staging, created_at)
+                if self.config.database.mode == "embedded":
+                    _write_json(staging / RETENTION_MARKER, DAILY_FULL_RETENTION)
                 artifacts = _inventory(staging)
                 manifest = BackupManifest(
                     schema_version=BACKUP_SCHEMA_VERSION,
@@ -487,33 +618,38 @@ class BackupCoordinator:
                 raise
             # 这套全量已经发布、核对过。WAL 接不上时它照样能用，但这一次算失败、不更新“最近成功”，
             # 好让 RPO 告警叫人来看。
-            last_success = created_at
-            if manifest.database_mode == "embedded":
-                last_success = self._archive_wal(manifest).created_at
-                self.repository.prune_wal_store()
-            self.repository.write_metric_snapshot(
-                "backup",
-                (
-                    f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
-                    f"agent_room_backup_rpo_target_seconds {manifest.rpo_minutes * 60}",
-                ),
-            )
-            return manifest
+            if manifest.database_mode != "embedded":
+                self._report_success(created_at)
+                return manifest, None
+            point = self._archive_wal(_new_backup_id(self.clock().astimezone(UTC)), self._anchor(manifest))
+            self.repository.prune_wal_store()
+            self._report_success(point.created_at)
+            return manifest, point
 
-    def _archive_wal(self, manifest: BackupManifest) -> WalPoint:
+    def _report_success(self, last_success: datetime) -> None:
+        self.repository.write_metric_snapshot(
+            "backup",
+            (
+                f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
+                f"agent_room_backup_rpo_target_seconds {self.config.backup.rpo_minutes * 60}",
+            ),
+        )
+
+    def _anchor(self, manifest: BackupManifest) -> WalAnchor:
         try:
             restore_point = RestorePoint.load(
                 self.repository.root / manifest.backup_id / "postgres" / "restore-point.json"
             )
         except RestorePointError as error:
             raise BackupError(str(error)) from error
-        point_id = _new_backup_id(self.clock().astimezone(UTC))
-        anchor = WalAnchor(
+        return WalAnchor(
             manifest.backup_id,
             restore_point.name,
             restore_point.lsn,
             restore_point.last_required_wal,
         )
+
+    def _archive_wal(self, point_id: str, anchor: WalAnchor | None) -> WalPoint:
         self.capture.archive_wal(point_id, anchor)
         try:
             latest = self.repository.wal_store.latest()

@@ -71,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
         lifecycle = subcommands.add_parser(command)
         lifecycle.add_argument("--config", type=Path, required=True)
         lifecycle.add_argument("--state-dir", type=Path, required=True)
+        if command == "backup":
+            lifecycle.add_argument(
+                "--full",
+                action="store_true",
+                help="马上做一份全量；不给时每个 UTC 日第一次做全量，别的时候只打恢复点",
+            )
         if command == "backup-verify":
             lifecycle.add_argument("--backup-id", required=True)
         if command == "restore-drill":
@@ -127,6 +133,8 @@ def run_lifecycle(arguments: argparse.Namespace) -> int:
         value = getattr(arguments, option, None)
         if value is not None:
             command.extend((f"--{option.replace('_', '-')}", value))
+    if getattr(arguments, "full", False):
+        command.append("--full")
     return subprocess.run(command, cwd=ROOT, check=False).returncode
 
 
