@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -40,8 +41,13 @@ class FakeBackupCapture:
         staging = self.repository / f".partial-{backup_id}"
         for name in ("agent-room.dump", "synapse.dump", "keycloak.dump"):
             write(staging / "database" / name, name.encode())
-        write(staging / "objects" / "source-inventory.ndjson", b'{"key":"content/1"}\n')
-        write(staging / "objects" / "data" / "content" / "1", b"payload")
+        write(self.repository / "objects" / "mirror" / "content" / "1", b"payload")
+        write(
+            staging / "objects" / "source-inventory.ndjson",
+            b'{"Path":"content/1","Name":"1","Size":7,"IsDir":false,"Hashes":{"sha256":"'
+            + hashlib.sha256(b"payload").hexdigest().encode()
+            + b'"}}\n',
+        )
         write(staging / "privacy" / "account-deletions.json", b'{"schemaVersion":1,"entries":[]}\n')
         if self.embedded:
             start, last = segment(self.start_segment), segment(self.start_segment + 1)
@@ -409,6 +415,16 @@ class BackupCoordinatorTests(unittest.TestCase):
             [(point.kind, point.segment) for point in repository.wal_store.points()],
             [("point", segment(7)), ("point", segment(11))],
         )
+
+    def test_objects_removed_from_the_mirror_are_kept_for_the_retention_period(self) -> None:
+        repository = BackupRepository(self.repository_path)
+        removed = self.repository_path / "objects" / "removed"
+        for day in ("2026-07-25", "2026-07-26", "2026-07-27", "manual-copy"):
+            write(removed / day / "content" / "1", b"payload")
+
+        # 30 天前那天（7 月 26 日）挪走的对象，最晚在今天删掉。
+        self.assertEqual(repository.prune_object_removals(30, now=FIXED_NOW), ("2026-07-25", "2026-07-26"))
+        self.assertEqual(sorted(path.name for path in removed.iterdir()), ["2026-07-27", "manual-copy"])
 
     def test_wal_store_never_drops_the_last_two_restore_points(self) -> None:
         store = WalStore(self.repository_path / "wal-store")

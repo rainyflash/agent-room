@@ -224,6 +224,7 @@ class ProductionRuntime:
             self.config.backup.retention_days,
             self.config.backup.recent_retention_hours,
         )
+        repository.prune_object_removals(self.config.backup.retention_days)
         # 恢复演练目录是备份还原出来的副本，跟备份守同一个保留期。
         prune_expired_restore_drills(
             restore_drill_root(self.paths),

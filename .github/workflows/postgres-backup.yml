@@ -1,16 +1,19 @@
-name: 生产物理备份实跑
+name: 生产备份实跑
 
-# 物理备份和 WAL 归档脚本只在生产的定时备份和发版的恢复演练里真跑，单元测试碰不到真实的
-# pg_basebackup、pg_verifybackup 和 pg_waldump。改到备份脚本、归档设置或恢复代码时，在 PR 上用
-# 生产同款 PostgreSQL 镜像实跑一遍备份和归档，再还原、按恢复点起库，确认数据一条不少。
+# 物理备份、WAL 归档和对象备份的脚本只在生产的定时备份和发版的恢复演练里真跑，单元测试碰不到真实的
+# pg_basebackup、pg_verifybackup、pg_waldump 和 rclone。改到备份脚本、归档设置或恢复代码时，在 PR 上
+# 用生产同款镜像实跑一遍：数据库备份和归档后还原、按恢复点起库，确认数据一条不少；对象增量同步两次后
+# 照两套快照的清单把对象一个不少地取回来。
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - '.github/workflows/postgres-backup.yml'
       - 'infra/production/compose.yaml'
+      - 'infra/production/object-backup.sh'
       - 'infra/production/postgres-base-backup.sh'
       - 'infra/production/postgres-wal-archive.sh'
+      - 'tools/object_backup_e2e.py'
       - 'tools/postgres_backup_e2e.py'
       - 'tools/prodops/backup.py'
       - 'tools/prodops/restore.py'
@@ -21,8 +24,10 @@ on:
     paths:
       - '.github/workflows/postgres-backup.yml'
       - 'infra/production/compose.yaml'
+      - 'infra/production/object-backup.sh'
       - 'infra/production/postgres-base-backup.sh'
       - 'infra/production/postgres-wal-archive.sh'
+      - 'tools/object_backup_e2e.py'
       - 'tools/postgres_backup_e2e.py'
       - 'tools/prodops/backup.py'
       - 'tools/prodops/restore.py'
@@ -51,3 +56,15 @@ jobs:
           persist-credentials: false
       - name: 实跑物理备份和 WAL 归档并按恢复点还原
         run: python3 tools/postgres_backup_e2e.py
+
+  objects:
+    name: 实跑对象增量备份并按清单取回
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 实跑对象增量备份并按清单取回
+        run: python3 tools/object_backup_e2e.py

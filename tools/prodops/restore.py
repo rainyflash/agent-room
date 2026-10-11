@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tarfile
 from typing import Callable, Final, Protocol
 
-from .backup import BackupError, BackupManifest, BackupRepository
+from .backup import OBJECT_BACKUPS, REMOVAL_DAY, BackupError, BackupManifest, BackupRepository
 from .config import DeploymentConfig
 from .render import DeploymentPaths
 from .restore_point import RestorePoint, RestorePointError
@@ -28,6 +28,7 @@ class RestoreDrillError(RuntimeError):
 # 2026-10-09 起只留最近 2 份：那天生产盘不够发版，维护者同意把演练目录清到 2 份。
 RETAINED_RESTORE_DRILLS = 2
 RESTORE_DRILL_NAME: Final = re.compile(r"^([0-9]{8}T[0-9]{12}Z)-[0-9a-f]{8}-[0-9]{8}T[0-9]{6}Z$")
+SHA256_TEXT: Final = re.compile(r"^[0-9a-f]{64}$")
 # 恢复时 PostgreSQL 按段名要 WAL：全量自带的是原样的段，一直留着的是 gzip 压缩过的，两种都认；
 # 都没有就失败，PostgreSQL 当成 WAL 到头了。
 RESTORE_COMMAND: Final = (
@@ -286,21 +287,27 @@ class RestoreDrillCoordinator:
             raise RestoreDrillError("恢复后的 Synapse signing key 摘要不一致。")
         return actual
 
-    @staticmethod
     def _restore_objects(
+        self,
         backup_directory: Path,
         drill_directory: Path,
         manifest: BackupManifest,
     ) -> tuple[int, int]:
+        prefix = "objects/data/"
+        if not any(artifact.path.startswith(prefix) for artifact in manifest.artifacts):
+            created_at = datetime.fromisoformat(manifest.created_at.replace("Z", "+00:00"))
+            return restore_mirrored_objects(
+                self.repository.root / OBJECT_BACKUPS,
+                backup_directory / "objects" / "source-inventory.ndjson",
+                created_at.astimezone(UTC).date(),
+                drill_directory / "objects",
+            )
+        # 改成增量同步以前的快照自己带着全部对象。
         source = backup_directory / "objects" / "data"
         target = drill_directory / "objects"
-        if source.is_dir():
-            shutil.copytree(source, target)
-        else:
-            target.mkdir(mode=0o700)
+        shutil.copytree(source, target)
         count = 0
         total = 0
-        prefix = "objects/data/"
         for artifact in manifest.artifacts:
             if not artifact.path.startswith(prefix):
                 continue
@@ -311,6 +318,90 @@ class RestoreDrillCoordinator:
             count += 1
             total += artifact.byte_length
         return count, total
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryEntry:
+    path: str
+    size: int
+    sha256: str
+
+
+def read_object_inventory(path: Path) -> tuple[InventoryEntry, ...]:
+    """快照的对象清单：rclone lsjson 每个对象一行，带 SHA-256。"""
+
+    entries: list[InventoryEntry] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, UnicodeDecodeError) as error:
+        raise RestoreDrillError("对象清单缺失或者不是 UTF-8。") from error
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise RestoreDrillError("对象清单里有一行不是 JSON。") from error
+        relative = value.get("Path") if isinstance(value, dict) else None
+        size = value.get("Size") if isinstance(value, dict) else None
+        hashes = value.get("Hashes") if isinstance(value, dict) else None
+        digest = hashes.get("sha256") if isinstance(hashes, dict) else None
+        if (
+            not isinstance(relative, str)
+            or not _safe_relative(relative)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or not isinstance(digest, str)
+            or not SHA256_TEXT.fullmatch(digest)
+        ):
+            raise RestoreDrillError("对象清单里有一行字段不对。")
+        entries.append(InventoryEntry(relative, size, digest))
+    return tuple(entries)
+
+
+def restore_mirrored_objects(
+    objects: Path, inventory: Path, backed_up_on: date, target: Path
+) -> tuple[int, int]:
+    """照快照的清单取回每个对象：先看镜像，再看快照那天及以后挪走的旧版本。
+
+    镜像是最近一次同步的样子。快照之后被删掉或者被覆盖的对象，同步时挪进了当天的 `removed/<日期>`。
+    """
+
+    removed = objects / "removed"
+    sources = [objects / "mirror"]
+    if removed.is_dir():
+        sources.extend(
+            path
+            for path in sorted(removed.iterdir(), key=lambda item: item.name)
+            if REMOVAL_DAY.fullmatch(path.name) and date.fromisoformat(path.name) >= backed_up_on
+        )
+    target.mkdir(mode=0o700)
+    count = 0
+    total = 0
+    for entry in read_object_inventory(inventory):
+        for source in sources:
+            candidate = source / entry.path
+            if (
+                candidate.is_file()
+                and not candidate.is_symlink()
+                and candidate.stat().st_size == entry.size
+                and _sha256(candidate) == entry.sha256
+            ):
+                restored = target / entry.path
+                restored.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                shutil.copyfile(candidate, restored)
+                break
+        else:
+            raise RestoreDrillError(f"对象取不回来：{entry.path}。")
+        count += 1
+        total += entry.size
+    return count, total
+
+
+def _safe_relative(value: str) -> bool:
+    logical = PurePosixPath(value)
+    return bool(value) and not logical.is_absolute() and ".." not in logical.parts and "\\" not in value
 
 
 def _read_restore_point(path: Path) -> tuple[str, str]:
