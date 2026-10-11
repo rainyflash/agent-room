@@ -1,14 +1,15 @@
 """一直留着的 WAL：恢复点记录的解析，和按最老的全量删旧段（specs/backups/design.md）。
 
 `postgres-wal-archive.sh` 每次定时备份打一个恢复点，把接着上一个恢复点读通了的段压缩以后放进
-`wal-store/`，再往 `restore-points.log` 追加一行。这里只读那份记录、按保留下来的全量删旧段；
-段的内容由脚本在容器里核对。
+`wal-store/`，再往 `restore-points.log` 追加一行。这里读那份记录、按保留下来的全量删旧段，恢复前
+核对收好的段没被改过；段的内容在收的时候已由脚本在容器里读通。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -106,6 +107,23 @@ class WalStore:
             return ()
         names = (path.name for path in self.root.iterdir() if path.name.endswith(".gz"))
         return tuple(sorted(name.removesuffix(".gz") for name in names if _STORED.fullmatch(name)))
+
+    def checked_segment(self, segment: str) -> Path:
+        """收好的段，和收的时候记下的 SHA-256 对得上才交出去。"""
+
+        if not WAL_SEGMENT.fullmatch(segment):
+            raise WalStoreError(f"不是 WAL 段名：{segment}。")
+        packed = self.root / f"{segment}.gz"
+        record = self.root / f"{segment}.gz.sha256"
+        if packed.is_symlink() or not packed.is_file() or record.is_symlink() or not record.is_file():
+            raise WalStoreError(f"WAL 段 {segment} 不在仓库里，或者缺 SHA-256 记录。")
+        digest = hashlib.sha256()
+        with packed.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        if record.read_text(encoding="utf-8", errors="replace").split() != [digest.hexdigest(), packed.name]:
+            raise WalStoreError(f"WAL 段 {segment} 的 SHA-256 对不上，不能拿来恢复。")
+        return packed
 
     def prune(self, keep_from: str) -> tuple[str, ...]:
         """删掉 `keep_from` 以前的段和恢复点记录。

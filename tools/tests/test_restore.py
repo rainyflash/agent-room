@@ -15,16 +15,22 @@ from tools.prodops.config import load_deployment_config
 from tools.prodops.render import DeploymentPaths, render_deployment
 from tools.prodops.restore import (
     RETAINED_RESTORE_DRILLS,
+    UNREACHED_TARGET,
+    BaseCandidate,
     DatabaseRestoreEvidence,
+    RecoveryTarget,
     RestoreDrillCoordinator,
     RestoreDrillError,
+    RestoreTarget,
     _prune_restore_drills,
     materialize_base_backup,
+    parse_target_time,
+    plan_restore,
     prune_expired_restore_drills,
     read_object_inventory,
     restore_drill_root,
 )
-from tools.prodops.restore_point import restore_point_name
+from tools.prodops.restore_point import RestorePoint, restore_point_name
 from tools.prodops.secrets import SecretStore
 from tools.prodops.wal_store import WalAnchor, WalPoint, WalStore
 
@@ -63,7 +69,7 @@ class RestoreFixtureCapture:
 
     def archive_wal(self, point_id: str, anchor: WalAnchor) -> None:
         store = WalStore(self.repository / "wal-store")
-        write(store.root / "000000010000000000000002.gz", b"wal")
+        store_segment(store, "000000010000000000000002")
         store._write(
             (
                 WalPoint(START, "anchor", anchor.name, anchor.lsn, anchor.segment, anchor.backup_id),
@@ -77,16 +83,17 @@ class FakeRestoreBackend:
         self,
         backup_directory: Path,
         drill_directory: Path,
-        restore_point_name: str,
-        restore_point_lsn: str,
+        recovery: RecoveryTarget,
         account_deletion_ledger: Path,
     ) -> DatabaseRestoreEvidence:
         self.backup_directory = backup_directory
         self.drill_directory = drill_directory
+        self.recovery = recovery
+        self.wal = sorted(path.name for path in (drill_directory / "wal").iterdir())
         self.account_deletion_ledger = account_deletion_ledger
         return DatabaseRestoreEvidence(
-            restore_point_name,
-            restore_point_lsn,
+            recovery.name,
+            recovery.lsn,
             True,
             3,
             ("agent_room", "keycloak", "synapse"),
@@ -94,6 +101,7 @@ class FakeRestoreBackend:
             1,
             0,
             0,
+            recovery.time_text,
         )
 
 
@@ -135,7 +143,7 @@ class RestoreDrillTests(unittest.TestCase):
             self.repository,
             backend,
             clock=lambda: next(times),
-        ).run(self.manifest.backup_id)
+        ).run(RestoreTarget(backup_id=self.manifest.backup_id))
 
         self.assertTrue(report.rto_met)
         self.assertEqual(report.duration_seconds, 12)
@@ -147,11 +155,33 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertTrue(backend.account_deletion_ledger.is_file())
         metrics = (self.repository_path / "metrics" / "restore.prom").read_text(encoding="utf-8")
         self.assertIn("agent_room_restore_drill_duration_seconds 12.000", metrics)
+        # 按快照恢复只用它自带的 WAL，停在它自己的恢复点。
+        self.assertEqual(backend.recovery, RecoveryTarget(name="agent_room_point", lsn="0/16B6C50"))
+        self.assertEqual(backend.wal, ["000000010000000000000001"])
+
+    def test_by_default_the_drill_replays_kept_wal_to_the_latest_restore_point(self) -> None:
+        report = self.drill().run()
+
+        point = WalStore(self.repository_path / "wal-store").points()[-1]
+        self.assertEqual(report.backup_id, self.manifest.backup_id)
+        self.assertEqual(self.backend.recovery, RecoveryTarget(name=point.name, lsn="0/2000000"))
+        # 快照自带的段原样放着，接在后面的段从 wal-store/ 取压缩过的。
+        self.assertEqual(self.backend.wal, ["000000010000000000000001", "000000010000000000000002.gz"])
+        self.assertEqual(report.to_mapping()["database"]["restorePointName"], point.name)
+
+    def test_drill_refuses_kept_wal_that_changed_after_it_was_stored(self) -> None:
+        write(self.repository_path / "wal-store" / "000000010000000000000002.gz", b"tampered")
+
+        with self.assertRaisesRegex(RestoreDrillError, "SHA-256 对不上"):
+            self.drill().run()
+        (drill,) = restore_drill_root(self.paths).iterdir()
+        self.assertTrue((drill / "FAILED").is_file())
 
     def drill(self) -> RestoreDrillCoordinator:
         times = iter((START, START + timedelta(seconds=12)))
+        self.backend = FakeRestoreBackend()
         return RestoreDrillCoordinator(
-            self.config, self.paths, self.repository, FakeRestoreBackend(), clock=lambda: next(times)
+            self.config, self.paths, self.repository, self.backend, clock=lambda: next(times)
         )
 
     def test_objects_removed_or_replaced_after_the_snapshot_come_back_from_that_day(self) -> None:
@@ -162,7 +192,7 @@ class RestoreDrillTests(unittest.TestCase):
         # 快照那天以前挪走的不算：那时它还不是这个样子。
         write(objects / "removed" / "2026-08-24" / "content.bin", b"stale")
 
-        report = self.drill().run(self.manifest.backup_id)
+        report = self.drill().run(RestoreTarget(backup_id=self.manifest.backup_id))
 
         drill = restore_drill_root(self.paths) / f"{self.manifest.backup_id}-{START:%Y%m%dT%H%M%SZ}"
         self.assertEqual((report.object_count, report.object_bytes), (1, 6))
@@ -174,7 +204,7 @@ class RestoreDrillTests(unittest.TestCase):
         write(objects / "removed" / "2026-08-24" / "content.bin", b"object")
 
         with self.assertRaisesRegex(RestoreDrillError, "取不回来：content.bin"):
-            self.drill().run(self.manifest.backup_id)
+            self.drill().run(RestoreTarget(backup_id=self.manifest.backup_id))
 
     def test_inventory_paths_must_stay_inside_the_mirror(self) -> None:
         inventory = self.repository_path / "inventory.ndjson"
@@ -193,7 +223,7 @@ class RestoreDrillTests(unittest.TestCase):
         ).create()
         (self.repository_path / "objects" / "mirror" / "content.bin").unlink()
 
-        report = self.drill().run(manifest.backup_id)
+        report = self.drill().run(RestoreTarget(backup_id=manifest.backup_id))
 
         self.assertEqual((report.object_count, report.object_bytes), (1, 6))
 
@@ -206,7 +236,147 @@ class RestoreDrillTests(unittest.TestCase):
                 self.paths,
                 self.repository,
                 FakeRestoreBackend(),
-            ).run(self.manifest.backup_id)
+            ).run(RestoreTarget(backup_id=self.manifest.backup_id))
+
+
+def segment(number: int) -> str:
+    return f"{1:08X}{0:08X}{number:08X}"
+
+
+def candidate(backup_id: str, name: str, lsn: str, last_wal: int) -> BaseCandidate:
+    return BaseCandidate(backup_id, RestorePoint(name, lsn, segment(last_wal)))
+
+
+def at(minute: int, second: int = 10) -> datetime:
+    return datetime(2026, 10, 11, 9, minute, second, tzinfo=UTC)
+
+
+class RestorePlanTests(unittest.TestCase):
+    """按恢复点名字、按时间恢复时找哪套快照当起点、接哪些段。"""
+
+    OLD = candidate("20261011T084500000000Z-0000000a", "agent_room_old", "0/1000100", 1)
+    FIRST = candidate("20261011T090000000000Z-0000000b", "agent_room_first", "0/3000100", 3)
+    SECOND = candidate("20261011T093000000000Z-0000000c", "agent_room_second", "0/6000100", 6)
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.store = WalStore(Path(self.temporary.name) / "wal-store")
+        self.store.root.mkdir()
+        for number in range(3, 10):
+            store_segment(self.store, segment(number))
+        # 链从 FIRST 接起，之后每 15 分钟一个恢复点；SECOND 在 09:30 前一点做完。
+        self.points = (
+            WalPoint(at(0), "anchor", "agent_room_first", "0/3000100", segment(3), self.FIRST.backup_id),
+            WalPoint(at(15), "point", "agent_room_p1", "0/5000100", segment(5), None),
+            WalPoint(at(30), "point", "agent_room_p2", "0/7000100", segment(7), None),
+            WalPoint(at(45), "point", "agent_room_p3", "0/9000100", segment(9), None),
+        )
+        self.store._write(self.points)
+        self.candidates = (self.OLD, self.FIRST, self.SECOND)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def plan(self, target: RestoreTarget):
+        return plan_restore(target, self.candidates, self.store)
+
+    def test_named_point_starts_from_the_latest_snapshot_before_it(self) -> None:
+        early = self.plan(RestoreTarget(restore_point="agent_room_p1"))
+        late = self.plan(RestoreTarget(restore_point="agent_room_p3"))
+
+        self.assertEqual(early.base, self.FIRST.backup_id)
+        self.assertEqual(early.wal, (segment(4), segment(5)))
+        self.assertEqual(early.recovery, RecoveryTarget(name="agent_room_p1", lsn="0/5000100"))
+        self.assertEqual(late.base, self.SECOND.backup_id)
+        self.assertEqual(late.wal, (segment(7), segment(8), segment(9)))
+
+    def test_without_a_target_the_latest_point_is_used(self) -> None:
+        self.assertEqual(self.plan(RestoreTarget()), self.plan(RestoreTarget(restore_point="agent_room_p3")))
+
+    def test_a_snapshots_own_restore_point_needs_no_kept_wal(self) -> None:
+        plan = self.plan(RestoreTarget(restore_point="agent_room_second"))
+
+        self.assertEqual((plan.base, plan.wal), (self.SECOND.backup_id, ()))
+
+    def test_time_starts_before_it_and_keeps_wal_through_the_next_point(self) -> None:
+        between = self.plan(RestoreTarget(time=at(20, 0)))
+        later = self.plan(RestoreTarget(time=at(40, 0)))
+
+        # 09:20 时 SECOND 还没做，从 FIRST 起；WAL 放到 09:30 的恢复点为止。
+        self.assertEqual(between.base, self.FIRST.backup_id)
+        self.assertEqual(between.wal, tuple(segment(number) for number in range(4, 8)))
+        self.assertEqual(between.recovery, RecoveryTarget(time=at(20, 0), next_point="agent_room_p2"))
+        self.assertEqual(later.base, self.SECOND.backup_id)
+        self.assertEqual(later.wal, (segment(7), segment(8), segment(9)))
+
+    def test_time_outside_the_kept_wal_is_refused(self) -> None:
+        with self.assertRaisesRegex(RestoreDrillError, "晚于最近一个核对过的恢复点"):
+            self.plan(RestoreTarget(time=at(50)))
+        with self.assertRaisesRegex(RestoreDrillError, "早于最早的恢复点"):
+            self.plan(RestoreTarget(time=at(0, 0)))
+
+    def test_snapshots_from_before_the_chain_are_never_a_starting_point(self) -> None:
+        self.candidates = (self.OLD,)
+
+        with self.assertRaisesRegex(RestoreDrillError, "没有接得上的快照"):
+            self.plan(RestoreTarget(restore_point="agent_room_p1"))
+
+    def test_once_the_anchor_is_pruned_every_snapshot_left_is_on_the_chain(self) -> None:
+        self.store._write(self.points[1:])
+        self.candidates = (self.FIRST, self.SECOND)
+
+        self.assertEqual(self.plan(RestoreTarget(restore_point="agent_room_p1")).base, self.FIRST.backup_id)
+
+    def test_unknown_restore_point_is_refused(self) -> None:
+        with self.assertRaisesRegex(RestoreDrillError, "没有这个恢复点：agent_room_typo"):
+            self.plan(RestoreTarget(restore_point="agent_room_typo"))
+
+    def test_no_restore_points_yet(self) -> None:
+        self.store.log.unlink()
+
+        with self.assertRaisesRegex(RestoreDrillError, "还没有核对过的恢复点"):
+            self.plan(RestoreTarget())
+
+
+class RecoveryTargetTests(unittest.TestCase):
+    def test_settings_for_a_named_point_and_for_a_moment(self) -> None:
+        named = RecoveryTarget(name="agent_room_p1", lsn="0/5000100").settings()
+        timed = RecoveryTarget(time=at(20, 0), next_point="agent_room_p2").settings()
+
+        self.assertIn("recovery_target_name = 'agent_room_p1'", named)
+        self.assertIn("recovery_target_time = '2026-10-11 09:20:00.000000+00'", timed)
+        for settings in (named, timed):
+            self.assertIn("recovery_target_action = 'promote'", settings)
+            self.assertTrue(settings[0].startswith("restore_command = "))
+
+    def test_reaching_the_target(self) -> None:
+        named = RecoveryTarget(name="agent_room_p1", lsn="0/5000100")
+        timed = RecoveryTarget(time=at(20, 0), next_point="agent_room_p2")
+        stopped = "LOG:  recovery stopping before commit of transaction 755, time 2026-10-11 09:20:01+00"
+
+        self.assertTrue(named.reached("", replayed_past_lsn=True))
+        self.assertTrue(named.reached('LOG:  recovery stopping at restore point "agent_room_p1"', replayed_past_lsn=False))
+        self.assertFalse(named.reached("", replayed_past_lsn=False))
+        self.assertTrue(timed.reached(stopped, replayed_past_lsn=False))
+        self.assertFalse(timed.reached("LOG:  redo done", replayed_past_lsn=True))
+
+    def test_explains_a_target_the_wal_never_reaches(self) -> None:
+        logs = f"FATAL:  {UNREACHED_TARGET}"
+        timed = RecoveryTarget(time=at(20, 0), next_point="agent_room_p2")
+
+        self.assertIn("--restore-point agent_room_p2", timed.unreachable(logs) or "")
+        self.assertIn("接不上", RecoveryTarget(name="agent_room_p1", lsn="0/5000100").unreachable(logs) or "")
+        self.assertIsNone(timed.unreachable("FATAL:  could not open file"))
+
+    def test_target_options(self) -> None:
+        self.assertEqual(parse_target_time("2026-10-11T17:20:00+08:00"), at(20, 0))
+        for text in ("2026-10-11T09:20:00", "yesterday"):
+            with self.subTest(text=text), self.assertRaises(RestoreDrillError):
+                parse_target_time(text)
+        with self.assertRaisesRegex(RestoreDrillError, "只能给一个"):
+            RestoreTarget(backup_id="20261011T090000000000Z-0000000b", restore_point="agent_room_p1")
+        with self.assertRaisesRegex(RestoreDrillError, "带时区"):
+            RestoreTarget(time=datetime(2026, 10, 11, 9, 20))
 
 
 class RestoreDrillRetentionTests(unittest.TestCase):
@@ -374,6 +544,14 @@ def write_tar_gz(path: Path, members: dict[str, bytes | None]) -> None:
 def write(path: Path, content: bytes) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.write_bytes(content)
+
+
+def store_segment(store: WalStore, name: str) -> None:
+    """照 postgres-wal-archive.sh 收好一段：压缩的段，加一行 sha256sum 格式的记录。"""
+
+    packed = b"wal " + name.encode()
+    write(store.root / f"{name}.gz", packed)
+    write(store.root / f"{name}.gz.sha256", f"{hashlib.sha256(packed).hexdigest()}  {name}.gz\n".encode())
 
 
 if __name__ == "__main__":

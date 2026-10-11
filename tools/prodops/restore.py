@@ -11,12 +11,13 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tarfile
-from typing import Callable, Final, Protocol
+from typing import Callable, Final, Protocol, Sequence
 
-from .backup import OBJECT_BACKUPS, REMOVAL_DAY, BackupError, BackupManifest, BackupRepository
+from .backup import BACKUP_ID, OBJECT_BACKUPS, REMOVAL_DAY, BackupError, BackupManifest, BackupRepository
 from .config import DeploymentConfig
 from .render import DeploymentPaths
 from .restore_point import RestorePoint, RestorePointError
+from .wal_store import WalPoint, WalStore, WalStoreError
 
 
 class RestoreDrillError(RuntimeError):
@@ -36,12 +37,195 @@ RESTORE_COMMAND: Final = (
     "elif [ -f /wal/%f.gz ]; then gunzip -c /wal/%f.gz > %p; "
     "else exit 1; fi"
 )
+# PostgreSQL 把给它的 WAL 读完了还没到恢复目标时，记下这句就退出。
+UNREACHED_TARGET: Final = "recovery ended before configured recovery target was reached"
+STOPPED_BEFORE_TRANSACTION: Final = re.compile(r"recovery stopping before (?:commit|abort) of transaction")
+EXTERNAL_DATABASE: Final = "外部 PostgreSQL 必须由供应商隔离恢复流程执行，不能伪装成本地 PITR。"
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreTarget:
+    """恢复到哪儿：某套快照自己的恢复点、某个恢复点的名字，或者某一刻。都不给就是最近一个恢复点。"""
+
+    backup_id: str | None = None
+    restore_point: str | None = None
+    time: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if sum(value is not None for value in (self.backup_id, self.restore_point, self.time)) > 1:
+            raise RestoreDrillError("--backup-id、--restore-point 和 --target-time 只能给一个。")
+        if self.time is not None and self.time.utcoffset() is None:
+            raise RestoreDrillError("目标时间要带时区，比如 2026-10-11T09:20:00Z。")
+
+
+def parse_target_time(text: str) -> datetime:
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError as error:
+        raise RestoreDrillError(f"目标时间看不懂：{text}。要写成 2026-10-11T09:20:00Z 这样。") from error
+    if value.utcoffset() is None:
+        raise RestoreDrillError("目标时间要带时区，比如 2026-10-11T09:20:00Z。")
+    return value.astimezone(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryTarget:
+    """交给 PostgreSQL 的恢复目标：停在某个恢复点，或者停在某一刻之后的第一次提交之前。"""
+
+    name: str | None = None
+    lsn: str | None = None
+    time: datetime | None = None
+    # 按时间恢复时，目标之后的第一个恢复点：WAL 只放到它为止。
+    next_point: str | None = None
+
+    @property
+    def time_text(self) -> str | None:
+        return None if self.time is None else _utc(self.time.astimezone(UTC))
+
+    def settings(self) -> tuple[str, ...]:
+        """写进 postgresql.auto.conf 的几行。"""
+
+        if self.time is not None:
+            target = f"recovery_target_time = '{self.time.astimezone(UTC):%Y-%m-%d %H:%M:%S.%f}+00'"
+        else:
+            target = f"recovery_target_name = '{self.name}'"
+        return (f"restore_command = '{RESTORE_COMMAND}'", target, "recovery_target_action = 'promote'")
+
+    def reached(self, logs: str, *, replayed_past_lsn: bool) -> bool:
+        """停在了目标上：按名字的看重放过没过它的 LSN，按时间的看 PostgreSQL 说没说停在哪次提交之前。"""
+
+        if self.time is not None:
+            return STOPPED_BEFORE_TRANSACTION.search(logs) is not None
+        return replayed_past_lsn or f'restore point "{self.name}"' in logs
+
+    def unreachable(self, logs: str) -> str | None:
+        """WAL 读完了还没到目标时说清楚为什么、怎么办；不是这种情况就是 None。"""
+
+        if UNREACHED_TARGET not in logs:
+            return None
+        if self.time is not None:
+            return (
+                f"目标时间到下一个恢复点 {self.next_point} 之间没有提交，按时间停不下来。"
+                f"这段时间的数据和这个恢复点一样，可以改用 --restore-point {self.next_point}。"
+            )
+        return f"WAL 在恢复点 {self.name} 之前就接不上了，到不了这个恢复点。"
+
+
+@dataclass(frozen=True, slots=True)
+class BaseCandidate:
+    """能当起点的一套快照。它自带的 WAL 到 `restore_point.last_required_wal` 为止。"""
+
+    backup_id: str
+    restore_point: RestorePoint
+
+
+@dataclass(frozen=True, slots=True)
+class RestorePlan:
+    base: str
+    recovery: RecoveryTarget
+    # 接在快照自带的 WAL 后面、从 wal-store/ 取的段，从旧到新。
+    wal: tuple[str, ...] = ()
+
+
+def plan_restore(target: RestoreTarget, candidates: Sequence[BaseCandidate], store: WalStore) -> RestorePlan:
+    """按恢复点名字或者时间恢复：找目标之前最近的一套快照，加上它之后一直留着的 WAL。"""
+
+    if target.backup_id is not None:
+        raise RestoreDrillError("按快照恢复不用找起点。")
+    try:
+        points = store.points()
+    except WalStoreError as error:
+        raise RestoreDrillError(str(error)) from error
+    if target.time is not None:
+        return _plan_to_time(target.time.astimezone(UTC), candidates, points, store)
+    if target.restore_point is not None:
+        for candidate in candidates:
+            if candidate.restore_point.name == target.restore_point:
+                return RestorePlan(
+                    candidate.backup_id,
+                    RecoveryTarget(name=candidate.restore_point.name, lsn=candidate.restore_point.lsn),
+                )
+        point = next((point for point in points if point.name == target.restore_point), None)
+        if point is None:
+            raise RestoreDrillError(f"没有这个恢复点：{target.restore_point}。")
+    elif points:
+        point = points[-1]
+    else:
+        raise RestoreDrillError("还没有核对过的恢复点。先跑一次备份，或者用 --backup-id 恢复某一套快照。")
+    base = _base_before(point, candidates, points)
+    return RestorePlan(
+        base.backup_id,
+        RecoveryTarget(name=point.name, lsn=point.lsn),
+        _store_segments(store, base, point.segment),
+    )
+
+
+def _plan_to_time(
+    moment: datetime, candidates: Sequence[BaseCandidate], points: Sequence[WalPoint], store: WalStore
+) -> RestorePlan:
+    if not points:
+        raise RestoreDrillError("还没有核对过的恢复点，没法按时间恢复。")
+    if moment > points[-1].created_at:
+        raise RestoreDrillError(
+            f"目标时间晚于最近一个核对过的恢复点（{_utc(points[-1].created_at)}），之后的 WAL 还没收好。"
+        )
+    earlier = [point for point in points if point.created_at <= moment]
+    if not earlier:
+        raise RestoreDrillError(f"目标时间早于最早的恢复点（{_utc(points[0].created_at)}）。")
+    following = next(point for point in points if point.created_at >= moment)
+    base = _base_before(earlier[-1], candidates, points)
+    return RestorePlan(
+        base.backup_id,
+        RecoveryTarget(time=moment, next_point=following.name),
+        _store_segments(store, base, following.segment),
+    )
+
+
+def _base_before(limit: WalPoint, candidates: Sequence[BaseCandidate], points: Sequence[WalPoint]) -> BaseCandidate:
+    """`limit` 之前最近的一套快照，而且从它往后的 WAL 都在这条链上。
+
+    链从第一行的全量（anchor）接起，更早的快照之后的 WAL 当时没留，接不上。第一行已经不是 anchor，
+    说明接起的那套全量和它之前的段都按保留期删了，剩下的快照都在链上。
+    """
+
+    start = _lsn(points[0].lsn) if points and points[0].kind == "anchor" else None
+    usable = [
+        candidate
+        for candidate in candidates
+        if _lsn(candidate.restore_point.lsn) <= _lsn(limit.lsn)
+        and (start is None or _lsn(candidate.restore_point.lsn) >= start)
+    ]
+    if not usable:
+        raise RestoreDrillError(f"恢复点 {limit.name} 之前没有接得上的快照。")
+    return max(usable, key=lambda candidate: _lsn(candidate.restore_point.lsn))
+
+
+def _store_segments(store: WalStore, base: BaseCandidate, through: str) -> tuple[str, ...]:
+    after = base.restore_point.last_required_wal
+    return tuple(segment for segment in store.segments() if after < segment <= through)
+
+
+def stage_wal(own: Path, store: WalStore, segments: Sequence[str], target: Path) -> None:
+    """把快照自带的 WAL 和接在后面的段放进同一个目录，恢复命令从这里按段名取。"""
+
+    shutil.copytree(own, target, symlinks=True)
+    for segment in segments:
+        try:
+            packed = store.checked_segment(segment)
+        except WalStoreError as error:
+            raise RestoreDrillError(str(error)) from error
+        shutil.copyfile(packed, target / packed.name)
+
+
+def _lsn(text: str) -> int:
+    high, low = text.split("/")
+    return (int(high, 16) << 32) | int(low, 16)
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseRestoreEvidence:
-    restore_point_name: str
-    restore_point_lsn: str
+    restore_point_name: str | None
+    restore_point_lsn: str | None
     replay_reached_target: bool
     logical_archives_verified: int
     databases_verified: tuple[str, ...]
@@ -49,6 +233,7 @@ class DatabaseRestoreEvidence:
     projection_rooms: int
     deletion_ledger_entries: int
     deletion_replays_queued: int
+    target_time: str | None = None
 
 
 class RestoreBackend(Protocol):
@@ -56,11 +241,10 @@ class RestoreBackend(Protocol):
         self,
         backup_directory: Path,
         drill_directory: Path,
-        restore_point_name: str,
-        restore_point_lsn: str,
+        recovery: RecoveryTarget,
         account_deletion_ledger: Path,
     ) -> DatabaseRestoreEvidence:
-        """在隔离运行时恢复数据库并重建派生投影。"""
+        """在隔离运行时恢复数据库并重建派生投影。WAL 已经放在演练目录的 wal/ 里。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +278,7 @@ class RestoreDrillReport:
             "database": {
                 "restorePointName": self.database.restore_point_name,
                 "restorePointLsn": self.database.restore_point_lsn,
+                "targetTime": self.database.target_time,
                 "replayReachedTarget": self.database.replay_reached_target,
                 "logicalArchivesVerified": self.database.logical_archives_verified,
                 "databasesVerified": list(self.database.databases_verified),
@@ -196,18 +381,26 @@ class RestoreDrillCoordinator:
     backend: RestoreBackend
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
-    def run(self, backup_id: str) -> RestoreDrillReport:
+    def run(self, target: RestoreTarget | None = None) -> RestoreDrillReport:
+        target = target or RestoreTarget()
         started = self.clock().astimezone(UTC)
-        manifest = self.repository.verify(backup_id)
-        if manifest.database_mode != "embedded" or self.config.database.mode != "embedded":
-            raise RestoreDrillError("外部 PostgreSQL 必须由供应商隔离恢复流程执行，不能伪装成本地 PITR。")
-        if manifest.server_name != self.config.public.server_name:
-            raise RestoreDrillError("备份所属 server_name 与当前部署不一致。")
-        backup_directory = self.repository.root / backup_id
-        drill_directory = self._create_drill_directory(backup_id, started)
+        if self.config.database.mode != "embedded":
+            raise RestoreDrillError(EXTERNAL_DATABASE)
+        if target.backup_id is not None:
+            manifest = self._verified(target.backup_id)
+            point = _load_restore_point(self.repository.root / target.backup_id / "postgres" / "restore-point.json")
+            plan = RestorePlan(target.backup_id, RecoveryTarget(name=point.name, lsn=point.lsn))
+        else:
+            plan = plan_restore(target, self._candidates(), self.repository.wal_store)
+            manifest = self._verified(plan.base)
+        backup_directory = self.repository.root / plan.base
+        drill_directory = self._create_drill_directory(plan.base, started)
         try:
-            restore_name, restore_lsn = _read_restore_point(
-                backup_directory / "postgres" / "restore-point.json"
+            stage_wal(
+                backup_directory / "postgres" / "wal",
+                self.repository.wal_store,
+                plan.wal,
+                drill_directory / "wal",
             )
             signing_digest = self._restore_identity(backup_directory, drill_directory, manifest)
             object_count, object_bytes = self._restore_objects(
@@ -216,15 +409,14 @@ class RestoreDrillCoordinator:
             database = self.backend.restore_database(
                 backup_directory,
                 drill_directory,
-                restore_name,
-                restore_lsn,
+                plan.recovery,
                 self._stage_account_deletion_ledger(drill_directory),
             )
             completed = self.clock().astimezone(UTC)
             duration = max(0.0, (completed - started).total_seconds())
             report = RestoreDrillReport(
                 schema_version=1,
-                backup_id=backup_id,
+                backup_id=plan.base,
                 started_at=_utc(started),
                 completed_at=_utc(completed),
                 duration_seconds=duration,
@@ -251,6 +443,27 @@ class RestoreDrillCoordinator:
         except BaseException:
             _write_failure_marker(drill_directory)
             raise
+
+    def _verified(self, backup_id: str) -> BackupManifest:
+        manifest = self.repository.verify(backup_id)
+        if manifest.database_mode != "embedded":
+            raise RestoreDrillError(EXTERNAL_DATABASE)
+        if manifest.server_name != self.config.public.server_name:
+            raise RestoreDrillError("备份所属 server_name 与当前部署不一致。")
+        return manifest
+
+    def _candidates(self) -> tuple[BaseCandidate, ...]:
+        """仓库里内置数据库的每一套快照和它的恢复点。挑中的那套恢复前还要整套核对。"""
+
+        candidates: list[BaseCandidate] = []
+        for path in sorted(self.repository.root.iterdir(), key=lambda item: item.name):
+            if path.is_symlink() or not path.is_dir() or not BACKUP_ID.fullmatch(path.name):
+                continue
+            if self.repository.load(path.name).database_mode != "embedded":
+                continue
+            point = _load_restore_point(path / "postgres" / "restore-point.json")
+            candidates.append(BaseCandidate(path.name, point))
+        return tuple(candidates)
 
     def _stage_account_deletion_ledger(self, drill_directory: Path) -> Path:
         ledger = self.repository.load_account_deletion_ledger()
@@ -404,12 +617,11 @@ def _safe_relative(value: str) -> bool:
     return bool(value) and not logical.is_absolute() and ".." not in logical.parts and "\\" not in value
 
 
-def _read_restore_point(path: Path) -> tuple[str, str]:
+def _load_restore_point(path: Path) -> RestorePoint:
     try:
-        restore_point = RestorePoint.load(path)
+        return RestorePoint.load(path)
     except RestorePointError as error:
         raise RestoreDrillError(str(error)) from error
-    return restore_point.name, restore_point.lsn
 
 
 def _artifact_digest(manifest: BackupManifest, path: str) -> str:

@@ -21,11 +21,12 @@ from .config import DeploymentConfig
 from .network_agents import disable_statement
 from .render import DeploymentPaths, render_deployment
 from .restore import (
-    RESTORE_COMMAND,
     DatabaseRestoreEvidence,
+    RecoveryTarget,
     RestoreDrillCoordinator,
     RestoreDrillReport,
     RestoreDrillError,
+    RestoreTarget,
     materialize_base_backup,
     prune_expired_restore_drills,
     restore_drill_root,
@@ -233,7 +234,7 @@ class ProductionRuntime:
         )
         return removed
 
-    def restore_drill(self, backup_id: str) -> RestoreDrillReport:
+    def restore_drill(self, target: RestoreTarget | None = None) -> RestoreDrillReport:
         repository = BackupRepository(Path(self.config.backup.repository))
         coordinator = RestoreDrillCoordinator(
             self.config,
@@ -241,7 +242,7 @@ class ProductionRuntime:
             repository,
             self,
         )
-        return coordinator.run(backup_id)
+        return coordinator.run(target)
 
     def capture_backup_payload(self, backup_id: str) -> None:
         common = [
@@ -278,8 +279,7 @@ class ProductionRuntime:
         self,
         backup_directory: Path,
         drill_directory: Path,
-        restore_point_name: str,
-        restore_point_lsn: str,
+        recovery: RecoveryTarget,
         account_deletion_ledger: Path,
     ) -> DatabaseRestoreEvidence:
         database_directory = backup_directory / "database"
@@ -306,14 +306,13 @@ class ProductionRuntime:
         wal_target = drill_directory / "wal"
         if target.exists():
             raise RestoreDrillError("隔离 PostgreSQL 恢复目录已存在。")
+        if not wal_target.is_dir():
+            raise RestoreDrillError("恢复要用的 WAL 还没放进演练目录。")
         materialize_base_backup(source, target)
-        shutil.copytree(backup_directory / "postgres" / "wal", wal_target, symlinks=True)
         (target / "recovery.signal").touch(mode=0o600)
         auto_config = target / "postgresql.auto.conf"
         with auto_config.open("a", encoding="utf-8", newline="\n") as stream:
-            stream.write(f"restore_command = '{RESTORE_COMMAND}'\n")
-            stream.write(f"recovery_target_name = '{restore_point_name}'\n")
-            stream.write("recovery_target_action = 'promote'\n")
+            stream.writelines(f"{line}\n" for line in recovery.settings())
 
         container_name = f"{self.config.project_name}-restore-{backup_directory.name[-8:]}"
         data_volume = f"{container_name}-data"
@@ -395,16 +394,18 @@ class ProductionRuntime:
                 capture=True,
             )
             started = True
-            self._wait_restored_postgres(container_name, timeout_seconds=180)
-            replayed = self._postgres_scalar(
-                container_name,
-                "postgres",
-                f"SELECT coalesce(pg_last_wal_replay_lsn() >= '{restore_point_lsn}'::pg_lsn, false)",
-            )
-            if replayed != "t":
-                logs = self._container_logs(container_name)
-                if f'restore point "{restore_point_name}"' not in logs:
-                    raise RestoreDrillError("隔离数据库没有到达指定 PITR 恢复点。")
+            # 从全量往后重放的 WAL 最多一天左右（specs/backups/design.md），给足时间。
+            self._wait_restored_postgres(container_name, timeout_seconds=900, recovery=recovery)
+            replayed = "f"
+            if recovery.lsn is not None:
+                replayed = self._postgres_scalar(
+                    container_name,
+                    "postgres",
+                    f"SELECT coalesce(pg_last_wal_replay_lsn() >= '{recovery.lsn}'::pg_lsn, false)",
+                )
+            logs = self._container_logs(container_name)
+            if not recovery.reached(logs, replayed_past_lsn=replayed == "t"):
+                raise RestoreDrillError("隔离数据库没有停在指定的 PITR 恢复目标上。")
             databases = tuple(
                 line
                 for line in self._postgres_scalar(
@@ -446,8 +447,8 @@ class ProductionRuntime:
             memberships = _named_integer(projection_output, "memberships")
             rooms = _named_integer(projection_output, "rooms")
             return DatabaseRestoreEvidence(
-                restore_point_name=restore_point_name,
-                restore_point_lsn=restore_point_lsn,
+                restore_point_name=recovery.name,
+                restore_point_lsn=recovery.lsn,
                 replay_reached_target=True,
                 logical_archives_verified=3,
                 databases_verified=databases,
@@ -455,6 +456,7 @@ class ProductionRuntime:
                 projection_rooms=rooms,
                 deletion_ledger_entries=deletion_entries,
                 deletion_replays_queued=deletion_replays,
+                target_time=recovery.time_text,
             )
         finally:
             if started:
@@ -462,7 +464,9 @@ class ProductionRuntime:
             for volume in reversed(created_volumes):
                 self._run_cleanup(["docker", "volume", "rm", "--force", volume])
 
-    def _wait_restored_postgres(self, container_name: str, *, timeout_seconds: int) -> None:
+    def _wait_restored_postgres(
+        self, container_name: str, *, timeout_seconds: int, recovery: RecoveryTarget
+    ) -> None:
         deadline = time.monotonic() + timeout_seconds
         last_error = "尚未就绪"
         while time.monotonic() < deadline:
@@ -472,7 +476,9 @@ class ProductionRuntime:
             ).strip()
             if running != "true":
                 logs = self._container_logs(container_name)
-                raise RestoreDrillError(f"隔离 PostgreSQL 在恢复完成前退出：{logs}")
+                raise RestoreDrillError(
+                    recovery.unreachable(logs) or f"隔离 PostgreSQL 在恢复完成前退出：{logs}"
+                )
             result = subprocess.run(
                 [
                     "docker",

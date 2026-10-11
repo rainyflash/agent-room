@@ -11,7 +11,7 @@ from prodops.backup import BackupError
 from prodops.config import DeploymentConfigError, load_deployment_config
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
-from prodops.restore import RestoreDrillError
+from prodops.restore import RestoreDrillError, RestoreTarget, parse_target_time
 from prodops.schedule import BackupScheduleError, BackupScheduleInstaller
 from prodops.secrets import SecretStoreError
 
@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, required=True, help="部署 JSON 配置")
     parser.add_argument("--state-dir", type=Path, required=True, help="持久状态与 Secret 目录")
     parser.add_argument("--backup-id", help="要校验或恢复的备份 ID")
+    parser.add_argument("--restore-point", help="restore-drill 恢复到这个名字的恢复点")
+    parser.add_argument(
+        "--target-time",
+        help="restore-drill 恢复到这一刻，要带时区，比如 2026-10-11T09:20:00Z",
+    )
     parser.add_argument(
         "--network-agent",
         help="要停用的网络 Agent：网络 Agent ID、它的 Agent ID，或还在用的名字",
@@ -98,11 +103,18 @@ def main() -> int:
                 installer.verify(installer.render())
                 print("备份调度已启用且正在运行。")
             case "restore-drill":
-                if not arguments.backup_id:
-                    raise ValueError("restore-drill 必须提供 --backup-id。")
-                report = runtime.restore_drill(arguments.backup_id)
+                # 三样都不给就恢复到最近一个核对过的恢复点。
+                target_time = arguments.target_time
+                report = runtime.restore_drill(
+                    RestoreTarget(
+                        backup_id=arguments.backup_id,
+                        restore_point=arguments.restore_point,
+                        time=None if target_time is None else parse_target_time(target_time),
+                    )
+                )
+                stop = report.database.target_time or report.database.restore_point_name
                 print(
-                    f"隔离恢复演练通过：{report.backup_id}，"
+                    f"隔离恢复演练通过：{report.backup_id}，恢复到 {stop}，"
                     f"耗时 {report.duration_seconds:.3f} 秒。"
                 )
             case "network-agent-disable":
