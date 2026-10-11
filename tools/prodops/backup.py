@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import os
@@ -26,6 +26,9 @@ BACKUP_ID: Final = re.compile(r"^[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}$")
 SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 # 全量里自带的 WAL：原样的段，或者压缩过的段。
 SET_WAL_SEGMENT: Final = re.compile(r"^postgres/wal/([0-9A-F]{24})(?:\.gz)?$")
+# 对象的镜像在 objects/mirror，同步时被删掉、被覆盖的旧版本按天放在 objects/removed/<日期>。
+OBJECT_BACKUPS: Final = "objects"
+REMOVAL_DAY: Final = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 LOCK_STALE_AFTER: Final = timedelta(hours=24)
 MINIMUM_BACKUP_HEADROOM_BYTES: Final = 2 * 1024 * 1024 * 1024
 MANIFEST_NAME: Final = "manifest.json"
@@ -386,6 +389,29 @@ class BackupRepository:
                 f"备份前磁盘余量不足：可用 {available} 字节，至少需要 {required} 字节。"
             )
         return required
+
+    def prune_object_removals(self, retention_days: int, *, now: datetime | None = None) -> tuple[str, ...]:
+        """按天删掉同步时挪走的旧对象：过了保留期的那天整个目录一起删。
+
+        某天挪走的对象最晚在那天之后第 `retention_days` 天删掉，备份里不会留得比保留期长。代价是
+        正好在那天做的、马上也要过期的那套快照，那天之后才删掉的对象取不回来了。
+        """
+
+        if not 7 <= retention_days <= 365:
+            raise BackupError("备份保留天数必须在 7–365 之间。")
+        root = self.root / OBJECT_BACKUPS / "removed"
+        if not root.is_dir():
+            return ()
+        cutoff = ((now or datetime.now(UTC)) - timedelta(days=retention_days)).date()
+        removed: list[str] = []
+        for path in sorted(root.iterdir(), key=lambda item: item.name):
+            if not REMOVAL_DAY.fullmatch(path.name) or path.is_symlink() or not path.is_dir():
+                continue
+            if date.fromisoformat(path.name) > cutoff:
+                continue
+            shutil.rmtree(path)
+            removed.append(path.name)
+        return tuple(removed)
 
     @property
     def wal_store(self) -> WalStore:

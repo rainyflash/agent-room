@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import hashlib
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
@@ -19,6 +21,8 @@ from tools.prodops.restore import (
     _prune_restore_drills,
     materialize_base_backup,
     prune_expired_restore_drills,
+    read_object_inventory,
+    restore_drill_root,
 )
 from tools.prodops.restore_point import restore_point_name
 from tools.prodops.secrets import SecretStore
@@ -31,15 +35,23 @@ START = datetime(2026, 8, 25, 13, 0, 0, tzinfo=UTC)
 
 
 class RestoreFixtureCapture:
-    def __init__(self, repository: Path) -> None:
+    """照 object-backup.sh 写出的样子：对象同步进仓库的镜像，快照只带清单。"""
+
+    def __init__(self, repository: Path, *, copies_objects: bool = False) -> None:
         self.repository = repository
+        self.copies_objects = copies_objects
 
     def capture_backup_payload(self, backup_id: str) -> None:
         staging = self.repository / f".partial-{backup_id}"
         for name in ("agent-room.dump", "synapse.dump", "keycloak.dump"):
             write(staging / "database" / name, name.encode())
-        write(staging / "objects" / "source-inventory.ndjson", b"{}\n")
-        write(staging / "objects" / "data" / "content.bin", b"object")
+        if self.copies_objects:
+            # 改成增量同步以前：每套快照把对象存储整份复制一遍。
+            write(staging / "objects" / "source-inventory.ndjson", b"{}\n")
+            write(staging / "objects" / "data" / "content.bin", b"object")
+        else:
+            write(self.repository / "objects" / "mirror" / "content.bin", b"object")
+            write(staging / "objects" / "source-inventory.ndjson", inventory_line("content.bin", b"object"))
         write(staging / "privacy" / "account-deletions.json", b'{"schemaVersion":1,"entries":[]}\n')
         write(staging / "postgres" / "base" / "backup_manifest", b"{}")
         write(
@@ -135,6 +147,55 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertTrue(backend.account_deletion_ledger.is_file())
         metrics = (self.repository_path / "metrics" / "restore.prom").read_text(encoding="utf-8")
         self.assertIn("agent_room_restore_drill_duration_seconds 12.000", metrics)
+
+    def drill(self) -> RestoreDrillCoordinator:
+        times = iter((START, START + timedelta(seconds=12)))
+        return RestoreDrillCoordinator(
+            self.config, self.paths, self.repository, FakeRestoreBackend(), clock=lambda: next(times)
+        )
+
+    def test_objects_removed_or_replaced_after_the_snapshot_come_back_from_that_day(self) -> None:
+        objects = self.repository_path / "objects"
+        # 快照之后同步时，这个对象被覆盖，旧版本挪进了当天的目录。
+        write(objects / "removed" / START.date().isoformat() / "content.bin", b"object")
+        write(objects / "mirror" / "content.bin", b"replaced")
+        # 快照那天以前挪走的不算：那时它还不是这个样子。
+        write(objects / "removed" / "2026-08-24" / "content.bin", b"stale")
+
+        report = self.drill().run(self.manifest.backup_id)
+
+        drill = restore_drill_root(self.paths) / f"{self.manifest.backup_id}-{START:%Y%m%dT%H%M%SZ}"
+        self.assertEqual((report.object_count, report.object_bytes), (1, 6))
+        self.assertEqual((drill / "objects" / "content.bin").read_bytes(), b"object")
+
+    def test_drill_fails_when_an_object_cannot_be_found(self) -> None:
+        objects = self.repository_path / "objects"
+        (objects / "mirror" / "content.bin").unlink()
+        write(objects / "removed" / "2026-08-24" / "content.bin", b"object")
+
+        with self.assertRaisesRegex(RestoreDrillError, "取不回来：content.bin"):
+            self.drill().run(self.manifest.backup_id)
+
+    def test_inventory_paths_must_stay_inside_the_mirror(self) -> None:
+        inventory = self.repository_path / "inventory.ndjson"
+        for path in ("../escape", "/etc/passwd", "content/../../escape", "content\\1", ""):
+            inventory.write_bytes(inventory_line(path, b"object"))
+            with self.subTest(path=path), self.assertRaisesRegex(RestoreDrillError, "字段不对"):
+                read_object_inventory(inventory)
+
+    def test_older_snapshots_restore_their_own_object_copies(self) -> None:
+        manifest = BackupCoordinator(
+            self.config,
+            self.paths,
+            RestoreFixtureCapture(self.repository_path, copies_objects=True),
+            self.repository,
+            clock=lambda: START - timedelta(hours=1),
+        ).create()
+        (self.repository_path / "objects" / "mirror" / "content.bin").unlink()
+
+        report = self.drill().run(manifest.backup_id)
+
+        self.assertEqual((report.object_count, report.object_bytes), (1, 6))
 
     def test_external_database_cannot_claim_local_pitr_drill(self) -> None:
         external = replace(self.config, database=replace(self.config.database, mode="external"))
@@ -279,6 +340,20 @@ class BaseBackupMaterializationTests(unittest.TestCase):
             with self.assertRaisesRegex(RestoreDrillError, "解不开"):
                 materialize_base_backup(source, root / "restored")
             self.assertFalse((root / "escape").exists())
+
+
+def inventory_line(path: str, content: bytes) -> bytes:
+    """rclone lsjson --hash --hash-type sha256 列本地镜像时的一项。"""
+
+    entry = {
+        "Path": path,
+        "Name": path.rsplit("/", 1)[-1],
+        "Size": len(content),
+        "ModTime": "2026-08-25T12:00:00.000000000Z",
+        "IsDir": False,
+        "Hashes": {"sha256": hashlib.sha256(content).hexdigest()},
+    }
+    return (json.dumps(entry) + "\n").encode()
 
 
 def write_tar_gz(path: Path, members: dict[str, bytes | None]) -> None:

@@ -74,11 +74,13 @@ python3 tools/production.py network-agent-disable \n  --config /etc/agent-room/d
 
 ## 自动备份与恢复演练
 
-`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm、对象清单和对象字节的一致性备份。每个物理快照只封装从基础备份起点到恢复点的必要 WAL 区间。`backup.recentRetentionHours`（默认 24）内保留全部高频快照，此后到 `retentionDays` 期限内每个 UTC 日保留最新一份。创建快照前还会按上一份快照体积执行磁盘余量门禁。
+`backup.rpoMinutes` 只允许 1–15 分钟。内置 PostgreSQL 会持续归档 WAL，并以相同周期强制切换 WAL；生产主机还必须安装 systemd timer，以相同周期创建包含三个数据库、Synapse signing key、OIDC Realm 和对象清单的一致性备份，对象本身增量同步进仓库里的一份镜像（见下）。每个物理快照只封装从基础备份起点到恢复点的必要 WAL 区间。`backup.recentRetentionHours`（默认 24）内保留全部高频快照，此后到 `retentionDays` 期限内每个 UTC 日保留最新一份。创建快照前还会按上一份快照体积执行磁盘余量门禁。
 
 WAL 一直留着（[specs/backups/design.md](../../specs/backups/design.md)）：每次备份做完快照，再打一个恢复点、切一次 WAL，把从上一个恢复点到这个恢复点之间的段用 `pg_waldump` 接着读一遍（`postgres-wal-archive.sh`）。读通了才 gzip 压缩、解压回来比一遍、记下 SHA-256，放进仓库的 `wal-store/`，往 `wal-store/restore-points.log` 记一行，最后才删宿主归档里的原文件；读不通就停下、什么都不删，这次备份算失败。第一次从当次的快照接起。`wal-store/` 只留保留下来的最老一份快照起点以后的段。归档命令先写临时文件、落盘再改名；PostgreSQL 还开了 `wal_compression=zstd`、`checkpoint_timeout=15min`。这几项写在 compose 的启动参数里，改了要重建 PostgreSQL 容器才生效，发版部署不重建它。
 
-物理快照是 `pg_basebackup` 的 tar 格式加 gzip（`postgres/base/base.tar.gz` 和备份期间流式取到的 `pg_wal.tar.gz`），约为普通目录格式的四分之一；`pg_verifybackup` 逐个核对压缩包里文件的校验和，WAL 用 `pg_waldump` 对快照里的归档区间另行解析。恢复时先解包，2026-10-09 以前的普通目录格式快照照样能恢复。改备份脚本或恢复代码时，PR 上会跑“生产物理备份实跑”（`tools/postgres_backup_e2e.py`），也可以在装了 Docker 的 Linux 上直接运行它。
+对象只传新的：每次备份由 `object-backup.sh` 用 `rclone sync` 把对象桶同步到仓库的 `objects/mirror/`，没变的不重新下载；同步时被删掉或被覆盖的旧版本挪进 `objects/removed/<UTC 日期>/`，那一天过了 `retentionDays` 整个目录删掉，所以删掉的对象在备份里留不过保留期。每套快照只带一份清单（`objects/source-inventory.ndjson`：同步完镜像里每个对象的路径、大小和 SHA-256）。恢复演练照清单先在镜像里、再在快照那天及以后挪走的旧版本里找，大小和 SHA-256 都对上才算，找不到就失败。改成增量同步以前的快照自己带着全部对象（`objects/data/`），照旧从里面取。
+
+物理快照是 `pg_basebackup` 的 tar 格式加 gzip（`postgres/base/base.tar.gz` 和备份期间流式取到的 `pg_wal.tar.gz`），约为普通目录格式的四分之一；`pg_verifybackup` 逐个核对压缩包里文件的校验和，WAL 用 `pg_waldump` 对快照里的归档区间另行解析。恢复时先解包，2026-10-09 以前的普通目录格式快照照样能恢复。改备份脚本或恢复代码时，PR 上会跑“生产备份实跑”（数据库是 `tools/postgres_backup_e2e.py`，对象是 `tools/object_backup_e2e.py`），也可以在装了 Docker 的 Linux 上直接运行它们。
 
 恢复演练在 `state-dir/restore-drills/` 留下还原出的完整副本，只留最近 2 次；定时备份清理时，所恢复快照已超过 `retentionDays` 的演练目录一并删除，副本不会比备份活得更久。
 

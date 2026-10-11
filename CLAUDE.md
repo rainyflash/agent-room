@@ -56,7 +56,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 本机跑要加 `--isolated`；不加会拒绝运行，免得结束正在用的 Agent Room。
   - 升级 `@tauri-apps/cli` 时，同步更新工具里固定的模板提交和哈希，单元测试会提醒。
   - 占位程序是 NSIS 编出来的，运行时一直以不许删改的方式开着自己，所以运行中挪不开。“桌面端挪开”这条路要在桌面端已退出的场景（WebView 还开着本机数据）里查；真正的桌面端运行时能改名，候选上的真实安装验收会查。
-- 改备份脚本、`tools/prodops/backup.py` 或 `restore.py` 时，PR 上会跑“生产物理备份实跑”（#362，`tools/postgres_backup_e2e.py`）：用生产同款 PostgreSQL 镜像实跑备份脚本，再按恢复点还原起库。同样按路径触发、不是必需检查，红了不能合。
+- 改备份脚本、`tools/prodops/backup.py` 或 `restore.py` 时，PR 上会跑“生产备份实跑”（#362，`tools/postgres_backup_e2e.py`）：用生产同款 PostgreSQL 镜像实跑备份脚本，再按恢复点还原起库。改 `object-backup.sh` 时它的另一个作业（`tools/object_backup_e2e.py`）用生产同款 SeaweedFS 和 rclone 同步两次，再照两套快照的清单取回对象。同样按路径触发、不是必需检查，红了不能合。
 - 已知的偶发失败，重跑即过：
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
   - 同一个用例以前偶发 `Failed to process outgoing request 1: AbortError: signal is aborted without reason`（编号 0 也见过）：退出登录时 `stopClient` 中止了还在发的加密请求，SDK 把错误拼成一句话记成错误。现在退出时只认这一句的格式、记成调试信息（`matrix-lifecycle-logger.ts`）；再红在这里，就是有请求没在退出时停下，要查，别只重跑。
@@ -185,9 +185,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 每天一份全量，中间的 WAL 一直留着（每段用 `pg_waldump` 接着读、压缩核对后才删原文件），最近三周以上任意时刻都能恢复；全量最近 7 天每天一份、更早的每周一份，备份里的东西最多 30 天（隐私说明页的承诺）。
   - 对象只传新的，被删的留 30 天；开 `wal_compression=zstd`，`checkpoint_timeout` 改 15 分钟。
   - 放到异地（rclone 加密远端放到 Akamai 另一个机房的对象存储，生产盘只留一天）是第 3 步，维护者 2026-10-10 说数据还不多、暂时不租存储空间，先不做。没配异地时备份全部留在生产盘上。
-- 维护者 2026-10-10 同意了设计。第 2 步只在生产盘上做，拆成：2a-1 WAL 一直留着（#397）、2a-2 对象增量同步、2a-3 每天一份全量和新的保留规则、按时间恢复的演练，2b 文档。
+- 维护者 2026-10-10 同意了设计。第 2 步只在生产盘上做，拆成：2a-1 WAL 一直留着（#397）、2a-2 对象增量同步（#398）、2a-3 每天一份全量和新的保留规则、按时间恢复的演练，2b 文档。
   - 2a-1 上线后要单独重建一次 PostgreSQL 容器：归档命令、`wal_compression`、`checkpoint_timeout` 写在启动参数里，发版部署不重建它。先确认备份空闲。
   - `wal-store/restore-points.log` 是 WAL 接成的链。接不上时这次备份算失败、RPO 告警；修不回来就把它改名留档，下一次从当次的快照重新接起（运维手册 AgentRoomBackupRpoBreached 一节）。
+  - 2a-2 起对象不再整份复制进每套快照：`rclone sync` 到仓库的 `objects/mirror/`，被删、被覆盖的旧版本挪进 `objects/removed/<UTC 日期>/`，那一天过了保留期整个删掉。快照只带同步完镜像的清单（路径、大小、SHA-256），恢复演练照清单从镜像和快照那天及以后挪走的旧版本里取，对不上就失败。之前的快照自带 `objects/data/`，照旧从里面取。
 
 ### 推广
 
