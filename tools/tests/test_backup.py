@@ -142,6 +142,17 @@ class BackupCoordinatorTests(unittest.TestCase):
             clock=lambda: moment,
         ).run(full=full)
 
+    def backup_metrics(self) -> str:
+        return (self.repository_path / "metrics" / "backup.prom").read_text(encoding="utf-8")
+
+    def bytes_outside_metrics(self) -> int:
+        metrics = self.repository_path / "metrics"
+        return sum(
+            path.stat().st_size
+            for path in self.repository_path.rglob("*")
+            if path.is_file() and metrics not in path.parents
+        )
+
     def external(self, observed_at: datetime):
         evidence_path = Path(self.temporary.name) / "provider.json"
         evidence_path.write_text(
@@ -278,17 +289,24 @@ class BackupCoordinatorTests(unittest.TestCase):
     def test_metrics_report_the_latest_full_and_the_repository_size(self) -> None:
         capture = FakeBackupCapture(self.repository_path)
         midnight = datetime(2026, 8, 25, 0, 5, tzinfo=UTC)
-        full = self.run_backup(capture, midnight).full
+        self.run_backup(capture, midnight)
         self.run_backup(capture, midnight + timedelta(minutes=15))
 
-        metrics = (self.repository_path / "metrics" / "backup.prom").read_text(encoding="utf-8")
+        metrics = self.backup_metrics()
         # 只打恢复点的那次照样报最近一份全量的时间：26 小时没有新的全量就告警。
         self.assertIn(f"agent_room_backup_last_full_timestamp_seconds {midnight.timestamp():.3f}", metrics)
-        size = re.search(r"^agent_room_backup_repository_bytes ([0-9]+)$", metrics, re.MULTILINE)
-        published = sum(
-            path.stat().st_size for path in (self.repository_path / full.backup_id).rglob("*") if path.is_file()
-        )
-        self.assertGreater(int(size.group(1)), published)
+        self.assertEqual(repository_bytes(metrics), self.bytes_outside_metrics())
+
+    def test_repository_size_counts_published_snapshots_from_their_manifests(self) -> None:
+        capture = FakeBackupCapture(self.repository_path)
+        midnight = datetime(2026, 8, 25, 0, 5, tzinfo=UTC)
+        full = self.run_backup(capture, midnight).full
+        # 发布了的快照不再改，按清单算，不逐个看里面的文件；这里故意改大一个，报的照旧是清单上的。
+        with (self.repository_path / full.backup_id / RETENTION_MARKER).open("ab") as marker:
+            marker.write(b"x" * 1000)
+        self.run_backup(capture, midnight + timedelta(minutes=15))
+
+        self.assertEqual(repository_bytes(self.backup_metrics()), self.bytes_outside_metrics() - 1000)
 
     def test_the_next_utc_day_starts_with_a_full_and_a_full_can_be_forced(self) -> None:
         capture = FakeBackupCapture(self.repository_path)
@@ -425,21 +443,26 @@ class BackupCoordinatorTests(unittest.TestCase):
         with self.assertRaisesRegex(BackupError, "摘要不匹配"):
             repository.verify(manifest.backup_id)
 
-    def test_manifest_rejects_path_traversal(self) -> None:
-        value = {
-            "schemaVersion": 1,
-            "backupId": "20260825T123456123456Z-0123abcd",
-            "createdAt": "2026-08-25T12:34:56Z",
-            "serverName": "agent-room.example",
-            "databaseMode": "embedded",
-            "objectStoreMode": "embedded",
-            "configSha256": "0" * 64,
-            "rpoMinutes": 15,
-            "artifacts": [{"path": "../escape", "byteLength": 1, "sha256": "0" * 64}],
-        }
+    def test_manifest_rejects_unsafe_paths_without_touching_the_filesystem(self) -> None:
+        def manifest(path: str) -> dict[str, object]:
+            return {
+                "schemaVersion": 1,
+                "backupId": "20260825T123456123456Z-0123abcd",
+                "createdAt": "2026-08-25T12:34:56Z",
+                "serverName": "agent-room.example",
+                "databaseMode": "embedded",
+                "objectStoreMode": "embedded",
+                "configSha256": "0" * 64,
+                "rpoMinutes": 15,
+                "artifacts": [{"path": path, "byteLength": 1, "sha256": "0" * 64}],
+            }
 
-        with self.assertRaisesRegex(BackupError, "安全的相对"):
-            BackupManifest.from_mapping(value)
+        # 读清单只看字面。以前每个工件都去文件系统 resolve 一遍，生产上读一遍清单要将近一分钟 CPU。
+        with patch.object(Path, "resolve", side_effect=AssertionError("读清单不该碰文件系统")):
+            BackupManifest.from_mapping(manifest("objects/data/content/v1/1f/object"))
+            for unsafe in ("../escape", "content/../../escape", "/etc/passwd", "content\\1", "a\x00b", "", ".", "./"):
+                with self.subTest(path=unsafe), self.assertRaisesRegex(BackupError, "安全的相对|非空短文本"):
+                    BackupManifest.from_mapping(manifest(unsafe))
 
     def test_prune_keeps_newest_even_when_all_are_expired(self) -> None:
         repository = BackupRepository(self.repository_path)
@@ -749,6 +772,13 @@ class BackupCoordinatorTests(unittest.TestCase):
 def write(path: Path, content: bytes) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.write_bytes(content)
+
+
+def repository_bytes(metrics: str) -> int:
+    match = re.search(r"^agent_room_backup_repository_bytes ([0-9]+)$", metrics, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"没有报备份仓库大小：{metrics}")
+    return int(match.group(1))
 
 
 def as_old_format(repository: Path, backup_id: str) -> None:
