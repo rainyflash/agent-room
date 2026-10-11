@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import re
 import secrets
 import shutil
+from stat import S_ISREG
 from typing import Callable, Final, Iterator, Protocol
 from uuid import UUID
 
@@ -627,13 +628,18 @@ class BackupCoordinator:
             return manifest, point
 
     def _report_success(self, last_success: datetime) -> None:
-        self.repository.write_metric_snapshot(
-            "backup",
-            (
-                f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
-                f"agent_room_backup_rpo_target_seconds {self.config.backup.rpo_minutes * 60}",
-            ),
-        )
+        # 只在成功时写：失败的那几次靠“最近成功”变旧叫人，归档积压也由它报。
+        lines = [
+            f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
+            f"agent_room_backup_rpo_target_seconds {self.config.backup.rpo_minutes * 60}",
+            f"agent_room_backup_repository_bytes {_repository_bytes(self.repository.root)}",
+        ]
+        backups = self.repository.published()
+        if backups:
+            lines.append(
+                f"agent_room_backup_last_full_timestamp_seconds {backups[-1].created_at.timestamp():.3f}"
+            )
+        self.repository.write_metric_snapshot("backup", tuple(lines))
 
     def _anchor(self, manifest: BackupManifest) -> WalAnchor:
         try:
@@ -676,6 +682,21 @@ class BackupCoordinator:
         source = Path(evidence_path)
         evidence = _load_provider_evidence(source, created_at, self.config.backup.rpo_minutes)
         _write_json(staging / "database" / "provider-pitr-evidence.json", evidence)
+
+
+def _repository_bytes(root: Path) -> int:
+    """仓库里常规文件加起来多大。读不了的目录（比如归 PostgreSQL 的归档目录）跳过，不让备份失败。"""
+
+    total = 0
+    for directory, _, files in os.walk(root):
+        for name in files:
+            try:
+                status = os.lstat(os.path.join(directory, name))
+            except OSError:
+                continue
+            if S_ISREG(status.st_mode):
+                total += status.st_size
+    return total
 
 
 def _inventory(directory: Path) -> tuple[BackupArtifact, ...]:

@@ -1,0 +1,43 @@
+name: 告警规则检查
+
+# 告警规则、它们的 promtool 单元测试和仪表盘以前只在运维手工跑 tools/observability.py validate 时检查。
+# 改到这些文件时在 PR 上跑一遍，免得规则写错了要等真出事才发现。
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/observability-rules.yml'
+      - 'infra/production/grafana/**'
+      - 'infra/production/observability-rules.test.yaml'
+      - 'infra/production/observability-rules.yaml'
+      - 'tools/observability.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/observability-rules.yml'
+      - 'infra/production/grafana/**'
+      - 'infra/production/observability-rules.test.yaml'
+      - 'infra/production/observability-rules.yaml'
+      - 'tools/observability.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: observability-rules-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: '1'
+
+jobs:
+  validate:
+    name: 校验告警规则、规则测试和仪表盘
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 校验告警规则、规则测试和仪表盘
+        run: python3 tools/observability.py validate

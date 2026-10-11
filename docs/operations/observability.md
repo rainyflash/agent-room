@@ -86,6 +86,12 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 内置 PostgreSQL 的“最近成功”是最近一个核对过的 WAL 恢复点（`wal-store/restore-points.log` 的最后一行）。快照做完、WAL 却接不上时，这次备份算失败：服务日志里是“WAL 读不通”“缺少 WAL 段”或“时间线变了”。先查宿主归档目录（`wal/`）和 `wal-store/` 缺了哪段、盘是否写满；归档目录里没收的段都还在，修好以后下一次备份会接着收。确认修不回来时，把 `restore-points.log` 改名留档：下一次定时备份看到没有恢复点记录，先做一份全量，从它重新接起；断开以前的时刻只能按各自的快照恢复。
 
+## AgentRoomBackupFullStale
+
+每个 UTC 日第一次定时备份做全量（`metrics/backup.prom` 的 `agent_room_backup_last_full_timestamp_seconds`），别的时候只打恢复点。全量做不成时那一次整个失败、下一次接着做全量，RPO 告警会先响，按那一节处理。只有这个响、RPO 没响，说明定时备份过了 UTC 零点还一直只打恢复点：对照服务器时钟和仓库里最新一套快照的时间，再看服务日志里每次打印的是“备份已原子发布”还是“恢复点已归档”。要马上补一份全量，运行 `production.py backup --full`。
+
+全量旧了不丢数据：恢复从旧的全量起、重放更多 WAL，只是更慢。
+
 ## AgentRoomRestoreDrillStale
 
 选择最近已验证备份执行隔离恢复演练，核对数据库、对象、Synapse signing key、OIDC Realm、投影重建和删除账本重放。成功报告和 `metrics/restore.prom` 必须由同一次演练生成。
@@ -99,4 +105,4 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 - Prometheus 保留 45 天；Alertmanager、Prometheus 与 Grafana 状态使用独立命名卷。
 - 前端只上报受限枚举的耗时或分数；不上报 URL、资源名、消息正文、标识符或本地文件路径。
 - API 路由使用框架匹配模板，未知方法收敛为 `OTHER`；不得把原始路径或自定义方法写入标签。
-- 备份与恢复 textfile 指标仅含时间戳、目标秒数和耗时，目录 `0755`、文件 `0644`，备份正文仍保持私有。
+- 备份与恢复 textfile 指标仅含时间戳、目标秒数、耗时和备份仓库的总字节数，目录 `0755`、文件 `0644`，备份正文仍保持私有。
