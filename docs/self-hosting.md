@@ -133,9 +133,9 @@ sudo python3 tools/self_host.py backup-verify \
   --state-dir /var/lib/agent-room
 ```
 
-Use `restore-drill` with the same arguments to prove an isolated recovery. A backup stored only on the application host is not disaster recovery.
+Use `restore-drill` to prove an isolated recovery. With `--backup-id` it restores that backup; `--restore-point NAME` or `--target-time 2026-10-11T09:20:00Z` restores to a named restore point or to a moment between restore points; with none of them it restores to the latest verified restore point. A backup stored only on the application host is not disaster recovery.
 
-Size the backup volume before enabling the timer. Every backup within `recentRetentionHours` is kept in full, so the recent set alone costs roughly `recentRetentionHours * 60 / rpoMinutes` backups; older ones are thinned to one per day up to `retentionDays`. With the defaults, a 15-minute RPO keeps 96 full backups for the first day. Lower `recentRetentionHours` when the host has limited disk: the RPO is unchanged, only the window of fine-grained restore points shrinks. Restore drills are kept for the five most recent runs; each one stores a complete isolated copy, so treat their space as comparable to a backup.
+Size the backup volume before enabling the timer. Every backup within `recentRetentionHours` is kept in full, so the recent set alone costs roughly `recentRetentionHours * 60 / rpoMinutes` backups; older ones are thinned to one per day up to `retentionDays`. With the defaults, a 15-minute RPO keeps 96 full backups for the first day. Lower `recentRetentionHours` when the host has limited disk: the RPO is unchanged, only the window of fine-grained restore points shrinks. Restore drills are kept for the two most recent runs; each one stores a complete isolated copy, so treat their space as comparable to a backup.
 
 ## Upgrade and stop
 

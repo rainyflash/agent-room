@@ -82,6 +82,8 @@ WAL 一直留着（[specs/backups/design.md](../../specs/backups/design.md)）�
 
 物理快照是 `pg_basebackup` 的 tar 格式加 gzip（`postgres/base/base.tar.gz` 和备份期间流式取到的 `pg_wal.tar.gz`），约为普通目录格式的四分之一；`pg_verifybackup` 逐个核对压缩包里文件的校验和，WAL 用 `pg_waldump` 对快照里的归档区间另行解析。恢复时先解包，2026-10-09 以前的普通目录格式快照照样能恢复。改备份脚本或恢复代码时，PR 上会跑“生产备份实跑”（数据库是 `tools/postgres_backup_e2e.py`，对象是 `tools/object_backup_e2e.py`），也可以在装了 Docker 的 Linux 上直接运行它们。
 
+恢复演练可以恢复到某一套快照自己的恢复点（`--backup-id`），也可以恢复到 `wal-store/restore-points.log` 里的任意一个恢复点（`--restore-point`），或者两个恢复点之间的某一刻（`--target-time`，要带时区）；都不给就是最近一个恢复点。后两种从目标之前最近的一套快照起，接上它之后一直留着的 WAL（每段先核对 SHA-256）重放到目标，对象照起点那套快照的清单取回。按时间恢复停在目标之后的第一次提交之前；目标到下一个恢复点之间没有提交时 PostgreSQL 停不下来，演练会说清楚、让你改用那个恢复点，那段时间的数据和它一样。
+
 恢复演练在 `state-dir/restore-drills/` 留下还原出的完整副本，只留最近 2 次；定时备份清理时，所恢复快照已超过 `retentionDays` 的演练目录一并删除，副本不会比备份活得更久。
 
 先渲染并审查 unit，再以 root 安装和核验：
@@ -108,6 +110,9 @@ sudo python3 tools/production.py backup-schedule-verify \
 sudo python3 tools/production.py backup --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 sudo python3 tools/production.py backup-verify --backup-id BACKUP_ID --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 sudo python3 tools/production.py restore-drill --backup-id BACKUP_ID --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+# 不给 --backup-id 就恢复到最近一个核对过的恢复点；也可以按名字（--restore-point）或者按时间（--target-time）。
+sudo python3 tools/production.py restore-drill --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+sudo python3 tools/production.py restore-drill --target-time 2026-10-11T09:20:00Z --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 sudo python3 tools/production.py backup-prune --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 ```
 
