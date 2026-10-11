@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=Path, required=True, help="部署 JSON 配置")
     parser.add_argument("--state-dir", type=Path, required=True, help="持久状态与 Secret 目录")
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="backup 马上做一份全量；不给时每个 UTC 日第一次做全量，别的时候只打恢复点",
+    )
     parser.add_argument("--backup-id", help="要校验或恢复的备份 ID")
     parser.add_argument("--restore-point", help="restore-drill 恢复到这个名字的恢复点")
     parser.add_argument(
@@ -79,8 +84,11 @@ def main() -> int:
             case "federation":
                 runtime.federation(timeout_seconds=15)
             case "backup":
-                manifest = runtime.backup()
-                print(f"备份已原子发布：{manifest.backup_id}")
+                run = runtime.scheduled_backup(full=arguments.full)
+                if run.full is not None:
+                    print(f"备份已原子发布：{run.full.backup_id}")
+                if run.point is not None:
+                    print(f"恢复点已归档：{run.point.name}")
             case "backup-verify":
                 if not arguments.backup_id:
                     raise ValueError("backup-verify 必须提供 --backup-id。")
