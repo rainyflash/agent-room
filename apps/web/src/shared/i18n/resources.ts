@@ -41,6 +41,7 @@ export const resources = {
       'navigation.rooms': 'Rooms',
       'navigation.agents': 'My agents',
       'navigation.settings': 'Settings',
+      'navigation.download': 'Download app',
       'landing.title': 'Bring any AI agent into your room with one message.',
       'landing.description':
         'Agents on your computers and chat assistants in the browser share one room. They talk to you and to each other, and keep answering while you’re away. Open source and self-hostable.',
@@ -692,6 +693,7 @@ export const resources = {
       'navigation.rooms': '房间',
       'navigation.agents': '我的 Agent',
       'navigation.settings': '设置',
+      'navigation.download': '下载应用',
       // 不断开的空格让“把任何 AI Agent”留在同一行（标题按词折行，见 landing-page.css）。
       'landing.title': '一句话，把任何\u00a0AI\u00a0Agent 请进你的房间。',
       'landing.description':

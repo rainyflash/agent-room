@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 const surfaces = [
@@ -32,7 +32,11 @@ for (const width of [1440, 390]) {
         );
       }
       if (name === 'settings-about-browser')
-        await expect(page.getByRole('link', { name: 'Source code on GitHub' })).toBeVisible();
+        await expect(
+          page
+            .getByRole('region', { name: 'Agent Room', exact: true })
+            .getByRole('link', { name: 'Source code on GitHub' }),
+        ).toBeVisible();
       await expect(page.getByRole('navigation', { name: 'Explore Agent Room' })).toBeVisible();
       await expectNoHorizontalOverflow(page);
       const scan = await new AxeBuilder({ page })
@@ -163,3 +167,63 @@ test('消息没连上时提示栈里常驻一条：登录超时给“重新连�
   await expect(notifications.getByText('Finish signing in in your browser')).toBeVisible();
   expect(failures).toEqual([]);
 });
+
+const MAC_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const MAC_INSTALLER = 'https://download.fixture.invalid/agent-room.dmg';
+
+// 网页登录以后也一眼找得到 GitHub 和下载：顶栏右边，地方不够时收成图标，名字、标志和四个去处
+// 都不被挤；桌面端顶栏没有这两样。
+for (const width of [1440, 1024, 390]) {
+  test(`网页顶栏：${String(width)}px 有 GitHub 和下载应用，桌面端没有`, async ({ browser }) => {
+    const context = await browser.newContext({
+      reducedMotion: 'reduce',
+      userAgent: MAC_USER_AGENT,
+      viewport: { width, height: width === 390 ? 844 : 1000 },
+    });
+    // 开发服务器的运行时清单里没有安装包地址，这里补一个 Mac 的。
+    await context.route('**/runtime-manifest.json', async (route) => {
+      const response = await route.fetch();
+      const manifest = (await response.json()) as Record<string, unknown>;
+      await route.fulfill({ response, json: { ...manifest, macosDownloadUrl: MAC_INSTALLER } });
+    });
+    const page = await context.newPage();
+    const failures = collectPageFailures(page);
+    const header = page.locator('.app-navigation');
+
+    await page.goto('/e2e/fixtures/my-agents.html?browser');
+    await expect(header.getByRole('link', { name: 'Source code on GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/rainyflash/agent-room',
+    );
+    const download = header.getByRole('link', { name: 'Download app' });
+    await expect(download).toBeVisible();
+    await expect(download).toHaveAttribute('href', MAC_INSTALLER);
+    await expect(download).toHaveAttribute('title', 'Download for Mac');
+    expect(await crowdedHeaderParts(page)).toEqual([]);
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .include('.app-navigation')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(scan.violations.map(({ id }) => id)).toEqual([]);
+
+    await page.goto('/e2e/fixtures/my-agents.html');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(header.getByRole('link', { name: 'Source code on GitHub' })).toHaveCount(0);
+    await expect(header.getByRole('link', { name: 'Download app' })).toHaveCount(0);
+    expect(await crowdedHeaderParts(page)).toEqual([]);
+    expect(failures).toEqual([]);
+    await context.close();
+  });
+}
+
+/** 顶栏里被挤得放不下的部分：名字和标志、四个去处。 */
+async function crowdedHeaderParts(page: Page): Promise<string[]> {
+  return await page.locator('.app-navigation').evaluate((header) =>
+    ['.app-navigation__identity', '.app-navigation__links'].filter((selector) => {
+      const part = header.querySelector(selector);
+      return part !== null && part.scrollWidth > part.clientWidth;
+    }),
+  );
+}
