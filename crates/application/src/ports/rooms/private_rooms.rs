@@ -1,6 +1,6 @@
 use agent_room_domain::{
     DomainError, DomainResult,
-    ids::{PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus},
     rooms::{
         MatrixRoomReference, RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus,
@@ -71,6 +71,14 @@ pub trait PrivateRoomAgentDirectory: Send + Sync {
         &self,
         principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>>;
+
+    /// 这个 Agent 是不是该主体名下、还在用的 Agent。Agent 替主体建房时，用它核对建房的
+    /// Agent 真是这个主体的。
+    fn owns_active_agent(
+        &self,
+        principal_id: PrincipalId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
 }
 
 /// 私人房间在 Matrix 上的最小硬边界能力。

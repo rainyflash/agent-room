@@ -2,10 +2,10 @@ use std::env;
 
 use agent_room_application::{
     persistence::RepositoryErrorKind,
-    ports::{PrivateRoomSnapshot, PrivateRoomStore},
+    ports::{PrivateRoomAgentDirectory, PrivateRoomSnapshot, PrivateRoomStore},
 };
 use agent_room_domain::{
-    ids::{PrincipalId, RoomCatalogId, RoomInstanceId},
+    ids::{AgentId, PrincipalId, RoomCatalogId, RoomInstanceId},
     private_rooms::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomLifecycleStatus,
         PrivateRoomMembershipStatus, PrivateRoomPermissions,
@@ -155,6 +155,93 @@ async fn 私人房间生命周期可完整往返且不依赖房主进程() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_建的房间记下建房的_agent_改动以后照旧在() {
+    let database = TestDatabase::connect().await;
+    let owner = seed_principal(&database.runtime, "agent-room-owner").await;
+    let member = seed_principal(&database.runtime, "agent-room-member").await;
+    let agent = seed_agent(&database.runtime, owner).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let created = snapshot_of(
+        catalog_id,
+        owner,
+        PrivateRoom::create_by_agent(catalog_id, owner, agent),
+    );
+    PrivateRoomStore::create(&repositories, &created, time(0))
+        .await
+        .expect("Agent 建的房间应能保存");
+    let loaded = PrivateRoomStore::find_by_catalog(&repositories, catalog_id)
+        .await
+        .expect("读取应成功")
+        .expect("私人房间应存在");
+    assert_eq!(loaded.room().created_by_agent(), Some(agent));
+
+    let mut room = loaded.room().clone();
+    room.invite(owner, member, ordinary_permissions())
+        .expect("房主可邀请");
+    PrivateRoomStore::save(&repositories, &room, loaded.room().version(), time(1))
+        .await
+        .expect("邀请应持久化");
+    let saved = PrivateRoomStore::find_by_catalog(&repositories, catalog_id)
+        .await
+        .expect("读取应成功")
+        .expect("私人房间应存在");
+    assert_eq!(
+        saved.room().created_by_agent(),
+        Some(agent),
+        "改动不碰建房的 Agent"
+    );
+
+    let person_catalog = RoomCatalogId::from_uuid(Uuid::now_v7());
+    PrivateRoomStore::create(&repositories, &snapshot(person_catalog, owner), time(2))
+        .await
+        .expect("人建的房间应能保存");
+    let person_room = PrivateRoomStore::find_by_catalog(&repositories, person_catalog)
+        .await
+        .expect("读取应成功")
+        .expect("私人房间应存在");
+    assert_eq!(person_room.room().created_by_agent(), None);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 只认主体名下还在用的_agent() {
+    let database = TestDatabase::connect().await;
+    let owner = seed_principal(&database.runtime, "agent-owner").await;
+    let stranger = seed_principal(&database.runtime, "agent-stranger").await;
+    let active = seed_agent(&database.runtime, owner).await;
+    let suspended = seed_agent(&database.runtime, owner).await;
+    sqlx::query("UPDATE agent_room.agent SET lifecycle_state = 'suspended' WHERE id = $1")
+        .bind(suspended.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .expect("停用 Agent 应成功");
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owns = |principal, agent| {
+        let repositories = &repositories;
+        async move {
+            PrivateRoomAgentDirectory::owns_active_agent(repositories, principal, agent)
+                .await
+                .expect("所有权查询应成功")
+        }
+    };
+
+    assert!(owns(owner, active).await);
+    assert!(!owns(stranger, active).await, "别人的 Agent 不算");
+    assert!(!owns(owner, suspended).await, "停用的 Agent 不算");
+    assert!(
+        !owns(owner, AgentId::from_uuid(Uuid::now_v7())).await,
+        "不存在的 Agent 不算"
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 改名只改目录上的名字_不存在的房间不会悄悄成功() {
     let database = TestDatabase::connect().await;
     let owner = seed_principal(&database.runtime, "rename-owner").await;
@@ -269,6 +356,14 @@ async fn 乐观锁拒绝并发覆盖且数据库约束拒绝伪造房主() {
 }
 
 fn snapshot(catalog_id: RoomCatalogId, owner: PrincipalId) -> PrivateRoomSnapshot {
+    snapshot_of(catalog_id, owner, PrivateRoom::create(catalog_id, owner))
+}
+
+fn snapshot_of(
+    catalog_id: RoomCatalogId,
+    owner: PrincipalId,
+    room: PrivateRoom,
+) -> PrivateRoomSnapshot {
     let catalog = RoomCatalog::new(
         catalog_id,
         RoomCatalogFields {
@@ -304,8 +399,41 @@ fn snapshot(catalog_id: RoomCatalogId, owner: PrincipalId) -> PrivateRoomSnapsho
         },
     )
     .expect("私人实例有效");
-    PrivateRoomSnapshot::new(catalog, instance, PrivateRoom::create(catalog_id, owner))
-        .expect("私人房间快照有效")
+    PrivateRoomSnapshot::new(catalog, instance, room).expect("私人房间快照有效")
+}
+
+/// 主体名下一个还在用的 Agent：先以停用状态写入，有了主人再激活（还在用的 Agent 必须有主人）。
+async fn seed_agent(pool: &PgPool, owner: PrincipalId) -> AgentId {
+    let agent = AgentId::from_uuid(Uuid::now_v7());
+    sqlx::query(
+        r"INSERT INTO agent_room.agent (
+               id, matrix_user_id, slug, display_name, description, visibility,
+               lifecycle_state, created_at, updated_at, version
+            ) VALUES ($1, $2, $3, '建房测试 Agent', '', 'private',
+                      'suspended', statement_timestamp(), statement_timestamp(), 0)",
+    )
+    .bind(agent.as_uuid())
+    .bind(format!("@_agent_{}:matrix.test", agent.as_uuid().simple()))
+    .bind(format!("agent-{}", agent.as_uuid().simple()))
+    .execute(pool)
+    .await
+    .expect("Agent 写入应成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.agent_ownership (
+               principal_id, agent_id, role, granted_by, created_at
+           ) VALUES ($1, $2, 'owner', $1, clock_timestamp())",
+    )
+    .bind(owner.as_uuid())
+    .bind(agent.as_uuid())
+    .execute(pool)
+    .await
+    .expect("Agent 所有权写入应成功");
+    sqlx::query("UPDATE agent_room.agent SET lifecycle_state = 'active' WHERE id = $1")
+        .bind(agent.as_uuid())
+        .execute(pool)
+        .await
+        .expect("建立主人后应能激活 Agent");
+    agent
 }
 
 async fn seed_principal(pool: &PgPool, suffix: &str) -> PrincipalId {

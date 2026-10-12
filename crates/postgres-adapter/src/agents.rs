@@ -36,6 +36,33 @@ impl PrivateRoomAgentDirectory for PostgresRepositories {
                 .collect()
         })
     }
+
+    fn owns_active_agent(
+        &self,
+        principal_id: agent_room_domain::ids::PrincipalId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, bool>(
+                r"SELECT EXISTS (
+                      SELECT 1
+                      FROM agent_room.agent AS agent
+                      JOIN agent_room.agent_ownership AS ownership
+                        ON ownership.agent_id = agent.id
+                      WHERE agent.id = $1
+                        AND ownership.principal_id = $2
+                        AND ownership.role = 'owner'
+                        AND ownership.revoked_at IS NULL
+                        AND agent.lifecycle_state = 'active'
+                  )",
+            )
+            .bind(agent_id.as_uuid())
+            .bind(principal_id.as_uuid())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("private_room_agent.owns_active_agent", &error))
+        })
+    }
 }
 
 impl AgentRepository for PostgresRepositories {

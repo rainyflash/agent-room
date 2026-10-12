@@ -3,7 +3,7 @@ use agent_room_application::{
     ports::{PortFuture, PrivateRoomSnapshot, PrivateRoomStore},
 };
 use agent_room_domain::{
-    ids::{PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::{
         PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMember, PrivateRoomMembershipStatus,
         PrivateRoomPermissions,
@@ -30,6 +30,7 @@ use super::decode::{
 
 const PRIVATE_ROOM_COLUMNS: &str = r"
     private_state.version AS private_room_version,
+    private_state.created_by_agent_id AS private_created_by_agent_id,
     membership.principal_id AS private_member_principal_id,
     membership.membership_status AS private_member_status,
     membership.permission_bits AS private_member_permission_bits";
@@ -230,17 +231,20 @@ async fn create_private_room(
 
     sqlx::query(
         r"INSERT INTO agent_room.private_room_state (
-               catalog_entry_id, room_instance_id, version, created_at, updated_at
+               catalog_entry_id, room_instance_id, version, created_at, updated_at,
+               created_by_agent_id
            ) VALUES (
                $1, $2, $3,
                to_timestamp($4::double precision / 1000.0),
-               to_timestamp($4::double precision / 1000.0)
+               to_timestamp($4::double precision / 1000.0),
+               $5
            )",
     )
     .bind(room.catalog_id().as_uuid())
     .bind(instance.id().as_uuid())
     .bind(room.version().value())
     .bind(created_at.value())
+    .bind(room.created_by_agent().map(AgentId::as_uuid))
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -467,6 +471,8 @@ fn decode_private_room(
     let catalog = decode_catalog(first, operation)?;
     let instance = decode_instance(first, operation)?;
     let version: i64 = decode_column(first, "private_room_version", operation)?;
+    let created_by_agent: Option<uuid::Uuid> =
+        decode_column(first, "private_created_by_agent_id", operation)?;
     let members = rows
         .iter()
         .map(|row| decode_member(row, operation))
@@ -485,6 +491,7 @@ fn decode_private_room(
         lifecycle,
         members,
         AggregateVersion::new(version).map_err(|_| corrupt_data(operation))?,
+        created_by_agent.map(AgentId::from_uuid),
     )
     .map_err(|_| corrupt_data(operation))?;
     PrivateRoomSnapshot::new(catalog, instance, room).map_err(|_| corrupt_data(operation))

@@ -25,7 +25,7 @@ use crate::{
 use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
     InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
-    PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
+    PrivateRoomActor, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
     PrivateRoomResult, RenamePrivateRoom, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
@@ -148,7 +148,8 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.create";
         let owner_matrix_user =
-            active_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
+            active_room_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
+        self.ensure_creator(&request, OPERATION).await?;
         if let Some(existing) = self.find(request.catalog_id, OPERATION).await? {
             return ensure_same_creation(&request, existing, OPERATION);
         }
@@ -626,23 +627,67 @@ impl PrivateRoomService {
         Ok(renamed)
     }
 
+    /// 人建房不带建房的 Agent；Agent 建房必须带，且是操作者名下还在用的 Agent，也不顺带邀请人
+    /// （之后一个个邀请）。
+    async fn ensure_creator(
+        &self,
+        request: &CreatePrivateRoom,
+        operation: &'static str,
+    ) -> PrivateRoomResult<()> {
+        let agent_id = match (request.actor.is_agent(), request.created_by_agent) {
+            (false, None) => return Ok(()),
+            (true, Some(agent_id)) if request.invitations.is_empty() => agent_id,
+            _ => {
+                return Err(failure(
+                    operation,
+                    PrivateRoomFailureStage::Validation,
+                    PrivateRoomFailureKind::InvalidRequest,
+                ));
+            }
+        };
+        let owned = self
+            .agents
+            .owns_active_agent(request.actor.principal_id(), agent_id)
+            .await
+            .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?;
+        if owned {
+            Ok(())
+        } else {
+            Err(failure(
+                operation,
+                PrivateRoomFailureStage::Validation,
+                PrivateRoomFailureKind::Forbidden,
+            ))
+        }
+    }
+
     async fn prepare_creation(
         &self,
         request: &CreatePrivateRoom,
-        owner_matrix_user: MatrixUserId,
+        owner_matrix_user: Option<MatrixUserId>,
         operation: &'static str,
     ) -> PrivateRoomResult<PreparedPrivateRoomCreation> {
-        let mut room = PrivateRoom::create(request.catalog_id, request.actor.principal_id);
+        let owner = request.actor.principal_id();
+        let mut room = match request.created_by_agent {
+            Some(agent_id) => PrivateRoom::create_by_agent(request.catalog_id, owner, agent_id),
+            None => PrivateRoom::create(request.catalog_id, owner),
+        };
         let mut invited_principals = BTreeSet::new();
-        let mut speaking_assignments = vec![PrivateMatrixSpeakingAssignment::new(
-            owner_matrix_user.clone(),
-            true,
-        )];
-        let mut matrix_invites = vec![owner_matrix_user];
-        let mut unique_matrix_users = BTreeSet::from([request.actor.matrix_user_id.clone()]);
+        let mut speaking_assignments = Vec::new();
+        let mut matrix_invites = Vec::new();
+        let mut unique_matrix_users = BTreeSet::new();
+        // 网络 Agent 的合成主体没有自己的 Matrix 账号：不邀请房主本人，房主由它的 Agent 代表进房间。
+        if let Some(owner_matrix_user) = owner_matrix_user {
+            unique_matrix_users.insert(owner_matrix_user.as_str().to_owned());
+            speaking_assignments.push(PrivateMatrixSpeakingAssignment::new(
+                owner_matrix_user.clone(),
+                true,
+            ));
+            matrix_invites.push(owner_matrix_user);
+        }
 
         for invitation in &request.invitations {
-            if invitation.principal_id == request.actor.principal_id
+            if invitation.principal_id == owner
                 || !invited_principals.insert(invitation.principal_id)
             {
                 return Err(failure(
@@ -651,12 +696,8 @@ impl PrivateRoomService {
                     PrivateRoomFailureKind::InvalidRequest,
                 ));
             }
-            room.invite(
-                request.actor.principal_id,
-                invitation.principal_id,
-                invitation.permissions,
-            )
-            .map_err(|error| domain(operation, &error))?;
+            room.invite(owner, invitation.principal_id, invitation.permissions)
+                .map_err(|error| domain(operation, &error))?;
             let user_id = self
                 .principal_matrix_user(invitation.principal_id, operation)
                 .await?;
@@ -725,7 +766,7 @@ impl PrivateRoomService {
                 description: request.description.clone(),
                 language: None,
                 matrix_space_id: None,
-                owner_principal_id: Some(request.actor.principal_id),
+                owner_principal_id: Some(request.actor.principal_id()),
                 visibility: RoomCatalogVisibility::Private,
                 retention_days: request.retention_days,
                 status: RoomCatalogStatus::Active,
@@ -1061,7 +1102,8 @@ fn ensure_same_creation(
     existing: PrivateRoomSnapshot,
     operation: &'static str,
 ) -> PrivateRoomResult<PrivateRoomSnapshot> {
-    let same = existing.room().owner_principal_id() == request.actor.principal_id
+    let same = existing.room().owner_principal_id() == request.actor.principal_id()
+        && existing.room().created_by_agent() == request.created_by_agent
         && existing.catalog().name() == request.name
         && existing.catalog().description() == request.description
         && existing.catalog().retention_days() == request.retention_days;
@@ -1122,6 +1164,33 @@ fn active_actor_matrix_user(
             PrivateRoomFailureKind::Internal,
         )
     })
+}
+
+/// 私人房间操作者还在有效期内时，给出它自己的 Matrix 账号；网络 Agent 没有，给空。
+fn active_room_actor_matrix_user(
+    actor: &PrivateRoomActor,
+    now: agent_room_domain::time::UtcMillis,
+    operation: &'static str,
+) -> PrivateRoomResult<Option<MatrixUserId>> {
+    if now >= actor.expires_at() {
+        return Err(failure(
+            operation,
+            PrivateRoomFailureStage::Validation,
+            PrivateRoomFailureKind::Forbidden,
+        ));
+    }
+    actor
+        .own_matrix_user_id()
+        .map(|user| {
+            MatrixUserId::new(user.to_owned()).map_err(|_| {
+                failure(
+                    operation,
+                    PrivateRoomFailureStage::Validation,
+                    PrivateRoomFailureKind::Internal,
+                )
+            })
+        })
+        .transpose()
 }
 
 fn matrix_room_id(
