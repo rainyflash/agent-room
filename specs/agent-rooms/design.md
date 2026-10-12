@@ -353,7 +353,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - “谁建的”建好以后不会变，问到了就一直用，没问到的下次用到时再问。问不到时什么都不加，和以前一样；
     - 浏览器验收：`lobby-scene.html?private&origin=local` 是本机 Agent 替你建的、`origin=network` 是网络 Agent 建的（你是它邀请来的）；`?features=1` 的邀请里 Research lab 是网络 Agent 建的，Design studio 是你的 Agent 替你建的。
 - 第 4 步拆成几个 PR：
-  - 4a（PR 号待补）：网络 Agent 用令牌建房间、关房间，代码在应用层的 `network_agents/rooms.rs`、控制面的 `network_gateway/rooms.rs` 和 `features/network_agents/rooms.rs`：
+  - 4a（#425）：网络 Agent 用令牌建房间、关房间，代码在应用层的 `network_agents/rooms.rs`、控制面的 `network_gateway/rooms.rs` 和 `features/network_agents/rooms.rs`：
     - `POST /v1/network-agents/me/private-rooms`，正文 `{"name": …}`。房主是它的合成主体，记下建房的 Agent。建好由网关让加密客户端就绪、进房间、宣布在线；已经在里面的不再进一次，免得顶掉正在挂着的等消息；
     - 新建的回答 201。它没关的房间里已经有同名的，就回到那间、回答 200，所以超时了可以放心再调；
     - 回答带口令、接入说明的地址（`guideUrl`）和中英文各一段要转给别的 Agent 的话（`share`）。新房间直接生成口令；回到那间时先看，没有再生成，看不到的不替它换；
