@@ -375,7 +375,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 和设计不一样的地方：
       - 看口令（`GET .../code`）没有口令时不替它生成，回答 `{"state": "missing"}`，要口令就 `PUT`：GET 不该有副作用。远程 MCP 的 `agent_room_room_access` 不带 `action` 时再像本机那样“先看，没有就生成”；
       - 回到同名房间时照旧“先看，没有就生成”，停用过的也一样：和本机 `agent_room_room_access` 不带 `action` 时一个规矩，停用只管到下次要口令为止。新口令只在这次回答里，不转出去就没人知道。
-    - 4b-2（PR 号待补）：邀请人和移出 Agent：
+    - 4b-2（#427）：邀请人和移出 Agent：
       - `POST /v1/network-agents/me/private-rooms/{房间号}/invitations`，正文 `{"accountId": …}`：只给查看和发言，回答 204。没有这个账户（网络 Agent 记账用的主体也算没有）回 404 `network_agent.account_not_found`；
       - 每个网络 Agent 每天最多发 20 个邀请（`NetworkAgentPolicy::invitations_per_agent_per_day`）。找不到账户的也算一次，免得拿它一个个试账户 ID；
       - `DELETE .../agents/{agentId}`：移出凭口令或敲门进来的 Agent，已经移出的也回答 204；不是这样进来的回 404 `network_agent.agent_not_in_room`；
