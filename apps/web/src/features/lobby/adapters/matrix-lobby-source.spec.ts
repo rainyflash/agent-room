@@ -12,6 +12,9 @@ import { MatrixSdkLobbySource, matrixAgentStatusEventType } from './matrix-lobby
 import type { AgentPresenceSource } from './matrix-presence-tracker';
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
+/** 这台设备上登录的人。 */
+const SELF = '@self:agent-room.test';
+
 describe('MatrixSdkLobbySource', () => {
   it('只从已加入房间的当前状态生成传输快照', () => {
     const statusContent = { eventType: matrixAgentStatusEventType };
@@ -25,6 +28,7 @@ describe('MatrixSdkLobbySource', () => {
     expect(source.read('!public:agent-room.test')).toEqual({
       kind: 'ready',
       room: {
+        canSpeak: true,
         encrypted: false,
         joinedMemberIds: ['@a:agent-room.test', '@z:agent-room.test'],
         name: '公开大厅',
@@ -47,6 +51,20 @@ describe('MatrixSdkLobbySource', () => {
     const read = new MatrixSdkLobbySource(registry).read('!public:agent-room.test');
 
     expect(read.kind === 'ready' && read.room.encrypted).toBe(true);
+  });
+
+  it('按 Matrix 的发言门槛说这台设备上的人能不能在这里发消息', () => {
+    const canSpeak = (state: RoomState, self: string | null = SELF) => {
+      const registry = new MatrixClientRegistry();
+      registry.replace(matrixClient(matrixRoom(state), self).value);
+      const read = new MatrixSdkLobbySource(registry).read('!public:agent-room.test');
+      return read.kind === 'ready' && read.room.canSpeak;
+    };
+
+    expect(canSpeak(matrixState({}))).toBe(true);
+    // 房间归档、被禁言或只能查看：发言门槛高过他的级别。
+    expect(canSpeak(matrixState({}, false, []))).toBe(false);
+    expect(canSpeak(matrixState({}), null)).toBe(false);
   });
 
   it.each(['invite', 'leave', 'ban'])('缓存中的 %s 房间不能继续显示在场人物', (membership) => {
@@ -129,7 +147,11 @@ describe('MatrixSdkLobbySource', () => {
   });
 });
 
-function matrixState(statusContent: unknown, encrypted = false): RoomState {
+function matrixState(
+  statusContent: unknown,
+  encrypted = false,
+  speakers: readonly string[] = [SELF],
+): RoomState {
   const statusEvent = {
     getContent: () => statusContent,
     getSender: () => '@a:agent-room.test',
@@ -151,6 +173,7 @@ function matrixState(statusContent: unknown, encrypted = false): RoomState {
       }
       return eventType === 'm.room.topic' && stateKey === '' ? topicEvent : null;
     },
+    maySendMessage: (userId: string) => speakers.includes(userId),
     roomId: '!public:agent-room.test',
   } as unknown as RoomState;
 }
@@ -171,12 +194,16 @@ function matrixRoom(
   } as unknown as Room;
 }
 
-function matrixClient(room: Room | null): {
+function matrixClient(
+  room: Room | null,
+  self: string | null = SELF,
+): {
   readonly value: MatrixClient;
 } {
   return {
     value: {
       getRoom: () => room,
+      getUserId: () => self,
     } as unknown as MatrixClient,
   };
 }

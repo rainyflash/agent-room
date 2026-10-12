@@ -235,6 +235,7 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
       }),
     ),
     archiveAfterDays,
+    canSpeak: room.canSpeak,
     encrypted: room.encrypted,
     joinedMemberIds: Object.freeze([...room.joinedMemberIds]),
     name: room.name,

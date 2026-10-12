@@ -115,9 +115,16 @@ const codeFixture = privateFixture ? new URLSearchParams(window.location.search)
 const originFixture = privateFixture
   ? new URLSearchParams(window.location.search).get('origin')
   : null;
-let room: LobbyRoom = privateFixture
-  ? { ...testRoom(fixtureAgentCount), encrypted: true }
-  : testRoom(fixtureAgentCount);
+// `?private&archived` 是归档了的私人房间：之前的消息照样看，谁都不能再说话，也不能再接入 Agent。
+const archivedFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('archived');
+// `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
+const mutedFixture = new URLSearchParams(window.location.search).has('muted');
+let room: LobbyRoom = {
+  ...testRoom(fixtureAgentCount),
+  ...(privateFixture ? { encrypted: true } : {}),
+  ...(archivedFixture || mutedFixture ? { canSpeak: false } : {}),
+};
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
 let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
 Object.defineProperty(window, '__agentRoomFixtureScene', {
@@ -648,7 +655,7 @@ const fixturePrivateRoom: PrivateRoom = {
   ownerPrincipalId: fixtureRoomOwner,
   retentionDays: 30,
   roomInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
-  status: 'active',
+  status: archivedFixture ? 'archived' : 'active',
   version: 3,
 };
 const privateRooms: PrivateRoomGateway = {

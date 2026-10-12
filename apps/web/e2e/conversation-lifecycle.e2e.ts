@@ -43,6 +43,30 @@ for (const width of [1440, 390]) {
   });
 }
 
+for (const width of [1440, 390]) {
+  test(`房间里不能发消息时（被禁言或只能查看）输入框关着并说清为什么，私聊照常：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/e2e/fixtures/lobby-scene.html?muted&view=conversation');
+    const notice = page.locator('.room-panel__read-only');
+    await expect(notice).toHaveText('You can read this room, but you can’t send messages here.');
+    await expect(notice).toHaveAttribute('role', 'status');
+    const room = page.locator('.workspace-room-content');
+    await expect(room.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
+    await expect(room.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+    await page.screenshot({ path: testInfo.outputPath(`read-only-room-${String(width)}.png`) });
+    // 私聊是另一个房间，照常能说。
+    await openExistingConversation(page);
+    await expect(notice).toBeHidden();
+    await expect(
+      page.locator('.direct-conversation').getByRole('textbox', { name: 'Message', exact: true }),
+    ).toBeEnabled();
+    expect(failures).toEqual([]);
+  });
+}
+
 test('资料实际显示后标为已读，并且不提前读取隐藏的聊天消息', async ({ page }) => {
   await page.goto('/e2e/fixtures/lobby-scene.html');
   await openExistingConversation(page);

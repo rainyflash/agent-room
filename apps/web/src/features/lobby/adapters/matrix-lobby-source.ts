@@ -15,6 +15,11 @@ export type MatrixLobbyStateEvent = {
 };
 
 export type MatrixLobbyRoomSnapshot = {
+  /**
+   * 这台设备上登录的人此刻能不能在这里发消息，按 Matrix 的发言门槛和他的级别算：房间归档、他被禁言
+   * 或只能查看时都不能。
+   */
+  readonly canSpeak: boolean;
   readonly encrypted: boolean;
   readonly joinedMemberIds: readonly string[];
   readonly name: string;
@@ -76,9 +81,11 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
       }),
     );
     const presence = this.#cardPresence(statusEvents, joinedMemberIds);
+    const self = client.getUserId();
     return {
       kind: 'ready',
       room: Object.freeze({
+        canSpeak: self !== null && state.maySendMessage(self),
         encrypted: state.getStateEvents('m.room.encryption', '') !== null,
         joinedMemberIds: Object.freeze(joinedMemberIds),
         name: room.name.trim() || roomId,
