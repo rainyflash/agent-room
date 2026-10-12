@@ -14,7 +14,8 @@ use agent_room_application::{
         PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord,
         PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway,
         PrivateRoomSnapshot, PrivateRoomStore, RoomAllocationMode, RoomAllocationStore,
-        RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome, SecretDigest,
+        RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome, SealedJoinCode,
+        SealedSecret, SecretDigest,
     },
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningOperation, LobbyProvisioningOutcome,
@@ -255,8 +256,15 @@ impl PrivateRoomAgentAccessStore for 固定口令成员仓储 {
         &'a self,
         _record: &'a PrivateRoomJoinCodeRecord,
         _digest: &'a SecretDigest,
+        _sealed: Option<&'a SealedSecret>,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async { unreachable!("入场不改口令") })
+    }
+    fn sealed_join_code(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SealedJoinCode>>> {
+        Box::pin(async { unreachable!("入场不看口令") })
     }
     fn clear_join_code(
         &self,

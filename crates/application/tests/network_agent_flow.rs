@@ -739,6 +739,13 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         unreachable!("网络 Agent 不管理口令")
     }
 
+    fn reveal_code(
+        &self,
+        _request: ManageJoinCode,
+    ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
+        unreachable!("网络 Agent 不管理口令")
+    }
+
     fn disable_code(&self, _request: ManageJoinCode) -> PortFuture<'_, AgentAccessResult<()>> {
         unreachable!("网络 Agent 不管理口令")
     }

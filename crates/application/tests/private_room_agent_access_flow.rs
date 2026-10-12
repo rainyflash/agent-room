@@ -1,4 +1,4 @@
-//! 私人房间 Agent 口令：房主生成与停用、Agent 凭口令加入、猜错限流、移出与再加入；
+//! 私人房间 Agent 口令：房主生成、再看与停用、Agent 凭口令加入、猜错限流、移出与再加入；
 //! 敲门：记下与再敲、放行与不让进、作废与房间满了限流。
 
 use std::{
@@ -11,12 +11,13 @@ use agent_room_application::{
     devices::AuthenticatedDevice,
     persistence::RepositoryResult,
     ports::{
-        AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, MatrixResult, MatrixRoomId,
-        MatrixUserId, PortFuture, PrincipalAccount, PrivateMatrixMembership,
+        AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, JoinCodeSealer, MatrixResult,
+        MatrixRoomId, MatrixUserId, PortFuture, PrincipalAccount, PrivateMatrixMembership,
         PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
         PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, SecretDigest,
-        SecretFactory, SecretGenerationFailure, SecretValue,
+        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, SealedJoinCode,
+        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
+        SecretValue,
     },
     private_rooms::{
         AGENT_KNOCK_TTL_MILLIS, AgentAccessFailureKind, AnswerKnock, InspectAgentAccess,
@@ -86,6 +87,114 @@ async fn 房主生成口令_再生成就替换旧的_查看时不含口令本身
         .expect("房主可以查看");
     assert_eq!(view.join_code, Some(second.record));
     assert!(view.agents.is_empty());
+}
+
+#[tokio::test]
+async fn 管理者能再看到口令_换了看到新的_停用以后没有() {
+    let fixture = Fixture::new();
+    let first = fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.service.reveal_code(manage(owner())).await.unwrap(),
+        first
+    );
+    assert!(
+        fixture.store.sealed_bytes().iter().all(|sealed| !sealed
+            .windows(12)
+            .any(|window| window == first.code.normalized().as_bytes())),
+        "库里存的是封存的口令"
+    );
+
+    let second = fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .service
+            .reveal_code(manage(owner()))
+            .await
+            .unwrap()
+            .code,
+        second.code
+    );
+    let member = fixture
+        .service
+        .reveal_code(manage(speaker()))
+        .await
+        .expect_err("普通成员看不到");
+    assert_eq!(member.kind(), AgentAccessFailureKind::Forbidden);
+
+    fixture.service.disable_code(manage(owner())).await.unwrap();
+    assert_eq!(
+        fixture
+            .service
+            .reveal_code(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::NotFound
+    );
+}
+
+#[tokio::test]
+async fn 以前的口令和封存不了的口令看不到_封存的不是当前口令也看不到() {
+    // 封存之前生成的只有摘要。
+    let fixture = Fixture::new();
+    fixture
+        .store
+        .install_code(PrivateRoomJoinCode::from_entropy([7; 8]));
+    assert_eq!(
+        fixture
+            .service
+            .reveal_code(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::NotRevealable
+    );
+
+    // 没配封存密钥时照样生成，只是看不到。
+    *fixture.sealer.unavailable.lock().unwrap() = true;
+    let unsealed = fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .expect("封存不了也照样生成");
+    assert!(fixture.store.has_digest(&unsealed.code));
+    *fixture.sealer.unavailable.lock().unwrap() = false;
+    assert_eq!(
+        fixture
+            .service
+            .reveal_code(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::NotRevealable
+    );
+
+    // 旧版控制面换口令时只写摘要，封存着的还是上一个：不把它给出去。
+    fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .install_code(PrivateRoomJoinCode::from_entropy([8; 8]));
+    assert_eq!(
+        fixture
+            .service
+            .reveal_code(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::NotRevealable
+    );
 }
 
 #[tokio::test]
@@ -658,6 +767,7 @@ async fn waiting_agents(fixture: &Fixture, actor: PrincipalId) -> Vec<AgentId> {
 struct Fixture {
     service: PrivateRoomAgentAccessService,
     store: Arc<MemoryAccessStore>,
+    sealer: Arc<FakeSealer>,
     matrix: Arc<RecordingMatrix>,
     clock: Arc<TestClock>,
 }
@@ -675,6 +785,7 @@ impl Fixture {
 
     fn with_room(room: PrivateRoom) -> Self {
         let store = Arc::new(MemoryAccessStore::default());
+        let sealer = Arc::new(FakeSealer::default());
         let matrix = Arc::new(RecordingMatrix::default());
         let clock = Arc::new(TestClock(Mutex::new(NOW)));
         let service = PrivateRoomAgentAccessService::new(PrivateRoomAgentAccessDependencies {
@@ -683,6 +794,7 @@ impl Fixture {
             memberships: Arc::new(FixedMemberships),
             matrix: matrix.clone(),
             secrets: Arc::new(CountingSecrets(Mutex::new(0))),
+            sealer: sealer.clone(),
             clock: clock.clone(),
             attempts: JoinCodeAttemptPolicy {
                 window: DurationMillis::new(u64::try_from(HOUR).unwrap()).unwrap(),
@@ -692,6 +804,7 @@ impl Fixture {
         Self {
             service,
             store,
+            sealer,
             matrix,
             clock,
         }
@@ -861,6 +974,45 @@ impl SecretFactory for CountingSecrets {
     }
 }
 
+/// 封存替身：把房间号和打乱过的明文拼在一起，换个房间就打不开；可以设成没配封存密钥。
+#[derive(Default)]
+struct FakeSealer {
+    unavailable: Mutex<bool>,
+}
+
+impl JoinCodeSealer for FakeSealer {
+    fn seal(
+        &self,
+        catalog_id: RoomCatalogId,
+        plaintext: &[u8],
+    ) -> Result<SealedSecret, SecretSealingFailure> {
+        if *self.unavailable.lock().unwrap() {
+            return Err(SecretSealingFailure::Unavailable);
+        }
+        let mut bytes = catalog_id.as_uuid().as_bytes().to_vec();
+        bytes.extend(plaintext.iter().map(|byte| byte ^ 0x5A));
+        Ok(SealedSecret {
+            key_version: 1,
+            bytes,
+        })
+    }
+
+    fn open(
+        &self,
+        catalog_id: RoomCatalogId,
+        sealed: &SealedSecret,
+    ) -> Result<Vec<u8>, SecretSealingFailure> {
+        if *self.unavailable.lock().unwrap() {
+            return Err(SecretSealingFailure::Unavailable);
+        }
+        let (room, body) = sealed.bytes.split_at(16);
+        if room != catalog_id.as_uuid().as_bytes() {
+            return Err(SecretSealingFailure::Corrupt);
+        }
+        Ok(body.iter().map(|byte| byte ^ 0x5A).collect())
+    }
+}
+
 struct FixedRooms(PrivateRoomSnapshot);
 
 impl PrivateRoomStore for FixedRooms {
@@ -998,6 +1150,8 @@ impl PrivateRoomMatrixGateway for RecordingMatrix {
 #[derive(Default)]
 struct MemoryAccessStore {
     codes: Mutex<BTreeMap<RoomCatalogId, ([u8; 32], PrivateRoomJoinCodeRecord)>>,
+    /// 封存的口令另放一处：`install_code` 像旧版控制面一样只写摘要，不碰它。
+    sealed: Mutex<BTreeMap<RoomCatalogId, SealedSecret>>,
     members: Mutex<BTreeMap<AgentId, PrivateRoomAgentMemberRecord>>,
     joined_via: Mutex<BTreeMap<AgentId, PrivateRoomAgentJoinedVia>>,
     attempts: Mutex<BTreeMap<String, (UtcMillis, u32)>>,
@@ -1040,6 +1194,15 @@ impl MemoryAccessStore {
             .unwrap()
             .values()
             .any(|(stored, _)| *stored == digest)
+    }
+
+    fn sealed_bytes(&self) -> Vec<Vec<u8>> {
+        self.sealed
+            .lock()
+            .unwrap()
+            .values()
+            .map(|sealed| sealed.bytes.clone())
+            .collect()
     }
 
     fn install_code(&self, code: PrivateRoomJoinCode) -> PrivateRoomJoinCode {
@@ -1097,14 +1260,38 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
         &'a self,
         record: &'a PrivateRoomJoinCodeRecord,
         digest: &'a SecretDigest,
+        sealed: Option<&'a SealedSecret>,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         self.codes
             .lock()
             .unwrap()
             .insert(record.catalog_id, (*digest.as_bytes(), record.clone()));
+        let mut stored = self.sealed.lock().unwrap();
+        match sealed {
+            Some(sealed) => stored.insert(record.catalog_id, sealed.clone()),
+            None => stored.remove(&record.catalog_id),
+        };
         Box::pin(async { Ok(()) })
     }
+    fn sealed_join_code(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SealedJoinCode>>> {
+        let sealed = self.sealed.lock().unwrap().get(&catalog_id).cloned();
+        let found = self
+            .codes
+            .lock()
+            .unwrap()
+            .get(&catalog_id)
+            .map(|(digest, record)| SealedJoinCode {
+                record: record.clone(),
+                digest: SecretDigest::from_array(*digest),
+                sealed,
+            });
+        Box::pin(async move { Ok(found) })
+    }
     fn clear_join_code(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, RepositoryResult<bool>> {
+        self.sealed.lock().unwrap().remove(&catalog_id);
         let removed = self.codes.lock().unwrap().remove(&catalog_id).is_some();
         Box::pin(async move { Ok(removed) })
     }

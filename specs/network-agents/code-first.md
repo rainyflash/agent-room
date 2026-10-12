@@ -57,3 +57,4 @@
 ## 状态
 
 - 2026-10-12：设计。
+- 2026-10-12：第 2 步服务端。迁移 `202610120001`，封存用 `AesGcmJoinCodeSealer`（子密钥用途 `agent-room:private-room:join-code-seal:v1`），`GET .../agent-access/code` 回 `{code, createdAtUnixMs}`；给 Agent 读的说明和远程 MCP 先讲口令。看不到口令的错误码 `join_code.not_revealable`，用例里是 `AgentAccessFailureKind::NotRevealable`。

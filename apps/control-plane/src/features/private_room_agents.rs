@@ -84,7 +84,7 @@ pub(crate) fn router(state: PrivateRoomAgentHttpState) -> Router {
         .route("/private-rooms/{catalog_id}/agent-access", get(inspect))
         .route(
             "/private-rooms/{catalog_id}/agent-access/code",
-            put(generate_code).delete(disable_code),
+            get(reveal_code).put(generate_code).delete(disable_code),
         )
         .route(
             "/private-rooms/{catalog_id}/agent-access/agents/{agent_id}",
@@ -107,7 +107,8 @@ pub(crate) fn router(state: PrivateRoomAgentHttpState) -> Router {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentAccessResponse {
-    /// 口令的元数据；口令本身只在生成时返回一次。
+    /// 口令的元数据。口令本身在生成的回答里，管理者再看走 `GET .../agent-access/code`：这份回答
+    /// 网页严格校验，旧版多看到一个字段就整个读不出来。
     join_code: Option<JoinCodeSummary>,
     agents: Vec<AgentMemberResponse>,
 }
@@ -283,6 +284,40 @@ async fn generate_code(
     {
         Ok(generated) => {
             no_store((StatusCode::OK, Json(GeneratedCodeResponse::from(generated))).into_response())
+        }
+        Err(failure) => no_store(ApiError::agent_access(failure, correlation_id).into_response()),
+    }
+}
+
+/// 管理者再看房间当前的口令（`specs/network-agents/code-first.md`）。和查看 Agent 进门一样凭有效
+/// 会话；没有口令回答 `join_code.not_found`，有却看不到回答 `join_code.not_revealable`。
+async fn reveal_code(
+    State(state): State<PrivateRoomAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Ok(catalog_id) = parse_uuid_v7(&catalog).map(RoomCatalogId::from_uuid) else {
+        return invalid_resource(correlation_id);
+    };
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .access
+        .reveal_code(ManageJoinCode { actor, catalog_id })
+        .await
+    {
+        Ok(code) => {
+            no_store((StatusCode::OK, Json(GeneratedCodeResponse::from(code))).into_response())
         }
         Err(failure) => no_store(ApiError::agent_access(failure, correlation_id).into_response()),
     }

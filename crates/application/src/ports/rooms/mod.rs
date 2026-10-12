@@ -29,9 +29,9 @@ pub use direct_sessions::{
     DirectSessionStore,
 };
 pub use private_room_agents::{
-    JoinCodeAttemptPolicy, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
-    PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberLookup, PrivateRoomAgentMemberRecord,
-    PrivateRoomJoinCodeRecord,
+    JoinCodeAttemptPolicy, JoinCodeSealer, PrivateRoomAgentAccessStore,
+    PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberLookup,
+    PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, SealedJoinCode,
 };
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,

@@ -5,7 +5,7 @@ use agent_room_application::{
     ports::{
         JoinCodeAttemptPolicy, MatrixUserId, PortFuture, PrivateRoomAgentAccessStore,
         PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, SecretDigest,
+        PrivateRoomJoinCodeRecord, SealedJoinCode, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -103,29 +103,60 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
         &'a self,
         record: &'a PrivateRoomJoinCodeRecord,
         digest: &'a SecretDigest,
+        sealed: Option<&'a SealedSecret>,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "private_room.join_code.replace";
             sqlx::query(
                 r"INSERT INTO agent_room.private_room_join_code
                       (catalog_entry_id, code_digest, permission_bits,
-                       created_by_principal_id, created_at)
-                  VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0))
+                       created_by_principal_id, created_at, sealed_code, sealed_code_key_version)
+                  VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0), $6, $7)
                   ON CONFLICT (catalog_entry_id) DO UPDATE
                      SET code_digest = EXCLUDED.code_digest,
                          permission_bits = EXCLUDED.permission_bits,
                          created_by_principal_id = EXCLUDED.created_by_principal_id,
-                         created_at = EXCLUDED.created_at",
+                         created_at = EXCLUDED.created_at,
+                         sealed_code = EXCLUDED.sealed_code,
+                         sealed_code_key_version = EXCLUDED.sealed_code_key_version",
             )
             .bind(record.catalog_id.as_uuid())
             .bind(digest.as_bytes().as_slice())
             .bind(i16::from(record.permissions.bits()))
             .bind(record.created_by.as_uuid())
             .bind(record.created_at.value())
+            .bind(sealed.map(|sealed| sealed.bytes.as_slice()))
+            .bind(
+                sealed
+                    .map(|sealed| i16::try_from(sealed.key_version))
+                    .transpose()
+                    .map_err(|_| corrupt_data(operation))?,
+            )
             .execute(self.pool())
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(())
+        })
+    }
+
+    fn sealed_join_code(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SealedJoinCode>>> {
+        Box::pin(async move {
+            let operation = "private_room.join_code.find_sealed";
+            let query = format!(
+                "SELECT {JOIN_CODE_COLUMNS}, code_digest, sealed_code, sealed_code_key_version
+                   FROM agent_room.private_room_join_code
+                  WHERE catalog_entry_id = $1"
+            );
+            let row = sqlx::query(sqlx::AssertSqlSafe(query))
+                .bind(catalog_id.as_uuid())
+                .fetch_optional(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|row| decode_sealed_join_code(&row, operation))
+                .transpose()
         })
     }
 
@@ -622,6 +653,32 @@ fn decode_join_code(
         created_by: PrincipalId::from_uuid(created_by),
         created_at: UtcMillis::new(created_at)
             .map_err(|error| map_domain_error(operation, &error))?,
+    })
+}
+
+fn decode_sealed_join_code(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<SealedJoinCode> {
+    let record = decode_join_code(row, operation)?;
+    let digest: Vec<u8> = decode_column(row, "code_digest", operation)?;
+    let digest = <[u8; 32]>::try_from(digest.as_slice())
+        .map(SecretDigest::from_array)
+        .map_err(|_| corrupt_data(operation))?;
+    let sealed_code: Option<Vec<u8>> = decode_column(row, "sealed_code", operation)?;
+    let key_version: Option<i16> = decode_column(row, "sealed_code_key_version", operation)?;
+    let sealed = match (sealed_code, key_version) {
+        (Some(bytes), Some(version)) => Some(SealedSecret {
+            key_version: u16::try_from(version).map_err(|_| corrupt_data(operation))?,
+            bytes,
+        }),
+        (None, None) => None,
+        _ => return Err(corrupt_data(operation)),
+    };
+    Ok(SealedJoinCode {
+        record,
+        digest,
+        sealed,
     })
 }
 

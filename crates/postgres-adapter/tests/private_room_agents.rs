@@ -1,5 +1,6 @@
-//! 私人房间 Agent 口令的真实数据库往返：口令只存摘要且一房一个、Agent 成员的加入与移出、猜错窗口，
-//! 以及网络 Agent 拿房间号敲门（`specs/network-agents/knock.md`）。
+//! 私人房间 Agent 口令的真实数据库往返：口令按摘要认且一房一个、封存的口令连同摘要存取
+//! （`specs/network-agents/code-first.md`）、Agent 成员的加入与移出、猜错窗口，以及网络 Agent
+//! 拿房间号敲门（`specs/network-agents/knock.md`）。
 
 use std::env;
 
@@ -8,7 +9,7 @@ use agent_room_application::{
     ports::{
         JoinCodeAttemptPolicy, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
         PrivateRoomAgentKnockRecord, PrivateRoomJoinCodeRecord, PrivateRoomSnapshot,
-        PrivateRoomStore, SecretDigest,
+        PrivateRoomStore, SealedJoinCode, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -59,7 +60,7 @@ async fn 口令只存摘要且一房一个_按摘要找回_停用后找不到() 
     let first = digest(1);
     let record = code_record(catalog_id, owner, time(0));
     repositories
-        .replace_join_code(&record, &first)
+        .replace_join_code(&record, &first, None)
         .await
         .expect("写入口令");
     assert_eq!(
@@ -74,7 +75,7 @@ async fn 口令只存摘要且一房一个_按摘要找回_停用后找不到() 
     let second = digest(2);
     let newer = code_record(catalog_id, owner, time(10));
     repositories
-        .replace_join_code(&newer, &second)
+        .replace_join_code(&newer, &second, None)
         .await
         .expect("更换口令");
     assert_eq!(
@@ -103,6 +104,83 @@ async fn 口令只存摘要且一房一个_按摘要找回_停用后找不到() 
     );
     assert_eq!(
         repositories.join_code(catalog_id).await.expect("读取"),
+        None
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 封存的口令连同摘要存取_换上没封存的口令时一起清掉() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "sealed-owner").await;
+    let catalog_id = seed_room(&repositories, owner).await;
+    assert_eq!(
+        repositories
+            .sealed_join_code(catalog_id)
+            .await
+            .expect("读取"),
+        None
+    );
+
+    let first = digest(3);
+    let record = code_record(catalog_id, owner, time(0));
+    let sealed = SealedSecret {
+        key_version: 1,
+        bytes: vec![7; 40],
+    };
+    repositories
+        .replace_join_code(&record, &first, Some(&sealed))
+        .await
+        .expect("写入");
+    assert_eq!(
+        repositories
+            .sealed_join_code(catalog_id)
+            .await
+            .expect("读取"),
+        Some(SealedJoinCode {
+            record: record.clone(),
+            digest: first,
+            sealed: Some(sealed),
+        })
+    );
+    assert_eq!(
+        repositories.join_code(catalog_id).await.expect("读取"),
+        Some(record),
+        "元数据照旧"
+    );
+
+    // 封存不了时换上的口令只有摘要，上一个封存的一起清掉。
+    let second = digest(4);
+    let newer = code_record(catalog_id, owner, time(10));
+    repositories
+        .replace_join_code(&newer, &second, None)
+        .await
+        .expect("更换");
+    assert_eq!(
+        repositories
+            .sealed_join_code(catalog_id)
+            .await
+            .expect("读取"),
+        Some(SealedJoinCode {
+            record: newer,
+            digest: second,
+            sealed: None,
+        })
+    );
+
+    assert!(
+        repositories
+            .clear_join_code(catalog_id)
+            .await
+            .expect("停用")
+    );
+    assert_eq!(
+        repositories
+            .sealed_join_code(catalog_id)
+            .await
+            .expect("读取"),
         None
     );
     database.close().await;

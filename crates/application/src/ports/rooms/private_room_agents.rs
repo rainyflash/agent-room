@@ -12,16 +12,46 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{MatrixUserId, PortFuture, SecretDigest},
+    ports::{MatrixUserId, PortFuture, SealedSecret, SecretDigest, SecretSealingFailure},
 };
 
-/// 房间当前的 Agent 口令。口令本身只在生成时出现一次，这里只有它的元数据。
+/// 房间当前的 Agent 口令的元数据。口令本身在生成的回答里，管理者再看时从封存的那份解开。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateRoomJoinCodeRecord {
     pub catalog_id: RoomCatalogId,
     pub permissions: PrivateRoomPermissions,
     pub created_by: PrincipalId,
     pub created_at: UtcMillis,
+}
+
+/// 房间当前的口令连同摘要和封存的那份（`specs/network-agents/code-first.md`）。封存之前生成的
+/// 口令只有摘要，`sealed` 为空；旧版控制面换口令时不写封存的那份，所以解开以后要核对摘要。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SealedJoinCode {
+    pub record: PrivateRoomJoinCodeRecord,
+    pub digest: SecretDigest,
+    pub sealed: Option<SealedSecret>,
+}
+
+/// 用部署配置里的封存密钥封存房间的口令。附加数据绑定房间，密文挪到别的房间打不开。
+pub trait JoinCodeSealer: Send + Sync {
+    /// # Errors
+    ///
+    /// 封存密钥没有配置时返回错误。
+    fn seal(
+        &self,
+        catalog_id: RoomCatalogId,
+        plaintext: &[u8],
+    ) -> Result<SealedSecret, SecretSealingFailure>;
+
+    /// # Errors
+    ///
+    /// 封存密钥没有配置、密文被改过或不属于这个房间时返回错误。
+    fn open(
+        &self,
+        catalog_id: RoomCatalogId,
+        sealed: &SealedSecret,
+    ) -> Result<Vec<u8>, SecretSealingFailure>;
 }
 
 /// 一个凭口令进来的 Agent 成员，带上房间设置里展示所需的名字。
@@ -79,12 +109,20 @@ pub trait PrivateRoomAgentAccessStore: Send + Sync {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomJoinCodeRecord>>>;
 
-    /// 换上新口令；房间原来的口令随之失效。
+    /// 换上新口令；房间原来的口令随之失效。`sealed` 是封存的口令，封存不了（没配封存密钥）时为空，
+    /// 这个口令以后就看不到了。
     fn replace_join_code<'a>(
         &'a self,
         record: &'a PrivateRoomJoinCodeRecord,
         digest: &'a SecretDigest,
+        sealed: Option<&'a SealedSecret>,
     ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 房间当前的口令连同摘要和封存的那份，给管理者再看。
+    fn sealed_join_code(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SealedJoinCode>>>;
 
     /// 停用口令；原本就没有时返回 `false`。
     fn clear_join_code(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, RepositoryResult<bool>>;
