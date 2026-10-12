@@ -270,6 +270,86 @@ async fn 真实_synapse_对方后建立身份时收到的消息刷新后可信()
     );
 }
 
+/// 说过话以后有人经服务器进了房间，本机没同步就接着说：发送前要重新拉成员名单，新来的人才分得到
+/// 房间密钥。网络 Agent 只在等消息时同步，在它建的房间里放行敲门后马上说话就是这样（2026-10-12
+/// 无头验收里，放进来的网络 Agent 一直解不开房主的消息）。
+#[tokio::test]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 真实_synapse_说过话以后有人进来_没同步就发言也给他房间密钥() {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let provisioner = application_service_provisioner(
+        &base_url,
+        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
+    );
+    let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
+    let speaker = managed_device(&provisioner, &factory).await;
+    establish_identity(&speaker).await;
+    let member = managed_device(&provisioner, &factory).await;
+    establish_identity(&member).await;
+    let speaker_user = speaker.matrix().session().metadata().user_id().clone();
+    let member_user = member.matrix().session().metadata().user_id().clone();
+    let room_id = PrivateRoomMatrixProvisioner::create(
+        &provisioner,
+        &private_room_creation(&speaker_user, &member_user),
+    )
+    .await
+    .expect("Application Service 必须能创建私人房间");
+    join_with_retry(speaker.matrix().gateway(), &room_id).await;
+    join_with_retry(member.matrix().gateway(), &room_id).await;
+    provisioner
+        .set_speaking_batch(
+            &room_id,
+            &[PrivateMatrixSpeakingAssignment::new(speaker_user, true)],
+        )
+        .await
+        .expect("说话的一方应获得发言能力");
+    sync_until_room(
+        speaker.matrix().gateway(),
+        &room_id,
+        MatrixRoomSyncKind::Joined,
+    )
+    .await;
+    // 先说一句：成员名单拉过了，房间密钥只给了当时在房间里的人。
+    speaker
+        .security_gateway_handle()
+        .ensure_room_ready(&room_id)
+        .await
+        .expect("说话的一方可以发送");
+    send_with_retry(
+        speaker.matrix().gateway(),
+        &room_id,
+        &message_event(unique_value("before-newcomer"), "新来的人进来之前的消息"),
+    )
+    .await;
+
+    // 新来的人由服务器邀请后自己加入；说话的一方不再同步，看不到这次加入。
+    let newcomer = managed_device(&provisioner, &factory).await;
+    establish_identity(&newcomer).await;
+    let newcomer_user = newcomer.matrix().session().metadata().user_id().clone();
+    PrivateRoomMatrixGateway::invite(&provisioner, &room_id, &newcomer_user)
+        .await
+        .expect("可以邀请新来的人");
+    join_with_retry(newcomer.matrix().gateway(), &room_id).await;
+
+    speaker
+        .security_gateway_handle()
+        .ensure_room_ready(&room_id)
+        .await
+        .expect("发送前必须能重新拉成员名单");
+    let sent = send_with_retry(
+        speaker.matrix().gateway(),
+        &room_id,
+        &message_event(unique_value("after-newcomer"), "新来的人进来以后的消息"),
+    )
+    .await;
+    let received = sync_until_event(newcomer.matrix().gateway(), &room_id, sent.event_id()).await;
+    assert_eq!(
+        received.event_type().as_str(),
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        "新来的人必须拿到房间密钥并解开这条消息"
+    );
+}
+
 /// 先入场的一方已有加密身份，并在后来者建立身份之前查询过它的设备（此时未签名）。
 ///
 /// 复现 Alpha 46 上 Agent 之间互相收不到消息的顺序：对方后来才建立身份，本机缓存却一直停在签名之前。

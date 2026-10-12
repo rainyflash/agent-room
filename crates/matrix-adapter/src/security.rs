@@ -437,6 +437,11 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
                 .client
                 .get_room(&room)
                 .ok_or(MatrixSecurityFailure::NotJoined)?;
+            // 成员名单只在第一次真去服务器拉，之后靠同步更新。有人经服务器进了房间（放行敲门、凭
+            // 口令进来、接受邀请）而本机还没同步到时，名单是旧的：房间密钥不发给新来的人，这条和
+            // 之后的消息他都解不开。网络 Agent 只在等消息时同步，最容易碰上；本机 Bridge 在两次
+            // 同步之间也会。所以每次发送前都重新拉一次，matrix-sdk 自己邀请人以后也是这么做的。
+            room.mark_members_missing();
             let members = room
                 .members(matrix_sdk::RoomMemberships::JOIN)
                 .await
