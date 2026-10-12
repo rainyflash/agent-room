@@ -157,7 +157,7 @@ async fn 替设备列房间只列账号的_agent_进得去的() {
     fixture
         .service
         .archive(ArchivePrivateRoom {
-            actor: fixture.owner_actor(),
+            actor: fixture.owner_actor().into(),
             catalog_id: fixture.catalog,
         })
         .await
@@ -279,6 +279,118 @@ async fn agent_建房要用自己名下的_agent_也不顺带邀请人() {
 }
 
 #[tokio::test]
+async fn agent_替主体邀请人_只在_agent_建的房间里_只给查看和发言() {
+    let fixture = Fixture::new();
+    fixture.agents.own(fixture.owner, agent_id(160));
+    let owner_device = || PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test"));
+    fixture
+        .service
+        .create(fixture.agent_creation_request(owner_device(), agent_id(160)))
+        .await
+        .expect("Agent 建房应成功");
+    let invite = |permissions| InvitePrivateRoomMember {
+        actor: owner_device(),
+        catalog_id: fixture.catalog,
+        target_principal_id: fixture.member,
+        permissions,
+    };
+
+    let too_little = fixture
+        .service
+        .invite(invite(viewer_permissions()))
+        .await
+        .expect_err("Agent 邀请的人只能查看和发言，不多不少");
+    assert_eq!(too_little.kind(), PrivateRoomFailureKind::InvalidRequest);
+
+    let invited = fixture
+        .service
+        .invite(invite(PrivateRoomPermissions::INVITED_BY_AGENT))
+        .await
+        .expect("Agent 建的房间里能替房主邀请人");
+    let member = invited.room().member(fixture.member).expect("受邀");
+    assert_eq!(member.status(), PrivateRoomMembershipStatus::Invited);
+    assert_eq!(
+        member.permissions(),
+        PrivateRoomPermissions::INVITED_BY_AGENT
+    );
+    assert_eq!(
+        fixture.matrix.speaking_allowed("@member:matrix.test"),
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn 人建的房间_agent_不能替人邀请() {
+    let fixture = Fixture::new();
+    fixture
+        .service
+        .create(fixture.creation_request(speaker_permissions()))
+        .await
+        .expect("人建房应成功");
+    fixture
+        .matrix
+        .set_membership(&Fixture::member_matrix(), PrivateMatrixMembership::Left);
+    fixture
+        .service
+        .decline(fixture.member_action())
+        .await
+        .expect("拒绝邀请应成功");
+
+    let refused = fixture
+        .service
+        .invite(InvitePrivateRoomMember {
+            actor: PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test")),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
+        })
+        .await
+        .expect_err("人建的房间要不要请人由人决定");
+    assert_eq!(refused.kind(), PrivateRoomFailureKind::Forbidden);
+}
+
+#[tokio::test]
+async fn 本机设备不能归档_网络_agent_能关自己的房间() {
+    let local = Fixture::new();
+    local.agents.own(local.owner, agent_id(161));
+    let owner_device = || PrivateRoomActor::Device(device(local.owner, "@owner:matrix.test"));
+    local
+        .service
+        .create(local.agent_creation_request(owner_device(), agent_id(161)))
+        .await
+        .expect("本机 Agent 建房应成功");
+    let refused = local
+        .service
+        .archive(ArchivePrivateRoom {
+            actor: owner_device(),
+            catalog_id: local.catalog,
+        })
+        .await
+        .expect_err("本机 Agent 建的房间由人在网页上关");
+    assert_eq!(refused.kind(), PrivateRoomFailureKind::Forbidden);
+
+    let network = Fixture::new();
+    let network_principal = principal_id(3);
+    network.agents.own(network_principal, agent_id(162));
+    let network_agent =
+        || PrivateRoomActor::NetworkAgent(device(network_principal, "@user-0123abcd:matrix.test"));
+    network
+        .service
+        .create(network.agent_creation_request(network_agent(), agent_id(162)))
+        .await
+        .expect("网络 Agent 建房应成功");
+    let archived = network
+        .service
+        .archive(ArchivePrivateRoom {
+            actor: network_agent(),
+            catalog_id: network.catalog,
+        })
+        .await
+        .expect("网络 Agent 能关自己的房间");
+    assert_eq!(archived.catalog().status().as_str(), "archived");
+}
+
+#[tokio::test]
 async fn 同一个房间_id_换了建房的_agent_算冲突() {
     let fixture = Fixture::new();
     fixture.agents.own(fixture.owner, agent_id(153));
@@ -311,7 +423,7 @@ async fn 建房之后邀请的成员按邀请的权限得到或收回发言级�
         Some(false)
     );
     let invite = |permissions| InvitePrivateRoomMember {
-        actor: fixture.owner_actor(),
+        actor: fixture.owner_actor().into(),
         catalog_id: fixture.catalog,
         target_principal_id: fixture.member,
         permissions,
@@ -623,7 +735,7 @@ async fn 归档先锁死_matrix_消息再原子归档产品状态() {
     let archived = fixture
         .service
         .archive(ArchivePrivateRoom {
-            actor: fixture.owner_actor(),
+            actor: fixture.owner_actor().into(),
             catalog_id: fixture.catalog,
         })
         .await

@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
+    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus, PrivateRoomPermissions},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
@@ -251,17 +251,24 @@ impl PrivateRoomService {
         request: InvitePrivateRoomMember,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.invite";
-        ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        ensure_active_room_actor(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
-        let changed = room
-            .invite(
-                request.actor.principal_id,
-                request.target_principal_id,
-                request.permissions,
-            )
-            .map_err(|error| domain(OPERATION, &error))?;
+        let actor = request.actor.principal_id();
+        let changed = if request.actor.is_agent() {
+            if request.permissions != PrivateRoomPermissions::INVITED_BY_AGENT {
+                return Err(failure(
+                    OPERATION,
+                    PrivateRoomFailureStage::Validation,
+                    PrivateRoomFailureKind::InvalidRequest,
+                ));
+            }
+            room.invite_by_agent(actor, request.target_principal_id)
+        } else {
+            room.invite(actor, request.target_principal_id, request.permissions)
+        }
+        .map_err(|error| domain(OPERATION, &error))?;
         let target = self
             .principal_matrix_user(request.target_principal_id, OPERATION)
             .await?;
@@ -575,12 +582,20 @@ impl PrivateRoomService {
         request: ArchivePrivateRoom,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.archive";
-        ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        ensure_active_room_actor(&request.actor, self.clock.now(), OPERATION)?;
+        // 本机 Agent 替人建的房间由人在网页上关（要最近验证过身份）；只有网络 Agent 能关自己的房间。
+        if matches!(request.actor, PrivateRoomActor::Device(_)) {
+            return Err(failure(
+                OPERATION,
+                PrivateRoomFailureStage::Validation,
+                PrivateRoomFailureKind::Forbidden,
+            ));
+        }
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .archive(request.actor.principal_id)
+            .archive(request.actor.principal_id())
             .map_err(|error| domain(OPERATION, &error))?;
         let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
         self.matrix
@@ -1166,19 +1181,29 @@ fn active_actor_matrix_user(
     })
 }
 
+fn ensure_active_room_actor(
+    actor: &PrivateRoomActor,
+    now: agent_room_domain::time::UtcMillis,
+    operation: &'static str,
+) -> PrivateRoomResult<()> {
+    if now < actor.expires_at() {
+        Ok(())
+    } else {
+        Err(failure(
+            operation,
+            PrivateRoomFailureStage::Validation,
+            PrivateRoomFailureKind::Forbidden,
+        ))
+    }
+}
+
 /// 私人房间操作者还在有效期内时，给出它自己的 Matrix 账号；网络 Agent 没有，给空。
 fn active_room_actor_matrix_user(
     actor: &PrivateRoomActor,
     now: agent_room_domain::time::UtcMillis,
     operation: &'static str,
 ) -> PrivateRoomResult<Option<MatrixUserId>> {
-    if now >= actor.expires_at() {
-        return Err(failure(
-            operation,
-            PrivateRoomFailureStage::Validation,
-            PrivateRoomFailureKind::Forbidden,
-        ));
-    }
+    ensure_active_room_actor(actor, now, operation)?;
     actor
         .own_matrix_user_id()
         .map(|user| {

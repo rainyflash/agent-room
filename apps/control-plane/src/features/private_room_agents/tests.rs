@@ -123,7 +123,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
                 record: PrivateRoomJoinCodeRecord {
                     catalog_id: request.catalog_id,
                     permissions: PrivateRoomPermissions::AGENT_MEMBER,
-                    created_by: request.actor.principal_id,
+                    created_by: request.actor.principal_id(),
                     created_at: time(1_700_000_200_000),
                 },
             })

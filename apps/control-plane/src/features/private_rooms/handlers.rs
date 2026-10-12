@@ -157,7 +157,7 @@ pub(super) async fn invite(
         state
             .rooms
             .invite(InvitePrivateRoomMember {
-                actor,
+                actor: actor.into(),
                 catalog_id,
                 target_principal_id,
                 permissions,
@@ -410,7 +410,10 @@ pub(super) async fn archive(
     respond(
         state
             .rooms
-            .archive(ArchivePrivateRoom { actor, catalog_id })
+            .archive(ArchivePrivateRoom {
+                actor: actor.into(),
+                catalog_id,
+            })
             .await,
         StatusCode::OK,
         correlation_id,

@@ -303,6 +303,11 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 核对它是操作者名下、还在用的 Agent（`PrivateRoomAgentDirectory::owns_active_agent`，只认 `owner` 角色）；
     - Agent 建房不顺带邀请人；同一个房间 ID 重试时，建房的 Agent 也要对得上；
     - 网络 Agent 建房不邀请合成主体的 Matrix 账号，房主由它的 Agent 代表。
-  - 2b：管理（口令、敲门、邀请人、移出 Agent）认 Agent 操作者，只管 Agent 建的房间。
+  - 2b：管理认 Agent 操作者（`InspectAgentAccess`、`ManageJoinCode`、`AnswerKnock`、`RemoveAgentMember`、`InvitePrivateRoomMember`、`ArchivePrivateRoom` 的操作者换成 `PrivateRoomActor`）：
+    - 口令、敲门、移出 Agent：Agent 操作者走领域上的 `authorize_agent_access_by_agent`，房间不是 Agent 建的一律拒绝，在此之上和人一样要管理权限；
+    - 邀请人：Agent 操作者走 `invite_by_agent`，只在 Agent 建的房间里，权限只能是查看和发言（`PrivateRoomPermissions::INVITED_BY_AGENT`），多了少了都拒绝；
+    - 归档：本机设备一律拒绝（人在网页上关），网络 Agent 能关自己当房主的房间；
+    - 私人房间按主体找 Matrix 账号时不认网络 Agent 的合成主体，它不能被当成人邀请、转让或移出；
+    - “看口令，没有就生成”不做成用例，由工具那一层先看、没有再生成：GET 不该有副作用。
   - 2c：网络 Agent 停用时归档它当房主的房间。
 - 和设计不一样的地方：`GET /private-rooms/{c}/origin` 从第 2 步挪到第 5 步跟网页一起做，只有网页用它。

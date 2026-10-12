@@ -146,16 +146,30 @@ impl ContentPrincipalIdentityLookup for PostgresRepositories {
     }
 }
 
+/// 只认人：网络 Agent 的合成主体没有 Matrix 账号（那个用户名从来没注册过），不能被当成人
+/// 邀请、转让或移出。
 impl PrivateRoomPrincipalDirectory for PostgresRepositories {
     fn matrix_user_id(
         &self,
         principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>> {
-        Box::pin(find_active_principal_matrix_user(
-            &self.pool,
-            principal_id,
-            "private_room_principal.matrix_user_id",
-        ))
+        Box::pin(async move {
+            let operation = "private_room_principal.matrix_user_id";
+            let matrix_user_id: Option<String> = sqlx::query_scalar(
+                r"SELECT matrix_user_id
+                  FROM agent_room.principal
+                  WHERE id = $1 AND status = 'active' AND oidc_issuer <> $2",
+            )
+            .bind(principal_id.as_uuid())
+            .bind(agent_room_domain::network_agents::NETWORK_AGENT_ISSUER)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            matrix_user_id
+                .map(MatrixUserId::new)
+                .transpose()
+                .map_err(|_| corrupt_data(operation))
+        })
     }
 }
 

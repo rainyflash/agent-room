@@ -17,8 +17,8 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 
+use super::PrivateRoomActor;
 use crate::{
-    authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
@@ -94,19 +94,19 @@ pub type AgentAccessResult<T> = Result<T, AgentAccessFailure>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectAgentAccess {
-    pub actor: AuthenticatedPrincipal,
+    pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManageJoinCode {
-    pub actor: AuthenticatedPrincipal,
+    pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveAgentMember {
-    pub actor: AuthenticatedPrincipal,
+    pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
     pub agent_id: AgentId,
 }
@@ -157,7 +157,7 @@ pub enum KnockResult {
 /// 管理者对一次敲门的回答：放行或不让进。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnswerKnock {
-    pub actor: AuthenticatedPrincipal,
+    pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
     pub agent_id: AgentId,
 }
@@ -319,7 +319,7 @@ impl PrivateRoomAgentAccessService {
         let record = PrivateRoomJoinCodeRecord {
             catalog_id: request.catalog_id,
             permissions: PrivateRoomPermissions::AGENT_MEMBER,
-            created_by: request.actor.principal_id,
+            created_by: request.actor.principal_id(),
             created_at: self.clock.now(),
         };
         // 封存不了（没配封存密钥）时照样生成，只是以后看不到。
@@ -600,7 +600,7 @@ impl PrivateRoomAgentAccessService {
                 request.catalog_id,
                 request.agent_id,
                 status,
-                request.actor.principal_id,
+                request.actor.principal_id(),
                 self.clock.now(),
             )
             .await
@@ -699,14 +699,15 @@ impl PrivateRoomAgentAccessService {
         Ok((record, snapshot))
     }
 
-    /// 操作者看得见这个房间（受邀或已加入），并且有管理 Agent 口令的权限。
+    /// 操作者看得见这个房间（受邀或已加入），并且有管理 Agent 口令的权限。Agent 替主体操作时
+    /// 只管 Agent 建的房间。
     async fn managed_room(
         &self,
-        actor: &AuthenticatedPrincipal,
+        actor: &PrivateRoomActor,
         catalog_id: RoomCatalogId,
         operation: &'static str,
     ) -> AgentAccessResult<PrivateRoomSnapshot> {
-        if self.clock.now() >= actor.expires_at {
+        if self.clock.now() >= actor.expires_at() {
             return Err(AgentAccessFailure::new(
                 operation,
                 AgentAccessFailureKind::Forbidden,
@@ -720,7 +721,7 @@ impl PrivateRoomAgentAccessService {
             .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
         let visible = snapshot
             .room()
-            .member(actor.principal_id)
+            .member(actor.principal_id())
             .is_some_and(|member| {
                 matches!(
                     member.status(),
@@ -733,10 +734,13 @@ impl PrivateRoomAgentAccessService {
                 AgentAccessFailureKind::NotFound,
             ));
         }
-        snapshot
-            .room()
-            .authorize_agent_access(actor.principal_id)
-            .map_err(|error| domain(operation, &error))?;
+        let room = snapshot.room();
+        if actor.is_agent() {
+            room.authorize_agent_access_by_agent(actor.principal_id())
+        } else {
+            room.authorize_agent_access(actor.principal_id())
+        }
+        .map_err(|error| domain(operation, &error))?;
         Ok(snapshot)
     }
 }
