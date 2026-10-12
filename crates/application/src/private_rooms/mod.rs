@@ -20,4 +20,6 @@ pub use models::{
     PrivateRoomActor, PrivateRoomInvitation, PrivateRoomMembershipAction, RenamePrivateRoom,
     TransferPrivateRoomOwnership,
 };
-pub use service::{PrivateRoomDependencies, PrivateRoomService, PrivateRoomUseCases};
+pub use service::{
+    PrivateRoomDependencies, PrivateRoomRetirement, PrivateRoomService, PrivateRoomUseCases,
+};

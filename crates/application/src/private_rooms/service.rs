@@ -2,7 +2,10 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus, PrivateRoomPermissions},
+    private_rooms::{
+        PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMembershipStatus,
+        PrivateRoomPermissions,
+    },
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
@@ -102,6 +105,14 @@ pub trait PrivateRoomUseCases: Send + Sync {
         &self,
         request: RenamePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+}
+
+/// 没有操作者的归档：停用的网络 Agent 当房主的房间由系统关掉（`specs/agent-rooms/design.md`）。
+/// 和 [`PrivateRoomUseCases`] 分开，只交给网络 Agent 的网关。
+pub trait PrivateRoomRetirement: Send + Sync {
+    /// 关掉 `owner` 当房主、还在用的私人房间，返回这次关了几个。副作用和房主自己归档一样：
+    /// 锁死 Matrix 上的发言、改目录状态。一个关不成就报错，已经关上的下次跳过。
+    fn archive_owned_by(&self, owner: PrincipalId) -> PortFuture<'_, PrivateRoomResult<usize>>;
 }
 
 pub struct PrivateRoomDependencies {
@@ -592,19 +603,52 @@ impl PrivateRoomService {
             ));
         }
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.archive_as_owner(snapshot, request.actor.principal_id(), OPERATION)
+            .await
+    }
+
+    async fn archive_owned_by_internal(&self, owner: PrincipalId) -> PrivateRoomResult<usize> {
+        const OPERATION: &str = "private_room.archive_owned";
+        let rooms = self
+            .store
+            .list_for_principal(owner)
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
+        let mut archived = 0;
+        for snapshot in rooms {
+            let room = snapshot.room();
+            if room.owner_principal_id() != owner
+                || room.status() == PrivateRoomLifecycleStatus::Archived
+            {
+                continue;
+            }
+            self.archive_as_owner(snapshot, owner, OPERATION).await?;
+            archived += 1;
+        }
+        Ok(archived)
+    }
+
+    /// 以房主的身份归档：先锁死 Matrix 上的发言（重复设也不出错），再存目录状态。存失败时
+    /// 房间还算在用，再来一次会重走一遍。
+    async fn archive_as_owner(
+        &self,
+        snapshot: PrivateRoomSnapshot,
+        owner: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .archive(request.actor.principal_id())
-            .map_err(|error| domain(OPERATION, &error))?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+            .archive(owner)
+            .map_err(|error| domain(operation, &error))?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .archive(&matrix_room)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+            .map_err(|error| matrix(operation, error))?;
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn rename_internal(
@@ -1086,6 +1130,12 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: RenamePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.rename_internal(request))
+    }
+}
+
+impl PrivateRoomRetirement for PrivateRoomService {
+    fn archive_owned_by(&self, owner: PrincipalId) -> PortFuture<'_, PrivateRoomResult<usize>> {
+        Box::pin(self.archive_owned_by_internal(owner))
     }
 }
 

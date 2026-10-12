@@ -21,7 +21,8 @@ use agent_room_application::{
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
         ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomDependencies,
         PrivateRoomFailureKind, PrivateRoomInvitation, PrivateRoomMembershipAction,
-        PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
+        PrivateRoomRetirement, PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom,
+        TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -388,6 +389,76 @@ async fn 本机设备不能归档_网络_agent_能关自己的房间() {
         .await
         .expect("网络 Agent 能关自己的房间");
     assert_eq!(archived.catalog().status().as_str(), "archived");
+}
+
+#[tokio::test]
+async fn 网络_agent_停用时系统关掉它当房主的房间_没关成下次接着关_关上的不再动() {
+    let fixture = Fixture::new();
+    let network_principal = principal_id(3);
+    fixture.agents.own(network_principal, agent_id(163));
+    fixture
+        .service
+        .create(fixture.agent_creation_request(
+            PrivateRoomActor::NetworkAgent(device(network_principal, "@user-0123abcd:matrix.test")),
+            agent_id(163),
+        ))
+        .await
+        .expect("网络 Agent 建房应成功");
+    fixture.clear_events();
+
+    fixture.store.fail_next_save.store(true, Ordering::SeqCst);
+    fixture
+        .service
+        .archive_owned_by(network_principal)
+        .await
+        .expect_err("存不进去就报错，留给下一次");
+    fixture.clear_events();
+    assert_eq!(
+        fixture
+            .service
+            .archive_owned_by(network_principal)
+            .await
+            .expect("下一次接着关"),
+        1
+    );
+    assert_eq!(fixture.events(), ["matrix.archive", "store.save"]);
+    let stored = fixture.store.snapshot.lock().expect("快照锁正常").clone();
+    assert_eq!(
+        stored.expect("房间还在").catalog().status().as_str(),
+        "archived"
+    );
+
+    fixture.clear_events();
+    assert_eq!(
+        fixture
+            .service
+            .archive_owned_by(network_principal)
+            .await
+            .expect("再来一次也不出错"),
+        0
+    );
+    assert!(fixture.events().is_empty(), "关上的不再动 Matrix");
+}
+
+#[tokio::test]
+async fn 系统只关房主的房间_成员的不动() {
+    let fixture = Fixture::new();
+    fixture
+        .service
+        .create(fixture.creation_request(speaker_permissions()))
+        .await
+        .expect("人建房应成功");
+    fixture.clear_events();
+
+    assert_eq!(
+        fixture
+            .service
+            .archive_owned_by(fixture.member)
+            .await
+            .expect("没有它当房主的房间"),
+        0
+    );
+    assert!(fixture.events().is_empty());
 }
 
 #[tokio::test]

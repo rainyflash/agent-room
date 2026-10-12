@@ -54,6 +54,7 @@ async fn run_worker(gateway: Arc<NetworkGateway>, mut stop_requested: oneshot::R
                 Ok(outcome) if outcome == NetworkAgentCleanupOutcome::default() => {}
                 Ok(outcome) => tracing::info!(
                     disabled = outcome.disabled,
+                    archived = outcome.archived,
                     left = outcome.left,
                     abandoned = outcome.abandoned,
                     retrying = outcome.retrying,
