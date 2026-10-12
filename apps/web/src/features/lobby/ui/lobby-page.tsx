@@ -1,5 +1,15 @@
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
-import { Bot, Files, Maximize2, MessageCircle, Minimize2, UsersRound, X } from 'lucide-react';
+import {
+  Archive,
+  Bot,
+  Files,
+  Maximize2,
+  MessageCircle,
+  MessageSquareOff,
+  Minimize2,
+  UsersRound,
+  X,
+} from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -48,7 +58,10 @@ import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { WorkspaceNavigation } from '@/features/lobby/ui/workspace-navigation';
 import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
-import { usePrivateRoomOrigin } from '@/features/private-rooms/data/private-room-queries';
+import {
+  usePrivateRoomList,
+  usePrivateRoomOrigin,
+} from '@/features/private-rooms/data/private-room-queries';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
 import './lobby-game.css';
@@ -175,6 +188,19 @@ function ReadyLobby({
     catalogId,
     principal !== null && room.encrypted === true,
   );
+  // 归档了的私人房间照样打得开、看得到之前的消息，只是谁都不能再说话、也不能再接入 Agent。
+  const privateRoomList = usePrivateRoomList(
+    privateRooms,
+    principal?.principalId,
+    principal !== null && room.encrypted === true,
+  );
+  const archived =
+    privateRoomList.data?.ok === true &&
+    privateRoomList.data.value.some(
+      (entry) => entry.catalogId === catalogId && entry.status === 'archived',
+    );
+  // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
+  const writesAllowed = !archived && room.canSpeak !== false;
   const projection = useMemo(
     () => ({
       ...scene,
@@ -294,6 +320,7 @@ function ReadyLobby({
       <RoomBeacon
         agentCount={attendance.present}
         privateRoom={room.encrypted === true}
+        archived={archived}
         serverReadable={origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent}
         membersButtonRef={membersButton}
         roomName={room.name}
@@ -306,7 +333,7 @@ function ReadyLobby({
         {...(room.topic === undefined ? {} : { topic: room.topic })}
       />
       <p className="room-scene-hint">{t('roomGame.hint')}</p>
-      {attendance.present === 0 ? (
+      {attendance.present === 0 && !archived ? (
         <div className="room-empty-presence" role="status">
           <strong>
             {t(attendance.reconnecting > 0 ? 'studio.reconnectingRoom' : 'studio.emptyRoom')}
@@ -398,20 +425,22 @@ function ReadyLobby({
             {t('roomGame.charactersShort')}
           </span>
         </button>
-        <button
-          type="button"
-          aria-haspopup="dialog"
-          aria-expanded={inviteOpen}
-          onClick={() => {
-            setInviteOpen(true);
-          }}
-        >
-          <Bot aria-hidden="true" />
-          <span className="room-toolbelt__label">{t('agentInvite.open')}</span>
-          <span className="room-toolbelt__short" aria-hidden="true">
-            {t('roomGame.inviteShort')}
-          </span>
-        </button>
+        {archived ? null : (
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={inviteOpen}
+            onClick={() => {
+              setInviteOpen(true);
+            }}
+          >
+            <Bot aria-hidden="true" />
+            <span className="room-toolbelt__label">{t('agentInvite.open')}</span>
+            <span className="room-toolbelt__short" aria-hidden="true">
+              {t('roomGame.inviteShort')}
+            </span>
+          </button>
+        )}
       </nav>
       {roomSettings === null || principal === null ? null : (
         <RoomSettingsDialog
@@ -480,6 +509,12 @@ function ReadyLobby({
             </button>
           </div>
         </header>
+        {writesAllowed || selectedDirectSessionId !== null ? null : (
+          <p className="room-panel__read-only" role="status">
+            {archived ? <Archive aria-hidden="true" /> : <MessageSquareOff aria-hidden="true" />}
+            {t(archived ? 'roomWorkspace.archivedNotice' : 'roomWorkspace.readOnlyNotice')}
+          </p>
+        )}
         {publicConversationVisible && invitation !== null && principal !== null ? (
           <div className="room-first-reply">
             <strong>{invitation.displayName}</strong>
@@ -520,6 +555,7 @@ function ReadyLobby({
               privateRoom={room.encrypted === true}
               selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
               view={panelView}
+              writesAllowed={writesAllowed}
             />
           </div>
           <DirectConversationDock

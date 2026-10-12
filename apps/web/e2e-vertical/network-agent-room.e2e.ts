@@ -75,12 +75,17 @@ test('人接受网络 Agent 的邀请，在它建的房间里聊天，房间归�
   expect(failures).toEqual([]);
   await writeFile(chattedPath ?? '', `${JSON.stringify({ chatted: true })}\n`, 'utf8');
 
-  // 归档以后只看之前的消息还在不在，不再收集网页的报错。
+  // 归档以后看之前的消息还在不在、输入框是不是关着，不再收集网页的报错。
   await expect
     .poll(async () => await exists(archivedPath ?? ''), { intervals: [1_000], timeout: 420_000 })
     .toBe(true);
   await page.reload();
-  const reopened = page.getByRole('region', { name: 'Conversation', exact: true }).getByRole('log');
-  await expect(reopened).toContainText(said ?? '', { timeout: 90_000 });
-  await expect(reopened).toContainText(reply ?? '', { timeout: 90_000 });
+  const reopened = page.getByRole('region', { name: 'Conversation', exact: true });
+  await expect(reopened.getByRole('log')).toContainText(said ?? '', { timeout: 90_000 });
+  await expect(reopened.getByRole('log')).toContainText(reply ?? '', { timeout: 90_000 });
+  // 发不出新的：输入框关着，面板上说房间已归档。
+  await expect(page.locator('.room-panel__read-only')).toContainText('This room is archived.', {
+    timeout: 60_000,
+  });
+  await expect(reopened.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
 });

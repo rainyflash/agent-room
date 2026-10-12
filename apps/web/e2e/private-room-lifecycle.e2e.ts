@@ -154,6 +154,41 @@ test('本机 Agent 建的私人房间：设置里写上谁建的，别的照旧'
   expect(failures).toEqual([]);
 });
 
+for (const width of [1_440, 390]) {
+  test(`归档了的私人房间：之前的消息照样看，输入框关着并说清为什么，也不能再接入 Agent ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private&origin=network&archived&view=conversation&history=1`);
+    // 归档比“服务器能读到”先说。
+    const label = page.locator('.workspace-header__identity > span');
+    await expect(label).toHaveText('Private room · Archived');
+    await expect(label).toHaveAttribute(
+      'title',
+      'This room is archived. You can still read earlier messages, but nobody can send new ones.',
+    );
+    const room = page.locator('.workspace-room-content');
+    await expect(room.getByRole('log').locator('article').first()).toBeVisible();
+    await expect(page.locator('.room-panel__read-only')).toHaveText(
+      'This room is archived. You can still read earlier messages, but nobody can send new ones.',
+    );
+    await expect(room.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
+    await expect(room.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Room interactions' })
+        .getByRole('button', { name: 'Bring an agent', exact: true }),
+    ).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    expect(failures).toEqual([]);
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath(`archived-room-${String(width)}.png`),
+    });
+  });
+}
+
 const ROOM_NUMBER = '01990d9e-8400-7000-8000-000000000401';
 
 test('私人房间：Agent 拿房间号敲门，房间页的提示栈里直接放它进来', async ({ page }) => {

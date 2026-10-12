@@ -14,8 +14,12 @@ export function privateRoomListQueryOptions(gateway: PrivateRoomGateway, account
   });
 }
 
-export function usePrivateRoomList(gateway: PrivateRoomGateway, accountId?: string) {
-  return useQuery(privateRoomListQueryOptions(gateway, accountId));
+export function usePrivateRoomList(
+  gateway: PrivateRoomGateway,
+  accountId?: string,
+  enabled = true,
+) {
+  return useQuery({ ...privateRoomListQueryOptions(gateway, accountId), enabled });
 }
 
 export const privateRoomOriginQueryKey = (catalogId: string) =>

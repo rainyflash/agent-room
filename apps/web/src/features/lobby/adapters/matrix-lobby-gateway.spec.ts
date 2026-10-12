@@ -47,6 +47,7 @@ describe('MatrixLobbyGateway', () => {
       return;
     }
     expect(result.value).toMatchObject({
+      canSpeak: true,
       name: '公开大厅',
       observedAtUnixMs: NOW,
       roomId: room.roomId,
@@ -191,6 +192,15 @@ describe('MatrixLobbyGateway', () => {
       reception: 'waiting',
     });
     expect(read('2026-08-24T16:03:00.001Z')).toHaveLength(0);
+  });
+
+  it('不能在这里发消息时照实交给房间页', () => {
+    const room = { ...snapshot([]), canSpeak: false };
+    const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+      room.roomId,
+    );
+
+    expect(result.ok && result.value.canSpeak).toBe(false);
   });
 
   it('共享归档期限生效且同一身份重新接入后恢复', () => {
@@ -400,6 +410,7 @@ function noop(): void {
 
 function snapshot(statusEvents: readonly MatrixLobbyStateEvent[]): MatrixLobbyRoomSnapshot {
   return {
+    canSpeak: true,
     encrypted: false,
     joinedMemberIds: [MATRIX_USER_ID],
     name: '公开大厅',

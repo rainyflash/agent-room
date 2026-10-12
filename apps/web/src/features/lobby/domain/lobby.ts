@@ -40,6 +40,8 @@ export type LobbyAgent = {
 };
 
 export type LobbyRoom = {
+  /** 你此刻能不能在这里发消息：房间归档、你被禁言或只能查看时不能。不给算能。 */
+  readonly canSpeak?: boolean;
   /** 私人房间都是端到端加密的；公开大厅不加密。 */
   readonly encrypted?: boolean;
   readonly joinedMemberIds?: readonly string[];

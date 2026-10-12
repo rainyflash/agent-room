@@ -1003,6 +1003,25 @@
   width: 14px;
   height: 14px;
 }
+/* 房间里不能发消息时，面板标题下面说为什么，和私信里的那一条一个样子。 */
+.room-panel__read-only {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+  color: var(--ar-warning);
+  background: var(--ar-surface-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.room-panel__read-only > svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
 .message-workspace .message-dock__headline--failed {
   display: flex;
   color: var(--color-alert);
