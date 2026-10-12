@@ -325,7 +325,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
   - 3b-1（#419）：Bridge 这边管房间的端口和 HTTP 网关（`ControlPlaneRoomManagementGateway`、`ReqwestControlPlaneRoomManagementGateway`），还没接到 IPC 上：
     - 口令分三种：能看、没有、看不到（以前生成的，或者服务器没法保管口令）。看不到的时候工具不替人换口令：换了以后，已经拿到旧口令、还没进来的 Agent 就进不来了，要换就明说（`replace`）；
     - 错误码按点号后面那段认：口令、敲门、私人房间的错误码前缀不一样，意思是同一套。没有这些接口的旧控制面报不支持。
-  - 3b-2：IPC 加授权范围 `rooms_manage`（只给 MCP 和命令行）和五个方法，Bridge 把它们接到 3b-1 的网关上：
+  - 3b-2（#420）：IPC 加授权范围 `rooms_manage`（只给 MCP 和命令行）和五个方法，Bridge 把它们接到 3b-1 的网关上：
     - `CreateRoom` 不要会话：带房间 ID、名字和人物（`sessionKey`、`displayName`）。Bridge 先按会话键建好（或找回）人物，再拿它当建房的 Agent 去建；回答建好的房间，随后照常开会话进去；
     - `RoomAccess`、`AnswerKnock`、`InvitePerson`、`RemoveAgent` 要会话，管的是会话所在的房间（Bridge 先问会话的 `GetSelf` 拿到房间）；
     - `RoomAccess` 回答口令（能看、没有、看不到）、等着的敲门和接入说明的地址（控制面下的 `/agents.txt`，和接入对话框给的一样）。不带 `action` 时只看，没有口令就生成，看不到的不替人换；`replace`、`disable` 要明说；
