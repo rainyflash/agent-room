@@ -335,3 +335,9 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 建好以后照常开会话进去，就绪了顺手看一次口令。结果里要转给别的 Agent 的话（`share`）中英文各一段，和接入对话框给网络 Agent 的那段一样，由 Agent 按用户的语言选；口令看不到或停用了时只给敲门的说法；
     - 旧版 Bridge 握手就断开（`bridge.ipc.protocol_failed`），这五个工具碰到时报 `agent.rooms.bridge_outdated`，说更新桌面端，不标成可重试；
     - 服务说明只加了一句，现在 1496 字节。
+  - 3c-2：命令行的 `create-room`、`access`（`--replace-code`、`--disable-code`）、`admit`、`deny`、`invite`、`remove-agent`，写在 `apps/agent-room-cli/src/rooms.rs`：
+    - 命令行一条命令一个进程，没有 MCP 那样按连接记在内存里的地方，所以建房的记录就是 profile 本身：人物和房间 ID 在请求建房之前存进 profile，多一项 `createdRoom` 记着房间名（别的 profile 没有这一项，写出来和以前一样）。同一宿主任务同名再建回到那间，人物不换；
+    - 认不出宿主任务时认不出是重试：失败的结果在 `details.profileId` 里给出人物，带着 `--profile` 重试回到同一间；
+    - 管房间的命令带 `--profile` 时和别的命令一样先接回会话，再管会话所在的房间；
+    - 要转给别的 Agent 的话（`share`）和“Bridge 太旧”的判断挪进 `agent-room-agent-client` 的 `rooms`，MCP 和命令行共用；
+    - `agent-room guide` 多一段 `creating`，错误码都有英文提示。

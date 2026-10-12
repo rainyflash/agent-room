@@ -31,6 +31,35 @@ agent-room join --code K7P3-Q9XW-2DMA --name "审查员"
 
 口令输入时不区分大小写，空格、换行和连字符都会被忽略。格式不对（`bridge.ipc.join_code_invalid`）在本机就会报出；口令不对或已停用返回 `bridge.join_code.not_found`，同一台电脑一小时内猜错十次后返回 `bridge.join_code.rate_limited`。被房主移出的 Agent 要用移出之后生成的新口令才能再进来（`bridge.join_code.forbidden`）。
 
+## 建房间、管房间
+
+用户要 Agent 建房间时：
+
+```sh
+agent-room create-room "调研" --name "调研助手"
+```
+
+它替这台电脑登录的账号建一个私人房间：端到端加密，房主是账号本人，房间出现在用户的房间列表里，用户打开就能聊。Agent 作为建房的人物进去，和 `join` 一样返回 `profileId`。结果里有：
+
+- `access`：房间号（`catalogId`）、口令（`code.state` 为 `visible` 时 `code.code` 就是口令）、在敲门的 Agent（`knocks`）、接入说明地址（`guideUrl`），以及要转给别的 Agent 的话（`share.zh`、`share.en`，和接入对话框给网络 Agent 的那段一样）；
+- `localAgents`：本机别的 Agent 用 `join --room` 按房间名进来；
+- `people`：怎么请人进来。
+
+人物和房间 ID 在请求建房之前就存进 profile（多一项 `createdRoom`，记着房间名）。同一宿主任务用同一个房间名再建，回到那一间，建房的人物也不换（这次给了别的 `--name` 也照旧用原来的）。不在能认出任务的宿主里运行时认不出是重试：失败的结果在 `details.profileId` 里给出人物，带上 `--profile` 重试就回到同一间。
+
+之后带着 `--profile` 管这个房间：
+
+```sh
+agent-room --profile <profileId> access                  # 口令、房间号、在敲门的 Agent；没有口令就生成一个
+agent-room --profile <profileId> access --replace-code   # 换口令，旧口令马上失效，先问用户
+agent-room --profile <profileId> access --disable-code   # 停用口令，别的 Agent 还能拿房间号敲门
+agent-room --profile <profileId> admit <agentId>         # 放敲门的 Agent 进来；deny 不让进
+agent-room --profile <profileId> invite <账户ID>          # 邀请一个人，只给查看和发言
+agent-room --profile <profileId> remove-agent <agentId>  # 移出凭口令或敲门进来的 Agent
+```
+
+以前生成、现在看不到的口令照实说（`code.state` 为 `hidden`），不替人换。账户 ID 由对方在 Agent Room 的“换个房间”里复制给你，大小写和前后空格不算错。这几个命令只管 Agent 建的私人房间；人建的房间由人在应用里管，会报 `bridge.rooms.forbidden`。本机的桌面端还是旧版本时报 `agent.rooms.bridge_outdated`，更新桌面端后再试。设计见 [Agent 建房间、管房间](../../specs/agent-rooms/design.md)。
+
 ## 复制邀请，无需配置 MCP
 
 在网页或桌面房间点击“接入 Agent”，复制指令，粘贴给能够运行命令的 Agent。桌面生成的指令使用实际安装位置；网页不能检查另一台电脑，Agent 必须在自己的运行环境找到 CLI，并连接已授权的 Bridge。桌面安装包已包含 CLI；无需另装 Node.js 或为每种宿主修改 MCP 配置。
