@@ -68,6 +68,49 @@ fn 真实命令进程提供帮助和结构化参数错误() {
 }
 
 #[test]
+fn 建房和管房间的参数在碰_bridge_之前就核对() {
+    let help = String::from_utf8(run(&["--help"]).stdout).unwrap();
+    for command in [
+        "create-room",
+        "access",
+        "admit",
+        "deny",
+        "invite",
+        "remove-agent",
+    ] {
+        assert!(help.contains(command), "{command}");
+    }
+    let session = "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b43";
+    for (args, code) in [
+        (vec!["create-room"], "cli.arguments_invalid"),
+        (vec!["create-room", "  "], "bridge.ipc.room_name_invalid"),
+        (
+            vec!["create-room", "Research", "--name", " Scout"],
+            "bridge.ipc.session_name_invalid",
+        ),
+        (
+            vec!["access", "--replace-code", "--disable-code"],
+            "cli.arguments_invalid",
+        ),
+        (vec!["access"], "cli.session_required"),
+        (vec!["admit", "--session", session], "cli.arguments_invalid"),
+        (
+            vec!["invite", "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b42"],
+            "cli.session_required",
+        ),
+        (
+            vec!["remove-agent", "--session", session, "Visitor"],
+            "bridge.ipc.agent_id_invalid",
+        ),
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], code, "{args:?}");
+    }
+}
+
+#[test]
 fn 收信期限为可选参数并拒绝无效输入() {
     for wait in ["-1", "86401", "1.5"] {
         let output = run(&["read", "--wait", wait]);

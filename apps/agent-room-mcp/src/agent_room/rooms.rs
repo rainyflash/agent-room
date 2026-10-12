@@ -1,6 +1,7 @@
 //! Agent 自己建房间、管房间的工具（`specs/agent-rooms/design.md` 第 3 步）。只管 Agent 建的私人房间，
 //! 由控制面把关；人建的房间由人在应用里管。
 
+use agent_room_agent_client::rooms::{BRIDGE_OUTDATED, access_value, bridge_outdated};
 use agent_room_bridge_ipc::{
     IpcCreateRoomRequest, IpcErrorCategory, IpcHostRoomTarget, IpcHostSessionState,
     IpcHostSessionSummary, IpcMethod, IpcResponse, IpcRoomAccess, IpcRoomAccessAction,
@@ -28,8 +29,6 @@ use super::{
 
 /// 旧版 Bridge 不认管房间的授权范围，握手时就断开：这几个工具碰到时照实说要更新。
 const OUTDATED_BRIDGE: &str = "本机的 Agent Room 可能还是旧版本，不会建房间、管房间：请让用户在 Agent Room 桌面端检查更新、装上新版本后再试。";
-const ZH_NO_WEB: &str = "如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。";
-const EN_NO_WEB: &str = "If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.";
 const PEOPLE: &str = "要请人进来：让对方在 Agent Room 的“换个房间”里复制自己的账户 ID 发给你，再用 agent_room_invite_person 邀请；房主（这台电脑登录的账号）也能在应用里邀请。";
 
 #[tool_router(router = room_tools, vis = "pub(super)")]
@@ -347,47 +346,6 @@ fn created_result(
     remote_result(value)
 }
 
-/// 房间怎么进，外加要转给别的 Agent 的话。
-fn access_value(access: &IpcRoomAccess, room: Option<&str>) -> Value {
-    json!({
-        "catalogId": access.catalog_id,
-        "code": access.code,
-        "knocks": access.knocks,
-        "guideUrl": access.guide_url,
-        "share": share_messages(access, room),
-    })
-}
-
-/// 和接入对话框给网络 Agent 的那段话一样：有口令就凭口令进，口令传不进去再拿房间号敲门。
-fn share_messages(access: &IpcRoomAccess, room: Option<&str>) -> Value {
-    let guide = &access.guide_url;
-    let number = &access.catalog_id;
-    let (zh_room, en_room) = room.map_or_else(
-        || {
-            (
-                "Agent Room 的这个私人房间".to_owned(),
-                "this Agent Room private room".to_owned(),
-            )
-        },
-        |name| {
-            (
-                format!("Agent Room 私人房间「{name}」"),
-                format!("the Agent Room private room “{name}”"),
-            )
-        },
-    );
-    match &access.code {
-        IpcRoomCode::Visible { code } => json!({
-            "zh": format!("请读 {guide}，照上面的说明给自己起一个简短好认的名字，凭口令 {code} 进 {zh_room}，和大家聊天。口令传不进去的话，就拿房间号 {number} 敲门，等我放你进来。{ZH_NO_WEB}"),
-            "en": format!("Read {guide} and follow it: give yourself a short, recognizable name and enter {en_room} with the code {code}, then chat with everyone there. If you can’t pass the code on, knock with the room number {number} instead and wait for me to let you in. {EN_NO_WEB}"),
-        }),
-        IpcRoomCode::Missing | IpcRoomCode::Hidden => json!({
-            "zh": format!("请读 {guide}，照上面的说明给自己起一个简短好认的名字，拿房间号 {number} 敲 {zh_room}的门，等我放你进来后和大家聊天。{ZH_NO_WEB}"),
-            "en": format!("Read {guide} and follow it: give yourself a short, recognizable name and knock on {en_room} with its room number {number}. Once I let you in, chat with everyone there. {EN_NO_WEB}"),
-        }),
-    }
-}
-
 fn access_next(access: &IpcRoomAccess) -> &'static str {
     if !access.knocks.is_empty() {
         return "有 Agent 在敲门（knocks）：问用户要不要放它进来，再用 agent_room_answer_knock 回答。";
@@ -415,11 +373,11 @@ fn remote_result(value: Value) -> CallToolResult {
 }
 
 fn room_failure(failure: &BridgeToolFailure) -> CallToolResult {
-    if failure.code() != "bridge.ipc.protocol_failed" {
+    if !bridge_outdated(failure) {
         return failure_result(failure);
     }
     let mut result = CallToolResult::structured_error(json!({
-        "code": "agent.rooms.bridge_outdated",
+        "code": BRIDGE_OUTDATED,
         "category": IpcErrorCategory::IncompatibleVersion,
         "retryable": false,
         "message": OUTDATED_BRIDGE,

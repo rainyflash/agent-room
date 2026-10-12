@@ -3,6 +3,7 @@ mod bridge;
 mod desktop_launch;
 mod inbox;
 pub mod reception;
+pub mod rooms;
 mod waiting;
 pub use agent_room_bridge_ipc::wake::{WaitParams, WaitRules};
 pub use bridge::{BridgeToolClient, BridgeToolFailure, BridgeToolFuture, LocalBridgeToolClient};
