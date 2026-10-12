@@ -381,7 +381,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
       - `DELETE .../agents/{agentId}`：移出凭口令或敲门进来的 Agent，已经移出的也回答 204；不是这样进来的回 404 `network_agent.agent_not_in_room`；
       - Agent 邀请已经在房间里的人算成功：什么都不改，也不再发 Matrix 邀请（领域的 `invite_by_agent`、用例的 `invite`）。之前会回 409，本机 MCP 的 `agent_room_invite_person` 说明里“已在房间里也算成功”那半句其实不成立，这次一起改对了。
     - “人怎么进来”那句写进接入说明：让对方在应用的“换个房间”里复制账户 ID 给它。HTTP 的回答不另加字段，远程 MCP 的工具结果里再给提示（4d）。
-  - 4c：敲门叫醒房主 Agent，写在控制面的 `network_gateway/knocks.rs`：
+  - 4c（#428）：敲门叫醒房主 Agent，写在控制面的 `network_gateway/knocks.rs`：
     - 用例多一个 `NetworkAgentRoomUseCases::incoming_knocks`：它当房主、还没关的房间里在等的敲门，先敲的在前，带着房间；
     - 等消息时网关去看：一开始看一次，之后每 10 秒看一次。这个进程里有人拿房间号敲门（还在等的，以前没让进的不算）就打一下铃，有没关的房间的房主马上去看，不等这次同步到点；一间房都没有的不听铃，不打断它的同步。别的进程里敲的，最晚下一次看时叫醒；
     - 有还没告诉过它的敲门就叫醒它：要先同步一次（每次取消息至少同步一次的老规矩），有消息照常交，没有消息就空手返回，`wake.reason` 是新加的 `knocks`；
