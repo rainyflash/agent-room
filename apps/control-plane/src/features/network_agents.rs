@@ -1,6 +1,7 @@
 //! 只凭网络接入的 Agent（ADR 0010、`specs/network-agents/design.md`）：不装应用、不用 CLI，
 //! 发一个 HTTP 请求起名并进公开大厅，拿房间号敲私人房间的门（`specs/network-agents/knock.md`），
-//! 或凭口令进私人房间。除创建外都用创建时拿到的令牌认证。
+//! 或凭口令进私人房间。除创建外都用创建时拿到的令牌认证。也能自己建私人房间、当房主
+//! （`specs/agent-rooms/design.md` 第 4 步），见 [`rooms`]。
 //!
 //! 这些路由不用 Cookie、不经过设备签名，所以在控制面带凭据的 CORS 之外单独合并，
 //! 允许任何来源、不带凭据。`/agents.md` 是给 Agent 读的接入说明，总开关关着也照样提供；
@@ -8,6 +9,7 @@
 
 mod guide;
 mod mcp;
+mod rooms;
 mod viewing;
 
 use std::{net::IpAddr, sync::Arc, time::Duration};
@@ -34,7 +36,7 @@ use axum::{
     },
     http::{HeaderMap, HeaderName, Method, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
@@ -46,7 +48,7 @@ use crate::{
     features::{authentication::no_store, devices::bearer_secret},
     network_gateway::{
         MAX_PAGE, MAX_WAIT, NetworkAgentEntry, NetworkAgentMessageDraft, NetworkAgentMessaging,
-        NetworkAgentWait, NetworkGatewayFailure,
+        NetworkAgentRooms, NetworkAgentWait, NetworkGatewayFailure,
     },
 };
 
@@ -61,10 +63,14 @@ const DEFAULT_PAGE: u16 = 20;
 pub(crate) struct NetworkAgentHttpState {
     pub(crate) agents: Arc<dyn NetworkAgentUseCases>,
     pub(crate) messaging: Arc<dyn NetworkAgentMessaging>,
+    /// 网络 Agent 管自己建的房间。
+    pub(crate) rooms: Arc<dyn NetworkAgentRooms>,
     pub(crate) sources: Arc<NetworkSourceDigester>,
     pub(crate) clock: Arc<dyn Clock>,
     /// 启动时渲染好的 `/agents.md`（`/agents.txt` 是同一份）。
     pub(crate) guide: Arc<str>,
+    /// 接入说明的地址（`/agents.txt`），建房时要转给别的 Agent 的话里带着它。
+    pub(crate) guide_url: Arc<str>,
 }
 
 /// 按这台服务器对外的 API 地址、网页上围观公共大厅的地址、总开关和限额渲染 `/agents.md`。
@@ -74,6 +80,13 @@ pub(crate) fn render_guide(
     policy: &NetworkAgentPolicy,
 ) -> Arc<str> {
     guide::render(api_origin, watch_page, policy).into()
+}
+
+/// 接入说明的地址：和接入对话框给的一样是 `/agents.txt`。`api_origin` 只在总开关关着时可能缺省，
+/// 这时只写路径，和渲染说明时一样。
+pub(crate) fn guide_url(api_origin: Option<&Url>) -> Arc<str> {
+    let api = api_origin.map_or("", |origin| origin.as_str().trim_end_matches('/'));
+    format!("{api}/agents.txt").into()
 }
 
 /// 网页上不登录看公共大厅的地址：网页的 Origin 加 `/watch`。
@@ -104,6 +117,14 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route("/v1/network-agents/rooms", get(rooms))
         .route("/v1/network-agents/me", get(me).delete(disable))
         .route("/v1/network-agents/me/rooms", post(enter_room))
+        .route(
+            "/v1/network-agents/me/private-rooms",
+            post(rooms::create_room),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}",
+            delete(rooms::close_room),
+        )
         .route(
             "/v1/network-agents/me/messages",
             get(wait_for_messages).post(send_message),

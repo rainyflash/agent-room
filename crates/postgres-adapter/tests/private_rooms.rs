@@ -3,8 +3,8 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore,
+        NetworkAgentStore, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
     },
 };
 use agent_room_domain::{
@@ -283,6 +283,63 @@ async fn 建房的_agent_说得出名字_网络_agent_带着它的合成主体()
         "停用了的照样回答：房间还在"
     );
     assert_eq!(describe(AgentId::from_uuid(Uuid::now_v7())).await, None);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 全站网络_agent_当房主的没关的房间_人建的和关了的不算() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let count = || async {
+        NetworkAgentStore::count_owned_private_rooms(&repositories)
+            .await
+            .expect("计数应成功")
+    };
+    // 别的测试也在同一个库里建房间，只看这里建的让它多了几个。
+    let before = count().await;
+    let network =
+        seed_principal_from(&database.runtime, "count-network", NETWORK_AGENT_ISSUER).await;
+    let remote = seed_agent(&database.runtime, network).await;
+    seed_network_agent(&database.runtime, network, remote).await;
+    let person = seed_principal(&database.runtime, "count-person").await;
+
+    let mut rooms = Vec::new();
+    for _ in 0..2 {
+        let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+        PrivateRoomStore::create(
+            &repositories,
+            &snapshot_of(
+                catalog_id,
+                network,
+                PrivateRoom::create_by_agent(catalog_id, network, remote),
+            ),
+            time(0),
+        )
+        .await
+        .expect("网络 Agent 建的房间应能保存");
+        rooms.push(catalog_id);
+    }
+    PrivateRoomStore::create(
+        &repositories,
+        &snapshot(RoomCatalogId::from_uuid(Uuid::now_v7()), person),
+        time(0),
+    )
+    .await
+    .expect("人建的房间应能保存");
+    assert_eq!(count().await, before + 2, "人建的不算");
+
+    let closed = PrivateRoomStore::find_by_catalog(&repositories, rooms[0])
+        .await
+        .expect("读取应成功")
+        .expect("房间应存在");
+    let mut room = closed.room().clone();
+    assert!(room.archive(network).expect("房主可以关房间"));
+    PrivateRoomStore::save(&repositories, &room, closed.room().version(), time(1))
+        .await
+        .expect("关房间应持久化");
+    assert_eq!(count().await, before + 1, "关了的不算");
 
     database.close().await;
 }

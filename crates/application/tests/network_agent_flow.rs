@@ -26,17 +26,22 @@ use agent_room_application::{
         NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
-        NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PublicLobbyDirectoryEntry,
-        PublicLobbyObservationRoom, RateWindowDecision, RateWindowPolicy, RegisteredAgent,
-        RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretSealingFailure, SecretValue,
-        StoredAgentInstanceRegistration,
+        NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomJoinCodeRecord,
+        PrivateRoomSnapshot, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
+        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
+        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
+        SecretValue, StoredAgentInstanceRegistration,
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
-        AgentAccessView, AnswerKnock, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller,
-        KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomAgentAccessUseCases, RedeemJoinCode,
-        RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
+        AgentAccessView, AnswerKnock, ArchivePrivateRoom, ChangePrivateRoomPermissions,
+        CreatePrivateRoom, GeneratedJoinCode, GovernPrivateRoomMember, InspectAgentAccess,
+        InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller, KnockOnRoom, KnockResult,
+        ListPrivateRooms, ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
+        PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
+        PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
+        PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember, RenamePrivateRoom,
+        ResolveJoinCode, TransferPrivateRoomOwnership,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -52,8 +57,9 @@ use agent_room_domain::{
         HandoffId, LoginAttemptId, NetworkAgentId, OutboxEventId, PrincipalId, RoomCatalogId,
         RoomInstanceId, RoomReservationId, WebSessionId,
     },
-    join_codes::PrivateRoomAgentKnockStatus,
+    join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomJoinCode},
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
+    private_rooms::{PrivateRoom, PrivateRoomPermissions},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
@@ -90,6 +96,8 @@ struct MemoryStore {
     agents: Mutex<Vec<StoredAgent>>,
     windows: Mutex<HashMap<String, (UtcMillis, u32)>>,
     rooms: Mutex<Vec<(NetworkAgentId, NetworkAgentRoomRecord)>>,
+    /// 全站网络 Agent 建的、没关的私人房间：测试直接设。
+    owned_private_rooms: Mutex<u64>,
 }
 
 impl MemoryStore {
@@ -249,6 +257,11 @@ impl NetworkAgentStore for MemoryStore {
             })
             .count();
         Box::pin(async move { Ok(u64::try_from(count).unwrap()) })
+    }
+
+    fn count_owned_private_rooms(&self) -> PortFuture<'_, RepositoryResult<u64>> {
+        let count = *self.owned_private_rooms.lock().unwrap();
+        Box::pin(async move { Ok(count) })
     }
 
     fn record_activity(
@@ -731,6 +744,34 @@ struct FakeAccess {
     knocks: Mutex<Vec<PrivateRoomAgentKnockRecord>>,
     members: Mutex<HashSet<AgentId>>,
     declined: Mutex<HashSet<AgentId>>,
+    /// 网络 Agent 自己建的房间的口令；看不到的记在 `hidden`。
+    codes: Mutex<HashMap<RoomCatalogId, PrivateRoomJoinCode>>,
+    hidden: Mutex<HashSet<RoomCatalogId>>,
+    /// 管口令的是谁（合成主体）、管的哪间、生成还是看。
+    managed: Mutex<Vec<(PrincipalId, RoomCatalogId, &'static str)>>,
+}
+
+impl FakeAccess {
+    fn generated_codes(&self) -> usize {
+        self.managed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, _, action)| *action == "generate")
+            .count()
+    }
+}
+
+fn generated_code(catalog_id: RoomCatalogId, code: &PrivateRoomJoinCode) -> GeneratedJoinCode {
+    GeneratedJoinCode {
+        code: code.clone(),
+        record: PrivateRoomJoinCodeRecord {
+            catalog_id,
+            permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
+            created_by: PrincipalId::from_uuid(Uuid::nil()),
+            created_at: UtcMillis::new(START).unwrap(),
+        },
+    }
 }
 
 impl PrivateRoomAgentAccessUseCases for FakeAccess {
@@ -741,18 +782,54 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         unreachable!("网络 Agent 不管理口令")
     }
 
+    /// 只有网络 Agent 管自己建的房间时才来：按生成的次数给不同的口令。
     fn generate_code(
         &self,
-        _request: ManageJoinCode,
+        request: ManageJoinCode,
     ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
-        unreachable!("网络 Agent 不管理口令")
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        self.managed.lock().unwrap().push((
+            request.actor.principal_id(),
+            request.catalog_id,
+            "generate",
+        ));
+        let entropy = u8::try_from(self.generated_codes()).unwrap();
+        let code = PrivateRoomJoinCode::from_entropy([entropy; 8]);
+        self.codes
+            .lock()
+            .unwrap()
+            .insert(request.catalog_id, code.clone());
+        self.hidden.lock().unwrap().remove(&request.catalog_id);
+        let generated = generated_code(request.catalog_id, &code);
+        Box::pin(async move { Ok(generated) })
     }
 
     fn reveal_code(
         &self,
-        _request: ManageJoinCode,
+        request: ManageJoinCode,
     ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
-        unreachable!("网络 Agent 不管理口令")
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        self.managed.lock().unwrap().push((
+            request.actor.principal_id(),
+            request.catalog_id,
+            "reveal",
+        ));
+        let result = if self.hidden.lock().unwrap().contains(&request.catalog_id) {
+            Err(AgentAccessFailure::new(
+                "test.reveal",
+                AgentAccessFailureKind::NotRevealable,
+            ))
+        } else {
+            self.codes
+                .lock()
+                .unwrap()
+                .get(&request.catalog_id)
+                .map(|code| generated_code(request.catalog_id, code))
+                .ok_or_else(|| {
+                    AgentAccessFailure::new("test.reveal", AgentAccessFailureKind::NotFound)
+                })
+        };
+        Box::pin(async move { result })
     }
 
     fn disable_code(&self, _request: ManageJoinCode) -> PortFuture<'_, AgentAccessResult<()>> {
@@ -902,6 +979,248 @@ fn private_redeemed() -> RedeemedRoom {
     }
 }
 
+/// 网络 Agent 自己建、自己关的私人房间：房间按领域规则建，谁能进、谁能关都照领域规则判断。
+#[derive(Default)]
+struct FakeRooms {
+    rooms: Mutex<Vec<PrivateRoomSnapshot>>,
+    created: Mutex<Vec<CreatePrivateRoom>>,
+    archived: Mutex<Vec<(PrincipalId, RoomCatalogId)>>,
+}
+
+impl FakeRooms {
+    /// 别人当房主的一间私人房间。
+    fn seed_other(&self, owner: PrincipalId) -> RoomCatalogId {
+        let catalog_id = catalog_id(77);
+        self.rooms.lock().unwrap().push(owned_snapshot(
+            catalog_id,
+            owner,
+            None,
+            "别人的房间",
+            false,
+        ));
+        catalog_id
+    }
+}
+
+/// 一间私人房间：建房的 Agent 给了就是 Agent 建的。
+fn owned_snapshot(
+    catalog_id: RoomCatalogId,
+    owner: PrincipalId,
+    agent: Option<AgentId>,
+    name: &str,
+    archived: bool,
+) -> PrivateRoomSnapshot {
+    let mut room = agent.map_or_else(
+        || PrivateRoom::create(catalog_id, owner),
+        |agent| PrivateRoom::create_by_agent(catalog_id, owner, agent),
+    );
+    let (catalog_status, instance_state) = if archived {
+        room.archive(owner).unwrap();
+        (RoomCatalogStatus::Archived, RoomInstanceState::Archived)
+    } else {
+        (RoomCatalogStatus::Active, RoomInstanceState::Active)
+    };
+    let catalog = RoomCatalog::new(
+        catalog_id,
+        RoomCatalogFields {
+            kind: RoomCatalogKind::PrivateRoom,
+            slug: None,
+            name: name.to_owned(),
+            description: String::new(),
+            language: None,
+            matrix_space_id: None,
+            owner_principal_id: Some(owner),
+            visibility: RoomCatalogVisibility::Private,
+            retention_days: None,
+            status: catalog_status,
+        },
+    )
+    .unwrap();
+    let instance = RoomInstance::restore(
+        RoomInstanceId::from_uuid(catalog_id.as_uuid()),
+        RoomInstanceFields {
+            catalog_id,
+            matrix_room_id: owned_matrix_room(catalog_id),
+            region: None,
+            capacity: RoomCapacity::new(8, 16).unwrap(),
+            projected_member_count: 1,
+            allocated_slots: 0,
+            activity_score_millis: 0,
+            state: instance_state,
+        },
+    )
+    .unwrap();
+    PrivateRoomSnapshot::new(catalog, instance, room).unwrap()
+}
+
+fn owned_matrix_room(catalog_id: RoomCatalogId) -> MatrixRoomReference {
+    MatrixRoomReference::new(format!(
+        "!owned{}:matrix.test",
+        catalog_id.as_uuid().simple()
+    ))
+    .unwrap()
+}
+
+fn room_failure(kind: PrivateRoomFailureKind) -> PrivateRoomFailure {
+    PrivateRoomFailure::new(
+        "test.private_room",
+        PrivateRoomFailureStage::Validation,
+        kind,
+    )
+}
+
+impl PrivateRoomUseCases for FakeRooms {
+    fn create(
+        &self,
+        request: CreatePrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        let snapshot = owned_snapshot(
+            request.catalog_id,
+            request.actor.principal_id(),
+            request.created_by_agent,
+            &request.name,
+            false,
+        );
+        self.rooms.lock().unwrap().push(snapshot.clone());
+        self.created.lock().unwrap().push(request);
+        Box::pin(async move { Ok(snapshot) })
+    }
+
+    fn inspect(
+        &self,
+        _request: InspectPrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不按网页登录查看房间")
+    }
+
+    fn origin(
+        &self,
+        _request: InspectPrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomOrigin>> {
+        unreachable!("网络 Agent 不问房间是谁建的")
+    }
+
+    fn list(
+        &self,
+        _request: ListPrivateRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+        unreachable!("网络 Agent 不按网页登录列房间")
+    }
+
+    /// 和真的一样只列它的 Agent 进得去的：没关、它是已加入能发言的成员。
+    fn list_for_account(
+        &self,
+        request: ListPrivateRoomsForAccount,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>> {
+        let rooms = self
+            .rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|snapshot| snapshot.room().admits_agent_of(request.principal_id))
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(rooms) })
+    }
+
+    fn invite(
+        &self,
+        _request: InvitePrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("这一步还不邀请人")
+    }
+
+    fn accept(
+        &self,
+        _request: PrivateRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不接受邀请")
+    }
+
+    fn decline(
+        &self,
+        _request: PrivateRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不拒绝邀请")
+    }
+
+    fn leave(
+        &self,
+        _request: PrivateRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不按成员离开房间")
+    }
+
+    fn remove(
+        &self,
+        _request: GovernPrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不移出人")
+    }
+
+    fn ban(
+        &self,
+        _request: GovernPrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不封禁人")
+    }
+
+    fn update_permissions(
+        &self,
+        _request: ChangePrivateRoomPermissions,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不改人的权限")
+    }
+
+    fn transfer_ownership(
+        &self,
+        _request: TransferPrivateRoomOwnership,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不转让房间")
+    }
+
+    /// 只认房主，关了的再关一次照样成功（领域规则）。
+    fn archive(
+        &self,
+        request: ArchivePrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        let actor = request.actor.principal_id();
+        let mut rooms = self.rooms.lock().unwrap();
+        let result = match rooms
+            .iter_mut()
+            .find(|snapshot| snapshot.catalog().id() == request.catalog_id)
+        {
+            None => Err(room_failure(PrivateRoomFailureKind::NotFound)),
+            Some(snapshot) if snapshot.room().clone().archive(actor).is_err() => {
+                Err(room_failure(PrivateRoomFailureKind::Forbidden))
+            }
+            Some(snapshot) => {
+                *snapshot = owned_snapshot(
+                    request.catalog_id,
+                    actor,
+                    snapshot.room().created_by_agent(),
+                    snapshot.catalog().name(),
+                    true,
+                );
+                self.archived
+                    .lock()
+                    .unwrap()
+                    .push((actor, request.catalog_id));
+                Ok(snapshot.clone())
+            }
+        };
+        Box::pin(async move { result })
+    }
+
+    fn rename(
+        &self,
+        _request: RenamePrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不改房间名")
+    }
+}
+
 struct FakeDirectory(Vec<RoomCatalog>);
 
 impl FakeDirectory {
@@ -1046,7 +1365,7 @@ impl IdentifierFactory for TestRuntime {
         unreachable!()
     }
     fn room_catalog_id(&self) -> RoomCatalogId {
-        unreachable!()
+        RoomCatalogId::from_uuid(self.next())
     }
     fn room_instance_id(&self) -> RoomInstanceId {
         unreachable!()
@@ -1076,6 +1395,7 @@ struct Harness {
     agents: Arc<FakeAgents>,
     lobbies: Arc<ScriptedLobbies>,
     access: Arc<FakeAccess>,
+    rooms: Arc<FakeRooms>,
     runtime: Arc<TestRuntime>,
 }
 
@@ -1089,6 +1409,7 @@ impl Harness {
         let agents = Arc::new(FakeAgents::default());
         let lobbies = Arc::new(lobbies);
         let access = Arc::new(FakeAccess::default());
+        let rooms = Arc::new(FakeRooms::default());
         let runtime = Arc::new(TestRuntime::new());
         let service = NetworkAgentService::new(NetworkAgentDependencies {
             store: store.clone(),
@@ -1097,6 +1418,7 @@ impl Harness {
             agents: agents.clone(),
             lobbies: lobbies.clone(),
             access: access.clone(),
+            rooms: rooms.clone(),
             directory: Arc::new(FakeDirectory::standard()),
             secrets: Arc::new(CountingSecrets::default()),
             clock: runtime.clone(),
@@ -1111,6 +1433,7 @@ impl Harness {
             agents,
             lobbies,
             access,
+            rooms,
             runtime,
         }
     }
@@ -2653,3 +2976,6 @@ async fn 放行后按_agent_取会话替它进房间_不记活动_停用的不�
         NetworkAgentFailureKind::Unauthorized
     );
 }
+
+#[path = "network_agent_flow/rooms.rs"]
+mod rooms;

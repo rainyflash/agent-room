@@ -827,87 +827,23 @@ impl ApiError {
         failure: &NetworkAgentFailure,
         correlation_id: CorrelationId,
     ) -> Self {
-        let (status, code, category, message) = match failure.kind() {
-            NetworkAgentFailureKind::Disabled => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "network_agent.disabled",
-                ErrorCategory::DependencyUnavailable,
-                "This server doesn't accept network agents.",
-            ),
-            NetworkAgentFailureKind::InvalidName => (
-                StatusCode::BAD_REQUEST,
-                "network_agent.name_invalid",
-                ErrorCategory::Validation,
-                "The name must be 1 to 64 characters with no control characters, and can't pass for the platform or an administrator (such as Agent Room, System or Admin).",
-            ),
-            NetworkAgentFailureKind::NameUnavailable => (
-                StatusCode::CONFLICT,
-                "network_agent.name_unavailable",
-                ErrorCategory::Conflict,
-                "Too many network agents already use this name; pick another one.",
-            ),
+        log_network_agent_failure(failure, correlation_id);
+        let mut error = from_mapping(network_agent_mapping(failure.kind()), correlation_id);
+        match failure.kind() {
             NetworkAgentFailureKind::RoomNotFound => {
-                let mut error = Self::new(
-                    StatusCode::NOT_FOUND,
-                    "network_agent.room_not_found",
-                    ErrorCategory::Validation,
-                    "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it.",
-                    correlation_id,
-                );
                 error.envelope.details.insert(
                     "rooms".to_owned(),
                     serde_json::Value::from(failure.rooms().to_vec()),
                 );
-                log_network_agent_failure(failure, correlation_id);
-                return error;
             }
-            NetworkAgentFailureKind::CodeInvalid => (
-                StatusCode::NOT_FOUND,
-                "network_agent.code_invalid",
-                ErrorCategory::Validation,
-                "The code is wrong, was replaced or was turned off; ask the room's owner or a manager for a new Agent code.",
-            ),
             NetworkAgentFailureKind::RateLimited => {
-                let error = Self::new(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "network_agent.rate_limited",
-                    ErrorCategory::Transient,
-                    "Too many requests; wait as long as Retry-After says, then try again.",
-                    correlation_id,
-                );
-                log_network_agent_failure(failure, correlation_id);
-                return match failure.retry_at() {
-                    Some(retry_at) => error.retry_after_seconds(seconds_until(retry_at)),
-                    None => error,
-                };
+                if let Some(retry_at) = failure.retry_at() {
+                    error = error.retry_after_seconds(seconds_until(retry_at));
+                }
             }
-            NetworkAgentFailureKind::CapacityReached => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "network_agent.capacity_reached",
-                ErrorCategory::Transient,
-                "The public lobbies already hold as many network agents as this server allows; try again later. Private rooms have no such limit.",
-            ),
-            NetworkAgentFailureKind::Unauthorized => (
-                StatusCode::UNAUTHORIZED,
-                "network_agent.unauthorized",
-                ErrorCategory::Authentication,
-                "The token is missing, wrong or no longer active. Send the Authorization: Bearer <token> you got when you joined, or join again.",
-            ),
-            NetworkAgentFailureKind::DependencyUnavailable => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "network_agent.dependency_unavailable",
-                ErrorCategory::DependencyUnavailable,
-                "Something this server depends on is temporarily unavailable; retry the same request later.",
-            ),
-            NetworkAgentFailureKind::Internal => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "network_agent.internal",
-                ErrorCategory::Transient,
-                "The network agent service hit an internal error.",
-            ),
-        };
-        log_network_agent_failure(failure, correlation_id);
-        Self::new(status, code, category, message, correlation_id)
+            _ => {}
+        }
+        error
     }
 
     pub(crate) fn direct_session(
@@ -1498,6 +1434,96 @@ fn log_agent_access_failure(failure: AgentAccessFailure, correlation_id: Correla
         failure = ?failure.kind(),
         "Agent 口令请求失败"
     );
+}
+
+/// 网络 Agent 每种失败回的状态码、错误码和分类；消息给模型看，写明下一步怎么做。
+fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
+    match kind {
+        NetworkAgentFailureKind::Disabled => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.disabled",
+            ErrorCategory::DependencyUnavailable,
+            "This server doesn't accept network agents.",
+        ),
+        NetworkAgentFailureKind::InvalidName => (
+            StatusCode::BAD_REQUEST,
+            "network_agent.name_invalid",
+            ErrorCategory::Validation,
+            "The name must be 1 to 64 characters with no control characters, and can't pass for the platform or an administrator (such as Agent Room, System or Admin).",
+        ),
+        NetworkAgentFailureKind::NameUnavailable => (
+            StatusCode::CONFLICT,
+            "network_agent.name_unavailable",
+            ErrorCategory::Conflict,
+            "Too many network agents already use this name; pick another one.",
+        ),
+        NetworkAgentFailureKind::RoomNotFound => (
+            StatusCode::NOT_FOUND,
+            "network_agent.room_not_found",
+            ErrorCategory::Validation,
+            "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it.",
+        ),
+        NetworkAgentFailureKind::CodeInvalid => (
+            StatusCode::NOT_FOUND,
+            "network_agent.code_invalid",
+            ErrorCategory::Validation,
+            "The code is wrong, was replaced or was turned off; ask the room's owner or a manager for a new Agent code.",
+        ),
+        NetworkAgentFailureKind::RateLimited => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "network_agent.rate_limited",
+            ErrorCategory::Transient,
+            "Too many requests; wait as long as Retry-After says, then try again.",
+        ),
+        NetworkAgentFailureKind::CapacityReached => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.capacity_reached",
+            ErrorCategory::Transient,
+            "The public lobbies already hold as many network agents as this server allows; try again later. Private rooms have no such limit.",
+        ),
+        NetworkAgentFailureKind::Unauthorized => (
+            StatusCode::UNAUTHORIZED,
+            "network_agent.unauthorized",
+            ErrorCategory::Authentication,
+            "The token is missing, wrong or no longer active. Send the Authorization: Bearer <token> you got when you joined, or join again.",
+        ),
+        NetworkAgentFailureKind::RoomNameInvalid => (
+            StatusCode::BAD_REQUEST,
+            "network_agent.room_name_invalid",
+            ErrorCategory::Validation,
+            "The room name must be 1 to 128 characters with no control characters.",
+        ),
+        NetworkAgentFailureKind::RoomLimitReached => (
+            StatusCode::CONFLICT,
+            "network_agent.room_limit_reached",
+            ErrorCategory::Conflict,
+            "You already have as many open rooms as a network agent may keep. Close one first with DELETE /v1/network-agents/me/private-rooms/<room number>, or use one you have; GET /v1/network-agents/me lists the rooms you are in.",
+        ),
+        NetworkAgentFailureKind::RoomCapacityReached => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.room_capacity_reached",
+            ErrorCategory::Transient,
+            "Network agents have opened as many private rooms as this server allows right now; try again later, or ask a person to make the room and give you its Agent code.",
+        ),
+        NetworkAgentFailureKind::RoomNotOwned => (
+            StatusCode::FORBIDDEN,
+            "network_agent.room_not_owned",
+            ErrorCategory::Authorization,
+            "You can only manage private rooms you made yourself. Give the room number you got when you made it, or its roomId; GET /v1/network-agents/me lists the rooms you are in.",
+        ),
+        NetworkAgentFailureKind::DependencyUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.dependency_unavailable",
+            ErrorCategory::DependencyUnavailable,
+            "Something this server depends on is temporarily unavailable; retry the same request later.",
+        ),
+        NetworkAgentFailureKind::Internal => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "network_agent.internal",
+            ErrorCategory::Transient,
+            "The network agent service hit an internal error.",
+        ),
+    }
 }
 
 fn log_network_agent_failure(failure: &NetworkAgentFailure, correlation_id: CorrelationId) {

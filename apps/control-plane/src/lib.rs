@@ -995,7 +995,8 @@ fn build_network_agent_routes(
     )?;
     let key = config.network_agents.seal_key.as_ref();
     let policy = NetworkAgentPolicy::default_limits(config.network_agents.enabled);
-    let service = NetworkAgentService::new(NetworkAgentDependencies {
+    let private_rooms = build_private_room_service(config, dependencies)?;
+    let service = Arc::new(NetworkAgentService::new(NetworkAgentDependencies {
         store: dependencies.repositories.clone(),
         sealer: Arc::new(AesGcmNetworkAgentSealer::new(key)),
         keys: Arc::new(Ed25519NetworkAgentKeyFactory),
@@ -1007,6 +1008,7 @@ fn build_network_agent_routes(
         ),
         lobbies,
         access: build_private_room_agent_access(dependencies, key),
+        rooms: private_rooms.clone(),
         directory: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
         clock: dependencies.system_runtime.clone(),
@@ -1014,9 +1016,9 @@ fn build_network_agent_routes(
         pause: dependencies.system_runtime.clone(),
         policy,
         matrix_server_name: config.authentication.matrix_server_name.clone(),
-    });
+    }));
     let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
-        Arc::new(service);
+        service.clone();
     let encrypted = build_encrypted_clients(config, agents.clone(), dependencies.secrets.clone())?;
     // 用网络 Agent 自己的 Matrix 会话同步：请求期限覆盖一次长轮询，连接期限沿用依赖配置。
     let matrix = MatrixAgentSessionClient::new(
@@ -1027,12 +1029,13 @@ fn build_network_agent_routes(
     let gateway = Arc::new(network_gateway::NetworkGateway::new(
         network_gateway::NetworkGatewayDependencies {
             agents: agents.clone(),
+            owned_rooms: service,
             inbox: dependencies.repositories.clone(),
             history: dependencies.repositories.clone(),
             submissions: dependencies.repositories.clone(),
             matrix: Arc::new(matrix),
             content: dependencies.content.clone(),
-            rooms: build_private_room_service(config, dependencies)?,
+            rooms: private_rooms,
             verification: dependencies.repositories.clone(),
             signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
             clock: dependencies.system_runtime.clone(),
@@ -1047,13 +1050,17 @@ fn build_network_agent_routes(
     let routes =
         features::network_agents::router(features::network_agents::NetworkAgentHttpState {
             agents,
-            messaging: gateway,
+            messaging: gateway.clone(),
+            rooms: gateway,
             sources: Arc::new(NetworkSourceDigester::new(key)),
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(
                 config.network_agents.public_api_origin.as_ref(),
                 &features::network_agents::watch_page(&config.authentication.frontend_origin),
                 &policy,
+            ),
+            guide_url: features::network_agents::guide_url(
+                config.network_agents.public_api_origin.as_ref(),
             ),
         });
     Ok(NetworkAgentRuntime {
