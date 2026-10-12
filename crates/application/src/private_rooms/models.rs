@@ -81,6 +81,22 @@ pub struct InspectPrivateRoom {
     pub catalog_id: RoomCatalogId,
 }
 
+/// 房间是谁建的（`specs/agent-rooms/design.md`“网页”）：建房的 Agent，以及房主是不是网络 Agent。
+/// 网络 Agent 当房主的房间服务器读得到，人进来之前要看到。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateRoomOrigin {
+    /// 人建的房间为空。
+    pub created_by_agent: Option<PrivateRoomCreatorAgent>,
+    pub owner_is_network_agent: bool,
+}
+
+/// 建房的 Agent。查不到它的记录时没有名字。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateRoomCreatorAgent {
+    pub agent_id: AgentId,
+    pub display_name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListPrivateRooms {
     pub actor: AuthenticatedPrincipal,

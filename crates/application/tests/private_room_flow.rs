@@ -13,16 +13,17 @@ use agent_room_application::{
     ports::{
         Clock, IdentifierFactory, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomMatrixGateway,
+        PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
+        PrivateRoomStore,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomDependencies,
-        PrivateRoomFailureKind, PrivateRoomInvitation, PrivateRoomMembershipAction,
-        PrivateRoomRetirement, PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom,
-        TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent,
+        PrivateRoomDependencies, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomInvitation,
+        PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomRetirement, PrivateRoomService,
+        PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -317,6 +318,109 @@ async fn agent_替主体邀请人_只在_agent_建的房间里_只给查看和�
     assert_eq!(
         fixture.matrix.speaking_allowed("@member:matrix.test"),
         Some(true)
+    );
+}
+
+async fn origin(
+    fixture: &Fixture,
+    actor: AuthenticatedPrincipal,
+) -> Result<PrivateRoomOrigin, PrivateRoomFailure> {
+    fixture
+        .service
+        .origin(InspectPrivateRoom {
+            actor,
+            catalog_id: fixture.catalog,
+        })
+        .await
+}
+
+#[tokio::test]
+async fn 房间是谁建的_受邀的人接受前就看得到_网络_agent_当房主时标出来() {
+    let person = Fixture::new();
+    person
+        .service
+        .create(person.creation_request(speaker_permissions()))
+        .await
+        .expect("人建房应成功");
+    for viewer in [person.owner_actor(), person.member_action().actor] {
+        assert_eq!(
+            origin(&person, viewer)
+                .await
+                .expect("房主和受邀的人都看得到"),
+            PrivateRoomOrigin {
+                created_by_agent: None,
+                owner_is_network_agent: false,
+            }
+        );
+    }
+    let outsider = origin(&person, actor(principal_id(9), "@outsider:matrix.test"))
+        .await
+        .expect_err("房间外的人看不到");
+    assert_eq!(outsider.kind(), PrivateRoomFailureKind::NotFound);
+
+    // 本机 Agent 建的：房主是人。查不到建房的 Agent 时照样说是 Agent 建的，只是没有名字。
+    for described in [true, false] {
+        let local = Fixture::new();
+        local.agents.own(local.owner, agent_id(170));
+        if described {
+            local.agents.describe(agent_id(170), "Scout", None);
+        }
+        local
+            .service
+            .create(local.agent_creation_request(
+                PrivateRoomActor::Device(device(local.owner, "@owner:matrix.test")),
+                agent_id(170),
+            ))
+            .await
+            .expect("本机 Agent 建房应成功");
+        assert_eq!(
+            origin(&local, local.owner_actor())
+                .await
+                .expect("房主看得到"),
+            PrivateRoomOrigin {
+                created_by_agent: Some(PrivateRoomCreatorAgent {
+                    agent_id: agent_id(170),
+                    display_name: described.then(|| "Scout".to_owned()),
+                }),
+                owner_is_network_agent: false,
+            }
+        );
+    }
+
+    let network = Fixture::new();
+    let network_principal = principal_id(3);
+    network.agents.own(network_principal, agent_id(171));
+    network
+        .agents
+        .describe(agent_id(171), "Visitor", Some(network_principal));
+    let network_agent =
+        || PrivateRoomActor::NetworkAgent(device(network_principal, "@user-0123abcd:matrix.test"));
+    network
+        .service
+        .create(network.agent_creation_request(network_agent(), agent_id(171)))
+        .await
+        .expect("网络 Agent 建房应成功");
+    network
+        .service
+        .invite(InvitePrivateRoomMember {
+            actor: network_agent(),
+            catalog_id: network.catalog,
+            target_principal_id: network.member,
+            permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
+        })
+        .await
+        .expect("网络 Agent 能邀请人");
+    assert_eq!(
+        origin(&network, network.member_action().actor)
+            .await
+            .expect("受邀的人接受之前就看得到"),
+        PrivateRoomOrigin {
+            created_by_agent: Some(PrivateRoomCreatorAgent {
+                agent_id: agent_id(171),
+                display_name: Some("Visitor".to_owned()),
+            }),
+            owner_is_network_agent: true,
+        }
     );
 }
 
@@ -1358,6 +1462,7 @@ impl PrivateRoomMatrixGateway for TestMatrix {
 struct TestAgentDirectory {
     agents: Mutex<BTreeMap<PrincipalId, Vec<MatrixUserId>>>,
     owned: Mutex<Vec<(PrincipalId, AgentId)>>,
+    described: Mutex<BTreeMap<AgentId, PrivateRoomAgentDescription>>,
 }
 
 impl TestAgentDirectory {
@@ -1366,6 +1471,21 @@ impl TestAgentDirectory {
             .lock()
             .expect("Agent 锁正常")
             .push((principal_id, agent_id));
+    }
+
+    fn describe(
+        &self,
+        agent_id: AgentId,
+        display_name: &str,
+        network_principal_id: Option<PrincipalId>,
+    ) {
+        self.described.lock().expect("Agent 锁正常").insert(
+            agent_id,
+            PrivateRoomAgentDescription {
+                display_name: display_name.to_owned(),
+                network_principal_id,
+            },
+        );
     }
 
     fn register(&self, principal_id: PrincipalId, agent: &MatrixUserId) {
@@ -1404,6 +1524,19 @@ impl PrivateRoomAgentDirectory for TestAgentDirectory {
             .expect("Agent 锁正常")
             .contains(&(principal_id, agent_id));
         Box::pin(async move { Ok(owned) })
+    }
+
+    fn describe_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentDescription>>> {
+        let described = self
+            .described
+            .lock()
+            .expect("Agent 锁正常")
+            .get(&agent_id)
+            .cloned();
+        Box::pin(async move { Ok(described) })
     }
 }
 

@@ -2,12 +2,13 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentRegistration, AgentRegistrationTransaction, AgentRepository, MatrixUserId,
-        OutboxMessage, PortFuture, PrivateRoomAgentDirectory, RegisteredAgent,
+        OutboxMessage, PortFuture, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+        RegisteredAgent,
     },
 };
 use agent_room_domain::{
     agents::{Agent, AgentStatus, AgentVisibility},
-    ids::{AgentId, ContentId},
+    ids::{AgentId, ContentId, PrincipalId},
     time::UtcMillis,
     version::AggregateVersion,
 };
@@ -19,7 +20,7 @@ use crate::{PostgresRepositories, error::map_sqlx_error, outbox::insert_outbox_e
 impl PrivateRoomAgentDirectory for PostgresRepositories {
     fn agent_matrix_users(
         &self,
-        principal_id: agent_room_domain::ids::PrincipalId,
+        principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>> {
         Box::pin(async move {
             let agents = AgentRepository::list_for_principal(self, principal_id).await?;
@@ -39,7 +40,7 @@ impl PrivateRoomAgentDirectory for PostgresRepositories {
 
     fn owns_active_agent(
         &self,
-        principal_id: agent_room_domain::ids::PrincipalId,
+        principal_id: PrincipalId,
         agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<bool>> {
         Box::pin(async move {
@@ -63,6 +64,36 @@ impl PrivateRoomAgentDirectory for PostgresRepositories {
             .map_err(|error| map_sqlx_error("private_room_agent.owns_active_agent", &error))
         })
     }
+
+    fn describe_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentDescription>>> {
+        Box::pin(async move {
+            let operation = "private_room_agent.describe";
+            // 网络 Agent 的 agent_id 唯一，最多连上一行；停用了的也照样回答。
+            let row = sqlx::query(
+                r"SELECT agent.display_name, network.principal_id AS network_principal_id
+                  FROM agent_room.agent AS agent
+                  LEFT JOIN agent_room.network_agent AS network
+                    ON network.agent_id = agent.id
+                  WHERE agent.id = $1",
+            )
+            .bind(agent_id.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|row| {
+                let network_principal_id: Option<uuid::Uuid> =
+                    decode_column(&row, "network_principal_id", operation)?;
+                Ok(PrivateRoomAgentDescription {
+                    display_name: decode_column(&row, "display_name", operation)?,
+                    network_principal_id: network_principal_id.map(PrincipalId::from_uuid),
+                })
+            })
+            .transpose()
+        })
+    }
 }
 
 impl AgentRepository for PostgresRepositories {
@@ -84,7 +115,7 @@ impl AgentRepository for PostgresRepositories {
 
     fn list_for_principal(
         &self,
-        principal_id: agent_room_domain::ids::PrincipalId,
+        principal_id: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<RegisteredAgent>>> {
         Box::pin(async move {
             let operation = "agent.list_for_principal";

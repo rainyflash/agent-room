@@ -1,6 +1,8 @@
 use agent_room_application::{
     ports::PrivateRoomSnapshot,
-    private_rooms::{CreatePrivateRoom, PrivateRoomInvitation},
+    private_rooms::{
+        CreatePrivateRoom, PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomOrigin,
+    },
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
@@ -131,6 +133,39 @@ impl From<PrivateRoomSnapshot> for PrivateRoomResponse {
             status: snapshot.room().status().as_str(),
             version: snapshot.room().version().value(),
             members,
+        }
+    }
+}
+
+/// 房间是谁建的。单独一个接口，不加进房间的回答：网页对房间的回答严格校验，
+/// 旧版桌面端多看到一个字段就读不出房间。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PrivateRoomOriginResponse {
+    created_by_agent: Option<PrivateRoomCreatorResponse>,
+    owner_is_network_agent: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrivateRoomCreatorResponse {
+    agent_id: String,
+    display_name: Option<String>,
+}
+
+impl From<PrivateRoomOrigin> for PrivateRoomOriginResponse {
+    fn from(origin: PrivateRoomOrigin) -> Self {
+        Self {
+            created_by_agent: origin.created_by_agent.map(
+                |PrivateRoomCreatorAgent {
+                     agent_id,
+                     display_name,
+                 }| PrivateRoomCreatorResponse {
+                    agent_id: agent_id.to_string(),
+                    display_name,
+                },
+            ),
+            owner_is_network_agent: origin.owner_is_network_agent,
         }
     }
 }

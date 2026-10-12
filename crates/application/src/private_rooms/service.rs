@@ -28,8 +28,9 @@ use crate::{
 use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
     InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
-    PrivateRoomActor, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
-    PrivateRoomResult, RenamePrivateRoom, TransferPrivateRoomOwnership,
+    PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomFailureKind, PrivateRoomFailureStage,
+    PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult, RenamePrivateRoom,
+    TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -43,6 +44,13 @@ pub trait PrivateRoomUseCases: Send + Sync {
         &self,
         request: InspectPrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    /// 房间是谁建的。和 [`Self::inspect`] 一样受邀和已加入的成员都看得到：接受邀请之前就知道
+    /// 房主是不是网络 Agent、服务器读不读得到。
+    fn origin(
+        &self,
+        request: InspectPrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomOrigin>>;
 
     fn list(
         &self,
@@ -226,6 +234,39 @@ impl PrivateRoomService {
             ));
         }
         Ok(snapshot)
+    }
+
+    async fn origin_internal(
+        &self,
+        request: InspectPrivateRoom,
+    ) -> PrivateRoomResult<PrivateRoomOrigin> {
+        const OPERATION: &str = "private_room.origin";
+        let snapshot = self.inspect_internal(request).await?;
+        let room = snapshot.room();
+        let Some(agent_id) = room.created_by_agent() else {
+            return Ok(PrivateRoomOrigin {
+                created_by_agent: None,
+                owner_is_network_agent: false,
+            });
+        };
+        let description = self
+            .agents
+            .describe_agent(agent_id)
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
+        // 网络 Agent 只能建自己当房主的房间，也转让不了：建房的是网络 Agent、房主又是它，
+        // 服务器就读得到这里的消息。
+        let owner_is_network_agent = description
+            .as_ref()
+            .and_then(|agent| agent.network_principal_id)
+            .is_some_and(|principal| principal == room.owner_principal_id());
+        Ok(PrivateRoomOrigin {
+            created_by_agent: Some(PrivateRoomCreatorAgent {
+                agent_id,
+                display_name: description.map(|agent| agent.display_name),
+            }),
+            owner_is_network_agent,
+        })
     }
 
     async fn list_internal(
@@ -1046,6 +1087,13 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: InspectPrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.inspect_internal(request))
+    }
+
+    fn origin(
+        &self,
+        request: InspectPrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomOrigin>> {
+        Box::pin(self.origin_internal(request))
     }
 
     fn list(

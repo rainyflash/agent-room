@@ -3,8 +3,8 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        PrivateRoomAgentDirectory, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-        PrivateRoomStore,
+        PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomPrincipalDirectory,
+        PrivateRoomSnapshot, PrivateRoomStore,
     },
 };
 use agent_room_domain::{
@@ -246,6 +246,49 @@ async fn 只认主体名下还在用的_agent() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 建房的_agent_说得出名字_网络_agent_带着它的合成主体() {
+    let database = TestDatabase::connect().await;
+    let person = seed_principal(&database.runtime, "describe-person").await;
+    let local = seed_agent(&database.runtime, person).await;
+    let network =
+        seed_principal_from(&database.runtime, "describe-network", NETWORK_AGENT_ISSUER).await;
+    let remote = seed_agent(&database.runtime, network).await;
+    seed_network_agent(&database.runtime, network, remote).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let describe = |agent| {
+        let repositories = &repositories;
+        async move {
+            PrivateRoomAgentDirectory::describe_agent(repositories, agent)
+                .await
+                .expect("查询应成功")
+        }
+    };
+    let described = |network_principal_id| {
+        Some(PrivateRoomAgentDescription {
+            display_name: "建房测试 Agent".to_owned(),
+            network_principal_id,
+        })
+    };
+
+    assert_eq!(describe(local).await, described(None));
+    assert_eq!(describe(remote).await, described(Some(network)));
+    sqlx::query("UPDATE agent_room.agent SET lifecycle_state = 'suspended' WHERE id = $1")
+        .bind(remote.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .expect("停用 Agent 应成功");
+    assert_eq!(
+        describe(remote).await,
+        described(Some(network)),
+        "停用了的照样回答：房间还在"
+    );
+    assert_eq!(describe(AgentId::from_uuid(Uuid::now_v7())).await, None);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 私人房间只把人当成员_网络_agent_的合成主体找不到() {
     let database = TestDatabase::connect().await;
     let person = seed_principal(&database.runtime, "directory-person").await;
@@ -464,6 +507,43 @@ async fn seed_agent(pool: &PgPool, owner: PrincipalId) -> AgentId {
         .await
         .expect("建立主人后应能激活 Agent");
     agent
+}
+
+/// 把合成主体和它的 Agent 连起来的网络 Agent 记录；停在 provisioning 就够了。
+async fn seed_network_agent(pool: &PgPool, principal: PrincipalId, agent: AgentId) {
+    let device = Uuid::now_v7();
+    let digest = [
+        principal.as_uuid().as_bytes().as_slice(),
+        agent.as_uuid().as_bytes().as_slice(),
+    ]
+    .concat();
+    sqlx::query(
+        r"INSERT INTO agent_room.device (
+               id, principal_id, label, platform, public_signing_key, trust_state, created_at
+           ) VALUES ($1, $2, '网络 Agent', 'network', $3, 'pending', statement_timestamp())",
+    )
+    .bind(device)
+    .bind(principal.as_uuid())
+    .bind(&digest)
+    .execute(pool)
+    .await
+    .expect("网络 Agent 的设备写入应成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.network_agent (
+               id, principal_id, device_id, agent_id, token_digest, display_name, status,
+               source_digest, created_at, last_active_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, 'provisioning', $5,
+                     statement_timestamp(), statement_timestamp())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(principal.as_uuid())
+    .bind(device)
+    .bind(agent.as_uuid())
+    .bind(&digest)
+    .bind(format!("Visitor {}", agent.as_uuid().simple()))
+    .execute(pool)
+    .await
+    .expect("网络 Agent 写入应成功");
 }
 
 async fn seed_principal(pool: &PgPool, suffix: &str) -> PrincipalId {
