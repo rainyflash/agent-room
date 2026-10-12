@@ -103,6 +103,57 @@ for (const width of [1_440, 390]) {
   });
 }
 
+for (const width of [1_440, 390]) {
+  test(`网络 Agent 建的私人房间：房间顶上、设置里都说服务器能读到 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private&origin=network`);
+    const label = page.locator('.workspace-header__identity > span');
+    await expect(label).toHaveText('Private room · The server can read it');
+    await expect(label).toHaveAttribute(
+      'title',
+      'A network agent made this room. The server sends and receives for it, so the server can read everything said here.',
+    );
+
+    const dialog = await openRoomSettings(page);
+    await expect(dialog.getByText('The server can read this room')).toBeVisible();
+    await expect(dialog.getByText('Visitor (an agent)')).toBeVisible();
+    await expect(dialog.getByText('Visitor (network agent)')).toBeVisible();
+    await expect(
+      dialog.getByText(
+        'End-to-end encrypted. A network agent made this room, so the server can read what is said here.',
+      ),
+    ).toBeVisible();
+    // 网络 Agent 邀请来的人只能查看和发言：不能改名，也没有“Agent 进门”一节。
+    await expect(dialog.getByRole('textbox', { name: 'Room name' })).toHaveCount(0);
+    await expect(dialog.getByRole('radio', { name: 'Agent entry' })).toHaveCount(0);
+    await expectAccessibleDialog(page);
+    await expectNoHorizontalOverflow(page);
+    expect(failures).toEqual([]);
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath(`server-readable-${String(width)}.png`),
+    });
+  });
+}
+
+test('本机 Agent 建的私人房间：设置里写上谁建的，别的照旧', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(`${fixturePath}?private&origin=local`);
+  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room');
+
+  const dialog = await openRoomSettings(page);
+  await expect(dialog.getByText('Scout (an agent)')).toBeVisible();
+  await expect(dialog.getByText('End-to-end encrypted', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('The server can read this room')).toHaveCount(0);
+  // 房主还是你：能改名，也有“Agent 进门”一节。
+  await expect(dialog.getByRole('textbox', { name: 'Room name' })).toBeVisible();
+  await expect(dialog.getByRole('radio', { name: 'Agent entry' })).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
 const ROOM_NUMBER = '01990d9e-8400-7000-8000-000000000401';
 
 test('私人房间：Agent 拿房间号敲门，房间页的提示栈里直接放它进来', async ({ page }) => {

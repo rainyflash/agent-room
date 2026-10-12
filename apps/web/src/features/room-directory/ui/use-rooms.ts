@@ -7,6 +7,7 @@ import { PrivateRoomCoordinator } from '@/features/private-rooms/application/pri
 import {
   privateRoomListQueryKey,
   usePrivateRoomList,
+  useServerReadableRooms,
 } from '@/features/private-rooms/data/private-room-queries';
 import type {
   CreatePrivateRoomInput,
@@ -22,6 +23,8 @@ export type MyPrivateRooms = {
   readonly principalId: string | undefined;
   /** 有人邀请了你、你还没答复的房间。 */
   readonly invitations: readonly PrivateRoom[];
+  /** 邀请里哪些房间是网络 Agent 建的、服务器读得到（房间 ID）；接受之前就要说。 */
+  readonly serverReadable: ReadonlySet<string>;
   readonly joined: readonly PrivateRoom[];
   readonly state: RoomListState;
   readonly retry: () => void;
@@ -36,9 +39,15 @@ export function useMyPrivateRooms(): MyPrivateRooms {
     query.data?.ok === true ? query.data.value.filter((room) => room.status === 'active') : [];
   const membership = (room: PrivateRoom) =>
     room.members.find((member) => member.principalId === principalId)?.status;
+  const invitations = active.filter((room) => membership(room) === 'invited');
+  const serverReadable = useServerReadableRooms(
+    privateRooms,
+    invitations.map((room) => room.catalogId),
+  );
   return {
     principalId,
-    invitations: active.filter((room) => membership(room) === 'invited'),
+    invitations,
+    serverReadable,
     joined: active.filter((room) => membership(room) === 'joined'),
     state: query.isPending ? 'loading' : query.isError || !query.data.ok ? 'failed' : 'ready',
     retry: () => void query.refetch(),

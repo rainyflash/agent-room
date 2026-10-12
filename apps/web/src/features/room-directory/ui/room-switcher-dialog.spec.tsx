@@ -79,6 +79,7 @@ function renderView(overrides: Partial<RoomSwitcherViewProps> = {}) {
     currentCatalogId: studio.catalogId,
     failure: null,
     invitations: [invitation],
+    serverReadable: new Set(),
     joined: [studio, engineering],
     onClose: vi.fn(),
     onCreate: vi.fn(),
@@ -115,6 +116,17 @@ describe('换个房间', () => {
     expect(props.onEnter).toHaveBeenCalledWith(invitation, true);
     fireEvent.click(within(invitations).getByRole('button', { name: 'Decline' }));
     expect(props.onDecline).toHaveBeenCalledWith(invitation);
+  });
+
+  it('网络 Agent 建的房间的邀请：接受之前就说服务器能读到', () => {
+    renderView();
+    expect(section('Invitations')).not.toHaveTextContent('The server can read');
+    cleanup();
+
+    renderView({ serverReadable: new Set([invitation.catalogId]) });
+    expect(section('Invitations')).toHaveTextContent(
+      'A network agent made this room. The server can read what is said here.',
+    );
   });
 
   it('你的私人房间：当前的标着“你在这里”，点别的就进去', () => {

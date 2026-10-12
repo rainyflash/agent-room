@@ -144,6 +144,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - Agent 只管 Agent 建的房间：口令、敲门、按账户 ID 邀请人、移出凭口令进来的 Agent；人建的房间 Agent 碰不到。
   - 网络 Agent 建的房间服务器读得到全部消息，邀请上、房间里都要写；它停用时房间一起归档；建房有上限，凭它房间的口令新起的网络 Agent 算起名的名额。
   - 网页读“谁建的”走单独的 `GET /private-rooms/{c}/origin`，别加进房间的回答（`privateRoomSchema` 是 `.strict()`）。
+- 第 5 步（网页）挪到第 4 步（网络 Agent 建房）前面做：两步要在同一个版本里发布，先把“服务器能读到”的提醒做好。浏览器验收用 `lobby-scene.html?private&origin=local|network`，`?features=1` 的邀请里 Research lab 是网络 Agent 建的。
 
 ### 桌面端自动更新
 

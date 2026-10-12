@@ -48,6 +48,7 @@ import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { WorkspaceNavigation } from '@/features/lobby/ui/workspace-navigation';
 import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
+import { usePrivateRoomOrigin } from '@/features/private-rooms/data/private-room-queries';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
 import './lobby-game.css';
@@ -147,7 +148,7 @@ function ReadyLobby({
   view,
 }: LobbyPageProps & { readonly room: LobbyRoom; readonly scene: LobbySceneProjection }) {
   const { t } = useTranslation();
-  const { config, localRuntime, messages: messageGateway } = useAppServices();
+  const { config, localRuntime, messages: messageGateway, privateRooms } = useAppServices();
   const reception = useReceptionEvidence();
   const { url: downloadUrl } = usePublishedDownload(config);
   const directSessions = useDirectSessionController(principal !== null);
@@ -169,6 +170,11 @@ function ReadyLobby({
       : { principalId: principal.principalId, displayName: principal.displayName };
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
+  const origin = usePrivateRoomOrigin(
+    privateRooms,
+    catalogId,
+    principal !== null && room.encrypted === true,
+  );
   const projection = useMemo(
     () => ({
       ...scene,
@@ -288,6 +294,7 @@ function ReadyLobby({
       <RoomBeacon
         agentCount={attendance.present}
         privateRoom={room.encrypted === true}
+        serverReadable={origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent}
         membersButtonRef={membersButton}
         roomName={room.name}
         onOpenNavigation={() => {

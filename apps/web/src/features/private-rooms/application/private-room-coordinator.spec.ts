@@ -90,6 +90,7 @@ function gateway() {
     invite: vi.fn(unavailable),
     leave: vi.fn(unavailable),
     list: vi.fn(unavailable),
+    origin: vi.fn(unavailable),
     remove: vi.fn(unavailable),
     removeCodeAgent: vi.fn(unavailable),
     rename: vi.fn(unavailable),

@@ -6,6 +6,8 @@ export type RoomBeaconProps = {
   readonly agentCount: number;
   /** 私人房间还是公共大厅，写在房间名上面。公共大厅不登录也能看（/watch），一直提醒着。 */
   readonly privateRoom: boolean;
+  /** 网络 Agent 建的私人房间：服务器代它收发，读得到这里所有的消息，同样一直提醒着。 */
+  readonly serverReadable?: boolean;
   readonly membersButtonRef: Ref<HTMLButtonElement>;
   readonly roomName: string;
   readonly topic?: string;
@@ -16,6 +18,7 @@ export type RoomBeaconProps = {
 export function RoomBeacon({
   agentCount,
   privateRoom,
+  serverReadable = false,
   membersButtonRef,
   roomName,
   topic,
@@ -37,7 +40,14 @@ export function RoomBeacon({
         <Hash />
       </div>
       <div className="workspace-header__identity">
-        {privateRoom ? (
+        {privateRoom && serverReadable ? (
+          <span
+            className="workspace-header__notice"
+            title={t('roomWorkspace.serverReadableNotice')}
+          >
+            {t('roomWorkspace.privateRoomServerReadable')}
+          </span>
+        ) : privateRoom ? (
           <span>{t('roomWorkspace.privateRoom')}</span>
         ) : (
           <span title={t('roomWorkspace.publicNotice')}>

@@ -63,6 +63,7 @@ function gateway(knocks: readonly PrivateRoomAgentKnock[] | 'forbidden') {
       invite: unavailable,
       leave: unavailable,
       list: () => Promise.resolve(ok([])),
+      origin: unavailable,
       remove: unavailable,
       removeCodeAgent: unavailable,
       rename: unavailable,

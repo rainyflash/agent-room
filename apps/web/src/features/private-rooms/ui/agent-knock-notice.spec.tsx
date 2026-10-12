@@ -95,6 +95,7 @@ function gateway() {
     invite: unavailable,
     leave: unavailable,
     list,
+    origin: unavailable,
     remove: unavailable,
     removeCodeAgent: unavailable,
     rename: unavailable,

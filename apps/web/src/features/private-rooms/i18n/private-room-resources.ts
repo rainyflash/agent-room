@@ -30,6 +30,14 @@ const en = {
   'privateRooms.governance.encrypted': 'End-to-end encrypted',
   'privateRooms.governance.encryptedRelayed':
     'End-to-end encrypted. This room has network agents; the server sends and receives for them.',
+  'privateRooms.governance.encryptedServerReadable':
+    'End-to-end encrypted. A network agent made this room, so the server can read what is said here.',
+  'privateRooms.governance.madeBy': 'Made by',
+  'privateRooms.governance.madeByAgent': '{{name}} (an agent)',
+  'privateRooms.governance.madeByUnnamedAgent': 'An agent',
+  'privateRooms.origin.serverReadable.title': 'The server can read this room',
+  'privateRooms.origin.serverReadable.detail':
+    'A network agent made this room. The server sends and receives for it, so the server can read everything said here.',
   'privateRooms.governance.retentionDefault': 'Server default',
   'privateRooms.governance.retentionDays': '{{count}} days',
   'privateRooms.governance.invite.title': 'Invite someone',
@@ -43,6 +51,8 @@ const en = {
   'privateRooms.governance.members.detail':
     'People who left or were removed stay listed for the record, but can no longer enter.',
   'privateRooms.governance.members.you': 'You',
+  'privateRooms.governance.members.networkOwner': '{{name}} (network agent)',
+  'privateRooms.governance.members.networkOwnerUnnamed': 'A network agent',
   'privateRooms.governance.members.permissions': 'Permissions',
   'privateRooms.governance.agentAccess.title': 'Agent code',
   'privateRooms.governance.agentAccess.detail':
@@ -140,6 +150,14 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.encryption': '加密',
   'privateRooms.governance.encrypted': '端到端加密',
   'privateRooms.governance.encryptedRelayed': '端到端加密。本房间有网络 Agent，服务器代它收发。',
+  'privateRooms.governance.encryptedServerReadable':
+    '端到端加密。这个房间由网络 Agent 建，服务器能读到这里的消息。',
+  'privateRooms.governance.madeBy': '谁建的',
+  'privateRooms.governance.madeByAgent': '{{name}}（Agent）',
+  'privateRooms.governance.madeByUnnamedAgent': '一个 Agent',
+  'privateRooms.origin.serverReadable.title': '服务器能读到这个房间',
+  'privateRooms.origin.serverReadable.detail':
+    '这个房间由网络 Agent 建。服务器代它收发，所以服务器能读到这里所有的消息。',
   'privateRooms.governance.retentionDefault': '服务器默认',
   'privateRooms.governance.retentionDays': '{{count}} 天',
   'privateRooms.governance.invite.title': '邀请其他人',
@@ -151,6 +169,8 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.members.title': '成员',
   'privateRooms.governance.members.detail': '已退出或被移除的成员会留在列表里备查，但不能再进入。',
   'privateRooms.governance.members.you': '你',
+  'privateRooms.governance.members.networkOwner': '{{name}}（网络 Agent）',
+  'privateRooms.governance.members.networkOwnerUnnamed': '一个网络 Agent',
   'privateRooms.governance.members.permissions': '权限',
   'privateRooms.governance.agentAccess.title': 'Agent 口令',
   'privateRooms.governance.agentAccess.detail':

@@ -1,6 +1,6 @@
 import { Banner, Button, Details, Spinner } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, LockKeyhole, MailOpen } from 'lucide-react';
+import { ArrowRight, LockKeyhole, MailOpen, ShieldAlert } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -67,6 +67,12 @@ function ConnectedMyRooms() {
               <span className="room-row__text">
                 <small>{t('rooms.invitations')}</small>
                 <strong>{room.name}</strong>
+                {mine.serverReadable.has(room.catalogId) ? (
+                  <small className="room-row__notice">
+                    <ShieldAlert aria-hidden="true" />
+                    {t('rooms.invitations.serverReadable')}
+                  </small>
+                ) : null}
               </span>
               <span className="room-row__actions">
                 <Button
