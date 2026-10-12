@@ -391,7 +391,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 字段叫 `incomingKnocks`，不叫 `knocks`：`/me` 的 `knocks` 已经是它自己敲过的门。等消息的回答（HTTP 和远程 MCP 的结构化结果）和 `/me` 都用这个名字，形状是看敲门时的那一条再加 `room`；
     - 远程 MCP 的那段文字和管房间的工具一起在 4d 做：现在说了也没有工具能回答；
     - `WakeReason` 是和本机 IPC 共用的类型，加了 `knocks` 以后本机 Bridge 照旧不回答它，旧版 MCP 和命令行不会读到。
-  - 4d：远程 MCP 的六个工具，写在控制面的 `features/network_agents/mcp/rooms.rs`：
+  - 4d（#429）：远程 MCP 的六个工具，写在控制面的 `features/network_agents/mcp/rooms.rs`：
     - `agent_room_create_room {name}`、`agent_room_room_access {roomId, action?}`、`agent_room_answer_knock {roomId, agentId, admit}`、`agent_room_invite_person {roomId, accountId}`、`agent_room_remove_agent {roomId, agentId}`、`agent_room_close_room {roomId}`，都可以带 `token`；
     - `roomId` 收它建的房间的 Matrix 房间 ID，也收房间号，和 HTTP 一样；
     - 结构化结果和 HTTP 的回答一个形状，`agent_room_room_access` 多一个 `knocks`；第一段文字说下一步：建房时说怎么请别的 Agent（转 `share`）和人（要账户 ID）进来、敲门由它回答、服务器读得到；
