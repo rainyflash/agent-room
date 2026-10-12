@@ -43,6 +43,10 @@ use agent_room_application::{
         NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
         NetworkAgentTimelineGap, PortFuture, SecretValue,
     },
+    private_rooms::{
+        PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult,
+        PrivateRoomRetirement,
+    },
 };
 use agent_room_bridge_core::{
     matrix_recovery::{MatrixRecoveryCommand, MatrixRecoveryResult},
@@ -276,7 +280,7 @@ impl NetworkAgentUseCases for FakeAgents {
             .filter(|exit| {
                 let id = match exit {
                     NetworkAgentPendingExit::Session(session) => session.network_agent_id,
-                    NetworkAgentPendingExit::Unopenable(id) => *id,
+                    NetworkAgentPendingExit::Unopenable { id, .. } => *id,
                 };
                 !left.contains(&id)
             })
@@ -1579,6 +1583,30 @@ impl Clock for TokioClock {
 
 // ---------- 组装与构造 ----------
 
+/// 停用时关房间：记下每次替谁关；按房主记着它有几个房间，关过就没了；`fails` 为真时关不成。
+#[derive(Default)]
+struct FakeRetirement {
+    calls: Mutex<Vec<PrincipalId>>,
+    owned: Mutex<HashMap<PrincipalId, usize>>,
+    fails: Mutex<bool>,
+}
+
+impl PrivateRoomRetirement for FakeRetirement {
+    fn archive_owned_by(&self, owner: PrincipalId) -> PortFuture<'_, PrivateRoomResult<usize>> {
+        self.calls.lock().unwrap().push(owner);
+        let result = if *self.fails.lock().unwrap() {
+            Err(PrivateRoomFailure::new(
+                "private_room.archive_owned",
+                PrivateRoomFailureStage::Matrix,
+                PrivateRoomFailureKind::DependencyUnavailable,
+            ))
+        } else {
+            Ok(self.owned.lock().unwrap().remove(&owner).unwrap_or(0))
+        };
+        Box::pin(async move { result })
+    }
+}
+
 struct Harness {
     gateway: NetworkGateway,
     agents: Arc<FakeAgents>,
@@ -1587,6 +1615,7 @@ struct Harness {
     content: Arc<FakeContent>,
     matrix: Arc<ScriptedMatrix>,
     encrypted: Arc<FakeEncrypted>,
+    rooms: Arc<FakeRetirement>,
 }
 
 fn harness() -> Harness {
@@ -1607,6 +1636,7 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
     let submissions = Arc::new(MemorySubmissions::default());
     let content = Arc::new(FakeContent::default());
     let matrix = Arc::new(ScriptedMatrix::default());
+    let rooms = Arc::new(FakeRetirement::default());
     let encrypted = Arc::new(FakeEncrypted {
         log: agents.log.clone(),
         ..FakeEncrypted::default()
@@ -1618,6 +1648,7 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
         submissions: submissions.clone(),
         matrix: matrix.clone(),
         content: content.clone(),
+        rooms: rooms.clone(),
         verification: Arc::new(KnownInstances),
         signatures: Arc::new(FakeSignatures),
         clock: Arc::new(TokioClock {
@@ -1633,6 +1664,7 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
         content,
         matrix,
         encrypted,
+        rooms,
     }
 }
 
@@ -1645,6 +1677,7 @@ fn restarted(harness: &Harness) -> NetworkGateway {
         submissions: harness.submissions.clone(),
         matrix: harness.matrix.clone(),
         content: harness.content.clone(),
+        rooms: harness.rooms.clone(),
         verification: Arc::new(KnownInstances),
         signatures: Arc::new(FakeSignatures),
         clock: Arc::new(TokioClock {
@@ -3330,6 +3363,33 @@ async fn 停用时离开所有房间再作废令牌_离开失败也照样作废_
     );
 }
 
+#[tokio::test]
+async fn 停用时先关掉它当房主的房间再离开_关不成就先不离开_令牌照样作废() {
+    let owner = PrincipalId::from_uuid(uuid(PRINCIPAL));
+    let closing = harness();
+    closing.rooms.owned.lock().unwrap().insert(owner, 2);
+    closing.gateway.leave_and_disable(TOKEN).await.unwrap();
+    assert_eq!(*closing.rooms.calls.lock().unwrap(), [owner]);
+    assert_eq!(*closing.matrix.left.lock().unwrap(), [ROOM]);
+    assert_eq!(
+        *closing.agents.rooms_left.lock().unwrap(),
+        [network_agent_id()]
+    );
+
+    let failing = harness();
+    *failing.rooms.fails.lock().unwrap() = true;
+    failing.gateway.leave_and_disable(TOKEN).await.unwrap();
+    assert_eq!(*failing.agents.disabled.lock().unwrap(), [TOKEN]);
+    assert!(
+        failing.matrix.left.lock().unwrap().is_empty(),
+        "房间没关上就先不离开"
+    );
+    assert!(
+        failing.agents.rooms_left.lock().unwrap().is_empty(),
+        "不记为已离开，定时清理再来关"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn 进过加密房间的_agent_改由加密客户端同步_收件箱照旧() {
     let harness = harness();
@@ -3420,7 +3480,10 @@ async fn 停用与定时清理时关掉加密客户端_闲置的也关掉() {
     let lost = NetworkAgentId::from_uuid(Uuid::now_v7());
     *cleanup.agents.exits.lock().unwrap() = vec![
         NetworkAgentPendingExit::Session(Box::new(cleanup.agents.own_session())),
-        NetworkAgentPendingExit::Unopenable(lost),
+        NetworkAgentPendingExit::Unopenable {
+            id: lost,
+            principal_id: PrincipalId::from_uuid(Uuid::now_v7()),
+        },
     ];
     *cleanup.encrypted.idle.lock().unwrap() = 2;
 
@@ -3899,7 +3962,10 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
     *harness.agents.stale.lock().unwrap() = 2;
     *harness.agents.exits.lock().unwrap() = vec![
         NetworkAgentPendingExit::Session(Box::new(harness.agents.own_session())),
-        NetworkAgentPendingExit::Unopenable(lost),
+        NetworkAgentPendingExit::Unopenable {
+            id: lost,
+            principal_id: PrincipalId::from_uuid(Uuid::now_v7()),
+        },
     ];
     *harness.matrix.leave_fails.lock().unwrap() = true;
 
@@ -3909,6 +3975,7 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
         first,
         NetworkAgentCleanupOutcome {
             disabled: 2,
+            archived: 0,
             left: 0,
             abandoned: 1,
             retrying: 1,
@@ -3944,6 +4011,63 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
     assert_eq!(
         harness.gateway.clean_up().await.unwrap(),
         NetworkAgentCleanupOutcome::default()
+    );
+}
+
+#[tokio::test]
+async fn 定时清理先关掉停用的网络_agent_当房主的房间_关不成的先不离开_下轮再来() {
+    let harness = harness();
+    let owner = PrincipalId::from_uuid(uuid(PRINCIPAL));
+    let lost = NetworkAgentId::from_uuid(Uuid::now_v7());
+    let lost_owner = PrincipalId::from_uuid(Uuid::now_v7());
+    *harness.agents.exits.lock().unwrap() = vec![
+        NetworkAgentPendingExit::Session(Box::new(harness.agents.own_session())),
+        // 会话打不开的也关：关房间用不着它的会话。
+        NetworkAgentPendingExit::Unopenable {
+            id: lost,
+            principal_id: lost_owner,
+        },
+    ];
+    harness
+        .rooms
+        .owned
+        .lock()
+        .unwrap()
+        .extend([(owner, 1), (lost_owner, 2)]);
+    *harness.rooms.fails.lock().unwrap() = true;
+
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            retrying: 2,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert!(
+        harness.matrix.left.lock().unwrap().is_empty(),
+        "房间没关上就先不离开"
+    );
+    assert!(harness.agents.rooms_left.lock().unwrap().is_empty());
+
+    *harness.rooms.fails.lock().unwrap() = false;
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            archived: 3,
+            left: 1,
+            abandoned: 1,
+            keys_deleted: 2,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert_eq!(
+        *harness.rooms.calls.lock().unwrap(),
+        [owner, lost_owner, owner, lost_owner]
+    );
+    assert_eq!(*harness.matrix.left.lock().unwrap(), [ROOM]);
+    assert_eq!(
+        *harness.agents.rooms_left.lock().unwrap(),
+        [network_agent_id(), lost]
     );
 }
 

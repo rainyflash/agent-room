@@ -1028,6 +1028,7 @@ fn build_network_agent_routes(
             submissions: dependencies.repositories.clone(),
             matrix: Arc::new(matrix),
             content: dependencies.content.clone(),
+            rooms: build_private_room_service(config, dependencies)?,
             verification: dependencies.repositories.clone(),
             signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
             clock: dependencies.system_runtime.clone(),

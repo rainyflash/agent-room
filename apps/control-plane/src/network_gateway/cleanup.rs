@@ -1,5 +1,6 @@
 //! 定时清理（ADR 0010 的治理）：停用 30 天没活动的与卡在创建中的网络 Agent，再替已停用、
 //! 还没离开房间的网络 Agent 离开。后者包括运维停用的、闲置停用的，以及自己停用时没离开成的。
+//! 离开之前先关掉它当房主的私人房间，关不成就先不离开，下一轮再来。
 //! 离开了所有房间的，删掉服务器替它存的加密存储和钥匙（停用不能撤回，以后用不上了）。
 //! 顺带关掉闲置太久的加密客户端。另有一项单独按时做：删掉过了房间保留期的消息副本。
 
@@ -26,6 +27,8 @@ const MESSAGE_RETENTION: NetworkAgentMessageRetention = NetworkAgentMessageReten
 pub(crate) struct NetworkAgentCleanupOutcome {
     /// 这一轮因闲置或卡在创建中而停用的。
     pub(crate) disabled: usize,
+    /// 替停用的网络 Agent 关掉的、它当房主的私人房间。
+    pub(crate) archived: usize,
     /// 替它们离开了所有房间的。
     pub(crate) left: usize,
     /// 会话打不开、没法替它离开，只好记为已离开的。
@@ -49,7 +52,13 @@ impl NetworkGateway {
             match exit {
                 NetworkAgentPendingExit::Session(session) => {
                     let id = session.network_agent_id;
-                    let left = self.leave_rooms(&session).await;
+                    let left = match self.archive_owned_rooms(id, session.principal_id).await {
+                        Some(archived) => {
+                            outcome.archived += archived;
+                            self.leave_rooms(&session).await
+                        }
+                        None => false,
+                    };
                     self.presence.forget(id).await;
                     self.close_encrypted(id).await;
                     if left {
@@ -59,7 +68,13 @@ impl NetworkGateway {
                         outcome.retrying += 1;
                     }
                 }
-                NetworkAgentPendingExit::Unopenable(id) => {
+                NetworkAgentPendingExit::Unopenable { id, principal_id } => {
+                    // 关房间用不着它的会话，照样关；关不成就下一轮再来。
+                    let Some(archived) = self.archive_owned_rooms(id, principal_id).await else {
+                        outcome.retrying += 1;
+                        continue;
+                    };
+                    outcome.archived += archived;
                     tracing::warn!(
                         network_agent.id = %id,
                         "停用的网络 Agent 会话打不开，没法替它离开房间；不再重试"

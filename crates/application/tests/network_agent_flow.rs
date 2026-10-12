@@ -1590,7 +1590,7 @@ async fn 会话带上实例的_matrix_设备与进加密房间的时刻() {
 async fn 停用后会话打不开的_如实告诉清理方() {
     let harness = Harness::enabled();
     let created = harness.create("Scout", None).await.unwrap();
-    {
+    let principal_id = {
         let mut agents = harness.store.agents.lock().unwrap();
         let stored = agents
             .iter_mut()
@@ -1601,7 +1601,8 @@ async fn 停用后会话打不开的_如实告诉清理方() {
                 sealed.bytes = b"tampered".to_vec();
             }
         }
-    }
+        stored.record.principal_id
+    };
     harness
         .service
         .disable(created.token.expose())
@@ -1610,9 +1611,10 @@ async fn 停用后会话打不开的_如实告诉清理方() {
 
     assert_eq!(
         harness.service.pending_exits(10).await.unwrap(),
-        [NetworkAgentPendingExit::Unopenable(
-            created.network_agent_id
-        )]
+        [NetworkAgentPendingExit::Unopenable {
+            id: created.network_agent_id,
+            principal_id,
+        }]
     );
 }
 

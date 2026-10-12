@@ -262,7 +262,11 @@ pub enum NetworkAgentPendingExit {
     /// 会话打得开：先发“已离线”、离开这些房间，再记为已离开。
     Session(Box<NetworkAgentSession>),
     /// 秘密缺失或解不开（例如封存密钥换了），没法替它离开；调用方记日志后记为已离开，免得每轮都卡住。
-    Unopenable(NetworkAgentId),
+    /// 带着它的合成主体：它当房主的房间不用它的会话也关得掉。
+    Unopenable {
+        id: NetworkAgentId,
+        principal_id: PrincipalId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1231,22 +1235,26 @@ impl NetworkAgentService {
         &self,
         record: NetworkAgentRecord,
     ) -> NetworkAgentResult<NetworkAgentPendingExit> {
-        let id = record.id;
+        let unopenable = NetworkAgentPendingExit::Unopenable {
+            id: record.id,
+            principal_id: record.principal_id,
+        };
         let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
         else {
-            return Ok(NetworkAgentPendingExit::Unopenable(id));
+            return Ok(unopenable);
         };
+        let id = record.id;
         let OpenedSecret::Secret(matrix_access_token) = self
             .read_secret(id, NetworkAgentSecretKind::MatrixAccessToken)
             .await?
         else {
-            return Ok(NetworkAgentPendingExit::Unopenable(id));
+            return Ok(unopenable);
         };
         let OpenedSecret::Secret(instance_signing_seed) = self
             .read_secret(id, NetworkAgentSecretKind::InstanceSigningSeed)
             .await?
         else {
-            return Ok(NetworkAgentPendingExit::Unopenable(id));
+            return Ok(unopenable);
         };
         let rooms = self.store.rooms(id).await.map_err(repository)?;
         Ok(NetworkAgentPendingExit::Session(Box::new(self.session_of(

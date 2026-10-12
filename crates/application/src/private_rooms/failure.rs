@@ -32,7 +32,7 @@ pub struct PrivateRoomFailure {
 }
 
 impl PrivateRoomFailure {
-    pub(crate) const fn new(
+    pub const fn new(
         operation: &'static str,
         stage: PrivateRoomFailureStage,
         kind: PrivateRoomFailureKind,

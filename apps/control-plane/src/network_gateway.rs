@@ -29,6 +29,7 @@ use agent_room_application::{
         NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentSubmissionStore,
         NetworkAgentSyncRequest, PortFuture,
     },
+    private_rooms::PrivateRoomRetirement,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
@@ -54,7 +55,9 @@ use agent_room_bridge_ipc::{
 };
 use agent_room_domain::{
     content::{ContentEncryptionMode, ContentMediaType},
-    ids::{AgentId, AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId},
+    ids::{
+        AgentId, AutomationGrantId, MessageId, MessageSubmissionId, NetworkAgentId, PrincipalId,
+    },
     messages::{
         ConversationMessage, MessagePreview, MessageProvenance, MessageRelation, MessageRiskFlags,
         MessageSensitivity, MessageSummary, MessageTitle,
@@ -276,6 +279,8 @@ pub(crate) struct NetworkGatewayDependencies {
     pub(crate) submissions: Arc<dyn NetworkAgentSubmissionStore>,
     pub(crate) matrix: Arc<dyn NetworkAgentMatrixGateway>,
     pub(crate) content: Arc<dyn ContentUseCases>,
+    /// 停用时关掉它当房主的私人房间（`specs/agent-rooms/design.md`）。
+    pub(crate) rooms: Arc<dyn PrivateRoomRetirement>,
     pub(crate) verification: Arc<dyn AgentInstanceVerificationRepository>,
     pub(crate) signatures: Arc<dyn AgentInstanceSignatureVerifier>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -290,6 +295,7 @@ pub(crate) struct NetworkGateway {
     submissions: Arc<dyn NetworkAgentSubmissionStore>,
     matrix: Arc<dyn NetworkAgentMatrixGateway>,
     content: Arc<dyn ContentUseCases>,
+    rooms: Arc<dyn PrivateRoomRetirement>,
     verification: Arc<dyn AgentInstanceVerificationRepository>,
     signatures: Arc<dyn AgentInstanceSignatureVerifier>,
     clock: Arc<dyn Clock>,
@@ -314,6 +320,7 @@ impl NetworkGateway {
             submissions: dependencies.submissions,
             matrix: dependencies.matrix,
             content: dependencies.content,
+            rooms: dependencies.rooms,
             verification: dependencies.verification,
             signatures: dependencies.signatures,
             clock: dependencies.clock,
@@ -413,15 +420,19 @@ impl NetworkGateway {
         })
     }
 
-    /// 尽量离开所有房间，再作废令牌。离开失败不挡作废：令牌作废才是停用的关键，
-    /// 没离开成的房间由定时清理补上。
+    /// 尽量关掉它当房主的房间、离开所有房间，再作废令牌。没做完不挡作废：令牌作废才是停用的
+    /// 关键，剩下的由定时清理补上。房间没关上时先不离开，免得记为已离开以后没人再来关。
     async fn leave_and_disable_internal(&self, token: &str) -> Result<(), NetworkGatewayFailure> {
         let session = self
             .agents
             .session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
-        let left = self.leave_rooms(&session).await;
+        let left = self
+            .archive_owned_rooms(session.network_agent_id, session.principal_id)
+            .await
+            .is_some()
+            && self.leave_rooms(&session).await;
         self.agents
             .disable(token)
             .await
@@ -467,6 +478,27 @@ impl NetworkGateway {
             }
         }
         left
+    }
+
+    /// 关掉它当房主、还在用的私人房间（`specs/agent-rooms/design.md`），返回关了几个。关不成时
+    /// 返回空，调用方这时先别离开房间：记为已离开以后，定时清理就不再找它了。
+    async fn archive_owned_rooms(
+        &self,
+        id: NetworkAgentId,
+        principal_id: PrincipalId,
+    ) -> Option<usize> {
+        match self.rooms.archive_owned_by(principal_id).await {
+            Ok(archived) => Some(archived),
+            Err(failure) => {
+                tracing::warn!(
+                    network_agent.id = %id,
+                    kind = ?failure.kind(),
+                    stage = ?failure.stage(),
+                    "没能关掉停用的网络 Agent 当房主的房间，稍后由定时清理再试"
+                );
+                None
+            }
+        }
     }
 
     fn submissions_for(&self, session: &NetworkAgentSession) -> speaking::AgentSubmissions {
