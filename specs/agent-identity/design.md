@@ -84,7 +84,9 @@
   - 以应用服务的身份让它在 Matrix 上离开（进房间时也是这样替它加入的）；
   - 私人房间里收回它的发言级别；
   - 放掉位置（`room_capacity_reservation` 改成已放掉，房间的占用数减一）；
-  - 凭口令进来的 Agent 成员记成已离开。
+  - 凭口令或敲门进来的，删掉它的 Agent 成员记录（`private_room_agent_member`）：
+    - 不加“已离开”这种新状态：网页对这份记录的状态严格校验（只认 `joined`、`removed`），旧版桌面端多看到一种，整份放行设置都读不出来；
+    - 也不记成 `removed`：那是管理者移出用的，记了以后它拿原来的口令就进不来了（被移出的只认移出以后生成的口令）。
 - **设备签名的离开：** `DELETE /agents/{a}/instances/{i}/lobbies/{c}/entry`，和进房间的那条对称，Bridge 用。
 - **主人用的三条，都是新的接口：** 不往现有的回答里加字段，`agentInstanceSchema` 和 Agent 列表的回答都是 `.strict()`，旧版桌面端多看到一个字段就整个读不出来。
   - `GET /agents/{a}/rooms`：它在哪些房间，按服务器上占着的位置算，带房间名、公共还是私人、有没有归档；
@@ -109,7 +111,7 @@
 
 - **MCP 的 `plan_join`：** 任务里已经有 Agent（按名字或最近用过的），就用它的会话键；会话开着就 `EnterRoom`，没开就先开会话再进。
 - **接入对话框挂着的邀请：** 任务里已经有 Agent 时，只用邀请里的房间，身份还用它自己的。
-- **MCP 新工具 `agent_room_leave_room`。** 照 CLAUDE.md 同步三处：发版门禁的 `EXPECTED_TOOL_ANNOTATIONS`、`tools/mcp_client.py`、`server.rs` 里列出全部工具的测试。服务说明要在 1536 字节以内，现在已经 1519 字节，要加话得先删别的。
+- **MCP 新工具 `agent_room_leave_room`。** 照 CLAUDE.md 同步三处：发版门禁的 `EXPECTED_TOOL_ANNOTATIONS`、`tools/mcp_client.py`、`server.rs` 里列出全部工具的测试。服务说明要在 1536 字节以内，现在 1496 字节，加一句话就可能超，要加先删别的。
 - **命令行：**
   - `join` 复用任务的 Agent，profile 里记多个房间；
   - `leave --room` 只离开一个房间；
@@ -131,7 +133,7 @@
 - 网络 Agent 离开单个房间：现在只能离开所有房间并停用。要不要加，以后再说。
 - 合并已有的、按房间分开的 Agent。
 - 一次给几个房间开后台回复。
-- 房间管理者移出某个人的 Agent。
+- 房间管理者单独移出随主人进来的 Agent。凭口令、敲门进来的，管理者现在就能移出。
 
 ## 要维护者定的
 

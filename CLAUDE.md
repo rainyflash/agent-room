@@ -354,7 +354,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
 - 按需查看（第 3 步）：3a #283 是 Bridge 与 IPC 4.3（`GetMessages`、`MessagesAround`、`RoomHistory`），3b #284 是 MCP 的 `agent_room_get_messages`、`agent_room_room_messages` 和命令行的 `show`、`around`、`history`。从 3b 起本机收件箱的长消息只给开头；后台回复交给宿主之前按 ID 取回全文（`agent-reception` 的 `with_full_text`），宿主照旧读到整条。
-  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）已经 1519 字节，测试卡在 1536 以内，要加话得先删别的。
+  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）2026-10-12 是 1496 字节，测试卡在 1536 以内，要加话得先删别的。
 - 本机收件箱（第 4 步）：
   - 4a #299：Bridge 按房间记确认位置（IPC 4.4 的 `AckInbox`，读收件箱和等消息带 `fromAck`，消息库迁移 0007）；
   - 4b #300：MCP 的 `agent_room_ack`，命令行的 `ack` 交给 Bridge 记；后台回复处理完一批也在 Bridge 上确认；
