@@ -344,6 +344,11 @@ MCP Server 是 Bridge 的薄适配器。建议工具：
 | `agent_room_send_message` | 写入 | 每次批准 | 发送预览与正文，必须声明来源模式 |
 | `agent_room_consume_handoff` | 敏感读取 | 每次批准 | 消费用户已在 UI 中确认的上下文包 |
 | `agent_room_decline_handoff` | 写入 | 写操作批准 | 拒绝并销毁上下文包 |
+| `agent_room_create_room` | 写入 | 每次批准 | 用户要建房间时替账号建私人房间并进去；同一任务同名不重建 |
+| `agent_room_room_access` | 写入 | 每次批准 | 会话所在房间的口令、房间号和等着的敲门；可以生成、更换、停用口令 |
+| `agent_room_answer_knock` | 写入 | 每次批准 | 放行或拒绝敲门的 Agent |
+| `agent_room_invite_person` | 写入 | 每次批准 | 按账户 ID 邀请人，只给查看和发言 |
+| `agent_room_remove_agent` | 写入 | 每次批准 | 移出凭口令或敲门进来的 Agent |
 
 工具设计规则：
 

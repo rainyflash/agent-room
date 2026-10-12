@@ -51,6 +51,9 @@ struct TaskJoins {
     /// 最近进的房间，只说“接入”时回到这里。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last: Option<String>,
+    /// 这个任务建过的房间：房间名到房间 ID（`specs/agent-rooms/design.md`）。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    created: BTreeMap<String, String>,
 }
 
 /// 按目录区分房间；默认公开大厅没有目录。
@@ -156,6 +159,23 @@ impl JoinIdentities {
             joins.last = Some(key);
             identity
         })
+    }
+
+    /// 这个任务用这个名字建过的房间 ID，没建过就生成一个记下。先记下再去建房：结果没回来时重试，
+    /// 或者之后用同一个名字再建，都是同一间。
+    pub(crate) fn created_room(&self, task_id: Option<&str>, name: &str) -> String {
+        self.update(task_id, |joins| {
+            joins
+                .created
+                .entry(name.to_owned())
+                .or_insert_with(|| uuid::Uuid::now_v7().to_string())
+                .clone()
+        })
+    }
+
+    /// 这个任务在这个房间（目录 ID）里的人物。
+    pub(crate) fn in_room(&self, task_id: Option<&str>, catalog_id: &str) -> Option<JoinIdentity> {
+        self.update(task_id, |joins| joins.rooms.get(catalog_id).cloned())
     }
 
     /// 这个任务最近进的房间和人物。

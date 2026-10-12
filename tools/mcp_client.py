@@ -37,9 +37,13 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_list_handoffs",
     "agent_room_consume_handoff",
     "agent_room_decline_handoff",
+    "agent_room_room_access",
+    "agent_room_answer_knock",
+    "agent_room_invite_person",
+    "agent_room_remove_agent",
 )
-# 列房间与按名字接入不属于任何会话：接入工具自己分配并返回 sessionId。
-SESSIONLESS_TOOLS: Final = ("agent_room_list_rooms", "agent_room_join")
+# 列房间、按名字接入和建房间不属于任何会话：接入和建房工具自己开会话并返回 sessionId。
+SESSIONLESS_TOOLS: Final = ("agent_room_list_rooms", "agent_room_join", "agent_room_create_room")
 AGENT_ROOM_TOOLS: Final = (
     "agent_room_open_session", "agent_room_close_session", *SESSION_SCOPED_TOOLS,
     *SESSIONLESS_TOOLS,
@@ -435,12 +439,12 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
 
 
 def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) -> None:
-    """不带会话的工具不能接收会话标识，也不能把任何参数设为必填或放行额外字段。"""
+    """不带会话的工具不能接收会话标识，也不能放行额外字段；只有建房间必须给房间名。"""
     properties = schema.get("properties", {})
     required = schema.get("required", [])
     if (
         not isinstance(properties, dict)
-        or required != []
+        or required != (["name"] if name == "agent_room_create_room" else [])
         or schema.get("additionalProperties") is not False
         or "sessionId" in properties
         or "sessionKey" in properties
@@ -460,6 +464,19 @@ def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) ->
             or code.get("maxLength") != 64
         ):
             raise McpClientFailure("join 只接受房间名、有界口令和有界 displayName。")
+    if name == "agent_room_create_room":
+        room_name = properties.get("name")
+        display_name = properties.get("displayName")
+        if (
+            set(properties) != {"name", "displayName"}
+            or not isinstance(room_name, dict)
+            or room_name.get("minLength") != 1
+            or room_name.get("maxLength") != 128
+            or not isinstance(display_name, dict)
+            or display_name.get("minLength") != 1
+            or display_name.get("maxLength") != 128
+        ):
+            raise McpClientFailure("create_room 只接受有界的房间名和 displayName。")
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:

@@ -330,3 +330,8 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - `RoomAccess`、`AnswerKnock`、`InvitePerson`、`RemoveAgent` 要会话，管的是会话所在的房间（Bridge 先问会话的 `GetSelf` 拿到房间）；
     - `RoomAccess` 回答口令（能看、没有、看不到）、等着的敲门和接入说明的地址（控制面下的 `/agents.txt`，和接入对话框给的一样）。不带 `action` 时只看，没有口令就生成，看不到的不替人换；`replace`、`disable` 要明说；
     - IPC 版本没升，和凭口令进房间那次一样：旧版 Bridge 不认 `rooms_manage`，握手时就断开，只有这一次调用失败。
+  - 3c-1（#421）：本机 MCP 的五个工具（`agent_room_create_room`、`agent_room_room_access`、`agent_room_answer_knock`、`agent_room_invite_person`、`agent_room_remove_agent`），写在 `rooms.rs`，发版门禁连它一起查：
+    - 建房按宿主任务记下“房间名到房间 ID”，和人物一起存在 `mcp-joins/` 里，先记下再去建。同一任务同名再建回到那间，建房的人物也不换（这次给了别的 `displayName` 也照旧用原来的），不然控制面会因为建房的 Agent 对不上而拒绝；
+    - 建好以后照常开会话进去，就绪了顺手看一次口令。结果里要转给别的 Agent 的话（`share`）中英文各一段，和接入对话框给网络 Agent 的那段一样，由 Agent 按用户的语言选；口令看不到或停用了时只给敲门的说法；
+    - 旧版 Bridge 握手就断开（`bridge.ipc.protocol_failed`），这五个工具碰到时报 `agent.rooms.bridge_outdated`，说更新桌面端，不标成可重试；
+    - 服务说明只加了一句，现在 1496 字节。

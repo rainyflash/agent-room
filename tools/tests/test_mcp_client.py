@@ -32,6 +32,12 @@ def session_tool_definitions() -> list[dict[str, object]]:
                     "code": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
                     "displayName": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
                 }
+            if name == "agent_room_create_room":
+                schema["properties"] = {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "displayName": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+                }
+                schema["required"] = ["name"]
             definitions.append({"name": name, "inputSchema": schema})
             continue
         key = "sessionKey" if name == "agent_room_open_session" else "sessionId"
@@ -162,9 +168,9 @@ class McpSessionTests(unittest.TestCase):
 
 
 class McpSessionSchemaTests(unittest.TestCase):
-    def test_十八个工具都有必填的会话边界(self) -> None:
+    def test_二十三个工具都有必填的会话边界(self) -> None:
         tools = session_tool_definitions()
-        self.assertEqual(len(tools), 18)
+        self.assertEqual(len(tools), 23)
         validate_session_tool_schemas(tools)
 
     def test_不带会话的工具不能接收会话标识或必填参数(self) -> None:
@@ -181,6 +187,24 @@ class McpSessionSchemaTests(unittest.TestCase):
                         schema["additionalProperties"] = True
                     with self.assertRaises(McpClientFailure):
                         validate_session_tool_schemas(tools)
+
+    def test_建房间必须给有界的房间名(self) -> None:
+        for mutation in ("optional", "unbounded", "extra"):
+            with self.subTest(mutation=mutation):
+                tools = session_tool_definitions()
+                schema = next(
+                    tool for tool in tools if tool["name"] == "agent_room_create_room"
+                )["inputSchema"]
+                properties = schema["properties"]
+                assert isinstance(properties, dict)
+                if mutation == "optional":
+                    schema["required"] = []
+                elif mutation == "unbounded":
+                    del properties["name"]["maxLength"]
+                else:
+                    properties["room"] = {"type": "string"}
+                with self.assertRaises(McpClientFailure):
+                    validate_session_tool_schemas(tools)
 
     def test_join_的口令必须有界(self) -> None:
         for mutation in ("missing", "unbounded"):

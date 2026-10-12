@@ -1,9 +1,10 @@
 use agent_room_bridge_ipc::wake::{WaitParams, WaitRules, WakeRule};
 use agent_room_bridge_ipc::{
-    IpcAckInboxRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest, IpcGetPresenceRequest,
-    IpcHandoffRequest, IpcListHandoffsRequest, IpcListPreviewsRequest, IpcMessageProvenance,
-    IpcMessageSensitivity, IpcMessagesAroundRequest, IpcMethod, IpcOpenContentRequest,
-    IpcOpenHostSessionRequest, IpcRoomHistoryRequest, IpcSendMessageRequest,
+    IpcAckInboxRequest, IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest,
+    IpcGetPresenceRequest, IpcHandoffRequest, IpcInvitePersonRequest, IpcListHandoffsRequest,
+    IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMessagesAroundRequest,
+    IpcMethod, IpcOpenContentRequest, IpcOpenHostSessionRequest, IpcRemoveAgentRequest,
+    IpcRoomAccessAction, IpcRoomHistoryRequest, IpcSendMessageRequest,
     limits::{
         AROUND_MESSAGES, EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES,
         MEDIA_TYPE_BYTES, MENTIONS, MESSAGE_FROM_BYTES, MESSAGE_LOOKUP_IDS, PRESENCE_TARGETS,
@@ -668,6 +669,106 @@ impl From<ReceptionHostInput> for agent_room_bridge_ipc::IpcReceptionHost {
         match value {
             ReceptionHostInput::Codex => Self::Codex,
             ReceptionHostInput::ClaudeCode => Self::ClaudeCode,
+        }
+    }
+}
+
+/// 建私人房间（`specs/agent-rooms/design.md`）：用户要建房间时才调用。
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateRoomInput {
+    /// 房间名，1 到 128 个字。同一任务用同一个名字再调用会回到那间，不会多建。
+    #[schemars(length(min = 1, max = 128))]
+    pub name: String,
+    /// 你在这个房间里的显示名，规则和 `agent_room_join` 的 displayName 一样。
+    #[schemars(length(min = 1, max = 128))]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoomAccessInput {
+    /// 本任务的 `sessionId`：管的是这个会话所在的房间。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 不传或 show：只看，没有口令就生成一个。replace：换一个新口令，旧的马上失效。disable：停用口令。
+    pub action: Option<RoomAccessActionInput>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomAccessActionInput {
+    Show,
+    Replace,
+    Disable,
+}
+
+impl From<RoomAccessActionInput> for IpcRoomAccessAction {
+    fn from(value: RoomAccessActionInput) -> Self {
+        match value {
+            RoomAccessActionInput::Show => Self::Show,
+            RoomAccessActionInput::Replace => Self::Replace,
+            RoomAccessActionInput::Disable => Self::Disable,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnswerKnockInput {
+    /// 本任务的 `sessionId`：管的是这个会话所在的房间。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 敲门的 Agent 的 agentId，从 `agent_room_room_access` 的 knocks 里原样复制。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub agent_id: String,
+    /// true 放它进来，false 不让进。
+    pub admit: bool,
+}
+
+impl From<AnswerKnockInput> for IpcAnswerKnockRequest {
+    fn from(input: AnswerKnockInput) -> Self {
+        Self {
+            agent_id: input.agent_id,
+            admit: input.admit,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InvitePersonInput {
+    /// 本任务的 `sessionId`：邀请进这个会话所在的房间。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 对方的账户 ID：对方在 Agent Room 的“换个房间”里复制给你的那串，不要猜。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub account_id: String,
+}
+
+impl From<InvitePersonInput> for IpcInvitePersonRequest {
+    fn from(input: InvitePersonInput) -> Self {
+        Self {
+            account_id: input.account_id.to_ascii_lowercase(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemoveAgentInput {
+    /// 本任务的 `sessionId`：从这个会话所在的房间移出。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 要移出的 Agent 的 agentId：凭口令或敲门进来的 Agent。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub agent_id: String,
+}
+
+impl From<RemoveAgentInput> for IpcRemoveAgentRequest {
+    fn from(input: RemoveAgentInput) -> Self {
+        Self {
+            agent_id: input.agent_id,
         }
     }
 }
