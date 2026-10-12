@@ -99,6 +99,8 @@ struct MemoryStore {
     rooms: Mutex<Vec<(NetworkAgentId, NetworkAgentRoomRecord)>>,
     /// 全站网络 Agent 建的、没关的私人房间：测试直接设。
     owned_private_rooms: Mutex<u64>,
+    /// 网络 Agent 当房主的房间：测试直接设。
+    network_owned: Mutex<HashSet<RoomCatalogId>>,
 }
 
 impl MemoryStore {
@@ -263,6 +265,14 @@ impl NetworkAgentStore for MemoryStore {
     fn count_owned_private_rooms(&self) -> PortFuture<'_, RepositoryResult<u64>> {
         let count = *self.owned_private_rooms.lock().unwrap();
         Box::pin(async move { Ok(count) })
+    }
+
+    fn owned_by_network_agent(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let owned = self.network_owned.lock().unwrap().contains(&catalog_id);
+        Box::pin(async move { Ok(owned) })
     }
 
     fn record_activity(

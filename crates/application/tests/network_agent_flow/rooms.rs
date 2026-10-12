@@ -1,7 +1,8 @@
 //! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。
 
 use agent_room_application::network_agents::{
-    NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomUseCases,
+    NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
+    NetworkAgentRoomUseCases,
 };
 
 use super::*;
@@ -274,6 +275,85 @@ async fn 全站网络_agent_建的没关的房间满了就请稍后_不占当天
 
     *harness.store.owned_private_rooms.lock().unwrap() = 499;
     assert!(create_room(&harness, &token, "周报").await.unwrap().created);
+}
+
+/// 凭口令新起一个网络 Agent，从 `source` 这个来源。
+async fn create_with_code_from(
+    harness: &Harness,
+    name: &str,
+    source_digest: [u8; 32],
+) -> Result<CreatedNetworkAgent, NetworkAgentFailure> {
+    harness
+        .service
+        .create(CreateNetworkAgent {
+            name: name.to_owned(),
+            room: NetworkAgentRoomRequest::Code(CODE.to_owned()),
+            source_digest,
+        })
+        .await
+}
+
+#[tokio::test]
+async fn 凭网络_agent_建的房间的口令新起_agent_和进大厅共用起名的名额_人管的房间不算() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        lobby_entries_per_source_per_hour: 2,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    for index in 0..3 {
+        create_with_code_from(&harness, &format!("Guest {index}"), [1; 32])
+            .await
+            .unwrap_or_else(|failure| {
+                panic!("人管的房间的口令不占名额，第 {index} 个：{failure:?}")
+            });
+    }
+
+    harness
+        .store
+        .network_owned
+        .lock()
+        .unwrap()
+        .insert(private_redeemed().catalog_id);
+    let greeter = harness.create("Greeter", None).await.expect("进大厅占一个");
+    create_with_code_from(&harness, "Cipher", [1; 32])
+        .await
+        .expect("网络 Agent 建的房间的口令占第二个");
+    let agents = harness.store.agents.lock().unwrap().len();
+    let limited = create_with_code_from(&harness, "Echo", [1; 32])
+        .await
+        .unwrap_err();
+    assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
+    assert_eq!(
+        limited.retry_at(),
+        Some(UtcMillis::new(START + HOUR).unwrap())
+    );
+    assert_eq!(
+        harness.store.agents.lock().unwrap().len(),
+        agents,
+        "名额用完了什么都不建"
+    );
+
+    // 只算新起的：已经有的网络 Agent 凭这个口令进来不占名额。名额按来源算，别的来源照常。
+    let admitted = harness
+        .service
+        .admit(
+            greeter.token.expose(),
+            NetworkAgentRoomRequest::Code(CODE.to_owned()),
+            [1; 32],
+        )
+        .await
+        .expect("已有的网络 Agent 凭口令进来");
+    assert!(matches!(
+        admitted,
+        NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(_))
+    ));
+    create_with_code_from(&harness, "Delta", [2; 32])
+        .await
+        .expect("别的来源照常起");
+
+    harness.runtime.advance(HOUR);
+    create_with_code_from(&harness, "Echo", [1; 32])
+        .await
+        .expect("过了一小时又能起");
 }
 
 #[tokio::test]

@@ -84,11 +84,13 @@ const MAX_LOBBY_ATTEMPTS: usize = 3;
 /// 凭口令进私人房间、在私人房间里说话都不限。敲门和猜口令的上限是挡骚扰的，照旧。
 ///
 /// 网络 Agent 自己建房间另有上限（`specs/agent-rooms/design.md`“限额”）：它没有账号、没人为它负责，
-/// 还能拿自己房间的口令起新的网络 Agent 再建，一路放大。
+/// 还能拿自己房间的口令起新的网络 Agent 再建，一路放大。所以凭它的房间的口令新起网络 Agent，和进
+/// 公开大厅共用起名的名额；人管的房间的口令是人发的，人负责，不算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetworkAgentPolicy {
     pub enabled: bool,
     /// 同一来源每小时、每天最多让几个网络 Agent 进公开大厅：起名时就进的，和已有的头一回进的。
+    /// 凭网络 Agent 建的房间的口令新起的也算在里面。
     pub lobby_entries_per_source_per_hour: u32,
     pub lobby_entries_per_source_per_day: u32,
     /// 全站同时最多几个网络 Agent 在公开大厅里。
@@ -759,7 +761,7 @@ impl NetworkAgentService {
     }
 
     /// 要进的房间先核对好：大厅要存在，口令要对（猜错计在来源上），敲门的私人房间要在使用中
-    /// （敲门计在来源上）。
+    /// （敲门计在来源上）。口令是网络 Agent 建的房间的，对了还要占起名的名额。
     async fn creation_target(
         &self,
         room: NetworkAgentRoomRequest,
@@ -778,7 +780,15 @@ impl NetworkAgentService {
                 }
             },
             NetworkAgentRoomRequest::Code(code) => {
-                self.resolve_code(&code, source_digest).await?;
+                let room = self.resolve_code(&code, source_digest).await?;
+                if self
+                    .store
+                    .owned_by_network_agent(room.catalog_id)
+                    .await
+                    .map_err(repository)?
+                {
+                    self.take_naming(source_digest).await?;
+                }
                 Ok(CreationTarget::Private(code))
             }
         }
@@ -949,15 +959,18 @@ impl NetworkAgentService {
         .await
     }
 
-    /// 核对口令：猜错按来源计数，与本机设备分开计。
-    async fn resolve_code(&self, code: &str, source_digest: &[u8; 32]) -> NetworkAgentResult<()> {
+    /// 核对口令：猜错按来源计数，与本机设备分开计。回答口令是哪个房间的。
+    async fn resolve_code(
+        &self,
+        code: &str,
+        source_digest: &[u8; 32],
+    ) -> NetworkAgentResult<RedeemedRoom> {
         self.access
             .resolve(ResolveJoinCode {
                 caller: JoinCodeCaller::NetworkSource(*source_digest),
                 code: code.to_owned(),
             })
             .await
-            .map(|_| ())
             .map_err(code_failure)
     }
 
@@ -1471,10 +1484,27 @@ impl NetworkAgentService {
         })
     }
 
-    /// 让一个网络 Agent 进公开大厅：同一来源每小时、每天各有上限，超过时告诉 Agent 什么时候能
-    /// 再试；大厅里的网络 Agent 满了就请它过一会儿再来。计数的桶沿用 `create:` 这个名字（以前
-    /// 一起名就算一次）。
+    /// 让一个网络 Agent 进公开大厅：先占起名的名额，大厅里的网络 Agent 满了就请它过一会儿再来。
     async fn admit_to_lobbies(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
+        self.take_naming(source).await?;
+        let lobbies = self.public_lobby_ids().await?;
+        let in_lobbies = self
+            .store
+            .count_live_in(&lobbies)
+            .await
+            .map_err(repository)?;
+        if in_lobbies >= self.policy.max_lobby_agents {
+            return Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::CapacityReached,
+            ));
+        }
+        Ok(())
+    }
+
+    /// 起名的名额：同一来源每小时、每天各有上限，超过时告诉 Agent 什么时候能再试。进公开大厅和
+    /// 凭网络 Agent 建的房间的口令新起网络 Agent 共用。计数的桶沿用 `create:` 这个名字（以前
+    /// 一起名就算一次）。
+    async fn take_naming(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
         let source = hex(source);
         for (window, limit, label) in [
             (
@@ -1490,17 +1520,6 @@ impl NetworkAgentService {
         ] {
             self.take(&format!("create:{label}:{source}"), window, limit)
                 .await?;
-        }
-        let lobbies = self.public_lobby_ids().await?;
-        let in_lobbies = self
-            .store
-            .count_live_in(&lobbies)
-            .await
-            .map_err(repository)?;
-        if in_lobbies >= self.policy.max_lobby_agents {
-            return Err(NetworkAgentFailure::new(
-                NetworkAgentFailureKind::CapacityReached,
-            ));
         }
         Ok(())
     }

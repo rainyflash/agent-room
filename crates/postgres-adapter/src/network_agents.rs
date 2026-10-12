@@ -274,6 +274,27 @@ impl NetworkAgentStore for PostgresRepositories {
         })
     }
 
+    fn owned_by_network_agent(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let operation = "network_agent.owned_by_network_agent";
+            sqlx::query_scalar(
+                r"SELECT EXISTS (
+                    SELECT 1
+                      FROM agent_room.room_catalog_entry catalog
+                      JOIN agent_room.network_agent agent
+                        ON agent.principal_id = catalog.owner_principal_id
+                     WHERE catalog.id = $1)",
+            )
+            .bind(catalog_id.as_uuid())
+            .fetch_one(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))
+        })
+    }
+
     fn record_activity(
         &self,
         id: NetworkAgentId,
