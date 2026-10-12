@@ -2,10 +2,14 @@ use std::env;
 
 use agent_room_application::{
     persistence::RepositoryErrorKind,
-    ports::{PrivateRoomAgentDirectory, PrivateRoomSnapshot, PrivateRoomStore},
+    ports::{
+        PrivateRoomAgentDirectory, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
+        PrivateRoomStore,
+    },
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId, RoomInstanceId},
+    network_agents::NETWORK_AGENT_ISSUER,
     private_rooms::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomLifecycleStatus,
         PrivateRoomMembershipStatus, PrivateRoomPermissions,
@@ -242,6 +246,32 @@ async fn 只认主体名下还在用的_agent() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 私人房间只把人当成员_网络_agent_的合成主体找不到() {
+    let database = TestDatabase::connect().await;
+    let person = seed_principal(&database.runtime, "directory-person").await;
+    let network =
+        seed_principal_from(&database.runtime, "directory-network", NETWORK_AGENT_ISSUER).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+
+    let lookup = |principal| {
+        let repositories = &repositories;
+        async move {
+            PrivateRoomPrincipalDirectory::matrix_user_id(repositories, principal)
+                .await
+                .expect("查 Matrix 账号应成功")
+        }
+    };
+    assert!(lookup(person).await.is_some());
+    assert!(
+        lookup(network).await.is_none(),
+        "合成主体没有 Matrix 账号，不能被当成人邀请"
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 改名只改目录上的名字_不存在的房间不会悄悄成功() {
     let database = TestDatabase::connect().await;
     let owner = seed_principal(&database.runtime, "rename-owner").await;
@@ -437,13 +467,17 @@ async fn seed_agent(pool: &PgPool, owner: PrincipalId) -> AgentId {
 }
 
 async fn seed_principal(pool: &PgPool, suffix: &str) -> PrincipalId {
+    seed_principal_from(pool, suffix, "https://issuer.test").await
+}
+
+async fn seed_principal_from(pool: &PgPool, suffix: &str, issuer: &str) -> PrincipalId {
     let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
     sqlx::query(
         r"INSERT INTO agent_room.principal (
                id, oidc_issuer, oidc_subject, matrix_user_id, display_name,
                locale, status, created_at, updated_at, version
            ) VALUES (
-               $1, 'https://issuer.test', $2, $3, $4, 'zh-CN', 'active',
+               $1, $6, $2, $3, $4, 'zh-CN', 'active',
                to_timestamp($5::double precision / 1000.0),
                to_timestamp($5::double precision / 1000.0), 0
            )",
@@ -459,6 +493,7 @@ async fn seed_principal(pool: &PgPool, suffix: &str) -> PrincipalId {
     ))
     .bind(format!("测试主体 {suffix}"))
     .bind(time(0).value())
+    .bind(issuer)
     .execute(pool)
     .await
     .expect("主体写入应成功");

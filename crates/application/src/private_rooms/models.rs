@@ -93,9 +93,11 @@ pub struct ListPrivateRoomsForAccount {
     pub principal_id: PrincipalId,
 }
 
+/// 邀请一个人。Agent 替主体邀请时只在 Agent 建的房间里，权限只能是查看和发言
+/// （`PrivateRoomPermissions::INVITED_BY_AGENT`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvitePrivateRoomMember {
-    pub actor: AuthenticatedPrincipal,
+    pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
     pub target_principal_id: PrincipalId,
     pub permissions: PrivateRoomPermissions,
@@ -138,8 +140,9 @@ pub struct RenamePrivateRoom {
     pub name: String,
 }
 
+/// 归档房间。人要最近验证过身份（由网页登录的路由查）；Agent 里只有网络 Agent 能关自己的房间。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchivePrivateRoom {
-    pub actor: AuthenticatedPrincipal,
+    pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
 }

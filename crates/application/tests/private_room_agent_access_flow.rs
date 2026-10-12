@@ -22,7 +22,7 @@ use agent_room_application::{
     private_rooms::{
         AGENT_KNOCK_TTL_MILLIS, AgentAccessFailureKind, AnswerKnock, InspectAgentAccess,
         JoinCodeCaller, KnockOnRoom, KnockResult, MAX_WAITING_AGENT_KNOCKS, ManageJoinCode,
-        PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService,
+        PrivateRoomActor, PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService,
         PrivateRoomAgentAccessUseCases, RedeemJoinCode, RemoveAgentMember, ResolveJoinCode,
     },
 };
@@ -80,7 +80,7 @@ async fn 房主生成口令_再生成就替换旧的_查看时不含口令本身
     let view = fixture
         .service
         .inspect(InspectAgentAccess {
-            actor: principal_actor(owner()),
+            actor: principal_actor(owner()).into(),
             catalog_id: catalog_id(),
         })
         .await
@@ -223,6 +223,74 @@ async fn 只有能管理的成员可以管理口令_归档房间不能() {
 }
 
 #[tokio::test]
+async fn agent_替主体管口令和敲门_只在_agent_建的房间里() {
+    let person_built = Fixture::new();
+    for actor in [device_actor(owner()), network_actor(owner())] {
+        let refused = person_built
+            .service
+            .generate_code(ManageJoinCode {
+                actor: actor.clone(),
+                catalog_id: catalog_id(),
+            })
+            .await
+            .expect_err("人建的房间 Agent 碰不到");
+        assert_eq!(refused.kind(), AgentAccessFailureKind::Forbidden);
+        let knocks = person_built
+            .service
+            .waiting_knocks(InspectAgentAccess {
+                actor,
+                catalog_id: catalog_id(),
+            })
+            .await
+            .expect_err("人建的房间 Agent 看不到敲门");
+        assert_eq!(knocks.kind(), AgentAccessFailureKind::Forbidden);
+    }
+
+    let agent_built = Fixture::with_room(agent_built_room());
+    let as_owner_device = || ManageJoinCode {
+        actor: device_actor(owner()),
+        catalog_id: catalog_id(),
+    };
+    let generated = agent_built
+        .service
+        .generate_code(as_owner_device())
+        .await
+        .expect("Agent 建的房间里房主的 Agent 能生成口令");
+    assert_eq!(generated.record.created_by, owner());
+    let revealed = agent_built
+        .service
+        .reveal_code(as_owner_device())
+        .await
+        .expect("也能再看");
+    assert_eq!(revealed.code, generated.code);
+    assert!(
+        agent_built
+            .service
+            .waiting_knocks(InspectAgentAccess {
+                actor: device_actor(owner()),
+                catalog_id: catalog_id(),
+            })
+            .await
+            .expect("能看敲门")
+            .is_empty()
+    );
+    let member = agent_built
+        .service
+        .generate_code(ManageJoinCode {
+            actor: device_actor(speaker()),
+            catalog_id: catalog_id(),
+        })
+        .await
+        .expect_err("没有管理权限的成员，他的 Agent 也不能管");
+    assert_eq!(member.kind(), AgentAccessFailureKind::Forbidden);
+    agent_built
+        .service
+        .disable_code(as_owner_device())
+        .await
+        .expect("能停用口令");
+}
+
+#[tokio::test]
 async fn 凭口令加入后记为_agent_成员并返回房间() {
     let fixture = Fixture::new();
     let generated = fixture
@@ -252,7 +320,7 @@ async fn 凭口令加入后记为_agent_成员并返回房间() {
     let view = fixture
         .service
         .inspect(InspectAgentAccess {
-            actor: principal_actor(owner()),
+            actor: principal_actor(owner()).into(),
             catalog_id: catalog_id(),
         })
         .await
@@ -418,7 +486,7 @@ async fn 移出先收紧_matrix_再记账_旧口令进不来_新口令可以() {
     fixture
         .service
         .remove_agent(RemoveAgentMember {
-            actor: principal_actor(owner()),
+            actor: principal_actor(owner()).into(),
             catalog_id: catalog_id(),
             agent_id: agent_id(),
         })
@@ -458,7 +526,7 @@ async fn 移出先收紧_matrix_再记账_旧口令进不来_新口令可以() {
     let missing = fixture
         .service
         .remove_agent(RemoveAgentMember {
-            actor: principal_actor(owner()),
+            actor: principal_actor(owner()).into(),
             catalog_id: catalog_id(),
             agent_id: AgentId::from_uuid(Uuid::from_u128(77)),
         })
@@ -740,7 +808,7 @@ fn knock_request() -> KnockOnRoom {
 
 fn answer(actor: PrincipalId) -> AnswerKnock {
     AnswerKnock {
-        actor: principal_actor(actor),
+        actor: principal_actor(actor).into(),
         catalog_id: catalog_id(),
         agent_id: agent_id(),
     }
@@ -748,7 +816,7 @@ fn answer(actor: PrincipalId) -> AnswerKnock {
 
 fn inspect(actor: PrincipalId) -> InspectAgentAccess {
     InspectAgentAccess {
-        actor: principal_actor(actor),
+        actor: principal_actor(actor).into(),
         catalog_id: catalog_id(),
     }
 }
@@ -813,7 +881,7 @@ impl Fixture {
 
 fn manage(actor: PrincipalId) -> ManageJoinCode {
     ManageJoinCode {
-        actor: principal_actor(actor),
+        actor: principal_actor(actor).into(),
         catalog_id: catalog_id(),
     }
 }
@@ -837,7 +905,19 @@ fn redeem_request(code: &str) -> RedeemJoinCode {
 }
 
 fn active_room() -> PrivateRoom {
-    let mut room = PrivateRoom::create(catalog_id(), owner());
+    with_speaker(PrivateRoom::create(catalog_id(), owner()))
+}
+
+/// 房主的 Agent 替房主建的房间，里面同样有一个能发言的成员。
+fn agent_built_room() -> PrivateRoom {
+    with_speaker(PrivateRoom::create_by_agent(
+        catalog_id(),
+        owner(),
+        AgentId::from_uuid(Uuid::from_u128(70)),
+    ))
+}
+
+fn with_speaker(mut room: PrivateRoom) -> PrivateRoom {
     room.invite(
         owner(),
         speaker(),
@@ -894,6 +974,29 @@ fn snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
     )
     .unwrap();
     PrivateRoomSnapshot::new(catalog, instance, room).unwrap()
+}
+
+/// 替主体行动的设备身份：本机 Bridge 和网络 Agent 都长这样，只是路由造出的种类不同。
+fn device_for(principal_id: PrincipalId) -> AuthenticatedDevice {
+    AuthenticatedDevice {
+        account: PrincipalAccount {
+            principal: Principal::new(principal_id),
+            matrix_user_id: "@someone:matrix.test".to_owned(),
+            display_name: "Someone".to_owned(),
+            avatar_content_id: None,
+            locale: "zh-CN".to_owned(),
+        },
+        device_id: device_id(),
+        access_token_expires_at: UtcMillis::new(i64::MAX).unwrap(),
+    }
+}
+
+fn device_actor(principal_id: PrincipalId) -> PrivateRoomActor {
+    PrivateRoomActor::Device(device_for(principal_id))
+}
+
+fn network_actor(principal_id: PrincipalId) -> PrivateRoomActor {
+    PrivateRoomActor::NetworkAgent(device_for(principal_id))
 }
 
 fn principal_actor(principal_id: PrincipalId) -> AuthenticatedPrincipal {

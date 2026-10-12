@@ -255,7 +255,10 @@ async fn inspect(
     };
     match state
         .access
-        .inspect(InspectAgentAccess { actor, catalog_id })
+        .inspect(InspectAgentAccess {
+            actor: actor.into(),
+            catalog_id,
+        })
         .await
     {
         Ok(view) => {
@@ -279,7 +282,10 @@ async fn generate_code(
         };
     match state
         .access
-        .generate_code(ManageJoinCode { actor, catalog_id })
+        .generate_code(ManageJoinCode {
+            actor: actor.into(),
+            catalog_id,
+        })
         .await
     {
         Ok(generated) => {
@@ -313,7 +319,10 @@ async fn reveal_code(
     };
     match state
         .access
-        .reveal_code(ManageJoinCode { actor, catalog_id })
+        .reveal_code(ManageJoinCode {
+            actor: actor.into(),
+            catalog_id,
+        })
         .await
     {
         Ok(code) => {
@@ -338,7 +347,10 @@ async fn disable_code(
     empty(
         state
             .access
-            .disable_code(ManageJoinCode { actor, catalog_id })
+            .disable_code(ManageJoinCode {
+                actor: actor.into(),
+                catalog_id,
+            })
             .await,
         correlation_id,
     )
@@ -363,7 +375,7 @@ async fn remove_agent(
         state
             .access
             .remove_agent(RemoveAgentMember {
-                actor,
+                actor: actor.into(),
                 catalog_id,
                 agent_id,
             })
@@ -395,7 +407,10 @@ async fn waiting_knocks(
     };
     match state
         .access
-        .waiting_knocks(InspectAgentAccess { actor, catalog_id })
+        .waiting_knocks(InspectAgentAccess {
+            actor: actor.into(),
+            catalog_id,
+        })
         .await
     {
         Ok(knocks) => no_store(
@@ -429,7 +444,7 @@ async fn admit_knock(
             Err(response) => return response,
         };
     let answer = AnswerKnock {
-        actor,
+        actor: actor.into(),
         catalog_id,
         agent_id,
     };
@@ -483,7 +498,7 @@ async fn decline_knock(
     match state
         .access
         .decline_knock(AnswerKnock {
-            actor,
+            actor: actor.into(),
             catalog_id,
             agent_id,
         })

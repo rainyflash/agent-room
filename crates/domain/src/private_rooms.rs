@@ -110,6 +110,10 @@ impl PrivateRoomPermissions {
     pub const AGENT_MEMBER: Self = Self {
         bits: Self::VIEW_BIT | Self::SPEAK_BIT,
     };
+    /// Agent 替主体邀请的人：只能查看和发言，管理留给房主。
+    pub const INVITED_BY_AGENT: Self = Self {
+        bits: Self::VIEW_BIT | Self::SPEAK_BIT,
+    };
 
     /// 创建相互一致的私人房间权限集合。
     ///
@@ -423,6 +427,39 @@ impl PrivateRoom {
     pub fn authorize_agent_access(&self, actor: PrincipalId) -> DomainResult<()> {
         self.ensure_active("agent_access_changed")?;
         self.require(actor, PrivateRoomCapability::Manage, "管理 Agent 口令")
+    }
+
+    /// Agent 替主体管口令、敲门和凭口令进来的 Agent：只管 Agent 建的房间，在此之上和人一样
+    /// 要管理权限、房间还在使用中。人建的房间要不要对外开放由人决定（`specs/agent-rooms/design.md`）。
+    ///
+    /// # Errors
+    ///
+    /// 房间不是 Agent 建的、操作者没有管理权限，或房间已归档时返回错误。
+    pub fn authorize_agent_access_by_agent(&self, actor: PrincipalId) -> DomainResult<()> {
+        self.ensure_built_by_agent("Agent 只管 Agent 建的房间")?;
+        self.authorize_agent_access(actor)
+    }
+
+    /// Agent 替主体邀请人：只在 Agent 建的房间里，被邀请的人只能查看和发言。
+    ///
+    /// # Errors
+    ///
+    /// 房间不是 Agent 建的，或按 `invite` 的规则不能邀请时返回错误。
+    pub fn invite_by_agent(
+        &mut self,
+        actor: PrincipalId,
+        target: PrincipalId,
+    ) -> DomainResult<bool> {
+        self.ensure_built_by_agent("Agent 只在 Agent 建的房间里邀请人")?;
+        self.invite(actor, target, PrivateRoomPermissions::INVITED_BY_AGENT)
+    }
+
+    fn ensure_built_by_agent(&self, action: &'static str) -> DomainResult<()> {
+        if self.created_by_agent.is_some() {
+            Ok(())
+        } else {
+            Err(DomainError::Forbidden { action })
+        }
     }
 
     /// 邀请成员进入活跃房间。
@@ -1025,6 +1062,46 @@ mod tests {
         )
         .expect("房间事实有效");
         assert_eq!(restored, room);
+    }
+
+    #[test]
+    fn agent_只管_agent_建的房间() {
+        let agent = AgentId::from_uuid(Uuid::from_u128(78));
+        let mut built = PrivateRoom::create_by_agent(catalog_id(), principal(1), agent);
+        assert!(built.authorize_agent_access_by_agent(principal(1)).is_ok());
+        assert!(
+            built.authorize_agent_access_by_agent(principal(2)).is_err(),
+            "不是成员、没有管理权限"
+        );
+        assert!(
+            built
+                .invite_by_agent(principal(1), principal(2))
+                .expect("能邀请")
+        );
+        assert_eq!(
+            built.member(principal(2)).expect("受邀").permissions(),
+            PrivateRoomPermissions::INVITED_BY_AGENT
+        );
+        assert!(built.archive(principal(1)).expect("房主可归档"));
+        assert!(
+            built.authorize_agent_access_by_agent(principal(1)).is_err(),
+            "归档的房间不再管"
+        );
+
+        let mut person_built = PrivateRoom::create(catalog_id(), principal(1));
+        assert!(person_built.authorize_agent_access(principal(1)).is_ok());
+        assert!(
+            person_built
+                .authorize_agent_access_by_agent(principal(1))
+                .is_err(),
+            "人建的房间 Agent 碰不到"
+        );
+        assert!(
+            person_built
+                .invite_by_agent(principal(1), principal(2))
+                .is_err()
+        );
+        assert!(person_built.member(principal(2)).is_none());
     }
 
     #[test]
