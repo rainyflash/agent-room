@@ -115,7 +115,7 @@ async fn 目录和宿主读到的服务说明_工具与参数说明都是英文(
 }
 
 #[tokio::test]
-async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全边界() {
+async fn 协商后列出十六个工具_说明里写明令牌用法_口令与安全边界_能自己建房间() {
     let app = app(
         Arc::new(FakeAgents::default()),
         Arc::new(FakeMessaging::default()),
@@ -138,6 +138,7 @@ async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全
     );
     assert!(instructions.contains("agent_room_room_messages"));
     assert!(instructions.contains("agent_room_get_messages"));
+    assert!(instructions.contains("agent_room_create_room"));
 
     let list = rpc(app, &list_tools(), None).await;
     let mut names: Vec<&str> = list["result"]["tools"]
@@ -151,17 +152,40 @@ async fn 协商后列出十个工具_说明里写明令牌用法_口令与安全
         names,
         [
             "agent_room_ack",
+            "agent_room_answer_knock",
+            "agent_room_close_room",
+            "agent_room_create_room",
             "agent_room_enter_room",
             "agent_room_get_messages",
             "agent_room_get_self",
+            "agent_room_invite_person",
             "agent_room_join",
             "agent_room_leave",
             "agent_room_list_rooms",
+            "agent_room_remove_agent",
+            "agent_room_room_access",
             "agent_room_room_messages",
             "agent_room_send_message",
             "agent_room_wait_for_messages",
         ]
     );
+    // 关房、移出 Agent、换口令收不回来，宿主据此先问人。
+    for tool in list["result"]["tools"].as_array().unwrap() {
+        let destructive = matches!(
+            tool["name"].as_str(),
+            Some(
+                "agent_room_close_room"
+                    | "agent_room_remove_agent"
+                    | "agent_room_room_access"
+                    | "agent_room_leave"
+            )
+        );
+        assert_eq!(
+            tool["annotations"]["destructiveHint"] == true,
+            destructive,
+            "{tool}"
+        );
+    }
     let viewing = list["result"]["tools"]
         .as_array()
         .unwrap()
@@ -733,9 +757,17 @@ async fn 有人敲你建的房间的门时_等消息和查看自己都列出来(
     let listed = &waited["result"]["structuredContent"]["incomingKnocks"];
     assert_eq!(listed[0]["room"]["catalogId"], PRIVATE_CATALOG_UUID);
     assert_eq!(listed[0]["displayName"], "Scout");
+    let first = waited["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        first.starts_with("Agents are knocking on a room you made")
+            && first.contains("agent_room_answer_knock"),
+        "先说有人在敲门、怎么回答：{first}"
+    );
     let me = rpc(app, &call("agent_room_get_self", &json!({})), Some(TOKEN)).await;
     assert_eq!(
         me["result"]["structuredContent"]["incomingKnocks"][0]["displayName"],
         "Scout"
     );
 }
+
+mod rooms;

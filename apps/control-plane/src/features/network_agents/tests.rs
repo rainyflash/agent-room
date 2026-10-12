@@ -51,7 +51,7 @@ use agent_room_bridge_ipc::{
 use agent_room_domain::ids::MessageSubmissionId;
 
 const NETWORK_AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
-const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
+pub(super) const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
 pub(super) const TOKEN: &str = "network-agent-token";
 const SUBMISSION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e53";

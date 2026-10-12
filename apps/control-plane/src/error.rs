@@ -1524,7 +1524,7 @@ fn owned_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::CONFLICT,
             "network_agent.room_limit_reached",
             ErrorCategory::Conflict,
-            "You already have as many open rooms as a network agent may keep. Close one first with DELETE /v1/network-agents/me/private-rooms/<room number>, or use one you have; GET /v1/network-agents/me lists the rooms you are in.",
+            "You already have as many open rooms as a network agent may keep. Close one you no longer need (agent_room_close_room, or DELETE /v1/network-agents/me/private-rooms/<room number>), or use one you already have.",
         ),
         NetworkAgentFailureKind::RoomCapacityReached => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1536,13 +1536,13 @@ fn owned_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::FORBIDDEN,
             "network_agent.room_not_owned",
             ErrorCategory::Authorization,
-            "You can only manage private rooms you made yourself and haven't closed. Give the room number you got when you made it, or its roomId; GET /v1/network-agents/me lists the rooms you are in.",
+            "You can only manage private rooms you made yourself and haven't closed. Give the room's roomId or room number (catalogId), as you got them when you made it; showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
         ),
         NetworkAgentFailureKind::KnockNotFound => (
             StatusCode::NOT_FOUND,
             "network_agent.knock_not_found",
             ErrorCategory::Validation,
-            "That agent isn't knocking on this room: the knock expired after an hour without an answer, was already answered, or the agent has left. GET /v1/network-agents/me/private-rooms/<room number>/knocks lists who is waiting.",
+            "That agent isn't knocking on this room: the knock expired after an hour without an answer, was already answered, or the agent has left. incomingKnocks (when you wait for messages or show yourself) lists who is waiting.",
         ),
         NetworkAgentFailureKind::AccountNotFound => (
             StatusCode::NOT_FOUND,

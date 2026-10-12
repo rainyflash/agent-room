@@ -4,7 +4,7 @@
 //! 里面所有的消息：接入说明照实写，人进来之前网页上也写。
 //!
 //! 建房和放行要替 Agent 进房间，走网关（`state.rooms`）；别的只动账，直接交给用例
-//! （`state.owned_rooms`）。
+//! （`state.owned_rooms`）。远程 MCP 的同名工具（`mcp/rooms.rs`）用这里的回答形状。
 
 use agent_room_application::{
     network_agents::{
@@ -47,7 +47,7 @@ pub(super) struct InvitePersonBody {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CreatedRoomResponse {
+pub(super) struct CreatedRoomResponse {
     schema_version: u8,
     /// 新建的；为 false 时回到了它没关的同名房间。
     created: bool,
@@ -62,7 +62,7 @@ struct CreatedRoomResponse {
 /// 看口令、换口令时回答房间现在的口令，外加要转给别的 Agent 的话。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RoomCodeResponse {
+pub(super) struct RoomCodeResponse {
     schema_version: u8,
     room: RoomResponse,
     code: CodeResponse,
@@ -101,7 +101,7 @@ struct KnocksResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct KnockResponse {
+pub(super) struct KnockResponse {
     agent_id: String,
     display_name: String,
     knocked_at_unix_ms: i64,
@@ -147,7 +147,7 @@ struct AdmittedResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AdmittedAgentResponse {
+pub(super) struct AdmittedAgentResponse {
     agent_id: String,
     display_name: String,
 }
@@ -343,8 +343,7 @@ pub(super) async fn invite_person(
 ) -> Response {
     let Some(account_id) = body
         .ok()
-        .and_then(|Json(body)| parse_uuid_v7(&body.account_id).ok())
-        .map(PrincipalId::from_uuid)
+        .and_then(|Json(body)| account_id(&body.account_id))
     else {
         return invalid_request(
             "The request body must be a JSON object: {\"accountId\": the person's account ID}. Ask the person to copy it from 'Switch room' in the Agent Room app; don't guess it.",
@@ -384,8 +383,12 @@ pub(super) async fn remove_agent(
     }
 }
 
-fn agent_id(agent: &str) -> Option<AgentId> {
+pub(super) fn agent_id(agent: &str) -> Option<AgentId> {
     parse_uuid_v7(agent).ok().map(AgentId::from_uuid)
+}
+
+pub(super) fn account_id(account: &str) -> Option<PrincipalId> {
+    parse_uuid_v7(account).ok().map(PrincipalId::from_uuid)
 }
 
 fn invalid_agent(correlation_id: CorrelationId) -> Response {
@@ -418,24 +421,23 @@ fn code_response(
     correlation_id: CorrelationId,
 ) -> Response {
     match result {
-        Ok(view) => {
-            let share = share(guide_url, &view.room, &view.code);
-            no_store(
-                Json(RoomCodeResponse {
-                    schema_version: SCHEMA_VERSION,
-                    room: RoomResponse::from(view.room),
-                    code: CodeResponse::from(view.code),
-                    guide_url: guide_url.to_owned(),
-                    share,
-                })
-                .into_response(),
-            )
-        }
+        Ok(view) => no_store(Json(room_code_view(guide_url, view)).into_response()),
         Err(failure) => agent_failure(&failure, correlation_id),
     }
 }
 
-fn created_room(guide_url: &str, owned: NetworkAgentOwnedRoom) -> CreatedRoomResponse {
+pub(super) fn room_code_view(guide_url: &str, view: NetworkAgentRoomCodeView) -> RoomCodeResponse {
+    let share = share(guide_url, &view.room, &view.code);
+    RoomCodeResponse {
+        schema_version: SCHEMA_VERSION,
+        room: RoomResponse::from(view.room),
+        code: CodeResponse::from(view.code),
+        guide_url: guide_url.to_owned(),
+        share,
+    }
+}
+
+pub(super) fn created_room(guide_url: &str, owned: NetworkAgentOwnedRoom) -> CreatedRoomResponse {
     let share = share(guide_url, &owned.room, &owned.code);
     CreatedRoomResponse {
         schema_version: SCHEMA_VERSION,
