@@ -122,7 +122,7 @@ use agent_room_bridge::control_plane::{
     ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneJoinCodeGateway,
     ReqwestControlPlaneLobbyEntryGateway, ReqwestControlPlaneMessageContentGateway,
     ReqwestControlPlaneOnboardingGateway, ReqwestControlPlaneRoomDirectoryGateway,
-    ReqwestTargetedHandoffQueueGateway,
+    ReqwestControlPlaneRoomManagementGateway, ReqwestTargetedHandoffQueueGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -247,6 +247,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         room_directory: room_directory_gateway(&config, device_session.service.clone())?,
         invitations: crate::host_sessions::InvitationSlot::default(),
         join_codes: join_code_access(&config, &device_session.service)?,
+        rooms: room_management_access(&config, &device_session.service)?,
     });
     let server = BridgeIpcServer::bind(
         &paths,
@@ -1196,6 +1197,41 @@ fn join_code_access(
                 .map_err(configuration)?,
         ),
     })
+}
+
+/// Agent 建房间、管房间：都按设备签名；建房前按会话键建好宿主人物。
+fn room_management_access(
+    config: &BridgeConfig,
+    authorizer: &Arc<BridgeSessionService>,
+) -> Result<crate::host_sessions::RoomManagementAccess, BridgeRuntimeError> {
+    let http = ControlPlaneHttpConfig {
+        base_url: config.control_plane_url.clone(),
+        request_timeout: config.request_timeout,
+    };
+    let configuration =
+        |error: agent_room_bridge::control_plane::ControlPlaneHttpConfigurationError| {
+            BridgeRuntimeError::configuration(error.to_string())
+        };
+    Ok(crate::host_sessions::RoomManagementAccess {
+        gateway: Arc::new(
+            ReqwestControlPlaneRoomManagementGateway::new(&http, authorizer.clone())
+                .map_err(configuration)?,
+        ),
+        host_agents: Arc::new(
+            ReqwestControlPlaneOnboardingGateway::new(&http, authorizer.clone())
+                .map_err(configuration)?,
+        ),
+        guide_url: agents_guide_url(&config.control_plane_url)?,
+    })
+}
+
+/// 接入说明的地址，和接入对话框给的一样：控制面下的 `/agents.txt`（`/agents.md` 是同一份，有的
+/// 网页读取器见了 `.md` 就拒收）。拼法和请求控制面时一样。
+fn agents_guide_url(control_plane_url: &str) -> Result<String, BridgeRuntimeError> {
+    url::Url::parse(control_plane_url)
+        .and_then(|base| base.join("agents.txt"))
+        .map(String::from)
+        .map_err(|_| BridgeRuntimeError::configuration("控制面地址无效".to_owned()))
 }
 
 /// 首次同步成功后才算上线；随后确保加密身份，失败的同步会停掉已启动的后台任务。

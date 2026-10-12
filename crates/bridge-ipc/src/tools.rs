@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    IpcCloseHostSessionRequest, IpcHostSessionSummary, IpcInvitationOffer,
-    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcRedeemJoinCodeRequest,
-    IpcResolveJoinCodeRequest, IpcWithdrawInvitationRequest, limits,
+    IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcCreateRoomRequest, IpcHostSessionSummary,
+    IpcInvitationOffer, IpcInvitePersonRequest, IpcOpenHostSessionRequest, IpcPendingInvitation,
+    IpcRedeemJoinCodeRequest, IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess,
+    IpcRoomAccessRequest, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +34,17 @@ pub enum IpcMethod {
     ResolveJoinCode(IpcResolveJoinCodeRequest),
     /// 凭口令让这个会话键的人物加入私人房间；随后照常开会话进入返回的房间。
     RedeemJoinCode(IpcRedeemJoinCodeRequest),
+    /// 建私人房间，这个会话键的人物当建房的 Agent；随后照常开会话进入返回的房间。不需要先开会话。
+    CreateRoom(IpcCreateRoomRequest),
+    /// 会话所在的房间怎么进：口令和等着的敲门，口令可以生成、更换、停用。下面四个都只管 Agent
+    /// 建的房间，由控制面把关。
+    RoomAccess(IpcRoomAccessRequest),
+    /// 放行或拒绝敲门的 Agent。
+    AnswerKnock(IpcAnswerKnockRequest),
+    /// 按账户 ID 邀请一个人，只给查看和发言。
+    InvitePerson(IpcInvitePersonRequest),
+    /// 移出凭口令或敲门进来的 Agent。
+    RemoveAgent(IpcRemoveAgentRequest),
     RegisterReception(crate::IpcRegisterReceptionRequest),
     ReceptionControl(crate::ReceptionRequest),
     SendReceptionMessage {
@@ -81,6 +93,11 @@ impl IpcMethod {
             Self::ReadInvitation => "read_invitation",
             Self::ResolveJoinCode(_) => "resolve_join_code",
             Self::RedeemJoinCode(_) => "redeem_join_code",
+            Self::CreateRoom(_) => "create_room",
+            Self::RoomAccess(_) => "room_access",
+            Self::AnswerKnock(_) => "answer_knock",
+            Self::InvitePerson(_) => "invite_person",
+            Self::RemoveAgent(_) => "remove_agent",
             Self::RegisterReception(_) => "register_reception",
             Self::ReceptionControl(_) => "reception_control",
             Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
@@ -117,6 +134,11 @@ impl IpcMethod {
             | Self::RegisterReception(_)
             | Self::ReceptionControl(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
+            Self::CreateRoom(_)
+            | Self::RoomAccess(_)
+            | Self::AnswerKnock(_)
+            | Self::InvitePerson(_)
+            | Self::RemoveAgent(_) => IpcScope::RoomsManage,
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
@@ -156,10 +178,15 @@ impl IpcMethod {
             | Self::ListRooms
             | Self::ReadInvitation
             | Self::ListRecoverySessions
-            | Self::HostSessionDiagnostics => Ok(()),
+            | Self::HostSessionDiagnostics
+            | Self::RoomAccess(_) => Ok(()),
             Self::WithdrawInvitation(request) => request.validate(),
             Self::ResolveJoinCode(request) => request.validate(),
             Self::RedeemJoinCode(request) => request.validate(),
+            Self::CreateRoom(request) => request.validate(),
+            Self::AnswerKnock(request) => request.validate(),
+            Self::InvitePerson(request) => request.validate(),
+            Self::RemoveAgent(request) => request.validate(),
             Self::MatrixRecovery(request) => request.command().map(|_| ()),
             Self::MatrixSecurity(request) => request.command().map(|_| ()),
             Self::OpenHostSession(request) => request.validate(),
@@ -194,6 +221,7 @@ impl IpcMethod {
                         | Self::ReadInvitation
                         | Self::ResolveJoinCode(_)
                         | Self::RedeemJoinCode(_)
+                        | Self::CreateRoom(_)
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
                 }
@@ -744,6 +772,19 @@ pub enum IpcResponse {
     /// 口令对应的私人房间：查看时还没有人加入，兑换后选定的人物已是它的 Agent 成员。
     JoinCodeRoom {
         room: IpcRoomSummary,
+    },
+    /// 建好的私人房间，建房的人物已在里面。
+    CreatedRoom {
+        room: IpcRoomSummary,
+    },
+    /// 房间怎么进：口令和等着的敲门。
+    RoomAccess {
+        access: IpcRoomAccess,
+    },
+    /// 放行或拒绝了敲门、邀请了人、移出了 Agent。
+    RoomUpdated {
+        #[serde(rename = "catalogId")]
+        catalog_id: String,
     },
     DefaultAgentBootstrap {
         bootstrap: IpcDefaultAgentBootstrap,
@@ -1316,7 +1357,10 @@ fn validate_uuid(value: &str, code: &'static str) -> Result<(), IpcMethodValidat
         .map_err(|_| failure(code))
 }
 
-fn validate_uuid_v7(value: &str, code: &'static str) -> Result<(), IpcMethodValidationFailure> {
+pub(crate) fn validate_uuid_v7(
+    value: &str,
+    code: &'static str,
+) -> Result<(), IpcMethodValidationFailure> {
     let id = Uuid::parse_str(value).map_err(|_| failure(code))?;
     if id.get_version() != Some(uuid::Version::SortRand) || id.to_string() != value {
         return Err(failure(code));

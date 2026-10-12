@@ -72,7 +72,7 @@ fn validate_room(room: Option<&IpcHostRoomTarget>) -> Result<(), IpcMethodValida
     Ok(())
 }
 
-fn validate_display_name(name: &str) -> Result<(), IpcMethodValidationFailure> {
+pub(crate) fn validate_display_name(name: &str) -> Result<(), IpcMethodValidationFailure> {
     if name.trim() != name
         || name.is_empty()
         || name.chars().count() > 128

@@ -19,6 +19,7 @@ use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcMethod,
     IpcOpenHostSessionRequest, IpcResponse, IpcRoomKind, IpcRoomMembership, IpcRoomSummary,
 };
+use agent_room_domain::ids::RoomCatalogId;
 use tokio::{
     sync::{Mutex, RwLock, watch},
     task::{JoinHandle, JoinSet},
@@ -30,8 +31,10 @@ use crate::ipc::{BridgeIpcDispatchFailure, BridgeIpcDispatchFuture, BridgeIpcReq
 
 mod invitation;
 mod join_codes;
+mod room_management;
 pub(crate) use invitation::InvitationSlot;
 pub(crate) use join_codes::JoinCodeAccess;
+pub(crate) use room_management::RoomManagementAccess;
 
 const MAX_HOST_SESSIONS: usize = 16;
 const IDLE_LIFETIME: Duration = Duration::from_mins(15);
@@ -367,6 +370,30 @@ impl HostSessionRegistry {
         self.find(session_id).await?.execute(method).await
     }
 
+    /// 会话所在的房间：管房间的方法管的就是它。
+    async fn room(&self, session_id: &str) -> Result<RoomCatalogId, BridgeIpcDispatchFailure> {
+        let IpcResponse::SelfSummary { summary } =
+            self.execute(session_id, IpcMethod::GetSelf).await?
+        else {
+            return Err(session_failure(
+                "bridge.host_session.response_invalid",
+                false,
+            ));
+        };
+        summary
+            .room_catalog_id
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .map(RoomCatalogId::from_uuid)
+            .ok_or_else(|| {
+                BridgeIpcDispatchFailure::new(
+                    "bridge.rooms.not_found",
+                    IpcErrorCategory::Validation,
+                    false,
+                )
+            })
+    }
+
     async fn recovery_sessions(&self) -> IpcResponse {
         let sessions: Vec<_> = self.sessions.lock().await.values().cloned().collect();
         let mut entries = Vec::with_capacity(sessions.len());
@@ -633,6 +660,8 @@ pub(crate) struct SessionAwareIpcHandler {
     pub(crate) invitations: InvitationSlot,
     /// 凭私人房间口令进房间：CLI/MCP 先查看房间、选定人物，再兑换，然后照常开会话。
     pub(crate) join_codes: JoinCodeAccess,
+    /// Agent 建房间，管会话所在的、Agent 建的房间。
+    pub(crate) rooms: RoomManagementAccess,
 }
 
 impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
@@ -679,6 +708,7 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 }),
                 IpcMethod::ResolveJoinCode(request) => self.join_codes.resolve(request).await,
                 IpcMethod::RedeemJoinCode(request) => self.join_codes.redeem(request).await,
+                IpcMethod::CreateRoom(request) => self.rooms.create(request).await,
                 IpcMethod::OpenHostSession(request) => {
                     let session_key = request.session_key.clone();
                     let opened = self.sessions.open(request).await;
@@ -690,6 +720,12 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 }
                 IpcMethod::CloseHostSession(request) => {
                     self.sessions.close(&request.session_id).await
+                }
+                IpcMethod::WithSession { session_id, method }
+                    if room_management::manages_room(&method) =>
+                {
+                    let catalog_id = self.sessions.room(&session_id).await?;
+                    self.rooms.manage(catalog_id, *method).await
                 }
                 IpcMethod::WithSession { session_id, method } => {
                     self.sessions.execute(&session_id, *method).await

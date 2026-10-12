@@ -106,6 +106,8 @@ pub enum IpcScope {
     HandoffList,
     HandoffConsume,
     HandoffDecline,
+    /// 建私人房间，管 Agent 建的房间怎么进（口令、敲门、邀请人、移出 Agent）。
+    RoomsManage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +239,7 @@ impl IpcScopePolicy for FoundationIpcScopePolicy {
                         | IpcScope::HandoffList
                         | IpcScope::HandoffConsume
                         | IpcScope::HandoffDecline
+                        | IpcScope::RoomsManage
                 )
             }
             IpcCallerKind::DesktopShell => {
@@ -509,6 +512,7 @@ mod tests {
             IpcScope::HandoffList,
             IpcScope::HandoffConsume,
             IpcScope::HandoffDecline,
+            IpcScope::RoomsManage,
         ];
 
         assert!(
@@ -535,6 +539,9 @@ mod tests {
         assert!(!policy.allows(IpcCallerKind::McpServer, IpcScope::MatrixRecoveryManage));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::MatrixRecoveryManage));
         assert!(!policy.allows(IpcCallerKind::DiagnosticCli, IpcScope::HandoffApprove));
+        // 建房、管房间只给 Agent 用的 MCP 和命令行，桌面壳和诊断都没有。
+        assert!(policy.allows(IpcCallerKind::AgentCli, IpcScope::RoomsManage));
+        assert!(!policy.allows(IpcCallerKind::DesktopShell, IpcScope::RoomsManage));
     }
 
     #[test]

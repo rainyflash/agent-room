@@ -16,6 +16,8 @@ use tokio::sync::Notify;
 
 use super::*;
 
+mod rooms;
+
 #[derive(Default)]
 struct TestFactory {
     starts: AtomicUsize,
@@ -135,10 +137,11 @@ impl HostSessionFactory for TestFactory {
     ) -> PortFuture<'_, Result<PreparedHostSession, BridgeIpcDispatchFailure>> {
         Box::pin(async move {
             self.starts.fetch_add(1, Ordering::AcqRel);
+            let room_catalog_id = request.room.as_ref().map(|room| room.catalog_id.clone());
             let handler = TestHandler {
                 summary: IpcSelfSummary {
                     owner: None,
-                    room_catalog_id: None,
+                    room_catalog_id,
                     agent: IpcAgentSummary {
                         agent_id: request.session_key.clone(),
                         display_name: request.display_name,
@@ -635,7 +638,7 @@ fn code_room(code: &str) -> JoinCodeResult<JoinCodeRoom> {
         return Err(JoinCodeFailure::new(JoinCodeFailureKind::NotFound));
     }
     Ok(JoinCodeRoom {
-        catalog_id: agent_room_domain::ids::RoomCatalogId::from_uuid(Uuid::from_u128(7)),
+        catalog_id: RoomCatalogId::from_uuid(Uuid::from_u128(7)),
         matrix_room_id: agent_room_domain::rooms::MatrixRoomReference::new(
             "!project:matrix.test".to_owned(),
         )
@@ -696,7 +699,7 @@ impl crate::ipc::BridgeStatusReader for ReadyStatus {
 
 #[tokio::test]
 async fn 列房间不需要会话_公开大厅与私人房间都按目录原样返回() {
-    let catalog = agent_room_domain::ids::RoomCatalogId::from_uuid(Uuid::now_v7());
+    let catalog = RoomCatalogId::from_uuid(Uuid::now_v7());
     let handler = SessionAwareIpcHandler {
         default: Arc::new(RefusingHandler),
         sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
@@ -728,6 +731,7 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
         }),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
+        rooms: rooms::access(Arc::default(), Arc::default()),
     };
 
     let response = handler
@@ -758,6 +762,7 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
+        rooms: rooms::access(Arc::default(), Arc::default()),
     };
     let pending = |response: IpcResponse| {
         let IpcResponse::Invitation { invitation } = response else {
@@ -839,6 +844,7 @@ async fn 凭口令查看房间不建人物_兑换先按会话键建好人物再�
         room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(gateway.clone(), host_agents.clone()),
+        rooms: rooms::access(Arc::default(), host_agents.clone()),
     };
     let room = |response: IpcResponse| {
         let IpcResponse::JoinCodeRoom { room } = response else {

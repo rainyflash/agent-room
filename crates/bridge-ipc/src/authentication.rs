@@ -147,6 +147,7 @@ const fn scope_tag(scope: IpcScope) -> u8 {
         IpcScope::HostSessionsManage => 13,
         IpcScope::MatrixSecurityManage => 14,
         IpcScope::MatrixRecoveryManage => 15,
+        IpcScope::RoomsManage => 16,
     }
 }
 

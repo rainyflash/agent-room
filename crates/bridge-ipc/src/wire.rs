@@ -97,6 +97,8 @@ pub enum IpcScopeName {
     HandoffList,
     HandoffConsume,
     HandoffDecline,
+    /// 旧版 Bridge 不认这个名字，握手时直接断开：只是这一次调用失败。
+    RoomsManage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +188,7 @@ impl From<IpcScopeName> for IpcScope {
             IpcScopeName::HandoffList => Self::HandoffList,
             IpcScopeName::HandoffConsume => Self::HandoffConsume,
             IpcScopeName::HandoffDecline => Self::HandoffDecline,
+            IpcScopeName::RoomsManage => Self::RoomsManage,
         }
     }
 }
@@ -208,6 +211,7 @@ impl From<IpcScope> for IpcScopeName {
             IpcScope::HandoffList => Self::HandoffList,
             IpcScope::HandoffConsume => Self::HandoffConsume,
             IpcScope::HandoffDecline => Self::HandoffDecline,
+            IpcScope::RoomsManage => Self::RoomsManage,
         }
     }
 }

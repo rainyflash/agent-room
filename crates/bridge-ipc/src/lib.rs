@@ -15,6 +15,11 @@ pub use matrix_security::{
 pub mod limits;
 mod paths;
 pub mod previews;
+mod room_management;
+pub use room_management::{
+    IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
+    IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
+};
 pub mod typing;
 pub mod wake;
 pub use paths::attachment_directory;
