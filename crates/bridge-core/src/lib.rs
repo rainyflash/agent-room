@@ -17,5 +17,6 @@ pub mod presence_support;
 pub mod presence_tracker;
 pub mod reconnect;
 pub mod room_directory;
+pub mod room_management;
 pub mod session;
 pub mod status;
