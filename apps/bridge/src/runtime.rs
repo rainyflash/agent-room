@@ -3062,9 +3062,10 @@ impl BridgeRuntimeError {
                 "bridge.lobby_not_authorized",
                 "当前 Bridge 设备尚未获准让 Agent 进入大厅",
             ),
+            // 最常见的是私人房间不接：账号只是受邀、只能看，或房间已归档。
             AgentLobbySessionFailureKind::Forbidden => (
                 "bridge.lobby_forbidden",
-                "当前设备与 Agent 实例的权威绑定不匹配",
+                "进不了这个房间：私人房间要这台电脑的账号已加入并能发言，或者 Agent 凭口令进来过；也可能是这台设备与 Agent 实例的绑定不对",
             ),
             AgentLobbySessionFailureKind::NotFound => (
                 "bridge.lobby_not_found",

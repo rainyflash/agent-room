@@ -18,9 +18,9 @@ use agent_room_application::{
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        PrivateRoomDependencies, PrivateRoomFailureKind, PrivateRoomInvitation,
-        PrivateRoomMembershipAction, PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom,
-        TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomDependencies, PrivateRoomFailureKind,
+        PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomService,
+        PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -109,6 +109,59 @@ async fn 列表只返回当前主体受邀或已加入的权威房间() {
         .await
         .expect("拒绝后的列表应可读");
     assert!(declined.is_empty());
+}
+
+#[tokio::test]
+async fn 替设备列房间只列账号的_agent_进得去的() {
+    let fixture = Fixture::new();
+    fixture
+        .service
+        .create(fixture.creation_request(viewer_permissions()))
+        .await
+        .expect("创建应成功");
+    let service = &fixture.service;
+    let listed = move |principal_id| async move {
+        service
+            .list_for_account(ListPrivateRoomsForAccount { principal_id })
+            .await
+            .expect("设备列房间应成功")
+            .len()
+    };
+    assert_eq!(listed(fixture.owner).await, 1, "房主已加入、能发言");
+    assert_eq!(listed(fixture.member).await, 0, "只是受邀，Agent 进不去");
+
+    fixture
+        .matrix
+        .set_membership(&Fixture::member_matrix(), PrivateMatrixMembership::Joined);
+    fixture
+        .service
+        .accept(fixture.member_action())
+        .await
+        .expect("接受应成功");
+    assert_eq!(listed(fixture.member).await, 0, "已加入但只能看");
+
+    fixture
+        .service
+        .update_permissions(ChangePrivateRoomPermissions {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions: speaker_permissions(),
+        })
+        .await
+        .expect("给发言权应成功");
+    assert_eq!(listed(fixture.member).await, 1, "能发言了");
+
+    fixture
+        .service
+        .archive(ArchivePrivateRoom {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+        })
+        .await
+        .expect("归档应成功");
+    assert_eq!(listed(fixture.owner).await, 0, "归档的房间不再接 Agent");
+    assert_eq!(listed(fixture.member).await, 0, "归档的房间不再接 Agent");
 }
 
 #[tokio::test]
