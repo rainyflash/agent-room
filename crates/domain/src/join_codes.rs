@@ -1,7 +1,8 @@
 //! 私人房间的 Agent 口令：房主生成、交给 Agent，Agent 凭它以“Agent 成员”身份进入房间。
 //!
-//! 口令是 12 位 Crockford Base32（约 60 位熵），给人看时分三组 `XXXX-XXXX-XXXX`。只在生成时显示
-//! 一次，服务器只存摘要。输入时容忍大小写、空白和连字符，并把易混的 O 当作 0、I 和 L 当作 1。
+//! 口令是 12 位 Crockford Base32（约 60 位熵），给人看时分三组 `XXXX-XXXX-XXXX`。服务器按摘要认口令，
+//! 另存一份封存的口令给管理者再看（`specs/network-agents/code-first.md`）。输入时容忍大小写、空白和
+//! 连字符，并把易混的 O 当作 0、I 和 L 当作 1。
 
 use std::fmt;
 

@@ -1,6 +1,7 @@
 //! 私人房间的 Agent 口令与敲门：房主或管理员生成、更换、停用口令，放行或拒绝敲门的 Agent，查看并
 //! 移出进来的 Agent；Agent 凭口令或经放行以“Agent 成员”身份加入。口令和敲门不改变任何人的成员资格，
-//! 只决定 Agent 能否入场（`specs/network-agents/knock.md`）。
+//! 只决定 Agent 能否入场（`specs/network-agents/knock.md`）。口令封存后存着，管理者能再看到
+//! （`specs/network-agents/code-first.md`）。
 
 use std::{fmt::Write as _, sync::Arc};
 
@@ -21,10 +22,11 @@ use crate::{
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, MatrixFailure, MatrixFailureKind,
-        MatrixRoomId, PortFuture, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
-        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
+        AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, JoinCodeSealer, MatrixFailure,
+        MatrixFailureKind, MatrixRoomId, PortFuture, PrivateRoomAgentAccessStore,
+        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
+        SecretFactory,
     },
 };
 
@@ -45,6 +47,8 @@ pub enum AgentAccessFailureKind {
     DependencyUnavailable,
     UnknownCommit,
     Internal,
+    /// 房间有口令，可管理者看不到：封存之前生成的只有摘要，或者这台服务器没配封存密钥。
+    NotRevealable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +176,7 @@ pub struct AgentAccessView {
     pub agents: Vec<PrivateRoomAgentMemberRecord>,
 }
 
+/// 口令连同元数据：生成时给一次，管理者之后再看也是这个。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedJoinCode {
     pub code: PrivateRoomJoinCode,
@@ -193,6 +198,12 @@ pub trait PrivateRoomAgentAccessUseCases: Send + Sync {
     ) -> PortFuture<'_, AgentAccessResult<AgentAccessView>>;
 
     fn generate_code(
+        &self,
+        request: ManageJoinCode,
+    ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>>;
+
+    /// 管理者再看房间当前的口令。没有口令时 `NotFound`，有却看不到时 `NotRevealable`。
+    fn reveal_code(
         &self,
         request: ManageJoinCode,
     ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>>;
@@ -241,6 +252,7 @@ pub struct PrivateRoomAgentAccessDependencies {
     pub memberships: Arc<dyn AgentMembershipRepository>,
     pub matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub secrets: Arc<dyn SecretFactory>,
+    pub sealer: Arc<dyn JoinCodeSealer>,
     pub clock: Arc<dyn Clock>,
     pub attempts: JoinCodeAttemptPolicy,
 }
@@ -251,6 +263,7 @@ pub struct PrivateRoomAgentAccessService {
     memberships: Arc<dyn AgentMembershipRepository>,
     matrix: Arc<dyn PrivateRoomMatrixGateway>,
     secrets: Arc<dyn SecretFactory>,
+    sealer: Arc<dyn JoinCodeSealer>,
     clock: Arc<dyn Clock>,
     attempts: JoinCodeAttemptPolicy,
 }
@@ -263,6 +276,7 @@ impl PrivateRoomAgentAccessService {
             memberships: dependencies.memberships,
             matrix: dependencies.matrix,
             secrets: dependencies.secrets,
+            sealer: dependencies.sealer,
             clock: dependencies.clock,
             attempts: dependencies.attempts,
         }
@@ -308,11 +322,54 @@ impl PrivateRoomAgentAccessService {
             created_by: request.actor.principal_id,
             created_at: self.clock.now(),
         };
+        // 封存不了（没配封存密钥）时照样生成，只是以后看不到。
+        let sealed = self
+            .sealer
+            .seal(request.catalog_id, code.normalized().as_bytes())
+            .ok();
         self.access
-            .replace_join_code(&record, &self.secrets.digest(code.normalized()))
+            .replace_join_code(
+                &record,
+                &self.secrets.digest(code.normalized()),
+                sealed.as_ref(),
+            )
             .await
             .map_err(|error| repository(OPERATION, &error))?;
         Ok(GeneratedJoinCode { code, record })
+    }
+
+    async fn reveal_internal(
+        &self,
+        request: ManageJoinCode,
+    ) -> AgentAccessResult<GeneratedJoinCode> {
+        const OPERATION: &str = "private_room.join_code.reveal";
+        self.managed_room(&request.actor, request.catalog_id, OPERATION)
+            .await?;
+        let stored = self
+            .access
+            .sealed_join_code(request.catalog_id)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?
+            .ok_or_else(|| AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::NotFound))?;
+        let not_revealable =
+            || AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::NotRevealable);
+        let sealed = stored.sealed.as_ref().ok_or_else(not_revealable)?;
+        let opened = self
+            .sealer
+            .open(request.catalog_id, sealed)
+            .map_err(|_| not_revealable())?;
+        let code = std::str::from_utf8(&opened)
+            .ok()
+            .and_then(|text| PrivateRoomJoinCode::parse(text).ok())
+            .ok_or_else(not_revealable)?;
+        // 封存的那份可能是上一个口令：旧版控制面换口令时不写它。
+        if self.secrets.digest(code.normalized()) != stored.digest {
+            return Err(not_revealable());
+        }
+        Ok(GeneratedJoinCode {
+            code,
+            record: stored.record,
+        })
     }
 
     async fn disable_internal(&self, request: ManageJoinCode) -> AgentAccessResult<()> {
@@ -697,6 +754,13 @@ impl PrivateRoomAgentAccessUseCases for PrivateRoomAgentAccessService {
         request: ManageJoinCode,
     ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
         Box::pin(self.generate_internal(request))
+    }
+
+    fn reveal_code(
+        &self,
+        request: ManageJoinCode,
+    ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
+        Box::pin(self.reveal_internal(request))
     }
 
     fn disable_code(&self, request: ManageJoinCode) -> PortFuture<'_, AgentAccessResult<()>> {

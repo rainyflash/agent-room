@@ -32,6 +32,7 @@ use zeroize::Zeroizing;
 
 mod account_encryption;
 mod device_grant;
+mod join_codes;
 mod network_agents;
 mod sign_in_removal;
 
@@ -39,6 +40,7 @@ pub use account_encryption::AesGcmAccountEncryptionKeySealer;
 pub use device_grant::{
     DiscoveredOidcDeviceGrant, OidcDeviceGrantConfig, OidcDeviceGrantConfigurationError,
 };
+pub use join_codes::AesGcmJoinCodeSealer;
 pub use network_agents::{
     AesGcmNetworkAgentSealer, Ed25519NetworkAgentKeyFactory, NETWORK_AGENT_SEAL_KEY_BYTES,
     NetworkAgentSealKey, NetworkSourceDigester,

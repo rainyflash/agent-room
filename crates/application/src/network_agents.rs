@@ -1751,7 +1751,9 @@ fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::DependencyUnavailable | AgentAccessFailureKind::UnknownCommit => {
             dependency()
         }
-        AgentAccessFailureKind::Forbidden | AgentAccessFailureKind::Internal => internal(),
+        AgentAccessFailureKind::Forbidden
+        | AgentAccessFailureKind::Internal
+        | AgentAccessFailureKind::NotRevealable => internal(),
     }
 }
 
@@ -1778,7 +1780,7 @@ fn code_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::DependencyUnavailable | AgentAccessFailureKind::UnknownCommit => {
             dependency()
         }
-        AgentAccessFailureKind::Internal => internal(),
+        AgentAccessFailureKind::Internal | AgentAccessFailureKind::NotRevealable => internal(),
     }
 }
 

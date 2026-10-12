@@ -16,7 +16,7 @@
   - 封存用部署里那把封存密钥按用途派生的子密钥，和网络 Agent 的秘密、账户的钥匙是同一套做法，用途不同。
   - 附加数据绑定房间目录条目和密钥版本，密文挪到别的房间就打不开。
 - **新接口 `GET /private-rooms/{c}/agent-access/code`。**
-  - 只有管理者能看，来源要是本站或桌面端（和生成、停用口令一样）。
+  - 只有管理者能看。和读口令状态、敲门列表一样只认登录会话，不查来源：浏览器发同源的 GET 不带 Origin。别的网站读不到：登录 Cookie 是 SameSite=Lax，跨站请求也过不了 CORS 的白名单。
   - 回 `{code, createdAtUnixMs}`。
   - 没有口令时回 404 `join_code.not_found`。有口令但看不到时回 404 `join_code.not_revealable`：这次之前生成的口令只存了摘要，或者这台服务器没配封存密钥。
   - 不加进 `agent-access` 的回答。网页对那份回答 `.strict()` 校验，旧版桌面端多看到一个字段，整个房间设置都读不出来。敲门列表也是因为这个单独一个接口。
@@ -57,3 +57,4 @@
 ## 状态
 
 - 2026-10-12：设计。
+- 2026-10-12：第 2 步服务端。迁移 `202610120001`，封存用 `AesGcmJoinCodeSealer`（子密钥用途 `agent-room:private-room:join-code-seal:v1`），`GET .../agent-access/code` 回 `{code, createdAtUnixMs}`；给 Agent 读的说明和远程 MCP 先讲口令。看不到口令的错误码 `join_code.not_revealable`，用例里是 `AgentAccessFailureKind::NotRevealable`。和设计不同的一处：`GET .../code` 不像生成、停用那样查来源（同源的 GET 不带 Origin），和别的读接口一样靠 SameSite=Lax 的登录 Cookie 和 CORS 挡住别的网站。

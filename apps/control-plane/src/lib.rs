@@ -66,11 +66,11 @@ use agent_room_application::{
 };
 use agent_room_domain::time::{DurationMillis, SlidingLifetime};
 use agent_room_identity_adapter::{
-    AesGcmAccountEncryptionKeySealer, AesGcmNetworkAgentSealer, DiscoveredOidcDeviceGrant,
-    DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier, Ed25519DeviceProofVerifier,
-    Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer, KeycloakAccountRemovalConfig,
-    KeycloakSignInAccountRemoval, NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig,
-    SecureSecretFactory,
+    AesGcmAccountEncryptionKeySealer, AesGcmJoinCodeSealer, AesGcmNetworkAgentSealer,
+    DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier,
+    Ed25519DeviceProofVerifier, Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer,
+    KeycloakAccountRemovalConfig, KeycloakSignInAccountRemoval, NetworkAgentSealKey,
+    NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixAgentSessionClient, MatrixApplicationServiceConfiguration,
@@ -869,7 +869,10 @@ fn build_agent_collaboration_http_states(
         ),
         private_room_agents: PrivateRoomAgentHttpState::new(
             PrivateRoomAgentHttpDependencies {
-                access: build_private_room_agent_access(dependencies),
+                access: build_private_room_agent_access(
+                    dependencies,
+                    config.network_agents.seal_key.as_ref(),
+                ),
                 authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),
                 secrets: dependencies.secrets.clone(),
@@ -999,7 +1002,7 @@ fn build_network_agent_routes(
             dependencies.matrix_identities.clone(),
         ),
         lobbies,
-        access: build_private_room_agent_access(dependencies),
+        access: build_private_room_agent_access(dependencies, key),
         directory: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
         clock: dependencies.system_runtime.clone(),
@@ -1099,9 +1102,11 @@ fn build_private_room_service(
 /// 口令一小时内最多猜错这么多次：本机设备按设备、网络 Agent 按来源各自计数。
 pub(crate) const JOIN_CODE_FAILURES_PER_HOUR: u32 = 10;
 
-/// 私人房间的 Agent 口令。猜错按设备（网络 Agent 按来源）计数，窗口过后自然放开。
+/// 私人房间的 Agent 口令。猜错按设备（网络 Agent 按来源）计数，窗口过后自然放开。口令用部署的
+/// 封存密钥封存后存着，管理者能再看到；没配封存密钥时照样生成，只是看不到。
 fn build_private_room_agent_access(
     dependencies: &AgentFeatureDependencies,
+    seal_key: Option<&NetworkAgentSealKey>,
 ) -> Arc<PrivateRoomAgentAccessService> {
     Arc::new(PrivateRoomAgentAccessService::new(
         PrivateRoomAgentAccessDependencies {
@@ -1110,6 +1115,7 @@ fn build_private_room_agent_access(
             memberships: dependencies.repositories.clone(),
             matrix: dependencies.matrix_identities.clone(),
             secrets: dependencies.secrets.clone(),
+            sealer: Arc::new(AesGcmJoinCodeSealer::new(seal_key)),
             clock: dependencies.system_runtime.clone(),
             attempts: agent_room_application::ports::JoinCodeAttemptPolicy {
                 window: DurationMillis::new(60 * 60 * 1_000).expect("固定口令猜错窗口必须有效"),

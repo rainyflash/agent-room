@@ -697,6 +697,12 @@ impl ApiError {
                 ErrorCategory::Transient,
                 "口令服务发生内部错误。",
             ),
+            AgentAccessFailureKind::NotRevealable => (
+                StatusCode::NOT_FOUND,
+                "join_code.not_revealable",
+                ErrorCategory::Validation,
+                "这个口令看不到了：它是以前生成的，或者这台服务器没法保管口令。要给 Agent 口令就换一个新的。",
+            ),
         };
         log_agent_access_failure(failure, correlation_id);
         Self::new(status, code, category, message, correlation_id)
@@ -745,7 +751,7 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "操作提交状态未知，请刷新后确认。",
             ),
-            AgentAccessFailureKind::Internal => (
+            AgentAccessFailureKind::Internal | AgentAccessFailureKind::NotRevealable => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "agent_knock.internal",
                 ErrorCategory::Transient,

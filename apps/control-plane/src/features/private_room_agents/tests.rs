@@ -60,6 +60,8 @@ struct FakeAccess {
     redeem_failure: Mutex<Option<AgentAccessFailureKind>>,
     /// 回答敲门时用例回答的失败。
     knock_failure: Mutex<Option<AgentAccessFailureKind>>,
+    /// 再看口令时用例回答的失败。
+    reveal_failure: Mutex<Option<AgentAccessFailureKind>>,
 }
 
 /// 网关替身：记下替谁进了哪个房间，按预设成功或失败。
@@ -123,6 +125,28 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
                     permissions: PrivateRoomPermissions::AGENT_MEMBER,
                     created_by: request.actor.principal_id,
                     created_at: time(1_700_000_200_000),
+                },
+            })
+        })
+    }
+
+    fn reveal_code(
+        &self,
+        request: ManageJoinCode,
+    ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
+        self.record(format!("reveal:{}", request.catalog_id));
+        let failure = *self.reveal_failure.lock().unwrap();
+        Box::pin(async move {
+            if let Some(kind) = failure {
+                return Err(AgentAccessFailure::new("test.reveal", kind));
+            }
+            Ok(GeneratedJoinCode {
+                code: PrivateRoomJoinCode::parse("K7P3-Q9XW-2DMA").unwrap(),
+                record: PrivateRoomJoinCodeRecord {
+                    catalog_id: request.catalog_id,
+                    permissions: PrivateRoomPermissions::AGENT_MEMBER,
+                    created_by: owner_id(),
+                    created_at: time(1_700_000_000_000),
                 },
             })
         })
@@ -468,6 +492,48 @@ async fn 生成与停用口令_移出_agent_都要求可信来源() {
         .await
         .unwrap();
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn 管理者再看口令_回答不缓存_没有口令和看不到的分开说() {
+    let access = Arc::new(FakeAccess::default());
+    let revealed = app(access.clone(), Arc::default())
+        .oneshot(web(Method::GET, "/agent-access/code", false))
+        .await
+        .unwrap();
+    assert_eq!(revealed.status(), StatusCode::OK);
+    assert_eq!(revealed.headers()[header::CACHE_CONTROL], "no-store");
+    let body = json_of(revealed).await;
+    assert_eq!(body["code"], "K7P3-Q9XW-2DMA");
+    assert_eq!(body["createdAtUnixMs"], 1_700_000_000_000_i64);
+    assert_eq!(access.calls(), [format!("reveal:{CATALOG_UUID}")]);
+
+    for (kind, status, code) in [
+        (
+            AgentAccessFailureKind::NotFound,
+            StatusCode::NOT_FOUND,
+            "join_code.not_found",
+        ),
+        (
+            AgentAccessFailureKind::NotRevealable,
+            StatusCode::NOT_FOUND,
+            "join_code.not_revealable",
+        ),
+        (
+            AgentAccessFailureKind::Forbidden,
+            StatusCode::FORBIDDEN,
+            "join_code.forbidden",
+        ),
+    ] {
+        *access.reveal_failure.lock().unwrap() = Some(kind);
+        let refused = app(access.clone(), Arc::default())
+            .oneshot(web(Method::GET, "/agent-access/code", false))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), status, "{code}");
+        assert_eq!(refused.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(json_of(refused).await["code"], code);
+    }
 }
 
 #[tokio::test]
