@@ -125,32 +125,46 @@ test('私人房间：Agent 拿房间号敲门，房间页的提示栈里直接�
   expect(failures).toEqual([]);
 });
 
+/** 打开房间页上的“接入 Agent”，选网络接入。 */
+async function openNetworkInvite(page: Page) {
+  await page
+    .getByRole('navigation', { name: 'Room interactions' })
+    .getByRole('button', { name: 'Bring an agent', exact: true })
+    .click();
+  const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+  await dialog.getByRole('radio', { name: /^Network/u }).click();
+  return dialog;
+}
+
+const JOIN_CODE =
+  /with the code [0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/u;
+
 for (const width of [1_440, 390]) {
-  test(`私人房间的接入对话框：话里只有房间号，它敲门后在对话框里放它进来 ${String(width)}`, async ({
+  test(`私人房间的接入对话框：一键生成口令并复制，话里带着敲门用的房间号，它敲门后在对话框里放它进来 ${String(width)}`, async ({
     page,
   }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ height: 900, width });
     await page.goto(`${fixturePath}?private`);
 
-    await page
-      .getByRole('navigation', { name: 'Room interactions' })
-      .getByRole('button', { name: 'Bring an agent', exact: true })
-      .click();
-    const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
-    await dialog.getByRole('radio', { name: /^Network/u }).click();
+    const dialog = await openNetworkInvite(page);
     await expect(
-      dialog.getByText(/a network agent knocks with the room number, and you let it in here/u),
+      dialog.getByText(/a network agent comes straight in with its code/u),
     ).toBeVisible();
-    // 打开就能复制，不用先生成什么。房间号不是秘密；口令收在折叠里，话里没有。
+    // 还没有口令：一个按钮生成并复制。不想用口令的，折叠里有只带房间号的那段话。
+    await expect(dialog.getByText('Rather not use a code? Let it knock')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Create code and copy' }).click();
+    await expect(dialog.getByText(/Anyone who gets the code can come in/u)).toBeVisible();
+    const message = dialog.getByLabel('Message for your agent');
+    await expect(message).toContainText(JOIN_CODE);
+    await expect(message).toContainText(`knock with the room number ${ROOM_NUMBER}`);
+    await expect(message).toContainText('/agents.txt');
     await expect(dialog.getByRole('button', { name: 'Copy message' })).toBeEnabled();
-    const message = (await dialog.getByLabel('Message for your agent').textContent()) ?? '';
-    expect(message).toContain(ROOM_NUMBER);
-    expect(message).toContain('/agents.txt');
-    expect(message.toLowerCase()).not.toContain('code');
-    await expect(dialog.getByText(/When it knocks, it shows up here/u)).toBeVisible();
-    await expect(dialog.getByText('Want the agent in without waiting? Use a code')).toBeVisible();
+    await expect(
+      dialog.getByText(/If your agent knocks with the room number, it shows up here/u),
+    ).toBeVisible();
 
+    // 口令传不进去的 Agent 照话里的房间号敲门。
     await page.evaluate(() => {
       (window as LobbyFixtureWindow).__agentRoomFixtureControls.knockAgent('Atlas');
     });
@@ -168,3 +182,23 @@ for (const width of [1_440, 390]) {
     });
   });
 }
+
+test('私人房间已经有口令：接入对话框打开就带着它，房间设置里也看得到、能复制', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.goto(`${fixturePath}?private&code`);
+
+  const dialog = await openNetworkInvite(page);
+  await expect(dialog.getByLabel('Message for your agent')).toContainText(
+    'with the code K7P3-Q9XW-2DMA',
+  );
+  await expect(dialog.getByRole('button', { name: 'Copy message' })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: /code and copy/u })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+
+  const settings = await openRoomSettings(page, 'Agent entry');
+  await expect(settings.getByText('K7P3-Q9XW-2DMA', { exact: true })).toBeVisible();
+  await expect(settings.getByRole('button', { name: 'Copy message for the agent' })).toBeVisible();
+  await expectAccessibleDialog(page);
+  expect(failures).toEqual([]);
+});

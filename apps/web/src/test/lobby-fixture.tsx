@@ -77,6 +77,7 @@ import type {
   ModerationGateway,
 } from '@/features/moderation/domain/moderation';
 import type {
+  JoinCode,
   PrivateRoom,
   PrivateRoomAgentKnock,
   PrivateRoomAgentMember,
@@ -106,6 +107,8 @@ const privateFixture = new URLSearchParams(window.location.search).has('private'
 const cardFixture = new URLSearchParams(window.location.search).has('cards');
 // `?private&knock` 里一个网络 Agent（Sol）拿房间号在敲门，房间页的提示栈和接入对话框都能放它进来。
 const knockFixture = privateFixture && new URLSearchParams(window.location.search).has('knock');
+// `?private&code` 里房间已经有口令，管理者看得到；`?private&code=hidden` 的口令是能再看之前生成的，看不到。
+const codeFixture = privateFixture ? new URLSearchParams(window.location.search).get('code') : null;
 let room: LobbyRoom = privateFixture
   ? { ...testRoom(fixtureAgentCount), encrypted: true }
   : testRoom(fixtureAgentCount);
@@ -532,6 +535,21 @@ const unavailablePrivateRoom = () =>
   Promise.resolve(err({ code: 'private_room.fixture_unavailable', retryable: false }));
 let fixtureKnocks: readonly PrivateRoomAgentKnock[] = knockFixture ? [fixtureKnock('Sol')] : [];
 let fixtureRoomAgents: readonly PrivateRoomAgentMember[] = [];
+let fixtureJoinCode: JoinCode | null =
+  codeFixture === null ? null : { code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: Date.now() - 3_600_000 };
+let fixtureJoinCodeHidden = codeFixture === 'hidden';
+
+/** 和服务器一样每次生成一个新口令：12 位 Crockford Base32，分三组。 */
+function newFixtureJoinCode(): JoinCode {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  const symbols = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) =>
+    alphabet.charAt(byte % alphabet.length),
+  ).join('');
+  return {
+    code: `${symbols.slice(0, 4)}-${symbols.slice(4, 8)}-${symbols.slice(8)}`,
+    createdAtUnixMs: Date.now(),
+  };
+}
 
 function fixtureKnock(displayName: string): PrivateRoomAgentKnock {
   const knockedAtUnixMs = Date.now();
@@ -611,7 +629,16 @@ const privateRooms: PrivateRoomGateway = {
       }
     : unavailablePrivateRoom,
   agentAccess: privateFixture
-    ? () => Promise.resolve(ok({ agents: [...fixtureRoomAgents], joinCode: null }))
+    ? () =>
+        Promise.resolve(
+          ok({
+            agents: [...fixtureRoomAgents],
+            joinCode:
+              fixtureJoinCode === null
+                ? null
+                : { createdAtUnixMs: fixtureJoinCode.createdAtUnixMs },
+          }),
+        )
     : unavailablePrivateRoom,
   agentKnocks: privateFixture
     ? () => Promise.resolve(ok([...fixtureKnocks]))
@@ -624,8 +651,20 @@ const privateRooms: PrivateRoomGateway = {
     ? (_catalogId, agentId) =>
         answerFixtureKnock(agentId, false) === null ? knockGone() : Promise.resolve(ok(undefined))
     : unavailablePrivateRoom,
-  disableJoinCode: unavailablePrivateRoom,
-  generateJoinCode: unavailablePrivateRoom,
+  disableJoinCode: privateFixture
+    ? () => {
+        fixtureJoinCode = null;
+        return Promise.resolve(ok(undefined));
+      }
+    : unavailablePrivateRoom,
+  generateJoinCode: privateFixture
+    ? () => {
+        const generated = newFixtureJoinCode();
+        fixtureJoinCode = generated;
+        fixtureJoinCodeHidden = false;
+        return Promise.resolve(ok(generated));
+      }
+    : unavailablePrivateRoom,
   inspect: unavailablePrivateRoom,
   invite: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
@@ -633,6 +672,16 @@ const privateRooms: PrivateRoomGateway = {
   remove: unavailablePrivateRoom,
   removeCodeAgent: unavailablePrivateRoom,
   rename: unavailablePrivateRoom,
+  revealJoinCode: privateFixture
+    ? () =>
+        Promise.resolve(
+          fixtureJoinCode === null
+            ? err({ code: 'join_code.not_found', retryable: false })
+            : fixtureJoinCodeHidden
+              ? err({ code: 'join_code.not_revealable', retryable: false })
+              : ok(fixtureJoinCode),
+        )
+    : unavailablePrivateRoom,
   transferOwnership: unavailablePrivateRoom,
   updatePermissions: unavailablePrivateRoom,
 };

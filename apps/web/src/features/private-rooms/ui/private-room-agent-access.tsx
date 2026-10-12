@@ -18,10 +18,12 @@ import { useTranslation } from 'react-i18next';
 import { useNetworkAgentGuideUrl } from '@/features/desktop/ui/network-agent-invite';
 import {
   privateRoomAgentAccessQueryKey,
+  privateRoomJoinCodeQueryKey,
   usePrivateRoomAgentAccess,
+  usePrivateRoomJoinCode,
 } from '@/features/private-rooms/data/private-room-queries';
 import type {
-  GeneratedJoinCode,
+  JoinCode,
   PrivateRoom,
   PrivateRoomAgentAccess as AgentAccessView,
   PrivateRoomAgentMember,
@@ -33,19 +35,22 @@ import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-ro
 import { formatDateTime } from '@/shared/i18n/formatters';
 import { ok, type Result } from '@/shared/result';
 
+/** 查口令时这两种回答不算出错：没有口令，或者有口令但服务器给不出来。 */
+const expectedRevealFailures = new Set(['join_code.not_found', 'join_code.not_revealable']);
+
 /** 服务器确认后的变化：先写进缓存，免得重新读取之前界面闪回旧状态。 */
 type AccessChange = {
   readonly settle: (view: AgentAccessView) => AgentAccessView;
-  /** 这次生成的口令；停用时清掉；其他操作不动它。 */
-  readonly generated?: GeneratedJoinCode | null;
+  /** 这次生成的口令：写进再看口令的缓存，马上显示，不用再去问一次。 */
+  readonly generated?: JoinCode;
 };
 
 type AccessCommand = () => Promise<Result<AccessChange, PrivateRoomFailure>>;
 
 /**
- * 房间设置里的「Agent 进门」：在敲门的 Agent（让它进来或不让进）；生成、更换、停用口令；
- * 移出凭口令或经放行进来的 Agent。口令只在生成的那次响应里出现，记在这个面板里；关掉面板就看不到了，
- * 忘了就换一个。
+ * 房间设置里的「Agent 进门」：在敲门的 Agent（让它进来或不让进）；看、复制、生成、更换、停用口令；
+ * 移出凭口令或经放行进来的 Agent。口令由服务器保管，管理者随时能再看（`specs/network-agents/code-first.md`）；
+ * 能再看之前生成的口令看不到，要复制就换一个。
  */
 export function PrivateRoomAgentAccess({
   room,
@@ -58,7 +63,6 @@ export function PrivateRoomAgentAccess({
   const queryClient = useQueryClient();
   const access = usePrivateRoomAgentAccess(rooms, room.catalogId);
   const guide = useNetworkAgentGuideUrl();
-  const [generated, setGenerated] = useState<GeneratedJoinCode | null>(null);
   // 复制失败时展开给 Agent 的话，让人手动选中复制。
   const [copied, setCopied] = useState<'code' | 'failed' | 'message' | null>(null);
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
@@ -72,13 +76,17 @@ export function PrivateRoomAgentAccess({
       }
       setFailure(null);
       const change = result.value;
+      // 先记下新口令，再改口令状态，面板直接换成新口令。
+      if (change.generated !== undefined) {
+        queryClient.setQueryData<Result<JoinCode, PrivateRoomFailure>>(
+          privateRoomJoinCodeQueryKey(room.catalogId, change.generated.createdAtUnixMs),
+          ok(change.generated),
+        );
+        setCopied(null);
+      }
       queryClient.setQueryData<Result<AgentAccessView, PrivateRoomFailure>>(queryKey, (current) =>
         current?.ok === true ? ok(change.settle(current.value)) : current,
       );
-      if (change.generated !== undefined) {
-        setGenerated(change.generated);
-        setCopied(null);
-      }
       await queryClient.invalidateQueries({ queryKey });
     },
   });
@@ -117,9 +125,7 @@ export function PrivateRoomAgentAccess({
   const disable = (): void => {
     run(async () => {
       const result = await rooms.disableJoinCode(room.catalogId);
-      return result.ok
-        ? ok({ generated: null, settle: (view) => ({ ...view, joinCode: null }) })
-        : result;
+      return result.ok ? ok({ settle: (view) => ({ ...view, joinCode: null }) }) : result;
     });
   };
 
@@ -140,11 +146,26 @@ export function PrivateRoomAgentAccess({
   };
 
   const view = access.data?.ok === true ? access.data.value : null;
-  // 别人在别处换了或停用了口令时，这里记着的旧口令就不能再给人看。
-  const visible =
-    generated !== null && view?.joinCode?.createdAtUnixMs === generated.createdAtUnixMs
-      ? generated
+  // 按口令状态里的生成时间去查：别人在别处换了口令，查的就是新的那个。
+  const createdAt = view?.joinCode?.createdAtUnixMs ?? null;
+  const revealed = usePrivateRoomJoinCode(rooms, room.catalogId, createdAt);
+  const revealing = createdAt !== null && revealed.isPending;
+  const visible = createdAt !== null && revealed.data?.ok === true ? revealed.data.value : null;
+  const revealFailure =
+    createdAt !== null &&
+    revealed.data?.ok === false &&
+    !expectedRevealFailures.has(revealed.data.error.code)
+      ? revealed.data.error
       : null;
+  const message =
+    visible === null
+      ? null
+      : t('agentInvite.network.code.message', {
+          code: visible.code,
+          guide,
+          room: room.name,
+          roomNumber: room.catalogId,
+        });
   const joined = view?.agents.filter((agent) => agent.status === 'joined') ?? [];
 
   return (
@@ -208,11 +229,16 @@ export function PrivateRoomAgentAccess({
 
       {view === null ? null : (
         <>
-          {visible === null ? (
+          {revealing ? (
+            <p className="private-room-operation" role="status">
+              <LoaderCircle aria-hidden="true" className="private-room-spin" />
+              {t('privateRooms.governance.agentAccess.loading')}
+            </p>
+          ) : visible === null || message === null ? (
             <p className="private-room-agent-access__status">
               {view.joinCode === null
                 ? t('privateRooms.governance.agentAccess.none')
-                : t('privateRooms.governance.agentAccess.enabled', {
+                : t('privateRooms.governance.agentAccess.hidden', {
                     time: formatDateTime(view.joinCode.createdAtUnixMs, i18n.resolvedLanguage),
                   })}
             </p>
@@ -221,7 +247,11 @@ export function PrivateRoomAgentAccess({
               <p className="private-room-join-code__value">
                 <code>{visible.code}</code>
               </p>
-              <small>{t('privateRooms.governance.agentAccess.onlyOnce')}</small>
+              <small>
+                {t('privateRooms.governance.agentAccess.createdAt', {
+                  time: formatDateTime(visible.createdAtUnixMs, i18n.resolvedLanguage),
+                })}
+              </small>
               {copied === 'failed' ? (
                 <p className="private-room-join-code__failed" role="status">
                   <AlertTriangle aria-hidden="true" />
@@ -238,14 +268,7 @@ export function PrivateRoomAgentAccess({
                     )
                   }
                   onClick={() => {
-                    copy(
-                      t('privateRooms.governance.agentAccess.message', {
-                        code: visible.code,
-                        guide,
-                        room: room.name,
-                      }),
-                      'message',
-                    );
+                    copy(message, 'message');
                   }}
                   size="compact"
                   tone="primary"
@@ -280,16 +303,11 @@ export function PrivateRoomAgentAccess({
                   <ChevronDown aria-hidden="true" />
                   {t('privateRooms.governance.agentAccess.preview')}
                 </summary>
-                <pre>
-                  {t('privateRooms.governance.agentAccess.message', {
-                    code: visible.code,
-                    guide,
-                    room: room.name,
-                  })}
-                </pre>
+                <pre>{message}</pre>
               </details>
             </div>
           )}
+          {revealFailure === null ? null : <PrivateRoomFailureNotice failure={revealFailure} />}
 
           <p className="private-room-agent-access__warning">
             <AlertTriangle aria-hidden="true" />
@@ -314,7 +332,8 @@ export function PrivateRoomAgentAccess({
                   icon={<RefreshCw aria-hidden="true" />}
                   onClick={generate}
                   size="compact"
-                  tone="ghost"
+                  // 口令看不到时，要复制给 Agent 只能换一个：这时它是这一块要做的事。
+                  tone={visible === null && !revealing ? 'primary' : 'ghost'}
                   type="button"
                 >
                   {t('privateRooms.governance.agentAccess.rotate')}

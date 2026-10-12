@@ -95,7 +95,7 @@ describe('ControlPlanePrivateRoomClient', () => {
     );
   });
 
-  it('Agent 口令：查看只有创建时间，生成时才拿到口令，停用与移出没有正文', async () => {
+  it('Agent 口令：口令状态只有创建时间，生成和再看拿到口令，停用与移出没有正文', async () => {
     const agentId = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
     const fetch = vi
       .fn<typeof globalThis.fetch>()
@@ -117,6 +117,9 @@ describe('ControlPlanePrivateRoomClient', () => {
       .mockResolvedValueOnce(
         Response.json({ code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: 1_700_000_100_000 }),
       )
+      .mockResolvedValueOnce(
+        Response.json({ code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: 1_700_000_100_000 }),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = new ControlPlanePrivateRoomClient({
@@ -130,11 +133,12 @@ describe('ControlPlanePrivateRoomClient', () => {
     expect(access.ok ? access.value.joinCode : null).toEqual({
       createdAtUnixMs: 1_700_000_000_000,
     });
-    const generated = await client.generateJoinCode(ROOM.catalogId);
-    expect(generated).toEqual({
+    const code = {
       ok: true,
       value: { code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: 1_700_000_100_000 },
-    });
+    };
+    expect(await client.generateJoinCode(ROOM.catalogId)).toEqual(code);
+    expect(await client.revealJoinCode(ROOM.catalogId)).toEqual(code);
     expect(await client.disableJoinCode(ROOM.catalogId)).toEqual({ ok: true, value: undefined });
     expect(await client.removeCodeAgent(ROOM.catalogId, agentId)).toEqual({
       ok: true,
@@ -143,6 +147,7 @@ describe('ControlPlanePrivateRoomClient', () => {
     for (const [index, [path, method]] of [
       [base, 'GET'],
       [`${base}/code`, 'PUT'],
+      [`${base}/code`, 'GET'],
       [`${base}/code`, 'DELETE'],
       [`${base}/agents/${agentId}`, 'DELETE'],
     ].entries()) {
@@ -250,6 +255,23 @@ describe('ControlPlanePrivateRoomClient', () => {
 
     expect(await client.agentKnocks(ROOM.catalogId)).toEqual({
       error: { code: 'private_room.invalid_response', retryable: false },
+      ok: false,
+    });
+  });
+
+  it('口令看不到时把服务器的错误码交给界面', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json({ code: 'join_code.not_revealable', retryable: false }, { status: 404 }),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.revealJoinCode(ROOM.catalogId)).toEqual({
+      error: { code: 'join_code.not_revealable', retryable: false },
       ok: false,
     });
   });

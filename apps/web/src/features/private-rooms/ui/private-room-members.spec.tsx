@@ -9,6 +9,7 @@ import { NetworkAgentLabelStore } from '@/features/lobby/application/network-age
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import type { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
 import type {
+  JoinCode,
   PrivateRoom,
   PrivateRoomAgentAccess,
   PrivateRoomAgentKnock,
@@ -49,25 +50,48 @@ const room: PrivateRoom = {
 
 const AGENT = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
 const CREATED = Date.UTC(2026, 8, 23, 6, 0);
+/** 房间原来就有的口令；生成的新口令是 `K7P3-Q9XW-2DMA`。 */
+const STORED_CODE = 'H8J9-K2M3-N4P5';
 
-/** 和服务器一样记着口令状态和敲门：生成、停用、移出、放行之后再查看拿到的是新状态。 */
+/**
+ * 和服务器一样记着口令状态和敲门：生成、停用、移出、放行之后再查看拿到的是新状态。
+ * `revealable` 为 false 时原来的口令是能再看之前生成的，看不到；新生成的都看得到。
+ */
 function gateway(
   initial: PrivateRoomAgentAccess = { agents: [], joinCode: null },
   waiting: readonly PrivateRoomAgentKnock[] = [],
+  revealable = true,
 ) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   const rename = vi.fn((_catalogId: string, name: string) =>
     Promise.resolve(ok({ ...room, name })),
   );
   let access = initial;
+  let code: JoinCode | null =
+    initial.joinCode === null
+      ? null
+      : { code: STORED_CODE, createdAtUnixMs: initial.joinCode.createdAtUnixMs };
+  let hidden = !revealable;
   const agentAccess = vi.fn(() => Promise.resolve(ok(access)));
   const generateJoinCode = vi.fn(() => {
-    const createdAtUnixMs = CREATED + 60_000;
-    access = { ...access, joinCode: { createdAtUnixMs } };
-    return Promise.resolve(ok({ code: 'K7P3-Q9XW-2DMA', createdAtUnixMs }));
+    const generated = { code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: CREATED + 60_000 };
+    access = { ...access, joinCode: { createdAtUnixMs: generated.createdAtUnixMs } };
+    code = generated;
+    hidden = false;
+    return Promise.resolve(ok(generated));
   });
+  const revealJoinCode = vi.fn<PrivateRoomGateway['revealJoinCode']>(() =>
+    Promise.resolve(
+      code === null
+        ? err({ code: 'join_code.not_found', retryable: false })
+        : hidden
+          ? err({ code: 'join_code.not_revealable', retryable: false })
+          : ok(code),
+    ),
+  );
   const disableJoinCode = vi.fn(() => {
     access = { ...access, joinCode: null };
+    code = null;
     return Promise.resolve(ok(undefined));
   });
   const removeCodeAgent = vi.fn((_catalogId: string, agentId: string) => {
@@ -117,6 +141,7 @@ function gateway(
     remove: unavailable,
     removeCodeAgent,
     rename,
+    revealJoinCode,
     transferOwnership: unavailable,
     updatePermissions: unavailable,
   };
@@ -128,6 +153,7 @@ function gateway(
     generateJoinCode,
     removeCodeAgent,
     rename,
+    revealJoinCode,
     value,
   };
 }
@@ -216,7 +242,7 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
   });
 
-  it('房主生成口令后看到口令，一键复制给 Agent 的话', async () => {
+  it('房主生成口令后看到口令，一键复制给 Agent 的话：和接入对话框里的同一段', async () => {
     const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     const rooms = gateway();
@@ -225,13 +251,14 @@ describe('私人房间的成员与 Agent 口令', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create code' }));
     expect(await screen.findByText('K7P3-Q9XW-2DMA')).toBeVisible();
     expect(rooms.generateJoinCode).toHaveBeenCalledWith(room.catalogId);
-    expect(screen.getByText(/Shown only this once/u)).toBeVisible();
+    expect(rooms.revealJoinCode).not.toHaveBeenCalled();
+    expect(screen.getByText(/^Created /u)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Copy message for the agent' }));
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeVisible();
     const message = writeText.mock.calls[0]?.[0] ?? '';
-    expect(message).toContain('agent-room join --code K7P3-Q9XW-2DMA');
-    expect(message).toContain('"Architecture room"');
-    expect(message).toContain('agent_room_join');
+    expect(message).toContain('with the code K7P3-Q9XW-2DMA');
+    expect(message).toContain(`knock with the room number ${room.catalogId}`);
+    expect(message).toContain('“Architecture room”');
     expect(message).toContain('/agents.txt');
     // 口令开着时只能换或停用，不再显示生成按钮。
     expect(screen.getByRole('button', { name: 'Replace code' })).toBeVisible();
@@ -248,21 +275,34 @@ describe('私人房间的成员与 Agent 口令', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Create code' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Copy message for the agent' }));
     expect(await screen.findByText(/Copy failed/u)).toBeVisible();
-    const preview = screen.getByText(/agent-room join --code K7P3-Q9XW-2DMA/u);
+    const preview = screen.getByText(/with the code K7P3-Q9XW-2DMA/u);
     expect(preview).toBeVisible();
     expect(preview.closest('details')).toHaveAttribute('open');
   });
 
-  it('已有口令只显示创建时间；停用后回到生成', async () => {
+  it('已有口令时直接显示口令、能复制；停用后回到生成', async () => {
     const rooms = gateway({ agents: [], joinCode: { createdAtUnixMs: CREATED } });
     renderGovernance(OWNER, rooms.value);
-    expect(await screen.findByText(/Code on since/u)).toBeVisible();
-    expect(screen.queryByText('K7P3-Q9XW-2DMA')).toBeNull();
+    expect(await screen.findByText(STORED_CODE)).toBeVisible();
+    expect(rooms.revealJoinCode).toHaveBeenCalledWith(room.catalogId);
+    expect(screen.getByRole('button', { name: 'Copy message for the agent' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Turn off code' }));
     await waitFor(() => {
       expect(rooms.disableJoinCode).toHaveBeenCalledWith(room.catalogId);
     });
     expect(await screen.findByRole('button', { name: 'Create code' })).toBeVisible();
+    expect(screen.queryByText(STORED_CODE)).toBeNull();
+  });
+
+  it('口令看不到时说清楚，要复制就换一个；换完显示新口令', async () => {
+    const rooms = gateway({ agents: [], joinCode: { createdAtUnixMs: CREATED } }, [], false);
+    renderGovernance(OWNER, rooms.value);
+    expect(await screen.findByText(/Code on since .*, but it can’t be shown here/u)).toBeVisible();
+    expect(screen.queryByText(STORED_CODE)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy message for the agent' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace code' }));
+    expect(await screen.findByText('K7P3-Q9XW-2DMA')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy message for the agent' })).toBeVisible();
   });
 
   it('列出凭口令进来的 Agent 与主人，移除后不再列出', async () => {

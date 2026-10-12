@@ -2,13 +2,13 @@ import { z } from 'zod';
 
 import {
   admittedAgentSchema,
-  generatedJoinCodeSchema,
+  joinCodeSchema,
   privateRoomAgentAccessSchema,
   privateRoomAgentKnocksSchema,
   privateRoomListSchema,
   privateRoomSchema,
   type CreatePrivateRoomInput,
-  type GeneratedJoinCode,
+  type JoinCode,
   type PrivateRoom,
   type PrivateRoomAgentAccess,
   type PrivateRoomAgentKnock,
@@ -181,11 +181,19 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     });
   }
 
-  generateJoinCode(catalogId: string): Promise<Result<GeneratedJoinCode, PrivateRoomFailure>> {
+  generateJoinCode(catalogId: string): Promise<Result<JoinCode, PrivateRoomFailure>> {
     return this.#request(
       `${this.#agentAccessPath(catalogId)}/code`,
       { method: 'PUT' },
-      generatedJoinCodeSchema,
+      joinCodeSchema,
+    );
+  }
+
+  revealJoinCode(catalogId: string): Promise<Result<JoinCode, PrivateRoomFailure>> {
+    return this.#request(
+      `${this.#agentAccessPath(catalogId)}/code`,
+      { method: 'GET' },
+      joinCodeSchema,
     );
   }
 

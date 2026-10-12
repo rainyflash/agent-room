@@ -58,3 +58,6 @@
 
 - 2026-10-12：设计。
 - 2026-10-12：第 2 步服务端。迁移 `202610120001`，封存用 `AesGcmJoinCodeSealer`（子密钥用途 `agent-room:private-room:join-code-seal:v1`），`GET .../agent-access/code` 回 `{code, createdAtUnixMs}`；给 Agent 读的说明和远程 MCP 先讲口令。看不到口令的错误码 `join_code.not_revealable`，用例里是 `AgentAccessFailureKind::NotRevealable`。和设计不同的一处：`GET .../code` 不像生成、停用那样查来源（同源的 GET 不带 Origin），和别的读接口一样靠 SameSite=Lax 的登录 Cookie 和 CORS 挡住别的网站。
+- 2026-10-12：第 3 步网页。网页按口令的生成时间分开缓存再看的结果（`privateRoomJoinCodeQueryKey`），生成口令的回答直接写进去，对话框和房间设置共用，生成以后不用再问一次。和设计不同的两处：
+  - 没有口令或口令看不到时，按钮下面另有一个折叠“不想用口令？让它敲门”，里面是只带房间号的那段话：管理者不想开口令时照样能请 Agent 敲门。
+  - 房间设置里给 Agent 的话换成接入对话框那一段以后，原来那段里“命令行 `agent-room join --code`、MCP 传 `code`”的写法没了。成员自己的本机 Agent 走对话框的 MCP、命令行两页，不用口令；别人的本机 Agent 拿到这段话会走网络接入，要用本机的照样可以只复制口令。

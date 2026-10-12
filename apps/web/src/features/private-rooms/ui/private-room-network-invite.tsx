@@ -6,10 +6,12 @@ import { useTranslation } from 'react-i18next';
 
 import {
   privateRoomAgentAccessQueryKey,
+  privateRoomJoinCodeQueryKey,
   usePrivateRoomAgentAccess,
+  usePrivateRoomJoinCode,
 } from '@/features/private-rooms/data/private-room-queries';
 import type {
-  GeneratedJoinCode,
+  JoinCode,
   PrivateRoomAgentAccess,
   PrivateRoomFailure,
   PrivateRoomGateway,
@@ -20,6 +22,8 @@ import { ok, type Result } from '@/shared/result';
 
 /** 服务器拒绝非管理者查看或生成口令时的错误码。 */
 const forbiddenCodes = new Set(['join_code.forbidden', 'private_room.forbidden']);
+/** 查口令时这两种回答不算出错：没有口令，或者有口令但服务器给不出来。 */
+const expectedRevealFailures = new Set(['join_code.not_found', 'join_code.not_revealable']);
 
 type InviteProps = {
   readonly catalogId: string;
@@ -29,22 +33,27 @@ type InviteProps = {
   readonly onCopied?: (() => void) | undefined;
 };
 
+/** 管理者这边的口令：看得到就放进话里；没有，或者有却看不到，就给一个生成的按钮。 */
+type CodeState =
+  | { readonly kind: 'shown'; readonly code: JoinCode }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'hidden'; readonly failure: PrivateRoomFailure | null };
+
 /**
- * 在“接入 Agent”里请网络 Agent 进私人房间（`specs/network-agents/knock.md`）：给 Agent 的话里只有
- * 房间号，打开就能复制；Agent 拿它敲门，管理者在下面放它进来。口令收进折叠里，给不用等放行的 Agent。
- * 房间号不是秘密：房间里每个人的地址栏里都有，拿到它也看不到房间里的任何东西。
+ * 在“接入 Agent”里请网络 Agent 进私人房间（`specs/network-agents/code-first.md`）。管理者给 Agent 的话里
+ * 带着口令，Agent 凭它直接进来；同一段话里还有房间号，口令传不进去的 Agent（有的应用不让把口令交给工具）
+ * 拿它敲门，管理者在下面放它进来。还没有口令，或者口令看不到（能再看之前生成的），一个按钮生成并复制。
+ * 不是管理者的成员看不到口令，话里只有房间号。房间号不是秘密：房间里每个人的地址栏里都有。
  */
-export function PrivateRoomNetworkInvite({
-  catalogId,
-  guide,
-  roomName,
-  rooms,
-  onCopied,
-}: InviteProps) {
+export function PrivateRoomNetworkInvite(props: InviteProps) {
   const { t } = useTranslation();
-  // 查口令状态只有管理者查得到：顺便知道这段话该说“等我放行”还是“等管理者放行”。
+  const { catalogId, rooms } = props;
+  // 口令状态只有管理者查得到：顺便知道这段话能不能带口令。
   const access = usePrivateRoomAgentAccess(rooms, catalogId);
-  if (access.isPending) {
+  const createdAt =
+    access.data?.ok === true ? (access.data.value.joinCode?.createdAtUnixMs ?? null) : null;
+  const revealed = usePrivateRoomJoinCode(rooms, catalogId, createdAt);
+  if (access.isPending || (createdAt !== null && revealed.isPending)) {
     return (
       <p className="agent-invite__waiting">
         <Spinner />
@@ -52,145 +61,194 @@ export function PrivateRoomNetworkInvite({
       </p>
     );
   }
-  const manager = access.data?.ok === true;
-  const failure =
-    access.data?.ok === false && !forbiddenCodes.has(access.data.error.code)
-      ? access.data.error
-      : null;
-  const message = t(
-    manager ? 'agentInvite.network.knock.message' : 'agentInvite.network.knock.messageMember',
-    { guide, room: roomName, roomNumber: catalogId },
-  );
+  if (access.data?.ok !== true) {
+    const failure =
+      access.data === undefined || forbiddenCodes.has(access.data.error.code)
+        ? null
+        : access.data.error;
+    return <MemberInvite {...props} failure={failure} />;
+  }
+  return <ManagerInvite {...props} code={codeState(createdAt, revealed.data)} />;
+}
 
+function codeState(
+  createdAt: number | null,
+  revealed: Result<JoinCode, PrivateRoomFailure> | undefined,
+): CodeState {
+  if (createdAt === null || revealed === undefined) return { kind: 'none' };
+  if (revealed.ok) return { kind: 'shown', code: revealed.value };
+  // 别处刚停用了口令：当作没有。
+  if (revealed.error.code === 'join_code.not_found') return { kind: 'none' };
+  return {
+    kind: 'hidden',
+    failure: expectedRevealFailures.has(revealed.error.code) ? null : revealed.error,
+  };
+}
+
+/** 不是管理者：看不到口令，话里只有房间号，Agent 敲门后等房间的管理者放行。 */
+function MemberInvite({
+  catalogId,
+  guide,
+  roomName,
+  onCopied,
+  failure,
+}: InviteProps & { readonly failure: PrivateRoomFailure | null }) {
+  const { t } = useTranslation();
   return (
     <div className="agent-invite__private-code">
       <p className="agent-invite__note">
-        {t(manager ? 'agentInvite.network.privateRoom' : 'agentInvite.network.privateRoomMember', {
-          room: roomName,
-        })}
+        {t('agentInvite.network.privateRoomMember', { room: roomName })}
       </p>
       <CopyBlock
         copiedLabel={t('agentInvite.message.copied')}
         copyLabel={t('agentInvite.message.copy')}
         failedLabel={t('agentInvite.message.failed')}
         onCopied={onCopied}
-        text={message}
+        text={t('agentInvite.network.knock.messageMember', {
+          guide,
+          room: roomName,
+          roomNumber: catalogId,
+        })}
         textLabel={t('agentInvite.message.label')}
       />
-      {manager ? (
-        <PrivateRoomAgentKnocks
-          catalogId={catalogId}
-          emptyText={t('agentInvite.network.knock.waiting')}
-          rooms={rooms}
-        />
-      ) : (
-        <p className="agent-invite__note">{t('agentInvite.network.knock.memberNote')}</p>
-      )}
+      <p className="agent-invite__note">{t('agentInvite.network.knock.memberNote')}</p>
       {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
-      {manager ? (
-        <Details className="agent-invite__code" summary={t('agentInvite.network.code.summary')}>
-          <JoinCodeInvite
-            catalogId={catalogId}
-            guide={guide}
-            onCopied={onCopied}
-            roomName={roomName}
-            rooms={rooms}
-          />
-        </Details>
-      ) : null}
       <p className="agent-invite__note">{t('agentInvite.network.private.relay')}</p>
     </div>
   );
 }
 
 /**
- * 口令：一个按钮生成、把给 Agent 的整段话复制好。口令只在生成的那次响应里出现，所以已经有口令时
- * 只能换一个新的。
+ * 管理者：看得到口令就把它放进话里，打开就能复制；没有口令或者看不到，一个按钮生成、把整段话复制好。
+ * 不想用口令的，折叠里有只带房间号的那段话。在敲门的 Agent 列在下面，放行照旧。
  */
-function JoinCodeInvite({ catalogId, guide, roomName, rooms, onCopied }: InviteProps) {
+function ManagerInvite({
+  catalogId,
+  guide,
+  roomName,
+  rooms,
+  onCopied,
+  code,
+}: InviteProps & { readonly code: CodeState }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const access = usePrivateRoomAgentAccess(rooms, catalogId);
-  const [generated, setGenerated] = useState<GeneratedJoinCode | null>(null);
   const [autoCopied, setAutoCopied] = useState(false);
-  const queryKey = privateRoomAgentAccessQueryKey(catalogId);
-  const messageFor = (code: string) =>
-    t('privateRooms.governance.agentAccess.message', { code, guide, room: roomName });
+  const messageFor = (value: string) =>
+    t('agentInvite.network.code.message', {
+      code: value,
+      guide,
+      room: roomName,
+      roomNumber: catalogId,
+    });
 
   const mutation = useMutation({
     mutationFn: async () => await rooms.generateJoinCode(catalogId),
     onSuccess: async (result) => {
       if (!result.ok) return;
-      setGenerated(result.value);
-      // 和房间设置里的口令面板共用缓存：那边马上显示“口令已开启”，不闪回旧状态。
+      const generated = result.value;
+      // 先记下新口令，再改口令状态：话里马上换成新口令，不用再去问一次。房间设置里的口令一块也读这两份缓存。
+      queryClient.setQueryData<Result<JoinCode, PrivateRoomFailure>>(
+        privateRoomJoinCodeQueryKey(catalogId, generated.createdAtUnixMs),
+        ok(generated),
+      );
+      const accessKey = privateRoomAgentAccessQueryKey(catalogId);
       queryClient.setQueryData<Result<PrivateRoomAgentAccess, PrivateRoomFailure>>(
-        queryKey,
+        accessKey,
         (current) =>
           current?.ok === true
-            ? ok({ ...current.value, joinCode: { createdAtUnixMs: result.value.createdAtUnixMs } })
+            ? ok({ ...current.value, joinCode: { createdAtUnixMs: generated.createdAtUnixMs } })
             : current,
       );
-      // 一次点击就复制好。有的浏览器等完服务器就不认那次点击了，这时下面照样有复制按钮。
+      // 一次点击就复制好。有的浏览器等完服务器就不认那次点击了，这时话旁边照样有复制按钮。
       try {
-        await navigator.clipboard.writeText(messageFor(result.value.code));
+        await navigator.clipboard.writeText(messageFor(generated.code));
         setAutoCopied(true);
         onCopied?.();
       } catch {
         // 不算错。
       }
-      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({ queryKey: accessKey });
     },
   });
 
   const failure = mutation.data?.ok === false ? mutation.data.error : null;
   const forbidden = failure !== null && forbiddenCodes.has(failure.code);
-  const existing = access.data?.ok === true && access.data.value.joinCode !== null;
 
   return (
-    <>
-      <p className="agent-invite__note">{t('agentInvite.network.code.detail')}</p>
-      {forbidden ? (
-        <Banner role={null} tone="info">
-          {t('agentInvite.network.private.forbidden')}
-        </Banner>
-      ) : generated === null ? (
+    <div className="agent-invite__private-code">
+      <p className="agent-invite__note">
+        {t('agentInvite.network.privateRoom', { room: roomName })}
+      </p>
+      {code.kind === 'shown' ? (
         <>
-          <Button
-            disabled={access.isPending || mutation.isPending}
-            icon={mutation.isPending ? <Spinner /> : <KeyRound aria-hidden="true" />}
-            onClick={() => {
-              mutation.mutate();
-            }}
-            tone="ghost"
-          >
-            {t(
-              existing
-                ? 'agentInvite.network.private.replace'
-                : 'agentInvite.network.private.create',
-            )}
-          </Button>
-          {existing ? (
-            <p className="agent-invite__note">{t('agentInvite.network.private.replaceNote')}</p>
-          ) : null}
+          {autoCopied ? <Banner tone="success">{t('agentInvite.message.copied')}</Banner> : null}
+          <CopyBlock
+            copiedLabel={t('agentInvite.message.copied')}
+            copyLabel={t('agentInvite.message.copy')}
+            failedLabel={t('agentInvite.message.failed')}
+            onCopied={onCopied}
+            text={messageFor(code.code.code)}
+            textLabel={t('agentInvite.message.label')}
+          />
+          <p className="agent-invite__note">{t('agentInvite.network.code.detail')}</p>
         </>
       ) : (
         <>
-          {autoCopied ? (
-            <Banner tone="success">{t('agentInvite.network.private.copied')}</Banner>
+          {forbidden ? (
+            <Banner role={null} tone="info">
+              {t('agentInvite.network.private.forbidden')}
+            </Banner>
+          ) : (
+            <Button
+              disabled={mutation.isPending}
+              icon={mutation.isPending ? <Spinner /> : <KeyRound aria-hidden="true" />}
+              onClick={() => {
+                mutation.mutate();
+              }}
+              size="large"
+              tone="primary"
+            >
+              {t(
+                code.kind === 'hidden'
+                  ? 'agentInvite.network.private.replace'
+                  : 'agentInvite.network.private.create',
+              )}
+            </Button>
+          )}
+          {code.kind === 'hidden' ? (
+            <p className="agent-invite__note">{t('agentInvite.network.private.replaceNote')}</p>
           ) : null}
-          <CopyBlock
-            copiedLabel={t('agentInvite.network.private.copied')}
-            copyLabel={t('agentInvite.network.private.copy')}
-            failedLabel={t('agentInvite.message.failed')}
-            onCopied={onCopied}
-            text={messageFor(generated.code)}
-            textLabel={t('agentInvite.message.label')}
-            tone="ghost"
-          />
-          <p className="agent-invite__note">{t('agentInvite.network.private.onlyOnce')}</p>
+          {code.kind === 'hidden' && code.failure !== null ? (
+            <PrivateRoomFailureNotice failure={code.failure} />
+          ) : null}
+          <Details
+            className="agent-invite__knock-only"
+            summary={t('agentInvite.network.knock.summary')}
+          >
+            <CopyBlock
+              copiedLabel={t('agentInvite.message.copied')}
+              copyLabel={t('agentInvite.message.copy')}
+              failedLabel={t('agentInvite.message.failed')}
+              onCopied={onCopied}
+              text={t('agentInvite.network.knock.message', {
+                guide,
+                room: roomName,
+                roomNumber: catalogId,
+              })}
+              textLabel={t('agentInvite.message.label')}
+              tone="ghost"
+            />
+          </Details>
         </>
       )}
       {failure === null || forbidden ? null : <PrivateRoomFailureNotice failure={failure} />}
-    </>
+      <PrivateRoomAgentKnocks
+        catalogId={catalogId}
+        emptySpinner={false}
+        emptyText={t('agentInvite.network.knock.waiting')}
+        rooms={rooms}
+      />
+      <p className="agent-invite__note">{t('agentInvite.network.private.relay')}</p>
+    </div>
   );
 }

@@ -21,7 +21,8 @@
   gap: 12px;
 }
 
-.agent-invite__private-code > .ar-banner {
+.agent-invite__private-code > .ar-banner,
+.agent-invite__private-code > .agent-invite__knock-only {
   justify-self: stretch;
 }
 

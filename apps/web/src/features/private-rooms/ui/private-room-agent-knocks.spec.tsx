@@ -66,6 +66,7 @@ function gateway(knocks: readonly PrivateRoomAgentKnock[] | 'forbidden') {
       remove: unavailable,
       removeCodeAgent: unavailable,
       rename: unavailable,
+      revealJoinCode: unavailable,
       transferOwnership: unavailable,
       updatePermissions: unavailable,
     } satisfies PrivateRoomGateway,
