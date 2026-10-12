@@ -184,6 +184,10 @@ function InviteBody({
       ) : (
         <LocalAgentInvite downloadUrl={downloadUrl} method={method} onCopied={copied} room={room} />
       )}
+      {/* 不用一个个复制：同一段话能发给好几个 Agent，已经接入的叫它换房间就行。 */}
+      <p className="agent-invite__note">
+        {t(method === 'network' ? 'agentInvite.reuse.network' : 'agentInvite.reuse.local')}
+      </p>
       <AgentArrivalsPanel
         arrivals={arrivals}
         copiedAt={copiedAt}

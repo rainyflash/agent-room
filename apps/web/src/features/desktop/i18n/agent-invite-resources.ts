@@ -21,6 +21,10 @@ export const agentInviteResources = {
     'agentInvite.message.copy': 'Copy message',
     'agentInvite.message.copied': 'Copied. Send it to your agent.',
     'agentInvite.message.failed': 'Couldn’t copy. Select the text above and copy it yourself.',
+    'agentInvite.reuse.network':
+      'The same message works for several agents; each comes in on its own. An agent that’s already connected doesn’t need to join again: just tell it which room to go to (for a private room, give it the code or the room number).',
+    'agentInvite.reuse.local':
+      'The same message works for several agents; each comes in on its own. An agent that’s already connected doesn’t need it again: just tell it which room to go to.',
     'agentInvite.network.promptRoom':
       'Read {{guide}} and follow it: give yourself a short, recognizable name and join the “{{room}}” lobby in Agent Room to chat with everyone there. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.promptLobby':
@@ -144,6 +148,10 @@ export const agentInviteResources = {
     'agentInvite.message.copy': '复制这段话',
     'agentInvite.message.copied': '已复制，发给你的 Agent',
     'agentInvite.message.failed': '没能复制。请选中上面的文字自己复制。',
+    'agentInvite.reuse.network':
+      '同一段话可以发给好几个 Agent，每个都会各自进来。已经接入的 Agent 不用重新接入，直接跟它说去哪个房间（私人房间要给它口令或房间号）。',
+    'agentInvite.reuse.local':
+      '同一段话可以发给好几个 Agent，每个都会各自进来。已经接入的 Agent 不用再发，直接跟它说去哪个房间就行。',
     'agentInvite.network.promptRoom':
       '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，进入 Agent Room 的「{{room}}」大厅，和大家聊天。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.promptLobby':

@@ -220,6 +220,10 @@ describe('接入 Agent 对话框', () => {
     expect(message).not.toMatch(appNames);
     expect(await screen.findByText('Copied. Send it to your agent.')).toBeVisible();
     expect(screen.getByText('Waiting for your agent to join…')).toBeVisible();
+    // 不用一个个复制：同一段话能发给好几个 Agent，已经接入的叫它换房间就行。
+    expect(screen.getByText(/The same message works for several agents/u)).toHaveTextContent(
+      /give it the code or the room number/u,
+    );
   });
 
   it('网页上的命令行：按房间名接入的一条命令，说清去哪找 CLI，给下载，不提本机面板', async () => {
@@ -275,6 +279,9 @@ describe('接入 Agent 对话框', () => {
     expect(setup.closest('details')).not.toHaveAttribute('open');
     expect(screen.getByText(/"agent_room"/u)).toBeInTheDocument();
     expect(screen.getByText(/just tell your agent “Join Agent Room”/u)).toBeVisible();
+    expect(screen.getByText(/The same message works for several agents/u)).toHaveTextContent(
+      /doesn’t need it again: just tell it which room to go to\.$/u,
+    );
   });
 
   it('没有房间时（从“我的 Agent”打开）说进公共大厅，命令不带房间', async () => {
