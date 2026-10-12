@@ -4,6 +4,8 @@
 //!
 //! 进房间也由网关统筹（第 3 步）：私人房间都是端到端加密的，凭口令放行之后，先把 Agent 切到
 //! 加密客户端、建好加密身份，再进去。
+//!
+//! 有人敲网络 Agent 建的房间的门，它正在等消息就叫醒它（`knocks`）。
 
 use std::{
     collections::{HashMap, HashSet},
@@ -18,8 +20,9 @@ use agent_room_application::{
     content::ContentUseCases,
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentFailure,
-        NetworkAgentKnock, NetworkAgentPlacement, NetworkAgentRoom, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentIncomingKnock, NetworkAgentKnock, NetworkAgentKnockStatus,
+        NetworkAgentPlacement, NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
+        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
     },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
@@ -81,6 +84,7 @@ mod backfill;
 mod before_join;
 mod cleanup;
 mod encrypted;
+mod knocks;
 mod presence;
 pub(crate) mod projection;
 mod rooms;
@@ -179,6 +183,8 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) remaining: u64,
     /// 交出去的这些消息前面补不回来的几段：一次来得太多、往回补到上限还没接上。
     pub(crate) gaps: Vec<IpcTimelineGap>,
+    /// 敲它建的房间的门、在等它回答的，先敲的在前。被新的等待顶掉时不列。
+    pub(crate) incoming_knocks: Vec<NetworkAgentIncomingKnock>,
 }
 
 /// 一次等消息：最多等多久、一次最多取几条、听什么（`specs/agent-reading/waiting.md`）。
@@ -314,6 +320,8 @@ pub(crate) struct NetworkGateway {
     last_mentions: Mutex<HashMap<NetworkAgentId, Vec<String>>>,
     /// 每个网络 Agent 的房间里此刻谁在打字。
     typing: typing::AgentTyping,
+    /// 有人敲网络 Agent 建的房间的门时叫醒它。
+    knocks: knocks::KnockWatch,
 }
 
 impl NetworkGateway {
@@ -336,6 +344,7 @@ impl NetworkGateway {
             presence: Arc::default(),
             last_mentions: Mutex::new(HashMap::new()),
             typing: typing::AgentTyping::default(),
+            knocks: knocks::KnockWatch::default(),
         }
     }
 
@@ -531,6 +540,7 @@ impl NetworkGateway {
         let peek_options = peek(&options);
         let room = scoped_room(&session, request.room.as_deref())?;
         let poll = self.polls.begin(session.network_agent_id);
+        let mut knocks = self.knocks.listen(session.network_agent_id);
         let mut waiting =
             presence::WaitAnnouncement::new(&self.presence, &self.matrix, &self.clock, &session);
         let wait = request.wait.min(MAX_WAIT);
@@ -550,6 +560,8 @@ impl NetworkGateway {
                 .pending(session.network_agent_id, room.as_ref(), INBOX_PAGE)
                 .await
                 .map_err(|_| NetworkGatewayFailure::Unavailable)?;
+            knocks.refresh(self.owned_rooms.as_ref(), token).await;
+            let knocked = knocks.fresh();
             let first = page.sync_token.is_none();
             peek |= first;
             let now_ms = self.clock.now().value();
@@ -563,15 +575,19 @@ impl NetworkGateway {
             let (ready, recheck_at_ms) =
                 match judge(&page, rules, context, limit, now_ms, deadline_ms) {
                     WaitDecision::Deliver(delivery) if synced => {
-                        return Ok(delivered(page, delivery));
+                        return Ok(knocks.attach(delivered(page, delivery)));
                     }
                     WaitDecision::Deliver(delivery) => (Some(delivery), None),
+                    // 有人敲它建的房间的门：没有要交的消息也叫醒它。
+                    WaitDecision::Wait { .. } if knocked && synced => {
+                        return Ok(knocks.attach(nothing(&page, WakeReason::Knocks)));
+                    }
                     WaitDecision::Wait { recheck_at_ms } => (None, recheck_at_ms),
                 };
             let remaining = deadline.saturating_duration_since(Instant::now());
             // 只在没有可交的、又还有时间时才等新消息，最多等到防抖或定时看一眼到点；
-            // 第一次同步只把房间里最近的几条拿来当上下文，不等。
-            let block = !first && ready.is_none() && !remaining.is_zero();
+            // 第一次同步只把房间里最近的几条拿来当上下文，不等；有人敲门时同步一下就交。
+            let block = !first && ready.is_none() && !knocked && !remaining.is_zero();
             let chunk = recheck_at_ms
                 .map_or(remaining, |at_ms| remaining.min(until(now_ms, at_ms)))
                 .min(SYNC_CHUNK);
@@ -601,6 +617,8 @@ impl NetworkGateway {
                     (Err(failure), None) => return Err(failure),
                 },
                 () = poll.superseded() => return Ok(nothing(&page, WakeReason::Superseded)),
+                // 这个进程里有人敲了门：这次同步不等了，回头先去看一眼。
+                () = knocks.rung() => continue,
             };
             let elapsed_ms = started.elapsed().as_millis();
             self.typing.record(
@@ -705,7 +723,10 @@ impl NetworkGateway {
                 self.announce_online(created.token.expose()).await;
                 return Ok(created);
             }
-            NetworkAgentPlacement::Knocked(_) => return Ok(created),
+            NetworkAgentPlacement::Knocked(knock) => {
+                self.knocked(knock);
+                return Ok(created);
+            }
             NetworkAgentPlacement::Admitted(room) => room.clone(),
         };
         match self.enter_private(created.token.expose(), admitted).await {
@@ -741,7 +762,10 @@ impl NetworkGateway {
             .map_err(NetworkGatewayFailure::Agent)?
         {
             NetworkAgentAdmission::AlreadyIn(room) => Ok(NetworkAgentEntry::Entered(room)),
-            NetworkAgentAdmission::Knocked(knock) => Ok(NetworkAgentEntry::Knocked(knock)),
+            NetworkAgentAdmission::Knocked(knock) => {
+                self.knocked(&knock);
+                Ok(NetworkAgentEntry::Knocked(knock))
+            }
             NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) => {
                 let room = self.enter_private(token, room).await?;
                 self.announce_online(token).await;
@@ -761,6 +785,14 @@ impl NetworkGateway {
                 self.announce_online(token).await;
                 Ok(NetworkAgentEntry::Entered(room))
             }
+        }
+    }
+
+    /// 敲了门、在等回答：房间要是网络 Agent 建的，它正在等消息就叫醒它，别让敲门放到作废。
+    /// 以前没让进的不再打扰。
+    fn knocked(&self, knock: &NetworkAgentKnock) {
+        if knock.status == NetworkAgentKnockStatus::Waiting {
+            self.knocks.ring();
         }
     }
 
@@ -1419,6 +1451,7 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
             .unwrap_or(u64::MAX)
             .saturating_add(unread),
         gaps,
+        incoming_knocks: Vec::new(),
     }
 }
 
@@ -1455,6 +1488,7 @@ fn nothing(page: &NetworkAgentInboxPage, reason: WakeReason) -> NetworkAgentMess
         skipped: 0,
         remaining: page.pending,
         gaps: Vec::new(),
+        incoming_knocks: Vec::new(),
     }
 }
 

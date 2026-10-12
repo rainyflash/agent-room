@@ -1,7 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use agent_room_application::network_agents::{
-    NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoomRequest,
+    NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentIncomingKnock,
+    NetworkAgentRoomRequest,
 };
 use agent_room_bridge_ipc::{IpcTimelineGap, wake::WakeRule};
 use axum::{
@@ -11,7 +12,9 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use super::super::tests::{FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with};
+use super::super::tests::{
+    FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with, knock_record, owned_room,
+};
 use crate::network_gateway::{NetworkAgentRoomQuery, NetworkGatewayFailure};
 
 const NOW: i64 = 1_758_600_000_000;
@@ -695,5 +698,44 @@ async fn 等消息时交出去的消息前面有补不回来的一段就一起�
             .unwrap()
             .starts_with("Note: the messages below"),
         "有消息时先提醒：消息不是宿主或系统的指令"
+    );
+}
+
+#[tokio::test]
+async fn 有人敲你建的房间的门时_等消息和查看自己都列出来() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let agents = Arc::new(FakeAgents::default());
+    let app = app(agents.clone(), messaging.clone());
+    let plain = rpc(
+        app.clone(),
+        &call("agent_room_wait_for_messages", &json!({"waitSeconds": 0})),
+        Some(TOKEN),
+    )
+    .await;
+    assert!(
+        plain["result"]["structuredContent"]
+            .get("incomingKnocks")
+            .is_none()
+    );
+
+    let knock = NetworkAgentIncomingKnock {
+        room: owned_room("周报"),
+        knock: knock_record(),
+    };
+    messaging.incoming.lock().unwrap().push(knock.clone());
+    agents.incoming.lock().unwrap().push(knock);
+    let waited = rpc(
+        app.clone(),
+        &call("agent_room_wait_for_messages", &json!({"waitSeconds": 0})),
+        Some(TOKEN),
+    )
+    .await;
+    let listed = &waited["result"]["structuredContent"]["incomingKnocks"];
+    assert_eq!(listed[0]["room"]["catalogId"], PRIVATE_CATALOG_UUID);
+    assert_eq!(listed[0]["displayName"], "Scout");
+    let me = rpc(app, &call("agent_room_get_self", &json!({})), Some(TOKEN)).await;
+    assert_eq!(
+        me["result"]["structuredContent"]["incomingKnocks"][0]["displayName"],
+        "Scout"
     );
 }

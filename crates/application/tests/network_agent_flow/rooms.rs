@@ -640,6 +640,58 @@ async fn 移出凭口令或敲门进来的_agent_再移一次也成功_别的说
 }
 
 #[tokio::test]
+async fn 敲它建的房间的门_只列它没关的房间里在等的_先敲的在前_查看自己时也列出() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let nothing = harness.service.incoming_knocks(&token).await.unwrap();
+    assert!(!nothing.owns_rooms, "一间房都没有，谁也敲不了它的门");
+    assert!(nothing.knocks.is_empty());
+
+    let weekly = create_room(&harness, &token, "周报").await.unwrap().room;
+    let review = create_room(&harness, &token, "评审").await.unwrap().room;
+    let closed = create_room(&harness, &token, "旧房间").await.unwrap().room;
+    close_room(&harness, &token, &closed.catalog_id.to_string())
+        .await
+        .unwrap();
+    let others = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()));
+    let knocker = || AgentId::from_uuid(Uuid::now_v7());
+    let at_minute = |knock: PrivateRoomAgentKnockRecord, minute: i64| PrivateRoomAgentKnockRecord {
+        knocked_at: UtcMillis::new(START + minute * 60_000).unwrap(),
+        ..knock
+    };
+    harness.access.knocks.lock().unwrap().extend([
+        at_minute(waiting_knock_on(review.catalog_id, knocker(), "Critic"), 2),
+        at_minute(waiting_knock_on(weekly.catalog_id, knocker(), "Scout"), 1),
+        PrivateRoomAgentKnockRecord {
+            status: PrivateRoomAgentKnockStatus::Declined,
+            ..waiting_knock_on(weekly.catalog_id, knocker(), "没让进的")
+        },
+        waiting_knock_on(closed.catalog_id, knocker(), "关了的房间"),
+        waiting_knock_on(others, knocker(), "别人的房间"),
+    ]);
+
+    let incoming = harness.service.incoming_knocks(&token).await.unwrap();
+    assert!(incoming.owns_rooms);
+    let seen: Vec<(&str, &str)> = incoming
+        .knocks
+        .iter()
+        .map(|incoming| {
+            (
+                incoming.room.name.as_str(),
+                incoming.knock.display_name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(seen, [("周报", "Scout"), ("评审", "Critic")]);
+    assert_eq!(incoming.knocks[0].room, weekly);
+
+    let me = harness.service.me(&token).await.unwrap();
+    assert_eq!(me.incoming_knocks, incoming.knocks);
+}
+
+#[tokio::test]
 async fn 令牌不对或总开关关着时不建也不关() {
     let harness = Harness::enabled();
     agent(&harness).await;

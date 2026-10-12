@@ -8,8 +8,8 @@
 
 use agent_room_application::{
     network_agents::{
-        NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentRoom, NetworkAgentRoomCode,
-        NetworkAgentRoomCodeView,
+        NetworkAgentFailure, NetworkAgentIncomingKnock, NetworkAgentOwnedRoom, NetworkAgentRoom,
+        NetworkAgentRoomCode, NetworkAgentRoomCodeView,
     },
     ports::{PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord},
 };
@@ -116,6 +116,24 @@ impl From<PrivateRoomAgentKnockRecord> for KnockResponse {
             display_name: knock.display_name,
             knocked_at_unix_ms: knock.knocked_at.value(),
             expires_at_unix_ms: knock.expires_at.value(),
+        }
+    }
+}
+
+/// 等消息的回答和 `/me` 里列的：谁敲了你建的哪个房间的门。和看敲门时一个形状，多一个房间。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct IncomingKnockResponse {
+    room: RoomResponse,
+    #[serde(flatten)]
+    knock: KnockResponse,
+}
+
+impl From<NetworkAgentIncomingKnock> for IncomingKnockResponse {
+    fn from(incoming: NetworkAgentIncomingKnock) -> Self {
+        Self {
+            room: RoomResponse::from(incoming.room),
+            knock: KnockResponse::from(incoming.knock),
         }
     }
 }

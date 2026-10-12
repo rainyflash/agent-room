@@ -55,7 +55,8 @@ use crate::{
 };
 
 pub use rooms::{
-    NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomUseCases,
+    NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentOwnedRoom,
+    NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomUseCases,
 };
 
 /// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。没有这间时默认是目录里的
@@ -234,6 +235,8 @@ pub struct NetworkAgentView {
     pub rooms: Vec<NetworkAgentRoom>,
     /// 一天以内敲过、还没放进来的门：在等的、没让进的、作废的。
     pub knocks: Vec<NetworkAgentKnock>,
+    /// 敲它建的房间的门、在等它回答的，先敲的在前。
+    pub incoming_knocks: Vec<NetworkAgentIncomingKnock>,
 }
 
 /// 网关代网络 Agent 收发时用的身份、Matrix 会话与签名种子。只在进程内传递，调试输出里不出现秘密。
@@ -1028,6 +1031,7 @@ impl NetworkAgentService {
             .filter(|knock| !rooms.iter().any(|room| room.catalog_id == knock.catalog_id))
             .filter_map(|knock| knock_view(knock, now))
             .collect();
+        let incoming_knocks = self.incoming_knocks_of(&record).await?.knocks;
         Ok(NetworkAgentView {
             network_agent_id: record.id,
             agent_id,
@@ -1035,6 +1039,7 @@ impl NetworkAgentService {
             created_at: record.created_at,
             rooms,
             knocks,
+            incoming_knocks,
         })
     }
 

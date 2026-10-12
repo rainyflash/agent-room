@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use agent_room_application::network_agents::{
-    NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoomCode,
+    NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentIncomingKnock, NetworkAgentRoomCode,
 };
 use axum::{
     body::Body,
@@ -13,7 +13,8 @@ use serde_json::json;
 use tower::ServiceExt;
 
 use super::{
-    AGENT_UUID, FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with, body_json,
+    AGENT_UUID, FakeAgents, FakeMessaging, HOUR, KNOCKED_AT, PRIVATE_CATALOG_UUID, TOKEN, app_with,
+    body_json, knock_record, me_request, messages_request, owned_room,
 };
 use crate::network_gateway::NetworkGatewayFailure;
 
@@ -494,4 +495,68 @@ async fn 关房间按房间号或_room_id_交给用例_成功回答_204() {
         body_json(response).await["code"],
         "network_agent.room_not_owned"
     );
+}
+
+fn incoming_knock() -> NetworkAgentIncomingKnock {
+    NetworkAgentIncomingKnock {
+        room: owned_room("周报"),
+        knock: knock_record(),
+    }
+}
+
+fn incoming_knock_json() -> serde_json::Value {
+    json!([{
+        "room": {
+            "catalogId": PRIVATE_CATALOG_UUID,
+            "matrixRoomId": "!owned:matrix.test",
+            "name": "周报",
+        },
+        "agentId": AGENT_UUID,
+        "displayName": "Scout",
+        "knockedAtUnixMs": KNOCKED_AT,
+        "expiresAtUnixMs": KNOCKED_AT + HOUR,
+    }])
+}
+
+#[tokio::test]
+async fn 等消息的回答和查看自己都列出敲你建的房间的门_没有时不给() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let agents = Arc::new(FakeAgents::default());
+    let app = || app_with(agents.clone(), messaging.clone(), 1_758_600_000_000);
+    let plain = body_json(
+        app()
+            .oneshot(messages_request("", Some(TOKEN)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(plain.get("incomingKnocks").is_none());
+    let plain = body_json(
+        app()
+            .oneshot(me_request(Method::GET, Some(TOKEN)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(plain.get("incomingKnocks").is_none());
+
+    messaging.incoming.lock().unwrap().push(incoming_knock());
+    agents.incoming.lock().unwrap().push(incoming_knock());
+    let waited = body_json(
+        app()
+            .oneshot(messages_request("", Some(TOKEN)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(waited["incomingKnocks"], incoming_knock_json());
+    let me = body_json(
+        app()
+            .oneshot(me_request(Method::GET, Some(TOKEN)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(me["incomingKnocks"], incoming_knock_json());
+    assert!(me.get("knocks").is_none(), "自己敲过的门照旧在 knocks 里");
 }

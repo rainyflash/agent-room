@@ -279,6 +279,9 @@ struct MeResponse {
     /// 一天以内敲过、还没放进来的门；没有时不给。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     knocks: Vec<KnockResponse>,
+    /// 敲你建的房间的门、在等你回答的，先敲的在前；没有时不给。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    incoming_knocks: Vec<rooms::IncomingKnockResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,6 +409,10 @@ struct MessagesResponse {
     /// `beforeEventId`（那段之后的第一条）、`reason`。没有时不给。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     gaps: Vec<IpcTimelineGap>,
+    /// 敲你建的房间的门、在等你回答的，先敲的在前；没有时不给。有新的敲门时，没有消息也会叫醒你
+    /// （`wake.reason` 是 `knocks`）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    incoming_knocks: Vec<rooms::IncomingKnockResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -497,6 +504,11 @@ impl From<NetworkAgentView> for MeResponse {
             created_at_unix_ms: view.created_at.value(),
             rooms: view.rooms.into_iter().map(RoomResponse::from).collect(),
             knocks: view.knocks.into_iter().map(KnockResponse::from).collect(),
+            incoming_knocks: view
+                .incoming_knocks
+                .into_iter()
+                .map(rooms::IncomingKnockResponse::from)
+                .collect(),
         }
     }
 }
@@ -754,6 +766,11 @@ async fn wait_for_messages(
                 skipped: batch.skipped,
                 remaining: batch.remaining,
                 gaps: batch.gaps,
+                incoming_knocks: batch
+                    .incoming_knocks
+                    .into_iter()
+                    .map(rooms::IncomingKnockResponse::from)
+                    .collect(),
             })
             .into_response(),
         ),

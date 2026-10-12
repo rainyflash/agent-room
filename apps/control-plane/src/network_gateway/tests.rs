@@ -16,11 +16,11 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
-        NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
-        NetworkAgentRoom, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentIncomingKnocks, NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby,
+        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentPendingExit,
+        NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCodeView,
+        NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -126,6 +126,9 @@ struct FakeAgents {
     /// 网络 Agent 放行敲它房间的门：记成员的结果按顺序给出，记放进来了的失败。
     knock_admissions: Mutex<VecDeque<NetworkAgentResult<AdmittedKnock>>>,
     completion_failure: Mutex<Option<NetworkAgentFailure>>,
+    /// 敲它建的房间的门、在等它回答的；网关来看了几次。
+    incoming: Mutex<NetworkAgentResult<NetworkAgentIncomingKnocks>>,
+    incoming_checks: Mutex<usize>,
 }
 
 impl FakeAgents {
@@ -158,6 +161,8 @@ impl FakeAgents {
             owned: Mutex::new(VecDeque::new()),
             knock_admissions: Mutex::new(VecDeque::new()),
             completion_failure: Mutex::new(None),
+            incoming: Mutex::new(Ok(NetworkAgentIncomingKnocks::default())),
+            incoming_checks: Mutex::new(0),
         }
     }
 
@@ -503,6 +508,16 @@ impl NetworkAgentRoomUseCases for FakeAgents {
         _agent_id: AgentId,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         unreachable!("移出 Agent 只动账，不经过网关")
+    }
+
+    fn incoming_knocks<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentIncomingKnocks>> {
+        assert_eq!(token, TOKEN, "看的是等消息的这个 Agent 自己的房间");
+        *self.incoming_checks.lock().unwrap() += 1;
+        let incoming = self.incoming.lock().unwrap().clone();
+        Box::pin(async move { incoming })
     }
 }
 
@@ -4426,6 +4441,7 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
 
 mod backfill;
 mod before_join;
+mod knocks;
 mod presence;
 mod rooms;
 mod viewing;
