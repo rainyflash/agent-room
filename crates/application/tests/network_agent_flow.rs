@@ -231,13 +231,22 @@ impl NetworkAgentStore for MemoryStore {
         Box::pin(async move { Ok(found) })
     }
 
-    fn count_live(&self) -> PortFuture<'_, RepositoryResult<u64>> {
+    fn count_live_in<'a>(
+        &'a self,
+        catalog_ids: &'a [RoomCatalogId],
+    ) -> PortFuture<'a, RepositoryResult<u64>> {
+        let rooms = self.rooms.lock().unwrap().clone();
         let count = self
             .agents
             .lock()
             .unwrap()
             .iter()
             .filter(|agent| agent.record.status != NetworkAgentStatus::Disabled)
+            .filter(|agent| {
+                rooms.iter().any(|(id, room)| {
+                    *id == agent.record.id && catalog_ids.contains(&room.catalog_id)
+                })
+            })
             .count();
         Box::pin(async move { Ok(u64::try_from(count).unwrap()) })
     }
@@ -1105,8 +1114,8 @@ impl Harness {
 
     fn generous() -> Self {
         Self::new(NetworkAgentPolicy {
-            creations_per_source_per_hour: 100,
-            creations_per_source_per_day: 100,
+            lobby_entries_per_source_per_hour: 100,
+            lobby_entries_per_source_per_day: 100,
             ..NetworkAgentPolicy::default_limits(true)
         })
     }
@@ -1751,20 +1760,21 @@ async fn 同一来源每小时五个_超出时告诉何时再试_换来源或过
 }
 
 #[tokio::test]
-async fn 发言每分钟二十条_每天一千条_超了告诉何时能再发() {
+async fn 公开大厅里发言每分钟二十条_每天一千条_超了告诉何时能再发() {
     let harness = Harness::enabled();
     let created = harness.create("Talker", None).await.unwrap();
     let id = created.network_agent_id;
+    let lobby = room_of(&created).catalog_id;
     for _ in 0..20 {
         harness
             .service
-            .take_message_quota(id)
+            .take_message_quota(id, lobby)
             .await
             .expect("每分钟前二十条");
     }
     let limited = harness
         .service
-        .take_message_quota(id)
+        .take_message_quota(id, lobby)
         .await
         .expect_err("第二十一条被限流");
     assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
@@ -1779,7 +1789,7 @@ async fn 发言每分钟二十条_每天一千条_超了告诉何时能再发() 
         for _ in 0..20 {
             harness
                 .service
-                .take_message_quota(id)
+                .take_message_quota(id, lobby)
                 .await
                 .unwrap_or_else(|_| panic!("第 {minute} 分钟"));
         }
@@ -1787,7 +1797,7 @@ async fn 发言每分钟二十条_每天一千条_超了告诉何时能再发() 
     harness.runtime.advance(60_000);
     let daily = harness
         .service
-        .take_message_quota(id)
+        .take_message_quota(id, lobby)
         .await
         .expect_err("一天一千条用完了");
     assert_eq!(daily.kind(), NetworkAgentFailureKind::RateLimited);
@@ -1803,12 +1813,49 @@ async fn 总开关关着时不给发言额度() {
     assert_eq!(
         harness
             .service
-            .take_message_quota(NetworkAgentId::from_uuid(Uuid::now_v7()))
+            .take_message_quota(NetworkAgentId::from_uuid(Uuid::now_v7()), catalog_id(2))
             .await
             .unwrap_err()
             .kind(),
         NetworkAgentFailureKind::Disabled
     );
+}
+
+#[tokio::test]
+async fn 私人房间里说话不限条数_大厅里的额度用完了也照样说() {
+    let harness = Harness::enabled();
+    let created = harness.create_with_code("Cipher", CODE).await.unwrap();
+    let id = created.network_agent_id;
+    let private = room_of(&created).catalog_id;
+    for _ in 0..1_100 {
+        harness
+            .service
+            .take_message_quota(id, private)
+            .await
+            .expect("私人房间不限条数");
+    }
+
+    for _ in 0..20 {
+        harness
+            .service
+            .take_message_quota(id, catalog_id(2))
+            .await
+            .expect("同一个 Agent 在公开大厅里照样按每分钟二十条算");
+    }
+    assert_eq!(
+        harness
+            .service
+            .take_message_quota(id, catalog_id(2))
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::RateLimited
+    );
+    harness
+        .service
+        .take_message_quota(id, private)
+        .await
+        .expect("回到私人房间照样能说");
 }
 
 #[tokio::test]
@@ -1840,9 +1887,9 @@ async fn 同一来源一天最多二十个() {
 }
 
 #[tokio::test]
-async fn 全站上限到了就请稍后_停用一个就空出名额() {
+async fn 公开大厅里的网络_agent_到了全站上限就请稍后_停用一个就空出名额() {
     let harness = Harness::new(NetworkAgentPolicy {
-        max_live_agents: 1,
+        max_lobby_agents: 1,
         ..NetworkAgentPolicy::default_limits(true)
     });
     let first = harness.create("First", None).await.unwrap();
@@ -1860,6 +1907,98 @@ async fn 全站上限到了就请稍后_停用一个就空出名额() {
         .create("Second", None)
         .await
         .expect("空出名额后能建");
+}
+
+#[tokio::test]
+async fn 凭口令起名不占进大厅的名额_大厅满了照样进私人房间_只是进不了大厅() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        max_lobby_agents: 1,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    harness.create("Greeter", None).await.expect("大厅里第一个");
+    assert_eq!(
+        harness.create("Second", None).await.err(),
+        Some(NetworkAgentFailureKind::CapacityReached)
+    );
+
+    // 同一个来源每小时只能让五个进大厅；凭口令进私人房间的不算，大厅满了也不挡。
+    let mut ciphers = Vec::new();
+    for index in 0..8 {
+        ciphers.push(
+            harness
+                .create_with_code(&format!("Cipher {index}"), CODE)
+                .await
+                .unwrap_or_else(|failure| panic!("第 {index} 个：{failure:?}")),
+        );
+    }
+    assert_eq!(
+        harness
+            .service
+            .admit(
+                ciphers[0].token.expose(),
+                NetworkAgentRoomRequest::Lobby(None),
+                [2; 32],
+            )
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::CapacityReached,
+        "进大厅照样看大厅满没满"
+    );
+}
+
+#[tokio::test]
+async fn 从私人房间头一回进公开大厅要占名额_已经在大厅里的换一间不算() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        lobby_entries_per_source_per_hour: 1,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let cipher = harness.create_with_code("Cipher", CODE).await.unwrap();
+    let token = cipher.token.expose();
+    harness
+        .service
+        .enter(token, NetworkAgentTarget::Private(room_of(&cipher).clone()))
+        .await
+        .expect("进私人房间");
+    harness
+        .create("Greeter", None)
+        .await
+        .expect("用掉这个来源这一小时的名额");
+
+    let limited = harness
+        .service
+        .admit(token, NetworkAgentRoomRequest::Lobby(None), [1; 32])
+        .await
+        .unwrap_err();
+    assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
+    assert_eq!(
+        limited.retry_at(),
+        Some(UtcMillis::new(START + HOUR).unwrap())
+    );
+
+    harness.runtime.advance(HOUR);
+    let admitted = harness
+        .service
+        .admit(token, NetworkAgentRoomRequest::Lobby(None), [1; 32])
+        .await
+        .unwrap();
+    let NetworkAgentAdmission::Admitted(target) = admitted else {
+        panic!("过了一小时该放行了：{admitted:?}");
+    };
+    harness.service.enter(token, target).await.expect("进大厅");
+    assert_eq!(
+        harness
+            .service
+            .admit(
+                token,
+                NetworkAgentRoomRequest::Lobby(Some("rust-night".to_owned())),
+                [1; 32],
+            )
+            .await
+            .unwrap(),
+        NetworkAgentAdmission::Admitted(NetworkAgentTarget::Lobby(catalog_id(1))),
+        "已经在大厅里了，换一间不再占名额"
+    );
 }
 
 #[tokio::test]
@@ -2377,8 +2516,8 @@ async fn 已有的网络_agent_拿房间号敲门_成员直接放行_没让进�
 }
 
 #[tokio::test]
-async fn 敲门每个来源每小时十次_拿房间号建人物也算() {
-    let harness = Harness::generous();
+async fn 敲门每个来源每小时十次_拿房间号建人物也算_不占进大厅的名额() {
+    let harness = Harness::enabled();
     let address = private_catalog().to_string();
     for index in 0..10 {
         harness

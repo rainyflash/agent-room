@@ -20,7 +20,7 @@ use agent_room_domain::{
     },
     join_codes::{PrivateRoomAgentKnockStatus, parse_room_number},
     network_agents::{NetworkAgentName, NetworkAgentStatus},
-    rooms::{MatrixRoomReference, RoomSlug},
+    rooms::{MatrixRoomReference, RoomCatalogKind, RoomSlug},
     time::{DurationMillis, UtcMillis},
 };
 use serde_json::Map;
@@ -59,7 +59,7 @@ const CAPABILITY_VERSION: &str = "1.0";
 const ACTOR_LIFETIME_MILLIS: u64 = 5 * 60 * 1_000;
 /// 同名时最多试到 ` 20`，再撞上就请 Agent 换个名字。
 const MAX_NAME_NUMBER: u32 = 20;
-/// 30 天没有活动的网络 Agent 自动停用，放开全站名额。
+/// 30 天没有活动的网络 Agent 自动停用，放开公开大厅的名额。
 const IDLE_LIFETIME_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
 /// 创建一个小时还没建好，说明中途断了：停用，放开名字与名额。
 const PROVISIONING_TIMEOUT_MILLIS: i64 = 60 * 60 * 1_000;
@@ -69,29 +69,35 @@ const STALE_BATCH: u32 = 100;
 const MAX_LOBBY_ATTEMPTS: usize = 3;
 
 /// 部署配置里的开关与限额。总开关默认关闭。
+///
+/// 限额只管公开大厅（维护者 2026-10-12 定）：进大厅的个数、同时在大厅里的个数、在大厅里说的条数。
+/// 凭口令进私人房间、在私人房间里说话都不限。敲门和猜口令的上限是挡骚扰的，照旧。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetworkAgentPolicy {
     pub enabled: bool,
-    pub creations_per_source_per_hour: u32,
-    pub creations_per_source_per_day: u32,
-    pub max_live_agents: u64,
-    pub messages_per_minute: u32,
-    pub messages_per_day: u32,
+    /// 同一来源每小时、每天最多让几个网络 Agent 进公开大厅：起名时就进的，和已有的头一回进的。
+    pub lobby_entries_per_source_per_hour: u32,
+    pub lobby_entries_per_source_per_day: u32,
+    /// 全站同时最多几个网络 Agent 在公开大厅里。
+    pub max_lobby_agents: u64,
+    /// 每个网络 Agent 在公开大厅里每分钟、每天最多说几条。
+    pub lobby_messages_per_minute: u32,
+    pub lobby_messages_per_day: u32,
     /// 每个来源每小时最多敲几次私人房间的门（拿房间号建人物也算一次）。
     pub knocks_per_source_per_hour: u32,
 }
 
 impl NetworkAgentPolicy {
-    /// 设计文档里的初始值：每个来源每小时建 5 个、每天 20 个，全站同时 500 个；
-    /// 每个网络 Agent 每分钟发 20 条、每天 1000 条；每个来源每小时敲 10 次门。
+    /// 设计文档里的初始值：每个来源每小时让 5 个进公开大厅、每天 20 个，大厅里同时 500 个；
+    /// 每个网络 Agent 在大厅里每分钟说 20 条、每天 1000 条；每个来源每小时敲 10 次门。
     pub const fn default_limits(enabled: bool) -> Self {
         Self {
             enabled,
-            creations_per_source_per_hour: 5,
-            creations_per_source_per_day: 20,
-            max_live_agents: 500,
-            messages_per_minute: 20,
-            messages_per_day: 1_000,
+            lobby_entries_per_source_per_hour: 5,
+            lobby_entries_per_source_per_day: 20,
+            max_lobby_agents: 500,
+            lobby_messages_per_minute: 20,
+            lobby_messages_per_day: 1_000,
             knocks_per_source_per_hour: 10,
         }
     }
@@ -270,7 +276,7 @@ pub enum NetworkAgentFailureKind {
     /// 口令不对、已更换或已停用，房间不收 Agent，或被移出后拿旧口令再来：不说是哪一种。
     CodeInvalid,
     RateLimited,
-    /// 全站同时有效的网络 Agent 到了上限。
+    /// 公开大厅里的网络 Agent 到了全站上限。
     CapacityReached,
     /// 令牌不对，或这个网络 Agent 已停用。
     Unauthorized,
@@ -344,8 +350,13 @@ pub trait NetworkAgentUseCases: Send + Sync {
         token: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>>;
 
-    /// 发一条之前记一次：每分钟、每天各有上限，超了告诉 Agent 什么时候能再发。
-    fn take_message_quota(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
+    /// 往这个房间发一条之前记一次：公开大厅里每分钟、每天各有上限，超了告诉 Agent 什么时候能
+    /// 再发；私人房间不限。
+    fn take_message_quota(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, NetworkAgentResult<()>>;
 
     /// 定时清理：停用闲置超过 30 天的与卡在创建中超过一小时的网络 Agent，返回停用了几个。
     fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>>;
@@ -519,11 +530,8 @@ impl NetworkAgentService {
         let target = self
             .creation_target(request.room, &request.source_digest)
             .await?;
-        self.limit(&request.source_digest).await?;
-        if self.store.count_live().await.map_err(repository)? >= self.policy.max_live_agents {
-            return Err(NetworkAgentFailure::new(
-                NetworkAgentFailureKind::CapacityReached,
-            ));
+        if matches!(target, CreationTarget::Lobby(_)) {
+            self.admit_to_lobbies(&request.source_digest).await?;
         }
 
         let now = self.clock.now();
@@ -744,20 +752,22 @@ impl NetworkAgentService {
             NetworkAgentRoomRequest::Lobby(room) => {
                 let place = self.place(room.as_deref()).await?;
                 let (Place::Lobby(catalog) | Place::Private(catalog)) = place;
-                let joined = self
-                    .store
-                    .rooms(record.id)
-                    .await
-                    .map_err(repository)?
-                    .into_iter()
-                    .find(|room| room.catalog_id == catalog);
-                if let Some(room) = joined {
-                    return Ok(NetworkAgentAdmission::AlreadyIn(self.named(room).await?));
+                let rooms = self.store.rooms(record.id).await.map_err(repository)?;
+                if let Some(room) = rooms.iter().find(|room| room.catalog_id == catalog) {
+                    return Ok(NetworkAgentAdmission::AlreadyIn(
+                        self.named(room.clone()).await?,
+                    ));
                 }
                 match place {
-                    Place::Lobby(catalog) => Ok(NetworkAgentAdmission::Admitted(
-                        NetworkAgentTarget::Lobby(catalog),
-                    )),
+                    Place::Lobby(catalog) => {
+                        // 已经在别的公开大厅里的换个大厅不再算；从私人房间头一回来大厅的要算。
+                        if !self.in_public_lobby(&rooms).await? {
+                            self.admit_to_lobbies(&source_digest).await?;
+                        }
+                        Ok(NetworkAgentAdmission::Admitted(NetworkAgentTarget::Lobby(
+                            catalog,
+                        )))
+                    }
                     Place::Private(catalog) => {
                         self.take_knock(&source_digest).await?;
                         self.knock(self.actor_of(&record, now)?, agent_id, catalog, now)
@@ -1248,14 +1258,21 @@ impl NetworkAgentService {
         ))))
     }
 
-    async fn take_message_quota_internal(&self, id: NetworkAgentId) -> NetworkAgentResult<()> {
+    async fn take_message_quota_internal(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> NetworkAgentResult<()> {
         if !self.policy.enabled {
             return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
         }
+        if !self.is_public_lobby(catalog_id).await? {
+            return Ok(());
+        }
         let agent = id.as_uuid().simple().to_string();
         for (window, limit, label) in [
-            (60_000_u64, self.policy.messages_per_minute, "minute"),
-            (86_400_000_u64, self.policy.messages_per_day, "day"),
+            (60_000_u64, self.policy.lobby_messages_per_minute, "minute"),
+            (86_400_000_u64, self.policy.lobby_messages_per_day, "day"),
         ] {
             self.take(&format!("send:{label}:{agent}"), window, limit)
                 .await?;
@@ -1399,25 +1416,68 @@ impl NetworkAgentService {
         })
     }
 
-    /// 同一来源每小时、每天各有上限；超过时告诉 Agent 什么时候能再试。
-    async fn limit(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
+    /// 让一个网络 Agent 进公开大厅：同一来源每小时、每天各有上限，超过时告诉 Agent 什么时候能
+    /// 再试；大厅里的网络 Agent 满了就请它过一会儿再来。计数的桶沿用 `create:` 这个名字（以前
+    /// 一起名就算一次）。
+    async fn admit_to_lobbies(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
         let source = hex(source);
         for (window, limit, label) in [
             (
                 3_600_000_u64,
-                self.policy.creations_per_source_per_hour,
+                self.policy.lobby_entries_per_source_per_hour,
                 "hour",
             ),
             (
                 86_400_000_u64,
-                self.policy.creations_per_source_per_day,
+                self.policy.lobby_entries_per_source_per_day,
                 "day",
             ),
         ] {
             self.take(&format!("create:{label}:{source}"), window, limit)
                 .await?;
         }
+        let lobbies = self.public_lobby_ids().await?;
+        let in_lobbies = self
+            .store
+            .count_live_in(&lobbies)
+            .await
+            .map_err(repository)?;
+        if in_lobbies >= self.policy.max_lobby_agents {
+            return Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::CapacityReached,
+            ));
+        }
         Ok(())
+    }
+
+    async fn public_lobby_ids(&self) -> NetworkAgentResult<Vec<RoomCatalogId>> {
+        Ok(self
+            .directory
+            .list_public(&RoomDirectoryQuery::default())
+            .await
+            .map_err(repository)?
+            .into_iter()
+            .map(|entry| entry.catalog.id())
+            .collect())
+    }
+
+    /// 这个房间是不是公开大厅：大厅的各个分片都记在大厅自己的目录条目下。
+    async fn is_public_lobby(&self, catalog_id: RoomCatalogId) -> NetworkAgentResult<bool> {
+        Ok(self
+            .directory
+            .find_catalog(catalog_id)
+            .await
+            .map_err(repository)?
+            .is_some_and(|catalog| catalog.kind() == RoomCatalogKind::PublicLobby))
+    }
+
+    async fn in_public_lobby(&self, rooms: &[NetworkAgentRoomRecord]) -> NetworkAgentResult<bool> {
+        for room in rooms {
+            if self.is_public_lobby(room.catalog_id).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// 进公开大厅（由大厅分配），或指名进私人房间。大厅正在准备新房间时按服务器给的时间等一会儿再试。
@@ -1506,8 +1566,12 @@ impl NetworkAgentUseCases for NetworkAgentService {
         Box::pin(self.session_internal(token))
     }
 
-    fn take_message_quota(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
-        Box::pin(self.take_message_quota_internal(id))
+    fn take_message_quota(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, NetworkAgentResult<()>> {
+        Box::pin(self.take_message_quota_internal(id, catalog_id))
     }
 
     fn disable_stale(&self) -> PortFuture<'_, NetworkAgentResult<usize>> {

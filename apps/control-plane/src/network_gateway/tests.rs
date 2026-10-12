@@ -99,7 +99,8 @@ struct FakeAgents {
     seed: SecretValue,
     rooms: Vec<NetworkAgentRoomRecord>,
     quota: Mutex<Option<NetworkAgentFailure>>,
-    quota_taken: Mutex<u32>,
+    /// 每次记发言额度时说的是哪个房间。
+    quota_taken: Mutex<Vec<RoomCatalogId>>,
     disabled: Mutex<Vec<String>>,
     /// 定时清理：停用了几个闲置的、待离开的有哪些、记为已离开的有哪些、删了钥匙的有哪些。
     /// 记为已离开、还没删钥匙的，就等着删钥匙。
@@ -134,7 +135,7 @@ impl FakeAgents {
                 })
                 .collect(),
             quota: Mutex::new(None),
-            quota_taken: Mutex::new(0),
+            quota_taken: Mutex::new(Vec::new()),
             disabled: Mutex::new(Vec::new()),
             stale: Mutex::new(0),
             exits: Mutex::new(Vec::new()),
@@ -243,11 +244,15 @@ impl NetworkAgentUseCases for FakeAgents {
         Box::pin(async move { Ok(room) })
     }
 
-    fn take_message_quota(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+    fn take_message_quota(
+        &self,
+        _id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, NetworkAgentResult<()>> {
         let result = if let Some(failure) = self.quota.lock().unwrap().clone() {
             Err(failure)
         } else {
-            *self.quota_taken.lock().unwrap() += 1;
+            self.quota_taken.lock().unwrap().push(catalog_id);
             Ok(())
         };
         Box::pin(async move { result })
@@ -3027,7 +3032,11 @@ async fn 发言走本机_bridge_同一套发布_正文进内容服务_签名后�
         harness.submissions.state(sent.submission),
         Some(NetworkAgentSubmissionState::Bound)
     );
-    assert_eq!(*harness.agents.quota_taken.lock().unwrap(), 1);
+    assert_eq!(
+        *harness.agents.quota_taken.lock().unwrap(),
+        [harness.agents.rooms[0].catalog_id],
+        "按发到的那个房间记发言额度"
+    );
 }
 
 #[tokio::test]
@@ -3268,9 +3277,8 @@ async fn 内容不合规时说明是哪一项_限流时什么都不发() {
             "{field}"
         );
     }
-    assert_eq!(
-        *harness.agents.quota_taken.lock().unwrap(),
-        0,
+    assert!(
+        harness.agents.quota_taken.lock().unwrap().is_empty(),
         "不合规的不扣发言次数"
     );
 
@@ -3790,7 +3798,7 @@ async fn 进过加密房间的_agent_在加密房间里由加密客户端发言_
         ContentEncryptionMode::ClientE2ee
     );
     assert_ne!(uploads[0].1, "只说给房间里的人".as_bytes(), "存的是密文");
-    assert_eq!(*harness.agents.quota_taken.lock().unwrap(), 1);
+    assert_eq!(harness.agents.quota_taken.lock().unwrap().len(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -3821,7 +3829,7 @@ async fn 所有人只能在加密房间里发_公开大厅里拒绝且不扣次�
     );
     assert_eq!(harness.encrypted.client.sent.lock().unwrap().len(), 1);
     assert_eq!(
-        *harness.agents.quota_taken.lock().unwrap(),
+        harness.agents.quota_taken.lock().unwrap().len(),
         1,
         "拒绝的不扣次数"
     );

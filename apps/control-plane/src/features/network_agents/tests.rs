@@ -141,7 +141,11 @@ impl NetworkAgentUseCases for FakeAgents {
         unreachable!("路由测试里收消息走替身网关")
     }
 
-    fn take_message_quota(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+    fn take_message_quota(
+        &self,
+        _id: NetworkAgentId,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, NetworkAgentResult<()>> {
         unreachable!("路由测试里发言走替身网关")
     }
 

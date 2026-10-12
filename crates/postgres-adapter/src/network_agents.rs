@@ -10,7 +10,7 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, DeviceId, NetworkAgentId, PrincipalId},
+    ids::{AgentId, AgentInstanceId, DeviceId, NetworkAgentId, PrincipalId, RoomCatalogId},
     network_agents::NetworkAgentStatus,
     time::UtcMillis,
 };
@@ -227,12 +227,28 @@ impl NetworkAgentStore for PostgresRepositories {
         })
     }
 
-    fn count_live(&self) -> PortFuture<'_, RepositoryResult<u64>> {
+    fn count_live_in<'a>(
+        &'a self,
+        catalog_ids: &'a [RoomCatalogId],
+    ) -> PortFuture<'a, RepositoryResult<u64>> {
         Box::pin(async move {
-            let operation = "network_agent.count_live";
+            if catalog_ids.is_empty() {
+                return Ok(0);
+            }
+            let operation = "network_agent.count_live_in";
+            let catalog_ids: Vec<uuid::Uuid> = catalog_ids
+                .iter()
+                .copied()
+                .map(RoomCatalogId::as_uuid)
+                .collect();
             let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM agent_room.network_agent WHERE status <> 'disabled'",
+                r"SELECT count(DISTINCT agent.id)
+                    FROM agent_room.network_agent agent
+                    JOIN agent_room.network_agent_room room ON room.network_agent_id = agent.id
+                   WHERE agent.status <> 'disabled'
+                     AND room.catalog_entry_id = ANY($1)",
             )
+            .bind(&catalog_ids)
             .fetch_one(self.pool())
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;

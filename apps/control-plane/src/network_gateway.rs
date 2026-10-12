@@ -326,7 +326,8 @@ impl NetworkGateway {
         }
     }
 
-    /// 以这个 Agent 的身份发一条聊天：限流后交给本机 Bridge 同一个发布服务。
+    /// 以这个 Agent 的身份发一条聊天：限流后交给本机 Bridge 同一个发布服务。只有公开大厅限流，
+    /// 私人房间里说多少都行。
     async fn send_internal(
         &self,
         token: &str,
@@ -349,8 +350,14 @@ impl NetworkGateway {
         let body = chat_body(submission_id, &room, speaker.as_ref(), &draft.text)?;
         let mentions = draft.mentions.clone();
         let request = chat_request(&session, submission_id, room.clone(), draft, body)?;
+        let catalog_id = session
+            .rooms
+            .iter()
+            .find(|joined| joined.matrix_room_id.as_str() == room.as_str())
+            .map(|joined| joined.catalog_id)
+            .ok_or(NetworkGatewayFailure::RoomNotJoined)?;
         self.agents
-            .take_message_quota(session.network_agent_id)
+            .take_message_quota(session.network_agent_id, catalog_id)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         let signer = speaking::SessionSigner::from_seed(&session.instance_signing_seed)
@@ -362,12 +369,6 @@ impl NetworkGateway {
             session.agent_instance_id,
         )
         .map_err(|_| NetworkGatewayFailure::Internal)?;
-        let catalog_id = session
-            .rooms
-            .iter()
-            .find(|joined| joined.matrix_room_id.as_str() == room.as_str())
-            .map(|joined| joined.catalog_id)
-            .ok_or(NetworkGatewayFailure::RoomNotJoined)?;
         let publisher: Arc<dyn MessageEventPublisher> = match speaker {
             Some((speaker, _)) => Arc::new(speaking::ClientPublisher {
                 matrix: speaker.matrix,

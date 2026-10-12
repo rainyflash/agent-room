@@ -973,7 +973,10 @@ mod real_dependency_tests {
     use agent_room_domain::{
         agent_lifecycle::MatrixPresenceState,
         content::{ContentEncryptionMode, ContentMediaType},
-        ids::{AgentId, AgentInstanceId, MessageSubmissionId, NetworkAgentId, PrincipalId},
+        ids::{
+            AgentId, AgentInstanceId, MessageSubmissionId, NetworkAgentId, PrincipalId,
+            RoomCatalogId,
+        },
         time::UtcMillis,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
@@ -1041,6 +1044,7 @@ mod real_dependency_tests {
         fn take_message_quota(
             &self,
             _id: NetworkAgentId,
+            _catalog_id: RoomCatalogId,
         ) -> PortFuture<'_, NetworkAgentResult<()>> {
             unreachable!("只测加密客户端")
         }
