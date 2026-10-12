@@ -1,3 +1,4 @@
+mod device;
 mod handlers;
 mod models;
 
@@ -7,7 +8,8 @@ pub(crate) mod tests;
 use std::sync::Arc;
 
 use agent_room_application::{
-    authentication::AuthenticationUseCases, private_rooms::PrivateRoomUseCases,
+    authentication::AuthenticationUseCases, devices::DeviceAuthorizationUseCases,
+    ports::SecretFactory, private_rooms::PrivateRoomUseCases,
 };
 
 use crate::features::authentication::TrustedOrigins;
@@ -23,19 +25,30 @@ const MAX_PRIVATE_ROOM_BODY_BYTES: usize = 64 * 1_024;
 pub(crate) struct PrivateRoomHttpState {
     pub(super) rooms: Arc<dyn PrivateRoomUseCases>,
     pub(super) authentication: Arc<dyn AuthenticationUseCases>,
+    /// 本机 Bridge 替账号建房、邀请人时核对设备签名（`specs/agent-rooms/design.md`）。
+    pub(super) devices: Arc<dyn DeviceAuthorizationUseCases>,
+    pub(super) secrets: Arc<dyn SecretFactory>,
     pub(super) trusted_origins: TrustedOrigins,
+}
+
+pub(crate) struct PrivateRoomHttpDependencies {
+    pub(crate) rooms: Arc<dyn PrivateRoomUseCases>,
+    pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
+    pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
+    pub(crate) secrets: Arc<dyn SecretFactory>,
 }
 
 impl PrivateRoomHttpState {
     pub(crate) fn new(
-        rooms: Arc<dyn PrivateRoomUseCases>,
-        authentication: Arc<dyn AuthenticationUseCases>,
+        dependencies: PrivateRoomHttpDependencies,
         frontend_origin: &url::Url,
         desktop_origins: &crate::config::DesktopOrigins,
     ) -> Self {
         Self {
-            rooms,
-            authentication,
+            rooms: dependencies.rooms,
+            authentication: dependencies.authentication,
+            devices: dependencies.devices,
+            secrets: dependencies.secrets,
             trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
         }
     }
@@ -81,6 +94,11 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             put(handlers::transfer_ownership),
         )
         .route("/private-rooms/{catalog_id}/name", put(handlers::rename))
+        .route("/devices/current/private-rooms", post(device::create))
+        .route(
+            "/devices/current/private-rooms/{catalog_id}/invitations",
+            post(device::invite),
+        )
         .layer(DefaultBodyLimit::max(MAX_PRIVATE_ROOM_BODY_BYTES))
         .with_state(state)
 }

@@ -3,6 +3,9 @@
 //!
 //! 敲门（`specs/network-agents/knock.md`）：管理者在这里看谁在敲门，让它进来或不让进。
 //! 让它进来时网关在这次请求里替它进房间，进去了才回答。
+//!
+//! 本机 Agent 也能管 Agent 建的房间（`specs/agent-rooms/design.md`）：`/devices/current/private-rooms`
+//! 下同一组用例，换成设备签名，见 [`device`]。
 
 use std::sync::Arc;
 
@@ -100,6 +103,24 @@ pub(crate) fn router(state: PrivateRoomAgentHttpState) -> Router {
         )
         .route("/join-codes/resolve", post(resolve))
         .route("/agents/{agent_id}/join-codes/redeem", post(redeem))
+        .route(
+            "/devices/current/private-rooms/{catalog_id}/code",
+            get(device::reveal_code)
+                .put(device::generate_code)
+                .delete(device::disable_code),
+        )
+        .route(
+            "/devices/current/private-rooms/{catalog_id}/knocks",
+            get(device::waiting_knocks),
+        )
+        .route(
+            "/devices/current/private-rooms/{catalog_id}/knocks/{agent_id}",
+            put(device::admit_knock).delete(device::decline_knock),
+        )
+        .route(
+            "/devices/current/private-rooms/{catalog_id}/agents/{agent_id}",
+            delete(device::remove_agent),
+        )
         .layer(DefaultBodyLimit::max(MAX_AGENT_ACCESS_BODY_BYTES))
         .with_state(state)
 }
@@ -280,19 +301,16 @@ async fn generate_code(
             Ok(context) => context,
             Err(response) => return response,
         };
-    match state
-        .access
-        .generate_code(ManageJoinCode {
-            actor: actor.into(),
-            catalog_id,
-        })
-        .await
-    {
-        Ok(generated) => {
-            no_store((StatusCode::OK, Json(GeneratedCodeResponse::from(generated))).into_response())
-        }
-        Err(failure) => no_store(ApiError::agent_access(failure, correlation_id).into_response()),
-    }
+    code_response(
+        state
+            .access
+            .generate_code(ManageJoinCode {
+                actor: actor.into(),
+                catalog_id,
+            })
+            .await,
+        correlation_id,
+    )
 }
 
 /// 管理者再看房间当前的口令（`specs/network-agents/code-first.md`）。和查看 Agent 进门一样凭有效
@@ -317,19 +335,16 @@ async fn reveal_code(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    match state
-        .access
-        .reveal_code(ManageJoinCode {
-            actor: actor.into(),
-            catalog_id,
-        })
-        .await
-    {
-        Ok(code) => {
-            no_store((StatusCode::OK, Json(GeneratedCodeResponse::from(code))).into_response())
-        }
-        Err(failure) => no_store(ApiError::agent_access(failure, correlation_id).into_response()),
-    }
+    code_response(
+        state
+            .access
+            .reveal_code(ManageJoinCode {
+                actor: actor.into(),
+                catalog_id,
+            })
+            .await,
+        correlation_id,
+    )
 }
 
 async fn disable_code(
@@ -405,25 +420,16 @@ async fn waiting_knocks(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    match state
-        .access
-        .waiting_knocks(InspectAgentAccess {
-            actor: actor.into(),
-            catalog_id,
-        })
-        .await
-    {
-        Ok(knocks) => no_store(
-            (
-                StatusCode::OK,
-                Json(KnocksResponse {
-                    knocks: knocks.into_iter().map(KnockResponse::from).collect(),
-                }),
-            )
-                .into_response(),
-        ),
-        Err(failure) => knock_failure(failure, correlation_id),
-    }
+    knocks_response(
+        state
+            .access
+            .waiting_knocks(InspectAgentAccess {
+                actor: actor.into(),
+                catalog_id,
+            })
+            .await,
+        correlation_id,
+    )
 }
 
 /// 让在敲门的 Agent 进来：记为这个房间的 Agent 成员，网关替它进房间，进去了才把敲门记为
@@ -443,11 +449,25 @@ async fn admit_knock(
             Ok(context) => context,
             Err(response) => return response,
         };
-    let answer = AnswerKnock {
-        actor: actor.into(),
-        catalog_id,
-        agent_id,
-    };
+    admit(
+        &state,
+        AnswerKnock {
+            actor: actor.into(),
+            catalog_id,
+            agent_id,
+        },
+        correlation_id,
+    )
+    .await
+}
+
+/// 放行：记为 Agent 成员，网关替它进房间，进去了才把敲门记为放进来了。网页和设备共用。
+async fn admit(
+    state: &PrivateRoomAgentHttpState,
+    answer: AnswerKnock,
+    correlation_id: CorrelationId,
+) -> Response {
+    let agent_id = answer.agent_id;
     let admitted = match state.access.admit_knock(answer.clone()).await {
         Ok(admitted) => admitted,
         Err(failure) => return knock_failure(failure, correlation_id),
@@ -495,15 +515,51 @@ async fn decline_knock(
             Ok(context) => context,
             Err(response) => return response,
         };
-    match state
-        .access
-        .decline_knock(AnswerKnock {
-            actor: actor.into(),
-            catalog_id,
-            agent_id,
-        })
-        .await
-    {
+    declined(
+        state
+            .access
+            .decline_knock(AnswerKnock {
+                actor: actor.into(),
+                catalog_id,
+                agent_id,
+            })
+            .await,
+        correlation_id,
+    )
+}
+
+fn code_response(
+    result: AgentAccessResult<GeneratedJoinCode>,
+    correlation_id: CorrelationId,
+) -> Response {
+    match result {
+        Ok(code) => {
+            no_store((StatusCode::OK, Json(GeneratedCodeResponse::from(code))).into_response())
+        }
+        Err(failure) => no_store(ApiError::agent_access(failure, correlation_id).into_response()),
+    }
+}
+
+fn knocks_response(
+    result: AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>,
+    correlation_id: CorrelationId,
+) -> Response {
+    match result {
+        Ok(knocks) => no_store(
+            (
+                StatusCode::OK,
+                Json(KnocksResponse {
+                    knocks: knocks.into_iter().map(KnockResponse::from).collect(),
+                }),
+            )
+                .into_response(),
+        ),
+        Err(failure) => knock_failure(failure, correlation_id),
+    }
+}
+
+fn declined(result: AgentAccessResult<()>, correlation_id: CorrelationId) -> Response {
+    match result {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(failure) => knock_failure(failure, correlation_id),
     }
@@ -684,6 +740,8 @@ fn invalid_resource(correlation_id: CorrelationId) -> Response {
 fn invalid_body(correlation_id: CorrelationId) -> Response {
     no_store(ApiError::invalid_request("join_code.invalid_body", correlation_id).into_response())
 }
+
+mod device;
 
 #[cfg(test)]
 mod tests;

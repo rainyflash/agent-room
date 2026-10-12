@@ -28,7 +28,7 @@ use crate::{
     features::authentication::{authenticate_session, no_store, origin_matches},
 };
 
-const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
+pub(super) const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 
 pub(super) async fn create(
     State(state): State<PrivateRoomHttpState>,
@@ -575,10 +575,10 @@ fn respond(
     }
 }
 
-fn invalid(code: &'static str, correlation_id: CorrelationId) -> Response {
+pub(super) fn invalid(code: &'static str, correlation_id: CorrelationId) -> Response {
     no_store(ApiError::invalid_request(code, correlation_id).into_response())
 }
 
-fn invalid_resource(correlation_id: CorrelationId) -> Response {
+pub(super) fn invalid_resource(correlation_id: CorrelationId) -> Response {
     invalid("private_room.invalid_resource_id", correlation_id)
 }

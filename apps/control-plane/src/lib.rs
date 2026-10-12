@@ -103,7 +103,7 @@ use features::health::HealthRuntime;
 use features::lobbies::{LobbyHttpDependencies, LobbyHttpState};
 use features::moderation::ModerationHttpState;
 use features::private_room_agents::{PrivateRoomAgentHttpDependencies, PrivateRoomAgentHttpState};
-use features::private_rooms::PrivateRoomHttpState;
+use features::private_rooms::{PrivateRoomHttpDependencies, PrivateRoomHttpState};
 use features::telemetry::FrontendTelemetryHttpState;
 use observability::Observability;
 use runtime::SystemRuntime;
@@ -862,8 +862,12 @@ fn build_agent_collaboration_http_states(
             private_rooms: private_rooms.clone(),
         }),
         private_rooms: PrivateRoomHttpState::new(
-            private_rooms,
-            dependencies.authentication.clone(),
+            PrivateRoomHttpDependencies {
+                rooms: private_rooms,
+                authentication: dependencies.authentication.clone(),
+                devices: dependencies.devices.clone(),
+                secrets: dependencies.secrets.clone(),
+            },
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origins,
         ),
