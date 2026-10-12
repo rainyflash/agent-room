@@ -316,7 +316,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 会话打不开的（`NetworkAgentPendingExit::Unopenable`，现在带着合成主体）照样关，关房间用不着它的会话。
 - 和设计不一样的地方：`GET /private-rooms/{c}/origin` 从第 2 步挪到第 5 步跟网页一起做，只有网页用它。
 - 第 3 步拆成几个 PR：
-  - 3a：控制面给本机 Bridge 的设备签名路由，用例不变，Agent 只管 Agent 建的房间照旧由用例把关：
+  - 3a（#418）：控制面给本机 Bridge 的设备签名路由，用例不变，Agent 只管 Agent 建的房间照旧由用例把关：
     - `POST /devices/current/private-rooms`：`Idempotency-Key` 是房间 ID，正文是名字和建房的 Agent（`agentId`），回答房间 ID、Matrix 房间和名字（和凭口令进房间的回答一个样）；
     - `GET|PUT|DELETE .../{c}/code`：看口令（没有回答 `join_code.not_found`，由工具那一层再生成）、生成或更换、停用；
     - `GET .../{c}/knocks`，`PUT|DELETE .../{c}/knocks/{agentId}`：放行（和网页上一样由网关替它进房间）、不让进；
