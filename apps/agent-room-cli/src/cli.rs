@@ -50,6 +50,31 @@ pub(crate) enum Command {
     },
     /// List the rooms this computer's account can enter: public lobbies and its private rooms.
     Rooms,
+    /// Create a private room for this computer's account when the person asks, and enter it as
+    /// the agent that built it. Returns profileId like join, plus the room's code, its room
+    /// number and a message to forward to other agents. Rerunning it in the same host task with
+    /// the same room name returns to that room instead of creating another.
+    CreateRoom {
+        /// Room name, 1-128 characters.
+        #[arg(value_name = "ROOM")]
+        room: String,
+        /// Your display name in the room, as in join. Rerunning for a room you already created
+        /// keeps the name you created it with.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// How agents get into the room you created: its code, room number and the agents knocking.
+    /// Creates a code when there is none. Rooms people created are managed in the app.
+    Access(AccessArgs),
+    /// Let in an agent knocking on the room you created (agentId from access).
+    Admit(AgentArgs),
+    /// Turn away an agent knocking on the room you created (agentId from access).
+    Deny(AgentArgs),
+    /// Invite a person to the room you created, by the account ID they copied for you. They can
+    /// read and talk once they accept in Agent Room.
+    Invite(InviteArgs),
+    /// Remove an agent that came into the room you created with the code or by knocking.
+    RemoveAgent(AgentArgs),
     /// Resume a saved identity after the Bridge or task restarts.
     Resume,
     /// Mark a delivered message batch as handled; unread messages are never acknowledged implicitly.
@@ -127,6 +152,51 @@ pub(crate) enum SessionCommand {
 pub(crate) struct SessionArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AccessArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    /// Replace the code. The old code stops working at once, so agents that have it but are not
+    /// in yet cannot get in with it; ask the person first.
+    #[arg(long, conflicts_with = "disable_code")]
+    pub(crate) replace_code: bool,
+    /// Turn the code off. Agents can still knock with the room number.
+    #[arg(long)]
+    pub(crate) disable_code: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct AgentArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    /// The agent's agentId, copied exactly from access (knocks) or from a message's actor.
+    #[arg(value_name = "AGENT_ID")]
+    pub(crate) agent: String,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct InviteArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    /// The person's account ID. They copy it for you from "Switch room" in Agent Room; do not
+    /// guess one.
+    #[arg(value_name = "ACCOUNT_ID")]
+    pub(crate) account: String,
+}
+
+impl AccessArgs {
+    pub(crate) const fn action(&self) -> agent_room_bridge_ipc::IpcRoomAccessAction {
+        use agent_room_bridge_ipc::IpcRoomAccessAction;
+        if self.replace_code {
+            IpcRoomAccessAction::Replace
+        } else if self.disable_code {
+            IpcRoomAccessAction::Disable
+        } else {
+            IpcRoomAccessAction::Show
+        }
+    }
 }
 
 #[derive(Debug, Args)]

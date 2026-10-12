@@ -119,6 +119,10 @@ pub(crate) struct Profile {
     pub(crate) after_event_id: Option<String>,
     /// 旧版记的已交出、还没确认的消息；不再用。
     pub(crate) delivered: Vec<String>,
+    /// `create-room` 为建哪个房间造的这个人物（房间名）。同一任务用同一个名字再建就回到它；
+    /// 别的人物没有这一项，档案写出来和以前一样，旧版照样读得出来。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) created_room: Option<String>,
 }
 
 impl Profile {
@@ -132,6 +136,7 @@ impl Profile {
             room_id: None,
             after_event_id: None,
             delivered: Vec::new(),
+            created_room: None,
         }
     }
 
@@ -206,22 +211,12 @@ impl ProfileStore {
         target: &RoomTarget,
         display_name: Option<&str>,
     ) -> Option<String> {
-        let entries = fs::read_dir(root.join("cli-profiles")).ok()?;
-        entries
-            .filter_map(std::result::Result::ok)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-            .filter_map(|entry| {
-                let bytes = fs::read(entry.path()).ok()?;
-                let profile: Profile = serde_json::from_slice(&bytes).ok()?;
-                let key = entry.path().file_stem()?.to_str()?.to_owned();
-                (profile.invitation.session_key == key
-                    && validate_key(&key).is_ok()
-                    && profile.bridge_service == service
-                    && profile.task_id.as_deref() == Some(task_id)
-                    && target.matches(&profile.invitation)
-                    && display_name.is_none_or(|name| name == profile.invitation.display_name))
-                .then_some(key)
+        Self::task_profiles(root, service, task_id)
+            .filter(|(_, _, profile)| {
+                target.matches(&profile.invitation)
+                    && display_name.is_none_or(|name| name == profile.invitation.display_name)
             })
+            .map(|(_, key, _)| key)
             .max()
     }
 
@@ -233,24 +228,52 @@ impl ProfileStore {
         task_id: &str,
         display_name: Option<&str>,
     ) -> Option<String> {
-        let entries = fs::read_dir(root.join("cli-profiles")).ok()?;
-        entries
-            .filter_map(std::result::Result::ok)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-            .filter_map(|entry| {
-                let path = entry.path();
+        Self::task_profiles(root, service, task_id)
+            .filter(|(_, _, profile)| {
+                display_name.is_none_or(|name| name == profile.invitation.display_name)
+            })
+            .filter_map(|(entry, key, _)| {
                 let modified = entry.metadata().and_then(|meta| meta.modified()).ok()?;
-                let profile: Profile = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
-                let key = path.file_stem()?.to_str()?.to_owned();
-                (profile.invitation.session_key == key
-                    && validate_key(&key).is_ok()
-                    && profile.bridge_service == service
-                    && profile.task_id.as_deref() == Some(task_id)
-                    && display_name.is_none_or(|name| name == profile.invitation.display_name))
-                .then_some((modified, key))
+                Some((modified, key))
             })
             .max()
             .map(|(_, key)| key)
+    }
+
+    /// 这个宿主任务用同一个房间名建过的房间：重跑 `create-room` 回到那间和建它的人物，不再建一间。
+    pub(crate) fn find_created(
+        root: &Path,
+        service: &str,
+        task_id: &str,
+        room_name: &str,
+    ) -> Option<String> {
+        Self::task_profiles(root, service, task_id)
+            .filter(|(_, _, profile)| profile.created_room.as_deref() == Some(room_name))
+            .map(|(_, key, _)| key)
+            .max()
+    }
+
+    /// 这个连接下绑在这个宿主任务上的人物：目录项、键和档案。读不出来、键对不上的文件跳过。
+    fn task_profiles(
+        root: &Path,
+        service: &str,
+        task_id: &str,
+    ) -> impl Iterator<Item = (fs::DirEntry, String, Profile)> {
+        fs::read_dir(root.join("cli-profiles"))
+            .into_iter()
+            .flatten()
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .filter_map(move |entry| {
+                let profile: Profile =
+                    serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
+                let key = entry.path().file_stem()?.to_str()?.to_owned();
+                (profile.invitation.session_key == key
+                    && validate_key(&key).is_ok()
+                    && profile.bridge_service == service
+                    && profile.task_id.as_deref() == Some(task_id))
+                .then_some((entry, key, profile))
+            })
     }
 
     pub(crate) fn load(&self) -> Result<Option<Profile>> {

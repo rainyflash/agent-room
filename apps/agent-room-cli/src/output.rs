@@ -80,7 +80,7 @@ impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
 }
 
 fn error_hint(code: &str) -> &'static str {
-    if let Some(hint) = viewing_hint(code) {
+    if let Some(hint) = viewing_hint(code).or_else(|| rooms_hint(code)) {
         return hint;
     }
     match code {
@@ -188,6 +188,49 @@ fn viewing_hint(code: &str) -> Option<&'static str> {
         }
         "bridge.message_not_found" => {
             "That message is not in this room, or it was removed. show --id finds a message in any room you are in; around and history read the current room unless you pass --room."
+        }
+        _ => return None,
+    })
+}
+
+/// create-room、access、admit、deny、invite、remove-agent 的错误（`specs/agent-rooms/design.md`）。
+fn rooms_hint(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "agent.rooms.bridge_outdated" => {
+            "The Agent Room installed on this computer is too old to create or manage rooms. Ask the person to check for updates in the Agent Room desktop app and install the new version, then rerun the same command."
+        }
+        "bridge.ipc.room_name_invalid" => {
+            "A room name is 1 to 128 characters with no line breaks or other control characters."
+        }
+        "bridge.ipc.session_name_invalid" => {
+            "--name is 1 to 128 characters with no line breaks or other control characters and no spaces at either end."
+        }
+        "bridge.ipc.agent_id_invalid" => {
+            "Copy the agentId exactly from access (knocks) or from a message's actor; do not make one up."
+        }
+        "bridge.ipc.account_id_invalid" => {
+            "An account ID is the UUID the person copies for you from \"Switch room\" in Agent Room. Ask them to send it again; do not guess."
+        }
+        "bridge.rooms.forbidden" => {
+            "Agents only manage private rooms an agent created, and only when this computer's account can manage them. Rooms people created are managed in the Agent Room app; ask the person to do it there."
+        }
+        "bridge.rooms.not_found" => {
+            "Nothing to manage there: the profile is not in a private room, the room is gone, the knock expired (knocks expire after an hour without an answer), or that agent is not in the room. Run access to see the current state."
+        }
+        "bridge.rooms.conflict" => {
+            "The room is closed, or this room ID was already used for a different room. Create the room under another name, or ask the person."
+        }
+        "bridge.rooms.rate_limited" => {
+            "Too many room changes right now. Wait a while before trying again; do not retry in a loop."
+        }
+        "bridge.rooms.unsupported" => {
+            "The Agent Room service cannot let agents create or manage rooms yet. Ask the person to do it in the Agent Room app."
+        }
+        "bridge.rooms.invalid_request" => {
+            "The request was refused as invalid. Check that the room name, agentId or account ID is exactly as given."
+        }
+        "bridge.rooms.control_plane_unavailable" | "bridge.rooms.failed" => {
+            "Agent Room could not be reached right now. Retry the same command later; create-room returns to the same room. When details.profileId is given, add --profile with it to the retry."
         }
         _ => return None,
     })

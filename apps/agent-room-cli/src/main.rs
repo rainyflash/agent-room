@@ -3,6 +3,7 @@ mod cli;
 mod output;
 mod profile;
 mod receiver;
+mod rooms;
 
 use agent_room_agent_client::{
     BridgeToolClient, InboxWaiter, LocalBridgeToolClient, MessageWait, WaitParams, WokenBatch,
@@ -85,6 +86,20 @@ async fn run(cli: Cli) -> CliResult<()> {
     }
     let backend = launching_desktop_when_absent(local, &data_root, &service);
     let backend = backend.as_ref();
+    // 建房自己挑人物：同一任务同名回到建过的那间，带 --profile 是重试那一次。
+    if let Command::CreateRoom { room, name } = cli.command {
+        let creation = rooms::Creation { room, name };
+        let task_id = profile::host_task_id()?;
+        let created = rooms::create(
+            backend,
+            &data_root,
+            service.as_str(),
+            cli.profile,
+            task_id,
+            creation,
+        );
+        return success(created.await?);
+    }
     if cli.profile.is_some()
         || matches!(
             &cli.command,
@@ -115,6 +130,12 @@ async fn run_command(
         }
         Command::Guide => success(access::guide()),
         Command::Rooms => success(call(backend, IpcMethod::ListRooms).await?),
+        command @ (Command::CreateRoom { .. }
+        | Command::Access(_)
+        | Command::Admit(_)
+        | Command::Deny(_)
+        | Command::Invite(_)
+        | Command::RemoveAgent(_)) => rooms::run(backend, command).await,
         Command::Id => success(json!({"id": uuid::Uuid::now_v7()})),
         Command::Doctor => success(call(backend, IpcMethod::BridgeStatus).await?),
         Command::Session {
