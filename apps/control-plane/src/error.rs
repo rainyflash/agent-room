@@ -879,7 +879,7 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "network_agent.capacity_reached",
                 ErrorCategory::Transient,
-                "Too many network agents are online on this server right now; try again later.",
+                "The public lobbies already hold as many network agents as this server allows; try again later. Private rooms have no such limit.",
             ),
             NetworkAgentFailureKind::Unauthorized => (
                 StatusCode::UNAUTHORIZED,

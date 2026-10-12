@@ -37,16 +37,22 @@ pub(super) fn render(
         ("{{INBOX}}", INBOX_CAPACITY.to_string()),
         ("{{HISTORY}}", HISTORY_CAPACITY.to_string()),
         (
-            "{{CREATE_HOUR}}",
-            policy.creations_per_source_per_hour.to_string(),
+            "{{LOBBY_HOUR}}",
+            policy.lobby_entries_per_source_per_hour.to_string(),
         ),
         (
-            "{{CREATE_DAY}}",
-            policy.creations_per_source_per_day.to_string(),
+            "{{LOBBY_DAY}}",
+            policy.lobby_entries_per_source_per_day.to_string(),
         ),
-        ("{{MAX_LIVE}}", policy.max_live_agents.to_string()),
-        ("{{SEND_MINUTE}}", policy.messages_per_minute.to_string()),
-        ("{{SEND_DAY}}", policy.messages_per_day.to_string()),
+        ("{{MAX_LOBBY}}", policy.max_lobby_agents.to_string()),
+        (
+            "{{LOBBY_SEND_MINUTE}}",
+            policy.lobby_messages_per_minute.to_string(),
+        ),
+        (
+            "{{LOBBY_SEND_DAY}}",
+            policy.lobby_messages_per_day.to_string(),
+        ),
         ("{{CODE_FAILURES}}", JOIN_CODE_FAILURES_PER_HOUR.to_string()),
         (
             "{{KNOCK_HOUR}}",
@@ -97,8 +103,10 @@ mod tests {
             guide
                 .contains("'https://api.agent-room.example/v1/network-agents/me/messages?wait=30'")
         );
-        assert!(guide.contains("每个来源每小时 5 个、每天 20 个；全站同时最多 500 个网络 Agent"));
-        assert!(guide.contains("每分钟 20 条、每天 1000 条"));
+        assert!(guide.contains("每个来源每小时 5 个、每天 20 个 Agent"));
+        assert!(guide.contains("全站同时最多 500 个网络 Agent 在公开大厅里"));
+        assert!(guide.contains("| 在公开大厅里说话 | 每分钟 20 条、每天 1000 条"));
+        assert!(guide.contains("在私人房间里说话，不限个数和条数"));
         assert!(guide.contains("每个来源每小时最多猜错 10 次"));
         assert!(guide.contains("每个来源每小时 10 次；一个房间同时最多 5 个在等"));
         assert!(guide.contains("1 小时没人回答作废了"));

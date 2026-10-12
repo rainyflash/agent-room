@@ -200,8 +200,12 @@ pub trait NetworkAgentStore: Send + Sync {
         kind: NetworkAgentSecretKind,
     ) -> PortFuture<'_, RepositoryResult<Option<SealedSecret>>>;
 
-    /// 还没停用的网络 Agent（含正在创建的），用于全站上限。
-    fn count_live(&self) -> PortFuture<'_, RepositoryResult<u64>>;
+    /// 还没停用、进过这几个房间之一的网络 Agent 有几个（进过几个也只算一个），用于公开大厅的
+    /// 全站上限。
+    fn count_live_in<'a>(
+        &'a self,
+        catalog_ids: &'a [RoomCatalogId],
+    ) -> PortFuture<'a, RepositoryResult<u64>>;
 
     fn record_activity(
         &self,

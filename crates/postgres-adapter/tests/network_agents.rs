@@ -73,7 +73,6 @@ async fn 一个事务写入主体设备与秘密_没停用的不重名_停用后
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let name = format!("Scout {}", &Uuid::now_v7().simple().to_string()[..8]);
-    let live_before = repositories.count_live().await.expect("计数");
 
     let first = provisioning(&name, time(0));
     assert_eq!(
@@ -106,10 +105,6 @@ async fn 一个事务写入主体设备与秘密_没停用的不重名_停用后
             .await
             .expect("读秘密"),
         Some(sealed(2))
-    );
-    assert_eq!(
-        repositories.count_live().await.expect("计数"),
-        live_before + 1
     );
     let platform: String =
         sqlx::query_scalar("SELECT platform FROM agent_room.device WHERE id = $1")
@@ -349,6 +344,65 @@ async fn 进过的房间只记一次_按进入先后列出() {
     assert_eq!(
         repositories.rooms(provisioning.id).await.expect("列房间"),
         [named(first), named(second)]
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 按给的房间数还没停用的网络_agent_进过几间也只算一个() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let first = provisioning(&unique_name("Counter"), time(0));
+    let second = provisioning(&unique_name("Counter"), time(0));
+    repositories.begin(&first).await.expect("写入");
+    repositories.begin(&second).await.expect("写入");
+    // 两间新建的房间只有这个测试用，并行的测试不影响计数。
+    let owner = first.principal.principal.id();
+    let hall = seed_private_room(&repositories, owner).await;
+    let annex = seed_private_room(&repositories, owner).await;
+    let rooms = [hall, annex];
+    assert_eq!(
+        repositories.count_live_in(&rooms).await.expect("计数"),
+        0,
+        "还没进房间的不算"
+    );
+
+    for (id, room) in [
+        (
+            first.id,
+            room_record(hall, "!hall-first:matrix.test", time(10)),
+        ),
+        (
+            first.id,
+            room_record(annex, "!annex-first:matrix.test", time(20)),
+        ),
+        (
+            second.id,
+            room_record(annex, "!annex-second:matrix.test", time(30)),
+        ),
+    ] {
+        repositories.record_room(id, &room).await.expect("记房间");
+    }
+    assert_eq!(
+        repositories.count_live_in(&rooms).await.expect("计数"),
+        2,
+        "进过两间的只算一个"
+    );
+    assert_eq!(repositories.count_live_in(&[hall]).await.expect("计数"), 1);
+    assert_eq!(
+        repositories.count_live_in(&[]).await.expect("空列表不查库"),
+        0
+    );
+
+    repositories
+        .disable(second.id, time(40))
+        .await
+        .expect("停用");
+    assert_eq!(
+        repositories.count_live_in(&rooms).await.expect("计数"),
+        1,
+        "停用的不算"
     );
     database.close().await;
 }
