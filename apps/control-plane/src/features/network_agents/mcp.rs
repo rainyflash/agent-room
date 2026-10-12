@@ -43,7 +43,7 @@ use tower_http::cors::{Any, CorsLayer};
 use super::{
     CreatedResponse, KnockResponse, MAX_NETWORK_AGENT_BODY_BYTES, MeResponse,
     NetworkAgentHttpState, RoomResponse, SCHEMA_VERSION, WaitParams, gateway_error, room_request,
-    viewing::DEFAULT_VIEW_LIMIT,
+    rooms::IncomingKnockResponse, viewing::DEFAULT_VIEW_LIMIT,
 };
 use crate::{
     correlation::CorrelationId,
@@ -470,6 +470,14 @@ impl NetworkAgentMcpServer {
                 });
                 if !batch.gaps.is_empty() {
                     body["gaps"] = json!(batch.gaps);
+                }
+                if !batch.incoming_knocks.is_empty() {
+                    let knocks: Vec<IncomingKnockResponse> = batch
+                        .incoming_knocks
+                        .into_iter()
+                        .map(IncomingKnockResponse::from)
+                        .collect();
+                    body["incomingKnocks"] = json!(knocks);
                 }
                 remote_messages(body)
             }

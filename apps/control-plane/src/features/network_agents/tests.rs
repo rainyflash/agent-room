@@ -7,7 +7,8 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
+        NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentKnock,
+        NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
         NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
         NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
         NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
@@ -64,8 +65,9 @@ pub(super) struct FakeAgents {
     created: Mutex<Vec<CreateNetworkAgent>>,
     tokens: Mutex<Vec<String>>,
     failure: Mutex<Option<NetworkAgentFailure>>,
-    /// 查看自己时列出的敲门。
+    /// 查看自己时列出的敲门：自己敲的，和敲自己建的房间的。
     knocks: Mutex<Vec<NetworkAgentKnock>>,
+    pub(super) incoming: Mutex<Vec<NetworkAgentIncomingKnock>>,
 }
 
 impl FakeAgents {
@@ -132,6 +134,7 @@ impl NetworkAgentUseCases for FakeAgents {
             created_at: time(1_700_000_000_000),
             rooms: vec![lobby()],
             knocks: self.knocks.lock().unwrap().clone(),
+            incoming_knocks: self.incoming.lock().unwrap().clone(),
         });
         Box::pin(async move { result })
     }
@@ -284,6 +287,8 @@ pub(super) struct FakeMessaging {
     pub(super) room_calls: Mutex<Vec<(String, String)>>,
     /// 看口令时房间现在的口令；不设就是看得到的那个。
     pub(super) room_code: Mutex<Option<NetworkAgentRoomCode>>,
+    /// 等消息时一起交出去的、敲它建的房间的门的。
+    pub(super) incoming: Mutex<Vec<NetworkAgentIncomingKnock>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -381,6 +386,7 @@ impl NetworkAgentMessaging for FakeMessaging {
         self.waits.lock().unwrap().push((token.to_owned(), request));
         let failure = self.failure.lock().unwrap().clone();
         let gaps = self.gaps.lock().unwrap().clone();
+        let incoming_knocks = self.incoming.lock().unwrap().clone();
         Box::pin(async move {
             if let Some(failure) = failure {
                 return Err(failure);
@@ -397,6 +403,7 @@ impl NetworkAgentMessaging for FakeMessaging {
                 skipped: 2,
                 remaining: 4,
                 gaps,
+                incoming_knocks,
             })
         })
     }
@@ -608,15 +615,7 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         room: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>>> {
         self.room_call(token, format!("waiting_knocks {room}"));
-        self.owned_result(vec![PrivateRoomAgentKnockRecord {
-            catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
-            agent_id: AgentId::from_uuid(uuid(AGENT_UUID)),
-            display_name: "Scout".to_owned(),
-            status: PrivateRoomAgentKnockStatus::Waiting,
-            knocked_at: UtcMillis::new(KNOCKED_AT).unwrap(),
-            expires_at: UtcMillis::new(KNOCKED_AT + HOUR).unwrap(),
-            decided_at: None,
-        }])
+        self.owned_result(vec![knock_record()])
     }
 
     fn admit_knock<'a>(
@@ -665,6 +664,26 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         self.room_call(token, format!("remove_agent {room} {agent_id}"));
         self.owned_result(())
+    }
+
+    fn incoming_knocks<'a>(
+        &'a self,
+        _token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentIncomingKnocks>> {
+        unreachable!("等消息时由网关来看，接口不直接问")
+    }
+}
+
+/// 有人敲 `owned_room` 的门，在等它回答。
+pub(super) fn knock_record() -> PrivateRoomAgentKnockRecord {
+    PrivateRoomAgentKnockRecord {
+        catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
+        agent_id: AgentId::from_uuid(uuid(AGENT_UUID)),
+        display_name: "Scout".to_owned(),
+        status: PrivateRoomAgentKnockStatus::Waiting,
+        knocked_at: UtcMillis::new(KNOCKED_AT).unwrap(),
+        expires_at: UtcMillis::new(KNOCKED_AT + HOUR).unwrap(),
+        decided_at: None,
     }
 }
 

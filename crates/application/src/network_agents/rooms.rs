@@ -8,6 +8,9 @@
 //! 网络 Agent 没有账号、没人为它负责，建房有上限（设计“限额”一节）：每个网络 Agent 同时几个没关的
 //! 房间、每天建几个，全站网络 Agent 建的没关的房间也有上限。它没关的房间里已经有同名的就回到那间，
 //! 不新建：调用超时以后再调一次，不会多出一间。
+//!
+//! 能放行的只有它自己，所以有人敲它建的房间的门时，网关在它等消息时叫醒它，等消息的回答和 `/me`
+//! 都列出在等的敲门（`incoming_knocks`）。不然敲门放一小时没人回答就作废了。
 
 use std::fmt;
 
@@ -22,7 +25,7 @@ use super::{
     NetworkAgentService, dependency, internal, repository,
 };
 use crate::{
-    ports::{PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
+    ports::{NetworkAgentRecord, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock, ArchivePrivateRoom,
         CreatePrivateRoom, InspectAgentAccess, InvitePrivateRoomMember, ListPrivateRoomsForAccount,
@@ -121,6 +124,13 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         room: &'a str,
         agent_id: AgentId,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 敲它建的房间的门、在等它回答的：它当房主、还没关的房间里在等的敲门，先敲的在前。网关等消息
+    /// 时隔一会儿看一次，有新的就叫醒它。不记活动，只是看一眼。
+    fn incoming_knocks<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentIncomingKnocks>>;
 }
 
 /// 网络 Agent 建好的房间，或回到的同名房间。
@@ -161,6 +171,22 @@ impl fmt::Debug for NetworkAgentRoomCode {
 pub struct NetworkAgentRoomCodeView {
     pub room: NetworkAgentRoom,
     pub code: NetworkAgentRoomCode,
+}
+
+/// 敲它建的房间的门、在等它回答的。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetworkAgentIncomingKnocks {
+    /// 它有没关的房间：一间都没有时谁也敲不了它的门，别处有人敲门时网关不必替它来看。
+    pub owns_rooms: bool,
+    /// 先敲的在前。
+    pub knocks: Vec<NetworkAgentIncomingKnock>,
+}
+
+/// 谁敲了它的哪个房间的门。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentIncomingKnock {
+    pub room: NetworkAgentRoom,
+    pub knock: PrivateRoomAgentKnockRecord,
 }
 
 /// 管房间时认出的房间，和以谁的身份管。
@@ -395,6 +421,53 @@ impl NetworkAgentService {
     }
 
     /// 它当房主、还没关的私人房间。合成主体不会被邀请进别人的房间，列出来的本来就都是它的。
+    /// 它当房主、还没关的房间里在等的敲门，先敲的在前。看的这一会儿刚关掉的房间跳过：没有要它
+    /// 回答的敲门了。
+    pub(super) async fn incoming_knocks_of(
+        &self,
+        record: &NetworkAgentRecord,
+    ) -> NetworkAgentResult<NetworkAgentIncomingKnocks> {
+        let rooms = self.open_rooms(record.principal_id).await?;
+        if rooms.is_empty() {
+            return Ok(NetworkAgentIncomingKnocks::default());
+        }
+        let actor = PrivateRoomActor::NetworkAgent(self.actor_of(record, self.clock.now())?);
+        let mut knocks = Vec::new();
+        for snapshot in &rooms {
+            let room = owned_room(snapshot);
+            let waiting = match self
+                .access
+                .waiting_knocks(InspectAgentAccess {
+                    actor: actor.clone(),
+                    catalog_id: room.catalog_id,
+                })
+                .await
+            {
+                Ok(waiting) => waiting,
+                Err(failure)
+                    if matches!(
+                        failure.kind(),
+                        AgentAccessFailureKind::NotFound
+                            | AgentAccessFailureKind::Forbidden
+                            | AgentAccessFailureKind::Conflict
+                    ) =>
+                {
+                    continue;
+                }
+                Err(failure) => return Err(access_failure(failure)),
+            };
+            knocks.extend(waiting.into_iter().map(|knock| NetworkAgentIncomingKnock {
+                room: room.clone(),
+                knock,
+            }));
+        }
+        knocks.sort_by_key(|incoming| incoming.knock.knocked_at);
+        Ok(NetworkAgentIncomingKnocks {
+            owns_rooms: true,
+            knocks,
+        })
+    }
+
     async fn open_rooms(
         &self,
         principal_id: PrincipalId,
@@ -612,6 +685,16 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
         agent_id: AgentId,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         Box::pin(self.remove_agent_internal(token, room, agent_id))
+    }
+
+    fn incoming_knocks<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentIncomingKnocks>> {
+        Box::pin(async move {
+            let record = self.authenticated(token).await?;
+            self.incoming_knocks_of(&record).await
+        })
     }
 }
 

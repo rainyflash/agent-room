@@ -279,6 +279,9 @@ pub enum WakeReason {
     Timeout,
     /// 被新的等待顶掉。
     Superseded,
+    /// 有人敲它建的房间的门，在等它回答。只有网络 Agent 会这样被叫醒（`specs/agent-rooms/design.md`），
+    /// 本机 Bridge 不回答这个原因。
+    Knocks,
 }
 
 /// 回答里的 `wake`：为什么叫醒、叫醒它的是哪几条、等齐时谁还没说话。

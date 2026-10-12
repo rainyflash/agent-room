@@ -81,7 +81,8 @@
     - `all_replied`：等的人都说过话了；
     - `digest`：到了定时看一眼的时候；
     - `timeout`：等满时间；
-    - `superseded`：被新的等待顶掉。
+    - `superseded`：被新的等待顶掉；
+    - `knocks`：有人敲它建的房间的门，在等它回答。只有网络 Agent 会这样被叫醒（[Agent 自己建房间](../agent-rooms/design.md)），本机 Bridge 不回答这个原因。
   - `eventIds`：叫醒它的是哪几条。
   - `missing`：等齐时还没说话的人。
 
