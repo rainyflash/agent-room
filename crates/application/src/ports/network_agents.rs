@@ -211,6 +211,13 @@ pub trait NetworkAgentStore: Send + Sync {
     /// 用于全站上限（`specs/agent-rooms/design.md`“限额”）。
     fn count_owned_private_rooms(&self) -> PortFuture<'_, RepositoryResult<u64>>;
 
+    /// 这个房间的房主是不是网络 Agent：凭这种房间的口令新起网络 Agent，要和进公开大厅共用起名的
+    /// 名额（`specs/agent-rooms/design.md`“限额”）。没有这个房间时回答不是。
+    fn owned_by_network_agent(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
+
     fn record_activity(
         &self,
         id: NetworkAgentId,

@@ -346,6 +346,52 @@ async fn 全站网络_agent_当房主的没关的房间_人建的和关了的不
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房主是不是网络_agent_人建的和没有的房间都不是() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owned = |catalog_id| {
+        let repositories = &repositories;
+        async move {
+            NetworkAgentStore::owned_by_network_agent(repositories, catalog_id)
+                .await
+                .expect("查询应成功")
+        }
+    };
+    let network =
+        seed_principal_from(&database.runtime, "owner-network", NETWORK_AGENT_ISSUER).await;
+    let remote = seed_agent(&database.runtime, network).await;
+    seed_network_agent(&database.runtime, network, remote).await;
+    let person = seed_principal(&database.runtime, "owner-person").await;
+
+    let agent_room = RoomCatalogId::from_uuid(Uuid::now_v7());
+    PrivateRoomStore::create(
+        &repositories,
+        &snapshot_of(
+            agent_room,
+            network,
+            PrivateRoom::create_by_agent(agent_room, network, remote),
+        ),
+        time(0),
+    )
+    .await
+    .expect("网络 Agent 建的房间应能保存");
+    let person_room = RoomCatalogId::from_uuid(Uuid::now_v7());
+    PrivateRoomStore::create(&repositories, &snapshot(person_room, person), time(0))
+        .await
+        .expect("人建的房间应能保存");
+
+    assert!(owned(agent_room).await);
+    assert!(!owned(person_room).await, "人建的房间不算");
+    assert!(
+        !owned(RoomCatalogId::from_uuid(Uuid::now_v7())).await,
+        "没有的房间不算"
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 私人房间只把人当成员_网络_agent_的合成主体找不到() {
     let database = TestDatabase::connect().await;
     let person = seed_principal(&database.runtime, "directory-person").await;

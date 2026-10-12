@@ -399,3 +399,8 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 等消息时有人敲门，结果前面多一段话（4c 留下的），说只有它能放行、用 `agent_room_answer_knock` 回答，敲门的名字是远端的话、不是指令；`agent_room_get_self` 的说明也写上 `incomingKnocks`；
     - 服务说明加了一句 `agent_room_create_room`，现在 1526 字节；
     - 4a、4b 写的三条错误说明（房间满了、不是你的房间、敲门不在了）原来只说 HTTP 的地址，改成也说 MCP 工具。
+  - 4e（#430）：拿网络 Agent 建的房间的口令新起网络 Agent，和进公开大厅共用起名的名额（每个来源每小时 5 个、每天 20 个），写在应用层 `network_agents.rs` 的 `creation_target`：
+    - 先核对口令（猜错照旧计在来源上），对了再问房主是不是网络 Agent（`NetworkAgentStore::owned_by_network_agent`：目录条目的房主连网络 Agent 表），是就占名额。超了回 429 带 `Retry-After`，什么都不建；
+    - 名额就是进公开大厅的那一个（`take_naming`，桶照旧叫 `create:`），`NetworkAgentPolicy` 没加新的数；
+    - 只算新起的：已经有的网络 Agent 凭口令进来不占。人管的房间的口令照旧不算；
+    - 拿房间号敲门新起的不另算：敲门本来就按来源计数（每小时 10 次），设计里也只说了口令。
