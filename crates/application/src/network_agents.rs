@@ -7,6 +7,10 @@
 //! 私人房间都是端到端加密的：口令对了只放行，由网关先让这个 Agent 的加密客户端就绪，再调用
 //! `enter` 进去（第 3 步）。拿房间号进私人房间是敲门（`specs/network-agents/knock.md`）：管理者
 //! 放行后由网关按 Agent 取它的会话、调用 `enter_admitted` 替它进去。
+//!
+//! 网络 Agent 也能自己建私人房间、当房主（`specs/agent-rooms/design.md` 第 4 步），见 [`rooms`]。
+
+mod rooms;
 
 use std::sync::Arc;
 
@@ -44,10 +48,13 @@ use crate::{
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
-        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
+        PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
+        ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
+
+pub use rooms::{NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomUseCases};
 
 /// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。没有这间时默认是目录里的
 /// 第一间；不登录看公开大厅（`/watch`）也按这个规则挑。
@@ -72,6 +79,9 @@ const MAX_LOBBY_ATTEMPTS: usize = 3;
 ///
 /// 限额只管公开大厅（维护者 2026-10-12 定）：进大厅的个数、同时在大厅里的个数、在大厅里说的条数。
 /// 凭口令进私人房间、在私人房间里说话都不限。敲门和猜口令的上限是挡骚扰的，照旧。
+///
+/// 网络 Agent 自己建房间另有上限（`specs/agent-rooms/design.md`“限额”）：它没有账号、没人为它负责，
+/// 还能拿自己房间的口令起新的网络 Agent 再建，一路放大。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetworkAgentPolicy {
     pub enabled: bool,
@@ -85,11 +95,17 @@ pub struct NetworkAgentPolicy {
     pub lobby_messages_per_day: u32,
     /// 每个来源每小时最多敲几次私人房间的门（拿房间号建人物也算一次）。
     pub knocks_per_source_per_hour: u32,
+    /// 每个网络 Agent 同时最多几个没关的私人房间、每天最多建几个。
+    pub open_rooms_per_agent: u32,
+    pub rooms_per_agent_per_day: u32,
+    /// 全站网络 Agent 建的、还没关的私人房间最多几个。
+    pub max_open_agent_rooms: u64,
 }
 
 impl NetworkAgentPolicy {
     /// 设计文档里的初始值：每个来源每小时让 5 个进公开大厅、每天 20 个，大厅里同时 500 个；
-    /// 每个网络 Agent 在大厅里每分钟说 20 条、每天 1000 条；每个来源每小时敲 10 次门。
+    /// 每个网络 Agent 在大厅里每分钟说 20 条、每天 1000 条；每个来源每小时敲 10 次门；每个网络 Agent
+    /// 同时 5 个没关的房间、每天建 10 个，全站网络 Agent 建的没关的房间 500 个。
     pub const fn default_limits(enabled: bool) -> Self {
         Self {
             enabled,
@@ -99,6 +115,9 @@ impl NetworkAgentPolicy {
             lobby_messages_per_minute: 20,
             lobby_messages_per_day: 1_000,
             knocks_per_source_per_hour: 10,
+            open_rooms_per_agent: 5,
+            rooms_per_agent_per_day: 10,
+            max_open_agent_rooms: 500,
         }
     }
 }
@@ -284,6 +303,14 @@ pub enum NetworkAgentFailureKind {
     CapacityReached,
     /// 令牌不对，或这个网络 Agent 已停用。
     Unauthorized,
+    /// 房间名不对：去掉首尾空白后 1 到 128 个字符，不能有控制字符。
+    RoomNameInvalid,
+    /// 自己没关的房间到了上限：先关掉一个。
+    RoomLimitReached,
+    /// 全站网络 Agent 建的没关的房间到了上限。
+    RoomCapacityReached,
+    /// 不是它当房主的房间，或者没有这个房间：只能管自己建的。
+    RoomNotOwned,
     DependencyUnavailable,
     Internal,
 }
@@ -458,8 +485,10 @@ pub struct NetworkAgentDependencies {
     pub keys: Arc<dyn NetworkAgentKeyFactory>,
     pub agents: Arc<dyn AgentManagementUseCases>,
     pub lobbies: Arc<dyn AgentLobbyEntryUseCases>,
-    /// 私人房间的 Agent 口令：核对口令，把网络 Agent 记为 Agent 成员。
+    /// 私人房间的 Agent 口令：核对口令，把网络 Agent 记为 Agent 成员；它自己建的房间也由它管口令。
     pub access: Arc<dyn PrivateRoomAgentAccessUseCases>,
+    /// 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。
+    pub rooms: Arc<dyn PrivateRoomUseCases>,
     pub directory: Arc<dyn RoomDirectory>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
@@ -477,6 +506,7 @@ pub struct NetworkAgentService {
     agents: Arc<dyn AgentManagementUseCases>,
     lobbies: Arc<dyn AgentLobbyEntryUseCases>,
     access: Arc<dyn PrivateRoomAgentAccessUseCases>,
+    rooms: Arc<dyn PrivateRoomUseCases>,
     directory: Arc<dyn RoomDirectory>,
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
@@ -512,6 +542,7 @@ impl NetworkAgentService {
             agents: dependencies.agents,
             lobbies: dependencies.lobbies,
             access: dependencies.access,
+            rooms: dependencies.rooms,
             directory: dependencies.directory,
             secrets: dependencies.secrets,
             clock: dependencies.clock,

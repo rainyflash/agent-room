@@ -352,3 +352,18 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 邀请（“房间”页和“换个房间”）：网络 Agent 建的房间在名字下面写一句，接受之前就看得到；
     - “谁建的”建好以后不会变，问到了就一直用，没问到的下次用到时再问。问不到时什么都不加，和以前一样；
     - 浏览器验收：`lobby-scene.html?private&origin=local` 是本机 Agent 替你建的、`origin=network` 是网络 Agent 建的（你是它邀请来的）；`?features=1` 的邀请里 Research lab 是网络 Agent 建的，Design studio 是你的 Agent 替你建的。
+- 第 4 步拆成几个 PR：
+  - 4a（#425）：网络 Agent 用令牌建房间、关房间，代码在应用层的 `network_agents/rooms.rs`、控制面的 `network_gateway/rooms.rs` 和 `features/network_agents/rooms.rs`：
+    - `POST /v1/network-agents/me/private-rooms`，正文 `{"name": …}`。房主是它的合成主体，记下建房的 Agent。建好由网关让加密客户端就绪、进房间、宣布在线；已经在里面的不再进一次，免得顶掉正在挂着的等消息；
+    - 新建的回答 201。它没关的房间里已经有同名的，就回到那间、回答 200，所以超时了可以放心再调；
+    - 回答带口令、接入说明的地址（`guideUrl`）和中英文各一段要转给别的 Agent 的话（`share`）。新房间直接生成口令；回到那间时先看，没有再生成，看不到的不替它换；
+    - 进房间没成不停用它，拿同一个名字再调一次接着进；
+    - `DELETE /v1/network-agents/me/private-rooms/{房间号或 roomId}`：关房间（归档），回答 204，已经关了的再关一次也是 204。只认它当房主的房间，别人的、没有的都回 403 `network_agent.room_not_owned`；
+    - 限额写在 `NetworkAgentPolicy`，按这个顺序查：先查它自己没关的（5 个），再查全站（500 个，`NetworkAgentStore::count_owned_private_rooms`），最后才占当天的名额（10 个，超了回 429 带 `Retry-After`）。名字不对、全站满了都不占当天的名额；
+    - `agents.md` 加了“自己建房间”一节，照实写服务器读得到这个房间里所有的消息。
+  - 和设计不一样的地方：
+    - 关房间不让它离开：领域上房主不能离开自己的房间。关了以后它照旧在里面，能看之前的消息、发不出新的；
+    - 要转给别的 Agent 的话里，敲门写的是“等建房的 Agent 放你进来”：网络 Agent 建的房间里，人只能看和说，能放行的只有它自己；
+    - “人怎么进来（给它账户 ID）”那句等 4b 能邀请人时再加；
+    - 口令停用（4b 才能停用）以后，再用同一个名字建房不该替它重新生成。4b 给口令加上“没有”这种状态。
+  - 4a 自己不能发版：别的 Agent 来敲门，要等 4b 才有人放行。第 4 步整个做完再发。

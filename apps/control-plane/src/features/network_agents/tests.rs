@@ -8,9 +8,9 @@ use agent_room_application::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
-        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
+        NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomRequest, NetworkAgentSession,
+        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
 };
@@ -29,11 +29,11 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{NetworkAgentHttpState, render_guide, router, watch_page};
+use super::{NetworkAgentHttpState, guide_url, render_guide, router, watch_page};
 use crate::network_gateway::{
     NetworkAgentEntry, NetworkAgentFoundMessages, NetworkAgentMessageDraft, NetworkAgentMessages,
     NetworkAgentMessaging, NetworkAgentRoomMessages, NetworkAgentRoomMessagesRequest,
-    NetworkAgentSentMessage, NetworkAgentWait, NetworkGatewayFailure,
+    NetworkAgentRooms, NetworkAgentSentMessage, NetworkAgentWait, NetworkGatewayFailure,
 };
 use agent_room_application::network_agents::NetworkAgentPolicy;
 use agent_room_bridge_ipc::{
@@ -271,6 +271,9 @@ pub(super) struct FakeMessaging {
     pub(super) gaps: Mutex<Vec<IpcTimelineGap>>,
     /// 拿房间号敲门时回答“没让进”。
     pub(super) declined: Mutex<bool>,
+    /// 自己建房、关房的请求：令牌和名字（关房时是房间）。
+    pub(super) created_rooms: Mutex<Vec<(String, String)>>,
+    pub(super) closed_rooms: Mutex<Vec<(String, String)>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -450,6 +453,49 @@ impl NetworkAgentMessaging for FakeMessaging {
     }
 }
 
+impl NetworkAgentRooms for FakeMessaging {
+    /// 名字是“已有的”时回到没关的同名房间，“看不到口令”时口令看不到。
+    fn create_room<'a>(
+        &'a self,
+        token: &'a str,
+        name: &'a str,
+    ) -> PortFuture<'a, Result<NetworkAgentOwnedRoom, NetworkGatewayFailure>> {
+        self.created_rooms
+            .lock()
+            .unwrap()
+            .push((token.to_owned(), name.to_owned()));
+        let owned = NetworkAgentOwnedRoom {
+            room: NetworkAgentRoom {
+                catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
+                matrix_room_id: MatrixRoomReference::new("!owned:matrix.test".to_owned()).unwrap(),
+                name: name.to_owned(),
+            },
+            created: name != "已有的",
+            joined: true,
+            code: if name == "看不到口令" {
+                NetworkAgentRoomCode::Hidden
+            } else {
+                NetworkAgentRoomCode::Visible("K7P3-Q9XW-2DMA".to_owned())
+            },
+        };
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(owned), Err) })
+    }
+
+    fn close_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
+        self.closed_rooms
+            .lock()
+            .unwrap()
+            .push((token.to_owned(), room.to_owned()));
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(()), Err) })
+    }
+}
+
 struct FixedClock(i64);
 
 impl Clock for FixedClock {
@@ -514,6 +560,7 @@ pub(super) fn app_with(
     *messaging.agents.lock().unwrap() = Some(agents.clone());
     router(NetworkAgentHttpState {
         agents,
+        rooms: messaging.clone(),
         messaging,
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(now)),
@@ -522,6 +569,9 @@ pub(super) fn app_with(
             &watch_page(&url::Url::parse("https://app.agent-room.example").unwrap()),
             &NetworkAgentPolicy::default_limits(true),
         ),
+        guide_url: guide_url(Some(
+            &url::Url::parse("https://api.agent-room.example").unwrap(),
+        )),
     })
     .layer(middleware::from_fn(crate::correlation::attach))
 }
@@ -1023,9 +1073,11 @@ async fn 浏览器预检允许任何来源_但不允许携带凭据() {
 pub(crate) fn disabled_router() -> axum::Router {
     let key = NetworkAgentSealKey::from_bytes([7; 32]);
     let disabled = NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled);
+    let messaging = FakeMessaging::failing(NetworkGatewayFailure::Agent(disabled.clone()));
     router(NetworkAgentHttpState {
-        agents: FakeAgents::failing(disabled.clone()),
-        messaging: FakeMessaging::failing(NetworkGatewayFailure::Agent(disabled)),
+        agents: FakeAgents::failing(disabled),
+        rooms: messaging.clone(),
+        messaging,
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(1_758_600_000_000)),
         guide: render_guide(
@@ -1033,6 +1085,7 @@ pub(crate) fn disabled_router() -> axum::Router {
             &watch_page(&url::Url::parse("https://app.agent-room.example").unwrap()),
             &NetworkAgentPolicy::default_limits(false),
         ),
+        guide_url: guide_url(None),
     })
 }
 
@@ -1680,4 +1733,5 @@ fn 错误说明都是英文() {
     }
 }
 
+mod rooms;
 mod viewing;

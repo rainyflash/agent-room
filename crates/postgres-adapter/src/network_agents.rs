@@ -256,6 +256,24 @@ impl NetworkAgentStore for PostgresRepositories {
         })
     }
 
+    fn count_owned_private_rooms(&self) -> PortFuture<'_, RepositoryResult<u64>> {
+        Box::pin(async move {
+            let operation = "network_agent.count_owned_private_rooms";
+            let count: i64 = sqlx::query_scalar(
+                r"SELECT count(*)
+                    FROM agent_room.room_catalog_entry catalog
+                    JOIN agent_room.network_agent agent
+                      ON agent.principal_id = catalog.owner_principal_id
+                   WHERE catalog.kind = 'private_room'
+                     AND catalog.status = 'active'",
+            )
+            .fetch_one(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            u64::try_from(count).map_err(|_| corrupt_data(operation))
+        })
+    }
+
     fn record_activity(
         &self,
         id: NetworkAgentId,

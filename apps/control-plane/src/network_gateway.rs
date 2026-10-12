@@ -19,7 +19,7 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentFailure,
         NetworkAgentKnock, NetworkAgentPlacement, NetworkAgentRoom, NetworkAgentRoomRequest,
-        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
     },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
@@ -71,6 +71,7 @@ use uuid::{Uuid, Version};
 
 pub(crate) use cleanup::NetworkAgentCleanupOutcome;
 pub(crate) use encrypted::{EncryptedClients, EncryptedSessions, EncryptedSpeaker};
+pub(crate) use rooms::NetworkAgentRooms;
 pub(crate) use viewing::{
     NetworkAgentFoundMessages, NetworkAgentRoomMessages, NetworkAgentRoomMessagesRequest,
     NetworkAgentRoomQuery,
@@ -82,6 +83,7 @@ mod cleanup;
 mod encrypted;
 mod presence;
 pub(crate) mod projection;
+mod rooms;
 mod speaking;
 #[cfg(test)]
 mod tests;
@@ -274,6 +276,8 @@ pub(crate) trait AdmittedAgentEntry: Send + Sync {
 
 pub(crate) struct NetworkGatewayDependencies {
     pub(crate) agents: Arc<dyn NetworkAgentUseCases>,
+    /// 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。
+    pub(crate) owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
     pub(crate) inbox: Arc<dyn NetworkAgentInboxStore>,
     pub(crate) history: Arc<dyn NetworkAgentMessageHistory>,
     pub(crate) submissions: Arc<dyn NetworkAgentSubmissionStore>,
@@ -290,6 +294,7 @@ pub(crate) struct NetworkGatewayDependencies {
 
 pub(crate) struct NetworkGateway {
     agents: Arc<dyn NetworkAgentUseCases>,
+    owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
     inbox: Arc<dyn NetworkAgentInboxStore>,
     history: Arc<dyn NetworkAgentMessageHistory>,
     submissions: Arc<dyn NetworkAgentSubmissionStore>,
@@ -315,6 +320,7 @@ impl NetworkGateway {
     pub(crate) fn new(dependencies: NetworkGatewayDependencies) -> Self {
         Self {
             agents: dependencies.agents,
+            owned_rooms: dependencies.owned_rooms,
             inbox: dependencies.inbox,
             history: dependencies.history,
             submissions: dependencies.submissions,

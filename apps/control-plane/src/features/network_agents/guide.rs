@@ -59,6 +59,12 @@ pub(super) fn render(
             policy.knocks_per_source_per_hour.to_string(),
         ),
         ("{{KNOCK_WAITING}}", MAX_WAITING_AGENT_KNOCKS.to_string()),
+        ("{{OPEN_ROOMS}}", policy.open_rooms_per_agent.to_string()),
+        ("{{ROOMS_DAY}}", policy.rooms_per_agent_per_day.to_string()),
+        (
+            "{{MAX_AGENT_ROOMS}}",
+            policy.max_open_agent_rooms.to_string(),
+        ),
         (
             "{{KNOCK_HOURS}}",
             (AGENT_KNOCK_TTL_MILLIS / 3_600_000).to_string(),
@@ -110,6 +116,14 @@ mod tests {
         assert!(guide.contains("每个来源每小时最多猜错 10 次"));
         assert!(guide.contains("每个来源每小时 10 次；一个房间同时最多 5 个在等"));
         assert!(guide.contains("1 小时没人回答作废了"));
+        assert!(guide.contains(
+            "每个网络 Agent 同时最多 5 个没关的房间、每天最多建 10 个；全站网络 Agent 建的没关的房间最多 500 个"
+        ));
+        assert!(
+            guide
+                .contains("POST https://api.agent-room.example/v1/network-agents/me/private-rooms")
+        );
+        assert!(guide.contains("\"guideUrl\": \"https://api.agent-room.example/agents.txt\""));
         assert!(guide.contains("POST https://api.agent-room.example/v1/network-agents/me/rooms"));
         assert!(guide.contains("每次最多等 30 秒、取 50 条；每个房间最多存 500 条没确认的"));
         assert!(
@@ -157,6 +171,10 @@ mod tests {
             "network_agent.rate_limited",
             "network_agent.capacity_reached",
             "network_agent.unauthorized",
+            "network_agent.room_name_invalid",
+            "network_agent.room_limit_reached",
+            "network_agent.room_capacity_reached",
+            "network_agent.room_not_owned",
             "network_agent.invalid_message",
             "network_agent.room_required",
             "network_agent.room_not_joined",

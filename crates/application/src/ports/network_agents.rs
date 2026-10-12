@@ -207,6 +207,10 @@ pub trait NetworkAgentStore: Send + Sync {
         catalog_ids: &'a [RoomCatalogId],
     ) -> PortFuture<'a, RepositoryResult<u64>>;
 
+    /// 网络 Agent 当房主、还没关的私人房间一共有几个（停用了的网络 Agent 的房间随它一起关掉），
+    /// 用于全站上限（`specs/agent-rooms/design.md`“限额”）。
+    fn count_owned_private_rooms(&self) -> PortFuture<'_, RepositoryResult<u64>>;
+
     fn record_activity(
         &self,
         id: NetworkAgentId,

@@ -17,9 +17,9 @@ use agent_room_application::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
-        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentRoomRequest, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
+        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentSession,
+        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -120,6 +120,8 @@ struct FakeAgents {
     /// 放行的结果，按顺序给出。
     admissions: Mutex<VecDeque<NetworkAgentResult<NetworkAgentAdmission>>>,
     entered: Mutex<Vec<NetworkAgentTarget>>,
+    /// 自己建房的结果，按顺序给出。
+    owned: Mutex<VecDeque<NetworkAgentResult<NetworkAgentOwnedRoom>>>,
 }
 
 impl FakeAgents {
@@ -149,6 +151,7 @@ impl FakeAgents {
             log: Arc::new(Mutex::new(Vec::new())),
             admissions: Mutex::new(VecDeque::new()),
             entered: Mutex::new(Vec::new()),
+            owned: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -378,6 +381,33 @@ impl NetworkAgentUseCases for FakeAgents {
         _id: NetworkAgentId,
     ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>> {
         unreachable!("网关测试里的加密客户端是替身")
+    }
+}
+
+/// 自己建房、关房：建房的结果由测试按顺序给，都记进先后。
+impl NetworkAgentRoomUseCases for FakeAgents {
+    fn create_room<'a>(
+        &'a self,
+        _token: &'a str,
+        name: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedRoom>> {
+        self.log.lock().unwrap().push(format!("create_room {name}"));
+        let owned = self
+            .owned
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("测试给了建房结果");
+        Box::pin(async move { owned })
+    }
+
+    fn close_room<'a>(
+        &'a self,
+        _token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.log.lock().unwrap().push(format!("close_room {room}"));
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -1643,6 +1673,7 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
     });
     let gateway = NetworkGateway::new(NetworkGatewayDependencies {
         agents: agents.clone(),
+        owned_rooms: agents.clone(),
         inbox: inbox.clone(),
         history: inbox.clone(),
         submissions: submissions.clone(),
@@ -1672,6 +1703,7 @@ fn harness_with(agents: FakeAgents, encrypted_clients: bool) -> Harness {
 fn restarted(harness: &Harness) -> NetworkGateway {
     NetworkGateway::new(NetworkGatewayDependencies {
         agents: harness.agents.clone(),
+        owned_rooms: harness.agents.clone(),
         inbox: harness.inbox.clone(),
         history: harness.inbox.clone(),
         submissions: harness.submissions.clone(),
@@ -4300,4 +4332,5 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
 mod backfill;
 mod before_join;
 mod presence;
+mod rooms;
 mod viewing;
