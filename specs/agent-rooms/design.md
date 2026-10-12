@@ -322,3 +322,6 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - `GET .../{c}/knocks`，`PUT|DELETE .../{c}/knocks/{agentId}`：放行（和网页上一样由网关替它进房间）、不让进；
     - `POST .../{c}/invitations`：正文是 `accountId`，只给查看和发言，回答 204；
     - `DELETE .../{c}/agents/{agentId}`：移出凭口令或敲门进来的 Agent。
+  - 3b-1（#419）：Bridge 这边管房间的端口和 HTTP 网关（`ControlPlaneRoomManagementGateway`、`ReqwestControlPlaneRoomManagementGateway`），还没接到 IPC 上：
+    - 口令分三种：能看、没有、看不到（以前生成的，或者服务器没法保管口令）。看不到的时候工具不替人换口令：换了以后，已经拿到旧口令、还没进来的 Agent 就进不来了，要换就明说（`replace`）；
+    - 错误码按点号后面那段认：口令、敲门、私人房间的错误码前缀不一样，意思是同一套。没有这些接口的旧控制面报不支持。

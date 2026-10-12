@@ -54,6 +54,7 @@ mod host_agents;
 mod join_codes;
 mod lobbies;
 mod message_content;
+mod room_management;
 mod rooms;
 mod targeted_handoffs;
 
@@ -64,6 +65,7 @@ pub use handoffs::ReqwestControlPlaneHandoffGateway;
 pub use join_codes::ReqwestControlPlaneJoinCodeGateway;
 pub use lobbies::ReqwestControlPlaneLobbyEntryGateway;
 pub use message_content::ReqwestControlPlaneMessageContentGateway;
+pub use room_management::ReqwestControlPlaneRoomManagementGateway;
 pub use rooms::ReqwestControlPlaneRoomDirectoryGateway;
 pub use targeted_handoffs::ReqwestTargetedHandoffQueueGateway;
 
