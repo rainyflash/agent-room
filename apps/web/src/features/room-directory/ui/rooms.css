@@ -178,6 +178,23 @@
   white-space: nowrap;
 }
 
+/* 网络 Agent 建的房间：接受邀请之前就说服务器能读到。这句要读全，不截断。 */
+.room-row__text > .room-row__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  overflow: visible;
+  color: var(--ar-warning);
+  white-space: normal;
+}
+
+.room-row__notice > svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+
 .room-row__actions {
   display: flex;
   flex: 0 0 auto;

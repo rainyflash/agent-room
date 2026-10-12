@@ -6,6 +6,7 @@ import {
   privateRoomAgentAccessSchema,
   privateRoomAgentKnocksSchema,
   privateRoomListSchema,
+  privateRoomOriginSchema,
   privateRoomSchema,
   type CreatePrivateRoomInput,
   type JoinCode,
@@ -16,6 +17,7 @@ import {
   type PrivateRoomFailure,
   type PrivateRoomGateway,
   type PrivateRoomInvitationInput,
+  type PrivateRoomOrigin,
   type PrivateRoomPermissions,
   type TransferPrivateRoomOwnershipInput,
 } from '@/features/private-rooms/domain/private-room';
@@ -63,6 +65,14 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
 
   inspect(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
     return this.#roomRequest(`/private-rooms/${encodeURIComponent(catalogId)}`, { method: 'GET' });
+  }
+
+  origin(catalogId: string): Promise<Result<PrivateRoomOrigin, PrivateRoomFailure>> {
+    return this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/origin`,
+      { method: 'GET' },
+      privateRoomOriginSchema,
+    );
   }
 
   create(

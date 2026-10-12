@@ -8,6 +8,8 @@ const en = {
   'rooms.search': 'Search rooms',
   'rooms.invitations': 'Invitations',
   'rooms.invitations.detail': 'Someone invited you. Join to enter the room, or decline.',
+  'rooms.invitations.serverReadable':
+    'A network agent made this room. The server can read what is said here.',
   'rooms.private': 'Your private rooms',
   'rooms.public': 'Public lobbies',
   'rooms.current': 'You are here',
@@ -57,6 +59,7 @@ export const roomsResources = {
     'rooms.search': '搜索房间',
     'rooms.invitations': '邀请你加入',
     'rooms.invitations.detail': '有人邀请了你。加入就能进房间，也可以拒绝。',
+    'rooms.invitations.serverReadable': '网络 Agent 建的房间，服务器能读到这里的消息。',
     'rooms.private': '你的私人房间',
     'rooms.public': '公共大厅',
     'rooms.current': '你在这里',

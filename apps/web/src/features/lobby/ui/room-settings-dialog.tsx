@@ -8,7 +8,10 @@ import { AutomationSettings } from '@/features/automation/ui/automation-settings
 import { useModerationCapabilities } from '@/features/moderation/data/moderation-queries';
 import { ModerationSettings } from '@/features/moderation/ui/moderation-settings';
 import { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
-import { usePrivateRoomList } from '@/features/private-rooms/data/private-room-queries';
+import {
+  usePrivateRoomList,
+  usePrivateRoomOrigin,
+} from '@/features/private-rooms/data/private-room-queries';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomMembers } from '@/features/private-rooms/ui/private-room-members';
@@ -54,6 +57,9 @@ export function RoomSettingsDialog({
   const list = usePrivateRoomList(privateRooms, principal.principalId);
   const capabilities = useModerationCapabilities(moderation, catalogId);
   const room = list.data?.ok === true ? joinedRoom(list.data.value, catalogId, principal) : null;
+  const origin = usePrivateRoomOrigin(privateRooms, catalogId, room !== null);
+  const serverReadable =
+    room !== null && origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent;
   const canManageRoom =
     room !== null &&
     (room.ownerPrincipalId === principal.principalId ||
@@ -100,6 +106,15 @@ export function RoomSettingsDialog({
               tone="warning"
             >
               {t('roomSettings.privateFailed')}
+            </Banner>
+          ) : null}
+          {serverReadable ? (
+            <Banner
+              role={null}
+              title={t('privateRooms.origin.serverReadable.title')}
+              tone="warning"
+            >
+              {t('privateRooms.origin.serverReadable.detail')}
             </Banner>
           ) : null}
           {sections.length > 1 ? (

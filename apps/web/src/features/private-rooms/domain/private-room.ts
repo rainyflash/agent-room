@@ -95,7 +95,23 @@ export const joinCodeSchema = z
   })
   .strict();
 
+/**
+ * 房间是谁建的（`specs/agent-rooms/design.md`“网页”）：建房的 Agent（人建的为空，查不到名字时名字为空），
+ * 以及房主是不是网络 Agent。房主是网络 Agent 时服务器代它收发，读得到这个房间里所有的消息，
+ * 人接受邀请之前就要看到。
+ */
+export const privateRoomOriginSchema = z
+  .object({
+    createdByAgent: z
+      .object({ agentId: z.uuid(), displayName: z.string().min(1).nullable() })
+      .strict()
+      .nullable(),
+    ownerIsNetworkAgent: z.boolean(),
+  })
+  .strict();
+
 export type PrivateRoom = z.infer<typeof privateRoomSchema>;
+export type PrivateRoomOrigin = z.infer<typeof privateRoomOriginSchema>;
 export type PrivateRoomAgentAccess = z.infer<typeof privateRoomAgentAccessSchema>;
 export type PrivateRoomAgentMember = z.infer<typeof agentMemberSchema>;
 export type PrivateRoomAgentKnock = z.infer<typeof agentKnockSchema>;
@@ -159,6 +175,8 @@ export type PrivateRoomGateway = {
   ): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   leave(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   list(): Promise<Result<readonly PrivateRoom[], PrivateRoomFailure>>;
+  /** Who made the room. Invited and joined members can ask, so an invitation can warn before it is accepted. */
+  origin(catalogId: string): Promise<Result<PrivateRoomOrigin, PrivateRoomFailure>>;
   remove(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   /** Removes an agent that came in with the code or was let in; it needs a newer code or a new knock to come back. */
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>>;

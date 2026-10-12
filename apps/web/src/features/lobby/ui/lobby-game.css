@@ -105,6 +105,10 @@
   font-weight: 600;
   letter-spacing: 0;
 }
+/* 网络 Agent 建的私人房间：“服务器能读到”用提醒色，和别的私人房间分得出来。 */
+.lobby-game .workspace-header__identity > .workspace-header__notice {
+  color: var(--ar-warning);
+}
 .lobby-game .workspace-header__identity h1 {
   font-family: var(--font-display);
   font-size: 28px;

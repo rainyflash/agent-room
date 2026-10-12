@@ -1,6 +1,6 @@
 import { Banner, Button, Details, Dialog, Spinner } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Globe2, LockKeyhole, MailOpen, Plus, Search } from 'lucide-react';
+import { ArrowRight, Globe2, LockKeyhole, MailOpen, Plus, Search, ShieldAlert } from 'lucide-react';
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -65,6 +65,7 @@ export function RoomSwitcherDialog({
       currentCatalogId={currentCatalogId}
       failure={failure}
       invitations={mine.invitations}
+      serverReadable={mine.serverReadable}
       joined={mine.joined}
       onClose={onClose}
       onCreate={onCreate}
@@ -93,6 +94,8 @@ export type RoomSwitcherViewProps = {
   readonly currentCatalogId?: string | undefined;
   readonly principalId: string | undefined;
   readonly invitations: readonly PrivateRoom[];
+  /** 邀请里网络 Agent 建的房间（房间 ID）：服务器读得到，接受之前就说。 */
+  readonly serverReadable: ReadonlySet<string>;
   readonly joined: readonly PrivateRoom[];
   readonly privateState: RoomListState;
   readonly onRetryPrivate: () => void;
@@ -116,6 +119,7 @@ export function RoomSwitcherView({
   currentCatalogId,
   principalId,
   invitations,
+  serverReadable,
   joined,
   privateState,
   onRetryPrivate,
@@ -182,7 +186,11 @@ export function RoomSwitcherView({
               <span aria-hidden="true" className="room-row__icon">
                 <MailOpen />
               </span>
-              <RoomText description={room.description} name={room.name} />
+              <RoomText
+                description={room.description}
+                name={room.name}
+                serverReadable={serverReadable.has(room.catalogId)}
+              />
               <span className="room-row__actions">
                 <Button
                   disabled={busy}
@@ -295,11 +303,26 @@ function RoomSection({
   );
 }
 
-function RoomText({ name, description }: { readonly name: string; readonly description: string }) {
+function RoomText({
+  name,
+  description,
+  serverReadable = false,
+}: {
+  readonly name: string;
+  readonly description: string;
+  readonly serverReadable?: boolean;
+}) {
+  const { t } = useTranslation();
   return (
     <span className="room-row__text">
       <strong>{name}</strong>
       {description === '' ? null : <small>{description}</small>}
+      {serverReadable ? (
+        <small className="room-row__notice">
+          <ShieldAlert aria-hidden="true" />
+          {t('rooms.invitations.serverReadable')}
+        </small>
+      ) : null}
     </span>
   );
 }

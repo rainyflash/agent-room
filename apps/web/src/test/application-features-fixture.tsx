@@ -18,7 +18,11 @@ import { BrowserMessageSubmissionJournal } from '@/features/messages/adapters/br
 import { BrowserContentVerifier } from '@/features/messages/adapters/browser-content-verifier';
 import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { encryptContent } from '@/features/messages/adapters/browser-content-cipher';
-import type { PrivateRoom, PrivateRoomGateway } from '@/features/private-rooms/domain/private-room';
+import type {
+  PrivateRoom,
+  PrivateRoomGateway,
+  PrivateRoomOrigin,
+} from '@/features/private-rooms/domain/private-room';
 import type {
   HumanMessagePreviewEvent,
   MessageContentUploadRequest,
@@ -82,6 +86,23 @@ const seededRooms = [
   invitedRoom('01990d9e-8400-7000-8000-000000000404', 'Budget review'),
 ];
 const rooms = new Map(seededRooms.map((room) => [room.catalogId, room]));
+/** 房间是谁建的：Research lab 是网络 Agent 建的（服务器读得到），Design studio 是你的 Agent 替你建的。 */
+const origins = new Map<string, PrivateRoomOrigin>([
+  [
+    '01990d9e-8400-7000-8000-000000000403',
+    {
+      createdByAgent: { agentId: '01990d9e-8400-7000-8000-000000000611', displayName: 'Visitor' },
+      ownerIsNetworkAgent: true,
+    },
+  ],
+  [
+    firstCatalog,
+    {
+      createdByAgent: { agentId: '01990d9e-8400-7000-8000-000000000612', displayName: 'Scout' },
+      ownerIsNetworkAgent: false,
+    },
+  ],
+]);
 const uploads = new Map<string, MessageContentUploadRequest>();
 const transactions = new Map<string, string>();
 const listeners = new Set<() => void>();
@@ -148,6 +169,12 @@ function featureServices(base: AppServices): AppServices {
       );
     },
     list: () => Promise.resolve(ok([...rooms.values()])),
+    origin: (id) =>
+      Promise.resolve(
+        rooms.has(id)
+          ? ok(origins.get(id) ?? { createdByAgent: null, ownerIsNetworkAgent: false })
+          : err({ code: 'fixture.missing', retryable: false }),
+      ),
     accept: (id) => answerInvitation(id, 'joined'),
     decline: (id) => answerInvitation(id, 'declined'),
     inspect: (id) => {

@@ -47,6 +47,9 @@ export const roomWorkspaceResources = {
     'roomWorkspace.publicNotice':
       'This is a public lobby. People who aren’t signed in can read what’s said here.',
     'roomWorkspace.privateRoom': 'Private room',
+    'roomWorkspace.privateRoomServerReadable': 'Private room · The server can read it',
+    'roomWorkspace.serverReadableNotice':
+      'A network agent made this room. The server sends and receives for it, so the server can read everything said here.',
     'roomWorkspace.thisRoom': 'This room',
     'roomWorkspace.direct': 'Direct messages',
     'roomWorkspace.noDirect': 'Choose an agent to start a private conversation.',
@@ -112,6 +115,9 @@ export const roomWorkspaceResources = {
     'roomWorkspace.publicLobbyVisible': '公共大厅 · 谁都能看到',
     'roomWorkspace.publicNotice': '这是公共大厅，不登录的人也能看到这里说的话。',
     'roomWorkspace.privateRoom': '私人房间',
+    'roomWorkspace.privateRoomServerReadable': '私人房间 · 服务器能读到',
+    'roomWorkspace.serverReadableNotice':
+      '这个房间由网络 Agent 建。服务器代它收发，所以服务器能读到这里所有的消息。',
     'roomWorkspace.thisRoom': '这个房间',
     'roomWorkspace.direct': '私聊',
     'roomWorkspace.noDirect': '选择一位 Agent，开始一段私聊。',

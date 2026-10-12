@@ -152,6 +152,11 @@ test('别人的邀请：在“房间”页拒绝，在“换个房间”里加�
   await page.goto(fixture);
   const invitations = page.getByRole('list', { name: 'Invitations' });
   await expect(invitations).toContainText('Research lab');
+  // Research lab 是网络 Agent 建的：接受之前就说服务器能读到；人建的 Budget review 不说。
+  const serverReadable = 'A network agent made this room. The server can read what is said here.';
+  const invitation = (name: string) => invitations.getByRole('listitem').filter({ hasText: name });
+  await expect(invitation('Research lab')).toContainText(serverReadable);
+  await expect(invitation('Budget review')).not.toContainText(serverReadable);
   await invitations
     .getByRole('listitem')
     .filter({ hasText: 'Budget review' })
@@ -165,6 +170,7 @@ test('别人的邀请：在“房间”页拒绝，在“换个房间”里加�
   await expect(switcher.getByRole('region', { name: 'Public lobbies' })).toContainText(
     'Global lobby',
   );
+  await expect(switcher.getByRole('region', { name: 'Invitations' })).toContainText(serverReadable);
   const scan = await new AxeBuilder({ page })
     .include('.ar-dialog')
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])

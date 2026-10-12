@@ -122,6 +122,10 @@ function gateway(
     access = { ...access, agents: [...access.agents, agent] };
     return Promise.resolve(ok(agent));
   });
+  // 默认是人建的房间；要看 Agent 建的，改它的回答。
+  const origin = vi.fn<PrivateRoomGateway['origin']>(() =>
+    Promise.resolve(ok({ createdByAgent: null, ownerIsNetworkAgent: false })),
+  );
   const value: PrivateRoomGateway = {
     accept: unavailable,
     admitKnock,
@@ -138,6 +142,7 @@ function gateway(
     invite: unavailable,
     leave: unavailable,
     list: () => Promise.resolve(ok([])),
+    origin,
     remove: unavailable,
     removeCodeAgent,
     rename,
@@ -151,6 +156,7 @@ function gateway(
     agentKnocks,
     disableJoinCode,
     generateJoinCode,
+    origin,
     removeCodeAgent,
     rename,
     revealJoinCode,
@@ -232,6 +238,50 @@ describe('私人房间的成员与 Agent 口令', () => {
     await waitFor(() => {
       expect(rooms.rename).toHaveBeenCalledWith(room.catalogId, 'Design review');
     });
+  });
+
+  it('Agent 建的房间写上是谁建的；网络 Agent 建的，加密一栏照实说服务器能读到', async () => {
+    const rooms = gateway();
+    const built = renderGovernance(MEMBER, rooms.value);
+    await waitFor(() => {
+      expect(rooms.origin).toHaveBeenCalledWith(room.catalogId);
+    });
+    expect(screen.queryByText('Made by')).toBeNull();
+    expect(screen.getByText('End-to-end encrypted')).toBeVisible();
+    built.unmount();
+
+    rooms.origin.mockResolvedValue(
+      ok({ createdByAgent: { agentId: AGENT, displayName: 'Scout' }, ownerIsNetworkAgent: false }),
+    );
+    const local = renderGovernance(MEMBER, rooms.value);
+    expect(await screen.findByText('Scout (an agent)')).toBeVisible();
+    expect(screen.getByText('End-to-end encrypted')).toBeVisible();
+    local.unmount();
+
+    rooms.origin.mockResolvedValue(
+      ok({ createdByAgent: { agentId: AGENT, displayName: null }, ownerIsNetworkAgent: true }),
+    );
+    renderGovernance(MEMBER, rooms.value);
+    expect(await screen.findByText('An agent')).toBeVisible();
+    // 房主是建房的网络 Agent：成员里写它，不写合成主体的 ID。
+    expect(screen.getByText('A network agent')).toBeVisible();
+    expect(screen.queryByText(OWNER)).toBeNull();
+    expect(
+      screen.getByText(
+        'End-to-end encrypted. A network agent made this room, so the server can read what is said here.',
+      ),
+    ).toBeVisible();
+  });
+
+  it('问不到是谁建的：不写谁建的，加密一栏照旧', async () => {
+    const rooms = gateway();
+    rooms.origin.mockResolvedValue(err({ code: 'private_room.unreachable', retryable: true }));
+    renderGovernance(MEMBER, rooms.value);
+    await waitFor(() => {
+      expect(rooms.origin).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('Made by')).toBeNull();
+    expect(screen.getByText('End-to-end encrypted')).toBeVisible();
   });
 
   it('成员只看到房间名，不能改', () => {

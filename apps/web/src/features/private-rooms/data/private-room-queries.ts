@@ -1,4 +1,4 @@
-import { queryOptions, useQuery } from '@tanstack/react-query';
+import { queryOptions, useQueries, useQuery } from '@tanstack/react-query';
 
 import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private-room';
 
@@ -16,6 +16,48 @@ export function privateRoomListQueryOptions(gateway: PrivateRoomGateway, account
 
 export function usePrivateRoomList(gateway: PrivateRoomGateway, accountId?: string) {
   return useQuery(privateRoomListQueryOptions(gateway, accountId));
+}
+
+export const privateRoomOriginQueryKey = (catalogId: string) =>
+  ['control-plane', 'private-room-origin', catalogId] as const;
+
+/**
+ * 房间是谁建的。建好以后不会变：问到了就一直用，没问到的下次用到时再问。不挂在房间列表的键下面，
+ * 房间列表刷新时不跟着重问。
+ */
+export function privateRoomOriginQueryOptions(gateway: PrivateRoomGateway, catalogId: string) {
+  return queryOptions({
+    queryKey: privateRoomOriginQueryKey(catalogId),
+    queryFn: async () => await gateway.origin(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: (query) => (query.state.data?.ok === true ? Infinity : 0),
+  });
+}
+
+export function usePrivateRoomOrigin(
+  gateway: PrivateRoomGateway,
+  catalogId: string,
+  enabled = true,
+) {
+  return useQuery({ ...privateRoomOriginQueryOptions(gateway, catalogId), enabled });
+}
+
+/** 这些房间里哪些是网络 Agent 建的、服务器读得到；还没问到的不算。 */
+export function useServerReadableRooms(
+  gateway: PrivateRoomGateway,
+  catalogIds: readonly string[],
+): ReadonlySet<string> {
+  return useQueries({
+    queries: catalogIds.map((catalogId) => privateRoomOriginQueryOptions(gateway, catalogId)),
+    combine: (results) =>
+      new Set(
+        catalogIds.filter((_, index) => {
+          const origin = results[index]?.data;
+          return origin?.ok === true && origin.value.ownerIsNetworkAgent;
+        }),
+      ),
+  });
 }
 
 export const privateRoomAgentAccessQueryKey = (catalogId: string) =>

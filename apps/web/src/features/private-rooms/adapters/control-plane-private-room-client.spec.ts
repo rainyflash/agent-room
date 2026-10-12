@@ -73,6 +73,34 @@ describe('ControlPlanePrivateRoomClient', () => {
     });
   });
 
+  it('房间是谁建的：GET 单独的接口，严格校验回答', async () => {
+    const origin = {
+      createdByAgent: { agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48', displayName: 'Visitor' },
+      ownerIsNetworkAgent: true,
+    };
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json(origin))
+      .mockResolvedValueOnce(Response.json({ ...origin, ownerIsNetworkAgent: 'yes' }))
+      .mockResolvedValueOnce(Response.json({ ...origin, extra: true }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.origin(ROOM.catalogId)).toEqual({ ok: true, value: origin });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/origin`),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await client.origin(ROOM.catalogId)).toEqual({
+        ok: false,
+        error: { code: 'private_room.invalid_response', retryable: false },
+      });
+    }
+  });
+
   it('改名用 PUT 发送名字并返回权威房间', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

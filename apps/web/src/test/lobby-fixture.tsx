@@ -83,6 +83,7 @@ import type {
   PrivateRoomAgentMember,
   PrivateRoomGateway,
   PrivateRoomMatrixGateway,
+  PrivateRoomOrigin,
 } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentKnockToasts } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
@@ -109,6 +110,11 @@ const cardFixture = new URLSearchParams(window.location.search).has('cards');
 const knockFixture = privateFixture && new URLSearchParams(window.location.search).has('knock');
 // `?private&code` 里房间已经有口令，管理者看得到；`?private&code=hidden` 的口令是能再看之前生成的，看不到。
 const codeFixture = privateFixture ? new URLSearchParams(window.location.search).get('code') : null;
+// `?private&origin=local` 是本机 Agent 替你建的私人房间，房主还是你；`?private&origin=network` 是网络 Agent
+// 建的：房主是它，你是它邀请来的，只能查看和发言，房间顶上、设置里都说服务器能读到。
+const originFixture = privateFixture
+  ? new URLSearchParams(window.location.search).get('origin')
+  : null;
 let room: LobbyRoom = privateFixture
   ? { ...testRoom(fixtureAgentCount), encrypted: true }
   : testRoom(fixtureAgentCount);
@@ -597,6 +603,21 @@ function answerFixtureKnock(agentId: string, admit: boolean): PrivateRoomAgentMe
 
 const knockGone = () => Promise.resolve(err({ code: 'agent_knock.not_found', retryable: false }));
 const fixtureOwner = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
+/** 网络 Agent 建房时替它记账的合成主体：它是房主。 */
+const fixtureNetworkOwner = '0198b601-77a1-7bb8-83eb-a8fe68c97e44';
+const fixtureOrigin: PrivateRoomOrigin =
+  originFixture === 'network'
+    ? {
+        createdByAgent: { agentId: '01990d9e-8400-7000-8000-000000000611', displayName: 'Visitor' },
+        ownerIsNetworkAgent: true,
+      }
+    : originFixture === 'local'
+      ? {
+          createdByAgent: { agentId: '01990d9e-8400-7000-8000-000000000001', displayName: 'Scout' },
+          ownerIsNetworkAgent: false,
+        }
+      : { createdByAgent: null, ownerIsNetworkAgent: false };
+const fixtureRoomOwner = fixtureOrigin.ownerIsNetworkAgent ? fixtureNetworkOwner : fixtureOwner;
 const fixturePrivateRoom: PrivateRoom = {
   catalogId: '01990d9e-8400-7000-8000-000000000401',
   description: 'Coordinate the release with people and agents.',
@@ -604,9 +625,19 @@ const fixturePrivateRoom: PrivateRoom = {
   members: [
     {
       permissions: { capabilities: ['view', 'speak', 'invite', 'manage', 'automate'] },
-      principalId: fixtureOwner,
+      principalId: fixtureRoomOwner,
       status: 'joined',
     },
+    ...(fixtureOrigin.ownerIsNetworkAgent
+      ? [
+          {
+            // 网络 Agent 邀请来的人只有查看和发言。
+            permissions: { capabilities: ['view', 'speak'] as const },
+            principalId: fixtureOwner,
+            status: 'joined' as const,
+          },
+        ]
+      : []),
     {
       permissions: { capabilities: ['view', 'speak'] },
       principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
@@ -614,7 +645,7 @@ const fixturePrivateRoom: PrivateRoom = {
     },
   ],
   name: room.name,
-  ownerPrincipalId: fixtureOwner,
+  ownerPrincipalId: fixtureRoomOwner,
   retentionDays: 30,
   roomInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
   status: 'active',
@@ -669,6 +700,7 @@ const privateRooms: PrivateRoomGateway = {
   invite: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
   list: () => Promise.resolve(ok(privateFixture ? [fixturePrivateRoom] : [])),
+  origin: privateFixture ? () => Promise.resolve(ok(fixtureOrigin)) : unavailablePrivateRoom,
   remove: unavailablePrivateRoom,
   removeCodeAgent: unavailablePrivateRoom,
   rename: unavailablePrivateRoom,

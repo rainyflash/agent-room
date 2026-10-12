@@ -17,6 +17,7 @@ import type { PrivateRoomCoordinator } from '@/features/private-rooms/applicatio
 import {
   privateRoomListQueryKey,
   usePrivateRoomAgentAccess,
+  usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
 import {
   allows,
@@ -97,6 +98,17 @@ export function PrivateRoomMembers({
   const canManage = owner || allows(currentMember, 'manage');
   const canInvite = canManage || allows(currentMember, 'invite');
   const relayed = useHasNetworkAgents(rooms, room, canManage);
+  const origin = usePrivateRoomOrigin(rooms, room.catalogId);
+  const known = origin.data?.ok === true ? origin.data.value : null;
+  const creator = known?.createdByAgent ?? null;
+  const creatorName = creator?.displayName ?? null;
+  // 网络 Agent 当房主时，成员里那一行写它的名字，不写合成主体的 ID。
+  const networkOwner =
+    known?.ownerIsNetworkAgent !== true
+      ? null
+      : creatorName === null
+        ? t('privateRooms.governance.members.networkOwnerUnnamed')
+        : t('privateRooms.governance.members.networkOwner', { name: creatorName });
   const mutation = useMutation({
     mutationFn: async (command: RoomCommand) => await command.execute(),
     onSuccess: async (result, command) => {
@@ -133,6 +145,16 @@ export function PrivateRoomMembers({
           )}
         </div>
         <dl>
+          {creator === null ? null : (
+            <div>
+              <dt>{t('privateRooms.governance.madeBy')}</dt>
+              <dd>
+                {creator.displayName === null
+                  ? t('privateRooms.governance.madeByUnnamedAgent')
+                  : t('privateRooms.governance.madeByAgent', { name: creator.displayName })}
+              </dd>
+            </div>
+          )}
           <div>
             <dt>{t('privateRooms.governance.visibility')}</dt>
             <dd>{t('privateRooms.governance.inviteOnly')}</dd>
@@ -149,9 +171,11 @@ export function PrivateRoomMembers({
             <dt>{t('privateRooms.governance.encryption')}</dt>
             <dd>
               {t(
-                relayed
-                  ? 'privateRooms.governance.encryptedRelayed'
-                  : 'privateRooms.governance.encrypted',
+                known?.ownerIsNetworkAgent === true
+                  ? 'privateRooms.governance.encryptedServerReadable'
+                  : relayed
+                    ? 'privateRooms.governance.encryptedRelayed'
+                    : 'privateRooms.governance.encrypted',
               )}
             </dd>
           </div>
@@ -234,6 +258,7 @@ export function PrivateRoomMembers({
               disabled={mutation.isPending}
               isOwner={member.principalId === room.ownerPrincipalId}
               key={member.principalId}
+              label={member.principalId === room.ownerPrincipalId ? networkOwner : null}
               member={member}
               onBan={() => {
                 run({
@@ -398,12 +423,15 @@ type MemberRowProps = {
   readonly onRemove: () => void;
   readonly onTransfer: (() => void) | undefined;
   readonly self: boolean;
+  /** 不写 ID 时写的名字：网络 Agent 当房主时是它的名字。 */
+  readonly label: string | null;
 };
 
 function MemberRow({
   canManage,
   disabled,
   isOwner,
+  label,
   member,
   onBan,
   onPermissionsChange,
@@ -419,7 +447,9 @@ function MemberRow({
       <div className="private-room-member__identity">
         <span>{isOwner ? <Crown aria-hidden="true" /> : null}</span>
         <div>
-          <strong>{self ? t('privateRooms.governance.members.you') : member.principalId}</strong>
+          <strong>
+            {self ? t('privateRooms.governance.members.you') : (label ?? member.principalId)}
+          </strong>
           <small>{t(`privateRooms.membership.${member.status}`)}</small>
         </div>
       </div>

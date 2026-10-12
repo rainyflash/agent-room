@@ -1100,8 +1100,15 @@
 
 .private-room-governance__summary dl {
   display: flex;
-  gap: 1.4rem;
+  /* 说明长的一栏（谁建的、服务器能读到）自己换行，不把房间名挤没。 */
+  flex-wrap: wrap;
+  max-width: 26rem;
+  gap: 0.6rem 1.4rem;
   margin: 0;
+}
+
+.private-room-governance__summary dl > div {
+  min-width: 0;
 }
 
 .private-room-governance__summary dt,
