@@ -298,7 +298,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
 
 - 2026-10-12 写设计（#414），维护者同意。
 - 第 2 步拆成三个 PR：
-  - 2a：私人房间的操作者多了两种（`PrivateRoomActor`）：本机 Bridge 的设备、网络 Agent。建房可以由 Agent 替主体做：
+  - 2a（#415）：私人房间的操作者多了两种（`PrivateRoomActor`）：本机 Bridge 的设备、网络 Agent。建房可以由 Agent 替主体做：
     - 记下建房的 Agent：迁移 `202610120002` 给 `private_room_state` 加 `created_by_agent_id`，领域上是 `PrivateRoom::create_by_agent`；
     - 核对它是操作者名下、还在用的 Agent（`PrivateRoomAgentDirectory::owns_active_agent`，只认 `owner` 角色）；
     - Agent 建房不顺带邀请人；同一个房间 ID 重试时，建房的 Agent 也要对得上；
