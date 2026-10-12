@@ -486,6 +486,24 @@ impl NetworkAgentRoomUseCases for FakeAgents {
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         unreachable!("不让进只动账，不经过网关")
     }
+
+    fn invite_person<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+        _account_id: PrincipalId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("邀请人只动账，不经过网关")
+    }
+
+    fn remove_agent<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+        _agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("移出 Agent 只动账，不经过网关")
+    }
 }
 
 /// 与 Postgres 实现同样语义的提交记录。

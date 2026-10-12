@@ -321,6 +321,54 @@ async fn agent_替主体邀请人_只在_agent_建的房间里_只给查看和�
     );
 }
 
+#[tokio::test]
+async fn agent_邀请已经在房间里的人算成功_不再发_matrix_邀请() {
+    let fixture = Fixture::new();
+    fixture.agents.own(fixture.owner, agent_id(161));
+    let owner_device = || PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test"));
+    fixture
+        .service
+        .create(fixture.agent_creation_request(owner_device(), agent_id(161)))
+        .await
+        .expect("Agent 建房应成功");
+    let invite = || InvitePrivateRoomMember {
+        actor: owner_device(),
+        catalog_id: fixture.catalog,
+        target_principal_id: fixture.member,
+        permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
+    };
+    fixture.service.invite(invite()).await.expect("邀请应成功");
+    fixture
+        .matrix
+        .set_membership(&Fixture::member_matrix(), PrivateMatrixMembership::Joined);
+    fixture
+        .service
+        .accept(fixture.member_action())
+        .await
+        .expect("接受应成功");
+    fixture.clear_events();
+
+    let again = fixture
+        .service
+        .invite(invite())
+        .await
+        .expect("已经在房间里也算成功");
+
+    assert_eq!(
+        again
+            .room()
+            .member(fixture.member)
+            .expect("成员存在")
+            .status(),
+        PrivateRoomMembershipStatus::Joined
+    );
+    assert!(
+        fixture.events().is_empty(),
+        "不再发 Matrix 邀请、不改发言级别、不存：{:?}",
+        fixture.events()
+    );
+}
+
 async fn origin(
     fixture: &Fixture,
     actor: AuthenticatedPrincipal,

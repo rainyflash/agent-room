@@ -1,7 +1,7 @@
 //! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。房主是它自己，建好就在
 //! 里面，回答里带着口令和一段要转给别的 Agent 的话；之后看口令、换口令、停用口令，看谁在敲门、
-//! 放行或不让进，最后关掉。它建的房间服务器读得到里面所有的消息：接入说明照实写，人进来之前网页
-//! 上也写。
+//! 放行或不让进，按账户 ID 邀请人，移出凭口令或敲门进来的 Agent，最后关掉。它建的房间服务器读得到
+//! 里面所有的消息：接入说明照实写，人进来之前网页上也写。
 //!
 //! 建房和放行要替 Agent 进房间，走网关（`state.rooms`）；别的只动账，直接交给用例
 //! （`state.owned_rooms`）。
@@ -13,7 +13,7 @@ use agent_room_application::{
     },
     ports::{PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord},
 };
-use agent_room_domain::ids::AgentId;
+use agent_room_domain::ids::{AgentId, PrincipalId};
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json,
@@ -37,6 +37,12 @@ const EN_NO_WEB: &str = "If you can’t read that page or can’t send web reque
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CreateRoomBody {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct InvitePersonBody {
+    account_id: String,
 }
 
 #[derive(Serialize)]
@@ -269,7 +275,7 @@ pub(super) async fn admit_knock(
     Path((room, agent)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(agent_id) = knocking_agent(&agent) else {
+    let Some(agent_id) = agent_id(&agent) else {
         return invalid_agent(correlation_id);
     };
     let token = bearer_secret(&headers).ok();
@@ -293,7 +299,7 @@ pub(super) async fn decline_knock(
     Path((room, agent)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(agent_id) = knocking_agent(&agent) else {
+    let Some(agent_id) = agent_id(&agent) else {
         return invalid_agent(correlation_id);
     };
     let token = bearer_secret(&headers).ok();
@@ -308,17 +314,76 @@ pub(super) async fn decline_knock(
     }
 }
 
-fn knocking_agent(agent: &str) -> Option<AgentId> {
+/// 按账户 ID 邀请一个人，只给查看和发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
+/// 都回答 204。
+pub(super) async fn invite_person(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+    body: Result<Json<InvitePersonBody>, JsonRejection>,
+) -> Response {
+    let Some(account_id) = body
+        .ok()
+        .and_then(|Json(body)| parse_uuid_v7(&body.account_id).ok())
+        .map(PrincipalId::from_uuid)
+    else {
+        return invalid_request(
+            "The request body must be a JSON object: {\"accountId\": the person's account ID}. Ask the person to copy it from 'Switch room' in the Agent Room app; don't guess it.",
+            correlation_id,
+        );
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state
+        .owned_rooms
+        .invite_person(token, &room, account_id)
+        .await
+    {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
+/// 移出凭口令或敲门进来的 Agent；它要再进来得有新口令或再敲门。已经移出的也回答 204。
+pub(super) async fn remove_agent(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((room, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(agent_id) = agent_id(&agent) else {
+        return invalid_request(
+            "The last part of the path must be the agentId of an agent in the room, as shown in actor.agent.agentId on its messages.",
+            correlation_id,
+        );
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.owned_rooms.remove_agent(token, &room, agent_id).await {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
+fn agent_id(agent: &str) -> Option<AgentId> {
     parse_uuid_v7(agent).ok().map(AgentId::from_uuid)
 }
 
 fn invalid_agent(correlation_id: CorrelationId) -> Response {
+    invalid_request(
+        "The last part of the path must be the agentId of an agent knocking on the room, as listed by GET /v1/network-agents/me/private-rooms/<room number>/knocks.",
+        correlation_id,
+    )
+}
+
+fn invalid_request(message: &str, correlation_id: CorrelationId) -> Response {
     no_store(
         ApiError::new(
             StatusCode::BAD_REQUEST,
             "network_agent.invalid_request",
             ErrorCategory::Validation,
-            "The last part of the path must be the agentId of an agent knocking on the room, as listed by GET /v1/network-agents/me/private-rooms/<room number>/knocks.",
+            message,
             correlation_id,
         )
         .into_response(),

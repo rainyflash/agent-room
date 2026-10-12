@@ -1436,6 +1436,13 @@ fn log_agent_access_failure(failure: AgentAccessFailure, correlation_id: Correla
     );
 }
 
+const NETWORK_AGENT_INTERNAL: ErrorMapping = (
+    StatusCode::INTERNAL_SERVER_ERROR,
+    "network_agent.internal",
+    ErrorCategory::Transient,
+    "The network agent service hit an internal error.",
+);
+
 /// 网络 Agent 每种失败回的状态码、错误码和分类；消息给模型看，写明下一步怎么做。
 fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
     match kind {
@@ -1487,6 +1494,26 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             ErrorCategory::Authentication,
             "The token is missing, wrong or no longer active. Send the Authorization: Bearer <token> you got when you joined, or join again.",
         ),
+        NetworkAgentFailureKind::DependencyUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "network_agent.dependency_unavailable",
+            ErrorCategory::DependencyUnavailable,
+            "Something this server depends on is temporarily unavailable; retry the same request later.",
+        ),
+        NetworkAgentFailureKind::Internal => NETWORK_AGENT_INTERNAL,
+        NetworkAgentFailureKind::RoomNameInvalid
+        | NetworkAgentFailureKind::RoomLimitReached
+        | NetworkAgentFailureKind::RoomCapacityReached
+        | NetworkAgentFailureKind::RoomNotOwned
+        | NetworkAgentFailureKind::KnockNotFound
+        | NetworkAgentFailureKind::AccountNotFound
+        | NetworkAgentFailureKind::AgentNotInRoom => owned_room_mapping(kind),
+    }
+}
+
+/// 网络 Agent 自己建房间、管房间时的几种失败（`specs/agent-rooms/design.md` 第 4 步）。
+fn owned_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
+    match kind {
         NetworkAgentFailureKind::RoomNameInvalid => (
             StatusCode::BAD_REQUEST,
             "network_agent.room_name_invalid",
@@ -1517,18 +1544,20 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             ErrorCategory::Validation,
             "That agent isn't knocking on this room: the knock expired after an hour without an answer, was already answered, or the agent has left. GET /v1/network-agents/me/private-rooms/<room number>/knocks lists who is waiting.",
         ),
-        NetworkAgentFailureKind::DependencyUnavailable => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "network_agent.dependency_unavailable",
-            ErrorCategory::DependencyUnavailable,
-            "Something this server depends on is temporarily unavailable; retry the same request later.",
+        NetworkAgentFailureKind::AccountNotFound => (
+            StatusCode::NOT_FOUND,
+            "network_agent.account_not_found",
+            ErrorCategory::Validation,
+            "No one can be invited with that account ID. Ask the person to copy their account ID from 'Switch room' in the Agent Room app and send it to you; don't guess it.",
         ),
-        NetworkAgentFailureKind::Internal => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "network_agent.internal",
-            ErrorCategory::Transient,
-            "The network agent service hit an internal error.",
+        NetworkAgentFailureKind::AgentNotInRoom => (
+            StatusCode::NOT_FOUND,
+            "network_agent.agent_not_in_room",
+            ErrorCategory::Validation,
+            "That agent didn't come into this room with the code or by knocking, so there is nothing to remove. You can't remove people, or agents that came in with a member of the room.",
         ),
+        // 别的由 `network_agent_mapping` 回答，到不了这里。
+        _ => NETWORK_AGENT_INTERNAL,
     }
 }
 

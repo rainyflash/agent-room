@@ -1,8 +1,9 @@
 //! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。
 //!
 //! 房主是网络 Agent 的合成主体，它的 Agent 按“房主的 Agent”进去（`admits_agent_of`）。建房、关房、
-//! 口令和敲门都走私人房间的用例，操作者是网络 Agent（`PrivateRoomActor::NetworkAgent`）；建房时
-//! 顺手生成口令，好让它转给别的 Agent。管房间只认它当房主、还没关的房间，别的一律说不是它的。
+//! 口令、敲门、邀请人和移出 Agent 都走私人房间的用例，操作者是网络 Agent
+//! （`PrivateRoomActor::NetworkAgent`）；建房时顺手生成口令，好让它转给别的 Agent。管房间只认它
+//! 当房主、还没关的房间，别的一律说不是它的。
 //!
 //! 网络 Agent 没有账号、没人为它负责，建房有上限（设计“限额”一节）：每个网络 Agent 同时几个没关的
 //! 房间、每天建几个，全站网络 Agent 建的没关的房间也有上限。它没关的房间里已经有同名的就回到那间，
@@ -13,6 +14,7 @@ use std::fmt;
 use agent_room_domain::{
     ids::{AgentId, NetworkAgentId, PrincipalId, RoomCatalogId},
     join_codes::parse_room_number,
+    private_rooms::PrivateRoomPermissions,
 };
 
 use super::{
@@ -23,8 +25,9 @@ use crate::{
     ports::{PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock, ArchivePrivateRoom,
-        CreatePrivateRoom, InspectAgentAccess, ListPrivateRoomsForAccount, ManageJoinCode,
-        PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind,
+        CreatePrivateRoom, InspectAgentAccess, InvitePrivateRoomMember, ListPrivateRoomsForAccount,
+        ManageJoinCode, PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind,
+        PrivateRoomFailureStage, RemoveAgentMember,
     },
 };
 
@@ -101,6 +104,23 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         room: &'a str,
         agent_id: AgentId,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 按账户 ID 邀请一个人，只给查看和发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
+    /// 都算成功。每个网络 Agent 每天发的邀请有上限。
+    fn invite_person<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        account_id: PrincipalId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 移出凭口令或敲门进来的 Agent；它要再进来得有新口令或再敲门。已经移出的也算成功。
+    fn remove_agent<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
 }
 
 /// 网络 Agent 建好的房间，或回到的同名房间。
@@ -141,6 +161,14 @@ impl fmt::Debug for NetworkAgentRoomCode {
 pub struct NetworkAgentRoomCodeView {
     pub room: NetworkAgentRoom,
     pub code: NetworkAgentRoomCode,
+}
+
+/// 管房间时认出的房间，和以谁的身份管。
+struct ManagedRoom {
+    /// 网络 Agent 自己：每天发的邀请按它算。
+    agent: NetworkAgentId,
+    actor: PrivateRoomActor,
+    room: NetworkAgentRoom,
 }
 
 impl NetworkAgentService {
@@ -221,7 +249,7 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<NetworkAgentRoomCodeView> {
-        let (actor, room) = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         let revealed = self
             .access
             .reveal_code(ManageJoinCode {
@@ -247,13 +275,13 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<NetworkAgentRoomCodeView> {
-        let (actor, room) = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         let code = self.new_code(actor, room.catalog_id).await?;
         Ok(NetworkAgentRoomCodeView { room, code })
     }
 
     async fn disable_code_internal(&self, token: &str, room: &str) -> NetworkAgentResult<()> {
-        let (actor, room) = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         self.access
             .disable_code(ManageJoinCode {
                 actor,
@@ -268,7 +296,7 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>> {
-        let (actor, room) = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         self.access
             .waiting_knocks(InspectAgentAccess {
                 actor,
@@ -285,7 +313,7 @@ impl NetworkAgentService {
         room: &str,
         agent_id: AgentId,
     ) -> NetworkAgentResult<AnswerKnock> {
-        let (actor, room) = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         Ok(AnswerKnock {
             actor,
             catalog_id: room.catalog_id,
@@ -293,12 +321,51 @@ impl NetworkAgentService {
         })
     }
 
-    /// 管房间的请求先认令牌、记一次活动，再认出房间：只认它当房主、还没关的房间。
-    async fn managed(
+    async fn invite_person_internal(
         &self,
         token: &str,
         room: &str,
-    ) -> NetworkAgentResult<(PrivateRoomActor, NetworkAgentRoom)> {
+        account_id: PrincipalId,
+    ) -> NetworkAgentResult<()> {
+        let ManagedRoom { agent, actor, room } = self.managed(token, room).await?;
+        // 邀请会弹到对方的应用里：每天发的有上限。没有这个账户的也算一次，免得拿它一个个试账户 ID。
+        self.take(
+            &format!("invite:day:{}", agent.as_uuid().simple()),
+            DAY_MILLIS,
+            self.policy.invitations_per_agent_per_day,
+        )
+        .await?;
+        self.rooms
+            .invite(InvitePrivateRoomMember {
+                actor,
+                catalog_id: room.catalog_id,
+                target_principal_id: account_id,
+                permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
+            })
+            .await
+            .map(|_| ())
+            .map_err(invitation_failure)
+    }
+
+    async fn remove_agent_internal(
+        &self,
+        token: &str,
+        room: &str,
+        agent_id: AgentId,
+    ) -> NetworkAgentResult<()> {
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        self.access
+            .remove_agent(RemoveAgentMember {
+                actor,
+                catalog_id: room.catalog_id,
+                agent_id,
+            })
+            .await
+            .map_err(removal_failure)
+    }
+
+    /// 管房间的请求先认令牌、记一次活动，再认出房间：只认它当房主、还没关的房间。
+    async fn managed(&self, token: &str, room: &str) -> NetworkAgentResult<ManagedRoom> {
         let record = self.authenticated(token).await?;
         let now = self.clock.now();
         self.store
@@ -320,7 +387,11 @@ impl NetworkAgentService {
             })
             .map(owned_room)
             .ok_or_else(not_owned)?;
-        Ok((actor, room))
+        Ok(ManagedRoom {
+            agent: record.id,
+            actor,
+            room,
+        })
     }
 
     /// 它当房主、还没关的私人房间。合成主体不会被邀请进别人的房间，列出来的本来就都是它的。
@@ -524,6 +595,24 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
                 .map_err(knock_failure)
         })
     }
+
+    fn invite_person<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        account_id: PrincipalId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(self.invite_person_internal(token, room, account_id))
+    }
+
+    fn remove_agent<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(self.remove_agent_internal(token, room, agent_id))
+    }
 }
 
 /// 房间名去掉首尾空白后 1 到 128 个字符，不能有控制字符，和人在网页上建房一样。
@@ -578,6 +667,25 @@ fn access_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         | AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable => internal(),
     }
+}
+
+/// 邀请时找不到的是账户：房间已经认过是它的。房间这时恰好关了，领域上是冲突，也只说不是它能管的。
+fn invitation_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
+    match (failure.kind(), failure.stage()) {
+        (PrivateRoomFailureKind::NotFound, PrivateRoomFailureStage::Directory) => {
+            NetworkAgentFailure::new(NetworkAgentFailureKind::AccountNotFound)
+        }
+        (PrivateRoomFailureKind::Conflict, _) => not_owned(),
+        _ => room_failure(failure),
+    }
+}
+
+/// 移出时找不到的是 Agent 成员：房间已经认过是它的。
+fn removal_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
+    if failure.kind() == AgentAccessFailureKind::NotFound {
+        return NetworkAgentFailure::new(NetworkAgentFailureKind::AgentNotInRoom);
+    }
+    access_failure(failure)
 }
 
 /// 回答敲门时找不到的只会是敲门：房间已经认过是它的。

@@ -62,6 +62,10 @@ pub(super) fn render(
         ("{{OPEN_ROOMS}}", policy.open_rooms_per_agent.to_string()),
         ("{{ROOMS_DAY}}", policy.rooms_per_agent_per_day.to_string()),
         (
+            "{{INVITES_DAY}}",
+            policy.invitations_per_agent_per_day.to_string(),
+        ),
+        (
             "{{MAX_AGENT_ROOMS}}",
             policy.max_open_agent_rooms.to_string(),
         ),
@@ -119,6 +123,7 @@ mod tests {
         assert!(guide.contains(
             "每个网络 Agent 同时最多 5 个没关的房间、每天最多建 10 个；全站网络 Agent 建的没关的房间最多 500 个"
         ));
+        assert!(guide.contains("每个网络 Agent 每天最多发 20 个邀请"));
         assert!(
             guide
                 .contains("POST https://api.agent-room.example/v1/network-agents/me/private-rooms")
@@ -179,6 +184,8 @@ mod tests {
             "network_agent.room_capacity_reached",
             "network_agent.room_not_owned",
             "network_agent.knock_not_found",
+            "network_agent.account_not_found",
+            "network_agent.agent_not_in_room",
             "network_agent.invalid_message",
             "network_agent.room_required",
             "network_agent.room_not_joined",
