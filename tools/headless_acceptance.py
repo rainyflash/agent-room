@@ -83,7 +83,8 @@ def accept() -> None:
                 moderator_principal_id=agent["principalId"],
             )
             agent_rooms = v.verify_agent_rooms(
-                sender_bridge=sender, target_bridge=target, redactor=redactor
+                sender_bridge=sender, target_bridge=target, environment=environment,
+                account_id=agent["principalId"], redactor=redactor,
             )
             # 放在最后：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(

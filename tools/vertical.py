@@ -76,6 +76,9 @@ CATALOG_RESULT: Final = VERTICAL_ROOT / "catalog.json"
 TARGETED_HANDOFF_RESULT: Final = VERTICAL_ROOT / "targeted-handoff.json"
 PRIVATE_ROOM_RESULT: Final = VERTICAL_ROOT / "private-room.json"
 KNOCK_RESULT: Final = VERTICAL_ROOT / "private-room-knock.json"
+# 人在网络 Agent 建的房间里聊过了、房间归档了：纵向验收和网页用例靠这两个文件对步子。
+NETWORK_ROOM_CHATTED: Final = VERTICAL_ROOT / "network-agent-room-chatted.json"
+NETWORK_ROOM_ARCHIVED: Final = VERTICAL_ROOT / "network-agent-room-archived.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
 NETWORK_AGENT_STORE_ROOT: Final = VERTICAL_ROOT / "network-agents"
 PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
@@ -2995,14 +2998,16 @@ def verify_agent_rooms(
     *,
     sender_bridge: AuthorizedBridgeRuntime,
     target_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    account_id: str,
     redactor: LogRedactor,
 ) -> dict[str, str]:
     """Agent 自己建房间（specs/agent-rooms/design.md“验收”）：本机 Agent 和网络 Agent 各建一间，
-    别的 Agent 按房间名、凭口令或敲门进来，加密收发。"""
+    别的 Agent 按房间名、凭口令或敲门进来，加密收发；网络 Agent 邀请的人在网页上接受后和它聊。"""
     local = verify_local_agent_room(
         sender_bridge=sender_bridge, target_bridge=target_bridge, redactor=redactor
     )
-    network = verify_network_agent_room()
+    network = verify_network_agent_room(environment=environment, account_id=account_id)
     return {**local, **network}
 
 
@@ -3095,11 +3100,15 @@ def deliver_to_network_agent(client: McpAgentSession, *, token: str, room_id: st
     raise VerticalFailure("网络 Agent 始终没能解开另一台电脑上的 Agent 的消息。")
 
 
-def verify_network_agent_room() -> dict[str, str]:
-    """网络 Agent 建房间，同名再建回到那间；别的网络 Agent 拿房间号敲门，把在等消息的房主叫醒，
-    放行后两边加密收发；房主离开后房间归档，留下的 Agent 说不了话，之前的消息照样翻得到。"""
+def verify_network_agent_room(*, environment: Mapping[str, str], account_id: str) -> dict[str, str]:
+    """网络 Agent 建房间，同名再建回到那间；它按账户 ID 邀请验收账号，人在网页上接受后和它聊；
+    别的网络 Agent 拿房间号敲门，把在等消息的房主叫醒，放行后两边加密收发；房主离开后房间归档，
+    留下的 Agent 说不了话，人和它都还看得到之前的消息。"""
     owner = create_waiting_network_agent("Vertical Room Owner", "198.51.100.41")
     catalog_id, room_id, code = create_network_agent_room(owner)
+    browser = chat_with_invited_person(
+        owner, environment=environment, account_id=account_id, catalog_id=catalog_id, room_id=room_id
+    )
     knocker, knocker_id = knock_while_owner_waits(owner, catalog_id=catalog_id, room_id=room_id)
     status, admitted = network_agent_request(
         "PUT",
@@ -3132,6 +3141,9 @@ def verify_network_agent_room() -> dict[str, str]:
     history = network_agent_get(knocker, room_messages_path(room_id, "limit=20"))
     if said not in network_event_ids(history):
         raise VerticalFailure("房间归档以后，之前的消息该照样翻得到。")
+    # 告诉网页那一侧房间归档了：它重新打开房间，看之前的消息还在不在。
+    NETWORK_ROOM_ARCHIVED.write_text("{}\n", encoding="utf-8")
+    browser.finish(timeout_seconds=300)
     status, _ = network_agent_request("DELETE", "/me", token=knocker)
     if status != 204:
         raise VerticalFailure(f"敲门进来的网络 Agent 停用失败：HTTP {status}。")
@@ -3141,6 +3153,106 @@ def verify_network_agent_room() -> dict[str, str]:
         "networkRoomCode": code,
         "networkRoomReplyEventId": replied,
     }
+
+
+class BrowserRun:
+    """在后台线程里跑一个纵向浏览器用例：主线程照常往下走，等的时候看它还活着没有，最后等它跑完。"""
+
+    def __init__(self, spec: str, environment: Mapping[str, str]) -> None:
+        self._error: BaseException | None = None
+        command = [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            spec,
+        ]
+
+        def run() -> None:
+            try:
+                run_checked(command, environment=environment)
+            except BaseException as error:  # noqa: BLE001 - 交回主线程再抛
+                self._error = error
+
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def ensure_running(self) -> None:
+        """网页那一侧已经结束了（多半是失败了）就别再等，把它的错误抛出来。"""
+        if not self._thread.is_alive():
+            self.finish(timeout_seconds=0)
+            raise VerticalFailure("网页那一侧还没走到这一步就结束了。")
+
+    def finish(self, *, timeout_seconds: float) -> None:
+        self._thread.join(timeout=timeout_seconds)
+        if self._thread.is_alive():
+            raise VerticalFailure("网页那一侧没有按时跑完。")
+        if self._error is not None:
+            raise self._error
+
+
+def chat_with_invited_person(
+    owner: str, *, environment: Mapping[str, str], account_id: str, catalog_id: str, room_id: str
+) -> BrowserRun:
+    """房主按账户 ID 邀请验收账号；人用真实网页会话在“房间”页看到“服务器能读到”的提醒后接受，
+    进房间说一句，房主解开后回复，人在网页上看到回复。返回还开着的网页那一侧：房间归档以后它要
+    重新打开房间看之前的消息（network-agent-room.e2e.ts）。"""
+    status, _ = network_agent_request(
+        "POST",
+        f"/me/private-rooms/{catalog_id}/invitations",
+        token=owner,
+        body={"accountId": account_id},
+        timeout_seconds=180,
+    )
+    if status != 204:
+        raise VerticalFailure(f"网络 Agent 邀请验收账号失败：HTTP {status}。")
+    nonce = new_uuid_v7()[-8:]
+    said, reply = f"Hello from a person {nonce}.", f"Welcome in, person {nonce}."
+    for path in (NETWORK_ROOM_CHATTED, NETWORK_ROOM_ARCHIVED):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_AGENT_ROOM_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_VERTICAL_AGENT_ROOM_NAME": NETWORK_AGENT_ROOM_NAME,
+            "AGENT_ROOM_VERTICAL_AGENT_ROOM_SAID": said,
+            "AGENT_ROOM_VERTICAL_AGENT_ROOM_REPLY": reply,
+            "AGENT_ROOM_VERTICAL_AGENT_ROOM_CHATTED": str(NETWORK_ROOM_CHATTED),
+            "AGENT_ROOM_VERTICAL_AGENT_ROOM_ARCHIVED": str(NETWORK_ROOM_ARCHIVED),
+        }
+    )
+    browser = BrowserRun("network-agent-room.e2e.ts", playwright_environment)
+    message_id = wait_for_person_message(owner, room_id=room_id, text=said, browser=browser)
+    network_agent_say_in(owner, room_id, reply, reply_to=message_id)
+    deadline = time.monotonic() + 180
+    while not NETWORK_ROOM_CHATTED.is_file():
+        browser.ensure_running()
+        if time.monotonic() >= deadline:
+            raise VerticalFailure("人在网页上 3 分钟内没看到房主的回复。")
+        time.sleep(1)
+    return browser
+
+
+def wait_for_person_message(owner: str, *, room_id: str, text: str, browser: BrowserRun) -> str:
+    """房主等人在网页上说的那一句，确认掉（免得它叫醒之后的等待），回答它的消息 ID。"""
+    query = f"wait=10&limit=50&wake=all&settle=0&roomId={quote(room_id, safe='')}"
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        browser.ensure_running()
+        page = network_agent_wait(owner, query)
+        acknowledge_network_page(owner, page)
+        for message in network_page_messages(page):
+            conversation = message.get("conversation")
+            if not isinstance(conversation, dict) or conversation.get("text") != text:
+                continue
+            if require_object(message.get("actor"), "说话的人").get("kind") != "human":
+                raise VerticalFailure("房主收到的那一句不是人说的。")
+            return require_text(message.get("messageId"), "人说的那一句的消息 ID")
+    raise VerticalFailure("房主 4 分钟内没收到人在网页上说的那一句。")
 
 
 def create_network_agent_room(owner: str) -> tuple[str, str, str]:
