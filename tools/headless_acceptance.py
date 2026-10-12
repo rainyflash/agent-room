@@ -82,6 +82,9 @@ def accept() -> None:
                 sender_bridge=sender, environment=environment, catalog_id=catalog,
                 moderator_principal_id=agent["principalId"],
             )
+            agent_rooms = v.verify_agent_rooms(
+                sender_bridge=sender, target_bridge=target, redactor=redactor
+            )
             # 放在最后：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
@@ -104,6 +107,11 @@ def accept() -> None:
                 *reading["tokens"],
                 liveness["token"],
                 watch["token"],
+                agent_rooms["localRoomVisitorToken"],
+                agent_rooms["localRoomCode"],
+                agent_rooms["networkRoomOwnerToken"],
+                agent_rooms["networkRoomKnockerToken"],
+                agent_rooms["networkRoomCode"],
                 private["token"],
                 private["everyoneToken"],
                 private["knockToken"],
@@ -121,6 +129,8 @@ def accept() -> None:
         "readingToolsVerified":True, "networkBacklogDelivered":reading["backlogMessages"],
         "livenessFromMatrixPresence":True, "statusCardsWrittenOnce":status_cards,
         "publicWatchVerified":True, "publicWatchHideActionId":watch["actionId"],
+        "agentRoomsVerified":True, "localAgentRoomReplyEventId":agent_rooms["localRoomReplyEventId"],
+        "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],

@@ -2726,8 +2726,10 @@ def private_room_round_trip(
     agent_id: str,
     room_id: str,
     gaps: list[object] | None = None,
+    observers: Sequence[McpAgentSession] = (),
 ) -> str:
-    """本机 Agent 在私人房间里发一条，网络 Agent 解密收到并回复，本机 Agent 验签后看到回复。"""
+    """本机 Agent 在私人房间里发一条，网络 Agent 解密收到并回复，本机 Agent 验签后看到回复。
+    `observers` 是房间里另外几个本机 Agent，它们也要看到这条回复。"""
     # 房间密钥只分给身份已就绪的设备；网络 Agent 刚进来或刚重建时可能还没轮到，没收到就再发一条。
     received: dict[str, object] | None = None
     for _ in range(4):
@@ -2769,6 +2771,13 @@ def private_room_round_trip(
     agent = require_object(reply_actor.get("agent"), "网络 Agent 发言的 Agent")
     if agent.get("agentId") != agent_id or reply_actor.get("provenance") != "autonomous_agent":
         raise VerticalFailure("本机 Agent 在私人房间里看到的网络 Agent 发言身份不对。")
+    for observer in observers:
+        wait_for_mcp_preview(
+            observer,
+            room_id=room_id,
+            submission={"eventId": reply_event, "title": reply_text},
+            timeout_seconds=90,
+        )
     status, _ = network_agent_request(
         "POST", "/me/ack", token=token, body={"eventId": message["eventId"]}
     )
@@ -2977,6 +2986,282 @@ def drain_network_agent_messages(token: str, *, gaps: list[object] | None = None
         network_agent_request(
             "POST", "/me/ack", token=token, body={"eventId": require_text(last.get("eventId"), "事件 ID")}
         )
+
+AGENT_ROOM_NAME: Final = "Vertical Agent Room"
+NETWORK_AGENT_ROOM_NAME: Final = "Vertical Network Room"
+
+
+def verify_agent_rooms(
+    *,
+    sender_bridge: AuthorizedBridgeRuntime,
+    target_bridge: AuthorizedBridgeRuntime,
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """Agent 自己建房间（specs/agent-rooms/design.md“验收”）：本机 Agent 和网络 Agent 各建一间，
+    别的 Agent 按房间名、凭口令或敲门进来，加密收发。"""
+    local = verify_local_agent_room(
+        sender_bridge=sender_bridge, target_bridge=target_bridge, redactor=redactor
+    )
+    network = verify_network_agent_room()
+    return {**local, **network}
+
+
+def verify_local_agent_room(
+    *,
+    sender_bridge: AuthorizedBridgeRuntime,
+    target_bridge: AuthorizedBridgeRuntime,
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """本机 Agent 用 MCP 建房间，结果里带口令；同一个账号另一台电脑上的 Agent 按房间名进来；
+    网络 Agent 凭口令进来，三方加密收发。"""
+    with bridge_mcp_client(sender_bridge, redactor) as maker_transport, bridge_mcp_client(
+        target_bridge, redactor
+    ) as guest_transport:
+        maker, catalog_id, room_id, code = create_local_agent_room(maker_transport)
+        joined = guest_transport.call_tool(
+            "agent_room_join", {"room": AGENT_ROOM_NAME, "displayName": "Vertical Room Guest"}
+        )
+        if require_object(joined.get("room"), "按房间名进的房间").get("catalogId") != catalog_id:
+            raise VerticalFailure("另一台电脑上的 Agent 按房间名进了别的房间。")
+        guest = guest_transport.bind_session(
+            require_text(joined.get("sessionId"), "按房间名进来的会话")
+        )
+        if wait_for_session_identity(guest, timeout_seconds=180)["matrixRoomId"] != room_id:
+            raise VerticalFailure("按房间名进来的 Agent 不在建好的房间里。")
+
+        status, visitor = network_agent_request(
+            "POST",
+            "",
+            body={"name": "Vertical Room Visitor", "code": code},
+            source="198.51.100.40",
+            timeout_seconds=180,
+        )
+        if status != 201 or visitor is None:
+            raise VerticalFailure(f"网络 Agent 凭本机 Agent 建的房间的口令进来失败：HTTP {status}。")
+        token = require_text(visitor.get("token"), "网络 Agent 令牌")
+        agent_id = require_text(visitor.get("agentId"), "网络 Agent 的 Agent ID")
+        if require_object(visitor.get("room"), "网络 Agent 进的房间").get("matrixRoomId") != room_id:
+            raise VerticalFailure("网络 Agent 凭口令进了别的房间。")
+        drain_network_agent_messages(token)
+        reply = private_room_round_trip(
+            maker, token=token, agent_id=agent_id, room_id=room_id, observers=(guest,)
+        )
+        # 另一台电脑上的 Agent 说的，网络 Agent 也解得开。
+        deliver_to_network_agent(guest, token=token, room_id=room_id)
+    status, _ = network_agent_request("DELETE", "/me", token=token)
+    if status != 204:
+        raise VerticalFailure(f"凭口令进来的网络 Agent 停用失败：HTTP {status}。")
+    return {
+        "localRoomVisitorToken": token,
+        "localRoomCode": code,
+        "localRoomReplyEventId": reply,
+    }
+
+
+def create_local_agent_room(
+    transport: McpStdioClient,
+) -> tuple[McpAgentSession, str, str, str]:
+    """本机 Agent 用 MCP 替账号建私人房间、自己进去；回答它的会话、房间号、Matrix 房间和口令。"""
+    created = transport.call_tool(
+        "agent_room_create_room", {"name": AGENT_ROOM_NAME, "displayName": "Vertical Room Maker"}
+    )
+    room = require_object(created.get("room"), "本机 Agent 建的房间")
+    if room.get("name") != AGENT_ROOM_NAME:
+        raise VerticalFailure("本机 Agent 建的房间名字不对。")
+    catalog_id = require_text(room.get("catalogId"), "本机 Agent 建的房间号")
+    maker = transport.bind_session(require_text(created.get("sessionId"), "建房的会话"))
+    room_id = wait_for_session_identity(maker, timeout_seconds=180)["matrixRoomId"]
+    access = created.get("access")
+    if not isinstance(access, dict):
+        # 会话还在启动时结果里没带口令：就绪以后再看一次，和工具说的下一步一样。
+        access = maker.call_tool("agent_room_room_access", {})
+    if access.get("catalogId") != catalog_id:
+        raise VerticalFailure("建房结果里的口令不是这个房间的。")
+    code = require_object(access.get("code"), "建房结果里的口令")
+    if code.get("state") != "visible":
+        raise VerticalFailure(f"本机 Agent 新建的房间口令该看得到，实际是 {code.get('state')}。")
+    return maker, catalog_id, room_id, require_text(code.get("code"), "口令")
+
+
+def deliver_to_network_agent(client: McpAgentSession, *, token: str, room_id: str) -> str:
+    """本机 Agent 说一句，网络 Agent 解开收到；房间密钥还没轮到它时再说一句。"""
+    for _ in range(4):
+        message = send_mcp_vertical_message(client, room_id)
+        try:
+            wait_for_network_agent_message(token, message["eventId"], timeout_seconds=60)
+        except VerticalFailure:
+            continue
+        return message["eventId"]
+    raise VerticalFailure("网络 Agent 始终没能解开另一台电脑上的 Agent 的消息。")
+
+
+def verify_network_agent_room() -> dict[str, str]:
+    """网络 Agent 建房间，同名再建回到那间；别的网络 Agent 拿房间号敲门，把在等消息的房主叫醒，
+    放行后两边加密收发；房主离开后房间归档，留下的 Agent 说不了话，之前的消息照样翻得到。"""
+    owner = create_waiting_network_agent("Vertical Room Owner", "198.51.100.41")
+    catalog_id, room_id, code = create_network_agent_room(owner)
+    knocker, knocker_id = knock_while_owner_waits(owner, catalog_id=catalog_id, room_id=room_id)
+    status, admitted = network_agent_request(
+        "PUT",
+        f"/me/private-rooms/{catalog_id}/knocks/{knocker_id}",
+        token=owner,
+        timeout_seconds=180,
+    )
+    if status != 200 or admitted is None:
+        raise VerticalFailure(f"房主放行敲门的网络 Agent 失败：HTTP {status}。")
+    if require_object(admitted.get("agent"), "放进来的 Agent").get("agentId") != knocker_id:
+        raise VerticalFailure("房主放进来的不是敲门的那个网络 Agent。")
+    rooms, knocks = network_agent_rooms(knocker)
+    if room_id not in rooms or knocks:
+        raise VerticalFailure("放行以后，敲门的网络 Agent 该在房间里，门不该还在等。")
+    drain_network_agent_messages(knocker)
+    said, replied = network_agents_round_trip(owner, knocker, room_id=room_id)
+
+    status, _ = network_agent_request("DELETE", "/me", token=owner)
+    if status != 204:
+        raise VerticalFailure(f"建房的网络 Agent 离开失败：HTTP {status}。")
+    require_archived(catalog_id)
+    status, refused = network_agent_request(
+        "POST",
+        "/me/messages",
+        token=knocker,
+        body={"roomId": room_id, "text": "Is anyone still here?"},
+    )
+    if status != 403 or refused is None or refused.get("code") != "network_agent.forbidden":
+        raise VerticalFailure(f"房间归档以后，留下的网络 Agent 不该还能说话：HTTP {status}。")
+    history = network_agent_get(knocker, room_messages_path(room_id, "limit=20"))
+    if said not in network_event_ids(history):
+        raise VerticalFailure("房间归档以后，之前的消息该照样翻得到。")
+    status, _ = network_agent_request("DELETE", "/me", token=knocker)
+    if status != 204:
+        raise VerticalFailure(f"敲门进来的网络 Agent 停用失败：HTTP {status}。")
+    return {
+        "networkRoomOwnerToken": owner,
+        "networkRoomKnockerToken": knocker,
+        "networkRoomCode": code,
+        "networkRoomReplyEventId": replied,
+    }
+
+
+def create_network_agent_room(owner: str) -> tuple[str, str, str]:
+    """网络 Agent 建房间：新建回答 201、带着口令；同名再建回到那一间，回答 200。"""
+
+    def create() -> tuple[int, dict[str, object]]:
+        status, body = network_agent_request(
+            "POST",
+            "/me/private-rooms",
+            token=owner,
+            body={"name": NETWORK_AGENT_ROOM_NAME},
+            timeout_seconds=180,
+        )
+        if body is None:
+            raise VerticalFailure(f"网络 Agent 建房间没有回答：HTTP {status}。")
+        return status, body
+
+    status, made = create()
+    if status != 201 or made.get("created") is not True:
+        raise VerticalFailure(f"网络 Agent 建房间失败：HTTP {status}，{made.get('code')}。")
+    room = require_object(made.get("room"), "网络 Agent 建的房间")
+    catalog_id = require_text(room.get("catalogId"), "网络 Agent 建的房间号")
+    room_id = require_text(room.get("matrixRoomId"), "网络 Agent 建的 Matrix 房间")
+    code = require_object(made.get("code"), "网络 Agent 建的房间的口令")
+    if code.get("state") != "visible":
+        raise VerticalFailure("网络 Agent 新建的房间该带着看得到的口令。")
+    status, again = create()
+    again_room = require_object(again.get("room"), "同名再建回到的房间")
+    if status != 200 or again.get("created") is not False or again_room.get("catalogId") != catalog_id:
+        raise VerticalFailure(f"网络 Agent 同名再建，该回到原来那间：HTTP {status}。")
+    rooms, _ = network_agent_rooms(owner)
+    if room_id not in rooms:
+        raise VerticalFailure("建房的网络 Agent 不在自己的房间里。")
+    return catalog_id, room_id, require_text(code.get("code"), "口令")
+
+
+def knock_while_owner_waits(owner: str, *, catalog_id: str, room_id: str) -> tuple[str, str]:
+    """房主在自己的房间里等消息，别的网络 Agent 拿房间号敲门：房主被叫醒，wake.reason 是
+    knocks，incomingKnocks 列着这次敲门（specs/agent-rooms/design.md 4c）。"""
+    waiting = in_background(
+        lambda: network_agent_wait(owner, f"wait=30&roomId={quote(room_id, safe='')}")
+    )
+    time.sleep(2)  # 让房主先挂上等消息
+    status, created = network_agent_request(
+        "POST",
+        "",
+        body={"name": "Vertical Room Knocker", "room": catalog_id},
+        source="198.51.100.42",
+        timeout_seconds=180,
+    )
+    if status != 201 or created is None or "room" in created:
+        raise VerticalFailure(f"网络 Agent 拿房间号敲门失败：HTTP {status}。")
+    knock = require_object(created.get("knock"), "敲的门")
+    if knock.get("status") != "waiting" or knock.get("catalogId") != catalog_id:
+        raise VerticalFailure("敲的门不对，或者不在等。")
+    token = require_text(created.get("token"), "敲门的网络 Agent 令牌")
+    agent_id = require_text(created.get("agentId"), "敲门的网络 Agent 的 Agent ID")
+    page = waiting()
+    wake = network_page_wake(page)
+    if wake.get("reason") != "knocks":
+        raise VerticalFailure(f"房主等消息时没被敲门叫醒：{wake}。")
+    incoming = page.get("incomingKnocks")
+    if not isinstance(incoming, list) or not any(
+        is_knock_of(item, agent_id=agent_id, catalog_id=catalog_id) for item in incoming
+    ):
+        raise VerticalFailure("叫醒房主的回答里没列出这次敲门。")
+    acknowledge_network_page(owner, page)
+    return token, agent_id
+
+
+def is_knock_of(item: object, *, agent_id: str, catalog_id: str) -> bool:
+    knock = require_object(item, "在等的敲门")
+    room = require_object(knock.get("room"), "敲的房间")
+    return knock.get("agentId") == agent_id and room.get("catalogId") == catalog_id
+
+
+def network_agents_round_trip(owner: str, guest: str, *, room_id: str) -> tuple[str, str]:
+    """房主说一句，放进来的网络 Agent 解开后回复，房主再解开回复；房间密钥还没轮到它时再说一句。"""
+    for attempt in range(1, 5):
+        said = network_agent_say_in(owner, room_id, f"Welcome in ({attempt}).")
+        try:
+            received = wait_for_network_agent_message(guest, said, timeout_seconds=60)
+        except VerticalFailure:
+            continue
+        reply = network_agent_say_in(
+            guest,
+            room_id,
+            "Thanks for letting me in.",
+            reply_to=require_text(received.get("messageId"), "消息 ID"),
+        )
+        wait_for_network_agent_message(owner, reply, timeout_seconds=90)
+        return said, reply
+    raise VerticalFailure("放进来的网络 Agent 始终没能解开房主的消息。")
+
+
+def network_agent_say_in(
+    token: str, room_id: str, text: str, *, reply_to: str | None = None
+) -> str:
+    """网络 Agent 在指定的房间里说话（它在不止一个房间里时要说是哪间）。"""
+    body: dict[str, object] = {"roomId": room_id, "text": text}
+    if reply_to is not None:
+        body["replyTo"] = reply_to
+    status, sent = network_agent_request("POST", "/me/messages", token=token, body=body)
+    if status != 201 or sent is None or sent.get("status") != "sent":
+        code = sent.get("code") if sent is not None else None
+        raise VerticalFailure(f"网络 Agent 在私人房间里发言失败：HTTP {status}，{code}。")
+    return require_text(sent.get("eventId"), "网络 Agent 发言的事件 ID")
+
+
+def require_archived(catalog_id: str) -> None:
+    """房主离开时网关当场关掉它的房间；关不成才留给定时清理，所以多等一会儿。"""
+    require_uuid_v7(catalog_id, "房间号")
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        status = compose_psql(
+            f"SELECT status FROM agent_room.room_catalog_entry WHERE id = '{catalog_id}';"
+        )
+        if status == "archived":
+            return
+        time.sleep(1)
+    raise VerticalFailure("建房的网络 Agent 离开以后，房间该归档。")
 
 
 def verify_mcp_workflow(
