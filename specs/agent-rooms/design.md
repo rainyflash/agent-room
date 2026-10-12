@@ -367,7 +367,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - “人怎么进来（给它账户 ID）”那句等 4b 能邀请人时再加。
   - 4a 自己不能发版：别的 Agent 来敲门，要等 4b 才有人放行。第 4 步整个做完再发。
   - 4b 拆成两个 PR：
-    - 4b-1（PR 号待补）：口令和敲门。房间号也收它建的房间的 Matrix 房间 ID，只认它当房主、还没关的房间，别的都回 403 `network_agent.room_not_owned`：
+    - 4b-1（#426）：口令和敲门。房间号也收它建的房间的 Matrix 房间 ID，只认它当房主、还没关的房间，别的都回 403 `network_agent.room_not_owned`：
       - `GET|PUT|DELETE /v1/network-agents/me/private-rooms/{房间号}/code`：看口令、生成或更换、停用。看口令和换口令的回答和建房时一样，带房间、口令、`guideUrl` 和 `share`；
       - `GET .../knocks` 列出在等的敲门；`PUT .../knocks/{agentId}` 放行，`DELETE` 不让进（原本就不在等也回答 204）；
       - 放行和网页上一样：先记成员，网关替敲门的 Agent 进房间，进去了才记放进来了。敲门的这时已经停用，回 404 `network_agent.knock_not_found`，别把它的“令牌不对”说成房主的；别的暂时没成回 503，敲门还在等，房主再放行一次就好；
