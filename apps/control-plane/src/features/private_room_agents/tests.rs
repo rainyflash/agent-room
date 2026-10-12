@@ -18,8 +18,8 @@ use agent_room_application::{
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
         AgentAccessView, AnswerKnock, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller,
-        KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomAgentAccessUseCases, RedeemJoinCode,
-        RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
+        KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomActor, PrivateRoomAgentAccessUseCases,
+        RedeemJoinCode, RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
     },
 };
 use agent_room_domain::{
@@ -62,6 +62,8 @@ struct FakeAccess {
     knock_failure: Mutex<Option<AgentAccessFailureKind>>,
     /// 再看口令时用例回答的失败。
     reveal_failure: Mutex<Option<AgentAccessFailureKind>>,
+    /// 管理的调用是谁做的：网页上的人（`person`）还是本机设备（`device`）。
+    actors: Mutex<Vec<&'static str>>,
 }
 
 /// 网关替身：记下替谁进了哪个房间，按预设成功或失败。
@@ -91,6 +93,14 @@ impl FakeAccess {
     fn record(&self, call: String) {
         self.calls.lock().unwrap().push(call);
     }
+
+    fn note(&self, actor: &PrivateRoomActor) {
+        self.actors.lock().unwrap().push(match actor {
+            PrivateRoomActor::Person(_) => "person",
+            PrivateRoomActor::Device(_) => "device",
+            PrivateRoomActor::NetworkAgent(_) => "network",
+        });
+    }
 }
 
 impl PrivateRoomAgentAccessUseCases for FakeAccess {
@@ -117,6 +127,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         request: ManageJoinCode,
     ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
         self.record(format!("generate:{}", request.catalog_id));
+        self.note(&request.actor);
         Box::pin(async move {
             Ok(GeneratedJoinCode {
                 code: PrivateRoomJoinCode::parse("K7P3-Q9XW-2DMA").unwrap(),
@@ -135,6 +146,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         request: ManageJoinCode,
     ) -> PortFuture<'_, AgentAccessResult<GeneratedJoinCode>> {
         self.record(format!("reveal:{}", request.catalog_id));
+        self.note(&request.actor);
         let failure = *self.reveal_failure.lock().unwrap();
         Box::pin(async move {
             if let Some(kind) = failure {
@@ -154,6 +166,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
 
     fn disable_code(&self, request: ManageJoinCode) -> PortFuture<'_, AgentAccessResult<()>> {
         self.record(format!("disable:{}", request.catalog_id));
+        self.note(&request.actor);
         Box::pin(async { Ok(()) })
     }
 
@@ -162,6 +175,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
             "remove:{}:{}",
             request.catalog_id, request.agent_id
         ));
+        self.note(&request.actor);
         Box::pin(async { Ok(()) })
     }
 
@@ -201,6 +215,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         request: InspectAgentAccess,
     ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
         self.record(format!("knocks:{}", request.catalog_id));
+        self.note(&request.actor);
         let failure = *self.knock_failure.lock().unwrap();
         Box::pin(async move {
             if let Some(kind) = failure {
@@ -215,6 +230,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         request: AnswerKnock,
     ) -> PortFuture<'_, AgentAccessResult<AdmittedKnock>> {
         self.record(format!("admit:{}:{}", request.catalog_id, request.agent_id));
+        self.note(&request.actor);
         let failure = *self.knock_failure.lock().unwrap();
         Box::pin(async move {
             if let Some(kind) = failure {
@@ -243,6 +259,7 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
             "decline:{}:{}",
             request.catalog_id, request.agent_id
         ));
+        self.note(&request.actor);
         let failure = *self.knock_failure.lock().unwrap();
         Box::pin(async move {
             match failure {
@@ -351,6 +368,8 @@ impl AuthenticationUseCases for FakeAuthentication {
 struct FakeDevices {
     expected_body: Mutex<Option<String>>,
     expected_target: Mutex<Option<String>>,
+    /// 签名覆盖的方法；没登记时是 `POST`。
+    signed_method: Mutex<Option<String>>,
 }
 
 impl DeviceAuthorizationUseCases for FakeDevices {
@@ -367,7 +386,8 @@ impl DeviceAuthorizationUseCases for FakeDevices {
     ) -> PortFuture<'a, DeviceAuthorizationResult<AuthenticatedDevice>> {
         assert_eq!(request.access_token.expose(), "device-access-token");
         assert_eq!(request.proof.device_id(), device_id());
-        assert_eq!(request.proof.method(), "POST");
+        let method = self.signed_method.lock().unwrap().clone();
+        assert_eq!(request.proof.method(), method.as_deref().unwrap_or("POST"));
         let target = self.expected_target.lock().unwrap().clone();
         assert_eq!(
             Some(request.proof.request_target().to_owned()),
@@ -534,6 +554,122 @@ async fn 管理者再看口令_回答不缓存_没有口令和看不到的分开
         assert_eq!(refused.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(json_of(refused).await["code"], code);
     }
+}
+
+#[tokio::test]
+async fn 本机设备签名管口令_生成_再看_停用_都以设备身份交给用例() {
+    let access = Arc::new(FakeAccess::default());
+    let code = device_route("/code");
+    for method in [Method::PUT, Method::GET] {
+        let response = device_app(access.clone(), &method, &code)
+            .oneshot(device_request(method.clone(), &code))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{method}");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(json_of(response).await["code"], "K7P3-Q9XW-2DMA");
+    }
+    let disabled = device_app(access.clone(), &Method::DELETE, &code)
+        .oneshot(device_request(Method::DELETE, &code))
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), StatusCode::NO_CONTENT);
+
+    assert_eq!(
+        access.calls(),
+        [
+            format!("generate:{CATALOG_UUID}"),
+            format!("reveal:{CATALOG_UUID}"),
+            format!("disable:{CATALOG_UUID}"),
+        ]
+    );
+    assert_eq!(*access.actors.lock().unwrap(), ["device"; 3]);
+}
+
+#[tokio::test]
+async fn 本机设备签名看敲门_放行时网关替它进房间_也能不让进和移出() {
+    let access = Arc::new(FakeAccess::default());
+    let entry = Arc::new(FakeEntry::default());
+    let knocks = device_route("/knocks");
+    let listed = device_app(access.clone(), &Method::GET, &knocks)
+        .oneshot(device_request(Method::GET, &knocks))
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    assert_eq!(json_of(listed).await["knocks"][0]["agentId"], AGENT_UUID);
+
+    let knock = device_route(&format!("/knocks/{AGENT_UUID}"));
+    let admitted = app_with_entry(
+        access.clone(),
+        devices_with(&Method::PUT, &knock),
+        entry.clone(),
+    )
+    .oneshot(device_request(Method::PUT, &knock))
+    .await
+    .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+    assert_eq!(json_of(admitted).await["agent"]["agentId"], AGENT_UUID);
+    assert_eq!(entry.entered.lock().unwrap()[0].0, agent_id());
+
+    let declined = device_app(access.clone(), &Method::DELETE, &knock)
+        .oneshot(device_request(Method::DELETE, &knock))
+        .await
+        .unwrap();
+    assert_eq!(declined.status(), StatusCode::NO_CONTENT);
+    let member = device_route(&format!("/agents/{AGENT_UUID}"));
+    let removed = device_app(access.clone(), &Method::DELETE, &member)
+        .oneshot(device_request(Method::DELETE, &member))
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+
+    assert_eq!(
+        access.calls(),
+        [
+            format!("knocks:{CATALOG_UUID}"),
+            format!("admit:{CATALOG_UUID}:{AGENT_UUID}"),
+            format!("complete:{CATALOG_UUID}:{AGENT_UUID}"),
+            format!("decline:{CATALOG_UUID}:{AGENT_UUID}"),
+            format!("remove:{CATALOG_UUID}:{AGENT_UUID}"),
+        ]
+    );
+    assert_eq!(*access.actors.lock().unwrap(), ["device"; 4]);
+}
+
+#[tokio::test]
+async fn 设备路由先认房间号和_agent_号_没有设备签名不交给用例() {
+    let access = Arc::new(FakeAccess::default());
+    // 设备替身没登记签名：走到核对签名这一步就会失败。
+    for (method, path) in [
+        (
+            Method::GET,
+            "/devices/current/private-rooms/not-a-uuid/code".to_owned(),
+        ),
+        (Method::PUT, device_route("/knocks/not-a-uuid")),
+        (Method::DELETE, device_route("/agents/not-a-uuid")),
+    ] {
+        let response = app(access.clone(), Arc::default())
+            .oneshot(device_request(method, &path))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(
+            json_of(response).await["code"],
+            "join_code.invalid_resource_id"
+        );
+    }
+    let unsigned = app(access.clone(), Arc::default())
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(device_route("/code"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+    assert!(access.calls().is_empty());
 }
 
 #[tokio::test]
@@ -817,6 +953,27 @@ fn devices_for(target: &str, body: &str) -> Arc<FakeDevices> {
     *devices.expected_body.lock().unwrap() = Some(body.to_owned());
     *devices.expected_target.lock().unwrap() = Some(target.to_owned());
     devices
+}
+
+fn device_route(suffix: &str) -> String {
+    format!("/devices/current/private-rooms/{CATALOG_UUID}{suffix}")
+}
+
+/// 只认这一次设备签名：方法、路径和空正文。
+fn devices_with(method: &Method, target: &str) -> Arc<FakeDevices> {
+    let devices = devices_for(target, "");
+    *devices.signed_method.lock().unwrap() = Some(method.to_string());
+    devices
+}
+
+fn device_app(access: Arc<FakeAccess>, method: &Method, target: &str) -> axum::Router {
+    app(access, devices_with(method, target))
+}
+
+fn device_request(method: Method, path: &str) -> Request<Body> {
+    let mut request = signed(path, "");
+    *request.method_mut() = method;
+    request
 }
 
 fn signed(path: &str, body: &str) -> Request<Body> {

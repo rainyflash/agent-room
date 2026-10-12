@@ -8,16 +8,23 @@ use agent_room_application::{
         AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
         AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
     },
-    ports::{PortFuture, PrivateRoomSnapshot, SecretValue},
+    devices::{
+        AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
+        DeviceAuthorizationUseCases, DeviceCredentials, RefreshDeviceSession, RegisterDevice,
+        RevokedDevice,
+    },
+    ports::{PortFuture, PrincipalAccount, PrivateRoomSnapshot, SecretFactory, SecretValue},
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        ListPrivateRoomsForAccount, PrivateRoomMembershipAction, PrivateRoomResult,
-        PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomMembershipAction,
+        PrivateRoomResult, PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
-    ids::{PrincipalId, RoomCatalogId, RoomInstanceId},
+    devices::Device,
+    identity::Principal,
+    ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId},
     private_rooms::{PrivateRoom, PrivateRoomPermissions},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
@@ -26,23 +33,27 @@ use agent_room_domain::{
     },
     time::UtcMillis,
 };
+use agent_room_identity_adapter::SecureSecretFactory;
 use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
     middleware,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use url::Url;
 use uuid::Uuid;
 
-use super::{PrivateRoomHttpState, router};
+use super::{PrivateRoomHttpDependencies, PrivateRoomHttpState, router};
 
 const OWNER_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const TARGET_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
 const INSTANCE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
 const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
+const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
+const AGENT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e49";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ObservedCall {
@@ -56,6 +67,9 @@ struct ObservedCall {
 struct FakeRooms {
     calls: Mutex<Vec<ObservedCall>>,
     snapshot: PrivateRoomSnapshot,
+    /// 建房、邀请是谁做的：网页上的人（`person`）还是本机设备（`device`）。
+    actors: Mutex<Vec<&'static str>>,
+    created_by_agent: Mutex<Option<AgentId>>,
 }
 
 impl FakeRooms {
@@ -63,7 +77,17 @@ impl FakeRooms {
         Self {
             calls: Mutex::new(Vec::new()),
             snapshot: snapshot(),
+            actors: Mutex::new(Vec::new()),
+            created_by_agent: Mutex::new(None),
         }
+    }
+
+    fn note(&self, actor: &PrivateRoomActor) {
+        self.actors.lock().unwrap().push(match actor {
+            PrivateRoomActor::Person(_) => "person",
+            PrivateRoomActor::Device(_) => "device",
+            PrivateRoomActor::NetworkAgent(_) => "network",
+        });
     }
 
     fn record(&self, call: ObservedCall) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
@@ -78,7 +102,8 @@ impl PrivateRoomUseCases for FakeRooms {
         &self,
         request: CreatePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
-        assert_eq!(request.invitations.len(), 1);
+        self.note(&request.actor);
+        *self.created_by_agent.lock().unwrap() = request.created_by_agent;
         self.record(ObservedCall {
             operation: "create",
             catalog_id: request.catalog_id,
@@ -121,6 +146,7 @@ impl PrivateRoomUseCases for FakeRooms {
         &self,
         request: InvitePrivateRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        self.note(&request.actor);
         self.record(call(
             "invite",
             request.catalog_id,
@@ -266,6 +292,195 @@ impl AuthenticationUseCases for FakeAuthentication {
     ) -> PortFuture<'_, AuthenticationResult<()>> {
         Box::pin(async { unreachable!("私人房间路由不会暂停主体") })
     }
+}
+
+/// 只认一次设备签名：方法、路径和正文都要对得上。
+#[derive(Default)]
+struct FakeDevices {
+    expected: Mutex<Option<(String, String, String)>>,
+}
+
+impl FakeDevices {
+    fn expecting(method: &str, target: &str, body: &str) -> Arc<Self> {
+        Arc::new(Self {
+            expected: Mutex::new(Some((
+                method.to_owned(),
+                target.to_owned(),
+                body.to_owned(),
+            ))),
+        })
+    }
+}
+
+impl DeviceAuthorizationUseCases for FakeDevices {
+    fn register_device(
+        &self,
+        _request: RegisterDevice,
+    ) -> PortFuture<'_, DeviceAuthorizationResult<DeviceCredentials>> {
+        Box::pin(async { unreachable!("私人房间路由不会注册设备") })
+    }
+
+    fn authenticate_device<'a>(
+        &'a self,
+        request: AuthenticateDeviceRequest<'a>,
+    ) -> PortFuture<'a, DeviceAuthorizationResult<AuthenticatedDevice>> {
+        let (method, target, body) = self
+            .expected
+            .lock()
+            .unwrap()
+            .take()
+            .expect("登记了设备签名");
+        assert_eq!(request.access_token.expose(), "device-access-token");
+        assert_eq!(request.proof.method(), method);
+        assert_eq!(request.proof.request_target(), target, "签名覆盖的路径");
+        assert_eq!(
+            request.proof.body_digest(),
+            &SecureSecretFactory.digest(&body)
+        );
+        Box::pin(async {
+            Ok(AuthenticatedDevice {
+                account: PrincipalAccount {
+                    principal: Principal::new(owner_id()),
+                    matrix_user_id: "@owner:matrix.agent-room.test".to_owned(),
+                    display_name: "Owner".to_owned(),
+                    avatar_content_id: None,
+                    locale: "zh-CN".to_owned(),
+                },
+                device_id: DeviceId::from_uuid(uuid(DEVICE_UUID)),
+                access_token_expires_at: time(1_700_000_900_000),
+            })
+        })
+    }
+
+    fn refresh_device_session<'a>(
+        &'a self,
+        _request: RefreshDeviceSession<'a>,
+    ) -> PortFuture<'a, DeviceAuthorizationResult<DeviceCredentials>> {
+        Box::pin(async { unreachable!("私人房间路由不会刷新设备会话") })
+    }
+
+    fn list_devices(
+        &self,
+        _principal_id: PrincipalId,
+    ) -> PortFuture<'_, DeviceAuthorizationResult<Vec<Device>>> {
+        Box::pin(async { unreachable!("私人房间路由不会列出设备") })
+    }
+
+    fn revoke_device(
+        &self,
+        _principal_id: PrincipalId,
+        _device_id: DeviceId,
+    ) -> PortFuture<'_, DeviceAuthorizationResult<RevokedDevice>> {
+        Box::pin(async { unreachable!("私人房间路由不会撤销设备") })
+    }
+}
+
+#[tokio::test]
+async fn 本机设备签名建房_说清建房的_agent_不顺带邀请人() {
+    let rooms = Arc::new(FakeRooms::new());
+    let target = "/devices/current/private-rooms";
+    let body = json!({ "name": "Weekly sync", "agentId": AGENT_UUID }).to_string();
+    let response = device_router(rooms.clone(), FakeDevices::expecting("POST", target, &body))
+        .oneshot(device_request(target, &body, true))
+        .await
+        .expect("路由可调用");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "catalogId": CATALOG_UUID,
+            "matrixRoomId": "!private:matrix.agent-room.test",
+            "name": "Incident Room",
+        })
+    );
+    assert_eq!(
+        *rooms.calls.lock().unwrap(),
+        [ObservedCall {
+            name: Some("Weekly sync".to_owned()),
+            ..call("create", catalog_id(), None, None)
+        }]
+    );
+    assert_eq!(*rooms.actors.lock().unwrap(), ["device"]);
+    assert_eq!(
+        *rooms.created_by_agent.lock().unwrap(),
+        Some(AgentId::from_uuid(uuid(AGENT_UUID)))
+    );
+}
+
+#[tokio::test]
+async fn 本机设备签名建房要房间号和合法的建房_agent() {
+    let rooms = Arc::new(FakeRooms::new());
+    let target = "/devices/current/private-rooms";
+    let valid = json!({ "name": "Weekly sync", "agentId": AGENT_UUID }).to_string();
+    let missing_key = device_router(rooms.clone(), Arc::default())
+        .oneshot(device_request(target, &valid, false))
+        .await
+        .expect("路由可调用");
+    assert_eq!(missing_key.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(missing_key).await["code"],
+        "private_room.invalid_idempotency_key"
+    );
+
+    for body in [
+        json!({ "name": "Weekly sync", "agentId": "not-a-uuid" }),
+        json!({ "name": "Weekly sync" }),
+        json!({ "name": "Weekly sync", "agentId": AGENT_UUID, "invitations": [] }),
+    ] {
+        let body = body.to_string();
+        let refused = device_router(rooms.clone(), FakeDevices::expecting("POST", target, &body))
+            .oneshot(device_request(target, &body, true))
+            .await
+            .expect("路由可调用");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            response_json(refused).await["code"],
+            "private_room.invalid_creation_body"
+        );
+    }
+    assert!(rooms.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn 本机设备签名按账户_id_邀请人_只给查看和发言() {
+    let rooms = Arc::new(FakeRooms::new());
+    let target = format!("/devices/current/private-rooms/{CATALOG_UUID}/invitations");
+    let body = json!({ "accountId": TARGET_UUID }).to_string();
+    let response = device_router(
+        rooms.clone(),
+        FakeDevices::expecting("POST", &target, &body),
+    )
+    .oneshot(device_request(&target, &body, false))
+    .await
+    .expect("路由可调用");
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        *rooms.calls.lock().unwrap(),
+        [call(
+            "invite",
+            catalog_id(),
+            Some(target_id()),
+            Some(PrivateRoomPermissions::INVITED_BY_AGENT)
+        )]
+    );
+    assert_eq!(*rooms.actors.lock().unwrap(), ["device"]);
+
+    let body = json!({ "accountId": "someone" }).to_string();
+    let refused = device_router(
+        rooms.clone(),
+        FakeDevices::expecting("POST", &target, &body),
+    )
+    .oneshot(device_request(&target, &body, false))
+    .await
+    .expect("路由可调用");
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(refused).await["code"],
+        "private_room.invalid_invitation_body"
+    );
 }
 
 #[tokio::test]
@@ -615,13 +830,51 @@ async fn 房间列表只需活动会话并返回权威快照集合() {
 }
 
 fn test_router(rooms: Arc<FakeRooms>, authentication: Arc<FakeAuthentication>) -> axum::Router {
+    router_with(rooms, authentication, Arc::default())
+}
+
+fn device_router(rooms: Arc<FakeRooms>, devices: Arc<FakeDevices>) -> axum::Router {
+    router_with(rooms, Arc::default(), devices)
+}
+
+fn router_with(
+    rooms: Arc<FakeRooms>,
+    authentication: Arc<FakeAuthentication>,
+    devices: Arc<FakeDevices>,
+) -> axum::Router {
     let state = PrivateRoomHttpState::new(
-        rooms,
-        authentication,
+        PrivateRoomHttpDependencies {
+            rooms,
+            authentication,
+            devices,
+            secrets: Arc::new(SecureSecretFactory),
+        },
         &Url::parse(FRONTEND_ORIGIN).expect("前端地址有效"),
         &crate::config::DesktopOrigins::for_tests(),
     );
     router(state).layer(middleware::from_fn(crate::correlation::attach))
+}
+
+/// 本机 Bridge 发的请求：设备令牌和签名头，没有会话和来源。
+fn device_request(path: &str, body: &str, include_idempotency_key: bool) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, "Bearer device-access-token")
+        .header("x-agent-room-device-id", DEVICE_UUID)
+        .header("x-agent-room-proof-issued-at", "1700000000000")
+        .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+        .header(
+            "x-agent-room-proof-signature",
+            URL_SAFE_NO_PAD.encode([9_u8; 64]),
+        );
+    if include_idempotency_key {
+        request = request.header("idempotency-key", CATALOG_UUID);
+    }
+    request
+        .body(Body::from(body.to_owned()))
+        .expect("HTTP 请求有效")
 }
 
 fn request(
