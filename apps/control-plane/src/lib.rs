@@ -1029,7 +1029,7 @@ fn build_network_agent_routes(
     let gateway = Arc::new(network_gateway::NetworkGateway::new(
         network_gateway::NetworkGatewayDependencies {
             agents: agents.clone(),
-            owned_rooms: service,
+            owned_rooms: service.clone(),
             inbox: dependencies.repositories.clone(),
             history: dependencies.repositories.clone(),
             submissions: dependencies.repositories.clone(),
@@ -1052,6 +1052,7 @@ fn build_network_agent_routes(
             agents,
             messaging: gateway.clone(),
             rooms: gateway,
+            owned_rooms: service,
             sources: Arc::new(NetworkSourceDigester::new(key)),
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(

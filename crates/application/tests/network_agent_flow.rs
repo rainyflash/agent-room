@@ -26,11 +26,12 @@ use agent_room_application::{
         NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
-        NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomSnapshot, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
-        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
-        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
-        SecretValue, StoredAgentInstanceRegistration,
+        NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
+        PublicLobbyObservationRoom, RateWindowDecision, RateWindowPolicy, RegisteredAgent,
+        RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory,
+        SecretGenerationFailure, SecretSealingFailure, SecretValue,
+        StoredAgentInstanceRegistration,
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
@@ -57,7 +58,7 @@ use agent_room_domain::{
         HandoffId, LoginAttemptId, NetworkAgentId, OutboxEventId, PrincipalId, RoomCatalogId,
         RoomInstanceId, RoomReservationId, WebSessionId,
     },
-    join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomJoinCode},
+    join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
     private_rooms::{PrivateRoom, PrivateRoomPermissions},
     rooms::{
@@ -747,7 +748,7 @@ struct FakeAccess {
     /// 网络 Agent 自己建的房间的口令；看不到的记在 `hidden`。
     codes: Mutex<HashMap<RoomCatalogId, PrivateRoomJoinCode>>,
     hidden: Mutex<HashSet<RoomCatalogId>>,
-    /// 管口令的是谁（合成主体）、管的哪间、生成还是看。
+    /// 管房间的是谁（合成主体）、管的哪间、做了什么（生成、看、停用口令，回答敲门）。
     managed: Mutex<Vec<(PrincipalId, RoomCatalogId, &'static str)>>,
 }
 
@@ -759,6 +760,64 @@ impl FakeAccess {
             .iter()
             .filter(|(_, _, action)| *action == "generate")
             .count()
+    }
+
+    fn manage(&self, actor: &PrivateRoomActor, catalog_id: RoomCatalogId, action: &'static str) {
+        assert!(
+            matches!(actor, PrivateRoomActor::NetworkAgent(_)),
+            "只有网络 Agent 管自己建的房间时才来"
+        );
+        self.managed
+            .lock()
+            .unwrap()
+            .push((actor.principal_id(), catalog_id, action));
+    }
+
+    /// 回答敲门：只认在等的。
+    fn waiting_knock(
+        &self,
+        request: &AnswerKnock,
+    ) -> AgentAccessResult<PrivateRoomAgentKnockRecord> {
+        self.knocks
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|knock| {
+                knock.catalog_id == request.catalog_id
+                    && knock.agent_id == request.agent_id
+                    && knock.status == PrivateRoomAgentKnockStatus::Waiting
+            })
+            .cloned()
+            .ok_or_else(|| AgentAccessFailure::new("test.answer", AgentAccessFailureKind::NotFound))
+    }
+
+    fn decide(&self, request: &AnswerKnock, status: PrivateRoomAgentKnockStatus) {
+        for knock in self.knocks.lock().unwrap().iter_mut() {
+            if knock.catalog_id == request.catalog_id
+                && knock.agent_id == request.agent_id
+                && knock.status == PrivateRoomAgentKnockStatus::Waiting
+            {
+                knock.status = status;
+                knock.decided_at = Some(UtcMillis::new(START).unwrap());
+            }
+        }
+    }
+}
+
+/// 有个 Agent 在敲这个房间的门。
+fn waiting_knock_on(
+    catalog_id: RoomCatalogId,
+    agent_id: AgentId,
+    name: &str,
+) -> PrivateRoomAgentKnockRecord {
+    PrivateRoomAgentKnockRecord {
+        catalog_id,
+        agent_id,
+        display_name: name.to_owned(),
+        status: PrivateRoomAgentKnockStatus::Waiting,
+        knocked_at: UtcMillis::new(START).unwrap(),
+        expires_at: UtcMillis::new(START + HOUR).unwrap(),
+        decided_at: None,
     }
 }
 
@@ -832,8 +891,11 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         Box::pin(async move { result })
     }
 
-    fn disable_code(&self, _request: ManageJoinCode) -> PortFuture<'_, AgentAccessResult<()>> {
-        unreachable!("网络 Agent 不管理口令")
+    fn disable_code(&self, request: ManageJoinCode) -> PortFuture<'_, AgentAccessResult<()>> {
+        self.manage(&request.actor, request.catalog_id, "disable");
+        self.codes.lock().unwrap().remove(&request.catalog_id);
+        self.hidden.lock().unwrap().remove(&request.catalog_id);
+        Box::pin(async { Ok(()) })
     }
 
     fn remove_agent(&self, _request: RemoveAgentMember) -> PortFuture<'_, AgentAccessResult<()>> {
@@ -950,24 +1012,63 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
 
     fn waiting_knocks(
         &self,
-        _request: InspectAgentAccess,
+        request: InspectAgentAccess,
     ) -> PortFuture<'_, AgentAccessResult<Vec<PrivateRoomAgentKnockRecord>>> {
-        unreachable!("网络 Agent 不看别人敲门")
+        self.manage(&request.actor, request.catalog_id, "knocks");
+        let waiting = self
+            .knocks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|knock| {
+                knock.catalog_id == request.catalog_id
+                    && knock.status == PrivateRoomAgentKnockStatus::Waiting
+            })
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(waiting) })
     }
 
+    /// 放行只记成员，敲门还在等，进去了再 `complete_knock`，和真的一样。
     fn admit_knock(
         &self,
-        _request: AnswerKnock,
+        request: AnswerKnock,
     ) -> PortFuture<'_, AgentAccessResult<AdmittedKnock>> {
-        unreachable!("网络 Agent 不放行")
+        self.manage(&request.actor, request.catalog_id, "admit");
+        let result = self.waiting_knock(&request).map(|knock| AdmittedKnock {
+            room: RedeemedRoom {
+                catalog_id: request.catalog_id,
+                matrix_room_id: owned_matrix_room(request.catalog_id),
+                name: "Owned".to_owned(),
+            },
+            agent: PrivateRoomAgentMemberRecord {
+                catalog_id: request.catalog_id,
+                agent_id: request.agent_id,
+                display_name: knock.display_name,
+                matrix_user_id: MatrixUserId::new("@knocker:matrix.test".to_owned()).unwrap(),
+                owner_display_name: None,
+                status: PrivateRoomAgentMemberStatus::Joined,
+                permissions: PrivateRoomPermissions::AGENT_MEMBER,
+                joined_at: UtcMillis::new(START).unwrap(),
+                status_changed_at: UtcMillis::new(START).unwrap(),
+            },
+        });
+        Box::pin(async move { result })
     }
 
-    fn complete_knock(&self, _request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
-        unreachable!("网络 Agent 不放行")
+    fn complete_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        self.manage(&request.actor, request.catalog_id, "complete");
+        let result = self
+            .waiting_knock(&request)
+            .map(|_| self.decide(&request, PrivateRoomAgentKnockStatus::Admitted));
+        Box::pin(async move { result })
     }
 
-    fn decline_knock(&self, _request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
-        unreachable!("网络 Agent 不放行")
+    /// 原本就不在等也算成功，和真的一样。
+    fn decline_knock(&self, request: AnswerKnock) -> PortFuture<'_, AgentAccessResult<()>> {
+        self.manage(&request.actor, request.catalog_id, "decline");
+        self.decide(&request, PrivateRoomAgentKnockStatus::Declined);
+        Box::pin(async { Ok(()) })
     }
 }
 

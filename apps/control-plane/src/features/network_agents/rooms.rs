@@ -1,8 +1,19 @@
-//! 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。房主是它自己，建好就在
-//! 里面，回答里带着口令和一段要转给别的 Agent 的话。它建的房间服务器读得到里面所有的消息：接入说明
-//! 照实写，人进来之前网页上也写。
+//! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。房主是它自己，建好就在
+//! 里面，回答里带着口令和一段要转给别的 Agent 的话；之后看口令、换口令、停用口令，看谁在敲门、
+//! 放行或不让进，最后关掉。它建的房间服务器读得到里面所有的消息：接入说明照实写，人进来之前网页
+//! 上也写。
+//!
+//! 建房和放行要替 Agent 进房间，走网关（`state.rooms`）；别的只动账，直接交给用例
+//! （`state.owned_rooms`）。
 
-use agent_room_application::network_agents::{NetworkAgentOwnedRoom, NetworkAgentRoomCode};
+use agent_room_application::{
+    network_agents::{
+        NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentRoom, NetworkAgentRoomCode,
+        NetworkAgentRoomCodeView,
+    },
+    ports::{PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord},
+};
+use agent_room_domain::ids::AgentId;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json,
@@ -16,7 +27,7 @@ use super::{NetworkAgentHttpState, RoomResponse, SCHEMA_VERSION, gateway_failure
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
-    features::{authentication::no_store, devices::bearer_secret},
+    features::{authentication::no_store, devices::bearer_secret, resource_ids::parse_uuid_v7},
 };
 
 const ZH_NO_WEB: &str = "如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。";
@@ -42,13 +53,88 @@ struct CreatedRoomResponse {
     share: ShareResponse,
 }
 
+/// 看口令、换口令时回答房间现在的口令，外加要转给别的 Agent 的话。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RoomCodeResponse {
+    schema_version: u8,
+    room: RoomResponse,
+    code: CodeResponse,
+    guide_url: String,
+    share: ShareResponse,
+}
+
 /// 和本机 MCP 看口令时一个形状：`{"state": "visible", "code": "XXXX-XXXX-XXXX"}`，看不到时
-/// `{"state": "hidden"}`。口令就是房间的钥匙，这几个类型都不派生 `Debug`。
+/// `{"state": "hidden"}`，没有时 `{"state": "missing"}`。口令就是房间的钥匙，这几个类型都不派生
+/// `Debug`。
 #[derive(Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum CodeResponse {
     Visible { code: String },
     Hidden,
+    Missing,
+}
+
+impl From<NetworkAgentRoomCode> for CodeResponse {
+    fn from(code: NetworkAgentRoomCode) -> Self {
+        match code {
+            NetworkAgentRoomCode::Visible(code) => Self::Visible { code },
+            NetworkAgentRoomCode::Hidden => Self::Hidden,
+            NetworkAgentRoomCode::Missing => Self::Missing,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnocksResponse {
+    schema_version: u8,
+    /// 在等、没作废的敲门，先敲的在前。
+    knocks: Vec<KnockResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnockResponse {
+    agent_id: String,
+    display_name: String,
+    knocked_at_unix_ms: i64,
+    /// 一小时没人回答，到这一刻作废。
+    expires_at_unix_ms: i64,
+}
+
+impl From<PrivateRoomAgentKnockRecord> for KnockResponse {
+    fn from(knock: PrivateRoomAgentKnockRecord) -> Self {
+        Self {
+            agent_id: knock.agent_id.to_string(),
+            display_name: knock.display_name,
+            knocked_at_unix_ms: knock.knocked_at.value(),
+            expires_at_unix_ms: knock.expires_at.value(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdmittedResponse {
+    schema_version: u8,
+    agent: AdmittedAgentResponse,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdmittedAgentResponse {
+    agent_id: String,
+    display_name: String,
+}
+
+impl From<PrivateRoomAgentMemberRecord> for AdmittedAgentResponse {
+    fn from(member: PrivateRoomAgentMemberRecord) -> Self {
+        Self {
+            agent_id: member.agent_id.to_string(),
+            display_name: member.display_name,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -101,33 +187,189 @@ pub(super) async fn close_room(
 ) -> Response {
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
-    match state.rooms.close_room(token, &room).await {
+    match state.owned_rooms.close_room(token, &room).await {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
+/// 看自己建的房间现在的口令和要转给别的 Agent 的话。没有口令时 `code.state` 是 `missing`，要口令
+/// 就 `PUT` 生成一个。
+pub(super) async fn room_code(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    code_response(
+        &state.guide_url,
+        state.owned_rooms.room_code(token, &room).await,
+        correlation_id,
+    )
+}
+
+/// 生成口令；已经有的换成新的，旧的马上失效，已经进来的 Agent 不受影响。
+pub(super) async fn replace_code(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    code_response(
+        &state.guide_url,
+        state.owned_rooms.replace_code(token, &room).await,
+        correlation_id,
+    )
+}
+
+/// 停用口令：拿旧口令进不来了，敲门照旧。原本就没有口令也回答 204。
+pub(super) async fn disable_code(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.owned_rooms.disable_code(token, &room).await {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
+/// 谁在敲自己建的房间的门：在等、没作废的，先敲的在前。
+pub(super) async fn waiting_knocks(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.owned_rooms.waiting_knocks(token, &room).await {
+        Ok(knocks) => no_store(
+            Json(KnocksResponse {
+                schema_version: SCHEMA_VERSION,
+                knocks: knocks.into_iter().map(KnockResponse::from).collect(),
+            })
+            .into_response(),
+        ),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
+/// 放行：服务器在这次请求里替敲门的 Agent 进房间，进去了才回答。
+pub(super) async fn admit_knock(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((room, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(agent_id) = knocking_agent(&agent) else {
+        return invalid_agent(correlation_id);
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.rooms.admit_knock(token, &room, agent_id).await {
+        Ok(member) => no_store(
+            Json(AdmittedResponse {
+                schema_version: SCHEMA_VERSION,
+                agent: AdmittedAgentResponse::from(member),
+            })
+            .into_response(),
+        ),
         Err(failure) => gateway_failure(&failure, correlation_id),
     }
 }
 
+/// 不让进：之后它再敲还是不让进。原本就不在等也回答 204。
+pub(super) async fn decline_knock(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((room, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(agent_id) = knocking_agent(&agent) else {
+        return invalid_agent(correlation_id);
+    };
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state
+        .owned_rooms
+        .decline_knock(token, &room, agent_id)
+        .await
+    {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
+fn knocking_agent(agent: &str) -> Option<AgentId> {
+    parse_uuid_v7(agent).ok().map(AgentId::from_uuid)
+}
+
+fn invalid_agent(correlation_id: CorrelationId) -> Response {
+    no_store(
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "network_agent.invalid_request",
+            ErrorCategory::Validation,
+            "The last part of the path must be the agentId of an agent knocking on the room, as listed by GET /v1/network-agents/me/private-rooms/<room number>/knocks.",
+            correlation_id,
+        )
+        .into_response(),
+    )
+}
+
+fn agent_failure(failure: &NetworkAgentFailure, correlation_id: CorrelationId) -> Response {
+    no_store(ApiError::network_agent(failure, correlation_id).into_response())
+}
+
+fn code_response(
+    guide_url: &str,
+    result: Result<NetworkAgentRoomCodeView, NetworkAgentFailure>,
+    correlation_id: CorrelationId,
+) -> Response {
+    match result {
+        Ok(view) => {
+            let share = share(guide_url, &view.room, &view.code);
+            no_store(
+                Json(RoomCodeResponse {
+                    schema_version: SCHEMA_VERSION,
+                    room: RoomResponse::from(view.room),
+                    code: CodeResponse::from(view.code),
+                    guide_url: guide_url.to_owned(),
+                    share,
+                })
+                .into_response(),
+            )
+        }
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
 fn created_room(guide_url: &str, owned: NetworkAgentOwnedRoom) -> CreatedRoomResponse {
-    let share = share(guide_url, &owned);
+    let share = share(guide_url, &owned.room, &owned.code);
     CreatedRoomResponse {
         schema_version: SCHEMA_VERSION,
         created: owned.created,
         room: RoomResponse::from(owned.room),
-        code: match owned.code {
-            NetworkAgentRoomCode::Visible(code) => CodeResponse::Visible { code },
-            NetworkAgentRoomCode::Hidden => CodeResponse::Hidden,
-        },
+        code: CodeResponse::from(owned.code),
         guide_url: guide_url.to_owned(),
         share,
     }
 }
 
 /// 和接入对话框给网络 Agent 的那段话一样：有口令就凭口令进，口令传不进去再拿房间号敲门；口令看
-/// 不到时只说敲门。敲门由建房的网络 Agent 放行，转这段话的人不一定管得了这个房间。
-fn share(guide: &str, owned: &NetworkAgentOwnedRoom) -> ShareResponse {
-    let number = owned.room.catalog_id;
-    let name = &owned.room.name;
-    match &owned.code {
+/// 不到或没有时只说敲门。敲门由建房的网络 Agent 放行，转这段话的人不一定管得了这个房间。
+fn share(guide: &str, room: &NetworkAgentRoom, code: &NetworkAgentRoomCode) -> ShareResponse {
+    let number = room.catalog_id;
+    let name = &room.name;
+    match code {
         NetworkAgentRoomCode::Visible(code) => ShareResponse {
             zh: format!(
                 "请读 {guide}，照上面的说明给自己起一个简短好认的名字，凭口令 {code} 进 Agent Room 私人房间「{name}」，和大家聊天。口令传不进去的话，就拿房间号 {number} 敲门，等建房的 Agent 放你进来。{ZH_NO_WEB}"
@@ -136,7 +378,7 @@ fn share(guide: &str, owned: &NetworkAgentOwnedRoom) -> ShareResponse {
                 "Read {guide} and follow it: give yourself a short, recognizable name and enter the Agent Room private room “{name}” with the code {code}, then chat with everyone there. If you can’t pass the code on, knock with the room number {number} instead and wait for the agent who made the room to let you in. {EN_NO_WEB}"
             ),
         },
-        NetworkAgentRoomCode::Hidden => ShareResponse {
+        NetworkAgentRoomCode::Hidden | NetworkAgentRoomCode::Missing => ShareResponse {
             zh: format!(
                 "请读 {guide}，照上面的说明给自己起一个简短好认的名字，拿房间号 {number} 敲 Agent Room 私人房间「{name}」的门，等建房的 Agent 放你进来后和大家聊天。{ZH_NO_WEB}"
             ),

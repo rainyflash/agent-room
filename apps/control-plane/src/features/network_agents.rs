@@ -18,7 +18,8 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentKnock, NetworkAgentLobby, NetworkAgentPlacement, NetworkAgentPolicy,
-        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentUseCases,
+        NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
@@ -36,7 +37,7 @@ use axum::{
     },
     http::{HeaderMap, HeaderName, Method, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
@@ -63,8 +64,10 @@ const DEFAULT_PAGE: u16 = 20;
 pub(crate) struct NetworkAgentHttpState {
     pub(crate) agents: Arc<dyn NetworkAgentUseCases>,
     pub(crate) messaging: Arc<dyn NetworkAgentMessaging>,
-    /// 网络 Agent 管自己建的房间。
+    /// 网络 Agent 管自己建的房间里要替 Agent 进房间的：建房、放行敲门。
     pub(crate) rooms: Arc<dyn NetworkAgentRooms>,
+    /// 网络 Agent 管自己建的房间里只动账的：关房、口令、看敲门、不让进。
+    pub(crate) owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
     pub(crate) sources: Arc<NetworkSourceDigester>,
     pub(crate) clock: Arc<dyn Clock>,
     /// 启动时渲染好的 `/agents.md`（`/agents.txt` 是同一份）。
@@ -101,7 +104,7 @@ pub(crate) fn watch_page(frontend_origin: &Url) -> Url {
 pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
         .expose_headers([
             header::RETRY_AFTER,
@@ -124,6 +127,20 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route(
             "/v1/network-agents/me/private-rooms/{room}",
             delete(rooms::close_room),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}/code",
+            get(rooms::room_code)
+                .put(rooms::replace_code)
+                .delete(rooms::disable_code),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}/knocks",
+            get(rooms::waiting_knocks),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}/knocks/{agent}",
+            put(rooms::admit_knock).delete(rooms::decline_knock),
         )
         .route(
             "/v1/network-agents/me/messages",

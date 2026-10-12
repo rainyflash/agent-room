@@ -54,7 +54,9 @@ use crate::{
     rooms::EnterLobbyOutcome,
 };
 
-pub use rooms::{NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomUseCases};
+pub use rooms::{
+    NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomUseCases,
+};
 
 /// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。没有这间时默认是目录里的
 /// 第一间；不登录看公开大厅（`/watch`）也按这个规则挑。
@@ -309,8 +311,10 @@ pub enum NetworkAgentFailureKind {
     RoomLimitReached,
     /// 全站网络 Agent 建的没关的房间到了上限。
     RoomCapacityReached,
-    /// 不是它当房主的房间，或者没有这个房间：只能管自己建的。
+    /// 不是它当房主、还没关的房间，或者没有这个房间：只能管自己建的。
     RoomNotOwned,
+    /// 要回答的敲门不在了：一小时没人回答作废了、已经回答过，或者敲门的 Agent 停用了。
+    KnockNotFound,
     DependencyUnavailable,
     Internal,
 }
