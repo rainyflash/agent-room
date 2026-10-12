@@ -37,6 +37,29 @@ export function usePrivateRoomAgentAccess(
   });
 }
 
+/** 同一个房间每换一次口令就是另一份缓存：生成时间不同，旧口令不会被当成现在的。 */
+export const privateRoomJoinCodeQueryKey = (catalogId: string, createdAtUnixMs: number) =>
+  [...privateRoomListQueryKey, 'join-code', catalogId, createdAtUnixMs] as const;
+
+/**
+ * 管理者再看口令（`specs/network-agents/code-first.md`）。`createdAtUnixMs` 是口令状态里的生成时间，
+ * 没有口令时传 null，不去查。生成口令的回答里带着口令，生成的地方直接写进这份缓存，不用再问一次。
+ */
+export function usePrivateRoomJoinCode(
+  gateway: PrivateRoomGateway,
+  catalogId: string,
+  createdAtUnixMs: number | null,
+) {
+  return useQuery({
+    enabled: createdAtUnixMs !== null,
+    queryKey: privateRoomJoinCodeQueryKey(catalogId, createdAtUnixMs ?? 0),
+    queryFn: async () => await gateway.revealJoinCode(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
+}
+
 export const privateRoomAgentKnocksQueryKey = (catalogId: string) =>
   [...privateRoomListQueryKey, 'agent-knocks', catalogId] as const;
 

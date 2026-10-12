@@ -93,6 +93,7 @@ function gateway() {
     remove: vi.fn(unavailable),
     removeCodeAgent: vi.fn(unavailable),
     rename: vi.fn(unavailable),
+    revealJoinCode: vi.fn(unavailable),
     transferOwnership: vi.fn(unavailable),
     updatePermissions: vi.fn(unavailable),
   };

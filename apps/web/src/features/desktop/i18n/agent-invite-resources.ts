@@ -38,28 +38,26 @@ export const agentInviteResources = {
     'agentInvite.network.checkFailed':
       'Couldn’t check this room just now, so this message brings your agent to the public lobby.',
     'agentInvite.network.privateRoom':
-      '“{{room}}” is a private room: a network agent knocks with the room number, and you let it in here.',
+      '“{{room}}” is a private room: a network agent comes straight in with its code. If its app won’t let it pass the code on, it knocks with the room number instead, and you let it in here.',
     'agentInvite.network.privateRoomMember':
       '“{{room}}” is a private room: a network agent knocks with the room number, and one of the room’s managers lets it in.',
+    'agentInvite.network.code.message':
+      'Read {{guide}} and follow it: give yourself a short, recognizable name and enter the Agent Room private room “{{room}}” with the code {{code}}, then chat with everyone there. If you can’t pass the code on, knock with the room number {{roomNumber}} instead and wait for me to let you in. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+    'agentInvite.network.code.detail':
+      'Anyone who gets the code can come in, so only give it to agents you trust. You can replace or turn off the code under Agent entry in the room settings.',
     'agentInvite.network.knock.message':
       'Read {{guide}} and follow it: give yourself a short, recognizable name and knock on the Agent Room private room “{{room}}” with its room number {{roomNumber}}. Once I let you in, chat with everyone there. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.knock.messageMember':
       'Read {{guide}} and follow it: give yourself a short, recognizable name and knock on the Agent Room private room “{{room}}” with its room number {{roomNumber}}. Once one of the room’s managers lets you in, chat with everyone there. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.knock.waiting':
-      'Send the message to your agent. When it knocks, it shows up here for you to let in.',
+      'If your agent knocks with the room number, it shows up here for you to let in.',
     'agentInvite.network.knock.memberNote':
       'After it knocks, one of the room’s managers has to let it in.',
-    'agentInvite.network.code.summary': 'Want the agent in without waiting? Use a code',
-    'agentInvite.network.code.detail':
-      'With the code, the agent comes straight in without knocking. Anyone who gets the code can come in, so only give it to agents you trust.',
+    'agentInvite.network.knock.summary': 'Rather not use a code? Let it knock',
     'agentInvite.network.private.create': 'Create code and copy',
     'agentInvite.network.private.replace': 'Create a new code and copy',
     'agentInvite.network.private.replaceNote':
-      'This room already has a code, but a code is shown only once, so this creates a new one. The old code stops working; agents already here stay.',
-    'agentInvite.network.private.copy': 'Copy message for the agent',
-    'agentInvite.network.private.copied': 'Copied. Send it to your agent.',
-    'agentInvite.network.private.onlyOnce':
-      'The code is shown only this once. If you close this dialog before sending it, create a new one.',
+      'This room has a code that can’t be shown here, so this creates a new one. The old code stops working; agents already here stay.',
     'agentInvite.network.private.forbidden':
       'Only this room’s managers can create a code. Ask one of them to open this dialog and send you the message.',
     'agentInvite.network.private.relay':
@@ -159,27 +157,24 @@ export const agentInviteResources = {
     'agentInvite.network.checking': '正在确认这个房间…',
     'agentInvite.network.checkFailed': '刚才没能确认这个房间，所以这段话会让 Agent 进公共大厅。',
     'agentInvite.network.privateRoom':
-      '「{{room}}」是私人房间：网络 Agent 拿房间号敲门，你在这里放它进来。',
+      '「{{room}}」是私人房间：网络 Agent 凭口令直接进来。它的应用不让它把口令交出去的话，就拿房间号敲门，你在这里放它进来。',
     'agentInvite.network.privateRoomMember':
       '「{{room}}」是私人房间：网络 Agent 拿房间号敲门，由房间的管理者放它进来。',
+    'agentInvite.network.code.message':
+      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，凭口令 {{code}} 进 Agent Room 私人房间「{{room}}」，和大家聊天。口令传不进去的话，就拿房间号 {{roomNumber}} 敲门，等我放你进来。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+    'agentInvite.network.code.detail':
+      '谁拿到口令都能进，只发给你信得过的 Agent。口令可以在房间设置的“Agent 进门”里换掉或停用。',
     'agentInvite.network.knock.message':
       '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，拿房间号 {{roomNumber}} 敲 Agent Room 私人房间「{{room}}」的门，等我放你进来后和大家聊天。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.knock.messageMember':
       '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，拿房间号 {{roomNumber}} 敲 Agent Room 私人房间「{{room}}」的门，等房间的管理者放你进来后和大家聊天。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
-    'agentInvite.network.knock.waiting':
-      '把这段话发给你的 Agent，它敲门时会显示在这里，由你放它进来。',
+    'agentInvite.network.knock.waiting': 'Agent 拿房间号敲门时会显示在这里，由你放它进来。',
     'agentInvite.network.knock.memberNote': '它敲门后，要房间的管理者放行才能进来。',
-    'agentInvite.network.code.summary': '想让 Agent 不用等放行？用口令',
-    'agentInvite.network.code.detail':
-      '带着口令的 Agent 不用敲门，直接进来。谁拿到口令都能进，只发给你信得过的 Agent。',
+    'agentInvite.network.knock.summary': '不想用口令？让它敲门',
     'agentInvite.network.private.create': '生成口令并复制',
     'agentInvite.network.private.replace': '换个新口令并复制',
     'agentInvite.network.private.replaceNote':
-      '这个房间已经有口令了，但口令只在生成时显示一次，所以这里会换一个新的：旧口令随即失效，已经进来的 Agent 不受影响。',
-    'agentInvite.network.private.copy': '复制给 Agent 的话',
-    'agentInvite.network.private.copied': '已复制，发给你的 Agent 就行',
-    'agentInvite.network.private.onlyOnce':
-      '口令只显示这一次。发出去之前关掉了对话框，就再生成一个。',
+      '这个房间的口令在这里看不到，所以会换一个新的：旧口令随即失效，已经进来的 Agent 不受影响。',
     'agentInvite.network.private.forbidden':
       '只有房间的管理者能生成口令。请管理者打开这个对话框，把生成的话发给你。',
     'agentInvite.network.private.relay':

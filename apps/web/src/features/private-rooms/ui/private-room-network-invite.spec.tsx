@@ -6,7 +6,7 @@ import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type {
-  PrivateRoomAgentAccess,
+  JoinCode,
   PrivateRoomAgentKnock,
   PrivateRoomAgentMember,
   PrivateRoomFailure,
@@ -20,6 +20,8 @@ import { PrivateRoomNetworkInvite } from './private-room-network-invite';
 const CATALOG = '0198b601-77a1-7bb8-83eb-a8fe68c97e46';
 const GUIDE = 'https://app.agent-room.test/agents.txt';
 const CODE = 'K7P3-Q9XW-2DMA';
+const NEW_CODE = 'M4QX-7H2D-9RTE';
+const CREATED = Date.UTC(2026, 8, 27);
 const SOL = '0198b601-77a1-7bb8-83eb-a8fe68c97e51';
 const KNOCKED_AT = Date.UTC(2026, 9, 6, 9);
 
@@ -49,13 +51,39 @@ const solInside: PrivateRoomAgentMember = {
 
 type Knocks = Result<readonly PrivateRoomAgentKnock[], PrivateRoomFailure>;
 
-function gateway(
-  access: Result<PrivateRoomAgentAccess, PrivateRoomFailure>,
-  knocks: Knocks = ok([]),
-) {
+/** 房间的口令：没有、管理者看得到、有却看不到（能再看之前生成的）；不是管理者时什么都查不到。 */
+type Stored = 'none' | 'shown' | 'hidden' | 'forbidden';
+
+/** 和服务器一样记着口令：生成以后口令状态和再看拿到的都是新口令。 */
+function gateway(stored: Stored, knocks: Knocks = ok([])) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
-  const generateJoinCode = vi.fn(() =>
-    Promise.resolve(ok({ code: CODE, createdAtUnixMs: Date.UTC(2026, 8, 28, 14) })),
+  let code: JoinCode | null =
+    stored === 'shown' || stored === 'hidden' ? { code: CODE, createdAtUnixMs: CREATED } : null;
+  let hidden = stored === 'hidden';
+  const agentAccess = vi.fn<PrivateRoomGateway['agentAccess']>(() =>
+    Promise.resolve(
+      stored === 'forbidden'
+        ? err({ code: 'join_code.forbidden', retryable: false })
+        : ok({
+            agents: [],
+            joinCode: code === null ? null : { createdAtUnixMs: code.createdAtUnixMs },
+          }),
+    ),
+  );
+  const generateJoinCode = vi.fn<PrivateRoomGateway['generateJoinCode']>(() => {
+    const generated = { code: NEW_CODE, createdAtUnixMs: CREATED + 60_000 };
+    code = generated;
+    hidden = false;
+    return Promise.resolve(ok(generated));
+  });
+  const revealJoinCode = vi.fn<PrivateRoomGateway['revealJoinCode']>(() =>
+    Promise.resolve(
+      code === null
+        ? err({ code: 'join_code.not_found', retryable: false })
+        : hidden
+          ? err({ code: 'join_code.not_revealable', retryable: false })
+          : ok(code),
+    ),
   );
   const agentKnocks = vi.fn(() => Promise.resolve(knocks));
   const admitKnock = vi.fn<PrivateRoomGateway['admitKnock']>(() => Promise.resolve(ok(solInside)));
@@ -65,7 +93,7 @@ function gateway(
   const value: PrivateRoomGateway = {
     accept: unavailable,
     admitKnock,
-    agentAccess: () => Promise.resolve(access),
+    agentAccess,
     agentKnocks,
     archive: unavailable,
     ban: unavailable,
@@ -81,10 +109,11 @@ function gateway(
     remove: unavailable,
     removeCodeAgent: unavailable,
     rename: unavailable,
+    revealJoinCode,
     transferOwnership: unavailable,
     updatePermissions: unavailable,
   };
-  return { admitKnock, agentKnocks, declineKnock, generateJoinCode, value };
+  return { admitKnock, agentKnocks, declineKnock, generateJoinCode, revealJoinCode, value };
 }
 
 /** 口令状态查完之前按钮是灰的，等它能点再点。 */
@@ -94,11 +123,6 @@ async function clickWhenReady(name: string): Promise<void> {
     expect(button).toBeEnabled();
   });
   fireEvent.click(button);
-}
-
-/** 口令收在折叠里，先展开。 */
-async function openCodeDetails(): Promise<void> {
-  fireEvent.click(await screen.findByText('Want the agent in without waiting? Use a code'));
 }
 
 function renderInvite(rooms: PrivateRoomGateway) {
@@ -117,29 +141,117 @@ function renderInvite(rooms: PrivateRoomGateway) {
   );
 }
 
-describe('私人房间里请网络 Agent：敲门', () => {
-  it('给 Agent 的话里只有房间号、没有口令，打开就能复制；没人敲门时说在等它敲门', async () => {
-    const rooms = gateway(ok({ agents: [], joinCode: null }));
+describe('私人房间里请网络 Agent：口令优先', () => {
+  it('有看得到的口令：话里带着口令，也带着敲门用的房间号，打开就能复制', async () => {
+    const rooms = gateway('shown');
     renderInvite(rooms.value);
 
-    expect(
-      await screen.findByText(/a network agent knocks with the room number, and you let it in/u),
-    ).toBeVisible();
-    const message = screen.getByText(/knock on the Agent Room private room “new game dev”/u);
-    expect(message).toHaveTextContent(CATALOG);
+    const message = await screen.findByText(
+      /enter the Agent Room private room “new game dev” with the code/u,
+    );
+    expect(message).toHaveTextContent(CODE);
     expect(message).toHaveTextContent(GUIDE);
-    expect(message).toHaveTextContent(/Once I let you in/u);
-    expect(screen.getByRole('button', { name: 'Copy message' })).toBeVisible();
-    expect(
-      await screen.findByText(/When it knocks, it shows up here for you to let in/u),
-    ).toBeVisible();
-    expect(rooms.agentKnocks).toHaveBeenCalledWith(CATALOG);
+    expect(message).toHaveTextContent(
+      `knock with the room number ${CATALOG} instead and wait for me to let you in`,
+    );
+    expect(screen.getByRole('button', { name: 'Copy message' })).toBeEnabled();
+    expect(screen.getByText(/comes straight in with its code/u)).toBeVisible();
+    expect(screen.getByText(/Anyone who gets the code can come in/u)).toBeVisible();
+    expect(rooms.revealJoinCode).toHaveBeenCalledWith(CATALOG);
     expect(rooms.generateJoinCode).not.toHaveBeenCalled();
+    expect(screen.queryByText('Rather not use a code? Let it knock')).not.toBeInTheDocument();
     expect(screen.getByText(/the server can read what is said in this room/u)).toBeVisible();
   });
 
+  it('还没有口令：一个按钮生成口令、把整段话复制好，话留在对话框里，不用再查一次', async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const rooms = gateway('none');
+    renderInvite(rooms.value);
+
+    await clickWhenReady('Create code and copy');
+
+    expect(await screen.findByText('Copied. Send it to your agent.')).toBeVisible();
+    expect(rooms.generateJoinCode).toHaveBeenCalledWith(CATALOG);
+    const copied = writeText.mock.calls[0]?.[0] ?? '';
+    expect(copied).toContain(NEW_CODE);
+    expect(copied).toContain(`room number ${CATALOG}`);
+    expect(copied).toContain(GUIDE);
+    expect(copied).toContain('new game dev');
+    expect(screen.getByText(copied)).toBeVisible();
+    expect(rooms.revealJoinCode).not.toHaveBeenCalled();
+  });
+
+  it('口令看不到时按钮说换个新口令，旧的随即失效；换完话里是新口令', async () => {
+    const rooms = gateway('hidden');
+    renderInvite(rooms.value);
+
+    expect(await screen.findByRole('button', { name: 'Create a new code and copy' })).toBeVisible();
+    expect(screen.getByText(/The old code stops working; agents already here stay/u)).toBeVisible();
+    expect(screen.queryByText(new RegExp(CODE, 'u'))).not.toBeInTheDocument();
+
+    await clickWhenReady('Create a new code and copy');
+    expect(
+      await screen.findByText(new RegExp(`with the code ${NEW_CODE}`, 'u'), { selector: 'pre' }),
+    ).toBeVisible();
+  });
+
+  it('不想用口令的，折叠里有只带房间号的那段话', async () => {
+    const rooms = gateway('none');
+    renderInvite(rooms.value);
+
+    fireEvent.click(await screen.findByText('Rather not use a code? Let it knock'));
+    const message = screen.getByText(/knock on the Agent Room private room “new game dev”/u);
+    expect(message).toBeVisible();
+    expect(message).toHaveTextContent(CATALOG);
+    expect(message).toHaveTextContent(/Once I let you in/u);
+    expect(message).not.toHaveTextContent(/code/iu);
+    expect(rooms.generateJoinCode).not.toHaveBeenCalled();
+  });
+
+  it('自动复制不了时不报错，照样给出这段话；自己点复制也失败才提示手动复制', async () => {
+    const writeText = vi.fn(() => Promise.reject(new Error('denied')));
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const rooms = gateway('none');
+    renderInvite(rooms.value);
+
+    await clickWhenReady('Create code and copy');
+
+    expect(
+      await screen.findByText(new RegExp(`with the code ${NEW_CODE}`, 'u'), { selector: 'pre' }),
+    ).toBeVisible();
+    expect(screen.queryByText(/Couldn’t copy/u)).not.toBeInTheDocument();
+    expect(screen.queryByText('Copied. Send it to your agent.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+    expect(await screen.findByText(/Couldn’t copy. Select the text above/u)).toBeVisible();
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it('查口令没成时说出了问题，照样能换个新口令', async () => {
+    const rooms = gateway('shown');
+    rooms.revealJoinCode.mockResolvedValue(
+      err({ code: 'private_room.unreachable', retryable: true }),
+    );
+    renderInvite(rooms.value);
+
+    expect(await screen.findByRole('button', { name: 'Create a new code and copy' })).toBeVisible();
+    expect(screen.getByText('private_room.unreachable')).toBeInTheDocument();
+  });
+});
+
+describe('私人房间里请网络 Agent：敲门', () => {
+  it('没人敲门时说拿房间号敲门的 Agent 会显示在这里', async () => {
+    const rooms = gateway('shown');
+    renderInvite(rooms.value);
+
+    expect(
+      await screen.findByText(/If your agent knocks with the room number, it shows up here/u),
+    ).toBeVisible();
+    expect(rooms.agentKnocks).toHaveBeenCalledWith(CATALOG);
+  });
+
   it('有 Agent 敲门就显示出来，点“让它进来”由服务器替它进房间', async () => {
-    const rooms = gateway(ok({ agents: [], joinCode: null }), ok([sol]));
+    const rooms = gateway('none', ok([sol]));
     renderInvite(rooms.value);
 
     const list = await screen.findByRole('list', { name: 'Agents knocking' });
@@ -155,7 +267,7 @@ describe('私人房间里请网络 Agent：敲门', () => {
   });
 
   it('不让进的从列表里拿掉', async () => {
-    const rooms = gateway(ok({ agents: [], joinCode: null }), ok([sol]));
+    const rooms = gateway('none', ok([sol]));
     renderInvite(rooms.value);
 
     const decline = await screen.findByRole('button', { name: 'Turn Sol away' });
@@ -168,7 +280,7 @@ describe('私人房间里请网络 Agent：敲门', () => {
   });
 
   it('服务器这会儿没让它进去时说它还在敲门，可以再点；它已经不在敲门时说清楚原因', async () => {
-    const rooms = gateway(ok({ agents: [], joinCode: null }), ok([sol]));
+    const rooms = gateway('none', ok([sol]));
     rooms.admitKnock.mockResolvedValueOnce(
       err({ code: 'private_room.agent_entry_unavailable', retryable: true }),
     );
@@ -186,8 +298,8 @@ describe('私人房间里请网络 Agent：敲门', () => {
     expect(screen.queryByText('Sol is knocking')).not.toBeInTheDocument();
   });
 
-  it('不是管理者：话里说等房间的管理者放行，不显示敲门列表，也不给口令', async () => {
-    const rooms = gateway(err({ code: 'join_code.forbidden', retryable: false }));
+  it('不是管理者：话里只有房间号，等房间的管理者放行；不显示敲门列表，也不查口令', async () => {
+    const rooms = gateway('forbidden');
     renderInvite(rooms.value);
 
     expect(
@@ -199,63 +311,9 @@ describe('私人房间里请网络 Agent：敲门', () => {
       CATALOG,
     );
     expect(screen.getByText(/one of the room’s managers has to let it in/u)).toBeVisible();
-    expect(screen.queryByText('Want the agent in without waiting? Use a code')).toBeNull();
+    expect(screen.queryByRole('button', { name: /code/u })).not.toBeInTheDocument();
     expect(rooms.agentKnocks).not.toHaveBeenCalled();
+    expect(rooms.revealJoinCode).not.toHaveBeenCalled();
     expect(rooms.generateJoinCode).not.toHaveBeenCalled();
-  });
-});
-
-describe('私人房间里请网络 Agent：口令', () => {
-  it('收在折叠里；一个按钮生成口令、把给 Agent 的整段话复制好，并留在对话框里', async () => {
-    const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const rooms = gateway(ok({ agents: [], joinCode: null }));
-    renderInvite(rooms.value);
-
-    await openCodeDetails();
-    expect(screen.getByText(/comes straight in without knocking/u)).toBeVisible();
-    await clickWhenReady('Create code and copy');
-
-    expect(await screen.findByText('Copied. Send it to your agent.')).toBeVisible();
-    expect(rooms.generateJoinCode).toHaveBeenCalledWith(CATALOG);
-    const copied = writeText.mock.calls[0]?.[0] ?? '';
-    expect(copied).toContain(CODE);
-    expect(copied).toContain(GUIDE);
-    expect(copied).toContain('new game dev');
-    expect(screen.getByText(copied)).toBeVisible();
-    expect(screen.getByText(/shown only this once/u)).toBeVisible();
-  });
-
-  it('已经有口令时说明会换一个新的，旧的随即失效', async () => {
-    const rooms = gateway(ok({ agents: [], joinCode: { createdAtUnixMs: Date.UTC(2026, 8, 27) } }));
-    renderInvite(rooms.value);
-
-    await openCodeDetails();
-    expect(await screen.findByRole('button', { name: 'Create a new code and copy' })).toBeVisible();
-    expect(screen.getByText(/The old code stops working; agents already here stay/u)).toBeVisible();
-  });
-
-  it('自动复制不了时不报错，照样给出这段话；自己点复制也失败才提示手动复制', async () => {
-    const writeText = vi.fn(() => Promise.reject(new Error('denied')));
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
-    const rooms = gateway(ok({ agents: [], joinCode: null }));
-    renderInvite(rooms.value);
-
-    await openCodeDetails();
-    await clickWhenReady('Create code and copy');
-
-    const details = screen
-      .getByText('Want the agent in without waiting? Use a code')
-      .closest('details');
-    if (details === null) throw new Error('口令应该收在折叠里');
-    const copyButton = await within(details).findByRole('button', {
-      name: 'Copy message for the agent',
-    });
-    expect(within(details).getByText(new RegExp(CODE, 'u'))).toBeVisible();
-    expect(screen.queryByText(/Couldn’t copy/u)).not.toBeInTheDocument();
-    expect(screen.queryByText('Copied. Send it to your agent.')).not.toBeInTheDocument();
-    fireEvent.click(copyButton);
-    expect(await screen.findByText(/Couldn’t copy. Select the text above/u)).toBeVisible();
-    expect(writeText).toHaveBeenCalledTimes(2);
   });
 });

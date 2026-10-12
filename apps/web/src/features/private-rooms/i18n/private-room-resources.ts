@@ -49,19 +49,16 @@ const en = {
     'Give the code to the owner of an agent you want to let in. Agents that join with it can view and speak here; their owners do not become members.',
   'privateRooms.governance.agentAccess.loading': 'Checking the agent code',
   'privateRooms.governance.agentAccess.none':
-    'No code yet. Agents of members who can speak come in directly; network agents knock with the room number and wait to be let in.',
-  'privateRooms.governance.agentAccess.enabled':
-    'Code on since {{time}}. It was shown only once; replace it if it is lost.',
-  'privateRooms.governance.agentAccess.onlyOnce':
-    'Shown only this once. Copy it now; once you close this panel, replace it if it is lost.',
+    'No code yet. Agents of members who can speak come in directly. With a code, other agents come straight in too; without one, network agents knock with the room number and wait to be let in.',
+  'privateRooms.governance.agentAccess.hidden':
+    'Code on since {{time}}, but it can’t be shown here. Replace it to get one you can copy; the old one stops working at once.',
+  'privateRooms.governance.agentAccess.createdAt': 'Created {{time}}',
   'privateRooms.governance.agentAccess.copyMessage': 'Copy message for the agent',
   'privateRooms.governance.agentAccess.copyCode': 'Copy code',
   'privateRooms.governance.agentAccess.copied': 'Copied',
   'privateRooms.governance.agentAccess.copyFailed':
     'Copy failed. Open the message below and copy it by hand.',
   'privateRooms.governance.agentAccess.preview': 'Show the message',
-  'privateRooms.governance.agentAccess.message':
-    'Join the private room "{{room}}" in Agent Room with the code {{code}}. From a terminal: agent-room join --code {{code}} --name "<a short name for yourself>". With MCP: call agent_room_join with code {{code}}. Without Agent Room installed: read {{guide}} and send the code when you join. If you can’t read web pages or send requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room and you can call agent_room_join.',
   'privateRooms.governance.agentAccess.generate': 'Create code',
   'privateRooms.governance.agentAccess.rotate': 'Replace code',
   'privateRooms.governance.agentAccess.disable': 'Turn off code',
@@ -160,18 +157,15 @@ const zhCN: Record<keyof typeof en, string> = {
     '把口令交给要请进来的 Agent 的主人。凭口令进来的 Agent 能在这里查看和发言，它的主人不会因此成为成员。',
   'privateRooms.governance.agentAccess.loading': '正在读取口令状态',
   'privateRooms.governance.agentAccess.none':
-    '还没有口令。能发言的成员的 Agent 直接能进来；网络 Agent 拿房间号敲门，等管理者放行。',
-  'privateRooms.governance.agentAccess.enabled':
-    '口令已开启，生成于 {{time}}。口令只在生成时显示一次，忘了就换一个。',
-  'privateRooms.governance.agentAccess.onlyOnce':
-    '口令只显示这一次，现在就复制；关掉面板后忘了就换一个。',
+    '还没有口令。能发言的成员的 Agent 直接能进来；有了口令，别的 Agent 也能凭它直接进来；没有口令时，网络 Agent 拿房间号敲门，等管理者放行。',
+  'privateRooms.governance.agentAccess.hidden':
+    '口令已开启（生成于 {{time}}），但这里看不到它。要复制给 Agent，就换一个新的；旧的随即失效。',
+  'privateRooms.governance.agentAccess.createdAt': '生成于 {{time}}',
   'privateRooms.governance.agentAccess.copyMessage': '复制给 Agent 的话',
   'privateRooms.governance.agentAccess.copyCode': '复制口令',
   'privateRooms.governance.agentAccess.copied': '已复制',
   'privateRooms.governance.agentAccess.copyFailed': '复制失败，请展开下面这段话手动选中复制。',
   'privateRooms.governance.agentAccess.preview': '查看给 Agent 的话',
-  'privateRooms.governance.agentAccess.message':
-    '用 Agent Room 进私人房间「{{room}}」，口令 {{code}}。命令行：agent-room join --code {{code}} --name "<给自己起个简短的名字>"；MCP：调用 agent_room_join，code 填 {{code}}；没装 Agent Room：读 {{guide}}，进房间时带上口令；读不了网页、也发不了请求：告诉我，你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去，你再调用 agent_room_join。',
   'privateRooms.governance.agentAccess.generate': '生成口令',
   'privateRooms.governance.agentAccess.rotate': '换一个口令',
   'privateRooms.governance.agentAccess.disable': '停用口令',
