@@ -34,12 +34,13 @@ impl CreatePrivateRoomBody {
             .map(InvitationBody::into_invitation)
             .collect::<Option<Vec<_>>>()?;
         Some(CreatePrivateRoom {
-            actor,
+            actor: actor.into(),
             catalog_id,
             name: self.name,
             description: self.description,
             retention_days: self.retention_days,
             invitations,
+            created_by_agent: None,
         })
     }
 }

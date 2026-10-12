@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     DomainError, DomainResult,
-    ids::{PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId},
     version::AggregateVersion,
 };
 
@@ -261,6 +261,7 @@ pub struct PrivateRoom {
     status: PrivateRoomLifecycleStatus,
     members: BTreeMap<PrincipalId, PrivateRoomMember>,
     version: AggregateVersion,
+    created_by_agent: Option<AgentId>,
 }
 
 impl PrivateRoom {
@@ -276,6 +277,20 @@ impl PrivateRoom {
             status: PrivateRoomLifecycleStatus::Active,
             members: BTreeMap::from([(owner_principal_id, owner)]),
             version: AggregateVersion::INITIAL,
+            created_by_agent: None,
+        }
+    }
+
+    /// Agent 替房主建的房间（`specs/agent-rooms/design.md`）。房主照旧是主体：本机 Agent 替
+    /// 账号建时是人，网络 Agent 建时是它自己的合成主体；记下是哪个 Agent 建的，Agent 只管这种房间。
+    pub fn create_by_agent(
+        catalog_id: RoomCatalogId,
+        owner_principal_id: PrincipalId,
+        agent_id: AgentId,
+    ) -> Self {
+        Self {
+            created_by_agent: Some(agent_id),
+            ..Self::create(catalog_id, owner_principal_id)
         }
     }
 
@@ -290,6 +305,7 @@ impl PrivateRoom {
         status: PrivateRoomLifecycleStatus,
         members: impl IntoIterator<Item = PrivateRoomMember>,
         version: AggregateVersion,
+        created_by_agent: Option<AgentId>,
     ) -> DomainResult<Self> {
         let mut indexed_members = BTreeMap::new();
         for member in members {
@@ -318,6 +334,7 @@ impl PrivateRoom {
             status,
             members: indexed_members,
             version,
+            created_by_agent,
         })
     }
 
@@ -327,6 +344,11 @@ impl PrivateRoom {
 
     pub const fn owner_principal_id(&self) -> PrincipalId {
         self.owner_principal_id
+    }
+
+    /// 建这个房间的 Agent；人建的为空。
+    pub const fn created_by_agent(&self) -> Option<AgentId> {
+        self.created_by_agent
     }
 
     pub const fn status(&self) -> PrivateRoomLifecycleStatus {
@@ -812,7 +834,7 @@ mod tests {
         PrivateRoomMembershipStatus, PrivateRoomPermissions,
     };
     use crate::{
-        ids::{PrincipalId, RoomCatalogId},
+        ids::{AgentId, PrincipalId, RoomCatalogId},
         version::AggregateVersion,
     };
 
@@ -981,6 +1003,31 @@ mod tests {
     }
 
     #[test]
+    fn agent_建的房间记下是哪个_agent_房主照旧是主体() {
+        let agent = AgentId::from_uuid(Uuid::from_u128(77));
+        let room = PrivateRoom::create_by_agent(catalog_id(), principal(1), agent);
+        assert_eq!(room.created_by_agent(), Some(agent));
+        assert_eq!(room.owner_principal_id(), principal(1));
+        assert!(room.admits_agent_of(principal(1)));
+        assert_eq!(
+            PrivateRoom::create(catalog_id(), principal(1)).created_by_agent(),
+            None
+        );
+
+        let owner = room.member(principal(1)).expect("房主是成员").clone();
+        let restored = PrivateRoom::restore(
+            catalog_id(),
+            principal(1),
+            PrivateRoomLifecycleStatus::Active,
+            [owner],
+            AggregateVersion::INITIAL,
+            Some(agent),
+        )
+        .expect("房间事实有效");
+        assert_eq!(restored, room);
+    }
+
+    #[test]
     fn 恢复时拒绝重复成员和损坏的房主事实() {
         let owner = PrivateRoomMember::restore(
             principal(1),
@@ -995,6 +1042,7 @@ mod tests {
                 PrivateRoomLifecycleStatus::Active,
                 [owner.clone(), owner],
                 AggregateVersion::INITIAL,
+                None,
             )
             .is_err()
         );
@@ -1012,6 +1060,7 @@ mod tests {
                 PrivateRoomLifecycleStatus::Active,
                 [weak_owner],
                 AggregateVersion::INITIAL,
+                None,
             )
             .is_err()
         );
@@ -1031,6 +1080,7 @@ mod tests {
             PrivateRoomLifecycleStatus::Active,
             [owner],
             AggregateVersion::new(i64::MAX).expect("最大版本有效"),
+            None,
         )
         .expect("房间事实有效");
 

@@ -8,6 +8,7 @@ use std::{
 
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
+    devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, IdentifierFactory, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
@@ -18,12 +19,13 @@ use agent_room_application::{
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        ListPrivateRoomsForAccount, PrivateRoomDependencies, PrivateRoomFailureKind,
-        PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomService,
-        PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomDependencies,
+        PrivateRoomFailureKind, PrivateRoomInvitation, PrivateRoomMembershipAction,
+        PrivateRoomService, PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
+    identity::Principal,
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
@@ -162,6 +164,138 @@ async fn 替设备列房间只列账号的_agent_进得去的() {
         .expect("归档应成功");
     assert_eq!(listed(fixture.owner).await, 0, "归档的房间不再接 Agent");
     assert_eq!(listed(fixture.member).await, 0, "归档的房间不再接 Agent");
+}
+
+#[tokio::test]
+async fn 本机_agent_替账号建房_房主是人_记下建房的_agent() {
+    let fixture = Fixture::new();
+    fixture.agents.own(fixture.owner, agent_id(150));
+    let request = fixture.agent_creation_request(
+        PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test")),
+        agent_id(150),
+    );
+
+    let snapshot = fixture
+        .service
+        .create(request.clone())
+        .await
+        .expect("本机 Agent 建房应成功");
+
+    assert_eq!(snapshot.room().owner_principal_id(), fixture.owner);
+    assert_eq!(snapshot.room().created_by_agent(), Some(agent_id(150)));
+    assert!(snapshot.room().admits_agent_of(fixture.owner));
+    let creation = fixture.matrix.creation().expect("应记录真实建房请求");
+    assert!(
+        creation
+            .request()
+            .invite()
+            .iter()
+            .any(|user| user.as_str() == "@owner:matrix.test"),
+        "人得在 Matrix 上受邀，第一次打开房间时由客户端加入"
+    );
+    assert_eq!(
+        fixture.matrix.speaking_allowed("@owner:matrix.test"),
+        Some(true)
+    );
+
+    fixture.clear_events();
+    let retried = fixture
+        .service
+        .create(request)
+        .await
+        .expect("同一个房间 ID 重试回到同一间");
+    assert_eq!(retried.catalog().id(), snapshot.catalog().id());
+    assert!(!fixture.events().contains(&"matrix.create"), "重试不再建房");
+}
+
+#[tokio::test]
+async fn 网络_agent_建房_房主是它自己_不邀请合成主体的_matrix_账号() {
+    let fixture = Fixture::new();
+    let network = principal_id(3);
+    fixture.agents.own(network, agent_id(151));
+
+    let snapshot = fixture
+        .service
+        .create(fixture.agent_creation_request(
+            PrivateRoomActor::NetworkAgent(device(network, "@user-0123abcd:matrix.test")),
+            agent_id(151),
+        ))
+        .await
+        .expect("网络 Agent 建房应成功");
+
+    assert_eq!(snapshot.room().owner_principal_id(), network);
+    assert_eq!(snapshot.room().created_by_agent(), Some(agent_id(151)));
+    assert!(
+        snapshot.room().admits_agent_of(network),
+        "它的 Agent 按房主的 Agent 进"
+    );
+    let creation = fixture.matrix.creation().expect("应记录真实建房请求");
+    let invited: Vec<&str> = creation
+        .request()
+        .invite()
+        .iter()
+        .map(MatrixUserId::as_str)
+        .collect();
+    assert_eq!(invited, vec!["@content-authority:matrix.test"]);
+    assert_eq!(
+        fixture
+            .matrix
+            .speaking_allowed("@user-0123abcd:matrix.test"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn agent_建房要用自己名下的_agent_也不顺带邀请人() {
+    let fixture = Fixture::new();
+    fixture.agents.own(fixture.member, agent_id(152));
+    let owner_device = || PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test"));
+
+    let not_owned = fixture
+        .service
+        .create(fixture.agent_creation_request(owner_device(), agent_id(152)))
+        .await
+        .expect_err("别人名下的 Agent 不能替我建房");
+    assert_eq!(not_owned.kind(), PrivateRoomFailureKind::Forbidden);
+
+    let mut without_agent = fixture.agent_creation_request(owner_device(), agent_id(152));
+    without_agent.created_by_agent = None;
+    let mut with_invitations = fixture.agent_creation_request(owner_device(), agent_id(152));
+    with_invitations.invitations = vec![PrivateRoomInvitation {
+        principal_id: fixture.member,
+        permissions: speaker_permissions(),
+    }];
+    let mut person_with_agent = fixture.creation_request(speaker_permissions());
+    person_with_agent.created_by_agent = Some(agent_id(152));
+    for request in [without_agent, with_invitations, person_with_agent] {
+        let rejected = fixture
+            .service
+            .create(request)
+            .await
+            .expect_err("建房的人和 Agent 对不上时拒绝");
+        assert_eq!(rejected.kind(), PrivateRoomFailureKind::InvalidRequest);
+    }
+    assert!(fixture.matrix.creation().is_none(), "被拒的请求一间也不建");
+}
+
+#[tokio::test]
+async fn 同一个房间_id_换了建房的_agent_算冲突() {
+    let fixture = Fixture::new();
+    fixture.agents.own(fixture.owner, agent_id(153));
+    fixture.agents.own(fixture.owner, agent_id(154));
+    let owner_device = || PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test"));
+    fixture
+        .service
+        .create(fixture.agent_creation_request(owner_device(), agent_id(153)))
+        .await
+        .expect("第一次建房应成功");
+
+    let conflict = fixture
+        .service
+        .create(fixture.agent_creation_request(owner_device(), agent_id(154)))
+        .await
+        .expect_err("同一个房间 ID 换了建房的 Agent");
+    assert_eq!(conflict.kind(), PrivateRoomFailureKind::Conflict);
 }
 
 #[tokio::test]
@@ -654,7 +788,7 @@ impl Fixture {
 
     fn creation_request(&self, permissions: PrivateRoomPermissions) -> CreatePrivateRoom {
         CreatePrivateRoom {
-            actor: self.owner_actor(),
+            actor: self.owner_actor().into(),
             catalog_id: self.catalog,
             name: "Architecture room".to_owned(),
             description: "Private design review".to_owned(),
@@ -663,6 +797,24 @@ impl Fixture {
                 principal_id: self.member,
                 permissions,
             }],
+            created_by_agent: None,
+        }
+    }
+
+    /// Agent 替主体建房：没有顺带邀请，带着建房的 Agent。
+    fn agent_creation_request(
+        &self,
+        actor: PrivateRoomActor,
+        agent_id: AgentId,
+    ) -> CreatePrivateRoom {
+        CreatePrivateRoom {
+            actor,
+            catalog_id: self.catalog,
+            name: "Weekly sync".to_owned(),
+            description: String::new(),
+            retention_days: None,
+            invitations: Vec::new(),
+            created_by_agent: Some(agent_id),
         }
     }
 
@@ -1022,9 +1174,17 @@ impl PrivateRoomMatrixGateway for TestMatrix {
 #[derive(Default)]
 struct TestAgentDirectory {
     agents: Mutex<BTreeMap<PrincipalId, Vec<MatrixUserId>>>,
+    owned: Mutex<Vec<(PrincipalId, AgentId)>>,
 }
 
 impl TestAgentDirectory {
+    fn own(&self, principal_id: PrincipalId, agent_id: AgentId) {
+        self.owned
+            .lock()
+            .expect("Agent 锁正常")
+            .push((principal_id, agent_id));
+    }
+
     fn register(&self, principal_id: PrincipalId, agent: &MatrixUserId) {
         self.agents
             .lock()
@@ -1048,6 +1208,19 @@ impl PrivateRoomAgentDirectory for TestAgentDirectory {
             .cloned()
             .unwrap_or_default();
         Box::pin(async move { Ok(agents) })
+    }
+
+    fn owns_active_agent(
+        &self,
+        principal_id: PrincipalId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let owned = self
+            .owned
+            .lock()
+            .expect("Agent 锁正常")
+            .contains(&(principal_id, agent_id));
+        Box::pin(async move { Ok(owned) })
     }
 }
 
@@ -1145,6 +1318,25 @@ fn actor(principal_id: PrincipalId, matrix_user_id: &str) -> AuthenticatedPrinci
         expires_at: UtcMillis::new(2_000).expect("时间有效"),
         recently_authenticated: true,
     }
+}
+
+/// 替主体行动的设备身份：本机 Bridge 的签名请求或网络 Agent 的令牌请求都长这样。
+fn device(principal_id: PrincipalId, matrix_user_id: &str) -> AuthenticatedDevice {
+    AuthenticatedDevice {
+        account: agent_room_application::ports::PrincipalAccount {
+            principal: Principal::new(principal_id),
+            matrix_user_id: matrix_user_id.to_owned(),
+            display_name: "Test account".to_owned(),
+            avatar_content_id: None,
+            locale: "zh-CN".to_owned(),
+        },
+        device_id: DeviceId::from_uuid(uuid(140)),
+        access_token_expires_at: UtcMillis::new(2_000).expect("时间有效"),
+    }
+}
+
+fn agent_id(value: u128) -> AgentId {
+    AgentId::from_uuid(uuid(value))
 }
 
 fn viewer_permissions() -> PrivateRoomPermissions {

@@ -269,7 +269,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
 1. **设计**：本文档。
 2. **控制面打底**：
    - 设备操作者；
-   - `created_by_agent_id` 和迁移，`GET /private-rooms/{c}/origin`；
+   - `created_by_agent_id` 和迁移；
    - 房主没有 Matrix 账号时不邀请；
    - 网络 Agent 停用时归档它的房间。
    - 带迁移，合并前派发 `suite=all` 跑真实数据库。
@@ -278,7 +278,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
    - 令牌路由和远程 MCP 工具；
    - 限额，敲门叫醒；
    - `agents.md`、ADR 0010 修订、README 和隐私说明页。
-5. **网页**：谁建的；网络 Agent 房间的提示（房间里、设置里、邀请上）。
+5. **网页**：`GET /private-rooms/{c}/origin` 和谁建的；网络 Agent 房间的提示（房间里、设置里、邀请上）。
 6. **无头验收**：见下面“验收”，只在派发 `suite=all` 时跑。
 
 第 3、4、5 步都依赖第 2 步，彼此不依赖。第 4 步和第 5 步要在同一个版本里发布：网络 Agent 能建房以后，人收到邀请时就该看得到“服务器读得到”。
@@ -296,4 +296,13 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
 
 ## 状态
 
-- 2026-10-12 写设计（#414）。
+- 2026-10-12 写设计（#414），维护者同意。
+- 第 2 步拆成三个 PR：
+  - 2a（#415）：私人房间的操作者多了两种（`PrivateRoomActor`）：本机 Bridge 的设备、网络 Agent。建房可以由 Agent 替主体做：
+    - 记下建房的 Agent：迁移 `202610120002` 给 `private_room_state` 加 `created_by_agent_id`，领域上是 `PrivateRoom::create_by_agent`；
+    - 核对它是操作者名下、还在用的 Agent（`PrivateRoomAgentDirectory::owns_active_agent`，只认 `owner` 角色）；
+    - Agent 建房不顺带邀请人；同一个房间 ID 重试时，建房的 Agent 也要对得上；
+    - 网络 Agent 建房不邀请合成主体的 Matrix 账号，房主由它的 Agent 代表。
+  - 2b：管理（口令、敲门、邀请人、移出 Agent）认 Agent 操作者，只管 Agent 建的房间。
+  - 2c：网络 Agent 停用时归档它当房主的房间。
+- 和设计不一样的地方：`GET /private-rooms/{c}/origin` 从第 2 步挪到第 5 步跟网页一起做，只有网页用它。
