@@ -1,7 +1,7 @@
-//! 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。
+//! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。
 
 use agent_room_application::network_agents::{
-    NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomUseCases,
+    NetworkAgentOwnedRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomUseCases,
 };
 
 use super::*;
@@ -39,8 +39,27 @@ async fn close_room(
 fn visible(code: &NetworkAgentRoomCode) -> &str {
     match code {
         NetworkAgentRoomCode::Visible(code) => code,
-        NetworkAgentRoomCode::Hidden => panic!("口令应当看得到"),
+        NetworkAgentRoomCode::Hidden | NetworkAgentRoomCode::Missing => panic!("口令应当看得到"),
     }
+}
+
+async fn room_code(
+    harness: &Harness,
+    token: &str,
+    room: &str,
+) -> Result<NetworkAgentRoomCodeView, NetworkAgentFailureKind> {
+    harness
+        .service
+        .room_code(token, room)
+        .await
+        .map_err(|failure| failure.kind())
+}
+
+fn waiting_names(knocks: &[PrivateRoomAgentKnockRecord]) -> Vec<&str> {
+    knocks
+        .iter()
+        .map(|knock| knock.display_name.as_str())
+        .collect()
 }
 
 async fn record_joined(harness: &Harness, room: &NetworkAgentRoom) {
@@ -308,6 +327,212 @@ async fn 关房间只认它当房主的_房间号和_room_id_都行_关了的再
 }
 
 #[tokio::test]
+async fn 看口令不替它生成_停用了说没有_看不到的说看不到() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let owned = create_room(&harness, &token, "周报").await.unwrap();
+    let number = owned.room.catalog_id.to_string();
+
+    let shown = room_code(&harness, &token, &number).await.unwrap();
+    assert_eq!(shown.room, owned.room);
+    assert_eq!(visible(&shown.code), visible(&owned.code));
+
+    harness.service.disable_code(&token, &number).await.unwrap();
+    assert_eq!(
+        room_code(&harness, &token, &number).await.unwrap().code,
+        NetworkAgentRoomCode::Missing
+    );
+    harness
+        .service
+        .disable_code(&token, &number)
+        .await
+        .expect("没有口令时再停用也成功");
+    assert_eq!(
+        harness.access.generated_codes(),
+        1,
+        "看口令没有副作用：没有就说没有，由它决定要不要生成"
+    );
+
+    let replaced = harness.service.replace_code(&token, &number).await.unwrap();
+    assert_eq!(replaced.room, owned.room);
+    assert_ne!(visible(&replaced.code), visible(&owned.code));
+    assert_eq!(
+        room_code(&harness, &token, &number).await.unwrap().code,
+        replaced.code
+    );
+
+    harness
+        .access
+        .hidden
+        .lock()
+        .unwrap()
+        .insert(owned.room.catalog_id);
+    assert_eq!(
+        room_code(&harness, &token, &number).await.unwrap().code,
+        NetworkAgentRoomCode::Hidden
+    );
+}
+
+#[tokio::test]
+async fn 管房间只认它当房主_还没关的房间_也认它的_matrix_房间_id() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let owned = create_room(&harness, &token, "周报").await.unwrap();
+    assert_eq!(
+        room_code(&harness, &token, owned.room.matrix_room_id.as_str())
+            .await
+            .unwrap()
+            .room,
+        owned.room,
+        "建好还没进去时也认得出 Matrix 房间 ID"
+    );
+
+    let closed = create_room(&harness, &token, "关了的").await.unwrap();
+    close_room(&harness, &token, &closed.room.catalog_id.to_string())
+        .await
+        .unwrap();
+    let others = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()));
+    let knocker = AgentId::from_uuid(Uuid::now_v7());
+    let before = harness.access.managed.lock().unwrap().len();
+    for room in [
+        closed.room.catalog_id.to_string(),
+        others.to_string(),
+        catalog_id(78).to_string(),
+        "!unknown:matrix.test".to_owned(),
+    ] {
+        assert_eq!(
+            room_code(&harness, &token, &room).await.unwrap_err(),
+            NetworkAgentFailureKind::RoomNotOwned,
+            "{room}"
+        );
+        for failure in [
+            harness
+                .service
+                .replace_code(&token, &room)
+                .await
+                .unwrap_err(),
+            harness
+                .service
+                .disable_code(&token, &room)
+                .await
+                .unwrap_err(),
+            harness
+                .service
+                .waiting_knocks(&token, &room)
+                .await
+                .unwrap_err(),
+            harness
+                .service
+                .admit_knock(&token, &room, knocker)
+                .await
+                .unwrap_err(),
+            harness
+                .service
+                .decline_knock(&token, &room, knocker)
+                .await
+                .unwrap_err(),
+        ] {
+            assert_eq!(
+                failure.kind(),
+                NetworkAgentFailureKind::RoomNotOwned,
+                "{room}"
+            );
+        }
+    }
+    assert_eq!(
+        harness.access.managed.lock().unwrap().len(),
+        before,
+        "别人的房间、关了的房间碰都不碰"
+    );
+}
+
+#[tokio::test]
+async fn 看谁在敲门_放行以后等网关进去了再记放进来了_不让进的再放行说敲门不在了() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let owned = create_room(&harness, &token, "周报").await.unwrap();
+    let catalog_id = owned.room.catalog_id;
+    let number = catalog_id.to_string();
+    let (scout, critic) = (
+        AgentId::from_uuid(Uuid::now_v7()),
+        AgentId::from_uuid(Uuid::now_v7()),
+    );
+    let others = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()));
+    harness.access.knocks.lock().unwrap().extend([
+        waiting_knock_on(catalog_id, scout, "Scout"),
+        waiting_knock_on(catalog_id, critic, "Critic"),
+        waiting_knock_on(others, AgentId::from_uuid(Uuid::now_v7()), "别人的"),
+    ]);
+
+    let waiting = harness
+        .service
+        .waiting_knocks(&token, &number)
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting_names(&waiting),
+        ["Scout", "Critic"],
+        "只看这个房间的"
+    );
+
+    let admitted = harness
+        .service
+        .admit_knock(&token, &number, scout)
+        .await
+        .unwrap();
+    assert_eq!(admitted.agent.agent_id, scout);
+    assert_eq!(admitted.room.catalog_id, catalog_id);
+    assert_eq!(
+        waiting_names(
+            &harness
+                .service
+                .waiting_knocks(&token, &number)
+                .await
+                .unwrap()
+        ),
+        ["Scout", "Critic"],
+        "网关替它进去之前，敲门还在等"
+    );
+    harness
+        .service
+        .complete_knock(&token, &number, scout)
+        .await
+        .unwrap();
+
+    harness
+        .service
+        .decline_knock(&token, &number, critic)
+        .await
+        .unwrap();
+    assert!(
+        harness
+            .service
+            .waiting_knocks(&token, &number)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        harness
+            .service
+            .admit_knock(&token, &number, critic)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::KnockNotFound
+    );
+    harness
+        .service
+        .decline_knock(&token, &number, critic)
+        .await
+        .expect("原本就不在等，再拒绝一次也成功");
+}
+
+#[tokio::test]
 async fn 令牌不对或总开关关着时不建也不关() {
     let harness = Harness::enabled();
     agent(&harness).await;
@@ -317,6 +542,12 @@ async fn 令牌不对或总开关关着时不建也不关() {
     );
     assert_eq!(
         close_room(&harness, "wrong", &catalog_id(9).to_string())
+            .await
+            .unwrap_err(),
+        NetworkAgentFailureKind::Unauthorized
+    );
+    assert_eq!(
+        room_code(&harness, "wrong", &catalog_id(9).to_string())
             .await
             .unwrap_err(),
         NetworkAgentFailureKind::Unauthorized

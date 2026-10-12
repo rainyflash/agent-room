@@ -18,8 +18,9 @@ use agent_room_application::{
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
         NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
-        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentSession,
-        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentRoom, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -41,11 +42,11 @@ use agent_room_application::{
         NetworkAgentRoomRecord, NetworkAgentStoredMessage, NetworkAgentSubmissionClaim,
         NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
         NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
-        NetworkAgentTimelineGap, PortFuture, SecretValue,
+        NetworkAgentTimelineGap, PortFuture, PrivateRoomAgentKnockRecord, SecretValue,
     },
     private_rooms::{
-        PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult,
-        PrivateRoomRetirement,
+        AdmittedKnock, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
+        PrivateRoomResult, PrivateRoomRetirement,
     },
 };
 use agent_room_bridge_core::{
@@ -122,6 +123,9 @@ struct FakeAgents {
     entered: Mutex<Vec<NetworkAgentTarget>>,
     /// 自己建房的结果，按顺序给出。
     owned: Mutex<VecDeque<NetworkAgentResult<NetworkAgentOwnedRoom>>>,
+    /// 网络 Agent 放行敲它房间的门：记成员的结果按顺序给出，记放进来了的失败。
+    knock_admissions: Mutex<VecDeque<NetworkAgentResult<AdmittedKnock>>>,
+    completion_failure: Mutex<Option<NetworkAgentFailure>>,
 }
 
 impl FakeAgents {
@@ -152,6 +156,8 @@ impl FakeAgents {
             admissions: Mutex::new(VecDeque::new()),
             entered: Mutex::new(Vec::new()),
             owned: Mutex::new(VecDeque::new()),
+            knock_admissions: Mutex::new(VecDeque::new()),
+            completion_failure: Mutex::new(None),
         }
     }
 
@@ -384,7 +390,8 @@ impl NetworkAgentUseCases for FakeAgents {
     }
 }
 
-/// 自己建房、关房：建房的结果由测试按顺序给，都记进先后。
+/// 自己建房、放行敲它房间的门：结果由测试按顺序给，都记进先后。只动账的几样由接口直接交给
+/// 用例，不经过网关。
 impl NetworkAgentRoomUseCases for FakeAgents {
     fn create_room<'a>(
         &'a self,
@@ -404,10 +411,80 @@ impl NetworkAgentRoomUseCases for FakeAgents {
     fn close_room<'a>(
         &'a self,
         _token: &'a str,
-        room: &'a str,
+        _room: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
-        self.log.lock().unwrap().push(format!("close_room {room}"));
-        Box::pin(async { Ok(()) })
+        unreachable!("关房只动账，不经过网关")
+    }
+
+    fn room_code<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>> {
+        unreachable!("口令只动账，不经过网关")
+    }
+
+    fn replace_code<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>> {
+        unreachable!("口令只动账，不经过网关")
+    }
+
+    fn disable_code<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("口令只动账，不经过网关")
+    }
+
+    fn waiting_knocks<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        unreachable!("看敲门只动账，不经过网关")
+    }
+
+    fn admit_knock<'a>(
+        &'a self,
+        _token: &'a str,
+        room: &'a str,
+        _agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<AdmittedKnock>> {
+        self.log.lock().unwrap().push(format!("admit_knock {room}"));
+        let admitted = self
+            .knock_admissions
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("测试给了放行结果");
+        Box::pin(async move { admitted })
+    }
+
+    fn complete_knock<'a>(
+        &'a self,
+        _token: &'a str,
+        room: &'a str,
+        _agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("complete_knock {room}"));
+        let failure = self.completion_failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(()), Err) })
+    }
+
+    fn decline_knock<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+        _agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("不让进只动账，不经过网关")
     }
 }
 

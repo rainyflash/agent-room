@@ -1,8 +1,8 @@
-//! 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。
+//! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。
 //!
-//! 房主是网络 Agent 的合成主体，它的 Agent 按“房主的 Agent”进去（`admits_agent_of`）。建房和关房
-//! 走私人房间的用例，操作者是网络 Agent（`PrivateRoomActor::NetworkAgent`）；建房时顺手生成口令，
-//! 好让它转给别的 Agent。
+//! 房主是网络 Agent 的合成主体，它的 Agent 按“房主的 Agent”进去（`admits_agent_of`）。建房、关房、
+//! 口令和敲门都走私人房间的用例，操作者是网络 Agent（`PrivateRoomActor::NetworkAgent`）；建房时
+//! 顺手生成口令，好让它转给别的 Agent。管房间只认它当房主、还没关的房间，别的一律说不是它的。
 //!
 //! 网络 Agent 没有账号、没人为它负责，建房有上限（设计“限额”一节）：每个网络 Agent 同时几个没关的
 //! 房间、每天建几个，全站网络 Agent 建的没关的房间也有上限。它没关的房间里已经有同名的就回到那间，
@@ -11,7 +11,7 @@
 use std::fmt;
 
 use agent_room_domain::{
-    ids::{NetworkAgentId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, NetworkAgentId, PrincipalId, RoomCatalogId},
     join_codes::parse_room_number,
 };
 
@@ -20,11 +20,11 @@ use super::{
     NetworkAgentService, dependency, internal, repository,
 };
 use crate::{
-    ports::{PortFuture, PrivateRoomSnapshot},
+    ports::{PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, ArchivePrivateRoom, CreatePrivateRoom,
-        ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor, PrivateRoomFailure,
-        PrivateRoomFailureKind,
+        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock, ArchivePrivateRoom,
+        CreatePrivateRoom, InspectAgentAccess, ListPrivateRoomsForAccount, ManageJoinCode,
+        PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind,
     },
 };
 
@@ -48,6 +48,59 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         token: &'a str,
         room: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 看它建的房间现在的口令。没有口令时回答 `Missing`，不替它生成：看口令不该有副作用。
+    /// 下面管房间的几样，`room` 都是它当房主、还没关的房间的房间号或 Matrix 房间 ID。
+    fn room_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>>;
+
+    /// 生成口令；已经有的换成新的，旧的马上失效，已经进来的 Agent 不受影响。
+    fn replace_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>>;
+
+    /// 停用口令：拿旧口令进不来了，敲门照旧。原本就没有口令也算成功。
+    fn disable_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 在等、没作废的敲门，先敲的在前。
+    fn waiting_knocks<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>>>;
+
+    /// 放行：记为这个房间的 Agent 成员，敲门还在等。由网关替它进房间，进去了再 `complete_knock`。
+    fn admit_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<AdmittedKnock>>;
+
+    /// 放行的 Agent 进了房间，把敲门记为放进来了。
+    fn complete_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 不让进：之后它再敲还是不让进。原本就不在等也算成功。
+    fn decline_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
 }
 
 /// 网络 Agent 建好的房间，或回到的同名房间。
@@ -68,6 +121,8 @@ pub enum NetworkAgentRoomCode {
     Visible(String),
     /// 有口令，但看不到了（这台服务器没法保管口令）：要转给别的 Agent 就得换一个。
     Hidden,
+    /// 没有口令：停用了，或者还没生成。只能敲门进来。
+    Missing,
 }
 
 // 口令就是房间的钥匙，调试输出里不能出现。
@@ -76,8 +131,16 @@ impl fmt::Debug for NetworkAgentRoomCode {
         match self {
             Self::Visible(_) => formatter.write_str("Visible([已脱敏])"),
             Self::Hidden => formatter.write_str("Hidden"),
+            Self::Missing => formatter.write_str("Missing"),
         }
     }
+}
+
+/// 它建的一个房间和房间现在的口令。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentRoomCodeView {
+    pub room: NetworkAgentRoom,
+    pub code: NetworkAgentRoomCode,
 }
 
 impl NetworkAgentService {
@@ -151,6 +214,113 @@ impl NetworkAgentService {
             .await
             .map(|_| ())
             .map_err(room_failure)
+    }
+
+    async fn room_code_internal(
+        &self,
+        token: &str,
+        room: &str,
+    ) -> NetworkAgentResult<NetworkAgentRoomCodeView> {
+        let (actor, room) = self.managed(token, room).await?;
+        let revealed = self
+            .access
+            .reveal_code(ManageJoinCode {
+                actor,
+                catalog_id: room.catalog_id,
+            })
+            .await;
+        let code = match revealed {
+            Ok(code) => NetworkAgentRoomCode::Visible(code.code.display()),
+            Err(failure) if failure.kind() == AgentAccessFailureKind::NotFound => {
+                NetworkAgentRoomCode::Missing
+            }
+            Err(failure) if failure.kind() == AgentAccessFailureKind::NotRevealable => {
+                NetworkAgentRoomCode::Hidden
+            }
+            Err(failure) => return Err(access_failure(failure)),
+        };
+        Ok(NetworkAgentRoomCodeView { room, code })
+    }
+
+    async fn replace_code_internal(
+        &self,
+        token: &str,
+        room: &str,
+    ) -> NetworkAgentResult<NetworkAgentRoomCodeView> {
+        let (actor, room) = self.managed(token, room).await?;
+        let code = self.new_code(actor, room.catalog_id).await?;
+        Ok(NetworkAgentRoomCodeView { room, code })
+    }
+
+    async fn disable_code_internal(&self, token: &str, room: &str) -> NetworkAgentResult<()> {
+        let (actor, room) = self.managed(token, room).await?;
+        self.access
+            .disable_code(ManageJoinCode {
+                actor,
+                catalog_id: room.catalog_id,
+            })
+            .await
+            .map_err(access_failure)
+    }
+
+    async fn waiting_knocks_internal(
+        &self,
+        token: &str,
+        room: &str,
+    ) -> NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>> {
+        let (actor, room) = self.managed(token, room).await?;
+        self.access
+            .waiting_knocks(InspectAgentAccess {
+                actor,
+                catalog_id: room.catalog_id,
+            })
+            .await
+            .map_err(knock_failure)
+    }
+
+    /// 回答敲门的请求：认出房间，带上它这个操作者。
+    async fn answer(
+        &self,
+        token: &str,
+        room: &str,
+        agent_id: AgentId,
+    ) -> NetworkAgentResult<AnswerKnock> {
+        let (actor, room) = self.managed(token, room).await?;
+        Ok(AnswerKnock {
+            actor,
+            catalog_id: room.catalog_id,
+            agent_id,
+        })
+    }
+
+    /// 管房间的请求先认令牌、记一次活动，再认出房间：只认它当房主、还没关的房间。
+    async fn managed(
+        &self,
+        token: &str,
+        room: &str,
+    ) -> NetworkAgentResult<(PrivateRoomActor, NetworkAgentRoom)> {
+        let record = self.authenticated(token).await?;
+        let now = self.clock.now();
+        self.store
+            .record_activity(record.id, now)
+            .await
+            .map_err(repository)?;
+        let actor = PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?);
+        let wanted = parse_room_number(room);
+        let matrix_room_id = room.trim();
+        let room = self
+            .open_rooms(record.principal_id)
+            .await?
+            .iter()
+            .find(|snapshot| {
+                wanted.map_or_else(
+                    || snapshot.instance().matrix_room_id().as_str() == matrix_room_id,
+                    |catalog_id| snapshot.catalog().id() == catalog_id,
+                )
+            })
+            .map(owned_room)
+            .ok_or_else(not_owned)?;
+        Ok((actor, room))
     }
 
     /// 它当房主、还没关的私人房间。合成主体不会被邀请进别人的房间，列出来的本来就都是它的。
@@ -280,6 +450,80 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         Box::pin(self.close_room_internal(token, room))
     }
+
+    fn room_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>> {
+        Box::pin(self.room_code_internal(token, room))
+    }
+
+    fn replace_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>> {
+        Box::pin(self.replace_code_internal(token, room))
+    }
+
+    fn disable_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(self.disable_code_internal(token, room))
+    }
+
+    fn waiting_knocks<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        Box::pin(self.waiting_knocks_internal(token, room))
+    }
+
+    fn admit_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<AdmittedKnock>> {
+        Box::pin(async move {
+            let answer = self.answer(token, room, agent_id).await?;
+            self.access.admit_knock(answer).await.map_err(knock_failure)
+        })
+    }
+
+    fn complete_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(async move {
+            let answer = self.answer(token, room, agent_id).await?;
+            self.access
+                .complete_knock(answer)
+                .await
+                .map_err(knock_failure)
+        })
+    }
+
+    fn decline_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(async move {
+            let answer = self.answer(token, room, agent_id).await?;
+            self.access
+                .decline_knock(answer)
+                .await
+                .map_err(knock_failure)
+        })
+    }
 }
 
 /// 房间名去掉首尾空白后 1 到 128 个字符，不能有控制字符，和人在网页上建房一样。
@@ -334,6 +578,14 @@ fn access_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         | AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable => internal(),
     }
+}
+
+/// 回答敲门时找不到的只会是敲门：房间已经认过是它的。
+fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
+    if failure.kind() == AgentAccessFailureKind::NotFound {
+        return NetworkAgentFailure::new(NetworkAgentFailureKind::KnockNotFound);
+    }
+    access_failure(failure)
 }
 
 const fn not_owned() -> NetworkAgentFailure {

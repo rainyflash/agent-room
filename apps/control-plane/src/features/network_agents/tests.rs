@@ -9,13 +9,20 @@ use agent_room_application::{
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
         NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
-        NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomRequest, NetworkAgentSession,
-        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentView,
     },
-    ports::{Clock, NetworkAgentAckOutcome, PortFuture, SecretValue},
+    ports::{
+        Clock, MatrixUserId, NetworkAgentAckOutcome, PortFuture, PrivateRoomAgentKnockRecord,
+        PrivateRoomAgentMemberRecord, SecretValue,
+    },
+    private_rooms::AdmittedKnock,
 };
 use agent_room_domain::{
     ids::{AgentId, NetworkAgentId, RoomCatalogId},
+    join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus},
+    private_rooms::PrivateRoomPermissions,
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
@@ -271,9 +278,12 @@ pub(super) struct FakeMessaging {
     pub(super) gaps: Mutex<Vec<IpcTimelineGap>>,
     /// 拿房间号敲门时回答“没让进”。
     pub(super) declined: Mutex<bool>,
-    /// 自己建房、关房的请求：令牌和名字（关房时是房间）。
+    /// 自己建房的请求：令牌和名字。
     pub(super) created_rooms: Mutex<Vec<(String, String)>>,
-    pub(super) closed_rooms: Mutex<Vec<(String, String)>>,
+    /// 管自己建的房间的请求：令牌，和做了什么、对哪间（回答敲门时还有是谁）。
+    pub(super) room_calls: Mutex<Vec<(String, String)>>,
+    /// 看口令时房间现在的口令；不设就是看得到的那个。
+    pub(super) room_code: Mutex<Option<NetworkAgentRoomCode>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -282,6 +292,38 @@ impl FakeMessaging {
         let messaging = Arc::new(Self::default());
         *messaging.failure.lock().unwrap() = Some(failure);
         messaging
+    }
+
+    fn room_call(&self, token: &str, call: String) {
+        self.room_calls
+            .lock()
+            .unwrap()
+            .push((token.to_owned(), call));
+    }
+
+    /// 只动账的那几样直接交给用例，用例只会给出网络 Agent 的失败。
+    fn owned_failure(&self) -> Option<NetworkAgentFailure> {
+        self.failure
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|failure| match failure {
+                NetworkGatewayFailure::Agent(failure) => failure,
+                _ => NetworkAgentFailure::new(NetworkAgentFailureKind::DependencyUnavailable),
+            })
+    }
+
+    fn owned_result<T: Send + 'static>(&self, value: T) -> PortFuture<'_, NetworkAgentResult<T>> {
+        let failure = self.owned_failure();
+        Box::pin(async move { failure.map_or(Ok(value), Err) })
+    }
+}
+
+pub(super) fn owned_room(name: &str) -> NetworkAgentRoom {
+    NetworkAgentRoom {
+        catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
+        matrix_room_id: MatrixRoomReference::new("!owned:matrix.test".to_owned()).unwrap(),
+        name: name.to_owned(),
     }
 }
 
@@ -465,11 +507,7 @@ impl NetworkAgentRooms for FakeMessaging {
             .unwrap()
             .push((token.to_owned(), name.to_owned()));
         let owned = NetworkAgentOwnedRoom {
-            room: NetworkAgentRoom {
-                catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
-                matrix_room_id: MatrixRoomReference::new("!owned:matrix.test".to_owned()).unwrap(),
-                name: name.to_owned(),
-            },
+            room: owned_room(name),
             created: name != "已有的",
             joined: true,
             code: if name == "看不到口令" {
@@ -482,17 +520,131 @@ impl NetworkAgentRooms for FakeMessaging {
         Box::pin(async move { failure.map_or(Ok(owned), Err) })
     }
 
+    /// 放行在敲门的 Agent：回答它叫 Scout。
+    fn admit_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, Result<PrivateRoomAgentMemberRecord, NetworkGatewayFailure>> {
+        self.room_call(token, format!("admit_knock {room} {agent_id}"));
+        let member = PrivateRoomAgentMemberRecord {
+            catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
+            agent_id,
+            display_name: "Scout".to_owned(),
+            matrix_user_id: MatrixUserId::new("@scout:matrix.test".to_owned()).unwrap(),
+            owner_display_name: None,
+            status: PrivateRoomAgentMemberStatus::Joined,
+            permissions: PrivateRoomPermissions::AGENT_MEMBER,
+            joined_at: UtcMillis::new(KNOCKED_AT).unwrap(),
+            status_changed_at: UtcMillis::new(KNOCKED_AT).unwrap(),
+        };
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(member), Err) })
+    }
+}
+
+/// 只动账的那几样：记下请求，按预设回答。建房和放行走网关，不会到这里。
+impl NetworkAgentRoomUseCases for FakeMessaging {
+    fn create_room<'a>(
+        &'a self,
+        _token: &'a str,
+        _name: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedRoom>> {
+        unreachable!("建房走网关")
+    }
+
     fn close_room<'a>(
         &'a self,
         token: &'a str,
         room: &'a str,
-    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
-        self.closed_rooms
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.room_call(token, format!("close_room {room}"));
+        self.owned_result(())
+    }
+
+    fn room_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>> {
+        self.room_call(token, format!("room_code {room}"));
+        let code = self
+            .room_code
             .lock()
             .unwrap()
-            .push((token.to_owned(), room.to_owned()));
-        let failure = self.failure.lock().unwrap().clone();
-        Box::pin(async move { failure.map_or(Ok(()), Err) })
+            .clone()
+            .unwrap_or_else(|| NetworkAgentRoomCode::Visible("K7P3-Q9XW-2DMA".to_owned()));
+        self.owned_result(NetworkAgentRoomCodeView {
+            room: owned_room("周报"),
+            code,
+        })
+    }
+
+    fn replace_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoomCodeView>> {
+        self.room_call(token, format!("replace_code {room}"));
+        self.owned_result(NetworkAgentRoomCodeView {
+            room: owned_room("周报"),
+            code: NetworkAgentRoomCode::Visible("N3WC-0DE2-XYZW".to_owned()),
+        })
+    }
+
+    fn disable_code<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.room_call(token, format!("disable_code {room}"));
+        self.owned_result(())
+    }
+
+    fn waiting_knocks<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>>> {
+        self.room_call(token, format!("waiting_knocks {room}"));
+        self.owned_result(vec![PrivateRoomAgentKnockRecord {
+            catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
+            agent_id: AgentId::from_uuid(uuid(AGENT_UUID)),
+            display_name: "Scout".to_owned(),
+            status: PrivateRoomAgentKnockStatus::Waiting,
+            knocked_at: UtcMillis::new(KNOCKED_AT).unwrap(),
+            expires_at: UtcMillis::new(KNOCKED_AT + HOUR).unwrap(),
+            decided_at: None,
+        }])
+    }
+
+    fn admit_knock<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+        _agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<AdmittedKnock>> {
+        unreachable!("放行走网关")
+    }
+
+    fn complete_knock<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+        _agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("放行走网关")
+    }
+
+    fn decline_knock<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.room_call(token, format!("decline_knock {room} {agent_id}"));
+        self.owned_result(())
     }
 }
 
@@ -561,6 +713,7 @@ pub(super) fn app_with(
     router(NetworkAgentHttpState {
         agents,
         rooms: messaging.clone(),
+        owned_rooms: messaging.clone(),
         messaging,
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(now)),
@@ -1067,6 +1220,10 @@ async fn 浏览器预检允许任何来源_但不允许携带凭据() {
             .headers()
             .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
     );
+    let methods = response.headers()[header::ACCESS_CONTROL_ALLOW_METHODS]
+        .to_str()
+        .unwrap();
+    assert!(methods.contains("PUT"), "换口令、放行敲门用 PUT：{methods}");
 }
 
 /// 给根路由的组合测试用：一个总是回答“已关闭”的网络 Agent 路由。
@@ -1077,6 +1234,7 @@ pub(crate) fn disabled_router() -> axum::Router {
     router(NetworkAgentHttpState {
         agents: FakeAgents::failing(disabled),
         rooms: messaging.clone(),
+        owned_rooms: messaging.clone(),
         messaging,
         sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
         clock: Arc::new(FixedClock(1_758_600_000_000)),

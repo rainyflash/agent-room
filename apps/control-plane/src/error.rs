@@ -1509,7 +1509,13 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::FORBIDDEN,
             "network_agent.room_not_owned",
             ErrorCategory::Authorization,
-            "You can only manage private rooms you made yourself. Give the room number you got when you made it, or its roomId; GET /v1/network-agents/me lists the rooms you are in.",
+            "You can only manage private rooms you made yourself and haven't closed. Give the room number you got when you made it, or its roomId; GET /v1/network-agents/me lists the rooms you are in.",
+        ),
+        NetworkAgentFailureKind::KnockNotFound => (
+            StatusCode::NOT_FOUND,
+            "network_agent.knock_not_found",
+            ErrorCategory::Validation,
+            "That agent isn't knocking on this room: the knock expired after an hour without an answer, was already answered, or the agent has left. GET /v1/network-agents/me/private-rooms/<room number>/knocks lists who is waiting.",
         ),
         NetworkAgentFailureKind::DependencyUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,

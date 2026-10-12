@@ -1,11 +1,19 @@
-//! 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。建好以后和凭口令进私人
-//! 房间一样：先让加密客户端就绪、建好加密身份，再进去，进了说一声在线。
+//! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）里要替 Agent 进房间的两样：
+//! 建房和放行敲门。建好以后和凭口令进私人房间一样：先让加密客户端就绪、建好加密身份，再进去，进了
+//! 说一声在线；放行时替敲门的 Agent 进去，和管理者在网页上放行一样。只动账的几样（关房、口令、看
+//! 敲门、不让进）由接口直接交给 `NetworkAgentRoomUseCases`。
 
-use agent_room_application::{network_agents::NetworkAgentOwnedRoom, ports::PortFuture};
+use agent_room_application::{
+    network_agents::{
+        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentOwnedRoom, NetworkAgentRoom,
+    },
+    ports::{PortFuture, PrivateRoomAgentMemberRecord},
+};
+use agent_room_domain::ids::AgentId;
 
 use super::{NetworkGateway, NetworkGatewayFailure};
 
-/// 网络 Agent 管自己建的房间；HTTP 接口与远程 MCP 只认这个，便于单独测试。
+/// 网络 Agent 管自己建的房间里要替 Agent 进房间的；HTTP 接口与远程 MCP 只认这个，便于单独测试。
 pub(crate) trait NetworkAgentRooms: Send + Sync {
     /// 建房并进去；它没关的房间里已经有同名的，就回到那间（还没进去的这次进去）。
     fn create_room<'a>(
@@ -14,12 +22,14 @@ pub(crate) trait NetworkAgentRooms: Send + Sync {
         name: &'a str,
     ) -> PortFuture<'a, Result<NetworkAgentOwnedRoom, NetworkGatewayFailure>>;
 
-    /// 关掉自己建的房间；已经关了的也算成功。它照旧留在房间里，之前的消息还看得到。
-    fn close_room<'a>(
+    /// 放行在敲它房间的 Agent：先记为成员，再替那个 Agent 进房间，进去了才把敲门记为放进来了。
+    /// 回答放进来的 Agent。
+    fn admit_knock<'a>(
         &'a self,
         token: &'a str,
         room: &'a str,
-    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>>;
+        agent_id: AgentId,
+    ) -> PortFuture<'a, Result<PrivateRoomAgentMemberRecord, NetworkGatewayFailure>>;
 }
 
 impl NetworkGateway {
@@ -42,6 +52,47 @@ impl NetworkGateway {
         }
         Ok(owned)
     }
+
+    async fn admit_knock_internal(
+        &self,
+        token: &str,
+        room: &str,
+        agent_id: AgentId,
+    ) -> Result<PrivateRoomAgentMemberRecord, NetworkGatewayFailure> {
+        let admitted = self
+            .owned_rooms
+            .admit_knock(token, room, agent_id)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        let entered = NetworkAgentRoom {
+            catalog_id: admitted.room.catalog_id,
+            matrix_room_id: admitted.room.matrix_room_id,
+            name: admitted.room.name,
+        };
+        self.enter_admitted_internal(agent_id, entered)
+            .await
+            .map_err(admission_failure)?;
+        if let Err(failure) = self.owned_rooms.complete_knock(token, room, agent_id).await {
+            // 它已经进去了：敲门还显示在等，再放行一次会原样走完，不影响它在房间里。
+            tracing::warn!(failure = ?failure.kind(), "放行的 Agent 进了房间，敲门没记成放进来了");
+        }
+        Ok(admitted.agent)
+    }
+}
+
+/// 替敲门的 Agent 进房间没成。它这时停用了就和没在敲门一样；别的都是暂时的，敲门还在等，房主过
+/// 一会儿再放行一次就好。它的“令牌不对”别原样交出去：说的是敲门的那个，不是房主。
+fn admission_failure(failure: NetworkGatewayFailure) -> NetworkGatewayFailure {
+    match failure {
+        NetworkGatewayFailure::Agent(failure)
+            if failure.kind() == NetworkAgentFailureKind::Unauthorized =>
+        {
+            NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::KnockNotFound,
+            ))
+        }
+        _ => NetworkGatewayFailure::Unavailable,
+    }
 }
 
 impl NetworkAgentRooms for NetworkGateway {
@@ -53,16 +104,12 @@ impl NetworkAgentRooms for NetworkGateway {
         Box::pin(self.create_room_internal(token, name))
     }
 
-    fn close_room<'a>(
+    fn admit_knock<'a>(
         &'a self,
         token: &'a str,
         room: &'a str,
-    ) -> PortFuture<'a, Result<(), NetworkGatewayFailure>> {
-        Box::pin(async move {
-            self.owned_rooms
-                .close_room(token, room)
-                .await
-                .map_err(NetworkGatewayFailure::Agent)
-        })
+        agent_id: AgentId,
+    ) -> PortFuture<'a, Result<PrivateRoomAgentMemberRecord, NetworkGatewayFailure>> {
+        Box::pin(self.admit_knock_internal(token, room, agent_id))
     }
 }

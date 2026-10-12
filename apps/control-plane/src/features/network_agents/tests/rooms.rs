@@ -1,8 +1,10 @@
-//! 网络 Agent 自己建房间、关房间的 HTTP 接口（`specs/agent-rooms/design.md` 第 4 步）。
+//! 网络 Agent 自己建房间、管房间的 HTTP 接口（`specs/agent-rooms/design.md` 第 4 步）。
 
 use std::sync::Arc;
 
-use agent_room_application::network_agents::{NetworkAgentFailure, NetworkAgentFailureKind};
+use agent_room_application::network_agents::{
+    NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentRoomCode,
+};
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},
@@ -10,7 +12,9 @@ use axum::{
 use serde_json::json;
 use tower::ServiceExt;
 
-use super::{FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with, body_json};
+use super::{
+    AGENT_UUID, FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with, body_json,
+};
 use crate::network_gateway::NetworkGatewayFailure;
 
 const ROOMS: &str = "/v1/network-agents/me/private-rooms";
@@ -159,8 +163,201 @@ async fn 建房的几种失败各有错误码() {
     }
 }
 
+fn calls(messaging: &FakeMessaging) -> Vec<String> {
+    messaging
+        .room_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(token, call)| {
+            assert_eq!(token, TOKEN, "令牌原样交给用例");
+            call.clone()
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn 关房间按房间号或_room_id_交给网关_成功回答_204() {
+async fn 看口令回答口令和要转给别的_agent_的话_没有口令时只说敲门() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let path = format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/code");
+    let response = call(&messaging, request(Method::GET, &path, "")).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = body_json(response).await;
+    assert_eq!(body["schemaVersion"], 1);
+    assert_eq!(body["room"]["catalogId"], PRIVATE_CATALOG_UUID);
+    assert_eq!(
+        body["code"],
+        json!({"state": "visible", "code": "K7P3-Q9XW-2DMA"})
+    );
+    assert_eq!(
+        body["guideUrl"],
+        "https://api.agent-room.example/agents.txt"
+    );
+    assert!(
+        body["share"]["en"]
+            .as_str()
+            .unwrap()
+            .contains("K7P3-Q9XW-2DMA")
+    );
+
+    *messaging.room_code.lock().unwrap() = Some(NetworkAgentRoomCode::Missing);
+    let body = body_json(call(&messaging, request(Method::GET, &path, "")).await).await;
+    assert_eq!(body["code"], json!({"state": "missing"}));
+    for language in ["zh", "en"] {
+        let text = body["share"][language].as_str().unwrap();
+        assert!(text.contains(PRIVATE_CATALOG_UUID), "{text}");
+        assert!(!text.contains("K7P3"), "{text}");
+    }
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("room_code {PRIVATE_CATALOG_UUID}"),
+            format!("room_code {PRIVATE_CATALOG_UUID}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 换口令回答新口令_停用口令回答_204() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let path = format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/code");
+
+    let response = call(&messaging, request(Method::PUT, &path, "")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(
+        body["code"],
+        json!({"state": "visible", "code": "N3WC-0DE2-XYZW"})
+    );
+    assert!(
+        body["share"]["zh"]
+            .as_str()
+            .unwrap()
+            .contains("N3WC-0DE2-XYZW")
+    );
+
+    let response = call(&messaging, request(Method::DELETE, &path, "")).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("replace_code {PRIVATE_CATALOG_UUID}"),
+            format!("disable_code {PRIVATE_CATALOG_UUID}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 看敲门列出在等的_放行交给网关_不让进交给用例() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let knocks = format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/knocks");
+
+    let body = body_json(call(&messaging, request(Method::GET, &knocks, "")).await).await;
+    assert_eq!(
+        body,
+        json!({
+            "schemaVersion": 1,
+            "knocks": [{
+                "agentId": AGENT_UUID,
+                "displayName": "Scout",
+                "knockedAtUnixMs": 1_758_600_000_000_i64,
+                "expiresAtUnixMs": 1_758_603_600_000_i64,
+            }],
+        })
+    );
+
+    let one = format!("{knocks}/{AGENT_UUID}");
+    let response = call(&messaging, request(Method::PUT, &one, "")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await,
+        json!({
+            "schemaVersion": 1,
+            "agent": {"agentId": AGENT_UUID, "displayName": "Scout"},
+        })
+    );
+    let response = call(&messaging, request(Method::DELETE, &one, "")).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("waiting_knocks {PRIVATE_CATALOG_UUID}"),
+            format!("admit_knock {PRIVATE_CATALOG_UUID} {AGENT_UUID}"),
+            format!("decline_knock {PRIVATE_CATALOG_UUID} {AGENT_UUID}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 回答敲门时_agent_id_不对就不往下交() {
+    let messaging = Arc::new(FakeMessaging::default());
+    for method in [Method::PUT, Method::DELETE] {
+        let response = call(
+            &messaging,
+            request(
+                method.clone(),
+                &format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/knocks/Scout"),
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "network_agent.invalid_request");
+        assert!(body["message"].as_str().unwrap().contains("/knocks"));
+    }
+    assert!(calls(&messaging).is_empty());
+}
+
+#[tokio::test]
+async fn 敲门不在了_口令和敲门的失败各有错误码() {
+    for (kind, status, code) in [
+        (
+            NetworkAgentFailureKind::KnockNotFound,
+            StatusCode::NOT_FOUND,
+            "network_agent.knock_not_found",
+        ),
+        (
+            NetworkAgentFailureKind::RoomNotOwned,
+            StatusCode::FORBIDDEN,
+            "network_agent.room_not_owned",
+        ),
+    ] {
+        let messaging =
+            FakeMessaging::failing(NetworkGatewayFailure::Agent(NetworkAgentFailure::new(kind)));
+        for (method, path) in [
+            (Method::GET, format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/code")),
+            (Method::PUT, format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/code")),
+            (
+                Method::DELETE,
+                format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/code"),
+            ),
+            (
+                Method::GET,
+                format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/knocks"),
+            ),
+            (
+                Method::PUT,
+                format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/knocks/{AGENT_UUID}"),
+            ),
+            (
+                Method::DELETE,
+                format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/knocks/{AGENT_UUID}"),
+            ),
+        ] {
+            let response = call(&messaging, request(method.clone(), &path, "")).await;
+            assert_eq!(response.status(), status, "{method} {path}");
+            let body = body_json(response).await;
+            assert_eq!(body["code"], code, "{method} {path}");
+            assert!(body["message"].as_str().unwrap().is_ascii());
+        }
+    }
+}
+
+#[tokio::test]
+async fn 关房间按房间号或_room_id_交给用例_成功回答_204() {
     let messaging = Arc::new(FakeMessaging::default());
     for room in [
         PRIVATE_CATALOG_UUID,
@@ -175,11 +372,11 @@ async fn 关房间按房间号或_room_id_交给网关_成功回答_204() {
         assert_eq!(response.status(), StatusCode::NO_CONTENT, "{room}");
     }
     assert_eq!(
-        *messaging.closed_rooms.lock().unwrap(),
+        calls(&messaging),
         [
-            (TOKEN.to_owned(), PRIVATE_CATALOG_UUID.to_owned()),
-            (TOKEN.to_owned(), "!owned:matrix.test".to_owned()),
-            (TOKEN.to_owned(), "!owned:matrix.test".to_owned()),
+            format!("close_room {PRIVATE_CATALOG_UUID}"),
+            "close_room !owned:matrix.test".to_owned(),
+            "close_room !owned:matrix.test".to_owned(),
         ]
     );
 

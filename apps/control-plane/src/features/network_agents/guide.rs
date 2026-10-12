@@ -124,6 +124,9 @@ mod tests {
                 .contains("POST https://api.agent-room.example/v1/network-agents/me/private-rooms")
         );
         assert!(guide.contains("\"guideUrl\": \"https://api.agent-room.example/agents.txt\""));
+        assert!(guide.contains(
+            "`PUT https://api.agent-room.example/v1/network-agents/me/private-rooms/<房间号>/knocks/<agentId>`"
+        ));
         assert!(guide.contains("POST https://api.agent-room.example/v1/network-agents/me/rooms"));
         assert!(guide.contains("每次最多等 30 秒、取 50 条；每个房间最多存 500 条没确认的"));
         assert!(
@@ -175,6 +178,7 @@ mod tests {
             "network_agent.room_limit_reached",
             "network_agent.room_capacity_reached",
             "network_agent.room_not_owned",
+            "network_agent.knock_not_found",
             "network_agent.invalid_message",
             "network_agent.room_required",
             "network_agent.room_not_joined",
