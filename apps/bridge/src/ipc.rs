@@ -147,6 +147,29 @@ impl FoundationBridgeIpcRequestHandler {
         self
     }
 
+    async fn reception_control(
+        &self,
+        request: agent_room_bridge_ipc::ReceptionRequest,
+    ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        self.reception
+            .as_ref()
+            .ok_or_else(agent_runtime_unavailable)?
+            .execute(request)
+            .await
+            .map(|record| IpcResponse::Reception { record })
+            .map_err(|error| {
+                BridgeIpcDispatchFailure::new(
+                    error.code,
+                    if error.retryable {
+                        IpcErrorCategory::DependencyUnavailable
+                    } else {
+                        IpcErrorCategory::Conflict
+                    },
+                    error.retryable,
+                )
+            })
+    }
+
     fn onboarding(&self) -> Result<&BridgeOnboardingService, BridgeIpcDispatchFailure> {
         self.onboarding.as_deref().ok_or_else(|| {
             BridgeIpcDispatchFailure::new(
@@ -193,24 +216,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
     fn dispatch(&self, method: IpcMethod) -> BridgeIpcDispatchFuture<'_> {
         Box::pin(async move {
             match method {
-                IpcMethod::ReceptionControl(request) => self
-                    .reception
-                    .as_ref()
-                    .ok_or_else(agent_runtime_unavailable)?
-                    .execute(request)
-                    .await
-                    .map(|record| IpcResponse::Reception { record })
-                    .map_err(|error| {
-                        BridgeIpcDispatchFailure::new(
-                            error.code,
-                            if error.retryable {
-                                IpcErrorCategory::DependencyUnavailable
-                            } else {
-                                IpcErrorCategory::Conflict
-                            },
-                            error.retryable,
-                        )
-                    }),
+                IpcMethod::ReceptionControl(request) => self.reception_control(request).await,
                 IpcMethod::SendReceptionMessage { run_id, request } => {
                     self.agent_runtime()?
                         .send_message_with_run(request, Some(run_id))
@@ -226,6 +232,11 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 | IpcMethod::ReadInvitation
                 | IpcMethod::ResolveJoinCode(_)
                 | IpcMethod::RedeemJoinCode(_)
+                | IpcMethod::CreateRoom(_)
+                | IpcMethod::RoomAccess(_)
+                | IpcMethod::AnswerKnock(_)
+                | IpcMethod::InvitePerson(_)
+                | IpcMethod::RemoveAgent(_)
                 | IpcMethod::CloseHostSession(_)
                 | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
                     "bridge.host_session.unavailable",
@@ -811,6 +822,7 @@ fn authorize_method(
             | IpcMethod::ReadInvitation
             | IpcMethod::ResolveJoinCode(_)
             | IpcMethod::RedeemJoinCode(_)
+            | IpcMethod::CreateRoom(_)
             | IpcMethod::OpenHostSession(_)
             | IpcMethod::CloseHostSession(_)
             | IpcMethod::WithSession { .. }
@@ -3155,6 +3167,46 @@ mod tests {
             assert!(authorize_method(&IpcMethod::ReadInvitation, &agent).is_ok());
             assert!(authorize_method(&offer_method, &agent).is_err());
             assert!(authorize_method(&withdraw_method, &agent).is_err());
+        }
+    }
+
+    #[test]
+    fn 建房不要会话_管房间要会话_都只给接入的_agent() {
+        let create = IpcMethod::CreateRoom(agent_room_bridge_ipc::IpcCreateRoomRequest {
+            catalog_id: Uuid::now_v7().to_string(),
+            name: "周报".into(),
+            session_key: Uuid::now_v7().to_string(),
+            display_name: "Scout".into(),
+        });
+        let access = IpcMethod::RoomAccess(agent_room_bridge_ipc::IpcRoomAccessRequest::default());
+        let agreement = |caller, scope| {
+            let offer =
+                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_4], [scope]).unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_4], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+        };
+        for caller in [IpcCallerKind::McpServer, IpcCallerKind::AgentCli] {
+            let agent = agreement(caller, IpcScope::RoomsManage).unwrap();
+            assert!(authorize_method(&create, &agent).is_ok());
+            assert_eq!(
+                authorize_method(&access, &agent).unwrap_err().code(),
+                "bridge.host_session.required"
+            );
+            let in_session = IpcMethod::WithSession {
+                session_id: Uuid::now_v7().to_string(),
+                method: Box::new(access.clone()),
+            };
+            assert!(authorize_method(&in_session, &agent).is_ok());
+            // 只协商到会话管理的连接建不了房。
+            let sessions = agreement(caller, IpcScope::HostSessionsManage).unwrap();
+            assert_eq!(
+                authorize_method(&create, &sessions).unwrap_err().category,
+                IpcErrorCategory::Authorization
+            );
+        }
+        for caller in [IpcCallerKind::DesktopShell, IpcCallerKind::DiagnosticCli] {
+            assert!(agreement(caller, IpcScope::RoomsManage).is_err());
         }
     }
 
