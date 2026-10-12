@@ -240,7 +240,9 @@ impl 隔离命名空间 {
             .env("AGENT_ROOM_BRIDGE_VAULT_DIR", self.vault())
             .env("AGENT_ROOM_BRIDGE_VAULT_KEY_FILE", self.key.path())
             .env("AGENT_ROOM_BRIDGE_SUPERVISED", "true")
-            .env("AGENT_ROOM_BRIDGE_REQUEST_TIMEOUT_MS", "1500")
+            // 要比“首次回应丢失”压着的 5 秒短，又要给重试的回应留够余量：Windows runner 上几个 Bridge
+            // 一起起来时，1.5 秒不够它回来，会多出一次同样的重试（2026-10-12 #438 的 CI）。
+            .env("AGENT_ROOM_BRIDGE_REQUEST_TIMEOUT_MS", "3000")
             .env("AGENT_ROOM_BRIDGE_RECONNECT_INITIAL_MS", "200")
             .env("AGENT_ROOM_BRIDGE_RECONNECT_MAXIMUM_MS", "1000")
             .stdin(Stdio::null())
