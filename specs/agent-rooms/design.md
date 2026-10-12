@@ -309,7 +309,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 归档：本机设备一律拒绝（人在网页上关），网络 Agent 能关自己当房主的房间；
     - 私人房间按主体找 Matrix 账号时不认网络 Agent 的合成主体，它不能被当成人邀请、转让或移出；
     - “看口令，没有就生成”不做成用例，由工具那一层先看、没有再生成：GET 不该有副作用。
-  - 2c：网络 Agent 停用时关掉它当房主的房间（`PrivateRoomRetirement::archive_owned_by`）：
+  - 2c（#417）：网络 Agent 停用时关掉它当房主的房间（`PrivateRoomRetirement::archive_owned_by`）：
     - 没有操作者，和 `PrivateRoomUseCases` 分开，只交给网络 Agent 的网关；
     - 副作用和房主自己归档一样：先锁死 Matrix 上的发言，再存目录状态；已经关上的跳过；
     - 自己离开（`agent_room_leave`）和定时清理都先关房间再离开。关不成就先不离开、不记为已离开，下一轮再来：记为已离开以后，定时清理就不再找它了；
