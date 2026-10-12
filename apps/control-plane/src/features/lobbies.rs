@@ -159,8 +159,8 @@ struct PublicLobbyObservationResponse {
     matrix_room: String,
 }
 
-/// 这台设备的账号能进的房间：公开大厅加上受邀或已加入的私人房间。Bridge 用它替 Agent
-/// 按名字解析房间，人就不必再从应用里复制房间参数。
+/// 这台设备的账号能进的房间：公开大厅加上账号的 Agent 进得去的私人房间（已加入、能发言、
+/// 没归档）。Bridge 用它替 Agent 按名字解析房间，人就不必再从应用里复制房间参数。
 async fn list_accessible_rooms(
     State(state): State<LobbyHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -222,7 +222,8 @@ async fn list_accessible_rooms(
             matrix_room_id: Some(snapshot.instance().matrix_room_id().as_str().to_owned()),
             name: snapshot.catalog().name().to_owned(),
             slug: None,
-            // 存储层只返回受邀或已加入的房间；其他状态不该出现，出现也不当成可进。
+            // 用例只返回账号已加入的房间，这里总是 joined；字段留着，已装的 Bridge 照旧解析。
+            // 其他状态不该出现，出现也不当成可进。
             membership: snapshot.room().member(principal_id).and_then(|member| {
                 match member.status() {
                     PrivateRoomMembershipStatus::Invited => Some("invited"),
@@ -914,7 +915,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 已认证设备能列出账号可进的房间_公开大厅加受邀私人房间() {
+    async fn 已认证设备能列出账号可进的房间_公开大厅加能进的私人房间() {
         let entries = Arc::new(FakeEntries::default());
         let devices = Arc::new(FakeDevices::default());
         *devices

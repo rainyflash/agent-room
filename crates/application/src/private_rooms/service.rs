@@ -46,7 +46,8 @@ pub trait PrivateRoomUseCases: Send + Sync {
         request: ListPrivateRooms,
     ) -> PortFuture<'_, PrivateRoomResult<Vec<PrivateRoomSnapshot>>>;
 
-    /// 列出账号当前受邀或已加入的私人房间，供已认证的设备替该账号的 Agent 查询。
+    /// 列出账号的 Agent 此刻进得去的私人房间（账号已加入、能发言、房间没归档），供已认证的
+    /// 设备替该账号的 Agent 查询。只是受邀或只能看的房间不列：Agent 照着进会被拒。
     fn list_for_account(
         &self,
         request: ListPrivateRoomsForAccount,
@@ -232,10 +233,16 @@ impl PrivateRoomService {
         request: ListPrivateRoomsForAccount,
     ) -> PrivateRoomResult<Vec<PrivateRoomSnapshot>> {
         const OPERATION: &str = "private_room.list_for_account";
-        self.store
+        let rooms = self
+            .store
             .list_for_principal(request.principal_id)
             .await
-            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
+        // 和 Agent 进房间时同一条规则（`admits_agent_of`），列出来的就进得去。
+        Ok(rooms
+            .into_iter()
+            .filter(|snapshot| snapshot.room().admits_agent_of(request.principal_id))
+            .collect())
     }
 
     async fn invite_internal(
