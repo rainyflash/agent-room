@@ -17,8 +17,9 @@ use agent_room_application::{
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomMembershipAction,
-        PrivateRoomResult, PrivateRoomUseCases, RenamePrivateRoom, TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent,
+        PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult, PrivateRoomUseCases,
+        RenamePrivateRoom, TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -124,6 +125,27 @@ impl PrivateRoomUseCases for FakeRooms {
         request: InspectPrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         self.record(call("inspect", request.catalog_id, None, None))
+    }
+
+    fn origin(
+        &self,
+        request: InspectPrivateRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomOrigin>> {
+        self.calls.lock().expect("房间调用记录锁可用").push(call(
+            "origin",
+            request.catalog_id,
+            None,
+            None,
+        ));
+        Box::pin(async move {
+            Ok(PrivateRoomOrigin {
+                created_by_agent: Some(PrivateRoomCreatorAgent {
+                    agent_id: AgentId::from_uuid(uuid(AGENT_UUID)),
+                    display_name: Some("Visitor".to_owned()),
+                }),
+                owner_is_network_agent: true,
+            })
+        })
     }
 
     fn list(
@@ -795,6 +817,58 @@ async fn 查看邀请和权限更新分别进入正确边界() {
     assert_eq!(calls[2].operation, "permissions");
     assert_eq!(calls[1].permissions, Some(viewer_speaker_permissions()));
     assert_eq!(calls[2].permissions, Some(viewer_speaker_permissions()));
+}
+
+#[tokio::test]
+async fn 房间是谁建的只需活动会话_房间号不对在用例之前就拒绝() {
+    let rooms = Arc::new(FakeRooms::new());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let app = test_router(rooms.clone(), authentication.clone());
+    let response = app
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            &format!("/private-rooms/{CATALOG_UUID}/origin"),
+            &json!({}),
+            false,
+            false,
+        ))
+        .await
+        .expect("路由可调用");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "createdByAgent": { "agentId": AGENT_UUID, "displayName": "Visitor" },
+            "ownerIsNetworkAgent": true,
+        })
+    );
+    assert_eq!(
+        authentication.calls.lock().unwrap().as_slice(),
+        &[AuthenticationRequirement::ActiveSession]
+    );
+
+    let invalid = app
+        .oneshot(request(
+            Method::GET,
+            "/private-rooms/not-a-room/origin",
+            &json!({}),
+            false,
+            false,
+        ))
+        .await
+        .expect("路由可调用");
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(invalid).await["code"],
+        "private_room.invalid_resource_id"
+    );
+    assert_eq!(
+        *rooms.calls.lock().unwrap(),
+        [call("origin", catalog_id(), None, None)]
+    );
 }
 
 #[tokio::test]

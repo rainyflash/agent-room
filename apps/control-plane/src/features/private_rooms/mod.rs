@@ -61,6 +61,7 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             "/private-rooms/{catalog_id}",
             get(handlers::inspect).delete(handlers::archive),
         )
+        .route("/private-rooms/{catalog_id}/origin", get(handlers::origin))
         .route(
             "/private-rooms/{catalog_id}/invitations",
             post(handlers::invite),

@@ -19,7 +19,8 @@ use super::{
     PrivateRoomHttpState,
     models::{
         CreatePrivateRoomBody, InviteMemberBody, PermissionsBody, PrivateRoomListResponse,
-        PrivateRoomResponse, RenameRoomBody, TransferOwnershipBody, catalog_id, principal_id,
+        PrivateRoomOriginResponse, PrivateRoomResponse, RenameRoomBody, TransferOwnershipBody,
+        catalog_id, principal_id,
     },
 };
 use crate::{
@@ -97,6 +98,43 @@ pub(super) async fn inspect(
         StatusCode::OK,
         correlation_id,
     )
+}
+
+/// 房间是谁建的：受邀和已加入的成员都看得到，接受邀请之前就知道服务器读不读得到。
+pub(super) async fn origin(
+    State(state): State<PrivateRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Some(catalog_id) = catalog_id(&catalog) else {
+        return invalid_resource(correlation_id);
+    };
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .rooms
+        .origin(InspectPrivateRoom { actor, catalog_id })
+        .await
+    {
+        Ok(origin) => no_store(
+            (
+                StatusCode::OK,
+                Json(PrivateRoomOriginResponse::from(origin)),
+            )
+                .into_response(),
+        ),
+        Err(failure) => no_store(ApiError::private_room(failure, correlation_id).into_response()),
+    }
 }
 
 pub(super) async fn list(

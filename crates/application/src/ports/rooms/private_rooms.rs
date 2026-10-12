@@ -62,6 +62,13 @@ pub trait PrivateRoomPrincipalDirectory: Send + Sync {
     ) -> PortFuture<'_, RepositoryResult<Option<MatrixUserId>>>;
 }
 
+/// 建房的 Agent：名字，以及它是网络 Agent 时替它记账的合成主体。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateRoomAgentDescription {
+    pub display_name: String,
+    pub network_principal_id: Option<PrincipalId>,
+}
+
 /// 列出某个主体名下全部 Agent 的 Matrix 用户。
 ///
 /// Agent 不是私人房间成员，它随主体入场，在 Matrix 上的能力不能超过该主体。主体的发言被收回、
@@ -79,6 +86,13 @@ pub trait PrivateRoomAgentDirectory: Send + Sync {
         principal_id: PrincipalId,
         agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<bool>>;
+
+    /// 建房的 Agent 叫什么、是不是网络 Agent：房间设置里写由谁建，网络 Agent 当房主的房间要提醒
+    /// 服务器读得到。停用了的也照样回答；找不到这个 Agent 时为空。
+    fn describe_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentDescription>>>;
 }
 
 /// 私人房间在 Matrix 上的最小硬边界能力。

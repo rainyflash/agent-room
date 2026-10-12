@@ -17,8 +17,8 @@ pub use failure::{
 pub use models::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
     InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
-    PrivateRoomActor, PrivateRoomInvitation, PrivateRoomMembershipAction, RenamePrivateRoom,
-    TransferPrivateRoomOwnership,
+    PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomMembershipAction,
+    PrivateRoomOrigin, RenamePrivateRoom, TransferPrivateRoomOwnership,
 };
 pub use service::{
     PrivateRoomDependencies, PrivateRoomRetirement, PrivateRoomService, PrivateRoomUseCases,

@@ -1152,6 +1152,16 @@ mod tests {
             unreachable!("大厅路由不查看单个私人房间")
         }
 
+        fn origin(
+            &self,
+            _request: agent_room_application::private_rooms::InspectPrivateRoom,
+        ) -> PortFuture<
+            '_,
+            PrivateRoomResult<agent_room_application::private_rooms::PrivateRoomOrigin>,
+        > {
+            unreachable!("大厅路由不看房间是谁建的")
+        }
+
         fn list(
             &self,
             _request: agent_room_application::private_rooms::ListPrivateRooms,

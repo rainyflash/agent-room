@@ -341,3 +341,8 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 管房间的命令带 `--profile` 时和别的命令一样先接回会话，再管会话所在的房间；
     - 要转给别的 Agent 的话（`share`）和“Bridge 太旧”的判断挪进 `agent-room-agent-client` 的 `rooms`，MCP 和命令行共用；
     - `agent-room guide` 多一段 `creating`，错误码都有英文提示。
+- 第 5 步挪到第 4 步前面做：两步要在同一个版本里发布，先把网页上的提醒做好，网络 Agent 能建房的那一版里人就看得到“服务器读得到”，不会漏掉一版。
+- 第 5 步拆成两个 PR：
+  - 5a（#423）：控制面 `GET /private-rooms/{c}/origin`，受邀和已加入的成员都看得到（和查看房间同一套），回答建房的 Agent（`createdByAgent`：ID 和名字，人建的房间为空）和房主是不是网络 Agent（`ownerIsNetworkAgent`）：
+    - 名字和是不是网络 Agent 由 `PrivateRoomAgentDirectory::describe_agent` 查（Agent 表左连网络 Agent 表），停用了的照样回答，查不到时只是没有名字；
+    - 单独一个接口，不加进房间的回答：网页对房间的回答严格校验，旧版桌面端多看到一个字段就读不出房间。
