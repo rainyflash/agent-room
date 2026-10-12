@@ -20,6 +20,9 @@ class McpReleaseGateTests(unittest.TestCase):
         self.assertEqual(set(declared), set(gate.EXPECTED_TOOL_ANNOTATIONS))
         self.assertEqual(set(declared), set(AGENT_ROOM_TOOLS))
         self.assertIn("agent_room_list_handoffs", declared)
+        # 建房间、管房间的工具写在 rooms.rs，一样算进来。
+        self.assertIn("agent_room_create_room", declared)
+        self.assertIn("agent_room_remove_agent", declared)
         gate.validate_source()
 
     def test新增rust工具但未更新风险标注时廉价门禁立即失败(self) -> None:

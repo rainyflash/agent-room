@@ -28,6 +28,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVER_SOURCE = (
     REPOSITORY_ROOT / "apps" / "agent-room-mcp" / "src" / "agent_room" / "server.rs"
 )
+# 建房间、管房间的工具单独放在 rooms.rs，和 server.rs 里的工具合成同一个工具集合。
+MCP_ROOMS_SOURCE = MCP_SERVER_SOURCE.with_name("rooms.rs")
 BINARY_BASENAME = "agent-room-mcp"
 # 每个工具的 (readOnlyHint, destructiveHint, idempotentHint, openWorldHint)。
 # 新增 MCP 工具时同步改这里、tools/mcp_client.py 和 server.rs 里的工具集合测试。
@@ -50,6 +52,11 @@ EXPECTED_TOOL_ANNOTATIONS = {
     "agent_room_list_handoffs": (True, False, True, True),
     "agent_room_consume_handoff": (False, True, False, True),
     "agent_room_decline_handoff": (False, True, False, True),
+    "agent_room_create_room": (False, False, True, True),
+    "agent_room_room_access": (False, True, False, True),
+    "agent_room_answer_knock": (False, False, False, True),
+    "agent_room_invite_person": (False, False, True, True),
+    "agent_room_remove_agent": (False, True, False, True),
 }
 TOOL_ATTRIBUTE_PATTERN = re.compile(r"#\[\s*tool\s*\(")
 TOOL_NAME_PATTERN = re.compile(r'#\[\s*tool\s*\(\s*name\s*=\s*"([a-z0-9_]+)"')
@@ -115,12 +122,16 @@ def require_content_boundary(instructions: object, where: str) -> None:
 
 
 def declared_mcp_tools() -> tuple[str, ...]:
-    source = MCP_SERVER_SOURCE.read_text(encoding="utf-8")
-    tools = tuple(TOOL_NAME_PATTERN.findall(source))
+    declared: list[str] = []
+    for path in (MCP_SERVER_SOURCE, MCP_ROOMS_SOURCE):
+        source = path.read_text(encoding="utf-8")
+        named = TOOL_NAME_PATTERN.findall(source)
+        if len(TOOL_ATTRIBUTE_PATTERN.findall(source)) != len(named):
+            raise RuntimeError("每个 MCP Rust 工具都必须显式声明稳定名称")
+        declared.extend(named)
+    tools = tuple(declared)
     if not tools:
         raise RuntimeError("MCP Rust 源码未声明任何工具")
-    if len(TOOL_ATTRIBUTE_PATTERN.findall(source)) != len(tools):
-        raise RuntimeError("每个 MCP Rust 工具都必须显式声明稳定名称")
     if len(tools) != len(set(tools)):
         raise RuntimeError("MCP Rust 源码包含重复工具名称")
     if not all(name.startswith("agent_room_") for name in tools):

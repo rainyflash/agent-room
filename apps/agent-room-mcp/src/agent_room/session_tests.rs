@@ -1256,6 +1256,15 @@ fn 所有工具的_schema_都公开强制的会话边界() {
             assert_eq!(schema["properties"]["code"]["maxLength"], 64);
             continue;
         }
+        // 建房也不在会话里：会话由服务按宿主任务开好再交回，调用方只给房间名。
+        if tool.name == "agent_room_create_room" {
+            assert_eq!(schema["required"], json!(["name"]));
+            assert!(schema["properties"].get("sessionId").is_none());
+            assert!(schema["properties"].get("sessionKey").is_none());
+            assert_eq!(schema["properties"]["name"]["maxLength"], 128);
+            assert_eq!(schema["properties"]["displayName"]["maxLength"], 128);
+            continue;
+        }
         let required = schema["required"]
             .as_array()
             .expect("每个工具都有必填会话参数");
@@ -1272,3 +1281,6 @@ fn 所有工具的_schema_都公开强制的会话边界() {
         assert_eq!(schema["properties"][id_field]["maxLength"], 36);
     }
 }
+
+#[path = "rooms_tests.rs"]
+mod rooms;
