@@ -748,8 +748,10 @@ struct FakeAccess {
     /// 网络 Agent 自己建的房间的口令；看不到的记在 `hidden`。
     codes: Mutex<HashMap<RoomCatalogId, PrivateRoomJoinCode>>,
     hidden: Mutex<HashSet<RoomCatalogId>>,
-    /// 管房间的是谁（合成主体）、管的哪间、做了什么（生成、看、停用口令，回答敲门）。
+    /// 管房间的是谁（合成主体）、管的哪间、做了什么（生成、看、停用口令，回答敲门，移出 Agent）。
     managed: Mutex<Vec<(PrincipalId, RoomCatalogId, &'static str)>>,
+    /// 移出过的 Agent 成员：再移一次也成功，和真的一样。
+    removed: Mutex<HashSet<AgentId>>,
 }
 
 impl FakeAccess {
@@ -898,8 +900,21 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         Box::pin(async { Ok(()) })
     }
 
-    fn remove_agent(&self, _request: RemoveAgentMember) -> PortFuture<'_, AgentAccessResult<()>> {
-        unreachable!("网络 Agent 不管理口令")
+    /// 只移得出凭口令或敲门进来的（`members`）；移出过的再移一次也成功。
+    fn remove_agent(&self, request: RemoveAgentMember) -> PortFuture<'_, AgentAccessResult<()>> {
+        self.manage(&request.actor, request.catalog_id, "remove");
+        let result = if self.members.lock().unwrap().remove(&request.agent_id) {
+            self.removed.lock().unwrap().insert(request.agent_id);
+            Ok(())
+        } else if self.removed.lock().unwrap().contains(&request.agent_id) {
+            Ok(())
+        } else {
+            Err(AgentAccessFailure::new(
+                "test.remove",
+                AgentAccessFailureKind::NotFound,
+            ))
+        };
+        Box::pin(async move { result })
     }
 
     fn resolve(&self, request: ResolveJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>> {
@@ -1086,6 +1101,12 @@ struct FakeRooms {
     rooms: Mutex<Vec<PrivateRoomSnapshot>>,
     created: Mutex<Vec<CreatePrivateRoom>>,
     archived: Mutex<Vec<(PrincipalId, RoomCatalogId)>>,
+    invited: Mutex<Vec<InvitePrivateRoomMember>>,
+}
+
+/// 没有这个账户：邀请时按主体找不到 Matrix 账号。
+fn no_account() -> PrincipalId {
+    PrincipalId::from_uuid(Uuid::from_u128(404))
 }
 
 impl FakeRooms {
@@ -1225,11 +1246,29 @@ impl PrivateRoomUseCases for FakeRooms {
         Box::pin(async move { Ok(rooms) })
     }
 
+    /// 网络 Agent 在自己建的房间里邀请人；`no_account()` 按主体找不到 Matrix 账号。
     fn invite(
         &self,
-        _request: InvitePrivateRoomMember,
+        request: InvitePrivateRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
-        unreachable!("这一步还不邀请人")
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        let result = if request.target_principal_id == no_account() {
+            Err(PrivateRoomFailure::new(
+                "test.invite",
+                PrivateRoomFailureStage::Directory,
+                PrivateRoomFailureKind::NotFound,
+            ))
+        } else {
+            self.rooms
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|snapshot| snapshot.catalog().id() == request.catalog_id)
+                .cloned()
+                .ok_or_else(|| room_failure(PrivateRoomFailureKind::NotFound))
+        };
+        self.invited.lock().unwrap().push(request);
+        Box::pin(async move { result })
     }
 
     fn accept(

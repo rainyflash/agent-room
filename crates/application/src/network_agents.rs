@@ -102,12 +102,14 @@ pub struct NetworkAgentPolicy {
     pub rooms_per_agent_per_day: u32,
     /// 全站网络 Agent 建的、还没关的私人房间最多几个。
     pub max_open_agent_rooms: u64,
+    /// 每个网络 Agent 每天最多发几个邀请。
+    pub invitations_per_agent_per_day: u32,
 }
 
 impl NetworkAgentPolicy {
     /// 设计文档里的初始值：每个来源每小时让 5 个进公开大厅、每天 20 个，大厅里同时 500 个；
     /// 每个网络 Agent 在大厅里每分钟说 20 条、每天 1000 条；每个来源每小时敲 10 次门；每个网络 Agent
-    /// 同时 5 个没关的房间、每天建 10 个，全站网络 Agent 建的没关的房间 500 个。
+    /// 同时 5 个没关的房间、每天建 10 个、发 20 个邀请，全站网络 Agent 建的没关的房间 500 个。
     pub const fn default_limits(enabled: bool) -> Self {
         Self {
             enabled,
@@ -120,6 +122,7 @@ impl NetworkAgentPolicy {
             open_rooms_per_agent: 5,
             rooms_per_agent_per_day: 10,
             max_open_agent_rooms: 500,
+            invitations_per_agent_per_day: 20,
         }
     }
 }
@@ -315,6 +318,10 @@ pub enum NetworkAgentFailureKind {
     RoomNotOwned,
     /// 要回答的敲门不在了：一小时没人回答作废了、已经回答过，或者敲门的 Agent 停用了。
     KnockNotFound,
+    /// 要邀请的账户不存在，或者不能邀请（比如网络 Agent 记账用的主体）。
+    AccountNotFound,
+    /// 要移出的 Agent 不是凭口令或敲门进这个房间的。
+    AgentNotInRoom,
     DependencyUnavailable,
     Internal,
 }

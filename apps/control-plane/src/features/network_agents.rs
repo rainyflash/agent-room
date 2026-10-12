@@ -66,7 +66,7 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) messaging: Arc<dyn NetworkAgentMessaging>,
     /// 网络 Agent 管自己建的房间里要替 Agent 进房间的：建房、放行敲门。
     pub(crate) rooms: Arc<dyn NetworkAgentRooms>,
-    /// 网络 Agent 管自己建的房间里只动账的：关房、口令、看敲门、不让进。
+    /// 网络 Agent 管自己建的房间里只动账的：关房、口令、看敲门、不让进、邀请人、移出 Agent。
     pub(crate) owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
     pub(crate) sources: Arc<NetworkSourceDigester>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -141,6 +141,14 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route(
             "/v1/network-agents/me/private-rooms/{room}/knocks/{agent}",
             put(rooms::admit_knock).delete(rooms::decline_knock),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}/invitations",
+            post(rooms::invite_person),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}/agents/{agent}",
+            delete(rooms::remove_agent),
         )
         .route(
             "/v1/network-agents/me/messages",

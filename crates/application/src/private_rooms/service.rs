@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
     private_rooms::{
-        PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMembershipStatus,
+        PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMember, PrivateRoomMembershipStatus,
         PrivateRoomPermissions,
     },
     rooms::{
@@ -321,6 +321,14 @@ impl PrivateRoomService {
             room.invite(actor, request.target_principal_id, request.permissions)
         }
         .map_err(|error| domain(OPERATION, &error))?;
+        // Agent 邀请已经在房间里的人：什么都不用做。别再发 Matrix 邀请，Synapse 不让邀请已经加入的人。
+        if !changed
+            && room
+                .member(request.target_principal_id)
+                .is_some_and(PrivateRoomMember::has_joined)
+        {
+            return Ok(snapshot);
+        }
         let target = self
             .principal_matrix_user(request.target_principal_id, OPERATION)
             .await?;
@@ -498,7 +506,7 @@ impl PrivateRoomService {
         let previous = snapshot
             .room()
             .member(request.target_principal_id)
-            .map(agent_room_domain::private_rooms::PrivateRoomMember::permissions)
+            .map(PrivateRoomMember::permissions)
             .ok_or_else(|| {
                 failure(
                     OPERATION,

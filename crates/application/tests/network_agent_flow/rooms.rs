@@ -533,6 +533,113 @@ async fn 看谁在敲门_放行以后等网关进去了再记放进来了_不让
 }
 
 #[tokio::test]
+async fn 邀请人只给查看和发言_没有这个账户说找不到_每天发的有上限() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        invitations_per_agent_per_day: 2,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let token = agent(&harness).await;
+    let record = harness.store.only();
+    let owned = create_room(&harness, &token, "周报").await.unwrap();
+    let number = owned.room.catalog_id.to_string();
+    let person = PrincipalId::from_uuid(Uuid::now_v7());
+
+    harness
+        .service
+        .invite_person(&token, &number, person)
+        .await
+        .unwrap();
+    {
+        let invited = harness.rooms.invited.lock().unwrap();
+        assert_eq!(invited.len(), 1);
+        assert_eq!(invited[0].actor.principal_id(), record.principal_id);
+        assert_eq!(invited[0].catalog_id, owned.room.catalog_id);
+        assert_eq!(invited[0].target_principal_id, person);
+        assert_eq!(
+            invited[0].permissions,
+            PrivateRoomPermissions::INVITED_BY_AGENT,
+            "只给查看和发言"
+        );
+    }
+
+    assert_eq!(
+        harness
+            .service
+            .invite_person(&token, &number, no_account())
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::AccountNotFound
+    );
+    let limited = harness
+        .service
+        .invite_person(&token, &number, person)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        limited.kind(),
+        NetworkAgentFailureKind::RateLimited,
+        "找不到的也算一次，免得拿它一个个试账户 ID"
+    );
+    assert_eq!(
+        limited.retry_at(),
+        Some(UtcMillis::new(START + 24 * HOUR).unwrap())
+    );
+    assert_eq!(harness.rooms.invited.lock().unwrap().len(), 2);
+
+    assert_eq!(
+        harness
+            .service
+            .invite_person(&token, &catalog_id(78).to_string(), person)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::RoomNotOwned,
+        "不是它的房间时先说这个，不占名额也不去邀请"
+    );
+    assert_eq!(harness.rooms.invited.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn 移出凭口令或敲门进来的_agent_再移一次也成功_别的说不在房间里() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let owned = create_room(&harness, &token, "周报").await.unwrap();
+    let number = owned.room.catalog_id.to_string();
+    let scout = AgentId::from_uuid(Uuid::now_v7());
+    harness.access.members.lock().unwrap().insert(scout);
+
+    harness
+        .service
+        .remove_agent(&token, &number, scout)
+        .await
+        .unwrap();
+    harness
+        .service
+        .remove_agent(&token, &number, scout)
+        .await
+        .expect("已经移出的再移一次也成功");
+    assert_eq!(
+        harness
+            .service
+            .remove_agent(&token, &number, AgentId::from_uuid(Uuid::now_v7()))
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::AgentNotInRoom
+    );
+    assert_eq!(
+        harness
+            .service
+            .remove_agent(&token, &catalog_id(78).to_string(), scout)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::RoomNotOwned
+    );
+}
+
+#[tokio::test]
 async fn 令牌不对或总开关关着时不建也不关() {
     let harness = Harness::enabled();
     agent(&harness).await;

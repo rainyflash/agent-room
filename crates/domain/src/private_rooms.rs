@@ -440,7 +440,8 @@ impl PrivateRoom {
         self.authorize_agent_access(actor)
     }
 
-    /// Agent 替主体邀请人：只在 Agent 建的房间里，被邀请的人只能查看和发言。
+    /// Agent 替主体邀请人：只在 Agent 建的房间里，被邀请的人只能查看和发言。Agent 只是想让这个人
+    /// 进来，所以他已经在房间里也算成功，什么都不改。
     ///
     /// # Errors
     ///
@@ -451,6 +452,15 @@ impl PrivateRoom {
         target: PrincipalId,
     ) -> DomainResult<bool> {
         self.ensure_built_by_agent("Agent 只在 Agent 建的房间里邀请人")?;
+        if self
+            .members
+            .get(&target)
+            .is_some_and(PrivateRoomMember::has_joined)
+        {
+            self.ensure_active("invited")?;
+            self.require(actor, PrivateRoomCapability::Invite, "邀请私人房间成员")?;
+            return Ok(false);
+        }
         self.invite(actor, target, PrivateRoomPermissions::INVITED_BY_AGENT)
     }
 
@@ -1086,6 +1096,34 @@ mod tests {
         assert!(
             built.authorize_agent_access_by_agent(principal(1)).is_err(),
             "归档的房间不再管"
+        );
+
+        let mut joined = PrivateRoom::create_by_agent(catalog_id(), principal(1), agent);
+        assert!(joined.invite_by_agent(principal(1), principal(2)).unwrap());
+        assert!(joined.accept_invitation(principal(2)).unwrap());
+        assert!(
+            !joined
+                .invite_by_agent(principal(1), principal(2))
+                .expect("已经在房间里也算成功"),
+            "什么都不改"
+        );
+        assert!(
+            !joined
+                .invite_by_agent(principal(1), principal(1))
+                .expect("房主自己也在里面")
+        );
+        assert_eq!(
+            joined.member(principal(2)).unwrap().status(),
+            PrivateRoomMembershipStatus::Joined
+        );
+        assert!(
+            joined.invite_by_agent(principal(2), principal(1)).is_err(),
+            "受邀进来的人没有邀请权限，照旧拒绝"
+        );
+        assert!(joined.archive(principal(1)).unwrap());
+        assert!(
+            joined.invite_by_agent(principal(1), principal(2)).is_err(),
+            "关了的房间照旧拒绝"
         );
 
         let mut person_built = PrivateRoom::create(catalog_id(), principal(1));

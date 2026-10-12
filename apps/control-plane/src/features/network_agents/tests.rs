@@ -20,7 +20,7 @@ use agent_room_application::{
     private_rooms::AdmittedKnock,
 };
 use agent_room_domain::{
-    ids::{AgentId, NetworkAgentId, RoomCatalogId},
+    ids::{AgentId, NetworkAgentId, PrincipalId, RoomCatalogId},
     join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus},
     private_rooms::PrivateRoomPermissions,
     rooms::MatrixRoomReference,
@@ -644,6 +644,26 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         agent_id: AgentId,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         self.room_call(token, format!("decline_knock {room} {agent_id}"));
+        self.owned_result(())
+    }
+
+    fn invite_person<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        account_id: PrincipalId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.room_call(token, format!("invite_person {room} {account_id}"));
+        self.owned_result(())
+    }
+
+    fn remove_agent<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+        agent_id: AgentId,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.room_call(token, format!("remove_agent {room} {agent_id}"));
         self.owned_result(())
     }
 }

@@ -357,6 +357,103 @@ async fn 敲门不在了_口令和敲门的失败各有错误码() {
 }
 
 #[tokio::test]
+async fn 邀请人和移出_agent_交给用例_成功回答_204() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let person = "0198b601-77a1-7bb8-83eb-a8fe68c97e70";
+
+    let response = call(
+        &messaging,
+        request(
+            Method::POST,
+            &format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/invitations"),
+            &format!(r#"{{"accountId":"{person}"}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = call(
+        &messaging,
+        request(
+            Method::DELETE,
+            &format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/agents/{AGENT_UUID}"),
+            "",
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("invite_person {PRIVATE_CATALOG_UUID} {person}"),
+            format!("remove_agent {PRIVATE_CATALOG_UUID} {AGENT_UUID}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 邀请的正文或要移出的_agent_不对就不往下交() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let invitations = format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/invitations");
+    for body in [
+        "",
+        "{}",
+        r#"{"accountId":"小明"}"#,
+        r#"{"accountId":"0198b601-77a1-7bb8-83eb-a8fe68c97e70","extra":1}"#,
+    ] {
+        let response = call(&messaging, request(Method::POST, &invitations, body)).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "network_agent.invalid_request");
+        assert!(
+            body["message"].as_str().unwrap().contains("accountId"),
+            "{body}"
+        );
+    }
+    let response = call(
+        &messaging,
+        request(
+            Method::DELETE,
+            &format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/agents/Scout"),
+            "",
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(calls(&messaging).is_empty());
+}
+
+#[tokio::test]
+async fn 邀请和移出的失败各有错误码() {
+    for (kind, path, body, code) in [
+        (
+            NetworkAgentFailureKind::AccountNotFound,
+            format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/invitations"),
+            r#"{"accountId":"0198b601-77a1-7bb8-83eb-a8fe68c97e70"}"#,
+            "network_agent.account_not_found",
+        ),
+        (
+            NetworkAgentFailureKind::AgentNotInRoom,
+            format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/agents/{AGENT_UUID}"),
+            "",
+            "network_agent.agent_not_in_room",
+        ),
+    ] {
+        let messaging =
+            FakeMessaging::failing(NetworkGatewayFailure::Agent(NetworkAgentFailure::new(kind)));
+        let method = if body.is_empty() {
+            Method::DELETE
+        } else {
+            Method::POST
+        };
+        let response = call(&messaging, request(method, &path, body)).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{code}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], code);
+        assert!(body["message"].as_str().unwrap().is_ascii());
+    }
+}
+
+#[tokio::test]
 async fn 关房间按房间号或_room_id_交给用例_成功回答_204() {
     let messaging = Arc::new(FakeMessaging::default());
     for room in [
