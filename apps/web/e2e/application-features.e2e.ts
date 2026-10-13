@@ -185,6 +185,32 @@ test('别人的邀请：在“房间”页拒绝，在“换个房间”里加�
   expect(failures).toEqual([]);
 });
 
+for (const width of [1440, 390]) {
+  test(`已归档的房间单独收起来，点开能进去看 ${String(width)}`, async ({ page }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(fixture);
+    const mine = page.getByRole('region', { name: 'Your private rooms' });
+    const archived = mine.locator('details', { hasText: 'Archived rooms (1)' });
+    await expect(archived).toBeVisible();
+    // 默认收起：卡片看不见；上面已加入的房间里也没有它。
+    const card = mine.getByRole('link', { name: /Spring launch/ });
+    await expect(card).toBeHidden();
+    await expect(mine.getByRole('link', { name: /Design studio/ })).toBeVisible();
+    await archived.getByText('Archived rooms (1)').click();
+    await expect(archived).toContainText('Nobody can speak in these rooms any more.');
+    await expect(card).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`archived-rooms-${String(width)}.png`),
+      fullPage: true,
+    });
+    await card.click();
+    await expect(page.getByRole('heading', { name: 'Spring launch', exact: true })).toBeVisible();
+    expect(failures).toEqual([]);
+  });
+}
+
 test('刷新恢复附件、清除后不残留本地文件', async ({ page }) => {
   await page.goto(fixture);
   await page.getByRole('link', { name: /Design studio/ }).click();

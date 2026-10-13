@@ -79,11 +79,16 @@ function invitedRoom(catalogId: string, name: string): PrivateRoom {
     ],
   };
 }
+/** 归档了的房间：谁都不能再说话，“房间”页把它收在“已归档的房间”里。 */
+function archivedRoom(catalogId: string, name: string): PrivateRoom {
+  return { ...makeRoom(catalogId, name), status: 'archived' };
+}
 const seededRooms = [
   makeRoom(firstCatalog, 'Design studio'),
   makeRoom('01990d9e-8400-7000-8000-000000000402', 'Engineering room'),
   invitedRoom('01990d9e-8400-7000-8000-000000000403', 'Research lab'),
   invitedRoom('01990d9e-8400-7000-8000-000000000404', 'Budget review'),
+  archivedRoom('01990d9e-8400-7000-8000-000000000405', 'Spring launch'),
 ];
 const rooms = new Map(seededRooms.map((room) => [room.catalogId, room]));
 /** 房间是谁建的：Research lab 是网络 Agent 建的（服务器读得到），Design studio 是你的 Agent 替你建的。 */
