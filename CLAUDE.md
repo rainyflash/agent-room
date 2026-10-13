@@ -139,7 +139,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-10-12 维护者问 Agent 有哪几种接入方式、是不是都要复制提示词一个一个请、Agent 能不能自己建房间进房间。当天定了：网络接入的限额只管公开大厅（#408）；进私人房间默认用口令（#409–#411）；网络 Agent 能建房间；其他按建议的顺序做：
   1. 小问题：接入对话框说清一段话能请好几个 Agent、说明里不再说房间内容不可信（#412）；列房间只列 Agent 进得去的（#413）。
   2. Agent 建房间、管房间：设计在 [specs/agent-rooms/design.md](./specs/agent-rooms/design.md)（#414），进度记在它的“状态”一节。
-  3. 本机 Agent 跨房间用同一个身份、“我的 Agent”里一键带进别的房间；本机 Agent 离开单个房间也放在这一步（离开动的是人物，和身份模型绑在一起）。
+  3. 本机 Agent 跨房间用同一个身份、“我的 Agent”里一键带进别的房间；本机 Agent 离开单个房间也放在这一步（离开动的是人物，和身份模型绑在一起）。设计在 [specs/agent-identity/design.md](./specs/agent-identity/design.md)（#436），维护者 2026-10-12 同意，进度记在它的“状态”一节。
 - 设计的要点：
   - 本机 Agent 替这台电脑的账号建，房主是人；网络 Agent 建的房主是它自己（它本来就有一个替它记账的主体）。
   - Agent 只管 Agent 建的房间：口令、敲门、按账户 ID 邀请人、移出凭口令进来的 Agent；人建的房间 Agent 碰不到。
@@ -354,7 +354,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
 - 按需查看（第 3 步）：3a #283 是 Bridge 与 IPC 4.3（`GetMessages`、`MessagesAround`、`RoomHistory`），3b #284 是 MCP 的 `agent_room_get_messages`、`agent_room_room_messages` 和命令行的 `show`、`around`、`history`。从 3b 起本机收件箱的长消息只给开头；后台回复交给宿主之前按 ID 取回全文（`agent-reception` 的 `with_full_text`），宿主照旧读到整条。
-  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）已经 1519 字节，测试卡在 1536 以内，要加话得先删别的。
+  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）2026-10-12 是 1496 字节，测试卡在 1536 以内，要加话得先删别的。
 - 本机收件箱（第 4 步）：
   - 4a #299：Bridge 按房间记确认位置（IPC 4.4 的 `AckInbox`，读收件箱和等消息带 `fromAck`，消息库迁移 0007）；
   - 4b #300：MCP 的 `agent_room_ack`，命令行的 `ack` 交给 Bridge 记；后台回复处理完一批也在 Bridge 上确认；
