@@ -1,6 +1,6 @@
 import { Banner, Button, Details, Spinner } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, LockKeyhole, MailOpen, ShieldAlert } from 'lucide-react';
+import { Archive, ArrowRight, LockKeyhole, MailOpen, ShieldAlert } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -15,7 +15,7 @@ import {
 
 import './rooms.css';
 
-/** “房间”页上的“你的私人房间”：别人的邀请（加入或拒绝）和已经加入的房间。 */
+/** “房间”页上的“你的私人房间”：别人的邀请（加入或拒绝）、已经加入的房间，和收起来的已归档房间。 */
 export function MyRoomsSection() {
   const services = useOptionalAppServices();
   if (services === null) return null;
@@ -114,32 +114,54 @@ function ConnectedMyRooms() {
           {t('rooms.loadFailed')}
         </Banner>
       ) : null}
-      {mine.state === 'ready' && mine.joined.length === 0 && mine.invitations.length === 0 ? (
+      {mine.state === 'ready' &&
+      mine.joined.length === 0 &&
+      mine.invitations.length === 0 &&
+      mine.archived.length === 0 ? (
         <p className="my-rooms__state">{t('rooms.noPrivate')}</p>
       ) : null}
       {mine.joined.length === 0 ? null : (
         <div className="my-rooms__grid">
           {mine.joined.map((room) => (
-            <Link
-              className="room-row room-row--link room-row--card"
-              key={room.catalogId}
-              params={{ catalogId: room.catalogId, roomId: room.matrixRoomId }}
-              search={{}}
-              to="/lobby/$catalogId/instance/$roomId"
-            >
-              <span aria-hidden="true" className="room-row__icon">
-                <LockKeyhole />
-              </span>
-              <span className="room-row__text">
-                <strong>{room.name}</strong>
-                {room.description === '' ? null : <small>{room.description}</small>}
-              </span>
-              <ArrowRight aria-hidden="true" className="room-row__mark" />
-            </Link>
+            <RoomCard key={room.catalogId} room={room} />
           ))}
         </div>
       )}
+      {mine.archived.length === 0 ? null : (
+        <Details
+          className="my-rooms__archived"
+          summary={t('rooms.archived', { count: mine.archived.length })}
+        >
+          <p>{t('rooms.archived.detail')}</p>
+          <div className="my-rooms__grid">
+            {mine.archived.map((room) => (
+              <RoomCard archived key={room.catalogId} room={room} />
+            ))}
+          </div>
+        </Details>
+      )}
       {mine.principalId === undefined ? null : <AccountIdCopy principalId={mine.principalId} />}
     </section>
+  );
+}
+
+/** 一间私人房间的卡片，点了就进去。归档了的换个图标：进去只能看之前的消息。 */
+function RoomCard({ room, archived = false }: { room: PrivateRoom; archived?: boolean }) {
+  return (
+    <Link
+      className={`room-row room-row--link room-row--card${archived ? ' room-row--archived' : ''}`}
+      params={{ catalogId: room.catalogId, roomId: room.matrixRoomId }}
+      search={{}}
+      to="/lobby/$catalogId/instance/$roomId"
+    >
+      <span aria-hidden="true" className="room-row__icon">
+        {archived ? <Archive /> : <LockKeyhole />}
+      </span>
+      <span className="room-row__text">
+        <strong>{room.name}</strong>
+        {room.description === '' ? null : <small>{room.description}</small>}
+      </span>
+      <ArrowRight aria-hidden="true" className="room-row__mark" />
+    </Link>
   );
 }

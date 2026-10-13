@@ -14,41 +14,37 @@ import type {
   PrivateRoom,
   PrivateRoomFailure,
 } from '@/features/private-rooms/domain/private-room';
+import {
+  groupMyPrivateRooms,
+  type GroupedPrivateRooms,
+} from '@/features/room-directory/domain/my-private-rooms';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import type { Result } from '@/shared/result';
 
 export type RoomListState = 'failed' | 'loading' | 'ready';
 
-export type MyPrivateRooms = {
+export type MyPrivateRooms = GroupedPrivateRooms & {
   readonly principalId: string | undefined;
-  /** 有人邀请了你、你还没答复的房间。 */
-  readonly invitations: readonly PrivateRoom[];
   /** 邀请里哪些房间是网络 Agent 建的、服务器读得到（房间 ID）；接受之前就要说。 */
   readonly serverReadable: ReadonlySet<string>;
-  readonly joined: readonly PrivateRoom[];
   readonly state: RoomListState;
   readonly retry: () => void;
 };
 
-/** 你的私人房间：受邀还没答复的，和已经加入的；归档了的不算。 */
+/** 你的私人房间：受邀还没答复的、已经加入的，和归档了的（只算你加入过的）。 */
 export function useMyPrivateRooms(): MyPrivateRooms {
   const { privateRooms } = useAppServices();
   const principalId = useOptionalSession()?.snapshot.context.principal?.principalId;
   const query = usePrivateRoomList(privateRooms, principalId);
-  const active =
-    query.data?.ok === true ? query.data.value.filter((room) => room.status === 'active') : [];
-  const membership = (room: PrivateRoom) =>
-    room.members.find((member) => member.principalId === principalId)?.status;
-  const invitations = active.filter((room) => membership(room) === 'invited');
+  const grouped = groupMyPrivateRooms(query.data?.ok === true ? query.data.value : [], principalId);
   const serverReadable = useServerReadableRooms(
     privateRooms,
-    invitations.map((room) => room.catalogId),
+    grouped.invitations.map((room) => room.catalogId),
   );
   return {
+    ...grouped,
     principalId,
-    invitations,
     serverReadable,
-    joined: active.filter((room) => membership(room) === 'joined'),
     state: query.isPending ? 'loading' : query.isError || !query.data.ok ? 'failed' : 'ready',
     retry: () => void query.refetch(),
   };

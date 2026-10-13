@@ -19,6 +19,9 @@ const en = {
   'rooms.loadFailed': 'Could not load rooms.',
   'rooms.retry': 'Try again',
   'rooms.noPrivate': 'No private rooms yet. Create one, or ask a room owner to invite you.',
+  'rooms.archived': 'Archived rooms ({{count}})',
+  'rooms.archived.detail':
+    'Nobody can speak in these rooms any more. Open one to read what was said.',
   'rooms.noResults': 'No rooms match.',
   'rooms.actionFailed': 'That did not go through. Try again.',
   'rooms.details': 'Details',
@@ -69,6 +72,8 @@ export const roomsResources = {
     'rooms.loadFailed': '没能读取房间。',
     'rooms.retry': '重试',
     'rooms.noPrivate': '还没有私人房间。新建一个，或者请房主邀请你。',
+    'rooms.archived': '已归档的房间（{{count}}）',
+    'rooms.archived.detail': '这些房间谁都不能再说话了，进去还能看之前的消息。',
     'rooms.noResults': '没有找到匹配的房间。',
     'rooms.actionFailed': '没有成功，请重试。',
     'rooms.details': '详情',
