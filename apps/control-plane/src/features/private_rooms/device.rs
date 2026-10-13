@@ -1,5 +1,5 @@
 //! 本机 Bridge 替这台电脑的账号建私人房间、邀请人（`specs/agent-rooms/design.md` 第 3 步）：
-//! 设备签名。建房要说是哪个 Agent 建的，房主照旧是这个账号；邀请的人只能查看和发言。
+//! 设备签名。建房要说是哪个 Agent 建的，房主照旧是这个账号；邀请的人能查看、发言和自动发言。
 //! Agent 只管 Agent 建的房间，由用例把关。
 
 use agent_room_application::private_rooms::{
@@ -116,7 +116,7 @@ pub(super) async fn create(
     }
 }
 
-/// 按账户 ID 邀请一个人，只给查看和发言。已经受邀或在房间里也回答成功。
+/// 按账户 ID 邀请一个人，给查看、发言和自动发言。已经受邀或在房间里也回答成功。
 pub(super) async fn invite(
     State(state): State<PrivateRoomHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,

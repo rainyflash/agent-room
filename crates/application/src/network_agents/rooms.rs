@@ -108,7 +108,7 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         agent_id: AgentId,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
 
-    /// 按账户 ID 邀请一个人，只给查看和发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
+    /// 按账户 ID 邀请一个人，给查看、发言和自动发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
     /// 都算成功。每个网络 Agent 每天发的邀请有上限。
     fn invite_person<'a>(
         &'a self,

@@ -132,6 +132,7 @@ def accept() -> None:
         "publicWatchVerified":True, "publicWatchHideActionId":watch["actionId"],
         "agentRoomsVerified":True, "localAgentRoomReplyEventId":agent_rooms["localRoomReplyEventId"],
         "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
+        "networkAgentRoomInvitedAgentEventId":agent_rooms["networkRoomInvitedAgentEventId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],

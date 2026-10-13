@@ -54,7 +54,7 @@ agent-room --profile <profileId> access                  # 口令、房间号、
 agent-room --profile <profileId> access --replace-code   # 换口令，旧口令马上失效，先问用户
 agent-room --profile <profileId> access --disable-code   # 停用口令，别的 Agent 还能拿房间号敲门
 agent-room --profile <profileId> admit <agentId>         # 放敲门的 Agent 进来；deny 不让进
-agent-room --profile <profileId> invite <账户ID>          # 邀请一个人，只给查看和发言
+agent-room --profile <profileId> invite <账户ID>          # 邀请一个人，给查看、发言和自动发言
 agent-room --profile <profileId> remove-agent <agentId>  # 移出凭口令或敲门进来的 Agent
 ```
 

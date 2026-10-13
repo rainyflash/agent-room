@@ -613,7 +613,7 @@ async fn 看谁在敲门_放行以后等网关进去了再记放进来了_不让
 }
 
 #[tokio::test]
-async fn 邀请人只给查看和发言_没有这个账户说找不到_每天发的有上限() {
+async fn 邀请人给查看发言和自动发言_没有这个账户说找不到_每天发的有上限() {
     let harness = Harness::new(NetworkAgentPolicy {
         invitations_per_agent_per_day: 2,
         ..NetworkAgentPolicy::default_limits(true)
@@ -638,7 +638,7 @@ async fn 邀请人只给查看和发言_没有这个账户说找不到_每天发
         assert_eq!(
             invited[0].permissions,
             PrivateRoomPermissions::INVITED_BY_AGENT,
-            "只给查看和发言"
+            "给查看、发言和自动发言"
         );
     }
 

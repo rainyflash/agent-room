@@ -111,7 +111,7 @@ const knockFixture = privateFixture && new URLSearchParams(window.location.searc
 // `?private&code` 里房间已经有口令，管理者看得到；`?private&code=hidden` 的口令是能再看之前生成的，看不到。
 const codeFixture = privateFixture ? new URLSearchParams(window.location.search).get('code') : null;
 // `?private&origin=local` 是本机 Agent 替你建的私人房间，房主还是你；`?private&origin=network` 是网络 Agent
-// 建的：房主是它，你是它邀请来的，只能查看和发言，房间顶上、设置里都说服务器能读到。
+// 建的：房主是它，你是它邀请来的，能查看、发言和自动发言、不能管理，房间顶上、设置里都说服务器能读到。
 const originFixture = privateFixture
   ? new URLSearchParams(window.location.search).get('origin')
   : null;
@@ -638,8 +638,8 @@ const fixturePrivateRoom: PrivateRoom = {
     ...(fixtureOrigin.ownerIsNetworkAgent
       ? [
           {
-            // 网络 Agent 邀请来的人只有查看和发言。
-            permissions: { capabilities: ['view', 'speak'] as const },
+            // 网络 Agent 邀请来的人能查看、发言和自动发言（他请进来的 Agent 也能说话），不能邀请和管理。
+            permissions: { capabilities: ['view', 'speak', 'automate'] as const },
             principalId: fixtureOwner,
             status: 'joined' as const,
           },

@@ -110,9 +110,10 @@ impl PrivateRoomPermissions {
     pub const AGENT_MEMBER: Self = Self {
         bits: Self::VIEW_BIT | Self::SPEAK_BIT,
     };
-    /// Agent 替主体邀请的人：只能查看和发言，管理留给房主。
+    /// Agent 替主体邀请的人：查看、发言和自动发言，邀请和管理留给房主。私人房间里 Agent 发言要它
+    /// 主人有自动发言，不给的话这个人请进来的 Agent 只进得来、说不了话（维护者 2026-10-12 定）。
     pub const INVITED_BY_AGENT: Self = Self {
-        bits: Self::VIEW_BIT | Self::SPEAK_BIT,
+        bits: Self::VIEW_BIT | Self::SPEAK_BIT | Self::AUTOMATE_BIT,
     };
 
     /// 创建相互一致的私人房间权限集合。
@@ -440,8 +441,8 @@ impl PrivateRoom {
         self.authorize_agent_access(actor)
     }
 
-    /// Agent 替主体邀请人：只在 Agent 建的房间里，被邀请的人只能查看和发言。Agent 只是想让这个人
-    /// 进来，所以他已经在房间里也算成功，什么都不改。
+    /// Agent 替主体邀请人：只在 Agent 建的房间里，被邀请的人能查看、发言和自动发言
+    /// （`INVITED_BY_AGENT`）。Agent 只是想让这个人进来，所以他已经在房间里也算成功，什么都不改。
     ///
     /// # Errors
     ///
@@ -1120,6 +1121,11 @@ mod tests {
             joined.invite_by_agent(principal(2), principal(1)).is_err(),
             "受邀进来的人没有邀请权限，照旧拒绝"
         );
+        assert!(
+            joined.allows(principal(2), PrivateRoomCapability::Automate),
+            "受邀进来的人有自动发言：他请进来的 Agent 也能说话"
+        );
+        assert!(!joined.allows(principal(2), PrivateRoomCapability::Manage));
         assert!(joined.archive(principal(1)).unwrap());
         assert!(
             joined.invite_by_agent(principal(1), principal(2)).is_err(),

@@ -332,7 +332,7 @@ pub(super) async fn decline_knock(
     }
 }
 
-/// 按账户 ID 邀请一个人，只给查看和发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
+/// 按账户 ID 邀请一个人，给查看、发言和自动发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
 /// 都回答 204。
 pub(super) async fn invite_person(
     State(state): State<NetworkAgentHttpState>,

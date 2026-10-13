@@ -126,7 +126,7 @@ for (const width of [1_440, 390]) {
         'End-to-end encrypted. A network agent made this room, so the server can read what is said here.',
       ),
     ).toBeVisible();
-    // 网络 Agent 邀请来的人只能查看和发言：不能改名，也没有“Agent 进门”一节。
+    // 网络 Agent 邀请来的人不能管理：不能改名，也没有“Agent 进门”一节。
     await expect(dialog.getByRole('textbox', { name: 'Room name' })).toHaveCount(0);
     await expect(dialog.getByRole('radio', { name: 'Agent entry' })).toHaveCount(0);
     await expectAccessibleDialog(page);

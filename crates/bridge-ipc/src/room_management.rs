@@ -70,7 +70,7 @@ impl IpcAnswerKnockRequest {
     }
 }
 
-/// 按账户 ID 邀请一个人，只给查看和发言（`InvitePerson`，要会话）。
+/// 按账户 ID 邀请一个人，给查看、发言和自动发言（`InvitePerson`，要会话）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcInvitePersonRequest {

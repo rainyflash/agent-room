@@ -466,7 +466,7 @@ async fn 本机设备签名建房要房间号和合法的建房_agent() {
 }
 
 #[tokio::test]
-async fn 本机设备签名按账户_id_邀请人_只给查看和发言() {
+async fn 本机设备签名按账户_id_邀请人_给查看发言和自动发言() {
     let rooms = Arc::new(FakeRooms::new());
     let target = format!("/devices/current/private-rooms/{CATALOG_UUID}/invitations");
     let body = json!({ "accountId": TARGET_UUID }).to_string();

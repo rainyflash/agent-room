@@ -127,7 +127,7 @@ pub trait ControlPlaneRoomManagementGateway: Send + Sync {
         admit: bool,
     ) -> PortFuture<'_, RoomManagementResult<()>>;
 
-    /// 按账户 ID 邀请一个人，只给查看和发言。
+    /// 按账户 ID 邀请一个人，给查看、发言和自动发言。
     fn invite(
         &self,
         catalog_id: RoomCatalogId,

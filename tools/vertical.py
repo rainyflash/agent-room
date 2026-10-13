@@ -3003,11 +3003,17 @@ def verify_agent_rooms(
     redactor: LogRedactor,
 ) -> dict[str, str]:
     """Agent 自己建房间（specs/agent-rooms/design.md“验收”）：本机 Agent 和网络 Agent 各建一间，
-    别的 Agent 按房间名、凭口令或敲门进来，加密收发；网络 Agent 邀请的人在网页上接受后和它聊。"""
+    别的 Agent 按房间名、凭口令或敲门进来，加密收发；网络 Agent 邀请的人在网页上接受后和它聊，
+    他自己的 Agent 也进得来、说得了话。"""
     local = verify_local_agent_room(
         sender_bridge=sender_bridge, target_bridge=target_bridge, redactor=redactor
     )
-    network = verify_network_agent_room(environment=environment, account_id=account_id)
+    network = verify_network_agent_room(
+        environment=environment,
+        account_id=account_id,
+        person_bridge=sender_bridge,
+        redactor=redactor,
+    )
     return {**local, **network}
 
 
@@ -3100,14 +3106,23 @@ def deliver_to_network_agent(client: McpAgentSession, *, token: str, room_id: st
     raise VerticalFailure("网络 Agent 始终没能解开另一台电脑上的 Agent 的消息。")
 
 
-def verify_network_agent_room(*, environment: Mapping[str, str], account_id: str) -> dict[str, str]:
-    """网络 Agent 建房间，同名再建回到那间；它按账户 ID 邀请验收账号，人在网页上接受后和它聊；
-    别的网络 Agent 拿房间号敲门，把在等消息的房主叫醒，放行后两边加密收发；房主离开后房间归档，
-    留下的 Agent 说不了话，人和它都还看得到之前的消息。"""
+def verify_network_agent_room(
+    *,
+    environment: Mapping[str, str],
+    account_id: str,
+    person_bridge: AuthorizedBridgeRuntime,
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """网络 Agent 建房间，同名再建回到那间；它按账户 ID 邀请验收账号，人在网页上接受后和它聊，
+    人的本机 Agent 也进来说一句；别的网络 Agent 拿房间号敲门，把在等消息的房主叫醒，放行后两边
+    加密收发；房主离开后房间归档，留下的 Agent 说不了话，人和它都还看得到之前的消息。"""
     owner = create_waiting_network_agent("Vertical Room Owner", "198.51.100.41")
     catalog_id, room_id, code = create_network_agent_room(owner)
     browser = chat_with_invited_person(
         owner, environment=environment, account_id=account_id, catalog_id=catalog_id, room_id=room_id
+    )
+    invited_agent_said = invited_person_agent_speaks(
+        person_bridge, redactor, owner=owner, catalog_id=catalog_id, room_id=room_id
     )
     knocker, knocker_id = knock_while_owner_waits(owner, catalog_id=catalog_id, room_id=room_id)
     status, admitted = network_agent_request(
@@ -3152,6 +3167,7 @@ def verify_network_agent_room(*, environment: Mapping[str, str], account_id: str
         "networkRoomKnockerToken": knocker,
         "networkRoomCode": code,
         "networkRoomReplyEventId": replied,
+        "networkRoomInvitedAgentEventId": invited_agent_said,
     }
 
 
@@ -3235,6 +3251,35 @@ def chat_with_invited_person(
             raise VerticalFailure("人在网页上 3 分钟内没看到房主的回复。")
         time.sleep(1)
     return browser
+
+
+def invited_person_agent_speaks(
+    bridge: AuthorizedBridgeRuntime,
+    redactor: LogRedactor,
+    *,
+    owner: str,
+    catalog_id: str,
+    room_id: str,
+) -> str:
+    """人接受了网络 Agent 的邀请以后，他的本机 Agent 按他的成员身份进房间说一句，房主解开收到。
+    Agent 邀请的人带着自动发言（维护者 2026-10-12 定）：私人房间里 Agent 发言要主人有自动发言，
+    以前只给查看和发言时，他的 Agent 进得来、说不了话。"""
+    with bridge_mcp_client(bridge, redactor) as transport:
+        joined = transport.call_tool(
+            "agent_room_join",
+            {"room": NETWORK_AGENT_ROOM_NAME, "displayName": "Vertical Invited Agent"},
+        )
+        if require_object(joined.get("room"), "受邀的人的 Agent 进的房间").get("catalogId") != catalog_id:
+            raise VerticalFailure("受邀的人的 Agent 按房间名进了别的房间。")
+        agent = transport.bind_session(require_text(joined.get("sessionId"), "受邀的人的 Agent 的会话"))
+        if wait_for_session_identity(agent, timeout_seconds=180)["matrixRoomId"] != room_id:
+            raise VerticalFailure("受邀的人的 Agent 不在网络 Agent 建的房间里。")
+        said = deliver_to_network_agent(agent, token=owner, room_id=room_id)
+    # 确认掉，免得房主之后等敲门时又把这一句交回来。
+    status, _ = network_agent_request("POST", "/me/ack", token=owner, body={"eventId": said})
+    if status != 200:
+        raise VerticalFailure(f"房主确认受邀的人的 Agent 说的那一句失败：HTTP {status}。")
+    return said
 
 
 def wait_for_person_message(owner: str, *, room_id: str, text: str, browser: BrowserRun) -> str:
