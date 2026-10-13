@@ -11,6 +11,9 @@ const optionalAccountData = new Set([
   'm.cross_signing.user_signing',
 ]);
 
+// 密钥备份里某个房间的某一把会话密钥；房间 ID 和会话 ID 都转义过，路径里没有别的斜杠。
+const roomKeyBackupSession = /^\/_matrix\/client\/v3\/room_keys\/keys\/[^/]+\/[^/]+$/u;
+
 export function isExpectedHttpBoundary(status: number, rawUrl: string, method: string): boolean {
   const url = new URL(rawUrl);
   const accountDataType = /^\/_matrix\/client\/v3\/user\/[^/]+\/account_data\/([^/]+)$/u.exec(
@@ -31,6 +34,12 @@ export function isExpectedHttpBoundary(status: number, rawUrl: string, method: s
       (method === 'GET' || method === 'DELETE') &&
       url.origin === matrixOrigin &&
       url.pathname === '/_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device') ||
+    // 新设备解不开以前的消息时，按会话去密钥备份里一把一把找；发送那台设备还没把这把传上去，
+    // Synapse 就回 404，SDK 当作“备份里没有”。验收账号在前面几轮里收发过加密消息，换新设备登录就会碰上。
+    (status === 404 &&
+      method === 'GET' &&
+      url.origin === matrixOrigin &&
+      roomKeyBackupSession.test(url.pathname)) ||
     (status === 404 &&
       method === 'GET' &&
       url.origin === matrixOrigin &&

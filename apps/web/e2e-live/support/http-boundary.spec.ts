@@ -17,6 +17,22 @@ describe('真实验收的 HTTP 边界', () => {
     expect(isExpectedHttpBoundary(404, `${matrixOrigin}${workspacePath}`, method)).toBe(false);
   });
 
+  it('密钥备份里还没有某一把会话密钥时的 404 算正常，别的写法和状态照旧算失败', () => {
+    const session =
+      '/_matrix/client/v3/room_keys/keys/!zxYPnxbHLjLJyPJptT%3Amatrix.agent-room.localhost/dA4UcC%2Bx1AuF%2BK4Zxh5HuOn8R0PutsNapTFyTg5%2Bv5Q';
+    expect(isExpectedHttpBoundary(404, `${matrixOrigin}${session}?version=1`, 'GET')).toBe(true);
+    expect(isExpectedHttpBoundary(403, `${matrixOrigin}${session}?version=1`, 'GET')).toBe(false);
+    expect(isExpectedHttpBoundary(404, `${matrixOrigin}${session}?version=1`, 'PUT')).toBe(false);
+    for (const path of [
+      '/_matrix/client/v3/room_keys/keys',
+      '/_matrix/client/v3/room_keys/keys/!zxYPnxbHLjLJyPJptT%3Amatrix.agent-room.localhost',
+      `${session}/extra`,
+    ]) {
+      expect(isExpectedHttpBoundary(404, `${matrixOrigin}${path}`, 'GET')).toBe(false);
+    }
+    expect(isExpectedHttpBoundary(404, `https://wrong.example${session}`, 'GET')).toBe(false);
+  });
+
   it('不放过错误主机、未知类型和错误路由的 404', () => {
     for (const url of [
       `https://wrong.example${workspacePath}`,
