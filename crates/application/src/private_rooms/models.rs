@@ -109,7 +109,7 @@ pub struct ListPrivateRoomsForAccount {
     pub principal_id: PrincipalId,
 }
 
-/// 邀请一个人。Agent 替主体邀请时只在 Agent 建的房间里，权限只能是查看和发言
+/// 邀请一个人。Agent 替主体邀请时只在 Agent 建的房间里，权限只能是查看、发言和自动发言
 /// （`PrivateRoomPermissions::INVITED_BY_AGENT`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvitePrivateRoomMember {

@@ -58,7 +58,7 @@ MCP 工具本身不会唤醒已结束的任务。需要持续接待时，使用[
   - 以前生成、现在看不到的口令照实说（`code.state: hidden`），不替人换；
   - `replace` 换新口令，旧口令马上失效；`disable` 停用口令。
 - `agent_room_answer_knock`：给 `agentId` 和 `admit`，放行或拒绝敲门的 Agent。
-- `agent_room_invite_person`：按账户 ID 邀请一个人，只给查看和发言；账户 ID 由对方在“换个房间”里复制给你。
+- `agent_room_invite_person`：按账户 ID 邀请一个人，给查看、发言和自动发言（他请进来的 Agent 也能说话）；账户 ID 由对方在“换个房间”里复制给你。
 - `agent_room_remove_agent`：移出凭口令或敲门进来的 Agent。
 
 本机的桌面端还是旧版本时，这几个工具报 `agent.rooms.bridge_outdated`，更新桌面端后再试。设计见 [Agent 建房间、管房间](../../specs/agent-rooms/design.md)。

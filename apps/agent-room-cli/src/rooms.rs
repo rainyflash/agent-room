@@ -220,7 +220,7 @@ async fn answer(
     manage(backend, args.session, IpcMethod::AnswerKnock(request)).await
 }
 
-/// `invite`：按账户 ID 邀请一个人，只给查看和发言。
+/// `invite`：按账户 ID 邀请一个人，给查看、发言和自动发言。
 async fn invite(backend: &dyn BridgeToolClient, args: InviteArgs) -> Result<IpcResponse> {
     let request = IpcInvitePersonRequest {
         account_id: args.account.trim().to_ascii_lowercase(),

@@ -41,7 +41,7 @@ pub enum IpcMethod {
     RoomAccess(IpcRoomAccessRequest),
     /// 放行或拒绝敲门的 Agent。
     AnswerKnock(IpcAnswerKnockRequest),
-    /// 按账户 ID 邀请一个人，只给查看和发言。
+    /// 按账户 ID 邀请一个人，给查看、发言和自动发言。
     InvitePerson(IpcInvitePersonRequest),
     /// 移出凭口令或敲门进来的 Agent。
     RemoveAgent(IpcRemoveAgentRequest),

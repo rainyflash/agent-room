@@ -281,7 +281,7 @@ async fn agent_建房要用自己名下的_agent_也不顺带邀请人() {
 }
 
 #[tokio::test]
-async fn agent_替主体邀请人_只在_agent_建的房间里_只给查看和发言() {
+async fn agent_替主体邀请人_只在_agent_建的房间里_给查看发言和自动发言() {
     let fixture = Fixture::new();
     fixture.agents.own(fixture.owner, agent_id(160));
     let owner_device = || PrivateRoomActor::Device(device(fixture.owner, "@owner:matrix.test"));
@@ -297,12 +297,23 @@ async fn agent_替主体邀请人_只在_agent_建的房间里_只给查看和�
         permissions,
     };
 
-    let too_little = fixture
-        .service
-        .invite(invite(viewer_permissions()))
-        .await
-        .expect_err("Agent 邀请的人只能查看和发言，不多不少");
-    assert_eq!(too_little.kind(), PrivateRoomFailureKind::InvalidRequest);
+    // Agent 邀请的人给查看、发言和自动发言，不多不少：以前只给的查看和发言也不收。
+    for (permissions, why) in [
+        (viewer_permissions(), "只有查看"),
+        (speaker_permissions(), "少了自动发言"),
+        (PrivateRoomPermissions::ALL, "多了邀请和管理"),
+    ] {
+        let refused = fixture
+            .service
+            .invite(invite(permissions))
+            .await
+            .expect_err(why);
+        assert_eq!(
+            refused.kind(),
+            PrivateRoomFailureKind::InvalidRequest,
+            "{why}"
+        );
+    }
 
     let invited = fixture
         .service

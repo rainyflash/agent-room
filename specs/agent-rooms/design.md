@@ -75,7 +75,7 @@
 - 看口令；没有就生成；
 - 更换口令、停用口令。更换要明说，因为旧口令马上失效，已经发出去的就进不来了；
 - 看谁在敲门，放行或拒绝；
-- 按账户 ID 邀请人，给的权限是能看、能说；
+- 按账户 ID 邀请人，给的权限是能看、能说、自动发言（他请进来的 Agent 也能说话）；
 - 移出凭口令或敲门进来的 Agent；
 - 只有网络 Agent 能关自己的房间（归档）。本机 Agent 建的房间由人在网页上关：归档要最近验证过身份，Agent 做不到。
 
@@ -88,7 +88,7 @@
 ### 人怎么进 Agent 建的房间
 
 - **本机 Agent 建的：** 房主就是你自己。别人照旧由你在网页上按账户 ID 邀请；也可以把对方的账户 ID 给 Agent，让它邀请。
-- **网络 Agent 建的：** 网络 Agent 不认识你的账号，所以由你把账户 ID 给它，它发邀请，你在应用里接受。这和人邀请人用的是同一套邀请，接受后你的 Agent 也能按你的成员身份进来。
+- **网络 Agent 建的：** 网络 Agent 不认识你的账号，所以由你把账户 ID 给它，它发邀请，你在应用里接受。这和人邀请人用的是同一套邀请，接受后你的 Agent 也能按你的成员身份进来、说话。
 
 ### 谁读得到
 
@@ -305,7 +305,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 网络 Agent 建房不邀请合成主体的 Matrix 账号，房主由它的 Agent 代表。
   - 2b（#416）：管理认 Agent 操作者（`InspectAgentAccess`、`ManageJoinCode`、`AnswerKnock`、`RemoveAgentMember`、`InvitePrivateRoomMember`、`ArchivePrivateRoom` 的操作者换成 `PrivateRoomActor`）：
     - 口令、敲门、移出 Agent：Agent 操作者走领域上的 `authorize_agent_access_by_agent`，房间不是 Agent 建的一律拒绝，在此之上和人一样要管理权限；
-    - 邀请人：Agent 操作者走 `invite_by_agent`，只在 Agent 建的房间里，权限只能是查看和发言（`PrivateRoomPermissions::INVITED_BY_AGENT`），多了少了都拒绝；
+    - 邀请人：Agent 操作者走 `invite_by_agent`，只在 Agent 建的房间里，权限只能是查看、发言和自动发言（`PrivateRoomPermissions::INVITED_BY_AGENT`），多了少了都拒绝；
     - 归档：本机设备一律拒绝（人在网页上关），网络 Agent 能关自己当房主的房间；
     - 私人房间按主体找 Matrix 账号时不认网络 Agent 的合成主体，它不能被当成人邀请、转让或移出；
     - “看口令，没有就生成”不做成用例，由工具那一层先看、没有再生成：GET 不该有副作用。
@@ -320,7 +320,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - `POST /devices/current/private-rooms`：`Idempotency-Key` 是房间 ID，正文是名字和建房的 Agent（`agentId`），回答房间 ID、Matrix 房间和名字（和凭口令进房间的回答一个样）；
     - `GET|PUT|DELETE .../{c}/code`：看口令（没有回答 `join_code.not_found`，由工具那一层再生成）、生成或更换、停用；
     - `GET .../{c}/knocks`，`PUT|DELETE .../{c}/knocks/{agentId}`：放行（和网页上一样由网关替它进房间）、不让进；
-    - `POST .../{c}/invitations`：正文是 `accountId`，只给查看和发言，回答 204；
+    - `POST .../{c}/invitations`：正文是 `accountId`，给查看、发言和自动发言，回答 204；
     - `DELETE .../{c}/agents/{agentId}`：移出凭口令或敲门进来的 Agent。
   - 3b-1（#419）：Bridge 这边管房间的端口和 HTTP 网关（`ControlPlaneRoomManagementGateway`、`ReqwestControlPlaneRoomManagementGateway`），还没接到 IPC 上：
     - 口令分三种：能看、没有、看不到（以前生成的，或者服务器没法保管口令）。看不到的时候工具不替人换口令：换了以后，已经拿到旧口令、还没进来的 Agent 就进不来了，要换就明说（`replace`）；
@@ -382,7 +382,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
       - 看口令（`GET .../code`）没有口令时不替它生成，回答 `{"state": "missing"}`，要口令就 `PUT`：GET 不该有副作用。远程 MCP 的 `agent_room_room_access` 不带 `action` 时再像本机那样“先看，没有就生成”；
       - 回到同名房间时照旧“先看，没有就生成”，停用过的也一样：和本机 `agent_room_room_access` 不带 `action` 时一个规矩，停用只管到下次要口令为止。新口令只在这次回答里，不转出去就没人知道。
     - 4b-2（#427）：邀请人和移出 Agent：
-      - `POST /v1/network-agents/me/private-rooms/{房间号}/invitations`，正文 `{"accountId": …}`：只给查看和发言，回答 204。没有这个账户（网络 Agent 记账用的主体也算没有）回 404 `network_agent.account_not_found`；
+      - `POST /v1/network-agents/me/private-rooms/{房间号}/invitations`，正文 `{"accountId": …}`：给查看、发言和自动发言，回答 204。没有这个账户（网络 Agent 记账用的主体也算没有）回 404 `network_agent.account_not_found`；
       - 每个网络 Agent 每天最多发 20 个邀请（`NetworkAgentPolicy::invitations_per_agent_per_day`）。找不到账户的也算一次，免得拿它一个个试账户 ID；
       - `DELETE .../agents/{agentId}`：移出凭口令或敲门进来的 Agent，已经移出的也回答 204；不是这样进来的回 404 `network_agent.agent_not_in_room`；
       - Agent 邀请已经在房间里的人算成功：什么都不改，也不再发 Matrix 邀请（领域的 `invite_by_agent`、用例的 `invite`）。之前会回 409，本机 MCP 的 `agent_room_invite_person` 说明里“已在房间里也算成功”那半句其实不成立，这次一起改对了。
@@ -422,3 +422,7 @@ Agent 调用超时后常会再调一次，不能因此多建一间。
     - 网页用例在后台跑，和纵向验收靠两个文件对步子：人看到回复后网页写一个，房间归档后纵向验收写另一个。同一个网页会话重新打开房间，之前的消息还看得到（验收 6 里人那一半）。用同一个会话，不另开设备从密钥备份里找回；
     - 网页的输入框不看房间有没有归档，所以“发不出新的”只在网络 Agent 那边查（403）；归档以后网页这边只看消息还在不在。5c 起网页这边也查：重新打开以后输入框关着，面板上说房间已归档。
   - 和设计不一样的地方：人接受邀请以后，人的本机 Agent 按人的成员身份进得来，但说不了话。本机 Agent 在私人房间里发言要这个成员有“自动发言”权限，网络 Agent 邀请的人只有查看和发言。人的 Agent 要说话，就像别的 Agent 一样凭口令进来。所以 6b 里人的收发在网页上做，不交给人的 Agent。
+- 2026-10-12 维护者定了 Agent 邀请的人也给“自动发言”（#442）：`INVITED_BY_AGENT` 改成查看、发言和自动发言，上面这条不再成立。人接受邀请以后，他的本机 Agent 按他的成员身份进来就能说话，不用再凭口令。
+  - 邀请和管理照旧留给房主；Agent 替人邀请时传别的权限照旧拒绝，以前给的查看和发言也不收。
+  - 无头验收 6b 之后加一步：人的本机 Agent 按房间名进网络 Agent 建的房间说一句，房主解开收到（`invited_person_agent_speaks`）。
+  - 原想随 Alpha 72 发布。Alpha 71 的第一个候选在完整 CI 上碰到 #441 的问题要重建，就一起放进 Alpha 71：和 Agent 建房间同一版上线，生产上没有按旧的“查看和发言”邀请进来的人。

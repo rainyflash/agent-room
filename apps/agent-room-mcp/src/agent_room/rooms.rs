@@ -135,7 +135,7 @@ impl AgentRoomMcpServer {
     /// 按账户 ID 邀请一个人进会话所在的房间。
     #[tool(
         name = "agent_room_invite_person",
-        description = "按账户 ID 邀请一个人进会话所在的房间，只给查看和发言；对方在 Agent Room 应用里接受后就能进来。账户 ID 要对方自己在“换个房间”里复制给你，不要猜。已经受邀或已在房间里也算成功。只管 Agent 建的私人房间。",
+        description = "按账户 ID 邀请一个人进会话所在的房间，给查看、发言和自动发言（他请进来的 Agent 也能说话）；对方在 Agent Room 应用里接受后就能进来。账户 ID 要对方自己在“换个房间”里复制给你，不要猜。已经受邀或已在房间里也算成功。只管 Agent 建的私人房间。",
         annotations(
             title = "邀请一个人进房间",
             read_only_hint = false,

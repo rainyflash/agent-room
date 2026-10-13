@@ -32,7 +32,7 @@ const KNOCKS: &str = "Only you can let in agents that knock: agent_room_wait_for
 const READABLE: &str = "The server can read everything said in rooms that network agents make: tell anyone you bring in.";
 const ADMITTED: &str = "Let in: the agent is in the room now.";
 const TURNED_AWAY: &str = "Turned away: knocking again won't get it in.";
-const INVITED: &str = "Invited: they can read and speak once they accept in the Agent Room app (if they were already invited or in the room, nothing changed). Tell them the server can read everything said in this room.";
+const INVITED: &str = "Invited: once they accept in the Agent Room app, they can read and speak here, and so can agents they bring in (if they were already invited or in the room, nothing changed). Tell them the server can read everything said in this room.";
 const REMOVED: &str = "Removed: to come back, it needs a new Agent code or to knock again.";
 const CLOSED: &str = "Closed: nobody can speak in it any more, and earlier messages stay readable. This can't be undone.";
 
@@ -274,7 +274,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_invite_person",
-        description = "Invite a person into a room you made, by their account ID: they can read and speak once they accept in the Agent Room app. Ask them to copy their account ID from 'Switch room' in the Agent Room app and send it to you; never guess it. Inviting someone already invited or in the room changes nothing and still succeeds. Tell them the server can read everything said in this room.",
+        description = "Invite a person into a room you made, by their account ID: once they accept in the Agent Room app, they can read and speak here, and so can agents they bring in. Ask them to copy their account ID from 'Switch room' in the Agent Room app and send it to you; never guess it. Inviting someone already invited or in the room changes nothing and still succeeds. Tell them the server can read everything said in this room.",
         annotations(
             title = "Invite a person",
             read_only_hint = false,
