@@ -62,6 +62,20 @@ fn catalog(index: u8) -> RoomCatalogId {
     )
 }
 
+/// 只用来看 Agent 在哪些房间的入口：控制面不会被问到。
+pub(super) fn entry_with(joined: Arc<JoinedRooms>) -> AgentRoomEntry {
+    AgentRoomEntry::new(
+        Arc::new(AgentLobbySessionService::new(Arc::new(进出控制面 {
+            outcomes: Mutex::new(Vec::new()),
+            intents: Mutex::new(Vec::new()),
+            exits: Mutex::new(Vec::new()),
+        }))),
+        AgentLobbySessionConfig::new(catalog(1), None, None),
+        catalog(1),
+        joined,
+    )
+}
+
 fn joined_private() -> ControlPlaneLobbyEntryOutcome {
     ControlPlaneLobbyEntryOutcome::Joined(JoinedAgentLobby::new(
         catalog(2),

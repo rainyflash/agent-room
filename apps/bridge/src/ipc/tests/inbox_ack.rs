@@ -16,6 +16,8 @@ fn inbox(after: Option<String>, from_ack: bool) -> IpcMethod {
         keep_waiting: false,
         wait_ms: None,
         from_ack,
+        every_room: false,
+        room_cursors: Vec::new(),
     })
 }
 

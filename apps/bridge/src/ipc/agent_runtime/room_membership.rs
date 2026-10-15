@@ -44,6 +44,11 @@ impl AgentRoomEntry {
         }
     }
 
+    /// 这次连上以后同步里看到的、Agent 在的房间。
+    pub(super) fn joined_rooms(&self) -> Vec<MatrixRoomId> {
+        self.joined.rooms()
+    }
+
     fn config(
         &self,
         catalog_id: RoomCatalogId,

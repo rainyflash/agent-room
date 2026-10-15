@@ -12,4 +12,4 @@ pub use desktop_launch::{
     launching_desktop_when_absent,
 };
 pub use inbox::{MAX_EXPLICIT_WAIT_SECONDS, MessageReadMode, MessageWait, wait_for_messages};
-pub use waiting::{InboxWaiter, WokenBatch};
+pub use waiting::{InboxWaiter, WokenBatch, cursor_events};

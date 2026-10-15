@@ -7,7 +7,7 @@ use crate::{
     IpcHostSessionSummary, IpcInvitationOffer, IpcInvitePersonRequest, IpcLeaveRoomRequest,
     IpcOpenHostSessionRequest, IpcPendingInvitation, IpcRedeemJoinCodeRequest,
     IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess, IpcRoomAccessRequest,
-    IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
+    IpcRoomCursor, IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,8 +241,8 @@ impl IpcMethod {
             }
             Self::BootstrapDefaultAgent(request) => request.validate(),
             Self::ListPreviews(request) => {
-                // 往前翻的页没有确认位置可言。
-                if request.from_ack {
+                // 往前翻的页没有确认位置可言；看所有房间时只给最新的一页。
+                if request.from_ack || !request.room_cursors.is_empty() {
                     return Err(failure("bridge.ipc.event_cursor_invalid"));
                 }
                 request.validate()
@@ -303,6 +303,16 @@ pub struct IpcListPreviewsRequest {
     /// `afterEventId` 就从它之后，不看确认位置。只对 `ReadInbox`、`WaitInbox` 有用。
     #[serde(default, skip_serializing_if = "is_false")]
     pub from_ack: bool,
+    /// 看 Agent 在的所有房间，每条带房间，按服务器收到的时间排（IPC 4.5 起，
+    /// `specs/agent-identity/design.md` 第 4 步）。这时不给 `roomId`、`afterEventId`、
+    /// `beforeEventId`。不设时照旧只看一个房间，没给 `roomId` 就是会话的那一个：旧版客户端的
+    /// 游标只认一个房间。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub every_room: bool,
+    /// 看所有房间时，这几个房间各从哪一条之后开始，一个房间一条；没给的房间照 `fromAck`。
+    /// 不在的房间给了也不看。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub room_cursors: Vec<IpcRoomCursor>,
 }
 
 impl IpcListPreviewsRequest {
@@ -310,6 +320,7 @@ impl IpcListPreviewsRequest {
         if self.after_event_id.is_some() && self.before_event_id.is_some() {
             return Err(failure("bridge.ipc.event_cursor_invalid"));
         }
+        self.validate_room_cursors()?;
         if self
             .wait_ms
             .is_some_and(|wait| wait > limits::INBOX_BLOCK_MILLIS)
@@ -334,6 +345,36 @@ impl IpcListPreviewsRequest {
         )?;
         if !(1..=limits::PREVIEW_PAGE_SIZE).contains(&self.limit) {
             return Err(failure("bridge.ipc.preview_limit_invalid"));
+        }
+        Ok(())
+    }
+
+    /// 看所有房间时不给单个房间的位置；各房间的位置一个房间一条。
+    fn validate_room_cursors(&self) -> Result<(), IpcMethodValidationFailure> {
+        let single_room = self.room_id.is_some()
+            || self.after_event_id.is_some()
+            || self.before_event_id.is_some();
+        if (self.every_room && single_room)
+            || (!self.every_room && !self.room_cursors.is_empty())
+            || self.room_cursors.len() > limits::SESSION_ROOMS
+        {
+            return Err(failure("bridge.ipc.event_cursor_invalid"));
+        }
+        let mut rooms = std::collections::HashSet::new();
+        for cursor in &self.room_cursors {
+            validate_bounded(
+                &cursor.room_id,
+                limits::ROOM_ID_BYTES,
+                "bridge.ipc.room_id_invalid",
+            )?;
+            validate_bounded(
+                &cursor.after_event_id,
+                limits::EVENT_ID_BYTES,
+                "bridge.ipc.event_id_invalid",
+            )?;
+            if !rooms.insert(cursor.room_id.as_str()) {
+                return Err(failure("bridge.ipc.event_cursor_invalid"));
+            }
         }
         Ok(())
     }
@@ -1444,6 +1485,8 @@ mod tests {
                     keep_waiting: false,
                     wait_ms: None,
                     from_ack: false,
+                    every_room: false,
+                    room_cursors: Vec::new(),
                 }),
                 IpcScope::PreviewsRead,
             ),
@@ -1696,6 +1739,8 @@ mod tests {
             keep_waiting: false,
             wait_ms: None,
             from_ack,
+            every_room: false,
+            room_cursors: Vec::new(),
         };
         assert!(IpcMethod::ReadInbox(request(true)).validate().is_ok());
         assert!(IpcMethod::WaitInbox(request(true)).validate().is_ok());

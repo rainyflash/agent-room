@@ -8,9 +8,9 @@ use std::{
 };
 
 use agent_room_bridge_ipc::{
-    IpcErrorCategory, IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMethod, IpcResponse,
-    IpcTimelineGap,
-    limits::INBOX_BLOCK_MILLIS,
+    IpcErrorCategory, IpcGetMessagesRequest, IpcListPreviewsRequest, IpcMessagePreviewSummary,
+    IpcMethod, IpcResponse, IpcRoomCursor, IpcTimelineGap,
+    limits::{INBOX_BLOCK_MILLIS, MESSAGE_LOOKUP_IDS},
     typing::TypingRooms,
     wake::{
         Arrival, DEFAULT_WAIT_FOR_LIMIT, Delivery, IpcTyping, IpcWake, WaitDecision, WaitOptions,
@@ -30,6 +30,16 @@ const FETCH_PAGES_PER_ROUND: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// 挂着等的调用多给这么久再截断：Bridge 刚好到点才回时，不能算成超时。
 const BLOCK_GRACE: Duration = Duration::from_secs(2);
+/// 看所有房间时给 Agent 的游标是每个房间的位置，用它连起来。
+const CURSOR_SEPARATOR: &str = ",";
+
+/// 游标里的几条位置：看所有房间时每个房间一条，用逗号连起来；只看一个房间时就是一条。
+pub fn cursor_events(cursor: &str) -> impl Iterator<Item = &str> {
+    cursor
+        .split(CURSOR_SEPARATOR)
+        .map(str::trim)
+        .filter(|event| !event.is_empty())
+}
 
 /// 交给 Agent 的一批。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +51,8 @@ pub struct WokenBatch {
     pub skipped: usize,
     /// 交出去的最后一条之后还攒着、没交的条数。
     pub remaining: usize,
-    /// 下次从这一条之后接着等：交出去的最后一条，或者已经看过的自己发的那几条之后。
+    /// 下次从这一条之后接着等：交出去的最后一条，或者已经看过的自己发的那几条之后。看所有房间时
+    /// 是每个房间的这一条，用逗号连起来（[`cursor_events`]）。
     pub cursor: Option<String>,
     /// 这一批里哪几条前面少了一段补不回来的消息（同步时一次来得太多）。
     pub gaps: Vec<IpcTimelineGap>,
@@ -75,7 +86,83 @@ struct InboxPage {
     gaps: Vec<IpcTimelineGap>,
 }
 
-/// 在一个房间里等消息。一次性的读每次新建；`listen` 一直用同一个。
+/// 读到哪一条了。只看一个房间时是一条；看所有房间时每个房间各一条。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Position {
+    Room(Option<String>),
+    EveryRoom(BTreeMap<String, String>),
+}
+
+impl Position {
+    /// 读过了这一条。
+    fn pass(&mut self, preview: &IpcMessagePreviewSummary) {
+        match self {
+            Self::Room(at) => *at = Some(preview.event_id.clone()),
+            Self::EveryRoom(rooms) => {
+                rooms.insert(preview.room_id.clone(), preview.event_id.clone());
+            }
+        }
+    }
+
+    /// 给 Agent 的游标。
+    fn cursor(&self) -> Option<String> {
+        match self {
+            Self::Room(at) => at.clone(),
+            Self::EveryRoom(rooms) => (!rooms.is_empty()).then(|| {
+                rooms
+                    .values()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(CURSOR_SEPARATOR)
+            }),
+        }
+    }
+
+    /// 从这里接着读的请求；只看一个房间时没给房间就是会话的那一个。
+    fn request(
+        &self,
+        room_id: Option<&String>,
+        limit: u16,
+        from_ack: bool,
+    ) -> IpcListPreviewsRequest {
+        let (after_event_id, every_room, room_cursors) = match self {
+            Self::Room(at) => (at.clone(), false, Vec::new()),
+            Self::EveryRoom(rooms) => (
+                None,
+                true,
+                rooms
+                    .iter()
+                    .map(|(room_id, event_id)| IpcRoomCursor {
+                        room_id: room_id.clone(),
+                        after_event_id: event_id.clone(),
+                    })
+                    .collect(),
+            ),
+        };
+        IpcListPreviewsRequest {
+            after_event_id,
+            room_id: room_id.cloned(),
+            before_event_id: None,
+            limit,
+            keep_waiting: false,
+            wait_ms: None,
+            from_ack,
+            every_room,
+            room_cursors,
+        }
+    }
+
+    /// 同样看法、还没读过的位置：找上一条点到的人时从最新的看。
+    fn latest(&self) -> Self {
+        match self {
+            Self::Room(_) => Self::Room(None),
+            Self::EveryRoom(_) => Self::EveryRoom(BTreeMap::new()),
+        }
+    }
+}
+
+/// 等消息：在一个房间里，或者在 Agent 在的所有房间里（[`InboxWaiter::every_room`]）。一次性的读
+/// 每次新建；`listen` 一直用同一个。
 pub struct InboxWaiter {
     session_id: String,
     room_id: Option<String>,
@@ -83,11 +170,13 @@ pub struct InboxWaiter {
     options: WaitOptions,
     wait_for_mentioned: bool,
     /// 交到哪一条了：之前的都看过。
-    delivered_through: Option<String>,
+    delivered_through: Position,
     /// 向 Bridge 取到哪一条了。
-    fetched_through: Option<String>,
+    fetched_through: Position,
     /// 攒着的第一条之前是哪一条：交过的、或者攒满以后丢掉的最后一条。重读只读这之后的。
-    held_after: Option<String>,
+    held_after: Position,
+    /// 看所有房间时调用方给的游标，还不知道每条在哪个房间；开始读之前问一次 Bridge。
+    unplaced_cursor: Option<String>,
     /// 取回来还没交的，和本机看到它的时间（Unix 毫秒）。自己发的不留。
     held: Vec<(IpcMessagePreviewSummary, i64)>,
     /// 攒满以后丢掉的最早那些，交的时候算进跳过的。
@@ -136,9 +225,10 @@ impl InboxWaiter {
             limit: usize::from(limit.max(1)),
             options: rules.options,
             wait_for_mentioned: rules.wait_for_mentioned,
-            delivered_through: after_event_id.clone(),
-            fetched_through: after_event_id.clone(),
-            held_after: after_event_id,
+            delivered_through: Position::Room(after_event_id.clone()),
+            fetched_through: Position::Room(after_event_id.clone()),
+            held_after: Position::Room(after_event_id),
+            unplaced_cursor: None,
             held: Vec::new(),
             dropped: 0,
             fetched_once: false,
@@ -158,6 +248,21 @@ impl InboxWaiter {
     #[must_use]
     pub const fn from_acknowledged(mut self) -> Self {
         self.start = Start::Acknowledged;
+        self
+    }
+
+    /// 没给房间时看 Agent 在的所有房间，每条带房间（`specs/agent-identity/design.md` 第 4 步）；
+    /// 给的位置可以是之前的游标，每个房间一条。给了房间时照旧只看那一个。
+    #[must_use]
+    pub fn every_room(mut self) -> Self {
+        if self.room_id.is_none()
+            && let Position::Room(given) = &self.delivered_through
+        {
+            self.unplaced_cursor.clone_from(given);
+            self.delivered_through = Position::EveryRoom(BTreeMap::new());
+            self.fetched_through = Position::EveryRoom(BTreeMap::new());
+            self.held_after = Position::EveryRoom(BTreeMap::new());
+        }
         self
     }
 
@@ -189,6 +294,7 @@ impl InboxWaiter {
         backend: &dyn BridgeToolClient,
         wait: MessageWait,
     ) -> Result<WokenBatch, BridgeToolFailure> {
+        self.place_cursor(backend).await?;
         self.resolve_mentioned(backend).await?;
         if wait == MessageWait::For(Duration::ZERO) {
             return self.peek(backend).await;
@@ -255,24 +361,20 @@ impl InboxWaiter {
         &mut self,
         backend: &dyn BridgeToolClient,
     ) -> Result<WokenBatch, BridgeToolFailure> {
-        let request = IpcListPreviewsRequest {
-            after_event_id: self.delivered_through.clone(),
-            room_id: self.room_id.clone(),
-            before_event_id: None,
-            limit: u16::try_from(self.limit).unwrap_or(FETCH_PAGE),
-            keep_waiting: false,
-            wait_ms: None,
-            from_ack: self.start == Start::Acknowledged,
-        };
+        let request = self.delivered_through.request(
+            self.room_id.as_ref(),
+            u16::try_from(self.limit).unwrap_or(FETCH_PAGE),
+            self.start == Start::Acknowledged,
+        );
         let InboxPage { previews, gaps, .. } = self
             .read_page(backend, IpcMethod::ReadInbox(request), None)
             .await?;
         self.note_gaps(gaps);
         let gaps = self.release_gaps(&HashSet::new());
-        let cursor = previews
-            .last()
-            .map(|preview| preview.event_id.clone())
-            .or_else(|| self.delivered_through.clone());
+        let mut cursor = self.delivered_through.clone();
+        for preview in &previews {
+            cursor.pass(preview);
+        }
         self.delivered_through.clone_from(&cursor);
         self.fetched_through.clone_from(&cursor);
         self.held_after.clone_from(&cursor);
@@ -298,7 +400,7 @@ impl InboxWaiter {
             wake,
             skipped,
             remaining: 0,
-            cursor,
+            cursor: cursor.cursor(),
             gaps,
         })
     }
@@ -325,15 +427,13 @@ impl InboxWaiter {
             let wait_ms = (page == 0 && !block.is_zero())
                 .then(|| u32::try_from(block.as_millis()).unwrap_or(INBOX_BLOCK_MILLIS))
                 .map(|wait| wait.min(INBOX_BLOCK_MILLIS));
-            let request = IpcListPreviewsRequest {
-                after_event_id: self.fetched_through.clone(),
-                room_id: self.room_id.clone(),
-                before_event_id: None,
-                limit: FETCH_PAGE,
-                keep_waiting,
-                wait_ms,
-                from_ack: self.start == Start::Acknowledged,
-            };
+            let mut request = self.fetched_through.request(
+                self.room_id.as_ref(),
+                FETCH_PAGE,
+                self.start == Start::Acknowledged,
+            );
+            request.keep_waiting = keep_waiting;
+            request.wait_ms = wait_ms;
             // 挂着等的那一页多给一点再截断：Bridge 刚好到点才回时不能算成超时。
             let cut_off = cut_off.map(|cut_off| {
                 if wait_ms.is_some() {
@@ -360,7 +460,7 @@ impl InboxWaiter {
             }
             self.note_gaps(gaps);
             for preview in previews {
-                self.fetched_through = Some(preview.event_id.clone());
+                self.fetched_through.pass(&preview);
                 if preview.from_me || known.contains(&preview.event_id) {
                     fetched_own |= preview.from_me;
                     continue;
@@ -382,7 +482,9 @@ impl InboxWaiter {
         if self.held.len() > HELD_CAPACITY {
             let excess = self.held.len() - HELD_CAPACITY;
             let dropped: Vec<_> = self.held.drain(..excess).collect();
-            self.held_after = dropped.last().map(|(preview, _)| preview.event_id.clone());
+            for (preview, _) in &dropped {
+                self.held_after.pass(preview);
+            }
             let oldest_dropped = dropped.iter().map(|(_, at_ms)| *at_ms).min();
             if let (Some(dropped_at_ms), Some((_, first_at_ms))) =
                 (oldest_dropped, self.held.first_mut())
@@ -465,15 +567,15 @@ impl InboxWaiter {
     fn take(&mut self, delivery: Delivery) -> WokenBatch {
         let consumed = delivery.picks.last().map_or(0, |last| last + 1);
         let mut previews = Vec::with_capacity(delivery.picks.len());
+        // 最后交的那条之前的都算看过，各在各的房间里。
         for (index, (preview, _)) in self.held.drain(..consumed).enumerate() {
+            self.delivered_through.pass(&preview);
+            self.held_after.pass(&preview);
             if delivery.picks.contains(&index) {
                 previews.push(preview);
             }
         }
-        if let Some(last) = previews.last() {
-            self.delivered_through = Some(last.event_id.clone());
-            self.held_after.clone_from(&self.delivered_through);
-        } else if self.held.is_empty() {
+        if previews.is_empty() && self.held.is_empty() {
             // 什么都没交、也没攒着别人的：看过的只有自己发的，游标直接跟上。
             self.delivered_through.clone_from(&self.fetched_through);
             self.held_after.clone_from(&self.delivered_through);
@@ -494,7 +596,7 @@ impl InboxWaiter {
             wake: delivery.wake,
             skipped,
             remaining: delivery.remaining,
-            cursor: self.delivered_through.clone(),
+            cursor: self.delivered_through.cursor(),
             gaps,
         }
     }
@@ -535,15 +637,10 @@ impl InboxWaiter {
             return Ok(());
         }
         self.wait_for_mentioned = false;
-        let request = IpcListPreviewsRequest {
-            after_event_id: None,
-            room_id: self.room_id.clone(),
-            before_event_id: None,
-            limit: FETCH_PAGE,
-            keep_waiting: false,
-            wait_ms: None,
-            from_ack: false,
-        };
+        let request =
+            self.delivered_through
+                .latest()
+                .request(self.room_id.as_ref(), FETCH_PAGE, false);
         let newest_first = self
             .read_page(backend, IpcMethod::ListPreviews(request), None)
             .await?
@@ -553,6 +650,67 @@ impl InboxWaiter {
             return Err(invalid("waitFor"));
         }
         self.options.wait_for = people;
+        Ok(())
+    }
+
+    /// 看所有房间时调用方给的游标：问 Bridge 每条在哪个房间，一个房间给了几条就用最新的。找不到的、
+    /// 不在的房间里的不算；一条也找不到时说游标找不到。
+    async fn place_cursor(
+        &mut self,
+        backend: &dyn BridgeToolClient,
+    ) -> Result<(), BridgeToolFailure> {
+        let Some(given) = self.unplaced_cursor.take() else {
+            return Ok(());
+        };
+        let mut asking: Vec<String> = cursor_events(&given).map(str::to_owned).collect();
+        let mut placed: BTreeMap<String, (i64, String)> = BTreeMap::new();
+        while !asking.is_empty() {
+            let ids: Vec<String> = asking
+                .drain(..asking.len().min(MESSAGE_LOOKUP_IDS))
+                .collect();
+            let method = IpcMethod::WithSession {
+                session_id: self.session_id.clone(),
+                method: Box::new(IpcMethod::GetMessages(IpcGetMessagesRequest { ids })),
+            };
+            let IpcResponse::Messages { messages, more, .. } = backend.invoke(method).await? else {
+                return Err(failure(
+                    "agent.inbox.response_invalid",
+                    IpcErrorCategory::Internal,
+                    false,
+                ));
+            };
+            // 一条也没放下时别再问：放不下的这几条不算。
+            if !messages.is_empty() {
+                asking.extend(more);
+            }
+            for message in messages {
+                if placed
+                    .get(&message.room_id)
+                    .is_none_or(|(at_ms, _)| *at_ms < message.created_at_unix_ms)
+                {
+                    placed.insert(
+                        message.room_id,
+                        (message.created_at_unix_ms, message.event_id),
+                    );
+                }
+            }
+        }
+        if placed.is_empty() {
+            return Err(failure(
+                "bridge.preview_cursor_not_found",
+                IpcErrorCategory::Validation,
+                false,
+            ));
+        }
+        let rooms = Position::EveryRoom(
+            placed
+                .into_iter()
+                .map(|(room_id, (_, event_id))| (room_id, event_id))
+                .collect(),
+        );
+        self.delivered_through = rooms.clone();
+        self.fetched_through = rooms.clone();
+        self.held_after = rooms;
         Ok(())
     }
 
@@ -572,15 +730,11 @@ impl InboxWaiter {
 
     /// 等到了要交的，告诉 Bridge 不在等了；失败了也只是“等待中”晚 10 秒消失。
     async fn stop_waiting(&self, backend: &dyn BridgeToolClient) {
-        let request = IpcListPreviewsRequest {
-            after_event_id: self.delivered_through.clone(),
-            room_id: self.room_id.clone(),
-            before_event_id: None,
-            limit: 1,
-            keep_waiting: false,
-            wait_ms: None,
-            from_ack: self.start == Start::Acknowledged,
-        };
+        let request = self.delivered_through.request(
+            self.room_id.as_ref(),
+            1,
+            self.start == Start::Acknowledged,
+        );
         let method = IpcMethod::WithSession {
             session_id: self.session_id.clone(),
             method: Box::new(IpcMethod::ReadInbox(request)),

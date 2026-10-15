@@ -71,6 +71,7 @@ use super::{
 };
 use crate::agent_status::AgentStatusPublicationHandle;
 
+mod every_room;
 mod inbox_ack;
 mod room_membership;
 mod viewing;
@@ -611,6 +612,9 @@ impl AgentRuntimeIpcFacade {
         oldest_first: bool,
         waiting: bool,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+        if request.every_room {
+            return self.read_every_room(request, oldest_first, waiting).await;
+        }
         let runtime = self.runtime_snapshot()?;
         let keep_waiting = request.keep_waiting;
         let (room_id, _) = runtime.message_room(request.room_id).await?;
@@ -619,44 +623,34 @@ impl AgentRuntimeIpcFacade {
             .map(MatrixEventId::new)
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
-        let mut after = request
+        let after = request
             .after_event_id
             .map(MatrixEventId::new)
             .transpose()
             .map_err(|_| invalid_request("bridge.ipc.event_id_invalid"))?;
-        // 没给位置就从这个房间的确认位置之后开始；没确认过就从最早一条开始。
-        if after.is_none() && request.from_ack && oldest_first {
-            after = self
-                .previews
-                .inbox_position(&room_id)
-                .await
-                .map_err(map_preview_query_failure)?;
-        }
-        let query = match after {
-            Some(after) => MessagePreviewQuery::after(room_id.clone(), after, request.limit),
-            None if oldest_first => MessagePreviewQuery::from_start(room_id.clone(), request.limit),
-            None => MessagePreviewQuery::new(room_id.clone(), cursor, request.limit),
-        }
-        .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))?;
-        let block = waiting
-            .then_some(request.wait_ms)
-            .flatten()
-            .map(|wait| Duration::from_millis(u64::from(wait)));
-        let status = runtime
-            .status
-            .as_ref()
-            .filter(|_| self.consumer == AgentRuntimeConsumer::HostSession);
+        let query = self
+            .preview_query(
+                &room_id,
+                after,
+                cursor,
+                request.from_ack,
+                oldest_first,
+                request.limit,
+            )
+            .await?;
         // 等消息时打字的人变了也马上返回，客户端好重新判断要不要再等等。
         let typing = runtime.typing.as_ref().filter(|_| waiting);
         let page = self
-            .page_when_ready(
-                &query,
-                block,
-                status,
+            .pages_when_ready(
+                std::slice::from_ref(&query),
+                &runtime,
+                waiting.then_some(request.wait_ms).flatten(),
                 &room_id,
-                typing.map(|typing| typing.subscribe()),
+                typing,
             )
-            .await?;
+            .await?
+            .pop()
+            .ok_or_else(|| internal_failure("bridge.preview_page_missing"))?;
         let replied = self.replied_messages(&room_id, page.previews()).await;
         // 房间名和加入时间读不出来只是少了这两项。
         let context = self
@@ -689,48 +683,94 @@ impl AgentRuntimeIpcFacade {
             typing.map_or_else(Vec::new, |typing| typing.now(room_id.as_str())),
             gaps,
         )?;
-        // The desktop reads the same projection, but only the host can attest to receiving it.
+        // 读到了消息就算不在等了，除非客户端按规则先不交、接着等。
+        self.note_host_wait(
+            &runtime,
+            &room_id,
+            waiting && (keep_waiting || page.previews().is_empty()),
+        )
+        .await;
+        Ok(response)
+    }
+
+    /// 一个房间从哪里读：给了位置从它之后；没给、要从确认位置接着读时从确认位置之后，没确认过就
+    /// 从最早一条开始；从新到旧的从 `before` 之前，没给就从最新一条。
+    async fn preview_query(
+        &self,
+        room_id: &MatrixRoomId,
+        mut after: Option<MatrixEventId>,
+        before: Option<MatrixEventId>,
+        from_ack: bool,
+        oldest_first: bool,
+        limit: u16,
+    ) -> Result<MessagePreviewQuery, BridgeIpcDispatchFailure> {
+        if after.is_none() && from_ack && oldest_first {
+            after = self
+                .previews
+                .inbox_position(room_id)
+                .await
+                .map_err(map_preview_query_failure)?;
+        }
+        match after {
+            Some(after) => MessagePreviewQuery::after(room_id.clone(), after, limit),
+            None if oldest_first => MessagePreviewQuery::from_start(room_id.clone(), limit),
+            None => MessagePreviewQuery::new(room_id.clone(), before, limit),
+        }
+        .map_err(|_| invalid_request("bridge.ipc.preview_limit_invalid"))
+    }
+
+    /// 告诉在线状态这次是不是在等。桌面端读的是同一份投影，但只有宿主收到了才算。
+    async fn note_host_wait(
+        &self,
+        runtime: &BridgeAgentRuntimeSnapshot,
+        room_id: &MatrixRoomId,
+        waiting: bool,
+    ) {
         if self.consumer == AgentRuntimeConsumer::HostSession
-            && let Some(status) = runtime.status
+            && let Some(status) = &runtime.status
             && let Err(failure) = status
-                .note_inbox_wait(
-                    &room_id,
-                    self.clock.now(),
-                    // 读到了消息就算不在等了，除非客户端按规则先不交、接着等。
-                    waiting && (keep_waiting || page.previews().is_empty()),
-                )
+                .note_inbox_wait(room_id, self.clock.now(), waiting)
                 .await
         {
             tracing::warn!(kind = ?failure.kind(), "could not publish host inbox activity");
         }
-        Ok(response)
     }
 
-    /// 等消息的客户端说了最多挂多久：没有新消息就在这里等，每 250 毫秒看一眼本地消息库，来了
-    /// 立刻交，到点空手返回。省得客户端每秒新开一条连接来问。挂着的时候照样算在等。
-    /// 打字的人变了也空手返回，客户端好重新判断。
-    async fn page_when_ready(
+    /// 等消息的客户端说了最多挂多久（毫秒）：几个房间都没有新消息就在这里等，每 250 毫秒看一眼
+    /// 本地消息库，哪个房间来了立刻交，到点空手返回。省得客户端每秒新开一条连接来问。挂着的
+    /// 时候照样算在等（记在 `room_id`）。打字的人变了也空手返回，客户端好重新判断。
+    async fn pages_when_ready(
         &self,
-        query: &MessagePreviewQuery,
-        block: Option<Duration>,
-        status: Option<&Arc<AgentStatusPublicationHandle>>,
+        queries: &[MessagePreviewQuery],
+        runtime: &BridgeAgentRuntimeSnapshot,
+        wait_ms: Option<u32>,
         room_id: &MatrixRoomId,
-        mut typing: Option<tokio::sync::watch::Receiver<u64>>,
-    ) -> Result<MessagePreviewPage, BridgeIpcDispatchFailure> {
-        let deadline = block.map(|wait| tokio::time::Instant::now() + wait);
+        typing: Option<&Arc<crate::typing::TypingWatch>>,
+    ) -> Result<Vec<MessagePreviewPage>, BridgeIpcDispatchFailure> {
+        let deadline = wait_ms
+            .map(|wait| tokio::time::Instant::now() + Duration::from_millis(u64::from(wait)));
+        let status = runtime
+            .status
+            .as_ref()
+            .filter(|_| self.consumer == AgentRuntimeConsumer::HostSession);
+        let mut typing = typing.map(|typing| typing.subscribe());
         let mut noted: Option<tokio::time::Instant> = None;
         loop {
-            let page = self
-                .previews
-                .list_previews(query)
-                .await
-                .map_err(map_preview_query_failure)?;
+            let mut pages = Vec::with_capacity(queries.len());
+            for query in queries {
+                pages.push(
+                    self.previews
+                        .list_previews(query)
+                        .await
+                        .map_err(map_preview_query_failure)?,
+                );
+            }
             let now = tokio::time::Instant::now();
             let Some(deadline) = deadline.filter(|deadline| now < *deadline) else {
-                return Ok(page);
+                return Ok(pages);
             };
-            if !page.previews().is_empty() {
-                return Ok(page);
+            if pages.iter().any(|page| !page.previews().is_empty()) {
+                return Ok(pages);
             }
             // 挂着等的时候每几秒报一次“还在等”，免得看门狗以为等的进程走了。
             if let Some(status) = status
@@ -751,7 +791,7 @@ impl AgentRuntimeIpcFacade {
                         () = next_look => {}
                         changed = typing.changed() => {
                             if changed.is_ok() {
-                                return Ok(page);
+                                return Ok(pages);
                             }
                         }
                     }
