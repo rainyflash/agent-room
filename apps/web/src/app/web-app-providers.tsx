@@ -172,6 +172,8 @@ export function createCloudRuntime(
     new ControlPlaneNetworkAgentLookup(businessApi),
   );
   // 房间里的 Agent 是谁的（specs/room-people）：名字按登录的人能看的给，退出登录时清空。
+  // 同一个客户端也管邀请链接（specs/room-people）。
+  const privateRooms = new ControlPlanePrivateRoomClient(businessApi);
   const agentOwners = new AgentOwnerStore(new ControlPlaneAgentOwnerLookup(businessApi));
   const lobbyEntry = new PublicLobbyEntryCoordinator(
     new ControlPlanePublicLobbyEntryClient(businessApi),
@@ -224,7 +226,8 @@ export function createCloudRuntime(
     messageTranslation: new BrowserMachineTranslationGateway(),
     moderation: new ControlPlaneModerationClient(businessApi),
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
-    privateRooms: new ControlPlanePrivateRoomClient(businessApi),
+    privateRooms,
+    privateRoomInvites: privateRooms,
     // 不登录也能看：不放进登录范围，没登录的人打开别的页面时清理登录状态也不会中止它。
     publicWatch: new ControlPlanePublicWatchClient({
       baseUrl: config.controlPlaneUrl,

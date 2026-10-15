@@ -1142,6 +1142,55 @@
   margin-top: 0.5rem;
 }
 
+.private-room-invite-note {
+  margin: 0.5rem 0 0;
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+}
+
+/* “邀请人”对话框（specs/room-people）：上面是链接，下面两个折叠是链接给的权限和按账户 ID 邀请。 */
+.private-room-invite-link {
+  display: grid;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+}
+
+.private-room-invite-link__note,
+.private-room-invite-link__hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.private-room-invite-link__hint {
+  font-size: 0.8125rem;
+}
+
+.private-room-invite-link > .ar-button {
+  justify-self: start;
+}
+
+.private-room-invite-link__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.private-room-invite-link .ar-details .ar-button {
+  margin-top: 0.5rem;
+}
+
+.private-room-invite-dialog .private-room-invite {
+  padding: 0.25rem 0 0;
+  border-bottom: 0;
+}
+
 .private-room-members {
   padding: 1.25rem 0;
 }

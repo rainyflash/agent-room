@@ -15,7 +15,7 @@ export function isPrivateRoomPrincipalId(value: string): boolean {
   return uuidV7Schema.safeParse(value.trim()).success;
 }
 
-const permissionsSchema = z
+export const privateRoomPermissionsSchema = z
   .object({
     capabilities: z.array(z.enum(privateRoomCapabilities)).max(privateRoomCapabilities.length),
   })
@@ -26,7 +26,7 @@ const permissionsSchema = z
 
 const memberSchema = z
   .object({
-    permissions: permissionsSchema,
+    permissions: privateRoomPermissionsSchema,
     principalId: privateRoomPrincipalIdSchema,
     status: z.enum(['invited', 'joined', 'declined', 'removed', 'banned']),
   })
@@ -131,7 +131,7 @@ export type PrivateRoomAgentMember = z.infer<typeof agentMemberSchema>;
 export type PrivateRoomAgentKnock = z.infer<typeof agentKnockSchema>;
 export type JoinCode = z.infer<typeof joinCodeSchema>;
 export type PrivateRoomMember = z.infer<typeof memberSchema>;
-export type PrivateRoomPermissions = z.infer<typeof permissionsSchema>;
+export type PrivateRoomPermissions = z.infer<typeof privateRoomPermissionsSchema>;
 
 export type PrivateRoomFailure = {
   readonly code: string;

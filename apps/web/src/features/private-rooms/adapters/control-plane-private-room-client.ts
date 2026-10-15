@@ -23,6 +23,15 @@ import {
   type PrivateRoomPerson,
   type TransferPrivateRoomOwnershipInput,
 } from '@/features/private-rooms/domain/private-room';
+import {
+  privateRoomInviteLinkSchema,
+  privateRoomInvitePreviewSchema,
+  redeemedPrivateRoomInviteSchema,
+  type PrivateRoomInviteGateway,
+  type PrivateRoomInviteLink,
+  type PrivateRoomInvitePreview,
+  type RedeemedPrivateRoomInvite,
+} from '@/features/private-rooms/domain/private-room-invite-link';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -41,7 +50,7 @@ export type ControlPlanePrivateRoomClientOptions = {
   readonly timeoutMs?: number;
 };
 
-export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
+export class ControlPlanePrivateRoomClient implements PrivateRoomGateway, PrivateRoomInviteGateway {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
   readonly #timeoutMs: number;
@@ -230,10 +239,57 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     return this.#send(`${this.#agentAccessPath(catalogId)}/code`, { method: 'DELETE' });
   }
 
+  inviteLink(catalogId: string): Promise<Result<PrivateRoomInviteLink, PrivateRoomFailure>> {
+    return this.#request(
+      this.#inviteLinkPath(catalogId),
+      { method: 'GET' },
+      privateRoomInviteLinkSchema,
+    );
+  }
+
+  createInviteLink(
+    catalogId: string,
+    permissions?: PrivateRoomPermissions,
+  ): Promise<Result<PrivateRoomInviteLink, PrivateRoomFailure>> {
+    return this.#request(
+      this.#inviteLinkPath(catalogId),
+      {
+        body: JSON.stringify(permissions === undefined ? {} : { permissions }),
+        method: 'POST',
+      },
+      privateRoomInviteLinkSchema,
+    );
+  }
+
+  disableInviteLink(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#send(this.#inviteLinkPath(catalogId), { method: 'DELETE' });
+  }
+
+  // 秘密放在请求正文里，不进地址：地址会进服务器和代理的日志。
+  previewInvite(secret: string): Promise<Result<PrivateRoomInvitePreview, PrivateRoomFailure>> {
+    return this.#request(
+      '/private-room-invites/preview',
+      { body: JSON.stringify({ secret }), method: 'POST' },
+      privateRoomInvitePreviewSchema,
+    );
+  }
+
+  redeemInvite(secret: string): Promise<Result<RedeemedPrivateRoomInvite, PrivateRoomFailure>> {
+    return this.#request(
+      '/private-room-invites/redeem',
+      { body: JSON.stringify({ secret }), method: 'POST' },
+      redeemedPrivateRoomInviteSchema,
+    );
+  }
+
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
     return this.#send(`${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`, {
       method: 'DELETE',
     });
+  }
+
+  #inviteLinkPath(catalogId: string): string {
+    return `/private-rooms/${encodeURIComponent(catalogId)}/invite-link`;
   }
 
   #agentAccessPath(catalogId: string): string {

@@ -1,4 +1,4 @@
-import { Dialog, Segmented } from '@agent-room/ui-system';
+import { Banner, Dialog, Segmented } from '@agent-room/ui-system';
 import { Bot, Globe, Plug, SquareTerminal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -37,6 +37,11 @@ export type AgentInviteDialogProps = {
   readonly downloadUrl: string | null;
   /** 房间里已经在场的 Agent：之后新出现的算作刚进来的。 */
   readonly presentAgents?: readonly PresentAgent[];
+  /**
+   * 你在这个私人房间没有“自动发言”：带进来的 Agent 进得来、说不了话，打开时就说
+   * （`specs/room-people/design.md`）。缺省是能说话。
+   */
+  readonly agentsCanSpeak?: boolean;
   readonly onClose: () => void;
   readonly onStartConversation?: (() => void) | undefined;
   readonly onConnected?: ((invitation: ConnectedInvitation) => void) | undefined;
@@ -82,6 +87,7 @@ function localStorageOrNull(): Storage | null {
  * Agent 应用区分；Agent 自己起名，同一个任务再接入会回到同一个人物，所以这里不再管人物和名字。
  */
 export function AgentInviteDialog({
+  agentsCanSpeak = true,
   room,
   owner = null,
   downloadUrl,
@@ -105,6 +111,7 @@ export function AgentInviteDialog({
       title={t('agentInvite.title')}
     >
       <InviteBody
+        agentsCanSpeak={agentsCanSpeak}
         downloadUrl={downloadUrl}
         onClose={onClose}
         onConnected={onConnected}
@@ -118,6 +125,7 @@ export function AgentInviteDialog({
 }
 
 function InviteBody({
+  agentsCanSpeak,
   room,
   owner: ownerProp,
   downloadUrl,
@@ -179,6 +187,11 @@ function InviteBody({
         value={method}
       />
       <p className="agent-invite__lead">{t(`agentInvite.method.${method}Hint`)}</p>
+      {agentsCanSpeak ? null : (
+        <Banner role={null} tone="info">
+          {t('agentInvite.cannotSpeak')}
+        </Banner>
+      )}
       {method === 'network' ? (
         <NetworkAgentInvite onCopied={copied} room={room} />
       ) : (

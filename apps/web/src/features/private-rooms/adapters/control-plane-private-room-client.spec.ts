@@ -386,3 +386,103 @@ describe('ControlPlanePrivateRoomClient', () => {
     });
   });
 });
+
+describe('ControlPlanePrivateRoomClient 的邀请链接', () => {
+  const SECRET = '0123456789abcdefghjkmnpqrs';
+  const LINK = {
+    createdAtUnixMs: 1_780_000_000_000,
+    expiresAtUnixMs: 1_780_604_800_000,
+    permissions: { capabilities: ['view', 'speak', 'automate'] },
+    secret: SECRET,
+    url: `https://agentroom.chat/join#${SECRET}`,
+  };
+
+  it('生成时带上权限，不带就让服务器给默认的；再看、停用走同一个地址', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(() => Promise.resolve(Response.json(LINK, { status: 201 })));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+    const path = new URL(
+      `https://control.agent-room.test/private-rooms/${ROOM.catalogId}/invite-link`,
+    );
+
+    expect((await client.createInviteLink(ROOM.catalogId)).ok).toBe(true);
+    expect(fetch).toHaveBeenLastCalledWith(
+      path,
+      expect.objectContaining({ body: '{}', method: 'POST' }),
+    );
+    await client.createInviteLink(ROOM.catalogId, { capabilities: ['view', 'speak'] });
+    expect(fetch).toHaveBeenLastCalledWith(
+      path,
+      expect.objectContaining({
+        body: JSON.stringify({ permissions: { capabilities: ['view', 'speak'] } }),
+      }),
+    );
+    expect(await client.inviteLink(ROOM.catalogId)).toEqual({ ok: true, value: LINK });
+    expect(fetch).toHaveBeenLastCalledWith(path, expect.objectContaining({ method: 'GET' }));
+    fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    expect(await client.disableInviteLink(ROOM.catalogId)).toEqual({ ok: true, value: undefined });
+    expect(fetch).toHaveBeenLastCalledWith(path, expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it('打开、兑换链接时秘密只放在正文里，不进地址', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          catalogId: ROOM.catalogId,
+          expiresAtUnixMs: LINK.expiresAtUnixMs,
+          inviterDisplayName: 'Ada',
+          membership: 'absent',
+          permissions: LINK.permissions,
+          roomName: 'Architecture room',
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ catalogId: ROOM.catalogId, membership: 'invited' }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    const preview = await client.previewInvite(SECRET);
+    const redeemed = await client.redeemInvite(SECRET);
+
+    expect(preview.ok && preview.value.inviterDisplayName).toBe('Ada');
+    expect(redeemed).toEqual({
+      ok: true,
+      value: { catalogId: ROOM.catalogId, membership: 'invited' },
+    });
+    for (const [url, init] of fetch.mock.calls) {
+      expect(href(url)).not.toContain(SECRET);
+      expect(init?.body).toBe(JSON.stringify({ secret: SECRET }));
+    }
+    expect(fetch.mock.calls.map(([url]) => href(url))).toEqual([
+      'https://control.agent-room.test/private-room-invites/preview',
+      'https://control.agent-room.test/private-room-invites/redeem',
+    ]);
+  });
+
+  it('链接失效时保留服务器的错误码', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json({ code: 'invite_link.not_found', retryable: false }, { status: 404 }),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.previewInvite(SECRET)).toEqual({
+      error: { code: 'invite_link.not_found', retryable: false },
+      ok: false,
+    });
+  });
+});
+
+function href(target: Parameters<typeof globalThis.fetch>[0]): string {
+  return typeof target === 'string' ? target : target instanceof URL ? target.href : target.url;
+}

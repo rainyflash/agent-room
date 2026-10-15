@@ -9,7 +9,6 @@ import {
   PencilLine,
   UserCheck,
   UserMinus,
-  UserPlus,
   X,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -25,8 +24,6 @@ import {
 import {
   allows,
   grantableBy,
-  intersectPermissions,
-  isPrivateRoomPrincipalId,
   memberFor,
   permissions,
   privateRoomCapabilities,
@@ -36,6 +33,7 @@ import {
   type PrivateRoomMember,
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
+import { PrivateRoomAccountInvite } from '@/features/private-rooms/ui/private-room-account-invite';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { useNetworkAgentIds } from '@/features/lobby/ui/network-agent-labels';
@@ -120,16 +118,12 @@ export function PrivateRoomMembers({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
-  const [invitee, setInvitee] = useState('');
   const currentMember = memberFor(room, principalId);
   const owner = room.ownerPrincipalId === principalId;
   // 和服务器一致：邀请看“邀请”，移出、封禁、改权限看“管理”，两样各管各的。
   const canManage = owner || allows(currentMember, 'manage');
   const canInvite = owner || allows(currentMember, 'invite');
   const grantable = grantableBy(room, principalId);
-  const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(() =>
-    intersectPermissions(permissions('view', 'speak'), grantable),
-  );
   const [transferTarget, setTransferTarget] = useState<string | null>(null);
   const nameOf = useMemberNames(rooms, room, currentMember?.status === 'joined');
   const relayed = useHasNetworkAgents(rooms, room, canManage);
@@ -218,65 +212,7 @@ export function PrivateRoomMembers({
       </div>
 
       {canInvite ? (
-        <form
-          className="private-room-invite"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const targetPrincipalId = invitee.trim();
-            if (!isPrivateRoomPrincipalId(targetPrincipalId)) {
-              return;
-            }
-            run({
-              execute: async () =>
-                await rooms.invite(room.catalogId, {
-                  permissions: invitePermissions,
-                  principalId: targetPrincipalId,
-                }),
-              onSuccess: () => {
-                setInvitee('');
-              },
-            });
-          }}
-        >
-          <div className="private-room-section-heading">
-            <div>
-              <h3>{t('privateRooms.governance.invite.title')}</h3>
-              <p>{t('privateRooms.governance.invite.detail')}</p>
-            </div>
-          </div>
-          <label className="private-room-field">
-            <span>{t('privateRooms.governance.invite.principal')}</span>
-            <input
-              disabled={mutation.isPending}
-              onChange={(event) => {
-                setInvitee(event.target.value);
-              }}
-              placeholder={t('privateRooms.governance.invite.principalPlaceholder')}
-              value={invitee}
-            />
-          </label>
-          <PrivateRoomCapabilityEditor
-            disabled={mutation.isPending}
-            grantable={grantable}
-            legend={t('privateRooms.governance.invite.permissions')}
-            onChange={setInvitePermissions}
-            value={invitePermissions}
-          />
-          {invitee.trim().length > 0 && !isPrivateRoomPrincipalId(invitee.trim()) ? (
-            <p className="private-room-invite-hint" role="status">
-              {t('privateRooms.governance.invite.principalInvalid')}
-            </p>
-          ) : null}
-          <Button
-            disabled={mutation.isPending || !isPrivateRoomPrincipalId(invitee.trim())}
-            icon={<UserPlus aria-hidden="true" />}
-            size="compact"
-            tone="primary"
-            type="submit"
-          >
-            {t('privateRooms.action.invite')}
-          </Button>
-        </form>
+        <PrivateRoomAccountInvite principalId={principalId} room={room} rooms={rooms} />
       ) : null}
 
       <div className="private-room-members">

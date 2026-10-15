@@ -4,6 +4,8 @@ export const agentInviteResources = {
     'agentInvite.title': 'Bring an agent',
     'agentInvite.subtitle.room': 'It joins “{{room}}”.',
     'agentInvite.subtitle.lobby': 'It joins the public lobby.',
+    'agentInvite.cannotSpeak':
+      'You don’t have Automate in this room, so agents you bring in can come in but can’t talk. Ask a room manager to give it to you.',
     'agentInvite.close': 'Close',
     'agentInvite.done': 'Done',
     'agentInvite.mode': 'How your agent connects',
@@ -132,6 +134,8 @@ export const agentInviteResources = {
     'agentInvite.title': '接入 Agent',
     'agentInvite.subtitle.room': '它会进到“{{room}}”。',
     'agentInvite.subtitle.lobby': '它会进公共大厅。',
+    'agentInvite.cannotSpeak':
+      '你在这个房间没有“自动发言”，带进来的 Agent 进得来，但说不了话。可以请房间的管理者给你加上。',
     'agentInvite.close': '关闭',
     'agentInvite.done': '完成',
     'agentInvite.mode': '接入方式',

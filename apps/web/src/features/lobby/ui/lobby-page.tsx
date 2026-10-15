@@ -7,6 +7,7 @@ import {
   MessageCircle,
   MessageSquareOff,
   Minimize2,
+  UserPlus,
   UsersRound,
   X,
 } from 'lucide-react';
@@ -54,6 +55,8 @@ import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { MatrixConnectionCard } from '@/features/session/ui/matrix-connection-card';
 import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
+import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
+import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { WorkspaceNavigation } from '@/features/lobby/ui/workspace-navigation';
@@ -167,7 +170,13 @@ function ReadyLobby({
   view,
 }: LobbyPageProps & { readonly room: LobbyRoom; readonly scene: LobbySceneProjection }) {
   const { t } = useTranslation();
-  const { config, localRuntime, messages: messageGateway, privateRooms } = useAppServices();
+  const {
+    config,
+    localRuntime,
+    messages: messageGateway,
+    privateRoomInvites,
+    privateRooms,
+  } = useAppServices();
   const reception = useReceptionEvidence();
   const { url: downloadUrl } = usePublishedDownload(config);
   const directSessions = useDirectSessionController(principal !== null);
@@ -181,6 +190,7 @@ function ReadyLobby({
       : null,
   );
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [peopleInviteOpen, setPeopleInviteOpen] = useState(false);
   const [invitation, setInvitation] = useState<ConnectedInvitation | null>(null);
   const [panelSize, setPanelSize] = useState<PanelSize>(readPanelSize);
   const owner =
@@ -205,6 +215,17 @@ function ReadyLobby({
     privateRoomList.data.value.some(
       (entry) => entry.catalogId === catalogId && entry.status === 'archived',
     );
+  // 私人房间里你没有“自动发言”时，带进来的 Agent 进得来、说不了话：“接入 Agent”里先说。
+  const agentsCanSpeak = agentsSpeakIn(
+    privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+    catalogId,
+    principal?.principalId ?? null,
+  );
+  const invitable = invitableRoom(
+    privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+    catalogId,
+    privateRoomInvites === undefined ? null : (principal?.principalId ?? null),
+  );
   // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
   const writesAllowed = !archived && room.canSpeak !== false;
   const projection = useMemo(
@@ -447,6 +468,22 @@ function ReadyLobby({
             </span>
           </button>
         )}
+        {invitable === null ? null : (
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={peopleInviteOpen}
+            onClick={() => {
+              setPeopleInviteOpen(true);
+            }}
+          >
+            <UserPlus aria-hidden="true" />
+            <span className="room-toolbelt__label">{t('privateRooms.inviteLink.open')}</span>
+            <span className="room-toolbelt__short" aria-hidden="true">
+              {t('privateRooms.inviteLink.openShort')}
+            </span>
+          </button>
+        )}
       </nav>
       {roomSettings === null || principal === null ? null : (
         <RoomSettingsDialog
@@ -460,8 +497,23 @@ function ReadyLobby({
           roomName={room.name}
         />
       )}
+      {peopleInviteOpen &&
+      invitable !== null &&
+      principal !== null &&
+      privateRoomInvites !== undefined ? (
+        <PrivateRoomInviteDialog
+          invites={privateRoomInvites}
+          onClose={() => {
+            setPeopleInviteOpen(false);
+          }}
+          principalId={principal.principalId}
+          room={invitable}
+          rooms={privateRooms}
+        />
+      ) : null}
       {inviteOpen ? (
         <AgentInviteDialog
+          agentsCanSpeak={agentsCanSpeak}
           onConnected={setInvitation}
           onStartConversation={() => {
             setInviteOpen(false);
@@ -635,4 +687,34 @@ function toDirectAgent(agent: LobbyRoom['agents'][number]): DirectAgent {
     displayName: agent.displayName,
     matrixUserId: agent.matrixUserId,
   });
+}
+
+/**
+ * 能在这个房间里邀请人时是这个私人房间：房主，或者有“邀请”权限的已加入成员；归档了的不行
+ * （`specs/room-people/design.md`）。没有邀请链接服务（测试、夹具）时也没有。
+ */
+function invitableRoom(
+  rooms: readonly PrivateRoom[],
+  catalogId: string,
+  principalId: string | null,
+): PrivateRoom | null {
+  if (principalId === null) return null;
+  const room = rooms.find((entry) => entry.catalogId === catalogId);
+  if (room?.status !== 'active') return null;
+  return room.ownerPrincipalId === principalId || allows(memberFor(room, principalId), 'invite')
+    ? room
+    : null;
+}
+
+/** 你在这个私人房间里带进来的 Agent 能不能说话：房主都能，成员要有“自动发言”。不是私人房间的都能。 */
+function agentsSpeakIn(
+  rooms: readonly PrivateRoom[],
+  catalogId: string,
+  principalId: string | null,
+): boolean {
+  const room = rooms.find((entry) => entry.catalogId === catalogId);
+  if (room === undefined || principalId === null || room.ownerPrincipalId === principalId) {
+    return true;
+  }
+  return allows(memberFor(room, principalId), 'automate');
 }

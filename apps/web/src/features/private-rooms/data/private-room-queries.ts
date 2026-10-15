@@ -1,6 +1,7 @@
 import { queryOptions, useQueries, useQuery } from '@tanstack/react-query';
 
 import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private-room';
+import type { PrivateRoomInviteGateway } from '@/features/private-rooms/domain/private-room-invite-link';
 
 export const privateRoomListQueryKey = ['control-plane', 'private-rooms'] as const;
 
@@ -150,5 +151,22 @@ export function usePrivateRoomAgentKnocks(
     refetchOnWindowFocus: 'always',
     retry: false,
     staleTime: 1_000,
+  });
+}
+
+export const privateRoomInviteLinkQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'invite-link', catalogId] as const;
+
+/**
+ * 这个房间现在的邀请链接（`specs/room-people/design.md`）：没有时回 `invite_link.not_found`，
+ * 看不到时 `invite_link.not_revealable`。生成、停用的地方直接改这份缓存，不用再问一次。
+ */
+export function usePrivateRoomInviteLink(gateway: PrivateRoomInviteGateway, catalogId: string) {
+  return useQuery({
+    queryKey: privateRoomInviteLinkQueryKey(catalogId),
+    queryFn: async () => await gateway.inviteLink(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
   });
 }
