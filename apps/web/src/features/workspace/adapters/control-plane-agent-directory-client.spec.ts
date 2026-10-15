@@ -89,6 +89,74 @@ describe('ControlPlaneAgentDirectoryClient', () => {
   });
 });
 
+describe('Agent 在哪些房间', () => {
+  const CATALOG = '0198b601-77a2-7f41-b4f4-940f291951b8';
+  const ROOM = { archived: false, catalogId: CATALOG, kind: 'private_room', name: 'Weekly review' };
+
+  it('列出它在的房间，按 ID 带进、离开', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ rooms: [ROOM] }))
+      .mockResolvedValueOnce(Response.json({ entered: 1 }))
+      .mockResolvedValueOnce(Response.json({ left: true }));
+    const client = createClient(fetch);
+
+    expect(await client.listAgentRooms(AGENT.agentId)).toEqual({ ok: true, value: [ROOM] });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`https://control.agent-room.test/agents/${AGENT.agentId}/rooms`),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+    expect(await client.bringAgentIntoRoom(AGENT.agentId, CATALOG)).toEqual({ ok: true, value: 1 });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`https://control.agent-room.test/agents/${AGENT.agentId}/rooms`),
+      expect.objectContaining({
+        body: JSON.stringify({ catalogId: CATALOG }),
+        credentials: 'include',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }) as unknown,
+        method: 'POST',
+      }),
+    );
+    expect(await client.leaveAgentRoom(AGENT.agentId, CATALOG)).toEqual({ ok: true, value: true });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`https://control.agent-room.test/agents/${AGENT.agentId}/rooms/${CATALOG}`),
+      expect.objectContaining({ credentials: 'include', method: 'DELETE' }),
+    );
+  });
+
+  it('房间正在准备时带回过多久再试', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json(
+          { code: 'agent_room.busy', retryable: true },
+          { headers: { 'retry-after': '3' }, status: 503 },
+        ),
+      );
+
+    expect(await createClient(fetch).bringAgentIntoRoom(AGENT.agentId, CATALOG)).toEqual({
+      error: { code: 'agent_room.busy', retryAfterSeconds: 3, retryable: true },
+      ok: false,
+    });
+  });
+
+  it('回答多了字段或者房间种类不认得，就当回答损坏', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ rooms: [{ ...ROOM, kind: 'hall' }] }))
+      .mockResolvedValueOnce(Response.json({ entered: 1, extra: true }));
+    const client = createClient(fetch);
+
+    expect(await client.listAgentRooms(AGENT.agentId)).toEqual({
+      error: { code: 'workspace.invalid_agent_rooms', retryable: false },
+      ok: false,
+    });
+    expect(await client.bringAgentIntoRoom(AGENT.agentId, CATALOG)).toEqual({
+      error: { code: 'workspace.invalid_agent_rooms', retryable: false },
+      ok: false,
+    });
+  });
+});
+
 function createClient(fetch: typeof globalThis.fetch) {
   return new ControlPlaneAgentDirectoryClient({
     baseUrl: 'https://control.agent-room.test',

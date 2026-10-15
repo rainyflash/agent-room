@@ -1221,6 +1221,9 @@ const services: AppServices = {
   agentDirectory: {
     listOwnedAgents: () => Promise.resolve(ok([])),
     deleteAgent: () => Promise.resolve(ok(undefined)),
+    listAgentRooms: () => Promise.resolve(ok([])),
+    bringAgentIntoRoom: () => Promise.resolve(ok(0)),
+    leaveAgentRoom: () => Promise.resolve(ok(false)),
   },
   automation,
   config: {

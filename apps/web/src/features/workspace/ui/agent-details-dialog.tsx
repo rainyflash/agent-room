@@ -1,6 +1,6 @@
 import { Banner, Button, Details, Dialog } from '@agent-room/ui-system';
 import { Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
@@ -23,18 +23,22 @@ export type AgentDeletionControl = {
 };
 
 /**
- * 一个 Agent 的详情：它在哪儿运行、每处是否在线，可以删除。ID 这类排查用的信息收在“详情”里。
+ * 一个 Agent 的详情：它在哪儿运行、每处是否在线，在哪些房间，可以删除。ID 这类排查用的信息收在
+ * “详情”里。
  */
 export function AgentDetailsDialog({
   agent,
   deletion,
   now,
   onClose,
+  rooms,
 }: {
   readonly agent: FleetAgent;
   readonly deletion?: AgentDeletionControl | undefined;
   readonly now: number;
   readonly onClose: () => void;
+  /** “在哪些房间”那一节。 */
+  readonly rooms?: ReactNode;
 }) {
   const { i18n, t } = useTranslation();
   const language = i18n.resolvedLanguage;
@@ -78,6 +82,7 @@ export function AgentDetailsDialog({
           </ul>
         )}
       </section>
+      {rooms}
       {deletion?.canDelete(agent) ? (
         <AgentDeletion agent={agent} deletion={deletion} key={agent.agent.agentId} />
       ) : null}

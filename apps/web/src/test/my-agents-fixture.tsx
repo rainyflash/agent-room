@@ -25,6 +25,8 @@ import { bridgePhaseSchema } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
 import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
+import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
+import type { AgentRoom } from '@/features/workspace/domain/agent-directory';
 import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
 import { SettingsLayout, SettingsSectionContent } from '@/features/settings/ui/settings-page';
 import { isSettingsSection } from '@/features/settings/ui/settings-sections';
@@ -186,6 +188,53 @@ const fixtureInstances: readonly AgentInstance[] = [
     status: 'online',
   },
 ];
+// 夹具 Agent 在两个房间里（公共大厅和一个私人房间），“带进房间”还能选两个私人房间和一个公共大厅；
+// 其中 Board notes 里你没有“自动发言”，带进去只能看。?bring=none 时带进去回 0 个连接。
+const privateRoom = (
+  catalogId: string,
+  name: string,
+  capabilities: PrivateRoom['members'][number]['permissions']['capabilities'],
+): PrivateRoom => ({
+  catalogId,
+  description: '',
+  matrixRoomId: `!${name.replace(/\s/gu, '-').toLowerCase()}:matrix.test`,
+  members: [
+    { permissions: { capabilities }, principalId: principal.principalId, status: 'joined' },
+  ],
+  name,
+  ownerPrincipalId: principal.principalId,
+  retentionDays: null,
+  roomInstanceId: catalogId,
+  status: 'active',
+  version: 1,
+});
+const fixturePrivateRooms: readonly PrivateRoom[] = [
+  privateRoom('0198b601-77a7-7bb8-83eb-a8fe68c97e60', 'Weekly review', [
+    'view',
+    'speak',
+    'invite',
+    'manage',
+    'automate',
+  ]),
+  privateRoom('0198b601-77a7-7bb8-83eb-a8fe68c97e61', 'Design crit', ['view', 'speak', 'automate']),
+  privateRoom('0198b601-77a7-7bb8-83eb-a8fe68c97e62', 'Board notes', ['view', 'speak']),
+];
+const nightMarket = {
+  ...lobby,
+  catalogId: '0198b601-77a7-7bb8-83eb-a8fe68c97e63',
+  name: 'Night Market',
+  slug: 'night-market',
+};
+let agentRooms: AgentRoom[] = [
+  { archived: false, catalogId: lobby.catalogId, kind: 'public_lobby', name: lobby.name },
+  {
+    archived: false,
+    catalogId: '0198b601-77a7-7bb8-83eb-a8fe68c97e60',
+    kind: 'private_room',
+    name: 'Weekly review',
+  },
+];
+const bringNothing = new URLSearchParams(location.search).get('bring') === 'none';
 // ?agents=none 模拟还没有 Agent 的新账户。
 const fixtureAgents = new URLSearchParams(location.search).get('agents') === 'none' ? [] : [agent];
 // ?update=current|failed|expired|translocated|none 看更新的几种情况：已是最新、没查成、
@@ -414,7 +463,30 @@ async function bootstrapFixture() {
     agentDirectory: {
       listOwnedAgents: () => ready(fixtureAgents),
       deleteAgent: unavailable,
+      listAgentRooms: () => ready([...agentRooms]),
+      bringAgentIntoRoom: (_agentId: string, catalogId: string) => {
+        if (bringNothing) return ready(0);
+        const known = [
+          ...fixturePrivateRooms.map((room) => ({ ...room, kind: 'private_room' as const })),
+          { ...nightMarket, kind: 'public_lobby' as const },
+          { ...lobby, kind: 'public_lobby' as const },
+        ].find((room) => room.catalogId === catalogId);
+        if (known !== undefined && !agentRooms.some((room) => room.catalogId === catalogId)) {
+          agentRooms = [
+            ...agentRooms,
+            { archived: false, catalogId, kind: known.kind, name: known.name },
+          ];
+        }
+        return ready(1);
+      },
+      leaveAgentRoom: (_agentId: string, catalogId: string) => {
+        const before = agentRooms.length;
+        agentRooms = agentRooms.filter((room) => room.catalogId !== catalogId);
+        return ready(agentRooms.length < before);
+      },
     },
+    privateRooms: { ...runtime.services.privateRooms, list: () => ready(fixturePrivateRooms) },
+    roomDirectory: { list: () => ready([lobby, nightMarket]) },
     accessManagement: {
       listProductDevices: () => ready(fixtureDevices),
       listAgentInstances: () => ready(fixtureAgents.length === 0 ? [] : fixtureInstances),

@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { AppNavigation } from '@/shared/ui/app-navigation';
-import type { AgentFleet } from '@/features/workspace/domain/agent-fleet';
+import type { AgentFleet, FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import type { WorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AgentCardList } from '@/features/workspace/ui/agent-card-list';
 import {
@@ -32,6 +32,10 @@ export type AccountWorkspaceViewProps = {
   /** 在别的电脑上开着的后台回复。 */
   readonly reception?: ReactNode;
   readonly agentDeletion?: AgentDeletionControl;
+  /** 每个 Agent 在几个房间，卡片上写；没问到的不写。 */
+  readonly roomCounts?: ReadonlyMap<string, number>;
+  /** 详情里“在哪些房间”那一节。 */
+  readonly agentRooms?: (agent: FleetAgent) => ReactNode;
 };
 
 /**
@@ -52,6 +56,8 @@ export function AccountWorkspaceView({
   thisComputer,
   reception,
   agentDeletion,
+  roomCounts,
+  agentRooms,
 }: AccountWorkspaceViewProps) {
   const { t } = useTranslation();
   const [now] = useState(() => Date.now());
@@ -130,7 +136,12 @@ export function AccountWorkspaceView({
             </Button>
           </div>
         ) : (
-          <AgentCardList agents={fleet.agents} now={now} onOpen={onSelectAgent} />
+          <AgentCardList
+            agents={fleet.agents}
+            now={now}
+            onOpen={onSelectAgent}
+            roomCounts={roomCounts}
+          />
         )}
       </section>
 
@@ -154,6 +165,7 @@ export function AccountWorkspaceView({
           onClose={() => {
             onSelectAgent(null);
           }}
+          rooms={agentRooms?.(selected)}
         />
       )}
     </main>

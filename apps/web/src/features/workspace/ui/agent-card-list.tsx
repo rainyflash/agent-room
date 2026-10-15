@@ -12,15 +12,17 @@ import {
 import type { FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { formatRelativeTime } from '@/features/workspace/ui/workspace-format';
 
-/** 每个 Agent 一张卡：头像、名字、在不在线、在哪儿运行。点开看详情。 */
+/** 每个 Agent 一张卡：头像、名字、在不在线、在哪儿运行、在几个房间。点开看详情。 */
 export function AgentCardList({
   agents,
   now,
   onOpen,
+  roomCounts,
 }: {
   readonly agents: readonly FleetAgent[];
   readonly now: number;
   readonly onOpen: (agentId: string) => void;
+  readonly roomCounts?: ReadonlyMap<string, number> | undefined;
 }) {
   const { i18n, t } = useTranslation();
   return (
@@ -28,6 +30,7 @@ export function AgentCardList({
       {agents.map((entry) => {
         const activity = agentActivity(entry);
         const place = agentPlace(entry);
+        const rooms = roomCounts?.get(entry.agent.agentId);
         return (
           <li key={entry.agent.agentId}>
             <button
@@ -49,6 +52,13 @@ export function AgentCardList({
                 </span>
                 {place.kind === 'none' ? null : (
                   <span className="agent-card__place">{placeText(t, place)}</span>
+                )}
+                {rooms === undefined ? null : (
+                  <span className="agent-card__place">
+                    {rooms === 0
+                      ? t('workspace.rooms.countNone')
+                      : t('workspace.rooms.count', { count: rooms })}
+                  </span>
                 )}
               </span>
               <ChevronRight aria-hidden="true" className="agent-card__chevron" />
