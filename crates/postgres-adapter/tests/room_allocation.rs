@@ -339,7 +339,8 @@ async fn 人_围观和新来的_agent_都去_agent_最多的分片_分片按开�
             fixture.agent_instances[0],
             fixture.catalog_id,
             RoomAllocationMode::Automatic,
-            0,
+            // 同时跑的“到期回收”在 60 秒那一刻扫全库：这一条晚一秒到期，扫不到它。
+            1_000,
         ),
     )
     .await
@@ -352,6 +353,16 @@ async fn 人_围观和新来的_agent_都去_agent_最多的分片_分片按开�
         ids[1],
         "新来的 Agent 先填满热闹的分片"
     );
+    // 用完确认掉，别留下没确认的预约给后面的测试。
+    RoomAllocationStore::transition(
+        &repositories,
+        reservation.id(),
+        RoomReservationState::Reserved,
+        RoomReservationState::Committed,
+        test_time(1_100),
+    )
+    .await
+    .expect("确认预约");
 
     // 一样多时挑老的。
     set_allocated_slots(&database.runtime, &ids, [10, 10, 5]).await;
