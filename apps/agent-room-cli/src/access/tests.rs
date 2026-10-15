@@ -28,6 +28,9 @@ struct Bridge {
     /// 收到的确认，和 Bridge 记下的确认位置（只往前走）。
     acks: Mutex<Vec<String>>,
     ack_position: Mutex<Option<String>>,
+    /// 开好会话以后又进的房间、离开的房间（目录 ID）。
+    entered: Mutex<Vec<IpcHostRoomTarget>>,
+    left: Mutex<Vec<String>>,
 }
 impl Bridge {
     fn new() -> Self {
@@ -61,6 +64,34 @@ impl Bridge {
             read_cursors: Mutex::new(vec![]),
             acks: Mutex::new(Vec::new()),
             ack_position: Mutex::new(None),
+            entered: Mutex::new(Vec::new()),
+            left: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// 和 Bridge 一样：进别的房间，回答进的是哪一间；离开回答离没离开。
+    fn membership(&self, method: IpcMethod) -> std::result::Result<IpcResponse, BridgeToolFailure> {
+        match method {
+            IpcMethod::EnterRoom(request) => {
+                let room = agent_room_bridge_ipc::IpcSessionRoom {
+                    catalog_id: request.room.catalog_id.clone(),
+                    room_id: request
+                        .room
+                        .room_id
+                        .clone()
+                        .unwrap_or_else(|| "!entered:test.invalid".into()),
+                };
+                self.entered.lock().unwrap().push(request.room);
+                Ok(IpcResponse::RoomEntered { room })
+            }
+            IpcMethod::LeaveRoom(request) => {
+                self.left.lock().unwrap().push(request.catalog_id.clone());
+                Ok(IpcResponse::RoomLeft {
+                    catalog_id: request.catalog_id,
+                    left: true,
+                })
+            }
+            _ => Err(refusal("test.unexpected_call")),
         }
     }
 }
@@ -148,6 +179,7 @@ impl BridgeToolClient for Bridge {
                     summary: self.summary.lock().unwrap().clone(),
                 })
             }
+            IpcMethod::WithSession { method, .. } => self.membership(*method),
             _ => Err(BridgeToolFailure::new(
                 "test.unexpected_call",
                 agent_room_bridge_ipc::IpcErrorCategory::Internal,
@@ -326,19 +358,31 @@ async fn 按房间名接入会合成邀请_同一档案重跑复用身份_默认
         assert_eq!(opened[0], opened[1]);
         assert_eq!(opened[0].session_key, key);
     }
-    // 同一档案换房间不能悄悄换掉身份。
+    // 同一档案进别的房间：还是这个 Agent，会话照旧开在原来的房间，开好以后再进。
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(key.clone()),
+        join(Some("Lobby"), None),
+    )
+    .await
+    .unwrap();
+    {
+        let opened = bridge.opened.lock().unwrap();
+        assert_eq!(opened.len(), 3);
+        assert_eq!(opened[2], opened[0]);
+        let entered = bridge.entered.lock().unwrap();
+        assert_eq!(entered.len(), 1);
+        assert_ne!(entered[0].catalog_id, catalog);
+    }
+    let profiles = saved_profiles(directory.path());
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].rooms.len(), 1);
+    assert_eq!(profiles[0].rooms[0].name.as_deref(), Some("Lobby"));
     assert_eq!(
-        run(
-            &bridge,
-            directory.path(),
-            "test",
-            Some(key.clone()),
-            join(Some("Lobby"), None),
-        )
-        .await
-        .unwrap_err()
-        .code,
-        "cli.profile.invitation_mismatch"
+        profiles[0].current_room.as_deref(),
+        Some("!entered:test.invalid")
     );
     // 没有等待中的邀请、这个任务也没用过人物时，不指定房间就让 Bridge 选默认公开大厅。
     let fresh = tempfile::tempdir().unwrap();
@@ -346,9 +390,103 @@ async fn 按房间名接入会合成邀请_同一档案重跑复用身份_默认
         .await
         .unwrap();
     let opened = bridge.opened.lock().unwrap();
-    assert_eq!(opened.len(), 3);
-    assert!(opened[2].room.is_none());
-    assert!(!opened[2].display_name.is_empty());
+    assert_eq!(opened.len(), 4);
+    assert!(opened[3].room.is_none());
+    assert!(!opened[3].display_name.is_empty());
+}
+
+#[tokio::test]
+async fn 进了别的房间说话默认是它_离开它以后回到第一个房间_第一个房间离不开() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    let weekly = IpcRoomSummary {
+        matrix_room_id: Some("!weekly:test.invalid".into()),
+        ..room(IpcRoomKind::PrivateRoom, "周报", None)
+    };
+    bridge.rooms.lock().unwrap().extend([
+        room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev")),
+        weekly.clone(),
+    ]);
+    let root = directory.path();
+    run(
+        &bridge,
+        root,
+        "test",
+        None,
+        join(Some("game dev"), Some("Scout")),
+    )
+    .await
+    .unwrap();
+    let key = saved_profiles(root)[0].invitation.session_key.clone();
+    run(
+        &bridge,
+        root,
+        "test",
+        Some(key.clone()),
+        join(Some("周报"), None),
+    )
+    .await
+    .unwrap();
+    let mut saved = load(root, &key);
+    assert_eq!(saved.room_name.as_deref(), Some("game dev"));
+    assert_eq!(saved.current_room.as_deref(), Some("!weekly:test.invalid"));
+
+    // 说话、看前后不给 --room 就是最近进的房间；也能按名字说第一个房间。
+    let mut send = <crate::cli::Cli as clap::Parser>::try_parse_from([
+        "agent-room",
+        "send",
+        "--text",
+        "hi",
+        "--submission-id",
+        "x",
+        "--authorized",
+    ])
+    .unwrap()
+    .command;
+    apply_context(&mut send, &saved).unwrap();
+    let Command::Send(args) = send else {
+        panic!("是发消息");
+    };
+    assert_eq!(args.room.as_deref(), Some("!weekly:test.invalid"));
+    let mut asked = Some("GAME DEV".to_owned());
+    let mut session = None;
+    set_scope(&mut session, Some(&mut asked), RoomScope::Current, &saved).unwrap();
+    assert_eq!(asked.as_deref(), Some("!room:test.invalid"));
+    asked = None;
+    set_scope(&mut session, Some(&mut asked), RoomScope::Every, &saved).unwrap();
+    assert_eq!(asked, None, "等消息不给房间就是所有房间");
+
+    // 第一个房间离不开；离开周报以后回到第一个房间。
+    let leave = |room: &str| Command::Leave {
+        room: Some(room.to_owned()),
+    };
+    assert_eq!(
+        run(&bridge, root, "test", Some(key.clone()), leave("game dev"))
+            .await
+            .unwrap_err()
+            .code,
+        "cli.leave_session_room"
+    );
+    run(
+        &bridge,
+        root,
+        "test",
+        Some(key.clone()),
+        leave("!weekly:test.invalid"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        bridge.left.lock().unwrap().as_slice(),
+        std::slice::from_ref(&weekly.catalog_id)
+    );
+    saved = load(root, &key);
+    assert!(saved.rooms.is_empty());
+    assert_eq!(saved.current_room, None);
+    assert_eq!(
+        saved.current().room_id.as_deref(),
+        Some("!room:test.invalid")
+    );
 }
 
 #[tokio::test]
@@ -514,7 +652,7 @@ async fn 只说接入时接上桌面面板正在等的人物_用掉后不再重�
     let waiting = IpcInvitationOffer {
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: Some("面板里起的名字".into()),
-        room: Some(agent_room_bridge_ipc::IpcHostRoomTarget {
+        room: Some(IpcHostRoomTarget {
             catalog_id: uuid::Uuid::now_v7().to_string(),
             room_id: Some("!room:test.invalid".into()),
         }),
@@ -639,6 +777,7 @@ fn 只说接入且没有等待中的邀请时回到这个任务最近用过的�
     let target = RoomTarget {
         catalog_id: Some(uuid::Uuid::now_v7().to_string()),
         room_id: Some("!room:test.invalid".into()),
+        name: None,
     };
     let mut profiles = Vec::new();
     for (name, room) in [("Lobby", &RoomTarget::DEFAULT_LOBBY), ("Game", &target)] {
@@ -698,6 +837,7 @@ fn 同一宿主任务为同一房间保存过的身份会被找回() {
     let target = RoomTarget {
         catalog_id: Some(uuid::Uuid::now_v7().to_string()),
         room_id: Some("!room:test.invalid".into()),
+        name: None,
     };
     let task = uuid::Uuid::now_v7().to_string();
     let mut older = Profile::new(
@@ -842,14 +982,27 @@ fn 自动上下文不能覆盖显式的其他会话或房间() {
     saved.room_id = saved.invitation.room_id.clone();
     let mut session = None;
     let mut room = None;
-    set_scope(&mut session, Some(&mut room), &saved).unwrap();
+    set_scope(&mut session, Some(&mut room), RoomScope::Current, &saved).unwrap();
     assert_eq!(session, saved.session_id);
     assert_eq!(room, saved.room_id);
+    // 等消息不给房间就是所有房间。
+    room = None;
+    set_scope(&mut session, Some(&mut room), RoomScope::Every, &saved).unwrap();
+    assert_eq!(room, None);
     session = Some(uuid::Uuid::now_v7().to_string());
-    assert!(set_scope(&mut session, Some(&mut room), &saved).is_err());
+    assert!(set_scope(&mut session, Some(&mut room), RoomScope::Current, &saved).is_err());
+    // 给了别的 Matrix 房间照原样交给 Bridge（主人带它进去的房间档案里没记）；名字要是它在的房间。
     session = None;
     room = Some("!other:test.invalid".into());
-    assert!(set_scope(&mut session, Some(&mut room), &saved).is_err());
+    set_scope(&mut session, Some(&mut room), RoomScope::Current, &saved).unwrap();
+    assert_eq!(room.as_deref(), Some("!other:test.invalid"));
+    room = Some("别处".into());
+    assert_eq!(
+        set_scope(&mut session, Some(&mut room), RoomScope::Current, &saved)
+            .unwrap_err()
+            .code,
+        "cli.room_not_found"
+    );
 }
 
 #[test]
@@ -900,11 +1053,23 @@ fn 按需查看的命令带上档案的会话和房间() {
     assert!(request.mentions_me);
     assert_eq!(request.limit, 20, "默认 20 条");
 
-    // 一个档案只管一个房间；往哪个方向翻只能选一个。
-    let mut elsewhere = parse(&["history", "--room", "!other:test.invalid"]).unwrap();
+    // 后来进的房间按名字找；不认得的名字说找不到。往哪个方向翻只能选一个。
+    saved.remember(EnteredRoom {
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        room_id: Some("!weekly:test.invalid".into()),
+        name: Some("周报".into()),
+        created: false,
+    });
+    let mut weekly = parse(&["history", "--room", "周报"]).unwrap();
+    apply_context(&mut weekly, &saved).unwrap();
+    let Command::History(args) = weekly else {
+        panic!("history 是往前翻");
+    };
+    assert_eq!(args.scope.room.as_deref(), Some("!weekly:test.invalid"));
+    let mut elsewhere = parse(&["history", "--room", "别处"]).unwrap();
     assert_eq!(
         apply_context(&mut elsewhere, &saved).unwrap_err().code,
-        "cli.profile.room_mismatch"
+        "cli.room_not_found"
     );
     assert!(parse(&["history", "--before", "$a", "--after", "$b"]).is_err());
     assert!(parse(&["around", "--id", "$a", "--after", "21"]).is_err());

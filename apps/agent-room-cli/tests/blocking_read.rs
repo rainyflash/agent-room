@@ -163,30 +163,35 @@ async fn serve(
             };
             assert_eq!(session_id, SESSION);
             let waiting = matches!(*method, IpcMethod::WaitInbox(_));
-            if matches!(*method, IpcMethod::GetSelf) {
+            let answered = match method.as_ref() {
                 // 等消息前问一次主人是谁。假 Bridge 照实回答（这里没有主人）：原来遇到它就 panic，
                 // CI 上打印回溯要十几秒，连接迟迟不断，把后面的计时全拖乱了。
-                IpcFrameCodec::write(
-                    &mut stream,
-                    &IpcFrame::Response {
-                        correlation_id,
-                        result: self_summary(),
-                    },
-                )
-                .await
-                .unwrap();
+                IpcMethod::GetSelf => Some(self_summary()),
+                // 给的游标先按 ID 问在哪个房间，再从那个房间的这一条之后看所有房间。
+                IpcMethod::GetMessages(request) if request.ids == ["$last"] => Some(last_lookup()),
+                _ => None,
+            };
+            if let Some(result) = answered {
+                let response = IpcFrame::Response {
+                    correlation_id,
+                    result,
+                };
+                IpcFrameCodec::write(&mut stream, &response).await.unwrap();
                 return;
             }
             let (IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request)) = *method else {
                 panic!("read must not acknowledge or send")
             };
+            assert!(request.every_room);
             reads.fetch_add(1, Ordering::SeqCst);
             if waiting && slow_wait.swap(false, Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(2500)).await;
             }
-            let previews = if message_available.load(Ordering::SeqCst)
-                && request.after_event_id.as_deref() == Some("$last")
-            {
+            let after = request
+                .room_cursors
+                .first()
+                .map(|cursor| cursor.after_event_id.as_str());
+            let previews = if message_available.load(Ordering::SeqCst) && after == Some("$last") {
                 vec![message()]
             } else {
                 vec![]
@@ -206,6 +211,16 @@ async fn serve(
             .await
             .unwrap();
         });
+    }
+}
+
+fn last_lookup() -> IpcResponse {
+    let mut last = message();
+    last.event_id = "$last".into();
+    IpcResponse::Messages {
+        messages: vec![last],
+        missing: Vec::new(),
+        more: Vec::new(),
     }
 }
 

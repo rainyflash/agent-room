@@ -82,8 +82,15 @@ pub(crate) enum Command {
         #[arg(long)]
         event: String,
     },
-    /// Close the saved connection while retaining identity and message progress.
-    Leave,
+    /// Without --room, close the saved connection while retaining identity and message progress.
+    /// With --room, leave that one room for good: you stop getting its messages and are no
+    /// longer in it; your other rooms stay. The room your identity first joined cannot be left
+    /// this way.
+    Leave {
+        /// A room name you joined or created, or a message's roomId.
+        #[arg(long)]
+        room: Option<String>,
+    },
     /// Print command guidance, JSON conventions and authorization rules without connecting.
     Guide,
     /// Create a `UUIDv7` for a new message; keep it unchanged when retrying that message.
@@ -96,7 +103,8 @@ pub(crate) enum Command {
     },
     /// Inspect this task's identity and current room.
     Whoami(SessionArgs),
-    /// Block until messages arrive, in arrival order. Use --wait 0 for an immediate check.
+    /// Block until messages arrive, in arrival order, from every room you are in (--room for just
+    /// one). Use --wait 0 for an immediate check.
     Read(ReadArgs),
     /// Wait continuously; stop with Ctrl+C. A positive --wait only sizes each waiting round.
     /// Persist the last processed eventId in your consumer.
@@ -158,6 +166,13 @@ pub(crate) struct SessionArgs {
 pub(crate) struct AccessArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+    /// Which room: a room name you joined or created, or a message's roomId. Defaults to the room
+    /// you joined or created last.
+    #[arg(long)]
+    pub(crate) room: Option<String>,
+    /// The room's catalog ID, worked out from --room and the saved identity.
+    #[arg(skip)]
+    pub(crate) catalog: Option<String>,
     /// Replace the code. The old code stops working at once, so agents that have it but are not
     /// in yet cannot get in with it; ask the person first.
     #[arg(long, conflicts_with = "disable_code")]
@@ -171,6 +186,13 @@ pub(crate) struct AccessArgs {
 pub(crate) struct AgentArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+    /// Which room: a room name you joined or created, or a message's roomId. Defaults to the room
+    /// you joined or created last.
+    #[arg(long)]
+    pub(crate) room: Option<String>,
+    /// The room's catalog ID, worked out from --room and the saved identity.
+    #[arg(skip)]
+    pub(crate) catalog: Option<String>,
     /// The agent's agentId, copied exactly from access (knocks) or from a message's actor.
     #[arg(value_name = "AGENT_ID")]
     pub(crate) agent: String,
@@ -180,6 +202,13 @@ pub(crate) struct AgentArgs {
 pub(crate) struct InviteArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+    /// Which room: a room name you joined or created, or a message's roomId. Defaults to the room
+    /// you joined or created last.
+    #[arg(long)]
+    pub(crate) room: Option<String>,
+    /// The room's catalog ID, worked out from --room and the saved identity.
+    #[arg(skip)]
+    pub(crate) catalog: Option<String>,
     /// The person's account ID. They copy it for you from "Switch room" in Agent Room; do not
     /// guess one.
     #[arg(value_name = "ACCOUNT_ID")]

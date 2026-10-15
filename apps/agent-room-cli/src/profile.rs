@@ -1,6 +1,6 @@
 //! Task-local identity and acknowledged inbox progress. No login or Matrix secrets are stored here.
 use crate::output::{CliFailure as Failure, CliResult as Result};
-use agent_room_bridge_ipc::{IpcMethod, IpcOpenHostSessionRequest};
+use agent_room_bridge_ipc::{IpcMethod, IpcOpenHostSessionRequest, limits::SESSION_ROOMS};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -91,18 +91,44 @@ impl Invitation {
 pub(crate) struct RoomTarget {
     pub(crate) catalog_id: Option<String>,
     pub(crate) room_id: Option<String>,
+    /// 房间名：记进档案，之后 `--room` 能按名字找。
+    pub(crate) name: Option<String>,
 }
 
 impl RoomTarget {
     pub(crate) const DEFAULT_LOBBY: Self = Self {
         catalog_id: None,
         room_id: None,
+        name: None,
     };
 
     /// 同一目录条目就是同一个房间；Matrix 房间实例变了由连接时的房间核对来报。
     pub(crate) fn matches(&self, invitation: &Invitation) -> bool {
         invitation.catalog_id == self.catalog_id
     }
+}
+
+/// 开会话以后这个 Agent 又进的房间（`specs/agent-identity/design.md`）：一个任务一个 Agent，
+/// 进别的房间不另起人物，会话照旧开在第一次进的房间。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EnteredRoom {
+    pub(crate) catalog_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) room_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+    /// 这个 Agent 建的：同一任务用同一个房间名再建就回到它，不再建一间。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) created: bool,
+}
+
+/// `--room` 说的、这个 Agent 在的房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KnownRoom {
+    pub(crate) room_id: Option<String>,
+    /// 后来进的房间的目录 ID；会话开在的那个房间为空（管房间时交给 Bridge 默认）。
+    pub(crate) catalog_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +149,16 @@ pub(crate) struct Profile {
     /// 别的人物没有这一项，档案写出来和以前一样，旧版照样读得出来。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) created_room: Option<String>,
+    /// 会话开在的那个房间的名字（按名字接入时记下），`--room` 按名字找它。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) room_name: Option<String>,
+    /// 开会话以后又进的房间。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) rooms: Vec<EnteredRoom>,
+    /// 最近进的房间（Matrix 房间 ID）：说话、看前后、管房间不给 `--room` 时用它；
+    /// 空着就是会话开在的那个房间。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) current_room: Option<String>,
 }
 
 impl Profile {
@@ -137,7 +173,111 @@ impl Profile {
             after_event_id: None,
             delivered: Vec::new(),
             created_room: None,
+            room_name: None,
+            rooms: Vec::new(),
+            current_room: None,
         }
+    }
+
+    /// 这个 Agent 在不在这个房间：会话开在的，或者后来进的。
+    pub(crate) fn in_room(&self, target: &RoomTarget) -> bool {
+        target.matches(&self.invitation)
+            || target
+                .catalog_id
+                .as_ref()
+                .is_some_and(|catalog| self.rooms.iter().any(|room| &room.catalog_id == catalog))
+    }
+
+    /// 这个 Agent 用这个名字建过、后来进去的房间。
+    pub(crate) fn created(&self, name: &str) -> Option<&EnteredRoom> {
+        self.rooms
+            .iter()
+            .find(|room| room.created && room.name.as_deref() == Some(name))
+    }
+
+    /// 记下又进的房间；进过的就更新它（建房的标记不丢）。最多记 [`SESSION_ROOMS`] 个。
+    pub(crate) fn remember(&mut self, room: EnteredRoom) {
+        if let Some(known) = self
+            .rooms
+            .iter_mut()
+            .find(|known| known.catalog_id == room.catalog_id)
+        {
+            known.created |= room.created;
+            if room.room_id.is_some() {
+                known.room_id = room.room_id;
+            }
+            if room.name.is_some() {
+                known.name = room.name;
+            }
+        } else if self.rooms.len() < SESSION_ROOMS {
+            self.rooms.push(room);
+        }
+    }
+
+    /// 离开了这个房间：不再记它，最近进的是它时回到会话开在的那个。
+    pub(crate) fn forget(&mut self, catalog_id: &str) {
+        let Some(index) = self
+            .rooms
+            .iter()
+            .position(|room| room.catalog_id == catalog_id)
+        else {
+            return;
+        };
+        let room = self.rooms.remove(index);
+        if room.room_id.is_some() && self.current_room == room.room_id {
+            self.current_room = None;
+        }
+    }
+
+    /// `--room` 说的房间：房间名（不分大小写）、Matrix 房间 ID 或目录 ID，在这个 Agent 在的房间里找。
+    pub(crate) fn room_for(&self, wanted: &str) -> Option<KnownRoom> {
+        let wanted = wanted.trim();
+        let named = |name: Option<&String>| {
+            name.is_some_and(|name| name.to_lowercase() == wanted.to_lowercase())
+        };
+        let home = self.room_id.as_ref().or(self.invitation.room_id.as_ref());
+        if home.is_some_and(|room| room == wanted)
+            || self.invitation.catalog_id.as_deref() == Some(wanted)
+            || named(self.room_name.as_ref().or(self.created_room.as_ref()))
+        {
+            return Some(KnownRoom {
+                room_id: home.cloned(),
+                catalog_id: None,
+            });
+        }
+        self.rooms
+            .iter()
+            .find(|room| {
+                room.catalog_id == wanted
+                    || room.room_id.as_deref() == Some(wanted)
+                    || named(room.name.as_ref())
+            })
+            .map(|room| KnownRoom {
+                room_id: room.room_id.clone(),
+                catalog_id: Some(room.catalog_id.clone()),
+            })
+    }
+
+    /// 最近进的房间；没有就是会话开在的那个。
+    pub(crate) fn current(&self) -> KnownRoom {
+        self.current_room
+            .as_deref()
+            .and_then(|room| self.room_for(room))
+            .unwrap_or_else(|| KnownRoom {
+                room_id: self.room_id.clone(),
+                catalog_id: None,
+            })
+    }
+
+    /// 这个 Agent 在的房间的名字，找不到房间时告诉 Agent 能说哪些。
+    pub(crate) fn room_names(&self) -> String {
+        self.room_name
+            .iter()
+            .chain(self.created_room.iter())
+            .chain(self.rooms.iter().filter_map(|room| room.name.as_ref()))
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 
     pub(crate) fn validate_binding(&self, service: &str, task_id: Option<&str>) -> Result<()> {
@@ -213,7 +353,7 @@ impl ProfileStore {
     ) -> Option<String> {
         Self::task_profiles(root, service, task_id)
             .filter(|(_, _, profile)| {
-                target.matches(&profile.invitation)
+                profile.in_room(target)
                     && display_name.is_none_or(|name| name == profile.invitation.display_name)
             })
             .map(|(_, key, _)| key)
@@ -248,7 +388,10 @@ impl ProfileStore {
         room_name: &str,
     ) -> Option<String> {
         Self::task_profiles(root, service, task_id)
-            .filter(|(_, _, profile)| profile.created_room.as_deref() == Some(room_name))
+            .filter(|(_, _, profile)| {
+                profile.created_room.as_deref() == Some(room_name)
+                    || profile.created(room_name).is_some()
+            })
             .map(|(_, key, _)| key)
             .max()
     }
@@ -298,6 +441,7 @@ impl ProfileStore {
         if self.path.file_stem().and_then(|name| name.to_str())
             != Some(&profile.invitation.session_key)
             || profile.delivered.len() > 1000
+            || profile.rooms.len() > SESSION_ROOMS
         {
             return Err(Failure::local("cli.profile.corrupt"));
         }
