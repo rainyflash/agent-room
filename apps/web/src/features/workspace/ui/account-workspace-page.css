@@ -608,6 +608,127 @@
   font-size: 0.875rem;
 }
 
+.agent-details__rooms {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-details__rooms h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.agent-details__rooms ul,
+.agent-details__candidates ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-details__rooms > ul > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px 8px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-surface-muted);
+}
+
+.agent-details__rooms > ul > li strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-details__room-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+}
+
+.agent-details__room-action {
+  margin-left: auto;
+}
+
+.agent-details__rooms > p.agent-details__muted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-details__notice {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.agent-details__notice[role='alert'] {
+  color: var(--color-alert);
+}
+
+.agent-details__picker {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+}
+
+.agent-details__candidates {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-details__candidates > p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.agent-details__candidate {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  background: var(--ar-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-details__candidate:hover:not(:disabled) {
+  background: var(--ar-surface-muted);
+}
+
+.agent-details__candidate:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.agent-details__candidate > span {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.agent-details__candidate small {
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+
+.agent-details__candidate .agent-details__view-only {
+  color: var(--ar-warning);
+}
+
 .agent-details__delete {
   display: grid;
   justify-items: start;

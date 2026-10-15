@@ -20,6 +20,7 @@ import {
   AgentDetailsDialog,
   type AgentDeletionControl,
 } from '@/features/workspace/ui/agent-details-dialog';
+import { AgentRoomsView, BringCandidates } from '@/features/workspace/ui/agent-rooms-section';
 import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
 import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
@@ -186,6 +187,122 @@ describe('账号工作区组件', () => {
     expect(scout).toHaveTextContent('On Travel laptop');
     await user.click(build);
     expect(open).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  it('卡片上写它在几个房间，不在任何房间也说', () => {
+    const fleet = projectAgentFleet({
+      agents: [agent(), agent(SCOUT_ID, 'Research Scout')],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [instance()],
+    });
+    renderWithI18n(
+      <AgentCardList
+        agents={fleet.agents}
+        now={NOW}
+        onOpen={() => undefined}
+        roomCounts={
+          new Map([
+            [AGENT_ID, 2],
+            [SCOUT_ID, 0],
+          ])
+        }
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /Build Agent/u })).toHaveTextContent('In 2 rooms');
+    expect(screen.getByRole('button', { name: /Research Scout/u })).toHaveTextContent(
+      'Not in any room',
+    );
+  });
+
+  it('详情里每个房间一行带“离开”，“带进房间”打开房间选择；网络 Agent 只看不动', async () => {
+    const user = userEvent.setup();
+    const onLeave = vi.fn();
+    const onPick = vi.fn();
+    const rooms = [
+      {
+        archived: false,
+        catalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
+        kind: 'public_lobby' as const,
+        name: 'Builders Exchange',
+      },
+      {
+        archived: true,
+        catalogId: '0198b601-77a7-7bb8-83eb-a8fe68c97e60',
+        kind: 'private_room' as const,
+        name: 'Weekly review',
+      },
+    ];
+    const view = (managed: boolean) => (
+      <I18nextProvider i18n={i18n}>
+        <AgentRoomsView
+          agentName="Build Agent"
+          managed={managed}
+          notice={{ kind: 'brought', room: 'Design crit', entered: 0 }}
+          onLeave={onLeave}
+          onPick={onPick}
+          onRetry={() => undefined}
+          pendingCatalogId={null}
+          picker={null}
+          rooms={rooms}
+          state="ready"
+        />
+      </I18nextProvider>
+    );
+    const rendered = render(view(true));
+
+    const section = screen.getByRole('region', { name: 'Rooms' });
+    expect(within(section).getByText('Public lobby')).toBeVisible();
+    expect(within(section).getByText('Archived')).toBeVisible();
+    expect(within(section).getByRole('status')).toHaveTextContent('no working connection');
+    await user.click(
+      within(section).getByRole('button', { name: 'Take Build Agent out of Weekly review' }),
+    );
+    expect(onLeave).toHaveBeenCalledWith(rooms[1]);
+    await user.click(within(section).getByRole('button', { name: 'Take into a room' }));
+    expect(onPick).toHaveBeenCalledWith(true);
+
+    rendered.rerender(view(false));
+    expect(screen.queryByRole('button', { name: /Take .* out of/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Take into a room' })).not.toBeInTheDocument();
+    expect(screen.getByText(/network agent goes in and out of rooms on its own/u)).toBeVisible();
+  });
+
+  it('房间选择写明哪些房间它进去只能看', async () => {
+    const user = userEvent.setup();
+    const onBring = vi.fn();
+    const crit = {
+      catalogId: '0198b601-77a7-7bb8-83eb-a8fe68c97e61',
+      kind: 'private_room' as const,
+      name: 'Design crit',
+      viewOnly: false,
+    };
+    renderWithI18n(
+      <BringCandidates
+        candidates={[
+          crit,
+          {
+            catalogId: '0198b601-77a7-7bb8-83eb-a8fe68c97e62',
+            kind: 'private_room',
+            name: 'Board notes',
+            viewOnly: true,
+          },
+        ]}
+        onBring={onBring}
+        state="ready"
+      />,
+    );
+
+    const picker = screen.getByRole('group', { name: 'Which room?' });
+    expect(within(picker).getByRole('button', { name: /Board notes/u })).toHaveTextContent(
+      'can only read there',
+    );
+    expect(within(picker).getByRole('button', { name: /Design crit/u })).not.toHaveTextContent(
+      'can only read there',
+    );
+    await user.click(within(picker).getByRole('button', { name: /Design crit/u }));
+    expect(onBring).toHaveBeenCalledWith(crit);
   });
 
   it('还没有 Agent 时给一个接入按钮；页头的主按钮也是接入 Agent', async () => {

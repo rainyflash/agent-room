@@ -20,9 +20,14 @@ import {
   ownedAgentQueryKey,
   useOwnedAgents,
 } from '@/features/workspace/data/agent-directory-query';
+import {
+  agentRoomsQueryKey,
+  useAgentRoomCounts,
+} from '@/features/workspace/data/agent-rooms-query';
 import { projectAgentFleet, type FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
+import { AgentRoomsSection } from '@/features/workspace/ui/agent-rooms-section';
 import { DesktopAppCard } from '@/features/updates/ui/desktop-app-card';
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 
@@ -65,6 +70,10 @@ export function AccountWorkspacePage({
         instances: resultValue(instances.data),
       }),
     [agents.data, devices.data, instances.data, matrixSecurity.data],
+  );
+  const roomCounts = useAgentRoomCounts(
+    services.agentDirectory,
+    fleet.agents.map((entry) => entry.agent.agentId),
   );
   const failureCode =
     resultFailureCode(agents.data) ??
@@ -127,6 +136,7 @@ export function AccountWorkspacePage({
       queryClient.invalidateQueries({ queryKey: ownedAgentQueryKey }),
       queryClient.invalidateQueries({ queryKey: productDeviceQueryKey }),
       queryClient.invalidateQueries({ queryKey: agentInstanceQueryKey }),
+      queryClient.invalidateQueries({ queryKey: agentRoomsQueryKey }),
       matrixSecurity.refetch(),
     ]);
   };
@@ -168,6 +178,9 @@ export function AccountWorkspacePage({
           recentlyAuthenticated: principal.recentlyAuthenticated,
         }}
         accountName={principal.displayName}
+        agentRooms={(agent) => (
+          <AgentRoomsSection agent={agent} key={`rooms:${agent.agent.agentId}`} />
+        )}
         connectionHealth={connectionHealth}
         failureCode={failureCode}
         fleet={fleet}
@@ -186,6 +199,7 @@ export function AccountWorkspacePage({
           localRuntime.available ? <ThisComputerSection /> : <DesktopAppCard download={download} />
         }
         reception={<ReceptionOwnershipPanel />}
+        roomCounts={roomCounts}
       />
       {inviteOpen ? (
         <AgentInviteDialog
