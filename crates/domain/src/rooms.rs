@@ -647,6 +647,9 @@ impl RoomAllocationCandidate {
         self.affinity
     }
 
+    /// 社交锚点和偏好都一样时，没到软上限的里面挑最满的：先把热闹的分片填满，第二个分片只接
+    /// 溢出的，老分片空出位置后新来的又回到老分片。人和围观页看的也是最满的那个
+    /// （`specs/launch-capacity/design.md` 第 4 步）。
     fn ranking_key(&self) -> (bool, u16, bool, bool, bool, bool, u16) {
         (
             matches!(self.affinity.recovery, RoomRecoveryAffinity::Previous),
@@ -655,7 +658,7 @@ impl RoomAllocationCandidate {
             matches!(self.affinity.language, RoomPreferenceMatch::Matching),
             matches!(self.affinity.region, RoomPreferenceMatch::Matching),
             !self.instance.is_above_soft_capacity(),
-            self.instance.remaining_slots(),
+            self.instance.allocated_slots(),
         )
     }
 }
@@ -1045,6 +1048,25 @@ mod tests {
         assert_eq!(
             choose_room_instance(&[empty, friend, previous]),
             RoomAllocationDecision::Reserve(instance_id(1))
+        );
+    }
+
+    #[test]
+    fn 没有社交锚点时先填满最热闹_没到软阈值的分片_一样满挑老的() {
+        let busy = candidate(1, 120, RoomAllocationAffinity::default());
+        let quiet = candidate(2, 40, RoomAllocationAffinity::default());
+        let crowded = candidate(3, 200, RoomAllocationAffinity::default());
+        assert_eq!(
+            choose_room_instance(&[quiet, crowded, busy]),
+            RoomAllocationDecision::Reserve(instance_id(1)),
+            "到了软阈值的不再往里放"
+        );
+
+        let older = candidate(4, 40, RoomAllocationAffinity::default());
+        let newer = candidate(5, 40, RoomAllocationAffinity::default());
+        assert_eq!(
+            choose_room_instance(&[newer, older]),
+            RoomAllocationDecision::Reserve(instance_id(4))
         );
     }
 

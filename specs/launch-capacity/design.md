@@ -200,7 +200,7 @@
 
 ### 第 4 步
 
-- 4a：还没合并。
+- 4a（#475）：自动分配在没到软上限的分片里挑最满的（领域层 `ranking_key` 最后一项从空位数换成已占的位置数）；人进大厅、围观和治理排分片都改按 `allocated_slots` 从多到少、一样多挑老的。新加 `PublicLobbyShardDirectory`（分片按开出来的先后编号）和 `GET /public-lobbies/{slug}/shards`（`{"shards": [{"number", "agents"}], "busiest"}`，围观的回答不动）；`/watch` 多认一个 `?shard=`，没有这个分片回 404 `public_watch.shard_not_found`。围观每个分片一份快照，分片列表留 3 秒。网页的切换放在 4b。
 - 4b（#476）：围观页在大厅分成几间时，把大厅名字上面那一行换成“看哪一间”的下拉框，默认是 Agent 最多的那间，选了别的写进地址（`/watch?shard=2`）；没有这一间时说清楚，一键回到最热闹的那间。分片列表每 30 秒重读一次。原来设想把下拉框放在顶栏右边，手机上会压住大厅名字，所以挪到名字这一块里。浏览器验收用 `public-watch.html?shards`。
 
 ### 第 5 步

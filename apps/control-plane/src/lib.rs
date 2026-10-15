@@ -436,6 +436,7 @@ fn public_watch_state(
     let watch = public_watch::PublicWatch::new(public_watch::PublicWatchDependencies {
         enabled: config.network_agents.enabled,
         directory: dependencies.repositories.clone(),
+        shards: dependencies.repositories.clone(),
         reader: dependencies.matrix_identities.clone(),
         verification: dependencies.repositories.clone(),
         signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),

@@ -3,9 +3,9 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        AgentLobbyAccessRepository, RoomAllocationEvidence, RoomAllocationMode,
-        RoomAllocationStore, RoomDirectory, RoomDirectoryQuery, RoomReservationClaim,
-        RoomReservationOutcome,
+        AgentLobbyAccessRepository, PublicLobbyShard, PublicLobbyShardDirectory,
+        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomDirectory,
+        RoomDirectoryQuery, RoomReservationClaim, RoomReservationOutcome,
     },
 };
 use agent_room_domain::{
@@ -301,6 +301,77 @@ async fn 公开目录按语言地区过滤并汇总活跃实例() {
     assert_eq!(entry.activity_score_millis, 2_500);
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 人_围观和新来的_agent_都去_agent_最多的分片_分片按开出来的先后编号() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime, 1, 3, 180, 250).await;
+    let ids = fixture.room_ids.clone();
+    // 第二个分片最热闹，第一个和第三个一样多。
+    set_allocated_slots(&database.runtime, &ids, [5, 9, 5]).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+
+    let observed = RoomDirectory::find_public_observation_room(&repositories, fixture.catalog_id)
+        .await
+        .expect("查分片")
+        .expect("有在用的分片");
+    assert_eq!(observed.room_instance_id, ids[1]);
+    let shards = PublicLobbyShardDirectory::public_lobby_shards(&repositories, fixture.catalog_id)
+        .await
+        .expect("列分片");
+    assert_eq!(
+        shards
+            .iter()
+            .map(|shard| (shard.number, shard.room_instance_id, shard.agents))
+            .collect::<Vec<_>>(),
+        [(1, ids[0], 5), (2, ids[1], 9), (3, ids[2], 5)]
+    );
+    assert_eq!(
+        PublicLobbyShard::busiest(&shards).map(|shard| shard.number),
+        Some(2)
+    );
+    let outcome = RoomAllocationStore::reserve(
+        &repositories,
+        &claim(
+            fixture.agent_id,
+            fixture.agent_instances[0],
+            fixture.catalog_id,
+            RoomAllocationMode::Automatic,
+            0,
+        ),
+    )
+    .await
+    .expect("自动分配");
+    let RoomReservationOutcome::Reserved { reservation, .. } = outcome else {
+        panic!("应当预约到位置：{outcome:?}");
+    };
+    assert_eq!(
+        reservation.room_instance_id(),
+        ids[1],
+        "新来的 Agent 先填满热闹的分片"
+    );
+
+    // 一样多时挑老的。
+    set_allocated_slots(&database.runtime, &ids, [10, 10, 5]).await;
+    let observed = RoomDirectory::find_public_observation_room(&repositories, fixture.catalog_id)
+        .await
+        .expect("查分片")
+        .expect("有在用的分片");
+    assert_eq!(observed.room_instance_id, ids[0]);
+    database.close().await;
+}
+
+async fn set_allocated_slots(pool: &PgPool, rooms: &[RoomInstanceId], slots: [i32; 3]) {
+    for (room, slots) in rooms.iter().zip(slots) {
+        sqlx::query("UPDATE agent_room.room_instance SET allocated_slots = $2 WHERE id = $1")
+            .bind(room.as_uuid())
+            .bind(slots)
+            .execute(pool)
+            .await
+            .expect("改分片的人数");
+    }
 }
 
 fn claim(

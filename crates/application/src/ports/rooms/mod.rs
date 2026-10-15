@@ -115,6 +115,29 @@ pub struct PublicLobbyObservationRoom {
     pub matrix_room_id: MatrixRoomReference,
 }
 
+/// 公开大厅的一个在用的分片（`specs/launch-capacity/design.md` 第 4 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicLobbyShard {
+    /// 第几个分片，从 1 起按开出来的先后编；分片不关，编号不变。
+    pub number: u16,
+    pub room_instance_id: RoomInstanceId,
+    pub matrix_room_id: MatrixRoomReference,
+    /// 占着位置的 Agent 数（`allocated_slots`）。
+    pub agents: u16,
+}
+
+impl PublicLobbyShard {
+    /// 人进大厅、围观不指明分片时看的那个：Agent 最多的，一样多时挑老的。和
+    /// `RoomDirectory::find_public_observation_room` 的顺序一样。
+    pub fn busiest(shards: &[Self]) -> Option<&Self> {
+        shards.iter().max_by(|left, right| {
+            left.agents
+                .cmp(&right.agents)
+                .then(right.number.cmp(&left.number))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoomAllocationMode {
     Automatic,
@@ -171,10 +194,19 @@ pub trait RoomDirectory: Send + Sync {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<RoomCatalog>>>;
 
+    /// 人进大厅、看大厅时去的分片：Agent 最多的在用分片，一样多时挑老的。
     fn find_public_observation_room(
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PublicLobbyObservationRoom>>>;
+}
+
+/// 公开大厅在用的分片，按编号排好。围观页切换分片用。
+pub trait PublicLobbyShardDirectory: Send + Sync {
+    fn public_lobby_shards(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PublicLobbyShard>>>;
 }
 
 /// 不登录也能看公开大厅（specs/public-lobby-watch/design.md）：以建公开大厅的应用服务账号读

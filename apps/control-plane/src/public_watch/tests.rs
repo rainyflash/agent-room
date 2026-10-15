@@ -14,7 +14,7 @@ use agent_room_application::{
         MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
         MatrixRoomId, MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, NetworkAgentLookup,
         PortFuture, PublicLobbyDirectoryEntry, PublicLobbyMatrixReader, PublicLobbyObservationRoom,
-        RoomDirectory, RoomDirectoryQuery,
+        PublicLobbyShard, PublicLobbyShardDirectory, RoomDirectory, RoomDirectoryQuery,
     },
 };
 use agent_room_domain::{
@@ -44,6 +44,7 @@ use crate::features::public_watch::{PublicWatchHttpState, router};
 /// 2026-10-20T08:00:00Z。
 const NOW: i64 = 1_792_483_200_000;
 const ROOM: &str = "!lobby:matrix.test";
+const SECOND_ROOM: &str = "!lobby-2:matrix.test";
 const SERVICE_USER: &str = "@_agent_room:matrix.test";
 const HUMAN: &str = "@xiaoyu:matrix.test";
 const FORGED_SIGNATURE: [u8; 64] = [9; 64];
@@ -93,6 +94,8 @@ struct FakeReader {
     lobby: Mutex<Lobby>,
     failing: Mutex<bool>,
     reads: AtomicUsize,
+    /// 读过哪些分片，按先后。
+    rooms: Mutex<Vec<String>>,
     /// 各人的 Matrix 在线状态；没有的问了回 403。
     presence: Mutex<HashMap<String, MatrixPresenceState>>,
     presence_asks: Mutex<Vec<String>>,
@@ -134,9 +137,9 @@ impl PublicLobbyMatrixReader for FakeReader {
         room_id: &'a MatrixRoomId,
         limit: u16,
     ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>> {
-        assert_eq!(room_id.as_str(), ROOM);
         assert_eq!(limit, 60);
         self.reads.fetch_add(1, Ordering::SeqCst);
+        self.rooms.lock().unwrap().push(room_id.as_str().to_owned());
         let events = self.answer(|lobby| lobby.events.clone());
         Box::pin(async move { events })
     }
@@ -145,7 +148,7 @@ impl PublicLobbyMatrixReader for FakeReader {
         &'a self,
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>> {
-        assert_eq!(room_id.as_str(), ROOM);
+        assert!([ROOM, SECOND_ROOM].contains(&room_id.as_str()));
         let state = self.answer(|lobby| lobby.state.clone());
         Box::pin(async move { state })
     }
@@ -175,7 +178,10 @@ struct FakeDirectory {
     lobbies: Vec<PublicLobbyDirectoryEntry>,
     /// 公开大厅有没有分片（有没有人进过）。
     instance: bool,
+    /// 在用的分片和各自的 Agent 数，按编号排。
+    shards: Vec<(&'static str, u16)>,
     listings: AtomicUsize,
+    shard_listings: AtomicUsize,
 }
 
 impl FakeDirectory {
@@ -183,8 +189,36 @@ impl FakeDirectory {
         Self {
             lobbies: slugs.iter().map(|slug| lobby_entry(slug)).collect(),
             instance: true,
+            shards: vec![(ROOM, 1)],
             listings: AtomicUsize::new(0),
+            shard_listings: AtomicUsize::new(0),
         }
+    }
+}
+
+impl PublicLobbyShardDirectory for FakeDirectory {
+    fn public_lobby_shards(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PublicLobbyShard>>> {
+        self.shard_listings.fetch_add(1, Ordering::SeqCst);
+        let shards = if self.instance {
+            self.shards
+                .iter()
+                .zip(1..)
+                .map(|((room, agents), number)| PublicLobbyShard {
+                    number,
+                    room_instance_id: RoomInstanceId::from_uuid(Uuid::from_u128(u128::from(
+                        number,
+                    ))),
+                    matrix_room_id: MatrixRoomReference::new((*room).to_owned()).unwrap(),
+                    agents: *agents,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Box::pin(async move { Ok(shards) })
     }
 }
 
@@ -207,14 +241,9 @@ impl RoomDirectory for FakeDirectory {
 
     fn find_public_observation_room(
         &self,
-        catalog_id: RoomCatalogId,
+        _catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PublicLobbyObservationRoom>>> {
-        let room = self.instance.then(|| PublicLobbyObservationRoom {
-            catalog_id,
-            room_instance_id: RoomInstanceId::from_uuid(Uuid::now_v7()),
-            matrix_room_id: MatrixRoomReference::new(ROOM.to_owned()).unwrap(),
-        });
-        Box::pin(async move { Ok(room) })
+        unreachable!("围观按分片列表挑分片")
     }
 }
 
@@ -334,6 +363,7 @@ impl Setup {
         let watch = PublicWatch::new(PublicWatchDependencies {
             enabled: self.enabled,
             directory: directory.clone(),
+            shards: directory.clone(),
             reader: reader.clone(),
             verification: Arc::new(KnownInstances {
                 agents: self.agents,
@@ -359,7 +389,7 @@ impl Setup {
 
 impl Harness {
     async fn view(&self, slug: &str) -> Value {
-        let body = self.watch.watch(slug).await.expect("看得到这个大厅");
+        let body = self.watch.watch(slug, None).await.expect("看得到这个大厅");
         serde_json::from_slice(&body).expect("快照是 JSON")
     }
 }
@@ -1090,15 +1120,15 @@ async fn 读不到时先给不太旧的快照_太旧了照实说看不了() {
         )],
         state: room_state(&[scout.matrix_user()]),
     });
-    let fresh = harness.watch.watch("default").await.unwrap();
+    let fresh = harness.watch.watch("default", None).await.unwrap();
 
     harness.reader.fail(true);
     harness.clock.advance(3_000);
-    assert_eq!(harness.watch.watch("default").await.unwrap(), fresh);
+    assert_eq!(harness.watch.watch("default", None).await.unwrap(), fresh);
 
     harness.clock.advance(60_000);
     assert_eq!(
-        harness.watch.watch("default").await,
+        harness.watch.watch("default", None).await,
         Err(PublicWatchFailure::Unavailable)
     );
 
@@ -1106,12 +1136,12 @@ async fn 读不到时先给不太旧的快照_太旧了照实说看不了() {
     let reads = harness.reader.reads.load(Ordering::SeqCst);
     harness.reader.fail(false);
     assert_eq!(
-        harness.watch.watch("default").await,
+        harness.watch.watch("default", None).await,
         Err(PublicWatchFailure::Unavailable)
     );
     assert_eq!(harness.reader.reads.load(Ordering::SeqCst), reads);
     harness.clock.advance(3_000);
-    assert!(harness.watch.watch("default").await.is_ok());
+    assert!(harness.watch.watch("default", None).await.is_ok());
 }
 
 #[tokio::test]
@@ -1146,13 +1176,13 @@ async fn 按_slug_找大厅_default_是默认大厅() {
         "night-owls"
     );
     assert_eq!(
-        harness.watch.watch("nobody-here").await,
+        harness.watch.watch("nobody-here", None).await,
         Err(PublicWatchFailure::LobbyNotFound)
     );
     // 不像 slug 的不去碰目录。
     let listings = harness.directory.listings.load(Ordering::SeqCst);
     assert_eq!(
-        harness.watch.watch("Not A Slug").await,
+        harness.watch.watch("Not A Slug", None).await,
         Err(PublicWatchFailure::LobbyNotFound)
     );
     assert_eq!(harness.directory.listings.load(Ordering::SeqCst), listings);
@@ -1195,7 +1225,7 @@ async fn 总开关关着时说没开放_不碰目录() {
     let harness = setup.build();
 
     assert_eq!(
-        harness.watch.watch("default").await,
+        harness.watch.watch("default", None).await,
         Err(PublicWatchFailure::Disabled)
     );
     assert_eq!(harness.directory.listings.load(Ordering::SeqCst), 0);
@@ -1262,4 +1292,90 @@ async fn 接口照实说没开放_没有这个大厅_暂时看不了() {
         json_body(unavailable).await["code"],
         "public_watch.unavailable"
     );
+}
+
+#[tokio::test]
+async fn 大厅有几个分片时_不指明看_agent_最多的_指明看第几个_没有的说没有() {
+    let mut setup = Setup::new(&[]);
+    setup.directory.shards = vec![(ROOM, 40), (SECOND_ROOM, 120)];
+    let harness = setup.build();
+    harness.reader.set(Lobby {
+        events: Vec::new(),
+        state: room_state(&[]),
+    });
+
+    harness.view("default").await;
+    harness.watch.watch("default", Some(1)).await.unwrap();
+    assert_eq!(*harness.reader.rooms.lock().unwrap(), [SECOND_ROOM, ROOM]);
+    // 指明的正好是 Agent 最多的那个时，和不指明的用同一份快照。
+    harness.watch.watch("default", Some(2)).await.unwrap();
+    assert_eq!(harness.reader.rooms.lock().unwrap().len(), 2);
+    assert_eq!(
+        harness.watch.watch("default", Some(3)).await,
+        Err(PublicWatchFailure::ShardNotFound)
+    );
+
+    let shards: Value =
+        serde_json::from_slice(&harness.watch.shards("default").await.unwrap()).unwrap();
+    assert_eq!(
+        shards,
+        json!({
+            "shards": [{ "number": 1, "agents": 40 }, { "number": 2, "agents": 120 }],
+            "busiest": 2
+        })
+    );
+    assert_eq!(
+        harness.directory.shard_listings.load(Ordering::SeqCst),
+        1,
+        "分片列表 3 秒内只查一次"
+    );
+    harness.clock.advance(3_000);
+    harness.watch.shards("default").await.unwrap();
+    assert_eq!(harness.directory.shard_listings.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn 还没有分片的大厅_分片列表是空的() {
+    let mut setup = Setup::new(&[]);
+    setup.directory.instance = false;
+    let harness = setup.build();
+    let shards: Value =
+        serde_json::from_slice(&harness.watch.shards("default").await.unwrap()).unwrap();
+    assert_eq!(shards, json!({ "shards": [], "busiest": null }));
+    assert_eq!(
+        harness.watch.shards("nobody-here").await,
+        Err(PublicWatchFailure::LobbyNotFound)
+    );
+}
+
+#[tokio::test]
+async fn 接口按_shard_看指定的分片_写得不对或没有的说没有这个分片() {
+    let mut setup = Setup::new(&[]);
+    setup.directory.shards = vec![(ROOM, 40), (SECOND_ROOM, 120)];
+    let harness = setup.build();
+    harness.reader.set(Lobby {
+        events: Vec::new(),
+        state: room_state(&[]),
+    });
+
+    let second = call(&harness, "/public-lobbies/default/watch?shard=1").await;
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(*harness.reader.rooms.lock().unwrap(), [ROOM]);
+    for path in [
+        "/public-lobbies/default/watch?shard=0",
+        "/public-lobbies/default/watch?shard=two",
+        "/public-lobbies/default/watch?shard=9",
+    ] {
+        let missing = call(&harness, path).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(
+            json_body(missing).await["code"],
+            "public_watch.shard_not_found"
+        );
+    }
+
+    let shards = call(&harness, "/public-lobbies/default/shards").await;
+    assert_eq!(shards.status(), StatusCode::OK);
+    assert_eq!(shards.headers()[header::CACHE_CONTROL], "public, max-age=3");
+    assert_eq!(json_body(shards).await["busiest"], 2);
 }
