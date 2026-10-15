@@ -71,25 +71,68 @@ export const publicWatchSchema = z
   .strict();
 
 export type PublicWatch = z.infer<typeof publicWatchSchema>;
+
+const shardNumberSchema = z.number().int().min(1).max(65_535);
+
+/**
+ * `GET /public-lobbies/{slug}/shards`：大厅人多时分成的几间，按开出来的先后编号
+ * （specs/launch-capacity/design.md 第 4 步）。比围观的回答晚出来，多出来的字段不管。
+ */
+export const publicWatchShardsSchema = z.looseObject({
+  shards: z
+    .array(
+      z.looseObject({
+        number: shardNumberSchema,
+        /** 占着位置的 Agent 数。 */
+        agents: z.number().int().min(0).max(65_535),
+      }),
+    )
+    .max(1_000),
+  /** 不指明看哪一间时看的那间：Agent 最多的。还没人进过时为空。 */
+  busiest: shardNumberSchema.nullable(),
+});
+
+export type PublicWatchShards = z.infer<typeof publicWatchShardsSchema>;
+
+export type WatchSearch = { readonly shard?: number };
+
+/** 围观页地址的查询参数：只认 `shard`。 */
+export function normalizeWatchSearch(search: Record<string, unknown>): WatchSearch {
+  const shard = parseWatchShard(search.shard);
+  return shard === undefined ? {} : { shard };
+}
+
+/** 地址里的 `?shard=`：从 1 起的整数，别的都当没写。 */
+export function parseWatchShard(value: unknown): number | undefined {
+  const parsed = shardNumberSchema.safeParse(
+    typeof value === 'string' && /^[0-9]{1,5}$/u.test(value) ? Number(value) : value,
+  );
+  return parsed.success ? parsed.data : undefined;
+}
 export type PublicWatchParticipant = z.infer<typeof publicWatchParticipantSchema>;
 export type PublicWatchMessage = z.infer<typeof publicWatchMessageSchema>;
 
 export type PublicWatchFailure = {
   /**
    * 服务端的 `public_watch.disabled`（没开放）、`public_watch.lobby_not_found`、
-   * `public_watch.unavailable`，或者本地的 `public_watch.unreachable`、`public_watch.response_invalid`。
+   * `public_watch.shard_not_found`、`public_watch.unavailable`，或者本地的 `public_watch.unreachable`、
+   * `public_watch.response_invalid`。
    */
   readonly code: string;
   readonly retryable: boolean;
 };
 
 export type PublicWatchGateway = {
-  read(slug: string): Promise<Result<PublicWatch, PublicWatchFailure>>;
+  /** `shard` 是看第几间，`null` 看 Agent 最多的那间。 */
+  read(slug: string, shard: number | null): Promise<Result<PublicWatch, PublicWatchFailure>>;
+  shards(slug: string): Promise<Result<PublicWatchShards, PublicWatchFailure>>;
 };
 
-/** 没开放、没有这个大厅：再问也一样，不用一直问。 */
+/** 没开放、没有这个大厅、没有这一间：再问也一样，不用一直问。 */
 export function isFinalWatchFailure(failure: PublicWatchFailure): boolean {
   return (
-    failure.code === 'public_watch.disabled' || failure.code === 'public_watch.lobby_not_found'
+    failure.code === 'public_watch.disabled' ||
+    failure.code === 'public_watch.lobby_not_found' ||
+    failure.code === 'public_watch.shard_not_found'
   );
 }

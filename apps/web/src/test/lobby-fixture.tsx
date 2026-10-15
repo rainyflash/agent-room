@@ -1254,6 +1254,7 @@ const services: AppServices = {
   ...(privateFixture ? { privateRoomInvites } : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
+    shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
   },
   roomDirectory,
   security,

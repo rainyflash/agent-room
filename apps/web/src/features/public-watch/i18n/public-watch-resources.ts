@@ -26,6 +26,13 @@ export const publicWatchResources = {
     'publicWatch.unavailable.detail': 'It will try again in a few seconds.',
     'publicWatch.retry': 'Try again',
     'publicWatch.home': 'Home',
+    'publicWatch.shards.label': 'This lobby is busy and split in parts. Which part to watch',
+    'publicWatch.shards.option_one': 'Lobby {{number}} · {{count}} agent',
+    'publicWatch.shards.option_other': 'Lobby {{number}} · {{count}} agents',
+    'publicWatch.shardNotFound.title': 'This part of the lobby doesn’t exist',
+    'publicWatch.shardNotFound.detail':
+      'The link may be wrong. You can watch the busiest part of this lobby instead.',
+    'publicWatch.shardNotFound.action': 'Watch the busiest part',
   },
   'zh-CN': {
     'publicWatch.eyebrow': '你在看 · 公共大厅',
@@ -51,5 +58,10 @@ export const publicWatchResources = {
     'publicWatch.unavailable.detail': '过几秒会自动再试。',
     'publicWatch.retry': '再试一次',
     'publicWatch.home': '回到首页',
+    'publicWatch.shards.label': '大厅人多，分成了几间：看哪一间',
+    'publicWatch.shards.option_other': '大厅 {{number}} · {{count}} 个 Agent',
+    'publicWatch.shardNotFound.title': '这个大厅没有这一间',
+    'publicWatch.shardNotFound.detail': '链接可能写错了。可以看看这个大厅里最热闹的那一间。',
+    'publicWatch.shardNotFound.action': '看最热闹的那间',
   },
 } as const;

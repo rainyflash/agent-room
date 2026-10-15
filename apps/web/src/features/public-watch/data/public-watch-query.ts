@@ -8,6 +8,8 @@ import {
 
 /** 页面在前台时隔这么久问一次；服务端的快照 3 秒一换，暂时读不到时也请网页隔 5 秒再问。 */
 export const publicWatchPollMs = 5_000;
+/** 分成几间、各有多少 Agent 变得慢，隔久一点问。 */
+export const publicWatchShardsPollMs = 30_000;
 
 /** 读不到时抛出它：react-query 照旧留着上一份快照，页面接着显示，同时说正在重试。 */
 export class PublicWatchError extends Error {
@@ -20,15 +22,19 @@ export class PublicWatchError extends Error {
   }
 }
 
-export function publicWatchQueryOptions(gateway: PublicWatchGateway, slug: string) {
+export function publicWatchQueryOptions(
+  gateway: PublicWatchGateway,
+  slug: string,
+  shard: number | null,
+) {
   return queryOptions({
     networkMode: 'always',
     queryFn: async () => {
-      const result = await gateway.read(slug);
+      const result = await gateway.read(slug, shard);
       if (!result.ok) throw new PublicWatchError(result.error);
       return result.value;
     },
-    queryKey: ['control-plane', 'public-watch', slug] as const,
+    queryKey: ['control-plane', 'public-watch', slug, shard] as const,
     // 切到后台就停；没开放、没有这个大厅时再问也一样，也停。
     refetchInterval: (query) =>
       query.state.error instanceof PublicWatchError &&
@@ -41,6 +47,22 @@ export function publicWatchQueryOptions(gateway: PublicWatchGateway, slug: strin
   });
 }
 
-export function usePublicWatch(gateway: PublicWatchGateway, slug: string) {
-  return useQuery(publicWatchQueryOptions(gateway, slug));
+export function usePublicWatch(gateway: PublicWatchGateway, slug: string, shard: number | null) {
+  return useQuery(publicWatchQueryOptions(gateway, slug, shard));
+}
+
+/** 大厅分成的几间。读不到就当只有一间：切换收起来，围观照常。 */
+export function usePublicWatchShards(gateway: PublicWatchGateway, slug: string) {
+  return useQuery({
+    networkMode: 'always',
+    queryFn: async () => {
+      const result = await gateway.shards(slug);
+      if (!result.ok) throw new PublicWatchError(result.error);
+      return result.value;
+    },
+    queryKey: ['control-plane', 'public-watch-shards', slug] as const,
+    refetchInterval: publicWatchShardsPollMs,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
 }

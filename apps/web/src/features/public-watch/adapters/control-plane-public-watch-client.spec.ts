@@ -41,7 +41,7 @@ describe('不登录看公共大厅的接口', () => {
   it('不带登录问控制面，地址保留同源前缀', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(watch));
 
-    await expect(client(fetch).read('default')).resolves.toEqual({ ok: true, value: watch });
+    await expect(client(fetch).read('default', null)).resolves.toEqual({ ok: true, value: watch });
     expect(fetch).toHaveBeenCalledWith(
       new URL('https://app.agent-room.test/_agent-room/api/public-lobbies/default/watch'),
       expect.objectContaining({ credentials: 'omit', method: 'GET' }),
@@ -55,7 +55,7 @@ describe('不登录看公共大厅的接口', () => {
         Response.json({ ...watch, messages: [{ ...watch.messages[0], roomId: '!x:matrix' }] }),
       );
 
-    await expect(client(fetch).read('default')).resolves.toEqual({
+    await expect(client(fetch).read('default', null)).resolves.toEqual({
       error: { code: 'public_watch.response_invalid', retryable: true },
       ok: false,
     });
@@ -72,17 +72,21 @@ describe('不登录看公共大厅的接口', () => {
           ),
         );
 
-    await expect(client(answer(404, 'public_watch.disabled')).read('default')).resolves.toEqual({
+    await expect(
+      client(answer(404, 'public_watch.disabled')).read('default', null),
+    ).resolves.toEqual({
       error: { code: 'public_watch.disabled', retryable: false },
       ok: false,
     });
     await expect(
-      client(answer(404, 'public_watch.lobby_not_found')).read('night-owls'),
+      client(answer(404, 'public_watch.lobby_not_found')).read('night-owls', null),
     ).resolves.toEqual({
       error: { code: 'public_watch.lobby_not_found', retryable: false },
       ok: false,
     });
-    await expect(client(answer(503, 'public_watch.unavailable')).read('default')).resolves.toEqual({
+    await expect(
+      client(answer(503, 'public_watch.unavailable')).read('default', null),
+    ).resolves.toEqual({
       error: { code: 'public_watch.unavailable', retryable: true },
       ok: false,
     });
@@ -91,7 +95,7 @@ describe('不登录看公共大厅的接口', () => {
   it('不像 slug 的不去问服务器', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
 
-    await expect(client(fetch).read('../auth/session')).resolves.toEqual({
+    await expect(client(fetch).read('../auth/session', null)).resolves.toEqual({
       error: { code: 'public_watch.lobby_not_found', retryable: false },
       ok: false,
     });
@@ -101,8 +105,44 @@ describe('不登录看公共大厅的接口', () => {
   it('连不上时可以重试', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new TypeError('offline'));
 
-    await expect(client(fetch).read('default')).resolves.toEqual({
+    await expect(client(fetch).read('default', null)).resolves.toEqual({
       error: { code: 'public_watch.unreachable', retryable: true },
+      ok: false,
+    });
+  });
+
+  it('看第几间时带上 shard', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(watch));
+
+    await client(fetch).read('default', 2);
+    expect(fetch).toHaveBeenCalledWith(
+      new URL('https://app.agent-room.test/_agent-room/api/public-lobbies/default/watch?shard=2'),
+      expect.objectContaining({ credentials: 'omit', method: 'GET' }),
+    );
+  });
+
+  it('分成几间：多出来的字段不管，形状不对就不交给界面', async () => {
+    const shards = {
+      shards: [
+        { number: 1, agents: 40 },
+        { number: 2, agents: 120, region: 'ap' },
+      ],
+      busiest: 2,
+      generatedAt: 1,
+    };
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(shards));
+
+    await expect(client(fetch).shards('default')).resolves.toEqual({ ok: true, value: shards });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL('https://app.agent-room.test/_agent-room/api/public-lobbies/default/shards'),
+      expect.objectContaining({ credentials: 'omit', method: 'GET' }),
+    );
+
+    const broken = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(Response.json({ shards: [{ number: 0, agents: 1 }], busiest: null }));
+    await expect(client(broken).shards('default')).resolves.toEqual({
+      error: { code: 'public_watch.response_invalid', retryable: true },
       ok: false,
     });
   });

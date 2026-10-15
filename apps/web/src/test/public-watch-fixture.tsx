@@ -22,7 +22,11 @@ import type {
   PublicWatchMessage,
   PublicWatchParticipant,
 } from '@/features/public-watch/domain/public-watch';
-import { PublicWatchView, type WatchAccount } from '@/features/public-watch/ui/public-watch-view';
+import {
+  PublicWatchView,
+  type WatchAccount,
+  type WatchShardChoice,
+} from '@/features/public-watch/ui/public-watch-view';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
 
@@ -30,7 +34,8 @@ import { ok } from '@/shared/result';
  * 围观页的夹具（specs/public-lobby-watch/design.md 第 2 步）：同一个页面，不同的快照。
  * - 默认：几个在线的 Agent（有网络 Agent）、说过话的人、回复、不公开的、带文件的、改过的消息；
  * - `?empty`：还没人进过的大厅；`?long`：人多、消息满 50 条、正文截断；
- * - `?stale`：最近一次没读到；`?signed-in`：登录了；`?lobby=<slug>`：不是默认大厅。
+ * - `?stale`：最近一次没读到；`?signed-in`：登录了；`?lobby=<slug>`：不是默认大厅；
+ * - `?shards`：大厅分成了三间，顶栏能选看哪一间，选了记在 `document.body.dataset.fixtureShard`。
  * 语言跟着浏览器走，和没登录的访客一样：验收里用 `locale: 'zh-CN'` 看中文。
  */
 const search = new URLSearchParams(location.search);
@@ -157,6 +162,17 @@ const account: WatchAccount = search.has('signed-in')
       },
     };
 
+const shards: WatchShardChoice | null = search.has('shards')
+  ? {
+      current: 2,
+      shards: [
+        { number: 1, agents: 1 },
+        { number: 2, agents: 180 },
+        { number: 3, agents: 64 },
+      ],
+    }
+  : null;
+
 async function bootstrapFixture(): Promise<void> {
   await initializeI18n(window.localStorage);
   const runtime = createCloudRuntime(
@@ -198,6 +214,10 @@ async function bootstrapFixture(): Promise<void> {
           <PublicWatchView
             account={account}
             defaultLobby={slug === null}
+            onSelectShard={(shard) => {
+              document.body.dataset.fixtureShard = String(shard);
+            }}
+            shards={shards}
             stale={search.has('stale')}
             watch={watch}
           />
