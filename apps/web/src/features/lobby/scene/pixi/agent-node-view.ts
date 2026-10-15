@@ -1,5 +1,5 @@
 import type { SceneCharacter } from '../scene-character';
-import { characterLabel } from '../character-labels';
+import { characterLabel, OWNER_LABEL_LIMIT } from '../character-labels';
 import type { Container, FederatedPointerEvent, Sprite } from 'pixi.js';
 import type { LobbySceneDetail } from '@/features/lobby/domain/scene-projection';
 import type { CharacterPose } from '../character-motion';
@@ -8,7 +8,9 @@ import {
   characterDimmed,
   characterFill,
   estimatedTextWidth,
+  labelStack,
   nameplate,
+  ownerTag,
   sceneFont,
   sceneInk,
   statusSticker,
@@ -86,12 +88,9 @@ export function createAgentNodeView(
     selected || (options.showName ?? (node.kind === 'human' || options.detail === 'near'));
   label.visible = showLabel;
   labels.addChild(label);
-  if (
-    showLabel &&
-    options.detail === 'near' &&
-    options.statusLabel !== undefined &&
-    node.kind === 'agent'
-  ) {
+  const near = showLabel && options.detail === 'near' && node.kind === 'agent';
+  const stack = labelStack(near && options.statusLabel !== undefined);
+  if (near && options.statusLabel !== undefined) {
     const status = pill(pixi, {
       text: options.statusLabel,
       fontSize: statusSticker.fontSize,
@@ -101,8 +100,21 @@ export function createAgentNodeView(
       fill: characterFill(node),
       strokeWidth: statusSticker.strokeWidth,
     });
-    status.position.set(0, nameplate.top + nameplate.height + statusSticker.gap);
+    status.position.set(0, stack.status);
     labels.addChild(status);
+  }
+  if (near && node.ownerLabel !== undefined) {
+    const owner = pill(pixi, {
+      text: characterLabel(node.ownerLabel, OWNER_LABEL_LIMIT),
+      fontSize: ownerTag.fontSize,
+      fontWeight: ownerTag.fontWeight,
+      paddingX: ownerTag.paddingX,
+      height: ownerTag.height,
+      fill: ownerTag.fill,
+      strokeWidth: ownerTag.strokeWidth,
+    });
+    owner.position.set(0, stack.owner);
+    labels.addChild(owner);
   }
   container.on('pointerover', () => {
     hovered = true;
@@ -148,7 +160,7 @@ export function createAgentNodeView(
 type PillOptions = {
   readonly text: string;
   readonly fontSize: number;
-  readonly fontWeight: '600';
+  readonly fontWeight: '500' | '600';
   readonly paddingX: number;
   readonly height: number;
   readonly fill: string;

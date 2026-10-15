@@ -45,7 +45,10 @@ export function characterDimmed(node: Pick<SceneCharacter, 'availability'>): boo
   return node.availability === 'reconnecting' || node.availability === 'offline';
 }
 
-/** 名牌在人物脚下；标签避让在 character-labels.ts 里预留了 y + 8 到 y + 66 的高度。 */
+/**
+ * 名牌在人物脚下；标签避让在 character-labels.ts 里预留了 y + 8 到 y + 66 的高度，
+ * 名牌下还写着“谁的 Agent”时再往下多留 {@link ownerTag} 那一行。
+ */
 export const nameplate = {
   top: 12,
   height: 26,
@@ -66,6 +69,31 @@ export const statusSticker = {
   stroke: sceneInk,
   strokeWidth: 2,
 } as const;
+
+/** 贴纸下面一行“谁的 Agent”：比贴纸小一号，白底，免得和在不在等消息的颜色混在一起。 */
+export const ownerTag = {
+  gap: 4,
+  height: 20,
+  paddingX: 7,
+  fontSize: 12,
+  fontWeight: '500',
+  fill: '#ffffff',
+  stroke: sceneInk,
+  strokeWidth: 1.5,
+} as const;
+
+/** 名牌、贴纸、“谁的 Agent”从上到下的位置；Pixi 和 SVG 回退共用。 */
+export function labelStack(hasStatus: boolean): {
+  readonly status: number;
+  readonly owner: number;
+} {
+  const status = nameplate.top + nameplate.height + statusSticker.gap;
+  return {
+    status,
+    owner:
+      (hasStatus ? status + statusSticker.height : nameplate.top + nameplate.height) + ownerTag.gap,
+  };
+}
 
 const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 

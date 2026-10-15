@@ -43,6 +43,32 @@ describe('room character labels', () => {
       ...visibleCharacterLabels([short('a', 0), short('b', 150)], null, true, status),
     ]).toEqual(['a']);
   });
+  it('reserves the owner line under the status sticker', () => {
+    const owned = (id: string, y: number, ownerLabel?: string): SceneCharacter => ({
+      ...person(id),
+      displayName: 'Ada',
+      y,
+      ...(ownerLabel === undefined ? {} : { ownerLabel }),
+    });
+    const status = () => 'Waiting';
+    expect([
+      ...visibleCharacterLabels([owned('a', 0), owned('b', 75)], null, true, status),
+    ]).toEqual(['a', 'b']);
+    expect([
+      ...visibleCharacterLabels(
+        [owned('a', 0, 'Grace’s agent'), owned('b', 75)],
+        null,
+        true,
+        status,
+      ),
+    ]).toEqual(['a']);
+  });
+  it('shortens a long owner caption without dropping its end', () => {
+    expect(characterLabel('Network agent · let in by Grace', 40)).toBe(
+      'Network agent · let in by Grace',
+    );
+    expect(characterLabel('Network agent · let in by Grace', 20)).toBe('Network agent · let…');
+  });
   it('shows only focused or human names at room overview scale', () => {
     expect([...visibleCharacterLabels([person('a'), person('b', 1000)], 'b', false)]).toEqual([
       'b',

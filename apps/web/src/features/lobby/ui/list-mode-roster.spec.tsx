@@ -9,7 +9,10 @@ import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { LobbyAgent, LobbyAgentStatus } from '@/features/lobby/domain/lobby';
+import { AgentOwnerStore } from '@/features/lobby/application/agent-owner-store';
+import type { AgentOwnerRecord } from '@/features/lobby/domain/agent-owners';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import { AgentOwnersProvider, AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
 import {
   NetworkAgentLabelsProvider,
@@ -254,6 +257,78 @@ describe('ListModeRoster 的网络 Agent 标记', () => {
       'Network agent · relayed by the server',
     );
     expect(label).toHaveAttribute('title', expect.stringContaining('the server can read'));
+  });
+});
+
+describe('ListModeRoster 写 Agent 是谁的', () => {
+  it('本机 Agent 写主人，网络 Agent 写放行的人，自己的写“你的”', async () => {
+    const self = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
+    const grace = { displayName: 'Grace', principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43' };
+    const ids = Array.from(
+      { length: 5 },
+      (_, index) => `01990d9e-8400-7000-8000-${String(index + 21).padStart(12, '0')}`,
+    );
+    const answers: Record<string, AgentOwnerRecord> = {
+      [ids[0] ?? '']: {
+        agentId: ids[0] ?? '',
+        kind: 'local',
+        owner: { ...grace, principalId: self },
+      },
+      [ids[1] ?? '']: { agentId: ids[1] ?? '', kind: 'local', owner: grace },
+      [ids[2] ?? '']: { agentId: ids[2] ?? '', kind: 'network', admittedBy: grace },
+      [ids[3] ?? '']: {
+        agentId: ids[3] ?? '',
+        kind: 'network',
+        admittedBy: { ...grace, principalId: self },
+      },
+      [ids[4] ?? '']: { agentId: ids[4] ?? '', kind: 'network' },
+    };
+    const store = new AgentOwnerStore(
+      {
+        lookup: (_room, agentIds) =>
+          Promise.resolve(ok(agentIds.flatMap((id) => (answers[id] ? [answers[id]] : [])))),
+      },
+      {
+        schedule: (task) => {
+          task();
+        },
+      },
+    );
+    const names = ['mine', 'graces', 'admitted', 'byme', 'lobby'];
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AgentOwnersProvider store={store}>
+          <AgentOwnersScope catalogId="01990d9e-8400-7000-8000-000000000401" selfPrincipalId={self}>
+            <ListModeRoster
+              agents={names.map((name, index) => ({
+                ...agent(name, 'idle'),
+                agentId: ids[index] ?? '',
+              }))}
+              observedAtUnixMs={1_700_000_000_000}
+              onSelectAgent={vi.fn()}
+              selectedAgentId={null}
+            />
+          </AgentOwnersScope>
+        </AgentOwnersProvider>
+      </I18nextProvider>,
+    );
+
+    const row = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`, 'u') });
+    expect(await within(row('Mine')).findByText('Your agent')).toBeVisible();
+    expect(within(row('Graces')).getByText('Grace’s agent')).toBeVisible();
+    expect(within(row('Admitted')).getByText('Let in by Grace')).toBeVisible();
+    expect(within(row('Byme')).getByText('Let in by you')).toBeVisible();
+    // 公共大厅里的网络 Agent 没人放行，名字旁的“网络 Agent”已经够了。
+    expect(row('Lobby').querySelector('.roster-agent__owner')).toBeNull();
+  });
+
+  it('不在房间里（没有查询服务）时什么都不写', () => {
+    renderRoster({
+      agents: [agent('solo', 'idle')],
+      onSelectAgent: vi.fn(),
+      selectedAgentId: null,
+    });
+    expect(document.querySelector('.roster-agent__owner')).toBeNull();
   });
 });
 

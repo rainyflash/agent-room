@@ -24,6 +24,8 @@ export type LobbyBounds = {
 };
 
 export type LobbyAgentNodeProjection = LobbyAgent & {
+  /** 名牌下写的“谁的 Agent”，服务器按自己的记录回答（specs/room-people）；不知道时没有。 */
+  readonly ownerLabel?: string;
   readonly radius: number;
   readonly roamingRadius?: number;
   readonly floorPosition?: FloorPoint;

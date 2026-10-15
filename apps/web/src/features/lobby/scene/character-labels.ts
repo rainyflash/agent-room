@@ -1,11 +1,19 @@
 import type { SceneCharacter } from './scene-character';
-import { estimatedTextWidth, nameplate, statusSticker } from './scene-style';
+import { estimatedTextWidth, labelStack, nameplate, ownerTag, statusSticker } from './scene-style';
 
 const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-export function characterLabel(name: string): string {
+export function characterLabel(name: string, limit = 20): string {
   const letters = Array.from(segments.segment(name.trim()), (entry) => entry.segment);
-  return letters.length <= 20 ? name.trim() : `${letters.slice(0, 19).join('')}…`;
+  return letters.length <= limit ? name.trim() : `${letters.slice(0, limit - 1).join('')}…`;
 }
+
+/**
+ * 名牌下“谁的 Agent”那一行最多这么长。里面的人名已经按 {@link OWNER_NAME_LIMIT} 截过，
+ * 这里只兜底，免得把“放行”之类的后半句截掉。
+ */
+export const OWNER_LABEL_LIMIT = 40;
+/** “谁的 Agent”里的人名最多这么长。 */
+export const OWNER_NAME_LIMIT = 16;
 
 type Rect = {
   readonly x: number;
@@ -57,8 +65,21 @@ export function visibleCharacterLabels(
       status === undefined
         ? 0
         : estimatedTextWidth(status, statusSticker.fontSize) + statusSticker.paddingX * 2;
-    const width = (Math.max(plate, sticker) + roamAllowance * 2) * size;
-    const box = { x: node.x - width / 2, y: node.y + 8 * size, width, height: 58 * size };
+    const owner =
+      near && node.kind === 'agent' && node.ownerLabel !== undefined
+        ? characterLabel(node.ownerLabel, OWNER_LABEL_LIMIT)
+        : undefined;
+    const ownerWidth =
+      owner === undefined
+        ? 0
+        : estimatedTextWidth(owner, ownerTag.fontSize) + ownerTag.paddingX * 2;
+    // 名牌下还写着“谁的 Agent”时，往下多留那一行。
+    const bottom =
+      owner === undefined
+        ? 66
+        : Math.max(66, labelStack(status !== undefined).owner + ownerTag.height + 2);
+    const width = (Math.max(plate, sticker, ownerWidth) + roamAllowance * 2) * size;
+    const box = { x: node.x - width / 2, y: node.y + 8 * size, width, height: (bottom - 8) * size };
     const buckets = keys(box);
     if (buckets.some((key) => cells.get(key)?.some((other) => overlaps(box, other)))) continue;
     visible.add(node.characterId);

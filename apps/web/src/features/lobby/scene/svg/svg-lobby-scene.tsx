@@ -1,4 +1,4 @@
-import { visibleCharacterLabels, characterLabel } from '../character-labels';
+import { visibleCharacterLabels, characterLabel, OWNER_LABEL_LIMIT } from '../character-labels';
 import { sceneCharacters, type SceneCharacter, type SceneFrame } from '../scene-character';
 import {
   forwardRef,
@@ -23,7 +23,9 @@ import {
   characterShadow,
   estimatedTextWidth,
   humanMarker,
+  labelStack,
   nameplate,
+  ownerTag,
   sceneInk,
   selectionRing,
   statusSticker,
@@ -303,6 +305,7 @@ export const SvgLobbyScene = forwardRef<SvgLobbySceneHandle, SvgLobbySceneProps>
                       ? characterStatusLabel(node, labels)
                       : undefined
                   }
+                  ownerLabel={names.has(node.characterId) && near ? node.ownerLabel : undefined}
                 />
               </g>
             ))}
@@ -377,14 +380,23 @@ function SvgCharacterLabels({
   node,
   visible,
   statusLabel,
+  ownerLabel,
 }: {
   readonly node: SceneCharacter;
   readonly visible: boolean;
   readonly statusLabel: string | undefined;
+  readonly ownerLabel: string | undefined;
 }) {
   const name = characterLabel(node.displayName);
   const nameWidth = estimatedTextWidth(name, nameplate.fontSize) + nameplate.paddingX * 2;
-  const statusTop = nameplate.top + nameplate.height + statusSticker.gap;
+  const stack = labelStack(statusLabel !== undefined && node.kind === 'agent');
+  const statusTop = stack.status;
+  const owner =
+    ownerLabel === undefined || node.kind === 'human'
+      ? null
+      : characterLabel(ownerLabel, OWNER_LABEL_LIMIT);
+  const ownerWidth =
+    owner === null ? 0 : estimatedTextWidth(owner, ownerTag.fontSize) + ownerTag.paddingX * 2;
   const statusWidth =
     statusLabel === undefined
       ? 0
@@ -432,6 +444,29 @@ function SvgCharacterLabels({
             className="room-character-status"
           >
             {statusLabel}
+          </text>
+        </g>
+      )}
+      {owner === null ? null : (
+        <g>
+          <rect
+            x={-ownerWidth / 2}
+            y={stack.owner}
+            width={ownerWidth}
+            height={ownerTag.height}
+            rx={ownerTag.height / 2}
+            fill={ownerTag.fill}
+            stroke={ownerTag.stroke}
+            strokeWidth={ownerTag.strokeWidth}
+          />
+          <text
+            x="0"
+            y={stack.owner + ownerTag.height / 2}
+            textAnchor="middle"
+            dominantBaseline="central"
+            className="room-character-owner"
+          >
+            {owner}
           </text>
         </g>
       )}

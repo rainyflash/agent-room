@@ -22,6 +22,7 @@ import {
   type AgentStateKey,
 } from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
+import { useAgentOwners, useAgentOwnerText } from './agent-owners';
 import { useNetworkAgentIds, useNetworkAgentLabel } from './network-agent-labels';
 import './agent-roster.css';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
@@ -107,6 +108,9 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
     const visibleAgents = filteredAgents.slice(currentPage * 100, (currentPage + 1) * 100);
     const networkAgents = useNetworkAgentIds(visibleAgents.map((agent) => agent.agentId));
     const networkLabel = useNetworkAgentLabel();
+    // 谁的 Agent：服务器按自己的记录回答（specs/room-people），网络 Agent 上面已经标了，这里只写放行的人。
+    const owners = useAgentOwners(visibleAgents.map((agent) => agent.agentId));
+    const ownerText = useAgentOwnerText();
 
     useImperativeHandle(forwardedRef, () => ({
       focusSelected: () => {
@@ -283,6 +287,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                       ) : null}
                     </strong>
                     <AgentStateLabel agent={agent} now={observedAtUnixMs} />
+                    {ownerLine(ownerText.detail(owners.get(agent.agentId)))}
                   </span>
                   {/* 名单上只说在不在等消息，不再说工作状态和任务摘要（specs/agent-liveness）。 */}
                   <span className="roster-agent__summary">
@@ -329,6 +334,10 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
     );
   },
 );
+
+function ownerLine(text: string | null) {
+  return text === null ? null : <span className="roster-agent__owner">{text}</span>;
+}
 
 function targetAgentForKey(
   agents: readonly LobbyAgent[],

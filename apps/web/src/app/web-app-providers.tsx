@@ -16,7 +16,10 @@ import { MatrixSdkPublicLobbyEntryGateway } from '@/features/lobby-entry/adapter
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import { MatrixLobbyGateway } from '@/features/lobby/adapters/matrix-lobby-gateway';
 import { ControlPlaneNetworkAgentLookup } from '@/features/lobby/adapters/control-plane-network-agent-lookup';
+import { ControlPlaneAgentOwnerLookup } from '@/features/lobby/adapters/control-plane-agent-owner-lookup';
+import { AgentOwnerStore } from '@/features/lobby/application/agent-owner-store';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import { AgentOwnersProvider } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { ControlPlaneAgentRosterPolicy } from '@/features/lobby/adapters/control-plane-agent-roster-policy';
 import { MatrixSdkLobbySource } from '@/features/lobby/adapters/matrix-lobby-source';
@@ -88,9 +91,11 @@ export function CloudAppProviders({ config, localRuntime }: CloudAppProvidersPro
           <PersonalWorkspaceProvider store={runtime.personalWorkspace}>
             <InboxProvider store={runtime.inbox}>
               <NetworkAgentLabelsProvider store={runtime.networkAgentLabels}>
-                <RoomKeyRecoveryProvider recovery={runtime.roomKeyRecovery}>
-                  <RouterProvider router={router} />
-                </RoomKeyRecoveryProvider>
+                <AgentOwnersProvider store={runtime.agentOwners}>
+                  <RoomKeyRecoveryProvider recovery={runtime.roomKeyRecovery}>
+                    <RouterProvider router={router} />
+                  </RoomKeyRecoveryProvider>
+                </AgentOwnersProvider>
               </NetworkAgentLabelsProvider>
             </InboxProvider>
           </PersonalWorkspaceProvider>
@@ -166,6 +171,8 @@ export function createCloudRuntime(
   const networkAgentLabels = new NetworkAgentLabelStore(
     new ControlPlaneNetworkAgentLookup(businessApi),
   );
+  // 房间里的 Agent 是谁的（specs/room-people）：名字按登录的人能看的给，退出登录时清空。
+  const agentOwners = new AgentOwnerStore(new ControlPlaneAgentOwnerLookup(businessApi));
   const lobbyEntry = new PublicLobbyEntryCoordinator(
     new ControlPlanePublicLobbyEntryClient(businessApi),
     new MatrixSdkPublicLobbyEntryGateway(matrixClients),
@@ -233,6 +240,7 @@ export function createCloudRuntime(
         clear: () => {
           privateRequests.clear();
           queryClient.clear();
+          agentOwners.clear();
         },
       },
     },
@@ -241,6 +249,7 @@ export function createCloudRuntime(
   };
   return {
     accountPreferences,
+    agentOwners,
     personalWorkspace,
     inbox,
     matrixClients,
@@ -254,6 +263,7 @@ export function createCloudRuntime(
 
 export type CloudRuntimeComposition = {
   readonly accountPreferences: AccountPreferencesStore;
+  readonly agentOwners: AgentOwnerStore;
   readonly personalWorkspace: PersonalWorkspaceStore;
   readonly inbox: InboxStore;
   readonly matrixClients: MatrixClientRegistry;

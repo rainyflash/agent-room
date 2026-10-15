@@ -56,6 +56,10 @@
   gap: 6px;
   font-size: 12px;
 }
+/* 谁的 Agent：写的是人的昵称，不用等宽字。 */
+.roster-agent__identity > .roster-agent__owner {
+  font-family: var(--font-sans);
+}
 .list-roster .roster-agent__identity > .agent-state-label {
   display: flex;
   white-space: normal;
