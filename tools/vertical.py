@@ -79,6 +79,10 @@ KNOCK_RESULT: Final = VERTICAL_ROOT / "private-room-knock.json"
 # 人在网络 Agent 建的房间里聊过了、房间归档了：纵向验收和网页用例靠这两个文件对步子。
 NETWORK_ROOM_CHATTED: Final = VERTICAL_ROOT / "network-agent-room-chatted.json"
 NETWORK_ROOM_ARCHIVED: Final = VERTICAL_ROOT / "network-agent-room-archived.json"
+# 房间里的人那一轮：第二个人凭链接加入了、他的 Agent 说过了、两边网页看过了。
+ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
+ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
+ROOM_PEOPLE_CHECKED: Final = VERTICAL_ROOT / "room-people-checked.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
 NETWORK_AGENT_STORE_ROOT: Final = VERTICAL_ROOT / "network-agents"
 PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
@@ -3298,6 +3302,110 @@ def wait_for_person_message(owner: str, *, room_id: str, text: str, browser: Bro
                 raise VerticalFailure("房主收到的那一句不是人说的。")
             return require_text(message.get("messageId"), "人说的那一句的消息 ID")
     raise VerticalFailure("房主 4 分钟内没收到人在网页上说的那一句。")
+
+
+ROOM_PEOPLE_NAME: Final = "Vertical People Room"
+ROOM_PEOPLE_AGENT: Final = "Vertical People Agent"
+
+
+def verify_room_people(
+    *,
+    person_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """房间里的人（specs/room-people/design.md 第 6 步）：第二个账号在真实网页上建私人房间、从“邀请人”
+    生成链接；验收账号在另一个网页会话里没登录就打开链接，登录回来以后加入。他的本机 Agent 按房间名
+    进来说一句，两边网页都解开；房主那边写着“Local Developer 的 Agent”，他自己那边写着“你的 Agent”。
+    网页和这边靠三个文件对步子（room-people.e2e.ts）。"""
+    for path in (ROOM_PEOPLE_JOINED, ROOM_PEOPLE_SPOKE, ROOM_PEOPLE_CHECKED):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_ROOM_PEOPLE_OWNER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_ROOM_PEOPLE_OWNER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_ROOM_PEOPLE_NAME": ROOM_PEOPLE_NAME,
+            "AGENT_ROOM_VERTICAL_ROOM_PEOPLE_JOINED": str(ROOM_PEOPLE_JOINED),
+            "AGENT_ROOM_VERTICAL_ROOM_PEOPLE_SPOKE": str(ROOM_PEOPLE_SPOKE),
+            "AGENT_ROOM_VERTICAL_ROOM_PEOPLE_CHECKED": str(ROOM_PEOPLE_CHECKED),
+        }
+    )
+    browser = BrowserRun("room-people.e2e.ts", playwright_environment)
+    joined = wait_for_browser_step(
+        ROOM_PEOPLE_JOINED, browser, timeout_seconds=420, failure="第二个人 7 分钟内没凭链接加入房间。"
+    )
+    catalog_id = require_text(joined.get("catalogId"), "凭链接加入的房间号")
+    with bridge_mcp_client(person_bridge, redactor) as transport:
+        entered = transport.call_tool(
+            "agent_room_join", {"room": ROOM_PEOPLE_NAME, "displayName": ROOM_PEOPLE_AGENT}
+        )
+        if require_object(entered.get("room"), "他的 Agent 进的房间").get("catalogId") != catalog_id:
+            raise VerticalFailure("凭链接加入的人的 Agent 按房间名进了别的房间。")
+        agent = transport.bind_session(require_text(entered.get("sessionId"), "他的 Agent 的会话"))
+        room_id = wait_for_session_identity(agent, timeout_seconds=180)["matrixRoomId"]
+        text = f"Hello from the invited person's agent ({new_uuid_v7()[-8:]})."
+        event_id = say_in_room(agent, room_id, text)
+        ROOM_PEOPLE_SPOKE.write_text(
+            json.dumps({"agentName": ROOM_PEOPLE_AGENT, "text": text}) + "\n", encoding="utf-8"
+        )
+        # 两边网页看完以前会话一直开着：服务器只回答此刻在房间里的 Agent 是谁的。
+        wait_for_browser_step(
+            ROOM_PEOPLE_CHECKED,
+            browser,
+            timeout_seconds=420,
+            failure="两边网页 7 分钟内没看到他的 Agent 说的话和它是谁的。",
+        )
+    browser.finish(timeout_seconds=120)
+    return {"roomPeopleAgentEventId": event_id}
+
+
+def wait_for_browser_step(
+    path: Path, browser: BrowserRun, *, timeout_seconds: float, failure: str
+) -> dict[str, object]:
+    """等网页那一侧写下这一步的文件，读出来；网页那一侧先结束了就把它的错误抛出来。"""
+    deadline = time.monotonic() + timeout_seconds
+    while not path.is_file():
+        browser.ensure_running()
+        if time.monotonic() >= deadline:
+            raise VerticalFailure(failure)
+        time.sleep(1)
+    return require_object(json.loads(path.read_text(encoding="utf-8")), path.name)
+
+
+def say_in_room(client: McpAgentSession, room_id: str, text: str) -> str:
+    """本机 Agent 在房间里说一句普通聊天，回答事件 ID。刚进房间时 Bridge 可能还在准备（可重试），
+    同一个提交 ID 重发是幂等的。"""
+    arguments = {
+        "submissionId": new_uuid_v7(),
+        "roomId": room_id,
+        "chat": True,
+        "body": text,
+        "provenance": "human_confirmed_agent",
+    }
+    deadline = time.monotonic() + 120
+    while True:
+        result = client.call_tool_result("agent_room_send_message", arguments)
+        if result.get("isError") is not True:
+            break
+        structured = result.get("structuredContent")
+        if (
+            not isinstance(structured, dict)
+            or structured.get("retryable") is not True
+            or time.monotonic() >= deadline
+        ):
+            raise VerticalFailure(f"本机 Agent 发言失败（错误码 {tool_failure_code(result) or '缺失'}）。")
+        time.sleep(1)
+    response = require_object(result.get("structuredContent"), "本机 Agent 发言的结果")
+    message = require_object(response.get("message"), "本机 Agent 发出的消息")
+    if message.get("state") != "submitted":
+        raise VerticalFailure(f"本机 Agent 说的话没有确定提交：{message.get('state')}。")
+    return require_text(message.get("eventId"), "本机 Agent 说的那一句的事件 ID")
 
 
 def create_network_agent_room(owner: str) -> tuple[str, str, str]:

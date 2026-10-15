@@ -86,6 +86,10 @@ def accept() -> None:
                 sender_bridge=sender, target_bridge=target, environment=environment,
                 account_id=agent["principalId"], redactor=redactor,
             )
+            # 第二个账号在网页上建房间、发邀请链接，验收账号凭链接进来，他的 Agent 进来说话。
+            room_people = v.verify_room_people(
+                person_bridge=sender, environment=environment, redactor=redactor,
+            )
             # 放在最后：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
@@ -133,6 +137,7 @@ def accept() -> None:
         "agentRoomsVerified":True, "localAgentRoomReplyEventId":agent_rooms["localRoomReplyEventId"],
         "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
         "networkAgentRoomInvitedAgentEventId":agent_rooms["networkRoomInvitedAgentEventId"],
+        "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
