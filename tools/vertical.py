@@ -84,6 +84,9 @@ ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
 ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
 ROOM_PEOPLE_CHECKED: Final = VERTICAL_ROOT / "room-people-checked.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
+# 同一个身份那一轮里主人在网页会话里做的事（建房间、带进房间、让它离开、删掉它）的结果。
+AGENT_IDENTITY_RESULT: Final = VERTICAL_ROOT / "agent-identity.json"
+AGENT_IDENTITY_ROOMS: Final = ("Vertical Identity A", "Vertical Identity B", "Vertical Identity C")
 NETWORK_AGENT_STORE_ROOT: Final = VERTICAL_ROOT / "network-agents"
 PRODUCT_CLOSURE_RESULT: Final = VERTICAL_ROOT / "product-closure.json"
 LOG_ROOT: Final = ROOT / "artifacts" / "browser" / "task-24" / "services"
@@ -3527,6 +3530,219 @@ def require_archived(catalog_id: str) -> None:
             return
         time.sleep(1)
     raise VerticalFailure("建房的网络 Agent 离开以后，房间该归档。")
+
+
+def verify_agent_identity(
+    *,
+    speaker_bridge: AuthorizedBridgeRuntime,
+    agent_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """本机 Agent 跨房间用同一个身份（specs/agent-identity/design.md“验收”）：同一个 MCP 连接的 Agent
+    进房间 A 再进 B 还是它，两个房间的消息一起等到；离开 B 以后 A 照常；主人带它进 C、收到 C 的；
+    主人让它离开 C、删掉它以后，它不在任何房间里。会话开在的 A 离不开，所以离开的是 B。"""
+    created = agent_identity_step(
+        environment,
+        "rooms",
+        AGENT_ROOM_VERTICAL_AGENT_IDENTITY_ROOMS=json.dumps(
+            [{"catalogId": new_uuid_v7(), "name": name} for name in AGENT_IDENTITY_ROOMS]
+        ),
+    )
+    first, second, third = (
+        IdentityRoom.parse(room) for room in require_list(created.get("rooms"))
+    )
+    with bridge_mcp_client(agent_bridge, redactor) as agent_transport, bridge_mcp_client(
+        speaker_bridge, redactor
+    ) as speaker_transport:
+        agent, identity = enter_identity_rooms(agent_transport, first, second)
+        speaker = join_identity_speaker(speaker_transport, first, second)
+        user = identity["agentMatrixUserId"]
+        wait_for_room_messages(
+            agent,
+            {
+                say_in_room(speaker, first.room_id, "Identity check in the first room."): first,
+                say_in_room(speaker, second.room_id, "Identity check in the second room."): second,
+            },
+        )
+        left = agent.call_tool("agent_room_leave_room", {"room": second.name})
+        if left.get("left") is not True:
+            raise VerticalFailure(f"Agent 离开第二个房间没有成功：{left}")
+        require_membership(second.room_id, user, "leave")
+        require_membership(first.room_id, user, "join")
+        wait_for_room_messages(
+            agent, {say_in_room(speaker, first.room_id, "Still here after leaving."): first}
+        )
+        brought = agent_identity_step(
+            environment,
+            "bring",
+            AGENT_ROOM_VERTICAL_AGENT_IDENTITY_AGENT=identity["agentId"],
+            AGENT_ROOM_VERTICAL_AGENT_IDENTITY_CATALOG=third.catalog_id,
+        )
+        entered = require_object(brought.get("brought"), "带进房间的回答").get("entered")
+        if not isinstance(entered, int) or entered < 1:
+            raise VerticalFailure(f"主人带 Agent 进房间时一个连接也没进去：{brought}")
+        if sorted(require_list(brought.get("rooms"))) != sorted([first.catalog_id, third.catalog_id]):
+            raise VerticalFailure(f"带进去以后它该在第一个和第三个房间：{brought}")
+        require_membership(third.room_id, user, "join")
+        join_when_ready(speaker_transport, {"room": third.name})
+        wait_for_room_messages(
+            agent, {say_in_room(speaker, third.room_id, "Welcome to the third room."): third}
+        )
+        agent.close()
+    removed = agent_identity_step(
+        environment,
+        "leave-and-delete",
+        AGENT_ROOM_VERTICAL_AGENT_IDENTITY_AGENT=identity["agentId"],
+        AGENT_ROOM_VERTICAL_AGENT_IDENTITY_CATALOG=third.catalog_id,
+    )
+    if require_object(removed.get("left"), "离开的回答").get("left") is not True:
+        raise VerticalFailure(f"主人让 Agent 离开第三个房间没有成功：{removed}")
+    if require_list(removed.get("roomsAfterLeave")) != [first.catalog_id]:
+        raise VerticalFailure(f"离开第三个房间以后它该只在第一个房间：{removed}")
+    if removed.get("deleted") != 204:
+        raise VerticalFailure(f"删除 Agent 失败：{removed}")
+    for room in (first, second, third):
+        require_membership(room.room_id, user, "leave")
+    return {"agentIdentityAgentId": identity["agentId"]}
+
+
+@dataclass(frozen=True)
+class IdentityRoom:
+    catalog_id: str
+    room_id: str
+    name: str
+
+    @staticmethod
+    def parse(value: object) -> "IdentityRoom":
+        room = require_object(value, "主人建的房间")
+        return IdentityRoom(
+            catalog_id=require_text(room.get("catalogId"), "房间号"),
+            room_id=require_text(room.get("matrixRoomId"), "Matrix 房间"),
+            name=require_text(room.get("name"), "房间名"),
+        )
+
+
+def enter_identity_rooms(
+    transport: McpStdioClient, first: IdentityRoom, second: IdentityRoom
+) -> tuple[McpAgentSession, dict[str, str]]:
+    """Agent 按房间名进第一个房间，再进第二个：还是同一个会话、同一个 Agent。"""
+    joined = transport.call_tool(
+        "agent_room_join", {"room": first.name, "displayName": "Vertical Identity Agent"}
+    )
+    agent = transport.bind_session(require_text(joined.get("sessionId"), "第一个房间的会话"))
+    identity = wait_for_session_identity(agent, timeout_seconds=180)
+    if identity["matrixRoomId"] != first.room_id:
+        raise VerticalFailure("Agent 按房间名进了别的房间。")
+    entered = join_when_ready(transport, {"room": second.name})
+    if (
+        entered.get("sessionId") != agent.session_id
+        or entered.get("identity") != "reused"
+        or entered.get("roomId") != second.room_id
+    ):
+        raise VerticalFailure(f"同一个 MCP 连接进第二个房间该还是原来的 Agent：{entered}")
+    if wait_for_session_identity(agent, timeout_seconds=60)["agentId"] != identity["agentId"]:
+        raise VerticalFailure("进第二个房间以后 Agent 换了。")
+    return agent, identity
+
+
+def join_identity_speaker(
+    transport: McpStdioClient, first: IdentityRoom, second: IdentityRoom
+) -> McpAgentSession:
+    """另一台电脑上的 Agent 也进这两个房间，好在两边说话。"""
+    joined = transport.call_tool(
+        "agent_room_join", {"room": first.name, "displayName": "Vertical Identity Speaker"}
+    )
+    speaker = transport.bind_session(require_text(joined.get("sessionId"), "说话的会话"))
+    wait_for_session_identity(speaker, timeout_seconds=180)
+    join_when_ready(transport, {"room": second.name})
+    return speaker
+
+
+def join_when_ready(transport: McpStdioClient, arguments: Mapping[str, object]) -> dict[str, object]:
+    """会话还在启动时 join 让 Agent 稍后再调用一次（同一个 Agent）；照做直到进去。"""
+    deadline = time.monotonic() + 120
+    while True:
+        joined = transport.call_tool("agent_room_join", arguments)
+        if joined.get("roomId") is not None or time.monotonic() >= deadline:
+            return joined
+        time.sleep(1)
+
+
+def wait_for_room_messages(client: McpAgentSession, expected: Mapping[str, IdentityRoom]) -> None:
+    """不说房间等消息：几个房间的都交给它，每条带着是哪个房间；收齐以后确认。"""
+    missing = dict(expected)
+    deadline = time.monotonic() + 120
+    while missing:
+        if time.monotonic() >= deadline:
+            raise VerticalFailure(f"Agent 没等到这些房间的消息：{sorted(room.name for room in missing.values())}")
+        page = client.call_tool(
+            "agent_room_wait_for_messages", {"wake": "all", "settleSeconds": 0, "waitSeconds": 30}
+        )
+        for item in require_list(page.get("previews")):
+            preview = require_object(item, "等到的消息")
+            room = missing.pop(str(preview.get("eventId")), None)
+            if room is None:
+                continue
+            if preview.get("roomId") != room.room_id or preview.get("roomName") != room.name:
+                raise VerticalFailure(f"等到的消息没写对是哪个房间：{preview}")
+        cursor = page.get("nextCursor")
+        if isinstance(cursor, str) and cursor:
+            client.call_tool("agent_room_ack", {"eventId": cursor})
+
+
+def require_membership(room_id: str, user_id: str, membership: str) -> None:
+    """问 Synapse 这个 Agent 在这个房间的成员状态；离开、带进都是服务器替它办的，多等一会儿。"""
+    if re.fullmatch(r"![A-Za-z0-9._=-]+:[A-Za-z0-9.-]+(?::\d+)?", room_id) is None:
+        raise VerticalFailure("Matrix 房间标识格式不对。")
+    if re.fullmatch(r"@[a-z0-9._=/-]+:[A-Za-z0-9.-]+(?::\d+)?", user_id) is None:
+        raise VerticalFailure("Matrix 用户标识格式不对。")
+    deadline = time.monotonic() + 60
+    current = ""
+    while time.monotonic() < deadline:
+        current = compose_psql(
+            "SELECT membership FROM local_current_membership"
+            f" WHERE room_id = '{room_id}' AND user_id = '{user_id}';",
+            database="synapse",
+        )
+        if current == membership:
+            return
+        time.sleep(1)
+    raise VerticalFailure(f"Agent 在房间里该是 {membership}，实际是 {current or '没有记录'}。")
+
+
+def agent_identity_step(environment: Mapping[str, str], step: str, **variables: str) -> dict[str, object]:
+    """主人用真实网页会话做这一步，读回结果。"""
+    AGENT_IDENTITY_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_IDENTITY_RESULT.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_AGENT_IDENTITY_STEP": step,
+            "AGENT_ROOM_VERTICAL_AGENT_IDENTITY_RESULT": str(AGENT_IDENTITY_RESULT),
+            **variables,
+        }
+    )
+    run_checked(
+        [
+            executable("node"),
+            "apps/web/node_modules/@playwright/test/cli.js",
+            "test",
+            "--config",
+            "apps/web/playwright.vertical.config.ts",
+            "agent-identity.e2e.ts",
+        ],
+        environment=playwright_environment,
+    )
+    try:
+        payload: object = json.loads(AGENT_IDENTITY_RESULT.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise VerticalFailure(f"同一个身份那一轮的 {step} 没有留下结果。") from error
+    finally:
+        AGENT_IDENTITY_RESULT.unlink(missing_ok=True)
+    return require_object(payload, f"{step} 的结果")
 
 
 def verify_mcp_workflow(
