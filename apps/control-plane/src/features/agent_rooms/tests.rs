@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryResult},
     agent_room_placements::{
-        AgentRoom, AgentRoomActor, AgentRoomPlacementUseCases, LeaveAgentRoom, LeftAgentRoom,
-        ListAgentRooms,
+        AgentRoom, AgentRoomActor, AgentRoomPlacementUseCases, LeaveAgentRoom, LeaveAllAgentRooms,
+        LeftAgentRoom, ListAgentRooms,
     },
     authentication::{
         AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -93,6 +93,13 @@ impl AgentRoomPlacementUseCases for FakePlacements {
         self.left.lock().unwrap().push(request);
         let failure = self.failure.lock().unwrap().take();
         Box::pin(async move { failure.map_or(Ok(LeftAgentRoom { left }), Err) })
+    }
+
+    fn leave_all(
+        &self,
+        _request: LeaveAllAgentRooms,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<usize>> {
+        Box::pin(async { unreachable!("房间路由不离开所有房间") })
     }
 }
 

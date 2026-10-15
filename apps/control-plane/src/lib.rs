@@ -760,12 +760,11 @@ fn build_agent_feature_states(
     })
 }
 
-/// Agent 在哪些房间、离开一个房间：Bridge 用设备签名，主人用网页登录。
-fn build_agent_room_http_state(
-    config: &ControlPlaneConfig,
+/// Agent 在哪些房间、离开房间。没有自己的状态，房间路由和删除 Agent 各用一个。
+fn build_agent_room_placements(
     dependencies: &AgentFeatureDependencies,
-) -> AgentRoomHttpState {
-    let placements = Arc::new(AgentRoomPlacementService::new(
+) -> Arc<AgentRoomPlacementService> {
+    Arc::new(AgentRoomPlacementService::new(
         AgentRoomPlacementDependencies {
             access: dependencies.repositories.clone(),
             agent_memberships: dependencies.repositories.clone(),
@@ -775,10 +774,17 @@ fn build_agent_room_http_state(
             memberships: dependencies.matrix_identities.clone(),
             clock: dependencies.system_runtime.clone(),
         },
-    ));
+    ))
+}
+
+/// Agent 在哪些房间、离开一个房间：Bridge 用设备签名，主人用网页登录。
+fn build_agent_room_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> AgentRoomHttpState {
     AgentRoomHttpState::new(
         AgentRoomHttpDependencies {
-            placements,
+            placements: build_agent_room_placements(dependencies),
             authentication: dependencies.authentication.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
@@ -817,6 +823,7 @@ fn build_agent_identity_http_states(
         agents: AgentHttpState::new(
             AgentHttpDependencies {
                 agents,
+                placements: build_agent_room_placements(dependencies),
                 verification,
                 authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),

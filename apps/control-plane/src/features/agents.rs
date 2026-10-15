@@ -4,6 +4,8 @@ use agent_room_application::{
     agent_instance_verification::{
         AgentInstanceVerificationUseCases, ResolveAgentInstanceVerification,
     },
+    agent_lobbies::AgentLobbyEntryFailureKind,
+    agent_room_placements::{AgentRoomPlacementUseCases, LeaveAllAgentRooms},
     agents::{
         AgentManagementUseCases, ChangeAgentMembership, CreateAgent, CreateHostAgentForDevice,
         DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
@@ -57,6 +59,7 @@ const TARGETED_HANDOFF_CAPABILITY: &str = "targeted_handoff_v1";
 #[derive(Clone)]
 pub(crate) struct AgentHttpState {
     agents: Arc<dyn AgentManagementUseCases>,
+    placements: Arc<dyn AgentRoomPlacementUseCases>,
     verification: Arc<dyn AgentInstanceVerificationUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
@@ -66,6 +69,8 @@ pub(crate) struct AgentHttpState {
 
 pub(crate) struct AgentHttpDependencies {
     pub(crate) agents: Arc<dyn AgentManagementUseCases>,
+    /// 删除 Agent 之前让它离开它在的所有房间。
+    pub(crate) placements: Arc<dyn AgentRoomPlacementUseCases>,
     pub(crate) verification: Arc<dyn AgentInstanceVerificationUseCases>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
@@ -80,6 +85,7 @@ impl AgentHttpState {
     ) -> Self {
         Self {
             agents: dependencies.agents,
+            placements: dependencies.placements,
             verification: dependencies.verification,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
@@ -486,6 +492,22 @@ async fn delete_agent(
         Ok(actor) => actor,
         Err(response) => return response,
     };
+    // 先离开它在的所有房间再删（specs/agent-identity/design.md），不然删掉以后它还挂在房间的成员名单里。
+    // 离开不成就不删，再点一次接着离开。不是主人、没有这个 Agent，交给删除回答它自己的错误。
+    if let Err(failure) = state
+        .placements
+        .leave_all(LeaveAllAgentRooms {
+            actor: actor.clone(),
+            agent_id,
+        })
+        .await
+        && !matches!(
+            failure.kind(),
+            AgentLobbyEntryFailureKind::Unauthorized | AgentLobbyEntryFailureKind::NotFound
+        )
+    {
+        return no_store(ApiError::agent_lobby(&failure, correlation_id).into_response());
+    }
     match state
         .agents
         .delete_agent(DeleteAgent { actor, agent_id })
@@ -972,8 +994,9 @@ mod tests {
         },
         ports::{
             AgentInstanceManagementRecord, AgentInstanceVerificationRecord, MatrixDeviceId,
-            MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture, PrincipalAccount,
-            RegisteredAgent, SecretFactory, SecretValue, StoredAgentInstanceRegistration,
+            MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixSession,
+            MatrixSessionMetadata, MatrixUserId, PortFuture, PrincipalAccount, RegisteredAgent,
+            SecretFactory, SecretValue, StoredAgentInstanceRegistration,
         },
     };
     use agent_room_domain::{
@@ -999,6 +1022,46 @@ mod tests {
     use uuid::Uuid;
 
     use super::{AgentHttpDependencies, AgentHttpState, DEVICE_DEFAULT_AGENT_TARGET, router};
+
+    use agent_room_application::{
+        agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryResult},
+        agent_room_placements::{
+            AgentRoom, AgentRoomPlacementUseCases, LeaveAgentRoom, LeaveAllAgentRooms,
+            LeftAgentRoom, ListAgentRooms,
+        },
+    };
+
+    /// 记下删除之前的“离开所有房间”，按给的结果回答。
+    #[derive(Default)]
+    struct FakePlacements {
+        leave_all: Mutex<Vec<LeaveAllAgentRooms>>,
+        failure: Mutex<Option<AgentLobbyEntryFailure>>,
+    }
+
+    impl AgentRoomPlacementUseCases for FakePlacements {
+        fn rooms(
+            &self,
+            _request: ListAgentRooms,
+        ) -> PortFuture<'_, AgentLobbyEntryResult<Vec<AgentRoom>>> {
+            Box::pin(async { unreachable!("Agent 路由不列房间") })
+        }
+
+        fn leave(
+            &self,
+            _request: LeaveAgentRoom,
+        ) -> PortFuture<'_, AgentLobbyEntryResult<LeftAgentRoom>> {
+            Box::pin(async { unreachable!("Agent 路由不离开单个房间") })
+        }
+
+        fn leave_all(
+            &self,
+            request: LeaveAllAgentRooms,
+        ) -> PortFuture<'_, AgentLobbyEntryResult<usize>> {
+            self.leave_all.lock().expect("离开记录锁可用").push(request);
+            let failure = self.failure.lock().expect("离开结果锁可用").take();
+            Box::pin(async move { failure.map_or(Ok(1), Err) })
+        }
+    }
 
     const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
     const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
@@ -1264,11 +1327,26 @@ mod tests {
         authentication: Arc<FakeAuthentication>,
         devices: Arc<FakeDevices>,
     ) -> axum::Router {
-        test_router_with_verification(
+        test_router_with_placements(
+            agents,
+            authentication,
+            devices,
+            Arc::new(FakePlacements::default()),
+        )
+    }
+
+    fn test_router_with_placements(
+        agents: Arc<FakeAgents>,
+        authentication: Arc<FakeAuthentication>,
+        devices: Arc<FakeDevices>,
+        placements: Arc<FakePlacements>,
+    ) -> axum::Router {
+        test_router_with(
             agents,
             authentication,
             devices,
             Arc::new(FakeVerification::default()),
+            placements,
         )
     }
 
@@ -1278,9 +1356,26 @@ mod tests {
         devices: Arc<FakeDevices>,
         verification: Arc<FakeVerification>,
     ) -> axum::Router {
+        test_router_with(
+            agents,
+            authentication,
+            devices,
+            verification,
+            Arc::new(FakePlacements::default()),
+        )
+    }
+
+    fn test_router_with(
+        agents: Arc<FakeAgents>,
+        authentication: Arc<FakeAuthentication>,
+        devices: Arc<FakeDevices>,
+        verification: Arc<FakeVerification>,
+        placements: Arc<FakePlacements>,
+    ) -> axum::Router {
         let state = AgentHttpState::new(
             AgentHttpDependencies {
                 agents,
+                placements,
                 verification,
                 authentication,
                 devices,
@@ -1686,10 +1781,12 @@ mod tests {
     async fn 删除_agent_强制最近认证且拒绝跨站来源() {
         let agents = Arc::new(FakeAgents::default());
         let authentication = Arc::new(FakeAuthentication::default());
-        let app = test_router(
+        let placements = Arc::new(FakePlacements::default());
+        let app = test_router_with_placements(
             agents.clone(),
             authentication.clone(),
             Arc::new(FakeDevices::default()),
+            placements.clone(),
         );
         let request = |origin: &str| {
             Request::builder()
@@ -1714,6 +1811,13 @@ mod tests {
                 .expect("Agent 删除记录锁可用")
                 .is_empty()
         );
+        assert!(
+            placements
+                .leave_all
+                .lock()
+                .expect("离开记录锁可用")
+                .is_empty()
+        );
 
         let response = app
             .oneshot(request(FRONTEND_ORIGIN))
@@ -1723,6 +1827,10 @@ mod tests {
         let deletions = agents.deletions.lock().expect("Agent 删除记录锁可用");
         assert_eq!(deletions.len(), 1);
         assert_eq!(deletions[0].agent_id, agent_id());
+        let left = placements.leave_all.lock().expect("离开记录锁可用");
+        assert_eq!(left.len(), 1, "删之前先离开所有房间");
+        assert_eq!(left[0].agent_id, agent_id());
+        assert_eq!(left[0].actor, deletions[0].actor);
         assert_eq!(
             *authentication
                 .requirements
@@ -1730,6 +1838,50 @@ mod tests {
                 .expect("认证要求记录锁可用"),
             vec![AuthenticationRequirement::RecentAuthentication]
         );
+    }
+
+    #[tokio::test]
+    async fn 删除_agent_时离开房间不成就不删_不是主人交给删除回答() {
+        let unavailable = AgentLobbyEntryFailure::Membership(MatrixFailure::new(
+            MatrixOperation::Leave,
+            MatrixFailureKind::DependencyUnavailable,
+        ));
+        for (failure, status, deleted) in [
+            (unavailable, StatusCode::SERVICE_UNAVAILABLE, 0),
+            (
+                AgentLobbyEntryFailure::Unauthorized,
+                StatusCode::NO_CONTENT,
+                1,
+            ),
+            (AgentLobbyEntryFailure::NotFound, StatusCode::NO_CONTENT, 1),
+        ] {
+            let agents = Arc::new(FakeAgents::default());
+            let placements = Arc::new(FakePlacements::default());
+            *placements.failure.lock().expect("离开结果锁可用") = Some(failure);
+            let response = test_router_with_placements(
+                agents.clone(),
+                Arc::new(FakeAuthentication::default()),
+                Arc::new(FakeDevices::default()),
+                placements,
+            )
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/agents/{AGENT_UUID}"))
+                    .header(header::ORIGIN, FRONTEND_ORIGIN)
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .body(Body::empty())
+                    .expect("Agent 删除请求有效"),
+            )
+            .await
+            .expect("Agent 删除路由可调用");
+
+            assert_eq!(response.status(), status);
+            assert_eq!(
+                agents.deletions.lock().expect("Agent 删除记录锁可用").len(),
+                deleted
+            );
+        }
     }
 
     #[tokio::test]

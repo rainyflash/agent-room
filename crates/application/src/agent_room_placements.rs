@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
+    agents::AgentRole,
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
     rooms::{RoomCatalogStatus, RoomReservationState},
 };
@@ -57,6 +58,13 @@ pub struct AgentRoom {
     pub status: RoomCatalogStatus,
 }
 
+/// 删除 Agent 之前让它离开它在的所有房间。只有主人能做，和删除 Agent 一样。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaveAllAgentRooms {
+    pub actor: AuthenticatedPrincipal,
+    pub agent_id: AgentId,
+}
+
 /// 离开的结果。原本就不在这个房间时 `left` 为 `false`，也算成功：重复点“离开”不报错。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeftAgentRoom {
@@ -73,6 +81,23 @@ pub trait AgentRoomPlacementUseCases: Send + Sync {
         &self,
         request: LeaveAgentRoom,
     ) -> PortFuture<'_, AgentLobbyEntryResult<LeftAgentRoom>>;
+
+    /// 离开所有房间，返回离开了几个。
+    fn leave_all(
+        &self,
+        request: LeaveAllAgentRooms,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<usize>>;
+}
+
+/// 主人这边要做的事要哪种角色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerAccess {
+    /// 看在哪些房间：Agent 的成员都行。
+    View,
+    /// 让它离开一个房间：主人或操作者。
+    Leave,
+    /// 删除之前离开所有房间：只有主人。
+    Retire,
 }
 
 pub struct AgentRoomPlacementDependencies {
@@ -112,7 +137,7 @@ impl AgentRoomPlacementService {
         &self,
         request: ListAgentRooms,
     ) -> AgentLobbyEntryResult<Vec<AgentRoom>> {
-        self.authorize_owner(&request.actor, request.agent_id, false)
+        self.authorize_owner(&request.actor, request.agent_id, OwnerAccess::View)
             .await?;
         let placements = self
             .placements
@@ -150,7 +175,8 @@ impl AgentRoomPlacementService {
                     .await?;
             }
             AgentRoomActor::Owner(actor) => {
-                self.authorize_owner(actor, request.agent_id, true).await?;
+                self.authorize_owner(actor, request.agent_id, OwnerAccess::Leave)
+                    .await?;
             }
         }
         let placements: Vec<AgentRoomPlacement> = self
@@ -161,24 +187,75 @@ impl AgentRoomPlacementService {
             .into_iter()
             .filter(|placement| placement.catalog_id == request.catalog_id)
             .collect();
-        let Some(room) = placements.first() else {
+        if placements.is_empty() {
             return Ok(LeftAgentRoom { left: false });
-        };
-        let matrix_user = self
+        }
+        let matrix_user = self.matrix_user(request.agent_id).await?;
+        self.leave_room(request.agent_id, &placements, &matrix_user)
+            .await?;
+        Ok(LeftAgentRoom { left: true })
+    }
+
+    async fn leave_all_internal(
+        &self,
+        request: LeaveAllAgentRooms,
+    ) -> AgentLobbyEntryResult<usize> {
+        self.authorize_owner(&request.actor, request.agent_id, OwnerAccess::Retire)
+            .await?;
+        let placements = self
             .placements
-            .matrix_user(request.agent_id)
+            .placements(request.agent_id)
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?;
+        if placements.is_empty() {
+            return Ok(0);
+        }
+        let matrix_user = self.matrix_user(request.agent_id).await?;
+        let mut catalogs: Vec<RoomCatalogId> = Vec::new();
+        for placement in &placements {
+            if !catalogs.contains(&placement.catalog_id) {
+                catalogs.push(placement.catalog_id);
+            }
+        }
+        for catalog_id in &catalogs {
+            let room: Vec<AgentRoomPlacement> = placements
+                .iter()
+                .filter(|placement| placement.catalog_id == *catalog_id)
+                .cloned()
+                .collect();
+            self.leave_room(request.agent_id, &room, &matrix_user)
+                .await?;
+        }
+        Ok(catalogs.len())
+    }
+
+    async fn matrix_user(&self, agent_id: AgentId) -> AgentLobbyEntryResult<MatrixUserId> {
+        self.placements
+            .matrix_user(agent_id)
             .await
             .map_err(AgentLobbyEntryFailure::Access)?
-            .ok_or(AgentLobbyEntryFailure::NotFound)?;
-        self.leave_matrix(room, &matrix_user).await?;
+            .ok_or(AgentLobbyEntryFailure::NotFound)
+    }
+
+    /// 离开一个房间：`placements` 是它在这个房间占着的全部位置。
+    async fn leave_room(
+        &self,
+        agent_id: AgentId,
+        placements: &[AgentRoomPlacement],
+        matrix_user: &MatrixUserId,
+    ) -> AgentLobbyEntryResult<()> {
+        let Some(room) = placements.first() else {
+            return Ok(());
+        };
+        self.leave_matrix(room, matrix_user).await?;
         if room.kind == AgentRoomKind::PrivateRoom {
             self.placements
-                .forget_agent_member(request.catalog_id, request.agent_id)
+                .forget_agent_member(room.catalog_id, agent_id)
                 .await
                 .map_err(AgentLobbyEntryFailure::Access)?;
         }
         let now = self.clock.now();
-        for placement in &placements {
+        for placement in placements {
             self.allocations
                 .transition(
                     placement.reservation_id,
@@ -189,7 +266,7 @@ impl AgentRoomPlacementService {
                 .await
                 .map_err(AgentLobbyEntryFailure::Access)?;
         }
-        Ok(LeftAgentRoom { left: true })
+        Ok(())
     }
 
     /// 私人房间先收回发言级别再离开：离开以后 Matrix 上的发言级别还留着，下次再进来时由进房间那一套
@@ -244,13 +321,13 @@ impl AgentRoomPlacementService {
         }
     }
 
-    /// 主人这边：看在哪些房间，Agent 的成员都行；让它离开要主人或操作者。不是成员的当作没有这个
-    /// Agent，不让人拿 ID 试探别人的 Agent。
+    /// 主人这边：看在哪些房间，Agent 的成员都行；让它离开要主人或操作者；删除之前离开所有房间只有
+    /// 主人能做。不是成员的当作没有这个 Agent，不让人拿 ID 试探别人的 Agent。
     async fn authorize_owner(
         &self,
         actor: &AuthenticatedPrincipal,
         agent_id: AgentId,
-        manage: bool,
+        access: OwnerAccess,
     ) -> AgentLobbyEntryResult<()> {
         if actor.expires_at <= self.clock.now() {
             return Err(AgentLobbyEntryFailure::Unauthorized);
@@ -262,7 +339,12 @@ impl AgentRoomPlacementService {
             .map_err(AgentLobbyEntryFailure::Access)?
             .and_then(|memberships| memberships.role_of(actor.principal_id))
             .ok_or(AgentLobbyEntryFailure::NotFound)?;
-        if !manage || role.can_register_instance() {
+        let allowed = match access {
+            OwnerAccess::View => true,
+            OwnerAccess::Leave => role.can_register_instance(),
+            OwnerAccess::Retire => role == AgentRole::Owner,
+        };
+        if allowed {
             Ok(())
         } else {
             Err(AgentLobbyEntryFailure::Unauthorized)
@@ -290,5 +372,12 @@ impl AgentRoomPlacementUseCases for AgentRoomPlacementService {
         request: LeaveAgentRoom,
     ) -> PortFuture<'_, AgentLobbyEntryResult<LeftAgentRoom>> {
         Box::pin(self.leave_internal(request))
+    }
+
+    fn leave_all(
+        &self,
+        request: LeaveAllAgentRooms,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<usize>> {
+        Box::pin(self.leave_all_internal(request))
     }
 }
