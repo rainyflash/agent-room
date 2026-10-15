@@ -4,7 +4,7 @@ use agent_room_application::{
     agent_lobbies::AgentLobbyEntryFailureKind,
     agent_room_placements::{
         AgentRoomActor, AgentRoomPlacementDependencies, AgentRoomPlacementService,
-        AgentRoomPlacementUseCases, LeaveAgentRoom, ListAgentRooms,
+        AgentRoomPlacementUseCases, LeaveAgentRoom, LeaveAllAgentRooms, ListAgentRooms,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -567,6 +567,74 @@ async fn 登录过期时不能看也不能离开() {
 
     assert_eq!(listed.kind(), AgentLobbyEntryFailureKind::Unauthorized);
     assert_eq!(left.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+    assert!(log.全部().is_empty());
+}
+
+#[tokio::test]
+async fn 删除之前离开所有房间_每个房间照离开一个房间那样做() {
+    let (service, log) = 场景::new(vec![
+        placement(1, 20, AgentRoomKind::PrivateRoom, RoomCatalogStatus::Active),
+        placement(2, 10, AgentRoomKind::PublicLobby, RoomCatalogStatus::Active),
+        placement(3, 20, AgentRoomKind::PrivateRoom, RoomCatalogStatus::Active),
+    ])
+    .service();
+
+    let left = service
+        .leave_all(LeaveAllAgentRooms {
+            actor: owner(),
+            agent_id: agent(),
+        })
+        .await
+        .expect("主人能让它离开所有房间");
+
+    assert_eq!(left, 2);
+    assert_eq!(
+        log.全部(),
+        vec![
+            format!("speaking {} false", matrix_room(20).as_str()),
+            format!("leave {}", matrix_room(20).as_str()),
+            "forget 20".to_owned(),
+            "release 1".to_owned(),
+            "release 3".to_owned(),
+            format!("leave {}", matrix_room(10).as_str()),
+            "release 2".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 删除之前离开所有房间只有主人能做_不在房间里时什么都不动() {
+    for role in [AgentRole::Operator, AgentRole::Viewer] {
+        let mut scene = 场景::new(vec![placement(
+            1,
+            10,
+            AgentRoomKind::PublicLobby,
+            RoomCatalogStatus::Active,
+        )]);
+        scene.members = Some(memberships(role));
+        let (service, log) = scene.service();
+
+        let failure = service
+            .leave_all(LeaveAllAgentRooms {
+                actor: owner(),
+                agent_id: agent(),
+            })
+            .await
+            .expect_err("不是主人");
+
+        assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+        assert!(log.全部().is_empty());
+    }
+
+    let (service, log) = 场景::new(Vec::new()).service();
+    let left = service
+        .leave_all(LeaveAllAgentRooms {
+            actor: owner(),
+            agent_id: agent(),
+        })
+        .await
+        .expect("没在房间里");
+    assert_eq!(left, 0);
     assert!(log.全部().is_empty());
 }
 
