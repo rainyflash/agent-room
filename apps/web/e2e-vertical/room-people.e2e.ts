@@ -82,20 +82,25 @@ async function openLinkSignedOut(
   await guest.locator('input[name="password"]').fill(credentials.password);
   await guest.locator('input[type="submit"], button[type="submit"]').click();
 
+  // 回到 `/join` 以后还要登录聊天服务器：再跳去它那边一趟。登录过聊天服务器的人会先看到一页
+  // “Continue”，点了才回来。所以等的是邀请的标题，不是地址；中途看到“Continue”就点。
   const consent = guest.getByRole('link', { name: /^Continue$/u });
+  const invitation = guest.getByRole('heading', { name: /invited you to/u });
   await expect
     .poll(
-      async () =>
-        (await consent.isVisible())
-          ? 'consent'
-          : new URL(guest.url()).pathname === '/join'
-            ? 'ready'
-            : 'pending',
-      { timeout: 40_000 },
+      async () => {
+        if (await consent.isVisible()) {
+          // 点完页面就跳走，点的这一下报错也不要紧，下一轮再看。
+          await consent.click().catch(() => undefined);
+          return 'consent';
+        }
+        if (await invitation.isVisible()) return 'ready';
+        return `pending at ${new URL(guest.url()).pathname}`;
+      },
+      { timeout: 90_000 },
     )
-    .not.toBe('pending');
-  if (await consent.isVisible()) await consent.click();
-  await expect(guest).toHaveURL(/\/join$/u, { timeout: 40_000 });
+    .toBe('ready');
+  await expect(guest).toHaveURL(/\/join$/u);
 }
 
 async function openConversation(page: Page): Promise<void> {
