@@ -22,6 +22,7 @@ pub mod ports;
 pub mod private_rooms;
 pub mod public_lobby_entry;
 pub mod reception;
+pub mod room_people;
 pub mod rooms;
 
 pub mod agent_roster;

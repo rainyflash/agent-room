@@ -19,8 +19,8 @@ use agent_room_application::{
         NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
-        PrivateRoomSnapshot, PrivateRoomStore, RateWindowDecision, RateWindowPolicy, SealedSecret,
-        SecretDigest,
+        PrivateRoomSnapshot, PrivateRoomStore, RateWindowDecision, RateWindowPolicy, RoomAgentKind,
+        RoomPeopleDirectory, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -31,7 +31,9 @@ use agent_room_domain::{
         AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
         RoomInstanceId,
     },
-    join_codes::{PrivateRoomAgentJoinedVia, PrivateRoomAgentMemberStatus},
+    join_codes::{
+        PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
+    },
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
     private_rooms::{PrivateRoom, PrivateRoomPermissions},
     rooms::{
@@ -1557,6 +1559,102 @@ async fn 记下离开房间时_它在私人房间的_agent_成员一并记为已
     let earlier = member(removed_room).await;
     assert_eq!(earlier.status, PrivateRoomAgentMemberStatus::Removed);
     assert_eq!(earlier.status_changed_at, time(8));
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房间里的网络_agent_没有人类主人_敲门放进来的写放行的人() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Knocker"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let owner = provisioning.principal.principal.id();
+    let (agent, instance) =
+        seed_agent_instance(&database.runtime, owner, provisioning.device.id()).await;
+    repositories
+        .activate(&NetworkAgentActivation {
+            id: provisioning.id,
+            agent_id: agent,
+            agent_instance_id: instance,
+            matrix_access_token: sealed(4),
+            activated_at: time(0),
+        })
+        .await
+        .expect("生效");
+    let (room, matrix_room) = seed_private_room_kept(&repositories, owner, 30).await;
+    let elsewhere = seed_private_room(&repositories, owner).await;
+    let absent = AgentId::from_uuid(Uuid::now_v7());
+
+    assert!(
+        repositories
+            .agent_owners(room, &[agent, absent])
+            .await
+            .expect("还没进房间时可查询")
+            .is_empty(),
+        "不在房间里的不回答"
+    );
+    repositories
+        .record_room(
+            provisioning.id,
+            &room_record(room, matrix_room.as_str(), time(5)),
+        )
+        .await
+        .expect("记房间");
+    repositories
+        .knock(room, agent, time(5), time(3_600_005), 20)
+        .await
+        .expect("敲门");
+    assert!(
+        repositories
+            .decide_knock(
+                room,
+                agent,
+                PrivateRoomAgentKnockStatus::Admitted,
+                owner,
+                time(6)
+            )
+            .await
+            .expect("放行")
+    );
+    repositories
+        .admit_agent(
+            room,
+            agent,
+            PrivateRoomPermissions::AGENT_MEMBER,
+            PrivateRoomAgentJoinedVia::Knock,
+            time(6),
+        )
+        .await
+        .expect("记为敲门进来的");
+
+    let owners = repositories
+        .agent_owners(room, &[agent, absent])
+        .await
+        .expect("可查询");
+    assert_eq!(owners.len(), 1);
+    assert_eq!(owners[0].agent_id, agent);
+    assert_eq!(owners[0].kind, RoomAgentKind::Network);
+    assert_eq!(owners[0].owner, None, "替它记账的合成主体不算人类主人");
+    let admitted_by = owners[0].admitted_by.as_ref().expect("写放行的人");
+    assert_eq!(admitted_by.principal_id, owner);
+    assert_eq!(
+        admitted_by.display_name,
+        provisioning.principal.display_name
+    );
+    assert!(
+        repositories
+            .agent_owners(elsewhere, &[agent])
+            .await
+            .expect("可查询")
+            .is_empty(),
+        "别的房间不回答"
+    );
+
+    let names = repositories.member_names(room).await.expect("成员名字");
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].principal_id, owner);
+    assert_eq!(names[0].display_name, provisioning.principal.display_name);
     database.close().await;
 }
 
