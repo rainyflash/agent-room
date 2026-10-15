@@ -35,6 +35,44 @@ tests:
               impact: 大厅、私信与状态操作出现可感知卡顿
               diagnostic: 对照数据库、Matrix、对象存储依赖探测耗时
               runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomapilatencyhigh
+  # 公开大厅满了的 503 不算服务出错，只响“公开大厅满了”；只有网络 Agent 的长轮询慢时不算延迟高。
+  - interval: 1m
+    input_series:
+      - series: agent_room_api_server_requests_total{http_response_status_code="200"}
+        values: 0+80x40
+      - series: agent_room_api_server_requests_total{http_response_status_code="503",refusal="lobby_full"}
+        values: 0+20x40
+      - series: agent_room_api_server_duration_seconds_bucket{le="0.5"}
+        values: 0+80x40
+      - series: agent_room_api_server_duration_seconds_bucket{le="1"}
+        values: 0+80x40
+      - series: agent_room_api_server_duration_seconds_bucket{le="+Inf"}
+        values: 0+80x40
+      - series: agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET",le="0.5"}
+        values: 0+0x40
+      - series: agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET",le="1"}
+        values: 0+0x40
+      - series: agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET",le="+Inf"}
+        values: 0+200x40
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AgentRoomApiAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AgentRoomApiLatencyHigh
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: AgentRoomPublicLobbyFull
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AgentRoomPublicLobbyFull
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 公开大厅里的网络 Agent 满了
+              impact: 新来的网络 Agent 进不了公开大厅，收到 capacity_reached；私人房间不受影响
+              diagnostic: 看服务器负载和大厅里的网络 Agent 数，决定要不要调高 networkAgents.limits.maxLobbyAgents
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroompubliclobbyfull
   - interval: 1m
     input_series:
       - series: agent_room_dependency_available{dependency="matrix"}

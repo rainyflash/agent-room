@@ -15,14 +15,42 @@ use opentelemetry::{
 use crate::SERVICE_NAME;
 
 #[cfg(test)]
-const ALLOWED_LABEL_KEYS: [&str; 6] = [
+const ALLOWED_LABEL_KEYS: [&str; 7] = [
     "dependency",
     "http.request.method",
     "http.response.status_code",
     "http.route",
     "metric",
+    "refusal",
     "surface",
 ];
+
+/// 我们自己挡下的 503：网络 Agent 的位置满了。它不算服务出错，可用性的记录规则不算带这个标签的；
+/// 公开大厅满了另有一条提醒。标签只有这两种取值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CapacityRefusal {
+    /// `network_agent.capacity_reached`：公开大厅里的网络 Agent 到了上限。
+    LobbyFull,
+    /// `network_agent.room_capacity_reached`：网络 Agent 建的房间到了全站上限。
+    AgentRoomsFull,
+}
+
+impl CapacityRefusal {
+    pub(crate) fn of_code(code: &str) -> Option<Self> {
+        match code {
+            "network_agent.capacity_reached" => Some(Self::LobbyFull),
+            "network_agent.room_capacity_reached" => Some(Self::AgentRoomsFull),
+            _ => None,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::LobbyFull => "lobby_full",
+            Self::AgentRoomsFull => "agent_rooms_full",
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct TelemetryMetrics {
@@ -139,12 +167,22 @@ impl TelemetryMetrics {
         }
     }
 
-    fn record_http(&self, method: &Method, route: &str, status: StatusCode, elapsed: f64) {
-        let attributes = [
+    fn record_http(
+        &self,
+        method: &Method,
+        route: &str,
+        status: StatusCode,
+        refusal: Option<CapacityRefusal>,
+        elapsed: f64,
+    ) {
+        let mut attributes = vec![
             KeyValue::new("http.request.method", method_label(method)),
             KeyValue::new("http.route", route.to_owned()),
             KeyValue::new("http.response.status_code", i64::from(status.as_u16())),
         ];
+        if let Some(refusal) = refusal {
+            attributes.push(KeyValue::new("refusal", refusal.label()));
+        }
         self.api_requests.add(1, &attributes);
         self.api_duration.record(elapsed, &attributes);
     }
@@ -167,6 +205,7 @@ pub(crate) async fn record_http_request(
         &method,
         &route,
         response.status(),
+        response.extensions().get::<CapacityRefusal>().copied(),
         started.elapsed().as_secs_f64(),
     );
     response
@@ -187,8 +226,41 @@ fn method_label(method: &Method) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALLOWED_LABEL_KEYS, method_label};
-    use axum::http::Method;
+    use super::{ALLOWED_LABEL_KEYS, CapacityRefusal, method_label};
+    use agent_room_application::network_agents::{NetworkAgentFailure, NetworkAgentFailureKind};
+    use axum::{
+        http::{HeaderMap, Method, StatusCode},
+        response::IntoResponse as _,
+    };
+
+    use crate::{correlation::CorrelationId, error::ApiError};
+
+    #[test]
+    fn 网络_agent_的位置满了的_503_带上自己的标签_别的_503_不带() {
+        for (kind, expected) in [
+            (
+                NetworkAgentFailureKind::CapacityReached,
+                Some(CapacityRefusal::LobbyFull),
+            ),
+            (
+                NetworkAgentFailureKind::RoomCapacityReached,
+                Some(CapacityRefusal::AgentRoomsFull),
+            ),
+            (NetworkAgentFailureKind::DependencyUnavailable, None),
+        ] {
+            let response = ApiError::network_agent(
+                &NetworkAgentFailure::new(kind),
+                CorrelationId::from_headers(&HeaderMap::new()),
+            )
+            .into_response();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response.extensions().get::<CapacityRefusal>().copied(),
+                expected,
+                "{kind:?}"
+            );
+        }
+    }
 
     #[test]
     fn 指标标签契约不允许身份正文令牌或本地路径() {

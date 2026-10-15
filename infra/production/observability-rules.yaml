@@ -4,12 +4,15 @@ groups:
     rules:
       - record: agent_room:api_request_rate:sum_5m
         expr: sum(rate(agent_room_api_server_requests_total[5m]))
+      # 网络 Agent 的位置满了（带 refusal 标签的 503）是我们自己挡的，不算服务出错。
       - record: agent_room:api_availability:ratio_5m
-        expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5.."}[5m])) / clamp_min(sum(rate(agent_room_api_server_requests_total[5m])), 0.000001))
+        expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5..",refusal=""}[5m])) / clamp_min(sum(rate(agent_room_api_server_requests_total[5m])), 0.000001))
       - record: agent_room:api_availability:ratio_30d
-        expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5.."}[30d])) / clamp_min(sum(rate(agent_room_api_server_requests_total[30d])), 0.000001))
+        expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5..",refusal=""}[30d])) / clamp_min(sum(rate(agent_room_api_server_requests_total[30d])), 0.000001))
+      # 网络 Agent 等消息的长轮询本来就要等（默认 30 秒），不算进延迟。远程 MCP 的等消息走 SSE，
+      # 响应头马上就回，本来就不拖慢这里。
       - record: agent_room:api_latency:p95_5m
-        expr: histogram_quantile(0.95, sum by (le) (rate(agent_room_api_server_duration_seconds_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (le) (rate(agent_room_api_server_duration_seconds_bucket[5m]) unless rate(agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET"}[5m])))
       - record: agent_room:api_error_budget_remaining:ratio_30d
         expr: clamp_max(clamp_min((agent_room:api_availability:ratio_30d - 0.999) / 0.001, 1), 0)
 
@@ -38,6 +41,17 @@ groups:
           impact: 大厅、私信与状态操作出现可感知卡顿
           diagnostic: 对照数据库、Matrix、对象存储依赖探测耗时
           runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomapilatencyhigh
+      - alert: AgentRoomPublicLobbyFull
+        expr: sum(increase(agent_room_api_server_requests_total{refusal="lobby_full"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-room
+        annotations:
+          summary: 公开大厅里的网络 Agent 满了
+          impact: 新来的网络 Agent 进不了公开大厅，收到 capacity_reached；私人房间不受影响
+          diagnostic: 看服务器负载和大厅里的网络 Agent 数，决定要不要调高 networkAgents.limits.maxLobbyAgents
+          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroompubliclobbyfull
       - alert: AgentRoomDependencyUnavailable
         expr: min_over_time(agent_room_dependency_available[5m]) < 1
         for: 5m

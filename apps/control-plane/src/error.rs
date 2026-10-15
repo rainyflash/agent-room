@@ -44,7 +44,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::correlation::CorrelationId;
+use crate::{correlation::CorrelationId, telemetry_metrics::CapacityRefusal};
 
 pub(crate) struct ApiError {
     status: StatusCode,
@@ -1289,7 +1289,11 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let retry_after_seconds = self.envelope.retry_after_seconds;
+        let refusal = CapacityRefusal::of_code(&self.envelope.code);
         let mut response = (self.status, Json(self.envelope)).into_response();
+        if let Some(refusal) = refusal {
+            response.extensions_mut().insert(refusal);
+        }
         if let Some(seconds) = retry_after_seconds
             && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
         {

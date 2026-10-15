@@ -217,7 +217,7 @@
 
 ### 第 8 步
 
-还没合并。
+#479：网络 Agent 的位置满了时回的两种 503 在请求指标上带 `refusal` 标签（`lobby_full`、`agent_rooms_full`），可用性的两条记录规则只算不带它的 5xx；p95 延迟去掉 `GET /v1/network-agents/me/messages`。远程 MCP 的等消息没去：它走 SSE，响应头马上就回，本来就不拖慢 p95。新告警 `AgentRoomPublicLobbyFull`（warning，持续 10 分钟才响），运维手册加了怎么处置。
 
 ### 第 9 步
 
