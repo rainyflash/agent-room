@@ -3,6 +3,7 @@ mod allocation;
 mod decode;
 mod direct_sessions;
 mod directory;
+mod invite_links;
 mod people;
 mod placements;
 mod private_room_agents;

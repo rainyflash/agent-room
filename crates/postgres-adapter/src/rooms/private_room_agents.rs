@@ -1,4 +1,4 @@
-//! 私人房间的 Agent 口令、敲门、凭口令或放行进来的 Agent 成员，以及猜口令的固定窗口计数。
+//! 私人房间的 Agent 口令、敲门、凭口令或放行进来的 Agent 成员，以及猜口令、猜邀请链接共用的固定窗口计数。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
@@ -311,33 +311,13 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
         now: UtcMillis,
         policy: JoinCodeAttemptPolicy,
     ) -> PortFuture<'a, RepositoryResult<Option<UtcMillis>>> {
-        Box::pin(async move {
-            let operation = "private_room.join_code.attempts";
-            let row = sqlx::query_as::<_, (i64, i32)>(
-                r"SELECT floor(extract(epoch FROM window_started_at) * 1000)::bigint,
-                         failure_count
-                    FROM agent_room.join_code_attempt_window
-                   WHERE caller_key = $1",
-            )
-            .bind(caller)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            let Some((started, failures)) = row else {
-                return Ok(None);
-            };
-            let window =
-                i64::try_from(policy.window.value()).map_err(|_| corrupt_data(operation))?;
-            let ends = started.saturating_add(window);
-            let exhausted = u32::try_from(failures).is_ok_and(|count| count >= policy.max_failures);
-            if exhausted && now.value() < ends {
-                UtcMillis::new(ends)
-                    .map(Some)
-                    .map_err(|error| map_domain_error(operation, &error))
-            } else {
-                Ok(None)
-            }
-        })
+        Box::pin(attempt_retry_at(
+            self,
+            caller,
+            now,
+            policy,
+            "private_room.join_code.attempts",
+        ))
     }
 
     fn record_join_code_failure<'a>(
@@ -346,39 +326,13 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
         now: UtcMillis,
         policy: JoinCodeAttemptPolicy,
     ) -> PortFuture<'a, RepositoryResult<()>> {
-        Box::pin(async move {
-            let operation = "private_room.join_code.record_failure";
-            let window =
-                i64::try_from(policy.window.value()).map_err(|_| corrupt_data(operation))?;
-            // 窗口已过就从这一次重新计数。
-            sqlx::query(
-                r"INSERT INTO agent_room.join_code_attempt_window
-                      (caller_key, window_started_at, failure_count)
-                  VALUES ($1, to_timestamp($2::double precision / 1000.0), 1)
-                  ON CONFLICT (caller_key) DO UPDATE
-                     SET failure_count = CASE
-                             WHEN join_code_attempt_window.window_started_at
-                                  + make_interval(secs => $3::double precision / 1000.0)
-                                  <= EXCLUDED.window_started_at
-                             THEN 1
-                             ELSE join_code_attempt_window.failure_count + 1
-                         END,
-                         window_started_at = CASE
-                             WHEN join_code_attempt_window.window_started_at
-                                  + make_interval(secs => $3::double precision / 1000.0)
-                                  <= EXCLUDED.window_started_at
-                             THEN EXCLUDED.window_started_at
-                             ELSE join_code_attempt_window.window_started_at
-                         END",
-            )
-            .bind(caller)
-            .bind(now.value())
-            .bind(window)
-            .execute(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            Ok(())
-        })
+        Box::pin(record_attempt_failure(
+            self,
+            caller,
+            now,
+            policy,
+            "private_room.join_code.record_failure",
+        ))
     }
 
     fn knock(
@@ -639,6 +593,77 @@ fn decode_knock(
     })
 }
 
+/// 猜口令、猜邀请链接共用的固定窗口：调用方此刻还能不能试，返回 `Some(到期时间)` 表示要等到那时。
+pub(super) async fn attempt_retry_at(
+    repositories: &PostgresRepositories,
+    caller: &str,
+    now: UtcMillis,
+    policy: JoinCodeAttemptPolicy,
+    operation: &'static str,
+) -> RepositoryResult<Option<UtcMillis>> {
+    let row = sqlx::query_as::<_, (i64, i32)>(
+        r"SELECT floor(extract(epoch FROM window_started_at) * 1000)::bigint,
+                 failure_count
+            FROM agent_room.join_code_attempt_window
+           WHERE caller_key = $1",
+    )
+    .bind(caller)
+    .fetch_optional(repositories.pool())
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let Some((started, failures)) = row else {
+        return Ok(None);
+    };
+    let window = i64::try_from(policy.window.value()).map_err(|_| corrupt_data(operation))?;
+    let ends = started.saturating_add(window);
+    let exhausted = u32::try_from(failures).is_ok_and(|count| count >= policy.max_failures);
+    if exhausted && now.value() < ends {
+        UtcMillis::new(ends)
+            .map(Some)
+            .map_err(|error| map_domain_error(operation, &error))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 记一次猜错，窗口已过就从这一次重新计数。
+pub(super) async fn record_attempt_failure(
+    repositories: &PostgresRepositories,
+    caller: &str,
+    now: UtcMillis,
+    policy: JoinCodeAttemptPolicy,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    let window = i64::try_from(policy.window.value()).map_err(|_| corrupt_data(operation))?;
+    sqlx::query(
+        r"INSERT INTO agent_room.join_code_attempt_window
+              (caller_key, window_started_at, failure_count)
+          VALUES ($1, to_timestamp($2::double precision / 1000.0), 1)
+          ON CONFLICT (caller_key) DO UPDATE
+             SET failure_count = CASE
+                     WHEN join_code_attempt_window.window_started_at
+                          + make_interval(secs => $3::double precision / 1000.0)
+                          <= EXCLUDED.window_started_at
+                     THEN 1
+                     ELSE join_code_attempt_window.failure_count + 1
+                 END,
+                 window_started_at = CASE
+                     WHEN join_code_attempt_window.window_started_at
+                          + make_interval(secs => $3::double precision / 1000.0)
+                          <= EXCLUDED.window_started_at
+                     THEN EXCLUDED.window_started_at
+                     ELSE join_code_attempt_window.window_started_at
+                 END",
+    )
+    .bind(caller)
+    .bind(now.value())
+    .bind(window)
+    .execute(repositories.pool())
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(())
+}
+
 fn decode_join_code(
     row: &PgRow,
     operation: &'static str,
@@ -715,7 +740,10 @@ fn decode_agent_member(
     })
 }
 
-fn permissions(bits: i16, operation: &'static str) -> RepositoryResult<PrivateRoomPermissions> {
+pub(super) fn permissions(
+    bits: i16,
+    operation: &'static str,
+) -> RepositoryResult<PrivateRoomPermissions> {
     let bits = u8::try_from(bits).map_err(|_| corrupt_data(operation))?;
     PrivateRoomPermissions::from_bits(bits).map_err(|_| corrupt_data(operation))
 }
