@@ -188,8 +188,8 @@ impl IpcMethod {
             | Self::ListRooms
             | Self::ReadInvitation
             | Self::ListRecoverySessions
-            | Self::HostSessionDiagnostics
-            | Self::RoomAccess(_) => Ok(()),
+            | Self::HostSessionDiagnostics => Ok(()),
+            Self::RoomAccess(request) => request.validate(),
             Self::WithdrawInvitation(request) => request.validate(),
             Self::ResolveJoinCode(request) => request.validate(),
             Self::RedeemJoinCode(request) => request.validate(),

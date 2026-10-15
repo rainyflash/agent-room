@@ -36,11 +36,21 @@ impl IpcCreateRoomRequest {
 }
 
 /// 会话所在的房间怎么进（`RoomAccess`，要会话）：口令和等着的敲门。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcRoomAccessRequest {
     #[serde(default)]
     pub action: IpcRoomAccessAction,
+    /// 管哪个房间：会话的 Agent 在的、用目录 ID 说（IPC 4.5 起，`specs/agent-identity/design.md`）。
+    /// 不给就是开会话时进的那个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
+}
+
+impl IpcRoomAccessRequest {
+    pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        validate_managed_room(self.catalog_id.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,11 +72,16 @@ pub enum IpcRoomAccessAction {
 pub struct IpcAnswerKnockRequest {
     pub agent_id: String,
     pub admit: bool,
+    /// 管哪个房间：会话的 Agent 在的、用目录 ID 说（IPC 4.5 起，`specs/agent-identity/design.md`）。
+    /// 不给就是开会话时进的那个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
 }
 
 impl IpcAnswerKnockRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
-        validate_uuid_v7(&self.agent_id, "bridge.ipc.agent_id_invalid")
+        validate_uuid_v7(&self.agent_id, "bridge.ipc.agent_id_invalid")?;
+        validate_managed_room(self.catalog_id.as_deref())
     }
 }
 
@@ -75,11 +90,16 @@ impl IpcAnswerKnockRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcInvitePersonRequest {
     pub account_id: String,
+    /// 管哪个房间：会话的 Agent 在的、用目录 ID 说（IPC 4.5 起，`specs/agent-identity/design.md`）。
+    /// 不给就是开会话时进的那个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
 }
 
 impl IpcInvitePersonRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
-        validate_uuid_v7(&self.account_id, "bridge.ipc.account_id_invalid")
+        validate_uuid_v7(&self.account_id, "bridge.ipc.account_id_invalid")?;
+        validate_managed_room(self.catalog_id.as_deref())
     }
 }
 
@@ -88,12 +108,37 @@ impl IpcInvitePersonRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcRemoveAgentRequest {
     pub agent_id: String,
+    /// 管哪个房间：会话的 Agent 在的、用目录 ID 说（IPC 4.5 起，`specs/agent-identity/design.md`）。
+    /// 不给就是开会话时进的那个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
 }
 
 impl IpcRemoveAgentRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
-        validate_uuid_v7(&self.agent_id, "bridge.ipc.agent_id_invalid")
+        validate_uuid_v7(&self.agent_id, "bridge.ipc.agent_id_invalid")?;
+        validate_managed_room(self.catalog_id.as_deref())
     }
+}
+
+/// 给了房间就要是房间的目录 ID。
+fn validate_managed_room(catalog_id: Option<&str>) -> Result<(), IpcMethodValidationFailure> {
+    catalog_id.map_or(Ok(()), |catalog_id| {
+        validate_session_id(catalog_id).map_err(|_| failure("bridge.ipc.room_invalid"))
+    })
+}
+
+/// 管房间的请求说的是哪个房间（目录 ID）；没说就是开会话时进的那个，不是管房间的请求时为空。
+#[must_use]
+pub fn managed_room(method: &crate::IpcMethod) -> Option<Option<&str>> {
+    let catalog_id = match method {
+        crate::IpcMethod::RoomAccess(request) => &request.catalog_id,
+        crate::IpcMethod::AnswerKnock(request) => &request.catalog_id,
+        crate::IpcMethod::InvitePerson(request) => &request.catalog_id,
+        crate::IpcMethod::RemoveAgent(request) => &request.catalog_id,
+        _ => return None,
+    };
+    Some(catalog_id.as_deref())
 }
 
 /// 房间怎么进：房间号（`catalogId`）、口令和等着的敲门。
@@ -291,17 +336,22 @@ mod tests {
                 IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
                     agent_id: agent_id.clone(),
                     admit: true,
+                    catalog_id: None,
                 }),
                 "answer_knock",
             ),
             (
                 IpcMethod::InvitePerson(IpcInvitePersonRequest {
                     account_id: Uuid::now_v7().to_string(),
+                    catalog_id: None,
                 }),
                 "invite_person",
             ),
             (
-                IpcMethod::RemoveAgent(IpcRemoveAgentRequest { agent_id }),
+                IpcMethod::RemoveAgent(IpcRemoveAgentRequest {
+                    agent_id,
+                    catalog_id: None,
+                }),
                 "remove_agent",
             ),
         ];
@@ -321,17 +371,22 @@ mod tests {
                 IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
                     agent_id: not_v7.clone(),
                     admit: false,
+                    catalog_id: None,
                 }),
                 "bridge.ipc.agent_id_invalid",
             ),
             (
                 IpcMethod::InvitePerson(IpcInvitePersonRequest {
                     account_id: "someone@example.com".into(),
+                    catalog_id: None,
                 }),
                 "bridge.ipc.account_id_invalid",
             ),
             (
-                IpcMethod::RemoveAgent(IpcRemoveAgentRequest { agent_id: not_v7 }),
+                IpcMethod::RemoveAgent(IpcRemoveAgentRequest {
+                    agent_id: not_v7,
+                    catalog_id: None,
+                }),
                 "bridge.ipc.agent_id_invalid",
             ),
         ];

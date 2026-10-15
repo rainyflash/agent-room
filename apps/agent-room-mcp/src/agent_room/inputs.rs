@@ -1,6 +1,6 @@
 use agent_room_bridge_ipc::wake::{WaitParams, WaitRules, WakeRule};
 use agent_room_bridge_ipc::{
-    IpcAckInboxRequest, IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest,
+    IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest,
     IpcGetPresenceRequest, IpcHandoffRequest, IpcInvitePersonRequest, IpcListHandoffsRequest,
     IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMessagesAroundRequest,
     IpcMethod, IpcOpenContentRequest, IpcOpenHostSessionRequest, IpcRemoveAgentRequest,
@@ -144,15 +144,9 @@ pub struct AckInput {
     /// `agent_room_open_session` 返回的本任务 `sessionId`。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 处理到的最后一条：等消息返回的 nextCursor，或者某条消息的 eventId；它和它之前的都不会再收到。
-    #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
+    /// 处理到的最后一条：等消息返回的 nextCursor（在几个房间里时是每个房间的位置，用逗号连起来），或者某条消息的 eventId；它和它之前的都不会再收到。
+    #[schemars(length(min = 1, max = agent_room_agent_client::CURSOR_BYTES))]
     pub event_id: String,
-}
-
-impl From<AckInput> for IpcAckInboxRequest {
-    fn from(input: AckInput) -> Self {
-        Self { id: input.event_id }
-    }
 }
 
 /// 按 ID 取消息的全文（`specs/agent-reading/design.md`「按需查看」）。
@@ -247,7 +241,7 @@ impl RoomMessagesInput {
 pub struct WaitMessagesInput {
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    #[schemars(length(max = EVENT_ID_BYTES))]
+    #[schemars(length(max = agent_room_agent_client::CURSOR_BYTES))]
     pub after_event_id: Option<String>,
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: Option<String>,
@@ -690,9 +684,12 @@ pub struct CreateRoomInput {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoomAccessInput {
-    /// 本任务的 `sessionId`：管的是这个会话所在的房间。
+    /// 本任务的 `sessionId`。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
+    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
+    pub room: Option<String>,
     /// 不传或 show：只看，没有口令就生成一个。replace：换一个新口令，旧的马上失效。disable：停用口令。
     pub action: Option<RoomAccessActionInput>,
 }
@@ -718,9 +715,12 @@ impl From<RoomAccessActionInput> for IpcRoomAccessAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AnswerKnockInput {
-    /// 本任务的 `sessionId`：管的是这个会话所在的房间。
+    /// 本任务的 `sessionId`。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
+    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
+    pub room: Option<String>,
     /// 敲门的 Agent 的 agentId，从 `agent_room_room_access` 的 knocks 里原样复制。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub agent_id: String,
@@ -733,6 +733,7 @@ impl From<AnswerKnockInput> for IpcAnswerKnockRequest {
         Self {
             agent_id: input.agent_id,
             admit: input.admit,
+            catalog_id: None,
         }
     }
 }
@@ -740,9 +741,12 @@ impl From<AnswerKnockInput> for IpcAnswerKnockRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InvitePersonInput {
-    /// 本任务的 `sessionId`：邀请进这个会话所在的房间。
+    /// 本任务的 `sessionId`。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
+    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
+    pub room: Option<String>,
     /// 对方的账户 ID：对方在 Agent Room 的“换个房间”里复制给你的那串，不要猜。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub account_id: String,
@@ -752,6 +756,7 @@ impl From<InvitePersonInput> for IpcInvitePersonRequest {
     fn from(input: InvitePersonInput) -> Self {
         Self {
             account_id: input.account_id.to_ascii_lowercase(),
+            catalog_id: None,
         }
     }
 }
@@ -759,9 +764,12 @@ impl From<InvitePersonInput> for IpcInvitePersonRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoveAgentInput {
-    /// 本任务的 `sessionId`：从这个会话所在的房间移出。
+    /// 本任务的 `sessionId`。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
+    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
+    pub room: Option<String>,
     /// 要移出的 Agent 的 agentId：凭口令或敲门进来的 Agent。
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub agent_id: String,
@@ -771,6 +779,18 @@ impl From<RemoveAgentInput> for IpcRemoveAgentRequest {
     fn from(input: RemoveAgentInput) -> Self {
         Self {
             agent_id: input.agent_id,
+            catalog_id: None,
         }
     }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LeaveRoomInput {
+    /// 本任务的 `sessionId`。
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// 要离开的房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId。
+    #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
+    pub room: String,
 }

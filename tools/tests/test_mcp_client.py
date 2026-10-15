@@ -168,9 +168,9 @@ class McpSessionTests(unittest.TestCase):
 
 
 class McpSessionSchemaTests(unittest.TestCase):
-    def test_二十三个工具都有必填的会话边界(self) -> None:
+    def test_二十四个工具都有必填的会话边界(self) -> None:
         tools = session_tool_definitions()
-        self.assertEqual(len(tools), 23)
+        self.assertEqual(len(tools), 24)
         validate_session_tool_schemas(tools)
 
     def test_不带会话的工具不能接收会话标识或必填参数(self) -> None:

@@ -526,17 +526,21 @@ async fn 放行拒绝邀请移出都管会话所在的房间() {
             IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
                 agent_id: agent.into(),
                 admit: true,
+                catalog_id: None,
             }),
             IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
                 agent_id: agent.into(),
                 admit: false,
+                catalog_id: None,
             }),
             // 账户 ID 照对方给的复制，大小写和前后空格不算错。
             IpcMethod::InvitePerson(IpcInvitePersonRequest {
                 account_id: account.to_ascii_lowercase(),
+                catalog_id: None,
             }),
             IpcMethod::RemoveAgent(IpcRemoveAgentRequest {
                 agent_id: agent.into(),
+                catalog_id: None,
             }),
         ]
     );

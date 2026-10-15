@@ -20,6 +20,7 @@ mod session_rooms;
 pub use room_management::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
     IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
+    managed_room,
 };
 pub use session_rooms::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcRoomCursor, IpcSessionRoom};
 pub mod typing;

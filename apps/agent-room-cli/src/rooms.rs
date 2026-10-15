@@ -216,6 +216,7 @@ async fn answer(
     let request = IpcAnswerKnockRequest {
         agent_id: args.agent,
         admit,
+        catalog_id: None,
     };
     manage(backend, args.session, IpcMethod::AnswerKnock(request)).await
 }
@@ -224,6 +225,7 @@ async fn answer(
 async fn invite(backend: &dyn BridgeToolClient, args: InviteArgs) -> Result<IpcResponse> {
     let request = IpcInvitePersonRequest {
         account_id: args.account.trim().to_ascii_lowercase(),
+        catalog_id: None,
     };
     manage(backend, args.session, IpcMethod::InvitePerson(request)).await
 }
@@ -232,6 +234,7 @@ async fn invite(backend: &dyn BridgeToolClient, args: InviteArgs) -> Result<IpcR
 async fn remove(backend: &dyn BridgeToolClient, args: AgentArgs) -> Result<IpcResponse> {
     let request = IpcRemoveAgentRequest {
         agent_id: args.agent,
+        catalog_id: None,
     };
     manage(backend, args.session, IpcMethod::RemoveAgent(request)).await
 }
@@ -253,7 +256,10 @@ async fn room_access(
     session: String,
     action: IpcRoomAccessAction,
 ) -> Result<IpcRoomAccess> {
-    let method = IpcMethod::RoomAccess(IpcRoomAccessRequest { action });
+    let method = IpcMethod::RoomAccess(IpcRoomAccessRequest {
+        action,
+        catalog_id: None,
+    });
     match room_call(backend, scoped(session, method)).await? {
         IpcResponse::RoomAccess { access } => Ok(access),
         _ => Err(Failure::local("cli.response_invalid")),
