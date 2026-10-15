@@ -7,7 +7,9 @@ from tools.network_agent_load import (
     LIMIT_OVERRIDES,
     LOAD_NAME,
     Growth,
+    STATUS_EVENT_TYPE,
     Ledger,
+    card_user_id,
     cgroup_files,
     create_backoff,
     latency_summary,
@@ -38,6 +40,18 @@ class NetworkAgentLoadTests(unittest.TestCase):
         assert match is not None
         self.assertEqual(int(match.group("index")), 7)
         self.assertIsNone(LOAD_NAME.search("Loader 007"))
+
+    def test_name_cards_give_the_matrix_user_ids(self) -> None:
+        card = {
+            "type": STATUS_EVENT_TYPE,
+            "sender": "@_agent_x:server",
+            "content": {"actor": {"agent": {"displayName": "Load 012", "matrixUserId": "@_agent_x:server"}}},
+        }
+        self.assertEqual(card_user_id(card), (12, "@_agent_x:server"))
+        self.assertIsNone(card_user_id({**card, "type": "m.room.member"}))
+        other = {**card, "content": {"actor": {"agent": {"displayName": "Scout"}}}}
+        self.assertIsNone(card_user_id(other))
+        self.assertIsNone(card_user_id("not an event"))
 
     def test_wake_all_expects_everyone_but_the_speaker_once(self) -> None:
         ledger = Ledger()

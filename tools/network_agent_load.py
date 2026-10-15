@@ -65,6 +65,7 @@ CREATE_WORKERS: Final = 4
 CREATE_ATTEMPTS: Final = 6
 SEND_WORKERS: Final = 8
 MATRIX_API: Final = "http://127.0.0.1:18008/_matrix/client/v3"
+STATUS_EVENT_TYPE: Final = "io.github.rainyflash.agentroom.agent.status.v1"
 REPORT: Final = v.ROOT / "artifacts" / "capacity" / "network-agent-load.json"
 CONTROL_PLANE_LOG: Final = v.LOG_ROOT / "control-plane-load.log"
 PRODUCTION_LIKE: Final = {
@@ -554,23 +555,39 @@ def pick_mention(
 
 
 def learn_user_ids(run: LoadRun) -> int:
-    """按名字（Load 007）从各个分片的成员名单里认出每个 Agent 的 Matrix 用户 ID。只等点名的那种叫醒方式
-    一开始就要点名，等不到从收到的消息里学。应用服务建的分片，它自己就在房间里。"""
+    """按名字（Load 007）从各个分片的名片里认出每个 Agent 的 Matrix 用户 ID。只等点名的那种叫醒方式
+    一开始就要点名，等不到从收到的消息里学。名片是房间状态（网络 Agent 在 Matrix 上没设显示名），
+    应用服务建的分片它自己就在房间里，读得到。"""
     for room_id in {agent.room_id for agent in run.agents}:
-        request = Request(f"{MATRIX_API}/rooms/{quote(room_id, safe='')}/joined_members")
+        request = Request(f"{MATRIX_API}/rooms/{quote(room_id, safe='')}/state")
         request.add_header("Authorization", f"Bearer {run.appservice_token}")
         try:
             with urlopen(request, timeout=30) as response:
-                joined = json.loads(response.read())["joined"]
-        except (OSError, HTTPException, ValueError, KeyError) as error:
-            print(f"  读不到 {room_id} 的成员名单（{type(error).__name__}），点名的对象只从收到的消息里学。")
+                events = json.loads(response.read())
+        except (OSError, HTTPException, ValueError) as error:
+            print(f"  读不到 {room_id} 的房间状态（{type(error).__name__}），点名的对象只从收到的消息里学。")
             continue
-        for user_id, profile in joined.items():
-            name = profile.get("display_name") if isinstance(profile, dict) else None
-            match = LOAD_NAME.search(name) if isinstance(name, str) else None
-            if match is not None:
-                run.ledger.learn(int(match.group("index")), user_id)
+        for event in events if isinstance(events, list) else []:
+            learned = card_user_id(event)
+            if learned is not None:
+                run.ledger.learn(*learned)
     return sum(1 for agent in run.agents if run.ledger.user_id(agent.index) is not None)
+
+
+def card_user_id(event: object) -> tuple[int, str] | None:
+    """名片上写着 Agent 的名字和 Matrix 用户 ID；名字是 Load 007 这样的才算。"""
+    if not isinstance(event, dict) or event.get("type") != STATUS_EVENT_TYPE:
+        return None
+    content = event.get("content")
+    actor = content.get("actor") if isinstance(content, dict) else None
+    agent = actor.get("agent") if isinstance(actor, dict) else None
+    if not isinstance(agent, dict):
+        return None
+    name, user_id = agent.get("displayName"), agent.get("matrixUserId") or event.get("sender")
+    match = LOAD_NAME.search(name) if isinstance(name, str) else None
+    if match is None or not isinstance(user_id, str):
+        return None
+    return int(match.group("index")), user_id
 
 
 # ---- 一档一档地量 ----
@@ -627,7 +644,8 @@ class LoadRun:
         room_sizes = Counter(agent.room_id for agent in self.agents)
         return {
             "agents": len(self.agents),
-            "wake": self.wake,
+            # 只等不说的那一段谁也不叫醒，叫醒方式不相干。
+            "wake": self.wake if rate > 0 else "idle",
             "messagesPerSecond": rate,
             "shards": len(room_sizes),
             "windowSeconds": round(elapsed, 1),
