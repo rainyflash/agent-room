@@ -758,7 +758,7 @@ async fn has_other_effective_action(
         .any(|reference| same_target(action.target(), reference)))
 }
 
-/// 到期解除要撤到哪。和 [`inspect_room_authority`] 拿的是同一组分片（同样最活跃的在前），但不看谁在
+/// 到期解除要撤到哪。和 [`inspect_room_authority`] 拿的是同一组分片（同样 Agent 最多的在前），但不看谁在
 /// 问、不看目录和账号的状态：房间关了就给空的分片，账号停用、删除了也照样给它的 Matrix 账号。
 async fn expiry_room(
     pool: &PgPool,
@@ -776,8 +776,8 @@ async fn expiry_room(
                     SELECT room.matrix_room_id
                     FROM agent_room.room_instance AS room
                     WHERE room.catalog_entry_id = catalog.id AND room.state = 'active'
-                    ORDER BY room.activity_score DESC,
-                             room.member_count_projection DESC,
+                    ORDER BY room.allocated_slots DESC,
+                             room.created_at ASC,
                              room.id ASC
                   ) AS matrix_room_ids,
                   target.matrix_user_id AS target_matrix_user_id
@@ -827,8 +827,8 @@ async fn mute_standing(
                     SELECT room.matrix_room_id
                     FROM agent_room.room_instance AS room
                     WHERE room.catalog_entry_id = catalog.id AND room.state = 'active'
-                    ORDER BY room.activity_score DESC,
-                             room.member_count_projection DESC,
+                    ORDER BY room.allocated_slots DESC,
+                             room.created_at ASC,
                              room.id ASC
                   ) AS matrix_room_ids,
                   target.matrix_user_id AS target_matrix_user_id,
@@ -1168,16 +1168,16 @@ async fn inspect_room_authority(
     } else {
         None
     };
-    // 公开大厅人多了会分成好几个活跃分片：全都交出去，由治理按动作决定落到哪些。最活跃的在前，
-    // 和围观、登录的人看大厅选分片（`find_public_observation_room`）的顺序一样。
+    // 公开大厅人多了会分成好几个活跃分片：全都交出去，由治理按动作决定落到哪些。Agent 最多的
+    // 在前，和围观、登录的人看大厅选分片（`find_public_observation_room`）的顺序一样。
     let row = sqlx::query(
         r"SELECT catalog.kind,
                   ARRAY(
                     SELECT room.matrix_room_id
                     FROM agent_room.room_instance AS room
                     WHERE room.catalog_entry_id = catalog.id AND room.state = 'active'
-                    ORDER BY room.activity_score DESC,
-                             room.member_count_projection DESC,
+                    ORDER BY room.allocated_slots DESC,
+                             room.created_at ASC,
                              room.id ASC
                   ) AS matrix_room_ids,
                   target.matrix_user_id AS target_matrix_user_id,

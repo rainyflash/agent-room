@@ -3,6 +3,9 @@
 //! 有人来看某个大厅、而它的快照已经超过 3 秒时，以建大厅的应用服务账号重读一次：最近的消息和
 //! 房间状态，经本机 Bridge 的同一套解析和验签，去掉被隐藏、撤回的，人和 Agent 换成快照内部的
 //! 编号。快照放在内存里，请求直接拿；有人正在重读时，别的请求先拿上一份。没人看就不读。
+//!
+//! 大厅不止一个分片在用时，可以指明看第几个（`specs/launch-capacity/design.md` 第 4 步）；不指明
+//! 看 Agent 最多的那个，和登录的人进大厅去的是同一个。
 
 mod reading;
 mod view;
@@ -23,19 +26,21 @@ use agent_room_application::{
     persistence::RepositoryError,
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixFailure,
-        MatrixRoomId, NetworkAgentLookup, PublicLobbyMatrixReader, RoomDirectory,
-        RoomDirectoryQuery, SecretFactory, SecretGenerationFailure,
+        MatrixRoomId, NetworkAgentLookup, PublicLobbyMatrixReader, PublicLobbyShard,
+        PublicLobbyShardDirectory, RoomDirectory, RoomDirectoryQuery, SecretFactory,
+        SecretGenerationFailure,
     },
 };
 use agent_room_bridge_core::agent_verification::{
     AgentInstanceMessageAuthenticator, AgentInstanceMessageAuthenticatorDependencies,
 };
 use agent_room_domain::{
-    ids::{AgentId, RoomCatalogId},
+    ids::{AgentId, RoomCatalogId, RoomInstanceId},
     rooms::{MatrixRoomReference, RoomSlug},
     time::UtcMillis,
 };
 use axum::body::Bytes;
+use serde::Serialize;
 
 /// 快照比这旧时，有人来看就重读。
 const REFRESH_INTERVAL_MS: i64 = 3_000;
@@ -58,6 +63,7 @@ pub(crate) struct PublicWatchDependencies {
     /// 网络 Agent 的总开关：公开大厅本来就对不要账号的网络 Agent 开放，围观跟着它走。
     pub(crate) enabled: bool,
     pub(crate) directory: Arc<dyn RoomDirectory>,
+    pub(crate) shards: Arc<dyn PublicLobbyShardDirectory>,
     pub(crate) reader: Arc<dyn PublicLobbyMatrixReader>,
     pub(crate) verification: Arc<dyn AgentInstanceVerificationRepository>,
     pub(crate) signatures: Arc<dyn AgentInstanceSignatureVerifier>,
@@ -71,6 +77,8 @@ pub(crate) enum PublicWatchFailure {
     /// 这个部署没开网络 Agent：公开大厅只有登录的人能读，围观也关着。
     Disabled,
     LobbyNotFound,
+    /// 指明的分片不在用（或者根本没有这一个）。
+    ShardNotFound,
     /// 读不到，也没有不太旧的快照可给。
     Unavailable,
 }
@@ -78,6 +86,7 @@ pub(crate) enum PublicWatchFailure {
 pub(crate) struct PublicWatch {
     enabled: bool,
     directory: Arc<dyn RoomDirectory>,
+    shard_directory: Arc<dyn PublicLobbyShardDirectory>,
     reader: Arc<dyn PublicLobbyMatrixReader>,
     network_agents: Arc<dyn NetworkAgentLookup>,
     clock: Arc<dyn Clock>,
@@ -86,7 +95,10 @@ pub(crate) struct PublicWatch {
     presence: reading::PresenceCache,
     keys: view::Keys,
     lobbies: tokio::sync::Mutex<DirectoryCache>,
-    slots: Mutex<HashMap<RoomCatalogId, Arc<LobbySlot>>>,
+    /// 每个大厅在用的分片，问过的留 3 秒。
+    shard_lists: tokio::sync::Mutex<HashMap<RoomCatalogId, ShardList>>,
+    /// 每个分片一份快照；还没有分片的大厅是 `None`。
+    slots: Mutex<HashMap<SlotKey, Arc<LobbySlot>>>,
     agent_kinds: Mutex<HashMap<AgentId, bool>>,
 }
 
@@ -110,6 +122,7 @@ impl PublicWatch {
         Ok(Self {
             enabled: dependencies.enabled,
             directory: dependencies.directory,
+            shard_directory: dependencies.shards,
             presence: reading::PresenceCache::new(
                 dependencies.reader.clone(),
                 dependencies.clock.clone(),
@@ -120,18 +133,38 @@ impl PublicWatch {
             authenticator,
             keys,
             lobbies: tokio::sync::Mutex::new(DirectoryCache::default()),
+            shard_lists: tokio::sync::Mutex::new(HashMap::new()),
             slots: Mutex::new(HashMap::new()),
             agent_kinds: Mutex::new(HashMap::new()),
         })
     }
 
-    /// 这个公开大厅此刻的样子，已经是要回给网页的 JSON。`slug` 写 `default` 是默认大厅。
-    pub(crate) async fn watch(&self, slug: &str) -> Result<Bytes, PublicWatchFailure> {
+    /// 这个公开大厅此刻的样子，已经是要回给网页的 JSON。`slug` 写 `default` 是默认大厅；`shard`
+    /// 是第几个分片，不给就看 Agent 最多的那个。
+    pub(crate) async fn watch(
+        &self,
+        slug: &str,
+        shard: Option<u16>,
+    ) -> Result<Bytes, PublicWatchFailure> {
         if !self.enabled {
             return Err(PublicWatchFailure::Disabled);
         }
         let lobby = self.lobby(slug).await?;
-        let slot = self.slot(lobby.catalog_id);
+        let shards = self.shard_list(&lobby).await?;
+        let room = match shard {
+            None => PublicLobbyShard::busiest(&shards).cloned(),
+            Some(number) => Some(
+                shards
+                    .iter()
+                    .find(|shard| shard.number == number)
+                    .cloned()
+                    .ok_or(PublicWatchFailure::ShardNotFound)?,
+            ),
+        };
+        let slot = self.slot(
+            lobby.catalog_id,
+            room.as_ref().map(|room| room.room_instance_id),
+        );
         let now = self.clock.now();
         if !slot.due(now) {
             return slot.usable(now).ok_or(PublicWatchFailure::Unavailable);
@@ -155,7 +188,8 @@ impl PublicWatch {
             return slot.usable(now).ok_or(PublicWatchFailure::Unavailable);
         }
         slot.attempted(now);
-        match tokio::time::timeout(REFRESH_DEADLINE, self.refresh(&lobby, now)).await {
+        match tokio::time::timeout(REFRESH_DEADLINE, self.refresh(&lobby, room.as_ref(), now)).await
+        {
             Ok(Ok(body)) => {
                 slot.store(now, body.clone());
                 Ok(body)
@@ -221,21 +255,85 @@ impl PublicWatch {
             .ok_or(PublicWatchFailure::LobbyNotFound)
     }
 
-    fn slot(&self, catalog_id: RoomCatalogId) -> Arc<LobbySlot> {
+    /// 这个公开大厅在用的分片，已经是要回给网页的 JSON：每个分片的编号和 Agent 数，不指明时看
+    /// 的是哪一个。
+    pub(crate) async fn shards(&self, slug: &str) -> Result<Bytes, PublicWatchFailure> {
+        if !self.enabled {
+            return Err(PublicWatchFailure::Disabled);
+        }
+        let lobby = self.lobby(slug).await?;
+        let shards = self.shard_list(&lobby).await?;
+        let view = ShardsView {
+            shards: shards
+                .iter()
+                .map(|shard| ShardView {
+                    number: shard.number,
+                    agents: shard.agents,
+                })
+                .collect(),
+            busiest: PublicLobbyShard::busiest(&shards).map(|shard| shard.number),
+        };
+        serde_json::to_vec(&view)
+            .map(Bytes::from)
+            .map_err(|_| PublicWatchFailure::Unavailable)
+    }
+
+    /// 大厅在用的分片，3 秒内问过就用上次的。查不了时上次的不太旧就先用着。
+    async fn shard_list(
+        &self,
+        lobby: &WatchLobby,
+    ) -> Result<Arc<Vec<PublicLobbyShard>>, PublicWatchFailure> {
+        let mut lists = self.shard_lists.lock().await;
+        let now = self.clock.now();
+        let cached = lists.get(&lobby.catalog_id).cloned();
+        if let Some(list) = &cached
+            && now.value().saturating_sub(list.checked_at.value()) < REFRESH_INTERVAL_MS
+        {
+            return Ok(list.shards.clone());
+        }
+        match self
+            .shard_directory
+            .public_lobby_shards(lobby.catalog_id)
+            .await
+        {
+            Ok(shards) => {
+                let shards = Arc::new(shards);
+                lists.insert(
+                    lobby.catalog_id,
+                    ShardList {
+                        checked_at: now,
+                        shards: shards.clone(),
+                    },
+                );
+                Ok(shards)
+            }
+            Err(error) => {
+                RefreshFailure::Directory(error).log(&lobby.slug);
+                cached
+                    .filter(|list| {
+                        now.value().saturating_sub(list.checked_at.value()) <= STALE_LIMIT_MS
+                    })
+                    .map(|list| list.shards)
+                    .ok_or(PublicWatchFailure::Unavailable)
+            }
+        }
+    }
+
+    fn slot(&self, catalog_id: RoomCatalogId, room: Option<RoomInstanceId>) -> Arc<LobbySlot> {
         self.slots
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .entry(catalog_id)
+            .entry((catalog_id, room))
             .or_default()
             .clone()
     }
 
-    async fn refresh(&self, lobby: &WatchLobby, now: UtcMillis) -> Result<Bytes, RefreshFailure> {
-        let room = self
-            .directory
-            .find_public_observation_room(lobby.catalog_id)
-            .await
-            .map_err(RefreshFailure::Directory)?;
+    async fn refresh(
+        &self,
+        lobby: &WatchLobby,
+        room: Option<&PublicLobbyShard>,
+        now: UtcMillis,
+    ) -> Result<Bytes, RefreshFailure> {
         // 还没人进过的大厅没有分片：人和消息都是空的。
         let reading = match room {
             Some(room) => Some(self.read_room(&room.matrix_room_id, now).await?),
@@ -350,6 +448,29 @@ fn find_lobby<'a>(lobbies: &'a [WatchLobby], slug: &str) -> Option<&'a WatchLobb
             .find(|lobby| lobby.slug == DEFAULT_LOBBY_SLUG)
             .or_else(|| lobbies.first())
     })
+}
+
+/// 哪个大厅的哪个分片；还没有分片的大厅是 `None`。
+type SlotKey = (RoomCatalogId, Option<RoomInstanceId>);
+
+/// 分片列表的回答。网页对围观的回答做严格校验，分片列表单独放在这里。
+#[derive(Serialize)]
+struct ShardsView {
+    shards: Vec<ShardView>,
+    /// 不指明分片时看的那个；还没有分片时为空。
+    busiest: Option<u16>,
+}
+
+#[derive(Serialize)]
+struct ShardView {
+    number: u16,
+    agents: u16,
+}
+
+#[derive(Clone)]
+struct ShardList {
+    checked_at: UtcMillis,
+    shards: Arc<Vec<PublicLobbyShard>>,
 }
 
 #[derive(Default)]

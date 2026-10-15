@@ -1,8 +1,8 @@
 use agent_room_application::{
     persistence::RepositoryResult,
     ports::{
-        PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom, RoomDirectory,
-        RoomDirectoryQuery,
+        PortFuture, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom, PublicLobbyShard,
+        PublicLobbyShardDirectory, RoomDirectory, RoomDirectoryQuery,
     },
 };
 use agent_room_domain::rooms::{MatrixRoomReference, RoomLanguage, RoomRegion};
@@ -130,8 +130,8 @@ impl RoomDirectory for PostgresRepositories {
                     AND catalog.visibility = 'public'
                     AND catalog.status = 'active'
                     AND instance.state = 'active'
-                  ORDER BY instance.activity_score DESC,
-                           instance.member_count_projection DESC,
+                  ORDER BY instance.allocated_slots DESC,
+                           instance.created_at ASC,
                            instance.id ASC
                   LIMIT 1",
             )
@@ -153,6 +153,45 @@ impl RoomDirectory for PostgresRepositories {
                     })
                 })
                 .transpose()
+        })
+    }
+}
+
+impl PublicLobbyShardDirectory for PostgresRepositories {
+    fn public_lobby_shards(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PublicLobbyShard>>> {
+        Box::pin(async move {
+            let operation = "room_directory.public_lobby_shards";
+            let rows = sqlx::query_as::<_, (uuid::Uuid, String, i32, i64)>(
+                r"SELECT instance.id, instance.matrix_room_id, instance.allocated_slots,
+                         row_number() OVER (ORDER BY instance.created_at, instance.id)
+                  FROM agent_room.room_catalog_entry AS catalog
+                  JOIN agent_room.room_instance AS instance
+                    ON instance.catalog_entry_id = catalog.id
+                  WHERE catalog.id = $1
+                    AND catalog.kind = 'public_lobby'
+                    AND catalog.visibility = 'public'
+                    AND catalog.status = 'active'
+                    AND instance.state = 'active'
+                  ORDER BY instance.created_at, instance.id",
+            )
+            .bind(catalog_id.as_uuid())
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.into_iter()
+                .map(|(id, matrix_room_id, agents, number)| {
+                    Ok(PublicLobbyShard {
+                        number: u16::try_from(number).map_err(|_| corrupt_data(operation))?,
+                        room_instance_id: RoomInstanceId::from_uuid(id),
+                        matrix_room_id: MatrixRoomReference::new(matrix_room_id)
+                            .map_err(|_| corrupt_data(operation))?,
+                        agents: u16::try_from(agents).map_err(|_| corrupt_data(operation))?,
+                    })
+                })
+                .collect()
         })
     }
 }

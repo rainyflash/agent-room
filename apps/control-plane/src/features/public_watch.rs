@@ -1,4 +1,6 @@
 //! 不登录也能看公开大厅：`GET /public-lobbies/{slug}/watch`（specs/public-lobby-watch/design.md）。
+//! 大厅不止一个分片在用时，`?shard=<第几个>` 看指定的分片，分片列表在
+//! `GET /public-lobbies/{slug}/shards`（specs/launch-capacity/design.md 第 4 步）。
 //!
 //! 不要登录、不看 Cookie。回答是内存里的快照，3 秒内的重复请求浏览器可以直接用缓存。
 
@@ -7,7 +9,8 @@ use std::sync::Arc;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Router,
-    extract::{Extension, Path, State},
+    body::Bytes,
+    extract::{Extension, Path, RawQuery, State},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
@@ -33,6 +36,7 @@ pub(crate) struct PublicWatchHttpState {
 pub(crate) fn router(state: PublicWatchHttpState) -> Router {
     Router::new()
         .route("/public-lobbies/{slug}/watch", get(watch))
+        .route("/public-lobbies/{slug}/shards", get(shards))
         .with_state(state)
 }
 
@@ -40,8 +44,42 @@ async fn watch(
     State(state): State<PublicWatchHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
     Path(slug): Path<String>,
+    RawQuery(query): RawQuery,
 ) -> Response {
-    match state.watch.watch(&slug).await {
+    let result = match shard_of(query.as_deref()) {
+        Ok(shard) => state.watch.watch(&slug, shard).await,
+        Err(failure) => Err(failure),
+    };
+    respond(result, correlation_id)
+}
+
+async fn shards(
+    State(state): State<PublicWatchHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(slug): Path<String>,
+) -> Response {
+    respond(state.watch.shards(&slug).await, correlation_id)
+}
+
+/// `shard=<第几个>`，从 1 起；别的参数不管。写得不对当作没有这个分片。
+fn shard_of(query: Option<&str>) -> Result<Option<u16>, PublicWatchFailure> {
+    let Some(value) = query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .find_map(|pair| pair.strip_prefix("shard="))
+    else {
+        return Ok(None);
+    };
+    value
+        .parse::<u16>()
+        .ok()
+        .filter(|number| *number > 0)
+        .map(Some)
+        .ok_or(PublicWatchFailure::ShardNotFound)
+}
+
+fn respond(result: Result<Bytes, PublicWatchFailure>, correlation_id: CorrelationId) -> Response {
+    match result {
         Ok(body) => (
             [
                 (
@@ -73,6 +111,12 @@ fn failure_response(failure: PublicWatchFailure, correlation_id: CorrelationId) 
             "public_watch.lobby_not_found",
             ErrorCategory::Validation,
             "没有这个公开大厅。",
+        ),
+        PublicWatchFailure::ShardNotFound => (
+            StatusCode::NOT_FOUND,
+            "public_watch.shard_not_found",
+            ErrorCategory::Validation,
+            "这个公开大厅没有这个分片。",
         ),
         PublicWatchFailure::Unavailable => (
             StatusCode::SERVICE_UNAVAILABLE,

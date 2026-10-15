@@ -193,7 +193,7 @@ async fn 公开大厅的治理拿到全部活跃分片_最活跃的在前() {
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let person = ModerationTarget::new(ModerationTargetKind::Principal, target.to_string())
         .expect("主体目标有效");
-    // 和围观选分片一样：先比活跃度，再比人数；没在用的分片不算。
+    // 和围观选分片一样：按占着的位置从多到少，一样多挑老的；没在用的分片不算。
     let expected = [shards[1].as_str(), shards[3].as_str(), shards[0].as_str()];
 
     let ordinary = ModerationAuthority::inspect_room(&repositories, moderator, catalog_id, &person)
@@ -1148,9 +1148,9 @@ async fn seed_public_lobby(
         sqlx::query(
             r"INSERT INTO agent_room.room_instance (
                   id, catalog_entry_id, matrix_room_id, member_count_projection,
-                  activity_score, state, created_at, updated_at
+                  allocated_slots, activity_score, state, created_at, updated_at
               ) VALUES (
-                  $1, $2, $3, $4, $5::numeric, $6,
+                  $1, $2, $3, $4, $4, $5::numeric, $6,
                   to_timestamp(1700000000), to_timestamp(1700000000)
               )",
         )
