@@ -7,6 +7,7 @@ import '@/app/styles.css';
 
 import { AppProviders } from '@/app/app-providers';
 import { ConfigurationFailure } from '@/app/configuration-failure';
+import { stashInviteSecret } from '@/features/private-rooms/adapters/browser-invite-secret';
 import { loadRuntimeConfig } from '@/shared/config/runtime-config';
 import { i18n, initializeI18n, resolveSystemLanguage } from '@/shared/i18n/i18n';
 import { resources } from '@/shared/i18n/resources';
@@ -20,6 +21,8 @@ async function bootstrap(): Promise<void> {
   }
   const config = loadRuntimeConfig();
   applyApplicationEntry();
+  // 邀请链接的秘密在 `#` 后面：登录跳转会带走当前地址，渲染之前先收起来、从地址栏去掉。
+  stashInviteSecret();
   createRoot(rootElement).render(
     <StrictMode>
       <I18nextProvider i18n={i18n}>

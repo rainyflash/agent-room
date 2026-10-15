@@ -52,6 +52,10 @@ const PrivacyPage = lazyRouteComponent(
   () => import('@/features/privacy/ui/privacy-page'),
   'PrivacyPage',
 );
+// 打开别人发来的邀请链接（specs/room-people/design.md）。
+const JoinInvitePage = lazyPage(
+  async () => (await import('@/features/room-directory/ui/join-invite-page')).JoinInvitePage,
+);
 const RoomDirectoryPage = lazyPage(
   async () => (await import('@/features/room-directory/ui/room-directory-page')).RoomDirectoryPage,
 );
@@ -139,6 +143,13 @@ const workspaceRoute = createRoute({
   component: WorkspaceBoundary,
 });
 
+// 邀请链接是 `/join#<秘密>`：秘密在入口渲染之前就收进这个标签页、从地址栏去掉了。
+const joinRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/join',
+  component: JoinBoundary,
+});
+
 const roomDirectoryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/rooms',
@@ -189,6 +200,7 @@ const routeTree = rootRoute.addChildren([
   onboardingRoute,
   workspaceRoute,
   roomDirectoryRoute,
+  joinRoute,
   inboxRoute,
   lobbyRoute,
   lobbyInstanceRoute,
@@ -319,6 +331,15 @@ function WorkspaceBoundary() {
       selectedAgentId={search.agent ?? null}
     />
   );
+}
+
+function JoinBoundary() {
+  const navigate = joinRoute.useNavigate();
+  // 没登录时先去登录，登录完回到这一页，接着打开这条邀请。
+  const onConnectionRequired = useCallback(() => {
+    void navigate({ replace: true, search: { returnTo: '/join' }, to: '/connect' });
+  }, [navigate]);
+  return <JoinInvitePage onConnectionRequired={onConnectionRequired} />;
 }
 
 function RoomDirectoryBoundary() {

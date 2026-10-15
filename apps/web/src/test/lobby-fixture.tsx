@@ -96,6 +96,11 @@ import {
   type PrivateRoomPerson,
 } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentKnockToasts } from '@/features/private-rooms/ui/private-room-agent-knocks';
+import {
+  DEFAULT_INVITE_PERMISSIONS,
+  type PrivateRoomInviteGateway,
+  type PrivateRoomInviteLink,
+} from '@/features/private-rooms/domain/private-room-invite-link';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -128,6 +133,12 @@ const originFixture = privateFixture
 // `?private&archived` 是归档了的私人房间：之前的消息照样看，谁都不能再说话，也不能再接入 Agent。
 const archivedFixture =
   privateFixture && new URLSearchParams(window.location.search).has('archived');
+// `?private&origin=network&speak-only` 里你只有查看和发言：“接入 Agent”里说带进来的 Agent 说不了话。
+const speakOnlyFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('speak-only');
+// `?private&invite-link` 里房间已经有一条邀请链接；不带时还没有，“邀请人”里能生成。
+const inviteLinkFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('invite-link');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?owners` 里服务器回答 Agent 是谁的：依次是你的、Grace 的、Grace 放行的网络 Agent、
@@ -661,7 +672,11 @@ let fixturePrivateRoom: PrivateRoom = {
       ? [
           {
             // 网络 Agent 邀请来的人能查看、发言和自动发言（他请进来的 Agent 也能说话），不能邀请和管理。
-            permissions: { capabilities: ['view', 'speak', 'automate'] as const },
+            permissions: {
+              capabilities: speakOnlyFixture
+                ? (['view', 'speak'] as const)
+                : (['view', 'speak', 'automate'] as const),
+            },
             principalId: fixtureOwner,
             status: 'joined' as const,
           },
@@ -1110,6 +1125,47 @@ const fixtureOfflineHandoffTarget: HandoffTarget = Object.freeze({
 
 const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' });
 
+function fixtureInviteLinkFor(permissions = DEFAULT_INVITE_PERMISSIONS): PrivateRoomInviteLink {
+  const alphabet = '0123456789abcdefghjkmnpqrstvwxyz';
+  const secret = Array.from(
+    crypto.getRandomValues(new Uint8Array(26)),
+    (byte) => alphabet[byte % 32] ?? '0',
+  ).join('');
+  const createdAtUnixMs = Date.now();
+  return {
+    createdAtUnixMs,
+    expiresAtUnixMs: createdAtUnixMs + 7 * 86_400_000,
+    permissions,
+    secret,
+    url: `https://agentroom.test/join#${secret}`,
+  };
+}
+
+let fixtureInviteLink: PrivateRoomInviteLink | null = inviteLinkFixture
+  ? fixtureInviteLinkFor()
+  : null;
+// 夹具里打开链接那一边不在这一页（见 join-invite.html），这里只管生成、再看、停用。
+const privateRoomInvites: PrivateRoomInviteGateway = {
+  inviteLink: () =>
+    Promise.resolve(
+      fixtureInviteLink === null
+        ? err({ code: 'invite_link.not_found', retryable: false })
+        : ok(fixtureInviteLink),
+    ),
+  createInviteLink: (_catalogId, permissions) => {
+    fixtureInviteLink = fixtureInviteLinkFor(permissions);
+    return Promise.resolve(ok(fixtureInviteLink));
+  },
+  disableInviteLink: () => {
+    fixtureInviteLink = null;
+    return Promise.resolve(ok(undefined));
+  },
+  previewInvite: () =>
+    Promise.resolve(err({ code: 'fixture.external_action_unavailable', retryable: false })),
+  redeemInvite: () =>
+    Promise.resolve(err({ code: 'fixture.external_action_unavailable', retryable: false })),
+};
+
 /** 夹具 Agent 的 ID 末尾是它的序号（从 1 起）。 */
 function fixtureAgentOwner(agentId: string): AgentOwnerRecord | null {
   const index = Number(agentId.slice(-12)) - 1;
@@ -1192,6 +1248,7 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
+  ...(privateFixture ? { privateRoomInvites } : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
   },
