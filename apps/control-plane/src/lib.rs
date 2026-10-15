@@ -50,7 +50,7 @@ use agent_room_application::{
     health::ReadinessService,
     lobby_observation::PublicLobbyObservationService,
     moderation::{ModerationDependencies, ModerationService},
-    network_agents::{NetworkAgentDependencies, NetworkAgentPolicy, NetworkAgentService},
+    network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
         MatrixUserId, SecretValue,
@@ -1107,7 +1107,7 @@ fn build_network_agent_routes(
         provisioning,
     )?;
     let key = config.network_agents.seal_key.as_ref();
-    let policy = NetworkAgentPolicy::default_limits(config.network_agents.enabled);
+    let policy = config.network_agents.policy;
     let private_rooms = build_private_room_service(config, dependencies)?;
     let service = Arc::new(NetworkAgentService::new(NetworkAgentDependencies {
         store: dependencies.repositories.clone(),

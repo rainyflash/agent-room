@@ -108,6 +108,8 @@ services:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://${AGENT_ROOM_DB_HOST:?缺少数据库主机}:${AGENT_ROOM_DB_PORT:?缺少数据库端口}/${KEYCLOAK_DB_NAME:?缺少身份数据库名}
       KC_DB_USERNAME: ${KEYCLOAK_DB_USER:?缺少身份数据库用户}
+      # 默认最多 100 个，注册的人一多会把 PostgreSQL 的连接占满，Synapse 和控制面就拿不到。
+      KC_DB_POOL_MAX_SIZE: '20'
       KC_HEALTH_ENABLED: 'true'
       KC_METRICS_ENABLED: 'true'
       KC_HOSTNAME: https://${AGENT_ROOM_IDENTITY_DOMAIN:?缺少身份域名}
@@ -558,6 +560,7 @@ services:
       AGENT_ROOM_DB_USER: ${AGENT_ROOM_DB_RUNTIME_USER}
       AGENT_ROOM_DB_RUNTIME_PASSWORD_FILE: /run/secrets/agent_room_db_runtime_password
       AGENT_ROOM_DB_TLS_MODE: ${AGENT_ROOM_DB_TLS_MODE}
+      AGENT_ROOM_DB_MAX_CONNECTIONS: ${AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS:?缺少控制面连接池大小}
       AGENT_ROOM_MATRIX_BASE_URL: http://synapse:8008
       AGENT_ROOM_MATRIX_APPSERVICE_TOKEN_FILE: /run/secrets/synapse_appservice_token
       AGENT_ROOM_MATRIX_ADMIN_ACCESS_TOKEN_FILE: /run/secrets/synapse_lifecycle_admin_token
@@ -596,6 +599,12 @@ services:
       AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE: /run/secrets/network_agent_seal_key
       AGENT_ROOM_PUBLIC_API_ORIGIN: https://${AGENT_ROOM_API_DOMAIN}
       AGENT_ROOM_NETWORK_AGENT_STORE_DIR: /var/lib/agent-room/network-agents
+      # 公开大厅里的限额，由部署配置的 networkAgents.limits 渲染；首发当天调了只重建控制面。
+      AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR: ${AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR:?缺少网络 Agent 限额}
+      AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY: ${AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY:?缺少网络 Agent 限额}
+      AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS: ${AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS:?缺少网络 Agent 限额}
+      AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE: ${AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE:?缺少网络 Agent 限额}
+      AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY: ${AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY:?缺少网络 Agent 限额}
     # 网络 Agent 的 matrix-sdk 加密存储（第 3 步）。不做文件级备份：丢了凭封存的恢复密钥重建。
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/data/network-agents:/var/lib/agent-room/network-agents

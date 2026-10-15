@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use agent_room_application::network_agents::NetworkAgentPolicy;
 use agent_room_domain::{content::MAX_CONTENT_BYTES, ids::AgentId};
 use agent_room_identity_adapter::{NETWORK_AGENT_SEAL_KEY_BYTES, NetworkAgentSealKey};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -14,6 +15,8 @@ use url::Url;
 use uuid::{Uuid, Version};
 
 const DEFAULT_DEPENDENCY_TIMEOUT_MILLIS: u64 = 2_000;
+// 控制面整个只有这一个连接池，就绪探针也用它。几百个网络 Agent 同时等消息时 5 个不够用。
+const DEFAULT_DATABASE_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_OTEL_EXPORT_TIMEOUT_MILLIS: u64 = 5_000;
 const DEFAULT_LOGIN_ATTEMPT_TTL_MILLIS: u64 = 10 * 60 * 1_000;
 // 普通登录跨应用重启保留；敏感操作仍独立要求近期重新认证。
@@ -94,6 +97,7 @@ pub(crate) struct DatabaseConfig {
     pub(crate) username: String,
     pub(crate) password: SecretValue,
     pub(crate) tls_mode: DatabaseTlsMode,
+    pub(crate) max_connections: u32,
 }
 
 #[derive(Clone)]
@@ -193,6 +197,8 @@ pub(crate) struct NetworkAgentConfig {
     pub(crate) public_api_origin: Option<Url>,
     /// 网络 Agent 的 matrix-sdk 加密存储（第 3 步），每个 Agent 一个子目录；开关打开时必配。
     pub(crate) store_dir: Option<PathBuf>,
+    /// 限额：公开大厅那几项可以由部署配置改，别的照 `NetworkAgentPolicy::default_limits`。
+    pub(crate) policy: NetworkAgentPolicy,
 }
 
 #[derive(Clone)]
@@ -284,7 +290,68 @@ fn read_network_agent_config(
         seal_key,
         public_api_origin,
         store_dir,
+        policy: read_network_agent_policy(source, enabled)?,
     })
+}
+
+/// 网络 Agent 在公开大厅里的限额，没配的用 `NetworkAgentPolicy::default_limits`。首发当天要临时
+/// 调的时候改部署配置、只重建控制面（`specs/launch-capacity/design.md` 第 5 步）。
+fn read_network_agent_policy(
+    source: &impl EnvironmentSource,
+    enabled: bool,
+) -> Result<NetworkAgentPolicy, ConfigError> {
+    const ENTRIES_PER_HOUR: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR";
+    const ENTRIES_PER_DAY: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY";
+    const MAX_LOBBY_AGENTS: &str = "AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS";
+    const MESSAGES_PER_MINUTE: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE";
+    const MESSAGES_PER_DAY: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY";
+    let defaults = NetworkAgentPolicy::default_limits(enabled);
+    let policy = NetworkAgentPolicy {
+        lobby_entries_per_source_per_hour: read_bounded_u32(
+            source,
+            ENTRIES_PER_HOUR,
+            defaults.lobby_entries_per_source_per_hour,
+            1..=100_000,
+        )?,
+        lobby_entries_per_source_per_day: read_bounded_u32(
+            source,
+            ENTRIES_PER_DAY,
+            defaults.lobby_entries_per_source_per_day,
+            1..=1_000_000,
+        )?,
+        max_lobby_agents: read_bounded_u64(
+            source,
+            MAX_LOBBY_AGENTS,
+            defaults.max_lobby_agents,
+            1..=100_000,
+        )?,
+        lobby_messages_per_minute: read_bounded_u32(
+            source,
+            MESSAGES_PER_MINUTE,
+            defaults.lobby_messages_per_minute,
+            1..=600,
+        )?,
+        lobby_messages_per_day: read_bounded_u32(
+            source,
+            MESSAGES_PER_DAY,
+            defaults.lobby_messages_per_day,
+            1..=1_000_000,
+        )?,
+        ..defaults
+    };
+    if policy.lobby_entries_per_source_per_day < policy.lobby_entries_per_source_per_hour {
+        return Err(ConfigError::invalid(
+            ENTRIES_PER_DAY,
+            "不能少于每小时的名额",
+        ));
+    }
+    if policy.lobby_messages_per_day < policy.lobby_messages_per_minute {
+        return Err(ConfigError::invalid(
+            MESSAGES_PER_DAY,
+            "不能少于每分钟的条数",
+        ));
+    }
+    Ok(policy)
 }
 
 fn read_account_lifecycle_config(
@@ -506,6 +573,12 @@ fn read_dependency_config(
                 source,
                 "AGENT_ROOM_DB_TLS_MODE",
             )?)?,
+            max_connections: read_bounded_u32(
+                source,
+                "AGENT_ROOM_DB_MAX_CONNECTIONS",
+                DEFAULT_DATABASE_MAX_CONNECTIONS,
+                2..=100,
+            )?,
         },
         matrix_base_url: parse_http_url(
             "AGENT_ROOM_MATRIX_BASE_URL",
@@ -939,7 +1012,7 @@ impl ConfigError {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{ConfigError, ControlPlaneConfig, EnvironmentSource};
+    use super::{ConfigError, ControlPlaneConfig, EnvironmentSource, NetworkAgentPolicy};
 
     #[derive(Default)]
     struct MapEnvironment(BTreeMap<&'static str, String>);
@@ -1348,6 +1421,60 @@ mod tests {
                 "AGENT_ROOM_NETWORK_AGENT_STORE_DIR",
                 "relative/network-agents",
             ),
+        ] {
+            let mut environment = valid_environment();
+            environment.0.insert(name, value.to_owned());
+            assert!(
+                matches!(
+                    ControlPlaneConfig::from_source(&environment),
+                    Err(ConfigError::Invalid { name: invalid, .. }) if invalid == name
+                ),
+                "{name}={value} 应当被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn 网络_agent_在公开大厅的限额和连接池可以配_没配的用默认值_范围不对拒绝启动() {
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+        assert_eq!(
+            config.network_agents.policy,
+            NetworkAgentPolicy::default_limits(false)
+        );
+        assert_eq!(config.dependencies.database.max_connections, 10);
+
+        let mut environment = valid_environment();
+        for (name, value) in [
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR", "50"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY", "200"),
+            ("AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS", "1500"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE", "10"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY", "500"),
+            ("AGENT_ROOM_DB_MAX_CONNECTIONS", "20"),
+        ] {
+            environment.0.insert(name, value.to_owned());
+        }
+        let config = ControlPlaneConfig::from_source(&environment).expect("限额有效");
+        assert_eq!(
+            config.network_agents.policy,
+            NetworkAgentPolicy {
+                lobby_entries_per_source_per_hour: 50,
+                lobby_entries_per_source_per_day: 200,
+                max_lobby_agents: 1_500,
+                lobby_messages_per_minute: 10,
+                lobby_messages_per_day: 500,
+                ..NetworkAgentPolicy::default_limits(false)
+            }
+        );
+        assert_eq!(config.dependencies.database.max_connections, 20);
+
+        for (name, value) in [
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR", "0"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY", "4"),
+            ("AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS", "many"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE", "601"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY", "19"),
+            ("AGENT_ROOM_DB_MAX_CONNECTIONS", "1"),
         ] {
             let mut environment = valid_environment();
             environment.0.insert(name, value.to_owned());

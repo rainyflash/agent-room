@@ -131,10 +131,62 @@ class IdentityConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class NetworkAgentLimits:
+    """网络 Agent 在公开大厅里的限额。默认值和控制面的 `NetworkAgentPolicy::default_limits` 一样。"""
+
+    lobby_entries_per_source_per_hour: int = 5
+    lobby_entries_per_source_per_day: int = 20
+    max_lobby_agents: int = 500
+    lobby_messages_per_minute: int = 20
+    lobby_messages_per_day: int = 1_000
+
+
+# 部署配置里的名字、控制面的环境变量、允许的范围。范围和控制面启动时的校验一样。
+NETWORK_AGENT_LIMIT_FIELDS: tuple[tuple[str, str, str, int, int], ...] = (
+    (
+        "lobbyEntriesPerSourcePerHour",
+        "lobby_entries_per_source_per_hour",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR",
+        1,
+        100_000,
+    ),
+    (
+        "lobbyEntriesPerSourcePerDay",
+        "lobby_entries_per_source_per_day",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY",
+        1,
+        1_000_000,
+    ),
+    (
+        "maxLobbyAgents",
+        "max_lobby_agents",
+        "AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS",
+        1,
+        100_000,
+    ),
+    (
+        "lobbyMessagesPerMinute",
+        "lobby_messages_per_minute",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE",
+        1,
+        600,
+    ),
+    (
+        "lobbyMessagesPerDay",
+        "lobby_messages_per_day",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY",
+        1,
+        1_000_000,
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
 class NetworkAgentsConfig:
-    """只凭网络接入的 Agent（ADR 0010）的总开关；默认关闭。"""
+    """只凭网络接入的 Agent（ADR 0010）的总开关（默认关闭）和公开大厅里的限额。"""
 
     enabled: bool
+    limits: NetworkAgentLimits = NetworkAgentLimits()
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,11 +497,43 @@ def _parse_network_agents(value: object) -> NetworkAgentsConfig:
     if value is None:
         return NetworkAgentsConfig(enabled=False)
     source = _mapping(value, "networkAgents")
-    _reject_unknown(source, {"enabled"}, "networkAgents")
+    _reject_unknown(source, {"enabled", "limits"}, "networkAgents")
     enabled = source.get("enabled", False)
     if not isinstance(enabled, bool):
         raise DeploymentConfigError("networkAgents.enabled 必须是 true 或 false。")
-    return NetworkAgentsConfig(enabled=enabled)
+    return NetworkAgentsConfig(
+        enabled=enabled, limits=_parse_network_agent_limits(source.get("limits"))
+    )
+
+
+def _parse_network_agent_limits(value: object) -> NetworkAgentLimits:
+    if value is None:
+        return NetworkAgentLimits()
+    source = _mapping(value, "networkAgents.limits")
+    _reject_unknown(
+        source,
+        {name for name, *_ in NETWORK_AGENT_LIMIT_FIELDS},
+        "networkAgents.limits",
+    )
+    defaults = NetworkAgentLimits()
+    values: dict[str, int] = {}
+    for name, field, _variable, minimum, maximum in NETWORK_AGENT_LIMIT_FIELDS:
+        number = _optional_integer(source, name, getattr(defaults, field))
+        if not minimum <= number <= maximum:
+            raise DeploymentConfigError(
+                f"networkAgents.limits.{name} 必须在 {minimum}–{maximum} 之间。"
+            )
+        values[field] = number
+    limits = NetworkAgentLimits(**values)
+    if limits.lobby_entries_per_source_per_day < limits.lobby_entries_per_source_per_hour:
+        raise DeploymentConfigError(
+            "networkAgents.limits.lobbyEntriesPerSourcePerDay 不能少于每小时的名额。"
+        )
+    if limits.lobby_messages_per_day < limits.lobby_messages_per_minute:
+        raise DeploymentConfigError(
+            "networkAgents.limits.lobbyMessagesPerDay 不能少于每分钟的条数。"
+        )
+    return limits
 
 
 def _parse_distribution(value: object) -> DistributionConfig:
