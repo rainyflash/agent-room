@@ -11,7 +11,7 @@ import re
 from typing import Final
 from urllib.parse import quote
 
-from .config import DeploymentConfig
+from .config import NETWORK_AGENT_LIMIT_FIELDS, DeploymentConfig
 from .secrets import SecretStore
 
 
@@ -25,9 +25,17 @@ PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
+# 控制面所有副本加起来用的数据库连接。Synapse 20 个、Keycloak 20 个、控制面 20 个，再加迁移、备份和
+# 指标采集几个，PostgreSQL 默认的 100 个够用（specs/launch-capacity/design.md 第 5 步）。
+CONTROL_PLANE_DATABASE_CONNECTIONS: Final = 20
 OIDC_MAPPING_SOURCE: Final = (
     Path(__file__).resolve().parents[2] / "infra" / "synapse" / "agent_room_oidc_mapping.py"
 )
+
+
+def control_plane_database_connections(replicas: int) -> int:
+    """每个控制面副本的连接池大小：所有副本加起来不超过 20 个，每个至少 2 个。"""
+    return max(2, CONTROL_PLANE_DATABASE_CONNECTIONS // replicas)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +229,13 @@ def _compose_environment(
         "AGENT_ROOM_IDENTITY_REGISTRATION_MODE": config.identity.registration.mode,
         "AGENT_ROOM_NETWORK_AGENTS_ENABLED": (
             "true" if config.network_agents.enabled else "false"
+        ),
+        **{
+            variable: str(getattr(config.network_agents.limits, field))
+            for _name, field, variable, _minimum, _maximum in NETWORK_AGENT_LIMIT_FIELDS
+        },
+        "AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS": str(
+            control_plane_database_connections(config.capacity.control_plane_replicas)
         ),
         "AGENT_ROOM_WINDOWS_DOWNLOAD_URL": config.distribution.windows_download_url or "",
         "AGENT_ROOM_MACOS_DOWNLOAD_URL": config.distribution.macos_download_url or "",

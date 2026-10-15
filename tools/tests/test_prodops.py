@@ -14,7 +14,13 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from tools.prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
+from tools.prodops.config import (
+    NETWORK_AGENT_LIMIT_FIELDS,
+    DeploymentConfig,
+    DeploymentConfigError,
+    NetworkAgentLimits,
+    load_deployment_config,
+)
 from tools.prodops.network_agents import NetworkAgentTargetError, disable_statement
 from tools.prodops.render import (
     CONTAINER_CONFIG_DIRECTORY_MODE,
@@ -22,6 +28,7 @@ from tools.prodops.render import (
     PRIVATE_DIRECTORY_MODE,
     DeploymentPaths,
     _generated_config_digest,
+    control_plane_database_connections,
     render_deployment,
 )
 from tools.prodops.runtime import (
@@ -279,6 +286,66 @@ class ProductionConfigTests(unittest.TestCase):
         value["networkAgents"] = {"enabled": True, "maxLiveAgents": 10}
         with self.assertRaises(DeploymentConfigError):
             DeploymentConfig.from_mapping(value)
+
+    def test_network_agent_limits_default_to_the_control_plane_values(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["networkAgents"] = {"enabled": True}
+        self.assertEqual(
+            DeploymentConfig.from_mapping(value).network_agents.limits, NetworkAgentLimits()
+        )
+
+        # 默认值和控制面的 `NetworkAgentPolicy::default_limits` 一样，不配的部署行为不变。
+        source = (ROOT / "crates" / "application" / "src" / "network_agents.rs").read_text(
+            encoding="utf-8"
+        )
+        defaults = source.split("pub const fn default_limits", 1)[1].split("\n    }\n", 1)[0]
+        for _name, field, _variable, _minimum, _maximum in NETWORK_AGENT_LIMIT_FIELDS:
+            match = re.search(rf"\b{field}: ([0-9_]+),", defaults)
+            self.assertIsNotNone(match, field)
+            assert match is not None
+            self.assertEqual(
+                int(match.group(1).replace("_", "")),
+                getattr(NetworkAgentLimits(), field),
+                field,
+            )
+
+        # 只写了几项时，别的照默认值。
+        value["networkAgents"]["limits"] = {"maxLobbyAgents": 1500}
+        self.assertEqual(
+            DeploymentConfig.from_mapping(value).network_agents.limits,
+            NetworkAgentLimits(max_lobby_agents=1_500),
+        )
+
+    def test_network_agent_limits_are_range_checked(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["networkAgents"] = {
+            "enabled": True,
+            "limits": {
+                "lobbyEntriesPerSourcePerHour": 50,
+                "lobbyEntriesPerSourcePerDay": 200,
+                "maxLobbyAgents": 1500,
+                "lobbyMessagesPerMinute": 10,
+                "lobbyMessagesPerDay": 500,
+            },
+        }
+        self.assertEqual(
+            DeploymentConfig.from_mapping(value).network_agents.limits,
+            NetworkAgentLimits(50, 200, 1_500, 10, 500),
+        )
+
+        for limits, message in (
+            ({"lobbyEntriesPerSourcePerHour": 0}, "lobbyEntriesPerSourcePerHour 必须在"),
+            ({"maxLobbyAgents": 100_001}, "maxLobbyAgents 必须在"),
+            ({"lobbyMessagesPerMinute": "20"}, "lobbyMessagesPerMinute 必须是整数"),
+            ({"lobbyEntriesPerSourcePerHour": 30}, "lobbyEntriesPerSourcePerDay 不能少于"),
+            ({"lobbyMessagesPerDay": 19}, "lobbyMessagesPerDay 不能少于"),
+            ({"maxLiveAgents": 10}, "未知字段：maxLiveAgents"),
+        ):
+            value["networkAgents"]["limits"] = limits
+            with self.subTest(limits=limits), self.assertRaisesRegex(
+                DeploymentConfigError, message
+            ):
+                DeploymentConfig.from_mapping(value)
 
     def test_network_agents_require_a_single_control_plane_replica(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
@@ -717,6 +784,39 @@ class ProductionRenderingTests(unittest.TestCase):
         bare = caddyfile.split(f"\n{self.config.public.server_name} {{\n", 1)[1]
         self.assertLess(bare.index("handle /agents.md"), bare.index("redir https://"))
         self.assertLess(bare.index("handle /agents.txt"), bare.index("redir https://"))
+
+    def test_network_agent_limits_and_database_pools_reach_the_containers(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["networkAgents"] = {
+            "enabled": True,
+            "limits": {"maxLobbyAgents": 1500, "lobbyEntriesPerSourcePerHour": 10},
+        }
+        render_deployment(DeploymentConfig.from_mapping(value), self.paths, self.secrets)
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        compose = (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")
+
+        for variable, expected in (
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR", "10"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY", "20"),
+            ("AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS", "1500"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE", "20"),
+            ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY", "1000"),
+        ):
+            self.assertIn(f"{variable}={expected}\n", environment)
+            self.assertIn(f"      {variable}: ${{{variable}:?", compose)
+        self.assertIn("AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS=20\n", environment)
+        self.assertIn(
+            "AGENT_ROOM_DB_MAX_CONNECTIONS: ${AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS:?",
+            compose,
+        )
+        identity = compose.split("\n  identity:\n", 1)[1].split("\n  control-plane:\n", 1)[0]
+        self.assertIn("KC_DB_POOL_MAX_SIZE: '20'", identity)
+
+    def test_control_plane_replicas_share_twenty_database_connections(self) -> None:
+        self.assertEqual(control_plane_database_connections(1), 20)
+        self.assertEqual(control_plane_database_connections(2), 10)
+        self.assertEqual(control_plane_database_connections(3), 6)
+        self.assertEqual(control_plane_database_connections(16), 2)
 
     def test_network_agent_disable_runs_in_embedded_postgres_and_reports_who(self) -> None:
         runtime = ProductionRuntime(self.config, self.paths)

@@ -87,7 +87,7 @@ fn create_pool(config: &DatabaseConfig, timeout: std::time::Duration) -> PgPool 
 
     PgPoolOptions::new()
         .min_connections(0)
-        .max_connections(5)
+        .max_connections(config.max_connections)
         .acquire_timeout(timeout)
         .connect_lazy_with(options)
 }

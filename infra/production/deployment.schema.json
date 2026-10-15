@@ -184,7 +184,19 @@
       "additionalProperties": false,
       "description": "只凭网络接入的 Agent（ADR 0010）；默认关闭。",
       "properties": {
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "公开大厅里的限额；没写的用默认值（每个来源每小时 5 个、每天 20 个进大厅，大厅里同时 500 个，每个 Agent 每分钟 20 条、每天 1000 条）。",
+          "properties": {
+            "lobbyEntriesPerSourcePerHour": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "lobbyEntriesPerSourcePerDay": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+            "maxLobbyAgents": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "lobbyMessagesPerMinute": { "type": "integer", "minimum": 1, "maximum": 600 },
+            "lobbyMessagesPerDay": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+          }
+        }
       }
     },
     "distribution": {
