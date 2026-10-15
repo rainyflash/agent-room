@@ -1,17 +1,20 @@
 """量一量网络 Agent 多了以后服务器撑得住多少（specs/launch-capacity/design.md 第 6 步）。
 
 和无头验收用同一套隔离的依赖（PostgreSQL、Synapse、Keycloak），起一个发布构建的控制面，用部署配置同款的
-环境变量放开公开大厅的限额。每一档建够 N 个网络 Agent，让它们一直等消息；再从它们里面随机挑人，每秒在
-大厅里说 M 句，三成点名别人、三成说之前先“正在输入”。量：
+环境变量放开公开大厅的限额、连接池和依赖超时和生产一样。每一档建够 N 个网络 Agent，让它们一直等消息；再从
+它们里面随机挑人，每秒在大厅里说 M 句，三成点名别人、三成说之前先“正在输入”。量：
 
 - Synapse、PostgreSQL、控制面各用了几个核、内存最多用到多少；
-- 从发出到每个在等的 Agent 收到的时间（中位数、p95）；
-- 出错的个数（按状态码和超时分）。
+- 消息多久送到（中位数、p95）；
+- 出错的个数（按状态码和超时分），建 Agent 时重试了几次、每个建了多久。
 
-等消息用 `wake=all&settle=0`：每句话都叫醒每个在等的，是最重的情形。只在 CI 里派发跑
-（`gh workflow run ci.yml -f suite=load`），结果写到 artifacts/capacity/network-agent-load.json。
-CI 的机器比生产快，所以看用了几个核：Synapse 超过约 0.7 个核、三样加起来超过约 1.5 个核，就算生产这台
-2 vCPU 的撑不住。
+等消息分两种叫醒方式各量一遍：
+- `related`：默认的规则，跟它有关的才叫醒。大厅里只有点名它的那句会叫醒它，量的是点名到被点名的收到；
+- `all`：每句话都叫醒每个在等的，最重的情形，量的是每个在等的都收到。
+
+只在 CI 里派发跑（`gh workflow run ci.yml -f suite=load`），结果写到
+artifacts/capacity/network-agent-load.json。CI 的机器比生产快，所以看用了几个核：Synapse 超过约 0.7 个
+核、三样加起来超过约 1.5 个核，就算生产这台 2 vCPU 的撑不住。
 """
 
 from __future__ import annotations
@@ -44,7 +47,12 @@ else:
     import vertical as v
 
 AGENT_COUNTS: Final = (50, 100, 200, 400)
-MESSAGE_RATES: Final = (0.0, 0.2, 1.0)
+MESSAGE_RATES: Final = (0.2, 1.0)
+WAKE_MODES: Final = ("related", "all")
+WAIT_QUERIES: Final = {
+    "related": "wait=10&limit=50&settle=0",
+    "all": "wait=10&limit=50&wake=all&settle=0",
+}
 WINDOW_SECONDS: Final = 60.0
 IDLE_WINDOW_SECONDS: Final = 30.0
 GRACE_SECONDS: Final = 15.0
@@ -53,17 +61,21 @@ MENTION_SHARE: Final = 0.3
 TYPING_SHARE: Final = 0.3
 SYNAPSE_CORE_BUDGET: Final = 0.7
 TOTAL_CORE_BUDGET: Final = 1.5
-CREATE_WORKERS: Final = 8
+CREATE_WORKERS: Final = 4
+CREATE_ATTEMPTS: Final = 6
 SEND_WORKERS: Final = 8
-WAIT_QUERY: Final = "wait=10&limit=50&wake=all&settle=0"
 MATRIX_API: Final = "http://127.0.0.1:18008/_matrix/client/v3"
 REPORT: Final = v.ROOT / "artifacts" / "capacity" / "network-agent-load.json"
 CONTROL_PLANE_LOG: Final = v.LOG_ROOT / "control-plane-load.log"
+PRODUCTION_LIKE: Final = {
+    # 生产渲染给一个控制面副本的连接池（tools/prodops/render.py 的 control_plane_database_connections）
+    # 和依赖超时（infra/production/compose.yaml）；本地默认的 2 秒会把排队的进大厅请求提前判成 503。
+    "AGENT_ROOM_DB_MAX_CONNECTIONS": "20",
+    "AGENT_ROOM_DEPENDENCY_TIMEOUT_MS": "5000",
+}
 # 部署配置 networkAgents.limits 渲染成的环境变量（tools/prodops/config.py 的 NETWORK_AGENT_LIMIT_FIELDS）
 # 放到最大：量的是服务器，不是限额。
 LIMIT_OVERRIDES: Final = {
-    # 生产渲染给一个控制面副本的连接池（tools/prodops/render.py 的 control_plane_database_connections）。
-    "AGENT_ROOM_DB_MAX_CONNECTIONS": "20",
     "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR": "100000",
     "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY": "1000000",
     "AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS": "100000",
@@ -73,6 +85,7 @@ LIMIT_OVERRIDES: Final = {
 # 生产的控制面同款日志级别（infra/production/compose.yaml）。
 CONTROL_PLANE_LOG_FILTER: Final = "agent_room_control_plane=info,sqlx=warn"
 LOAD_TEXT: Final = re.compile(r"^load (?P<nonce>[0-9a-f]{16}) (?P<speaker>\d+)$")
+LOAD_NAME: Final = re.compile(r"\bLoad (?P<index>\d{3,})\b")
 
 
 @dataclass
@@ -87,28 +100,38 @@ class LoadAgent:
         return f"198.18.{self.index // 200}.{self.index % 200 + 1}"
 
 
+@dataclass(frozen=True)
+class Sent:
+    at: float
+    room_id: str
+    speaker: int
+    target: int | None
+
+
 @dataclass
 class Ledger:
-    """一档里发了什么、谁什么时候收到、出了什么错。等消息的线程和发言的线程一起写，所以加锁。"""
+    """一段里发了什么、谁什么时候收到、出了什么错。等消息的线程和发言的线程一起写，所以加锁。"""
 
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    _sent: dict[str, tuple[float, str, int]] = field(default_factory=dict)
+    _wake: str = "all"
+    _sent: dict[str, Sent] = field(default_factory=dict)
     _delivered: set[tuple[str, int]] = field(default_factory=set)
     _latencies: list[float] = field(default_factory=list)
     _errors: Counter[str] = field(default_factory=Counter)
-    # 说过话的 Agent 的 Matrix 用户 ID：点名、“正在输入”都要它，从收到的消息里学来，跨档留着。
+    # 说过话的 Agent 的 Matrix 用户 ID：点名、“正在输入”都要它，从收到的消息里学来，跨段留着。
     _user_ids: dict[int, str] = field(default_factory=dict)
 
-    def begin(self) -> None:
+    def begin(self, wake: str) -> None:
         with self._lock:
+            self._wake = wake
             self._sent.clear()
             self._delivered.clear()
             self._latencies.clear()
             self._errors.clear()
 
-    def sending(self, nonce: str, room_id: str, speaker: int) -> None:
+    def sending(self, nonce: str, room_id: str, speaker: int, target: int | None) -> None:
         with self._lock:
-            self._sent[nonce] = (time.monotonic(), room_id, speaker)
+            self._sent[nonce] = Sent(time.monotonic(), room_id, speaker, target)
 
     def not_sent(self, nonce: str, reason: str) -> None:
         with self._lock:
@@ -124,11 +147,20 @@ class Ledger:
         with self._lock:
             if author is not None:
                 self._user_ids.setdefault(speaker, author)
-            entry = self._sent.get(nonce)
-            if entry is None or receiver == speaker or (nonce, receiver) in self._delivered:
+            sent = self._sent.get(nonce)
+            if sent is None or not self._counts(sent, receiver) or (nonce, receiver) in self._delivered:
                 return
             self._delivered.add((nonce, receiver))
-            self._latencies.append(now - entry[0])
+            self._latencies.append(now - sent.at)
+
+    def _counts(self, sent: Sent, receiver: int) -> bool:
+        if self._wake == "related":
+            return receiver == sent.target
+        return receiver != sent.speaker
+
+    def learn(self, index: int, user_id: str) -> None:
+        with self._lock:
+            self._user_ids.setdefault(index, user_id)
 
     def user_id(self, index: int) -> str | None:
         with self._lock:
@@ -136,7 +168,10 @@ class Ledger:
 
     def summary(self, room_sizes: Mapping[str, int]) -> dict[str, object]:
         with self._lock:
-            expected = sum(max(room_sizes.get(room, 0) - 1, 0) for _, room, _ in self._sent.values())
+            if self._wake == "related":
+                expected = sum(1 for sent in self._sent.values() if sent.target is not None)
+            else:
+                expected = sum(max(room_sizes.get(sent.room_id, 0) - 1, 0) for sent in self._sent.values())
             return {
                 "messagesSent": len(self._sent),
                 "deliveriesExpected": expected,
@@ -174,6 +209,10 @@ def parse_load_text(text: object) -> tuple[str, int] | None:
 
 def within_budget(cores: Mapping[str, float]) -> bool:
     return cores["synapse"] <= SYNAPSE_CORE_BUDGET and cores["total"] <= TOTAL_CORE_BUDGET
+
+
+def create_backoff(attempt: int) -> float:
+    return float(min(2**attempt, 16))
 
 
 # ---- 容器和进程用了多少 CPU、内存 ----
@@ -242,6 +281,8 @@ class Meter:
     def cpu_seconds(self) -> dict[str, float]:
         usage = {name: cgroup_cpu_seconds(files[0]) for name, files in self.containers.items()}
         usage["controlPlane"] = process_cpu_seconds(self.control_plane_pid)
+        # 量的工具自己（几百个等消息的线程）也占 CI 机器的核；单独记，不算进合计。
+        usage["harness"] = process_cpu_seconds(os.getpid())
         return usage
 
     def memory_bytes(self) -> dict[str, int]:
@@ -297,15 +338,55 @@ class PeakMemory:
 # ---- 网络 Agent：建、等消息、说话 ----
 
 
-def create_agent(index: int) -> LoadAgent:
+@dataclass
+class Growth:
+    """建 Agent 时的记账：每个建了多久、因为什么重试了几次。几个建的线程一起写。"""
+
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _seconds: list[float] = field(default_factory=list)
+    _retries: Counter[str] = field(default_factory=Counter)
+
+    def took(self, seconds: float) -> None:
+        with self._lock:
+            self._seconds.append(seconds)
+
+    def retried(self, reason: str) -> None:
+        with self._lock:
+            self._retries[reason] += 1
+
+    def summary(self, agents: int) -> dict[str, object]:
+        with self._lock:
+            result = {
+                "agents": agents,
+                "createSeconds": latency_summary(self._seconds),
+                "createRetries": dict(sorted(self._retries.items())),
+            }
+            self._seconds.clear()
+            self._retries.clear()
+            return result
+
+
+def create_agent(index: int, growth: Growth) -> LoadAgent:
+    """像真的网络 Agent 一样进大厅：503 时等一会再试，重试记下来，那就是首发时一拥而上会碰到的。"""
     agent = LoadAgent(index=index, token="", room_id="")
-    status, created = v.network_agent_request(
-        "POST", "", body={"name": f"Load {index:03d}", "room": v.CATALOG_SLUG},
-        source=agent.source, timeout_seconds=120,
-    )
-    if status != 201 or created is None:
-        code = created.get("code") if created else None
-        raise v.VerticalFailure(f"第 {index} 个网络 Agent 没建成：HTTP {status} {code}。")
+    for attempt in range(CREATE_ATTEMPTS):
+        started = time.monotonic()
+        try:
+            status, created = v.network_agent_request(
+                "POST", "", body={"name": f"Load {index:03d}", "room": v.CATALOG_SLUG},
+                source=agent.source, timeout_seconds=120,
+            )
+        except (OSError, HTTPException) as error:
+            status, created, reason = 0, None, type(error).__name__
+        else:
+            reason = f"HTTP {status} {created.get('code') if created else ''}".strip()
+        if status == 201 and created is not None:
+            growth.took(time.monotonic() - started)
+            break
+        if attempt + 1 == CREATE_ATTEMPTS or status not in (0, 429, 503):
+            raise v.VerticalFailure(f"第 {index} 个网络 Agent 没建成：{reason}。")
+        growth.retried(reason)
+        time.sleep(create_backoff(attempt))
     agent.token = v.require_text(created.get("token"), "网络 Agent 令牌")
     room = v.require_object(created.get("room"), "进的房间")
     agent.room_id = v.require_text(room.get("matrixRoomId"), "房间 ID")
@@ -329,21 +410,22 @@ def acknowledge(agent: LoadAgent, messages: Sequence[Mapping[str, object]]) -> i
     return status
 
 
-def wait_loop(agent: LoadAgent, ledger: Ledger, stop: threading.Event) -> None:
-    """像一直在等消息的 Agent 一样：长轮询、收到就确认、接着等。"""
-    while not stop.is_set():
+def wait_loop(agent: LoadAgent, run: LoadRun) -> None:
+    """像一直在等消息的 Agent 一样：长轮询、收到就确认、接着等。叫醒方式每一轮读一次，量的时候能切换。"""
+    ledger = run.ledger
+    while not run.stop.is_set():
         try:
             status, page = v.network_agent_request(
-                "GET", f"/me/messages?{WAIT_QUERY}", token=agent.token,
+                "GET", f"/me/messages?{WAIT_QUERIES[run.wake]}", token=agent.token,
                 source=agent.source, timeout_seconds=40,
             )
         except (OSError, HTTPException) as error:  # 超时、连接被拒、断在半截都在这里
             ledger.error(f"wait {type(error).__name__}")
-            stop.wait(1)
+            run.stop.wait(1)
             continue
         if status != 200 or page is None:
             ledger.error(f"wait HTTP {status}")
-            stop.wait(1)
+            run.stop.wait(1)
             continue
         try:
             messages = v.network_page_messages(page)
@@ -378,7 +460,7 @@ def say(
     speaker: LoadAgent,
     ledger: Ledger,
     *,
-    mentions: Sequence[str],
+    mention: tuple[int, str] | None,
     typing: bool,
     appservice_token: str,
 ) -> None:
@@ -387,11 +469,11 @@ def say(
     if typing and user_id is not None:
         put_typing(appservice_token, speaker.room_id, user_id, ledger)
         time.sleep(1)
-    ledger.sending(nonce, speaker.room_id, speaker.index)
+    ledger.sending(nonce, speaker.room_id, speaker.index, mention[0] if mention else None)
     try:
         status, _ = v.network_agent_request(
             "POST", "/me/messages", token=speaker.token,
-            body={"text": f"load {nonce} {speaker.index}", "mentions": list(mentions)},
+            body={"text": f"load {nonce} {speaker.index}", "mentions": [mention[1]] if mention else []},
             source=speaker.source, timeout_seconds=60,
         )
     except (OSError, HTTPException) as error:
@@ -447,7 +529,7 @@ def speak(
             speaker = rng.choice(agents)
             pending.append(pool.submit(
                 say, speaker, ledger,
-                mentions=pick_mentions(speaker, rooms[speaker.room_id], ledger, rng),
+                mention=pick_mention(speaker, rooms[speaker.room_id], ledger, rng),
                 typing=rng.random() < TYPING_SHARE,
                 appservice_token=appservice_token,
             ))
@@ -457,17 +539,38 @@ def speak(
             future.result()
 
 
-def pick_mentions(
+def pick_mention(
     speaker: LoadAgent, room: Sequence[LoadAgent], ledger: Ledger, rng: random.Random
-) -> list[str]:
+) -> tuple[int, str] | None:
+    """三成的话点名同一个分片里的另一个 Agent（得先知道它的 Matrix 用户 ID）。"""
     if rng.random() >= MENTION_SHARE:
-        return []
+        return None
     known = [
-        user_id
+        (other.index, user_id)
         for other in room
         if other.index != speaker.index and (user_id := ledger.user_id(other.index)) is not None
     ]
-    return [rng.choice(known)] if known else []
+    return rng.choice(known) if known else None
+
+
+def learn_user_ids(run: LoadRun) -> int:
+    """按名字（Load 007）从各个分片的成员名单里认出每个 Agent 的 Matrix 用户 ID。只等点名的那种叫醒方式
+    一开始就要点名，等不到从收到的消息里学。应用服务建的分片，它自己就在房间里。"""
+    for room_id in {agent.room_id for agent in run.agents}:
+        request = Request(f"{MATRIX_API}/rooms/{quote(room_id, safe='')}/joined_members")
+        request.add_header("Authorization", f"Bearer {run.appservice_token}")
+        try:
+            with urlopen(request, timeout=30) as response:
+                joined = json.loads(response.read())["joined"]
+        except (OSError, HTTPException, ValueError, KeyError) as error:
+            print(f"  读不到 {room_id} 的成员名单（{type(error).__name__}），点名的对象只从收到的消息里学。")
+            continue
+        for user_id, profile in joined.items():
+            name = profile.get("display_name") if isinstance(profile, dict) else None
+            match = LOAD_NAME.search(name) if isinstance(name, str) else None
+            if match is not None:
+                run.ledger.learn(int(match.group("index")), user_id)
+    return sum(1 for agent in run.agents if run.ledger.user_id(agent.index) is not None)
 
 
 # ---- 一档一档地量 ----
@@ -477,28 +580,36 @@ def pick_mentions(
 class LoadRun:
     meter: Meter
     appservice_token: str
+    wake: str = WAKE_MODES[0]
     ledger: Ledger = field(default_factory=Ledger)
+    growth: Growth = field(default_factory=Growth)
     agents: list[LoadAgent] = field(default_factory=list)
     stop: threading.Event = field(default_factory=threading.Event)
     waiters: list[threading.Thread] = field(default_factory=list)
     rng: random.Random = field(default_factory=lambda: random.Random(20261026))
 
-    def grow_to(self, count: int) -> None:
+    def grow_to(self, count: int) -> dict[str, object]:
         indexes = range(len(self.agents), count)
         with ThreadPoolExecutor(CREATE_WORKERS, thread_name_prefix="create") as pool:
-            created = list(pool.map(create_agent, indexes))
+            created = list(pool.map(lambda index: create_agent(index, self.growth), indexes))
         for agent in created:
             thread = threading.Thread(
-                target=wait_loop, args=(agent, self.ledger, self.stop),
-                name=f"waiter-{agent.index}", daemon=True,
+                target=wait_loop, args=(agent, self), name=f"waiter-{agent.index}", daemon=True
             )
             thread.start()
             self.waiters.append(thread)
         self.agents.extend(created)
         time.sleep(SETTLE_SECONDS)
+        return self.growth.summary(count)
+
+    def switch_wake(self, wake: str) -> None:
+        """换叫醒方式：在等的那一轮最多 10 秒就回来，下一轮按新的等。"""
+        if wake != self.wake:
+            self.wake = wake
+            time.sleep(SETTLE_SECONDS)
 
     def measure(self, rate: float, window: float) -> dict[str, object]:
-        self.ledger.begin()
+        self.ledger.begin(self.wake)
         with PeakMemory(self.meter) as peak:
             before = self.meter.cpu_seconds()
             started = time.monotonic()
@@ -512,10 +623,11 @@ class LoadRun:
         if rate > 0:
             time.sleep(GRACE_SECONDS)
         cores = {name: round((after[name] - before[name]) / elapsed, 3) for name in before}
-        cores["total"] = round(sum(cores.values()), 3)
+        cores["total"] = round(sum(value for name, value in cores.items() if name != "harness"), 3)
         room_sizes = Counter(agent.room_id for agent in self.agents)
         return {
             "agents": len(self.agents),
+            "wake": self.wake,
             "messagesPerSecond": rate,
             "shards": len(room_sizes),
             "windowSeconds": round(elapsed, 1),
@@ -531,18 +643,38 @@ class LoadRun:
             thread.join(timeout=60)
 
 
+@dataclass
+class Results:
+    growth: list[dict[str, object]] = field(default_factory=list)
+    rounds: list[dict[str, object]] = field(default_factory=list)
+
+
 def run_rounds(
-    run: LoadRun, counts: Iterable[int], rates: Sequence[float], window: float
-) -> list[dict[str, object]]:
-    rounds = []
+    run: LoadRun,
+    counts: Iterable[int],
+    *,
+    rates: Sequence[float],
+    wakes: Sequence[str],
+    window: float,
+    results: Results,
+) -> None:
+    """每一档：建够 N 个，先只等不说，再按每种叫醒方式、每种说话的快慢各量一段。"""
     for count in counts:
         print(f"建到 {count} 个网络 Agent……", flush=True)
-        run.grow_to(count)
-        for rate in rates:
-            result = run.measure(rate, IDLE_WINDOW_SECONDS if rate == 0 else window)
-            print(summary_line(result), flush=True)
-            rounds.append(result)
-    return rounds
+        growth = run.grow_to(count)
+        growth["knownUserIds"] = learn_user_ids(run)
+        print(f"  建完：{growth}", flush=True)
+        results.growth.append(growth)
+        record(results, run.measure(0.0, IDLE_WINDOW_SECONDS))
+        for wake in wakes:
+            run.switch_wake(wake)
+            for rate in rates:
+                record(results, run.measure(rate, window))
+
+
+def record(results: Results, result: dict[str, object]) -> None:
+    print(summary_line(result), flush=True)
+    results.rounds.append(result)
 
 
 def summary_line(result: Mapping[str, object]) -> str:
@@ -550,9 +682,9 @@ def summary_line(result: Mapping[str, object]) -> str:
     latency = result["latencySeconds"] or {}
     assert isinstance(cores, dict) and isinstance(latency, dict)
     return (
-        f"N={result['agents']:>3} M={result['messagesPerSecond']:<3} 分片={result['shards']} "
-        f"Synapse={cores['synapse']:.2f} PostgreSQL={cores['postgres']:.2f} "
-        f"控制面={cores['controlPlane']:.2f} 合计={cores['total']:.2f} 核；"
+        f"N={result['agents']:>3} {result['wake']:<7} M={result['messagesPerSecond']:<3} "
+        f"分片={result['shards']} Synapse={cores['synapse']:.2f} PostgreSQL={cores['postgres']:.2f} "
+        f"控制面={cores['controlPlane']:.2f} 合计={cores['total']:.2f} 核（工具 {cores['harness']:.2f}）；"
         f"收到 {result['deliveriesReceived']}/{result['deliveriesExpected']}，"
         f"p50={latency.get('p50', '-')} p95={latency.get('p95', '-')} 秒；"
         f"错误 {result['errors'] or '无'}；"
@@ -564,6 +696,7 @@ def start_control_plane(
     processes: v.ProcessStack, environment: Mapping[str, str], redactor: v.LogRedactor
 ) -> v.ManagedProcess:
     runtime = v.vertical_control_plane_environment(environment)
+    runtime.update(PRODUCTION_LIKE)
     runtime.update(LIMIT_OVERRIDES)
     runtime["AGENT_ROOM_LOG_FILTER"] = CONTROL_PLANE_LOG_FILTER
     v.NETWORK_AGENT_STORE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -581,11 +714,15 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--agents", type=int, nargs="+", default=list(AGENT_COUNTS),
                         help="每一档建到几个网络 Agent，从小到大")
     parser.add_argument("--rates", type=float, nargs="+", default=list(MESSAGE_RATES),
-                        help="每一档里每秒说几句，0 是只等不说")
+                        help="每一档里每秒说几句（另外总有一段只等不说）")
+    parser.add_argument("--wake", nargs="+", choices=WAKE_MODES, default=list(WAKE_MODES),
+                        help="等消息的叫醒方式")
     parser.add_argument("--window", type=float, default=WINDOW_SECONDS, help="说话的那一段量多少秒")
     arguments = parser.parse_args(argv)
     if arguments.agents != sorted(arguments.agents) or min(arguments.agents) < 2:
         parser.error("--agents 要从小到大，每档至少 2 个")
+    if min(arguments.rates) <= 0:
+        parser.error("--rates 要大于 0")
     return arguments
 
 
@@ -596,31 +733,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     environment = v.prepare_environment()
     v.run_checked([v.executable("cargo"), "build", "--locked", "--release",
                    "-p", "agent-room-control-plane"])
-    with v.IsolatedInfrastructure():
-        v.initialize_isolated_dependencies()
-        v.seed_public_catalog()
-        redactor = v.LogRedactor(environment)
-        with v.ProcessStack() as processes:
-            control_plane = start_control_plane(processes, environment, redactor)
-            run = LoadRun(
-                meter=Meter.attach(control_plane.process.pid),
-                appservice_token=v.required_value(environment, "SYNAPSE_APPSERVICE_TOKEN"),
-            )
-            try:
-                rounds = run_rounds(run, arguments.agents, arguments.rates, arguments.window)
-            finally:
-                run.close()
-    write_report(rounds)
+    results = Results()
+    try:
+        with v.IsolatedInfrastructure():
+            v.initialize_isolated_dependencies()
+            v.seed_public_catalog()
+            redactor = v.LogRedactor(environment)
+            with v.ProcessStack() as processes:
+                control_plane = start_control_plane(processes, environment, redactor)
+                run = LoadRun(
+                    meter=Meter.attach(control_plane.process.pid),
+                    appservice_token=v.required_value(environment, "SYNAPSE_APPSERVICE_TOKEN"),
+                )
+                try:
+                    run_rounds(run, arguments.agents, rates=arguments.rates, wakes=arguments.wake,
+                               window=arguments.window, results=results)
+                finally:
+                    run.close()
+    finally:
+        # 中途失败也把量到的那几档留下来。
+        write_report(results)
     return 0
 
 
-def write_report(rounds: Sequence[Mapping[str, object]]) -> None:
+def write_report(results: Results) -> None:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(json.dumps({
         "schemaVersion": 1,
-        "waitQuery": WAIT_QUERY,
+        "waitQueries": WAIT_QUERIES,
         "budgetCores": {"synapse": SYNAPSE_CORE_BUDGET, "total": TOTAL_CORE_BUDGET},
-        "rounds": list(rounds),
+        "growth": results.growth,
+        "rounds": results.rounds,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"结果写在 {REPORT.relative_to(v.ROOT)}。")
 
