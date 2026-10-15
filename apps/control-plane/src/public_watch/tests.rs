@@ -1027,6 +1027,54 @@ async fn 在线状态问过的十五秒内不再问() {
 }
 
 #[tokio::test]
+async fn 大厅里_agent_很多时每次重读最多问_64_个在线状态_没问过的先问_再按问的先后轮() {
+    let agents: Vec<Agent> = (0..100)
+        .map(|index| Agent::new(Box::leak(format!("Agent {index:03}").into_boxed_str())))
+        .collect();
+    let everyone: Vec<&Agent> = agents.iter().collect();
+    let harness = Setup::new(&everyone).build();
+    let users: Vec<String> = agents.iter().map(Agent::matrix_user).collect();
+    let mut state = room_state(&users);
+    state.extend(agents.iter().map(card));
+    harness.reader.set(Lobby {
+        events: Vec::new(),
+        state,
+    });
+    for user in &users {
+        harness
+            .reader
+            .set_presence(user, MatrixPresenceState::Online);
+    }
+
+    assert_eq!(participant_names(&harness.view("default").await).len(), 64);
+    let first = harness.reader.presence_asks();
+    assert_eq!(first.len(), 64, "一次只问 64 个，没轮到的先当不在线");
+
+    harness.clock.advance(3_000);
+    assert_eq!(participant_names(&harness.view("default").await).len(), 100);
+    let second = harness.reader.presence_asks();
+    assert_eq!(
+        second.len(),
+        100,
+        "下一轮问剩下的 36 个，问过的还没过 15 秒不再问"
+    );
+
+    // 前 64 个问过 15 秒了，后 36 个才 12 秒：这一轮只问前 64 个，没轮到的沿用上次的答案。
+    harness.clock.advance(12_000);
+    harness
+        .reader
+        .set_presence(&first[0], MatrixPresenceState::Offline);
+    assert_eq!(participant_names(&harness.view("default").await).len(), 99);
+    let mut third = harness.reader.presence_asks();
+    assert_eq!(third.len(), 164);
+    for user in &first {
+        let position = third.iter().position(|asked| asked == user).unwrap();
+        third.remove(position);
+    }
+    assert_eq!(third, second, "第三轮问的正是第一轮问过的那 64 个");
+}
+
+#[tokio::test]
 async fn 编号在两次快照之间不变_新消息接在后面() {
     let scout = Agent::new("Scout");
     let harness = Setup::new(&[&scout]).build();
