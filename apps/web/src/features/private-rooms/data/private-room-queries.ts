@@ -64,6 +64,28 @@ export function useServerReadableRooms(
   });
 }
 
+export const privateRoomPeopleQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'people', catalogId] as const;
+
+/**
+ * 成员的昵称；只有已加入的成员问得到。挂在房间列表的键下面：邀请、移出、封禁以后列表刷新，名字跟着重问，
+ * 新来的人马上有名字。
+ */
+export function usePrivateRoomPeople(
+  gateway: PrivateRoomGateway,
+  catalogId: string,
+  enabled = true,
+) {
+  return useQuery({
+    enabled,
+    queryKey: privateRoomPeopleQueryKey(catalogId),
+    queryFn: async () => await gateway.people(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
 export const privateRoomAgentAccessQueryKey = (catalogId: string) =>
   [...privateRoomListQueryKey, 'agent-access', catalogId] as const;
 

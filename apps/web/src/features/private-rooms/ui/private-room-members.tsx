@@ -7,10 +7,12 @@ import {
   LoaderCircle,
   LogOut,
   PencilLine,
+  UserCheck,
   UserMinus,
   UserPlus,
+  X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
@@ -18,12 +20,16 @@ import {
   privateRoomListQueryKey,
   usePrivateRoomAgentAccess,
   usePrivateRoomOrigin,
+  usePrivateRoomPeople,
 } from '@/features/private-rooms/data/private-room-queries';
 import {
   allows,
+  grantableBy,
+  intersectPermissions,
   isPrivateRoomPrincipalId,
   memberFor,
   permissions,
+  privateRoomCapabilities,
   type PrivateRoom,
   type PrivateRoomFailure,
   type PrivateRoomGateway,
@@ -69,6 +75,31 @@ function useHasNetworkAgents(
   return joined.some((id) => networkIds.has(id));
 }
 
+/**
+ * 成员的昵称（`specs/room-people/design.md`“名字”）：只有已加入的成员问得到。还在问的时候写“…”，
+ * 问不到或者没有昵称的写“名字暂时看不到”，账户 ID 在每一行的“详情”里。
+ */
+function useMemberNames(
+  rooms: PrivateRoomGateway,
+  room: PrivateRoom,
+  joined: boolean,
+): (principalId: string) => string {
+  const { t } = useTranslation();
+  const people = usePrivateRoomPeople(rooms, room.catalogId, joined);
+  const names = new Map(
+    people.data?.ok === true
+      ? people.data.value.map((person) => [person.principalId, person.displayName.trim()])
+      : [],
+  );
+  return (principalId) => {
+    const name = names.get(principalId);
+    if (name !== undefined && name.length > 0) {
+      return name;
+    }
+    return joined && people.isPending ? '…' : t('privateRooms.governance.members.unnamed');
+  };
+}
+
 type RoomCommand = {
   readonly execute: () => Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   readonly onSuccess?: (room: PrivateRoom) => void;
@@ -90,13 +121,17 @@ export function PrivateRoomMembers({
   const queryClient = useQueryClient();
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
   const [invitee, setInvitee] = useState('');
-  const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
-    permissions('view', 'speak'),
-  );
   const currentMember = memberFor(room, principalId);
   const owner = room.ownerPrincipalId === principalId;
+  // 和服务器一致：邀请看“邀请”，移出、封禁、改权限看“管理”，两样各管各的。
   const canManage = owner || allows(currentMember, 'manage');
-  const canInvite = canManage || allows(currentMember, 'invite');
+  const canInvite = owner || allows(currentMember, 'invite');
+  const grantable = grantableBy(room, principalId);
+  const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(() =>
+    intersectPermissions(permissions('view', 'speak'), grantable),
+  );
+  const [transferTarget, setTransferTarget] = useState<string | null>(null);
+  const nameOf = useMemberNames(rooms, room, currentMember?.status === 'joined');
   const relayed = useHasNetworkAgents(rooms, room, canManage);
   const origin = usePrivateRoomOrigin(rooms, room.catalogId);
   const known = origin.data?.ok === true ? origin.data.value : null;
@@ -222,6 +257,7 @@ export function PrivateRoomMembers({
           </label>
           <PrivateRoomCapabilityEditor
             disabled={mutation.isPending}
+            grantable={grantable}
             legend={t('privateRooms.governance.invite.permissions')}
             onChange={setInvitePermissions}
             value={invitePermissions}
@@ -254,12 +290,24 @@ export function PrivateRoomMembers({
         <ol>
           {room.members.map((member) => (
             <MemberRow
+              account={
+                member.principalId === room.ownerPrincipalId && networkOwner !== null
+                  ? null
+                  : member.principalId
+              }
               canManage={canManage}
               disabled={mutation.isPending}
+              grantable={grantable}
               isOwner={member.principalId === room.ownerPrincipalId}
               key={member.principalId}
-              label={member.principalId === room.ownerPrincipalId ? networkOwner : null}
               member={member}
+              name={
+                member.principalId === principalId
+                  ? t('privateRooms.governance.members.you')
+                  : member.principalId === room.ownerPrincipalId && networkOwner !== null
+                    ? networkOwner
+                    : nameOf(member.principalId)
+              }
               onBan={() => {
                 run({
                   execute: async () => await rooms.ban(room.catalogId, member.principalId),
@@ -286,18 +334,43 @@ export function PrivateRoomMembers({
                 member.status === 'joined' &&
                 member.principalId !== principalId
                   ? () => {
+                      setTransferTarget(member.principalId);
+                    }
+                  : undefined
+              }
+              onUnban={
+                canManage && member.status === 'banned' && member.principalId !== principalId
+                  ? () => {
                       run({
-                        execute: async () =>
-                          await rooms.transferOwnership(room.catalogId, {
-                            formerOwnerPermissions: permissions('view', 'speak'),
-                            targetPrincipalId: member.principalId,
-                          }),
+                        execute: async () => await rooms.unban(room.catalogId, member.principalId),
                       });
                     }
                   : undefined
               }
               self={member.principalId === principalId}
-            />
+            >
+              {transferTarget === member.principalId ? (
+                <TransferConfirm
+                  disabled={mutation.isPending}
+                  name={nameOf(member.principalId)}
+                  onCancel={() => {
+                    setTransferTarget(null);
+                  }}
+                  onConfirm={(kept) => {
+                    run({
+                      execute: async () =>
+                        await rooms.transferOwnership(room.catalogId, {
+                          formerOwnerPermissions: kept,
+                          targetPrincipalId: member.principalId,
+                        }),
+                      onSuccess: () => {
+                        setTransferTarget(null);
+                      },
+                    });
+                  }}
+                />
+              ) : null}
+            </MemberRow>
           ))}
         </ol>
       </div>
@@ -414,29 +487,40 @@ function RenameForm({
 }
 
 type MemberRowProps = {
+  /** 收在“详情”里的账户 ID；网络 Agent 当房主时那个主体不是谁的账户，不写。 */
+  readonly account: string | null;
   readonly canManage: boolean;
+  /** 这一行底下另外摆的东西：转让房主的确认。 */
+  readonly children?: ReactNode;
   readonly disabled: boolean;
+  /** 改权限时能加上的：房主以外的人加不了自己没有的。 */
+  readonly grantable: PrivateRoomPermissions;
   readonly isOwner: boolean;
   readonly member: PrivateRoomMember;
+  /** 这一行写的名字：你自己、网络 Agent 房主的名字，或者这个人的昵称。 */
+  readonly name: string;
   readonly onBan: () => void;
   readonly onPermissionsChange: (permissions: PrivateRoomPermissions) => void;
   readonly onRemove: () => void;
   readonly onTransfer: (() => void) | undefined;
+  readonly onUnban: (() => void) | undefined;
   readonly self: boolean;
-  /** 不写 ID 时写的名字：网络 Agent 当房主时是它的名字。 */
-  readonly label: string | null;
 };
 
 function MemberRow({
+  account,
   canManage,
+  children,
   disabled,
+  grantable,
   isOwner,
-  label,
   member,
+  name,
   onBan,
   onPermissionsChange,
   onRemove,
   onTransfer,
+  onUnban,
   self,
 }: MemberRowProps) {
   const { t } = useTranslation();
@@ -447,20 +531,40 @@ function MemberRow({
       <div className="private-room-member__identity">
         <span>{isOwner ? <Crown aria-hidden="true" /> : null}</span>
         <div>
-          <strong>
-            {self ? t('privateRooms.governance.members.you') : (label ?? member.principalId)}
-          </strong>
+          <strong>{name}</strong>
           <small>{t(`privateRooms.membership.${member.status}`)}</small>
         </div>
       </div>
+      {account === null ? null : (
+        <Details
+          className="private-room-member__account"
+          summary={t('privateRooms.governance.members.accountId')}
+        >
+          <code>{account}</code>
+        </Details>
+      )}
       {active ? (
         <PrivateRoomCapabilityEditor
           disabled={!editable || disabled}
+          grantable={grantable}
           legend={t('privateRooms.governance.members.permissions')}
           onChange={onPermissionsChange}
           value={member.permissions}
         />
       ) : null}
+      {onUnban === undefined ? null : (
+        <div className="private-room-member__actions">
+          <Button
+            disabled={disabled}
+            icon={<UserCheck aria-hidden="true" />}
+            onClick={onUnban}
+            size="compact"
+            tone="quiet"
+          >
+            {t('privateRooms.action.unban')}
+          </Button>
+        </div>
+      )}
       {editable ? (
         <div className="private-room-member__actions">
           {onTransfer === undefined ? null : (
@@ -494,6 +598,66 @@ function MemberRow({
           </Button>
         </div>
       ) : null}
+      {children}
     </li>
+  );
+}
+
+/**
+ * 转让房主前确认一次：原房主选好自己留下哪些权限，默认留着全部（转让以后不再是房主）。
+ * 房主要最近登录过才看得到“转让房主”，这里不再查。
+ */
+function TransferConfirm({
+  disabled,
+  name,
+  onCancel,
+  onConfirm,
+}: {
+  readonly disabled: boolean;
+  readonly name: string;
+  readonly onCancel: () => void;
+  readonly onConfirm: (kept: PrivateRoomPermissions) => void;
+}) {
+  const { t } = useTranslation();
+  const [kept, setKept] = useState<PrivateRoomPermissions>(() =>
+    permissions(...privateRoomCapabilities),
+  );
+  return (
+    <div
+      className="private-room-transfer"
+      role="group"
+      aria-label={t('privateRooms.governance.transfer.title', { name })}
+    >
+      <strong>{t('privateRooms.governance.transfer.title', { name })}</strong>
+      <p>{t('privateRooms.governance.transfer.detail')}</p>
+      <PrivateRoomCapabilityEditor
+        disabled={disabled}
+        legend={t('privateRooms.governance.transfer.kept')}
+        onChange={setKept}
+        value={kept}
+      />
+      <div className="private-room-member__actions">
+        <Button
+          disabled={disabled}
+          icon={<X aria-hidden="true" />}
+          onClick={onCancel}
+          size="compact"
+          tone="ghost"
+        >
+          {t('privateRooms.action.cancel')}
+        </Button>
+        <Button
+          disabled={disabled}
+          icon={<Crown aria-hidden="true" />}
+          onClick={() => {
+            onConfirm(kept);
+          }}
+          size="compact"
+          tone="alert"
+        >
+          {t('privateRooms.action.confirmTransfer')}
+        </Button>
+      </div>
+    </div>
   );
 }

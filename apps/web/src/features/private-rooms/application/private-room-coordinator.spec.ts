@@ -91,11 +91,13 @@ function gateway() {
     leave: vi.fn(unavailable),
     list: vi.fn(unavailable),
     origin: vi.fn(unavailable),
+    people: vi.fn(unavailable),
     remove: vi.fn(unavailable),
     removeCodeAgent: vi.fn(unavailable),
     rename: vi.fn(unavailable),
     revealJoinCode: vi.fn(unavailable),
     transferOwnership: vi.fn(unavailable),
+    unban: vi.fn(unavailable),
     updatePermissions: vi.fn(unavailable),
   };
   return { spies: { accept, create }, value };

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +23,7 @@ import { PrivateRoomMembers } from './private-room-members';
 
 const OWNER = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
 const MEMBER = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
+const BANNED = '0198b601-77a1-7bb8-83eb-a8fe68c97e4a';
 
 const room: PrivateRoom = {
   catalogId: '0198b601-77a1-7bb8-83eb-a8fe68c97e46',
@@ -126,6 +127,19 @@ function gateway(
   const origin = vi.fn<PrivateRoomGateway['origin']>(() =>
     Promise.resolve(ok({ createdByAgent: null, ownerIsNetworkAgent: false })),
   );
+  const people = vi.fn<PrivateRoomGateway['people']>(() =>
+    Promise.resolve(
+      ok([
+        { displayName: 'Ada', principalId: OWNER },
+        { displayName: 'Grace', principalId: MEMBER },
+        { displayName: 'Mallory', principalId: BANNED },
+      ]),
+    ),
+  );
+  const unban = vi.fn<PrivateRoomGateway['unban']>(() => Promise.resolve(ok(room)));
+  const transferOwnership = vi.fn<PrivateRoomGateway['transferOwnership']>(() =>
+    Promise.resolve(ok(room)),
+  );
   const value: PrivateRoomGateway = {
     accept: unavailable,
     admitKnock,
@@ -143,11 +157,13 @@ function gateway(
     leave: unavailable,
     list: () => Promise.resolve(ok([])),
     origin,
+    people,
     remove: unavailable,
     removeCodeAgent,
     rename,
     revealJoinCode,
-    transferOwnership: unavailable,
+    transferOwnership,
+    unban,
     updatePermissions: unavailable,
   };
   return {
@@ -157,9 +173,12 @@ function gateway(
     disableJoinCode,
     generateJoinCode,
     origin,
+    people,
     removeCodeAgent,
     rename,
     revealJoinCode,
+    transferOwnership,
+    unban,
     value,
   };
 }
@@ -172,6 +191,7 @@ function renderGovernance(
   principalId: string,
   rooms: PrivateRoomGateway,
   networkAgents: readonly string[] = [],
+  { recentlyAuthenticated = false, subject = room } = {},
 ) {
   const labels = new NetworkAgentLabelStore(
     {
@@ -191,15 +211,24 @@ function renderGovernance(
             coordinator={{} as PrivateRoomCoordinator}
             onExitRoom={() => undefined}
             principalId={principalId}
-            recentlyAuthenticated={false}
-            room={room}
+            recentlyAuthenticated={recentlyAuthenticated}
+            room={subject}
             rooms={rooms}
           />
-          {principalId === OWNER ? <AgentCodeSection room={room} rooms={rooms} /> : null}
+          {principalId === OWNER ? <AgentCodeSection room={subject} rooms={rooms} /> : null}
         </NetworkAgentLabelsProvider>
       </QueryClientProvider>
     </I18nextProvider>,
   );
+}
+
+/** 换掉一个成员的权限或者加一个成员，别的照旧。 */
+function roomWith(...members: PrivateRoom['members']): PrivateRoom {
+  const changed = new Set(members.map((member) => member.principalId));
+  return {
+    ...room,
+    members: [...room.members.filter((member) => !changed.has(member.principalId)), ...members],
+  };
 }
 
 function codeAgent(agentId: string, ownerDisplayName: string | null) {
@@ -282,6 +311,110 @@ describe('私人房间的成员与 Agent 口令', () => {
     });
     expect(screen.queryByText('Made by')).toBeNull();
     expect(screen.getByText('End-to-end encrypted')).toBeVisible();
+  });
+
+  it('成员写昵称，账户 ID 收在每一行的详情里', async () => {
+    const rooms = gateway();
+    renderGovernance(MEMBER, rooms.value);
+    expect(await screen.findByText('Ada')).toBeVisible();
+    expect(screen.getByText('You')).toBeVisible();
+    expect(rooms.people).toHaveBeenCalledWith(room.catalogId);
+    const id = screen.getByText(OWNER);
+    expect(id).not.toBeVisible();
+    fireEvent.click(id.closest('details')?.querySelector('summary') ?? id);
+    expect(id).toBeVisible();
+  });
+
+  it('问不到名字时说看不到，不露出账户 ID', async () => {
+    const rooms = gateway();
+    rooms.people.mockResolvedValue(
+      err({ code: 'room_people.dependency_unavailable', retryable: true }),
+    );
+    renderGovernance(MEMBER, rooms.value);
+    expect(await screen.findByText('Name not available')).toBeVisible();
+    expect(screen.getByText(OWNER)).not.toBeVisible();
+  });
+
+  it('邀请表单看“邀请”：只有“管理”的看不到，只有“邀请”的看得到、勾不上自己没有的', async () => {
+    const rooms = gateway();
+    const manager = renderGovernance(MEMBER, rooms.value, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view', 'manage'] },
+        principalId: MEMBER,
+        status: 'joined',
+      }),
+    });
+    expect(screen.queryByRole('heading', { name: 'Invite someone' })).toBeNull();
+    manager.unmount();
+
+    renderGovernance(MEMBER, rooms.value, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view', 'speak', 'invite'] },
+        principalId: MEMBER,
+        status: 'joined',
+      }),
+    });
+    expect(await screen.findByRole('heading', { name: 'Invite someone' })).toBeVisible();
+    const form = within(screen.getByRole('group', { name: 'Invitation permissions' }));
+    expect(form.getByRole('checkbox', { name: /^Speak/u })).toBeEnabled();
+    expect(form.getByRole('checkbox', { name: /^Invite/u })).toBeEnabled();
+    expect(form.getByRole('checkbox', { name: /^Manage/u })).toBeDisabled();
+    expect(form.getByRole('checkbox', { name: /^Automate/u })).toBeDisabled();
+  });
+
+  it('账户 ID 要和服务器一样是 UUID v7', () => {
+    renderGovernance(OWNER, gateway().value);
+    const input = screen.getByLabelText('Account ID');
+    const send = screen.getByRole('button', { name: 'Send invitation' });
+    fireEvent.change(input, { target: { value: '6f9619ff-8b86-4011-b42d-00cf4fc964ff' } });
+    expect(screen.getByText('That is not an account ID.')).toBeVisible();
+    expect(send).toBeDisabled();
+    fireEvent.change(input, { target: { value: '0198b601-77a1-7bb8-83eb-a8fe68c97e4b' } });
+    expect(send).toBeEnabled();
+  });
+
+  it('能管理的人解除封禁；不能管理的看不到这个按钮', async () => {
+    const banned = roomWith({
+      permissions: { capabilities: [] },
+      principalId: BANNED,
+      status: 'banned',
+    });
+    const rooms = gateway();
+    const member = renderGovernance(MEMBER, rooms.value, [], { subject: banned });
+    expect(await screen.findByText('Mallory')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Unban' })).toBeNull();
+    member.unmount();
+
+    renderGovernance(OWNER, rooms.value, [], { subject: banned });
+    fireEvent.click(await screen.findByRole('button', { name: 'Unban' }));
+    await waitFor(() => {
+      expect(rooms.unban).toHaveBeenCalledWith(room.catalogId, BANNED);
+    });
+  });
+
+  it('转移房主先确认，默认留着全部权限，能少留几项，也能取消', async () => {
+    const rooms = gateway();
+    renderGovernance(OWNER, rooms.value, [], { recentlyAuthenticated: true });
+    expect(await screen.findByText('Grace')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
+    const confirm = within(screen.getByRole('group', { name: 'Make Grace the owner?' }));
+    fireEvent.click(confirm.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('group', { name: 'Make Grace the owner?' })).toBeNull();
+    expect(rooms.transferOwnership).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
+    const again = within(screen.getByRole('group', { name: 'Make Grace the owner?' }));
+    const kept = within(again.getByRole('group', { name: 'You keep' }));
+    expect(kept.getByRole('checkbox', { name: /^Manage/u })).toBeChecked();
+    fireEvent.click(kept.getByRole('checkbox', { name: /^Manage/u }));
+    fireEvent.click(again.getByRole('button', { name: 'Transfer' }));
+    await waitFor(() => {
+      expect(rooms.transferOwnership).toHaveBeenCalledWith(room.catalogId, {
+        formerOwnerPermissions: { capabilities: ['view', 'speak', 'invite', 'automate'] },
+        targetPrincipalId: MEMBER,
+      });
+    });
   });
 
   it('成员只看到房间名，不能改', () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { Result } from '@/shared/result';
+import { uuidV7Schema } from '@/shared/validation/identifiers';
 
 export const privateRoomCapabilities = ['view', 'speak', 'invite', 'manage', 'automate'] as const;
 
@@ -9,9 +10,9 @@ export type PrivateRoomCapability = (typeof privateRoomCapabilities)[number];
 export const privateRoomPrincipalIdSchema = z.uuid();
 
 /// 邀请只接受 Agent Room 主体 ID。产品不提供按昵称或邮箱检索账号，因此先在本地判断格式，
-/// 把明显错误的输入挡在请求之前，并让界面给出可操作的提示。
+/// 把明显错误的输入挡在请求之前，并让界面给出可操作的提示。和服务器一样只认 UUID v7。
 export function isPrivateRoomPrincipalId(value: string): boolean {
-  return privateRoomPrincipalIdSchema.safeParse(value.trim()).success;
+  return uuidV7Schema.safeParse(value.trim()).success;
 }
 
 const permissionsSchema = z
@@ -110,7 +111,20 @@ export const privateRoomOriginSchema = z
   })
   .strict();
 
+/**
+ * 房间里的人叫什么（`specs/room-people/design.md`）：成员（含受邀、移出、封禁的）的昵称，只有已加入的成员问得到。
+ * 名字是服务器按登录账户的昵称给的，带 `@` 的只给前面那段。
+ */
+export const privateRoomPeopleSchema = z
+  .object({
+    people: z.array(
+      z.object({ displayName: z.string(), principalId: privateRoomPrincipalIdSchema }).strict(),
+    ),
+  })
+  .strict();
+
 export type PrivateRoom = z.infer<typeof privateRoomSchema>;
+export type PrivateRoomPerson = z.infer<typeof privateRoomPeopleSchema>['people'][number];
 export type PrivateRoomOrigin = z.infer<typeof privateRoomOriginSchema>;
 export type PrivateRoomAgentAccess = z.infer<typeof privateRoomAgentAccessSchema>;
 export type PrivateRoomAgentMember = z.infer<typeof agentMemberSchema>;
@@ -177,6 +191,8 @@ export type PrivateRoomGateway = {
   list(): Promise<Result<readonly PrivateRoom[], PrivateRoomFailure>>;
   /** Who made the room. Invited and joined members can ask, so an invitation can warn before it is accepted. */
   origin(catalogId: string): Promise<Result<PrivateRoomOrigin, PrivateRoomFailure>>;
+  /** Members' nicknames, including invited, removed and banned ones; only joined members can ask. */
+  people(catalogId: string): Promise<Result<readonly PrivateRoomPerson[], PrivateRoomFailure>>;
   remove(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   /** Removes an agent that came in with the code or was let in; it needs a newer code or a new knock to come back. */
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>>;
@@ -192,6 +208,8 @@ export type PrivateRoomGateway = {
     catalogId: string,
     input: TransferPrivateRoomOwnershipInput,
   ): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
+  /** Lifts a ban; the person goes back to removed and can be invited again. Needs the manage permission. */
+  unban(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>>;
   updatePermissions(
     catalogId: string,
     principalId: string,
@@ -217,4 +235,23 @@ export function allows(
 
 export function memberFor(room: PrivateRoom, principalId: string): PrivateRoomMember | undefined {
   return room.members.find((member) => member.principalId === principalId);
+}
+
+/** 两份权限都有的那几项。 */
+export function intersectPermissions(
+  left: PrivateRoomPermissions,
+  right: PrivateRoomPermissions,
+): PrivateRoomPermissions {
+  return permissions(
+    ...left.capabilities.filter((capability) => right.capabilities.includes(capability)),
+  );
+}
+
+/** 房主以外的人邀请、改权限时给不出自己没有的权限（和服务器同一条规则），房主什么都能给。 */
+export function grantableBy(room: PrivateRoom, principalId: string): PrivateRoomPermissions {
+  if (room.ownerPrincipalId === principalId) {
+    return permissions(...privateRoomCapabilities);
+  }
+  const member = memberFor(room, principalId);
+  return member?.status === 'joined' ? member.permissions : permissions();
 }
