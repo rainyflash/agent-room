@@ -36,7 +36,7 @@ use agent_room_domain::{
     ids::{AgentInstanceId, MessageSubmissionId},
     time::{DurationMillis, UtcMillis},
 };
-use futures_util::{StreamExt as _, stream};
+use futures_util::{StreamExt as _, future, stream};
 use serde_json::Value;
 
 use crate::network_gateway::projection::CapturedProjection;
@@ -52,6 +52,9 @@ const PRESENCE_TTL_MS: i64 = 15_000;
 const MAX_PRESENCE_ENTRIES: usize = 4_096;
 /// 同时最多问几个人的在线状态。
 const PRESENCE_FETCH_CONCURRENCY: usize = 8;
+/// 每次重读最多问几个人的在线状态。大厅里几百个 Agent 时一次问不完，几轮轮完一遍；不设上限的话
+/// 重读 8 秒做不完就作废，快照一直是旧的。
+const PRESENCE_FETCHES_PER_REFRESH: usize = 64;
 const MODERATION_NOTICE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.moderation.notice.v1";
 const ROOM_CREATE_EVENT_TYPE: &str = "m.room.create";
 const ROOM_MEMBER_EVENT_TYPE: &str = "m.room.member";
@@ -348,7 +351,8 @@ impl MessageSubmissionRepository for NoSubmissions {
 }
 
 /// 写名片的 Agent 的在线状态：同一个人 15 秒内只问一次，快照每 3 秒重读一次。问不到的也记着，
-/// 当它不在线，过 15 秒再问，免得每次重读都去问。
+/// 当它不在线，过 15 秒再问，免得每次重读都去问。每次重读最多问 64 个，还没问过的先问，其余按
+/// 上次问的时间从早到晚；没轮到的沿用上次的答案，还没问过的先当不在线。
 pub(super) struct PresenceCache {
     reader: Arc<dyn PublicLobbyMatrixReader>,
     clock: Arc<dyn Clock>,
@@ -364,56 +368,69 @@ impl PresenceCache {
         }
     }
 
-    /// 这些人此刻的在线状态，问不到的不在结果里。过了 15 秒的再问一次，同时最多问 8 个。
+    /// 这些人此刻的在线状态，问不到的和还没轮到问的不在结果里。同时最多问 8 个。
     pub(super) async fn observe(
         &self,
         users: &[MatrixUserId],
     ) -> HashMap<MatrixUserId, MatrixPresenceObservation> {
-        let now = self.clock.now();
-        let stale: Vec<MatrixUserId> = {
-            let entries = self.entries();
-            users
-                .iter()
-                .filter(|user_id| {
-                    entries.get(*user_id).is_none_or(|(fetched_at, _)| {
-                        now.value().saturating_sub(fetched_at.value()) >= PRESENCE_TTL_MS
-                    })
-                })
-                .cloned()
-                .collect()
-        };
-        let answers: Vec<_> = stream::iter(stale)
+        stream::iter(self.due(users))
             .map(|user_id| async move {
                 let answer = self.reader.user_presence(&user_id).await;
                 (user_id, answer)
             })
             .buffer_unordered(PRESENCE_FETCH_CONCURRENCY)
-            .collect()
+            // 问到一个存一个：这次重读超时作废时，已经问到的也留得下来。
+            .for_each(|(user_id, answer)| {
+                let fetched_at = self.clock.now();
+                let observed = match answer {
+                    Ok(presence) => Some(observation(&presence, fetched_at)),
+                    Err(failure) => {
+                        tracing::debug!(
+                            failure_kind = ?failure.kind(),
+                            "围观公开大厅：问不到 Agent 的在线状态，先当它不在线"
+                        );
+                        None
+                    }
+                };
+                self.entries().insert(user_id, (fetched_at, observed));
+                future::ready(())
+            })
             .await;
-        let fetched_at = self.clock.now();
-        let mut entries = self.entries();
-        if entries.len() + answers.len() > MAX_PRESENCE_ENTRIES {
-            entries.clear();
-        }
-        for (user_id, answer) in answers {
-            let observed = match answer {
-                Ok(presence) => Some(observation(&presence, fetched_at)),
-                Err(failure) => {
-                    tracing::debug!(
-                        failure_kind = ?failure.kind(),
-                        "围观公开大厅：问不到 Agent 的在线状态，先当它不在线"
-                    );
-                    None
-                }
-            };
-            entries.insert(user_id, (fetched_at, observed));
-        }
+        let entries = self.entries();
         users
             .iter()
             .filter_map(|user_id| {
                 let observed = entries.get(user_id)?.1?;
                 Some((user_id.clone(), observed))
             })
+            .collect()
+    }
+
+    /// 这次该问的：还没问过的在前，其余过了 15 秒的按上次问的时间从早到晚，最多 64 个。记得太多
+    /// 时只留这次要看的人。
+    fn due(&self, users: &[MatrixUserId]) -> Vec<MatrixUserId> {
+        let now = self.clock.now();
+        let mut entries = self.entries();
+        if entries.len() + users.len() > MAX_PRESENCE_ENTRIES {
+            let wanted: HashSet<&MatrixUserId> = users.iter().collect();
+            entries.retain(|user_id, _| wanted.contains(user_id));
+        }
+        let mut due: Vec<(Option<i64>, &MatrixUserId)> = users
+            .iter()
+            .filter_map(|user_id| match entries.get(user_id) {
+                None => Some((None, user_id)),
+                Some((fetched_at, _))
+                    if now.value().saturating_sub(fetched_at.value()) >= PRESENCE_TTL_MS =>
+                {
+                    Some((Some(fetched_at.value()), user_id))
+                }
+                Some(_) => None,
+            })
+            .collect();
+        due.sort_by_key(|(fetched_at, _)| *fetched_at);
+        due.into_iter()
+            .take(PRESENCE_FETCHES_PER_REFRESH)
+            .map(|(_, user_id)| user_id.clone())
             .collect()
     }
 
