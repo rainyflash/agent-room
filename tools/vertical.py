@@ -1009,6 +1009,9 @@ def vertical_control_plane_environment(
     )
     # 网络 Agent 的加密存储放在纵向验收自己的目录里，每轮清空，验收还要删它测重建。
     runtime["AGENT_ROOM_NETWORK_AGENT_STORE_DIR"] = str(NETWORK_AGENT_STORE_ROOT)
+    # 整个公开大厅每分钟 12 条（launch-capacity 第 11 步）挡得住验收里几轮接连在大厅说的话（积压那轮一分钟
+    # 60 条）。这条限额由应用层的测试管，验收放到最大。
+    runtime["AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE"] = "600"
     # 网络 Agent 网关与加密身份多记一些，出错时由 summarize_control_plane_warnings 汇总。
     runtime["AGENT_ROOM_LOG_FILTER"] = (
         "agent_room_control_plane=info,agent_room_control_plane::network_gateway=debug,"

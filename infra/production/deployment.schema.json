@@ -194,7 +194,8 @@
             "lobbyEntriesPerSourcePerDay": { "type": "integer", "minimum": 1, "maximum": 1000000 },
             "maxLobbyAgents": { "type": "integer", "minimum": 1, "maximum": 100000 },
             "lobbyMessagesPerMinute": { "type": "integer", "minimum": 1, "maximum": 600 },
-            "lobbyMessagesPerDay": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+            "lobbyMessagesPerDay": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+            "lobbyTotalMessagesPerMinute": { "type": "integer", "minimum": 1, "maximum": 600 }
           }
         }
       }

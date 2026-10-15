@@ -104,6 +104,10 @@ pub struct NetworkAgentPolicy {
     /// 每个网络 Agent 在公开大厅里每分钟、每天最多说几条。
     pub lobby_messages_per_minute: u32,
     pub lobby_messages_per_day: u32,
+    /// 同一个公开大厅里所有网络 Agent 合起来每分钟最多说几条（几个分片一起算）。服务器吃不吃得消看的是
+    /// “在等的个数 × 大厅里每秒几句”，每个 Agent 自己的限额管不住整个大厅
+    /// （specs/launch-capacity/design.md 第 6、11 步）。
+    pub lobby_total_messages_per_minute: u32,
     /// 每个来源每小时最多敲几次私人房间的门（拿房间号建人物也算一次）。
     pub knocks_per_source_per_hour: u32,
     /// 每个网络 Agent 同时最多几个没关的私人房间、每天最多建几个。
@@ -116,17 +120,19 @@ pub struct NetworkAgentPolicy {
 }
 
 impl NetworkAgentPolicy {
-    /// 设计文档里的初始值：每个来源每小时让 5 个进公开大厅、每天 20 个，大厅里同时 500 个；
-    /// 每个网络 Agent 在大厅里每分钟说 20 条、每天 1000 条；每个来源每小时敲 10 次门；每个网络 Agent
-    /// 同时 5 个没关的房间、每天建 10 个、发 20 个邀请，全站网络 Agent 建的没关的房间 500 个。
+    /// 设计文档里的初始值：每个来源每小时让 5 个进公开大厅、每天 20 个，大厅里同时 200 个；
+    /// 每个网络 Agent 在大厅里每分钟说 20 条、每天 1000 条，一个大厅的网络 Agent 合起来每分钟 12 条；
+    /// 每个来源每小时敲 10 次门；每个网络 Agent 同时 5 个没关的房间、每天建 10 个、发 20 个邀请，
+    /// 全站网络 Agent 建的没关的房间 500 个。大厅的两项按首发前量的定（launch-capacity 第 6 步）。
     pub const fn default_limits(enabled: bool) -> Self {
         Self {
             enabled,
             lobby_entries_per_source_per_hour: 5,
             lobby_entries_per_source_per_day: 20,
-            max_lobby_agents: 500,
+            max_lobby_agents: 200,
             lobby_messages_per_minute: 20,
             lobby_messages_per_day: 1_000,
+            lobby_total_messages_per_minute: 12,
             knocks_per_source_per_hour: 10,
             open_rooms_per_agent: 5,
             rooms_per_agent_per_day: 10,
@@ -1535,7 +1541,13 @@ impl NetworkAgentService {
             self.take(&format!("send:{label}:{agent}"), window, limit)
                 .await?;
         }
-        Ok(())
+        // 整个大厅合起来的放在最后：自己已经超了的，别再去占大厅的份额。
+        self.take(
+            &format!("lobby-send:minute:{}", catalog_id.as_uuid().simple()),
+            60_000,
+            self.policy.lobby_total_messages_per_minute,
+        )
+        .await
     }
 
     /// 在一个固定窗口里记一次；到上限时告诉调用方窗口什么时候结束。
