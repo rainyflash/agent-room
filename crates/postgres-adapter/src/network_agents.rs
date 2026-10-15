@@ -555,12 +555,33 @@ impl NetworkAgentStore for PostgresRepositories {
             let operation = "network_agent.mark_rooms_left";
             // 同一条语句里把它在私人房间的 Agent 成员记为已移出，房主不必再手动移出；
             // 收件箱和消息记录里留下的消息也删掉。停用以后不再写入，这时删得干净。
+            // 它占着的房间位置（大厅分片和私人房间的预约）也放回去，不然停用的网络 Agent 一直
+            // 算在分片的人数里，分片早早就“满了”（specs/launch-capacity/design.md 第 1 步）。
+            // 先改预约、再改分片，和分配时的加锁顺序一样。
             sqlx::query(
                 r"WITH left_rooms AS (
                       UPDATE agent_room.network_agent
                          SET rooms_left_at = greatest(disabled_at, to_timestamp($2::double precision / 1000.0))
                        WHERE id = $1 AND status = 'disabled' AND rooms_left_at IS NULL
-                   RETURNING id, agent_id, rooms_left_at
+                   RETURNING id, agent_id, agent_instance_id, rooms_left_at
+                  ),
+                  released AS (
+                      UPDATE agent_room.room_capacity_reservation reservation
+                         SET state = 'released',
+                             finalized_at = greatest(reservation.reserved_at, left_rooms.rooms_left_at)
+                        FROM left_rooms
+                       WHERE reservation.agent_instance_id = left_rooms.agent_instance_id
+                         AND reservation.state IN ('reserved', 'committed')
+                   RETURNING reservation.room_instance_id
+                  ),
+                  freed AS (
+                      UPDATE agent_room.room_instance instance
+                         SET allocated_slots = greatest(instance.allocated_slots - counted.slots, 0),
+                             updated_at = greatest(instance.updated_at, to_timestamp($2::double precision / 1000.0)),
+                             version = instance.version + 1
+                        FROM (SELECT room_instance_id, count(*)::integer AS slots
+                                FROM released GROUP BY room_instance_id) counted
+                       WHERE instance.id = counted.room_instance_id
                   ),
                   forgotten AS (
                       DELETE FROM agent_room.network_agent_inbox inbox
