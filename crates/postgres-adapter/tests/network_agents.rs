@@ -20,7 +20,8 @@ use agent_room_application::{
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
         PrivateRoomSnapshot, PrivateRoomStore, RateWindowDecision, RateWindowPolicy, RoomAgentKind,
-        RoomPeopleDirectory, SealedSecret, SecretDigest,
+        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomPeopleDirectory,
+        RoomReservationClaim, RoomReservationOutcome, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -29,7 +30,7 @@ use agent_room_domain::{
     identity::Principal,
     ids::{
         AgentId, AgentInstanceId, DeviceId, MessageId, NetworkAgentId, PrincipalId, RoomCatalogId,
-        RoomInstanceId,
+        RoomInstanceId, RoomReservationId,
     },
     join_codes::{
         PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
@@ -39,7 +40,7 @@ use agent_room_domain::{
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
-        RoomInstanceState,
+        RoomInstanceState, RoomReservationState,
     },
     time::{DurationMillis, UtcMillis},
 };
@@ -49,6 +50,8 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 const HOUR: u64 = 3_600_000;
+const RELEASE_DISABLED_SLOTS: &str =
+    include_str!("../../../infra/migrations/202610150001_release_disabled_network_agent_slots.sql");
 
 struct TestDatabase {
     migration: PgPool,
@@ -1564,6 +1567,119 @@ async fn 记下离开房间时_它在私人房间的_agent_成员一并记为已
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 记下离开房间时放回它占着的房间位置_别人的不动() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let leaver = activated(&database, &repositories, "Slot Leaver").await;
+    let stayer = activated(&database, &repositories, "Slot Stayer").await;
+    let shared = seed_private_room(&repositories, leaver.owner).await;
+    let pending_room = seed_private_room(&repositories, leaver.owner).await;
+    let shared_instance = room_instance_of(&database.runtime, shared).await;
+    let pending_instance = room_instance_of(&database.runtime, pending_room).await;
+    // 离开的那个：一间已经确认、一间还在预约；留下的那个和它在同一间。
+    let committed = reserve(&repositories, &leaver, shared, shared_instance, true).await;
+    let pending = reserve(
+        &repositories,
+        &leaver,
+        pending_room,
+        pending_instance,
+        false,
+    )
+    .await;
+    let kept = reserve(&repositories, &stayer, shared, shared_instance, true).await;
+    assert_eq!(allocated_slots(&database.runtime, shared_instance).await, 2);
+    assert_eq!(
+        allocated_slots(&database.runtime, pending_instance).await,
+        1
+    );
+
+    repositories
+        .disable(leaver.id, time(10))
+        .await
+        .expect("停用");
+    assert_eq!(
+        allocated_slots(&database.runtime, shared_instance).await,
+        2,
+        "停用了、还没离开房间时不动"
+    );
+    repositories
+        .mark_rooms_left(leaver.id, time(20))
+        .await
+        .expect("记下已离开");
+
+    assert_eq!(
+        reservation_state(&database.runtime, committed).await,
+        "released"
+    );
+    assert_eq!(
+        reservation_state(&database.runtime, pending).await,
+        "released"
+    );
+    assert_eq!(
+        reservation_state(&database.runtime, kept).await,
+        "committed"
+    );
+    assert_eq!(allocated_slots(&database.runtime, shared_instance).await, 1);
+    assert_eq!(
+        allocated_slots(&database.runtime, pending_instance).await,
+        0
+    );
+    repositories
+        .mark_rooms_left(leaver.id, time(30))
+        .await
+        .expect("再记一次");
+    assert_eq!(
+        allocated_slots(&database.runtime, shared_instance).await,
+        1,
+        "已经记过离开的不再减"
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 迁移放回停用的网络_agent_以前没放回的位置_还在用的不动() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let leaver = activated(&database, &repositories, "Old Leaver").await;
+    let stayer = activated(&database, &repositories, "Old Stayer").await;
+    let room = seed_private_room(&repositories, leaver.owner).await;
+    let instance = room_instance_of(&database.runtime, room).await;
+    let leaked = reserve(&repositories, &leaver, room, instance, true).await;
+    let kept = reserve(&repositories, &stayer, room, instance, true).await;
+    repositories
+        .disable(leaver.id, time(10))
+        .await
+        .expect("停用");
+    // 以前的 mark_rooms_left 只记离开、不放位置。
+    sqlx::query("UPDATE agent_room.network_agent SET rooms_left_at = disabled_at WHERE id = $1")
+        .bind(leaver.id.as_uuid())
+        .execute(&database.migration)
+        .await
+        .expect("照以前的样子记下离开");
+    assert_eq!(allocated_slots(&database.runtime, instance).await, 2);
+
+    let mut transaction = database.migration.begin().await.expect("开事务");
+    sqlx::raw_sql(RELEASE_DISABLED_SLOTS)
+        .execute(&mut *transaction)
+        .await
+        .expect("放回成功");
+    assert_eq!(
+        reservation_state(&mut *transaction, leaked).await,
+        "released"
+    );
+    assert_eq!(
+        reservation_state(&mut *transaction, kept).await,
+        "committed"
+    );
+    assert_eq!(allocated_slots(&mut *transaction, instance).await, 1);
+    transaction.rollback().await.expect("回滚");
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 房间里的网络_agent_没有人类主人_敲门放进来的写放行的人() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -1860,6 +1976,112 @@ async fn seed_private_room_kept(
         .await
         .expect("创建房间");
     (catalog_id, matrix_room_id)
+}
+
+/// 起好名、绑好 Agent 与实例的网络 Agent。
+struct ActiveNetworkAgent {
+    id: NetworkAgentId,
+    owner: PrincipalId,
+    agent: AgentId,
+    instance: AgentInstanceId,
+}
+
+async fn activated(
+    database: &TestDatabase,
+    repositories: &PostgresRepositories,
+    prefix: &str,
+) -> ActiveNetworkAgent {
+    let provisioning = provisioning(&unique_name(prefix), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let owner = provisioning.principal.principal.id();
+    let (agent, instance) =
+        seed_agent_instance(&database.runtime, owner, provisioning.device.id()).await;
+    repositories
+        .activate(&NetworkAgentActivation {
+            id: provisioning.id,
+            agent_id: agent,
+            agent_instance_id: instance,
+            matrix_access_token: sealed(7),
+            activated_at: time(0),
+        })
+        .await
+        .expect("生效");
+    ActiveNetworkAgent {
+        id: provisioning.id,
+        owner,
+        agent,
+        instance,
+    }
+}
+
+/// 在指定的房间里给它占一个位置；`commit` 时接着确认。
+async fn reserve(
+    repositories: &PostgresRepositories,
+    agent: &ActiveNetworkAgent,
+    catalog: RoomCatalogId,
+    instance: RoomInstanceId,
+    commit: bool,
+) -> RoomReservationId {
+    let claim = RoomReservationClaim {
+        reservation_id: RoomReservationId::from_uuid(Uuid::now_v7()),
+        agent_id: agent.agent,
+        agent_instance_id: agent.instance,
+        catalog_id: catalog,
+        mode: RoomAllocationMode::Manual(instance),
+        preferred_language: None,
+        preferred_region: None,
+        evidence: RoomAllocationEvidence::default(),
+        reserved_at: time(1),
+        expires_at: time(60_001),
+    };
+    let RoomReservationOutcome::Reserved { reservation, .. } =
+        RoomAllocationStore::reserve(repositories, &claim)
+            .await
+            .expect("预约")
+    else {
+        panic!("应当预约到位置");
+    };
+    if commit {
+        RoomAllocationStore::transition(
+            repositories,
+            reservation.id(),
+            RoomReservationState::Reserved,
+            RoomReservationState::Committed,
+            time(2),
+        )
+        .await
+        .expect("确认");
+    }
+    reservation.id()
+}
+
+async fn room_instance_of(pool: &PgPool, catalog: RoomCatalogId) -> RoomInstanceId {
+    let id: Uuid =
+        sqlx::query_scalar("SELECT id FROM agent_room.room_instance WHERE catalog_entry_id = $1")
+            .bind(catalog.as_uuid())
+            .fetch_one(pool)
+            .await
+            .expect("私人房间有一个实例");
+    RoomInstanceId::from_uuid(id)
+}
+
+async fn allocated_slots<'e>(executor: impl sqlx::PgExecutor<'e>, instance: RoomInstanceId) -> i32 {
+    sqlx::query_scalar("SELECT allocated_slots FROM agent_room.room_instance WHERE id = $1")
+        .bind(instance.as_uuid())
+        .fetch_one(executor)
+        .await
+        .expect("读分片的位置")
+}
+
+async fn reservation_state<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    reservation: RoomReservationId,
+) -> String {
+    sqlx::query_scalar("SELECT state FROM agent_room.room_capacity_reservation WHERE id = $1")
+        .bind(reservation.as_uuid())
+        .fetch_one(executor)
+        .await
+        .expect("读预约")
 }
 
 async fn encrypted_since(
