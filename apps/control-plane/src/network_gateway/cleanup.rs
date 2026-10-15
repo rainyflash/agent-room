@@ -2,12 +2,14 @@
 //! 还没离开房间的网络 Agent 离开。后者包括运维停用的、闲置停用的，以及自己停用时没离开成的。
 //! 离开之前先关掉它当房主的私人房间，关不成就先不离开，下一轮再来。
 //! 离开了所有房间的，删掉服务器替它存的加密存储和钥匙（停用不能撤回，以后用不上了）。
+//! 一小时没调接口的网络 Agent 先请出公开大厅，它下次调接口时服务器替它回来
+//! （`specs/launch-capacity/design.md` 第 2 步）。
 //! 顺带关掉闲置太久的加密客户端。另有一项单独按时做：删掉过了房间保留期的消息副本。
 
 use agent_room_application::{
-    network_agents::{NetworkAgentFailure, NetworkAgentPendingExit},
+    network_agents::{NetworkAgentFailure, NetworkAgentLobbyExit, NetworkAgentPendingExit},
     persistence::RepositoryResult,
-    ports::NetworkAgentMessageRetention,
+    ports::{MatrixFailureKind, MatrixRoomId, NetworkAgentMessageRetention},
 };
 use agent_room_domain::ids::NetworkAgentId;
 
@@ -15,6 +17,9 @@ use super::NetworkGateway;
 
 /// 每轮最多替这么多个网络 Agent 离开房间。
 const EXIT_BATCH: u32 = 20;
+
+/// 每轮最多请出这么多个闲置网络 Agent 所在的大厅分片。
+const LOBBY_IDLE_BATCH: u32 = 50;
 
 /// 消息副本留多久：房间目录上没设保留期的，按聊天服务器的默认保留期（30 天）；到期后多留一天，
 /// 等聊天服务器每天那次清理先删掉原来的事件，免得往回补时又补回来。和正文对象一样。
@@ -33,8 +38,10 @@ pub(crate) struct NetworkAgentCleanupOutcome {
     pub(crate) left: usize,
     /// 会话打不开、没法替它离开，只好记为已离开的。
     pub(crate) abandoned: usize,
-    /// 有房间没离开成、下一轮再试的。
+    /// 有房间没离开成、下一轮再试的（停用的和闲置的都算）。
     pub(crate) retrying: usize,
+    /// 一小时没动静、请出了公开大厅的（每个大厅分片算一次）。
+    pub(crate) away: usize,
     /// 删掉了加密存储和钥匙的。
     pub(crate) keys_deleted: usize,
     /// 关掉的闲置加密客户端。
@@ -85,6 +92,7 @@ impl NetworkGateway {
                 }
             }
         }
+        self.leave_idle_lobbies(&mut outcome).await?;
         for id in self.agents.pending_key_deletions(EXIT_BATCH).await? {
             // 先删存储再删钥匙：存储没删掉时钥匙留着，下一轮还会再来删。
             if self.remove_store(id).await {
@@ -96,6 +104,65 @@ impl NetworkGateway {
             outcome.closed = encrypted.evict_idle().await;
         }
         Ok(outcome)
+    }
+
+    /// 用它自己的会话离开这个大厅分片，再记一笔、放回位置；它下次调接口时服务器替它回来。
+    /// 先离开再记：库里记的照 Matrix 的事实来，刚好在这时调了接口的那一次可能扑空，下一次就回来了。
+    async fn leave_idle_lobbies(
+        &self,
+        outcome: &mut NetworkAgentCleanupOutcome,
+    ) -> Result<(), NetworkAgentFailure> {
+        for exit in self.agents.idle_lobby_exits(LOBBY_IDLE_BATCH).await? {
+            if self.leave_idle_lobby(&exit).await {
+                self.agents.mark_lobby_away(exit.id, &exit.room).await?;
+                outcome.away += 1;
+            } else {
+                outcome.retrying += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// 离开了（或者没法替它离开、只好放弃）返回 true；聊天服务器一时不通返回 false，下一轮再试。
+    /// 会话打不开、令牌被拒这类再试也没用的放弃，免得最久没动静的那几个每轮都占着名额。
+    async fn leave_idle_lobby(&self, exit: &NetworkAgentLobbyExit) -> bool {
+        let Some(token) = &exit.matrix_access_token else {
+            tracing::warn!(
+                network_agent.id = %exit.id,
+                "闲置的网络 Agent 会话打不开，没法替它离开公开大厅；只放回位置"
+            );
+            return true;
+        };
+        let Ok(room_id) = MatrixRoomId::new(exit.room.matrix_room_id.as_str()) else {
+            return true;
+        };
+        match self.matrix.leave(token, &room_id).await {
+            Ok(()) => true,
+            Err(failure)
+                if matches!(
+                    failure.kind(),
+                    MatrixFailureKind::RateLimited
+                        | MatrixFailureKind::Timeout
+                        | MatrixFailureKind::DependencyUnavailable
+                        | MatrixFailureKind::UnknownCommit
+                ) =>
+            {
+                tracing::warn!(
+                    network_agent.id = %exit.id,
+                    kind = ?failure.kind(),
+                    "没能替闲置的网络 Agent 离开公开大厅，下一轮再试"
+                );
+                false
+            }
+            Err(failure) => {
+                tracing::warn!(
+                    network_agent.id = %exit.id,
+                    kind = ?failure.kind(),
+                    "替闲置的网络 Agent 离开公开大厅被拒，不再重试；只放回位置"
+                );
+                true
+            }
+        }
     }
 
     /// 删掉所有网络 Agent 过了房间保留期的收件箱和消息记录，返回删了几条。

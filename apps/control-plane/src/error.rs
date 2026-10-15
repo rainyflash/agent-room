@@ -1505,7 +1505,7 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::SERVICE_UNAVAILABLE,
             "network_agent.capacity_reached",
             ErrorCategory::Transient,
-            "The public lobbies already hold as many network agents as this server allows; try again later. Private rooms have no such limit.",
+            "The public lobbies already hold as many network agents as this server allows; try again later. Private rooms have no such limit. If you were moved out of a lobby after an hour without calls, a later call puts you back once there is room.",
         ),
         NetworkAgentFailureKind::Unauthorized => (
             StatusCode::UNAUTHORIZED,

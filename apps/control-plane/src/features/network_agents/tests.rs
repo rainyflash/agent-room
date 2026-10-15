@@ -8,15 +8,15 @@ use agent_room_application::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentKnock,
-        NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentMatrixDevice,
-        NetworkAgentOwnedRoom, NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult,
-        NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentLobbyExit,
+        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentPendingExit,
+        NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCode,
+        NetworkAgentRoomCodeView, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
+        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{
-        Clock, MatrixUserId, NetworkAgentAckOutcome, PortFuture, PrivateRoomAgentKnockRecord,
-        PrivateRoomAgentMemberRecord, SecretValue,
+        Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentRoomRecord, PortFuture,
+        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, SecretValue,
     },
     private_rooms::AdmittedKnock,
 };
@@ -197,6 +197,28 @@ impl NetworkAgentUseCases for FakeAgents {
     }
 
     fn delete_keys(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+        unreachable!("路由不做定时清理")
+    }
+
+    fn idle_lobby_exits(
+        &self,
+        _limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobbyExit>>> {
+        unreachable!("路由不做定时清理")
+    }
+
+    fn mark_lobby_away<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        _room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        unreachable!("路由不做定时清理")
+    }
+
+    fn exit_session<'a>(
+        &'a self,
+        _token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
         unreachable!("路由不做定时清理")
     }
 

@@ -264,7 +264,8 @@ pub trait NetworkAgentStore: Send + Sync {
         taken_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>>;
 
-    /// 记下网络 Agent 进了哪个房间；重复记同一个房间不改最初的时间。
+    /// 记下网络 Agent 进了哪个房间；重复记同一个房间不改最初的时间。进的是闲置时先请出的公开
+    /// 大厅，那一笔一起删掉。
     fn record_room<'a>(
         &'a self,
         id: NetworkAgentId,
@@ -276,6 +277,29 @@ pub trait NetworkAgentStore: Send + Sync {
         &self,
         id: NetworkAgentId,
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>>;
+
+    /// 生效中、`idle_before` 以前最后一次调接口、还在公开大厅里的网络 Agent 和它在的大厅分片，
+    /// 最久没动静的在前，最多 `limit` 个（specs/launch-capacity/design.md 第 2 步）。
+    fn idle_in_lobbies(
+        &self,
+        idle_before: UtcMillis,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentIdleLobby>>>;
+
+    /// 替它离开了这个大厅分片以后记一笔：去掉进过的这个房间，放回它在这个大厅占的位置，记下离开的
+    /// 是哪个大厅、哪个分片。记过的再记一次什么都不改。
+    fn mark_lobby_away<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+        at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 闲置时先请出、还没回去的公开大厅，先离开的在前。
+    fn lobbies_away(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentLobbyAway>>>;
 
     /// 停用闲置太久的、以及卡在创建中太久的网络 Agent，一次最多 `limit` 个；返回停用了哪些。
     fn disable_stale(
@@ -355,6 +379,22 @@ pub struct NetworkAgentRoomRecord {
     pub joined_at: UtcMillis,
     /// 房间名：读的时候从房间目录带出来，记下进房间时不用。
     pub name: Option<String>,
+}
+
+/// 一小时没动静、还在公开大厅里的网络 Agent 和它在的那个分片。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentIdleLobby {
+    pub id: NetworkAgentId,
+    pub room: NetworkAgentRoomRecord,
+}
+
+/// 闲置时先请出的公开大厅：它下次调接口时回到这里。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentLobbyAway {
+    pub catalog_id: RoomCatalogId,
+    /// 离开的那个分片：还在、放得下就回那里。
+    pub matrix_room_id: MatrixRoomReference,
+    pub left_at: UtcMillis,
 }
 
 /// 同步到的一条变化，按时间线顺序写进收件箱。

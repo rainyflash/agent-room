@@ -956,17 +956,17 @@ mod real_dependency_tests {
         network_agents::{
             CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
             NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-            NetworkAgentLobby, NetworkAgentMatrixDevice, NetworkAgentPendingExit,
-            NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentSession,
-            NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+            NetworkAgentLobby, NetworkAgentLobbyExit, NetworkAgentMatrixDevice,
+            NetworkAgentPendingExit, NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomRequest,
+            NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
         },
         ports::{
             MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
             MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
             MatrixAgentUserRegistration, MatrixCreateRoom, MatrixDeviceId, MatrixEvent,
             MatrixEventType, MatrixRoomEncryption, MatrixRoomId, MatrixRoomPreset,
-            MatrixRoomVisibility, MatrixTransactionId, MatrixUserId, NetworkAgentSyncRequest,
-            PortFuture, SecretFactory, SecretValue,
+            MatrixRoomVisibility, MatrixTransactionId, MatrixUserId, NetworkAgentRoomRecord,
+            NetworkAgentSyncRequest, PortFuture, SecretFactory, SecretValue,
         },
     };
     use agent_room_bridge_core::messages::ProtectMessageBodyRequest;
@@ -1087,6 +1087,28 @@ mod real_dependency_tests {
         }
 
         fn delete_keys(&self, _id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn idle_lobby_exits(
+            &self,
+            _limit: u32,
+        ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobbyExit>>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn mark_lobby_away<'a>(
+            &'a self,
+            _id: NetworkAgentId,
+            _room: &'a NetworkAgentRoomRecord,
+        ) -> PortFuture<'a, NetworkAgentResult<()>> {
+            unreachable!("只测加密客户端")
+        }
+
+        fn exit_session<'a>(
+            &'a self,
+            _token: &'a str,
+        ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
             unreachable!("只测加密客户端")
         }
 
@@ -1227,6 +1249,7 @@ mod real_dependency_tests {
             rooms: Vec::new(),
             matrix_device_id: device_id,
             encrypted_since: Some(UtcMillis::new(1).unwrap()),
+            lobbies_away: Vec::new(),
         };
         (session, identities, device)
     }

@@ -17,10 +17,10 @@ use agent_room_application::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentIncomingKnocks, NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby,
-        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentPendingExit,
-        NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCodeView,
-        NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget,
-        NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentLobbyExit, NetworkAgentMatrixDevice, NetworkAgentOwnedRoom,
+        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
+        NetworkAgentRoomCodeView, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
+        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -37,12 +37,13 @@ use agent_room_application::{
         NetworkAgentGapReason, NetworkAgentHistoryDirection, NetworkAgentHistoryFilter,
         NetworkAgentHistorySender, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
-        NetworkAgentInboxStore, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
-        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
-        NetworkAgentRoomRecord, NetworkAgentStoredMessage, NetworkAgentSubmissionClaim,
-        NetworkAgentSubmissionClaimOutcome, NetworkAgentSubmissionRecord,
-        NetworkAgentSubmissionState, NetworkAgentSubmissionStore, NetworkAgentSyncRequest,
-        NetworkAgentTimelineGap, PortFuture, PrivateRoomAgentKnockRecord, SecretValue,
+        NetworkAgentInboxStore, NetworkAgentLobbyAway, NetworkAgentMatrixGateway,
+        NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
+        NetworkAgentMessageRetention, NetworkAgentRoomRecord, NetworkAgentStoredMessage,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
+        NetworkAgentSyncRequest, NetworkAgentTimelineGap, PortFuture, PrivateRoomAgentKnockRecord,
+        SecretValue,
     },
     private_rooms::{
         AdmittedKnock, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
@@ -113,6 +114,11 @@ struct FakeAgents {
     exits: Mutex<Vec<NetworkAgentPendingExit>>,
     rooms_left: Mutex<Vec<NetworkAgentId>>,
     keys_deleted: Mutex<Vec<NetworkAgentId>>,
+    /// 定时清理：一小时没动静、要请出公开大厅的，和记为已请出的（哪个 Agent、哪个分片）。
+    idle_lobbies: Mutex<Vec<NetworkAgentLobbyExit>>,
+    marked_away: Mutex<Vec<(NetworkAgentId, String)>>,
+    /// 会话里闲置时请出、这次没回去的公开大厅。
+    lobbies_away: Mutex<Vec<NetworkAgentLobbyAway>>,
     /// 进过加密房间的时刻；有值时网关改用加密客户端同步。记入库（`mark_encrypted`）不改它：
     /// 切过去之前取的会话里本来就没有，网关得靠自己记着。
     encrypted_since: Mutex<Option<UtcMillis>>,
@@ -154,6 +160,9 @@ impl FakeAgents {
             exits: Mutex::new(Vec::new()),
             rooms_left: Mutex::new(Vec::new()),
             keys_deleted: Mutex::new(Vec::new()),
+            idle_lobbies: Mutex::new(Vec::new()),
+            marked_away: Mutex::new(Vec::new()),
+            lobbies_away: Mutex::new(Vec::new()),
             encrypted_since: Mutex::new(None),
             log: Arc::new(Mutex::new(Vec::new())),
             admissions: Mutex::new(VecDeque::new()),
@@ -183,6 +192,7 @@ impl FakeAgents {
             rooms: self.rooms.clone(),
             matrix_device_id: format!("AR_{}", uuid(OWN_INSTANCE).simple()),
             encrypted_since: *self.encrypted_since.lock().unwrap(),
+            lobbies_away: self.lobbies_away.lock().unwrap().clone(),
         }
     }
 }
@@ -328,6 +338,45 @@ impl NetworkAgentUseCases for FakeAgents {
         self.log.lock().unwrap().push("delete_keys".to_owned());
         self.keys_deleted.lock().unwrap().push(id);
         Box::pin(async { Ok(()) })
+    }
+
+    fn idle_lobby_exits(
+        &self,
+        _limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobbyExit>>> {
+        let marked = self.marked_away.lock().unwrap().clone();
+        let exits = self
+            .idle_lobbies
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|exit| {
+                !marked.contains(&(exit.id, exit.room.matrix_room_id.as_str().to_owned()))
+            })
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(exits) })
+    }
+
+    fn mark_lobby_away<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        self.marked_away
+            .lock()
+            .unwrap()
+            .push((id, room.matrix_room_id.as_str().to_owned()));
+        Box::pin(async { Ok(()) })
+    }
+
+    /// 和 `session` 一样认令牌，记一笔好看出停用时走的是它。
+    fn exit_session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
+        self.log.lock().unwrap().push("exit_session".to_owned());
+        self.session(token)
     }
 
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>> {
@@ -3477,6 +3526,10 @@ async fn 内容不合规时说明是哪一项_限流时什么都不发() {
 async fn 停用时离开所有房间再作废令牌_离开失败也照样作废_留给定时清理() {
     let two_rooms = harness_in(&[ROOM, SECOND_ROOM]);
     two_rooms.gateway.leave_and_disable(TOKEN).await.unwrap();
+    assert!(
+        two_rooms.agents.log().contains(&"exit_session".to_owned()),
+        "不先回到闲置时请出的公开大厅"
+    );
     assert_eq!(*two_rooms.matrix.left.lock().unwrap(), [ROOM, SECOND_ROOM]);
     assert_eq!(*two_rooms.agents.disabled.lock().unwrap(), [TOKEN]);
     assert_eq!(
@@ -4121,6 +4174,7 @@ async fn 定时清理替停用的离开房间并记下_打不开的放弃_没离
             left: 0,
             abandoned: 1,
             retrying: 1,
+            away: 0,
             keys_deleted: 1,
             closed: 0,
         }
@@ -4287,6 +4341,116 @@ async fn 没开加密客户端时_离开房间以后直接删钥匙() {
         [network_agent_id()]
     );
     assert!(harness.encrypted.removed.lock().unwrap().is_empty());
+}
+
+fn idle_exit(room: &str, token: Option<&str>) -> NetworkAgentLobbyExit {
+    NetworkAgentLobbyExit {
+        id: network_agent_id(),
+        room: NetworkAgentRoomRecord {
+            catalog_id: RoomCatalogId::from_uuid(Uuid::now_v7()),
+            matrix_room_id: MatrixRoomReference::new(room.to_owned()).unwrap(),
+            joined_at: UtcMillis::new(1).unwrap(),
+            name: None,
+        },
+        matrix_access_token: token.map(|token| SecretValue::new(token).unwrap()),
+    }
+}
+
+#[tokio::test]
+async fn 定时清理替一小时没动静的离开公开大厅再记下_会话打不开的只记账_一时离不开的下轮再试() {
+    let harness = harness();
+    *harness.agents.idle_lobbies.lock().unwrap() = vec![
+        idle_exit(ROOM, Some("syt_scout")),
+        idle_exit(SECOND_ROOM, None),
+    ];
+
+    assert_eq!(
+        harness.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            away: 2,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert_eq!(
+        *harness.matrix.left.lock().unwrap(),
+        [ROOM],
+        "会话打不开的没法替它离开"
+    );
+    assert_eq!(
+        *harness.agents.marked_away.lock().unwrap(),
+        [
+            (network_agent_id(), ROOM.to_owned()),
+            (network_agent_id(), SECOND_ROOM.to_owned())
+        ]
+    );
+
+    let failing = harness_in(&[]);
+    *failing.agents.idle_lobbies.lock().unwrap() = vec![idle_exit(ROOM, Some("syt_scout"))];
+    *failing.matrix.leave_fails.lock().unwrap() = true;
+    assert_eq!(
+        failing.gateway.clean_up().await.unwrap(),
+        NetworkAgentCleanupOutcome {
+            retrying: 1,
+            ..NetworkAgentCleanupOutcome::default()
+        }
+    );
+    assert!(
+        failing.agents.marked_away.lock().unwrap().is_empty(),
+        "聊天服务器一时不通，先不记"
+    );
+    *failing.matrix.leave_fails.lock().unwrap() = false;
+    assert_eq!(failing.gateway.clean_up().await.unwrap().away, 1);
+}
+
+#[tokio::test]
+async fn 闲置时请出_大厅满了没回去的_往那里发说大厅满了() {
+    let harness = harness_in(&[]);
+    *harness.agents.lobbies_away.lock().unwrap() = vec![NetworkAgentLobbyAway {
+        catalog_id: RoomCatalogId::from_uuid(Uuid::now_v7()),
+        matrix_room_id: MatrixRoomReference::new(ROOM.to_owned()).unwrap(),
+        left_at: UtcMillis::new(1).unwrap(),
+    }];
+    let lobby_full = NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+        NetworkAgentFailureKind::CapacityReached,
+    ));
+
+    assert_eq!(
+        harness
+            .gateway
+            .send_message(TOKEN, draft("没说发到哪"))
+            .await
+            .unwrap_err(),
+        lobby_full
+    );
+    assert_eq!(
+        harness
+            .gateway
+            .send_message(
+                TOKEN,
+                NetworkAgentMessageDraft {
+                    room_id: Some(ROOM.to_owned()),
+                    ..draft("发到原来的大厅")
+                },
+            )
+            .await
+            .unwrap_err(),
+        lobby_full
+    );
+    assert_eq!(
+        harness
+            .gateway
+            .send_message(
+                TOKEN,
+                NetworkAgentMessageDraft {
+                    room_id: Some(PRIVATE_ROOM.to_owned()),
+                    ..draft("没进过的房间")
+                },
+            )
+            .await
+            .unwrap_err(),
+        NetworkGatewayFailure::RoomNotJoined
+    );
+    assert!(harness.matrix.sent().is_empty());
 }
 
 #[tokio::test(start_paused = true)]

@@ -39,12 +39,12 @@ use crate::{
     persistence::RepositoryError,
     ports::{
         Clock, IdentifierFactory, MatrixAgentLocalpart, NetworkAgentActivation,
-        NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
-        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
-        NetworkAgentStore, PortFuture, PrincipalAccount, PrincipalRegistration,
-        PrivateRoomAgentKnockRecord, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
-        RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
+        NetworkAgentBeginOutcome, NetworkAgentIdleLobby, NetworkAgentKeyFactory,
+        NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
+        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, PrincipalAccount,
+        PrincipalRegistration, PrivateRoomAgentKnockRecord, RateWindowBucket, RateWindowDecision,
+        RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
@@ -74,6 +74,9 @@ const MAX_NAME_NUMBER: u32 = 999;
 const NAME_ATTEMPTS: usize = 5;
 /// 30 天没有活动的网络 Agent 自动停用，放开公开大厅的名额。
 const IDLE_LIFETIME_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
+/// 一小时没调接口的网络 Agent 先请出公开大厅，下次调接口时再回来（`specs/launch-capacity/design.md`
+/// 第 2 步）：大厅的名额和分片的位置只算最近在用的。
+const LOBBY_IDLE_MILLIS: i64 = 60 * 60 * 1_000;
 /// 创建一个小时还没建好，说明中途断了：停用，放开名字与名额。
 const PROVISIONING_TIMEOUT_MILLIS: i64 = 60 * 60 * 1_000;
 /// 定时清理每轮最多停用这么多个。
@@ -264,6 +267,9 @@ pub struct NetworkAgentSession {
     pub matrix_device_id: String,
     /// 第一次进加密房间的时刻；有值时它所有房间都改由 matrix-sdk 客户端收发。
     pub encrypted_since: Option<UtcMillis>,
+    /// 闲置时请出、这次没回去的公开大厅（大厅满了，或者一时进不去）。往那里发的说大厅满了，
+    /// 下次调接口再试。
+    pub lobbies_away: Vec<NetworkAgentLobbyAway>,
 }
 
 /// 进加密房间要用的秘密（第 3 步）。只在进程内传递，调试输出里不出现内容。
@@ -299,6 +305,17 @@ pub enum NetworkAgentPendingExit {
         id: NetworkAgentId,
         principal_id: PrincipalId,
     },
+}
+
+/// 一小时没调接口、要请出公开大厅的网络 Agent 和它在的那个分片（`specs/launch-capacity/design.md`
+/// 第 2 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentLobbyExit {
+    pub id: NetworkAgentId,
+    pub room: NetworkAgentRoomRecord,
+    /// 用它自己的 Matrix 会话离开。秘密缺失或解不开时为空：没法替它离开，只记账、放回位置，
+    /// 免得每轮都卡住。
+    pub matrix_access_token: Option<SecretValue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -429,6 +446,27 @@ pub trait NetworkAgentUseCases: Send + Sync {
 
     /// 服务器上的加密存储删掉以后，删掉它封存的钥匙。停用不能撤回，这些以后用不上了。
     fn delete_keys(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>>;
+
+    /// 定时清理：一小时没调接口、还在公开大厅里的网络 Agent，每个大厅分片一项，一次最多 `limit`
+    /// 项，最久没动静的在前。不看总开关。
+    fn idle_lobby_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobbyExit>>>;
+
+    /// 替它离开了这个大厅分片（或者没法替它离开）以后记一笔：放回位置，它下次调接口时回来。
+    fn mark_lobby_away<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, NetworkAgentResult<()>>;
+
+    /// 停用前替它离开房间时用的会话：和 `session` 一样凭令牌取，只是不记活动，也不先回到闲置时
+    /// 请出的公开大厅。
+    fn exit_session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>>;
 
     /// 能进的公开大厅；总开关关着时回答“已关闭”。
     fn public_lobbies(&self) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobby>>>;
@@ -847,6 +885,7 @@ impl NetworkAgentService {
             .record_activity(record.id, now)
             .await
             .map_err(repository)?;
+        let away = self.return_to_lobbies(&record).await?;
         match room {
             NetworkAgentRoomRequest::Lobby(room) => {
                 let place = self.place(room.as_deref()).await?;
@@ -860,8 +899,15 @@ impl NetworkAgentService {
                 match place {
                     Place::Lobby(catalog) => {
                         // 已经在别的公开大厅里的换个大厅不再算；从私人房间头一回来大厅的要算。
+                        // 闲置时请出、这次大厅满了没回去的，只看大厅满没满，不占名额。
                         if !self.in_public_lobby(&rooms).await? {
-                            self.admit_to_lobbies(&source_digest).await?;
+                            if away.is_empty() {
+                                self.admit_to_lobbies(&source_digest).await?;
+                            } else if self.lobbies_full(&self.public_lobby_ids().await?).await? {
+                                return Err(NetworkAgentFailure::new(
+                                    NetworkAgentFailureKind::CapacityReached,
+                                ));
+                            }
                         }
                         Ok(NetworkAgentAdmission::Admitted(NetworkAgentTarget::Lobby(
                             catalog,
@@ -1070,6 +1116,7 @@ impl NetworkAgentService {
             .record_activity(record.id, self.clock.now())
             .await
             .map_err(repository)?;
+        self.return_to_lobbies(&record).await?;
         let mut rooms = Vec::new();
         for room in self.store.rooms(record.id).await.map_err(repository)? {
             rooms.push(self.named(room).await?);
@@ -1102,7 +1149,13 @@ impl NetworkAgentService {
             .record_activity(record.id, self.clock.now())
             .await
             .map_err(repository)?;
-        self.open_session(record).await
+        let away = self.return_to_lobbies(&record).await?;
+        self.open_session(record, away).await
+    }
+
+    async fn exit_session_internal(&self, token: &str) -> NetworkAgentResult<NetworkAgentSession> {
+        let record = self.authenticated(token).await?;
+        self.open_session(record, Vec::new()).await
     }
 
     async fn session_of_agent_internal(
@@ -1110,7 +1163,72 @@ impl NetworkAgentService {
         agent_id: AgentId,
     ) -> NetworkAgentResult<NetworkAgentSession> {
         let record = self.active_by_agent(agent_id).await?;
-        self.open_session(record).await
+        let away = self.lobbies_away(record.id).await?;
+        self.open_session(record, away).await
+    }
+
+    /// 闲置时请出的公开大厅，这次调接口时先替它回去（`specs/launch-capacity/design.md` 第 2 步）：
+    /// 原来的分片还在、放得下就回原来的，不然由大厅分配；不占来源的名额。大厅里的网络 Agent 满了、
+    /// 或者一时进不去时，这次调用照常做，返回还没回去的，下次调接口再试。
+    async fn return_to_lobbies(
+        &self,
+        record: &NetworkAgentRecord,
+    ) -> NetworkAgentResult<Vec<NetworkAgentLobbyAway>> {
+        let away = self.lobbies_away(record.id).await?;
+        if away.is_empty() {
+            return Ok(away);
+        }
+        let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
+        else {
+            return Err(internal());
+        };
+        let actor = self.actor_of(record, self.clock.now())?;
+        let lobbies = self.public_lobby_ids().await?;
+        let mut remaining = Vec::new();
+        for lobby in away {
+            if self.lobbies_full(&lobbies).await? {
+                remaining.push(lobby);
+                continue;
+            }
+            let entered = match self
+                .enter_room(
+                    &actor,
+                    agent_id,
+                    agent_instance_id,
+                    lobby.catalog_id,
+                    Some(lobby.matrix_room_id.clone()),
+                )
+                .await
+            {
+                Ok(room) => Ok(room),
+                // 原来的分片满了或者不在了：由大厅分配。
+                Err(_) => {
+                    self.enter_room(&actor, agent_id, agent_instance_id, lobby.catalog_id, None)
+                        .await
+                }
+            };
+            match entered {
+                Ok(room) => self.record_room(record.id, &room).await?,
+                Err(_) => remaining.push(lobby),
+            }
+        }
+        Ok(remaining)
+    }
+
+    /// 闲置时请出、还没回去的公开大厅；大厅已经不在目录里的不算。
+    async fn lobbies_away(
+        &self,
+        id: NetworkAgentId,
+    ) -> NetworkAgentResult<Vec<NetworkAgentLobbyAway>> {
+        let away = self.store.lobbies_away(id).await.map_err(repository)?;
+        if away.is_empty() {
+            return Ok(away);
+        }
+        let lobbies = self.public_lobby_ids().await?;
+        Ok(away
+            .into_iter()
+            .filter(|lobby| lobbies.contains(&lobby.catalog_id))
+            .collect())
     }
 
     /// 生效中的网络 Agent：按 Agent 找，不是网络 Agent 或已停用时回答未认证。
@@ -1130,6 +1248,7 @@ impl NetworkAgentService {
     async fn open_session(
         &self,
         record: NetworkAgentRecord,
+        lobbies_away: Vec<NetworkAgentLobbyAway>,
     ) -> NetworkAgentResult<NetworkAgentSession> {
         let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
         else {
@@ -1147,7 +1266,7 @@ impl NetworkAgentService {
             (agent_id, agent_instance_id),
             matrix_access_token,
             instance_signing_seed,
-            rooms,
+            (rooms, lobbies_away),
         ))
     }
 
@@ -1157,7 +1276,7 @@ impl NetworkAgentService {
         (agent_id, agent_instance_id): (AgentId, AgentInstanceId),
         matrix_access_token: SecretValue,
         instance_signing_seed: SecretValue,
-        rooms: Vec<NetworkAgentRoomRecord>,
+        (rooms, lobbies_away): (Vec<NetworkAgentRoomRecord>, Vec<NetworkAgentLobbyAway>),
     ) -> NetworkAgentSession {
         NetworkAgentSession {
             network_agent_id: record.id,
@@ -1177,6 +1296,7 @@ impl NetworkAgentService {
                 .matrix_device_id
                 .unwrap_or_else(|| crate::agents::instance_matrix_device_id(agent_instance_id)),
             encrypted_since: record.encrypted_since,
+            lobbies_away,
         }
     }
 
@@ -1357,13 +1477,43 @@ impl NetworkAgentService {
             return Ok(unopenable);
         };
         let rooms = self.store.rooms(id).await.map_err(repository)?;
+        // 停用了，不再回大厅。
         Ok(NetworkAgentPendingExit::Session(Box::new(self.session_of(
             record,
             (agent_id, agent_instance_id),
             matrix_access_token,
             instance_signing_seed,
-            rooms,
+            (rooms, Vec::new()),
         ))))
+    }
+
+    async fn idle_lobby_exits_internal(
+        &self,
+        limit: u32,
+    ) -> NetworkAgentResult<Vec<NetworkAgentLobbyExit>> {
+        let idle_before =
+            UtcMillis::new(self.clock.now().value() - LOBBY_IDLE_MILLIS).map_err(|_| internal())?;
+        let idle = self
+            .store
+            .idle_in_lobbies(idle_before, limit)
+            .await
+            .map_err(repository)?;
+        let mut exits = Vec::with_capacity(idle.len());
+        for NetworkAgentIdleLobby { id, room } in idle {
+            let matrix_access_token = match self
+                .read_secret(id, NetworkAgentSecretKind::MatrixAccessToken)
+                .await?
+            {
+                OpenedSecret::Secret(token) => Some(token),
+                OpenedSecret::Missing | OpenedSecret::Unsealable => None,
+            };
+            exits.push(NetworkAgentLobbyExit {
+                id,
+                room,
+                matrix_access_token,
+            });
+        }
+        Ok(exits)
     }
 
     async fn take_message_quota_internal(
@@ -1527,18 +1677,22 @@ impl NetworkAgentService {
     /// 让一个网络 Agent 进公开大厅：大厅里的网络 Agent 满了就请它过一会儿再来，没满才占起名的
     /// 名额。满了不扣名额：一直重试“大厅满了”的来源不该一小时后连空出来的位置都进不来。
     async fn admit_to_lobbies(&self, source: &[u8; 32]) -> NetworkAgentResult<NamingTicket> {
-        let lobbies = self.public_lobby_ids().await?;
-        let in_lobbies = self
-            .store
-            .count_live_in(&lobbies)
-            .await
-            .map_err(repository)?;
-        if in_lobbies >= self.policy.max_lobby_agents {
+        if self.lobbies_full(&self.public_lobby_ids().await?).await? {
             return Err(NetworkAgentFailure::new(
                 NetworkAgentFailureKind::CapacityReached,
             ));
         }
         self.take_naming(source).await
+    }
+
+    /// 公开大厅里的网络 Agent 到没到上限。闲置时请出的不算。
+    async fn lobbies_full(&self, lobbies: &[RoomCatalogId]) -> NetworkAgentResult<bool> {
+        let in_lobbies = self
+            .store
+            .count_live_in(lobbies)
+            .await
+            .map_err(repository)?;
+        Ok(in_lobbies >= self.policy.max_lobby_agents)
     }
 
     /// 起名的名额：同一来源每小时、每天各有上限，超过时告诉 Agent 什么时候能再试。进公开大厅和
@@ -1745,6 +1899,33 @@ impl NetworkAgentUseCases for NetworkAgentService {
                 .await
                 .map_err(repository)
         })
+    }
+
+    fn idle_lobby_exits(
+        &self,
+        limit: u32,
+    ) -> PortFuture<'_, NetworkAgentResult<Vec<NetworkAgentLobbyExit>>> {
+        Box::pin(self.idle_lobby_exits_internal(limit))
+    }
+
+    fn mark_lobby_away<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+        Box::pin(async move {
+            self.store
+                .mark_lobby_away(id, room, self.clock.now())
+                .await
+                .map_err(repository)
+        })
+    }
+
+    fn exit_session<'a>(
+        &'a self,
+        token: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSession>> {
+        Box::pin(self.exit_session_internal(token))
     }
 
     fn delete_keys(&self, id: NetworkAgentId) -> PortFuture<'_, NetworkAgentResult<()>> {

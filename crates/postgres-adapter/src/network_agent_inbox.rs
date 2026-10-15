@@ -42,8 +42,13 @@ impl PostgresRepositories {
         room: &NetworkAgentRoomRecord,
     ) -> RepositoryResult<()> {
         let operation = "network_agent.record_room";
+        // 闲置时请出的公开大厅（`network_agent_lobby_away.rs`）回来了，那一笔一起删掉。
         sqlx::query(
-            r"INSERT INTO agent_room.network_agent_room
+            r"WITH returned AS (
+                  DELETE FROM agent_room.network_agent_lobby_away
+                   WHERE network_agent_id = $1 AND catalog_entry_id = $3
+              )
+              INSERT INTO agent_room.network_agent_room
                   (network_agent_id, matrix_room_id, catalog_entry_id, joined_at)
               VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000.0))
               ON CONFLICT (network_agent_id, matrix_room_id) DO NOTHING",
