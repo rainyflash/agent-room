@@ -187,6 +187,24 @@ impl PrivateRoomPermissions {
         self.view()
     }
 
+    /// `self` 比 `previous` 多出来的权限。
+    const fn added_since(self, previous: Self) -> Self {
+        Self {
+            bits: self.bits & !previous.bits,
+        }
+    }
+
+    /// 两边都有的权限。查看是一切权限的前提，自动发言要有发言，两边都满足时交集也满足。
+    const fn intersection(self, other: Self) -> Self {
+        Self {
+            bits: self.bits & other.bits,
+        }
+    }
+
+    const fn contains(self, other: Self) -> bool {
+        other.bits & !self.bits == 0
+    }
+
     const fn capability_bit(capability: PrivateRoomCapability) -> u8 {
         match capability {
             PrivateRoomCapability::View => Self::VIEW_BIT,
@@ -442,7 +460,8 @@ impl PrivateRoom {
     }
 
     /// Agent 替主体邀请人：只在 Agent 建的房间里，被邀请的人能查看、发言和自动发言
-    /// （`INVITED_BY_AGENT`）。Agent 只是想让这个人进来，所以他已经在房间里也算成功，什么都不改。
+    /// （`INVITED_BY_AGENT`），再不超过这个主体自己有的。Agent 只是想让这个人进来，所以他已经在
+    /// 房间里也算成功，什么都不改。
     ///
     /// # Errors
     ///
@@ -462,7 +481,9 @@ impl PrivateRoom {
             self.require(actor, PrivateRoomCapability::Invite, "邀请私人房间成员")?;
             return Ok(false);
         }
-        self.invite(actor, target, PrivateRoomPermissions::INVITED_BY_AGENT)
+        let permissions =
+            PrivateRoomPermissions::INVITED_BY_AGENT.intersection(self.permissions_of(actor));
+        self.invite(actor, target, permissions)
     }
 
     fn ensure_built_by_agent(&self, action: &'static str) -> DomainResult<()> {
@@ -473,11 +494,11 @@ impl PrivateRoom {
         }
     }
 
-    /// 邀请成员进入活跃房间。
+    /// 邀请成员进入活跃房间，给的权限不超过邀请人自己有的。
     ///
     /// # Errors
     ///
-    /// 操作者无邀请权限、房间已归档、目标已加入或被封禁时返回错误。
+    /// 操作者无邀请权限、给了自己没有的权限、房间已归档、目标已加入或被封禁时返回错误。
     pub fn invite(
         &mut self,
         actor: PrincipalId,
@@ -487,6 +508,7 @@ impl PrivateRoom {
         self.ensure_active("invited")?;
         self.require(actor, PrivateRoomCapability::Invite, "邀请私人房间成员")?;
         require_assignable_permissions(permissions)?;
+        self.require_grantable(actor, PrivateRoomPermissions::NONE, permissions)?;
 
         match self.members.get(&target) {
             Some(member) if member.status == PrivateRoomMembershipStatus::Invited => {
@@ -654,11 +676,39 @@ impl PrivateRoom {
         Ok(true)
     }
 
-    /// 更新已加入或待邀请成员的产品权限。
+    /// 撤销封禁：这个人回到“已移出”，之后可以再邀请。没有封着的什么都不改。
     ///
     /// # Errors
     ///
-    /// 操作者无治理权限、目标是房主、目标不在活跃成员态或权限为空时返回错误。
+    /// 操作者无治理权限或房间已归档时返回错误。
+    pub fn unban_member(&mut self, actor: PrincipalId, target: PrincipalId) -> DomainResult<bool> {
+        self.ensure_active("removed")?;
+        self.require(actor, PrivateRoomCapability::Manage, "解封私人房间成员")?;
+        if !self
+            .members
+            .get(&target)
+            .is_some_and(|member| member.status == PrivateRoomMembershipStatus::Banned)
+        {
+            return Ok(false);
+        }
+        let next_version = self.next_version()?;
+        self.members
+            .get_mut(&target)
+            .ok_or_else(|| invariant("private_room", "已验证的封禁成员必须存在"))?
+            .replace(
+                PrivateRoomMembershipStatus::Removed,
+                PrivateRoomPermissions::NONE,
+            );
+        self.version = next_version;
+        Ok(true)
+    }
+
+    /// 更新已加入或待邀请成员的产品权限。加上的权限不超过操作者自己有的，收回不限。
+    ///
+    /// # Errors
+    ///
+    /// 操作者无治理权限、加上了自己没有的权限、目标是房主、目标不在活跃成员态或权限为空时返回
+    /// 错误。
     pub fn update_permissions(
         &mut self,
         actor: PrincipalId,
@@ -683,6 +733,7 @@ impl PrivateRoom {
         if member.permissions == permissions {
             return Ok(false);
         }
+        self.require_grantable(actor, member.permissions, permissions)?;
         let next_version = self.next_version()?;
         self.members
             .get_mut(&target)
@@ -829,6 +880,32 @@ impl PrivateRoom {
             return Err(DomainError::Forbidden { action });
         }
         Ok(())
+    }
+
+    fn permissions_of(&self, principal_id: PrincipalId) -> PrivateRoomPermissions {
+        self.members
+            .get(&principal_id)
+            .map_or(PrivateRoomPermissions::NONE, |member| member.permissions)
+    }
+
+    /// 房主以外的人只能给出自己有的权限（`specs/room-people/design.md`）。邀请和改权限都管：
+    /// 不然没有自动发言的管理者先邀请、再改权限，照样能给出自动发言。房主什么权限都有。
+    fn require_grantable(
+        &self,
+        actor: PrincipalId,
+        previous: PrivateRoomPermissions,
+        next: PrivateRoomPermissions,
+    ) -> DomainResult<()> {
+        if self
+            .permissions_of(actor)
+            .contains(next.added_since(previous))
+        {
+            Ok(())
+        } else {
+            Err(DomainError::Forbidden {
+                action: "给出自己没有的私人房间权限",
+            })
+        }
     }
 
     fn require_non_owner_target(
@@ -986,6 +1063,81 @@ mod tests {
         assert!(
             room.invite(principal(1), principal(2), ordinary_permissions())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn 解封以后回到已移出_能再邀请() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        room.ban_member(principal(1), principal(2))
+            .expect("房主可封禁");
+
+        assert!(
+            room.unban_member(principal(2), principal(2)).is_err(),
+            "没有管理权限不能解封"
+        );
+        assert!(
+            room.unban_member(principal(1), principal(2))
+                .expect("房主可解封")
+        );
+        let member = room.member(principal(2)).expect("成员事实保留");
+        assert_eq!(member.status(), PrivateRoomMembershipStatus::Removed);
+        assert_eq!(member.permissions(), PrivateRoomPermissions::NONE);
+        assert!(
+            !room
+                .unban_member(principal(1), principal(2))
+                .expect("没有封着的不改")
+        );
+        assert!(
+            !room
+                .unban_member(principal(1), principal(9))
+                .expect("不认识的人不改")
+        );
+        assert!(
+            room.invite(principal(1), principal(2), ordinary_permissions())
+                .expect("解封后能再邀请")
+        );
+    }
+
+    #[test]
+    fn 房主以外的人给不出自己没有的权限() {
+        let mut room = room();
+        let manager = PrivateRoomPermissions::from_capabilities([
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Invite,
+            PrivateRoomCapability::Manage,
+        ])
+        .expect("权限组合有效");
+        room.invite(principal(1), principal(2), manager)
+            .expect("房主邀请管理者");
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+
+        let automate = PrivateRoomPermissions::INVITED_BY_AGENT;
+        assert!(
+            room.invite(principal(2), principal(3), automate).is_err(),
+            "没有自动发言的人邀请时给不出自动发言"
+        );
+        assert!(
+            room.invite(principal(2), principal(3), ordinary_permissions())
+                .expect("自己有的可以给")
+        );
+        room.accept_invitation(principal(3)).expect("接受邀请成功");
+        assert!(
+            room.update_permissions(principal(2), principal(3), automate)
+                .is_err(),
+            "先邀请再改权限也给不出自动发言"
+        );
+        assert!(
+            room.update_permissions(principal(1), principal(3), automate)
+                .expect("房主什么都能给")
+        );
+        let view_only = PrivateRoomPermissions::from_capabilities([PrivateRoomCapability::View])
+            .expect("只能查看有效");
+        assert!(
+            room.update_permissions(principal(2), principal(3), view_only)
+                .expect("收回自己没有的也行")
         );
     }
 

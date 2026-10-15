@@ -792,6 +792,77 @@ async fn 移除先收紧_matrix_再保存且数据库失败不会重新放开访
 }
 
 #[tokio::test]
+async fn 解封先解开_matrix_再保存_重试收敛_之后能再邀请() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    let govern = || GovernPrivateRoomMember {
+        actor: fixture.owner_actor(),
+        catalog_id: fixture.catalog,
+        target_principal_id: fixture.member,
+    };
+    fixture.service.ban(govern()).await.expect("封禁应成功");
+    fixture.store.fail_next_save.store(true, Ordering::SeqCst);
+    fixture.clear_events();
+
+    let failure = fixture
+        .service
+        .unban(govern())
+        .await
+        .expect_err("模拟持久化失败");
+    assert_eq!(
+        failure.kind(),
+        PrivateRoomFailureKind::DependencyUnavailable
+    );
+    assert_eq!(fixture.events(), vec!["matrix.unban", "store.save"]);
+    assert_eq!(
+        fixture.matrix.membership_of(&Fixture::member_matrix()),
+        Some(PrivateMatrixMembership::Left)
+    );
+    assert_eq!(
+        fixture.store.member_status(fixture.member),
+        PrivateRoomMembershipStatus::Banned
+    );
+
+    fixture.clear_events();
+    let unbanned = fixture
+        .service
+        .unban(govern())
+        .await
+        .expect("重试应收敛产品状态");
+    assert_eq!(fixture.events(), vec!["matrix.unban", "store.save"]);
+    assert_eq!(
+        unbanned
+            .room()
+            .member(fixture.member)
+            .expect("历史成员存在")
+            .status(),
+        PrivateRoomMembershipStatus::Removed
+    );
+
+    fixture.clear_events();
+    fixture
+        .service
+        .unban(govern())
+        .await
+        .expect("没封着的再解封什么都不做");
+    assert!(fixture.events().is_empty(), "{:?}", fixture.events());
+
+    fixture
+        .service
+        .invite(InvitePrivateRoomMember {
+            actor: fixture.owner_actor().into(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions: speaker_permissions(),
+        })
+        .await
+        .expect("解封后能再邀请");
+    assert_eq!(
+        fixture.matrix.membership_of(&Fixture::member_matrix()),
+        Some(PrivateMatrixMembership::Invited)
+    );
+}
+
+#[tokio::test]
 async fn 权限降级先写_matrix_而升级先写产品事实() {
     let fixture = Fixture::joined(speaker_permissions()).await;
     fixture.clear_events();
@@ -1454,6 +1525,20 @@ impl PrivateRoomMatrixGateway for TestMatrix {
         Box::pin(async move {
             self.record("matrix.ban");
             self.set_membership(user_id, PrivateMatrixMembership::Banned);
+            Ok(())
+        })
+    }
+
+    fn unban<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            self.record("matrix.unban");
+            if self.membership_of(user_id) == Some(PrivateMatrixMembership::Banned) {
+                self.set_membership(user_id, PrivateMatrixMembership::Left);
+            }
             Ok(())
         })
     }

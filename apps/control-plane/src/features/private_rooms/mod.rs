@@ -87,6 +87,10 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             post(handlers::ban),
         )
         .route(
+            "/private-rooms/{catalog_id}/members/{principal_id}/unban",
+            post(handlers::unban),
+        )
+        .route(
             "/private-rooms/{catalog_id}/members/{principal_id}/permissions",
             put(handlers::update_permissions),
         )

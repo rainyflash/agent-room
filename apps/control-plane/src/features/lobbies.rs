@@ -1221,6 +1221,13 @@ mod tests {
             unreachable!("大厅路由不封禁成员")
         }
 
+        fn unban(
+            &self,
+            _request: agent_room_application::private_rooms::GovernPrivateRoomMember,
+        ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+            unreachable!("大厅路由不解封成员")
+        }
+
         fn update_permissions(
             &self,
             _request: agent_room_application::private_rooms::ChangePrivateRoomPermissions,
