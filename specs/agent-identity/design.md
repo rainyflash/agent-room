@@ -259,4 +259,4 @@
   - 主人做的事由真实网页会话发请求（`e2e-vertical/agent-identity.e2e.ts`，分 `rooms`、`bring`、`leave-and-delete` 三次跑）：先建 A、B、C 三个私人房间；带它进 C 以后 `entered` 至少 1、它在 A 和 C，C 里说的它等得到；让它离开 C 以后只在 A；再照网页的做法撤掉它的连接、删掉它，三个房间里它都是 `leave`。
   - 成员状态问 Synapse 的库（`local_current_membership`），不看本机投影；离开、带进都是服务器替它办的，最多等 60 秒。
 - 2c 说以前删掉、还挂在房间里的 Agent 要清得先问维护者。2026-10-15 只读查了生产：77 个 Agent 都在用，一个删掉的也没有，不用清。
-- 七步都做完了，一起随 Alpha 72 发布。
+- 七步都做完了，一起随 Alpha 72 发布（2026-10-15，[发布记录](../agent-access/alpha72-release.md)）。
