@@ -28,9 +28,9 @@ use agent_room_application::{
         NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
         NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
         PrivateRoomJoinCodeRecord, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
-        PublicLobbyObservationRoom, RateWindowDecision, RateWindowPolicy, RegisteredAgent,
-        RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretSealingFailure, SecretValue,
+        PublicLobbyObservationRoom, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
+        RegisteredAgent, RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest,
+        SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
         StoredAgentInstanceRegistration,
     },
     private_rooms::{
@@ -321,6 +321,68 @@ impl NetworkAgentStore for MemoryStore {
             RateWindowDecision::Allowed
         };
         Box::pin(async move { Ok(decision) })
+    }
+
+    fn take_all<'a>(
+        &'a self,
+        buckets: &'a [RateWindowBucket],
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<RateWindowDecision>> {
+        let mut windows = self.windows.lock().unwrap();
+        let mut limited: Option<UtcMillis> = None;
+        for bucket in buckets {
+            let window = i64::try_from(bucket.policy.window.value()).unwrap();
+            let entry = windows.get(&bucket.bucket).copied().unwrap_or((now, 0));
+            if now.value() < entry.0.value() + window && entry.1 >= bucket.policy.limit {
+                let retry_at = UtcMillis::new(entry.0.value() + window).unwrap();
+                limited = Some(limited.map_or(retry_at, |known| known.max(retry_at)));
+            }
+        }
+        if let Some(retry_at) = limited {
+            return Box::pin(async move { Ok(RateWindowDecision::Limited { retry_at }) });
+        }
+        for bucket in buckets {
+            let window = i64::try_from(bucket.policy.window.value()).unwrap();
+            let entry = windows.entry(bucket.bucket.clone()).or_insert((now, 0));
+            if now.value() >= entry.0.value() + window {
+                *entry = (now, 0);
+            }
+            entry.1 += 1;
+        }
+        Box::pin(async { Ok(RateWindowDecision::Allowed) })
+    }
+
+    fn give_back<'a>(
+        &'a self,
+        buckets: &'a [String],
+        taken_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        let mut windows = self.windows.lock().unwrap();
+        for bucket in buckets {
+            if let Some(entry) = windows.get_mut(bucket)
+                && entry.0 <= taken_at
+            {
+                entry.1 = entry.1.saturating_sub(1);
+            }
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn names_starting_with<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> PortFuture<'a, RepositoryResult<Vec<String>>> {
+        let prefix = prefix.to_lowercase();
+        let names = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|agent| agent.record.status != NetworkAgentStatus::Disabled)
+            .map(|agent| agent.record.display_name.to_lowercase())
+            .filter(|name| name.starts_with(&prefix))
+            .collect();
+        Box::pin(async move { Ok(names) })
     }
 
     fn record_room<'a>(
@@ -2147,7 +2209,7 @@ async fn 按名字或短名找公开大厅_忽略大小写_找不到时列出候
 }
 
 #[tokio::test]
-async fn 同名时自动加序号_不分大小写_二十个之后请换名字() {
+async fn 同名时自动加序号_不分大小写_过了二十个接着加_空出来的先用() {
     let harness = Harness::generous();
 
     assert_eq!(
@@ -2158,18 +2220,101 @@ async fn 同名时自动加序号_不分大小写_二十个之后请换名字() 
         harness.create("scout", None).await.unwrap().display_name,
         "scout 2"
     );
-    assert_eq!(
-        harness.create("SCOUT", None).await.unwrap().display_name,
-        "SCOUT 3"
-    );
-    for number in 4..=20 {
+    let third = harness.create("SCOUT", None).await.unwrap();
+    assert_eq!(third.display_name, "SCOUT 3");
+    for number in 4..=25 {
         let created = harness.create("Scout", None).await.unwrap();
         assert_eq!(created.display_name, format!("Scout {number}"));
     }
+
+    harness
+        .service
+        .disable(third.token.expose())
+        .await
+        .expect("停用");
+    assert_eq!(
+        harness.create("Scout", None).await.unwrap().display_name,
+        "Scout 3",
+        "停用以后空出来的序号先用"
+    );
+    assert_eq!(
+        harness.create("Scout", None).await.unwrap().display_name,
+        "Scout 26"
+    );
+}
+
+#[tokio::test]
+async fn 大厅满了不扣来源的名额_空出位置后照样能进() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        max_lobby_agents: 1,
+        lobby_entries_per_source_per_hour: 2,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let first = harness.create("First", None).await.unwrap();
+    for _ in 0..5 {
+        assert_eq!(
+            harness.create("Second", None).await.err(),
+            Some(NetworkAgentFailureKind::CapacityReached)
+        );
+    }
+
+    harness
+        .service
+        .disable(first.token.expose())
+        .await
+        .expect("停用成功");
+    harness
+        .create("Second", None)
+        .await
+        .expect("满着的时候没扣名额，空出位置后能进");
+}
+
+#[tokio::test]
+async fn 没建成时退回起名的名额() {
+    let harness = Harness::with_lobbies(
+        NetworkAgentPolicy {
+            lobby_entries_per_source_per_hour: 1,
+            ..NetworkAgentPolicy::default_limits(true)
+        },
+        ScriptedLobbies::scripted(vec![Err(AgentLobbyEntryFailure::NotFound)]),
+    );
+
     assert_eq!(
         harness.create("Scout", None).await.err(),
-        Some(NetworkAgentFailureKind::NameUnavailable)
+        Some(NetworkAgentFailureKind::DependencyUnavailable)
     );
+    harness
+        .create("Scout", None)
+        .await
+        .expect("上一次没建成，名额退回来了");
+    assert_eq!(
+        harness.create("Scout", None).await.err(),
+        Some(NetworkAgentFailureKind::RateLimited),
+        "建成的那次照扣"
+    );
+}
+
+#[tokio::test]
+async fn 每小时和每天两档一起扣_有一档不够就都不扣() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        lobby_entries_per_source_per_hour: 5,
+        lobby_entries_per_source_per_day: 1,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    harness.create("First", None).await.unwrap();
+    assert_eq!(
+        harness.create("Second", None).await.err(),
+        Some(NetworkAgentFailureKind::RateLimited)
+    );
+    let hourly = harness
+        .store
+        .windows
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(bucket, _)| bucket.starts_with("create:hour:"))
+        .map(|(_, (_, count))| *count);
+    assert_eq!(hourly, Some(1), "每天的不够时每小时的也不扣");
 }
 
 #[tokio::test]

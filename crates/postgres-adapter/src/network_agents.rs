@@ -6,7 +6,7 @@ use agent_room_application::{
         NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentLookup,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture,
-        RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -90,6 +90,25 @@ impl NetworkAgentStore for PostgresRepositories {
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(NetworkAgentBeginOutcome::Created)
+        })
+    }
+
+    fn names_starting_with<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> PortFuture<'a, RepositoryResult<Vec<String>>> {
+        Box::pin(async move {
+            let operation = "network_agent.names_starting_with";
+            sqlx::query_scalar(
+                r"SELECT lower(display_name)
+                    FROM agent_room.network_agent
+                   WHERE status <> 'disabled'
+                     AND starts_with(lower(display_name), lower($1))",
+            )
+            .bind(prefix)
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))
         })
     }
 
@@ -346,67 +365,45 @@ impl NetworkAgentStore for PostgresRepositories {
         policy: RateWindowPolicy,
     ) -> PortFuture<'a, RepositoryResult<RateWindowDecision>> {
         Box::pin(async move {
-            let operation = "network_agent.rate_window";
-            let window =
-                i64::try_from(policy.window.value()).map_err(|_| corrupt_data(operation))?;
-            let mut transaction = self
-                .pool()
-                .begin()
-                .await
-                .map_err(|error| map_sqlx_error(operation, &error))?;
-            // 先确保有这一行，再锁住它判断：并发的请求按顺序各记一次。
-            sqlx::query(
-                r"INSERT INTO agent_room.network_agent_rate_window
-                      (bucket, window_started_at, event_count)
-                  VALUES ($1, to_timestamp($2::double precision / 1000.0), 0)
-                  ON CONFLICT (bucket) DO NOTHING",
+            self.take_windows(
+                &[RateWindowBucket {
+                    bucket: bucket.to_owned(),
+                    policy,
+                }],
+                now,
             )
-            .bind(bucket)
-            .bind(now.value())
-            .execute(&mut *transaction)
             .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            let (started, count) = sqlx::query_as::<_, (i64, i32)>(
-                r"SELECT floor(extract(epoch FROM window_started_at) * 1000)::bigint, event_count
-                    FROM agent_room.network_agent_rate_window
-                   WHERE bucket = $1
-                   FOR UPDATE",
-            )
-            .bind(bucket)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            let ends = started.saturating_add(window);
-            let (next_started, next_count, decision) = if now.value() >= ends {
-                (now.value(), 1, RateWindowDecision::Allowed)
-            } else if u32::try_from(count).is_ok_and(|count| count < policy.limit) {
-                (
-                    started,
-                    count.saturating_add(1),
-                    RateWindowDecision::Allowed,
-                )
-            } else {
-                let retry_at =
-                    UtcMillis::new(ends).map_err(|error| map_domain_error(operation, &error))?;
-                (started, count, RateWindowDecision::Limited { retry_at })
-            };
+        })
+    }
+
+    fn take_all<'a>(
+        &'a self,
+        buckets: &'a [RateWindowBucket],
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<RateWindowDecision>> {
+        Box::pin(self.take_windows(buckets, now))
+    }
+
+    fn give_back<'a>(
+        &'a self,
+        buckets: &'a [String],
+        taken_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "network_agent.rate_window_give_back";
+            // 窗口在记的那一刻之后重新开始过（`window_started_at` 更晚）的，那一次已经不在里面了。
             sqlx::query(
                 r"UPDATE agent_room.network_agent_rate_window
-                     SET window_started_at = to_timestamp($2::double precision / 1000.0),
-                         event_count = $3
-                   WHERE bucket = $1",
+                     SET event_count = greatest(event_count - 1, 0)
+                   WHERE bucket = ANY($1)
+                     AND window_started_at <= to_timestamp($2::double precision / 1000.0)",
             )
-            .bind(bucket)
-            .bind(next_started)
-            .bind(next_count)
-            .execute(&mut *transaction)
+            .bind(buckets)
+            .bind(taken_at.value())
+            .execute(self.pool())
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
-            transaction
-                .commit()
-                .await
-                .map_err(|error| map_sqlx_error(operation, &error))?;
-            Ok(decision)
+            Ok(())
         })
     }
 
@@ -820,4 +817,113 @@ fn decode_record(row: &PgRow, operation: &'static str) -> RepositoryResult<Netwo
             .transpose()
             .map_err(|error| map_domain_error(operation, &error))?,
     })
+}
+
+impl PostgresRepositories {
+    /// 在一个事务里锁住这几个窗口（按名字排好，免得并发的请求互相等）：都没到上限才一起记，
+    /// 有一个到了就整个回滚，返回最晚的那个能再试的时间。
+    async fn take_windows(
+        &self,
+        buckets: &[RateWindowBucket],
+        now: UtcMillis,
+    ) -> RepositoryResult<RateWindowDecision> {
+        let operation = "network_agent.rate_window";
+        let mut ordered: Vec<&RateWindowBucket> = buckets.iter().collect();
+        ordered.sort_by(|left, right| left.bucket.cmp(&right.bucket));
+        let mut transaction = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+        let mut updates = Vec::with_capacity(ordered.len());
+        let mut limited: Option<UtcMillis> = None;
+        for bucket in ordered {
+            let (started, count) = lock_window(&mut transaction, &bucket.bucket, now).await?;
+            match next_window(started, count, now, bucket.policy, operation)? {
+                (next_started, next_count, RateWindowDecision::Allowed) => {
+                    updates.push((bucket.bucket.as_str(), next_started, next_count));
+                }
+                (_, _, RateWindowDecision::Limited { retry_at }) => {
+                    limited = Some(limited.map_or(retry_at, |known| known.max(retry_at)));
+                }
+            }
+        }
+        if let Some(retry_at) = limited {
+            // 一个都不记：事务丢掉就回滚了。
+            return Ok(RateWindowDecision::Limited { retry_at });
+        }
+        for (bucket, started, count) in updates {
+            sqlx::query(
+                r"UPDATE agent_room.network_agent_rate_window
+                     SET window_started_at = to_timestamp($2::double precision / 1000.0),
+                         event_count = $3
+                   WHERE bucket = $1",
+            )
+            .bind(bucket)
+            .bind(started)
+            .bind(count)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+        Ok(RateWindowDecision::Allowed)
+    }
+}
+
+/// 先确保有这一行，再锁住它读出窗口开始的时刻和已经记了几次：并发的请求按顺序各记一次。
+async fn lock_window(
+    transaction: &mut Transaction<'_, Postgres>,
+    bucket: &str,
+    now: UtcMillis,
+) -> RepositoryResult<(i64, i32)> {
+    let operation = "network_agent.rate_window";
+    sqlx::query(
+        r"INSERT INTO agent_room.network_agent_rate_window
+              (bucket, window_started_at, event_count)
+          VALUES ($1, to_timestamp($2::double precision / 1000.0), 0)
+          ON CONFLICT (bucket) DO NOTHING",
+    )
+    .bind(bucket)
+    .bind(now.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    sqlx::query_as::<_, (i64, i32)>(
+        r"SELECT floor(extract(epoch FROM window_started_at) * 1000)::bigint, event_count
+            FROM agent_room.network_agent_rate_window
+           WHERE bucket = $1
+           FOR UPDATE",
+    )
+    .bind(bucket)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))
+}
+
+/// 这一次记下以后窗口的样子：过了窗口就从现在重新开始；没到上限就加一；到了就不变，告诉什么时候能再试。
+fn next_window(
+    started: i64,
+    count: i32,
+    now: UtcMillis,
+    policy: RateWindowPolicy,
+    operation: &'static str,
+) -> RepositoryResult<(i64, i32, RateWindowDecision)> {
+    let window = i64::try_from(policy.window.value()).map_err(|_| corrupt_data(operation))?;
+    let ends = started.saturating_add(window);
+    if now.value() >= ends {
+        Ok((now.value(), 1, RateWindowDecision::Allowed))
+    } else if u32::try_from(count).is_ok_and(|count| count < policy.limit) {
+        Ok((
+            started,
+            count.saturating_add(1),
+            RateWindowDecision::Allowed,
+        ))
+    } else {
+        let retry_at = UtcMillis::new(ends).map_err(|error| map_domain_error(operation, &error))?;
+        Ok((started, count, RateWindowDecision::Limited { retry_at }))
+    }
 }

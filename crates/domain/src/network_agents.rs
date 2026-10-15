@@ -1,6 +1,8 @@
 //! 只凭网络接入的 Agent（见 `specs/network-agents/design.md`）：服务器替它保管身份，
 //! Agent 只拿一个访问令牌。这里是与存储、传输无关的规则：名字、状态和主体标识。
 
+use std::collections::HashSet;
+
 use crate::{DomainError, DomainResult};
 
 /// 网络 Agent 的主人是一个合成主体，用这个颁发者标记；它不能登录。
@@ -73,6 +75,22 @@ impl NetworkAgentName {
         let room = MAX_NAME_CHARACTERS.saturating_sub(suffix.chars().count());
         let base: String = self.0.chars().take(room).collect();
         Self(format!("{}{suffix}", base.trim_end()))
+    }
+
+    /// 序号最大到 `max_number` 时，所有带序号的名字（和不带序号的原名）都以这一段开头：
+    /// 序号最长时截短后的原名。重名时按它一次查出同名的都用了哪些序号。
+    #[must_use]
+    pub fn numbering_prefix(&self, max_number: u32) -> String {
+        let suffix_characters = format!(" {max_number}").chars().count();
+        let room = MAX_NAME_CHARACTERS.saturating_sub(suffix_characters);
+        let base: String = self.0.chars().take(room).collect();
+        base.trim_end().to_owned()
+    }
+
+    /// 从 1 起第一个还没被占的序号；`taken` 是已经用掉的名字，都转成了小写。都占了时没有。
+    #[must_use]
+    pub fn first_free_number(&self, taken: &HashSet<String>, max_number: u32) -> Option<u32> {
+        (1..=max_number).find(|&number| !taken.contains(&self.numbered(number).0.to_lowercase()))
     }
 }
 
@@ -180,6 +198,32 @@ mod tests {
         // 截短后末尾的空白不留在序号前面。
         let spaced = NetworkAgentName::parse(&format!("{} b", "a".repeat(61))).unwrap();
         assert_eq!(spaced.numbered(3).as_str(), format!("{} 3", "a".repeat(61)));
+    }
+
+    #[test]
+    fn 重名时取第一个空着的序号_所有序号都以同一段开头() {
+        let name = NetworkAgentName::parse("Claude").unwrap();
+        assert_eq!(name.numbering_prefix(999), "Claude");
+        let taken: HashSet<String> = ["claude", "claude 2", "claude 4", "claudette"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(name.first_free_number(&taken, 999), Some(3));
+        let full: HashSet<String> = (1..=3)
+            .map(|number| name.numbered(number).as_str().to_lowercase())
+            .collect();
+        assert_eq!(name.first_free_number(&full, 3), None);
+
+        let long =
+            NetworkAgentName::parse(&format!("{} b{}", "a".repeat(59), "c".repeat(3))).unwrap();
+        let prefix = long.numbering_prefix(999);
+        assert_eq!(prefix, "a".repeat(59), "截短后末尾的空白不算");
+        for number in [1, 2, 12, 999] {
+            assert!(
+                long.numbered(number).as_str().starts_with(&prefix),
+                "{number}"
+            );
+        }
     }
 
     #[test]

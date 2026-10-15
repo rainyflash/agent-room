@@ -12,7 +12,7 @@
 
 mod rooms;
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
@@ -43,8 +43,8 @@ use crate::{
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
         NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
         NetworkAgentStore, PortFuture, PrincipalAccount, PrincipalRegistration,
-        PrivateRoomAgentKnockRecord, RateWindowDecision, RateWindowPolicy, RoomDirectory,
-        RoomDirectoryQuery, SecretFactory, SecretValue,
+        PrivateRoomAgentKnockRecord, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
+        RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
@@ -67,8 +67,11 @@ const ADAPTER_TYPE: &str = "network";
 const CAPABILITY_VERSION: &str = "1.0";
 /// 合成主体的会话只活在这一次请求里：够建 Agent、登记实例、进大厅。
 const ACTOR_LIFETIME_MILLIS: u64 = 5 * 60 * 1_000;
-/// 同名时最多试到 ` 20`，再撞上就请 Agent 换个名字。
-const MAX_NAME_NUMBER: u32 = 20;
+/// 同名时序号最大到 ` 999`，都占了才请 Agent 换个名字。首发周会有很多 Agent 叫同一个名字
+/// （specs/launch-capacity/design.md 第 3 步）。
+const MAX_NAME_NUMBER: u32 = 999;
+/// 挑好的序号写入时又被别人抢先占了，最多再挑这么多次。
+const NAME_ATTEMPTS: usize = 5;
 /// 30 天没有活动的网络 Agent 自动停用，放开公开大厅的名额。
 const IDLE_LIFETIME_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
 /// 创建一个小时还没建好，说明中途断了：停用，放开名字与名额。
@@ -578,13 +581,29 @@ impl NetworkAgentService {
         }
         let name = NetworkAgentName::parse(&request.name)
             .map_err(|_| NetworkAgentFailure::new(NetworkAgentFailureKind::InvalidName))?;
-        let target = self
+        let (target, mut naming) = self
             .creation_target(request.room, &request.source_digest)
             .await?;
         if matches!(target, CreationTarget::Lobby(_)) {
-            self.admit_to_lobbies(&request.source_digest).await?;
+            naming = Some(self.admit_to_lobbies(&request.source_digest).await?);
         }
+        // 没建成就把这次占的起名名额退回去，不然连着失败几次，这个来源一小时就进不来了。
+        let created = self
+            .create_admitted(name, request.source_digest, target)
+            .await;
+        if created.is_err() {
+            self.give_back(naming).await;
+        }
+        created
+    }
 
+    /// 名额已经占好、要进的房间也核对过：生成身份、占住名字、生效并进房间。
+    async fn create_admitted(
+        &self,
+        name: NetworkAgentName,
+        source_digest: [u8; 32],
+        target: CreationTarget,
+    ) -> NetworkAgentResult<CreatedNetworkAgent> {
         let now = self.clock.now();
         let id = NetworkAgentId::from_uuid(uuid::Uuid::now_v7());
         let token = self.secrets.generate().map_err(|_| internal())?;
@@ -630,29 +649,11 @@ impl NetworkAgentService {
             device_label: DEVICE_LABEL.to_owned(),
             token_digest: self.secrets.digest(token.expose()),
             display_name: name.as_str().to_owned(),
-            source_digest: request.source_digest,
+            source_digest,
             secrets,
             created_at: now,
         };
-        let mut number = 1;
-        loop {
-            name.numbered(number)
-                .as_str()
-                .clone_into(&mut provisioning.display_name);
-            provisioning
-                .principal
-                .display_name
-                .clone_from(&provisioning.display_name);
-            match self.store.begin(&provisioning).await.map_err(repository)? {
-                NetworkAgentBeginOutcome::Created => break,
-                NetworkAgentBeginOutcome::NameTaken if number < MAX_NAME_NUMBER => number += 1,
-                NetworkAgentBeginOutcome::NameTaken => {
-                    return Err(NetworkAgentFailure::new(
-                        NetworkAgentFailureKind::NameUnavailable,
-                    ));
-                }
-            }
-        }
+        self.claim_name(&name, &mut provisioning).await?;
 
         // 从这里起失败时令牌不会交给 Agent，这条记录也就没用了：停用它，放开名字与全站名额。
         // 停用本身失败时记录留在 provisioning，仍占着名字，但不影响这次的结果。
@@ -672,6 +673,42 @@ impl NetworkAgentService {
                 Err(failure)
             }
         }
+    }
+
+    /// 先一次查出同名的都用了哪些序号，取第一个空着的写入；写的时候又被别人抢先占了，
+    /// 记下它再挑下一个。都占了就请 Agent 换个名字。
+    async fn claim_name(
+        &self,
+        name: &NetworkAgentName,
+        provisioning: &mut NetworkAgentProvisioning,
+    ) -> NetworkAgentResult<()> {
+        let mut taken: HashSet<String> = self
+            .store
+            .names_starting_with(&name.numbering_prefix(MAX_NAME_NUMBER))
+            .await
+            .map_err(repository)?
+            .into_iter()
+            .collect();
+        for _ in 0..NAME_ATTEMPTS {
+            let Some(number) = name.first_free_number(&taken, MAX_NAME_NUMBER) else {
+                break;
+            };
+            let numbered = name.numbered(number);
+            numbered.as_str().clone_into(&mut provisioning.display_name);
+            provisioning
+                .principal
+                .display_name
+                .clone_from(&provisioning.display_name);
+            match self.store.begin(provisioning).await.map_err(repository)? {
+                NetworkAgentBeginOutcome::Created => return Ok(()),
+                NetworkAgentBeginOutcome::NameTaken => {
+                    taken.insert(numbered.as_str().to_lowercase());
+                }
+            }
+        }
+        Err(NetworkAgentFailure::new(
+            NetworkAgentFailureKind::NameUnavailable,
+        ))
     }
 
     /// 以这台网络设备的身份建 Agent、登记实例、保存 Matrix 会话，生效后进大厅；
@@ -762,34 +799,37 @@ impl NetworkAgentService {
 
     /// 要进的房间先核对好：大厅要存在，口令要对（猜错计在来源上），敲门的私人房间要在使用中
     /// （敲门计在来源上）。口令是网络 Agent 建的房间的，对了还要占起名的名额。
+    /// 占了起名名额的（网络 Agent 建的房间的口令）一起交回去，没建成时退回。
     async fn creation_target(
         &self,
         room: NetworkAgentRoomRequest,
         source_digest: &[u8; 32],
-    ) -> NetworkAgentResult<CreationTarget> {
+    ) -> NetworkAgentResult<(CreationTarget, Option<NamingTicket>)> {
         match room {
             NetworkAgentRoomRequest::Lobby(room) => match self.place(room.as_deref()).await? {
-                Place::Lobby(catalog) => Ok(CreationTarget::Lobby(catalog)),
+                Place::Lobby(catalog) => Ok((CreationTarget::Lobby(catalog), None)),
                 Place::Private(catalog) => {
                     self.access
                         .knockable(catalog)
                         .await
                         .map_err(knock_failure)?;
                     self.take_knock(source_digest).await?;
-                    Ok(CreationTarget::Knock(catalog))
+                    Ok((CreationTarget::Knock(catalog), None))
                 }
             },
             NetworkAgentRoomRequest::Code(code) => {
                 let room = self.resolve_code(&code, source_digest).await?;
-                if self
+                let naming = if self
                     .store
                     .owned_by_network_agent(room.catalog_id)
                     .await
                     .map_err(repository)?
                 {
-                    self.take_naming(source_digest).await?;
-                }
-                Ok(CreationTarget::Private(code))
+                    Some(self.take_naming(source_digest).await?)
+                } else {
+                    None
+                };
+                Ok((CreationTarget::Private(code), naming))
             }
         }
     }
@@ -1484,9 +1524,9 @@ impl NetworkAgentService {
         })
     }
 
-    /// 让一个网络 Agent 进公开大厅：先占起名的名额，大厅里的网络 Agent 满了就请它过一会儿再来。
-    async fn admit_to_lobbies(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
-        self.take_naming(source).await?;
+    /// 让一个网络 Agent 进公开大厅：大厅里的网络 Agent 满了就请它过一会儿再来，没满才占起名的
+    /// 名额。满了不扣名额：一直重试“大厅满了”的来源不该一小时后连空出来的位置都进不来。
+    async fn admit_to_lobbies(&self, source: &[u8; 32]) -> NetworkAgentResult<NamingTicket> {
         let lobbies = self.public_lobby_ids().await?;
         let in_lobbies = self
             .store
@@ -1498,14 +1538,15 @@ impl NetworkAgentService {
                 NetworkAgentFailureKind::CapacityReached,
             ));
         }
-        Ok(())
+        self.take_naming(source).await
     }
 
     /// 起名的名额：同一来源每小时、每天各有上限，超过时告诉 Agent 什么时候能再试。进公开大厅和
     /// 凭网络 Agent 建的房间的口令新起网络 Agent 共用。计数的桶沿用 `create:` 这个名字（以前
-    /// 一起名就算一次）。
-    async fn take_naming(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
+    /// 一起名就算一次）。两档一起记：有一档不够就都不记。
+    async fn take_naming(&self, source: &[u8; 32]) -> NetworkAgentResult<NamingTicket> {
         let source = hex(source);
+        let mut buckets = Vec::with_capacity(2);
         for (window, limit, label) in [
             (
                 3_600_000_u64,
@@ -1518,10 +1559,36 @@ impl NetworkAgentService {
                 "day",
             ),
         ] {
-            self.take(&format!("create:{label}:{source}"), window, limit)
-                .await?;
+            buckets.push(RateWindowBucket {
+                bucket: format!("create:{label}:{source}"),
+                policy: RateWindowPolicy {
+                    window: DurationMillis::new(window).map_err(|_| internal())?,
+                    limit,
+                },
+            });
         }
-        Ok(())
+        let taken_at = self.clock.now();
+        match self
+            .store
+            .take_all(&buckets, taken_at)
+            .await
+            .map_err(repository)?
+        {
+            RateWindowDecision::Allowed => Ok(NamingTicket {
+                buckets: buckets.into_iter().map(|bucket| bucket.bucket).collect(),
+                taken_at,
+            }),
+            RateWindowDecision::Limited { retry_at } => {
+                Err(NetworkAgentFailure::rate_limited(retry_at))
+            }
+        }
+    }
+
+    /// 退回占过的起名名额。退不成只是这个来源少一次，不影响这次的结果。
+    async fn give_back(&self, naming: Option<NamingTicket>) {
+        if let Some(naming) = naming {
+            let _ignored = self.store.give_back(&naming.buckets, naming.taken_at).await;
+        }
     }
 
     async fn public_lobby_ids(&self) -> NetworkAgentResult<Vec<RoomCatalogId>> {
@@ -1755,6 +1822,12 @@ impl NetworkAgentUseCases for NetworkAgentService {
     ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentMatrixDevice>> {
         Box::pin(self.replace_matrix_device_internal(id))
     }
+}
+
+/// 占过的起名名额：在哪几个窗口里、什么时候记的。没建成时按它退回。
+struct NamingTicket {
+    buckets: Vec<String>,
+    taken_at: UtcMillis,
 }
 
 /// 读一个封存秘密的结果。

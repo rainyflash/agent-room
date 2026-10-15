@@ -162,6 +162,13 @@ pub enum RateWindowDecision {
     Limited { retry_at: UtcMillis },
 }
 
+/// 一个要记一次的固定窗口。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RateWindowBucket {
+    pub bucket: String,
+    pub policy: RateWindowPolicy,
+}
+
 /// 写入网络 Agent 时名字撞上了还没停用的同名者（不分大小写）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkAgentBeginOutcome {
@@ -174,6 +181,13 @@ pub trait NetworkAgentStore: Send + Sync {
         &self,
         provisioning: &NetworkAgentProvisioning,
     ) -> PortFuture<'_, RepositoryResult<NetworkAgentBeginOutcome>>;
+
+    /// 没停用的网络 Agent 里，名字（不分大小写）以 `prefix` 开头的，都转成小写。重名时一次查出
+    /// 哪些序号已经用了。
+    fn names_starting_with<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> PortFuture<'a, RepositoryResult<Vec<String>>>;
 
     fn activate(&self, activation: &NetworkAgentActivation)
     -> PortFuture<'_, RepositoryResult<()>>;
@@ -234,6 +248,21 @@ pub trait NetworkAgentStore: Send + Sync {
         now: UtcMillis,
         policy: RateWindowPolicy,
     ) -> PortFuture<'a, RepositoryResult<RateWindowDecision>>;
+
+    /// 几个固定窗口一起记一次：都没到上限才一起记；有一个到了就都不记，返回最晚的那个能再试的
+    /// 时间。
+    fn take_all<'a>(
+        &'a self,
+        buckets: &'a [RateWindowBucket],
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<RateWindowDecision>>;
+
+    /// 退回 `taken_at` 那一刻在这几个窗口里各记的一次；窗口在那之后重新开始过的不退。
+    fn give_back<'a>(
+        &'a self,
+        buckets: &'a [String],
+        taken_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
 
     /// 记下网络 Agent 进了哪个房间；重复记同一个房间不改最初的时间。
     fn record_room<'a>(
