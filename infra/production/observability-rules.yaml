@@ -4,7 +4,7 @@ groups:
     rules:
       - record: agent_room:api_request_rate:sum_5m
         expr: sum(rate(agent_room_api_server_requests_total[5m]))
-      # 网络 Agent 的位置满了（带 refusal 标签的 503）是我们自己挡的，不算服务出错。
+      # 网络 Agent 的位置满了、总开关关着（带 refusal 标签的 503）是我们自己挡的，不算服务出错。
       - record: agent_room:api_availability:ratio_5m
         expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5..",refusal=""}[5m])) / clamp_min(sum(rate(agent_room_api_server_requests_total[5m])), 0.000001))
       - record: agent_room:api_availability:ratio_30d

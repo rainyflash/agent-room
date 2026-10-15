@@ -359,6 +359,56 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "agent-room-prometheus" },
+      "description": "首发当天看的：此刻在等消息的网络 Agent 请求（各控制面加起来）、公开大厅在用的分片、分片里占着的位置、公开大厅里的网络 Agent。上限和处置见 docs/operations/launch-day.md。",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 29 },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum(agent_room_operational_value{metric=\"network_agents_waiting\"})",
+          "legendFormat": "network Agents waiting",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (metric) (agent_room_operational_value{metric=~\"public_lobby_.*\"})",
+          "legendFormat": "{{metric}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Launch capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "agent-room-prometheus" },
       "fieldConfig": {
         "defaults": {
           "custom": {

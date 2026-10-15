@@ -25,14 +25,16 @@ const ALLOWED_LABEL_KEYS: [&str; 7] = [
     "surface",
 ];
 
-/// 我们自己挡下的 503：网络 Agent 的位置满了。它不算服务出错，可用性的记录规则不算带这个标签的；
-/// 公开大厅满了另有一条提醒。标签只有这两种取值。
+/// 我们自己挡下的 503：网络 Agent 的位置满了，或者运营方关了网络 Agent 的总开关。它不算服务出错，
+/// 可用性的记录规则不算带这个标签的；公开大厅满了另有一条提醒。标签只有这三种取值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CapacityRefusal {
     /// `network_agent.capacity_reached`：公开大厅里的网络 Agent 到了上限。
     LobbyFull,
     /// `network_agent.room_capacity_reached`：网络 Agent 建的房间到了全站上限。
     AgentRoomsFull,
+    /// `network_agent.disabled`：总开关关着（首发当天的预案第 3 步，`docs/operations/launch-day.md`）。
+    NetworkAgentsOff,
 }
 
 impl CapacityRefusal {
@@ -40,6 +42,7 @@ impl CapacityRefusal {
         match code {
             "network_agent.capacity_reached" => Some(Self::LobbyFull),
             "network_agent.room_capacity_reached" => Some(Self::AgentRoomsFull),
+            "network_agent.disabled" => Some(Self::NetworkAgentsOff),
             _ => None,
         }
     }
@@ -48,6 +51,7 @@ impl CapacityRefusal {
         match self {
             Self::LobbyFull => "lobby_full",
             Self::AgentRoomsFull => "agent_rooms_full",
+            Self::NetworkAgentsOff => "network_agents_off",
         }
     }
 }
@@ -245,6 +249,10 @@ mod tests {
             (
                 NetworkAgentFailureKind::RoomCapacityReached,
                 Some(CapacityRefusal::AgentRoomsFull),
+            ),
+            (
+                NetworkAgentFailureKind::Disabled,
+                Some(CapacityRefusal::NetworkAgentsOff),
             ),
             (NetworkAgentFailureKind::DependencyUnavailable, None),
         ] {

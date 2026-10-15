@@ -225,4 +225,4 @@
 
 ### 第 10 步
 
-还没合并。
+#481：运行指标多了在等消息的网络 Agent 请求、公开大厅的分片数、占着的位置和大厅里的网络 Agent，仪表盘加一块 “Launch capacity”；`production.py` 多了 `control-plane-reload`（只重建控制面）和 `registration-apply`（只同步 Keycloak 的注册开关）；预案写在 `docs/operations/launch-day.md`。关注册时发信设置要一起删掉（配置不许关着注册还带 SMTP），所以忘记密码、重发验证信也一起停，手册里写明了。
