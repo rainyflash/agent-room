@@ -1569,7 +1569,7 @@ fn log_network_agent_failure(failure: &NetworkAgentFailure, correlation_id: Corr
     );
 }
 
-fn seconds_until(retry_at: agent_room_domain::time::UtcMillis) -> u64 {
+pub(crate) fn seconds_until(retry_at: agent_room_domain::time::UtcMillis) -> u64 {
     let now_millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0_i128, |duration| {

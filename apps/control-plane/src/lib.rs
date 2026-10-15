@@ -57,7 +57,7 @@ use agent_room_application::{
     },
     private_rooms::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
-        PrivateRoomService,
+        PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService, PrivateRoomService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     rooms::{
@@ -136,6 +136,7 @@ struct AgentFeatureHttpStates {
     roster: features::agent_roster::AgentRosterHttpState,
     agent_rooms: AgentRoomHttpState,
     room_people: features::room_people::RoomPeopleHttpState,
+    room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -536,6 +537,7 @@ fn compose_identity_routes(
         .merge(features::moderation::router(agents.moderation))
         .merge(features::agent_roster::router(agents.roster))
         .merge(features::room_people::router(agents.room_people))
+        .merge(features::private_room_invites::router(agents.room_invites))
         .merge(content)
 }
 
@@ -749,6 +751,7 @@ fn build_agent_feature_states(
         roster,
         agent_rooms: build_agent_room_http_state(config, dependencies),
         room_people: build_room_people_http_state(dependencies),
+        room_invites: build_room_invite_http_state(config, dependencies)?,
         agents,
         instances,
         cards,
@@ -794,6 +797,36 @@ fn build_agent_room_http_state(
         },
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
+    )
+}
+
+/// 私人房间的邀请链接（`specs/room-people/design.md`）。用链接进来时以创建人的名义邀请，走私人房间
+/// 服务；链接和 Agent 口令共用部署的封存密钥和猜错限额。
+fn build_room_invite_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<features::private_room_invites::PrivateRoomInviteHttpState, StartupError> {
+    let links = Arc::new(PrivateRoomInviteLinkService::new(
+        PrivateRoomInviteLinkDependencies {
+            rooms: dependencies.repositories.clone(),
+            links: dependencies.repositories.clone(),
+            invitations: build_private_room_service(config, dependencies)?,
+            people: dependencies.repositories.clone(),
+            secrets: dependencies.secrets.clone(),
+            sealer: Arc::new(AesGcmJoinCodeSealer::new(
+                config.network_agents.seal_key.as_ref(),
+            )),
+            clock: dependencies.system_runtime.clone(),
+            attempts: join_code_attempt_policy(),
+        },
+    ));
+    Ok(
+        features::private_room_invites::PrivateRoomInviteHttpState::new(
+            links,
+            dependencies.authentication.clone(),
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+        ),
     )
 }
 
@@ -1172,7 +1205,7 @@ fn build_private_room_service(
     })))
 }
 
-/// 口令一小时内最多猜错这么多次：本机设备按设备、网络 Agent 按来源各自计数。
+/// 口令一小时内最多猜错这么多次：本机设备按设备、网络 Agent 按来源、邀请链接按账号各自计数。
 pub(crate) const JOIN_CODE_FAILURES_PER_HOUR: u32 = 10;
 
 /// 私人房间的 Agent 口令。猜错按设备（网络 Agent 按来源）计数，窗口过后自然放开。口令用部署的
@@ -1190,12 +1223,17 @@ fn build_private_room_agent_access(
             secrets: dependencies.secrets.clone(),
             sealer: Arc::new(AesGcmJoinCodeSealer::new(seal_key)),
             clock: dependencies.system_runtime.clone(),
-            attempts: agent_room_application::ports::JoinCodeAttemptPolicy {
-                window: DurationMillis::new(60 * 60 * 1_000).expect("固定口令猜错窗口必须有效"),
-                max_failures: JOIN_CODE_FAILURES_PER_HOUR,
-            },
+            attempts: join_code_attempt_policy(),
         },
     ))
+}
+
+/// 口令和邀请链接一小时内最多猜错 [`JOIN_CODE_FAILURES_PER_HOUR`] 次，窗口过后自然放开。
+fn join_code_attempt_policy() -> agent_room_application::ports::JoinCodeAttemptPolicy {
+    agent_room_application::ports::JoinCodeAttemptPolicy {
+        window: DurationMillis::new(60 * 60 * 1_000).expect("固定口令猜错窗口必须有效"),
+        max_failures: JOIN_CODE_FAILURES_PER_HOUR,
+    }
 }
 
 /// 网页上的治理接口和到期自动解除的定时任务各用一个，读写的是同一套。
