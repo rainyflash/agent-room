@@ -102,6 +102,7 @@ def accept() -> None:
             )
             # 全部轮次跑完：重启、断线恢复、控制面重启以后，每个实例在每个房间里还是只有一张名片。
             status_cards = v.verify_status_events_written_once()
+            keycloak_events = v.verify_keycloak_user_event_metrics()
             v.run_checked([str(v.runtime_binary("agent-room")), "doctor"], environment=target.environment)
         logs = tuple(v.LOG_ROOT.glob("*.log"))
         v.verify_sanitized_logs(
@@ -149,6 +150,7 @@ def accept() -> None:
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
         "privateRoomSurvivedStoreRebuild":private["rebuiltReplyEventId"],
         "privateRoomKnockAdmitted":True, "privateRoomKnockReplyEventId":private["knockReplyEventId"],
+        "keycloakUserEventMetrics":keycloak_events,
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))
 

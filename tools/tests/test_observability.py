@@ -17,12 +17,19 @@ class ObservabilityContractTests(unittest.TestCase):
             set(DRILL_TARGETS),
             {"control-plane", "matrix", "object-store", "oidc", "federation", "bridge"},
         )
-        self.assertEqual(len(EXPECTED_ALERTS), 15)
+        self.assertEqual(len(EXPECTED_ALERTS), 17)
 
     def test_sensitive_or_high_cardinality_rule_labels_are_rejected(self) -> None:
         for label in ("user_id", "room", "message_digest", "local_path", "token_kind"):
             with self.assertRaises(ObservabilityError):
                 _validate_low_cardinality_labels(f'expr: metric{{{label}="value"}}')
+
+    def test_keycloak_event_type_label_is_allowed_but_ours_are_not(self) -> None:
+        _validate_low_cardinality_labels(
+            'expr: keycloak_user_events_total{event="send_verify_email",error=""}'
+        )
+        with self.assertRaises(ObservabilityError):
+            _validate_low_cardinality_labels('expr: metric{event_id="value"}')
 
     def test_dashboard_expression_parser_rejects_invalid_panel_shape(self) -> None:
         with self.assertRaises(ObservabilityError):

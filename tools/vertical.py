@@ -2158,6 +2158,20 @@ def verify_status_events_written_once() -> int:
     return instances
 
 
+def verify_keycloak_user_event_metrics() -> list[str]:
+    """Keycloak 按用户事件记指标（生产靠它看发了多少封信、有没有发失败）：验收里设备授权、登录都走过
+    Keycloak，`/metrics` 里要有 `keycloak_user_events_total`。交回出现过的事件名，留作证据（大小写以它为准）。"""
+    with urlopen(Request("http://127.0.0.1:19000/metrics"), timeout=10) as response:
+        text = response.read().decode("utf-8")
+    events = sorted(
+        set(re.findall(r'^keycloak_user_events_total\{[^}]*\bevent="([^"]+)"', text, re.MULTILINE))
+    )
+    if not events:
+        raise VerticalFailure("Keycloak 的 /metrics 里没有 keycloak_user_events_total，用户事件指标没打开。")
+    print(f"Keycloak 用户事件指标：{', '.join(events)}")
+    return events
+
+
 # @所有人那一轮用自己的来源地址建网络 Agent，不占别的轮次每小时 5 个的名额。
 EVERYONE_SOURCES: Final = ("198.51.100.27", "198.51.100.42")
 

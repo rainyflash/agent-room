@@ -545,6 +545,68 @@
       ],
       "title": "Restore RTO",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agent-room-prometheus"
+      },
+      "description": "Keycloak 最近 24 小时发出去的验证信和重设密码信。Resend 免费档每天 100 封，UTC 零点重置；80 封时提醒。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 29
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "agent_room:emails_sent:increase_24h",
+          "legendFormat": "emails sent",
+          "refId": "A"
+        }
+      ],
+      "title": "Emails sent, last 24h",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

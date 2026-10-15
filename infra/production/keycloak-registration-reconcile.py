@@ -297,6 +297,8 @@ def apply_web_client_policy(
         {
             "redirectUris": [redirect_url],
             "webOrigins": [frontend_origin],
+            # 登录页出错时（比如邮件发不出去）给“回到 Agent Room”。
+            "baseUrl": f"{frontend_origin}/",
             "standardFlowEnabled": True,
             "directAccessGrantsEnabled": False,
         }

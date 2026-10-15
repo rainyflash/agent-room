@@ -52,6 +52,14 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 公开大厅里的网络 Agent 到了 `networkAgents.limits.maxLobbyAgents`，持续 10 分钟有新来的被挡在外面（`refusal="lobby_full"` 的 503）。一小时没调接口的网络 Agent 会自己离开大厅、空出位置，所以短时间满一下不用管。一直满着时先看服务器撑不撑得住：Synapse 和 PostgreSQL 的 CPU、控制面的 API 延迟。还有余量就在部署配置里调高 `maxLobbyAgents`，再运行 `python3 tools/production.py control-plane-reload ...`（重新渲染、只重建控制面，见[首发当天的预案](./launch-day.md)）；已经吃紧就别调，私人房间不受这个上限影响。
 
+## AgentRoomEmailSendFailed
+
+只有 Keycloak 发邮件：注册时的验证信、“重新发送邮件”、忘记密码。发不出去时登录页会说“邮件这会儿发不出去，账户已经建好了，过几个小时点‘忘记密码？’或者‘重新发送邮件’”，再给一个“回到 Agent Room”。先看 Keycloak 日志（`docker compose ... logs identity`）里的发信错误：额度用完（Resend 免费档每天 100 封、每月 3000 封，UTC 零点重置）就只能等到零点；凭据或发件地址出错时修好再运行一次 `install`。指标是 `keycloak_user_events_total{error!=""}`，按 `event` 看是验证信还是重设密码信。
+
+## AgentRoomEmailQuotaNearlyUsed
+
+最近 24 小时已经成功发了 80 封（`agent_room:emails_sent:increase_24h`，仪表盘上的 “Emails sent, last 24h”）。正常的注册高峰就等它过去，额度用完的那几个小时，新注册的人会看到上面那句话。如果是被刷（短时间大量注册、同一来源），按首发预案临时关注册：部署配置的 `identity.registration.mode` 改成 `closed`，运行一次 `install`。
+
 ## AgentRoomDependencyUnavailable
 
 按 `dependency` 定位 PostgreSQL、Matrix、OIDC 或对象存储。确认 DNS、TLS、凭据文件权限和上游健康；不得绕过失败关闭策略。依赖恢复后验证 `/health/ready`、一次真实读取和一次真实写入。
