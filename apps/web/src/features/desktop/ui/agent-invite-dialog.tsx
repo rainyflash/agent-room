@@ -7,10 +7,12 @@ import { useOptionalAppServices } from '@/app/app-services';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import {
+  hostBaseline,
   hostSessionArrivals,
   mergeArrivals,
   rosterArrivals,
   type AgentArrival,
+  type HostBaseline,
   type PresentAgent,
 } from '../domain/agent-arrivals';
 import { localConnectionReady } from '../domain/desktop-connection';
@@ -149,19 +151,22 @@ function InviteBody({
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const local = method !== 'network';
   const { sessions, sessionsFailure, localReady, desktop } = useHostSessions(local);
-  const [hostBaseline, setHostBaseline] = useState<ReadonlySet<string> | null>(null);
-  // 第一次读到本机会话时记下已有的；之后多出来的才算刚进来的。
-  if (hostBaseline === null && sessions !== null) {
-    setHostBaseline(new Set(sessions.map((entry) => entry.session.sessionId)));
+  const [baseline, setBaseline] = useState<HostBaseline | null>(null);
+  // 第一次读到本机会话时记下已有的和它们在的房间；之后多出来的会话、或者已有的会话又进了
+  // 这个房间，才算刚进来的。
+  if (baseline === null && sessions !== null) {
+    setBaseline(hostBaseline(sessions));
   }
   const [rosterBaseline] = useState(() => new Set(presentAgents.map((agent) => agent.agentId)));
   const arrivals = mergeArrivals(
-    sessions === null || hostBaseline === null
-      ? []
-      : hostSessionArrivals(sessions, hostBaseline, room),
+    sessions === null || baseline === null ? [] : hostSessionArrivals(sessions, baseline, room),
     rosterArrivals(presentAgents, rosterBaseline),
   );
-  useParkedInvitation(local && localReady, room, sessions);
+  // 已经接入的 Agent 进了这个房间（它不接面板的人物，只用面板的房间）：到了就收回挂着的邀请。
+  const existingArrived = arrivals.some(
+    (arrival) => arrival.existing && arrival.state === 'ready' && !arrival.elsewhere,
+  );
+  useParkedInvitation(local && localReady, room, sessions, existingArrived);
   useConnectedCallback(arrivals, room, copiedAt ?? openedAt, onConnected);
 
   const chooseMethod = (next: InviteMethod) => {
@@ -269,11 +274,12 @@ function useParkedInvitation(
   active: boolean,
   room: InviteRoom,
   sessions: readonly HostSessionDiagnostics[] | null,
+  answered: boolean,
 ): void {
   const controller = useDesktopRuntimeController();
   const { offerInvitation, withdrawInvitation } = controller;
   const [sessionKey] = useState(() => uuid.next());
-  const taken = sessions?.some((entry) => entry.sessionKey === sessionKey) ?? false;
+  const taken = answered || (sessions?.some((entry) => entry.sessionKey === sessionKey) ?? false);
   const catalogId = room?.catalogId;
   const roomId = room?.roomId;
   useEffect(() => {

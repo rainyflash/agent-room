@@ -340,6 +340,40 @@ describe('接入 Agent 对话框', () => {
     expect(screen.getByRole('button', { name: 'Done' })).toBeVisible();
   }, 10_000);
 
+  it('已经接入的 Agent 进了这个房间也算到了，并收回挂着的邀请', async () => {
+    rememberMethod('mcp');
+    const existing = '0198b601-77a3-74f1-b4f4-940f291951d3';
+    let sessions: HostSessionDiagnostics[] = [
+      session(existing, 'ready', { displayName: 'Old timer', roomId: '!weekly:test', rooms: [] }),
+    ];
+    const onConnected = vi.fn();
+    const runtime = gateway({ sessions: () => ok(sessions) });
+    renderDialog(runtime.value, { onConnected });
+    await waitFor(() => {
+      expect(runtime.offerInvitation).toHaveBeenCalled();
+    });
+    const offered = runtime.offerInvitation.mock.calls[0]?.[0].sessionKey;
+    expect(screen.queryByText(/Old timer/u)).toBeNull();
+
+    // 它没接面板的人物，只用了面板的房间：会话还是原来那个，诊断里多了这个房间。
+    sessions = [
+      session(existing, 'ready', {
+        displayName: 'Old timer',
+        roomId: '!weekly:test',
+        rooms: [{ catalogId: CATALOG, roomId: room.roomId }],
+      }),
+    ];
+    expect(await screen.findByText('“Old timer” joined', {}, { timeout: 5_000 })).toBeVisible();
+    await waitFor(() => {
+      expect(onConnected).toHaveBeenCalledWith(
+        expect.objectContaining({ roomId: room.roomId, displayName: 'Old timer' }),
+      );
+    });
+    await waitFor(() => {
+      expect(runtime.withdrawInvitation).toHaveBeenCalledWith(offered);
+    });
+  }, 10_000);
+
   it('没能进来的给出错误码；进了同一个大厅另一间的说它在别处', async () => {
     rememberMethod('mcp');
     let sessions: HostSessionDiagnostics[] = [];
