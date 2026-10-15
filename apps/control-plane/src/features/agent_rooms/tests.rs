@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryResult},
     agent_room_placements::{
-        AgentRoom, AgentRoomActor, AgentRoomPlacementUseCases, LeaveAgentRoom, LeaveAllAgentRooms,
-        LeftAgentRoom, ListAgentRooms,
+        AgentRoom, AgentRoomActor, AgentRoomPlacementUseCases, BringAgentIntoRoom, BroughtAgent,
+        LeaveAgentRoom, LeaveAllAgentRooms, LeftAgentRoom, ListAgentRooms,
     },
     authentication::{
         AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -51,7 +51,10 @@ const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
 #[derive(Default)]
 struct FakePlacements {
     listed: Mutex<Vec<ListAgentRooms>>,
+    brought: Mutex<Vec<BringAgentIntoRoom>>,
     left: Mutex<Vec<LeaveAgentRoom>>,
+    /// 带进房间回答什么；没给就是进去了一个。
+    bring_outcome: Mutex<Option<BroughtAgent>>,
     failure: Mutex<Option<AgentLobbyEntryFailure>>,
 }
 
@@ -83,6 +86,21 @@ impl AgentRoomPlacementUseCases for FakePlacements {
                 Err,
             )
         })
+    }
+
+    fn bring(
+        &self,
+        request: BringAgentIntoRoom,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<BroughtAgent>> {
+        self.brought.lock().unwrap().push(request);
+        let outcome = self
+            .bring_outcome
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or(BroughtAgent::Entered(1));
+        let failure = self.failure.lock().unwrap().take();
+        Box::pin(async move { failure.map_or(Ok(outcome), Err) })
     }
 
     fn leave(
@@ -323,6 +341,89 @@ async fn 主人让它离开要可信的来源() {
 }
 
 #[tokio::test]
+async fn 主人带进房间_要可信的来源和房间编号_回进去了几个() {
+    let placements = Arc::new(FakePlacements::default());
+    let path = format!("/agents/{AGENT_UUID}/rooms");
+    let body = json!({ "catalogId": CATALOG_UUID }).to_string();
+
+    let refused = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, false, &body))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(refused).await["code"],
+        "agent_room.invalid_origin"
+    );
+
+    for invalid in [
+        String::new(),
+        json!({ "catalogId": "not-a-uuid" }).to_string(),
+        json!({ "catalogId": CATALOG_UUID, "extra": true }).to_string(),
+    ] {
+        let response = test_router(placements.clone())
+            .oneshot(web_with_body(Method::POST, &path, true, &invalid))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{invalid}");
+        assert_eq!(
+            response_json(response).await["code"],
+            "agent_room.invalid_body"
+        );
+    }
+    assert!(placements.brought.lock().unwrap().is_empty());
+
+    let response = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, true, &body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&header::HeaderValue::from_static("no-store"))
+    );
+    assert_eq!(response_json(response).await, json!({ "entered": 1 }));
+    let requests = placements.brought.lock().unwrap();
+    assert_eq!(requests[0].actor, principal());
+    assert_eq!(requests[0].agent_id, agent_id());
+    assert_eq!(requests[0].catalog_id, catalog_id());
+}
+
+#[tokio::test]
+async fn 带进房间时大厅正忙回_503_带_retry_after_带不了回_403() {
+    let placements = Arc::new(FakePlacements::default());
+    let path = format!("/agents/{AGENT_UUID}/rooms");
+    let body = json!({ "catalogId": CATALOG_UUID }).to_string();
+    let retry_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    *placements.bring_outcome.lock().unwrap() = Some(BroughtAgent::Busy {
+        retry_at: time(i64::try_from(retry_at).unwrap() + 2_500),
+    });
+    let busy = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, true, &body))
+        .await
+        .unwrap();
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let retry_after: u64 = busy.headers()[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=3).contains(&retry_after), "{retry_after}");
+    assert_eq!(response_json(busy).await["code"], "agent_room.busy");
+
+    *placements.failure.lock().unwrap() = Some(AgentLobbyEntryFailure::Unauthorized);
+    let refused = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, true, &body))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response_json(refused).await["code"], "lobby.unauthorized");
+}
+
+#[tokio::test]
 async fn 找不到_agent_回_404_编号不对回_400() {
     let placements = Arc::new(FakePlacements::default());
     *placements.failure.lock().unwrap() = Some(AgentLobbyEntryFailure::NotFound);
@@ -387,6 +488,18 @@ fn web(method: Method, path: &str, origin: bool) -> Request<Body> {
         request = request.header(header::ORIGIN, FRONTEND_ORIGIN);
     }
     request.body(Body::empty()).unwrap()
+}
+
+fn web_with_body(method: Method, path: &str, origin: bool, body: &str) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+        .header(header::CONTENT_TYPE, "application/json");
+    if origin {
+        request = request.header(header::ORIGIN, FRONTEND_ORIGIN);
+    }
+    request.body(Body::from(body.to_owned())).unwrap()
 }
 
 fn entry_path() -> String {

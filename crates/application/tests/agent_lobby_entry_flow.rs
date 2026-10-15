@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use agent_room_application::{
     agent_lobbies::{
-        AgentLobbyEntryDependencies, AgentLobbyEntryFailureKind, AgentLobbyEntryService,
-        AgentLobbyEntryUseCases, EnterAgentLobby,
+        AgentInstanceRoomEntry, AgentLobbyEntryDependencies, AgentLobbyEntryFailureKind,
+        AgentLobbyEntryService, AgentLobbyEntryUseCases, EnterAgentLobby,
     },
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
@@ -64,6 +64,13 @@ impl AgentLobbyAccessRepository for 固定访问仓储 {
         _agent_instance_id: AgentInstanceId,
     ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>> {
         let value = self.0.clone();
+        Box::pin(async move { Ok(value) })
+    }
+    fn lobby_accesses_of_agent(
+        &self,
+        _agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentLobbyAccessRecord>>> {
+        let value = self.0.clone().into_iter().collect();
         Box::pin(async move { Ok(value) })
     }
 }
@@ -380,11 +387,16 @@ impl PrivateRoomStore for 固定私人房间仓储 {
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async { unreachable!("入场不得创建私人房间") })
     }
+    /// 主人带进房间时按目录找；Agent 自己进来按 Matrix 房间找。
     fn find_by_catalog(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
-        Box::pin(async { unreachable!("入场按 Matrix 房间定位") })
+        let value = self
+            .0
+            .clone()
+            .filter(|snapshot| snapshot.catalog().id() == catalog_id);
+        Box::pin(async move { Ok(value) })
     }
     fn list_for_principal(
         &self,
@@ -852,6 +864,68 @@ async fn 不能用另一个房间的成员资格换取本房间入场() {
 
     assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::NotFound);
     assert!(matrix.邀请记录().is_empty());
+}
+
+#[tokio::test]
+async fn 主人带进私人房间_按目录找到房间_照样邀请并给发言() {
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    let snapshot = 私人房间快照(Some((operator_principal_id(), 可发言权限())));
+    let (service, _, membership) = private_request(Some(snapshot), &matrix);
+
+    service
+        .enter_instance(&access(true, device_id()), private_catalog_id())
+        .await
+        .expect("带进房间");
+
+    assert_eq!(matrix.邀请记录(), [matrix_user_id().as_str()]);
+    assert_eq!(
+        matrix.发言授予记录(),
+        [(matrix_user_id().as_str().to_owned(), true)]
+    );
+    assert_eq!(
+        *membership.joins.lock().expect("锁可用"),
+        [private_matrix_room().as_str()]
+    );
+}
+
+#[tokio::test]
+async fn 主人带进房间_连接失效或连接的账号带不了_agent_都不碰_matrix() {
+    for (active, permissions) in [(false, 可发言权限()), (true, 只读权限())] {
+        let matrix = Arc::new(记录私人Matrix::new(false));
+        let snapshot = 私人房间快照(Some((operator_principal_id(), permissions)));
+        let (service, _, membership) = private_request(Some(snapshot), &matrix);
+
+        let failure = service
+            .enter_instance(&access(active, device_id()), private_catalog_id())
+            .await
+            .expect_err("必须拒绝");
+
+        assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+        assert!(matrix.邀请记录().is_empty());
+        assert!(matrix.发言授予记录().is_empty());
+        assert!(membership.joins.lock().expect("锁可用").is_empty());
+    }
+}
+
+#[tokio::test]
+async fn 主人带进公共大厅_交给自动分配() {
+    let membership = Arc::new(记录成员能力::default());
+    let factory = Arc::new(记录成员工厂 {
+        users: Mutex::new(Vec::new()),
+        membership: membership.clone(),
+    });
+    let service = service(access(true, device_id()), factory.clone());
+
+    service
+        .enter_instance(&access(true, device_id()), catalog_id())
+        .await
+        .expect("带进大厅");
+
+    assert_eq!(*factory.users.lock().unwrap(), [matrix_user_id()]);
+    assert_eq!(
+        *membership.joins.lock().unwrap(),
+        [room().matrix_room_id().as_str()]
+    );
 }
 
 #[tokio::test]

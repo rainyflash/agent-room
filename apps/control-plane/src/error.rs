@@ -533,6 +533,21 @@ impl ApiError {
         Self::new(status, code, category, message, correlation_id)
     }
 
+    /// 主人把 Agent 带进公共大厅时，大厅正在开新的分片，或者刚选好的分片满了：过一会儿再点。
+    pub(crate) fn agent_room_busy(
+        retry_at: agent_room_domain::time::UtcMillis,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_room.busy",
+            ErrorCategory::Transient,
+            "房间正在准备，请稍后重试。",
+            correlation_id,
+        )
+        .retry_after_seconds(seconds_until(retry_at))
+    }
+
     pub(crate) fn agent_lobby(
         failure: &AgentLobbyEntryFailure,
         correlation_id: CorrelationId,
