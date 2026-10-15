@@ -16,6 +16,9 @@ struct RoomsBridge {
     created: Mutex<Vec<IpcCreateRoomRequest>>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
     actions: Mutex<Vec<IpcRoomAccessAction>>,
+    /// 看口令时说的房间（目录 ID），和开好会话以后又进的房间。
+    access_rooms: Mutex<Vec<Option<String>>>,
+    entered: Mutex<Vec<String>>,
     managed: Mutex<Vec<IpcMethod>>,
     refuse_create: Mutex<Option<&'static str>>,
     code: Mutex<IpcRoomCode>,
@@ -28,6 +31,8 @@ impl RoomsBridge {
             created: Mutex::new(Vec::new()),
             opened: Mutex::new(Vec::new()),
             actions: Mutex::new(Vec::new()),
+            access_rooms: Mutex::new(Vec::new()),
+            entered: Mutex::new(Vec::new()),
             managed: Mutex::new(Vec::new()),
             refuse_create: Mutex::new(None),
             code: Mutex::new(IpcRoomCode::Visible { code: CODE.into() }),
@@ -73,8 +78,21 @@ impl RoomsBridge {
             IpcMethod::GetSelf => Ok(IpcResponse::SelfSummary {
                 summary: self_summary(&catalog_id),
             }),
+            IpcMethod::EnterRoom(request) => {
+                self.entered
+                    .lock()
+                    .unwrap()
+                    .push(request.room.catalog_id.clone());
+                Ok(IpcResponse::RoomEntered {
+                    room: agent_room_bridge_ipc::IpcSessionRoom {
+                        catalog_id: request.room.catalog_id,
+                        room_id: BUILT_ROOM.into(),
+                    },
+                })
+            }
             IpcMethod::RoomAccess(request) => {
                 self.actions.lock().unwrap().push(request.action);
+                self.access_rooms.lock().unwrap().push(request.catalog_id);
                 let mut code = self.code.lock().unwrap();
                 match request.action {
                     IpcRoomAccessAction::Replace => {
@@ -246,7 +264,7 @@ async fn 建房后进去_结果里有口令和要转给别的_agent_的话() {
 }
 
 #[tokio::test]
-async fn 同一任务同名再建回到那间_人物不换_换名字或换任务才另建() {
+async fn 同一任务同名再建回到那间_再建一间还是这个_agent_换名字或换任务才另起() {
     let directory = tempfile::tempdir().unwrap();
     let bridge = RoomsBridge::new();
     let task = uuid::Uuid::now_v7().to_string();
@@ -280,13 +298,52 @@ async fn 同一任务同名再建回到那间_人物不换_换名字或换任务
     }
     assert_eq!(saved_profiles(root).len(), 1);
 
+    // 再建一间：还是这个 Agent，建好以后进新房间，口令看的是新房间；再说一次回到同一间。
+    for _ in 0..2 {
+        create(
+            &bridge,
+            root,
+            "test",
+            None,
+            Some(task.clone()),
+            creation("Design", None),
+        )
+        .await
+        .unwrap();
+    }
+    {
+        let created = bridge.created.lock().unwrap();
+        assert_eq!(created.len(), 4);
+        assert_ne!(created[2].catalog_id, created[0].catalog_id);
+        assert_eq!(created[3], created[2]);
+        assert_eq!(created[2].session_key, created[0].session_key);
+        assert_eq!(
+            bridge.entered.lock().unwrap().as_slice(),
+            [created[2].catalog_id.clone(), created[2].catalog_id.clone()]
+        );
+        assert_eq!(
+            bridge
+                .access_rooms
+                .lock()
+                .unwrap()
+                .last()
+                .cloned()
+                .flatten(),
+            Some(created[2].catalog_id.clone())
+        );
+    }
+    let profiles = saved_profiles(root);
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0].rooms.len(), 1);
+    assert!(profiles[0].rooms[0].created);
+    // 给了没用过的名字、或者换个任务，才另起一个 Agent。
     create(
         &bridge,
         root,
         "test",
         None,
         Some(task.clone()),
-        creation("Design", None),
+        creation("Notes", Some("Pilot")),
     )
     .await
     .unwrap();
@@ -302,10 +359,10 @@ async fn 同一任务同名再建回到那间_人物不换_换名字或换任务
     .await
     .unwrap();
     let created = bridge.created.lock().unwrap();
-    assert_eq!(created.len(), 4);
-    assert_ne!(created[2].catalog_id, created[0].catalog_id);
-    assert_ne!(created[3].catalog_id, created[0].catalog_id);
-    assert_ne!(created[3].session_key, created[0].session_key);
+    assert_eq!(created.len(), 6);
+    assert_ne!(created[4].session_key, created[0].session_key);
+    assert_ne!(created[5].catalog_id, created[0].catalog_id);
+    assert_ne!(created[5].session_key, created[0].session_key);
     assert_eq!(saved_profiles(root).len(), 3);
 }
 
@@ -363,21 +420,26 @@ async fn 没有宿主任务时失败带上_profile_id_带着它重试回到同�
     .await
     .unwrap();
     assert_eq!(saved_profiles(root).len(), 2);
-    // 这个 --profile 不是为建这间房造的。
-    assert_eq!(
-        create(
-            &bridge,
-            root,
-            "test",
-            Some(key.clone()),
-            None,
-            creation("Design", None)
-        )
-        .await
-        .unwrap_err()
-        .code,
-        "cli.profile.invitation_mismatch"
-    );
+    // 带着这个 --profile 再建一间：还是它，建好以后进去。
+    create(
+        &bridge,
+        root,
+        "test",
+        Some(key.clone()),
+        None,
+        creation("Design", None),
+    )
+    .await
+    .unwrap();
+    {
+        let created = bridge.created.lock().unwrap();
+        let design = created.last().unwrap();
+        assert_eq!(design.session_key, key);
+        assert_eq!(
+            bridge.entered.lock().unwrap().as_slice(),
+            std::slice::from_ref(&design.catalog_id)
+        );
+    }
     let missing = uuid::Uuid::now_v7().to_string();
     assert_eq!(
         create(
@@ -442,6 +504,8 @@ async fn 名字不对不存人物也不碰_bridge_旧版_bridge_说要更新() {
 fn access_args(replace_code: bool, disable_code: bool) -> AccessArgs {
     AccessArgs {
         session: Some(uuid::Uuid::now_v7().to_string()),
+        room: None,
+        catalog: None,
         replace_code,
         disable_code,
     }
@@ -493,6 +557,8 @@ async fn 看口令时有人敲门先说敲门_换口令和停用要明说() {
 fn agent_args(agent: &str) -> AgentArgs {
     AgentArgs {
         session: Some(uuid::Uuid::now_v7().to_string()),
+        room: None,
+        catalog: None,
         agent: agent.to_owned(),
     }
 }
@@ -510,6 +576,8 @@ async fn 放行拒绝邀请移出都管会话所在的房间() {
             &bridge,
             InviteArgs {
                 session: Some(uuid::Uuid::now_v7().to_string()),
+                room: None,
+                catalog: None,
                 account: format!(" {account} "),
             },
         )
@@ -549,6 +617,8 @@ async fn 放行拒绝邀请移出都管会话所在的房间() {
         &bridge,
         AgentArgs {
             session: None,
+            room: None,
+            catalog: None,
             agent: agent.into(),
         },
         true,
@@ -586,6 +656,8 @@ async fn 带_profile_管房间时用档案的会话() {
         Some(key.clone()),
         Command::Access(AccessArgs {
             session: None,
+            room: None,
+            catalog: None,
             replace_code: false,
             disable_code: false,
         }),
@@ -599,6 +671,8 @@ async fn 带_profile_管房间时用档案的会话() {
         Some(key),
         Command::Admit(AgentArgs {
             session: None,
+            room: None,
+            catalog: None,
             agent: "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b41".into(),
         }),
     )

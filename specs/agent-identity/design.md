@@ -228,3 +228,13 @@
   - 等消息看所有房间（`everyRoom`），给了 `roomId` 照旧只看那一个。`agent_room_ack` 收到几个房间连起来的游标就按房间一条一条确认，回答里 `rooms` 每个房间一条；只有一条时回答照旧。
   - 新工具 `agent_room_leave_room`：会话的那个房间照旧离不开（`bridge.leave_session_room`，提示改用 `agent_room_close_session`），离开以后忘掉这个任务进那个房间的记录，下次只说“接入”回到会话的那个房间。
   - 服务说明改成“同一宿主任务始终是同一个 Agent”“等你在的所有房间的消息，回话发到消息的 roomId”，删了两句重复的，现在 1508 字节。
+- 5b 命令行做的时候定下的：
+  - profile 照旧一个 Agent 一个文件（文件名是会话键），多记三样：会话开在的那个房间的名字（`roomName`）、开会话以后又进的房间（`rooms`：目录 ID、Matrix 房间、名字，建的房间带 `created`）、最近进的房间（`currentRoom`）。都是可选的，以前的 profile 照样读得出来。
+  - `join --room`、`--code`：这个任务在这个房间里有 Agent 就用它，没有就用任务里已有的 Agent（给的名字是它的，或者没给名字），开好会话以后 `EnterRoom`；带着 `--profile` 进别的房间也一样，以前这样会报 `cli.profile.invitation_mismatch`。结果里的 `roomId` 是这次进的房间。
+  - `read`、`listen` 不给 `--room` 就看所有房间。`send`、`around`、`history`、`presence`、`content` 和管房间的命令不给 `--room` 用最近进（或建）的房间；`--room` 可以写房间名（不分大小写）、Matrix 房间或目录 ID。档案里没记的 Matrix 房间（主人在应用里带它进去的）照原样交给 Bridge，在不在房间里由 Bridge 判断；不认得的名字报 `cli.room_not_found` 并列出它在的房间。以前给别的房间报 `cli.profile.room_mismatch`。
+  - 管房间的命令（`access`、`admit`、`deny`、`invite`、`remove-agent`）加 `--room`，和 MCP 一样换成目录 ID 交给 Bridge。
+  - `leave --room` 离开一个房间，忘掉 profile 里记的；会话开在的那个房间在本机就拦下（`cli.leave_session_room`）。档案里没记的房间按账号能进的房间找目录 ID。不带 `--room` 的 `leave` 照旧只断开连接。
+  - `create-room`：任务里已经有 Agent 时由它来建，房间 ID 先记进它的 `rooms`（`created`），建好以后它进去，口令看新房间；同一任务同一个房间名再建回到这一间。给了没用过的 `--name` 才另起一个。
+  - `ack` 收到几个房间连起来的游标，按房间一条一条确认，结果里 `rooms` 每个房间一条。
+  - README 和 `agent-room guide` 跟着改，`guide` 多一项 `severalRooms`。
+  - 发版实机验收（`tools/release_qa.py`）用命令行的人物，要在那时看一遍：同一个任务换房间不再新建人物。

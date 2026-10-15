@@ -103,7 +103,7 @@ async fn run(cli: Cli) -> CliResult<()> {
     if cli.profile.is_some()
         || matches!(
             &cli.command,
-            Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave
+            Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave { .. }
         )
     {
         return access::run(
@@ -125,7 +125,7 @@ async fn run_command(
     command: Command,
 ) -> CliResult<()> {
     match command {
-        Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave => {
+        Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave { .. } => {
             Err(CliFailure::validation("cli.profile.required"))
         }
         Command::Guide => success(access::guide()),
@@ -282,7 +282,8 @@ pub(crate) fn waiter(args: &cli::ReadArgs) -> CliResult<InboxWaiter> {
         rules,
     )
     .with_owner_lookup()
-    .from_acknowledged())
+    .from_acknowledged()
+    .every_room())
 }
 
 /// 等下一批；按 Ctrl+C 停下时返回空。

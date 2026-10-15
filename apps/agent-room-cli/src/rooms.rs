@@ -2,10 +2,10 @@
 //! 建的房间怎么进。人建的房间由人在应用里管，控制面把关。
 
 use crate::{
-    access::{connect, open_store},
+    access::{connect, enter_room, open_store},
     cli::{AccessArgs, AgentArgs, Command, InviteArgs},
     output::{CliFailure as Failure, CliResult as Result, success},
-    profile::{Invitation, Profile, ProfileStore, RoomTarget, default_display_name},
+    profile::{EnteredRoom, Invitation, Profile, ProfileStore, RoomTarget, default_display_name},
     required, scoped,
 };
 use agent_room_agent_client::{
@@ -32,7 +32,8 @@ pub(crate) struct Creation {
 }
 
 /// 建房间并进去。同一任务用同一个房间名再建就回到那间，建房的人物也不换：
-/// 控制面按房间 ID 认出是同一次建房，建房的 Agent 对不上会拒绝。
+/// 控制面按房间 ID 认出是同一次建房，建房的 Agent 对不上会拒绝。任务里已经有 Agent（给的名字
+/// 是它的，或者没给名字）就由它来建，建好以后它进新房间，会话照旧开在原来的房间。
 pub(crate) async fn create(
     backend: &dyn BridgeToolClient,
     root: &Path,
@@ -43,17 +44,17 @@ pub(crate) async fn create(
 ) -> Result<Value> {
     let room_name = creation.room.trim();
     check_creation(room_name, creation.name.as_deref())?;
-    let created = task_id
-        .as_deref()
-        .and_then(|task| ProfileStore::find_created(root, service, task, room_name));
+    let bound = |find: &dyn Fn(&str) -> Option<String>| task_id.as_deref().and_then(find);
     let key = selected
         .clone()
-        .or(created)
+        .or_else(|| bound(&|task| ProfileStore::find_created(root, service, task, room_name)))
+        .or_else(|| {
+            bound(&|task| ProfileStore::latest_bound(root, service, task, creation.name.as_deref()))
+        })
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let store = open_store(root, &key).await?;
     let mut profile = match store.load()? {
-        Some(profile) if profile.created_room.as_deref() == Some(room_name) => profile,
-        Some(_) => return Err(Failure::validation("cli.profile.invitation_mismatch")),
+        Some(profile) => profile,
         None if selected.is_some() => return Err(Failure::validation("cli.profile.not_found")),
         None => creating(
             key.clone(),
@@ -64,6 +65,15 @@ pub(crate) async fn create(
         )?,
     };
     profile.validate_binding(service, task_id.as_deref())?;
+    // 已有的 Agent 来建：房间 ID 现在就定下，和房间名一起记进档案。
+    if profile.created_room.as_deref() != Some(room_name) && profile.created(room_name).is_none() {
+        profile.remember(EnteredRoom {
+            catalog_id: uuid::Uuid::now_v7().to_string(),
+            room_id: None,
+            name: Some(room_name.to_owned()),
+            created: true,
+        });
+    }
     // 先记下再去建：结果没回来时重试，回到同一间、同一个人物。
     store.save(&profile)?;
     let entered = enter_created(backend, &store, &mut profile, room_name)
@@ -100,6 +110,7 @@ fn creating(
     let target = RoomTarget {
         catalog_id: Some(uuid::Uuid::now_v7().to_string()),
         room_id: None,
+        name: Some(room.to_owned()),
     };
     let invitation = Invitation::for_room(key, name.unwrap_or_else(default_display_name), &target);
     invitation.validate()?;
@@ -146,19 +157,24 @@ impl Entered {
 }
 
 /// 请 Bridge 建房（房间 ID 一样就是同一次），照常开会话进去，就绪了顺手看一次口令。
+/// 已有的 Agent 建的房间，开好会话以后再进。
 async fn enter_created(
     backend: &dyn BridgeToolClient,
     store: &ProfileStore,
     profile: &mut Profile,
     room: &str,
 ) -> Result<Entered> {
-    let catalog_id = profile
-        .invitation
-        .catalog_id
-        .clone()
-        .ok_or_else(|| Failure::local("cli.profile.corrupt"))?;
+    let home = profile.created_room.as_deref() == Some(room);
+    let catalog_id = if home {
+        profile.invitation.catalog_id.clone()
+    } else {
+        profile
+            .created(room)
+            .map(|created| created.catalog_id.clone())
+    }
+    .ok_or_else(|| Failure::local("cli.profile.corrupt"))?;
     let request = IpcCreateRoomRequest {
-        catalog_id,
+        catalog_id: catalog_id.clone(),
         name: room.to_owned(),
         session_key: profile.invitation.session_key.clone(),
         display_name: profile.invitation.display_name.clone(),
@@ -169,13 +185,26 @@ async fn enter_created(
         return Err(Failure::local("cli.response_invalid"));
     };
     // 记下 Matrix 房间：连上以后核对进的是这一间。
-    if profile.invitation.room_id.is_none() && room.matrix_room_id.is_some() {
+    if home && profile.invitation.room_id.is_none() && room.matrix_room_id.is_some() {
         profile.invitation.room_id.clone_from(&room.matrix_room_id);
         store.save(profile)?;
     }
     let identity = connect(backend, store, profile).await?;
     let session = required(profile.session_id.clone(), "cli.response_invalid")?;
-    let access = room_access(backend, session, IpcRoomAccessAction::Show).await;
+    let managed = if home {
+        profile.current_room = None;
+        store.save(profile)?;
+        None
+    } else {
+        let target = RoomTarget {
+            catalog_id: Some(catalog_id.clone()),
+            room_id: room.matrix_room_id.clone(),
+            name: Some(room.name.clone()),
+        };
+        enter_room(backend, store, profile, target, true).await?;
+        Some(catalog_id)
+    };
+    let access = room_access(backend, session, IpcRoomAccessAction::Show, managed).await;
     Ok(Entered {
         identity,
         room,
@@ -183,7 +212,7 @@ async fn enter_created(
     })
 }
 
-/// 管 Agent 建的房间的命令，作用在会话所在的房间上。
+/// 管 Agent 建的房间的命令，作用在 `--room` 说的房间上，没说就是最近进的那间。
 pub(crate) async fn run(backend: &dyn BridgeToolClient, command: Command) -> Result<()> {
     match command {
         Command::Access(args) => success(access(backend, args).await?),
@@ -199,8 +228,9 @@ pub(crate) async fn run(backend: &dyn BridgeToolClient, command: Command) -> Res
 /// `access`：口令、房间号、在敲门的 Agent 和要转给别的 Agent 的话。
 async fn access(backend: &dyn BridgeToolClient, args: AccessArgs) -> Result<Value> {
     let action = args.action();
+    let catalog = managed_room(args.room.as_deref(), args.catalog)?;
     let session = required(args.session, "cli.session_required")?;
-    let access = room_access(backend, session, action).await?;
+    let access = room_access(backend, session, action, catalog).await?;
     let name = room_name(backend, &access.catalog_id).await;
     let mut value = access_value(&access, name.as_deref());
     value["next"] = access_next(&access).into();
@@ -216,7 +246,7 @@ async fn answer(
     let request = IpcAnswerKnockRequest {
         agent_id: args.agent,
         admit,
-        catalog_id: None,
+        catalog_id: managed_room(args.room.as_deref(), args.catalog)?,
     };
     manage(backend, args.session, IpcMethod::AnswerKnock(request)).await
 }
@@ -225,7 +255,7 @@ async fn answer(
 async fn invite(backend: &dyn BridgeToolClient, args: InviteArgs) -> Result<IpcResponse> {
     let request = IpcInvitePersonRequest {
         account_id: args.account.trim().to_ascii_lowercase(),
-        catalog_id: None,
+        catalog_id: managed_room(args.room.as_deref(), args.catalog)?,
     };
     manage(backend, args.session, IpcMethod::InvitePerson(request)).await
 }
@@ -234,9 +264,19 @@ async fn invite(backend: &dyn BridgeToolClient, args: InviteArgs) -> Result<IpcR
 async fn remove(backend: &dyn BridgeToolClient, args: AgentArgs) -> Result<IpcResponse> {
     let request = IpcRemoveAgentRequest {
         agent_id: args.agent,
-        catalog_id: None,
+        catalog_id: managed_room(args.room.as_deref(), args.catalog)?,
     };
     manage(backend, args.session, IpcMethod::RemoveAgent(request)).await
+}
+
+/// 管哪个房间：带着档案时已经按 `--room` 换好了目录 ID；只给会话时 `--room` 要是目录 ID。
+fn managed_room(room: Option<&str>, catalog: Option<String>) -> Result<Option<String>> {
+    match (catalog, room.map(str::trim)) {
+        (Some(catalog), _) => Ok(Some(catalog)),
+        (None, None) => Ok(None),
+        (None, Some(room)) if uuid::Uuid::parse_str(room).is_ok() => Ok(Some(room.to_owned())),
+        (None, Some(_)) => Err(Failure::validation("cli.profile.required")),
+    }
 }
 
 async fn manage(
@@ -255,11 +295,9 @@ async fn room_access(
     backend: &dyn BridgeToolClient,
     session: String,
     action: IpcRoomAccessAction,
+    catalog_id: Option<String>,
 ) -> Result<IpcRoomAccess> {
-    let method = IpcMethod::RoomAccess(IpcRoomAccessRequest {
-        action,
-        catalog_id: None,
-    });
+    let method = IpcMethod::RoomAccess(IpcRoomAccessRequest { action, catalog_id });
     match room_call(backend, scoped(session, method)).await? {
         IpcResponse::RoomAccess { access } => Ok(access),
         _ => Err(Failure::local("cli.response_invalid")),
