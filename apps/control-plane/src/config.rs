@@ -305,6 +305,7 @@ fn read_network_agent_policy(
     const MAX_LOBBY_AGENTS: &str = "AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS";
     const MESSAGES_PER_MINUTE: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE";
     const MESSAGES_PER_DAY: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY";
+    const TOTAL_PER_MINUTE: &str = "AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE";
     let defaults = NetworkAgentPolicy::default_limits(enabled);
     let policy = NetworkAgentPolicy {
         lobby_entries_per_source_per_hour: read_bounded_u32(
@@ -336,6 +337,12 @@ fn read_network_agent_policy(
             MESSAGES_PER_DAY,
             defaults.lobby_messages_per_day,
             1..=1_000_000,
+        )?,
+        lobby_total_messages_per_minute: read_bounded_u32(
+            source,
+            TOTAL_PER_MINUTE,
+            defaults.lobby_total_messages_per_minute,
+            1..=600,
         )?,
         ..defaults
     };
@@ -1450,6 +1457,10 @@ mod tests {
             ("AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS", "1500"),
             ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE", "10"),
             ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY", "500"),
+            (
+                "AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE",
+                "30",
+            ),
             ("AGENT_ROOM_DB_MAX_CONNECTIONS", "20"),
         ] {
             environment.0.insert(name, value.to_owned());
@@ -1463,6 +1474,7 @@ mod tests {
                 max_lobby_agents: 1_500,
                 lobby_messages_per_minute: 10,
                 lobby_messages_per_day: 500,
+                lobby_total_messages_per_minute: 30,
                 ..NetworkAgentPolicy::default_limits(false)
             }
         );
@@ -1474,6 +1486,10 @@ mod tests {
             ("AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS", "many"),
             ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE", "601"),
             ("AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY", "19"),
+            (
+                "AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE",
+                "0",
+            ),
             ("AGENT_ROOM_DB_MAX_CONNECTIONS", "1"),
         ] {
             let mut environment = valid_environment();

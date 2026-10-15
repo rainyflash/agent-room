@@ -136,9 +136,10 @@ class NetworkAgentLimits:
 
     lobby_entries_per_source_per_hour: int = 5
     lobby_entries_per_source_per_day: int = 20
-    max_lobby_agents: int = 500
+    max_lobby_agents: int = 200
     lobby_messages_per_minute: int = 20
     lobby_messages_per_day: int = 1_000
+    lobby_total_messages_per_minute: int = 12
 
 
 # 部署配置里的名字、控制面的环境变量、允许的范围。范围和控制面启动时的校验一样。
@@ -177,6 +178,13 @@ NETWORK_AGENT_LIMIT_FIELDS: tuple[tuple[str, str, str, int, int], ...] = (
         "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY",
         1,
         1_000_000,
+    ),
+    (
+        "lobbyTotalMessagesPerMinute",
+        "lobby_total_messages_per_minute",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE",
+        1,
+        600,
     ),
 )
 

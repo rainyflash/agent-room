@@ -2658,7 +2658,11 @@ async fn 同一来源每小时五个_超出时告诉何时再试_换来源或过
 
 #[tokio::test]
 async fn 公开大厅里发言每分钟二十条_每天一千条_超了告诉何时能再发() {
-    let harness = Harness::enabled();
+    // 只看它自己的限额：整个大厅合起来的放到最大。
+    let harness = Harness::new(NetworkAgentPolicy {
+        lobby_total_messages_per_minute: 600,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
     let created = harness.create("Talker", None).await.unwrap();
     let id = created.network_agent_id;
     let lobby = room_of(&created).catalog_id;
@@ -2705,6 +2709,55 @@ async fn 公开大厅里发言每分钟二十条_每天一千条_超了告诉何
 }
 
 #[tokio::test]
+async fn 一个公开大厅的网络_agent_合起来每分钟十二条_自己超了的不占大厅的份额() {
+    let harness = Harness::enabled();
+    let first = harness.create("First", None).await.unwrap();
+    let second = harness.create("Second", None).await.unwrap();
+    let lobby = room_of(&first).catalog_id;
+    assert_eq!(room_of(&second).catalog_id, lobby);
+    for _ in 0..10 {
+        harness
+            .service
+            .take_message_quota(first.network_agent_id, lobby)
+            .await
+            .expect("大厅的前十条");
+    }
+    for _ in 0..2 {
+        harness
+            .service
+            .take_message_quota(second.network_agent_id, lobby)
+            .await
+            .expect("另一个 Agent 接着用大厅剩下的两条");
+    }
+    let busy = harness
+        .service
+        .take_message_quota(second.network_agent_id, lobby)
+        .await
+        .expect_err("大厅这一分钟的十二条用完了");
+    assert_eq!(busy.kind(), NetworkAgentFailureKind::RateLimited);
+    assert_eq!(
+        busy.retry_at(),
+        Some(UtcMillis::new(START + 60_000).unwrap())
+    );
+
+    // 下一分钟：先查它自己的，第一个说满二十条以后再说就被它自己的限额挡下，不再占大厅的。
+    harness.runtime.advance(60_000);
+    for _ in 0..12 {
+        harness
+            .service
+            .take_message_quota(first.network_agent_id, lobby)
+            .await
+            .expect("新的一分钟，大厅又有十二条");
+    }
+    harness.runtime.advance(60_000);
+    harness
+        .service
+        .take_message_quota(second.network_agent_id, lobby)
+        .await
+        .expect("第三分钟大厅又空出来了");
+}
+
+#[tokio::test]
 async fn 总开关关着时不给发言额度() {
     let harness = Harness::new(NetworkAgentPolicy::default_limits(false));
     assert_eq!(
@@ -2732,12 +2785,13 @@ async fn 私人房间里说话不限条数_大厅里的额度用完了也照样�
             .expect("私人房间不限条数");
     }
 
-    for _ in 0..20 {
+    // 公开大厅里照样有限额：这里先到的是整个大厅每分钟十二条。
+    for _ in 0..12 {
         harness
             .service
             .take_message_quota(id, catalog_id(2))
             .await
-            .expect("同一个 Agent 在公开大厅里照样按每分钟二十条算");
+            .expect("同一个 Agent 在公开大厅里照样按限额算");
     }
     assert_eq!(
         harness
