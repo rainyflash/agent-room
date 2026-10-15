@@ -13,6 +13,8 @@ const optionalAccountData = new Set([
 
 // 密钥备份里某个房间的某一把会话密钥；房间 ID 和会话 ID 都转义过，路径里没有别的斜杠。
 const roomKeyBackupSession = /^\/_matrix\/client\/v3\/room_keys\/keys\/[^/]+\/[^/]+$/u;
+// 私人房间现在的邀请链接；还没生成过时回 404 `invite_link.not_found`，“邀请人”里说还没有链接。
+const privateRoomInviteLink = /^\/private-rooms\/[0-9a-f-]{36}\/invite-link$/u;
 
 export function isExpectedHttpBoundary(status: number, rawUrl: string, method: string): boolean {
   const url = new URL(rawUrl);
@@ -40,6 +42,10 @@ export function isExpectedHttpBoundary(status: number, rawUrl: string, method: s
       method === 'GET' &&
       url.origin === matrixOrigin &&
       roomKeyBackupSession.test(url.pathname)) ||
+    (status === 404 &&
+      method === 'GET' &&
+      url.origin === apiOrigin &&
+      privateRoomInviteLink.test(url.pathname)) ||
     (status === 404 &&
       method === 'GET' &&
       url.origin === matrixOrigin &&
