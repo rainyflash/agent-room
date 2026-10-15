@@ -5,23 +5,37 @@ import { AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
-import { PublicWatchError, usePublicWatch } from '@/features/public-watch/data/public-watch-query';
+import {
+  PublicWatchError,
+  usePublicWatch,
+  usePublicWatchShards,
+} from '@/features/public-watch/data/public-watch-query';
 import {
   defaultWatchSlug,
   isFinalWatchFailure,
   type PublicWatchFailure,
+  type PublicWatchShards,
 } from '@/features/public-watch/domain/public-watch';
 import { EntryCard, EntryShell } from '@/shared/ui/entry-shell';
-import { PublicWatchView, type WatchAccount } from './public-watch-view';
+import { PublicWatchView, type WatchAccount, type WatchShardChoice } from './public-watch-view';
 
 /**
  * `/watch` 和 `/watch/<slug>`：不登录也能看公共大厅。这页和首页一样不在登录会话里，没登录的人
- * 打开它不会去清理登录状态；登录了没有自己问一下服务器。
+ * 打开它不会去清理登录状态；登录了没有自己问一下服务器。大厅人多分成几间时，`?shard=` 看第几间。
  */
-export function PublicWatchPage({ slug }: { readonly slug: string | null }) {
+export function PublicWatchPage({
+  slug,
+  shard,
+  onSelectShard,
+}: {
+  readonly slug: string | null;
+  readonly shard: number | null;
+  readonly onSelectShard: (shard: number | null) => void;
+}) {
   const { t } = useTranslation();
   const { config, controlPlane, publicWatch } = useAppServices();
-  const query = usePublicWatch(publicWatch, slug ?? defaultWatchSlug);
+  const query = usePublicWatch(publicWatch, slug ?? defaultWatchSlug, shard);
+  const shards = usePublicWatchShards(publicWatch, slug ?? defaultWatchSlug);
   const session = useQuery({
     networkMode: 'always',
     queryFn: async () => await controlPlane.readSession(),
@@ -42,6 +56,9 @@ export function PublicWatchPage({ slug }: { readonly slug: string | null }) {
           failure={failure}
           onRetry={() => {
             void query.refetch();
+          }}
+          onWatchBusiest={() => {
+            onSelectShard(null);
           }}
           slug={slug}
         />
@@ -75,17 +92,30 @@ export function PublicWatchPage({ slug }: { readonly slug: string | null }) {
             },
           }
         : { kind: 'unknown' };
+  const shardChoice = watchShardChoice(shards.data, shard);
   return (
     <>
       {noindex}
       <PublicWatchView
         account={account}
         defaultLobby={slug === null}
+        onSelectShard={onSelectShard}
+        shards={shardChoice}
         stale={failure !== null}
         watch={query.data}
       />
     </>
   );
+}
+
+/** 只分成一间（或者还没问到）时不给切换。 */
+function watchShardChoice(
+  shards: PublicWatchShards | undefined,
+  shard: number | null,
+): WatchShardChoice | null {
+  if (shards === undefined || shards.shards.length < 2) return null;
+  const current = shard ?? shards.busiest;
+  return current === null ? null : { current, shards: shards.shards };
 }
 
 function watchFailure(error: Error | null): PublicWatchFailure | null {
@@ -98,10 +128,12 @@ function watchFailure(error: Error | null): PublicWatchFailure | null {
 function WatchFailureCard({
   failure,
   onRetry,
+  onWatchBusiest,
   slug,
 }: {
   readonly failure: PublicWatchFailure;
   readonly onRetry: () => void;
+  readonly onWatchBusiest: () => void;
   readonly slug: string | null;
 }) {
   const { t } = useTranslation();
@@ -129,6 +161,31 @@ function WatchFailureCard({
           details={details}
           icon={<AlertTriangle />}
           title={t('publicWatch.disabled.title')}
+          tone="alert"
+        />
+      </EntryShell>
+    );
+  }
+  if (failure.code === 'public_watch.shard_not_found') {
+    return (
+      <EntryShell>
+        <EntryCard
+          actions={
+            <>
+              <button
+                className="ar-button ar-button--large ar-button--primary"
+                onClick={onWatchBusiest}
+                type="button"
+              >
+                {t('publicWatch.shardNotFound.action')}
+              </button>
+              {home}
+            </>
+          }
+          detail={t('publicWatch.shardNotFound.detail')}
+          details={details}
+          icon={<AlertTriangle />}
+          title={t('publicWatch.shardNotFound.title')}
           tone="alert"
         />
       </EntryShell>

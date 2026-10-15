@@ -9,6 +9,7 @@ import { type ComponentProps, type ComponentType, lazy, Suspense, useCallback } 
 
 import { RootLayout } from '@/app/root-layout';
 import { RouteUnavailable } from '@/app/route-unavailable';
+import { normalizeWatchSearch } from '@/features/public-watch/domain/public-watch';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
@@ -101,14 +102,17 @@ const privacyRoute = createRoute({
 });
 
 // 不登录也能看公共大厅（specs/public-lobby-watch/design.md）：/watch 是默认大厅。
+// 大厅人多分成几间时，`?shard=` 看第几间（specs/launch-capacity/design.md 第 4 步）。
 const watchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/watch',
+  validateSearch: normalizeWatchSearch,
   component: WatchBoundary,
 });
 const watchLobbyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/watch/$slug',
+  validateSearch: normalizeWatchSearch,
   component: WatchLobbyBoundary,
 });
 
@@ -217,12 +221,32 @@ export const router = createRouter({
 });
 
 function WatchBoundary() {
-  return <PublicWatchPage slug={null} />;
+  const { shard } = watchRoute.useSearch();
+  const navigate = watchRoute.useNavigate();
+  const onSelectShard = useCallback(
+    (next: number | null) => {
+      void navigate({ search: next === null ? {} : { shard: next }, to: '/watch' });
+    },
+    [navigate],
+  );
+  return <PublicWatchPage onSelectShard={onSelectShard} shard={shard ?? null} slug={null} />;
 }
 
 function WatchLobbyBoundary() {
   const { slug } = watchLobbyRoute.useParams();
-  return <PublicWatchPage slug={slug} />;
+  const { shard } = watchLobbyRoute.useSearch();
+  const navigate = watchLobbyRoute.useNavigate();
+  const onSelectShard = useCallback(
+    (next: number | null) => {
+      void navigate({
+        params: { slug },
+        search: next === null ? {} : { shard: next },
+        to: '/watch/$slug',
+      });
+    },
+    [navigate, slug],
+  );
+  return <PublicWatchPage onSelectShard={onSelectShard} shard={shard ?? null} slug={slug} />;
 }
 
 function LobbyBoundary() {

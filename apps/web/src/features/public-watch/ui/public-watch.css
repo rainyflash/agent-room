@@ -36,6 +36,35 @@
   white-space: nowrap;
 }
 
+/*
+ * 大厅人多分成几间时，大厅名字上面那一行（“你在看 · 公共大厅”）换成选看哪一间。
+ * 放在名字这一块里，手机上不和右边的按钮抢地方。
+ */
+.public-watch__shard {
+  display: block;
+  max-width: 100%;
+  height: 26px;
+  margin-bottom: 2px;
+  padding: 0 4px 0 8px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 9px;
+  background: var(--ar-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.public-watch__shard option {
+  color: var(--color-ink);
+  background: var(--color-paper);
+}
+.public-watch__shard:focus-visible {
+  outline: 3px solid var(--ar-accent);
+  outline-offset: 2px;
+}
+
 /* 对话面板：标题、只读的对话、底部一行说明和“进去说话”。 */
 .public-watch__panel-title {
   margin: 0;

@@ -303,6 +303,120 @@ test('服务器没开放围观时不重试；暂时看不了时可以再试', as
   expect(unexpected(failures)).toEqual([]);
 });
 
+test('围观页：大厅分成几间时顶栏能选看哪一间，手机上也放得下', async ({ page }, testInfo) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 920, width: 1_440 });
+  await page.goto(`${fixturePath}?shards`);
+
+  const choose = page.getByRole('combobox', { name: 'Which part to watch' });
+  await expect(choose).toHaveValue('2');
+  await expect(choose.getByRole('option')).toHaveText([
+    'Lobby 1 · 1 agent',
+    'Lobby 2 · 180 agents',
+    'Lobby 3 · 64 agents',
+  ]);
+  await choose.selectOption('3');
+  await expect(page.locator('body')).toHaveAttribute('data-fixture-shard', '3');
+  await expectAccessible(page);
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('public-watch-shards-desktop.png'),
+  });
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  await expect(choose).toBeVisible();
+  await expectTitleClearOfActions(page);
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('public-watch-shards-mobile.png'),
+  });
+  expect(failures).toEqual([]);
+});
+
+test.describe('shards-zh', () => {
+  test.use({ locale: 'zh-CN' });
+
+  test('围观页：中文的分间说法，320px 也不横向溢出', async ({ page }, testInfo) => {
+    await page.setViewportSize({ height: 700, width: 320 });
+    await page.goto(`${fixturePath}?shards`);
+
+    const choose = page.getByRole('combobox', { name: '看哪一间' });
+    await expect(choose.getByRole('option')).toHaveText([
+      '大厅 1 · 1 个 Agent',
+      '大厅 2 · 180 个 Agent',
+      '大厅 3 · 64 个 Agent',
+    ]);
+    await expectTitleClearOfActions(page);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath('public-watch-shards-mobile-zh.png'),
+    });
+  });
+});
+
+test('选了另一间，地址和请求都带上第几间；没有这一间时说清楚，可以回到最热闹的那间', async ({
+  baseURL,
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  const server = await mockServer(
+    page,
+    baseURL,
+    { default: [{ status: 200, body: snapshot(['m1']) }] },
+    null,
+    {
+      default: {
+        shards: [
+          { number: 1, agents: 40 },
+          { number: 2, agents: 120 },
+        ],
+        busiest: 2,
+      },
+    },
+  );
+  await page.goto('/watch');
+
+  const choose = page.getByRole('combobox', { name: 'Which part to watch' });
+  await expect(choose).toHaveValue('2');
+  await choose.selectOption('1');
+  await expect(page).toHaveURL(/\/watch\?shard=1$/u);
+  await expect(choose).toHaveValue('1');
+  await expect.poll(() => server.watchShards.at(-1)).toBe('1');
+  expect(server.watchShards[0]).toBeNull();
+
+  await server.answer('default', [
+    { status: 404, body: problem('public_watch.shard_not_found', false) },
+  ]);
+  await page.goto('/watch?shard=9');
+  await expect(
+    page.getByRole('heading', { name: 'This part of the lobby doesn’t exist' }),
+  ).toBeVisible();
+  await server.answer('default', [{ status: 200, body: snapshot(['m1']) }]);
+  await page.getByRole('button', { name: 'Watch the busiest part' }).click();
+  await expect(page).toHaveURL(/\/watch$/u);
+  await expect(page.getByRole('heading', { level: 1, name: 'Agent Room Global' })).toBeVisible();
+  expect(server.unexpected).toEqual([]);
+  expect(unexpected(failures)).toEqual([]);
+});
+
+/** 顶栏里大厅名字和选哪一间都露得出来，不被右边的按钮压住。 */
+async function expectTitleClearOfActions(page: Page): Promise<void> {
+  const actions = await page.locator('.public-watch__account').boundingBox();
+  for (const part of [
+    page.getByRole('heading', { level: 1 }),
+    page.locator('.public-watch__shard'),
+  ]) {
+    const box = await part.boundingBox();
+    expect(box).not.toBeNull();
+    expect(actions).not.toBeNull();
+    if (box === null || actions === null) return;
+    expect(box.width).toBeGreaterThan(48);
+    expect(box.x + box.width).toBeLessThanOrEqual(actions.x);
+  }
+}
+
 async function expectAccessible(page: Page): Promise<void> {
   const scan = await new AxeBuilder({ page }).withTags([...wcagTags]).analyze();
   expect(
@@ -360,8 +474,12 @@ function problem(code: string, retryable: boolean) {
   };
 }
 
+/** 只有一间的大厅：围观页不给切换。 */
+const singleShard = { shards: [{ number: 1, agents: 2 }], busiest: 1 };
+
 /**
  * 假的控制面：没登录时 `/auth/session` 回 401；每个大厅按顺序回给定的答案，最后一个一直重复。
+ * 分成几间按 `shards` 回，没给的只有一间；`watchShards` 记下每次看的是第几间（没指明是 null）。
  * 别的请求都记进 `unexpected`：围观页不该去碰要登录的接口。
  */
 async function mockServer(
@@ -369,6 +487,7 @@ async function mockServer(
   baseURL: string | undefined,
   lobbies: Record<string, readonly WatchAnswer[]>,
   session: object | null = null,
+  shards: Record<string, object> = {},
 ) {
   if (baseURL === undefined) throw new Error('Missing browser base URL');
   const headers = {
@@ -378,6 +497,7 @@ async function mockServer(
   };
   const answers = new Map(Object.entries(lobbies));
   const watchCalls = new Map<string, number>();
+  const watchShards: (string | null)[] = [];
   const unexpectedRequests: string[] = [];
   await page.route(`${apiOrigin}/**`, async (route) => {
     const url = new URL(route.request().url());
@@ -386,10 +506,16 @@ async function mockServer(
       const slug = watch[1];
       const calls = watchCalls.get(slug) ?? 0;
       watchCalls.set(slug, calls + 1);
+      watchShards.push(url.searchParams.get('shard'));
       const queue = answers.get(slug) ?? [];
       const answer = queue[Math.min(calls, queue.length - 1)];
       if (answer === undefined) throw new Error(`没有给 ${slug} 准备回答`);
       await route.fulfill({ headers, json: answer.body, status: answer.status });
+      return;
+    }
+    const shardList = /^\/public-lobbies\/([^/]+)\/shards$/u.exec(url.pathname);
+    if (shardList?.[1] !== undefined) {
+      await route.fulfill({ headers, json: shards[shardList[1]] ?? singleShard, status: 200 });
       return;
     }
     if (url.pathname === '/auth/session') {
@@ -420,6 +546,7 @@ async function mockServer(
   return {
     unexpected: unexpectedRequests,
     watchCalls,
+    watchShards,
     /** 换掉一个大厅接下来的回答，从头数起。 */
     answer: (slug: string, queue: readonly WatchAnswer[]) => {
       answers.set(slug, queue);

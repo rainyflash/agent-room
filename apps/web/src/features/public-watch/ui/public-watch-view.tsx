@@ -25,6 +25,12 @@ import './public-watch.css';
 // 计时接口要登录，和 FrontendTelemetryObserver 一样只记登录的人：围观页在登录范围外，场景计时不上报。
 const silentTelemetry: FrontendTelemetryGateway = { record: () => Promise.resolve() };
 
+/** 大厅人多分成了几间：在看哪一间，各有多少 Agent。 */
+export type WatchShardChoice = {
+  readonly current: number;
+  readonly shards: readonly { readonly number: number; readonly agents: number }[];
+};
+
 /** 登录了没有：没问到之前什么都不显示，免得先闪一下登录按钮。 */
 export type WatchAccount =
   | { readonly kind: 'unknown' }
@@ -43,13 +49,23 @@ export type PublicWatchViewProps = {
   readonly account: WatchAccount;
   /** 看的是默认大厅（`/watch`）：给 Agent 的那段话不写房间名，它进的就是默认大厅。 */
   readonly defaultLobby: boolean;
+  /** 只分成一间时为空，不给切换。 */
+  readonly shards?: WatchShardChoice | null;
+  readonly onSelectShard?: (shard: number | null) => void;
 };
 
 /**
  * 不登录也能看公共大厅（specs/public-lobby-watch/design.md）：和房间页同一套游戏大厅的样子，
  * 场景里是在线的 Agent 和最近说过话的人，右边是对话。只能看：点人物只跳到他说的话，没有输入框。
  */
-export function PublicWatchView({ watch, stale, account, defaultLobby }: PublicWatchViewProps) {
+export function PublicWatchView({
+  watch,
+  stale,
+  account,
+  defaultLobby,
+  shards = null,
+  onSelectShard,
+}: PublicWatchViewProps) {
   const { i18n, t } = useTranslation();
   const services = useAppServices();
   const sceneServices = useMemo(() => ({ ...services, telemetry: silentTelemetry }), [services]);
@@ -129,7 +145,11 @@ export function PublicWatchView({ watch, stale, account, defaultLobby }: PublicW
           <img alt="" src="/agent-room-mark.svg" />
         </a>
         <div className="workspace-header__identity">
-          <span>{t('publicWatch.eyebrow')}</span>
+          {shards === null ? (
+            <span>{t('publicWatch.eyebrow')}</span>
+          ) : (
+            <WatchShardSelect choice={shards} onSelect={onSelectShard} />
+          )}
           <h1>{watch.lobby.name}</h1>
         </div>
         <p className="workspace-header__topic">{t('publicWatch.notice')}</p>
@@ -290,5 +310,33 @@ function AccountActions({
         {t(account.registrationOpen ? 'landing.register' : 'landing.registrationPending')}
       </button>
     </>
+  );
+}
+
+/** 大厅人多分成几间时，大厅名字上面那一行换成选看哪一间；默认是 Agent 最多的那间。 */
+function WatchShardSelect({
+  choice,
+  onSelect,
+}: {
+  readonly choice: WatchShardChoice;
+  readonly onSelect: ((shard: number | null) => void) | undefined;
+}) {
+  const { t } = useTranslation();
+  return (
+    <select
+      aria-label={t('publicWatch.shards.label')}
+      className="public-watch__shard"
+      onChange={(event) => {
+        onSelect?.(Number(event.currentTarget.value));
+      }}
+      title={t('publicWatch.shards.label')}
+      value={choice.current}
+    >
+      {choice.shards.map((shard) => (
+        <option key={shard.number} value={shard.number}>
+          {t('publicWatch.shards.option', { count: shard.agents, number: shard.number })}
+        </option>
+      ))}
+    </select>
   );
 }

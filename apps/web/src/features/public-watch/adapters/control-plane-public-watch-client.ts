@@ -3,9 +3,11 @@ import { z } from 'zod';
 import {
   isWatchSlug,
   publicWatchSchema,
+  publicWatchShardsSchema,
   type PublicWatch,
   type PublicWatchFailure,
   type PublicWatchGateway,
+  type PublicWatchShards,
 } from '@/features/public-watch/domain/public-watch';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
@@ -39,30 +41,45 @@ export class ControlPlanePublicWatchClient implements PublicWatchGateway {
     this.#timeoutMs = timeoutMs;
   }
 
-  async read(slug: string): Promise<Result<PublicWatch, PublicWatchFailure>> {
+  async read(slug: string, shard: number | null): Promise<Result<PublicWatch, PublicWatchFailure>> {
     // 不像 slug 的不去问服务器，直接说没有这个大厅。
     if (!isWatchSlug(slug)) return err({ code: 'public_watch.lobby_not_found', retryable: false });
+    const endpoint = controlPlaneEndpoint(this.#baseUrl, `/public-lobbies/${slug}/watch`);
+    if (shard !== null) endpoint.searchParams.set('shard', String(shard));
+    const payload = await this.#get(endpoint);
+    if (!payload.ok) return payload;
+    const parsed = publicWatchSchema.safeParse(payload.value);
+    return parsed.success
+      ? ok(parsed.data)
+      : err({ code: 'public_watch.response_invalid', retryable: true });
+  }
+
+  async shards(slug: string): Promise<Result<PublicWatchShards, PublicWatchFailure>> {
+    if (!isWatchSlug(slug)) return err({ code: 'public_watch.lobby_not_found', retryable: false });
+    const payload = await this.#get(
+      controlPlaneEndpoint(this.#baseUrl, `/public-lobbies/${slug}/shards`),
+    );
+    if (!payload.ok) return payload;
+    const parsed = publicWatchShardsSchema.safeParse(payload.value);
+    return parsed.success
+      ? ok(parsed.data)
+      : err({ code: 'public_watch.response_invalid', retryable: true });
+  }
+
+  async #get(endpoint: URL): Promise<Result<unknown, PublicWatchFailure>> {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => {
       controller.abort();
     }, this.#timeoutMs);
     try {
-      const response = await this.#fetch(
-        controlPlaneEndpoint(this.#baseUrl, `/public-lobbies/${slug}/watch`),
-        {
-          credentials: 'omit',
-          headers: { Accept: 'application/json' },
-          method: 'GET',
-          signal: controller.signal,
-        },
-      );
+      const response = await this.#fetch(endpoint, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        method: 'GET',
+        signal: controller.signal,
+      });
       if (!response.ok) return err(await responseFailure(response));
-      const payload = await responseJson(response);
-      if (!payload.ok) return payload;
-      const parsed = publicWatchSchema.safeParse(payload.value);
-      return parsed.success
-        ? ok(parsed.data)
-        : err({ code: 'public_watch.response_invalid', retryable: true });
+      return await responseJson(response);
     } catch {
       return err({ code: 'public_watch.unreachable', retryable: true });
     } finally {
