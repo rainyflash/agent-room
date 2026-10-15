@@ -10,13 +10,13 @@ use agent_room_application::{
         MatrixTransactionId, NetworkAgentAckOutcome, NetworkAgentActivation,
         NetworkAgentBeforeJoinGap, NetworkAgentBeginOutcome, NetworkAgentGapReason,
         NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
-        NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-        NetworkAgentInboxMessage, NetworkAgentInboxPage, NetworkAgentInboxStore,
-        NetworkAgentLookup, NetworkAgentMessageActor, NetworkAgentMessageHistory,
-        NetworkAgentMessageRef, NetworkAgentMessageRetention, NetworkAgentProvisioning,
-        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
-        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
-        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentIdleLobby, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+        NetworkAgentInboxChange, NetworkAgentInboxMessage, NetworkAgentInboxPage,
+        NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentMessageActor,
+        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
+        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
         PrivateRoomSnapshot, PrivateRoomStore, RateWindowBucket, RateWindowDecision,
@@ -1733,6 +1733,152 @@ async fn 记下离开房间时放回它占着的房间位置_别人的不动() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 闲置的请出公开大厅时放回这个分片的位置_私人房间不动_回来时删掉那一笔() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let hour = i64::try_from(HOUR).expect("一小时");
+    let idle = activated(&database, &repositories, "Lobby Idle").await;
+    let busy = activated(&database, &repositories, "Lobby Busy").await;
+    let (lobby, instance, room_id) = seed_lobby(&database.migration).await;
+    let private = seed_private_room(&repositories, idle.owner).await;
+    let away_slot = reserve(&repositories, &idle, lobby, instance, true).await;
+    let kept = reserve(&repositories, &busy, lobby, instance, true).await;
+    let lobby_room = room_record(lobby, &room_id, time(1));
+    let private_room = room_record(
+        private,
+        &format!("!den-{}:matrix.test", Uuid::now_v7().simple()),
+        time(1),
+    );
+    for (agent, room) in [
+        (&idle, &lobby_room),
+        (&idle, &private_room),
+        (&busy, &lobby_room),
+    ] {
+        repositories
+            .record_room(agent.id, room)
+            .await
+            .expect("记下进的房间");
+    }
+    repositories
+        .record_activity(busy.id, time(2 * hour))
+        .await
+        .expect("记活动");
+
+    // 别的测试也在库里留了很久没动静的网络 Agent，只看这两个。
+    let ours = |found: Vec<NetworkAgentIdleLobby>| -> Vec<(NetworkAgentId, String)> {
+        found
+            .into_iter()
+            .filter(|lobby| [idle.id, busy.id].contains(&lobby.id))
+            .map(|lobby| (lobby.id, lobby.room.matrix_room_id.as_str().to_owned()))
+            .collect()
+    };
+    let idle_lobbies = repositories
+        .idle_in_lobbies(time(hour), 10_000)
+        .await
+        .expect("找闲置的");
+    assert_eq!(
+        ours(idle_lobbies),
+        [(idle.id, room_id.clone())],
+        "只有公开大厅，没动静的才算"
+    );
+
+    repositories
+        .mark_lobby_away(idle.id, &lobby_room, time(2 * hour))
+        .await
+        .expect("记下请出");
+    assert_eq!(
+        reservation_state(&database.runtime, away_slot).await,
+        "released"
+    );
+    assert_eq!(
+        reservation_state(&database.runtime, kept).await,
+        "committed"
+    );
+    assert_eq!(allocated_slots(&database.runtime, instance).await, 1);
+    assert_eq!(repositories.count_live_in(&[lobby]).await.expect("数人"), 1);
+    let rooms = repositories.rooms(idle.id).await.expect("进过的房间");
+    assert_eq!(rooms.len(), 1);
+    assert_eq!(rooms[0].catalog_id, private, "私人房间不动");
+    let away = repositories.lobbies_away(idle.id).await.expect("请出的");
+    assert_eq!(away.len(), 1);
+    assert_eq!(away[0].catalog_id, lobby);
+    assert_eq!(away[0].matrix_room_id.as_str(), room_id);
+    assert_eq!(away[0].left_at, time(2 * hour));
+
+    repositories
+        .mark_lobby_away(idle.id, &lobby_room, time(3 * hour))
+        .await
+        .expect("再记一次");
+    assert_eq!(
+        allocated_slots(&database.runtime, instance).await,
+        1,
+        "记过的不再减"
+    );
+    assert_eq!(
+        repositories.lobbies_away(idle.id).await.expect("请出的")[0].left_at,
+        time(2 * hour)
+    );
+
+    repositories
+        .record_room(idle.id, &lobby_room)
+        .await
+        .expect("回到大厅");
+    assert!(
+        repositories
+            .lobbies_away(idle.id)
+            .await
+            .expect("请出的")
+            .is_empty()
+    );
+    assert_eq!(
+        repositories.rooms(idle.id).await.expect("进过的房间").len(),
+        2
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 停用后记下离开房间时_请出的公开大厅也不再记着() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let idle = activated(&database, &repositories, "Away Leaver").await;
+    let (lobby, _, room_id) = seed_lobby(&database.migration).await;
+    let lobby_room = room_record(lobby, &room_id, time(1));
+    repositories
+        .record_room(idle.id, &lobby_room)
+        .await
+        .expect("进大厅");
+    repositories
+        .mark_lobby_away(idle.id, &lobby_room, time(10))
+        .await
+        .expect("记下请出");
+    assert_eq!(
+        repositories
+            .lobbies_away(idle.id)
+            .await
+            .expect("请出的")
+            .len(),
+        1
+    );
+
+    repositories.disable(idle.id, time(20)).await.expect("停用");
+    repositories
+        .mark_rooms_left(idle.id, time(30))
+        .await
+        .expect("记下已离开");
+    assert!(
+        repositories
+            .lobbies_away(idle.id)
+            .await
+            .expect("请出的")
+            .is_empty()
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 迁移放回停用的网络_agent_以前没放回的位置_还在用的不动() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -2148,6 +2294,40 @@ async fn reserve(
         .expect("确认");
     }
     reservation.id()
+}
+
+/// 只给这个测试用的公开大厅和它的一个分片：返回目录、分片和分片的 Matrix 房间。
+async fn seed_lobby(pool: &PgPool) -> (RoomCatalogId, RoomInstanceId, String) {
+    let catalog = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let instance = RoomInstanceId::from_uuid(Uuid::now_v7());
+    let suffix = Uuid::now_v7().simple().to_string();
+    let room_id = format!("!shard-{suffix}:matrix.test");
+    sqlx::query(
+        r"INSERT INTO agent_room.room_catalog_entry (
+              id, kind, slug, name, language, visibility, status, created_at, updated_at
+          ) VALUES (
+              $1, 'public_lobby', $2, '测试大厅', 'zh-CN', 'public', 'active',
+              to_timestamp(1700000000), to_timestamp(1700000000)
+          )",
+    )
+    .bind(catalog.as_uuid())
+    .bind(format!("lobby-{}", &suffix[8..32]))
+    .execute(pool)
+    .await
+    .expect("建测试大厅");
+    sqlx::query(
+        r"INSERT INTO agent_room.room_instance (
+              id, catalog_entry_id, matrix_room_id, soft_capacity, hard_capacity, state,
+              created_at, updated_at
+          ) VALUES ($1, $2, $3, 180, 250, 'active', to_timestamp(1700000000), to_timestamp(1700000000))",
+    )
+    .bind(instance.as_uuid())
+    .bind(catalog.as_uuid())
+    .bind(&room_id)
+    .execute(pool)
+    .await
+    .expect("建大厅的分片");
+    (catalog, instance, room_id)
 }
 
 async fn room_instance_of(pool: &PgPool, catalog: RoomCatalogId) -> RoomInstanceId {

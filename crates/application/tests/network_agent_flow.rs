@@ -23,15 +23,15 @@ use agent_room_application::{
     ports::{
         AgentInstanceManagementRecord, Clock, GeneratedSigningKey, IdentifierFactory,
         MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId, NetworkAgentActivation,
-        NetworkAgentBeginOutcome, NetworkAgentKeyFactory, NetworkAgentPause,
-        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff,
-        NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
-        PublicLobbyObservationRoom, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
-        RegisteredAgent, RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest,
-        SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
-        StoredAgentInstanceRegistration,
+        NetworkAgentBeginOutcome, NetworkAgentIdleLobby, NetworkAgentKeyFactory,
+        NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
+        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord,
+        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomSnapshot,
+        PublicLobbyDirectoryEntry, PublicLobbyObservationRoom, RateWindowBucket,
+        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
+        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
+        SecretValue, StoredAgentInstanceRegistration,
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
@@ -101,6 +101,8 @@ struct MemoryStore {
     owned_private_rooms: Mutex<u64>,
     /// 网络 Agent 当房主的房间：测试直接设。
     network_owned: Mutex<HashSet<RoomCatalogId>>,
+    /// 闲置时请出、还没回去的公开大厅。
+    away: Mutex<Vec<(NetworkAgentId, NetworkAgentLobbyAway)>>,
 }
 
 impl MemoryStore {
@@ -397,7 +399,85 @@ impl NetworkAgentStore for MemoryStore {
         {
             rooms.push((id, room.clone()));
         }
+        self.away
+            .lock()
+            .unwrap()
+            .retain(|(agent, away)| !(*agent == id && away.catalog_id == room.catalog_id));
         Box::pin(async { Ok(()) })
+    }
+
+    /// 目录里的三间公开大厅（`FakeDirectory::standard`）；别的都是私人房间。
+    fn idle_in_lobbies(
+        &self,
+        idle_before: UtcMillis,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentIdleLobby>>> {
+        let lobbies = [1, 2, 3].map(catalog_id);
+        let rooms = self.rooms.lock().unwrap().clone();
+        let idle = self
+            .agents
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|agent| {
+                agent.record.status == NetworkAgentStatus::Active
+                    && agent.record.last_active_at < idle_before
+            })
+            .flat_map(|agent| {
+                rooms
+                    .iter()
+                    .filter(|(id, room)| {
+                        *id == agent.record.id && lobbies.contains(&room.catalog_id)
+                    })
+                    .map(|(id, room)| NetworkAgentIdleLobby {
+                        id: *id,
+                        room: room.clone(),
+                    })
+            })
+            .take(usize::try_from(limit).unwrap())
+            .collect();
+        Box::pin(async move { Ok(idle) })
+    }
+
+    fn mark_lobby_away<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+        at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        let mut rooms = self.rooms.lock().unwrap();
+        let before = rooms.len();
+        rooms.retain(|(agent, known)| {
+            !(*agent == id && known.matrix_room_id == room.matrix_room_id)
+        });
+        if rooms.len() < before {
+            let mut away = self.away.lock().unwrap();
+            away.retain(|(agent, known)| !(*agent == id && known.catalog_id == room.catalog_id));
+            away.push((
+                id,
+                NetworkAgentLobbyAway {
+                    catalog_id: room.catalog_id,
+                    matrix_room_id: room.matrix_room_id.clone(),
+                    left_at: at,
+                },
+            ));
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn lobbies_away(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentLobbyAway>>> {
+        let away = self
+            .away
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(agent, _)| *agent == id)
+            .map(|(_, lobby)| lobby.clone())
+            .collect();
+        Box::pin(async move { Ok(away) })
     }
 
     fn rooms(
@@ -1953,6 +2033,189 @@ async fn 取会话要生效中的令牌_封存的会话打不开时报依赖不�
             .kind(),
         NetworkAgentFailureKind::Unauthorized
     );
+}
+
+#[tokio::test]
+async fn 一小时没动静先请出公开大厅_再调接口时回到原来的分片_不占名额() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        lobby_entries_per_source_per_hour: 1,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let scout = harness.create("Scout", None).await.unwrap();
+    let lobby = harness.store.rooms.lock().unwrap()[0].1.clone();
+    harness.runtime.advance(HOUR);
+    assert!(
+        harness
+            .service
+            .idle_lobby_exits(10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "刚好一小时还不算"
+    );
+
+    harness.runtime.advance(1);
+    let exits = harness.service.idle_lobby_exits(10).await.unwrap();
+    let [exit] = exits.as_slice() else {
+        panic!("闲置的要请出大厅：{exits:?}");
+    };
+    assert_eq!(exit.id, scout.network_agent_id);
+    assert_eq!(exit.room.matrix_room_id, lobby.matrix_room_id);
+    assert!(exit.matrix_access_token.is_some(), "用它自己的会话离开");
+    harness
+        .service
+        .mark_lobby_away(exit.id, &exit.room)
+        .await
+        .unwrap();
+    assert!(
+        harness
+            .service
+            .idle_lobby_exits(10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let session = harness.service.session(scout.token.expose()).await.unwrap();
+    assert_eq!(
+        session
+            .rooms
+            .iter()
+            .map(|room| room.matrix_room_id.clone())
+            .collect::<Vec<_>>(),
+        std::slice::from_ref(&lobby.matrix_room_id),
+        "回到原来的分片"
+    );
+    assert!(session.lobbies_away.is_empty());
+    let requests = harness.lobbies.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].target_room, Some(lobby.matrix_room_id));
+    harness
+        .create("Second", None)
+        .await
+        .expect("回大厅没占来源的名额，这一小时的那一个还在");
+}
+
+#[tokio::test]
+async fn 原来的分片进不去时由大厅分配() {
+    let harness = Harness::generous();
+    let scout = harness.create("Scout", None).await.unwrap();
+    harness.runtime.advance(HOUR + 1);
+    let exit = harness
+        .service
+        .idle_lobby_exits(10)
+        .await
+        .unwrap()
+        .remove(0);
+    harness
+        .service
+        .mark_lobby_away(exit.id, &exit.room)
+        .await
+        .unwrap();
+    harness
+        .lobbies
+        .script
+        .lock()
+        .unwrap()
+        .push_back(Err(AgentLobbyEntryFailure::NotFound));
+
+    let session = harness.service.session(scout.token.expose()).await.unwrap();
+    assert_eq!(session.rooms.len(), 1);
+    assert!(session.lobbies_away.is_empty());
+    let requests = harness.lobbies.requests.lock().unwrap().clone();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.target_room.clone())
+            .collect::<Vec<_>>(),
+        [None, Some(exit.room.matrix_room_id), None]
+    );
+}
+
+#[tokio::test]
+async fn 大厅满了回不去时照常取会话_记着没回去的_空出位置后再回() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        max_lobby_agents: 1,
+        lobby_entries_per_source_per_hour: 2,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let scout = harness.create("Scout", None).await.unwrap();
+    harness.runtime.advance(HOUR + 1);
+    let exit = harness
+        .service
+        .idle_lobby_exits(10)
+        .await
+        .unwrap()
+        .remove(0);
+    harness
+        .service
+        .mark_lobby_away(exit.id, &exit.room)
+        .await
+        .unwrap();
+    let other = harness
+        .create("Other", None)
+        .await
+        .expect("请出去的不算在大厅的人数里");
+
+    let session = harness.service.session(scout.token.expose()).await.unwrap();
+    assert!(session.rooms.is_empty());
+    assert_eq!(
+        session
+            .lobbies_away
+            .iter()
+            .map(|lobby| lobby.matrix_room_id.clone())
+            .collect::<Vec<_>>(),
+        std::slice::from_ref(&exit.room.matrix_room_id)
+    );
+    assert_eq!(
+        harness
+            .service
+            .admit(
+                scout.token.expose(),
+                NetworkAgentRoomRequest::Lobby(None),
+                [1; 32],
+            )
+            .await
+            .err()
+            .map(|failure| failure.kind()),
+        Some(NetworkAgentFailureKind::CapacityReached),
+        "大厅满了：只看满没满，不占名额"
+    );
+
+    harness
+        .service
+        .disable(other.token.expose())
+        .await
+        .expect("停用");
+    let session = harness.service.session(scout.token.expose()).await.unwrap();
+    assert_eq!(session.rooms.len(), 1, "空出位置后回来了");
+    assert!(session.lobbies_away.is_empty());
+}
+
+#[tokio::test]
+async fn 停用前离开房间用的会话不先回大厅() {
+    let harness = Harness::generous();
+    let scout = harness.create("Scout", None).await.unwrap();
+    harness.runtime.advance(HOUR + 1);
+    let exit = harness
+        .service
+        .idle_lobby_exits(10)
+        .await
+        .unwrap()
+        .remove(0);
+    harness
+        .service
+        .mark_lobby_away(exit.id, &exit.room)
+        .await
+        .unwrap();
+
+    let session = harness
+        .service
+        .exit_session(scout.token.expose())
+        .await
+        .unwrap();
+    assert!(session.rooms.is_empty());
+    assert_eq!(harness.lobbies.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

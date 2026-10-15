@@ -3,10 +3,11 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentLookup,
-        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture,
-        RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretDigest,
+        NetworkAgentActivation, NetworkAgentBeginOutcome, NetworkAgentIdleLobby,
+        NetworkAgentLobbyAway, NetworkAgentLookup, NetworkAgentProvisioning, NetworkAgentRecord,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        PortFuture, RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret,
+        SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -422,6 +423,30 @@ impl NetworkAgentStore for PostgresRepositories {
         Box::pin(self.network_agent_rooms(id))
     }
 
+    fn idle_in_lobbies(
+        &self,
+        idle_before: UtcMillis,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentIdleLobby>>> {
+        Box::pin(self.idle_network_agents_in_lobbies(idle_before, limit))
+    }
+
+    fn mark_lobby_away<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: &'a NetworkAgentRoomRecord,
+        at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(self.mark_network_agent_lobby_away(id, room, at))
+    }
+
+    fn lobbies_away(
+        &self,
+        id: NetworkAgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentLobbyAway>>> {
+        Box::pin(self.network_agent_lobbies_away(id))
+    }
+
     fn disable_stale(
         &self,
         cutoff: NetworkAgentStaleCutoff,
@@ -551,7 +576,8 @@ impl NetworkAgentStore for PostgresRepositories {
         Box::pin(async move {
             let operation = "network_agent.mark_rooms_left";
             // 同一条语句里把它在私人房间的 Agent 成员记为已移出，房主不必再手动移出；
-            // 收件箱和消息记录里留下的消息也删掉。停用以后不再写入，这时删得干净。
+            // 收件箱和消息记录里留下的消息也删掉。停用以后不再写入，这时删得干净。闲置时请出、
+            // 还没回去的公开大厅也不用再记着。
             // 它占着的房间位置（大厅分片和私人房间的预约）也放回去，不然停用的网络 Agent 一直
             // 算在分片的人数里，分片早早就“满了”（specs/launch-capacity/design.md 第 1 步）。
             // 先改预约、再改分片，和分配时的加锁顺序一样。
@@ -589,6 +615,11 @@ impl NetworkAgentStore for PostgresRepositories {
                       DELETE FROM agent_room.network_agent_message message
                        USING left_rooms
                        WHERE message.network_agent_id = left_rooms.id
+                  ),
+                  forgotten_away AS (
+                      DELETE FROM agent_room.network_agent_lobby_away away
+                       USING left_rooms
+                       WHERE away.network_agent_id = left_rooms.id
                   )
                   UPDATE agent_room.private_room_agent_member member
                      SET membership_status = 'removed',

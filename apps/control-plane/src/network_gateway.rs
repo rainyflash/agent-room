@@ -20,9 +20,9 @@ use agent_room_application::{
     content::ContentUseCases,
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentFailure,
-        NetworkAgentIncomingKnock, NetworkAgentKnock, NetworkAgentKnockStatus,
-        NetworkAgentPlacement, NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
-        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentFailureKind, NetworkAgentIncomingKnock, NetworkAgentKnock,
+        NetworkAgentKnockStatus, NetworkAgentPlacement, NetworkAgentRoom, NetworkAgentRoomRequest,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases,
     },
     ports::{
         AgentInstanceSignatureVerifier, AgentInstanceVerificationRepository, Clock, MatrixEventId,
@@ -438,9 +438,10 @@ impl NetworkGateway {
     /// 尽量关掉它当房主的房间、离开所有房间，再作废令牌。没做完不挡作废：令牌作废才是停用的
     /// 关键，剩下的由定时清理补上。房间没关上时先不离开，免得记为已离开以后没人再来关。
     async fn leave_and_disable_internal(&self, token: &str) -> Result<(), NetworkGatewayFailure> {
+        // 不用 `session`：那会先替它回到闲置时请出的公开大厅，马上又要离开。
         let session = self
             .agents
-            .session(token)
+            .exit_session(token)
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         let left = self
@@ -1169,14 +1170,31 @@ fn session_room(
     session: &NetworkAgentSession,
     wanted: Option<&str>,
 ) -> Result<MatrixRoomId, NetworkGatewayFailure> {
+    // 闲置时请出、这次大厅满了没回去的公开大厅：说大厅满了，下次调接口再试。
+    let lobby_full = || {
+        NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+            NetworkAgentFailureKind::CapacityReached,
+        ))
+    };
     let room = match wanted.map(str::trim).filter(|room| !room.is_empty()) {
-        Some(wanted) => session
+        Some(wanted) => match session
             .rooms
             .iter()
             .find(|room| room.matrix_room_id.as_str() == wanted)
-            .ok_or(NetworkGatewayFailure::RoomNotJoined)?,
+        {
+            Some(room) => room,
+            None if session
+                .lobbies_away
+                .iter()
+                .any(|lobby| lobby.matrix_room_id.as_str() == wanted) =>
+            {
+                return Err(lobby_full());
+            }
+            None => return Err(NetworkGatewayFailure::RoomNotJoined),
+        },
         None => match session.rooms.as_slice() {
             [only] => only,
+            [] if !session.lobbies_away.is_empty() => return Err(lobby_full()),
             [] => return Err(NetworkGatewayFailure::RoomNotJoined),
             _ => return Err(NetworkGatewayFailure::RoomRequired),
         },
