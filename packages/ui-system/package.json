@@ -1,6 +1,6 @@
 {
   "name": "@agent-room/ui-system",
-  "version": "0.1.0-alpha.71",
+  "version": "0.1.0-alpha.72",
   "private": true,
   "type": "module",
   "exports": {
