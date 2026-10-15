@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
             "backup-schedule-verify",
             "restore-drill",
             "network-agent-disable",
+            "control-plane-reload",
+            "registration-apply",
             "down",
         ),
     )
@@ -133,6 +135,13 @@ def main() -> int:
                     raise ValueError("没有找到还在用的这个网络 Agent。")
                 for line in disabled:
                     print(f"已停用网络 Agent：{line}。令牌已作废，约一分钟内离开所有房间。")
+            case "control-plane-reload":
+                runtime.reload_control_plane()
+                print("控制面已按新的配置重建。")
+            case "registration-apply":
+                runtime.apply_registration()
+                state = "开放" if config.identity.registration.is_open else "关闭"
+                print(f"Keycloak 注册已{state}。")
             case "down":
                 runtime.down()
             case _:

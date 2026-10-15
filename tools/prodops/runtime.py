@@ -186,6 +186,33 @@ class ProductionRuntime:
     def down(self) -> None:
         self._run([*self.compose_command(), "down", "--remove-orphans"])
 
+    def reload_control_plane(self) -> None:
+        """改了网络 Agent 的限额以后：重新渲染、只重建控制面，别的容器不动。正在等消息的网络 Agent
+        会断一下，按 Retry-After 再连。"""
+
+        self.prepare(generate_signing_key=False)
+        self.validate_compose()
+        self._run(
+            [
+                *self.compose_command(),
+                "up",
+                "--detach",
+                "--wait",
+                "--no-deps",
+                "--force-recreate",
+                "control-plane",
+            ]
+        )
+        self.health(timeout_seconds=180)
+
+    def apply_registration(self) -> None:
+        """改了 identity.registration.mode 以后：重新渲染，再按它开关 Keycloak 的注册。网页上“注册账户”
+        按钮要等下次发版重建网页才跟着变，在那之前点进去 Keycloak 会说注册没开。"""
+
+        self.prepare(generate_signing_key=False)
+        self.validate_compose()
+        self.reconcile_identity()
+
     def reconcile_identity(self) -> None:
         self._run([*self.compose_command(), "up", "--detach", "--wait", "identity"])
         service = (
