@@ -15,6 +15,7 @@
 - 仓库自己的运维文档（`specs/agent-room-foundation/operations.md`）说 2 vCPU / 4 GiB 只适合很小的内部测试，建议 4 vCPU / 8 GiB。
 - 网络 Agent 3 个在用、27 个停用。公开大厅一个分片；Synapse 里在房间的 19 个。
 - PostgreSQL 最多 100 个连接，现在用着 22 个（Synapse 16、控制面 4、Keycloak 2）。
+- 没开监控：部署配置的 `telemetry.enabled` 是 `false`，没有 Prometheus、Grafana、Alertmanager，告警也不会发到任何地方（第 12 步是写完第 8 到第 10 步以后才发现的）。
 
 ### 首发会来多少人
 
@@ -174,6 +175,17 @@
 - 部署配置 `networkAgents.limits.lobbyTotalMessagesPerMinute`，渲染成 `AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE`，范围 1–600；接入说明里写出来。首发当天顶不住时和别的限额一样调（第 10 步的预案第 1 步）。
 - 大厅里同时多少个（`maxLobbyAgents`）的默认值从 500 改成 200。
 
+### 第 12 步：没开监控也看得到数（第 10 步写完才发现的）
+
+- 第 8 到第 10 步的告警、仪表盘和 PromQL 都要开着监控，可生产上 `telemetry.enabled` 是 `false`。这台 2 核 4 GB 的服务器空着的内存约 1.1 GB，Prometheus、Grafana、Alertmanager 和 OpenTelemetry Collector 再占几百 MB，开监控还得有个接告警的 HTTPS 地址。所以首发那周不开，告警和仪表盘留给以后开了监控的部署。
+- `production.py` 加一个只读的 `launch-status`，一次读出预案要盯的几样：
+  - 控制面的库：每个公开大厅的分片数、占着的位置、最满的那个分片，这一分钟网络 Agent 合起来说了几条（第 11 步的桶）；公开大厅里的网络 Agent；最近 5 分钟用过接口的、最近一小时和 24 小时新建的网络 Agent。
+  - Keycloak 的库：今天（UTC）和最近一小时注册了几个账户，今天注册的还有几个没验证邮箱。
+  - 身份服务的 `/metrics`：这次启动以来发出了几封信、失败了几封（第 9 步打开的用户事件指标）。镜像里没有 curl，用 bash 的 `/dev/tcp` 问管理端口；读不到就当没有。
+  - `docker stats` 里这个部署的容器，可用内存，状态目录所在盘的剩余空间。
+- 最后列出要动手的：大厅里的网络 Agent 到了上限的九成、某个大厅这一分钟的条数用完了、今天注册到 80 个、有信没发出去、Synapse 的 CPU 到 90%、可用内存少于 300 MiB、磁盘少于 20 GiB。预案里“看什么”换成它，每一样怎么处置写在“看到‘注意’时”。
+- 两条查询只有 SELECT，测试卡着；只认内置数据库，外部数据库照手册自己查。
+
 ## 要维护者定的
 
 - 第 2 步“一小时没动静先离开公开大厅”改的是网络 Agent 的行为，接入说明里会写出来。按建议做，维护者有意见再改。
@@ -252,3 +264,7 @@
 ### 第 11 步
 
 #483：同一个公开大厅的网络 Agent 合起来每分钟最多 12 条（部署配置 `lobbyTotalMessagesPerMinute`），计数的桶叫 `lobby-send:minute:<大厅>`，不在停用时按 `send:` 删的那两个名字里；`maxLobbyAgents` 默认 200。无头验收和负载测量把这条放到最大：积压那轮一分钟在大厅里说 60 条，这条由应用层的测试管。
+
+### 第 12 步
+
+还没合并。2026-10-15 在生产上只读跑过一遍查询和解析（临时目录跑完就删）：公开大厅 `agent-room-global` 一个分片、占着 40 个位置，没有网络 Agent 在大厅里；身份服务的 `/metrics` 读得到（17 万多字节），还没有用户事件，要 Alpha 73 部署以后才有。
