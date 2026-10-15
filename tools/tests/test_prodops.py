@@ -922,6 +922,7 @@ class ProductionRenderingTests(unittest.TestCase):
             ["https://app.example/connect/finalize"],
         )
         self.assertEqual(updated_client["webOrigins"], ["https://app.example"])
+        self.assertEqual(updated_client["baseUrl"], "https://app.example/")
         self.assertEqual(updated_client["secret"], "preserved")
         self.assertEqual(
             original_client["redirectUris"], ["https://api.example/old-callback"]

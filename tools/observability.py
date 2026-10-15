@@ -43,6 +43,8 @@ EXPECTED_ALERTS: Final = frozenset(
         "AgentRoomApiAvailabilityFastBurn",
         "AgentRoomApiLatencyHigh",
         "AgentRoomPublicLobbyFull",
+        "AgentRoomEmailSendFailed",
+        "AgentRoomEmailQuotaNearlyUsed",
         "AgentRoomDependencyUnavailable",
         "AgentRoomOutboxBacklog",
         "AgentRoomOutboxDeadLetters",
@@ -57,6 +59,9 @@ EXPECTED_ALERTS: Final = frozenset(
         "AgentRoomRestoreRtoExceeded",
     }
 )
+# 别人家的指标里本来就有、取值固定的标签：Keycloak 用户事件指标的 `event` 是事件类型（固定的几十种），
+# 不是我们的事件 ID。
+THIRD_PARTY_LABELS: Final = frozenset({"event"})
 BANNED_LABEL_FRAGMENTS: Final = (
     "user",
     "principal",
@@ -304,7 +309,7 @@ def _alert_block(rules: str, alert: str) -> str:
 
 def _validate_low_cardinality_labels(rules: str) -> None:
     label_names = set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:=~|!~|!=|=)\s*\"", rules))
-    for label in label_names:
+    for label in label_names - THIRD_PARTY_LABELS:
         normalized = label.lower()
         if any(fragment in normalized for fragment in BANNED_LABEL_FRAGMENTS):
             raise ObservabilityError(f"规则包含禁止的高基数或敏感标签：{label}。")

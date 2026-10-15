@@ -323,6 +323,8 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
                 "directAccessGrantsEnabled": False,
                 "redirectUris": [f"{public.app_origin}{BROWSER_OIDC_CALLBACK_PATH}"],
                 "webOrigins": [public.app_origin],
+                # 登录页出错时（比如邮件发不出去）给“回到 Agent Room”。
+                "baseUrl": f"{public.app_origin}/",
                 "attributes": {"pkce.code.challenge.method": "S256"},
             },
             {

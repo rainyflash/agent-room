@@ -73,6 +73,42 @@ tests:
               impact: 新来的网络 Agent 进不了公开大厅，收到 capacity_reached；私人房间不受影响
               diagnostic: 看服务器负载和大厅里的网络 Agent 数，决定要不要调高 networkAgents.limits.maxLobbyAgents
               runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroompubliclobbyfull
+  # 发信：失败一封就提醒；最近 24 小时成功发了 80 封提醒额度快用完。
+  - interval: 1m
+    input_series:
+      - series: keycloak_user_events_total{realm="agent-room",event="send_verify_email",error=""}
+        values: 0+2x60
+      - series: keycloak_user_events_total{realm="agent-room",event="send_reset_password",error=""}
+        values: 0+1x60
+      - series: keycloak_user_events_total{realm="agent-room",event="send_verify_email",error="email_send_failed"}
+        values: 0x30 1+0x30
+      - series: keycloak_user_events_total{realm="agent-room",event="login",error=""}
+        values: 0+50x60
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AgentRoomEmailSendFailed
+        exp_alerts: []
+      - eval_time: 33m
+        alertname: AgentRoomEmailSendFailed
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 有验证信或重设密码信发不出去
+              impact: 刚注册的人收不到验证信、忘了密码的人收不到重设信；登录页让他们过几个小时再试
+              diagnostic: 看 Keycloak 日志里的发信错误和 Resend 后台的当天用量；额度用完要等 UTC 零点
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomemailsendfailed
+      - eval_time: 20m
+        alertname: AgentRoomEmailQuotaNearlyUsed
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AgentRoomEmailQuotaNearlyUsed
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 最近 24 小时已经发了 80 封邮件，快到 Resend 每天 100 封的额度了
+              impact: 额度用完以后注册和重设密码的邮件都发不出去，到 UTC 零点才恢复
+              diagnostic: 看注册是不是被刷了（同一来源大量注册）；被刷时按首发预案临时关注册
+              runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomemailquotanearlyused
   - interval: 1m
     input_series:
       - series: agent_room_dependency_available{dependency="matrix"}

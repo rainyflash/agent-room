@@ -112,6 +112,9 @@ services:
       KC_DB_POOL_MAX_SIZE: '20'
       KC_HEALTH_ENABLED: 'true'
       KC_METRICS_ENABLED: 'true'
+      # 按用户事件记指标（keycloak_user_events_total），看得见发了多少封验证信、重设密码信，有没有发失败。
+      # 镜像构建时也设了同样的值：万一它算构建期选项，运行时和构建时也一致。
+      KC_EVENT_METRICS_USER_ENABLED: 'true'
       KC_HOSTNAME: https://${AGENT_ROOM_IDENTITY_DOMAIN:?缺少身份域名}
       KC_BOOTSTRAP_ADMIN_USERNAME: agent-room-admin
     labels:
