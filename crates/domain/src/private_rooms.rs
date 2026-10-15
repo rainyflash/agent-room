@@ -481,9 +481,49 @@ impl PrivateRoom {
             self.require(actor, PrivateRoomCapability::Invite, "邀请私人房间成员")?;
             return Ok(false);
         }
-        let permissions =
-            PrivateRoomPermissions::INVITED_BY_AGENT.intersection(self.permissions_of(actor));
-        self.invite(actor, target, permissions)
+        self.invite(actor, target, self.default_invitation_for(actor))
+    }
+
+    /// 邀请默认给的权限：查看、发言、自动发言，被邀请的人带进来的 Agent 能说话
+    /// （`specs/room-people/design.md`）；不超过邀请人自己有的。
+    #[must_use]
+    pub fn default_invitation_for(&self, inviter: PrincipalId) -> PrivateRoomPermissions {
+        PrivateRoomPermissions::INVITED_BY_AGENT.intersection(self.permissions_of(inviter))
+    }
+
+    /// 生成、再看、停用邀请链接：已加入、有邀请权限、房间还在使用中。链接以创建人的名义邀请，
+    /// 所以创建人不再满足这一条时，他的链接也不管用了。
+    ///
+    /// # Errors
+    ///
+    /// 不是已加入的成员、没有邀请权限或房间已归档时返回错误。
+    pub fn authorize_invite_link(&self, actor: PrincipalId) -> DomainResult<()> {
+        self.ensure_active("invite_link_changed")?;
+        if !self
+            .members
+            .get(&actor)
+            .is_some_and(PrivateRoomMember::has_joined)
+        {
+            return Err(DomainError::Forbidden {
+                action: "管理私人房间邀请链接",
+            });
+        }
+        self.require(actor, PrivateRoomCapability::Invite, "管理私人房间邀请链接")
+    }
+
+    /// 新链接带的权限：在 [`Self::authorize_invite_link`] 之上，能给成员、不超过自己有的。
+    ///
+    /// # Errors
+    ///
+    /// 不能管理邀请链接、权限不能给成员或给了自己没有的权限时返回错误。
+    pub fn authorize_invite_link_permissions(
+        &self,
+        actor: PrincipalId,
+        permissions: PrivateRoomPermissions,
+    ) -> DomainResult<()> {
+        self.authorize_invite_link(actor)?;
+        require_assignable_permissions(permissions)?;
+        self.require_grantable(actor, PrivateRoomPermissions::NONE, permissions)
     }
 
     fn ensure_built_by_agent(&self, action: &'static str) -> DomainResult<()> {
@@ -1097,6 +1137,53 @@ mod tests {
         assert!(
             room.invite(principal(1), principal(2), ordinary_permissions())
                 .expect("解封后能再邀请")
+        );
+    }
+
+    #[test]
+    fn 邀请链接要已加入且有邀请权限_默认权限不超过自己的() {
+        let mut room = room();
+        assert_eq!(
+            room.default_invitation_for(principal(1)),
+            PrivateRoomPermissions::INVITED_BY_AGENT,
+            "房主默认给查看、发言、自动发言"
+        );
+        let inviter = PrivateRoomPermissions::from_capabilities([
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Invite,
+        ])
+        .expect("权限组合有效");
+        room.invite(principal(1), principal(2), inviter)
+            .expect("房主邀请");
+        assert!(
+            room.authorize_invite_link(principal(2)).is_err(),
+            "还没接受邀请的不能管链接"
+        );
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+        room.authorize_invite_link(principal(2))
+            .expect("已加入、有邀请权限");
+        assert_eq!(
+            room.default_invitation_for(principal(2)),
+            ordinary_permissions(),
+            "没有自动发言的人默认只给查看和发言"
+        );
+        assert!(
+            room.authorize_invite_link_permissions(
+                principal(2),
+                PrivateRoomPermissions::INVITED_BY_AGENT
+            )
+            .is_err()
+        );
+        join(&mut room, principal(3));
+        assert!(
+            room.authorize_invite_link(principal(3)).is_err(),
+            "没有邀请权限"
+        );
+        room.archive(principal(1)).expect("房主可归档");
+        assert!(
+            room.authorize_invite_link(principal(1)).is_err(),
+            "归档以后"
         );
     }
 

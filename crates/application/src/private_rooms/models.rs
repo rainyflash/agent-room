@@ -119,6 +119,15 @@ pub struct InvitePrivateRoomMember {
     pub permissions: PrivateRoomPermissions,
 }
 
+/// 以邀请链接创建人的名义邀请拿着链接的人。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteByLink {
+    pub catalog_id: RoomCatalogId,
+    pub link_creator: PrincipalId,
+    pub target_principal_id: PrincipalId,
+    pub permissions: PrivateRoomPermissions,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateRoomMembershipAction {
     pub actor: AuthenticatedPrincipal,

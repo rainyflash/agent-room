@@ -11,6 +11,7 @@ use agent_room_domain::{
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
         RoomInstanceState,
     },
+    version::AggregateVersion,
 };
 
 use crate::{
@@ -27,10 +28,10 @@ use crate::{
 
 use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
-    InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
-    PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomFailureKind, PrivateRoomFailureStage,
-    PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult, RenamePrivateRoom,
-    TransferPrivateRoomOwnership,
+    InspectPrivateRoom, InviteByLink, InvitePrivateRoomMember, ListPrivateRooms,
+    ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomFailureKind,
+    PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
+    RenamePrivateRoom, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -127,6 +128,16 @@ pub trait PrivateRoomRetirement: Send + Sync {
     /// 关掉 `owner` 当房主、还在用的私人房间，返回这次关了几个。副作用和房主自己归档一样：
     /// 锁死 Matrix 上的发言、改目录状态。一个关不成就报错，已经关上的下次跳过。
     fn archive_owned_by(&self, owner: PrincipalId) -> PortFuture<'_, PrivateRoomResult<usize>>;
+}
+
+/// 凭邀请链接进来：以链接创建人的名义做一次普通的邀请（`specs/room-people/design.md`）。创建人
+/// 不在场，不看他的登录，只看他此刻还能管邀请链接、给的权限还在他的权限以内。和
+/// [`PrivateRoomUseCases`] 分开，只交给邀请链接的服务。
+pub trait PrivateRoomLinkInvitations: Send + Sync {
+    fn invite_by_link(
+        &self,
+        request: InviteByLink,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
 }
 
 pub struct PrivateRoomDependencies {
@@ -327,34 +338,78 @@ impl PrivateRoomService {
             room.invite(actor, request.target_principal_id, request.permissions)
         }
         .map_err(|error| domain(OPERATION, &error))?;
+        self.deliver_invitation(
+            snapshot,
+            room,
+            expected,
+            changed,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    async fn invite_by_link_internal(
+        &self,
+        request: InviteByLink,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        const OPERATION: &str = "private_room.invite_by_link";
+        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        let expected = snapshot.room().version();
+        let mut room = snapshot.room().clone();
+        room.authorize_invite_link(request.link_creator)
+            .map_err(|error| domain(OPERATION, &error))?;
+        let changed = room
+            .invite(
+                request.link_creator,
+                request.target_principal_id,
+                request.permissions,
+            )
+            .map_err(|error| domain(OPERATION, &error))?;
+        self.deliver_invitation(
+            snapshot,
+            room,
+            expected,
+            changed,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 领域上已经记成受邀的人，在 Matrix 上邀请他、按邀请的权限设好发言级别，再保存。
+    async fn deliver_invitation(
+        &self,
+        snapshot: PrivateRoomSnapshot,
+        room: PrivateRoom,
+        expected: AggregateVersion,
+        changed: bool,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         // Agent 邀请已经在房间里的人：什么都不用做。别再发 Matrix 邀请，Synapse 不让邀请已经加入的人。
-        if !changed
-            && room
-                .member(request.target_principal_id)
-                .is_some_and(PrivateRoomMember::has_joined)
-        {
+        let Some(member) = room
+            .member(target_principal_id)
+            .filter(|member| !member.has_joined() || changed)
+        else {
             return Ok(snapshot);
-        }
+        };
+        let speak = member.permissions().speak();
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .invite(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
+            .map_err(|error| matrix(operation, error))?;
         // 私人房间的默认成员级别低于发言级别，建房时一起邀请的成员才批量拿到发言级别；之后邀请的
         // 成员也要按邀请的权限设好，否则进了房间也发不了言。被移出后再邀请只给旁观时同样收回。
-        self.set_speaking(
-            &matrix_room,
-            &target,
-            request.permissions.speak(),
-            OPERATION,
-        )
-        .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+        self.set_speaking(&matrix_room, &target, speak, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        self.save_if_changed(&room, expected, changed, operation)
+            .await?;
+        replace_room(snapshot, room, operation)
     }
 
     async fn accept_internal(
@@ -982,7 +1037,7 @@ impl PrivateRoomService {
     async fn save_if_changed(
         &self,
         room: &PrivateRoom,
-        expected: agent_room_domain::version::AggregateVersion,
+        expected: AggregateVersion,
         changed: bool,
         operation: &'static str,
     ) -> PrivateRoomResult<()> {
@@ -1229,6 +1284,15 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: RenamePrivateRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.rename_internal(request))
+    }
+}
+
+impl PrivateRoomLinkInvitations for PrivateRoomService {
+    fn invite_by_link(
+        &self,
+        request: InviteByLink,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.invite_by_link_internal(request))
     }
 }
 

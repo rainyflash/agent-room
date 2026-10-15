@@ -1,6 +1,7 @@
 //! 私人房间 Agent 口令的真实数据库往返：口令按摘要认且一房一个、封存的口令连同摘要存取
 //! （`specs/network-agents/code-first.md`）、Agent 成员的加入与移出、猜错窗口，以及网络 Agent
-//! 拿房间号敲门（`specs/network-agents/knock.md`）。
+//! 拿房间号敲门（`specs/network-agents/knock.md`）；邀请链接一房一条、和口令共用猜错窗口
+//! （`specs/room-people/design.md`）。
 
 use std::env;
 
@@ -8,8 +9,9 @@ use agent_room_application::{
     persistence::{RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentRoomPlacementStore, JoinCodeAttemptPolicy, PrivateRoomAgentAccessStore,
-        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomSnapshot, PrivateRoomStore, SealedJoinCode, SealedSecret, SecretDigest,
+        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomInviteLinkRecord,
+        PrivateRoomInviteLinkStore, PrivateRoomJoinCodeRecord, PrivateRoomSnapshot,
+        PrivateRoomStore, SealedInviteLink, SealedJoinCode, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -350,6 +352,128 @@ async fn agent_自己离开时删掉已加入的成员记录_被移出的留着(
         .expect("读取")
         .expect("被移出的记录留着");
     assert_eq!(still_removed.status, PrivateRoomAgentMemberStatus::Removed);
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 邀请链接一房一条_封存的连同摘要存取_换了旧的找不到_停用后没有() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "invite-owner").await;
+    let catalog_id = seed_room(&repositories, owner).await;
+    assert_eq!(
+        repositories.invite_link(catalog_id).await.expect("读取"),
+        None
+    );
+
+    let first = digest(11);
+    let record = invite_record(catalog_id, owner, time(0));
+    let sealed = SealedSecret {
+        key_version: 1,
+        bytes: vec![9; 40],
+    };
+    repositories
+        .replace_invite_link(&record, &first, Some(&sealed))
+        .await
+        .expect("写入");
+    assert_eq!(
+        repositories.invite_link(catalog_id).await.expect("读取"),
+        Some(SealedInviteLink {
+            record: record.clone(),
+            digest: first,
+            sealed: Some(sealed),
+        })
+    );
+    assert_eq!(
+        repositories
+            .find_invite_link(&first)
+            .await
+            .expect("按摘要找"),
+        Some(record)
+    );
+
+    // 换一条没封存的：旧摘要找不到，封存的那份一起清掉。
+    let second = digest(12);
+    let newer = invite_record(catalog_id, owner, time(10));
+    repositories
+        .replace_invite_link(&newer, &second, None)
+        .await
+        .expect("换一条");
+    assert_eq!(
+        repositories.find_invite_link(&first).await.expect("查找"),
+        None
+    );
+    assert_eq!(
+        repositories.invite_link(catalog_id).await.expect("读取"),
+        Some(SealedInviteLink {
+            record: newer,
+            digest: second,
+            sealed: None,
+        })
+    );
+    assert!(
+        repositories
+            .clear_invite_link(catalog_id)
+            .await
+            .expect("停用")
+    );
+    assert!(
+        !repositories
+            .clear_invite_link(catalog_id)
+            .await
+            .expect("再停用")
+    );
+    assert_eq!(
+        repositories.find_invite_link(&second).await.expect("查找"),
+        None
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 猜链接和猜口令共用一套窗口_按调用方各算各的() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let person = format!("principal:{}", Uuid::now_v7());
+    let device = format!("device:{}", Uuid::now_v7());
+    let policy = JoinCodeAttemptPolicy {
+        window: DurationMillis::new(u64::try_from(HOUR).unwrap()).unwrap(),
+        max_failures: 1,
+    };
+    repositories
+        .record_invite_link_failure(&person, time(0), policy)
+        .await
+        .expect("记一次");
+    assert_eq!(
+        repositories
+            .invite_link_retry_at(&person, time(1), policy)
+            .await
+            .expect("查询"),
+        Some(time(HOUR))
+    );
+    assert_eq!(
+        repositories
+            .join_code_retry_at(&person, time(1), policy)
+            .await
+            .expect("同一张表"),
+        Some(time(HOUR))
+    );
+    assert_eq!(
+        repositories
+            .invite_link_retry_at(&device, time(1), policy)
+            .await
+            .expect("别的调用方"),
+        None
+    );
+    assert_eq!(
+        repositories
+            .invite_link_retry_at(&person, time(HOUR), policy)
+            .await
+            .expect("窗口过后"),
+        None
+    );
     database.close().await;
 }
 
@@ -723,6 +847,20 @@ fn code_record(
 }
 
 /// 测试里的摘要只需要彼此不同、32 字节，并在同一次运行里与别的测试不冲突。
+fn invite_record(
+    catalog_id: RoomCatalogId,
+    owner: PrincipalId,
+    created_at: UtcMillis,
+) -> PrivateRoomInviteLinkRecord {
+    PrivateRoomInviteLinkRecord {
+        catalog_id,
+        permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
+        created_by: owner,
+        created_at,
+        expires_at: UtcMillis::new(created_at.value() + 7 * 24 * HOUR).expect("测试时间有效"),
+    }
+}
+
 fn digest(seed: u8) -> SecretDigest {
     let mut bytes = [seed; 32];
     bytes[..16].copy_from_slice(Uuid::now_v7().as_bytes());
