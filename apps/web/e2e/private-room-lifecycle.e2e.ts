@@ -104,6 +104,35 @@ for (const width of [1_440, 390]) {
 }
 
 for (const width of [1_440, 390]) {
+  test(`成员写昵称、能解除封禁、转移房主前先确认 ${String(width)}`, async ({ page }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private`);
+
+    const dialog = await openRoomSettings(page);
+    const members = dialog.locator('.private-room-members');
+    await expect(members.getByText('Grace', { exact: true })).toBeVisible();
+    await expect(members.getByText('Mallory', { exact: true })).toBeVisible();
+    // 账户 ID 收在每一行的详情里。
+    await expect(members.getByText('0198b601-77a1-7bb8-83eb-a8fe68c97e43')).toBeHidden();
+
+    await members.getByRole('button', { name: 'Unban' }).click();
+    await expect(members.getByRole('button', { name: 'Unban' })).toHaveCount(0);
+    await expect(members.locator('li', { hasText: 'Mallory' })).toContainText('Removed');
+
+    await members.getByRole('button', { name: 'Transfer ownership' }).click();
+    const confirm = members.getByRole('group', { name: 'Make Grace the owner?' });
+    await expect(confirm).toBeVisible();
+    await expect(confirm.getByRole('checkbox', { name: /^Manage/u })).toBeChecked();
+    await expectNoHorizontalOverflow(page);
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toHaveCount(0);
+    await expectAccessibleDialog(page);
+    expect(failures).toEqual([]);
+  });
+}
+
+for (const width of [1_440, 390]) {
   test(`网络 Agent 建的私人房间：房间顶上、设置里都说服务器能读到 ${String(width)}`, async ({
     page,
   }, testInfo) => {

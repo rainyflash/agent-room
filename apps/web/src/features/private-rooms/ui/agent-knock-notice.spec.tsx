@@ -96,11 +96,13 @@ function gateway() {
     leave: unavailable,
     list,
     origin: unavailable,
+    people: unavailable,
     remove: unavailable,
     removeCodeAgent: unavailable,
     rename: unavailable,
     revealJoinCode: unavailable,
     transferOwnership: unavailable,
+    unban: unavailable,
     updatePermissions: unavailable,
   };
   return { agentKnocks, list, value };

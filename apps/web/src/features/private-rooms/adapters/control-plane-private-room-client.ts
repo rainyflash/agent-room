@@ -7,6 +7,7 @@ import {
   privateRoomAgentKnocksSchema,
   privateRoomListSchema,
   privateRoomOriginSchema,
+  privateRoomPeopleSchema,
   privateRoomSchema,
   type CreatePrivateRoomInput,
   type JoinCode,
@@ -19,6 +20,7 @@ import {
   type PrivateRoomInvitationInput,
   type PrivateRoomOrigin,
   type PrivateRoomPermissions,
+  type PrivateRoomPerson,
   type TransferPrivateRoomOwnershipInput,
 } from '@/features/private-rooms/domain/private-room';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
@@ -75,6 +77,17 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
     );
   }
 
+  async people(
+    catalogId: string,
+  ): Promise<Result<readonly PrivateRoomPerson[], PrivateRoomFailure>> {
+    const response = await this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/people`,
+      { method: 'GET' },
+      privateRoomPeopleSchema,
+    );
+    return response.ok ? ok(response.value.people) : response;
+  }
+
   create(
     catalogId: string,
     input: CreatePrivateRoomInput,
@@ -117,6 +130,12 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway {
 
   ban(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
     return this.#roomRequest(`${this.#memberPath(catalogId, principalId)}/ban`, { method: 'POST' });
+  }
+
+  unban(catalogId: string, principalId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
+    return this.#roomRequest(`${this.#memberPath(catalogId, principalId)}/unban`, {
+      method: 'POST',
+    });
   }
 
   updatePermissions(

@@ -76,14 +76,19 @@ import type {
   ModerationCase,
   ModerationGateway,
 } from '@/features/moderation/domain/moderation';
-import type {
-  JoinCode,
-  PrivateRoom,
-  PrivateRoomAgentKnock,
-  PrivateRoomAgentMember,
-  PrivateRoomGateway,
-  PrivateRoomMatrixGateway,
-  PrivateRoomOrigin,
+import {
+  permissions,
+  privateRoomCapabilities,
+  type JoinCode,
+  type PrivateRoom,
+  type PrivateRoomAgentKnock,
+  type PrivateRoomAgentMember,
+  type PrivateRoomFailure,
+  type PrivateRoomGateway,
+  type PrivateRoomMatrixGateway,
+  type PrivateRoomMember,
+  type PrivateRoomOrigin,
+  type PrivateRoomPerson,
 } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentKnockToasts } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
@@ -93,7 +98,7 @@ import type { AccessManagementGateway } from '@/features/security/domain/access-
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
-import { err, ok } from '@/shared/result';
+import { err, ok, type Result } from '@/shared/result';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 import { ApplicationFeaturesFixture } from './application-features-fixture';
 
@@ -625,7 +630,16 @@ const fixtureOrigin: PrivateRoomOrigin =
         }
       : { createdByAgent: null, ownerIsNetworkAgent: false };
 const fixtureRoomOwner = fixtureOrigin.ownerIsNetworkAgent ? fixtureNetworkOwner : fixtureOwner;
-const fixturePrivateRoom: PrivateRoom = {
+/** 另一个成员和一个被封禁的人：成员列表写他们的昵称，被封禁的能解除封禁。 */
+const fixtureMember = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
+const fixtureBanned = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
+/** 成员的昵称；网络 Agent 房主的合成主体没有昵称，成员列表写它的名字。 */
+const fixturePeople: readonly PrivateRoomPerson[] = [
+  { displayName: 'Ada', principalId: fixtureOwner },
+  { displayName: 'Grace', principalId: fixtureMember },
+  { displayName: 'Mallory', principalId: fixtureBanned },
+];
+let fixturePrivateRoom: PrivateRoom = {
   catalogId: '01990d9e-8400-7000-8000-000000000401',
   description: 'Coordinate the release with people and agents.',
   matrixRoomId: room.roomId,
@@ -647,8 +661,13 @@ const fixturePrivateRoom: PrivateRoom = {
       : []),
     {
       permissions: { capabilities: ['view', 'speak'] },
-      principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+      principalId: fixtureMember,
       status: 'joined',
+    },
+    {
+      permissions: { capabilities: [] },
+      principalId: fixtureBanned,
+      status: 'banned',
     },
   ],
   name: room.name,
@@ -658,6 +677,21 @@ const fixturePrivateRoom: PrivateRoom = {
   status: archivedFixture ? 'archived' : 'active',
   version: 3,
 };
+/** 改一个成员：状态和权限换掉，房间版本加一，和服务器回的新房间一样。 */
+function changeFixtureMember(
+  principalId: string,
+  change: Partial<PrivateRoomMember>,
+): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
+  fixturePrivateRoom = {
+    ...fixturePrivateRoom,
+    members: fixturePrivateRoom.members.map((member) =>
+      member.principalId === principalId ? { ...member, ...change } : member,
+    ),
+    version: fixturePrivateRoom.version + 1,
+  };
+  return Promise.resolve(ok(fixturePrivateRoom));
+}
+
 const privateRooms: PrivateRoomGateway = {
   accept: unavailablePrivateRoom,
   admitKnock: privateFixture
@@ -682,7 +716,10 @@ const privateRooms: PrivateRoomGateway = {
     ? () => Promise.resolve(ok([...fixtureKnocks]))
     : unavailablePrivateRoom,
   archive: unavailablePrivateRoom,
-  ban: unavailablePrivateRoom,
+  ban: privateFixture
+    ? (_catalogId, principalId) =>
+        changeFixtureMember(principalId, { permissions: { capabilities: [] }, status: 'banned' })
+    : unavailablePrivateRoom,
   create: unavailablePrivateRoom,
   decline: unavailablePrivateRoom,
   declineKnock: privateFixture
@@ -708,6 +745,7 @@ const privateRooms: PrivateRoomGateway = {
   leave: unavailablePrivateRoom,
   list: () => Promise.resolve(ok(privateFixture ? [fixturePrivateRoom] : [])),
   origin: privateFixture ? () => Promise.resolve(ok(fixtureOrigin)) : unavailablePrivateRoom,
+  people: privateFixture ? () => Promise.resolve(ok(fixturePeople)) : unavailablePrivateRoom,
   remove: unavailablePrivateRoom,
   removeCodeAgent: unavailablePrivateRoom,
   rename: unavailablePrivateRoom,
@@ -721,7 +759,27 @@ const privateRooms: PrivateRoomGateway = {
               : ok(fixtureJoinCode),
         )
     : unavailablePrivateRoom,
-  transferOwnership: unavailablePrivateRoom,
+  transferOwnership: privateFixture
+    ? (_catalogId, { formerOwnerPermissions, targetPrincipalId }) => {
+        const formerOwner = fixturePrivateRoom.ownerPrincipalId;
+        fixturePrivateRoom = {
+          ...fixturePrivateRoom,
+          members: fixturePrivateRoom.members.map((member) =>
+            member.principalId === targetPrincipalId
+              ? { ...member, permissions: permissions(...privateRoomCapabilities) }
+              : member.principalId === formerOwner
+                ? { ...member, permissions: formerOwnerPermissions }
+                : member,
+          ),
+          ownerPrincipalId: targetPrincipalId,
+          version: fixturePrivateRoom.version + 1,
+        };
+        return Promise.resolve(ok(fixturePrivateRoom));
+      }
+    : unavailablePrivateRoom,
+  unban: privateFixture
+    ? (_catalogId, principalId) => changeFixtureMember(principalId, { status: 'removed' })
+    : unavailablePrivateRoom,
   updatePermissions: unavailablePrivateRoom,
 };
 const privateRoomMatrix: PrivateRoomMatrixGateway = {

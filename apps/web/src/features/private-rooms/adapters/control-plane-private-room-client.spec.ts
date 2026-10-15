@@ -101,6 +101,47 @@ describe('ControlPlanePrivateRoomClient', () => {
     }
   });
 
+  it('成员的昵称：GET 单独的接口，严格校验回答', async () => {
+    const people = [{ displayName: 'Ada', principalId: ROOM.ownerPrincipalId }];
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ people }))
+      .mockResolvedValueOnce(Response.json({ people: [{ ...people[0], email: 'a@b.test' }] }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.people(ROOM.catalogId)).toEqual({ ok: true, value: people });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/people`),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+    expect(await client.people(ROOM.catalogId)).toEqual({
+      ok: false,
+      error: { code: 'private_room.invalid_response', retryable: false },
+    });
+  });
+
+  it('解除封禁用 POST，返回权威房间', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(ROOM));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+    const banned = '0198b601-77a1-7bb8-83eb-a8fe68c97e4a';
+
+    const result = await client.unban(ROOM.catalogId, banned);
+
+    expect(result.ok).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(
+        `https://control.agent-room.test/private-rooms/${ROOM.catalogId}/members/${banned}/unban`,
+      ),
+      expect.objectContaining({ credentials: 'include', method: 'POST' }),
+    );
+  });
+
   it('改名用 PUT 发送名字并返回权威房间', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

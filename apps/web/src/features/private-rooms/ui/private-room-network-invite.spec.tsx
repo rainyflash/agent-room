@@ -107,11 +107,13 @@ function gateway(stored: Stored, knocks: Knocks = ok([])) {
     leave: unavailable,
     list: () => Promise.resolve(ok([])),
     origin: unavailable,
+    people: unavailable,
     remove: unavailable,
     removeCodeAgent: unavailable,
     rename: unavailable,
     revealJoinCode,
     transferOwnership: unavailable,
+    unban: unavailable,
     updatePermissions: unavailable,
   };
   return { admitKnock, agentKnocks, declineKnock, generateJoinCode, revealJoinCode, value };
