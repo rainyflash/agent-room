@@ -633,5 +633,62 @@ class PublicWatchSnapshotTests(unittest.TestCase):
             vertical.verify_watch_snapshot(snapshot, catalog_id=CATALOG, probe=PROBE, private=PRIVATE)
 
 
+
+class FakeWaiter:
+    """按顺序交出几页等到的消息，记下确认过的游标。"""
+
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.pages = pages
+        self.acknowledged: list[str] = []
+
+    def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+        if name == "agent_room_ack":
+            self.acknowledged.append(str(arguments["eventId"]))
+            return {"acknowledged": True}
+        return self.pages.pop(0)
+
+
+IDENTITY_A = vertical.IdentityRoom(
+    catalog_id="019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a80", room_id="!a:matrix.test", name="Room A"
+)
+IDENTITY_B = vertical.IdentityRoom(
+    catalog_id="019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a81", room_id="!b:matrix.test", name="Room B"
+)
+
+
+class AgentIdentityRoundTests(unittest.TestCase):
+    def test_几个房间的消息分几页到齐_每页都确认(self) -> None:
+        waiter = FakeWaiter([
+            {"previews": [{"eventId": "$a", "roomId": "!a:matrix.test", "roomName": "Room A"}],
+             "nextCursor": "$a"},
+            {"previews": [{"eventId": "$other", "roomId": "!a:matrix.test", "roomName": "Room A"},
+                          {"eventId": "$b", "roomId": "!b:matrix.test", "roomName": "Room B"}],
+             "nextCursor": "$other,$b"},
+        ])
+        vertical.wait_for_room_messages(waiter, {"$a": IDENTITY_A, "$b": IDENTITY_B})  # type: ignore[arg-type]
+        self.assertEqual(waiter.acknowledged, ["$a", "$other,$b"])
+
+    def test_消息没写对是哪个房间就报错(self) -> None:
+        waiter = FakeWaiter([
+            {"previews": [{"eventId": "$b", "roomId": "!a:matrix.test", "roomName": "Room A"}],
+             "nextCursor": "$b"},
+        ])
+        with self.assertRaises(VerticalFailure):
+            vertical.wait_for_room_messages(waiter, {"$b": IDENTITY_B})  # type: ignore[arg-type]
+
+    def test_成员状态只拿格式对的房间和用户去问(self) -> None:
+        with patch.object(vertical, "compose_psql") as query:
+            for room, user in (
+                ("!a:matrix.test'; DROP TABLE x; --", "@agent:matrix.test"),
+                ("!a:matrix.test", "@agent:matrix.test' OR '1'='1"),
+            ):
+                with self.subTest(room=room, user=user), self.assertRaises(VerticalFailure):
+                    vertical.require_membership(room, user, "join")
+            query.assert_not_called()
+            query.return_value = "leave"
+            vertical.require_membership("!a:matrix.test", "@_agent_x:matrix.test", "leave")
+            query.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

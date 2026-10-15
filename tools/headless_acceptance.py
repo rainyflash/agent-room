@@ -86,6 +86,11 @@ def accept() -> None:
                 sender_bridge=sender, target_bridge=target, environment=environment,
                 account_id=agent["principalId"], redactor=redactor,
             )
+            # 本机 Agent 跨房间用同一个身份：进两个房间、一起等消息、离开一个；主人带它进第三个，
+            # 再让它离开、删掉它。
+            identity_rooms = v.verify_agent_identity(
+                speaker_bridge=sender, agent_bridge=target, environment=environment, redactor=redactor,
+            )
             # 第二个账号在网页上建房间、发邀请链接，验收账号凭链接进来，他的 Agent 进来说话。
             room_people = v.verify_room_people(
                 person_bridge=sender, environment=environment, redactor=redactor,
@@ -138,6 +143,7 @@ def accept() -> None:
         "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
         "networkAgentRoomInvitedAgentEventId":agent_rooms["networkRoomInvitedAgentEventId"],
         "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
+        "agentIdentityVerified":True, "agentIdentityAgentId":identity_rooms["agentIdentityAgentId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
