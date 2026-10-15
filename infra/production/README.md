@@ -172,6 +172,12 @@ python3 tools/production.py registration-apply --config /etc/agent-room/deployme
 
 什么时候用、要多久、对在用的人有什么影响，见[首发当天的预案](../../docs/operations/launch-day.md)。
 
+没开监控（`telemetry.enabled` 为 `false`）时，用一条只读的命令看公开大厅、注册、发信和服务器的余量，最后列出要注意的地方：
+
+```bash
+python3 tools/production.py launch-status --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
 控制平面必须显式允许桌面壳的精确源站：Windows 是 `http://tauri.localhost`，macOS 是自定义协议 `tauri://localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为这两个值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
 
 ## 外部 PostgreSQL 与对象存储

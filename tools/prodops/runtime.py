@@ -18,6 +18,17 @@ from urllib.request import Request, urlopen
 
 from .backup import BackupCoordinator, BackupManifest, BackupRepository, BackupRun
 from .config import DeploymentConfig
+from .launch_status import (
+    CONTROL_QUERY,
+    IDENTITY_QUERY,
+    HostUsage,
+    LaunchSnapshot,
+    parse_available_memory,
+    parse_container_usage,
+    parse_email_counts,
+    parse_network_agents,
+    parse_registrations,
+)
 from .network_agents import disable_statement
 from .render import DeploymentPaths, render_deployment
 from .restore import (
@@ -648,7 +659,52 @@ class ProductionRuntime:
             raise ProductionRuntimeError(
                 f"外部数据库请由数据库管理员在控制面数据库里执行：{statement};"
             )
-        output = self._run(
+        output = self._embedded_psql(self.config.database.control_database, statement)
+        return tuple(
+            line.strip()
+            for line in output.splitlines()
+            if line.strip() and not line.startswith("UPDATE ")
+        )
+
+    def launch_status(self) -> LaunchSnapshot:
+        """首发当天看数，全是只读的（见 `launch_status.py`）。"""
+        database = self.config.database
+        if database.mode != "embedded":
+            raise ProductionRuntimeError(
+                "launch-status 只认内置数据库；外部数据库请照运维手册里的查询自己查。"
+            )
+        stats = self._run(
+            [
+                "docker",
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}",
+            ],
+            capture=True,
+        )
+        meminfo = Path("/proc/meminfo")
+        return LaunchSnapshot(
+            network_agents=parse_network_agents(
+                self._embedded_psql(database.control_database, CONTROL_QUERY)
+            ),
+            registrations=parse_registrations(
+                self._embedded_psql(database.identity_database, IDENTITY_QUERY)
+            ),
+            emails=parse_email_counts(self._identity_metrics()),
+            host=HostUsage(
+                containers=parse_container_usage(stats, self.config.project_name),
+                disk_free_bytes=shutil.disk_usage(self.paths.state.parent).free,
+                memory_available_bytes=(
+                    parse_available_memory(meminfo.read_text(encoding="utf-8"))
+                    if meminfo.is_file()
+                    else None
+                ),
+            ),
+        )
+
+    def _embedded_psql(self, database: str, statement: str) -> str:
+        return self._run(
             [
                 *self.compose_command(),
                 "exec",
@@ -660,7 +716,7 @@ class ProductionRuntime:
                 "--username",
                 "agent_room_bootstrap",
                 "--dbname",
-                self.config.database.control_database,
+                database,
                 "--tuples-only",
                 "--no-align",
                 "--set",
@@ -670,11 +726,28 @@ class ProductionRuntime:
             ],
             capture=True,
         )
-        return tuple(
-            line.strip()
-            for line in output.splitlines()
-            if line.strip() and not line.startswith("UPDATE ")
+
+    def _identity_metrics(self) -> str:
+        """身份服务管理端口上的 `/metrics`。镜像里没有 curl，用 bash 的 /dev/tcp 问；读不到就当没有。"""
+        request = (
+            "exec 3<>/dev/tcp/127.0.0.1/9000"
+            ' && printf "GET /metrics HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n" >&3'
+            " && cat <&3"
         )
+        try:
+            result = subprocess.run(
+                [*self.compose_command(), "exec", "-T", "identity", "bash", "-c", request],
+                cwd=ROOT,
+                check=False,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            return ""
+        return result.stdout if result.returncode == 0 else ""
 
     def compose_command(self) -> list[str]:
         return [

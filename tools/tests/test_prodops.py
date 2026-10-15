@@ -840,6 +840,38 @@ class ProductionRenderingTests(unittest.TestCase):
         with self.assertRaisesRegex(ProductionRuntimeError, "数据库管理员"):
             runtime.disable_network_agent("0198b601-77a1-7bb8-83eb-a8fe68c97e50")
 
+    def test_launch_status_only_reads_both_databases(self) -> None:
+        runtime = ProductionRuntime(self.config, self.paths)
+        outputs = {
+            self.config.database.control_database: (
+                '{"lobbies": [], "inLobbies": 0, "active": 0, "createdHour": 0, "createdDay": 0}\n'
+            ),
+            self.config.database.identity_database: '{"hour": 0, "today": 2, "unverifiedToday": 1}\n',
+        }
+
+        def answer(command: list[str], *, capture: bool = False) -> str:
+            if command[:2] == ["docker", "stats"]:
+                return "agent-room-synapse-1\t3.00%\t150MiB / 3.8GiB\n"
+            return outputs[command[command.index("--dbname") + 1]]
+
+        with (
+            patch.object(ProductionRuntime, "_run", side_effect=answer) as run,
+            patch.object(ProductionRuntime, "_identity_metrics", return_value=""),
+        ):
+            snapshot = runtime.launch_status()
+
+        self.assertEqual(snapshot.registrations.today, 2)
+        statements = [call.args[0][-1] for call in run.call_args_list if "psql" in call.args[0]]
+        self.assertEqual(len(statements), 2)
+        for statement in statements:
+            self.assertRegex(statement.lstrip(), r"^(SELECT|WITH)\b")
+            self.assertNotRegex(statement, r"(?i)\b(insert|update|delete|alter|drop|create|truncate|grant)\b")
+
+        external = json.loads(EXTERNAL_EXAMPLE.read_text(encoding="utf-8"))
+        runtime = ProductionRuntime(DeploymentConfig.from_mapping(external), self.paths)
+        with self.assertRaisesRegex(ProductionRuntimeError, "内置数据库"):
+            runtime.launch_status()
+
     def test_worker_count_generates_unique_processes_and_routes(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         value["capacity"]["synapseWorkers"] = 2

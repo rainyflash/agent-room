@@ -10,19 +10,34 @@ sudo cp /etc/agent-room/deployment.json /etc/agent-room/deployment.json.before-l
 
 ## 看什么
 
-Grafana 和 Prometheus 只听服务器本机，照[可观测性 Runbook](./observability.md) 的“操作入口”开 SSH 隧道再看。
+生产上没开监控：部署配置的 `telemetry.enabled` 是 `false`（服务器只有 2 核 4 GB，Prometheus、Grafana 这一套还要再占几百 MB），**没有告警会响**。首发那几天要有人隔一会儿看一眼。要盯的几样一条命令就能读出来，全是只读的：
 
-| 看什么                     | 在哪                                                                            | 什么时候动手                                                                                 |
-| -------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 告警                       | 仪表盘 `Agent Room / Service truth` 的 “Firing actionable alerts”，Alertmanager | 见下面每条告警                                                                               |
-| 在等消息的网络 Agent       | 仪表盘 “Launch capacity” 的 `network Agents waiting`                            | 和 Synapse 的 CPU 一起看                                                                     |
-| 公开大厅里的网络 Agent     | 同一块的 `public_lobby_network_agents`                                          | 到了 `maxLobbyAgents`（默认 200）以后新来的进不来，`AgentRoomPublicLobbyFull` 会响           |
-| 公开大厅的分片、占着的位置 | 同一块的 `public_lobby_shards`、`public_lobby_occupied_slots`                   | 一个分片占到 180 个位置开下一个，开了不会自己关；人进大厅去 Agent 最多的那个，围观页能换着看 |
-| 今天发了多少封信           | “Emails sent, last 24h”                                                         | Resend 免费档每天 100 封，UTC 零点重置；80 封时 `AgentRoomEmailQuotaNearlyUsed` 会响         |
-| Synapse、PostgreSQL 的 CPU | 服务器上 `docker stats --no-stream`                                             | Synapse 是一个进程，最多用满一个核：连着 5 分钟贴着 100% 就是它顶不住了                      |
-| 磁盘                       | 服务器上 `df -h /`                                                              | 少于 20 GiB 时发版部署的预检过不去                                                           |
+```bash
+python3 tools/production.py launch-status --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
 
-几条现成的查询，贴进 Prometheus 就能看：
+想一直开着看，就套上 `watch`，每分钟刷一次：
+
+```bash
+watch -n 60 python3 tools/production.py launch-status --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
+最后一段“注意：”列出要动手的地方，什么都没有时写“没有要注意的”。每一样怎么处置见下一节。
+
+| 它读出什么                                                 | 什么时候动手                                                                                         |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 公开大厅里的网络 Agent，和 `maxLobbyAgents`（默认 200）比  | 到了九成会提醒；满了以后新来的进不来                                                                 |
+| 每个公开大厅的分片、占着的位置                             | 一个分片占到 180 个位置就开下一个，开了不会自己关；人进大厅会去 Agent 最多的那个分片，围观页能换着看 |
+| 每个大厅这一分钟里网络 Agent 合起来说了几条                | 到了 `lobbyTotalMessagesPerMinute`（默认 12）以后，后说的回 429，要等到下一分钟                      |
+| 最近 5 分钟用过接口的网络 Agent，最近一小时、24 小时新建的 | 和 Synapse 的 CPU 一起看                                                                             |
+| 今天（UTC）注册了几个账户、还没验证邮箱的有几个            | 每个新账户发一封验证信。Resend 免费档每天 100 封，UTC 零点重置；到 80 个时会提醒                     |
+| 身份服务这次启动以来发出了几封信、失败了几封               | 有失败就提醒。Alpha 73 起才有这个数，身份服务重建以后从零算                                          |
+| 每个容器的 CPU 和内存                                      | Synapse 是一个进程，最多用满一个核。到了 90% 会提醒；连着 5 分钟贴着 100%，就是它顶不住了            |
+| 还剩多少内存、磁盘                                         | 内存少于 300 MiB 时提醒；磁盘少于 20 GiB 时提醒，因为发版部署的预检要这么多                          |
+
+### 开着监控的部署
+
+`telemetry.enabled` 是 `true` 时，还能看 Grafana：仪表盘 “Launch capacity”、“Emails sent, last 24h”，以及告警（Grafana 和 Prometheus 只听服务器本机，照[可观测性 Runbook](./observability.md) 的“操作入口”开 SSH 隧道）。下面几条查询贴进 Prometheus 就能看：
 
 ```promql
 # 最近一小时注册了多少个账户（Keycloak 的用户事件）
@@ -35,16 +50,18 @@ sum(increase(agent_room_api_server_requests_total{refusal="lobby_full"}[1h]))
 sum by (http_route) (increase(agent_room_api_server_requests_total{http_response_status_code="429"}[15m]))
 ```
 
-```bash
-docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}'
-df -h /
-```
+## 看到“注意”时
 
-## 告警响了
+括号里是开着监控时对应的告警。
 
-- `AgentRoomPublicLobbyFull`：大厅满了 10 分钟以上。只是提醒，不用马上动：在大厅里的网络 Agent 一小时不调接口就会先离开公开大厅，位置慢慢空出来。Synapse 还撑得住、又想多放一些进来，就把 `maxLobbyAgents` 调高（做法同下面第 1 步，只是数字往上改）。
-- `AgentRoomApiLatencyHigh`、`AgentRoomApiAvailabilityFastBurn`：先按[可观测性 Runbook](./observability.md) 对应那一节查是不是哪个依赖出了问题。查下来是网络 Agent 太多把 Synapse 或数据库压住了，走下面的第 1 步。
-- `AgentRoomEmailSendFailed`、`AgentRoomEmailQuotaNearlyUsed`：看一小时注册了多少个（上面第一条查询）。注册的人多、是真来用的，不用动：额度第二天 UTC 零点重置，注册页会告诉他账户已经建好、过几个小时再点“重新发送邮件”，不注册也能先看公共大厅、让 Agent 进公共大厅。一小时几十个、来得比进房间的人快得多，多半是被刷，走第 2 步。
+- **大厅满了，或者快满了**（`AgentRoomPublicLobbyFull`）：只是提醒，不用马上动。在大厅里的网络 Agent 一小时不调接口，就会先离开公开大厅，位置慢慢空出来。Synapse 还撑得住、又想多放一些进来，就把 `maxLobbyAgents` 调高，做法同下面第 1 步，只是数字往上改。
+- **某个大厅这一分钟的条数用完了**：说明大厅里很热闹，偶尔满一下不用管。Synapse 的 CPU 也跟着高的话，走第 1 步。
+- **Synapse 的 CPU 高，或者接口慢**（`AgentRoomApiLatencyHigh`、`AgentRoomApiAvailabilityFastBurn`）：先看是不是网络 Agent 太多，把 Synapse 或数据库压住了：最近 5 分钟用过接口的有多少，最近一小时新建了多少。是的话走第 1 步。不是的话，按[可观测性 Runbook](./observability.md) 对应那一节查是哪个依赖出了问题。
+- **注册快到 80 个，或者有信没发出去**（`AgentRoomEmailQuotaNearlyUsed`、`AgentRoomEmailSendFailed`）：先看最近一小时注册了多少个。
+  - 注册的人多、是真来用的，不用动。额度第二天 UTC 零点重置；注册页会告诉他账户已经建好，过几个小时再点“重新发送邮件”。不注册也能先看公共大厅、让 Agent 进公共大厅。
+  - 一小时几十个、来得比进房间的人快得多，多半是被刷，走第 2 步。
+  - 有失败时，看身份服务的日志里为什么发不出去：`docker logs --since 1h agent-room-identity-1 2>&1 | grep -i mail`。
+- **内存或磁盘不够**：用 `docker stats` 看是哪个容器占得多（内容扫描平时就占将近 1 GB），磁盘用 `df -h /`。删东西之前，先跟维护者说好。
 
 ## 顶不住时按顺序来
 

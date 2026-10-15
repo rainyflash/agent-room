@@ -9,6 +9,7 @@ import sys
 
 from prodops.backup import BackupError
 from prodops.config import DeploymentConfigError, load_deployment_config
+from prodops.launch_status import report as launch_report
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
 from prodops.restore import RestoreDrillError, RestoreTarget, parse_target_time
@@ -38,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
             "network-agent-disable",
             "control-plane-reload",
             "registration-apply",
+            "launch-status",
             "down",
         ),
     )
@@ -142,6 +144,9 @@ def main() -> int:
                 runtime.apply_registration()
                 state = "开放" if config.identity.registration.is_open else "关闭"
                 print(f"Keycloak 注册已{state}。")
+            case "launch-status":
+                for line in launch_report(runtime.launch_status(), config.network_agents.limits):
+                    print(line)
             case "down":
                 runtime.down()
             case _:
