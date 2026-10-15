@@ -1,11 +1,12 @@
 use std::{
+    collections::BTreeMap,
     sync::{Arc, Weak},
     time::Duration,
 };
 
 use agent_room_application::ports::{
     MatrixEventType, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation,
-    MatrixResult, MatrixRoomId, MatrixStateKey, PortFuture,
+    MatrixResult, MatrixRoomId, MatrixRoomSyncKind, MatrixStateKey, PortFuture,
 };
 use agent_room_bridge_core::{
     presence::AGENT_STATUS_EVENT_TYPE,
@@ -15,7 +16,9 @@ use agent_room_bridge_core::{
         StatusPublicationOutcome, StatusPublicationResult, WAIT_IDLE_TIMEOUT,
     },
 };
-use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
+use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState, agent_status::AgentStatusVisibility, time::UtcMillis,
+};
 use tokio::{sync::Mutex, time::Instant};
 use uuid::Uuid;
 
@@ -49,8 +52,11 @@ enum Liveness {
 
 #[derive(Default)]
 struct PresenceReporting {
-    /// 这次连上以后，房间里已经有一样的名片（看到的或者自己写的）。
+    /// 这次连上以后，会话的那个房间里已经有一样的名片（看到的或者自己写的）。
     card_in_place: bool,
+    /// 它在的别的房间（主人带进去的、后来进的），值是这次连上以后名片的事办完了没有：看到了、
+    /// 写好了，或者没有权限写（`specs/agent-identity/design.md`“名片写进每个房间”）。
+    other_rooms: BTreeMap<MatrixRoomId, bool>,
     /// 服务器开没开在线状态。确认开着才写名片。
     support: PresenceSupport,
     /// 最近一次在等消息，哪个房间都算：Matrix 的在线状态按 Agent 算。
@@ -164,9 +170,38 @@ impl AgentStatusPublicationHandle {
         Ok(())
     }
 
+    /// 同步里看到的自己在哪些房间：加入了的记下，名片也要写进去；离开了的忘掉，再进来时重新看。
+    /// 会话的那个房间照旧单独管。写租约的只在会话的那个房间里续租。
+    pub(crate) async fn observe_rooms<'r>(
+        &self,
+        rooms: impl IntoIterator<Item = (&'r MatrixRoomId, MatrixRoomSyncKind)>,
+    ) {
+        let mut state = self.state.lock().await;
+        let Liveness::Presence(reporting) = &mut state.liveness else {
+            return;
+        };
+        for (room_id, kind) in rooms {
+            if room_id == self.target.room_id() {
+                continue;
+            }
+            match kind {
+                MatrixRoomSyncKind::Joined => {
+                    reporting
+                        .other_rooms
+                        .entry(room_id.clone())
+                        .or_insert(false);
+                }
+                MatrixRoomSyncKind::Left => {
+                    reporting.other_rooms.remove(room_id);
+                }
+                MatrixRoomSyncKind::Invited | MatrixRoomSyncKind::Knocked => {}
+            }
+        }
+    }
+
     /// 每次同步之后调用。写名片的：还没确认服务器开着在线状态就确认一次，确认了才写名片
     /// （没开的话写了名片，别人只会看到它离线）；房间里已经有一样的就不写，之后也不再写。
-    /// 写租约的：到点续租。
+    /// 它在的每个房间都写一张，房间里才看得到它。写租约的：到点续租。
     pub(crate) async fn renew(&self) -> StatusPublicationResult<()> {
         let mut state = self.state.lock().await;
         let state = &mut *state;
@@ -196,33 +231,18 @@ impl AgentStatusPublicationHandle {
             }
         }
         match &mut state.liveness {
-            Liveness::Presence(reporting)
-                if reporting.support != PresenceSupport::Enabled || reporting.card_in_place =>
-            {
+            Liveness::Presence(reporting) if reporting.support != PresenceSupport::Enabled => {
                 Ok(())
             }
             Liveness::Presence(reporting) => {
                 let Some(matrix) = &self.matrix else {
                     return Ok(());
                 };
-                // 问服务器，不看本机投影：投影把同一个 Agent 离线的几个实例并成一张，刚连上、还没
-                // 拿到自己的在线状态时，自己的名片可能就被并掉了。读不出来这次先不写，下次同步后
-                // 再看：多写一张就多一条永久记录。
-                match card_in_room(matrix.as_ref(), &self.target, &state.service).await {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        state.service.publish_card(&self.target).await?;
-                    }
-                    Err(failure) => {
-                        tracing::debug!(
-                            failure_kind = ?failure.kind(),
-                            "没读到房间里的名片，下次同步后再看"
-                        );
-                        return Ok(());
-                    }
-                }
-                reporting.card_in_place = true;
-                Ok(())
+                let session_room = self
+                    .place_session_card(matrix.as_ref(), reporting, &state.service)
+                    .await;
+                place_other_cards(matrix.as_ref(), reporting, &state.service).await;
+                session_room
             }
             Liveness::Lease => {
                 let intent = state.intent.clone();
@@ -233,6 +253,28 @@ impl AgentStatusPublicationHandle {
                     .map(|_| ())
             }
         }
+    }
+
+    /// 会话的那个房间：写不出去算这次同步失败，下一轮重来。
+    async fn place_session_card(
+        &self,
+        matrix: &dyn MatrixGateway,
+        reporting: &mut PresenceReporting,
+        service: &AgentStatusPublicationService,
+    ) -> StatusPublicationResult<()> {
+        if reporting.card_in_place {
+            return Ok(());
+        }
+        match place_card(matrix, &self.target, service).await? {
+            CardPlacement::Placed => reporting.card_in_place = true,
+            CardPlacement::Unread(failure) => {
+                tracing::debug!(
+                    failure_kind = ?failure.kind(),
+                    "没读到房间里的名片，下次同步后再看"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// 宿主收件后记下读取时间与是否仍在等待。写名片的：哪个房间里等着都算在等，刚开始等就
@@ -314,6 +356,60 @@ impl OwnPresence for OwnMatrixPresence<'_> {
                 .await
                 .map(|presence| presence.state())
         })
+    }
+}
+
+/// 这次同步以后，名片在不在这个房间里。
+enum CardPlacement {
+    /// 房间里已经有一样的，或者刚写好。
+    Placed,
+    /// 没读到房间里的那条，这次先不写。
+    Unread(MatrixFailure),
+}
+
+/// 问服务器，不看本机投影：投影把同一个 Agent 离线的几个实例并成一张，刚连上、还没拿到自己的
+/// 在线状态时，自己的名片可能就被并掉了。房间里没有就写一张；读不出来这次先不写，下次同步后
+/// 再看：多写一张就多一条永久记录。
+async fn place_card(
+    matrix: &dyn MatrixGateway,
+    target: &AgentStatusRoomTarget,
+    service: &AgentStatusPublicationService,
+) -> StatusPublicationResult<CardPlacement> {
+    match card_in_room(matrix, target, service).await {
+        Ok(true) => Ok(CardPlacement::Placed),
+        Ok(false) => service
+            .publish_card(target)
+            .await
+            .map(|_| CardPlacement::Placed),
+        Err(failure) => Ok(CardPlacement::Unread(failure)),
+    }
+}
+
+/// 它在的别的房间也各写一张。写不成只记日志、下次同步再试，不挡同步；没有权限读、写的（比如
+/// 归档了的私人房间，或者刚被移出）这次连上以后不再试。
+async fn place_other_cards(
+    matrix: &dyn MatrixGateway,
+    reporting: &mut PresenceReporting,
+    service: &AgentStatusPublicationService,
+) {
+    for (room_id, settled) in &mut reporting.other_rooms {
+        if *settled {
+            continue;
+        }
+        let target = AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse);
+        let failure = match place_card(matrix, &target, service).await {
+            Ok(CardPlacement::Placed) => {
+                *settled = true;
+                continue;
+            }
+            Ok(CardPlacement::Unread(failure)) => Some(failure),
+            Err(failure) => failure.matrix_failure(),
+        };
+        let kind = failure.map(MatrixFailure::kind);
+        if kind == Some(MatrixFailureKind::Forbidden) {
+            *settled = true;
+        }
+        tracing::debug!(failure_kind = ?kind, "没把名片写进它在的另一个房间");
     }
 }
 

@@ -1,6 +1,7 @@
 //! 写名片、报 Matrix 在线状态（`specs/agent-liveness/design.md` 第 3 步）。
 
 use std::{
+    collections::BTreeMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -9,9 +10,9 @@ use agent_room_application::ports::{
     Clock, DeviceSignature, MatrixAcceptedEvent, MatrixBackfillPage, MatrixBackfillRequest,
     MatrixCreateRoom, MatrixDeviceId, MatrixEvent, MatrixEventId, MatrixEventType, MatrixFailure,
     MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixReceipt, MatrixResult,
-    MatrixRoomAliasLocalpart, MatrixRoomId, MatrixSessionMetadata, MatrixStateEvent,
-    MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId, MatrixUserPresence,
-    PortFuture,
+    MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomSyncKind, MatrixSessionMetadata,
+    MatrixStateEvent, MatrixStateKey, MatrixSyncBatch, MatrixSyncRequest, MatrixUserId,
+    MatrixUserPresence, PortFuture,
 };
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
@@ -103,6 +104,82 @@ async fn 读不出房间里的那条就这次先不写_下次同步再看() {
     let reconnected = 名片句柄(&matrix, &publisher, "Codex Agent");
     reconnected.renew().await.expect("重连以后的第一次同步");
     assert!(publisher.contents().is_empty());
+}
+
+#[tokio::test]
+async fn 它在的别的房间也各写一张名片_离开以后再进来重新看() {
+    let matrix = 在线状态网关::new(true);
+    let publisher = Arc::new(记录状态发布器::default());
+    let status = 名片句柄(&matrix, &publisher, "Codex Agent");
+    status.renew().await.expect("第一次同步之后");
+    assert_eq!(publisher.rooms(), [大厅()]);
+
+    // 主人把它带进了私人房间：下一次同步里看到自己加入了。
+    status
+        .observe_rooms([
+            (&私人房间(), MatrixRoomSyncKind::Joined),
+            (&大厅(), MatrixRoomSyncKind::Joined),
+        ])
+        .await;
+    status.renew().await.expect("看到加入以后");
+    status
+        .observe_rooms([(&私人房间(), MatrixRoomSyncKind::Joined)])
+        .await;
+    status.renew().await.expect("再一次同步");
+    assert_eq!(publisher.rooms(), [大厅(), 私人房间()], "每个房间只写一次");
+    assert_eq!(publisher.contents()[1]["liveness"], "presence");
+
+    // 离开以后再进来：重新问服务器，房间里已经有一样的就不写。
+    status
+        .observe_rooms([(&私人房间(), MatrixRoomSyncKind::Left)])
+        .await;
+    matrix
+        .other_states
+        .lock()
+        .expect("锁可用")
+        .insert(私人房间(), 房间里的("Codex Agent", true));
+    status
+        .observe_rooms([(&私人房间(), MatrixRoomSyncKind::Joined)])
+        .await;
+    let reads = *matrix.state_reads.lock().expect("锁可用");
+    status.renew().await.expect("再进来以后");
+    assert_eq!(*matrix.state_reads.lock().expect("锁可用"), reads + 1);
+    assert_eq!(publisher.rooms().len(), 2);
+}
+
+#[tokio::test]
+async fn 别的房间写不成不挡同步_没有权限的这次连上以后不再试() {
+    let matrix = 在线状态网关::new(true);
+    let publisher = Arc::new(记录状态发布器::default());
+    publisher.refused.lock().expect("锁可用").push(私人房间());
+    let status = 名片句柄(&matrix, &publisher, "Codex Agent");
+    status
+        .observe_rooms([(&私人房间(), MatrixRoomSyncKind::Joined)])
+        .await;
+    status.renew().await.expect("别的房间写不成不算同步失败");
+    assert_eq!(publisher.rooms(), [大厅()]);
+    let reads = *matrix.state_reads.lock().expect("锁可用");
+    status.renew().await.expect("下一次同步");
+    assert_eq!(
+        *matrix.state_reads.lock().expect("锁可用"),
+        reads,
+        "没有权限写的不再去问"
+    );
+
+    // 读不出来（超时）的下次同步再看。
+    let other = MatrixRoomId::new("!other:matrix.test").expect("房间标识有效");
+    matrix
+        .state_failures
+        .lock()
+        .expect("锁可用")
+        .push(MatrixFailureKind::Timeout);
+    status
+        .observe_rooms([(&other, MatrixRoomSyncKind::Joined)])
+        .await;
+    status.renew().await.expect("读不出来不算同步失败");
+    assert_eq!(publisher.rooms(), [大厅()]);
+    status.renew().await.expect("下一次同步");
+    assert_eq!(publisher.rooms(), [大厅(), other]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -294,6 +371,8 @@ struct 在线状态网关 {
     reported: Mutex<Vec<MatrixPresenceState>>,
     /// 服务器上这个实例在大厅里的那条状态。
     room_state: Mutex<Option<Value>>,
+    /// 别的房间里的那条。
+    other_states: Mutex<BTreeMap<MatrixRoomId, Value>>,
     state_failures: Mutex<Vec<MatrixFailureKind>>,
     state_reads: Mutex<usize>,
 }
@@ -310,6 +389,7 @@ impl 在线状态网关 {
             report_failures: Mutex::new(Vec::new()),
             reported: Mutex::new(Vec::new()),
             room_state: Mutex::new(None),
+            other_states: Mutex::new(BTreeMap::new()),
             state_failures: Mutex::new(Vec::new()),
             state_reads: Mutex::new(0),
         })
@@ -431,7 +511,6 @@ impl MatrixGateway for 在线状态网关 {
         event_type: &'a MatrixEventType,
         state_key: &'a MatrixStateKey,
     ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
-        assert_eq!(room_id, &大厅());
         assert_eq!(event_type.as_str(), AGENT_STATUS_EVENT_TYPE);
         assert_eq!(state_key.as_str(), "01945c1e-7b5a-7c7f-8a28-2de53f56a9a4");
         *self.state_reads.lock().expect("锁可用") += 1;
@@ -441,7 +520,13 @@ impl MatrixGateway for 在线状态网关 {
         };
         let result = match failure {
             Some(kind) => Err(MatrixFailure::new(MatrixOperation::ReadRoomState, kind)),
-            None => Ok(self.room_state.lock().expect("锁可用").clone()),
+            None if room_id == &大厅() => Ok(self.room_state.lock().expect("锁可用").clone()),
+            None => Ok(self
+                .other_states
+                .lock()
+                .expect("锁可用")
+                .get(room_id)
+                .cloned()),
         };
         Box::pin(async move { result })
     }
@@ -468,15 +553,28 @@ impl DeviceSigningIdentity for 测试签名身份 {
 }
 
 #[derive(Default)]
-struct 记录状态发布器(Mutex<Vec<MatrixStateEvent>>);
+struct 记录状态发布器 {
+    events: Mutex<Vec<(MatrixRoomId, MatrixStateEvent)>>,
+    /// 这些房间里写状态被拒（403），像归档了的私人房间。
+    refused: Mutex<Vec<MatrixRoomId>>,
+}
 
 impl 记录状态发布器 {
     fn contents(&self) -> Vec<Value> {
-        self.0
+        self.events
             .lock()
             .expect("状态事件锁可用")
             .iter()
-            .map(|event| event.content().clone())
+            .map(|(_, event)| event.content().clone())
+            .collect()
+    }
+
+    fn rooms(&self) -> Vec<MatrixRoomId> {
+        self.events
+            .lock()
+            .expect("状态事件锁可用")
+            .iter()
+            .map(|(room_id, _)| room_id.clone())
             .collect()
     }
 }
@@ -484,10 +582,21 @@ impl 记录状态发布器 {
 impl AgentStatusStatePublisher for 记录状态发布器 {
     fn publish<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         event: &'a MatrixStateEvent,
     ) -> PortFuture<'a, MatrixResult<MatrixEventId>> {
-        self.0.lock().expect("状态事件锁可用").push(event.clone());
+        if self.refused.lock().expect("锁可用").contains(room_id) {
+            return Box::pin(async {
+                Err(MatrixFailure::new(
+                    MatrixOperation::SendStateEvent,
+                    MatrixFailureKind::Forbidden,
+                ))
+            });
+        }
+        self.events
+            .lock()
+            .expect("状态事件锁可用")
+            .push((room_id.clone(), event.clone()));
         Box::pin(async {
             Ok(MatrixEventId::new("$status:matrix.test").expect("事件标识有效"))
         })

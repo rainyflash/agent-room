@@ -1525,6 +1525,15 @@ async fn sync_agent_online(
     isolated_messages::recover_isolated_messages(runtime, online, full_state).await;
     online
         .status
+        .observe_rooms(
+            batch
+                .rooms()
+                .iter()
+                .map(|room| (room.room_id(), room.kind())),
+        )
+        .await;
+    online
+        .status
         .renew()
         .await
         .map_err(AgentOnlineFailure::Status)?;
