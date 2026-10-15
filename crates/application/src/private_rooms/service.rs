@@ -94,6 +94,12 @@ pub trait PrivateRoomUseCases: Send + Sync {
         request: GovernPrivateRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
 
+    /// 撤销封禁，这个人回到“已移出”，之后能再邀请。
+    fn unban(
+        &self,
+        request: GovernPrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
     fn update_permissions(
         &self,
         request: ChangePrivateRoomPermissions,
@@ -491,6 +497,36 @@ impl PrivateRoomService {
             OPERATION,
         )
         .await?;
+        self.save_if_changed(&room, expected, changed, OPERATION)
+            .await?;
+        replace_room(snapshot, room, OPERATION)
+    }
+
+    async fn unban_internal(
+        &self,
+        request: GovernPrivateRoomMember,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        const OPERATION: &str = "private_room.unban";
+        ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        let expected = snapshot.room().version();
+        let mut room = snapshot.room().clone();
+        let changed = room
+            .unban_member(request.actor.principal_id, request.target_principal_id)
+            .map_err(|error| domain(OPERATION, &error))?;
+        if !changed {
+            return replace_room(snapshot, room, OPERATION);
+        }
+        // 先在 Matrix 上解开再保存，和封禁同一个顺序：保存失败时产品上还封着，重试会再解一次
+        // （已经解开的跳过）再保存。他的 Agent 封禁时只移出没封，这里不用管。
+        let target = self
+            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .await?;
+        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        self.matrix
+            .unban(&matrix_room, &target)
+            .await
+            .map_err(|error| matrix(OPERATION, error))?;
         self.save_if_changed(&room, expected, changed, OPERATION)
             .await?;
         replace_room(snapshot, room, OPERATION)
@@ -1158,6 +1194,13 @@ impl PrivateRoomUseCases for PrivateRoomService {
         request: GovernPrivateRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.ban_internal(request))
+    }
+
+    fn unban(
+        &self,
+        request: GovernPrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.unban_internal(request))
     }
 
     fn update_permissions(

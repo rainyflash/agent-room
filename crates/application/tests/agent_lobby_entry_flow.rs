@@ -477,6 +477,14 @@ impl PrivateRoomMatrixGateway for 记录私人Matrix {
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async { unreachable!("入场不得封禁成员") })
     }
+
+    fn unban<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { unreachable!("入场不解封") })
+    }
     fn set_speaking<'a>(
         &'a self,
         _room_id: &'a MatrixRoomId,

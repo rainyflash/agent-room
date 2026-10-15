@@ -48,6 +48,8 @@ mod moderation_expiry;
 mod owner_identity;
 #[path = "real_synapse/presence.rs"]
 mod presence;
+#[path = "real_synapse/private_room_unban.rs"]
+mod private_room_unban;
 #[path = "real_synapse/public_lobby_moderation.rs"]
 mod public_lobby_moderation;
 #[path = "real_synapse/recovery.rs"]

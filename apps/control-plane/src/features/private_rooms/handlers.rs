@@ -296,6 +296,24 @@ pub(super) async fn ban(
     .await
 }
 
+pub(super) async fn unban(
+    state: State<PrivateRoomHttpState>,
+    correlation: Extension<CorrelationId>,
+    path: Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    governance_action(
+        state,
+        correlation,
+        path,
+        headers,
+        jar,
+        GovernanceAction::Unban,
+    )
+    .await
+}
+
 pub(super) async fn update_permissions(
     State(state): State<PrivateRoomHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -499,6 +517,7 @@ async fn membership_action(
 enum GovernanceAction {
     Remove,
     Ban,
+    Unban,
 }
 
 async fn governance_action(
@@ -533,6 +552,7 @@ async fn governance_action(
     let result = match action {
         GovernanceAction::Remove => state.rooms.remove(request).await,
         GovernanceAction::Ban => state.rooms.ban(request).await,
+        GovernanceAction::Unban => state.rooms.unban(request).await,
     };
     respond(result, StatusCode::OK, correlation_id)
 }

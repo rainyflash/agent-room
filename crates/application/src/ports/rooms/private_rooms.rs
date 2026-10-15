@@ -123,6 +123,13 @@ pub trait PrivateRoomMatrixGateway: Send + Sync {
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>>;
 
+    /// 解封。只解真封着的人：Synapse 不让解没封的人（`M_BAD_STATE`），重试时已经解开了也算成功。
+    fn unban<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
     fn set_speaking<'a>(
         &'a self,
         room_id: &'a MatrixRoomId,

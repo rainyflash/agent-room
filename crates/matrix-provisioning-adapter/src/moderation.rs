@@ -1,7 +1,7 @@
 use agent_room_application::ports::{
     MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
     MatrixUserId, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
-    PrivateMatrixMembership, PrivateRoomMatrixGateway,
+    PrivateRoomMatrixGateway,
 };
 use agent_room_domain::{
     moderation::{ModerationAction, ModerationActionKind},
@@ -248,40 +248,13 @@ fn required_matrix_user(target: &ModerationEffectTarget) -> MatrixResult<&Matrix
         .ok_or_else(invalid_configuration)
 }
 
-/// 只解这个分片里真封着的人：Synapse 不让解没封的人（`M_BAD_STATE`），封禁之后新开的分片里他
-/// 本来就没被封。
+/// 只解这个分片里真封着的人（封禁之后新开的分片里他本来就没被封），规则和私人房间的解封一样。
 async fn unban(
     provisioner: &MatrixApplicationServiceProvisioner,
     target: &ModerationEffectTarget,
     user_id: &MatrixUserId,
 ) -> MatrixResult<()> {
-    if PrivateRoomMatrixGateway::membership(provisioner, &target.matrix_room_id, user_id).await?
-        != Some(PrivateMatrixMembership::Banned)
-    {
-        return Ok(());
-    }
-    let operation = MatrixOperation::Unban;
-    let endpoint = endpoint_with_segments(
-        &provisioner.homeserver_url,
-        &[
-            "_matrix",
-            "client",
-            "v3",
-            "rooms",
-            target.matrix_room_id.as_str(),
-            "unban",
-        ],
-        operation,
-    )?;
-    let response = provisioner
-        .client
-        .post(endpoint)
-        .bearer_auth(provisioner.access_token.expose())
-        .json(&json!({ "user_id": user_id.as_str() }))
-        .send()
-        .await
-        .map_err(|error| super::map_transport_error(operation, &error))?;
-    expect_empty_success(response, operation).await
+    PrivateRoomMatrixGateway::unban(provisioner, &target.matrix_room_id, user_id).await
 }
 
 async fn write_moderation_notice(

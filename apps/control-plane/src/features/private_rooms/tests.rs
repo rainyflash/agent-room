@@ -222,6 +222,18 @@ impl PrivateRoomUseCases for FakeRooms {
         ))
     }
 
+    fn unban(
+        &self,
+        request: GovernPrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        self.record(call(
+            "unban",
+            request.catalog_id,
+            Some(request.target_principal_id),
+            None,
+        ))
+    }
+
     fn update_permissions(
         &self,
         request: ChangePrivateRoomPermissions,
@@ -735,6 +747,11 @@ async fn 全部成员生命周期端点只调用对应应用用例() {
             format!("/private-rooms/{CATALOG_UUID}/members/{TARGET_UUID}/ban"),
             "ban",
         ),
+        (
+            Method::POST,
+            format!("/private-rooms/{CATALOG_UUID}/members/{TARGET_UUID}/unban"),
+            "unban",
+        ),
     ];
     for (method, uri, expected) in cases {
         let response = app
@@ -752,7 +769,10 @@ async fn 全部成员生命周期端点只调用对应应用用例() {
         .iter()
         .map(|call| call.operation)
         .collect::<Vec<_>>();
-    assert_eq!(operations, ["accept", "decline", "leave", "remove", "ban"]);
+    assert_eq!(
+        operations,
+        ["accept", "decline", "leave", "remove", "ban", "unban"]
+    );
 }
 
 #[tokio::test]

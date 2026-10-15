@@ -1216,6 +1216,14 @@ impl PrivateRoomMatrixGateway for RecordingMatrix {
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async { unreachable!("移出不封禁") })
     }
+
+    fn unban<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { unreachable!("移出不解封") })
+    }
     fn set_speaking<'a>(
         &'a self,
         _room_id: &'a MatrixRoomId,

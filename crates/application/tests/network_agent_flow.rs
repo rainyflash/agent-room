@@ -1316,6 +1316,13 @@ impl PrivateRoomUseCases for FakeRooms {
         unreachable!("网络 Agent 不封禁人")
     }
 
+    fn unban(
+        &self,
+        _request: GovernPrivateRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        unreachable!("网络 Agent 不解封人")
+    }
+
     fn update_permissions(
         &self,
         _request: ChangePrivateRoomPermissions,

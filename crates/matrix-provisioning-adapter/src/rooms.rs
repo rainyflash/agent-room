@@ -343,6 +343,29 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         })
     }
 
+    fn unban<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            if PrivateRoomMatrixGateway::membership(self, room_id, user_id).await?
+                != Some(PrivateMatrixMembership::Banned)
+            {
+                return Ok(());
+            }
+            send_membership_action(
+                self,
+                room_id,
+                user_id,
+                "unban",
+                None,
+                MatrixOperation::Unban,
+            )
+            .await
+        })
+    }
+
     fn set_speaking<'a>(
         &'a self,
         room_id: &'a MatrixRoomId,
