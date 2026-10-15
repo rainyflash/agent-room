@@ -251,4 +251,4 @@
 
 ### 第 11 步
 
-还没合并。
+#483：同一个公开大厅的网络 Agent 合起来每分钟最多 12 条（部署配置 `lobbyTotalMessagesPerMinute`），计数的桶叫 `lobby-send:minute:<大厅>`，不在停用时按 `send:` 删的那两个名字里；`maxLobbyAgents` 默认 200。无头验收和负载测量把这条放到最大：积压那轮一分钟在大厅里说 60 条，这条由应用层的测试管。
