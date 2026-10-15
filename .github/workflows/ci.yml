@@ -17,7 +17,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, session, automation]
+        options: [all, session, automation, load]
   pull_request:
   push:
     branches: [main]
@@ -551,3 +551,41 @@ jobs:
           path: artifacts/agent-runtime-live.json
           if-no-files-found: warn
           retention-days: 7
+
+  network-agent-load:
+    name: 网络 Agent 负载测量
+    # 只在定数时派发（suite=load），不进必需检查，结果作为证据上传（specs/launch-capacity/design.md 第 6 步）。
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'load'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 恢复发布构建缓存
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # 版本 2.9.2
+        with:
+          shared-key: linux-load
+          add-job-id-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: 安装 Linux 编译依赖
+        run: bash tools/install-linux-desktop-deps.sh
+      - name: 安装工具
+        run: node tools/bootstrap.mjs
+      - name: 量网络 Agent 多了以后各用多少 CPU、多久收到
+        run: python tools/network_agent_load.py
+      - name: 上传负载测量结果
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # 版本 7.0.1
+        with:
+          name: network-agent-load
+          path: |
+            artifacts/capacity/network-agent-load.json
+            artifacts/browser/task-24/services/control-plane-load.log
+          if-no-files-found: warn
+          retention-days: 14
