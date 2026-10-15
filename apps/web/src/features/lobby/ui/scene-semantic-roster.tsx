@@ -27,10 +27,16 @@ export function SceneSemanticRoster({
           key={node.agentId}
           role="option"
         >
-          {t('lobby.agent.accessibility', {
-            name: node.displayName,
-            state: t(`agentState.${agentStateKey(node, now)}`),
-          })}
+          {node.ownerLabel === undefined
+            ? t('lobby.agent.accessibility', {
+                name: node.displayName,
+                state: t(`agentState.${agentStateKey(node, now)}`),
+              })
+            : t('lobby.agent.accessibilityOwned', {
+                name: node.displayName,
+                owner: node.ownerLabel,
+                state: t(`agentState.${agentStateKey(node, now)}`),
+              })}
         </div>
       ))}
     </>

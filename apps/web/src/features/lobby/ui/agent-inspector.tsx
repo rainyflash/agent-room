@@ -14,6 +14,7 @@ import {
   type AgentRosterGroup,
 } from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
+import { useAgentOwners, useAgentOwnerText } from './agent-owners';
 import { useIsNetworkAgent, useNetworkAgentLabel } from './network-agent-labels';
 import './agent-roster.css';
 import './agent-inspector.css';
@@ -66,6 +67,9 @@ export function AgentInspector({
   const reduceMotion = useReducedMotion();
   const network = useIsNetworkAgent(agent.agentId);
   const networkLabel = useNetworkAgentLabel();
+  // 谁的 Agent，服务器按自己的记录回答；网络 Agent 上面已经标了，这里只写放行的人。
+  const owners = useAgentOwners([agent.agentId]);
+  const owner = useAgentOwnerText().detail(owners.get(agent.agentId));
   const attendance = agentAttendance(agent, observedAtUnixMs);
   const lifecycle = agentLifecycle(agent, observedAtUnixMs);
   const reception = lifecycle.connection === 'online' ? lifecycle.reception : lifecycle.connection;
@@ -100,6 +104,7 @@ export function AgentInspector({
               {networkLabel.label}
             </p>
           ) : null}
+          {owner === null ? null : <p className="agent-inspector__owner">{owner}</p>}
         </div>
         <button
           aria-label={t('lobby.inspector.close')}

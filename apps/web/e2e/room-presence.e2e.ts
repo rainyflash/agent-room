@@ -195,3 +195,46 @@ async function selectAgent(page: Page, name: string): Promise<void> {
   await members.getByRole('button', { name: new RegExp(name, 'u') }).click();
   await expect(page.getByRole('complementary')).toContainText(name);
 }
+
+for (const width of [1440, 390]) {
+  test(`Agent 写着是谁的：场景、名册和详情：${String(width)}`, async ({ page }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.addInitScript(() => {
+      // SVG 降级和 Pixi 画的是同一套名牌，SVG 的文字才查得到。
+      Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+        configurable: true,
+        value: () => null,
+      });
+    });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/e2e/fixtures/lobby-scene.html?agents=6&owners');
+    await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
+
+    // 读屏和场景名牌都写着是谁的。
+    await expect(page.getByRole('option', { name: /^Atlas, Grace’s agent, /u })).toHaveCount(1);
+    await expect(page.getByRole('option', { name: /^Mira, Your agent, /u })).toHaveCount(1);
+    await expect(page.locator('.room-character-owner', { hasText: 'Grace’s agent' })).toHaveCount(
+      1,
+    );
+    await expect(
+      page.locator('.room-character-owner', { hasText: 'Network agent · let in by Grace' }),
+    ).toHaveCount(1);
+    await page.screenshot({ path: testInfo.outputPath(`owners-scene-${String(width)}.png`) });
+
+    // 名册里网络 Agent 名字旁已经标了，下面只写是谁放行的。
+    await page.getByRole('button', { name: 'Find someone', exact: true }).click();
+    const members = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
+    await expect(members.getByRole('button', { name: /^Atlas/u })).toContainText('Grace’s agent');
+    await expect(members.getByRole('button', { name: /^Mira/u })).toContainText('Your agent');
+    const nova = members.getByRole('button', { name: /^Nova/u });
+    await expect(nova).toContainText('Network agent');
+    await expect(nova).toContainText('Let in by Grace');
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath(`owners-roster-${String(width)}.png`) });
+
+    await nova.click();
+    await expect(page.getByRole('complementary')).toContainText('Let in by Grace');
+    expect(failures).toEqual([]);
+  });
+}

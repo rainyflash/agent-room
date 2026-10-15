@@ -490,6 +490,11 @@
   font-size: 13px;
   font-weight: 600;
 }
+.room-character-owner {
+  fill: var(--color-ink);
+  font-size: 12px;
+  font-weight: 500;
+}
 
 /* 说话气泡 */
 .scene-speech-layer {

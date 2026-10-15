@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import type { LobbySceneLabels } from '@/features/lobby/scene/lobby-scene';
+import { useAgentOwners, useAgentOwnerText } from '@/features/lobby/ui/agent-owners';
 import { ListModeRoster, type ListModeRosterHandle } from '@/features/lobby/ui/list-mode-roster';
 import {
   LobbySceneSurface,
@@ -59,6 +60,19 @@ export function LobbySpatialView({
     }),
     [languageKey, t],
   );
+  // 名牌下写“谁的 Agent”：服务器按自己的记录回答（specs/room-people），问到了才写。
+  const owners = useAgentOwners(projection.nodes.map((node) => node.agentId));
+  const { caption } = useAgentOwnerText();
+  const labelled = useMemo<LobbySceneProjection>(() => {
+    if (owners.size === 0) return projection;
+    return {
+      ...projection,
+      nodes: projection.nodes.map((node) => {
+        const ownerLabel = caption(owners.get(node.agentId));
+        return ownerLabel === null ? node : { ...node, ownerLabel };
+      }),
+    };
+  }, [projection, owners, caption]);
   useImperativeHandle(ref, () => ({
     focus: () => (mode === 'scene' ? scene.current?.focus() : list.current?.focusSelected()),
   }));
@@ -81,7 +95,7 @@ export function LobbySpatialView({
             }}
             onSelectAgent={onSelectAgent}
             onZoomChange={setZoom}
-            projection={projection}
+            projection={labelled}
             ref={scene}
           />
         ) : (

@@ -1,5 +1,5 @@
 import { createRoot, type Root } from 'react-dom/client';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { ToastStack } from '@agent-room/ui-system';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -59,9 +59,14 @@ import type {
   LobbyRoom,
 } from '@/features/lobby/domain/lobby';
 import type { LobbyFixtureControls } from './lobby-fixture-controls';
+import { AgentOwnerStore } from '@/features/lobby/application/agent-owner-store';
+import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import type { AgentOwnerRecord } from '@/features/lobby/domain/agent-owners';
 import { roomHumans } from '@/features/lobby/domain/room-participants';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
+import { AgentOwnersProvider } from '@/features/lobby/ui/agent-owners';
+import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
@@ -125,6 +130,9 @@ const archivedFixture =
   privateFixture && new URLSearchParams(window.location.search).has('archived');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
+// `?owners` 里服务器回答 Agent 是谁的：依次是你的、Grace 的、Grace 放行的网络 Agent、
+// 没人放行的网络 Agent（公共大厅里的）。
+const ownersFixture = new URLSearchParams(window.location.search).has('owners');
 let room: LobbyRoom = {
   ...testRoom(fixtureAgentCount),
   ...(privateFixture ? { encrypted: true } : {}),
@@ -1102,6 +1110,46 @@ const fixtureOfflineHandoffTarget: HandoffTarget = Object.freeze({
 
 const fixtureControlPlane = new ControlPlaneClient({ baseUrl: 'https://api.agent-room.test' });
 
+/** 夹具 Agent 的 ID 末尾是它的序号（从 1 起）。 */
+function fixtureAgentOwner(agentId: string): AgentOwnerRecord | null {
+  const index = Number(agentId.slice(-12)) - 1;
+  if (!room.agents.some((agent) => agent.agentId === agentId) || !(index >= 0)) return null;
+  const grace = { displayName: 'Grace', principalId: fixtureMember };
+  switch (index % 4) {
+    case 0:
+      return {
+        agentId,
+        kind: 'local',
+        owner: { displayName: 'Ada', principalId: fixtureOwner },
+      };
+    case 1:
+      return { agentId, kind: 'local', owner: grace };
+    case 2:
+      return { agentId, kind: 'network', admittedBy: grace };
+    default:
+      return { agentId, kind: 'network' };
+  }
+}
+
+// 和真的一样，名册另外按 ID 问哪些是网络 Agent。
+const networkAgentLabels = new NetworkAgentLabelStore({
+  lookup: (agentIds) =>
+    Promise.resolve(
+      ok(new Set(agentIds.filter((agentId) => fixtureAgentOwner(agentId)?.kind === 'network'))),
+    ),
+});
+const agentOwners = new AgentOwnerStore({
+  lookup: (_catalogId, agentIds) =>
+    Promise.resolve(
+      ok(
+        agentIds.flatMap((agentId) => {
+          const owner = fixtureAgentOwner(agentId);
+          return owner === null ? [] : [owner];
+        }),
+      ),
+    ),
+});
+
 const services: AppServices = {
   accessManagement,
   agentRosterPolicy: {
@@ -1209,7 +1257,7 @@ function LobbyFixture({
                   {inboxMode ? (
                     <InboxPage />
                   ) : (
-                    <>
+                    <OptionalAgentOwners>
                       <LobbyPage
                         catalogId="01990d9e-8400-7000-8000-000000000401"
                         onExitRoom={() => undefined}
@@ -1267,7 +1315,7 @@ function LobbyFixture({
                           />
                         </ToastStack>
                       ) : null}
-                    </>
+                    </OptionalAgentOwners>
                   )}
                 </DesktopRuntimeProvider>
               </InboxProvider>
@@ -1276,6 +1324,16 @@ function LobbyFixture({
         </AppServicesProvider>
       </QueryClientProvider>
     </I18nextProvider>
+  );
+}
+
+function OptionalAgentOwners({ children }: { readonly children: ReactNode }) {
+  return ownersFixture ? (
+    <NetworkAgentLabelsProvider store={networkAgentLabels}>
+      <AgentOwnersProvider store={agentOwners}>{children}</AgentOwnersProvider>
+    </NetworkAgentLabelsProvider>
+  ) : (
+    <>{children}</>
   );
 }
 

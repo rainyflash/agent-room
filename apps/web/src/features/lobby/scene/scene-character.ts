@@ -16,6 +16,8 @@ export type SceneCharacter = {
   readonly reception?: AgentReception;
   /** 名牌下的贴纸和头顶圆点看它：在不在等消息，或者重连中、离线。人没有。 */
   readonly availability?: AgentStateKey;
+  /** 贴纸下面一行“谁的 Agent”。人没有，不知道时也没有。 */
+  readonly ownerLabel?: string;
   readonly radius: number;
   readonly roamingRadius?: number;
   readonly floorPosition?: FloorPoint;

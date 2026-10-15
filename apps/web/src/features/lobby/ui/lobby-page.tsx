@@ -52,6 +52,7 @@ import {
 } from '@/features/lobby/ui/lobby-spatial-view';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { MatrixConnectionCard } from '@/features/session/ui/matrix-connection-card';
+import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
@@ -130,12 +131,17 @@ export function LobbyPage(props: LobbyPageProps) {
         ) : (
           <RoomMessagesProvider store={store.messages}>
             <NetworkAgentRelayProvider relayed={state.room.encrypted === true}>
-              <ReadyLobby
-                {...props}
-                key={state.room.roomId}
-                room={state.room}
-                scene={state.projection}
-              />
+              <AgentOwnersScope
+                catalogId={props.catalogId}
+                selfPrincipalId={props.principal?.principalId ?? null}
+              >
+                <ReadyLobby
+                  {...props}
+                  key={state.room.roomId}
+                  room={state.room}
+                  scene={state.projection}
+                />
+              </AgentOwnersScope>
             </NetworkAgentRelayProvider>
           </RoomMessagesProvider>
         )}
