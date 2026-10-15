@@ -70,6 +70,12 @@ pub trait AgentLobbyAccessRepository: Send + Sync {
         agent_instance_id: AgentInstanceId,
     ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>>;
 
+    /// 这个 Agent 没吊销的连接，新建的在前。主人把它带进房间时用；还能不能用看 `active`。
+    fn lobby_accesses_of_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentLobbyAccessRecord>>>;
+
     /// Resolve an active room in the requested public catalog. This grants no private-room access.
     fn find_public_lobby_room<'a>(
         &'a self,

@@ -10,6 +10,27 @@ use sqlx::{Row, postgres::PgRow};
 
 use crate::{PostgresRepositories, agents::decode_column, error::map_sqlx_error};
 
+/// 连接还能不能用：连接、设备、账号、Agent 和适配器绑定都还有效。按连接找、按 Agent 找共用。
+const ACCESS_SELECT: &str = r"SELECT instance.id AS agent_instance_id,
+         instance.agent_id,
+         instance.device_id,
+         principal.id AS principal_id,
+         agent.matrix_user_id,
+         (
+             instance.revoked_at IS NULL
+             AND device.revoked_at IS NULL
+             AND device.trust_state = 'verified'
+             AND principal.status = 'active'
+             AND agent.lifecycle_state = 'active'
+             AND binding.state = 'active'
+         ) AS active
+  FROM agent_room.agent_instance AS instance
+  JOIN agent_room.device AS device ON device.id = instance.device_id
+  JOIN agent_room.principal AS principal ON principal.id = device.principal_id
+  JOIN agent_room.agent AS agent ON agent.id = instance.agent_id
+  JOIN agent_room.adapter_binding AS binding
+    ON binding.id = instance.adapter_binding_id";
+
 impl AgentLobbyAccessRepository for PostgresRepositories {
     fn find_public_lobby_room<'a>(
         &'a self,
@@ -40,35 +61,39 @@ impl AgentLobbyAccessRepository for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>> {
         Box::pin(async move {
             let operation = "agent_lobby.access.find";
-            let row = sqlx::query(
-                r"SELECT instance.id AS agent_instance_id,
-                         instance.agent_id,
-                         instance.device_id,
-                         principal.id AS principal_id,
-                         agent.matrix_user_id,
-                         (
-                             instance.revoked_at IS NULL
-                             AND device.revoked_at IS NULL
-                             AND device.trust_state = 'verified'
-                             AND principal.status = 'active'
-                             AND agent.lifecycle_state = 'active'
-                             AND binding.state = 'active'
-                         ) AS active
-                  FROM agent_room.agent_instance AS instance
-                  JOIN agent_room.device AS device ON device.id = instance.device_id
-                  JOIN agent_room.principal AS principal ON principal.id = device.principal_id
-                  JOIN agent_room.agent AS agent ON agent.id = instance.agent_id
-                  JOIN agent_room.adapter_binding AS binding
-                    ON binding.id = instance.adapter_binding_id
-                  WHERE instance.id = $1",
-            )
-            .bind(agent_instance_id.as_uuid())
-            .fetch_optional(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let statement = format!("{ACCESS_SELECT} WHERE instance.id = $1");
+            // 这里只拼接编译期固定的查询，运行时的值都走参数绑定。
+            let row = sqlx::query(sqlx::AssertSqlSafe(statement))
+                .bind(agent_instance_id.as_uuid())
+                .fetch_optional(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
             row.as_ref()
                 .map(|row| decode_access(row, operation))
                 .transpose()
+        })
+    }
+
+    fn lobby_accesses_of_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentLobbyAccessRecord>>> {
+        Box::pin(async move {
+            let operation = "agent_lobby.access.of_agent";
+            let statement = format!(
+                "{ACCESS_SELECT}
+                 WHERE instance.agent_id = $1 AND instance.revoked_at IS NULL
+                 ORDER BY instance.created_at DESC, instance.id DESC"
+            );
+            // 这里只拼接编译期固定的查询，运行时的值都走参数绑定。
+            let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
+                .bind(agent_id.as_uuid())
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_access(row, operation))
+                .collect()
         })
     }
 }

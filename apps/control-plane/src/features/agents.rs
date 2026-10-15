@@ -1023,6 +1023,7 @@ mod tests {
 
     use super::{AgentHttpDependencies, AgentHttpState, DEVICE_DEFAULT_AGENT_TARGET, router};
 
+    use agent_room_application::agent_room_placements::{BringAgentIntoRoom, BroughtAgent};
     use agent_room_application::{
         agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryResult},
         agent_room_placements::{
@@ -1044,6 +1045,13 @@ mod tests {
             _request: ListAgentRooms,
         ) -> PortFuture<'_, AgentLobbyEntryResult<Vec<AgentRoom>>> {
             Box::pin(async { unreachable!("Agent 路由不列房间") })
+        }
+
+        fn bring(
+            &self,
+            _request: BringAgentIntoRoom,
+        ) -> PortFuture<'_, AgentLobbyEntryResult<BroughtAgent>> {
+            Box::pin(async { unreachable!("Agent 路由不带进房间") })
         }
 
         fn leave(

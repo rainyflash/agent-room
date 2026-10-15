@@ -1,4 +1,7 @@
-//! Agent 在哪些房间、离开一个房间（`specs/agent-identity/design.md` 第 2 步）。
+//! Agent 在哪些房间、主人把它带进房间、离开一个房间（`specs/agent-identity/design.md` 第 2 步）。
+//!
+//! 带进房间由主人用网页登录发起，服务器替 Agent 在主人这台电脑上的连接进房间，和 Agent 自己进来
+//! 走同一套（私人房间看连接代表的账号能不能带 Agent 进来）。
 //!
 //! 离开由 Agent 自己（Bridge 用设备签名）或主人（网页登录）发起，做三件事：私人房间里收回它的
 //! 发言级别、以应用服务的身份让它在 Matrix 上离开、放掉服务器上给它占的位置。凭口令或敲门进来的，
@@ -8,12 +11,13 @@ use std::sync::Arc;
 
 use agent_room_domain::{
     agents::AgentRole,
-    ids::{AgentId, AgentInstanceId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceId, DeviceId, RoomCatalogId},
     rooms::{RoomCatalogStatus, RoomReservationState},
+    time::UtcMillis,
 };
 
 use crate::{
-    agent_lobbies::{AgentLobbyEntryFailure, AgentLobbyEntryResult},
+    agent_lobbies::{AgentInstanceRoomEntry, AgentLobbyEntryFailure, AgentLobbyEntryResult},
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
     ports::{
@@ -22,6 +26,7 @@ use crate::{
         MatrixFailure, MatrixFailureKind, MatrixRoomId, MatrixUserId, PortFuture,
         PrivateRoomMatrixGateway, RoomAllocationStore,
     },
+    rooms::EnterLobbyOutcome,
 };
 
 /// 谁在让 Agent 离开。
@@ -58,6 +63,23 @@ pub struct AgentRoom {
     pub status: RoomCatalogStatus,
 }
 
+/// 主人从“我的 Agent”把它带进一个房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BringAgentIntoRoom {
+    pub actor: AuthenticatedPrincipal,
+    pub agent_id: AgentId,
+    pub catalog_id: RoomCatalogId,
+}
+
+/// 带进房间的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BroughtAgent {
+    /// 进去了几个连接。是 0 时它在你的电脑上还没有能用的连接：没连过，或者连接都失效了。
+    Entered(usize),
+    /// 公共大厅正在开新的分片，或者刚选好的分片满了，到 `retry_at` 再来。
+    Busy { retry_at: UtcMillis },
+}
+
 /// 删除 Agent 之前让它离开它在的所有房间。只有主人能做，和删除 Agent 一样。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeaveAllAgentRooms {
@@ -77,6 +99,11 @@ pub trait AgentRoomPlacementUseCases: Send + Sync {
         request: ListAgentRooms,
     ) -> PortFuture<'_, AgentLobbyEntryResult<Vec<AgentRoom>>>;
 
+    fn bring(
+        &self,
+        request: BringAgentIntoRoom,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<BroughtAgent>>;
+
     fn leave(
         &self,
         request: LeaveAgentRoom,
@@ -94,6 +121,8 @@ pub trait AgentRoomPlacementUseCases: Send + Sync {
 enum OwnerAccess {
     /// 看在哪些房间：Agent 的成员都行。
     View,
+    /// 带进房间：主人或操作者，只带他自己电脑上的连接。
+    Bring,
     /// 让它离开一个房间：主人或操作者。
     Leave,
     /// 删除之前离开所有房间：只有主人。
@@ -107,6 +136,8 @@ pub struct AgentRoomPlacementDependencies {
     pub allocations: Arc<dyn RoomAllocationStore>,
     pub private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub memberships: Arc<dyn AgentRoomMembershipFactory>,
+    /// 带进房间时替连接进房间，和 Agent 自己进来是同一个服务。
+    pub entry: Arc<dyn AgentInstanceRoomEntry>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -117,6 +148,7 @@ pub struct AgentRoomPlacementService {
     allocations: Arc<dyn RoomAllocationStore>,
     private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     memberships: Arc<dyn AgentRoomMembershipFactory>,
+    entry: Arc<dyn AgentInstanceRoomEntry>,
     clock: Arc<dyn Clock>,
 }
 
@@ -129,6 +161,7 @@ impl AgentRoomPlacementService {
             allocations: dependencies.allocations,
             private_matrix: dependencies.private_matrix,
             memberships: dependencies.memberships,
+            entry: dependencies.entry,
             clock: dependencies.clock,
         }
     }
@@ -160,6 +193,48 @@ impl AgentRoomPlacementService {
             });
         }
         Ok(rooms)
+    }
+
+    /// 只带主人自己电脑上的连接：连接代表的是它所在设备的账号，私人房间按这个账号裁决，带别人
+    /// 电脑上的连接等于替别人进房间。同一台设备只带最新的那个连接，旧的多半已经不用了。
+    async fn bring_internal(
+        &self,
+        request: BringAgentIntoRoom,
+    ) -> AgentLobbyEntryResult<BroughtAgent> {
+        self.authorize_owner(&request.actor, request.agent_id, OwnerAccess::Bring)
+            .await?;
+        let accesses = self
+            .access
+            .lobby_accesses_of_agent(request.agent_id)
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?;
+        let mut devices: Vec<DeviceId> = Vec::new();
+        for access in accesses {
+            if !access.active
+                || access.agent_id != request.agent_id
+                || access.principal_id != request.actor.principal_id
+                || devices.contains(&access.device_id)
+            {
+                continue;
+            }
+            devices.push(access.device_id);
+            match self
+                .entry
+                .enter_instance(&access, request.catalog_id)
+                .await?
+            {
+                EnterLobbyOutcome::Joined { .. } => {}
+                EnterLobbyOutcome::ProvisioningBusy { retry_at } => {
+                    return Ok(BroughtAgent::Busy { retry_at });
+                }
+                EnterLobbyOutcome::CapacityChanged { .. } => {
+                    return Ok(BroughtAgent::Busy {
+                        retry_at: self.clock.now(),
+                    });
+                }
+            }
+        }
+        Ok(BroughtAgent::Entered(devices.len()))
     }
 
     async fn leave_internal(
@@ -321,8 +396,8 @@ impl AgentRoomPlacementService {
         }
     }
 
-    /// 主人这边：看在哪些房间，Agent 的成员都行；让它离开要主人或操作者；删除之前离开所有房间只有
-    /// 主人能做。不是成员的当作没有这个 Agent，不让人拿 ID 试探别人的 Agent。
+    /// 主人这边：看在哪些房间，Agent 的成员都行；带进房间、让它离开要主人或操作者；删除之前离开
+    /// 所有房间只有主人能做。不是成员的当作没有这个 Agent，不让人拿 ID 试探别人的 Agent。
     async fn authorize_owner(
         &self,
         actor: &AuthenticatedPrincipal,
@@ -341,7 +416,7 @@ impl AgentRoomPlacementService {
             .ok_or(AgentLobbyEntryFailure::NotFound)?;
         let allowed = match access {
             OwnerAccess::View => true,
-            OwnerAccess::Leave => role.can_register_instance(),
+            OwnerAccess::Bring | OwnerAccess::Leave => role.can_register_instance(),
             OwnerAccess::Retire => role == AgentRole::Owner,
         };
         if allowed {
@@ -365,6 +440,13 @@ impl AgentRoomPlacementUseCases for AgentRoomPlacementService {
         request: ListAgentRooms,
     ) -> PortFuture<'_, AgentLobbyEntryResult<Vec<AgentRoom>>> {
         Box::pin(self.rooms_internal(request))
+    }
+
+    fn bring(
+        &self,
+        request: BringAgentIntoRoom,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<BroughtAgent>> {
+        Box::pin(self.bring_internal(request))
     }
 
     fn leave(

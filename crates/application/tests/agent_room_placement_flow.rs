@@ -1,10 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use agent_room_application::{
-    agent_lobbies::AgentLobbyEntryFailureKind,
+    agent_lobbies::{AgentInstanceRoomEntry, AgentLobbyEntryFailureKind, AgentLobbyEntryResult},
     agent_room_placements::{
         AgentRoomActor, AgentRoomPlacementDependencies, AgentRoomPlacementService,
-        AgentRoomPlacementUseCases, LeaveAgentRoom, LeaveAllAgentRooms, ListAgentRooms,
+        AgentRoomPlacementUseCases, BringAgentIntoRoom, BroughtAgent, LeaveAgentRoom,
+        LeaveAllAgentRooms, ListAgentRooms,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -17,6 +18,7 @@ use agent_room_application::{
         PrivateMatrixSpeakingAssignment, PrivateRoomMatrixGateway, RoomAllocationStore,
         RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome,
     },
+    rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
 use agent_room_domain::{
     agents::{AgentMember, AgentMemberships, AgentRole},
@@ -26,8 +28,8 @@ use agent_room_domain::{
         RoomReservationId,
     },
     rooms::{
-        MatrixRoomReference, RoomCatalogStatus, RoomReservation, RoomReservationFields,
-        RoomReservationState,
+        MatrixRoomReference, RoomCapacity, RoomCatalogStatus, RoomInstance, RoomInstanceFields,
+        RoomInstanceState, RoomReservation, RoomReservationFields, RoomReservationState,
     },
     time::UtcMillis,
 };
@@ -49,7 +51,8 @@ impl 调用记录 {
     }
 }
 
-struct 固定访问(Option<AgentLobbyAccessRecord>);
+/// 第一个是按连接找到的那个，后面是这个 Agent 没吊销的全部连接（带进房间用）。
+struct 固定访问(Option<AgentLobbyAccessRecord>, Vec<AgentLobbyAccessRecord>);
 
 impl AgentLobbyAccessRepository for 固定访问 {
     fn find_public_lobby_room<'a>(
@@ -66,6 +69,40 @@ impl AgentLobbyAccessRepository for 固定访问 {
     ) -> PortFuture<'_, RepositoryResult<Option<AgentLobbyAccessRecord>>> {
         let value = self.0.clone();
         Box::pin(async move { Ok(value) })
+    }
+
+    fn lobby_accesses_of_agent(
+        &self,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentLobbyAccessRecord>>> {
+        assert_eq!(agent_id, agent());
+        let value = self.1.clone();
+        Box::pin(async move { Ok(value) })
+    }
+}
+
+/// 替连接进房间：记下进了哪个连接、哪个房间，回答事先定好的结果（没定就是进去了）。
+struct 记录进房间 {
+    log: Arc<调用记录>,
+    outcome: Option<EnterLobbyOutcome>,
+}
+
+impl AgentInstanceRoomEntry for 记录进房间 {
+    fn enter_instance<'a>(
+        &'a self,
+        access: &'a AgentLobbyAccessRecord,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'a, AgentLobbyEntryResult<EnterLobbyOutcome>> {
+        self.log.记(format!(
+            "enter {} {}",
+            access.agent_instance_id.as_uuid().as_u128(),
+            catalog_id.as_uuid().as_u128()
+        ));
+        let outcome = self
+            .outcome
+            .clone()
+            .unwrap_or_else(|| joined(access.agent_instance_id, catalog_id));
+        Box::pin(async move { Ok(outcome) })
     }
 }
 
@@ -261,25 +298,29 @@ impl Clock for 固定时钟 {
 
 struct 场景 {
     access: Option<AgentLobbyAccessRecord>,
+    accesses: Vec<AgentLobbyAccessRecord>,
     members: Option<AgentMemberships>,
     placements: Vec<AgentRoomPlacement>,
     leave_failure: Option<MatrixFailureKind>,
+    entry_outcome: Option<EnterLobbyOutcome>,
 }
 
 impl 场景 {
     fn new(placements: Vec<AgentRoomPlacement>) -> Self {
         Self {
             access: Some(access(true, device())),
+            accesses: vec![access(true, device())],
             members: Some(memberships(AgentRole::Owner)),
             placements,
             leave_failure: None,
+            entry_outcome: None,
         }
     }
 
     fn service(self) -> (AgentRoomPlacementService, Arc<调用记录>) {
         let log = Arc::new(调用记录::default());
         let service = AgentRoomPlacementService::new(AgentRoomPlacementDependencies {
-            access: Arc::new(固定访问(self.access)),
+            access: Arc::new(固定访问(self.access, self.accesses)),
             agent_memberships: Arc::new(固定成员(self.members)),
             placements: Arc::new(固定位置 {
                 placements: self.placements,
@@ -291,6 +332,10 @@ impl 场景 {
                 log: log.clone(),
                 failure: self.leave_failure,
             }))),
+            entry: Arc::new(记录进房间 {
+                log: log.clone(),
+                outcome: self.entry_outcome,
+            }),
             clock: Arc::new(固定时钟),
         });
         (service, log)
@@ -644,6 +689,157 @@ async fn 删除之前离开所有房间只有主人能做_不在房间里时什�
         .expect("没在房间里");
     assert_eq!(left, 0);
     assert!(log.全部().is_empty());
+}
+
+#[tokio::test]
+async fn 主人带进房间_只带他自己电脑上还能用的连接_每台设备只带最新的() {
+    let other = PrincipalId::from_uuid(Uuid::from_u128(77));
+    let mut scene = 场景::new(Vec::new());
+    // 新建的在前：同一台设备上旧的那个不带，失效的、别人电脑上的也不带。
+    scene.accesses = vec![
+        connection(1, 501, owner_id(), true),
+        connection(2, 501, owner_id(), true),
+        connection(3, 502, owner_id(), false),
+        connection(4, 503, other, true),
+        connection(5, 504, owner_id(), true),
+    ];
+    let (service, log) = scene.service();
+
+    let brought = service.bring(bring(30)).await.expect("能带进去");
+
+    assert_eq!(brought, BroughtAgent::Entered(2));
+    assert_eq!(log.全部(), vec!["enter 1 30", "enter 5 30"]);
+}
+
+#[tokio::test]
+async fn 主人带进房间_没有能用的连接时进去零个() {
+    let mut scene = 场景::new(Vec::new());
+    scene.accesses = vec![connection(1, 501, owner_id(), false)];
+    let (service, log) = scene.service();
+
+    let brought = service.bring(bring(30)).await.expect("不报错");
+
+    assert_eq!(brought, BroughtAgent::Entered(0));
+    assert!(log.全部().is_empty());
+}
+
+#[tokio::test]
+async fn 带进房间要主人或操作者_只能查看的不行_不是成员当作没有() {
+    let mut scene = 场景::new(Vec::new());
+    scene.members = Some(memberships(AgentRole::Operator));
+    let (service, log) = scene.service();
+    service.bring(bring(30)).await.expect("操作者能带");
+    assert_eq!(log.全部().len(), 1);
+
+    let mut scene = 场景::new(Vec::new());
+    scene.members = Some(memberships(AgentRole::Viewer));
+    let (service, log) = scene.service();
+    let failure = service.bring(bring(30)).await.expect_err("查看的不能带");
+    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+    assert!(log.全部().is_empty());
+
+    let mut scene = 场景::new(Vec::new());
+    scene.members = Some(
+        AgentMemberships::restore(
+            agent(),
+            vec![member(
+                PrincipalId::from_uuid(Uuid::from_u128(77)),
+                AgentRole::Owner,
+            )],
+        )
+        .expect("成员有效"),
+    );
+    let (service, log) = scene.service();
+    let failure = service.bring(bring(30)).await.expect_err("别人的 Agent");
+    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::NotFound);
+    assert!(log.全部().is_empty());
+}
+
+#[tokio::test]
+async fn 大厅正在开分片或者分片刚满时停下_说什么时候再来() {
+    for (outcome, retry_at) in [
+        (
+            EnterLobbyOutcome::ProvisioningBusy {
+                retry_at: time(NOW + 2_000),
+            },
+            time(NOW + 2_000),
+        ),
+        (
+            EnterLobbyOutcome::CapacityChanged {
+                catalog_id: catalog(30),
+            },
+            time(NOW),
+        ),
+    ] {
+        let mut scene = 场景::new(Vec::new());
+        scene.accesses = vec![
+            connection(1, 501, owner_id(), true),
+            connection(5, 504, owner_id(), true),
+        ];
+        scene.entry_outcome = Some(outcome);
+        let (service, log) = scene.service();
+
+        let brought = service.bring(bring(30)).await.expect("不报错");
+
+        assert_eq!(brought, BroughtAgent::Busy { retry_at });
+        assert_eq!(log.全部(), vec!["enter 1 30"], "停下以后不再带别的连接");
+    }
+}
+
+fn bring(catalog_id: u128) -> BringAgentIntoRoom {
+    BringAgentIntoRoom {
+        actor: owner(),
+        agent_id: agent(),
+        catalog_id: catalog(catalog_id),
+    }
+}
+
+fn connection(
+    instance_id: u128,
+    device_id: u128,
+    principal_id: PrincipalId,
+    active: bool,
+) -> AgentLobbyAccessRecord {
+    AgentLobbyAccessRecord {
+        agent_instance_id: AgentInstanceId::from_uuid(Uuid::from_u128(instance_id)),
+        device_id: DeviceId::from_uuid(Uuid::from_u128(device_id)),
+        principal_id,
+        ..access(active, device())
+    }
+}
+
+fn joined(instance_id: AgentInstanceId, catalog_id: RoomCatalogId) -> EnterLobbyOutcome {
+    let room_instance_id = RoomInstanceId::from_uuid(Uuid::from_u128(901));
+    EnterLobbyOutcome::Joined {
+        reservation: RoomReservation::restore(
+            RoomReservationId::from_uuid(Uuid::from_u128(900)),
+            RoomReservationFields {
+                catalog_id,
+                room_instance_id,
+                agent_instance_id: instance_id,
+                reserved_at: time(NOW - 1_000),
+                expires_at: time(NOW + 59_000),
+                state: RoomReservationState::Committed,
+                finalized_at: Some(time(NOW)),
+            },
+        )
+        .expect("预约有效"),
+        room: RoomInstance::restore(
+            room_instance_id,
+            RoomInstanceFields {
+                catalog_id,
+                matrix_room_id: matrix_room(30),
+                region: None,
+                capacity: RoomCapacity::standard(),
+                projected_member_count: 0,
+                allocated_slots: 0,
+                activity_score_millis: 0,
+                state: RoomInstanceState::Active,
+            },
+        )
+        .expect("房间有效"),
+        kind: LobbyJoinKind::NewAssignment,
+    }
 }
 
 fn owner_leave(catalog_id: u128) -> LeaveAgentRoom {

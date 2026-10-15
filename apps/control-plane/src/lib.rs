@@ -732,11 +732,12 @@ fn build_agent_feature_states(
     dependencies: &AgentFeatureDependencies,
     admitted_entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 ) -> Result<AgentFeatureHttpStates, StartupError> {
+    let placements = build_agent_room_placements(config, dependencies)?;
     let AgentIdentityHttpStates {
         agents,
         instances,
         cards,
-    } = build_agent_identity_http_states(config, request_timeout, dependencies);
+    } = build_agent_identity_http_states(config, request_timeout, dependencies, placements.clone());
     let AgentCollaborationHttpStates {
         roster,
         handoffs,
@@ -749,7 +750,7 @@ fn build_agent_feature_states(
     } = build_agent_collaboration_http_states(config, dependencies, admitted_entry)?;
     Ok(AgentFeatureHttpStates {
         roster,
-        agent_rooms: build_agent_room_http_state(config, dependencies),
+        agent_rooms: build_agent_room_http_state(config, dependencies, placements),
         room_people: build_room_people_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
         agents,
@@ -766,11 +767,27 @@ fn build_agent_feature_states(
     })
 }
 
-/// Agent 在哪些房间、离开房间。没有自己的状态，房间路由和删除 Agent 各用一个。
+/// Agent 在哪些房间、带进房间、离开房间。房间路由和删除 Agent 共用一个。
+///
+/// 带进房间和 Agent 自己进来走同一套，另起一份进房间的服务（没有自己的状态）。
 fn build_agent_room_placements(
+    config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
-) -> Arc<AgentRoomPlacementService> {
-    Arc::new(AgentRoomPlacementService::new(
+) -> Result<Arc<AgentRoomPlacementService>, StartupError> {
+    let provisioning = build_lobby_provisioning(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+    )?;
+    let entry = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+        provisioning,
+    )?;
+    Ok(Arc::new(AgentRoomPlacementService::new(
         AgentRoomPlacementDependencies {
             access: dependencies.repositories.clone(),
             agent_memberships: dependencies.repositories.clone(),
@@ -778,19 +795,21 @@ fn build_agent_room_placements(
             allocations: dependencies.repositories.clone(),
             private_matrix: dependencies.matrix_identities.clone(),
             memberships: dependencies.matrix_identities.clone(),
+            entry,
             clock: dependencies.system_runtime.clone(),
         },
-    ))
+    )))
 }
 
-/// Agent 在哪些房间、离开一个房间：Bridge 用设备签名，主人用网页登录。
+/// Agent 在哪些房间、带进房间、离开一个房间：Bridge 用设备签名，主人用网页登录。
 fn build_agent_room_http_state(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
+    placements: Arc<AgentRoomPlacementService>,
 ) -> AgentRoomHttpState {
     AgentRoomHttpState::new(
         AgentRoomHttpDependencies {
-            placements: build_agent_room_placements(dependencies),
+            placements,
             authentication: dependencies.authentication.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
@@ -851,6 +870,7 @@ fn build_agent_identity_http_states(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
     dependencies: &AgentFeatureDependencies,
+    placements: Arc<AgentRoomPlacementService>,
 ) -> AgentIdentityHttpStates {
     let agents = build_agent_management(
         dependencies.repositories.clone(),
@@ -876,7 +896,7 @@ fn build_agent_identity_http_states(
         agents: AgentHttpState::new(
             AgentHttpDependencies {
                 agents,
-                placements: build_agent_room_placements(dependencies),
+                placements,
                 verification,
                 authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),

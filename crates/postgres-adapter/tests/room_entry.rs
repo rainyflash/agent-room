@@ -316,6 +316,14 @@ async fn 大厅访问记录绑定实例设备和权威_matrix_身份并反映撤
     assert_eq!(active.agent_instance_id, fixture.instance);
     assert_eq!(active.device_id, fixture.device);
     assert!(active.active);
+    // 按 Agent 找（主人带进房间用）得到同一份。
+    assert_eq!(
+        repositories
+            .lobby_accesses_of_agent(fixture.agent)
+            .await
+            .expect("按 Agent 找"),
+        [active]
+    );
 
     sqlx::query(
         "UPDATE agent_room.agent_instance SET status = 'revoked', revoked_at = now() WHERE id = $1",
@@ -330,6 +338,14 @@ async fn 大厅访问记录绑定实例设备和权威_matrix_身份并反映撤
         .expect("撤销后仍应可查询")
         .expect("撤销不会删除实例");
     assert!(!revoked.active);
+    // 吊销了的连接不再列出。
+    assert!(
+        repositories
+            .lobby_accesses_of_agent(fixture.agent)
+            .await
+            .expect("按 Agent 找")
+            .is_empty()
+    );
 
     database.close().await;
 }

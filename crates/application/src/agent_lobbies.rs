@@ -73,6 +73,18 @@ pub trait AgentLobbyEntryUseCases: Send + Sync {
     ) -> PortFuture<'_, AgentLobbyEntryResult<EnterLobbyOutcome>>;
 }
 
+/// 主人从“我的 Agent”把 Agent 带进房间：服务器替它的一个连接进房间，不要设备签名。
+///
+/// 调用方已经核对过主人和这个连接；这里照旧按连接代表的账号裁决私人房间的入场资格，和 Agent
+/// 自己进来一样。
+pub trait AgentInstanceRoomEntry: Send + Sync {
+    fn enter_instance<'a>(
+        &'a self,
+        access: &'a AgentLobbyAccessRecord,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'a, AgentLobbyEntryResult<EnterLobbyOutcome>>;
+}
+
 pub struct AgentLobbyEntryDependencies {
     pub access: Arc<dyn AgentLobbyAccessRepository>,
     pub allocations: Arc<dyn RoomAllocationStore>,
@@ -141,6 +153,63 @@ impl AgentLobbyEntryService {
         } else {
             RoomAllocationMode::Automatic
         };
+        self.join(
+            &access,
+            JoinLobbyRequest {
+                agent_id: request.agent_id,
+                agent_instance_id: request.agent_instance_id,
+                catalog_id: request.catalog_id,
+                mode,
+                preferred_language: request.preferred_language,
+                preferred_region: request.preferred_region,
+                evidence: RoomAllocationEvidence::default(),
+            },
+        )
+        .await
+    }
+
+    /// 主人带进房间：私人房间按目录找到唯一的实例，照 Agent 自己指名进来的那套裁决；别的交给
+    /// 自动分配，分配只认公共大厅（私人房间绝不自动分配，见 `RoomAllocationStore`）。
+    async fn enter_instance_internal(
+        &self,
+        access: &AgentLobbyAccessRecord,
+        catalog_id: RoomCatalogId,
+    ) -> AgentLobbyEntryResult<EnterLobbyOutcome> {
+        if !access.active {
+            return Err(AgentLobbyEntryFailure::Unauthorized);
+        }
+        let mode = match self
+            .private_rooms
+            .find_by_catalog(catalog_id)
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?
+        {
+            Some(snapshot) => {
+                RoomAllocationMode::Manual(self.admit_private(&snapshot, access).await?)
+            }
+            None => RoomAllocationMode::Automatic,
+        };
+        self.join(
+            access,
+            JoinLobbyRequest {
+                agent_id: access.agent_id,
+                agent_instance_id: access.agent_instance_id,
+                catalog_id,
+                mode,
+                preferred_language: None,
+                preferred_region: None,
+                evidence: RoomAllocationEvidence::default(),
+            },
+        )
+        .await
+    }
+
+    /// 预约位置、在 Matrix 上加入、确认：Agent 自己进来和主人带进来共用。
+    async fn join(
+        &self,
+        access: &AgentLobbyAccessRecord,
+        request: JoinLobbyRequest,
+    ) -> AgentLobbyEntryResult<EnterLobbyOutcome> {
         let membership = self
             .memberships
             .bind(&access.matrix_user_id)
@@ -158,15 +227,7 @@ impl AgentLobbyEntryService {
             joins,
             provisioning: self.provisioning.clone(),
         })
-        .enter(JoinLobbyRequest {
-            agent_id: request.agent_id,
-            agent_instance_id: request.agent_instance_id,
-            catalog_id: request.catalog_id,
-            mode,
-            preferred_language: request.preferred_language,
-            preferred_region: request.preferred_region,
-            evidence: RoomAllocationEvidence::default(),
-        })
+        .enter(request)
         .await
         .map_err(AgentLobbyEntryFailure::Lobby)
     }
@@ -209,8 +270,18 @@ impl AgentLobbyEntryService {
         if snapshot.catalog().id() != request.catalog_id {
             return Err(AgentLobbyEntryFailure::NotFound);
         }
+        self.admit_private(&snapshot, access).await
+    }
+
+    /// 私人房间的准入：Agent 代表的账号已加入且能发言，或者它本身是还有效的 Agent 成员。准了就在
+    /// Matrix 上邀请它、给它发言级别，返回房间唯一的实例。
+    async fn admit_private(
+        &self,
+        snapshot: &crate::ports::PrivateRoomSnapshot,
+        access: &AgentLobbyAccessRecord,
+    ) -> AgentLobbyEntryResult<RoomInstanceId> {
         if !snapshot.room().admits_agent_of(access.principal_id)
-            && !self.admitted_by_code(&snapshot, request.agent_id).await?
+            && !self.admitted_by_code(snapshot, access.agent_id).await?
         {
             return Err(AgentLobbyEntryFailure::Unauthorized);
         }
@@ -265,6 +336,16 @@ impl AgentLobbyEntryUseCases for AgentLobbyEntryService {
         request: EnterAgentLobby,
     ) -> PortFuture<'_, AgentLobbyEntryResult<EnterLobbyOutcome>> {
         Box::pin(self.enter_internal(request))
+    }
+}
+
+impl AgentInstanceRoomEntry for AgentLobbyEntryService {
+    fn enter_instance<'a>(
+        &'a self,
+        access: &'a AgentLobbyAccessRecord,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'a, AgentLobbyEntryResult<EnterLobbyOutcome>> {
+        Box::pin(self.enter_instance_internal(access, catalog_id))
     }
 }
 
