@@ -135,6 +135,7 @@ struct IdentityRuntime {
 struct AgentFeatureHttpStates {
     roster: features::agent_roster::AgentRosterHttpState,
     agent_rooms: AgentRoomHttpState,
+    room_people: features::room_people::RoomPeopleHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -534,6 +535,7 @@ fn compose_identity_routes(
         .merge(features::automation::router(agents.automation))
         .merge(features::moderation::router(agents.moderation))
         .merge(features::agent_roster::router(agents.roster))
+        .merge(features::room_people::router(agents.room_people))
         .merge(content)
 }
 
@@ -746,6 +748,7 @@ fn build_agent_feature_states(
     Ok(AgentFeatureHttpStates {
         roster,
         agent_rooms: build_agent_room_http_state(config, dependencies),
+        room_people: build_room_people_http_state(dependencies),
         agents,
         instances,
         cards,
@@ -792,6 +795,23 @@ fn build_agent_room_http_state(
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
     )
+}
+
+/// 房间里的人叫什么、Agent 是谁的（`specs/room-people/design.md`）。
+fn build_room_people_http_state(
+    dependencies: &AgentFeatureDependencies,
+) -> features::room_people::RoomPeopleHttpState {
+    features::room_people::RoomPeopleHttpState {
+        people: Arc::new(agent_room_application::room_people::RoomPeopleService::new(
+            agent_room_application::room_people::RoomPeopleDependencies {
+                people: dependencies.repositories.clone(),
+                private_rooms: dependencies.repositories.clone(),
+                directory: dependencies.repositories.clone(),
+                clock: dependencies.system_runtime.clone(),
+            },
+        )),
+        authentication: dependencies.authentication.clone(),
+    }
 }
 
 fn build_agent_identity_http_states(

@@ -11,8 +11,9 @@ use agent_room_application::{
         AgentLobbyAccessRepository, AgentRoomKind, AgentRoomPlacementStore, Clock,
         MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
         MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
-        ModerationEffectGateway, ModerationEffectTarget, PortFuture, RoomAllocationEvidence,
-        RoomAllocationMode, RoomMembershipGateway, RoomProvisioningGateway,
+        ModerationEffectGateway, ModerationEffectTarget, PortFuture, RoomAgentKind,
+        RoomAllocationEvidence, RoomAllocationMode, RoomMembershipGateway, RoomPeopleDirectory,
+        RoomProvisioningGateway,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyOutcome, EnterLobbyService, JoinLobbyDependencies,
@@ -395,6 +396,40 @@ async fn agent_在哪些房间按已确认的位置算_放掉以后就不在了(
             .is_empty()
     );
     assert_eq!(allocated_slots(&database.runtime, fixture.catalog).await, 0);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 大厅里的本机_agent_写主人的名字_不在的不回答() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let absent = AgentId::from_uuid(Uuid::now_v7());
+    assert!(
+        repositories
+            .agent_owners(fixture.catalog, &[fixture.agent])
+            .await
+            .expect("还没进大厅时可查询")
+            .is_empty()
+    );
+    service(database.runtime.clone(), Arc::new(测试Matrix::new(false)))
+        .enter(request(&fixture))
+        .await
+        .expect("进大厅");
+
+    let owners = repositories
+        .agent_owners(fixture.catalog, &[fixture.agent, absent])
+        .await
+        .expect("可查询");
+
+    assert_eq!(owners.len(), 1);
+    assert_eq!(owners[0].agent_id, fixture.agent);
+    assert_eq!(owners[0].kind, RoomAgentKind::Local);
+    let owner = owners[0].owner.as_ref().expect("本机 Agent 有主人");
+    assert_eq!(owner.display_name, "纵向测试主体");
+    assert_eq!(owners[0].admitted_by, None);
 
     database.close().await;
 }

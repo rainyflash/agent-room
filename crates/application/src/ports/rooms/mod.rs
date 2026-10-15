@@ -18,6 +18,7 @@ use super::{
 
 mod agent_placements;
 mod direct_sessions;
+mod people;
 mod private_room_agents;
 mod private_rooms;
 mod provisioning;
@@ -30,6 +31,7 @@ pub use direct_sessions::{
     DirectSessionMatrixProvisioner, DirectSessionMembershipGateway, DirectSessionRecord,
     DirectSessionStore,
 };
+pub use people::{RoomAgentKind, RoomAgentOwnerRecord, RoomPeopleDirectory, RoomPersonName};
 pub use private_room_agents::{
     JoinCodeAttemptPolicy, JoinCodeSealer, PrivateRoomAgentAccessStore,
     PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberLookup,
