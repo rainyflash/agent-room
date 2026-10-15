@@ -21,7 +21,7 @@ pub use room_management::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
     IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
 };
-pub use session_rooms::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcSessionRoom};
+pub use session_rooms::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcRoomCursor, IpcSessionRoom};
 pub mod typing;
 pub mod wake;
 pub use paths::attachment_directory;

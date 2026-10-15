@@ -192,6 +192,8 @@ async fn 收件箱里长消息只给开头_按_id_取回全文() {
             keep_waiting: false,
             wait_ms: None,
             from_ack: false,
+            every_room: false,
+            room_cursors: Vec::new(),
         }))
         .await
         .expect("可以读收件箱");

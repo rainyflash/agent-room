@@ -35,6 +35,11 @@ impl JoinedRooms {
         });
     }
 
+    /// 此刻同步里看到的房间。
+    pub(crate) fn rooms(&self) -> Vec<MatrixRoomId> {
+        self.rooms.borrow().iter().cloned().collect()
+    }
+
     /// 等到同步里看到自己在这个房间，最多等 `timeout`；看到了回答 `true`。
     pub(crate) async fn wait_for(&self, room_id: &MatrixRoomId, timeout: Duration) -> bool {
         let mut receiver = self.rooms.subscribe();

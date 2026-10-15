@@ -89,6 +89,8 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
                 keep_waiting: false,
                 wait_ms: None,
                 from_ack: true,
+                every_room: false,
+                room_cursors: Vec::new(),
             },
         )),
     };
@@ -168,6 +170,8 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
                     wait_ms: None,
                     // 等消息总带着“从确认位置开始”；给了 afterEventId 就以它为准。
                     from_ack: true,
+                    every_room: false,
+                    room_cursors: Vec::new(),
                 },
             )),
         },

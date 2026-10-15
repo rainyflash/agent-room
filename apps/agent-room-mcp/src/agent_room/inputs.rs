@@ -127,6 +127,8 @@ impl From<ListPreviewsInput> for IpcListPreviewsRequest {
             keep_waiting: false,
             wait_ms: None,
             from_ack: false,
+            every_room: false,
+            room_cursors: Vec::new(),
         }
     }
 }

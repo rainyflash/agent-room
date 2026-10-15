@@ -45,10 +45,18 @@ pub struct IpcSessionRoom {
     pub room_id: String,
 }
 
+/// 看所有房间等消息时，一个房间从哪一条之后开始（第 4 步）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcRoomCursor {
+    pub room_id: String,
+    pub after_event_id: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{IpcEnterRoomRequest, IpcLeaveRoomRequest};
-    use crate::{IpcHostRoomTarget, IpcMethod};
+    use super::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcRoomCursor};
+    use crate::{IpcHostRoomTarget, IpcListPreviewsRequest, IpcMethod};
 
     const SESSION_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
     const CATALOG_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
@@ -100,5 +108,60 @@ mod tests {
             bad_room.validate().expect_err("Matrix 房间不像样").code(),
             "bridge.ipc.room_invalid"
         );
+    }
+
+    fn cursor(room_id: &str, after_event_id: &str) -> IpcRoomCursor {
+        IpcRoomCursor {
+            room_id: room_id.to_owned(),
+            after_event_id: after_event_id.to_owned(),
+        }
+    }
+
+    #[test]
+    fn 看所有房间时不给单个房间的位置_一个房间一条位置() {
+        let every_room = IpcListPreviewsRequest {
+            after_event_id: None,
+            room_id: None,
+            before_event_id: None,
+            limit: 20,
+            keep_waiting: false,
+            wait_ms: None,
+            from_ack: true,
+            every_room: true,
+            room_cursors: vec![cursor("!lobby:matrix.test", "$1:matrix.test")],
+        };
+        let code = |method: IpcMethod| {
+            method
+                .validate()
+                .map_err(|failure| failure.code().to_owned())
+        };
+        assert!(code(IpcMethod::WaitInbox(every_room.clone())).is_ok());
+
+        let mut single_room = every_room.clone();
+        single_room.room_id = Some("!lobby:matrix.test".to_owned());
+        let mut single_cursor = every_room.clone();
+        single_cursor.room_cursors.clear();
+        single_cursor.after_event_id = Some("$1:matrix.test".to_owned());
+        let mut not_every_room = every_room.clone();
+        not_every_room.every_room = false;
+        let mut same_room_twice = every_room.clone();
+        same_room_twice
+            .room_cursors
+            .push(cursor("!lobby:matrix.test", "$2:matrix.test"));
+        let mut newest_with_cursor = every_room;
+        newest_with_cursor.from_ack = false;
+        for method in [
+            IpcMethod::WaitInbox(single_room),
+            IpcMethod::ReadInbox(single_cursor),
+            IpcMethod::ReadInbox(not_every_room),
+            IpcMethod::WaitInbox(same_room_twice),
+            // 从新到旧只给最新的一页。
+            IpcMethod::ListPreviews(newest_with_cursor),
+        ] {
+            assert_eq!(
+                code(method),
+                Err("bridge.ipc.event_cursor_invalid".to_owned())
+            );
+        }
     }
 }

@@ -4,6 +4,8 @@ pub const ROOM_ID_BYTES: usize = 512;
 /// 等消息时 Bridge 最多挂这么久（毫秒），在“等待中”10 秒的看门狗以内，也在一次本地调用的期限以内。
 pub const INBOX_BLOCK_MILLIS: u32 = 8_000;
 pub const EVENT_ID_BYTES: usize = 512;
+/// 一个 Agent 同时在的房间，等消息、诊断最多看这么多个。
+pub const SESSION_ROOMS: usize = 200;
 pub const UUID_TEXT_CHARACTERS: usize = 36;
 pub const TITLE_CHARACTERS: usize = 120;
 pub const SUMMARY_CHARACTERS: usize = 500;

@@ -1040,6 +1040,7 @@ pub(crate) type BridgeIpcResult<T> = Result<T, BridgeIpcFailure>;
 
 #[cfg(test)]
 mod tests {
+    mod every_room;
     mod inbox_ack;
     mod room_membership;
     mod viewing;
@@ -1690,6 +1691,8 @@ mod tests {
                     keep_waiting: false,
                     wait_ms: None,
                     from_ack: false,
+                    every_room: false,
+                    room_cursors: Vec::new(),
                 },
             ))
             .await
@@ -1877,6 +1880,8 @@ mod tests {
                 keep_waiting: false,
                 wait_ms: None,
                 from_ack: false,
+                every_room: false,
+                room_cursors: Vec::new(),
             };
             let mut invalid_request = request.clone();
             invalid_request.limit = 0;
@@ -1982,6 +1987,8 @@ mod tests {
             keep_waiting,
             wait_ms: None,
             from_ack: false,
+            every_room: false,
+            room_cursors: Vec::new(),
         };
         handler
             .dispatch(IpcMethod::WaitInbox(request(true)))
@@ -2031,6 +2038,8 @@ mod tests {
             keep_waiting: false,
             wait_ms: Some(2_000),
             from_ack: false,
+            every_room: false,
+            room_cursors: Vec::new(),
         };
 
         let started = tokio::time::Instant::now();
@@ -2091,6 +2100,8 @@ mod tests {
             keep_waiting: false,
             wait_ms: Some(8_000),
             from_ack: false,
+            every_room: false,
+            room_cursors: Vec::new(),
         };
         let ada_typing = MatrixSyncBatch::new(
             MatrixSyncToken::new("s2").expect("同步位置有效"),
@@ -2190,6 +2201,8 @@ mod tests {
                     keep_waiting: false,
                     wait_ms: None,
                     from_ack: false,
+                    every_room: false,
+                    room_cursors: Vec::new(),
                 },
             ))
             .await
@@ -3361,6 +3374,8 @@ mod tests {
             keep_waiting: true,
             wait_ms: None,
             from_ack: true,
+            every_room: false,
+            room_cursors: Vec::new(),
         });
 
         for method in [IpcMethod::GetSelf, wait] {

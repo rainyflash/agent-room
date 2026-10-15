@@ -1,4 +1,4 @@
-use std::{sync::Mutex, time::Duration};
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
@@ -159,13 +159,39 @@ impl Room {
         if newest_first {
             visible.reverse();
         }
-        let start = request.after_event_id.as_ref().map_or(0, |after| {
+        let rest = if request.every_room {
+            // 看所有房间：每个房间从它自己的位置之后，照到的先后排。
+            let after: HashMap<&str, usize> = request
+                .room_cursors
+                .iter()
+                .map(|cursor| {
+                    let at = visible
+                        .iter()
+                        .position(|preview| preview.event_id == cursor.after_event_id)
+                        .unwrap_or(visible.len());
+                    (cursor.room_id.as_str(), at)
+                })
+                .collect();
             visible
                 .iter()
-                .position(|preview| preview.event_id == *after)
-                .map_or(visible.len(), |index| index + 1)
-        });
-        let rest = &visible[start..];
+                .enumerate()
+                .filter(|(index, preview)| {
+                    after
+                        .get(preview.room_id.as_str())
+                        .is_none_or(|at| index > at)
+                })
+                .map(|(_, preview)| preview.clone())
+                .collect::<Vec<_>>()
+        } else {
+            let start = request.after_event_id.as_ref().map_or(0, |after| {
+                visible
+                    .iter()
+                    .position(|preview| preview.event_id == *after)
+                    .map_or(visible.len(), |index| index + 1)
+            });
+            visible[start..].to_vec()
+        };
+        let rest = &rest[..];
         let limit = usize::from(request.limit);
         let previews: Vec<_> = rest.iter().take(limit).cloned().collect();
         let gaps = self
@@ -238,6 +264,24 @@ impl BridgeToolClient for Room {
                     .unwrap()
                     .push(("list_previews".to_owned(), false));
                 self.page(&request, true)
+            }
+            IpcMethod::GetMessages(request) => {
+                let visible = self.visible();
+                let (messages, missing) = request.ids.iter().fold(
+                    (Vec::new(), Vec::new()),
+                    |(mut messages, mut missing), id| {
+                        match visible.iter().find(|preview| preview.event_id == *id) {
+                            Some(preview) => messages.push(preview.clone()),
+                            None => missing.push(id.clone()),
+                        }
+                        (messages, missing)
+                    },
+                );
+                IpcResponse::Messages {
+                    messages,
+                    missing,
+                    more: Vec::new(),
+                }
             }
             IpcMethod::GetSelf => IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
@@ -726,4 +770,74 @@ async fn 只看一眼时缺口跟着读到的那页一起给_后面那条是自�
         .unwrap();
     assert_eq!(texts(&batch.previews), ["闲聊"]);
     assert_eq!(batch.gaps, [lost_before("$我离线前说的:room.test")]);
+}
+
+fn in_room(room_id: &str, mut preview: IpcMessagePreviewSummary) -> IpcMessagePreviewSummary {
+    preview.room_id = room_id.to_owned();
+    preview
+}
+
+#[tokio::test(start_paused = true)]
+async fn 看所有房间时两个房间的都交_游标是每个房间的位置_拿它接着等() {
+    const PRIVATE: &str = "!private:room.test";
+    let room = Room::new(vec![
+        (0, chatter("大厅闲聊")),
+        (1_000, in_room(PRIVATE, named("私人房间点名"))),
+        (60_000, in_room(PRIVATE, named("私人房间又点名"))),
+    ]);
+    let batch = waiter(WaitRules::default())
+        .every_room()
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["大厅闲聊", "私人房间点名"]);
+    assert_eq!(
+        batch
+            .previews
+            .iter()
+            .map(|preview| preview.room_id.as_str())
+            .collect::<Vec<_>>(),
+        ["!lobby:room.test", PRIVATE]
+    );
+    let cursor = batch.cursor.unwrap();
+    assert_eq!(cursor, "$大厅闲聊:room.test,$私人房间点名:room.test");
+    assert_eq!(
+        super::cursor_events(&cursor).collect::<Vec<_>>(),
+        ["$大厅闲聊:room.test", "$私人房间点名:room.test"]
+    );
+
+    // 拿游标接着等：先问清每条在哪个房间，再各从各的位置之后。
+    let next = InboxWaiter::new(
+        SESSION.to_owned(),
+        None,
+        Some(cursor),
+        20,
+        WaitRules::default(),
+    )
+    .every_room()
+    .next(&room, MessageWait::For(Duration::from_mins(2)))
+    .await
+    .unwrap();
+    assert_eq!(texts(&next.previews), ["私人房间又点名"]);
+    assert_eq!(
+        next.cursor.as_deref(),
+        Some("$大厅闲聊:room.test,$私人房间又点名:room.test")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 看所有房间时给的游标一条也找不到_说游标找不到() {
+    let room = Room::new(vec![(0, chatter("大厅闲聊"))]);
+    let failure = InboxWaiter::new(
+        SESSION.to_owned(),
+        None,
+        Some("$typo:room.test".to_owned()),
+        20,
+        WaitRules::default(),
+    )
+    .every_room()
+    .next(&room, MessageWait::For(Duration::ZERO))
+    .await
+    .unwrap_err();
+    assert_eq!(failure.code(), "bridge.preview_cursor_not_found");
 }
