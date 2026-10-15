@@ -72,12 +72,12 @@ pub(super) struct InviteMemberBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct PermissionsBody {
+pub(crate) struct PermissionsBody {
     capabilities: Vec<PermissionCapability>,
 }
 
 impl PermissionsBody {
-    pub(super) fn into_domain(self) -> Option<PrivateRoomPermissions> {
+    pub(crate) fn into_domain(self) -> Option<PrivateRoomPermissions> {
         PrivateRoomPermissions::from_capabilities(
             self.capabilities
                 .into_iter()
@@ -203,7 +203,7 @@ impl From<&PrivateRoomMember> for PrivateRoomMemberResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct PermissionsResponse {
+pub(crate) struct PermissionsResponse {
     capabilities: Vec<PermissionCapability>,
 }
 

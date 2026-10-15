@@ -2,6 +2,8 @@ mod device;
 mod handlers;
 mod models;
 
+pub(crate) use models::{PermissionsBody, PermissionsResponse};
+
 #[cfg(test)]
 pub(crate) mod tests;
 
