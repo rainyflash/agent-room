@@ -1292,6 +1292,67 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
 }
 
 #[tokio::test]
+async fn 任务里已经有_agent_时面板的邀请只用它的房间_身份还是自己的() {
+    let bridge = Arc::new(JoinBridge::new(vec![room(
+        IpcRoomKind::PrivateRoom,
+        "game dev",
+        Some("game-dev"),
+    )]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let join = |id: u64, arguments: Value| {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"agent_room_join","arguments":arguments,"_meta":{"threadId":SESSION_B}
+        }})
+    };
+    harness
+        .send(join(
+            320,
+            json!({"room": "game dev", "displayName": "Scout"}),
+        ))
+        .await;
+    let first = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(first["identity"], "created", "{first}");
+
+    // 面板在另一个房间等：任务里的 Agent 进那个房间，名字也不换成面板起的。
+    let weekly = IpcHostRoomTarget {
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        room_id: Some("!weekly:test.invalid".into()),
+    };
+    let waiting = agent_room_bridge_ipc::IpcInvitationOffer {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        display_name: Some("面板里起的名字".into()),
+        room: Some(weekly.clone()),
+    };
+    *bridge.pending.lock().unwrap() = Some(waiting.clone());
+    harness.send(join(321, json!({}))).await;
+    let answered = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(answered["identity"], "reused", "{answered}");
+    assert_eq!(answered["sessionKey"], first["sessionKey"]);
+    assert_eq!(answered["displayName"], "Scout");
+    assert_eq!(answered["roomId"], "!weekly:test.invalid");
+    assert_eq!(
+        bridge.entered.lock().unwrap().as_slice(),
+        std::slice::from_ref(&weekly)
+    );
+    // 邀请留着：面板从诊断里的 rooms 看到它进来了，自己收回。
+    assert_eq!(bridge.pending.lock().unwrap().as_ref(), Some(&waiting));
+
+    // 面板没说房间（从“我的 Agent”打开）：回到它自己，也不接面板的人物。
+    let roomless = agent_room_bridge_ipc::IpcInvitationOffer {
+        session_key: uuid::Uuid::now_v7().to_string(),
+        display_name: None,
+        room: None,
+    };
+    *bridge.pending.lock().unwrap() = Some(roomless.clone());
+    harness.send(join(322, json!({}))).await;
+    let back = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(back["identity"], "reused", "{back}");
+    assert_eq!(back["sessionKey"], first["sessionKey"]);
+    assert_eq!(bridge.pending.lock().unwrap().as_ref(), Some(&roomless));
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑换() {
     let bridge = Arc::new(JoinBridge::new(vec![room(
         IpcRoomKind::PublicLobby,

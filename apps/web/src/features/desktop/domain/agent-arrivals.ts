@@ -14,6 +14,8 @@ export type AgentArrival = {
   readonly errorCode: string | null;
   /** 最近 35 秒内取过信：它正在看消息。 */
   readonly active: boolean;
+  /** 打开对话框时就已经接入的 Agent，后来进了这个房间。 */
+  readonly existing: boolean;
 };
 
 export type ArrivalRoom = { readonly roomId: string; readonly catalogId?: string } | null;
@@ -24,31 +26,66 @@ export type PresentAgent = { readonly agentId: string; readonly displayName: str
 /** 与桌面诊断一致：最近 35 秒内有取信才算正在看消息。 */
 const ACTIVE_WINDOW_MS = 35_000;
 
+/** 打开对话框时本机已有的会话，和它们那时在的房间（Matrix 房间 ID）。 */
+export type HostBaseline = ReadonlyMap<string, ReadonlySet<string>>;
+
+export function hostBaseline(sessions: readonly HostSessionDiagnostics[]): HostBaseline {
+  return new Map(sessions.map((entry) => [entry.session.sessionId, sessionRooms(entry)]));
+}
+
 /**
- * 对话框打开后本机新出现的会话。有房间时只算进了这个房间、或正往这个房间去的；
- * 进了同一个大厅另一间的也列出来，标明在别处。没有房间时（从“我的 Agent”打开）都算。
+ * 对话框打开后到了的本机 Agent。新会话：有房间时只算进了这个房间、或正往这个房间去的；进了
+ * 同一个大厅另一间的也列出来，标明在别处；没有房间时（从“我的 Agent”打开）都算。已有的会话：
+ * 同一个 Agent 进了这个房间也算到了（`specs/agent-identity/design.md`“网页”），看诊断里的
+ * `rooms`；打开时它就在这里的不算。
  */
 export function hostSessionArrivals(
   sessions: readonly HostSessionDiagnostics[],
-  baseline: ReadonlySet<string>,
+  baseline: HostBaseline,
   room: ArrivalRoom,
 ): AgentArrival[] {
   const arrivals: AgentArrival[] = [];
   for (const entry of sessions) {
-    if (baseline.has(entry.session.sessionId)) continue;
-    const placement = placeInRoom(entry, room);
+    const before = baseline.get(entry.session.sessionId);
+    const placement =
+      before === undefined ? placeInRoom(entry, room) : enteredRoom(entry, before, room);
     if (placement === 'unrelated') continue;
     arrivals.push({
-      key: entry.session.sessionId,
+      key:
+        before === undefined
+          ? entry.session.sessionId
+          : `${entry.session.sessionId}:${room?.roomId ?? ''}`,
       agentId: entry.session.agentId,
       displayName: entry.displayName,
       state: entry.session.state,
       elsewhere: placement === 'elsewhere',
       errorCode: entry.session.errorCode,
       active: entry.lastInboxReadAgoMs !== null && entry.lastInboxReadAgoMs < ACTIVE_WINDOW_MS,
+      existing: before !== undefined,
     });
   }
   return arrivals;
+}
+
+/** 已有的会话打开对话框以后又进了这个房间（或者同一个大厅的另一间）。 */
+function enteredRoom(
+  entry: HostSessionDiagnostics,
+  before: ReadonlySet<string>,
+  room: ArrivalRoom,
+): 'here' | 'elsewhere' | 'unrelated' {
+  if (room === null || before.has(room.roomId)) return 'unrelated';
+  if (sessionRooms(entry).has(room.roomId)) return 'here';
+  const sameLobby = (entry.rooms ?? []).some(
+    (entered) => entered.catalogId === room.catalogId && !before.has(entered.roomId),
+  );
+  return sameLobby ? 'elsewhere' : 'unrelated';
+}
+
+/** 会话的 Agent 在的房间：开会话的那个，加上后来进的。 */
+function sessionRooms(entry: HostSessionDiagnostics): Set<string> {
+  const rooms = new Set((entry.rooms ?? []).map((entered) => entered.roomId));
+  if (entry.roomId != null) rooms.add(entry.roomId);
+  return rooms;
 }
 
 function placeInRoom(
@@ -83,6 +120,7 @@ export function rosterArrivals(
       elsewhere: false,
       errorCode: null,
       active: false,
+      existing: false,
     }));
 }
 

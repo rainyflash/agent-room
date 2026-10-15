@@ -756,13 +756,28 @@ async fn 带名字接入时这个任务已有同名人物就回到它_面板的�
     let invited = select(Some("Pilot")).await.unwrap();
     assert_eq!(invited.key, waiting.session_key);
     assert_eq!(invited.invitation.unwrap().display_name, "Pilot");
-    // 不带名字时面板的邀请优先于这个任务上次的人物。
+    // 不带名字、任务里已经有 Agent：面板没说房间时回到它自己，邀请留给别的 Agent。
     let bare = select(None).await.unwrap();
-    assert_eq!(bare.key, waiting.session_key);
+    assert_eq!(bare.key, saved.invitation.session_key);
+    assert!(bare.invitation.is_none() && bare.join.is_none());
+    // 面板在某个房间等：还是这个 Agent，带它进面板的房间。
+    let weekly = IpcHostRoomTarget {
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        room_id: Some("!weekly:test.invalid".into()),
+    };
+    *bridge.pending.lock().unwrap() = Some(IpcInvitationOffer {
+        room: Some(weekly.clone()),
+        ..waiting.clone()
+    });
+    let entering = select(None).await.unwrap();
+    assert_eq!(entering.key, saved.invitation.session_key);
+    assert!(entering.invitation.is_none());
+    let target = entering.join.unwrap().target;
     assert_eq!(
-        bare.invitation.unwrap().display_name,
-        default_display_name()
+        target.catalog_id.as_deref(),
+        Some(weekly.catalog_id.as_str())
     );
+    assert_eq!(target.room_id, weekly.room_id);
     *bridge.pending.lock().unwrap() = None;
     assert_eq!(
         select(None).await.unwrap().key,

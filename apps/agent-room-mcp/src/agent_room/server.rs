@@ -5,8 +5,8 @@ use agent_room_agent_client::{
 };
 use agent_room_bridge_ipc::{
     IpcAckInboxRequest, IpcBridgeState, IpcEnterRoomRequest, IpcErrorCategory, IpcHostRoomTarget,
-    IpcHostSessionState, IpcHostSessionSummary, IpcListPreviewsRequest, IpcMethod,
-    IpcRedeemJoinCodeRequest, IpcResolveJoinCodeRequest, IpcResponse, IpcRoomSummary,
+    IpcHostSessionState, IpcHostSessionSummary, IpcInvitationOffer, IpcListPreviewsRequest,
+    IpcMethod, IpcRedeemJoinCodeRequest, IpcResolveJoinCodeRequest, IpcResponse, IpcRoomSummary,
     IpcSelfSummary, IpcSessionRoom, limits::SESSION_ROOMS, resolve_room_by_name,
 };
 use rmcp::{
@@ -63,9 +63,10 @@ impl AgentRoomMcpServer {
     }
 
     /// 决定这次接入用哪个人物、进哪个房间。没给房间名或口令时：这个任务已经用这个名字接入过就
-    /// 回到它；否则先接桌面接入面板正在等的人物（面板没定名字就用 Agent 自己起的），再回到这个
-    /// 任务上次的房间，都没有才进默认公开大厅。给了房间名就按名字解析；给了口令就先查看口令对应的
-    /// 房间，之后和按名字一样按任务与房间选人物，开会话之前再兑换。
+    /// 回到它；桌面接入面板正在等时，任务里已经有 Agent 就带它进面板的房间，没有才接面板的人物
+    /// （面板没定名字就用 Agent 自己起的）；再回到这个任务上次的房间，都没有才进默认公开大厅。
+    /// 给了房间名就按名字解析；给了口令就先查看口令对应的房间，之后和按名字一样按任务与房间选
+    /// 人物，开会话之前再兑换。
     async fn plan_join(
         &self,
         input: JoinInput,
@@ -98,14 +99,34 @@ impl AgentRoomMcpServer {
                     code: None,
                 });
             }
-            if let Some(identity) = self.pending_invitation(chosen).await {
-                self.joins.adopt(task_id, identity.clone());
-                return Ok(JoinPlan {
-                    identity,
-                    origin: IdentityOrigin::Invited,
-                    room: None,
-                    code: None,
-                });
+            if let Some(invitation) = self.pending_invitation().await {
+                // 任务里已经有 Agent：只用面板的房间，身份还是它自己的。面板看诊断里的 `rooms`
+                // 认出它进来了，自己收回邀请。面板没说房间（从“我的 Agent”打开）时回到它自己。
+                if chosen.is_none() && self.joins.last(task_id).is_some() {
+                    if let Some(room) = invitation.room {
+                        let (identity, origin) =
+                            self.joins
+                                .resolve(task_id, Some(room), None, default_display_name);
+                        return Ok(JoinPlan {
+                            identity,
+                            origin,
+                            room: None,
+                            code: None,
+                        });
+                    }
+                } else {
+                    let identity =
+                        JoinIdentity::from(invitation.open_request(|| {
+                            chosen.map_or_else(default_display_name, str::to_owned)
+                        }));
+                    self.joins.adopt(task_id, identity.clone());
+                    return Ok(JoinPlan {
+                        identity,
+                        origin: IdentityOrigin::Invited,
+                        room: None,
+                        code: None,
+                    });
+                }
             }
             if chosen.is_none()
                 && let Some(identity) = self.joins.last(task_id)
@@ -168,15 +189,13 @@ impl AgentRoomMcpServer {
         }
     }
 
-    /// 桌面端接入面板正在等的人物。旧 Bridge 不认识这个方法或暂时读不到时当作没有，
-    /// 真正的连接错误会在随后开会话时如实报出。面板没定名字时用 Agent 自己起的名字。
-    async fn pending_invitation(&self, chosen: Option<&str>) -> Option<JoinIdentity> {
+    /// 桌面端接入面板正在等的邀请。旧 Bridge 不认识这个方法或暂时读不到时当作没有，
+    /// 真正的连接错误会在随后开会话时如实报出。
+    async fn pending_invitation(&self) -> Option<IpcInvitationOffer> {
         match self.backend.invoke(IpcMethod::ReadInvitation).await {
             Ok(IpcResponse::Invitation {
                 invitation: Some(pending),
-            }) => Some(JoinIdentity::from(pending.invitation.open_request(|| {
-                chosen.map_or_else(default_display_name, str::to_owned)
-            }))),
+            }) => Some(pending.invitation),
             _ => None,
         }
     }
