@@ -18,6 +18,7 @@ use agent_room_bridge_core::{
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcMethod,
     IpcOpenHostSessionRequest, IpcResponse, IpcRoomKind, IpcRoomMembership, IpcRoomSummary,
+    IpcSelfSummary, IpcSessionRoom,
 };
 use agent_room_domain::ids::RoomCatalogId;
 use tokio::{
@@ -38,6 +39,8 @@ pub(crate) use room_management::RoomManagementAccess;
 
 const MAX_HOST_SESSIONS: usize = 16;
 const IDLE_LIFETIME: Duration = Duration::from_mins(15);
+/// 诊断里每个会话最多列这么多房间。
+const MAX_DIAGNOSED_ROOMS: usize = 200;
 
 /// 工厂负责资源组合；注册表只处理绑定、并发分派和关闭次序。
 pub(crate) trait HostSessionFactory: Send + Sync {
@@ -80,6 +83,8 @@ struct HostCallEvidence {
     message_received: Option<Instant>,
     message_sent: Option<Instant>,
     reception_offer: Option<agent_room_bridge_ipc::IpcReceptionOffer>,
+    /// 开会话以后用 `EnterRoom` 进的房间，去掉离开的，照进的先后。
+    entered_rooms: Vec<IpcSessionRoom>,
 }
 
 impl HostCallEvidence {
@@ -97,9 +102,43 @@ impl HostCallEvidence {
             {
                 self.message_sent = Some(now);
             }
+            IpcResponse::RoomEntered { room } => {
+                self.entered_rooms
+                    .retain(|entered| entered.catalog_id != room.catalog_id);
+                self.entered_rooms.push(room.clone());
+            }
+            IpcResponse::RoomLeft { catalog_id, .. } => {
+                self.entered_rooms
+                    .retain(|entered| &entered.catalog_id != catalog_id);
+            }
             _ => {}
         }
     }
+}
+
+/// 会话的 Agent 在哪些房间：开会话时进的那个在前，后来进的照进的先后。
+fn session_rooms(
+    opening: Option<&IpcSelfSummary>,
+    entered: &[IpcSessionRoom],
+) -> Vec<IpcSessionRoom> {
+    let opening = opening.and_then(|summary| {
+        Some(IpcSessionRoom {
+            catalog_id: summary.room_catalog_id.clone()?,
+            room_id: summary.room_id.clone(),
+        })
+    });
+    let entered = entered.iter().filter(|room| {
+        opening
+            .as_ref()
+            .is_none_or(|opening| opening.catalog_id != room.catalog_id)
+    });
+    // 网页按 256 个校验，超过了整份诊断都读不出来。
+    opening
+        .iter()
+        .chain(entered)
+        .take(MAX_DIAGNOSED_ROOMS)
+        .cloned()
+        .collect()
 }
 
 fn elapsed_millis(instant: Option<Instant>) -> Option<u64> {
@@ -419,10 +458,10 @@ impl HostSessionRegistry {
         let mut sessions = Vec::with_capacity(entries.len());
         for entry in entries {
             let session = entry.summary().await;
-            let room_id = match &*entry.phase.read().await {
+            let opening = match &*entry.phase.read().await {
                 SessionPhase::Running(handler) => {
                     match handler.dispatch(IpcMethod::GetSelf).await {
-                        Ok(IpcResponse::SelfSummary { summary }) => Some(summary.room_id),
+                        Ok(IpcResponse::SelfSummary { summary }) => Some(summary),
                         _ => None,
                     }
                 }
@@ -431,7 +470,8 @@ impl HostSessionRegistry {
             let evidence = entry.evidence.lock().await;
             sessions.push(agent_room_bridge_ipc::IpcHostSessionDiagnostics {
                 session,
-                room_id,
+                room_id: opening.as_ref().map(|summary| summary.room_id.clone()),
+                rooms: session_rooms(opening.as_ref(), &evidence.entered_rooms),
                 requested_room: entry.request.room.clone(),
                 display_name: entry.request.display_name.clone(),
                 session_key: Some(entry.request.session_key.clone()),

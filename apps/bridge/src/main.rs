@@ -2,6 +2,7 @@ mod agent_status;
 mod config;
 mod host_sessions;
 mod ipc;
+mod joined_rooms;
 mod logging;
 mod owner_record;
 mod runtime;

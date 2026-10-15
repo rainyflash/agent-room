@@ -3,9 +3,10 @@ use std::sync::Arc;
 use agent_room_application::ports::PortFuture;
 use agent_room_bridge_core::{
     lobby_session::{
-        AgentLobbyEntryIntent, ControlPlaneLobbyEntryFailure, ControlPlaneLobbyEntryFailureKind,
-        ControlPlaneLobbyEntryGateway, ControlPlaneLobbyEntryOutcome, ControlPlaneLobbyEntryResult,
-        JoinedAgentLobby, LobbyAssignmentKind,
+        AgentLobbyEntryIntent, AgentLobbyExit, ControlPlaneLobbyEntryFailure,
+        ControlPlaneLobbyEntryFailureKind, ControlPlaneLobbyEntryGateway,
+        ControlPlaneLobbyEntryOutcome, ControlPlaneLobbyEntryResult, JoinedAgentLobby,
+        LobbyAssignmentKind,
     },
     session::{BridgeSessionFailure, BridgeSessionFailureKind, ControlPlaneRequestAuthorizer},
 };
@@ -88,6 +89,50 @@ impl ReqwestControlPlaneLobbyEntryGateway {
             .map_err(|error| transport_failure(&error))?;
         decode_response(response).await
     }
+
+    /// 和进房间对称的那条：同一个地址的 `DELETE`，正文为空，签名也按空正文算。
+    async fn leave_internal(&self, exit: &AgentLobbyExit) -> ControlPlaneLobbyEntryResult<bool> {
+        let request_target = format!(
+            "/agents/{}/instances/{}/lobbies/{}/entry",
+            exit.agent_id(),
+            exit.agent_instance_id(),
+            exit.catalog_id()
+        );
+        let authorized = self
+            .authorizer
+            .authorize("DELETE", &request_target, "")
+            .await
+            .map_err(map_session_failure)?;
+        let request_url = self
+            .base_url
+            .join(request_target.trim_start_matches('/'))
+            .map_err(|_| failure(ControlPlaneLobbyEntryFailureKind::Internal))?;
+        let request = signed_request_headers(
+            self.client.delete(request_url),
+            &authorized,
+            "DELETE",
+            &request_target,
+        )
+        .map_err(|()| failure(ControlPlaneLobbyEntryFailureKind::Internal))?;
+        let response = request
+            .body(Vec::new())
+            .send()
+            .await
+            .map_err(|error| transport_failure(&error))?;
+        let status = response.status();
+        let body = read_limited_response_body(response)
+            .await
+            .map_err(|()| response_body_failure(status))?;
+        if !status.is_success() {
+            let category = serde_json::from_slice::<ErrorCategoryResponse>(&body)
+                .ok()
+                .map(|envelope| envelope.category);
+            return Err(status_failure(status, category.as_deref()));
+        }
+        serde_json::from_slice::<LeaveResponse>(&body)
+            .map(|response| response.left)
+            .map_err(|_| failure(ControlPlaneLobbyEntryFailureKind::UnknownCommit))
+    }
 }
 
 impl ControlPlaneLobbyEntryGateway for ReqwestControlPlaneLobbyEntryGateway {
@@ -97,6 +142,20 @@ impl ControlPlaneLobbyEntryGateway for ReqwestControlPlaneLobbyEntryGateway {
     ) -> PortFuture<'a, ControlPlaneLobbyEntryResult<ControlPlaneLobbyEntryOutcome>> {
         Box::pin(self.enter_internal(intent))
     }
+
+    fn leave<'a>(
+        &'a self,
+        exit: &'a AgentLobbyExit,
+    ) -> PortFuture<'a, ControlPlaneLobbyEntryResult<bool>> {
+        Box::pin(self.leave_internal(exit))
+    }
+}
+
+/// 原本就不在这个房间时 `left` 为 `false`。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeaveResponse {
+    left: bool,
 }
 
 #[derive(Serialize)]
@@ -297,7 +356,7 @@ mod tests {
         extract::Path,
         http::{HeaderMap, StatusCode},
         response::IntoResponse,
-        routing::post,
+        routing::{delete, post},
     };
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
@@ -458,6 +517,65 @@ mod tests {
             failure.kind(),
             AgentLobbySessionFailureKind::EntryOutcomeUnknown
         );
+    }
+
+    #[tokio::test]
+    async fn 离开按空正文签名_原本不在也照样回答() {
+        let app = Router::new().route(
+            "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
+            delete(
+                |Path((agent_id, instance_id, catalog_id)): Path<(String, String, String)>,
+                 headers: HeaderMap,
+                 body: String| async move {
+                    let valid = agent_id == AGENT_ID
+                        && instance_id == INSTANCE_ID
+                        && catalog_id == CATALOG_ID
+                        && header(&headers, "authorization") == Some("Bearer access-token")
+                        && body.is_empty();
+                    if valid {
+                        (StatusCode::OK, Json(json!({ "left": false }))).into_response()
+                    } else {
+                        StatusCode::BAD_REQUEST.into_response()
+                    }
+                },
+            ),
+        );
+        let authorizer = Arc::new(测试请求授权器::default());
+        let left = service(spawn_server(app).await, authorizer.clone())
+            .leave(&identity(), catalog_id())
+            .await
+            .expect("规范的离开回答可解析");
+        assert!(!left, "原本不在这个房间");
+        assert_eq!(
+            authorizer
+                .requests
+                .lock()
+                .expect("授权请求记录锁可用")
+                .as_slice(),
+            [(
+                "DELETE".to_owned(),
+                format!("/agents/{AGENT_ID}/instances/{INSTANCE_ID}/lobbies/{CATALOG_ID}/entry"),
+                String::new()
+            )]
+        );
+
+        let refused = Router::new().route(
+            "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
+            delete(|| async {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "category": "authorization", "code": "agent_room.forbidden" })),
+                )
+            }),
+        );
+        let failure = service(
+            spawn_server(refused).await,
+            Arc::new(测试请求授权器::default()),
+        )
+        .leave(&identity(), catalog_id())
+        .await
+        .expect_err("控制面拒绝");
+        assert_eq!(failure.kind(), AgentLobbySessionFailureKind::Forbidden);
     }
 
     fn service(

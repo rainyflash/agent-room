@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcCreateRoomRequest, IpcHostSessionSummary,
-    IpcInvitationOffer, IpcInvitePersonRequest, IpcOpenHostSessionRequest, IpcPendingInvitation,
-    IpcRedeemJoinCodeRequest, IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess,
-    IpcRoomAccessRequest, IpcWithdrawInvitationRequest, limits,
+    IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcCreateRoomRequest, IpcEnterRoomRequest,
+    IpcHostSessionSummary, IpcInvitationOffer, IpcInvitePersonRequest, IpcLeaveRoomRequest,
+    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcRedeemJoinCodeRequest,
+    IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess, IpcRoomAccessRequest,
+    IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,6 +17,11 @@ pub enum IpcMethod {
     HostSessionDiagnostics,
     OpenHostSession(IpcOpenHostSessionRequest),
     CloseHostSession(IpcCloseHostSessionRequest),
+    /// 会话的 Agent 再进一个房间，不离开已经在的（`specs/agent-identity/design.md`）。包在
+    /// `WithSession` 里用。
+    EnterRoom(IpcEnterRoomRequest),
+    /// 会话的 Agent 离开一个房间。包在 `WithSession` 里用；开会话时进的那个房间离不开，要关会话。
+    LeaveRoom(IpcLeaveRoomRequest),
     WithSession {
         #[serde(rename = "sessionId")]
         session_id: String,
@@ -85,6 +91,8 @@ impl IpcMethod {
             Self::HostSessionDiagnostics => "host_session_diagnostics",
             Self::OpenHostSession(_) => "open_host_session",
             Self::CloseHostSession(_) => "close_host_session",
+            Self::EnterRoom(_) => "enter_room",
+            Self::LeaveRoom(_) => "leave_room",
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::ListRooms => "list_rooms",
@@ -128,6 +136,8 @@ impl IpcMethod {
             // 凭口令进房间是开会话的一部分：CLI 与 MCP 在开会话之前调用。
             Self::OpenHostSession(_)
             | Self::CloseHostSession(_)
+            | Self::EnterRoom(_)
+            | Self::LeaveRoom(_)
             | Self::ReadInvitation
             | Self::ResolveJoinCode(_)
             | Self::RedeemJoinCode(_)
@@ -192,6 +202,8 @@ impl IpcMethod {
             Self::OpenHostSession(request) => request.validate(),
             Self::OfferInvitation(offer) => offer.validate(),
             Self::CloseHostSession(request) => request.validate(),
+            Self::EnterRoom(request) => request.validate(),
+            Self::LeaveRoom(request) => request.validate(),
             Self::RegisterReception(request) => request.validate(),
             Self::ReceptionControl(request) => {
                 if request.valid() {
@@ -780,6 +792,16 @@ pub enum IpcResponse {
     /// 房间怎么进：口令和等着的敲门。
     RoomAccess {
         access: IpcRoomAccess,
+    },
+    /// 会话的 Agent 进了这个房间。
+    RoomEntered {
+        room: IpcSessionRoom,
+    },
+    /// 会话的 Agent 离开了这个房间；原本就不在时 `left` 为 `false`。
+    RoomLeft {
+        #[serde(rename = "catalogId")]
+        catalog_id: String,
+        left: bool,
     },
     /// 放行或拒绝了敲门、邀请了人、移出了 Agent。
     RoomUpdated {

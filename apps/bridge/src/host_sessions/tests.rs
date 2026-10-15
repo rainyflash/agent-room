@@ -8,8 +8,9 @@ use agent_room_bridge_core::{
     onboarding::{BridgeDefaultAgent, ControlPlaneOnboardingResult, HostAgentRegistrationGateway},
 };
 use agent_room_bridge_ipc::{
-    IpcAgentSummary, IpcBridgeState, IpcOpenContentRequest, IpcRedeemJoinCodeRequest,
-    IpcResolveJoinCodeRequest, IpcSelfSummary,
+    IpcAgentSummary, IpcBridgeState, IpcEnterRoomRequest, IpcHostRoomTarget, IpcLeaveRoomRequest,
+    IpcOpenContentRequest, IpcRedeemJoinCodeRequest, IpcResolveJoinCodeRequest, IpcSelfSummary,
+    IpcSessionRoom,
 };
 use agent_room_domain::ids::AgentCreationRequestId;
 use tokio::sync::Notify;
@@ -49,6 +50,20 @@ impl BridgeIpcRequestHandler for TestHandler {
             if matches!(method, IpcMethod::OpenContent(_)) {
                 self.entered.notify_one();
                 self.release.notified().await;
+            }
+            if let IpcMethod::EnterRoom(request) = &method {
+                return Ok(IpcResponse::RoomEntered {
+                    room: IpcSessionRoom {
+                        catalog_id: request.room.catalog_id.clone(),
+                        room_id: format!("!{}:test.invalid", &request.room.catalog_id[..8]),
+                    },
+                });
+            }
+            if let IpcMethod::LeaveRoom(request) = &method {
+                return Ok(IpcResponse::RoomLeft {
+                    catalog_id: request.catalog_id.clone(),
+                    left: true,
+                });
             }
             Ok(IpcResponse::SelfSummary {
                 summary: self.summary.clone(),
@@ -104,6 +119,65 @@ async fn 诊断不伪造取信证据也不延长空闲寿命() {
         panic!("诊断响应");
     };
     assert!(sessions.is_empty());
+}
+
+#[tokio::test]
+async fn 诊断列出会话的_agent_在哪些房间_开会话的那个在前() {
+    let registry = HostSessionRegistry::new(Arc::new(TestFactory::default()));
+    let opening = Uuid::now_v7().to_string();
+    let mut opened = request("Traveler");
+    opened.room = Some(IpcHostRoomTarget {
+        catalog_id: opening.clone(),
+        room_id: None,
+    });
+    let id = open(&registry, opened).await;
+    identity(&registry, &id).await;
+    let rooms = |sessions: &[agent_room_bridge_ipc::IpcHostSessionDiagnostics]| {
+        sessions[0]
+            .rooms
+            .iter()
+            .map(|room| room.catalog_id.clone())
+            .collect::<Vec<_>>()
+    };
+    let enter = |catalog_id: &str| {
+        IpcMethod::EnterRoom(IpcEnterRoomRequest {
+            room: IpcHostRoomTarget {
+                catalog_id: catalog_id.to_owned(),
+                room_id: None,
+            },
+        })
+    };
+
+    let (first, second) = (Uuid::now_v7().to_string(), Uuid::now_v7().to_string());
+    for catalog_id in [&first, &second, &first, &opening] {
+        registry
+            .execute(&id, enter(catalog_id))
+            .await
+            .expect("进房间");
+    }
+    let IpcResponse::HostSessionDiagnostics { sessions } = registry.diagnostics().await else {
+        panic!("诊断响应");
+    };
+    assert_eq!(
+        rooms(&sessions),
+        [opening.clone(), second.clone(), first.clone()],
+        "再进一次挪到最后，开会话的那个不重复"
+    );
+    assert_eq!(sessions[0].rooms[0].room_id, "!lobby:test.invalid");
+
+    registry
+        .execute(
+            &id,
+            IpcMethod::LeaveRoom(IpcLeaveRoomRequest {
+                catalog_id: second.clone(),
+            }),
+        )
+        .await
+        .expect("离开");
+    let IpcResponse::HostSessionDiagnostics { sessions } = registry.diagnostics().await else {
+        panic!("诊断响应");
+    };
+    assert_eq!(rooms(&sessions), [opening, first]);
 }
 
 #[test]

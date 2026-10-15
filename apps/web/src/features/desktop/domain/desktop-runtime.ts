@@ -213,6 +213,11 @@ export const hostSessionDiagnosticsSchema = z
       .strict()
       .nullable()
       .optional(),
+    /** 会话的 Agent 在哪些房间：开会话时进的那个在前（`specs/agent-identity/design.md`）。 */
+    rooms: z
+      .array(z.object({ catalogId: z.uuid(), roomId: z.string().min(1).max(512) }).strict())
+      .max(256)
+      .optional(),
     lastInboxReadAgoMs: z.number().int().nonnegative().nullable(),
     lastMessageReceivedAgoMs: z.number().int().nonnegative().nullable(),
     lastMessageSentAgoMs: z.number().int().nonnegative().nullable(),

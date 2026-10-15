@@ -97,6 +97,28 @@ impl AgentLobbyEntryIntent {
     }
 }
 
+/// 让这个 Agent 实例离开一个房间（`specs/agent-identity/design.md`“离开一个房间”）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentLobbyExit {
+    agent: AgentId,
+    instance: AgentInstanceId,
+    catalog: RoomCatalogId,
+}
+
+impl AgentLobbyExit {
+    pub const fn agent_id(&self) -> AgentId {
+        self.agent
+    }
+
+    pub const fn agent_instance_id(&self) -> AgentInstanceId {
+        self.instance
+    }
+
+    pub const fn catalog_id(&self) -> RoomCatalogId {
+        self.catalog
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LobbyAssignmentKind {
     New,
@@ -192,6 +214,13 @@ pub trait ControlPlaneLobbyEntryGateway: Send + Sync {
         &'a self,
         intent: &'a AgentLobbyEntryIntent,
     ) -> PortFuture<'a, ControlPlaneLobbyEntryResult<ControlPlaneLobbyEntryOutcome>>;
+
+    /// 离开一个房间：在 Matrix 上离开、私人房间里收回发言级别、服务器放掉它占的位置。原本就不在
+    /// 这个房间时回答 `false`。
+    fn leave<'a>(
+        &'a self,
+        exit: &'a AgentLobbyExit,
+    ) -> PortFuture<'a, ControlPlaneLobbyEntryResult<bool>>;
 }
 
 pub struct AgentLobbySessionService {
@@ -218,7 +247,7 @@ impl AgentLobbySessionService {
             .control_plane
             .enter(&intent)
             .await
-            .map_err(map_control_plane_failure)?;
+            .map_err(|failure| map_control_plane_failure("bridge.lobby.enter", failure))?;
         let wrong_room = matches!(&outcome, ControlPlaneLobbyEntryOutcome::Joined(room)
             if config.target_room.as_ref().is_some_and(|target| target != room.matrix_room_id()));
         if wrong_room || !outcome_matches_catalog(&outcome, config.catalog_id) {
@@ -228,6 +257,27 @@ impl AgentLobbySessionService {
             ));
         }
         Ok(outcome)
+    }
+
+    /// 让已登记 Agent 实例离开一个房间；原本就不在时回答 `false`，重复离开不报错。
+    ///
+    /// # Errors
+    ///
+    /// 控制面拒绝、不可用、提交状态未知或返回内容不可信时返回稳定错误。
+    pub async fn leave(
+        &self,
+        identity: &BridgeAgentIdentity,
+        catalog_id: RoomCatalogId,
+    ) -> AgentLobbySessionResult<bool> {
+        let exit = AgentLobbyExit {
+            agent: identity.agent_id(),
+            instance: identity.agent_instance_id(),
+            catalog: catalog_id,
+        };
+        self.control_plane
+            .leave(&exit)
+            .await
+            .map_err(|failure| map_control_plane_failure("bridge.lobby.leave", failure))
     }
 }
 
@@ -276,6 +326,7 @@ impl AgentLobbySessionFailure {
 pub type AgentLobbySessionResult<T> = Result<T, AgentLobbySessionFailure>;
 
 fn map_control_plane_failure(
+    operation: &'static str,
     control_plane_failure: ControlPlaneLobbyEntryFailure,
 ) -> AgentLobbySessionFailure {
     let kind = match control_plane_failure.kind() {
@@ -299,7 +350,7 @@ fn map_control_plane_failure(
         }
         ControlPlaneLobbyEntryFailureKind::Internal => AgentLobbySessionFailureKind::Internal,
     };
-    failure("bridge.lobby.enter", kind)
+    failure(operation, kind)
 }
 
 const fn failure(

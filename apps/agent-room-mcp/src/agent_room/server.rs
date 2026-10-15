@@ -1139,6 +1139,8 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::CreatedRoom { .. } => "created_room",
         IpcResponse::RoomAccess { .. } => "room_access",
         IpcResponse::RoomUpdated { .. } => "room_updated",
+        IpcResponse::RoomEntered { .. } => "room_entered",
+        IpcResponse::RoomLeft { .. } => "room_left",
         IpcResponse::MessagePreviews { .. } => "message_previews",
         IpcResponse::Messages { .. } => "messages",
         IpcResponse::RoomMessages { .. } => "room_messages",
