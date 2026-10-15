@@ -16,6 +16,7 @@ use super::{
     MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture,
 };
 
+mod agent_placements;
 mod direct_sessions;
 mod private_room_agents;
 mod private_rooms;
@@ -23,6 +24,7 @@ mod provisioning;
 
 use std::sync::Arc;
 
+pub use agent_placements::{AgentRoomKind, AgentRoomPlacement, AgentRoomPlacementStore};
 pub use direct_sessions::{
     DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
     DirectSessionMatrixProvisioner, DirectSessionMembershipGateway, DirectSessionRecord,

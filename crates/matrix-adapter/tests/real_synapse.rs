@@ -38,6 +38,8 @@ use uuid::Uuid;
 const TEST_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TEST_SYNC_TIMEOUT_MILLIS: u64 = 100;
 
+#[path = "real_synapse/agent_room_leave.rs"]
+mod agent_room_leave;
 #[path = "real_synapse/cross_signing_upload.rs"]
 mod cross_signing_upload;
 #[path = "real_synapse/moderation_expiry.rs"]
