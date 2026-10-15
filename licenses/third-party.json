@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "dcdc3c6cb59999efcdce04f40d41e5b1a5aafeb23d14b5e8f5dcc35b1b1d4771",
+    "Cargo.lock": "d639c873f638937426ac04b1bc4fc7603d4cfa1b38269b83f82232b9029a3309",
     "pnpm-lock.yaml": "16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877"
   },
   "dependencies": [
@@ -4061,7 +4061,7 @@
     {
       "ecosystem": "cargo",
       "name": "rustls",
-      "version": "0.23.45",
+      "version": "0.23.46",
       "license": "Apache-2.0 OR ISC OR MIT",
       "source": "https://github.com/rustls/rustls"
     },
