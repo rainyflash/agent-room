@@ -7,9 +7,9 @@ use std::env;
 use agent_room_application::{
     persistence::{RepositoryErrorKind, RepositoryResult},
     ports::{
-        JoinCodeAttemptPolicy, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
-        PrivateRoomAgentKnockRecord, PrivateRoomJoinCodeRecord, PrivateRoomSnapshot,
-        PrivateRoomStore, SealedJoinCode, SealedSecret, SecretDigest,
+        AgentRoomPlacementStore, JoinCodeAttemptPolicy, PrivateRoomAgentAccessStore,
+        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomJoinCodeRecord,
+        PrivateRoomSnapshot, PrivateRoomStore, SealedJoinCode, SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -285,6 +285,71 @@ async fn agent_成员加入_移出_再加入都能往返_名字取自_agent_与�
             .expect("读取")
             .is_none()
     );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_自己离开时删掉已加入的成员记录_被移出的留着() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "leave-owner").await;
+    let catalog_id = seed_room(&repositories, owner).await;
+    let agent_owner = seed_principal(&database.runtime, "leave-agent-owner").await;
+    let leaving = seed_agent(&database.runtime, agent_owner).await;
+    let removed = seed_agent(&database.runtime, agent_owner).await;
+    for agent in [leaving, removed] {
+        repositories
+            .admit_agent(
+                catalog_id,
+                agent,
+                PrivateRoomPermissions::AGENT_MEMBER,
+                PrivateRoomAgentJoinedVia::Code,
+                time(0),
+            )
+            .await
+            .expect("加入");
+    }
+    assert!(
+        repositories
+            .remove_agent(catalog_id, removed, time(10))
+            .await
+            .expect("管理者移出")
+    );
+
+    assert!(
+        repositories
+            .forget_agent_member(catalog_id, leaving)
+            .await
+            .expect("离开")
+    );
+    assert!(
+        !repositories
+            .forget_agent_member(catalog_id, leaving)
+            .await
+            .expect("再离开")
+    );
+    assert!(
+        !repositories
+            .forget_agent_member(catalog_id, removed)
+            .await
+            .expect("被移出的离开")
+    );
+
+    assert!(
+        repositories
+            .agent_member(catalog_id, leaving)
+            .await
+            .expect("读取")
+            .is_none(),
+        "离开以后要重新凭口令或敲门"
+    );
+    let still_removed = repositories
+        .agent_member(catalog_id, removed)
+        .await
+        .expect("读取")
+        .expect("被移出的记录留着");
+    assert_eq!(still_removed.status, PrivateRoomAgentMemberStatus::Removed);
     database.close().await;
 }
 

@@ -35,6 +35,7 @@ use agent_room_application::{
         AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
     },
     agent_lobbies::{AgentLobbyEntryDependencies, AgentLobbyEntryService},
+    agent_room_placements::{AgentRoomPlacementDependencies, AgentRoomPlacementService},
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
     automation::{AutomationDependencies, AutomationService},
@@ -93,6 +94,7 @@ use config::{
 use features::accounts::AccountHttpState;
 use features::agent_cards::{AgentCardHttpDependencies, AgentCardHttpState};
 use features::agent_instances::{AgentInstanceHttpState, AgentInstanceHttpStateDependencies};
+use features::agent_rooms::{AgentRoomHttpDependencies, AgentRoomHttpState};
 use features::agents::{AgentHttpDependencies, AgentHttpState};
 use features::authentication::AuthenticationHttpState;
 use features::automation::{AutomationHttpDependencies, AutomationHttpState};
@@ -132,6 +134,7 @@ struct IdentityRuntime {
 
 struct AgentFeatureHttpStates {
     roster: features::agent_roster::AgentRosterHttpState,
+    agent_rooms: AgentRoomHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -520,6 +523,7 @@ fn compose_identity_routes(
         .merge(features::agent_instances::router(agents.instances))
         .merge(features::handoffs::router(agents.handoffs))
         .merge(features::lobbies::router(agents.lobbies))
+        .merge(features::agent_rooms::router(agents.agent_rooms))
         .merge(features::public_watch::router(agents.public_watch))
         .merge(features::private_rooms::router(agents.private_rooms))
         .merge(features::private_room_agents::router(
@@ -741,6 +745,7 @@ fn build_agent_feature_states(
     } = build_agent_collaboration_http_states(config, dependencies, admitted_entry)?;
     Ok(AgentFeatureHttpStates {
         roster,
+        agent_rooms: build_agent_room_http_state(config, dependencies),
         agents,
         instances,
         cards,
@@ -753,6 +758,34 @@ fn build_agent_feature_states(
         automation,
         moderation,
     })
+}
+
+/// Agent 在哪些房间、离开一个房间：Bridge 用设备签名，主人用网页登录。
+fn build_agent_room_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> AgentRoomHttpState {
+    let placements = Arc::new(AgentRoomPlacementService::new(
+        AgentRoomPlacementDependencies {
+            access: dependencies.repositories.clone(),
+            agent_memberships: dependencies.repositories.clone(),
+            placements: dependencies.repositories.clone(),
+            allocations: dependencies.repositories.clone(),
+            private_matrix: dependencies.matrix_identities.clone(),
+            memberships: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    AgentRoomHttpState::new(
+        AgentRoomHttpDependencies {
+            placements,
+            authentication: dependencies.authentication.clone(),
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+        },
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
 }
 
 fn build_agent_identity_http_states(

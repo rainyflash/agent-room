@@ -8,10 +8,11 @@ use std::{
 
 use agent_room_application::{
     ports::{
-        AgentLobbyAccessRepository, Clock, MatrixCreateRoom, MatrixEventId, MatrixFailure,
-        MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId,
-        MatrixRoomKind, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
-        RoomAllocationEvidence, RoomAllocationMode, RoomMembershipGateway, RoomProvisioningGateway,
+        AgentLobbyAccessRepository, AgentRoomKind, AgentRoomPlacementStore, Clock,
+        MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
+        MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
+        ModerationEffectGateway, ModerationEffectTarget, PortFuture, RoomAllocationEvidence,
+        RoomAllocationMode, RoomMembershipGateway, RoomProvisioningGateway,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyOutcome, EnterLobbyService, JoinLobbyDependencies,
@@ -26,7 +27,7 @@ use agent_room_domain::{
         RoomProvisioningLeaseId, RoomReservationId,
     },
     moderation::ModerationAction,
-    rooms::MatrixRoomReference,
+    rooms::{MatrixRoomReference, RoomCatalogStatus, RoomReservationState},
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
@@ -328,6 +329,72 @@ async fn 大厅访问记录绑定实例设备和权威_matrix_身份并反映撤
         .expect("撤销后仍应可查询")
         .expect("撤销不会删除实例");
     assert!(!revoked.active);
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_在哪些房间按已确认的位置算_放掉以后就不在了() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime).await;
+    let matrix = Arc::new(测试Matrix::new(false));
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    assert!(
+        repositories
+            .placements(fixture.agent)
+            .await
+            .expect("还没进房间时可查询")
+            .is_empty()
+    );
+    service(database.runtime.clone(), matrix.clone())
+        .enter(request(&fixture))
+        .await
+        .expect("进大厅");
+
+    let placements = repositories
+        .placements(fixture.agent)
+        .await
+        .expect("进房间以后可查询");
+    assert_eq!(placements.len(), 1);
+    let placement = &placements[0];
+    assert_eq!(placement.agent_instance_id, fixture.instance);
+    assert_eq!(placement.catalog_id, fixture.catalog);
+    assert_eq!(placement.matrix_room_id.as_str(), matrix.instance_id);
+    assert_eq!(placement.kind, AgentRoomKind::PublicLobby);
+    assert_eq!(placement.name, "纵向测试大厅");
+    assert_eq!(placement.status, RoomCatalogStatus::Active);
+    let user = repositories
+        .matrix_user(fixture.agent)
+        .await
+        .expect("可查询")
+        .expect("Agent 有 Matrix 账号");
+    assert!(user.as_str().starts_with("@agent-"));
+    assert!(
+        repositories
+            .matrix_user(AgentId::from_uuid(Uuid::now_v7()))
+            .await
+            .expect("可查询")
+            .is_none()
+    );
+
+    agent_room_application::ports::RoomAllocationStore::transition(
+        &repositories,
+        placement.reservation_id,
+        RoomReservationState::Committed,
+        RoomReservationState::Released,
+        test_time(2_000),
+    )
+    .await
+    .expect("放掉位置");
+    assert!(
+        repositories
+            .placements(fixture.agent)
+            .await
+            .expect("放掉以后可查询")
+            .is_empty()
+    );
+    assert_eq!(allocated_slots(&database.runtime, fixture.catalog).await, 0);
 
     database.close().await;
 }
