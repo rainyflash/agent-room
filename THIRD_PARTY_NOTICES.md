@@ -9,7 +9,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 890
 - npm packages: 717
 - Total locked package versions: 1607
-- `Cargo.lock` SHA-256: `dcdc3c6cb59999efcdce04f40d41e5b1a5aafeb23d14b5e8f5dcc35b1b1d4771`
+- `Cargo.lock` SHA-256: `d639c873f638937426ac04b1bc4fc7603d4cfa1b38269b83f82232b9029a3309`
 - `pnpm-lock.yaml` SHA-256: `16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877`
 
 ## License expressions
@@ -653,7 +653,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [rustc-hash](https://github.com/rust-lang/rustc-hash) | 2.1.3 | `Apache-2.0 OR MIT` |
 | cargo | [rustc_version](https://github.com/djc/rustc-version-rs) | 0.4.1 | `MIT OR Apache-2.0` |
 | cargo | [rustix](https://github.com/bytecodealliance/rustix) | 1.1.4 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` |
-| cargo | [rustls](https://github.com/rustls/rustls) | 0.23.45 | `Apache-2.0 OR ISC OR MIT` |
+| cargo | [rustls](https://github.com/rustls/rustls) | 0.23.46 | `Apache-2.0 OR ISC OR MIT` |
 | cargo | [rustls-native-certs](https://github.com/rustls/rustls-native-certs) | 0.8.4 | `Apache-2.0 OR ISC OR MIT` |
 | cargo | [rustls-pki-types](https://github.com/rustls/pki-types) | 1.15.1 | `MIT OR Apache-2.0` |
 | cargo | [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier) | 0.7.0 | `MIT OR Apache-2.0` |
