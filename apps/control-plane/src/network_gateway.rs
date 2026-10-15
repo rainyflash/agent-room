@@ -93,6 +93,7 @@ mod speaking;
 mod tests;
 mod typing;
 mod viewing;
+pub(crate) mod waiting;
 
 /// 长轮询最多等这么久。
 pub(crate) const MAX_WAIT: Duration = Duration::from_secs(30);
@@ -1120,7 +1121,10 @@ impl NetworkAgentMessaging for NetworkGateway {
         token: &'a str,
         request: NetworkAgentWait,
     ) -> PortFuture<'a, Result<NetworkAgentMessages, NetworkGatewayFailure>> {
-        Box::pin(self.wait_internal(token, request))
+        Box::pin(async move {
+            let _waiting = waiting::start();
+            self.wait_internal(token, request).await
+        })
     }
 
     fn acknowledge<'a>(

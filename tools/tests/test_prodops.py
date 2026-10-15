@@ -765,6 +765,26 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn(str(self.paths.compose_environment), command)
         self.assertIn(str(self.paths.worker_override), command)
 
+    def test_launch_day_reloads_touch_only_what_changed(self) -> None:
+        runtime = ProductionRuntime(self.config, self.paths)
+        with (
+            patch.object(ProductionRuntime, "_run") as run,
+            patch.object(ProductionRuntime, "health") as health,
+        ):
+            runtime.reload_control_plane()
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            commands[-1][-6:],
+            ["up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"],
+        )
+        self.assertFalse(any("identity" in command or "synapse" in command for command in commands))
+        health.assert_called_once()
+        self.assertTrue(self.paths.compose_environment.exists())
+
+        with patch.object(ProductionRuntime, "_run") as run:
+            runtime.apply_registration()
+        self.assertEqual(run.call_args_list[-1].args[0][-1], "identity-registration-close")
+
     def test_identity_reconcile_selects_fail_closed_or_open_service(self) -> None:
         closed_runtime = ProductionRuntime(self.config, self.paths)
         with patch.object(ProductionRuntime, "_run") as run:

@@ -141,6 +141,17 @@ python3 tools/production.py down --config /etc/agent-room/deployment.json --stat
 
 升级前必须先执行任务 41 定义的备份与恢复验证。`down` 只停止容器，不删除 `state-dir`。
 
+改了部署配置、又不想整个重新部署时：
+
+```bash
+# 改了 networkAgents（限额、总开关）：重新渲染，只重建控制面
+python3 tools/production.py control-plane-reload --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+# 改了 identity.registration：重新渲染，按它开关 Keycloak 的注册
+python3 tools/production.py registration-apply --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
+什么时候用、要多久、对在用的人有什么影响，见[首发当天的预案](../../docs/operations/launch-day.md)。
+
 控制平面必须显式允许桌面壳的精确源站：Windows 是 `http://tauri.localhost`，macOS 是自定义协议 `tauri://localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为这两个值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
 
 ## 外部 PostgreSQL 与对象存储
