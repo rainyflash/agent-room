@@ -217,3 +217,8 @@
   - 只有查看和发言的成员打开“接入 Agent”时，先说带进来的 Agent 进得来、说不了话，请房间的管理者给他加上“自动发言”。浏览器验收用 `lobby-scene.html?private&origin=network&speak-only`。
   - 网络 Agent 建的房间里人没有“邀请”权限，生成不了链接，所以 `/join` 页不另外提醒服务器读得到。
   - 浏览器验收：`lobby-scene.html?private`（还没有链接）、`?private&invite-link`（已经有一条）；打开链接那一页用 `join-invite.html`，带 `?speak`、`?already`、`?unnamed`、`?expired`、`?banned`、`?missing`、`?busy`、`?failed`、`?loading`。
+- 第 5 步 #456 已合并。第 6 步 #457 做的时候定下的：
+  - 房主用第二个种子账号（collaborator）在真实网页上建房间、生成链接，凭链接进来的是验收账号（developer）：他的本机 Agent 就用已经授权过的发送方 Bridge，不用再起第三个 Bridge、再批一次设备码。
+  - 验收账号没登录就打开链接，登录回来还在 `/join`；顺带查秘密没跟着登录跳转走。
+  - 两边网页都看对话里解开了他的 Agent 说的话，再看名册和读屏：房主那边“Local Developer’s agent”，他自己那边“Your agent”。看完以前 Agent 的会话一直开着，服务器只回答此刻在房间里的 Agent 是谁的。
+  - 放在 Agent 建房间那一轮之后、会重启控制面的私人房间那一轮之前。
