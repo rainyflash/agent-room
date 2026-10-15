@@ -19,9 +19,10 @@ use agent_room_application::{
         NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
-        PrivateRoomSnapshot, PrivateRoomStore, RateWindowDecision, RateWindowPolicy, RoomAgentKind,
-        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomPeopleDirectory,
-        RoomReservationClaim, RoomReservationOutcome, SealedSecret, SecretDigest,
+        PrivateRoomSnapshot, PrivateRoomStore, RateWindowBucket, RateWindowDecision,
+        RateWindowPolicy, RoomAgentKind, RoomAllocationEvidence, RoomAllocationMode,
+        RoomAllocationStore, RoomPeopleDirectory, RoomReservationClaim, RoomReservationOutcome,
+        SealedSecret, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -305,6 +306,100 @@ async fn 固定窗口到上限拒绝_窗口过后重新计数() {
             .expect("计数"),
         RateWindowDecision::Limited { .. }
     ));
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 几个窗口一起记_有一个到上限就都不记_退回只退那一刻记的() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let source = Uuid::now_v7().simple();
+    let hourly = format!("create:hour:{source}");
+    let daily = format!("create:day:{source}");
+    let hour = i64::try_from(HOUR).expect("一小时");
+    let buckets = [
+        RateWindowBucket {
+            bucket: hourly.clone(),
+            policy: RateWindowPolicy {
+                window: DurationMillis::new(HOUR).expect("一小时"),
+                limit: 2,
+            },
+        },
+        RateWindowBucket {
+            bucket: daily.clone(),
+            policy: RateWindowPolicy {
+                window: DurationMillis::new(24 * HOUR).expect("一天"),
+                limit: 1,
+            },
+        },
+    ];
+    let take_all = |at| repositories.take_all(&buckets, at);
+    assert_eq!(
+        take_all(time(0)).await.expect("计数"),
+        RateWindowDecision::Allowed
+    );
+    assert_eq!(
+        take_all(time(1)).await.expect("计数"),
+        RateWindowDecision::Limited {
+            retry_at: time(24 * hour)
+        },
+        "每天的到了上限，告诉每天的那个时间"
+    );
+    assert_eq!(
+        window_count(&database.runtime, &hourly).await,
+        1,
+        "每天的不够时每小时的也不记"
+    );
+
+    repositories
+        .give_back(&[hourly.clone(), daily.clone()], time(0))
+        .await
+        .expect("退回");
+    assert_eq!(window_count(&database.runtime, &hourly).await, 0);
+    assert_eq!(
+        take_all(time(2)).await.expect("计数"),
+        RateWindowDecision::Allowed
+    );
+
+    // 窗口从 time(0) 开始，说是在那以前记的，就不在这个窗口里，不退。
+    repositories
+        .give_back(std::slice::from_ref(&hourly), time(-1))
+        .await
+        .expect("退回");
+    assert_eq!(
+        window_count(&database.runtime, &hourly).await,
+        1,
+        "窗口开始以前记的不在这个窗口里"
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 按开头查名字_不分大小写_停用的不算() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let base = unique_name("Twin");
+    let mut ids = Vec::new();
+    for name in [
+        base.clone(),
+        format!("{} 2", base.to_uppercase()),
+        format!("{base} 3"),
+    ] {
+        let provisioning = provisioning(&name, time(0));
+        repositories.begin(&provisioning).await.expect("写入");
+        ids.push(provisioning.id);
+    }
+    repositories.disable(ids[2], time(5)).await.expect("停用");
+
+    let mut names = repositories
+        .names_starting_with(&base.to_lowercase())
+        .await
+        .expect("查名字");
+    names.sort();
+    let lowered = base.to_lowercase();
+    assert_eq!(names, vec![lowered.clone(), format!("{lowered} 2")]);
     database.close().await;
 }
 
@@ -2082,6 +2177,16 @@ async fn reservation_state<'e>(
         .fetch_one(executor)
         .await
         .expect("读预约")
+}
+
+async fn window_count(pool: &PgPool, bucket: &str) -> i32 {
+    sqlx::query_scalar(
+        "SELECT event_count FROM agent_room.network_agent_rate_window WHERE bucket = $1",
+    )
+    .bind(bucket)
+    .fetch_one(pool)
+    .await
+    .expect("读计数")
 }
 
 async fn encrypted_since(
