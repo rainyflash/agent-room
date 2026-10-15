@@ -4,10 +4,11 @@ use agent_room_application::ports::{MatrixUserId, PortFuture};
 use agent_room_bridge_core::{
     agent_identity::BridgeAgentIdentity,
     lobby_session::{
-        AgentLobbyEntryIntent, AgentLobbySessionConfig, AgentLobbySessionFailureKind,
-        AgentLobbySessionService, ControlPlaneLobbyEntryFailure, ControlPlaneLobbyEntryFailureKind,
-        ControlPlaneLobbyEntryGateway, ControlPlaneLobbyEntryOutcome, ControlPlaneLobbyEntryResult,
-        JoinedAgentLobby, LobbyAssignmentKind,
+        AgentLobbyEntryIntent, AgentLobbyExit, AgentLobbySessionConfig,
+        AgentLobbySessionFailureKind, AgentLobbySessionService, ControlPlaneLobbyEntryFailure,
+        ControlPlaneLobbyEntryFailureKind, ControlPlaneLobbyEntryGateway,
+        ControlPlaneLobbyEntryOutcome, ControlPlaneLobbyEntryResult, JoinedAgentLobby,
+        LobbyAssignmentKind,
     },
 };
 use agent_room_domain::{
@@ -27,6 +28,8 @@ const RESERVATION_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e49";
 struct 固定大厅控制面 {
     outcome: Mutex<Option<ControlPlaneLobbyEntryResult<ControlPlaneLobbyEntryOutcome>>>,
     intent: Mutex<Option<AgentLobbyEntryIntent>>,
+    left: Mutex<Option<ControlPlaneLobbyEntryResult<bool>>>,
+    exit: Mutex<Option<AgentLobbyExit>>,
 }
 
 impl 固定大厅控制面 {
@@ -34,6 +37,17 @@ impl 固定大厅控制面 {
         Self {
             outcome: Mutex::new(Some(outcome)),
             intent: Mutex::new(None),
+            left: Mutex::new(None),
+            exit: Mutex::new(None),
+        }
+    }
+
+    fn leaving(left: ControlPlaneLobbyEntryResult<bool>) -> Self {
+        Self {
+            outcome: Mutex::new(None),
+            intent: Mutex::new(None),
+            left: Mutex::new(Some(left)),
+            exit: Mutex::new(None),
         }
     }
 }
@@ -52,6 +66,49 @@ impl ControlPlaneLobbyEntryGateway for 固定大厅控制面 {
             .expect("测试已配置一个结果");
         Box::pin(async move { outcome })
     }
+
+    fn leave<'a>(
+        &'a self,
+        exit: &'a AgentLobbyExit,
+    ) -> PortFuture<'a, ControlPlaneLobbyEntryResult<bool>> {
+        *self.exit.lock().expect("离开锁可用") = Some(*exit);
+        let left = self
+            .left
+            .lock()
+            .expect("离开结果锁可用")
+            .take()
+            .expect("测试已配置离开的结果");
+        Box::pin(async move { left })
+    }
+}
+
+#[tokio::test]
+async fn 用登记身份离开一个房间_失败按离开报() {
+    let gateway = Arc::new(固定大厅控制面::leaving(Ok(true)));
+    let service = AgentLobbySessionService::new(gateway.clone());
+    assert!(
+        service
+            .leave(&identity(), other_catalog_id())
+            .await
+            .expect("离开成功")
+    );
+    let exit = gateway
+        .exit
+        .lock()
+        .expect("离开锁可用")
+        .expect("离开已发送");
+    assert_eq!(exit.agent_id(), agent_id());
+    assert_eq!(exit.agent_instance_id(), agent_instance_id());
+    assert_eq!(exit.catalog_id(), other_catalog_id());
+
+    let refused = AgentLobbySessionService::new(Arc::new(固定大厅控制面::leaving(Err(
+        ControlPlaneLobbyEntryFailure::new(ControlPlaneLobbyEntryFailureKind::Forbidden),
+    ))))
+    .leave(&identity(), other_catalog_id())
+    .await
+    .expect_err("控制面拒绝");
+    assert_eq!(refused.kind(), AgentLobbySessionFailureKind::Forbidden);
+    assert_eq!(refused.operation(), "bridge.lobby.leave");
 }
 
 #[tokio::test]

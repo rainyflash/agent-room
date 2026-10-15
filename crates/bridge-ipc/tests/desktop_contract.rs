@@ -1,6 +1,6 @@
 use agent_room_bridge_ipc::{
     IpcHostRoomTarget, IpcHostSessionDiagnostics, IpcHostSessionState, IpcHostSessionSummary,
-    IpcReceptionHost, IpcReceptionOffer, IpcRegisterReceptionRequest,
+    IpcReceptionHost, IpcReceptionOffer, IpcRegisterReceptionRequest, IpcSessionRoom,
 };
 
 #[test]
@@ -29,6 +29,16 @@ fn 原生诊断响应与前端消费的同一份契约保持一致() {
             },
             room_id: "!public:matrix.test".into(),
         }),
+        rooms: vec![
+            IpcSessionRoom {
+                catalog_id: "0198b601-77a3-7bb8-83eb-a8fe68c97e44".into(),
+                room_id: "!public:matrix.test".into(),
+            },
+            IpcSessionRoom {
+                catalog_id: "0198b601-77a7-7bb8-83eb-a8fe68c97e44".into(),
+                room_id: "!private:matrix.test".into(),
+            },
+        ],
         last_inbox_read_ago_ms: Some(1),
         last_message_received_ago_ms: Some(2),
         last_message_sent_ago_ms: Some(3),
@@ -40,6 +50,7 @@ fn 原生诊断响应与前端消费的同一份契约保持一致() {
     entry.requested_room = None;
     entry.session_key = None;
     entry.reception_offer = None;
+    entry.rooms = Vec::new();
     entry.last_inbox_read_ago_ms = None;
     entry.last_message_received_ago_ms = None;
     entry.last_message_sent_ago_ms = None;

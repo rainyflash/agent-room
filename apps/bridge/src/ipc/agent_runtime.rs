@@ -72,7 +72,10 @@ use super::{
 use crate::agent_status::AgentStatusPublicationHandle;
 
 mod inbox_ack;
+mod room_membership;
 mod viewing;
+
+pub(crate) use room_membership::AgentRoomEntry;
 
 /// 一次回复里消息预览最多这么多字节，给 64 KiB 的 IPC 帧留出信封的余量。
 const PREVIEW_PAGE_BYTES: usize = 48 * 1024;
@@ -172,6 +175,8 @@ pub(crate) struct BridgeAgentRuntimeSnapshot {
     typing: Option<Arc<crate::typing::TypingWatch>>,
     room_encryption: MatrixRoomEncryption,
     message_content_protection: Option<Arc<MessageBodyProtectionService>>,
+    /// 会话的 Agent 进出别的房间用的；同步还没开始时没有。
+    room_entry: Option<Arc<AgentRoomEntry>>,
 }
 
 impl BridgeAgentRuntimeSnapshot {
@@ -201,7 +206,13 @@ impl BridgeAgentRuntimeSnapshot {
             typing: None,
             room_encryption: MatrixRoomEncryption::Unencrypted,
             message_content_protection: None,
+            room_entry: None,
         }
+    }
+
+    pub(crate) fn with_room_entry(mut self, entry: Arc<AgentRoomEntry>) -> Self {
+        self.room_entry = Some(entry);
+        self
     }
 
     pub(crate) fn with_room_authority(

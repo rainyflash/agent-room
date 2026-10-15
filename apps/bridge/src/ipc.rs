@@ -43,7 +43,9 @@ mod agent_runtime;
 mod attachment_downloads;
 
 use agent_runtime::AgentRuntimeIpcFacade;
-pub(crate) use agent_runtime::{BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot};
+pub(crate) use agent_runtime::{
+    AgentRoomEntry, BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot,
+};
 
 const IPC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const IPC_SECRET_BYTES: usize = 32;
@@ -254,6 +256,8 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                     })
                 }
                 IpcMethod::GetSelf => self.agent_runtime()?.get_self(),
+                IpcMethod::EnterRoom(request) => self.agent_runtime()?.enter_room(request).await,
+                IpcMethod::LeaveRoom(request) => self.agent_runtime()?.leave_room(request).await,
                 IpcMethod::MatrixSecurity(request) => {
                     self.agent_runtime()?.matrix_security(request).await
                 }
@@ -596,9 +600,8 @@ where
         return Err(BridgeIpcFailure::new(BridgeIpcFailureKind::Authentication));
     }
 
-    let negotiator =
-        IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_4], FoundationIpcScopePolicy)
-            .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
+    let negotiator = IpcHandshakeNegotiator::new(SUPPORTED_IPC_VERSIONS, FoundationIpcScopePolicy)
+        .map_err(|_| BridgeIpcFailure::new(BridgeIpcFailureKind::Internal))?;
     let agreement = match negotiator.negotiate(&offer) {
         Ok(value) => value,
         Err(failure) => {
@@ -783,6 +786,10 @@ fn log_request_failure(
         );
     }
 }
+
+/// 4.4 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发 4.5 才有的方法。
+const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 2] =
+    [IpcProtocolVersion::V4_4, IpcProtocolVersion::V4_5];
 
 fn authorize_method(
     method: &IpcMethod,
@@ -1034,6 +1041,7 @@ pub(crate) type BridgeIpcResult<T> = Result<T, BridgeIpcFailure>;
 #[cfg(test)]
 mod tests {
     mod inbox_ack;
+    mod room_membership;
     mod viewing;
 
     use std::{
@@ -2858,6 +2866,38 @@ mod tests {
                 cryptography: None,
             },
         ))
+    }
+
+    #[test]
+    fn 旧版客户端报的四点四照样谈得拢_新版报四点五用新版() {
+        let negotiator =
+            IpcHandshakeNegotiator::new(super::SUPPORTED_IPC_VERSIONS, FoundationIpcScopePolicy)
+                .expect("Bridge 的协商器有效");
+        for (offered, selected) in [
+            (IpcProtocolVersion::V4_4, IpcProtocolVersion::V4_4),
+            (IpcProtocolVersion::V4_5, IpcProtocolVersion::V4_5),
+        ] {
+            let offer = IpcHandshakeOffer::new(
+                IpcCallerKind::McpServer,
+                [offered],
+                [IpcScope::HostSessionsManage],
+            )
+            .expect("测试提议有效");
+            assert_eq!(
+                negotiator
+                    .negotiate(&offer)
+                    .expect("谈得拢")
+                    .selected_version(),
+                selected
+            );
+        }
+        let old = IpcHandshakeOffer::new(
+            IpcCallerKind::McpServer,
+            [IpcProtocolVersion::V4_3],
+            [IpcScope::HostSessionsManage],
+        )
+        .expect("测试提议有效");
+        assert!(negotiator.negotiate(&old).is_err(), "更旧的谈不拢");
     }
 
     #[tokio::test]

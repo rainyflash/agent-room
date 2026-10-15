@@ -61,7 +61,9 @@ impl IpcInvitationOffer {
     }
 }
 
-fn validate_room(room: Option<&IpcHostRoomTarget>) -> Result<(), IpcMethodValidationFailure> {
+pub(crate) fn validate_room(
+    room: Option<&IpcHostRoomTarget>,
+) -> Result<(), IpcMethodValidationFailure> {
     if let Some(room) = room {
         validate_session_id(&room.catalog_id)?;
         if let Some(room_id) = &room.room_id {
@@ -209,6 +211,10 @@ pub struct IpcHostSessionDiagnostics {
     pub session_key: Option<String>,
     #[serde(default)]
     pub reception_offer: Option<IpcReceptionOffer>,
+    /// 会话的 Agent 在哪些房间：开会话时进的那个，加上后来用 `EnterRoom` 进的，去掉离开的
+    /// （`specs/agent-identity/design.md`）。接入对话框据此认出已经接入的 Agent 进了这个房间。
+    #[serde(default)]
+    pub rooms: Vec<crate::IpcSessionRoom>,
     pub last_inbox_read_ago_ms: Option<u64>,
     pub last_message_received_ago_ms: Option<u64>,
     pub last_message_sent_ago_ms: Option<u64>,

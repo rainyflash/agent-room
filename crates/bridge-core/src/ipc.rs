@@ -56,6 +56,10 @@ impl IpcProtocolVersion {
     /// 4.4：收件箱的确认位置由 Bridge 按房间记——确认（`AckInbox`），读收件箱、等消息能从确认
     /// 位置开始（`fromAck`）。旧 Bridge 不认，握手时就说清版本不兼容。
     pub const V4_4: Self = Self { major: 4, minor: 4 };
+    /// 4.5：会话的 Agent 能再进一个房间（`EnterRoom`）、离开一个房间（`LeaveRoom`）。Bridge 同时
+    /// 接受 4.4：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不会发这两个方法。新版客户端
+    /// 只报 4.5，碰上旧 Bridge 握手时就说清版本不兼容。
+    pub const V4_5: Self = Self { major: 4, minor: 5 };
 
     /// 构造本地 IPC 协议版本。
     ///

@@ -454,6 +454,10 @@ struct AgentOnlineSession {
     presence_fetch: presence_fetch::PresenceFetchWorker,
     /// 房间里此刻谁在打字：等消息时叫醒它的人还在打字就再等等。
     typing: Arc<crate::typing::TypingWatch>,
+    /// 同步里看到的自己在哪些房间。
+    joined_rooms: Arc<crate::joined_rooms::JoinedRooms>,
+    /// 会话的 Agent 进出别的房间用的。
+    room_entry: Arc<crate::ipc::AgentRoomEntry>,
     next_batch: Option<MatrixSyncToken>,
     /// 导入了别人重发的房间密钥、还没重读完的会话。
     recovered_sessions: BTreeSet<(MatrixRoomId, String)>,
@@ -577,6 +581,7 @@ impl BridgeAgentRuntimeState {
             .with_targeted_handoffs(online.targeted_handoffs.clone())
             .with_presence(online.presence_projections.clone())
             .with_typing(online.typing.clone())
+            .with_room_entry(online.room_entry.clone())
             .with_owner(self.owner.as_ref().and_then(|record| record.owner())),
         ));
     }
@@ -1062,21 +1067,7 @@ async fn establish_agent_online_once(
     let matrix = connection.matrix_gateway_handle();
     let handoff_transport = connection.handoff_transport_handle();
     let handoff_events = connection.handoff_event_source_handle();
-    let status = Arc::new(AgentStatusPublicationHandle::with_presence(
-        AgentStatusPublicationService::new(
-            AgentStatusPublicationDependencies {
-                identity: registered.identity().clone(),
-                signer: signer.clone(),
-                publisher: Arc::new(MatrixStatusStatePublisher::new(matrix.clone())),
-                identifiers: Arc::new(SystemStatusEventIdentifiers),
-                clock: Arc::new(SystemClock),
-            },
-            runtime.status_policy,
-        ),
-        AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
-        HostAgentState::Available,
-        matrix.clone(),
-    ));
+    let status = compose_status_publication(runtime, &registered, &signer, &matrix, &room_id);
     let publication = Arc::new(MessagePublicationService::new(
         MessagePublicationDependencies {
             identity: registered.identity().clone(),
@@ -1120,6 +1111,13 @@ async fn establish_agent_online_once(
     );
     let presence_fetch =
         presence_fetch::PresenceFetchWorker::spawn(runtime.presence.clone(), matrix.clone());
+    let joined_rooms = Arc::new(crate::joined_rooms::JoinedRooms::new());
+    let room_entry = Arc::new(crate::ipc::AgentRoomEntry::new(
+        runtime.lobby.clone(),
+        runtime.lobby_config.clone(),
+        lobby.catalog_id(),
+        joined_rooms.clone(),
+    ));
     let online = AgentOnlineSession {
         security: connection.security_gateway_handle(),
         room_authority: connection.room_authority_gateway_handle(),
@@ -1138,10 +1136,37 @@ async fn establish_agent_online_once(
         presence_projections: runtime.presence_projections.clone(),
         presence_fetch,
         typing: Arc::new(crate::typing::TypingWatch::new()),
+        joined_rooms,
+        room_entry,
         next_batch: stored_sync_cursor(runtime).await,
         recovered_sessions: BTreeSet::new(),
     };
     complete_agent_online(runtime, online).await
+}
+
+/// 名片和在线状态：会话的那个房间是名片的主房间，它在的别的房间由同步补写。
+fn compose_status_publication(
+    runtime: &AgentSessionRuntime,
+    registered: &RegisteredAgentRuntime,
+    signer: &Arc<dyn agent_room_bridge_core::ports::DeviceSigningIdentity>,
+    matrix: &Arc<dyn MatrixGateway>,
+    room_id: &MatrixRoomId,
+) -> Arc<AgentStatusPublicationHandle> {
+    Arc::new(AgentStatusPublicationHandle::with_presence(
+        AgentStatusPublicationService::new(
+            AgentStatusPublicationDependencies {
+                identity: registered.identity().clone(),
+                signer: signer.clone(),
+                publisher: Arc::new(MatrixStatusStatePublisher::new(matrix.clone())),
+                identifiers: Arc::new(SystemStatusEventIdentifiers),
+                clock: Arc::new(SystemClock),
+            },
+            runtime.status_policy,
+        ),
+        AgentStatusRoomTarget::new(room_id.clone(), AgentStatusVisibility::Coarse),
+        HostAgentState::Available,
+        matrix.clone(),
+    ))
 }
 
 /// 接着上次处理完的位置同步。以前每次上线都从头全量同步，只带每个房间最近几十条，
@@ -1523,15 +1548,14 @@ async fn sync_agent_online(
         }
     }
     isolated_messages::recover_isolated_messages(runtime, online, full_state).await;
-    online
-        .status
-        .observe_rooms(
-            batch
-                .rooms()
-                .iter()
-                .map(|room| (room.room_id(), room.kind())),
-        )
-        .await;
+    let rooms = || {
+        batch
+            .rooms()
+            .iter()
+            .map(|room| (room.room_id(), room.kind()))
+    };
+    online.joined_rooms.record(rooms());
+    online.status.observe_rooms(rooms()).await;
     online
         .status
         .renew()
