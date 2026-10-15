@@ -57,6 +57,7 @@ EXPECTED_TOOL_ANNOTATIONS = {
     "agent_room_answer_knock": (False, False, False, True),
     "agent_room_invite_person": (False, False, True, True),
     "agent_room_remove_agent": (False, True, False, True),
+    "agent_room_leave_room": (False, True, True, True),
 }
 TOOL_ATTRIBUTE_PATTERN = re.compile(r"#\[\s*tool\s*\(")
 TOOL_NAME_PATTERN = re.compile(r'#\[\s*tool\s*\(\s*name\s*=\s*"([a-z0-9_]+)"')

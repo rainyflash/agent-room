@@ -1,5 +1,5 @@
-//! 按房间名接入：名字在 Bridge 给出的可进房间里解析，身份按宿主任务与房间保存，
-//! 同一任务重跑得到同一个人物。这里不持有任何登录或 Matrix 秘密。
+//! 按房间名接入：名字在 Bridge 给出的可进房间里解析，身份按宿主任务保存：同一任务一直是同一个
+//! Agent，进别的房间也用它（`specs/agent-identity/design.md`）。这里不持有任何登录或 Matrix 秘密。
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -19,9 +19,12 @@ use serde_json::Value;
 pub(crate) struct JoinIdentity {
     pub(crate) session_key: String,
     pub(crate) display_name: String,
-    /// 进的房间；默认公开大厅为空。回到上次的房间时按它重新进入。
+    /// 开会话时进的房间；默认公开大厅为空。回到上次的房间时按它重新开会话。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) room: Option<IpcHostRoomTarget>,
+    /// 开会话以后又进的这个房间：这条记录记的是它。开完会话再进一次（进过的再进也一样）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) entered: Option<IpcHostRoomTarget>,
 }
 
 impl JoinIdentity {
@@ -32,6 +35,31 @@ impl JoinIdentity {
             room: self.room.clone(),
         }
     }
+
+    /// 这条记录记的房间：后来进的，或者开会话时进的。
+    pub(crate) fn target(&self) -> Option<&IpcHostRoomTarget> {
+        self.entered.as_ref().or(self.room.as_ref())
+    }
+
+    /// 换成这次解析到的房间（同一目录的私人房间实例可能换过）。
+    pub(crate) fn place(&mut self, room: Option<IpcHostRoomTarget>) {
+        if self.entered.is_some() {
+            self.entered = room;
+        } else {
+            self.room = room;
+        }
+    }
+
+    /// 同一个 Agent 再进一个房间：会话照旧开在原来的房间，开完再进这一间。
+    fn entering(&self, room: Option<IpcHostRoomTarget>) -> Self {
+        let same = room_key(room.as_ref()) == room_key(self.room.as_ref());
+        Self {
+            session_key: self.session_key.clone(),
+            display_name: self.display_name.clone(),
+            room: self.room.clone(),
+            entered: if same { None } else { room },
+        }
+    }
 }
 
 impl From<IpcOpenHostSessionRequest> for JoinIdentity {
@@ -40,6 +68,7 @@ impl From<IpcOpenHostSessionRequest> for JoinIdentity {
             session_key: request.session_key,
             display_name: request.display_name,
             room: request.room,
+            entered: None,
         }
     }
 }
@@ -61,11 +90,28 @@ fn room_key(room: Option<&IpcHostRoomTarget>) -> String {
     room.map_or_else(|| "default".to_owned(), |room| room.catalog_id.clone())
 }
 
+impl TaskJoins {
+    /// 任务里已经有的 Agent：给了名字找叫这个名字的，优先最近进的房间；没给名字就是最近用的那个。
+    fn agent(&self, name: Option<&str>) -> Option<&JoinIdentity> {
+        let last = self.last.as_ref().and_then(|key| self.rooms.get(key));
+        match name {
+            None => last,
+            Some(name) => last
+                .filter(|identity| identity.display_name == name)
+                .or_else(|| {
+                    self.rooms
+                        .values()
+                        .find(|identity| identity.display_name == name)
+                }),
+        }
+    }
+}
+
 /// 身份怎么来的，回给调用方好让它知道是否复用了旧人物。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum IdentityOrigin {
-    /// 同一宿主任务（或同一 MCP 连接）先前为这个房间用过的人物。
+    /// 同一宿主任务（或同一 MCP 连接）已经有的 Agent：这个房间里用过的，或者带进这个房间。
     Reused,
     /// 新建的人物。
     Created,
@@ -90,7 +136,8 @@ impl JoinIdentities {
         }
     }
 
-    /// 取这个任务为该房间保存的人物；没有、或显式要求了别的名字时新建。
+    /// 取这个任务为该房间保存的人物；这个房间里还没有时，任务里已经有的 Agent（给的名字是它的，
+    /// 或者没给名字）带进这个房间；给了没用过的名字、或任务里还没有 Agent 时新建。
     /// 没有宿主任务标识时退回到这条连接内复用。
     pub(crate) fn resolve(
         &self,
@@ -101,22 +148,28 @@ impl JoinIdentities {
     ) -> (JoinIdentity, IdentityOrigin) {
         let key = room_key(room.as_ref());
         self.update(task_id, |joins| {
-            let (identity, origin) = match joins.rooms.get(&key) {
-                Some(saved)
-                    if display_name
-                        .as_deref()
-                        .is_none_or(|name| name == saved.display_name) =>
-                {
-                    // 同一目录的私人房间实例可能换过，按这次解析到的房间更新。
+            let saved = joins.rooms.get(&key).filter(|saved| {
+                display_name
+                    .as_deref()
+                    .is_none_or(|name| name == saved.display_name)
+            });
+            // 默认公开大厅没有目录，进不了“别的房间”：开会话时就在它里面的 Agent 才带得进去。
+            let agent = joins
+                .agent(display_name.as_deref())
+                .filter(|agent| room.is_some() || agent.room.is_none());
+            let (identity, origin) = match (saved, agent) {
+                (Some(saved), _) => {
                     let mut identity = saved.clone();
-                    identity.room = room;
+                    identity.place(room);
                     (identity, IdentityOrigin::Reused)
                 }
-                _ => (
+                (None, Some(agent)) => (agent.entering(room), IdentityOrigin::Reused),
+                (None, None) => (
                     JoinIdentity {
                         session_key: uuid::Uuid::now_v7().to_string(),
                         display_name: display_name.unwrap_or_else(default_name),
                         room,
+                        entered: None,
                     },
                     IdentityOrigin::Created,
                 ),
@@ -127,9 +180,10 @@ impl JoinIdentities {
         })
     }
 
-    /// 记下接入面板交来的人物，之后这个任务再说“接入”或按名字进同一房间都回到它。
+    /// 记下接入面板交来的人物（或者建好房间的那条记录），之后这个任务再说“接入”或按名字进同一
+    /// 房间都回到它。
     pub(crate) fn adopt(&self, task_id: Option<&str>, identity: JoinIdentity) {
-        let key = room_key(identity.room.as_ref());
+        let key = room_key(identity.target());
         self.update(task_id, |joins| {
             joins.rooms.insert(key.clone(), identity);
             joins.last = Some(key);
@@ -176,6 +230,41 @@ impl JoinIdentities {
     /// 这个任务在这个房间（目录 ID）里的人物。
     pub(crate) fn in_room(&self, task_id: Option<&str>, catalog_id: &str) -> Option<JoinIdentity> {
         self.update(task_id, |joins| joins.rooms.get(catalog_id).cloned())
+    }
+
+    /// 这个任务记着的房间：目录 ID、Matrix 房间 ID，或者这个任务建房时起的名字。
+    pub(crate) fn catalog_of(&self, task_id: Option<&str>, wanted: &str) -> Option<String> {
+        self.update(task_id, |joins| {
+            joins
+                .rooms
+                .values()
+                .flat_map(|identity| [identity.room.as_ref(), identity.entered.as_ref()])
+                .flatten()
+                .find(|room| room.catalog_id == wanted || room.room_id.as_deref() == Some(wanted))
+                .map(|room| room.catalog_id.clone())
+                .or_else(|| joins.created.get(wanted).cloned())
+        })
+    }
+
+    /// 离开了这个房间：忘掉这个任务进这个房间的那条记录，最近进的回到开会话的那个房间。开会话时
+    /// 进的那个房间离不开，它的记录不动。
+    pub(crate) fn forget(&self, task_id: Option<&str>, catalog_id: &str) {
+        self.update(task_id, |joins| {
+            let Some(mut identity) = joins
+                .rooms
+                .remove(catalog_id)
+                .filter(|identity| identity.entered.is_some())
+            else {
+                return;
+            };
+            identity.entered = None;
+            let home = room_key(identity.room.as_ref());
+            // 同一个 Agent 还要找得回来：开会话的那个房间没有记录时补一条。
+            joins.rooms.entry(home.clone()).or_insert(identity);
+            if joins.last.as_deref() == Some(catalog_id) {
+                joins.last = Some(home);
+            }
+        });
     }
 
     /// 这个任务最近进的房间和人物。
@@ -394,6 +483,7 @@ mod tests {
             session_key: uuid::Uuid::now_v7().to_string(),
             display_name: "面板里的名字".into(),
             room: Some(room("ops")),
+            entered: None,
         };
         identities.adopt(Some(&task), invited.clone());
         assert_eq!(identities.last(Some(&task)), Some(invited.clone()));
@@ -405,6 +495,51 @@ mod tests {
         // 新进程也记得最近的房间。
         let restarted = JoinIdentities::new(Some(directory.path().join("mcp-joins")));
         assert_eq!(restarted.last(Some(&task)), Some(invited));
+    }
+
+    #[test]
+    fn 同一任务进别的房间还是同一个_agent_给了没用过的名字才另起() {
+        let directory = tempfile::tempdir().unwrap();
+        let task = uuid::Uuid::now_v7().to_string();
+        let identities = JoinIdentities::new(Some(directory.path().join("mcp-joins")));
+        let (first, _) =
+            identities.resolve(Some(&task), Some(room("room-a")), None, || "Scout".into());
+        // 不给名字、或者给它的名字：带进第二个房间，会话照旧开在第一个房间。
+        let (second, origin) =
+            identities.resolve(Some(&task), Some(room("room-b")), None, || "x".into());
+        assert_eq!(origin, IdentityOrigin::Reused);
+        assert_eq!(second.session_key, first.session_key);
+        assert_eq!(second.room, first.room);
+        assert_eq!(second.entered, Some(room("room-b")));
+        assert_eq!(second.target(), Some(&room("room-b")));
+        let (third, origin) = identities.resolve(
+            Some(&task),
+            Some(room("room-c")),
+            Some("Scout".into()),
+            || "x".into(),
+        );
+        assert_eq!(origin, IdentityOrigin::Reused);
+        assert_eq!(third.session_key, first.session_key);
+        // 回到开会话的那个房间不用再进。
+        let (home, _) = identities.resolve(Some(&task), Some(room("room-a")), None, || "x".into());
+        assert_eq!(home, first);
+        // 最近进的房间记的是后来进的那一间。
+        identities.resolve(Some(&task), Some(room("room-b")), None, || "x".into());
+        assert_eq!(identities.last(Some(&task)), Some(second.clone()));
+        // 给了没用过的名字才另起一个。
+        let (pilot, origin) = identities.resolve(
+            Some(&task),
+            Some(room("room-d")),
+            Some("Pilot".into()),
+            || "x".into(),
+        );
+        assert_eq!(origin, IdentityOrigin::Created);
+        assert_ne!(pilot.session_key, first.session_key);
+        assert_eq!(pilot.entered, None);
+        // 新进程照样记得。
+        let restarted = JoinIdentities::new(Some(directory.path().join("mcp-joins")));
+        let (again, _) = restarted.resolve(Some(&task), Some(room("room-b")), None, || "x".into());
+        assert_eq!(again, second);
     }
 
     #[test]

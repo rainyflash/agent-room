@@ -41,6 +41,7 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_answer_knock",
     "agent_room_invite_person",
     "agent_room_remove_agent",
+    "agent_room_leave_room",
 )
 # 列房间、按名字接入和建房间不属于任何会话：接入和建房工具自己开会话并返回 sessionId。
 SESSIONLESS_TOOLS: Final = ("agent_room_list_rooms", "agent_room_join", "agent_room_create_room")

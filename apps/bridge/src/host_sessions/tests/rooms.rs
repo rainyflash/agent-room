@@ -188,7 +188,10 @@ async fn room_access(
     session_id: &str,
     action: IpcRoomAccessAction,
 ) -> IpcRoomAccess {
-    let method = IpcMethod::RoomAccess(IpcRoomAccessRequest { action });
+    let method = IpcMethod::RoomAccess(IpcRoomAccessRequest {
+        action,
+        catalog_id: None,
+    });
     match in_session(handler, session_id, method).await {
         Ok(IpcResponse::RoomAccess { access }) => access,
         other => panic!("应返回房间怎么进：{other:?}"),
@@ -322,16 +325,20 @@ async fn 放行_拒绝_邀请和移出管的都是会话所在的房间() {
         IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
             agent_id: agent.to_string(),
             admit: true,
+            catalog_id: None,
         }),
         IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
             agent_id: agent.to_string(),
             admit: false,
+            catalog_id: None,
         }),
         IpcMethod::InvitePerson(IpcInvitePersonRequest {
             account_id: account.to_string(),
+            catalog_id: None,
         }),
         IpcMethod::RemoveAgent(IpcRemoveAgentRequest {
             agent_id: agent.to_string(),
+            catalog_id: None,
         }),
     ];
     for method in methods {
@@ -417,4 +424,55 @@ async fn 不在房间里的会话管不了_控制面的拒绝换成稳定的错�
             .expect_err("控制面拒绝");
         assert_eq!((failure.code(), failure.retryable()), (code, retryable));
     }
+}
+
+#[tokio::test]
+async fn 说了房间就管那一间_要是会话的_agent_在的() {
+    let home = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let entered = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let elsewhere = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let rooms = Arc::new(RoomsFake::default());
+    let handler = handler(rooms.clone(), Arc::default());
+    let id = session_in(&handler, Some(home)).await;
+    in_session(
+        &handler,
+        &id,
+        IpcMethod::EnterRoom(IpcEnterRoomRequest {
+            room: IpcHostRoomTarget {
+                catalog_id: entered.to_string(),
+                room_id: None,
+            },
+        }),
+    )
+    .await
+    .expect("又进了一个房间");
+    let agent = AgentId::from_uuid(Uuid::now_v7());
+    let remove = |catalog: RoomCatalogId| {
+        IpcMethod::RemoveAgent(IpcRemoveAgentRequest {
+            agent_id: agent.to_string(),
+            catalog_id: Some(catalog.to_string()),
+        })
+    };
+
+    for catalog in [entered, home] {
+        assert_eq!(
+            in_session(&handler, &id, remove(catalog))
+                .await
+                .expect("控制面答应"),
+            IpcResponse::RoomUpdated {
+                catalog_id: catalog.to_string()
+            }
+        );
+    }
+    let refused = in_session(&handler, &id, remove(elsewhere))
+        .await
+        .expect_err("它不在这个房间");
+    assert_eq!(refused.code(), "bridge.room_not_joined");
+    assert_eq!(
+        rooms.take_calls(),
+        [
+            format!("remove {entered} {agent}"),
+            format!("remove {home} {agent}"),
+        ]
+    );
 }

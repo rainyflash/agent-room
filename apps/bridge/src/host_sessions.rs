@@ -410,7 +410,13 @@ impl HostSessionRegistry {
     }
 
     /// 会话所在的房间：管房间的方法管的就是它。
-    async fn room(&self, session_id: &str) -> Result<RoomCatalogId, BridgeIpcDispatchFailure> {
+    /// 会话的 Agent 管的房间：没说就是开会话时进的那个；说了就要是它在的（开会话时进的，或者
+    /// 之后用 `EnterRoom` 进的）。
+    async fn room(
+        &self,
+        session_id: &str,
+        requested: Option<&str>,
+    ) -> Result<RoomCatalogId, BridgeIpcDispatchFailure> {
         let IpcResponse::SelfSummary { summary } =
             self.execute(session_id, IpcMethod::GetSelf).await?
         else {
@@ -419,8 +425,32 @@ impl HostSessionRegistry {
                 false,
             ));
         };
-        summary
-            .room_catalog_id
+        let catalog_id = match requested {
+            None => summary.room_catalog_id,
+            Some(requested) if summary.room_catalog_id.as_deref() == Some(requested) => {
+                summary.room_catalog_id
+            }
+            Some(requested) => {
+                let entered = self
+                    .find(session_id)
+                    .await?
+                    .evidence
+                    .lock()
+                    .await
+                    .entered_rooms
+                    .iter()
+                    .any(|room| room.catalog_id == requested);
+                if !entered {
+                    return Err(BridgeIpcDispatchFailure::new(
+                        "bridge.room_not_joined",
+                        IpcErrorCategory::Authorization,
+                        false,
+                    ));
+                }
+                Some(requested.to_owned())
+            }
+        };
+        catalog_id
             .as_deref()
             .and_then(|id| Uuid::parse_str(id).ok())
             .map(RoomCatalogId::from_uuid)
@@ -764,7 +794,8 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 IpcMethod::WithSession { session_id, method }
                     if room_management::manages_room(&method) =>
                 {
-                    let catalog_id = self.sessions.room(&session_id).await?;
+                    let requested = agent_room_bridge_ipc::managed_room(&method).flatten();
+                    let catalog_id = self.sessions.room(&session_id, requested).await?;
                     self.rooms.manage(catalog_id, *method).await
                 }
                 IpcMethod::WithSession { session_id, method } => {

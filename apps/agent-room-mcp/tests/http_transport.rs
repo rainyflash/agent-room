@@ -39,6 +39,8 @@ impl BridgeToolClient for RecordingBridge {
                 }),
                 IpcMethod::WithSession { session_id, method } if session_id == SESSION => {
                     match *method {
+                        // 等消息给的游标先按 ID 问在哪个房间：都在 `!room:example.test`。
+                        IpcMethod::GetMessages(request) => Ok(looked_up(&request.ids)),
                         // 像真的消息库一样：消息到了就一直在，按游标给；读过去了才是空的。
                         IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
                             let page = self.next.lock().unwrap().clone();
@@ -48,7 +50,7 @@ impl BridgeToolClient for RecordingBridge {
                                     next_cursor,
                                     ..
                                 }) if previews.last().map(|preview| preview.event_id.as_str())
-                                    != request.after_event_id.as_deref() =>
+                                    != after(&request) =>
                                 {
                                     IpcResponse::MessagePreviews {
                                         previews,
@@ -246,7 +248,9 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
             other => panic!("等消息都带着会话：{other:?}"),
         })
         .collect();
-    // 先问一次主人是谁（这个假 Bridge 不认，就当没有主人）。
+    // 先问给的游标在哪个房间，再问一次主人是谁（这个假 Bridge 不认，就当没有主人）。
+    let (lookup, inner) = inner.split_first().unwrap();
+    assert!(matches!(lookup, IpcMethod::GetMessages(request) if request.ids == ["$last"]));
     let (first, inner) = inner.split_first().unwrap();
     assert!(matches!(first, IpcMethod::GetSelf));
     let (last, holds) = inner.split_last().unwrap();
@@ -256,11 +260,9 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
             .iter()
             .all(|method| matches!(method, IpcMethod::WaitInbox(request) if request.keep_waiting))
     );
+    assert!(matches!(holds[0], IpcMethod::WaitInbox(request) if after(request) == Some("$last")));
     assert!(
-        matches!(holds[0], IpcMethod::WaitInbox(request) if request.after_event_id.as_deref() == Some("$last"))
-    );
-    assert!(
-        matches!(last, IpcMethod::ReadInbox(request) if request.after_event_id.as_deref() == Some("$next") && !request.keep_waiting)
+        matches!(last, IpcMethod::ReadInbox(request) if after(request) == Some("$next") && !request.keep_waiting)
     );
 }
 
@@ -312,7 +314,7 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
     let list = server
         .rpc(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
         .await;
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 23);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 24);
     let open = server.rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
         "name":"agent_room_open_session","arguments":{"sessionKey":SESSION,"displayName":"HTTP test"}
     }})).await;
@@ -322,11 +324,11 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
     }})).await;
     assert_ne!(wait["result"]["isError"], true);
     let calls = server.bridge.calls.lock().unwrap();
-    assert_eq!(calls.len(), 2);
+    assert_eq!(calls.len(), 3);
     assert!(
-        matches!(&calls[1], IpcMethod::WithSession { session_id, method }
+        matches!(&calls[2], IpcMethod::WithSession { session_id, method }
         if session_id == SESSION && matches!(method.as_ref(), IpcMethod::ReadInbox(request)
-            if request.after_event_id.as_deref() == Some("$last")))
+            if request.every_room && after(request) == Some("$last")))
     );
 }
 
@@ -457,7 +459,7 @@ async fn 新版无状态协议可直接发现工具并拒绝重复认证头() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let result = common::rpc_result(response).await;
-    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 23);
+    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 24);
     let response = server
         .client
         .post(&server.url)
@@ -468,6 +470,30 @@ async fn 新版无状态协议可直接发现工具并拒绝重复认证头() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert!(server.bridge.calls.lock().unwrap().is_empty());
+}
+
+/// 看所有房间时从哪一条之后接着看：这个假 Bridge 只有一个房间。
+fn after(request: &agent_room_bridge_ipc::IpcListPreviewsRequest) -> Option<&str> {
+    request
+        .room_cursors
+        .first()
+        .map(|cursor| cursor.after_event_id.as_str())
+        .or(request.after_event_id.as_deref())
+}
+
+fn looked_up(ids: &[String]) -> IpcResponse {
+    let messages = ids
+        .iter()
+        .flat_map(|id| match message_page(id) {
+            IpcResponse::MessagePreviews { previews, .. } => previews,
+            _ => unreachable!(),
+        })
+        .collect();
+    IpcResponse::Messages {
+        messages,
+        missing: Vec::new(),
+        more: Vec::new(),
+    }
 }
 
 fn message_page(event: &str) -> IpcResponse {

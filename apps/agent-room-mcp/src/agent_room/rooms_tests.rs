@@ -18,7 +18,8 @@ const KNOCKER: &str = "01990d9e-8400-7000-8000-0000000000b1";
 struct RoomsBridge {
     created: Mutex<Vec<IpcCreateRoomRequest>>,
     opened: Mutex<Vec<IpcOpenHostSessionRequest>>,
-    access: Mutex<Vec<IpcRoomAccessAction>>,
+    access: Mutex<Vec<IpcRoomAccessRequest>>,
+    entered: Mutex<Vec<IpcHostRoomTarget>>,
     refuse_create: Mutex<Option<BridgeToolFailure>>,
 }
 
@@ -51,8 +52,18 @@ impl RoomsBridge {
                     granted_capabilities: vec![],
                 },
             }),
+            IpcMethod::EnterRoom(request) => {
+                let catalog_id = request.room.catalog_id.clone();
+                self.entered.lock().unwrap().push(request.room);
+                Ok(IpcResponse::RoomEntered {
+                    room: IpcSessionRoom {
+                        catalog_id,
+                        room_id: CREATED_ROOM.into(),
+                    },
+                })
+            }
             IpcMethod::RoomAccess(request) => {
-                self.access.lock().unwrap().push(request.action);
+                self.access.lock().unwrap().push(request);
                 Ok(IpcResponse::RoomAccess {
                     access: IpcRoomAccess {
                         catalog_id: self.last_created().catalog_id,
@@ -157,7 +168,17 @@ async fn 建房后就在里面_拿到口令和要转给别的_agent_的话() {
     let target = opened.room.expect("进建好的房间");
     assert_eq!(target.catalog_id, created.catalog_id);
     assert_eq!(target.room_id.as_deref(), Some(CREATED_ROOM));
-    assert_eq!(*bridge.access.lock().unwrap(), [IpcRoomAccessAction::Show]);
+    assert_eq!(
+        *bridge.access.lock().unwrap(),
+        [IpcRoomAccessRequest {
+            action: IpcRoomAccessAction::Show,
+            catalog_id: Some(created.catalog_id.clone()),
+        }]
+    );
+    assert!(
+        bridge.entered.lock().unwrap().is_empty(),
+        "会话就开在建好的房间"
+    );
 
     let content = &result["structuredContent"];
     assert_eq!(content["sessionId"], SESSION_A);
@@ -203,8 +224,19 @@ async fn 同一任务同名再建回到同一间_人物也不换_换个名字或
     assert_eq!(second.session_key, first.session_key);
     assert_eq!(second.display_name, "Scout");
 
-    create(&mut harness, json!({"name": "周会"}), TASK).await;
-    assert_ne!(bridge.last_created().catalog_id, first.catalog_id);
+    // 同一任务再建一间：还是这个 Agent，会话照旧开在第一间，开好以后进新的这间。
+    let meeting = create(&mut harness, json!({"name": "周会"}), TASK).await;
+    assert_ne!(meeting["isError"], true, "{meeting}");
+    assert_eq!(meeting["structuredContent"]["identity"], "reused");
+    let third = bridge.last_created();
+    assert_ne!(third.catalog_id, first.catalog_id);
+    assert_eq!(third.session_key, first.session_key);
+    let opened = bridge.opened.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(opened.room.unwrap().catalog_id, first.catalog_id);
+    assert_eq!(
+        bridge.entered.lock().unwrap().last().unwrap().catalog_id,
+        third.catalog_id
+    );
     create(&mut harness, json!({"name": "周报"}), OTHER_TASK).await;
     assert_ne!(bridge.last_created().catalog_id, first.catalog_id);
     harness.stop().await;
@@ -252,7 +284,10 @@ fn access_call(
         ExpectedCall {
             method: IpcMethod::WithSession {
                 session_id: SESSION_A.into(),
-                method: Box::new(IpcMethod::RoomAccess(IpcRoomAccessRequest { action })),
+                method: Box::new(IpcMethod::RoomAccess(IpcRoomAccessRequest {
+                    action,
+                    catalog_id: None,
+                })),
             },
             response: Ok(IpcResponse::RoomAccess {
                 access: IpcRoomAccess {
@@ -346,12 +381,15 @@ async fn 放行_邀请和移出都在会话里_账户_id_统一成小写() {
         in_session(IpcMethod::AnswerKnock(IpcAnswerKnockRequest {
             agent_id: KNOCKER.into(),
             admit: true,
+            catalog_id: None,
         })),
         in_session(IpcMethod::InvitePerson(IpcInvitePersonRequest {
             account_id: account.to_ascii_lowercase(),
+            catalog_id: None,
         })),
         in_session(IpcMethod::RemoveAgent(IpcRemoveAgentRequest {
             agent_id: KNOCKER.into(),
+            catalog_id: None,
         })),
     ]));
     let mut harness = McpHarness::start(bridge.clone()).await;

@@ -32,6 +32,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const BLOCK_GRACE: Duration = Duration::from_secs(2);
 /// 看所有房间时给 Agent 的游标是每个房间的位置，用它连起来。
 const CURSOR_SEPARATOR: &str = ",";
+/// 这样连起来的游标最长这么多字节：每个房间一条，Agent 同时在的房间有上限。
+pub const CURSOR_BYTES: usize = 16 * 1024;
 
 /// 游标里的几条位置：看所有房间时每个房间一条，用逗号连起来；只看一个房间时就是一条。
 pub fn cursor_events(cursor: &str) -> impl Iterator<Item = &str> {

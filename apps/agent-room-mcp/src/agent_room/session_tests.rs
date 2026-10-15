@@ -6,9 +6,11 @@ use std::{
 
 use agent_room_agent_client::BridgeToolFuture;
 use agent_room_bridge_ipc::{
-    IpcAgentSummary, IpcBridgeState, IpcCloseHostSessionRequest, IpcErrorCategory,
-    IpcHostSessionState, IpcHostSessionSummary, IpcMethod, IpcOpenHostSessionRequest, IpcResponse,
-    IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary,
+    IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcCloseHostSessionRequest,
+    IpcContentReference, IpcErrorCategory, IpcHostRoomTarget, IpcHostSessionState,
+    IpcHostSessionSummary, IpcMessagePreviewSummary, IpcMessageSensitivity, IpcMethod,
+    IpcOpenHostSessionRequest, IpcResponse, IpcRoomCursor, IpcRoomKind, IpcRoomMembership,
+    IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
 };
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
@@ -89,7 +91,7 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
                 keep_waiting: false,
                 wait_ms: None,
                 from_ack: true,
-                every_room: false,
+                every_room: true,
                 room_cursors: Vec::new(),
             },
         )),
@@ -156,32 +158,138 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
 }
 
 #[tokio::test]
-async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝历史参数() {
-    let bridge = Arc::new(ScriptedBridge::new(vec![ExpectedCall {
+async fn 确认几个房间的游标时按房间一条一条确认() {
+    let ack = |id: &str, room: &str| ExpectedCall {
         method: IpcMethod::WithSession {
             session_id: SESSION_A.into(),
-            method: Box::new(IpcMethod::ReadInbox(
+            method: Box::new(IpcMethod::AckInbox(
+                agent_room_bridge_ipc::IpcAckInboxRequest { id: id.into() },
+            )),
+        },
+        response: Ok(IpcResponse::InboxAcknowledged {
+            room_id: room.into(),
+            event_id: id.into(),
+            acknowledged: true,
+            pending: 0,
+        }),
+    };
+    let bridge = Arc::new(ScriptedBridge::new(vec![
+        ack("$a:matrix.test", "!one:matrix.test"),
+        ack("$b:matrix.test", "!two:matrix.test"),
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let result = harness
+        .call(
+            "agent_room_ack",
+            json!({"sessionId":SESSION_A,"eventId":"$a:matrix.test, $b:matrix.test"}),
+        )
+        .await;
+    assert_ne!(result["isError"], true, "{result}");
+    let rooms = result["structuredContent"]["rooms"].as_array().unwrap();
+    assert_eq!(rooms.len(), 2);
+    assert_eq!(rooms[1]["roomId"], "!two:matrix.test");
+    assert_eq!(rooms[1]["acknowledged"], true);
+    // 只有逗号的不问 Bridge。
+    let empty = harness
+        .call(
+            "agent_room_ack",
+            json!({"sessionId":SESSION_A,"eventId":","}),
+        )
+        .await;
+    assert_eq!(empty["isError"], true);
+    bridge.assert_finished();
+    harness.stop().await;
+}
+
+/// 等消息给的游标里的那一条：在 `!room:example.test`。
+fn last_preview() -> IpcMessagePreviewSummary {
+    IpcMessagePreviewSummary {
+        event_id: "$last".into(),
+        message_id: "01990d9e-8400-7000-8000-000000000301".into(),
+        room_id: "!room:example.test".into(),
+        conversation: None,
+        reply_to_message_id: None,
+        actor: IpcActorSummary::Human {
+            principal_id: "01990d9e-8400-7000-8000-000000000302".into(),
+            display_name: "Owner".into(),
+            matrix_user_id: "@owner:example.test".into(),
+            avatar_url: None,
+        },
+        created_at_unix_ms: 1,
+        title: "message".into(),
+        summary: "message".into(),
+        content: IpcContentReference {
+            content_id: "01990d9e-8400-7000-8000-000000000303".into(),
+            digest_sha256: "0".repeat(64),
+            media_type: "text/plain".into(),
+            size_bytes: 7,
+        },
+        language: None,
+        sensitivity: IpcMessageSensitivity::Normal,
+        risk_flags: vec![],
+        reply_to: None,
+        from_me: false,
+        mentions_me: false,
+        mentions_everyone: false,
+        room_name: None,
+        before_join: false,
+    }
+}
+
+fn last_lookup() -> IpcResponse {
+    IpcResponse::Messages {
+        messages: vec![last_preview()],
+        missing: Vec::new(),
+        more: Vec::new(),
+    }
+}
+
+/// 给的游标先按 ID 问清在哪个房间，再从那个房间的这一条之后看所有房间。
+fn every_room_after_last() -> Vec<IpcRoomCursor> {
+    vec![IpcRoomCursor {
+        room_id: "!room:example.test".into(),
+        after_event_id: "$last".into(),
+    }]
+}
+
+#[tokio::test]
+async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝历史参数() {
+    let in_session = |method| IpcMethod::WithSession {
+        session_id: SESSION_A.into(),
+        method: Box::new(method),
+    };
+    let bridge = Arc::new(ScriptedBridge::new(vec![
+        ExpectedCall {
+            method: in_session(IpcMethod::GetMessages(
+                agent_room_bridge_ipc::IpcGetMessagesRequest {
+                    ids: vec!["$last".into()],
+                },
+            )),
+            response: Ok(last_lookup()),
+        },
+        ExpectedCall {
+            method: in_session(IpcMethod::ReadInbox(
                 agent_room_bridge_ipc::IpcListPreviewsRequest {
                     room_id: None,
-                    after_event_id: Some("$last".into()),
+                    after_event_id: None,
                     before_event_id: None,
                     limit: 20,
                     keep_waiting: false,
                     wait_ms: None,
                     // 等消息总带着“从确认位置开始”；给了 afterEventId 就以它为准。
                     from_ack: true,
-                    every_room: false,
-                    room_cursors: Vec::new(),
+                    every_room: true,
+                    room_cursors: every_room_after_last(),
                 },
             )),
+            response: Ok(IpcResponse::MessagePreviews {
+                previews: vec![],
+                next_cursor: None,
+                typing: Vec::new(),
+                gaps: Vec::new(),
+            }),
         },
-        response: Ok(IpcResponse::MessagePreviews {
-            previews: vec![],
-            next_cursor: None,
-            typing: Vec::new(),
-            gaps: Vec::new(),
-        }),
-    }]));
+    ]));
     let mut harness = McpHarness::start(bridge.clone()).await;
     let result = harness
         .call(
@@ -254,8 +362,13 @@ impl BridgeToolClient for WaitingBridge {
         assert_eq!(session_id, SESSION_A);
         let response = match *method {
             IpcMethod::GetSelf => Ok(self_summary(&session_id)),
+            IpcMethod::GetMessages(request) => {
+                assert_eq!(request.ids, ["$last"]);
+                Ok(last_lookup())
+            }
             IpcMethod::ReadInbox(request) | IpcMethod::WaitInbox(request) => {
-                assert_eq!(request.after_event_id.as_deref(), Some("$last"));
+                assert!(request.every_room);
+                assert_eq!(request.room_cursors, every_room_after_last());
                 self.reads.fetch_add(1, Ordering::SeqCst);
                 if self.fail.load(Ordering::SeqCst) {
                     Err(BridgeToolFailure::new(
@@ -806,6 +919,12 @@ struct JoinBridge {
     redeemed: Mutex<Vec<agent_room_bridge_ipc::IpcRedeemJoinCodeRequest>>,
     /// 会话之外的调用按顺序记下方法名。
     calls: Mutex<Vec<&'static str>>,
+    /// 会话开好以后又进的房间、离开的房间（目录 ID）、邀请人时说的房间。
+    entered: Mutex<Vec<IpcHostRoomTarget>>,
+    left: Mutex<Vec<String>>,
+    managed: Mutex<Vec<Option<String>>>,
+    /// 进别的房间时落在哪个 Matrix 房间；不设就是要进的那个。
+    enter_lands_in: Mutex<Option<String>>,
 }
 
 impl JoinBridge {
@@ -818,6 +937,45 @@ impl JoinBridge {
             code_room: Mutex::new(None),
             redeemed: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
+            entered: Mutex::new(Vec::new()),
+            left: Mutex::new(Vec::new()),
+            managed: Mutex::new(Vec::new()),
+            enter_lands_in: Mutex::new(None),
+        }
+    }
+
+    fn in_session(&self, method: IpcMethod) -> Result<IpcResponse, BridgeToolFailure> {
+        match method {
+            IpcMethod::EnterRoom(request) => {
+                let room_id = self
+                    .enter_lands_in
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .or_else(|| request.room.room_id.clone())
+                    .unwrap_or_else(|| "!entered:test.invalid".into());
+                let catalog_id = request.room.catalog_id.clone();
+                self.entered.lock().unwrap().push(request.room);
+                Ok(IpcResponse::RoomEntered {
+                    room: IpcSessionRoom {
+                        catalog_id,
+                        room_id,
+                    },
+                })
+            }
+            IpcMethod::LeaveRoom(request) => {
+                self.left.lock().unwrap().push(request.catalog_id.clone());
+                Ok(IpcResponse::RoomLeft {
+                    catalog_id: request.catalog_id,
+                    left: true,
+                })
+            }
+            IpcMethod::InvitePerson(request) => {
+                let catalog_id = request.catalog_id.clone().unwrap_or_default();
+                self.managed.lock().unwrap().push(request.catalog_id);
+                Ok(IpcResponse::RoomUpdated { catalog_id })
+            }
+            other => Err(failure(&format!("test.unexpected_{}", other.name()), false)),
         }
     }
 
@@ -898,6 +1056,7 @@ impl BridgeToolClient for JoinBridge {
                     },
                 })
             }
+            IpcMethod::WithSession { method, .. } => self.in_session(*method),
             other => Err(BridgeToolFailure::new(
                 "test.unexpected_call",
                 IpcErrorCategory::Internal,
@@ -1036,8 +1195,8 @@ async fn 按房间名接入_默认进大厅_找不到或连错房间都不报成
     );
     assert_eq!(bridge.opened.lock().unwrap().len(), opened_before);
 
-    // 连上的房间与目录不符不能报成功。
-    *bridge.connected_room.lock().unwrap() = "!other:test.invalid".into();
+    // 连上的房间与目录不符不能报成功：同一个 Agent 从默认大厅再进这个房间，落到了别处。
+    *bridge.enter_lands_in.lock().unwrap() = Some("!other:test.invalid".into());
     let mismatch = harness
         .call("agent_room_join", json!({"room":"game dev"}))
         .await;
@@ -1058,7 +1217,7 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
     let waiting = agent_room_bridge_ipc::IpcInvitationOffer {
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: Some("面板里起的名字".into()),
-        room: Some(agent_room_bridge_ipc::IpcHostRoomTarget {
+        room: Some(IpcHostRoomTarget {
             catalog_id: uuid::Uuid::now_v7().to_string(),
             room_id: Some("!game:test.invalid".into()),
         }),
@@ -1227,6 +1386,110 @@ async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑
 }
 
 const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
+
+#[tokio::test]
+async fn 同一任务再进一个房间还是同一个_agent_离开以后回到原来的房间() {
+    let weekly = IpcRoomSummary {
+        kind: IpcRoomKind::PrivateRoom,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: Some("!weekly:test.invalid".to_owned()),
+        name: "周报".to_owned(),
+        slug: None,
+        membership: Some(IpcRoomMembership::Joined),
+    };
+    let game = room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev"));
+    let bridge = Arc::new(JoinBridge::new(vec![game.clone(), weekly.clone()]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let call = |id: u64, name: &str, arguments: Value| {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":name,"arguments":arguments,"_meta":{"threadId":SESSION_B}
+        }})
+    };
+    harness
+        .send(call(
+            500,
+            "agent_room_join",
+            json!({"room": "game dev", "displayName": "Scout"}),
+        ))
+        .await;
+    let first = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(first["identity"], "created", "{first}");
+
+    // 进第二个房间：同一个 Agent，会话照旧开在第一个房间，开好以后再进。
+    harness
+        .send(call(501, "agent_room_join", json!({"room": "周报"})))
+        .await;
+    let second = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(second["identity"], "reused", "{second}");
+    assert_eq!(second["sessionKey"], first["sessionKey"]);
+    assert_eq!(second["displayName"], "Scout");
+    assert_eq!(second["roomId"], "!weekly:test.invalid");
+    assert_eq!(second["target"]["catalogId"], weekly.catalog_id.as_str());
+    {
+        let opened = bridge.opened.lock().unwrap();
+        assert_eq!(opened.len(), 2);
+        assert_eq!(opened[0], opened[1]);
+    }
+    let weekly_target = IpcHostRoomTarget {
+        catalog_id: weekly.catalog_id.clone(),
+        room_id: Some("!weekly:test.invalid".into()),
+    };
+    assert_eq!(
+        bridge.entered.lock().unwrap().as_slice(),
+        std::slice::from_ref(&weekly_target)
+    );
+    let session = second["sessionId"].as_str().unwrap().to_owned();
+
+    // 管第二个房间：按消息里的 roomId 换成目录 ID 交给 Bridge。
+    harness
+        .send(call(
+            502,
+            "agent_room_invite_person",
+            json!({"sessionId": session, "accountId": "01990d9e-8400-7000-8000-0000000000d1", "room": "!weekly:test.invalid"}),
+        ))
+        .await;
+    let invited = harness.receive().await["result"].clone();
+    assert_ne!(invited["isError"], true, "{invited}");
+    assert_eq!(
+        bridge.managed.lock().unwrap().as_slice(),
+        &[Some(weekly.catalog_id.clone())]
+    );
+    // 说了不认得的房间：照实说找不到，不去管会话开在的那个。
+    harness
+        .send(call(
+            503,
+            "agent_room_invite_person",
+            json!({"sessionId": session, "accountId": "01990d9e-8400-7000-8000-0000000000d1", "room": "nowhere"}),
+        ))
+        .await;
+    let unknown = harness.receive().await["result"].clone();
+    assert_eq!(unknown["structuredContent"]["code"], "agent.room.not_found");
+    assert_eq!(bridge.managed.lock().unwrap().len(), 1);
+
+    // 按房间名离开第二个房间；之后只说“接入”回到第一个房间。
+    harness
+        .send(call(
+            504,
+            "agent_room_leave_room",
+            json!({"sessionId": session, "room": "周报"}),
+        ))
+        .await;
+    let left = harness.receive().await["result"].clone();
+    assert_ne!(left["isError"], true, "{left}");
+    assert_eq!(left["structuredContent"]["left"], true);
+    assert_eq!(
+        bridge.left.lock().unwrap().as_slice(),
+        std::slice::from_ref(&weekly.catalog_id)
+    );
+    harness.send(call(505, "agent_room_join", json!({}))).await;
+    let back = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(back["identity"], "reused", "{back}");
+    assert_eq!(back["sessionKey"], first["sessionKey"]);
+    assert_eq!(back["target"]["catalogId"], game.catalog_id.as_str());
+    assert_eq!(back["roomId"], "!game:test.invalid");
+    assert_eq!(bridge.entered.lock().unwrap().len(), 1);
+    harness.stop().await;
+}
 
 #[test]
 fn 所有工具的_schema_都公开强制的会话边界() {
