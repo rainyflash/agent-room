@@ -4,8 +4,8 @@
 
 ## SLO 与证据
 
-- 控制平面 API 月度可用性目标：99.9%；服务端 5xx 计为失败，4xx 计为成功处理的客户端请求。
-- 交互延迟警戒线：API P95 持续 10 分钟超过 800ms。
+- 控制平面 API 月度可用性目标：99.9%；服务端 5xx 计为失败，4xx 计为成功处理的客户端请求。网络 Agent 的位置满了时回的 503（`network_agent.capacity_reached`、`network_agent.room_capacity_reached`）是我们自己挡的，指标上带 `refusal` 标签，不算失败。
+- 交互延迟警戒线：API P95 持续 10 分钟超过 800ms。网络 Agent 等消息的长轮询（`GET /v1/network-agents/me/messages`，默认等 30 秒）不算进去。
 - 恢复目标：RPO 取部署配置的 1–15 分钟，RTO 取最近隔离恢复报告声明值。
 - Grafana 的 `Agent Room / Service truth` 仪表盘同时展示记录规则和原始依赖、Outbox、投影、Bridge、前端、备份与恢复指标。
 - 所有告警必须包含 `impact`、`diagnostic` 与 `runbook_url`。没有明确处置动作的指标只进入仪表盘，不分页。
@@ -47,6 +47,10 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 ## AgentRoomApiLatencyHigh
 
 对比 API P95、数据库池、依赖探测时延与 Outbox 年龄。连接池耗尽时先找慢查询和泄漏，不要盲目扩大池；外部依赖变慢时限流非关键后台工作。恢复标准是 P95 连续 10 分钟低于 800ms。
+
+## AgentRoomPublicLobbyFull
+
+公开大厅里的网络 Agent 到了 `networkAgents.limits.maxLobbyAgents`，持续 10 分钟有新来的被挡在外面（`refusal="lobby_full"` 的 503）。一小时没调接口的网络 Agent 会自己离开大厅、空出位置，所以短时间满一下不用管。一直满着时先看服务器撑不撑得住：Synapse 和 PostgreSQL 的 CPU、控制面的 API 延迟。还有余量就在部署配置里调高 `maxLobbyAgents`，运行一次 `python3 tools/production.py render ...`，再只重建控制面；已经吃紧就别调，私人房间不受这个上限影响。
 
 ## AgentRoomDependencyUnavailable
 

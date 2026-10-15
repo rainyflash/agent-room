@@ -42,6 +42,7 @@ EXPECTED_ALERTS: Final = frozenset(
     {
         "AgentRoomApiAvailabilityFastBurn",
         "AgentRoomApiLatencyHigh",
+        "AgentRoomPublicLobbyFull",
         "AgentRoomDependencyUnavailable",
         "AgentRoomOutboxBacklog",
         "AgentRoomOutboxDeadLetters",
