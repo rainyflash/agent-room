@@ -47,7 +47,7 @@ const DEVICE_ID_HEADER: &str = "x-agent-room-device-id";
 const PROOF_ISSUED_AT_HEADER: &str = "x-agent-room-proof-issued-at";
 const PROOF_NONCE_HEADER: &str = "x-agent-room-proof-nonce";
 const PROOF_SIGNATURE_HEADER: &str = "x-agent-room-proof-signature";
-const MAX_DEVICE_BODY_BYTES: usize = 16 * 1_024;
+pub(super) const MAX_DEVICE_BODY_BYTES: usize = 16 * 1_024;
 const MAX_ENCODED_PUBLIC_KEY_LENGTH: usize = 64;
 const MAX_ENCODED_SIGNATURE_LENGTH: usize = 128;
 
@@ -93,9 +93,11 @@ pub(crate) fn router(state: DeviceHttpState) -> Router {
         .with_state(state)
 }
 
+/// 设备码和电脑授权两条注册路的请求体一样。电脑授权那条路的账户已经有了，
+/// 不再按登录资料改名字和语言，两个 `import_*` 收下不用。
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RegisterDeviceBody {
+pub(super) struct RegisterDeviceBody {
     label: String,
     platform: String,
     public_signing_key: String,
@@ -108,7 +110,7 @@ struct RegisterDeviceBody {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceCredentialsResponse {
+pub(super) struct DeviceCredentialsResponse {
     device_id: String,
     principal_id: String,
     matrix_user_id: String,
@@ -186,6 +188,38 @@ async fn registration_request(
         .verify_assertion(&assertion)
         .await
         .map_err(|failure| oidc_assertion_error(failure, correlation_id))?;
+    let profile_import = ProfileImportConsent {
+        display_name: body.import_display_name,
+        locale: body.import_locale,
+    };
+    let fields = registration_fields(body, correlation_id)?;
+    let authorization = VerifiedDeviceAuthorization::new(
+        verified_assertion,
+        state.secrets.digest(assertion.expose()),
+    );
+
+    Ok(RegisterDevice {
+        authorization,
+        label: fields.label,
+        platform: fields.platform,
+        public_signing_key: fields.public_signing_key,
+        possession_signature: fields.possession_signature,
+        profile_import,
+    })
+}
+
+pub(super) struct DeviceRegistrationFields {
+    pub(super) label: String,
+    pub(super) platform: DevicePlatform,
+    pub(super) public_signing_key: DevicePublicSigningKey,
+    pub(super) possession_signature: DeviceSignature,
+}
+
+/// 解出两条注册路共用的名字、平台、签名公钥和持有证明。
+pub(super) fn registration_fields(
+    body: RegisterDeviceBody,
+    correlation_id: CorrelationId,
+) -> Result<DeviceRegistrationFields, ApiError> {
     let public_signing_key = DevicePublicSigningKey::new(
         decode_bounded(&body.public_signing_key, MAX_ENCODED_PUBLIC_KEY_LENGTH)
             .map_err(|()| ApiError::invalid_request("device.invalid_public_key", correlation_id))?,
@@ -201,21 +235,11 @@ async fn registration_request(
     })?;
     let platform = DevicePlatform::parse_client(body.platform.as_str())
         .map_err(|_| ApiError::invalid_request("device.invalid_platform", correlation_id))?;
-    let authorization = VerifiedDeviceAuthorization::new(
-        verified_assertion,
-        state.secrets.digest(assertion.expose()),
-    );
-
-    Ok(RegisterDevice {
-        authorization,
+    Ok(DeviceRegistrationFields {
         label: body.label,
         platform,
         public_signing_key,
         possession_signature,
-        profile_import: ProfileImportConsent {
-            display_name: body.import_display_name,
-            locale: body.import_locale,
-        },
     })
 }
 
@@ -442,7 +466,7 @@ fn decode_bounded(value: &str, maximum_encoded_length: usize) -> Result<Vec<u8>,
     URL_SAFE_NO_PAD.decode(value).map_err(|_| ())
 }
 
-fn invalid_bearer(correlation_id: CorrelationId) -> ApiError {
+pub(super) fn invalid_bearer(correlation_id: CorrelationId) -> ApiError {
     ApiError::new(
         StatusCode::UNAUTHORIZED,
         "device.invalid_bearer",

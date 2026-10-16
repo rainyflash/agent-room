@@ -44,6 +44,8 @@ const PRINCIPAL_SELECT: &str = r"principal.id AS principal_id, principal.status,
 const FAMILY_SELECT: &str = r"family.id AS family_id, family.device_id AS family_device_id,
     family.state AS family_state,
     floor(extract(epoch FROM family.created_at) * 1000)::bigint AS family_created_at_ms,
+    floor(extract(epoch FROM family.authenticated_at) * 1000)::bigint
+        AS family_authenticated_at_ms,
     floor(extract(epoch FROM family.expires_at) * 1000)::bigint AS family_expires_at_ms,
     floor(extract(epoch FROM family.revoked_at) * 1000)::bigint AS family_revoked_at_ms,
     floor(extract(epoch FROM family.compromise_detected_at) * 1000)::bigint
@@ -249,27 +251,69 @@ async fn register_device_transaction(
         .begin()
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
-    let (account, device) =
-        resolve_device_owner(&mut transaction, principal, requested_device, operation).await?;
-    consume_authorization_receipt(
+    insert_principal_if_absent(&mut transaction, principal, operation).await?;
+    let account = lock_account_by_oidc(
         &mut transaction,
+        &principal.oidc_issuer,
+        &principal.oidc_subject,
+        operation,
+    )
+    .await?;
+    let stored = store_device_session(
+        &mut transaction,
+        account,
+        requested_device,
+        session,
+        operation,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(stored)
+}
+
+/// 把这台设备记到已经锁住的账户名下，用掉这次授权的回执，换上一组新令牌。
+/// 设备码和电脑授权两条路共用；账户停用、删除了，或者这把公钥已经是别人的设备，回 `Forbidden`。
+pub(crate) async fn store_device_session(
+    transaction: &mut Transaction<'_, Postgres>,
+    account: PrincipalAccount,
+    requested_device: &Device,
+    session: &DeviceSessionRegistration,
+    operation: &'static str,
+) -> RepositoryResult<StoredDeviceSession> {
+    if !account.principal.allows_authentication() {
+        return Err(RepositoryError::new(
+            operation,
+            RepositoryErrorKind::Forbidden,
+        ));
+    }
+    let device = claim_device(transaction, &account, requested_device, operation).await?;
+    consume_authorization_receipt(
+        transaction,
         account.principal.id(),
         device.id(),
         session,
         operation,
     )
     .await?;
-    revoke_active_families(&mut transaction, device.id(), session.issued_at, operation).await?;
-    let family = DeviceTokenFamily::new(
+    revoke_active_families(transaction, device.id(), session.issued_at, operation).await?;
+    let mut family = DeviceTokenFamily::new(
         session.family.id(),
         device.id(),
         session.family.created_at(),
         session.family.expires_at(),
     )
     .map_err(|_| corrupt_data(operation))?;
-    insert_token_family(&mut transaction, &family, operation).await?;
+    if let Some(authenticated_at) = session.family.authenticated_at() {
+        family = family
+            .with_authenticated_at(authenticated_at)
+            .map_err(|_| corrupt_data(operation))?;
+    }
+    insert_token_family(transaction, &family, operation).await?;
     insert_access_token(
-        &mut transaction,
+        transaction,
         device.id(),
         family.id(),
         session.access_token_id.as_uuid(),
@@ -280,7 +324,7 @@ async fn register_device_transaction(
     )
     .await?;
     insert_refresh_token(
-        &mut transaction,
+        transaction,
         family.id(),
         session.refresh_token_id.as_uuid(),
         &session.refresh_token_digest,
@@ -290,10 +334,6 @@ async fn register_device_transaction(
         operation,
     )
     .await?;
-    transaction
-        .commit()
-        .await
-        .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(StoredDeviceSession {
         account,
         device,
@@ -337,26 +377,12 @@ async fn consume_authorization_receipt(
     Ok(())
 }
 
-async fn resolve_device_owner(
+async fn claim_device(
     transaction: &mut Transaction<'_, Postgres>,
-    principal: &PrincipalRegistration,
+    account: &PrincipalAccount,
     requested_device: &Device,
     operation: &'static str,
-) -> RepositoryResult<(PrincipalAccount, Device)> {
-    insert_principal_if_absent(transaction, principal, operation).await?;
-    let account = lock_account_by_oidc(
-        transaction,
-        &principal.oidc_issuer,
-        &principal.oidc_subject,
-        operation,
-    )
-    .await?;
-    if !account.principal.allows_authentication() {
-        return Err(RepositoryError::new(
-            operation,
-            RepositoryErrorKind::Forbidden,
-        ));
-    }
+) -> RepositoryResult<Device> {
     insert_device_if_absent(
         transaction,
         account.principal.id(),
@@ -390,7 +416,7 @@ async fn resolve_device_owner(
         existing.created_at(),
     )
     .map_err(|_| corrupt_data(operation))?;
-    Ok((account, device))
+    Ok(device)
 }
 
 async fn rotate_refresh_transaction(
@@ -1009,11 +1035,12 @@ async fn insert_token_family(
 ) -> RepositoryResult<()> {
     sqlx::query(
         r"INSERT INTO agent_room.device_token_family (
-            id, device_id, state, created_at, expires_at
+            id, device_id, state, created_at, expires_at, authenticated_at
         ) VALUES (
             $1, $2, $3,
             to_timestamp($4::double precision / 1000.0),
-            to_timestamp($5::double precision / 1000.0)
+            to_timestamp($5::double precision / 1000.0),
+            to_timestamp($6::double precision / 1000.0)
         )",
     )
     .bind(family.id().as_uuid())
@@ -1021,6 +1048,7 @@ async fn insert_token_family(
     .bind(family.state().as_str())
     .bind(family.created_at().value())
     .bind(family.expires_at().value())
+    .bind(family.authenticated_at().map(UtcMillis::value))
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -1137,7 +1165,7 @@ fn decode_token_family(
     let state: String = decode(row, "family_state", operation)?;
     let state =
         DeviceTokenFamilyState::try_from(state.as_str()).map_err(|_| corrupt_data(operation))?;
-    DeviceTokenFamily::restore(
+    let family = DeviceTokenFamily::restore(
         DeviceTokenFamilyId::from_uuid(decode(row, "family_id", operation)?),
         DeviceId::from_uuid(decode(row, "family_device_id", operation)?),
         state,
@@ -1146,7 +1174,13 @@ fn decode_token_family(
         decode_optional_time(row, "family_revoked_at_ms", operation)?,
         decode_optional_time(row, "family_compromise_detected_at_ms", operation)?,
     )
-    .map_err(|_| corrupt_data(operation))
+    .map_err(|_| corrupt_data(operation))?;
+    match decode_optional_time(row, "family_authenticated_at_ms", operation)? {
+        Some(authenticated_at) => family
+            .with_authenticated_at(authenticated_at)
+            .map_err(|_| corrupt_data(operation)),
+        None => Ok(family),
+    }
 }
 
 fn device_event(

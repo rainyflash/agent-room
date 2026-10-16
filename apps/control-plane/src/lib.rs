@@ -481,6 +481,7 @@ fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDepen
     ))
     .merge(account_encryption_routes(config, dependencies))
     .merge(desktop_matrix_session_routes(config, dependencies))
+    .merge(computer_grant_routes(config, dependencies))
 }
 
 fn build_authentication_runtime(
@@ -660,6 +661,24 @@ fn desktop_matrix_session_routes(
             &config.authentication.desktop_origins,
         ),
     )
+}
+
+/// 这台电脑的授权跟着账户登录走（`specs/desktop-sign-in/design.md`）：桌面端登录着要电脑授权，
+/// Bridge 拿它注册这台电脑，不用再批准设备码。
+fn computer_grant_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Router {
+    features::computer_grants::router(features::computer_grants::ComputerGrantHttpState::new(
+        Arc::new(
+            dependencies
+                .devices
+                .computer_grants(dependencies.repositories.clone()),
+        ),
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    ))
 }
 
 fn build_account_deletion_worker(

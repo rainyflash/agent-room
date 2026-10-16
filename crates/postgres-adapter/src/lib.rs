@@ -8,6 +8,7 @@ mod agent_retirement;
 mod agents;
 mod authentication;
 mod automation;
+mod computer_grants;
 mod content;
 mod devices;
 mod error;

@@ -566,7 +566,7 @@ pub(crate) async fn lock_account_by_oidc(
     decode_principal_account(&row, operation)
 }
 
-async fn lock_account_by_id(
+pub(crate) async fn lock_account_by_id(
     transaction: &mut Transaction<'_, Postgres>,
     principal_id: PrincipalId,
     operation: &'static str,

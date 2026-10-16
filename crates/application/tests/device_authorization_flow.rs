@@ -41,6 +41,9 @@ use agent_room_domain::{
 };
 use uuid::Uuid;
 
+#[path = "device_authorization_flow/computer_grants.rs"]
+mod computer_grants;
+
 const NOW: i64 = 1_700_000_000_000;
 const DAY: i64 = 24 * 60 * 60 * 1_000;
 
@@ -55,6 +58,7 @@ struct MemoryState {
     access_token_digest: Option<SecretDigest>,
     refresh_tokens: HashMap<SecretDigest, MemoryRefreshToken>,
     pending_matrix_devices: Vec<PendingAgentMatrixDeviceRevocation>,
+    grants: HashMap<SecretDigest, agent_room_application::ports::ComputerGrantRecord>,
 }
 
 #[derive(Default)]
