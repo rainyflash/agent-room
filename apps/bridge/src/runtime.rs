@@ -13,6 +13,7 @@ use agent_room_application::ports::{
     Clock, MatrixFailure, MatrixFailureKind, MatrixGateway, MatrixOperation, MatrixRoomEncryption,
     MatrixRoomId, MatrixSyncRequest, MatrixSyncToken, OidcDeviceAuthorizationPrompt,
     OidcDeviceAuthorizationPromptSink, OidcDevicePromptFailure, PortFuture, ProfileImportConsent,
+    SecretValue,
 };
 use agent_room_bridge_core::{
     agent_runtime::{
@@ -99,7 +100,7 @@ use tokio::{
 
 use crate::{
     agent_status::AgentStatusPublicationHandle,
-    config::BridgeConfig,
+    config::{BridgeConfig, DeviceAuthorizationSource},
     ipc::{
         BridgeAgentRuntimeReader, BridgeAgentRuntimeSnapshot, BridgeIpcFailure,
         BridgeIpcFailureKind, BridgeIpcRequestHandler, BridgeIpcServer, BridgeStatusReader,
@@ -135,7 +136,11 @@ mod connectivity;
 mod host_sessions;
 mod isolated_messages;
 mod presence_fetch;
+mod supervisor_input;
 use crate::host_sessions::{HostSessionRegistry, SessionAwareIpcHandler};
+use supervisor_input::{
+    GrantOutcome, SupervisorInput, SupervisorRelease, authorize_with_supervisor_grant,
+};
 const FOUNDATION_AGENT_CAPABILITIES: [&str; 8] = [
     "matrix.security",
     "self.read",
@@ -184,9 +189,18 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     crate::ipc::recover_endpoint(&paths, runtime_secrets.installation_id())
         .await
         .map_err(BridgeRuntimeError::ipc)?;
+    let mut supervisor = config
+        .exit_with_supervisor
+        .then(|| SupervisorInput::watch(io::stdin()));
     let matrix = initialize_matrix(&config, &paths, &runtime_secrets).await?;
     let handoff_store = initialize_handoff_store(&paths, &runtime_secrets).await?;
-    let device_session = initialize_device_session(&config).await?;
+    let device_session = match initialize_device_session(&config, supervisor.as_mut()).await {
+        Err(error) if error.is_supervisor_release() => {
+            tracing::info!("还没授权完桌面端就退出了，Bridge 随之退出");
+            return Ok(());
+        }
+        session => session?,
+    };
     let agent_session = initialize_agent_session(
         &config,
         &paths,
@@ -201,37 +215,13 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         SystemClock.now().value(),
         agent_session.is_some(),
     ));
-    let reception = Arc::new(
-        agent_room_bridge::control_plane::reception::HttpReceptionGateway::new(
-            &ControlPlaneHttpConfig {
-                base_url: config.control_plane_url.clone(),
-                request_timeout: config.request_timeout,
-            },
-            device_session.service.clone(),
-        )
-        .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
-    );
-    let request_handler: Arc<dyn BridgeIpcRequestHandler> = match agent_session.as_ref() {
-        Some(runtime) => Arc::new(
-            FoundationBridgeIpcRequestHandler::with_agent_runtime(
-                crate::ipc::AgentRuntimeConsumer::Desktop,
-                status.clone(),
-                runtime.state.clone(),
-                runtime.previews.clone(),
-                runtime.content.clone(),
-                Arc::new(SystemClock),
-            )
-            .with_attachment_directory(paths.attachment_root().to_path_buf())
-            .with_reception(reception.clone()),
-        ),
-        None => Arc::new(
-            FoundationBridgeIpcRequestHandler::with_onboarding(
-                status.clone(),
-                initialize_onboarding(&config, device_session.service.clone())?,
-            )
-            .with_reception(reception),
-        ),
-    };
+    let request_handler = default_request_handler(
+        &config,
+        &paths,
+        &status,
+        agent_session.as_ref(),
+        &device_session.service,
+    )?;
     let host_sessions = Arc::new(HostSessionRegistry::new(Arc::new(
         host_sessions::HostAgentRuntimeFactory::new(
             config.clone(),
@@ -259,7 +249,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     finish_starting(&status, &device_session, agent_session.as_ref());
     announce_supervisor_ready()?;
     run_until_shutdown(
-        wait_for_exit_signal(config.exit_with_supervisor),
+        wait_for_exit_signal(supervisor.as_ref().map(SupervisorInput::released)),
         server,
         status,
         device_session,
@@ -267,6 +257,47 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         host_sessions,
     )
     .await
+}
+
+/// 桌面端默认人物的本机接口：有默认 Agent 时读它的消息，没有时只做接入引导。
+fn default_request_handler(
+    config: &BridgeConfig,
+    paths: &BridgeRuntimePaths,
+    status: &Arc<BridgeRuntimeStatus>,
+    agent_session: Option<&AgentSessionRuntime>,
+    device_session: &Arc<BridgeSessionService>,
+) -> Result<Arc<dyn BridgeIpcRequestHandler>, BridgeRuntimeError> {
+    let reception = Arc::new(
+        agent_room_bridge::control_plane::reception::HttpReceptionGateway::new(
+            &ControlPlaneHttpConfig {
+                base_url: config.control_plane_url.clone(),
+                request_timeout: config.request_timeout,
+            },
+            device_session.clone(),
+        )
+        .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
+    );
+    Ok(match agent_session {
+        Some(runtime) => Arc::new(
+            FoundationBridgeIpcRequestHandler::with_agent_runtime(
+                crate::ipc::AgentRuntimeConsumer::Desktop,
+                status.clone(),
+                runtime.state.clone(),
+                runtime.previews.clone(),
+                runtime.content.clone(),
+                Arc::new(SystemClock),
+            )
+            .with_attachment_directory(paths.attachment_root().to_path_buf())
+            .with_reception(reception),
+        ),
+        None => Arc::new(
+            FoundationBridgeIpcRequestHandler::with_onboarding(
+                status.clone(),
+                initialize_onboarding(config, device_session.clone())?,
+            )
+            .with_reception(reception),
+        ),
+    })
 }
 
 /// 按初始会话标记各组件是否就绪，结束启动态。
@@ -656,6 +687,7 @@ impl AgentOnlineFailure {
 
 async fn initialize_device_session(
     config: &BridgeConfig,
+    supervisor: Option<&mut SupervisorInput>,
 ) -> Result<DeviceSessionRuntime, BridgeRuntimeError> {
     let control_plane = Arc::new(
         ReqwestControlPlaneDeviceGateway::new(&ControlPlaneHttpConfig {
@@ -727,6 +759,7 @@ async fn initialize_device_session(
         &session_service,
         authorization_service,
         reconnect_policy,
+        supervisor,
     )
     .await?;
 
@@ -1609,6 +1642,7 @@ async fn establish_initial_session(
     session_service: &BridgeSessionService,
     authorization_service: BridgeAuthorizationService,
     reconnect_policy: ReconnectPolicy,
+    supervisor: Option<&mut SupervisorInput>,
 ) -> Result<Option<ActiveBridgeSession>, BridgeRuntimeError> {
     match session_service.active_session().await {
         Ok(session) => {
@@ -1627,11 +1661,14 @@ async fn establish_initial_session(
                     },
                 },
             };
-            let authorized = authorize_first_device(
+            let grant_from_supervisor = config.device_authorization
+                == DeviceAuthorizationSource::Supervisor
+                && supervisor_events_enabled();
+            let authorized = authorize_this_device(
                 &authorization,
-                &TerminalAuthorizationPrompt,
+                supervisor,
+                grant_from_supervisor,
                 reconnect_policy,
-                announce_authorization_retry,
             )
             .await?;
             announce_authorized_device(authorized)?;
@@ -1649,12 +1686,57 @@ async fn establish_initial_session(
     }
 }
 
-/// 一次完整的首次设备授权：发现身份服务、申请并展示设备码、等待批准、注册设备。
+/// 还没授权的这台设备怎么授权：桌面端托管、设了交电脑授权时先等桌面端交来电脑授权
+/// （`specs/desktop-sign-in/design.md`），桌面端要不到再改走设备码；别的时候直接走设备码。
+/// 桌面托管时，授权途中桌面端要退出，Bridge 也不再等。
+async fn authorize_this_device(
+    authorization: &ConfiguredDeviceAuthorization,
+    supervisor: Option<&mut SupervisorInput>,
+    grant_from_supervisor: bool,
+    reconnect_policy: ReconnectPolicy,
+) -> Result<AuthorizedBridgeDevice, BridgeRuntimeError> {
+    let released = supervisor.as_deref().map(SupervisorInput::released);
+    if let Some(input) = supervisor.filter(|_| grant_from_supervisor) {
+        write_supervisor_event(&BridgeSupervisorEvent::DeviceGrantRequired {
+            channel: "agent_room_desktop",
+        })?;
+        match authorize_with_supervisor_grant(authorization, input, announce_device_grant_failed)
+            .await?
+        {
+            GrantOutcome::Authorized(device) => return Ok(device),
+            GrantOutcome::Released => return Err(BridgeRuntimeError::supervisor_released()),
+            GrantOutcome::DeviceCode => {
+                tracing::info!("桌面端要不到电脑授权，改走设备码");
+            }
+        }
+    }
+    let device_code = authorize_first_device(
+        authorization,
+        &TerminalAuthorizationPrompt,
+        reconnect_policy,
+        announce_authorization_retry,
+    );
+    match released {
+        Some(released) => tokio::select! {
+            authorized = device_code => authorized,
+            _ = released => Err(BridgeRuntimeError::supervisor_released()),
+        },
+        None => device_code.await,
+    }
+}
+
+/// 一次完整的首次设备授权：发现身份服务、申请并展示设备码、等待批准、注册设备；
+/// 或者拿桌面端交来的电脑授权注册设备。
 trait FirstDeviceAuthorization: Send + Sync {
     fn attempt<'a>(
         &'a self,
         prompt: &'a dyn OidcDeviceAuthorizationPromptSink,
     ) -> PortFuture<'a, Result<AuthorizedBridgeDevice, BridgeAuthorizationFailure>>;
+
+    fn attempt_with_grant(
+        &self,
+        grant: SecretValue,
+    ) -> PortFuture<'_, Result<AuthorizedBridgeDevice, BridgeAuthorizationFailure>>;
 }
 
 struct ConfiguredDeviceAuthorization {
@@ -1668,6 +1750,16 @@ impl FirstDeviceAuthorization for ConfiguredDeviceAuthorization {
         prompt: &'a dyn OidcDeviceAuthorizationPromptSink,
     ) -> PortFuture<'a, Result<AuthorizedBridgeDevice, BridgeAuthorizationFailure>> {
         Box::pin(self.service.authorize(self.request.clone(), prompt))
+    }
+
+    fn attempt_with_grant(
+        &self,
+        grant: SecretValue,
+    ) -> PortFuture<'_, Result<AuthorizedBridgeDevice, BridgeAuthorizationFailure>> {
+        Box::pin(
+            self.service
+                .authorize_with_grant(self.request.clone(), grant),
+        )
     }
 }
 
@@ -1883,12 +1975,13 @@ async fn run_until_shutdown(
 ///
 /// 桌面被强制结束时来不及结束子进程，Windows 上也没有信号可收。留下的 Bridge 继续占着实例锁和
 /// 本机 IPC，下一次启动的桌面既起不了自己的 Bridge，又会把它当成外部 Bridge 接管，而它随时可能退出。
-async fn wait_for_exit_signal(exit_with_supervisor: bool) -> io::Result<()> {
+async fn wait_for_exit_signal(
+    supervisor: Option<impl Future<Output = SupervisorRelease>>,
+) -> io::Result<()> {
     let supervisor_released = async {
-        if exit_with_supervisor {
-            supervisor_released(io::stdin()).await
-        } else {
-            std::future::pending().await
+        match supervisor {
+            Some(released) => released.await,
+            None => std::future::pending().await,
         }
     };
     tokio::select! {
@@ -1919,54 +2012,6 @@ async fn operating_system_exit_signal() -> io::Result<()> {
     }
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await
-}
-
-/// 桌面端要退出时往 Bridge 的标准输入写这一行（桌面端 `bridge_supervisor.rs` 的 `BRIDGE_EXIT_REQUEST`）。
-const SUPERVISOR_EXIT_REQUEST: &str = "exit";
-
-/// 监督 Bridge 的桌面为什么放手。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SupervisorRelease {
-    /// 桌面端正常退出前请 Bridge 先退，自己等着。
-    ExitRequested,
-    /// 管道关了：桌面已经不在（包括被强制结束），或者它是不会写这一行的旧版。
-    InputClosed,
-}
-
-/// 桌面请 Bridge 退出、或者标准输入读到结束和读取失败时完成。桌面把标准输入接成自己持有的管道，
-/// 平时从不写入，桌面进程一退出（包括被强制结束）管道就关闭。
-///
-/// 阻塞读放在独立线程：运行时关闭时会等 `spawn_blocking` 的任务返回，而桌面还在时这次读取不会返回。
-fn supervisor_released(
-    input: impl io::Read + Send + 'static,
-) -> impl Future<Output = SupervisorRelease> {
-    let (released, receiver) = oneshot::channel();
-    let watcher = std::thread::Builder::new()
-        .name("agent-room-supervisor-watch".to_owned())
-        .spawn(move || {
-            let mut release = SupervisorRelease::InputClosed;
-            for line in io::BufRead::lines(io::BufReader::new(input)) {
-                match line {
-                    Ok(line) if line.trim() == SUPERVISOR_EXIT_REQUEST => {
-                        release = SupervisorRelease::ExitRequested;
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
-                }
-            }
-            let _ = released.send(release);
-        });
-    async move {
-        match watcher {
-            Ok(_) => match receiver.await {
-                Ok(release) => release,
-                // 看不了输入时不因此退出，照旧只响应操作系统关闭信号。
-                Err(_) => std::future::pending().await,
-            },
-            Err(_) => std::future::pending().await,
-        }
-    }
 }
 
 async fn maintain_sessions(
@@ -2671,6 +2716,16 @@ enum BridgeSupervisorEvent<'a> {
         channel: &'static str,
         code: &'static str,
     },
+    /// 还没授权，等桌面端经标准输入交来电脑授权（`device-grant <授权>`），或者请 Bridge 改走设备码
+    /// （`device-code`）。
+    DeviceGrantRequired {
+        channel: &'static str,
+    },
+    /// 拿电脑授权注册这台电脑没成，接着等下一行。
+    DeviceGrantFailed {
+        channel: &'static str,
+        code: &'static str,
+    },
     /// 首次授权连不上服务，Bridge 保持运行并将在 `retryAfterMs` 后重试。
     ServerUnreachable {
         channel: &'static str,
@@ -2696,6 +2751,15 @@ fn announce_authorization_retry(
         "{reason}，{} 秒后重试设备授权。\n",
         delay.value().div_ceil(1_000)
     ))
+}
+
+fn announce_device_grant_failed(
+    failure: BridgeAuthorizationFailure,
+) -> Result<(), BridgeRuntimeError> {
+    write_supervisor_event(&BridgeSupervisorEvent::DeviceGrantFailed {
+        channel: "agent_room_desktop",
+        code: BridgeRuntimeError::authorization(failure).code(),
+    })
 }
 
 fn announce_supervisor_ready() -> Result<(), BridgeRuntimeError> {
@@ -2794,6 +2858,15 @@ impl BridgeRuntimeError {
 
     fn shutdown_signal() -> Self {
         Self::new("bridge.shutdown_signal_failed", "无法监听操作系统关闭信号")
+    }
+
+    /// 还没授权完桌面端就要退出了：Bridge 随之退出，不算启动失败。
+    fn supervisor_released() -> Self {
+        Self::new("bridge.supervisor_released", "桌面端已退出")
+    }
+
+    fn is_supervisor_release(&self) -> bool {
+        self.code == "bridge.supervisor_released"
     }
 
     fn ipc_stopped_early() -> Self {
@@ -3276,9 +3349,9 @@ mod tests {
 
     use super::{
         AgentOnlineFailure, BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader,
-        SupervisorRelease, TargetedHandoffPoller, TargetedHandoffPollingPolicy,
-        is_reconnectable_agent_online_failure, session_card_forbidden,
-        spawn_targeted_handoff_worker_with_policy, supervisor_released, verification_destination,
+        TargetedHandoffPoller, TargetedHandoffPollingPolicy, is_reconnectable_agent_online_failure,
+        session_card_forbidden, spawn_targeted_handoff_worker_with_policy,
+        verification_destination,
     };
 
     #[test]
@@ -3501,49 +3574,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(poller.completed.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn 监督管道关闭后才触发随桌面退出() {
-        let (reader, writer) = std::io::pipe().expect("可创建管道");
-        let released = supervisor_released(reader);
-        tokio::pin!(released);
-
-        assert!(
-            tokio::time::timeout(Duration::from_millis(200), &mut released)
-                .await
-                .is_err(),
-            "桌面还持有管道时 Bridge 不能退出"
-        );
-        drop(writer);
-        let release = tokio::time::timeout(Duration::from_secs(5), released)
-            .await
-            .expect("桌面一退出，管道关闭就应触发退出");
-        assert_eq!(release, SupervisorRelease::InputClosed);
-    }
-
-    #[tokio::test]
-    async fn 桌面端写一行_exit_就请_bridge_有序退出_别的内容不算() {
-        use std::io::Write as _;
-
-        let (reader, mut writer) = std::io::pipe().expect("可创建管道");
-        let released = supervisor_released(reader);
-        tokio::pin!(released);
-
-        writer.write_all(b"hello\n").expect("可写入管道");
-        assert!(
-            tokio::time::timeout(Duration::from_millis(200), &mut released)
-                .await
-                .is_err(),
-            "不认识的内容不能让 Bridge 退出"
-        );
-        // 桌面端还握着管道：只凭这一行就要退出，不等管道关闭。
-        writer.write_all(b"exit\n").expect("可写入管道");
-        let release = tokio::time::timeout(Duration::from_secs(5), released)
-            .await
-            .expect("读到 exit 就应触发退出");
-        assert_eq!(release, SupervisorRelease::ExitRequested);
-        drop(writer);
     }
 
     impl TargetedHandoffPoller for 计数交接轮询器 {
@@ -3861,6 +3891,51 @@ mod first_authorization_tests {
         }
     }
 
+    struct 拒收的控制面;
+
+    impl ControlPlaneDeviceGateway for 拒收的控制面 {
+        fn register(
+            &self,
+            _request: RegisterBridgeDevice,
+        ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+            Box::pin(async {
+                Err(agent_room_bridge_core::ports::ControlPlaneDeviceFailure::new(
+                    agent_room_bridge_core::ports::ControlPlaneDeviceFailureKind::AuthenticationRejected,
+                ))
+            })
+        }
+
+        fn refresh(
+            &self,
+            _request: RefreshBridgeDevice,
+        ) -> PortFuture<'_, ControlPlaneDeviceResult<DeviceCredentials>> {
+            Box::pin(async { Ok(设备凭据()) })
+        }
+    }
+
+    /// 控制面拒收的电脑授权（用过、过期）：拿真的授权服务走一遍，得到和线上一样的失败。
+    pub(super) async fn 授权被拒() -> BridgeAuthorizationFailure {
+        let (mut authorization, _) = 首次授权([]);
+        authorization.service = BridgeAuthorizationService::new(BridgeAuthorizationDependencies {
+            oidc: Arc::new(脚本身份服务 {
+                script: Mutex::new(VecDeque::new()),
+                attempts: AtomicU32::new(0),
+            }),
+            signing_identities: Arc::new(测试签名存储),
+            control_plane: Arc::new(拒收的控制面),
+            credentials: Arc::new(内存凭据库::default()),
+            secrets: Arc::new(SecureSecretFactory),
+        });
+        authorization
+            .service
+            .authorize_with_grant(
+                authorization.request.clone(),
+                SecretValue::new("used-grant").expect("测试授权有效"),
+            )
+            .await
+            .expect_err("控制面拒收")
+    }
+
     fn 首次授权(
         script: impl IntoIterator<Item = 身份服务表现>,
     ) -> (ConfiguredDeviceAuthorization, Arc<脚本身份服务>) {
@@ -3987,6 +4062,29 @@ mod first_authorization_tests {
             assert_eq!(failure.code(), code, "{kind:?}");
             assert_eq!(oidc.attempts.load(Ordering::SeqCst), 1, "{kind:?}");
         }
+    }
+
+    #[test]
+    fn 等电脑授权的监督事件() {
+        assert_eq!(
+            serde_json::to_value(BridgeSupervisorEvent::DeviceGrantRequired {
+                channel: "agent_room_desktop",
+            })
+            .expect("监督事件可序列化"),
+            json!({ "event": "device_grant_required", "channel": "agent_room_desktop" })
+        );
+        assert_eq!(
+            serde_json::to_value(BridgeSupervisorEvent::DeviceGrantFailed {
+                channel: "agent_room_desktop",
+                code: "bridge.identity_assertion_invalid",
+            })
+            .expect("监督事件可序列化"),
+            json!({
+                "event": "device_grant_failed",
+                "channel": "agent_room_desktop",
+                "code": "bridge.identity_assertion_invalid"
+            })
+        );
     }
 
     #[test]

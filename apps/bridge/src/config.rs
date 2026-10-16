@@ -55,6 +55,9 @@ pub(crate) struct BridgeConfig {
     pub(crate) reset_device_session: bool,
     /// 桌面托管启动时设置：标准输入是桌面持有的管道，读到结束说明桌面已经退出，Bridge 随之有序退出。
     pub(crate) exit_with_supervisor: bool,
+    /// 桌面端托管启动时设为 `supervisor`：还没授权时不申请设备码，等桌面端经标准输入交来电脑授权
+    /// （`specs/desktop-sign-in/design.md`）。没设或 `device-code` 时照旧申请设备码。
+    pub(crate) device_authorization: DeviceAuthorizationSource,
     pub(crate) data_root: PathBuf,
     pub(crate) secure_storage_service: SecureStorageService,
     /// 独立人物的秘密存放处；根 Bridge 为空，照旧用系统凭据库或无桌面加密库。
@@ -135,6 +138,7 @@ impl BridgeConfig {
                 "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR",
                 false,
             )?,
+            device_authorization: read_device_authorization(source)?,
             data_root: read_data_root(source)?,
             secure_storage_service: read_secure_storage_service(source)?,
             agent_secret_vault: None,
@@ -285,6 +289,31 @@ fn read_required_text(
     Ok(value)
 }
 
+/// 还没授权时这台设备怎么授权。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeviceAuthorizationSource {
+    /// 申请设备码，请人去浏览器批准。
+    DeviceCode,
+    /// 等托管它的桌面端经标准输入交来电脑授权，桌面端要不到再改走设备码。
+    Supervisor,
+}
+
+fn read_device_authorization(
+    source: &impl EnvironmentSource,
+) -> Result<DeviceAuthorizationSource, BridgeConfigError> {
+    const NAME: &str = "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION";
+    read_optional(source, NAME).map_or(Ok(DeviceAuthorizationSource::DeviceCode), |value| {
+        match value.trim() {
+            "supervisor" => Ok(DeviceAuthorizationSource::Supervisor),
+            "device-code" => Ok(DeviceAuthorizationSource::DeviceCode),
+            _ => Err(BridgeConfigError::invalid(
+                NAME,
+                "仅支持 supervisor 或 device-code",
+            )),
+        }
+    })
+}
+
 fn read_bool(
     source: &impl EnvironmentSource,
     name: &'static str,
@@ -346,7 +375,7 @@ impl std::error::Error for BridgeConfigError {}
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{BridgeConfig, BridgeConfigError, EnvironmentSource};
+    use super::{BridgeConfig, BridgeConfigError, DeviceAuthorizationSource, EnvironmentSource};
 
     #[derive(Default)]
     struct MapEnvironment(BTreeMap<&'static str, String>);
@@ -415,6 +444,11 @@ mod tests {
             !config.exit_with_supervisor,
             "手动运行或标准输入为空时不能因输入结束而退出"
         );
+        assert_eq!(
+            config.device_authorization,
+            DeviceAuthorizationSource::DeviceCode,
+            "没有桌面端托管时照旧申请设备码"
+        );
         assert!(config.agent_id.is_none());
         assert!(config.public_lobby_catalog_id.is_none());
         assert!(config.lobby_language.is_none());
@@ -451,6 +485,43 @@ mod tests {
             BridgeConfig::from_source(&environment),
             Err(BridgeConfigError::Invalid {
                 name: "AGENT_ROOM_BRIDGE_IMPORT_OIDC_PROFILE",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn 电脑授权只认_supervisor_和_device_code() {
+        let mut environment = valid_environment();
+        environment.0.insert(
+            "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION",
+            "supervisor".to_owned(),
+        );
+        assert_eq!(
+            BridgeConfig::from_source(&environment)
+                .expect("supervisor 有效")
+                .device_authorization,
+            DeviceAuthorizationSource::Supervisor
+        );
+
+        environment.0.insert(
+            "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION",
+            "device-code".to_owned(),
+        );
+        assert_eq!(
+            BridgeConfig::from_source(&environment)
+                .expect("device-code 有效")
+                .device_authorization,
+            DeviceAuthorizationSource::DeviceCode
+        );
+
+        environment
+            .0
+            .insert("AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION", "grant".to_owned());
+        assert!(matches!(
+            BridgeConfig::from_source(&environment),
+            Err(BridgeConfigError::Invalid {
+                name: "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION",
                 ..
             })
         ));
