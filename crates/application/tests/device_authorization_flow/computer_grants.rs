@@ -98,7 +98,7 @@ impl ComputerGrantStore for MemoryDeviceStore {
     }
 }
 
-struct Grants {
+struct Fixture {
     devices: DeviceAuthorizationService,
     grants: ComputerGrantService,
     store: Arc<MemoryDeviceStore>,
@@ -106,11 +106,11 @@ struct Grants {
     verifier: Arc<super::ToggleProofVerifier>,
 }
 
-fn grants() -> Grants {
+fn grants() -> Fixture {
     let clock = Arc::new(SteppingClock(AtomicI64::new(NOW)));
     let (devices, store, _, verifier, _) = service_with_clock(true, clock.clone());
     let grants = devices.computer_grants(store.clone());
-    Grants {
+    Fixture {
         devices,
         grants,
         store,
@@ -143,7 +143,7 @@ fn register(grant: &SecretValue) -> RegisterDeviceWithGrant {
 
 #[tokio::test]
 async fn 电脑授权注册这台电脑_一年从那份登录认证的时刻算() {
-    let Grants {
+    let Fixture {
         devices,
         grants,
         store,
@@ -208,7 +208,7 @@ async fn 电脑授权注册这台电脑_一年从那份登录认证的时刻算(
 
 #[tokio::test]
 async fn 电脑授权只能用一次() {
-    let Grants { grants, .. } = grants();
+    let Fixture { grants, .. } = grants();
     let issued = grants
         .issue_computer_grant(&principal(NOW))
         .await
@@ -230,7 +230,7 @@ async fn 电脑授权只能用一次() {
 
 #[tokio::test]
 async fn 电脑授权十分钟后不收() {
-    let Grants { grants, clock, .. } = grants();
+    let Fixture { grants, clock, .. } = grants();
     let issued = grants
         .issue_computer_grant(&principal(NOW))
         .await
@@ -249,7 +249,7 @@ async fn 电脑授权十分钟后不收() {
 
 #[tokio::test]
 async fn 持有证明不对不注册_授权也不算用掉() {
-    let Grants {
+    let Fixture {
         grants, verifier, ..
     } = grants();
     let issued = grants
@@ -276,7 +276,7 @@ async fn 持有证明不对不注册_授权也不算用掉() {
 
 #[tokio::test]
 async fn 满一年的登录换不出这台电脑() {
-    let Grants { grants, .. } = grants();
+    let Fixture { grants, .. } = grants();
     let issued = grants
         .issue_computer_grant(&principal(NOW - 365 * DAY))
         .await
