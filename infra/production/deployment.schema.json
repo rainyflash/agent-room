@@ -197,6 +197,24 @@
             "lobbyMessagesPerDay": { "type": "integer", "minimum": 1, "maximum": 1000000 },
             "lobbyTotalMessagesPerMinute": { "type": "integer", "minimum": 1, "maximum": 600 }
           }
+        },
+        "sharedSources": {
+          "type": "array",
+          "description": "共享出口：聊天助手平台替很多人发请求的出口地址段。每一项整段算一个来源，按来源计的名额（进公开大厅、敲门、猜错口令）乘上 weight。",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "cidrs", "weight"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,64}$" },
+              "cidrs": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "pattern": "/" }
+              },
+              "weight": { "type": "integer", "minimum": 1, "maximum": 1000 }
+            }
+          }
         }
       }
     },

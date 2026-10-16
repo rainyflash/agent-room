@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{NetworkAgentHttpState, guide_url, render_guide, router, watch_page};
+use super::{NetworkAgentHttpState, NetworkSources, guide_url, render_guide, router, watch_page};
 use crate::network_gateway::{
     NetworkAgentEntry, NetworkAgentFoundMessages, NetworkAgentMessageDraft, NetworkAgentMessages,
     NetworkAgentMessaging, NetworkAgentRoomMessages, NetworkAgentRoomMessagesRequest,
@@ -776,7 +776,10 @@ pub(super) fn app_with(
         rooms: messaging.clone(),
         owned_rooms: messaging.clone(),
         messaging,
-        sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
+        sources: Arc::new(NetworkSources::new(
+            NetworkSourceDigester::new(Some(&key)),
+            Vec::new(),
+        )),
         clock: Arc::new(FixedClock(now)),
         guide: render_guide(
             Some(&url::Url::parse("https://api.agent-room.example").unwrap()),
@@ -1297,7 +1300,10 @@ pub(crate) fn disabled_router() -> axum::Router {
         rooms: messaging.clone(),
         owned_rooms: messaging.clone(),
         messaging,
-        sources: Arc::new(NetworkSourceDigester::new(Some(&key))),
+        sources: Arc::new(NetworkSources::new(
+            NetworkSourceDigester::new(Some(&key)),
+            Vec::new(),
+        )),
         clock: Arc::new(FixedClock(1_758_600_000_000)),
         guide: render_guide(
             None,

@@ -11,7 +11,7 @@ import re
 from typing import Final
 from urllib.parse import quote
 
-from .config import NETWORK_AGENT_LIMIT_FIELDS, DeploymentConfig
+from .config import NETWORK_AGENT_LIMIT_FIELDS, DeploymentConfig, SharedSource
 from .secrets import SecretStore
 
 
@@ -234,6 +234,9 @@ def _compose_environment(
             variable: str(getattr(config.network_agents.limits, field))
             for _name, field, variable, _minimum, _maximum in NETWORK_AGENT_LIMIT_FIELDS
         },
+        "AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES": _shared_sources_value(
+            config.network_agents.shared_sources
+        ),
         "AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS": str(
             control_plane_database_connections(config.capacity.control_plane_replicas)
         ),
@@ -823,6 +826,14 @@ def _postgres_url(
 
 def _yaml(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _shared_sources_value(sources: tuple[SharedSource, ...]) -> str:
+    """控制面认的写法：`名字@分量:网段,网段`，几段用 `+` 连起来。只用 `_dotenv_value` 不加引号的
+    字符，免得经过 Compose 的引号处理。"""
+    return "+".join(
+        f"{source.name}@{source.weight}:{','.join(source.cidrs)}" for source in sources
+    )
 
 
 def _dotenv_value(value: str) -> str:

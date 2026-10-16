@@ -26,12 +26,12 @@ use agent_room_application::{
         NetworkAgentBeginOutcome, NetworkAgentIdleLobby, NetworkAgentKeyFactory,
         NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
         NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, PrivateRoomAgentKnockRecord,
-        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomSnapshot,
-        PublicLobbyDirectoryEntry, PublicLobbyObservationRoom, RateWindowBucket,
-        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
-        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
-        SecretValue, StoredAgentInstanceRegistration,
+        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights, PortFuture,
+        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
+        PrivateRoomSnapshot, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
+        RateWindowBucket, RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory,
+        RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure,
+        SecretSealingFailure, SecretValue, StoredAgentInstanceRegistration, UniformSourceWeights,
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
@@ -1688,6 +1688,22 @@ impl IdentifierFactory for TestRuntime {
 
 // ---------- 组装 ----------
 
+/// 把一个来源当成共享出口：它的名额乘上分量，别的来源都算一个。
+struct SharedSource {
+    source: [u8; 32],
+    weight: u32,
+}
+
+impl NetworkSourceWeights for SharedSource {
+    fn weight(&self, source: &[u8; 32]) -> u32 {
+        if *source == self.source {
+            self.weight
+        } else {
+            1
+        }
+    }
+}
+
 struct Harness {
     service: NetworkAgentService,
     store: Arc<MemoryStore>,
@@ -1704,6 +1720,23 @@ impl Harness {
     }
 
     fn with_lobbies(policy: NetworkAgentPolicy, lobbies: ScriptedLobbies) -> Self {
+        Self::build(policy, lobbies, Arc::new(UniformSourceWeights))
+    }
+
+    /// `source` 是一段共享出口，按来源计的名额乘上 `weight`。
+    fn with_shared_source(source: [u8; 32], weight: u32) -> Self {
+        Self::build(
+            NetworkAgentPolicy::default_limits(true),
+            ScriptedLobbies::default(),
+            Arc::new(SharedSource { source, weight }),
+        )
+    }
+
+    fn build(
+        policy: NetworkAgentPolicy,
+        lobbies: ScriptedLobbies,
+        source_weights: Arc<dyn NetworkSourceWeights>,
+    ) -> Self {
         let store = Arc::new(MemoryStore::default());
         let agents = Arc::new(FakeAgents::default());
         let lobbies = Arc::new(lobbies);
@@ -1724,6 +1757,7 @@ impl Harness {
             identifiers: runtime.clone(),
             pause: runtime.clone(),
             policy,
+            source_weights,
             matrix_server_name: "matrix.test".to_owned(),
         });
         Self {
@@ -2807,6 +2841,47 @@ async fn 私人房间里说话不限条数_大厅里的额度用完了也照样�
         .take_message_quota(id, private)
         .await
         .expect("回到私人房间照样能说");
+}
+
+#[tokio::test]
+async fn 共享出口整段算一个来源_进大厅和敲门的名额都乘上分量_别的来源照旧() {
+    let shared = [7; 32];
+    let harness = Harness::with_shared_source(shared, 3);
+    for index in 0..15 {
+        harness
+            .create_from(&format!("Agent {index}"), None, shared)
+            .await
+            .expect("分量 3：一小时能进 15 个");
+    }
+    assert_eq!(
+        harness.create_from("Agent 15", None, shared).await.err(),
+        Some(NetworkAgentFailureKind::RateLimited)
+    );
+    for index in 0..5 {
+        harness
+            .create_from(&format!("Solo {index}"), None, [8; 32])
+            .await
+            .expect("普通来源照旧五个");
+    }
+    assert_eq!(
+        harness.create_from("Solo 5", None, [8; 32]).await.err(),
+        Some(NetworkAgentFailureKind::RateLimited)
+    );
+
+    let created = harness.create("Knocker", None).await.unwrap();
+    for _ in 0..30 {
+        harness
+            .service
+            .admit(created.token.expose(), knock_on_private(), shared)
+            .await
+            .expect("分量 3：一小时能敲 30 次");
+    }
+    let limited = harness
+        .service
+        .admit(created.token.expose(), knock_on_private(), shared)
+        .await
+        .unwrap_err();
+    assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
 }
 
 #[tokio::test]

@@ -19,6 +19,7 @@ from tools.prodops.config import (
     DeploymentConfig,
     DeploymentConfigError,
     NetworkAgentLimits,
+    SharedSource,
     load_deployment_config,
 )
 from tools.prodops.network_agents import NetworkAgentTargetError, disable_statement
@@ -370,6 +371,43 @@ class ProductionConfigTests(unittest.TestCase):
                 DeploymentConfigError, message
             ):
                 DeploymentConfig.from_mapping(value)
+
+    def test_shared_sources_are_parsed_and_checked(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["networkAgents"] = {"enabled": True}
+        self.assertEqual(DeploymentConfig.from_mapping(value).network_agents.shared_sources, ())
+
+        value["networkAgents"]["sharedSources"] = [
+            {"name": "assistant", "cidrs": ["160.79.104.0/21", "2607:6bc0::/48"], "weight": 20},
+            {"name": "gateway", "cidrs": ["203.0.113.7/24"], "weight": 5},
+        ]
+        self.assertEqual(
+            DeploymentConfig.from_mapping(value).network_agents.shared_sources,
+            (
+                SharedSource("assistant", ("160.79.104.0/21", "2607:6bc0::/48"), 20),
+                SharedSource("gateway", ("203.0.113.0/24",), 5),
+            ),
+        )
+
+        for shared, message in (
+            ({"name": "a b", "cidrs": ["10.0.0.0/8"], "weight": 2}, "name 只能用"),
+            ({"name": "a", "cidrs": ["10.0.0.0/8"], "weight": 0}, "weight 必须是"),
+            ({"name": "a", "cidrs": ["10.0.0.0/8"], "weight": True}, "weight 必须是"),
+            ({"name": "a", "cidrs": [], "weight": 2}, "不空的网段列表"),
+            ({"name": "a", "cidrs": ["10.0.0.1"], "weight": 2}, "地址/前缀长度"),
+            ({"name": "a", "cidrs": ["10.0.0.0/40"], "weight": 2}, "不是网段"),
+            ({"name": "a", "cidrs": ["10.0.0.0/8"], "weight": 2, "note": "x"}, "未知字段：note"),
+        ):
+            value["networkAgents"]["sharedSources"] = [shared]
+            with self.subTest(shared=shared), self.assertRaisesRegex(
+                DeploymentConfigError, message
+            ):
+                DeploymentConfig.from_mapping(value)
+
+        twice = {"name": "a", "cidrs": ["10.0.0.0/8"], "weight": 2}
+        value["networkAgents"]["sharedSources"] = [twice, twice]
+        with self.assertRaisesRegex(DeploymentConfigError, "重名"):
+            DeploymentConfig.from_mapping(value)
 
     def test_network_agents_require_a_single_control_plane_replica(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
@@ -835,6 +873,31 @@ class ProductionRenderingTests(unittest.TestCase):
         )
         identity = compose.split("\n  identity:\n", 1)[1].split("\n  control-plane:\n", 1)[0]
         self.assertIn("KC_DB_POOL_MAX_SIZE: '20'", identity)
+
+    def test_shared_sources_reach_the_control_plane_without_quotes(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["networkAgents"] = {"enabled": True}
+        render_deployment(DeploymentConfig.from_mapping(value), self.paths, self.secrets)
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        self.assertIn("AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES=\n", environment)
+
+        value["networkAgents"]["sharedSources"] = [
+            {"name": "assistant", "cidrs": ["160.79.104.0/21", "2607:6bc0::/48"], "weight": 20},
+            {"name": "gateway", "cidrs": ["203.0.113.0/24"], "weight": 5},
+        ]
+        render_deployment(DeploymentConfig.from_mapping(value), self.paths, self.secrets)
+        environment = self.paths.compose_environment.read_text(encoding="utf-8")
+        # 控制面 sources.rs 的 parse_shared_sources 认的就是这个写法。
+        self.assertIn(
+            "AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES="
+            "assistant@20:160.79.104.0/21,2607:6bc0::/48+gateway@5:203.0.113.0/24\n",
+            environment,
+        )
+        compose = (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")
+        self.assertIn(
+            "      AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES: ${AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES:-}\n",
+            compose,
+        )
 
     def test_new_compose_variables_have_defaults_so_the_pre_deploy_backup_still_runs(self) -> None:
         compose = (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")

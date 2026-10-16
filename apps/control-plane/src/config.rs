@@ -14,6 +14,8 @@ use thiserror::Error;
 use url::Url;
 use uuid::{Uuid, Version};
 
+use crate::features::network_agents::{SharedSource, parse_shared_sources};
+
 const DEFAULT_DEPENDENCY_TIMEOUT_MILLIS: u64 = 2_000;
 // 控制面整个只有这一个连接池，就绪探针也用它。几百个网络 Agent 同时等消息时 5 个不够用。
 const DEFAULT_DATABASE_MAX_CONNECTIONS: u32 = 10;
@@ -199,6 +201,8 @@ pub(crate) struct NetworkAgentConfig {
     pub(crate) store_dir: Option<PathBuf>,
     /// 限额：公开大厅那几项可以由部署配置改，别的照 `NetworkAgentPolicy::default_limits`。
     pub(crate) policy: NetworkAgentPolicy,
+    /// 共享出口：整段算一个来源，按来源计的名额乘上分量（`specs/launch-capacity/design.md` 第 13 步）。
+    pub(crate) shared_sources: Vec<SharedSource>,
 }
 
 #[derive(Clone)]
@@ -241,6 +245,7 @@ fn read_network_agent_config(
     const SEAL_KEY: &str = "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY";
     const PUBLIC_API_ORIGIN: &str = "AGENT_ROOM_PUBLIC_API_ORIGIN";
     const STORE_DIR: &str = "AGENT_ROOM_NETWORK_AGENT_STORE_DIR";
+    const SHARED_SOURCES: &str = "AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES";
     let enabled = match read_optional(source, ENABLED).as_deref().map(str::trim) {
         None | Some("false") => false,
         Some("true") => true,
@@ -291,6 +296,17 @@ fn read_network_agent_config(
         public_api_origin,
         store_dir,
         policy: read_network_agent_policy(source, enabled)?,
+        shared_sources: read_optional(source, SHARED_SOURCES)
+            .map(|value| {
+                parse_shared_sources(&value).map_err(|_| {
+                    ConfigError::invalid(
+                        SHARED_SOURCES,
+                        "要写成 名字@分量:网段,网段，几段用 + 连起来，分量 1–1000",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or_default(),
     })
 }
 
@@ -1502,6 +1518,29 @@ mod tests {
                 "{name}={value} 应当被拒绝"
             );
         }
+    }
+
+    #[test]
+    fn 共享出口可以配_没配就没有_写错拒绝启动() {
+        const NAME: &str = "AGENT_ROOM_NETWORK_AGENT_SHARED_SOURCES";
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+        assert!(config.network_agents.shared_sources.is_empty());
+
+        let mut environment = valid_environment();
+        environment.0.insert(
+            NAME,
+            "assistant@20:160.79.104.0/21+gateway@5:203.0.113.0/24,2001:db8::/32".to_owned(),
+        );
+        let config = ControlPlaneConfig::from_source(&environment).expect("共享出口有效");
+        assert_eq!(config.network_agents.shared_sources.len(), 2);
+
+        environment
+            .0
+            .insert(NAME, "assistant@0:160.79.104.0/21".to_owned());
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Invalid { name, .. }) if name == NAME
+        ));
     }
 
     #[test]

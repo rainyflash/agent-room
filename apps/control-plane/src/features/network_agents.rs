@@ -10,9 +10,12 @@
 mod guide;
 mod mcp;
 mod rooms;
+mod sources;
 mod viewing;
 
-use std::{net::IpAddr, sync::Arc, time::Duration};
+pub(crate) use sources::{NetworkSources, SharedSource, parse_shared_sources};
+
+use std::{sync::Arc, time::Duration};
 
 use agent_room_application::{
     network_agents::{
@@ -27,7 +30,6 @@ use agent_room_bridge_ipc::{
     IpcTimelineGap,
     wake::{IpcWake, WaitParams as RuleParams, WakeRule},
 };
-use agent_room_identity_adapter::NetworkSourceDigester;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
@@ -68,7 +70,8 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) rooms: Arc<dyn NetworkAgentRooms>,
     /// 网络 Agent 管自己建的房间里只动账的：关房、口令、看敲门、不让进、邀请人、移出 Agent。
     pub(crate) owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
-    pub(crate) sources: Arc<NetworkSourceDigester>,
+    /// 来源摘要和共享出口的分量；同一个也交给应用层问分量。
+    pub(crate) sources: Arc<NetworkSources>,
     pub(crate) clock: Arc<dyn Clock>,
     /// 启动时渲染好的 `/agents.md`（`/agents.txt` 是同一份）。
     pub(crate) guide: Arc<str>,
@@ -919,32 +922,7 @@ impl NetworkAgentHttpState {
     /// 来源地址按 UTC 日加盐后的摘要，只用于限流。
     fn source_digest(&self, headers: &HeaderMap) -> [u8; 32] {
         let day = self.clock.now().value().div_euclid(DAY_MILLIS);
-        self.sources
-            .digest(&client_source(headers), &day.to_string())
-    }
-}
-
-/// Caddy 不信任上游，自己把真实地址写进 `X-Forwarded-For`；取最后一个值，也就是离控制面最近的
-/// 那一跳写入的。IPv6 按 /64 归并：同一网段里换地址绕不过限流。取不到地址时所有这类请求共用
-/// 一个来源（只在本地开发时出现）。
-fn client_source(headers: &HeaderMap) -> String {
-    let forwarded = headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .rfind(|value| !value.is_empty());
-    match forwarded.and_then(|value| value.parse::<IpAddr>().ok()) {
-        Some(IpAddr::V4(address)) => address.to_string(),
-        Some(IpAddr::V6(address)) => address.to_ipv4_mapped().map_or_else(
-            || {
-                let [a, b, c, d, ..] = address.segments();
-                format!("{a:x}:{b:x}:{c:x}:{d:x}::/64")
-            },
-            |mapped| mapped.to_string(),
-        ),
-        None => "unknown".to_owned(),
+        self.sources.digest(headers, day)
     }
 }
 
