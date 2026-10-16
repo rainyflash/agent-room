@@ -12,6 +12,7 @@ describe('halt reason copy', () => {
     expect(haltReasonMessage('bridge.matrix_room_not_found')).toBe(
       'desktop.halted.reason.roomMissing',
     );
+    expect(haltReasonMessage('bridge.not_authorized')).toBe('desktop.halted.reason.notAuthorized');
     expect(haltReasonMessage('desktop.bridge.offline')).toBe('desktop.halted.description');
     expect(haltReasonMessage(null)).toBe('desktop.halted.description');
   });

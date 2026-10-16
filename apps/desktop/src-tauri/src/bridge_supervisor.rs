@@ -22,9 +22,9 @@ use url::Url;
 
 use crate::{
     bridge_lifecycle::{
-        BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy,
-        ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState, UnmanagedAction,
-        UnmanagedBridge, decide_resume,
+        AUTHORIZATION_LOST_DIAGNOSTIC, BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase,
+        BridgeRestartPolicy, ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState,
+        UnmanagedAction, UnmanagedBridge, decide_resume,
     },
     computer_grant::{
         ComputerGrant, ComputerGrantClient, ComputerGrantFailure, DEVICE_CODE_LINE, GrantStep,
@@ -143,6 +143,7 @@ impl BridgeSupervisor {
             generation: 0,
             managed_child_active: false,
             child_found_other_instance: false,
+            child_lost_authorization: false,
             logged_lifecycle: None,
         };
         tauri::async_runtime::spawn(actor.run());
@@ -268,6 +269,8 @@ struct BridgeSupervisorActor {
     managed_child_active: bool,
     /// 当前子进程报告另一个 Bridge 进程占着实例锁，它随后的退出不算崩溃。
     child_found_other_instance: bool,
+    /// 当前子进程报告这台电脑的授权失效了，它随后的退出不自动重启。
+    child_lost_authorization: bool,
     /// 上一次写进日志的生命周期状态；状态没变的发布不再重复记。
     logged_lifecycle: Option<(BridgePhase, Option<String>, Option<String>)>,
     /// 这一代子进程等电脑授权的进度（`specs/desktop-sign-in/design.md`）。
@@ -348,6 +351,7 @@ impl BridgeSupervisorActor {
         }
         self.generation = self.generation.saturating_add(1);
         self.child_found_other_instance = false;
+        self.child_lost_authorization = false;
         self.grant.reset();
         self.policy.starting(now_unix_ms());
         self.authorization = None;
@@ -652,6 +656,9 @@ impl BridgeSupervisorActor {
                     if code == INSTANCE_LOCK_HELD_CODE {
                         self.child_found_other_instance = true;
                     }
+                    if code == AUTHORIZATION_LOST_DIAGNOSTIC {
+                        self.child_lost_authorization = true;
+                    }
                     self.policy.set_diagnostic(now_unix_ms(), code);
                     self.publish();
                 }
@@ -855,6 +862,13 @@ impl BridgeSupervisorActor {
             // 这不是崩溃，不占重启预算；等它走完再按普通方式启动。重新授权的请求随之作废：Bridge 先拿锁
             // 后清凭据，这个子进程什么也没动，之后若仍停机，停机视图会再提供重新授权。
             self.observe_unmanaged(UnmanagedBridge::Locked);
+            return;
+        }
+        if self.child_lost_authorization && !shutting_down {
+            tracing::warn!("这台电脑的授权失效了，停下等人重新授权");
+            self.policy.authorization_lost(now_unix_ms(), exit_code);
+            self.notify_stopped();
+            self.publish();
             return;
         }
         match self
