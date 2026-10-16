@@ -60,6 +60,30 @@ def _load_keycloak_reconcile():
     return module
 EXTERNAL_EXAMPLE = ROOT / "infra" / "production" / "deployment.external.example.json"
 SCHEMA = ROOT / "infra" / "production" / "deployment.schema.json"
+# compose.yaml 里必填（`${名字:?说明}`）的变量。发版部署先把生产的源码切到候选，再拿上一版渲染的
+# compose.env 做部署前备份（这时故意不重新渲染，留住上一版的配置）；候选新加的必填变量上一版的
+# compose.env 里没有，compose 整个起不来。Alpha 73 就停在这里，等定时备份按候选重新渲染了一遍才过。
+# 所以新变量先带默认值（`${名字:-值}`），等一版发出去、生产的 compose.env 里有了，再加进这份名单改成必填。
+REQUIRED_COMPOSE_VARIABLES = frozenset(
+    {
+        "AGENT_ROOM_BACKUP_REPOSITORY",
+        "AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS",
+        "AGENT_ROOM_DB_HOST",
+        "AGENT_ROOM_DB_PORT",
+        "AGENT_ROOM_GENERATED_CONFIG_DIGEST",
+        "AGENT_ROOM_IDENTITY_DOMAIN",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_DAY",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_ENTRIES_PER_HOUR",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_DAY",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_MESSAGES_PER_MINUTE",
+        "AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE",
+        "AGENT_ROOM_NETWORK_AGENT_MAX_LOBBY_AGENTS",
+        "AGENT_ROOM_PROJECT_NAME",
+        "AGENT_ROOM_STATE_DIR",
+        "KEYCLOAK_DB_NAME",
+        "KEYCLOAK_DB_USER",
+    }
+)
 
 
 def open_email_config(password_file: Path) -> DeploymentConfig:
@@ -811,6 +835,19 @@ class ProductionRenderingTests(unittest.TestCase):
         )
         identity = compose.split("\n  identity:\n", 1)[1].split("\n  control-plane:\n", 1)[0]
         self.assertIn("KC_DB_POOL_MAX_SIZE: '20'", identity)
+
+    def test_new_compose_variables_have_defaults_so_the_pre_deploy_backup_still_runs(self) -> None:
+        compose = (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")
+        required = set(re.findall(r"\$\{([A-Z0-9_]+):\?", compose))
+
+        self.assertEqual(
+            required - REQUIRED_COMPOSE_VARIABLES,
+            set(),
+            "新加的 compose 变量先写成 ${名字:-默认值}：部署前备份用的是上一版渲染的 compose.env，"
+            "里面还没有它。等一版发出去以后再加进 REQUIRED_COMPOSE_VARIABLES 改成必填。",
+        )
+        # 名单里的都还在用；不再用的从名单里删掉，免得以后同名的新变量被当成老的放过去。
+        self.assertEqual(REQUIRED_COMPOSE_VARIABLES - required, set())
 
     def test_control_plane_replicas_share_twenty_database_connections(self) -> None:
         self.assertEqual(control_plane_database_connections(1), 20)
