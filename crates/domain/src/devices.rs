@@ -402,6 +402,9 @@ pub struct DeviceTokenFamily {
     device_id: DeviceId,
     state: DeviceTokenFamilyState,
     created_at: UtcMillis,
+    /// 一年上限从哪天算：拿电脑授权注册的，是那份桌面登录真正认证的时刻；
+    /// 设备码注册的空着，按创建时间算。
+    authenticated_at: Option<UtcMillis>,
     expires_at: UtcMillis,
     revoked_at: Option<UtcMillis>,
     compromise_detected_at: Option<UtcMillis>,
@@ -430,10 +433,28 @@ impl DeviceTokenFamily {
             device_id,
             state: DeviceTokenFamilyState::Active,
             created_at,
+            authenticated_at: None,
             expires_at,
             revoked_at: None,
             compromise_detected_at: None,
         })
+    }
+
+    /// 记下一年上限的起算时刻：拿电脑授权注册时，是那份桌面登录真正认证的时刻
+    /// （`specs/desktop-sign-in/design.md`）。
+    ///
+    /// # Errors
+    ///
+    /// 认证时刻晚于创建时间时返回校验错误。
+    pub fn with_authenticated_at(mut self, authenticated_at: UtcMillis) -> DomainResult<Self> {
+        if authenticated_at > self.created_at {
+            return Err(DomainError::Validation {
+                field: "device_token_family_authenticated_at",
+                reason: "不能晚于创建时间",
+            });
+        }
+        self.authenticated_at = Some(authenticated_at);
+        Ok(self)
     }
 
     /// 从持久化状态恢复 Token 族并检查状态时间一致性。
@@ -471,6 +492,7 @@ impl DeviceTokenFamily {
             device_id,
             state,
             created_at,
+            authenticated_at: None,
             expires_at,
             revoked_at,
             compromise_detected_at,
@@ -493,6 +515,15 @@ impl DeviceTokenFamily {
         self.created_at
     }
 
+    pub const fn authenticated_at(&self) -> Option<UtcMillis> {
+        self.authenticated_at
+    }
+
+    /// 一年上限的起算时刻：记着认证时刻的用它，没记的用创建时间。
+    pub fn lifetime_anchor(&self) -> UtcMillis {
+        self.authenticated_at.unwrap_or(self.created_at)
+    }
+
     pub const fn expires_at(&self) -> UtcMillis {
         self.expires_at
     }
@@ -511,8 +542,8 @@ impl DeviceTokenFamily {
 
     /// 这组令牌在 `now` 用了一次：到期时间按 `lifetime` 续，只往后挪。
     ///
-    /// 起算时刻是这组令牌的创建时间，也就是批准设备码、注册这台设备的那一刻，
-    /// 所以不管换多少次令牌，最长也只到创建时间加最长时限。
+    /// 起算时刻是 [`Self::lifetime_anchor`]：设备码注册的是批准设备码、注册这台设备的那一刻，
+    /// 拿电脑授权注册的是那份桌面登录真正认证的时刻，所以不管换多少次令牌，最长也只到它加最长时限。
     ///
     /// # Errors
     ///
@@ -525,7 +556,7 @@ impl DeviceTokenFamily {
                 to: "renewed",
             });
         }
-        let renewed = lifetime.renewed_until(self.created_at, now)?;
+        let renewed = lifetime.renewed_until(self.lifetime_anchor(), now)?;
         if renewed > self.expires_at {
             self.expires_at = renewed;
         }
@@ -666,6 +697,25 @@ mod tests {
         assert_eq!(family.expires_at(), time(366 * DAY));
         assert!(family.allows_rotation(time(366 * DAY - 1)));
         assert!(!family.allows_rotation(time(366 * DAY)));
+    }
+
+    #[test]
+    fn 拿电脑授权注册的令牌族按桌面登录的认证时刻卡一年() {
+        let mut family = family_created_at(time(100 * DAY))
+            .with_authenticated_at(time(DAY))
+            .expect("认证时刻早于创建时间");
+        assert_eq!(family.lifetime_anchor(), time(DAY));
+        for day in (120..=360).step_by(20) {
+            family
+                .renew(lifetime(), time(day * DAY))
+                .expect("一直在用就一直能续");
+        }
+        assert_eq!(family.expires_at(), time(366 * DAY));
+        assert!(
+            family_created_at(time(DAY))
+                .with_authenticated_at(time(DAY + 1))
+                .is_err()
+        );
     }
 
     #[test]

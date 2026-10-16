@@ -2,10 +2,11 @@ use std::env;
 
 use agent_room_application::persistence::RepositoryErrorKind;
 use agent_room_application::ports::{
-    DeviceProofNonceStore, DeviceRefreshOutcome, DeviceRefreshReplay, DeviceRefreshReplaySalt,
-    DeviceRegistrationTransaction, DeviceRepository, DeviceRevocationOutcome,
-    DeviceRevocationTransaction, DeviceSecurityEvent, DeviceSessionRegistration,
-    DeviceSessionStore, DeviceTokenReplacement, PrincipalRegistration, SecretDigest,
+    ComputerGrantRecord, ComputerGrantStore, DeviceProofNonceStore, DeviceRefreshOutcome,
+    DeviceRefreshReplay, DeviceRefreshReplaySalt, DeviceRegistrationTransaction, DeviceRepository,
+    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
+    DeviceSessionRegistration, DeviceSessionStore, DeviceTokenReplacement, PrincipalRegistration,
+    SecretDigest,
 };
 use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey, DeviceTokenFamily},
@@ -406,6 +407,157 @@ async fn 换令牌时令牌组和新刷新令牌一起续期且只往后挪() {
 
     delete_device_events(&database.runtime, device_id).await;
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 电脑授权注册这台电脑_用一次就删_令牌组记着认证时刻() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = registration(91, 92);
+    register(&repositories, &owner).await;
+    let grant = computer_grant(owner.principal.principal.id(), 93, 0);
+    repositories
+        .insert_grant(&grant)
+        .await
+        .expect("电脑授权应写入");
+    assert_eq!(
+        repositories
+            .find_grant(&grant.grant_digest, test_time(1))
+            .await
+            .expect("可查电脑授权"),
+        Some(grant.clone())
+    );
+
+    let computer = grant_registration(&grant, 94, 95);
+    let stored = repositories
+        .register_with_grant(&grant, &computer.device, &computer.session)
+        .await
+        .expect("拿电脑授权注册成功");
+    assert_eq!(stored.account.principal.id(), grant.principal_id);
+    assert_eq!(
+        stored.family.authenticated_at(),
+        Some(grant.authenticated_at)
+    );
+    let context = repositories
+        .find_refresh_context(&computer.session.refresh_token_digest)
+        .await
+        .expect("可读刷新上下文")
+        .expect("新令牌组存在");
+    assert_eq!(
+        context.family.authenticated_at(),
+        Some(grant.authenticated_at),
+        "换令牌时读得到一年上限的起算时刻"
+    );
+
+    assert_eq!(
+        repositories
+            .find_grant(&grant.grant_digest, test_time(1))
+            .await
+            .expect("可查电脑授权"),
+        None,
+        "用过就删"
+    );
+    let reused = repositories
+        .register_with_grant(&grant, &computer.device, &computer.session)
+        .await
+        .expect_err("同一份授权不能再用");
+    assert_eq!(reused.kind(), RepositoryErrorKind::NotFound);
+
+    delete_device_events(&database.runtime, stored.device.id()).await;
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 过期的电脑授权用不了_要新授权时顺手删掉() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = registration(96, 97);
+    register(&repositories, &owner).await;
+    let principal_id = owner.principal.principal.id();
+    let expired = computer_grant(principal_id, 98, 0);
+    repositories
+        .insert_grant(&expired)
+        .await
+        .expect("电脑授权应写入");
+    assert_eq!(
+        repositories
+            .find_grant(&expired.grant_digest, expired.expires_at)
+            .await
+            .expect("可查电脑授权"),
+        None
+    );
+    let mut late = grant_registration(&expired, 99, 100);
+    late.session.issued_at = expired.expires_at;
+    let rejected = repositories
+        .register_with_grant(&expired, &late.device, &late.session)
+        .await
+        .expect_err("过期的授权注册不了");
+    assert_eq!(rejected.kind(), RepositoryErrorKind::NotFound);
+
+    repositories
+        .insert_grant(&computer_grant(principal_id, 101, 11 * 60 * 1_000))
+        .await
+        .expect("新的电脑授权应写入");
+    let (left,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM agent_room.desktop_computer_grant WHERE grant_digest = $1",
+    )
+    .bind(expired.grant_digest.as_bytes().as_slice())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("可数电脑授权");
+    assert_eq!(left, 0, "过期的授权在要新授权时删掉");
+
+    database.close().await;
+}
+
+/// 一份 `offset` 时签发、10 分钟内有效的电脑授权，那份桌面登录是前一天认证的。
+fn computer_grant(principal_id: PrincipalId, digest: u8, offset: i64) -> ComputerGrantRecord {
+    ComputerGrantRecord {
+        grant_digest: SecretDigest::from_array([digest; 32]),
+        principal_id,
+        authenticated_at: test_time(offset - DAY),
+        created_at: test_time(offset),
+        expires_at: test_time(offset + 10 * 60 * 1_000),
+    }
+}
+
+/// 拿电脑授权注册一台新电脑：令牌组记着那份登录的认证时刻。
+fn grant_registration(
+    grant: &ComputerGrantRecord,
+    access_digest: u8,
+    refresh_digest: u8,
+) -> RegistrationFixture {
+    let fixture = registration(access_digest, refresh_digest);
+    let mut device = Device::register(
+        DeviceId::from_uuid(Uuid::now_v7()),
+        grant.principal_id,
+        "这台电脑".to_owned(),
+        DevicePlatform::Windows,
+        DevicePublicSigningKey::new(Uuid::now_v7().as_bytes().repeat(2)).expect("32 字节公钥有效"),
+        grant.created_at,
+    )
+    .expect("设备有效");
+    device.verify().expect("设备已完成持有证明");
+    let family = DeviceTokenFamily::new(
+        DeviceTokenFamilyId::from_uuid(Uuid::now_v7()),
+        device.id(),
+        grant.created_at,
+        test_time(30 * DAY),
+    )
+    .and_then(|family| family.with_authenticated_at(grant.authenticated_at))
+    .expect("Token 族有效");
+    RegistrationFixture {
+        device,
+        session: DeviceSessionRegistration {
+            authorization_token_digest: grant.grant_digest,
+            family,
+            issued_at: grant.created_at,
+            ..fixture.session
+        },
+        ..fixture
+    }
 }
 
 fn rotated_expiry(outcome: DeviceRefreshOutcome) -> UtcMillis {

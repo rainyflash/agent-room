@@ -8,6 +8,7 @@ pub(crate) mod agents;
 pub(crate) mod authentication;
 pub(crate) mod automation;
 pub(crate) mod capabilities;
+pub(crate) mod computer_grants;
 pub(crate) mod content;
 pub(crate) mod desktop_matrix_session;
 pub(crate) mod devices;

@@ -198,6 +198,42 @@ pub trait DeviceRegistrationTransaction: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<StoredDeviceSession>>;
 }
 
+/// 桌面端登录着要的一次性电脑授权（`specs/desktop-sign-in/design.md`），库里只存摘要。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputerGrantRecord {
+    pub grant_digest: SecretDigest,
+    pub principal_id: PrincipalId,
+    /// 那份桌面登录真正认证的时刻（输密码或批准设备码的那次），注册出来的令牌组一年上限从它算。
+    pub authenticated_at: UtcMillis,
+    pub created_at: UtcMillis,
+    pub expires_at: UtcMillis,
+}
+
+pub trait ComputerGrantStore: Send + Sync {
+    /// 存下一份新授权，顺手删掉已经过期的。
+    fn insert_grant<'a>(
+        &'a self,
+        grant: &'a ComputerGrantRecord,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 找到 `now` 还没过期、也没用过的授权。
+    fn find_grant<'a>(
+        &'a self,
+        grant_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<ComputerGrantRecord>>>;
+
+    /// 用掉这份授权、注册这台电脑，在同一个事务里：删掉授权，锁住账户，记下设备和新的一组令牌。
+    ///
+    /// 授权已经被用掉或过期回 `NotFound`；账户停用、删除了，或者这把公钥已经是别人的设备，回 `Forbidden`。
+    fn register_with_grant<'a>(
+        &'a self,
+        grant: &'a ComputerGrantRecord,
+        device: &'a Device,
+        session: &'a DeviceSessionRegistration,
+    ) -> PortFuture<'a, RepositoryResult<StoredDeviceSession>>;
+}
+
 pub trait DeviceSessionStore: Send + Sync {
     fn find_active_access<'a>(
         &'a self,

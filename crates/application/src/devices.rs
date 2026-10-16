@@ -23,6 +23,13 @@ use crate::{
     },
 };
 
+#[path = "devices/computer_grants.rs"]
+mod computer_grants;
+
+pub use computer_grants::{
+    ComputerGrantService, ComputerGrantUseCases, IssuedComputerGrant, RegisterDeviceWithGrant,
+};
+
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
 const MAX_REQUEST_METHOD_LENGTH: usize = 16;
 const MAX_REQUEST_TARGET_LENGTH: usize = 2_048;
@@ -464,11 +471,6 @@ impl DeviceAuthorizationService {
         device
             .verify()
             .map_err(|_| internal_failure("device.register"))?;
-        let access_token = generate_secret(&*self.secrets, "device.register")?;
-        let refresh_token = generate_secret(&*self.secrets, "device.register")?;
-        let access_token_expires_at = now
-            .checked_add(self.policy.access_token_ttl)
-            .map_err(|_| internal_failure("device.register"))?;
         let refresh_token_expires_at = self
             .policy
             .refresh_lifetime
@@ -481,30 +483,25 @@ impl DeviceAuthorizationService {
             refresh_token_expires_at,
         )
         .map_err(|_| internal_failure("device.register"))?;
-        let session_registration = DeviceSessionRegistration {
-            authorization_token_digest: *request.authorization.authorization_token_digest(),
-            authorization_receipt_expires_at: now
-                .checked_add(self.policy.device_authorization_maximum_age)
-                .and_then(|value| value.checked_add(self.policy.allowed_clock_skew))
-                .map_err(|_| internal_failure("device.register"))?,
+        let issued = new_device_session(
+            &self.policy,
+            &*self.identifiers,
+            &*self.secrets,
+            *request.authorization.authorization_token_digest(),
             family,
-            access_token_id: self.identifiers.device_access_token_id(),
-            access_token_digest: self.secrets.digest(access_token.expose()),
-            access_token_expires_at,
-            refresh_token_id: self.identifiers.device_refresh_token_id(),
-            refresh_token_digest: self.secrets.digest(refresh_token.expose()),
-            issued_at: now,
-        };
+            now,
+            "device.register",
+        )?;
         let session = self
             .registrations
-            .register(&principal, &device, &session_registration)
+            .register(&principal, &device, &issued.registration)
             .await
             .map_err(|error| map_repository_failure("device.register", &error))?;
 
         Ok(credentials(
             &session,
-            access_token,
-            refresh_token,
+            issued.access_token,
+            issued.refresh_token,
             refresh_token_expires_at,
         ))
     }
@@ -983,6 +980,49 @@ fn encode_hex(bytes: &[u8]) -> String {
         write!(&mut encoded, "{byte:02x}").expect("写入 String 不会失败");
     }
     encoded
+}
+
+/// 注册一台设备要发的一组新令牌：库里只记摘要，明文交回给客户端。
+struct NewDeviceSession {
+    registration: DeviceSessionRegistration,
+    access_token: SecretValue,
+    refresh_token: SecretValue,
+}
+
+/// 设备码和电脑授权两条路注册时共用：`authorization_token_digest` 是这次授权的摘要，
+/// 用掉以后记成一次性回执。
+fn new_device_session(
+    policy: &DeviceAuthorizationPolicy,
+    identifiers: &dyn IdentifierFactory,
+    secrets: &dyn SecretFactory,
+    authorization_token_digest: SecretDigest,
+    family: DeviceTokenFamily,
+    now: UtcMillis,
+    operation: &'static str,
+) -> DeviceAuthorizationResult<NewDeviceSession> {
+    let access_token = generate_secret(secrets, operation)?;
+    let refresh_token = generate_secret(secrets, operation)?;
+    let registration = DeviceSessionRegistration {
+        authorization_token_digest,
+        authorization_receipt_expires_at: now
+            .checked_add(policy.device_authorization_maximum_age)
+            .and_then(|value| value.checked_add(policy.allowed_clock_skew))
+            .map_err(|_| internal_failure(operation))?,
+        family,
+        access_token_id: identifiers.device_access_token_id(),
+        access_token_digest: secrets.digest(access_token.expose()),
+        access_token_expires_at: now
+            .checked_add(policy.access_token_ttl)
+            .map_err(|_| internal_failure(operation))?,
+        refresh_token_id: identifiers.device_refresh_token_id(),
+        refresh_token_digest: secrets.digest(refresh_token.expose()),
+        issued_at: now,
+    };
+    Ok(NewDeviceSession {
+        registration,
+        access_token,
+        refresh_token,
+    })
 }
 
 fn generate_secret(

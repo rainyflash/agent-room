@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 62] = [
+const EXPECTED_TABLES: [&str; 63] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -69,6 +69,7 @@ const EXPECTED_TABLES: [&str; 62] = [
     "content_upload_request",
     "context_handoff",
     "desktop_authorization_code",
+    "desktop_computer_grant",
     "device",
     "device_access_token",
     "device_authorization_receipt",
