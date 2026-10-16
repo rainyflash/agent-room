@@ -4,16 +4,20 @@ use agent_room_application::{
     devices::canonical_device_registration_message,
     ports::{
         OidcDeviceAuthorizationPromptSink, OidcDeviceGrantGateway, OidcFailureKind,
-        ProfileImportConsent, SecretFactory,
+        ProfileImportConsent, SecretFactory, SecretValue,
     },
 };
-use agent_room_domain::{devices::DevicePlatform, ids::DeviceId, time::UtcMillis};
+use agent_room_domain::{
+    devices::{DevicePlatform, DevicePublicSigningKey},
+    ids::DeviceId,
+    time::UtcMillis,
+};
 
 use crate::ports::{
     BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialState,
-    ControlPlaneDeviceFailure, ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway,
-    DeviceCredentialVault, DeviceSigningIdentityStore, RegisterBridgeDevice,
-    StoredBridgeDeviceCredentials,
+    BridgeDeviceAuthorization, ControlPlaneDeviceFailure, ControlPlaneDeviceFailureKind,
+    ControlPlaneDeviceGateway, DeviceCredentialVault, DeviceSigningIdentity,
+    DeviceSigningIdentityStore, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
 };
 
 const MAX_DEVICE_LABEL_LENGTH: usize = 128;
@@ -117,13 +121,8 @@ impl BridgeAuthorizationService {
         prompt_sink: &dyn OidcDeviceAuthorizationPromptSink,
     ) -> BridgeAuthorizationResult<AuthorizedBridgeDevice> {
         validate_label(&request.label)?;
-        let signing_identity = self
-            .signing_identities
-            .load_or_create()
-            .map_err(|error| map_credential_failure("bridge.authorize.load_key", error))?;
-        let public_signing_key = signing_identity
-            .public_key()
-            .map_err(|error| map_credential_failure("bridge.authorize.public_key", error))?;
+        // 先确认本机钥匙可用，再给用户看设备码：批准完才发现存不了钥匙，这次批准就白费了。
+        let signing = self.signing_key()?;
         let assertion = self.oidc.authorize(prompt_sink).await.map_err(|error| {
             let kind = match error.kind() {
                 OidcFailureKind::DependencyUnavailable => {
@@ -145,9 +144,60 @@ impl BridgeAuthorizationService {
             };
             failure("bridge.authorize.oidc", kind)
         })?;
-        let assertion_digest = self.secrets.digest(assertion.expose());
+        self.register_and_store(
+            request,
+            signing,
+            BridgeDeviceAuthorization::OidcAssertion(assertion),
+        )
+        .await
+    }
+
+    /// 拿桌面端交来的一次性电脑授权注册这台电脑，不用设备码（`specs/desktop-sign-in/design.md`）。
+    ///
+    /// # Errors
+    ///
+    /// 授权用过、过期或被拒时返回 `InvalidIdentityAssertion`；其余同 [`Self::authorize`]。
+    pub async fn authorize_with_grant(
+        &self,
+        request: AuthorizeBridgeDevice,
+        grant: SecretValue,
+    ) -> BridgeAuthorizationResult<AuthorizedBridgeDevice> {
+        validate_label(&request.label)?;
+        let signing = self.signing_key()?;
+        self.register_and_store(
+            request,
+            signing,
+            BridgeDeviceAuthorization::ComputerGrant(grant),
+        )
+        .await
+    }
+
+    fn signing_key(
+        &self,
+    ) -> BridgeAuthorizationResult<(Arc<dyn DeviceSigningIdentity>, DevicePublicSigningKey)> {
+        let signing_identity = self
+            .signing_identities
+            .load_or_create()
+            .map_err(|error| map_credential_failure("bridge.authorize.load_key", error))?;
+        let public_signing_key = signing_identity
+            .public_key()
+            .map_err(|error| map_credential_failure("bridge.authorize.public_key", error))?;
+        Ok((signing_identity, public_signing_key))
+    }
+
+    /// 用这台设备的签名钥匙签下授权的摘要，向控制面注册，存好拿回来的凭据。
+    async fn register_and_store(
+        &self,
+        request: AuthorizeBridgeDevice,
+        (signing_identity, public_signing_key): (
+            Arc<dyn DeviceSigningIdentity>,
+            DevicePublicSigningKey,
+        ),
+        authorization: BridgeDeviceAuthorization,
+    ) -> BridgeAuthorizationResult<AuthorizedBridgeDevice> {
+        let authorization_digest = self.secrets.digest(authorization.secret().expose());
         let registration_message = canonical_device_registration_message(
-            &assertion_digest,
+            &authorization_digest,
             &request.label,
             request.platform,
             &public_signing_key,
@@ -158,7 +208,7 @@ impl BridgeAuthorizationService {
         let credentials = self
             .control_plane
             .register(RegisterBridgeDevice {
-                oidc_assertion: assertion,
+                authorization,
                 label: request.label,
                 platform: request.platform,
                 public_signing_key,

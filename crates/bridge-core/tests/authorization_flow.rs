@@ -15,9 +15,10 @@ use agent_room_bridge_core::{
     },
     ports::{
         BridgeCredentialFailure, BridgeCredentialFailureKind, BridgeCredentialResult,
-        BridgeCredentialState, ControlPlaneDeviceGateway, ControlPlaneDeviceResult,
-        DeviceCredentialVault, DeviceSigningIdentity, DeviceSigningIdentityStore,
-        RefreshBridgeDevice, RegisterBridgeDevice, StoredBridgeDeviceCredentials,
+        BridgeCredentialState, BridgeDeviceAuthorization, ControlPlaneDeviceGateway,
+        ControlPlaneDeviceResult, DeviceCredentialVault, DeviceSigningIdentity,
+        DeviceSigningIdentityStore, RefreshBridgeDevice, RegisterBridgeDevice,
+        StoredBridgeDeviceCredentials,
     },
 };
 use agent_room_domain::{
@@ -190,12 +191,56 @@ async fn 设备授权把_oidc_断言_设备属性和公钥绑定在同一持有�
         vec![expected_message]
     );
     assert_eq!(registrations.len(), 1);
-    assert_eq!(registrations[0].oidc_assertion.expose(), ASSERTION);
+    assert_eq!(
+        registrations[0].authorization,
+        BridgeDeviceAuthorization::OidcAssertion(SecretValue::new(ASSERTION).expect("断言有效"))
+    );
     assert!(registrations[0].import_display_name);
     assert!(registrations[0].import_locale);
     assert_eq!(stored.device_id, authorized.device_id);
     assert_eq!(stored.state, BridgeCredentialState::Ready);
     assert_eq!(stored.refresh_token.expose(), "bridge-refresh-token");
+}
+
+#[tokio::test]
+async fn 拿电脑授权注册时签的是授权的摘要_不弹设备码() {
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let control_plane = Arc::new(测试控制平面::default());
+    let vault = Arc::new(内存凭据库::default());
+    let service = service(messages.clone(), control_plane.clone(), vault.clone());
+
+    let authorized = service
+        .authorize_with_grant(
+            request(),
+            SecretValue::new("computer-grant").expect("测试授权有效"),
+        )
+        .await
+        .expect("拿电脑授权注册应成功");
+    let expected_message = canonical_device_registration_message(
+        &SecureSecretFactory.digest("computer-grant"),
+        "Windows 开发工作站",
+        DevicePlatform::Windows,
+        &DevicePublicSigningKey::new(vec![9; 32]).expect("测试公钥有效"),
+    );
+
+    assert_eq!(
+        *messages.lock().expect("签名消息锁未中毒"),
+        vec![expected_message]
+    );
+    let registrations = control_plane.registrations.lock().expect("注册锁未中毒");
+    assert_eq!(
+        registrations[0].authorization,
+        BridgeDeviceAuthorization::ComputerGrant(
+            SecretValue::new("computer-grant").expect("测试授权有效")
+        )
+    );
+    let stored = vault
+        .value
+        .lock()
+        .expect("凭据锁未中毒")
+        .clone()
+        .expect("设备凭据必须写入安全存储");
+    assert_eq!(stored.device_id, authorized.device_id);
 }
 
 /// 记下交过来的主人。

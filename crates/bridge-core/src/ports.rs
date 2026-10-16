@@ -102,9 +102,25 @@ pub trait DeviceCredentialVault: Send + Sync {
     fn clear(&self) -> BridgeCredentialResult<()>;
 }
 
+/// 注册这台设备凭的是什么：批准设备码换来的 ID Token，或者桌面端交来的一次性电脑授权
+/// （`specs/desktop-sign-in/design.md`）。两样都放在 `Authorization: Bearer` 里，持有证明签它的摘要。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgeDeviceAuthorization {
+    OidcAssertion(SecretValue),
+    ComputerGrant(SecretValue),
+}
+
+impl BridgeDeviceAuthorization {
+    pub const fn secret(&self) -> &SecretValue {
+        match self {
+            Self::OidcAssertion(secret) | Self::ComputerGrant(secret) => secret,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterBridgeDevice {
-    pub oidc_assertion: SecretValue,
+    pub authorization: BridgeDeviceAuthorization,
     pub label: String,
     pub platform: DevicePlatform,
     pub public_signing_key: DevicePublicSigningKey,

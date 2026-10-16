@@ -24,8 +24,9 @@ use agent_room_bridge_core::{
         ControlPlaneOnboardingResult,
     },
     ports::{
-        ControlPlaneDeviceFailure, ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway,
-        ControlPlaneDeviceResult, RefreshBridgeDevice, RegisterBridgeDevice,
+        BridgeDeviceAuthorization, ControlPlaneDeviceFailure, ControlPlaneDeviceFailureKind,
+        ControlPlaneDeviceGateway, ControlPlaneDeviceResult, RefreshBridgeDevice,
+        RegisterBridgeDevice,
     },
     session::{
         AuthorizedControlPlaneRequest, BridgeSessionFailure, BridgeSessionFailureKind,
@@ -70,6 +71,7 @@ pub use rooms::ReqwestControlPlaneRoomDirectoryGateway;
 pub use targeted_handoffs::ReqwestTargetedHandoffQueueGateway;
 
 const REGISTER_DEVICE_PATH: &str = "auth/devices/register";
+const REGISTER_DEVICE_WITH_GRANT_PATH: &str = "auth/devices/register-with-grant";
 const REFRESH_DEVICE_PATH: &str = "auth/devices/refresh";
 const DEVICE_DEFAULT_AGENT_PATH: &str = "/onboarding/device/default-agent";
 const PUBLIC_LOBBIES_PATH: &str = "/lobbies/public";
@@ -88,6 +90,7 @@ pub struct ControlPlaneHttpConfig {
 pub struct ReqwestControlPlaneDeviceGateway {
     client: Client,
     register_url: Url,
+    register_with_grant_url: Url,
     refresh_url: Url,
 }
 
@@ -122,12 +125,16 @@ impl ReqwestControlPlaneDeviceGateway {
         let register_url = base_url
             .join(REGISTER_DEVICE_PATH)
             .map_err(|_| ControlPlaneHttpConfigurationError::InvalidBaseUrl)?;
+        let register_with_grant_url = base_url
+            .join(REGISTER_DEVICE_WITH_GRANT_PATH)
+            .map_err(|_| ControlPlaneHttpConfigurationError::InvalidBaseUrl)?;
         let refresh_url = base_url
             .join(REFRESH_DEVICE_PATH)
             .map_err(|_| ControlPlaneHttpConfigurationError::InvalidBaseUrl)?;
         Ok(Self {
             client,
             register_url,
+            register_with_grant_url,
             refresh_url,
         })
     }
@@ -144,10 +151,15 @@ impl ReqwestControlPlaneDeviceGateway {
             import_display_name: request.import_display_name,
             import_locale: request.import_locale,
         };
+        // 设备码换来的 ID Token 和桌面端交来的电脑授权走两个地址，请求体一样。
+        let url = match &request.authorization {
+            BridgeDeviceAuthorization::OidcAssertion(_) => &self.register_url,
+            BridgeDeviceAuthorization::ComputerGrant(_) => &self.register_with_grant_url,
+        };
         let response = self
             .client
-            .post(self.register_url.clone())
-            .bearer_auth(request.oidc_assertion.expose())
+            .post(url.clone())
+            .bearer_auth(request.authorization.secret().expose())
             .json(&body)
             .send()
             .await
@@ -1147,8 +1159,8 @@ mod tests {
         },
         onboarding::{ControlPlaneOnboardingGateway, HostAgentRegistrationGateway},
         ports::{
-            ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway, RefreshBridgeDevice,
-            RegisterBridgeDevice,
+            BridgeDeviceAuthorization, ControlPlaneDeviceFailureKind, ControlPlaneDeviceGateway,
+            RefreshBridgeDevice, RegisterBridgeDevice,
         },
         session::{
             AuthorizedControlPlaneRequest, BridgeSessionResult, ControlPlaneRequestAuthorizer,
@@ -1255,7 +1267,7 @@ mod tests {
 
         let credentials = gateway
             .register(RegisterBridgeDevice {
-                oidc_assertion: secret("oidc-assertion"),
+                authorization: BridgeDeviceAuthorization::OidcAssertion(secret("oidc-assertion")),
                 label: "Windows 设备".to_owned(),
                 platform: DevicePlatform::Windows,
                 public_signing_key: DevicePublicSigningKey::new(vec![7; 32]).expect("测试公钥有效"),
@@ -1269,6 +1281,35 @@ mod tests {
         assert_eq!(credentials.device.device_id, device_id());
         assert_eq!(credentials.device.account.display_name, "测试用户");
         assert_eq!(credentials.access_token.expose(), "access-token");
+    }
+
+    #[tokio::test]
+    async fn 拿电脑授权注册走另一个地址_请求体一样() {
+        let app = Router::new().route(
+            "/auth/devices/register-with-grant",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                let valid = headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    == Some("Bearer computer-grant")
+                    && body["label"] == "Windows 设备"
+                    && body["possessionSignature"].is_string();
+                if valid {
+                    (StatusCode::OK, Json(valid_credentials_response())).into_response()
+                } else {
+                    StatusCode::BAD_REQUEST.into_response()
+                }
+            }),
+        );
+        let credentials = gateway(spawn_server(app).await)
+            .register(RegisterBridgeDevice {
+                authorization: BridgeDeviceAuthorization::ComputerGrant(secret("computer-grant")),
+                ..register_request()
+            })
+            .await
+            .expect("拿电脑授权注册应成功");
+
+        assert_eq!(credentials.device.device_id, device_id());
     }
 
     #[tokio::test]
@@ -1784,7 +1825,7 @@ mod tests {
 
     fn register_request() -> RegisterBridgeDevice {
         RegisterBridgeDevice {
-            oidc_assertion: secret("oidc-assertion"),
+            authorization: BridgeDeviceAuthorization::OidcAssertion(secret("oidc-assertion")),
             label: "Windows 设备".to_owned(),
             platform: DevicePlatform::Windows,
             public_signing_key: DevicePublicSigningKey::new(vec![7; 32]).expect("测试公钥有效"),
