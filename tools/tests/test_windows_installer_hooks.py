@@ -54,6 +54,7 @@ from tools.windows_installer_hooks import (
     running_images,
     run_while_held,
     scenario_problems,
+    sidecar_relaunch_problem,
     uninstall_command,
     verify_hooks_cover_runtime,
     webview_lockfile,
@@ -65,6 +66,8 @@ WORKFLOW = ROOT / ".github" / "workflows" / "windows-installer-hooks.yml"
 DESKTOP = ROOT / "apps" / "desktop"
 DESKTOP_MARKER_SOURCE = DESKTOP / "src-tauri" / "src" / "installer_marker.rs"
 PARKED_DESKTOP = f"{PRODUCT_IMAGES.desktop}{PARKED_SUFFIX}"
+PARKED_MCP = f"{PRODUCT_IMAGES.mcp}{PARKED_SUFFIX}"
+PARKED_CLI = f"{PRODUCT_IMAGES.cli}{PARKED_SUFFIX}"
 TOOLCHAIN = Toolchain(Path("nsis") / "makensis.exe", Path("plugins"), Path("template"))
 PREVIOUS = {name: f"previous {name}" for name in PRODUCT_IMAGES.names()}
 CURRENT = {name: f"current {name}" for name in PRODUCT_IMAGES.names()}
@@ -221,13 +224,34 @@ class HarnessMirrorsTemplateTests(unittest.TestCase):
             body = body[: body.index("!macroend")]
             with self.subTest(hook=hook):
                 self.assertIn('Delete "$INSTDIR\\${AGENT_ROOM_PARKED_DESKTOP}"', body)
+                self.assertIn('Delete "$INSTDIR\\${AGENT_ROOM_PARKED_MCP}"', body)
+                self.assertIn('Delete "$INSTDIR\\${AGENT_ROOM_PARKED_CLI}"', body)
                 self.assertIn("AGENT_ROOM_RELEASE_INSTALLER_MARKER", body)
         for callback in ("Function .onInstFailed", "Function un.onUninstFailed"):
             body = source[source.index(callback) :]
             body = body[: body.index("FunctionEnd")]
             with self.subTest(callback=callback):
                 self.assertIn("AGENT_ROOM_RESTORE_DESKTOP", body)
+                self.assertIn("AGENT_ROOM_RESTORE_SIDECARS", body)
                 self.assertIn("AGENT_ROOM_RELEASE_INSTALLER_MARKER", body)
+
+    def test_hooks_park_mcp_and_cli_so_a_looping_agent_cannot_relaunch_the_old_ones(self) -> None:
+        source = HOOKS.read_text(encoding="utf-8")
+        stop = source[source.index("!macro AGENT_ROOM_STOP_RUNTIME") :]
+        stop = stop[: stop.index("!macroend")]
+        abort = source[source.index("!macro AGENT_ROOM_ABORT_STILL_RUNNING") :]
+        abort = abort[: abort.index("!macroend")]
+
+        self.assertIn(f'!define AGENT_ROOM_PARKED_MCP "{PARKED_MCP}"', source)
+        self.assertIn(f'!define AGENT_ROOM_PARKED_CLI "{PARKED_CLI}"', source)
+        # 结束进程之前先试一次；等待里四个进程都不在时再挪一次（之前挪不开的），然后才查程序能不能写。
+        self.assertLess(stop.index("AGENT_ROOM_PARK_SIDECARS"), stop.index("taskkill.exe"))
+        waiting = stop[stop.index("${If} $2 = 0") :]
+        self.assertLess(waiting.index("AGENT_ROOM_PARK_SIDECARS"), waiting.index("AGENT_ROOM_MARK_IF_LOCKED"))
+        self.assertIn('AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\\${AGENT_ROOM_PARKED_MCP}"', stop)
+        self.assertIn('AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\\${AGENT_ROOM_PARKED_CLI}"', stop)
+        # 中止时和桌面端一起挪回原处。
+        self.assertIn("AGENT_ROOM_RESTORE_SIDECARS", abort)
 
     def test_hooks_stop_exactly_the_four_runtime_programs(self) -> None:
         source = HOOKS.read_text(encoding="utf-8")
@@ -592,12 +616,30 @@ class HoldTests(unittest.TestCase):
 class MidwayTests(unittest.TestCase):
     def test_relaunch_is_only_checked_once_the_desktop_has_been_moved_aside(self) -> None:
         with patch("tools.windows_installer_hooks.marker_problem", return_value=None), patch(
-            "tools.windows_installer_hooks.desktop_relaunch_problem", return_value="还能启动"
-        ) as relaunch:
+            "tools.windows_installer_hooks.sidecar_relaunch_problem", return_value=None
+        ), patch("tools.windows_installer_hooks.desktop_relaunch_problem", return_value="还能启动") as relaunch:
             self.assertEqual(midway_problems(Path("install"), PRODUCT_IMAGES, desktop_parked=False), [])
             relaunch.assert_not_called()
             self.assertEqual(midway_problems(Path("install"), PRODUCT_IMAGES, desktop_parked=True), ["还能启动"])
             relaunch.assert_called_once_with(Path("install") / PRODUCT_IMAGES.desktop)
+
+
+    def test_mcp_and_cli_must_not_start_while_the_runtime_is_stopped(self) -> None:
+        with patch("tools.windows_installer_hooks.marker_problem", return_value=None), patch(
+            "tools.windows_installer_hooks.sidecar_relaunch_problem", side_effect=lambda program: f"{program.name} 还能启动"
+        ) as relaunch:
+            self.assertEqual(
+                midway_problems(Path("install"), PRODUCT_IMAGES, desktop_parked=False),
+                [f"{PRODUCT_IMAGES.mcp} 还能启动", f"{PRODUCT_IMAGES.cli} 还能启动"],
+            )
+        self.assertEqual(
+            [call.args[0] for call in relaunch.call_args_list],
+            [Path("install") / PRODUCT_IMAGES.mcp, Path("install") / PRODUCT_IMAGES.cli],
+        )
+
+    def test_a_missing_program_cannot_be_relaunched(self) -> None:
+        with patch("tools.windows_installer_hooks.subprocess.Popen", side_effect=FileNotFoundError):
+            self.assertIsNone(sidecar_relaunch_problem(Path("install") / PRODUCT_IMAGES.cli))
 
 
 class WorkflowTests(unittest.TestCase):

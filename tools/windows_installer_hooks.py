@@ -651,15 +651,35 @@ class WebViewDataHold:
         self.release()
 
 
+def sidecar_relaunch_problem(program: Path) -> str | None:
+    """像宿主那样从安装目录再调一次 MCP 或命令行。钩子停 Agent Room 期间它们已被挪开，这一步必须失败：
+    不然一遍遍调命令行的 Agent 会在换文件的当口把旧版拉起来，占住程序，新版写不进去。
+    """
+
+    try:
+        launched = subprocess.Popen(
+            (str(program),),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return None
+    launched.kill()
+    launched.wait(timeout=30)
+    return f"钩子停 Agent Room 期间，{program.name} 还能从安装目录启动，一遍遍调它的 Agent 会占住旧版。"
+
+
 def midway_problems(directory: Path, images: RuntimeImages, *, desktop_parked: bool) -> list[str]:
     """钩子还在等 Agent Room 退干净时，从外面看到的问题。
 
-    desktop_parked 为真时，桌面端程序应已被挪开：从安装目录启动它必须失败。
+    MCP 和命令行这时都应已被挪开，从安装目录启动它们必须失败。desktop_parked 为真时，桌面端程序也应已被挪开。
     """
 
     found = [marker_problem(directory / INSTALLER_MARKER)]
     if desktop_parked:
         found.append(desktop_relaunch_problem(directory / images.desktop))
+    found += [sidecar_relaunch_problem(directory / image) for image in (images.mcp, images.cli)]
     return [problem for problem in found if problem is not None]
 
 
