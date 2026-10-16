@@ -1005,8 +1005,25 @@ async fn establish_agent_online(
             recover_matrix_identity(runtime).await?;
             establish_agent_online_once(runtime).await
         }
+        Err(failure) if session_card_forbidden(failure) => {
+            tracing::warn!("名片写不进房间，再经控制面进一次房间、补上发言级别后重试");
+            establish_agent_online_once(runtime).await
+        }
         result => result,
     }
+}
+
+/// 名片写不进会话的那个房间，Matrix 说没有权限。多半是控制面给的发言级别被同时进来的另一个
+/// Agent 盖掉了（2026-10-16 CIG 房间，控制面那边已经按房间排队改权限）：再经控制面进一次房间，
+/// 房间还让它进就会把级别补上。只再试一次，补了还写不进就照旧报错。
+fn session_card_forbidden(failure: AgentOnlineFailure) -> bool {
+    matches!(
+        failure,
+        AgentOnlineFailure::Status(status)
+            if status
+                .matrix_failure()
+                .is_some_and(|matrix| matrix.kind() == MatrixFailureKind::Forbidden)
+    )
 }
 
 async fn recover_matrix_identity(runtime: &AgentSessionRuntime) -> Result<(), AgentOnlineFailure> {
@@ -2079,7 +2096,7 @@ async fn maintain_agent_session(
             };
             match sync {
                 Ok(()) => backoff.record_connected(),
-                Err(failure) if is_reconnectable_agent_online_failure(failure) => {
+                Err(failure) if reconnect_after_sync_failure(failure) => {
                     status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
                     runtime.state.clear();
                     let delay = retry_delay_for_agent_failure(failure, &mut backoff);
@@ -2262,6 +2279,12 @@ fn is_reconnectable_agent_runtime_failure(failure: AgentRuntimeSessionFailure) -
             | AgentRuntimeSessionFailureKind::RegistrationOutcomeUnknown
             | AgentRuntimeSessionFailureKind::SecureStorageUnavailable
     )
+}
+
+/// 上线以后同步失败时要不要整个重连。名片晚一点才写（服务器开没开在线状态要探两次）时，
+/// 没有权限写也在这里：整个重连一次，重连会再经控制面进房间、补上发言级别。
+fn reconnect_after_sync_failure(failure: AgentOnlineFailure) -> bool {
+    is_reconnectable_agent_online_failure(failure) || session_card_forbidden(failure)
 }
 
 fn is_reconnectable_agent_online_failure(failure: AgentOnlineFailure) -> bool {
@@ -3254,8 +3277,8 @@ mod tests {
     use super::{
         AgentOnlineFailure, BridgeRuntimeError, BridgeRuntimeStatus, BridgeStatusReader,
         SupervisorRelease, TargetedHandoffPoller, TargetedHandoffPollingPolicy,
-        is_reconnectable_agent_online_failure, spawn_targeted_handoff_worker_with_policy,
-        supervisor_released, verification_destination,
+        is_reconnectable_agent_online_failure, session_card_forbidden,
+        spawn_targeted_handoff_worker_with_policy, supervisor_released, verification_destination,
     };
 
     #[test]
@@ -3320,6 +3343,26 @@ mod tests {
             "bridge.matrix_restore_dependency_unavailable"
         );
         assert_eq!(sync.code(), "bridge.matrix_sync_dependency_unavailable");
+    }
+
+    #[test]
+    fn 名片因为没有权限写不进去时再进一次房间_别的写不进去不算() {
+        use agent_room_bridge_core::status::StatusPublicationFailure;
+
+        let card = |kind| {
+            AgentOnlineFailure::Status(StatusPublicationFailure::matrix(MatrixFailure::new(
+                MatrixOperation::SendStateEvent,
+                kind,
+            )))
+        };
+        assert!(session_card_forbidden(card(MatrixFailureKind::Forbidden)));
+        assert!(!session_card_forbidden(card(
+            MatrixFailureKind::InvalidResponse
+        )));
+        // 加入那一步被拒是房间不让它进，再进一次也一样。
+        assert!(!session_card_forbidden(AgentOnlineFailure::Matrix(
+            MatrixFailure::new(MatrixOperation::Join, MatrixFailureKind::Forbidden,)
+        )));
     }
 
     #[test]

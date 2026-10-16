@@ -13,10 +13,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     MatrixApplicationServiceProvisioner, decode_matrix_error, invalid_response, map_matrix_error,
     read_limited_body,
-    rooms::{
-        endpoint_with_segments, expect_empty_success, read_power_levels,
-        write_power_levels_if_changed,
-    },
+    rooms::{endpoint_with_segments, expect_empty_success, update_power_levels},
 };
 
 const MODERATION_NOTICE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.moderation.notice.v1";
@@ -127,16 +124,11 @@ async fn set_speaking(
         )
         .await;
     }
-    let operation = MatrixOperation::UpdatePowerLevels;
-    let original = read_power_levels(provisioner, &target.matrix_room_id, operation).await?;
-    let mut content = original.clone();
-    set_public_speaker(&mut content, user_id, allowed, operation)?;
-    write_power_levels_if_changed(
+    update_power_levels(
         provisioner,
         &target.matrix_room_id,
-        &original,
-        &content,
-        operation,
+        MatrixOperation::UpdatePowerLevels,
+        |content, operation| set_public_speaker(content, user_id, allowed, operation),
     )
     .await
 }
