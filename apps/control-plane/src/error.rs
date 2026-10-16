@@ -18,6 +18,7 @@ use agent_room_application::{
         BeginContentUploadFailure, BindContentEventFailure, CompleteContentUploadFailure,
         IssueContentReadTicketFailure, OpenContentFailure, RedactContentFailure,
     },
+    desktop_matrix_sessions::DesktopMatrixSessionFailure,
     devices::{DeviceAuthorizationFailure, DeviceAuthorizationFailureKind},
     direct_sessions::{DirectSessionFailure, DirectSessionFailureKind},
     handoffs::{
@@ -821,6 +822,29 @@ impl ApiError {
                 "account.encryption_unavailable",
                 ErrorCategory::DependencyUnavailable,
                 "暂时没法保管或取回签名钥匙，请稍后再试。",
+                correlation_id,
+            ),
+        }
+    }
+
+    pub(crate) fn desktop_matrix_session(
+        failure: DesktopMatrixSessionFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        match failure {
+            DesktopMatrixSessionFailure::RateLimited { retry_at } => Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "matrix_session.rate_limited",
+                ErrorCategory::Transient,
+                "一小时里登录聊天的次数太多了，请按 Retry-After 等一会儿再试。",
+                correlation_id,
+            )
+            .retry_after_seconds(seconds_until(retry_at)),
+            DesktopMatrixSessionFailure::Unavailable => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "matrix_session.unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "聊天服务暂时登录不上，请稍后再试。",
                 correlation_id,
             ),
         }

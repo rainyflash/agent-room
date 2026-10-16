@@ -496,10 +496,17 @@ oidc_providers:
     jwks_uri: {_yaml(public.identity_origin + "/realms/agent-room/protocol/openid-connect/certs")}
     scopes: ["openid", "profile", "email"]
     enable_registration: true
+    # 第一次用就在桌面端的人，账户由控制面以应用服务身份注册（specs/desktop-sign-in/design.md），
+    # 之后在网页上走 SSO 时映射器算出同一个用户名，要认下这个账户。
+    allow_existing_users: true
     user_mapping_provider:
       module: "agent_room_oidc_mapping.AgentRoomOidcMappingProvider"
       config:
         issuer: {_yaml(public.identity_origin + "/realms/agent-room")}
+# 网页登录聊天时不停在 Synapse 的“继续登录你的账户”确认页。带结尾的 /，只放行这个站点下的地址。
+sso:
+  client_whitelist:
+    - {_yaml(public.app_origin + "/")}
 rc_login:
   address:
     per_second: 5

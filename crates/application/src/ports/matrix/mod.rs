@@ -94,6 +94,17 @@ pub trait MatrixCrossSigningResetGateway: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
+/// 替这个本地的人登录 Matrix：桌面端的聊天登录由控制面发，不再走 Synapse 的 SSO
+/// （`specs/desktop-sign-in/design.md`）。还没有账户时先注册、写上显示名，再以应用服务的身份
+/// 登录出一台带刷新令牌的新设备。实现不得替 Agent 的用户或别的服务器的用户登录。
+pub trait MatrixHumanSessionIssuer: Send + Sync {
+    fn issue_human_session<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+        display_name: &'a str,
+    ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
+}
+
 /// 新的签名公钥：Matrix `keys/device_signing/upload` 的正文，不带交互认证。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixCrossSigningKeys(serde_json::Map<String, serde_json::Value>);

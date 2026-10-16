@@ -42,6 +42,8 @@ const TEST_SYNC_TIMEOUT_MILLIS: u64 = 100;
 mod agent_room_leave;
 #[path = "real_synapse/cross_signing_upload.rs"]
 mod cross_signing_upload;
+#[path = "real_synapse/human_session.rs"]
+mod human_session;
 #[path = "real_synapse/moderation_expiry.rs"]
 mod moderation_expiry;
 #[path = "real_synapse/owner_identity.rs"]

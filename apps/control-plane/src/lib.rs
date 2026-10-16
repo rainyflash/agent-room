@@ -39,6 +39,7 @@ use agent_room_application::{
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
     automation::{AutomationDependencies, AutomationService},
+    desktop_matrix_sessions::DesktopMatrixSessionService,
     devices::{
         DeviceAuthorizationDependencies, DeviceAuthorizationPolicy, DeviceAuthorizationService,
     },
@@ -479,6 +480,7 @@ fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDepen
         },
     ))
     .merge(account_encryption_routes(config, dependencies))
+    .merge(desktop_matrix_session_routes(config, dependencies))
 }
 
 fn build_authentication_runtime(
@@ -635,6 +637,24 @@ fn account_encryption_routes(
     features::account_encryption::router(
         features::account_encryption::AccountEncryptionHttpState::new(
             service,
+            dependencies.authentication.clone(),
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+        ),
+    )
+}
+
+/// 桌面端的聊天登录由控制面以应用服务的身份替人发（`specs/desktop-sign-in/design.md`）。
+fn desktop_matrix_session_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Router {
+    features::desktop_matrix_session::router(
+        features::desktop_matrix_session::DesktopMatrixSessionHttpState::new(
+            Arc::new(DesktopMatrixSessionService::new(
+                dependencies.matrix_identities.clone(),
+                dependencies.system_runtime.clone(),
+            )),
             dependencies.authentication.clone(),
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origins,

@@ -666,6 +666,11 @@ class ProductionRenderingTests(unittest.TestCase):
                 homeserver,
             )
         self.assertIn("retention:\n  enabled: true", homeserver)
+        # 桌面端替人注册的账户，网页走 SSO 时要认下；网页登录聊天不停在确认页。
+        self.assertIn("    allow_existing_users: true\n", homeserver)
+        self.assertIn(
+            f"sso:\n  client_whitelist:\n    - \"{self.config.public.app_origin}/\"\n", homeserver
+        )
         self.assertIn("max_lifetime: 30d", homeserver)
         self.assertFalse(realm["registrationAllowed"])
         self.assertTrue(realm["verifyEmail"])

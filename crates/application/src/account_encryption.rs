@@ -1,16 +1,13 @@
 //! 人的设备自动签名（ADR 0011，`specs/device-signing/design.md`）：控制面替账户保管密钥存储钥匙，
 //! 只交给本人的登录会话；设备要重建签名身份时，由控制面以应用服务的身份代传新的签名公钥。
 
-use std::{
-    collections::HashMap,
-    fmt,
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::{fmt, sync::Arc};
 
-use agent_room_domain::{ids::PrincipalId, time::UtcMillis};
+use agent_room_domain::time::UtcMillis;
 
 use crate::{
     authentication::AuthenticatedPrincipal,
+    hourly_limit::HourlyLimit,
     ports::{
         AccountEncryptionKeyRepository, AccountEncryptionKeySealer, Clock, MatrixCrossSigningKeys,
         MatrixCrossSigningResetGateway, MatrixUserId, StoredEncryptionKey,
@@ -23,7 +20,6 @@ pub const ENCRYPTION_KEY_BYTES: usize = 32;
 pub const ENCRYPTION_KEY_ID_BYTES: usize = 255;
 /// 一小时里最多重建几次签名身份：两台设备来回抢、客户端出了循环时挡一挡。
 pub const RESETS_PER_HOUR: usize = 3;
-const HOUR_MILLIS: i64 = 3_600_000;
 
 /// 钥匙的明文，丢掉时清零；调试输出里不出现内容。
 pub struct EncryptionKeyBytes(Vec<u8>);
@@ -86,8 +82,7 @@ pub struct AccountEncryptionService {
     sealer: Arc<dyn AccountEncryptionKeySealer>,
     matrix: Arc<dyn MatrixCrossSigningResetGateway>,
     clock: Arc<dyn Clock>,
-    /// 每个主体最近一小时的重建时刻。只记在进程里：控制面只有一个实例，重启后从头计也无妨。
-    resets: Mutex<HashMap<PrincipalId, Vec<UtcMillis>>>,
+    resets: HourlyLimit,
 }
 
 impl AccountEncryptionService {
@@ -97,7 +92,7 @@ impl AccountEncryptionService {
             sealer: dependencies.sealer,
             matrix: dependencies.matrix,
             clock: dependencies.clock,
-            resets: Mutex::new(HashMap::new()),
+            resets: HourlyLimit::new(RESETS_PER_HOUR),
         }
     }
 
@@ -176,30 +171,15 @@ impl AccountEncryptionService {
             .map_err(|_| AccountEncryptionFailure::Unavailable)?;
         let keys = MatrixCrossSigningKeys::new(body, &user)
             .map_err(|_| AccountEncryptionFailure::InvalidCrossSigningKeys)?;
-        self.take_reset(actor.principal_id)?;
+        self.resets
+            .take(actor.principal_id, self.clock.now())
+            .map_err(|reached| AccountEncryptionFailure::RateLimited {
+                retry_at: reached.retry_at,
+            })?;
         self.matrix
             .replace_cross_signing_keys(&user, &keys)
             .await
             .map_err(|_| AccountEncryptionFailure::Unavailable)
-    }
-
-    fn take_reset(&self, principal: PrincipalId) -> Result<(), AccountEncryptionFailure> {
-        let now = self.clock.now();
-        let mut resets = self.resets.lock().unwrap_or_else(PoisonError::into_inner);
-        let recent = resets.entry(principal).or_default();
-        recent.retain(|at| now.value().saturating_sub(at.value()) < HOUR_MILLIS);
-        if recent.len() >= RESETS_PER_HOUR {
-            let oldest = recent
-                .iter()
-                .map(|at| at.value())
-                .min()
-                .unwrap_or(now.value());
-            let retry_at = UtcMillis::new(oldest.saturating_add(HOUR_MILLIS))
-                .map_err(|_| AccountEncryptionFailure::Unavailable)?;
-            return Err(AccountEncryptionFailure::RateLimited { retry_at });
-        }
-        recent.push(now);
-        Ok(())
     }
 }
 

@@ -9,6 +9,7 @@ pub mod agents;
 pub mod authentication;
 pub mod automation;
 pub mod content;
+pub mod desktop_matrix_sessions;
 pub mod devices;
 pub mod direct_sessions;
 pub mod handoffs;
@@ -26,5 +27,6 @@ pub mod room_people;
 pub mod rooms;
 
 pub mod agent_roster;
+mod hourly_limit;
 mod matrix_device_cleanup;
 mod principal_projection;

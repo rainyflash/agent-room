@@ -10,6 +10,8 @@ pub enum MatrixOperation {
     RevokeAgentDeviceSession,
     DeactivateAccount,
     ReplaceCrossSigningKeys,
+    /// 替人登录 Matrix（桌面端的聊天登录）。
+    IssueHumanSession,
     Login,
     RestoreSession,
     Sync,
@@ -51,6 +53,7 @@ impl MatrixOperation {
                 | Self::RevokeAgentDeviceSession
                 | Self::DeactivateAccount
                 | Self::ReplaceCrossSigningKeys
+                | Self::IssueHumanSession
                 | Self::Login
                 | Self::RestoreSession
                 | Self::Sync

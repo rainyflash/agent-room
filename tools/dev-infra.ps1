@@ -417,10 +417,15 @@ oidc_providers:
     skip_verification: true
     scopes: ["openid", "profile", "email"]
     enable_registration: true
+    allow_existing_users: true
     user_mapping_provider:
       module: "agent_room_oidc_mapping.AgentRoomOidcMappingProvider"
       config:
         issuer: "http://127.0.0.1:18080/realms/agent-room"
+sso:
+  client_whitelist:
+    - "https://app.agent-room.localhost:18443/"
+    - "http://localhost:14173/"
 rc_login:
   address:
     per_second: 100

@@ -712,6 +712,36 @@ pub(crate) fn session_secret(jar: &CookieJar) -> Result<SecretValue, MissingSess
         .ok_or(MissingSession)
 }
 
+/// 只认桌面登录（原生层代发时带的那个 Cookie）：聊天登录和电脑授权只发给桌面端
+/// （`specs/desktop-sign-in/design.md`）。别的回 403 而不是 401：桌面端见了 401 会删掉本机的登录。
+pub(crate) async fn authenticate_desktop_session(
+    authentication: &dyn AuthenticationUseCases,
+    jar: &CookieJar,
+    correlation_id: CorrelationId,
+) -> Result<AuthenticatedPrincipal, Response> {
+    let secret = jar
+        .get(DESKTOP_SESSION_COOKIE)
+        .and_then(|cookie| SecretValue::new(cookie.value()).ok())
+        .ok_or_else(|| {
+            no_store(
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "authentication.desktop_session_required",
+                    agent_room_protocol_conformance::generated::ErrorCategory::Authorization,
+                    "只有桌面应用的登录能这样做。",
+                    correlation_id,
+                )
+                .into_response(),
+            )
+        })?;
+    authentication
+        .authenticate(&secret, AuthenticationRequirement::ActiveSession)
+        .await
+        .map_err(|failure| {
+            no_store(ApiError::authentication(failure, correlation_id).into_response())
+        })
+}
+
 pub(crate) async fn authenticate_session(
     authentication: &dyn AuthenticationUseCases,
     jar: &CookieJar,
