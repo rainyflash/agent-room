@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { openDirectConversation } from './support/workspace-navigation';
 
 for (const width of [1440, 390]) {
   test(`人物发言、未读和对话上下文：${String(width)}`, async ({ page }, testInfo) => {
@@ -82,8 +83,7 @@ test('私聊消息不会出现在房间气泡或未读中，私聊期间仍接�
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/e2e/fixtures/lobby-scene.html');
-  await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
-  await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await openDirectConversation(page, 'Build Agent 002');
   await page.evaluate(() =>
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({
       agentIndex: 1,

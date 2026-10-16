@@ -24,42 +24,7 @@
   min-width: 0;
   min-height: 0;
 }
-.workspace-navigation {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  padding: 28px 16px 14px;
-  background: var(--ar-surface);
-  color: var(--color-ink);
-}
-.workspace-navigation a {
-  text-decoration: none;
-  color: inherit;
-}
-.workspace-navigation__brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 2px 8px 28px;
-}
-.workspace-navigation__brand img {
-  width: 31px;
-  height: 31px;
-}
-.workspace-navigation__brand > span {
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: 0;
-  font-family: var(--font-display);
-}
-.workspace-navigation__rooms {
-  display: grid;
-  gap: 4px;
-}
-.workspace-navigation__rooms > .room-actions {
-  padding: 8px 4px 0;
-}
-.workspace-navigation__label {
+.workspace-direct__label {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -69,44 +34,17 @@
   font-weight: 580;
   letter-spacing: 0;
 }
-.workspace-navigation__label > svg {
+.workspace-direct__label > svg {
   width: 13px;
   height: 13px;
 }
-.workspace-navigation__room {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 12px;
-  border: var(--ar-outline-thin) solid transparent;
-  border-radius: 18px;
-  color: var(--color-ink);
-  background: transparent;
-  text-align: left;
-}
-.workspace-navigation__room[aria-pressed='true'] {
-  border-color: var(--ar-outline);
-  color: var(--color-ink);
-  background: var(--ar-warning-soft);
-}
-.workspace-navigation__room > svg {
-  width: 21px;
-  flex: 0 0 21px;
-}
-.workspace-navigation__room > strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 .workspace-direct {
-  flex: 1;
+  flex: 0 1 auto;
+  max-height: 40%;
   min-height: 80px;
   overflow-y: auto;
-  margin-top: 30px;
+  padding: 16px 12px 8px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
 }
 .workspace-direct__session {
   display: flex;
@@ -174,97 +112,6 @@
   color: var(--ar-muted);
   background: none;
   text-decoration: underline;
-}
-.workspace-navigation__footer {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 18px;
-}
-.workspace-navigation__link {
-  display: flex;
-  width: 100%;
-  min-height: 44px;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 14px;
-  color: var(--ar-muted);
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.workspace-navigation__link:hover {
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-}
-.workspace-navigation__link > svg {
-  width: 16px;
-  height: 16px;
-}
-/* 和顶栏一样的四个去处，竖着排。 */
-.workspace-navigation__app {
-  display: grid;
-  gap: 2px;
-}
-.workspace-navigation__app > a {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  gap: 9px;
-  padding: 8px;
-  border-radius: 14px;
-  color: var(--ar-muted);
-  font-size: 13px;
-}
-.workspace-navigation__app > a:hover {
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-}
-.workspace-navigation__app > a[aria-current='page'] {
-  color: var(--color-ink);
-  font-weight: 600;
-}
-.workspace-navigation__app svg {
-  width: 16px;
-  height: 16px;
-}
-.workspace-navigation__app small {
-  min-width: 20px;
-  margin-left: auto;
-  padding: 0 6px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
-  color: var(--color-ink);
-  background: var(--ar-coral);
-  font-size: 11px;
-  font-weight: 700;
-  text-align: center;
-}
-.workspace-navigation__account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0 0;
-  padding: 12px 8px 2px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
-  color: var(--ar-muted);
-  font-size: 13px;
-}
-.workspace-navigation__account > svg {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-}
-.workspace-navigation__account > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .workspace-header {
   display: flex;
@@ -342,12 +189,21 @@
 .workspace-header__members:hover {
   background: var(--ar-surface-muted);
 }
-.workspace-header__menu {
-  display: none;
+.workspace-header__back,
+.workspace-header__settings {
+  display: grid;
+  place-items: center;
   padding: 7px;
   border: 0;
   background: none;
   color: inherit;
+}
+/* 房间设置和在场的 Agent 挨着放在右边。 */
+.workspace-header__settings {
+  margin-left: auto;
+}
+.workspace-header__settings + .workspace-header__members {
+  margin-left: 0;
 }
 .workspace-view-tabs {
   display: flex;
@@ -623,22 +479,10 @@
   background: var(--ar-backdrop);
   backdrop-filter: blur(3px);
 }
-.workspace-drawer--navigation {
-  right: auto;
-  left: 0;
-  background: var(--ar-surface);
-  color: var(--color-ink);
-  border-left: 0;
-  border-right: var(--ar-outline-width) solid var(--ar-outline);
-  border-radius: 0 var(--ar-panel-radius) var(--ar-panel-radius) 0;
-}
 .workspace-drawer__close {
   position: absolute;
   top: 12px;
   right: 12px;
-}
-.workspace-drawer .workspace-navigation {
-  padding-top: 8px;
 }
 .workspace-direct-content {
   display: flex;
@@ -899,11 +743,8 @@
     gap: 10px;
     padding: 0 12px;
   }
-  .workspace-header__menu {
-    display: grid;
-    place-items: center;
-  }
-  .workspace-header__menu svg {
+  .workspace-header__back svg,
+  .workspace-header__settings svg {
     width: 21px;
     height: 21px;
   }
@@ -963,22 +804,6 @@
   }
   .lobby-workspace .direct-conversation__actions .ar-button {
     padding: 6px;
-  }
-}
-@media (max-height: 600px) {
-  .workspace-navigation {
-    padding-top: 16px;
-  }
-  .workspace-navigation__brand {
-    padding-bottom: 20px;
-  }
-  .workspace-navigation__footer {
-    gap: 0;
-    padding-top: 6px;
-  }
-  .workspace-navigation__account {
-    margin-top: 4px;
-    padding-top: 10px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

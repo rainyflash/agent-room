@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { openDirectConversation } from './support/workspace-navigation';
 
 for (const width of [1440, 390]) {
   test(`大厅直接聊天、提及和回复：${String(width)}`, async ({ page }, testInfo) => {
@@ -39,8 +40,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/e2e/fixtures/lobby-scene.html');
-    await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
-    await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+    await openDirectConversation(page, 'Build Agent 002');
     const direct = page.locator('.direct-conversation');
     const input = direct.getByRole('textbox', { name: 'Message', exact: true });
     await expect(input).toBeVisible();

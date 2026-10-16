@@ -50,8 +50,8 @@ export function AppNavigation({
   );
 }
 
-/** 四个去处，顶栏和房间菜单用同一份：收件箱带未读数，“设置”带提醒点。 */
-export function AppDestinationLinks({
+/** 顶栏的四个去处：收件箱带未读数，“设置”带提醒点。 */
+function AppDestinationLinks({
   active,
   className,
 }: {

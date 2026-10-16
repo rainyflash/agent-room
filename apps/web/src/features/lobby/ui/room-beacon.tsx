@@ -1,4 +1,5 @@
-import { Hash, Menu, UsersRound } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { ArrowLeft, Hash, Settings2, UsersRound } from 'lucide-react';
 import type { Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,10 +14,12 @@ export type RoomBeaconProps = {
   readonly membersButtonRef: Ref<HTMLButtonElement>;
   readonly roomName: string;
   readonly topic?: string;
-  readonly onOpenNavigation: () => void;
+  /** 没登录时没有房间设置。 */
+  readonly onOpenSettings: (() => void) | null;
   readonly onOpenMembers: () => void;
 };
 
+/** 房间页顶上：左上角回到房间列表，右边是房间设置和在场的 Agent。 */
 export function RoomBeacon({
   agentCount,
   privateRoom,
@@ -25,20 +28,20 @@ export function RoomBeacon({
   membersButtonRef,
   roomName,
   topic,
-  onOpenNavigation,
+  onOpenSettings,
   onOpenMembers,
 }: RoomBeaconProps) {
   const { t } = useTranslation();
   return (
     <header className="workspace-header">
-      <button
-        className="workspace-header__menu"
-        type="button"
-        aria-label={t('roomWorkspace.openNavigation')}
-        onClick={onOpenNavigation}
+      <Link
+        className="workspace-header__back"
+        to="/rooms"
+        aria-label={t('roomWorkspace.backToRooms')}
+        title={t('roomWorkspace.backToRooms')}
       >
-        <Menu aria-hidden="true" />
-      </button>
+        <ArrowLeft aria-hidden="true" />
+      </Link>
       <div className="workspace-header__symbol" aria-hidden="true">
         <Hash />
       </div>
@@ -64,6 +67,18 @@ export function RoomBeacon({
         <h1>{roomName}</h1>
       </div>
       {topic === undefined ? null : <p className="workspace-header__topic">{topic}</p>}
+      {onOpenSettings === null ? null : (
+        <button
+          type="button"
+          className="workspace-header__settings"
+          aria-haspopup="dialog"
+          aria-label={t('roomSettings.open')}
+          title={t('roomSettings.open')}
+          onClick={onOpenSettings}
+        >
+          <Settings2 aria-hidden="true" />
+        </button>
+      )}
       <button
         type="button"
         className="workspace-header__members"
