@@ -69,7 +69,8 @@
   box-shadow: none;
   background: transparent;
 }
-.lobby-game .workspace-header__menu {
+.lobby-game .workspace-header__back,
+.lobby-game .workspace-header__settings {
   display: grid;
   place-items: center;
   width: 44px;
@@ -82,7 +83,8 @@
   box-shadow: var(--ar-press-small);
   color: var(--color-ink);
 }
-.lobby-game .workspace-header__menu:active {
+.lobby-game .workspace-header__back:active,
+.lobby-game .workspace-header__settings:active {
   transform: translateY(2px);
   box-shadow: 0 1px 0 var(--ar-outline);
 }

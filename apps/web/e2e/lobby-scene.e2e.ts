@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { openDirectConversation } from './support/workspace-navigation';
 import { expectCompleteRosterPages } from './support/roster-pages';
 import { graphicsSample, installGraphicsProbe } from './support/graphics-probe';
 import {
@@ -267,8 +268,7 @@ test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ p
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(fixturePath);
 
-  await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
-  await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await openDirectConversation(page, 'Build Agent 002');
   const conversation = page.locator('.direct-conversation');
   await expect(conversation).toBeVisible();
   await expect(conversation.getByRole('heading', { name: 'Build Agent 002' })).toBeVisible();
@@ -402,4 +402,22 @@ async function writeCapacityReport(metrics: Readonly<Record<string, number>>): P
     )}\n`,
     'utf8',
   );
+}
+
+for (const width of [1_440, 390]) {
+  test(`房间左上角回到房间列表，房间设置在右上角：${String(width)}`, async ({ page }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto('/e2e/fixtures/lobby-scene.html?private');
+
+    const back = page.getByRole('link', { name: 'Back to rooms', exact: true });
+    await expect(back).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /room menu/i })).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+
+    // 夹具的路由历史在内存里，地址栏不变，所以核对链接去哪儿。
+    await expect(back).toHaveAttribute('href', '/rooms');
+    expect(failures).toEqual([]);
+  });
 }

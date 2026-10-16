@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
-import { openRoomMenu, openRoomSettings } from './support/workspace-navigation';
+import { openRoomSettings } from './support/workspace-navigation';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
@@ -23,9 +23,8 @@ const second = '0198b601-77a2-7f41-b4f4-940f291951b9';
 test('新建房间一屏：保留多久、现在就邀请谁放在更多选项里', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
-  await page.goto(fixturePath);
-
-  await openRoomMenu(page);
+  await page.goto(`${fixturePath}?features=1&failJoin=1`);
+  await expect(page.getByRole('heading', { name: 'Your private rooms' })).toBeVisible();
   await page.getByRole('button', { name: 'New room', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New room' });
   await expect(dialog).toContainText('Private rooms are invite only');
@@ -44,7 +43,7 @@ test('新建房间一屏：保留多久、现在就邀请谁放在更多选项�
 
   await dialog.getByRole('button', { name: 'Create and enter' }).click();
   await expect(dialog.getByRole('alert')).toContainText('Could not finish creating the room');
-  await expect(dialog).toContainText('private_room.fixture_unavailable');
+  await expect(dialog).toContainText('fixture.unavailable');
   await expect(dialog.getByRole('textbox', { name: 'Name', exact: true })).toBeDisabled();
   await expectAccessibleDialog(page);
   await expectNoHorizontalOverflow(page);
@@ -60,9 +59,8 @@ test('新建房间一屏：保留多久、现在就邀请谁放在更多选项�
 test('新建房间在手机上是底部面板，不产生横向溢出', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto(fixturePath);
-
-  await openRoomMenu(page);
+  await page.goto(`${fixturePath}?features=1`);
+  await expect(page.getByRole('heading', { name: 'Your private rooms' })).toBeVisible();
   await page.getByRole('button', { name: 'New room', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New room' });
   await expect(dialog).toBeVisible();

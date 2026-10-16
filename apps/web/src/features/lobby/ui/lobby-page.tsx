@@ -59,7 +59,7 @@ import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/do
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
-import { WorkspaceNavigation } from '@/features/lobby/ui/workspace-navigation';
+import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
 import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import {
@@ -180,7 +180,7 @@ function ReadyLobby({
   const reception = useReceptionEvidence();
   const { url: downloadUrl } = usePublishedDownload(config);
   const directSessions = useDirectSessionController(principal !== null);
-  const [drawer, setDrawer] = useState<'navigation' | 'members' | null>(null);
+  const [drawer, setDrawer] = useState<'members' | null>(null);
   // 重新登录回来时，没提交完的自动发言授权要接着填：直接打开房间设置的那一节。
   const [roomSettings, setRoomSettings] = useState<{
     readonly section?: RoomSettingsSection;
@@ -282,31 +282,6 @@ function ReadyLobby({
     closeDrawer();
     onSelectedAgentChange(id);
   };
-  const navigation = (
-    <WorkspaceNavigation
-      currentCatalogId={catalogId}
-      activeDirectId={selectedDirectSessionId}
-      controller={directSessions}
-      onActivateRoom={() => {
-        closeDrawer();
-        onViewChange('space');
-      }}
-      onActivateDirect={(id) => {
-        closeDrawer();
-        onSelectedDirectSessionChange(id);
-      }}
-      onOpenRoomSettings={
-        principal === null
-          ? null
-          : () => {
-              closeDrawer();
-              setRoomSettings({});
-            }
-      }
-      roomName={room.name}
-      userName={principal?.displayName ?? null}
-    />
-  );
   const roster = (
     <div className="workspace-members">
       <ListModeRoster
@@ -317,6 +292,16 @@ function ReadyLobby({
         variant="compact"
       />
       <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
+      {principal === null ? null : (
+        <DirectSessionNavigation
+          activeCatalogId={selectedDirectSessionId}
+          controller={directSessions}
+          onActivate={(id) => {
+            closeDrawer();
+            onSelectedDirectSessionChange(id);
+          }}
+        />
+      )}
       <AgentRosterPolicyPanel
         key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
         catalogId={catalogId}
@@ -351,9 +336,13 @@ function ReadyLobby({
         serverReadable={origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent}
         membersButtonRef={membersButton}
         roomName={room.name}
-        onOpenNavigation={() => {
-          setDrawer('navigation');
-        }}
+        onOpenSettings={
+          principal === null
+            ? null
+            : () => {
+                setRoomSettings({});
+              }
+        }
         onOpenMembers={() => {
           setDrawer('members');
         }}
@@ -626,12 +615,8 @@ function ReadyLobby({
         </div>
       </section>
       {drawer === null ? null : (
-        <WorkspaceDrawer
-          label={t(drawer === 'navigation' ? 'roomWorkspace.navigation' : 'roomWorkspace.members')}
-          variant={drawer}
-          onClose={closeDrawer}
-        >
-          {drawer === 'navigation' ? navigation : roster}
+        <WorkspaceDrawer label={t('roomWorkspace.members')} variant={drawer} onClose={closeDrawer}>
+          {roster}
         </WorkspaceDrawer>
       )}
       <AnimatePresence>

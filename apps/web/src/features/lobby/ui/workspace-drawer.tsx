@@ -11,7 +11,7 @@ export function WorkspaceDrawer({
   readonly children: ReactNode;
   readonly label: string;
   readonly onClose: () => void;
-  readonly variant: 'navigation' | 'members';
+  readonly variant: 'members';
 }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);

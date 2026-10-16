@@ -15,7 +15,7 @@ export function DirectSessionNavigation({
   const { t } = useTranslation();
   return (
     <nav className="workspace-direct" aria-label={t('directSessions.rail.label')}>
-      <p className="workspace-navigation__label">
+      <p className="workspace-direct__label">
         {t('roomWorkspace.direct')}
         <MessageCircle aria-hidden="true" />
       </p>

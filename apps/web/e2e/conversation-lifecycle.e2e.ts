@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures } from './support/page-assertions';
+import { openDirectConversation } from './support/workspace-navigation';
 
 for (const width of [1440, 390]) {
   test(`离开私聊后恢复独立草稿与回复：${String(width)}`, async ({ page }, testInfo) => {
@@ -131,8 +132,7 @@ test('阅读旧消息时保留未读，显示最新消息后才发送回执', as
 });
 
 async function openExistingConversation(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Open room menu', exact: true }).click();
-  await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await openDirectConversation(page, 'Build Agent 002');
   await expect(
     page.locator('.direct-conversation').getByRole('textbox', { name: 'Message', exact: true }),
   ).toBeVisible();
