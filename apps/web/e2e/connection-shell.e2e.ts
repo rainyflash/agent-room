@@ -64,6 +64,18 @@ test('桌面宽度下连接页是一张居中的卡片，五段进度收在详�
     fullPage: true,
     path: testInfo.outputPath('connection-desktop.png'),
   });
+  // 没登录时停在“你的账户”是在等人点按钮：图标不转，消息说登录后连接（别像在加载）。
+  await page.getByText(/Connection details|连接详情/u).click();
+  await expect(
+    page.getByText(/Waiting for you: use the button above|等你点上面的按钮/u),
+  ).toBeVisible();
+  await expect(page.locator('.connection-step .ar-status-mark--pulse')).toHaveCount(0);
+  await expect(page.getByText(/Connects after you sign in|登录后连接/u)).toBeVisible();
+  await page.screenshot({
+    animations: 'disabled',
+    fullPage: true,
+    path: testInfo.outputPath('connection-desktop-details.png'),
+  });
 });
 
 test('390px 移动布局首屏可操作且连接详情可用键盘展开收起', async ({ page }, testInfo) => {

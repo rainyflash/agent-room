@@ -6,12 +6,17 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 
+import type { UseQueryResult } from '@tanstack/react-query';
+
 import type { SessionContext } from '../domain/session-machine';
+import type { SessionFailure } from '../domain/session';
 import { connectionViewModel } from './connection-model';
 import { ConnectionWorkspace } from './connection-workspace';
 import { RouterTestProvider } from '@/test/router-test-provider';
+import type { ReadinessReport } from '@/features/health/domain/readiness';
+import { DependencyHealthStrip } from '@/features/health/ui/dependency-health-strip';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
-import { ok } from '@/shared/result';
+import { ok, type Result } from '@/shared/result';
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en-US']);
@@ -110,4 +115,42 @@ it('等待浏览器登录时可以重新开始，而不是干等 15 分钟', () 
   );
   fireEvent.click(screen.getByRole('button', { name: 'Start sign-in again' }));
   expect(onAction).toHaveBeenCalledExactlyOnceWith('retry');
+});
+
+it('没登录时停在“你的账户”是在等人点按钮：图标不转，消息说登录后连接', () => {
+  const context: SessionContext = {
+    authenticationMode: 'interactive',
+    authenticationTarget: 'control',
+    connection: null,
+    controlStatus: 'unavailable',
+    failure: null,
+    principal: null,
+    resumePath: null,
+  };
+  render(
+    <I18nextProvider i18n={i18n}>
+      <RouterTestProvider>
+        <ConnectionWorkspace
+          context={context}
+          onAction={vi.fn()}
+          view={connectionViewModel('unauthenticated', context)}
+        >
+          <DependencyHealthStrip
+            matrixConnected={false}
+            online
+            readiness={
+              { data: undefined } as UseQueryResult<Result<ReadinessReport, SessionFailure>>
+            }
+            sessionState="unauthenticated"
+          />
+        </ConnectionWorkspace>
+      </RouterTestProvider>
+    </I18nextProvider>,
+  );
+  fireEvent.click(screen.getByText('Connection details'));
+  expect(screen.getByText('Waiting for you: use the button above')).toBeVisible();
+  const waiting = screen.getByRole('img', { name: 'Waiting for you' });
+  expect(waiting).not.toHaveClass('ar-status-mark--pulse');
+  expect(screen.queryByRole('img', { name: 'Current' })).not.toBeInTheDocument();
+  expect(screen.getByText('Connects after you sign in')).toBeVisible();
 });

@@ -20,7 +20,8 @@ export type SessionStateName =
   | 'unauthenticated';
 
 export type ConnectionAction = 'enter' | 'login' | 'logout' | 'retry';
-export type StageStatus = 'blocked' | 'complete' | 'current' | 'pending';
+/** `waiting`：这一步等人去点上面的按钮（没登录时），`current` 才是正在做。 */
+export type StageStatus = 'blocked' | 'complete' | 'current' | 'pending' | 'waiting';
 
 export type ConnectionStage = {
   readonly detailKey: TranslationKey;
@@ -155,6 +156,7 @@ export function connectionViewModel(
   const [titleKey, detailKey] = copyForState(state, context.authenticationTarget);
   const currentStage = stageForState(state, context);
   const blocked = state === 'degraded' || state === 'offline' || state === 'signOutFailed';
+  const waiting = state === 'unauthenticated';
   const [action, actionKey] = actionForState(state, context);
 
   return {
@@ -165,7 +167,7 @@ export function connectionViewModel(
     detailKey,
     failureKey: failureMessage(context),
     stages: stageDefinitions.map(([stageTitleKey, stageDetailKey], index) => ({
-      detailKey: stageDetailKey,
+      detailKey: waiting && index === currentStage ? 'connection.stage.waiting' : stageDetailKey,
       index,
       status:
         state === 'ready' || index < currentStage
@@ -173,7 +175,9 @@ export function connectionViewModel(
           : index === currentStage
             ? blocked
               ? 'blocked'
-              : 'current'
+              : waiting
+                ? 'waiting'
+                : 'current'
             : 'pending',
       titleKey: stageTitleKey,
     })),

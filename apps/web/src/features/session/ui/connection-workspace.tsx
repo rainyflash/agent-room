@@ -36,6 +36,7 @@ const toneByStage: Readonly<Record<ConnectionStage['status'], StatusTone>> = {
   complete: 'active',
   current: 'network',
   pending: 'idle',
+  waiting: 'waiting',
 };
 
 const stageStatusKey: Readonly<Record<ConnectionStage['status'], TranslationKey>> = {
@@ -43,6 +44,7 @@ const stageStatusKey: Readonly<Record<ConnectionStage['status'], TranslationKey>
   complete: 'connection.stage.status.complete',
   current: 'connection.stage.status.current',
   pending: 'connection.stage.status.pending',
+  waiting: 'connection.stage.status.waiting',
 };
 
 /**

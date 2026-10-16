@@ -87,25 +87,31 @@ function healthItems({
           label: t('connection.health.matrix'),
           tone: 'alert',
         }
-      : sessionState === 'offline'
+      : sessionState === 'unauthenticated'
         ? {
-            detail: t('connection.health.offline'),
+            detail: t('connection.health.afterSignIn'),
             label: t('connection.health.matrix'),
-            tone: 'offline',
+            tone: 'idle',
           }
-        : sessionState === 'restoring' ||
-            sessionState === 'syncing' ||
-            sessionState === 'reconnecting'
+        : sessionState === 'offline'
           ? {
-              detail: t('connection.health.pending'),
+              detail: t('connection.health.offline'),
               label: t('connection.health.matrix'),
-              tone: 'network',
+              tone: 'offline',
             }
-          : {
-              detail: t('connection.health.pending'),
-              label: t('connection.health.matrix'),
-              tone: 'network',
-            };
+          : sessionState === 'restoring' ||
+              sessionState === 'syncing' ||
+              sessionState === 'reconnecting'
+            ? {
+                detail: t('connection.health.pending'),
+                label: t('connection.health.matrix'),
+                tone: 'network',
+              }
+            : {
+                detail: t('connection.health.pending'),
+                label: t('connection.health.matrix'),
+                tone: 'network',
+              };
   const network: HealthItem = online
     ? {
         detail: t('connection.health.ready'),

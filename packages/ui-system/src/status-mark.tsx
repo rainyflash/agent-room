@@ -1,9 +1,17 @@
-import { AlertTriangle, Check, CircleDashed, LoaderCircle, WifiOff } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  CircleArrowUp,
+  CircleDashed,
+  LoaderCircle,
+  WifiOff,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { classNames } from './class-names.js';
 
-export type StatusTone = 'active' | 'alert' | 'idle' | 'network' | 'offline';
+/** `waiting`：轮到人去做（比如点上面的登录），图标不转，别看着像在加载。 */
+export type StatusTone = 'active' | 'alert' | 'idle' | 'network' | 'offline' | 'waiting';
 
 const iconByTone: Readonly<Record<StatusTone, ReactNode>> = {
   active: <Check aria-hidden="true" />,
@@ -11,6 +19,7 @@ const iconByTone: Readonly<Record<StatusTone, ReactNode>> = {
   idle: <CircleDashed aria-hidden="true" />,
   network: <LoaderCircle aria-hidden="true" />,
   offline: <WifiOff aria-hidden="true" />,
+  waiting: <CircleArrowUp aria-hidden="true" />,
 };
 
 export type StatusMarkProps = {

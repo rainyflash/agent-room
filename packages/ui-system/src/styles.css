@@ -425,6 +425,11 @@ summary {
   color: var(--ar-ink-48);
 }
 
+.ar-status-mark--waiting {
+  color: var(--ar-accent);
+  background: var(--ar-accent-soft);
+}
+
 .ar-status-mark--pulse > svg {
   animation: ar-status-spin 1.4s linear infinite;
 }
