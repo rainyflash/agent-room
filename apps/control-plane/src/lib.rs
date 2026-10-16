@@ -53,7 +53,7 @@ use agent_room_application::{
     network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
-        MatrixUserId, SecretValue,
+        MatrixUserId, NetworkSourceWeights, SecretValue, UniformSourceWeights,
     },
     private_rooms::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
@@ -987,7 +987,7 @@ fn build_agent_collaboration_http_states(
         ),
         private_room_agents: PrivateRoomAgentHttpState::new(
             PrivateRoomAgentHttpDependencies {
-                access: build_private_room_agent_access(
+                access: build_device_agent_access(
                     dependencies,
                     config.network_agents.seal_key.as_ref(),
                 ),
@@ -1109,6 +1109,10 @@ fn build_network_agent_routes(
     )?;
     let key = config.network_agents.seal_key.as_ref();
     let policy = config.network_agents.policy;
+    let sources = Arc::new(features::network_agents::NetworkSources::new(
+        NetworkSourceDigester::new(key),
+        config.network_agents.shared_sources.clone(),
+    ));
     let private_rooms = build_private_room_service(config, dependencies)?;
     let service = Arc::new(NetworkAgentService::new(NetworkAgentDependencies {
         store: dependencies.repositories.clone(),
@@ -1121,7 +1125,7 @@ fn build_network_agent_routes(
             dependencies.matrix_identities.clone(),
         ),
         lobbies,
-        access: build_private_room_agent_access(dependencies, key),
+        access: build_private_room_agent_access(dependencies, key, sources.clone()),
         rooms: private_rooms.clone(),
         directory: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
@@ -1129,6 +1133,7 @@ fn build_network_agent_routes(
         identifiers: dependencies.system_runtime.clone(),
         pause: dependencies.system_runtime.clone(),
         policy,
+        source_weights: sources.clone(),
         matrix_server_name: config.authentication.matrix_server_name.clone(),
     }));
     let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
@@ -1167,7 +1172,7 @@ fn build_network_agent_routes(
             messaging: gateway.clone(),
             rooms: gateway,
             owned_rooms: service,
-            sources: Arc::new(NetworkSourceDigester::new(key)),
+            sources,
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(
                 config.network_agents.public_api_origin.as_ref(),
@@ -1231,9 +1236,18 @@ pub(crate) const JOIN_CODE_FAILURES_PER_HOUR: u32 = 10;
 
 /// 私人房间的 Agent 口令。猜错按设备（网络 Agent 按来源）计数，窗口过后自然放开。口令用部署的
 /// 封存密钥封存后存着，管理者能再看到；没配封存密钥时照样生成，只是看不到。
+/// 本机设备用的那一份：猜错按设备计，不看来源，共享出口用不上。
+fn build_device_agent_access(
+    dependencies: &AgentFeatureDependencies,
+    seal_key: Option<&NetworkAgentSealKey>,
+) -> Arc<PrivateRoomAgentAccessService> {
+    build_private_room_agent_access(dependencies, seal_key, Arc::new(UniformSourceWeights))
+}
+
 fn build_private_room_agent_access(
     dependencies: &AgentFeatureDependencies,
     seal_key: Option<&NetworkAgentSealKey>,
+    source_weights: Arc<dyn NetworkSourceWeights>,
 ) -> Arc<PrivateRoomAgentAccessService> {
     Arc::new(PrivateRoomAgentAccessService::new(
         PrivateRoomAgentAccessDependencies {
@@ -1245,6 +1259,7 @@ fn build_private_room_agent_access(
             sealer: Arc::new(AesGcmJoinCodeSealer::new(seal_key)),
             clock: dependencies.system_runtime.clone(),
             attempts: join_code_attempt_policy(),
+            source_weights,
         },
     ))
 }

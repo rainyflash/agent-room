@@ -42,9 +42,10 @@ use crate::{
         NetworkAgentBeginOutcome, NetworkAgentIdleLobby, NetworkAgentKeyFactory,
         NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
         NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStaleCutoff, NetworkAgentStore, PortFuture, PrincipalAccount,
-        PrincipalRegistration, PrivateRoomAgentKnockRecord, RateWindowBucket, RateWindowDecision,
-        RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
+        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights, PortFuture,
+        PrincipalAccount, PrincipalRegistration, PrivateRoomAgentKnockRecord, RateWindowBucket,
+        RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory,
+        SecretValue,
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
@@ -558,6 +559,8 @@ pub struct NetworkAgentDependencies {
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub pause: Arc<dyn NetworkAgentPause>,
     pub policy: NetworkAgentPolicy,
+    /// 共享出口的分量：按来源计的名额乘上它（`specs/launch-capacity/design.md` 第 13 步）。
+    pub source_weights: Arc<dyn NetworkSourceWeights>,
     /// Matrix 服务器名，用来算合成主体的 Matrix 用户 ID（这个用户从不注册）。
     pub matrix_server_name: String,
 }
@@ -576,6 +579,7 @@ pub struct NetworkAgentService {
     identifiers: Arc<dyn IdentifierFactory>,
     pause: Arc<dyn NetworkAgentPause>,
     policy: NetworkAgentPolicy,
+    source_weights: Arc<dyn NetworkSourceWeights>,
     matrix_server_name: String,
 }
 
@@ -612,6 +616,7 @@ impl NetworkAgentService {
             identifiers: dependencies.identifiers,
             pause: dependencies.pause,
             policy: dependencies.policy,
+            source_weights: dependencies.source_weights,
             matrix_server_name: dependencies.matrix_server_name,
         }
     }
@@ -1041,12 +1046,14 @@ impl NetworkAgentService {
         })
     }
 
-    /// 敲门按来源计数：每小时有上限，超了告诉 Agent 什么时候能再敲。
+    /// 敲门按来源计数：每小时有上限（共享出口乘上它的分量），超了告诉 Agent 什么时候能再敲。
     async fn take_knock(&self, source: &[u8; 32]) -> NetworkAgentResult<()> {
         self.take(
             &format!("knock:{}", hex(source)),
             3_600_000,
-            self.policy.knocks_per_source_per_hour,
+            self.policy
+                .knocks_per_source_per_hour
+                .saturating_mul(self.source_weights.weight(source)),
         )
         .await
     }
@@ -1709,19 +1716,24 @@ impl NetworkAgentService {
 
     /// 起名的名额：同一来源每小时、每天各有上限，超过时告诉 Agent 什么时候能再试。进公开大厅和
     /// 凭网络 Agent 建的房间的口令新起网络 Agent 共用。计数的桶沿用 `create:` 这个名字（以前
-    /// 一起名就算一次）。两档一起记：有一档不够就都不记。
+    /// 一起名就算一次）。两档一起记：有一档不够就都不记。共享出口的两档都乘上它的分量。
     async fn take_naming(&self, source: &[u8; 32]) -> NetworkAgentResult<NamingTicket> {
+        let weight = self.source_weights.weight(source);
         let source = hex(source);
         let mut buckets = Vec::with_capacity(2);
         for (window, limit, label) in [
             (
                 3_600_000_u64,
-                self.policy.lobby_entries_per_source_per_hour,
+                self.policy
+                    .lobby_entries_per_source_per_hour
+                    .saturating_mul(weight),
                 "hour",
             ),
             (
                 86_400_000_u64,
-                self.policy.lobby_entries_per_source_per_day,
+                self.policy
+                    .lobby_entries_per_source_per_day
+                    .saturating_mul(weight),
                 "day",
             ),
         ] {

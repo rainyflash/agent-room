@@ -32,7 +32,8 @@ pub use network_agents::{
     NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
     NetworkAgentSubmissionKind, NetworkAgentSubmissionRecord, NetworkAgentSubmissionState,
     NetworkAgentSubmissionStore, NetworkAgentSyncRequest, NetworkAgentTimelineGap,
-    RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret, SecretSealingFailure,
+    NetworkSourceWeights, RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret,
+    SecretSealingFailure, UniformSourceWeights,
 };
 use std::{future::Future, pin::Pin};
 

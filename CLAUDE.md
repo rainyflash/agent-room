@@ -275,6 +275,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 维护者 2026-10-15 定：Resend 不升付费档、Windows 安装包不签名；GitHub 仓库简介和话题由编码 Agent 改（当天已改，去掉了 end-to-end-encryption 话题）；README 跟上 Alpha 72（#470）；仓库分享图由编码 Agent 上传（要在浏览器里登录 GitHub）。
 - 首发周的容量：设计在 [specs/launch-capacity/design.md](./specs/launch-capacity/design.md)，进度记在它的“状态”一节。要点：网络 Agent 的 500 上限和大厅分片的位置都按“30 天里来过的”算，停用的网络 Agent 还不放回位置；第二个分片一开，人和围观页停在老分片、新 Agent 去新分片；名字序号到 20 就没了；限额和连接池写死；邮件额度用完时注册的人会卡住、没人知道。按文档分十二步改，都随 Alpha 73 发布（2026-10-16）。
   - 已合并：第 1 步 #472、第 2 步 #474、第 3 步 #473、第 4 步 #475（接口）和 #476（围观页换分片）、第 5 步 #477、第 7 步 #478、第 8 步 #479、第 9 步 #480、第 10 步 #481、第 6 步 #482、第 11 步 #483、第 12 步 #484。
+  - 第 13 步 #489（维护者 2026-10-16 同意）：网页版的聊天助手、MCP 目录的网关替很多人从几个出口地址发请求，按 IP 算的名额（进公开大厅、敲门、猜错口令）就成了整个平台合起来的。部署配置的 `networkAgents.sharedSources` 把这些出口整段算一个来源、名额乘上分量；应用层经 `NetworkSourceWeights` 问分量（来源摘要按天加盐，只有控制面算摘要时认得出）。生产要照 Anthropic、OpenAI 公布的网段写上，OpenAI 的会变，隔一阵重新抄。
   - #476（网页）比 #475（接口）先合并，中间 main 上围观页请求 `/public-lobbies/{slug}/shards` 回 404，那段时间派发的无头验收都红在“不登录看公共大厅”那一条。网页和接口分开交付时，接口先合。
   - 本地和 CI 起的控制面依赖超时是 2 秒（`tools/local_runtime.py`），生产是 5 秒。量负载要用生产的：第一次量时 50 个在等、再建 Agent 就排队两秒多回 503。
   - 首发当天的预案在 `docs/operations/launch-day.md`。调限额、关网络 Agent 的总开关用 `production.py control-plane-reload`（只重建控制面），开关注册用 `registration-apply`，不用整个重新部署。关注册时部署配置不许带 SMTP，所以忘记密码、重发验证信也一起停。生产没开监控（`telemetry.enabled` 是 false），告警和仪表盘都不在，首发那几天用只读的 `production.py launch-status` 看数（第 12 步）。

@@ -169,6 +169,24 @@ pub struct RateWindowBucket {
     pub policy: RateWindowPolicy,
 }
 
+/// 一个来源算几个来源（`specs/launch-capacity/design.md` 第 13 步）。聊天助手平台替很多人从同一段
+/// 地址发请求，部署配置把这样的一段记成“共享出口”：整段算一个来源，按来源计的名额（进公开大厅、
+/// 敲门、猜错口令）都乘上它的分量。别的来源都算一个。
+pub trait NetworkSourceWeights: Send + Sync {
+    /// 来源摘要的分量，至少是 1。
+    fn weight(&self, source: &[u8; 32]) -> u32;
+}
+
+/// 没配共享出口：每个来源都算一个。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UniformSourceWeights;
+
+impl NetworkSourceWeights for UniformSourceWeights {
+    fn weight(&self, _source: &[u8; 32]) -> u32 {
+        1
+    }
+}
+
 /// 写入网络 Agent 时名字撞上了还没停用的同名者（不分大小写）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkAgentBeginOutcome {

@@ -23,10 +23,10 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, JoinCodeSealer, MatrixFailure,
-        MatrixFailureKind, MatrixRoomId, PortFuture, PrivateRoomAgentAccessStore,
-        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
-        SecretFactory,
+        MatrixFailureKind, MatrixRoomId, NetworkSourceWeights, PortFuture,
+        PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord,
+        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway,
+        PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
     },
 };
 
@@ -255,6 +255,9 @@ pub struct PrivateRoomAgentAccessDependencies {
     pub sealer: Arc<dyn JoinCodeSealer>,
     pub clock: Arc<dyn Clock>,
     pub attempts: JoinCodeAttemptPolicy,
+    /// 网络 Agent 按来源计猜错次数，共享出口的上限乘上它的分量（`specs/launch-capacity/design.md`
+    /// 第 13 步）。
+    pub source_weights: Arc<dyn NetworkSourceWeights>,
 }
 
 pub struct PrivateRoomAgentAccessService {
@@ -266,6 +269,7 @@ pub struct PrivateRoomAgentAccessService {
     sealer: Arc<dyn JoinCodeSealer>,
     clock: Arc<dyn Clock>,
     attempts: JoinCodeAttemptPolicy,
+    source_weights: Arc<dyn NetworkSourceWeights>,
 }
 
 impl PrivateRoomAgentAccessService {
@@ -279,6 +283,7 @@ impl PrivateRoomAgentAccessService {
             sealer: dependencies.sealer,
             clock: dependencies.clock,
             attempts: dependencies.attempts,
+            source_weights: dependencies.source_weights,
         }
     }
 
@@ -638,6 +643,7 @@ impl PrivateRoomAgentAccessService {
         operation: &'static str,
     ) -> AgentAccessResult<(PrivateRoomJoinCodeRecord, PrivateRoomSnapshot)> {
         let now = self.clock.now();
+        let mut attempts = self.attempts;
         let caller = match caller {
             JoinCodeCaller::Device(actor) => {
                 if actor.access_token_expires_at <= now {
@@ -649,6 +655,9 @@ impl PrivateRoomAgentAccessService {
                 format!("device:{}", actor.device_id)
             }
             JoinCodeCaller::NetworkSource(digest) => {
+                attempts.max_failures = attempts
+                    .max_failures
+                    .saturating_mul(self.source_weights.weight(digest));
                 digest
                     .iter()
                     .fold(String::from("network-source:"), |mut caller, byte| {
@@ -659,7 +668,7 @@ impl PrivateRoomAgentAccessService {
         };
         if let Some(retry_at) = self
             .access
-            .join_code_retry_at(&caller, now, self.attempts)
+            .join_code_retry_at(&caller, now, attempts)
             .await
             .map_err(|error| repository(operation, &error))?
         {
@@ -676,7 +685,7 @@ impl PrivateRoomAgentAccessService {
             .map_err(|error| repository(operation, &error))?
         else {
             self.access
-                .record_join_code_failure(&caller, now, self.attempts)
+                .record_join_code_failure(&caller, now, attempts)
                 .await
                 .map_err(|error| repository(operation, &error))?;
             return Err(AgentAccessFailure::new(

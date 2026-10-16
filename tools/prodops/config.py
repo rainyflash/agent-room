@@ -190,11 +190,26 @@ NETWORK_AGENT_LIMIT_FIELDS: tuple[tuple[str, str, str, int, int], ...] = (
 
 
 @dataclass(frozen=True, slots=True)
+class SharedSource:
+    """共享出口：聊天助手平台替很多人发请求的一段出口地址，整段算一个来源，按来源计的名额
+    （进公开大厅、敲门、猜错口令）乘上分量（specs/launch-capacity/design.md 第 13 步）。"""
+
+    name: str
+    cidrs: tuple[str, ...]
+    weight: int
+
+
+SHARED_SOURCE_NAME: Final = re.compile(r"[A-Za-z0-9-]{1,64}")
+SHARED_SOURCE_MAX_WEIGHT: Final = 1_000
+
+
+@dataclass(frozen=True, slots=True)
 class NetworkAgentsConfig:
-    """只凭网络接入的 Agent（ADR 0010）的总开关（默认关闭）和公开大厅里的限额。"""
+    """只凭网络接入的 Agent（ADR 0010）的总开关（默认关闭）、公开大厅里的限额和共享出口。"""
 
     enabled: bool
     limits: NetworkAgentLimits = NetworkAgentLimits()
+    shared_sources: tuple[SharedSource, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,13 +520,55 @@ def _parse_network_agents(value: object) -> NetworkAgentsConfig:
     if value is None:
         return NetworkAgentsConfig(enabled=False)
     source = _mapping(value, "networkAgents")
-    _reject_unknown(source, {"enabled", "limits"}, "networkAgents")
+    _reject_unknown(source, {"enabled", "limits", "sharedSources"}, "networkAgents")
     enabled = source.get("enabled", False)
     if not isinstance(enabled, bool):
         raise DeploymentConfigError("networkAgents.enabled 必须是 true 或 false。")
     return NetworkAgentsConfig(
-        enabled=enabled, limits=_parse_network_agent_limits(source.get("limits"))
+        enabled=enabled,
+        limits=_parse_network_agent_limits(source.get("limits")),
+        shared_sources=_parse_shared_sources(source.get("sharedSources")),
     )
+
+
+def _parse_shared_sources(value: object) -> tuple[SharedSource, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise DeploymentConfigError("networkAgents.sharedSources 必须是列表。")
+    sources: list[SharedSource] = []
+    for index, item in enumerate(value):
+        label = f"networkAgents.sharedSources[{index}]"
+        entry = _mapping(item, label)
+        _reject_unknown(entry, {"name", "cidrs", "weight"}, label)
+        name = entry.get("name")
+        if not isinstance(name, str) or not SHARED_SOURCE_NAME.fullmatch(name):
+            raise DeploymentConfigError(f"{label}.name 只能用字母、数字和 -，最多 64 个字符。")
+        if any(source.name == name for source in sources):
+            raise DeploymentConfigError(f"{label}.name 和前面的重名：{name}。")
+        weight = entry.get("weight")
+        if (
+            not isinstance(weight, int)
+            or isinstance(weight, bool)
+            or not 1 <= weight <= SHARED_SOURCE_MAX_WEIGHT
+        ):
+            raise DeploymentConfigError(
+                f"{label}.weight 必须是 1–{SHARED_SOURCE_MAX_WEIGHT} 之间的整数。"
+            )
+        cidrs = entry.get("cidrs")
+        if not isinstance(cidrs, list) or not cidrs:
+            raise DeploymentConfigError(f"{label}.cidrs 必须是不空的网段列表。")
+        networks: list[str] = []
+        for cidr in cidrs:
+            # 必须写前缀长度：只写一个地址时容易以为管的是一段、实际只管一个。
+            if not isinstance(cidr, str) or "/" not in cidr:
+                raise DeploymentConfigError(f"{label}.cidrs 里的 {cidr!r} 要写成 地址/前缀长度。")
+            try:
+                networks.append(str(ipaddress.ip_network(cidr, strict=False)))
+            except ValueError as error:
+                raise DeploymentConfigError(f"{label}.cidrs 里的 {cidr!r} 不是网段。") from error
+        sources.append(SharedSource(name=name, cidrs=tuple(networks), weight=weight))
+    return tuple(sources)
 
 
 def _parse_network_agent_limits(value: object) -> NetworkAgentLimits:

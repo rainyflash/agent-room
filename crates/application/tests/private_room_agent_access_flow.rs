@@ -12,12 +12,12 @@ use agent_room_application::{
     persistence::RepositoryResult,
     ports::{
         AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, JoinCodeSealer, MatrixResult,
-        MatrixRoomId, MatrixUserId, PortFuture, PrincipalAccount, PrivateMatrixMembership,
-        PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome,
-        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore, SealedJoinCode,
-        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
-        SecretValue,
+        MatrixRoomId, MatrixUserId, NetworkSourceWeights, PortFuture, PrincipalAccount,
+        PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore,
+        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
+        SealedJoinCode, SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure,
+        SecretSealingFailure, SecretValue,
     },
     private_rooms::{
         AGENT_KNOCK_TTL_MILLIS, AgentAccessFailureKind, AnswerKnock, InspectAgentAccess,
@@ -470,6 +470,32 @@ async fn 网络_agent_猜错按来源计数_与本机设备和别的来源分开
 }
 
 #[tokio::test]
+async fn 共享出口猜错的上限乘上分量() {
+    let fixture = Fixture::new();
+    let generated = fixture
+        .service
+        .generate_code(manage(owner()))
+        .await
+        .expect("生成口令");
+    let resolve = |code: String| {
+        fixture.service.resolve(ResolveJoinCode {
+            caller: JoinCodeCaller::NetworkSource([9; 32]),
+            code,
+        })
+    };
+    for _ in 0..6 {
+        let wrong = resolve("0000-0000-0000".to_owned())
+            .await
+            .expect_err("猜错");
+        assert_eq!(wrong.kind(), AgentAccessFailureKind::NotFound);
+    }
+    let limited = resolve(generated.code.display())
+        .await
+        .expect_err("分量 2：猜错 6 次到上限");
+    assert_eq!(limited.kind(), AgentAccessFailureKind::RateLimited);
+}
+
+#[tokio::test]
 async fn 移出先收紧_matrix_再记账_旧口令进不来_新口令可以() {
     let fixture = Fixture::new();
     let old = fixture
@@ -840,6 +866,15 @@ struct Fixture {
     clock: Arc<TestClock>,
 }
 
+/// 来源 `[9; 32]` 是一段共享出口，算两个来源；别的都算一个。
+struct SharedNine;
+
+impl NetworkSourceWeights for SharedNine {
+    fn weight(&self, source: &[u8; 32]) -> u32 {
+        if *source == [9; 32] { 2 } else { 1 }
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         Self::with_room(active_room())
@@ -868,6 +903,7 @@ impl Fixture {
                 window: DurationMillis::new(u64::try_from(HOUR).unwrap()).unwrap(),
                 max_failures: 3,
             },
+            source_weights: Arc::new(SharedNine),
         });
         Self {
             service,
