@@ -192,7 +192,8 @@ async fn registration_request(
         display_name: body.import_display_name,
         locale: body.import_locale,
     };
-    let fields = registration_fields(body, correlation_id)?;
+    let fields = registration_fields(body)
+        .map_err(|code| ApiError::invalid_request(code, correlation_id))?;
     let authorization = VerifiedDeviceAuthorization::new(
         verified_assertion,
         state.secrets.digest(assertion.expose()),
@@ -215,26 +216,24 @@ pub(super) struct DeviceRegistrationFields {
     pub(super) possession_signature: DeviceSignature,
 }
 
-/// 解出两条注册路共用的名字、平台、签名公钥和持有证明。
+/// 解出两条注册路共用的名字、平台、签名公钥和持有证明；不对时回错误码。
 pub(super) fn registration_fields(
     body: RegisterDeviceBody,
-    correlation_id: CorrelationId,
-) -> Result<DeviceRegistrationFields, ApiError> {
+) -> Result<DeviceRegistrationFields, &'static str> {
+    const PUBLIC_KEY: &str = "device.invalid_public_key";
+    const SIGNATURE: &str = "device.invalid_possession_signature";
     let public_signing_key = DevicePublicSigningKey::new(
         decode_bounded(&body.public_signing_key, MAX_ENCODED_PUBLIC_KEY_LENGTH)
-            .map_err(|()| ApiError::invalid_request("device.invalid_public_key", correlation_id))?,
+            .map_err(|()| PUBLIC_KEY)?,
     )
-    .map_err(|_| ApiError::invalid_request("device.invalid_public_key", correlation_id))?;
+    .map_err(|_| PUBLIC_KEY)?;
     let possession_signature = DeviceSignature::new(
-        decode_bounded(&body.possession_signature, MAX_ENCODED_SIGNATURE_LENGTH).map_err(|()| {
-            ApiError::invalid_request("device.invalid_possession_signature", correlation_id)
-        })?,
+        decode_bounded(&body.possession_signature, MAX_ENCODED_SIGNATURE_LENGTH)
+            .map_err(|()| SIGNATURE)?,
     )
-    .map_err(|_| {
-        ApiError::invalid_request("device.invalid_possession_signature", correlation_id)
-    })?;
+    .map_err(|_| SIGNATURE)?;
     let platform = DevicePlatform::parse_client(body.platform.as_str())
-        .map_err(|_| ApiError::invalid_request("device.invalid_platform", correlation_id))?;
+        .map_err(|_| "device.invalid_platform")?;
     Ok(DeviceRegistrationFields {
         label: body.label,
         platform,

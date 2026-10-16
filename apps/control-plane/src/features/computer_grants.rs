@@ -123,9 +123,11 @@ async fn register(
                 .into_response(),
         );
     };
-    let fields = match registration_fields(body, correlation_id) {
+    let fields = match registration_fields(body) {
         Ok(fields) => fields,
-        Err(error) => return no_store(error.into_response()),
+        Err(code) => {
+            return no_store(ApiError::invalid_request(code, correlation_id).into_response());
+        }
     };
     match state
         .grants
