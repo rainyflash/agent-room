@@ -368,7 +368,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 没进房间时的页面（连接、登录没完成、进大厅、房间打开中或打不开、找不到页面、配置出错）共用 `shared/ui/entry-shell.tsx` 的 `EntryShell` + `EntryCard`：一张居中卡片，错误码和地址收进“详情”，出错给“回到房间”。
 - 登录页的标志由 `tools/sync-brand-assets.mjs` 从网页端同步；`tools/tests/test_brand_consistency.py` 卡着登录主题的颜色令牌和标志不和网页端走偏。
 - “新建房间”“换个房间”只有 `RoomActions`（`features/room-directory`）一个入口组件，“房间”页和夹具都用它。浏览器验收的 `lobby-scene.html?features=1` 里有两个待答复的邀请（Research lab、Budget review），加入和拒绝都能真走一遍。
-- 房间页没有房间菜单了：左上角回到房间列表，房间设置是顶栏右边的齿轮打开的对话框（`RoomSettingsDialog`），私聊列表在“找人”抽屉里（维护者 2026-10-15 定）。`lobby-scene.html?private` 把夹具房间当成你是房主的私人房间，四节都能看到；浏览器验收用 `openRoomSettings(page, '节名')` 打开。
+- 房间页没有房间菜单了：左上角回到房间列表，房间设置是顶栏右边的齿轮打开的对话框（`RoomSettingsDialog`），私聊列表在“找人”抽屉里（维护者 2026-10-15 定，#487）。`lobby-scene.html?private` 把夹具房间当成你是房主的私人房间，四节都能看到；浏览器验收用 `openRoomSettings(page, '节名')` 打开。
 - 网页顶栏右边有 GitHub（只放标志）和“下载应用”（按访客的系统直接给安装包，提示里写是哪个系统的；手机、Linux 上不显示），桌面端顶栏没有这两样（`features/updates/ui/web-header-links.tsx`，#405，维护者 2026-10-11 说网页上找不到下载按钮、要有 GitHub 链接）。放不下时先把“退出登录”、再把下载收成图标，平板宽度上名字只留标志；往顶栏加东西前，中英文都在各个宽度上量一遍（`interface-refresh.e2e.ts` 的“网页顶栏”查名字和四个去处有没有被挤）。
 
 ### Agent 怎么看房间里的消息
