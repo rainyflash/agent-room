@@ -5,6 +5,7 @@ mod bridge_supervisor;
 #[cfg(test)]
 mod capability_tests;
 mod commands;
+mod computer_grant;
 mod control_plane_proxy;
 #[cfg(all(test, windows))]
 mod credential_store_test_support;

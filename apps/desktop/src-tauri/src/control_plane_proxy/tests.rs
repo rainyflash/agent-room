@@ -313,6 +313,8 @@ fn 只认控制面根地址下面的相对路径() {
         "a#b",
         "a b",
         "a\nb",
+        "auth/desktop/computer-grant",
+        "auth/desktop/computer%2Dgrant",
     ] {
         assert!(prefixed.endpoint(invalid).is_err(), "应拒绝 {invalid:?}");
         assert!(root.endpoint(invalid).is_err(), "应拒绝 {invalid:?}");

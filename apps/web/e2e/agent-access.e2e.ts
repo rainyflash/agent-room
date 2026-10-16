@@ -147,6 +147,18 @@ test('连接服务重连时只是告知，不挡复制；重试后提示消失',
   expect(failures).toEqual([]);
 });
 
+test('托管的连接服务等电脑授权时只说正在连接，退回设备码才出授权提示', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  // 桌面端拿应用里的登录换电脑授权交给连接服务（specs/desktop-sign-in），这段时间是 starting。
+  await page.goto('/e2e/fixtures/my-agents.html?bridge=starting');
+  await expect(page.getByRole('link', { name: 'This computer: Connecting' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open secure sign-in' })).toHaveCount(0);
+
+  await page.goto('/e2e/fixtures/my-agents.html?bridge=authorization_required');
+  await expect(page.getByRole('button', { name: 'Open secure sign-in' }).first()).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
 test('MCP 只给同一份通用配置：设置里的“这台电脑”和接入对话框都不出现具体应用', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto('/e2e/fixtures/my-agents.html?bridge=authorized&settings=this-computer');

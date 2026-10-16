@@ -17,6 +17,8 @@ const DEFAULT_OIDC_ISSUER_URL: &str = "https://id.agentroom.chat/realms/agent-ro
 const DEFAULT_OIDC_DEVICE_CLIENT_ID: &str = "agent-room-bridge";
 const RESET_DEVICE_SESSION: &str = "AGENT_ROOM_BRIDGE_RESET_DEVICE_SESSION";
 const EXIT_WITH_SUPERVISOR: &str = "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR";
+/// 还没授权时怎么授权：托管的 Bridge 等桌面端交电脑授权（`specs/desktop-sign-in/design.md`）。
+const DEVICE_AUTHORIZATION: &str = "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION";
 
 /// 这一次以什么方式启动托管 Bridge。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +98,8 @@ impl DesktopBridgeConfig {
         environment.insert(RESET_DEVICE_SESSION.to_owned(), "false".to_owned());
         // 同理：标准输入不是桌面管道的启动（安装器验收）继承到这个开关会立即退出。
         environment.insert(EXIT_WITH_SUPERVISOR.to_owned(), "false".to_owned());
+        // 标准输入不是桌面管道时没人交电脑授权，照旧申请设备码。
+        environment.insert(DEVICE_AUTHORIZATION.to_owned(), "device-code".to_owned());
         copy_optional_environment(&mut environment, "AGENT_ROOM_AGENT_ID")?;
         copy_optional_environment(&mut environment, "AGENT_ROOM_PUBLIC_LOBBY_CATALOG_ID")?;
         copy_optional_environment(&mut environment, "AGENT_ROOM_LOBBY_LANGUAGE")?;
@@ -145,6 +149,7 @@ impl DesktopBridgeConfig {
     pub(crate) fn launch_environment(&self, launch: BridgeLaunch) -> BTreeMap<String, String> {
         let mut environment = self.environment.clone();
         environment.insert(EXIT_WITH_SUPERVISOR.to_owned(), "true".to_owned());
+        environment.insert(DEVICE_AUTHORIZATION.to_owned(), "supervisor".to_owned());
         if launch == BridgeLaunch::ReauthorizeDevice {
             environment.insert(RESET_DEVICE_SESSION.to_owned(), "true".to_owned());
         }
@@ -317,6 +322,14 @@ mod tests {
                     .map(String::as_str),
                 Some("true")
             );
+            assert_eq!(
+                config
+                    .launch_environment(launch)
+                    .get("AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION")
+                    .map(String::as_str),
+                Some("supervisor"),
+                "托管的 Bridge 等桌面端交电脑授权"
+            );
         }
         // 安装器验收用这份环境启动 Bridge，标准输入为空，打开开关会让 Bridge 立即退出。
         assert_eq!(
@@ -330,6 +343,10 @@ mod tests {
         managed.insert(
             "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR".to_owned(),
             "false".to_owned(),
+        );
+        managed.insert(
+            "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION".to_owned(),
+            "device-code".to_owned(),
         );
         assert_eq!(&managed, config.environment());
     }

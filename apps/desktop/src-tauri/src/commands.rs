@@ -2,7 +2,7 @@ use agent_room_host_adapters::{HostConfigurator, ManualHostConfiguration};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{
-    AppHandle, State, Webview,
+    AppHandle, Manager as _, State, Webview,
     ipc::{Request as IpcRequest, Response as IpcResponse},
 };
 use tauri_plugin_autostart::ManagerExt as _;
@@ -225,7 +225,12 @@ pub(crate) fn desktop_restore_human_session(
     app: AppHandle,
     sessions: State<'_, HumanSessionRuntime>,
 ) -> Result<bool, DesktopCommandFailure> {
-    Ok(sessions.restore(&app)?)
+    let restored = sessions.restore(&app)?;
+    if restored && let Some(runtime) = app.try_state::<DesktopRuntime>() {
+        // 托管的 Bridge 在等电脑授权的话，拿恢复的登录去要。
+        runtime.bridge.signed_in();
+    }
+    Ok(restored)
 }
 
 /// 前端发往控制面的请求由这里代发：带上登录和窗口自己的 Origin，回答原样交回。

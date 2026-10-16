@@ -477,6 +477,10 @@ pub(crate) async fn complete_authentication_callback(
     let authenticated = match result {
         Ok(session) => {
             let _ = app.emit(HUMAN_SESSION_CHANGED_EVENT, session);
+            // 托管的 Bridge 在等电脑授权的话，登录完顺带把这台电脑连上（`specs/desktop-sign-in/design.md`）。
+            if let Some(runtime) = app.try_state::<crate::commands::DesktopRuntime>() {
+                runtime.bridge.signed_in();
+            }
             true
         }
         Err(failure) => {
