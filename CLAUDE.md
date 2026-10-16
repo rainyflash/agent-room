@@ -97,6 +97,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **升级时别让桌面端在换文件的当口启动。** Agent 的 MCP 和命令行连不上 Bridge 会在后台拉起桌面端（#221）。安装器停 Agent Room 的当口被拉起的旧版，会和正在退出的 WebView 抢同一份本机数据（推测 Chromium 打不开就整库删掉重建），升级后网页存储（加密库、登录）被清空：Alpha 57、62 都遇到过。所以安装器钩子：
   - 先在安装目录占住标记 `installer-running.lock`（不许别人打开、关掉就删），再把桌面端程序改名为 `agent-room-desktop.exe.old`，然后才结束进程；
   - 等到四个进程都退出、程序都能写、`%LOCALAPPDATA%\dev.agent-room.desktop\EBWebView\lockfile` 也放开了才换文件；
+  - MCP 和命令行也挪开（`agent-room-mcp.exe.old`、`agent-room.exe.old`）：结束进程前先挪一次，四个进程都不在时再挪一次。宿主一遍遍调命令行（每次等消息起一个 `agent-room read`）时，刚结束的命令行又被拉起来占住程序，新版写不进去，只换了一半（Alpha 74 发版时在维护者电脑上遇到，#500）。
   - 装完删掉挪开的程序、放开标记；没装成就挪回原处。
   - 桌面端启动时看到标记被占着就直接退出（`installer_marker.rs`）。改安装流程时这几样别拆。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。

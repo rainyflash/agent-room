@@ -12,6 +12,12 @@ AllowSkipFiles off
 
 ; 停 Agent Room 之前，桌面端程序先挪到这个名字；新版写好后删掉，没装成就挪回原处。
 !define AGENT_ROOM_PARKED_DESKTOP "agent-room-desktop.exe.old"
+; MCP 和命令行也一样挪开。Agent 的宿主常常一遍遍地调命令行（每次等消息起一个 `agent-room read`），
+; 安装器刚结束它、还没写新版，它又被拉起来占住程序，新版写不进去，只换了一半（Alpha 74 发版时
+; 在维护者电脑上遇到：桌面端、Bridge、MCP 换成了新版，命令行还是旧的，静默安装退出码 2）。
+; 挪开以后再拉起找不到程序；新版写进来以后，拉起的就是新版。
+!define AGENT_ROOM_PARKED_MCP "agent-room-mcp.exe.old"
+!define AGENT_ROOM_PARKED_CLI "agent-room.exe.old"
 ; 换文件期间安装器在安装目录里开着这个标记：不许别人打开，关掉就删，安装器意外退出也不会留下。
 ; 桌面端启动时发现它被占着就直接退出（apps/desktop/src-tauri/src/installer_marker.rs 的 INSTALLER_MARKER）。
 !define AGENT_ROOM_INSTALLER_MARKER "installer-running.lock"
@@ -86,6 +92,37 @@ Var AgentRoomInstallerMarker
   ${EndIf}
 !macroend
 
+; 原处没有 IMAGE、挪开的 PARKED 还在时，把它挪回原处。用在没装成的时候，和桌面端一样。
+!macro AGENT_ROOM_RESTORE_PARKED IMAGE PARKED
+  ${IfNot} ${FileExists} "$INSTDIR\${IMAGE}"
+  ${AndIf} ${FileExists} "$INSTDIR\${PARKED}"
+    Rename "$INSTDIR\${PARKED}" "$INSTDIR\${IMAGE}"
+  ${EndIf}
+!macroend
+
+!macro AGENT_ROOM_RESTORE_SIDECARS
+  !insertmacro AGENT_ROOM_RESTORE_PARKED "agent-room-mcp.exe" "${AGENT_ROOM_PARKED_MCP}"
+  !insertmacro AGENT_ROOM_RESTORE_PARKED "agent-room.exe" "${AGENT_ROOM_PARKED_CLI}"
+!macroend
+
+; 把 IMAGE 挪到 PARKED，原处没有就不动。上次没装成留下的 PARKED 先删掉，它不比原处的新。
+; 挪不开时把 $2 记为 1，下一轮再挪：正在运行的程序一般能改名，NSIS 编出来的占位程序运行时挪不开。
+!macro AGENT_ROOM_PARK_SIDECAR IMAGE PARKED
+  ${If} ${FileExists} "$INSTDIR\${IMAGE}"
+    Delete "$INSTDIR\${PARKED}"
+    ClearErrors
+    Rename "$INSTDIR\${IMAGE}" "$INSTDIR\${PARKED}"
+    ${If} ${Errors}
+      StrCpy $2 1
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro AGENT_ROOM_PARK_SIDECARS
+  !insertmacro AGENT_ROOM_PARK_SIDECAR "agent-room-mcp.exe" "${AGENT_ROOM_PARKED_MCP}"
+  !insertmacro AGENT_ROOM_PARK_SIDECAR "agent-room.exe" "${AGENT_ROOM_PARKED_CLI}"
+!macroend
+
 ; 结束进程之前先把桌面端程序挪开。Agent 的 MCP 和命令行连不上 Bridge 时，会把装在一起的桌面端在后台
 ; 拉起来；停 Agent Room 的当口被拉起的旧版，会和正在退出的 WebView 抢同一份本机数据，升级后网页存储
 ; 被清空（Alpha 57、62 都遇到过）。挪开以后谁也找不到它，新版写进来以前没有桌面端能启动。
@@ -106,6 +143,7 @@ Var AgentRoomInstallerMarker
 ; 先把桌面端程序挪回原处、放开标记，和停下之前一样。
 !macro AGENT_ROOM_ABORT_STILL_RUNNING
   !insertmacro AGENT_ROOM_RESTORE_DESKTOP
+  !insertmacro AGENT_ROOM_RESTORE_SIDECARS
   !insertmacro AGENT_ROOM_RELEASE_INSTALLER_MARKER
   ${If} ${Silent}
     ; 静默安装没有界面，把原因写给调用方（控制台或被重定向的标准输出）。
@@ -134,6 +172,8 @@ Var AgentRoomInstallerMarker
   ; 新版看到标记直接退出，都不会在换文件的当口启动、碰本机数据。
   !insertmacro AGENT_ROOM_HOLD_INSTALLER_MARKER
   !insertmacro AGENT_ROOM_PARK_DESKTOP
+  ; 运行中的 MCP 和命令行一般也能先挪开；挪不开的，等它们退出以后在下面的等待里再挪。
+  !insertmacro AGENT_ROOM_PARK_SIDECARS
 
   ${Do}
     DetailPrint "Stopping Agent Room... 正在停止 Agent Room…"
@@ -168,11 +208,15 @@ Var AgentRoomInstallerMarker
       !insertmacro AGENT_ROOM_KILL_IF_RUNNING "agent-room-mcp.exe"
       !insertmacro AGENT_ROOM_KILL_IF_RUNNING "agent-room.exe"
       ${If} $2 = 0
+        ; 四个进程都不在了：还没挪开的 MCP 和命令行这时挪开，之后 Agent 再调也拉不起旧版。
+        !insertmacro AGENT_ROOM_PARK_SIDECARS
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\agent-room-desktop.exe"
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\${AGENT_ROOM_PARKED_DESKTOP}"
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\agent-room-bridge.exe"
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\agent-room-mcp.exe"
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\agent-room.exe"
+        !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\${AGENT_ROOM_PARKED_MCP}"
+        !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\${AGENT_ROOM_PARKED_CLI}"
         ; WebView2 的浏览器进程开着本机数据时一直占着它的 lockfile（关掉就删）。当前用户安装时
         ; $LOCALAPPDATA 就是桌面端存数据的地方；按机器安装时这里查不到，不影响别的检查。
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$LOCALAPPDATA\${BUNDLEID}\EBWebView\lockfile"
@@ -213,8 +257,10 @@ Var AgentRoomInstallerMarker
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  ; 新版程序都写好了：删掉挪开的旧桌面端，放开标记。之后谁再拉起桌面端，启动的都是新版。
+  ; 新版程序都写好了：删掉挪开的旧程序，放开标记。之后谁再拉起桌面端、MCP 或命令行，启动的都是新版。
   Delete "$INSTDIR\${AGENT_ROOM_PARKED_DESKTOP}"
+  Delete "$INSTDIR\${AGENT_ROOM_PARKED_MCP}"
+  Delete "$INSTDIR\${AGENT_ROOM_PARKED_CLI}"
   !insertmacro AGENT_ROOM_RELEASE_INSTALLER_MARKER
 !macroend
 
@@ -224,19 +270,23 @@ Var AgentRoomInstallerMarker
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; 模板按原名删程序，挪开的那份由这里删；标记关掉就删。模板删安装目录时它们还在，这里再删一次空目录。
+  ; 模板按原名删程序，挪开的那几份由这里删；标记关掉就删。模板删安装目录时它们还在，这里再删一次空目录。
   Delete "$INSTDIR\${AGENT_ROOM_PARKED_DESKTOP}"
+  Delete "$INSTDIR\${AGENT_ROOM_PARKED_MCP}"
+  Delete "$INSTDIR\${AGENT_ROOM_PARKED_CLI}"
   !insertmacro AGENT_ROOM_RELEASE_INSTALLER_MARKER
   RMDir "$INSTDIR"
 !macroend
 
-; 没装成、没卸成（中止、取消、写文件出错）时，把挪开的桌面端程序挪回原处，放开标记。
+; 没装成、没卸成（中止、取消、写文件出错）时，把挪开的程序挪回原处，放开标记。
 Function .onInstFailed
   !insertmacro AGENT_ROOM_RESTORE_DESKTOP
+  !insertmacro AGENT_ROOM_RESTORE_SIDECARS
   !insertmacro AGENT_ROOM_RELEASE_INSTALLER_MARKER
 FunctionEnd
 
 Function un.onUninstFailed
   !insertmacro AGENT_ROOM_RESTORE_DESKTOP
+  !insertmacro AGENT_ROOM_RESTORE_SIDECARS
   !insertmacro AGENT_ROOM_RELEASE_INSTALLER_MARKER
 FunctionEnd
