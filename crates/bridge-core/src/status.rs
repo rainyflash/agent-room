@@ -229,7 +229,8 @@ impl StatusPublicationFailure {
         }
     }
 
-    const fn matrix(failure: MatrixFailure) -> Self {
+    /// Matrix 那边没写成。
+    pub const fn matrix(failure: MatrixFailure) -> Self {
         Self {
             kind: StatusPublicationFailureKind::Matrix,
             matrix_failure: Some(failure),

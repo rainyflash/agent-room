@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
+};
 
 use agent_room_application::ports::{
     AgentRoomMembershipFactory, DirectMatrixRoomCreation, DirectSessionMatrixProvisioner,
@@ -373,18 +378,17 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
         allowed: bool,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
-            let operation = MatrixOperation::UpdatePowerLevels;
-            let original = read_power_levels(self, room_id, operation).await?;
-            let mut content = original.clone();
-            apply_active_private_policy(
-                &mut content,
-                &[PrivateMatrixSpeakingAssignment::new(
-                    user_id.clone(),
-                    allowed,
-                )],
-                operation,
-            )?;
-            write_power_levels_if_changed(self, room_id, &original, &content, operation).await
+            let assignment = [PrivateMatrixSpeakingAssignment::new(
+                user_id.clone(),
+                allowed,
+            )];
+            update_power_levels(
+                self,
+                room_id,
+                MatrixOperation::UpdatePowerLevels,
+                |content, operation| apply_active_private_policy(content, &assignment, operation),
+            )
+            .await
         })
     }
 
@@ -397,11 +401,13 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
             if assignments.is_empty() {
                 return Ok(());
             }
-            let operation = MatrixOperation::UpdatePowerLevels;
-            let original = read_power_levels(self, room_id, operation).await?;
-            let mut content = original.clone();
-            apply_active_private_policy(&mut content, assignments, operation)?;
-            write_power_levels_if_changed(self, room_id, &original, &content, operation).await
+            update_power_levels(
+                self,
+                room_id,
+                MatrixOperation::UpdatePowerLevels,
+                |content, operation| apply_active_private_policy(content, assignments, operation),
+            )
+            .await
         })
     }
 
@@ -440,11 +446,13 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
 
     fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
-            let operation = MatrixOperation::ArchiveRoom;
-            let original = read_power_levels(self, room_id, operation).await?;
-            let mut content = original.clone();
-            apply_archived_private_policy(&mut content, operation)?;
-            write_power_levels_if_changed(self, room_id, &original, &content, operation).await
+            update_power_levels(
+                self,
+                room_id,
+                MatrixOperation::ArchiveRoom,
+                apply_archived_private_policy,
+            )
+            .await
         })
     }
 }
@@ -764,7 +772,36 @@ async fn send_membership_action(
     expect_empty_success(response, operation).await
 }
 
-pub(crate) async fn read_power_levels(
+/// 改权限状态只能“读出整份、改一项、整份写回”，Matrix 没有按版本写的办法。两个请求同时改同一个
+/// 房间时，后写的那份没有先写的那一项，先给的就丢了：2026-10-16 两个 Agent 在同一毫秒进了
+/// 同一个私人房间，后一个的发言级别被前一个的写入盖掉，它的名片一直写不进去。所以这个进程里
+/// 改同一个房间的权限一次只做一个（按房间分到固定的几把锁上，不同房间偶尔排一下队）。生产上
+/// 只有一个控制面；哪天开了多个副本，这把锁就挡不住了，要换成库里的锁。
+static POWER_LEVEL_LOCKS: [tokio::sync::Mutex<()>; 64] =
+    [const { tokio::sync::Mutex::const_new(()) }; 64];
+
+fn power_level_lock(room_id: &MatrixRoomId) -> &'static tokio::sync::Mutex<()> {
+    let mut hasher = DefaultHasher::new();
+    room_id.as_str().hash(&mut hasher);
+    let index = usize::try_from(hasher.finish() % 64).unwrap_or_default();
+    &POWER_LEVEL_LOCKS[index]
+}
+
+/// 读出这个房间的权限、交给 `change` 改，变了才写回；读到写完都拿着这个房间的锁。
+pub(crate) async fn update_power_levels(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    room_id: &MatrixRoomId,
+    operation: MatrixOperation,
+    change: impl FnOnce(&mut Map<String, Value>, MatrixOperation) -> MatrixResult<()>,
+) -> MatrixResult<()> {
+    let _room = power_level_lock(room_id).lock().await;
+    let original = read_power_levels(provisioner, room_id, operation).await?;
+    let mut content = original.clone();
+    change(&mut content, operation)?;
+    write_power_levels_if_changed(provisioner, room_id, &original, &content, operation).await
+}
+
+async fn read_power_levels(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
     operation: MatrixOperation,
@@ -798,7 +835,7 @@ pub(crate) async fn read_power_levels(
 }
 
 /// Agent 每次重连都会重新确认发言权；内容没变时不写，免得每次入场都给房间多一条权限状态事件。
-pub(crate) async fn write_power_levels_if_changed(
+async fn write_power_levels_if_changed(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
     original: &Map<String, Value>,
@@ -1316,6 +1353,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 两个_agent_同时进同一个房间都拿到发言级别() {
+        // 读完到写回之间慢一点：两个请求不排队的话都读到没有对方的那份，后写的盖掉先写的。
+        let server = PrivateRoomTestServer::start_with_read_delay(Duration::from_millis(50)).await;
+        let provisioner = provisioner(&server.url);
+        let room = MatrixRoomId::new("!private:matrix.agent-room.localhost").expect("房间有效");
+        let first = MatrixUserId::new(
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a3:matrix.agent-room.localhost",
+        )
+        .expect("Agent 用户有效");
+        let second = MatrixUserId::new(
+            "@_agent_01945c1e7b5a7c7f8a282de53f56a9a4:matrix.agent-room.localhost",
+        )
+        .expect("Agent 用户有效");
+
+        let (first_result, second_result) = tokio::join!(
+            provisioner.set_speaking(&room, &first, true),
+            provisioner.set_speaking(&room, &second, true),
+        );
+        first_result.expect("第一个授予");
+        second_result.expect("第二个授予");
+
+        assert_eq!(
+            server.actions().await,
+            vec!["read-power", "write-power", "read-power", "write-power"]
+        );
+        let current = server.current_power_levels().await.expect("写过权限");
+        assert_eq!(current["users"][first.as_str()], 10);
+        assert_eq!(current["users"][second.as_str()], 10);
+    }
+
+    #[tokio::test]
     async fn application_service_可创建解析并挂载大厅房间() {
         let server = TestServer::start().await;
         let provisioner = provisioner(&server.url);
@@ -1553,11 +1621,20 @@ mod tests {
         power_level_writes: tokio::sync::Mutex<Vec<Value>>,
         /// 最近一次写入的权限；读取时返回它，才能看出重复授予是否还会再写一次。
         current_power_levels: tokio::sync::Mutex<Option<Value>>,
+        /// 读权限时先等这么久，好让同时来的请求都在写之前读到。
+        read_delay: Duration,
     }
 
     impl PrivateRoomTestServer {
         async fn start() -> Self {
-            let state = Arc::new(PrivateRoomTestState::default());
+            Self::start_with_read_delay(Duration::ZERO).await
+        }
+
+        async fn start_with_read_delay(read_delay: Duration) -> Self {
+            let state = Arc::new(PrivateRoomTestState {
+                read_delay,
+                ..PrivateRoomTestState::default()
+            });
             let app = Router::new()
                 .route(
                     "/_matrix/client/v3/rooms/{room}/state/m.room.member/{user}",
@@ -1596,6 +1673,10 @@ mod tests {
 
         async fn power_level_writes(&self) -> Vec<Value> {
             self.state.power_level_writes.lock().await.clone()
+        }
+
+        async fn current_power_levels(&self) -> Option<Value> {
+            self.state.current_power_levels.lock().await.clone()
         }
     }
 
@@ -1840,6 +1921,7 @@ mod tests {
         assert_eq!(room, "!private:matrix.agent-room.localhost");
         state.actions.lock().await.push("read-power");
         let current = state.current_power_levels.lock().await.clone();
+        tokio::time::sleep(state.read_delay).await;
         Json(current.unwrap_or_else(|| {
             json!({
                 "users": { "@service:matrix.agent-room.localhost": 100 },
