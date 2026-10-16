@@ -24,7 +24,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 依赖还没合并的上一步时开叠加 PR（base 设为上一步的分支）。上一步合并后，`gh pr edit <号> --base main`，再 `git rebase --onto origin/main <旧基提交>` 并强推。
 - 推之前在本地检查：
   - `cargo fmt --all -- --check`；
-  - 与 CI 同款的 clippy：`cargo clippy -p agent-room-application -p agent-room-content-adapter -p agent-room-postgres-adapter -p agent-room-control-plane -p agent-room-bridge --all-targets -- -D warnings`；
+  - 与 CI 同款的 clippy：`cargo clippy --workspace --all-targets --all-features -- -D warnings`。只查几个包会漏掉别的包里的告警（比如 `result_large_err`、`struct_field_names`），CI 查的是整个 workspace；
   - 改了 Markdown 或前端代码就跑 prettier（`specs/` 在 `.prettierignore` 里）。
 - clippy 开了 `too_many_lines`（100 行），函数太长就拆出辅助函数。测试函数也算。
 - 合并到 main 的数据库迁移不再改（SQLx 记着每个迁移的校验和），要改就新加一个。
@@ -146,6 +146,13 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 聊天登录由控制面以应用服务身份替人发（`POST /auth/desktop/matrix-session`，只认桌面登录）；第一次用就在桌面端的人，控制面先替他在 Synapse 上注册，Synapse 的 OIDC 配置开 `allow_existing_users` 认下这个账户。网页只把自己的地址加进 `sso.client_whitelist`。
   - 这台电脑的授权跟着账户登录走：原生层用桌面登录要一份一次性的电脑授权（`POST /auth/desktop/computer-grant`，代发通道不转发），经标准输入交给 Bridge，Bridge 拿它注册（`POST /auth/devices/register-with-grant`）；一年从那份登录的认证时间算。
   - 无头 Bridge 和发版实机验收照旧用设备码；桌面端要不到授权时也退回设备码。
+- 已合并：设计 #492；第 2 步控制面发聊天登录 #493；第 3 步桌面端改向控制面要聊天登录 #494；第 4 步控制面的电脑授权 #495；第 5 步 Bridge 的 `supervisor` 模式 #496；第 6 步桌面端拿登录要授权交给 Bridge #497；第 7 步说法 #498。都随 Alpha 74 发布。
+- 改这一块时别拆的几样：
+  - 托管的 Bridge 运行中授权失效（退出时报 `bridge.not_authorized`）桌面端停下、不自动重启（`BridgeRestartPolicy::authorization_lost`）。重启的 Bridge 会拿应用里的登录自己连回来，在别处移除的电脑不该这样；人点“重新连接”或“重新授权这台电脑”才连回去。
+  - 代发通道（`desktop_control_plane_request`）拦着 `auth/desktop/computer-grant`，大小写、百分号编码、多余斜杠都算：网页里的代码不该拿到电脑授权。
+  - Bridge 的标准输入从启动起由一个线程按行读（`runtime/supervisor_input.rs`）：`exit` 和管道关闭照旧是退出，新加的行不认识就忽略。别在别处再读标准输入。
+  - 控制面说桌面登录无效（401 `authentication.invalid_session`）才删本机这份登录；别的拒绝退回设备码，网络不通、5xx、429 隔一会儿再要。
+  - 电脑授权的一年从那份桌面登录的认证时间算（令牌组的 `authenticated_at`）。满一年的登录要得到授权，注册时回 401，桌面端退回设备码。
 
 ### Agent 自己建房间、管房间
 
