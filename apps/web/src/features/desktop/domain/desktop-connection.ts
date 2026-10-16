@@ -49,6 +49,8 @@ export function haltReasonMessage(code: string | null | undefined): TranslationK
       return 'desktop.halted.reason.identityConflict';
     case 'bridge.matrix_room_not_found':
       return 'desktop.halted.reason.roomMissing';
+    case 'bridge.not_authorized':
+      return 'desktop.halted.reason.notAuthorized';
     default:
       return 'desktop.halted.description';
   }

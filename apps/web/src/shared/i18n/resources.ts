@@ -106,8 +106,10 @@ export const resources = {
         'This computer’s encryption identity conflicts with the server. Reconnect; if it happens again, re-authorize this computer.',
       'desktop.halted.reason.roomMissing':
         'The agent’s room no longer exists on the server. Reconnect to be placed again.',
+      'desktop.halted.reason.notAuthorized':
+        'This computer is no longer authorized: it was removed elsewhere, or went unused for a long time. Re-authorize it to connect again.',
       'desktop.halted.reauthorizeDescription':
-        'If reconnecting doesn’t help, re-authorize this computer. It clears the device credential saved here and asks for a new one-time code.',
+        'If reconnecting doesn’t help, re-authorize this computer. It clears the device credential saved here and authorizes it again with your sign-in in the app; if that isn’t possible, it asks for a one-time code.',
       'desktop.halted.reauthorize': 'Re-authorize this computer',
       'desktop.halted.exitCode': 'Last exit code',
       'desktop.failure.refresh': 'Refresh status',
@@ -765,8 +767,10 @@ export const resources = {
       'desktop.halted.reason.identityConflict':
         '这台电脑的加密身份与服务端冲突。先重新连接；再次出现就重新授权这台电脑。',
       'desktop.halted.reason.roomMissing': 'Agent 所在的房间在服务端已不存在。重新连接会重新安置。',
+      'desktop.halted.reason.notAuthorized':
+        '这台电脑的授权已经失效：在别处移除了它，或者太久没用。重新授权这台电脑就能再连上。',
       'desktop.halted.reauthorizeDescription':
-        '如果重新连接后仍然停止，可以重新授权这台电脑：清除本机保存的设备凭据，再用新的一次性代码授权。',
+        '如果重新连接后仍然停止，可以重新授权这台电脑：清除本机保存的设备凭据，再用应用里的登录授权；授权不了时改用一次性代码。',
       'desktop.halted.reauthorize': '重新授权这台电脑',
       'desktop.halted.exitCode': '最近退出码',
       'desktop.failure.refresh': '刷新状态',

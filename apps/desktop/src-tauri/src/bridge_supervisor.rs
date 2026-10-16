@@ -11,7 +11,7 @@ use std::{
 use agent_room_bridge_ipc::{IpcBridgeState, IpcMethod, IpcResponse, IpcSelfSummary};
 use agent_room_bridge_local_adapter::{LocalBridgeClient, LocalBridgeClientFailureKind};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter as _};
+use tauri::{AppHandle, Emitter as _, Manager as _};
 use tauri_plugin_notification::NotificationExt as _;
 use tauri_plugin_shell::{
     ShellExt as _,
@@ -22,11 +22,16 @@ use url::Url;
 
 use crate::{
     bridge_lifecycle::{
-        BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase, BridgeRestartPolicy,
-        ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState, UnmanagedAction,
-        UnmanagedBridge, decide_resume,
+        AUTHORIZATION_LOST_DIAGNOSTIC, BridgeLifecycleSnapshot, BridgeOwnership, BridgePhase,
+        BridgeRestartPolicy, ConnectionProgress, ExitDecision, ResumeDecision, ResumeProbeState,
+        UnmanagedAction, UnmanagedBridge, decide_resume,
+    },
+    computer_grant::{
+        ComputerGrant, ComputerGrantClient, ComputerGrantFailure, DEVICE_CODE_LINE, GrantStep,
+        GrantWait,
     },
     desktop_config::{BridgeLaunch, DesktopBridgeConfig},
+    human_session::HumanSessionRuntime,
     server_move::BRIDGE_LOCK,
 };
 
@@ -133,10 +138,12 @@ impl BridgeSupervisor {
             shutting_down: shutting_down.clone(),
             input: input_tx.clone(),
             receiver: input_rx,
+            grant: GrantWait::default(),
             state: state_tx,
             generation: 0,
             managed_child_active: false,
             child_found_other_instance: false,
+            child_lost_authorization: false,
             logged_lifecycle: None,
         };
         tauri::async_runtime::spawn(actor.run());
@@ -213,6 +220,11 @@ impl BridgeSupervisor {
         let _ = self.input.try_send(ActorInput::Resume);
     }
 
+    /// 应用里登录好了（恢复了本机的登录或刚登录完）：托管的 Bridge 在等电脑授权的话，现在去要。
+    pub(crate) fn signed_in(&self) {
+        let _ = self.input.try_send(ActorInput::SignedIn);
+    }
+
     /// 桌面端正常退出时用：请托管的 Bridge 有序退出并等它，超时再直接结束。
     pub(crate) async fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
@@ -257,8 +269,12 @@ struct BridgeSupervisorActor {
     managed_child_active: bool,
     /// 当前子进程报告另一个 Bridge 进程占着实例锁，它随后的退出不算崩溃。
     child_found_other_instance: bool,
+    /// 当前子进程报告这台电脑的授权失效了，它随后的退出不自动重启。
+    child_lost_authorization: bool,
     /// 上一次写进日志的生命周期状态；状态没变的发布不再重复记。
     logged_lifecycle: Option<(BridgePhase, Option<String>, Option<String>)>,
+    /// 这一代子进程等电脑授权的进度（`specs/desktop-sign-in/design.md`）。
+    grant: GrantWait,
 }
 
 impl BridgeSupervisorActor {
@@ -296,6 +312,19 @@ impl BridgeSupervisorActor {
                 }
                 ActorInput::Reconfigure { config } => self.handle_reconfigure(*config),
                 ActorInput::Resume => self.handle_resume().await,
+                ActorInput::SignedIn => self.request_grant(),
+                ActorInput::GrantResolved { generation, result } => {
+                    if generation == self.generation {
+                        let step = self.grant.resolved(result);
+                        self.follow_grant_step(step);
+                    }
+                }
+                ActorInput::GrantRetry { generation } => {
+                    if generation == self.generation {
+                        self.grant.retry_due();
+                        self.request_grant();
+                    }
+                }
                 ActorInput::Shutdown { done } => {
                     self.shutting_down.store(true, Ordering::SeqCst);
                     self.stop_managed_child_orderly().await;
@@ -322,6 +351,8 @@ impl BridgeSupervisorActor {
         }
         self.generation = self.generation.saturating_add(1);
         self.child_found_other_instance = false;
+        self.child_lost_authorization = false;
+        self.grant.reset();
         self.policy.starting(now_unix_ms());
         self.authorization = None;
         self.session = None;
@@ -625,6 +656,9 @@ impl BridgeSupervisorActor {
                     if code == INSTANCE_LOCK_HELD_CODE {
                         self.child_found_other_instance = true;
                     }
+                    if code == AUTHORIZATION_LOST_DIAGNOSTIC {
+                        self.child_lost_authorization = true;
+                    }
                     self.policy.set_diagnostic(now_unix_ms(), code);
                     self.publish();
                 }
@@ -670,10 +704,26 @@ impl BridgeSupervisorActor {
                 self.policy.authorization_required(now_unix_ms());
                 self.publish();
             }
+            BridgeSupervisorEvent::DeviceGrantRequired { channel }
+                if channel == SUPERVISOR_CHANNEL =>
+            {
+                // 界面照旧是“正在连接”，不出授权横幅：先拿账户登录换电脑授权。
+                tracing::info!("托管的 Bridge 在等电脑授权");
+                self.grant.bridge_asked();
+                self.request_grant();
+            }
+            BridgeSupervisorEvent::DeviceGrantFailed { channel, code }
+                if channel == SUPERVISOR_CHANNEL && is_stable_bridge_code(&code) =>
+            {
+                tracing::warn!(error_code = code, "Bridge 拿电脑授权注册没成");
+                let step = self.grant.bridge_rejected(&code);
+                self.follow_grant_step(step);
+            }
             BridgeSupervisorEvent::DeviceAuthorized { channel }
             | BridgeSupervisorEvent::Ready { channel }
                 if channel == SUPERVISOR_CHANNEL =>
             {
+                self.grant.bridge_authorized();
                 self.authorization = None;
                 self.session = None;
                 self.policy.discovered_pending(
@@ -707,8 +757,99 @@ impl BridgeSupervisorActor {
         }
     }
 
+    /// Bridge 在等电脑授权、手上又没有没回来的请求时，拿应用里的登录去要一份。
+    /// 还没登录就等着：登录好了 `signed_in` 会再叫一次。
+    fn request_grant(&mut self) {
+        if !self.grant.should_request() {
+            return;
+        }
+        let secret = self
+            .app
+            .try_state::<HumanSessionRuntime>()
+            .and_then(|sessions| sessions.session_secret().ok().flatten());
+        let Some(secret) = secret else {
+            tracing::info!("应用里还没登录，登录以后再连上这台电脑");
+            return;
+        };
+        let Some(client) = ComputerGrantClient::new(self.config.control_plane_url()) else {
+            self.follow_grant_step(GrantStep::DeviceCode);
+            return;
+        };
+        let origin = self
+            .app
+            .get_webview_window("main")
+            .and_then(|window| window.url().ok())
+            .as_ref()
+            .and_then(crate::control_plane_proxy::webview_origin);
+        self.grant.requesting();
+        let sender = self.input.clone();
+        let generation = self.generation;
+        let app = self.app.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = match origin {
+                Some(origin) => client.request(&origin, &secret).await,
+                // 窗口还没起来：等一会儿再要。
+                None => Err(ComputerGrantFailure::Transient),
+            };
+            if result == Err(ComputerGrantFailure::SessionRejected)
+                && let Some(sessions) = app.try_state::<HumanSessionRuntime>()
+                && let Err(failure) = sessions.forget_rejected(&secret)
+            {
+                tracing::warn!(
+                    error_code = failure.code(),
+                    "控制面说登录无效，本机这份没删掉"
+                );
+            }
+            let _ = sender
+                .send(ActorInput::GrantResolved { generation, result })
+                .await;
+        });
+    }
+
+    fn follow_grant_step(&mut self, step: GrantStep) {
+        match step {
+            GrantStep::Wait => {}
+            GrantStep::Deliver(grant) => {
+                if self.write_to_bridge(grant.bridge_line().as_bytes()) {
+                    tracing::info!("电脑授权已交给 Bridge");
+                }
+            }
+            GrantStep::RetryAfter(delay) => {
+                tracing::info!(
+                    delay_ms = delay.as_millis(),
+                    "暂时要不到电脑授权，过一会儿再要"
+                );
+                let sender = self.input.clone();
+                let generation = self.generation;
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(delay).await;
+                    let _ = sender.send(ActorInput::GrantRetry { generation }).await;
+                });
+            }
+            GrantStep::ForgetSession => {
+                tracing::info!("控制面说应用里的登录无效，重新登录以后再连上这台电脑");
+            }
+            GrantStep::DeviceCode => {
+                tracing::warn!("要不到电脑授权，请 Bridge 改走设备码");
+                self.write_to_bridge(DEVICE_CODE_LINE.as_bytes());
+            }
+        }
+    }
+
+    /// 往托管 Bridge 的标准输入写一行；它已经不在就算了，它的退出事件会接着处理。
+    fn write_to_bridge(&self, line: &[u8]) -> bool {
+        self.managed_child_active
+            && self
+                .child
+                .lock()
+                .ok()
+                .and_then(|mut child| child.as_mut().map(|child| child.write(line).is_ok()))
+                .unwrap_or(false)
+    }
+
     fn handle_exit(&mut self, exit_code: Option<i32>) {
         tracing::warn!(?exit_code, "Bridge 子进程退出");
+        self.grant.reset();
         if let Ok(mut child) = self.child.lock() {
             *child = None;
         }
@@ -721,6 +862,13 @@ impl BridgeSupervisorActor {
             // 这不是崩溃，不占重启预算；等它走完再按普通方式启动。重新授权的请求随之作废：Bridge 先拿锁
             // 后清凭据，这个子进程什么也没动，之后若仍停机，停机视图会再提供重新授权。
             self.observe_unmanaged(UnmanagedBridge::Locked);
+            return;
+        }
+        if self.child_lost_authorization && !shutting_down {
+            tracing::warn!("这台电脑的授权失效了，停下等人重新授权");
+            self.policy.authorization_lost(now_unix_ms(), exit_code);
+            self.notify_stopped();
+            self.publish();
             return;
         }
         match self
@@ -908,6 +1056,14 @@ enum ActorInput {
         event: CommandEvent,
     },
     Resume,
+    SignedIn,
+    GrantResolved {
+        generation: u64,
+        result: Result<ComputerGrant, ComputerGrantFailure>,
+    },
+    GrantRetry {
+        generation: u64,
+    },
     /// 停掉托管的 Bridge 并结束监督；`done` 在收尾之后通知等着的一方。
     Shutdown {
         done: Option<oneshot::Sender<()>>,
@@ -1002,6 +1158,15 @@ enum BridgeSupervisorEvent {
         user_code: String,
         #[serde(rename = "expiresInSeconds")]
         expires_in_seconds: u64,
+    },
+    /// 还没授权的 Bridge 在等桌面端交电脑授权。
+    DeviceGrantRequired {
+        channel: String,
+    },
+    /// Bridge 拿电脑授权注册没成，接着等下一行。
+    DeviceGrantFailed {
+        channel: String,
+        code: String,
     },
     DeviceAuthorized {
         channel: String,

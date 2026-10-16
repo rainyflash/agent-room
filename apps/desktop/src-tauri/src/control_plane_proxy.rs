@@ -203,9 +203,11 @@ impl ControlPlaneProxy {
     }
 
     /// 只认控制面根地址下面的相对路径：前端不能借这条路把登录带去别的地方。
+    /// 电脑授权只给原生层自己要，这里不转发（`computer_grant.rs`）。
     fn endpoint(&self, path: &str) -> Result<Url, ControlPlaneProxyFailure> {
         let route = path.split('?').next().unwrap_or_default();
         if path.is_empty()
+            || crate::computer_grant::is_native_only_route(path)
             || path.starts_with('/')
             || path.contains(['\\', '#'])
             || path
@@ -326,7 +328,7 @@ fn response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
 }
 
 /// `join` 只在根地址以斜杠结尾时才把路径接在它后面，否则会换掉最后一段。
-fn directory_url(mut url: Url) -> Url {
+pub(crate) fn directory_url(mut url: Url) -> Url {
     if !url.path().ends_with('/') {
         let path = format!("{}/", url.path());
         url.set_path(&path);

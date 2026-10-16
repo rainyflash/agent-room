@@ -12,6 +12,8 @@ const RESTART_DELAYS: [Duration; MAX_AUTOMATIC_RESTARTS] = [
 const SERVER_UNREACHABLE_DIAGNOSTIC: &str = "desktop.bridge.server_unreachable";
 const AUTHORIZATION_FAILED_DIAGNOSTIC: &str = "desktop.authorization.failed";
 const OTHER_INSTANCE_DIAGNOSTIC: &str = "desktop.bridge.other_instance_running";
+/// Bridge 因为这台电脑的授权失效而退出时报的代码（Bridge `BridgeRuntimeError::session`）。
+pub(crate) const AUTHORIZATION_LOST_DIAGNOSTIC: &str = "bridge.not_authorized";
 /// Bridge 重连退避允许配置的最大间隔；更长的值只可能来自损坏的输出。
 const MAX_SERVER_RETRY_DELAY: Duration = Duration::from_mins(15);
 /// 另一个 Bridge 进程占着实例锁时最多等这么久再停机提示。上一个桌面留下的 Bridge 要逐个排空宿主
@@ -412,6 +414,16 @@ impl BridgeRestartPolicy {
         ExitDecision::RetryAfter(delay)
     }
 
+    /// 托管的 Bridge 因为这台电脑的授权失效而退出（在别处移除了这台电脑、太久没用）。
+    /// 不自动重启：重启后的 Bridge 会拿应用里的登录自己连回来，而被移除的电脑不该自己连回来
+    /// （`specs/desktop-sign-in/design.md`）。停下来，给“重新授权这台电脑”。
+    pub(crate) fn authorization_lost(&mut self, now_unix_ms: i64, exit_code: Option<i32>) {
+        self.snapshot.last_exit_code = exit_code;
+        self.snapshot.ownership = Some(BridgeOwnership::Managed);
+        self.other_instance_since = None;
+        self.halt(now_unix_ms, AUTHORIZATION_LOST_DIAGNOSTIC);
+    }
+
     pub(crate) fn explicit_retry(&mut self, now_unix_ms: i64) {
         self.crashes.clear();
         self.snapshot.automatic_restart_count = 0;
@@ -432,6 +444,25 @@ mod tests {
         BridgeOwnership, BridgePhase, BridgeRestartPolicy, ConnectionProgress, ExitDecision,
         ResumeDecision, ResumeProbeState, UnmanagedAction, UnmanagedBridge, decide_resume,
     };
+
+    #[test]
+    fn 运行中授权失效就停下_给重新授权_不自动重启() {
+        let mut policy = BridgeRestartPolicy::new(0);
+        policy.discovered_ready(1, BridgeOwnership::Managed);
+        policy.authorization_lost(2, Some(1));
+        let snapshot = policy.snapshot();
+        assert_eq!(snapshot.phase, BridgePhase::Halted);
+        assert_eq!(
+            snapshot.diagnostic_code.as_deref(),
+            Some("bridge.not_authorized")
+        );
+        assert_eq!(snapshot.last_exit_code, Some(1));
+        assert!(snapshot.device_reauthorization_available());
+        assert!(
+            !policy.probes_periodically(false),
+            "停下的托管 Bridge 不再自己重启"
+        );
+    }
 
     #[test]
     fn 已运行_bridge_被发现后不会争夺生命周期所有权() {
