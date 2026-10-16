@@ -135,9 +135,7 @@ test('中文窄屏安全操作不挤成竖排，身份与授权入口保持可�
   });
 });
 
-test('消息没连上时提示栈里常驻一条：登录超时给“重新连接”，等浏览器登录时能重新开始', async ({
-  page,
-}, testInfo) => {
+test('消息没连上时提示栈里常驻一条：聊天登录没拿到给“重新连接”', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   const notifications = page.getByRole('region', { name: 'Notifications' });
   await page.goto('/e2e/fixtures/my-agents.html?matrix=failed');
@@ -145,9 +143,7 @@ test('消息没连上时提示栈里常驻一条：登录超时给“重新连�
   await expect(page.getByText('Studio companion', { exact: true })).toBeVisible();
   await expect(notifications.getByText('Messages are not connected')).toBeVisible();
   await expect(
-    notifications.getByText(
-      'The previous connection was not completed. Choose Reconnect to continue.',
-    ),
+    notifications.getByText('Your conversations could not connect. Please retry.'),
   ).toBeVisible();
   const scan = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
@@ -157,14 +153,10 @@ test('消息没连上时提示栈里常驻一条：登录超时给“重新连�
     animations: 'disabled',
     path: testInfo.outputPath('matrix-connection-failed.png'),
   });
-  // 夹具里每次登录都超时，重新连接一遍后还是停在这条提示上。
+  // 夹具里每次都拿不到聊天登录，重新连接一遍后还是停在这条提示上。
   await notifications.getByRole('button', { name: 'Reconnect' }).click();
   await expect(notifications.getByText('Messages are not connected')).toBeVisible();
 
-  await page.goto('/e2e/fixtures/my-agents.html?matrix=signin');
-  await expect(notifications.getByText('Finish signing in in your browser')).toBeVisible();
-  await notifications.getByRole('button', { name: 'Start sign-in again' }).click();
-  await expect(notifications.getByText('Finish signing in in your browser')).toBeVisible();
   expect(failures).toEqual([]);
 });
 

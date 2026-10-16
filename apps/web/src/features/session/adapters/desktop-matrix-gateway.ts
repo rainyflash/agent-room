@@ -1,4 +1,3 @@
-import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import type {
   AuthenticationStartOutcome,
   MatrixGateway,
@@ -7,46 +6,41 @@ import type {
 } from '@/features/session/domain/session';
 import { err, ok, type Result } from '@/shared/result';
 import { supersededMatrixSession } from '../domain/matrix-session-repository';
+import type { DesktopMatrixSessions } from './control-plane-desktop-matrix-sessions';
 
 export type DesktopMatrixGatewayOptions = {
-  readonly matrix: MatrixAuthenticationSessionGateway;
-  readonly runtime: Pick<DesktopRuntimeGateway, 'beginMatrixAuthentication'>;
+  readonly matrix: MatrixIssuedSessionGateway;
+  readonly sessions: DesktopMatrixSessions;
 };
 
-export type MatrixAuthenticationSessionGateway = MatrixGateway & {
-  exchangeAuthenticationGrant(
-    loginToken: string,
-    returnPath: string,
-  ): Promise<Result<void, SessionFailure>>;
+export type MatrixIssuedSessionGateway = MatrixGateway & {
+  adoptIssuedSession(login: unknown, returnPath: string): Promise<Result<void, SessionFailure>>;
 };
 
 /**
- * 桌面层只接管系统浏览器与回环回调；Matrix 凭据交换、校验和连接仍由 Matrix 网关负责。
+ * 桌面端的聊天登录由控制面替人发（`specs/desktop-sign-in/design.md`），不开系统浏览器；拿到以后的
+ * 校验、存储和连接仍由 Matrix 网关负责。
  */
 export class DesktopMatrixGateway implements MatrixGateway {
-  readonly #matrix: MatrixAuthenticationSessionGateway;
-  readonly #runtime: Pick<DesktopRuntimeGateway, 'beginMatrixAuthentication'>;
+  readonly #matrix: MatrixIssuedSessionGateway;
+  readonly #sessions: DesktopMatrixSessions;
   #authenticationEpoch = 0;
 
-  constructor({ matrix, runtime }: DesktopMatrixGatewayOptions) {
+  constructor({ matrix, sessions }: DesktopMatrixGatewayOptions) {
     this.#matrix = matrix;
-    this.#runtime = runtime;
+    this.#sessions = sessions;
   }
 
   async beginAuthentication(
     returnPath: string,
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
     const epoch = this.#authenticationEpoch;
-    const grant = await this.#runtime.beginMatrixAuthentication(returnPath);
+    const issued = await this.#sessions.issue();
+    // 等的时候退出登录或断开了：迟到的登录不要了。
     if (epoch !== this.#authenticationEpoch) return err(supersededMatrixSession());
-    if (!grant.ok) {
-      return err(runtimeFailure(grant.error));
-    }
-    const exchanged = await this.#matrix.exchangeAuthenticationGrant(
-      grant.value.loginToken,
-      grant.value.returnPath,
-    );
-    return exchanged.ok ? ok({ kind: 'session-established' }) : exchanged;
+    if (!issued.ok) return issued;
+    const adopted = await this.#matrix.adoptIssuedSession(issued.value, returnPath);
+    return adopted.ok ? ok({ kind: 'session-established' }) : adopted;
   }
 
   logout(): ReturnType<MatrixGateway['logout']> {
@@ -62,16 +56,4 @@ export class DesktopMatrixGateway implements MatrixGateway {
   restore(expectedUserId: string): Promise<Result<MatrixRestoreOutcome, SessionFailure>> {
     return this.#matrix.restore(expectedUserId);
   }
-}
-
-function runtimeFailure(failure: {
-  readonly code: string;
-  readonly retryable: boolean;
-}): SessionFailure {
-  return {
-    boundary: 'matrix',
-    code: failure.code,
-    offline: false,
-    retryable: failure.retryable,
-  };
 }

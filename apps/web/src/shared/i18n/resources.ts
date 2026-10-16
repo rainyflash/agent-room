@@ -286,9 +286,6 @@ export const resources = {
       'connection.stage.status.waiting': 'Waiting for you',
       'matrixConnection.connecting.title': 'Connecting messages',
       'matrixConnection.connecting.detail': 'This room opens as soon as messages connect.',
-      'matrixConnection.browserSignIn.title': 'Finish signing in in your browser',
-      'matrixConnection.browserSignIn.detail':
-        'The sign-in page is open in your browser. When you are done there, messages connect here on their own.',
       'matrixConnection.required.title': 'Messages are not connected',
       'matrixConnection.required.detail':
         'This device lost its message connection. Reconnect to pick up where you left off.',
@@ -931,9 +928,6 @@ export const resources = {
       'connection.stage.status.waiting': '等你操作',
       'matrixConnection.connecting.title': '正在接通消息',
       'matrixConnection.connecting.detail': '接通以后，这个房间会自己打开。',
-      'matrixConnection.browserSignIn.title': '在浏览器里完成登录',
-      'matrixConnection.browserSignIn.detail':
-        '登录页已经在浏览器里打开。那边登录完，这里的消息就会自己接通。',
       'matrixConnection.required.title': '消息没有连上',
       'matrixConnection.required.detail': '这台设备的消息连接断了，重新连接一下就好。',
       'matrixConnection.details': '查看详情',

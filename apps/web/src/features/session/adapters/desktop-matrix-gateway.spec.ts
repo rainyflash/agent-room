@@ -1,83 +1,81 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { MatrixAuthenticationSessionGateway } from './desktop-matrix-gateway';
+import type { DesktopMatrixSessions } from './control-plane-desktop-matrix-sessions';
+import type { MatrixIssuedSessionGateway } from './desktop-matrix-gateway';
 import { DesktopMatrixGateway } from './desktop-matrix-gateway';
-import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import { err, ok } from '@/shared/result';
 
+const issuedLogin = {
+  access_token: 'syt_access',
+  device_id: 'DESKTOPDEV',
+  refresh_token: 'syr_refresh',
+  user_id: '@rainy:matrix.agent-room.test',
+};
+
 function matrixGateway(
-  exchangeAuthenticationGrant: MatrixAuthenticationSessionGateway['exchangeAuthenticationGrant'],
-): MatrixAuthenticationSessionGateway {
+  adoptIssuedSession: MatrixIssuedSessionGateway['adoptIssuedSession'],
+): MatrixIssuedSessionGateway {
   return {
     disconnect: vi.fn(),
     beginAuthentication: () => Promise.resolve(ok({ kind: 'browser-navigation' })),
-    exchangeAuthenticationGrant,
+    adoptIssuedSession,
     logout: () => Promise.resolve(ok(undefined)),
     restore: () => Promise.resolve(ok({ kind: 'authentication-required' })),
   };
 }
 
 describe('DesktopMatrixGateway', () => {
-  it.each(['disconnect', 'logout'] as const)('在 %s 后忽略迟到的原生授权回调', async (action) => {
-    const grant =
-      Promise.withResolvers<
-        Awaited<ReturnType<DesktopRuntimeGateway['beginMatrixAuthentication']>>
-      >();
-    const exchange = vi.fn();
+  it.each(['disconnect', 'logout'] as const)('在 %s 后不要迟到的聊天登录', async (action) => {
+    const issued = Promise.withResolvers<Awaited<ReturnType<DesktopMatrixSessions['issue']>>>();
+    const adopt = vi.fn();
     const gateway = new DesktopMatrixGateway({
-      matrix: matrixGateway(exchange),
-      runtime: { beginMatrixAuthentication: () => grant.promise },
+      matrix: matrixGateway(adopt),
+      sessions: { issue: () => issued.promise },
     });
     const authentication = gateway.beginAuthentication('/lobby/public');
     await gateway[action]();
-    grant.resolve(ok({ loginToken: 'late-token', returnPath: '/lobby/public' }));
+    issued.resolve(ok(issuedLogin));
 
     await expect(authentication).resolves.toMatchObject({
       ok: false,
       error: { code: 'matrix.session_superseded' },
     });
-    expect(exchange).not.toHaveBeenCalled();
+    expect(adopt).not.toHaveBeenCalled();
   });
 
-  it('把原生回环授权交换为已建立会话而不导航桌面 WebView', async () => {
-    const exchange = vi.fn().mockResolvedValue(ok(undefined));
-    const beginMatrixAuthentication = vi
-      .fn()
-      .mockResolvedValue(ok({ loginToken: 'single-use-token', returnPath: '/lobby/public' }));
+  it('控制面发的聊天登录直接存下连上，不开浏览器', async () => {
+    const adopt = vi.fn().mockResolvedValue(ok(undefined));
+    const issue = vi.fn().mockResolvedValue(ok(issuedLogin));
     const gateway = new DesktopMatrixGateway({
-      matrix: matrixGateway(exchange),
-      runtime: { beginMatrixAuthentication },
+      matrix: matrixGateway(adopt),
+      sessions: { issue },
     });
 
     await expect(gateway.beginAuthentication('/lobby/public')).resolves.toEqual({
       ok: true,
       value: { kind: 'session-established' },
     });
-    expect(beginMatrixAuthentication).toHaveBeenCalledWith('/lobby/public');
-    expect(exchange).toHaveBeenCalledWith('single-use-token', '/lobby/public');
+    expect(issue).toHaveBeenCalledOnce();
+    expect(adopt).toHaveBeenCalledWith(issuedLogin, '/lobby/public');
   });
 
-  it('原生回调失败时不尝试交换 Matrix 凭据', async () => {
-    const exchange = vi.fn();
+  it('控制面没发出来时照实报，不去存', async () => {
+    const adopt = vi.fn();
+    const failure = {
+      boundary: 'matrix',
+      code: 'matrix_session.unavailable',
+      offline: false,
+      retryable: true,
+    } as const;
     const gateway = new DesktopMatrixGateway({
-      matrix: matrixGateway(exchange),
-      runtime: {
-        beginMatrixAuthentication: () =>
-          Promise.resolve(
-            err({ code: 'desktop.matrix_session.loopback_timeout', retryable: true }),
-          ),
-      },
+      matrix: matrixGateway(adopt),
+      sessions: { issue: () => Promise.resolve(err(failure)) },
     });
 
     await expect(gateway.beginAuthentication('/connect')).resolves.toEqual({
-      error: {
-        boundary: 'matrix',
-        code: 'desktop.matrix_session.loopback_timeout',
-        offline: false,
-        retryable: true,
-      },
+      error: failure,
       ok: false,
     });
-    expect(exchange).not.toHaveBeenCalled();
+    expect(adopt).not.toHaveBeenCalled();
   });
 });

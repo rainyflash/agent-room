@@ -13,7 +13,6 @@ use url::Url;
 use crate::native_language::NativeLanguage;
 
 const HUMAN_SESSION_CALLBACK_PATH: &str = "/auth/callback";
-const MATRIX_SESSION_CALLBACK_PREFIX: &str = "/matrix/callback/";
 const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1_024;
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -30,20 +29,6 @@ pub(crate) struct LoopbackCallbackListener {
 impl LoopbackCallbackListener {
     pub(crate) async fn bind_human_session() -> io::Result<Self> {
         Self::bind_path(HUMAN_SESSION_CALLBACK_PATH).await
-    }
-
-    pub(crate) async fn bind_matrix_session(transaction_id: &str) -> io::Result<Self> {
-        if !(32..=128).contains(&transaction_id.len())
-            || !transaction_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Matrix 回调事务标识无效",
-            ));
-        }
-        Self::bind_path(&format!("{MATRIX_SESSION_CALLBACK_PREFIX}{transaction_id}")).await
     }
 
     async fn bind_path(callback_path: &str) -> io::Result<Self> {
@@ -324,22 +309,5 @@ mod tests {
         assert!(body.contains(r#"<html lang="zh-CN">"#));
         assert!(body.contains("<title>已登录 Agent Room</title>"));
         assert!(body.contains("可以关掉这个页面，回到桌面应用继续。"));
-    }
-
-    #[tokio::test]
-    async fn matrix_回调使用不可猜测事务路径并拒绝相邻路径() {
-        let transaction_id = "abcdefghijklmnopqrstuvwxyzABCDEF0123456789_-";
-        let listener = LoopbackCallbackListener::bind_matrix_session(transaction_id)
-            .await
-            .expect("Matrix 回环端口可绑定");
-        assert_eq!(
-            listener.callback_url().path(),
-            format!("/matrix/callback/{transaction_id}")
-        );
-        assert!(
-            LoopbackCallbackListener::bind_matrix_session("unsafe/path")
-                .await
-                .is_err()
-        );
     }
 }

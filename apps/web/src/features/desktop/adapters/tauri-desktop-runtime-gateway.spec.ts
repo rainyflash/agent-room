@@ -219,37 +219,6 @@ describe('Tauri 桌面运行时适配器', () => {
     expect(listeners.size).toBe(0);
   });
 
-  it('Matrix 登录通过原生命令返回一次性授权而不订阅 WebView 导航', async () => {
-    const invoke = vi.fn().mockResolvedValue({
-      loginToken: 'single-use-token',
-      returnPath: '/lobby/public',
-    });
-    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
-
-    await expect(gateway.beginMatrixAuthentication('/lobby/public')).resolves.toEqual({
-      ok: true,
-      value: { loginToken: 'single-use-token', returnPath: '/lobby/public' },
-    });
-    expect(invoke).toHaveBeenCalledWith('desktop_begin_matrix_authentication', {
-      returnPath: '/lobby/public',
-    });
-  });
-
-  it('上一次 Matrix 登录还在等浏览器回来时，再开始一次照样交给桌面端，由它让旧的那次让位', async () => {
-    const invoke = vi
-      .fn()
-      .mockReturnValueOnce(new Promise(() => undefined))
-      .mockResolvedValueOnce({ loginToken: 'second-token', returnPath: '/rooms' });
-    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
-
-    void gateway.beginMatrixAuthentication('/lobby/public');
-    await expect(gateway.beginMatrixAuthentication('/rooms')).resolves.toEqual({
-      ok: true,
-      value: { loginToken: 'second-token', returnPath: '/rooms' },
-    });
-    expect(invoke).toHaveBeenCalledTimes(2);
-  });
-
   it.each([
     [
       '序列化失败对象',
@@ -265,7 +234,7 @@ describe('Tauri 桌面运行时适配器', () => {
     ],
     [
       'Tauri ACL 拒绝',
-      'Command desktop_begin_matrix_authentication not allowed by ACL',
+      'Command desktop_clear_human_session not allowed by ACL',
       { code: 'desktop.command.permission_denied', retryable: false },
     ],
   ])('保留%s的可操作诊断', async (_caseName, rejection, expected) => {
@@ -273,7 +242,7 @@ describe('Tauri 桌面运行时适配器', () => {
       transport({ invoke: vi.fn().mockRejectedValue(rejection) }),
     );
 
-    await expect(gateway.beginMatrixAuthentication('/lobby/public')).resolves.toEqual({
+    await expect(gateway.clearHumanSession()).resolves.toEqual({
       error: expected,
       ok: false,
     });
@@ -284,7 +253,7 @@ describe('Tauri 桌面运行时适配器', () => {
       transport({ invoke: vi.fn().mockRejectedValue(`{${'x'.repeat(1_024)}}`) }),
     );
 
-    await expect(gateway.beginMatrixAuthentication('/lobby/public')).resolves.toEqual({
+    await expect(gateway.clearHumanSession()).resolves.toEqual({
       error: { code: 'desktop.command.failed', retryable: true },
       ok: false,
     });

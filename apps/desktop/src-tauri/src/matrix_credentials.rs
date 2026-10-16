@@ -5,9 +5,30 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::{desktop_config::DesktopBridgeConfig, matrix_session::MatrixSessionFailure};
+use crate::desktop_config::DesktopBridgeConfig;
 
 const ACCOUNT: &str = "matrix-human-session-v1";
+
+/// 系统凭据库里那份聊天登录读不出、存不进时报给网页的错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MatrixSessionFailure {
+    code: &'static str,
+    retryable: bool,
+}
+
+impl MatrixSessionFailure {
+    pub(crate) const fn new(code: &'static str, retryable: bool) -> Self {
+        Self { code, retryable }
+    }
+
+    pub(crate) const fn code(self) -> &'static str {
+        self.code
+    }
+
+    pub(crate) const fn retryable(self) -> bool {
+        self.retryable
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

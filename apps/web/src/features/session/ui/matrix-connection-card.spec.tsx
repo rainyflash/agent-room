@@ -22,7 +22,7 @@ const principal: WebSession = {
 
 const timedOut: SessionFailure = {
   boundary: 'matrix',
-  code: 'desktop.matrix_session.loopback_timeout',
+  code: 'matrix_session.unavailable',
   offline: false,
   retryable: true,
 };
@@ -40,9 +40,6 @@ vi.mock('./session-provider', () => ({
     if (session.current === null) throw new Error('SessionProvider is missing.');
     return session.current;
   },
-}));
-vi.mock('@/features/desktop/ui/desktop-runtime-provider', () => ({
-  useOptionalDesktopRuntimeController: () => ({ available: true }),
 }));
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, to }: { readonly children: React.ReactNode; readonly to: string }) => (
@@ -79,33 +76,27 @@ afterEach(() => {
 });
 
 describe('房间页：消息没连上时的卡片', () => {
-  it('浏览器登录页等太久没回来：说上次没连完，“重新连接”交给会话', () => {
+  it('聊天登录没拿到：说消息没连上，“重新连接”交给会话', () => {
     const send = givenSession('degraded', { failure: timedOut });
     renderWithI18n(<MatrixConnectionCard fallback={<p>fallback</p>} />);
 
     expect(screen.getByText('Messages are not connected')).toBeVisible();
-    expect(screen.getByText('desktop.matrix_session.loopback_timeout')).toBeInTheDocument();
+    expect(screen.getByText('matrix_session.unavailable')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
     expect(send).toHaveBeenCalledWith({ type: 'RETRY' });
     expect(screen.queryByText('fallback')).toBeNull();
   });
 
-  it('桌面端等着浏览器里登录完：说清楚去浏览器，能重新开始登录', () => {
-    const send = givenSession('authenticating');
-    renderWithI18n(<MatrixConnectionCard fallback={<p>fallback</p>} />);
+  it.each(['restoring', 'authenticating'])(
+    '%s 的时候只说正在接通，不给按钮：桌面端的聊天登录由控制面发，不用去浏览器',
+    (state) => {
+      givenSession(state);
+      renderWithI18n(<MatrixConnectionCard fallback={<p>fallback</p>} />);
 
-    expect(screen.getByText('Finish signing in in your browser')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Start sign-in again' }));
-    expect(send).toHaveBeenCalledWith({ type: 'RETRY' });
-  });
-
-  it('正在连的时候只说正在接通，不给按钮', () => {
-    givenSession('restoring');
-    renderWithI18n(<MatrixConnectionCard fallback={<p>fallback</p>} />);
-
-    expect(screen.getByText('Connecting messages')).toBeVisible();
-    expect(screen.queryByRole('button')).toBeNull();
-  });
+      expect(screen.getByText('Connecting messages')).toBeVisible();
+      expect(screen.queryByRole('button')).toBeNull();
+    },
+  );
 
   it('没有会话（夹具）时照旧显示原来的卡片', () => {
     renderWithI18n(<MatrixConnectionCard fallback={<p>fallback</p>} />);

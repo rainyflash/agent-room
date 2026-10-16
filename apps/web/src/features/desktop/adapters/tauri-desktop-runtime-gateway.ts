@@ -17,7 +17,6 @@ import {
   desktopAgentTargetSchema,
   desktopDeepLinkSchema,
   desktopHumanSessionChangedSchema,
-  desktopMatrixAuthenticationGrantSchema,
   releaseUpdateCheckSchema,
   releaseUpdateProgressSchema,
   releaseUpdateStatusSchema,
@@ -31,7 +30,6 @@ import {
   type DesktopControlPlaneRequest,
   type DesktopControlPlaneResponse,
   type DesktopHumanSessionChanged,
-  type DesktopMatrixAuthenticationGrant,
   type DesktopNotification,
   type DesktopRuntimeFailure,
   type DesktopRuntimeGateway,
@@ -55,7 +53,6 @@ const desktopCommands = {
   autostart: 'desktop_set_autostart',
   language: 'desktop_set_language',
   beginHumanAuthentication: 'desktop_begin_human_authentication',
-  beginMatrixAuthentication: 'desktop_begin_matrix_authentication',
   bootstrapDefaultAgent: 'desktop_bootstrap_default_agent',
   checkUpdate: 'desktop_check_update',
   clearHumanSession: 'desktop_clear_human_session',
@@ -136,20 +133,6 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     } finally {
       this.humanAuthenticationPending = false;
     }
-  }
-
-  /**
-   * 再开始一次时不拦：桌面端让还在等浏览器回来的那次以 `authentication_superseded` 结束，
-   * 由新的一次接手。人关掉了登录页、点了“重新开始登录”，不用等旧的那次超时。
-   */
-  async beginMatrixAuthentication(
-    returnPath: string,
-  ): Promise<Result<DesktopMatrixAuthenticationGrant, DesktopRuntimeFailure>> {
-    return await this.invokeValidated(
-      desktopCommands.beginMatrixAuthentication,
-      { returnPath },
-      desktopMatrixAuthenticationGrantSchema,
-    );
   }
 
   async clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>> {

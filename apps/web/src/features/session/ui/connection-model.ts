@@ -105,8 +105,6 @@ const stateCopy: Readonly<
 
 const failureCopy: Readonly<Record<string, TranslationKey>> = {
   'matrix.authentication_interrupted': 'connection.state.failure.connectionInterrupted',
-  // 桌面端开的浏览器登录页 15 分钟没回来：和上面一样，点“重新连接”再开一次。
-  'desktop.matrix_session.loopback_timeout': 'connection.state.failure.connectionInterrupted',
   'browser.session_storage_unavailable': 'connection.state.failure.browserVaultUnavailable',
   'browser.session_storage_corrupt': 'connection.state.failure.matrixVaultCorrupt',
   'browser.session_lock_unavailable': 'connection.state.failure.browserVaultUnavailable',
@@ -130,6 +128,10 @@ const failureCopy: Readonly<Record<string, TranslationKey>> = {
   'matrix.login_exchange_failed': 'connection.state.failure.matrixLogin',
   'matrix.sso_start_failed': 'connection.state.failure.matrixLogin',
   'matrix.sso_unavailable': 'connection.state.failure.matrixLogin',
+  // 桌面端的聊天登录由控制面发（specs/desktop-sign-in）：没发出来时说接不通，点“重新连接”再要一次。
+  'matrix.desktop_session_unreachable': 'connection.state.failure.matrixLogin',
+  'matrix_session.unavailable': 'connection.state.failure.matrixLogin',
+  'matrix_session.rate_limited': 'connection.state.failure.matrixLogin',
 };
 
 const busyStates = new Set<SessionStateName>([

@@ -8,7 +8,6 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-desktop-begin-human-authentication",
-    "allow-desktop-begin-matrix-authentication",
     "allow-desktop-load-matrix-session",
     "allow-desktop-save-matrix-session",
     "allow-desktop-clear-matrix-session",

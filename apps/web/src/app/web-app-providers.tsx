@@ -51,6 +51,7 @@ import { ControlPlaneAccessManagementClient } from '@/features/security/adapters
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
 import { DesktopControlPlaneClient } from '@/features/session/adapters/desktop-control-plane-client';
+import { ControlPlaneDesktopMatrixSessions } from '@/features/session/adapters/control-plane-desktop-matrix-sessions';
 import { desktopControlPlaneFetch } from '@/features/session/adapters/desktop-control-plane-fetch';
 import { DesktopMatrixGateway } from '@/features/session/adapters/desktop-matrix-gateway';
 import { GuardedMatrixGateway } from '@/features/session/adapters/guarded-matrix-gateway';
@@ -151,7 +152,14 @@ export function createCloudRuntime(
   });
   const matrix = new GuardedMatrixGateway(
     localRuntime.isAvailable()
-      ? new DesktopMatrixGateway({ matrix: matrixCore, runtime: localRuntime })
+      ? new DesktopMatrixGateway({
+          matrix: matrixCore,
+          // 桌面端的聊天登录由控制面替人发，不开系统浏览器（specs/desktop-sign-in）。
+          sessions: new ControlPlaneDesktopMatrixSessions({
+            baseUrl: config.controlPlaneUrl,
+            fetch: controlPlaneFetch,
+          }),
+        })
       : matrixCore,
     window.sessionStorage,
     config.matrixHomeserverUrl,
