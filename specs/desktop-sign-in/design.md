@@ -144,4 +144,5 @@ ADR 0011 的修订给应用服务注册加了一个覆盖所有本地用户的�
 
 ## 状态
 
-- 2026-10-16：写好设计。
+- 2026-10-16：写好设计（#492）。
+- 第 2 步 #493：控制面发聊天登录（`POST /auth/desktop/matrix-session`，`DesktopMatrixSessionService`，适配器 `human_sessions.rs`），每个人一小时最多发 10 次；Synapse 配置加 `allow_existing_users` 和网页的 `client_whitelist`；ADR 0011 补了一段。不是桌面登录时回 403 `authentication.desktop_session_required`，不回 401：桌面端见了 401 会删掉本机的登录。
