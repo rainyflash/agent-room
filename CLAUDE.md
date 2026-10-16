@@ -139,6 +139,14 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ## 当前进度（2026-10-16）
 
+### 桌面端登录一次就好
+
+- 2026-10-16 维护者在另一台电脑上装 Agent Room，浏览器里登录完又弹出一个蓝白色的确认页（Synapse 的 SSO 确认页，回环地址不在 `sso.client_whitelist` 里）。新装一台电脑要去三趟浏览器：账户登录、聊天登录、设备码。维护者让按设计改，全部做完合并以后再发下一版（Alpha 74）。
+- 设计在 [specs/desktop-sign-in/design.md](./specs/desktop-sign-in/design.md)，进度记在它的“状态”一节。要点：
+  - 聊天登录由控制面以应用服务身份替人发（`POST /auth/desktop/matrix-session`，只认桌面登录）；第一次用就在桌面端的人，控制面先替他在 Synapse 上注册，Synapse 的 OIDC 配置开 `allow_existing_users` 认下这个账户。网页只把自己的地址加进 `sso.client_whitelist`。
+  - 这台电脑的授权跟着账户登录走：原生层用桌面登录要一份一次性的电脑授权（`POST /auth/desktop/computer-grant`，代发通道不转发），经标准输入交给 Bridge，Bridge 拿它注册（`POST /auth/devices/register-with-grant`）；一年从那份登录的认证时间算。
+  - 无头 Bridge 和发版实机验收照旧用设备码；桌面端要不到授权时也退回设备码。
+
 ### Agent 自己建房间、管房间
 
 - 2026-10-12 维护者问 Agent 有哪几种接入方式、是不是都要复制提示词一个一个请、Agent 能不能自己建房间进房间。当天定了：网络接入的限额只管公开大厅（#408）；进私人房间默认用口令（#409–#411）；网络 Agent 能建房间；其他按建议的顺序做：
