@@ -15,7 +15,6 @@ for (const boundary of ['human', 'matrix'] as const) {
     await page.addInitScript(
       ({ apiOrigin, boundary }) => {
         let loads = 0;
-        let authorizations = 0;
         Object.defineProperty(window, 'isTauri', { value: true });
         Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
           value: { unregisterListener: () => undefined },
@@ -54,11 +53,6 @@ for (const boundary of ['human', 'matrix'] as const) {
                 });
               }
               if (command === 'plugin:event|unlisten') return Promise.resolve();
-              if (command === 'desktop_begin_matrix_authentication') {
-                document.documentElement.dataset.matrixAuthorizations = String(++authorizations);
-                // Leave the external authorization open so the UI can expose its pending state.
-                return new Promise<never>(() => undefined);
-              }
               if (command === 'desktop_restore_human_session') {
                 if (boundary === 'matrix' || loads++ > 0) return Promise.resolve(true);
                 return Promise.reject(
@@ -94,8 +88,17 @@ for (const boundary of ['human', 'matrix'] as const) {
       },
       { apiOrigin, boundary },
     );
+    // 桌面端的聊天登录由控制面发（specs/desktop-sign-in）：记下要了几次，一直不回答，好看清“正在连”。
+    let matrixSessions = 0;
+    await page.route(`${apiOrigin}/auth/desktop/matrix-session`, () => {
+      matrixSessions += 1;
+    });
     await page.route(`${apiOrigin}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname;
+      if (path === '/auth/desktop/matrix-session') {
+        await route.fallback();
+        return;
+      }
       const headers = {
         'access-control-allow-origin': new URL(baseURL ?? '').origin,
         'access-control-allow-credentials': 'true',
@@ -155,7 +158,7 @@ for (const boundary of ['human', 'matrix'] as const) {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(
       /Connecting your conversations|正在连接你的对话/u,
     );
-    await expect(page.locator('html')).toHaveAttribute('data-matrix-authorizations', '1');
+    await expect.poll(() => matrixSessions).toBe(1);
     await expect(page.locator('.failure-panel')).toHaveCount(0);
     expect(errors).toEqual([]);
   });

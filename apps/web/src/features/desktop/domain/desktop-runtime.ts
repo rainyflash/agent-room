@@ -292,21 +292,6 @@ export const desktopHumanSessionChangedSchema = z
 export type DesktopHumanSessionChanged = z.infer<typeof desktopHumanSessionChangedSchema>;
 export type DesktopAuthenticationIntent = 'register' | 'sign-in';
 
-export const desktopMatrixAuthenticationGrantSchema = z
-  .object({
-    loginToken: z.string().min(1).max(4_096),
-    returnPath: z.string().min(1).max(2_048),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (!value.returnPath.startsWith('/') || value.returnPath.startsWith('//')) {
-      context.addIssue({ code: 'custom', message: 'desktop.matrix_session.return_path_invalid' });
-    }
-  });
-export type DesktopMatrixAuthenticationGrant = z.infer<
-  typeof desktopMatrixAuthenticationGrantSchema
->;
-
 export type DesktopRuntimeEventHandlers = {
   readonly onDeepLink: (target: DesktopDeepLink) => void;
   readonly onFailure: (failure: DesktopRuntimeFailure) => void;
@@ -332,9 +317,6 @@ export type DesktopRuntimeGateway = {
     returnPath: string,
     intent: DesktopAuthenticationIntent,
   ): Promise<Result<DesktopHumanSessionChanged, DesktopRuntimeFailure>>;
-  beginMatrixAuthentication(
-    returnPath: string,
-  ): Promise<Result<DesktopMatrixAuthenticationGrant, DesktopRuntimeFailure>>;
   clearHumanSession(): Promise<Result<void, DesktopRuntimeFailure>>;
   restoreHumanSession(): Promise<Result<boolean, DesktopRuntimeFailure>>;
   /** 由原生层带上登录，代发一个控制面请求。 */

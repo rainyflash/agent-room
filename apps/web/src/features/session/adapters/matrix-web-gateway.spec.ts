@@ -28,21 +28,26 @@ describe('MatrixWebGateway', () => {
     });
   });
 
-  it('拒绝桌面边界传入的空令牌或站外返回路径', async () => {
+  it('控制面发的聊天登录不对、或者要回到站外时不收', async () => {
     const gateway = new MatrixWebGateway({
       baseUrl: 'https://matrix.agent-room.test',
       sessionStorage: memoryStorage(),
       url: () => new URL('https://app.agent-room.test/connect'),
     });
+    const login = {
+      access_token: 'syt_access',
+      device_id: 'DESKTOPDEV',
+      user_id: '@user:matrix.agent-room.test',
+    };
 
-    await expect(gateway.exchangeAuthenticationGrant('', '/connect')).resolves.toMatchObject({
-      error: { code: 'matrix.invalid_desktop_authentication_grant' },
+    await expect(
+      gateway.adoptIssuedSession({ ...login, access_token: '' }, '/connect'),
+    ).resolves.toMatchObject({
+      error: { code: 'matrix.invalid_login_response' },
       ok: false,
     });
-    await expect(
-      gateway.exchangeAuthenticationGrant('single-use', '//evil.example'),
-    ).resolves.toMatchObject({
-      error: { code: 'matrix.invalid_desktop_authentication_grant' },
+    await expect(gateway.adoptIssuedSession(login, '//evil.example')).resolves.toMatchObject({
+      error: { code: 'matrix.invalid_return_path' },
       ok: false,
     });
   });

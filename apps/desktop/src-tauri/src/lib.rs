@@ -19,7 +19,6 @@ mod logging;
 use logging::desktop_open_logs;
 mod loopback_callback;
 mod matrix_credentials;
-mod matrix_session;
 mod native_language;
 mod notifications;
 use native_language::desktop_set_language;
@@ -40,20 +39,19 @@ mod webview_migration;
 use agent_room_host_adapters::{HostConfigurator, HostContext};
 use commands::{
     DesktopRuntime, desktop_agent_recovery, desktop_agent_recovery_sessions,
-    desktop_begin_human_authentication, desktop_begin_matrix_authentication,
-    desktop_bootstrap_default_agent, desktop_check_update, desktop_clear_human_session,
-    desktop_clear_matrix_session, desktop_configure_agent_runtime, desktop_control_plane_request,
-    desktop_host_session_diagnostics, desktop_install_update, desktop_load_matrix_session,
-    desktop_offer_invitation, desktop_open_authorization, desktop_reauthorize_bridge,
-    desktop_restore_human_session, desktop_retry_bridge, desktop_runtime_snapshot,
-    desktop_save_matrix_session, desktop_set_autostart, desktop_withdraw_invitation,
+    desktop_begin_human_authentication, desktop_bootstrap_default_agent, desktop_check_update,
+    desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
+    desktop_control_plane_request, desktop_host_session_diagnostics, desktop_install_update,
+    desktop_load_matrix_session, desktop_offer_invitation, desktop_open_authorization,
+    desktop_reauthorize_bridge, desktop_restore_human_session, desktop_retry_bridge,
+    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
+    desktop_withdraw_invitation,
 };
 use control_plane_proxy::ControlPlaneProxy;
 use deep_link::{DeepLinkInbox, deliver_deep_links};
 use desktop_config::DesktopBridgeConfig;
 use human_session::HumanSessionRuntime;
 use matrix_credentials::MatrixCredentialRuntime;
-use matrix_session::MatrixSessionRuntime;
 use release_update_config::ReleaseUpdateConfig;
 use release_updates::ReleaseUpdateRuntime;
 use runtime_target::RuntimeTargetStore;
@@ -133,7 +131,6 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         .manage(native_language::NativeLanguageState::default())
         .invoke_handler(tauri::generate_handler![
             desktop_begin_human_authentication,
-            desktop_begin_matrix_authentication,
             desktop_load_matrix_session,
             desktop_save_matrix_session,
             desktop_clear_matrix_session,
@@ -281,7 +278,6 @@ fn setup_user_sessions(app: &tauri::App, config: &DesktopBridgeConfig) -> Result
     let control_plane = ControlPlaneProxy::new(config.control_plane_url())
         .map_err(|failure| format!("控制面代发初始化失败 [{}]", failure.code()))?;
     app.manage(control_plane);
-    app.manage(MatrixSessionRuntime::system(config));
     app.manage(MatrixCredentialRuntime::system(config));
     Ok(())
 }

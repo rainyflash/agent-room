@@ -56,7 +56,6 @@ function desktopGateway(updateAvailable: boolean): DesktopRuntimeGateway {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   return {
     beginHumanAuthentication: unavailable,
-    beginMatrixAuthentication: unavailable,
     bootstrapDefaultAgent: unavailable,
     checkUpdate: (channel) =>
       Promise.resolve(

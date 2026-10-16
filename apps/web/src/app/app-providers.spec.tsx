@@ -289,8 +289,6 @@ function runtimeGateway(
   return {
     beginHumanAuthentication: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
-    beginMatrixAuthentication: () =>
-      Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     bootstrapDefaultAgent: () =>
       Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),
     checkUpdate: () => Promise.resolve(err({ code: 'desktop.test.unavailable', retryable: false })),

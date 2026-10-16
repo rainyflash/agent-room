@@ -100,8 +100,7 @@ function ready<T>(value: T) {
   return Promise.resolve(ok(value));
 }
 const desktop = !new URLSearchParams(location.search).has('browser');
-// ?matrix=signin 停在“等浏览器里登录完”，?matrix=failed 停在“浏览器登录页等太久没回来”，
-// 看消息没连上时提示栈里的那一条。
+// ?matrix=failed 停在“聊天登录没拿到”，看消息没连上时提示栈里的那一条。
 const matrixState = new URLSearchParams(location.search).get('matrix');
 const principal: WebSession = {
   authenticatedAtUnixMs: 1,
@@ -304,7 +303,6 @@ let autostartEnabled = false;
 const gateway: DesktopRuntimeGateway = {
   ...(receptionEnabled ? reception.gateway : {}),
   beginHumanAuthentication: unavailable,
-  beginMatrixAuthentication: unavailable,
   clearHumanSession: unavailable,
   restoreHumanSession: unavailable,
   sendControlPlaneRequest: unavailable,
@@ -505,21 +503,19 @@ async function bootstrapFixture() {
     matrix: {
       disconnect: () => undefined,
       beginAuthentication: () =>
-        matrixState === 'signin'
-          ? new Promise(() => undefined)
-          : matrixState === 'failed'
-            ? Promise.resolve(
-                err({
-                  boundary: 'matrix' as const,
-                  code: 'desktop.matrix_session.loopback_timeout',
-                  offline: false,
-                  retryable: true,
-                }),
-              )
-            : ready({ kind: 'session-established' as const }),
+        matrixState === 'failed'
+          ? Promise.resolve(
+              err({
+                boundary: 'matrix' as const,
+                code: 'matrix_session.unavailable',
+                offline: false,
+                retryable: true,
+              }),
+            )
+          : ready({ kind: 'session-established' as const }),
       logout: () => ready(undefined),
       restore: () =>
-        matrixState === 'signin' || matrixState === 'failed'
+        matrixState === 'failed'
           ? ready({ kind: 'authentication-required' as const })
           : ready({
               kind: 'connected',

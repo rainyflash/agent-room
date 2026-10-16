@@ -195,7 +195,7 @@ describe('自动消息授权防循环', () => {
     matrix.beginAuthentication.mockResolvedValue(
       err({
         boundary: 'matrix',
-        code: 'desktop.matrix_session.loopback_timeout',
+        code: 'matrix_session.unavailable',
         offline: false,
         retryable: true,
       }),
@@ -204,7 +204,7 @@ describe('自动消息授权防循环', () => {
     await guarded.restore(user);
     await expect(guarded.beginAuthentication('/rooms', 'automatic')).resolves.toMatchObject({
       ok: false,
-      error: { code: 'desktop.matrix_session.loopback_timeout' },
+      error: { code: 'matrix_session.unavailable' },
     });
     await guarded.beginAuthentication('/rooms', 'automatic');
     expect(matrix.beginAuthentication).toHaveBeenCalledOnce();

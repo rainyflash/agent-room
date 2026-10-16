@@ -45,7 +45,6 @@ export const SIGNING_STOP_WAIT_MS = 5_000;
  */
 export const RESTORE_HANDOFF_WAIT_MS = 30_000;
 const MATRIX_SAS_VERIFICATION_METHOD = 'm.sas.v1';
-const MAX_LOGIN_TOKEN_LENGTH = 4_096;
 
 const loginResponseSchema = z.looseObject({
   access_token: z.string().min(1),
@@ -207,16 +206,20 @@ export class MatrixWebGateway implements MatrixGateway {
     }
   }
 
-  async exchangeAuthenticationGrant(
-    loginToken: string,
+  /**
+   * 桌面端的聊天登录由控制面替人发（`specs/desktop-sign-in/design.md`）：回答和 Matrix 登录接口
+   * 同一个形状，存下以后和换完登录令牌一样连上。
+   */
+  async adoptIssuedSession(
+    login: unknown,
     returnPath: string,
   ): Promise<Result<void, SessionFailure>> {
-    if (!isValidLoginToken(loginToken) || !isSafeReturnPath(returnPath)) {
-      return err(failure('matrix', 'matrix.invalid_desktop_authentication_grant', false, false));
+    if (!isSafeReturnPath(returnPath)) {
+      return err(failure('matrix', 'matrix.invalid_return_path', false, false));
     }
-    const exchanged = await this.#exchangeLoginToken(loginToken);
-    if (!exchanged.ok) {
-      return exchanged;
+    const adopted = await this.#saveLogin(login, this.#sessions.beginSession());
+    if (!adopted.ok) {
+      return adopted;
     }
     this.#freshAuthenticationReturnPath = returnPath;
     return ok(undefined);
@@ -650,34 +653,41 @@ export class MatrixWebGateway implements MatrixGateway {
     try {
       const sdk = await import('matrix-js-sdk');
       const client = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
-      const decoded = loginResponseSchema.safeParse(
-        await client.loginRequest({
-          initial_device_display_name: this.#deviceDisplayName,
-          refresh_token: true,
-          token: loginToken,
-          type: 'm.login.token',
-        }),
-      );
-      if (!decoded.success) {
-        return err(failure('matrix', 'matrix.invalid_login_response', false, false));
-      }
-      const session: StoredMatrixSession = {
-        accessToken: decoded.data.access_token,
-        deviceId: decoded.data.device_id,
-        ...(decoded.data.refresh_token === undefined
-          ? {}
-          : { refreshToken: decoded.data.refresh_token }),
-        userId: decoded.data.user_id,
-        version: 1,
-      };
-      const parsed = storedMatrixSessionSchema.safeParse(session);
-      if (!parsed.success)
-        return err(failure('matrix', 'matrix.invalid_login_response', false, false));
-      const persisted = await this.#sessions.save(parsed.data, epoch);
-      return persisted.ok ? ok(session) : persisted;
+      const login: unknown = await client.loginRequest({
+        initial_device_display_name: this.#deviceDisplayName,
+        refresh_token: true,
+        token: loginToken,
+        type: 'm.login.token',
+      });
+      return await this.#saveLogin(login, epoch);
     } catch {
       return err(failure('matrix', 'matrix.login_exchange_failed', !this.#online(), true));
     }
+  }
+
+  /** 校验 Matrix 登录的回答、存下这份登录。 */
+  async #saveLogin(
+    login: unknown,
+    epoch: number,
+  ): Promise<Result<StoredMatrixSession, SessionFailure>> {
+    const decoded = loginResponseSchema.safeParse(login);
+    if (!decoded.success) {
+      return err(failure('matrix', 'matrix.invalid_login_response', false, false));
+    }
+    const session: StoredMatrixSession = {
+      accessToken: decoded.data.access_token,
+      deviceId: decoded.data.device_id,
+      ...(decoded.data.refresh_token === undefined
+        ? {}
+        : { refreshToken: decoded.data.refresh_token }),
+      userId: decoded.data.user_id,
+      version: 1,
+    };
+    const parsed = storedMatrixSessionSchema.safeParse(session);
+    if (!parsed.success)
+      return err(failure('matrix', 'matrix.invalid_login_response', false, false));
+    const persisted = await this.#sessions.save(parsed.data, epoch);
+    return persisted.ok ? ok(session) : persisted;
   }
 
   #clearReturnPath(): Result<void, SessionFailure> {
@@ -988,10 +998,6 @@ function isSafeReturnPath(path: string): boolean {
     path.length <= 2_048 &&
     !/\p{Cc}/u.test(path)
   );
-}
-
-function isValidLoginToken(token: string): boolean {
-  return token.length > 0 && token.length <= MAX_LOGIN_TOKEN_LENGTH && !/\p{Cc}/u.test(token);
 }
 
 /** 等 `work` 最多 `ms` 毫秒：完成、失败，或者还没结果（仍在进行，不会被取消）。 */

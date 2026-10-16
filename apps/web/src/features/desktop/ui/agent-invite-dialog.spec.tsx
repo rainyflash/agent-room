@@ -79,7 +79,6 @@ function gateway(
   const runtime = bridge(options.phase ?? 'ready');
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: unavailable,
-    beginMatrixAuthentication: unavailable,
     bootstrapDefaultAgent: unavailable,
     checkUpdate: unavailable,
     clearHumanSession: () => Promise.resolve(ok(undefined)),

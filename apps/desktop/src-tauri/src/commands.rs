@@ -20,8 +20,7 @@ use crate::{
     deep_link::{DeepLinkInbox, DeepLinkTarget},
     desktop_config::{DesktopBridgeConfig, DesktopConfigFailure},
     human_session::{DesktopAuthenticationIntent, HumanSessionFailure, HumanSessionRuntime},
-    matrix_credentials::{MatrixCredentialRuntime, StoredMatrixSession},
-    matrix_session::{MatrixAuthenticationGrant, MatrixSessionFailure, MatrixSessionRuntime},
+    matrix_credentials::{MatrixCredentialRuntime, MatrixSessionFailure, StoredMatrixSession},
     release_update_watch::{ReleaseUpdateStatus, app_translocated},
     release_updates::{
         ReleaseUpdateCheck, ReleaseUpdateFailure, ReleaseUpdateRuntime, parse_channel,
@@ -183,16 +182,6 @@ pub(crate) async fn desktop_begin_human_authentication(
     Ok(sessions
         .begin_authentication(&app, &return_path, intent)
         .await?)
-}
-
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) async fn desktop_begin_matrix_authentication(
-    app: AppHandle,
-    sessions: State<'_, MatrixSessionRuntime>,
-    return_path: String,
-) -> Result<MatrixAuthenticationGrant, DesktopCommandFailure> {
-    Ok(sessions.begin_authentication(&app, &return_path).await?)
 }
 
 #[tauri::command]

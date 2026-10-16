@@ -6,13 +6,11 @@ import { connectionViewModel, type SessionStateName } from '@/features/session/u
  * 账户登录着、这台设备的消息却没连上时，房间页和提示栈怎么说。
  *
  * - `connecting`：正在连，等一会就好；
- * - `browserSignIn`：桌面端已经在系统浏览器里打开了登录页，等人在那边登录完；
  * - `actionRequired`：要人动手。`action` 是连接页上的那个动作（重新连接或登录）；
  *   连接页给的是“退出登录”这类重的动作时为 `null`，界面只给“查看详情”，去连接页再选。
  */
 export type MatrixConnectionNotice =
   | { readonly kind: 'connecting' }
-  | { readonly kind: 'browserSignIn' }
   | {
       readonly kind: 'actionRequired';
       readonly action: 'login' | 'retry' | null;
@@ -32,19 +30,17 @@ const actionRequiredStates = new Set<SessionStateName>(['degraded', 'offline', '
 
 /**
  * 没登录账户（连接页自己会说）、消息已经连上、或者正在退出登录时返回 `null`。
- * 网页端登录 Matrix 是整页跳去登录页，跳走之前算“正在连”；桌面端开的是系统浏览器，人得过去登录。
+ * 登录 Matrix 时算“正在连”：网页端是整页跳去登录页，桌面端由控制面直接发，都不用人过去。
  */
 export function matrixConnectionNotice(
   state: SessionStateName,
   context: SessionContext,
-  desktop: boolean,
 ): MatrixConnectionNotice | null {
   if (context.principal === null || state === 'ready') {
     return null;
   }
   if (state === 'authenticating' || state === 'awaitingBrowserNavigation') {
-    if (context.authenticationTarget !== 'matrix') return null;
-    return desktop ? { kind: 'browserSignIn' } : { kind: 'connecting' };
+    return context.authenticationTarget === 'matrix' ? { kind: 'connecting' } : null;
   }
   if (connectingStates.has(state)) {
     return { kind: 'connecting' };

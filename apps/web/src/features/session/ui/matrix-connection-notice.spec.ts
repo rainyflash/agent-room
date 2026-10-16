@@ -25,7 +25,7 @@ const connection: MatrixConnection = {
 function failure(overrides: Partial<SessionFailure> = {}): SessionFailure {
   return {
     boundary: 'matrix',
-    code: 'desktop.matrix_session.loopback_timeout',
+    code: 'matrix.authentication_interrupted',
     offline: false,
     retryable: true,
     ...overrides,
@@ -47,30 +47,30 @@ function context(overrides: Partial<SessionContext> = {}): SessionContext {
 
 describe('消息没连上时怎么说', () => {
   it('没登录账户、消息已经连上时都不说', () => {
-    expect(matrixConnectionNotice('degraded', context({ principal: null }), true)).toBeNull();
-    expect(matrixConnectionNotice('ready', context({ connection }), true)).toBeNull();
+    expect(matrixConnectionNotice('degraded', context({ principal: null }))).toBeNull();
+    expect(matrixConnectionNotice('ready', context({ connection }))).toBeNull();
   });
 
   it('正在恢复、同步、重连时只说正在连', () => {
     for (const state of ['booting', 'restoring', 'syncing', 'reconnecting'] as const) {
-      expect(matrixConnectionNotice(state, context(), false)).toEqual({ kind: 'connecting' });
+      expect(matrixConnectionNotice(state, context())).toEqual({ kind: 'connecting' });
     }
   });
 
-  it('桌面端等着浏览器里登录完时说出来；网页端是整页跳去登录，跳走前算正在连', () => {
-    expect(matrixConnectionNotice('authenticating', context(), true)).toEqual({
-      kind: 'browserSignIn',
+  it('登录 Matrix 时算正在连：网页端整页跳走之前、桌面端等控制面发的时候都一样', () => {
+    expect(matrixConnectionNotice('authenticating', context())).toEqual({
+      kind: 'connecting',
     });
-    expect(matrixConnectionNotice('awaitingBrowserNavigation', context(), false)).toEqual({
+    expect(matrixConnectionNotice('awaitingBrowserNavigation', context())).toEqual({
       kind: 'connecting',
     });
     expect(
-      matrixConnectionNotice('authenticating', context({ authenticationTarget: 'control' }), true),
+      matrixConnectionNotice('authenticating', context({ authenticationTarget: 'control' })),
     ).toBeNull();
   });
 
-  it('登录页等太久没回来：说消息没连上，给“重新连接”', () => {
-    expect(matrixConnectionNotice('degraded', context({ failure: failure() }), true)).toEqual({
+  it('上次连接没走完：说消息没连上，给“重新连接”', () => {
+    expect(matrixConnectionNotice('degraded', context({ failure: failure() }))).toEqual({
       kind: 'actionRequired',
       action: 'retry',
       actionKey: 'connection.action.reconnect',
@@ -79,7 +79,7 @@ describe('消息没连上时怎么说', () => {
   });
 
   it('要重新登录时给“登录”，重的动作（退出登录）留给连接页', () => {
-    expect(matrixConnectionNotice('unauthenticated', context(), true)).toMatchObject({
+    expect(matrixConnectionNotice('unauthenticated', context())).toMatchObject({
       kind: 'actionRequired',
       action: 'login',
       actionKey: 'connection.action.loginMatrix',
@@ -88,7 +88,6 @@ describe('消息没连上时怎么说', () => {
       matrixConnectionNotice(
         'degraded',
         context({ failure: failure({ code: 'matrix.identity_mismatch', retryable: false }) }),
-        true,
       ),
     ).toEqual({
       kind: 'actionRequired',
@@ -106,7 +105,6 @@ describe('消息没连上时怎么说', () => {
           connection,
           failure: failure({ boundary: 'control-plane', code: 'control_plane.readiness_degraded' }),
         }),
-        true,
       ),
     ).toBeNull();
   });

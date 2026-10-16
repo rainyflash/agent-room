@@ -156,7 +156,6 @@ function gateway(
   const events: { handlers: DesktopRuntimeEventHandlers | null } = { handlers: null };
   const value: DesktopRuntimeGateway = {
     beginHumanAuthentication: unavailable,
-    beginMatrixAuthentication: unavailable,
     bootstrapDefaultAgent: unavailable,
     checkUpdate,
     clearHumanSession: () => Promise.resolve(ok(undefined)),

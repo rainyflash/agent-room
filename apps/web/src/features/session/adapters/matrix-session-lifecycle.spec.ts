@@ -293,7 +293,16 @@ describe('Matrix 网关持久会话生命周期', () => {
 
   it('首次认证持久化后新建网关无需再 SSO 且复用同一设备的加密库', async () => {
     const vault = storage(null);
-    await gateway(vault).exchangeAuthenticationGrant('single-use', '/rooms');
+    await gateway(vault).adoptIssuedSession(
+      {
+        access_token: session.accessToken,
+        device_id: session.deviceId,
+        refresh_token: session.refreshToken,
+        user_id: session.userId,
+      },
+      '/rooms',
+    );
+    expect(vault.save).toHaveBeenCalledWith(session);
     const restored = await gateway(vault).restore(session.userId);
     expect(restored).toMatchObject({
       ok: true,
@@ -302,7 +311,7 @@ describe('Matrix 网关持久会话生命周期', () => {
         connection: { deviceId: session.deviceId, userId: session.userId },
       },
     });
-    expect(sdk.login).toHaveBeenCalledTimes(1);
+    expect(sdk.login).not.toHaveBeenCalled();
     const firstCryptoOptions: unknown = sdk.initializeCrypto.mock.calls[0]?.[0];
     await gateway(vault).restore(session.userId);
     expect(sdk.initializeCrypto.mock.calls[1]?.[0]).toEqual(firstCryptoOptions);
