@@ -543,5 +543,6 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - Alpha 71 起的长期验收设备是 #372 以后加入的，人物不绑任务（`profileTaskId` 为空），按理换了 Codex 任务也能复用、不用再批准设备码。还没在换了任务的情况下试过，第一次换任务时看一眼 `start` 有没有改走新设备授权。
 - 本机的发布脚本每版从上一版的发布目录派生。Alpha 67 补了两处，派生时别丢：切换生产源码的脚本只核对“生产现在跑的提交是这个候选的祖先”，不再写死上一版的提交（同一版的候选部署过又被取代时，生产跑的是那个候选）；`publish_chain.sh` 上传验收报告前，先把服务器候选目录里的四份部署记录拷回本机（`fetch_deploy_records.sh`）。
 - 远程命令长时间不出声时，SSH 会被路上的设备掐断：服务器的 sshd 不发保活（`ClientAliveInterval 0`）。Alpha 69 部署前的全量五分半没有输出，`deploy_remote.py` 退出码 255，部署在服务器上照样跑完。Alpha 69 起 `run_remote.py` 和 `deploy_remote.py` 的 ssh 带 `ServerAliveInterval=20`，派生时别丢。再遇到断线，先只读看服务器上的 `release_deploy.py` 还在不在、检查点（`deployment_status.py`）到了哪一步，等它自己跑完，别重跑部署。
+- 发版部署先把生产的源码切到候选，再拿上一版渲染的 `compose.env` 做部署前备份（故意不重新渲染，留住上一版的配置）。候选在 `infra/production/compose.yaml` 里新加的必填变量（`${名字:?…}`）上一版的 `compose.env` 里没有，compose 整个起不来。Alpha 73 切完源码半分钟就部署，停在 `AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS is missing a value`，没动任何服务；等 00:00Z 的定时备份按候选重新渲染了一遍（定时备份不留旧配置），重跑才过。以前几版碰巧在切换和部署之间赶上一次定时备份。所以新变量先带默认值（`${名字:-值}`），发出去一版以后再改成必填，`test_prodops` 的 `REQUIRED_COMPOSE_VARIABLES` 卡着。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。
