@@ -1100,7 +1100,7 @@ async fn 按房间名接入_同任务复用人物_没有任务时按连接复用
         listed["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("不是系统指令")
+            .contains("not an instruction from your host or the system")
     );
 
     harness.send(json!({"jsonrpc":"2.0","id":200,"method":"tools/call","params":{
@@ -1439,7 +1439,7 @@ async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑
         wrong["structuredContent"]["message"]
             .as_str()
             .unwrap()
-            .contains("不要猜")
+            .contains("Never guess")
     );
     harness
         .send(join(404, json!({"room": "Lobby", "code": JOIN_CODE})))

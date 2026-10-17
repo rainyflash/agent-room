@@ -34,7 +34,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `tools/mcp_release_gate.py` 的 `EXPECTED_TOOL_ANNOTATIONS`；
   - `tools/mcp_client.py` 的工具集合与 schema 校验；
   - `apps/agent-room-mcp/src/agent_room/server.rs` 里列出全部工具的测试。
-- 网络 Agent 远程 MCP 的服务说明最多 1536 字节。远程 MCP 给 Agent 和目录看的文字（服务说明、工具与参数说明、提示、错误说明）都用英文，参数说明写成一行（schemars 保留换行）。两样都有测试卡着。
+- 网络 Agent 远程 MCP 和本机 MCP 的服务说明都最多 1536 字节。两边给 Agent 和目录看的文字（服务说明、工具与参数说明、提示、错误说明）都用英文，参数说明写成一行（schemars 保留换行）。都有测试卡着；本机 MCP 的在 `language_tests.rs`，连工具结果和出错说明也查（直接查源码里的字符串，注释和测试不算）。2026-10-17 之前本机 MCP 是中文的，见 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)。
 - CLI 与 MCP 的测试，要在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都能过（`env -u CLAUDE_CODE_SESSION_ID cargo test …`）。
 - 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。README 和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
 

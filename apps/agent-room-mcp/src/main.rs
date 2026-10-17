@@ -37,7 +37,7 @@ async fn main() -> ExitCode {
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Agent Room MCP 启动失败：{error}");
+            eprintln!("Agent Room MCP failed to start: {error}");
             ExitCode::FAILURE
         }
     }
@@ -47,7 +47,7 @@ async fn run() -> Result<(), String> {
     let options = Options::parse();
     let data_root = bridge_data_root_from_environment().map_err(format_location_failure)?;
     let secure_storage_service = secure_storage_service_from_environment()
-        .map_err(|_| "Bridge 安全存储命名空间无效".to_owned())?;
+        .map_err(|_| "Invalid Bridge secure storage namespace".to_owned())?;
     let backend = launching_desktop_when_absent(
         LocalBridgeToolClient::system_with_secure_storage_service(
             bridge_runtime_root(&data_root),
@@ -93,17 +93,17 @@ async fn run() -> Result<(), String> {
         .with_join_store(data_root.join("mcp-joins"))
         .serve(stdio())
         .await
-        .map_err(|error| format!("无法建立 STDIO 会话：{error}"))?;
+        .map_err(|error| format!("Couldn't start the stdio session: {error}"))?;
     service
         .waiting()
         .await
-        .map_err(|error| format!("STDIO 会话异常结束：{error}"))?;
+        .map_err(|error| format!("The stdio session ended unexpectedly: {error}"))?;
     Ok(())
 }
 
 fn format_location_failure(failure: BridgeLocationFailure) -> String {
     format!(
-        "Bridge 数据目录无效 [{}:{:?}]",
+        "Invalid Bridge data directory [{}:{:?}]",
         failure.variable(),
         failure.kind()
     )

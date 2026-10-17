@@ -31,8 +31,8 @@ use super::{
 };
 
 /// 旧版 Bridge 不认管房间的授权范围，握手时就断开：这几个工具碰到时照实说要更新。
-const OUTDATED_BRIDGE: &str = "本机的 Agent Room 可能还是旧版本，不会建房间、管房间：请让用户在 Agent Room 桌面端检查更新、装上新版本后再试。";
-const PEOPLE: &str = "要请人进来：让对方在 Agent Room 的“换个房间”里复制自己的账户 ID 发给你，再用 agent_room_invite_person 邀请；房主（这台电脑登录的账号）也能在应用里邀请。";
+const OUTDATED_BRIDGE: &str = "Agent Room on this computer may be an older version that can't create or manage rooms: ask the user to check for updates in the Agent Room desktop app, install the new version, then try again.";
+const PEOPLE: &str = "To invite a person: have them copy their account ID from \"Switch room\" in Agent Room and send it to you, then invite them with agent_room_invite_person; the room's owner (the account signed in on this computer) can also invite people in the app.";
 
 #[tool_router(router = room_tools, vis = "pub(super)")]
 impl AgentRoomMcpServer {
@@ -440,7 +440,7 @@ fn check_creation(name: &str, display_name: Option<&str>) -> Result<(), CallTool
     IpcMethod::CreateRoom(probe).validate().map_err(|error| {
         validation_failure_result(
             error.code(),
-            "建房参数无效：房间名和显示名都要 1 到 128 个字，不能有换行等控制字符，前后不留空格。",
+            "Invalid room parameters: the room name and displayName must each be 1 to 128 characters, with no line breaks or other control characters and no leading or trailing spaces.",
         )
     })
 }
@@ -459,7 +459,7 @@ fn created_result(
         "room": entered.room,
         "self": entered.summary,
         "localAgents": format!(
-            "本机别的 Agent（同一个账号）用 agent_room_join 传 room「{name}」就能进来，命令行是 agent-room join --room \"{name}\"。",
+            "Other agents on this computer (same account) join with agent_room_join and room \"{name}\", or on the command line with agent-room join --room \"{name}\".",
             name = entered.room.name
         ),
         "people": PEOPLE,
@@ -467,14 +467,14 @@ fn created_result(
     value["next"] = Value::from(match access {
         Some(Ok(access)) => {
             value["access"] = access_value(&access, Some(&entered.room.name));
-            "房间建好了，你已在里面：后续工具携带 sessionId。把 access.share 里合用户语言的那段交给用户转发给别的 Agent；用 agent_room_wait_for_messages 等消息。"
+            "The room is ready and you are in it: pass sessionId to later tools. Give the user the paragraph of access.share in their language to forward to other agents; wait for messages with agent_room_wait_for_messages."
         }
         Some(Err(failure)) => {
             value["accessError"] = failure.structured_content.unwrap_or(Value::Null);
-            "房间建好了，你已在里面，但口令这次没拿到：稍后用 agent_room_room_access 再看。"
+            "The room is ready and you are in it, but its code couldn't be fetched this time: check again later with agent_room_room_access."
         }
         None => {
-            "房间建好了，会话仍在启动：用带 sessionId 的 agent_room_get_self 查询，就绪后用 agent_room_room_access 拿口令和要转给别的 Agent 的话。"
+            "The room is ready, but the session is still starting: check agent_room_get_self with the sessionId, and once it is ready get the code and the message for other agents from agent_room_room_access."
         }
     });
     remote_result(value)
@@ -482,17 +482,17 @@ fn created_result(
 
 fn access_next(access: &IpcRoomAccess) -> &'static str {
     if !access.knocks.is_empty() {
-        return "有 Agent 在敲门（knocks）：问用户要不要放它进来，再用 agent_room_answer_knock 回答。";
+        return "Agents are knocking (knocks): ask the user whether to let them in, then answer with agent_room_answer_knock.";
     }
     match access.code {
         IpcRoomCode::Visible { .. } => {
-            "把 share 里合用户语言的那段交给用户转发给别的 Agent；本机别的 Agent 用 agent_room_join 按房间名进来。"
+            "Give the user the paragraph of share in their language to forward to other agents; agents on this computer join with agent_room_join and the room name."
         }
         IpcRoomCode::Hidden => {
-            "口令看不到了（以前生成的）：share 里只有敲门的说法。要给别的 Agent 新口令，先问用户，再用 action=replace 换一个；旧口令随即失效，已经进来的 Agent 不受影响。"
+            "The code can't be shown (it was made earlier), so share only explains knocking. To give other agents a new code, ask the user first, then use action=replace; the old code stops working at once, and agents already in the room are not affected."
         }
         IpcRoomCode::Missing => {
-            "这个房间现在没有口令：share 里只有敲门的说法。要口令就用 action=show 生成一个。"
+            "This room has no code right now, so share only explains knocking. To get a code, use action=show to create one."
         }
     }
 }
@@ -509,43 +509,45 @@ fn remote_result(value: Value) -> CallToolResult {
 /// 进房间、离开房间和管房间的错误码怎么办；不是这些就交回给 [`super::recovery_for`]。
 pub(super) fn recovery_for(code: &str) -> Option<&'static str> {
     match code {
-        "bridge.ipc.room_name_invalid" => {
-            Some("房间名要 1 到 128 个字，不能有换行等控制字符，前后不留空格。")
-        }
-        "bridge.ipc.agent_id_invalid" => {
-            Some("agentId 要从 agent_room_room_access 的 knocks 或消息里原样复制，不要自己编。")
-        }
+        "bridge.ipc.room_name_invalid" => Some(
+            "A room name is 1 to 128 characters, with no line breaks or other control characters and no leading or trailing spaces.",
+        ),
+        "bridge.ipc.agent_id_invalid" => Some(
+            "Copy agentId exactly from the knocks of agent_room_room_access or from a message; don't make one up.",
+        ),
         "bridge.ipc.account_id_invalid" => Some(
-            "账户 ID 是对方在 Agent Room 的“换个房间”里复制给你的那串（UUID），请对方再发一次，不要猜。",
+            "An account ID is the UUID the person copies from \"Switch room\" in Agent Room; ask them to send it again, never guess.",
         ),
         "bridge.room_not_joined" => Some(
-            "你不在这个房间里（可能被移出了，或者还没进）：要进就用 agent_room_join 按房间名进；说话、看消息时 roomId 照消息里给的填。",
+            "You are not in this room (you may have been removed, or haven't joined yet): to enter, use agent_room_join with the room name; when speaking or reading, use the roomId given in the message.",
         ),
         "bridge.leave_session_room" => Some(
-            "会话开在这个房间，离不开：要走就用 agent_room_close_session 断开（你还留在房间里），或者请用户在 Agent Room 的“我的 Agent”里让你离开。",
+            "Your session opened in this room, so you can't leave it: to go, disconnect with agent_room_close_session (you stay in the room), or ask the user to take you out of it in \"My agents\" in Agent Room.",
         ),
         "bridge.lobby_provisioning_busy" | "bridge.lobby_capacity_changed" => {
-            Some("房间这会儿正在调整；稍后用同样的参数重试。")
+            Some("The room is being adjusted right now; retry later with the same parameters.")
         }
         "bridge.rooms.forbidden" => Some(
-            "Agent 只能管 Agent 建的私人房间，而且这台电脑的账号要能管这个房间；人建的房间请用户在 Agent Room 应用里管。",
+            "Agents can only manage private rooms an agent created, and only if the account on this computer can manage the room; the user manages rooms people created in the Agent Room app.",
         ),
         "bridge.rooms.not_found" => Some(
-            "找不到要管的东西：会话不在私人房间里、房间已经没了，或者敲门已经作废（一小时没人回答就作废）、那个 Agent 不在房间里。先用 agent_room_room_access 看看现在的情况。",
+            "Nothing to manage was found: the session isn't in a private room, the room is gone, the knock has expired (knocks expire after an hour without an answer) or that agent isn't in the room. Check the current state with agent_room_room_access first.",
         ),
         "bridge.rooms.conflict" => Some(
-            "这个房间已经关了，或者这个房间 ID 被别的建房请求用过；换一个房间名再建，或问用户。",
+            "This room has been closed, or its room ID was used by another create request; create it under a different name, or ask the user.",
         ),
-        "bridge.rooms.rate_limited" => Some("这会儿操作太频繁；过一阵再试，不要连着重试。"),
-        "bridge.rooms.unsupported" => {
-            Some("Agent Room 服务还不支持 Agent 建房间、管房间；请用户在 Agent Room 应用里操作。")
+        "bridge.rooms.rate_limited" => {
+            Some("Too many operations right now; try again after a while, not in a quick loop.")
         }
-        "bridge.rooms.invalid_request" => {
-            Some("请求不对：检查房间名、agentId 或账户 ID 是否照原样给出。")
-        }
-        "bridge.rooms.control_plane_unavailable" | "bridge.rooms.failed" => {
-            Some("暂时连不上 Agent Room 服务；稍后用同样的参数重试，建房会回到同一间。")
-        }
+        "bridge.rooms.unsupported" => Some(
+            "This Agent Room service doesn't let agents create or manage rooms yet; ask the user to do it in the Agent Room app.",
+        ),
+        "bridge.rooms.invalid_request" => Some(
+            "The request is invalid: check that the room name, agentId or account ID was given exactly.",
+        ),
+        "bridge.rooms.control_plane_unavailable" | "bridge.rooms.failed" => Some(
+            "Agent Room can't be reached right now; retry later with the same parameters, and creating a room returns to the same one.",
+        ),
         _ => None,
     }
 }
@@ -555,12 +557,12 @@ fn unknown_room(wanted: &str, ambiguous: bool) -> CallToolResult {
     let (code, message) = if ambiguous {
         (
             "agent.room.ambiguous",
-            "有几个房间叫这个名字：改用消息里的 roomId 或房间的 slug，或者问用户指的是哪一间。",
+            "Several rooms have that name: use the roomId from a message or the room's slug instead, or ask the user which one they meant.",
         )
     } else {
         (
             "agent.room.not_found",
-            "找不到这个房间：给 agent_room_list_rooms 里的 name 或 slug，或者消息里的 roomId、roomName，不要猜。",
+            "That room wasn't found: give a name or slug from agent_room_list_rooms, or a roomId or roomName from a message; never guess.",
         )
     };
     let mut result = CallToolResult::structured_error(json!({
