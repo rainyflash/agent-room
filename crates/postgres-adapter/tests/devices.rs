@@ -23,6 +23,10 @@ use uuid::Uuid;
 
 const DAY: i64 = 24 * 60 * 60 * 1_000;
 
+/// 已经有的电脑补“上次使用”的迁移；测试在事务里重跑它，看完就回滚，别的测试看不到。
+const LAST_SEEN_BACKFILL: &str =
+    include_str!("../../../infra/migrations/202610170001_device_last_seen_backfill.sql");
+
 struct TestDatabase {
     migration: PgPool,
     runtime: PgPool,
@@ -411,6 +415,110 @@ async fn 换令牌时令牌组和新刷新令牌一起续期且只往后挪() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 换令牌时记下上次使用_一小时内不再写_只往后挪() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let registration = registration(101, 102);
+    let stored = register(&repositories, &registration).await;
+    let device_id = stored.device.id();
+    assert_eq!(stored.device.last_seen_at(), None);
+    assert_eq!(stored_last_seen(&database.runtime, device_id).await, None);
+
+    let first = replacement(103, 104, 20 * DAY);
+    let outcome = rotate(
+        &repositories,
+        &registration.session.refresh_token_digest,
+        &first,
+    )
+    .await;
+    let DeviceRefreshOutcome::Rotated { session, .. } = outcome else {
+        panic!("还能轮换的令牌应换成功，实际为 {outcome:?}");
+    };
+    assert_eq!(session.device.last_seen_at(), Some(test_time(20 * DAY)));
+    assert_eq!(
+        stored_last_seen(&database.runtime, device_id).await,
+        Some(test_time(20 * DAY))
+    );
+
+    // 半小时后又换了一次：一小时内记过，不再写。
+    let second = replacement(105, 106, 20 * DAY + 30 * 60 * 1_000);
+    rotate(&repositories, &first.refresh_token_digest, &second).await;
+    assert_eq!(
+        stored_last_seen(&database.runtime, device_id).await,
+        Some(test_time(20 * DAY))
+    );
+
+    // 第二天再换：往后挪。
+    let third = replacement(107, 108, 21 * DAY);
+    rotate(&repositories, &second.refresh_token_digest, &third).await;
+    assert_eq!(
+        stored_last_seen(&database.runtime, device_id).await,
+        Some(test_time(21 * DAY))
+    );
+
+    delete_device_events(&database.runtime, device_id).await;
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 补上已有电脑的上次使用_按令牌组到期往回推三十天_不早于注册_记过的不动() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let recent = register(&repositories, &registration(111, 112))
+        .await
+        .device
+        .id();
+    let young = register(&repositories, &registration(113, 114))
+        .await
+        .device
+        .id();
+    let seen = register(&repositories, &registration(115, 116))
+        .await
+        .device
+        .id();
+
+    let mut transaction = database.migration.begin().await.expect("开事务");
+    for (device_id, expires) in [(recent, 50 * DAY), (young, 10 * DAY)] {
+        sqlx::query(
+            r"UPDATE agent_room.device_token_family
+               SET expires_at = to_timestamp($2::double precision / 1000.0)
+               WHERE device_id = $1",
+        )
+        .bind(device_id.as_uuid())
+        .bind(test_time(expires).value())
+        .execute(&mut *transaction)
+        .await
+        .expect("可改令牌组的到期时间");
+    }
+    sqlx::query(
+        r"UPDATE agent_room.device
+           SET last_seen_at = to_timestamp($2::double precision / 1000.0)
+           WHERE id = $1",
+    )
+    .bind(seen.as_uuid())
+    .bind(test_time(5 * DAY).value())
+    .execute(&mut *transaction)
+    .await
+    .expect("可记上次使用");
+    sqlx::raw_sql(LAST_SEEN_BACKFILL)
+        .execute(&mut *transaction)
+        .await
+        .expect("迁移可以在事务里重跑");
+
+    for (device_id, expected) in [(recent, 20 * DAY), (young, 0), (seen, 5 * DAY)] {
+        assert_eq!(
+            stored_last_seen(&mut *transaction, device_id).await,
+            Some(test_time(expected)),
+            "{device_id:?}"
+        );
+    }
+    transaction.rollback().await.expect("回滚");
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 电脑授权注册这台电脑_用一次就删_令牌组记着认证时刻() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -594,6 +702,23 @@ async fn stored_expiries(
         UtcMillis::new(family).expect("令牌组到期时间有效"),
         UtcMillis::new(refresh).expect("刷新令牌到期时间有效"),
     )
+}
+
+/// 库里这台设备记着的“上次使用”。
+async fn stored_last_seen<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    device_id: DeviceId,
+) -> Option<UtcMillis> {
+    let (value,): (Option<i64>,) = sqlx::query_as(
+        r"SELECT floor(extract(epoch FROM last_seen_at) * 1000)::bigint
+           FROM agent_room.device
+           WHERE id = $1",
+    )
+    .bind(device_id.as_uuid())
+    .fetch_one(executor)
+    .await
+    .expect("可读取上次使用");
+    value.map(|value| UtcMillis::new(value).expect("上次使用有效"))
 }
 
 fn lifetime(idle: i64, maximum: i64) -> SlidingLifetime {

@@ -37,6 +37,9 @@ const DEVICE_SELECT: &str = r"device.id AS device_id,
     floor(extract(epoch FROM device.revoked_at) * 1000)::bigint AS device_revoked_at_ms,
     floor(extract(epoch FROM device.created_at) * 1000)::bigint AS device_created_at_ms";
 
+/// 记“上次使用”最多隔多久写一次库：令牌每 15 分钟换一次，不用每次都写一行。
+const DEVICE_SEEN_WRITE_INTERVAL_MS: i64 = 60 * 60 * 1_000;
+
 const PRINCIPAL_SELECT: &str = r"principal.id AS principal_id, principal.status,
     principal.version, principal.matrix_user_id, principal.display_name,
     principal.avatar_content_id, principal.locale";
@@ -662,6 +665,13 @@ async fn persist_refresh_replacement(
         .checked_add(1)
         .ok_or_else(|| corrupt_data(operation))?;
     let family = renew_token_family(transaction, &locked.family, replacement, operation).await?;
+    let device = record_device_seen(
+        transaction,
+        &locked.device,
+        replacement.issued_at,
+        operation,
+    )
+    .await?;
     insert_access_token(
         transaction,
         locked.device.id(),
@@ -698,10 +708,42 @@ async fn persist_refresh_replacement(
     .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(StoredDeviceSession {
         account: locked.account.clone(),
-        device: locked.device.clone(),
+        device,
         family,
         access_token_expires_at: replacement.access_token_expires_at,
     })
+}
+
+/// 换一次令牌也记下这台电脑“上次使用”的时间（设置里“已登录的电脑”按它显示、分组）。
+/// 只往后挪；一小时内记过的、时间比注册还早的（几台控制面的时钟对不齐）都不写，
+/// 不能因为它让换令牌失败。调用方已经锁住这台设备。
+async fn record_device_seen(
+    transaction: &mut Transaction<'_, Postgres>,
+    locked: &Device,
+    seen_at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<Device> {
+    let recent = locked.last_seen_at().is_some_and(|last_seen_at| {
+        seen_at.value() - last_seen_at.value() < DEVICE_SEEN_WRITE_INTERVAL_MS
+    });
+    if recent || seen_at < locked.created_at() {
+        return Ok(locked.clone());
+    }
+    let mut device = locked.clone();
+    device
+        .record_seen(seen_at)
+        .map_err(|_| corrupt_data(operation))?;
+    sqlx::query(
+        r"UPDATE agent_room.device
+           SET last_seen_at = to_timestamp($2::double precision / 1000.0)
+           WHERE id = $1",
+    )
+    .bind(device.id().as_uuid())
+    .bind(seen_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(device)
 }
 
 /// 换一次令牌就算这台设备用了一次：令牌组的到期时间按规则往后续，只往后挪，
