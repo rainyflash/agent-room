@@ -203,6 +203,33 @@ describe('MatrixLobbyGateway', () => {
     expect(result.ok && result.value.canSpeak).toBe(false);
   });
 
+  it('成员的名字只留认得出的，邮箱只留 @ 前面那段；源里没有就不给', () => {
+    const owner = '@user-3412b8ab0ef3cf6a658cbdcf29595500:agent-room.test';
+    const unnamed = '@user-0123456789abcdef0123456789abcdef:agent-room.test';
+    const room = {
+      ...snapshot([]),
+      encrypted: true,
+      memberNames: [
+        { displayName: '小王', matrixUserId: owner },
+        { displayName: 'grace@example.com', matrixUserId: '@grace:agent-room.test' },
+        // 没设名字时 SDK 给的就是用户 ID。
+        { displayName: unnamed, matrixUserId: unnamed },
+      ],
+    };
+    const read = (value: MatrixLobbyRoomSnapshot) => {
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room: value }), () => NOW).read(
+        value.roomId,
+      );
+      return result.ok ? result.value.memberNames : 'failed';
+    };
+
+    expect(read(room)).toEqual([
+      { displayName: '小王', matrixUserId: owner },
+      { displayName: 'grace', matrixUserId: '@grace:agent-room.test' },
+    ]);
+    expect(read(snapshot([]))).toBeUndefined();
+  });
+
   it('共享归档期限生效且同一身份重新接入后恢复', () => {
     const old = statusState({
       instanceSuffix: '1',

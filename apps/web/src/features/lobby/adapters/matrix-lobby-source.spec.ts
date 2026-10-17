@@ -53,6 +53,21 @@ describe('MatrixSdkLobbySource', () => {
     expect(read.kind === 'ready' && read.room.encrypted).toBe(true);
   });
 
+  it('私人房间带上已加入成员的 Matrix 显示名，按用户 ID 排好；公开大厅不带', () => {
+    const named = (encrypted: boolean) => {
+      const registry = new MatrixClientRegistry();
+      registry.replace(matrixClient(matrixRoom(matrixState({}, encrypted))).value);
+      const read = new MatrixSdkLobbySource(registry).read('!public:agent-room.test');
+      return read.kind === 'ready' ? read.room.memberNames : 'not ready';
+    };
+
+    expect(named(true)).toEqual([
+      { displayName: 'Name of @a:agent-room.test', matrixUserId: '@a:agent-room.test' },
+      { displayName: 'Name of @z:agent-room.test', matrixUserId: '@z:agent-room.test' },
+    ]);
+    expect(named(false)).toBeUndefined();
+  });
+
   it('按 Matrix 的发言门槛说这台设备上的人能不能在这里发消息', () => {
     const canSpeak = (state: RoomState, self: string | null = SELF) => {
       const registry = new MatrixClientRegistry();
@@ -188,7 +203,8 @@ function matrixRoom(
   } as unknown as EventTimeline;
   return {
     getMyMembership: () => membership,
-    getJoinedMembers: () => members.map((userId) => ({ userId })) as RoomMember[],
+    getJoinedMembers: () =>
+      members.map((userId) => ({ rawDisplayName: `Name of ${userId}`, userId })) as RoomMember[],
     getLiveTimeline: () => timeline,
     name: '  公开大厅  ',
   } as unknown as Room;

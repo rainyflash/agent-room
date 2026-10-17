@@ -53,6 +53,11 @@ export type ConversationPanelProps = {
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly messages: readonly RoomMessageSignal[];
   readonly participants?: readonly ConversationParticipant[];
+  /**
+   * 房间成员叫什么，只用来写出被点名的人：Agent 点了还没说过话的人时靠它。不进 @ 菜单。
+   * 优先级最低：说过话的照消息上的名字，Agent 照 `participants` 里的。
+   */
+  readonly memberNames?: readonly ConversationParticipant[];
   readonly publisher: MessagePublisher;
   readonly roomId: string;
   /** 打字时告诉房间里的人“正在输入”；不给就不说。 */
@@ -77,6 +82,7 @@ export function ConversationPanel({
   onLatestDisplayed,
   messages,
   participants = emptyParticipants,
+  memberNames = emptyParticipants,
   publisher,
   roomId,
   typing,
@@ -181,9 +187,14 @@ export function ConversationPanel({
     focusedMessage.current.scrollIntoView({ block: 'center' });
     focusedMessage.current.focus({ preventScroll: true });
   }, [active, focusMessageId, focusAvailable]);
+  // 后面的盖住前面的：成员名单、你自己、消息上的发送者、房间里的 Agent。
+  // 你自己和成员名单让 Agent 点了还没说过话的人时也写得出名字。
+  const self = composer.publication.context.identity;
   const names = useMemo(
     () =>
       new Map([
+        ...memberNames.map((member) => [member.matrixUserId, member.displayName] as const),
+        ...(self === null ? [] : [[self.matrixUserId, self.displayName] as const]),
         ...messages.map(
           (message) => [message.actor.matrixUserId, message.actor.displayName] as const,
         ),
@@ -191,7 +202,7 @@ export function ConversationPanel({
           (participant) => [participant.matrixUserId, participant.displayName] as const,
         ),
       ]),
-    [messages, participants],
+    [memberNames, self, messages, participants],
   );
   const messagesById = useMemo(
     () => new Map(messages.map((message) => [message.messageId, message])),

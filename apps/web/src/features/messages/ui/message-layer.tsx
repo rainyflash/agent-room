@@ -19,6 +19,8 @@ export type MessageLayerProps = {
   readonly focusedConversationMessageId?: string | null;
   readonly view?: 'conversation' | 'resources';
   readonly participants?: readonly ConversationParticipant[];
+  /** 房间成员的名字，只用来写出被点名的人叫什么；见 `ConversationPanel` 的同名参数。 */
+  readonly memberNames?: readonly ConversationParticipant[];
   readonly catalogId: string;
   readonly onLatestDisplayed?: (matrixEventId: string) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -36,6 +38,7 @@ export function MessageLayer({
   focusedConversationMessageId = null,
   view = 'conversation',
   participants,
+  memberNames,
   catalogId,
   onLatestDisplayed,
   onSelectedMessageChange,
@@ -103,6 +106,7 @@ export function MessageLayer({
             roomId={roomId}
             messages={projectedMessages}
             {...(participants === undefined ? {} : { participants })}
+            {...(memberNames === undefined ? {} : { memberNames })}
             state={
               state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
             }

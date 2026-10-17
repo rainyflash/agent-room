@@ -94,3 +94,65 @@ describe('自己消息下的送达标记', () => {
     expect(mark).toHaveTextContent('Scout · Reply needs attention');
   });
 });
+
+describe('消息里被点名的人', () => {
+  const owner = '@user-3412b8ab0ef3cf6a658cbdcf29595500:matrix.agent-room.localhost';
+  const fromAgent: RoomMessageSignal = {
+    ...message,
+    actor: {
+      agentId: '01990d9e-8400-7000-8000-000000000005',
+      displayName: 'Ada',
+      instanceId: '01990d9e-8400-7000-8000-000000000006',
+      kind: 'agent',
+      matrixUserId: '@agent-ada:agent-room.test',
+      provenance: 'autonomous_agent',
+    },
+    preview: {
+      contentType: 'text/plain',
+      conversation: { mentions: [owner], text: 'Done, please take a look.' },
+      riskFlags: [],
+      sensitivity: 'normal',
+      summary: 'Done, please take a look.',
+      title: 'Done, please take a look.',
+    },
+  };
+
+  function renderMentions(names: ReadonlyMap<string, string>): HTMLElement {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ConversationMessage
+          editable
+          message={fromAgent}
+          names={names}
+          onReply={vi.fn()}
+          own={false}
+          parent={undefined}
+          time={new Intl.DateTimeFormat('en', { timeStyle: 'short' })}
+        />
+      </I18nextProvider>,
+    );
+    const mentions = document.querySelector('.conversation-message__mentions');
+    expect(mentions).toBeInstanceOf(HTMLElement);
+    return mentions as HTMLElement;
+  }
+
+  it('认得出名字时写名字，完整 ID 留在提示里', () => {
+    const mentions = renderMentions(new Map([[owner, '小王']]));
+
+    expect(mentions).toHaveTextContent('@小王');
+    expect(screen.getByText('@小王')).toHaveAttribute('title', owner);
+  });
+
+  it('认不出名字时写“某位成员”，不露出带两个 @ 的整串 Matrix ID', async () => {
+    const english = renderMentions(new Map());
+
+    expect(english).toHaveTextContent('@a member');
+    expect(english).not.toHaveTextContent('@@');
+    expect(english).not.toHaveTextContent(owner);
+    expect(screen.getByText('@a member')).toHaveAttribute('title', owner);
+
+    cleanup();
+    await i18n.changeLanguage('zh-CN');
+    expect(renderMentions(new Map())).toHaveTextContent('@某位成员');
+  });
+});

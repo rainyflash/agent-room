@@ -15,6 +15,7 @@ import type {
   UndecryptableRecovery,
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
+import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { initializeI18n, i18n } from '@/shared/i18n/i18n';
@@ -34,6 +35,7 @@ function harness(
   labels: NetworkAgentLabelStore | null = null,
   undecryptable?: UndecryptableSummary,
   recovery: UndecryptableRecovery = 'idle',
+  memberNames?: readonly ConversationParticipant[],
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -81,6 +83,7 @@ function harness(
       participants={[{ matrixUserId: agentId, displayName: 'Ada' }]}
       submissionIds={{ next: () => submissionId }}
       {...(undecryptable === undefined ? {} : { recovery, undecryptable })}
+      {...(memberNames === undefined ? {} : { memberNames })}
     />
   );
   render(
@@ -701,5 +704,113 @@ describe('人与 Agent 直接聊天', () => {
       relation: { kind: 'reply', targetMessageId: submissionId },
       conversation: { mentions: [agentId] },
     });
+  });
+});
+
+describe('Agent 点名房间里的人', () => {
+  const owner = '@user-3412b8ab0ef3cf6a658cbdcf29595500:matrix.agent-room.localhost';
+  const grace = '@grace:agent-room.test';
+  const self = '@rainy:agent-room.test';
+
+  function chat(
+    actor: RoomMessageSignal['actor'],
+    id: string,
+    timestamp: number,
+    mentions: readonly string[],
+  ): RoomMessageSignal {
+    return {
+      actor,
+      messageId: id,
+      matrixEventId: `$${id}`,
+      roomId,
+      lifecycle: 'active',
+      edited: false,
+      endToEndEncrypted: true,
+      serverTimestamp: timestamp,
+      signatureStatus: 'instance_verified',
+      content: null,
+      preview: {
+        title: id,
+        summary: id,
+        contentType: 'text/plain',
+        riskFlags: [],
+        sensitivity: 'normal',
+        conversation: { text: `Message ${id}`, mentions },
+      },
+    };
+  }
+
+  const fromGrace = chat(
+    {
+      displayName: 'Grace',
+      kind: 'human',
+      matrixUserId: grace,
+      principalId: '01990d9e-8400-7000-8000-000000000011',
+      provenance: 'human',
+    },
+    'grace-says',
+    1_000,
+    [],
+  );
+  const fromAda = chat(
+    {
+      agentId: submissionId,
+      instanceId: submissionId,
+      displayName: 'Ada',
+      kind: 'agent',
+      matrixUserId: agentId,
+      provenance: 'autonomous_agent',
+    },
+    'ada-mentions',
+    2_000,
+    [owner, self, grace, agentId],
+  );
+
+  function mentionsOfAda(): HTMLElement {
+    const article = document
+      .querySelector('[data-conversation-message-id="ada-mentions"]')
+      ?.querySelector('.conversation-message__mentions');
+    expect(article).toBeInstanceOf(HTMLElement);
+    return article as HTMLElement;
+  }
+
+  it('没说过话的人也按成员名单写出名字；你自己按你的身份写', async () => {
+    harness(false, [fromGrace, fromAda], null, undefined, 'idle', [
+      { matrixUserId: owner, displayName: '小王' },
+    ]);
+
+    await waitFor(() => {
+      expect(within(mentionsOfAda()).getByText('@Rainy')).toHaveAttribute('title', self);
+    });
+    const chips = within(mentionsOfAda());
+    expect(chips.getByText('@小王')).toHaveAttribute('title', owner);
+    expect(chips.getByText('@Grace')).toBeInTheDocument();
+    expect(chips.getByText('@Ada')).toBeInTheDocument();
+    expect(mentionsOfAda()).not.toHaveTextContent('@@');
+  });
+
+  it('成员名单只补没有的：说过话的照消息上的名字，Agent 照房间里的名字', async () => {
+    harness(false, [fromGrace, fromAda], null, undefined, 'idle', [
+      { matrixUserId: owner, displayName: '小王' },
+      { matrixUserId: grace, displayName: 'Old Grace' },
+      { matrixUserId: agentId, displayName: 'Matrix Ada' },
+      { matrixUserId: self, displayName: 'Matrix Rainy' },
+    ]);
+
+    await waitFor(() => {
+      expect(within(mentionsOfAda()).getByText('@Rainy')).toBeInTheDocument();
+    });
+    expect(mentionsOfAda()).toHaveTextContent('@小王@Rainy@Grace@Ada');
+  });
+
+  it('名单里也没有时写“某位成员”，不显示整串 Matrix ID', async () => {
+    harness(false, [fromGrace, fromAda]);
+
+    await waitFor(() => {
+      expect(within(mentionsOfAda()).getByText('@Rainy')).toBeInTheDocument();
+    });
+    const unknown = within(mentionsOfAda()).getByText('@a member');
+    expect(unknown).toHaveAttribute('title', owner);
+    expect(mentionsOfAda()).not.toHaveTextContent(owner);
   });
 });
