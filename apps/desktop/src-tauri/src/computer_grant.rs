@@ -236,6 +236,12 @@ impl GrantWait {
                     self.retry_later()
                 }
             }
+            // 请求在路上时人又登录了一次：被拒的是之前那份登录，刚登录的那份马上试。
+            // 没有的话只删本机这份、等人登录，别拿同一份登录接着要（删没成时会一直空转）。
+            Err(ComputerGrantFailure::SessionRejected) if signed_in => {
+                self.phase = GrantPhase::WaitingRetry;
+                GrantStep::RetryAfter(Duration::ZERO)
+            }
             Err(ComputerGrantFailure::SessionRejected) => GrantStep::ForgetSession,
             Err(ComputerGrantFailure::Refused) => {
                 self.wanted = false;
@@ -542,6 +548,22 @@ mod tests {
             wait.resolved(Err(ComputerGrantFailure::Transient)),
             GrantStep::RetryAfter(Duration::ZERO),
             "请求在路上时登录好，旧请求暂时失败后应立即重试"
+        );
+
+        wait.retry_due();
+        wait.requesting();
+        wait.signed_in();
+        assert_eq!(
+            wait.resolved(Err(ComputerGrantFailure::SessionRejected)),
+            GrantStep::RetryAfter(Duration::ZERO),
+            "被拒的是登录之前那份，刚登录的那份马上试"
+        );
+        wait.retry_due();
+        wait.requesting();
+        assert_eq!(
+            wait.resolved(Err(ComputerGrantFailure::SessionRejected)),
+            GrantStep::ForgetSession,
+            "没有新登录就等人登录，不接着要"
         );
     }
 

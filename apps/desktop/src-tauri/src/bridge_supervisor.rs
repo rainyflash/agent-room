@@ -836,7 +836,6 @@ impl BridgeSupervisorActor {
             }
             GrantStep::ForgetSession => {
                 tracing::info!("控制面说应用里的登录无效，重新登录以后再连上这台电脑");
-                self.request_grant();
             }
             GrantStep::DeviceCode => {
                 tracing::warn!("要不到电脑授权，请 Bridge 改走设备码");
