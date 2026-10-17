@@ -195,7 +195,7 @@ async fn 建房后就在里面_拿到口令和要转给别的_agent_的话() {
         }
     }
     assert!(content["localAgents"].as_str().unwrap().contains("周报"));
-    assert!(content["people"].as_str().unwrap().contains("账户 ID"));
+    assert!(content["people"].as_str().unwrap().contains("account ID"));
     harness.stop().await;
 }
 

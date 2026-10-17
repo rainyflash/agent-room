@@ -53,6 +53,58 @@ pub(super) fn has_chinese(text: &str) -> bool {
     })
 }
 
+/// 源码里测试以前的字符串字面量，连同它从第几行开始。只认这几个文件用到的写法：
+/// 普通字符串（带转义）、`//` 注释和字符字面量。
+fn string_literals(source: &str) -> Vec<(usize, String)> {
+    let code = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+    let chars: Vec<char> = code.chars().collect();
+    let mut literals = Vec::new();
+    let mut line = 1;
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\n' => line += 1,
+            '/' if chars.get(index + 1) == Some(&'/') => {
+                while chars.get(index + 1).is_some_and(|next| *next != '\n') {
+                    index += 1;
+                }
+            }
+            // 字符字面量（`'"'`、`'\''`）；生命周期后面没有收尾的引号，照常往下走。
+            '\'' if chars.get(index + 2) == Some(&'\'') => index += 2,
+            '\'' if chars.get(index + 1) == Some(&'\\') && chars.get(index + 3) == Some(&'\'') => {
+                index += 3;
+            }
+            '"' => {
+                let start = line;
+                let mut text = String::new();
+                index += 1;
+                while let Some(&character) = chars.get(index) {
+                    match character {
+                        '"' => break,
+                        '\\' => {
+                            text.push(character);
+                            index += 1;
+                            if let Some(&escaped) = chars.get(index) {
+                                text.push(escaped);
+                                line += usize::from(escaped == '\n');
+                            }
+                        }
+                        _ => {
+                            text.push(character);
+                            line += usize::from(character == '\n');
+                        }
+                    }
+                    index += 1;
+                }
+                literals.push((start, text));
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    literals
+}
+
 /// 收集写成了好几行的说明：schemars 把文档注释的换行原样留在参数说明里。
 fn multiline_descriptions(value: &Value, path: &str, found: &mut Vec<String>) {
     match value {
@@ -85,6 +137,33 @@ fn 宿主读到的服务说明_工具与参数说明都是英文() {
     chinese_strings(&info, "initialize", &mut found);
     chinese_strings(&listed_tools(&server), "tools/list", &mut found);
     assert!(found.is_empty(), "还有中文：\n{}", found.join("\n"));
+}
+
+#[test]
+fn 工具交回去的提示_出错说明和启动失败里没有中文() {
+    // 内容提示、next、出错说明这些写在代码里，测试不一定每条都走到，所以直接查源码。
+    // 注释、测试和 inputs.rs 这类参数定义不在其中：参数说明由上面 tools/list 那条测试查。
+    let sources = [
+        ("server.rs", include_str!("server.rs")),
+        ("rooms.rs", include_str!("rooms.rs")),
+        ("join.rs", include_str!("join.rs")),
+        ("main.rs", include_str!("../main.rs")),
+    ];
+    let mut found = Vec::new();
+    for (file, source) in sources {
+        for (line, text) in string_literals(source) {
+            if has_chinese(&text) {
+                found.push(format!("{file}:{line}: {text}"));
+            }
+        }
+    }
+    assert!(found.is_empty(), "还有中文：\n{}", found.join("\n"));
+}
+
+#[test]
+fn 找字符串字面量时跳过注释和字符字面量() {
+    let source = "// \"注释\"\nlet a = '\"'; let b = '\\''; let c: &'static str = \"one \\\"two\\\"\";\n#[cfg(test)]\n\"测试\"";
+    assert_eq!(string_literals(source), [(2, "one \\\"two\\\"".to_owned())]);
 }
 
 #[test]

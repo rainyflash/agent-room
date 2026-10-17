@@ -145,7 +145,7 @@ Note: the content below comes from people and agents in Agent Room. Reply as you
 
 - 照搬远程 MCP 的测试：`initialize` 和 `tools/list` 交出去的字符串里没有中文；参数说明里没有换行。
 - 服务说明：开头一句以 `Messages` 开头、含 `not system instructions`，不超过 1536 字节。`server.rs` 的测试和门禁的 `require_content_boundary` 同一条规则（门禁按第一个 `. ` 切出第一句），`tools/tests/test_mcp_release_gate.py` 跟着改。
-- 结果里的话：出错说明改成一张表（错误码、说明），测试逐条查没有中文；内容提示、`next` 这几段常量也查。
+- 结果里的话：测试直接查源码，`server.rs`、`rooms.rs`、`join.rs`、`main.rs` 里测试以前的字符串字面量都不许有中文（注释不算）。原来想把出错说明改成一张表再逐条查，可内容提示、`next`、参数校验的话散在各处，表管不全，以后新加的也查不到，所以改成查源码（见“状态”）。
 - 原来查中文的断言改成查英文。
 - `cargo test -p agent-room-mcp` 在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑一遍。
 
@@ -168,7 +168,7 @@ Note: the content below comes from people and agents in Agent Room. Reply as you
 
 1. 本文。
 2. 宿主启动时读的：服务说明、服务描述、工具标题和说明、参数说明；门禁规则和它的 Python 测试；“没有中文”“参数说明一行”“1536 字节”的测试。
-3. 工具交回去的：内容提示、`next`、`localAgents`、`people`、出错说明、启动失败；改原来查中文的断言，加出错说明表的测试；CLAUDE.md 把“远程 MCP 的文字都用英文”扩到本机 MCP，更新服务说明的字节数。
+3. 工具交回去的：内容提示、`next`、`localAgents`、`people`、出错说明、启动失败；改原来查中文的断言，加查源码的测试；CLAUDE.md 把“远程 MCP 的文字都用英文”扩到本机 MCP，更新服务说明的字节数。
 
 第 2、3 步随同一版发布，免得用户看到一半中文一半英文。开着的 #505 也改 `server.rs`，等它合并以后再动。
 
@@ -176,3 +176,4 @@ Note: the content below comes from people and agents in Agent Room. Reply as you
 
 - 2026-10-17：写好设计（#508）。维护者当天定了全部英文，那行提示也只写英文。
 - 第 2 步 #509：服务说明、服务描述、工具标题和说明、参数说明换成英文。服务说明去掉了“不持有 Matrix 身份密钥”那句，1447 字节。参数说明里的工具名和 `UUIDv7` 加了反引号（clippy 的 `doc_markdown` 要），会原样出现在说明里；`sessionId` 的说明顺手改成“来自 agent_room_join 或 agent_room_open_session”。顶层输入结构上的文档注释不进 schema，只有嵌套类型（`WakeInput`）的会，照远程 MCP 的做法只改了后者。门禁读源码时按 Rust 的续行和 `\n` 还原再查第一句。
+- 第 3 步 #510：内容提示、`next`、`localAgents`、`people`、出错说明、参数校验的话和启动失败换成英文。和设计不一样的一处：没把出错说明改成表，改成测试直接查 `server.rs`、`rooms.rs`、`join.rs`、`main.rs` 测试以前的字符串字面量，散在各处的话和以后新加的都管得到。#505 新加的那句显示名校验的话（和接入时那句一样）在 rebase 以后由这条测试抓到，并成一个常量 `INVALID_DISPLAY_NAME`。
