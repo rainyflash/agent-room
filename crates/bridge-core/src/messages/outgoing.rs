@@ -156,12 +156,41 @@ pub struct MessagePublicationService {
     submissions: Arc<dyn MessageSubmissionRepository>,
     automation: Arc<dyn AutomationAuthorizationGateway>,
     room_catalog_id: RoomCatalogId,
+    rooms: std::sync::Mutex<std::collections::HashMap<MatrixRoomId, RoomCatalogId>>,
 }
 
 impl MessagePublicationService {
     pub const fn room_catalog_id(&self) -> RoomCatalogId {
         self.room_catalog_id
     }
+
+    pub fn remember_room(&self, room_id: MatrixRoomId, catalog_id: RoomCatalogId) {
+        self.rooms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(room_id, catalog_id);
+    }
+
+    pub fn forget_room_catalog(&self, catalog_id: RoomCatalogId) {
+        self.rooms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, known| *known != catalog_id);
+    }
+
+    pub fn known_room_catalog_id(&self, room_id: &MatrixRoomId) -> Option<RoomCatalogId> {
+        self.rooms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(room_id)
+            .copied()
+    }
+
+    pub fn room_catalog_id_for(&self, room_id: &MatrixRoomId) -> RoomCatalogId {
+        self.known_room_catalog_id(room_id)
+            .unwrap_or(self.room_catalog_id)
+    }
+
     pub fn new(dependencies: MessagePublicationDependencies) -> Self {
         Self {
             identity: dependencies.identity,
@@ -171,6 +200,7 @@ impl MessagePublicationService {
             submissions: dependencies.submissions,
             automation: dependencies.automation,
             room_catalog_id: dependencies.room_catalog_id,
+            rooms: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -233,7 +263,7 @@ impl MessagePublicationService {
                 submission_id: request.submission_id(),
                 agent_id: self.identity.agent_id(),
                 agent_instance_id: self.identity.agent_instance_id(),
-                room_catalog_id: self.room_catalog_id,
+                room_catalog_id: self.room_catalog_id_for(request.room_id()),
                 matrix_room_id: request.room_id().clone(),
                 is_reply: request.relation().is_some(),
                 // Never reveal client-encrypted bytes to a server-side scanner.

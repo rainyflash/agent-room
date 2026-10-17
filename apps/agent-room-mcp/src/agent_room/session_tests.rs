@@ -1205,6 +1205,14 @@ async fn 按房间名接入_默认进大厅_找不到或连错房间都不报成
         mismatch["structuredContent"]["code"],
         "agent.join.room_mismatch"
     );
+    // 非法显示名不污染已保存的人物，连错的第二间也退回默认大厅。
+    let bad_name = harness
+        .call("agent_room_join", json!({"displayName":"bad\nname"}))
+        .await;
+    assert_eq!(bad_name["isError"], true);
+    let back_to_default = harness.call("agent_room_join", json!({})).await;
+    assert_ne!(back_to_default["isError"], true);
+    assert!(back_to_default["structuredContent"]["room"].is_null());
     harness.stop().await;
 }
 

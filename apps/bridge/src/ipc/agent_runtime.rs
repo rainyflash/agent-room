@@ -238,7 +238,15 @@ impl BridgeAgentRuntimeSnapshot {
         encryption: MatrixRoomEncryption,
         provenance: IpcMessageProvenance,
     ) -> Result<(), BridgeIpcDispatchFailure> {
-        if room_id != &self.room_id && provenance == IpcMessageProvenance::AutonomousAgent {
+        let entered_room = self
+            .publication
+            .as_ref()
+            .and_then(|publication| publication.known_room_catalog_id(room_id))
+            .is_some();
+        if room_id != &self.room_id
+            && !entered_room
+            && provenance == IpcMessageProvenance::AutonomousAgent
+        {
             return Err(BridgeIpcDispatchFailure::new(
                 "bridge.automation_room_mismatch",
                 IpcErrorCategory::Authorization,

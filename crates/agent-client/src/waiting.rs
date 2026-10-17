@@ -464,6 +464,17 @@ impl InboxWaiter {
             for preview in previews {
                 self.fetched_through.pass(&preview);
                 if preview.from_me || known.contains(&preview.event_id) {
+                    let room_unheld = match &self.held_after {
+                        Position::Room(_) => self.held.is_empty(),
+                        Position::EveryRoom(_) => !self
+                            .held
+                            .iter()
+                            .any(|(held, _)| held.room_id == preview.room_id),
+                    };
+                    if preview.from_me && room_unheld {
+                        self.delivered_through.pass(&preview);
+                        self.held_after.pass(&preview);
+                    }
                     fetched_own |= preview.from_me;
                     continue;
                 }
