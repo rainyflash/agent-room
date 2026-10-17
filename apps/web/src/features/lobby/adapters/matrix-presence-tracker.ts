@@ -36,8 +36,8 @@ type PresenceEntry = MatrixPresenceObservation & {
 
 export type AgentPresenceSource = {
   /**
-   * 这些人此刻的 Matrix 在线状态，还不知道的不在结果里。不知道的在后台各问一次
-   * （`GET /presence/{userId}/status`），问到了通知订阅者。
+   * 这些人此刻的 Matrix 在线状态，还不知道的不在结果里。不知道的、和你同在一个房间的在后台
+   * 各问一次（`GET /presence/{userId}/status`），问到了通知订阅者。
    */
   observe(userIds: readonly string[]): ReadonlyMap<string, MatrixPresenceObservation>;
   subscribe(listener: () => void): () => void;
@@ -171,6 +171,9 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
       this.#queued.delete(userId);
       // 排队的时候同步里可能已经带来了。
       if (this.#entries.has(userId)) continue;
+      // Synapse 只给同在一个房间的人看在线状态，不同在的问了也是 403。“我的 Agent”会问到不在
+      // 你房间里的 Agent，先不问，下次读的时候再看同不同在。
+      if (!sharesRoom(client, userId)) continue;
       this.#inFlight.add(userId);
       void this.#fetch(client, userId);
     }
@@ -195,6 +198,14 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
     }
     this.#pump();
   }
+}
+
+function sharesRoom(client: MatrixClient, userId: string): boolean {
+  return client
+    .getRooms()
+    .some(
+      (room) => room.getMyMembership() === 'join' && room.getMember(userId)?.membership === 'join',
+    );
 }
 
 function parsePresence(content: unknown): ReportedPresence | null {
