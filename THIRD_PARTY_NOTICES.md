@@ -6,10 +6,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 
 ## Inventory
 
-- Cargo packages: 890
+- Cargo packages: 887
 - npm packages: 717
-- Total locked package versions: 1607
-- `Cargo.lock` SHA-256: `ee6b390cd1e885e02841e575d5f919a7e37f4c9518e5cd2aa4a9a4c6305c8b03`
+- Total locked package versions: 1604
+- `Cargo.lock` SHA-256: `778491f28102616161b915837424230ba2120b8af267c4b619f34d2c3b5196fd`
 - `pnpm-lock.yaml` SHA-256: `16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877`
 
 ## License expressions
@@ -51,9 +51,9 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 56 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 769 |
+| `MIT` | 768 |
 | `MIT AND BSD-3-Clause` | 1 |
-| `MIT OR Apache-2.0` | 380 |
+| `MIT OR Apache-2.0` | 378 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | 2 |
 | `MIT OR Apache-2.0 OR Zlib` | 3 |
@@ -94,7 +94,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [anymap2](https://github.com/azriel91/anymap2) | 0.13.0 | `MIT/Apache-2.0` |
 | cargo | [apple-native-keyring-store](https://github.com/open-source-cooperative/apple-native-keyring-store.git) | 1.0.2 | `MIT OR Apache-2.0` |
 | cargo | [aquamarine](https://github.com/mersinvald/aquamarine) | 0.6.0 | `MIT` |
-| cargo | [arbitrary](https://github.com/rust-fuzz/arbitrary/) | 1.4.2 | `MIT OR Apache-2.0` |
 | cargo | [arc-swap](https://github.com/vorner/arc-swap) | 1.9.2 | `MIT OR Apache-2.0` |
 | cargo | [archery](https://github.com/orium/archery) | 1.2.3 | `MIT` |
 | cargo | [arrayvec](https://github.com/bluss/arrayvec) | 0.7.8 | `MIT OR Apache-2.0` |
@@ -254,7 +253,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [der](https://github.com/RustCrypto/formats/tree/master/der) | 0.7.10 | `Apache-2.0 OR MIT` |
 | cargo | [deranged](https://github.com/jhpratt/deranged) | 0.5.8 | `MIT OR Apache-2.0` |
 | cargo | [derivative](https://github.com/mcarton/rust-derivative) | 2.2.0 | `MIT/Apache-2.0` |
-| cargo | [derive_arbitrary](https://github.com/rust-fuzz/arbitrary) | 1.4.2 | `MIT OR Apache-2.0` |
 | cargo | [derive_more](https://github.com/JelteF/derive_more) | 1.0.0 | `MIT` |
 | cargo | [derive_more](https://github.com/JelteF/derive_more) | 2.1.1 | `MIT` |
 | cargo | [derive_more-impl](https://github.com/JelteF/derive_more) | 1.0.0 | `MIT` |
@@ -959,7 +957,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [zerotrie](https://github.com/unicode-org/icu4x) | 0.2.5 | `Unicode-3.0` |
 | cargo | [zerovec](https://github.com/unicode-org/icu4x) | 0.11.8 | `Unicode-3.0` |
 | cargo | [zerovec-derive](https://github.com/unicode-org/icu4x) | 0.11.6 | `Unicode-3.0` |
-| cargo | [zip](https://github.com/zip-rs/zip2.git) | 4.6.1 | `MIT` |
 | cargo | [zmij](https://github.com/dtolnay/zmij) | 1.0.23 | `MIT` |
 | cargo | [zvariant](https://github.com/z-galaxy/zbus/) | 5.15.0 | `MIT` |
 | cargo | [zvariant_derive](https://github.com/z-galaxy/zbus/) | 5.15.0 | `MIT` |

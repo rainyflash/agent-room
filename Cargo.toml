@@ -112,7 +112,9 @@ tauri-plugin-notification = "2.3.3"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
-tauri-plugin-updater = "2.10.1"
+# 不开 zip 特性：发布只有 Windows 的 -setup.exe 和 macOS 的 .app.tar.gz，用不到解 zip；开着会引入有公告的 zip 4（RUSTSEC-2026-0367/0368/0369）。
+# 以后要发 Linux 的 .AppImage.tar.gz 或打成 zip 的 Windows 更新包，得等上游换到 zip 9 以上再打开。
+tauri-plugin-updater = { version = "2.10.1", default-features = false, features = ["rustls-tls"] }
 url = "2.5.7"
 uuid = { version = "1.25.0", features = ["serde", "v7"] }
 widestring = "1.2.1"
