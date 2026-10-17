@@ -26,6 +26,7 @@ import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-pr
 import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
 import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
 import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
+import type { AgentPresenceSource } from '@/features/lobby/adapters/matrix-presence-tracker';
 import type { AgentRoom } from '@/features/workspace/domain/agent-directory';
 import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
 import { SettingsLayout, SettingsSectionContent } from '@/features/settings/ui/settings-page';
@@ -234,6 +235,26 @@ let agentRooms: AgentRoom[] = [
   },
 ];
 const bringNothing = new URLSearchParams(location.search).get('bring') === 'none';
+// ?presence=online|unavailable|offline 给夹具 Agent 一个 Matrix 在线状态。它的连接上一直记着在线
+// （发过自动回复的就这样），?presence=offline 时卡片照在线状态说上次在线。
+const presenceParam = new URLSearchParams(location.search).get('presence');
+const fixturePresence: AgentPresenceSource | undefined =
+  presenceParam === 'online' || presenceParam === 'unavailable' || presenceParam === 'offline'
+    ? {
+        observe: (userIds) =>
+          new Map(
+            userIds
+              .filter((userId) => userId === agent.matrixUserId)
+              .map((userId) => [
+                userId,
+                presenceParam === 'offline'
+                  ? { offlineSeenAtUnixMs: Date.now() - 3 * 60 * 60 * 1000, state: presenceParam }
+                  : { state: presenceParam },
+              ]),
+          ),
+        subscribe: () => () => undefined,
+      }
+    : undefined;
 // ?agents=none 模拟还没有 Agent 的新账户。
 const fixtureAgents = new URLSearchParams(location.search).get('agents') === 'none' ? [] : [agent];
 // ?update=current|failed|expired|translocated|none 看更新的几种情况：已是最新、没查成、
@@ -450,6 +471,7 @@ async function bootstrapFixture() {
   );
   const services = {
     ...runtime.services,
+    ...(fixturePresence === undefined ? {} : { agentPresence: fixturePresence }),
     account: {
       exportData: () => ready({ fileName: 'agent-room-account-fixture.json', json: '{}\n' }),
       requestDeletion: () => ready(undefined),

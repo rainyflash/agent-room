@@ -35,6 +35,8 @@ export type AppServices = {
   readonly receptionOwnership?: import('@/features/desktop/domain/reception-ownership').ReceptionOwnershipGateway;
   readonly accessManagement: AccessManagementGateway;
   readonly agentDirectory: AgentDirectoryGateway;
+  /** Agent 的 Matrix 在线状态，房间页和“我的 Agent”共用一份；测试和夹具里可以没有。 */
+  readonly agentPresence?: import('@/features/lobby/adapters/matrix-presence-tracker').AgentPresenceSource;
   readonly automation: AutomationGrantGateway;
   readonly config: RuntimeConfig;
   readonly content: ContentGateway;
