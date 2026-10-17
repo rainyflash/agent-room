@@ -88,10 +88,18 @@ describe('MatrixWebGateway', () => {
     expect(storage.length).toBe(0);
   });
 
-  it('恢复和登出边界都会先撤下旧客户端租约', async () => {
+  it('恢复和登出边界都会先撤下旧客户端租约并重置设备签名状态', async () => {
     const observedClients: null[] = [];
+    const { DeviceSigningStatus } = await import('@/shared/matrix/device-signing-status');
+    const deviceSigning = new DeviceSigningStatus();
+    let retried = 0;
+    deviceSigning.set({ kind: 'failed' });
+    deviceSigning.setRetry(() => {
+      retried += 1;
+    });
     const gateway = new MatrixWebGateway({
       baseUrl: 'https://matrix.agent-room.test',
+      deviceSigning,
       onClientChange: (client) => {
         if (client === null) {
           observedClients.push(client);
@@ -102,8 +110,13 @@ describe('MatrixWebGateway', () => {
     });
 
     await gateway.restore('@user:matrix.agent-room.test');
-    await gateway.logout();
+    expect(deviceSigning.getSnapshot()).toEqual({ kind: 'idle' });
+    deviceSigning.retry();
+    expect(retried).toBe(0);
 
+    deviceSigning.set({ kind: 'ready' });
+    await gateway.logout();
+    expect(deviceSigning.getSnapshot()).toEqual({ kind: 'idle' });
     expect(observedClients).toEqual([null, null]);
   });
 

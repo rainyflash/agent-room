@@ -483,4 +483,32 @@ describe('Web 会话状态机', () => {
     expect(actor.getSnapshot().context.failure).toEqual(matrixFailure);
     actor.stop();
   });
+
+  it('控制面不可达降级期间发生 Matrix 重连恢复时重新核对控制面会话而不留下失效的 controlStatus', async () => {
+    const runtime = dependencies();
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    actor.send({
+      type: 'CONTROL_DEGRADED',
+      reachable: false,
+      failure: {
+        boundary: 'control-plane',
+        code: 'control_plane.unreachable',
+        offline: false,
+        retryable: true,
+      },
+    });
+    expect(actor.getSnapshot().matches('degraded')).toBe(true);
+    expect(actor.getSnapshot().context.controlStatus).toBe('unavailable');
+
+    actor.send({ type: 'MATRIX_INTERRUPTED' });
+    expect(actor.getSnapshot().matches('reconnecting')).toBe(true);
+
+    actor.send({ type: 'MATRIX_RESTORED' });
+    const recovered = await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+    expect(recovered.context.controlStatus).toBe('ready');
+    expect(recovered.context.failure).toBeNull();
+    actor.stop();
+  });
 });
