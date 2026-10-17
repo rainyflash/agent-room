@@ -72,7 +72,9 @@ impl PostgresRepositories {
         sqlx::query(
             r"WITH gone AS (
                   DELETE FROM agent_room.network_agent_room room
-                   WHERE room.network_agent_id = $1 AND room.matrix_room_id = $2
+                   WHERE room.network_agent_id = $1
+                     AND room.matrix_room_id = $2
+                     AND room.joined_at <= to_timestamp($4::double precision / 1000.0)
                RETURNING room.catalog_entry_id, room.matrix_room_id
               ),
               away AS (
@@ -96,6 +98,13 @@ impl PostgresRepositories {
                      AND reservation.room_instance_id = instance.id
                      AND instance.matrix_room_id = $2
                      AND reservation.state IN ('reserved', 'committed')
+                     AND NOT EXISTS (
+                         SELECT 1
+                           FROM agent_room.network_agent_room current_room
+                          WHERE current_room.network_agent_id = $1
+                            AND current_room.matrix_room_id = $2
+                            AND current_room.joined_at > to_timestamp($4::double precision / 1000.0)
+                     )
                RETURNING reservation.room_instance_id
               )
               UPDATE agent_room.room_instance instance
@@ -110,6 +119,7 @@ impl PostgresRepositories {
         .bind(id.as_uuid())
         .bind(room.matrix_room_id.as_str())
         .bind(at.value())
+        .bind(room.joined_at.value())
         .execute(self.pool())
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;

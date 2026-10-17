@@ -501,6 +501,21 @@ impl AuthenticationService {
                     AuthenticationFailureKind::InvalidLoginState,
                 )
             })?;
+        let latest = self
+            .policy
+            .session_lifetime
+            .latest(session.authenticated_at)
+            .map_err(|_| internal_failure("authentication.exchange_desktop_authorization"))?;
+        if now >= latest {
+            let _ = self
+                .sessions
+                .revoke(&session_registration.secret_digest, now)
+                .await;
+            return Err(AuthenticationFailure::new(
+                "authentication.exchange_desktop_authorization",
+                AuthenticationFailureKind::InvalidLoginState,
+            ));
+        }
         Ok(DesktopSessionCompletion {
             session_secret,
             principal: session_view(&session, now, &self.policy),
@@ -512,6 +527,31 @@ impl AuthenticationService {
         request: AuthorizeDesktopSession<'_>,
     ) -> AuthenticationResult<DesktopLoginCompletion> {
         let now = self.clock.now();
+        let session_digest = self.secrets.digest(request.session_secret.expose());
+        let active = self
+            .sessions
+            .find_active(&session_digest, now)
+            .await
+            .map_err(|error| {
+                map_repository_failure("authentication.authorize_desktop_session", &error)
+            })?
+            .ok_or_else(|| {
+                AuthenticationFailure::new(
+                    "authentication.authorize_desktop_session",
+                    AuthenticationFailureKind::InvalidSession,
+                )
+            })?;
+        let latest = self
+            .policy
+            .session_lifetime
+            .latest(active.authenticated_at)
+            .map_err(|_| internal_failure("authentication.authorize_desktop_session"))?;
+        if now >= latest {
+            return Err(AuthenticationFailure::new(
+                "authentication.authorize_desktop_session",
+                AuthenticationFailureKind::InvalidSession,
+            ));
+        }
         let authorization_code = self
             .secrets
             .generate()
@@ -525,7 +565,6 @@ impl AuthenticationService {
             created_at: now,
             expires_at,
         };
-        let session_digest = self.secrets.digest(request.session_secret.expose());
         self.desktop_session_authorization
             .authorize_desktop_session(&session_digest, &grant, now)
             .await
