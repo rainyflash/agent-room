@@ -131,6 +131,19 @@ function Get-OrCreateLobby {
   }
 }
 
+function Test-NativeCommand {
+  param(
+    [Parameter(Mandatory)][string]$Command,
+    [Parameter(Mandatory)][string[]]$Arguments
+  )
+
+  # 只看退出码。Windows PowerShell 5.1 在 Stop 下会把重定向的 stderr 当成终止错误，
+  # 所以在这个函数里改成 Continue（只在函数作用域内生效）。
+  $ErrorActionPreference = 'Continue'
+  & $Command @Arguments 2>$null | Out-Null
+  return $LASTEXITCODE -eq 0
+}
+
 function Seed-ObjectStore {
   param([Parameter(Mandatory)][hashtable]$Environment)
 
@@ -150,8 +163,8 @@ function Seed-ObjectStore {
     '--endpoint-url', 'http://object-store:8333'
   )
 
-  & docker @common s3api head-bucket --bucket agent-room-content 2>$null
-  if ($LASTEXITCODE -ne 0) {
+  $headBucketArguments = $common + @('s3api', 'head-bucket', '--bucket', 'agent-room-content')
+  if (-not (Test-NativeCommand -Command 'docker' -Arguments $headBucketArguments)) {
     & docker @common s3api create-bucket --bucket agent-room-content | Out-Null
     if ($LASTEXITCODE -ne 0) {
       throw '创建本地内容桶失败。'

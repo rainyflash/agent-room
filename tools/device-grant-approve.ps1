@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$BaseUrl = 'http://127.0.0.1:28080',
   [string]$Realm = 'agent-room'

@@ -24,6 +24,8 @@ The bootstrap validates tool versions, installs the locked Node dependencies, re
 
 Run `just control-plane` and `just web` in separate terminals. Use `just dev-down` when finished.
 
+On Windows, `tools/run-powershell.mjs` uses PowerShell 7 (`pwsh`) when it is installed and falls back to Windows PowerShell 5.1 otherwise, so every `.ps1` script must run on both. Save scripts as UTF-8 with a BOM, as `.editorconfig` asks: 5.1 reads a BOM-less script in the system code page and fails to parse its Chinese strings. When a script redirects a native command's stderr (`2>$null`), do it inside a function that first sets `$ErrorActionPreference = 'Continue'`: under `Stop`, 5.1 turns the redirected stderr into a terminating error. `tools/tests/test_powershell_scripts.py` checks both.
+
 ### Desktop development and packaging
 
 Use the same entrypoints locally and in the Windows candidate workflow:
