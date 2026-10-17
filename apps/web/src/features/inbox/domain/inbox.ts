@@ -1,6 +1,7 @@
 import type { MessageGateway, RoomMessageSignal } from '@/features/messages/domain/message';
 import {
   compareCursors,
+  type ReadingCursor,
   type WorkspaceIndex,
 } from '@/features/personal-workspace/domain/workspace-document';
 import type { Result } from '@/shared/result';
@@ -48,6 +49,19 @@ export type InboxItem = {
   readonly muted: boolean;
   readonly handoff?: InboxHandoff;
 };
+/**
+ * 一个房间有多少没读的、有没有人点名你（“房间”页的卡片，`specs/workspace-tidy/design.md`）。
+ * 没读的按收件箱那份“读到哪儿”算，只数别人发的话。
+ */
+export type RoomUnread = {
+  readonly catalogId: string;
+  /** 读到的位置以后别人说了几句；还没有读到的位置（从没打开过）时不数，是 null。 */
+  readonly count: number | null;
+  /** 本机的消息没接到读到的位置：真实的只会更多。 */
+  readonly more: boolean;
+  /** 有没读的点名你或 @所有人。 */
+  readonly mentioned: boolean;
+};
 
 export function projectInbox(
   index: InboxIndex,
@@ -58,9 +72,12 @@ export function projectInbox(
   readonly items: readonly InboxItem[];
   readonly unavailableRooms: number;
   readonly contacts: ReadonlyMap<string, number>;
+  /** 按 Matrix 房间号；公开大厅的每个分片各一份。 */
+  readonly rooms: ReadonlyMap<string, RoomUnread>;
 } {
   const items = new Map<string, InboxItem>();
   const contacts = new Map<string, number>();
+  const unread = new Map<string, RoomUnread>();
   const remember = (message: RoomMessageSignal, timestamp: number) => {
     if (message.actor.kind === 'agent')
       contacts.set(
@@ -69,7 +86,8 @@ export function projectInbox(
       );
   };
   let unavailableRooms = 0;
-  if (source.accountId() !== index.accountId) return { items: [], unavailableRooms: 0, contacts };
+  if (source.accountId() !== index.accountId)
+    return { items: [], unavailableRooms: 0, contacts, rooms: unread };
   for (const room of index.rooms) {
     if (!source.isJoined(room.roomId)) continue;
     const result = messages.read(room.roomId);
@@ -83,6 +101,8 @@ export function projectInbox(
         .filter((message) => message.lifecycle === 'active')
         .map((message) => [message.actor.matrixUserId, message]),
     );
+    const cursor = preferences.read.get(room.roomId);
+    let mentioned = false;
     for (const message of result.value.messages) {
       if (message.lifecycle !== 'active' || source.isIgnored(message.actor.matrixUserId)) continue;
       if (message.actor.matrixUserId === index.accountId) {
@@ -98,7 +118,10 @@ export function projectInbox(
       if (kind === null) continue;
       remember(message, message.serverTimestamp);
       const id = `message:${room.roomId}:${message.messageId}`;
-      const cursor = preferences.read.get(room.roomId);
+      const read =
+        preferences.acknowledged.has(id) ||
+        (cursor !== undefined && compareCursors(position(message), cursor) <= 0);
+      if (kind === 'mention' && !read) mentioned = true;
       items.set(id, {
         id,
         kind,
@@ -108,16 +131,15 @@ export function projectInbox(
         sender: message.actor.displayName,
         text: message.preview?.conversation?.text ?? message.preview?.summary ?? '',
         timestamp: message.serverTimestamp,
-        read:
-          preferences.acknowledged.has(id) ||
-          (cursor !== undefined &&
-            compareCursors(
-              { timestamp: message.serverTimestamp, eventId: message.matrixEventId },
-              cursor,
-            ) <= 0),
+        read,
         muted: preferences.muted.has(room.roomId),
       });
     }
+    unread.set(room.roomId, {
+      catalogId: room.catalogId,
+      ...unreadCount(result.value.messages, cursor, index.accountId, source),
+      mentioned,
+    });
   }
   const rooms = new Map(index.rooms.map((room) => [room.roomId, room]));
   for (const handoff of index.handoffs) {
@@ -144,7 +166,41 @@ export function projectInbox(
     ),
     unavailableRooms,
     contacts,
+    rooms: unread,
   };
+}
+
+function position(message: RoomMessageSignal) {
+  return { timestamp: message.serverTimestamp, eventId: message.matrixEventId };
+}
+
+/**
+ * 读到的位置以后别人说的话有几句。本机只同步了最近的一段：一条读到的位置以前（含）的消息
+ * 都没有，就说明没接上，真实的只会更多。
+ */
+function unreadCount(
+  messages: readonly RoomMessageSignal[],
+  cursor: ReadingCursor | undefined,
+  self: string,
+  source: InboxMatrixSource,
+): Pick<RoomUnread, 'count' | 'more'> {
+  if (cursor === undefined) return { count: null, more: false };
+  let count = 0;
+  let reached = false;
+  for (const message of messages) {
+    if (compareCursors(position(message), cursor) <= 0) {
+      reached = true;
+      continue;
+    }
+    if (
+      message.lifecycle === 'active' &&
+      message.preview?.conversation !== undefined &&
+      message.actor.matrixUserId !== self &&
+      !source.isIgnored(message.actor.matrixUserId)
+    )
+      count += 1;
+  }
+  return { count, more: count > 0 && !reached };
 }
 
 export function notificationAllowed(

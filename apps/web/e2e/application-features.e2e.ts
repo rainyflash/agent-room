@@ -211,6 +211,33 @@ for (const width of [1440, 390]) {
   });
 }
 
+for (const width of [1440, 390]) {
+  test(`房间卡片写未读条数和有没有人点名你 ${String(width)}`, async ({ page }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${fixture}&unread`);
+    const mine = page.getByRole('region', { name: 'Your private rooms' });
+    // Design studio 读到一半，后面三条里有一条点名你；Engineering room 积了 120 条。
+    await expect(mine.getByRole('link', { name: /Design studio/ })).toContainText(
+      'Someone mentioned you, 3 unread messages',
+    );
+    await expect(mine.getByRole('link', { name: /Engineering room/ })).toContainText(
+      'At least 99 unread messages',
+    );
+    await expect(mine.getByRole('link', { name: /Engineering room/ })).toContainText('99+');
+    // 公开大厅只标 @，不写条数。
+    const lobby = page.locator('.room-card', { hasText: 'Global lobby' });
+    await expect(lobby).toContainText('Someone mentioned you');
+    await expect(lobby.locator('.room-unread-mark__count')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`room-unread-${String(width)}.png`),
+      fullPage: true,
+    });
+    expect(failures).toEqual([]);
+  });
+}
+
 test('刷新恢复附件、清除后不残留本地文件', async ({ page }) => {
   await page.goto(fixture);
   await page.getByRole('link', { name: /Design studio/ }).click();

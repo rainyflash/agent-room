@@ -102,6 +102,13 @@
 .room-card__body {
   min-width: 0;
 }
+.room-card__heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .room-card h3 {
   margin: 0;
   font-family: var(--font-display);

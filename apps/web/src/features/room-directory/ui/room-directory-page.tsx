@@ -15,6 +15,7 @@ import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { RoomUnreadMark, useCatalogMentioned } from '@/features/inbox/ui/room-unread-mark';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 import { RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { usePublicRoomDirectory } from '@/features/room-directory/data/public-room-directory-query';
@@ -149,8 +150,9 @@ export function RoomDirectoryView({
                 <RoomIllustration />
               </div>
               <div className="room-card__body">
-                <header>
+                <header className="room-card__heading">
                   <h3>{room.name}</h3>
+                  <LobbyMention catalogId={room.catalogId} />
                 </header>
                 <p className="room-card__description">{room.description}</p>
                 <dl>
@@ -235,4 +237,9 @@ function DirectoryBoundary({
       {action}
     </section>
   );
+}
+
+/** 公开大厅只标有没有人点名你，不写条数：人多，条数很快就是 99+（维护者 2026-10-17 定）。 */
+function LobbyMention({ catalogId }: { readonly catalogId: string }) {
+  return <RoomUnreadMark mentioned={useCatalogMentioned(catalogId)} />;
 }

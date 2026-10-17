@@ -5,6 +5,7 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
+import { RoomUnreadMark, useRoomUnread } from '@/features/inbox/ui/room-unread-mark';
 import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { AccountIdCopy } from '@/features/room-directory/ui/account-id-copy';
 import {
@@ -147,6 +148,7 @@ function ConnectedMyRooms() {
 
 /** 一间私人房间的卡片，点了就进去。归档了的换个图标：进去只能看之前的消息。 */
 function RoomCard({ room, archived = false }: { room: PrivateRoom; archived?: boolean }) {
+  const unread = useRoomUnread(room.matrixRoomId);
   return (
     <Link
       className={`room-row room-row--link room-row--card${archived ? ' room-row--archived' : ''}`}
@@ -161,6 +163,11 @@ function RoomCard({ room, archived = false }: { room: PrivateRoom; archived?: bo
         <strong>{room.name}</strong>
         {room.description === '' ? null : <small>{room.description}</small>}
       </span>
+      <RoomUnreadMark
+        count={unread?.count}
+        mentioned={unread?.mentioned ?? false}
+        more={unread?.more ?? false}
+      />
       <ArrowRight aria-hidden="true" className="room-row__mark" />
     </Link>
   );

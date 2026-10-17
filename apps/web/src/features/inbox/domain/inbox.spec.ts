@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { conversationFixture } from '@/features/conversation/testing/conversation-fixture';
-import type { AgentMessageActor } from '@/features/messages/domain/message';
+import type { AgentMessageActor, RoomMessageSignal } from '@/features/messages/domain/message';
 import {
   emptyWorkspace,
   workspaceIndex,
@@ -178,6 +178,108 @@ describe('personal inbox', () => {
         { ...source, isIgnored: (id) => id === agent.matrixUserId },
         prefs,
       ).contacts.size,
+    ).toBe(0);
+  });
+});
+
+describe('room unread counts', () => {
+  const at = (minute: number) => new Date('2026-10-17T12:00:00Z').getTime() + minute * 60_000;
+  const said = (id: string, minute: number, options: Partial<RoomMessageSignal> = {}) =>
+    conversationFixture(id, { serverTimestamp: at(minute), ...options });
+  const me: RoomMessageSignal['actor'] = {
+    kind: 'human',
+    displayName: 'Me',
+    matrixUserId: self,
+    principalId: 'self',
+    provenance: 'human',
+  };
+  const gateway = (messages: readonly RoomMessageSignal[]) => ({
+    read: () => ok({ roomId, messages, observedAtUnixMs: 0, readOnlyFederatedEvents: [] }),
+    subscribe: () => () => undefined,
+  });
+  const readUpTo = (message: RoomMessageSignal) => {
+    const prefs = workspaceIndex(emptyWorkspace);
+    prefs.read.set(roomId, { timestamp: message.serverTimestamp, eventId: message.matrixEventId });
+    return prefs;
+  };
+
+  it('数读到的位置以后别人说的话，自己说的、撤回的、屏蔽的人说的都不算', () => {
+    const seen = said('seen', 0);
+    const messages = [
+      said('before', -1),
+      seen,
+      said('one', 1),
+      said('two', 2),
+      said('mine', 3, { actor: me }),
+      said('removed', 4, { lifecycle: 'redacted' }),
+      said('ignored', 5, {
+        actor: { ...said('x', 0).actor, matrixUserId: '@ignored:example.org' },
+      }),
+    ];
+    const rooms = projectInbox(
+      index,
+      gateway(messages),
+      { ...source, isIgnored: (id) => id === '@ignored:example.org' },
+      readUpTo(seen),
+    ).rooms;
+    expect(rooms.get(roomId)).toEqual({
+      catalogId: 'catalog',
+      count: 2,
+      more: false,
+      mentioned: false,
+    });
+  });
+
+  it('本机的消息没接到读到的位置时，写成至少这么多', () => {
+    const seen = said('seen', 0);
+    const rooms = projectInbox(
+      index,
+      gateway([said('one', 1), said('two', 2)]),
+      source,
+      readUpTo(seen),
+    ).rooms;
+    expect(rooms.get(roomId)).toMatchObject({ count: 2, more: true });
+  });
+
+  it('从没打开过的房间不数条数，只看有没有人点名你', () => {
+    const base = said('mention', 1);
+    const mention = said('mention', 1, {
+      preview: base.preview
+        ? { ...base.preview, conversation: { text: 'Look', mentions: [self] } }
+        : null,
+    });
+    const prefs = workspaceIndex(emptyWorkspace);
+    expect(projectInbox(index, gateway([said('one', 0)]), source, prefs).rooms.get(roomId)).toEqual(
+      { catalogId: 'catalog', count: null, more: false, mentioned: false },
+    );
+    expect(
+      projectInbox(index, gateway([said('one', 0), mention]), source, prefs).rooms.get(roomId),
+    ).toMatchObject({ count: null, mentioned: true });
+  });
+
+  it('点名你、@所有人的标出来；读到了那条以后就不标', () => {
+    const base = said('everyone', 2);
+    const everyone = said('everyone', 2, {
+      preview: base.preview ? { ...base.preview, mentionsEveryone: true } : null,
+    });
+    const seen = said('seen', 0);
+    const messages = [seen, said('one', 1), everyone];
+    expect(
+      projectInbox(index, gateway(messages), source, readUpTo(seen)).rooms.get(roomId),
+    ).toMatchObject({ count: 2, mentioned: true });
+    expect(
+      projectInbox(index, gateway(messages), source, readUpTo(everyone)).rooms.get(roomId),
+    ).toMatchObject({ count: 0, mentioned: false });
+  });
+
+  it('没加入的房间、读不出来的房间都没有这一份', () => {
+    expect(
+      projectInbox(
+        index,
+        gateway([said('one', 0)]),
+        { ...source, isJoined: () => false },
+        workspaceIndex(emptyWorkspace),
+      ).rooms.size,
     ).toBe(0);
   });
 });

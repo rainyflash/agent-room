@@ -6,11 +6,14 @@ import {
   type InboxIndexGateway,
   type InboxMatrixSource,
   type InboxItem,
+  type RoomUnread,
 } from '../domain/inbox';
 
 export type InboxSnapshot = {
   readonly accountId: string | null;
   readonly items: readonly InboxItem[];
+  /** 每个房间有多少没读、有没有人点名你，按 Matrix 房间号。 */
+  readonly rooms: ReadonlyMap<string, RoomUnread>;
   readonly limited: boolean;
   readonly unavailableRooms: number;
   readonly status: 'loading' | 'ready' | 'failed' | 'signed_out';
@@ -18,6 +21,7 @@ export type InboxSnapshot = {
 const initial: InboxSnapshot = Object.freeze({
   accountId: null,
   items: [],
+  rooms: new Map(),
   limited: false,
   unavailableRooms: 0,
   status: 'signed_out',
@@ -113,6 +117,7 @@ export class InboxStore {
     const projected = projectInbox(this.#index, this.messages, this.source, personal.index);
     this.#publish({
       items: projected.items,
+      rooms: projected.rooms,
       unavailableRooms: projected.unavailableRooms,
       limited: this.#index.limited,
       accountId: this.#index.accountId,

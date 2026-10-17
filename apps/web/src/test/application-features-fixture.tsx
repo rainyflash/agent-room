@@ -31,6 +31,8 @@ import type {
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import type { WebSession } from '@/features/session/domain/session';
 import { ok, err } from '@/shared/result';
+import { InboxProvider } from '@/features/inbox/ui/inbox-provider';
+import { featuresUnreadInbox } from './features-unread-fixture';
 
 // Isolated UI acceptance harness: real publication, cryptography and IndexedDB; in-memory services.
 const principal: WebSession = {
@@ -321,6 +323,24 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
   const [queries] = useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
+  const [inbox] = useState(() =>
+    params.has('unread')
+      ? featuresUnreadInbox(principal.matrixUserId, [
+          ...seededRooms.slice(0, 2).map((room) => ({
+            catalogId: room.catalogId,
+            roomId: room.matrixRoomId,
+            name: room.name,
+            direct: false,
+          })),
+          {
+            catalogId: publicCatalog,
+            roomId: '!global-1:matrix.test',
+            name: 'Global lobby',
+            direct: false,
+          },
+        ])
+      : null,
+  );
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const settingsSection = /^\/settings\/([\w-]+)$/u.exec(pathname)?.[1] ?? null;
   const match = /\/instance\/(.+)$/u.exec(pathname);
@@ -346,7 +366,13 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
                     <SettingsSectionContent section={settingsSection} />
                   </SettingsLayout>
                 ) : pathname === '/rooms' || pathname.includes('/fixtures/') ? (
-                  <RoomDirectoryPage />
+                  inbox === null ? (
+                    <RoomDirectoryPage />
+                  ) : (
+                    <InboxProvider store={inbox}>
+                      <RoomDirectoryPage />
+                    </InboxProvider>
+                  )
                 ) : (
                   <main
                     id="main-content"
