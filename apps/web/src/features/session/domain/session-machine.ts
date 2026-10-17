@@ -431,7 +431,16 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       reconnecting: {
         after: { 1_200: 'restoring' },
         on: {
-          MATRIX_RESTORED: 'ready',
+          CONTROL_DEGRADED: { target: 'degraded', actions: 'setControlFailure' },
+          MATRIX_RESTORED: [
+            {
+              guard: ({ context }) => context.controlStatus === 'ready' && context.failure === null,
+              target: 'ready',
+            },
+            {
+              target: 'booting',
+            },
+          ],
           OFFLINE: 'offline',
           RETRY: { target: 'restoring', actions: 'interactiveAuthentication' },
         },

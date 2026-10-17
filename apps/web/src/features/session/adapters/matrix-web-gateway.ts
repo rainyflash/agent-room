@@ -254,6 +254,7 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#cryptoLease?.release();
     this.#cryptoLease = null;
     this.#secretStorageKeys.clear();
+    this.#deviceSigning.reset();
     this.#onClientChange(null);
 
     const capturedTokenResult = this.#consumeLoginToken();
@@ -462,6 +463,7 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#cryptoLease?.release();
     this.#cryptoLease = null;
     this.#secretStorageKeys.clear();
+    this.#deviceSigning.reset();
     this.#onClientChange(null);
   }
 
@@ -877,6 +879,9 @@ class BrowserMatrixConnection implements MatrixConnection {
   async waitUntilPrepared(): Promise<Result<void, SessionFailure>> {
     const persistenceFailure = this.#persistenceFailure();
     if (persistenceFailure !== null) return err(persistenceFailure);
+    if (this.#stopEncryption.signal.aborted) {
+      return err(failure('matrix', 'matrix.initial_sync_failed', !this.#online(), true));
+    }
     const current = this.#client.getSyncState();
     if (current === this.#syncState.Prepared || current === this.#syncState.Syncing) {
       this.#ensureEncryptionIdentity();
@@ -890,8 +895,17 @@ class BrowserMatrixConnection implements MatrixConnection {
         }
         settled = true;
         window.clearTimeout(timeout);
+        this.#stopEncryption.signal.removeEventListener('abort', onAbort);
         this.#client.removeListener(this.#syncEvent, onSync);
         resolve(result);
+      };
+      const onAbort = (): void => {
+        finish(
+          err(
+            this.#persistenceFailure() ??
+              failure('matrix', 'matrix.initial_sync_failed', !this.#online(), true),
+          ),
+        );
       };
       const onSync = (state: SyncState): void => {
         if (state === this.#syncState.Prepared || state === this.#syncState.Syncing) {
@@ -909,6 +923,7 @@ class BrowserMatrixConnection implements MatrixConnection {
       const timeout = window.setTimeout(() => {
         finish(err(failure('matrix', 'matrix.initial_sync_timeout', !this.#online(), true)));
       }, this.#syncTimeoutMs);
+      this.#stopEncryption.signal.addEventListener('abort', onAbort, { once: true });
       this.#client.on(this.#syncEvent, onSync);
       if (!this.#started) {
         this.#started = true;

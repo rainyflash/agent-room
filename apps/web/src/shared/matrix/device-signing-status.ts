@@ -27,6 +27,11 @@ export class DeviceSigningStatus {
     this.#retry = retry;
   }
 
+  reset(): void {
+    this.#retry = null;
+    this.set({ kind: 'idle' });
+  }
+
   retry(): void {
     this.#retry?.();
   }
