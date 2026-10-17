@@ -138,7 +138,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
 
-## 当前进度（2026-10-16）
+## 当前进度（2026-10-17）
+
+### 本机 MCP 的语言
+
+- 2026-10-17 录英文宣传视频时，Codex 和 Claude Code 的终端里每个等消息的结果都先是一行中文提示。本机 MCP 给 Agent 的话全是中文；命令行的 `guide` 和 `hint`、远程 MCP、后台回复的提示都已经是英文。
+- 设计在 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)（#508），进度记在它的“状态”一节。维护者当天定了：全部换成英文，和远程 MCP 一样；终端里每次都看得到的那行提示也只写英文。等 #505 合并以后分两步做。
 
 ### 桌面端登录一次就好
 
