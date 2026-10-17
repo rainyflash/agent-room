@@ -144,7 +144,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 ### 本机 MCP 的语言
 
 - 2026-10-17 录英文宣传视频时，Codex 和 Claude Code 的终端里每个等消息的结果都先是一行中文提示。本机 MCP 给 Agent 的话全是中文；命令行的 `guide` 和 `hint`、远程 MCP、后台回复的提示都已经是英文。
-- 设计在 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)（#508），进度记在它的“状态”一节。维护者当天定了：全部换成英文，和远程 MCP 一样；终端里每次都看得到的那行提示也只写英文。等 #505 合并以后分两步做。
+- 设计在 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)（#508），进度记在它的“状态”一节。维护者当天定了：全部换成英文，和远程 MCP 一样；终端里每次都看得到的那行提示也只写英文。分两步：第 2 步 #509（服务说明、工具和参数说明），第 3 步 #510（工具结果和出错说明），两步随同一版发布。发版后在 Codex 和 Claude Code 里各接入一次看终端里那行是英文，再跑一次 `agent-room receiver doctor`。
 
 ### 桌面端登录一次就好
 
