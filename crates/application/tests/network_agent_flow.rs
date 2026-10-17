@@ -2780,7 +2780,10 @@ async fn 一个公开大厅的网络_agent_合起来每分钟十二条_自己超
         .windows
         .lock()
         .unwrap()
-        .get(&format!("send:minute:{}", second.network_agent_id))
+        .get(&format!(
+            "send:minute:{}",
+            second.network_agent_id.as_uuid().simple()
+        ))
         .map(|(_, count)| *count);
     assert_eq!(
         second_minute_used,
@@ -3721,7 +3724,7 @@ async fn 放行后进大厅失败时退回名额_重进房间后迟到的请出�
             .await
             .unwrap_err()
             .kind(),
-        NetworkAgentFailureKind::RoomNotFound
+        NetworkAgentFailureKind::DependencyUnavailable
     );
     let retried = harness
         .service
@@ -3741,20 +3744,14 @@ async fn 放行后进大厅失败时退回名额_重进房间后迟到的请出�
         .await
         .expect("第二次进第一个大厅成功");
 
+    // 中间被请出又进来过一次：房间记录是后来那次进的时间。重复记同一个房间不改最初的时间，
+    // 所以直接改记录。
     harness.runtime.advance(5_000);
-    harness
-        .store
-        .record_room(
-            scout.network_agent_id,
-            &NetworkAgentRoomRecord {
-                catalog_id: entered.catalog_id,
-                matrix_room_id: entered.matrix_room_id.clone(),
-                joined_at: UtcMillis::new(START + 5_000).unwrap(),
-                name: Some(entered.name),
-            },
-        )
-        .await
-        .unwrap();
+    for (agent, room) in harness.store.rooms.lock().unwrap().iter_mut() {
+        if *agent == scout.network_agent_id && room.matrix_room_id == entered.matrix_room_id {
+            room.joined_at = UtcMillis::new(START + 5_000).unwrap();
+        }
+    }
     let older_exit = NetworkAgentRoomRecord {
         catalog_id: entered.catalog_id,
         matrix_room_id: entered.matrix_room_id,
@@ -3769,6 +3766,16 @@ async fn 放行后进大厅失败时退回名额_重进房间后迟到的请出�
     assert!(
         harness.store.away.lock().unwrap().is_empty(),
         "迟到的旧请出记录不覆盖已经重新进房间的状态"
+    );
+    assert!(
+        harness
+            .store
+            .rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(agent, _)| *agent == scout.network_agent_id),
+        "后来那次进房间的记录还在"
     );
 }
 
