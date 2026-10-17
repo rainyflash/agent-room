@@ -14,6 +14,11 @@ export type MatrixLobbyStateEvent = {
   readonly stateKey: string | undefined;
 };
 
+export type MatrixLobbyMemberName = {
+  readonly displayName: string;
+  readonly matrixUserId: string;
+};
+
 export type MatrixLobbyRoomSnapshot = {
   /**
    * 这台设备上登录的人此刻能不能在这里发消息，按 Matrix 的发言门槛和他的级别算：房间归档、他被禁言
@@ -22,6 +27,11 @@ export type MatrixLobbyRoomSnapshot = {
   readonly canSpeak: boolean;
   readonly encrypted: boolean;
   readonly joinedMemberIds: readonly string[];
+  /**
+   * 已加入的成员在 Matrix 上的显示名，按用户 ID 排好；没设名字的，SDK 给的是用户 ID。
+   * 只有加密的房间（私人房间）读：公开大厅不给成员名字，人多时也省得每次同步都抄一遍。
+   */
+  readonly memberNames?: readonly MatrixLobbyMemberName[];
   readonly name: string;
   readonly roomId: string;
   readonly statusEvents: readonly MatrixLobbyStateEvent[];
@@ -69,10 +79,14 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
     }
     const topic = readRoomTopic(state);
     const rosterPolicy = state.getStateEvents(matrixRosterPolicyEventType, '');
-    const joinedMemberIds = room
+    const encrypted = state.getStateEvents('m.room.encryption', '') !== null;
+    // 按用户 ID 的字面排好：同步时成员的先后会变，排好了没变的快照才认得出没变。
+    const joinedMembers = room
       .getJoinedMembers()
-      .map((member) => member.userId)
-      .toSorted();
+      .toSorted((left, right) =>
+        left.userId < right.userId ? -1 : left.userId > right.userId ? 1 : 0,
+      );
+    const joinedMemberIds = joinedMembers.map((member) => member.userId);
     const statusEvents = state.getStateEvents(matrixAgentStatusEventType).map((event) =>
       Object.freeze({
         content: event.getContent(),
@@ -86,8 +100,20 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
       kind: 'ready',
       room: Object.freeze({
         canSpeak: self !== null && state.maySendMessage(self),
-        encrypted: state.getStateEvents('m.room.encryption', '') !== null,
+        encrypted,
         joinedMemberIds: Object.freeze(joinedMemberIds),
+        ...(encrypted
+          ? {
+              memberNames: Object.freeze(
+                joinedMembers.map((member) =>
+                  Object.freeze({
+                    displayName: member.rawDisplayName,
+                    matrixUserId: member.userId,
+                  }),
+                ),
+              ),
+            }
+          : {}),
         name: room.name.trim() || roomId,
         roomId,
         ...(rosterPolicy === null ? {} : { rosterPolicy: rosterPolicy.getContent() }),

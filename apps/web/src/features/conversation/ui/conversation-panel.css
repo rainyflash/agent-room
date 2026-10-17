@@ -446,6 +446,7 @@
   margin-bottom: 5px;
   color: var(--ar-accent);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .conversation-panel__latest {
   position: absolute;

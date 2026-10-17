@@ -141,12 +141,15 @@ export function ConversationComposer({
               type="button"
               key={id}
               disabled={!canEdit}
-              aria-label={t('conversation.removeMention', { name: names.get(id) ?? id })}
+              title={id}
+              aria-label={t('conversation.removeMention', {
+                name: names.get(id) ?? t('conversation.unknownMention'),
+              })}
               onClick={() => {
                 composer.removeMention(id);
               }}
             >
-              @{names.get(id) ?? id}
+              @{names.get(id) ?? t('conversation.unknownMention')}
               <X aria-hidden="true" />
             </button>
           ))}

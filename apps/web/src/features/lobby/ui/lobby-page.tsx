@@ -595,6 +595,7 @@ function ReadyLobby({
               active={publicConversationVisible}
               focusedConversationMessageId={focusedConversationMessageId}
               participants={room.agents}
+              {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
               catalogId={catalogId}
               onSelectedMessageChange={onSelectedMessageChange}
               roomId={room.roomId}

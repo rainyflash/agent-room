@@ -10,15 +10,21 @@ import { presenceEvidence } from '../domain/agent-attendance';
 import { agentRosterPolicySchema } from '../domain/agent-roster-policy';
 import { z } from 'zod';
 
-import type { MatrixLobbyRoomSnapshot, MatrixLobbySource } from './matrix-lobby-source';
+import type {
+  MatrixLobbyMemberName,
+  MatrixLobbyRoomSnapshot,
+  MatrixLobbySource,
+} from './matrix-lobby-source';
 import {
   lobbyAgentStatuses,
   type LobbyAgent,
   type LobbyAgentStatus,
   type LobbyGateway,
+  type LobbyMemberName,
   type LobbyReadResult,
   type LobbyRoom,
 } from '@/features/lobby/domain/lobby';
+import { shownMemberName } from '@/features/lobby/domain/member-names';
 import { err, ok } from '@/shared/result';
 
 const uuidV7Schema = z
@@ -238,11 +244,26 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
     canSpeak: room.canSpeak,
     encrypted: room.encrypted,
     joinedMemberIds: Object.freeze([...room.joinedMemberIds]),
+    ...(room.memberNames === undefined
+      ? {}
+      : { memberNames: projectMemberNames(room.memberNames) }),
     name: room.name,
     observedAtUnixMs,
     roomId: room.roomId,
     ...(room.topic === undefined ? {} : { topic: room.topic }),
   });
+}
+
+/** 只留认得出名字的成员。 */
+function projectMemberNames(members: readonly MatrixLobbyMemberName[]): readonly LobbyMemberName[] {
+  return Object.freeze(
+    members.flatMap((member) => {
+      const displayName = shownMemberName(member.matrixUserId, member.displayName);
+      return displayName === null
+        ? []
+        : [Object.freeze({ displayName, matrixUserId: member.matrixUserId })];
+    }),
+  );
 }
 
 function aggregateAgent(

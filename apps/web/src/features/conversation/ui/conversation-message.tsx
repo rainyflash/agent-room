@@ -114,9 +114,10 @@ export function ConversationMessage({
                 {message.preview?.mentionsEveryone === true ? (
                   <span>{t('conversation.everyoneChip')}</span>
                 ) : null}
+                {/* 认不出名字时不写整串 Matrix ID（它自己就带 @），写“某位成员”，ID 留在提示里。 */}
                 {chat?.mentions.map((id) => (
                   <span key={id} title={id}>
-                    @{names.get(id) ?? id}
+                    @{names.get(id) ?? t('conversation.unknownMention')}
                   </span>
                 ))}
               </div>
