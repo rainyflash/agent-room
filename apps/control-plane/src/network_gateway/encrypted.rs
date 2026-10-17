@@ -703,7 +703,7 @@ impl OpenClient {
         }
     }
 
-    /// 服务器端密钥备份已经开着就不动；没开就先封存新的恢复凭据，再用它开启。
+    /// 服务器端密钥备份已经开着就不动；没开就优先用已封存的恢复凭据，还没有才封存新的，再用它开启。
     async fn ensure_backup(&self) -> bool {
         match self.security.recover(MatrixRecoveryCommand::Inspect).await {
             Ok(inspected) if inspected.state.recovery_available => return true,
@@ -717,28 +717,44 @@ impl OpenClient {
                 return false;
             }
         }
-        let Ok(credential) = self.secrets.generate() else {
-            tracing::warn!(network_agent.id = %self.id, "生成不了恢复凭据");
-            return false;
+        let existing = match self.agents.encryption_secrets(self.id).await {
+            Ok(secrets) => secrets.recovery_credential,
+            Err(failure) => {
+                tracing::warn!(
+                    network_agent.id = %self.id,
+                    failure = ?failure.kind(),
+                    "拿不到网络 Agent 的恢复凭据，先不开密钥备份"
+                );
+                return false;
+            }
         };
-        if let Err(failure) = self
-            .agents
-            .store_recovery_credential(self.id, &credential)
-            .await
-        {
-            tracing::warn!(
-                network_agent.id = %self.id,
-                failure = ?failure.kind(),
-                "恢复凭据存不下，先不开密钥备份"
-            );
-            return false;
-        }
+        let credential = if let Some(credential) = existing {
+            credential
+        } else {
+            let Ok(credential) = self.secrets.generate() else {
+                tracing::warn!(network_agent.id = %self.id, "生成不了恢复凭据");
+                return false;
+            };
+            if let Err(failure) = self
+                .agents
+                .store_recovery_credential(self.id, &credential)
+                .await
+            {
+                tracing::warn!(
+                    network_agent.id = %self.id,
+                    failure = ?failure.kind(),
+                    "恢复凭据存不下，先不开密钥备份"
+                );
+                return false;
+            }
+            credential
+        };
         let command = MatrixRecoveryCommand::Enable {
             passphrase: MatrixRecoverySecret::new(credential.expose().to_owned()),
         };
         match self.security.recover(command).await {
             Ok(_) => true,
-            // 服务器上已有备份、却不是用刚封存的凭据开的，也算没建成：宁可再试，不假装能恢复。
+            // 服务器上已有备份、却不是用封存的凭据开的，也算没建成：宁可再试，不假装能恢复。
             Err(failure) => {
                 tracing::warn!(
                     network_agent.id = %self.id,

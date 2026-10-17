@@ -448,7 +448,9 @@ impl NetworkAgentStore for MemoryStore {
         let mut rooms = self.rooms.lock().unwrap();
         let before = rooms.len();
         rooms.retain(|(agent, known)| {
-            !(*agent == id && known.matrix_room_id == room.matrix_room_id)
+            !(*agent == id
+                && known.matrix_room_id == room.matrix_room_id
+                && known.joined_at <= room.joined_at)
         });
         if rooms.len() < before {
             let mut away = self.away.lock().unwrap();
@@ -2773,6 +2775,21 @@ async fn 一个公开大厅的网络_agent_合起来每分钟十二条_自己超
         busy.retry_at(),
         Some(UtcMillis::new(START + 60_000).unwrap())
     );
+    let second_minute_used = harness
+        .store
+        .windows
+        .lock()
+        .unwrap()
+        .get(&format!(
+            "send:minute:{}",
+            second.network_agent_id.as_uuid().simple()
+        ))
+        .map(|(_, count)| *count);
+    assert_eq!(
+        second_minute_used,
+        Some(2),
+        "大厅总额度不够时，不白扣它自己的发言额度"
+    );
 
     // 下一分钟：先查它自己的，第一个说满二十条以后再说就被它自己的限额挡下，不再占大厅的。
     harness.runtime.advance(60_000);
@@ -3668,6 +3685,140 @@ async fn 放行后按_agent_取会话替它进房间_不记活动_停用的不�
             .unwrap_err()
             .kind(),
         NetworkAgentFailureKind::Unauthorized
+    );
+}
+
+#[tokio::test]
+async fn 放行后进大厅失败时退回名额_重进房间后迟到的请出不误删新记录() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        lobby_entries_per_source_per_hour: 1,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let scout = harness
+        .create("Scout", Some(&private_catalog().to_string()))
+        .await
+        .unwrap();
+
+    let admitted = harness
+        .service
+        .admit(
+            scout.token.expose(),
+            NetworkAgentRoomRequest::Lobby(None),
+            [5; 32],
+        )
+        .await
+        .expect("第一次放行进大厅");
+    let NetworkAgentAdmission::Admitted(target) = admitted else {
+        panic!("公开大厅应当直接放行：{admitted:?}");
+    };
+    harness
+        .lobbies
+        .script
+        .lock()
+        .unwrap()
+        .push_back(Err(AgentLobbyEntryFailure::NotFound));
+    assert_eq!(
+        harness
+            .service
+            .enter(scout.token.expose(), target)
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::DependencyUnavailable
+    );
+    let retried = harness
+        .service
+        .admit(
+            scout.token.expose(),
+            NetworkAgentRoomRequest::Lobby(None),
+            [5; 32],
+        )
+        .await
+        .expect("进房失败退回名额后可再次放行");
+    let NetworkAgentAdmission::Admitted(target) = retried else {
+        panic!("公开大厅应当直接放行：{retried:?}");
+    };
+    let entered = harness
+        .service
+        .enter(scout.token.expose(), target)
+        .await
+        .expect("第二次进第一个大厅成功");
+
+    // 中间被请出又进来过一次：房间记录是后来那次进的时间。重复记同一个房间不改最初的时间，
+    // 所以直接改记录。
+    harness.runtime.advance(5_000);
+    for (agent, room) in harness.store.rooms.lock().unwrap().iter_mut() {
+        if *agent == scout.network_agent_id && room.matrix_room_id == entered.matrix_room_id {
+            room.joined_at = UtcMillis::new(START + 5_000).unwrap();
+        }
+    }
+    let older_exit = NetworkAgentRoomRecord {
+        catalog_id: entered.catalog_id,
+        matrix_room_id: entered.matrix_room_id,
+        joined_at: UtcMillis::new(START).unwrap(),
+        name: None,
+    };
+    harness
+        .service
+        .mark_lobby_away(scout.network_agent_id, &older_exit)
+        .await
+        .unwrap();
+    assert!(
+        harness.store.away.lock().unwrap().is_empty(),
+        "迟到的旧请出记录不覆盖已经重新进房间的状态"
+    );
+    assert!(
+        harness
+            .store
+            .rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(agent, _)| *agent == scout.network_agent_id),
+        "后来那次进房间的记录还在"
+    );
+}
+
+#[tokio::test]
+async fn 已在别的大厅时即使在场人数已满也能回到暂离的其余大厅() {
+    let harness = Harness::new(NetworkAgentPolicy {
+        max_lobby_agents: 1,
+        ..NetworkAgentPolicy::default_limits(true)
+    });
+    let scout = harness.create("Scout", None).await.unwrap();
+    let second_admitted = harness
+        .service
+        .admit(
+            scout.token.expose(),
+            NetworkAgentRoomRequest::Lobby(Some("rust-night".to_owned())),
+            [6; 32],
+        )
+        .await
+        .expect("放行进第二个大厅");
+    let NetworkAgentAdmission::Admitted(second_target) = second_admitted else {
+        panic!("第二个大厅应当直接放行：{second_admitted:?}");
+    };
+    let second_entered = harness
+        .service
+        .enter(scout.token.expose(), second_target)
+        .await
+        .expect("进第二个大厅成功");
+    let away_record = NetworkAgentRoomRecord {
+        catalog_id: second_entered.catalog_id,
+        matrix_room_id: second_entered.matrix_room_id,
+        joined_at: UtcMillis::new(START).unwrap(),
+        name: Some(second_entered.name),
+    };
+    harness
+        .service
+        .mark_lobby_away(scout.network_agent_id, &away_record)
+        .await
+        .unwrap();
+    let returned = harness.service.session(scout.token.expose()).await.unwrap();
+    assert_eq!(
+        returned.rooms.len(),
+        2,
+        "它自己已经在一个大厅里时，能回到暂离的另一个大厅"
     );
 }
 

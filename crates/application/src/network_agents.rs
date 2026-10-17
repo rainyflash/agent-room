@@ -12,7 +12,10 @@
 
 mod rooms;
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 use agent_room_domain::{
     agents::AgentInstancePublicSigningKey,
@@ -581,6 +584,7 @@ pub struct NetworkAgentService {
     policy: NetworkAgentPolicy,
     source_weights: Arc<dyn NetworkSourceWeights>,
     matrix_server_name: String,
+    pending_naming: Mutex<HashMap<NetworkAgentId, NamingTicket>>,
 }
 
 /// 创建时要进的房间，建人物之前就核对好：口令不对、房间号不对时什么都不建。
@@ -618,6 +622,7 @@ impl NetworkAgentService {
             policy: dependencies.policy,
             source_weights: dependencies.source_weights,
             matrix_server_name: dependencies.matrix_server_name,
+            pending_naming: Mutex::new(HashMap::new()),
         }
     }
 
@@ -913,7 +918,8 @@ impl NetworkAgentService {
                         // 闲置时请出、这次大厅满了没回去的，只看大厅满没满，不占名额。
                         if !self.in_public_lobby(&rooms).await? {
                             if away.is_empty() {
-                                self.admit_to_lobbies(&source_digest).await?;
+                                let naming = self.admit_to_lobbies(&source_digest).await?;
+                                self.remember_naming(record.id, naming).await;
                             } else if self.lobbies_full(&self.public_lobby_ids().await?).await? {
                                 return Err(NetworkAgentFailure::new(
                                     NetworkAgentFailureKind::CapacityReached,
@@ -970,33 +976,50 @@ impl NetworkAgentService {
         record: &NetworkAgentRecord,
         target: NetworkAgentTarget,
     ) -> NetworkAgentResult<NetworkAgentRoom> {
+        let naming = if matches!(target, NetworkAgentTarget::Lobby(_)) {
+            self.take_pending_naming(record.id)
+        } else {
+            None
+        };
         let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
         else {
+            self.give_back(naming).await;
             return Err(internal());
         };
-        let actor = self.actor_of(record, self.clock.now())?;
-        let room = match target {
-            NetworkAgentTarget::Lobby(catalog) => {
-                self.enter_room(&actor, agent_id, agent_instance_id, catalog, None)
-                    .await?
-            }
-            NetworkAgentTarget::Private(room) => {
-                let entered = self
-                    .enter_room(
-                        &actor,
-                        agent_id,
-                        agent_instance_id,
-                        room.catalog_id,
-                        Some(room.matrix_room_id.clone()),
-                    )
-                    .await?;
-                NetworkAgentRoom {
-                    name: room.name,
-                    ..entered
-                }
+        let actor = match self.actor_of(record, self.clock.now()) {
+            Ok(actor) => actor,
+            Err(failure) => {
+                self.give_back(naming).await;
+                return Err(failure);
             }
         };
-        self.record_room(record.id, &room).await?;
+        let entered = match target {
+            NetworkAgentTarget::Lobby(catalog) => {
+                self.enter_room(&actor, agent_id, agent_instance_id, catalog, None)
+                    .await
+            }
+            NetworkAgentTarget::Private(room) => self
+                .enter_room(
+                    &actor,
+                    agent_id,
+                    agent_instance_id,
+                    room.catalog_id,
+                    Some(room.matrix_room_id.clone()),
+                )
+                .await
+                .map(|entered| NetworkAgentRoom {
+                    name: room.name,
+                    ..entered
+                }),
+        };
+        let Ok(room) = entered else {
+            self.give_back(naming).await;
+            return entered;
+        };
+        if let Err(failure) = self.record_room(record.id, &room).await {
+            self.give_back(naming).await;
+            return Err(failure);
+        }
         Ok(room)
     }
 
@@ -1197,9 +1220,11 @@ impl NetworkAgentService {
         };
         let actor = self.actor_of(record, self.clock.now())?;
         let lobbies = self.public_lobby_ids().await?;
+        let rooms = self.store.rooms(record.id).await.map_err(repository)?;
+        let mut in_lobby = self.in_public_lobby(&rooms).await?;
         let mut remaining = Vec::new();
         for lobby in away {
-            if self.lobbies_full(&lobbies).await? {
+            if !in_lobby && self.lobbies_full(&lobbies).await? {
                 remaining.push(lobby);
                 continue;
             }
@@ -1221,7 +1246,10 @@ impl NetworkAgentService {
                 }
             };
             match entered {
-                Ok(room) => self.record_room(record.id, &room).await?,
+                Ok(room) => {
+                    self.record_room(record.id, &room).await?;
+                    in_lobby = true;
+                }
                 Err(_) => remaining.push(lobby),
             }
         }
@@ -1541,20 +1569,37 @@ impl NetworkAgentService {
             return Ok(());
         }
         let agent = id.as_uuid().simple().to_string();
+        let mut buckets = Vec::with_capacity(3);
         for (window, limit, label) in [
             (60_000_u64, self.policy.lobby_messages_per_minute, "minute"),
             (86_400_000_u64, self.policy.lobby_messages_per_day, "day"),
         ] {
-            self.take(&format!("send:{label}:{agent}"), window, limit)
-                .await?;
+            buckets.push(RateWindowBucket {
+                bucket: format!("send:{label}:{agent}"),
+                policy: RateWindowPolicy {
+                    window: DurationMillis::new(window).map_err(|_| internal())?,
+                    limit,
+                },
+            });
         }
-        // 整个大厅合起来的放在最后：自己已经超了的，别再去占大厅的份额。
-        self.take(
-            &format!("lobby-send:minute:{}", catalog_id.as_uuid().simple()),
-            60_000,
-            self.policy.lobby_total_messages_per_minute,
-        )
-        .await
+        buckets.push(RateWindowBucket {
+            bucket: format!("lobby-send:minute:{}", catalog_id.as_uuid().simple()),
+            policy: RateWindowPolicy {
+                window: DurationMillis::new(60_000).map_err(|_| internal())?,
+                limit: self.policy.lobby_total_messages_per_minute,
+            },
+        });
+        match self
+            .store
+            .take_all(&buckets, self.clock.now())
+            .await
+            .map_err(repository)?
+        {
+            RateWindowDecision::Allowed => Ok(()),
+            RateWindowDecision::Limited { retry_at } => {
+                Err(NetworkAgentFailure::rate_limited(retry_at))
+            }
+        }
     }
 
     /// 在一个固定窗口里记一次；到上限时告诉调用方窗口什么时候结束。
@@ -1767,6 +1812,22 @@ impl NetworkAgentService {
         if let Some(naming) = naming {
             let _ignored = self.store.give_back(&naming.buckets, naming.taken_at).await;
         }
+    }
+
+    async fn remember_naming(&self, id: NetworkAgentId, naming: NamingTicket) {
+        let previous = self
+            .pending_naming
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id, naming);
+        self.give_back(previous).await;
+    }
+
+    fn take_pending_naming(&self, id: NetworkAgentId) -> Option<NamingTicket> {
+        self.pending_naming
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&id)
     }
 
     async fn public_lobby_ids(&self) -> NetworkAgentResult<Vec<RoomCatalogId>> {

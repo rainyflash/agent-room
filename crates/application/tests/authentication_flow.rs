@@ -988,12 +988,57 @@ async fn 用网页登录换来的桌面登录继承认证时间_最晚那天不�
         authenticate(&harness, &exchanged.session_secret)
             .await
             .expect("桌面登录一直在用");
+        authenticate(&harness, &web.session_secret)
+            .await
+            .expect("网页登录也一直在用");
     }
+    harness.clock.set(NOW + 365 * DAY - 1_000);
+    let late_verifier = "c".repeat(43);
+    let late_challenge =
+        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(late_verifier.as_bytes())))
+            .expect("PKCE challenge 有效");
+    let late_desktop = harness
+        .service
+        .authorize_desktop_session(AuthorizeDesktopSession {
+            session_secret: &web.session_secret,
+            client_state: DesktopClientState::new("d".repeat(43)).expect("桌面 state 有效"),
+            code_challenge: late_challenge.clone(),
+            return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+        })
+        .await
+        .expect("满一年前一秒还能签出授权码");
+
     harness.clock.set(NOW + 365 * DAY);
     let failure = authenticate(&harness, &exchanged.session_secret)
         .await
         .expect_err("到了网页那次输密码满一年，桌面登录也要重新登录");
     assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
+    let authorize_failure = harness
+        .service
+        .authorize_desktop_session(AuthorizeDesktopSession {
+            session_secret: &web.session_secret,
+            client_state: DesktopClientState::new("e".repeat(43)).expect("桌面 state 有效"),
+            code_challenge: late_challenge,
+            return_path: SafeReturnPath::new("/workspace").expect("返回路径有效"),
+        })
+        .await
+        .expect_err("满一年后不能再用滑动续期过的网页会话签发桌面授权码");
+    assert_eq!(
+        authorize_failure.kind(),
+        AuthenticationFailureKind::InvalidSession
+    );
+    let exchange_failure = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: late_desktop.authorization_code.expose(),
+            pkce_verifier: &late_verifier,
+        })
+        .await
+        .expect_err("满一年后也不能拿之前签出的授权码换出新的桌面会话");
+    assert_eq!(
+        exchange_failure.kind(),
+        AuthenticationFailureKind::InvalidLoginState
+    );
 }
 
 async fn authenticate(
