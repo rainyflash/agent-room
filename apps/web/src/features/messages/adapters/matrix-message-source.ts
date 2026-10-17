@@ -7,7 +7,11 @@ import type {
   RoomState,
 } from 'matrix-js-sdk';
 import { matrixAgentStatusEventType } from '@/features/lobby/adapters/matrix-lobby-source';
-import { DIRECTION_BACKWARD, DIRECTION_FORWARD } from '@/shared/matrix/matrix-sdk-enums';
+import {
+  DIRECTION_BACKWARD,
+  DIRECTION_FORWARD,
+  MATRIX_EVENT_DECRYPTED,
+} from '@/shared/matrix/matrix-sdk-enums';
 import { err, ok, type Result } from '@/shared/result';
 
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
@@ -39,6 +43,11 @@ const historyLimit = 5000;
 export const matrixMessageHistoryFilterId = 'agent-room.message-history.v1';
 /** 同步断档后 SDK 另起时间线，往回翻页接上旧的以后二者互为邻居；这里只防御成环。 */
 const maxNeighbouringTimelines = 1_000;
+/**
+ * 解密完攒一会儿再通知：打开房间、往回翻页时一批事件接连解密完，每个都通知的话，
+ * 每次都要重建整段快照、重新投影一遍。
+ */
+const decryptedNotifyDelayMs = 50;
 
 export type MatrixMessageTimelineEvent = {
   readonly content: unknown;
@@ -100,6 +109,10 @@ type CachedRoomSnapshot = {
  *
  * 聊天记录从一组带过滤器的时间线里读、也从那里往回翻页：Agent 的在线状态是频繁改写的状态事件，
  * 每次改写也会进时间线，不过滤的话一页 200 个事件里可能只有几条消息。
+ *
+ * 加密消息要等解密完才看得出是什么。SDK 处理一次同步时会把新的加密事件拿去解，但不等解完就发出同步事件：
+ * 只靠同步事件通知的话，这时还没解开的消息要等下一次同步（没有新事件时长轮询要等 30 秒）才显示。
+ * 所以订阅期间也听解密结果，解开（或确定解不开）就通知这个房间。
  */
 export class MatrixSdkMessageSource implements MatrixMessageSource {
   readonly #clients: MatrixClientSource;
@@ -107,11 +120,13 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
   #client: MatrixClient | null = null;
   #filter: Filter | null = null;
   #filterLoading: Promise<Filter> | null = null;
+  #watched: { readonly client: MatrixClient; readonly stop: () => void } | null = null;
   readonly #fallbackRooms = new Set<string>();
   readonly #windows = new Map<string, number>();
   readonly #loading = new Map<string, Promise<HistoryResult>>();
   readonly #listeners = new Map<string, Set<() => void>>();
   readonly #snapshots = new Map<string, CachedRoomSnapshot>();
+  readonly #decryptedNotices = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     clients: MatrixClientSource,
@@ -142,10 +157,13 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
     listeners.add(listener);
     this.#listeners.set(roomId, listeners);
     const detach = this.#clients.subscribe(listener);
+    this.#current();
+    this.#watch();
     return () => {
       detach();
       listeners.delete(listener);
       if (listeners.size === 0) this.#listeners.delete(roomId);
+      this.#watch();
     };
   }
 
@@ -184,7 +202,7 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
           backwards: true,
           limit: historyPageSize,
         });
-        // 翻页拿到的加密事件要解密完才看得出是不是消息；先通知的话，这批消息要等下一次同步才显示。
+        // 翻页拿到的加密事件要解密完才看得出是不是消息，下面按消息条数扩大窗口，所以等这一页解密完。
         await settleDecryption(client, history.getLiveTimeline());
       }
       if (this.#current() !== client || room.getMyMembership() !== 'join')
@@ -255,6 +273,37 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
     for (const listener of this.#listeners.get(roomId) ?? []) listener();
   }
 
+  /** 有人订阅时听当前客户端的解密结果；没人订阅、换了客户端或退出登录就不听了。 */
+  #watch(): void {
+    const client = this.#listeners.size > 0 ? this.#client : null;
+    if (this.#watched?.client === client) return;
+    this.#watched?.stop();
+    this.#watched = null;
+    for (const timer of this.#decryptedNotices.values()) clearTimeout(timer);
+    this.#decryptedNotices.clear();
+    if (client === null) return;
+    const onDecrypted = (event: MatrixEvent): void => {
+      const roomId = event.getRoomId();
+      if (roomId !== undefined && this.#listeners.has(roomId)) this.#noticeDecrypted(roomId);
+    };
+    client.on(MATRIX_EVENT_DECRYPTED, onDecrypted);
+    this.#watched = {
+      client,
+      stop: () => {
+        client.off(MATRIX_EVENT_DECRYPTED, onDecrypted);
+      },
+    };
+  }
+
+  #noticeDecrypted(roomId: string): void {
+    if (this.#decryptedNotices.has(roomId)) return;
+    const timer = setTimeout(() => {
+      this.#decryptedNotices.delete(roomId);
+      this.#notify(roomId);
+    }, decryptedNotifyDelayMs);
+    this.#decryptedNotices.set(roomId, timer);
+  }
+
   #current(): MatrixClient | null {
     const client = this.#clients.current();
     if (client !== this.#client) {
@@ -262,6 +311,7 @@ export class MatrixSdkMessageSource implements MatrixMessageSource {
       this.#windows.clear();
       this.#loading.clear();
       this.#snapshots.clear();
+      this.#watch();
     }
     return client;
   }
