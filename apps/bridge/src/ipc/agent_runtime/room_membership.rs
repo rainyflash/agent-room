@@ -103,6 +103,9 @@ impl AgentRuntimeIpcFacade {
                     false,
                 )
             })?;
+        if let Some(publication) = &runtime.publication {
+            publication.remember_room(room_id.clone(), catalog_id);
+        }
         // 服务器那边已经进去了；本机还没同步到时照样回答进去了，说话时再按“不在房间里”重试。
         if !entry.joined.wait_for(&room_id, LOCAL_JOIN_WAIT).await {
             tracing::debug!("进了房间，本机的 Matrix 客户端还没同步到");
@@ -135,6 +138,9 @@ impl AgentRuntimeIpcFacade {
             .leave(&runtime.identity, catalog_id)
             .await
             .map_err(map_lobby_failure)?;
+        if let Some(publication) = &runtime.publication {
+            publication.forget_room_catalog(catalog_id);
+        }
         Ok(IpcResponse::RoomLeft {
             catalog_id: catalog_id.to_string(),
             left,

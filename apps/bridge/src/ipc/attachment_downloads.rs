@@ -69,7 +69,7 @@ impl AttachmentDownloads {
         builder.prefix("agent-room-attachment-").suffix(suffix);
         let mut file = match self.directory.as_ref() {
             Some(directory) => {
-                std::fs::create_dir_all(directory)?;
+                agent_room_bridge_local_adapter::create_private_directories(directory)?;
                 builder.tempfile_in(directory)?
             }
             None => builder.tempfile()?,

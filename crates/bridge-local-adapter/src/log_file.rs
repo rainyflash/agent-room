@@ -76,11 +76,14 @@ impl State {
         let previous = previous_generation(&self.path);
         let _ = std::fs::remove_file(&previous);
         std::fs::rename(&self.path, &previous)?;
-        self.file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&self.path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        self.file = options.open(&self.path)?;
         self.written = 0;
         Ok(())
     }

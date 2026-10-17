@@ -365,8 +365,8 @@ async fn 默认跟它有关的才交_防抖后连同之前的一起给() {
 #[tokio::test(start_paused = true)]
 async fn 自己发的不叫醒也不交_等满时间空手返回() {
     let room = Room::new(vec![(1_000, mine("我先说", &[]))]);
-    let mut waiter = waiter(WaitRules::default());
-    let batch = waiter
+    let mut first_waiter = waiter(WaitRules::default());
+    let batch = first_waiter
         .next(&room, MessageWait::For(Duration::from_secs(5)))
         .await
         .unwrap();
@@ -377,6 +377,17 @@ async fn 自己发的不叫醒也不交_等满时间空手返回() {
         Some("$我先说:room.test"),
         "看过的只有自己发的，游标跟上"
     );
+
+    let mut many_own: Vec<_> = (0..160)
+        .map(|index| (0, mine(&format!("自言自语 {index}"), &[])))
+        .collect();
+    many_own.push((1_000, named("Scout 在吗")));
+    let room = Room::new(many_own);
+    let batch = waiter(WaitRules::default())
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["Scout 在吗"]);
 }
 
 #[tokio::test(start_paused = true)]

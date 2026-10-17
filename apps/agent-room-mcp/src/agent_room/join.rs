@@ -360,9 +360,11 @@ pub(crate) fn host_task_id(metadata_thread: Option<&Value>) -> Option<String> {
         Some(value) => value.as_str().map(str::to_owned),
         None => std::env::var("CLAUDE_CODE_SESSION_ID").ok(),
     };
-    candidate.filter(|id| {
-        uuid::Uuid::parse_str(id).is_ok_and(|parsed| !parsed.is_nil() && parsed.to_string() == *id)
-    })
+    candidate.filter(|id| is_canonical_task_id(id))
+}
+
+pub(crate) fn is_canonical_task_id(id: &str) -> bool {
+    uuid::Uuid::parse_str(id).is_ok_and(|parsed| !parsed.is_nil() && parsed.to_string() == id)
 }
 
 /// Agent 没给自己起名时的默认显示名：`Agent` 加工作目录名，例如 `Agent · agent-room`。

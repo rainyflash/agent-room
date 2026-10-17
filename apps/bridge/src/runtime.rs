@@ -2128,6 +2128,7 @@ async fn maintain_agent_session(
     };
     let mut backoff = ReconnectBackoff::new(runtime.reconnect_policy);
     let mut online = runtime.initial_session.take();
+    let mut card_retried = false;
     let mut retry_delay = online
         .is_none()
         .then(|| backoff.record_failure(retry_entropy()));
@@ -2140,17 +2141,16 @@ async fn maintain_agent_session(
                 return;
             };
             match sync {
-                Ok(()) => backoff.record_connected(),
-                Err(failure) if reconnect_after_sync_failure(failure) => {
+                Ok(()) => {
+                    backoff.record_connected();
+                    card_retried = false;
+                }
+                Err(failure) if reconnect_after_sync_failure(failure, &mut card_retried) => {
                     status.set_component_ready(BridgeRuntimeStatus::AGENT_COMPONENT, false);
                     runtime.state.clear();
                     let delay = retry_delay_for_agent_failure(failure, &mut backoff);
-                    tracing::warn!(
-                        failure_kind = ?failure.kind(),
-                        consecutive_failures = backoff.consecutive_failures(),
-                        retry_after_ms = delay.value(),
-                        "Agent Matrix 会话暂时不可用，已安排完整重连"
-                    );
+                    let failures = backoff.consecutive_failures();
+                    tracing::warn!(failure_kind = ?failure.kind(), consecutive_failures = failures, retry_after_ms = delay.value(), "Agent Matrix 会话暂时不可用，已安排完整重连");
                     active.stop_workers().await;
                     online = None;
                     retry_delay = Some(delay);
@@ -2158,10 +2158,7 @@ async fn maintain_agent_session(
                 Err(failure) => {
                     status.mark_agent_failure(failure);
                     runtime.state.clear();
-                    tracing::error!(
-                        failure_kind = ?failure.kind(),
-                        "Agent Matrix 会话进入离线态，禁止不安全重试"
-                    );
+                    tracing::error!(failure_kind = ?failure.kind(), "Agent Matrix 会话进入离线态，禁止不安全重试");
                     active.stop_workers().await;
                     drop(online.take());
                     wait_for_shutdown(&mut shutdown).await;
@@ -2328,8 +2325,15 @@ fn is_reconnectable_agent_runtime_failure(failure: AgentRuntimeSessionFailure) -
 
 /// 上线以后同步失败时要不要整个重连。名片晚一点才写（服务器开没开在线状态要探两次）时，
 /// 没有权限写也在这里：整个重连一次，重连会再经控制面进房间、补上发言级别。
-fn reconnect_after_sync_failure(failure: AgentOnlineFailure) -> bool {
-    is_reconnectable_agent_online_failure(failure) || session_card_forbidden(failure)
+fn reconnect_after_sync_failure(failure: AgentOnlineFailure, card_retried: &mut bool) -> bool {
+    if session_card_forbidden(failure) {
+        if *card_retried {
+            return false;
+        }
+        *card_retried = true;
+        return true;
+    }
+    is_reconnectable_agent_online_failure(failure)
 }
 
 fn is_reconnectable_agent_online_failure(failure: AgentOnlineFailure) -> bool {
@@ -3429,6 +3433,15 @@ mod tests {
             )))
         };
         assert!(session_card_forbidden(card(MatrixFailureKind::Forbidden)));
+        let mut retried = false;
+        assert!(super::reconnect_after_sync_failure(
+            card(MatrixFailureKind::Forbidden),
+            &mut retried
+        ));
+        assert!(!super::reconnect_after_sync_failure(
+            card(MatrixFailureKind::Forbidden),
+            &mut retried
+        ));
         assert!(!session_card_forbidden(card(
             MatrixFailureKind::InvalidResponse
         )));

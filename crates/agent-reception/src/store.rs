@@ -21,7 +21,7 @@ impl ReceiverStore {
     pub fn open(data_root: &Path, task_id: &str) -> Result<Self> {
         validate_task_id(task_id)?;
         let directory = data_root.join("receivers");
-        fs::create_dir_all(&directory)
+        crate::create_private_directories(&directory)
             .map_err(|_| Failure::local("receiver.storage_unavailable"))?;
         let lock = OpenOptions::new()
             .create(true)

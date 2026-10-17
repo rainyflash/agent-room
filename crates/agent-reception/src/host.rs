@@ -161,7 +161,7 @@ pub async fn verify_host_contract(
 ) -> CliResult<HostContractReport> {
     binding.validate()?;
     let directory = agent_room_bridge_ipc::attachment_directory(data_root);
-    std::fs::create_dir_all(&directory)
+    crate::create_private_directories(&directory)
         .map_err(|_| CliFailure::local("receiver.attachment_directory_failed"))?;
     let canary = format!("agent-room-contract-{}", uuid::Uuid::now_v7());
     let attachment = write_canary(&directory, &canary)?;

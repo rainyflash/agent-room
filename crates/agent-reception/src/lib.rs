@@ -31,6 +31,20 @@ async fn call(backend: &dyn BridgeToolClient, method: IpcMethod) -> ReceptionRes
     backend.invoke(method).await.map_err(Into::into)
 }
 
+pub(crate) fn create_private_directories(path: &std::path::Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
 /// An explicit host boundary keeps delivery and cursor decisions testable without a model.
 pub type HostFuture<'a> =
     std::pin::Pin<Box<dyn Future<Output = ReceptionResult<HostReply>> + Send + 'a>>;

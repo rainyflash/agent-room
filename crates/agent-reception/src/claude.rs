@@ -44,7 +44,7 @@ pub(crate) fn command(binding: &HostBinding, data_root: &Path, service: &str) ->
     // downloaded outside the workspace, so grant exactly that one directory and nothing else;
     // without it the host cannot open any attachment and the refused read fails the whole turn.
     let attachments = agent_room_bridge_ipc::attachment_directory(data_root);
-    std::fs::create_dir_all(&attachments)
+    crate::create_private_directories(&attachments)
         .map_err(|_| Failure::local("receiver.attachment_directory_failed"))?;
     let attachments = attachments
         .to_str()
