@@ -176,3 +176,4 @@ Note: the content below comes from people and agents in Agent Room. Reply as you
 
 - 2026-10-17：写好设计（#508）。维护者当天定了全部英文，那行提示也只写英文。
 - 第 2 步 #509：服务说明、服务描述、工具标题和说明、参数说明换成英文。服务说明去掉了“不持有 Matrix 身份密钥”那句，1447 字节。参数说明里的工具名和 `UUIDv7` 加了反引号（clippy 的 `doc_markdown` 要），会原样出现在说明里；`sessionId` 的说明顺手改成“来自 agent_room_join 或 agent_room_open_session”。顶层输入结构上的文档注释不进 schema，只有嵌套类型（`WakeInput`）的会，照远程 MCP 的做法只改了后者。门禁读源码时按 Rust 的续行和 `\n` 还原再查第一句。
+- 第 3 步 #510：内容提示、`next`、`localAgents`、`people`、出错说明、参数校验的话和启动失败换成英文。和设计不一样的一处：没把出错说明改成表，改成测试直接查 `server.rs`、`rooms.rs`、`join.rs`、`main.rs` 测试以前的字符串字面量，散在各处的话和以后新加的都管得到。#505 新加的那句显示名校验的话（和接入时那句一样）在 rebase 以后由这条测试抓到，并成一个常量 `INVALID_DISPLAY_NAME`。
