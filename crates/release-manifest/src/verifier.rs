@@ -33,6 +33,15 @@ pub fn validate_release_document(
     validate_artifacts(manifest)
 }
 
+/// 判断已记录的版本是否不高于当前已安装版本；无法解析为语义化版本时保守视为不高于。
+#[must_use]
+pub fn version_at_most(recorded_version: &str, installed_version: &str) -> bool {
+    let Ok(installed) = Version::parse(installed_version) else {
+        return true;
+    };
+    Version::parse(recorded_version).map_or(true, |recorded| recorded <= installed)
+}
+
 /// 检查已签名清单，并区分“已经是当前版本”和“需要更新”。
 ///
 /// # Errors

@@ -189,6 +189,7 @@ pub(crate) struct HumanSessionRuntime {
     vault: Arc<dyn HumanSessionVault>,
     operation_gate: Arc<Mutex<()>>,
     active: Arc<Mutex<Option<PersistedHumanSession>>>,
+    loopback_task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
 }
 
 impl HumanSessionRuntime {
@@ -206,6 +207,7 @@ impl HumanSessionRuntime {
             )),
             operation_gate: Arc::new(Mutex::new(())),
             active: Arc::new(Mutex::new(None)),
+            loopback_task: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -228,6 +230,7 @@ impl HumanSessionRuntime {
                 .operation_gate
                 .lock()
                 .map_err(|_| state_unavailable())?;
+            self.abort_loopback_task()?;
             let client_state = random_url_safe_value()?;
             let pkce_verifier = random_url_safe_value()?;
             let pending = PendingAuthentication {
@@ -267,11 +270,16 @@ impl HumanSessionRuntime {
         }
         let handle = app.clone();
         let sessions = self.clone();
-        tauri::async_runtime::spawn(async move {
+        let task = tauri::async_runtime::spawn(async move {
             sessions
-                .receive_loopback_callback(handle, callback_listener)
+                .receive_loopback_callback(handle, callback_listener, client_state)
                 .await;
         });
+        if let Ok(mut slot) = self.loopback_task.lock()
+            && let Some(previous) = slot.replace(task)
+        {
+            previous.abort();
+        }
         Ok(())
     }
 
@@ -306,6 +314,15 @@ impl HumanSessionRuntime {
                 .operation_gate
                 .lock()
                 .map_err(|_| state_unavailable())?;
+            let current_pending = self.vault.load_pending()?.ok_or_else(|| {
+                HumanSessionFailure::new("desktop.human_session.pending_missing", false)
+            })?;
+            if current_pending.client_state != pending.client_state {
+                return Err(HumanSessionFailure::new(
+                    "desktop.human_session.state_mismatch",
+                    false,
+                ));
+            }
             self.vault.write_session(&persisted)?;
             self.vault.delete_pending()?;
             self.set_active(Some(persisted))?;
@@ -341,6 +358,7 @@ impl HumanSessionRuntime {
             .operation_gate
             .lock()
             .map_err(|_| state_unavailable())?;
+        self.abort_loopback_task()?;
         self.set_active(None)?;
         self.vault.delete_session()?;
         self.vault.delete_pending()?;
@@ -431,6 +449,29 @@ impl HumanSessionRuntime {
         }
     }
 
+    fn abort_loopback_task(&self) -> HumanSessionResult<()> {
+        if let Some(previous) = self
+            .loopback_task
+            .lock()
+            .map_err(|_| state_unavailable())?
+            .take()
+        {
+            previous.abort();
+        }
+        Ok(())
+    }
+
+    fn is_current_pending(&self, client_state: &str) -> bool {
+        let Ok(_guard) = self.operation_gate.lock() else {
+            return false;
+        };
+        self.vault
+            .load_pending()
+            .ok()
+            .flatten()
+            .is_some_and(|pending| pending.client_state == client_state)
+    }
+
     fn cancel_pending_if_current(&self, client_state: &str) -> HumanSessionResult<()> {
         let _guard = self
             .operation_gate
@@ -446,15 +487,22 @@ impl HumanSessionRuntime {
         Ok(())
     }
 
-    async fn receive_loopback_callback(&self, app: AppHandle, listener: LoopbackCallbackListener) {
+    async fn receive_loopback_callback(
+        &self,
+        app: AppHandle,
+        listener: LoopbackCallbackListener,
+        client_state: String,
+    ) {
         let request = match listener.wait(PENDING_AUTHENTICATION_TTL).await {
             Ok(request) => request,
             Err(failure) => {
-                let _ = app.emit(
-                    HUMAN_SESSION_FAILED_EVENT,
-                    loopback_callback_failure(failure),
-                );
-                focus_main_window(&app);
+                if self.is_current_pending(&client_state) {
+                    let _ = app.emit(
+                        HUMAN_SESSION_FAILED_EVENT,
+                        loopback_callback_failure(failure),
+                    );
+                    focus_main_window(&app);
+                }
                 return;
             }
         };
@@ -842,6 +890,7 @@ mod tests {
             vault: vault.clone(),
             operation_gate: Arc::new(Mutex::new(())),
             active: Arc::new(Mutex::new(None)),
+            loopback_task: Arc::new(Mutex::new(None)),
         };
         assert_eq!(sessions.session_secret().expect("可读"), None);
 

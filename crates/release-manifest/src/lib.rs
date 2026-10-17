@@ -9,5 +9,5 @@ pub use model::{
 };
 pub use verifier::{
     MAX_CLOCK_SKEW_SECONDS, MAX_MANIFEST_LIFETIME_SECONDS, inspect_release,
-    validate_release_document, verify_release,
+    validate_release_document, verify_release, version_at_most,
 };

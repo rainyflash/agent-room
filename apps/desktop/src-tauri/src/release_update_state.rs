@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use agent_room_release_manifest::{ReleaseChannel, ReleaseTrustState};
+use agent_room_release_manifest::{ReleaseChannel, ReleaseTrustState, version_at_most};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
@@ -24,7 +24,7 @@ impl ReleaseUpdateStateStore {
     ) -> Result<ReleaseTrustState, ReleaseUpdateStateFailure> {
         Ok(ReleaseTrustState {
             channel,
-            highest_sequence: self.highest_committed_sequence(channel)?,
+            highest_sequence: self.highest_committed_sequence(channel, installed_version)?,
             installed_version: installed_version.to_owned(),
         })
     }
@@ -55,10 +55,12 @@ impl ReleaseUpdateStateStore {
             if !name.starts_with("pending-") || !name.ends_with(".json") {
                 continue;
             }
-            let record = read_record(&entry.path())?;
+            let path = entry.path();
+            let record = read_record(&path)?;
             validate_record_filename("pending", &name, &record)?;
             if record.version == installed_version {
                 self.write_record("committed", &record)?;
+                fs::remove_file(&path).map_err(ReleaseUpdateStateFailure::Io)?;
             }
         }
         Ok(())
@@ -67,6 +69,7 @@ impl ReleaseUpdateStateStore {
     fn highest_committed_sequence(
         &self,
         channel: ReleaseChannel,
+        installed_version: &str,
     ) -> Result<u64, ReleaseUpdateStateFailure> {
         if !self.root.exists() {
             return Ok(0);
@@ -81,7 +84,7 @@ impl ReleaseUpdateStateStore {
             }
             let record = read_record(&entry.path())?;
             validate_record_filename("committed", &name, &record)?;
-            if record.channel == channel {
+            if record.channel == channel && version_at_most(&record.version, installed_version) {
                 highest = highest.max(record.sequence);
             }
         }
@@ -228,12 +231,37 @@ mod tests {
         store
             .reconcile_installation("2.0.0")
             .expect("新版本启动后必须提交状态");
+        assert!(
+            !directory.path().join("pending-stable-12.json").exists(),
+            "提交后必须删掉已完成的 pending 记录"
+        );
         assert_eq!(
             store
                 .trust_state(ReleaseChannel::Stable, "2.0.0")
                 .expect("必须能读取提交状态")
                 .highest_sequence,
             12
+        );
+        assert_eq!(
+            store
+                .trust_state(ReleaseChannel::Stable, "1.0.0")
+                .expect("手动装回旧版后不能被高版本提交记录卡住")
+                .highest_sequence,
+            0
+        );
+
+        store
+            .record_pending(ReleaseChannel::Stable, 13, "1.9.0")
+            .expect("可记录受权回滚版本");
+        store
+            .reconcile_installation("1.9.0")
+            .expect("受权回滚版本启动后提交");
+        assert_eq!(
+            store
+                .trust_state(ReleaseChannel::Stable, "1.9.0")
+                .expect("受权回滚后仍保留更高序号以防重放")
+                .highest_sequence,
+            13
         );
     }
 

@@ -156,13 +156,22 @@ pub(crate) enum GrantStep {
     DeviceCode,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum GrantPhase {
+    #[default]
+    Idle,
+    /// 有一次请求正在路上；`signed_in` 表示请求发出后应用里又刚登录好。
+    InFlight { signed_in: bool },
+    /// 正在等定好的重试到点。
+    WaitingRetry,
+}
+
 /// 一代托管 Bridge 等电脑授权的进度。换一代子进程就重来。
 #[derive(Debug, Default)]
 pub(crate) struct GrantWait {
     /// Bridge 报了 `device_grant_required`，还没拿到能用的授权，也没改走设备码。
     wanted: bool,
-    /// 有一次请求或一次定好的重试还没回来。
-    busy: bool,
+    phase: GrantPhase,
     failures: u32,
 }
 
@@ -176,28 +185,41 @@ impl GrantWait {
         self.failures = 0;
     }
 
-    /// 现在该不该去要一份：Bridge 在等，手上也没有没回来的请求。
+    /// 现在该不该去要一份：Bridge 在等，手上没有正在路上的请求，也没有在等重试到点。
     pub(crate) const fn should_request(&self) -> bool {
-        self.wanted && !self.busy
+        self.wanted && matches!(self.phase, GrantPhase::Idle)
     }
 
     pub(crate) const fn requesting(&mut self) {
-        self.busy = true;
+        self.phase = GrantPhase::InFlight { signed_in: false };
+    }
+
+    /// 应用里刚登录好：打断退避等待，如果旧请求还在路上就记下来，等它回来立刻重试。
+    pub(crate) const fn signed_in(&mut self) {
+        self.failures = 0;
+        self.phase = match self.phase {
+            GrantPhase::InFlight { .. } => GrantPhase::InFlight { signed_in: true },
+            GrantPhase::Idle | GrantPhase::WaitingRetry => GrantPhase::Idle,
+        };
     }
 
     pub(crate) const fn retry_due(&mut self) {
-        self.busy = false;
+        if matches!(self.phase, GrantPhase::WaitingRetry) {
+            self.phase = GrantPhase::Idle;
+        }
     }
 
     pub(crate) const fn bridge_authorized(&mut self) {
         self.wanted = false;
+        self.phase = GrantPhase::Idle;
     }
 
     pub(crate) fn resolved(
         &mut self,
         result: Result<ComputerGrant, ComputerGrantFailure>,
     ) -> GrantStep {
-        self.busy = false;
+        let signed_in = matches!(self.phase, GrantPhase::InFlight { signed_in: true });
+        self.phase = GrantPhase::Idle;
         if !self.wanted {
             return GrantStep::Wait;
         }
@@ -206,7 +228,14 @@ impl GrantWait {
                 self.wanted = false;
                 GrantStep::Deliver(grant)
             }
-            Err(ComputerGrantFailure::Transient) => self.retry_later(),
+            Err(ComputerGrantFailure::Transient) => {
+                if signed_in {
+                    self.phase = GrantPhase::WaitingRetry;
+                    GrantStep::RetryAfter(Duration::ZERO)
+                } else {
+                    self.retry_later()
+                }
+            }
             Err(ComputerGrantFailure::SessionRejected) => GrantStep::ForgetSession,
             Err(ComputerGrantFailure::Refused) => {
                 self.wanted = false;
@@ -226,7 +255,7 @@ impl GrantWait {
     }
 
     fn retry_later(&mut self) -> GrantStep {
-        self.busy = true;
+        self.phase = GrantPhase::WaitingRetry;
         self.failures = self.failures.saturating_add(1);
         let delay = FIRST_RETRY_DELAY.saturating_mul(1 << self.failures.saturating_sub(1).min(6));
         GrantStep::RetryAfter(delay.min(MAX_RETRY_DELAY))
@@ -486,6 +515,34 @@ mod tests {
             GrantStep::DeviceCode
         );
         assert!(!wait.should_request());
+    }
+
+    #[test]
+    fn 退避期间或请求在路上时重新登录会立刻重试() {
+        let mut wait = GrantWait::default();
+        wait.bridge_asked();
+        wait.requesting();
+        assert_eq!(
+            wait.resolved(Err(ComputerGrantFailure::Transient)),
+            GrantStep::RetryAfter(Duration::from_secs(2))
+        );
+        assert!(!wait.should_request());
+
+        wait.signed_in();
+        assert!(wait.should_request(), "退避期间登录好应立即允许请求");
+        wait.requesting();
+        wait.retry_due();
+        assert!(
+            !wait.should_request(),
+            "旧的退避定时器到点不能打断正在路上的新请求"
+        );
+
+        wait.signed_in();
+        assert_eq!(
+            wait.resolved(Err(ComputerGrantFailure::Transient)),
+            GrantStep::RetryAfter(Duration::ZERO),
+            "请求在路上时登录好，旧请求暂时失败后应立即重试"
+        );
     }
 
     #[test]

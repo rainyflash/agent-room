@@ -175,7 +175,9 @@ async fn read_callback_url(stream: &mut TcpStream, callback_base: &Url) -> Resul
         || callback.port() != callback_base.port()
         || callback.path() != callback_base.path()
         || callback.fragment().is_some()
-        || callback.query().is_none()
+        || !callback
+            .query_pairs()
+            .any(|(name, _)| matches!(name.as_ref(), "code" | "state"))
     {
         return Err(());
     }

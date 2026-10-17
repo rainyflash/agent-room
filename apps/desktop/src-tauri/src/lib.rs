@@ -346,7 +346,6 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
             reopen_main_window(app);
         }
         "quit" => {
-            app.state::<DesktopRuntime>().bridge.shutdown_now();
             app.exit(0);
         }
         _ => {}
