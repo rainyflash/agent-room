@@ -48,6 +48,82 @@ describe('Agent 舰队投影', () => {
     expect(result.devices[0]?.instanceCount).toBe(0);
   });
 
+  it('在线状态问得到时按它算：在线、离开都是在线，离线带上离线那一刻', () => {
+    const waiting = agent(AGENT_A_ID, 'Waiting Agent');
+    const gone = agent(AGENT_B_ID, 'Gone Agent');
+    const result = projectAgentFleet({
+      agents: [waiting, gone],
+      currentMatrixDeviceId: null,
+      devices: [device(REMOTE_DEVICE_ID, 'Laptop', 'WEB-REMOTE')],
+      instances: [
+        // 只用 MCP 等消息的从来不续连接上的状态，一直停在正在连接。
+        instance(AGENT_A_ID, REMOTE_DEVICE_ID, 'connecting', 1_500),
+        // 发过一次自动回复的，库里一直写着在线。
+        instance(AGENT_B_ID, REMOTE_DEVICE_ID, 'online', 3_000),
+      ],
+      presence: new Map([
+        [waiting.matrixUserId, { state: 'unavailable' }],
+        [
+          gone.matrixUserId,
+          { lastActiveAtUnixMs: 8_000, offlineSeenAtUnixMs: 9_000, state: 'offline' },
+        ],
+      ]),
+    });
+
+    expect(result.agents.map((entry) => [entry.agent.displayName, entry.status])).toEqual([
+      ['Waiting Agent', 'online'],
+      ['Gone Agent', 'offline'],
+    ]);
+    expect(result.agents[0]?.instances[0]?.status).toBe('online');
+    expect(result.agents[1]?.lastSeenAtUnixMs).toBe(9_000);
+    expect(result.agents[1]?.instances[0]).toMatchObject({
+      lastSeenAtUnixMs: 9_000,
+      status: 'offline',
+    });
+  });
+
+  it('问不到在线状态、连接全撤销了的照旧看连接；好几个连接时不改各个连接', () => {
+    const quiet = agent(AGENT_A_ID, 'Quiet Agent');
+    const retired = agent(AGENT_B_ID, 'Retired Agent');
+    const revoked = {
+      ...instance(AGENT_B_ID, REMOTE_DEVICE_ID, 'revoked', 2_000),
+      revokedAtUnixMs: 2_500,
+    };
+    const result = projectAgentFleet({
+      agents: [quiet, retired],
+      currentMatrixDeviceId: null,
+      devices: [
+        device(CURRENT_DEVICE_ID, 'Studio', 'WEB-CURRENT'),
+        device(REMOTE_DEVICE_ID, 'Laptop', 'WEB-REMOTE'),
+      ],
+      instances: [
+        instance(AGENT_A_ID, CURRENT_DEVICE_ID, 'connecting', 1_500),
+        instance(AGENT_A_ID, REMOTE_DEVICE_ID, 'offline', 2_000),
+        revoked,
+      ],
+      presence: new Map([
+        [quiet.matrixUserId, { state: 'online' }],
+        [retired.matrixUserId, { state: 'online' }],
+      ]),
+    });
+
+    expect(result.agents[0]?.status).toBe('online');
+    expect(result.agents[0]?.instances.map((value) => value.status)).toEqual([
+      'connecting',
+      'offline',
+    ]);
+    expect(result.agents[1]?.status).toBe('revoked');
+
+    const unknown = projectAgentFleet({
+      agents: [quiet],
+      currentMatrixDeviceId: null,
+      devices: [],
+      instances: [instance(AGENT_A_ID, CURRENT_DEVICE_ID, 'connecting', 1_500)],
+      presence: new Map(),
+    });
+    expect(unknown.agents[0]?.status).toBe('connecting');
+  });
+
   it('把已撤销设备排在可信设备之后', () => {
     const revoked = {
       ...device(CURRENT_DEVICE_ID, 'Old PC', 'WEB-OLD'),

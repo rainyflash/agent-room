@@ -172,10 +172,10 @@ export function createCloudRuntime(
     new MatrixWorkspaceGateway(matrixClients),
     new BrowserWorkspaceCache(window.localStorage),
   );
-  // 写名片的 Agent 在不在线、在不在等消息看 Matrix 的在线状态（specs/agent-liveness）。
-  const lobby = new MatrixLobbyGateway(
-    new MatrixSdkLobbySource(matrixClients, new MatrixPresenceTracker(matrixClients)),
-  );
+  // 写名片的 Agent 在不在线、在不在等消息看 Matrix 的在线状态（specs/agent-liveness），
+  // 房间页和“我的 Agent”共用一份。
+  const agentPresence = new MatrixPresenceTracker(matrixClients);
+  const lobby = new MatrixLobbyGateway(new MatrixSdkLobbySource(matrixClients, agentPresence));
   const networkAgentLabels = new NetworkAgentLabelStore(
     new ControlPlaneNetworkAgentLookup(businessApi),
   );
@@ -216,6 +216,7 @@ export function createCloudRuntime(
     receptionOwnership: new ReceptionOwnershipClient(businessApi),
     accessManagement: new ControlPlaneAccessManagementClient(businessApi),
     agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),
+    agentPresence,
     agentRosterPolicy: new ControlPlaneAgentRosterPolicy(businessApi.baseUrl, businessApi.fetch),
     automation: new ControlPlaneAutomationGrantClient(businessApi),
     config,

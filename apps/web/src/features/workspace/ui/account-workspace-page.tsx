@@ -24,6 +24,7 @@ import {
   agentRoomsQueryKey,
   useAgentRoomCounts,
 } from '@/features/workspace/data/agent-rooms-query';
+import { useAgentPresence } from '@/features/workspace/data/use-agent-presence';
 import { projectAgentFleet, type FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
@@ -61,6 +62,10 @@ export function AccountWorkspacePage({
     staleTime: 5_000,
   });
   const localRuntime = useDesktopRuntimeController();
+  const presence = useAgentPresence(
+    services.agentPresence,
+    resultValue(agents.data).map((agent) => agent.matrixUserId),
+  );
   const fleet = useMemo(
     () =>
       projectAgentFleet({
@@ -68,8 +73,9 @@ export function AccountWorkspacePage({
         currentMatrixDeviceId: currentMatrixDeviceId(matrixSecurity.data),
         devices: resultValue(devices.data),
         instances: resultValue(instances.data),
+        presence,
       }),
-    [agents.data, devices.data, instances.data, matrixSecurity.data],
+    [agents.data, devices.data, instances.data, matrixSecurity.data, presence],
   );
   const roomCounts = useAgentRoomCounts(
     services.agentDirectory,
