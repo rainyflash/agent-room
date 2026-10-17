@@ -74,7 +74,9 @@ impl ReceptionRepository for PostgresRepositories {
         principal: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<ReceptionRecord>>> {
         Box::pin(async move {
-            sqlx::query("SELECT reception.*, device.label AS device_label FROM agent_room.reception_execution AS reception JOIN agent_room.device AS device ON device.id = reception.device_id WHERE EXISTS(SELECT 1 FROM agent_room.agent_ownership AS ownership JOIN agent_room.agent AS agent ON agent.id = ownership.agent_id WHERE ownership.agent_id = reception.agent_id AND ownership.principal_id = $1 AND ownership.role IN ('owner','operator') AND ownership.revoked_at IS NULL AND agent.lifecycle_state = 'active') ORDER BY reception.last_seen_unix_ms DESC LIMIT 128").bind(principal.as_uuid()).fetch_all(self.pool()).await.map_err(|error| map_sqlx_error(OP, &error))?.iter().map(decode).collect()
+            // 已停止、没在等交接、负责的设备或连接又已经撤销的不列：没有谁会接着它回复，留着只是一大片看不懂的卡片。
+            // 记录本身不删，它记着回复到了哪儿。
+            sqlx::query("SELECT reception.*, device.label AS device_label FROM agent_room.reception_execution AS reception JOIN agent_room.device AS device ON device.id = reception.device_id JOIN agent_room.agent_instance AS instance ON instance.id = reception.instance_id WHERE EXISTS(SELECT 1 FROM agent_room.agent_ownership AS ownership JOIN agent_room.agent AS agent ON agent.id = ownership.agent_id WHERE ownership.agent_id = reception.agent_id AND ownership.principal_id = $1 AND ownership.role IN ('owner','operator') AND ownership.revoked_at IS NULL AND agent.lifecycle_state = 'active') AND NOT (reception.state = 'idle' AND reception.next_device_id IS NULL AND (device.revoked_at IS NOT NULL OR instance.revoked_at IS NOT NULL)) ORDER BY reception.last_seen_unix_ms DESC LIMIT 128").bind(principal.as_uuid()).fetch_all(self.pool()).await.map_err(|error| map_sqlx_error(OP, &error))?.iter().map(decode).collect()
         })
     }
     fn drain(

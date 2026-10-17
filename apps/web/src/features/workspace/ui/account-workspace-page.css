@@ -253,6 +253,12 @@
   color: var(--ar-muted);
 }
 
+/* 网页端单独放的“由哪台电脑回复”，和别的几节一样宽。 */
+.account-workspace__reception {
+  width: min(var(--ar-page-width), calc(100% - 80px));
+  margin: 0 auto;
+}
+
 /* 最下面收起的“设备和连接详情”。 */
 .account-workspace__more {
   width: min(var(--ar-page-width), calc(100% - 80px));
@@ -846,6 +852,7 @@
   }
 
   .account-workspace__agents,
+  .account-workspace__reception,
   .account-workspace__more {
     width: calc(100% - 32px);
   }

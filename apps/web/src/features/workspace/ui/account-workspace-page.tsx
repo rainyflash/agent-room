@@ -204,7 +204,12 @@ export function AccountWorkspacePage({
         thisComputer={
           localRuntime.available ? <ThisComputerSection /> : <DesktopAppCard download={download} />
         }
-        reception={<ReceptionOwnershipPanel />}
+        // 桌面端“这台电脑”卡片的后台回复里已经嵌着一份，那里有就不在正文里再放一份。
+        reception={
+          localRuntime.available && localRuntime.receptionAvailable ? null : (
+            <ReceptionOwnershipPanel />
+          )
+        }
         roomCounts={roomCounts}
       />
       {inviteOpen ? (

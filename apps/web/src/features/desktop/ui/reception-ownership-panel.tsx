@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@agent-room/ui-system';
+import { Button, Details } from '@agent-room/ui-system';
 import { useAppServices } from '@/app/app-services';
 import { useSession } from '@/features/session/ui/session-provider';
 import type { ProductDevice } from '@/features/security/domain/access-management';
@@ -51,6 +51,22 @@ function ConnectedOwnershipPanel({ agentId, roomId, embedded = false }: Ownershi
       )
     : [];
   if (!records.isError && records.data?.ok !== false && rows.length === 0) return null;
+  // 已停止的收起来、只写有几个：以前各次接手留下的一大片“已停止”看不出是干嘛的，正在回复、
+  // 交接中、联系不上的才要人看。
+  const now = Date.now();
+  const current = rows.filter((record) => receptionAvailability(record, now) !== 'idle');
+  const stopped = rows.filter((record) => receptionAvailability(record, now) === 'idle');
+  const card = (record: ReceptionRecord) => (
+    <OwnershipCard
+      key={`${principal.principalId}:${record.agentId}:${record.catalogId}`}
+      record={record}
+      principalId={principal.principalId}
+      devices={devices.data?.ok ? devices.data.value : []}
+      refresh={() => {
+        void records.refetch();
+      }}
+    />
+  );
   return (
     <section
       className="reception-owners"
@@ -74,6 +90,7 @@ function ConnectedOwnershipPanel({ agentId, roomId, embedded = false }: Ownershi
           </button>
         )}
       </div>
+      {embedded ? null : <p className="reception-note">{t('receptionOwner.intro')}</p>}
       {records.isError || records.data?.ok === false ? (
         <p role="alert">{t('receptionOwner.failed')}</p>
       ) : null}
@@ -83,17 +100,15 @@ function ConnectedOwnershipPanel({ agentId, roomId, embedded = false }: Ownershi
       {records.data?.ok && records.data.value.limited ? (
         <p className="reception-note">{t('receptionOwner.limited')}</p>
       ) : null}
-      {rows.map((record) => (
-        <OwnershipCard
-          key={`${principal.principalId}:${record.agentId}:${record.catalogId}`}
-          record={record}
-          principalId={principal.principalId}
-          devices={devices.data?.ok ? devices.data.value : []}
-          refresh={() => {
-            void records.refetch();
-          }}
-        />
-      ))}
+      {current.map(card)}
+      {stopped.length === 0 ? null : (
+        <Details
+          className="reception-owners__stopped"
+          summary={t('receptionOwner.stoppedGroup', { count: stopped.length })}
+        >
+          {stopped.map(card)}
+        </Details>
+      )}
     </section>
   );
 }

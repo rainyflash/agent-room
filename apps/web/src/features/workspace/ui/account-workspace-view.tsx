@@ -146,7 +146,9 @@ export function AccountWorkspaceView({
       </section>
 
       {thisComputer}
-      {reception}
+      {reception === null || reception === undefined ? null : (
+        <div className="account-workspace__reception">{reception}</div>
+      )}
 
       <Details className="account-workspace__more" summary={t('workspace.more')}>
         <DeviceRail devices={fleet.devices} />
