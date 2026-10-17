@@ -461,7 +461,13 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 76 正在发布：“我的 Agent”不再把早就断了的 Agent 说成在线或正在连接（#516–#518），按在不在线分组、不在线的默认收起（#519）。第一个发布提交 `171cbafb`（#520）的完整 CI 抓到“我的 Agent”去问不同在房间的 Agent 的在线状态、回 403，修复 #521 的合并提交成为发布提交。没改登录相关代码，复用 Alpha 74 那台长期验收设备，不要设备码。
+- Alpha 76 已于 2026-10-17 公开，见 [发布记录](./specs/agent-access/alpha76-release.md)。
+  - “我的 Agent”不再把早就断了的 Agent 说成在线或正在连接（#516–#518），按在不在线分组、不在线的默认收起（#519），只问同在房间的 Agent 的在线状态（#521）。
+  - 第一个发布提交 `171cbafb`（#520）的完整 CI 红在“不登录在网页上看公共大厅”：“我的 Agent”去问不同在房间的 Agent 的在线状态、回 403。还没部署，草稿改名让位，修复 #521 在 PR 分支上派发 `suite=all` 通过后合并，它的合并提交成为发布提交。
+  - 版本提交先推到了 `release/alpha76-version`：`release/` 开头的分支受保护，建得了、删不掉，要维护者在 GitHub 上删。版本分支照旧叫 `chore/release-alphaNN`。那边停掉的 CodeQL 是同一个提交，在版本 PR 上显示成 CANCELLED，默认配置的 CodeQL 不许重跑：别停和 PR 头同一个提交的运行。
+  - 没改登录相关代码，复用 Alpha 74 那台长期验收设备，没要设备码。本机升级一次装上，升级期间的进程记录（`watch_procs.py`）从这一版起每次都带着。
+  - 实机验收第一次停在绑定宿主：Codex 在发布中途自动更新，删掉了记着的那份程序。改了 `qa-host.json`、旧绑定改名留档，从绑定那一步重跑通过。
+  - #520 合并到网页上线约 1 小时 33 分钟，#521 合并到网页上线约 44 分钟。
 - Alpha 75 已于 2026-10-17 公开，见 [发布记录](./specs/agent-access/alpha75-release.md)。
   - 桌面应用内更新挑得出安装包（#503，旧版要手动装一次）、加密消息解开后马上显示（#511）、Agent 点名没说过话的人时写出名字（#507）、本机 Agent 替人建的房间点一下就进得去（#512）、多房间的自动发言授权按房间算（#505）、本机 MCP 换成英文（#509、#510）、公开大厅限流不白扣（#504）、网页降级时重连不再假装正常（#506）、去掉有公告的 zip（#513）。
   - 没改登录相关代码，复用 Alpha 74 那台长期验收设备，没要设备码。
@@ -582,7 +588,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 实机验收的真实宿主暂时是 Codex（Claude Code 命令行的周额度 10 月 11 日才恢复）。它读附件：
   - Codex 没有单独的读文件工具，读本机文件要么跑命令，要么碰巧找到某个 MCP 带的读文件工具。Alpha 65、66 都是 Codex 找到了维护者自己装的一个 MCP 里的读文件工具才过的；那时跑命令也不通，Codex 的 Windows 沙箱每次跑命令前要改 `runtimes/cua_node/…/node_repl.exe` 的权限，维护者开着的 Codex 应用一直占着这个文件（os error 32）。
   - 2026-10-10 Codex 自动更新以后（`codex-cli 0.162.0-alpha.17.2`）沙箱起得来了。Alpha 67 里它照 #371 用一条只读命令读附件（.NET 的 `File.ReadAllText`），#389 以后读得到，doctor 一次就过。
-  - Codex 自动更新会挪程序（`%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe`），`qa-host.json` 里的宿主路径跟着改，不然 doctor 报 `receiver.executable_invalid`。派生脚本会找新位置，但派生以后、验收以前它也可能挪（Alpha 74 就是：绑定里记着旧路径，改了 `qa-host.json`、把 `binding.private.json` 改名留档，从绑定那一步重跑）。验收前再看一眼。
+  - Codex 自动更新会挪程序（`%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe`），`qa-host.json` 里的宿主路径跟着改，不然 doctor 报 `receiver.executable_invalid`。派生脚本会找新位置，但派生以后、验收以前它也可能挪（Alpha 74 就是：绑定里记着旧路径，改了 `qa-host.json`、把 `binding.private.json` 改名留档，从绑定那一步重跑）。Alpha 76 是验收开始前几分钟，Codex 把记着的那份整个删掉了，只剩新装的那份。验收前再看一眼。
   - doctor 没过就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
   - 验收人物不绑宿主任务（#372 起）。命令行在人物加入时会记下当时的 `CODEX_THREAD_ID`，以后换了任务就报 `cli.profile.task_mismatch`；Alpha 66 就卡在这里，是用本地补丁跑完的。现在验收工具以人物身份调用命令行时不带它，只有 `receiver` 命令带宿主任务。
   - Alpha 64–66 用 Codex 加入的人物已经绑了任务。长期验收设备的记录里记着它绑的任务（`profileTaskId`），以人物身份调用时带上；宿主是 Codex 又换了任务时登记不上，`start` 会自动改走新设备授权。所以复用长期验收设备时，宿主就用它绑着的那个任务：Alpha 67 第二个候选换了新任务，多批准了一次设备码；最终候选换回原来的任务，就不用批准。
