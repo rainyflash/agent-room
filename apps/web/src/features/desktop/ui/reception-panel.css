@@ -24,6 +24,22 @@
 .reception-owners[data-embedded='false'] > :not(.reception-card) {
   grid-column: 1 / -1;
 }
+/* 已停止的收在一起，展开后照样排成卡片 */
+.reception-owners__stopped > summary {
+  width: fit-content;
+  justify-content: flex-start;
+}
+.reception-owners__stopped > .ar-disclosure__body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  align-items: start;
+  gap: 12px;
+  padding-top: 12px;
+}
+.reception-owners[data-embedded='true'] .reception-owners__stopped > .ar-disclosure__body {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
 .reception-panel h3,
 .reception-owners h3,
 .reception-panel p,

@@ -408,3 +408,48 @@ async fn offline_presence_does_not_transfer_until_matrix_device_revoked() {
     );
     database.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires isolated PostgreSQL"]
+async fn stopped_reception_on_a_revoked_device_is_not_listed() {
+    let database = TestDatabase::connect().await;
+    let (fixture, first) = setup(&database.runtime).await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    repositories
+        .execute(fixture.principal, fixture.device, &first)
+        .await
+        .expect("claim");
+    let release = ReceptionRequest {
+        command: ReceptionCommand::Release,
+        ..first.clone()
+    };
+    repositories
+        .execute(fixture.principal, fixture.device, &release)
+        .await
+        .expect("release");
+    let listed = repositories
+        .list(fixture.principal)
+        .await
+        .expect("list stopped reception");
+    assert_eq!(
+        listed.len(),
+        1,
+        "a stopped reception on a live device stays listed"
+    );
+    assert_eq!(listed[0].status, ReceptionStatus::Idle);
+
+    sqlx::query("UPDATE agent_room.device SET trust_state='revoked', revoked_at=clock_timestamp() WHERE id=$1")
+        .bind(fixture.device.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .expect("revoke device");
+    assert!(
+        repositories
+            .list(fixture.principal)
+            .await
+            .expect("list after revocation")
+            .is_empty(),
+        "nobody can resume a stopped reception on a revoked device"
+    );
+    database.close().await;
+}

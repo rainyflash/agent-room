@@ -120,29 +120,49 @@ const reception = receptionFixture(
 );
 const receptionEnabled = new URLSearchParams(location.search).has('reception');
 // ?ownership=idle|active|unreachable lists receptions this account runs on other computers,
-// the way leftover or remote receptions appear on My agents.
+// the way leftover or remote receptions appear on My agents. ?ownership=mixed lists one active
+// reception and three stopped ones left behind by earlier acceptance runs.
 const ownershipStatus = new URLSearchParams(location.search).get('ownership');
+function ownershipRecord(
+  index: number,
+  status: ReceptionRecord['status'],
+  lastSeenUnixMs: number,
+): ReceptionRecord {
+  const suffix = String(index).padStart(2, '0');
+  return {
+    agentId: agent.agentId,
+    catalogId: index === 0 ? lobby.catalogId : `0198b601-77a5-74f1-b4f4-9402919519${suffix}`,
+    roomId: '!fixture:matrix.test',
+    sessionKey: `0198b601-77a5-74f1-b4f4-940f291951${suffix}`,
+    displayName: `Alpha ${String(41 + index)} acceptance Claude Code`,
+    instanceId: `0198b601-77a5-74f1-b4f4-940f291952${suffix}`,
+    deviceId: `0198b601-77a5-74f1-b4f4-940f291953${suffix}`,
+    deviceLabel: `Alpha ${String(41 + index)} fresh-device acceptance`,
+    runId: `0198b601-77a5-74f1-b4f4-940f291954${suffix}`,
+    status,
+    nextDeviceId: null,
+    lastSeenUnixMs,
+    revision: 3,
+    progress: { afterEventId: '$fixture-latest', pending: null, retry: null },
+  };
+}
 const ownershipRecords: readonly ReceptionRecord[] =
   ownershipStatus === null
     ? []
-    : [
-        {
-          agentId: agent.agentId,
-          catalogId: lobby.catalogId,
-          roomId: '!fixture:matrix.test',
-          sessionKey: '0198b601-77a5-74f1-b4f4-940f291951c1',
-          displayName: 'Alpha 41 acceptance Claude Code',
-          instanceId: '0198b601-77a5-74f1-b4f4-940f291951c2',
-          deviceId: '0198b601-77a5-74f1-b4f4-940f291951c3',
-          deviceLabel: 'Alpha 41 fresh-device acceptance',
-          runId: '0198b601-77a5-74f1-b4f4-940f291951c4',
-          status: ownershipStatus === 'idle' ? 'idle' : 'active',
-          nextDeviceId: null,
-          lastSeenUnixMs: ownershipStatus === 'unreachable' ? 1 : Date.now(),
-          revision: 3,
-          progress: { afterEventId: '$fixture-latest', pending: null, retry: null },
-        },
-      ];
+    : ownershipStatus === 'mixed'
+      ? [
+          ownershipRecord(0, 'active', Date.now()),
+          ownershipRecord(1, 'idle', 1),
+          ownershipRecord(2, 'idle', 1),
+          ownershipRecord(3, 'idle', 1),
+        ]
+      : [
+          ownershipRecord(
+            0,
+            ownershipStatus === 'idle' ? 'idle' : 'active',
+            ownershipStatus === 'unreachable' ? 1 : Date.now(),
+          ),
+        ];
 const fixtureDevices: readonly ProductDevice[] = [
   {
     createdAtUnixMs: 1,

@@ -90,4 +90,31 @@ describe('reception ownership controls', () => {
     expect(screen.getByRole('button', { name: 'Take over myself' })).toBeDisabled();
     client.clear();
   });
+  it('folds stopped background replies into a collapsed group with a count', async () => {
+    const stopped = (agentId: string): ReceptionRecord => ({
+      ...record,
+      agentId,
+      catalogId: `catalog-${agentId}`,
+      displayName: `Old ${agentId}`,
+      status: 'idle',
+    });
+    calls.list.mockResolvedValue(
+      ok({ receptions: [record, stopped('a'), stopped('b')], limited: false }),
+    );
+    const client = show();
+    expect(await screen.findByText('My Agent')).toBeVisible();
+    expect(screen.getByText(/one of your computers answers in the room for it/)).toBeVisible();
+    const group = screen.getByText('Stopped · 2').closest('details');
+    expect(group).not.toBeNull();
+    expect(group).not.toHaveAttribute('open');
+    expect(screen.getByText('Old a').closest('details')).toBe(group);
+    expect(screen.getByText('My Agent').closest('details')).toBeNull();
+    client.clear();
+  });
+  it('shows no stopped group while nothing is stopped', async () => {
+    const client = show();
+    expect(await screen.findByText('My Agent')).toBeVisible();
+    expect(screen.queryByText(/^Stopped ·/)).not.toBeInTheDocument();
+    client.clear();
+  });
 });

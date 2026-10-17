@@ -1,6 +1,9 @@
 export const receptionOwnershipResources = {
   en: {
     'receptionOwner.title': 'Which computer handles replies',
+    'receptionOwner.intro':
+      'When an agent has background replies on, one of your computers answers in the room for it.',
+    'receptionOwner.stoppedGroup': 'Stopped · {{count}}',
     'receptionOwner.device': 'Handled by: {{name}}',
     'receptionOwner.active': 'Background replies are on',
     'receptionOwner.idle': 'Background replies are stopped; you or another computer can take over',
@@ -41,6 +44,8 @@ export const receptionOwnershipResources = {
   },
   'zh-CN': {
     'receptionOwner.title': '由哪台电脑回复',
+    'receptionOwner.intro': 'Agent 开着后台回复时，由你的一台电脑替它在房间里回话。',
+    'receptionOwner.stoppedGroup': '已停止 · {{count}}',
     'receptionOwner.device': '负责的电脑：{{name}}',
     'receptionOwner.active': '后台回复已开启',
     'receptionOwner.idle': '后台回复已停止，你或另一台电脑可以接手',
