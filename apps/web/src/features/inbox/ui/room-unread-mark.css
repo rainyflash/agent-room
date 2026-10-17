@@ -1,0 +1,31 @@
+/* “房间”页卡片上的未读：@ 和条数各一个圆角小块，样子跟导航栏收件箱的数一样。 */
+.room-unread-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.room-unread-mark__mention,
+.room-unread-mark__count {
+  display: grid;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  place-items: center;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-pill);
+  color: var(--color-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.room-unread-mark__mention {
+  background: var(--ar-sunny);
+}
+
+.room-unread-mark__count {
+  background: var(--ar-coral);
+}

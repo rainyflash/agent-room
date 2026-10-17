@@ -16,6 +16,7 @@ const inbox = vi.hoisted(() => ({
   current: {
     accountId: 'account-1',
     items: [] as readonly InboxItem[],
+    rooms: new Map(),
     limited: false,
     unavailableRooms: 0,
     status: 'ready' as const,
