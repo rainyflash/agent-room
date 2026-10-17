@@ -264,10 +264,32 @@ impl Fixture {
         matrix_failure: Option<MatrixFailureKind>,
         cleanup_fails: bool,
     ) -> Self {
-        let record = managed_instance(false);
+        Self::with_records(
+            outcome,
+            matrix_failure,
+            cleanup_fails,
+            vec![managed_instance(false)],
+        )
+    }
+
+    fn listing(records: Vec<AgentInstanceManagementRecord>) -> Self {
+        Self::with_records(
+            AgentInstanceRevocationOutcome::NotFound,
+            None,
+            false,
+            records,
+        )
+    }
+
+    fn with_records(
+        outcome: AgentInstanceRevocationOutcome,
+        matrix_failure: Option<MatrixFailureKind>,
+        cleanup_fails: bool,
+        records: Vec<AgentInstanceManagementRecord>,
+    ) -> Self {
         let local_revoke_calls = Arc::new(AtomicUsize::new(0));
         let instances = Arc::new(FakeInstances {
-            records: vec![record],
+            records,
             list_failure: None,
             list_calls: AtomicUsize::new(0),
         });
@@ -319,6 +341,35 @@ async fn 列表保留每个实例和所属设备的独立状态() {
     assert_eq!(records[0].device_label, "Windows 工作站");
     assert_eq!(records[0].instance.status(), AgentInstanceStatus::Revoked);
     assert_eq!(fixture.instances.list_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn 在线租约过了的按离线报_上次在线不变() {
+    let lapsed = instance_with(AgentInstanceStatus::Online, Some(time(NOW - 1)));
+    let leased = instance_with(AgentInstanceStatus::Online, Some(time(NOW + 30_000)));
+    let connecting = instance_with(AgentInstanceStatus::Connecting, None);
+    let fixture = Fixture::listing(vec![lapsed, leased, connecting]);
+
+    let records = fixture
+        .service
+        .list_instances(ListAgentInstances { actor: actor(true) })
+        .await
+        .expect("活跃会话可以读取实例");
+
+    let statuses: Vec<_> = records
+        .iter()
+        .map(|record| record.instance.status())
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            AgentInstanceStatus::Offline,
+            AgentInstanceStatus::Online,
+            AgentInstanceStatus::Connecting,
+        ]
+    );
+    assert_eq!(records[0].instance.lease_expires_at(), None);
+    assert_eq!(records[0].last_seen_at, Some(time(NOW - 1_000)));
 }
 
 #[tokio::test]
@@ -425,6 +476,25 @@ async fn 过期网页会话在访问仓储前失败关闭() {
 }
 
 fn managed_instance(matrix_device_revoked: bool) -> AgentInstanceManagementRecord {
+    let mut record = record(AgentInstanceStatus::Revoked, None);
+    record.matrix_device_revoked_at = matrix_device_revoked.then(|| time(NOW));
+    record
+}
+
+/// 还没撤销、状态和租约照给的实例。
+fn instance_with(
+    status: AgentInstanceStatus,
+    lease_expires_at: Option<UtcMillis>,
+) -> AgentInstanceManagementRecord {
+    let mut record = record(status, lease_expires_at);
+    record.revoked_at = None;
+    record
+}
+
+fn record(
+    status: AgentInstanceStatus,
+    lease_expires_at: Option<UtcMillis>,
+) -> AgentInstanceManagementRecord {
     let instance = AgentInstance::restore(
         agent_instance_id(),
         agent_id(),
@@ -432,8 +502,8 @@ fn managed_instance(matrix_device_revoked: bool) -> AgentInstanceManagementRecor
         adapter_binding_id(),
         AgentInstancePublicSigningKey::new(vec![7; 32]).expect("公钥有效"),
         AgentMatrixDeviceId::new("AR_TEST_INSTANCE".to_owned()).expect("设备标识有效"),
-        AgentInstanceStatus::Revoked,
-        None,
+        status,
+        lease_expires_at,
     )
     .expect("实例快照有效");
     AgentInstanceManagementRecord {
@@ -449,7 +519,7 @@ fn managed_instance(matrix_device_revoked: bool) -> AgentInstanceManagementRecor
         created_at: time(NOW - 10_000),
         last_seen_at: Some(time(NOW - 1_000)),
         revoked_at: Some(time(NOW)),
-        matrix_device_revoked_at: matrix_device_revoked.then(|| time(NOW)),
+        matrix_device_revoked_at: None,
     }
 }
 
