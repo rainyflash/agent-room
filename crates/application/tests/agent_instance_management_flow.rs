@@ -344,11 +344,16 @@ async fn 列表保留每个实例和所属设备的独立状态() {
 }
 
 #[tokio::test]
-async fn 在线租约过了的按离线报_上次在线不变() {
+async fn 在线租约过了的_登记后一直没续上的按离线报_上次在线不变() {
     let lapsed = instance_with(AgentInstanceStatus::Online, Some(time(NOW - 1)));
     let leased = instance_with(AgentInstanceStatus::Online, Some(time(NOW + 30_000)));
-    let connecting = instance_with(AgentInstanceStatus::Connecting, None);
-    let fixture = Fixture::listing(vec![lapsed, leased, connecting]);
+    let mut connecting = instance_with(AgentInstanceStatus::Connecting, None);
+    connecting.created_at = time(NOW - 89_000);
+    connecting.last_seen_at = None;
+    let mut stale = instance_with(AgentInstanceStatus::Connecting, None);
+    stale.created_at = time(NOW - 600_000);
+    stale.last_seen_at = None;
+    let fixture = Fixture::listing(vec![lapsed, leased, connecting, stale]);
 
     let records = fixture
         .service
@@ -366,6 +371,7 @@ async fn 在线租约过了的按离线报_上次在线不变() {
             AgentInstanceStatus::Offline,
             AgentInstanceStatus::Online,
             AgentInstanceStatus::Connecting,
+            AgentInstanceStatus::Offline,
         ]
     );
     assert_eq!(records[0].instance.lease_expires_at(), None);

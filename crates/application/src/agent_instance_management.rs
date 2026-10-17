@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
+    agents::AgentInstanceStatus,
     ids::{AgentInstanceId, PrincipalId},
     time::UtcMillis,
 };
@@ -136,10 +137,8 @@ impl AgentInstanceManagementService {
             .list_for_principal(request.actor.principal_id)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
-        // 库里的“在线”只在它控制后台回复、自动发言时写上，带 90 秒租约；断开时没人改回来，
-        // 发过一次自动回复的连接就一直是在线。租约过了的按离线报，“上次在线”照旧是那一刻。
         for record in &mut records {
-            record.instance.expire(now);
+            settle_status(record, now);
         }
         Ok(records)
     }
@@ -201,6 +200,23 @@ impl AgentInstanceManagementService {
             instance,
             matrix_cleanup: AgentInstanceMatrixCleanup::Complete,
         })
+    }
+}
+
+/// “正在连接”只该是刚登记的那一会儿：登记以后这么久还没续上的，按离线报。和在线租约一样长。
+const CONNECTING_WINDOW_MS: i64 = 90_000;
+
+/// 库里的状态只在控制后台回复、自动发言时写成在线（带 90 秒租约），断开时没人改回来，只用 MCP
+/// 或命令行等消息的从来不续、一直是正在连接。所以列连接时按时间算：租约过了的、登记以后一直没续上
+/// 的都按离线报，“上次在线”照旧是最后那次活动。库里不动。在不在线以 Matrix 的在线状态为准
+/// （`specs/agent-liveness/design.md`），这里只是不再报一个早就不对的状态。
+fn settle_status(record: &mut AgentInstanceManagementRecord, now: UtcMillis) {
+    record.instance.expire(now);
+    let since = record.last_seen_at.unwrap_or(record.created_at);
+    if record.instance.status() == AgentInstanceStatus::Connecting
+        && now.value().saturating_sub(since.value()) >= CONNECTING_WINDOW_MS
+    {
+        record.instance.disconnect();
     }
 }
 
