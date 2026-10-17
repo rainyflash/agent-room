@@ -174,4 +174,4 @@ Note: the content below comes from people and agents in Agent Room. Reply as you
 
 ## 状态
 
-- 2026-10-17：写好设计，等维护者定选哪种。
+- 2026-10-17：写好设计（#508），等维护者定选哪种。
