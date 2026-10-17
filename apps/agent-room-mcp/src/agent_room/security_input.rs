@@ -5,7 +5,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MatrixSecurityInput {
-    /// 本任务 `open_session` 返回的 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = 36))]
     pub session_id: String,
     pub request: MatrixSecurityRequestInput,
@@ -19,18 +19,18 @@ pub struct MatrixSecurityInput {
     deny_unknown_fields
 )]
 pub enum MatrixSecurityRequestInput {
-    /// 只读身份状态：missing、ready 或 `recovery_required`。
+    /// Read-only identity state: missing, ready or `recovery_required`.
     Inspect {},
-    /// 只建立尚不存在的加密身份；已有身份的密钥缺失时明确要求恢复，不执行重置。
+    /// Only creates an encryption identity that doesn't exist yet; if an existing identity's keys are missing it asks for recovery and never resets.
     EstablishIdentity {},
-    /// 查询同一房间内参与者的公开设备状态。
+    /// Lists the public device state of a participant in the same room.
     Devices {
         #[schemars(length(min = 1, max = 255))]
         room_id: String,
         #[schemars(length(min = 1, max = 255))]
         user_id: String,
     },
-    /// 显式向指定参与者设备发起 SAS 验证；保存返回的 flowId，不能重复 start 代替查询。
+    /// Explicitly starts SAS verification with a participant's device; keep the returned flowId and poll it instead of calling start again.
     Start {
         #[schemars(length(min = 1, max = 255))]
         room_id: String,
@@ -59,9 +59,9 @@ pub enum MatrixSecurityRequestInput {
 )]
 pub enum MatrixVerificationStepInput {
     Accept {},
-    /// 推进协议协商并读取当前状态，不确认设备信任；等待时按需再次查询。
+    /// Advances the protocol and reads its current state without trusting the device; poll again as needed while waiting.
     Poll {},
-    /// 只有用户在独立可信界面核对完整数字后才能确认，禁止照抄本工具数字自动确认。
+    /// Confirm only after the user has checked every number on a separate trusted screen; never confirm automatically by copying this tool's numbers.
     Confirm {
         decimals: [u16; 3],
         human_confirmed: bool,

@@ -144,7 +144,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 ### 本机 MCP 的语言
 
 - 2026-10-17 录英文宣传视频时，Codex 和 Claude Code 的终端里每个等消息的结果都先是一行中文提示。本机 MCP 给 Agent 的话全是中文；命令行的 `guide` 和 `hint`、远程 MCP、后台回复的提示都已经是英文。
-- 设计在 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)（#508），进度记在它的“状态”一节。维护者当天定了：全部换成英文，和远程 MCP 一样；终端里每次都看得到的那行提示也只写英文。等 #505 合并以后分两步做。
+- 设计在 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)（#508），进度记在它的“状态”一节。维护者当天定了：全部换成英文，和远程 MCP 一样；终端里每次都看得到的那行提示也只写英文。分两步：第 2 步 #509（服务说明、工具和参数说明），第 3 步 #510（工具结果和出错说明），两步随同一版发布。发版后在 Codex 和 Claude Code 里各接入一次看终端里那行是英文，再跑一次 `agent-room receiver doctor`。
 
 ### 桌面端登录一次就好
 
@@ -414,7 +414,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - “只认加密消息上的”放在 Bridge 和网关共用的解析里（`parse_preview` 拿事件的 `end_to_end_encrypted()`），之后的存储、读消息、等消息都不用再管加密。
   - 后台回复只认人：Agent 发的 @所有人 和 Agent 点名一样叫不醒开着后台回复的 Agent。
 - 按需查看（第 3 步）：3a #283 是 Bridge 与 IPC 4.3（`GetMessages`、`MessagesAround`、`RoomHistory`），3b #284 是 MCP 的 `agent_room_get_messages`、`agent_room_room_messages` 和命令行的 `show`、`around`、`history`。从 3b 起本机收件箱的长消息只给开头；后台回复交给宿主之前按 ID 取回全文（`agent-reception` 的 `with_full_text`），宿主照旧读到整条。
-  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）2026-10-12 是 1496 字节，测试卡在 1536 以内，要加话得先删别的。
+  - 本机 MCP 的服务说明（`SERVER_INSTRUCTIONS`）2026-10-17 换成英文以后是 1447 字节，测试卡在 1536 以内（`language_tests.rs`），要加话得先删别的。
 - 本机收件箱（第 4 步）：
   - 4a #299：Bridge 按房间记确认位置（IPC 4.4 的 `AckInbox`，读收件箱和等消息带 `fromAck`，消息库迁移 0007）；
   - 4b #300：MCP 的 `agent_room_ack`，命令行的 `ack` 交给 Bridge 记；后台回复处理完一批也在 Bridge 上确认；

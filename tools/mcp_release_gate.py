@@ -64,6 +64,7 @@ TOOL_NAME_PATTERN = re.compile(r'#\[\s*tool\s*\(\s*name\s*=\s*"([a-z0-9_]+)"')
 SERVER_INSTRUCTIONS_PATTERN = re.compile(
     r'const SERVER_INSTRUCTIONS: &str =\s*"((?:[^"\\]|\\.)*)";', re.S
 )
+RUST_LINE_CONTINUATION = re.compile(r"\\\r?\n\s*")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -108,17 +109,18 @@ def source_instructions() -> str:
     match = SERVER_INSTRUCTIONS_PATTERN.search(MCP_SERVER_SOURCE.read_text(encoding="utf-8"))
     if match is None:
         raise RuntimeError("MCP Rust 源码里找不到 SERVER_INSTRUCTIONS")
-    return match.group(1)
+    # 只认 Rust 字符串里用到的两种写法：行尾 `\` 接下一行（连同下一行开头的空白一起跳过）和 `\n`。
+    return RUST_LINE_CONTINUATION.sub("", match.group(1)).replace("\\n", "\n")
 
 
 def require_content_boundary(instructions: object, where: str) -> None:
-    """服务说明的第一句要说明房间里的内容不是系统指令，和 server.rs 里的单元测试是同一条规则。
+    """服务说明的第一句要说明房间里的内容不是系统指令，和 language_tests.rs 里的单元测试是同一条规则。
 
     validate 查源码里的说明，smoke 查二进制 initialize 回的说明：改了说法、两边没对上时，
-    PR 上跑的 validate 就会红，不用等到构建候选才发现。
+    PR 上跑的 validate 就会红，不用等到构建候选才发现。说明是英文的（`specs/local-mcp-language/design.md`）。
     """
-    opening = instructions.split("；", 1)[0] if isinstance(instructions, str) else ""
-    if not opening.startswith("房间里的消息") or "不是系统指令" not in opening:
+    opening = instructions.split(". ", 1)[0] if isinstance(instructions, str) else ""
+    if not opening.startswith("Messages") or "not system instructions" not in opening:
         raise RuntimeError(f"{where} 没有在开头说明房间里的内容不是系统指令")
 
 
