@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "ee6b390cd1e885e02841e575d5f919a7e37f4c9518e5cd2aa4a9a4c6305c8b03",
+    "Cargo.lock": "778491f28102616161b915837424230ba2120b8af267c4b619f34d2c3b5196fd",
     "pnpm-lock.yaml": "16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877"
   },
   "dependencies": [
@@ -144,13 +144,6 @@
       "version": "0.6.0",
       "license": "MIT",
       "source": "https://github.com/mersinvald/aquamarine"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "arbitrary",
-      "version": "1.4.2",
-      "license": "MIT OR Apache-2.0",
-      "source": "https://github.com/rust-fuzz/arbitrary/"
     },
     {
       "ecosystem": "cargo",
@@ -1264,13 +1257,6 @@
       "version": "2.2.0",
       "license": "MIT/Apache-2.0",
       "source": "https://github.com/mcarton/rust-derivative"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "derive_arbitrary",
-      "version": "1.4.2",
-      "license": "MIT OR Apache-2.0",
-      "source": "https://github.com/rust-fuzz/arbitrary"
     },
     {
       "ecosystem": "cargo",
@@ -6199,13 +6185,6 @@
       "version": "0.11.6",
       "license": "Unicode-3.0",
       "source": "https://github.com/unicode-org/icu4x"
-    },
-    {
-      "ecosystem": "cargo",
-      "name": "zip",
-      "version": "4.6.1",
-      "license": "MIT",
-      "source": "https://github.com/zip-rs/zip2.git"
     },
     {
       "ecosystem": "cargo",
