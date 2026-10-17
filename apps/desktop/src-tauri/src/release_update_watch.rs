@@ -69,7 +69,9 @@ impl ReleaseUpdateStatus {
             Err(failure) => Self {
                 checked_at_unix_ms,
                 channel,
-                check: previous.and_then(|status| status.check.clone()),
+                check: previous
+                    .filter(|status| status.channel == channel)
+                    .and_then(|status| status.check.clone()),
                 failure: Some(ReleaseUpdateStatusFailure {
                     code: failure.code(),
                     retryable: failure.retryable(),
@@ -235,6 +237,18 @@ mod tests {
         );
         assert_eq!(first_failure.check, None);
         assert_eq!(first_failure.channel, "stable");
+
+        let switched_channel_failure = ReleaseUpdateStatus::after(
+            Some(&found),
+            "stable",
+            &Err(ReleaseUpdateFailure::for_tests(
+                "desktop.update.manifest_network",
+                true,
+            )),
+            50,
+        );
+        assert_eq!(switched_channel_failure.channel, "stable");
+        assert_eq!(switched_channel_failure.check, None);
     }
 
     #[test]

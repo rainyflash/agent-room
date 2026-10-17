@@ -182,7 +182,12 @@ impl ReceiverRuntime {
             tokio::pin!(operation);
             loop {
                 tokio::select! {
-                    result = &mut operation => return result,
+                    result = &mut operation => {
+                        while let Ok(event) = events.try_recv() {
+                            *progress_writer.write().await = Some(event);
+                        }
+                        return result;
+                    }
                     event = events.recv() => if let Some(event) = event { *progress_writer.write().await = Some(event); },
                 }
             }
@@ -200,29 +205,32 @@ impl ReceiverRuntime {
     }
 
     async fn pause(&self, task_id: &str, persist: bool) -> Result<()> {
-        let mut workers = self.inner.workers.lock().await;
+        let running_task = {
+            let mut workers = self.inner.workers.lock().await;
+            workers.get_mut(task_id).and_then(|worker| {
+                worker.stop.send_replace(true);
+                worker.task.take()
+            })
+        };
         let mut stop_failure = None;
-        if let Some(worker) = workers.get_mut(task_id) {
-            worker.stop.send_replace(true);
-            if let Some(mut task) = worker.task.take() {
-                match tokio::time::timeout(Duration::from_secs(135), &mut task).await {
-                    Ok(Ok(result)) => worker.failure = result.err(),
-                    Ok(Err(_)) => {
-                        worker.failure = Some(ReceptionFailure::local("receiver.worker_failed"));
+        if let Some(mut task) = running_task {
+            stop_failure = match tokio::time::timeout(Duration::from_secs(135), &mut task).await {
+                Ok(Ok(result)) => result.err(),
+                Ok(Err(_)) => Some(ReceptionFailure::local("receiver.worker_failed")),
+                Err(_) => {
+                    task.abort();
+                    // Await cancellation so the durable receiver lock is released before editing state.
+                    if let Err(error) = task.await
+                        && !error.is_cancelled()
+                    {
+                        return Err(ReceptionFailure::local("receiver.worker_failed"));
                     }
-                    Err(_) => {
-                        task.abort();
-                        // Await cancellation so the durable receiver lock is released before editing state.
-                        if let Err(error) = task.await
-                            && !error.is_cancelled()
-                        {
-                            return Err(ReceptionFailure::local("receiver.worker_failed"));
-                        }
-                        worker.failure = Some(ReceptionFailure::local("receiver.stop_timeout"));
-                    }
+                    Some(ReceptionFailure::local("receiver.stop_timeout"))
                 }
+            };
+            if let Some(worker) = self.inner.workers.lock().await.get_mut(task_id) {
+                worker.failure.clone_from(&stop_failure);
             }
-            stop_failure = worker.failure.clone();
         }
         let store = ReceiverStore::open(&self.inner.config.data_root(), task_id)?;
         let mut state = store
@@ -407,6 +415,9 @@ pub(crate) async fn desktop_receiver_action(
                 ReceiverAction::Resolve { event, resolution } => {
                     store.resolve(&event, resolution)?;
                     drop(store);
+                    if let Some(worker) = receivers.inner.workers.lock().await.get_mut(&task_id) {
+                        worker.failure = None;
+                    }
                     if matches!(resolution, Resolution::Retry) {
                         receivers.start(&task_id, ReceiverMode::Listen).await?;
                     }

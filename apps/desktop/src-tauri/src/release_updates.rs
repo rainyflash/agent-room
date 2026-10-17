@@ -326,10 +326,28 @@ impl ReleaseUpdateService {
         self.state
             .record_pending(channel, manifest.sequence, &manifest.version)
             .map_err(ReleaseUpdateFailure::from_state)?;
-        prepared
-            .update
-            .install(&bytes)
-            .map_err(|_| ReleaseUpdateFailure::state("desktop.update.install_failed"))?;
+        let runtime = self
+            .app
+            .try_state::<crate::commands::DesktopRuntime>()
+            .map(|state| state.inner().clone());
+        if let Some(runtime) = &runtime {
+            if let Err(error) = runtime.receivers.shutdown().await {
+                tracing::warn!(error_code = error.code, "安装更新前关闭接收进程失败");
+            }
+            runtime.bridge.shutdown().await;
+        }
+        if prepared.update.install(&bytes).is_err() {
+            if let Some(runtime) = runtime {
+                runtime.bridge.recover_after_failed_update();
+                if let Err(error) = runtime.receivers.restore().await {
+                    tracing::warn!(error_code = error.code, "安装更新失败后恢复接收进程失败");
+                }
+            }
+            return Err(ReleaseUpdateFailure::state("desktop.update.install_failed"));
+        }
+        if let Some(runtime) = &runtime {
+            let _ = runtime.receivers.begin_shutdown();
+        }
         self.app.restart()
     }
 
@@ -369,9 +387,12 @@ impl ReleaseUpdateService {
         .map_err(|_| ReleaseUpdateFailure::policy("desktop.update.metadata_invalid"))?;
         let target_version = manifest.version.clone();
         let comparator_version = target_version.clone();
+        let updater_target = tauri_plugin_updater::target()
+            .ok_or_else(|| ReleaseUpdateFailure::policy("desktop.update.updater_unavailable"))?;
         let updater = self
             .app
             .updater_builder()
+            .target(updater_target)
             .endpoints(vec![endpoint])
             .map_err(|_| ReleaseUpdateFailure::policy("desktop.update.metadata_invalid"))?
             .version_comparator(move |_current, remote| {
@@ -551,10 +572,18 @@ fn select_artifact(
     artifacts: &[ReleaseArtifact],
     update: &Update,
 ) -> Result<ReleaseArtifact, ReleaseUpdateFailure> {
+    select_artifact_for_target(artifacts, &update.target, &update.download_url)
+}
+
+fn select_artifact_for_target(
+    artifacts: &[ReleaseArtifact],
+    target: &str,
+    download_url: &Url,
+) -> Result<ReleaseArtifact, ReleaseUpdateFailure> {
     let selected = artifacts.iter().find(|artifact| {
         artifact.kind == ArtifactKind::Desktop
-            && artifact.platform == update.target
-            && Url::parse(&artifact.url).is_ok_and(|url| url == update.download_url)
+            && artifact.platform == target
+            && Url::parse(&artifact.url).is_ok_and(|url| &url == download_url)
     });
     selected
         .cloned()
@@ -731,6 +760,36 @@ mod tests {
                 .expect_err("篡改摘要必须失败")
                 .code(),
             "desktop.update.artifact_digest_mismatch"
+        );
+    }
+
+    #[test]
+    fn 桌面更新产物按完整平台标识与下载地址匹配() {
+        let download_url =
+            Url::parse("https://releases.example/Agent.Room.app.tar.gz").expect("下载地址有效");
+        let artifact = ReleaseArtifact {
+            name: "agent-room-desktop-darwin-aarch64".to_owned(),
+            kind: ArtifactKind::Desktop,
+            platform: "darwin-aarch64".to_owned(),
+            url: download_url.to_string(),
+            sha256: "a".repeat(64),
+            byte_length: 1024,
+            sbom_url: "https://releases.example/update.cdx.json".to_owned(),
+            signature_url: "https://releases.example/update.sig".to_owned(),
+        };
+        let selected = select_artifact_for_target(
+            std::slice::from_ref(&artifact),
+            "darwin-aarch64",
+            &download_url,
+        )
+        .expect("完整平台目标必须匹配");
+        assert_eq!(selected, artifact);
+
+        assert_eq!(
+            select_artifact_for_target(&[artifact], "darwin", &download_url)
+                .expect_err("仅有操作系统名不能匹配带架构的发布产物")
+                .code(),
+            "desktop.update.artifact_mismatch"
         );
     }
 

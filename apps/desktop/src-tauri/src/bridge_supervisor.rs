@@ -242,6 +242,12 @@ impl BridgeSupervisor {
         self.shutdown_now();
     }
 
+    /// 更新安装没成功、桌面端没有退出时，重新拉起刚才为安装而停下的托管 Bridge。
+    pub(crate) fn recover_after_failed_update(&self) {
+        self.shutting_down.store(false, Ordering::SeqCst);
+        let _ = self.input.try_send(ActorInput::ExplicitRetry);
+    }
+
     /// 来不及等的时候用：立刻结束托管的 Bridge。
     pub(crate) fn shutdown_now(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
@@ -312,7 +318,10 @@ impl BridgeSupervisorActor {
                 }
                 ActorInput::Reconfigure { config } => self.handle_reconfigure(*config),
                 ActorInput::Resume => self.handle_resume().await,
-                ActorInput::SignedIn => self.request_grant(),
+                ActorInput::SignedIn => {
+                    self.grant.signed_in();
+                    self.request_grant();
+                }
                 ActorInput::GrantResolved { generation, result } => {
                     if generation == self.generation {
                         let step = self.grant.resolved(result);
@@ -335,7 +344,6 @@ impl BridgeSupervisorActor {
                     if let Some(done) = done {
                         let _ = done.send(());
                     }
-                    break;
                 }
             }
         }

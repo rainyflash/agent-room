@@ -208,7 +208,8 @@ Var AgentRoomInstallerMarker
       !insertmacro AGENT_ROOM_KILL_IF_RUNNING "agent-room-mcp.exe"
       !insertmacro AGENT_ROOM_KILL_IF_RUNNING "agent-room.exe"
       ${If} $2 = 0
-        ; 四个进程都不在了：还没挪开的 MCP 和命令行这时挪开，之后 Agent 再调也拉不起旧版。
+        ; 四个进程都不在了：还没挪开的桌面端、MCP 和命令行这时挪开，之后 Agent 再调也拉不起旧版。
+        !insertmacro AGENT_ROOM_PARK_SIDECAR "agent-room-desktop.exe" "${AGENT_ROOM_PARKED_DESKTOP}"
         !insertmacro AGENT_ROOM_PARK_SIDECARS
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\agent-room-desktop.exe"
         !insertmacro AGENT_ROOM_MARK_IF_LOCKED "$INSTDIR\${AGENT_ROOM_PARKED_DESKTOP}"
