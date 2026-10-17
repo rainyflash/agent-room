@@ -87,7 +87,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 撤不成的留在 `applied`，下一轮再试；整台 Synapse 不通时这一轮先停。
 - **Synapse 会把一模一样的同步请求缓存两分钟**（`sync_response_cache_duration`，键是用户、设备、超时、起点、过滤器、`full_state` 等）。两分钟内再发一次不带起点的同步，拿到的是上一次的结果。2026-10-02 网络 Agent 凭口令进私人房间后马上发言，被说成不在房间里，就是因为加密客户端拿到的是加入之前的缓存。现在网关每次不带起点的同步都换一个超时值（`network_gateway/encrypted.rs` 的 `initial_sync_request`）；别的地方要反复做不带起点的同步，也得这样。
 - **刚进房间的用户，报完在线状态马上读回来可能是离线**（#390）。Synapse 内存里还没有这个用户时，读它的在线状态要先查库，查完把“离线”写回内存；新成员进大厅时，大厅里正在同步的客户端都会去读它的，这一读跨过它刚报的那一下，刚报上的就被盖掉了。所以“报完读回离线”别一次就当服务器没开在线状态（`PresenceSupport` 两次才算），探不出来要接着再探：本机 Bridge 每次同步后探，网关在心跳那一拍探。`PUT` 每个用户 10 秒只认一次，被限速时也读回来看。
-- **连接上记的状态不是在线状态。** `agent_instance.status` 只在控制后台回复、自动发言时写成在线（90 秒租约），断开时没人改回来；只用 MCP 或命令行等消息的从来不续，一直是 `connecting`。2026-10-17 “我的 Agent”上以前各版的发布验收 Agent 因此全显示在线。现在列连接时租约过了的按离线报（#516），“我的 Agent”和房间页一样看 Matrix 的在线状态（#517）。新加“在不在线”的地方也看在线状态，别看连接上的状态。
+- **连接上记的状态不是在线状态。** `agent_instance.status` 只在控制后台回复、自动发言时写成在线（90 秒租约），断开时没人改回来；只用 MCP 或命令行等消息的从来不续，一直是 `connecting`。2026-10-17 “我的 Agent”上以前各版的发布验收 Agent 因此全显示在线。现在列连接时租约过了的按离线报、登记后 90 秒还没续上的也按离线报（#516、#518），“我的 Agent”和房间页一样看 Matrix 的在线状态（#517）。新加“在不在线”的地方也看在线状态，别看连接上的状态。
 - **Synapse 默认的发言限速。** 生产配置没写 `rc_message`，用的是默认值：每个 Matrix 用户连发 10 条以后每 5 秒才放一条，人和 Agent 都一样。网络 Agent 被挡下时控制面回 429 `network_agent.rate_limited` 带 `Retry-After`（#311 之前回的是 503）。测试里要一个人连发十几条，就分给几个人发，或者按 `Retry-After` 等；2026-10-05 无头验收的积压就是这样改成六个人各说 10 条的。
 - **改房间权限是“读出整份、改一项、整份写回”。** Matrix 没有按版本写的办法，两个请求同时改同一个房间时，后写的会把先给的那一项盖掉。2026-10-16 两个 Agent 几乎同时进了 CIG 房间（创建只差 1 毫秒），后一个的发言级别就这样丢了：名片写不进去，`join`、`resume`、`read` 一直报 `bridge.agent_status_publication_failed`。所以控制面改权限一律走 `update_power_levels`（`matrix-provisioning-adapter` 的 `rooms.rs`），同一个房间一次只改一个，新加改权限的地方也用它。这把锁只在一个进程里管用，开多个控制面副本时要换成库里的锁。
   - Bridge 那边兜底：会话房间的名片因为没有权限写不进去时，再经控制面进一次房间（`session_card_forbidden`），进房间那一步会把级别补上。只再试一次，补了还写不进就照旧报错，别改成一直重连。
@@ -390,7 +390,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 以后加界面：先在 `packages/ui-system` 和 `shared/ui` 里找现成组件；用户看得到的说法按设计文档的“用词”一节；排查才看的 ID、错误码收进“详情”。新文案中英文一起加，删功能时顺手删掉只有它用的文案和样式。
 - 第 2 步（一屏的“接入 Agent”对话框）和第 3 步（新的“我的 Agent”、这台电脑、去掉浮动面板和 `/onboarding`）要在同一个版本里发布。
 - `/onboarding` 已去掉：桌面端没有默认 Agent 时连接服务照样运行，MCP 和命令行的 Agent 都走本机会话，不依赖默认 Agent。
-- 浏览器验收里桌面端的“我的 Agent”页用 `e2e/fixtures/my-agents.html`（加 `?browser` 是网页端），`window.__agentRoomFixtureControls.arriveAgent()` 模拟一个 Agent 接走接入对话框挂着的人物。
+- 浏览器验收里桌面端的“我的 Agent”页用 `e2e/fixtures/my-agents.html`（加 `?browser` 是网页端），`window.__agentRoomFixtureControls.arriveAgent()` 模拟一个 Agent 接走接入对话框挂着的人物。`?presence=online|unavailable|offline` 给夹具 Agent 一个 Matrix 在线状态。
+- “我的 Agent”按在不在线分两组（`AgentGroups`，#519，维护者 2026-10-17 定）：在线的摊开（正在连接、连接不稳的也算），不在线的收在折叠里、只写有几个。别改回一整列全摊开。
 - 设置页在 `/settings/<分节>`（通用 / 账户 / 安全 / 这台电脑 / 关于；账户一节是下载我的数据和删除账户，#343）；浏览器验收用 `my-agents.html?settings=<分节>`，安全一节用 `security-center.html`。新的浮层提示一律放进根布局的提示栈（`ToastStack` + `Toast`），别再单独 `position: fixed`。
 - 没进房间时的页面（连接、登录没完成、进大厅、房间打开中或打不开、找不到页面、配置出错）共用 `shared/ui/entry-shell.tsx` 的 `EntryShell` + `EntryCard`：一张居中卡片，错误码和地址收进“详情”，出错给“回到房间”。
 - 登录页的标志由 `tools/sync-brand-assets.mjs` 从网页端同步；`tools/tests/test_brand_consistency.py` 卡着登录主题的颜色令牌和标志不和网页端走偏。
