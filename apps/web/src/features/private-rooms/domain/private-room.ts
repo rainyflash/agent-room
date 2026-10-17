@@ -237,6 +237,23 @@ export function memberFor(room: PrivateRoom, principalId: string): PrivateRoomMe
   return room.members.find((member) => member.principalId === principalId);
 }
 
+/**
+ * 服务器记着你已经在里面的那间私人房间（房主、接受过邀请的人），房间号和 Matrix 房间都要对得上。
+ * 本机 Agent 替你建的房间就是这样：你在 Matrix 上还只是受邀，第一次打开时由网页替你加入。
+ * 还没答复的邀请、被移出的、别人的房间都不算：那些要你自己点“加入”，或者根本进不去。
+ */
+export function joinedPrivateRoom(
+  rooms: readonly PrivateRoom[],
+  catalogId: string,
+  matrixRoomId: string,
+  principalId: string,
+): PrivateRoom | null {
+  const room = rooms.find(
+    (entry) => entry.catalogId === catalogId && entry.matrixRoomId === matrixRoomId,
+  );
+  return room !== undefined && memberFor(room, principalId)?.status === 'joined' ? room : null;
+}
+
 /** 两份权限都有的那几项。 */
 export function intersectPermissions(
   left: PrivateRoomPermissions,

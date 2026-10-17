@@ -79,6 +79,9 @@ KNOCK_RESULT: Final = VERTICAL_ROOT / "private-room-knock.json"
 # 人在网络 Agent 建的房间里聊过了、房间归档了：纵向验收和网页用例靠这两个文件对步子。
 NETWORK_ROOM_CHATTED: Final = VERTICAL_ROOT / "network-agent-room-chatted.json"
 NETWORK_ROOM_ARCHIVED: Final = VERTICAL_ROOT / "network-agent-room-archived.json"
+# 房主进了本机 Agent 替他建的房间、在里面说过话了：纵向验收和网页用例靠这两个文件对步子。
+LOCAL_ROOM_OWNER_ENTERED: Final = VERTICAL_ROOT / "local-agent-room-owner-entered.json"
+LOCAL_ROOM_OWNER_SPOKE: Final = VERTICAL_ROOT / "local-agent-room-owner-spoke.json"
 # 房间里的人那一轮：第二个人凭链接加入了、他的 Agent 说过了、两边网页看过了。
 ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
 ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
@@ -3027,10 +3030,13 @@ def verify_agent_rooms(
     redactor: LogRedactor,
 ) -> dict[str, str]:
     """Agent 自己建房间（specs/agent-rooms/design.md“验收”）：本机 Agent 和网络 Agent 各建一间，
-    别的 Agent 按房间名、凭口令或敲门进来，加密收发；网络 Agent 邀请的人在网页上接受后和它聊，
-    他自己的 Agent 也进得来、说得了话。"""
+    别的 Agent 按房间名、凭口令或敲门进来，加密收发；本机 Agent 替他建的房间，房主在网页上点一下就进去；
+    网络 Agent 邀请的人在网页上接受后和它聊，他自己的 Agent 也进得来、说得了话。"""
     local = verify_local_agent_room(
-        sender_bridge=sender_bridge, target_bridge=target_bridge, redactor=redactor
+        sender_bridge=sender_bridge,
+        target_bridge=target_bridge,
+        environment=environment,
+        redactor=redactor,
     )
     network = verify_network_agent_room(
         environment=environment,
@@ -3045,10 +3051,11 @@ def verify_local_agent_room(
     *,
     sender_bridge: AuthorizedBridgeRuntime,
     target_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
     redactor: LogRedactor,
 ) -> dict[str, str]:
     """本机 Agent 用 MCP 建房间，结果里带口令；同一个账号另一台电脑上的 Agent 按房间名进来；
-    网络 Agent 凭口令进来，三方加密收发。"""
+    网络 Agent 凭口令进来，三方加密收发；房主在网页上点这个房间就进去、和建房的 Agent 说上话。"""
     with bridge_mcp_client(sender_bridge, redactor) as maker_transport, bridge_mcp_client(
         target_bridge, redactor
     ) as guest_transport:
@@ -3083,6 +3090,9 @@ def verify_local_agent_room(
         )
         # 另一台电脑上的 Agent 说的，网络 Agent 也解得开。
         deliver_to_network_agent(guest, token=token, room_id=room_id)
+        owner_said = owner_opens_local_agent_room(
+            maker, environment=environment, catalog_id=catalog_id, room_id=room_id
+        )
     status, _ = network_agent_request("DELETE", "/me", token=token)
     if status != 204:
         raise VerticalFailure(f"凭口令进来的网络 Agent 停用失败：HTTP {status}。")
@@ -3090,7 +3100,74 @@ def verify_local_agent_room(
         "localRoomVisitorToken": token,
         "localRoomCode": code,
         "localRoomReplyEventId": reply,
+        "localRoomOwnerEventId": owner_said,
     }
+
+
+def owner_opens_local_agent_room(
+    maker: McpAgentSession, *, environment: Mapping[str, str], catalog_id: str, room_id: str
+) -> str:
+    """本机 Agent 替账号建的房间，房主在 Matrix 上还只是受邀。人用真实网页会话在“房间”页点这个房间就进去
+    （网页替他补上加入），建房的 Agent 这时说一句，人解开、再说一句，建房的 Agent 解开收到
+    （local-agent-room.e2e.ts）。回答房主说的那一句的事件 ID。
+
+    Agent 等人进来以后才说：网页会话是新登录的设备，进来之前的消息要靠找回房间密钥，那是另一回事。"""
+    nonce = new_uuid_v7()[-8:]
+    greeting, said = f"Your room is ready, owner {nonce}.", f"Thanks, I am in {nonce}."
+    for path in (LOCAL_ROOM_OWNER_ENTERED, LOCAL_ROOM_OWNER_SPOKE):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_LOCAL_ROOM_CATALOG_ID": catalog_id,
+            "AGENT_ROOM_VERTICAL_LOCAL_ROOM_NAME": AGENT_ROOM_NAME,
+            "AGENT_ROOM_VERTICAL_LOCAL_ROOM_GREETING": greeting,
+            "AGENT_ROOM_VERTICAL_LOCAL_ROOM_SAID": said,
+            "AGENT_ROOM_VERTICAL_LOCAL_ROOM_ENTERED": str(LOCAL_ROOM_OWNER_ENTERED),
+            "AGENT_ROOM_VERTICAL_LOCAL_ROOM_SPOKE": str(LOCAL_ROOM_OWNER_SPOKE),
+        }
+    )
+    browser = BrowserRun("local-agent-room.e2e.ts", playwright_environment)
+    wait_for_browser_step(
+        LOCAL_ROOM_OWNER_ENTERED,
+        browser,
+        timeout_seconds=420,
+        failure="房主 7 分钟内没从“房间”页进到本机 Agent 替他建的房间。",
+    )
+    say_in_room(maker, room_id, greeting)
+    wait_for_browser_step(
+        LOCAL_ROOM_OWNER_SPOKE,
+        browser,
+        timeout_seconds=420,
+        failure="房主 7 分钟内没在本机 Agent 替他建的房间里说上话。",
+    )
+    browser.finish(timeout_seconds=120)
+    return wait_for_person_text(maker, room_id=room_id, text=said, timeout_seconds=120)
+
+
+def wait_for_person_text(
+    client: McpAgentSession, *, room_id: str, text: str, timeout_seconds: float
+) -> str:
+    """本机 Agent 翻房间里最近的消息，等到人说的这一句、而且解得开，回答它的事件 ID。"""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        page = client.call_tool("agent_room_room_messages", {"roomId": room_id, "limit": 20})
+        for item in require_list(page.get("messages")):
+            message = require_object(item, "房间里的消息")
+            actor = message.get("actor")
+            conversation = message.get("conversation")
+            if (
+                isinstance(actor, dict)
+                and actor.get("kind") == "human"
+                and isinstance(conversation, dict)
+                and conversation.get("text") == text
+            ):
+                return require_text(message.get("eventId"), "人说的那一句的事件 ID")
+        time.sleep(1)
+    raise VerticalFailure(f"本机 Agent {timeout_seconds:.0f} 秒内没解开房主说的那一句。")
 
 
 def create_local_agent_room(

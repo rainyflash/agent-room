@@ -52,6 +52,7 @@ import {
   type LobbySpatialViewHandle,
 } from '@/features/lobby/ui/lobby-spatial-view';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
+import { PrivateRoomJoinBoundary } from '@/features/lobby/ui/private-room-join-boundary';
 import { MatrixConnectionCard } from '@/features/session/ui/matrix-connection-card';
 import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
@@ -127,6 +128,15 @@ export function LobbyPage(props: LobbyPageProps) {
             // 消息没连上时照会话的状态说、按钮交给会话；连上以后房间自己打开。
             <MatrixConnectionCard
               fallback={<LobbyStateBoundary onRetry={store.retry} state={state} />}
+            />
+          ) : state.kind === 'failed' && state.code === 'lobby.room_not_joined' ? (
+            // 服务器记着你在、Matrix 上还只是受邀（本机 Agent 替你建的房间）：替你加入，不让你回列表找“加入”。
+            <PrivateRoomJoinBoundary
+              catalogId={props.catalogId}
+              onRetry={store.retry}
+              principalId={props.principal?.principalId ?? null}
+              roomId={props.roomId}
+              state={state}
             />
           ) : (
             <LobbyStateBoundary onRetry={store.retry} state={state} />

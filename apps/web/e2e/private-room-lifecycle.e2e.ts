@@ -181,6 +181,35 @@ test('本机 Agent 建的私人房间：设置里写上谁建的，别的照旧'
   expect(failures).toEqual([]);
 });
 
+test('本机 Agent 刚替你建的房间：Matrix 上你还只是受邀，点进来就替你加入，不叫你回列表', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.goto(`${fixturePath}?private&origin=local&matrix-invite&view=conversation`);
+  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room');
+  const room = page.locator('.workspace-room-content');
+  await expect(room.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+  await expect(page.getByText('You are not in this room yet')).toHaveCount(0);
+  const joins = await page.evaluate(() =>
+    (window as LobbyFixtureWindow).__agentRoomFixtureControls.matrixJoins(),
+  );
+  expect(joins).toHaveLength(1);
+  expect(failures).toEqual([]);
+});
+
+test('替你加入没成：说打不开，点“重试”再加入一次就进去了', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(`${fixturePath}?private&origin=local&matrix-invite=fail`);
+  await expect(page.getByText('You are not in this room yet')).toBeVisible();
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room');
+  const joins = await page.evaluate(() =>
+    (window as LobbyFixtureWindow).__agentRoomFixtureControls.matrixJoins(),
+  );
+  expect(joins).toHaveLength(2);
+  expect(failures).toEqual([]);
+});
+
 for (const width of [1_440, 390]) {
   test(`归档了的私人房间：之前的消息照样看，输入框关着并说清为什么，也不能再接入 Agent ${String(width)}`, async ({
     page,

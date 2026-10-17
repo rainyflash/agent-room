@@ -141,6 +141,13 @@ const inviteLinkFixture =
   privateFixture && new URLSearchParams(window.location.search).has('invite-link');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
+// `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
+// 打开房间时网页替你加入；`matrix-invite=fail` 时第一次加入失败，点“重试”才进得去。
+const matrixInviteFixture = privateFixture
+  ? new URLSearchParams(window.location.search).get('matrix-invite')
+  : null;
+let matrixInvited = matrixInviteFixture !== null;
+const matrixJoins: string[] = [];
 // `?owners` 里服务器回答 Agent 是谁的：依次是你的、Grace 的、Grace 放行的网络 Agent、
 // 没人放行的网络 Agent（公共大厅里的）。
 const ownersFixture = new URLSearchParams(window.location.search).has('owners');
@@ -183,7 +190,7 @@ const accountPreferences = new AccountPreferencesStore(localPreferencesGateway, 
 let fixtureRoot: Root | null = null;
 const lobbyListeners = new Set<() => void>();
 const lobby: LobbyGateway = {
-  read: () => ok(room),
+  read: () => (matrixInvited ? err({ code: 'lobby.room_not_joined', retryable: true }) : ok(room)),
   subscribe: (_roomId, listener) => {
     lobbyListeners.add(listener);
     return () => {
@@ -346,6 +353,7 @@ const inboxStore = new InboxStore(
 );
 const fixtureControls: LobbyFixtureControls = {
   displayedEvents: () => [...displayedEvents],
+  matrixJoins: () => [...matrixJoins],
   knockAgent: (displayName) => {
     const knock = fixtureKnock(displayName);
     fixtureKnocks = [...fixtureKnocks, knock];
@@ -806,7 +814,23 @@ const privateRooms: PrivateRoomGateway = {
   updatePermissions: unavailablePrivateRoom,
 };
 const privateRoomMatrix: PrivateRoomMatrixGateway = {
-  join: unavailablePrivateRoom,
+  join:
+    matrixInviteFixture === null
+      ? unavailablePrivateRoom
+      : (roomId) => {
+          matrixJoins.push(roomId);
+          if (matrixInviteFixture === 'fail' && matrixJoins.length === 1) {
+            return Promise.resolve(
+              err({ code: 'private_room.matrix_join_failed', retryable: true }),
+            );
+          }
+          // 加入请求先回来，同步稍后才把“已加入”带回来。
+          setTimeout(() => {
+            matrixInvited = false;
+            for (const listener of lobbyListeners) listener();
+          }, 300);
+          return Promise.resolve(ok(undefined));
+        },
   leave: unavailablePrivateRoom,
 };
 const accessManagement: AccessManagementGateway = {
