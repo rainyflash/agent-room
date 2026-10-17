@@ -123,6 +123,35 @@ describe('MatrixPresenceTracker', () => {
     expect(client.requests).toHaveLength(2);
   });
 
+  it('不和你同在一个房间的不问（Synapse 回 403），同在了下次读的时候再问', () => {
+    const { client, tracker } = setup();
+    client.strangers.add('@far:agent-room.test');
+
+    expect(tracker.observe(['@far:agent-room.test', '@near:agent-room.test']).size).toBe(0);
+    expect(client.requests.map((request) => request.userId)).toEqual(['@near:agent-room.test']);
+    tracker.observe(['@far:agent-room.test']);
+    expect(client.requests).toHaveLength(1);
+
+    client.strangers.delete('@far:agent-room.test');
+    tracker.observe(['@far:agent-room.test']);
+    expect(client.requests.map((request) => request.userId)).toEqual([
+      '@near:agent-room.test',
+      '@far:agent-room.test',
+    ]);
+  });
+
+  it('同步里带来的不同在的人照样用', () => {
+    const { client, tracker } = setup();
+    client.strangers.add('@far:agent-room.test');
+
+    client.presence('@far:agent-room.test', { presence: 'online' });
+
+    expect(tracker.observe(['@far:agent-room.test']).get('@far:agent-room.test')?.state).toBe(
+      'online',
+    );
+    expect(client.requests).toHaveLength(0);
+  });
+
   it('不认识的在线状态和缺字段的回答都不算数', async () => {
     const { client, tracker } = setup();
 
@@ -169,6 +198,19 @@ type PendingRequest = {
 
 class FakeClient extends EventEmitter {
   readonly requests: PendingRequest[] = [];
+  /** 不和你同在任何一个房间的人；别的人都和你同在一个加入了的房间里。 */
+  readonly strangers = new Set<string>();
+
+  getRooms(): unknown[] {
+    return [
+      {
+        getMember: (userId: string) =>
+          this.strangers.has(userId) ? null : { membership: 'join', userId },
+        getMyMembership: () => 'join',
+      },
+      { getMember: () => ({ membership: 'join' }), getMyMembership: () => 'invite' },
+    ];
+  }
 
   getPresence(userId: string): Promise<unknown> {
     return new Promise((resolve, reject) => {
