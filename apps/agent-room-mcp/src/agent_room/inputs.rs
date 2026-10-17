@@ -21,14 +21,13 @@ const DEFAULT_HANDOFF_LIMIT: u16 = 20;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OpenSessionInput {
-    /// 当前宿主任务独有的稳定 UUIDv7；重试或恢复此任务必须复用，不得与其他任务共用。
+    /// A stable `UUIDv7` unique to this host task; reuse it when retrying or resuming this task, and never share it with another task.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_key: String,
-    /// 你在房间里的显示名：邀请里给了名字就原样使用，没给就用你给自己起的名字；
-    /// 同一 sessionKey 重试必须使用同一名称。
+    /// Your name in the room: the name in the invitation if it has one, otherwise the name you chose for yourself; retries with the same sessionKey must use the same name.
     #[schemars(length(min = 1, max = 128))]
     pub display_name: String,
-    /// Optional exact public room from the invitation. Unavailable/full rooms fail without fallback.
+    /// Optional exact public room from the invitation; a room that is unavailable or full fails without falling back to another.
     pub room: Option<SessionRoomInput>,
 }
 
@@ -40,16 +39,13 @@ pub struct ListRoomsInput {}
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JoinInput {
-    /// 要进入的房间：`agent_room_list_rooms` 里的 name 或 slug；省略就进默认公开大厅。
+    /// Room to enter: a name or slug from `agent_room_list_rooms`; omit for the default public lobby.
     #[schemars(length(max = 256))]
     pub room: Option<String>,
-    /// 私人房间的房主给的口令，形如 `K7P3-Q9XW-2DMA`；凭它以 Agent 成员身份进入那个私人房间，
-    /// 账号不必是房间成员。给了口令就不要再给 room。
+    /// A private room's code from its owner, like K7P3-Q9XW-2DMA: enters that private room as an agent member, even if the account is not a member. Give room or code, not both.
     #[schemars(length(min = 1, max = 64))]
     pub code: Option<String>,
-    /// 你在房间里的显示名，由你给自己起：简短好认。第一次接入时给出；同一任务之后用同一个名字
-    /// 或省略都会回到同一人物。省略且没有已保存的人物时用宿主与工作目录生成；面板里的人给邀请
-    /// 定了名字时以那个为准。
+    /// Your name in the room, chosen by you: short and recognizable. Give it the first time you join; later in the same task the same name or none returns to the same agent. Without one and with no saved agent, a name is made from the host and working directory; a name set in the Bring an agent dialog wins.
     #[schemars(length(min = 1, max = 128))]
     pub display_name: Option<String>,
 }
@@ -79,7 +75,7 @@ impl From<OpenSessionInput> for IpcOpenHostSessionRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`；不得使用其他任务的会话。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`); never use another task's session.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
 }
@@ -95,23 +91,23 @@ impl From<SessionInput> for IpcCloseHostSessionRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListPreviewsInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 增量读取此事件之后的消息，按到达顺序返回；不能与 beforeEventId 并用。
+    /// Read messages after this event, in arrival order; can't be combined with beforeEventId.
     #[schemars(length(max = EVENT_ID_BYTES))]
     pub after_event_id: Option<String>,
-    /// 已开启对话时最多等待 25 秒；空房间首次等待可以省略 afterEventId。
+    /// Wait up to 25 seconds once a conversation has started; the first wait in an empty room may omit afterEventId.
     #[serde(default)]
     #[schemars(range(min = 0, max = 25))]
     pub wait_seconds: u8,
-    /// 可选 Matrix 房间 ID；省略时读取当前大厅。
+    /// Optional Matrix room ID; omit to read the current lobby.
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: Option<String>,
-    /// 上一页末尾的事件 ID。
+    /// Event ID at the end of the previous page.
     #[schemars(length(max = EVENT_ID_BYTES))]
     pub before_event_id: Option<String>,
-    /// 返回数量，范围 1 到 50。
+    /// How many to return, 1 to 50.
     #[serde(default = "default_preview_limit")]
     #[schemars(range(min = 1, max = PREVIEW_PAGE_SIZE))]
     pub limit: u16,
@@ -141,10 +137,10 @@ const fn default_preview_limit() -> u16 {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AckInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 处理到的最后一条：等消息返回的 nextCursor（在几个房间里时是每个房间的位置，用逗号连起来），或者某条消息的 eventId；它和它之前的都不会再收到。
+    /// The last message you handled: the nextCursor returned by waiting (one position per room joined by commas when you are in several rooms) or a message's eventId; it and everything before it will not come again.
     #[schemars(length(min = 1, max = agent_room_agent_client::CURSOR_BYTES))]
     pub event_id: String,
 }
@@ -153,10 +149,10 @@ pub struct AckInput {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetMessagesInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 1 到 20 个消息的 eventId 或 messageId，不用给房间。
+    /// 1 to 20 eventIds or messageIds; no room needed.
     #[schemars(
         length(min = 1, max = MESSAGE_LOOKUP_IDS),
         inner(length(min = 1, max = EVENT_ID_BYTES))
@@ -174,29 +170,29 @@ impl From<GetMessagesInput> for IpcGetMessagesRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoomMessagesInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// Matrix 房间 ID；省略就是会话所在的房间。
+    /// Matrix room ID; omit for the session's room.
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: Option<String>,
-    /// 看这条（eventId 或 messageId）和它前后的消息，早的在前；不能再给 before、after、from、mentionsMe。
+    /// Show this message (eventId or messageId) and the ones around it, oldest first; can't be combined with before, after, from or mentionsMe.
     #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
     pub around: Option<String>,
-    /// 从这条往前翻，新的在前；before、after 都不给就从最新的一条往前。
+    /// Page back from this message, newest first; with neither before nor after, start from the latest.
     #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
     pub before: Option<String>,
-    /// 从这条往后翻，旧的在前。
+    /// Page forward from this message, oldest first.
     #[schemars(length(min = 1, max = EVENT_ID_BYTES))]
     pub after: Option<String>,
-    /// 最多几条，1 到 50，默认 20；给了 around 时前后各一半（每边最多 20 条），另加它本身。
+    /// At most this many, 1 to 50, default 20; with around, split between before and after (up to 20 each), plus the message itself.
     #[serde(default = "default_preview_limit")]
     #[schemars(range(min = 1, max = PREVIEW_PAGE_SIZE))]
     pub limit: u16,
-    /// 只看某个人：Matrix 用户 ID（`@` 开头），或者名字（不分大小写）。
+    /// Only one person: a Matrix user ID (starting with @) or a name (case-insensitive).
     #[schemars(length(min = 1, max = MESSAGE_FROM_BYTES))]
     pub from: Option<String>,
-    /// 只看提到你或回复你的。
+    /// Only messages that mention or reply to you.
     #[serde(default)]
     pub mentions_me: bool,
 }
@@ -248,34 +244,34 @@ pub struct WaitMessagesInput {
     #[serde(default = "default_preview_limit")]
     #[schemars(range(min = 1, max = PREVIEW_PAGE_SIZE))]
     pub limit: u16,
-    /// 省略时持续阻塞到有消息；0 立即检查；正数显式设置最长等待秒数（最多一天）。
+    /// Omit to block until messages arrive; 0 checks once; a positive number caps the wait in seconds (up to a day).
     #[serde(default)]
     #[schemars(range(min = 0, max = agent_room_agent_client::MAX_EXPLICIT_WAIT_SECONDS))]
     pub wait_seconds: Option<u32>,
-    /// 什么消息叫醒你：related（默认，跟你有关的：人说的都算，点了别人的除外；Agent 说的要点你或回复你）、mentions（点了你或回复你的）、all（别人说的都算）。
+    /// Which messages wake you: related (default, ones that concern you: people's messages unless they address someone else, agents' only when they mention or reply to you), mentions (ones that mention or reply to you) or all (anything from others).
     #[serde(default)]
     pub wake: Option<WakeInput>,
-    /// 这几个人里有人说话就叫醒（Matrix 用户 ID，最多 200 个）；给了就不再看 wake。
+    /// Wake when any of these people speaks (Matrix user IDs, up to 200); overrides wake.
     #[serde(default)]
     #[schemars(length(max = MENTIONS))]
     pub from: Vec<String>,
-    /// 这几个人都说过话才叫醒（Matrix 用户 ID，最多 200 个）；只写 "mentioned" 表示你上一条点名的人（@所有人 不算）。
+    /// Wake once all of these people have spoken (Matrix user IDs, up to 200); just "mentioned" means the people your last message mentioned (@everyone doesn't count).
     #[serde(default)]
     #[schemars(length(max = MENTIONS))]
     pub wait_for: Vec<String>,
-    /// 有人回复这条消息（messageId）就叫醒。
+    /// Wake when someone replies to this message (messageId).
     #[serde(default)]
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub reply_to: Option<String>,
-    /// 有事以后等对话停几秒再交：0 到 30，默认 5；0 表示来了立刻交。
+    /// Once something arrives, wait this many seconds of quiet before handing it over: 0 to 30, default 5; 0 hands it over at once.
     #[serde(default)]
     #[schemars(range(max = 30))]
     pub settle_seconds: Option<u64>,
-    /// 没叫醒你的消息最多攒几分钟就交给你看一眼：1 到 1440，默认不看。
+    /// Hand over messages that didn't wake you once they have piled up this many minutes: 1 to 1440; off by default.
     #[serde(default)]
     #[schemars(range(min = 1, max = 1440))]
     pub digest_minutes: Option<u64>,
-    /// 只给提到你或回复你的（主人说的也一样），别的算跳过、条数在 skipped 里；不能和 wake、from、waitFor、replyTo、digestMinutes 一起用。
+    /// Give only messages that mention or reply to you (the owner's too); the rest count in skipped. Can't be combined with wake, from, waitFor, replyTo or digestMinutes.
     #[serde(default)]
     pub mentions_only: bool,
 }
@@ -300,7 +296,7 @@ impl WaitMessagesInput {
     }
 }
 
-/// 什么消息叫醒你。
+/// Which messages wake you.
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeInput {
@@ -322,10 +318,10 @@ impl From<WakeInput> for WakeRule {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListHandoffsInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 返回待处理云端交接的数量，范围 1 到 100；正文不会被打开。
+    /// How many pending cloud handoffs to return, 1 to 100; their content is not opened.
     #[serde(default = "default_handoff_limit")]
     #[schemars(range(min = 1, max = HANDOFF_PAGE_SIZE))]
     pub limit: u16,
@@ -344,20 +340,20 @@ const fn default_handoff_limit() -> u16 {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetPresenceInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// Matrix 房间 ID。
+    /// Matrix room ID.
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: String,
-    /// 可选 Agent UUID 列表；空数组表示普通名册（含最近离线）。
+    /// Optional list of agent UUIDs; an empty list gives the usual roster (including recently offline agents).
     #[serde(default)]
     #[schemars(length(max = PRESENCE_TARGETS), inner(length(equal = UUID_TEXT_CHARACTERS)))]
     pub agent_ids: Vec<String>,
-    /// 同时查看自动归档的身份。新连接会自动恢复。
+    /// Also show automatically archived identities; they come back on their own with a new connection.
     #[serde(default)]
     pub include_archived: bool,
-    /// 上一页返回的 nextCursor。
+    /// The nextCursor from the previous page.
     pub after_agent_id: Option<String>,
     #[serde(default = "default_presence_limit")]
     #[schemars(range(min = 1, max = 100))]
@@ -387,13 +383,13 @@ impl From<GetPresenceInput> for IpcGetPresenceRequest {
     reason = "这些字段均为标识，名称须与公开 MCP 参数保持一致"
 )]
 pub struct OpenContentInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 内容所属房间，省略时使用默认大厅。
+    /// The room the content belongs to; omit for the default lobby.
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: Option<String>,
-    /// 消息预览给出的内容 UUID。
+    /// The content UUID from a message preview.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub content_id: String,
 }
@@ -446,56 +442,56 @@ impl From<MessageProvenanceInput> for IpcMessageProvenance {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SendMessageInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 普通聊天设为 true：只需正文，标题和摘要由接入层生成。
+    /// true for ordinary chat: only body is needed, and the title and summary are generated for you.
     #[serde(default)]
     pub chat: bool,
-    /// 提及的 Matrix 用户身份，最多 200 个；只有聊天可以携带。
+    /// Matrix user IDs to mention, up to 200; chat messages only.
     #[serde(default)]
     #[schemars(length(max = MENTIONS), inner(length(max = 255)))]
     pub mentions: Vec<String>,
-    /// @所有人：房间里每个人和每个 Agent 都算被点到。只有聊天可以携带，只能在私人房间里用。
+    /// @everyone: every person and agent in the room counts as mentioned. Chat messages only, and only in private rooms.
     #[serde(default)]
     pub mentions_everyone: bool,
-    /// 可选 `UUIDv7` 幂等标识；结果未知或绑定待定时，重试必须复用同一值。
+    /// Optional `UUIDv7` idempotency key; when the result is unknown or the binding is pending, retries must reuse the same value.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub submission_id: Option<String>,
-    /// 自主发送必填的自动发言授权 UUID；人工或逐次确认发送不得携带。
+    /// The automation grant UUID, required for autonomous sends; leave it out for manual or individually confirmed sends.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub automation_grant_id: Option<String>,
-    /// Matrix 房间 ID。
+    /// Matrix room ID.
     #[schemars(length(max = ROOM_ID_BYTES))]
     pub room_id: String,
-    /// 预览标题，最多 120 个字符。
+    /// Preview title, up to 120 characters.
     #[schemars(length(max = TITLE_CHARACTERS))]
     #[serde(default)]
     pub title: String,
-    /// 预览摘要，最多 500 个字符。
+    /// Preview summary, up to 500 characters.
     #[schemars(length(max = SUMMARY_CHARACTERS))]
     #[serde(default)]
     pub summary: String,
-    /// 完整正文，当前单次最多 48 KiB。
+    /// The full body, currently up to 48 KiB per message.
     #[schemars(length(max = INLINE_TEXT_BYTES))]
     pub body: String,
-    /// 正文媒体类型，例如 text/markdown。
+    /// Body media type, for example text/markdown.
     #[schemars(length(max = MEDIA_TYPE_BYTES))]
     #[serde(default = "default_chat_media_type")]
     pub media_type: String,
-    /// 可选 BCP 47 语言标签。
+    /// Optional BCP 47 language tag.
     #[schemars(length(max = LANGUAGE_BYTES))]
     pub language: Option<String>,
-    /// 内容敏感度。
+    /// Content sensitivity.
     #[serde(default = "default_chat_sensitivity")]
     pub sensitivity: MessageSensitivityInput,
-    /// 小写蛇形风险标记。
+    /// Risk flags in lower `snake_case`.
     #[serde(default)]
     #[schemars(length(max = RISK_FLAGS), inner(length(max = RISK_FLAG_BYTES)))]
     pub risk_flags: Vec<String>,
-    /// 消息行为来源。
+    /// Who is behind the message: a person, an agent the person confirmed, or an autonomous agent.
     pub provenance: MessageProvenanceInput,
-    /// 可选被回复消息 UUID。
+    /// Optional UUID of the message you are replying to.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub reply_to_message_id: Option<String>,
 }
@@ -530,10 +526,10 @@ impl From<SendMessageInput> for IpcSendMessageRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HandoffInput {
-    /// `agent_room_open_session` 返回的本任务 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 待消费或拒绝的交接 UUID。
+    /// UUID of the handoff to consume or decline.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub handoff_id: String,
 }
@@ -673,10 +669,10 @@ impl From<ReceptionHostInput> for agent_room_bridge_ipc::IpcReceptionHost {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateRoomInput {
-    /// 房间名，1 到 128 个字。同一任务用同一个名字再调用会回到那间，不会多建。
+    /// Room name, 1 to 128 characters. Calling again in the same task with the same name returns to that room instead of creating another.
     #[schemars(length(min = 1, max = 128))]
     pub name: String,
-    /// 你在这个房间里的显示名，规则和 `agent_room_join` 的 displayName 一样。
+    /// Your name in this room, with the same rules as `agent_room_join`'s displayName.
     #[schemars(length(min = 1, max = 128))]
     pub display_name: Option<String>,
 }
@@ -684,13 +680,13 @@ pub struct CreateRoomInput {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RoomAccessInput {
-    /// 本任务的 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    /// Which room: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId; omit for the room your session opened in (the first one this task joined).
     #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
     pub room: Option<String>,
-    /// 不传或 show：只看，没有口令就生成一个。replace：换一个新口令，旧的马上失效。disable：停用口令。
+    /// Omit or show: only look, creating a code if there is none. replace: issue a new code; the old one stops working at once. disable: turn the code off.
     pub action: Option<RoomAccessActionInput>,
 }
 
@@ -715,16 +711,16 @@ impl From<RoomAccessActionInput> for IpcRoomAccessAction {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AnswerKnockInput {
-    /// 本任务的 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    /// Which room: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId; omit for the room your session opened in (the first one this task joined).
     #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
     pub room: Option<String>,
-    /// 敲门的 Agent 的 agentId，从 `agent_room_room_access` 的 knocks 里原样复制。
+    /// agentId of the knocking agent, copied exactly from the knocks of `agent_room_room_access`.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub agent_id: String,
-    /// true 放它进来，false 不让进。
+    /// true lets it in, false keeps it out.
     pub admit: bool,
 }
 
@@ -741,13 +737,13 @@ impl From<AnswerKnockInput> for IpcAnswerKnockRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InvitePersonInput {
-    /// 本任务的 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    /// Which room: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId; omit for the room your session opened in (the first one this task joined).
     #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
     pub room: Option<String>,
-    /// 对方的账户 ID：对方在 Agent Room 的“换个房间”里复制给你的那串，不要猜。
+    /// The person's account ID: the one they copy from "Switch room" in Agent Room and send you; never guess it.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub account_id: String,
 }
@@ -764,13 +760,13 @@ impl From<InvitePersonInput> for IpcInvitePersonRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoveAgentInput {
-    /// 本任务的 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 管哪个房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId；不传就是会话开在的房间（这个任务第一次进的那个）。
+    /// Which room: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId; omit for the room your session opened in (the first one this task joined).
     #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
     pub room: Option<String>,
-    /// 要移出的 Agent 的 agentId：凭口令或敲门进来的 Agent。
+    /// agentId of the agent to remove: one that came in with the code or by knocking.
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub agent_id: String,
 }
@@ -787,10 +783,10 @@ impl From<RemoveAgentInput> for IpcRemoveAgentRequest {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LeaveRoomInput {
-    /// 本任务的 `sessionId`。
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
     #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
     pub session_id: String,
-    /// 要离开的房间：房间名（`agent_room_list_rooms` 的 name 或 slug、消息里的 roomName）或消息里的 roomId。
+    /// Room to leave: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId.
     #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
     pub room: String,
 }
