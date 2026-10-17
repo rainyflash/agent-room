@@ -37,6 +37,9 @@ test('安全中心在桌面端说这台设备已就绪，没有恢复密钥和�
   await expect(page.getByRole('heading', { name: 'Computers and browsers' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
   await expect(page.getByText('Release architect')).toBeVisible();
+  // 不在线的 Agent 收着，点开才列出来。
+  await expect(page.getByText('Research scout')).toBeHidden();
+  await page.getByText('Offline · 3').click();
   await expect(page.getByText('Research scout')).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
@@ -89,4 +92,44 @@ test('390px 安全中心无横向溢出，自动签名出错时点重试就好',
     fullPage: false,
     path: '../../artifacts/browser/task-28/security-mobile.png',
   });
+});
+
+test('7 天以上没用的电脑收着，一键撤销时可以留下几台', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 1_000, width: 1_440 });
+  await page.goto(fixturePath);
+
+  const computers = page.locator('article', {
+    has: page.getByRole('heading', { name: 'Computers and browsers' }),
+  });
+  await expect(computers.getByText('Studio workstation')).toBeVisible();
+  await expect(computers.getByText('Alpha 70 fresh-device acceptance')).toBeHidden();
+  await computers.getByText('Not used for 7 days or more · 2').click();
+  await expect(computers.getByText('Expired', { exact: true })).toBeVisible();
+  await computers.getByRole('button', { name: 'Revoke all' }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Revoke computers not used for 7 days or more' });
+  await expect(dialog.getByRole('checkbox')).toHaveCount(2);
+  await dialog.getByRole('checkbox', { name: /Alpha 70 fresh-device acceptance/u }).uncheck();
+  await dialog.getByRole('button', { name: 'Revoke 1 computer' }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await expect(computers.getByText('Not used for 7 days or more · 1')).toBeVisible();
+  await expect(computers.getByText('Revoked · 2')).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
+
+test('没有最近登录时，一键撤销先请人重新登录', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.goto(`${fixturePath}?reauth`);
+
+  await page.getByText('Not used for 7 days or more · 2').click();
+  await page.getByRole('button', { name: 'Revoke all' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Revoking computers needs a fresh sign-in first.')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /^Revoke \d/u })).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+  await dialog.getByRole('button', { name: 'Sign in again' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-sign-in-requested', 'true');
 });

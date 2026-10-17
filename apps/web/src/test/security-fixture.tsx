@@ -6,7 +6,11 @@ import { I18nextProvider } from 'react-i18next';
 import '@agent-room/ui-system/styles.css';
 import '@/app/styles.css';
 
-import type { AccessManagementGateway } from '@/features/security/domain/access-management';
+import type {
+  AccessManagementGateway,
+  AgentInstance,
+  ProductDevice,
+} from '@/features/security/domain/access-management';
 import type {
   AgentRecoveryGateway,
   AgentRecoveryResult,
@@ -53,79 +57,123 @@ const agentRecovery: AgentRecoveryGateway = {
     );
   },
 };
+const MINUTE = 60_000;
+const DAY = 24 * 60 * MINUTE;
+const fixtureNow = Date.now();
+/**
+ * 两台在用的电脑，加上以前发布验收留下的：一台 10 天没用、一台 40 天没用（授权已过期）、
+ * 一台撤销了的。撤销照真的走：撤完挪进“已撤销的”。`?reauth` 是没有最近登录过。
+ */
+let fixtureDevices: readonly ProductDevice[] = [
+  {
+    createdAtUnixMs: fixtureNow - 90 * DAY,
+    deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+    label: 'Studio workstation',
+    lastSeenAtUnixMs: fixtureNow - 5 * MINUTE,
+    matrixDeviceId: null,
+    platform: 'windows',
+    revokedAtUnixMs: null,
+    trustState: 'verified',
+  },
+  {
+    createdAtUnixMs: fixtureNow - 60 * DAY,
+    deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e46',
+    label: 'Travel notebook',
+    lastSeenAtUnixMs: fixtureNow - 2 * DAY,
+    matrixDeviceId: null,
+    platform: 'macos',
+    revokedAtUnixMs: null,
+    trustState: 'verified',
+  },
+  {
+    createdAtUnixMs: fixtureNow - 12 * DAY,
+    deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e50',
+    label: 'Alpha 70 fresh-device acceptance',
+    lastSeenAtUnixMs: fixtureNow - 10 * DAY,
+    matrixDeviceId: null,
+    platform: 'windows',
+    revokedAtUnixMs: null,
+    trustState: 'verified',
+  },
+  {
+    createdAtUnixMs: fixtureNow - 45 * DAY,
+    deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e51',
+    label: 'Alpha 60 fresh-device acceptance',
+    lastSeenAtUnixMs: fixtureNow - 40 * DAY,
+    matrixDeviceId: null,
+    platform: 'windows',
+    revokedAtUnixMs: null,
+    trustState: 'verified',
+  },
+  {
+    createdAtUnixMs: fixtureNow - 50 * DAY,
+    deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e52',
+    label: 'Alpha 55 fresh-device acceptance',
+    lastSeenAtUnixMs: fixtureNow - 48 * DAY,
+    matrixDeviceId: null,
+    platform: 'windows',
+    revokedAtUnixMs: fixtureNow - 20 * DAY,
+    trustState: 'revoked',
+  },
+];
+
+function fixtureInstance(
+  index: number,
+  name: string,
+  status: AgentInstance['status'],
+  computer: ProductDevice,
+  lastSeenAgoMs: number,
+): AgentInstance {
+  const suffix = String(index).padStart(2, '0');
+  return {
+    adapterType: 'cli',
+    agentAvatarContentId: null,
+    agentDisplayName: name,
+    agentId: `0198b601-77a1-7bb8-83eb-a8fe68c97f${suffix}`,
+    agentInstanceId: `0198b601-77a1-7bb8-83eb-a8fe68c97d${suffix}`,
+    capabilityVersion: '1.0',
+    createdAtUnixMs: computer.createdAtUnixMs,
+    device: {
+      deviceId: computer.deviceId,
+      label: computer.label,
+      platform: computer.platform,
+      trustState: computer.trustState,
+    },
+    lastSeenAtUnixMs: fixtureNow - lastSeenAgoMs,
+    matrixDeviceId: `AR_FIXTURE_${suffix}`,
+    matrixDeviceRevokedAtUnixMs: status === 'revoked' ? fixtureNow - 20 * DAY : null,
+    revokedAtUnixMs: status === 'revoked' ? fixtureNow - 20 * DAY : null,
+    status,
+  };
+}
+
+const [studio, travel, alpha70, alpha60, alpha55] = fixtureDevices as [
+  ProductDevice,
+  ProductDevice,
+  ProductDevice,
+  ProductDevice,
+  ProductDevice,
+];
+const fixtureInstances: readonly AgentInstance[] = [
+  fixtureInstance(1, 'Release architect', 'online', studio, MINUTE),
+  fixtureInstance(2, 'Research scout', 'offline', travel, 2 * DAY),
+  fixtureInstance(3, 'Alpha 70 acceptance agent', 'offline', alpha70, 10 * DAY),
+  fixtureInstance(4, 'Alpha 60 acceptance agent', 'offline', alpha60, 40 * DAY),
+  fixtureInstance(5, 'Alpha 55 acceptance agent', 'revoked', alpha55, 48 * DAY),
+];
+
 const accessManagement: AccessManagementGateway = {
-  listAgentInstances: () =>
-    Promise.resolve(
-      ok([
-        {
-          adapterType: 'codex',
-          agentAvatarContentId: null,
-          agentDisplayName: 'Release architect',
-          agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',
-          agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
-          capabilityVersion: '1.0',
-          createdAtUnixMs: 1_756_118_400_000,
-          device: {
-            deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
-            label: 'Studio workstation',
-            platform: 'windows',
-            trustState: 'verified',
-          },
-          lastSeenAtUnixMs: 1_756_122_000_000,
-          matrixDeviceId: 'AR_CODEX_STUDIO',
-          matrixDeviceRevokedAtUnixMs: null,
-          revokedAtUnixMs: null,
-          status: 'online',
-        },
-        {
-          adapterType: 'claude-code',
-          agentAvatarContentId: null,
-          agentDisplayName: 'Research scout',
-          agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e45',
-          agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
-          capabilityVersion: '1.0',
-          createdAtUnixMs: 1_756_032_000_000,
-          device: {
-            deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e46',
-            label: 'Travel notebook',
-            platform: 'macos',
-            trustState: 'verified',
-          },
-          lastSeenAtUnixMs: 1_756_121_400_000,
-          matrixDeviceId: 'AR_CLAUDE_TRAVEL',
-          matrixDeviceRevokedAtUnixMs: null,
-          revokedAtUnixMs: null,
-          status: 'offline',
-        },
-      ]),
-    ),
-  listProductDevices: () =>
-    Promise.resolve(
-      ok([
-        {
-          createdAtUnixMs: 1_756_032_000_000,
-          deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
-          label: 'Studio workstation',
-          lastSeenAtUnixMs: 1_756_122_000_000,
-          matrixDeviceId: 'WEB_DEVICE',
-          platform: 'windows',
-          revokedAtUnixMs: null,
-          trustState: 'verified',
-        },
-        {
-          createdAtUnixMs: 1_756_118_400_000,
-          deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e46',
-          label: 'Travel notebook',
-          lastSeenAtUnixMs: null,
-          matrixDeviceId: null,
-          platform: 'macos',
-          revokedAtUnixMs: null,
-          trustState: 'pending',
-        },
-      ]),
-    ),
+  listAgentInstances: () => Promise.resolve(ok(fixtureInstances)),
+  listProductDevices: () => Promise.resolve(ok(fixtureDevices)),
   revokeAgentInstance: () => Promise.resolve(err({ code: 'access.fixture', retryable: false })),
-  revokeProductDevice: () => Promise.resolve(err({ code: 'access.fixture', retryable: false })),
+  revokeProductDevice: (deviceId) => {
+    fixtureDevices = fixtureDevices.map((device) =>
+      device.deviceId === deviceId
+        ? { ...device, revokedAtUnixMs: Date.now(), trustState: 'revoked' }
+        : device,
+    );
+    return Promise.resolve(ok({ matrixCleanup: 'complete', pendingAgentInstanceCount: 0 }));
+  },
 };
 const search = new URLSearchParams(window.location.search);
 /** `?signing=failed`：这台设备的自动签名出错了，点“重试”后先“正在准备”，再就绪。 */
@@ -196,6 +244,12 @@ async function bootstrapFixture(): Promise<void> {
                 {...(search.has('agentRecovery') ? { agentRecovery } : {})}
                 deviceSigning={deviceSigning}
                 gateway={security}
+                reauthentication={{
+                  recentlyAuthenticated: !search.has('reauth'),
+                  signInAgain: () => {
+                    document.body.dataset.signInRequested = 'true';
+                  },
+                }}
               />
             </SettingsLayout>
           </QueryClientProvider>

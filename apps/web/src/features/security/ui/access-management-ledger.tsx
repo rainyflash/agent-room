@@ -1,4 +1,4 @@
-import { Button } from '@agent-room/ui-system';
+import { Button, Details } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Bot,
@@ -19,27 +19,45 @@ import {
   useAgentInstances,
   useProductDevices,
 } from '@/features/security/data/access-management-queries';
+import {
+  deviceAuthorizationExpired,
+  groupDevices,
+  groupInstances,
+} from '@/features/security/domain/access-groups';
 import type {
   AccessManagementFailure,
   AccessManagementGateway,
   AgentInstance,
   ProductDevice,
 } from '@/features/security/domain/access-management';
+import {
+  BulkDeviceRevocationDialog,
+  DeviceUsage,
+  type Reauthentication,
+} from '@/features/security/ui/bulk-device-revocation-dialog';
+
+const REAUTHENTICATION_REQUIRED = 'authentication.reauthentication_required';
 
 export type AccessManagementLedgerProps = {
   readonly gateway: AccessManagementGateway;
+  /** 撤销要最近登录过；不给就不先拦着，服务器说要重新登录时只报错。 */
+  readonly reauthentication?: Reauthentication | undefined;
 };
 
 type RevocationIntent =
   | { readonly id: string; readonly kind: 'device'; readonly label: string }
   | { readonly id: string; readonly kind: 'instance'; readonly label: string };
 
-export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps) {
+export function AccessManagementLedger({ gateway, reauthentication }: AccessManagementLedgerProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const devices = useProductDevices(gateway);
   const instances = useAgentInstances(gateway);
   const [intent, setIntent] = useState<RevocationIntent | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkCleanupPending, setBulkCleanupPending] = useState(false);
+  const now = Date.now();
+  const idleDevices = groupDevices(resultValue(devices.data), now).idle;
   const refresh = async (): Promise<void> => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: productDeviceQueryKey }),
@@ -143,8 +161,10 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
         )}
       </AnimatePresence>
 
-      {failure === null ? null : <AccessFailure failure={failure} />}
-      {pendingCleanupNotice(revokeDevice.data, revokeInstance.data) ? (
+      {failure === null ? null : (
+        <AccessFailure failure={failure} reauthentication={reauthentication} />
+      )}
+      {bulkCleanupPending || pendingCleanupNotice(revokeDevice.data, revokeInstance.data) ? (
         <p className="security-access__pending" role="status">
           <Clock3 aria-hidden="true" />
           <span>{t('security.access.cleanupPending')}</span>
@@ -156,6 +176,11 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
           devices={resultValue(devices.data)}
           failure={resultFailure(devices.data)}
           loading={devices.isPending}
+          now={now}
+          onBulkRevoke={() => {
+            setIntent(null);
+            setBulkOpen(true);
+          }}
           onRetry={() => void devices.refetch()}
           onRevoke={(device) => {
             setIntent({ id: device.deviceId, kind: 'device', label: device.label });
@@ -178,6 +203,21 @@ export function AccessManagementLedger({ gateway }: AccessManagementLedgerProps)
           pendingId={revokeInstance.isPending ? revokeInstance.variables : null}
         />
       </div>
+      {bulkOpen && idleDevices.length > 0 ? (
+        <BulkDeviceRevocationDialog
+          devices={idleDevices}
+          gateway={gateway}
+          now={now}
+          onCleanupPending={() => {
+            setBulkCleanupPending(true);
+          }}
+          onClose={() => {
+            setBulkOpen(false);
+          }}
+          onRevoked={refresh}
+          reauthentication={reauthentication}
+        />
+      ) : null}
     </section>
   );
 }
@@ -186,26 +226,49 @@ type ProductDevicePanelProps = {
   readonly devices: readonly ProductDevice[];
   readonly failure: AccessManagementFailure | null;
   readonly loading: boolean;
+  readonly now: number;
+  readonly onBulkRevoke: () => void;
   readonly onRetry: () => void;
   readonly onRevoke: (device: ProductDevice) => void;
   readonly pendingCleanup: ReadonlySet<string>;
   readonly pendingId: string | null;
 };
 
+/**
+ * 最近 7 天用过的摊开；7 天以上没用的、已撤销的收起来、只写有几个（`specs/workspace-tidy/design.md`）。
+ * 以前每版发布验收都授权一台新设备，攒下一大片，全摊开就找不到真在用的。
+ */
 function ProductDevicePanel({
   devices,
   failure,
   loading,
+  now,
+  onBulkRevoke,
   onRetry,
   onRevoke,
   pendingCleanup,
   pendingId,
 }: ProductDevicePanelProps) {
   const { t } = useTranslation();
+  const groups = groupDevices(devices, now);
+  const row = (device: ProductDevice) => (
+    <DeviceRow
+      device={device}
+      key={device.deviceId}
+      now={now}
+      onRevoke={onRevoke}
+      pendingId={pendingId}
+      retryCleanup={pendingCleanup.has(device.deviceId)}
+    />
+  );
   return (
     <article className="security-access-panel">
       <AccessPanelHeading
-        count={devices.length}
+        // 只数还登录着的：撤销了的、授权已经过期的都不算。
+        count={
+          groups.recent.length +
+          groups.idle.filter((device) => !deviceAuthorizationExpired(device, now)).length
+        }
         detail={t('security.access.devices.detail')}
         icon={<MonitorSmartphone aria-hidden="true" />}
         title={t('security.access.devices.title')}
@@ -214,47 +277,88 @@ function ProductDevicePanel({
         {devices.length === 0 ? (
           <p className="security-access-panel__empty">{t('security.access.devices.empty')}</p>
         ) : (
-          <ol className="security-access-list">
-            {sortByRevocation(devices).map((device) => {
-              const retryCleanup = pendingCleanup.has(device.deviceId);
-              return (
-                <li key={device.deviceId}>
-                  <div className="security-access-list__identity">
-                    <strong>{device.label}</strong>
-                  </div>
-                  <span className={`security-access-status is-${device.trustState}`}>
-                    {t(`security.access.deviceState.${device.trustState}`)}
-                  </span>
-                  <AccessMetadata
-                    primary={t(`security.access.platform.${device.platform}`)}
-                    timestamp={device.lastSeenAtUnixMs ?? device.createdAtUnixMs}
-                    timestampKind={device.lastSeenAtUnixMs === null ? 'registered' : 'lastSeen'}
-                  />
-                  {device.trustState !== 'revoked' || retryCleanup ? (
-                    <Button
-                      disabled={pendingId !== null}
-                      onClick={() => {
-                        onRevoke(device);
-                      }}
-                      size="compact"
-                      tone={retryCleanup ? 'ghost' : 'alert'}
-                    >
-                      {pendingId === device.deviceId
-                        ? t('security.access.revoking')
-                        : t(
-                            retryCleanup
-                              ? 'security.access.retryCleanup'
-                              : 'security.access.revokeDevice',
-                          )}
-                    </Button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ol>
+          <div className="security-access-groups">
+            {groups.recent.length === 0 ? (
+              <p className="security-access-groups__empty">
+                {t('security.access.devices.noneRecent')}
+              </p>
+            ) : (
+              <ol className="security-access-list">{groups.recent.map(row)}</ol>
+            )}
+            {groups.idle.length === 0 ? null : (
+              <Details
+                className="security-access-group"
+                summary={t('security.access.group.idle', { count: groups.idle.length })}
+              >
+                <div className="security-access-group__actions">
+                  <Button
+                    disabled={pendingId !== null}
+                    onClick={onBulkRevoke}
+                    size="compact"
+                    tone="alert"
+                  >
+                    {t('security.access.bulk.open')}
+                  </Button>
+                </div>
+                <ol className="security-access-list">{groups.idle.map(row)}</ol>
+              </Details>
+            )}
+            {groups.revoked.length === 0 ? null : (
+              <Details
+                className="security-access-group"
+                // 有没收完尾、要重试的，展开着让人看到重试按钮。
+                defaultOpen={groups.revoked.some((device) => pendingCleanup.has(device.deviceId))}
+                summary={t('security.access.group.revoked', { count: groups.revoked.length })}
+              >
+                <ol className="security-access-list">{groups.revoked.map(row)}</ol>
+              </Details>
+            )}
+          </div>
         )}
       </AccessPanelBoundary>
     </article>
+  );
+}
+
+function DeviceRow({
+  device,
+  now,
+  onRevoke,
+  pendingId,
+  retryCleanup,
+}: {
+  readonly device: ProductDevice;
+  readonly now: number;
+  readonly onRevoke: (device: ProductDevice) => void;
+  readonly pendingId: string | null;
+  readonly retryCleanup: boolean;
+}) {
+  const { t } = useTranslation();
+  const state = deviceAuthorizationExpired(device, now) ? 'expired' : device.trustState;
+  return (
+    <li>
+      <div className="security-access-list__identity">
+        <strong>{device.label}</strong>
+      </div>
+      <span className={`security-access-status is-${state}`}>
+        {t(`security.access.deviceState.${state}`)}
+      </span>
+      <DeviceUsage device={device} explainExpiry={false} now={now} />
+      {device.trustState !== 'revoked' || retryCleanup ? (
+        <Button
+          disabled={pendingId !== null}
+          onClick={() => {
+            onRevoke(device);
+          }}
+          size="compact"
+          tone={retryCleanup ? 'ghost' : 'alert'}
+        >
+          {pendingId === device.deviceId
+            ? t('security.access.revoking')
+            : t(retryCleanup ? 'security.access.retryCleanup' : 'security.access.revokeDevice')}
+        </Button>
+      ) : null}
+    </li>
   );
 }
 
@@ -267,6 +371,7 @@ type AgentInstancePanelProps = {
   readonly pendingId: string | null;
 };
 
+/** 连着的摊开；不在线的、已断开的收起来、只写有几个。 */
 function AgentInstancePanel({
   failure,
   instances,
@@ -276,10 +381,19 @@ function AgentInstancePanel({
   pendingId,
 }: AgentInstancePanelProps) {
   const { t } = useTranslation();
+  const groups = groupInstances(instances);
+  const row = (instance: AgentInstance) => (
+    <InstanceRow
+      instance={instance}
+      key={instance.agentInstanceId}
+      onRevoke={onRevoke}
+      pendingId={pendingId}
+    />
+  );
   return (
     <article className="security-access-panel">
       <AccessPanelHeading
-        count={instances.length}
+        count={groups.connected.length}
         detail={t('security.access.instances.detail')}
         icon={<Bot aria-hidden="true" />}
         title={t('security.access.instances.title')}
@@ -288,49 +402,84 @@ function AgentInstancePanel({
         {instances.length === 0 ? (
           <p className="security-access-panel__empty">{t('security.access.instances.empty')}</p>
         ) : (
-          <ol className="security-access-list">
-            {sortByRevocation(instances).map((instance) => {
-              const retryCleanup =
-                instance.status === 'revoked' && instance.matrixDeviceRevokedAtUnixMs === null;
-              return (
-                <li key={instance.agentInstanceId}>
-                  <div className="security-access-list__identity">
-                    <strong>{instance.agentDisplayName}</strong>
-                  </div>
-                  <span className={`security-access-status is-${instance.status}`}>
-                    {t(`security.access.instanceState.${instance.status}`)}
-                  </span>
-                  <AccessMetadata
-                    primary={instance.device.label}
-                    timestamp={instance.lastSeenAtUnixMs ?? instance.createdAtUnixMs}
-                    timestampKind={instance.lastSeenAtUnixMs === null ? 'registered' : 'lastSeen'}
-                  />
-                  {instance.status !== 'revoked' || retryCleanup ? (
-                    <Button
-                      disabled={pendingId !== null}
-                      onClick={() => {
-                        onRevoke(instance);
-                      }}
-                      size="compact"
-                      tone={retryCleanup ? 'ghost' : 'alert'}
-                    >
-                      {pendingId === instance.agentInstanceId
-                        ? t('security.access.revoking')
-                        : t(
-                            retryCleanup
-                              ? 'security.access.retryCleanup'
-                              : 'security.access.revokeInstance',
-                          )}
-                    </Button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ol>
+          <div className="security-access-groups">
+            {groups.connected.length === 0 ? (
+              <p className="security-access-groups__empty">
+                {t('security.access.instances.noneConnected')}
+              </p>
+            ) : (
+              <ol className="security-access-list">{groups.connected.map(row)}</ol>
+            )}
+            {groups.offline.length === 0 ? null : (
+              <Details
+                className="security-access-group"
+                summary={t('security.access.group.offline', { count: groups.offline.length })}
+              >
+                <ol className="security-access-list">{groups.offline.map(row)}</ol>
+              </Details>
+            )}
+            {groups.revoked.length === 0 ? null : (
+              <Details
+                className="security-access-group"
+                defaultOpen={groups.revoked.some(needsCleanupRetry)}
+                summary={t('security.access.group.disconnected', {
+                  count: groups.revoked.length,
+                })}
+              >
+                <ol className="security-access-list">{groups.revoked.map(row)}</ol>
+              </Details>
+            )}
+          </div>
         )}
       </AccessPanelBoundary>
     </article>
   );
+}
+
+function InstanceRow({
+  instance,
+  onRevoke,
+  pendingId,
+}: {
+  readonly instance: AgentInstance;
+  readonly onRevoke: (instance: AgentInstance) => void;
+  readonly pendingId: string | null;
+}) {
+  const { t } = useTranslation();
+  const retryCleanup = needsCleanupRetry(instance);
+  return (
+    <li>
+      <div className="security-access-list__identity">
+        <strong>{instance.agentDisplayName}</strong>
+      </div>
+      <span className={`security-access-status is-${instance.status}`}>
+        {t(`security.access.instanceState.${instance.status}`)}
+      </span>
+      <AccessMetadata
+        primary={instance.device.label}
+        timestamp={instance.lastSeenAtUnixMs ?? instance.createdAtUnixMs}
+        timestampKind={instance.lastSeenAtUnixMs === null ? 'registered' : 'lastSeen'}
+      />
+      {instance.status !== 'revoked' || retryCleanup ? (
+        <Button
+          disabled={pendingId !== null}
+          onClick={() => {
+            onRevoke(instance);
+          }}
+          size="compact"
+          tone={retryCleanup ? 'ghost' : 'alert'}
+        >
+          {pendingId === instance.agentInstanceId
+            ? t('security.access.revoking')
+            : t(retryCleanup ? 'security.access.retryCleanup' : 'security.access.revokeInstance')}
+        </Button>
+      ) : null}
+    </li>
+  );
+}
+
+function needsCleanupRetry(instance: AgentInstance): boolean {
+  return instance.status === 'revoked' && instance.matrixDeviceRevokedAtUnixMs === null;
 }
 
 type AccessPanelHeadingProps = {
@@ -408,8 +557,25 @@ function AccessMetadata({
   );
 }
 
-function AccessFailure({ failure }: { readonly failure: AccessManagementFailure }) {
+function AccessFailure({
+  failure,
+  reauthentication,
+}: {
+  readonly failure: AccessManagementFailure;
+  readonly reauthentication: Reauthentication | undefined;
+}) {
   const { t } = useTranslation();
+  if (failure.code === REAUTHENTICATION_REQUIRED && reauthentication !== undefined) {
+    return (
+      <p className="security-failure" role="alert">
+        <CircleAlert aria-hidden="true" />
+        <span>{t('security.access.signInAgain')}</span>
+        <Button onClick={reauthentication.signInAgain} size="compact" tone="quiet">
+          {t('security.access.bulk.signInAgain')}
+        </Button>
+      </p>
+    );
+  }
   return (
     <p className="security-failure" role="alert">
       <CircleAlert aria-hidden="true" />
@@ -449,13 +615,5 @@ function pendingCleanupNotice(
   return (
     (device?.ok === true && device.value.matrixCleanup === 'pending') ||
     (instance?.ok === true && instance.value.matrixCleanup === 'pending')
-  );
-}
-
-function sortByRevocation<T extends { readonly revokedAtUnixMs: number | null }>(
-  values: readonly T[],
-): readonly T[] {
-  return [...values].sort(
-    (left, right) => Number(left.revokedAtUnixMs !== null) - Number(right.revokedAtUnixMs !== null),
   );
 }

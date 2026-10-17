@@ -422,6 +422,99 @@
   color: var(--color-alert);
 }
 
+/* 电脑和 Agent 分组：常用的摊开，其余的收起来、只写有几个（access-groups.ts）。 */
+.security-access-groups {
+  display: grid;
+  min-width: 0;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.security-access-groups > .security-access-list {
+  margin-top: 0;
+}
+
+.security-access-groups__empty {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+
+.security-access-group > summary {
+  width: fit-content;
+  justify-content: flex-start;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.security-access-group > .ar-disclosure__body {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.security-access-group > .ar-disclosure__body > .security-access-list {
+  margin-top: 0;
+}
+
+.security-access-group__actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.security-access-status.is-expired {
+  color: var(--ar-muted);
+}
+
+.security-access-list__expired {
+  color: var(--ar-muted);
+}
+
+/* 一键撤销：每台一行勾选框，名字和上次使用上下排。 */
+.security-bulk-revocation__list {
+  display: grid;
+  max-height: min(50vh, 420px);
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.security-bulk-revocation__list > li + li {
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.security-bulk-revocation__list label {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  cursor: pointer;
+}
+
+.security-bulk-revocation__list input {
+  margin-top: 0.2rem;
+}
+
+.security-bulk-revocation__identity {
+  display: grid;
+  min-width: 0;
+  gap: 0.22rem;
+}
+
+.security-bulk-revocation__identity strong {
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  font-weight: 620;
+}
+
+.security-bulk-revocation__identity .security-access-list__metadata span,
+.security-bulk-revocation__identity .security-access-list__metadata time {
+  white-space: normal;
+}
+
 .security-access-panel__boundary,
 .security-access-panel__empty {
   display: flex;
