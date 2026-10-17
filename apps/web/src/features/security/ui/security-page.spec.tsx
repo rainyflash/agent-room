@@ -221,7 +221,8 @@ function productDevice() {
     createdAtUnixMs: 1_700_000_000_000,
     deviceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
     label: 'Studio workstation',
-    lastSeenAtUnixMs: 1_700_000_010_000,
+    // 刚用过：最近 7 天用过的电脑摊开列着。
+    lastSeenAtUnixMs: Date.now() - 60_000,
     matrixDeviceId: 'WEB_DEVICE',
     platform: 'windows' as const,
     revokedAtUnixMs: null,

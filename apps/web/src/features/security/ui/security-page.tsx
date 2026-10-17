@@ -15,22 +15,39 @@ import type {
   MatrixSecuritySnapshot,
 } from '@/features/security/domain/matrix-security';
 import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
+import type { Reauthentication } from '@/features/security/ui/bulk-device-revocation-dialog';
 import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 import { SecurityDeviceLedger } from '@/features/security/ui/security-device-ledger';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
 import { ThisDeviceStatus } from '@/features/security/ui/this-device-status';
+import { useOptionalSession } from '@/features/session/ui/session-provider';
 import type { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 
 import './security-page.css';
 
+/** 撤销电脑前重新登录完回到这里。 */
+const SECURITY_PATH = '/settings/security';
+
 /** “设置 → 安全”：这台设备准备好没有、你的设备、已授权的电脑和 Agent。 */
 export function SecuritySettings() {
-  const { accessManagement, deviceSigning, security, localRuntime } = useAppServices();
+  const { accessManagement, controlPlane, deviceSigning, security, localRuntime } =
+    useAppServices();
+  const principal = useOptionalSession()?.snapshot.context.principal ?? null;
   return (
     <SecurityWorkspace
       accessManagement={accessManagement}
       deviceSigning={deviceSigning}
       gateway={security}
+      {...(principal === null
+        ? {}
+        : {
+            reauthentication: {
+              recentlyAuthenticated: principal.recentlyAuthenticated,
+              signInAgain: () => {
+                void controlPlane.beginAuthentication(SECURITY_PATH);
+              },
+            },
+          })}
       {...(localRuntime.isAvailable() && localRuntime.agentRecovery
         ? { agentRecovery: localRuntime.agentRecovery }
         : {})}
@@ -44,6 +61,8 @@ export type SecurityWorkspaceProps = {
   /** 这台设备的自动签名（ADR 0011）：准备中、就绪、出错可重试。 */
   readonly deviceSigning: DeviceSigningStatus;
   readonly gateway: MatrixSecurityGateway;
+  /** 撤销电脑要最近登录过：登录着的时候给，没登录（测试）就不先拦着。 */
+  readonly reauthentication?: Reauthentication;
 };
 
 export function SecurityWorkspace({
@@ -51,6 +70,7 @@ export function SecurityWorkspace({
   deviceSigning,
   gateway,
   agentRecovery,
+  reauthentication,
 }: SecurityWorkspaceProps) {
   const { t } = useTranslation();
   const inspection = useMatrixSecurity(gateway);
@@ -99,7 +119,7 @@ export function SecurityWorkspace({
           <SecurityContent snapshot={snapshot} thisDeviceReady={state === 'ready'} />
         )}
         {agentRecovery === undefined ? null : <AgentRecoveryPanel gateway={agentRecovery} />}
-        <AccessManagementLedger gateway={accessManagement} />
+        <AccessManagementLedger gateway={accessManagement} reauthentication={reauthentication} />
       </div>
     </div>
   );
