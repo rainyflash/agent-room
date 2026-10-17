@@ -24,6 +24,7 @@ import { matrixAgentStatusEventType } from '@/features/lobby/adapters/matrix-lob
 import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 const ROOM_ID = '!public:agent-room.test';
+const OTHER_ROOM_ID = '!other:agent-room.test';
 const legacyPreviewType = ['org', 'agentroom', 'message', 'preview', 'v1'].join('.');
 // 已退役的命名空间只拼出来用，源码里不出现它的字面量（tools/event_namespace.py 会检查）。
 const legacyNamespaceFilter = `${['org', 'agentroom'].join('.')}.*`;
@@ -381,9 +382,135 @@ describe('MatrixSdkMessageSource', () => {
 
     expect(listener).toHaveBeenCalledOnce();
   });
+
+  it('同步时还没解开的消息，解开后就通知这个房间，一批接连解开只通知一次，不等下一次同步', () => {
+    vi.useFakeTimers();
+    try {
+      const first = new FakeEvent('m.room.encrypted', '$first', 10, {
+        wireType: 'm.room.encrypted',
+      });
+      first.decryption = deferred<undefined>().promise;
+      const second = new FakeEvent('m.room.encrypted', '$second', 20, {
+        wireType: 'm.room.encrypted',
+      });
+      second.decryption = deferred<undefined>().promise;
+      const { client, source } = harness(new FakeRoom([first.asEvent(), second.asEvent()]));
+      const listener = vi.fn();
+      const other = vi.fn();
+      source.subscribe(ROOM_ID, listener);
+      source.subscribe(OTHER_ROOM_ID, other);
+      expect(snapshot(source.read(ROOM_ID)).timelineEvents).toEqual([]);
+
+      first.decryptAs(matrixMessagePreviewEventType);
+      client.emit('Event.decrypted', first.asEvent());
+      second.failDecryption('MEGOLM_UNKNOWN_INBOUND_SESSION_ID');
+      client.emit('Event.decrypted', second.asEvent());
+      client.emit(
+        'Event.decrypted',
+        new FakeEvent('m.room.message', '$elsewhere', 30, {
+          roomId: '!unwatched:agent-room.test',
+        }).asEvent(),
+      );
+      expect(listener).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(50);
+
+      expect(listener).toHaveBeenCalledOnce();
+      expect(other).not.toHaveBeenCalled();
+      expect(snapshot(source.read(ROOM_ID)).timelineEvents.map((event) => event.eventId)).toEqual([
+        '$first',
+        '$second',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('只在有人订阅时听解密结果，换了客户端跟着换', () => {
+    const { client, registry, source } = harness(new FakeRoom([]));
+    expect(client.listenerCount('Event.decrypted')).toBe(0);
+
+    const first = source.subscribe(ROOM_ID, vi.fn());
+    const second = source.subscribe(OTHER_ROOM_ID, vi.fn());
+    expect(client.listenerCount('Event.decrypted')).toBe(1);
+
+    const next = new FakeClient(new FakeRoom([]));
+    registry.replace(next.asClient());
+    expect(source.read(ROOM_ID).kind).toBe('ready');
+    expect(client.listenerCount('Event.decrypted')).toBe(0);
+    expect(next.listenerCount('Event.decrypted')).toBe(1);
+
+    first();
+    expect(next.listenerCount('Event.decrypted')).toBe(1);
+    second();
+    expect(next.listenerCount('Event.decrypted')).toBe(0);
+  });
 });
 
 describe('MatrixSdkMessageSource 与真实 Matrix SDK', () => {
+  it('同步时还没解开的消息，解开后不用等下一次同步就通知', async () => {
+    const me = '@me:agent-room.test';
+    const client = createClient({
+      accessToken: 'test-only-token',
+      baseUrl: 'https://matrix.example.test',
+      deviceId: 'DEVICE',
+      fetchFn: vi.fn<typeof fetch>(),
+      store: new MemoryStore(),
+      timelineSupport: true,
+      userId: me,
+    });
+    const room = new Room(ROOM_ID, client, me, { timelineSupport: true });
+    room.updateMyMembership('join');
+    client.store.storeRoom(room);
+    // 同步时事件经 SDK 的事件映射进来，解密结果由它转发到客户端上。
+    const encrypted = client.getEventMapper({ decrypt: false })({
+      content: { algorithm: 'm.megolm.v1.aes-sha2', ciphertext: 'opaque', session_id: 'session' },
+      event_id: '$late',
+      origin_server_ts: 100,
+      room_id: ROOM_ID,
+      sender: '@agent:agent-room.test',
+      type: 'm.room.encrypted',
+    });
+    await room.addLiveEvents([encrypted], { addToState: false });
+    // 同步时 SDK 把新的加密事件拿去解，但不等解完；这里用一个迟迟不返回的解密后端代替加密库。
+    const decryption = deferred<{ readonly clearEvent: object }>();
+    Object.assign(client, { cryptoBackend: { decryptEvent: () => decryption.promise } });
+    void client.decryptEventIfNeeded(encrypted);
+    const registry = new MatrixClientRegistry();
+    registry.replace(client);
+    const source = new MatrixSdkMessageSource(registry, () => Promise.resolve(Filter));
+    const listener = vi.fn();
+    source.subscribe(ROOM_ID, listener);
+    source.read(ROOM_ID);
+    // 过滤器加载好以后会通知一次，先等它过去，后面的通知只能来自解密结果。
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenCalledOnce();
+    });
+    listener.mockClear();
+
+    // 同步事件发出时读到的：消息还没解开，先不显示。
+    expect(snapshot(source.read(ROOM_ID)).timelineEvents).toEqual([]);
+    decryption.resolve({
+      clearEvent: {
+        type: matrixMessagePreviewEventType,
+        content: { eventType: matrixMessagePreviewEventType },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenCalledOnce();
+    });
+    expect(snapshot(source.read(ROOM_ID)).timelineEvents).toEqual([
+      {
+        content: { eventType: matrixMessagePreviewEventType },
+        endToEndEncrypted: true,
+        eventId: '$late',
+        sender: '@agent:agent-room.test',
+        serverTimestamp: 100,
+        type: matrixMessagePreviewEventType,
+      },
+    ]);
+  });
+
   it('按过滤器往回翻页；同步断档后翻回旧记录，两段接上，之前加载的消息都回来', async () => {
     const me = '@me:agent-room.test';
     const pages: unknown[] = [
@@ -548,6 +675,7 @@ class FakeEvent {
   redacted = false;
   type: string;
   readonly #content: { readonly eventType: string };
+  readonly #roomId: string;
   readonly #serverTimestamp: number;
   readonly #wireType: string;
 
@@ -555,11 +683,12 @@ class FakeEvent {
     type: string,
     eventId: string,
     serverTimestamp: number,
-    options: { readonly wireType?: string } = {},
+    options: { readonly roomId?: string; readonly wireType?: string } = {},
   ) {
     this.type = type;
     this.eventId = eventId;
     this.#serverTimestamp = serverTimestamp;
+    this.#roomId = options.roomId ?? ROOM_ID;
     this.#wireType = options.wireType ?? type;
     this.#content = { eventType: type };
   }
@@ -595,6 +724,10 @@ class FakeEvent {
 
   getId(): string {
     return this.eventId;
+  }
+
+  getRoomId(): string {
+    return this.#roomId;
   }
 
   getSender(): string {
@@ -725,6 +858,7 @@ class FakeClient {
     },
   );
   readonly scrollback = vi.fn();
+  readonly #handlers = new Map<string, Set<(event: MatrixEvent) => void>>();
   readonly #room: FakeRoom | null;
 
   constructor(room: FakeRoom | null) {
@@ -733,6 +867,24 @@ class FakeClient {
 
   asClient(): MatrixClient {
     return this as unknown as MatrixClient;
+  }
+
+  emit(name: string, event: MatrixEvent): void {
+    for (const handler of this.#handlers.get(name) ?? []) handler(event);
+  }
+
+  listenerCount(name: string): number {
+    return this.#handlers.get(name)?.size ?? 0;
+  }
+
+  off(name: string, handler: (event: MatrixEvent) => void): void {
+    this.#handlers.get(name)?.delete(handler);
+  }
+
+  on(name: string, handler: (event: MatrixEvent) => void): void {
+    const handlers = this.#handlers.get(name) ?? new Set();
+    handlers.add(handler);
+    this.#handlers.set(name, handlers);
   }
 
   getRoom(): Room | null {
