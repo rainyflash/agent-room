@@ -129,11 +129,19 @@ impl AgentInstanceManagementService {
         request: ListAgentInstances,
     ) -> AgentInstanceManagementResult<Vec<AgentInstanceManagementRecord>> {
         let operation = "agent_instance.list";
-        ensure_active_actor(&request.actor, self.clock.now(), operation)?;
-        self.instances
+        let now = self.clock.now();
+        ensure_active_actor(&request.actor, now, operation)?;
+        let mut records = self
+            .instances
             .list_for_principal(request.actor.principal_id)
             .await
-            .map_err(|error| map_repository_failure(operation, &error))
+            .map_err(|error| map_repository_failure(operation, &error))?;
+        // 库里的“在线”只在它控制后台回复、自动发言时写上，带 90 秒租约；断开时没人改回来，
+        // 发过一次自动回复的连接就一直是在线。租约过了的按离线报，“上次在线”照旧是那一刻。
+        for record in &mut records {
+            record.instance.expire(now);
+        }
+        Ok(records)
     }
 
     async fn revoke_instance_internal(
