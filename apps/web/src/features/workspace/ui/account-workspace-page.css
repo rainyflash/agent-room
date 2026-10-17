@@ -99,6 +99,40 @@
   color: var(--ar-muted);
 }
 
+/* 在线的一组摊开，不在线的收起来、只写有几个（agent-groups.tsx）。两组的标题一个样子。 */
+.agent-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.agent-group {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.agent-group__title,
+.agent-groups__offline > summary {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.agent-groups__offline > summary {
+  width: fit-content;
+  justify-content: flex-start;
+}
+
+.agent-groups__offline > .ar-disclosure__body {
+  padding-top: 12px;
+}
+
+.agent-group__empty {
+  margin: 0;
+  color: var(--ar-muted);
+}
+
 /* Agent 卡片：头像、名字、在不在线、在哪儿。 */
 .agent-cards {
   display: grid;

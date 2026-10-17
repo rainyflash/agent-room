@@ -20,6 +20,7 @@ import {
   AgentDetailsDialog,
   type AgentDeletionControl,
 } from '@/features/workspace/ui/agent-details-dialog';
+import { AgentGroups } from '@/features/workspace/ui/agent-groups';
 import { AgentRoomsView, BringCandidates } from '@/features/workspace/ui/agent-rooms-section';
 import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
@@ -187,6 +188,52 @@ describe('账号工作区组件', () => {
     expect(scout).toHaveTextContent('On Travel laptop');
     await user.click(build);
     expect(open).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  it('在线的一组摊开，不在线的收起来、只写有几个；正在连接的算在线', async () => {
+    const user = userEvent.setup();
+    const fleet = projectAgentFleet({
+      agents: [agent(), agent(SCOUT_ID, 'Research Scout'), agent(REMOTE_ID, 'Old Helper')],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [
+        { ...instance(), status: 'connecting' },
+        {
+          ...instance(),
+          agentId: SCOUT_ID,
+          agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e49',
+          status: 'offline',
+        },
+      ],
+    });
+    renderWithI18n(<AgentGroups agents={fleet.agents} now={NOW} onOpen={vi.fn()} />);
+
+    const online = screen.getByRole('region', { name: 'Online · 1' });
+    expect(within(online).getByRole('button', { name: /Build Agent/u })).toBeVisible();
+    const offline = screen.getByText('Offline · 2').closest('details');
+    expect(offline).not.toHaveAttribute('open');
+    await user.click(screen.getByText('Offline · 2'));
+    expect(offline).toHaveAttribute('open');
+    expect(
+      within(offline as HTMLElement).getByRole('button', { name: /Research Scout/u }),
+    ).toBeVisible();
+    expect(
+      within(offline as HTMLElement).getByRole('button', { name: /Old Helper/u }),
+    ).toBeVisible();
+  });
+
+  it('一个在线的都没有时照样有在线那一组，说现在没有', () => {
+    const fleet = projectAgentFleet({
+      agents: [agent()],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [{ ...instance(), status: 'offline' }],
+    });
+    renderWithI18n(<AgentGroups agents={fleet.agents} now={NOW} onOpen={vi.fn()} />);
+
+    const online = screen.getByRole('region', { name: 'Online · 0' });
+    expect(online).toHaveTextContent('None of your agents are online right now.');
+    expect(screen.getByText('Offline · 1')).toBeVisible();
   });
 
   it('卡片上写它在几个房间，不在任何房间也说', () => {

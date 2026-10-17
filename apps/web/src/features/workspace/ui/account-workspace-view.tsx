@@ -6,11 +6,11 @@ import { useTranslation } from 'react-i18next';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 import type { AgentFleet, FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import type { WorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
-import { AgentCardList } from '@/features/workspace/ui/agent-card-list';
 import {
   AgentDetailsDialog,
   type AgentDeletionControl,
 } from '@/features/workspace/ui/agent-details-dialog';
+import { AgentGroups } from '@/features/workspace/ui/agent-groups';
 import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
 import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
@@ -136,7 +136,7 @@ export function AccountWorkspaceView({
             </Button>
           </div>
         ) : (
-          <AgentCardList
+          <AgentGroups
             agents={fleet.agents}
             now={now}
             onOpen={onSelectAgent}
