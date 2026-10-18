@@ -59,7 +59,7 @@ describe('设置里的账户', () => {
     expect(screen.getByText(/sign in again before deleting/u)).toBeVisible();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
-    expect(beginAuthentication).toHaveBeenCalledWith('/settings/account');
+    expect(beginAuthentication).toHaveBeenCalledWith('/settings/account', 'reauthenticate');
     expect(account.requestDeletion).not.toHaveBeenCalled();
   });
 

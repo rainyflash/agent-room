@@ -185,6 +185,7 @@ function RoomSettingsContent({
   const reauthenticate = (): void => {
     void controlPlane.beginAuthentication(
       `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      'reauthenticate',
     );
   };
   switch (section) {

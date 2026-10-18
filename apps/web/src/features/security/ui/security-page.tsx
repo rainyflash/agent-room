@@ -44,7 +44,7 @@ export function SecuritySettings() {
             reauthentication: {
               recentlyAuthenticated: principal.recentlyAuthenticated,
               signInAgain: () => {
-                void controlPlane.beginAuthentication(SECURITY_PATH);
+                void controlPlane.beginAuthentication(SECURITY_PATH, 'reauthenticate');
               },
             },
           })}

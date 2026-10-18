@@ -33,6 +33,21 @@ describe('ControlPlaneClient', () => {
     );
   });
 
+  it('要再登录一次时带上 reauthenticate，服务端不拿已有的登录换', async () => {
+    const navigate = vi.fn();
+    const client = new ControlPlaneClient({
+      baseUrl: 'https://api.agent-room.test',
+      fetch: vi.fn(),
+      navigate,
+    });
+
+    await client.beginAuthentication('/settings/security', 'reauthenticate');
+
+    expect(navigate).toHaveBeenCalledWith(
+      'https://api.agent-room.test/auth/oidc/start?returnTo=%2Fsettings%2Fsecurity&importDisplayName=true&importLocale=true&intent=reauthenticate',
+    );
+  });
+
   it('通过同源 BFF 登录时保留部署路径前缀', async () => {
     const navigate = vi.fn();
     const client = new ControlPlaneClient({

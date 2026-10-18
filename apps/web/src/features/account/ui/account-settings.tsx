@@ -201,7 +201,7 @@ function DeletionConfirmation({
         {needsSignIn ? (
           <Button
             onClick={() => {
-              void controlPlane.beginAuthentication(RETURN_PATH);
+              void controlPlane.beginAuthentication(RETURN_PATH, 'reauthenticate');
             }}
             size="compact"
             tone="primary"
