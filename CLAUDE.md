@@ -472,7 +472,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 78 正在发布：桌面端“重新登录”真的去身份服务，撤销电脑、删 Agent、删账户、房间治理在桌面端也过得去（#531）。#531 改了 `apps/control-plane/src/features/authentication.rs`（登录相关路径），实机验收要走一次新设备授权，要维护者批准设备码。
+- Alpha 78 已于 2026-10-18 公开，见 [发布记录](./specs/agent-access/alpha78-release.md)。
+  - 桌面端要最近登录的操作点“重新登录”时一定去身份服务（#531）。实机验收走了一次新设备授权，第一个码过期、第二个批准；长期验收设备换成 Alpha 78 那台（`agent-room.alpha78.acceptance.fresh-device`）。
+  - 升级验收查会话时桌面端页面刚好跳转（CDP 报 `Execution context was destroyed`），安装本身装上了；从升级验收接着跑（`qa_resume.py`）一次通过。版本 PR #532 合并到网页上线约 1 小时 16 分钟，其中约 21 分钟在等设备码、约 9 分钟在等定时备份。
 - Alpha 77 已于 2026-10-18 公开，见 [发布记录](./specs/agent-access/alpha77-release.md)。
   - 后台回复的卡片只出现一次（#524），设置里的电脑按上次使用分组、7 天以上没用的一键撤销（#525、#526），“房间”页写未读条数和 @（#527）。
   - #525 改了 `crates/postgres-adapter/src/devices.rs`，实机验收走了一次新设备授权，维护者出码 4 分钟后就批准了；长期验收设备换成 Alpha 77 那台（`agent-room.alpha77.acceptance.fresh-device`，人物不绑任务）。
