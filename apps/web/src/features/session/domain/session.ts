@@ -20,7 +20,8 @@ export type SessionFailure = {
   readonly retryable: boolean;
 };
 
-export type AuthenticationIntent = 'register' | 'sign-in';
+/** `reauthenticate`：要“最近登录过”的操作请人再登录一次，不拿浏览器里已有的登录换桌面登录。 */
+export type AuthenticationIntent = 'reauthenticate' | 'register' | 'sign-in';
 export type AuthenticationMode = 'automatic' | 'interactive';
 
 export type AuthenticationStartOutcome =

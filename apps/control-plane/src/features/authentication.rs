@@ -138,6 +138,9 @@ enum BeginLoginIntent {
     #[default]
     SignIn,
     Register,
+    /// 要“最近登录过”的操作（撤销电脑、删账户等）请人再登录一次：一定去身份服务，
+    /// 不拿浏览器里已有的网页登录换桌面登录，那份的认证时间是当初登录的时候，不算最近。
+    Reauthenticate,
 }
 
 #[derive(Debug, Clone)]
@@ -263,10 +266,7 @@ async fn begin_login(
                 display_name: query.import_display_name,
                 locale: query.import_locale,
             },
-            intent: match query.intent {
-                BeginLoginIntent::SignIn => AuthenticationIntent::SignIn,
-                BeginLoginIntent::Register => AuthenticationIntent::Register,
-            },
+            intent: map_login_intent(query.intent),
         })
         .await
     {
@@ -637,7 +637,7 @@ fn with_desktop_callback_cookie(
 
 const fn map_login_intent(intent: BeginLoginIntent) -> AuthenticationIntent {
     match intent {
-        BeginLoginIntent::SignIn => AuthenticationIntent::SignIn,
+        BeginLoginIntent::SignIn | BeginLoginIntent::Reauthenticate => AuthenticationIntent::SignIn,
         BeginLoginIntent::Register => AuthenticationIntent::Register,
     }
 }
@@ -1281,6 +1281,42 @@ mod tests {
         assert!(set_cookies(&response).iter().any(|cookie| {
             cookie.starts_with("__Host-agent-room-login=") && cookie.contains("Max-Age=0")
         }));
+    }
+
+    #[tokio::test]
+    async fn 要再登录一次时不拿浏览器里的网页会话换桌面登录() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let app = test_router(fake.clone());
+        let desktop = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&callbackUrl=http%3A%2F%2F127.0.0.1%3A49153%2Fauth%2Fcallback&returnTo=%2Fworkspace&importDisplayName=true&intent=reauthenticate",
+                        "s".repeat(43),
+                        "c".repeat(43)
+                    ))
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面登录起点可执行");
+        assert_eq!(desktop.status(), StatusCode::SEE_OTHER);
+        assert_eq!(fake.desktop_session_authorization.load(Ordering::SeqCst), 0);
+        assert_eq!(fake.desktop_begin.load(Ordering::SeqCst), 1);
+
+        let web = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/start?returnTo=%2Fworkspace&importDisplayName=true&intent=reauthenticate")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("网页登录起点可执行");
+        assert_eq!(web.status(), StatusCode::SEE_OTHER);
+        assert_eq!(fake.begin.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

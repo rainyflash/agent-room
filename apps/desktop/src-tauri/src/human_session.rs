@@ -37,6 +37,8 @@ const MAX_AUTHORIZATION_CODE_LENGTH: usize = 4_096;
 pub(crate) enum DesktopAuthenticationIntent {
     Register,
     SignIn,
+    /// 要“最近登录过”的操作请人再登录一次：控制面不拿浏览器里的网页登录换，一定去身份服务。
+    Reauthenticate,
 }
 
 impl DesktopAuthenticationIntent {
@@ -44,6 +46,7 @@ impl DesktopAuthenticationIntent {
         match self {
             Self::Register => "register",
             Self::SignIn => "sign-in",
+            Self::Reauthenticate => "reauthenticate",
         }
     }
 }
@@ -751,12 +754,22 @@ mod tests {
     };
 
     use super::{
-        HumanAuthenticationCallback, HumanSessionResult, HumanSessionRuntime, HumanSessionVault,
-        PendingAuthentication, PersistedHumanSession, authentication_callback, now_unix_ms,
-        parse_authentication_callback, parse_loopback_authentication_callback, pkce_challenge,
-        validate_pending, validate_persisted_session, validate_return_path,
+        DesktopAuthenticationIntent, HumanAuthenticationCallback, HumanSessionResult,
+        HumanSessionRuntime, HumanSessionVault, PendingAuthentication, PersistedHumanSession,
+        authentication_callback, now_unix_ms, parse_authentication_callback,
+        parse_loopback_authentication_callback, pkce_challenge, validate_pending,
+        validate_persisted_session, validate_return_path,
     };
     use url::Url;
+
+    #[test]
+    fn 再登录一次照原样交给控制面_它据此不拿浏览器里的登录换() {
+        let intent: DesktopAuthenticationIntent =
+            serde_json::from_str("\"reauthenticate\"").expect("网页传来的意图有效");
+        assert_eq!(intent, DesktopAuthenticationIntent::Reauthenticate);
+        assert_eq!(intent.as_str(), "reauthenticate");
+        assert!(serde_json::from_str::<DesktopAuthenticationIntent>("\"fresh\"").is_err());
+    }
 
     #[test]
     fn 桌面回调只接受闭合的授权码与状态参数() {

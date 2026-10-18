@@ -178,6 +178,7 @@ export function AccountWorkspacePage({
           onReauthenticate: () => {
             void services.controlPlane.beginAuthentication(
               `${window.location.pathname}${window.location.search}${window.location.hash}`,
+              'reauthenticate',
             );
           },
           pendingAgentId: deletion.pendingAgentId,

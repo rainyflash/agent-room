@@ -113,6 +113,23 @@ describe('桌面 Control Plane 会话适配器', () => {
     expect(navigate).toHaveBeenCalledWith('/workspace');
   });
 
+  it('要再登录一次时把 reauthenticate 交给原生层，由它请控制面别拿浏览器里的登录换', async () => {
+    const beginHumanAuthentication = vi.fn(() =>
+      Promise.resolve(err({ code: 'desktop.human_session.browser_open_failed', retryable: true })),
+    );
+    const client = new DesktopControlPlaneClient({
+      controlPlane: new ControlPlaneClient({
+        baseUrl: 'https://api.agent-room.test',
+        fetch: vi.fn(),
+      }),
+      navigate: vi.fn(),
+      runtime: runtime({ beginHumanAuthentication }),
+    });
+
+    await client.beginAuthentication('/settings/security', 'reauthenticate');
+    expect(beginHumanAuthentication).toHaveBeenCalledWith('/settings/security', 'reauthenticate');
+  });
+
   it('远端注销失败时仍删除本机凭据，避免共享设备继续使用旧会话', async () => {
     const clearHumanSession = vi.fn(() => Promise.resolve(ok(undefined)));
     const client = new DesktopControlPlaneClient({

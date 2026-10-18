@@ -290,7 +290,7 @@ export const desktopHumanSessionChangedSchema = z
     }
   });
 export type DesktopHumanSessionChanged = z.infer<typeof desktopHumanSessionChangedSchema>;
-export type DesktopAuthenticationIntent = 'register' | 'sign-in';
+export type DesktopAuthenticationIntent = 'reauthenticate' | 'register' | 'sign-in';
 
 export type DesktopRuntimeEventHandlers = {
   readonly onDeepLink: (target: DesktopDeepLink) => void;
