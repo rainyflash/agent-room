@@ -2,6 +2,8 @@
 
 本 Runbook 只处理可操作故障。Prometheus 和 Grafana 默认仅监听主机回环地址，运营者通过 SSH 隧道访问；不要把 3000 或 9090 暴露到公网。
 
+2026-10-18 只读核对：当前生产的 `telemetry.enabled=false`，**没有自动告警**。下面的告警名和仪表盘只适用于已经启用监控的部署；首发期间的人工查看、待确认的值守与决策安排见[首发预案](./launch-day.md)。
+
 ## SLO 与证据
 
 - 控制平面 API 月度可用性目标：99.9%；服务端 5xx 计为失败，4xx 计为成功处理的客户端请求。网络 Agent 的位置满了、总开关关着时回的 503（`network_agent.capacity_reached`、`network_agent.room_capacity_reached`、`network_agent.disabled`）是我们自己挡的，指标上带 `refusal` 标签，不算失败。
@@ -54,11 +56,17 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 ## AgentRoomEmailSendFailed
 
-只有 Keycloak 发邮件：注册时的验证信、“重新发送邮件”、忘记密码。发不出去时登录页会说“邮件这会儿发不出去，账户已经建好了，过几个小时点‘忘记密码？’或者‘重新发送邮件’”，再给一个“回到 Agent Room”。先看 Keycloak 日志（`docker compose ... logs identity`）里的发信错误：额度用完（Resend 免费档每天 100 封、每月 3000 封，UTC 零点重置）就只能等到零点；凭据或发件地址出错时修好再运行一次 `install`。指标是 `keycloak_user_events_total{error!=""}`，按 `event` 看是验证信还是重设密码信。
+只有 Keycloak 发邮件：注册时的验证信、“重新发送邮件”、忘记密码。发不出去时登录页会说“邮件这会儿发不出去，账户已经建好了，过几个小时点‘忘记密码？’或者‘重新发送邮件’”，再给一个“回到 Agent Room”。这句通用提示不代表所有故障都会自行恢复。先看 Keycloak 日志（`docker compose ... logs identity`）里的发信错误，并核对实际 SMTP 所属工作区的套餐和用量。
+
+2026-10-17 的付款邮件确认 Transactional Pro、USD 20，服务期 10 月 17 日至 11 月 17 日。2026-10-18 用户切换登录账号后，只读核对的当前工作区显示 Pro、每月 50,000 封、无日额度，生产配置中的发件域名显示 `verified`。已核实套餐和域名验证状态，但**生产 SMTP 凭据归属仍待核实**：还缺生产实际凭据与该工作区／API Key 非秘密标识的对应记录。域名匹配本身不证明密钥归属。证据范围、旧阈值口径与最小缺口统一记在[首发预案“发信套餐与配额依据”](./launch-day.md#发信套餐与配额依据)。不要仅凭付款或域名记录提高生产额度。
+
+只有实际账户明确报免费档的日额度耗尽时，才等 UTC 零点重置；免费档的月额度或付费档的月额度耗尽要看相应周期，速率、凭据、域名验证等错误要分别处理。凭据或发件配置的修复由已确认的配置负责人按生产部署流程执行，不在文档核对时顺手改。指标是 `keycloak_user_events_total{error!=""}`，按 `event` 看是验证信还是重设密码信。
 
 ## AgentRoomEmailQuotaNearlyUsed
 
-最近 24 小时已经成功发了 80 封（`agent_room:emails_sent:increase_24h`，仪表盘上的 “Emails sent, last 24h”）。正常的注册高峰就等它过去，额度用完的那几个小时，新注册的人会看到上面那句话。如果是被刷（短时间大量注册、同一来源），按首发预案临时关注册：部署配置的 `identity.registration.mode` 改成 `closed`，运行一次 `install`。
+这条既有告警按滚动 24 小时成功发信达到 80 封提醒（`agent_room:emails_sent:increase_24h`，仪表盘上的 “Emails sent, last 24h”），来自原免费档每天 100 封的假设。规则与仪表盘的文字尚未调整，不能把它当成实时套餐或剩余额度。它与 `launch-status` 按 UTC 当天注册账户数达到 80 个的提醒口径不同；当前生产未开监控，不会自动收到这条告警。
+
+先核对实际 SMTP 账户的用量与发信错误。正常高峰继续观察，不因旧阈值自动关注册；如确认被刷，由首发值守表中确认的决策人决定是否关注册，执行按[首发预案第 2 步](./launch-day.md#第-2-步关注册被刷信时)。关注册还会暂停验证信、重发和忘记密码邮件，必须记录影响与恢复条件。
 
 ## AgentRoomDependencyUnavailable
 
