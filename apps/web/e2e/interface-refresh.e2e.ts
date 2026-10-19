@@ -56,13 +56,20 @@ for (const width of [1440, 390]) {
       });
     });
   }
-  test(`设置 · 账户：${String(width)}px 删除账户要勾选并输入 DELETE`, async ({ page }) => {
+  test(`设置 · 账户：${String(width)}px 退出、换账号，删除账户要勾选并输入 DELETE`, async ({
+    page,
+  }) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     // 网页端：桌面端夹具会弹“有新版本”的提示，在手机宽度上盖住按钮。
     await page.goto('/e2e/fixtures/my-agents.html?browser&settings=account');
     const content = page.getByRole('region', { name: 'Account', exact: true });
+    // 退出登录就在登录的账户旁边，网页上还能换个账号（specs/sign-out/design.md）。
+    await expect(content.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+    await expect(
+      content.getByRole('button', { name: 'Switch account', exact: true }),
+    ).toBeVisible();
     await expect(content.getByRole('button', { name: 'Download', exact: true })).toBeVisible();
     await content.getByRole('button', { name: 'Delete account…' }).click();
     const confirm = content.getByRole('button', { name: 'Delete my account' });

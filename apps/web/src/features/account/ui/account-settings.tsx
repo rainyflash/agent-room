@@ -1,6 +1,6 @@
 import { Banner, Button, Field } from '@agent-room/ui-system';
 import { useNavigate } from '@tanstack/react-router';
-import { Download, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Download, LogOut, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -11,6 +11,7 @@ import {
   type AccountGateway,
 } from '@/features/account/domain/account';
 import { rememberAccountDeletion } from '@/features/account/ui/account-deleted-notice';
+import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import './account-settings.css';
@@ -18,13 +19,16 @@ import './account-settings.css';
 const RETURN_PATH = '/settings/account';
 
 /**
- * 账户：下载我的数据、删除账户（隐私说明里写的两条路）。删除要几分钟内登录过、输入 DELETE；
- * 成功后服务器已让这次登录失效，这里接着退出登录、清掉本机数据，回到首页说一声。
+ * 账户：退出登录、换个账号登录（`specs/sign-out/design.md`），下载我的数据、删除账户（隐私说明里
+ * 写的两条路）。删除要几分钟内登录过、输入 DELETE；成功后服务器已让这次登录失效，这里接着退出登录、
+ * 清掉本机数据，回到首页说一声。
  */
 export function AccountSettings() {
   const { t } = useTranslation();
   const { account } = useAppServices();
   const session = useOptionalSession();
+  const desktop = useOptionalDesktopRuntimeController();
+  const navigate = useNavigate();
   const principal = session?.snapshot.context.principal ?? null;
   if (account === undefined || session === null || principal === null) return null;
   return (
@@ -34,7 +38,37 @@ export function AccountSettings() {
           <strong>{t('settings.account.signedInAs')}</strong>
           <p>{principal.displayName}</p>
         </div>
+        <Button
+          icon={<LogOut aria-hidden="true" />}
+          onClick={() => {
+            session.send({ type: 'LOGOUT' });
+            void navigate({ to: '/connect' });
+          }}
+          size="compact"
+          tone="ghost"
+        >
+          {t('connection.action.logout')}
+        </Button>
       </div>
+      {/* 桌面端换账号要把这台电脑一起交给新账户（设计第 4 步），做好以前只在网页上有。 */}
+      {desktop?.available === true ? null : (
+        <div className="settings-row">
+          <div>
+            <strong>{t('settings.account.switch')}</strong>
+            <p>{t('settings.account.switchHint')}</p>
+          </div>
+          <Button
+            icon={<ArrowLeftRight aria-hidden="true" />}
+            onClick={() => {
+              session.send({ type: 'SWITCH_ACCOUNT' });
+            }}
+            size="compact"
+            tone="ghost"
+          >
+            {t('settings.account.switchAction')}
+          </Button>
+        </div>
+      )}
       <ExportRow account={account} />
       <DeletionRow
         account={account}

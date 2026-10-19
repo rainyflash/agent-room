@@ -12,10 +12,13 @@ import {
   readMatrixSession,
   serverDeviceIds,
   serverHasSigningIdentity,
+  submitIdentityForm,
 } from './support/live-session';
 import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
+const secondUsername = process.env.AGENT_ROOM_E2E_SECOND_USERNAME;
+const secondPassword = process.env.AGENT_ROOM_E2E_SECOND_PASSWORD;
 /** 登录后自动签好这台设备（ADR 0011）：真实控制面保管钥匙、真实 Synapse 上签名。 */
 const thisDeviceReady = /^(?:This device is ready|这台设备已就绪)$/u;
 
@@ -191,4 +194,36 @@ test.describe('本机加密库丢了', () => {
     expect(devices).not.toContain(lost.deviceId);
     expect(failures).toEqual([]);
   });
+});
+
+test('设置里换个账号：退出这个账户，在身份服务的登录页登录另一个账户', async ({ page }) => {
+  test.skip(
+    username === undefined ||
+      password === undefined ||
+      secondUsername === undefined ||
+      secondPassword === undefined,
+    '缺少两个隔离验收账户。',
+  );
+  test.setTimeout(180_000);
+  const failures = collectUnhandledFailures(page);
+  const first = await connectLiveSession(page, {
+    expectedDisplayName: 'Local Developer',
+    password: password ?? '',
+    username: username ?? '',
+  });
+
+  await page.goto('/settings/account');
+  await page.getByRole('button', { name: /^(?:Switch account|换个账号)$/u }).click();
+  // 几分钟前刚输过密码，也不会直接回到这个账户：退出时身份服务上的登录一起结束了
+  // （specs/sign-out/design.md）。
+  await submitIdentityForm(page, secondUsername ?? '', secondPassword ?? '');
+  await continueThroughMatrixConsentWhenRequired(page, ['/settings/account', '/rooms']);
+  await expect(page).toHaveURL(/\/(?:settings\/account|rooms)$/u, { timeout: 40_000 });
+  await page.goto('/settings/account');
+  await expect(page.getByText('Local Collaborator', { exact: true })).toBeVisible({
+    timeout: 40_000,
+  });
+  const second = storedMatrixSessionSchema.parse(await readMatrixSession(page)).userId;
+  expect(second).not.toBe(first);
+  expect(failures).toEqual([]);
 });

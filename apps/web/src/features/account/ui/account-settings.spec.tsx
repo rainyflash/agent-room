@@ -11,6 +11,7 @@ import { useAppServices } from '@/app/app-services';
 import type { AccountGateway } from '@/features/account/domain/account';
 import { AccountDeletedNotice } from '@/features/account/ui/account-deleted-notice';
 import { AccountSettings } from '@/features/account/ui/account-settings';
+import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
@@ -19,6 +20,9 @@ const navigate = vi.hoisted(() => vi.fn());
 
 vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
 vi.mock('@/features/session/ui/session-provider', () => ({ useOptionalSession: vi.fn() }));
+vi.mock('@/features/desktop/ui/desktop-runtime-provider', () => ({
+  useOptionalDesktopRuntimeController: vi.fn(() => null),
+}));
 vi.mock('@tanstack/react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@tanstack/react-router')>()),
   useNavigate: () => navigate,
@@ -50,6 +54,38 @@ afterEach(() => {
 });
 
 describe('设置里的账户', () => {
+  it('退出登录就在登录的账户旁边：退出、回到登录页', () => {
+    signedIn(true);
+    render(<AccountSettings />, { wrapper: Translations });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    expect(send).toHaveBeenCalledWith({ type: 'LOGOUT' });
+    expect(navigate).toHaveBeenCalledWith({ to: '/connect' });
+  });
+
+  it('网页上换个账号：退出以后直接去登录', () => {
+    signedIn(true);
+    render(<AccountSettings />, { wrapper: Translations });
+
+    expect(screen.getByText('Use another account')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account' }));
+
+    expect(send).toHaveBeenCalledWith({ type: 'SWITCH_ACCOUNT' });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('桌面端先只有退出：换账号要连这台电脑一起交给新账户，还没做', () => {
+    vi.mocked(useOptionalDesktopRuntimeController).mockReturnValue({
+      available: true,
+    } as unknown as ReturnType<typeof useOptionalDesktopRuntimeController>);
+    signedIn(true);
+    render(<AccountSettings />, { wrapper: Translations });
+
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Switch account' })).not.toBeInTheDocument();
+  });
+
   it('很久没登录时先请人重新登录，回来还是这一页', () => {
     signedIn(false);
     render(<AccountSettings />, { wrapper: Translations });

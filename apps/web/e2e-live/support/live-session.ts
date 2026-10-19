@@ -20,12 +20,7 @@ export async function connectLiveSession(
   await openConnectionPage(page, login);
   await login.click();
 
-  await expect(page).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u);
-  const usernameInput = page.locator('input[name="username"]');
-  await waitForVisibleSurface(page, usernameInput, 'OIDC 登录表单');
-  await usernameInput.fill(credentials.username);
-  await page.locator('input[name="password"]').fill(credentials.password);
-  await page.locator('input[type="submit"], button[type="submit"]').click();
+  await submitIdentityForm(page, credentials.username, credentials.password);
 
   await continueThroughMatrixConsentWhenRequired(page);
   await expect(page).toHaveURL(/\/rooms$/u, { timeout: 40_000 });
@@ -41,6 +36,22 @@ export async function connectLiveSession(
   await expect(page.getByText(credentials.expectedDisplayName, { exact: true })).toBeVisible();
   await page.goto('/rooms');
   return matrixUserId;
+}
+
+/** 在身份服务（Keycloak）的登录页上填账户和密码登录。 */
+export async function submitIdentityForm(
+  page: Page,
+  username: string,
+  password: string,
+): Promise<void> {
+  await expect(page).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u, {
+    timeout: 40_000,
+  });
+  const usernameInput = page.locator('input[name="username"]');
+  await waitForVisibleSurface(page, usernameInput, 'OIDC 登录表单');
+  await usernameInput.fill(username);
+  await page.locator('input[name="password"]').fill(password);
+  await page.locator('input[type="submit"], button[type="submit"]').click();
 }
 
 async function openConnectionPage(page: Page, login: Locator): Promise<void> {
@@ -246,7 +257,11 @@ export async function serverDeviceIds(page: Page): Promise<string[]> {
   );
 }
 
-export async function continueThroughMatrixConsentWhenRequired(page: Page): Promise<void> {
+/** 登录完回到应用：Synapse 要确认就点“Continue”，到了 `destinations` 里的一页就算回来了。 */
+export async function continueThroughMatrixConsentWhenRequired(
+  page: Page,
+  destinations: readonly string[] = ['/rooms'],
+): Promise<void> {
   const continueLink = page.getByRole('link', { name: /^Continue$/u });
   await expect
     .poll(
@@ -254,7 +269,7 @@ export async function continueThroughMatrixConsentWhenRequired(page: Page): Prom
         if (await continueLink.isVisible()) {
           return 'consent';
         }
-        if (new URL(page.url()).pathname === '/rooms') {
+        if (destinations.includes(new URL(page.url()).pathname)) {
           return 'ready';
         }
         return 'pending';

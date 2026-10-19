@@ -35,6 +35,24 @@ class WebAcceptanceTests(unittest.TestCase):
         environment = run.call_args.kwargs["env"]
         self.assertEqual(environment["AGENT_ROOM_E2E_USERNAME"], "developer")
         self.assertEqual(environment["AGENT_ROOM_E2E_PASSWORD"], "test-password")
+        self.assertNotIn("AGENT_ROOM_E2E_SECOND_USERNAME", environment)
+
+    @patch("tools.web.subprocess.run")
+    @patch("tools.web.shutil.which", return_value="/usr/bin/corepack")
+    def test_有第二个种子账户时一起交给换账号的验收(
+        self,
+        _which: MagicMock,
+        run: MagicMock,
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess([], 0)
+
+        run_live_session_test(
+            {"SEED_ADMIN_PASSWORD": "test-password", "SEED_MEMBER_PASSWORD": "member-password"}
+        )
+
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["AGENT_ROOM_E2E_SECOND_USERNAME"], "collaborator")
+        self.assertEqual(environment["AGENT_ROOM_E2E_SECOND_PASSWORD"], "member-password")
 
 
 if __name__ == "__main__":

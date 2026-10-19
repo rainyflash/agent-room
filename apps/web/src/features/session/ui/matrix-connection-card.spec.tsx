@@ -57,6 +57,7 @@ function givenSession(value: string, overrides: Partial<SessionContext> = {}) {
     failure: null,
     principal,
     resumePath: null,
+    switchingAccount: false,
     ...overrides,
   };
   session.current = { send, snapshot: { value, context } };

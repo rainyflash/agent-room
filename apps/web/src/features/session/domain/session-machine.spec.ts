@@ -187,6 +187,72 @@ describe('Web 会话状态机', () => {
     actor.stop();
   });
 
+  it('换个账号登录：退出成功以后直接去登录，不停在退出后的页面', async () => {
+    const calls: string[] = [];
+    const runtime = dependencies({
+      controlPlane: {
+        beginAuthentication: () => {
+          calls.push('login');
+          return Promise.resolve(ok({ kind: 'browser-navigation' }));
+        },
+        logout: () => {
+          calls.push('logout');
+          return Promise.resolve(ok(undefined));
+        },
+      },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    actor.send({ type: 'SWITCH_ACCOUNT' });
+    const navigating = await waitFor(actor, (snapshot) =>
+      snapshot.matches('awaitingBrowserNavigation'),
+    );
+
+    expect(calls).toEqual(['logout', 'login']);
+    expect(navigating.context.principal).toBeNull();
+    expect(navigating.context.switchingAccount).toBe(false);
+    actor.stop();
+  });
+
+  it('换账号时退出没成：重试成功后照样去登录；改点退出就只退出', async () => {
+    const offline = err({
+      boundary: 'control-plane',
+      code: 'control_plane.unreachable',
+      offline: true,
+      retryable: true,
+    } satisfies SessionFailure);
+    const logout = vi
+      .fn<ControlPlaneGateway['logout']>()
+      .mockResolvedValueOnce(offline)
+      .mockResolvedValueOnce(ok(undefined))
+      .mockResolvedValueOnce(offline)
+      .mockResolvedValueOnce(ok(undefined));
+    const beginAuthentication = vi
+      .fn<ControlPlaneGateway['beginAuthentication']>()
+      .mockResolvedValue(ok({ kind: 'browser-navigation' }));
+    const runtime = dependencies({ controlPlane: { beginAuthentication, logout } });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    actor.send({ type: 'SWITCH_ACCOUNT' });
+    await waitFor(actor, (snapshot) => snapshot.matches('signOutFailed'));
+    expect(beginAuthentication).not.toHaveBeenCalled();
+    actor.send({ type: 'RETRY' });
+    await waitFor(actor, (snapshot) => snapshot.matches('awaitingBrowserNavigation'));
+    expect(beginAuthentication).toHaveBeenCalledOnce();
+    actor.stop();
+
+    const second = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(second, (snapshot) => snapshot.matches('ready'));
+    second.send({ type: 'SWITCH_ACCOUNT' });
+    await waitFor(second, (snapshot) => snapshot.matches('signOutFailed'));
+    second.send({ type: 'LOGOUT' });
+    await waitFor(second, (snapshot) => snapshot.matches('unauthenticated'));
+    expect(beginAuthentication).toHaveBeenCalledOnce();
+    second.stop();
+  });
+
   it('Matrix 注销抛出异常也会执行控制平面注销并报告失败', async () => {
     const logout = vi.fn<ControlPlaneGateway['logout']>().mockResolvedValue(ok(undefined));
     const runtime = dependencies({
