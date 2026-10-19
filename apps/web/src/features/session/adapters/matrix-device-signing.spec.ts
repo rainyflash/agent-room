@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 
@@ -16,6 +16,14 @@ const DEVICE = 'DESKTOP';
 const GENERATED = new Uint8Array(32).fill(7);
 
 describe('ensureDeviceSigned', () => {
+  // 等服务器的停顿用假时钟走完（`withTimers`）。
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('账户第一台设备：建立签名身份、建密钥存储和备份，把钥匙交给服务器', async () => {
     const account = fakeAccount({ identity: false });
 
@@ -162,6 +170,56 @@ describe('ensureDeviceSigned', () => {
     expect(account.generatedKey.every((byte) => byte === 0)).toBe(true);
   });
 
+  it('服务器上一直没有这台设备的密钥：等一会儿还没有就算出错，不签，也不说已就绪', async () => {
+    // 2026-10-19 维护者的 iPhone（iOS 17.2）：加密库的请求一个也发不出去，这台设备从没传过密钥；
+    // 签名上传回 404 Unknown device，加密库不当成错误，安全页一直说“已就绪”。
+    const account = fakeAccount({ escrowed: 'CURRENT', uploaded: false });
+
+    await expect(withTimers(run(account))).rejects.toThrow('这台设备的密钥还没传上服务器。');
+
+    expect(account.serverKeys).toHaveBeenCalledTimes(5);
+    expect(account.crypto.crossSignDevice).not.toHaveBeenCalled();
+    expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
+    expect(account.escrow.fetch).not.toHaveBeenCalled();
+  });
+
+  it('密钥晚一点才传上去：等到了再签', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT', uploaded: false });
+    account.serverKeys.mockImplementationOnce(async () => {
+      const answer = await account.answer();
+      account.server.uploaded = true;
+      return answer;
+    });
+
+    await expect(withTimers(run(account))).resolves.toBe('signed');
+
+    expect(account.crypto.crossSignDevice).toHaveBeenCalledWith(DEVICE);
+  });
+
+  it('签名没落到服务器上（服务器拒了也不报错）：算出错，不说已就绪', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT', holdsKeys: true });
+    // 本机以为签好了，服务器上还是没有账户的签名。
+    account.crypto.getDeviceVerificationStatus.mockResolvedValue({ signedByOwner: true });
+
+    await expect(withTimers(run(account))).rejects.toThrow('这台设备的签名没有落到服务器上。');
+  });
+
+  it('等服务器的时候叫停：马上停下，不再问', async () => {
+    const account = fakeAccount({ escrowed: 'CURRENT', uploaded: false });
+    const stop = new AbortController();
+    account.serverKeys.mockImplementationOnce(async () => {
+      const answer = await account.answer();
+      setTimeout(() => {
+        stop.abort(new DOMException('退出登录', 'AbortError'));
+      }, 10);
+      return answer;
+    });
+
+    await expect(withTimers(run(account, stop.signal))).rejects.toThrow('退出登录');
+
+    expect(account.serverKeys).toHaveBeenCalledOnce();
+  });
+
   it('叫停以后做完手头这一步就停下，不再往下发请求，取到的钥匙照样抹掉', async () => {
     // 2026-10-05 真实登录验收抓到的：恢复会话后签名还在跑，人点了退出，令牌作废以后它接着读
     // 账户数据，Synapse 回 401。
@@ -207,6 +265,18 @@ describe('ensureDeviceSigned', () => {
   });
 });
 
+/** 用假时钟把等服务器的那几次停顿走完。 */
+async function withTimers<T>(work: Promise<T>): Promise<T> {
+  const settled = work.then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ error, ok: false as const }),
+  );
+  await vi.runAllTimersAsync();
+  const result = await settled;
+  if (result.ok) return result.value;
+  throw result.error;
+}
+
 function run(account: ReturnType<typeof fakeAccount>, signal?: AbortSignal) {
   return ensureDeviceSigned(account.client, account.escrow, account.keys, signal);
 }
@@ -215,7 +285,8 @@ function run(account: ReturnType<typeof fakeAccount>, signal?: AbortSignal) {
  * 一个假的账户：`identity` 服务器上账户有没有签名身份，`localIdentity` 本机记着有没有（加密库的
  * `userHasCrossSigningKeys` 对自己的账户答的是它，默认和服务器一样），`holdsKeys` 本机有没有签名私钥，
  * `signed` 这台设备签好没有，`escrowed` 服务器上那把钥匙的 ID（账户现在的密钥存储钥匙是 `CURRENT`），
- * `keysInStorage` 密钥存储里有没有签名私钥，`backupKeyKnown` 本机有没有备份钥匙。
+ * `keysInStorage` 密钥存储里有没有签名私钥，`backupKeyKnown` 本机有没有备份钥匙，`uploaded` 服务器上
+ * 有没有这台设备的密钥。服务器上的签名跟着本机走：本来签好的，或者签过、重建过签名身份的，都算签上了。
  */
 function fakeAccount({
   backupKeyKnown = false,
@@ -225,6 +296,7 @@ function fakeAccount({
   keysInStorage = true,
   localIdentity = identity,
   signed = false,
+  uploaded = true,
 }: {
   readonly backupKeyKnown?: boolean;
   readonly escrowed?: 'CURRENT' | 'OLD' | null;
@@ -233,6 +305,7 @@ function fakeAccount({
   readonly keysInStorage?: boolean;
   readonly localIdentity?: boolean;
   readonly signed?: boolean;
+  readonly uploaded?: boolean;
 }) {
   let defaultKey: string | null = identity ? 'CURRENT' : null;
   const generatedKey = new Uint8Array(32).fill(7);
@@ -279,16 +352,39 @@ function fakeAccount({
     restoreKeyBackup: vi.fn(() => Promise.resolve({ imported: 0, total: 0 })),
     userHasCrossSigningKeys: vi.fn(() => Promise.resolve(localIdentity)),
   };
-  /** 服务器的 `keys/query`：有签名身份时带着主签名公钥。 */
-  const serverKeys = vi.fn(() =>
-    Promise.resolve({
-      device_keys: {},
+  /** 服务器上有没有这台设备的密钥；测试可以改。 */
+  const server = { uploaded };
+  const reset = (): boolean => crypto.resetEncryption.mock.calls.length > 0;
+  const signedOnServer = (): boolean =>
+    signed || reset() || crypto.crossSignDevice.mock.calls.length > 0;
+  /** 服务器的 `keys/query`：有签名身份时带着主签名公钥和自签公钥，这台设备带着签名。 */
+  const answer = () => {
+    const hasIdentity = identity || reset();
+    return Promise.resolve({
+      device_keys: server.uploaded
+        ? {
+            [USER]: {
+              [DEVICE]: {
+                signatures: {
+                  [USER]: {
+                    [`ed25519:${DEVICE}`]: 'DEVICE',
+                    ...(signedOnServer() ? { 'ed25519:SELF': 'SELF' } : {}),
+                  },
+                },
+              },
+            },
+          }
+        : {},
       failures: {},
-      master_keys: identity
+      master_keys: hasIdentity
         ? { [USER]: { keys: { 'ed25519:MASTER': 'MASTER' }, user_id: USER } }
         : {},
-    }),
-  );
+      self_signing_keys: hasIdentity
+        ? { [USER]: { keys: { 'ed25519:SELF': 'SELF' }, user_id: USER } }
+        : {},
+    });
+  };
+  const serverKeys = vi.fn(answer);
   const client = {
     downloadKeysForUsers: serverKeys,
     getCrypto: () => crypto,
@@ -314,6 +410,7 @@ function fakeAccount({
   const keys = new MatrixSecretStorageKeyCache();
   const unlock = vi.spyOn(keys, 'unlock');
   return {
+    answer,
     client,
     crypto,
     escrow,
@@ -321,6 +418,7 @@ function fakeAccount({
     generatedKey,
     keys,
     resetAuth,
+    server,
     serverKeys,
     stored,
     unlock,

@@ -68,6 +68,9 @@ const masterKeysSchema = z.looseObject({
  * 3. 否则用服务器上的钥匙打开密钥存储、取回签名私钥、签好这台设备、找回历史；没有能用的钥匙
  *    （或者密钥存储里没有签名私钥）就重建一次签名身份。
  *
+ * 前后各问一次服务器：开始前要有这台设备的密钥，做完要有账户给它的签名。等了一会儿还没有就抛错，
+ * 不说“已就绪”。
+ *
  * `signal` 中止后做完手头这一步就停下（抛出中止的原因）：退出登录前先叫停它，免得令牌作废以后
  * 它还接着发请求。
  */
@@ -83,8 +86,106 @@ export async function ensureDeviceSigned(
   if (crypto === undefined || userId === null || deviceId === null) {
     throw new Error('Matrix 加密还没有初始化好。');
   }
-  const step = <T>(work: Promise<T>): Promise<T> => continueUnlessStopped(work, signal);
   signal?.throwIfAborted();
+  // 签之前服务器上要有这台设备的密钥，签名才落得上去；没有时 Synapse 回 `404 Unknown device`，
+  // 加密库不当成错误。2026-10-19 维护者的 iPhone 上加密库的请求一个也发不出去，这台设备从没传过
+  // 密钥，安全页却一直说“已就绪”。所以签之前等它传上去，签完再问服务器签名落上没有。
+  await waitForServerDevice(client, userId, deviceId, 'uploaded', UPLOAD_WAIT_MS, signal);
+  const outcome = await signDevice(client, crypto, escrow, keys, signal);
+  await waitForServerDevice(client, userId, deviceId, 'signed', SIGNATURE_WAIT_MS, signal);
+  return outcome;
+}
+
+/** 等服务器上有这台设备的密钥：加密库在第一次同步完才传，稍等几次。 */
+const UPLOAD_WAIT_MS = [1_000, 2_000, 4_000, 8_000] as const;
+/** 签名上传回来以后服务器马上就查得到，多问两次只为躲开偶尔慢一拍。 */
+const SIGNATURE_WAIT_MS = [1_000, 2_000] as const;
+
+/** 服务器上这台设备的样子：还没有它的密钥、有密钥但没由账户签过、签好了。 */
+type ServerDeviceState = 'missing' | 'uploaded' | 'signed';
+
+/**
+ * 隔一会儿问一次服务器，直到这台设备至少到了 `wanted` 那一步；问完还没到就抛错，界面显示
+ * “出错可重试”。
+ */
+async function waitForServerDevice(
+  client: DeviceSigningClient,
+  userId: string,
+  deviceId: string,
+  wanted: Exclude<ServerDeviceState, 'missing'>,
+  delays: readonly number[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const reached = (state: ServerDeviceState): boolean =>
+    wanted === 'uploaded' ? state !== 'missing' : state === 'signed';
+  for (const delay of [0, ...delays]) {
+    if (delay > 0) await pause(delay, signal);
+    if (reached(await continueUnlessStopped(serverDeviceState(client, userId, deviceId), signal)))
+      return;
+  }
+  throw new Error(
+    wanted === 'uploaded' ? '这台设备的密钥还没传上服务器。' : '这台设备的签名没有落到服务器上。',
+  );
+}
+
+/** `keys/query` 回答里这个账户的设备（带签名）和自签公钥。 */
+const deviceSignaturesSchema = z.looseObject({
+  device_keys: z
+    .record(
+      z.string(),
+      z.record(
+        z.string(),
+        z.looseObject({
+          signatures: z.record(z.string(), z.record(z.string(), z.string())).optional(),
+        }),
+      ),
+    )
+    .optional(),
+  self_signing_keys: z
+    .record(z.string(), z.looseObject({ keys: z.record(z.string(), z.string()) }))
+    .optional(),
+});
+
+async function serverDeviceState(
+  client: DeviceSigningClient,
+  userId: string,
+  deviceId: string,
+): Promise<ServerDeviceState> {
+  const response = deviceSignaturesSchema.parse(await client.downloadKeysForUsers([userId]));
+  const device = response.device_keys?.[userId]?.[deviceId];
+  if (device === undefined) return 'missing';
+  const signatures = device.signatures?.[userId] ?? {};
+  const selfSigning = Object.keys(response.self_signing_keys?.[userId]?.keys ?? {});
+  return selfSigning.some((keyId) => keyId in signatures) ? 'signed' : 'uploaded';
+}
+
+/** 等 `ms` 毫秒；叫停了就马上以叫停的原因结束。 */
+function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const stop = (): void => {
+      clearTimeout(timer);
+      const reason: unknown = signal?.reason;
+      reject(reason instanceof Error ? reason : new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', stop);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', stop, { once: true });
+  });
+}
+
+/** {@link ensureDeviceSigned} 的三步，服务器上已经有这台设备的密钥。 */
+async function signDevice(
+  client: DeviceSigningClient,
+  crypto: CryptoApi,
+  escrow: EncryptionKeyEscrow,
+  keys: MatrixSecretStorageKeyCache,
+  signal: AbortSignal | undefined,
+): Promise<DeviceSigningOutcome> {
+  const userId = client.getUserId() ?? '';
+  const deviceId = client.getDeviceId() ?? '';
+  const step = <T>(work: Promise<T>): Promise<T> => continueUnlessStopped(work, signal);
   // 自己的身份每次都重新查一遍：别的设备重建过签名身份时，本机对不上的旧私钥随之清掉。可它对自己的
   // 账户答的是本机记着的身份，上次在本机建好、公钥没传上去的也算有，所以还要直接问服务器。
   const known = await step(crypto.userHasCrossSigningKeys(userId, true));
