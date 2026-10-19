@@ -157,6 +157,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 移出以后账户登录还留着，网页退出时要拿它在服务器上退（连 Keycloak 的登录一起结束）；清掉账户登录时（`desktop_clear_human_session`）才去掉标记 `account-release.pending`、重新拉起 Bridge。中途退出的，下次启动看到标记接着收。
   - 设备按公钥唯一只在没撤销的设备里算，所以同一把签名钥匙能登记给新账户。签名钥匙（`device-signing-seed`）不在 `SERVER_BOUND_ACCOUNTS` 里，别加进去。
   - Keycloak 退出没成时只记告警（#536），这时换账号的那次登录会被身份服务直接认成原来的账户；要彻底挡住得在登录起点给 Keycloak 加 `prompt=login`，还没做。
+- 4e 发现撤销电脑（换账号时移出这台电脑也是）不让 Agent 离开房间、不放位置，房间里一直挂着离线的它。设计在 [specs/computer-revocation/design.md](./specs/computer-revocation/design.md)（#545），维护者当天同意（以前撤销的一起清，“断开”单个连接不离开），按步做，进度记在它的“状态”一节。
 
 ### 后台回复、已登录的电脑和房间未读
 
