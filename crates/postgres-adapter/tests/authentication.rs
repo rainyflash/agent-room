@@ -103,6 +103,43 @@ async fn 登录尝试严格绑定浏览器与状态并且只能消费一次() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 撤销登录时回它属于哪个登录账户_已经撤销的回空() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let principal = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example/realms/agent-room",
+        "sign-out-subject",
+        "退出的人",
+    );
+    let session = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 21);
+    LoginCompletionTransaction::complete(&repositories, &principal, &session)
+        .await
+        .expect("登录应成功");
+
+    // 退出时据此结束身份服务上的登录（specs/sign-out/design.md）。
+    assert_eq!(
+        WebSessionStore::revoke(&repositories, &session.secret_digest, test_time(2_000))
+            .await
+            .expect("退出应成功"),
+        Some(SignInAccount {
+            issuer: "https://issuer.example/realms/agent-room".to_owned(),
+            subject: "sign-out-subject".to_owned(),
+        })
+    );
+    assert_eq!(
+        WebSessionStore::revoke(&repositories, &session.secret_digest, test_time(3_000))
+            .await
+            .expect("再退一次也成功"),
+        None,
+        "已经撤销的不再回账户，也就不再找身份服务"
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 并发首次登录只建立一个主体但分别建立会话() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -159,31 +196,13 @@ async fn 并发首次登录只建立一个主体但分别建立会话() {
         .is_some()
     );
 
-    // 撤销时回这份登录属于登录服务上的哪个账户，退出时据此结束身份服务上的登录。
-    assert_eq!(
-        WebSessionStore::revoke(
-            &repositories,
-            &first_session.secret_digest,
-            test_time(2_000),
-        )
-        .await
-        .expect("登出应成功"),
-        Some(SignInAccount {
-            issuer: "https://issuer.example/realms/agent-room".to_owned(),
-            subject: "same-subject".to_owned(),
-        })
-    );
-    assert_eq!(
-        WebSessionStore::revoke(
-            &repositories,
-            &first_session.secret_digest,
-            test_time(2_500),
-        )
-        .await
-        .expect("再退一次也成功"),
-        None,
-        "已经撤销的不再回账户"
-    );
+    WebSessionStore::revoke(
+        &repositories,
+        &first_session.secret_digest,
+        test_time(2_000),
+    )
+    .await
+    .expect("登出应成功");
     assert!(
         WebSessionStore::find_active(
             &repositories,
