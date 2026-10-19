@@ -6,7 +6,7 @@ use agent_room_application::ports::{
     DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt, LoginAttemptStore,
     LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge, PrincipalRegistration,
     PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
-    SecretValue, WebSessionRegistration, WebSessionStore,
+    SecretValue, SignInAccount, WebSessionRegistration, WebSessionStore,
 };
 use agent_room_domain::{
     identity::{Principal, PrincipalStatus},
@@ -159,13 +159,31 @@ async fn 并发首次登录只建立一个主体但分别建立会话() {
         .is_some()
     );
 
-    WebSessionStore::revoke(
-        &repositories,
-        &first_session.secret_digest,
-        test_time(2_000),
-    )
-    .await
-    .expect("登出应成功");
+    // 撤销时回这份登录属于登录服务上的哪个账户，退出时据此结束身份服务上的登录。
+    assert_eq!(
+        WebSessionStore::revoke(
+            &repositories,
+            &first_session.secret_digest,
+            test_time(2_000),
+        )
+        .await
+        .expect("登出应成功"),
+        Some(SignInAccount {
+            issuer: "https://issuer.example/realms/agent-room".to_owned(),
+            subject: "same-subject".to_owned(),
+        })
+    );
+    assert_eq!(
+        WebSessionStore::revoke(
+            &repositories,
+            &first_session.secret_digest,
+            test_time(2_500),
+        )
+        .await
+        .expect("再退一次也成功"),
+        None,
+        "已经撤销的不再回账户"
+    );
     assert!(
         WebSessionStore::find_active(
             &repositories,

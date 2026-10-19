@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use agent_room_application::ports::{
     OidcFailure, OidcFailureKind, SecretValue, SignInAccount, SignInAccountRemoval,
+    SignInSessionTermination,
 };
 use agent_room_identity_adapter::{KeycloakAccountRemovalConfig, KeycloakSignInAccountRemoval};
 use axum::{
@@ -33,6 +34,7 @@ struct FakeKeycloak {
     outcome: 删除结果,
     token_requests: Arc<Mutex<u16>>,
     deleted: Arc<Mutex<Vec<String>>>,
+    logged_out: Arc<Mutex<Vec<String>>>,
 }
 
 struct Running {
@@ -47,6 +49,7 @@ impl Running {
             outcome,
             token_requests: Arc::new(Mutex::new(0)),
             deleted: Arc::new(Mutex::new(Vec::new())),
+            logged_out: Arc::new(Mutex::new(Vec::new())),
         };
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -58,6 +61,7 @@ impl Running {
                 post(发令牌),
             )
             .route("/admin/realms/agent-room/users/{id}", delete(删用户))
+            .route("/admin/realms/agent-room/users/{id}/logout", post(退出用户))
             .with_state(keycloak.clone());
         let task = tokio::spawn(async move {
             axum::serve(listener, router)
@@ -84,6 +88,10 @@ impl Running {
 
     async fn deleted(&self) -> Vec<String> {
         self.keycloak.deleted.lock().await.clone()
+    }
+
+    async fn logged_out(&self) -> Vec<String> {
+        self.keycloak.logged_out.lock().await.clone()
     }
 
     async fn token_requests(&self) -> u16 {
@@ -146,10 +154,33 @@ async fn 删用户(
         return StatusCode::UNAUTHORIZED;
     }
     keycloak.deleted.lock().await.push(id);
-    match keycloak.outcome {
-        删除结果::删掉了 => StatusCode::NO_CONTENT,
-        删除结果::本来就没有 => StatusCode::NOT_FOUND,
-        删除结果::暂时出错 => StatusCode::SERVICE_UNAVAILABLE,
+    keycloak.status()
+}
+
+async fn 退出用户(
+    State(keycloak): State<FakeKeycloak>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> StatusCode {
+    let expected = format!("Bearer {ACCESS_TOKEN}");
+    if headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        != Some(expected.as_str())
+    {
+        return StatusCode::UNAUTHORIZED;
+    }
+    keycloak.logged_out.lock().await.push(id);
+    keycloak.status()
+}
+
+impl FakeKeycloak {
+    fn status(&self) -> StatusCode {
+        match self.outcome {
+            删除结果::删掉了 => StatusCode::NO_CONTENT,
+            删除结果::本来就没有 => StatusCode::NOT_FOUND,
+            删除结果::暂时出错 => StatusCode::SERVICE_UNAVAILABLE,
+        }
     }
 }
 
@@ -280,6 +311,55 @@ async fn 连不上_keycloak_时下次再试() {
         .await
         .map_err(OidcFailure::kind)
         .expect_err("连不上");
+
+    assert_eq!(failure, OidcFailureKind::DependencyUnavailable);
+}
+
+#[tokio::test]
+async fn 退出登录时结束这个账户在_keycloak_上的全部登录_不删账户() {
+    let keycloak = Running::start(删除结果::删掉了).await;
+
+    keycloak
+        .removal(CLIENT_SECRET)
+        .end_sessions(&account(ISSUER, "0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"))
+        .await
+        .expect("结束登录成功");
+
+    assert_eq!(
+        keycloak.logged_out().await,
+        ["0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"]
+    );
+    assert!(keycloak.deleted().await.is_empty());
+}
+
+#[tokio::test]
+async fn 结束登录时用户已经不在也算成功_别的签发方不碰() {
+    let keycloak = Running::start(删除结果::本来就没有).await;
+    let removal = keycloak.removal(CLIENT_SECRET);
+
+    removal
+        .end_sessions(&account(ISSUER, "already-gone"))
+        .await
+        .expect("已经不在也算成功");
+    removal
+        .end_sessions(&account("urn:agent-room:network-agent", "network-agent"))
+        .await
+        .expect("网络 Agent 没有登录可结束");
+
+    assert_eq!(keycloak.logged_out().await, ["already-gone"]);
+    assert_eq!(keycloak.token_requests().await, 1);
+}
+
+#[tokio::test]
+async fn 结束登录时_keycloak_出错照实说() {
+    let keycloak = Running::start(删除结果::暂时出错).await;
+
+    let failure = keycloak
+        .removal(CLIENT_SECRET)
+        .end_sessions(&account(ISSUER, "someone"))
+        .await
+        .map_err(OidcFailure::kind)
+        .expect_err("服务端出错");
 
     assert_eq!(failure, OidcFailureKind::DependencyUnavailable);
 }

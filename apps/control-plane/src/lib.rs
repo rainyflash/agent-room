@@ -54,7 +54,8 @@ use agent_room_application::{
     network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
-        MatrixUserId, NetworkSourceWeights, SecretValue, UniformSourceWeights,
+        MatrixUserId, NetworkSourceWeights, OidcResult, PortFuture, SecretValue, SignInAccount,
+        SignInSessionTermination, UniformSourceWeights,
     },
     private_rooms::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
@@ -335,7 +336,7 @@ async fn build_identity_router(
     let secrets = Arc::new(SecureSecretFactory);
     let matrix_identities = build_matrix_identity_provisioner(config, request_timeout)?;
     let (service, device_oidc) = build_authentication_runtime(
-        authentication_config,
+        config,
         request_timeout,
         &repositories,
         &system_runtime,
@@ -485,15 +486,19 @@ fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDepen
 }
 
 fn build_authentication_runtime(
-    config: &AuthenticationConfig,
+    control_plane: &ControlPlaneConfig,
     request_timeout: Duration,
     repositories: &Arc<PostgresRepositories>,
     system_runtime: &Arc<SystemRuntime>,
     secrets: &Arc<SecureSecretFactory>,
 ) -> Result<(Arc<AuthenticationService>, Arc<DiscoveredOidcDeviceGrant>), StartupError> {
+    let config = &control_plane.authentication;
     let oidc = build_web_oidc(config, request_timeout)?;
     let device_oidc = build_device_oidc(config, request_timeout)?;
     let policy = authentication_policy(config)?;
+    let sign_in_sessions = Arc::new(ReportedSignInSessions(build_sign_in_account_removal(
+        control_plane,
+    )?));
     let service = Arc::new(AuthenticationService::new(
         AuthenticationDependencies {
             oidc,
@@ -503,6 +508,7 @@ fn build_authentication_runtime(
             desktop_session_authorization: repositories.clone(),
             desktop_session_exchange: repositories.clone(),
             sessions: repositories.clone(),
+            sign_in_sessions,
             suspensions: repositories.clone(),
             secrets: secrets.clone(),
             identifiers: system_runtime.clone(),
@@ -511,6 +517,25 @@ fn build_authentication_runtime(
         policy,
     ));
     Ok((service, device_oidc))
+}
+
+/// 退出登录时结束身份服务上的登录；没结束成只记一条告警，退出照样算成功（`specs/sign-out/design.md`）。
+struct ReportedSignInSessions(Arc<KeycloakSignInAccountRemoval>);
+
+impl SignInSessionTermination for ReportedSignInSessions {
+    fn end_sessions<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>> {
+        Box::pin(async move {
+            let ended = self.0.end_sessions(account).await;
+            if let Err(failure) = &ended {
+                tracing::warn!(
+                    operation = "authentication.logout.sign_in_sessions",
+                    failure = ?failure.kind(),
+                    "退出登录时没能结束身份服务上的登录，换账户登录可能还会被拦"
+                );
+            }
+            ended
+        })
+    }
 }
 
 fn compose_identity_routes(
@@ -710,7 +735,7 @@ fn build_account_deletion_worker(
     )
 }
 
-/// 删除账户时删掉 Keycloak 里的登录账户：邮箱、昵称和密码散列都在那里。
+/// 删除账户时删掉 Keycloak 里的登录账户（邮箱、昵称和密码散列都在那里），退出登录时结束它的登录。
 fn build_sign_in_account_removal(
     config: &ControlPlaneConfig,
 ) -> Result<Arc<KeycloakSignInAccountRemoval>, StartupError> {
