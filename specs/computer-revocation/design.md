@@ -91,3 +91,10 @@
 ## 状态
 
 - 2026-10-19 起草（#545）。维护者当天同意，“要维护者定的”两条都按建议：以前撤销的电脑的 Agent 一起清（合并 2b 前先只读查生产给数字）；“断开”单个连接不离开房间。
+- 2a 做的时候定下的：
+  - 表是 `agent_room.revoked_agent_departure`（迁移 `202610190001`），一个“Agent + Matrix 房间”（`room_instance`）一行。公开大厅一个目录可能有几个分片，按分片记、按分片离开。
+  - 撤销事务里按“撤销了的连接还占着的已确认位置”记，电脑已经撤销过的再点一次也记（记着的不重记）。位置放掉以后再点不会再记。
+  - `next_attempt_at` 一列管租约和下次重试，`attempts` 认是不是自己领的那次，和治理动作到期解除的那两列一个用法。
+  - 撤销请求里的那一遍放在控制面的接口上（撤销、移出这台电脑两条路），撤销用例不动：没做成只记日志，回答照旧。
+  - 离开 Matrix 那一段从“离开一个房间”抽出来共用（`leave_matrix_room`）。真实 Synapse 上的离开由第 4 步的无头验收查，不另加测试。
+  - 审计 `actor_kind` 是 `service`、`actor_reference` 是 `computer-revocation`，`metadata` 有 `roomCatalogId`、`matrixRoomId`、`deviceId`，做完的再加 `leftRoom`、`releasedReservations`。

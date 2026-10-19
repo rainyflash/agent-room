@@ -1,4 +1,5 @@
 mod account_deletion;
+mod agent_room_departures;
 mod config;
 mod content_cleanup;
 mod content_runtime;
@@ -35,6 +36,7 @@ use agent_room_application::{
         AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
     },
     agent_lobbies::{AgentLobbyEntryDependencies, AgentLobbyEntryService},
+    agent_room_departures::{AgentRoomDepartureDependencies, AgentRoomDepartureService},
     agent_room_placements::{AgentRoomPlacementDependencies, AgentRoomPlacementService},
     agents::{AgentManagementDependencies, AgentManagementService},
     authentication::{AuthenticationDependencies, AuthenticationPolicy, AuthenticationService},
@@ -130,6 +132,8 @@ struct IdentityRuntime {
     account_deletion: account_deletion::AccountDeletionRuntime,
     operational_metrics: operational_metrics::OperationalMetricsRuntime,
     moderation_expiry: moderation_expiry::ModerationExpiryWorker,
+    /// 撤销电脑以后让它的 Agent 离开房间，撤销的请求里没做成的由它接着做。
+    agent_room_departures: agent_room_departures::AgentRoomDepartureWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -225,6 +229,7 @@ pub async fn run() -> Result<(), StartupError> {
         account_deletion,
         operational_metrics,
         moderation_expiry,
+        agent_room_departures,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -250,6 +255,7 @@ pub async fn run() -> Result<(), StartupError> {
     account_deletion.shutdown().await;
     operational_metrics.shutdown().await;
     moderation_expiry.shutdown().await;
+    agent_room_departures.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -344,23 +350,18 @@ async fn build_identity_router(
     )?;
     let state = build_authentication_http_state(&service, &system_runtime, authentication_config)?;
     let telemetry_state = build_frontend_telemetry_state(config, service.clone(), metrics.clone());
-    let devices = build_device_authorization(
+    let DeviceRuntime {
+        devices,
+        state: device_state,
+        departures,
+    } = build_device_runtime(
         authentication_config,
-        repositories.clone(),
-        secrets.clone(),
-        system_runtime.clone(),
-        matrix_identities.clone(),
+        &repositories,
+        &system_runtime,
+        &matrix_identities,
+        device_oidc,
+        &service,
     )?;
-    let device_state = DeviceHttpState::new(
-        DeviceHttpDependencies {
-            devices: devices.clone(),
-            assertion_verifier: device_oidc,
-            authentication: service.clone(),
-            secrets: secrets.clone(),
-        },
-        &authentication_config.frontend_origin,
-        &authentication_config.desktop_origins,
-    );
     let content_runtime::ContentRuntime {
         routes: content_routes,
         cleanup: content_cleanup,
@@ -425,6 +426,7 @@ async fn build_identity_router(
         account_deletion,
         operational_metrics,
         moderation_expiry: start_moderation_expiry(&agent_dependencies),
+        agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -1505,6 +1507,67 @@ fn build_device_authorization(
         },
         policy,
     )))
+}
+
+struct DeviceRuntime {
+    devices: Arc<DeviceAuthorizationService>,
+    state: DeviceHttpState,
+    departures: Arc<AgentRoomDepartureService>,
+}
+
+/// 这台电脑的授权：注册、换令牌、撤销。撤销以后让它的 Agent 离开房间，撤销的请求里先做一遍，
+/// 没做成的由定时任务接着做，两边用同一份。
+fn build_device_runtime(
+    config: &AuthenticationConfig,
+    repositories: &Arc<PostgresRepositories>,
+    system_runtime: &Arc<SystemRuntime>,
+    matrix: &Arc<MatrixApplicationServiceProvisioner>,
+    assertion_verifier: Arc<DiscoveredOidcDeviceGrant>,
+    authentication: &Arc<AuthenticationService>,
+) -> Result<DeviceRuntime, StartupError> {
+    let secrets = Arc::new(SecureSecretFactory);
+    let devices = build_device_authorization(
+        config,
+        repositories.clone(),
+        secrets.clone(),
+        system_runtime.clone(),
+        matrix.clone(),
+    )?;
+    let departures = build_agent_room_departures(repositories, system_runtime, matrix);
+    let state = DeviceHttpState::new(
+        DeviceHttpDependencies {
+            devices: devices.clone(),
+            departures: departures.clone(),
+            assertion_verifier,
+            authentication: authentication.clone(),
+            secrets,
+        },
+        &config.frontend_origin,
+        &config.desktop_origins,
+    );
+    Ok(DeviceRuntime {
+        devices,
+        state,
+        departures,
+    })
+}
+
+/// 撤销电脑以后让它的 Agent 离开房间（specs/computer-revocation/design.md）。
+fn build_agent_room_departures(
+    repositories: &Arc<PostgresRepositories>,
+    system_runtime: &Arc<SystemRuntime>,
+    matrix: &Arc<MatrixApplicationServiceProvisioner>,
+) -> Arc<AgentRoomDepartureService> {
+    Arc::new(AgentRoomDepartureService::new(
+        AgentRoomDepartureDependencies {
+            departures: repositories.clone(),
+            placements: repositories.clone(),
+            allocations: repositories.clone(),
+            private_matrix: matrix.clone(),
+            memberships: matrix.clone(),
+            clock: system_runtime.clone(),
+        },
+    ))
 }
 
 fn build_agent_card_management(

@@ -351,7 +351,7 @@ fn retry_delay_millis(attempt: u32) -> i64 {
 }
 
 /// 整个聊天服务器这会儿用不了：连不上、超时、限速，或者不认应用服务的令牌。换别的动作也一样撤不成。
-const fn homeserver_unavailable(failure: MatrixFailure) -> bool {
+pub(crate) const fn homeserver_unavailable(failure: MatrixFailure) -> bool {
     matches!(
         failure.kind(),
         MatrixFailureKind::DependencyUnavailable
