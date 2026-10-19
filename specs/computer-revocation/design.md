@@ -98,3 +98,5 @@
   - 撤销请求里的那一遍放在控制面的接口上（撤销、移出这台电脑两条路），撤销用例不动：没做成只记日志，回答照旧。
   - 离开 Matrix 那一段从“离开一个房间”抽出来共用（`leave_matrix_room`）。真实 Synapse 上的离开由第 4 步的无头验收查，不另加测试。
   - 审计 `actor_kind` 是 `service`、`actor_reference` 是 `computer-revocation`，`metadata` 有 `roomCatalogId`、`matrixRoomId`、`deviceId`，做完的再加 `leftRoom`、`releasedReservations`。
+- 2a #546、第 3 步三处确认的说法 #547 都已合并（2026-10-19），随 Alpha 80 发布。#546 改了 `crates/postgres-adapter/src/devices.rs`，实机验收要走一次新设备授权。
+- 第 4 步无头验收 #548：换账号那一轮在 `computer_released` 以后，查原来的 Agent 在验收大厅是 `leave`（问 Synapse 的库），它的连接不再占已确认的位置、`revoked_agent_departure` 里没有它的、审计里有一条 `leftRoom` 为真的 `agent.room.departed`。移出这台电脑的请求里就做完了，不用等定时任务。2026-10-19 在分支上派发 `suite=all` 通过。

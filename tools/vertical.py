@@ -3564,9 +3564,9 @@ def verify_computer_switch(
     *, processes: ProcessStack, environment: Mapping[str, str], redactor: LogRedactor
 ) -> dict[str, object]:
     """换账号（specs/sign-out/design.md 第 4 步）：一台电脑先归验收账号，它的 Agent 进公共大厅；像
-    桌面端那样写 `release` 以后，这台电脑移出账户，Agent 的连接和 Matrix 设备一起撤掉（和“撤销电脑”
-    一样，Agent 不离开房间）；照桌面端收走原账户留在本机的东西，再交给第二个账号：用的还是这台电脑的
-    签名钥匙，第二个账号的 Agent 进大厅说话。"""
+    桌面端那样写 `release` 以后，这台电脑移出账户，Agent 的连接和 Matrix 设备一起撤掉，Agent 离开大厅、
+    放掉位置（和“撤销电脑”一样，specs/computer-revocation/design.md）；照桌面端收走原账户留在本机的
+    东西，再交给第二个账号：用的还是这台电脑的签名钥匙，第二个账号的 Agent 进大厅说话。"""
     data_root = VERTICAL_ROOT.resolve() / SWITCH_BRIDGE_NAME
     data_root.mkdir(mode=0o700, parents=True, exist_ok=False)
     bridge_environment = switch_bridge_environment(data_root)
@@ -3588,6 +3588,8 @@ def verify_computer_switch(
         raise VerticalFailure("移出这台电脑以后 Bridge 没有正常退出。")
     first.stop()
     require_agent_device_revoked(before["agentInstanceId"], before["agentMatrixUserId"])
+    require_membership(before["matrixRoomId"], before["agentMatrixUserId"], "leave")
+    require_revoked_agent_departed(before["agentInstanceId"])
     retire_switched_account(data_root, bridge_environment)
 
     second, _, second_code = start_switch_bridge(
@@ -3704,6 +3706,28 @@ def require_agent_device_revoked(instance_id: str, user_id: str) -> None:
     )
     if remaining != "0":
         raise VerticalFailure("移出电脑以后 Agent 的 Matrix 设备还在 Synapse 上。")
+
+
+def require_revoked_agent_departed(instance_id: str) -> None:
+    """撤销电脑以后它的 Agent 离开了房间：这个连接不再占位置，记下的离开都做完了，审计里有一条离开。"""
+    require_uuid_v7(instance_id, "换账号那台电脑上的 Agent 实例")
+    row = compose_psql(
+        "SELECT"
+        " (SELECT count(*) FROM agent_room.room_capacity_reservation"
+        f" WHERE agent_instance_id = '{instance_id}' AND state = 'committed'),"
+        " (SELECT count(*) FROM agent_room.revoked_agent_departure AS departure"
+        " JOIN agent_room.agent_instance AS instance ON instance.agent_id = departure.agent_id"
+        f" WHERE instance.id = '{instance_id}'),"
+        " (SELECT count(*) FROM agent_room.audit_event AS audit"
+        " JOIN agent_room.agent_instance AS instance"
+        " ON audit.target_reference = instance.agent_id::text"
+        f" WHERE instance.id = '{instance_id}' AND audit.action = 'agent.room.departed'"
+        " AND audit.outcome = 'allowed' AND audit.metadata->>'leftRoom' = 'true');"
+    ).split("|")
+    if row != ["0", "0", "1"]:
+        raise VerticalFailure(
+            f"移出电脑以后 Agent 该放掉位置、离开都做完、审计里有一条离开：{row}。"
+        )
 
 
 def verify_switched_devices(before_instance: str, after_instance: str) -> None:
