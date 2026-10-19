@@ -163,6 +163,35 @@ describe('Tauri 桌面运行时适配器', () => {
     });
   });
 
+  it('换账号前移出这台电脑只调用闭合命令，没移出去时把原生层的原因原样交回', async () => {
+    const invoke = vi.fn().mockResolvedValue({ serverReleased: true });
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    await expect(gateway.releaseComputer()).resolves.toEqual({
+      ok: true,
+      value: { serverReleased: true },
+    });
+    expect(invoke).toHaveBeenCalledWith('desktop_release_computer', {});
+
+    const failing = new TauriDesktopRuntimeGateway(
+      transport({
+        invoke: vi.fn().mockRejectedValue({ code: 'bridge.release_unavailable', retryable: true }),
+      }),
+    );
+    await expect(failing.releaseComputer()).resolves.toEqual({
+      error: { code: 'bridge.release_unavailable', retryable: true },
+      ok: false,
+    });
+
+    const extra = new TauriDesktopRuntimeGateway(
+      transport({ invoke: vi.fn().mockResolvedValue({ serverReleased: true, extra: 1 }) }),
+    );
+    await expect(extra.releaseComputer()).resolves.toEqual({
+      error: { code: 'desktop.command.invalid_response', retryable: true },
+      ok: false,
+    });
+  });
+
   it('默认 Agent 引导只传递语言并校验目标摘要', async () => {
     const invoke = vi.fn().mockResolvedValue({
       agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e44',

@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import type { MyAgentsFixtureWindow } from '../src/test/my-agents-fixture-controls';
 
 const surfaces = [
   ['rooms', '/e2e/fixtures/room-directory.html'],
@@ -82,6 +83,48 @@ for (const width of [1440, 390]) {
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
       .analyze();
     expect(scan.violations.map(({ id }) => id)).toEqual([]);
+    expect(failures).toEqual([]);
+  });
+  test(`设置 · 账户（桌面端）：${String(width)}px 换账号先确认、移出这台电脑，没成能再点`, async ({
+    page,
+  }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    // 已是最新：不弹“有新版本”的提示，免得在手机宽度上盖住按钮。
+    await page.goto('/e2e/fixtures/my-agents.html?settings=account&update=current&release=failed');
+    const content = page.getByRole('region', { name: 'Account', exact: true });
+    const controls = async () =>
+      await page.evaluate(() => {
+        const fixture = (window as MyAgentsFixtureWindow).__agentRoomFixtureControls;
+        return { releases: fixture.releaseCount(), intents: fixture.signInIntents() };
+      });
+    await content.getByRole('button', { name: 'Switch account', exact: true }).click();
+    // 先说清楚原来的账户在这台电脑上会怎样（specs/sign-out/design.md 第 4 步），还没动手。
+    const confirmation = content.getByRole('region', { name: 'Use another account' });
+    await expect(
+      confirmation.getByText(
+        'This computer will be removed from Fixture operator’s account: Fixture operator’s agents on this computer disconnect',
+        { exact: false },
+      ),
+    ).toBeVisible();
+    expect(await controls()).toEqual({ releases: 0, intents: [] });
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(scan.violations.map(({ id }) => id)).toEqual([]);
+
+    // 第一次没移出去：账号没换，说为什么，按钮还在。
+    await confirmation.getByRole('button', { name: 'Remove and switch' }).click();
+    await expect(confirmation.getByRole('alert')).toContainText(
+      'This computer wasn’t removed, so the account hasn’t changed.',
+    );
+    expect(await controls()).toEqual({ releases: 1, intents: [] });
+
+    // 再点一次移出去了：照常退出，用 reauthenticate 登录新账户。
+    await confirmation.getByRole('button', { name: 'Remove and switch' }).click();
+    await expect.poll(controls).toEqual({ releases: 2, intents: ['reauthenticate'] });
     expect(failures).toEqual([]);
   });
   test(`设置 · 这台电脑：${String(width)}px 有新版本、自动打开与更新`, async ({

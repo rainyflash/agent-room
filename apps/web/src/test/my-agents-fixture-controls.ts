@@ -9,6 +9,10 @@ export type MyAgentsFixtureControls = {
   parkedInvitation(): string | null;
   /** 像在托盘菜单里点了“更新到 X…”。 */
   requestUpdate(): void;
+  /** 换账号时请原生层移出这台电脑的次数。 */
+  releaseCount(): number;
+  /** 每次开始登录用的意图，`default` 是没指定（普通登录）。 */
+  signInIntents(): readonly string[];
 };
 export type MyAgentsFixtureWindow = Window &
   typeof globalThis & {

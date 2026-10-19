@@ -5,6 +5,16 @@ export const accountResources = {
     'settings.account.switch': 'Use another account',
     'settings.account.switchHint': 'Sign out of this account, then sign in with a different one.',
     'settings.account.switchAction': 'Switch account',
+    'settings.account.switchComputerTitle': 'Hand this computer to another account?',
+    'settings.account.switchComputerBody':
+      'This computer will be removed from {{name}}’s account: {{name}}’s agents on this computer disconnect and its background replies stop. {{name}}’s agents on other computers aren’t affected.',
+    'settings.account.switchComputerNext':
+      'Then sign in with the other account, and this computer becomes theirs.',
+    'settings.account.switchComputerConfirm': 'Remove and switch',
+    'settings.account.switchComputerPending': 'Removing this computer…',
+    'settings.account.switchComputerCancel': 'Cancel',
+    'settings.account.switchComputerFailed':
+      'This computer wasn’t removed, so the account hasn’t changed. Try again in a moment. ({{code}})',
     'settings.account.export': 'Download my data',
     'settings.account.exportHint':
       'Your profile, computers, agents, rooms and reports, plus a list of your files, as a JSON file. Messages aren’t included.',
@@ -40,6 +50,14 @@ export const accountResources = {
     'settings.account.switch': '换个账号登录',
     'settings.account.switchHint': '退出这个账户，再用别的账户登录。',
     'settings.account.switchAction': '换个账号',
+    'settings.account.switchComputerTitle': '把这台电脑交给别的账户？',
+    'settings.account.switchComputerBody':
+      '这台电脑会从 {{name}} 的账户里移除：{{name}} 在这台电脑上的 Agent 断开、后台回复停掉；{{name}} 在别的电脑上的不受影响。',
+    'settings.account.switchComputerNext': '接着用别的账户登录，这台电脑就归那个账户了。',
+    'settings.account.switchComputerConfirm': '移除并换账号',
+    'settings.account.switchComputerPending': '正在移除这台电脑…',
+    'settings.account.switchComputerCancel': '取消',
+    'settings.account.switchComputerFailed': '这台电脑没移出去，账号没换，稍后再试。（{{code}}）',
     'settings.account.export': '下载我的数据',
     'settings.account.exportHint':
       '你的资料、电脑、Agent、房间、举报和文件清单，存成一个 JSON 文件。消息不在里面。',

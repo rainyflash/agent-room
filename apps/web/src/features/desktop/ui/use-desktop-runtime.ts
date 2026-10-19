@@ -9,6 +9,7 @@ import { newerUpdateStatus, updateStatusAfterCheck } from '@/features/desktop/do
 import {
   parseLobbyDeepLinkRoute,
   type BridgeRuntime,
+  type ComputerRelease,
   type InvitationOffer,
   type PendingInvitation,
   type DesktopAgentTarget,
@@ -32,6 +33,7 @@ type DesktopOperation =
   | 'agent-runtime'
   | 'reauthorize'
   | 'refresh'
+  | 'release'
   | 'retry'
   | 'update-check'
   | 'update-install';
@@ -65,6 +67,11 @@ export type DesktopRuntimeController = {
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
   readonly reauthorizeBridge: () => Promise<void>;
+  /**
+   * 换账号前把这台电脑移出原来的账户。没成的原因直接交回给调用的地方说，不进全局的报错；
+   * 没有这条命令的桌面端（测试替身）不给这一项。
+   */
+  readonly releaseComputer?: () => Promise<Result<ComputerRelease, DesktopRuntimeFailure>>;
   readonly installUpdate: () => Promise<void>;
   readonly setAutostart: (enabled: boolean) => Promise<void>;
   readonly bootstrapDefaultAgent: (preferredLanguage: string | null) => Promise<void>;
@@ -271,6 +278,20 @@ export function useDesktopRuntime(
     setBusy(null);
   }, [gateway]);
 
+  const releaseComputer = useCallback(async (): Promise<
+    Result<ComputerRelease, DesktopRuntimeFailure>
+  > => {
+    if (gateway.releaseComputer === undefined) {
+      return err({ code: 'desktop.release.unavailable', retryable: false });
+    }
+    setBusy('release');
+    try {
+      return await gateway.releaseComputer();
+    } finally {
+      setBusy(null);
+    }
+  }, [gateway]);
+
   const setAutostart = useCallback(
     async (enabled: boolean): Promise<void> => {
       setBusy('autostart');
@@ -423,6 +444,7 @@ export function useDesktopRuntime(
     refresh,
     retryBridge,
     reauthorizeBridge,
+    ...(gateway.releaseComputer === undefined ? {} : { releaseComputer }),
     installUpdate,
     setAutostart,
   };

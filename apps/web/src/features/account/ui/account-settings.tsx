@@ -11,6 +11,7 @@ import {
   type AccountGateway,
 } from '@/features/account/domain/account';
 import { rememberAccountDeletion } from '@/features/account/ui/account-deleted-notice';
+import type { DesktopRuntimeController } from '@/features/desktop/ui/use-desktop-runtime';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
@@ -21,7 +22,7 @@ const RETURN_PATH = '/settings/account';
 /**
  * 账户：退出登录、换个账号登录（`specs/sign-out/design.md`），下载我的数据、删除账户（隐私说明里
  * 写的两条路）。删除要几分钟内登录过、输入 DELETE；成功后服务器已让这次登录失效，这里接着退出登录、
- * 清掉本机数据，回到首页说一声。
+ * 清掉本机数据，回到首页说一声。桌面端换账号先确认、把这台电脑移出原来的账户，再照常换。
  */
 export function AccountSettings() {
   const { t } = useTranslation();
@@ -50,8 +51,17 @@ export function AccountSettings() {
           {t('connection.action.logout')}
         </Button>
       </div>
-      {/* 桌面端换账号要把这台电脑一起交给新账户（设计第 4 步），做好以前只在网页上有。 */}
-      {desktop?.available === true ? null : (
+      {desktop?.available === true ? (
+        desktop.releaseComputer === undefined ? null : (
+          <DesktopSwitchRow
+            displayName={principal.displayName}
+            onReleased={() => {
+              session.send({ type: 'SWITCH_ACCOUNT' });
+            }}
+            releaseComputer={desktop.releaseComputer}
+          />
+        )
+      ) : (
         <div className="settings-row">
           <div>
             <strong>{t('settings.account.switch')}</strong>
@@ -77,6 +87,100 @@ export function AccountSettings() {
         }}
         recentlyAuthenticated={principal.recentlyAuthenticated}
       />
+    </div>
+  );
+}
+
+/**
+ * 桌面端的换账号：这台电脑要一起交给新账户。先说清楚原来的账户在这台电脑上会怎样，确认以后请原生层
+ * 移出这台电脑；移出去了才退出登录、去登录新账户，没移出去什么都不动，说为什么、能再点。
+ */
+function DesktopSwitchRow({
+  displayName,
+  onReleased,
+  releaseComputer,
+}: {
+  readonly displayName: string;
+  readonly onReleased: () => void;
+  readonly releaseComputer: NonNullable<DesktopRuntimeController['releaseComputer']>;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const release = async (): Promise<void> => {
+    setPending(true);
+    setFailure(null);
+    const released = await releaseComputer();
+    if (!released.ok) {
+      setPending(false);
+      setFailure(released.error.code);
+      return;
+    }
+    // 托管的 Bridge 不在运行时只收了本机（serverReleased 为 false），原来的账户在设置里还看得到
+    // 这台电脑、能在那边撤销；它的凭据已经删了，没人用得了，这里照样接着换。
+    onReleased();
+  };
+  return (
+    <div className="settings-row settings-row--stack">
+      <div>
+        <strong>{t('settings.account.switch')}</strong>
+        <p>{t('settings.account.switchHint')}</p>
+      </div>
+      {confirming ? (
+        <section aria-label={t('settings.account.switch')} className="account-deletion">
+          <Banner
+            icon={null}
+            role={null}
+            title={t('settings.account.switchComputerTitle')}
+            tone="warning"
+          >
+            <p>{t('settings.account.switchComputerBody', { name: displayName })}</p>
+            <p>{t('settings.account.switchComputerNext')}</p>
+          </Banner>
+          {failure === null ? null : (
+            <p role="alert">{t('settings.account.switchComputerFailed', { code: failure })}</p>
+          )}
+          <div className="account-deletion__actions">
+            <Button
+              disabled={pending}
+              onClick={() => {
+                void release();
+              }}
+              size="compact"
+              tone="primary"
+            >
+              {t(
+                pending
+                  ? 'settings.account.switchComputerPending'
+                  : 'settings.account.switchComputerConfirm',
+              )}
+            </Button>
+            <Button
+              disabled={pending}
+              onClick={() => {
+                setConfirming(false);
+                setFailure(null);
+              }}
+              size="compact"
+              tone="quiet"
+            >
+              {t('settings.account.switchComputerCancel')}
+            </Button>
+          </div>
+        </section>
+      ) : (
+        <Button
+          icon={<ArrowLeftRight aria-hidden="true" />}
+          onClick={() => {
+            setConfirming(true);
+          }}
+          size="compact"
+          tone="ghost"
+        >
+          {t('settings.account.switchAction')}
+        </Button>
+      )}
     </div>
   );
 }

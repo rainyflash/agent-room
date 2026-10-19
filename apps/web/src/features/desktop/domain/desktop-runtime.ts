@@ -245,6 +245,14 @@ export const pendingInvitationSchema = z
 export type PendingInvitation = z.infer<typeof pendingInvitationSchema>;
 export type InvitationOffer = PendingInvitation['invitation'];
 
+export const computerReleaseSchema = z
+  .object({
+    /** 服务器上这台电脑也移出了原来的账户；托管的 Bridge 不在运行时只收了本机，原账户在设置里还看得到它。 */
+    serverReleased: z.boolean(),
+  })
+  .strict();
+export type ComputerRelease = z.infer<typeof computerReleaseSchema>;
+
 export type DesktopRuntimeFailure = {
   readonly code: string;
   readonly retryable: boolean;
@@ -326,6 +334,11 @@ export type DesktopRuntimeGateway = {
   snapshot(): Promise<Result<DesktopRuntimeSnapshot, DesktopRuntimeFailure>>;
   retryBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
   reauthorizeBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>>;
+  /**
+   * 换账号的第一步：停掉后台回复，把这台电脑移出原来的账户，收走原账户留在本机的东西。
+   * 之后照常退出登录、登录新账户；账户登录清掉时原生层重新拉起 Bridge 等新账户的电脑授权。
+   */
+  releaseComputer?(): Promise<Result<ComputerRelease, DesktopRuntimeFailure>>;
   setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>>;
   openAuthorization(promptId: string): Promise<Result<void, DesktopRuntimeFailure>>;
   /** Reveal the folder holding desktop.log and bridge.log, the two files to send with a bug report. */

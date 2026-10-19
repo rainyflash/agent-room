@@ -30,6 +30,8 @@ Alpha 77 起控制面换令牌时记下电脑的“上次使用”（`GET /auth/
 
 Alpha 78 起登录的起点（`/auth/oidc/start`、`/auth/desktop/start`）多认一个意图 `reauthenticate`：要“最近登录过”的操作请人再登录一次时带上，桌面端不再拿系统浏览器里已有的网页登录换。旧版网页和桌面端不传它，照旧；回滚到旧版控制面时，新版的这几处“重新登录”会被拒（400）。IPC 还是 `4.5`，没有迁移。
 
+退出登录和换账号（[设计](../specs/sign-out/design.md)）没有动 IPC。退出登录时控制面连身份服务上这个人的登录一起结束，之后能换别的账户登录。控制面加了一个接口 `POST /auth/devices/current/release`：这台电脑凭自己的设备签名把自己移出账户，不看网页登录，撤销和“撤销电脑”是同一套。桌面端换账号时经标准输入给托管的 Bridge 写一行 `release`，Bridge 调这个接口、删掉本机的设备凭据再退出，标准输出报 `computer_released` 或 `computer_release_failed`。旧版 Bridge 不认这一行（不认识的行忽略），桌面端等不到回话就当没成；桌面端和 Bridge 本来在同一个安装包里，一起升级。碰上还没有这个接口的控制面，Bridge 报 `bridge.release_unsupported`，桌面端什么都不动、说没换成，所以照常先部署服务端、再发客户端。没有迁移。
+
 一条消息最多点名 200 个人（以前是 8 个）。点名超过 8 个的消息，Alpha 58 及更早的 Bridge 会隔离，没刷新的旧网页看不到；升级或刷新以后正常。私人房间里可以 @所有人（`preview.mentionsEveryone`）：旧版收到时只当一条普通消息，旧版的 Agent 不会因此被叫醒。
 
 Do not combine files from separate release archives. Stable and testing channels have independent signed manifests and monotonic sequence state.
