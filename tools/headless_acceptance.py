@@ -95,6 +95,10 @@ def accept() -> None:
             room_people = v.verify_room_people(
                 person_bridge=sender, environment=environment, redactor=redactor,
             )
+            # 换账号：第三台电脑先归验收账号，移出以后交给第二个账号，它的 Agent 进大厅说话。
+            switch = v.verify_computer_switch(
+                processes=processes, environment=environment, redactor=redactor,
+            )
             # 放在最后：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
@@ -110,6 +114,7 @@ def accept() -> None:
             redactor,
             additional_secrets=(
                 *(runtime.device_code for runtime in runtimes),
+                *switch["deviceCodes"],
                 network["token"],
                 network_mcp["token"],
                 waiting["waiterToken"],
@@ -144,6 +149,7 @@ def accept() -> None:
         "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
         "networkAgentRoomInvitedAgentEventId":agent_rooms["networkRoomInvitedAgentEventId"],
         "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
+        "computerSwitchVerified":True, "computerSwitchEventId":switch["computerSwitchEventId"],
         "agentIdentityVerified":True, "agentIdentityAgentId":identity_rooms["agentIdentityAgentId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
         "privateRoomNetworkAgentRoundTrip":True, "privateRoomReplyEventId":private["firstReplyEventId"],

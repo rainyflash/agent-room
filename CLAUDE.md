@@ -148,6 +148,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 - 2026-10-19 维护者说网页和桌面端都没有退出登录、换账号的地方。退出只在“我的 Agent”顶栏（窄窗口只剩图标）；退出不结束身份服务的登录，再登录回到原账号或被 Keycloak 拒绝换人；桌面端这台电脑的授权还属于原账户。
 - 设计在 [specs/sign-out/design.md](./specs/sign-out/design.md)（#535），进度记在它的“状态”一节。第 2 步（退出时结束身份服务的登录）和第 3 步（设置里的退出、网页换账号）同一版发布，第 2 步先合；第 4 步桌面端换账号可以晚一版。
+- 同一天维护者还说手机浏览器登录后一直发不出消息：旧版 iOS 浏览器没有 `Promise.withResolvers`，同步停住，#534 补上。
+- 已合并：第 2 步 #536、第 3 步 #537；第 4 步拆成 4a 控制面 `POST /auth/devices/current/release` #538、4b Bridge 认 `release` #539、4c 桌面端 `desktop_release_computer` #540、4d 网页先确认再换 #541、4e 无头验收 #543。#536 改了 `crates/identity-adapter/`，#538 改了 `devices.rs`，发版要设备码。
+- 改这一块时别拆的几样：
+  - 换账号那次登录带 `reauthenticate`（会话状态机离开 `authenticating` 时才清 `switchingAccount`）：桌面端平时拿系统浏览器里已有的网页登录换，那份还是原来的账户。
+  - 桌面端先挡住 Bridge 自动重启再写 `release`（`ReleaseGate`）；一分钟等不到回话就结束它、照常重启。别在超时后放开闸门让原账户的登录再把这台电脑注册回去。
+  - Bridge 报就绪前丢掉标准输入里已经排着的行（`discard_pending`）：上一代没读完的 `release` 不能被新的一代拿去执行。
+  - 移出以后账户登录还留着，网页退出时要拿它在服务器上退（连 Keycloak 的登录一起结束）；清掉账户登录时（`desktop_clear_human_session`）才去掉标记 `account-release.pending`、重新拉起 Bridge。中途退出的，下次启动看到标记接着收。
+  - 设备按公钥唯一只在没撤销的设备里算，所以同一把签名钥匙能登记给新账户。签名钥匙（`device-signing-seed`）不在 `SERVER_BOUND_ACCOUNTS` 里，别加进去。
+  - Keycloak 退出没成时只记告警（#536），这时换账号的那次登录会被身份服务直接认成原来的账户；要彻底挡住得在登录起点给 Keycloak 加 `prompt=login`，还没做。
 
 ### 后台回复、已登录的电脑和房间未读
 
