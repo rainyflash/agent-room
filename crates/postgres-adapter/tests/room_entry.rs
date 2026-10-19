@@ -37,6 +37,10 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+/// 上线以前撤销的电脑，它们的 Agent 补进离开队列的迁移；测试在事务里重跑它，看完就回滚。
+const DEPARTURE_BACKFILL: &str =
+    include_str!("../../../infra/migrations/202610190002_revoked_agent_departure_backfill.sql");
+
 struct TestDatabase {
     migration: PgPool,
     runtime: PgPool,
@@ -556,6 +560,45 @@ async fn 同一个房间里别的电脑上还有它的连接时只放撤销的�
         committed_reservation_count(&database.runtime, second).await,
         1
     );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 上线以前撤销的电脑上的_agent_由迁移补进离开队列() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime).await;
+    service(database.runtime.clone(), Arc::new(测试Matrix::new(false)))
+        .enter(request(&fixture))
+        .await
+        .expect("进大厅");
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    revoke_device(&repositories, &database.runtime, fixture.device).await;
+
+    let mut transaction = database.migration.begin().await.expect("事务应启动");
+    sqlx::query("DELETE FROM agent_room.revoked_agent_departure WHERE agent_id = $1")
+        .bind(fixture.agent.as_uuid())
+        .execute(&mut *transaction)
+        .await
+        .expect("装作是上线以前撤销的，撤销时没记");
+    sqlx::raw_sql(DEPARTURE_BACKFILL)
+        .execute(&mut *transaction)
+        .await
+        .expect("迁移可以在事务里重跑");
+    let queued: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT device_id FROM agent_room.revoked_agent_departure WHERE agent_id = $1",
+    )
+    .bind(fixture.agent.as_uuid())
+    .fetch_all(&mut *transaction)
+    .await
+    .expect("可读离开队列");
+    assert_eq!(queued, [fixture.device.as_uuid()]);
+    sqlx::raw_sql(DEPARTURE_BACKFILL)
+        .execute(&mut *transaction)
+        .await
+        .expect("再跑一次也行，记着的不重记");
+    transaction.rollback().await.expect("回滚");
 
     database.close().await;
 }

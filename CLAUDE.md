@@ -157,7 +157,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 移出以后账户登录还留着，网页退出时要拿它在服务器上退（连 Keycloak 的登录一起结束）；清掉账户登录时（`desktop_clear_human_session`）才去掉标记 `account-release.pending`、重新拉起 Bridge。中途退出的，下次启动看到标记接着收。
   - 设备按公钥唯一只在没撤销的设备里算，所以同一把签名钥匙能登记给新账户。签名钥匙（`device-signing-seed`）不在 `SERVER_BOUND_ACCOUNTS` 里，别加进去。
   - Keycloak 退出没成时只记告警（#536），这时换账号的那次登录会被身份服务直接认成原来的账户；要彻底挡住得在登录起点给 Keycloak 加 `prompt=login`，还没做。
-- 4e 发现撤销电脑（换账号时移出这台电脑也是）不让 Agent 离开房间、不放位置，房间里一直挂着离线的它。设计在 [specs/computer-revocation/design.md](./specs/computer-revocation/design.md)（#545），维护者当天同意（以前撤销的一起清，“断开”单个连接不离开），按步做，进度记在它的“状态”一节。已合并：2a 控制面的离开队列 #546（改了 `crates/postgres-adapter/src/devices.rs`，发版要设备码）、第 3 步确认里的说法 #547、第 4 步无头验收 #548，随 Alpha 80 发布。2b 补以前撤销的 #549 先只读查生产有多少，数字报给维护者再合。
+- 4e 发现撤销电脑（换账号时移出这台电脑也是）不让 Agent 离开房间、不放位置，房间里一直挂着离线的它。设计在 [specs/computer-revocation/design.md](./specs/computer-revocation/design.md)（#545），维护者当天同意（以前撤销的一起清，“断开”单个连接不离开），按步做，进度记在它的“状态”一节。已合并：2a 控制面的离开队列 #546（改了 `crates/postgres-adapter/src/devices.rs`，发版要设备码）、第 3 步确认里的说法 #547、第 4 步无头验收 #548，随 Alpha 80 发布。2b 补以前撤销的 #549 也随 Alpha 80 发布：维护者看过只读查的数字（10-18 一键撤销的 13 台电脑，13 个 Agent 都在同一个公开大厅）同意合并。
 
 ### 后台回复、已登录的电脑和房间未读
 

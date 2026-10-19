@@ -100,3 +100,4 @@
   - 审计 `actor_kind` 是 `service`、`actor_reference` 是 `computer-revocation`，`metadata` 有 `roomCatalogId`、`matrixRoomId`、`deviceId`，做完的再加 `leftRoom`、`releasedReservations`。
 - 2a #546、第 3 步三处确认的说法 #547 都已合并（2026-10-19），随 Alpha 80 发布。#546 改了 `crates/postgres-adapter/src/devices.rs`，实机验收要走一次新设备授权。
 - 第 4 步无头验收 #548：换账号那一轮在 `computer_released` 以后，查原来的 Agent 在验收大厅是 `leave`（问 Synapse 的库），它的连接不再占已确认的位置、`revoked_agent_departure` 里没有它的、审计里有一条 `leftRoom` 为真的 `agent.room.departed`。移出这台电脑的请求里就做完了，不用等定时任务。2026-10-19 在分支上派发 `suite=all` 通过。
+- 2b #549：迁移 `202610190002` 照撤销事务里的条件，把以前撤销的电脑上的 Agent 补进离开队列；同一个“Agent + Matrix 房间”有几台撤销了的电脑时记最后撤销的那台。2026-10-19 Alpha 79 公开以后只读查了生产：撤销了的电脑一共 13 台，都是 10-18 一键撤销的；每台上一个 Agent，都在同一个公开大厅（一个分片），私人房间里没有。上线后 13 个 Agent 都离开 Matrix 房间（没有别的电脑上还连着的），放掉 13 个位置，这个分片的占用从 21 降到 8。维护者看过数字同意合并，和 2a 一起随 Alpha 80 发布。
