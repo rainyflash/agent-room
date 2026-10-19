@@ -116,6 +116,7 @@ use crate::{
         OsDeviceSigningIdentityStore,
     },
 };
+use agent_room_bridge::control_plane::computer_release::ComputerReleaseOutcome;
 use agent_room_bridge::control_plane::{
     ControlPlaneHttpConfig, ReqwestAgentInstanceVerificationGateway,
     ReqwestControlPlaneAgentRuntimeGateway, ReqwestControlPlaneAutomationAuthorizationGateway,
@@ -132,6 +133,7 @@ use agent_room_bridge_storage_adapter::{
 /// 主人记录文件：数据目录下，只有账号标识，不是凭据。
 const OWNER_RECORD_FILE: &str = "owner.json";
 const DESKTOP_RUNTIME_CAPABILITY_VERSION: &str = "1.0";
+mod computer_release;
 mod connectivity;
 mod host_sessions;
 mod isolated_messages;
@@ -247,16 +249,82 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
     )
     .map_err(BridgeRuntimeError::ipc)?;
     finish_starting(&status, &device_session, agent_session.as_ref());
+    let session_service = device_session.service.clone();
+    let release = computer_release_client(&config, &session_service)?;
+    if let Some(input) = supervisor.as_mut() {
+        input.discard_pending();
+    }
     announce_supervisor_ready()?;
-    run_until_shutdown(
-        wait_for_exit_signal(supervisor.as_ref().map(SupervisorInput::released)),
+    let (release_sender, mut computer_released) = oneshot::channel();
+    let result = run_until_shutdown(
+        exit_or_release(supervisor, release, release_sender),
         server,
         status,
         device_session,
         agent_session,
         host_sessions,
     )
-    .await
+    .await;
+    if let Ok(outcome) = computer_released.try_recv() {
+        finish_computer_release(&session_service, outcome).await;
+    }
+    result
+}
+
+type ComputerRelease = agent_room_bridge::control_plane::computer_release::ReqwestComputerRelease;
+
+fn computer_release_client(
+    config: &BridgeConfig,
+    session: &Arc<BridgeSessionService>,
+) -> Result<ComputerRelease, BridgeRuntimeError> {
+    ComputerRelease::new(
+        &ControlPlaneHttpConfig {
+            base_url: config.control_plane_url.clone(),
+            request_timeout: config.request_timeout,
+        },
+        session.clone(),
+    )
+    .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))
+}
+
+/// 桌面端要退出、管道关了、操作系统要关，或者桌面端换账号、这台电脑已经移出原来的账户时完成。
+/// 移出去了的结果交给 `released`，等 Bridge 停下以后收尾。
+async fn exit_or_release(
+    supervisor: Option<SupervisorInput>,
+    release: ComputerRelease,
+    released: oneshot::Sender<ComputerReleaseOutcome>,
+) -> io::Result<()> {
+    let exit = wait_for_exit_signal(supervisor.as_ref().map(SupervisorInput::released));
+    let Some(mut input) = supervisor else {
+        return exit.await;
+    };
+    tokio::select! {
+        signal = exit => signal,
+        outcome = computer_release::release_when_requested(
+            &mut input,
+            &release,
+            announce_computer_release_failed,
+        ) => {
+            let _ = released.send(outcome);
+            Ok(())
+        }
+    }
+}
+
+/// Bridge 停下以后：清掉本机这份设备凭据（服务器上已经作废），再告诉桌面端。数据目录里别的东西
+/// 由桌面端在 Bridge 退出以后收走。凭据删不掉也照样报：服务器上已经不算这台电脑，下次启动拿它刷新
+/// 会被拒绝，照旧清掉。
+async fn finish_computer_release(session: &BridgeSessionService, outcome: ComputerReleaseOutcome) {
+    if let Err(failure) = session.forget_device_session().await {
+        tracing::warn!(
+            operation = failure.operation(),
+            failure_kind = ?failure.kind(),
+            "这台电脑已移出原来的账户，本机设备凭据没删掉"
+        );
+    }
+    if let Err(error) = announce_computer_released(outcome) {
+        tracing::warn!(error_code = error.code(), "没能告诉桌面端这台电脑已移出");
+    }
 }
 
 /// 桌面端默认人物的本机接口：有默认 Agent 时读它的消息，没有时只做接入引导。
@@ -1705,6 +1773,12 @@ async fn authorize_this_device(
         {
             GrantOutcome::Authorized(device) => return Ok(device),
             GrantOutcome::Released => return Err(BridgeRuntimeError::supervisor_released()),
+            GrantOutcome::ReleaseRequested => {
+                // 还没授权，服务器上没有这台电脑可移：直接告诉桌面端移好了，然后退出。
+                tracing::info!("还没授权完桌面端就要换账号，Bridge 随之退出");
+                announce_computer_released(ComputerReleaseOutcome::AlreadyReleased)?;
+                return Err(BridgeRuntimeError::supervisor_released());
+            }
             GrantOutcome::DeviceCode => {
                 tracing::info!("桌面端要不到电脑授权，改走设备码");
             }
@@ -2737,6 +2811,40 @@ enum BridgeSupervisorEvent<'a> {
         #[serde(rename = "retryAfterMs")]
         retry_after_ms: u64,
     },
+    /// 桌面端写了 `release`：这台电脑已经移出原来的账户（`alreadyReleased` 是早就不算了），本机的
+    /// 设备凭据已经清掉，Bridge 随后退出。
+    ComputerReleased {
+        channel: &'static str,
+        #[serde(rename = "alreadyReleased")]
+        already_released: bool,
+    },
+    /// 没移出去，服务器上什么都没变；Bridge 照常运行，桌面端可以再写一次 `release`。
+    ComputerReleaseFailed {
+        channel: &'static str,
+        code: &'static str,
+    },
+}
+
+fn announce_computer_released(outcome: ComputerReleaseOutcome) -> Result<(), BridgeRuntimeError> {
+    if !supervisor_events_enabled() {
+        return Ok(());
+    }
+    write_supervisor_event(&BridgeSupervisorEvent::ComputerReleased {
+        channel: "agent_room_desktop",
+        already_released: outcome == ComputerReleaseOutcome::AlreadyReleased,
+    })
+}
+
+fn announce_computer_release_failed(code: &'static str) {
+    if !supervisor_events_enabled() {
+        return;
+    }
+    if let Err(error) = write_supervisor_event(&BridgeSupervisorEvent::ComputerReleaseFailed {
+        channel: "agent_room_desktop",
+        code,
+    }) {
+        tracing::warn!(error_code = error.code(), "没能告诉桌面端移出没成");
+    }
 }
 
 fn announce_authorization_retry(

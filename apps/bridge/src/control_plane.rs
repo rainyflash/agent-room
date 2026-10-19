@@ -49,6 +49,7 @@ use url::Url;
 use uuid::{Uuid, Version};
 
 mod automation;
+pub mod computer_release;
 mod content;
 mod handoffs;
 mod host_agents;
