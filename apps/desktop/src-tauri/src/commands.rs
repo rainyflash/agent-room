@@ -9,11 +9,12 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::{
+    account_release::{self, AccountReleaseFailure},
     agent_runtime::{
         AgentBootstrapFailure, AgentRuntimeBindingFailure, DesktopAgentRuntimeBinding,
         LocalBridgeBootstrapGateway, bind_agent_runtime, bootstrap_agent_target,
     },
-    bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, SupervisorFailure},
+    bridge_supervisor::{BridgeRuntimeView, BridgeSupervisor, ReleasedComputer, SupervisorFailure},
     control_plane_proxy::{
         ControlPlaneProxy, ControlPlaneProxyFailure, request_frame, webview_origin,
     },
@@ -36,6 +37,34 @@ pub(crate) struct DesktopRuntime {
     pub(crate) updates: ReleaseUpdateRuntime,
     pub(crate) hosts: Arc<HostConfigurator>,
     pub(crate) targets: Arc<RuntimeTargetStore>,
+}
+
+impl DesktopRuntime {
+    /// 换账号时原账户的登录清掉了：再收一遍（这期间宿主里的 MCP、命令行可能又写了东西），去掉标记，
+    /// 重新拉起 Bridge 等新账户的电脑授权。不在换账号时什么都不做；收不走就让 Bridge 停着，下次启动接着做。
+    pub(crate) fn finish_account_release(&self) {
+        let Ok(config) = DesktopBridgeConfig::from_environment() else {
+            return;
+        };
+        let data_root = config.data_root();
+        if !account_release::pending(&data_root) {
+            return;
+        }
+        match account_release::retire_account_state(&data_root, || {
+            account_release::forget_account_credentials(&config)
+        }) {
+            Ok(()) => {
+                account_release::finish(&data_root);
+                self.bridge.resume_after_release(config);
+            }
+            Err(failure) => {
+                tracing::warn!(
+                    error_code = failure.code(),
+                    "换账号时原账户的东西没收完，Bridge 先停着"
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +158,12 @@ impl From<ReleaseUpdateFailure> for DesktopCommandFailure {
     }
 }
 
+impl From<AccountReleaseFailure> for DesktopCommandFailure {
+    fn from(failure: AccountReleaseFailure) -> Self {
+        Self::new(failure.code(), true)
+    }
+}
+
 impl From<RuntimeTargetFailure> for DesktopCommandFailure {
     fn from(failure: RuntimeTargetFailure) -> Self {
         Self::new(failure.code(), failure.retryable())
@@ -215,7 +250,11 @@ pub(crate) fn desktop_clear_human_session(
     app: AppHandle,
     sessions: State<'_, HumanSessionRuntime>,
 ) -> Result<(), DesktopCommandFailure> {
-    Ok(sessions.clear(&app)?)
+    sessions.clear(&app)?;
+    if let Some(runtime) = app.try_state::<DesktopRuntime>() {
+        runtime.finish_account_release();
+    }
+    Ok(())
 }
 
 /// 只返回是否恢复成功，登录 Secret 始终留在原生层。
@@ -484,6 +523,54 @@ pub(crate) fn desktop_retry_bridge(
 ) -> Result<BridgeRuntimeView, DesktopCommandFailure> {
     runtime.bridge.retry()?;
     Ok(runtime.bridge.snapshot())
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ComputerReleaseView {
+    /// 服务器上这台电脑也移出了原来的账户。托管的 Bridge 不在运行时没移，原账户在设置里还看得到它。
+    server_released: bool,
+}
+
+/// 换账号的第一步（`specs/sign-out/design.md` 第 4 步）：停掉后台回复，请托管的 Bridge 把这台电脑移出
+/// 原来的账户，再收走原账户留在本机的东西。之后网页照常退出登录、用 `reauthenticate` 登录新账户；
+/// 账户登录清掉时重新拉起 Bridge，等新账户的电脑授权。没移出去就什么都不收，后台回复照旧。
+#[tauri::command]
+// Tauri 命令宏按值提取 State；这里不是普通函数调用边界。
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) async fn desktop_release_computer(
+    runtime: State<'_, DesktopRuntime>,
+) -> Result<ComputerReleaseView, DesktopCommandFailure> {
+    let config = DesktopBridgeConfig::from_environment()?;
+    let data_root = config.data_root();
+    account_release::begin(&data_root)?;
+    if let Err(error) = runtime.receivers.shutdown().await {
+        tracing::warn!(error_code = error.code, "换账号时后台回复没停干净");
+    }
+    let released = match runtime.bridge.release_computer().await {
+        Ok(released) => released,
+        Err(failure) => {
+            account_release::abandon(&data_root);
+            let receivers = runtime.receivers.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = receivers.restore().await {
+                    tracing::warn!(error_code = error.code, "接收进程恢复失败");
+                }
+            });
+            return Err(failure.into());
+        }
+    };
+    account_release::retire_account_state(&data_root, || {
+        account_release::forget_account_credentials(&config)
+    })?;
+    runtime.targets.forget()?;
+    tracing::info!(
+        ?released,
+        "这台电脑已移出原来的账户，原账户留在本机的东西已收走"
+    );
+    Ok(ComputerReleaseView {
+        server_released: released != ReleasedComputer::LocalOnly,
+    })
 }
 
 /// 停机视图的恢复入口：清除本机设备会话凭据，重启 Bridge 并显示新的设备授权码。

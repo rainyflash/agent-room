@@ -122,6 +122,26 @@ impl RuntimeTargetStore {
     }
 }
 
+impl RuntimeTargetStore {
+    /// 换账号时忘掉原账户的默认 Agent：文件已经随原账户的东西收走，这里删掉剩下的并清空内存里的。
+    pub(crate) fn forget(&self) -> Result<(), RuntimeTargetFailure> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(RuntimeTargetFailure::new(
+                    "desktop.agent_target.replace_unavailable",
+                    true,
+                ));
+            }
+        }
+        *self.current.lock().map_err(|_| {
+            RuntimeTargetFailure::new("desktop.agent_target.state_unavailable", true)
+        })? = None;
+        Ok(())
+    }
+}
+
 fn load_target(path: &Path) -> Result<Option<DesktopAgentTarget>, RuntimeTargetFailure> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,

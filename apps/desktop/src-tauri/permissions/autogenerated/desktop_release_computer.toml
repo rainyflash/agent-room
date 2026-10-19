@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-release-computer"
+description = "Enables the desktop_release_computer command without any pre-configured scope."
+commands.allow = ["desktop_release_computer"]
+
+[[permission]]
+identifier = "deny-desktop-release-computer"
+description = "Denies the desktop_release_computer command without any pre-configured scope."
+commands.deny = ["desktop_release_computer"]

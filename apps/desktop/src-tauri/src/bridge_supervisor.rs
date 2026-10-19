@@ -44,6 +44,11 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const BRIDGE_EXIT_REQUEST: &[u8] = b"exit\n";
 /// 等托管 Bridge 自己退出的上限；到了还没退就直接结束它。平常一两秒就退完。
 const ORDERLY_EXIT_TIMEOUT: Duration = Duration::from_secs(8);
+/// 换账号时写给托管 Bridge 的一行（Bridge `supervisor_input.rs` 的 `RELEASE_REQUEST`）：把这台电脑
+/// 移出原来的账户（`specs/sign-out/design.md` 第 4 步）。
+const BRIDGE_RELEASE_REQUEST: &[u8] = b"release\n";
+/// 等 Bridge 对 `release` 回话的上限：它要请控制面移出这台电脑，成了再有序退出。
+const RELEASE_TIMEOUT: Duration = Duration::from_mins(1);
 const MAX_AUTHORIZATION_SECONDS: u64 = 30 * 60;
 /// Bridge 拿不到实例锁时的启动失败代码，见 Bridge 的 `BridgeRuntimeError::instance_lock`。
 const INSTANCE_LOCK_HELD_CODE: &str = "bridge.already_running";
@@ -145,6 +150,7 @@ impl BridgeSupervisor {
             child_found_other_instance: false,
             child_lost_authorization: false,
             logged_lifecycle: None,
+            release: ReleaseGate::Closed,
         };
         tauri::async_runtime::spawn(actor.run());
         Self {
@@ -225,6 +231,28 @@ impl BridgeSupervisor {
         let _ = self.input.try_send(ActorInput::SignedIn);
     }
 
+    /// 换账号：请托管的 Bridge 把这台电脑移出原来的账户、等它退出。从这时起不再拉起 Bridge，
+    /// 直到 [`Self::resume_after_release`]：不然新起的 Bridge 会拿还存着的原账户登录要电脑授权。
+    /// 没移出去时照旧运行、照旧会自动重启。
+    pub(crate) async fn release_computer(&self) -> Result<ReleasedComputer, SupervisorFailure> {
+        let (done, result) = oneshot::channel();
+        self.input
+            .send(ActorInput::ReleaseComputer { done })
+            .await
+            .map_err(|_| SupervisorFailure::new("desktop.bridge.command_queue_busy", true))?;
+        result
+            .await
+            .unwrap_or_else(|_| Err(SupervisorFailure::new("desktop.release.interrupted", true)))
+    }
+
+    /// 换账号时原账户的登录也清掉了：换上不带原账户默认 Agent 的配置，重新拉起 Bridge，
+    /// 等新账户的电脑授权。不在换账号时什么都不做。
+    pub(crate) fn resume_after_release(&self, config: DesktopBridgeConfig) {
+        let _ = self.input.try_send(ActorInput::ResumeAfterRelease {
+            config: Box::new(config),
+        });
+    }
+
     /// 桌面端正常退出时用：请托管的 Bridge 有序退出并等它，超时再直接结束。
     pub(crate) async fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
@@ -281,6 +309,8 @@ struct BridgeSupervisorActor {
     logged_lifecycle: Option<(BridgePhase, Option<String>, Option<String>)>,
     /// 这一代子进程等电脑授权的进度（`specs/desktop-sign-in/design.md`）。
     grant: GrantWait,
+    /// 换账号用：这一代子进程读不读 `release`，或者正在换账号、不拉起 Bridge。
+    release: ReleaseGate,
 }
 
 impl BridgeSupervisorActor {
@@ -334,6 +364,13 @@ impl BridgeSupervisorActor {
                         self.request_grant();
                     }
                 }
+                ActorInput::ReleaseComputer { done } => {
+                    let result = self.handle_release_computer().await;
+                    let _ = done.send(result);
+                }
+                ActorInput::ResumeAfterRelease { config } => {
+                    self.handle_resume_after_release(*config);
+                }
                 ActorInput::Shutdown { done } => {
                     self.shutting_down.store(true, Ordering::SeqCst);
                     self.stop_managed_child_orderly().await;
@@ -354,12 +391,13 @@ impl BridgeSupervisorActor {
     }
 
     fn start_managed_with(&mut self, launch: BridgeLaunch) {
-        if self.shutting_down.load(Ordering::SeqCst) {
+        if self.shutting_down.load(Ordering::SeqCst) || self.releasing() {
             return;
         }
         self.generation = self.generation.saturating_add(1);
         self.child_found_other_instance = false;
         self.child_lost_authorization = false;
+        self.release = ReleaseGate::Closed;
         self.grant.reset();
         self.policy.starting(now_unix_ms());
         self.authorization = None;
@@ -408,7 +446,7 @@ impl BridgeSupervisorActor {
     }
 
     async fn handle_explicit_retry(&mut self) {
-        if self.shutting_down.load(Ordering::SeqCst) {
+        if self.shutting_down.load(Ordering::SeqCst) || self.releasing() {
             return;
         }
         if matches!(
@@ -432,6 +470,7 @@ impl BridgeSupervisorActor {
     fn handle_reauthorize_device(&mut self) {
         // 请求排队期间状态可能已经变化；只对仍然停机的托管 Bridge 生效。
         if self.shutting_down.load(Ordering::SeqCst)
+            || self.releasing()
             || !self.policy.snapshot().device_reauthorization_available()
         {
             return;
@@ -445,7 +484,7 @@ impl BridgeSupervisorActor {
     }
 
     fn handle_reconfigure(&mut self, config: DesktopBridgeConfig) {
-        if self.shutting_down.load(Ordering::SeqCst) {
+        if self.shutting_down.load(Ordering::SeqCst) || self.releasing() {
             return;
         }
         if self.policy.snapshot().ownership == Some(BridgeOwnership::External) {
@@ -466,7 +505,123 @@ impl BridgeSupervisorActor {
         self.start_managed();
     }
 
+    /// 换账号：请 Bridge 移出这台电脑，等它回话、退出，然后停着不再拉起。
+    async fn handle_release_computer(&mut self) -> Result<ReleasedComputer, SupervisorFailure> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(SupervisorFailure::new(
+                "desktop.release.shutting_down",
+                false,
+            ));
+        }
+        if self.policy.snapshot().ownership == Some(BridgeOwnership::External) {
+            return Err(SupervisorFailure::new(
+                "desktop.release.external_bridge",
+                false,
+            ));
+        }
+        if !self.managed_child_active {
+            // 没有在跑的托管 Bridge（停机了、在等重试）：服务器上的这台电脑这次移不了，本机照样收走。
+            tracing::warn!("换账号时托管的 Bridge 不在运行，本机照样收走原账户的东西");
+            self.stop_after_release();
+            return Ok(ReleasedComputer::LocalOnly);
+        }
+        if self.release != ReleaseGate::Open {
+            if self.policy.snapshot().phase != BridgePhase::AuthorizationRequired {
+                // 还在启动：Bridge 报就绪之前写的行会被丢掉。
+                return Err(SupervisorFailure::new(
+                    "desktop.release.bridge_starting",
+                    true,
+                ));
+            }
+            // 在等设备码：服务器上还没有这台电脑，结束它就好。
+            self.kill_managed_child();
+            self.stop_after_release();
+            return Ok(ReleasedComputer::AlreadyReleased);
+        }
+        if !self.write_to_bridge(BRIDGE_RELEASE_REQUEST) {
+            return Err(SupervisorFailure::new(
+                "desktop.release.bridge_unavailable",
+                true,
+            ));
+        }
+        tracing::info!("请托管的 Bridge 把这台电脑移出原来的账户");
+        // 先挡住重启：Bridge 移出去以后马上退出，退出事件不能再把它拉起来。
+        self.release = ReleaseGate::Releasing;
+        let generation = self.generation;
+        match wait_for_release(&mut self.receiver, generation, RELEASE_TIMEOUT).await {
+            ReleaseWait::Released { already_released } => {
+                if !wait_for_child_exit(&mut self.receiver, generation, ORDERLY_EXIT_TIMEOUT).await
+                {
+                    tracing::warn!("移出以后 Bridge 没有按时退出，直接结束它");
+                }
+                self.kill_managed_child();
+                self.stop_after_release();
+                Ok(if already_released {
+                    ReleasedComputer::AlreadyReleased
+                } else {
+                    ReleasedComputer::Released
+                })
+            }
+            ReleaseWait::Failed(failure) => {
+                // 没移出去，Bridge 照常运行，可以再写一次。
+                self.release = ReleaseGate::Open;
+                tracing::warn!(
+                    error_code = failure.code,
+                    "Bridge 没能把这台电脑移出原来的账户"
+                );
+                Err(failure)
+            }
+            ReleaseWait::Exited(exit_code) => {
+                self.release = ReleaseGate::Closed;
+                self.handle_exit(exit_code);
+                Err(SupervisorFailure::new(
+                    "desktop.release.bridge_exited",
+                    true,
+                ))
+            }
+            ReleaseWait::TimedOut => {
+                // Bridge 自己的请求 10 秒就超时，一分钟没回话多半是卡住了：结束它、照常重启。
+                tracing::warn!("托管的 Bridge 一分钟没回 release，结束它再重启");
+                self.release = ReleaseGate::Closed;
+                self.generation = self.generation.saturating_add(1);
+                self.kill_managed_child();
+                self.policy.explicit_retry(now_unix_ms());
+                self.start_managed();
+                Err(SupervisorFailure::new("desktop.release.timeout", true))
+            }
+        }
+    }
+
+    /// 这台电脑已经移出原来的账户：停在“已停止”，让这一代子进程迟到的事件作废。
+    fn stop_after_release(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+        self.grant.reset();
+        self.authorization = None;
+        self.session = None;
+        self.release = ReleaseGate::Releasing;
+        self.policy.stop(now_unix_ms());
+        self.publish();
+    }
+
+    fn handle_resume_after_release(&mut self, config: DesktopBridgeConfig) {
+        if !self.releasing() {
+            return;
+        }
+        tracing::info!("原账户的登录已清掉，重新拉起 Bridge 等新账户的电脑授权");
+        self.release = ReleaseGate::Closed;
+        self.config = config;
+        self.policy.explicit_retry(now_unix_ms());
+        self.start_managed();
+    }
+
+    fn releasing(&self) -> bool {
+        self.release == ReleaseGate::Releasing
+    }
+
     async fn handle_resume(&mut self) {
+        if self.releasing() {
+            return;
+        }
         let probe = match self.probe().await {
             // 托管子进程自己在退出或连接中途断开时沿用原来的处理，它的退出事件会接着决定是否重启。
             ProbeOutcome::Departing if self.managed_child_active => {
@@ -687,6 +842,11 @@ impl BridgeSupervisorActor {
         let Some(event) = supervisor_event(bytes) else {
             return;
         };
+        let event_kind = if matches!(event, BridgeSupervisorEvent::Ready { .. }) {
+            SupervisorEventKind::Ready
+        } else {
+            SupervisorEventKind::Other
+        };
         match event {
             BridgeSupervisorEvent::AuthorizationRequired {
                 channel,
@@ -709,6 +869,7 @@ impl BridgeSupervisorActor {
                 };
                 self.authorization = Some(prompt);
                 self.session = None;
+                self.release = ReleaseGate::Closed;
                 self.policy.authorization_required(now_unix_ms());
                 self.publish();
             }
@@ -717,6 +878,7 @@ impl BridgeSupervisorActor {
             {
                 // 界面照旧是“正在连接”，不出授权横幅：先拿账户登录换电脑授权。
                 tracing::info!("托管的 Bridge 在等电脑授权");
+                self.release = ReleaseGate::Open;
                 self.grant.bridge_asked();
                 self.request_grant();
             }
@@ -731,6 +893,11 @@ impl BridgeSupervisorActor {
             | BridgeSupervisorEvent::Ready { channel }
                 if channel == SUPERVISOR_CHANNEL =>
             {
+                // 授权完到就绪之间 Bridge 不读标准输入，就绪以后才读 `release`。
+                self.release = match event_kind {
+                    SupervisorEventKind::Ready => ReleaseGate::Open,
+                    SupervisorEventKind::Other => ReleaseGate::Closed,
+                };
                 self.grant.bridge_authorized();
                 self.authorization = None;
                 self.session = None;
@@ -1072,6 +1239,14 @@ enum ActorInput {
     GrantRetry {
         generation: u64,
     },
+    /// 换账号：把这台电脑移出原来的账户，结果交给 `done`。
+    ReleaseComputer {
+        done: oneshot::Sender<Result<ReleasedComputer, SupervisorFailure>>,
+    },
+    /// 换账号时原账户的登录清掉了：换上新配置、重新拉起 Bridge。
+    ResumeAfterRelease {
+        config: Box<DesktopBridgeConfig>,
+    },
     /// 停掉托管的 Bridge 并结束监督；`done` 在收尾之后通知等着的一方。
     Shutdown {
         done: Option<oneshot::Sender<()>>,
@@ -1096,6 +1271,90 @@ async fn wait_for_child_exit(
             Ok(None) | Err(_) => return false,
         }
     }
+}
+
+/// 换账号时 `release` 这一行能不能写、要不要挡住 Bridge 重启。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseGate {
+    /// 子进程还没就绪（启动中、授权完还没就绪、在等设备码），写了它也不读。
+    Closed,
+    /// 子进程报了就绪或者在等电脑授权，读 `release`。
+    Open,
+    /// 正在换账号：这台电脑已经（或者正在）移出原来的账户，原账户的登录还没清掉，不拉起 Bridge。
+    Releasing,
+}
+
+/// 换账号时这台电脑怎么离开原来的账户的。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReleasedComputer {
+    /// 这次移出去了。
+    Released,
+    /// 服务器上早就不算这个账户的电脑（在别处移除了，或者还没授权完）。
+    AlreadyReleased,
+    /// 托管的 Bridge 不在运行，服务器上的这台电脑这次没移；原账户在设置里还看得到它。
+    LocalOnly,
+}
+
+#[derive(Debug)]
+enum ReleaseWait {
+    Released { already_released: bool },
+    Failed(SupervisorFailure),
+    Exited(Option<i32>),
+    TimedOut,
+}
+
+/// 等托管 Bridge 对 `release` 的回话。和有序退出时一样，期间只看这一代子进程的输出和退出，
+/// 别的输入不再处理。
+async fn wait_for_release(
+    receiver: &mut mpsc::Receiver<ActorInput>,
+    generation: u64,
+    timeout: Duration,
+) -> ReleaseWait {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let event = match tokio::time::timeout_at(deadline, receiver.recv()).await {
+            Ok(Some(ActorInput::ProcessEvent {
+                generation: current,
+                event,
+            })) if current == generation => event,
+            Ok(Some(_)) => continue,
+            Ok(None) | Err(_) => return ReleaseWait::TimedOut,
+        };
+        match event {
+            CommandEvent::Stdout(bytes) => match supervisor_event(&bytes) {
+                Some(BridgeSupervisorEvent::ComputerReleased {
+                    channel,
+                    already_released,
+                }) if channel == SUPERVISOR_CHANNEL => {
+                    return ReleaseWait::Released { already_released };
+                }
+                Some(BridgeSupervisorEvent::ComputerReleaseFailed { channel, code })
+                    if channel == SUPERVISOR_CHANNEL =>
+                {
+                    return ReleaseWait::Failed(release_failure(&code));
+                }
+                _ => {}
+            },
+            CommandEvent::Terminated(payload) => return ReleaseWait::Exited(payload.code),
+            _ => {}
+        }
+    }
+}
+
+/// Bridge 报的错误码换成固定的几种；认不出的笼统算没成。
+fn release_failure(code: &str) -> SupervisorFailure {
+    match code {
+        "bridge.release_unavailable" => SupervisorFailure::new("bridge.release_unavailable", true),
+        "bridge.release_rejected" => SupervisorFailure::new("bridge.release_rejected", true),
+        "bridge.release_unsupported" => SupervisorFailure::new("bridge.release_unsupported", false),
+        _ => SupervisorFailure::new("desktop.release.failed", true),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SupervisorEventKind {
+    Ready,
+    Other,
 }
 
 enum ProbeOutcome {
@@ -1191,6 +1450,17 @@ enum BridgeSupervisorEvent {
         code: String,
         #[serde(rename = "retryAfterMs")]
         retry_after_ms: u64,
+    },
+    /// 这台电脑已经移出原来的账户，Bridge 随后退出。
+    ComputerReleased {
+        channel: String,
+        #[serde(rename = "alreadyReleased")]
+        already_released: bool,
+    },
+    /// 没移出去，Bridge 照常运行。
+    ComputerReleaseFailed {
+        channel: String,
+        code: String,
     },
 }
 
@@ -1340,6 +1610,102 @@ mod tests {
         sender.send(terminated(7)).await.expect("可以排队");
 
         assert!(super::wait_for_child_exit(&mut receiver, 7, super::ORDERLY_EXIT_TIMEOUT).await);
+    }
+
+    fn stdout(generation: u64, line: &str) -> super::ActorInput {
+        super::ActorInput::ProcessEvent {
+            generation,
+            event: tauri_plugin_shell::process::CommandEvent::Stdout(line.as_bytes().to_vec()),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 换账号时只认这一代子进程报的移出结果() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        sender
+            .send(super::ActorInput::Resume)
+            .await
+            .expect("可以排队");
+        // 旧代的、别的事件、别的频道的都不算。
+        sender
+            .send(stdout(
+                6,
+                r#"{"event":"computer_released","channel":"agent_room_desktop","alreadyReleased":false}"#,
+            ))
+            .await
+            .expect("可以排队");
+        sender
+            .send(stdout(
+                7,
+                r#"{"event":"ready","channel":"agent_room_desktop"}"#,
+            ))
+            .await
+            .expect("可以排队");
+        sender
+            .send(stdout(
+                7,
+                r#"{"event":"computer_released","channel":"other","alreadyReleased":false}"#,
+            ))
+            .await
+            .expect("可以排队");
+        sender
+            .send(stdout(
+                7,
+                r#"{"event":"computer_released","channel":"agent_room_desktop","alreadyReleased":true}"#,
+            ))
+            .await
+            .expect("可以排队");
+
+        assert!(matches!(
+            super::wait_for_release(&mut receiver, 7, super::RELEASE_TIMEOUT).await,
+            super::ReleaseWait::Released {
+                already_released: true
+            }
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn 换账号时_bridge_报没成_先退出了_或者等不到_都算没移出去() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+        sender
+            .send(stdout(
+                3,
+                r#"{"event":"computer_release_failed","channel":"agent_room_desktop","code":"bridge.release_unavailable"}"#,
+            ))
+            .await
+            .expect("可以排队");
+        let super::ReleaseWait::Failed(failure) =
+            super::wait_for_release(&mut receiver, 3, super::RELEASE_TIMEOUT).await
+        else {
+            panic!("应当是没成");
+        };
+        assert_eq!(failure.code, "bridge.release_unavailable");
+        assert!(failure.retryable);
+
+        sender.send(terminated(3)).await.expect("可以排队");
+        assert!(matches!(
+            super::wait_for_release(&mut receiver, 3, super::RELEASE_TIMEOUT).await,
+            super::ReleaseWait::Exited(Some(0))
+        ));
+
+        let started = tokio::time::Instant::now();
+        assert!(matches!(
+            super::wait_for_release(&mut receiver, 3, super::RELEASE_TIMEOUT).await,
+            super::ReleaseWait::TimedOut
+        ));
+        assert!(started.elapsed() >= super::RELEASE_TIMEOUT);
+    }
+
+    #[test]
+    fn 认不出的移出错误码笼统算没成_控制面没有接口的不用再试() {
+        let unsupported = super::release_failure("bridge.release_unsupported");
+        assert_eq!(unsupported.code, "bridge.release_unsupported");
+        assert!(!unsupported.retryable);
+        let rejected = super::release_failure("bridge.release_rejected");
+        assert_eq!(rejected.code, "bridge.release_rejected");
+        let unknown = super::release_failure("bridge.something_new");
+        assert_eq!(unknown.code, "desktop.release.failed");
+        assert!(unknown.retryable);
     }
 
     #[tokio::test(start_paused = true)]
