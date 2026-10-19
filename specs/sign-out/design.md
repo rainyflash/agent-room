@@ -58,19 +58,22 @@
 
 - 点“换个账号登录”先确认：“这台电脑会从 X 的账户里移除：X 在这台电脑上的 Agent 断开、后台回复停掉；X 在别的电脑上的不受影响。”
 - 确认以后：
-  1. 桌面端经标准输入给 Bridge 发 `release`。Bridge 拿自己的设备凭据请控制面移除这台电脑（新加 `POST /auth/devices/current/release`）。拿着这台电脑凭据的就是这台电脑本身，所以不要最近登录过；控制面照撤销电脑那样撤掉它和它的 Agent 连接。
-  2. Bridge 清掉本机凭据和数据目录里属于原账户的东西（`owner.json`、`host-agents`、`cli-profiles`、`mcp-joins`、`messages`、`matrix-store`、`attachments`、`handoffs`、`retired`），留下日志和部署配置，然后退出。
+  1. 桌面端先让 Bridge 退出以后不再自动重启：不然新起的 Bridge 会拿还存着的原账户登录要电脑授权，这台电脑又回到原账户。然后经标准输入发 `release`。Bridge 拿自己的设备凭据请控制面移除这台电脑（新加 `POST /auth/devices/current/release`）。拿着这台电脑凭据的就是这台电脑本身，所以不要最近登录过；控制面照撤销电脑那样撤掉它和它的 Agent 连接。
+     - 移出去了（凭据早就作废的也算），Bridge 有序退出，停下以后清掉本机这份设备凭据，最后报 `computer_released`。
+     - 没成就报 `computer_release_failed` 带错误码，照常运行。
+  2. Bridge 退出以后，桌面端收走原账户留在本机的东西，做法和换服务器时一样（`server_move.rs`）：删只对这个账户有效的凭据（设备会话、默认 Agent 的运行会话），停掉后台回复，数据目录里除了部署记录、锁和日志都挪进 `retired/` 下的新目录再删掉（`owner.json`、`host-agents`、`cli-profiles`、`mcp-joins`、`messages`、`matrix-store`、`attachments`、`handoffs` 这些）。
   3. 桌面端退出登录（第 2 步把身份服务的登录一起退了），再用 `reauthenticate` 意图登录：不拿系统浏览器里的网页登录换，身份服务给的是空的登录页。
   4. 新账户登录以后照旧（`specs/desktop-sign-in/design.md`）：桌面端重启 Bridge，Bridge 等电脑授权，原生层拿新的桌面登录要一份交给它，这台电脑就归新账户了。
-- 移除这一步没成（控制面连不上）就整个停下，不退出登录、不清本机，界面说为什么、能重试。服务器上已经移除、本机还没清完的，下次 Bridge 启动发现凭据作废（`bridge.not_authorized`）照旧停下，人点“重新授权这台电脑”时清掉再授权。
+- 移除这一步没成（控制面连不上）就整个停下，不退出登录、不清本机，Bridge 照常运行，界面说为什么、能重试。
+- 桌面端发 `release` 之前在数据目录里记一个标记，本机清完才去掉。中途退出了（崩溃、关机），下次启动在 Bridge 起来之前接着清，和换服务器一样在启动时做。
 - 宿主里还开着的 MCP、命令行进程拿着原账户的人物：Bridge 不认这些人物了，它们报找不到人物，在宿主里重新接入就是新账户的 Agent。
-- 旧版 Bridge 不认 `release` 这一行（新加的行不认识就忽略），所以桌面端和 Bridge 一起升级；桌面端发出 `release` 以后等不到 Bridge 回话就当失败。
+- 旧版 Bridge 不认 `release` 这一行（新加的行不认识就忽略），所以桌面端和 Bridge 一起升级；桌面端发出 `release` 以后等不到 `computer_released` 或 `computer_release_failed` 就当失败。Bridge 就绪之前写的行会被丢掉，所以桌面端只在 Bridge 报就绪以后发。
 
 ### 5. 验收
 
 - 第 2 步：控制面的单元测试（撤销后调身份服务、身份服务失败不挡退出、别的签发方不调）；真实依赖测试里退出以后，这个用户在 Keycloak 上没有会话。
 - 第 3 步：浏览器夹具看设置里的两行；真实网页验收里用第二个种子账户：A 退出、点“换个账号登录”、在身份服务的登录页登录 B，回来是 B。
-- 第 4 步：Bridge 的单元测试（`release` 清目录、清凭据、退出），控制面的接口测试；无头验收在派发 `suite=all` 时把一台电脑从 A 换给 B，Synapse 里 A 的 Agent 都离开了房间，B 的 Agent 能进房间说话。
+- 第 4 步：控制面的接口测试；Bridge 起真实进程测 `release`（没成照常运行，成了清凭据退出，再起来等新的电脑授权）；桌面端测清本机和中途退出后接着清；无头验收在派发 `suite=all` 时把一台电脑从 A 换给 B，Synapse 里 A 的 Agent 都离开了房间，B 的 Agent 能进房间说话。
 
 ## 交付
 
@@ -93,3 +96,4 @@
 - 第 2 步 #536：退出时调 Keycloak 的 `users/{id}/logout`。会话存储撤销时回登录账户（`WebSessionStore::revoke` 回 `Option<SignInAccount>`），没加列、没加迁移；Keycloak 出错只记告警（`authentication.logout.sign_in_sessions`）。真实网页验收在退出以后再点登录，要到能填别的账户的登录页。
 - 第 3 步 #537：设置 → 账户“当前登录”旁边放“退出登录”，下面一行“换个账号登录”（桌面端先不显示）。换账号是会话状态机的新事件 `SWITCH_ACCOUNT`：照常退出，退出成功直接开始登录；退出没成停在 `signOutFailed`，重试成功照样去登录，改点退出就只退出。登录完回到发起时的页面。浏览器验收在 `my-agents.html?browser&settings=account`；真实网页验收用第二个种子账户 `collaborator`（`tools/web.py` 传 `AGENT_ROOM_E2E_SECOND_*`）从 developer 换过去。
 - 4a #538：控制面加 `POST /auth/devices/current/release`，只认这台电脑的设备签名，不看网页登录、不要最近登录过；撤销和“撤销电脑”是同一套，回答也一样（204，Matrix 清理待重试回 202）。没有迁移。
+- 4b #539：Bridge 的 `supervisor` 模式认 `release` 这一行。就绪以后读到它就凭设备签名调 4a 的接口：成了（服务器说这台电脑已经撤销、设备令牌失效也算）删掉本机的设备凭据，报 `computer_released` 后退出；没成报 `computer_release_failed`（带错误码），照常运行、等下一次 `release`。还在等电脑授权时读到它，直接报移好了（`alreadyReleased`）再退出。报就绪之前先丢掉标准输入里已经排着的行，上一代子进程没读完的 `release` 不会被新的一代拿去执行。本机原账户的数据由桌面端收（4c），Bridge 不碰。

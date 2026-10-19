@@ -2,7 +2,8 @@
 //!
 //! 标准输入是桌面持有的管道，平时不写：桌面退出前写一行 `exit` 请 Bridge 先退，管道关了说明桌面已经
 //! 不在（包括被强制结束）。桌面端登录一次就好（`specs/desktop-sign-in/design.md`）以后又多两种行：
-//! `device-grant <电脑授权>` 交来电脑授权，`device-code` 请 Bridge 改走设备码。同一个线程按行读、
+//! `device-grant <电脑授权>` 交来电脑授权，`device-code` 请 Bridge 改走设备码。换账号
+//! （`specs/sign-out/design.md` 第 4 步）又多一行 `release`：把这台电脑移出原来的账户。同一个线程按行读、
 //! 分开处理，不认识的行跳过。
 
 use std::{future::Future, io};
@@ -17,6 +18,7 @@ use super::{BridgeRuntimeError, FirstDeviceAuthorization};
 const EXIT_REQUEST: &str = "exit";
 const DEVICE_GRANT_PREFIX: &str = "device-grant ";
 const DEVICE_CODE_REQUEST: &str = "device-code";
+const RELEASE_REQUEST: &str = "release";
 
 /// 监督 Bridge 的桌面为什么放手。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,11 +29,13 @@ pub(super) enum SupervisorRelease {
     InputClosed,
 }
 
-/// 还没授权时桌面端交来的下一步。
+/// 桌面端交来的下一步。
 #[derive(Debug)]
 pub(super) enum SupervisorCommand {
     DeviceGrant(SecretValue),
     DeviceCode,
+    /// 把这台电脑移出原来的账户。
+    Release,
 }
 
 enum SupervisorLine {
@@ -98,6 +102,23 @@ impl SupervisorInput {
     async fn next_command(&mut self) -> Option<SupervisorCommand> {
         self.commands.recv().await
     }
+
+    /// 丢掉就绪之前攒下的行。桌面端只在 Bridge 报就绪以后才写 `release`；设备码授权那会儿没人读，
+    /// 写进来的 `release` 不能留到授权完，把刚授权的这台电脑又移出去。
+    pub(super) fn discard_pending(&mut self) {
+        while self.commands.try_recv().is_ok() {}
+    }
+
+    /// 等桌面端写下一行 `release`，别的行跳过。管道关了就一直不返回：退出由 [`Self::released`] 管。
+    pub(super) async fn next_release(&mut self) {
+        loop {
+            match self.next_command().await {
+                Some(SupervisorCommand::Release) => return,
+                Some(SupervisorCommand::DeviceGrant(_) | SupervisorCommand::DeviceCode) => {}
+                None => std::future::pending().await,
+            }
+        }
+    }
 }
 
 fn parse(line: &str) -> Option<SupervisorLine> {
@@ -107,6 +128,9 @@ fn parse(line: &str) -> Option<SupervisorLine> {
     }
     if line == DEVICE_CODE_REQUEST {
         return Some(SupervisorLine::Command(SupervisorCommand::DeviceCode));
+    }
+    if line == RELEASE_REQUEST {
+        return Some(SupervisorLine::Command(SupervisorCommand::Release));
     }
     line.strip_prefix(DEVICE_GRANT_PREFIX)
         .and_then(|grant| SecretValue::new(grant.trim()).ok())
@@ -120,6 +144,8 @@ pub(super) enum GrantOutcome {
     DeviceCode,
     /// 还没授权完桌面端就要退出了。
     Released,
+    /// 还没授权完桌面端就要换账号：服务器上没有这台电脑可移，直接退出。
+    ReleaseRequested,
 }
 
 /// 桌面端托管、设了 `AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION=supervisor` 时的首次授权：调用方先报
@@ -140,6 +166,7 @@ pub(super) async fn authorize_with_supervisor_grant(
         };
         let grant = match command {
             SupervisorCommand::DeviceCode => return Ok(GrantOutcome::DeviceCode),
+            SupervisorCommand::Release => return Ok(GrantOutcome::ReleaseRequested),
             SupervisorCommand::DeviceGrant(grant) => grant,
         };
         match authorization.attempt_with_grant(grant).await {
@@ -343,6 +370,63 @@ mod tests {
             .await
             .expect("读到 exit 就应触发退出");
         assert_eq!(release, SupervisorRelease::ExitRequested);
+    }
+
+    #[tokio::test]
+    async fn 还没授权完桌面端就要换账号_不注册也不申请设备码() {
+        let (reader, mut writer) = io::pipe().expect("可创建管道");
+        let mut input = SupervisorInput::watch(reader);
+        let authorization = 脚本注册::new([]);
+        writer.write_all(b"release\r\n").expect("可写入管道");
+
+        let outcome = authorize_with_supervisor_grant(&authorization, &mut input, |_| Ok(()))
+            .await
+            .expect("要换账号");
+
+        assert!(matches!(outcome, GrantOutcome::ReleaseRequested));
+        assert!(
+            authorization
+                .grants
+                .lock()
+                .expect("记录锁未中毒")
+                .is_empty()
+        );
+        assert_eq!(authorization.device_code_attempts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn 就绪以后只等_release_这一行_就绪之前写的不算() {
+        let (reader, mut writer) = io::pipe().expect("可创建管道");
+        let mut input = SupervisorInput::watch(reader);
+        writer
+            .write_all(b"release\ndevice-code\n")
+            .expect("可写入管道");
+        // 读线程把两行都交过来以后再丢。
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        input.discard_pending();
+
+        writer
+            .write_all(b"device-grant late\nhello\n")
+            .expect("可写入管道");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), input.next_release())
+                .await
+                .is_err(),
+            "就绪之前的 release 和别的行都不算"
+        );
+        writer.write_all(b"release\n").expect("可写入管道");
+        tokio::time::timeout(Duration::from_secs(5), input.next_release())
+            .await
+            .expect("读到 release");
+
+        // 管道关了不算要移出，交给退出那边。
+        drop(writer);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), input.next_release())
+                .await
+                .is_err()
+        );
+        assert_eq!(input.released().await, SupervisorRelease::InputClosed);
     }
 
     #[tokio::test]
