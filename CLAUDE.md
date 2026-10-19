@@ -149,7 +149,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-10-19 维护者说网页和桌面端都没有退出登录、换账号的地方。退出只在“我的 Agent”顶栏（窄窗口只剩图标）；退出不结束身份服务的登录，再登录回到原账号或被 Keycloak 拒绝换人；桌面端这台电脑的授权还属于原账户。
 - 设计在 [specs/sign-out/design.md](./specs/sign-out/design.md)（#535），进度记在它的“状态”一节。第 2 步（退出时结束身份服务的登录）和第 3 步（设置里的退出、网页换账号）同一版发布，第 2 步先合；第 4 步桌面端换账号可以晚一版。
 - 同一天维护者还说手机浏览器登录后一直发不出消息：旧版 iOS 浏览器没有 `Promise.withResolvers`，同步停住，#534 补上。
-- 已合并：第 2 步 #536、第 3 步 #537；第 4 步拆成 4a 控制面 `POST /auth/devices/current/release` #538、4b Bridge 认 `release` #539、4c 桌面端 `desktop_release_computer` #540、4d 网页先确认再换 #541、4e 无头验收 #543。#536 改了 `crates/identity-adapter/`，#538 改了 `devices.rs`，发版要设备码。
+- 已合并：第 2 步 #536、第 3 步 #537；第 4 步拆成 4a 控制面 `POST /auth/devices/current/release` #538、4b Bridge 认 `release` #539、4c 桌面端 `desktop_release_computer` #540、4d 网页先确认再换 #541、4e 无头验收 #543。都随 Alpha 79 发布（2026-10-19）。
 - 改这一块时别拆的几样：
   - 换账号那次登录带 `reauthenticate`（会话状态机离开 `authenticating` 时才清 `switchingAccount`）：桌面端平时拿系统浏览器里已有的网页登录换，那份还是原来的账户。
   - 桌面端先挡住 Bridge 自动重启再写 `release`（`ReleaseGate`）；一分钟等不到回话就结束它、照常重启。别在超时后放开闸门让原账户的登录再把这台电脑注册回去。
@@ -488,7 +488,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 79 正在发布：设置里退出登录、换个账号（#536、#537），桌面端换账号先把这台电脑移出原来的账户（#538–#541），旧版 iOS 浏览器补上缺的内置函数（#534）。#536 改了 `crates/identity-adapter/`、#538 改了 `apps/control-plane/src/features/devices.rs`（登录相关路径），实机验收要走一次新设备授权，要维护者批准设备码。
+- Alpha 79 已于 2026-10-19 公开，见 [发布记录](./specs/agent-access/alpha79-release.md)。
+  - 设置里退出登录、换个账号（#536、#537），桌面端换账号先把这台电脑移出原来的账户（#538–#541，无头验收 #543），旧版 iOS 浏览器补上缺的内置函数（#534）。
+  - #536 改了 `crates/identity-adapter/`、#538 改了 `devices.rs`，实机验收走了一次新设备授权，第一个码过期、第二个批准；长期验收设备换成 Alpha 79 那台（`agent-room.alpha79.acceptance.fresh-device`）。
+  - 升级验收查会话时，桌面端以调试端口重启后第一次打开的页面是空文档（没有 `body`），网页没去恢复登录，控制面回 401；服务器上的登录没撤销，重载一次就好。从升级验收接着跑（`qa_resume.py`）一次通过。再碰到先看页面有没有 `body`，别当成升级丢了登录。
+  - 版本 PR #544 合并到网页上线约 2 小时 8 分钟，其中约 29 分钟在下载草稿发行的资产，约 34 分钟在等设备码。
 - Alpha 78 已于 2026-10-18 公开，见 [发布记录](./specs/agent-access/alpha78-release.md)。
   - 桌面端要最近登录的操作点“重新登录”时一定去身份服务（#531）。实机验收走了一次新设备授权，第一个码过期、第二个批准；长期验收设备换成 Alpha 78 那台（`agent-room.alpha78.acceptance.fresh-device`）。
   - 升级验收查会话时桌面端页面刚好跳转（CDP 报 `Execution context was destroyed`），安装本身装上了；从升级验收接着跑（`qa_resume.py`）一次通过。版本 PR #532 合并到网页上线约 1 小时 16 分钟，其中约 21 分钟在等设备码、约 9 分钟在等定时备份。
