@@ -14,6 +14,7 @@ import {
   serverHasSigningIdentity,
   submitIdentityForm,
 } from './support/live-session';
+import { removeBuiltinsMissingOnIos172 } from './support/old-safari';
 import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
@@ -133,16 +134,26 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
   }
 });
 
-test('旧版 iOS 浏览器缺 Promise.withResolvers 和 AbortSignal.any 也把这台设备的密钥传上去、签好', async ({
+test('旧版 iOS 浏览器（17.2）缺的内置函数都拿掉，也把这台设备的密钥传上去、签好、接着同步', async ({
   page,
 }) => {
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
   test.setTimeout(180_000);
-  // 像 iOS 17.3 及以前的浏览器：页面脚本跑之前拿掉这两个内置函数。2026-10-19 维护者的 iPhone（iOS 17.2）上，
-  // 加密库同步一次就停住，这台设备的密钥一直没传上服务器，签不好，加密房间里发不出消息。
-  await page.addInitScript(() => {
-    Reflect.deleteProperty(Promise, 'withResolvers');
-    Reflect.deleteProperty(AbortSignal, 'any');
+  // 2026-10-19 维护者的 iPhone（iOS 17.2）上，加密库同步一次就停住，这台设备的密钥一直没传上服务器，
+  // 签不好，加密房间里发不出消息。
+  await removeBuiltinsMissingOnIos172(page);
+  const syncs: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/_matrix/client/v3/sync'))
+      syncs.push(url.searchParams.get('since') ?? '');
+  });
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning')
+      console.log(`[页面 ${message.type()}] ${message.text().slice(0, 400)}`);
+  });
+  page.on('pageerror', (error) => {
+    console.log(`[页面异常] ${error.stack ?? error.message}`);
   });
   const failures = collectUnhandledFailures(page);
   await connectLiveSession(page, {
@@ -150,6 +161,7 @@ test('旧版 iOS 浏览器缺 Promise.withResolvers 和 AbortSignal.any 也把�
     password: password ?? '',
     username: username ?? '',
   });
+  syncs.length = 0;
   await page.goto('/settings/security');
   await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
   // “已就绪”是本机说的；那台 iPhone 上它也说已就绪，服务器上却没有这台设备的密钥。
@@ -157,6 +169,8 @@ test('旧版 iOS 浏览器缺 Promise.withResolvers 和 AbortSignal.any 也把�
   await expect
     .poll(async () => await serverDeviceIds(page), { timeout: 40_000 })
     .toContain(deviceId);
+  // 那台 iPhone 上只同步了一次就停了：重新打开以后要接着发第二次同步。
+  await expect.poll(() => syncs.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
   expect(failures).toEqual([]);
 });
 
