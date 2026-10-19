@@ -55,7 +55,7 @@ const en = {
   'security.access.instances.empty': 'No agent is connected.',
   'security.access.confirm.device.title': 'Sign out this computer?',
   'security.access.confirm.device.detail':
-    '{{label}} will be signed out, and every agent connected from it will disconnect right away.',
+    '{{label}} will be signed out. Every agent connected from it disconnects right away and leaves the rooms it’s in.',
   'security.access.confirm.instance.title': 'Disconnect this agent?',
   'security.access.confirm.instance.detail':
     '{{label}} will be disconnected. It can join again later.',
@@ -85,7 +85,7 @@ const en = {
   'security.access.bulk.open': 'Revoke all',
   'security.access.bulk.title': 'Revoke computers not used for 7 days or more',
   'security.access.bulk.detail':
-    'Each one has to be authorized again before it can be used, and the agents connected from it are disconnected. Uncheck the ones you want to keep.',
+    'Each one has to be authorized again before it can be used, and the agents connected from it disconnect and leave their rooms. Uncheck the ones you want to keep.',
   'security.access.bulk.close': 'Close',
   'security.access.bulk.confirm_one': 'Revoke {{count}} computer',
   'security.access.bulk.confirm_other': 'Revoke {{count}} computers',
@@ -189,7 +189,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.access.instances.empty': '没有接进来的 Agent。',
   'security.access.confirm.device.title': '让这台电脑退出登录？',
   'security.access.confirm.device.detail':
-    '{{label}} 会退出登录，从它接进来的 Agent 也会马上断开。',
+    '{{label}} 会退出登录，从它接进来的 Agent 马上断开，并离开所在的房间。',
   'security.access.confirm.instance.title': '断开这个 Agent？',
   'security.access.confirm.instance.detail': '{{label}} 会断开，之后还能再接进来。',
   'security.access.deviceState.pending': '等待批准',
@@ -218,7 +218,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'security.access.bulk.open': '全部撤销',
   'security.access.bulk.title': '撤销 7 天以上没用的电脑',
   'security.access.bulk.detail':
-    '撤销以后，这些电脑要重新授权才能用，从上面接进来的 Agent 也会断开。要留着的取消勾选。',
+    '撤销以后，这些电脑要重新授权才能用，从上面接进来的 Agent 也会断开、离开所在的房间。要留着的取消勾选。',
   'security.access.bulk.close': '关闭',
   'security.access.bulk.confirm_one': '撤销 {{count}} 台',
   'security.access.bulk.confirm_other': '撤销 {{count}} 台',
