@@ -217,13 +217,31 @@ test('设置里换个账号：退出这个账户，在身份服务的登录页�
   // 几分钟前刚输过密码，也不会直接回到这个账户：退出时身份服务上的登录一起结束了
   // （specs/sign-out/design.md）。
   await submitIdentityForm(page, secondUsername ?? '', secondPassword ?? '');
-  await continueThroughMatrixConsentWhenRequired(page, ['/settings/account', '/rooms']);
-  await expect(page).toHaveURL(/\/(?:settings\/account|rooms)$/u, { timeout: 40_000 });
+  // 先回到设置页，之后还要去聊天服务器登录一次（新账户第一次要点 Continue）：本机记下另一个账户的
+  // 聊天会话才算换好。中途翻页时读不到就当还没好。
+  const continueLink = page.getByRole('link', { name: /^Continue$/u });
+  const storedUserId = async () => {
+    const stored = storedMatrixSessionSchema.safeParse(
+      await readMatrixSession(page).catch(() => null),
+    );
+    return stored.success ? stored.data.userId : null;
+  };
+  await expect
+    .poll(
+      async () => {
+        if (await continueLink.isVisible().catch(() => false)) {
+          await continueLink.click().catch(() => undefined);
+        }
+        const userId = await storedUserId();
+        return userId !== null && userId !== first;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(true);
   await page.goto('/settings/account');
   await expect(page.getByText('Local Collaborator', { exact: true })).toBeVisible({
     timeout: 40_000,
   });
-  const second = storedMatrixSessionSchema.parse(await readMatrixSession(page)).userId;
-  expect(second).not.toBe(first);
+  expect(await storedUserId()).toMatch(/^@user-[a-f0-9]{32}:matrix\.agent-room\.localhost$/u);
   expect(failures).toEqual([]);
 });
