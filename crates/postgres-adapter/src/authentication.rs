@@ -6,8 +6,8 @@ use agent_room_application::{
         DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt,
         LoginAttemptStore, LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge,
         PortFuture, PrincipalAccount, PrincipalRegistration, PrincipalSuspensionTransaction,
-        SafeReturnPath, SecretDigest, SecretValue, StoredWebSession, WebSessionRegistration,
-        WebSessionStore,
+        SafeReturnPath, SecretDigest, SecretValue, SignInAccount, StoredWebSession,
+        WebSessionRegistration, WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -395,19 +395,30 @@ impl WebSessionStore for PostgresRepositories {
         &'a self,
         secret_digest: &'a SecretDigest,
         now: UtcMillis,
-    ) -> PortFuture<'a, RepositoryResult<bool>> {
+    ) -> PortFuture<'a, RepositoryResult<Option<SignInAccount>>> {
         Box::pin(async move {
-            let result = sqlx::query(
-                r"UPDATE agent_room.web_session
+            let row = sqlx::query(
+                r"UPDATE agent_room.web_session AS session
                    SET revoked_at = to_timestamp($2::double precision / 1000.0)
-                   WHERE secret_digest = $1 AND revoked_at IS NULL",
+                   FROM agent_room.principal AS principal
+                   WHERE session.secret_digest = $1
+                     AND session.revoked_at IS NULL
+                     AND principal.id = session.principal_id
+                   RETURNING principal.oidc_issuer, principal.oidc_subject",
             )
             .bind(secret_digest.as_bytes().as_slice())
             .bind(now.value())
-            .execute(&self.pool)
+            .fetch_optional(&self.pool)
             .await
             .map_err(|error| map_sqlx_error("web_session.revoke", &error))?;
-            Ok(result.rows_affected() == 1)
+            row.map(|row| {
+                Ok(SignInAccount {
+                    issuer: row.try_get("oidc_issuer")?,
+                    subject: row.try_get("oidc_subject")?,
+                })
+            })
+            .transpose()
+            .map_err(|error: sqlx::Error| map_sqlx_error("web_session.revoke", &error))
         })
     }
 

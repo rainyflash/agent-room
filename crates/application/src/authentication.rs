@@ -16,8 +16,8 @@ use crate::{
         LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
         OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, OidcInteraction,
         PkceCodeChallenge, PortFuture, PrincipalSuspensionTransaction, ProfileImportConsent,
-        SafeReturnPath, SecretFactory, SecretValue, StoredWebSession, WebSessionRegistration,
-        WebSessionStore,
+        SafeReturnPath, SecretFactory, SecretValue, SignInSessionTermination, StoredWebSession,
+        WebSessionRegistration, WebSessionStore,
     },
 };
 
@@ -262,6 +262,7 @@ pub struct AuthenticationService {
     desktop_session_authorization: Arc<dyn DesktopSessionAuthorizationTransaction>,
     desktop_session_exchange: Arc<dyn DesktopSessionExchangeTransaction>,
     sessions: Arc<dyn WebSessionStore>,
+    sign_in_sessions: Arc<dyn SignInSessionTermination>,
     suspensions: Arc<dyn PrincipalSuspensionTransaction>,
     secrets: Arc<dyn SecretFactory>,
     identifiers: Arc<dyn IdentifierFactory>,
@@ -277,6 +278,8 @@ pub struct AuthenticationDependencies {
     pub desktop_session_authorization: Arc<dyn DesktopSessionAuthorizationTransaction>,
     pub desktop_session_exchange: Arc<dyn DesktopSessionExchangeTransaction>,
     pub sessions: Arc<dyn WebSessionStore>,
+    /// 退出时结束这个账户在登录服务上的登录，之后才能换账户登录。
+    pub sign_in_sessions: Arc<dyn SignInSessionTermination>,
     pub suspensions: Arc<dyn PrincipalSuspensionTransaction>,
     pub secrets: Arc<dyn SecretFactory>,
     pub identifiers: Arc<dyn IdentifierFactory>,
@@ -293,6 +296,7 @@ impl AuthenticationService {
             desktop_session_authorization: dependencies.desktop_session_authorization,
             desktop_session_exchange: dependencies.desktop_session_exchange,
             sessions: dependencies.sessions,
+            sign_in_sessions: dependencies.sign_in_sessions,
             suspensions: dependencies.suspensions,
             secrets: dependencies.secrets,
             identifiers: dependencies.identifiers,
@@ -678,10 +682,15 @@ impl AuthenticationService {
     async fn logout_internal(&self, session_secret: &SecretValue) -> AuthenticationResult<()> {
         let now = self.clock.now();
         let secret_digest = self.secrets.digest(session_secret.expose());
-        self.sessions
+        let revoked = self
+            .sessions
             .revoke(&secret_digest, now)
             .await
             .map_err(|error| map_repository_failure("authentication.logout", &error))?;
+        if let Some(account) = revoked {
+            // 登录服务连不上不挡退出：这份登录已经撤销了，实现自己记下没结束成。
+            let _ = self.sign_in_sessions.end_sessions(&account).await;
+        }
         Ok(())
     }
 

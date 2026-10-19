@@ -103,10 +103,14 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
     const signOut = second.getByRole('button', { name: /Sign out|退出登录/u });
     await expect(signOut).toBeVisible();
     await signOut.click();
-    await expect(
-      second.getByRole('button', { name: /Sign in to Agent Room|登录 Agent Room/u }),
-    ).toBeVisible();
+    const signIn = second.getByRole('button', { name: /Sign in to Agent Room|登录 Agent Room/u });
+    await expect(signIn).toBeVisible();
     expect(await readMatrixSession(second)).toBeNull();
+    // 身份服务上的登录也一起结束了（specs/sign-out/design.md）：几分钟前刚输过密码，再点登录
+    // 也不会直接回到这个账户，而是一张能填别的账户的登录页。
+    await signIn.click();
+    await expect(second).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u);
+    await expect(second.locator('input[name="username"]')).toBeEditable({ timeout: 20_000 });
     await context?.close();
 
     const third = await open();

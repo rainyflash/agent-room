@@ -1,13 +1,14 @@
-//! 删除账户时删掉 Keycloak 里的登录账户：邮箱、昵称和密码散列都存在那里。
+//! 删除账户时删掉 Keycloak 里的登录账户：邮箱、昵称和密码散列都存在那里。退出登录时结束这个
+//! 账户在 Keycloak 上的全部登录，再登录才能换账户（`specs/sign-out/design.md`）。
 //!
 //! 控制面用一个只开了服务账号的客户端（realm-management 的 `manage-users`）先拿客户端凭据令牌，
-//! 再调管理接口删用户。只删本部署签发方的账户；用户已经不在也算成功，任务重试时会再调一次。
+//! 再调管理接口。只管本部署签发方的账户；用户已经不在也算成功，任务重试时会再调一次。
 
 use std::time::Duration;
 
 use agent_room_application::ports::{
     OidcFailure, OidcFailureKind, OidcResult, PortFuture, SecretValue, SignInAccount,
-    SignInAccountRemoval,
+    SignInAccountRemoval, SignInSessionTermination,
 };
 use openidconnect::{
     ClientId, ClientSecret, IssuerUrl, JsonWebKeySet, OAuth2TokenResponse, TokenUrl,
@@ -126,7 +127,8 @@ impl KeycloakSignInAccountRemoval {
         Ok(response.access_token().secret().clone())
     }
 
-    async fn delete_user(&self, subject: &str) -> OidcResult<()> {
+    /// 管理接口里这个用户的地址，`extra` 接在用户号后面。用户号不像 Keycloak 的就不拿去拼地址。
+    fn user_url(&self, subject: &str, extra: &[&str]) -> OidcResult<Url> {
         if subject.is_empty()
             || subject.len() > MAX_SUBJECT_LENGTH
             || subject.chars().any(char::is_control)
@@ -134,11 +136,17 @@ impl KeycloakSignInAccountRemoval {
         {
             return Err(OidcFailure::new(OidcFailureKind::InvalidConfiguration));
         }
-        let token = self.access_token().await?;
         let mut url = self.users_url.clone();
         url.path_segments_mut()
             .map_err(|()| OidcFailure::new(OidcFailureKind::InvalidConfiguration))?
-            .push(subject);
+            .push(subject)
+            .extend(extra);
+        Ok(url)
+    }
+
+    async fn delete_user(&self, subject: &str) -> OidcResult<()> {
+        let url = self.user_url(subject, &[])?;
+        let token = self.access_token().await?;
         let response = self
             .http_client
             .delete(url)
@@ -146,6 +154,21 @@ impl KeycloakSignInAccountRemoval {
             .send()
             .await
             .map_err(|_| OidcFailure::new(OidcFailureKind::DependencyUnavailable))?;
+        removal_outcome(response.status())
+    }
+
+    /// `POST /admin/realms/{realm}/users/{id}/logout`：结束这个用户在 Keycloak 上的全部登录。
+    async fn log_out_user(&self, subject: &str) -> OidcResult<()> {
+        let url = self.user_url(subject, &["logout"])?;
+        let token = self.access_token().await?;
+        let response = self
+            .http_client
+            .post(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|_| OidcFailure::new(OidcFailureKind::DependencyUnavailable))?;
+        // 和删除一样：用户已经不在，也就没有登录要结束了。
         removal_outcome(response.status())
     }
 }
@@ -157,6 +180,17 @@ impl SignInAccountRemoval for KeycloakSignInAccountRemoval {
                 return Ok(());
             }
             self.delete_user(&account.subject).await
+        })
+    }
+}
+
+impl SignInSessionTermination for KeycloakSignInAccountRemoval {
+    fn end_sessions<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>> {
+        Box::pin(async move {
+            if !self.is_ours(account) {
+                return Ok(());
+            }
+            self.log_out_user(&account.subject).await
         })
     }
 }

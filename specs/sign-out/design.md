@@ -86,3 +86,4 @@
 ## 状态
 
 - 2026-10-19 起草（维护者当天提出），设计 #535。
+- 第 2 步 #536：退出时调 Keycloak 的 `users/{id}/logout`。会话存储撤销时回登录账户（`WebSessionStore::revoke` 回 `Option<SignInAccount>`），没加列、没加迁移；Keycloak 出错只记告警（`authentication.logout.sign_in_sessions`）。真实网页验收在退出以后再点登录，要到能填别的账户的登录页。

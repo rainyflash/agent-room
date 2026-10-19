@@ -6,7 +6,7 @@ use agent_room_application::ports::{
     DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt, LoginAttemptStore,
     LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge, PrincipalRegistration,
     PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
-    SecretValue, WebSessionRegistration, WebSessionStore,
+    SecretValue, SignInAccount, WebSessionRegistration, WebSessionStore,
 };
 use agent_room_domain::{
     identity::{Principal, PrincipalStatus},
@@ -96,6 +96,43 @@ async fn 登录尝试严格绑定浏览器与状态并且只能消费一次() {
         .await
         .expect("到期尝试只返回空结果")
         .is_none()
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 撤销登录时回它属于哪个登录账户_已经撤销的回空() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let principal = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example/realms/agent-room",
+        "sign-out-subject",
+        "退出的人",
+    );
+    let session = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 21);
+    LoginCompletionTransaction::complete(&repositories, &principal, &session)
+        .await
+        .expect("登录应成功");
+
+    // 退出时据此结束身份服务上的登录（specs/sign-out/design.md）。
+    assert_eq!(
+        WebSessionStore::revoke(&repositories, &session.secret_digest, test_time(2_000))
+            .await
+            .expect("退出应成功"),
+        Some(SignInAccount {
+            issuer: "https://issuer.example/realms/agent-room".to_owned(),
+            subject: "sign-out-subject".to_owned(),
+        })
+    );
+    assert_eq!(
+        WebSessionStore::revoke(&repositories, &session.secret_digest, test_time(3_000))
+            .await
+            .expect("再退一次也成功"),
+        None,
+        "已经撤销的不再回账户，也就不再找身份服务"
     );
 
     database.close().await;

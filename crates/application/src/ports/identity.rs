@@ -8,7 +8,7 @@ use agent_room_domain::{
 
 use crate::persistence::RepositoryResult;
 
-use super::PortFuture;
+use super::{PortFuture, SignInAccount};
 
 pub const SECRET_DIGEST_LENGTH: usize = 32;
 const MAX_SECRET_LENGTH: usize = 4_096;
@@ -542,11 +542,12 @@ pub trait WebSessionStore: Send + Sync {
         now: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<Option<StoredWebSession>>>;
 
+    /// 撤销这份登录，回它属于登录服务上的哪个账户；没有可撤销的（已经撤销、不存在）回 `None`。
     fn revoke<'a>(
         &'a self,
         secret_digest: &'a SecretDigest,
         now: UtcMillis,
-    ) -> PortFuture<'a, RepositoryResult<bool>>;
+    ) -> PortFuture<'a, RepositoryResult<Option<SignInAccount>>>;
 
     /// 用着就续：把这份登录的到期时间往后挪到 `expires_at`。
     /// 已经撤销，或者到期时间本来就不早于它时不改，回 `false`。

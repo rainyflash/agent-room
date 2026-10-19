@@ -19,11 +19,12 @@ use agent_room_application::{
         DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
         DesktopSessionExchangeTransaction, DesktopSessionRegistration, IdentifierFactory,
         LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
-        OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcGateway,
-        OidcInteraction, OidcResult, PkceCodeChallenge, PortFuture, PrincipalAccount,
-        PrincipalRegistration, PrincipalSuspensionTransaction, ProfileImportConsent,
-        SafeReturnPath, SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
-        StoredWebSession, VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
+        OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,
+        OidcFailureKind, OidcGateway, OidcInteraction, OidcResult, PkceCodeChallenge, PortFuture,
+        PrincipalAccount, PrincipalRegistration, PrincipalSuspensionTransaction,
+        ProfileImportConsent, SafeReturnPath, SecretDigest, SecretFactory, SecretGenerationFailure,
+        SecretValue, SignInAccount, SignInSessionTermination, StoredWebSession,
+        VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -203,6 +204,25 @@ impl OidcGateway for TestOidc {
             assert_eq!(exchange.expected_nonce.expose(), "nonce-token");
             assert_eq!(exchange.pkce_verifier.expose(), "v".repeat(43));
             Ok(identity)
+        })
+    }
+}
+
+/// 登录服务那边：记下退出时结束了哪些账户的登录，`unavailable` 时像连不上一样报错。
+#[derive(Default)]
+struct TestSignInSessions {
+    ended: Mutex<Vec<SignInAccount>>,
+    unavailable: std::sync::atomic::AtomicBool,
+}
+
+impl SignInSessionTermination for TestSignInSessions {
+    fn end_sessions<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>> {
+        Box::pin(async move {
+            self.ended.lock().expect("测试锁可用").push(account.clone());
+            if self.unavailable.load(Ordering::SeqCst) {
+                return Err(OidcFailure::new(OidcFailureKind::DependencyUnavailable));
+            }
+            Ok(())
         })
     }
 }
@@ -404,15 +424,19 @@ impl WebSessionStore for InMemoryIdentity {
         &'a self,
         secret_digest: &'a SecretDigest,
         _now: UtcMillis,
-    ) -> PortFuture<'a, RepositoryResult<bool>> {
+    ) -> PortFuture<'a, RepositoryResult<Option<SignInAccount>>> {
         Box::pin(async move {
-            Ok(self
-                .0
-                .lock()
-                .expect("测试锁可用")
-                .sessions
-                .remove(secret_digest)
-                .is_some())
+            let mut state = self.0.lock().expect("测试锁可用");
+            if state.sessions.remove(secret_digest).is_none() {
+                return Ok(None);
+            }
+            Ok(state
+                .last_registration
+                .as_ref()
+                .map(|registration| SignInAccount {
+                    issuer: registration.oidc_issuer.clone(),
+                    subject: registration.oidc_subject.clone(),
+                }))
         })
     }
 
@@ -463,6 +487,7 @@ struct Harness {
     service: AuthenticationService,
     oidc: Arc<TestOidc>,
     storage: Arc<InMemoryIdentity>,
+    sign_in_sessions: Arc<TestSignInSessions>,
     clock: Arc<TestClock>,
 }
 
@@ -471,6 +496,7 @@ impl Harness {
         let oidc = Arc::new(TestOidc::new(identity));
         let storage = Arc::new(InMemoryIdentity::default());
         let clock = Arc::new(TestClock(AtomicI64::new(NOW)));
+        let sign_in_sessions = Arc::new(TestSignInSessions::default());
         let service = AuthenticationService::new(
             AuthenticationDependencies {
                 oidc: oidc.clone(),
@@ -480,6 +506,7 @@ impl Harness {
                 desktop_session_authorization: storage.clone(),
                 desktop_session_exchange: storage.clone(),
                 sessions: storage.clone(),
+                sign_in_sessions: sign_in_sessions.clone(),
                 suspensions: storage.clone(),
                 secrets: Arc::new(TestSecrets::default()),
                 identifiers: Arc::new(TestIdentifiers),
@@ -491,6 +518,7 @@ impl Harness {
             service,
             oidc,
             storage,
+            sign_in_sessions,
             clock,
         }
     }
@@ -867,6 +895,74 @@ async fn 近期认证会过期_普通会话继续_登出后立即失效() {
         .await
         .expect_err("登出后会话必须失效");
     assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
+}
+
+#[tokio::test]
+async fn 退出时结束这个账户在登录服务上的登录_再退一次不再找登录服务() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let completion = harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("登录成功");
+
+    harness
+        .service
+        .logout(&completion.session_secret)
+        .await
+        .expect("退出成功");
+    harness
+        .service
+        .logout(&completion.session_secret)
+        .await
+        .expect("再退一次也成功");
+
+    assert_eq!(
+        *harness.sign_in_sessions.ended.lock().expect("测试锁可用"),
+        [SignInAccount {
+            issuer: "https://identity.example/realms/agent-room".to_owned(),
+            subject: "stable-subject".to_owned(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn 登录服务连不上也照样退出() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let completion = harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("登录成功");
+    harness
+        .sign_in_sessions
+        .unavailable
+        .store(true, Ordering::SeqCst);
+
+    harness
+        .service
+        .logout(&completion.session_secret)
+        .await
+        .expect("登录服务出错不挡退出");
+
+    let failure = harness
+        .service
+        .authenticate(
+            &completion.session_secret,
+            AuthenticationRequirement::ActiveSession,
+        )
+        .await
+        .expect_err("这份登录已经作废");
+    assert_eq!(failure.kind(), AuthenticationFailureKind::InvalidSession);
+    assert_eq!(
+        harness
+            .sign_in_sessions
+            .ended
+            .lock()
+            .expect("测试锁可用")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]

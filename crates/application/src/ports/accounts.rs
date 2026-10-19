@@ -91,6 +91,14 @@ pub trait SignInAccountRemoval: Send + Sync {
     fn remove<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>>;
 }
 
+/// 退出登录时结束这个账户在登录服务上的全部登录（`specs/sign-out/design.md`）。不结束的话，
+/// 再点登录会直接回到原来的账户，或者登录服务只让人重新输原来那个账户的密码，换不了账户。
+///
+/// 实现只管本部署签发方的账户，别的签发方当作没有登录可结束；账户已经不在也算成功。
+pub trait SignInSessionTermination: Send + Sync {
+    fn end_sessions<'a>(&'a self, account: &'a SignInAccount) -> PortFuture<'a, OidcResult<()>>;
+}
+
 pub trait AccountDeletionReceiptIssuer: Send + Sync {
     /// 为同一幂等任务稳定派生同一不可预测回执，响应丢失后可以安全重放。
     ///
