@@ -476,7 +476,7 @@ async fn 撤销电脑时记下它的_agent_要离开的房间_一条一条领() 
     assert_eq!(claim.previous_failure_code, None);
     assert!(
         repositories
-            .claim_departure(None, test_time(1_000), test_time(121_000))
+            .claim_departure(Some(fixture.device), test_time(1_000), test_time(121_000))
             .await
             .expect("可领")
             .is_none(),
@@ -506,7 +506,11 @@ async fn 撤销电脑时记下它的_agent_要离开的房间_一条一条领() 
     revoke_device(&repositories, &database.runtime, fixture.device).await;
     assert!(
         repositories
-            .claim_departure(None, test_time(1_000_000), test_time(1_120_000))
+            .claim_departure(
+                Some(fixture.device),
+                test_time(1_000_000),
+                test_time(1_120_000)
+            )
             .await
             .expect("可领")
             .is_none(),
@@ -585,14 +589,14 @@ async fn finish_departure_after_one_retry(
     );
     assert!(
         repositories
-            .claim_departure(None, test_time(30_999), test_time(150_999))
+            .claim_departure(Some(claim.device_id), test_time(30_999), test_time(150_999))
             .await
             .expect("可领")
             .is_none(),
         "没到时间不领"
     );
     let retried = repositories
-        .claim_departure(None, test_time(31_000), test_time(151_000))
+        .claim_departure(Some(claim.device_id), test_time(31_000), test_time(151_000))
         .await
         .expect("可领")
         .expect("到时间再领");
