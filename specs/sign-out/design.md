@@ -96,3 +96,4 @@
 - 第 2 步 #536：退出时调 Keycloak 的 `users/{id}/logout`。会话存储撤销时回登录账户（`WebSessionStore::revoke` 回 `Option<SignInAccount>`），没加列、没加迁移；Keycloak 出错只记告警（`authentication.logout.sign_in_sessions`）。真实网页验收在退出以后再点登录，要到能填别的账户的登录页。
 - 第 3 步 #537：设置 → 账户“当前登录”旁边放“退出登录”，下面一行“换个账号登录”（桌面端先不显示）。换账号是会话状态机的新事件 `SWITCH_ACCOUNT`：照常退出，退出成功直接开始登录；退出没成停在 `signOutFailed`，重试成功照样去登录，改点退出就只退出。登录完回到发起时的页面。浏览器验收在 `my-agents.html?browser&settings=account`；真实网页验收用第二个种子账户 `collaborator`（`tools/web.py` 传 `AGENT_ROOM_E2E_SECOND_*`）从 developer 换过去。
 - 4a #538：控制面加 `POST /auth/devices/current/release`，只认这台电脑的设备签名，不看网页登录、不要最近登录过；撤销和“撤销电脑”是同一套，回答也一样（204，Matrix 清理待重试回 202）。没有迁移。
+- 4b #539：Bridge 的 `supervisor` 模式认 `release` 这一行。就绪以后读到它就凭设备签名调 4a 的接口：成了（服务器说这台电脑已经撤销、设备令牌失效也算）删掉本机的设备凭据，报 `computer_released` 后退出；没成报 `computer_release_failed`（带错误码），照常运行、等下一次 `release`。还在等电脑授权时读到它，直接报移好了（`alreadyReleased`）再退出。报就绪之前先丢掉标准输入里已经排着的行，上一代子进程没读完的 `release` 不会被新的一代拿去执行。本机原账户的数据由桌面端收（4c），Bridge 不碰。
