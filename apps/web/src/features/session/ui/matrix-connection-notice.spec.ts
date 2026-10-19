@@ -41,6 +41,7 @@ function context(overrides: Partial<SessionContext> = {}): SessionContext {
     failure: null,
     principal,
     resumePath: null,
+    switchingAccount: false,
     ...overrides,
   };
 }

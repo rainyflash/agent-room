@@ -12,10 +12,13 @@ import {
   readMatrixSession,
   serverDeviceIds,
   serverHasSigningIdentity,
+  submitIdentityForm,
 } from './support/live-session';
 import { storedMatrixSessionSchema } from '../src/features/session/domain/matrix-session-vault';
 const username = process.env.AGENT_ROOM_E2E_USERNAME;
 const password = process.env.AGENT_ROOM_E2E_PASSWORD;
+const secondUsername = process.env.AGENT_ROOM_E2E_SECOND_USERNAME;
+const secondPassword = process.env.AGENT_ROOM_E2E_SECOND_PASSWORD;
 /** 登录后自动签好这台设备（ADR 0011）：真实控制面保管钥匙、真实 Synapse 上签名。 */
 const thisDeviceReady = /^(?:This device is ready|这台设备已就绪)$/u;
 
@@ -191,4 +194,54 @@ test.describe('本机加密库丢了', () => {
     expect(devices).not.toContain(lost.deviceId);
     expect(failures).toEqual([]);
   });
+});
+
+test('设置里换个账号：退出这个账户，在身份服务的登录页登录另一个账户', async ({ page }) => {
+  test.skip(
+    username === undefined ||
+      password === undefined ||
+      secondUsername === undefined ||
+      secondPassword === undefined,
+    '缺少两个隔离验收账户。',
+  );
+  test.setTimeout(180_000);
+  const failures = collectUnhandledFailures(page);
+  const first = await connectLiveSession(page, {
+    expectedDisplayName: 'Local Developer',
+    password: password ?? '',
+    username: username ?? '',
+  });
+
+  await page.goto('/settings/account');
+  await page.getByRole('button', { name: /^(?:Switch account|换个账号)$/u }).click();
+  // 几分钟前刚输过密码，也不会直接回到这个账户：退出时身份服务上的登录一起结束了
+  // （specs/sign-out/design.md）。
+  await submitIdentityForm(page, secondUsername ?? '', secondPassword ?? '');
+  // 先回到设置页，之后还要去聊天服务器登录一次（新账户第一次要点 Continue）：本机记下另一个账户的
+  // 聊天会话才算换好。中途翻页时读不到就当还没好。
+  const continueLink = page.getByRole('link', { name: /^Continue$/u });
+  const storedUserId = async () => {
+    const stored = storedMatrixSessionSchema.safeParse(
+      await readMatrixSession(page).catch(() => null),
+    );
+    return stored.success ? stored.data.userId : null;
+  };
+  await expect
+    .poll(
+      async () => {
+        if (await continueLink.isVisible().catch(() => false)) {
+          await continueLink.click().catch(() => undefined);
+        }
+        const userId = await storedUserId();
+        return userId !== null && userId !== first;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(true);
+  await page.goto('/settings/account');
+  await expect(page.getByText('Local Collaborator', { exact: true })).toBeVisible({
+    timeout: 40_000,
+  });
+  expect(await storedUserId()).toMatch(/^@user-[a-f0-9]{32}:matrix\.agent-room\.localhost$/u);
+  expect(failures).toEqual([]);
 });

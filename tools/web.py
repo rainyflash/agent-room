@@ -42,6 +42,11 @@ def run_live_session_test(values: dict[str, str]) -> int:
     environment = os.environ.copy()
     environment["AGENT_ROOM_E2E_USERNAME"] = "developer"
     environment["AGENT_ROOM_E2E_PASSWORD"] = password
+    # 第二个种子账户：验收“换个账号登录”（specs/sign-out/design.md）。
+    member_password = values.get("SEED_MEMBER_PASSWORD")
+    if member_password:
+        environment["AGENT_ROOM_E2E_SECOND_USERNAME"] = "collaborator"
+        environment["AGENT_ROOM_E2E_SECOND_PASSWORD"] = member_password
     process = subprocess.run(
         [
             corepack,

@@ -87,3 +87,4 @@
 
 - 2026-10-19 起草（维护者当天提出），设计 #535。
 - 第 2 步 #536：退出时调 Keycloak 的 `users/{id}/logout`。会话存储撤销时回登录账户（`WebSessionStore::revoke` 回 `Option<SignInAccount>`），没加列、没加迁移；Keycloak 出错只记告警（`authentication.logout.sign_in_sessions`）。真实网页验收在退出以后再点登录，要到能填别的账户的登录页。
+- 第 3 步 #537：设置 → 账户“当前登录”旁边放“退出登录”，下面一行“换个账号登录”（桌面端先不显示）。换账号是会话状态机的新事件 `SWITCH_ACCOUNT`：照常退出，退出成功直接开始登录；退出没成停在 `signOutFailed`，重试成功照样去登录，改点退出就只退出。登录完回到发起时的页面。浏览器验收在 `my-agents.html?browser&settings=account`；真实网页验收用第二个种子账户 `collaborator`（`tools/web.py` 传 `AGENT_ROOM_E2E_SECOND_*`）从 developer 换过去。

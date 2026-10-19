@@ -46,6 +46,7 @@ it('连接正常时可以主动退出，而不必先进入故障状态', () => {
       recentlyAuthenticated: true,
     },
     resumePath: null,
+    switchingAccount: false,
   };
   const onAction = vi.fn();
   render(
@@ -98,6 +99,7 @@ it('等待浏览器登录时可以重新开始，而不是干等 15 分钟', () 
     failure: null,
     principal: null,
     resumePath: null,
+    switchingAccount: false,
   };
   const onAction = vi.fn();
   render(
@@ -126,6 +128,7 @@ it('没登录时停在“你的账户”是在等人点按钮：图标不转，�
     failure: null,
     principal: null,
     resumePath: null,
+    switchingAccount: false,
   };
   render(
     <I18nextProvider i18n={i18n}>

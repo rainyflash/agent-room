@@ -22,6 +22,8 @@ export type SessionContext = {
   readonly failure: SessionFailure | null;
   readonly principal: WebSession | null;
   readonly resumePath: string | null;
+  /** 换个账号登录：退出成功以后直接开始登录（`specs/sign-out/design.md`）。 */
+  readonly switchingAccount: boolean;
 };
 
 export type SessionEvent =
@@ -37,7 +39,8 @@ export type SessionEvent =
   | { readonly type: 'MATRIX_RESTORED' }
   | { readonly type: 'OFFLINE' }
   | { readonly type: 'ONLINE' }
-  | { readonly type: 'RETRY' };
+  | { readonly type: 'RETRY' }
+  | { readonly type: 'SWITCH_ACCOUNT' };
 
 type ControlSessionOutcome =
   | { readonly kind: 'authenticated'; readonly session: WebSession }
@@ -166,8 +169,12 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       failure: null,
       principal: null,
       resumePath: null,
+      switchingAccount: false,
     },
-    on: { LOGOUT: '.signingOut' },
+    on: {
+      LOGOUT: { target: '.signingOut', actions: assign({ switchingAccount: false }) },
+      SWITCH_ACCOUNT: { target: '.signingOut', actions: assign({ switchingAccount: true }) },
+    },
     states: {
       booting: {
         entry: assign({ controlStatus: 'checking' }),
@@ -455,11 +462,17 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       signingOut: {
         // logout 自行停止连接并在清理完成前持有设备锁，避免其他窗口提前打开加密库。
         entry: ['clearPrivateState', 'clearSession'],
-        on: { LOGOUT: {} },
+        on: { LOGOUT: {}, SWITCH_ACCOUNT: {} },
         invoke: {
           id: 'sign-out',
           src: 'signOut',
           onDone: [
+            {
+              // 服务器退出时连身份服务的登录一起结束了，这次登录给的是能填别的账户的登录页。
+              guard: ({ context, event }) => event.output.ok && context.switchingAccount,
+              target: 'authenticating',
+              actions: ['interactiveAuthentication', assign({ switchingAccount: false })],
+            },
             { guard: ({ event }) => event.output.ok, target: 'unauthenticated' },
             {
               target: 'signOutFailed',

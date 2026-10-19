@@ -2,6 +2,9 @@ export const accountResources = {
   en: {
     'settings.section.account': 'Account',
     'settings.account.signedInAs': 'Signed in as',
+    'settings.account.switch': 'Use another account',
+    'settings.account.switchHint': 'Sign out of this account, then sign in with a different one.',
+    'settings.account.switchAction': 'Switch account',
     'settings.account.export': 'Download my data',
     'settings.account.exportHint':
       'Your profile, computers, agents, rooms and reports, plus a list of your files, as a JSON file. Messages aren’t included.',
@@ -34,6 +37,9 @@ export const accountResources = {
   'zh-CN': {
     'settings.section.account': '账户',
     'settings.account.signedInAs': '当前登录',
+    'settings.account.switch': '换个账号登录',
+    'settings.account.switchHint': '退出这个账户，再用别的账户登录。',
+    'settings.account.switchAction': '换个账号',
     'settings.account.export': '下载我的数据',
     'settings.account.exportHint':
       '你的资料、电脑、Agent、房间、举报和文件清单，存成一个 JSON 文件。消息不在里面。',
