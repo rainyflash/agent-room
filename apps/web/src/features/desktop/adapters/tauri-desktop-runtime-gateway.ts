@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import {
   bridgeRuntimeSchema,
+  computerReleaseSchema,
   hostSessionDiagnosticsSchema,
   type HostSessionDiagnostics,
   pendingInvitationSchema,
@@ -22,6 +23,7 @@ import {
   releaseUpdateStatusSchema,
   desktopRuntimeSnapshotSchema,
   type BridgeRuntime,
+  type ComputerRelease,
   type InvitationOffer,
   type PendingInvitation,
   type DesktopRuntimeEventHandlers,
@@ -63,6 +65,7 @@ const desktopCommands = {
   offerInvitation: 'desktop_offer_invitation',
   withdrawInvitation: 'desktop_withdraw_invitation',
   reauthorize: 'desktop_reauthorize_bridge',
+  releaseComputer: 'desktop_release_computer',
   retry: 'desktop_retry_bridge',
   snapshot: 'desktop_runtime_snapshot',
   hostSessions: 'desktop_host_session_diagnostics',
@@ -217,6 +220,10 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
 
   async reauthorizeBridge(): Promise<Result<BridgeRuntime, DesktopRuntimeFailure>> {
     return this.invokeValidated(desktopCommands.reauthorize, {}, bridgeRuntimeSchema);
+  }
+
+  async releaseComputer(): Promise<Result<ComputerRelease, DesktopRuntimeFailure>> {
+    return this.invokeValidated(desktopCommands.releaseComputer, {}, computerReleaseSchema);
   }
 
   async setAutostart(enabled: boolean): Promise<Result<boolean, DesktopRuntimeFailure>> {

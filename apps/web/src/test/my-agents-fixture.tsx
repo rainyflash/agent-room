@@ -311,6 +311,11 @@ let runtimeHandlers: DesktopRuntimeEventHandlers | null = null;
 // 接入对话框挂在连接服务上的人物；arriveAgent() 让一个新会话接走它。
 let parkedInvitation: InvitationOffer | null = null;
 const arrivedSessions: HostSessionDiagnostics[] = [];
+// ?release=failed：换账号时第一次移出这台电脑没成（控制面连不上），第二次成。
+const releaseFailsFirst = new URLSearchParams(location.search).get('release') === 'failed';
+let releaseCount = 0;
+const signInIntents: string[] = [];
+
 const fixtureControls: MyAgentsFixtureControls = {
   arriveAgent: () => {
     const sessionKey = parkedInvitation?.sessionKey ?? null;
@@ -334,6 +339,8 @@ const fixtureControls: MyAgentsFixtureControls = {
   requestUpdate: () => {
     runtimeHandlers?.onUpdateRequested?.();
   },
+  releaseCount: () => releaseCount,
+  signInIntents: () => [...signInIntents],
 };
 Object.defineProperty(window, '__agentRoomFixtureControls', {
   configurable: true,
@@ -381,6 +388,13 @@ const gateway: DesktopRuntimeGateway = {
       lifecycle: { ...bridge.lifecycle, phase: 'starting' },
     };
     return ready(bridge);
+  },
+  releaseComputer: () => {
+    releaseCount += 1;
+    if (releaseFailsFirst && releaseCount === 1) {
+      return Promise.resolve(err({ code: 'bridge.release_unavailable', retryable: true }));
+    }
+    return ready({ serverReleased: true });
   },
   setAutostart: (enabled) => {
     autostartEnabled = enabled;
@@ -538,7 +552,10 @@ async function bootstrapFixture() {
   const sessionDependencies: SessionDependencies = {
     ...runtime.services.session,
     controlPlane: {
-      beginAuthentication: () => ready({ kind: 'session-established' }),
+      beginAuthentication: (_returnPath, intent) => {
+        signInIntents.push(intent ?? 'default');
+        return ready({ kind: 'session-established' });
+      },
       logout: () => ready(undefined),
       readSession: () => ready(principal),
     },

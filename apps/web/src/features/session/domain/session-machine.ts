@@ -80,11 +80,15 @@ export function createSessionMachine(dependencies: SessionDependencies) {
     {
       readonly mode: AuthenticationMode;
       readonly returnPath: string;
+      readonly switchingAccount: boolean;
       readonly target: AuthenticationTarget;
     }
   >(async ({ input }) => {
     if (input.target === 'control') {
-      return await dependencies.controlPlane.beginAuthentication(input.returnPath);
+      // 换账号时要能填别的账户：桌面端平时拿系统浏览器里已有的网页登录换，那份还是原来的账户。
+      return input.switchingAccount
+        ? await dependencies.controlPlane.beginAuthentication(input.returnPath, 'reauthenticate')
+        : await dependencies.controlPlane.beginAuthentication(input.returnPath);
     }
     return await dependencies.matrix.beginAuthentication(input.returnPath, input.mode);
   });
@@ -261,12 +265,14 @@ export function createSessionMachine(dependencies: SessionDependencies) {
         },
       },
       authenticating: {
+        exit: assign({ switchingAccount: false }),
         invoke: {
           id: 'authenticate-session',
           src: 'authenticate',
           input: ({ context }) => ({
             mode: context.authenticationMode,
             returnPath: dependencies.browser.currentPath(),
+            switchingAccount: context.switchingAccount,
             target: context.authenticationTarget,
           }),
           onDone: [
@@ -471,7 +477,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
               // 服务器退出时连身份服务的登录一起结束了，这次登录给的是能填别的账户的登录页。
               guard: ({ context, event }) => event.output.ok && context.switchingAccount,
               target: 'authenticating',
-              actions: ['interactiveAuthentication', assign({ switchingAccount: false })],
+              actions: 'interactiveAuthentication',
             },
             { guard: ({ event }) => event.output.ok, target: 'unauthenticated' },
             {

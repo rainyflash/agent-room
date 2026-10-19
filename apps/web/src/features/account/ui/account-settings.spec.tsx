@@ -75,7 +75,7 @@ describe('设置里的账户', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it('桌面端先只有退出：换账号要连这台电脑一起交给新账户，还没做', () => {
+  it('桌面端没有移出这台电脑的命令时只有退出', () => {
     vi.mocked(useOptionalDesktopRuntimeController).mockReturnValue({
       available: true,
     } as unknown as ReturnType<typeof useOptionalDesktopRuntimeController>);
@@ -84,6 +84,37 @@ describe('设置里的账户', () => {
 
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Switch account' })).not.toBeInTheDocument();
+  });
+
+  it('桌面端换账号先确认，移出这台电脑以后才去换；没移出去什么都不动、能再点', async () => {
+    const releaseComputer = vi
+      .fn()
+      .mockResolvedValueOnce(err({ code: 'bridge.release_unavailable', retryable: true }))
+      .mockResolvedValueOnce(ok({ serverReleased: true }));
+    vi.mocked(useOptionalDesktopRuntimeController).mockReturnValue({
+      available: true,
+      releaseComputer,
+    } as unknown as ReturnType<typeof useOptionalDesktopRuntimeController>);
+    signedIn(true);
+    render(<AccountSettings />, { wrapper: Translations });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account' }));
+    expect(
+      screen.getByText(/removed from Operator’s account: Operator’s agents on this computer/u),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(releaseComputer).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove and switch' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('bridge.release_unavailable');
+    expect(send).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove and switch' }));
+    await waitFor(() => {
+      expect(send).toHaveBeenCalledWith({ type: 'SWITCH_ACCOUNT' });
+    });
+    expect(releaseComputer).toHaveBeenCalledTimes(2);
   });
 
   it('很久没登录时先请人重新登录，回来还是这一页', () => {

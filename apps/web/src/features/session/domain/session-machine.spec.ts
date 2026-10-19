@@ -191,8 +191,9 @@ describe('Web 会话状态机', () => {
     const calls: string[] = [];
     const runtime = dependencies({
       controlPlane: {
-        beginAuthentication: () => {
-          calls.push('login');
+        beginAuthentication: (_returnPath, intent) => {
+          // 要能填别的账户：桌面端不拿系统浏览器里原账户的网页登录换。
+          calls.push(`login:${intent ?? 'default'}`);
           return Promise.resolve(ok({ kind: 'browser-navigation' }));
         },
         logout: () => {
@@ -209,9 +210,42 @@ describe('Web 会话状态机', () => {
       snapshot.matches('awaitingBrowserNavigation'),
     );
 
-    expect(calls).toEqual(['logout', 'login']);
+    expect(calls).toEqual(['logout', 'login:reauthenticate']);
     expect(navigating.context.principal).toBeNull();
     expect(navigating.context.switchingAccount).toBe(false);
+    actor.stop();
+  });
+
+  it('换账号的登录没成，再点登录就是普通登录', async () => {
+    const intents: (string | undefined)[] = [];
+    const runtime = dependencies({
+      controlPlane: {
+        beginAuthentication: (_returnPath, intent) => {
+          intents.push(intent);
+          return Promise.resolve(
+            intents.length === 1
+              ? err({
+                  boundary: 'browser',
+                  code: 'browser.authentication_navigation_failed',
+                  offline: false,
+                  retryable: true,
+                } satisfies SessionFailure)
+              : ok({ kind: 'browser-navigation' }),
+          );
+        },
+        logout: () => Promise.resolve(ok(undefined)),
+      },
+    });
+    const actor = createActor(createSessionMachine(runtime.value)).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    actor.send({ type: 'SWITCH_ACCOUNT' });
+    const failed = await waitFor(actor, (snapshot) => snapshot.matches('degraded'));
+    expect(failed.context.switchingAccount).toBe(false);
+    actor.send({ type: 'LOGIN' });
+    await waitFor(actor, (snapshot) => snapshot.matches('awaitingBrowserNavigation'));
+
+    expect(intents).toEqual(['reauthenticate', undefined]);
     actor.stop();
   });
 
