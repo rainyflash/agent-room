@@ -3,9 +3,10 @@ use std::sync::Arc;
 use agent_room_application::{
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::{
-        AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationUseCases,
-        DeviceCredentials, DeviceMatrixCleanup, DeviceRequestProof, DeviceRequestProofPayload,
-        RefreshDeviceSession, RegisterDevice, VerifiedDeviceAuthorization,
+        AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
+        DeviceAuthorizationUseCases, DeviceCredentials, DeviceMatrixCleanup, DeviceRequestProof,
+        DeviceRequestProofPayload, RefreshDeviceSession, RegisterDevice, RevokedDevice,
+        VerifiedDeviceAuthorization,
     },
     ports::{
         DeviceSignature, OidcDeviceAssertionVerifier, OidcFailure, OidcFailureKind,
@@ -20,6 +21,7 @@ use agent_room_domain::{
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{DefaultBodyLimit, Extension, Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
@@ -42,6 +44,8 @@ use crate::{
 
 const REGISTER_DEVICE_PATH: &str = "/auth/devices/register";
 const REFRESH_DEVICE_PATH: &str = "/auth/devices/refresh";
+/// 这台电脑自己请控制面把它从账户里移除（换账户，`specs/sign-out/design.md` 第 4 步）。
+const RELEASE_CURRENT_DEVICE_PATH: &str = "/auth/devices/current/release";
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const DEVICE_ID_HEADER: &str = "x-agent-room-device-id";
 const PROOF_ISSUED_AT_HEADER: &str = "x-agent-room-proof-issued-at";
@@ -89,6 +93,7 @@ pub(crate) fn router(state: DeviceHttpState) -> Router {
         .route(REFRESH_DEVICE_PATH, post(refresh_device_session))
         .route("/auth/devices", get(list_devices))
         .route("/auth/devices/{device_id}", delete(revoke_device))
+        .route(RELEASE_CURRENT_DEVICE_PATH, post(release_current_device))
         .layer(DefaultBodyLimit::max(MAX_DEVICE_BODY_BYTES))
         .with_state(state)
 }
@@ -340,11 +345,53 @@ async fn revoke_device(
         Ok(principal) => principal,
         Err(response) => return response,
     };
-    match state
+    let revoked = state
         .devices
         .revoke_device(principal.principal_id, DeviceId::from_uuid(device_id))
-        .await
+        .await;
+    revocation_response(revoked, correlation_id)
+}
+
+/// 拿着这台电脑凭据签名的就是这台电脑本身，所以不要最近登录过：换账户时这台电脑先把自己移出原来的
+/// 账户，再交给新账户。撤销和“撤销电脑”是同一套，它的 Agent 连接一起撤掉。
+async fn release_current_device(
+    State(state): State<DeviceHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let Ok(body) = std::str::from_utf8(&body) else {
+        return no_store(
+            ApiError::invalid_request("device.invalid_release_body", correlation_id)
+                .into_response(),
+        );
+    };
+    let device = match authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        &headers,
+        "POST",
+        RELEASE_CURRENT_DEVICE_PATH,
+        body,
+        correlation_id,
+    )
+    .await
     {
+        Ok(device) => device,
+        Err(response) => return response,
+    };
+    let revoked = state
+        .devices
+        .revoke_device(device.account.principal.id(), device.device_id)
+        .await;
+    revocation_response(revoked, correlation_id)
+}
+
+fn revocation_response(
+    revoked: DeviceAuthorizationResult<RevokedDevice>,
+    correlation_id: CorrelationId,
+) -> Response {
+    match revoked {
         Ok(revoked) => match revoked.matrix_cleanup {
             DeviceMatrixCleanup::Complete => no_store(StatusCode::NO_CONTENT.into_response()),
             DeviceMatrixCleanup::Pending {
@@ -560,8 +607,8 @@ mod tests {
             RefreshDeviceSession, RegisterDevice, RevokedDevice,
         },
         ports::{
-            OidcDeviceAssertionVerifier, OidcResult, PortFuture, PrincipalAccount, SecretFactory,
-            SecretValue, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
+            OidcDeviceAssertionVerifier, OidcResult, PortFuture, PrincipalAccount, SecretDigest,
+            SecretFactory, SecretValue, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
         },
     };
     use agent_room_domain::{
@@ -597,6 +644,8 @@ mod tests {
         refresh_attempts: Mutex<Vec<Option<DeviceRefreshAttemptId>>>,
         revocation: Mutex<Option<(PrincipalId, DeviceId)>>,
         pending_matrix_cleanup: AtomicUsize,
+        /// 设备签名的请求：访问令牌、方法、目标和正文摘要。
+        signed_requests: Mutex<Vec<(String, String, String, SecretDigest)>>,
     }
 
     impl DeviceAuthorizationUseCases for FakeDevices {
@@ -610,8 +659,17 @@ mod tests {
 
         fn authenticate_device<'a>(
             &'a self,
-            _request: AuthenticateDeviceRequest<'a>,
+            request: AuthenticateDeviceRequest<'a>,
         ) -> PortFuture<'a, DeviceAuthorizationResult<AuthenticatedDevice>> {
+            self.signed_requests
+                .lock()
+                .expect("签名请求记录锁可用")
+                .push((
+                    request.access_token.expose().to_owned(),
+                    request.proof.method().to_owned(),
+                    request.proof.request_target().to_owned(),
+                    *request.proof.body_digest(),
+                ));
             Box::pin(async { Ok(credentials().device) })
         }
 
@@ -1059,5 +1117,116 @@ mod tests {
         assert_eq!(body["localRevocation"], "complete");
         assert_eq!(body["matrixCleanup"], "pending");
         assert_eq!(body["pendingAgentInstanceCount"], 2);
+    }
+
+    fn release_request(body: &'static str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/auth/devices/current/release")
+            .header(header::AUTHORIZATION, "Bearer access-token")
+            .header(DEVICE_ID_HEADER, DEVICE_UUID)
+            .header(PROOF_ISSUED_AT_HEADER, "1700000000000")
+            .header(PROOF_NONCE_HEADER, "0123456789abcdef")
+            .header(PROOF_SIGNATURE_HEADER, URL_SAFE_NO_PAD.encode([5_u8; 64]))
+            .body(Body::from(body))
+            .expect("请求有效")
+    }
+
+    #[tokio::test]
+    async fn 这台电脑凭自己的签名把自己移出账户_不要网页登录() {
+        let devices = Arc::new(FakeDevices::default());
+        let authentication = Arc::new(FakeAuthentication::default());
+        let response = test_router(devices.clone(), authentication.clone())
+            .oneshot(release_request(""))
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("no-store"))
+        );
+        assert_eq!(
+            *devices.revocation.lock().expect("撤销记录锁可用"),
+            Some((principal_id_value(), device_id())),
+            "撤的是签名的这台电脑，主体取自它的凭据"
+        );
+        assert_eq!(
+            devices
+                .signed_requests
+                .lock()
+                .expect("签名请求记录锁可用")
+                .as_slice(),
+            [(
+                "access-token".to_owned(),
+                "POST".to_owned(),
+                "/auth/devices/current/release".to_owned(),
+                SecureSecretFactory.digest(""),
+            )]
+        );
+        assert!(
+            authentication
+                .requirements
+                .lock()
+                .expect("认证记录锁可用")
+                .is_empty(),
+            "不看网页登录，也不要最近登录过"
+        );
+    }
+
+    #[tokio::test]
+    async fn 移出这台电脑时_matrix_清理待重试也返回_202() {
+        let devices = Arc::new(FakeDevices::default());
+        devices.pending_matrix_cleanup.store(3, Ordering::SeqCst);
+        let response = test_router(devices, Arc::new(FakeAuthentication::default()))
+            .oneshot(release_request(""))
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["localRevocation"], "complete");
+        assert_eq!(body["matrixCleanup"], "pending");
+        assert_eq!(body["pendingAgentInstanceCount"], 3);
+    }
+
+    #[tokio::test]
+    async fn 移出这台电脑没有设备签名就什么都不动() {
+        let devices = Arc::new(FakeDevices::default());
+        let no_proof = test_router(devices.clone(), Arc::new(FakeAuthentication::default()))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/devices/current/release")
+                    .header(header::AUTHORIZATION, "Bearer access-token")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(no_proof.status(), StatusCode::BAD_REQUEST);
+
+        let cookie_only = test_router(devices.clone(), Arc::new(FakeAuthentication::default()))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/auth/devices/current/release")
+                    .header(header::ORIGIN, "https://app.agent-room.test")
+                    .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+        assert_eq!(cookie_only.status(), StatusCode::UNAUTHORIZED);
+
+        assert!(devices.revocation.lock().expect("撤销记录锁可用").is_none());
+        assert!(
+            devices
+                .signed_requests
+                .lock()
+                .expect("签名请求记录锁可用")
+                .is_empty()
+        );
     }
 }
