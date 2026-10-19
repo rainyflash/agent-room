@@ -105,6 +105,18 @@ SECURE_STORAGE_SERVICES: Final = (
 SENDER_BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge-sender"
 TARGET_BRIDGE_DATA_ROOT: Final = VERTICAL_ROOT / "bridge-target"
 BRIDGE_DATA_ROOTS: Final = (SENDER_BRIDGE_DATA_ROOT, TARGET_BRIDGE_DATA_ROOT)
+# 换账号那一轮（specs/sign-out/design.md 第 4 步）的第三台电脑：先归验收账号，再交给第二个账号。
+SWITCH_BRIDGE_NAME: Final = "bridge-switch"
+SWITCH_SECURE_STORAGE_SERVICE: Final = "dev.agent-room.bridge.vertical-24.switch"
+# 桌面端换账号时留在数据目录里的（apps/desktop/src-tauri/src/account_release.rs 的 KEPT_ENTRIES），
+# 外加验收里放在数据目录里、相当于系统钥匙串的无桌面加密库。
+SWITCH_KEPT_ENTRIES: Final = frozenset({
+    "deployment.json", "retired", "bridge.lock", "bridge.lock.pid", "matrix-store.lock",
+    "matrix-store.lock.pid", "runtime", "logs", "tray-hint-shown", "account-release.pending",
+    "secure-vault", "vault.key",
+})
+# 只对原来的账户有效的凭据（bridge-local-adapter 的 SERVER_BOUND_ACCOUNTS）；这台电脑的签名钥匙留着。
+SERVER_BOUND_SECRET_ACCOUNTS: Final = ("device-session-v1", "agent-runtime-session-v1")
 WEB_PREVIEW_PORT: Final = 14_173
 SECURE_STORAGE_ACCOUNTS: Final = (
     "device-signing-seed",
@@ -131,6 +143,9 @@ UNREDACTED_DEVICE_CODE_QUERY: Final = re.compile(
 UNREDACTED_DEVICE_CODE_LINE: Final = re.compile(
     r"^设备验证码：(?!\[已脱敏\])\S+", re.MULTILINE
 )
+# 桌面端托管的 Bridge 把设备码写在报给桌面端的事件里（`authorization_required` 的 `userCode`）。
+SUPERVISOR_USER_CODE: Final = re.compile(r'("userCode"\s*:\s*")[^"]*(")')
+UNREDACTED_SUPERVISOR_USER_CODE: Final = re.compile(r'"userCode"\s*:\s*"(?!\[已脱敏\]")')
 UUID_V7_TEXT: Final = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -171,6 +186,7 @@ class LogRedactor:
             sanitized = sanitized.replace(secret, "[已脱敏]")
         sanitized = JWT_VALUE.sub("[JWT 已脱敏]", sanitized)
         sanitized = DEVICE_CODE_QUERY.sub(r"\1[已脱敏]", sanitized)
+        sanitized = SUPERVISOR_USER_CODE.sub(r"\1[已脱敏]\2", sanitized)
         return DEVICE_CODE_LINE.sub(r"\1[已脱敏]", sanitized)
 
     @property
@@ -278,6 +294,52 @@ class BridgeRuntimeObservation:
         raise VerticalFailure(f"{label} 未在 {timeout_seconds:.0f} 秒内出现。")
 
 
+class SupervisorEvents:
+    """读 Bridge 报给桌面端的事件（标准输出里一行一个 JSON），像桌面端那样等某一种。"""
+
+    def __init__(self) -> None:
+        self._events: list[dict[str, object]] = []
+        self._changed = threading.Condition()
+
+    def observe(self, line: str) -> None:
+        text = line.strip()
+        if not text.startswith("{"):
+            return
+        try:
+            event = json.loads(text)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict) or event.get("channel") != "agent_room_desktop":
+            return
+        with self._changed:
+            self._events.append(event)
+            self._changed.notify_all()
+
+    def wait_for(
+        self,
+        name: str,
+        process: ProcessHealth | None,
+        *,
+        failure: str | None = None,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
+        """等第一条叫 `name` 的事件并把它取走；先等到 `failure` 就失败。`process` 为空时不管它退没退出
+        （Bridge 报完移出去以后马上退出）。"""
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if process is not None:
+                process.ensure_running()
+            with self._changed:
+                for index, event in enumerate(self._events):
+                    if event.get("event") == failure:
+                        raise VerticalFailure(f"托管的 Bridge 报了 {failure}：{event.get('code')}")
+                    if event.get("event") == name:
+                        del self._events[: index + 1]
+                        return event
+                self._changed.wait(timeout=min(0.25, max(0.0, deadline - time.monotonic())))
+        raise VerticalFailure(f"托管的 Bridge 没在 {timeout_seconds:.0f} 秒内报 {name}。")
+
+
 @dataclass
 class AuthorizedBridgeRuntime:
     """纵向验收中已授权 Bridge 的唯一运行时句柄。"""
@@ -303,8 +365,10 @@ class ManagedProcess(AbstractContextManager["ManagedProcess"]):
         log_path: Path,
         redactor: LogRedactor,
         on_line: LineObserver | None = None,
+        stdin_pipe: bool = False,
     ) -> None:
         self._name = name
+        self._stdin_pipe = stdin_pipe
         self._command = tuple(command)
         self._environment = dict(environment)
         self._log_path = log_path
@@ -330,6 +394,7 @@ class ManagedProcess(AbstractContextManager["ManagedProcess"]):
             self._command,
             cwd=ROOT,
             env=self._environment,
+            stdin=subprocess.PIPE if self._stdin_pipe else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -346,6 +411,20 @@ class ManagedProcess(AbstractContextManager["ManagedProcess"]):
         )
         self._reader.start()
         return self
+
+    def write_line(self, line: str) -> None:
+        """像桌面端那样往子进程的标准输入写一行。"""
+        stream = self.process.stdin
+        if stream is None:
+            raise VerticalFailure(f"进程 {self._name} 没有接标准输入。")
+        stream.write(f"{line}\n")
+        stream.flush()
+
+    def wait_for_exit(self, *, timeout_seconds: float) -> int:
+        try:
+            return self.process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            raise VerticalFailure(f"进程 {self._name} 没在 {timeout_seconds:.0f} 秒内退出。") from error
 
     def ensure_running(self) -> None:
         return_code = self.process.poll()
@@ -648,11 +727,12 @@ def remove_vertical_infrastructure() -> None:
 
 def reset_bridge_data_roots() -> None:
     expected_parent = VERTICAL_ROOT.resolve()
-    for data_root in BRIDGE_DATA_ROOTS:
+    for data_root in (*BRIDGE_DATA_ROOTS, VERTICAL_ROOT / SWITCH_BRIDGE_NAME):
         target = data_root.resolve()
         if target.parent != expected_parent or target.name not in {
             "bridge-sender",
             "bridge-target",
+            SWITCH_BRIDGE_NAME,
         }:
             raise VerticalFailure("拒绝清理未经审计的 Bridge 测试目录。")
         if target.exists():
@@ -1502,15 +1582,24 @@ def wait_for_mcp_runtime_unavailable(
     )
 
 
-def approve_device_grant(environment: Mapping[str, str], device_code: str) -> None:
+def approve_device_grant(
+    environment: Mapping[str, str],
+    device_code: str,
+    *,
+    username: str = "developer",
+    password_name: str = "SEED_ADMIN_PASSWORD",
+) -> None:
+    if (username, password_name) not in {
+        ("developer", "SEED_ADMIN_PASSWORD"),
+        ("collaborator", "SEED_MEMBER_PASSWORD"),
+    }:
+        raise VerticalFailure("只用种子账户批准设备码。")
     approval_environment = os.environ.copy()
     approval_environment.update(
         {
             "AGENT_ROOM_TEST_DEVICE_USER_CODE": device_code,
-            "AGENT_ROOM_TEST_OIDC_USERNAME": "developer",
-            "AGENT_ROOM_TEST_OIDC_PASSWORD": required_value(
-                environment, "SEED_ADMIN_PASSWORD"
-            ),
+            "AGENT_ROOM_TEST_OIDC_USERNAME": username,
+            "AGENT_ROOM_TEST_OIDC_PASSWORD": required_value(environment, password_name),
         }
     )
     run_checked(
@@ -3462,6 +3551,159 @@ def verify_room_people(
     return {"roomPeopleAgentEventId": event_id}
 
 
+@dataclass(frozen=True)
+class SwitchAccount:
+    """批准设备码的种子账户。"""
+
+    username: str
+    password_name: str
+    agent_name: str
+
+
+def verify_computer_switch(
+    *, processes: ProcessStack, environment: Mapping[str, str], redactor: LogRedactor
+) -> dict[str, object]:
+    """换账号（specs/sign-out/design.md 第 4 步）：一台电脑先归验收账号，它的 Agent 进公共大厅；像
+    桌面端那样写 `release` 以后，这台电脑移出账户、Agent 离开大厅；照桌面端收走原账户留在本机的东西，
+    再交给第二个账号：用的还是这台电脑的签名钥匙，第二个账号的 Agent 进大厅说话。"""
+    data_root = VERTICAL_ROOT.resolve() / SWITCH_BRIDGE_NAME
+    data_root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    bridge_environment = switch_bridge_environment(data_root)
+    first_account = SwitchAccount("developer", "SEED_ADMIN_PASSWORD", "Vertical Switch Before")
+    second_account = SwitchAccount("collaborator", "SEED_MEMBER_PASSWORD", "Vertical Switch After")
+
+    first, events, first_code = start_switch_bridge(
+        processes, bridge_environment, environment, redactor, "bridge-switch-before", first_account
+    )
+    before = join_switch_lobby(bridge_environment, redactor, first_account.agent_name, speak=False)
+    require_membership(before["matrixRoomId"], before["agentMatrixUserId"], "join")
+    first.write_line("release")
+    released = events.wait_for(
+        "computer_released", None, failure="computer_release_failed", timeout_seconds=90
+    )
+    if released.get("alreadyReleased") is not False:
+        raise VerticalFailure(f"这台电脑该是这次才移出账户：{released}")
+    if first.wait_for_exit(timeout_seconds=60) != 0:
+        raise VerticalFailure("移出这台电脑以后 Bridge 没有正常退出。")
+    first.stop()
+    require_membership(before["matrixRoomId"], before["agentMatrixUserId"], "leave")
+    retire_switched_account(data_root, bridge_environment)
+
+    second, _, second_code = start_switch_bridge(
+        processes, bridge_environment, environment, redactor, "bridge-switch-after", second_account
+    )
+    after = join_switch_lobby(bridge_environment, redactor, second_account.agent_name, speak=True)
+    second.stop()
+    verify_switched_devices(before["agentInstanceId"], after["agentInstanceId"])
+    return {
+        "deviceCodes": [first_code, second_code],
+        "computerSwitchEventId": after["eventId"],
+    }
+
+
+def switch_bridge_environment(data_root: Path) -> dict[str, str]:
+    """像桌面端托管那样起 Bridge：报事件、跟着标准输入退出、还没授权时等桌面端交授权；不配默认 Agent
+    （换账号时桌面端忘掉了原来的默认 Agent）。"""
+    environment = bridge_runtime_environment(
+        data_root=data_root, secure_storage_service=SWITCH_SECURE_STORAGE_SERVICE
+    )
+    key_file = data_root / "vault.key"
+    descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as key:
+        key.write(os.urandom(32))
+    environment.update({
+        "AGENT_ROOM_BRIDGE_VAULT_DIR": str(data_root / "secure-vault"),
+        "AGENT_ROOM_BRIDGE_VAULT_KEY_FILE": str(key_file),
+        "AGENT_ROOM_BRIDGE_SUPERVISED": "true",
+        "AGENT_ROOM_BRIDGE_EXIT_WITH_SUPERVISOR": "true",
+        "AGENT_ROOM_BRIDGE_DEVICE_AUTHORIZATION": "supervisor",
+    })
+    return environment
+
+
+def start_switch_bridge(
+    processes: ProcessStack,
+    bridge_environment: Mapping[str, str],
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+    name: str,
+    account: SwitchAccount,
+) -> tuple[ManagedProcess, SupervisorEvents, str]:
+    """起托管的 Bridge；它等电脑授权时像要不到授权的桌面端那样请它改走设备码，由这个账户批准。"""
+    events = SupervisorEvents()
+    bridge = processes.start(ManagedProcess(
+        name=name, command=[str(runtime_binary("agent-room-bridge"))],
+        environment=bridge_environment, log_path=LOG_ROOT / f"{name}.log",
+        redactor=redactor, on_line=events.observe, stdin_pipe=True,
+    ))
+    events.wait_for("device_grant_required", bridge, timeout_seconds=90)
+    bridge.write_line("device-code")
+    prompt = events.wait_for("authorization_required", bridge, timeout_seconds=90)
+    code = require_text(prompt.get("userCode"), "托管 Bridge 的设备码")
+    approve_device_grant(
+        environment, code, username=account.username, password_name=account.password_name
+    )
+    events.wait_for("ready", bridge, timeout_seconds=180)
+    return bridge, events, code
+
+
+def join_switch_lobby(
+    bridge_environment: Mapping[str, str], redactor: LogRedactor, name: str, *, speak: bool
+) -> dict[str, str]:
+    """这台电脑上的 Agent 按大厅的 slug 进验收大厅；`speak` 时再说一句。"""
+    with McpStdioClient(
+        command=[str(runtime_binary("agent-room-mcp"))],
+        working_directory=ROOT,
+        environment=bridge_environment,
+        stderr_path=LOG_ROOT / f"{name.replace(' ', '-')}-session.log",
+        sanitize_line=redactor.redact,
+    ) as transport:
+        joined = transport.call_tool("agent_room_join", {"room": CATALOG_SLUG, "displayName": name})
+        agent = transport.bind_session(require_text(joined.get("sessionId"), "换账号那台电脑的会话"))
+        identity = wait_for_session_identity(agent, timeout_seconds=180)
+        if speak:
+            text = f"Hello from the computer's new account ({new_uuid_v7()[-8:]})."
+            identity = {**identity, "eventId": say_in_room(agent, identity["matrixRoomId"], text)}
+    return identity
+
+
+def retire_switched_account(data_root: Path, bridge_environment: Mapping[str, str]) -> None:
+    """照桌面端换账号时做的收：删掉只对原来账户有效的凭据，数据目录里除留下的以外都挪走再删。"""
+    vault = Path(bridge_environment["AGENT_ROOM_BRIDGE_VAULT_DIR"])
+    for account in SERVER_BOUND_SECRET_ACCOUNTS:
+        context = f"agent-room-vault-v1\0{SWITCH_SECURE_STORAGE_SERVICE}\0{account}".encode()
+        digest = base64.urlsafe_b64encode(hashlib.sha256(context).digest()).rstrip(b"=").decode()
+        (vault / f"{digest}.json").unlink(missing_ok=True)
+    for entry in data_root.iterdir():
+        if entry.name in SWITCH_KEPT_ENTRIES:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
+def verify_switched_devices(before_instance: str, after_instance: str) -> None:
+    """服务器上原来的那台撤销了，新账户登记的是同一把签名钥匙的另一台。"""
+    for instance in (before_instance, after_instance):
+        require_uuid_v7(instance, "换账号那台电脑上的 Agent 实例")
+    rows = compose_psql(
+        "SELECT d.id, d.principal_id, d.revoked_at IS NOT NULL, encode(d.public_signing_key, 'hex')"
+        " FROM agent_room.agent_instance i JOIN agent_room.device d ON d.id = i.device_id"
+        f" WHERE i.id IN ('{before_instance}', '{after_instance}')"
+        f" ORDER BY i.id = '{after_instance}';"
+    ).splitlines()
+    if len(rows) != 2:
+        raise VerticalFailure(f"换账号前后的两个 Agent 实例该各有一台电脑：{len(rows)} 行。")
+    before, after = (row.split("|") for row in rows)
+    if before[0] == after[0] or before[3] != after[3]:
+        raise VerticalFailure("换账号以后该是同一把签名钥匙重新登记的另一台电脑。")
+    if before[2] != "t" or after[2] != "f":
+        raise VerticalFailure("原来账户的那台该撤销了、新账户的那台该还在用。")
+    if before[1] == after[1]:
+        raise VerticalFailure("换账号前后这台电脑该归两个不同的账户。")
+
+
 def wait_for_browser_step(
     path: Path, browser: BrowserRun, *, timeout_seconds: float, failure: str
 ) -> dict[str, object]:
@@ -4681,6 +4923,8 @@ def verify_sanitized_logs(
             issues.append(f"{path.name}:device-code-query")
         if UNREDACTED_DEVICE_CODE_LINE.search(text) is not None:
             issues.append(f"{path.name}:device-code-line")
+        if UNREDACTED_SUPERVISOR_USER_CODE.search(text) is not None:
+            issues.append(f"{path.name}:device-code-event")
     if issues:
         raise VerticalFailure(
             "敏感日志扫描发现未脱敏内容：" + ", ".join(sorted(set(issues)))

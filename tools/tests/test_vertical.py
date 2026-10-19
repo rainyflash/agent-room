@@ -18,6 +18,7 @@ from tools.vertical import (
     IsolatedBridgeState,
     IsolatedServiceInterruption,
     LogRedactor,
+    SupervisorEvents,
     VerticalFailure,
     compose_command,
     http_status_is_ready,
@@ -387,6 +388,83 @@ class LogRedactorTests(unittest.TestCase):
                         LogRedactor({"CLIENT_SECRET": "local-secret-value"}),
                         additional_secrets=("ABCD-EFGH",),
                     )
+
+
+class ComputerSwitchTests(unittest.TestCase):
+    def test_托管_bridge_事件里的设备码落盘前脱敏_没脱敏的扫得出来(self) -> None:
+        line = (
+            '{"event":"authorization_required","channel":"agent_room_desktop",'
+            '"userCode":"ABCD-EFGH","expiresInSeconds":600}\n'
+        )
+        redacted = LogRedactor({}).redact(line)
+        self.assertNotIn("ABCD-EFGH", redacted)
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "bridge-switch.log"
+            log.write_text(redacted, encoding="utf-8")
+            verify_sanitized_logs((log,), LogRedactor({}))
+            log.write_text(line, encoding="utf-8")
+            with self.assertRaises(VerticalFailure):
+                verify_sanitized_logs((log,), LogRedactor({}))
+
+    def test_只认报给桌面端的事件_按顺序取走_先报没成就失败(self) -> None:
+        events = SupervisorEvents()
+        events.observe("Agent Room Bridge 已就绪。\n")
+        events.observe('{"event":"ready","channel":"other"}\n')
+        events.observe('{"event":"device_grant_required","channel":"agent_room_desktop"}\n')
+        events.observe('{"event":"ready","channel":"agent_room_desktop"}\n')
+
+        self.assertEqual(
+            events.wait_for("ready", RunningProcess(), timeout_seconds=0.1)["event"], "ready"
+        )
+        with self.assertRaises(VerticalFailure):
+            events.wait_for("device_grant_required", RunningProcess(), timeout_seconds=0.1)
+        events.observe(
+            '{"event":"computer_release_failed","channel":"agent_room_desktop",'
+            '"code":"bridge.release_unavailable"}\n'
+        )
+        with self.assertRaisesRegex(VerticalFailure, "bridge.release_unavailable"):
+            events.wait_for(
+                "computer_released", None, failure="computer_release_failed", timeout_seconds=0.1
+            )
+
+    def test_照桌面端收走原账户的东西_签名钥匙和留下的都在(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data_root = Path(directory)
+            vault = data_root / "secure-vault"
+            vault.mkdir()
+            names = {
+                account: vault / f"{vault_file_stem(account)}.json"
+                for account in ("device-session-v1", "agent-runtime-session-v1", "device-signing-seed")
+            }
+            for path in names.values():
+                path.write_text("{}", encoding="utf-8")
+            for kept in ("deployment.json", "vault.key", "bridge.lock"):
+                (data_root / kept).write_text("", encoding="utf-8")
+            for gone in ("host-agents", "matrix-store", "messages"):
+                (data_root / gone).mkdir()
+                (data_root / gone / "state").write_text("", encoding="utf-8")
+            (data_root / "owner.json").write_text("{}", encoding="utf-8")
+
+            vertical.retire_switched_account(
+                data_root, {"AGENT_ROOM_BRIDGE_VAULT_DIR": str(vault)}
+            )
+
+            self.assertEqual(
+                sorted(entry.name for entry in data_root.iterdir()),
+                ["bridge.lock", "deployment.json", "secure-vault", "vault.key"],
+            )
+            self.assertFalse(names["device-session-v1"].exists())
+            self.assertFalse(names["agent-runtime-session-v1"].exists())
+            self.assertTrue(names["device-signing-seed"].exists())
+
+
+def vault_file_stem(account: str) -> str:
+    """和 bridge-local-adapter 的 EncryptedStore 一样：服务名和账户名拼起来取 SHA-256，URL 安全的 base64。"""
+    import base64
+    import hashlib
+
+    context = f"agent-room-vault-v1\0{vertical.SWITCH_SECURE_STORAGE_SERVICE}\0{account}".encode()
+    return base64.urlsafe_b64encode(hashlib.sha256(context).digest()).rstrip(b"=").decode()
 
 
 class BridgeObservationTests(unittest.TestCase):
