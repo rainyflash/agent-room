@@ -3564,8 +3564,9 @@ def verify_computer_switch(
     *, processes: ProcessStack, environment: Mapping[str, str], redactor: LogRedactor
 ) -> dict[str, object]:
     """换账号（specs/sign-out/design.md 第 4 步）：一台电脑先归验收账号，它的 Agent 进公共大厅；像
-    桌面端那样写 `release` 以后，这台电脑移出账户、Agent 离开大厅；照桌面端收走原账户留在本机的东西，
-    再交给第二个账号：用的还是这台电脑的签名钥匙，第二个账号的 Agent 进大厅说话。"""
+    桌面端那样写 `release` 以后，这台电脑移出账户，Agent 的连接和 Matrix 设备一起撤掉（和“撤销电脑”
+    一样，Agent 不离开房间）；照桌面端收走原账户留在本机的东西，再交给第二个账号：用的还是这台电脑的
+    签名钥匙，第二个账号的 Agent 进大厅说话。"""
     data_root = VERTICAL_ROOT.resolve() / SWITCH_BRIDGE_NAME
     data_root.mkdir(mode=0o700, parents=True, exist_ok=False)
     bridge_environment = switch_bridge_environment(data_root)
@@ -3586,7 +3587,7 @@ def verify_computer_switch(
     if first.wait_for_exit(timeout_seconds=60) != 0:
         raise VerticalFailure("移出这台电脑以后 Bridge 没有正常退出。")
     first.stop()
-    require_membership(before["matrixRoomId"], before["agentMatrixUserId"], "leave")
+    require_agent_device_revoked(before["agentInstanceId"], before["agentMatrixUserId"])
     retire_switched_account(data_root, bridge_environment)
 
     second, _, second_code = start_switch_bridge(
@@ -3681,6 +3682,28 @@ def retire_switched_account(data_root: Path, bridge_environment: Mapping[str, st
             shutil.rmtree(entry)
         else:
             entry.unlink()
+
+
+def require_agent_device_revoked(instance_id: str, user_id: str) -> None:
+    """移出电脑以后，这台电脑上的 Agent 连接撤销了，它的 Matrix 设备也从 Synapse 上删了。"""
+    require_uuid_v7(instance_id, "换账号那台电脑上的 Agent 实例")
+    if re.fullmatch(r"@[a-z0-9._=/-]+:[A-Za-z0-9.-]+(?::\d+)?", user_id) is None:
+        raise VerticalFailure("Matrix 用户标识格式不对。")
+    row = compose_psql(
+        "SELECT revoked_at IS NOT NULL, matrix_device_revoked_at IS NOT NULL, matrix_device_id"
+        f" FROM agent_room.agent_instance WHERE id = '{instance_id}';"
+    ).split("|")
+    if len(row) != 3 or row[:2] != ["t", "t"]:
+        raise VerticalFailure(f"移出电脑以后 Agent 的连接和 Matrix 设备该都撤销了：{row[:2]}。")
+    device_id = row[2]
+    if re.fullmatch(r"[A-Za-z0-9_]+", device_id) is None:
+        raise VerticalFailure("Matrix 设备标识格式不对。")
+    remaining = compose_psql(
+        f"SELECT count(*) FROM devices WHERE user_id = '{user_id}' AND device_id = '{device_id}';",
+        database="synapse",
+    )
+    if remaining != "0":
+        raise VerticalFailure("移出电脑以后 Agent 的 Matrix 设备还在 Synapse 上。")
 
 
 def verify_switched_devices(before_instance: str, after_instance: str) -> None:
