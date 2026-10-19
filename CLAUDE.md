@@ -478,6 +478,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 79 正在发布：设置里退出登录、换个账号（#536、#537），桌面端换账号先把这台电脑移出原来的账户（#538–#541），旧版 iOS 浏览器补上缺的内置函数（#534）。#536 改了 `crates/identity-adapter/`、#538 改了 `apps/control-plane/src/features/devices.rs`（登录相关路径），实机验收要走一次新设备授权，要维护者批准设备码。
 - Alpha 78 已于 2026-10-18 公开，见 [发布记录](./specs/agent-access/alpha78-release.md)。
   - 桌面端要最近登录的操作点“重新登录”时一定去身份服务（#531）。实机验收走了一次新设备授权，第一个码过期、第二个批准；长期验收设备换成 Alpha 78 那台（`agent-room.alpha78.acceptance.fresh-device`）。
   - 升级验收查会话时桌面端页面刚好跳转（CDP 报 `Execution context was destroyed`），安装本身装上了；从升级验收接着跑（`qa_resume.py`）一次通过。版本 PR #532 合并到网页上线约 1 小时 16 分钟，其中约 21 分钟在等设备码、约 9 分钟在等定时备份。
