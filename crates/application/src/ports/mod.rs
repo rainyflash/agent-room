@@ -158,13 +158,14 @@ pub use rooms::{
     PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
     PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
     PublicLobbyDirectoryEntry, PublicLobbyMatrixReader, PublicLobbyObservationRoom,
-    PublicLobbyShard, PublicLobbyShardDirectory, RoomAgentKind, RoomAgentOwnerRecord,
-    RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomDirectory,
-    RoomDirectoryQuery, RoomMembershipGateway, RoomPeopleDirectory, RoomPersonName,
-    RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
-    RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
-    RoomProvisioningTarget, RoomReservationClaim, RoomReservationOutcome, SealedInviteLink,
-    SealedJoinCode,
+    PublicLobbyShard, PublicLobbyShardDirectory, RevokedAgentDepartureAudit,
+    RevokedAgentDepartureAuditOutcome, RevokedAgentDepartureClaim, RevokedAgentDepartureFacts,
+    RevokedAgentDepartureStore, RoomAgentKind, RoomAgentOwnerRecord, RoomAllocationEvidence,
+    RoomAllocationMode, RoomAllocationStore, RoomDirectory, RoomDirectoryQuery,
+    RoomMembershipGateway, RoomPeopleDirectory, RoomPersonName, RoomProvisioningClaim,
+    RoomProvisioningClaimOutcome, RoomProvisioningFailureCode, RoomProvisioningGateway,
+    RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget,
+    RoomReservationClaim, RoomReservationOutcome, SealedInviteLink, SealedJoinCode,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

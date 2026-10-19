@@ -12,7 +12,7 @@ use std::sync::Arc;
 use agent_room_domain::{
     agents::AgentRole,
     ids::{AgentId, AgentInstanceId, DeviceId, RoomCatalogId},
-    rooms::{RoomCatalogStatus, RoomReservationState},
+    rooms::{MatrixRoomReference, RoomCatalogStatus, RoomReservationState},
     time::UtcMillis,
 };
 
@@ -344,33 +344,26 @@ impl AgentRoomPlacementService {
         Ok(())
     }
 
-    /// 私人房间先收回发言级别再离开：离开以后 Matrix 上的发言级别还留着，下次再进来时由进房间那一套
-    /// 按当时的准入重新给。归档了的房间不动发言级别：写发言级别会把整套在用的门槛写回去，等于取消归档。
-    ///
-    /// 在 Matrix 上已经不在房间里（被移出、主人离开时被一起请出去、或者上次离开到一半）时，离开会被
-    /// 拒绝（Synapse 回 403，房间不认得时 404），这里当作已经离开，接着放掉位置。
     async fn leave_matrix(
         &self,
         room: &AgentRoomPlacement,
         matrix_user: &MatrixUserId,
     ) -> AgentLobbyEntryResult<()> {
-        if room.kind == AgentRoomKind::PrivateRoom && room.status == RoomCatalogStatus::Active {
-            let matrix_room = MatrixRoomId::new(room.matrix_room_id.as_str().to_owned())
-                .map_err(|_| AgentLobbyEntryFailure::NotFound)?;
-            self.private_matrix
-                .set_speaking(&matrix_room, matrix_user, false)
-                .await
-                .map_err(AgentLobbyEntryFailure::Membership)?;
-        }
-        let membership = self
-            .memberships
-            .bind(matrix_user)
-            .map_err(AgentLobbyEntryFailure::Membership)?;
-        match membership.leave(&room.matrix_room_id).await {
-            Ok(()) => Ok(()),
-            Err(failure) if already_gone(&failure) => Ok(()),
-            Err(failure) => Err(AgentLobbyEntryFailure::Membership(failure)),
-        }
+        leave_matrix_room(
+            self.private_matrix.as_ref(),
+            self.memberships.as_ref(),
+            MatrixRoomToLeave {
+                kind: room.kind,
+                status: room.status,
+                matrix_room_id: &room.matrix_room_id,
+            },
+            matrix_user,
+        )
+        .await
+        .map_err(|failure| match failure {
+            RoomLeaveFailure::InvalidRoom => AgentLobbyEntryFailure::NotFound,
+            RoomLeaveFailure::Matrix(failure) => AgentLobbyEntryFailure::Membership(failure),
+        })
     }
 
     /// Agent 自己离开：设备、连接和 Agent 三者对得上，而且连接还有效，和它进房间时一样。
@@ -424,6 +417,53 @@ impl AgentRoomPlacementService {
         } else {
             Err(AgentLobbyEntryFailure::Unauthorized)
         }
+    }
+}
+
+/// 要离开的一个 Matrix 房间。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MatrixRoomToLeave<'a> {
+    pub(crate) kind: AgentRoomKind,
+    pub(crate) status: RoomCatalogStatus,
+    pub(crate) matrix_room_id: &'a MatrixRoomReference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RoomLeaveFailure {
+    /// 记着的 Matrix 房间号不对。
+    InvalidRoom,
+    Matrix(MatrixFailure),
+}
+
+/// 以应用服务的身份让 Agent 离开一个 Matrix 房间。离开一个房间、删除 Agent 前离开所有房间、撤销电脑后
+/// 离开（`agent_room_departures`）都用它。
+///
+/// 私人房间先收回发言级别再离开：离开以后 Matrix 上的发言级别还留着，下次再进来时由进房间那一套
+/// 按当时的准入重新给。归档了的房间不动发言级别：写发言级别会把整套在用的门槛写回去，等于取消归档。
+///
+/// 在 Matrix 上已经不在房间里（被移出、主人离开时被一起请出去、或者上次离开到一半）时，离开会被
+/// 拒绝（Synapse 回 403，房间不认得时 404），这里当作已经离开，接着放掉位置。
+pub(crate) async fn leave_matrix_room(
+    private_matrix: &dyn PrivateRoomMatrixGateway,
+    memberships: &dyn AgentRoomMembershipFactory,
+    room: MatrixRoomToLeave<'_>,
+    matrix_user: &MatrixUserId,
+) -> Result<(), RoomLeaveFailure> {
+    if room.kind == AgentRoomKind::PrivateRoom && room.status == RoomCatalogStatus::Active {
+        let matrix_room = MatrixRoomId::new(room.matrix_room_id.as_str().to_owned())
+            .map_err(|_| RoomLeaveFailure::InvalidRoom)?;
+        private_matrix
+            .set_speaking(&matrix_room, matrix_user, false)
+            .await
+            .map_err(RoomLeaveFailure::Matrix)?;
+    }
+    let membership = memberships
+        .bind(matrix_user)
+        .map_err(RoomLeaveFailure::Matrix)?;
+    match membership.leave(room.matrix_room_id).await {
+        Ok(()) => Ok(()),
+        Err(failure) if already_gone(&failure) => Ok(()),
+        Err(failure) => Err(RoomLeaveFailure::Matrix(failure)),
     }
 }
 

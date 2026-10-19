@@ -27,6 +27,7 @@ use crate::{
     error::map_sqlx_error,
     handoffs::fail_targeted_handoffs_for_device,
     outbox::insert_outbox_event,
+    rooms::queue_revoked_agent_departures,
 };
 
 const DEVICE_SELECT: &str = r"device.id AS device_id,
@@ -826,6 +827,14 @@ async fn revoke_device_transaction(
         )?;
         insert_outbox_event(&mut transaction, &event).await?;
     }
+    // 已经撤销过的再点一次也记：以前撤销、还挂在房间里的 Agent 这样也能离开，记着的不重记。
+    queue_revoked_agent_departures(
+        &mut transaction,
+        device.id(),
+        security_event.occurred_at,
+        operation,
+    )
+    .await?;
     let pending =
         pending_agent_matrix_device_revocations(&mut transaction, device.id(), operation).await?;
     transaction

@@ -9,11 +9,13 @@ use std::{
 use agent_room_application::{
     ports::{
         AgentLobbyAccessRepository, AgentRoomKind, AgentRoomPlacementStore, Clock,
-        MatrixCreateRoom, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId, MatrixRoomKind,
-        ModerationEffectGateway, ModerationEffectTarget, PortFuture, RoomAgentKind,
-        RoomAllocationEvidence, RoomAllocationMode, RoomMembershipGateway, RoomPeopleDirectory,
-        RoomProvisioningGateway,
+        DeviceRevocationTransaction, DeviceSecurityEvent, MatrixCreateRoom, MatrixEventId,
+        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart,
+        MatrixRoomId, MatrixRoomKind, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
+        RevokedAgentDepartureAudit, RevokedAgentDepartureAuditOutcome, RevokedAgentDepartureClaim,
+        RevokedAgentDepartureFacts, RevokedAgentDepartureStore, RoomAgentKind,
+        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomMembershipGateway,
+        RoomPeopleDirectory, RoomProvisioningGateway,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyOutcome, EnterLobbyService, JoinLobbyDependencies,
@@ -24,8 +26,8 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{
-        AgentId, AgentInstanceId, DeviceId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
-        RoomProvisioningLeaseId, RoomReservationId,
+        AgentId, AgentInstanceId, DeviceId, OutboxEventId, PrincipalId, RoomCatalogId,
+        RoomInstanceId, RoomProvisioningJobId, RoomProvisioningLeaseId, RoomReservationId,
     },
     moderation::ModerationAction,
     rooms::{MatrixRoomReference, RoomCatalogStatus, RoomReservationState},
@@ -395,7 +397,7 @@ async fn agent_在哪些房间按已确认的位置算_放掉以后就不在了(
             .is_none()
     );
 
-    agent_room_application::ports::RoomAllocationStore::transition(
+    RoomAllocationStore::transition(
         &repositories,
         placement.reservation_id,
         RoomReservationState::Committed,
@@ -448,6 +450,264 @@ async fn 大厅里的本机_agent_写主人的名字_不在的不回答() {
     assert_eq!(owners[0].admitted_by, None);
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 撤销电脑时记下它的_agent_要离开的房间_一条一条领() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime).await;
+    let matrix = Arc::new(测试Matrix::new(false));
+    service(database.runtime.clone(), matrix.clone())
+        .enter(request(&fixture))
+        .await
+        .expect("进大厅");
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    revoke_device(&repositories, &database.runtime, fixture.device).await;
+
+    let claim = repositories
+        .claim_departure(Some(fixture.device), test_time(1_000), test_time(121_000))
+        .await
+        .expect("可领")
+        .expect("撤销时记下了它在的大厅");
+    assert_eq!(claim.agent_id, fixture.agent);
+    assert_eq!(claim.device_id, fixture.device);
+    assert_eq!(claim.attempt, 1);
+    assert_eq!(claim.previous_failure_code, None);
+    assert!(
+        repositories
+            .claim_departure(None, test_time(1_000), test_time(121_000))
+            .await
+            .expect("可领")
+            .is_none(),
+        "领着的别人领不到"
+    );
+    let facts = repositories
+        .departure_facts(&claim)
+        .await
+        .expect("可查询")
+        .expect("本机 Agent 在公开大厅");
+    assert!(!facts.live_connection_remains);
+    assert_eq!(facts.kind, AgentRoomKind::PublicLobby);
+    assert_eq!(facts.catalog_id, fixture.catalog);
+    assert_eq!(facts.matrix_room_id.as_str(), matrix.instance_id);
+    assert_eq!(facts.revoked_reservations.len(), 1);
+
+    finish_departure_after_one_retry(&repositories, &database.runtime, claim, facts).await;
+    assert_eq!(allocated_slots(&database.runtime, fixture.catalog).await, 0);
+    assert_eq!(
+        departure_audits(&database.runtime, fixture.agent).await,
+        [
+            ("agent.room.depart_failed".to_owned(), "failed".to_owned()),
+            ("agent.room.departed".to_owned(), "allowed".to_owned()),
+        ]
+    );
+
+    revoke_device(&repositories, &database.runtime, fixture.device).await;
+    assert!(
+        repositories
+            .claim_departure(None, test_time(1_000_000), test_time(1_120_000))
+            .await
+            .expect("可领")
+            .is_none(),
+        "位置已经放掉了，再点一次撤销不再记"
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 同一个房间里别的电脑上还有它的连接时只放撤销的那个位置() {
+    let database = TestDatabase::connect().await;
+    let fixture = seed_fixture(&database.runtime).await;
+    let matrix = Arc::new(测试Matrix::new(false));
+    let lobby = service(database.runtime.clone(), matrix.clone());
+    lobby.enter(request(&fixture)).await.expect("进大厅");
+    let second = add_connection_on_another_computer(&database.runtime, &fixture).await;
+    lobby
+        .enter(JoinLobbyRequest {
+            agent_instance_id: second,
+            ..request(&fixture)
+        })
+        .await
+        .expect("另一台电脑上的连接也进大厅");
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    revoke_device(&repositories, &database.runtime, fixture.device).await;
+
+    let claim = repositories
+        .claim_departure(Some(fixture.device), test_time(1_000), test_time(121_000))
+        .await
+        .expect("可领")
+        .expect("撤销时记下了它在的大厅");
+    let facts = repositories
+        .departure_facts(&claim)
+        .await
+        .expect("可查询")
+        .expect("本机 Agent 在公开大厅");
+
+    assert!(facts.live_connection_remains);
+    assert_eq!(facts.revoked_reservations.len(), 1);
+    assert_eq!(
+        committed_reservation_count(&database.runtime, second).await,
+        1
+    );
+
+    database.close().await;
+}
+
+/// 第一次没做成、排到 30 秒以后；之前领的那次删不掉，再领一次放掉位置、做完删掉。
+async fn finish_departure_after_one_retry(
+    repositories: &PostgresRepositories,
+    pool: &PgPool,
+    claim: RevokedAgentDepartureClaim,
+    facts: RevokedAgentDepartureFacts,
+) {
+    let audit = |outcome| RevokedAgentDepartureAudit {
+        occurred_at: test_time(1_000),
+        catalog_id: facts.catalog_id,
+        matrix_room_id: facts.matrix_room_id.clone(),
+        outcome,
+    };
+    let failed = audit(RevokedAgentDepartureAuditOutcome::Failed {
+        failure_code: "matrix.unavailable",
+    });
+    assert!(
+        repositories
+            .retry_departure(
+                &claim,
+                test_time(31_000),
+                "matrix.unavailable",
+                Some(&failed)
+            )
+            .await
+            .expect("可排下次")
+    );
+    assert!(
+        repositories
+            .claim_departure(None, test_time(30_999), test_time(150_999))
+            .await
+            .expect("可领")
+            .is_none(),
+        "没到时间不领"
+    );
+    let retried = repositories
+        .claim_departure(None, test_time(31_000), test_time(151_000))
+        .await
+        .expect("可领")
+        .expect("到时间再领");
+    assert_eq!(retried.attempt, 2);
+    assert_eq!(
+        retried.previous_failure_code.as_deref(),
+        Some("matrix.unavailable")
+    );
+    assert!(
+        !repositories
+            .complete_departure(&claim, None)
+            .await
+            .expect("可删"),
+        "之前领的那次删不掉"
+    );
+    for reservation in &facts.revoked_reservations {
+        RoomAllocationStore::transition(
+            repositories,
+            *reservation,
+            RoomReservationState::Committed,
+            RoomReservationState::Released,
+            test_time(31_000),
+        )
+        .await
+        .expect("放掉位置");
+    }
+    let departed = audit(RevokedAgentDepartureAuditOutcome::Departed {
+        left_room: true,
+        released_reservations: 1,
+    });
+    assert!(
+        repositories
+            .complete_departure(&retried, Some(&departed))
+            .await
+            .expect("可删")
+    );
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_room.revoked_agent_departure WHERE agent_id = $1",
+    )
+    .bind(claim.agent_id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("可统计");
+    assert_eq!(remaining, 0);
+}
+
+async fn revoke_device(repositories: &PostgresRepositories, pool: &PgPool, device: DeviceId) {
+    let principal: Uuid =
+        sqlx::query_scalar("SELECT principal_id FROM agent_room.device WHERE id = $1")
+            .bind(device.as_uuid())
+            .fetch_one(pool)
+            .await
+            .expect("设备有主人");
+    DeviceRevocationTransaction::revoke(
+        repositories,
+        PrincipalId::from_uuid(principal),
+        device,
+        DeviceSecurityEvent {
+            id: OutboxEventId::from_uuid(Uuid::now_v7()),
+            occurred_at: test_time(1_000),
+        },
+    )
+    .await
+    .expect("撤销电脑");
+}
+
+async fn departure_audits(pool: &PgPool, agent: AgentId) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT action, outcome FROM agent_room.audit_event \
+         WHERE target_kind = 'agent' AND target_reference = $1 AND actor_kind = 'service' \
+         ORDER BY id",
+    )
+    .bind(agent.to_string())
+    .fetch_all(pool)
+    .await
+    .expect("可读审计")
+}
+
+/// 同一个 Agent 在同一个主人的另一台电脑上的连接。
+async fn add_connection_on_another_computer(pool: &PgPool, fixture: &Fixture) -> AgentInstanceId {
+    let device_id = Uuid::now_v7();
+    let instance_id = Uuid::now_v7();
+    sqlx::query(
+        r"INSERT INTO agent_room.device (
+              id, principal_id, label, platform, public_signing_key,
+              trust_state, verified_at, created_at
+          )
+          SELECT $1, principal_id, '另一台电脑', 'macos', $2, 'verified',
+                 to_timestamp(1700000000), to_timestamp(1700000000)
+            FROM agent_room.device WHERE id = $3",
+    )
+    .bind(device_id)
+    .bind(test_key(device_id))
+    .bind(fixture.device.as_uuid())
+    .execute(pool)
+    .await
+    .expect("另一台电脑应创建");
+    sqlx::query(
+        r"INSERT INTO agent_room.agent_instance (
+              id, agent_id, device_id, adapter_binding_id, public_signing_key,
+              matrix_device_id, status, created_at
+          )
+          SELECT $1, agent_id, $2, adapter_binding_id, $3, $4, 'connecting',
+                 to_timestamp(1700000000)
+            FROM agent_room.agent_instance WHERE id = $5",
+    )
+    .bind(instance_id)
+    .bind(device_id)
+    .bind(test_key(instance_id))
+    .bind(format!("AR_{}", instance_id.simple()))
+    .bind(fixture.instance.as_uuid())
+    .execute(pool)
+    .await
+    .expect("另一台电脑上的连接应创建");
+    AgentInstanceId::from_uuid(instance_id)
 }
 
 fn service(pool: PgPool, matrix: Arc<测试Matrix>) -> EnterLobbyService {

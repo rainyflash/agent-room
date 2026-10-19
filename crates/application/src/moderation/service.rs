@@ -787,7 +787,7 @@ pub(super) fn repository_failure(
     failure(operation, kind)
 }
 
-pub(super) fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
+pub(crate) fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
     match failure.kind() {
         crate::ports::MatrixFailureKind::InvalidConfiguration => "matrix.invalid_configuration",
         crate::ports::MatrixFailureKind::Unauthenticated => "matrix.unauthenticated",

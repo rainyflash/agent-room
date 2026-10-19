@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_application::{
+    agent_room_departures::AgentRoomDepartureUseCases,
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::{
         AuthenticateDeviceRequest, AuthenticatedDevice, DeviceAuthorizationResult,
@@ -34,6 +35,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::{
+    agent_room_departures::depart_after_revocation,
     correlation::CorrelationId,
     error::ApiError,
     features::{
@@ -58,6 +60,8 @@ const MAX_ENCODED_SIGNATURE_LENGTH: usize = 128;
 #[derive(Clone)]
 pub(crate) struct DeviceHttpState {
     devices: Arc<dyn DeviceAuthorizationUseCases>,
+    /// 撤销电脑以后让它的 Agent 离开房间：撤销的那次请求里先做一遍。
+    departures: Arc<dyn AgentRoomDepartureUseCases>,
     assertion_verifier: Arc<dyn OidcDeviceAssertionVerifier>,
     authentication: Arc<dyn AuthenticationUseCases>,
     secrets: Arc<dyn SecretFactory>,
@@ -66,6 +70,7 @@ pub(crate) struct DeviceHttpState {
 
 pub(crate) struct DeviceHttpDependencies {
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
+    pub(crate) departures: Arc<dyn AgentRoomDepartureUseCases>,
     pub(crate) assertion_verifier: Arc<dyn OidcDeviceAssertionVerifier>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
@@ -79,6 +84,7 @@ impl DeviceHttpState {
     ) -> Self {
         Self {
             devices: dependencies.devices,
+            departures: dependencies.departures,
             assertion_verifier: dependencies.assertion_verifier,
             authentication: dependencies.authentication,
             secrets: dependencies.secrets,
@@ -345,10 +351,14 @@ async fn revoke_device(
         Ok(principal) => principal,
         Err(response) => return response,
     };
+    let device_id = DeviceId::from_uuid(device_id);
     let revoked = state
         .devices
-        .revoke_device(principal.principal_id, DeviceId::from_uuid(device_id))
+        .revoke_device(principal.principal_id, device_id)
         .await;
+    if revoked.is_ok() {
+        depart_after_revocation(state.departures.as_ref(), device_id).await;
+    }
     revocation_response(revoked, correlation_id)
 }
 
@@ -384,6 +394,9 @@ async fn release_current_device(
         .devices
         .revoke_device(device.account.principal.id(), device.device_id)
         .await;
+    if revoked.is_ok() {
+        depart_after_revocation(state.departures.as_ref(), device.device_id).await;
+    }
     revocation_response(revoked, correlation_id)
 }
 
@@ -597,6 +610,7 @@ mod tests {
     };
 
     use agent_room_application::{
+        agent_room_departures::{AgentRoomDepartureUseCases, DepartureRound},
         authentication::{
             AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
             AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
@@ -606,6 +620,7 @@ mod tests {
             DeviceAuthorizationUseCases, DeviceCredentials, DeviceMatrixCleanup,
             RefreshDeviceSession, RegisterDevice, RevokedDevice,
         },
+        persistence::RepositoryError,
         ports::{
             OidcDeviceAssertionVerifier, OidcResult, PortFuture, PrincipalAccount, SecretDigest,
             SecretFactory, SecretValue, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
@@ -646,6 +661,25 @@ mod tests {
         pending_matrix_cleanup: AtomicUsize,
         /// 设备签名的请求：访问令牌、方法、目标和正文摘要。
         signed_requests: Mutex<Vec<(String, String, String, SecretDigest)>>,
+        /// 撤销以后接着让哪台电脑的 Agent 离开房间。
+        departed: Mutex<Vec<DeviceId>>,
+    }
+
+    impl AgentRoomDepartureUseCases for FakeDevices {
+        fn depart_for_device(
+            &self,
+            device_id: DeviceId,
+        ) -> PortFuture<'_, Result<DepartureRound, RepositoryError>> {
+            self.departed
+                .lock()
+                .expect("离开记录锁可用")
+                .push(device_id);
+            Box::pin(async { Ok(DepartureRound::default()) })
+        }
+
+        fn depart_due(&self) -> PortFuture<'_, Result<DepartureRound, RepositoryError>> {
+            Box::pin(async { unreachable!("撤销的请求里只做这台电脑的") })
+        }
     }
 
     impl DeviceAuthorizationUseCases for FakeDevices {
@@ -798,7 +832,8 @@ mod tests {
     ) -> axum::Router {
         let state = DeviceHttpState::new(
             DeviceHttpDependencies {
-                devices,
+                devices: devices.clone(),
+                departures: devices,
                 assertion_verifier: Arc::new(FakeAssertionVerifier),
                 authentication,
                 secrets: Arc::new(SecureSecretFactory),
@@ -1064,6 +1099,7 @@ mod tests {
             .expect("路由执行成功");
         assert_eq!(wrong_origin.status(), StatusCode::FORBIDDEN);
         assert!(devices.revocation.lock().expect("撤销记录锁可用").is_none());
+        assert!(devices.departed.lock().expect("离开记录锁可用").is_empty());
 
         let revoked = app
             .oneshot(
@@ -1092,6 +1128,11 @@ mod tests {
         assert_eq!(
             *devices.revocation.lock().expect("撤销记录锁可用"),
             Some((principal_id_value(), device_id()))
+        );
+        assert_eq!(
+            devices.departed.lock().expect("离开记录锁可用").as_slice(),
+            [device_id()],
+            "撤销以后接着让这台电脑的 Agent 离开房间"
         );
     }
 
@@ -1150,6 +1191,11 @@ mod tests {
             *devices.revocation.lock().expect("撤销记录锁可用"),
             Some((principal_id_value(), device_id())),
             "撤的是签名的这台电脑，主体取自它的凭据"
+        );
+        assert_eq!(
+            devices.departed.lock().expect("离开记录锁可用").as_slice(),
+            [device_id()],
+            "移出以后接着让这台电脑的 Agent 离开房间"
         );
         assert_eq!(
             devices
@@ -1221,6 +1267,7 @@ mod tests {
         assert_eq!(cookie_only.status(), StatusCode::UNAUTHORIZED);
 
         assert!(devices.revocation.lock().expect("撤销记录锁可用").is_none());
+        assert!(devices.departed.lock().expect("离开记录锁可用").is_empty());
         assert!(
             devices
                 .signed_requests
