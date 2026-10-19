@@ -126,6 +126,33 @@ test('真实账户关闭浏览器进程后自动恢复同一通信设备，退�
   }
 });
 
+test('旧版 iOS 浏览器缺 Promise.withResolvers 和 AbortSignal.any 也把这台设备的密钥传上去、签好', async ({
+  page,
+}) => {
+  test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
+  test.setTimeout(180_000);
+  // 像 iOS 17.3 及以前的浏览器：页面脚本跑之前拿掉这两个内置函数。2026-10-19 维护者的 iPhone（iOS 17.2）上，
+  // 加密库同步一次就停住，这台设备的密钥一直没传上服务器，签不好，加密房间里发不出消息。
+  await page.addInitScript(() => {
+    Reflect.deleteProperty(Promise, 'withResolvers');
+    Reflect.deleteProperty(AbortSignal, 'any');
+  });
+  const failures = collectUnhandledFailures(page);
+  await connectLiveSession(page, {
+    expectedDisplayName: 'Local Developer',
+    password: password ?? '',
+    username: username ?? '',
+  });
+  await page.goto('/settings/security');
+  await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
+  // “已就绪”是本机说的；那台 iPhone 上它也说已就绪，服务器上却没有这台设备的密钥。
+  const { deviceId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
+  await expect
+    .poll(async () => await serverDeviceIds(page), { timeout: 40_000 })
+    .toContain(deviceId);
+  expect(failures).toEqual([]);
+});
+
 test.describe('本机加密库丢了', () => {
   // 删库用的空白页由路由给出，不能让 Service Worker 换成应用。
   test.use({ serviceWorkers: 'block' });

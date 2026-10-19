@@ -1,3 +1,6 @@
+// 第一个导入：旧浏览器缺的内置函数要在别的模块加载之前补好。
+import '@/shared/browser/builtin-polyfills';
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
