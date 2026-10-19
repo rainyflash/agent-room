@@ -675,6 +675,12 @@
           "markdownDescription": "Enables the desktop_receiver_list command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_release_computer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-release-computer",
+          "markdownDescription": "Enables the desktop_release_computer command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_restore_human_session command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-restore-human-session",
@@ -835,6 +841,12 @@
           "type": "string",
           "const": "deny-desktop-receiver-list",
           "markdownDescription": "Denies the desktop_receiver_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_release_computer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-release-computer",
+          "markdownDescription": "Denies the desktop_release_computer command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_restore_human_session command without any pre-configured scope.",

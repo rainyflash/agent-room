@@ -1,3 +1,4 @@
+mod account_release;
 mod agent_runtime;
 mod authentication_values;
 mod bridge_lifecycle;
@@ -44,9 +45,9 @@ use commands::{
     desktop_clear_human_session, desktop_clear_matrix_session, desktop_configure_agent_runtime,
     desktop_control_plane_request, desktop_host_session_diagnostics, desktop_install_update,
     desktop_load_matrix_session, desktop_offer_invitation, desktop_open_authorization,
-    desktop_reauthorize_bridge, desktop_restore_human_session, desktop_retry_bridge,
-    desktop_runtime_snapshot, desktop_save_matrix_session, desktop_set_autostart,
-    desktop_withdraw_invitation,
+    desktop_reauthorize_bridge, desktop_release_computer, desktop_restore_human_session,
+    desktop_retry_bridge, desktop_runtime_snapshot, desktop_save_matrix_session,
+    desktop_set_autostart, desktop_withdraw_invitation,
 };
 use control_plane_proxy::ControlPlaneProxy;
 use deep_link::{DeepLinkInbox, deliver_deep_links};
@@ -141,6 +142,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_runtime_snapshot,
             desktop_retry_bridge,
             desktop_reauthorize_bridge,
+            desktop_release_computer,
             desktop_set_autostart,
             desktop_set_language,
             desktop_open_authorization,
@@ -231,6 +233,7 @@ fn setup_runtime(
         "Agent Room 桌面端启动"
     );
     server_move::retire_previous_server(&config);
+    account_release::resume_interrupted(&config);
     setup_user_sessions(app, &config)?;
     app.manage(tray_hint::TrayHint::new(&config.data_root()));
     let targets = Arc::new(

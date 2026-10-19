@@ -162,7 +162,7 @@ fn write_record(path: &Path, record: &DeploymentRecord) -> Result<(), ServerMove
 }
 
 /// 默认 Bridge 和每个宿主 Agent 的 Bridge 都在自己的目录里持有独占锁。
-fn bridge_running(data_root: &Path) -> Result<bool, ServerMoveFailure> {
+pub(crate) fn bridge_running(data_root: &Path) -> Result<bool, ServerMoveFailure> {
     let mut locks = vec![data_root.join(BRIDGE_LOCK)];
     match fs::read_dir(data_root.join("host-agents")) {
         Ok(entries) => locks.extend(
@@ -221,7 +221,7 @@ fn stale_entries(data_root: &Path) -> Result<Vec<PathBuf>, ServerMoveFailure> {
 }
 
 /// Bridge 拒绝 Unix 上权限宽于当前用户的数据目录，所以桌面先建目录时也只给自己。
-fn create_private_directory(path: &Path) -> Result<(), ServerMoveFailure> {
+pub(crate) fn create_private_directory(path: &Path) -> Result<(), ServerMoveFailure> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
