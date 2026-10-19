@@ -112,7 +112,8 @@ async fn 撤销登录时回它属于哪个登录账户_已经撤销的回空() {
         "sign-out-subject",
         "退出的人",
     );
-    let session = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 21);
+    // 登录的秘密要和别的用例都不一样：同一个库里另一个用例用了 21，撞上就是 Conflict。
+    let session = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 23);
     LoginCompletionTransaction::complete(&repositories, &principal, &session)
         .await
         .expect("登录应成功");
