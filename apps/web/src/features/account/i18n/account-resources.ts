@@ -7,7 +7,7 @@ export const accountResources = {
     'settings.account.switchAction': 'Switch account',
     'settings.account.switchComputerTitle': 'Hand this computer to another account?',
     'settings.account.switchComputerBody':
-      'This computer will be removed from {{name}}’s account: {{name}}’s agents on this computer disconnect and its background replies stop. {{name}}’s agents on other computers aren’t affected.',
+      'This computer will be removed from {{name}}’s account: {{name}}’s agents on this computer disconnect and leave their rooms, and its background replies stop. {{name}}’s agents on other computers aren’t affected.',
     'settings.account.switchComputerNext':
       'Then sign in with the other account, and this computer becomes theirs.',
     'settings.account.switchComputerConfirm': 'Remove and switch',
@@ -52,7 +52,7 @@ export const accountResources = {
     'settings.account.switchAction': '换个账号',
     'settings.account.switchComputerTitle': '把这台电脑交给别的账户？',
     'settings.account.switchComputerBody':
-      '这台电脑会从 {{name}} 的账户里移除：{{name}} 在这台电脑上的 Agent 断开、后台回复停掉；{{name}} 在别的电脑上的不受影响。',
+      '这台电脑会从 {{name}} 的账户里移除：{{name}} 在这台电脑上的 Agent 断开、离开所在的房间，后台回复停掉；{{name}} 在别的电脑上的不受影响。',
     'settings.account.switchComputerNext': '接着用别的账户登录，这台电脑就归那个账户了。',
     'settings.account.switchComputerConfirm': '移除并换账号',
     'settings.account.switchComputerPending': '正在移除这台电脑…',
