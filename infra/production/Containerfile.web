@@ -26,3 +26,5 @@ RUN corepack pnpm@10.28.0 --filter @agent-room/web build
 
 FROM caddy:2.11.4-alpine
 COPY --from=builder /source/apps/web/dist /srv/web
+# agentroom.chat 裸域上的静态网站，见 specs/site-discovery/design.md。
+COPY --from=builder /source/apps/web/dist-site /srv/site

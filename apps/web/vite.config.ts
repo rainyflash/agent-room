@@ -6,6 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { navigationFallbackDenylist } from './src/shared/pwa/navigation-fallback.js';
 import { runtimeManifest, writeContract, applicationVersion } from './build/runtime-manifest.js';
 import { sitePreview } from './build/site-preview.js';
+import { staticSite } from './build/site/plugin.js';
 
 export default defineConfig(({ mode }) => ({
   define: {
@@ -15,6 +16,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     runtimeManifest(mode),
     sitePreview(mode),
+    staticSite(mode),
     react(),
     tailwindcss(),
     VitePWA({

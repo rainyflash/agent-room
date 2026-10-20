@@ -8,6 +8,7 @@ node_modules
 target
 **/node_modules
 **/dist
+**/dist-site
 *.log
 .env
 .env.*

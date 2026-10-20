@@ -18,6 +18,7 @@
 *.tsbuildinfo
 **/coverage/
 **/dist/
+**/dist-site/
 apps/desktop/src-tauri/binaries/
 
 # Python
