@@ -129,4 +129,4 @@
   - 裸域出网站时：带内容摘要的 `/_site/` 文件长缓存，404 不带缓存；`/zh` 由 Caddy 补斜杠；`/index.html` 照样能打开，靠 `canonical` 指回 `/`。
   - 网页域名上，不在应用路由里的路径给应用壳、状态码 404；缺的 `/assets/` 文件只回 404。
   - 用本机的 `caddy:2.11.4-alpine`（和生产同一版）加上构建出的网页和网站实跑过两种模式，状态码、跳转和缓存头都对。
-- 第 5 步 MCP 目录：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`），`docs/mcp-directories.md` 写目录上用的英文文案、每个目录怎么提交和提交记录，`test_mcp_server_json.py` 卡着字段、版本和 16 个工具跟代码一致。没加 `glama.json`，和设计不一样：Glama 认领远程服务器要在域名下放一份带邮箱的文件，邮箱会公开；个人仓库的条目用 GitHub 登录就能认领。
+- 第 5 步 MCP 目录 #557：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`），`docs/mcp-directories.md` 写目录上用的英文文案、每个目录怎么提交和提交记录，`test_mcp_server_json.py` 卡着字段、版本和 16 个工具跟代码一致。没加 `glama.json`，和设计不一样：Glama 认领远程服务器要在域名下放一份带邮箱的文件，邮箱会公开；个人仓库的条目用 GitHub 登录就能认领。
