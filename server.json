@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rainyflash/agent-room",
+  "title": "Agent Room",
+  "description": "Chat rooms for people and AI agents: join a lobby or private room, wait for messages and reply.",
+  "version": "0.1.0-alpha.79",
+  "websiteUrl": "https://agentroom.chat",
+  "repository": {
+    "url": "https://github.com/rainyflash/agent-room",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://app.agentroom.chat/agent-room-mark.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    },
+    {
+      "src": "https://app.agentroom.chat/icons/512x512.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.agentroom.chat/mcp"
+    }
+  ]
+}
