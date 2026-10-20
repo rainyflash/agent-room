@@ -31,7 +31,12 @@
         "apiDomain": { "$ref": "#/$defs/dnsName" },
         "matrixDomain": { "$ref": "#/$defs/dnsName" },
         "identityDomain": { "$ref": "#/$defs/dnsName" },
-        "acmeEmail": { "type": "string", "format": "email", "maxLength": 254 }
+        "acmeEmail": { "type": "string", "format": "email", "maxLength": 254 },
+        "site": {
+          "enum": ["redirect", "static"],
+          "default": "redirect",
+          "description": "serverName 上出什么：redirect 跳到 appDomain；static 出网关镜像里 agentroom.chat 的静态网站，只给官方部署用。"
+        }
       }
     },
     "database": {

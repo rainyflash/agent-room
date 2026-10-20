@@ -24,6 +24,7 @@ from tools.prodops.config import (
 )
 from tools.prodops.network_agents import NetworkAgentTargetError, disable_statement
 from tools.prodops.render import (
+    APP_PAGE_PATHS,
     CONTAINER_CONFIG_DIRECTORY_MODE,
     CONTAINER_CONFIG_FILE_MODE,
     PRIVATE_DIRECTORY_MODE,
@@ -275,6 +276,23 @@ class ProductionConfigTests(unittest.TestCase):
 
         value["public"]["acmeEmail"] = "not-an-email"
         with self.assertRaisesRegex(DeploymentConfigError, "acmeEmail"):
+            DeploymentConfig.from_mapping(value)
+
+    def test_public_site_defaults_to_redirect_and_only_accepts_known_modes(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        self.assertEqual(DeploymentConfig.from_mapping(value).public.site, "redirect")
+
+        value["public"]["site"] = "static"
+        self.assertEqual(DeploymentConfig.from_mapping(value).public.site, "static")
+        self.assertEqual(
+            json.loads(SCHEMA.read_text(encoding="utf-8"))["properties"]["public"]["properties"][
+                "site"
+            ]["enum"],
+            ["redirect", "static"],
+        )
+
+        value["public"]["site"] = "website"
+        with self.assertRaisesRegex(DeploymentConfigError, "public.site"):
             DeploymentConfig.from_mapping(value)
 
     def test_enabled_telemetry_requires_secret_free_https_receiver(self) -> None:
@@ -811,6 +829,79 @@ class ProductionRenderingTests(unittest.TestCase):
         )
         # 页面入口 index.html 不带长期缓存，发版后浏览器能拿到新的资源清单。
         self.assertEqual(caddyfile.count("immutable"), 1)
+
+    def _caddy_block(self, caddyfile: str, domain: str) -> str:
+        return caddyfile.split(f"\n{domain} {{\n", 1)[1].split("\n}\n", 1)[0]
+
+    def test_app_page_paths_match_the_web_routes(self) -> None:
+        router = (ROOT / "apps" / "web" / "src" / "app" / "router.tsx").read_text(encoding="utf-8")
+        routes = re.findall(r"^\s+path: '([^']+)',$", router, flags=re.MULTILINE)
+        # 带参数的路由在 Caddy 里写成前缀：/lobby/$catalogId/instance/$roomId 落在 /lobby/* 里。
+        patterns = {route.split("/$", 1)[0] + "/*" if "/$" in route else route for route in routes}
+
+        self.assertGreater(len(routes), 10)
+        self.assertEqual(patterns, set(APP_PAGE_PATHS))
+
+    def test_bare_domain_serves_the_static_site_when_configured(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["public"]["site"] = "static"
+        config = DeploymentConfig.from_mapping(value)
+        render_deployment(config, self.paths, self.secrets)
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+        bare = self._caddy_block(caddyfile, config.public.server_name)
+
+        # Matrix 的 .well-known 和接入说明照旧，网站从网关镜像里的 /srv/site 出。
+        self.assertIn("handle /.well-known/matrix/* {", bare)
+        self.assertIn("\thandle /agents.txt {\n\t\treverse_proxy control-plane:8090\n\t}", bare)
+        self.assertIn("\thandle {\n\t\troot * /srv/site\n\t\tfile_server\n\t}", bare)
+        self.assertIn("rewrite * /404.html", bare)
+        self.assertIn("Content-Security-Policy \"default-src 'none'; script-src 'self';", bare)
+        # 以前发出去的应用链接照旧跳过去；首页不跳。
+        app_paths = " ".join(path for path in APP_PAGE_PATHS if path != "/")
+        self.assertIn(f"\t@app path {app_paths}\n", bare)
+        self.assertIn(
+            f"\thandle @app {{\n\t\tredir https://{config.public.app_domain}{{uri}} 302\n\t}}",
+            bare,
+        )
+        self.assertEqual(bare.count("redir https://"), 1)
+        # 只有带内容摘要的文件长缓存；404 不带缓存。
+        hashed = bare.index("@hashed path_regexp ^/_site/")
+        self.assertIn("immutable", bare[hashed : bare.index("\thandle {", hashed)])
+        self.assertEqual(bare.count("immutable"), 1)
+        self.assertIn('handle_errors 404 {\n\t\theader Cache-Control "no-store"', bare)
+
+    def test_bare_domain_still_redirects_by_default(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+        bare = self._caddy_block(caddyfile, self.config.public.server_name)
+
+        self.assertIn(
+            f"\thandle {{\n\t\tredir https://{self.config.public.app_domain}{{uri}} 302\n\t}}",
+            bare,
+        )
+        self.assertNotIn("/srv/site", caddyfile)
+
+    def test_app_domain_is_not_indexed_and_unknown_paths_answer_404(self) -> None:
+        render_deployment(self.config, self.paths, self.secrets)
+        caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+            encoding="utf-8"
+        )
+        app = self._caddy_block(caddyfile, self.config.public.app_domain)
+
+        self.assertIn('X-Robots-Tag "noindex"', app)
+        self.assertIn(f"\t@page path {' '.join(APP_PAGE_PATHS)}\n", app)
+        page = app.index("\thandle @page {")
+        self.assertIn("try_files {path} /index.html", app[page : app.index("\t}", page)])
+        # 别的路径只出真有的文件；没有就给应用壳，状态码留着 404，缺的打包文件只回 404。
+        self.assertIn("\thandle {\n\t\troot * /srv/web\n\t\tfile_server\n\t}", app)
+        errors = app[app.index("handle_errors 404 {") :]
+        self.assertIn('header Cache-Control "no-store"', errors)
+        self.assertIn("@missing_asset path /assets/*", errors)
+        self.assertIn("rewrite * /index.html", errors)
 
     def test_network_agent_switch_and_guide_reach_the_control_plane(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

@@ -22,6 +22,8 @@ OBJECT_STORE_MODES: Final = frozenset({"embedded", "external"})
 TLS_MODES: Final = frozenset({"disable", "prefer", "require", "verify-ca", "verify-full"})
 REGISTRATION_MODES: Final = frozenset({"closed", "open-email"})
 SMTP_ENCRYPTION_MODES: Final = frozenset({"starttls", "ssl"})
+# 裸域（serverName）上出什么：跳到网页，或者 agentroom.chat 的静态网站（specs/site-discovery/design.md）。
+PUBLIC_SITE_MODES: Final = frozenset({"redirect", "static"})
 
 
 class DeploymentConfigError(ValueError):
@@ -36,6 +38,7 @@ class PublicEndpoints:
     matrix_domain: str
     identity_domain: str
     acme_email: str | None
+    site: str = "redirect"
 
     @property
     def app_origin(self) -> str:
@@ -319,6 +322,7 @@ def _parse_public(value: object) -> PublicEndpoints:
         "matrixDomain",
         "identityDomain",
         "acmeEmail",
+        "site",
     }
     _reject_unknown(source, keys, "public")
     domains = {
@@ -343,6 +347,9 @@ def _parse_public(value: object) -> PublicEndpoints:
         or any(character.isspace() for character in email)
     ):
         raise DeploymentConfigError("public.acmeEmail 不是有效的 ACME 联系邮箱。")
+    site = source.get("site", "redirect")
+    if site not in PUBLIC_SITE_MODES:
+        raise DeploymentConfigError("public.site 必须是 redirect 或 static。")
     return PublicEndpoints(
         server_name=domains["serverName"],
         app_domain=domains["appDomain"],
@@ -350,6 +357,7 @@ def _parse_public(value: object) -> PublicEndpoints:
         matrix_domain=domains["matrixDomain"],
         identity_domain=domains["identityDomain"],
         acme_email=email,
+        site=site,
     )
 
 

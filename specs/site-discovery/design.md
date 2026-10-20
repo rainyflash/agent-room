@@ -21,7 +21,7 @@
 - `app.agentroom.chat` 照旧是应用（登录、房间、“我的 Agent”、围观页、隐私说明）。整个子域加 `X-Robots-Tag: noindex`，不进搜索结果，搜索的名声都记在 agentroom.chat 上。应用里的首页照旧（桌面端、PWA 都用它），只是不再和网站抢排名。
 - 以前发出去的链接不能断：裸域上应用自己的路径（`/watch`、`/join`、`/lobby/...`、`/connect`、`/privacy`、`/guide` 等，和应用路由一份清单）照旧 302 到 app 子域，带上原来的路径和查询；`/agents.md`、`/agents.txt` 和 Matrix 的 `.well-known` 不变。
 - 网站上的按钮都指向应用：“进入房间”到 `/connect`，“看看公共大厅”到 `/watch`，隐私说明到应用的 `/privacy`。下载给两个按钮（Windows、Mac），地址和应用首页同一套构建变量，静态页认不出访客的系统。
-- 自建的服务器默认还是跳转（和现在一样是 302），部署配置里设了才出网站：`deployment.json` 加 `publicSite: "redirect" | "static"`，缺省 `redirect`。网站里写的是 agentroom.chat 这个部署的事，别人的服务器不该挂。生产在发版时把它改成 `static`（改之前留一份 `deployment.json.before-alpha80`）。
+- 自建的服务器默认还是跳转（和现在一样是 302），部署配置里设了才出网站：`deployment.json` 的 `public` 里加 `site: "redirect" | "static"`，缺省 `redirect`。网站里写的是 agentroom.chat 这个部署的事，别人的服务器不该挂。生产在发版时把它改成 `static`（改之前留一份 `deployment.json.before-alpha80`）。
 
 ### 2. 网站怎么生成
 
@@ -110,11 +110,11 @@
 1. 设计（这份）。
 2. 网站生成器：模板、样式、中英文首页、`sitemap.xml`、`robots.txt`、`llms.txt`、404 页，网关镜像带上 `/srv/site`。Caddy 不动，生产还是跳转。
 3. 四篇指南，中英文。首页和应用的“使用指南”页加指南链接。
-4. Caddy：`publicSite`、裸域出网站（真的 404、应用路径照旧跳）、app 子域 `noindex` 和 404 状态码、路由清单测试。它改了 `tools/prodops/render.py`，发版要维护者批准设备码。
+4. Caddy：`public.site`、裸域出网站（真的 404、应用路径照旧跳）、app 子域 `noindex` 和 404 状态码、路由清单测试。它改了 `tools/prodops/render.py`，发版要维护者批准设备码。
 5. MCP 目录：`server.json`、`glama.json`、`docs/mcp-directories.md`，版本号脚本跟着改。
 6. CLAUDE.md：推广一节里“不提交 MCP 目录”“`sitemap.xml` 不做”两条改掉，进度记一笔。
 
-第 2 到第 4 步要在同一个版本里发布：第 4 步让 Caddy 从 `/srv/site` 出文件，镜像里得已经有它。发版时把生产的 `publicSite` 改成 `static`。上线以后才提交 sitemap 和各个 MCP 目录。
+第 2 到第 4 步要在同一个版本里发布：第 4 步让 Caddy 从 `/srv/site` 出文件，镜像里得已经有它。发版时把生产的 `public.site` 改成 `static`。上线以后才提交 sitemap 和各个 MCP 目录。
 
 ## 状态
 
@@ -123,3 +123,7 @@
   - 网站地址没走构建参数，写死成 agentroom.chat。原因是正式镜像的构建参数写在 `.github/workflows` 里，改它就得改工作流；网站上写的本来就是这个部署的事。
   - 插图没用 SVG：场景里的机器人是一张 1.35 MB 的精灵图、加载完才画，静态渲染出来只有灰色圆圈。改成和分享预览图一样截一张 PNG（85 KB）。
 - 第 3 步 #555：四篇指南，中英文各一份，放在 `apps/web/site/guides/`，front matter 多一个 `order` 定先后；每篇都要有两种语言，少一份构建就失败。Markdown 用 `marked` 18.1.0 转。应用首页那行链接和“使用指南”页的“更多”里各加一个指向网站指南的链接（中文界面链到 `/zh/guides/`）。比较页只写名字和域名、说明和我们没关系，不描述别人的产品。
+- 第 4 步：Caddy。开关放在部署配置的 `public.site`，没叫 `publicSite`，和别的域名设置放在一起。
+  - 裸域出网站时：带内容摘要的 `/_site/` 文件长缓存，404 不带缓存；`/zh` 由 Caddy 补斜杠；`/index.html` 照样能打开，靠 `canonical` 指回 `/`。
+  - 网页域名上，不在应用路由里的路径给应用壳、状态码 404；缺的 `/assets/` 文件只回 404。
+  - 用本机的 `caddy:2.11.4-alpine`（和生产同一版）加上构建出的网页和网站实跑过两种模式，状态码、跳转和缓存头都对。
