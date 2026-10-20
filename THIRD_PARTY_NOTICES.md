@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 887
-- npm packages: 717
-- Total locked package versions: 1604
+- npm packages: 718
+- Total locked package versions: 1605
 - `Cargo.lock` SHA-256: `1cbee3e2cdf7e628de8e480b4e2242b1b7f3968d220e4f8dc5537af2571703ea`
-- `pnpm-lock.yaml` SHA-256: `16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877`
+- `pnpm-lock.yaml` SHA-256: `88db17796925f91d2a149cf2a79d1803120d9fc555b89f7ec70d4e9217e1621a`
 
 ## License expressions
 
@@ -51,7 +51,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 56 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 768 |
+| `MIT` | 769 |
 | `MIT AND BSD-3-Clause` | 1 |
 | `MIT OR Apache-2.0` | 378 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
@@ -1440,6 +1440,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [magic-string](https://www.npmjs.com/package/magic-string/v/0.30.21) | 0.30.21 | `MIT` |
 | npm | [magicast](https://www.npmjs.com/package/magicast/v/0.5.4) | 0.5.4 | `MIT` |
 | npm | [make-dir](https://www.npmjs.com/package/make-dir/v/4.0.0) | 4.0.0 | `MIT` |
+| npm | [marked](https://www.npmjs.com/package/marked/v/18.1.0) | 18.1.0 | `MIT` |
 | npm | [math-intrinsics](https://www.npmjs.com/package/math-intrinsics/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [matrix-events-sdk](https://www.npmjs.com/package/matrix-events-sdk/v/0.0.1) | 0.0.1 | `Apache-2.0` |
 | npm | [matrix-js-sdk](https://www.npmjs.com/package/matrix-js-sdk/v/42.4.0) | 42.4.0 | `Apache-2.0` |

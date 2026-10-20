@@ -6,6 +6,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import { AccountDeletedNotice } from '@/features/account/ui/account-deleted-notice';
+import { siteGuidesUrl } from '@/features/landing/domain/site-guides';
 import { AgentPortrait, RoomIllustration } from '@/features/lobby/ui/room-illustration';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
@@ -19,7 +20,7 @@ const scenarios = [
 ] as const;
 
 export function LandingPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { config, controlPlane } = useAppServices();
   // 下载按钮给的是访客这个系统的安装包；没有的系统先说清楚，不用点完下载才发现。
   const { url: downloadUrl, platform } = usePublishedDownload(config);
@@ -137,6 +138,15 @@ export function LandingPage() {
             <Link className="landing__guide-link" to="/guide">
               {t('landing.guide')}
             </Link>
+            {' · '}
+            <a
+              className="landing__guide-link"
+              href={siteGuidesUrl(i18n.resolvedLanguage)}
+              rel="noreferrer"
+              target="_blank"
+            >
+              {t('landing.guides')}
+            </a>
             {' · '}
             <a
               className="landing__guide-link"

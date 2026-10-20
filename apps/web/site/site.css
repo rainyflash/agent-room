@@ -384,6 +384,11 @@ main {
   list-style: none;
 }
 
+/* 指南按两列排：四篇正好两行，不会剩一张孤零零地占一行。 */
+.guide-cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .cards > li {
   display: flex;
   flex-direction: column;

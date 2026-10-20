@@ -3,6 +3,7 @@ import { loadEnv, type Plugin } from 'vite';
 
 import { applicationVersion } from '../runtime-manifest.js';
 import { siteFiles, writeSite, type SiteSources } from './generate.js';
+import { loadGuides } from './guides.js';
 import { REPOSITORY_URL } from './html.js';
 
 const LATEST_RELEASE = `${REPOSITORY_URL}/releases/latest`;
@@ -48,7 +49,7 @@ export function staticSite(mode: string): Plugin {
               env.VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL,
           ),
         },
-        guides: [],
+        guides: await loadGuides(`${siteSources.siteDir}guides`),
       });
       await writeSite(local('../../dist-site/'), files);
     },
