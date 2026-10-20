@@ -19,6 +19,29 @@ CONTAINER_CONFIG_DIRECTORY_MODE: Final = 0o555
 CONTAINER_CONFIG_FILE_MODE: Final = 0o444
 BROWSER_CONTROL_PLANE_PATH_PREFIX: Final = "/_agent-room/api"
 BROWSER_OIDC_CALLBACK_PATH: Final = "/connect/finalize"
+# 网页应用自己的页面（apps/web/src/app/router.tsx 的路由）。网页域名上只有这些路径回 200，别的给出同一份
+# 应用壳、状态码是 404，爬虫知道这页不存在；裸域出静态网站时，这些路径照旧跳到网页域名，以前发出去的链接不断。
+# tools/tests/test_prodops.py 拿它和路由对一遍。
+APP_PAGE_PATHS: Final = (
+    "/",
+    "/about",
+    "/admin/*",
+    "/connect",
+    "/guide",
+    "/inbox",
+    "/join",
+    "/lobby/*",
+    "/onboarding",
+    "/privacy",
+    "/rooms",
+    "/settings",
+    "/settings/*",
+    "/watch",
+    "/watch/*",
+    "/workspace",
+)
+# 静态网站里带内容摘要的文件（`/_site/site.<12 位十六进制>.css` 之类），可以长期缓存。
+SITE_HASHED_ASSET_PATTERN: Final = r"^/_site/[a-z0-9-]+\.[0-9a-f]{12}\.[a-z0-9]+$"
 # 控制面镜像里的用户（infra/production/Containerfile.control-plane）。
 CONTROL_PLANE_UID: Final = 10001
 PRIVATE_DIRECTORY_MODE: Final = 0o700
@@ -612,6 +635,69 @@ worker_log_config: /config/log.config
     )
 
 
+def _server_name_block(config: DeploymentConfig) -> str:
+    """裸域：Matrix 的 .well-known 和接入说明，其余跳到网页，或者出 agentroom.chat 的静态网站。"""
+    public = config.public
+    common = f'''{public.server_name} {{
+\thandle /.well-known/matrix/* {{
+\t\theader Content-Type application/json
+\t\theader Access-Control-Allow-Origin *
+\t\trespond /.well-known/matrix/server `{{"m.server":"{public.matrix_domain}:443"}}` 200
+\t\trespond /.well-known/matrix/client `{{"m.homeserver":{{"base_url":"{public.matrix_origin}"}}}}` 200
+\t\trespond 404
+\t}}
+\thandle /agents.md {{
+\t\treverse_proxy control-plane:8090
+\t}}
+\thandle /agents.txt {{
+\t\treverse_proxy control-plane:8090
+\t}}
+'''
+    if public.site == "redirect":
+        return common + f'''\thandle {{
+\t\tredir https://{public.app_domain}{{uri}} 302
+\t}}
+}}
+'''
+    app_paths = " ".join(path for path in APP_PAGE_PATHS if path != "/")
+    csp = (
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+        "font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
+        "upgrade-insecure-requests"
+    )
+    return common + f'''\t# 静态网站（specs/site-discovery/design.md）：网关镜像里的 /srv/site。
+\tencode zstd gzip
+\theader {{
+\t\tContent-Security-Policy "{csp}"
+\t\tPermissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+\t\tReferrer-Policy "strict-origin-when-cross-origin"
+\t\tX-Content-Type-Options "nosniff"
+\t}}
+\t# 应用自己的页面照旧跳到网页域名，以前发出去的链接不断。
+\t@app path {app_paths}
+\thandle @app {{
+\t\tredir https://{public.app_domain}{{uri}} 302
+\t}}
+\t@hashed path_regexp {SITE_HASHED_ASSET_PATTERN}
+\thandle @hashed {{
+\t\troot * /srv/site
+\t\theader Cache-Control "public, max-age=31536000, immutable"
+\t\tfile_server
+\t}}
+\thandle {{
+\t\troot * /srv/site
+\t\tfile_server
+\t}}
+\thandle_errors 404 {{
+\t\theader Cache-Control "no-store"
+\t\troot * /srv/site
+\t\trewrite * /404.html
+\t\tfile_server
+\t}}
+}}
+'''
+
+
 def _caddyfile(config: DeploymentConfig) -> str:
     public = config.public
     acme_email_option = (
@@ -639,25 +725,7 @@ def _caddyfile(config: DeploymentConfig) -> str:
 {acme_email_option}\tadmin off
 }}
 
-{public.server_name} {{
-\thandle /.well-known/matrix/* {{
-\t\theader Content-Type application/json
-\t\theader Access-Control-Allow-Origin *
-\t\trespond /.well-known/matrix/server `{{"m.server":"{public.matrix_domain}:443"}}` 200
-\t\trespond /.well-known/matrix/client `{{"m.homeserver":{{"base_url":"{public.matrix_origin}"}}}}` 200
-\t\trespond 404
-\t}}
-\thandle /agents.md {{
-\t\treverse_proxy control-plane:8090
-\t}}
-\thandle /agents.txt {{
-\t\treverse_proxy control-plane:8090
-\t}}
-\thandle {{
-\t\tredir https://{public.app_domain}{{uri}} 302
-\t}}
-}}
-
+{_server_name_block(config)}
 {public.app_domain} {{
 \tencode zstd gzip
 \theader {{
@@ -666,6 +734,8 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t\tPermissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 \t\tReferrer-Policy "no-referrer"
 \t\tX-Content-Type-Options "nosniff"
+\t\t# 搜索的名声记在裸域的网站上，网页应用整个不进搜索结果。
+\t\tX-Robots-Tag "noindex"
 \t}}
 \thandle /_agent-room/healthz {{
 \t\trespond 200
@@ -691,10 +761,29 @@ def _caddyfile(config: DeploymentConfig) -> str:
 \t\theader Cache-Control "public, max-age=31536000, immutable"
 \t\tfile_server
 \t}}
-\thandle {{
+\t@page path {" ".join(APP_PAGE_PATHS)}
+\thandle @page {{
 \t\troot * /srv/web
 \t\ttry_files {{path}} /index.html
 \t\tfile_server
+\t}}
+\thandle {{
+\t\troot * /srv/web
+\t\tfile_server
+\t}}
+\t# 不存在的路径照样给应用壳（应用自己说找不到页面），状态码留着 404；缺的打包文件只回 404。
+\thandle_errors 404 {{
+\t\t@missing_asset path /assets/*
+\t\t# 前面给打包文件设的一年缓存不能跟着 404 走。
+\t\theader Cache-Control "no-store"
+\t\thandle @missing_asset {{
+\t\t\trespond 404
+\t\t}}
+\t\thandle {{
+\t\t\troot * /srv/web
+\t\t\trewrite * /index.html
+\t\t\tfile_server
+\t\t}}
 \t}}
 }}
 
