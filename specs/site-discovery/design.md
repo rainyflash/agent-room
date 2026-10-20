@@ -25,12 +25,13 @@
 
 ### 2. 网站怎么生成
 
-- 源文件放在 `apps/web/site/`：
-  - 页面模板和一份样式。颜色、字体、圆角用 `packages/ui-system` 的令牌，看起来和应用是一家。
-  - 首页的标题、简介和三个用法直接取应用 i18n 资源里的 `landing.*`，网站和应用首页说的是同一句话，改一处两边都变。
+- 生成器在 `apps/web/build/site/`（模板、页面、网站自己的文字），静态文件和内容在 `apps/web/site/`：
+  - 一份样式。颜色、字体、圆角的取值和 `packages/ui-system` 一样（测试卡着），看起来和应用是一家。
+  - 首页的标题、简介和三个用法直接取应用首页那份文案（`features/landing/i18n/landing-resources.ts`），网站和应用首页说的是同一句话，改一处两边都变。
+  - 首屏的房间插图 `room.png` 和分享预览图同一个画法，由 `e2e/social-preview.e2e.ts` 截出来（`AGENT_ROOM_WRITE_SITE_ART=1` 时写进去）；两句对话气泡由网站用 HTML 叠上，中英文各写各的。
   - 指南写成 Markdown，中英文各一份（`guides/<slug>.en.md`、`guides/<slug>.zh-CN.md`），开头写标题、简介、更新日期。
 - 网页构建（`pnpm --filter @agent-room/web build`）最后一步把它们生成到 `dist-site/`。网关镜像多拷一份到 `/srv/site`（`Containerfile.web`），Caddy 的裸域从那里出文件。不进应用的 `dist/`，PWA 的离线缓存不会带上它。
-- 网站的地址取部署的 `serverName`：网关镜像加一个构建参数，用 compose 里已经有的 `AGENT_ROOM_SERVER_NAME`，不加新的必填变量。构建时没有这个地址（本地开发、桌面端）就不生成网站，和分享预览图同一个规矩（`site-preview.ts`）。
+- 网站的地址写死成 `https://agentroom.chat`，应用写死成 `https://app.agentroom.chat`：网站上写的本来就是这个部署的事，自建默认也不出网站。下载地址用应用首页同一套构建变量，没有时指向 GitHub 上最新的发行。只有正式构建（`vite build`）生成网站，桌面端和验收用的构建不生成。
 - Markdown 转 HTML 用一个小库（`marked`）。加了依赖就在同一个 PR 里重新生成许可证清单。
 
 ### 3. 每一页都要有的
@@ -118,3 +119,6 @@
 ## 状态
 
 - 2026-10-20 起草，设计 #553。
+- 第 2 步 #554：网站生成器。和设计不一样的两处：
+  - 网站地址没走构建参数，写死成 agentroom.chat。原因是正式镜像的构建参数写在 `.github/workflows` 里，改它就得改工作流；网站上写的本来就是这个部署的事。
+  - 插图没用 SVG：场景里的机器人是一张 1.35 MB 的精灵图、加载完才画，静态渲染出来只有灰色圆圈。改成和分享预览图一样截一张 PNG（85 KB）。

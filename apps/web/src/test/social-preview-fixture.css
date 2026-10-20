@@ -97,3 +97,13 @@ body {
 .social-preview__bubble--second::after {
   left: 22%;
 }
+/* agentroom.chat 首屏的房间插图：网站上最宽约 600 像素，按两倍画。 */
+.site-room-art {
+  width: 1152px;
+  height: 960px;
+}
+.site-room-art .room-illustration {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
