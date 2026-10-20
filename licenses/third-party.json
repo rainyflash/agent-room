@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "1cbee3e2cdf7e628de8e480b4e2242b1b7f3968d220e4f8dc5537af2571703ea",
-    "pnpm-lock.yaml": "16c8f97bc5716805de864abbfdf773708ea9d33d5ed61345071049a706cf1877"
+    "pnpm-lock.yaml": "88db17796925f91d2a149cf2a79d1803120d9fc555b89f7ec70d4e9217e1621a"
   },
   "dependencies": [
     {
@@ -9566,6 +9566,13 @@
       "version": "4.0.0",
       "license": "MIT",
       "source": "https://www.npmjs.com/package/make-dir/v/4.0.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "marked",
+      "version": "18.1.0",
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/marked/v/18.1.0"
     },
     {
       "ecosystem": "npm",

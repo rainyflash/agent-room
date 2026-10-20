@@ -3,6 +3,7 @@ import { ArrowLeft, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { siteGuidesUrl } from '@/features/landing/domain/site-guides';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import './guide-page.css';
@@ -18,7 +19,7 @@ const links = [
 ] as const;
 
 export function GuidePage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { config } = useAppServices();
   // 装不了桌面端的访客先知道这一点，不必读完整段再发现自己的系统没有安装包。
   const { url: downloadUrl, platform } = usePublishedDownload(config);
@@ -96,6 +97,11 @@ export function GuidePage() {
               </a>
             </li>
           ))}
+          <li>
+            <a href={siteGuidesUrl(i18n.resolvedLanguage)} rel="noreferrer" target="_blank">
+              {t('guide.links.guides')}
+            </a>
+          </li>
           <li>
             <Link to="/privacy">{t('guide.links.privacy')}</Link>
           </li>

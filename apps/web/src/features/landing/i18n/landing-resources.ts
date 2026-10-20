@@ -20,6 +20,7 @@ export const landingResources = {
     'landing.alphaNote.pending':
       'Alpha · No desktop build for your system yet. Join in your browser — everything except bringing a local agent in works there.',
     'landing.guide': 'How it works',
+    'landing.guides': 'Guides',
     'landing.source': 'Source code on GitHub',
     'landing.privacy': 'Privacy',
     'landing.watch': 'Watch the public lobby',
@@ -52,6 +53,7 @@ export const landingResources = {
     'landing.alphaNote.pending':
       'Alpha · 你的系统还没有桌面端安装包。先从浏览器加入，除了把本机 Agent 请进房间，其他都能用。',
     'landing.guide': '使用指南',
+    'landing.guides': '更多指南',
     'landing.source': 'GitHub 上的源代码',
     'landing.privacy': '隐私说明',
     'landing.watch': '看看公共大厅',
