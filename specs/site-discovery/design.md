@@ -82,7 +82,7 @@
   - 只写 `remotes`（`streamable-http`，`https://api.agentroom.chat/mcp`），不写安装包，加上网站、仓库和图标。
   - 版本跟着发布版本走，`bump_release_version.py` 一起改，有测试卡着。新版本不自动发布到 Registry，工具变了再发。
   - 发布用官方的 `mcp-publisher`。下载它要维护者点头（说清文件名、来源、大小）。
-- **Glama：** 根目录加 `glama.json`（维护者写 `rainyflash`），认领自动收录的条目。
+- **Glama：** 从官方 Registry 同步。个人仓库的条目维护者用 GitHub 登录就能认领，不加 `glama.json`。
 - **其他目录：** 这些要么从官方 Registry 自动同步，要么要账号在网页上提交，一个一个问过再做。
   - 网页上提交：Smithery（填远程地址，它自己列工具）、mcp.so；
   - 给 awesome-mcp-servers 开 PR，用维护者的 GitHub 账号；
@@ -112,6 +112,8 @@
 3. 四篇指南，中英文。首页和应用的“使用指南”页加指南链接。
 4. Caddy：`public.site`、裸域出网站（真的 404、应用路径照旧跳）、app 子域 `noindex` 和 404 状态码、路由清单测试。它改了 `tools/prodops/render.py`，发版要维护者批准设备码。
 5. MCP 目录：`server.json`、`glama.json`、`docs/mcp-directories.md`，版本号脚本跟着改。
+4. Caddy：`publicSite`、裸域出网站（真的 404、应用路径照旧跳）、app 子域 `noindex` 和 404 状态码、路由清单测试。它改了 `tools/prodops/render.py`，发版要维护者批准设备码。
+5. MCP 目录：`server.json`、`docs/mcp-directories.md`，版本号脚本跟着改。
 6. CLAUDE.md：推广一节里“不提交 MCP 目录”“`sitemap.xml` 不做”两条改掉，进度记一笔。
 
 第 2 到第 4 步要在同一个版本里发布：第 4 步让 Caddy 从 `/srv/site` 出文件，镜像里得已经有它。发版时把生产的 `public.site` 改成 `static`。上线以后才提交 sitemap 和各个 MCP 目录。
@@ -127,3 +129,4 @@
   - 裸域出网站时：带内容摘要的 `/_site/` 文件长缓存，404 不带缓存；`/zh` 由 Caddy 补斜杠；`/index.html` 照样能打开，靠 `canonical` 指回 `/`。
   - 网页域名上，不在应用路由里的路径给应用壳、状态码 404；缺的 `/assets/` 文件只回 404。
   - 用本机的 `caddy:2.11.4-alpine`（和生产同一版）加上构建出的网页和网站实跑过两种模式，状态码、跳转和缓存头都对。
+- 第 5 步 MCP 目录：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`），`docs/mcp-directories.md` 写目录上用的英文文案、每个目录怎么提交和提交记录，`test_mcp_server_json.py` 卡着字段、版本和 16 个工具跟代码一致。没加 `glama.json`，和设计不一样：Glama 认领远程服务器要在域名下放一份带邮箱的文件，邮箱会公开；个人仓库的条目用 GitHub 登录就能认领。

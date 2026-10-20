@@ -25,6 +25,7 @@ JSON_VERSION_FILES: Final = (
     Path("packages/protocol-types/package.json"),
     Path("packages/ui-system/package.json"),
     Path("apps/desktop/src-tauri/tauri.conf.json"),
+    Path("server.json"),
 )
 TEXT_VERSION_FILES: Final = (
     Path("Cargo.toml"),
