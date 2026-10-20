@@ -36,7 +36,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `apps/agent-room-mcp/src/agent_room/server.rs` 里列出全部工具的测试。
 - 网络 Agent 远程 MCP 和本机 MCP 的服务说明都最多 1536 字节。两边给 Agent 和目录看的文字（服务说明、工具与参数说明、提示、错误说明）都用英文，参数说明写成一行（schemars 保留换行）。都有测试卡着；本机 MCP 的在 `language_tests.rs`，连工具结果和出错说明也查（直接查源码里的字符串，注释和测试不算）。2026-10-17 之前本机 MCP 是中文的，见 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)。
 - CLI 与 MCP 的测试，要在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都能过（`env -u CLAUDE_CODE_SESSION_ID cargo test …`）。
-- 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。README 和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
+- 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。README、网站（首页和指南）和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
 
 ## CI
 
@@ -143,7 +143,23 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
 
-## 当前进度（2026-10-19）
+## 当前进度（2026-10-20）
+
+### 网站被搜到
+
+- 2026-10-20 维护者问能不能给网站做 SEO 和 GEO。查下来搜索引擎和 AI 几乎读不到我们：agentroom.chat 整个 302 到 app 子域；app 子域是单页应用，什么路径都回 200 和同一个空壳，首页的字要跑完 JS 才有；也没有站点地图。维护者当天定了设计里 1 到 4 步都做，MCP 目录也上（改了 10-17 “不提交 MCP 目录”的决定），Google Search Console 由他自己配。
+- 设计在 [specs/site-discovery/design.md](./specs/site-discovery/design.md)（#553），进度记在它的“状态”一节。PR：第 2 步生成器 #554，第 3 步指南 #555，第 4 步 Caddy #556，第 5 步 MCP 目录 #557。
+- 要点：
+  - agentroom.chat 出网页构建时一起生成的静态网站（`apps/web/build/site/`，产出 `apps/web/dist-site/`，网关镜像放在 `/srv/site`）：中英文首页、指南、`sitemap.xml`、`robots.txt`、`llms.txt`、404 页。app 子域整个 `X-Robots-Tag: noindex`，不在应用路由里的路径给应用壳、状态码 404。裸域上应用自己的路径（`/watch`、`/join`、`/lobby/...`、`/privacy` 等）照旧 302 到 app 子域，以前发出去的链接不断。
+  - 部署配置 `public.site`：`redirect`（缺省，和以前一样）或 `static`（出网站）。
+  - 网站的标题、简介和三个用法跟应用首页用同一份文字（`features/landing/i18n/landing-resources.ts`），改首页说法时两边一起变；别的文字在 `apps/web/build/site/copy.ts`。网站地址写死 `https://agentroom.chat`：换成构建参数要改工作流。
+  - 裸域的内容安全策略不许内联脚本和样式，生成器的测试卡着；`site.css` 的颜色令牌和 ui-system 一致，也有测试卡着。
+  - 首页插图是一张 PNG，由 `AGENT_ROOM_WRITE_SITE_ART=1` 跑 `e2e/social-preview.e2e.ts` 截出来（场景的机器人是精灵图，画不成 SVG）。
+  - 新加应用路由要加进 `tools/prodops/render.py` 的 `APP_PAGE_PATHS`，不然在 app 子域上回 404；测试拿它和 `router.tsx` 对比。
+  - 指南是 `apps/web/site/guides/<slug>.<en|zh-CN>.md`，两种语言都要有，不然构建失败。改了指南顺手改 front matter 里的 `updated`。
+  - MCP 目录：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`）；目录上用的英文文案、每个目录怎么提交和提交记录在 `docs/mcp-directories.md`。每个目录提交前先问维护者，要登录的由他自己登录；官方 Registry 同一个版本号只能发一次。
+- 第 2 到第 4 步要在同一个版本里发布：`static` 要镜像里已经有 `/srv/site`。#556 改了 `tools/prodops/render.py`，发版实机验收要设备码。发版时把生产 `deployment.json` 的 `public.site` 改成 `static`，改之前留一份 `deployment.json.before-alpha80`。
+- 上线以后：维护者在 Google Search Console 用 DNS 验证 agentroom.chat，提交 `https://agentroom.chat/sitemap.xml`，首页和指南请求编入索引，Bing 从 Search Console 导入；然后才发官方 Registry 和其他目录。一周、四周后各看一次收录和搜索词。
 
 ### 退出登录和换账号
 
@@ -325,7 +341,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 维护者 2026-10-09 看过文字，确认了主机（Akamai，Linode）、邮件（Resend）和隐私请求的渠道（GitHub issue 加安全政策里的私密报告表单）。
   - 迁移的测试要动别的测试也在用的表时，在事务里重跑那段 SQL、看完就回滚（#351 的做法），免得改到别的测试的数据。
   - 以后改了数据怎么存、留多久、经谁的手，同一个 PR 里改页面文字、顶上的日期和那份文档。
-- 首发前还要做：演示视频以后再谈（维护者 2026-10-15 说想让编码 Agent 录和剪，用什么工具、录什么、能不能用讲解动画代替实机，往后放）。维护者 2026-10-17 定了不提交 MCP 目录（Glama、Smithery、Claude 的应用目录、awesome-mcp-servers 都不做）；官方 MCP Registry 也不用。`sitemap.xml` 不做：能被收录的只有首页和隐私说明，`/watch` 不让收录，别的页面要登录。
+- 首发前还要做：演示视频以后再谈（维护者 2026-10-15 说想让编码 Agent 录和剪，用什么工具、录什么、能不能用讲解动画代替实机，往后放）。维护者 2026-10-17 定过不提交 MCP 目录、不做 `sitemap.xml`，2026-10-20 改了：网站和站点地图、MCP 目录都做，见上面“网站被搜到”。Claude 和 ChatGPT 的应用目录要 OAuth，照旧不做。
 - Resend 的“2026-10-15 不升付费档”是历史决定：2026-10-17 付款邮件已确认 Transactional Pro、USD 20，服务期为 2026-10-17 至 2026-11-17。2026-10-18 用户切换登录账号后，只读核对的当前工作区显示 Pro、每月 50,000 封、无日额度，生产配置中的发件域名显示 `verified`。套餐和域名已核实，**生产 SMTP 凭据归属仍待核实**：域名匹配不代替生产凭据与工作区／API Key 非秘密标识的对应记录。不能据此提高生产额度，旧 100／80 基线和最小证据缺口见[首发预案](./docs/operations/launch-day.md#发信套餐与配额依据)。
 - 维护者 2026-10-15 定的其余安排：Windows 安装包不签名；GitHub 仓库简介和话题由编码 Agent 改（当天已改，去掉了 end-to-end-encryption 话题）；README 跟上 Alpha 72（#470）；仓库分享图由编码 Agent 上传（要在浏览器里登录 GitHub）。
 - 首发周的容量：设计在 [specs/launch-capacity/design.md](./specs/launch-capacity/design.md)，进度记在它的“状态”一节。要点：网络 Agent 的 500 上限和大厅分片的位置都按“30 天里来过的”算，停用的网络 Agent 还不放回位置；第二个分片一开，人和围观页停在老分片、新 Agent 去新分片；名字序号到 20 就没了；限额和连接池写死；邮件额度用完时注册的人会卡住、没人知道。按文档分十二步改，都随 Alpha 73 发布（2026-10-16）。
