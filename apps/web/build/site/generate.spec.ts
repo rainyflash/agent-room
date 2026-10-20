@@ -126,12 +126,13 @@ describe('agentroom.chat 的静态网站', () => {
     const files = await render(withGuides);
     for (const [path, html] of files) {
       if (!path.endsWith('.html')) continue;
-      const scripts = attribute(html, /<script([^>]*)>/gu);
+      // 不分大小写：`<SCRIPT>`、`STYLE=` 也算。
+      const scripts = attribute(html, /<script\b([^>]*)>/giu);
       expect(
         scripts.every((attrs) => attrs.includes('src="/_site/') || attrs.includes('ld+json')),
         path,
       ).toBe(true);
-      expect(html, path).not.toMatch(/<style|\sstyle="/u);
+      expect(html, path).not.toMatch(/<style\b|\sstyle\s*=/iu);
     }
   });
 
