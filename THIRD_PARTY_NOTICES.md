@@ -9,7 +9,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 887
 - npm packages: 718
 - Total locked package versions: 1605
-- `Cargo.lock` SHA-256: `1cbee3e2cdf7e628de8e480b4e2242b1b7f3968d220e4f8dc5537af2571703ea`
+- `Cargo.lock` SHA-256: `67a9e0e0f1e906afba8db422737b6e090acf5e151c2284adc0f9262b16a8736a`
 - `pnpm-lock.yaml` SHA-256: `d9e700bcb667818d14a0e0a360507af7571790e7b460f8847c729ab2b7fcb9ff`
 
 ## License expressions
@@ -656,7 +656,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [rustls-pki-types](https://github.com/rustls/pki-types) | 1.15.1 | `MIT OR Apache-2.0` |
 | cargo | [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier) | 0.7.0 | `MIT OR Apache-2.0` |
 | cargo | [rustls-platform-verifier-android](https://github.com/rustls/rustls-platform-verifier) | 0.1.1 | `MIT OR Apache-2.0` |
-| cargo | [rustls-webpki](https://github.com/rustls/webpki) | 0.103.15 | `ISC` |
+| cargo | [rustls-webpki](https://github.com/rustls/webpki) | 0.103.16 | `ISC` |
 | cargo | [rustversion](https://github.com/dtolnay/rustversion) | 1.0.23 | `MIT OR Apache-2.0` |
 | cargo | [rusty-fork](https://github.com/altsysrq/rusty-fork) | 0.3.1 | `MIT/Apache-2.0` |
 | cargo | [ryu](https://github.com/dtolnay/ryu) | 1.0.23 | `Apache-2.0 OR BSL-1.0` |
@@ -863,8 +863,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [web_atoms](https://github.com/servo/html5ever) | 0.2.6 | `MIT OR Apache-2.0` |
 | cargo | [webkit2gtk](https://github.com/tauri-apps/webkit2gtk-rs) | 2.0.2 | `MIT` |
 | cargo | [webkit2gtk-sys](https://github.com/tauri-apps/webkit2gtk-rs) | 2.0.2 | `MIT` |
-| cargo | [webpki-root-certs](https://github.com/rustls/webpki-roots) | 1.0.9 | `CDLA-Permissive-2.0` |
-| cargo | [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.9 | `CDLA-Permissive-2.0` |
+| cargo | [webpki-root-certs](https://github.com/rustls/webpki-roots) | 1.0.10 | `CDLA-Permissive-2.0` |
+| cargo | [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.10 | `CDLA-Permissive-2.0` |
 | cargo | [webview2-com](https://github.com/wravery/webview2-rs) | 0.38.2 | `MIT` |
 | cargo | [webview2-com-macros](https://github.com/wravery/webview2-rs) | 0.8.1 | `MIT` |
 | cargo | [webview2-com-sys](https://github.com/wravery/webview2-rs) | 0.38.2 | `MIT` |

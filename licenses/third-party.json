@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "1cbee3e2cdf7e628de8e480b4e2242b1b7f3968d220e4f8dc5537af2571703ea",
+    "Cargo.lock": "67a9e0e0f1e906afba8db422737b6e090acf5e151c2284adc0f9262b16a8736a",
     "pnpm-lock.yaml": "d9e700bcb667818d14a0e0a360507af7571790e7b460f8847c729ab2b7fcb9ff"
   },
   "dependencies": [
@@ -4082,7 +4082,7 @@
     {
       "ecosystem": "cargo",
       "name": "rustls-webpki",
-      "version": "0.103.15",
+      "version": "0.103.16",
       "license": "ISC",
       "source": "https://github.com/rustls/webpki"
     },
@@ -5531,14 +5531,14 @@
     {
       "ecosystem": "cargo",
       "name": "webpki-root-certs",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "CDLA-Permissive-2.0",
       "source": "https://github.com/rustls/webpki-roots"
     },
     {
       "ecosystem": "cargo",
       "name": "webpki-roots",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "CDLA-Permissive-2.0",
       "source": "https://github.com/rustls/webpki-roots"
     },
