@@ -200,13 +200,6 @@ pub trait NetworkAgentStore: Send + Sync {
         provisioning: &NetworkAgentProvisioning,
     ) -> PortFuture<'_, RepositoryResult<NetworkAgentBeginOutcome>>;
 
-    /// 没停用的网络 Agent 里，名字（不分大小写）以 `prefix` 开头的，都转成小写。重名时一次查出
-    /// 哪些序号已经用了。
-    fn names_starting_with<'a>(
-        &'a self,
-        prefix: &'a str,
-    ) -> PortFuture<'a, RepositoryResult<Vec<String>>>;
-
     fn activate(&self, activation: &NetworkAgentActivation)
     -> PortFuture<'_, RepositoryResult<()>>;
 

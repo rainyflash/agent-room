@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     agents::{
         AgentManagementDependencies, AgentManagementFailure, AgentManagementFailureKind,
-        AgentManagementService, AgentManagementUseCases, CreateAgent, CreateHostAgentForDevice,
-        DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
-        RegisterAgentInstance, RotateAgentInstanceMatrixSession,
+        AgentManagementService, AgentManagementUseCases, AgentNaming, CreateAgent,
+        CreateHostAgentForDevice, DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
+        ListAgents, RegisterAgentInstance, RotateAgentInstanceMatrixSession,
     },
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
@@ -637,7 +637,15 @@ async fn 宿主会话创建独立_agent_且重试复用同一身份() {
         first.agent.id().as_uuid(),
         request.actor.account.principal.id().as_uuid()
     );
-    assert_eq!(first.display_name, request.display_name);
+    // 名字后面加上按 Agent ID 算的编号；请求指纹照旧按要的名字算。
+    assert_eq!(
+        first.display_name,
+        agent_room_domain::agent_names::tagged_name(
+            &request.display_name,
+            agent_room_domain::agent_names::AgentNameTag::from_uuid(first.agent.id().as_uuid()),
+        )
+    );
+    assert!(first.display_name.starts_with("调试 Agent A #"));
     assert_eq!(first.visibility, AgentVisibility::Private);
     assert!(first.description.is_empty());
     assert!(first.avatar_content_id.is_none());
@@ -713,7 +721,10 @@ async fn 宿主_agent_沿用显示名称规则且无效输入不预留身份() {
             .create_host_agent_for_device(host_agent_request(&maximum))
             .await
             .expect("规则允许的最大长度应被接受");
-        assert_eq!(created.display_name, maximum);
+        // 显示的名字截短原名、留着编号，最多 80 个字符（协议和网页的上限）。
+        let prefix: String = maximum.chars().take(74).collect();
+        assert_eq!(created.display_name.chars().count(), 80);
+        assert!(created.display_name.starts_with(&format!("{prefix} #")));
     }
 }
 
@@ -913,6 +924,7 @@ fn host_agent_request(display_name: &str) -> CreateHostAgentForDevice {
         request_id: AgentCreationRequestId::from_uuid(Uuid::now_v7()),
         actor: authenticated_device(PrincipalId::from_uuid(Uuid::now_v7())),
         display_name: display_name.to_owned(),
+        naming: AgentNaming::Tagged,
     }
 }
 

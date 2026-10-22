@@ -7,10 +7,10 @@ use agent_room_application::{
     agent_lobbies::AgentLobbyEntryFailureKind,
     agent_room_placements::{AgentRoomPlacementUseCases, LeaveAllAgentRooms},
     agents::{
-        AgentManagementUseCases, ChangeAgentMembership, CreateAgent, CreateHostAgentForDevice,
-        DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice, ListAgents,
-        RegisterAgentInstance, RegisteredAgentInstance, RotateAgentInstanceMatrixSession,
-        RotatedAgentInstanceMatrixSession,
+        AgentManagementUseCases, AgentNaming, ChangeAgentMembership, CreateAgent,
+        CreateHostAgentForDevice, DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
+        ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
+        RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     devices::DeviceAuthorizationUseCases,
@@ -405,6 +405,7 @@ async fn create_host_agent_for_device(
             request_id,
             actor,
             display_name: body.display_name,
+            naming: AgentNaming::Tagged,
         })
         .await
     {

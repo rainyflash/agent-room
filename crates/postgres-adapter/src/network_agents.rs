@@ -94,25 +94,6 @@ impl NetworkAgentStore for PostgresRepositories {
         })
     }
 
-    fn names_starting_with<'a>(
-        &'a self,
-        prefix: &'a str,
-    ) -> PortFuture<'a, RepositoryResult<Vec<String>>> {
-        Box::pin(async move {
-            let operation = "network_agent.names_starting_with";
-            sqlx::query_scalar(
-                r"SELECT lower(display_name)
-                    FROM agent_room.network_agent
-                   WHERE status <> 'disabled'
-                     AND starts_with(lower(display_name), lower($1))",
-            )
-            .bind(prefix)
-            .fetch_all(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))
-        })
-    }
-
     fn activate(
         &self,
         activation: &NetworkAgentActivation,

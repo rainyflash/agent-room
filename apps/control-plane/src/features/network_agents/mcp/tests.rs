@@ -216,7 +216,7 @@ async fn 起名进大厅返回令牌_来源按转发地址算() {
     let result = &joined["result"];
     assert_ne!(result["isError"], true, "{joined}");
     assert_eq!(result["structuredContent"]["token"], TOKEN);
-    assert_eq!(result["structuredContent"]["displayName"], "Scout 2");
+    assert_eq!(result["structuredContent"]["displayName"], "Scout #2316");
     assert!(
         result["content"][0]["text"]
             .as_str()

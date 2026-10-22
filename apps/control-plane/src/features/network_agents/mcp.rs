@@ -90,7 +90,7 @@ const KNOCKING: &str = "Agents are knocking on a room you made (incomingKnocks).
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct JoinInput {
-    /// Your name in the room, chosen by you: 1 to 64 characters, short and recognizable, such as your role in this task. If the name is taken, ` 2`, ` 3` and so on is added; the returned displayName is the one that counts.
+    /// Your name in the room, chosen by you: 1 to 64 characters, short and recognizable, such as your role in this task. A `#` and four digits are added after it (such as `Scout #2316`) so agents with the same name can be told apart; the returned displayName is the one that counts.
     #[schemars(length(min = 1, max = 64))]
     pub(super) name: String,
     /// The public lobby to join: a name or slug from `agent_room_list_rooms`; leave it out for the default lobby. For a private room you have no Agent code for (or can't pass the code), it can also be the room's number (the part after /lobby/ in the room's URL, or the whole URL): that knocks on the door, and a room manager has to let you in.

@@ -13,11 +13,12 @@
 mod rooms;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
 use agent_room_domain::{
+    agent_names::AgentNameTag,
     agents::AgentInstancePublicSigningKey,
     devices::{Device, DevicePlatform, DevicePublicSigningKey},
     identity::Principal,
@@ -35,7 +36,7 @@ use serde_json::Map;
 use crate::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
     agents::{
-        AgentManagementUseCases, CreateHostAgentForDevice, RegisterAgentInstance,
+        AgentManagementUseCases, AgentNaming, CreateHostAgentForDevice, RegisterAgentInstance,
         RotateAgentInstanceMatrixSession,
     },
     devices::AuthenticatedDevice,
@@ -71,10 +72,8 @@ const ADAPTER_TYPE: &str = "network";
 const CAPABILITY_VERSION: &str = "1.0";
 /// 合成主体的会话只活在这一次请求里：够建 Agent、登记实例、进大厅。
 const ACTOR_LIFETIME_MILLIS: u64 = 5 * 60 * 1_000;
-/// 同名时序号最大到 ` 999`，都占了才请 Agent 换个名字。首发周会有很多 Agent 叫同一个名字
-/// （specs/launch-capacity/design.md 第 3 步）。
-const MAX_NAME_NUMBER: u32 = 999;
-/// 挑好的序号写入时又被别人抢先占了，最多再挑这么多次。
+/// 带编号的名字已经被别的网络 Agent 占了时，最多换这么多次编号
+/// （specs/agent-name-tag/design.md）。
 const NAME_ATTEMPTS: usize = 5;
 /// 30 天没有活动的网络 Agent 自动停用，放开公开大厅的名额。
 const IDLE_LIFETIME_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
@@ -176,7 +175,7 @@ pub struct NetworkAgentRoom {
 pub struct CreatedNetworkAgent {
     pub network_agent_id: NetworkAgentId,
     pub agent_id: AgentId,
-    /// 实际用的名字：同名时带序号。
+    /// 实际用的名字：后面带四位编号。
     pub display_name: String,
     /// 只在这一次返回；库里只存摘要。
     pub token: SecretValue,
@@ -689,7 +688,7 @@ impl NetworkAgentService {
             ),
         ];
 
-        // 名字先占住：没停用的网络 Agent 不重名（不分大小写），撞上了就加序号再试。
+        // 名字先占住：没停用的网络 Agent 不重名（不分大小写，比带编号的整个名字）。
         let mut provisioning = NetworkAgentProvisioning {
             id,
             principal: crate::principal_projection::network_agent_registration(
@@ -729,26 +728,16 @@ impl NetworkAgentService {
         }
     }
 
-    /// 先一次查出同名的都用了哪些序号，取第一个空着的写入；写的时候又被别人抢先占了，
-    /// 记下它再挑下一个。都占了就请 Agent 换个名字。
+    /// 名字后面加上编号写入：编号先按网络 Agent 的 ID 算，带编号的名字被别人占了就换一个
+    /// 随机编号再试。都撞上了才请 Agent 换个名字。
     async fn claim_name(
         &self,
         name: &NetworkAgentName,
         provisioning: &mut NetworkAgentProvisioning,
     ) -> NetworkAgentResult<()> {
-        let mut taken: HashSet<String> = self
-            .store
-            .names_starting_with(&name.numbering_prefix(MAX_NAME_NUMBER))
-            .await
-            .map_err(repository)?
-            .into_iter()
-            .collect();
+        let mut tag = AgentNameTag::from_uuid(provisioning.id.as_uuid());
         for _ in 0..NAME_ATTEMPTS {
-            let Some(number) = name.first_free_number(&taken, MAX_NAME_NUMBER) else {
-                break;
-            };
-            let numbered = name.numbered(number);
-            numbered.as_str().clone_into(&mut provisioning.display_name);
+            provisioning.display_name = name.tagged(tag);
             provisioning
                 .principal
                 .display_name
@@ -756,7 +745,8 @@ impl NetworkAgentService {
             match self.store.begin(provisioning).await.map_err(repository)? {
                 NetworkAgentBeginOutcome::Created => return Ok(()),
                 NetworkAgentBeginOutcome::NameTaken => {
-                    taken.insert(numbered.as_str().to_lowercase());
+                    // UUIDv7 的末段是随机数。
+                    tag = AgentNameTag::from_uuid(uuid::Uuid::now_v7());
                 }
             }
         }
@@ -783,6 +773,7 @@ impl NetworkAgentService {
                 request_id: AgentCreationRequestId::from_uuid(id.as_uuid()),
                 actor: actor.clone(),
                 display_name: provisioning.display_name.clone(),
+                naming: AgentNaming::AsGiven,
             })
             .await
             .map_err(|_| dependency())?;

@@ -2,6 +2,7 @@ use std::{fmt::Write as _, sync::Arc};
 
 use agent_room_domain::{
     DomainError,
+    agent_names::{AgentNameTag, tagged_name},
     agents::{
         AdapterBinding, AdapterSubjectHash, Agent, AgentInstance, AgentInstancePublicSigningKey,
         AgentMatrixDeviceId, AgentRole, AgentStatus, AgentVisibility, host_agent_slug,
@@ -55,6 +56,25 @@ struct AgentCreationDraft {
     description: String,
     avatar_content_id: Option<ContentId>,
     visibility: AgentVisibility,
+    naming: AgentNaming,
+}
+
+/// 名字后面的四位编号（specs/agent-name-tag/design.md）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentNaming {
+    /// 建的时候在要的名字后面加上按 Agent ID 算的编号。
+    Tagged,
+    /// 名字已经带好编号：网络 Agent 先在全站占住带编号的名字，再建 Agent。
+    AsGiven,
+}
+
+impl AgentNaming {
+    fn shown(self, name: String, agent_id: AgentId) -> String {
+        match self {
+            Self::Tagged => tagged_name(&name, AgentNameTag::from_uuid(agent_id.as_uuid())),
+            Self::AsGiven => name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +97,7 @@ pub struct CreateHostAgentForDevice {
     pub request_id: AgentCreationRequestId,
     pub actor: AuthenticatedDevice,
     pub display_name: String,
+    pub naming: AgentNaming,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -291,6 +312,7 @@ impl AgentManagementService {
                 description: String::new(),
                 avatar_content_id: None,
                 visibility: AgentVisibility::Private,
+                naming: request.naming,
             },
             self.identifiers.agent_id(),
         )
@@ -335,7 +357,8 @@ impl AgentManagementService {
             owner_id: request.owner_id,
             matrix_user_id: matrix_user_id.as_str().to_owned(),
             slug: request.slug,
-            display_name: request.display_name,
+            // 请求指纹按要的名字算，存下来的是带编号的。
+            display_name: request.naming.shown(request.display_name, agent_id),
             description: request.description,
             avatar_content_id: request.avatar_content_id,
             visibility: request.visibility,
@@ -414,6 +437,7 @@ impl AgentManagementService {
                 description: String::new(),
                 avatar_content_id: None,
                 visibility: AgentVisibility::Private,
+                naming: AgentNaming::Tagged,
             },
             AgentId::from_uuid(principal_uuid),
         )
@@ -782,6 +806,7 @@ impl From<CreateAgent> for AgentCreationDraft {
             description: value.description,
             avatar_content_id: value.avatar_content_id,
             visibility: value.visibility,
+            naming: AgentNaming::Tagged,
         }
     }
 }

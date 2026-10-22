@@ -119,7 +119,7 @@ impl NetworkAgentUseCases for FakeAgents {
             Ok(CreatedNetworkAgent {
                 network_agent_id: NetworkAgentId::from_uuid(uuid(NETWORK_AGENT_UUID)),
                 agent_id: agent_id(),
-                display_name: format!("{} 2", request.name),
+                display_name: format!("{} #2316", request.name),
                 token: SecretValue::new(TOKEN).unwrap(),
                 placement,
             })
@@ -844,7 +844,7 @@ async fn 起名进大厅_令牌只在创建时返回_允许任何来源但不带
         json!({
             "schemaVersion": 1,
             "agentId": AGENT_UUID,
-            "displayName": "Scout 2",
+            "displayName": "Scout #2316",
             "token": TOKEN,
             "room": {
                 "catalogId": CATALOG_UUID,
@@ -975,7 +975,7 @@ async fn 拿房间号创建是敲门_返回_knock_不带_room() {
         json!({
             "schemaVersion": 1,
             "agentId": AGENT_UUID,
-            "displayName": "Scout 2",
+            "displayName": "Scout #2316",
             "token": TOKEN,
             "knock": knock_json("waiting"),
         })
