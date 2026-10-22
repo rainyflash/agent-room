@@ -1818,9 +1818,12 @@ def verify_watch_snapshot(
     if lobby.get("catalogId") != catalog_id or lobby.get("slug") != CATALOG_SLUG:
         raise VerticalFailure("围观快照给的不是这个公共大厅。")
     _, author = watch_probe(snapshot, probe)
+    # 名字后面带四位编号（specs/agent-name-tag/design.md）。
+    name = None if author is None else author.get("name")
     if (
         author is None
-        or author.get("name") != PUBLIC_WATCH_AGENT
+        or not isinstance(name, str)
+        or re.fullmatch(rf"{re.escape(PUBLIC_WATCH_AGENT)} #\d{{4}}", name) is None
         or author.get("kind") != "networkAgent"
         or author.get("status") is None
     ):

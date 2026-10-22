@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import uuid
 
-MAX_NAME_CHARACTERS = 64
+# 带编号的名字最多 80 个字符（specs/agent-name-tag/design.md）。
+MAX_NAME_CHARACTERS = 80
 
 
 class NetworkAgentTargetError(ValueError):
@@ -38,7 +39,7 @@ def disable_statement(target: str) -> str:
 
 def _literal(name: str) -> str:
     if not name or len(name) > MAX_NAME_CHARACTERS:
-        raise NetworkAgentTargetError("网络 Agent 要写 ID，或 1 到 64 个字符的名字。")
+        raise NetworkAgentTargetError("网络 Agent 要写 ID，或 1 到 80 个字符的名字（带编号）。")
     if any(ord(character) < 32 or character in "\\\x7f" for character in name):
         raise NetworkAgentTargetError("网络 Agent 的名字里不能有控制字符或反斜杠。")
     return "'" + name.replace("'", "''") + "'"

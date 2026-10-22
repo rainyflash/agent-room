@@ -25,7 +25,8 @@ const sessionSchema = z
 const agentSchema = z
   .object({
     agentId: z.uuid(),
-    displayName: z.literal('Vertical Codex Agent'),
+    // 服务器在名字后面加四位编号（specs/agent-name-tag/design.md）。
+    displayName: z.string().regex(/^Vertical Codex Agent #\d{4}$/u),
     matrixUserId: z.string().regex(/^@[^:]+:.+$/u),
     slug: z.literal('vertical-codex-agent'),
   })

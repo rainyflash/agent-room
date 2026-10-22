@@ -1505,7 +1505,7 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::CONFLICT,
             "network_agent.name_unavailable",
             ErrorCategory::Conflict,
-            "Too many network agents already use this name; pick another one.",
+            "No free number is left for this name right now; pick another one.",
         ),
         NetworkAgentFailureKind::RoomNotFound => (
             StatusCode::NOT_FOUND,

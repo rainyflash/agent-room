@@ -26,6 +26,7 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
+    agent_names::{AgentNameTag, tagged_name},
     agents::AgentMatrixDeviceId,
     devices::{Device, DevicePlatform, DevicePublicSigningKey},
     identity::Principal,
@@ -53,6 +54,8 @@ use uuid::Uuid;
 const HOUR: u64 = 3_600_000;
 const RELEASE_DISABLED_SLOTS: &str =
     include_str!("../../../infra/migrations/202610150001_release_disabled_network_agent_slots.sql");
+const AGENT_NAME_TAGS: &str =
+    include_str!("../../../infra/migrations/202610220001_agent_name_tags.sql");
 
 struct TestDatabase {
     migration: PgPool,
@@ -377,29 +380,24 @@ async fn 几个窗口一起记_有一个到上限就都不记_退回只退那一
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
-async fn 按开头查名字_不分大小写_停用的不算() {
+async fn 带编号的名字最长_80_个字符_同名不同编号都能写入() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let base = unique_name("Twin");
-    let mut ids = Vec::new();
-    for name in [
-        base.clone(),
-        format!("{} 2", base.to_uppercase()),
-        format!("{base} 3"),
-    ] {
+    let long = format!("{base} {}", "a".repeat(80 - base.chars().count() - 1));
+    assert_eq!(long.chars().count(), 80);
+    for name in [format!("{base} #0001"), format!("{base} #0002"), long] {
         let provisioning = provisioning(&name, time(0));
-        repositories.begin(&provisioning).await.expect("写入");
-        ids.push(provisioning.id);
+        assert!(matches!(
+            repositories.begin(&provisioning).await.expect("写入"),
+            NetworkAgentBeginOutcome::Created
+        ));
     }
-    repositories.disable(ids[2], time(5)).await.expect("停用");
-
-    let mut names = repositories
-        .names_starting_with(&base.to_lowercase())
-        .await
-        .expect("查名字");
-    names.sort();
-    let lowered = base.to_lowercase();
-    assert_eq!(names, vec![lowered.clone(), format!("{lowered} 2")]);
+    let taken = provisioning(&format!("{} #0001", base.to_uppercase()), time(1));
+    assert!(matches!(
+        repositories.begin(&taken).await.expect("写入"),
+        NetworkAgentBeginOutcome::NameTaken
+    ));
     database.close().await;
 }
 
@@ -1914,6 +1912,76 @@ async fn 迁移放回停用的网络_agent_以前没放回的位置_还在用的
         "committed"
     );
     assert_eq!(allocated_slots(&mut *transaction, instance).await, 1);
+    transaction.rollback().await.expect("回滚");
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 补编号的迁移和领域规则算出同一个名字_网络_agent_三处一起改() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let name = unique_name("Tagme");
+    let provisioning = provisioning(&name, time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let owner = provisioning.principal.principal.id();
+    let (agent, instance) =
+        seed_agent_instance(&database.runtime, owner, provisioning.device.id()).await;
+    repositories
+        .activate(&NetworkAgentActivation {
+            id: provisioning.id,
+            agent_id: agent,
+            agent_instance_id: instance,
+            matrix_access_token: sealed(4),
+            activated_at: time(0),
+        })
+        .await
+        .expect("生效");
+    // 不是网络 Agent 的：名字太长，截原名留编号。
+    let (local, _) = seed_agent_instance(&database.runtime, owner, provisioning.device.id()).await;
+    let long = format!("{} #1234", "名".repeat(122));
+    sqlx::query("UPDATE agent_room.agent SET display_name = $2 WHERE id = $1")
+        .bind(local.as_uuid())
+        .bind(&long)
+        .execute(&database.runtime)
+        .await
+        .expect("改名");
+
+    let mut transaction = database.migration.begin().await.expect("开事务");
+    sqlx::raw_sql(AGENT_NAME_TAGS)
+        .execute(&mut *transaction)
+        .await
+        .expect("补编号成功");
+    let expected = tagged_name(&name, AgentNameTag::from_uuid(provisioning.id.as_uuid()));
+    for query in [
+        "SELECT display_name FROM agent_room.network_agent WHERE id = $1",
+        "SELECT display_name FROM agent_room.principal WHERE id = $1",
+        "SELECT display_name FROM agent_room.agent WHERE id = $1",
+    ] {
+        let id = match query {
+            q if q.contains("network_agent") => provisioning.id.as_uuid(),
+            q if q.contains("principal") => owner.as_uuid(),
+            _ => agent.as_uuid(),
+        };
+        let shown: String = sqlx::query_scalar(query)
+            .bind(id)
+            .fetch_one(&mut *transaction)
+            .await
+            .expect("读名字");
+        assert_eq!(shown, expected, "{query}");
+    }
+    let shown: String =
+        sqlx::query_scalar("SELECT display_name FROM agent_room.agent WHERE id = $1")
+            .bind(local.as_uuid())
+            .fetch_one(&mut *transaction)
+            .await
+            .expect("读名字");
+    assert_eq!(
+        shown,
+        tagged_name(&long, AgentNameTag::from_uuid(local.as_uuid()))
+    );
+    assert_eq!(shown.chars().count(), 80);
     transaction.rollback().await.expect("回滚");
 
     database.close().await;

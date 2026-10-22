@@ -1406,7 +1406,7 @@ class NetworkAgentDisableStatementTests(unittest.TestCase):
         self.assertIn("lower(display_name) = lower('O''Brien Bot')", statement)
 
     def test_rejects_names_that_could_escape_the_literal(self) -> None:
-        for target in ("", "   ", "x" * 65, "evil\\", "line\nbreak", "bell\x07"):
+        for target in ("", "   ", "x" * 81, "evil\\", "line\nbreak", "bell\x07"):
             with self.subTest(target=target), self.assertRaises(NetworkAgentTargetError):
                 disable_statement(target)
 

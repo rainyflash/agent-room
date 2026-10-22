@@ -8,9 +8,9 @@ use agent_room_application::{
         AgentLobbyEntryFailure, AgentLobbyEntryResult, AgentLobbyEntryUseCases, EnterAgentLobby,
     },
     agents::{
-        AgentManagementResult, AgentManagementUseCases, ChangeAgentMembership, CreateAgent,
-        CreateHostAgentForDevice, DeleteAgent, EnsureDefaultAgent, EnsureDefaultAgentForDevice,
-        ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
+        AgentManagementResult, AgentManagementUseCases, AgentNaming, ChangeAgentMembership,
+        CreateAgent, CreateHostAgentForDevice, DeleteAgent, EnsureDefaultAgent,
+        EnsureDefaultAgentForDevice, ListAgents, RegisterAgentInstance, RegisteredAgentInstance,
         RotateAgentInstanceMatrixSession, RotatedAgentInstanceMatrixSession,
     },
     network_agents::{
@@ -47,6 +47,7 @@ use agent_room_application::{
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
 use agent_room_domain::{
+    agent_names::{AgentNameTag, untagged_name},
     agents::{
         AdapterBinding, Agent, AgentInstance, AgentInstanceStatus, AgentMatrixDeviceId,
         AgentVisibility,
@@ -103,6 +104,8 @@ struct MemoryStore {
     network_owned: Mutex<HashSet<RoomCatalogId>>,
     /// 闲置时请出、还没回去的公开大厅。
     away: Mutex<Vec<(NetworkAgentId, NetworkAgentLobbyAway)>>,
+    /// 接下来这么多次写入都说名字被占了：测试直接设。
+    names_taken: Mutex<usize>,
 }
 
 impl MemoryStore {
@@ -117,14 +120,33 @@ impl MemoryStore {
         read(agents.iter().find(|agent| agent.record.id == id).unwrap())
     }
 
+    /// 名字去掉了编号，编号由 [`assert_tagged`] 查。
     fn statuses(&self) -> Vec<(String, NetworkAgentStatus)> {
         self.agents
             .lock()
             .unwrap()
             .iter()
-            .map(|agent| (agent.record.display_name.clone(), agent.record.status))
+            .map(|agent| {
+                (
+                    untagged_name(&agent.record.display_name).to_owned(),
+                    agent.record.status,
+                )
+            })
             .collect()
     }
+}
+
+/// 显示的名字是要的名字加上 ` #` 和四位数字。
+#[track_caller]
+fn assert_tagged(shown: &str, base: &str) {
+    let tag = shown
+        .strip_prefix(base)
+        .and_then(|rest| rest.strip_prefix(" #"))
+        .unwrap_or_else(|| panic!("{shown} 应当是 {base} 加编号"));
+    assert!(
+        tag.len() == 4 && tag.bytes().all(|byte| byte.is_ascii_digit()),
+        "{shown}"
+    );
 }
 
 impl NetworkAgentStore for MemoryStore {
@@ -133,11 +155,14 @@ impl NetworkAgentStore for MemoryStore {
         provisioning: &NetworkAgentProvisioning,
     ) -> PortFuture<'_, RepositoryResult<NetworkAgentBeginOutcome>> {
         let mut agents = self.agents.lock().unwrap();
-        let taken = agents.iter().any(|agent| {
-            agent.record.status != NetworkAgentStatus::Disabled
-                && agent.record.display_name.to_lowercase()
-                    == provisioning.display_name.to_lowercase()
-        });
+        let mut forced = self.names_taken.lock().unwrap();
+        let taken = *forced > 0
+            || agents.iter().any(|agent| {
+                agent.record.status != NetworkAgentStatus::Disabled
+                    && agent.record.display_name.to_lowercase()
+                        == provisioning.display_name.to_lowercase()
+            });
+        *forced = forced.saturating_sub(1);
         let outcome = if taken {
             NetworkAgentBeginOutcome::NameTaken
         } else {
@@ -368,23 +393,6 @@ impl NetworkAgentStore for MemoryStore {
             }
         }
         Box::pin(async { Ok(()) })
-    }
-
-    fn names_starting_with<'a>(
-        &'a self,
-        prefix: &'a str,
-    ) -> PortFuture<'a, RepositoryResult<Vec<String>>> {
-        let prefix = prefix.to_lowercase();
-        let names = self
-            .agents
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|agent| agent.record.status != NetworkAgentStatus::Disabled)
-            .map(|agent| agent.record.display_name.to_lowercase())
-            .filter(|name| name.starts_with(&prefix))
-            .collect();
-        Box::pin(async move { Ok(names) })
     }
 
     fn record_room<'a>(
@@ -1928,7 +1936,14 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
 
     let created = harness.create("  Scout ", None).await.expect("创建成功");
 
-    assert_eq!(created.display_name, "Scout");
+    assert_eq!(
+        created.display_name,
+        format!(
+            "Scout {}",
+            AgentNameTag::from_uuid(created.network_agent_id.as_uuid())
+        ),
+        "编号先按网络 Agent 的 ID 算"
+    );
     assert_eq!(created.token.expose(), "token-1");
     assert_eq!(room_of(&created).catalog_id, catalog_id(2));
     assert_eq!(room_of(&created).name, "Agent Room 大厅");
@@ -1947,7 +1962,7 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
             stored.principal.oidc_subject,
             created.network_agent_id.to_string()
         );
-        assert_eq!(stored.principal.display_name, "Scout");
+        assert_eq!(stored.principal.display_name, created.display_name);
         assert!(stored.principal.matrix_user_id.ends_with(":matrix.test"));
         assert_eq!(stored.device_platform, DevicePlatform::Network);
         assert_eq!(stored.device_trust, DeviceTrustState::Verified);
@@ -1976,7 +1991,9 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
         host.request_id.as_uuid(),
         created.network_agent_id.as_uuid()
     );
-    assert_eq!(host.display_name, "Scout");
+    // 名字已经带好编号，建宿主 Agent 时不再加。
+    assert_eq!(host.display_name, created.display_name);
+    assert_eq!(host.naming, AgentNaming::AsGiven);
     assert_eq!(host.actor.account.principal.id(), record.principal_id);
     assert_eq!(host.actor.device_id, record.device_id);
     let instance = harness.agents.instances.lock().unwrap()[0].clone();
@@ -1990,7 +2007,7 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     assert_eq!(entered.catalog_id, catalog_id(2));
 
     let me = harness.service.me("token-1").await.expect("令牌有效");
-    assert_eq!(me.display_name, "Scout");
+    assert_eq!(me.display_name, created.display_name);
     assert_eq!(me.agent_id, created.agent_id);
     // 进过的大厅记在它名下，查看自己时带着房间名。
     assert_eq!(me.rooms, std::slice::from_ref(room_of(&created)));
@@ -2000,7 +2017,7 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     assert_eq!(session.network_agent_id, created.network_agent_id);
     assert_eq!(session.agent_id, created.agent_id);
     assert_eq!(session.agent_instance_id, instance_id);
-    assert_eq!(session.display_name, "Scout");
+    assert_eq!(session.display_name, created.display_name);
     assert_eq!(session.matrix_access_token.expose(), MATRIX_TOKEN);
     // 签名种子是登记实例时那一把（第二把生成的密钥）的种子。
     assert_eq!(session.instance_signing_seed.expose(), "seed-2");
@@ -2287,7 +2304,7 @@ async fn 三十天没活动的自动停用_有活动就不算闲置_停用后等
         panic!("停用的要等着离开房间：{exits:?}");
     };
     assert_eq!(session.network_agent_id, idle.network_agent_id);
-    assert_eq!(session.display_name, "Idle");
+    assert_tagged(&session.display_name, "Idle");
     assert_eq!(session.rooms.len(), 1, "带上它进过的大厅");
     harness
         .service
@@ -2508,37 +2525,31 @@ async fn 按名字或短名找公开大厅_忽略大小写_找不到时列出候
 }
 
 #[tokio::test]
-async fn 同名时自动加序号_不分大小写_过了二十个接着加_空出来的先用() {
+async fn 同名的都能进_名字后面加编号_撞上了换一个编号() {
     let harness = Harness::generous();
 
-    assert_eq!(
-        harness.create("Scout", None).await.unwrap().display_name,
-        "Scout"
-    );
-    assert_eq!(
-        harness.create("scout", None).await.unwrap().display_name,
-        "scout 2"
-    );
-    let third = harness.create("SCOUT", None).await.unwrap();
-    assert_eq!(third.display_name, "SCOUT 3");
-    for number in 4..=25 {
-        let created = harness.create("Scout", None).await.unwrap();
-        assert_eq!(created.display_name, format!("Scout {number}"));
+    let mut shown = HashSet::new();
+    for name in ["Scout", "scout", "SCOUT #1234"] {
+        let created = harness.create(name, None).await.unwrap();
+        assert_tagged(&created.display_name, untagged_name(name));
+        assert!(shown.insert(created.display_name.to_lowercase()));
     }
-
-    harness
-        .service
-        .disable(third.token.expose())
-        .await
-        .expect("停用");
-    assert_eq!(
-        harness.create("Scout", None).await.unwrap().display_name,
-        "Scout 3",
-        "停用以后空出来的序号先用"
+    // 带编号的名字被别人占了，换一个随机编号再试。
+    *harness.store.names_taken.lock().unwrap() = 4;
+    let retried = harness.create("Scout", None).await.unwrap();
+    assert_tagged(&retried.display_name, "Scout");
+    assert_ne!(
+        retried.display_name,
+        format!(
+            "Scout {}",
+            AgentNameTag::from_uuid(retried.network_agent_id.as_uuid())
+        )
     );
+    // 换了五次都撞上，才请 Agent 换个名字。
+    *harness.store.names_taken.lock().unwrap() = 5;
     assert_eq!(
-        harness.create("Scout", None).await.unwrap().display_name,
-        "Scout 26"
+        harness.create("Scout", None).await.err(),
+        Some(NetworkAgentFailureKind::NameUnavailable)
     );
 }
 
@@ -3078,7 +3089,7 @@ async fn 令牌不对或已停用就未认证_停用后同名可以再用() {
     }
 
     let again = harness.create("Scout", None).await.unwrap();
-    assert_eq!(again.display_name, "Scout");
+    assert_tagged(&again.display_name, "Scout");
     assert_ne!(again.token.expose(), token);
 }
 
@@ -3129,7 +3140,7 @@ async fn 进不了大厅时报依赖不可用_停用这条记录并放开名字(
     );
 
     let retried = harness.create("Scout", None).await.expect("重试成功");
-    assert_eq!(retried.display_name, "Scout");
+    assert_tagged(&retried.display_name, "Scout");
 }
 
 #[tokio::test]

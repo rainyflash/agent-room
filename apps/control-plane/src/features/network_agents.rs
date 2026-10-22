@@ -212,7 +212,7 @@ struct KnockedResponse {
 struct CreatedResponse {
     schema_version: u8,
     agent_id: String,
-    /// 实际用的名字：同名时带序号。
+    /// 实际用的名字：后面带四位编号。
     display_name: String,
     /// 只在这一次返回；之后的请求都带 `Authorization: Bearer <token>`。
     token: String,

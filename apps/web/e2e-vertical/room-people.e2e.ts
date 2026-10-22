@@ -115,7 +115,8 @@ async function expectOwnerLabel(page: Page, agentName: string, label: string): P
   await page.goto(`${room.pathname}${room.search}`);
   // 服务器只回答此刻在房间里的 Agent 是谁的；刚进来的过 30 秒再问一次。
   await expect(
-    page.getByRole('option', { name: new RegExp(`^${agentName}, ${label}, `, 'u') }),
+    // 名字后面带四位编号。
+    page.getByRole('option', { name: new RegExp(`^${agentName} #\\d{4}, ${label}, `, 'u') }),
   ).toHaveCount(1, { timeout: 120_000 });
   await page.getByRole('button', { name: 'Find someone', exact: true }).click();
   const members = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
