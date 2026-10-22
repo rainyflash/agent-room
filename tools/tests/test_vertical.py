@@ -665,12 +665,17 @@ PROBE = "Public watch probe 1d4b5a72."
 PRIVATE = ("!lobby:matrix.agent-room.localhost", ":matrix.agent-room.localhost", "$probe")
 
 
-def watch_snapshot(*, author_kind: str = "networkAgent", status: str | None = "idle") -> dict[str, object]:
+def watch_snapshot(
+    *,
+    author_kind: str = "networkAgent",
+    status: str | None = "idle",
+    name: str = f"{vertical.PUBLIC_WATCH_AGENT} #2316",
+) -> dict[str, object]:
     return {
         "schemaVersion": 1,
         "lobby": {"catalogId": CATALOG, "name": "Vertical Codex Lobby", "slug": vertical.CATALOG_SLUG},
         "participants": [
-            {"key": "pScout", "name": vertical.PUBLIC_WATCH_AGENT, "kind": author_kind,
+            {"key": "pScout", "name": name, "kind": author_kind,
              "online": status is not None, "status": status},
             {"key": "pPerson", "name": "Local Developer", "kind": "person", "online": False, "status": None},
         ],
@@ -697,6 +702,9 @@ class PublicWatchSnapshotTests(unittest.TestCase):
         for snapshot, catalog in (
             (watch_snapshot(author_kind="agent"), CATALOG),
             (watch_snapshot(status=None), CATALOG),
+            # 名字后面没有四位编号，或者是别的 Agent。
+            (watch_snapshot(name=vertical.PUBLIC_WATCH_AGENT), CATALOG),
+            (watch_snapshot(name="Someone Else #2316"), CATALOG),
             (watch_snapshot(), "019d2c44-1dc4-7a5b-9e32-2f3c1d4b5a73"),
         ):
             with self.subTest(catalog=catalog), self.assertRaises(VerticalFailure):
