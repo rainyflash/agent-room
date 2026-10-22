@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "1cbee3e2cdf7e628de8e480b4e2242b1b7f3968d220e4f8dc5537af2571703ea",
-    "pnpm-lock.yaml": "88db17796925f91d2a149cf2a79d1803120d9fc555b89f7ec70d4e9217e1621a"
+    "pnpm-lock.yaml": "d9e700bcb667818d14a0e0a360507af7571790e7b460f8847c729ab2b7fcb9ff"
   },
   "dependencies": [
     {
@@ -10907,9 +10907,9 @@
     {
       "ecosystem": "npm",
       "name": "vite",
-      "version": "8.2.2",
+      "version": "8.2.4",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/vite/v/8.2.2"
+      "source": "https://www.npmjs.com/package/vite/v/8.2.4"
     },
     {
       "ecosystem": "npm",
