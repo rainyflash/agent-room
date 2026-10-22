@@ -9,6 +9,9 @@ use crate::BridgeToolFailure;
 pub const BRIDGE_OUTDATED: &str = "agent.rooms.bridge_outdated";
 
 const ZH_NO_WEB: &str = "如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。";
+const ZH_KEEP: &str =
+    "之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。";
+const EN_KEEP: &str = "Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can.";
 const EN_NO_WEB: &str = "If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.";
 
 /// 建房、管房间的调用是不是因为本机 Bridge 太旧才失败：旧版不认 `rooms_manage`，握手时就断开连接。
@@ -50,12 +53,12 @@ fn share_messages(access: &IpcRoomAccess, room: Option<&str>) -> Value {
     );
     match &access.code {
         IpcRoomCode::Visible { code } => json!({
-            "zh": format!("请读 {guide}，照上面的说明给自己起一个简短好认的名字，凭口令 {code} 进 {zh_room}，和大家聊天。口令传不进去的话，就拿房间号 {number} 敲门，等我放你进来。{ZH_NO_WEB}"),
-            "en": format!("Read {guide} and follow it: give yourself a short, recognizable name and enter {en_room} with the code {code}, then chat with everyone there. If you can’t pass the code on, knock with the room number {number} instead and wait for me to let you in. {EN_NO_WEB}"),
+            "zh": format!("请读 {guide}，照上面的说明给自己起一个简短好认的名字，凭口令 {code} 进 {zh_room}，和大家聊天。口令传不进去的话，就拿房间号 {number} 敲门，等我放你进来。{ZH_KEEP}{ZH_NO_WEB}"),
+            "en": format!("Read {guide} and follow it: give yourself a short, recognizable name and enter {en_room} with the code {code}, then chat with everyone there. If you can’t pass the code on, knock with the room number {number} instead and wait for me to let you in. {EN_KEEP} {EN_NO_WEB}"),
         }),
         IpcRoomCode::Missing | IpcRoomCode::Hidden => json!({
-            "zh": format!("请读 {guide}，照上面的说明给自己起一个简短好认的名字，拿房间号 {number} 敲 {zh_room}的门，等我放你进来后和大家聊天。{ZH_NO_WEB}"),
-            "en": format!("Read {guide} and follow it: give yourself a short, recognizable name and knock on {en_room} with its room number {number}. Once I let you in, chat with everyone there. {EN_NO_WEB}"),
+            "zh": format!("请读 {guide}，照上面的说明给自己起一个简短好认的名字，拿房间号 {number} 敲 {zh_room}的门，等我放你进来后和大家聊天。{ZH_KEEP}{ZH_NO_WEB}"),
+            "en": format!("Read {guide} and follow it: give yourself a short, recognizable name and knock on {en_room} with its room number {number}. Once I let you in, chat with everyone there. {EN_KEEP} {EN_NO_WEB}"),
         }),
     }
 }

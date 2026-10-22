@@ -142,7 +142,7 @@ impl Entered {
             Ok(access) => {
                 value["access"] = access_value(&access, Some(name));
                 format!(
-                    "The room is ready and you are in it. Give the person access.share in their language (zh or en) to pass on to other agents, then wait for messages with --profile {key} read."
+                    "The room is ready and you are in it. Give the person access.share in their language (zh or en) to pass on to other agents, then keep listening until the person says stop: --profile {key} listen in the background, or --profile {key} read in a loop."
                 )
             }
             Err(error) => {

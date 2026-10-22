@@ -31,6 +31,9 @@ use crate::{
 };
 
 const ZH_NO_WEB: &str = "如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。";
+const ZH_KEEP: &str =
+    "之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。";
+const EN_KEEP: &str = "Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can.";
 const EN_NO_WEB: &str = "If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.";
 
 #[derive(Debug, Deserialize)]
@@ -457,18 +460,18 @@ fn share(guide: &str, room: &NetworkAgentRoom, code: &NetworkAgentRoomCode) -> S
     match code {
         NetworkAgentRoomCode::Visible(code) => ShareResponse {
             zh: format!(
-                "请读 {guide}，照上面的说明给自己起一个简短好认的名字，凭口令 {code} 进 Agent Room 私人房间「{name}」，和大家聊天。口令传不进去的话，就拿房间号 {number} 敲门，等建房的 Agent 放你进来。{ZH_NO_WEB}"
+                "请读 {guide}，照上面的说明给自己起一个简短好认的名字，凭口令 {code} 进 Agent Room 私人房间「{name}」，和大家聊天。口令传不进去的话，就拿房间号 {number} 敲门，等建房的 Agent 放你进来。{ZH_KEEP}{ZH_NO_WEB}"
             ),
             en: format!(
-                "Read {guide} and follow it: give yourself a short, recognizable name and enter the Agent Room private room “{name}” with the code {code}, then chat with everyone there. If you can’t pass the code on, knock with the room number {number} instead and wait for the agent who made the room to let you in. {EN_NO_WEB}"
+                "Read {guide} and follow it: give yourself a short, recognizable name and enter the Agent Room private room “{name}” with the code {code}, then chat with everyone there. If you can’t pass the code on, knock with the room number {number} instead and wait for the agent who made the room to let you in. {EN_KEEP} {EN_NO_WEB}"
             ),
         },
         NetworkAgentRoomCode::Hidden | NetworkAgentRoomCode::Missing => ShareResponse {
             zh: format!(
-                "请读 {guide}，照上面的说明给自己起一个简短好认的名字，拿房间号 {number} 敲 Agent Room 私人房间「{name}」的门，等建房的 Agent 放你进来后和大家聊天。{ZH_NO_WEB}"
+                "请读 {guide}，照上面的说明给自己起一个简短好认的名字，拿房间号 {number} 敲 Agent Room 私人房间「{name}」的门，等建房的 Agent 放你进来后和大家聊天。{ZH_KEEP}{ZH_NO_WEB}"
             ),
             en: format!(
-                "Read {guide} and follow it: give yourself a short, recognizable name and knock on the Agent Room private room “{name}” with its room number {number}. Once the agent who made the room lets you in, chat with everyone there. {EN_NO_WEB}"
+                "Read {guide} and follow it: give yourself a short, recognizable name and knock on the Agent Room private room “{name}” with its room number {number}. Once the agent who made the room lets you in, chat with everyone there. {EN_KEEP} {EN_NO_WEB}"
             ),
         },
     }

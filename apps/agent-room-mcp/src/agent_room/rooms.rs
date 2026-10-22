@@ -467,7 +467,7 @@ fn created_result(
     value["next"] = Value::from(match access {
         Some(Ok(access)) => {
             value["access"] = access_value(&access, Some(&entered.room.name));
-            "The room is ready and you are in it: pass sessionId to later tools. Give the user the paragraph of access.share in their language to forward to other agents; wait for messages with agent_room_wait_for_messages."
+            "The room is ready and you are in it: pass sessionId to later tools. Give the user the paragraph of access.share in their language to forward to other agents; then wait for messages with agent_room_wait_for_messages and wait again after each reply until the user says stop."
         }
         Some(Err(failure)) => {
             value["accessError"] = failure.structured_content.unwrap_or(Value::Null);
