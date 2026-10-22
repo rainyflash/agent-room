@@ -160,7 +160,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - MCP 目录：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`）；目录上用的英文文案、每个目录怎么提交和提交记录在 `docs/mcp-directories.md`。每个目录提交前先问维护者，要登录的由他自己登录；官方 Registry 同一个版本号只能发一次。
 - 第 2 到第 4 步要在同一个版本里发布：`static` 要镜像里已经有 `/srv/site`。#556 改了 `tools/prodops/render.py`，发版实机验收要设备码。发版时把生产 `deployment.json` 的 `public.site` 改成 `static`，改之前留一份 `deployment.json.before-alpha80`。
 - Google Search Console 2026-10-22 验证了网域资源 agentroom.chat：维护者同意后，编码 Agent 在他的 Chrome 里加了 Vercel 上的 DNS TXT 记录。官方 MCP Registry 同一天发了 `io.github.rainyflash/agent-room` 0.1.0-alpha.79（GitHub 设备码维护者自己批），Glama 自动同步了；工具没变就不用每版再发。
-- Alpha 80 上线以后：提交 `https://agentroom.chat/sitemap.xml`，首页和指南请求编入索引，Bing 从 Search Console 导入；Smithery、mcp.so 由维护者自己登录后提交。punkpeye 的两个 awesome 列表不做（维护者 2026-10-22 定：开 PR 的账号要先加星才合并，条目必须带 Glama 徽章），原因记在 `docs/mcp-directories.md`。一周、四周后各看一次收录和搜索词。
+- 随 Alpha 80 上线（2026-10-22）。当天在 Search Console 提交了 `https://agentroom.chat/sitemap.xml`（读到 12 个网页），首页、中文首页和英文指南目录请求了编入索引。还没做：Bing 从 Search Console 导入（要维护者登录 Bing、同意授权）；Smithery、mcp.so 由维护者自己登录后提交。punkpeye 的两个 awesome 列表不做（维护者 2026-10-22 定：开 PR 的账号要先加星才合并，条目必须带 Glama 徽章），原因记在 `docs/mcp-directories.md`。一周、四周后各看一次收录和搜索词。
 
 ### Agent 名字后面的编号
 
@@ -523,10 +523,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 80 正在发布：Agent 名字后面的四位编号（#561–#563）、教 Agent 一直守着房间（#565）、撤销电脑后它的 Agent 离开房间（#545–#549）、设备没准备好时安全页不再说已就绪（#552）、agentroom.chat 的静态网站（#553–#557），以及 vite 和证书库的安全升级（#564、#566）。
-  - #546 改了 `crates/postgres-adapter/src/devices.rs`、#556 改了 `tools/prodops/render.py`，实机验收要走一次新设备授权，维护者批准设备码。
-  - 生产 `deployment.json` 的 `public.site` 在切换源码以后、部署以前改成 `static`（发布目录的 `set_public_site.py`，原配置留在 `deployment.json.before-alpha80`）：Alpha 79 的配置解析不认这个键。
-  - 有三个迁移（`202610190001`、`202610190002`、`202610220001`），部署时照常跑。
+- Alpha 80 已于 2026-10-22 公开，见 [发布记录](./specs/agent-access/alpha80-release.md)。
+  - Agent 名字后面的四位编号（#561–#563）、教 Agent 一直守着房间（#565）、撤销电脑后它的 Agent 离开房间（#545–#549）、设备没准备好时安全页不再说已就绪（#552）、agentroom.chat 的静态网站（#553–#557），以及 vite 和证书库的安全升级（#564、#566）。
+  - #546 改了 `crates/postgres-adapter/src/devices.rs`、#556 改了 `tools/prodops/render.py`，实机验收走了一次新设备授权；长期验收设备换成 Alpha 80 那台（`agent-room.alpha80.acceptance.fresh-device`）。
+  - 生产 `deployment.json` 的 `public.site` 在切换源码以后、部署以前改成了 `static`（发布目录的 `set_public_site.py`，原配置留在 `deployment.json.before-alpha80`）：Alpha 79 的配置解析不认这个键。网站要等网页那一段重建网关才出来。
+  - 第一个设备码没人看到就过期了：编码 Agent 盯日志的脚本按关键行的总数比，升级时别的日志被重写、行数变少，抵掉了“发出设备码”那一行，等批准的脚本空等了 3 小时。盯日志要比关键行的集合，发了码马上贴给维护者。从发码接着跑的是发布目录的 `qa_resume.py`。
+  - 版本 PR #567 合并到网页上线约 4 小时 35 分钟，去掉空等的 3 小时约 1 小时 35 分钟。
 - Alpha 79 已于 2026-10-19 公开，见 [发布记录](./specs/agent-access/alpha79-release.md)。
   - 设置里退出登录、换个账号（#536、#537），桌面端换账号先把这台电脑移出原来的账户（#538–#541，无头验收 #543），旧版 iOS 浏览器补上缺的内置函数（#534）。
   - #536 改了 `crates/identity-adapter/`、#538 改了 `devices.rs`，实机验收走了一次新设备授权，第一个码过期、第二个批准；长期验收设备换成 Alpha 79 那台（`agent-room.alpha79.acceptance.fresh-device`）。
