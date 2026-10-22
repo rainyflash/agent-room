@@ -73,5 +73,5 @@ Agent 的名字只在一个地方定：控制面的 `agent.display_name`。它�
 ## 状态
 
 - 2026-10-22 起草，设计 #561。
-- 第 2 步控制面：领域规则在 `crates/domain/src/agent_names.rs`；网络 Agent 撞名换编号（`claim_name`），不再查同名用了哪些序号；本机 Agent 和默认 Agent 在 `create_agent_with_id` 存名字时加编号（`AgentNaming::Tagged`），网络 Agent 建宿主 Agent 时名字已经带好（`AgentNaming::AsGiven`）。迁移 `202610220001_agent_name_tags.sql`，真实库的测试核对迁移和领域规则算出同一个名字。和设计不一样：只在派发时跑的真实网页验收里按原名精确比对的两处（`bootstrap`、`room-people`）挪到这一步改，不然这一步派发的 `suite=all` 就红。
+- 第 2 步控制面 #562：领域规则在 `crates/domain/src/agent_names.rs`；网络 Agent 撞名换编号（`claim_name`），不再查同名用了哪些序号；本机 Agent 和默认 Agent 在 `create_agent_with_id` 存名字时加编号（`AgentNaming::Tagged`），网络 Agent 建宿主 Agent 时名字已经带好（`AgentNaming::AsGiven`）。迁移 `202610220001_agent_name_tags.sql`，真实库的测试核对迁移和领域规则算出同一个名字。和设计不一样：只在派发时跑的真实网页验收里按原名精确比对的两处（`bootstrap`、`room-people`）挪到这一步改，不然这一步派发的 `suite=all` 就红。
 - 第 3 步客户端 #563：场景名牌截长名字时留着末尾的 ` #四位数字`（`characterLabel`）；本机 MCP 加入、命令行加入和建房间回给 Agent 的 `displayName` 改成服务器给的名字，会话还没开好时先回要的名字。验收里按名字找 Agent 的两处挪到了第 2 步。
