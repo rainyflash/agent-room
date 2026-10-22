@@ -74,6 +74,14 @@ describe('room character labels', () => {
       'b',
     ]);
   });
+  it('keeps the four-digit agent tag when shortening a long name', () => {
+    expect(characterLabel('Codex #2316')).toBe('Codex #2316');
+    const shortened = characterLabel('A research assistant for the budget #2316');
+    expect(shortened).toBe('A research as… #2316');
+    expect(Array.from(shortened)).toHaveLength(20);
+    // 不是编号的照旧从后面截。
+    expect(characterLabel('A research assistant for the budget #23')).toBe('A research assistan…');
+  });
   it('shortens long names without breaking a combined emoji', () => {
     const emoji = '👩‍💻';
     expect(characterLabel(emoji.repeat(21))).toBe(`${emoji.repeat(19)}…`);

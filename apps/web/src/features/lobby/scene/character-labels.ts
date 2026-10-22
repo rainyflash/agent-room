@@ -2,9 +2,24 @@ import type { SceneCharacter } from './scene-character';
 import { estimatedTextWidth, labelStack, nameplate, ownerTag, statusSticker } from './scene-style';
 
 const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const graphemes = (text: string) => Array.from(segments.segment(text), (entry) => entry.segment);
+/** Agent 名字后面的四位编号（specs/agent-name-tag/design.md），同名的靠它分开。 */
+const nameTag = / #\d{4}$/u;
+
 export function characterLabel(name: string, limit = 20): string {
-  const letters = Array.from(segments.segment(name.trim()), (entry) => entry.segment);
-  return letters.length <= limit ? name.trim() : `${letters.slice(0, limit - 1).join('')}…`;
+  const trimmed = name.trim();
+  const letters = graphemes(trimmed);
+  if (letters.length <= limit) return trimmed;
+  // 太长时截前面的名字、留着编号，不然同名的又分不开了。
+  const tag = nameTag.exec(trimmed)?.[0];
+  if (tag !== undefined && limit > tag.length + 1) {
+    const base = graphemes(trimmed.slice(0, -tag.length).trimEnd());
+    return `${base
+      .slice(0, limit - tag.length - 1)
+      .join('')
+      .trimEnd()}…${tag}`;
+  }
+  return `${letters.slice(0, limit - 1).join('')}…`;
 }
 
 /**

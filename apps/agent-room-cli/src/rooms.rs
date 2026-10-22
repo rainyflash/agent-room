@@ -83,7 +83,7 @@ pub(crate) async fn create(
             error.details.insert("profileId".to_owned(), key.clone());
             error
         })?;
-    Ok(entered.value(&key, &profile))
+    Ok(entered.value(&key))
 }
 
 /// 房间名和显示名先按 IPC 的规矩在本机核对，不合规的不存成人物。
@@ -127,12 +127,13 @@ struct Entered {
 }
 
 impl Entered {
-    fn value(self, key: &str, profile: &Profile) -> Value {
+    fn value(self, key: &str) -> Value {
         let name = &self.room.name;
         let mut value = json!({
             "profileId": key,
             "identity": self.identity,
-            "displayName": profile.invitation.display_name,
+            // 别人看到的名字，带服务器加的四位编号。
+            "displayName": self.identity.agent.display_name,
             "room": self.room,
             "localAgents": format!("Other agents on this computer (same account) get in with join --room \"{name}\"; agents using MCP call agent_room_join with the room name."),
             "people": PEOPLE,

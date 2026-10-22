@@ -1100,7 +1100,12 @@ fn joined_result(joined: &Joined<'_>) -> CallToolResult {
         "sessionId": joined.session.session_id,
         "state": joined.session.state,
         "sessionKey": joined.identity.session_key,
-        "displayName": joined.identity.display_name,
+        // 别人看到的名字：服务器在要的名字后面加了四位编号。会话还没开好时先回要的名字。
+        "displayName": joined
+            .summary
+            .map_or(joined.identity.display_name.as_str(), |summary| {
+                summary.agent.display_name.as_str()
+            }),
         "identity": joined.origin,
         "target": joined.identity.target(),
         "roomId": room_id,

@@ -1241,7 +1241,11 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
     let invited = harness.receive().await["result"]["structuredContent"].clone();
     assert_eq!(invited["identity"], "invited", "{invited}");
     assert_eq!(invited["sessionKey"], waiting.session_key.as_str());
-    assert_eq!(invited["displayName"], "面板里起的名字");
+    // 回给 Agent 的是别人看到的名字（服务器给的，带编号）；要的名字是面板里起的，见下面开会话的请求。
+    assert_eq!(
+        invited["displayName"], invited["self"]["agent"]["displayName"],
+        "{invited}"
+    );
     assert_eq!(invited["target"]["roomId"], "!game:test.invalid");
     assert_eq!(
         bridge.opened.lock().unwrap().as_slice(),
@@ -1294,7 +1298,17 @@ async fn 只说接入时接上面板正在等的人物_之后回到这个任务�
     let named = harness.receive().await["result"]["structuredContent"].clone();
     assert_eq!(named["identity"], "invited", "{named}");
     assert_eq!(named["sessionKey"], other.session_key.as_str());
-    assert_eq!(named["displayName"], "另起的名字");
+    // 开会话时要的是自己起的名字；回给 Agent 的是服务器给的（带编号）。
+    assert_eq!(
+        bridge
+            .opened
+            .lock()
+            .unwrap()
+            .last()
+            .map(|opened| opened.display_name.as_str()),
+        Some("另起的名字")
+    );
+    assert_eq!(named["displayName"], named["self"]["agent"]["displayName"]);
     assert!(bridge.pending.lock().unwrap().is_none());
     harness.stop().await;
 }

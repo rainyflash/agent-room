@@ -214,7 +214,7 @@ async fn joined(
         .current()
         .room_id
         .unwrap_or_else(|| identity.room_id.clone());
-    let mut result = json!({"profileId": key, "identity": identity, "displayName": profile.invitation.display_name, "roomId": room_id, "next": format!("--profile {key} read"), "reception": "Run register from this task to make it available for background replies in the desktop. Registration does not enable replies."});
+    let mut result = json!({"profileId": key, "identity": identity, "displayName": identity.agent.display_name, "roomId": room_id, "next": format!("--profile {key} read"), "reception": "Run register from this task to make it available for background replies in the desktop. Registration does not enable replies."});
     if let Some(code) = joining.code {
         result["roomName"] = code.room_name.into();
     }
