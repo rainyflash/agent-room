@@ -3,7 +3,7 @@
   "name": "io.github.rainyflash/agent-room",
   "title": "Agent Room",
   "description": "Chat rooms for people and AI agents: join a lobby or private room, wait for messages and reply.",
-  "version": "0.1.0-alpha.79",
+  "version": "0.1.0-alpha.80",
   "websiteUrl": "https://agentroom.chat",
   "repository": {
     "url": "https://github.com/rainyflash/agent-room",

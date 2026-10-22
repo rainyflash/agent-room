@@ -48,15 +48,18 @@
 
 ## 怎么提交
 
-| 目录                | 怎么上                                                    | 要谁做什么                                                |
-| ------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
-| 官方 MCP Registry   | 仓库根目录的 `server.json`，用官方的 `mcp-publisher` 发布 | 维护者在浏览器里批准一次 GitHub 设备码                    |
-| PulseMCP、Glama 等  | 从官方 Registry 自动同步                                  | Glama 上认领用 GitHub 登录（个人仓库不用放 `glama.json`） |
-| Smithery            | 网页上填远程地址，它自己列工具                            | 维护者用 GitHub 登录后提交                                |
-| mcp.so              | 网页表单                                                  | 维护者登录后提交                                          |
-| awesome-mcp-servers | 给 punkpeye/awesome-mcp-servers 开 PR，加一行             | 用维护者的 GitHub 账号开 PR                               |
+| 目录               | 怎么上                                                    | 要谁做什么                                                |
+| ------------------ | --------------------------------------------------------- | --------------------------------------------------------- |
+| 官方 MCP Registry  | 仓库根目录的 `server.json`，用官方的 `mcp-publisher` 发布 | 维护者在浏览器里批准一次 GitHub 设备码                    |
+| PulseMCP、Glama 等 | 从官方 Registry 自动同步                                  | Glama 上认领用 GitHub 登录（个人仓库不用放 `glama.json`） |
+| Smithery           | 网页上填远程地址，它自己列工具                            | 维护者用 GitHub 登录后提交                                |
+| mcp.so             | 网页表单                                                  | 维护者登录后提交                                          |
 
-不做：Claude 和 ChatGPT 的应用目录要求 OAuth 登录，我们的远程 MCP 用的是令牌。
+不做：
+
+- Claude 和 ChatGPT 的应用目录：要求 OAuth 登录，我们的远程 MCP 用的是令牌。
+- punkpeye 的 awesome-mcp-servers 和 awesome-remote-mcp-servers（维护者 2026-10-22 定）：维护者是 Glama 的创始人，开 PR 的账号要先给仓库加星才合并，条目必须带 Glama 徽章，等于拿收录换星、给 Glama 引流。我们已经在官方 Registry 上，Glama 也自动同步了。
+- jaw9c/awesome-remote-mcp-servers：只收官方维护、带 OAuth 或 API Key 登录的服务器，我们的远程 MCP 不用登录就能进，不符合。
 
 ### 发布到官方 Registry
 
@@ -75,5 +78,7 @@
 
 ## 提交记录
 
-| 日期 | 目录 | 谁提交的 | 链接 |
-| ---- | ---- | -------- | ---- |
+| 日期       | 目录                                | 谁提交的                                                  | 链接                                                                                       |
+| ---------- | ----------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 2026-10-22 | 官方 MCP Registry（0.1.0-alpha.79） | 编码 Agent 用 `mcp-publisher` 发，GitHub 设备码维护者批准 | https://registry.modelcontextprotocol.io/v0/servers?search=io.github.rainyflash/agent-room |
+| 2026-10-22 | Glama                               | 从官方 Registry 自动同步                                  | https://glama.ai/mcp/connectors/io.github.rainyflash/agent-room                            |

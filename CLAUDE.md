@@ -143,7 +143,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
 
-## 当前进度（2026-10-20）
+## 当前进度（2026-10-22）
 
 ### 网站被搜到
 
@@ -159,7 +159,25 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 指南是 `apps/web/site/guides/<slug>.<en|zh-CN>.md`，两种语言都要有，不然构建失败。改了指南顺手改 front matter 里的 `updated`。
   - MCP 目录：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`）；目录上用的英文文案、每个目录怎么提交和提交记录在 `docs/mcp-directories.md`。每个目录提交前先问维护者，要登录的由他自己登录；官方 Registry 同一个版本号只能发一次。
 - 第 2 到第 4 步要在同一个版本里发布：`static` 要镜像里已经有 `/srv/site`。#556 改了 `tools/prodops/render.py`，发版实机验收要设备码。发版时把生产 `deployment.json` 的 `public.site` 改成 `static`，改之前留一份 `deployment.json.before-alpha80`。
-- 上线以后：维护者在 Google Search Console 用 DNS 验证 agentroom.chat，提交 `https://agentroom.chat/sitemap.xml`，首页和指南请求编入索引，Bing 从 Search Console 导入；然后才发官方 Registry 和其他目录。一周、四周后各看一次收录和搜索词。
+- Google Search Console 2026-10-22 验证了网域资源 agentroom.chat：维护者同意后，编码 Agent 在他的 Chrome 里加了 Vercel 上的 DNS TXT 记录。官方 MCP Registry 同一天发了 `io.github.rainyflash/agent-room` 0.1.0-alpha.79（GitHub 设备码维护者自己批），Glama 自动同步了；工具没变就不用每版再发。
+- Alpha 80 上线以后：提交 `https://agentroom.chat/sitemap.xml`，首页和指南请求编入索引，Bing 从 Search Console 导入；Smithery、mcp.so 由维护者自己登录后提交。punkpeye 的两个 awesome 列表不做（维护者 2026-10-22 定：开 PR 的账号要先加星才合并，条目必须带 Glama 徽章），原因记在 `docs/mcp-directories.md`。一周、四周后各看一次收录和搜索词。
+
+### Agent 名字后面的编号
+
+- 2026-10-22 维护者说房间里 Agent 多了容易重名，要在每个名字后面加一个随机的四位编号，比如 `codex #2316`。设计在 [specs/agent-name-tag/design.md](./specs/agent-name-tag/design.md)（#561），进度记在它的“状态”一节。第 2 步控制面 #562（领域规则、网络 Agent 撞名换编号、迁移 `202610220001` 给已有的 Agent 补上），第 3 步客户端 #563（名牌截短名字时留着编号，本机 MCP 和命令行回带编号的名字）。随 Alpha 80 发布。
+- 改这一块时别拆的几样：
+  - 编号取 ID 末尾 32 位除以 10000 的余数（网络 Agent 用网络 Agent 的 ID，别的用 Agent ID）。迁移里的 SQL 和 `crates/domain/src/agent_names.rs` 要算出同一个，真实库的测试卡着。
+  - 带编号的名字就存在 `agent.display_name`，名片和消息里签的就是它，旧版客户端不用升级也看得到。名片由 Bridge 和网关发现名字变了自己重写（`is_current_card`）。
+  - 本机 MCP、命令行找任务里已有的 Agent，后台回复的登记，宿主 Agent 的请求指纹，都按“要的名字”。别改成按服务器存的名字，不然同一个任务再进一次会另起一个 Agent。
+  - 要的名字末尾已经是 ` #` 加四位数字的，先去掉再加：拿自己显示的名字再进一次不会变成两个编号，也冒充不了别人的编号。
+  - 网络 Agent 全站不重名，比的是带编号的整个名字，撞上了换一个随机编号，最多 5 次。
+
+### 教 Agent 一直守着房间
+
+- 2026-10-22 维护者说接入的口令和提示词要写清楚怎么用好 Agent Room，比如监听房间要用一直跑着的循环。以前的话只说“等消息、确认”，不少 Agent 回完一句就不再听了。
+- #565 在这些地方写上“一直守着房间，直到主人说停：回完话马上再等，能放后台就放后台”：接入对话框给 Agent 的话、建房后转给别的 Agent 的话、远程和本机 MCP 的服务说明和等消息的说明、命令行 `guide`（新的 `listening` 一节，最好在后台开一个 `listen`）、`agents.md`。同一个令牌同一时间只算一个等待（新的一次让正在等的返回，`wake.reason` 是 `superseded`），命令行一个人物同一时间只能有一个读者。随 Alpha 80 发布。
+- 后台回复交给宿主的提示别加这句：那是自动运行，只处理这一批。
+- 两份 MCP 服务说明都贴着 1536 字节的上限（本机的 1524），要加话得先删别的。
 
 ### 退出登录和换账号
 
@@ -505,6 +523,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 80 正在发布：Agent 名字后面的四位编号（#561–#563）、教 Agent 一直守着房间（#565）、撤销电脑后它的 Agent 离开房间（#545–#549）、设备没准备好时安全页不再说已就绪（#552）、agentroom.chat 的静态网站（#553–#557），以及 vite 和证书库的安全升级（#564、#566）。
+  - #546 改了 `crates/postgres-adapter/src/devices.rs`、#556 改了 `tools/prodops/render.py`，实机验收要走一次新设备授权，维护者批准设备码。
+  - 生产 `deployment.json` 的 `public.site` 在切换源码以后、部署以前改成 `static`（发布目录的 `set_public_site.py`，原配置留在 `deployment.json.before-alpha80`）：Alpha 79 的配置解析不认这个键。
+  - 有三个迁移（`202610190001`、`202610190002`、`202610220001`），部署时照常跑。
 - Alpha 79 已于 2026-10-19 公开，见 [发布记录](./specs/agent-access/alpha79-release.md)。
   - 设置里退出登录、换个账号（#536、#537），桌面端换账号先把这台电脑移出原来的账户（#538–#541，无头验收 #543），旧版 iOS 浏览器补上缺的内置函数（#534）。
   - #536 改了 `crates/identity-adapter/`、#538 改了 `devices.rs`，实机验收走了一次新设备授权，第一个码过期、第二个批准；长期验收设备换成 Alpha 79 那台（`agent-room.alpha79.acceptance.fresh-device`）。
