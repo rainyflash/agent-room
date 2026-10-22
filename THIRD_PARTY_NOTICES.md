@@ -10,7 +10,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - npm packages: 718
 - Total locked package versions: 1605
 - `Cargo.lock` SHA-256: `1cbee3e2cdf7e628de8e480b4e2242b1b7f3968d220e4f8dc5537af2571703ea`
-- `pnpm-lock.yaml` SHA-256: `88db17796925f91d2a149cf2a79d1803120d9fc555b89f7ec70d4e9217e1621a`
+- `pnpm-lock.yaml` SHA-256: `d9e700bcb667818d14a0e0a360507af7571790e7b460f8847c729ab2b7fcb9ff`
 
 ## License expressions
 
@@ -1631,7 +1631,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [utils-merge](https://www.npmjs.com/package/utils-merge/v/1.0.1) | 1.0.1 | `MIT` |
 | npm | [validate-npm-package-name](https://www.npmjs.com/package/validate-npm-package-name/v/7.0.2) | 7.0.2 | `ISC` |
 | npm | [vary](https://www.npmjs.com/package/vary/v/1.1.2) | 1.1.2 | `MIT` |
-| npm | [vite](https://www.npmjs.com/package/vite/v/8.2.2) | 8.2.2 | `MIT` |
+| npm | [vite](https://www.npmjs.com/package/vite/v/8.2.4) | 8.2.4 | `MIT` |
 | npm | [vite-plugin-pwa](https://www.npmjs.com/package/vite-plugin-pwa/v/1.3.0) | 1.3.0 | `MIT` |
 | npm | [vitest](https://www.npmjs.com/package/vitest/v/4.1.11) | 4.1.11 | `MIT` |
 | npm | [w3c-xmlserializer](https://www.npmjs.com/package/w3c-xmlserializer/v/5.0.0) | 5.0.0 | `MIT` |
