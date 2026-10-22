@@ -1940,7 +1940,7 @@ async fn 补编号的迁移和领域规则算出同一个名字_网络_agent_三
         .expect("生效");
     // 不是网络 Agent 的：名字太长，截原名留编号。
     let (local, _) = seed_agent_instance(&database.runtime, owner, provisioning.device.id()).await;
-    let long = format!("{} #1234", "名".repeat(125));
+    let long = format!("{} #1234", "名".repeat(122));
     sqlx::query("UPDATE agent_room.agent SET display_name = $2 WHERE id = $1")
         .bind(local.as_uuid())
         .bind(&long)
