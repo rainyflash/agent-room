@@ -46,6 +46,8 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal
       - name: 验证编排单元边界
         run: python -m unittest tools.tests.test_federation
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/federation/compose.yaml
       - name: 执行双 Homeserver 联邦验收
         run: python tools/federation.py bootstrap
       - name: 上传联邦证据
