@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_room_domain::{ids::RoomCatalogId, time::UtcMillis};
+use agent_room_domain::{ids::RoomCatalogId, rooms::RoomCatalogKind, time::UtcMillis};
 
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
@@ -102,6 +102,10 @@ impl PublicLobbyEntryService {
             .await
             .map_err(PublicLobbyEntryFailure::Directory)?
             .ok_or(PublicLobbyEntryFailure::NotFound)?;
+        // 私人房间的地址也是 /lobby/<房间号>，有人拿它走到这里；它不是公开大厅，不能拿去供给。
+        if catalog.kind() != RoomCatalogKind::PublicLobby {
+            return Err(PublicLobbyEntryFailure::NotFound);
+        }
         let outcome = self
             .provisioning
             .provision(LobbyProvisioningRequest {

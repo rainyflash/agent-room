@@ -19,7 +19,7 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
-    ids::{RoomCatalogId, RoomInstanceId},
+    ids::{PrincipalId, RoomCatalogId, RoomInstanceId},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
@@ -31,6 +31,7 @@ use uuid::Uuid;
 
 const CATALOG_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
 const INSTANCE_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
+const OWNER_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
 
 #[tokio::test]
 async fn 已有云端房间时直接返回且不重复供给() {
@@ -74,6 +75,21 @@ async fn 不存在的目录不触发_matrix_供给() {
         })
         .await
         .expect_err("不存在的目录必须失败关闭");
+
+    assert_eq!(failure.kind(), PublicLobbyEntryFailureKind::NotFound);
+    assert_eq!(provisioning.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn 私人房间的地址不当成公开大厅供给() {
+    let directory = Arc::new(FakeDirectory::new(None, Some(private_catalog())));
+    let provisioning = Arc::new(FakeProvisioning::ready());
+    let failure = service(directory, provisioning.clone())
+        .enter(EnterPublicLobby {
+            catalog_id: catalog_id(),
+        })
+        .await
+        .expect_err("私人房间不是公开大厅");
 
     assert_eq!(failure.kind(), PublicLobbyEntryFailureKind::NotFound);
     assert_eq!(provisioning.calls.load(Ordering::SeqCst), 0);
@@ -211,6 +227,27 @@ fn catalog() -> RoomCatalog {
         },
     )
     .expect("公开目录有效")
+}
+
+fn private_catalog() -> RoomCatalog {
+    RoomCatalog::new(
+        catalog_id(),
+        RoomCatalogFields {
+            kind: RoomCatalogKind::PrivateRoom,
+            slug: None,
+            name: "Research lab".to_owned(),
+            description: String::new(),
+            language: None,
+            matrix_space_id: None,
+            owner_principal_id: Some(PrincipalId::from_uuid(
+                Uuid::parse_str(OWNER_ID).expect("主人 UUID 有效"),
+            )),
+            visibility: RoomCatalogVisibility::Private,
+            retention_days: None,
+            status: RoomCatalogStatus::Active,
+        },
+    )
+    .expect("私人目录有效")
 }
 
 fn room() -> RoomInstance {
