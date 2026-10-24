@@ -195,6 +195,12 @@ python3 tools/production.py registration-apply --config /etc/agent-room/deployme
 python3 tools/production.py launch-status --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 ```
 
+这段时间出了哪些错，用 `error-digest` 汇总：读控制面、身份服务、Synapse 和网关的容器日志，同一种错算一种，打掉邮箱、IP、账户和房间的 ID、令牌，去掉噪音表（`tools/prodops/error_signatures.toml`）里写着正常的，只读。`--since` 给 `1h`、`2d` 这样的时长或带时区的时刻，`--format json` 给下一步用。容器日志只回看到上次重建，设计见 [specs/error-triage/design.md](../../specs/error-triage/design.md)：
+
+```bash
+python3 tools/production.py error-digest --since 24h --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
 控制平面必须显式允许桌面壳的精确源站：Windows 是 `http://tauri.localhost`，macOS 是自定义协议 `tauri://localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为这两个值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
 
 ## 外部 PostgreSQL 与对象存储
