@@ -13,8 +13,12 @@
             </#if>
             <#if skipLink??>
             <#else>
+                <#-- An expired email link carries no client; fall back to the app URL the deployment sync writes into the realm. -->
+                <#assign appUrl = (realm.attributes["agentRoomAppUrl"])!"">
                 <#if client?? && client.baseUrl?has_content>
                     <a class="ar-button ar-button--secondary ar-button--block" id="backToApplication" href="${client.baseUrl}">${msg("backToApplication")}</a>
+                <#elseif appUrl?has_content>
+                    <a class="ar-button ar-button--secondary ar-button--block" id="backToApplication" href="${appUrl}">${msg("backToApplication")}</a>
                 </#if>
             </#if>
         </div>

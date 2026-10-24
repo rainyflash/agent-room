@@ -695,6 +695,7 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertTrue(realm["registrationEmailAsUsername"])
         self.assertEqual(realm["actionTokenGeneratedByUserLifespan"], 60 * 60)
         self.assertEqual(realm["accessCodeLifespanUserAction"], 60 * 60)
+        self.assertEqual(realm["attributes"], {"agentRoomAppUrl": f"{self.config.public.app_origin}/"})
         self.assertEqual(
             web_client["redirectUris"],
             [f"{self.config.public.app_origin}/connect/finalize"],
@@ -1184,6 +1185,20 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertTrue(presented["internationalizationEnabled"])
         self.assertEqual(presented["passwordPolicy"], "length(8)")
         self.assertNotIn("loginTheme", closed)
+        # 没有客户端的错误页（邮件里过期的链接）靠这个属性给“回到 Agent Room”，realm 的其他属性原样留着。
+        with_app_url = module.apply_app_url(
+            {**presented, "attributes": {"frontendUrl": "https://id.example"}},
+            frontend_origin="https://app.example",
+        )
+        self.assertEqual(
+            with_app_url["attributes"],
+            {"frontendUrl": "https://id.example", "agentRoomAppUrl": "https://app.example/"},
+        )
+        self.assertNotIn("attributes", presented)
+        self.assertEqual(
+            module.apply_app_url(presented, frontend_origin="https://app.example")["attributes"],
+            {"agentRoomAppUrl": "https://app.example/"},
+        )
         # Other operator rules stay; a stricter minimum is never lowered.
         self.assertEqual(module.password_policy("length(12) and digits(1)"), "length(12) and digits(1)")
         self.assertEqual(module.password_policy("length(4) and notUsername(undefined)"),

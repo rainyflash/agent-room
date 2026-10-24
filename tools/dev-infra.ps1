@@ -216,6 +216,7 @@ function Write-KeycloakRealm {
     internationalizationEnabled = $true
     supportedLocales = @('zh-Hans', 'en')
     defaultLocale = 'en'
+    attributes = [ordered]@{ agentRoomAppUrl = 'https://app.agent-room.localhost:18443/' }
     clients = @(
       [ordered]@{
         clientId = 'agent-room-web'

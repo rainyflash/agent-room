@@ -32,6 +32,8 @@ THEME: Final = "agent-room"
 SUPPORTED_LOCALES: Final = ("zh-Hans", "en")
 DEFAULT_LOCALE: Final = "en"
 MINIMUM_PASSWORD_LENGTH: Final = 8
+# 登录主题在没有客户端的错误页（邮件里过期的链接）上，用它给“回到 Agent Room”。
+APP_URL_ATTRIBUTE: Final = "agentRoomAppUrl"
 
 
 class ReconcileError(RuntimeError):
@@ -363,6 +365,16 @@ def apply_presentation_policy(realm: dict[str, object]) -> dict[str, object]:
     return updated
 
 
+def apply_app_url(realm: dict[str, object], *, frontend_origin: str) -> dict[str, object]:
+    """realm 的其他属性原样留着，只写上网页的地址。"""
+    updated = dict(realm)
+    attributes = realm.get("attributes")
+    attributes = dict(attributes) if isinstance(attributes, dict) else {}
+    attributes[APP_URL_ATTRIBUTE] = f"{frontend_origin}/"
+    updated["attributes"] = attributes
+    return updated
+
+
 def apply_user_profile_policy(profile: dict[str, object]) -> dict[str, object]:
     """注册只要昵称：昵称存在 firstName，姓氏不再必填，也不向用户展示。"""
     updated = copy.deepcopy(profile)
@@ -492,6 +504,8 @@ def reconcile() -> None:
     reconcile_user_profile(base_url, token)
     redirect_url = require_https_url("AGENT_ROOM_OIDC_REDIRECT_URL", origin_only=False)
     frontend_origin = require_https_url("AGENT_ROOM_FRONTEND_ORIGIN", origin_only=True)
+    closed_realm = apply_app_url(closed_realm, frontend_origin=frontend_origin)
+    update_realm(base_url, token, closed_realm)
     web_client = load_web_client(base_url, token)
     update_web_client(
         base_url,

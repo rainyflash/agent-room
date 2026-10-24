@@ -23,6 +23,31 @@ const secondPassword = process.env.AGENT_ROOM_E2E_SECOND_PASSWORD;
 /** 登录后自动签好这台设备（ADR 0011）：真实控制面保管钥匙、真实 Synapse 上签名。 */
 const thisDeviceReady = /^(?:This device is ready|这台设备已就绪)$/u;
 
+test('邮件里的链接过期了：身份服务的错误页说清楚接下来怎么办，给回到 Agent Room 的按钮', async ({
+  baseURL,
+  page,
+}) => {
+  await page.goto('/connect');
+  await page.getByRole('button', { name: /Sign in to Agent Room|登录 Agent Room/u }).click();
+  await expect(page).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u, {
+    timeout: 40_000,
+  });
+  const identityOrigin = new URL(page.url()).origin;
+  // 状态对不上的 detached-info 和“过期、这个浏览器又没有登录会话”的邮件链接是同一个错误页：
+  // 认不出客户端，按钮要靠 realm 上的网页地址（agentRoomAppUrl）。
+  await page.goto(
+    `${identityOrigin}/realms/agent-room/login-actions/detached-info?kc_state_checker=stale`,
+  );
+  await expect(
+    page.getByText(
+      /This link has expired\. If you already set a password|这个链接已经过期了。设过密码的话/u,
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: /^(?:Back to Agent Room|回到 Agent Room)$/u }),
+  ).toHaveAttribute('href', `${new URL(baseURL ?? '').origin}/`);
+});
+
 test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }) => {
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
   const failures = collectUnhandledFailures(page);
