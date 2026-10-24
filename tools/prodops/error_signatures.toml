@@ -87,6 +87,11 @@ reason = "Synapse 后台任务的指标提示，不影响功能"
 
 [[ignore]]
 service = "synapse"
+summary = '^WARNING synapse\.storage\.txn \[TXN OPERROR\] \{\S*\} could not serialize access due to concurrent update$'
+reason = "PostgreSQL 的可重复读事务撞上并发更新，Synapse 会自动重试这个事务，日志里只是一条提示"
+
+[[ignore]]
+service = "synapse"
 summary = '^WARNING synapse\.http\.server Not sending response to request '
 reason = "客户端在回答之前断开了（长轮询被取消、页面关了）"
 
