@@ -42,6 +42,8 @@ jobs:
         run: |
           corepack pnpm@10.28.0 install --frozen-lockfile
           corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/compose/compose.yaml
       - name: 执行封闭测试矩阵
         run: >-
           dbus-run-session --

@@ -69,6 +69,8 @@ jobs:
           corepack pnpm@10.28.0 --filter @agent-room/protocol build
           corepack pnpm@10.28.0 --filter @agent-room/web typecheck
           corepack pnpm@10.28.0 --filter @agent-room/web exec vitest run src/features/automation src/features/session src/shared/browser/window-browser-gateway.spec.ts src/shared/routing/route-state.spec.ts
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/compose/compose.yaml postgres content-scanner
       - name: 准备隔离 PostgreSQL 与 ClamAV
         shell: pwsh
         run: |
@@ -398,6 +400,8 @@ jobs:
           corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
       - name: 预编译控制平面
         run: cargo build --locked -p agent-room-control-plane
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/compose/compose.yaml
       - name: 启动并初始化隔离依赖
         shell: pwsh
         run: |
@@ -455,6 +459,8 @@ jobs:
         run: bash tools/install-linux-desktop-deps.sh
       - name: 从干净检出引导贡献者环境
         run: node tools/bootstrap.mjs
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/compose/compose.yaml
       - name: 启动真实外部依赖
         shell: pwsh
         run: ./tools/dev-infra.ps1 up
@@ -541,6 +547,8 @@ jobs:
         run: |
           node tools/bootstrap.mjs
           corepack pnpm@10.28.0 --filter @agent-room/web exec playwright install --with-deps chromium
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/compose/compose.yaml
       - name: 验收 Vault 重启、独立身份及 Matrix 收发
         run: python tools/headless_acceptance.py
       - name: 上传服务器验收证据
@@ -577,6 +585,8 @@ jobs:
         run: bash tools/install-linux-desktop-deps.sh
       - name: 安装工具
         run: node tools/bootstrap.mjs
+      - name: 预拉依赖镜像（镜像站出错时自动重试）
+        run: python tools/pull_images.py infra/compose/compose.yaml
       - name: 量网络 Agent 多了以后各用多少 CPU、多久收到
         run: python tools/network_agent_load.py
       - name: 上传负载测量结果

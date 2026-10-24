@@ -62,6 +62,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
   - 同一个用例以前偶发 `Failed to process outgoing request 1: AbortError: signal is aborted without reason`（编号 0 也见过）：退出登录时 `stopClient` 中止了还在发的加密请求，SDK 把错误拼成一句话记成错误。现在退出时只认这一句的格式、记成调试信息（`matrix-lifecycle-logger.ts`）；再红在这里，就是有请求没在退出时停下，要查，别只重跑。
   - 无头验收里 Synapse 偶尔没起来。
+- CI 起容器之前先用 `tools/pull_images.py` 把 compose 文件里的镜像拉到本地，镜像站回 503 或限流时等 10、30、60 秒再拉；compose 只拉本地没有的，之后就不再去镜像站。以前 compose 拉镜像出一次错整个作业就红（2026-10-24 quay.io 回 503）。新加起容器的作业也先加这一步，`test_pull_images` 卡着。
 - 依赖的安全公告每天查一次（`advisories.yml`，UTC 23:23，只跑 `pnpm audit:node` 和 `cargo deny check`，几分钟）；改了 `Cargo.lock`、`pnpm-lock.yaml`、`package.json`、`deny.toml` 的 PR 上也跑。以前只有发布调度的完整 CI 查，发布提交切好以后才撞上（Alpha 59、80、81 都换过发布提交）。
   - 定时那次没过，就开一个 `[安全依赖] 每天的依赖安全检查没过` 的 issue（标 `security-dependency`），之后每天没过补一条、过了自动关。它开着就先处理再发版。
   - 它不是必需检查。PR 上红了同样不能合。
