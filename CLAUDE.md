@@ -160,6 +160,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 关掉的 issue 同一版上再出现不重开，换了版本才重开：修好就关，不用等发版。是正常现象的加噪音规则，别只关 issue，不然下一版又重开。
   - 版本号写在状态文件里，跟 `release_version()` 对比（Cargo workspace 版本加短提交号）。手动改了版本号的写法，状态文件里记着的也要一起改，不然关着的都会被当成回归重开。
   - 令牌 2026-11-23 过期（只有 30 天），离过期 14 天时自动开 `needs-owner` 的 issue；换令牌只能维护者自己来。
+- 第 4 步：云端 routine [`agent-room 生产错误处理`](https://claude.ai/code/routines/trig_01815ysJTn7rdshjCHSshs9N) 在 `agent-room-ops` 有 issue 新开、重新打开时叫醒，另外每天北京时间 10 点兜底一次；提示词全文和改法在 [docs/operations/error-triage.md](./docs/operations/error-triage.md)。
+  - 改提示词要两边一起改：文档开 PR，合并后在 routine 上改成一样的。
+  - 事件触发器按不了标签，提示词让它碰到不带 `prod-error` 的直接结束；云端的 `gh` 用不了 GraphQL，走会话的 GitHub 工具或 `gh api`。
 - Keycloak 的事件（`LOGIN_ERROR` 等）只在 identity 容器日志里，realm 没开存事件；容器日志只回看到上一次部署，Synapse 的大约三天半。
 
 ### 网站被搜到

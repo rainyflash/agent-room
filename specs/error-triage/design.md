@@ -137,3 +137,9 @@
   - 令牌离过期 14 天时开一个 `needs-owner` 的 issue 提醒维护者换（不带 `prod-error`，不叫醒开发 Agent），设计原来写的是一个月，这次的令牌一共才 30 天。
   - 版本号以 Cargo workspace 的为准（2a 读了根目录的 package.json，那个不跟着发版改）。
   - 开 issue 时 GitHub 对只有 Issues 权限的令牌可能悄悄丢标签，开完核对一遍、少了补上：叫醒开发 Agent 靠 `prod-error`。
+- 2026-10-24：第 3 步随 Alpha 81 上线。发布脚本最后一步在服务器上装好了定时器（`agent-room-error-digest.timer`，09:34Z 启用，下一次 10:07Z），以后跟着源码走，不用每版再装。
+- 2026-10-24：第 4 步叫醒开发 Agent 的 routine 建好了，怎么改、怎么查、提示词全文在 [docs/operations/error-triage.md](../../docs/operations/error-triage.md)。和设计不一样的几处：
+  - routine 的 GitHub 事件触发器不支持按标签过滤，`agent-room-ops` 里任何 issue 新开、重新打开都会叫醒它，由提示词让它碰到不带 `prod-error` 的直接结束；
+  - 云端会话里 `gh` 用不了 GraphQL（`gh issue list`、`gh pr merge --auto` 回 403），提示词让它用会话自带的 GitHub 工具或 `gh api` 走 REST；
+  - 每天兜底跳过一小时内刚更新过的 issue，免得和正被事件叫醒的那次撞上。
+  - 试跑了一次：两个仓库都克隆了，读到 `agent-room-ops` 里没有要处理的，什么都没写。
