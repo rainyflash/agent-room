@@ -338,6 +338,8 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
         # 与网页端 fallbackLng 一致用英文，法语、日语等浏览器不会看到中文登录页。
         "defaultLocale": "en",
         "passwordPolicy": "length(8)",
+        # 与 keycloak-registration-reconcile.py 的 APP_URL_ATTRIBUTE 一致：没有客户端的错误页靠它给“回到 Agent Room”。
+        "attributes": {"agentRoomAppUrl": f"{public.app_origin}/"},
         "clients": [
             {
                 "clientId": "agent-room-web",
