@@ -543,10 +543,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 81 正在发布：打开私人房间的地址直接进房间（#570）、登录没走完时自动重开登录页（#573）、邮件链接过期时说清楚怎么办（#574），以及生产错误汇总和自动开 issue（#572、#575）。
-  - 第一个发布提交 `ec3a7a66`（版本 PR #576）的完整 CI 红在供应链：上游新出了 zod、undici、body-parser、tokio、ctutils、crypto-bigint 的公告。#578 升级了前五个，crypto-bigint 要等上游换 p256，加了例外（跟踪 #577）；#578 的合并提交成为发布提交。还没部署，草稿改名让位。
-  - #574 改了 `infra/identity/`、`keycloak-registration-reconcile.py` 和 `tools/prodops/render.py`，实机验收要走一次新设备授权，维护者批准设备码。
-  - 没有迁移，部署配置没加新变量。公开以后发布脚本在服务器上装上每小时一次的错误汇总（`install_error_digest_schedule.py`）。
+- Alpha 81 已于 2026-10-24 公开，见 [发布记录](./specs/agent-access/alpha81-release.md)。
+  - 打开私人房间的地址直接进房间（#570）、登录没走完时自动重开登录页（#573）、邮件链接过期时说清楚怎么办（#574），生产错误汇总和自动开 issue（#572、#575），以及依赖的安全升级（#578）。
+  - 第一个发布提交 `ec3a7a66`（版本 PR #576）的完整 CI 开跑一分钟就红在供应链（上游新出了几条公告），可本机发布链要等候选建完、草稿资产下完才看 CI，晚了一个半小时才发现；第一次下载还断在 `PROTOCOL_ERROR`。修复 #578 的合并提交成为发布提交，草稿改名让位。
+  - #574 改了登录主题和 `keycloak-registration-reconcile.py`，实机验收走了一次新设备授权，维护者出码 5 分钟就批准了；长期验收设备换成 Alpha 81 那台（`agent-room.alpha81.acceptance.fresh-device`）。
+  - 升级前基线第一次报 `cli.connection.starting`（本机 CLI 还在连接，可重试），挪开日志重跑就过。
+  - 版本 PR #576 合并到网页上线约 4 小时 27 分钟，从 #578 合并算约 1 小时 42 分钟。之后在改：每天查一次安全公告（#580）、发布链看到失败的作业就停、草稿资产由服务器下、CI 拉镜像自动重试。
 - Alpha 80 已于 2026-10-22 公开，见 [发布记录](./specs/agent-access/alpha80-release.md)。
   - Agent 名字后面的四位编号（#561–#563）、教 Agent 一直守着房间（#565）、撤销电脑后它的 Agent 离开房间（#545–#549）、设备没准备好时安全页不再说已就绪（#552）、agentroom.chat 的静态网站（#553–#557），以及 vite 和证书库的安全升级（#564、#566）。
   - #546 改了 `crates/postgres-adapter/src/devices.rs`、#556 改了 `tools/prodops/render.py`，实机验收走了一次新设备授权；长期验收设备换成 Alpha 80 那台（`agent-room.alpha80.acceptance.fresh-device`）。
@@ -701,5 +703,5 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 远程命令长时间不出声时，SSH 会被路上的设备掐断：服务器的 sshd 不发保活（`ClientAliveInterval 0`）。Alpha 69 部署前的全量五分半没有输出，`deploy_remote.py` 退出码 255，部署在服务器上照样跑完。Alpha 69 起 `run_remote.py` 和 `deploy_remote.py` 的 ssh 带 `ServerAliveInterval=20`，派生时别丢。再遇到断线，先只读看服务器上的 `release_deploy.py` 还在不在、检查点（`deployment_status.py`）到了哪一步，等它自己跑完，别重跑部署。
 - 发版部署先把生产的源码切到候选，再拿上一版渲染的 `compose.env` 做部署前备份（故意不重新渲染，留住上一版的配置）。候选在 `infra/production/compose.yaml` 里新加的必填变量（`${名字:?…}`）上一版的 `compose.env` 里没有，compose 整个起不来。Alpha 73 切完源码半分钟就部署，停在 `AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS is missing a value`，没动任何服务；等 00:00Z 的定时备份按候选重新渲染了一遍（定时备份不留旧配置），重跑才过。以前几版碰巧在切换和部署之间赶上一次定时备份。所以新变量先带默认值（`${名字:-值}`），发出去一版以后再改成必填，`test_prodops` 的 `REQUIRED_COMPOSE_VARIABLES` 卡着。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
-- 带着 #575 的那一版（Alpha 81）公开以后，在服务器上跑一次 `production.py error-digest-schedule-install --issue-repository rainyflash/agent-room-ops`（完整命令在 `infra/production/README.md`），装好后跟着源码走，以后的版本不用再装。Alpha 81 的发布脚本最后一步就是它（`publish_rollout.sh` 跑 `install_error_digest_schedule.py`）。
+- 错误汇总的定时器 Alpha 81 公开时由发布脚本最后一步装上了（`install_error_digest_schedule.py`），之后跟着源码走，以后的版本不用再装，派生发布脚本时去掉这一步。换了服务器才要重装，命令在 `infra/production/README.md`。
 - 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。
