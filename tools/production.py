@@ -4,11 +4,21 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
+import json
 from pathlib import Path
 import sys
 
 from prodops.backup import BackupError
 from prodops.config import DeploymentConfigError, load_deployment_config
+from prodops.error_digest import (
+    SERVICES as ERROR_DIGEST_SERVICES,
+    NoiseTableError,
+    load_noise,
+    parse_window,
+    report as error_report,
+    summarize,
+)
 from prodops.launch_status import report as launch_report
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
@@ -40,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
             "control-plane-reload",
             "registration-apply",
             "launch-status",
+            "error-digest",
             "down",
         ),
     )
@@ -55,6 +66,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--target-time",
         help="restore-drill 恢复到这一刻，要带时区，比如 2026-10-11T09:20:00Z",
+    )
+    parser.add_argument(
+        "--since",
+        default="1h",
+        help="error-digest 从多久以前看起：1h、30m、2d，或带时区的时刻",
+    )
+    parser.add_argument("--until", help="error-digest 看到哪一刻，要带时区；不给就是现在")
+    parser.add_argument(
+        "--format",
+        choices=("markdown", "json"),
+        default="markdown",
+        help="error-digest 的输出：给人看的 markdown，或者给下一步用的 json",
     )
     parser.add_argument(
         "--network-agent",
@@ -147,6 +170,24 @@ def main() -> int:
             case "launch-status":
                 for line in launch_report(runtime.launch_status(), config.network_agents.limits):
                     print(line)
+            case "error-digest":
+                # 只读：读这段时间的容器日志，打码、去掉噪音表里的，打出汇总。还不往 GitHub 发。
+                since, until = parse_window(arguments.since, arguments.until, datetime.now(UTC))
+                logs = {
+                    service: runtime.service_logs(service, since, until)
+                    for service in ERROR_DIGEST_SERVICES
+                }
+                digest = summarize(logs, load_noise())
+                window = (since.strftime("%Y-%m-%dT%H:%M:%SZ"), until.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                if arguments.format == "json":
+                    payload = {"since": window[0], "until": window[1],
+                               "version": runtime.release_version(), **digest.to_json()}
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                else:
+                    for line in error_report(
+                        digest, since=window[0], until=window[1], version=runtime.release_version()
+                    ):
+                        print(line)
             case "down":
                 runtime.down()
             case _:
@@ -155,6 +196,7 @@ def main() -> int:
         BackupError,
         BackupScheduleError,
         DeploymentConfigError,
+        NoiseTableError,
         ProductionRuntimeError,
         RestoreDrillError,
         SecretStoreError,

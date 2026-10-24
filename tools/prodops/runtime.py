@@ -703,6 +703,48 @@ class ProductionRuntime:
             ),
         )
 
+    def service_logs(self, service: str, since: datetime, until: datetime) -> list[str]:
+        """一个服务这段时间的容器日志，标准输出和标准错误合在一起，只读。容器不在就是空的。
+
+        容器日志写满就覆盖，发版重建的容器从部署那一刻重新记，所以只回看得到这么多。
+        """
+        ids = self._run([*self.compose_command(), "ps", "-q", service], capture=True).split()
+        if not ids:
+            return []
+        result = subprocess.run(
+            [
+                "docker",
+                "logs",
+                "--since",
+                since.astimezone(UTC).isoformat(),
+                "--until",
+                until.astimezone(UTC).isoformat(),
+                ids[0],
+            ],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if result.returncode != 0:
+            raise ProductionRuntimeError(f"读不了 {service} 的日志：退出码 {result.returncode}")
+        return result.stdout.splitlines()
+
+    def release_version(self) -> str:
+        """生产源码的版本号和提交，写在汇总里，看得出错是在哪一版上出的。"""
+        version = json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("version", "?")
+        revision = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        return f"{version} ({revision})" if revision else str(version)
+
     def _embedded_psql(self, database: str, statement: str) -> str:
         return self._run(
             [

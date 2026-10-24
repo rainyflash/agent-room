@@ -1,0 +1,98 @@
+# 生产错误汇总的噪音表（`tools/prodops/error_digest.py`，设计在 specs/error-triage/design.md）。
+#
+# 这里写的是“看着像错、其实正常”的几种，汇总时不报。每条都要写清楚为什么正常；拿不准的别加，
+# 让它报出来、看过再说。`summary` 是正则，对着汇总里那一行（已经打码、换过占位）搜。
+# 2026-10-24 按生产上 48 小时的日志定的第一版。
+
+# 控制面
+
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=(Unauthorized|RateLimited) @ '
+reason = "没带或带错网络 Agent 令牌（MCP 目录和扫描器来探 /mcp）、被限速，回答里已经说清楚了"
+
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /devices/current/private-rooms/\{id\}/code$'
+reason = "房间还没有口令时 Agent 先来查一次口令，回 404 以后再去生成"
+
+# 身份服务
+
+[[ignore]]
+service = "identity"
+summary = '^(UPDATE_PASSWORD_ERROR|UPDATE_CREDENTIAL_ERROR) error=password_confirm_error$'
+reason = "设密码时两次输入不一样，页面上直接提示了"
+
+[[ignore]]
+service = "identity"
+summary = '^LOGIN_ERROR error=invalid_user_credentials$'
+reason = "输错密码"
+
+[[ignore]]
+service = "identity"
+summary = '^VERIFY_EMAIL_ERROR error=email_already_verified$'
+reason = "验证链接被点了不止一次（邮箱的链接安全扫描也会去点），邮箱已经验证过了"
+
+[[ignore]]
+service = "identity"
+summary = '^WARN org\.keycloak\.common\.Profile Deprecated features '
+reason = "Keycloak 启动时提示有默认开着的旧功能，每次重建身份服务都有"
+
+# Synapse
+
+[[ignore]]
+service = "synapse"
+summary = '^GET /_matrix/client/v3/user/\{id\}/account_data/\S+ → 404$'
+reason = "账户数据还没写过时读回 404，客户端第一次读都是这样"
+
+[[ignore]]
+service = "synapse"
+summary = '^PUT /_matrix/client/v3/presence/\{id\}/status → 429$'
+reason = "在线状态每个用户 10 秒只认一次，网络 Agent 心跳和同步撞上就是 429（见 CLAUDE.md）"
+
+[[ignore]]
+service = "synapse"
+summary = '^GET /_matrix/client/v3/rooms/\{id\}/state/\S+ → 404$'
+reason = "问一条还没写过的状态（Agent 的名片、某人的成员事件）回 404，写名片前本来就要先问"
+
+[[ignore]]
+service = "synapse"
+summary = '^GET /_matrix/client/v3/room_keys/(version|keys/\S*) → 404$'
+reason = "还没有密钥备份，或者备份里还没有这把密钥（#441）"
+
+[[ignore]]
+service = "synapse"
+summary = '^GET /_matrix/client/unstable/\S+/rtc/transports → 404$'
+reason = "matrix-js-sdk 探 MatrixRTC，我们没开"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.storage\.database Starting db (txn .* from sentinel context|connection from sentinel context)'
+reason = "Synapse 后台任务的指标提示，不影响功能"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.http\.server Not sending response to request '
+reason = "客户端在回答之前断开了（长轮询被取消、页面关了）"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.handlers\.pagination \[purge\] purging events not possible: No event found'
+reason = "按保留期清理时这一段没有要删的事件"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.api\.auth\.internal Invalid access token in auth: '
+reason = "带着认不出格式的令牌来请求（扫描器、过时的客户端），已经回了 401"
+
+# 网关
+
+[[ignore]]
+service = "gateway"
+summary = '^warn (admin admin endpoint disabled|http HTTP/N skipped because it requires TLS)$'
+reason = "Caddy 启动时的提示：管理端口关着，TLS 在前面一层"
+
+[[ignore]]
+service = "gateway"
+summary = '^warn http\.handlers\.reverse_proxy aborting with incomplete response$'
+reason = "客户端在流式回答（长轮询、下载）中途断开"
