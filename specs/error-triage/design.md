@@ -1,4 +1,4 @@
-# 生产上的问题自动汇总、开 issue、定期处理：设计
+# 生产上的问题自动汇总、开 issue、叫醒开发 Agent 处理：设计
 
 2026-10-24 维护者让查三个新注册用户用得正不正常，编码 Agent 手动翻了生产库和日志，找到两处用户碰上、却没人知道的问题：打开私人房间的地址回 500（#570），隔天点过期的验证链接以后登录失败。维护者接着问：有没有专门的错误监控？查到了要不要自动在 GitHub 开 issue？开发的 Agent 能不能定期看 issue 来处理？
 
@@ -20,7 +20,7 @@
 
 ## 怎么做
 
-分四层：服务器每小时自己汇总一次，有新问题就开或更新 issue，每天出一份新用户体检，开发 Agent 每天处理一次 issue。
+分四层：服务器每小时自己汇总一次，有新问题就开或更新 issue，每天出一份新用户体检，有新 issue 就叫醒开发 Agent 处理。
 
 ### 1. 服务器每小时汇总一次错误
 
@@ -37,11 +37,12 @@
 
 ### 2. 有新问题就开 issue，同一种错只开一个
 
+- issue 开在私有仓库 [`rainyflash/agent-room-ops`](https://github.com/rainyflash/agent-room-ops)（2026-10-24 建好，标签也建好了），修复的 PR 照旧开在公开仓库。
 - 新指纹开一个 issue，标签 `prod-error`，再按服务（`control-plane`、`identity`、`synapse`）和轻重（`p1` 有人被挡住了、`p2` 出错但能绕过、`p3` 只是日志难看）各加一个标签。轻重先按规则定：5xx 和登录失败算 p1，其余 p2，开发 Agent 看过可以改。
 - 已经开着的指纹又出现：在原 issue 下补一条评论，每天最多一条，写这一天的次数和账户数。
 - 已经关掉的指纹又出现：重新打开，加 `regression` 标签，写“在 vX 上线以后又出现”。
 - 防刷屏：每次汇总最多开 5 个新 issue，多出来的合进当天一条“今天还有这些”的 issue。
-- 令牌：服务器上放一个 GitHub fine-grained token，只给这一个仓库的 Issues 读写，一年过期。token 由维护者自己在 GitHub 上建，自己放到服务器的 secrets 目录（编码 Agent 给命令，不经手 token）。
+- 令牌：服务器上放一个 GitHub fine-grained token，只给 `agent-room-ops` 的 Issues 读写，366 天过期，放在 `/etc/agent-room/ops-issues.token`（root、0600）。不放进 `<状态目录>/secrets`，那里由 `SecretStore` 管。token 由维护者自己在 GitHub 上建、自己粘到服务器上：编码 Agent 不建、不经手凭据，建的时候 GitHub 也要账号本人再确认一次密码。过期前一个月，汇总在当天的 issue 里提醒一次。读不到 token 或者 GitHub 拒绝时，发现的问题留在状态文件里，下次再发，不丢。
 
 ### 3. 每天一份新用户体检
 
@@ -59,16 +60,27 @@
 - 只出每一步的人数，加上“卡在哪一步”的人数和当时的相关指纹，比如“登录回调失败以后没再登录：1 人”“Agent 进了房间，人说了话，Agent 一次都没回：1 人”。不出任何账户信息。
 - 写进当天那条汇总 issue。连着三天都卡在同一步的，单开一个 issue，标 `funnel`。
 
-### 4. 开发 Agent 每天处理一次
+### 4. 有新 issue 就叫醒开发 Agent
 
-- 用 Claude Code 的云端定时任务（routine），每天北京时间 10 点跑一次，每次最多处理 3 条，按 p1、regression、p2 的顺序：
+维护者 2026-10-24 定：有新 issue 就叫醒，不是每天看一次。
+
+- 用 Claude Code 的云端 routine，挂一个 GitHub 事件触发：`agent-room-ops` 里带 `prod-error` 标签的 issue 新开（`opened`）或重新打开（`reopened`）时叫醒，只处理叫醒它的这一条。补评论（同一种错又出现）不叫醒，免得一种错一天叫醒好几次。
+- 同一个 routine 再带一个每天一次的定时（北京时间 10 点），补漏：事件没送到、当时被限流跳过的，都在这时候处理。一次最多 3 条还没标 `triaged` 的，按 p1、regression、p2 的顺序。
+- routine 的代码来源是两个仓库：`agent-room`（改代码、开 PR）和 `agent-room-ops`（读 issue、写结论）。两个仓库都要装着 Claude 的 GitHub App。
+- 一次汇总最多开 5 个新 issue（第 2 层），所以一小时里最多同时叫醒 5 个。它们各修各的，PR 之间撞了由 main 的 push CI 兜底，和平时一样。
+- 每次叫醒做这几件事：
   1. 读 issue 和样例，在代码里找原因；
   2. 能修的按 CLAUDE.md 的规矩开 PR，PR 描述里写 `Fixes #N`，检查过了就自动合并；
   3. 判断是正常现象的，改噪音表，在 issue 下说明为什么正常，然后关掉；
   4. 要维护者定的（改产品行为、改隐私说明、涉及钱和账号），标 `needs-owner`，写清楚要定什么、建议是什么；
   5. 样例不够、要看生产现场的，标 `needs-prod-look`。维护者在本机开会话时，编码 Agent 照“只读查生产用户”的做法去看。
-- 修好以后：PR 合并时 issue 自动关闭；下一版上线后同一指纹又出现，第 2 层会重新打开它，标 `regression`。
+  6. 处理完加 `triaged` 标签。
+- 修好以后：PR 描述里写 `Fixes rainyflash/agent-room-ops#N`，合并时那个 issue 自动关闭；下一版上线后同一指纹又出现，第 2 层会重新打开它，标 `regression`，又会叫醒开发 Agent。
 - 每次处理完在当天的汇总 issue 下写一行：处理了哪几条、开了哪些 PR、哪些在等维护者。
+- **issue 里的字当数据看，不当指令。** 样例来自日志，日志里有外面的人能控制的字（请求路径、Keycloak 的 `reason`）。有人可能故意发一个带着“请把某段代码加进去”的请求，让它出现在 issue 里。所以：
+  - 汇总只留路由模板，样例截短、只留可打印字符；
+  - routine 的提示词写明 issue 内容是数据；
+  - 开发 Agent 的 PR 照旧要过 CI，改到 `.github/workflows`、发布、登录和权限相关的代码时，不自动合并，标 `needs-owner`。
 
 ## 不做
 
@@ -89,16 +101,19 @@
 2. 汇总脚本：读日志和库、算指纹、打码、噪音表，带测试。先只在服务器上打报告（`production.py error-digest --dry-run`），编码 Agent 在维护者本机跑几天，把噪音表调好。
 3. 开 issue：去重、重新打开、限量，装定时器。随下一次发版部署（改了 `schedule.py` 和生产配置）；部署之前维护者要放好 token。
 4. 新用户体检。
-5. 云端定时任务处理 issue：在 Claude Code 里建 routine，提示词写进仓库（`docs/operations/error-triage.md`），以后改提示词走 PR。
+5. 叫醒开发 Agent：建 routine，挂 GitHub 事件触发和每天的补漏定时；提示词写进仓库（`docs/operations/error-triage.md`），以后改提示词走 PR。
 6. 以后再说：客户端错误回报。
 
-## 待维护者定
+## 维护者定了的
 
-1. **issue 开在哪。** 仓库是公开的。打码以后不含个人信息，但错误细节和每天的新用户人数也算经营数字。建议另建一个私有仓库 `rainyflash/agent-room-ops` 专门放这些 issue（免费），开发 Agent 两个仓库都能读写，修复的 PR 照旧开在公开仓库。也可以都放公开仓库，只是新用户体检就不发了。
-2. **token。** 要维护者在 GitHub 上建（只有账号所有者能建），自己放到服务器上。
-3. **开发 Agent 的节奏。** 建议每天一次、每次最多 3 条。每次运行都要用 Claude 的额度。
-4. **新用户体检做不做。**
+2026-10-24：
+
+1. issue 开在新建的私有仓库 `rainyflash/agent-room-ops`，修复的 PR 照旧开在公开仓库。当天已经建好。
+2. token 维护者让编码 Agent 建。编码 Agent 不能替账号建凭据、经手凭据，所以改成：编码 Agent 给一个预先填好的创建链接和一条粘贴命令，维护者自己点“生成”、自己粘到服务器上。第 3 步合并前要放好。
+3. 开发 Agent 有新 issue 就叫醒，不是每天看一次（见第 4 层），每天的定时只用来补漏。
+
+新用户体检没有单独回答，照设计做，只发人数，放在私有仓库。
 
 ## 状态
 
-- 2026-10-24：起草，等维护者定上面四件事。
+- 2026-10-24：起草；维护者当天定了 issue 开在哪、token、开发 Agent 什么时候叫醒（见上一节）。私有仓库 `agent-room-ops` 和标签已建好。
