@@ -1,4 +1,4 @@
-//! 整个工作区唯一的 unsafe 代码：`security-framework` 没有封装的几个 Security 框架调用。
+//! macOS 上唯一的 unsafe 代码（Windows 上的在 `windows-app-package`）：`security-framework` 没有封装的几个 Security 框架调用。
 //!
 //! 每个函数只做一次调用，并按 Core Foundation 的所有权规则把结果包成会自动释放的对象。
 #![allow(unsafe_code)]

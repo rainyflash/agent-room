@@ -47,6 +47,9 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+agent-room-windows-app-package.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 

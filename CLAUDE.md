@@ -109,6 +109,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - MCP 和命令行也挪开（`agent-room-mcp.exe.old`、`agent-room.exe.old`）：结束进程前先挪一次，四个进程都不在时再挪一次。宿主一遍遍调命令行（每次等消息起一个 `agent-room read`）时，刚结束的命令行又被拉起来占住程序，新版写不进去，只换了一半（Alpha 74 发版时在维护者电脑上遇到，#500）。
   - 装完删掉挪开的程序、放开标记；没装成就挪回原处。
   - 桌面端启动时看到标记被占着就直接退出（`installer_marker.rs`）。改安装流程时这几样别拆。
+- **别让桌面端跑在 Agent 宿主的应用包里。** 从商店装的打包应用（MSIX，比如 Codex）起的子进程都算在它的包里。Windows 给包里的进程看的 AppData 是真实目录加上这个应用的私有副本（`%LOCALAPPDATA%\Packages\<包>\LocalCache`）：新建的文件写进副本，改已有的文件改真实目录，正常启动的程序看不到副本。
+  - 以前 Agent 连不上 Bridge 时拉起的桌面端（#221）跟着进了宿主的包，桌面端、Bridge 和 WebView 的一部分本机数据写进了 Codex 的副本。9 月 18 日换服务器时收走的默认 Agent 设置在副本里还留着，每次被 Codex 拉起都去登记一个早就没了的 Agent（agent-room-ops #7）。网页存储也有一半在副本里，很可能就是以前升级后登录和加密库被清空的原因。
+  - 现在 MCP 和命令行用 `agent-room-windows-app-package` 在包外拉起桌面端：创建进程时把 `PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY` 设成 `..._BREAKAWAY_ENABLE_PROCESS_TREE`。2026-10-24 用 `Invoke-CommandInDesktopPackage -PreventBreakaway` 在 Codex 的包里实测过：带上它的子进程本身就在包外；不带，或者设成 `..._OVERRIDE`，都留在包里。桌面端发现自己还在包里（比如升级后宿主里还开着旧版 MCP），就在包外重新启动一份（`package_breakaway.rs`）。从我们的程序拉起桌面端别再直接用 `std::process::Command`。
+  - 命令行人物（`cli-profiles`）和 MCP 的 `mcp-joins` 照旧写在宿主的副本里。只有同一个宿主里的命令行和 MCP 读它们，没关系；别让桌面端或 Bridge 去读。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **网页加密库的锁同一个页面里也会抢。** 每台设备的加密库由一把 Web Locks 锁守着，拿锁只等 1 秒，等不到就报“已在另一个窗口打开”。睡眠醒来、网络断了又连上时会接连恢复会话，上一次还拿着锁，2026-10-09 维护者的 Mac 就因此停住。现在新的一次先叫停上一次、等它放开锁（`RESTORE_HANDOFF_WAIT_MS`），等不到报 `matrix.restore_stuck`。改恢复流程时，被取代的那次也要尽快收尾、放开锁。
@@ -148,6 +152,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
 
 ## 当前进度（2026-10-24）
+
+### Codex 包里的本机数据
+
+- 2026-10-24 查 agent-room-ops #7 时发现：维护者电脑上 Codex 的私有副本里攒着一份 Agent Room 的本机数据（见上面“代码里的坑”）。里面有旧的默认 Agent 设置、76 个只在那里的命令行人物（包括维护者正在跑的 `listen`）、桌面端的网页存储（471 MB）、Bridge 的一些文件。维护者同意以后，只把旧的默认 Agent 设置挪到了 `artifacts/local-state-backups/2026-10-24-codex-overlay/`，别的没动。
+- 维护者当天同意：先修产品，让桌面端在包外运行（#PR_NUMBER）；装上修好的版本以后，约好时间做一次清理。清理时先停掉 Codex 里的 `listen`、退出桌面端，把副本里的命令行人物合并回真实目录，其余挪走备份、不删。代价是桌面端可能要重新登录一次。
 
 ### 生产问题自动汇总
 

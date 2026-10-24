@@ -23,6 +23,7 @@ mod loopback_callback;
 mod matrix_credentials;
 mod native_language;
 mod notifications;
+mod package_breakaway;
 use native_language::desktop_set_language;
 use notifications::desktop_notify;
 mod receiver_runtime;
@@ -73,6 +74,10 @@ pub fn run_entrypoint() -> ExitCode {
             // 抢同一份本机数据。什么都不碰，等安装器装完再由它或 Agent 重新拉起。
             if installer_marker::installer_running_beside_current_executable() {
                 installer_marker::log_skipped_start();
+                return ExitCode::SUCCESS;
+            }
+            // 在别的打包应用的包里被拉起时，到包外重新启动一份，本机数据才都写在正常的位置。
+            if package_breakaway::relaunched_outside_app_package() {
                 return ExitCode::SUCCESS;
             }
             let update_config = match ReleaseUpdateConfig::from_build() {
@@ -232,6 +237,7 @@ fn setup_runtime(
         log_file = log_path.as_deref().map(|path| path.display().to_string()),
         "Agent Room 桌面端启动"
     );
+    package_breakaway::log_launch_context();
     server_move::retire_previous_server(&config);
     account_release::resume_interrupted(&config);
     setup_user_sessions(app, &config)?;

@@ -14,6 +14,7 @@ const packages = [
   'agent-room-mcp',
   'agent-room-agent-client',
   'agent-room-agent-reception',
+  'agent-room-windows-app-package',
 ];
 const cargoPackages = packages.flatMap((name) => ['-p', name]);
 const pnpm = (...args) => ['corepack', 'pnpm@10.28.0', ...args];

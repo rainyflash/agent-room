@@ -120,25 +120,20 @@ impl DesktopLauncher for InstalledDesktop {
 }
 
 /// 桌面端不能继承 MCP 的标准输入输出（那是 MCP 协议的通道），也不能随启动它的宿主一起被结束。
+/// 宿主是打包应用时，桌面端还要跑在宿主的包外面，不然本机数据有一半写进宿主的私有副本
+/// （见 `agent-room-windows-app-package`）。
 #[cfg(windows)]
 fn launch_detached(target: &Path) -> io::Result<()> {
-    use std::os::windows::process::CommandExt as _;
-    use std::process::{Command, Stdio};
+    use std::ffi::OsString;
+
+    use agent_room_windows_app_package::spawn_outside_app_package;
 
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
-    let spawn = |flags: u32| {
-        Command::new(target)
-            .arg(DESKTOP_BACKGROUND_ARGUMENT)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(flags)
-            .spawn()
-            .map(drop)
-    };
+    let arguments = [OsString::from(DESKTOP_BACKGROUND_ARGUMENT)];
+    let spawn = |flags: u32| spawn_outside_app_package(target, &arguments, flags).map(drop);
     // 宿主可能把 MCP 放在“宿主退出就全部结束”的作业里；能脱离就脱离，不允许脱离时照常启动。
     spawn(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
         .or_else(|_| spawn(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP))

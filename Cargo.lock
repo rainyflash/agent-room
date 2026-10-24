@@ -83,6 +83,7 @@ version = "0.1.0-alpha.81"
 dependencies = [
  "agent-room-bridge-ipc",
  "agent-room-bridge-local-adapter",
+ "agent-room-windows-app-package",
  "serde",
  "serde_json",
  "tokio",
@@ -321,6 +322,7 @@ dependencies = [
  "agent-room-bridge-local-adapter",
  "agent-room-host-adapters",
  "agent-room-release-manifest",
+ "agent-room-windows-app-package",
  "base64 0.22.1",
  "cookie",
  "ed25519-dalek",
@@ -547,6 +549,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "zeroize",
+]
+
+[[package]]
+name = "agent-room-windows-app-package"
+version = "0.1.0-alpha.81"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
