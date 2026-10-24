@@ -80,3 +80,61 @@ for (const width of [1440, 390]) {
     expect(started).toEqual(['/rooms']);
   });
 }
+
+test('没登录时登录没走完，自动重新打开一次登录页，再失败就停在提示上', async ({
+  page,
+  baseURL,
+}) => {
+  const failures = collectPageFailures(page);
+  const started: string[] = [];
+  if (baseURL === undefined) throw new Error('Missing browser base URL');
+  const headers = {
+    'access-control-allow-credentials': 'true',
+    'access-control-allow-origin': new URL(baseURL).origin,
+    'content-type': 'application/json',
+  };
+  await page.route('https://api.agent-room.localhost:18443/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/auth/session') {
+      await route.fulfill({
+        headers,
+        status: 401,
+        json: { code: 'authentication.missing_session' },
+      });
+    } else if (url.pathname === '/health/ready') {
+      await route.fulfill({
+        headers,
+        json: {
+          checkedAtUnixMs: Date.now(),
+          correlationId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+          dependencies: [],
+          service: 'agent-room-control-plane',
+          status: 'ready',
+          version: '0.1.0',
+        },
+      });
+    } else if (url.pathname === '/auth/oidc/start') {
+      started.push(url.searchParams.get('returnTo') ?? '');
+      await route.fulfill({
+        contentType: 'text/html',
+        body: '<h1>New identity verification request</h1>',
+      });
+    } else {
+      await route.fulfill({ headers, status: 204 });
+    }
+  });
+  await page.goto('/connect?authentication=failed');
+  await expect(
+    page.getByRole('heading', { name: 'New identity verification request' }),
+  ).toBeVisible();
+  expect(started).toEqual(['/rooms']);
+
+  await page.goto('/connect?authentication=failed');
+  await expect(
+    page.getByRole('heading', { name: /Sign-in did not finish|这次登录没有完成/u }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /Sign in again|重新登录/u })).toBeEnabled();
+  expect(started).toEqual(['/rooms']);
+  // 没登录时问登录状态回 401，浏览器会记一条资源加载失败，是正常的。
+  expect(failures.filter((text) => !text.includes('401 (Unauthorized)'))).toEqual([]);
+});

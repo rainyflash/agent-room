@@ -159,6 +159,8 @@ export const resources = {
         'This sign-in link expired. Sign in again; if you signed in a moment ago, you will not need your password.',
       'connection.authenticationRecovery.failed':
         'We could not confirm the sign-in. Please sign in again.',
+      'connection.authenticationRecovery.restarting':
+        'The last sign-in did not finish. Opening the sign-in page again…',
       'connection.authenticationRecovery.sessionRetained':
         'You are still signed in. The change you were confirming has not been saved.',
       'connection.authenticationRecovery.retryFailed':
@@ -787,6 +789,7 @@ export const resources = {
       'connection.authenticationRecovery.expired':
         '登录链接过期了，请重新登录；如果刚刚登录过，不用再输密码。',
       'connection.authenticationRecovery.failed': '没能确认这次登录，请重新登录。',
+      'connection.authenticationRecovery.restarting': '上一次登录没走完，正在重新打开登录页…',
       'connection.authenticationRecovery.sessionRetained':
         '你仍是登录状态，刚才要确认的改动还没保存。',
       'connection.authenticationRecovery.retryFailed': '没能打开登录页，请重试。',
