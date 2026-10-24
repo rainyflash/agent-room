@@ -201,6 +201,12 @@ python3 tools/production.py launch-status --config /etc/agent-room/deployment.js
 python3 tools/production.py error-digest --since 24h --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 ```
 
+加 `--post --issue-repository <owner/repo>` 就接着上一次读到的地方汇总，发成那个私有仓库里的 issue：同一种错只开一个，开着的每天补一条前一天的次数，关掉以后换了版本又出现才重新打开。读到哪儿、还没发出去的记在 `<状态目录>/error-digest/state.json`，GitHub 不通时下次补发。令牌默认读 `/etc/agent-room/ops-issues.token`（root、0600，只给那个仓库的 Issues 读写），由账号本人在 GitHub 上建、自己放上去。每小时跑一次的定时器装一次就好，之后跟着源码走：
+
+```bash
+sudo python3 tools/production.py error-digest-schedule-install --issue-repository rainyflash/agent-room-ops --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
 控制平面必须显式允许桌面壳的精确源站：Windows 是 `http://tauri.localhost`，macOS 是自定义协议 `tauri://localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为这两个值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
 
 ## 外部 PostgreSQL 与对象存储

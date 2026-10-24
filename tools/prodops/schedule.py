@@ -1,4 +1,4 @@
-"""生产备份 systemd 调度单元的确定性生成、安装与核验。"""
+"""生产备份和错误汇总的 systemd 调度单元：确定性生成、安装与核验。"""
 
 from __future__ import annotations
 
@@ -38,12 +38,8 @@ class BackupScheduleInstaller:
     deployment_config: Path
 
     def render(self) -> BackupScheduleFiles:
-        config_path = self.deployment_config.expanduser().resolve()
-        if not config_path.is_file():
-            raise BackupScheduleError(f"部署配置不存在：{config_path}。")
-        python = Path(sys.executable).resolve()
-        if not python.is_file():
-            raise BackupScheduleError("当前 Python 解释器路径无效。")
+        config_path = _existing_config(self.deployment_config)
+        python = _python()
         service_name = f"{self.config.project_name}-backup.service"
         timer_name = f"{self.config.project_name}-backup.timer"
         command = " ".join(
@@ -95,45 +91,149 @@ WantedBy=timers.target
         return BackupScheduleFiles(service_name, timer_name, service, timer)
 
     def write_generated(self) -> tuple[Path, Path]:
-        files = self.render()
-        directory = self.paths.generated / "systemd"
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        service = directory / files.service_name
-        timer = directory / files.timer_name
-        _write_unit(service, files.service_content)
-        _write_unit(timer, files.timer_content)
-        return service, timer
+        return _write_generated(self.paths, self.render())
 
     def install(self) -> BackupScheduleFiles:
-        if not sys.platform.startswith("linux"):
-            raise BackupScheduleError("systemd 备份调度只能安装在 Linux 生产主机。")
-        if not hasattr(os, "geteuid") or os.geteuid() != 0:
-            raise BackupScheduleError("安装 systemd 备份调度必须使用 root 权限。")
-        systemctl = shutil.which("systemctl")
-        if systemctl is None:
-            raise BackupScheduleError("生产主机缺少 systemctl。")
-        files = self.render()
-        generated = self.write_generated()
-        _verify_unit_files(generated)
-        SYSTEM_UNIT_DIRECTORY.mkdir(mode=0o755, parents=True, exist_ok=True)
-        for source in generated:
-            destination = SYSTEM_UNIT_DIRECTORY / source.name
-            temporary = destination.with_suffix(destination.suffix + ".tmp")
-            shutil.copyfile(source, temporary)
-            temporary.chmod(0o644)
-            os.replace(temporary, destination)
-        _systemctl(systemctl, "daemon-reload")
-        _systemctl(systemctl, "enable", "--now", files.timer_name)
-        self.verify(files)
-        return files
+        return _install(self.paths, self.render())
 
     @staticmethod
     def verify(files: BackupScheduleFiles) -> None:
-        systemctl = shutil.which("systemctl")
-        if systemctl is None:
-            raise BackupScheduleError("生产主机缺少 systemctl。")
-        _systemctl(systemctl, "is-enabled", "--quiet", files.timer_name)
-        _systemctl(systemctl, "is-active", "--quiet", files.timer_name)
+        _verify_enabled(files)
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorDigestScheduleInstaller:
+    """每小时把生产错误汇总发成私有仓库里的 issue（`specs/error-triage/design.md`）。
+
+    只读日志，往 GitHub 发；令牌放在 `token_file`，单元里只有它的路径。
+    """
+
+    config: DeploymentConfig
+    paths: DeploymentPaths
+    deployment_config: Path
+    repository: str
+    token_file: Path
+
+    def render(self) -> BackupScheduleFiles:
+        config_path = _existing_config(self.deployment_config)
+        python = _python()
+        service_name = f"{self.config.project_name}-error-digest.service"
+        timer_name = f"{self.config.project_name}-error-digest.timer"
+        command = " ".join(
+            _systemd_argument(value)
+            for value in (
+                python.as_posix(),
+                PRODUCTION_SCRIPT.as_posix(),
+                "error-digest",
+                "--post",
+                "--issue-repository",
+                self.repository,
+                "--issue-token-file",
+                self.token_file.as_posix(),
+                "--config",
+                config_path.as_posix(),
+                "--state-dir",
+                self.paths.state.as_posix(),
+            )
+        )
+        service = f"""[Unit]
+Description=Agent Room 生产错误汇总
+Documentation=https://github.com/rainyflash/agent-room
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={command}
+WorkingDirectory={_systemd_path(ROOT.as_posix())}
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStartSec=20min
+"""
+        # 错开备份（每 15 分钟的整点刻），每小时第 7 分钟跑；停机错过的开机后补一次。
+        timer = f"""[Unit]
+Description=每小时汇总一次 Agent Room 生产错误
+Documentation=https://github.com/rainyflash/agent-room
+
+[Timer]
+OnCalendar=*-*-* *:07:00
+Persistent=true
+Unit={service_name}
+
+[Install]
+WantedBy=timers.target
+"""
+        return BackupScheduleFiles(service_name, timer_name, service, timer)
+
+    def write_generated(self) -> tuple[Path, Path]:
+        return _write_generated(self.paths, self.render())
+
+    def install(self) -> BackupScheduleFiles:
+        return _install(self.paths, self.render())
+
+    @staticmethod
+    def verify(files: BackupScheduleFiles) -> None:
+        _verify_enabled(files)
+
+
+def _existing_config(path: Path) -> Path:
+    config_path = path.expanduser().resolve()
+    if not config_path.is_file():
+        raise BackupScheduleError(f"部署配置不存在：{config_path}。")
+    return config_path
+
+
+def _python() -> Path:
+    python = Path(sys.executable).resolve()
+    if not python.is_file():
+        raise BackupScheduleError("当前 Python 解释器路径无效。")
+    return python
+
+
+def _write_generated(paths: DeploymentPaths, files: BackupScheduleFiles) -> tuple[Path, Path]:
+    directory = paths.generated / "systemd"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    service = directory / files.service_name
+    timer = directory / files.timer_name
+    _write_unit(service, files.service_content)
+    _write_unit(timer, files.timer_content)
+    return service, timer
+
+
+def _install(paths: DeploymentPaths, files: BackupScheduleFiles) -> BackupScheduleFiles:
+    if not sys.platform.startswith("linux"):
+        raise BackupScheduleError("systemd 调度只能安装在 Linux 生产主机。")
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        raise BackupScheduleError("安装 systemd 调度必须使用 root 权限。")
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        raise BackupScheduleError("生产主机缺少 systemctl。")
+    generated = _write_generated(paths, files)
+    _verify_unit_files(generated)
+    SYSTEM_UNIT_DIRECTORY.mkdir(mode=0o755, parents=True, exist_ok=True)
+    for source in generated:
+        destination = SYSTEM_UNIT_DIRECTORY / source.name
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        shutil.copyfile(source, temporary)
+        temporary.chmod(0o644)
+        os.replace(temporary, destination)
+    _systemctl(systemctl, "daemon-reload")
+    _systemctl(systemctl, "enable", "--now", files.timer_name)
+    _verify_enabled(files)
+    return files
+
+
+def _verify_enabled(files: BackupScheduleFiles) -> None:
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        raise BackupScheduleError("生产主机缺少 systemctl。")
+    _systemctl(systemctl, "is-enabled", "--quiet", files.timer_name)
+    _systemctl(systemctl, "is-active", "--quiet", files.timer_name)
 
 
 def _systemd_argument(value: str) -> str:

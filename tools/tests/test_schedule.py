@@ -12,6 +12,7 @@ from tools.prodops.render import DeploymentPaths
 from tools.prodops.schedule import (
     BackupScheduleError,
     BackupScheduleInstaller,
+    ErrorDigestScheduleInstaller,
     _systemd_path,
 )
 
@@ -87,6 +88,58 @@ class BackupScheduleTests(unittest.TestCase):
 
         with self.assertRaisesRegex(BackupScheduleError, "配置不存在"):
             BackupScheduleInstaller(self.config, self.paths, missing).render()
+
+
+class ErrorDigestScheduleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        root = Path(self.temporary.name)
+        self.config_path = root / "配置 含空格.json"
+        shutil.copyfile(EXAMPLE, self.config_path)
+        self.installer = ErrorDigestScheduleInstaller(
+            load_deployment_config(self.config_path),
+            DeploymentPaths.from_state(root / "状态 含空格"),
+            self.config_path,
+            "rainyflash/agent-room-ops",
+            Path("/etc/agent-room/ops-issues.token"),
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_hourly_timer_posts_with_repository_and_token_path_only(self) -> None:
+        files = self.installer.render()
+
+        self.assertEqual(
+            (files.service_name, files.timer_name),
+            ("agent-room-error-digest.service", "agent-room-error-digest.timer"),
+        )
+        self.assertIn("OnCalendar=*-*-* *:07:00", files.timer_content)
+        self.assertIn("Persistent=true", files.timer_content)
+        self.assertIn(f"Unit={files.service_name}", files.timer_content)
+        self.assertIn(
+            '"error-digest" "--post" "--issue-repository" "rainyflash/agent-room-ops" '
+            '"--issue-token-file" "/etc/agent-room/ops-issues.token"',
+            files.service_content,
+        )
+        self.assertIn(f'"{self.config_path.as_posix()}"', files.service_content)
+        self.assertIn("TimeoutStartSec=20min", files.service_content)
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux") and shutil.which("systemd-analyze"),
+        "需要 Linux systemd-analyze",
+    )
+    def test_generated_units_pass_systemd_parser(self) -> None:
+        service, timer = self.installer.write_generated()
+        result = subprocess.run(
+            ["systemd-analyze", "verify", str(service), str(timer)],
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 if __name__ == "__main__":

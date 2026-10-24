@@ -10,9 +10,10 @@ from pathlib import Path
 import sys
 
 from prodops.backup import BackupError
-from prodops.config import DeploymentConfigError, load_deployment_config
+from prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
 from prodops.error_digest import (
     SERVICES as ERROR_DIGEST_SERVICES,
+    Digest,
     NoiseTableError,
     load_noise,
     parse_window,
@@ -20,10 +21,19 @@ from prodops.error_digest import (
     summarize,
 )
 from prodops.launch_status import report as launch_report
+from prodops.ops_issues import (
+    DEFAULT_TOKEN_FILE,
+    DigestState,
+    GitHubIssueTracker,
+    OpsIssueError,
+    post,
+    post_window,
+    remember,
+)
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
 from prodops.restore import RestoreDrillError, RestoreTarget, parse_target_time
-from prodops.schedule import BackupScheduleError, BackupScheduleInstaller
+from prodops.schedule import BackupScheduleError, BackupScheduleInstaller, ErrorDigestScheduleInstaller
 from prodops.secrets import SecretStoreError
 
 
@@ -51,6 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
             "registration-apply",
             "launch-status",
             "error-digest",
+            "error-digest-schedule-install",
+            "error-digest-schedule-verify",
             "down",
         ),
     )
@@ -78,6 +90,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("markdown", "json"),
         default="markdown",
         help="error-digest 的输出：给人看的 markdown，或者给下一步用的 json",
+    )
+    parser.add_argument(
+        "--post",
+        action="store_true",
+        help="error-digest 接着上一次读到的地方汇总，发到 --issue-repository 的 issue 里",
+    )
+    parser.add_argument("--issue-repository", help="error-digest --post 开 issue 的私有仓库，比如 owner/repo")
+    parser.add_argument(
+        "--issue-token-file",
+        type=Path,
+        default=DEFAULT_TOKEN_FILE,
+        help="发 issue 用的 GitHub 令牌文件（root、0600），由账号本人放上去",
     )
     parser.add_argument(
         "--network-agent",
@@ -171,23 +195,17 @@ def main() -> int:
                 for line in launch_report(runtime.launch_status(), config.network_agents.limits):
                     print(line)
             case "error-digest":
-                # 只读：读这段时间的容器日志，打码、去掉噪音表里的，打出汇总。还不往 GitHub 发。
-                since, until = parse_window(arguments.since, arguments.until, datetime.now(UTC))
-                logs = {
-                    service: runtime.service_logs(service, since, until)
-                    for service in ERROR_DIGEST_SERVICES
-                }
-                digest = summarize(logs, load_noise())
-                window = (since.strftime("%Y-%m-%dT%H:%M:%SZ"), until.strftime("%Y-%m-%dT%H:%M:%SZ"))
-                if arguments.format == "json":
-                    payload = {"since": window[0], "until": window[1],
-                               "version": runtime.release_version(), **digest.to_json()}
-                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                if arguments.post:
+                    _post_error_digest(arguments, paths, runtime)
                 else:
-                    for line in error_report(
-                        digest, since=window[0], until=window[1], version=runtime.release_version()
-                    ):
-                        print(line)
+                    _print_error_digest(arguments, runtime)
+            case "error-digest-schedule-install":
+                files = _error_digest_schedule(arguments, config, paths).install()
+                print(f"错误汇总调度已启用：{files.timer_name}")
+            case "error-digest-schedule-verify":
+                installer = _error_digest_schedule(arguments, config, paths)
+                installer.verify(installer.render())
+                print("错误汇总调度已启用且正在运行。")
             case "down":
                 runtime.down()
             case _:
@@ -197,6 +215,7 @@ def main() -> int:
         BackupScheduleError,
         DeploymentConfigError,
         NoiseTableError,
+        OpsIssueError,
         ProductionRuntimeError,
         RestoreDrillError,
         SecretStoreError,
@@ -207,6 +226,59 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     return 0
+
+
+def _read_error_digest(runtime: ProductionRuntime, since: datetime, until: datetime) -> Digest:
+    logs = {service: runtime.service_logs(service, since, until) for service in ERROR_DIGEST_SERVICES}
+    return summarize(logs, load_noise())
+
+
+def _print_error_digest(arguments: argparse.Namespace, runtime: ProductionRuntime) -> None:
+    """只读：读这段时间的容器日志，打码、去掉噪音表里的，打出汇总，不往外发。"""
+    since, until = parse_window(arguments.since, arguments.until, datetime.now(UTC))
+    digest = _read_error_digest(runtime, since, until)
+    window = (since.strftime("%Y-%m-%dT%H:%M:%SZ"), until.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    if arguments.format == "json":
+        payload = {"since": window[0], "until": window[1],
+                   "version": runtime.release_version(), **digest.to_json()}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    for line in error_report(digest, since=window[0], until=window[1], version=runtime.release_version()):
+        print(line)
+
+
+def _post_error_digest(
+    arguments: argparse.Namespace, paths: DeploymentPaths, runtime: ProductionRuntime
+) -> None:
+    """接着上一次读到的地方汇总，发到私有仓库。先把发现存进状态文件再去 GitHub，GitHub 不通时下次补发。"""
+    if not arguments.issue_repository:
+        raise ValueError("error-digest --post 必须提供 --issue-repository。")
+    state_path = paths.state / "error-digest" / "state.json"
+    state = DigestState.load(state_path)
+    now = datetime.now(UTC)
+    since, until = post_window(state, now)
+    remember(state, _read_error_digest(runtime, since, until), until)
+    state.save(state_path)
+    try:
+        tracker = GitHubIssueTracker.from_token_file(arguments.issue_repository, arguments.issue_token_file)
+        result = post(state, tracker, version=runtime.release_version(), now=now)
+    finally:
+        state.save(state_path)
+    print(
+        f"错误汇总 {since:%Y-%m-%dT%H:%M:%SZ} – {until:%Y-%m-%dT%H:%M:%SZ}：开了 {len(result.opened)} 个，"
+        f"重新打开 {len(result.reopened)} 个，补了 {len(result.commented)} 条每天的次数，"
+        f"已有的记了 {result.counted} 种，超出上限 {result.overflow} 种。"
+    )
+
+
+def _error_digest_schedule(
+    arguments: argparse.Namespace, config: DeploymentConfig, paths: DeploymentPaths
+) -> ErrorDigestScheduleInstaller:
+    if not arguments.issue_repository:
+        raise ValueError("错误汇总调度必须提供 --issue-repository。")
+    return ErrorDigestScheduleInstaller(
+        config, paths, arguments.config, arguments.issue_repository, arguments.issue_token_file
+    )
 
 
 if __name__ == "__main__":
