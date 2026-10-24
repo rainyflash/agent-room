@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 MACOS_WORKFLOW = ROOT / ".github" / "workflows" / "macos.yml"
 RELEASE_CANDIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "release-candidate.yml"
+ADVISORIES_WORKFLOW = ROOT / ".github" / "workflows" / "advisories.yml"
 JOB_HEADING = re.compile(r"^  [a-z0-9-]+:$")
 
 
@@ -148,6 +149,35 @@ class CiCostPolicyTests(unittest.TestCase):
         runners = [line.strip() for line in workflow.splitlines() if line.strip().startswith("runs-on:")]
         self.assertEqual(len(runners), 1)
         self.assertRegex(runners[0], r"^runs-on: macos-(?:latest|[0-9]+)$")
+
+    def test_daily_advisories_run_the_supply_chain_audits_and_nothing_heavier(self) -> None:
+        advisories = ADVISORIES_WORKFLOW.read_text(encoding="utf-8")
+        supply_chain = [line.strip() for line in job_lines(CI_WORKFLOW.read_text(encoding="utf-8"), "supply-chain")]
+
+        # 发版前就要知道新公告：每天定时跑，改锁文件的 PR 也跑；查的和供应链作业是同两条命令。
+        self.assertRegex(advisories, r"(?m)^  schedule:\n    #.*\n(?:    #.*\n)*    - cron: '[0-9 *]+'$")
+        for path in ("Cargo.lock", "pnpm-lock.yaml", "deny.toml"):
+            with self.subTest(path=path):
+                self.assertIn(f"      - {path}\n", advisories)
+        for command in ("run: corepack pnpm@10.28.0 audit:node", "run: cargo deny check"):
+            with self.subTest(command=command):
+                self.assertIn(command, supply_chain)
+                self.assertIn(f"        {command}\n", advisories)
+        # 不编译、不装依赖：每天跑也只花几分钟。
+        self.assertNotRegex(advisories, r"run: cargo (?:build|check|clippy|test)\b")
+        self.assertNotIn("pnpm@10.28.0 install", advisories)
+        self.assertNotRegex(advisories, r"(?m)runs-on: (?!ubuntu-(?:latest|slim)$)")
+
+    def test_daily_advisories_only_get_issue_access_for_the_scheduled_report(self) -> None:
+        advisories = ADVISORIES_WORKFLOW.read_text(encoding="utf-8")
+        lines = advisories.splitlines()
+
+        self.assertIn("permissions:\n  contents: read\n", advisories)
+        self.assertEqual(
+            [index for index, line in enumerate(lines) if line.strip() == "issues: write"],
+            [lines.index("  report:") + lines[lines.index("  report:"):].index("    permissions:") + 1],
+        )
+        self.assertIn("    if: ${{ always() && github.event_name == 'schedule' }}", job_lines(advisories, "report"))
 
 
 if __name__ == "__main__":

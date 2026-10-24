@@ -1,0 +1,95 @@
+name: 依赖安全公告
+
+on:
+  schedule:
+    # 公告随时会出。以前只有发布调度的完整 CI 查它们，发布提交切好以后才撞上（Alpha 59、80、81 都被这样挡过），
+    # 所以每天查一次（北京时间 7 点 23 分），发版前就知道要升级什么。
+    - cron: '23 23 * * *'
+  pull_request:
+    paths:
+      - Cargo.lock
+      - pnpm-lock.yaml
+      - package.json
+      - deny.toml
+      - .github/workflows/advisories.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: advisories-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node 依赖安全公告
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # 版本 7.0.0
+        with:
+          node-version-file: .node-version
+      # 和供应链作业同一条命令：只读锁文件，不用先装依赖。
+      - name: 审计 Node 依赖
+        run: corepack pnpm@10.28.0 audit:node
+
+  rust:
+    name: Rust 依赖安全公告与许可证
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 Rust 工具链
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - name: 安装预编译的 cargo-deny
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # 版本 2.87.13
+        with:
+          tool: cargo-deny@0.20.2
+      - name: 审计 Rust 依赖与许可证
+        run: cargo deny check
+
+  report:
+    name: 记下每天的结果
+    needs: [node, rust]
+    # 只记定时的那一次：PR 上红了在 PR 里就看得到。
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: 没过就开 issue 或补一条，过了就关掉
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NODE_RESULT: ${{ needs.node.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='[安全依赖] 每天的依赖安全检查没过'
+          number=$(gh issue list --state open --label security-dependency --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | first | .number // empty")
+          if [ "$NODE_RESULT" = success ] && [ "$RUST_RESULT" = success ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "今天的检查过了（$RUN_URL）。"
+            fi
+            exit 0
+          fi
+          note="Node：$NODE_RESULT，Rust：$RUST_RESULT。详情：$RUN_URL"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "今天还没过。$note"
+          else
+            gh issue create --label security-dependency --title "$title" --body "$(printf '%s\n\n%s\n\n%s' \
+              "每天的依赖安全检查（.github/workflows/advisories.yml）没过：上游出了新的安全公告，或者许可证、来源不合规。" \
+              "$note" \
+              "照 CLAUDE.md 的做法处理：先试升级依赖；升不了就按 deny.toml 里已有例外的写法加一条带理由的精确例外，再开一个 security-dependency issue 跟踪。不处理的话，下一次发版的完整 CI 会红在供应链。")"
+          fi

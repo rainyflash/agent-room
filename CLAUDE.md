@@ -62,7 +62,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
   - 同一个用例以前偶发 `Failed to process outgoing request 1: AbortError: signal is aborted without reason`（编号 0 也见过）：退出登录时 `stopClient` 中止了还在发的加密请求，SDK 把错误拼成一句话记成错误。现在退出时只认这一句的格式、记成调试信息（`matrix-lifecycle-logger.ts`）；再红在这里，就是有请求没在退出时停下，要查，别只重跑。
   - 无头验收里 Synapse 偶尔没起来。
-- 上游出了新的安全公告、供应链作业变红时：
+- 依赖的安全公告每天查一次（`advisories.yml`，UTC 23:23，只跑 `pnpm audit:node` 和 `cargo deny check`，几分钟）；改了 `Cargo.lock`、`pnpm-lock.yaml`、`package.json`、`deny.toml` 的 PR 上也跑。以前只有发布调度的完整 CI 查，发布提交切好以后才撞上（Alpha 59、80、81 都换过发布提交）。
+  - 定时那次没过，就开一个 `[安全依赖] 每天的依赖安全检查没过` 的 issue（标 `security-dependency`），之后每天没过补一条、过了自动关。它开着就先处理再发版。
+  - 它不是必需检查。PR 上红了同样不能合。
+- 上游出了新的安全公告、供应链作业或每天的检查变红时：
   1. 先试升级依赖；
   2. 升不了，就按 `deny.toml` 里已有例外的写法加一条带理由的精确例外；
   3. 再开一个 `security-dependency` issue 跟踪。
