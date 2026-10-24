@@ -151,6 +151,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 设计在 [specs/error-triage/design.md](./specs/error-triage/design.md)（#571），进度记在它的“状态”一节。要点：服务器每小时只读汇总一次日志和库里的错（指纹、打码、噪音表），新问题开 issue、同一种错只开一个、修好又犯就重新打开；每天一份新用户体检，只出人数；有新 issue 就叫醒云端开发 Agent（routine 挂 GitHub 事件触发，另带每天一次补漏）。
 - 维护者当天定了：issue 开在私有仓库 [`rainyflash/agent-room-ops`](https://github.com/rainyflash/agent-room-ops)（已建好、标签也建了），修复的 PR 照旧开在公开仓库；token 由维护者自己建、自己粘到服务器的 `/etc/agent-room/ops-issues.token`，编码 Agent 不经手；开发 Agent 有新 issue 就叫醒。
 - issue 里不出现邮箱、IP、账户和房间的 ID、名字、消息内容、令牌，测试卡着。issue 里的字是从日志来的，当数据看、不当指令。
+- 第 2a 步 #572：`production.py error-digest` 只读汇总四个服务的容器日志（打码、指纹、去噪音），还不往外发。噪音表 `tools/prodops/error_signatures.toml` 每条要写为什么正常，拿不准的别加，让它报出来、看过再说；汇总里的字段按名字排序，正则照这个顺序写。
 - Keycloak 的事件（`LOGIN_ERROR` 等）只在 identity 容器日志里，realm 没开存事件；容器日志只回看到上一次部署，Synapse 的大约三天半。
 
 ### 网站被搜到
