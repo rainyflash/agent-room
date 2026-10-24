@@ -9,8 +9,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 887
 - npm packages: 718
 - Total locked package versions: 1605
-- `Cargo.lock` SHA-256: `bbe6ab79dbc6f6268484e3cc01226a7228d19d4088b251dcc513bcb0ec520c51`
-- `pnpm-lock.yaml` SHA-256: `d9e700bcb667818d14a0e0a360507af7571790e7b460f8847c729ab2b7fcb9ff`
+- `Cargo.lock` SHA-256: `b4cbc6ec6538702c7f4ebbbe4f7e51f51e26ed327315b7aff88f2926edd2d37d`
+- `pnpm-lock.yaml` SHA-256: `a2b0972236040643a978875fe98ce4c676c6fa15561da4344e3177751888e369`
 
 ## License expressions
 
@@ -184,7 +184,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [cfg-expr](https://github.com/EmbarkStudios/cfg-expr) | 0.15.8 | `MIT OR Apache-2.0` |
 | cargo | [cfg-if](https://github.com/rust-lang/cfg-if) | 1.0.4 | `MIT OR Apache-2.0` |
 | cargo | [cfg_aliases](https://github.com/katharostech/cfg_aliases) | 0.2.2 | `MIT` |
-| cargo | [chacha20](https://github.com/RustCrypto/stream-ciphers) | 0.10.1 | `MIT OR Apache-2.0` |
+| cargo | [chacha20](https://github.com/RustCrypto/stream-ciphers) | 0.10.2 | `MIT OR Apache-2.0` |
 | cargo | [chacha20](https://github.com/RustCrypto/stream-ciphers) | 0.9.1 | `Apache-2.0 OR MIT` |
 | cargo | [chacha20poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305) | 0.10.1 | `Apache-2.0 OR MIT` |
 | cargo | [chrono](https://github.com/chronotope/chrono) | 0.4.45 | `MIT OR Apache-2.0` |
@@ -229,7 +229,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [ctor](https://github.com/mmastrac/rust-ctor) | 0.8.0 | `Apache-2.0 OR MIT` |
 | cargo | [ctor-proc-macro](https://github.com/mmastrac/rust-ctor) | 0.0.7 | `Apache-2.0 OR MIT` |
 | cargo | [ctr](https://github.com/RustCrypto/block-modes) | 0.9.2 | `MIT OR Apache-2.0` |
-| cargo | [ctutils](https://github.com/RustCrypto/utils) | 0.4.2 | `Apache-2.0 OR MIT` |
+| cargo | [ctutils](https://github.com/RustCrypto/utils) | 0.4.5 | `Apache-2.0 OR MIT` |
 | cargo | [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek) | 4.1.3 | `BSD-3-Clause` |
 | cargo | [curve25519-dalek-derive](https://github.com/dalek-cryptography/curve25519-dalek) | 0.1.1 | `MIT/Apache-2.0` |
 | cargo | [darling](https://github.com/TedDriggs/darling) | 0.23.0 | `MIT` |
@@ -781,7 +781,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [tinystr](https://github.com/unicode-org/icu4x) | 0.8.4 | `Unicode-3.0` |
 | cargo | [tinyvec](https://github.com/Lokathor/tinyvec) | 1.12.0 | `Zlib OR Apache-2.0 OR MIT` |
 | cargo | [tinyvec_macros](https://github.com/Soveu/tinyvec_macros) | 0.1.1 | `MIT OR Apache-2.0 OR Zlib` |
-| cargo | [tokio](https://github.com/tokio-rs/tokio) | 1.53.1 | `MIT` |
+| cargo | [tokio](https://github.com/tokio-rs/tokio) | 1.53.3 | `MIT` |
 | cargo | [tokio-macros](https://github.com/tokio-rs/tokio) | 2.7.2 | `MIT` |
 | cargo | [tokio-rustls](https://github.com/rustls/tokio-rustls) | 0.26.4 | `MIT OR Apache-2.0` |
 | cargo | [tokio-stream](https://github.com/tokio-rs/tokio) | 0.1.19 | `MIT` |
@@ -1210,7 +1210,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [base-x](https://www.npmjs.com/package/base-x/v/5.0.1) | 5.0.1 | `MIT` |
 | npm | [baseline-browser-mapping](https://www.npmjs.com/package/baseline-browser-mapping/v/2.11.26) | 2.11.26 | `Apache-2.0` |
 | npm | [bidi-js](https://www.npmjs.com/package/bidi-js/v/1.0.3) | 1.0.3 | `MIT` |
-| npm | [body-parser](https://www.npmjs.com/package/body-parser/v/2.3.0) | 2.3.0 | `MIT` |
+| npm | [body-parser](https://www.npmjs.com/package/body-parser/v/2.4.0) | 2.4.0 | `MIT` |
 | npm | [boolbase](https://www.npmjs.com/package/boolbase/v/1.0.0) | 1.0.0 | `ISC` |
 | npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/2.1.7) | 2.1.7 | `MIT` |
 | npm | [brace-expansion](https://www.npmjs.com/package/brace-expansion/v/5.0.12) | 5.0.12 | `MIT` |
@@ -1510,7 +1510,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [pretty-format](https://www.npmjs.com/package/pretty-format/v/27.5.1) | 27.5.1 | `MIT` |
 | npm | [proc-log](https://www.npmjs.com/package/proc-log/v/6.1.0) | 6.1.0 | `ISC` |
 | npm | [punycode](https://www.npmjs.com/package/punycode/v/2.3.1) | 2.3.1 | `MIT` |
-| npm | [qs](https://www.npmjs.com/package/qs/v/6.16.0) | 6.16.0 | `BSD-3-Clause` |
+| npm | [qs](https://www.npmjs.com/package/qs/v/6.16.1) | 6.16.1 | `BSD-3-Clause` |
 | npm | [raw-body](https://www.npmjs.com/package/raw-body/v/3.0.2) | 3.0.2 | `MIT` |
 | npm | [react](https://www.npmjs.com/package/react/v/19.2.8) | 19.2.8 | `MIT` |
 | npm | [react-dom](https://www.npmjs.com/package/react-dom/v/19.2.8) | 19.2.8 | `MIT` |
@@ -1612,8 +1612,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [typescript](https://www.npmjs.com/package/typescript/v/6.0.3) | 6.0.3 | `Apache-2.0` |
 | npm | [typescript-eslint](https://www.npmjs.com/package/typescript-eslint/v/8.67.0) | 8.67.0 | `MIT` |
 | npm | [unbox-primitive](https://www.npmjs.com/package/unbox-primitive/v/1.1.0) | 1.1.0 | `MIT` |
-| npm | [undici](https://www.npmjs.com/package/undici/v/7.29.1) | 7.29.1 | `MIT` |
-| npm | [undici](https://www.npmjs.com/package/undici/v/8.10.2) | 8.10.2 | `MIT` |
+| npm | [undici](https://www.npmjs.com/package/undici/v/7.30.1) | 7.30.1 | `MIT` |
+| npm | [undici](https://www.npmjs.com/package/undici/v/8.12.2) | 8.12.2 | `MIT` |
 | npm | [undici-types](https://www.npmjs.com/package/undici-types/v/7.18.2) | 7.18.2 | `MIT` |
 | npm | [unhomoglyph](https://www.npmjs.com/package/unhomoglyph/v/1.0.6) | 1.0.6 | `MIT` |
 | npm | [unicode-canonical-property-names-ecmascript](https://www.npmjs.com/package/unicode-canonical-property-names-ecmascript/v/2.0.1) | 2.0.1 | `MIT` |
@@ -1678,4 +1678,4 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [yargs](https://www.npmjs.com/package/yargs/v/18.1.0) | 18.1.0 | `MIT` |
 | npm | [yargs-parser](https://www.npmjs.com/package/yargs-parser/v/22.0.0) | 22.0.0 | `ISC` |
 | npm | [yocto-queue](https://www.npmjs.com/package/yocto-queue/v/0.1.0) | 0.1.0 | `MIT` |
-| npm | [zod](https://www.npmjs.com/package/zod/v/4.4.3) | 4.4.3 | `MIT` |
+| npm | [zod](https://www.npmjs.com/package/zod/v/4.6.7) | 4.6.7 | `MIT` |
