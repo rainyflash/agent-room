@@ -11,7 +11,7 @@ core-foundation.workspace = true
 security-framework.workspace = true
 security-framework-sys.workspace = true
 
-# 与工作区相同，只把 unsafe_code 从 forbid 放宽到 deny：整个工作区里只有本 crate 的 ffi 模块允许它。
+# 与工作区相同，只把 unsafe_code 从 forbid 放宽到 deny：只有本 crate 的 ffi 模块允许它（Windows 上的是 windows-app-package）。
 [lints.rust]
 unsafe_code = "deny"
 unused_lifetimes = "deny"

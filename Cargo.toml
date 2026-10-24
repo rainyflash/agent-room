@@ -25,6 +25,7 @@ members = [
   "crates/postgres-adapter",
   "crates/protocol-conformance",
   "crates/release-manifest",
+  "crates/windows-app-package",
 ]
 resolver = "3"
 
@@ -55,6 +56,7 @@ agent-room-message-crypto-adapter = { version = "0.1.0-alpha.81", path = "crates
 agent-room-postgres-adapter = { version = "0.1.0-alpha.81", path = "crates/postgres-adapter" }
 agent-room-protocol-conformance = { version = "0.1.0-alpha.81", path = "crates/protocol-conformance" }
 agent-room-release-manifest = { version = "0.1.0-alpha.81", path = "crates/release-manifest" }
+agent-room-windows-app-package = { version = "0.1.0-alpha.81", path = "crates/windows-app-package" }
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 aes-gcm = "0.10.3"
@@ -119,6 +121,7 @@ url = "2.5.7"
 uuid = { version = "1.25.0", features = ["serde", "v7"] }
 widestring = "1.2.1"
 win-security-identifier = "0.2.0"
+windows-sys = "0.61.2"
 zeroize = "1.9.0"
 
 [workspace.lints.rust]
