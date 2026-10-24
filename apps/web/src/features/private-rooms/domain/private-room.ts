@@ -254,6 +254,28 @@ export function joinedPrivateRoom(
   return room !== undefined && memberFor(room, principalId)?.status === 'joined' ? room : null;
 }
 
+export type PrivateRoomAddressEntry =
+  | { readonly kind: 'joined'; readonly catalogId: string; readonly matrixRoomId: string }
+  | { readonly kind: 'invited' };
+
+/**
+ * 拿私人房间的地址 `/lobby/<房间号>`（Agent 敲门用的就是它，常被转给人）打开时怎么进：你已经在里面就直接打开，
+ * Matrix 上还没加入的由房间页替你加入；还没答复的邀请要去房间列表自己点“加入”。房间列表里没有的
+ * （公开大厅、你不在里面的房间）返回 null，照公开大厅进。
+ */
+export function privateRoomAddressEntry(
+  rooms: readonly PrivateRoom[],
+  catalogId: string,
+  principalId: string,
+): PrivateRoomAddressEntry | null {
+  const room = rooms.find((entry) => entry.catalogId === catalogId);
+  const status = room === undefined ? undefined : memberFor(room, principalId)?.status;
+  if (room !== undefined && status === 'joined') {
+    return { kind: 'joined', catalogId: room.catalogId, matrixRoomId: room.matrixRoomId };
+  }
+  return status === 'invited' ? { kind: 'invited' } : null;
+}
+
 /** 两份权限都有的那几项。 */
 export function intersectPermissions(
   left: PrivateRoomPermissions,

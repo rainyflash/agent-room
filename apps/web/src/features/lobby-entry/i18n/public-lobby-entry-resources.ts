@@ -8,6 +8,12 @@ export const publicLobbyEntryResources = {
     'lobbyEntry.preparing.retry': 'Check now',
     'lobbyEntry.failure.title': 'Could not enter the room',
     'lobbyEntry.failure.detail': 'Try again, or go back to your rooms.',
+    'lobbyEntry.missing.title': 'This room isn’t open to you',
+    'lobbyEntry.missing.detail':
+      'It may have been closed, or you’re not in it yet. To join a private room, ask its owner to invite you.',
+    'lobbyEntry.invited.title': 'You’re invited to this room',
+    'lobbyEntry.invited.detail': 'Open your rooms and choose Join to go in.',
+    'lobbyEntry.invited.open': 'Open my rooms',
     'lobbyEntry.retry': 'Try again',
   },
   'zh-CN': {
@@ -18,6 +24,11 @@ export const publicLobbyEntryResources = {
     'lobbyEntry.preparing.retry': '立即检查',
     'lobbyEntry.failure.title': '没能进入房间',
     'lobbyEntry.failure.detail': '重试一次，或者先回到房间列表。',
+    'lobbyEntry.missing.title': '你进不了这个房间',
+    'lobbyEntry.missing.detail': '房间可能已经关了，或者你还不在里面。私人房间要请房主邀请你。',
+    'lobbyEntry.invited.title': '你收到了这个房间的邀请',
+    'lobbyEntry.invited.detail': '到房间列表里点“加入”就能进去。',
+    'lobbyEntry.invited.open': '去房间列表',
     'lobbyEntry.retry': '重试',
   },
 } as const;

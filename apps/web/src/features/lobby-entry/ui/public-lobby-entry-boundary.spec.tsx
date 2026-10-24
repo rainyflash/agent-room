@@ -8,11 +8,12 @@ import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { useAppServices } from '@/app/app-services';
-import type { PublicLobbyEntryTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
+import type { PublicLobbyRouteTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
+import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { useSession } from '@/features/session/ui/session-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
-import { err } from '@/shared/result';
+import { err, ok } from '@/shared/result';
 
 vi.mock('@/app/app-services', () => ({ useAppServices: vi.fn() }));
 vi.mock('@/features/preferences/ui/language-control', () => ({ LanguageControl: () => null }));
@@ -35,9 +36,7 @@ describe('公开大厅入场边界', () => {
       Promise.resolve(err({ code: 'lobby.entry_provisioning_busy', retryable: true })),
     );
     const onEntered = vi.fn();
-    vi.mocked(useAppServices).mockReturnValue({
-      lobbyEntry: { enter },
-    } as unknown as ReturnType<typeof useAppServices>);
+    mockServices(enter);
     vi.mocked(useSession).mockReturnValue({
       snapshot: {
         context: {
@@ -66,9 +65,7 @@ describe('公开大厅入场边界', () => {
     const enter = vi.fn(() =>
       Promise.resolve(err({ code: 'lobby.entry_catalog_missing', retryable: false })),
     );
-    vi.mocked(useAppServices).mockReturnValue({
-      lobbyEntry: { enter },
-    } as unknown as ReturnType<typeof useAppServices>);
+    mockServices(enter);
     mockSession('ready', principal);
 
     renderBoundary(vi.fn());
@@ -82,9 +79,7 @@ describe('公开大厅入场边界', () => {
 
   it('没登录时交给路由去登录，不在这里请求进房间', () => {
     const enter = vi.fn();
-    vi.mocked(useAppServices).mockReturnValue({
-      lobbyEntry: { enter },
-    } as unknown as ReturnType<typeof useAppServices>);
+    const list = mockServices(enter);
     mockSession('unauthenticated', null);
     const onConnectionRequired = vi.fn();
 
@@ -92,8 +87,91 @@ describe('公开大厅入场边界', () => {
 
     expect(onConnectionRequired).toHaveBeenCalledOnce();
     expect(enter).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('你在里面的私人房间直接打开，不走公开大厅入场', async () => {
+    const enter = vi.fn();
+    mockServices(enter, [privateRoom('joined')]);
+    mockSession('ready', principal);
+    const onEntered = vi.fn();
+
+    renderBoundary(onEntered);
+
+    await vi.waitFor(() => {
+      expect(onEntered).toHaveBeenCalledWith({ catalogId, matrixRoomId: privateMatrixRoomId });
+    });
+    expect(onEntered).toHaveBeenCalledOnce();
+    expect(enter).not.toHaveBeenCalled();
+  });
+
+  it('还没答复的邀请请人去房间列表点加入，不替他加入', async () => {
+    const enter = vi.fn();
+    mockServices(enter, [privateRoom('invited')]);
+    mockSession('ready', principal);
+    const onEntered = vi.fn();
+
+    renderBoundary(onEntered);
+
+    expect(
+      await screen.findByRole('heading', { name: 'You’re invited to this room' }),
+    ).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Open my rooms' })).toHaveAttribute('href', '/rooms');
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    expect(onEntered).not.toHaveBeenCalled();
+    expect(enter).not.toHaveBeenCalled();
+  });
+
+  it('找不到的房间说清楚进不了，不给没用的重试', async () => {
+    const enter = vi.fn(() =>
+      Promise.resolve(err({ code: 'lobby.entry_not_found', retryable: false })),
+    );
+    mockServices(enter);
+    mockSession('ready', principal);
+
+    renderBoundary(vi.fn());
+
+    expect(
+      await screen.findByRole('heading', { name: 'This room isn’t open to you' }),
+    ).toBeVisible();
+    expect(screen.getByText(/ask its owner to invite you/u)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to rooms' })).toHaveAttribute('href', '/rooms');
+    expect(enter).toHaveBeenCalledWith(catalogId);
   });
 });
+
+const privateMatrixRoomId = '!private:matrix.test';
+
+function privateRoom(status: 'invited' | 'joined'): PrivateRoom {
+  return {
+    catalogId,
+    description: '',
+    matrixRoomId: privateMatrixRoomId,
+    members: [
+      {
+        permissions: { capabilities: ['view'] },
+        principalId: principal.principalId,
+        status,
+      },
+    ],
+    name: 'Research lab',
+    ownerPrincipalId: '0198b601-77a3-74f1-b4f4-940f291951ba',
+    retentionDays: null,
+    roomInstanceId: '0198b601-77a3-74f1-b4f4-940f291951bb',
+    status: 'active',
+    version: 1,
+  } as unknown as PrivateRoom;
+}
+
+function mockServices(enter: ReturnType<typeof vi.fn>, rooms: readonly PrivateRoom[] = []) {
+  const list = vi.fn(() => Promise.resolve(ok(rooms)));
+  vi.mocked(useAppServices).mockReturnValue({
+    lobbyEntry: { enter },
+    privateRooms: { list },
+  } as unknown as ReturnType<typeof useAppServices>);
+  return list;
+}
 
 const principal = {
   displayName: 'Alice',
@@ -109,7 +187,7 @@ function mockSession(value: string, sessionPrincipal: typeof principal | null) {
 }
 
 function renderBoundary(
-  onEntered: (target: PublicLobbyEntryTarget) => void,
+  onEntered: (target: PublicLobbyRouteTarget) => void,
   onConnectionRequired: () => void = vi.fn(),
 ) {
   const queryClient = new QueryClient({
