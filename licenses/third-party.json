@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "bbe6ab79dbc6f6268484e3cc01226a7228d19d4088b251dcc513bcb0ec520c51",
-    "pnpm-lock.yaml": "d9e700bcb667818d14a0e0a360507af7571790e7b460f8847c729ab2b7fcb9ff"
+    "Cargo.lock": "b4cbc6ec6538702c7f4ebbbe4f7e51f51e26ed327315b7aff88f2926edd2d37d",
+    "pnpm-lock.yaml": "a2b0972236040643a978875fe98ce4c676c6fa15561da4344e3177751888e369"
   },
   "dependencies": [
     {
@@ -778,7 +778,7 @@
     {
       "ecosystem": "cargo",
       "name": "chacha20",
-      "version": "0.10.1",
+      "version": "0.10.2",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/RustCrypto/stream-ciphers"
     },
@@ -1093,7 +1093,7 @@
     {
       "ecosystem": "cargo",
       "name": "ctutils",
-      "version": "0.4.2",
+      "version": "0.4.5",
       "license": "Apache-2.0 OR MIT",
       "source": "https://github.com/RustCrypto/utils"
     },
@@ -4957,7 +4957,7 @@
     {
       "ecosystem": "cargo",
       "name": "tokio",
-      "version": "1.53.1",
+      "version": "1.53.3",
       "license": "MIT",
       "source": "https://github.com/tokio-rs/tokio"
     },
@@ -7960,9 +7960,9 @@
     {
       "ecosystem": "npm",
       "name": "body-parser",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/body-parser/v/2.3.0"
+      "source": "https://www.npmjs.com/package/body-parser/v/2.4.0"
     },
     {
       "ecosystem": "npm",
@@ -10060,9 +10060,9 @@
     {
       "ecosystem": "npm",
       "name": "qs",
-      "version": "6.16.0",
+      "version": "6.16.1",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/qs/v/6.16.0"
+      "source": "https://www.npmjs.com/package/qs/v/6.16.1"
     },
     {
       "ecosystem": "npm",
@@ -10774,16 +10774,16 @@
     {
       "ecosystem": "npm",
       "name": "undici",
-      "version": "7.29.1",
+      "version": "7.30.1",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/undici/v/7.29.1"
+      "source": "https://www.npmjs.com/package/undici/v/7.30.1"
     },
     {
       "ecosystem": "npm",
       "name": "undici",
-      "version": "8.10.2",
+      "version": "8.12.2",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/undici/v/8.10.2"
+      "source": "https://www.npmjs.com/package/undici/v/8.12.2"
     },
     {
       "ecosystem": "npm",
@@ -11236,9 +11236,9 @@
     {
       "ecosystem": "npm",
       "name": "zod",
-      "version": "4.4.3",
+      "version": "4.6.7",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/zod/v/4.4.3"
+      "source": "https://www.npmjs.com/package/zod/v/4.6.7"
     }
   ]
 }

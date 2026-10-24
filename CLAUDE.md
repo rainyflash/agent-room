@@ -541,6 +541,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 ### 版本与其他
 
 - Alpha 81 正在发布：打开私人房间的地址直接进房间（#570）、登录没走完时自动重开登录页（#573）、邮件链接过期时说清楚怎么办（#574），以及生产错误汇总和自动开 issue（#572、#575）。
+  - 第一个发布提交 `ec3a7a66`（版本 PR #576）的完整 CI 红在供应链：上游新出了 zod、undici、body-parser、tokio、ctutils、crypto-bigint 的公告。#578 升级了前五个，crypto-bigint 要等上游换 p256，加了例外（跟踪 #577）；#578 的合并提交成为发布提交。还没部署，草稿改名让位。
   - #574 改了 `infra/identity/`、`keycloak-registration-reconcile.py` 和 `tools/prodops/render.py`，实机验收要走一次新设备授权，维护者批准设备码。
   - 没有迁移，部署配置没加新变量。公开以后发布脚本在服务器上装上每小时一次的错误汇总（`install_error_digest_schedule.py`）。
 - Alpha 80 已于 2026-10-22 公开，见 [发布记录](./specs/agent-access/alpha80-release.md)。
