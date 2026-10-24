@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+import tomllib
 from typing import Final
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -734,8 +735,15 @@ class ProductionRuntime:
         return result.stdout.splitlines()
 
     def release_version(self) -> str:
-        """生产源码的版本号和提交，写在汇总里，看得出错是在哪一版上出的。"""
-        version = json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("version", "?")
+        """生产源码的版本号和提交，写在汇总里，看得出错是在哪一版上出的。
+
+        版本号以 Cargo workspace 的为准（`bump_release_version.py` 也读它）；根目录的 package.json 不跟着发版改。
+        """
+        try:
+            manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+            version = str(manifest["workspace"]["package"]["version"])
+        except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError):
+            version = "?"
         revision = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=ROOT,

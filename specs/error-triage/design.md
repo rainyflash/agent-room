@@ -126,3 +126,14 @@
 - 实现和设计不一样的两处：
   - 汇总里的字段按名字排序（`failure=` 在 `operation=` 前面），噪音表的正则照这个顺序写；
   - 控制面的日志里没有账户，只有身份服务和 Synapse 的写“涉及几个账户”。
+- 2026-10-24：维护者放好了令牌（`/etc/agent-room/ops-issues.token`，root、0600），只给 `agent-room-ops` 的 Issues，GitHub 说 2026-11-23 过期（30 天，不是 366 天）。
+- 2026-10-24：第 3 步开 issue（`tools/prodops/ops_issues.py`）和每小时的定时器（`schedule.py` 的 `ErrorDigestScheduleInstaller`，每小时第 7 分钟）做好：
+  - 合并前把代码打包成脚本在生产上真发了一次，用 48 小时的日志起头：开了 `agent-room-ops` #1–#5，另 3 种记进当天的 #6“今天还有这些”，标签都在，正文没有邮箱、IP 和 Matrix ID；
+  - 状态文件 `/var/lib/agent-room/error-digest/state.json` 那时就建好了，定时器上线后接着它读；
+  - 代码要随下一次发版到服务器上，发完跑一次 `error-digest-schedule-install` 装定时器。
+- 第 3 步和设计不一样的几处：
+  - 开着的 issue 不在当天第一次出现时评论，而是每天第一次跑时把前一天的次数补一条。账户数写“单个小时里最多涉及几个账户”：状态文件不存账户摘要，跨小时去不了重。
+  - 关着的又出现：版本没变（修复还没上线）只数次数，换了版本才重新打开、加 `regression`，并去掉 `triaged` 让开发 Agent 再看一遍。
+  - 令牌离过期 14 天时开一个 `needs-owner` 的 issue 提醒维护者换（不带 `prod-error`，不叫醒开发 Agent），设计原来写的是一个月，这次的令牌一共才 30 天。
+  - 版本号以 Cargo workspace 的为准（2a 读了根目录的 package.json，那个不跟着发版改）。
+  - 开 issue 时 GitHub 对只有 Issues 权限的令牌可能悄悄丢标签，开完核对一遍、少了补上：叫醒开发 Agent 靠 `prod-error`。

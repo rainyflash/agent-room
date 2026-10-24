@@ -35,6 +35,21 @@ reason = "验证链接被点了不止一次（邮箱的链接安全扫描也会�
 
 [[ignore]]
 service = "identity"
+summary = '^CUSTOM_REQUIRED_ACTION_ERROR error=cookie_not_found$'
+reason = "邮箱的链接安全扫描一两秒里从二十多个地址去点验证链接、不带 Cookie，验证后面那一步就报这个（2026-10-22 生产上看到的）"
+
+[[ignore]]
+service = "identity"
+summary = '^EXECUTE_ACTION_TOKEN_ERROR error=expired_code$'
+reason = "点了过期的邮件链接（验证链接 1 小时有效）。#574 起错误页说清楚设过密码就登录、没设就点“忘记密码？”，并给回到 Agent Room 的按钮"
+
+[[ignore]]
+service = "identity"
+summary = '^RESTART_AUTHENTICATION_ERROR error=already_logged_in$'
+reason = "已经登录过了，浏览器里留着的旧登录页又提交了一次；Keycloak 把人送回网页，#573 起网页替没登录的人重开一次登录"
+
+[[ignore]]
+service = "identity"
 summary = '^WARN org\.keycloak\.common\.Profile Deprecated features '
 reason = "Keycloak 启动时提示有默认开着的旧功能，每次重建身份服务都有"
 
