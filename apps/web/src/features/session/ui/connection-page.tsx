@@ -74,6 +74,7 @@ export function ConnectionPage() {
     return (
       <EntryShell>
         <AuthenticationRecovery
+          automatic={state === 'unauthenticated'}
           gateway={controlPlane}
           principal={snapshot.context.principal}
           reason={callbackFailure}

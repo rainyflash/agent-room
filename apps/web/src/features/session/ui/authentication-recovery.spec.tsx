@@ -66,6 +66,66 @@ describe('AuthenticationRecovery', () => {
     expect(logout).not.toHaveBeenCalled();
   });
 
+  it('没登录的人登录没走完时自动重新打开一次登录页，五分钟内再失败就停在提示上', async () => {
+    const beginAuthentication = vi
+      .fn<ControlPlaneGateway['beginAuthentication']>()
+      .mockResolvedValue(ok({ kind: 'browser-navigation' }));
+    const gateway: ControlPlaneGateway = {
+      beginAuthentication,
+      readSession: vi.fn(),
+      logout: vi.fn(),
+    };
+    const view = render(
+      <I18nextProvider i18n={i18n}>
+        <AuthenticationRecovery automatic gateway={gateway} principal={null} reason="failed" />
+      </I18nextProvider>,
+    );
+    expect(
+      await screen.findByText('The last sign-in did not finish. Opening the sign-in page again…'),
+    ).toBeInTheDocument();
+    expect(beginAuthentication).toHaveBeenCalledExactlyOnceWith('/rooms');
+    view.unmount();
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AuthenticationRecovery automatic gateway={gateway} principal={null} reason="failed" />
+      </I18nextProvider>,
+    );
+    expect(
+      screen.getByText('We could not confirm the sign-in. Please sign in again.'),
+    ).toBeInTheDocument();
+    expect(beginAuthentication).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Sign in again' })).toBeEnabled();
+  });
+
+  it('自动重来时打不开登录页，照常说原因和打不开', async () => {
+    const beginAuthentication = vi
+      .fn<ControlPlaneGateway['beginAuthentication']>()
+      .mockResolvedValue(
+        err({
+          boundary: 'browser',
+          code: 'browser.authentication_navigation_failed',
+          offline: false,
+          retryable: true,
+        }),
+      );
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AuthenticationRecovery
+          automatic
+          gateway={{ beginAuthentication, readSession: vi.fn(), logout: vi.fn() }}
+          principal={null}
+          reason="expired"
+        />
+      </I18nextProvider>,
+    );
+    expect(
+      await screen.findByText('The sign-in page could not be opened. Please try again.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/This sign-in link expired/u)).toBeInTheDocument();
+    expect(beginAuthentication).toHaveBeenCalledOnce();
+  });
+
   it('无法打开验证页时显示可重试错误', async () => {
     const beginAuthentication = vi
       .fn<ControlPlaneGateway['beginAuthentication']>()

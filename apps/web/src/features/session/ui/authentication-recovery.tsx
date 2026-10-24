@@ -1,17 +1,31 @@
 import { Button } from '@agent-room/ui-system';
 import { LogIn } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { readAutomationGrantDraft } from '@/features/automation/adapters/automation-grant-draft';
-import type { AuthenticationCallbackFailure } from '@/features/session/domain/authentication-callback';
+import {
+  claimAutomaticRestart,
+  type AuthenticationCallbackFailure,
+} from '@/features/session/domain/authentication-callback';
 import type { ControlPlaneGateway, WebSession } from '@/features/session/domain/session';
 import { EntryCard } from '@/shared/ui/entry-shell';
 
+function tabStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthenticationRecovery({
+  automatic = false,
   gateway,
   principal,
   reason,
 }: {
+  /** 确认了没登录：替他重新打开一次登录页。登录着的人在确认改动，照旧等他自己点。 */
+  readonly automatic?: boolean;
   readonly gateway: ControlPlaneGateway;
   readonly principal: WebSession | null;
   readonly reason: AuthenticationCallbackFailure;
@@ -19,10 +33,12 @@ export function AuthenticationRecovery({
   const { t } = useTranslation();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const attempted = useRef(false);
   const saved = principal === null ? null : readAutomationGrantDraft(principal.principalId);
   const returnPath = saved?.ok === true ? (saved.value?.returnPath ?? '/rooms') : '/rooms';
 
-  const retry = async (): Promise<void> => {
+  const retry = useCallback(async (): Promise<void> => {
     setPending(true);
     setFailed(false);
     try {
@@ -30,12 +46,23 @@ export function AuthenticationRecovery({
       if (!result.ok) {
         setFailed(true);
         setPending(false);
+        setRestarting(false);
       }
     } catch {
       setFailed(true);
       setPending(false);
+      setRestarting(false);
     }
-  };
+  }, [gateway, returnPath]);
+
+  useEffect(() => {
+    if (!automatic || attempted.current) return;
+    attempted.current = true;
+    const storage = tabStorage();
+    if (storage === null || !claimAutomaticRestart(storage, Date.now())) return;
+    setRestarting(true);
+    void retry();
+  }, [automatic, retry]);
 
   return (
     <EntryCard
@@ -66,7 +93,11 @@ export function AuthenticationRecovery({
       title={t('connection.authenticationRecovery.title')}
     >
       <p className="entry-card__lede" role="alert">
-        {t(`connection.authenticationRecovery.${reason}`)}
+        {t(
+          restarting
+            ? 'connection.authenticationRecovery.restarting'
+            : `connection.authenticationRecovery.${reason}`,
+        )}
       </p>
       {principal === null ? null : (
         <p className="entry-card__lede">{t('connection.authenticationRecovery.sessionRetained')}</p>
