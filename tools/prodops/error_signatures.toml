@@ -45,6 +45,11 @@ reason = "点了过期的邮件链接（验证链接 1 小时有效）。#574 �
 
 [[ignore]]
 service = "identity"
+summary = '^CUSTOM_REQUIRED_ACTION_ERROR error=expired_code$'
+reason = "点了过期的验证邮件链接（1 小时有效），走到验证那一步才发现过期，和 EXECUTE_ACTION_TOKEN_ERROR 的过期是同一件事；#574 起错误页说清楚怎么办"
+
+[[ignore]]
+service = "identity"
 summary = '^RESTART_AUTHENTICATION_ERROR error=already_logged_in$'
 reason = "已经登录过了，浏览器里留着的旧登录页又提交了一次；Keycloak 把人送回网页，#573 起网页替没登录的人重开一次登录"
 
