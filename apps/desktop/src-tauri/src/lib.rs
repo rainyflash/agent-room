@@ -33,6 +33,7 @@ mod release_update_watch;
 mod release_updates;
 mod runtime_target;
 mod server_move;
+mod single_instance;
 mod tray_hint;
 use receiver_runtime::{
     ReceiverRuntime, desktop_receiver_action, desktop_receiver_configure, desktop_receiver_list,
@@ -78,6 +79,12 @@ pub fn run_entrypoint() -> ExitCode {
             }
             // 在别的打包应用的包里被拉起时，到包外重新启动一份，本机数据才都写在正常的位置。
             if package_breakaway::relaunched_outside_app_package() {
+                return ExitCode::SUCCESS;
+            }
+            // 同一时间只让一份跑起来：已经有一份在跑，就把这次的参数交给它（见 `single_instance.rs`）。
+            if !single_instance::wait_for_turn_to_run(launched_in_background(
+                std::env::args().skip(1),
+            )) {
                 return ExitCode::SUCCESS;
             }
             let update_config = match ReleaseUpdateConfig::from_build() {
@@ -167,6 +174,8 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_receiver_action,
         ])
         .setup(move |app| {
+            // 主窗口的 WebView 没建起来就另起一份重来，要在启动 Bridge 之前。
+            single_instance::recover_missing_main_window(app);
             let result = setup_runtime(app, update_config.clone());
             if let Err(error) = &result {
                 tracing::error!(%error, "桌面端初始化失败");
@@ -199,6 +208,8 @@ fn on_run_event(app: &tauri::AppHandle, event: RunEvent) {
             let runtime = app.state::<DesktopRuntime>().inner().clone();
             if runtime.receivers.begin_shutdown() {
                 api.prevent_exit();
+                // 退出要等 Bridge 收尾：这期间新启动的桌面端等这一份退完再接上，不把参数交给它。
+                single_instance::announce_closing();
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(error) = runtime.receivers.shutdown().await {

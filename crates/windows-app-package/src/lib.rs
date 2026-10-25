@@ -1,4 +1,5 @@
-//! 在打包应用（MSIX）的包外面启动程序。
+//! Windows 上拉起桌面端要用的系统调用：在打包应用（MSIX）的包外面启动程序，
+//! 以及同一时间只让一份桌面端跑起来（[`desktop_instance`]）。
 //!
 //! 从商店装的打包应用（比如某些 Agent 宿主）起的子进程，默认都算在那个应用的包里。Windows 给包里的
 //! 进程看的 `AppData` 是真实目录和这个应用私有副本（`%LOCALAPPDATA%\Packages\<包>\LocalCache`）
@@ -14,6 +15,8 @@
 
 #[cfg(any(windows, test))]
 mod command_line;
+#[cfg(windows)]
+pub mod desktop_instance;
 #[cfg(windows)]
 mod ffi;
 

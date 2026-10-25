@@ -113,6 +113,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 以前 Agent 连不上 Bridge 时拉起的桌面端（#221）跟着进了宿主的包，桌面端、Bridge 和 WebView 的一部分本机数据写进了 Codex 的副本。9 月 18 日换服务器时收走的默认 Agent 设置在副本里还留着，每次被 Codex 拉起都去登记一个早就没了的 Agent（agent-room-ops #7）。网页存储也有一半在副本里，很可能就是以前升级后登录和加密库被清空的原因。
   - #585 起 MCP 和命令行用 `agent-room-windows-app-package` 在包外拉起桌面端：创建进程时把 `PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY` 设成 `..._BREAKAWAY_ENABLE_PROCESS_TREE`。2026-10-24 用 `Invoke-CommandInDesktopPackage -PreventBreakaway` 在 Codex 的包里实测过：带上它的子进程本身就在包外；不带，或者设成 `..._OVERRIDE`，都留在包里。桌面端发现自己还在包里（比如升级后宿主里还开着旧版 MCP），就在包外重新启动一份（`package_breakaway.rs`）。从我们的程序拉起桌面端别再直接用 `std::process::Command`。
   - 命令行人物（`cli-profiles`）和 MCP 的 `mcp-joins` 照旧写在宿主的副本里。只有同一个宿主里的命令行和 MCP 读它们，没关系；别让桌面端或 Bridge 去读。
+- **Windows 上桌面端先排队再交给单实例插件。** 插件（`tauri-plugin-single-instance` 2.4.3）只看它的互斥体在不在：在却找不到正在跑的那份收消息的窗口（上一份正在退出、刚启动）时，它不拦、当成没人在跑，还一直开着自己的互斥体，之后每次启动都多起一份。两份抢同一份 `WebView` 本机数据时，后起的那份主窗口的 `WebView` 建不起来，Tauri 只记一行 `log` 日志（我们的日志收不到）、照样往下跑，只剩托盘、点“打开”也出不来（2026-10-25 维护者电脑上：发版验收后十几个 Agent 同时拉起桌面端，正好碰上他自己点开）。
+  - 现在 `single_instance.rs` 在建 Tauri 应用之前拿主线程排队（`agent-room-windows-app-package` 的 `desktop_instance`）：拿到 `Local\dev.agent-room.desktop.primary` 的往下启动；拿不到就照插件的格式把参数交给正在跑的那份（`WM_COPYDATA`）、自己退出；对方说了正在退出（`...desktop.closing`，退出开始时建）就等它退完再接上。拿到以后还等上一份的插件互斥体和 `EBWebView\lockfile` 放开。
+  - 主窗口的 `WebView` 还是没建起来（`hwnd()` 报错）时，启动 Bridge 之前另起一份、自己退出，只重来一次（`--retry-main-window`）。
+  - 命令行和 MCP 看到桌面端在跑、没在退出就不再拉起（`desktop_running()`）。
+  - 转交参数照的是插件 2.4.3 的窗口名和格式，测试卡着版本号；升级插件时先核对它的 `platform_impl/windows.rs`。
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **网页加密库的锁同一个页面里也会抢。** 每台设备的加密库由一把 Web Locks 锁守着，拿锁只等 1 秒，等不到就报“已在另一个窗口打开”。睡眠醒来、网络断了又连上时会接连恢复会话，上一次还拿着锁，2026-10-09 维护者的 Mac 就因此停住。现在新的一次先叫停上一次、等它放开锁（`RESTORE_HANDOFF_WAIT_MS`），等不到报 `matrix.restore_stuck`。改恢复流程时，被取代的那次也要尽快收尾、放开锁。

@@ -11,11 +11,18 @@ windows-sys = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Storage_Packaging_Appx",
+  "Win32_System_DataExchange",
   "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
 tempfile.workspace = true
+# 测试里建一个收消息的窗口，查转交参数真能送到。
+windows-sys = { workspace = true, features = [
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+] }
 
 # 与工作区相同，只把 unsafe_code 从 forbid 放宽到 deny：本 crate 只有 ffi 模块允许它。
 [lints.rust]
