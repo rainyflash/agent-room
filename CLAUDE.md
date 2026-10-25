@@ -114,7 +114,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - #585 起 MCP 和命令行用 `agent-room-windows-app-package` 在包外拉起桌面端：创建进程时把 `PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY` 设成 `..._BREAKAWAY_ENABLE_PROCESS_TREE`。2026-10-24 用 `Invoke-CommandInDesktopPackage -PreventBreakaway` 在 Codex 的包里实测过：带上它的子进程本身就在包外；不带，或者设成 `..._OVERRIDE`，都留在包里。桌面端发现自己还在包里（比如升级后宿主里还开着旧版 MCP），就在包外重新启动一份（`package_breakaway.rs`）。从我们的程序拉起桌面端别再直接用 `std::process::Command`。
   - 命令行人物（`cli-profiles`）和 MCP 的 `mcp-joins` 照旧写在宿主的副本里。只有同一个宿主里的命令行和 MCP 读它们，没关系；别让桌面端或 Bridge 去读。
 - **Windows 上桌面端先排队再交给单实例插件。** 插件（`tauri-plugin-single-instance` 2.4.3）只看它的互斥体在不在：在却找不到正在跑的那份收消息的窗口（上一份正在退出、刚启动）时，它不拦、当成没人在跑，还一直开着自己的互斥体，之后每次启动都多起一份。两份抢同一份 `WebView` 本机数据时，后起的那份主窗口的 `WebView` 建不起来，Tauri 只记一行 `log` 日志（我们的日志收不到）、照样往下跑，只剩托盘、点“打开”也出不来（2026-10-25 维护者电脑上：发版验收后十几个 Agent 同时拉起桌面端，正好碰上他自己点开）。
-  - 现在 `single_instance.rs` 在建 Tauri 应用之前拿主线程排队（`agent-room-windows-app-package` 的 `desktop_instance`）：拿到 `Local\dev.agent-room.desktop.primary` 的往下启动；拿不到就照插件的格式把参数交给正在跑的那份（`WM_COPYDATA`）、自己退出；对方说了正在退出（`...desktop.closing`，退出开始时建）就等它退完再接上。拿到以后还等上一份的插件互斥体和 `EBWebView\lockfile` 放开。
+  - 现在（#592）`single_instance.rs` 在建 Tauri 应用之前拿主线程排队（`agent-room-windows-app-package` 的 `desktop_instance`）：拿到 `Local\dev.agent-room.desktop.primary` 的往下启动；拿不到就照插件的格式把参数交给正在跑的那份（`WM_COPYDATA`）、自己退出；对方说了正在退出（`...desktop.closing`，退出开始时建）就等它退完再接上。拿到以后还等上一份的插件互斥体和 `EBWebView\lockfile` 放开。
   - 主窗口的 `WebView` 还是没建起来（`hwnd()` 报错）时，启动 Bridge 之前另起一份、自己退出，只重来一次（`--retry-main-window`）。
   - 命令行和 MCP 看到桌面端在跑、没在退出就不再拉起（`desktop_running()`）。
   - 转交参数照的是插件 2.4.3 的窗口名和格式，测试卡着版本号；升级插件时先核对它的 `platform_impl/windows.rs`。
