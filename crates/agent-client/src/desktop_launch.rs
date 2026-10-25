@@ -126,12 +126,17 @@ impl DesktopLauncher for InstalledDesktop {
 fn launch_detached(target: &Path) -> io::Result<()> {
     use std::ffi::OsString;
 
-    use agent_room_windows_app_package::spawn_outside_app_package;
+    use agent_room_windows_app_package::{desktop_instance, spawn_outside_app_package};
 
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
+    // 桌面端已经在跑、没在退出：再起一份也只是把这次启动交给它。好几个 Agent 同时连不上 Bridge 时，
+    // 不然每个都起一份。它正在退出时照样起：新的一份会等它退完再接上。
+    if desktop_instance::desktop_running() {
+        return Ok(());
+    }
     let arguments = [OsString::from(DESKTOP_BACKGROUND_ARGUMENT)];
     let spawn = |flags: u32| spawn_outside_app_package(target, &arguments, flags).map(drop);
     // 宿主可能把 MCP 放在“宿主退出就全部结束”的作业里；能脱离就脱离，不允许脱离时照常启动。
