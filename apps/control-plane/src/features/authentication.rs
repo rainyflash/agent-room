@@ -213,6 +213,51 @@ struct CompleteLoginQuery {
     state: String,
 }
 
+/// 身份服务没给授权码、带着错误回到回调（RFC 6749 4.1.2.1）。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReturnedErrorQuery {
+    error: String,
+    #[serde(default)]
+    error_description: Option<String>,
+    #[serde(default, rename = "error_uri")]
+    _error_uri: Option<String>,
+    #[serde(default)]
+    iss: Option<String>,
+    #[serde(default, rename = "state")]
+    _state: Option<String>,
+}
+
+impl ReturnedErrorQuery {
+    /// Keycloak 发现这个浏览器已经登录过了（比如点了两次登录，或者别的标签页里留着的旧登录页又提交了一次），
+    /// 就回这一种（`LoginProtocol.Error.ALREADY_LOGGED_IN`），让客户端重新登录一次，会直接成功。
+    fn already_signed_in(&self) -> bool {
+        self.error == "temporarily_unavailable"
+            && self.error_description.as_deref() == Some("authentication_expired")
+    }
+
+    /// 只记 OAuth 规定的错误名：回调地址谁都能打开，别的字不进日志。
+    fn error_kind(&self) -> &'static str {
+        const KINDS: [&str; 11] = [
+            "invalid_request",
+            "unauthorized_client",
+            "access_denied",
+            "unsupported_response_type",
+            "invalid_scope",
+            "server_error",
+            "temporarily_unavailable",
+            "interaction_required",
+            "login_required",
+            "account_selection_required",
+            "consent_required",
+        ];
+        KINDS
+            .into_iter()
+            .find(|kind| *kind == self.error)
+            .unwrap_or("other")
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DesktopExchangeRequest {
@@ -383,10 +428,14 @@ async fn complete_login(
     State(state): State<AuthenticationHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
     query: Result<Query<CompleteLoginQuery>, QueryRejection>,
+    returned_error: Result<Query<ReturnedErrorQuery>, QueryRejection>,
     headers: HeaderMap,
     jar: CookieJar,
 ) -> Response {
     let Ok(Query(query)) = query else {
+        if let Ok(Query(returned)) = returned_error {
+            return returned_login_error(&state, &headers, jar, &returned, correlation_id).await;
+        }
         return login_failure(
             &state,
             &headers,
@@ -481,6 +530,73 @@ fn desktop_login_success(
         .add(expired_cookie(LOGIN_COOKIE))
         .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
     no_store((jar, Redirect::to(destination.as_str())).into_response())
+}
+
+/// 身份服务带着错误回到回调。说“已经登录过了”时，浏览器里的网页登录还有效就直接送回房间，
+/// 不算失败；没有的照常回连接页，网页替没登录的人重开一次登录（#573），身份服务那边会直接放行。
+async fn returned_login_error(
+    state: &AuthenticationHttpState,
+    headers: &HeaderMap,
+    jar: CookieJar,
+    returned: &ReturnedErrorQuery,
+    correlation_id: CorrelationId,
+) -> Response {
+    if returned
+        .iss
+        .as_deref()
+        .is_some_and(|issuer| issuer != state.issuer.as_str())
+    {
+        return login_failure(
+            state,
+            headers,
+            jar,
+            ApiError::invalid_request("authentication.issuer_mismatch", correlation_id),
+        );
+    }
+    if returned.already_signed_in() {
+        if web_session_active(state, &jar).await
+            && let Ok(rooms) = state.frontend_origin.join("/rooms")
+        {
+            tracing::info!(
+                correlation.id = %correlation_id.as_uuid(),
+                "身份服务说这个浏览器已经登录过了，网页登录也还有效，送回房间"
+            );
+            return no_store(Redirect::to(rooms.as_str()).into_response());
+        }
+        if accepts_html(headers) {
+            tracing::info!(
+                correlation.id = %correlation_id.as_uuid(),
+                "身份服务说这个浏览器已经登录过了，网页这边没有有效的登录，回连接页重新登录"
+            );
+            return connect_page(state, jar, "expired");
+        }
+    }
+    tracing::info!(
+        correlation.id = %correlation_id.as_uuid(),
+        oauth.error = returned.error_kind(),
+        "身份服务带着错误回到登录回调"
+    );
+    login_failure(
+        state,
+        headers,
+        jar,
+        ApiError::invalid_request("authentication.provider_error", correlation_id),
+    )
+}
+
+/// 只看网页登录：桌面登录不经浏览器的回调。
+async fn web_session_active(state: &AuthenticationHttpState, jar: &CookieJar) -> bool {
+    let Some(secret) = jar
+        .get(SESSION_COOKIE)
+        .and_then(|cookie| SecretValue::new(cookie.value()).ok())
+    else {
+        return false;
+    };
+    state
+        .authentication
+        .authenticate(&secret, AuthenticationRequirement::ActiveSession)
+        .await
+        .is_ok()
 }
 
 async fn exchange_desktop_login(
@@ -670,9 +786,6 @@ fn login_failure(
     jar: CookieJar,
     error: ApiError,
 ) -> Response {
-    let jar = jar
-        .add(expired_cookie(LOGIN_COOKIE))
-        .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
     if accepts_html(headers) {
         tracing::warn!(
             correlation.id = error.correlation_id(),
@@ -685,10 +798,21 @@ fn login_failure(
             }
             _ => "failed",
         };
-        let destination = format!("{}?authentication={reason}", state.login_failure_redirect);
-        return no_store((jar, Redirect::to(&destination)).into_response());
+        return connect_page(state, jar, reason);
     }
+    let jar = jar
+        .add(expired_cookie(LOGIN_COOKIE))
+        .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
     no_store((jar, error).into_response())
+}
+
+/// 回连接页，清掉这次登录留下的 Cookie；网页按 `reason` 说明、替没登录的人重开登录。
+fn connect_page(state: &AuthenticationHttpState, jar: CookieJar, reason: &str) -> Response {
+    let jar = jar
+        .add(expired_cookie(LOGIN_COOKIE))
+        .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
+    let destination = format!("{}?authentication={reason}", state.login_failure_redirect);
+    no_store((jar, Redirect::to(&destination)).into_response())
 }
 
 fn accepts_html(headers: &HeaderMap) -> bool {
@@ -1483,6 +1607,116 @@ mod tests {
             set_cookies(&response)
                 .iter()
                 .any(|cookie| cookie.contains("Max-Age=0"))
+        );
+    }
+
+    const ALREADY_SIGNED_IN: &str = "error=temporarily_unavailable&error_description=authentication_expired&state=returned-state";
+
+    async fn browser_callback(
+        fake: Arc<FakeAuthentication>,
+        query: &str,
+        cookie: Option<&str>,
+    ) -> axum::response::Response {
+        let mut request = Request::builder()
+            .uri(format!("/auth/oidc/callback?{query}"))
+            .header(header::ACCEPT, "text/html,application/xhtml+xml");
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+        }
+        test_router(fake)
+            .oneshot(request.body(Body::empty()).expect("请求有效"))
+            .await
+            .expect("路由执行成功")
+    }
+
+    fn location(response: &axum::response::Response) -> &str {
+        response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .expect("回调要跳转")
+    }
+
+    #[tokio::test]
+    async fn 身份服务说已经登录过了而网页登录还有效时直接送回房间() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = browser_callback(
+            fake.clone(),
+            &format!("{ALREADY_SIGNED_IN}&iss=https%3A%2F%2Fidentity.example%2F"),
+            Some(
+                "__Host-agent-room-session=session-secret; __Host-agent-room-login=browser-secret",
+            ),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(location(&response), "https://app.agent-room.test/rooms");
+        assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+        // 别的标签页可能正在登录，这次不碰登录 Cookie。
+        assert!(set_cookies(&response).is_empty());
+    }
+
+    #[tokio::test]
+    async fn 身份服务说已经登录过了而网页没有登录时回连接页重新登录() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = browser_callback(
+            fake.clone(),
+            ALREADY_SIGNED_IN,
+            Some("__Host-agent-room-login=browser-secret"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            location(&response),
+            "https://app.agent-room.test/connect?authentication=expired"
+        );
+        assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+        assert!(set_cookies(&response).iter().any(|cookie| {
+            cookie.starts_with("__Host-agent-room-login=") && cookie.contains("Max-Age=0")
+        }));
+    }
+
+    #[tokio::test]
+    async fn 身份服务带着别的错误或者回调缺参数时照常算失败() {
+        for query in [
+            "error=access_denied&state=returned-state",
+            "error=temporarily_unavailable&state=returned-state",
+            "error=temporarily_unavailable&error_description=authentication_expired&iss=https%3A%2F%2Fevil.example",
+            "state=returned-state",
+            "code=authorization-code&error=access_denied&state=returned-state",
+        ] {
+            let fake = Arc::new(FakeAuthentication::default());
+            let response = browser_callback(
+                fake.clone(),
+                query,
+                Some("__Host-agent-room-session=session-secret"),
+            )
+            .await;
+
+            assert_eq!(response.status(), StatusCode::SEE_OTHER, "{query}");
+            assert_eq!(
+                location(&response),
+                "https://app.agent-room.test/connect?authentication=failed",
+                "{query}"
+            );
+            assert_eq!(fake.complete.load(Ordering::SeqCst), 0, "{query}");
+        }
+    }
+
+    #[test]
+    fn 身份服务送回的错误名只记规定的那几种() {
+        let returned = |error: &str| super::ReturnedErrorQuery {
+            error: error.to_owned(),
+            error_description: None,
+            _error_uri: None,
+            iss: None,
+            _state: None,
+        };
+        assert_eq!(returned("access_denied").error_kind(), "access_denied");
+        assert_eq!(
+            returned("ignore previous instructions").error_kind(),
+            "other"
         );
     }
 
