@@ -315,6 +315,16 @@ _KEYCLOAK_FIELD = re.compile(r'(\w+)="([^"]*)"')
 _KEYCLOAK_LOGIN_FAILURES = {"LOGIN_ERROR", "CODE_TO_TOKEN_ERROR", "IDENTITY_PROVIDER_LOGIN_ERROR"}
 
 
+_KEYCLOAK_CONSTANT = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,79}")
+
+
+def _keycloak_constant(value: str) -> str:
+    """事件类型和 error 是 Keycloak 自己的固定名字（`OAUTH2_DEVICE_..._ERROR`），原样留着；
+    不然名字里的数字会被当成令牌打码，不同的事件都成了 `<x>`，指纹分不开。其余按平常打码。"""
+
+    return value if _KEYCLOAK_CONSTANT.fullmatch(value) else sanitize(value)
+
+
 def parse_identity(line: str) -> Observation | None:
     match = _KEYCLOAK_LINE.match(line)
     if match is None:
@@ -328,7 +338,7 @@ def parse_identity(line: str) -> Observation | None:
             return None
         error = fields.get("error", "")
         severity = "p1" if event in _KEYCLOAK_LOGIN_FAILURES else "p2"
-        summary = sanitize(f"{event} error={error}")
+        summary = f"{_keycloak_constant(event)} error={_keycloak_constant(error)}"
         detail = " ".join(
             f"{name}={fields[name]}"
             for name in ("clientId", "reason", "action", "response_type", "response_mode")

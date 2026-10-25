@@ -239,6 +239,13 @@ class ParserTests(unittest.TestCase):
             self.assertNotIn(secret, verify.sample)
         self.assertIsNone(parse_identity(KEYCLOAK_INFO))
 
+    def test_identity_event_names_with_digits_are_kept(self) -> None:
+        line = KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", "OAUTH2_DEVICE_CODE_TO_TOKEN_ERROR")
+        observation = parse_identity(line)
+        assert observation is not None
+        self.assertTrue(observation.signature.summary.startswith("OAUTH2_DEVICE_CODE_TO_TOKEN_ERROR error="))
+        self.assertNotIn("<x>", observation.signature.summary)
+
     def test_identity_error_lines(self) -> None:
         observation = parse_identity(KEYCLOAK_SERVICES)
         assert observation is not None
