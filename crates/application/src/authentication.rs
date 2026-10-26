@@ -213,6 +213,15 @@ pub trait AuthenticationUseCases: Send + Sync {
         request: CompleteLogin<'a>,
     ) -> PortFuture<'a, AuthenticationResult<LoginCompletion>>;
 
+    /// 回调没带登录 Cookie 时问一句：回传的 `state` 那次登录还在等吗。登录页放得太久、打开的是
+    /// 用过的回调地址，都已经不在等了；还在等却没带 Cookie 才不对劲。默认当作还在等。
+    fn login_awaits_callback<'a>(
+        &'a self,
+        _returned_state: &'a str,
+    ) -> PortFuture<'a, AuthenticationResult<bool>> {
+        Box::pin(async { Ok(true) })
+    }
+
     fn exchange_desktop_authorization<'a>(
         &'a self,
         _request: ExchangeDesktopAuthorization<'a>,
@@ -719,6 +728,23 @@ impl AuthenticationUseCases for AuthenticationService {
         request: CompleteLogin<'a>,
     ) -> PortFuture<'a, AuthenticationResult<LoginCompletion>> {
         Box::pin(self.complete_login_internal(request))
+    }
+
+    fn login_awaits_callback<'a>(
+        &'a self,
+        returned_state: &'a str,
+    ) -> PortFuture<'a, AuthenticationResult<bool>> {
+        Box::pin(async move {
+            if validate_authorization_value(returned_state).is_err() {
+                return Ok(false);
+            }
+            self.login_attempts
+                .awaits_callback(&self.secrets.digest(returned_state), self.clock.now())
+                .await
+                .map_err(|error| {
+                    map_repository_failure("authentication.login_awaits_callback", &error)
+                })
+        })
     }
 
     fn exchange_desktop_authorization<'a>(

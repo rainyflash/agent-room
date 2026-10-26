@@ -272,6 +272,19 @@ impl LoginAttemptStore for InMemoryIdentity {
             Ok(matches.then(|| state.attempt.take()).flatten())
         })
     }
+
+    fn awaits_callback<'a>(
+        &'a self,
+        state_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let state = self.0.lock().expect("测试锁可用");
+            Ok(state.attempt.as_ref().is_some_and(|attempt| {
+                attempt.state_digest == *state_digest && now < attempt.expires_at
+            }))
+        })
+    }
 }
 
 impl LoginCompletionTransaction for InMemoryIdentity {
@@ -602,6 +615,29 @@ async fn 错误浏览器状态不会消费尝试或调用令牌端点() {
         .await
         .expect("错误尝试不应消费正确登录状态");
     assert_eq!(harness.oidc.exchanges.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn 回调没带登录_cookie_时分得清这次登录还在不在等() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    let awaits = |state: &'static str| harness.service.login_awaits_callback(state);
+
+    assert!(awaits(STATE).await.expect("查得到"));
+    assert!(!awaits("another-state").await.expect("查得到"));
+    assert!(!awaits("").await.expect("不合法的 state 当作不在等"));
+
+    // 登录页放过了这次登录的时限。
+    harness.clock.set(NOW + 600_000);
+    assert!(!awaits(STATE).await.expect("查得到"));
+
+    // 已经用过的回调地址。
+    harness.clock.set(NOW);
+    harness
+        .complete(&redirect.browser_secret, STATE)
+        .await
+        .expect("登录应完成");
+    assert!(!awaits(STATE).await.expect("查得到"));
 }
 
 #[tokio::test]

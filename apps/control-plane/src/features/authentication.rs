@@ -459,6 +459,15 @@ async fn complete_login(
         .get(LOGIN_COOKIE)
         .and_then(|cookie| SecretValue::new(cookie.value()).ok())
     else {
+        // 登录 Cookie 和这次登录一起到期：登录页放得比它久、打开的是用过的回调地址，都会走到这里，
+        // 网页替没登录的人重开一次登录就好。这次登录还在等、Cookie 却没了才报告。
+        if accepts_html(&headers) && !login_awaits_callback(&state, &query.state).await {
+            tracing::info!(
+                correlation.id = %correlation_id.as_uuid(),
+                "回调对应的那次登录已经过期或用过了，返回连接页重新开始"
+            );
+            return connect_page(&state, jar, "expired");
+        }
         return login_failure(
             &state,
             &headers,
@@ -806,6 +815,15 @@ fn login_failure(
     no_store((jar, error).into_response())
 }
 
+/// 问不出来就当作还在等，照旧报告。
+async fn login_awaits_callback(state: &AuthenticationHttpState, returned_state: &str) -> bool {
+    state
+        .authentication
+        .login_awaits_callback(returned_state)
+        .await
+        .unwrap_or(true)
+}
+
 /// 回连接页，清掉这次登录留下的 Cookie；网页按 `reason` 说明、替没登录的人重开登录。
 fn connect_page(state: &AuthenticationHttpState, jar: CookieJar, reason: &str) -> Response {
     let jar = jar
@@ -972,7 +990,7 @@ mod tests {
     use std::{
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::Duration,
     };
@@ -1007,6 +1025,9 @@ mod tests {
         register_begin: AtomicUsize,
         complete: AtomicUsize,
         logout: AtomicUsize,
+        /// 回调没带登录 Cookie 时问过几次、答这次登录还在不在等。
+        awaits_asked: AtomicUsize,
+        attempt_awaits: AtomicBool,
     }
 
     impl AuthenticationUseCases for FakeAuthentication {
@@ -1070,6 +1091,16 @@ mod tests {
                     }))
                 }
             })
+        }
+
+        fn login_awaits_callback<'a>(
+            &'a self,
+            returned_state: &'a str,
+        ) -> PortFuture<'a, AuthenticationResult<bool>> {
+            self.awaits_asked.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(returned_state, "returned-state");
+            let awaits = self.attempt_awaits.load(Ordering::SeqCst);
+            Box::pin(async move { Ok(awaits) })
         }
 
         fn exchange_desktop_authorization<'a>(
@@ -1570,6 +1601,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+        assert_eq!(fake.awaits_asked.load(Ordering::SeqCst), 0);
         assert!(
             set_cookies(&response)
                 .iter()
@@ -1577,37 +1609,63 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn 浏览器回调缺少登录_cookie_时返回连接页重新开始() {
-        let fake = Arc::new(FakeAuthentication::default());
-        let response = test_router(fake.clone())
-            .oneshot(
-                Request::builder()
-                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state")
-                    .header(header::ACCEPT, "text/html,application/xhtml+xml")
-                    .body(Body::empty())
-                    .expect("请求有效"),
-            )
-            .await
-            .expect("路由执行成功");
+    struct WarningCount(Arc<AtomicUsize>);
 
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(
-            response.headers().get(header::LOCATION),
-            Some(&header::HeaderValue::from_static(
-                "https://app.agent-room.test/connect?authentication=expired"
-            ))
-        );
-        assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
-        assert!(set_cookies(&response).iter().all(|cookie| {
-            !cookie.starts_with("__Host-agent-room-session=")
-                && !cookie.starts_with("__Secure-agent-room-desktop-session=")
-        }));
-        assert!(
-            set_cookies(&response)
-                .iter()
-                .any(|cookie| cookie.contains("Max-Age=0"))
-        );
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarningCount {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn 浏览器回调缺少登录_cookie_时返回连接页重新开始_这次登录还在等才告警() {
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        // 登录页放得太久、打开的是用过的回调地址，这次登录都已经不在等了。
+        for (attempt_awaits, expected_warnings) in [(false, 0), (true, 1)] {
+            let fake = Arc::new(FakeAuthentication::default());
+            fake.attempt_awaits.store(attempt_awaits, Ordering::SeqCst);
+            let warnings = Arc::new(AtomicUsize::new(0));
+            let _subscriber = tracing::subscriber::set_default(
+                tracing_subscriber::registry().with(WarningCount(warnings.clone())),
+            );
+            let response = test_router(fake.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri("/auth/oidc/callback?code=authorization-code&state=returned-state")
+                        .header(header::ACCEPT, "text/html,application/xhtml+xml")
+                        .body(Body::empty())
+                        .expect("请求有效"),
+                )
+                .await
+                .expect("路由执行成功");
+
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            assert_eq!(
+                response.headers().get(header::LOCATION),
+                Some(&header::HeaderValue::from_static(
+                    "https://app.agent-room.test/connect?authentication=expired"
+                ))
+            );
+            assert_eq!(fake.complete.load(Ordering::SeqCst), 0);
+            assert_eq!(fake.awaits_asked.load(Ordering::SeqCst), 1);
+            assert_eq!(warnings.load(Ordering::SeqCst), expected_warnings);
+            assert!(set_cookies(&response).iter().all(|cookie| {
+                !cookie.starts_with("__Host-agent-room-session=")
+                    && !cookie.starts_with("__Secure-agent-room-desktop-session=")
+            }));
+            assert!(
+                set_cookies(&response)
+                    .iter()
+                    .any(|cookie| cookie.contains("Max-Age=0"))
+            );
+        }
     }
 
     const ALREADY_SIGNED_IN: &str = "error=temporarily_unavailable&error_description=authentication_expired&state=returned-state";
