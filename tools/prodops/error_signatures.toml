@@ -55,6 +55,26 @@ reason = "已经登录过了，浏览器里留着的旧登录页又提交了一�
 
 [[ignore]]
 service = "identity"
+summary = '^CUSTOM_REQUIRED_ACTION_ERROR error=(already_logged_in|invalid_code)$'
+reason = "别的标签页已经登录完了（比如在新标签页里点了验证邮件），这个标签页留着的验证邮箱这类页面自己刷新或又被提交：登录页模板里的 startSessionPolling 盯着别的标签页。Keycloak 把人送回网页，#588 起网页登录还有效就直接回房间（2026-10-25 生产上看到的，9 秒前同一个浏览器刚有一条 RESTART_AUTHENTICATION_ERROR）"
+
+[[ignore]]
+service = "identity"
+summary = '^REGISTER_ERROR error=invalid_registration$'
+reason = "注册表单没填对（密码不合要求、两次不一样、少填了），页面上直接提示了；2026-10-25 生产上那次，同一个浏览器两分钟后就登录上了"
+
+[[ignore]]
+service = "identity"
+summary = '^REGISTER_ERROR error=expired_code$'
+reason = "账户已经建好了，留着的旧注册页又被提交，Keycloak 给“页面已过期”；2026-10-25 生产上那次是验证完邮箱又点了旧标签页里的注册"
+
+[[ignore]]
+service = "identity"
+summary = '^OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR error=invalid_oauth2_user_code$'
+reason = "打开了已经过期或用过的设备码批准链接，页面上让重新输入；2026-10-25 是发版验收重发设备码以后又打开了第一个"
+
+[[ignore]]
+service = "identity"
 summary = '^WARN org\.keycloak\.common\.Profile Deprecated features '
 reason = "Keycloak 启动时提示有默认开着的旧功能，每次重建身份服务都有"
 
