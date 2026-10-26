@@ -10,6 +10,7 @@ import { routeCrossSigningUpload } from './cross-signing-upload-route';
 import { type EncryptionKeyEscrow, ensureDeviceSigned } from './matrix-device-signing';
 import { ensureFirstEncryptionIdentity } from './matrix-encryption-identity';
 import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
+import { MatrixSignInTurn } from './matrix-sign-in-turn';
 import {
   storedMatrixSessionSchema,
   type MatrixSessionVault,
@@ -95,6 +96,8 @@ export type MatrixWebGatewayOptions = {
   readonly deviceSigning?: DeviceSigningStatus;
   readonly sessionStorage?: Storage;
   readonly sessionVault?: MatrixSessionVault;
+  /** 同一个浏览器里一次只让一个标签页走聊天登录；默认按 localStorage 排队。 */
+  readonly signInTurn?: Pick<MatrixSignInTurn, 'release' | 'take'>;
   readonly syncTimeoutMs?: number;
   readonly url?: () => URL;
 };
@@ -116,6 +119,7 @@ export class MatrixWebGateway implements MatrixGateway {
   readonly #deviceSigning: DeviceSigningStatus;
   readonly #sessionStorage: Storage;
   readonly #sessions: MatrixSessionRepository;
+  readonly #signInTurn: Pick<MatrixSignInTurn, 'release' | 'take'>;
   readonly #clientLogs = new WeakMap<MatrixClient, MatrixLifecycleLogger>();
   readonly #cryptoCleanup: MatrixCryptoStoreCleanup;
   #restoreAttempt = 0;
@@ -151,6 +155,11 @@ export class MatrixWebGateway implements MatrixGateway {
     deviceSigning = new DeviceSigningStatus(),
     sessionStorage = window.sessionStorage,
     sessionVault = new IndexedDbMatrixSessionVault(baseUrl, indexedDB, sessionStorage),
+    signInTurn = new MatrixSignInTurn({
+      key: `agent-room.matrix-sign-in.v1:${baseUrl}`,
+      shared: localStorage,
+      tab: sessionStorage,
+    }),
     syncTimeoutMs = 20_000,
     url = () => new URL(window.location.href),
   }: MatrixWebGatewayOptions) {
@@ -169,6 +178,7 @@ export class MatrixWebGateway implements MatrixGateway {
     this.#deviceSigning = deviceSigning;
     this.#sessionStorage = sessionStorage;
     this.#sessions = new MatrixSessionRepository(sessionVault);
+    this.#signInTurn = signInTurn;
     this.#syncTimeoutMs = syncTimeoutMs;
     this.#url = url;
     this.#cryptoCleanup = new MatrixCryptoStoreCleanup(localStorage, indexedDB);
@@ -179,12 +189,30 @@ export class MatrixWebGateway implements MatrixGateway {
     returnPath: string,
   ): Promise<Result<AuthenticationStartOutcome, SessionFailure>> {
     const attempt = this.#restoreAttempt;
+    // 别的标签页正在走聊天登录就等它走完：两边同时走，先开始的那个会停在 Synapse 的报错页上。
+    const turn = await this.#signInTurn.take();
+    if (attempt !== this.#restoreAttempt) {
+      this.#signInTurn.release();
+      return err(supersededMatrixSession());
+    }
+    if (turn.waited) {
+      // 它存下的登录同一个浏览器里共用，直接拿来连。
+      const stored = await this.#sessions.load();
+      if (stored.ok && stored.value !== null) {
+        this.#signInTurn.release();
+        return ok({ kind: 'session-established' });
+      }
+    }
     try {
       const sdk = await import('matrix-js-sdk');
       const client = sdk.createClient({ baseUrl: this.#baseUrl, localTimeoutMs: 8_000 });
       const flows = await client.loginFlows();
-      if (attempt !== this.#restoreAttempt) return err(supersededMatrixSession());
+      if (attempt !== this.#restoreAttempt) {
+        this.#signInTurn.release();
+        return err(supersededMatrixSession());
+      }
       if (!flows.flows.some((flow) => flow.type === 'm.login.sso')) {
+        this.#signInTurn.release();
         return err(failure('matrix', 'matrix.sso_unavailable', false, false));
       }
       const previousPath = this.#sessionStorage.getItem(MATRIX_RETURN_PATH_KEY);
@@ -202,6 +230,7 @@ export class MatrixWebGateway implements MatrixGateway {
       this.#navigate(loginUrl);
       return ok({ kind: 'browser-navigation' });
     } catch {
+      this.#signInTurn.release();
       return err(failure('matrix', 'matrix.sso_start_failed', !this.#online(), true));
     }
   }
@@ -266,6 +295,8 @@ export class MatrixWebGateway implements MatrixGateway {
       capturedToken === null
         ? await this.#sessions.load()
         : await this.#exchangeLoginToken(capturedToken);
+    // 这个标签页的聊天登录走完了（换没换成都算），等着的标签页可以接着来、用这份登录。
+    this.#signInTurn.release();
     if (!sessionResult.ok) {
       return sessionResult;
     }
