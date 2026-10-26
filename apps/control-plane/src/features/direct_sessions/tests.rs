@@ -10,9 +10,13 @@ use agent_room_application::{
     },
     direct_sessions::{
         DirectContactView, DirectSessionResult, DirectSessionUseCases, DirectSessionView,
-        InspectDirectSession, ListDirectSessions, OpenDirectSession, SetDirectAgentBlock,
+        InspectDirectSession, ListDirectAgentBlocks, ListDirectSessions, OpenDirectSession,
+        SetDirectAgentBlock,
     },
-    ports::{DirectAgentProfile, DirectSessionRecord, MatrixUserId, PortFuture, SecretValue},
+    ports::{
+        DirectAgentBlock, DirectAgentProfile, DirectSessionRecord, MatrixUserId, PortFuture,
+        SecretValue,
+    },
 };
 use agent_room_domain::{
     direct_sessions::{DirectContactPolicy, DirectSession},
@@ -138,6 +142,27 @@ impl DirectSessionUseCases for FakeDirectSessions {
                 target,
                 contact_policy: policy,
             })
+        })
+    }
+
+    fn list_blocks(
+        &self,
+        _request: ListDirectAgentBlocks,
+    ) -> PortFuture<'_, DirectSessionResult<Vec<DirectAgentBlock>>> {
+        self.calls
+            .lock()
+            .expect("直接会话调用记录锁可用")
+            .push(ObservedCall {
+                operation: "list-blocks",
+                target_agent_id: None,
+                catalog_id: None,
+                blocked: None,
+            });
+        Box::pin(async move {
+            Ok(vec![DirectAgentBlock {
+                target: target_profile(),
+                blocked_at: time(1_700_000_100_000),
+            }])
         })
     }
 }
@@ -271,6 +296,46 @@ async fn 屏蔽接口返回隐藏在线状态并停止投递() {
             target_agent_id: Some(agent_id()),
             catalog_id: None,
             blocked: Some(true),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn 屏蔽列表只需活动会话并带上名字和屏蔽时间() {
+    let sessions = Arc::new(FakeDirectSessions::new());
+    let response = test_router(sessions.clone(), Arc::new(FakeAuthentication::default()))
+        .oneshot(request(
+            Method::GET,
+            "/direct-contacts/blocks",
+            &json!({}),
+            false,
+        ))
+        .await
+        .expect("屏蔽列表路由可调用");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&header::HeaderValue::from_static("no-store"))
+    );
+    let payload = response_json(response).await;
+    assert_eq!(payload["blocks"][0]["target"]["agentId"], AGENT_UUID);
+    assert_eq!(payload["blocks"][0]["target"]["displayName"], "Build Agent");
+    assert_eq!(
+        payload["blocks"][0]["blockedAtUnixMs"],
+        1_700_000_100_000_i64
+    );
+    assert_eq!(
+        sessions
+            .calls
+            .lock()
+            .expect("直接会话记录锁可用")
+            .as_slice(),
+        &[ObservedCall {
+            operation: "list-blocks",
+            target_agent_id: None,
+            catalog_id: None,
+            blocked: None,
         }]
     );
 }

@@ -923,6 +923,7 @@ const directSessions: DirectSessionGateway = {
     );
   },
   list: () => Promise.resolve(ok(fixtureDirectSessions)),
+  listBlocks: () => Promise.resolve(ok([])),
   open: (targetAgentId) => {
     const index = room.agents.findIndex((agent) => agent.agentId === targetAgentId);
     if (index < 0) {
@@ -963,13 +964,24 @@ const directSessions: DirectSessionGateway = {
     return Promise.resolve(ok({ contactPolicy, target: toFixtureDirectAgent(lobbyAgent) }));
   },
 };
+// 像聊天账户的忽略名单一样记着屏蔽了谁：详情里的“已屏蔽”看的是它。
+const fixtureIgnoredUsers = new Set<string>();
 const directSessionMatrix: DirectSessionMatrixGateway = {
+  ignoredUsers: () =>
+    [...fixtureIgnoredUsers].map((matrixUserId) => ({ displayName: null, matrixUserId })),
   markDisplayed: (roomId, matrixEventId) => {
     displayedEvents.push({ roomId, matrixEventId });
     return Promise.resolve(ok(undefined));
   },
   prepare: () => Promise.resolve(ok(undefined)),
-  setIgnored: () => Promise.resolve(ok(undefined)),
+  setIgnored: (matrixUserId, ignored) => {
+    if (ignored) {
+      fixtureIgnoredUsers.add(matrixUserId);
+    } else {
+      fixtureIgnoredUsers.delete(matrixUserId);
+    }
+    return Promise.resolve(ok(undefined));
+  },
 };
 const locallyBlockedAgents = new Set<string>();
 const directSessionCoordinator = new DirectSessionCoordinator(directSessions, directSessionMatrix, {

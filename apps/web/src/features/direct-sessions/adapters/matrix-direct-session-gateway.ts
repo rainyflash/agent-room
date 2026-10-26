@@ -2,6 +2,7 @@ import type { EventType, ReceiptType } from 'matrix-js-sdk';
 import { z } from 'zod';
 
 import type {
+  DirectIgnoredUser,
   DirectSession,
   DirectSessionFailure,
   DirectSessionMatrixGateway,
@@ -61,6 +62,21 @@ export class MatrixSdkDirectSessionGateway implements DirectSessionMatrixGateway
     } catch {
       return err(failure('direct_session.matrix_prepare_failed'));
     }
+  }
+
+  ignoredUsers(): readonly DirectIgnoredUser[] {
+    const client = this.#clients.current();
+    if (client === null) {
+      return [];
+    }
+    return client.getIgnoredUsers().map((matrixUserId) => {
+      // 没见过的人 SDK 也给一个 User，名字就是 Matrix ID：那等于不知道名字。
+      const name = client.getUser(matrixUserId)?.displayName;
+      return Object.freeze({
+        displayName: name === undefined || name === '' || name === matrixUserId ? null : name,
+        matrixUserId,
+      });
+    });
   }
 
   async setIgnored(

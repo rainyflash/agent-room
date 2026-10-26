@@ -33,7 +33,7 @@ pub use agent_departures::{
 };
 pub use agent_placements::{AgentRoomKind, AgentRoomPlacement, AgentRoomPlacementStore};
 pub use direct_sessions::{
-    DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
+    DirectAgentBlock, DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
     DirectSessionMatrixProvisioner, DirectSessionMembershipGateway, DirectSessionRecord,
     DirectSessionStore,
 };

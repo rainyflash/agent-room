@@ -42,6 +42,22 @@ pub trait DirectSessionAgentDirectory: Send + Sync {
         actor_principal_id: PrincipalId,
         target_agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>>;
+
+    /// 返回能屏蔽的 Agent：任何还在用的 Agent，加上 [`Self::find_known_contact`] 认得的。
+    /// 屏蔽只管这个人自己还看不看它，不要求能和它私聊；Agent 都不公开，按“能私聊”找的话，
+    /// 房间里别人的 Agent 就屏蔽不了。
+    fn find_blockable(
+        &self,
+        actor_principal_id: PrincipalId,
+        target_agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>>;
+}
+
+/// 主体屏蔽着的一个 Agent。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectAgentBlock {
+    pub target: DirectAgentProfile,
+    pub blocked_at: UtcMillis,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,6 +298,12 @@ pub trait DirectSessionStore: Send + Sync {
         blocked: bool,
         changed_at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<DirectContactPolicy>>;
+
+    /// 主体自己屏蔽着的 Agent，最近屏蔽的在前；已经删掉的 Agent 也在，好让人取消屏蔽。
+    fn list_principal_blocks(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<DirectAgentBlock>>>;
 }
 
 const fn invariant(entity: &'static str, rule: &'static str) -> DomainError {

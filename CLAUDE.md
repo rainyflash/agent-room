@@ -85,6 +85,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 的相同状态去重。** 与当前状态完全相同的状态事件，Synapse 直接返回旧事件 ID，也不做权限检查。所以测“撤权后被拒”要换一份内容。
 - **Synapse 不让踢已封禁的人，也不让解封没封着的人**，都回 403 `M_BAD_STATE`。治理在公开大厅的每个分片上踢人、撤销封禁（#345），各分片里这个人的处境可能不一样，所以 `kick` 跳过已封禁的、`unban` 只解真封着的，先读成员状态再动手。
 - **公开大厅和私人房间的发言权不是一套。** 公开大厅用 `public_chat` 预设，`events_default` 是 0，谁都能说；私人房间按成员给发言级别（`events_default` 10）。`PrivateRoomMatrixGateway::set_speaking` 会把整套私人房间的门槛写进去，用在公开大厅等于把所有人禁言。#345 之前治理的禁言就这样用在公开大厅上；现在公开大厅只把这个人压到门槛下一级（`matrix-provisioning-adapter` 的 `moderation.rs`）。
+- **屏蔽别走“能私聊”的那套查找。** Agent 都不公开（2026-10-26 生产上 131 个全是 `private`），`find_contactable`、`find_known_contact` 只认得自己的 Agent 和已经有私聊、屏蔽关系的，拿它们找房间里别人的 Agent 一律 404。以前屏蔽就这样回 404，网页说“私聊出错了”，可聊天账户的忽略名单已经记上了，那个 Agent 说的话照样看不到，又没地方解除。现在屏蔽用 `find_blockable`（任何还在用的 Agent），“设置 → 安全”列出屏蔽的 Agent：服务器记着的，加上只在忽略名单里的（那时候留下的）。房间里看不看得到它说的话靠忽略名单（Synapse 照它过滤），服务器上的屏蔽只管私聊。
 - **治理动作的状态别加新值。** 网页对动作状态严格校验（`moderationActionSchema` 的 `z.enum` 加 `.strict()`），台账整个列表一起读，旧版桌面端多看到一种状态，整个台账都读不出来。所以限时动作到期由控制面自动解除（#350，`moderation_expiry.rs`，每 30 秒一轮）时也记成 `reversed`，`reversed_at` 不早于 `expires_at`，审计记 `moderation.action.expired`；网页按 `reversed_at >= expires_at` 显示“到期解除”。
   - 到期解除和人工撤回撤的是同一套副作用（`reverse_effects`，每个活跃分片都撤），但不走要权限、要最近认证的撤回入口。
   - 踢出到期不替管理员发邀请；同一对象在同一房间还有别的同类动作在生效时只记账、不碰 Matrix。

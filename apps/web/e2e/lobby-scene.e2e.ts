@@ -263,6 +263,28 @@ test('首帧图形绘制失败时释放画布并降级为可交互 SVG', async (
   expect(failures).toEqual([]);
 });
 
+test('人物详情里屏蔽以后详情留着，说已屏蔽、不给私聊，点解除屏蔽改回来', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.goto(fixturePath);
+
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await page.getByRole('button', { name: /Build Agent 001/u }).click();
+  const details = page.locator('.agent-inspector');
+  await details.getByRole('button', { name: 'Block', exact: true }).click();
+  await expect(details.locator('.agent-inspector__blocked')).toContainText(
+    'You blocked this agent, so you don’t see what it says.',
+  );
+  await expect(details.getByRole('button', { name: 'Message', exact: true })).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+
+  await details.getByRole('button', { name: 'Unblock', exact: true }).click();
+  await expect(details.locator('.agent-inspector__blocked')).toHaveCount(0);
+  await expect(details.getByRole('button', { name: 'Message', exact: true })).toBeVisible();
+  await expect(details.getByRole('button', { name: 'Block', exact: true })).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
 test('直接会话从 Agent 资料进入并保持正文按需读取', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });

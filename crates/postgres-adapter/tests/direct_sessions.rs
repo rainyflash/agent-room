@@ -40,7 +40,7 @@ impl TestDatabase {
 async fn 直接会话重复预留复用同一记录并完整往返屏蔽事实() {
     let database = TestDatabase::connect().await;
     let principal_id = seed_principal(&database.runtime).await;
-    let agent_id = seed_agent(&database.runtime, principal_id).await;
+    let agent_id = seed_agent(&database.runtime, principal_id, "public").await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
 
     let profile =
@@ -144,6 +144,82 @@ async fn 直接会话重复预留复用同一记录并完整往返屏蔽事实()
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 别人的私有_agent_私聊不了但屏蔽得了也列得出来() {
+    let database = TestDatabase::connect().await;
+    let owner_id = seed_principal(&database.runtime).await;
+    let viewer_id = seed_principal(&database.runtime).await;
+    let agent_id = seed_agent(&database.runtime, owner_id, "private").await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+
+    assert!(
+        DirectSessionAgentDirectory::find_contactable(&repositories, viewer_id, agent_id)
+            .await
+            .expect("可联系读取应成功")
+            .is_none(),
+        "别人的私有 Agent 不能私聊"
+    );
+    let blockable = DirectSessionAgentDirectory::find_blockable(&repositories, viewer_id, agent_id)
+        .await
+        .expect("可屏蔽读取应成功")
+        .expect("房间里别人的 Agent 也能屏蔽");
+    assert_eq!(blockable.display_name, "直接会话目标");
+
+    DirectSessionStore::set_principal_block(&repositories, viewer_id, agent_id, true, time(1))
+        .await
+        .expect("屏蔽应成功");
+    let blocks = DirectSessionStore::list_principal_blocks(&repositories, viewer_id)
+        .await
+        .expect("屏蔽列表可读");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].target.agent_id, agent_id);
+    assert_eq!(blocks[0].target.display_name, "直接会话目标");
+    assert_eq!(blocks[0].blocked_at, time(1));
+    assert!(
+        DirectSessionStore::list_principal_blocks(&repositories, owner_id)
+            .await
+            .expect("主人的屏蔽列表可读")
+            .is_empty(),
+        "屏蔽只算屏蔽的人自己的"
+    );
+
+    // 删掉的 Agent 还认得屏蔽着它的人，好取消屏蔽；取消以后就不认了。
+    sqlx::query(
+        r"UPDATE agent_room.agent
+           SET lifecycle_state = 'retired', updated_at = GREATEST(created_at, NOW())
+           WHERE id = $1",
+    )
+    .bind(agent_id.as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("可让 Agent 退役");
+    assert!(
+        DirectSessionAgentDirectory::find_blockable(&repositories, viewer_id, agent_id)
+            .await
+            .expect("可屏蔽读取应成功")
+            .is_some()
+    );
+    DirectSessionStore::set_principal_block(&repositories, viewer_id, agent_id, false, time(2))
+        .await
+        .expect("取消屏蔽应成功");
+    assert!(
+        DirectSessionStore::list_principal_blocks(&repositories, viewer_id)
+            .await
+            .expect("屏蔽列表可读")
+            .is_empty()
+    );
+    assert!(
+        DirectSessionAgentDirectory::find_blockable(&repositories, viewer_id, agent_id)
+            .await
+            .expect("可屏蔽读取应成功")
+            .is_none(),
+        "取消屏蔽以后，退役的 Agent 不再能屏蔽"
+    );
+
+    database.close().await;
+}
+
 async fn assert_existing_contact_survives_discovery_loss(
     pool: &PgPool,
     repositories: &PostgresRepositories,
@@ -237,7 +313,7 @@ async fn seed_principal(pool: &PgPool) -> PrincipalId {
     principal_id
 }
 
-async fn seed_agent(pool: &PgPool, owner_id: PrincipalId) -> AgentId {
+async fn seed_agent(pool: &PgPool, owner_id: PrincipalId, visibility: &str) -> AgentId {
     let agent_id = AgentId::from_uuid(Uuid::now_v7());
     let mut transaction = pool.begin().await.expect("Agent 事务应启动");
     sqlx::query(
@@ -245,7 +321,7 @@ async fn seed_agent(pool: &PgPool, owner_id: PrincipalId) -> AgentId {
                id, matrix_user_id, slug, display_name, description, visibility,
                lifecycle_state, created_at, updated_at, version
            ) VALUES (
-               $1, $2, $3, '直接会话目标', '', 'public', 'active',
+               $1, $2, $3, '直接会话目标', '', $5, 'active',
                to_timestamp($4::double precision / 1000.0),
                to_timestamp($4::double precision / 1000.0), 0
            )",
@@ -257,6 +333,7 @@ async fn seed_agent(pool: &PgPool, owner_id: PrincipalId) -> AgentId {
     ))
     .bind(format!("direct-{}", agent_id.as_uuid().simple()))
     .bind(time(0).value())
+    .bind(visibility)
     .execute(&mut *transaction)
     .await
     .expect("Agent 写入应成功");

@@ -19,6 +19,8 @@ import type {
   MatrixSecurityGateway,
   MatrixSecuritySnapshot,
 } from '@/features/security/domain/matrix-security';
+import type { BlockedAgent } from '@/features/direct-sessions/domain/direct-session';
+import type { BlockedAgentsSource } from '@/features/security/ui/blocked-agents-panel';
 import { SecurityWorkspace } from '@/features/security/ui/security-page';
 import { SettingsLayout } from '@/features/settings/ui/settings-page';
 import { RouterTestProvider } from '@/test/router-test-provider';
@@ -189,6 +191,35 @@ deviceSigning.setRetry(() => {
   }, 1_000);
 });
 
+/**
+ * 屏蔽的 Agent：一个服务器记着的，一个只在聊天账户忽略名单里、这台设备不知道名字的
+ * （以前服务器没记上的那种）。`?blocks=none` 是一个也没有。
+ */
+let fixtureBlocks: readonly BlockedAgent[] =
+  search.get('blocks') === 'none'
+    ? []
+    : [
+        {
+          agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e61',
+          blockedAtUnixMs: fixtureNow - 2 * DAY,
+          displayName: 'Noisy helper #4821',
+          matrixUserId: '@_agent_noisy:agent-room.test',
+        },
+        {
+          agentId: null,
+          blockedAtUnixMs: null,
+          displayName: null,
+          matrixUserId: '@_agent_0198b60177a17bb8:agent-room.test',
+        },
+      ];
+const blockedAgents: BlockedAgentsSource = {
+  listBlocked: () => Promise.resolve(ok(fixtureBlocks)),
+  unblock: (entry) => {
+    fixtureBlocks = fixtureBlocks.filter((block) => block.matrixUserId !== entry.matrixUserId);
+    return Promise.resolve(ok(undefined));
+  },
+};
+
 const security: MatrixSecurityGateway = {
   inspect: () => Promise.resolve(ok(securitySnapshot())),
   subscribe: (listener) => deviceSigning.subscribe(listener),
@@ -242,6 +273,7 @@ async function bootstrapFixture(): Promise<void> {
               <SecurityWorkspace
                 accessManagement={accessManagement}
                 {...(search.has('agentRecovery') ? { agentRecovery } : {})}
+                blockedAgents={blockedAgents}
                 deviceSigning={deviceSigning}
                 gateway={security}
                 reauthentication={{

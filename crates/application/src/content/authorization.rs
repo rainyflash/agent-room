@@ -314,11 +314,11 @@ mod tests {
         ports::{
             ContentAccessMode, ContentAuthorizationDecision, ContentAuthorizationFailureKind,
             ContentAuthorizationIntent, ContentAuthorizationRequest, ContentMembershipAuthorizer,
-            ContentPrincipalIdentityLookup, DirectSessionMembershipGateway, DirectSessionRecord,
-            DirectSessionStore, MatrixPowerLevel, MatrixResult, MatrixRoomAuthority,
-            MatrixRoomAuthorityGateway, MatrixRoomId, MatrixUserId, PortFuture,
-            PrivateRoomAgentMemberLookup, PrivateRoomAgentMemberRecord, PrivateRoomSnapshot,
-            PrivateRoomStore,
+            ContentPrincipalIdentityLookup, DirectAgentBlock, DirectSessionMembershipGateway,
+            DirectSessionRecord, DirectSessionStore, MatrixPowerLevel, MatrixResult,
+            MatrixRoomAuthority, MatrixRoomAuthorityGateway, MatrixRoomId, MatrixUserId,
+            PortFuture, PrivateRoomAgentMemberLookup, PrivateRoomAgentMemberRecord,
+            PrivateRoomSnapshot, PrivateRoomStore,
         },
     };
 
@@ -498,6 +498,13 @@ mod tests {
             _changed_at: UtcMillis,
         ) -> PortFuture<'_, RepositoryResult<DirectContactPolicy>> {
             Box::pin(async { unreachable!("授权不修改屏蔽策略") })
+        }
+
+        fn list_principal_blocks(
+            &self,
+            _principal_id: PrincipalId,
+        ) -> PortFuture<'_, RepositoryResult<Vec<DirectAgentBlock>>> {
+            Box::pin(async { unreachable!("授权不列举屏蔽") })
         }
     }
 

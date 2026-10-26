@@ -133,3 +133,26 @@ test('没有最近登录时，一键撤销先请人重新登录', async ({ page 
   await dialog.getByRole('button', { name: 'Sign in again' }).click();
   await expect(page.locator('body')).toHaveAttribute('data-sign-in-requested', 'true');
 });
+
+for (const width of [1_440, 390]) {
+  test(`${String(width)}px 安全里列出屏蔽的 Agent，解除以后拿掉`, async ({ page }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: width < 768 ? 844 : 1_000, width });
+    await page.goto(fixturePath);
+
+    const blocks = page.getByRole('region', { name: 'Blocked agents' });
+    const recorded = blocks.getByRole('listitem').filter({ hasText: 'Noisy helper #4821' });
+    await expect(recorded).toContainText('Blocked');
+    // 以前服务器没记上、只在聊天账户忽略名单里的，名字不知道就写 Matrix ID。
+    await expect(blocks.getByText('@_agent_0198b60177a17bb8:agent-room.test')).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await blocks.screenshot({
+      path: `../../artifacts/browser/blocked-agents-${String(width)}.png`,
+    });
+
+    await recorded.getByRole('button', { name: 'Unblock' }).click();
+    await expect(recorded).toHaveCount(0);
+    await expect(blocks.getByRole('listitem')).toHaveCount(1);
+    expect(failures).toEqual([]);
+  });
+}

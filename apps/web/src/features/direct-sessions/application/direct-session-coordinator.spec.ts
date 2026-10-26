@@ -72,6 +72,92 @@ describe('DirectSessionCoordinator', () => {
     expect(setIgnored).toHaveBeenCalledWith(target.matrixUserId, true);
   });
 
+  it('别的设备上屏蔽的（只在忽略名单里）也算屏蔽着', () => {
+    const target = session().target;
+    const coordinator = new DirectSessionCoordinator(
+      controlPlane({}),
+      matrix({
+        ignoredUsers: () => [{ displayName: null, matrixUserId: target.matrixUserId }],
+      }),
+      localBlocks(),
+    );
+
+    expect(coordinator.isLocallyBlocked(target.agentId)).toBe(false);
+    expect(coordinator.isBlocked(target)).toBe(true);
+    expect(
+      coordinator.isBlocked({ agentId: OTHER_AGENT_ID, matrixUserId: '@_agent_other:test' }),
+    ).toBe(false);
+  });
+
+  it('设置里列出服务器记着的，再补上只在忽略名单里的；两边都有的只列一次', async () => {
+    const target = session().target;
+    const coordinator = new DirectSessionCoordinator(
+      controlPlane({
+        listBlocks: () => Promise.resolve(ok([{ blockedAtUnixMs: 1_700_000_000_000, target }])),
+      }),
+      matrix({
+        ignoredUsers: () => [
+          { displayName: 'Build Agent', matrixUserId: target.matrixUserId },
+          { displayName: 'Noisy', matrixUserId: '@_agent_noisy:matrix.agent-room.test' },
+        ],
+      }),
+      localBlocks(),
+    );
+
+    await expect(coordinator.listBlocked()).resolves.toEqual(
+      ok([
+        {
+          agentId: target.agentId,
+          blockedAtUnixMs: 1_700_000_000_000,
+          displayName: 'Build Agent',
+          matrixUserId: target.matrixUserId,
+        },
+        {
+          agentId: null,
+          blockedAtUnixMs: null,
+          displayName: 'Noisy',
+          matrixUserId: '@_agent_noisy:matrix.agent-room.test',
+        },
+      ]),
+    );
+  });
+
+  it('解除只在忽略名单里的屏蔽不去问服务器，服务器记着的两边都解', async () => {
+    const target = session().target;
+    const setBlocked = vi.fn().mockResolvedValue(ok(contact(false)));
+    const setIgnored = vi.fn().mockResolvedValue(ok(undefined));
+    const blocks = localBlocks();
+    blocks.set(target.agentId, true);
+    const coordinator = new DirectSessionCoordinator(
+      controlPlane({ setBlocked }),
+      matrix({ setIgnored }),
+      blocks,
+    );
+
+    await expect(
+      coordinator.unblock({
+        agentId: null,
+        blockedAtUnixMs: null,
+        displayName: null,
+        matrixUserId: '@_agent_noisy:matrix.agent-room.test',
+      }),
+    ).resolves.toEqual(ok(undefined));
+    expect(setBlocked).not.toHaveBeenCalled();
+    expect(setIgnored).toHaveBeenCalledWith('@_agent_noisy:matrix.agent-room.test', false);
+
+    await expect(
+      coordinator.unblock({
+        agentId: target.agentId,
+        blockedAtUnixMs: 1_700_000_000_000,
+        displayName: target.displayName,
+        matrixUserId: target.matrixUserId,
+      }),
+    ).resolves.toEqual(ok(undefined));
+    expect(setBlocked).toHaveBeenCalledWith(target.agentId, false);
+    expect(setIgnored).toHaveBeenLastCalledWith(target.matrixUserId, false);
+    expect(coordinator.isLocallyBlocked(target.agentId)).toBe(false);
+  });
+
   it('Matrix 准备失败时不伪造已打开结果', async () => {
     const coordinator = new DirectSessionCoordinator(
       controlPlane({ open: vi.fn().mockResolvedValue(ok(session())) }),
@@ -89,10 +175,13 @@ describe('DirectSessionCoordinator', () => {
   });
 });
 
+const OTHER_AGENT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e59';
+
 function controlPlane(overrides: Partial<DirectSessionGateway>): DirectSessionGateway {
   return {
     inspect: () => Promise.resolve(ok(session())),
     list: () => Promise.resolve(ok([session()])),
+    listBlocks: () => Promise.resolve(ok([])),
     open: () => Promise.resolve(ok(session())),
     setBlocked: (_agentId, blocked) => Promise.resolve(ok(contact(blocked))),
     ...overrides,
@@ -115,6 +204,7 @@ function localBlocks(): DirectBlockRegistry {
 
 function matrix(overrides: Partial<DirectSessionMatrixGateway>): DirectSessionMatrixGateway {
   return {
+    ignoredUsers: () => [],
     markDisplayed: () => Promise.resolve(ok(undefined)),
     prepare: () => Promise.resolve(ok(undefined)),
     setIgnored: () => Promise.resolve(ok(undefined)),

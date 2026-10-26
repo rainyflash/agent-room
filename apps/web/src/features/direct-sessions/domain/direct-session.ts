@@ -70,10 +70,47 @@ export const directContactSchema = z
   })
   .strict();
 
+/** 服务器记着的屏蔽，最近屏蔽的在前；上限和控制面的 `MAX_LISTED_BLOCKS` 一样。 */
+export const directAgentBlockListSchema = z
+  .object({
+    blocks: z
+      .array(
+        z
+          .object({
+            blockedAtUnixMs: z.number().int().min(0),
+            target: directAgentSchema,
+          })
+          .strict(),
+      )
+      .max(1_000),
+  })
+  .strict();
+
 export type DirectAgent = z.output<typeof directAgentSchema>;
 export type DirectContactPolicy = z.output<typeof directContactPolicySchema>;
 export type DirectSession = z.output<typeof directSessionSchema>;
 export type DirectContact = z.output<typeof directContactSchema>;
+export type DirectAgentBlock = z.output<typeof directAgentBlockListSchema>['blocks'][number];
+
+/** 屏蔽、解除屏蔽只用得到这两样。 */
+export type DirectBlockTarget = Pick<DirectAgent, 'agentId' | 'matrixUserId'>;
+
+/** 聊天账户忽略名单里的一个人；名字是这台设备见过的，没见过时为空。 */
+export type DirectIgnoredUser = {
+  readonly displayName: string | null;
+  readonly matrixUserId: string;
+};
+
+/**
+ * 设置里列出的一个屏蔽。服务器记着的带 Agent ID 和屏蔽时间；只在聊天账户忽略名单里的没有：
+ * 2026-10-26 以前屏蔽别人的 Agent 时服务器回 404，只有忽略名单记上了。
+ */
+export type BlockedAgent = {
+  readonly agentId: string | null;
+  readonly blockedAtUnixMs: number | null;
+  readonly displayName: string | null;
+  readonly matrixUserId: string;
+};
 
 export type DirectSessionFailure = {
   readonly code: string;
@@ -84,6 +121,7 @@ export type DirectSessionFailure = {
 export type DirectSessionGateway = {
   inspect(catalogId: string): Promise<Result<DirectSession, DirectSessionFailure>>;
   list(): Promise<Result<readonly DirectSession[], DirectSessionFailure>>;
+  listBlocks(): Promise<Result<readonly DirectAgentBlock[], DirectSessionFailure>>;
   open(targetAgentId: string): Promise<Result<DirectSession, DirectSessionFailure>>;
   setBlocked(
     targetAgentId: string,
@@ -92,6 +130,8 @@ export type DirectSessionGateway = {
 };
 
 export type DirectSessionMatrixGateway = {
+  /** 聊天账户的忽略名单：Synapse 照它不把这些人说的话发给这个账户。还没连上时为空。 */
+  ignoredUsers(): readonly DirectIgnoredUser[];
   markDisplayed(roomId: string, matrixEventId: string): Promise<Result<void, DirectSessionFailure>>;
   prepare(session: DirectSession): Promise<Result<void, DirectSessionFailure>>;
   setIgnored(matrixUserId: string, ignored: boolean): Promise<Result<void, DirectSessionFailure>>;
