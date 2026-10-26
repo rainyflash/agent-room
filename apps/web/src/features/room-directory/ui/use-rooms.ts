@@ -1,4 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useMemo } from 'react';
 
@@ -6,6 +6,8 @@ import { useAppServices } from '@/app/app-services';
 import { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
 import {
   privateRoomListQueryKey,
+  privateRoomOriginQueryOptions,
+  privateRoomPeopleQueryOptions,
   usePrivateRoomList,
   useServerReadableRooms,
 } from '@/features/private-rooms/data/private-room-queries';
@@ -16,7 +18,9 @@ import type {
 } from '@/features/private-rooms/domain/private-room';
 import {
   groupMyPrivateRooms,
+  roomOwnerOf,
   type GroupedPrivateRooms,
+  type RoomOwner,
 } from '@/features/room-directory/domain/my-private-rooms';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import type { Result } from '@/shared/result';
@@ -48,6 +52,30 @@ export function useMyPrivateRooms(): MyPrivateRooms {
     state: query.isPending ? 'loading' : query.isError || !query.data.ok ? 'failed' : 'ready',
     retry: () => void query.refetch(),
   };
+}
+
+/**
+ * 这些房间的房主（房间 ID → 房主），只给“房间”页上别人的房间用：每间问一次是谁建的、问一次成员的昵称，
+ * 两个一起问。没问到、没问成的不在里面，卡片先不写房主；名字随房间列表一起刷新。
+ */
+export function useRoomOwners(rooms: readonly PrivateRoom[]): ReadonlyMap<string, RoomOwner> {
+  const { privateRooms } = useAppServices();
+  const origins = useQueries({
+    queries: rooms.map((room) => privateRoomOriginQueryOptions(privateRooms, room.catalogId)),
+    combine: (results) =>
+      results.map((result) => (result.data?.ok === true ? result.data.value : undefined)),
+  });
+  const people = useQueries({
+    queries: rooms.map((room) => privateRoomPeopleQueryOptions(privateRooms, room.catalogId)),
+    combine: (results) =>
+      results.map((result) => (result.data?.ok === true ? result.data.value : undefined)),
+  });
+  const owners = new Map<string, RoomOwner>();
+  rooms.forEach((room, index) => {
+    const owner = roomOwnerOf(room, origins[index], people[index]);
+    if (owner !== null) owners.set(room.catalogId, owner);
+  });
+  return owners;
 }
 
 export type RoomResult = Result<PrivateRoom, PrivateRoomFailure>;

@@ -212,6 +212,67 @@ for (const width of [1440, 390]) {
 }
 
 for (const width of [1440, 390]) {
+  test(`你建的和你加入的分开，别人的房间写着房主 ${String(width)}`, async ({ page }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(fixture);
+    const mine = page.getByRole('region', { name: 'Your private rooms' });
+    const created = mine.getByRole('region', { name: 'Rooms you created' });
+    const joined = mine.getByRole('region', { name: 'Rooms you joined' });
+    // Design studio 是你的 Agent 替你建的，房主是你：归“你建的”，不写房主。
+    await expect(created.getByRole('link', { name: /Design studio/ })).toBeVisible();
+    await expect(created.getByRole('link', { name: /Engineering room/ })).toBeVisible();
+    await expect(created).not.toContainText('Owner:');
+    await expect(joined.getByRole('link', { name: /Partner workshop/ })).toContainText(
+      'Owner: Mia',
+    );
+    // 网络 Agent 当房主：写它的名字，不写替它记账的合成主体。
+    const fieldNotes = joined.getByRole('link', { name: /Field notes/ });
+    await expect(fieldNotes).toContainText('Owner: Atlas (network agent)');
+    await expect(joined).not.toContainText('network-agent-principal');
+    await expect(joined.getByRole('link')).toHaveCount(2);
+    // 邀请照旧在最上面，已归档的照旧收在最下面。
+    const invitations = await mine.getByRole('list', { name: 'Invitations' }).boundingBox();
+    const createdBox = await created.boundingBox();
+    const joinedBox = await joined.boundingBox();
+    const archivedBox = await mine
+      .locator('details', { hasText: 'Archived rooms (1)' })
+      .boundingBox();
+    if (invitations === null || createdBox === null || joinedBox === null || archivedBox === null)
+      throw new Error('A room group is not visible');
+    expect(invitations.y).toBeLessThan(createdBox.y);
+    expect(createdBox.y).toBeLessThan(joinedBox.y);
+    expect(joinedBox.y).toBeLessThan(archivedBox.y);
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`rooms-by-owner-${String(width)}.png`),
+      fullPage: true,
+    });
+    await fieldNotes.click();
+    await expect(page.getByRole('heading', { name: 'Field notes', exact: true })).toBeVisible();
+    expect(failures).toEqual([]);
+  });
+}
+
+test('中文：“你建的房间”“你加入的房间”和房主', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem('agent-room.language', 'zh-CN');
+  });
+  await page.goto(fixture);
+  const mine = page.getByRole('region', { name: '你的私人房间' });
+  await expect(mine.getByRole('region', { name: '你建的房间' })).toContainText('Design studio');
+  const joined = mine.getByRole('region', { name: '你加入的房间' });
+  await expect(joined.getByRole('link', { name: /Partner workshop/ })).toContainText('房主：Mia');
+  await expect(joined.getByRole('link', { name: /Field notes/ })).toContainText(
+    '房主：Atlas（网络 Agent）',
+  );
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
+
+for (const width of [1440, 390]) {
   test(`房间卡片写未读条数和有没有人点名你 ${String(width)}`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
