@@ -172,6 +172,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 隔天去点注册时的验证链接（1 小时有效），身份服务只给一页“操作已过期”、没有按钮（#574）：过期的链接认不出客户端，错误页的“回到 Agent Room”靠 realm 属性 `agentRoomAppUrl`，由每次部署的身份同步写上，别去掉。
   - 从浏览器留着的旧登录地址进身份服务（`scope` 被弄坏成 `openidprofile`），登录没走完就停在“这次登录没有完成”上；没登录的人现在自动重新打开一次登录页（#573）。
   - 已经登录的浏览器又提交一次登录页（点了两次登录、别的标签页留着旧登录页），Keycloak 带着 `error=temporarily_unavailable&error_description=authentication_expired` 回到回调，以前记成 `invalid_callback_query`，刚登录上的人看到“这次登录没有完成”（agent-room-ops #5）。#588 起回调认出这一种：网页登录还有效就直接回房间，没有就回连接页由网页重开登录；身份服务送回的别的错误记成 `authentication.provider_error`。
+  - 回调没带登录 Cookie 时先按回传的 `state` 看这次登录还在不在等（#600，agent-room-ops #21）。控制面一次登录只记 10 分钟（Cookie 也是），身份服务的登录页能开 30 分钟：登录页放得比它久、打开的是用过的回调地址，只记 INFO、照旧回连接页重开登录。还在等却没带 Cookie 才是 WARN `missing_login_cookie`（换了浏览器、Cookie 被吞），别把它加进噪音表。
   - 邮箱的链接安全扫描会在一两秒内从二十多个地址去点验证链接、不带 Cookie：成串的 `email_already_verified`、`cookie_not_found` 是它，不是人。
 - 设计在 [specs/error-triage/design.md](./specs/error-triage/design.md)（#571），进度记在它的“状态”一节。要点：服务器每小时只读汇总一次日志和库里的错（指纹、打码、噪音表），新问题开 issue、同一种错只开一个、修好又犯就重新打开；每天一份新用户体检，只出人数；有新 issue 就叫醒云端开发 Agent（routine 挂 GitHub 事件触发，另带每天一次补漏）。
 - 维护者当天定了：issue 开在私有仓库 [`rainyflash/agent-room-ops`](https://github.com/rainyflash/agent-room-ops)（已建好、标签也建了），修复的 PR 照旧开在公开仓库；token 由维护者自己建、自己粘到服务器的 `/etc/agent-room/ops-issues.token`，编码 Agent 不经手；开发 Agent 有新 issue 就叫醒。
