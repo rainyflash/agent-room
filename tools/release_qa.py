@@ -38,6 +38,13 @@ registered with `register --task-id` and named in the binding, so a release can 
 after a failed `doctor` (archive `qa-host.json`, `registered.private.json` and `binding.private.json`, then
 `run` again) and the next release can reuse the long-lived device with its own task.
 
+Acceptance happens in the owner's own private room named by `"room": {"private": "<name>"}`: the first `run`
+step finds the owner's active room with that name, or creates it, and keeps its agent code for the network-agent
+smoke (`qa-room.json`, `qa-room.private.json`). Until Alpha 83 it was the public lobby, where every release left an
+offline QA agent in front of visitors. An explicit `{"roomId": ..., "catalogId": ...}` still works. The long-lived
+upgrade identity moves into that room once (`move_upgrade_identity`), so the next release's baseline finds this
+release's QA messages pending.
+
 The release directory holds the verified candidate (`candidate/`, `verified-candidate.json`,
 `ci-verification.json`) and the host description (`qa-host.json`). `upgrade` writes
 `upgrade-baseline.json`, `installed-verification.json`, `native-session-restoration.json` and
@@ -45,7 +52,7 @@ The release directory holds the verified candidate (`candidate/`, `verified-cand
 
     {"controlPlaneUrl": "https://api.example/", "matrixBaseUrl": "https://matrix.example/",
      "oidcIssuerUrl": "https://id.example/realms/agent-room", "oidcDeviceClientId": "agent-room-bridge",
-     "room": {"roomId": "!room:example", "catalogId": "<UUIDv7>"},
+     "room": {"private": "发布验收"},
      "desktop": {"executable": "C:/.../agent-room-desktop.exe", "origin": "http://tauri.localhost",
                  "cdpPort": 14222},
      "upgrade": {"identity": "<native-join.json of the long-lived upgrade identity>",
@@ -94,6 +101,9 @@ LABELS = {
     "send": ("发送", "Send"),
     "log": ("房间对话", "Conversation"),
 }
+# Shown on the owner's own room card; the room is theirs and only release acceptance speaks in it.
+QA_ROOM_DESCRIPTION = "发布验收专用：每一版的实机验收在这里收发消息。"
+UPGRADE_IDENTITY_NAME = "升级验收"
 
 
 def load(path: Path) -> Any:
@@ -119,6 +129,19 @@ def release_label(version: str) -> str:
 def release_slug(version: str) -> str:
     """0.1.0-alpha.41 -> alpha41, used for the isolated credential namespace and file names."""
     return re.sub(r"[^a-z0-9]", "", version.rsplit("-", 1)[-1].lower())
+
+
+def encode_invite(invite: dict[str, Any]) -> str:
+    """The `join --invite` argument: the invite as unpadded URL-safe base64 JSON."""
+    return base64.urlsafe_b64encode(json.dumps(invite).encode()).decode().rstrip("=")
+
+
+def pending_from_others(inbox: dict[str, Any], own_agent_id: str) -> list[str]:
+    """Event IDs in an installed CLI's `read` answer that someone else sent."""
+    # 新版只看一眼时不给自己发的，基线也只记别人发的；旧版输出还没有 fromMe，按作者认。
+    messages = inbox.get("messages", inbox.get("previews"))
+    return [message["eventId"] for message in messages
+            if (message.get("actor") or {}).get("agent", {}).get("agentId") != own_agent_id]
 
 
 class Acceptance:
@@ -153,8 +176,15 @@ class Acceptance:
         self.use_fresh_device()
         self.canary_name = f"{self.slug}-attachment.txt"
         self.migration = release_acceptance.SERVER_MIGRATIONS.get(self.version)
-        self.room_id = self.config["room"]["roomId"]
-        self.catalog_id = self.config["room"]["catalogId"]
+        room = self.config["room"]
+        # 私人房间按名字在第一步找到或建好（`resolve_qa_room`）；直接写房间 ID 的照旧可用。
+        self.room_name = room.get("private")
+        explicit = "roomId" in room and "catalogId" in room
+        if (self.room_name is not None) == explicit:
+            raise ReleaseFailure("release-qa.json 的 room 要么写 private（房间名），要么写 roomId 和 catalogId。")
+        self.room_id, self.catalog_id = room.get("roomId"), room.get("catalogId")
+        if self.room_name is not None and self.path("qa-room.json").exists():
+            self.use_room(load(self.path("qa-room.json")))
         desktop = self.config["desktop"]
         self.desktop_executable = ntpath.normpath(desktop["executable"])
         self.origin = desktop.get("origin", "http://tauri.localhost")
@@ -301,7 +331,7 @@ class Acceptance:
                                                            self.metadata["revision"], int(time.time()))
             except ReleaseFailure as failure:
                 blocker = str(failure)
-            blocker = blocker or self.character_task_blocker(record)
+            blocker = blocker or self.character_task_blocker(record) or self.room_blocker(record)
             decision = {"mode": "reused", "record": record} if blocker is None else {"mode": "fresh", "reason": blocker}
         self.save("device-mode.json", decision)
         return decision
@@ -316,7 +346,7 @@ class Acceptance:
         record = {"schemaVersion": 1, "dataDir": str(self.data.resolve()), "service": self.service,
                   "label": self.device_label, "profileId": joined["profileId"],
                   "agentId": joined["identity"]["agent"]["agentId"], "agentName": self.agent_name,
-                  "profileTaskId": self.character_task,
+                  "profileTaskId": self.character_task, "room": self.room_record(),
                   "freshAuthorization": {"version": self.version, "revision": self.metadata["revision"],
                                          "capturedAtUnixSeconds": first["observedAtUnixSeconds"]}}
         self.device_record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + NEWLINE, encoding="utf-8")
@@ -364,6 +394,20 @@ class Acceptance:
         if bound and self.host_type == "codex" and self.host["taskId"] != bound:
             return f"长期验收设备的人物绑在 Codex 任务 {bound} 上，这次的宿主任务不同，登记不上。"
         return None
+
+    def room_record(self) -> dict[str, Any]:
+        """The room the QA character first entered, as the long-lived device record keeps it."""
+        if self.room_name is None:
+            return {"catalogId": self.catalog_id}
+        return {"private": self.room_name, "catalogId": self.catalog_id}
+
+    def room_blocker(self, record: dict[str, Any]) -> str | None:
+        """The character's first room is its session room and cannot be left, so a new QA room needs a new device.
+
+        Records from before Alpha 84 carry no room: their character sits in the public lobby."""
+        if self.room_name is None or (record.get("room") or {}).get("private") == self.room_name:
+            return None
+        return f"长期验收设备的人物不在验收房间“{self.room_name}”里（以前在公共大厅），这次新授权一台。"
 
     def start(self) -> int:
         self.qa.mkdir(exist_ok=True)
@@ -456,12 +500,36 @@ class Acceptance:
 
     # ------------------------------------------------------------------ steps
 
+    def use_room(self, room: dict[str, Any]) -> None:
+        self.room_id, self.catalog_id = room["roomId"], room["catalogId"]
+
+    def resolve_qa_room(self) -> None:
+        """The owner's private QA room: found by name among their active rooms, or created on the first run.
+
+        Its agent code is kept privately for the network-agent smoke after publication, so that smoke stays out of
+        the public lobby too. The owner joins it on Matrix when `open_room` shows it (`PrivateRoomJoinBoundary`)."""
+        if self.room_name is None:
+            self.save("qa-room.json", {"roomId": self.room_id, "catalogId": self.catalog_id, "configured": True})
+            return
+        result = self.page("qa-room.js", qa_room_js(self.room_name, QA_ROOM_DESCRIPTION, self.cli("id")["id"]))
+        code = result.pop("code")
+        if result["name"] != self.room_name or not str(result["roomId"]).startswith("!"):
+            raise ReleaseFailure(f"找到或建好的验收房间不对：{result}")
+        self.save("qa-room.private.json", {"catalogId": result["catalogId"], "code": code}, overwrite=True)
+        self.save("qa-room.json", result)
+        self.use_room(result)
+        print(("已建好" if result["created"] else "沿用") + f"验收房间“{self.room_name}”。")
+
     def join(self) -> None:
         if self.device_mode() == "reused":
             record = load(self.path("device-mode.json"))["record"]
             resumed = self.cli("--profile", record["profileId"], "resume")
             if resumed["identity"]["agent"]["agentId"] != record["agentId"]:
                 raise ReleaseFailure("长期验收设备恢复出的人物与记录不一致。")
+            if resumed["identity"]["roomCatalogId"] != self.catalog_id:
+                raise ReleaseFailure("长期验收设备的人物不在这次的验收房间里（验收房间归档后又建了一间？）："
+                                     "把长期验收设备记录和 fresh-device-qa/device-mode.json 改名留档，"
+                                     "重跑 start 新授权一台。")
             self.save("joined.private.json", {"profileId": record["profileId"], "identity": resumed["identity"]})
             print(json.dumps({"profileId": record["profileId"], "agentId": record["agentId"], "reused": True}))
             return
@@ -471,8 +539,7 @@ class Acceptance:
             raise ReleaseFailure("无法生成验收会话标识。")
         invite = {"version": 1, "sessionKey": identifier, "displayName": self.agent_name,
                   "roomId": self.room_id, "catalogId": self.catalog_id}
-        encoded = base64.urlsafe_b64encode(json.dumps(invite).encode()).decode().rstrip("=")
-        joined = self.cli("join", "--invite", encoded)
+        joined = self.cli("join", "--invite", encode_invite(invite))
         self.save("invitation.json", invite)
         self.save("joined.private.json", joined)
         print(json.dumps({"profileId": joined["profileId"], "agentId": joined["identity"]["agent"]["agentId"]}))
@@ -728,12 +795,88 @@ class Acceptance:
 
     def installed_cli(self, *args: str, timeout: int = 60) -> Any:
         base, profile, _ = self.installed()
-        result = subprocess.run([*base, "--profile", profile, *args], capture_output=True, encoding="utf-8",
-                                timeout=timeout, creationflags=NO_WINDOW)
+        return self.run_installed([*base, "--profile", profile, *args], args[0], timeout=timeout)
+
+    @staticmethod
+    def run_installed(command: list[str], name: str, *, timeout: int = 60) -> Any:
+        # Outside any host task, like the QA character: a profile joined inside one refuses every other task.
+        env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_ROOM_")
+               and not key.upper().startswith("CLAUDE") and key.upper() != "CODEX_THREAD_ID"}
+        result = subprocess.run(command, env=env, capture_output=True, encoding="utf-8", timeout=timeout,
+                                creationflags=NO_WINDOW)
         envelope = json.loads(result.stdout)
         if result.returncode or envelope.get("ok") is not True:
-            raise ReleaseFailure(f"已安装 CLI 的 {args[0]} 失败：{envelope.get('error')}")
+            raise ReleaseFailure(f"已安装 CLI 的 {name} 失败：{envelope.get('error')}")
         return envelope["data"]
+
+    def move_upgrade_identity(self) -> None:
+        """Move the long-lived upgrade identity into the QA room, once.
+
+        Until Alpha 83 it sat in the public lobby. Its first room is its session room and cannot be left, so the
+        installed CLI joins a new identity into the QA room and the old record is kept beside the new one. From then
+        on each release's QA messages wait unacknowledged for it, which the next release's upgrade baseline needs.
+        Run before the QA messages are sent."""
+        path = Path(self.config["upgrade"]["identity"])
+        staged = path.with_name(f"{path.name}.new")
+        if not path.exists() and staged.exists():
+            staged.replace(path)  # An earlier run stopped between the two renames below.
+        record = load(path)
+        previous = record["joined"]["data"]["identity"]
+        if previous["roomId"] == self.room_id:
+            self.save("upgrade-identity.json", {"moved": False, "roomId": self.room_id,
+                                                "agentId": previous["agent"]["agentId"]})
+            return
+        # The invite is kept first, so a rerun returns to the same identity instead of joining another one.
+        invite_path = self.path("upgrade-identity-invite.json")
+        if not invite_path.exists():
+            self.save(invite_path.name, {"version": 1, "sessionKey": self.cli("id")["id"],
+                                         "displayName": UPGRADE_IDENTITY_NAME, "roomId": self.room_id,
+                                         "catalogId": self.catalog_id})
+        invite = load(invite_path)
+        configuration = record["configuration"]
+        command = [configuration["command"], *configuration["args"]]
+        joined = self.run_installed([*command, "join", "--invite", encode_invite(invite)], "join")
+        if joined["identity"]["roomId"] != self.room_id:
+            raise ReleaseFailure("新的升级验收身份没有进验收房间。")
+        self.run_installed([*command, "--profile", joined["profileId"], "leave"], "leave")
+        archived = path.with_name(f"{path.stem}.before-{self.slug}{path.suffix}")
+        staged.write_text(json.dumps({
+            "version": self.version, "mode": "join", "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "configuration": configuration, "invitation": invite, "joined": {"ok": True, "data": joined},
+            "checks": {"usesInstalledCli": True, "explicitTargetRoom": True},
+            "replaces": {"agentId": previous["agent"]["agentId"], "roomId": previous["roomId"],
+                         "record": archived.name},
+        }, ensure_ascii=False, indent=2) + NEWLINE, encoding="utf-8")
+        path.rename(archived)
+        staged.replace(path)
+        self.save("upgrade-identity.json", {
+            "moved": True, "roomId": self.room_id, "agentId": joined["identity"]["agent"]["agentId"],
+            "previousAgentId": previous["agent"]["agentId"], "previousRoomId": previous["roomId"],
+            "archived": archived.name, "observedAtUnixSeconds": int(time.time())})
+        print(f"升级验收身份已搬进验收房间；旧记录留在 {archived.name}。")
+
+    def check_upgrade_inbox(self) -> None:
+        """The upgrade identity holds this release's QA messages unacknowledged, as the next baseline needs.
+
+        Checked now rather than discovered at the next release's first step."""
+        identity = self.installed_cli("resume")["identity"]
+        own = identity["agent"]["agentId"]
+        try:
+            if identity["roomId"] != self.room_id:
+                raise ReleaseFailure("升级验收身份不在验收房间里。")
+            pending: list[str] = []
+            for _ in range(6):
+                inbox = self.installed_cli("read", "--wait", "0", "--limit", "50")
+                pending = pending_from_others(inbox, own)
+                if pending:
+                    break
+                time.sleep(5)
+        finally:
+            self.installed_cli("leave")
+        if not pending:
+            raise ReleaseFailure("升级验收身份没有收到这一版的验收消息，下一版的升级前基线会找不到未确认的投递。")
+        self.save("upgrade-inbox.json", {"agentId": own, "roomId": identity["roomId"], "pendingCount": len(pending),
+                                         "observedAtUnixSeconds": int(time.time())})
 
     def write_record(self, name: str, value: dict[str, Any]) -> None:
         with (self.work / name).open("x", encoding="utf-8") as stream:
@@ -752,14 +895,7 @@ class Acceptance:
         identity = self.installed_cli("resume")["identity"]
         if identity["agent"]["agentId"] != record["joined"]["data"]["identity"]["agent"]["agentId"]:
             raise ReleaseFailure("已安装版本恢复出的人物不是升级验收身份。")
-        inbox = self.installed_cli("read", "--wait", "0")
-        messages = inbox.get("messages", inbox.get("previews"))
-        # 新版只看一眼时不给自己发的，基线也只记别人发的；旧版输出还没有 fromMe，按作者认。
-        own = identity["agent"]["agentId"]
-        events = [
-            message["eventId"] for message in messages
-            if (message.get("actor") or {}).get("agent", {}).get("agentId") != own
-        ]
+        events = pending_from_others(self.installed_cli("read", "--wait", "0"), identity["agent"]["agentId"])
         if not events:
             raise ReleaseFailure("升级前需要至少一条真实的未确认投递。")
         self.write_record("upgrade-baseline.json", {
@@ -938,6 +1074,8 @@ class Acceptance:
 
     def steps(self) -> list[tuple[str, Callable[[], None], Path]]:
         return [
+            ("qa-room", self.resolve_qa_room, self.path("qa-room.json")),
+            ("upgrade-identity", self.move_upgrade_identity, self.path("upgrade-identity.json")),
             ("join", self.join, self.path("joined.private.json")),
             ("register", self.register, self.path("registered.private.json")),
             ("grant", self.create_grant, self.path("authorization.private.json")),
@@ -949,6 +1087,7 @@ class Acceptance:
             ("message-1", lambda: self.send(1), self.path("incoming-1.json")),
             ("message-2", lambda: self.send(2), self.path("incoming-2.json")),
             ("replies", self.verify_replies, self.path("verified-replies.json")),
+            ("upgrade-inbox", self.check_upgrade_inbox, self.path("upgrade-inbox.json")),
             ("idle", self.idle, self.path("observation-idle-after.json")),
             ("takeover", self.takeover, self.path("reception-stopped.json")),
             ("resume", self.resume, self.path("reception-resumed.json")),
@@ -959,7 +1098,7 @@ class Acceptance:
         if not self.authorized():
             print("设备码尚未获批。先运行 start，并请维护者批准。")
             return WAITING
-        needs_desktop = {"grant", "room", "message-1", "message-2", "replies", "takeover", "resume"}
+        needs_desktop = {"qa-room", "grant", "room", "message-1", "message-2", "replies", "takeover", "resume"}
         for name, step, record in self.steps():
             if record.exists():
                 continue
@@ -991,7 +1130,8 @@ class Acceptance:
             self.relaunch_desktop(debugging=False)
             if self.cdp_ready():
                 raise ReleaseFailure(f"桌面应用重启后调试端口 {self.cdp_port} 仍然开着；退出桌面应用后重试 cleanup。")
-        print("已清理：授权撤销、人物退出房间、隔离 Bridge 与接收端停止、桌面应用恢复普通启动。")
+        # `leave` closes the character's connection; the character stays in the QA room for the next release.
+        print("已清理：授权撤销、验收人物的连接关掉（人物留在验收房间里）、隔离 Bridge 与接收端停止、桌面应用恢复普通启动。")
 
     def status(self) -> int:
         done = [name for name, _, record in self.steps() if record.exists()]
@@ -1220,6 +1360,48 @@ def create_grant_js(version: str, payload: dict[str, Any]) -> str:
     return {principalId: session.principalId, grant, observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
   }, @@PAYLOAD@@);
 }""", {"NATIVE": NATIVE_CONTROL_PLANE_JS, "VERSION": json.dumps(version), "PAYLOAD": json.dumps(payload)})
+
+
+def qa_room_js(name: str, description: str, request_id: str) -> str:
+    """Find the owner's active private room called `name`, or create it, and reveal its agent code.
+
+    Only rooms the owner owns count, so a room someone else named the same way is never used. A code made before
+    codes were sealed cannot be shown again (`join_code.not_revealable`, 404 like no code at all): then a new one
+    replaces it, which only the QA room's own agents use."""
+    return fill("""async page => {
+  return await page.evaluate(async input => {
+    @@NATIVE@@
+    const sessionResponse = await controlPlane('auth/session');
+    const session = await sessionResponse.json();
+    if (!sessionResponse.ok || typeof session.principalId !== 'string') throw new Error('Owner session not restored');
+    const listed = await controlPlane('private-rooms');
+    const list = await listed.json();
+    if (!listed.ok) throw new Error('Private rooms not listed: ' + listed.status);
+    const named = list.rooms.filter(room => room.status === 'active'
+      && room.ownerPrincipalId === session.principalId && room.name === input.name);
+    if (named.length > 1) throw new Error('More than one active QA room is named ' + input.name);
+    let room = named[0];
+    const created = room === undefined;
+    if (created) {
+      const response = await controlPlane('private-rooms', {
+        method: 'POST', headers: {'Idempotency-Key': input.requestId},
+        body: {name: input.name, description: input.description, invitations: []},
+      });
+      room = await response.json();
+      if (!response.ok) throw new Error('QA room not created: ' + JSON.stringify(room));
+    }
+    const codePath = 'private-rooms/' + encodeURIComponent(room.catalogId) + '/agent-access/code';
+    let codeResponse = await controlPlane(codePath);
+    if (codeResponse.status === 404) codeResponse = await controlPlane(codePath, {method: 'PUT'});
+    const joinCode = await codeResponse.json();
+    if (!codeResponse.ok || typeof joinCode.code !== 'string') {
+      throw new Error('QA room agent code unavailable: ' + codeResponse.status);
+    }
+    return {name: room.name, catalogId: room.catalogId, roomId: room.matrixRoomId, created, code: joinCode.code,
+      observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
+  }, @@INPUT@@);
+}""", {"NATIVE": NATIVE_CONTROL_PLANE_JS,
+       "INPUT": json.dumps({"name": name, "description": description, "requestId": request_id})})
 
 
 def message_texts(label: str) -> dict[int, str]:
