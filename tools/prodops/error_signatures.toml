@@ -13,6 +13,11 @@ reason = "没带或带错网络 Agent 令牌（MCP 目录和扫描器来探 /mcp
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=RoomNotFound @ '
+reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房间不存在、不是私人房间、已归档。回答里列出能进的公开大厅、说清私人房间号在地址的哪一段（整个地址也认）；2026-10-26 生产上那次，43 秒后它就凭口令进了私人房间"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /devices/current/private-rooms/\{id\}/code$'
 reason = "房间还没有口令时 Agent 先来查一次口令，回 404 以后再去生成"
 
@@ -32,6 +37,11 @@ reason = "输错密码"
 service = "identity"
 summary = '^LOGIN_ERROR error=user_not_found$'
 reason = "登录时填的邮箱没有对应的账户（打错了、换了个邮箱），页面上和输错密码一样提示；2026-10-26 生产上那次，近两天注册的账户都已验证，没有卡住的新账户"
+
+[[ignore]]
+service = "identity"
+summary = '^LOGIN_ERROR error=expired_code$'
+reason = "登录页开着超过身份服务的登录时限（30 分钟）才提交，Keycloak 说登录超时、在原地从头再来；2026-10-26 生产上那次，同一个浏览器 22 秒后就登录上了"
 
 [[ignore]]
 service = "identity"

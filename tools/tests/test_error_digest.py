@@ -338,6 +338,7 @@ class NoiseTableTests(unittest.TestCase):
                     event("REGISTER_ERROR", "expired_code"),
                     event("OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR", "invalid_oauth2_user_code"),
                     event("LOGIN_ERROR", "user_not_found"),
+                    event("LOGIN_ERROR", "expired_code"),
                     KEYCLOAK_LOGIN_ERROR,
                 ]
             },
@@ -345,7 +346,29 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 6)
+        self.assertEqual(sum(digest.ignored.values()), 7)
+
+    def test_network_agent_naming_a_room_that_is_not_there_is_noise(self) -> None:
+        def failure(kind: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-10-26T04:14:30.623000Z",
+                    "level": "WARN",
+                    "fields": {"message": "网络 Agent 请求失败", "correlation.id": CORRELATION_ID, "failure": kind},
+                    "target": "agent_room_control_plane::error",
+                    "span": {"http.request.method": "POST", "url.path": "/mcp"},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {"control-plane": [failure("RoomNotFound"), failure("Internal")]}, load_noise(NOISE_FILE)
+        )
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries, ["WARN agent_room_control_plane::error 网络 Agent 请求失败 failure=Internal @ POST /mcp"]
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
 
 
 class SummaryTests(unittest.TestCase):
