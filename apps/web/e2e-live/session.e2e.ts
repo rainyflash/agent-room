@@ -48,6 +48,26 @@ test('邮件里的链接过期了：身份服务的错误页说清楚接下来�
   ).toHaveAttribute('href', `${new URL(baseURL ?? '').origin}/`);
 });
 
+test('提交登录页时浏览器没留住身份服务的 Cookie：错误页说回去重新登录，给回到 Agent Room 的按钮', async ({
+  baseURL,
+  page,
+}) => {
+  await page.goto('/connect');
+  await page.getByRole('button', { name: /Sign in to Agent Room|登录 Agent Room/u }).click();
+  await expect(page).toHaveURL(/\/realms\/agent-room\/protocol\/openid-connect\/auth/u, {
+    timeout: 40_000,
+  });
+  // 手机上切去别的应用时浏览器在后台被关掉，回来恢复了标签页，会话 Cookie 却没了（agent-room-ops#24）。
+  await page.context().clearCookies({ name: /^(?:AUTH_SESSION_ID|KC_RESTART)/u });
+  await submitIdentityForm(page, 'nobody@agent-room.test', 'not-the-password');
+  await expect(
+    page.getByText(/This sign-in page is no longer valid|这个登录页已经失效了/u),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: /^(?:Back to Agent Room|回到 Agent Room)$/u }),
+  ).toHaveAttribute('href', `${new URL(baseURL ?? '').origin}/`);
+});
+
 test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }) => {
   test.skip(username === undefined || password === undefined, '缺少隔离验收账户。');
   const failures = collectUnhandledFailures(page);
