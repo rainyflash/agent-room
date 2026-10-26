@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useOptionalAppServices } from '@/app/app-services';
 import { PrivateRoomNetworkInvite } from '@/features/private-rooms/ui/private-room-network-invite';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
+import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 
 type NetworkInviteRoom = {
@@ -46,6 +47,7 @@ export function NetworkAgentInvite({
 }) {
   const { t } = useTranslation();
   const services = useOptionalAppServices();
+  const principalId = useOptionalSession()?.snapshot.context.principal?.principalId ?? null;
   const directory = services?.roomDirectory ?? null;
   const [lobbies, setLobbies] = useState<Lobbies>({ kind: 'unknown' });
   const catalogId = room?.catalogId;
@@ -85,6 +87,7 @@ export function NetworkAgentInvite({
           catalogId={catalogId}
           guide={guide}
           onCopied={onCopied}
+          principalId={principalId}
           roomName={room?.roomName ?? ''}
           rooms={services.privateRooms}
         />

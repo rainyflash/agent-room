@@ -9,12 +9,15 @@ import {
   privateRoomJoinCodeQueryKey,
   usePrivateRoomAgentAccess,
   usePrivateRoomJoinCode,
+  usePrivateRoomList,
 } from '@/features/private-rooms/data/private-room-queries';
-import type {
-  JoinCode,
-  PrivateRoomAgentAccess,
-  PrivateRoomFailure,
-  PrivateRoomGateway,
+import {
+  allows,
+  memberFor,
+  type JoinCode,
+  type PrivateRoomAgentAccess,
+  type PrivateRoomFailure,
+  type PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentKnocks } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
@@ -31,6 +34,8 @@ type InviteProps = {
   readonly roomName: string;
   readonly rooms: PrivateRoomGateway;
   readonly onCopied?: (() => void) | undefined;
+  /** 看的人是谁。知道了就先按房间列表判断是不是管理者，不是就不去问口令状态。 */
+  readonly principalId?: string | null | undefined;
 };
 
 /** 管理者这边的口令：看得到就放进话里；没有，或者有却看不到，就给一个生成的按钮。 */
@@ -47,13 +52,16 @@ type CodeState =
  */
 export function PrivateRoomNetworkInvite(props: InviteProps) {
   const { t } = useTranslation();
-  const { catalogId, rooms } = props;
-  // 口令状态只有管理者查得到：顺便知道这段话能不能带口令。
-  const access = usePrivateRoomAgentAccess(rooms, catalogId);
+  const { catalogId, principalId = null, rooms } = props;
+  const manages = useManagesRoom(rooms, catalogId, principalId);
+  // 口令状态只有管理者查得到，顺便知道这段话能不能带口令。房间列表说了不是管理者就不问：
+  // 问了服务器也只回 403，还记成一条错（agent-room-ops#12）。
+  const access = usePrivateRoomAgentAccess(rooms, catalogId, manages === true || manages === null);
   const createdAt =
     access.data?.ok === true ? (access.data.value.joinCode?.createdAtUnixMs ?? null) : null;
   const revealed = usePrivateRoomJoinCode(rooms, catalogId, createdAt);
-  if (access.isPending || (createdAt !== null && revealed.isPending)) {
+  if (manages === false) return <MemberInvite {...props} failure={null} />;
+  if (manages === 'pending' || access.isPending || (createdAt !== null && revealed.isPending)) {
     return (
       <p className="agent-invite__waiting">
         <Spinner />
@@ -69,6 +77,24 @@ export function PrivateRoomNetworkInvite(props: InviteProps) {
     return <MemberInvite {...props} failure={failure} />;
   }
   return <ManagerInvite {...props} code={codeState(createdAt, revealed.data)} />;
+}
+
+/**
+ * 按房间列表看这个人能不能管这个房间（房主，或者有“管理”权限的已加入成员，和服务器、房间设置一样）。
+ * 还在读是 `'pending'`；不知道是谁、列表没读到或者里面没有这个房间是 `null`，这时照旧去问服务器。
+ */
+function useManagesRoom(
+  rooms: PrivateRoomGateway,
+  catalogId: string,
+  principalId: string | null,
+): boolean | 'pending' | null {
+  const list = usePrivateRoomList(rooms, principalId ?? undefined, principalId !== null);
+  if (principalId === null) return null;
+  if (list.isPending) return 'pending';
+  if (list.data?.ok !== true) return null;
+  const room = list.data.value.find((entry) => entry.catalogId === catalogId);
+  if (room === undefined) return null;
+  return room.ownerPrincipalId === principalId || allows(memberFor(room, principalId), 'manage');
 }
 
 function codeState(
