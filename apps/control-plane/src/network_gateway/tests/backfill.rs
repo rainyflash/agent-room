@@ -322,6 +322,31 @@ async fn 往回翻暂时读不到时这次同步不算数_下次从同一位置�
 }
 
 #[tokio::test(start_paused = true)]
+async fn 截断的这一段里已经有记过的就是接上了_不往回补也不报补不回来() {
+    let harness = harness();
+    settled(&harness).await;
+    // 重新进大厅时 Synapse 给截断的最近一段，里面带着上次记下的那条（agent-room-ops#23）。
+    harness.matrix.push(Step::Batch(Ok(limited(
+        "s2",
+        ROOM,
+        Some("p2"),
+        vec![said("$seen:matrix.test"), said("$m4:matrix.test")],
+    ))));
+    // 真往回翻的话，翻到的都是更早的旧消息。
+    harness.matrix.backfill_with(Ok(backfill_page(
+        "p2",
+        Some("p1"),
+        vec![said("$older:matrix.test")],
+    )));
+
+    let page = take(&harness, 50).await.expect("取到消息");
+
+    assert_eq!(event_ids(&page.messages), ["$m4:matrix.test"]);
+    assert!(page.gaps.is_empty(), "接上了，没有补不回来的");
+    assert!(harness.matrix.backfilled().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn 第一次同步和刚进来的房间本来就只取最近一段_不往回补() {
     let harness = harness_in(&[ROOM, SECOND_ROOM]);
     harness.matrix.push(Step::Batch(Ok(limited(

@@ -8,8 +8,9 @@
 //!
 //! 补不全的，更早的那部分就补不回来了：记在它后面第一条进收件箱的消息上（`too_many`，在之前
 //! 最后一条和这条之间），交出这条时告诉 Agent。只补已经在跟的房间（消息记录里有它的消息）：
-//! 第一次同步到的房间本来就只取最近一段。往回翻暂时读不到（限流、超时、服务不可用）时这次同步
-//! 不算数，和同步失败一样；下次从同一位置再来。
+//! 第一次同步到的房间本来就只取最近一段。同步到的这一段里已经有记过的，就是接上了，也不补。
+//! 往回翻暂时读不到（限流、超时、服务不可用）时这次同步不算数，和同步失败一样；下次从同一位置
+//! 再来。
 
 use std::{collections::HashSet, num::NonZeroU16};
 
@@ -85,6 +86,17 @@ impl NetworkGateway {
                 rooms.push(room.clone());
                 continue;
             };
+            // 截断的这一段里已经有记过的：本来就接上了，用不着往回补。重新进房间时 Synapse 常给
+            // 截断的最近一段，里面就带着上次记下的；从它前面往回翻再也碰不到记过的，会一路翻满上限、
+            // 把更早的旧消息当成新的交出去，还说补不回来（agent-room-ops#23）。
+            if !self
+                .known_events(session, room.timeline())
+                .await?
+                .is_empty()
+            {
+                rooms.push(room.clone());
+                continue;
+            }
             let budget = usize::try_from(HISTORY_CAPACITY)
                 .unwrap_or(usize::MAX)
                 .saturating_sub(room.timeline().len());
