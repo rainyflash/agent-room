@@ -22,6 +22,7 @@ import type {
   PrivateRoom,
   PrivateRoomGateway,
   PrivateRoomOrigin,
+  PrivateRoomPerson,
 } from '@/features/private-rooms/domain/private-room';
 import type {
   HumanMessagePreviewEvent,
@@ -46,6 +47,16 @@ const principal: WebSession = {
 };
 const firstCatalog = '01990d9e-8400-7000-8000-000000000401';
 const publicCatalog = '01990d9e-8400-7000-8000-000000000499';
+/** 别人：邀请你进 Research lab 和 Budget review、Partner workshop 的房主是 Mia；Field notes 的房主是网络 Agent。 */
+const peerOwner = '01990d9e-8400-7000-8000-000000000009';
+const networkOwner = '01990d9e-8400-7000-8000-000000000010';
+const fieldNotesCatalog = '01990d9e-8400-7000-8000-000000000407';
+/** 成员的昵称（`GET /private-rooms/{c}/people`）。网络 Agent 的合成主体也有个名字，“房间”页不该用它。 */
+const nicknames = new Map<string, string>([
+  [principal.principalId, principal.displayName],
+  [peerOwner, 'Mia'],
+  [networkOwner, 'network-agent-principal'],
+]);
 function makeRoom(catalogId: string, name: string): PrivateRoom {
   return {
     catalogId,
@@ -71,11 +82,31 @@ function invitedRoom(catalogId: string, name: string): PrivateRoom {
   const room = makeRoom(catalogId, name);
   return {
     ...room,
-    ownerPrincipalId: '01990d9e-8400-7000-8000-000000000009',
+    ownerPrincipalId: peerOwner,
     members: [
       {
         principalId: principal.principalId,
         status: 'invited',
+        permissions: { capabilities: ['view', 'speak'] },
+      },
+    ],
+  };
+}
+/** 别人的房间，这位用户已经加入了：“房间”页把它放在“你加入的房间”里，写着房主是谁。 */
+function othersRoom(catalogId: string, name: string, owner: string): PrivateRoom {
+  const room = makeRoom(catalogId, name);
+  return {
+    ...room,
+    ownerPrincipalId: owner,
+    members: [
+      {
+        principalId: owner,
+        status: 'joined',
+        permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
+      },
+      {
+        principalId: principal.principalId,
+        status: 'joined',
         permissions: { capabilities: ['view', 'speak'] },
       },
     ],
@@ -91,9 +122,14 @@ const seededRooms = [
   invitedRoom('01990d9e-8400-7000-8000-000000000403', 'Research lab'),
   invitedRoom('01990d9e-8400-7000-8000-000000000404', 'Budget review'),
   archivedRoom('01990d9e-8400-7000-8000-000000000405', 'Spring launch'),
+  othersRoom('01990d9e-8400-7000-8000-000000000406', 'Partner workshop', peerOwner),
+  othersRoom(fieldNotesCatalog, 'Field notes', networkOwner),
 ];
 const rooms = new Map(seededRooms.map((room) => [room.catalogId, room]));
-/** 房间是谁建的：Research lab 是网络 Agent 建的（服务器读得到），Design studio 是你的 Agent 替你建的。 */
+/**
+ * 房间是谁建的：Research lab 和 Field notes 是网络 Agent 建的（服务器读得到），Design studio 是你的 Agent
+ * 替你建的（房主还是你）。
+ */
 const origins = new Map<string, PrivateRoomOrigin>([
   [
     '01990d9e-8400-7000-8000-000000000403',
@@ -109,7 +145,28 @@ const origins = new Map<string, PrivateRoomOrigin>([
       ownerIsNetworkAgent: false,
     },
   ],
+  [
+    fieldNotesCatalog,
+    {
+      createdByAgent: { agentId: '01990d9e-8400-7000-8000-000000000613', displayName: 'Atlas' },
+      ownerIsNetworkAgent: true,
+    },
+  ],
 ]);
+/** 成员名单只给已加入的成员看，和服务器一样。 */
+function roomPeople(catalogId: string) {
+  const room = rooms.get(catalogId);
+  const joined = room?.members.some(
+    (member) => member.principalId === principal.principalId && member.status === 'joined',
+  );
+  if (room === undefined || joined !== true)
+    return Promise.resolve(err({ code: 'room_people.not_found', retryable: false }));
+  const people: PrivateRoomPerson[] = room.members.map((member) => ({
+    principalId: member.principalId,
+    displayName: nicknames.get(member.principalId) ?? 'Agent Room User',
+  }));
+  return Promise.resolve(ok(people));
+}
 const uploads = new Map<string, MessageContentUploadRequest>();
 const transactions = new Map<string, string>();
 const listeners = new Set<() => void>();
@@ -182,6 +239,7 @@ function featureServices(base: AppServices): AppServices {
           ? ok(origins.get(id) ?? { createdByAgent: null, ownerIsNetworkAgent: false })
           : err({ code: 'fixture.missing', retryable: false }),
       ),
+    people: roomPeople,
     accept: (id) => answerInvitation(id, 'joined'),
     decline: (id) => answerInvitation(id, 'declined'),
     inspect: (id) => {

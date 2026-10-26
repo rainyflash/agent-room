@@ -264,6 +264,20 @@
   list-style: none;
 }
 
+/* “你建的房间”“你加入的房间”：一个小标题加一格房间卡片，小标题和“换个房间”里的分组一样。 */
+.my-rooms__group {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.my-rooms__group > h3 {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
 .my-rooms__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
