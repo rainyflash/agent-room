@@ -90,9 +90,12 @@ export function AgentInspector({
   const networkLabel = useNetworkAgentLabel();
   // 谁的 Agent，服务器按自己的记录回答；网络 Agent 上面已经标了，这里只写放行的人。
   const owners = useAgentOwners([agent.agentId]);
-  const owner = useAgentOwnerText().detail(owners.get(agent.agentId));
-  // 屏蔽着的不给私聊（服务器也不让开）；屏蔽按钮换成解除屏蔽。
-  const message = blocked ? undefined : onMessage;
+  const ownerText = useAgentOwnerText();
+  const owner = ownerText.detail(owners.get(agent.agentId));
+  // 屏蔽着的、别人的、网络 Agent 都开不了私聊，不给按钮：点了只会说“私聊出错了”。
+  const message =
+    !blocked && ownerText.messageable(owners.get(agent.agentId)) ? onMessage : undefined;
+  // 屏蔽着的，屏蔽按钮换成解除屏蔽。
   const toggleBlock = blocked ? onUnblock : onBlock;
   const attendance = agentAttendance(agent, observedAtUnixMs);
   const lifecycle = agentLifecycle(agent, observedAtUnixMs);

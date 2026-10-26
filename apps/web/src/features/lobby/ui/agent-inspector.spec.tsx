@@ -2,15 +2,22 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AgentOwnerStore } from '@/features/lobby/application/agent-owner-store';
+import type { AgentOwner } from '@/features/lobby/domain/agent-owners';
 import type { LobbyAgent } from '@/features/lobby/domain/lobby';
 import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
+import { AgentOwnersProvider, AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
+import { ok } from '@/shared/result';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
 const NOW = Date.UTC(2026, 8, 30, 8, 0);
+const CATALOG = '0198b601-77a1-7bb8-83eb-a8fe68c97e46';
+const YOU = '0198b601-77a3-74f1-b4f4-940f291951b9';
+const GRACE = '0198b601-77a3-74f1-b4f4-940f291951c1';
 
 const identity = {
   agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
@@ -70,18 +77,41 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
-function renderInspector(agent: LobbyAgent) {
+function renderInspector(agent: LobbyAgent, owner?: AgentOwner) {
   const onMessage = vi.fn();
   const onBlock = vi.fn();
+  const inspector = (
+    <AgentInspector
+      agent={agent}
+      observedAtUnixMs={NOW}
+      onBlock={onBlock}
+      onClose={vi.fn()}
+      onMessage={onMessage}
+    />
+  );
+  // 给了主人就像房间页一样问服务器“这个 Agent 是谁的”。
+  const owners =
+    owner === undefined
+      ? null
+      : new AgentOwnerStore(
+          { lookup: () => Promise.resolve(ok([{ ...owner, agentId: agent.agentId }])) },
+          {
+            schedule: (task) => {
+              task();
+            },
+          },
+        );
   render(
     <I18nextProvider i18n={i18n}>
-      <AgentInspector
-        agent={agent}
-        observedAtUnixMs={NOW}
-        onBlock={onBlock}
-        onClose={vi.fn()}
-        onMessage={onMessage}
-      />
+      {owners === null ? (
+        inspector
+      ) : (
+        <AgentOwnersProvider store={owners}>
+          <AgentOwnersScope catalogId={CATALOG} selfPrincipalId={YOU}>
+            {inspector}
+          </AgentOwnersScope>
+        </AgentOwnersProvider>
+      )}
     </I18nextProvider>,
   );
   return { onBlock, onMessage };
@@ -184,5 +214,28 @@ describe('人物详情', () => {
     fireEvent.click(within(panel).getByRole('button', { name: 'Unblock' }));
     expect(onUnblock).toHaveBeenCalledWith(online.agentId);
     expect(onBlock).not.toHaveBeenCalled();
+  });
+
+  it('只能和自己的 Agent 私聊：别人的、网络 Agent 不给“私聊”，屏蔽照旧', async () => {
+    renderInspector(online, { kind: 'local', owner: { displayName: 'Grace', principalId: GRACE } });
+    const panel = screen.getByRole('complementary', { name: 'Scout' });
+    expect(await within(panel).findByText('Grace’s agent')).toBeVisible();
+    expect(within(panel).queryByRole('button', { name: 'Message' })).not.toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Block' })).toBeVisible();
+    cleanup();
+
+    renderInspector(online, { kind: 'network' });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Message' })).not.toBeInTheDocument();
+    });
+    cleanup();
+
+    const { onMessage } = renderInspector(online, {
+      kind: 'local',
+      owner: { displayName: 'Ada', principalId: YOU },
+    });
+    expect(await screen.findByText('Your agent')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Message' }));
+    expect(onMessage).toHaveBeenCalledWith(online.agentId);
   });
 });

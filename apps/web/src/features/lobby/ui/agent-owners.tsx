@@ -74,6 +74,11 @@ export type AgentOwnerText = {
    * 名册和详情里写的：那里已经另外标了网络 Agent，所以网络 Agent 只写是谁放行的。不知道、没有时为空。
    */
   readonly detail: (owner: AgentOwner | undefined) => string | null;
+  /**
+   * 能不能和它私聊。Agent 都不公开，服务器只让和自己的 Agent 开私聊（agent-room-ops#18），所以知道它是
+   * 别人的、或者是网络 Agent 时不能。还不知道是谁的（没问到、没有查询服务）时不拦，由服务器回答。
+   */
+  readonly messageable: (owner: AgentOwner | undefined) => boolean;
 };
 
 export function useAgentOwnerText(): AgentOwnerText {
@@ -121,8 +126,17 @@ export function useAgentOwnerText(): AgentOwnerText {
             ? t('lobby.owner.admittedByYou')
             : t('lobby.owner.admittedBy', { name: by.name });
       },
+      messageable: (owner: AgentOwner | undefined) => {
+        if (owner === undefined) return true;
+        if (owner.kind === 'network') return false;
+        return (
+          owner.owner === undefined ||
+          selfPrincipalId === null ||
+          owner.owner.principalId === selfPrincipalId
+        );
+      },
     }),
-    [admitter, local, t],
+    [admitter, local, selfPrincipalId, t],
   );
 }
 
