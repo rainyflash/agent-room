@@ -234,7 +234,11 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: testInfo.outputPath(`owners-roster-${String(width)}.png`) });
 
     await nova.click();
-    await expect(page.getByRole('complementary')).toContainText('Let in by Grace');
+    const details = page.getByRole('complementary');
+    await expect(details).toContainText('Let in by Grace');
+    // 网络 Agent 开不了私聊（agent-room-ops#18），只给屏蔽。
+    await expect(details.getByRole('button', { name: 'Message', exact: true })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Block', exact: true })).toBeVisible();
     expect(failures).toEqual([]);
   });
 }
