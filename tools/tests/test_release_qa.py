@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -84,6 +85,7 @@ class ReleaseQaHelpers(unittest.TestCase):
             acceptance.qa.mkdir()
             acceptance.metadata = {"revision": "d" * 40}
             acceptance.host_type, acceptance.label, acceptance.slug = "claude_code", "Alpha 43", "alpha43"
+            acceptance.room_name = None
             record = {"dataDir": str(work / "device"), "service": "svc", "label": "Long-lived", "profileId": "p",
                       "agentId": "a", "agentName": "发布验收 Claude Code",
                       "freshAuthorization": {"version": "0.1.0", "revision": "c" * 40,
@@ -151,6 +153,7 @@ class ReleaseQaHelpers(unittest.TestCase):
             acceptance.work, acceptance.qa = work, work / "fresh-device-qa"
             acceptance.qa.mkdir()
             acceptance.metadata = {"revision": "d" * 40}
+            acceptance.room_name = None
             acceptance.device_record_path = work / "acceptance-device.json"
             record = {"dataDir": str(work / "device"), "service": "svc", "label": "Long-lived", "profileId": "p",
                       "agentId": "a", "agentName": "发布验收 Codex", "profileTaskId": "task-then"}
@@ -174,6 +177,7 @@ class ReleaseQaHelpers(unittest.TestCase):
             acceptance.qa.mkdir()
             acceptance.host_type, acceptance.label, acceptance.slug = "codex", "Alpha 67", "alpha67"
             acceptance.version, acceptance.metadata = "0.1.0-alpha.67", {"revision": "e" * 40}
+            acceptance.room_name, acceptance.catalog_id = "发布验收", "qa-catalog"
             acceptance.device_record_path = work / "acceptance-device.json"
             acceptance.use_fresh_device()
             (acceptance.qa / "joined.private.json").write_text(
@@ -184,6 +188,34 @@ class ReleaseQaHelpers(unittest.TestCase):
             remembered = json.loads(acceptance.device_record_path.read_text(encoding="utf-8"))
             self.assertIsNone(remembered["profileTaskId"])
             self.assertEqual(remembered["agentName"], "发布验收 Codex")
+            # The next release reuses it only while acceptance stays in the same private room.
+            self.assertEqual(remembered["room"], {"private": "发布验收", "catalogId": "qa-catalog"})
+            self.assertIsNone(acceptance.room_blocker(remembered))
+
+    def test_a_device_from_the_public_lobby_is_not_reused_for_the_private_qa_room(self):
+        # Until Alpha 83 the character entered the public lobby first, and a session room cannot be left.
+        acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+        acceptance.room_name = "发布验收"
+        lobby_record = {"agentId": "a"}
+        self.assertIn("公共大厅", acceptance.room_blocker(lobby_record))
+        self.assertIsNotNone(acceptance.room_blocker({"room": {"private": "别的房间", "catalogId": "c"}}))
+        self.assertIsNone(acceptance.room_blocker({"room": {"private": "发布验收", "catalogId": "c"}}))
+        acceptance.room_name = None
+        self.assertIsNone(acceptance.room_blocker(lobby_record))
+
+    def test_a_reused_character_outside_this_qa_room_stops_the_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+            acceptance.qa = Path(directory)
+            acceptance.catalog_id = "new-qa-room"
+            record = {"profileId": "p", "agentId": "a"}
+            (acceptance.qa / "device-mode.json").write_text(
+                json.dumps({"mode": "reused", "record": record}), encoding="utf-8")
+            acceptance.cli = mock.Mock(return_value={"identity": {"agent": {"agentId": "a"},
+                                                                  "roomCatalogId": "archived-qa-room"}})
+            with self.assertRaisesRegex(release_qa.ReleaseFailure, "新授权"):
+                acceptance.join()
+            self.assertFalse((acceptance.qa / "joined.private.json").exists())
 
     def test_baseline_is_recorded_once_and_reused(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -339,6 +371,7 @@ check({getByRole: () => locator(texts)}).then(
             release_qa.goto_room_js("http://tauri.localhost/lobby/c/instance/r?view=conversation"),
             release_qa.native_session_js("http://tauri.localhost", VERSION),
             release_qa.migrated_session_js("http://tauri.localhost", VERSION),
+            release_qa.qa_room_js("发布验收", release_qa.QA_ROOM_DESCRIPTION, "request"),
         ]
         check = ("const s = require('fs').readFileSync(0, 'utf8');"
                  "if (typeof (0, eval)('(' + s.trim() + ')') !== 'function') process.exit(3);")
@@ -428,6 +461,58 @@ run({evaluate: (fn, arg) => fn(arg)}).then(
             "runtime": runtime, "GET auth/session": {"status": 401, "body": {"code": "auth.session_required"}}})
         self.assertEqual(code, 4, out)
         self.assertIn('"loginRestored":false', out)
+
+    @staticmethod
+    def private_room(catalog: str, name: str, owner: str = "owner", status: str = "active") -> dict:
+        return {"catalogId": catalog, "matrixRoomId": f"!{catalog}:example", "name": name,
+                "ownerPrincipalId": owner, "status": status}
+
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page functions")
+    def test_qa_room_is_the_owners_active_room_of_that_name(self):
+        source = release_qa.qa_room_js("发布验收", release_qa.QA_ROOM_DESCRIPTION, "request")
+        # Someone else's room and the owner's archived one share the name; only the owner's active one counts.
+        code, out = self.run_native(source, {
+            "GET auth/session": {"status": 200, "body": {"principalId": "owner"}},
+            "GET private-rooms": {"status": 200, "body": {"rooms": [
+                self.private_room("theirs", "发布验收", owner="someone-else"),
+                self.private_room("old", "发布验收", status="archived"),
+                self.private_room("qa", "发布验收"),
+                self.private_room("other", "Design studio")]}},
+            "GET private-rooms/qa/agent-access/code": {"status": 200, "body": {"code": "ABCD-EFGH-JKMN"}},
+        })
+        self.assertEqual(code, 0, out)
+        output = json.loads(out)
+        self.assertEqual(output["result"] | {"observedAtUnixSeconds": 0}, {
+            "name": "发布验收", "catalogId": "qa", "roomId": "!qa:example", "created": False,
+            "code": "ABCD-EFGH-JKMN", "observedAtUnixSeconds": 0})
+        self.assertEqual([request["method"] for request in output["requests"]], ["GET", "GET", "GET"])
+
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page functions")
+    def test_qa_room_is_created_once_and_given_a_code(self):
+        source = release_qa.qa_room_js("发布验收", release_qa.QA_ROOM_DESCRIPTION, "request")
+        code, out = self.run_native(source, {
+            "GET auth/session": {"status": 200, "body": {"principalId": "owner"}},
+            "GET private-rooms": {"status": 200, "body": {"rooms": []}},
+            "POST private-rooms": {"status": 201, "body": self.private_room("qa", "发布验收")},
+            "GET private-rooms/qa/agent-access/code": {"status": 404, "body": {"code": "join_code.not_found"}},
+            "PUT private-rooms/qa/agent-access/code": {"status": 200, "body": {"code": "ABCD-EFGH-JKMN"}},
+        })
+        self.assertEqual(code, 0, out)
+        output = json.loads(out)
+        self.assertEqual((output["result"]["created"], output["result"]["code"]), (True, "ABCD-EFGH-JKMN"))
+        create = output["requests"][2]
+        self.assertEqual(create["headers"], [["Idempotency-Key", "request"], ["content-type", "application/json"]])
+        self.assertEqual(create["body"], {"name": "发布验收", "description": release_qa.QA_ROOM_DESCRIPTION,
+                                          "invitations": []})
+        self.assertEqual(output["requests"][-1]["method"], "PUT")
+
+        code, out = self.run_native(source, {
+            "GET auth/session": {"status": 200, "body": {"principalId": "owner"}},
+            "GET private-rooms": {"status": 200, "body": {"rooms": [
+                self.private_room("one", "发布验收"), self.private_room("two", "发布验收")]}},
+        })
+        self.assertEqual(code, 4, out)
+        self.assertIn("More than one", out)
 
     @unittest.skipIf(shutil.which("node") is None, "node is required to run the page function")
     def test_a_message_already_shown_is_not_sent_again(self):
@@ -682,6 +767,116 @@ class AssembleReportsTests(unittest.TestCase):
         with mock.patch.dict(release_acceptance.SERVER_MIGRATIONS, {VERSION: self.MOVE}):
             with self.assertRaisesRegex(release.ReleaseFailure, "新服务器"):
                 self.assemble()
+
+    def test_qa_room_is_named_or_given_explicitly_but_not_both(self):
+        config = json.loads((self.work / "release-qa.json").read_text(encoding="utf-8"))
+        config["room"] = {"private": "发布验收"}
+        self.write(self.work / "release-qa.json", config)
+        acceptance = release_qa.Acceptance(self.work)
+        self.assertEqual((acceptance.room_name, acceptance.room_id, acceptance.catalog_id), ("发布验收", None, None))
+        # A later `run` picks up the room the first step found.
+        self.write(self.qa / "qa-room.json", {"name": "发布验收", "roomId": "!qa:example", "catalogId": "qa",
+                                              "created": True})
+        acceptance = release_qa.Acceptance(self.work)
+        self.assertEqual((acceptance.room_id, acceptance.catalog_id), ("!qa:example", "qa"))
+        for room in ({"private": "发布验收", "roomId": "!r:example", "catalogId": "c"}, {}, {"roomId": "!r:example"}):
+            with self.subTest(room=room):
+                config["room"] = room
+                self.write(self.work / "release-qa.json", config)
+                with self.assertRaisesRegex(release.ReleaseFailure, "room"):
+                    release_qa.Acceptance(self.work)
+
+
+class QaRoomStepTests(unittest.TestCase):
+    """The QA room and the upgrade identity that moves into it; the installed CLI is replaced by fakes."""
+
+    def acceptance(self) -> release_qa.Acceptance:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        acceptance = release_qa.Acceptance.__new__(release_qa.Acceptance)
+        acceptance.qa = work / "fresh-device-qa"
+        acceptance.qa.mkdir()
+        acceptance.version, acceptance.slug = "0.1.0-alpha.84", "alpha84"
+        acceptance.room_name, acceptance.room_id, acceptance.catalog_id = "发布验收", "!qa:example", "qa"
+        self.identity = work / "upgrade-identity" / "native-join.json"
+        self.identity.parent.mkdir()
+        self.identity.write_text(json.dumps({
+            "configuration": {"command": "agent-room.exe", "args": ["--connection", "desktop"]},
+            "joined": {"ok": True, "data": {"profileId": "old-profile", "identity": {
+                "agent": {"agentId": "old"}, "roomId": "!lobby:example", "roomCatalogId": "lobby"}}}}), encoding="utf-8")
+        acceptance.config = {"upgrade": {"identity": str(self.identity)}}
+        acceptance.cli = mock.Mock(return_value={"id": "session-key"})
+        return acceptance
+
+    def test_the_room_and_its_code_are_kept_apart(self):
+        acceptance = self.acceptance()
+        acceptance.room_id = acceptance.catalog_id = None
+        acceptance.page = mock.Mock(return_value={"name": "发布验收", "catalogId": "qa", "roomId": "!qa:example",
+                                                  "created": True, "code": "ABCD-EFGH-JKMN",
+                                                  "observedAtUnixSeconds": 1})
+        acceptance.resolve_qa_room()
+        self.assertEqual((acceptance.room_id, acceptance.catalog_id), ("!qa:example", "qa"))
+        public = json.loads((acceptance.qa / "qa-room.json").read_text(encoding="utf-8"))
+        self.assertNotIn("code", public)
+        self.assertEqual(json.loads((acceptance.qa / "qa-room.private.json").read_text(encoding="utf-8")),
+                         {"catalogId": "qa", "code": "ABCD-EFGH-JKMN"})
+
+    def test_an_explicit_room_needs_no_page(self):
+        acceptance = self.acceptance()
+        acceptance.room_name = None
+        acceptance.page = mock.Mock()
+        acceptance.resolve_qa_room()
+        acceptance.page.assert_not_called()
+        self.assertTrue(json.loads((acceptance.qa / "qa-room.json").read_text(encoding="utf-8"))["configured"])
+
+    def test_the_upgrade_identity_moves_into_the_qa_room_once_and_keeps_the_old_record(self):
+        acceptance = self.acceptance()
+        joined = {"profileId": "new-profile", "identity": {"agent": {"agentId": "new"}, "roomId": "!qa:example",
+                                                           "roomCatalogId": "qa"}}
+        acceptance.run_installed = mock.Mock(side_effect=[release_qa.ReleaseFailure("Bridge busy"), joined, {}])
+        with self.assertRaises(release_qa.ReleaseFailure):
+            acceptance.move_upgrade_identity()
+        acceptance.move_upgrade_identity()
+        join_first, join_again, leave = [call.args[0] for call in acceptance.run_installed.call_args_list]
+        # The retry joins with the same invite, so it returns to the same identity instead of making a second one.
+        self.assertEqual(join_first, join_again)
+        self.assertEqual(join_first[:4], ["agent-room.exe", "--connection", "desktop", "join"])
+        invite = json.loads(base64.urlsafe_b64decode(join_first[5] + "=" * (-len(join_first[5]) % 4)))
+        self.assertEqual(invite, {"version": 1, "sessionKey": "session-key", "displayName": "升级验收",
+                                  "roomId": "!qa:example", "catalogId": "qa"})
+        acceptance.cli.assert_called_once_with("id")
+        self.assertEqual(leave[3:], ["--profile", "new-profile", "leave"])
+        moved = json.loads(self.identity.read_text(encoding="utf-8"))
+        self.assertEqual(moved["joined"]["data"], joined)
+        self.assertEqual(moved["replaces"]["agentId"], "old")
+        archived = self.identity.with_name("native-join.before-alpha84.json")
+        self.assertEqual(json.loads(archived.read_text(encoding="utf-8"))["joined"]["data"]["profileId"],
+                         "old-profile")
+        self.assertTrue(json.loads((acceptance.qa / "upgrade-identity.json").read_text(encoding="utf-8"))["moved"])
+        # The next release finds it already in the QA room.
+        (acceptance.qa / "upgrade-identity.json").unlink()
+        acceptance.move_upgrade_identity()
+        self.assertEqual(acceptance.run_installed.call_count, 3)
+        self.assertFalse(json.loads((acceptance.qa / "upgrade-identity.json").read_text(encoding="utf-8"))["moved"])
+
+    def test_the_upgrade_identity_needs_a_message_from_someone_else_and_always_closes(self):
+        acceptance = self.acceptance()
+        answers = {"resume": {"identity": {"agent": {"agentId": "me"}, "roomId": "!qa:example"}}, "leave": {},
+                   "read": {"messages": [{"eventId": "$own", "actor": {"agent": {"agentId": "me"}}},
+                                         {"eventId": "$qa", "actor": {"principalId": "owner"}}]}}
+        acceptance.installed_cli = mock.Mock(side_effect=lambda *args, **_: answers[args[0]])
+        acceptance.check_upgrade_inbox()
+        self.assertEqual(json.loads((acceptance.qa / "upgrade-inbox.json").read_text(encoding="utf-8"))["pendingCount"], 1)
+        (acceptance.qa / "upgrade-inbox.json").unlink()
+        answers["read"] = {"previews": [{"eventId": "$own", "actor": {"agent": {"agentId": "me"}}}]}
+        with mock.patch.object(release_qa.time, "sleep"), self.assertRaisesRegex(release_qa.ReleaseFailure, "基线"):
+            acceptance.check_upgrade_inbox()
+        answers["resume"]["identity"]["roomId"] = "!lobby:example"
+        with self.assertRaisesRegex(release_qa.ReleaseFailure, "不在验收房间"):
+            acceptance.check_upgrade_inbox()
+        leaves = [call for call in acceptance.installed_cli.call_args_list if call.args[0] == "leave"]
+        self.assertEqual(len(leaves), 3)
 
 
 if __name__ == "__main__":
