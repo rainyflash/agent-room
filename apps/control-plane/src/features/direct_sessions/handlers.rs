@@ -1,7 +1,8 @@
 use agent_room_application::{
     authentication::{AuthenticatedPrincipal, AuthenticationRequirement},
     direct_sessions::{
-        DirectSessionResult, InspectDirectSession, ListDirectSessions, SetDirectAgentBlock,
+        DirectSessionResult, InspectDirectSession, ListDirectAgentBlocks, ListDirectSessions,
+        SetDirectAgentBlock,
     },
 };
 use axum::{
@@ -15,8 +16,8 @@ use axum_extra::extract::CookieJar;
 use super::{
     DirectSessionHttpState,
     models::{
-        DirectContactResponse, DirectSessionListResponse, DirectSessionResponse,
-        OpenDirectSessionBody, SetDirectBlockBody, agent_id, catalog_id,
+        DirectAgentBlockListResponse, DirectContactResponse, DirectSessionListResponse,
+        DirectSessionResponse, OpenDirectSessionBody, SetDirectBlockBody, agent_id, catalog_id,
     },
 };
 use crate::{
@@ -132,6 +133,38 @@ pub(super) async fn set_block(
         Ok(contact) => {
             no_store((StatusCode::OK, Json(DirectContactResponse::from(contact))).into_response())
         }
+        Err(failure) => no_store(ApiError::direct_session(failure, correlation_id).into_response()),
+    }
+}
+
+pub(super) async fn list_blocks(
+    State(state): State<DirectSessionHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    jar: CookieJar,
+) -> Response {
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .sessions
+        .list_blocks(ListDirectAgentBlocks { actor })
+        .await
+    {
+        Ok(blocks) => no_store(
+            (
+                StatusCode::OK,
+                Json(DirectAgentBlockListResponse::from(blocks)),
+            )
+                .into_response(),
+        ),
         Err(failure) => no_store(ApiError::direct_session(failure, correlation_id).into_response()),
     }
 }

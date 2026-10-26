@@ -101,6 +101,29 @@
   animation: ar-spin 900ms linear infinite;
 }
 
+/* 屏蔽着它时，按钮下面说一声；和私聊里“你已屏蔽该 Agent”一个样子。 */
+.agent-inspector__blocked {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 14px;
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agent-inspector__blocked > svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  color: var(--ar-warning);
+}
+
 .agent-inspector__failure {
   margin: 0;
   padding: 10px 12px;

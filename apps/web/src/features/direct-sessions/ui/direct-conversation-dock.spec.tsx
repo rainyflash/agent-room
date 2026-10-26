@@ -100,7 +100,9 @@ function controller(): DirectSessionController {
   return {
     blocking: false,
     clearFailure: vi.fn(),
+    failedAction: null,
     failure: null,
+    isBlocked: () => false,
     loading: false,
     markDisplayed: vi.fn(() => Promise.resolve(undefined)),
     openAgent: vi.fn(() =>

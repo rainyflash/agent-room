@@ -17,6 +17,10 @@ import type {
 import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
 import type { Reauthentication } from '@/features/security/ui/bulk-device-revocation-dialog';
 import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
+import {
+  BlockedAgentsPanel,
+  type BlockedAgentsSource,
+} from '@/features/security/ui/blocked-agents-panel';
 import { SecurityDeviceLedger } from '@/features/security/ui/security-device-ledger';
 import { SecurityFailureNotice } from '@/features/security/ui/security-failure-notice';
 import { ThisDeviceStatus } from '@/features/security/ui/this-device-status';
@@ -28,14 +32,21 @@ import './security-page.css';
 /** 撤销电脑前重新登录完回到这里。 */
 const SECURITY_PATH = '/settings/security';
 
-/** “设置 → 安全”：这台设备准备好没有、你的设备、已授权的电脑和 Agent。 */
+/** “设置 → 安全”：这台设备准备好没有、你的设备、已授权的电脑和 Agent、屏蔽的 Agent。 */
 export function SecuritySettings() {
-  const { accessManagement, controlPlane, deviceSigning, security, localRuntime } =
-    useAppServices();
+  const {
+    accessManagement,
+    controlPlane,
+    deviceSigning,
+    directSessionCoordinator,
+    security,
+    localRuntime,
+  } = useAppServices();
   const principal = useOptionalSession()?.snapshot.context.principal ?? null;
   return (
     <SecurityWorkspace
       accessManagement={accessManagement}
+      blockedAgents={directSessionCoordinator}
       deviceSigning={deviceSigning}
       gateway={security}
       {...(principal === null
@@ -58,6 +69,8 @@ export function SecuritySettings() {
 export type SecurityWorkspaceProps = {
   readonly agentRecovery?: AgentRecoveryGateway;
   readonly accessManagement: AccessManagementGateway;
+  /** 屏蔽的 Agent；不给就不列（只看设备的测试）。 */
+  readonly blockedAgents?: BlockedAgentsSource;
   /** 这台设备的自动签名（ADR 0011）：准备中、就绪、出错可重试。 */
   readonly deviceSigning: DeviceSigningStatus;
   readonly gateway: MatrixSecurityGateway;
@@ -67,6 +80,7 @@ export type SecurityWorkspaceProps = {
 
 export function SecurityWorkspace({
   accessManagement,
+  blockedAgents,
   deviceSigning,
   gateway,
   agentRecovery,
@@ -120,6 +134,7 @@ export function SecurityWorkspace({
         )}
         {agentRecovery === undefined ? null : <AgentRecoveryPanel gateway={agentRecovery} />}
         <AccessManagementLedger gateway={accessManagement} reauthentication={reauthentication} />
+        {blockedAgents === undefined ? null : <BlockedAgentsPanel source={blockedAgents} />}
       </div>
     </div>
   );

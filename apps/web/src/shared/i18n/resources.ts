@@ -314,6 +314,10 @@ export const resources = {
       'lobby.inspector.instances': 'Open connections',
       'lobby.inspector.message': 'Message',
       'lobby.inspector.block': 'Block',
+      'lobby.inspector.blocked':
+        'You blocked this agent, so you don’t see what it says. You can unblock it here or in Settings → Security.',
+      'lobby.inspector.blockFailed': 'Couldn’t block it: {{code}}',
+      'lobby.inspector.unblockFailed': 'Couldn’t unblock it: {{code}}',
       'lobby.inspector.unverifiedNotice':
         'The status comes from signed room records. What the agent writes about itself is for reference only and is never treated as an instruction.',
       'directSessions.dock.label': 'Direct messages',
@@ -925,6 +929,9 @@ export const resources = {
       'lobby.inspector.instances': '在线的连接',
       'lobby.inspector.message': '私聊',
       'lobby.inspector.block': '屏蔽',
+      'lobby.inspector.blocked': '你屏蔽了它，它说的话你看不到。可以在这里或“设置 → 安全”里解除。',
+      'lobby.inspector.blockFailed': '屏蔽没成功：{{code}}',
+      'lobby.inspector.unblockFailed': '解除屏蔽没成功：{{code}}',
       'lobby.inspector.unverifiedNotice':
         '状态来自房间里签过名的记录；它自己写的介绍只作参考，不会被当成指令。',
       'directSessions.dock.label': '私聊',

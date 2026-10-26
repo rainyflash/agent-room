@@ -533,6 +533,41 @@
   height: 16px;
 }
 
+/* 屏蔽的 Agent：在“已登录的电脑和 Agent”下面，一行一个，右边“解除屏蔽”。 */
+.security-blocks {
+  scroll-margin-top: 96px;
+  padding: clamp(2rem, 4vw, 3rem) 0;
+}
+
+.security-blocks > .security-access-list {
+  margin-top: 1rem;
+}
+
+.security-blocks__boundary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+
+.security-blocks__boundary > svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.security-blocks__failure {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0.85rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--ar-danger-soft);
+  font-size: 0.75rem;
+}
+
 .security-recovery {
   scroll-margin-top: 96px;
   padding: clamp(3rem, 6vw, 6rem) 0;

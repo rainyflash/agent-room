@@ -1,5 +1,5 @@
 import { Button, Details } from '@agent-room/ui-system';
-import { LoaderCircle, MessageSquare, ShieldBan, X } from 'lucide-react';
+import { LoaderCircle, MessageSquare, ShieldBan, ShieldCheck, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
@@ -20,17 +20,35 @@ import './agent-roster.css';
 import './agent-inspector.css';
 import { AgentOrganizationControls } from '@/features/personal-workspace/ui/agent-organization-controls';
 
+export type AgentInspectorAction = 'block' | 'message' | 'unblock';
+
+/** 上一次没做成的事和错误码。 */
+export type AgentInspectorFailure = {
+  readonly action: AgentInspectorAction;
+  readonly code: string;
+};
+
 export type AgentInspectorProps = {
   readonly hasBackgroundReception?: boolean;
   readonly receptionControls?: ReactNode;
-  readonly actionFailure?: string | null;
+  readonly actionFailure?: AgentInspectorFailure | null;
   readonly agent: LobbyAgent;
+  /** 你屏蔽着它：不给私聊，屏蔽按钮换成解除屏蔽。 */
+  readonly blocked?: boolean;
   readonly observedAtUnixMs?: number;
   readonly onBlock?: (agentId: string) => void;
   readonly onClose: () => void;
   readonly onMessage?: (agentId: string) => void;
+  readonly onUnblock?: (agentId: string) => void;
+  /** 正在做的事；屏蔽和解除屏蔽是同一个按钮，都算 `block`。 */
   readonly pendingAction?: 'block' | 'message' | null;
 };
+
+const failureCopy = {
+  block: 'lobby.inspector.blockFailed',
+  message: 'directSessions.failure',
+  unblock: 'lobby.inspector.unblockFailed',
+} as const;
 
 /** 人物详情里只说离线多久；「离线」两个字上面的状态已经说过了。 */
 function offlineDurationKey(group: AgentRosterGroup) {
@@ -51,16 +69,19 @@ function offlineDurationKey(group: AgentRosterGroup) {
 /**
  * 人物详情：头像、名字和状态在上；先是能做的事（私聊、屏蔽），再说它能不能回复、离线多久，
  * 然后是后台回复和收藏。Matrix 身份、在线连接数这些排查信息收在“身份与连接”里。
+ * 屏蔽着的 Agent 只给“解除屏蔽”，并说一声它说的话你看不到。
  */
 export function AgentInspector({
   hasBackgroundReception = false,
   receptionControls,
   actionFailure = null,
   agent,
+  blocked = false,
   observedAtUnixMs = Date.now(),
   onBlock,
   onClose,
   onMessage,
+  onUnblock,
   pendingAction = null,
 }: AgentInspectorProps) {
   const { i18n, t } = useTranslation();
@@ -70,6 +91,9 @@ export function AgentInspector({
   // 谁的 Agent，服务器按自己的记录回答；网络 Agent 上面已经标了，这里只写放行的人。
   const owners = useAgentOwners([agent.agentId]);
   const owner = useAgentOwnerText().detail(owners.get(agent.agentId));
+  // 屏蔽着的不给私聊（服务器也不让开）；屏蔽按钮换成解除屏蔽。
+  const message = blocked ? undefined : onMessage;
+  const toggleBlock = blocked ? onUnblock : onBlock;
   const attendance = agentAttendance(agent, observedAtUnixMs);
   const lifecycle = agentLifecycle(agent, observedAtUnixMs);
   const reception = lifecycle.connection === 'online' ? lifecycle.reception : lifecycle.connection;
@@ -117,9 +141,9 @@ export function AgentInspector({
         </button>
       </header>
       <div className="agent-inspector__body">
-        {onMessage === undefined && onBlock === undefined ? null : (
+        {message === undefined && toggleBlock === undefined ? null : (
           <div className="agent-inspector__actions">
-            {onMessage === undefined ? null : (
+            {message === undefined ? null : (
               <Button
                 disabled={pendingAction !== null}
                 icon={
@@ -130,7 +154,7 @@ export function AgentInspector({
                   )
                 }
                 onClick={() => {
-                  onMessage(agent.agentId);
+                  message(agent.agentId);
                 }}
                 size="compact"
                 tone="primary"
@@ -138,30 +162,38 @@ export function AgentInspector({
                 {t(attendance === 'present' ? 'lobby.inspector.message' : 'studio.leaveMessage')}
               </Button>
             )}
-            {onBlock === undefined ? null : (
+            {toggleBlock === undefined ? null : (
               <Button
                 disabled={pendingAction !== null}
                 icon={
                   pendingAction === 'block' ? (
                     <LoaderCircle aria-hidden="true" />
+                  ) : blocked ? (
+                    <ShieldCheck aria-hidden="true" />
                   ) : (
                     <ShieldBan aria-hidden="true" />
                   )
                 }
                 onClick={() => {
-                  onBlock(agent.agentId);
+                  toggleBlock(agent.agentId);
                 }}
                 size="compact"
                 tone="quiet"
               >
-                {t('lobby.inspector.block')}
+                {t(blocked ? 'directSessions.action.unblock' : 'lobby.inspector.block')}
               </Button>
             )}
           </div>
         )}
+        {blocked ? (
+          <p className="agent-inspector__blocked" role="status">
+            <ShieldBan aria-hidden="true" />
+            <span>{t('lobby.inspector.blocked')}</span>
+          </p>
+        ) : null}
         {actionFailure === null ? null : (
           <p className="agent-inspector__failure" role="alert">
-            {t('directSessions.failure', { code: actionFailure })}
+            {t(failureCopy[actionFailure.action], { code: actionFailure.code })}
           </p>
         )}
         <section

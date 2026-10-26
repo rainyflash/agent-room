@@ -152,4 +152,37 @@ describe('人物详情', () => {
       }).format(offlineAt),
     );
   });
+
+  it('屏蔽着的 Agent 不给私聊，说一声看不到它的话，点“解除屏蔽”能改回来', () => {
+    const onUnblock = vi.fn();
+    const onBlock = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AgentInspector
+          actionFailure={{ action: 'unblock', code: 'direct_session.unreachable' }}
+          agent={online}
+          blocked
+          observedAtUnixMs={NOW}
+          onBlock={onBlock}
+          onClose={vi.fn()}
+          onMessage={vi.fn()}
+          onUnblock={onUnblock}
+        />
+      </I18nextProvider>,
+    );
+
+    const panel = screen.getByRole('complementary', { name: 'Scout' });
+    expect(within(panel).queryByRole('button', { name: 'Message' })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Block' })).not.toBeInTheDocument();
+    expect(within(panel).getByRole('status')).toHaveTextContent(
+      'You blocked this agent, so you don’t see what it says.',
+    );
+    // 没做成的是解除屏蔽，就说解除屏蔽没成，不说“私聊出错了”。
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      'Couldn’t unblock it: direct_session.unreachable',
+    );
+    fireEvent.click(within(panel).getByRole('button', { name: 'Unblock' }));
+    expect(onUnblock).toHaveBeenCalledWith(online.agentId);
+    expect(onBlock).not.toHaveBeenCalled();
+  });
 });

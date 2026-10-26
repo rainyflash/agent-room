@@ -26,9 +26,11 @@ import {
   useReceptionEvidence,
 } from '@/features/desktop/ui/reception-evidence-context';
 import { hasAutomationDraftFor } from '@/features/automation/ui/automation-settings';
-import type { DirectAgent } from '@/features/direct-sessions/domain/direct-session';
 import { DirectConversationDock } from '@/features/direct-sessions/ui/direct-conversation-dock';
-import { useDirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
+import {
+  useDirectSessionController,
+  type DirectSessionController,
+} from '@/features/direct-sessions/ui/use-direct-session-controller';
 import { LobbyExperienceStore } from '@/features/lobby/application/lobby-experience-store';
 import { RoomActivityStore } from '@/features/lobby/application/room-activity-store';
 import {
@@ -40,7 +42,7 @@ import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import { attendanceCounts } from '@/features/lobby/domain/agent-attendance';
 import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
-import { AgentInspector } from '@/features/lobby/ui/agent-inspector';
+import { AgentInspector, type AgentInspectorFailure } from '@/features/lobby/ui/agent-inspector';
 import { AgentRosterPolicyPanel } from './agent-roster-policy-panel';
 import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
 import {
@@ -645,17 +647,20 @@ function ReadyLobby({
                 <ReceptionOwnershipPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
               ) : undefined
             }
-            actionFailure={directSessions.failure?.code ?? null}
+            actionFailure={inspectorFailure(directSessions)}
             agent={selectedAgent}
+            blocked={directSessions.isBlocked(selectedAgent)}
             observedAtUnixMs={room.observedAtUnixMs}
             key="agent-inspector"
             pendingAction={
               directSessions.opening ? 'message' : directSessions.blocking ? 'block' : null
             }
+            // 屏蔽完详情留着：上面说已屏蔽，按钮换成解除屏蔽，点错了马上能改回来。
             onBlock={() => {
-              void directSessions.setBlocked(toDirectAgent(selectedAgent), true).then((result) => {
-                if (result.ok) onSelectedAgentChange(null);
-              });
+              void directSessions.setBlocked(selectedAgent, true);
+            }}
+            onUnblock={() => {
+              void directSessions.setBlocked(selectedAgent, false);
             }}
             onClose={() => {
               spatial.current?.focus();
@@ -676,13 +681,13 @@ function ReadyLobby({
   );
 }
 
-function toDirectAgent(agent: LobbyRoom['agents'][number]): DirectAgent {
-  return Object.freeze({
-    agentId: agent.agentId,
-    avatarContentId: null,
-    displayName: agent.displayName,
-    matrixUserId: agent.matrixUserId,
-  });
+/** 详情里只说屏蔽、解除屏蔽、私聊没做成；读私聊列表出的错在私聊那边说。 */
+function inspectorFailure(controller: DirectSessionController): AgentInspectorFailure | null {
+  if (controller.failure === null || controller.failedAction === null) return null;
+  return {
+    action: controller.failedAction === 'open' ? 'message' : controller.failedAction,
+    code: controller.failure.code,
+  };
 }
 
 /**

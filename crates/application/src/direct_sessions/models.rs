@@ -31,6 +31,11 @@ pub struct SetDirectAgentBlock {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListDirectAgentBlocks {
+    pub actor: AuthenticatedPrincipal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectSessionView {
     pub record: DirectSessionRecord,
     pub target: DirectAgentProfile,

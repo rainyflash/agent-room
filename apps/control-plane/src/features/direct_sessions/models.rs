@@ -1,6 +1,6 @@
 use agent_room_application::{
     direct_sessions::{DirectContactView, DirectSessionView, OpenDirectSession},
-    ports::DirectAgentProfile,
+    ports::{DirectAgentBlock, DirectAgentProfile},
 };
 use agent_room_domain::{
     direct_sessions::{DirectContactPolicy, DirectPresenceDisclosure},
@@ -92,6 +92,34 @@ impl From<DirectContactView> for DirectContactResponse {
             contact_policy: DirectContactPolicyResponse::from(view.contact_policy),
         }
     }
+}
+
+/// 设置里“屏蔽的 Agent”：最近屏蔽的在前。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct DirectAgentBlockListResponse {
+    blocks: Vec<DirectAgentBlockResponse>,
+}
+
+impl From<Vec<DirectAgentBlock>> for DirectAgentBlockListResponse {
+    fn from(blocks: Vec<DirectAgentBlock>) -> Self {
+        Self {
+            blocks: blocks
+                .into_iter()
+                .map(|block| DirectAgentBlockResponse {
+                    target: DirectAgentResponse::from(block.target),
+                    blocked_at_unix_ms: block.blocked_at.value(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectAgentBlockResponse {
+    target: DirectAgentResponse,
+    blocked_at_unix_ms: i64,
 }
 
 #[derive(Debug, Serialize)]

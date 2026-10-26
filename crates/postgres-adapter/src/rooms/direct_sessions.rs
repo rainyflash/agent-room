@@ -1,6 +1,6 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
-    ports::{DirectSessionRecord, DirectSessionStore, PortFuture},
+    ports::{DirectAgentBlock, DirectSessionRecord, DirectSessionStore, PortFuture},
 };
 use agent_room_domain::{
     direct_sessions::{DirectContactPolicy, DirectSession, DirectSessionLifecycle},
@@ -15,12 +15,16 @@ use crate::{
     PostgresRepositories,
     agents::decode_column,
     error::{map_domain_error, map_sqlx_error},
+    principals::decode_direct_agent_profile,
     transaction::finish,
 };
 
 use super::decode::{
     CATALOG_COLUMNS, INSTANCE_COLUMNS, corrupt_data, decode_catalog, decode_instance,
 };
+
+/// 设置里一次列出的屏蔽最多这么多个；网页按同一个数校验。
+const MAX_LISTED_BLOCKS: i64 = 1_000;
 
 const DIRECT_SESSION_COLUMNS: &str = r"
     direct.principal_id AS direct_principal_id,
@@ -215,6 +219,46 @@ impl DirectSessionStore for PostgresRepositories {
             load_contact_policy(self, principal_id, agent_id, operation).await
         })
     }
+
+    fn list_principal_blocks(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<DirectAgentBlock>>> {
+        Box::pin(async move {
+            let operation = "direct_session.list_principal_blocks";
+            let rows = sqlx::query(
+                r"SELECT agent.id AS agent_id, agent.matrix_user_id, agent.display_name,
+                         agent.avatar_content_id,
+                         floor(extract(epoch FROM contact_block.blocked_at) * 1000)::bigint
+                             AS blocked_at_ms
+                   FROM agent_room.direct_contact_block AS contact_block
+                   JOIN agent_room.agent AS agent ON agent.id = contact_block.agent_id
+                   WHERE contact_block.principal_id = $1
+                     AND contact_block.blocker_kind = 'principal'
+                     AND contact_block.revoked_at IS NULL
+                   ORDER BY contact_block.blocked_at DESC, agent.id
+                   LIMIT $2",
+            )
+            .bind(principal_id.as_uuid())
+            .bind(MAX_LISTED_BLOCKS)
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_agent_block(row, operation))
+                .collect()
+        })
+    }
+}
+
+fn decode_agent_block(row: &PgRow, operation: &'static str) -> RepositoryResult<DirectAgentBlock> {
+    let agent_id = AgentId::from_uuid(decode_column(row, "agent_id", operation)?);
+    let blocked_at = UtcMillis::new(decode_column(row, "blocked_at_ms", operation)?)
+        .map_err(|_| corrupt_data(operation))?;
+    Ok(DirectAgentBlock {
+        target: decode_direct_agent_profile(row, agent_id, operation)?,
+        blocked_at,
+    })
 }
 
 async fn reserve_record(

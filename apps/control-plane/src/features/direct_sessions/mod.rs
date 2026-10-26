@@ -45,6 +45,7 @@ pub(crate) fn router(state: DirectSessionHttpState) -> Router {
     Router::new()
         .route("/direct-sessions", get(handlers::list).post(handlers::open))
         .route("/direct-sessions/{catalog_id}", get(handlers::inspect))
+        .route("/direct-contacts/blocks", get(handlers::list_blocks))
         .route(
             "/direct-contacts/{agent_id}/block",
             put(handlers::set_block),

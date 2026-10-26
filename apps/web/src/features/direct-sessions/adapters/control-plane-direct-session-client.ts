@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
 import {
+  directAgentBlockListSchema,
   directContactSchema,
   directSessionListSchema,
   directSessionSchema,
+  type DirectAgentBlock,
   type DirectContact,
   type DirectSession,
   type DirectSessionFailure,
@@ -46,6 +48,15 @@ export class ControlPlaneDirectSessionClient implements DirectSessionGateway {
       directSessionListSchema,
     );
     return response.ok ? ok(response.value.sessions) : response;
+  }
+
+  async listBlocks(): Promise<Result<readonly DirectAgentBlock[], DirectSessionFailure>> {
+    const response = await this.#request(
+      '/direct-contacts/blocks',
+      { method: 'GET' },
+      directAgentBlockListSchema,
+    );
+    return response.ok ? ok(response.value.blocks) : response;
   }
 
   inspect(catalogId: string): Promise<Result<DirectSession, DirectSessionFailure>> {

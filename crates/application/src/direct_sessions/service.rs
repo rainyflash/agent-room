@@ -13,17 +13,17 @@ use crate::{
     authentication::AuthenticatedPrincipal,
     persistence::RepositoryErrorKind,
     ports::{
-        Clock, DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
-        DirectSessionMatrixProvisioner, DirectSessionRecord, DirectSessionStore, IdentifierFactory,
-        MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomPreset, MatrixRoomVisibility,
-        MatrixUserId, PortFuture,
+        Clock, DirectAgentBlock, DirectAgentProfile, DirectMatrixRoomCreation,
+        DirectSessionAgentDirectory, DirectSessionMatrixProvisioner, DirectSessionRecord,
+        DirectSessionStore, IdentifierFactory, MatrixCreateRoom, MatrixRoomAliasLocalpart,
+        MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
     },
 };
 
 use super::{
     DirectContactView, DirectSessionFailureKind, DirectSessionFailureStage, DirectSessionResult,
-    DirectSessionView, InspectDirectSession, ListDirectSessions, OpenDirectSession,
-    SetDirectAgentBlock,
+    DirectSessionView, InspectDirectSession, ListDirectAgentBlocks, ListDirectSessions,
+    OpenDirectSession, SetDirectAgentBlock,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -47,6 +47,11 @@ pub trait DirectSessionUseCases: Send + Sync {
         &self,
         request: SetDirectAgentBlock,
     ) -> PortFuture<'_, DirectSessionResult<DirectContactView>>;
+
+    fn list_blocks(
+        &self,
+        request: ListDirectAgentBlocks,
+    ) -> PortFuture<'_, DirectSessionResult<Vec<DirectAgentBlock>>>;
 }
 
 pub struct DirectSessionDependencies {
@@ -188,13 +193,19 @@ impl DirectSessionService {
     ) -> DirectSessionResult<DirectContactView> {
         const OPERATION: &str = "direct_session.set_block";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        // 房间里任何一个 Agent 都能屏蔽，不只是能私聊的（agent-room-ops#18 之后只能和自己的私聊）。
         let target = self
-            .load_known_target(
-                request.actor.principal_id,
-                request.target_agent_id,
-                OPERATION,
-            )
-            .await?;
+            .agents
+            .find_blockable(request.actor.principal_id, request.target_agent_id)
+            .await
+            .map_err(|error| repository(OPERATION, DirectSessionFailureStage::Directory, &error))?
+            .ok_or_else(|| {
+                failure(
+                    OPERATION,
+                    DirectSessionFailureStage::Directory,
+                    DirectSessionFailureKind::NotFound,
+                )
+            })?;
         let contact_policy = self
             .store
             .set_principal_block(
@@ -211,6 +222,18 @@ impl DirectSessionService {
             target,
             contact_policy,
         })
+    }
+
+    async fn list_blocks_internal(
+        &self,
+        request: ListDirectAgentBlocks,
+    ) -> DirectSessionResult<Vec<DirectAgentBlock>> {
+        const OPERATION: &str = "direct_session.list_blocks";
+        ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
+        self.store
+            .list_principal_blocks(request.actor.principal_id)
+            .await
+            .map_err(|error| repository(OPERATION, DirectSessionFailureStage::Persistence, &error))
     }
 
     async fn reserve(
@@ -426,6 +449,13 @@ impl DirectSessionUseCases for DirectSessionService {
         request: SetDirectAgentBlock,
     ) -> PortFuture<'_, DirectSessionResult<DirectContactView>> {
         Box::pin(self.set_block_internal(request))
+    }
+
+    fn list_blocks(
+        &self,
+        request: ListDirectAgentBlocks,
+    ) -> PortFuture<'_, DirectSessionResult<Vec<DirectAgentBlock>>> {
+        Box::pin(self.list_blocks_internal(request))
     }
 }
 

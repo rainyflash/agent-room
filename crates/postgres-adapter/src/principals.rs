@@ -183,7 +183,7 @@ impl DirectSessionAgentDirectory for PostgresRepositories {
             &self.pool,
             actor_principal_id,
             target_agent_id,
-            false,
+            DirectAgentLookup::Contactable,
             "direct_session_agent.find_contactable",
         ))
     }
@@ -197,9 +197,44 @@ impl DirectSessionAgentDirectory for PostgresRepositories {
             &self.pool,
             actor_principal_id,
             target_agent_id,
-            true,
+            DirectAgentLookup::KnownContact,
             "direct_session_agent.find_known_contact",
         ))
+    }
+
+    fn find_blockable(
+        &self,
+        actor_principal_id: PrincipalId,
+        target_agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<DirectAgentProfile>>> {
+        Box::pin(find_direct_agent_profile(
+            &self.pool,
+            actor_principal_id,
+            target_agent_id,
+            DirectAgentLookup::Blockable,
+            "direct_session_agent.find_blockable",
+        ))
+    }
+}
+
+/// 按什么找私聊和屏蔽的对象，范围一个比一个大。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectAgentLookup {
+    /// 能新建私聊的：还在用的公开 Agent，或者自己的。
+    Contactable,
+    /// 再加上已经有私聊、屏蔽或所有权关系的，不管它现在还在不在用。
+    KnownContact,
+    /// 再加上任何还在用的 Agent：屏蔽不要求能私聊。
+    Blockable,
+}
+
+impl DirectAgentLookup {
+    const fn includes_known_relationship(self) -> bool {
+        !matches!(self, Self::Contactable)
+    }
+
+    const fn includes_any_active(self) -> bool {
+        matches!(self, Self::Blockable)
     }
 }
 
@@ -207,7 +242,7 @@ async fn find_direct_agent_profile(
     pool: &sqlx::PgPool,
     actor_principal_id: PrincipalId,
     target_agent_id: AgentId,
-    include_known_relationship: bool,
+    lookup: DirectAgentLookup,
     operation: &'static str,
 ) -> RepositoryResult<Option<DirectAgentProfile>> {
     let row = sqlx::query(
@@ -218,7 +253,8 @@ async fn find_direct_agent_profile(
                  (
                      agent.lifecycle_state = 'active'
                      AND (
-                         agent.visibility <> 'private'
+                         $4::boolean
+                         OR agent.visibility <> 'private'
                          OR EXISTS (
                              SELECT 1
                              FROM agent_room.agent_ownership AS ownership
@@ -257,7 +293,8 @@ async fn find_direct_agent_profile(
     )
     .bind(actor_principal_id.as_uuid())
     .bind(target_agent_id.as_uuid())
-    .bind(include_known_relationship)
+    .bind(lookup.includes_known_relationship())
+    .bind(lookup.includes_any_active())
     .fetch_optional(pool)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -265,7 +302,7 @@ async fn find_direct_agent_profile(
         .transpose()
 }
 
-fn decode_direct_agent_profile(
+pub(crate) fn decode_direct_agent_profile(
     row: &sqlx::postgres::PgRow,
     agent_id: AgentId,
     operation: &'static str,
