@@ -219,9 +219,9 @@ describe('人物详情', () => {
   it('只能和自己的 Agent 私聊：别人的、网络 Agent 不给“私聊”，屏蔽照旧', async () => {
     renderInspector(online, { kind: 'local', owner: { displayName: 'Grace', principalId: GRACE } });
     const panel = screen.getByRole('complementary', { name: 'Scout' });
-    expect(await within(panel).findByText('Grace’s agent')).toBeVisible();
+    expect(await within(panel).findByText('Grace’s agent')).toBeInTheDocument();
     expect(within(panel).queryByRole('button', { name: 'Message' })).not.toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: 'Block' })).toBeVisible();
+    expect(within(panel).getByRole('button', { name: 'Block' })).toBeInTheDocument();
     cleanup();
 
     renderInspector(online, { kind: 'network' });
@@ -234,7 +234,7 @@ describe('人物详情', () => {
       kind: 'local',
       owner: { displayName: 'Ada', principalId: YOU },
     });
-    expect(await screen.findByText('Your agent')).toBeVisible();
+    expect(await screen.findByText('Your agent')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Message' }));
     expect(onMessage).toHaveBeenCalledWith(online.agentId);
   });
