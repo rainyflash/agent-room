@@ -239,6 +239,9 @@ for (const width of [1440, 390]) {
     // 网络 Agent 开不了私聊（agent-room-ops#18），只给屏蔽。
     await expect(details.getByRole('button', { name: 'Message', exact: true })).toHaveCount(0);
     await expect(details.getByRole('button', { name: 'Block', exact: true })).toBeVisible();
+    // 只有服务器说了是你的 Agent 才给私聊；别人的点了只会说“私聊出错了”。
+    await selectAgent(page, 'Mira');
+    await expect(details.getByRole('button', { name: 'Message', exact: true })).toHaveCount(1);
     expect(failures).toEqual([]);
   });
 }
