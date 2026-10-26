@@ -1609,7 +1609,12 @@ mod tests {
         );
     }
 
-    struct WarningCount(Arc<AtomicUsize>);
+    thread_local! {
+        static THREAD_WARNINGS: std::cell::RefCell<Option<Arc<AtomicUsize>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    struct WarningCount;
 
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarningCount {
         fn on_event(
@@ -1618,23 +1623,40 @@ mod tests {
             _context: tracing_subscriber::layer::Context<'_, S>,
         ) {
             if *event.metadata().level() == tracing::Level::WARN {
-                self.0.fetch_add(1, Ordering::SeqCst);
+                THREAD_WARNINGS.with(|warnings| {
+                    if let Some(warnings) = &*warnings.borrow() {
+                        warnings.fetch_add(1, Ordering::SeqCst);
+                    }
+                });
             }
         }
     }
 
-    #[tokio::test]
-    async fn 浏览器回调缺少登录_cookie_时返回连接页重新开始_这次登录还在等才告警() {
+    /// 从现在起数这个线程上的告警。订阅者装成全局的：只在本线程设（`set_default`）的话，
+    /// 别的测试线程先碰到同一句日志时，tracing 会按那个线程（没有订阅者）把这句缓存成不记，
+    /// 并行跑全部测试时就数不到。
+    fn count_thread_warnings() -> Arc<AtomicUsize> {
         use tracing_subscriber::layer::SubscriberExt as _;
 
+        static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        INSTALLED.get_or_init(|| {
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::registry().with(WarningCount),
+            )
+            .expect("测试进程里没有别的全局订阅者");
+        });
+        let warnings = Arc::new(AtomicUsize::new(0));
+        THREAD_WARNINGS.with(|slot| *slot.borrow_mut() = Some(warnings.clone()));
+        warnings
+    }
+
+    #[tokio::test]
+    async fn 浏览器回调缺少登录_cookie_时返回连接页重新开始_这次登录还在等才告警() {
         // 登录页放得太久、打开的是用过的回调地址，这次登录都已经不在等了。
         for (attempt_awaits, expected_warnings) in [(false, 0), (true, 1)] {
             let fake = Arc::new(FakeAuthentication::default());
             fake.attempt_awaits.store(attempt_awaits, Ordering::SeqCst);
-            let warnings = Arc::new(AtomicUsize::new(0));
-            let _subscriber = tracing::subscriber::set_default(
-                tracing_subscriber::registry().with(WarningCount(warnings.clone())),
-            );
+            let warnings = count_thread_warnings();
             let response = test_router(fake.clone())
                 .oneshot(
                     Request::builder()
