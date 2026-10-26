@@ -49,6 +49,8 @@ async fn 登录尝试严格绑定浏览器与状态并且只能消费一次() {
         .expect("登录尝试应写入");
 
     let wrong_state = SecretDigest::from_array([9; 32]);
+    assert!(awaits(&repositories, &attempt.state_digest, test_time(1_000)).await);
+    assert!(!awaits(&repositories, &wrong_state, test_time(1_000)).await);
     assert!(
         LoginAttemptStore::consume(
             &repositories,
@@ -70,6 +72,7 @@ async fn 登录尝试严格绑定浏览器与状态并且只能消费一次() {
     .expect("正确状态可消费")
     .expect("登录尝试存在");
     assert_eq!(consumed.id, attempt.id);
+    assert!(!awaits(&repositories, &attempt.state_digest, test_time(1_000)).await);
     assert!(
         LoginAttemptStore::consume(
             &repositories,
@@ -86,6 +89,8 @@ async fn 登录尝试严格绑定浏览器与状态并且只能消费一次() {
     LoginAttemptStore::create(&repositories, &expired)
         .await
         .expect("过期前可写入");
+    assert!(awaits(&repositories, &expired.state_digest, test_time(9_999)).await);
+    assert!(!awaits(&repositories, &expired.state_digest, test_time(10_000)).await);
     assert!(
         LoginAttemptStore::consume(
             &repositories,
@@ -523,6 +528,13 @@ async fn 登录续期只往后挪_撤销以后不再续() {
     assert_eq!(stored, test_time(30 * DAY).value());
 
     database.close().await;
+}
+
+/// 回调没带登录 Cookie 时问的那一句：这个 `state` 的那次登录还在不在等。
+async fn awaits(repositories: &PostgresRepositories, state: &SecretDigest, at: UtcMillis) -> bool {
+    LoginAttemptStore::awaits_callback(repositories, state, at)
+        .await
+        .expect("查得到")
 }
 
 fn login_attempt(

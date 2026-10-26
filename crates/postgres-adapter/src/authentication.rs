@@ -102,6 +102,28 @@ impl LoginAttemptStore for PostgresRepositories {
                 .transpose()
         })
     }
+
+    fn awaits_callback<'a>(
+        &'a self,
+        state_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            sqlx::query_scalar(
+                r"SELECT EXISTS (
+                    SELECT 1 FROM agent_room.oidc_login_attempt
+                    WHERE state_digest = $1
+                      AND consumed_at IS NULL
+                      AND expires_at > to_timestamp($2::double precision / 1000.0)
+                )",
+            )
+            .bind(state_digest.as_bytes().as_slice())
+            .bind(now.value())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("login_attempt.awaits_callback", &error))
+        })
+    }
 }
 
 impl LoginCompletionTransaction for PostgresRepositories {

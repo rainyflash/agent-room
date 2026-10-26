@@ -419,6 +419,13 @@ pub trait LoginAttemptStore: Send + Sync {
         state_digest: &'a SecretDigest,
         now: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<Option<LoginAttempt>>>;
+
+    /// 这个 `state` 的那次登录还在等回调吗（没用过、没过期）。只看不改。
+    fn awaits_callback<'a>(
+        &'a self,
+        state_digest: &'a SecretDigest,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<bool>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
