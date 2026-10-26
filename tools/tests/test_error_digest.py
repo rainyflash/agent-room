@@ -325,7 +325,7 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(sum(digest.ignored.values()), 6)
         self.assertEqual(digest.findings[0].signature.severity, "p1")
 
-    def test_identity_events_seen_on_2026_10_25_are_noise(self) -> None:
+    def test_identity_events_seen_in_production_are_noise(self) -> None:
         def event(kind: str, error: str) -> str:
             return KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", kind).replace("invalid_request", error)
 
@@ -337,6 +337,7 @@ class NoiseTableTests(unittest.TestCase):
                     event("REGISTER_ERROR", "invalid_registration"),
                     event("REGISTER_ERROR", "expired_code"),
                     event("OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR", "invalid_oauth2_user_code"),
+                    event("LOGIN_ERROR", "user_not_found"),
                     KEYCLOAK_LOGIN_ERROR,
                 ]
             },
@@ -344,7 +345,7 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 5)
+        self.assertEqual(sum(digest.ignored.values()), 6)
 
 
 class SummaryTests(unittest.TestCase):
