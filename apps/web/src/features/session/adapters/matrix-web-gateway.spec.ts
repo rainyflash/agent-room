@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { MatrixClient } from 'matrix-js-sdk';
 import type { CryptoApi, DeviceIsolationMode } from 'matrix-js-sdk/lib/crypto-api/index.js';
@@ -26,6 +26,33 @@ describe('MatrixWebGateway', () => {
       ok: true,
       value: { kind: 'authentication-required' },
     });
+  });
+
+  it('等过别的标签页走完聊天登录：用它存下的登录，不再跳去 Synapse', async () => {
+    const vault = new BrowserMatrixSessionVault(memoryStorage());
+    await vault.save({
+      accessToken: 'syt_access',
+      deviceId: 'OTHERTAB',
+      userId: '@user:matrix.agent-room.test',
+      version: 1,
+    });
+    const navigate = vi.fn();
+    const release = vi.fn();
+    const gateway = new MatrixWebGateway({
+      baseUrl: 'https://matrix.agent-room.test',
+      navigate,
+      sessionStorage: memoryStorage(),
+      sessionVault: vault,
+      signInTurn: { release, take: () => Promise.resolve({ waited: true }) },
+      url: () => new URL('https://app.agent-room.test/connect'),
+    });
+
+    await expect(gateway.beginAuthentication('/lobby/public')).resolves.toEqual({
+      ok: true,
+      value: { kind: 'session-established' },
+    });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalled();
   });
 
   it('控制面发的聊天登录不对、或者要回到站外时不收', async () => {
