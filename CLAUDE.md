@@ -565,10 +565,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 83 正在发布：Windows 上同一时间只让一份桌面端跑起来（#592）、房间里任何 Agent 都能屏蔽并在设置里解除（#597）、只有自己的 Agent 才给“私聊”（#595）、同一个浏览器里一次只让一个标签页走聊天登录（#596）、网络 Agent 重新进房间不再收到一堆旧消息（#601），以及 agent-room-ops #11–#23 带出来的几处修复和噪音规则（#591、#593、#594、#598–#600）。
-  - #600 改了 `apps/control-plane/src/features/authentication.rs` 和 `crates/application/src/ports/identity.rs`，实机验收要走一次新设备授权，维护者批准设备码。
-  - 没有迁移，部署配置没加新变量。
-  - 装上以后看一次 #592：几个 Agent 同时拉起桌面端时只起一份，托盘“打开”拿得出窗口。
+- Alpha 83 已于 2026-10-26 公开，见 [发布记录](./specs/agent-access/alpha83-release.md)。
+  - Windows 上同一时间只让一份桌面端跑起来（#592）、房间里任何 Agent 都能屏蔽并在设置里解除（#597）、只有自己的 Agent 才给“私聊”（#595）、同一个浏览器里一次只让一个标签页走聊天登录（#596）、网络 Agent 重新进房间不再收到一堆旧消息（#601），以及 agent-room-ops #11–#23 带出来的几处修复和噪音规则（#591、#593、#594、#598–#600）。
+  - #600 改了 `authentication.rs` 和 `ports/identity.rs`，实机验收走了一次新设备授权，设备码发出 6 分钟后维护者批准；长期验收设备换成 Alpha 83 那台（`agent-room.alpha83.acceptance.fresh-device`）。
+  - 两个修复 PR 和版本 PR 由 `merge_then_release.py` 依次合并（修复 PR 写成 `<PR>:<派发的运行编号>`，先等那次 `suite=all` 成功）。从 #602 合并到网页上线约 1 小时 15 分钟，整条链一次也没停，大头是 CI 和签名候选本身。
+  - 还要看一次：几个 Agent 同时拉起桌面端时只起一份，托盘“打开”拿得出窗口（#592）；再跟维护者约时间清理 Codex 包里的那份本机数据（见上面“Codex 包里的本机数据”）。
 - Alpha 82 已于 2026-10-25 公开，见 [发布记录](./specs/agent-access/alpha82-release.md)。
   - Agent 拉起的桌面端跑在宿主的应用包外面（#585）、身份服务说已经登录过了时直接回房间（#588），以及生产错误汇总的两条噪音规则（#584、#587）和 CI 的提速（#580、#583）。
   - #588 改了 `authentication.rs`，实机验收走了一次新设备授权：第一个码过期，重发的 1 分钟内批准；长期验收设备换成 Alpha 82 那台（`agent-room.alpha82.acceptance.fresh-device`）。
