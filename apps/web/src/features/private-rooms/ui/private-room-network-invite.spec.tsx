@@ -7,6 +7,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type {
   JoinCode,
+  PrivateRoom,
   PrivateRoomAgentKnock,
   PrivateRoomAgentMember,
   PrivateRoomFailure,
@@ -24,6 +25,8 @@ const NEW_CODE = 'M4QX-7H2D-9RTE';
 const CREATED = Date.UTC(2026, 8, 27);
 const SOL = '0198b601-77a1-7bb8-83eb-a8fe68c97e51';
 const KNOCKED_AT = Date.UTC(2026, 9, 6, 9);
+const OWNER = '0198b601-77a3-74f1-b4f4-940f291951b9';
+const MEMBER = '0198b601-77a3-74f1-b4f4-940f291951c1';
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
@@ -51,11 +54,32 @@ const solInside: PrivateRoomAgentMember = {
 
 type Knocks = Result<readonly PrivateRoomAgentKnock[], PrivateRoomFailure>;
 
+/** 房间列表里的这个房间：房主什么都能做，普通成员只能看和说。 */
+const listedRoom: PrivateRoom = {
+  catalogId: CATALOG,
+  description: '',
+  matrixRoomId: '!private:matrix.test',
+  members: [
+    {
+      permissions: { capabilities: ['view', 'speak', 'invite', 'manage', 'automate'] },
+      principalId: OWNER,
+      status: 'joined',
+    },
+    { permissions: { capabilities: ['view', 'speak'] }, principalId: MEMBER, status: 'joined' },
+  ],
+  name: 'new game dev',
+  ownerPrincipalId: OWNER,
+  retentionDays: 30,
+  roomInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e47',
+  status: 'active',
+  version: 2,
+};
+
 /** 房间的口令：没有、管理者看得到、有却看不到（能再看之前生成的）；不是管理者时什么都查不到。 */
 type Stored = 'none' | 'shown' | 'hidden' | 'forbidden';
 
 /** 和服务器一样记着口令：生成以后口令状态和再看拿到的都是新口令。 */
-function gateway(stored: Stored, knocks: Knocks = ok([])) {
+function gateway(stored: Stored, knocks: Knocks = ok([]), listed: readonly PrivateRoom[] = []) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   let code: JoinCode | null =
     stored === 'shown' || stored === 'hidden' ? { code: CODE, createdAtUnixMs: CREATED } : null;
@@ -105,7 +129,7 @@ function gateway(stored: Stored, knocks: Knocks = ok([])) {
     inspect: unavailable,
     invite: unavailable,
     leave: unavailable,
-    list: () => Promise.resolve(ok([])),
+    list: () => Promise.resolve(ok(listed)),
     origin: unavailable,
     people: unavailable,
     remove: unavailable,
@@ -116,7 +140,15 @@ function gateway(stored: Stored, knocks: Knocks = ok([])) {
     unban: unavailable,
     updatePermissions: unavailable,
   };
-  return { admitKnock, agentKnocks, declineKnock, generateJoinCode, revealJoinCode, value };
+  return {
+    admitKnock,
+    agentAccess,
+    agentKnocks,
+    declineKnock,
+    generateJoinCode,
+    revealJoinCode,
+    value,
+  };
 }
 
 /** 口令状态查完之前按钮是灰的，等它能点再点。 */
@@ -128,7 +160,7 @@ async function clickWhenReady(name: string): Promise<void> {
   fireEvent.click(button);
 }
 
-function renderInvite(rooms: PrivateRoomGateway) {
+function renderInvite(rooms: PrivateRoomGateway, principalId: string | null = null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -136,6 +168,7 @@ function renderInvite(rooms: PrivateRoomGateway) {
         <PrivateRoomNetworkInvite
           catalogId={CATALOG}
           guide={GUIDE}
+          principalId={principalId}
           roomName="new game dev"
           rooms={rooms}
         />
@@ -318,5 +351,39 @@ describe('私人房间里请网络 Agent：敲门', () => {
     expect(rooms.agentKnocks).not.toHaveBeenCalled();
     expect(rooms.revealJoinCode).not.toHaveBeenCalled();
     expect(rooms.generateJoinCode).not.toHaveBeenCalled();
+  });
+});
+
+describe('私人房间里请网络 Agent：先看自己是不是管理者', () => {
+  it('房间列表说是普通成员：直接给敲门的话，不去问口令状态（服务器只会回 403）', async () => {
+    const rooms = gateway('forbidden', ok([]), [listedRoom]);
+    renderInvite(rooms.value, MEMBER);
+
+    expect(
+      await screen.findByText(/Once one of the room’s managers lets you in/u),
+    ).toHaveTextContent(CATALOG);
+    expect(rooms.agentAccess).not.toHaveBeenCalled();
+    expect(rooms.agentKnocks).not.toHaveBeenCalled();
+    expect(rooms.revealJoinCode).not.toHaveBeenCalled();
+  });
+
+  it('房主照旧问口令状态，话里带着口令', async () => {
+    const rooms = gateway('shown', ok([]), [listedRoom]);
+    renderInvite(rooms.value, OWNER);
+
+    expect(
+      await screen.findByText(/enter the Agent Room private room “new game dev” with the code/u),
+    ).toHaveTextContent(CODE);
+    expect(rooms.agentAccess).toHaveBeenCalledWith(CATALOG);
+  });
+
+  it('房间列表里没有这个房间：照旧问一次服务器，由它说是不是管理者', async () => {
+    const rooms = gateway('forbidden');
+    renderInvite(rooms.value, MEMBER);
+
+    expect(
+      await screen.findByText(/Once one of the room’s managers lets you in/u),
+    ).toHaveTextContent(CATALOG);
+    expect(rooms.agentAccess).toHaveBeenCalledWith(CATALOG);
   });
 });
