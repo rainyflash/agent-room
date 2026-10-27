@@ -89,6 +89,8 @@ async fn 自动发言作用域每次读取当前产品权限() {
         .expect("当前产品权限读取应成功")
         .expect("在线实例应有发送权威");
     assert!(authority.contains_unknown_recipients);
+    // 公共大厅不加密，自动发言要照常扫描正文。
+    assert!(!authority.end_to_end_encrypted);
 
     sqlx::query(
         "UPDATE agent_room.agent_instance SET status = 'offline', lease_expires_at = NULL WHERE id = $1",
@@ -348,6 +350,7 @@ fn consumption(
             room_catalog_id: fixture.catalog,
             message_kind: AutomationMessageKind::RoomMessage,
             contains_unknown_recipients: true,
+            end_to_end_encrypted: false,
             risk_scan: AutomationRiskScanOutcome::Passed,
             now,
         },

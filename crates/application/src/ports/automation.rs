@@ -131,6 +131,8 @@ pub struct AutomationSendAuthorityRequest {
 pub struct AutomationSendAuthority {
     pub agent_matrix_user_id: MatrixUserId,
     pub contains_unknown_recipients: bool,
+    /// 私人房间和私聊建房时就开了端到端加密，客户端不会把正文交给服务器扫描。
+    pub end_to_end_encrypted: bool,
 }
 
 /// 每次创建授权或发送前重新读取产品权限与实例归属；缓存实现不得实现此端口。

@@ -238,7 +238,7 @@ impl AutomationService {
         let preliminary = attempt(
             request,
             message_kind,
-            false,
+            Recipients::default(),
             AutomationRiskScanOutcome::Passed,
             now,
         );
@@ -282,10 +282,11 @@ impl AutomationService {
                 .await;
         };
 
+        let recipients = Recipients::from(&authority);
         let scoped = attempt(
             request,
             context.message_kind,
-            authority.contains_unknown_recipients,
+            recipients,
             AutomationRiskScanOutcome::Passed,
             now,
         );
@@ -333,13 +334,7 @@ impl AutomationService {
         let risk_scan = self
             .scan_message(request, context.principal_id, now)
             .await?;
-        let final_attempt = attempt(
-            request,
-            context.message_kind,
-            authority.contains_unknown_recipients,
-            risk_scan,
-            now,
-        );
+        let final_attempt = attempt(request, context.message_kind, recipients, risk_scan, now);
         if let AutomationGrantDecision::Denied(reason) =
             context.record.grant.evaluate_policy(&final_attempt)
         {
@@ -499,10 +494,26 @@ impl AutomationUseCases for AutomationService {
     }
 }
 
+/// 房间里收得到这条消息的是谁：有没有陌生人，服务器能不能读到正文。
+#[derive(Debug, Clone, Copy, Default)]
+struct Recipients {
+    unknown: bool,
+    end_to_end_encrypted: bool,
+}
+
+impl From<&AutomationSendAuthority> for Recipients {
+    fn from(authority: &AutomationSendAuthority) -> Self {
+        Self {
+            unknown: authority.contains_unknown_recipients,
+            end_to_end_encrypted: authority.end_to_end_encrypted,
+        }
+    }
+}
+
 fn attempt(
     request: &AuthorizeAutomationSend,
     message_kind: AutomationMessageKind,
-    contains_unknown_recipients: bool,
+    recipients: Recipients,
     risk_scan: AutomationRiskScanOutcome,
     now: agent_room_domain::time::UtcMillis,
 ) -> AutomationGrantAttempt {
@@ -511,7 +522,8 @@ fn attempt(
         agent_instance_id: Some(request.agent_instance_id),
         room_catalog_id: request.room_catalog_id,
         message_kind,
-        contains_unknown_recipients,
+        contains_unknown_recipients: recipients.unknown,
+        end_to_end_encrypted: recipients.end_to_end_encrypted,
         risk_scan,
         now,
     }

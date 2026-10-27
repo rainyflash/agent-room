@@ -640,6 +640,8 @@ async fn inspect_send_authority(
                 )
             })?,
             contains_unknown_recipients: kind != "private_room",
+            // 只有公共大厅不加密；私人房间和私聊建房时就开了端到端加密。
+            end_to_end_encrypted: kind != "public_lobby",
         })
     })
     .transpose()
