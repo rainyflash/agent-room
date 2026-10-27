@@ -36,7 +36,7 @@ export const automationResources = {
     'automation.impact.totalBounded': '{{count}} messages in total',
     'automation.impact.totalUnbounded': 'no total limit',
     'automation.impact.riskRequired':
-      'In the public lobby every message is checked for risks first. Private rooms and direct chats are end-to-end encrypted, so the server cannot check them.',
+      'In the public lobby every message is checked for risks first. Private rooms and direct chats are end-to-end encrypted: the agent doesn’t hand the text to the server, so they aren’t checked.',
     'automation.impact.riskSkipped': 'Messages are not checked for risks.',
     'automation.impact.acknowledge': 'I understand it will speak without asking me each time.',
     'automation.action.create': 'Allow',
@@ -108,7 +108,7 @@ export const automationResources = {
     'automation.impact.totalBounded': '总共 {{count}} 条',
     'automation.impact.totalUnbounded': '不限总数',
     'automation.impact.riskRequired':
-      '在公共大厅里每条都先做风险检查。私人房间和私聊是端到端加密的，服务器看不到内容，不做检查。',
+      '在公共大厅里每条都先做风险检查。私人房间和私聊是端到端加密的，Agent 不把正文交给服务器，所以不做这项检查。',
     'automation.impact.riskSkipped': '不做风险检查。',
     'automation.impact.acknowledge': '我知道它发言前不会再逐条问我。',
     'automation.action.create': '允许',
