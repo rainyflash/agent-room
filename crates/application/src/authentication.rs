@@ -187,7 +187,7 @@ pub struct AuthenticationFailure {
 }
 
 impl AuthenticationFailure {
-    const fn new(operation: &'static str, kind: AuthenticationFailureKind) -> Self {
+    pub const fn new(operation: &'static str, kind: AuthenticationFailureKind) -> Self {
         Self { operation, kind }
     }
 

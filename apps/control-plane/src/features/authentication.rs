@@ -2,9 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use agent_room_application::{
     authentication::{
-        AuthenticatedPrincipal, AuthenticationFailureKind, AuthenticationIntent,
-        AuthenticationRequirement, AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin,
-        CompleteLogin, DesktopLoginCompletion, ExchangeDesktopAuthorization, LoginCompletion,
+        AuthenticatedPrincipal, AuthenticationFailure, AuthenticationFailureKind,
+        AuthenticationIntent, AuthenticationRequirement, AuthenticationUseCases,
+        AuthorizeDesktopSession, BeginLogin, CompleteLogin, DesktopLoginCompletion,
+        ExchangeDesktopAuthorization, LoginCompletion,
     },
     ports::{
         Clock, DesktopClientState, LoginDelivery, PkceCodeChallenge, ProfileImportConsent,
@@ -486,12 +487,15 @@ async fn complete_login(
     {
         Ok(completion) => completion,
         Err(failure) => {
-            return login_failure(
+            return completion_failure(
                 &state,
                 &headers,
                 jar,
-                ApiError::authentication(failure, correlation_id),
-            );
+                &query.state,
+                failure,
+                correlation_id,
+            )
+            .await;
         }
     };
     match completion {
@@ -594,6 +598,66 @@ async fn returned_login_error(
 }
 
 /// 只看网页登录：桌面登录不经浏览器的回调。
+/// 回调换登录没成。被同一浏览器里后来的登录换掉的不算失败，别的照常回连接页。
+async fn completion_failure(
+    state: &AuthenticationHttpState,
+    headers: &HeaderMap,
+    jar: CookieJar,
+    returned_state: &str,
+    failure: AuthenticationFailure,
+    correlation_id: CorrelationId,
+) -> Response {
+    if failure.kind() == AuthenticationFailureKind::InvalidLoginState
+        && let Some(response) =
+            superseded_login(state, headers, &jar, returned_state, correlation_id).await
+    {
+        return response;
+    }
+    login_failure(
+        state,
+        headers,
+        jar,
+        ApiError::authentication(failure, correlation_id),
+    )
+}
+
+/// 同一个浏览器里别的标签页后来又开始了一次登录，登录 Cookie 换成了那次的：回调带的这次登录还在等，
+/// 只是对不上浏览器现在的 Cookie（2026-10-27 生产上一个人开着好几个登录标签页）。不算失败，也不清
+/// 登录 Cookie，那是别的标签页那次登录的。网页登录已经有了就送回房间；没有就回连接页，网页替没登录
+/// 的人重开一次登录，身份服务刚登录过、马上就回来。问不出来的照常算失败。
+async fn superseded_login(
+    state: &AuthenticationHttpState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    returned_state: &str,
+    correlation_id: CorrelationId,
+) -> Option<Response> {
+    if !accepts_html(headers)
+        || !state
+            .authentication
+            .login_awaits_callback(returned_state)
+            .await
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    if web_session_active(state, jar).await
+        && let Ok(rooms) = state.frontend_origin.join("/rooms")
+    {
+        tracing::info!(
+            correlation.id = %correlation_id.as_uuid(),
+            "回调对应的那次登录被同一浏览器里后来的一次换掉了，网页登录已经有了，送回房间"
+        );
+        return Some(no_store(Redirect::to(rooms.as_str()).into_response()));
+    }
+    tracing::info!(
+        correlation.id = %correlation_id.as_uuid(),
+        "回调对应的那次登录被同一浏览器里后来的一次换掉了，返回连接页重新开始"
+    );
+    let destination = format!("{}?authentication=expired", state.login_failure_redirect);
+    Some(no_store(Redirect::to(&destination).into_response()))
+}
+
 async fn web_session_active(state: &AuthenticationHttpState, jar: &CookieJar) -> bool {
     let Some(secret) = jar
         .get(SESSION_COOKIE)
@@ -997,10 +1061,11 @@ mod tests {
 
     use agent_room_application::{
         authentication::{
-            AuthenticatedPrincipal, AuthenticationIntent, AuthenticationRequirement,
-            AuthenticationResult, AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin,
-            CompleteLogin, DesktopLoginCompletion, DesktopSessionCompletion,
-            ExchangeDesktopAuthorization, LoginCompletion, LoginRedirect, WebLoginCompletion,
+            AuthenticatedPrincipal, AuthenticationFailure, AuthenticationFailureKind,
+            AuthenticationIntent, AuthenticationRequirement, AuthenticationResult,
+            AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin, CompleteLogin,
+            DesktopLoginCompletion, DesktopSessionCompletion, ExchangeDesktopAuthorization,
+            LoginCompletion, LoginRedirect, WebLoginCompletion,
         },
         ports::{Clock, LoginDelivery, PortFuture, SafeReturnPath, SecretValue},
     };
@@ -1028,6 +1093,8 @@ mod tests {
         /// 回调没带登录 Cookie 时问过几次、答这次登录还在不在等。
         awaits_asked: AtomicUsize,
         attempt_awaits: AtomicBool,
+        /// 登录 Cookie 已经换成了同一浏览器里后来那次登录的，这次对不上。
+        login_superseded: AtomicBool,
     }
 
     impl AuthenticationUseCases for FakeAuthentication {
@@ -1072,6 +1139,12 @@ mod tests {
                 assert_eq!(request.code, "authorization-code");
                 assert_eq!(request.returned_state, "returned-state");
                 assert_eq!(request.browser_secret.expose(), "browser-secret");
+                if self.login_superseded.load(Ordering::SeqCst) {
+                    return Err(AuthenticationFailure::new(
+                        "authentication.complete_login",
+                        AuthenticationFailureKind::InvalidLoginState,
+                    ));
+                }
                 if self.desktop_begin.load(Ordering::SeqCst) == 0 {
                     Ok(LoginCompletion::Web(WebLoginCompletion {
                         session_secret: SecretValue::new("session-secret").expect("测试密钥有效"),
@@ -1688,6 +1761,59 @@ mod tests {
                     .any(|cookie| cookie.contains("Max-Age=0"))
             );
         }
+    }
+
+    #[tokio::test]
+    async fn 登录_cookie_被同一浏览器里后来的登录换掉时不算失败_也不清那次的_cookie() {
+        const CALLBACK: &str = "code=authorization-code&state=returned-state";
+        for (cookie, destination) in [
+            (
+                "__Host-agent-room-login=browser-secret",
+                "https://app.agent-room.test/connect?authentication=expired",
+            ),
+            (
+                "__Host-agent-room-session=session-secret; __Host-agent-room-login=browser-secret",
+                "https://app.agent-room.test/rooms",
+            ),
+        ] {
+            let fake = Arc::new(FakeAuthentication::default());
+            fake.login_superseded.store(true, Ordering::SeqCst);
+            fake.attempt_awaits.store(true, Ordering::SeqCst);
+            let warnings = count_thread_warnings();
+            let response = browser_callback(fake.clone(), CALLBACK, Some(cookie)).await;
+
+            assert_eq!(response.status(), StatusCode::SEE_OTHER, "{cookie}");
+            assert_eq!(location(&response), destination);
+            assert_eq!(fake.complete.load(Ordering::SeqCst), 1);
+            assert_eq!(fake.awaits_asked.load(Ordering::SeqCst), 1);
+            assert_eq!(warnings.load(Ordering::SeqCst), 0, "{cookie}");
+            // 登录 Cookie 是别的标签页那次登录的。
+            assert!(set_cookies(&response).is_empty(), "{cookie}");
+        }
+    }
+
+    #[tokio::test]
+    async fn 回调的那次登录已经不在等时照常算失败() {
+        let fake = Arc::new(FakeAuthentication::default());
+        fake.login_superseded.store(true, Ordering::SeqCst);
+        let warnings = count_thread_warnings();
+        let response = browser_callback(
+            fake.clone(),
+            "code=authorization-code&state=returned-state",
+            Some("__Host-agent-room-login=browser-secret"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            location(&response),
+            "https://app.agent-room.test/connect?authentication=expired"
+        );
+        assert_eq!(fake.awaits_asked.load(Ordering::SeqCst), 1);
+        assert_eq!(warnings.load(Ordering::SeqCst), 2);
+        assert!(set_cookies(&response).iter().any(|cookie| {
+            cookie.starts_with("__Host-agent-room-login=") && cookie.contains("Max-Age=0")
+        }));
     }
 
     const ALREADY_SIGNED_IN: &str = "error=temporarily_unavailable&error_description=authentication_expired&state=returned-state";
