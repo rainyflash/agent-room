@@ -339,6 +339,13 @@ class NoiseTableTests(unittest.TestCase):
                     event("OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR", "invalid_oauth2_user_code"),
                     event("LOGIN_ERROR", "user_not_found"),
                     event("LOGIN_ERROR", "expired_code"),
+                    event("RESET_PASSWORD_ERROR", "user_not_found"),
+                    event("REGISTER_ERROR", "email_in_use"),
+                    KEYCLOAK_SERVICES.replace("ERROR [org.keycloak.services]", "WARN  [org.hibernate.orm.session]")
+                    .replace(
+                        "KC-SERVICES0093: Invalid parameter value for: scope",
+                        "HHH90010101: Closing shared session with unprocessed transaction completion actions",
+                    ),
                     KEYCLOAK_LOGIN_ERROR,
                 ]
             },
@@ -346,7 +353,23 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 7)
+        self.assertEqual(sum(digest.ignored.values()), 10)
+
+    def test_asking_for_a_room_code_before_there_is_one_is_noise(self) -> None:
+        web = CONTROL_JOIN_CODE.replace(
+            f"/devices/current/private-rooms/{CATALOG_ID}/code", f"/private-rooms/{CATALOG_ID}/agent-access/code"
+        )
+        forbidden = web.replace('"failure": "NotFound"', '"failure": "Forbidden"')
+        digest = summarize({"control-plane": [CONTROL_JOIN_CODE, web, forbidden]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error Agent 口令请求失败 failure=Forbidden "
+                "operation=private_room.join_code.reveal @ GET /private-rooms/{id}/agent-access/code"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 2)
 
     def test_network_agent_naming_a_room_that_is_not_there_is_noise(self) -> None:
         def failure(kind: str) -> str:
