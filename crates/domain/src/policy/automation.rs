@@ -505,6 +505,8 @@ impl AutomationGrant {
         })
         .or_else(|| match attempt.risk_scan {
             AutomationRiskScanOutcome::Rejected => Some(Denial::RiskScanRejected),
+            // 端到端加密的房间里客户端不把正文交给服务器，扫描无从做起；只有服务器认定房间加密时才放过（维护者 2026-10-27 定）。
+            AutomationRiskScanOutcome::NotRequested if attempt.end_to_end_encrypted => None,
             AutomationRiskScanOutcome::Unavailable | AutomationRiskScanOutcome::NotRequested
                 if self.scope.requires_risk_scan() =>
             {
@@ -529,6 +531,8 @@ pub struct AutomationGrantAttempt {
     pub room_catalog_id: RoomCatalogId,
     pub message_kind: AutomationMessageKind,
     pub contains_unknown_recipients: bool,
+    /// 服务器按房间类型认定的端到端加密；不取自客户端。
+    pub end_to_end_encrypted: bool,
     pub risk_scan: AutomationRiskScanOutcome,
     pub now: UtcMillis,
 }
@@ -726,6 +730,39 @@ mod tests {
     }
 
     #[test]
+    fn 加密房间不交正文时不要求扫描() {
+        let grant = grant(AutomationAudience::AnyRoomMember, true);
+        let decide = |end_to_end_encrypted, risk_scan| {
+            grant.evaluate(
+                &AutomationGrantAttempt {
+                    end_to_end_encrypted,
+                    risk_scan,
+                    ..attempt()
+                },
+                AutomationUsageSnapshot::default(),
+            )
+        };
+
+        assert_eq!(
+            decide(true, AutomationRiskScanOutcome::NotRequested),
+            AutomationGrantDecision::Allowed
+        );
+        assert_eq!(
+            decide(false, AutomationRiskScanOutcome::NotRequested),
+            AutomationGrantDecision::Denied(AutomationGrantDenial::RiskScanRequired)
+        );
+        // 交了正文就照常扫描：扫描坏了或者判了拒绝，加密房间也不放过。
+        assert_eq!(
+            decide(true, AutomationRiskScanOutcome::Unavailable),
+            AutomationGrantDecision::Denied(AutomationGrantDenial::RiskScanRequired)
+        );
+        assert_eq!(
+            decide(true, AutomationRiskScanOutcome::Rejected),
+            AutomationGrantDecision::Denied(AutomationGrantDenial::RiskScanRejected)
+        );
+    }
+
+    #[test]
     fn 无风险扫描不得扩大到陌生接收者() {
         assert!(
             AutomationGrantScope::new(
@@ -826,6 +863,7 @@ mod tests {
             room_catalog_id: room_id(),
             message_kind: AutomationMessageKind::Reply,
             contains_unknown_recipients: false,
+            end_to_end_encrypted: false,
             risk_scan: AutomationRiskScanOutcome::Passed,
             now: time(2_000),
         }

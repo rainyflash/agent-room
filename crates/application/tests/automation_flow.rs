@@ -263,6 +263,7 @@ impl Fixture {
             send: Mutex::new(Some(AutomationSendAuthority {
                 agent_matrix_user_id: matrix_user_id(),
                 contains_unknown_recipients: false,
+                end_to_end_encrypted: false,
             })),
             calls: calls.clone(),
         });
@@ -545,6 +546,30 @@ async fn 扫描实际正文通过后才允许公开自动回复() {
             "scan",
             "consume"
         ]
+    );
+}
+
+#[tokio::test]
+async fn 加密房间里不交正文也能后台回复() {
+    let fixture = Fixture::new(grant(AutomationAudience::AnyRoomMember, true));
+    *fixture.authority.send.lock().expect("发送权威锁可用") = Some(AutomationSendAuthority {
+        agent_matrix_user_id: matrix_user_id(),
+        contains_unknown_recipients: false,
+        end_to_end_encrypted: true,
+    });
+
+    let outcome = fixture
+        .service
+        .authorize_send(send_request())
+        .await
+        .expect("加密房间的授权判断");
+    assert!(matches!(
+        outcome,
+        AutomationAuthorizationOutcome::Authorized(_)
+    ));
+    assert_eq!(
+        *fixture.calls.lock().expect("调用顺序锁可用"),
+        ["find", "activity", "scope_send", "matrix", "consume"]
     );
 }
 
