@@ -476,7 +476,9 @@ class Acceptance:
 
     def relaunch_desktop(self, *, debugging: bool) -> None:
         script = relaunch_script(self.desktop_executable, self.cdp_port if debugging else None)
-        subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True, creationflags=NO_WINDOW)
+        result = subprocess.run(["powershell", "-NoProfile", "-Command", script], creationflags=NO_WINDOW)
+        if result.returncode:
+            raise ReleaseFailure("桌面应用重启了几次都被别处拉起的那份接走；先停下正在等消息的 Agent 再重试。")
 
     def ensure_desktop(self) -> None:
         if self.cdp_ready():
@@ -1263,28 +1265,43 @@ def delete_windows_credential(target: str) -> bool:  # pragma: no cover - Window
     return bool(api.CredDeleteW(target, 1, 0))
 
 
+# Agents may start their own desktop while the old one shuts down; each attempt closes it again (Alpha 84).
+RELAUNCH_ATTEMPTS = 6
+
+
 def relaunch_script(executable: str, cdp_port: int | None) -> str:
     """Close the installed desktop app, then start it with or without the WebView debugging port.
 
     Paths are compared after GetFullPath because the configuration may spell them with forward slashes
     while Get-Process reports backslashes. A missed match leaves the old instance running, and the new
     launch only hands over to it through the single-instance guard, so the port state never changes.
+
+    The owner's agents start the desktop themselves whenever they cannot reach the Bridge (#221), and a
+    second launch only hands its arguments to the running one and exits (#592). In Alpha 84's first upgrade
+    one appeared while this script waited for the old WebView, so the debug instance handed over and the port
+    never opened. So every instance that appears meanwhile is closed again, the new one starts as soon as none
+    is left, and it must still be running a few seconds later; otherwise the whole thing is tried again.
     """
     return (
         f"$app = [IO.Path]::GetFullPath({ps_literal(ntpath.normpath(executable))}); "
-        "foreach ($p in @(Get-Process -Name 'agent-room-desktop' -ErrorAction SilentlyContinue | "
-        "Where-Object { $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq $app })) { $null = $p.CloseMainWindow(); "
-        "if (-not $p.WaitForExit(5000)) { Stop-Process -Id $p.Id; $p.WaitForExit(5000) | Out-Null } }; "
+        "function Get-Desktops { @(Get-Process -Name 'agent-room-desktop' -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq $app }) }; "
         # The WebView browser process can outlive the app for a moment; let it exit so the new instance
         # starts its own with the requested arguments.
-        "$deadline = (Get-Date).AddSeconds(20); "
-        "while ((Get-Date) -lt $deadline -and @(Get-CimInstance Win32_Process -Filter 'Name = ''msedgewebview2.exe''' | "
-        "Where-Object { $_.CommandLine -like '*--webview-exe-name=agent-room-desktop.exe*' }).Count) "
-        "{ Start-Sleep -Milliseconds 500 }; "
+        "function Get-Views { @(Get-CimInstance Win32_Process -Filter 'Name = ''msedgewebview2.exe''' | "
+        "Where-Object { $_.CommandLine -like '*--webview-exe-name=agent-room-desktop.exe*' }) }; "
         + (f"$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port={int(cdp_port)}'; "
            if cdp_port is not None else
            "Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue; ")
-        + "Start-Process -FilePath $app | Out-Null"
+        + f"for ($attempt = 1; $attempt -le {RELAUNCH_ATTEMPTS}; $attempt++) {{ "
+        "$deadline = (Get-Date).AddSeconds(60); "
+        "while ((Get-Date) -lt $deadline) { $open = Get-Desktops; "
+        "foreach ($p in $open) { $null = $p.CloseMainWindow(); if (-not $p.WaitForExit(5000)) "
+        "{ Stop-Process -Id $p.Id -ErrorAction SilentlyContinue; $p.WaitForExit(5000) | Out-Null } }; "
+        "if ($open.Count -eq 0 -and (Get-Views).Count -eq 0) { break }; Start-Sleep -Milliseconds 200 }; "
+        "$started = Start-Process -FilePath $app -PassThru; Start-Sleep -Seconds 5; "
+        "if (-not $started.HasExited) { exit 0 } }; "
+        "exit 1"
     )
 
 

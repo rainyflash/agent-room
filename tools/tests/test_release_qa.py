@@ -56,6 +56,17 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertNotIn("remote-debugging-port", plain)
         self.assertIn("Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", plain)
 
+    def test_desktop_relaunch_outlasts_desktops_started_by_agents(self):
+        # Alpha 84: an agent started its own desktop while the old WebView shut down, and the debug launch
+        # only handed over to it. Close whatever appears, start at once, and retry if the new one handed over.
+        script = release_qa.relaunch_script("C:/Agent Room/agent-room-desktop.exe", 14222)
+        self.assertIn(f"$attempt -le {release_qa.RELAUNCH_ATTEMPTS}", script)
+        self.assertIn("$open.Count -eq 0 -and (Get-Views).Count -eq 0", script)
+        self.assertLess(script.index("--remote-debugging-port=14222"), script.index("for ($attempt"))
+        self.assertIn("$started = Start-Process -FilePath $app -PassThru", script)
+        self.assertIn("if (-not $started.HasExited) { exit 0 }", script)
+        self.assertTrue(script.endswith("exit 1"))
+
     def test_liveness_check_answers_for_exited_processes(self):
         script = release_qa.liveness_script(4242, r"C:\qa\o'k.exe")
         self.assertIn(r"'C:\qa\o''k.exe'", script)
