@@ -176,6 +176,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 从浏览器留着的旧登录地址进身份服务（`scope` 被弄坏成 `openidprofile`），登录没走完就停在“这次登录没有完成”上；没登录的人现在自动重新打开一次登录页（#573）。
   - 已经登录的浏览器又提交一次登录页（点了两次登录、别的标签页留着旧登录页），Keycloak 带着 `error=temporarily_unavailable&error_description=authentication_expired` 回到回调，以前记成 `invalid_callback_query`，刚登录上的人看到“这次登录没有完成”（agent-room-ops #5）。#588 起回调认出这一种：网页登录还有效就直接回房间，没有就回连接页由网页重开登录；身份服务送回的别的错误记成 `authentication.provider_error`。
   - 回调没带登录 Cookie 时先按回传的 `state` 看这次登录还在不在等（#600，agent-room-ops #21）。控制面一次登录只记 10 分钟（Cookie 也是），身份服务的登录页能开 30 分钟：登录页放得比它久、打开的是用过的回调地址，只记 INFO、照旧回连接页重开登录。还在等却没带 Cookie 才是 WARN `missing_login_cookie`（换了浏览器、Cookie 被吞），别把它加进噪音表。
+  - 同一个浏览器开着几个登录标签页时，每开始一次登录都换一个登录 Cookie，早些的标签页回调时对不上（`InvalidLoginState`，agent-room-ops #28、#29）。#618 起，回调带的那次登录还在等就不算失败、只记 INFO，也不清登录 Cookie（那是别的标签页正在用的，以前清掉会让那边也失败）：网页登录已经有了就送回房间，没有就回连接页重新登录。那次登录已经不在等的，照旧 WARN。
   - 邮箱的链接安全扫描会在一两秒内从二十多个地址去点验证链接、不带 Cookie：成串的 `email_already_verified`、`cookie_not_found` 是它，不是人。
   - 提交登录页时报的 `LOGIN_ERROR error=cookie_not_found` 是人：身份服务的两个会话 Cookie 都没带上（浏览器在后台被关掉又恢复了标签页，或者不让存 Cookie）。错误页说回去重新登录（agent-room-ops #24）。别加进噪音表：Cookie 的配置坏了时它会成片出现。
 - 设计在 [specs/error-triage/design.md](./specs/error-triage/design.md)（#571），进度记在它的“状态”一节。要点：服务器每小时只读汇总一次日志和库里的错（指纹、打码、噪音表），新问题开 issue、同一种错只开一个、修好又犯就重新打开；每天一份新用户体检，只出人数；有新 issue 就叫醒云端开发 Agent（routine 挂 GitHub 事件触发，另带每天一次补漏）。
