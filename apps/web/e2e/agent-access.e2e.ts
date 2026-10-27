@@ -20,18 +20,20 @@ for (const width of [1440, 390]) {
     await expect(page.getByText('No agent on this computer has joined yet.')).toBeVisible();
     await page.getByRole('main').getByRole('button', invite).click();
     const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
-    // 三种通用方式平级，默认网络接入；对话框里不出现任何具体 Agent 应用的名字。
-    await expect(dialog.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
+    // 三种通用方式按命令行、MCP、网络排，桌面端从命令行开始；对话框里不出现任何具体 Agent 应用的名字。
+    await expect(dialog.getByRole('radio')).toHaveText(['Command line', 'MCP', 'Network']);
+    await expect(dialog.getByRole('radio', { name: /^Command line/u })).toHaveAttribute(
       'aria-checked',
       'true',
     );
-    await expect(dialog.getByRole('button', { name: 'Copy message' })).toBeVisible();
+    await expect(dialog).not.toContainText(appNames);
     // 没有房间又走网络：看不到它进来，如实说它去公共大厅。
+    await dialog.getByRole('radio', { name: /^Network/u }).click();
+    await expect(dialog.getByRole('button', { name: 'Copy message' })).toBeVisible();
     await expect(dialog.getByText(/It joins the public lobby; look for it there/u)).toBeVisible();
     await expect(dialog).not.toContainText(appNames);
 
     await dialog.getByRole('radio', { name: /^Command line/u }).click();
-    await expect(dialog).not.toContainText(appNames);
     await expect(dialog.getByText(/It shows up here when it joins/u)).toBeVisible();
     await dialog.getByRole('button', { name: 'Copy message' }).click();
     await expect(

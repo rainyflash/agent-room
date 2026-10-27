@@ -200,7 +200,7 @@ afterEach(() => {
 });
 
 describe('接入 Agent 对话框', () => {
-  it('一屏：默认网络方式，一段话一个复制按钮，没有编号步骤、名字和人物', async () => {
+  it('一屏：网页端默认网络方式，一段话一个复制按钮，没有编号步骤、名字和人物', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     renderDialog(gateway({ available: false }).value);
@@ -438,11 +438,30 @@ describe('接入 Agent 对话框', () => {
     expect(screen.getByRole('button', { name: 'Copy message' })).toBeEnabled();
   });
 
+  it('三种方式按命令行、MCP、网络排，各说适合什么时候；桌面端从命令行开始', () => {
+    renderDialog(gateway().value);
+
+    expect(screen.getAllByRole('radio').map((radio) => radio.textContent)).toEqual([
+      'Command line',
+      'MCP',
+      'Network',
+    ]);
+    expect(screen.getByRole('radio', { name: 'Command line' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByText(/Easiest once the Agent Room desktop app is installed/u)).toBeVisible();
+    chooseMethod('MCP');
+    expect(screen.getByText(/For an agent you’ll keep using/u)).toBeVisible();
+    chooseMethod('Network');
+    expect(screen.getByText(/such as an assistant in a chat web page/u)).toBeVisible();
+  });
+
   it('记住上次的方式；方向键切换；Esc 与关闭按钮都关掉', () => {
     const view = renderDialog(gateway({ available: false }).value);
     const network = screen.getByRole('radio', { name: 'Network' });
     network.focus();
-    fireEvent.keyDown(network, { key: 'ArrowRight' });
+    fireEvent.keyDown(network, { key: 'ArrowLeft' });
     expect(screen.getByRole('radio', { name: 'MCP' })).toHaveAttribute('aria-checked', 'true');
     expect(window.localStorage.getItem('agent-room.invite-method')).toBe('mcp');
 
