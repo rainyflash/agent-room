@@ -75,15 +75,18 @@ export type AgentOwnerText = {
    */
   readonly detail: (owner: AgentOwner | undefined) => string | null;
   /**
-   * 能不能和它私聊。Agent 都不公开，服务器只让和自己的 Agent 开私聊（agent-room-ops#18），所以知道它是
-   * 别人的、或者是网络 Agent 时不能。还不知道是谁的（没问到、没有查询服务）时不拦，由服务器回答。
+   * 能不能和它私聊。Agent 都不公开，服务器只让和自己还在用的 Agent 开私聊（agent-room-ops#18），所以服务器
+   * 说了是你的才给。还没回答、没问成、或者它此刻不在这个房间里（服务器不回答）都不给：点了只会说“私聊出错了”。
+   * 只有没有查询服务时（单独渲染的组件、测试夹具）不拦，由服务器回答。
    */
   readonly messageable: (owner: AgentOwner | undefined) => boolean;
 };
 
 export function useAgentOwnerText(): AgentOwnerText {
   const { t } = useTranslation();
-  const selfPrincipalId = useContext(AgentOwnerScopeContext)?.selfPrincipalId ?? null;
+  const scope = useContext(AgentOwnerScopeContext);
+  const lookup = useContext(AgentOwnerStoreContext) !== null && scope !== null;
+  const selfPrincipalId = scope?.selfPrincipalId ?? null;
   /** 放行的人：你自己时为空名字。 */
   const admitter = useCallback(
     (owner: AgentOwner | undefined): { readonly you: boolean; readonly name: string } | null => {
@@ -127,16 +130,15 @@ export function useAgentOwnerText(): AgentOwnerText {
             : t('lobby.owner.admittedBy', { name: by.name });
       },
       messageable: (owner: AgentOwner | undefined) => {
-        if (owner === undefined) return true;
-        if (owner.kind === 'network') return false;
+        if (!lookup) return true;
         return (
-          owner.owner === undefined ||
-          selfPrincipalId === null ||
-          owner.owner.principalId === selfPrincipalId
+          owner?.kind === 'local' &&
+          selfPrincipalId !== null &&
+          owner.owner?.principalId === selfPrincipalId
         );
       },
     }),
-    [admitter, local, selfPrincipalId, t],
+    [admitter, local, lookup, selfPrincipalId, t],
   );
 }
 

@@ -77,7 +77,8 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
-function renderInspector(agent: LobbyAgent, owner?: AgentOwner) {
+/** `owner` 为空：服务器没回答这个 Agent（它此刻不在房间里）；不给：没有查询服务。 */
+function renderInspector(agent: LobbyAgent, owner?: AgentOwner | null) {
   const onMessage = vi.fn();
   const onBlock = vi.fn();
   const inspector = (
@@ -94,7 +95,10 @@ function renderInspector(agent: LobbyAgent, owner?: AgentOwner) {
     owner === undefined
       ? null
       : new AgentOwnerStore(
-          { lookup: () => Promise.resolve(ok([{ ...owner, agentId: agent.agentId }])) },
+          {
+            lookup: () =>
+              Promise.resolve(ok(owner === null ? [] : [{ ...owner, agentId: agent.agentId }])),
+          },
           {
             schedule: (task) => {
               task();
@@ -237,5 +241,21 @@ describe('人物详情', () => {
     expect(await screen.findByText('Your agent')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Message' }));
     expect(onMessage).toHaveBeenCalledWith(online.agentId);
+  });
+
+  it('服务器没说是你的就不给“私聊”：没回答（不在房间里）或者没写主人都算', async () => {
+    // agent-room-ops#18：Alpha 83 上还有人点到“私聊出错了”，那时还不知道它是谁的。
+    renderInspector(online, null);
+    const panel = screen.getByRole('complementary', { name: 'Scout' });
+    await waitFor(() => {
+      expect(within(panel).queryByRole('button', { name: 'Message' })).not.toBeInTheDocument();
+    });
+    expect(within(panel).getByRole('button', { name: 'Block' })).toBeInTheDocument();
+    cleanup();
+
+    renderInspector(online, { kind: 'local' });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Message' })).not.toBeInTheDocument();
+    });
   });
 });
