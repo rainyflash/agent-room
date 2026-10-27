@@ -21,6 +21,11 @@ service = "control-plane"
 summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /(devices/current/private-rooms/\{id\}/code|private-rooms/\{id\}/agent-access/code)$'
 reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生成；网页打开接入对话框、房间设置的“Agent 进门”也先查，没有就给“生成口令”的按钮（2026-10-27 生产上那次是发版验收头一回建验收房间）"
 
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
+reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
+
 # 身份服务
 
 [[ignore]]
@@ -70,8 +75,8 @@ reason = "点了过期的验证邮件链接（1 小时有效），走到验证�
 
 [[ignore]]
 service = "identity"
-summary = '^RESTART_AUTHENTICATION_ERROR error=already_logged_in$'
-reason = "已经登录过了，浏览器里留着的旧登录页又提交了一次；Keycloak 把人送回网页，#573 起网页替没登录的人重开一次登录"
+summary = '^RESTART_AUTHENTICATION_ERROR error=(already_logged_in|invalid_code)$'
+reason = "已经登录过了，浏览器里留着的旧登录页又提交了一次；Keycloak 把人送回网页，#573 起网页替没登录的人重开一次登录。旧页面上的登录步骤号对不上时先记一条 invalid_code，紧接着就是这条 already_logged_in（2026-10-27 生产上两条只差 9 毫秒，之后回调说网页登录还有效、送回了房间）"
 
 [[ignore]]
 service = "identity"
