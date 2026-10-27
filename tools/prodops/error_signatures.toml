@@ -18,8 +18,8 @@ reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房
 
 [[ignore]]
 service = "control-plane"
-summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /devices/current/private-rooms/\{id\}/code$'
-reason = "房间还没有口令时 Agent 先来查一次口令，回 404 以后再去生成"
+summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /(devices/current/private-rooms/\{id\}/code|private-rooms/\{id\}/agent-access/code)$'
+reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生成；网页打开接入对话框、房间设置的“Agent 进门”也先查，没有就给“生成口令”的按钮（2026-10-27 生产上那次是发版验收头一回建验收房间）"
 
 # 身份服务
 
@@ -37,6 +37,11 @@ reason = "输错密码"
 service = "identity"
 summary = '^LOGIN_ERROR error=user_not_found$'
 reason = "登录时填的邮箱没有对应的账户（打错了、换了个邮箱），页面上和输错密码一样提示；2026-10-26 生产上那次，近两天注册的账户都已验证，没有卡住的新账户"
+
+[[ignore]]
+service = "identity"
+summary = '^RESET_PASSWORD_ERROR error=user_not_found$'
+reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注册过）。页面照样说邮件已发出，不透露有没有这个账户"
 
 [[ignore]]
 service = "identity"
@@ -80,6 +85,11 @@ reason = "注册表单没填对（密码不合要求、两次不一样、少填�
 
 [[ignore]]
 service = "identity"
+summary = '^REGISTER_ERROR error=email_in_use$'
+reason = "拿已经注册过的邮箱又注册一次，注册页上直接说这个邮箱已经有账户；2026-10-27 生产上那次是验证链接过期了、以为要重新注册，两分钟后就登录上了"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=expired_code$'
 reason = "账户已经建好了，留着的旧注册页又被提交，Keycloak 给“页面已过期”；2026-10-25 生产上那次是验证完邮箱又点了旧标签页里的注册"
 
@@ -92,6 +102,11 @@ reason = "打开了已经过期或用过的设备码批准链接，页面上让�
 service = "identity"
 summary = '^WARN org\.keycloak\.common\.Profile Deprecated features '
 reason = "Keycloak 启动时提示有默认开着的旧功能，每次重建身份服务都有"
+
+[[ignore]]
+service = "identity"
+summary = '^WARN org\.hibernate\.orm\.session HHH90010101: Closing shared session with unprocessed transaction completion actions$'
+reason = "几个请求同时动同一个登录会话、有一个回滚时，Hibernate 关会话时多记的一句，功能不受影响（keycloak/keycloak#52583，26.8.0 起不再记；升到 26.8 以后删掉这条）。2026-10-27 生产上那次是一个人开着好几个登录标签页同时登录完"
 
 # Synapse
 
