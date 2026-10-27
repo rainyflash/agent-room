@@ -341,6 +341,7 @@ class NoiseTableTests(unittest.TestCase):
                     event("LOGIN_ERROR", "expired_code"),
                     event("RESET_PASSWORD_ERROR", "user_not_found"),
                     event("REGISTER_ERROR", "email_in_use"),
+                    event("RESTART_AUTHENTICATION_ERROR", "invalid_code"),
                     KEYCLOAK_SERVICES.replace("ERROR [org.keycloak.services]", "WARN  [org.hibernate.orm.session]")
                     .replace(
                         "KC-SERVICES0093: Invalid parameter value for: scope",
@@ -353,7 +354,20 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 10)
+        self.assertEqual(sum(digest.ignored.values()), 11)
+
+    def test_opening_a_room_you_are_not_in_is_noise(self) -> None:
+        not_found = CONTROL_WARN.replace('"failure": "Internal"', '"failure": "NotFound"')
+        digest = summarize({"control-plane": [not_found, CONTROL_WARN]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::features::lobbies 公开大厅云端入场失败 failure=Internal "
+                "@ POST /lobbies/{id}/entry"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
 
     def test_asking_for_a_room_code_before_there_is_one_is_noise(self) -> None:
         web = CONTROL_JOIN_CODE.replace(

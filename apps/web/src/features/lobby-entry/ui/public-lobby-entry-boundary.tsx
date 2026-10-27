@@ -8,6 +8,7 @@ import { useAppServices } from '@/app/app-services';
 import type { PublicLobbyRouteTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
 import { usePrivateRoomList } from '@/features/private-rooms/data/private-room-queries';
 import { privateRoomAddressEntry } from '@/features/private-rooms/domain/private-room';
+import { AccountIdCopy } from '@/features/room-directory/ui/account-id-copy';
 import { sessionStateName } from '@/features/session/ui/connection-model';
 import { useSession } from '@/features/session/ui/session-provider';
 import { EntryCard, EntryShell } from '@/shared/ui/entry-shell';
@@ -168,7 +169,12 @@ export function PublicLobbyEntryBoundary({
         }
         title={t(copy.title)}
         tone={phase === 'failure' || phase === 'missing' ? 'alert' : 'neutral'}
-      />
+      >
+        {/* 多半是有人把私人房间的地址发给了还不在里面的人：房主或房里的 Agent 要按账户 ID 邀请他。 */}
+        {phase === 'missing' && principalId !== null ? (
+          <AccountIdCopy defaultOpen principalId={principalId} />
+        ) : null}
+      </EntryCard>
     </EntryShell>
   );
 }

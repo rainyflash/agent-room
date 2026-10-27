@@ -135,6 +135,9 @@ describe('公开大厅入场边界', () => {
       await screen.findByRole('heading', { name: 'This room isn’t open to you' }),
     ).toBeVisible();
     expect(screen.getByText(/ask its owner to invite you/u)).toBeVisible();
+    // 账户 ID 直接摊开：房主或房里的 Agent 要按它邀请。
+    expect(screen.getByLabelText('Your account ID')).toHaveTextContent(principal.principalId);
+    expect(screen.getByRole('button', { name: 'Copy ID' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to rooms' })).toHaveAttribute('href', '/rooms');
     expect(enter).toHaveBeenCalledWith(catalogId);
