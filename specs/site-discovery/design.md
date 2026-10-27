@@ -136,3 +136,4 @@
   - “未找到 (404)”里多半是 `www.agentroom.chat`：DNS 指着 Vercel，Vercel 上没有部署，回 `DEPLOYMENT_NOT_FOUND`；其余是不存在的路径和 API 的根路径，本来就该是 404。维护者当天定了 www 跳到裸域：裸域出网站时网关多一个 `www.<裸域>` 站点，301 到裸域，带上原来的路径和查询；www 的 DNS 由 Vercel 改成指向这台服务器，要在部署之前改好，不然 Caddy 一直申请不到证书、错误汇总会报。自建的（`redirect`）不加。
   - 两种模式渲染出的 Caddyfile 用官方的 Caddy 2.11.4（和生产同一版）跑过 `caddy adapt`、`caddy validate`；本机实跑确认经反向代理出去的接入说明带着 `Link` 头。
   - “重复网页，用户未选定规范网页”：网站的每一页都有 `canonical`，没问题；一模一样的是接入说明，裸域和 API 域名上各有 `.md`、`.txt` 两份能被收录。改成上面第 4 节写的那样（#608），API 和聊天服务器的域名也不进搜索结果（接口里能 GET 的列表和 Synapse 的欢迎页以前都能被收录）。
+- 2026-10-27 03:15Z 前后，维护者同意后，编码 Agent 在 Vercel 的 DNS 里加了一条 `www` 的 A 记录指向生产服务器（TTL 60）。以前 www 没有自己的记录，落在 Vercel 自己管的通配 `*` ALIAS 上，所以指着 Vercel。新记录盖过通配，别的记录都没动；www 没有 IPv6 记录，CAA 沿用裸域的（含 letsencrypt.org）。Google 和 Cloudflare 的解析马上就是新地址。网关的 `www` 站点上线之前，`http://www` 由 Caddy 跳到 `https://www`，`https://www` 握手失败（以前是 Vercel 的 404），这是预料中的过渡。
