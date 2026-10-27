@@ -872,6 +872,12 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("immutable", bare[hashed : bare.index("\thandle {", hashed)])
         self.assertEqual(bare.count("immutable"), 1)
         self.assertIn('handle_errors 404 {\n\t\theader Cache-Control "no-store"', bare)
+        # 有人打 www 也送回裸域的网站（Search Console 报过 www 是 404）。
+        server_name = config.public.server_name
+        self.assertEqual(
+            self._caddy_block(caddyfile, f"www.{server_name}"),
+            f"\tredir https://{server_name}{{uri}} 301",
+        )
 
     def test_bare_domain_still_redirects_by_default(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)
@@ -885,6 +891,8 @@ class ProductionRenderingTests(unittest.TestCase):
             bare,
         )
         self.assertNotIn("/srv/site", caddyfile)
+        # 自建的部署不一定有 www，不替它申请证书。
+        self.assertNotIn(f"www.{self.config.public.server_name}", caddyfile)
 
     def test_app_domain_is_not_indexed_and_unknown_paths_answer_404(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)
@@ -903,6 +911,28 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn('header Cache-Control "no-store"', errors)
         self.assertIn("@missing_asset path /assets/*", errors)
         self.assertIn("rewrite * /index.html", errors)
+
+    def test_search_engines_only_index_the_bare_domain(self) -> None:
+        for site in ("redirect", "static"):
+            value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+            value["public"]["site"] = site
+            config = DeploymentConfig.from_mapping(value)
+            render_deployment(config, self.paths, self.secrets)
+            caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+                encoding="utf-8"
+            )
+            public = config.public
+            # 接入说明几个域名上都有，Search Console 说成“重复网页，用户未选定规范网页”：都指回裸域那一份。
+            bare = self._caddy_block(caddyfile, public.server_name)
+            self.assertIn("\t@agent_guide path /agents.md /agents.txt\n", bare)
+            self.assertIn(
+                "\theader @agent_guide Link "
+                f'`<https://{public.server_name}/agents.txt>; rel="canonical"`\n',
+                bare,
+            )
+            self.assertNotIn("X-Robots-Tag", bare)
+            for domain in (public.app_domain, public.api_domain, public.matrix_domain):
+                self.assertIn('X-Robots-Tag "noindex"', self._caddy_block(caddyfile, domain))
 
     def test_network_agent_switch_and_guide_reach_the_control_plane(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

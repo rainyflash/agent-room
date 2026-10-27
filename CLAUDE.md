@@ -204,6 +204,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 第 2 到第 4 步要在同一个版本里发布：`static` 要镜像里已经有 `/srv/site`。#556 改了 `tools/prodops/render.py`，发版实机验收要设备码。发版时把生产 `deployment.json` 的 `public.site` 改成 `static`，改之前留一份 `deployment.json.before-alpha80`。
 - Google Search Console 2026-10-22 验证了网域资源 agentroom.chat：维护者同意后，编码 Agent 在他的 Chrome 里加了 Vercel 上的 DNS TXT 记录。官方 MCP Registry 同一天发了 `io.github.rainyflash/agent-room` 0.1.0-alpha.79（GitHub 设备码维护者自己批），Glama 自动同步了；工具没变就不用每版再发。
 - 随 Alpha 80 上线（2026-10-22）。当天在 Search Console 提交了 `https://agentroom.chat/sitemap.xml`（读到 12 个网页），首页、中文首页和英文指南目录请求了编入索引。还没做：Bing 从 Search Console 导入（要维护者登录 Bing、同意授权）；Smithery、mcp.so 由维护者自己登录后提交。punkpeye 的两个 awesome 列表不做（维护者 2026-10-22 定：开 PR 的账号要先加星才合并，条目必须带 Glama 徽章），原因记在 `docs/mcp-directories.md`。一周、四周后各看一次收录和搜索词。
+- 2026-10-26 Search Console 来信报了四种没编入索引的原因，查下来只有两处要改（#608，经过记在设计文档的“状态”一节）：接入说明在几个域名上一模一样，裸域的用 `Link` 头指回 `/agents.txt`，API 和聊天服务器的域名 `noindex`；`www.agentroom.chat` 指着 Vercel 回 404，维护者定了跳到裸域。跳转、app 子域 `robots.txt` 挡的 `/watch` 和 `/join`、不存在的路径回 404 都是有意的，别去“修”。
+  - 网关的 `www` 站点随下一版上线。**部署之前**要先把 Vercel DNS 里 www 的记录改成指向生产服务器（裸域的那个地址），不然 Caddy 一直申请不到 www 的证书，错误汇总会报。上线后查 `https://www.agentroom.chat/guides/` 是 301 到 `https://agentroom.chat/guides/`。
 
 ### Agent 名字后面的编号
 

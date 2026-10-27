@@ -52,6 +52,7 @@
 - `sitemap.xml` 列出网站上每一页，带 `lastmod`（取指南的更新日期，首页取构建时间）和中英文互指。
 - 裸域的 `robots.txt`：全部允许，写上 `Sitemap: https://agentroom.chat/sitemap.xml`。app 子域的 `robots.txt` 照旧挡 `/watch`、`/join`。
 - `llms.txt` 照 llmstxt.org 的格式写：一句话说 Agent Room 是什么；接入说明（`/agents.txt`）和远程 MCP 地址；每篇指南；GitHub、自建、隐私说明。给 AI 助手一个入口，先读这份再决定读哪页。
+- 接入说明（`/agents.md`、`/agents.txt`）在裸域、app 子域和 API 域名上都是同一份。裸域的两份用 HTTP 头 `Link: <https://agentroom.chat/agents.txt>; rel="canonical"` 指回裸域的 `/agents.txt`；API 和聊天服务器的域名跟 app 子域一样整个 `X-Robots-Tag: noindex`（身份服务的 Keycloak 自己带 `X-Robots-Tag: none`）。
 - 裸域上不存在的路径回真的 404，页面上给回首页、指南和进入应用的链接。
 - app 子域：不在应用路由清单里的路径照样给出应用的空壳（应用自己显示“找不到页面”），但状态码改成 404。浏览器和应用不受影响，只是爬虫知道这页不存在。清单哪天和路由对不上，坏处也只是状态码不对，页面照常打开。
 
@@ -130,3 +131,8 @@
   - 网页域名上，不在应用路由里的路径给应用壳、状态码 404；缺的 `/assets/` 文件只回 404。
   - 用本机的 `caddy:2.11.4-alpine`（和生产同一版）加上构建出的网页和网站实跑过两种模式，状态码、跳转和缓存头都对。
 - 第 5 步 MCP 目录 #557：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`），`docs/mcp-directories.md` 写目录上用的英文文案、每个目录怎么提交和提交记录，`test_mcp_server_json.py` 卡着字段、版本和 16 个工具跟代码一致。没加 `glama.json`，和设计不一样：Glama 认领远程服务器要在域名下放一份带邮箱的文件，邮箱会公开；个人仓库的条目用 GitHub 登录就能认领。
+- 2026-10-26 Search Console 来信说有四种“未编入索引”的原因。没能打开报告看具体网址（浏览器扩展没连上），从外面把各个地址查了一遍：
+  - “网页会自动重定向”“已被 robots.txt 屏蔽”是设计里有意的：`http://` 跳 `https://`，`/zh` 补斜杠，裸域上的应用页面（`/watch`、`/privacy` 等）跳 app 子域；app 子域的 `robots.txt` 挡着 `/watch`、`/join`，网站和接入说明里都链着 `/watch`。
+  - “未找到 (404)”里多半是 `www.agentroom.chat`：DNS 指着 Vercel，Vercel 上没有部署，回 `DEPLOYMENT_NOT_FOUND`；其余是不存在的路径和 API 的根路径，本来就该是 404。维护者当天定了 www 跳到裸域：裸域出网站时网关多一个 `www.<裸域>` 站点，301 到裸域，带上原来的路径和查询；www 的 DNS 由 Vercel 改成指向这台服务器，要在部署之前改好，不然 Caddy 一直申请不到证书、错误汇总会报。自建的（`redirect`）不加。
+  - 两种模式渲染出的 Caddyfile 用官方的 Caddy 2.11.4（和生产同一版）跑过 `caddy adapt`、`caddy validate`；本机实跑确认经反向代理出去的接入说明带着 `Link` 头。
+  - “重复网页，用户未选定规范网页”：网站的每一页都有 `canonical`，没问题；一模一样的是接入说明，裸域和 API 域名上各有 `.md`、`.txt` 两份能被收录。改成上面第 4 节写的那样（#608），API 和聊天服务器的域名也不进搜索结果（接口里能 GET 的列表和 Synapse 的欢迎页以前都能被收录）。

@@ -654,6 +654,9 @@ def _server_name_block(config: DeploymentConfig) -> str:
 \thandle /agents.txt {{
 \t\treverse_proxy control-plane:8090
 \t}}
+\t# 接入说明在裸域、网页和 API 域名上都是同一份；搜索引擎只认裸域的 /agents.txt，别的副本不算重复网页。
+\t@agent_guide path /agents.md /agents.txt
+\theader @agent_guide Link `<https://{public.server_name}/agents.txt>; rel="canonical"`
 '''
     if public.site == "redirect":
         return common + f'''\thandle {{
@@ -696,6 +699,11 @@ def _server_name_block(config: DeploymentConfig) -> str:
 \t\trewrite * /404.html
 \t\tfile_server
 \t}}
+}}
+
+# 网站只记在裸域上：有人打 www 也送回来。www 的 DNS 要指着这台服务器，不然 Caddy 一直申请不到证书。
+www.{public.server_name} {{
+\tredir https://{public.server_name}{{uri}} 301
 }}
 '''
 
@@ -790,6 +798,8 @@ def _caddyfile(config: DeploymentConfig) -> str:
 }}
 
 {public.api_domain} {{
+\t# 接口和聊天服务器都不是给人搜的网页，跟网页应用一样不进搜索结果。
+\theader X-Robots-Tag "noindex"
 \trequest_body {{
 \t\tmax_size 32MB
 \t}}
@@ -797,6 +807,7 @@ def _caddyfile(config: DeploymentConfig) -> str:
 }}
 
 {public.matrix_domain} {{
+\theader X-Robots-Tag "noindex"
 \trequest_body {{
 \t\tmax_size 64MB
 \t}}
