@@ -616,7 +616,7 @@ class Acceptance:
             raise ReleaseFailure("验证码不能放在宿主工作区里。")
         identity = self.joined()["identity"]
         recipient = identity["agent"]["matrixUserId"]
-        messages = message_texts(self.label)
+        messages = message_texts(self.label, self.metadata["revision"])
         for number in (1, 2):
             attachment = canary_path if number == 2 else None
             self.path(f"send-message-{number}.js").write_text(
@@ -690,7 +690,7 @@ class Acceptance:
         sender = load(self.path("authorization.private.json"))["principalId"]
         if (message["eventId"] != event_id or message["roomId"] != self.room_id
                 or message["actor"].get("principalId") != sender
-                or conversation.get("text") != message_texts(self.label)[number]
+                or conversation.get("text") != message_texts(self.label, self.metadata["revision"])[number]
                 or message.get("mentionsMe") is not True
                 or attachment != (self.canary_name if number == 2 else None)):
             raise ReleaseFailure(f"接收端解开的第 {number} 条消息与发出的不符：{message}")
@@ -1421,10 +1421,16 @@ def qa_room_js(name: str, description: str, request_id: str) -> str:
        "INPUT": json.dumps({"name": name, "description": description, "requestId": request_id})})
 
 
-def message_texts(label: str) -> dict[int, str]:
+def message_texts(label: str, revision: str) -> dict[int, str]:
+    """The two QA messages, naming the release commit as well as the version.
+
+    The QA room keeps its history (#606). When a release commit is superseded, its attempt leaves the same
+    version's messages behind; the send step skips a message that already shows, so in Alpha 84 the next attempt
+    never sent its first one and its receiver waited in vain. A rerun of the same attempt still finds its own."""
+    run = f"{label}（{revision[:8]}）"
     return {
-        1: f"这是 {label} 真实接待验收的第一条消息，请简短回复：第一条消息已收到。",
-        2: f"这是 {label} 真实接待验收的第二条消息，请读取本条消息的附件，并回复附件里的验证码。",
+        1: f"这是 {run} 真实接待验收的第一条消息，请简短回复：第一条消息已收到。",
+        2: f"这是 {run} 真实接待验收的第二条消息，请读取本条消息的附件，并回复附件里的验证码。",
     }
 
 

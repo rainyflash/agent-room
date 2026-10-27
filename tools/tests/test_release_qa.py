@@ -585,6 +585,7 @@ class ConfirmDeliveryTests(unittest.TestCase):
         acceptance.qa = qa
         acceptance.room_id = "!room:example"
         acceptance.label = "Alpha 41"
+        acceptance.metadata = {"revision": REVISION}
         acceptance.canary_name = "alpha41-attachment.txt"
         events = [{"ok": True, "data": {"type": "delivery", "record": {"stage": stage, "eventId": event}}}
                   for event in event_ids for stage in ("received", "running", "replied")]
@@ -595,7 +596,7 @@ class ConfirmDeliveryTests(unittest.TestCase):
     @staticmethod
     def message(number: int, event: str, **changes):
         message = {"eventId": event, "roomId": "!room:example", "actor": {"principalId": "owner"},
-                   "conversation": {"text": release_qa.message_texts("Alpha 41")[number], "mentions": []},
+                   "conversation": {"text": release_qa.message_texts("Alpha 41", REVISION)[number], "mentions": []},
                    "mentionsMe": True, "content": {"contentId": f"content-{event}"}}
         if number == 2:
             message["conversation"]["attachmentName"] = "alpha41-attachment.txt"
@@ -612,13 +613,22 @@ class ConfirmDeliveryTests(unittest.TestCase):
                          ("$two", "content-$two", True))
         acceptance.cli.assert_called_with("--profile", "profile", "show", "--id", "$two")
 
+    def test_messages_name_the_release_commit(self):
+        # The QA room keeps an earlier, superseded attempt's messages; only this commit's count as sent.
+        first, again = (release_qa.message_texts("Alpha 84", "8e7556bd" + "0" * 32) for _ in range(2))
+        other = release_qa.message_texts("Alpha 84", "018b2b4c" + "0" * 32)
+        self.assertEqual(first, again)
+        self.assertIn("Alpha 84（8e7556bd）", first[1])
+        self.assertNotEqual(first[1], other[1])
+        self.assertNotEqual(first[2], other[2])
+
     def test_rejects_a_copy_that_differs_from_what_was_sent(self):
         wrong = {
             "text": {"conversation": {"text": "别的话", "mentions": []}},
             "room": {"roomId": "!other:example"},
             "sender": {"actor": {"principalId": "someone-else"}},
             "mention": {"mentionsMe": False},
-            "attachment": {"conversation": {"text": release_qa.message_texts("Alpha 41")[1], "mentions": [],
+            "attachment": {"conversation": {"text": release_qa.message_texts("Alpha 41", REVISION)[1], "mentions": [],
                                             "attachmentName": "alpha41-attachment.txt"}},
         }
         for name, changes in wrong.items():
