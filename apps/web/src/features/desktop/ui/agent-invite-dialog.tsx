@@ -49,7 +49,8 @@ export type AgentInviteDialogProps = {
   readonly onConnected?: ((invitation: ConnectedInvitation) => void) | undefined;
 };
 
-const inviteMethods = ['network', 'mcp', 'cli'] as const;
+/** 从装了桌面应用最省事的命令行，排到前两种用不了时才选的网络（维护者 2026-10-27 定）。 */
+const inviteMethods = ['cli', 'mcp', 'network'] as const;
 export type InviteMethod = (typeof inviteMethods)[number];
 const inviteMethodKey = 'agent-room.invite-method';
 const SESSION_POLL_MS = 3_000;
@@ -58,13 +59,17 @@ const OFFER_REFRESH_MS = 3 * 60_000;
 const uuid = new BrowserUuidV7Factory();
 const noAgents: readonly PresentAgent[] = [];
 
-/** 上次选的接入方式存在本机；读不到（隐私模式等）就从最通用的网络接入开始。 */
-function readInviteMethod(storage: Storage | null): InviteMethod {
+/**
+ * 上次选的接入方式存在本机；没选过或读不到（隐私模式等）时，桌面端从排第一的命令行开始。网页端
+ * 看不到 Agent 那台电脑装没装 Agent Room，围观页的人还没有账号，从哪儿都能用的网络开始。
+ */
+function readInviteMethod(storage: Storage | null, desktop: boolean): InviteMethod {
+  const fallback = desktop ? 'cli' : 'network';
   try {
     const saved = storage?.getItem(inviteMethodKey);
-    return inviteMethods.find((method) => method === saved) ?? 'network';
+    return inviteMethods.find((method) => method === saved) ?? fallback;
   } catch {
-    return 'network';
+    return fallback;
   }
 }
 
@@ -146,7 +151,8 @@ function InviteBody({
       ? null
       : { principalId: principal.principalId, displayName: principal.displayName });
   const [storage] = useState(localStorageOrNull);
-  const [method, setMethod] = useState<InviteMethod>(() => readInviteMethod(storage));
+  const { available } = useDesktopRuntimeController();
+  const [method, setMethod] = useState<InviteMethod>(() => readInviteMethod(storage, available));
   const [openedAt] = useState(() => Date.now());
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const local = method !== 'network';
@@ -185,9 +191,9 @@ function InviteBody({
         label={t('agentInvite.mode')}
         onChange={chooseMethod}
         options={[
-          { value: 'network', label: t('agentInvite.method.network'), icon: <Globe /> },
-          { value: 'mcp', label: t('agentInvite.method.mcp'), icon: <Plug /> },
           { value: 'cli', label: t('agentInvite.method.cli'), icon: <SquareTerminal /> },
+          { value: 'mcp', label: t('agentInvite.method.mcp'), icon: <Plug /> },
+          { value: 'network', label: t('agentInvite.method.network'), icon: <Globe /> },
         ]}
         value={method}
       />

@@ -12,13 +12,13 @@ export const agentInviteResources = {
     'agentInvite.mode.mcp': 'MCP compatibility',
     'agentInvite.method.network': 'Network',
     'agentInvite.method.networkHint':
-      'Recommended. Works for any agent that can reach the internet; nothing to install.',
+      'For agents that can’t use the other two, such as an assistant in a chat web page. Nothing to install; it only needs to reach the internet.',
     'agentInvite.method.mcp': 'MCP',
     'agentInvite.method.mcpHint':
-      'For agent tools that support MCP, on a computer with Agent Room installed.',
+      'For an agent you’ll keep using: add Agent Room to its MCP configuration once, and from then on just tell it to join. Its computer needs Agent Room installed.',
     'agentInvite.method.cli': 'Command line',
     'agentInvite.method.cliHint':
-      'For agents that can run commands, on a computer with Agent Room installed.',
+      'Easiest once the Agent Room desktop app is installed: an agent on that computer that can run commands comes straight in with this message.',
     'agentInvite.message.label': 'Message for your agent',
     'agentInvite.message.copy': 'Copy message',
     'agentInvite.message.copied': 'Copied. Send it to your agent.',
@@ -141,11 +141,14 @@ export const agentInviteResources = {
     'agentInvite.mode': '接入方式',
     'agentInvite.mode.mcp': 'MCP 兼容接入',
     'agentInvite.method.network': '网络',
-    'agentInvite.method.networkHint': '推荐。任何能上网的 Agent 都行，什么都不用装。',
+    'agentInvite.method.networkHint':
+      '前两种用不了时选它，比如网页上的聊天助手。什么都不用装，能上网就行。',
     'agentInvite.method.mcp': 'MCP',
-    'agentInvite.method.mcpHint': '给支持 MCP 的 Agent 工具，它所在的电脑要装有 Agent Room。',
+    'agentInvite.method.mcpHint':
+      '适合长期稳定用的 Agent：把 Agent Room 加进它的 MCP 配置一次，以后说一声就进来。它所在的电脑要装有 Agent Room。',
     'agentInvite.method.cli': '命令行',
-    'agentInvite.method.cliHint': '给能运行命令的 Agent，它所在的电脑要装有 Agent Room。',
+    'agentInvite.method.cliHint':
+      '装好 Agent Room 桌面应用后最省事：那台电脑上能运行命令的 Agent，照这段话就直接进来。',
     'agentInvite.message.label': '发给 Agent 的话',
     'agentInvite.message.copy': '复制这段话',
     'agentInvite.message.copied': '已复制，发给你的 Agent',
