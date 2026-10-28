@@ -19,7 +19,7 @@
 - 控制平面 API 月度可用性目标：99.9%；服务端 5xx 计为失败，4xx 计为成功处理的客户端请求。网络 Agent 的位置满了、总开关关着时回的 503（`network_agent.capacity_reached`、`network_agent.room_capacity_reached`、`network_agent.disabled`）是我们自己挡的，指标上带 `refusal` 标签，不算失败。
 - 交互延迟警戒线：API P95 持续 10 分钟超过 800ms。网络 Agent 等消息的长轮询（`GET /v1/network-agents/me/messages`，默认等 30 秒）不算进去。
 - 恢复目标：RPO 取部署配置的 1–15 分钟，RTO 取最近隔离恢复报告声明值。
-- Grafana 的 `Agent Room / Service truth` 仪表盘同时展示记录规则和原始依赖、Outbox、投影、Bridge、前端、备份与恢复指标。
+- Grafana 的 `Agent Room / Service truth` 仪表盘同时展示记录规则和原始依赖、Outbox、投影、Bridge、前端、备份与恢复指标。Outbox 只看不告警：控制面只往里写，一直没有发布器去读，待发布的条数和最旧的年龄只会涨（agent-room-ops#36）。
 - 所有告警必须包含 `impact`、`diagnostic` 与 `runbook_url`。没有明确处置动作的指标只进入仪表盘，不分页。
 
 ## 操作入口
@@ -63,7 +63,7 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 ## AgentRoomApiLatencyHigh
 
-对比 API P95、数据库池、依赖探测时延与 Outbox 年龄。连接池耗尽时先找慢查询和泄漏，不要盲目扩大池；外部依赖变慢时限流非关键后台工作。恢复标准是 P95 连续 10 分钟低于 800ms。
+对比 API P95、数据库池与依赖探测时延。连接池耗尽时先找慢查询和泄漏，不要盲目扩大池；外部依赖变慢时限流非关键后台工作。恢复标准是 P95 连续 10 分钟低于 800ms。
 
 ## AgentRoomPublicLobbyFull
 
@@ -87,14 +87,6 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 按 `dependency` 定位 PostgreSQL、Matrix、OIDC 或对象存储。确认 DNS、TLS、凭据文件权限和上游健康；不得绕过失败关闭策略。依赖恢复后验证 `/health/ready`、一次真实读取和一次真实写入。
 
-## AgentRoomOutboxBacklog
-
-检查 Matrix 健康、发布器错误和最旧待发布年龄。先修复下游，再观察积压是否单调下降；不要直接删待发布事件。若需要扩容发布器，确认幂等键和顺序约束仍成立。
-
-## AgentRoomOutboxDeadLetters
-
-从结构化日志取得错误码和事件类型，修复不可重试原因后使用受控重放工具。禁止直接修改 `published_at` 冒充成功。重放后核对 Matrix 事件与本地投影一致，并确认死信数归零。
-
 ## AgentRoomProjectionStalled
 
 确认 Matrix 同步游标、投影健康状态和更新时间。先停止产生错误投影的消费者，再使用 `projection-rebuild.sh` 在隔离环境验证；生产重建前必须有当期备份。恢复后比较成员数、房间数与权威 Matrix 快照。
@@ -108,6 +100,8 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 分别检查 `/.well-known/matrix/server`、Matrix federation version、DNS A/AAAA 与 TLS 证书链。运行 `python3 tools/production.py federation ...`；不要把内部 Synapse 端口暴露到公网作为修复。
 
 ## AgentRoomBridgeAvailabilityLow
+
+桌面端开着时每 15 分钟报一次这段时间本机连接连着的比例（`bridge_uptime`，还没授权、停下了、刚打开还在找 Bridge 的时间不算），这条告警看最近一小时的平均，样本少于 4 个不算。旧版桌面端只在状态变化时报 `bridge_availability`，每次启动先报一个“正在启动”，比例到不了一半，所以不进告警（agent-room-ops#39）。
 
 查看 Bridge 可用率与重连 P95，按发布版本而非设备标识聚合排查。确认 OIDC device flow、控制平面设备认证和 Matrix 连接；若新版本集中失败，停止自动更新并回滚。指标不得添加设备、用户或 Agent ID。
 

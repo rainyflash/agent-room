@@ -56,7 +56,10 @@ pub(crate) fn router(state: FrontendTelemetryHttpState) -> Router {
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum FrontendMetric {
+    /// 旧版桌面端在本机连接的状态变了时报一次：连上 1、没连上 0。新版改报 `BridgeUptime`。
     BridgeAvailability,
+    /// 每 15 分钟一次：这段时间里本机连接该连着的时候，有多少是连着的（0 到 1）。
+    BridgeUptime,
     BridgeReconnect,
     LargestContentfulPaint,
     InteractionToNextPaint,
@@ -74,6 +77,7 @@ impl FrontendMetric {
             Self::BridgeAvailability => {
                 FrontendMetricContract::bounded_score("bridge_availability", 1.0)
             }
+            Self::BridgeUptime => FrontendMetricContract::bounded_score("bridge_uptime", 1.0),
             Self::BridgeReconnect => FrontendMetricContract::duration("bridge_reconnect"),
             Self::LargestContentfulPaint => {
                 FrontendMetricContract::duration("largest_contentful_paint")

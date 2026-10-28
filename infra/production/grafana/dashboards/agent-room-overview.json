@@ -349,7 +349,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(agent_room_frontend_score_sum{metric=\"bridge_availability\"}[15m])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric=\"bridge_availability\"}[15m])), 0.000001)",
+          "expr": "sum(rate(agent_room_frontend_score_sum{metric=\"bridge_uptime\"}[1h])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric=\"bridge_uptime\"}[1h])), 0.000001)",
           "legendFormat": "availability",
           "refId": "A"
         }
