@@ -23,6 +23,11 @@ reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生�
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 认证请求失败 failure=ReauthenticationRequired operation=authentication\.authenticate @ '
+reason = "要最近登录过的操作（删账户、删 Agent、撤销电脑）在 5 分钟窗口刚过时点了确认：网页从读到会话那一刻起按自己的钟算，只会比服务器晚几秒，晚的那一段由服务器拒了以后的通知补上，确认框马上改成“重新登录”（#627，session-machine.ts 的 RECENT_AUTHENTICATION_WINDOW_MS）。2026-10-28 生产上那次是撤销验收电脑时卡在边上；以前网页不知道、让人白填的那种是 agent-room-ops#34，已经修了"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
 reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
 
@@ -77,6 +82,11 @@ reason = "点了过期的验证邮件链接（1 小时有效），走到验证�
 service = "identity"
 summary = '^RESTART_AUTHENTICATION_ERROR error=(already_logged_in|invalid_code)$'
 reason = "已经登录过了，浏览器里留着的旧登录页又提交了一次；Keycloak 把人送回网页，#573 起网页替没登录的人重开一次登录。旧页面上的登录步骤号对不上时先记一条 invalid_code，紧接着就是这条 already_logged_in（2026-10-27 生产上两条只差 9 毫秒，之后回调说网页登录还有效、送回了房间）"
+
+[[ignore]]
+service = "identity"
+summary = '^LOGIN_ERROR error=(already_logged_in|invalid_code)$'
+reason = "已经登录的浏览器又提交了一次登录页（点了两次登录、别的标签页留着旧登录页）：先记 invalid_code，紧接着 already_logged_in，Keycloak 带着 authentication_expired 回到回调，#588 起网页登录还有效就送回房间（2026-10-28 生产上两次，每次两条只差 30 毫秒以内，控制面随即回 303 送回房间）。和上面 RESTART_AUTHENTICATION_ERROR 那条是同一件事，只是事件类型不同"
 
 [[ignore]]
 service = "identity"
