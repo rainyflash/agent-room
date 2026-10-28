@@ -766,3 +766,4 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 错误汇总的定时器 Alpha 81 公开时由发布脚本最后一步装上了（`install_error_digest_schedule.py`），之后跟着源码走，以后的版本不用再装，派生发布脚本时去掉这一步。换了服务器才要重装，命令在 `infra/production/README.md`。
 - 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。
+- 发版前看一眼控制面镜像里 IP 库的月份（`infra/production/Containerfile.control-plane` 的 `dbip-country-lite-YYYY-MM`）。DB-IP 只留当月和上个月的文件，再早的回 404，控制面镜像就建不起来；PR 上不建这个镜像，要到发布候选才红。过了当月就先开个小 PR 换成当月那份：下载、算出 `.gz` 和解开后的 SHA-256，Containerfile 里的日期和 `.gz` 的摘要一起改，两个摘要都写进 PR 描述（[设计](./specs/measurement/design.md)第 3 步）。
