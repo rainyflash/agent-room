@@ -42,6 +42,7 @@ use crate::{
         authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
         resource_ids::parse_uuid_v7,
     },
+    request_regions,
 };
 
 const REGISTER_DEVICE_PATH: &str = "/auth/devices/register";
@@ -460,13 +461,15 @@ pub(crate) async fn authenticate_signed_device_request(
                     .into_response(),
             )
         })?;
-    devices
+    let device = devices
         .authenticate_device(AuthenticateDeviceRequest {
             access_token: &access_token,
             proof: &proof,
         })
         .await
-        .map_err(|failure| no_store(ApiError::device(failure, correlation_id).into_response()))
+        .map_err(|failure| no_store(ApiError::device(failure, correlation_id).into_response()))?;
+    request_regions::note_local_agent(device.account.principal.id());
+    Ok(device)
 }
 
 fn request_proof_for(

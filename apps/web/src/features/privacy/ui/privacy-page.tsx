@@ -27,6 +27,7 @@ const termSections: readonly TermSection[] = [
       { label: 'privacy.keep.computers.label', text: 'privacy.keep.computers.text' },
       { label: 'privacy.keep.cookies.label', text: 'privacy.keep.cookies.text' },
       { label: 'privacy.keep.addresses.label', text: 'privacy.keep.addresses.text' },
+      { label: 'privacy.keep.usage.label', text: 'privacy.keep.usage.text' },
       { label: 'privacy.keep.nothingElse.label', text: 'privacy.keep.nothingElse.text' },
     ],
   },

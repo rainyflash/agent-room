@@ -79,6 +79,21 @@
   - 每个地区每种请求的次数，同样分人和 Agent。
 - **数不准的地方，周报里写明：** 用代理、VPN 的人算在出口那个地区（中国大陆的用户很多走代理，大陆会被算少）；没登录的访客（官网、围观页）不算进去，围观页本来就不上报。
 - **隐私说明页：** 同一个 PR 里改。不再说“不收集使用统计”，改成照实说：按粗地区（比如“欧洲”“中国大陆”）汇总有多少账户在用、页面和接口有多快，不按人记，IP 只用来判断地区、不存；地区由 DB-IP 的免费数据库判断。顶上的日期和 [specs/privacy-page/design.md](../privacy-page/design.md) 一起改。
+- **做成的样子（#625）：**
+  - 指标：
+    - `agent_room_frontend_duration_seconds{metric,surface,region}`，`metric` 多了 `api_round_trip`；`agent_room_frontend_score{metric,surface,region}`。
+    - `agent_room_active_accounts{region,kind}`：今天（UTC）见过几个。每次导出都报全部 33 个组合，没人的报 0，过了零点没人来也是 0。
+    - `agent_room_requests_by_region_total{region,kind}`：认证通过的请求数。
+    - `region` 只取 `cn`、`hk_mo_tw`、`jp_kr`、`southeast_asia`、`south_asia`、`oceania`、`europe`、`north_america`、`latin_america`、`middle_east_africa`、`unknown`；`kind` 只取 `person`、`local_agent`、`network_agent`。
+  - 怎么算：人的登录认证通过时算 `person`（按账户）；Bridge 的设备请求认证通过时算 `local_agent`（按电脑所属的账户）；网络 Agent 凭令牌认出来时算 `network_agent`（按网络 Agent，应用层的 `NetworkAgentActivity` 告诉控制面）。同一个请求只算一次，没认证的请求不算。远程 MCP 的工具在 rmcp 另起的任务里跑，`call_tool` 从请求里取出这次请求接上，有测试卡着。见过的账户只存每次启动随机加盐的摘要，一天最多记 10 万个。
+  - `api_round_trip`：网页和桌面端登录以后用注入的 fetch 问一次 `/health/live`（不要登录、不碰数据库），量到的毫秒数照常报给 `/telemetry/frontend`。
+  - 国家到地区的对照在 `crates/domain/src/regions.rs`：249 个国家加上科索沃都有地区，DB-IP 的库里只有 `ZZ` 算未知（2026-10 那份逐条核对过）。没单列的放进最近的地区：
+    - 俄罗斯、白俄罗斯、外高加索、中亚和土耳其算欧洲，网络多半经莫斯科、法兰克福、伊斯坦布尔走；
+    - 蒙古和朝鲜算日韩，阿富汗和英属印度洋领地算南亚；
+    - 南极洲和澳新的海外领地算大洋洲，格陵兰算北美，加勒比海的美、英、法、荷属地算拉美；
+    - 以色列、伊朗和整个非洲算中东和非洲。
+  - IP 库：控制面镜像构建时下载 `dbip-country-lite-2026-10.mmdb.gz`，核对 SHA-256（`4cd44536ddfd40fec7eca94a233f7d19f38d470e6522e653cb8d27001f5fe177`）后解压到 `/usr/share/agent-room/dbip-country-lite.mmdb`（`infra/production/Containerfile.control-plane`）。本地可以用 `AGENT_ROOM_REGION_DATABASE` 指到别处。没有这个文件时启动记一条告警，地区一律算未知。CC BY 4.0 的署名在 `THIRD_PARTY_NOTICES.md`。
+  - **和上面说的不一样：** DB-IP 的下载站只留当月和上个月的文件（2026-10-28 查：9 月、10 月的在，8 月和更早的都是 404），“几个月换一次”做不到。10 月这份大约 12 月初就下不到了，从那以后控制面镜像建不起来，发布候选也一样。所以先每个月换一次日期和摘要：发版前看一眼月份，过了当月就开个小 PR 换成新的那份（下载、核对 `.gz` 和解开后的摘要，两个都写进 PR 描述）。PR 上不建控制面镜像，下不到的话要到发布候选才发现。把核对过的文件放到我们自己管的地方（比如公开仓库的一个 Release 资产）就不用每月换，但那是公开发一份文件，要先问维护者。
 
 ### 4. CDN：先量两三周，按数据再选（维护者 2026-10-28 定）
 
@@ -136,3 +151,4 @@
   - 每周开一条新的、关掉上一条，开着的永远只有最新那份；同一周重跑不再开。
   - 进下一阶段的三个起点（Synapse CPU P95 超过 0.7 个核、可用内存最低低于 500 MB、盘 60 天内不够 20 GiB）报告最后照着说一句。
   - 定时器每周一 01:23 UTC，和错误汇总共用一个令牌，安装放在第 5 步。
+- 2026-10-28：第 3 步 #625（IP 库、地区对照、前端的数加 `region`、`api_round_trip`、每天的活跃账户和请求次数，隐私说明页一起改）。DB-IP 只留两个月的文件，镜像构建时下载的那份 12 月初会失效，先每个月换一次（见第 3 步“和上面说的不一样”）。合并前在本机下载核对过：`.gz` 和解开后的 `.mmdb` 都和钉住的摘要一样，8 月的已经 404、9 月的还在。

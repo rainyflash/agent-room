@@ -43,13 +43,13 @@ use crate::{
     persistence::RepositoryError,
     ports::{
         Clock, IdentifierFactory, MatrixAgentLocalpart, NetworkAgentActivation,
-        NetworkAgentBeginOutcome, NetworkAgentIdleLobby, NetworkAgentKeyFactory,
-        NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights, PortFuture,
-        PrincipalAccount, PrincipalRegistration, PrivateRoomAgentKnockRecord, RateWindowBucket,
-        RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory,
-        SecretValue,
+        NetworkAgentActivity, NetworkAgentBeginOutcome, NetworkAgentIdleLobby,
+        NetworkAgentKeyFactory, NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning,
+        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
+        NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights,
+        PortFuture, PrincipalAccount, PrincipalRegistration, PrivateRoomAgentKnockRecord,
+        RateWindowBucket, RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery,
+        SecretFactory, SecretValue,
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
@@ -563,6 +563,8 @@ pub struct NetworkAgentDependencies {
     pub policy: NetworkAgentPolicy,
     /// 共享出口的分量：按来源计的名额乘上它（`specs/launch-capacity/design.md` 第 13 步）。
     pub source_weights: Arc<dyn NetworkSourceWeights>,
+    /// 凭令牌认出来以后告诉它，控制面按粗地区数有多少网络 Agent 在用。
+    pub activity: Arc<dyn NetworkAgentActivity>,
     /// Matrix 服务器名，用来算合成主体的 Matrix 用户 ID（这个用户从不注册）。
     pub matrix_server_name: String,
 }
@@ -582,6 +584,7 @@ pub struct NetworkAgentService {
     pause: Arc<dyn NetworkAgentPause>,
     policy: NetworkAgentPolicy,
     source_weights: Arc<dyn NetworkSourceWeights>,
+    activity: Arc<dyn NetworkAgentActivity>,
     matrix_server_name: String,
     pending_naming: Mutex<HashMap<NetworkAgentId, NamingTicket>>,
 }
@@ -620,6 +623,7 @@ impl NetworkAgentService {
             pause: dependencies.pause,
             policy: dependencies.policy,
             source_weights: dependencies.source_weights,
+            activity: dependencies.activity,
             matrix_server_name: dependencies.matrix_server_name,
             pending_naming: Mutex::new(HashMap::new()),
         }
@@ -1631,12 +1635,15 @@ impl NetworkAgentService {
             ));
         }
         let digest = self.secrets.digest(token);
-        self.store
+        let record = self
+            .store
             .find_by_token(&digest)
             .await
             .map_err(repository)?
             .filter(|record| record.status == NetworkAgentStatus::Active)
-            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))
+            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))?;
+        self.activity.authenticated(record.id);
+        Ok(record)
     }
 
     async fn public_lobbies_internal(&self) -> NetworkAgentResult<Vec<NetworkAgentLobby>> {

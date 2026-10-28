@@ -14,26 +14,27 @@ mod network_agents;
 mod notifications;
 mod outbox;
 mod projections;
+mod regions;
 mod rooms;
 mod runtime;
 
 pub use inbox::{InboxHandoff, InboxRoom, PersonalInboxIndex, PersonalInboxRepository};
 pub use network_agents::{
-    GeneratedSigningKey, NetworkAgentAckOutcome, NetworkAgentActivation, NetworkAgentBeforeJoinGap,
-    NetworkAgentBeginOutcome, NetworkAgentGapReason, NetworkAgentHistoryDirection,
-    NetworkAgentHistoryFilter, NetworkAgentHistorySender, NetworkAgentIdleLobby,
-    NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-    NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
-    NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLobbyAway, NetworkAgentLookup,
-    NetworkAgentMatrixGateway, NetworkAgentMessageActor, NetworkAgentMessageHistory,
-    NetworkAgentMessageRef, NetworkAgentMessageRetention, NetworkAgentPause,
-    NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
-    NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
+    GeneratedSigningKey, NetworkAgentAckOutcome, NetworkAgentActivation, NetworkAgentActivity,
+    NetworkAgentBeforeJoinGap, NetworkAgentBeginOutcome, NetworkAgentGapReason,
+    NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
+    NetworkAgentIdleLobby, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+    NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
+    NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLobbyAway,
+    NetworkAgentLookup, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
+    NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
+    NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+    NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
     NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
     NetworkAgentSubmissionKind, NetworkAgentSubmissionRecord, NetworkAgentSubmissionState,
     NetworkAgentSubmissionStore, NetworkAgentSyncRequest, NetworkAgentTimelineGap,
-    NetworkSourceWeights, RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret,
-    SecretSealingFailure, UniformSourceWeights,
+    NetworkSourceWeights, NoNetworkAgentActivity, RateWindowBucket, RateWindowDecision,
+    RateWindowPolicy, SealedSecret, SecretSealingFailure, UniformSourceWeights,
 };
 use std::{future::Future, pin::Pin};
 
@@ -146,6 +147,7 @@ pub use projections::{
     MembershipProjectionLookup, MembershipReadPlan, ProjectionApplyOutcome, ProjectionCursor,
     ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport, ROOM_PROJECTION_CONSUMER,
 };
+pub use regions::{CountryLookup, NoCountryLookup};
 pub use rooms::{
     AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomKind, AgentRoomMembershipFactory,
     AgentRoomPlacement, AgentRoomPlacementStore, DirectAgentBlock, DirectAgentProfile,

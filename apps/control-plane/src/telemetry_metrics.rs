@@ -9,19 +9,21 @@ use axum::{
 };
 use opentelemetry::{
     KeyValue,
-    metrics::{Counter, Gauge, Histogram},
+    metrics::{Counter, Gauge, Histogram, ObservableGauge},
 };
 
 use crate::SERVICE_NAME;
 
 #[cfg(test)]
-const ALLOWED_LABEL_KEYS: [&str; 7] = [
+const ALLOWED_LABEL_KEYS: [&str; 9] = [
     "dependency",
     "http.request.method",
     "http.response.status_code",
     "http.route",
+    "kind",
     "metric",
     "refusal",
+    "region",
     "surface",
 ];
 
@@ -67,6 +69,7 @@ pub(crate) struct TelemetryMetrics {
     sampler_failures: Counter<u64>,
     frontend_duration: Histogram<f64>,
     frontend_score: Histogram<f64>,
+    requests_by_region: Counter<u64>,
 }
 
 impl TelemetryMetrics {
@@ -121,6 +124,12 @@ impl TelemetryMetrics {
                 .with_description("无身份维度的前端布局偏移分数")
                 .with_boundaries(vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0])
                 .build(),
+            requests_by_region: meter
+                .u64_counter("agent_room.requests.by_region")
+                .with_description(
+                    "认证通过的请求数，按粗地区和账户种类（人、本机 Agent、网络 Agent）",
+                )
+                .build(),
         }
     }
 
@@ -157,18 +166,45 @@ impl TelemetryMetrics {
         &self,
         metric: &'static str,
         surface: &'static str,
+        region: &'static str,
         value: f64,
         is_score: bool,
     ) {
         let attributes = [
             KeyValue::new("metric", metric),
             KeyValue::new("surface", surface),
+            KeyValue::new("region", region),
         ];
         if is_score {
             self.frontend_score.record(value, &attributes);
         } else {
             self.frontend_duration.record(value / 1_000.0, &attributes);
         }
+    }
+
+    pub(crate) fn record_account_request(&self, region: &'static str, kind: &'static str) {
+        self.requests_by_region.add(
+            1,
+            &[KeyValue::new("region", region), KeyValue::new("kind", kind)],
+        );
+    }
+
+    /// 每个粗地区、每种账户今天（UTC）有多少个在用。导出时才问 `counts`，它每次报全部的组合。
+    pub(crate) fn observe_active_accounts(
+        counts: impl Fn(&mut dyn FnMut(&'static str, &'static str, u64)) + Send + Sync + 'static,
+    ) -> ObservableGauge<u64> {
+        opentelemetry::global::meter(SERVICE_NAME)
+            .u64_observable_gauge("agent_room.active.accounts")
+            .with_description("今天（UTC）在用的账户数，按粗地区和账户种类；只有个数，UTC 零点清空")
+            .with_callback(move |observer| {
+                counts(&mut |region, kind, count| {
+                    observer.observe(
+                        count,
+                        &[KeyValue::new("region", region), KeyValue::new("kind", kind)],
+                    );
+                });
+            })
+            .build()
     }
 
     fn record_http(

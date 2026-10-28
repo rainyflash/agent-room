@@ -1,5 +1,6 @@
 mod account_deletion;
 mod agent_room_departures;
+mod client_address;
 mod config;
 mod content_cleanup;
 mod content_runtime;
@@ -12,6 +13,7 @@ mod network_gateway;
 mod observability;
 mod operational_metrics;
 mod public_watch;
+mod request_regions;
 mod runtime;
 mod shutdown;
 mod telemetry_metrics;
@@ -214,6 +216,8 @@ pub async fn run() -> Result<(), StartupError> {
         }
     };
     let metrics = observability.metrics();
+    let regions =
+        request_regions::RegionUsage::open(&config.observability.region_database, metrics.clone());
     let identity_runtime = match build_identity_router(&config, &runtime, metrics.clone()).await {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -239,6 +243,7 @@ pub async fn run() -> Result<(), StartupError> {
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
         metrics,
+        regions,
     )?;
 
     tracing::info!(
@@ -276,6 +281,7 @@ fn build_router(
     frontend_origin: &url::Url,
     desktop_origins: &DesktopOrigins,
     metrics: TelemetryMetrics,
+    regions: request_regions::RegionUsage,
 ) -> Result<Router, StartupError> {
     let origins = std::iter::once(frontend_origin.origin().ascii_serialization())
         .chain(desktop_origins.values().iter().cloned())
@@ -323,6 +329,10 @@ fn build_router(
         .layer(cors)
         // 这些路由自带不带凭据、允许任何来源的 CORS，不能套上面那层。
         .merge(open_routes)
+        .layer(middleware::from_fn_with_state(
+            regions,
+            request_regions::attach,
+        ))
         .layer(middleware::from_fn_with_state(
             metrics,
             telemetry_metrics::record_http_request,
@@ -1200,6 +1210,7 @@ fn build_network_agent_routes(
         pause: dependencies.system_runtime.clone(),
         policy,
         source_weights: sources.clone(),
+        activity: Arc::new(request_regions::NetworkAgentRegions),
         matrix_server_name: config.authentication.matrix_server_name.clone(),
     }));
     let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
@@ -1887,6 +1898,7 @@ mod tests {
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
+            crate::request_regions::RegionUsage::unknown(),
         )
         .expect("测试 CORS 配置有效")
     }
@@ -2112,6 +2124,7 @@ mod tests {
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
+            crate::request_regions::RegionUsage::unknown(),
         )
         .expect("测试 CORS 配置有效");
 
@@ -2182,6 +2195,7 @@ mod real_dependency_tests {
             &frontend_origin,
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
+            crate::request_regions::RegionUsage::unknown(),
         )
         .expect("测试 CORS 配置有效")
         .oneshot(

@@ -22,7 +22,10 @@ import type {
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
 import type { ControlPlaneGateway, SessionDependencies } from '@/features/session/domain/session';
-import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
+import type {
+  ApiRoundTripProbe,
+  FrontendTelemetryGateway,
+} from '@/features/telemetry/domain/frontend-metric';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import type { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import type { AgentDirectoryGateway } from '@/features/workspace/domain/agent-directory';
@@ -61,6 +64,8 @@ export type AppServices = {
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
   readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;
+  /** 登录以后量一次调接口来回要多久，按粗地区汇总；测试和夹具里可以没有。 */
+  readonly roundTrip?: ApiRoundTripProbe;
   readonly security: MatrixSecurityGateway;
   readonly session: SessionDependencies;
   readonly telemetry: FrontendTelemetryGateway;

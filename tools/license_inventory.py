@@ -212,6 +212,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | Ecosystem | Package | Version | Declared license |
 | --- | --- | --- | --- |
 {dependency_rows}
+
+## Bundled data
+
+The control-plane container image includes the DB-IP IP to Country Lite database. The control plane uses it only to turn a request's address into a coarse region for aggregate counts; the address is not stored. [IP Geolocation by DB-IP](https://db-ip.com) is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 """
 
 

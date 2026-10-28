@@ -14,6 +14,7 @@ agent-room-bridge-ipc.workspace = true
 agent-room-content-adapter.workspace = true
 agent-room-domain.workspace = true
 agent-room-identity-adapter.workspace = true
+agent-room-ip-country-adapter.workspace = true
 agent-room-matrix-adapter.workspace = true
 agent-room-matrix-provisioning-adapter.workspace = true
 agent-room-message-crypto-adapter.workspace = true

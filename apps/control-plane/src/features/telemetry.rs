@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_application::authentication::{AuthenticationRequirement, AuthenticationUseCases};
+use agent_room_domain::regions::Region;
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
@@ -17,6 +18,7 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
+    request_regions::RequestRegion,
     telemetry_metrics::TelemetryMetrics,
 };
 
@@ -62,6 +64,8 @@ enum FrontendMetric {
     TimeToInteractive,
     SceneInitialization,
     MessageOpen,
+    /// 打开时调一次很轻的接口花了多久：看的是网络本身慢不慢，和页面加载分开。
+    ApiRoundTrip,
 }
 
 impl FrontendMetric {
@@ -81,6 +85,7 @@ impl FrontendMetric {
             Self::TimeToInteractive => FrontendMetricContract::duration("time_to_interactive"),
             Self::SceneInitialization => FrontendMetricContract::duration("scene_initialization"),
             Self::MessageOpen => FrontendMetricContract::duration("message_open"),
+            Self::ApiRoundTrip => FrontendMetricContract::duration("api_round_trip"),
         }
     }
 }
@@ -145,6 +150,7 @@ impl FrontendMetricContract {
 async fn record_frontend_metric(
     State(state): State<FrontendTelemetryHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
+    region: Option<Extension<RequestRegion>>,
     headers: HeaderMap,
     jar: CookieJar,
     payload: Result<Json<FrontendTelemetryRequest>, JsonRejection>,
@@ -184,9 +190,11 @@ async fn record_frontend_metric(
     {
         return response;
     }
+    let region = region.map_or(Region::Unknown, |Extension(RequestRegion(region))| region);
     state.metrics.record_frontend(
         contract.name,
         payload.surface.as_str(),
+        region.slug(),
         payload.value,
         contract.score,
     );

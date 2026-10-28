@@ -14,6 +14,8 @@ use agent_room_application::ports::NetworkSourceWeights;
 use agent_room_identity_adapter::NetworkSourceDigester;
 use axum::http::HeaderMap;
 
+use crate::client_address::forwarded_address;
+
 /// 一段共享出口：名字只用来算摘要和排查，分量至少是 1。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SharedSource {
@@ -162,19 +164,6 @@ impl NetworkSourceWeights for NetworkSources {
             .get(source)
             .map_or(1, |(_, weight)| *weight)
     }
-}
-
-/// Caddy 不信任上游，自己把真实地址写进 `X-Forwarded-For`；取最后一个值，也就是离控制面最近的
-/// 那一跳写入的。
-fn forwarded_address(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .rfind(|value| !value.is_empty())
-        .and_then(|value| value.parse::<IpAddr>().ok())
 }
 
 /// IPv6 按 /64 归并：同一网段里换地址绕不过限流。取不到地址时所有这类请求共用一个来源（只在本地
