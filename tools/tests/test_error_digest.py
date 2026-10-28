@@ -417,6 +417,25 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
         self.assertEqual(sum(digest.ignored.values()), 11)
 
+    def test_someone_elses_certificate_challenge_is_noise(self) -> None:
+        challenge = json.dumps(
+            {
+                "level": "warn",
+                "ts": 1792712032.5,
+                "logger": "http",
+                "msg": "looking up info for HTTP challenge",
+                "host": "www.agentroom.chat",
+                "remote_addr": f"{IP}:51234",
+                "user_agent": "Mozilla/5.0 (compatible; Let's Encrypt validation server)",
+                "error": "no information found to solve challenge for identifier: www.agentroom.chat",
+            }
+        )
+        digest = summarize({"gateway": [challenge, GATEWAY_ERROR]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertFalse(any("HTTP challenge" in summary for summary in summaries))
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_opening_a_room_you_are_not_in_is_noise(self) -> None:
         not_found = CONTROL_WARN.replace('"failure": "Internal"', '"failure": "NotFound"')
         digest = summarize({"control-plane": [not_found, CONTROL_WARN]}, load_noise(NOISE_FILE))
