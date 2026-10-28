@@ -121,7 +121,7 @@
   - 测试里查“写了一行 Outbox”的断言去掉；实例登记的幂等改查这个 Agent 在 `agent_instance` 里只有一行。`outbox_projection.rs` 只剩投影的测试，改名 `matrix_projection.rs`。
   - 表还在，`real_database.rs` 的表名单照旧有它，第 3 步再删。
   - 改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`（都在 `LOGIN_PATHS` 里），带它的那一版实机验收要走一次新设备授权。
-- 第 4 步：控制面每 30 秒找撤销了、Matrix 设备还没注销成的连接，再注销一次（应用层和控制面各一个 `agent_matrix_device_retry.rs`）。做的时候定下的：
+- 第 4 步（#638）：控制面每 30 秒找撤销了、Matrix 设备还没注销成的连接，再注销一次（应用层和控制面各一个 `agent_matrix_device_retry.rs`）。做的时候定下的：
   - 不另建表、没有迁移：要不要再试只看 `agent_instance` 的 `revoked_at` 和 `matrix_device_revoked_at`，走迁移 `202608250002` 建的部分索引。注销是幂等的（设备已经没了也算注销成），几个控制面副本同时试只是多发一次注销，所以不领租约。
   - 撤销以后 30 秒以内的先不碰，留给撤销的那次请求自己做。
   - 退避只记在内存里：30 秒起翻倍，最长 15 分钟，不放弃（放弃了这台设备就一直登着）；控制面重启以后从头来。一轮最多读 200 条、试 20 条；整台聊天服务器不通，或者注销成了库却记不下来时，这一轮先停。
