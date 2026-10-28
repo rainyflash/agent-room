@@ -204,6 +204,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 事件触发器按不了标签，提示词让它碰到不带 `prod-error` 的直接结束；云端的 `gh` 用不了 GraphQL，走会话的 GitHub 工具或 `gh api`。
 - Keycloak 的事件（`LOGIN_ERROR` 等）只在 identity 容器日志里，realm 没开存事件；容器日志只回看到上一次部署，Synapse 的大约三天半。
 
+### 没人读的 Outbox
+
+- 2026-10-28 开监控后 Outbox 积压的告警一直响（agent-room-ops#36，#635 去掉了告警）：控制面往 `outbox_event` 里写七种事件，从来没有发布器读，生产上 413 行一行也没发布。每种事件该跟着做的事，都已经在请求里直接做，或者有自己的任务表。
+- 设计在 [specs/outbox/design.md](./specs/outbox/design.md)，建议去掉（先停写，下一版再删表），等维护者定。删表不可逆，维护者同意前别合。
+- 在那之前别给它接一个“读到就标成已发布”的消费者，也别再加写它的地方：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表。
+
 ### 网站被搜到
 
 - 2026-10-20 维护者问能不能给网站做 SEO 和 GEO。查下来搜索引擎和 AI 几乎读不到我们：agentroom.chat 整个 302 到 app 子域；app 子域是单页应用，什么路径都回 200 和同一个空壳，首页的字要跑完 JS 才有；也没有站点地图。维护者当天定了设计里 1 到 4 步都做，MCP 目录也上（改了 10-17 “不提交 MCP 目录”的决定），Google Search Console 由他自己配。
