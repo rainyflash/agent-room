@@ -152,3 +152,7 @@
   - 进下一阶段的三个起点（Synapse CPU P95 超过 0.7 个核、可用内存最低低于 500 MB、盘 60 天内不够 20 GiB）报告最后照着说一句。
   - 定时器每周一 01:23 UTC，和错误汇总共用一个令牌，安装放在第 5 步。
 - 2026-10-28：第 3 步 #625（IP 库、地区对照、前端的数加 `region`、`api_round_trip`、每天的活跃账户和请求次数，隐私说明页一起改）。DB-IP 只留两个月的文件，镜像构建时下载的那份 12 月初会失效，先每个月换一次（见第 3 步“和上面说的不一样”）。合并前在本机下载核对过：`.gz` 和解开后的 `.mmdb` 都和钉住的摘要一样，8 月的已经 404、9 月的还在。
+- 2026-10-28：第 5 步，Alpha 86 发完以后在生产上打开了：`deployment.json` 的 `telemetry` 改成 `{"enabled": true, "alerts": "ops-issues"}`（原样留在 `deployment.json.before-telemetry`），跑了 `telemetry-apply`，装了容量周报的定时器。
+  - 第一次跑 `telemetry-apply` 时，监控容器起好了，重建控制面那一步却在服务器上从源码编起了 Rust：它只用了 `compose.yaml` 和工作进程那份文件，没带发版部署钉死签名镜像的 `compose.images.json`，控制面的 `build:` 就生效了。编了几分钟、控制面还没动时停掉，手动带上那份文件、`--no-build --pull never` 重建，健康检查通过。编了一半的构建缓存约 3.3 GB 留在盘上，删不删等维护者。
+  - 修正（本 PR）：`telemetry-apply` 和 `control-plane-reload` 读控制面容器上记着的 compose 文件，带上那份签名镜像的，`--no-build --pull never`；不是发版部署起的就停下、什么都不动。
+  - 打开后约 30 分钟的读数：监控容器合计约 320 MB，Grafana 154 MB 最贴近上限（192 MB），Prometheus 70 MB；整机可用内存约 2 GB，盘剩 26 GB。看满一天再记一次。

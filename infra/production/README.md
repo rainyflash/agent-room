@@ -197,6 +197,8 @@ python3 tools/production.py telemetry-apply --config /etc/agent-room/deployment.
 
 发版部署只重建身份服务、控制面和网关，不起监控容器，所以开监控、换告警去处都用 `telemetry-apply`。关掉时监控容器删掉，数据卷留着，再开接着用。
 
+`control-plane-reload` 和 `telemetry-apply` 重建控制面时，照它容器上记着的那几份 compose 文件来，带上发版部署钉死签名镜像的 `compose.images.json`，并且 `--no-build`、不拉镜像：用的就是正在跑的那个签名镜像，不会在服务器上从源码编译。控制面不是发版部署起的就直接停下、什么都不动，先走一次发版部署。
+
 什么时候用、要多久、对在用的人有什么影响，见[首发当天的预案](../../docs/operations/launch-day.md)。
 
 没开监控（`telemetry.enabled` 为 `false`）时，用一条只读的命令看公开大厅、注册、发信和服务器的余量，最后列出要注意的地方：

@@ -215,17 +215,7 @@ class ProductionRuntime:
 
         self.prepare(generate_signing_key=False)
         self.validate_compose()
-        self._run(
-            [
-                *self.compose_command(),
-                "up",
-                "--detach",
-                "--wait",
-                "--no-deps",
-                "--force-recreate",
-                "control-plane",
-            ]
-        )
+        self._recreate_control_plane(self.running_compose_command("control-plane"))
         self.health(timeout_seconds=180)
 
     def apply_registration(self) -> None:
@@ -243,7 +233,7 @@ class ProductionRuntime:
 
         self.prepare(generate_signing_key=False)
         self.validate_compose()
-        compose = self.compose_command()
+        compose = self.running_compose_command("control-plane")
         if self.config.telemetry_enabled:
             services = [*TELEMETRY_SERVICES]
             if self.config.alertmanager_enabled:
@@ -253,8 +243,57 @@ class ProductionRuntime:
             self._run([*compose, "up", "--detach", "--wait", "--no-deps", "--force-recreate", *services])
         else:
             self._remove_service_containers((*TELEMETRY_SERVICES, ALERTMANAGER_SERVICE))
-        self._run([*compose, "up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"])
+        self._recreate_control_plane(compose)
         self.health(timeout_seconds=180)
+
+    def running_compose_command(self, service: str) -> list[str]:
+        """照正在跑的这个服务起的时候用的那几份 compose 文件来。
+
+        发版部署在 `compose_command()` 之外多带一份钉死签名镜像的 `compose.images.json`
+        （`release_deploy.py`）。只用 `compose_command()` 重建的话，控制面这种带 `build:` 的服务会在生产上
+        现场从源码编译：Alpha 86 发完开监控时，`telemetry-apply` 就在 2 核的服务器上编起了 Rust，编出来的
+        也不是验过签名的镜像。所以只重建一个服务时读它容器上记着的文件；不是发版部署起的就停下。"""
+
+        project = self.config.project_name
+        ids = self._run(
+            [
+                "docker",
+                "ps",
+                "--quiet",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+                "--filter",
+                f"label=com.docker.compose.service={service}",
+            ],
+            capture=True,
+        ).split()
+        if len(ids) != 1:
+            raise ProductionRuntimeError(f"{service} 没有正好一个在跑的容器，先走一次发版部署。")
+        label = '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
+        files = self._run(["docker", "inspect", "--format", label, ids[0]], capture=True).strip().split(",")
+        base = [str(COMPOSE_FILE), str(self.paths.worker_override)]
+        if len(files) != 3 or files[:2] != base or Path(files[2]).name != "compose.images.json":
+            raise ProductionRuntimeError(
+                f"{service} 不是由发版部署钉死签名镜像起的（compose 文件：{files}），不在这里重建。"
+            )
+        return [*self.compose_command(), "--file", files[2]]
+
+    def _recreate_control_plane(self, compose: list[str]) -> None:
+        # 镜像就是正在跑的那个签名镜像：不许编译，也不去拉。
+        self._run(
+            [
+                *compose,
+                "up",
+                "--detach",
+                "--wait",
+                "--no-deps",
+                "--force-recreate",
+                "--no-build",
+                "--pull",
+                "never",
+                "control-plane",
+            ]
+        )
 
     def _remove_service_containers(self, services: tuple[str, ...]) -> None:
         """停掉并删掉这几个服务的容器，数据卷留着。档没开的服务 Compose 不认，所以按标签找。"""

@@ -36,6 +36,7 @@ from tools.prodops.render import (
     render_deployment,
 )
 from tools.prodops.runtime import (
+    COMPOSE_FILE,
     ProductionRuntime,
     ProductionRuntimeError,
     TELEMETRY_SERVICES,
@@ -1173,18 +1174,44 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn(str(self.paths.compose_environment), command)
         self.assertIn(str(self.paths.worker_override), command)
 
+    SIGNED_IMAGES = "/var/lib/agent-room/releases/abc/compose.images.json"
+    RECREATE = [
+        "up",
+        "--detach",
+        "--wait",
+        "--no-deps",
+        "--force-recreate",
+        "--no-build",
+        "--pull",
+        "never",
+        "control-plane",
+    ]
+
+    def released_control_plane(self, *, files: str | None = None):
+        """假的 `_run`：控制面是发版部署钉死签名镜像起的，容器上记着三份 compose 文件。"""
+
+        recorded = files or ",".join([str(COMPOSE_FILE), str(self.paths.worker_override), self.SIGNED_IMAGES])
+
+        def run(command: list[str], capture: bool = False) -> str:
+            if command[:2] == ["docker", "ps"]:
+                return "0123abcd\n"
+            if command[:2] == ["docker", "inspect"]:
+                return recorded + "\n"
+            return ""
+
+        return run
+
     def test_launch_day_reloads_touch_only_what_changed(self) -> None:
         runtime = ProductionRuntime(self.config, self.paths)
         with (
-            patch.object(ProductionRuntime, "_run") as run,
+            patch.object(ProductionRuntime, "_run", side_effect=self.released_control_plane()) as run,
             patch.object(ProductionRuntime, "health") as health,
         ):
             runtime.reload_control_plane()
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(
-            commands[-1][-6:],
-            ["up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"],
-        )
+        self.assertEqual(commands[-1][-len(self.RECREATE):], self.RECREATE)
+        # 照正在跑的那份起：带着钉死签名镜像的文件，不会在生产上现场编译（Alpha 86）。
+        self.assertEqual(commands[-1][commands[-1].index(self.SIGNED_IMAGES) - 1], "--file")
         self.assertFalse(any("identity" in command or "synapse" in command for command in commands))
         health.assert_called_once()
         self.assertTrue(self.paths.compose_environment.exists())
@@ -1198,7 +1225,7 @@ class ProductionRenderingTests(unittest.TestCase):
         value["telemetry"] = {"enabled": True, "alerts": "ops-issues"}
         runtime = ProductionRuntime(DeploymentConfig.from_mapping(value), self.paths)
         with (
-            patch.object(ProductionRuntime, "_run", return_value="") as run,
+            patch.object(ProductionRuntime, "_run", side_effect=self.released_control_plane()) as run,
             patch.object(ProductionRuntime, "health") as health,
         ):
             runtime.apply_telemetry()
@@ -1208,9 +1235,10 @@ class ProductionRenderingTests(unittest.TestCase):
             ups,
             [
                 ["up", "--detach", "--wait", "--no-deps", "--force-recreate", *TELEMETRY_SERVICES],
-                ["up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"],
+                self.RECREATE,
             ],
         )
+        self.assertTrue(all(self.SIGNED_IMAGES in command for command in commands if "up" in command))
         # 告警开成 issue 时不起 alertmanager，以前起过的删掉。
         self.assertIn(
             "label=com.docker.compose.service=alertmanager",
@@ -1223,12 +1251,8 @@ class ProductionRenderingTests(unittest.TestCase):
 
         value["telemetry"] = {"enabled": False}
         runtime = ProductionRuntime(DeploymentConfig.from_mapping(value), self.paths)
-
-        def containers(command: list[str], capture: bool = False) -> str:
-            return "0123abcd\n" if command[:2] == ["docker", "ps"] else ""
-
         with (
-            patch.object(ProductionRuntime, "_run", side_effect=containers) as run,
+            patch.object(ProductionRuntime, "_run", side_effect=self.released_control_plane()) as run,
             patch.object(ProductionRuntime, "health"),
         ):
             runtime.apply_telemetry()
@@ -1236,7 +1260,23 @@ class ProductionRenderingTests(unittest.TestCase):
         removed = [command for command in commands if command[:2] == ["docker", "rm"]]
         self.assertEqual(len(removed), len(TELEMETRY_SERVICES) + 1)
         ups = [command[command.index("up"):] for command in commands if "up" in command]
-        self.assertEqual(ups, [["up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"]])
+        self.assertEqual(ups, [self.RECREATE])
+
+    def test_single_service_recreates_refuse_a_control_plane_without_signed_images(self) -> None:
+        runtime = ProductionRuntime(self.config, self.paths)
+        unpinned = ",".join([str(COMPOSE_FILE), str(self.paths.worker_override)])
+        for fake in (
+            self.released_control_plane(files=unpinned),
+            lambda command, capture=False: "" if command[:2] == ["docker", "ps"] else "x",
+        ):
+            with (
+                patch.object(ProductionRuntime, "_run", side_effect=fake) as run,
+                patch.object(ProductionRuntime, "health") as health,
+                self.assertRaisesRegex(ProductionRuntimeError, "发版部署"),
+            ):
+                runtime.reload_control_plane()
+            self.assertFalse(any("up" in call.args[0] for call in run.call_args_list))
+            health.assert_not_called()
 
     def test_firing_alerts_come_one_per_line_and_unreachable_prometheus_is_said(self) -> None:
         runtime = ProductionRuntime(self.config, self.paths)
