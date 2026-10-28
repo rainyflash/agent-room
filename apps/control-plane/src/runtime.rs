@@ -9,8 +9,8 @@ use agent_room_domain::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AuditEventId,
         AutomationGrantId, ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId,
         DeviceTokenFamilyId, HandoffId, LoginAttemptId, ModerationActionId, ModerationCaseId,
-        OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId,
-        RoomProvisioningLeaseId, RoomReservationId, WebSessionId,
+        PrincipalId, RoomCatalogId, RoomInstanceId, RoomProvisioningJobId, RoomProvisioningLeaseId,
+        RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -98,10 +98,6 @@ impl IdentifierFactory for SystemRuntime {
 
     fn automation_grant_id(&self) -> AutomationGrantId {
         AutomationGrantId::from_uuid(Uuid::now_v7())
-    }
-
-    fn outbox_event_id(&self) -> OutboxEventId {
-        OutboxEventId::from_uuid(Uuid::now_v7())
     }
 }
 

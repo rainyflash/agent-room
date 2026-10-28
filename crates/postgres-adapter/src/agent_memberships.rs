@@ -1,8 +1,7 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction,
-        OutboxMessage, PortFuture,
+        AgentMembershipChange, AgentMembershipRepository, AgentMembershipTransaction, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -16,7 +15,6 @@ use crate::{
     PostgresRepositories,
     agents::{decode_column, decode_optional_time, decode_time},
     error::{map_domain_error, map_sqlx_error},
-    outbox::insert_outbox_event,
 };
 
 impl AgentMembershipRepository for PostgresRepositories {
@@ -45,9 +43,8 @@ impl AgentMembershipTransaction for PostgresRepositories {
     fn apply_change<'a>(
         &'a self,
         change: &'a AgentMembershipChange,
-        event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<AgentMemberships>> {
-        Box::pin(async move { self.apply_membership_change(change, event).await })
+        Box::pin(async move { self.apply_membership_change(change).await })
     }
 }
 
@@ -55,10 +52,8 @@ impl PostgresRepositories {
     async fn apply_membership_change(
         &self,
         change: &AgentMembershipChange,
-        event: &OutboxMessage,
     ) -> RepositoryResult<AgentMemberships> {
         let operation = "agent_membership.change";
-        ensure_event_contract(change, event)?;
         let mut transaction = self
             .pool()
             .begin()
@@ -77,7 +72,6 @@ impl PostgresRepositories {
             }
 
             persist_change(&mut transaction, change).await?;
-            insert_outbox_event(&mut transaction, event).await?;
             Ok(memberships)
         }
         .await;
@@ -244,21 +238,4 @@ fn decode_member(
         decode_optional_time(row, "revoked_at_ms", operation)?,
     )
     .map_err(|_| RepositoryError::new(operation, RepositoryErrorKind::CorruptData))
-}
-
-fn ensure_event_contract(
-    change: &AgentMembershipChange,
-    event: &OutboxMessage,
-) -> RepositoryResult<()> {
-    if event.aggregate_type() == "agent"
-        && event.aggregate_id() == change.agent_id.as_uuid()
-        && event.event_type() == "agent.membership.changed.v1"
-    {
-        Ok(())
-    } else {
-        Err(RepositoryError::new(
-            "agent_membership.change.event_contract",
-            RepositoryErrorKind::Constraint,
-        ))
-    }
 }

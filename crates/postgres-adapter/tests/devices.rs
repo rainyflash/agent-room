@@ -4,16 +4,15 @@ use agent_room_application::persistence::RepositoryErrorKind;
 use agent_room_application::ports::{
     ComputerGrantRecord, ComputerGrantStore, DeviceProofNonceStore, DeviceRefreshOutcome,
     DeviceRefreshReplay, DeviceRefreshReplaySalt, DeviceRegistrationTransaction, DeviceRepository,
-    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-    DeviceSessionRegistration, DeviceSessionStore, DeviceTokenReplacement, PrincipalRegistration,
-    SecretDigest,
+    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSessionRegistration,
+    DeviceSessionStore, DeviceTokenReplacement, PrincipalRegistration, SecretDigest,
 };
 use agent_room_domain::{
     devices::{Device, DevicePlatform, DevicePublicSigningKey, DeviceTokenFamily},
     identity::Principal,
     ids::{
         DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId, DeviceRefreshTokenId,
-        DeviceTokenFamilyId, OutboxEventId, PrincipalId,
+        DeviceTokenFamilyId, PrincipalId,
     },
     time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
@@ -103,12 +102,11 @@ async fn 设备撤销会原子失效_token_并写入传播事件() {
         .expect("重复 nonce 返回冲突结果")
     );
 
-    let event = security_event(2_000);
     let outcome = DeviceRevocationTransaction::revoke(
         &repositories,
         stored.account.principal.id(),
         stored.device.id(),
-        event,
+        test_time(2_000),
     )
     .await
     .expect("设备撤销成功");
@@ -128,17 +126,7 @@ async fn 设备撤销会原子失效_token_并写入传播事件() {
         .expect("设备列表可查询");
     assert_eq!(listed.len(), 1);
     assert!(!listed[0].accepts_authenticated_requests());
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.outbox_event WHERE id = $1 AND event_type = $2",
-    )
-    .bind(event.id.as_uuid())
-    .bind("device.revoked.v1")
-    .fetch_one(&database.runtime)
-    .await
-    .expect("可检查撤销传播事件");
-    assert_eq!(event_count, 1);
 
-    delete_device_events(&database.runtime, stored.device.id()).await;
     database.close().await;
 }
 
@@ -164,13 +152,11 @@ async fn 并发刷新只能一次成功且旧令牌重用会提交泄露撤销()
             &repositories,
             &registration.session.refresh_token_digest,
             &first_replacement,
-            security_event(2_000),
         ),
         DeviceSessionStore::rotate_refresh(
             &repositories,
             &registration.session.refresh_token_digest,
             &second_replacement,
-            security_event(3_000),
         )
     );
     let outcomes = [
@@ -203,17 +189,7 @@ async fn 并发刷新只能一次成功且旧令牌重用会提交泄露撤销()
     .await
     .expect("可读取泄露状态");
     assert_eq!(state, ("revoked".to_owned(), "compromised".to_owned()));
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_id = $1 AND event_type = $2",
-    )
-    .bind(stored.device.id().as_uuid())
-    .bind("device.compromised.v1")
-    .fetch_one(&database.runtime)
-    .await
-    .expect("可检查泄露传播事件");
-    assert_eq!(event_count, 1);
 
-    delete_device_events(&database.runtime, stored.device.id()).await;
     database.close().await;
 }
 
@@ -268,7 +244,6 @@ async fn 同一尝试号的并发重试重放原轮换且不提交泄露撤销()
         "重放交回的新令牌仍是当前令牌，可以继续轮换"
     );
 
-    delete_device_events(&database.runtime, stored.device.id()).await;
     database.close().await;
 }
 
@@ -328,7 +303,6 @@ async fn 新令牌再次轮换后清空派生盐且迟到的旧尝试按重用�
         ("revoked".to_owned(), "compromised".to_owned())
     );
 
-    delete_device_events(&database.runtime, stored.device.id()).await;
     database.close().await;
 }
 
@@ -359,7 +333,6 @@ async fn 换一个尝试号重放已轮换的令牌仍提交泄露撤销() {
         ("revoked".to_owned(), "compromised".to_owned())
     );
 
-    delete_device_events(&database.runtime, stored.device.id()).await;
     database.close().await;
 }
 
@@ -409,7 +382,6 @@ async fn 换令牌时令牌组和新刷新令牌一起续期且只往后挪() {
         (unchanged, unchanged)
     );
 
-    delete_device_events(&database.runtime, device_id).await;
     database.close().await;
 }
 
@@ -456,7 +428,6 @@ async fn 换令牌时记下上次使用_一小时内不再写_只往后挪() {
         Some(test_time(21 * DAY))
     );
 
-    delete_device_events(&database.runtime, device_id).await;
     database.close().await;
 }
 
@@ -572,7 +543,6 @@ async fn 电脑授权注册这台电脑_用一次就删_令牌组记着认证时
         .expect_err("同一份授权不能再用");
     assert_eq!(reused.kind(), RepositoryErrorKind::NotFound);
 
-    delete_device_events(&database.runtime, stored.device.id()).await;
     database.close().await;
 }
 
@@ -748,14 +718,9 @@ async fn rotate(
     refresh_token_digest: &SecretDigest,
     replacement: &DeviceTokenReplacement,
 ) -> DeviceRefreshOutcome {
-    DeviceSessionStore::rotate_refresh(
-        repositories,
-        refresh_token_digest,
-        replacement,
-        security_event(replacement.issued_at.value() - test_time(0).value()),
-    )
-    .await
-    .expect("刷新轮换应返回确定结果")
+    DeviceSessionStore::rotate_refresh(repositories, refresh_token_digest, replacement)
+        .await
+        .expect("刷新轮换应返回确定结果")
 }
 
 fn assert_replays(
@@ -883,13 +848,6 @@ async fn device_state(pool: &PgPool, device_id: DeviceId) -> (String, String) {
     .expect("可读取设备与 Token 族状态")
 }
 
-fn security_event(offset: i64) -> DeviceSecurityEvent {
-    DeviceSecurityEvent {
-        id: OutboxEventId::from_uuid(Uuid::now_v7()),
-        occurred_at: test_time(offset),
-    }
-}
-
 fn test_time(offset: i64) -> UtcMillis {
     UtcMillis::new(1_700_000_000_000 + offset).expect("测试时间有效")
 }
@@ -905,12 +863,4 @@ async fn connect_pool(url: &str) -> PgPool {
         .connect(url)
         .await
         .expect("真实 PostgreSQL 必须可连接")
-}
-
-async fn delete_device_events(pool: &PgPool, device_id: DeviceId) {
-    sqlx::query("DELETE FROM agent_room.outbox_event WHERE aggregate_id = $1")
-        .bind(device_id.as_uuid())
-        .execute(pool)
-        .await
-        .expect("测试必须清理自己创建的传播事件");
 }

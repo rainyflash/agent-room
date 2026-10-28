@@ -19,7 +19,7 @@
 - 控制平面 API 月度可用性目标：99.9%；服务端 5xx 计为失败，4xx 计为成功处理的客户端请求。网络 Agent 的位置满了、总开关关着时回的 503（`network_agent.capacity_reached`、`network_agent.room_capacity_reached`、`network_agent.disabled`）是我们自己挡的，指标上带 `refusal` 标签，不算失败。
 - 交互延迟警戒线：API P95 持续 10 分钟超过 800ms。网络 Agent 等消息的长轮询（`GET /v1/network-agents/me/messages`，默认等 30 秒）不算进去。
 - 恢复目标：RPO 取部署配置的 1–15 分钟，RTO 取最近隔离恢复报告声明值。
-- Grafana 的 `Agent Room / Service truth` 仪表盘同时展示记录规则和原始依赖、Outbox、投影、Bridge、前端、备份与恢复指标。Outbox 只看不告警：控制面只往里写，一直没有发布器去读，待发布的条数和最旧的年龄只会涨（agent-room-ops#36）。
+- Grafana 的 `Agent Room / Service truth` 仪表盘同时展示记录规则和原始依赖、投影、Bridge、前端、备份与恢复指标。
 - 所有告警必须包含 `impact`、`diagnostic` 与 `runbook_url`。没有明确处置动作的指标只进入仪表盘，不分页。
 
 ## 操作入口

@@ -20,13 +20,12 @@ use agent_room_application::{
         DeviceProofVerifier, DeviceRefreshContext, DeviceRefreshOutcome, DeviceRefreshReplay,
         DeviceRefreshReplaySalt, DeviceRefreshTokenDerivation, DeviceRegistrationTransaction,
         DeviceRepository, DeviceRevocationOutcome, DeviceRevocationTransaction,
-        DeviceSecurityEvent, DeviceSessionRegistration, DeviceSessionStore, DeviceSignature,
-        DeviceTokenReplacement, IdentifierFactory, MatrixAgentDeviceSessionRevoker,
-        MatrixAgentDeviceSessionTarget, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount,
-        PrincipalRegistration, ProfileImportConsent, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue, StoredDeviceSession, VerifiedOidcDeviceAssertion,
-        VerifiedOidcIdentity,
+        DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
+        IdentifierFactory, MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionTarget,
+        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+        PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount, PrincipalRegistration,
+        ProfileImportConsent, SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
+        StoredDeviceSession, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
     },
 };
 use agent_room_domain::{
@@ -34,8 +33,8 @@ use agent_room_domain::{
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId, DeviceRefreshTokenId,
-        DeviceTokenFamilyId, HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId,
-        RoomInstanceId, RoomReservationId, WebSessionId,
+        DeviceTokenFamilyId, HandoffId, LoginAttemptId, PrincipalId, RoomCatalogId, RoomInstanceId,
+        RoomReservationId, WebSessionId,
     },
     time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
@@ -145,7 +144,6 @@ impl DeviceSessionStore for MemoryDeviceStore {
         &'a self,
         refresh_token_digest: &'a SecretDigest,
         replacement: &'a DeviceTokenReplacement,
-        security_event: DeviceSecurityEvent,
     ) -> PortFuture<'a, RepositoryResult<DeviceRefreshOutcome>> {
         Box::pin(async move {
             let mut state = self.state.lock().expect("测试设备仓储锁不得中毒");
@@ -159,15 +157,12 @@ impl DeviceSessionStore for MemoryDeviceStore {
                 let session = state.session.as_mut().ok_or_else(|| {
                     RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
                 })?;
-                session
-                    .device
-                    .revoke(security_event.occurred_at)
-                    .map_err(|_| {
-                        RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
-                    })?;
+                session.device.revoke(replacement.issued_at).map_err(|_| {
+                    RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
+                })?;
                 session
                     .family
-                    .mark_compromised(security_event.occurred_at)
+                    .mark_compromised(replacement.issued_at)
                     .map_err(|_| {
                         RepositoryError::new("device.refresh", RepositoryErrorKind::CorruptData)
                     })?;
@@ -260,7 +255,7 @@ impl DeviceRevocationTransaction for MemoryDeviceStore {
         &self,
         principal_id: PrincipalId,
         device_id: DeviceId,
-        security_event: DeviceSecurityEvent,
+        revoked_at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<DeviceRevocationOutcome>> {
         Box::pin(async move {
             let mut state = self.state.lock().expect("测试设备仓储锁不得中毒");
@@ -274,18 +269,12 @@ impl DeviceRevocationTransaction for MemoryDeviceStore {
             if session.device.trust_state() == DeviceTrustState::Revoked {
                 return Ok(DeviceRevocationOutcome::AlreadyRevoked(pending));
             }
-            session
-                .device
-                .revoke(security_event.occurred_at)
-                .map_err(|_| {
-                    RepositoryError::new("device.revoke", RepositoryErrorKind::CorruptData)
-                })?;
-            session
-                .family
-                .revoke(security_event.occurred_at)
-                .map_err(|_| {
-                    RepositoryError::new("device.revoke", RepositoryErrorKind::CorruptData)
-                })?;
+            session.device.revoke(revoked_at).map_err(|_| {
+                RepositoryError::new("device.revoke", RepositoryErrorKind::CorruptData)
+            })?;
+            session.family.revoke(revoked_at).map_err(|_| {
+                RepositoryError::new("device.revoke", RepositoryErrorKind::CorruptData)
+            })?;
             Ok(DeviceRevocationOutcome::Revoked(pending))
         })
     }
@@ -514,10 +503,6 @@ impl IdentifierFactory for TestIdentifiers {
 
     fn automation_grant_id(&self) -> AutomationGrantId {
         AutomationGrantId::from_uuid(Uuid::now_v7())
-    }
-
-    fn outbox_event_id(&self) -> OutboxEventId {
-        OutboxEventId::from_uuid(Uuid::now_v7())
     }
 }
 

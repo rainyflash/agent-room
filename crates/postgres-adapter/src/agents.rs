@@ -1,9 +1,8 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentRegistration, AgentRegistrationTransaction, AgentRepository, MatrixUserId,
-        OutboxMessage, PortFuture, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
-        RegisteredAgent,
+        AgentRegistration, AgentRepository, MatrixUserId, PortFuture, PrivateRoomAgentDescription,
+        PrivateRoomAgentDirectory, RegisteredAgent,
     },
 };
 use agent_room_domain::{
@@ -14,7 +13,7 @@ use agent_room_domain::{
 };
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 
-use crate::{PostgresRepositories, error::map_sqlx_error, outbox::insert_outbox_event};
+use crate::{PostgresRepositories, error::map_sqlx_error};
 
 /// 私人房间收紧成员能力时，要一并收紧他名下 Agent 在 Matrix 上的能力；复用所有权查询。
 impl PrivateRoomAgentDirectory for PostgresRepositories {
@@ -159,7 +158,7 @@ impl AgentRepository for PostgresRepositories {
         &'a self,
         registration: &'a AgentRegistration,
     ) -> PortFuture<'a, RepositoryResult<Agent>> {
-        Box::pin(async move { self.create_in_transaction(registration, None).await })
+        Box::pin(async move { self.create_in_transaction(registration).await })
     }
 
     fn save<'a>(&'a self, agent: &'a Agent) -> PortFuture<'a, RepositoryResult<Agent>> {
@@ -193,32 +192,11 @@ impl AgentRepository for PostgresRepositories {
     }
 }
 
-impl AgentRegistrationTransaction for PostgresRepositories {
-    fn create_with_event<'a>(
-        &'a self,
-        registration: &'a AgentRegistration,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<Agent>> {
-        Box::pin(async move { self.create_in_transaction(registration, Some(event)).await })
-    }
-}
-
 impl PostgresRepositories {
     async fn create_in_transaction(
         &self,
         registration: &AgentRegistration,
-        event: Option<&OutboxMessage>,
     ) -> RepositoryResult<Agent> {
-        if event.is_some_and(|event| {
-            event.aggregate_type() != "agent"
-                || event.aggregate_id() != registration.agent.id().as_uuid()
-                || event.event_type() != "agent.registered.v1"
-        }) {
-            return Err(RepositoryError::new(
-                "agent.create.event_contract",
-                RepositoryErrorKind::Constraint,
-            ));
-        }
         let mut transaction = self
             .pool
             .begin()
@@ -226,9 +204,6 @@ impl PostgresRepositories {
             .map_err(|error| map_sqlx_error("agent.create.begin", &error))?;
         let result = async {
             insert_agent_registration(&mut transaction, registration).await?;
-            if let Some(event) = event {
-                insert_outbox_event(&mut transaction, event).await?;
-            }
             Ok(())
         }
         .await;

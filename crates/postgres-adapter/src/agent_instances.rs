@@ -5,7 +5,7 @@ use agent_room_application::{
         AgentInstanceMatrixCleanupStore, AgentInstanceRegistration,
         AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
         AgentInstanceRevocationTransaction, AgentInstanceVerificationRecord,
-        AgentInstanceVerificationRepository, OutboxMessage, PortFuture, SecretDigest,
+        AgentInstanceVerificationRepository, PortFuture, SecretDigest,
         StoredAgentInstanceRegistration,
     },
 };
@@ -26,7 +26,6 @@ use crate::{
     agents::{decode_column, decode_optional_time, decode_time},
     error::map_sqlx_error,
     handoffs::fail_targeted_handoffs_for_instance,
-    outbox::insert_outbox_event,
 };
 
 const MANAGEMENT_SELECT: &str = r"instance.id, instance.agent_id, instance.device_id,
@@ -56,12 +55,11 @@ const MANAGEMENT_FROM: &str = r"FROM agent_room.agent_instance AS instance
        JOIN agent_room.principal AS principal ON principal.id = ownership.principal_id";
 
 impl AgentInstanceRegistrationTransaction for PostgresRepositories {
-    fn register_with_event<'a>(
+    fn register_instance<'a>(
         &'a self,
         registration: &'a AgentInstanceRegistration,
-        event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<StoredAgentInstanceRegistration>> {
-        Box::pin(async move { self.register_agent_instance(registration, event).await })
+        Box::pin(async move { self.register_agent_instance(registration).await })
     }
 }
 
@@ -204,14 +202,14 @@ impl AgentInstanceManagementRepository for PostgresRepositories {
 }
 
 impl AgentInstanceRevocationTransaction for PostgresRepositories {
-    fn revoke<'a>(
-        &'a self,
+    fn revoke(
+        &self,
         principal_id: PrincipalId,
         instance_id: AgentInstanceId,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<AgentInstanceRevocationOutcome>> {
+        revoked_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<AgentInstanceRevocationOutcome>> {
         Box::pin(async move {
-            self.revoke_agent_instance(principal_id, instance_id, event)
+            self.revoke_agent_instance(principal_id, instance_id, revoked_at)
                 .await
         })
     }
@@ -254,7 +252,6 @@ impl PostgresRepositories {
     async fn register_agent_instance(
         &self,
         registration: &AgentInstanceRegistration,
-        event: &OutboxMessage,
     ) -> RepositoryResult<StoredAgentInstanceRegistration> {
         let operation = "agent_instance.register";
         ensure_registration_coherence(registration)?;
@@ -280,14 +277,9 @@ impl PostgresRepositories {
 
             authorize_registration(&mut transaction, registration).await?;
             let binding = reconcile_binding(&mut transaction, registration).await?;
-            let (instance, inserted) =
-                reconcile_instance(&mut transaction, registration, &binding).await?;
+            let instance = reconcile_instance(&mut transaction, registration, &binding).await?;
             insert_registration_receipt(&mut transaction, registration, &binding, &instance)
                 .await?;
-            if inserted {
-                ensure_event_contract(&instance, event)?;
-                insert_outbox_event(&mut transaction, event).await?;
-            }
             Ok(StoredAgentInstanceRegistration { binding, instance })
         }
         .await;
@@ -299,7 +291,7 @@ impl PostgresRepositories {
         &self,
         principal_id: PrincipalId,
         instance_id: AgentInstanceId,
-        event: &OutboxMessage,
+        revoked_at: UtcMillis,
     ) -> RepositoryResult<AgentInstanceRevocationOutcome> {
         let operation = "agent_instance.management.revoke";
         let mut transaction = self
@@ -331,7 +323,6 @@ impl PostgresRepositories {
             if record.instance.status() == AgentInstanceStatus::Revoked {
                 return Ok(AgentInstanceRevocationOutcome::AlreadyRevoked(record));
             }
-            ensure_revocation_event_contract(instance_id, event)?;
             let update = sqlx::query(
                 r"UPDATE agent_room.agent_instance
                    SET status = 'revoked',
@@ -340,7 +331,7 @@ impl PostgresRepositories {
                    WHERE id = $1 AND status <> 'revoked'",
             )
             .bind(instance_id.as_uuid())
-            .bind(event.occurred_at().value())
+            .bind(revoked_at.value())
             .execute(&mut *transaction)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -350,13 +341,12 @@ impl PostgresRepositories {
             fail_targeted_handoffs_for_instance(
                 &mut transaction,
                 instance_id,
-                event.occurred_at(),
+                revoked_at,
                 operation,
             )
             .await?;
-            insert_outbox_event(&mut transaction, event).await?;
             record.instance.revoke();
-            record.revoked_at = Some(event.occurred_at());
+            record.revoked_at = Some(revoked_at);
             Ok(AgentInstanceRevocationOutcome::Revoked(record))
         }
         .await;
@@ -563,7 +553,7 @@ async fn reconcile_instance(
     transaction: &mut Transaction<'_, Postgres>,
     registration: &AgentInstanceRegistration,
     binding: &AdapterBinding,
-) -> RepositoryResult<(AgentInstance, bool)> {
+) -> RepositoryResult<AgentInstance> {
     let proposed = &registration.instance;
     let rows = sqlx::query(
         r"SELECT id, agent_id, device_id, adapter_binding_id, public_signing_key,
@@ -587,7 +577,7 @@ async fn reconcile_instance(
     match rows.as_slice() {
         [] => {
             insert_instance(transaction, proposed, binding, registration.registered_at).await?;
-            Ok((proposed.clone(), true))
+            Ok(proposed.clone())
         }
         [row] => {
             let stored = decode_instance(row, "agent_instance.register.instance")?;
@@ -598,7 +588,7 @@ async fn reconcile_instance(
             {
                 return Err(conflict("agent_instance.register.instance"));
             }
-            Ok((stored, false))
+            Ok(stored)
         }
         _ => Err(corrupt_data("agent_instance.register.instance")),
     }
@@ -815,37 +805,6 @@ fn ensure_registration_coherence(registration: &AgentInstanceRegistration) -> Re
     } else {
         Err(RepositoryError::new(
             "agent_instance.register.contract",
-            RepositoryErrorKind::Constraint,
-        ))
-    }
-}
-
-fn ensure_event_contract(instance: &AgentInstance, event: &OutboxMessage) -> RepositoryResult<()> {
-    if event.aggregate_type() == "agent_instance"
-        && event.aggregate_id() == instance.id().as_uuid()
-        && event.event_type() == "agent.instance.registered.v1"
-    {
-        Ok(())
-    } else {
-        Err(RepositoryError::new(
-            "agent_instance.register.event_contract",
-            RepositoryErrorKind::Constraint,
-        ))
-    }
-}
-
-fn ensure_revocation_event_contract(
-    instance_id: AgentInstanceId,
-    event: &OutboxMessage,
-) -> RepositoryResult<()> {
-    if event.aggregate_type() == "agent_instance"
-        && event.aggregate_id() == instance_id.as_uuid()
-        && event.event_type() == "agent.instance.revoked.v1"
-    {
-        Ok(())
-    } else {
-        Err(RepositoryError::new(
-            "agent_instance.revoke.event_contract",
             RepositoryErrorKind::Constraint,
         ))
     }

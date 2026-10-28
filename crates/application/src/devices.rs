@@ -15,11 +15,11 @@ use crate::{
         AgentInstanceMatrixCleanupStore, Clock, DerivedDeviceTokens, DeviceProofNonceStore,
         DeviceProofVerifier, DeviceRefreshOutcome, DeviceRefreshReplay, DeviceRefreshReplaySalt,
         DeviceRefreshTokenDerivation, DeviceRegistrationTransaction, DeviceRepository,
-        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-        DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
-        IdentifierFactory, MatrixAgentDeviceSessionRevoker, PendingAgentMatrixDeviceRevocation,
-        PortFuture, PrincipalAccount, ProfileImportConsent, SecretDigest, SecretFactory,
-        SecretValue, StoredDeviceSession, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
+        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSessionRegistration,
+        DeviceSessionStore, DeviceSignature, DeviceTokenReplacement, IdentifierFactory,
+        MatrixAgentDeviceSessionRevoker, PendingAgentMatrixDeviceRevocation, PortFuture,
+        PrincipalAccount, ProfileImportConsent, SecretDigest, SecretFactory, SecretValue,
+        StoredDeviceSession, VerifiedOidcDeviceAssertion, VerifiedOidcIdentity,
     },
 };
 
@@ -578,14 +578,7 @@ impl DeviceAuthorizationService {
         };
         let outcome = self
             .sessions
-            .rotate_refresh(
-                &refresh_digest,
-                &replacement,
-                DeviceSecurityEvent {
-                    id: self.identifiers.outbox_event_id(),
-                    occurred_at: now,
-                },
-            )
+            .rotate_refresh(&refresh_digest, &replacement)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
 
@@ -649,14 +642,7 @@ impl DeviceAuthorizationService {
         let now = self.clock.now();
         let outcome = self
             .revocations
-            .revoke(
-                principal_id,
-                device_id,
-                DeviceSecurityEvent {
-                    id: self.identifiers.outbox_event_id(),
-                    occurred_at: now,
-                },
-            )
+            .revoke(principal_id, device_id, now)
             .await
             .map_err(|error| map_repository_failure("device.revoke", &error))?;
         let pending = match outcome {

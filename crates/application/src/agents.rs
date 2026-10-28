@@ -27,8 +27,7 @@ use crate::{
         MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
         MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
         MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind, MatrixSession,
-        MatrixUserId, OutboxMessage, PortFuture, RegisteredAgent, SecretFactory,
-        StoredAgentInstanceRegistration,
+        MatrixUserId, PortFuture, RegisteredAgent, SecretFactory, StoredAgentInstanceRegistration,
     },
 };
 
@@ -364,9 +363,8 @@ impl AgentManagementService {
             visibility: request.visibility,
             registered_at: now,
         };
-        let event = agent_registered_event(&*self.identifiers, &registration, now)?;
         self.creations
-            .complete_with_event(request.request_id, &fingerprint, &registration, &event)
+            .complete_creation(request.request_id, &fingerprint, &registration)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
         Ok(RegisteredAgent::from(&registration))
@@ -452,15 +450,9 @@ impl AgentManagementService {
         if request.agent_id.as_uuid() == principal_id.as_uuid() {
             return Err(failure(operation, AgentManagementFailureKind::DefaultAgent));
         }
-        let event = agent_retired_event(
-            self.identifiers.as_ref(),
-            request.agent_id,
-            principal_id,
-            now,
-        )?;
         let outcome = self
             .retirements
-            .retire(principal_id, request.agent_id, now, &event)
+            .retire(principal_id, request.agent_id, now)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
         let kind = match outcome {
@@ -532,10 +524,9 @@ impl AgentManagementService {
             instance,
             registered_at: now,
         };
-        let event = agent_instance_registered_event(&*self.identifiers, &registration, now)?;
         let stored = self
             .instances
-            .register_with_event(&registration, &event)
+            .register_instance(&registration)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
 
@@ -682,9 +673,8 @@ impl AgentManagementService {
             role: request.role,
             changed_at: now,
         };
-        let event = agent_membership_changed_event(&*self.identifiers, &change, now)?;
         self.membership_changes
-            .apply_change(&change, &event)
+            .apply_change(&change)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
         Ok(())
@@ -931,105 +921,6 @@ fn encode_hex(bytes: &[u8]) -> String {
         encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     encoded
-}
-
-fn agent_registered_event(
-    identifiers: &dyn IdentifierFactory,
-    registration: &AgentRegistration,
-    occurred_at: agent_room_domain::time::UtcMillis,
-) -> AgentManagementResult<OutboxMessage> {
-    let mut payload = Map::new();
-    payload.insert(
-        "owner_id".to_owned(),
-        Value::String(registration.owner_id.to_string()),
-    );
-    payload.insert(
-        "matrix_user_id".to_owned(),
-        Value::String(registration.matrix_user_id.clone()),
-    );
-    OutboxMessage::new(
-        identifiers.outbox_event_id(),
-        "agent".to_owned(),
-        registration.agent.id().as_uuid(),
-        "agent.registered.v1".to_owned(),
-        payload,
-        occurred_at,
-    )
-    .map_err(|_| internal_failure("agent.create"))
-}
-
-fn agent_instance_registered_event(
-    identifiers: &dyn IdentifierFactory,
-    registration: &AgentInstanceRegistration,
-    occurred_at: agent_room_domain::time::UtcMillis,
-) -> AgentManagementResult<OutboxMessage> {
-    let mut payload = Map::new();
-    payload.insert(
-        "agent_id".to_owned(),
-        Value::String(registration.instance.agent_id().to_string()),
-    );
-    payload.insert(
-        "device_id".to_owned(),
-        Value::String(registration.device_id.to_string()),
-    );
-    OutboxMessage::new(
-        identifiers.outbox_event_id(),
-        "agent_instance".to_owned(),
-        registration.instance.id().as_uuid(),
-        "agent.instance.registered.v1".to_owned(),
-        payload,
-        occurred_at,
-    )
-    .map_err(|_| internal_failure("agent_instance.register"))
-}
-
-fn agent_retired_event(
-    identifiers: &dyn IdentifierFactory,
-    agent_id: AgentId,
-    principal_id: PrincipalId,
-    occurred_at: agent_room_domain::time::UtcMillis,
-) -> AgentManagementResult<OutboxMessage> {
-    let mut payload = Map::new();
-    payload.insert(
-        "principal_id".to_owned(),
-        Value::String(principal_id.to_string()),
-    );
-    OutboxMessage::new(
-        identifiers.outbox_event_id(),
-        "agent".to_owned(),
-        agent_id.as_uuid(),
-        "agent.retired.v1".to_owned(),
-        payload,
-        occurred_at,
-    )
-    .map_err(|_| internal_failure("agent.delete"))
-}
-
-fn agent_membership_changed_event(
-    identifiers: &dyn IdentifierFactory,
-    change: &AgentMembershipChange,
-    occurred_at: agent_room_domain::time::UtcMillis,
-) -> AgentManagementResult<OutboxMessage> {
-    let mut payload = Map::new();
-    payload.insert(
-        "principal_id".to_owned(),
-        Value::String(change.principal_id.to_string()),
-    );
-    payload.insert(
-        "role".to_owned(),
-        change
-            .role
-            .map_or(Value::Null, |role| Value::String(role.as_str().to_owned())),
-    );
-    OutboxMessage::new(
-        identifiers.outbox_event_id(),
-        "agent".to_owned(),
-        change.agent_id.as_uuid(),
-        "agent.membership.changed.v1".to_owned(),
-        payload,
-        occurred_at,
-    )
-    .map_err(|_| internal_failure("agent_membership.change"))
 }
 
 const fn map_repository_failure(
