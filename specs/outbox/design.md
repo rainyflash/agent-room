@@ -114,7 +114,7 @@
 ## 状态
 
 - 2026-10-28 起草（#636）。维护者当天定了：走甲，先停写、删代码和指标，下一版再删表（第 3 步合并前照旧再只读查一次行数）；撤销以后 Matrix 设备注销的后台重试另做一步（第 4 步）。Matrix 投影那两张表还没定。
-- 第 2 步（#PRNUM）：控制面不再写 `outbox_event`；删了 `OutboxProcessor`、Outbox 的端口和 Postgres 实现、`OutboxEventId` 和 `IdentifierFactory::outbox_event_id`、三个运行指标和仪表盘那一格，各处文档的说法照实改了。做的时候定下的：
+- 第 2 步（#637）：控制面不再写 `outbox_event`；删了 `OutboxProcessor`、Outbox 的端口和 Postgres 实现、`OutboxEventId` 和 `IdentifierFactory::outbox_event_id`、三个运行指标和仪表盘那一格，各处文档的说法照实改了。做的时候定下的：
   - 只为带上事件才有的 `AgentRegistrationTransaction`（`create_with_event`）整个去掉：`AgentRepository::create` 本来就做同样的写入，产品代码也没用它。`complete_with_event`、`register_with_event` 改名 `complete_creation`、`register_instance`。
   - `DeviceSecurityEvent` 去掉：撤销电脑、断开连接都改成传撤销的时间；刷新令牌被重复使用时，按这次换令牌的 `issued_at` 记失守。以前事件的时间和这两个都是请求的那一刻，结果一样。建 Agent 时 `agent_creation_request.completed_at` 改按 `registered_at` 写，也是同一刻。
   - 测试里查“写了一行 Outbox”的断言去掉；实例登记的幂等改查这个 Agent 在 `agent_instance` 里只有一行。`outbox_projection.rs` 只剩投影的测试，改名 `matrix_projection.rs`。
