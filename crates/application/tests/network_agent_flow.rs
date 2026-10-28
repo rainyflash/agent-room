@@ -23,15 +23,16 @@ use agent_room_application::{
     ports::{
         AgentInstanceManagementRecord, Clock, GeneratedSigningKey, IdentifierFactory,
         MatrixDeviceId, MatrixSession, MatrixSessionMetadata, MatrixUserId, NetworkAgentActivation,
-        NetworkAgentBeginOutcome, NetworkAgentIdleLobby, NetworkAgentKeyFactory,
-        NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentSecretSealer,
-        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights, PortFuture,
-        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord,
-        PrivateRoomSnapshot, PublicLobbyDirectoryEntry, PublicLobbyObservationRoom,
-        RateWindowBucket, RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory,
-        RoomDirectoryQuery, SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure,
-        SecretSealingFailure, SecretValue, StoredAgentInstanceRegistration, UniformSourceWeights,
+        NetworkAgentActivity, NetworkAgentBeginOutcome, NetworkAgentIdleLobby,
+        NetworkAgentKeyFactory, NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning,
+        NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
+        NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights,
+        PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
+        PublicLobbyObservationRoom, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
+        RegisteredAgent, RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest,
+        SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
+        StoredAgentInstanceRegistration, UniformSourceWeights,
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
@@ -1714,9 +1715,26 @@ impl NetworkSourceWeights for SharedSource {
     }
 }
 
+/// 记下凭令牌认出来的网络 Agent。
+#[derive(Default)]
+struct RecordingActivity(Mutex<Vec<NetworkAgentId>>);
+
+impl RecordingActivity {
+    fn seen(&self) -> Vec<NetworkAgentId> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl NetworkAgentActivity for RecordingActivity {
+    fn authenticated(&self, agent: NetworkAgentId) {
+        self.0.lock().unwrap().push(agent);
+    }
+}
+
 struct Harness {
     service: NetworkAgentService,
     store: Arc<MemoryStore>,
+    activity: Arc<RecordingActivity>,
     agents: Arc<FakeAgents>,
     lobbies: Arc<ScriptedLobbies>,
     access: Arc<FakeAccess>,
@@ -1753,6 +1771,7 @@ impl Harness {
         let access = Arc::new(FakeAccess::default());
         let rooms = Arc::new(FakeRooms::default());
         let runtime = Arc::new(TestRuntime::new());
+        let activity = Arc::new(RecordingActivity::default());
         let service = NetworkAgentService::new(NetworkAgentDependencies {
             store: store.clone(),
             sealer: Arc::new(MarkingSealer),
@@ -1768,11 +1787,13 @@ impl Harness {
             pause: runtime.clone(),
             policy,
             source_weights,
+            activity: activity.clone(),
             matrix_server_name: "matrix.test".to_owned(),
         });
         Self {
             service,
             store,
+            activity,
             agents,
             lobbies,
             access,
@@ -3091,6 +3112,27 @@ async fn 令牌不对或已停用就未认证_停用后同名可以再用() {
     let again = harness.create("Scout", None).await.unwrap();
     assert_tagged(&again.display_name, "Scout");
     assert_ne!(again.token.expose(), token);
+}
+
+#[tokio::test]
+async fn 只有凭令牌认出来的网络_agent_才算在用() {
+    let harness = Harness::enabled();
+    let created = harness.create("Scout", None).await.unwrap();
+    let token = created.token.expose().to_owned();
+    let agent = harness.store.only().id;
+    assert!(harness.activity.seen().is_empty(), "建的时候还没凭令牌认过");
+
+    for wrong in ["", "token-2"] {
+        harness.service.me(wrong).await.unwrap_err();
+    }
+    assert!(harness.activity.seen().is_empty());
+
+    harness.service.me(&token).await.unwrap();
+    assert_eq!(harness.activity.seen(), [agent]);
+
+    harness.service.disable(&token).await.expect("停用成功");
+    harness.service.me(&token).await.unwrap_err();
+    assert_eq!(harness.activity.seen(), [agent, agent], "停用以后不再算");
 }
 
 #[tokio::test]

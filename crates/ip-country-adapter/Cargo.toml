@@ -1,0 +1,16 @@
+[package]
+name = "agent-room-ip-country-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent-room-application.workspace = true
+agent-room-domain.workspace = true
+maxminddb.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

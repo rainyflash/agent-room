@@ -15,7 +15,11 @@ use tower::ServiceExt;
 use super::super::tests::{
     FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with, knock_record, owned_room,
 };
-use crate::network_gateway::{NetworkAgentRoomQuery, NetworkGatewayFailure};
+use crate::{
+    network_gateway::{NetworkAgentRoomQuery, NetworkGatewayFailure},
+    request_regions::{AccountKind, RegionUsage},
+};
+use agent_room_domain::regions::Region;
 
 const NOW: i64 = 1_758_600_000_000;
 
@@ -767,6 +771,47 @@ async fn 有人敲你建的房间的门时_等消息和查看自己都列出来(
     assert_eq!(
         me["result"]["structuredContent"]["incomingKnocks"][0]["displayName"],
         "Scout"
+    );
+}
+
+#[tokio::test]
+async fn 远程_mcp_里凭令牌认出来的网络_agent_也按地区算() {
+    let usage = RegionUsage::everywhere_in("SG");
+    let app = app(
+        Arc::new(FakeAgents::default()),
+        Arc::new(FakeMessaging::default()),
+    )
+    .layer(axum::middleware::from_fn_with_state(
+        usage.clone(),
+        crate::request_regions::attach,
+    ));
+
+    let wrong = rpc(
+        app.clone(),
+        &call("agent_room_get_self", &json!({})),
+        Some("wrong"),
+    )
+    .await;
+    assert_eq!(wrong["result"]["isError"], true);
+    assert_eq!(
+        usage.seen_today(Region::SoutheastAsia, AccountKind::NetworkAgent),
+        0,
+        "令牌不对不算"
+    );
+
+    for _ in 0..2 {
+        let me = rpc(
+            app.clone(),
+            &call("agent_room_get_self", &json!({})),
+            Some(TOKEN),
+        )
+        .await;
+        assert_eq!(me["result"]["structuredContent"]["displayName"], "Scout");
+    }
+    assert_eq!(
+        usage.seen_today(Region::SoutheastAsia, AccountKind::NetworkAgent),
+        1,
+        "工具在 rmcp 另起的任务里跑，也接上了这次请求"
     );
 }
 

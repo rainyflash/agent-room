@@ -6,10 +6,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 
 ## Inventory
 
-- Cargo packages: 887
+- Cargo packages: 889
 - npm packages: 718
-- Total locked package versions: 1605
-- `Cargo.lock` SHA-256: `0299a83a96ad42942827f2e6d48f7723f0b44c638f8d846ed52f7cce3b6690aa`
+- Total locked package versions: 1607
+- `Cargo.lock` SHA-256: `ad56c7c4b136a8608c74d465868030e94faf66a4aabde2f844c6e98d810c5e7c`
 - `pnpm-lock.yaml` SHA-256: `a2b0972236040643a978875fe98ce4c676c6fa15561da4344e3177751888e369`
 
 ## License expressions
@@ -48,12 +48,12 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception` | 1 |
 | `CC0-1.0 OR MIT-0 OR Apache-2.0` | 2 |
 | `CDLA-Permissive-2.0` | 2 |
-| `ISC` | 56 |
+| `ISC` | 57 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
 | `MIT` | 769 |
 | `MIT AND BSD-3-Clause` | 1 |
-| `MIT OR Apache-2.0` | 378 |
+| `MIT OR Apache-2.0` | 379 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | 2 |
 | `MIT OR Apache-2.0 OR Zlib` | 3 |
@@ -411,6 +411,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [inout](https://github.com/RustCrypto/utils) | 0.1.4 | `MIT OR Apache-2.0` |
 | cargo | [interprocess](https://github.com/kotauskas/interprocess) | 2.4.3 | `0BSD OR Apache-2.0` |
 | cargo | [ipnet](https://github.com/krisprice/ipnet) | 2.12.1 | `MIT OR Apache-2.0` |
+| cargo | [ipnetwork](https://github.com/achanda/ipnetwork) | 0.21.1 | `MIT OR Apache-2.0` |
 | cargo | [is-docker](https://github.com/TheLarkInn/is-docker) | 0.2.0 | `MIT` |
 | cargo | [is-wsl](https://github.com/TheLarkInn/is-wsl) | 0.4.0 | `MIT` |
 | cargo | [is_terminal_polyfill](https://github.com/polyfill-rs/is_terminal_polyfill) | 1.70.2 | `MIT OR Apache-2.0` |
@@ -485,6 +486,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [matrix-sdk-store-encryption](https://github.com/matrix-org/matrix-rust-sdk) | 0.18.0 | `Apache-2.0` |
 | cargo | [matrix_indexed_db_futures](https://github.com/matrix-org/rust-indexed-db) | 0.7.0 | `MIT` |
 | cargo | [matrix_indexed_db_futures_macros_internal](https://github.com/matrix-org/rust-indexed-db) | 1.0.0 | `MIT` |
+| cargo | [maxminddb](https://github.com/oschwald/maxminddb-rust) | 0.32.0 | `ISC` |
 | cargo | [md-5](https://github.com/RustCrypto/hashes) | 0.11.0 | `MIT OR Apache-2.0` |
 | cargo | [memchr](https://github.com/BurntSushi/memchr) | 2.8.3 | `Unlicense OR MIT` |
 | cargo | [memoffset](https://github.com/Gilnaa/memoffset) | 0.9.1 | `MIT` |
@@ -1679,3 +1681,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [yargs-parser](https://www.npmjs.com/package/yargs-parser/v/22.0.0) | 22.0.0 | `ISC` |
 | npm | [yocto-queue](https://www.npmjs.com/package/yocto-queue/v/0.1.0) | 0.1.0 | `MIT` |
 | npm | [zod](https://www.npmjs.com/package/zod/v/4.6.7) | 4.6.7 | `MIT` |
+
+## Bundled data
+
+The control-plane container image includes the DB-IP IP to Country Lite database. The control plane uses it only to turn a request's address into a coarse region for aggregate counts; the address is not stored. [IP Geolocation by DB-IP](https://db-ip.com) is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

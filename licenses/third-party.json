@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "0299a83a96ad42942827f2e6d48f7723f0b44c638f8d846ed52f7cce3b6690aa",
+    "Cargo.lock": "ad56c7c4b136a8608c74d465868030e94faf66a4aabde2f844c6e98d810c5e7c",
     "pnpm-lock.yaml": "a2b0972236040643a978875fe98ce4c676c6fa15561da4344e3177751888e369"
   },
   "dependencies": [
@@ -2366,6 +2366,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "ipnetwork",
+      "version": "0.21.1",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/achanda/ipnetwork"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "is-docker",
       "version": "0.2.0",
       "license": "MIT",
@@ -2881,6 +2888,13 @@
       "version": "1.0.0",
       "license": "MIT",
       "source": "https://github.com/matrix-org/rust-indexed-db"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "maxminddb",
+      "version": "0.32.0",
+      "license": "ISC",
+      "source": "https://github.com/oschwald/maxminddb-rust"
     },
     {
       "ecosystem": "cargo",

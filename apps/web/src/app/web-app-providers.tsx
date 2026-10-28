@@ -59,6 +59,7 @@ import { ControlPlaneEncryptionKeyEscrow } from '@/features/session/adapters/con
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { TauriMatrixSessionVault } from '@/features/session/adapters/tauri-matrix-session-vault';
 import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
+import { ControlPlaneRoundTripProbe } from '@/features/telemetry/adapters/control-plane-round-trip-probe';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { readLanguagePreference } from '@/shared/i18n/i18n';
@@ -129,6 +130,10 @@ export function createCloudRuntime(
     : browserControlPlane;
   const roomDirectory = new ControlPlanePublicRoomDirectoryClient(businessApi);
   const telemetry = new ControlPlaneFrontendTelemetryClient({
+    baseUrl: config.controlPlaneUrl,
+    fetch: controlPlaneFetch,
+  });
+  const roundTrip = new ControlPlaneRoundTripProbe({
     baseUrl: config.controlPlaneUrl,
     fetch: controlPlaneFetch,
   });
@@ -243,6 +248,7 @@ export function createCloudRuntime(
       fetch: controlPlaneFetch,
     }),
     roomDirectory,
+    roundTrip,
     security: new MatrixSdkSecurityGateway(matrixClients),
     session: {
       browser: new WindowBrowserGateway(),

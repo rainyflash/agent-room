@@ -18,6 +18,7 @@ members = [
   "crates/domain",
   "crates/host-adapters",
   "crates/identity-adapter",
+  "crates/ip-country-adapter",
   "crates/macos-keychain",
   "crates/matrix-adapter",
   "crates/matrix-provisioning-adapter",
@@ -49,6 +50,7 @@ agent-room-content-adapter = { version = "0.1.0-alpha.85", path = "crates/conten
 agent-room-domain = { version = "0.1.0-alpha.85", path = "crates/domain" }
 agent-room-host-adapters = { version = "0.1.0-alpha.85", path = "crates/host-adapters" }
 agent-room-identity-adapter = { version = "0.1.0-alpha.85", path = "crates/identity-adapter" }
+agent-room-ip-country-adapter = { version = "0.1.0-alpha.85", path = "crates/ip-country-adapter" }
 agent-room-macos-keychain = { version = "0.1.0-alpha.85", path = "crates/macos-keychain" }
 agent-room-matrix-adapter = { version = "0.1.0-alpha.85", path = "crates/matrix-adapter" }
 agent-room-matrix-provisioning-adapter = { version = "0.1.0-alpha.85", path = "crates/matrix-provisioning-adapter" }
@@ -77,6 +79,7 @@ jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust
 keyring = "4.1.6"
 matrix-sdk = { version = "0.18.0", default-features = false }
 matrix-sdk-base = { version = "0.18.0", default-features = false }
+maxminddb = "0.32.0"
 minisign-verify = "0.2.5"
 opentelemetry = { version = "0.32.0", features = ["metrics", "trace"] }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "metrics", "reqwest-blocking-client", "trace"] }
