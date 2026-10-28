@@ -4,6 +4,7 @@ pub mod agent_cards;
 pub mod agent_instance_management;
 pub mod agent_instance_verification;
 pub mod agent_lobbies;
+pub mod agent_matrix_device_retry;
 pub mod agent_room_departures;
 pub mod agent_room_placements;
 pub mod agents;

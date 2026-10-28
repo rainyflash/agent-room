@@ -40,7 +40,7 @@
 | ---------------------- | --------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | 建 Agent               | 在 Matrix 上开 Agent 的账户       | 写库之前先 `ensure_user`（幂等）                                                 | 请求失败，同一个请求 ID 再来一次（`agent_creation_request` 记着） |
 | 登记连接               | 给这个连接一台 Matrix 设备和会话  | 写库之后马上 `rotate_device_session`                                             | 请求失败，Bridge 再登记一次、拿回原记录                          |
-| 断开连接、撤销电脑     | 注销 Agent 的 Matrix 设备         | 请求里直接注销，记下 `matrix_device_revoked_at`                                  | 回 202，要人再点一次撤销；没有后台重试（见“顺带发现的”）         |
+| 断开连接、撤销电脑     | 注销 Agent 的 Matrix 设备         | 请求里直接注销，记下 `matrix_device_revoked_at`                                  | 回 202；以前要人再点一次撤销，第 4 步起后台每 30 秒再试          |
 | 撤销电脑               | 它的 Agent 离开房间               | 撤销事务里记进 `revoked_agent_departure`，请求里做一遍，后台每 30 秒接着做（#546） | 退避重试                                                         |
 | 删除 Agent             | 先离开它在的所有房间              | 接口里先 `leave_all`（#449），离开不成就不删                                     | 再点一次                                                         |
 | 改主人                 | 没有：主人只记在控制面            | —                                                                                | —                                                                |
@@ -85,7 +85,7 @@
 
 ## 顺带发现的
 
-- 撤销以后 Matrix 设备没注销成时，没有后台重试（`specs/computer-revocation/design.md` 的“不做”里记过）。撤销那一刻 Synapse 不通，Agent 的 Matrix 设备就一直登着，要人再点一次撤销；桌面端换账号、移出这台电脑的那条路上，这台电脑的凭据已经删了，没人能再点。生产上现在一个也没有。建议另做一小步：照 `agent_room_departures.rs` 的样子，后台每 30 秒找 `revoked_at` 有值、`matrix_device_revoked_at` 为空的连接再注销一次，用上已有的部分索引。它和去掉 Outbox 互不依赖。
+- 撤销以后 Matrix 设备没注销成时，没有后台重试（`specs/computer-revocation/design.md` 的“不做”里记过）。撤销那一刻 Synapse 不通，Agent 的 Matrix 设备就一直登着，要人再点一次撤销；桌面端换账号、移出这台电脑的那条路上，这台电脑的凭据已经删了，没人能再点。生产上现在一个也没有。建议另做一小步：照 `agent_room_departures.rs` 的样子，后台每 30 秒找 `revoked_at` 有值、`matrix_device_revoked_at` 为空的连接再注销一次，用上已有的部分索引。它和去掉 Outbox 互不依赖。（第 4 步做了，见“状态”。）
 - 和 Outbox 同一批做的 Matrix 投影（`matrix_projection_cursor`、`matrix_projection_event_receipt`，`crates/postgres-adapter/src/projections.rs`）看着也没接上：`MatrixProjectionStore` 只有 Postgres 那一份实现，没有用例用它，控制面里只有运行指标读这两张表（表是空的，所以“投影停滞”的告警不会响）。没细查，要不要一起清另说。
 
 ## 要维护者定的
@@ -109,6 +109,7 @@
 ## 验收
 
 - 第 2 步：建 Agent、登记连接、断开连接、撤销电脑、删除 Agent、改主人、刷新令牌被重复使用的测试照旧过，去掉其中“写了一行 Outbox”的断言；运行指标的测试按新的名单改；真实数据库测试派发 `suite=all` 跑。
+- 第 4 步：用例的单元测试（注销成的记下、刚撤销的不碰、退避翻倍、聊天服务器不通时这一轮先停），定时任务的启停测试；真实数据库测试查读得到撤销了还没注销的、读不到撤销时间以后的和已经注销的，派发 `suite=all` 跑。
 - 第 3 步：迁移在真实库上跑过，`crates/postgres-adapter/tests/real_database.rs` 的表名单去掉它；上线后只读查一次表已经不在、控制面健康。
 
 ## 状态
@@ -120,3 +121,10 @@
   - 测试里查“写了一行 Outbox”的断言去掉；实例登记的幂等改查这个 Agent 在 `agent_instance` 里只有一行。`outbox_projection.rs` 只剩投影的测试，改名 `matrix_projection.rs`。
   - 表还在，`real_database.rs` 的表名单照旧有它，第 3 步再删。
   - 改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`（都在 `LOGIN_PATHS` 里），带它的那一版实机验收要走一次新设备授权。
+- 第 4 步（#638）：控制面每 30 秒找撤销了、Matrix 设备还没注销成的连接，再注销一次（应用层和控制面各一个 `agent_matrix_device_retry.rs`）。做的时候定下的：
+  - 不另建表、没有迁移：要不要再试只看 `agent_instance` 的 `revoked_at` 和 `matrix_device_revoked_at`，走迁移 `202608250002` 建的部分索引。注销是幂等的（设备已经没了也算注销成），几个控制面副本同时试只是多发一次注销，所以不领租约。
+  - 撤销以后 30 秒以内的先不碰，留给撤销的那次请求自己做。
+  - 退避只记在内存里：30 秒起翻倍，最长 15 分钟，不放弃（放弃了这台设备就一直登着）；控制面重启以后从头来。一轮最多读 200 条、试 20 条；整台聊天服务器不通，或者注销成了库却记不下来时，这一轮先停。
+  - 日志：注销成了记 info；同一个连接在这个进程里第一次没注销成记 warn（错误码和治理动作的一套，比如 `matrix.unavailable`），之后再失败只记 debug，不会每 30 秒刷一条。
+  - 删除账户时，提出删除的那一刻就把这个账户的连接记成撤销（`crates/postgres-adapter/src/accounts.rs`），从来不注销它们的 Matrix 设备，Agent 的设备一直登着。这一步起它们也由这个定时任务注销。2026-10-28 只读查生产：待注销的 0 个、删除任务 0 个，上线后第一轮什么都不动。
+  - 撤销接口的回答不变，204、202 照旧，只是 202 以后不用人再点。没改 `LOGIN_PATHS` 里的文件，带它的那一版不用为它走新设备授权。

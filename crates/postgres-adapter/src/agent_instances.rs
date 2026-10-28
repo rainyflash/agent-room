@@ -5,8 +5,8 @@ use agent_room_application::{
         AgentInstanceMatrixCleanupStore, AgentInstanceRegistration,
         AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
         AgentInstanceRevocationTransaction, AgentInstanceVerificationRecord,
-        AgentInstanceVerificationRepository, PortFuture, SecretDigest,
-        StoredAgentInstanceRegistration,
+        AgentInstanceVerificationRepository, PendingAgentMatrixDeviceRevocation,
+        PendingAgentMatrixDeviceStore, PortFuture, SecretDigest, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -244,6 +244,45 @@ impl AgentInstanceMatrixCleanupStore for PostgresRepositories {
                     RepositoryErrorKind::Constraint,
                 ))
             }
+        })
+    }
+}
+
+/// 撤销了、Matrix 设备还没注销成的连接，给后台再试用。走迁移 `202608250002` 建的部分索引。
+impl PendingAgentMatrixDeviceStore for PostgresRepositories {
+    fn list_pending_matrix_devices(
+        &self,
+        revoked_before: UtcMillis,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PendingAgentMatrixDeviceRevocation>>> {
+        Box::pin(async move {
+            let operation = "agent_instance.matrix_cleanup.pending";
+            let rows = sqlx::query(
+                r"SELECT instance.id, agent.matrix_user_id, instance.matrix_device_id
+                   FROM agent_room.agent_instance AS instance
+                   JOIN agent_room.agent AS agent ON agent.id = instance.agent_id
+                   WHERE instance.revoked_at IS NOT NULL
+                     AND instance.matrix_device_revoked_at IS NULL
+                     AND instance.revoked_at <= to_timestamp($1::double precision / 1000.0)
+                   ORDER BY instance.revoked_at, instance.id
+                   LIMIT $2",
+            )
+            .bind(revoked_before.value())
+            .bind(i64::from(limit))
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| {
+                    Ok(PendingAgentMatrixDeviceRevocation {
+                        instance_id: AgentInstanceId::from_uuid(decode_column(
+                            row, "id", operation,
+                        )?),
+                        matrix_user_id: decode_column(row, "matrix_user_id", operation)?,
+                        matrix_device_id: decode_column(row, "matrix_device_id", operation)?,
+                    })
+                })
+                .collect()
         })
     }
 }

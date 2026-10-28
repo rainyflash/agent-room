@@ -1,4 +1,5 @@
 mod account_deletion;
+mod agent_matrix_device_retry;
 mod agent_room_departures;
 mod client_address;
 mod config;
@@ -38,6 +39,9 @@ use agent_room_application::{
         AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
     },
     agent_lobbies::{AgentLobbyEntryDependencies, AgentLobbyEntryService},
+    agent_matrix_device_retry::{
+        AgentMatrixDeviceRetryDependencies, AgentMatrixDeviceRetryService,
+    },
     agent_room_departures::{AgentRoomDepartureDependencies, AgentRoomDepartureService},
     agent_room_placements::{AgentRoomPlacementDependencies, AgentRoomPlacementService},
     agents::{AgentManagementDependencies, AgentManagementService},
@@ -136,6 +140,8 @@ struct IdentityRuntime {
     moderation_expiry: moderation_expiry::ModerationExpiryWorker,
     /// 撤销电脑以后让它的 Agent 离开房间，撤销的请求里没做成的由它接着做。
     agent_room_departures: agent_room_departures::AgentRoomDepartureWorker,
+    /// 撤销以后 Matrix 设备没注销成的，由它接着试。
+    matrix_device_retry: agent_matrix_device_retry::AgentMatrixDeviceRetryWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -234,6 +240,7 @@ pub async fn run() -> Result<(), StartupError> {
         operational_metrics,
         moderation_expiry,
         agent_room_departures,
+        matrix_device_retry,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -261,6 +268,7 @@ pub async fn run() -> Result<(), StartupError> {
     operational_metrics.shutdown().await;
     moderation_expiry.shutdown().await;
     agent_room_departures.shutdown().await;
+    matrix_device_retry.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -437,6 +445,7 @@ async fn build_identity_router(
         operational_metrics,
         moderation_expiry: start_moderation_expiry(&agent_dependencies),
         agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
+        matrix_device_retry: start_matrix_device_retry(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -596,6 +605,20 @@ fn start_operational_metrics(
 }
 
 /// 治理动作到期自动解除，用自己的一份治理服务。
+/// 撤销以后 Matrix 设备没注销成的，后台再试（specs/outbox/design.md 第 4 步）。
+fn start_matrix_device_retry(
+    dependencies: &AgentFeatureDependencies,
+) -> agent_matrix_device_retry::AgentMatrixDeviceRetryWorker {
+    agent_matrix_device_retry::AgentMatrixDeviceRetryWorker::start(Arc::new(
+        AgentMatrixDeviceRetryService::new(AgentMatrixDeviceRetryDependencies {
+            pending: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            cleanup: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        }),
+    ))
+}
+
 fn start_moderation_expiry(
     dependencies: &AgentFeatureDependencies,
 ) -> moderation_expiry::ModerationExpiryWorker {
