@@ -101,10 +101,16 @@ class BackupConfig:
         return self.rpo_minutes * 60
 
 
+TELEMETRY_ALERT_ROUTES = ("webhook", "ops-issues")
+
+
 @dataclass(frozen=True, slots=True)
 class TelemetryConfig:
     enabled: bool
     alert_webhook_url: str | None
+    # 告警去处：`webhook` 由 Alertmanager 发到 alertWebhookUrl；`ops-issues` 不起 Alertmanager，
+    # 由每小时的错误汇总读 Prometheus 里正在响的告警、开成 ops 的 issue（specs/measurement/design.md）。
+    alert_route: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +296,14 @@ class DeploymentConfig:
     @property
     def telemetry_enabled(self) -> bool:
         return self.telemetry.enabled
+
+    @property
+    def alertmanager_enabled(self) -> bool:
+        return self.telemetry.alert_route == "webhook"
+
+    @property
+    def alerts_to_ops_issues(self) -> bool:
+        return self.telemetry.alert_route == "ops-issues"
 
     @property
     def compose_profiles(self) -> tuple[str, ...]:
@@ -481,7 +495,7 @@ def _parse_backup(value: object, database_value: object) -> BackupConfig:
 
 def _parse_telemetry(value: object) -> TelemetryConfig:
     source = _mapping(value, "telemetry")
-    _reject_unknown(source, {"enabled", "alertWebhookUrl"}, "telemetry")
+    _reject_unknown(source, {"enabled", "alertWebhookUrl", "alerts"}, "telemetry")
     enabled = source.get("enabled", True)
     if not isinstance(enabled, bool):
         raise DeploymentConfigError("telemetry.enabled 必须是布尔值。")
@@ -493,11 +507,19 @@ def _parse_telemetry(value: object) -> TelemetryConfig:
         if isinstance(raw_webhook, str)
         else None
     )
-    if enabled and webhook is None:
-        raise DeploymentConfigError("启用 telemetry 时必须配置 HTTPS 告警接收端。")
-    if not enabled and webhook is not None:
-        raise DeploymentConfigError("关闭 telemetry 时不得配置告警接收端。")
-    return TelemetryConfig(enabled=enabled, alert_webhook_url=webhook)
+    alerts = source.get("alerts")
+    if alerts is not None and alerts != "ops-issues":
+        raise DeploymentConfigError("telemetry.alerts 只能是 ops-issues；要发到接收端就写 alertWebhookUrl。")
+    if not enabled:
+        if webhook is not None or alerts is not None:
+            raise DeploymentConfigError("关闭 telemetry 时不得配置告警去处。")
+        return TelemetryConfig(enabled=False, alert_webhook_url=None)
+    if (webhook is None) == (alerts is None):
+        raise DeploymentConfigError(
+            "启用 telemetry 时要给一个告警去处：HTTPS 告警接收端 alertWebhookUrl，或者 alerts 写 ops-issues。"
+        )
+    route = "ops-issues" if alerts is not None else "webhook"
+    return TelemetryConfig(enabled=True, alert_webhook_url=webhook, alert_route=route)
 
 
 def _parse_identity(value: object) -> IdentityConfig:

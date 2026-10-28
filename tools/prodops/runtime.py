@@ -56,6 +56,17 @@ RECOMMENDED_MEMORY_BYTES: Final = 8 * 1024**3
 MEMORY_RESERVATION_ALLOWANCE_BYTES: Final = 256 * 1024**2
 MINIMUM_DISK_BYTES: Final = 20 * 1024**3
 RECOMMENDED_DISK_BYTES: Final = 100 * 1024**3
+# `telemetry` 档里一直开着的监控容器；`alertmanager` 只在告警发到接收端（`telemetry-webhook` 档）时开。
+TELEMETRY_SERVICES: Final = (
+    "telemetry",
+    "prometheus",
+    "blackbox",
+    "postgres-exporter",
+    "recovery-metrics",
+    "host-metrics",
+    "grafana",
+)
+ALERTMANAGER_SERVICE: Final = "alertmanager"
 
 
 class ProductionRuntimeError(RuntimeError):
@@ -224,6 +235,64 @@ class ProductionRuntime:
         self.prepare(generate_signing_key=False)
         self.validate_compose()
         self.reconcile_identity()
+
+    def apply_telemetry(self) -> None:
+        """改了 telemetry 以后：重新渲染，按它起或停监控容器，再只重建控制面，让它往新的地方发指标
+        （`specs/measurement/design.md`）。发版部署只重建身份服务、控制面和网关，监控容器要用这个单独起。
+        数据库、Synapse 这些不动：`--no-deps`，监控容器自己连得上它们。"""
+
+        self.prepare(generate_signing_key=False)
+        self.validate_compose()
+        compose = self.compose_command()
+        if self.config.telemetry_enabled:
+            services = [*TELEMETRY_SERVICES]
+            if self.config.alertmanager_enabled:
+                services.append(ALERTMANAGER_SERVICE)
+            else:
+                self._remove_service_containers((ALERTMANAGER_SERVICE,))
+            self._run([*compose, "up", "--detach", "--wait", "--no-deps", "--force-recreate", *services])
+        else:
+            self._remove_service_containers((*TELEMETRY_SERVICES, ALERTMANAGER_SERVICE))
+        self._run([*compose, "up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"])
+        self.health(timeout_seconds=180)
+
+    def _remove_service_containers(self, services: tuple[str, ...]) -> None:
+        """停掉并删掉这几个服务的容器，数据卷留着。档没开的服务 Compose 不认，所以按标签找。"""
+
+        project = self.config.project_name
+        for service in services:
+            ids = self._run(
+                [
+                    "docker",
+                    "ps",
+                    "--all",
+                    "--quiet",
+                    "--filter",
+                    f"label=com.docker.compose.project={project}",
+                    "--filter",
+                    f"label=com.docker.compose.service={service}",
+                ],
+                capture=True,
+            ).split()
+            if ids:
+                self._run(["docker", "rm", "--force", *ids], capture=True)
+
+    def firing_alerts(self) -> list[str]:
+        """Prometheus 的告警，一条一行（JSON），交给错误汇总；正在响的、快要响的都在里面，汇总只认正在响的。
+        Prometheus 只开在本机端口上（和 Compose 里一样，`AGENT_ROOM_PROMETHEUS_PORT` 默认 9090）。
+        读不到时交一条 `unreachable`：监控停了也要有人知道。"""
+
+        port = os.environ.get("AGENT_ROOM_PROMETHEUS_PORT") or "9090"
+        url = f"http://127.0.0.1:{port}/api/v1/alerts"
+        try:
+            with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=10) as response:
+                alerts = json.load(response)["data"]["alerts"]
+            if not isinstance(alerts, list):
+                raise TypeError("data.alerts 不是列表")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            moment = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return [json.dumps({"unreachable": f"{type(error).__name__}: {error}", "at": moment})]
+        return [json.dumps(alert, ensure_ascii=False) for alert in alerts if isinstance(alert, dict)]
 
     def reconcile_identity(self) -> None:
         self._run([*self.compose_command(), "up", "--detach", "--wait", "identity"])

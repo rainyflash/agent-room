@@ -46,13 +46,13 @@
 - **整台服务器挂了也要知道：** 服务器自己挂了就什么都报不出来。在私有仓库 `agent-room-ops` 里加一个定时工作流，每 30 分钟从 GitHub 的机器上探一次 `https://api.agentroom.chat/health/ready`、`https://app.agentroom.chat/` 和 `https://agentroom.chat/`。连续两次不通就用仓库自带的令牌开一个 `prod-error` 的 issue，恢复了在上面说一声、关掉。私有仓库的 Actions 每月有 2000 分钟免费额度，每 30 分钟一次约 1440 分钟。不用新令牌。
 - **起监控的容器：** 新加 `production.py telemetry-apply`，照 `control-plane-reload` 的做法：重新渲染、校验，起或停 `telemetry` profile 的容器，再重建控制面（它要知道往哪发指标）。不碰 Synapse、数据库和网关。开和关都用它，不用整个重新部署。
 - **补上缺的数：**
-  - 整机的 CPU、内存、磁盘、网络：加一个只读挂载主机 `/proc`、`/sys` 和根分区的 node-exporter（现在的 `recovery-metrics` 只读备份的指标文件）。
+  - 整机的 CPU、内存、磁盘：加一个只读挂载主机根目录的 node-exporter（现在的 `recovery-metrics` 只读备份的指标文件）。整机的网络流量它在容器的网络里看不到，由每周报告在主机上读（见“状态”）。
   - 数据库每个库多大：postgres-exporter 已经有。
   - 对象存储多大：备份同步对象时顺手把镜像的总字节数写进指标文件。
   - 各容器的 CPU：不加 cAdvisor（太重）。Synapse 和 Keycloak 自己报进程 CPU，整机的由 node-exporter 报，够分辨是谁。
 - **别把服务器挤爆：**
-  - 每个监控容器设内存上限（`mem_limit`），合计控制在 600 MB 以内。
-  - Prometheus 除了留 45 天，再加一个总大小上限 2 GB（`--storage.tsdb.retention.size`）。Synapse 的指标很多，用不上的在抓取时丢掉。
+  - 每个监控容器设内存上限（`mem_limit`），一直开着的合计约 700 MB（2a 定的数，见“状态”）。
+  - Prometheus 除了留 45 天，再加一个总大小上限 2 GB（`--storage.tsdb.retention.size`）。
   - 开起来以后看一天：可用内存不到 500 MB 就先停 Grafana（周报不靠它）。
 - **规则逐条过一遍：** 有几条是按以前的假设写的。比如“一天发信快到 80 封”是按 Resend 免费档每天 100 封定的，生产已经是付费档、而且生产凭据归属还没核实（见[首发预案](../../docs/operations/launch-day.md#发信套餐与配额依据)），这条先改成只进周报、不开 issue。打开前每条确认响了有人知道怎么办，没有就只进周报。
 
@@ -122,3 +122,10 @@
 ## 状态
 
 - 2026-10-28：写了设计。维护者当天定了三件事：按粗地区汇总并改隐私说明页；告警开成 `agent-room-ops` 的 issue；CDN 先量两三周再按数据选。
+- 2026-10-28：2a 做完。和上面写的不一样的几处：
+  - 内存上限：Collector 128 MB、Prometheus 256 MB、Grafana 192 MB、postgres-exporter 48 MB、blackbox 和主机指标各 32 MB、备份指标 24 MB，一直开着的合计 712 MB，比原先说的 600 MB 多。Prometheus 和 Grafana 再压就有被杀的风险；开起来看一天，不够就先停 Grafana。Alertmanager（64 MB）只在发到接收端时起。
+  - Synapse 的指标没有在抓取时挑着丢：盘有 2 GB 的上限兜着，先看实际涨多快，真挤了再丢。
+  - 主机指标只开 CPU、内存、负载、压力、文件系统、磁盘读写。整机网络流量没做：node-exporter 在容器自己的网络里，读到的是容器的网卡；要看主机的就得用主机网络、把端口开在主机上。每周报告本来就在主机上跑，由它读 `/proc/net/dev`、和上一周的比（第 4 步）。
+  - 对象存储多大写成 `agent_room_backup_object_bytes`（备份仓库 `objects/` 下的镜像和挪走的旧版本），和仓库总大小一起，每次备份成功时写。
+  - Prometheus 读不到时错误汇总单开一条（p2）；告警停了 issue 不会自己关。
+  - 规则：Runbook 链接改到 `rainyflash/agent-room`（以前写的组织不对）；发信快到 80 封改成 `info`。别的几条看过，响了都有 Runbook 里写的处置，留着。

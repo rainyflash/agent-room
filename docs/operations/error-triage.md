@@ -56,6 +56,7 @@ issue 的标题、正文、样例和评论来自生产日志，外面的人能�
 ## 每一条怎么处理
 
 1. 读 issue 和样例，在 agent-room 的代码里找原因。版本号写在正文里（`0.1.0-alpha.N (<提交>)`），对着那个提交看代码。
+   - 服务写着 `alerts` 的是 Prometheus 的告警（规则在 `infra/production/observability-rules.yaml`），不是日志里的错。先看 `docs/operations/observability.md` 里同名的那一节。多半是服务器上的事（容量、容器停了、备份没跑），归“要看生产现场的”。只有规则本身错了（指标改了名、表达式写错）才改规则开 PR（PR 上会跑“告警规则检查”，红了不能合）；别为了让它不响去放宽阈值，也别给它加噪音规则。
 2. 判断是哪一种，只选一种：
    - **能在代码里修的真毛病**：在 agent-room 开一个分支修，带测试，按 CLAUDE.md 的“写代码与提交”做本地检查（fmt、clippy 整个 workspace、prettier、相关测试）。PR 用中文写清楚为什么、改了什么、怎么查的，描述里写 `Fixes rainyflash/agent-room-ops#<号>`。
      - 改到 `.github/workflows`、发布流程（`tools/release_*.py`、`docs/release-workflow.md`）、`tools/release_acceptance.py` 的 `LOGIN_PATHS` 里的路径、权限和授权相关代码的：开 PR，不设自动合并，issue 标 `needs-owner`，写清楚要维护者看什么。
