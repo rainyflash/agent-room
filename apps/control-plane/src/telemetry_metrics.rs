@@ -102,7 +102,7 @@ impl TelemetryMetrics {
                 .build(),
             operational_value: meter
                 .i64_gauge("agent_room.operational.value")
-                .with_description("数据库、Outbox、投影和内容生命周期的低基数运行值")
+                .with_description("数据库、投影和内容生命周期的低基数运行值")
                 .build(),
             operational_age: meter
                 .f64_gauge("agent_room.operational.age")

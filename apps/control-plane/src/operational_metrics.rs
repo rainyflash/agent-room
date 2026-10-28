@@ -5,12 +5,9 @@ use tokio::{sync::oneshot, task::JoinHandle, time::MissedTickBehavior};
 
 use crate::{network_gateway::waiting, telemetry_metrics::TelemetryMetrics};
 
-const METRIC_NAMES: [&str; 13] = [
+const METRIC_NAMES: [&str; 10] = [
     "database_pool_connections",
     "database_pool_idle_connections",
-    "outbox_pending",
-    "outbox_dead_lettered",
-    "outbox_oldest_pending",
     "projection_unhealthy",
     "projection_oldest_update",
     "content_reclaimable",
@@ -68,9 +65,6 @@ impl OperationalMetricsRuntime {
 
 #[derive(Debug, FromRow)]
 struct DatabaseSnapshot {
-    outbox_pending: i64,
-    outbox_dead_lettered: i64,
-    outbox_oldest_pending_seconds: f64,
     projection_unhealthy: i64,
     projection_oldest_update_seconds: f64,
     content_reclaimable: i64,
@@ -112,21 +106,18 @@ fn record_pool_snapshot(pool: &PgPool, metrics: &TelemetryMetrics) {
         METRIC_NAMES[1],
         i64::try_from(pool.num_idle()).unwrap_or(i64::MAX),
     );
-    metrics.record_operational_value(METRIC_NAMES[9], waiting::now());
+    metrics.record_operational_value(METRIC_NAMES[6], waiting::now());
 }
 
 async fn sample_database(pool: &PgPool, metrics: &TelemetryMetrics) -> Result<(), sqlx::Error> {
     let snapshot = read_snapshot(pool).await?;
-    metrics.record_operational_value(METRIC_NAMES[2], snapshot.outbox_pending);
-    metrics.record_operational_value(METRIC_NAMES[3], snapshot.outbox_dead_lettered);
-    metrics.record_operational_age(METRIC_NAMES[4], snapshot.outbox_oldest_pending_seconds);
-    metrics.record_operational_value(METRIC_NAMES[5], snapshot.projection_unhealthy);
-    metrics.record_operational_age(METRIC_NAMES[6], snapshot.projection_oldest_update_seconds);
-    metrics.record_operational_value(METRIC_NAMES[7], snapshot.content_reclaimable);
-    metrics.record_operational_value(METRIC_NAMES[8], snapshot.account_deletion_pending);
-    metrics.record_operational_value(METRIC_NAMES[10], snapshot.public_lobby_shards);
-    metrics.record_operational_value(METRIC_NAMES[11], snapshot.public_lobby_occupied_slots);
-    metrics.record_operational_value(METRIC_NAMES[12], snapshot.public_lobby_network_agents);
+    metrics.record_operational_value(METRIC_NAMES[2], snapshot.projection_unhealthy);
+    metrics.record_operational_age(METRIC_NAMES[3], snapshot.projection_oldest_update_seconds);
+    metrics.record_operational_value(METRIC_NAMES[4], snapshot.content_reclaimable);
+    metrics.record_operational_value(METRIC_NAMES[5], snapshot.account_deletion_pending);
+    metrics.record_operational_value(METRIC_NAMES[7], snapshot.public_lobby_shards);
+    metrics.record_operational_value(METRIC_NAMES[8], snapshot.public_lobby_occupied_slots);
+    metrics.record_operational_value(METRIC_NAMES[9], snapshot.public_lobby_network_agents);
     Ok(())
 }
 
@@ -134,16 +125,6 @@ async fn read_snapshot(pool: &PgPool) -> Result<DatabaseSnapshot, sqlx::Error> {
     sqlx::query_as::<_, DatabaseSnapshot>(
         r"
         SELECT
-            (SELECT count(*)::bigint
-               FROM agent_room.outbox_event
-              WHERE published_at IS NULL AND dead_lettered_at IS NULL) AS outbox_pending,
-            (SELECT count(*)::bigint
-               FROM agent_room.outbox_event
-              WHERE dead_lettered_at IS NOT NULL) AS outbox_dead_lettered,
-            COALESCE((SELECT max(EXTRACT(EPOCH FROM (clock_timestamp() - occurred_at)))::double precision
-                        FROM agent_room.outbox_event
-                       WHERE published_at IS NULL AND dead_lettered_at IS NULL), 0.0)
-                AS outbox_oldest_pending_seconds,
             (SELECT count(*)::bigint
                FROM agent_room.matrix_projection_cursor
               WHERE health_state <> 'healthy') AS projection_unhealthy,
@@ -217,7 +198,7 @@ mod tests {
 
     #[test]
     fn 运行指标名是固定低基数集合() {
-        assert_eq!(METRIC_NAMES.len(), 13);
+        assert_eq!(METRIC_NAMES.len(), 10);
         for name in METRIC_NAMES {
             assert!(name.is_ascii());
             assert!(!name.contains(['/', '\\', '@', ':']));

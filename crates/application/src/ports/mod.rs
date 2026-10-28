@@ -12,7 +12,6 @@ mod matrix;
 mod moderation;
 mod network_agents;
 mod notifications;
-mod outbox;
 mod projections;
 mod regions;
 mod rooms;
@@ -56,9 +55,9 @@ pub use agents::{
     AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
     AgentInstanceRevocationTransaction, AgentInstanceSignatureVerifier,
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, AgentMembershipChange,
-    AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration,
-    AgentRegistrationTransaction, AgentRepository, AgentRetirementOutcome,
-    AgentRetirementTransaction, RegisteredAgent, StoredAgentInstanceRegistration,
+    AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
+    AgentRetirementOutcome, AgentRetirementTransaction, RegisteredAgent,
+    StoredAgentInstanceRegistration,
 };
 pub use audit::{AuditRecord, AuditSink};
 pub use automation::{
@@ -88,8 +87,8 @@ pub use devices::{
     DerivedDeviceTokens, DeviceProofNonceStore, DeviceProofValueError, DeviceProofVerifier,
     DeviceRefreshContext, DeviceRefreshOutcome, DeviceRefreshReplay, DeviceRefreshReplaySalt,
     DeviceRefreshTokenDerivation, DeviceRegistrationTransaction, DeviceRepository,
-    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-    DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
+    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSessionRegistration,
+    DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
     PendingAgentMatrixDeviceRevocation, StoredDeviceSession,
 };
 pub use handoffs::{
@@ -137,10 +136,6 @@ pub use moderation::{
     StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
-pub use outbox::{
-    ClaimedOutboxEvent, OutboxBacklog, OutboxClaim, OutboxFailure, OutboxFailureOutcome,
-    OutboxMessage, OutboxPublisher, OutboxRepository, PublishFailure, PublishFailureKind,
-};
 pub use projections::{
     ActivityScoreMillis, MatrixMembership, MatrixProjectionBatch, MatrixProjectionEvent,
     MatrixProjectionEventKind, MatrixProjectionRebuild, MatrixProjectionStore,

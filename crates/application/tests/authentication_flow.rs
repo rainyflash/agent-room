@@ -32,8 +32,8 @@ use agent_room_domain::{
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomReservationId, WebSessionId,
+        HandoffId, LoginAttemptId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId,
+        WebSessionId,
     },
     time::{DurationMillis, SlidingLifetime, UtcMillis},
 };
@@ -128,10 +128,6 @@ impl IdentifierFactory for TestIdentifiers {
 
     fn automation_grant_id(&self) -> AutomationGrantId {
         AutomationGrantId::from_uuid(Uuid::now_v7())
-    }
-
-    fn outbox_event_id(&self) -> OutboxEventId {
-        OutboxEventId::from_uuid(Uuid::now_v7())
     }
 }
 

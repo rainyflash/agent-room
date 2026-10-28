@@ -1,11 +1,6 @@
 use std::sync::Arc;
 
-use agent_room_domain::{
-    agents::AgentInstanceStatus,
-    ids::{AgentInstanceId, PrincipalId},
-    time::UtcMillis,
-};
-use serde_json::{Map, Value};
+use agent_room_domain::{agents::AgentInstanceStatus, ids::AgentInstanceId, time::UtcMillis};
 
 use crate::{
     authentication::AuthenticatedPrincipal,
@@ -14,8 +9,8 @@ use crate::{
     ports::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceMatrixCleanupStore, AgentInstanceRevocationOutcome,
-        AgentInstanceRevocationTransaction, Clock, IdentifierFactory,
-        MatrixAgentDeviceSessionRevoker, MatrixFailureKind, OutboxMessage, PortFuture,
+        AgentInstanceRevocationTransaction, Clock, MatrixAgentDeviceSessionRevoker,
+        MatrixFailureKind, PortFuture,
     },
 };
 
@@ -100,7 +95,6 @@ pub struct AgentInstanceManagementService {
     revocations: Arc<dyn AgentInstanceRevocationTransaction>,
     matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
     matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
-    identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
 
@@ -109,7 +103,6 @@ pub struct AgentInstanceManagementDependencies {
     pub revocations: Arc<dyn AgentInstanceRevocationTransaction>,
     pub matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
     pub matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
-    pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -120,7 +113,6 @@ impl AgentInstanceManagementService {
             revocations: dependencies.revocations,
             matrix_cleanup: dependencies.matrix_cleanup,
             matrix: dependencies.matrix,
-            identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }
     }
@@ -150,15 +142,9 @@ impl AgentInstanceManagementService {
         let operation = "agent_instance.revoke";
         let now = self.clock.now();
         ensure_active_actor(&request.actor, now, operation)?;
-        let event = revocation_event(
-            self.identifiers.as_ref(),
-            request.actor.principal_id,
-            request.instance_id,
-            now,
-        )?;
         let outcome = self
             .revocations
-            .revoke(request.actor.principal_id, request.instance_id, &event)
+            .revoke(request.actor.principal_id, request.instance_id, now)
             .await
             .map_err(|error| map_repository_failure(operation, &error))?;
         let instance = match outcome {
@@ -281,33 +267,6 @@ const fn pending_cleanup(
         instance,
         matrix_cleanup: AgentInstanceMatrixCleanup::Pending { reason },
     }
-}
-
-fn revocation_event(
-    identifiers: &dyn IdentifierFactory,
-    principal_id: PrincipalId,
-    instance_id: AgentInstanceId,
-    occurred_at: UtcMillis,
-) -> AgentInstanceManagementResult<OutboxMessage> {
-    let mut payload = Map::new();
-    payload.insert(
-        "principal_id".to_owned(),
-        Value::String(principal_id.to_string()),
-    );
-    OutboxMessage::new(
-        identifiers.outbox_event_id(),
-        "agent_instance".to_owned(),
-        instance_id.as_uuid(),
-        "agent.instance.revoked.v1".to_owned(),
-        payload,
-        occurred_at,
-    )
-    .map_err(|_| {
-        failure(
-            "agent_instance.revoke",
-            AgentInstanceManagementFailureKind::Internal,
-        )
-    })
 }
 
 fn ensure_active_actor(

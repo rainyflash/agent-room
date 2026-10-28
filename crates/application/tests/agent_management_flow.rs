@@ -19,9 +19,9 @@ use agent_room_application::{
         MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRotator,
         MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner,
         MatrixAgentUserRegistration, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, OutboxMessage,
-        PortFuture, PrincipalAccount, RegisteredAgent, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue, StoredAgentInstanceRegistration,
+        MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture,
+        PrincipalAccount, RegisteredAgent, SecretDigest, SecretFactory, SecretGenerationFailure,
+        SecretValue, StoredAgentInstanceRegistration,
     },
 };
 use agent_room_domain::{
@@ -35,7 +35,7 @@ use agent_room_domain::{
         AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId, AgentId, AgentInstanceId,
         AgentInstanceRegistrationRequestId, AutomationGrantId, ContentId, DeviceAccessTokenId,
         DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId, HandoffId, LoginAttemptId,
-        OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId, WebSessionId,
+        PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -122,10 +122,6 @@ impl IdentifierFactory for TestIdentifiers {
     fn automation_grant_id(&self) -> AutomationGrantId {
         AutomationGrantId::from_uuid(Uuid::now_v7())
     }
-
-    fn outbox_event_id(&self) -> OutboxEventId {
-        OutboxEventId::from_uuid(Uuid::now_v7())
-    }
 }
 
 struct TestSecrets;
@@ -197,12 +193,11 @@ impl AgentCreationWorkflow for FakeCreationWorkflow {
         })
     }
 
-    fn complete_with_event<'a>(
+    fn complete_creation<'a>(
         &'a self,
         _request_id: AgentCreationRequestId,
         _request_fingerprint: &'a SecretDigest,
         registration: &'a AgentRegistration,
-        _event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<Agent>> {
         Box::pin(async move {
             self.completions
@@ -280,7 +275,6 @@ impl AgentMembershipTransaction for FakeMembershipChanges {
     fn apply_change<'a>(
         &'a self,
         _change: &'a AgentMembershipChange,
-        _event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<AgentMemberships>> {
         Box::pin(async move { Err(unavailable("agent_membership.change.unused")) })
     }
@@ -293,10 +287,9 @@ struct FakeInstances {
 }
 
 impl AgentInstanceRegistrationTransaction for FakeInstances {
-    fn register_with_event<'a>(
+    fn register_instance<'a>(
         &'a self,
         registration: &'a AgentInstanceRegistration,
-        _event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<StoredAgentInstanceRegistration>> {
         Box::pin(async move {
             self.registrations
@@ -779,10 +772,7 @@ async fn 唯一_owner_删除_agent_时退役并写入事件() {
         .expect("唯一 Owner 可以删除 Agent");
 
     let calls = retirements.calls.lock().expect("测试锁不得中毒");
-    assert_eq!(
-        calls.as_slice(),
-        &[(principal_id, agent_id, "agent.retired.v1".to_owned())]
-    );
+    assert_eq!(calls.as_slice(), &[(principal_id, agent_id)]);
 }
 
 #[tokio::test]
@@ -1145,7 +1135,7 @@ fn test_matrix() -> Arc<FakeMatrixIdentities> {
 
 struct FakeRetirements {
     outcome: AgentRetirementOutcome,
-    calls: Mutex<Vec<(PrincipalId, AgentId, String)>>,
+    calls: Mutex<Vec<(PrincipalId, AgentId)>>,
 }
 
 impl FakeRetirements {
@@ -1158,18 +1148,16 @@ impl FakeRetirements {
 }
 
 impl AgentRetirementTransaction for FakeRetirements {
-    fn retire<'a>(
-        &'a self,
+    fn retire(
+        &self,
         principal_id: PrincipalId,
         agent_id: AgentId,
         _retired_at: UtcMillis,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<AgentRetirementOutcome>> {
-        self.calls.lock().expect("测试锁不得中毒").push((
-            principal_id,
-            agent_id,
-            event.event_type().to_owned(),
-        ));
+    ) -> PortFuture<'_, RepositoryResult<AgentRetirementOutcome>> {
+        self.calls
+            .lock()
+            .expect("测试锁不得中毒")
+            .push((principal_id, agent_id));
         let outcome = self.outcome;
         Box::pin(async move { Ok(outcome) })
     }

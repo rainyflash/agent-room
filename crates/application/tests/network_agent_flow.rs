@@ -57,8 +57,8 @@ use agent_room_domain::{
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, NetworkAgentId, OutboxEventId, PrincipalId, RoomCatalogId,
-        RoomInstanceId, RoomReservationId, WebSessionId,
+        HandoffId, LoginAttemptId, NetworkAgentId, PrincipalId, RoomCatalogId, RoomInstanceId,
+        RoomReservationId, WebSessionId,
     },
     join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
@@ -1690,9 +1690,6 @@ impl IdentifierFactory for TestRuntime {
         unreachable!()
     }
     fn automation_grant_id(&self) -> AutomationGrantId {
-        unreachable!()
-    }
-    fn outbox_event_id(&self) -> OutboxEventId {
         unreachable!()
     }
 }

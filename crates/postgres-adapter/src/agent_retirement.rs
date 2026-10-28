@@ -1,6 +1,6 @@
 use agent_room_application::{
     persistence::RepositoryResult,
-    ports::{AgentRetirementOutcome, AgentRetirementTransaction, OutboxMessage, PortFuture},
+    ports::{AgentRetirementOutcome, AgentRetirementTransaction, PortFuture},
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId},
@@ -8,18 +8,17 @@ use agent_room_domain::{
 };
 use sqlx::{Postgres, Transaction};
 
-use crate::{PostgresRepositories, error::map_sqlx_error, outbox::insert_outbox_event};
+use crate::{PostgresRepositories, error::map_sqlx_error};
 
 const OPERATION: &str = "agent.retire";
 
 impl AgentRetirementTransaction for PostgresRepositories {
-    fn retire<'a>(
-        &'a self,
+    fn retire(
+        &self,
         principal_id: PrincipalId,
         agent_id: AgentId,
         retired_at: UtcMillis,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<AgentRetirementOutcome>> {
+    ) -> PortFuture<'_, RepositoryResult<AgentRetirementOutcome>> {
         Box::pin(async move {
             let mut transaction = self
                 .pool()
@@ -27,8 +26,7 @@ impl AgentRetirementTransaction for PostgresRepositories {
                 .await
                 .map_err(|error| map_sqlx_error(OPERATION, &error))?;
             let result =
-                retire_in_transaction(&mut transaction, principal_id, agent_id, retired_at, event)
-                    .await;
+                retire_in_transaction(&mut transaction, principal_id, agent_id, retired_at).await;
             crate::transaction::finish(transaction, result, OPERATION).await
         })
     }
@@ -39,7 +37,6 @@ async fn retire_in_transaction(
     principal_id: PrincipalId,
     agent_id: AgentId,
     retired_at: UtcMillis,
-    event: &OutboxMessage,
 ) -> RepositoryResult<AgentRetirementOutcome> {
     // Locking the agent row serializes deletion with instance registration and membership changes.
     let state: Option<String> =
@@ -110,6 +107,5 @@ async fn retire_in_transaction(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(OPERATION, &error))?;
-    insert_outbox_event(transaction, event).await?;
     Ok(AgentRetirementOutcome::Retired)
 }

@@ -9,9 +9,9 @@ use std::{
 use agent_room_application::{
     ports::{
         AgentLobbyAccessRepository, AgentRoomKind, AgentRoomPlacementStore, Clock,
-        DeviceRevocationTransaction, DeviceSecurityEvent, MatrixCreateRoom, MatrixEventId,
-        MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart,
-        MatrixRoomId, MatrixRoomKind, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
+        DeviceRevocationTransaction, MatrixCreateRoom, MatrixEventId, MatrixFailure,
+        MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomId,
+        MatrixRoomKind, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
         RevokedAgentDepartureAudit, RevokedAgentDepartureAuditOutcome, RevokedAgentDepartureClaim,
         RevokedAgentDepartureFacts, RevokedAgentDepartureStore, RoomAgentKind,
         RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore, RoomMembershipGateway,
@@ -26,8 +26,8 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{
-        AgentId, AgentInstanceId, DeviceId, OutboxEventId, PrincipalId, RoomCatalogId,
-        RoomInstanceId, RoomProvisioningJobId, RoomProvisioningLeaseId, RoomReservationId,
+        AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId,
+        RoomProvisioningJobId, RoomProvisioningLeaseId, RoomReservationId,
     },
     moderation::ModerationAction,
     rooms::{MatrixRoomReference, RoomCatalogStatus, RoomReservationState},
@@ -697,10 +697,7 @@ async fn revoke_device(repositories: &PostgresRepositories, pool: &PgPool, devic
         repositories,
         PrincipalId::from_uuid(principal),
         device,
-        DeviceSecurityEvent {
-            id: OutboxEventId::from_uuid(Uuid::now_v7()),
-            occurred_at: test_time(1_000),
-        },
+        test_time(1_000),
     )
     .await
     .expect("撤销电脑");
