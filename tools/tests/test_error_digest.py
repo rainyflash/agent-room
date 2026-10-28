@@ -403,6 +403,8 @@ class NoiseTableTests(unittest.TestCase):
                     event("RESET_PASSWORD_ERROR", "user_not_found"),
                     event("REGISTER_ERROR", "email_in_use"),
                     event("RESTART_AUTHENTICATION_ERROR", "invalid_code"),
+                    event("LOGIN_ERROR", "invalid_code"),
+                    event("LOGIN_ERROR", "already_logged_in"),
                     KEYCLOAK_SERVICES.replace("ERROR [org.keycloak.services]", "WARN  [org.hibernate.orm.session]")
                     .replace(
                         "KC-SERVICES0093: Invalid parameter value for: scope",
@@ -415,7 +417,37 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 11)
+        self.assertEqual(sum(digest.ignored.values()), 13)
+
+    def test_confirming_just_after_the_recent_sign_in_window_is_noise(self) -> None:
+        def failure(kind: str, path: str) -> str:
+            return (
+                CONTROL_JOIN_CODE.replace("Agent 口令请求失败", "认证请求失败")
+                .replace("private_room.join_code.reveal", "authentication.authenticate")
+                .replace('"failure": "NotFound"', f'"failure": "{kind}"')
+                .replace('"GET"', '"DELETE"')
+                .replace(f"/devices/current/private-rooms/{CATALOG_ID}/code", path)
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    failure("ReauthenticationRequired", f"/auth/devices/{CATALOG_ID}"),
+                    failure("ReauthenticationRequired", "/account"),
+                    failure("Internal", "/account"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error 认证请求失败 failure=Internal "
+                "operation=authentication.authenticate @ DELETE /account"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 2)
 
     def test_someone_elses_certificate_challenge_is_noise(self) -> None:
         challenge = json.dumps(
