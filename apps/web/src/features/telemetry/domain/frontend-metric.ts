@@ -2,6 +2,7 @@ export type FrontendMetricName =
   | 'api_round_trip'
   | 'bridge_availability'
   | 'bridge_reconnect'
+  | 'bridge_uptime'
   | 'cumulative_layout_shift'
   | 'interaction_to_next_paint'
   | 'largest_contentful_paint'

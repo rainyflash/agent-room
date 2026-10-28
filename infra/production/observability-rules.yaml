@@ -89,28 +89,6 @@ groups:
           impact: 依赖相关业务路径会失败关闭
           diagnostic: 按 dependency 标签检查 PostgreSQL、Matrix、OIDC 或对象存储
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
-      - alert: AgentRoomOutboxBacklog
-        expr: agent_room_operational_value{metric="outbox_pending"} > 1000 or agent_room_operational_age_seconds{metric="outbox_oldest_pending"} > 300
-        for: 10m
-        labels:
-          severity: warning
-          service: agent-room
-        annotations:
-          summary: Outbox 发布持续积压
-          impact: 控制平面已接受的变更不能及时投影到 Matrix
-          diagnostic: 检查发布进程、Matrix 可用性与最旧待发布年龄
-          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxbacklog
-      - alert: AgentRoomOutboxDeadLetters
-        expr: agent_room_operational_value{metric="outbox_dead_lettered"} > 0
-        for: 5m
-        labels:
-          severity: critical
-          service: agent-room
-        annotations:
-          summary: Outbox 出现死信
-          impact: 至少一个业务事件已停止自动发布
-          diagnostic: 按 Runbook 查询结构化日志并执行受控重放
-          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxdeadletters
       - alert: AgentRoomProjectionStalled
         expr: agent_room_operational_value{metric="projection_unhealthy"} > 0 or agent_room_operational_age_seconds{metric="projection_oldest_update"} > 120
         for: 5m
@@ -145,7 +123,7 @@ groups:
           diagnostic: 检查 well-known、TLS、DNS 与 federation version 入口
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomfederationendpointunavailable
       - alert: AgentRoomBridgeAvailabilityLow
-        expr: sum(rate(agent_room_frontend_score_sum{metric="bridge_availability"}[15m])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric="bridge_availability"}[15m])), 0.000001) < 0.95
+        expr: (sum(rate(agent_room_frontend_score_sum{metric="bridge_uptime"}[1h])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])), 0.000001) < 0.95) and on() sum(increase(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])) >= 4
         for: 15m
         labels:
           severity: warning

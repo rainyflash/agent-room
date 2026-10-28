@@ -125,31 +125,6 @@ tests:
               runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
   - interval: 1m
     input_series:
-      - series: agent_room_operational_value{metric="outbox_pending"}
-        values: 1500+0x30
-      - series: agent_room_operational_value{metric="outbox_dead_lettered"}
-        values: 2+0x30
-    alert_rule_test:
-      - eval_time: 20m
-        alertname: AgentRoomOutboxBacklog
-        exp_alerts:
-          - exp_labels: { metric: outbox_pending, severity: warning, service: agent-room }
-            exp_annotations:
-              summary: Outbox 发布持续积压
-              impact: 控制平面已接受的变更不能及时投影到 Matrix
-              diagnostic: 检查发布进程、Matrix 可用性与最旧待发布年龄
-              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxbacklog
-      - eval_time: 20m
-        alertname: AgentRoomOutboxDeadLetters
-        exp_alerts:
-          - exp_labels: { metric: outbox_dead_lettered, severity: critical, service: agent-room }
-            exp_annotations:
-              summary: Outbox 出现死信
-              impact: 至少一个业务事件已停止自动发布
-              diagnostic: 按 Runbook 查询结构化日志并执行受控重放
-              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxdeadletters
-  - interval: 1m
-    input_series:
       - series: agent_room_operational_value{metric="projection_unhealthy"}
         values: 1+0x20
     alert_rule_test:
@@ -194,14 +169,16 @@ tests:
               impact: 其他 homeserver 无法发现或连接本站
               diagnostic: 检查 well-known、TLS、DNS 与 federation version 入口
               runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomfederationendpointunavailable
+  # 桌面端开着时每 15 分钟报一次这段时间连着的比例（0 到 1）。这里一分钟一条，像十几台桌面端都开着、
+  # 平均一半时间没连上。
   - interval: 1m
     input_series:
-      - series: agent_room_frontend_score_sum{metric="bridge_availability",surface="desktop"}
-        values: 0+8x40
-      - series: agent_room_frontend_score_count{metric="bridge_availability",surface="desktop"}
-        values: 0+10x40
+      - series: agent_room_frontend_score_sum{metric="bridge_uptime",surface="desktop"}
+        values: 0+0.5x120
+      - series: agent_room_frontend_score_count{metric="bridge_uptime",surface="desktop"}
+        values: 0+1x120
     alert_rule_test:
-      - eval_time: 35m
+      - eval_time: 80m
         alertname: AgentRoomBridgeAvailabilityLow
         exp_alerts:
           - exp_labels: { severity: warning, service: agent-room }
@@ -210,6 +187,25 @@ tests:
               impact: Agent 状态上报和本机消息投递可能中断
               diagnostic: 检查 Bridge 版本、认证与重连时延聚合指标
               runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroombridgeavailabilitylow
+  # 一小时里样本太少（只有一台开了一会儿）不算数；之后没人开着桌面端、没有新样本，也不算可用率低。
+  # 旧版客户端按状态变化报的 bridge_availability 不进这条告警：每次启动先报一个“正在启动”，比例到不了一半。
+  - interval: 1m
+    input_series:
+      - series: agent_room_frontend_score_sum{metric="bridge_uptime",surface="desktop"}
+        values: 0x120
+      - series: agent_room_frontend_score_count{metric="bridge_uptime",surface="desktop"}
+        values: 0x10 1x110
+      - series: agent_room_frontend_score_sum{metric="bridge_availability",surface="desktop"}
+        values: 0x120
+      - series: agent_room_frontend_score_count{metric="bridge_availability",surface="desktop"}
+        values: 0+10x120
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: AgentRoomBridgeAvailabilityLow
+        exp_alerts: []
+      - eval_time: 115m
+        alertname: AgentRoomBridgeAvailabilityLow
+        exp_alerts: []
   - interval: 1m
     input_series:
       - series: up{job="postgres"}
