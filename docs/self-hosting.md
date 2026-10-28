@@ -166,6 +166,6 @@ Use [`infra/production/deployment.external.example.json`](../infra/production/de
 ## Operational truth
 
 - Grafana and Prometheus bind to loopback by default; access them through an authenticated administrative tunnel.
-- Enabling telemetry requires a credential-free HTTPS alert webhook URL. A separate Bearer secret is generated locally.
+- Enabling telemetry requires somewhere to send alerts: a credential-free HTTPS alert webhook URL (a separate Bearer secret is generated locally), or `"alerts": "ops-issues"` to have the hourly error digest open GitHub issues for firing alerts instead. Apply a telemetry change with `tools/production.py telemetry-apply`; release deploys don't start the monitoring containers.
 - Public messages default to 30-day retention. Federation may leave copies governed by remote servers after local deletion.
 - A clean public-host acceptance run has not yet completed. Follow the [Task 40 evidence](../specs/agent-room-foundation/task-40-validation.md) rather than assuming a rendered Compose file is production proof.

@@ -1,7 +1,8 @@
 """每小时只读汇总一次生产上的错（`production.py error-digest`）。
 
 设计在 `specs/error-triage/design.md`。这里只放纯逻辑：把各服务的日志行认成“哪一种错”（指纹），打码，
-去掉噪音表里写着正常的，数次数。读日志在 `runtime.py`，往 GitHub 发在后面一步。
+去掉噪音表里写着正常的，数次数。读日志在 `runtime.py`，往 GitHub 发在后面一步。开了监控、告警交给 ops 的
+issue 时（`telemetry.alerts`），Prometheus 正在响的告警也当一个“服务”汇总进来（`specs/measurement/design.md`）。
 
 打码是这份文件最要紧的事：汇总会离开服务器（进私有仓库的 issue），里面不能有邮箱、IP、账户和房间的 ID、
 名字、令牌和各种一次性参数。`tools/tests/test_error_digest.py` 卡着。
@@ -21,7 +22,9 @@ import secrets
 import tomllib
 from typing import Iterable
 
-SERVICES = ("control-plane", "identity", "synapse", "gateway")
+LOG_SERVICES = ("control-plane", "identity", "synapse", "gateway")
+# 告警不是容器日志：`runtime.firing_alerts()` 把 Prometheus 的告警一条一行交过来。
+SERVICES = (*LOG_SERVICES, "alerts")
 NOISE_FILE = Path(__file__).with_name("error_signatures.toml")
 SEVERITIES = ("p1", "p2", "p3")
 MAX_SAMPLE_CHARACTERS = 300
@@ -415,11 +418,48 @@ def parse_gateway(line: str) -> Observation | None:
     )
 
 
+# 告警：Prometheus `/api/v1/alerts` 里的一条。只报正在响的 critical（p1）和 warning（p2）；info 只进每周的
+# 容量报告，不开 issue。同一条告警每小时汇总一次算一次。Prometheus 读不到时交一条 `unreachable`，单独报。
+_ALERT_SEVERITIES = {"critical": "p1", "warning": "p2"}
+# 规则自己带的标签，每条都一样，不进摘要。
+_ALERT_COMMON_LABELS = frozenset({"alertname", "severity", "service"})
+
+
+def parse_alerts(line: str) -> Observation | None:
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(entry, dict):
+        return None
+    if "unreachable" in entry:
+        signature = Signature("alerts", "Prometheus 读不到告警", "p2")
+        return Observation(signature, _iso(str(entry.get("at", ""))), sanitize(str(entry["unreachable"])))
+    labels = entry.get("labels") if isinstance(entry.get("labels"), dict) else {}
+    annotations = entry.get("annotations") if isinstance(entry.get("annotations"), dict) else {}
+    severity = _ALERT_SEVERITIES.get(str(labels.get("severity", "")))
+    name = labels.get("alertname")
+    if entry.get("state") != "firing" or severity is None or not isinstance(name, str) or not name:
+        return None
+    details = " ".join(
+        f"{key}={labels[key]}" for key in sorted(labels) if key not in _ALERT_COMMON_LABELS
+    )
+    sample = " ".join(
+        str(annotations[key]) for key in ("summary", "impact") if isinstance(annotations.get(key), str)
+    )
+    return Observation(
+        Signature("alerts", sanitize(f"{name} {details}".strip()), severity),
+        _iso(str(entry.get("activeAt", ""))),
+        sanitize(sample),
+    )
+
+
 _PARSERS = {
     "control-plane": parse_control_plane,
     "identity": parse_identity,
     "synapse": parse_synapse,
     "gateway": parse_gateway,
+    "alerts": parse_alerts,
 }
 
 

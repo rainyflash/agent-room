@@ -12,7 +12,7 @@
 - `object-store`：单机 SeaweedFS S3 端点，生产增长后可切换外部 S3；
 - `content-scanner`：ClamAV；
 - `telemetry`：OpenTelemetry Collector；
-- `prometheus`、`alertmanager`、`blackbox` 与 exporter：SLO、依赖和恢复事实；
+- `prometheus`、`alertmanager`、`blackbox` 与 exporter：SLO、依赖和恢复事实；`host-metrics` 只读主机的 CPU、内存、负载和磁盘；
 - `grafana`：仅通过主机回环地址访问的运营仪表盘。
 
 所有持久数据、生成配置和 Secret 都位于显式 `state-dir`。容器可以重建，`state-dir` 不能随意删除。生成配置的顶层目录保持 `0700`；挂载给非 root 容器的子目录和文件在渲染完成后分别规范化为只读 `0555` 与 `0444`。这既兼容 Compose bind mount，也不会让宿主普通用户穿过顶层目录。
@@ -51,7 +51,12 @@ python3 tools/production.py install \
 
 Secret 只通过 Compose Secret 文件挂载。父目录保持 `0700`，单个文件规范化为只读 `0444`，以兼容非 Swarm Compose 对非 root 容器的 bind-mount 语义；宿主普通用户仍无法穿过父目录。不要把 `/var/lib/agent-room/secrets` 加入 Git、工单或聊天记录。
 
-`telemetry.enabled=true` 时必须配置不含凭据的 HTTPS `alertWebhookUrl`。安装器会生成独立 Bearer Secret；告警接收端必须支持 `Authorization: Bearer`。Grafana 和 Prometheus 默认只监听 `127.0.0.1:3000` 与 `127.0.0.1:9090`，通过 SSH 隧道访问。完整验证与故障演练见[可观测性 Runbook](../../docs/operations/observability.md)。
+`telemetry.enabled=true` 时告警要有去处，二选一：
+
+- `alertWebhookUrl`：不含凭据的 HTTPS 地址，由 Alertmanager 发过去。安装器会生成独立 Bearer Secret；告警接收端必须支持 `Authorization: Bearer`。
+- `"alerts": "ops-issues"`：不起 Alertmanager，每小时的错误汇总（`error-digest --post`）读 Prometheus 正在响的告警，critical 和 warning 开成私有仓库里的 issue，info 只进每周报告。官方部署用这个（[specs/measurement/design.md](../../specs/measurement/design.md)）。
+
+监控的容器都设了内存上限，一直开着的合起来约 700 MB；Prometheus 的数据最多留 45 天、2 GB。Grafana 和 Prometheus 默认只监听 `127.0.0.1:3000` 与 `127.0.0.1:9090`，通过 SSH 隧道访问。完整验证与故障演练见[可观测性 Runbook](../../docs/operations/observability.md)。
 
 ## 网络 Agent
 
@@ -185,7 +190,12 @@ python3 tools/production.py down --config /etc/agent-room/deployment.json --stat
 python3 tools/production.py control-plane-reload --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 # 改了 identity.registration：重新渲染，按它开关 Keycloak 的注册
 python3 tools/production.py registration-apply --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+
+# 改了 telemetry：重新渲染，起或停监控容器，再只重建控制面（数据库、Synapse 不动）
+python3 tools/production.py telemetry-apply --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 ```
+
+发版部署只重建身份服务、控制面和网关，不起监控容器，所以开监控、换告警去处都用 `telemetry-apply`。关掉时监控容器删掉，数据卷留着，再开接着用。
 
 什么时候用、要多久、对在用的人有什么影响，见[首发当天的预案](../../docs/operations/launch-day.md)。
 

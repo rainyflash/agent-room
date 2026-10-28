@@ -12,7 +12,7 @@ import sys
 from prodops.backup import BackupError
 from prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
 from prodops.error_digest import (
-    SERVICES as ERROR_DIGEST_SERVICES,
+    LOG_SERVICES as ERROR_DIGEST_SERVICES,
     Digest,
     NoiseTableError,
     load_noise,
@@ -59,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
             "network-agent-disable",
             "control-plane-reload",
             "registration-apply",
+            "telemetry-apply",
             "launch-status",
             "error-digest",
             "error-digest-schedule-install",
@@ -191,6 +192,14 @@ def main() -> int:
                 runtime.apply_registration()
                 state = "开放" if config.identity.registration.is_open else "关闭"
                 print(f"Keycloak 注册已{state}。")
+            case "telemetry-apply":
+                runtime.apply_telemetry()
+                if not config.telemetry_enabled:
+                    print("监控已关，监控容器已删（数据卷留着），控制面已重建。")
+                elif config.alerts_to_ops_issues:
+                    print("监控已开，告警由每小时的错误汇总开成 ops 的 issue；控制面已重建。")
+                else:
+                    print("监控已开，告警发到接收端；控制面已重建。")
             case "launch-status":
                 for line in launch_report(runtime.launch_status(), config.network_agents.limits):
                     print(line)
@@ -230,6 +239,9 @@ def main() -> int:
 
 def _read_error_digest(runtime: ProductionRuntime, since: datetime, until: datetime) -> Digest:
     logs = {service: runtime.service_logs(service, since, until) for service in ERROR_DIGEST_SERVICES}
+    # 告警交给 ops 的 issue 时，此刻正在响的告警也汇总进来；告警发到接收端时不重复报。
+    if runtime.config.alerts_to_ops_issues:
+        logs["alerts"] = runtime.firing_alerts()
     return summarize(logs, load_noise())
 
 

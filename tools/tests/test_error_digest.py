@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+from pathlib import Path
 import re
 import unittest
 
@@ -9,6 +10,7 @@ from tools.prodops.error_digest import (
     NOISE_FILE,
     SERVICES,
     load_noise,
+    parse_alerts,
     parse_control_plane,
     parse_gateway,
     parse_identity,
@@ -19,6 +21,8 @@ from tools.prodops.error_digest import (
     sanitize,
     summarize,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
 
 # 下面的日志行照 2026-10-24 生产上的格式写，账户、房间、IP、邮箱、令牌都是编的。
 USER_ID = "@user-594e1f403740d561dd0176d9ba58c5de:agentroom.chat"
@@ -289,6 +293,63 @@ class ParserTests(unittest.TestCase):
         self.assertNotIn(IP, observation.sample)
         self.assertEqual(observation.timestamp[:4], "2026")
         self.assertIsNone(parse_gateway(json.dumps({"level": "info", "msg": "ok"})))
+
+    def test_alerts_report_only_what_is_firing_and_needs_someone(self) -> None:
+        def alert(name: str, severity: str, state: str = "firing", **labels: str) -> str:
+            # 照 Prometheus `/api/v1/alerts` 里一条的样子。
+            return json.dumps(
+                {
+                    "labels": {"alertname": name, "severity": severity, "service": "agent-room", **labels},
+                    "annotations": {
+                        "summary": "核心服务端点不可达",
+                        "impact": "对应核心能力对用户不可用",
+                        "runbook_url": "https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md",
+                    },
+                    "state": state,
+                    "activeAt": "2026-10-28T03:10:00.123456789Z",
+                    "value": "0e+00",
+                }
+            )
+
+        firing = parse_alerts(alert("AgentRoomCoreEndpointUnavailable", "critical", instance="web"))
+        assert firing is not None
+        self.assertEqual(firing.signature.service, "alerts")
+        self.assertEqual(firing.signature.severity, "p1")
+        self.assertEqual(firing.signature.summary, "AgentRoomCoreEndpointUnavailable instance=web")
+        self.assertEqual(firing.timestamp, "2026-10-28T03:10:00Z")
+        self.assertEqual(firing.sample, "核心服务端点不可达 对应核心能力对用户不可用")
+        warning = parse_alerts(alert("AgentRoomApiLatencyHigh", "warning"))
+        assert warning is not None
+        self.assertEqual(
+            (warning.signature.summary, warning.signature.severity), ("AgentRoomApiLatencyHigh", "p2")
+        )
+        # 快要响的、只进每周报告的（info）不报。
+        self.assertIsNone(parse_alerts(alert("AgentRoomApiLatencyHigh", "warning", state="pending")))
+        self.assertIsNone(parse_alerts(alert("AgentRoomEmailQuotaNearlyUsed", "info")))
+        self.assertIsNone(parse_alerts("not json"))
+
+    def test_unreachable_prometheus_is_its_own_finding(self) -> None:
+        observation = parse_alerts(
+            json.dumps(
+                {
+                    "unreachable": "URLError: <urlopen error [Errno 111] Connection refused> 127.0.0.1:9090",
+                    "at": "2026-10-28T04:07:00Z",
+                }
+            )
+        )
+        assert observation is not None
+        self.assertEqual(
+            (observation.signature.summary, observation.signature.severity), ("Prometheus 读不到告警", "p2")
+        )
+        self.assertNotIn("127.0.0.1", observation.sample)
+        self.assertEqual(observation.timestamp, "2026-10-28T04:07:00Z")
+
+    def test_every_production_alert_has_a_severity_the_digest_knows(self) -> None:
+        rules = (ROOT / "infra" / "production" / "observability-rules.yaml").read_text(encoding="utf-8")
+        severities = re.findall(r"^\s+severity: (\w+)$", rules, re.MULTILINE)
+        self.assertGreater(len(severities), 10)
+        # critical 和 warning 开 issue，info 只进每周报告。
+        self.assertLessEqual(set(severities), {"critical", "warning", "info"})
 
 
 class NoiseTableTests(unittest.TestCase):

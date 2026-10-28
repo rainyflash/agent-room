@@ -296,6 +296,12 @@ class BackupCoordinatorTests(unittest.TestCase):
         # 只打恢复点的那次照样报最近一份全量的时间：26 小时没有新的全量就告警。
         self.assertIn(f"agent_room_backup_last_full_timestamp_seconds {midnight.timestamp():.3f}", metrics)
         self.assertEqual(repository_bytes(metrics), self.bytes_outside_metrics())
+        objects = self.repository_path / "objects"
+        self.assertIn(
+            f"agent_room_backup_object_bytes "
+            f"{sum(path.stat().st_size for path in objects.rglob('*') if path.is_file())}\n",
+            metrics,
+        )
 
     def test_repository_size_counts_published_snapshots_from_their_manifests(self) -> None:
         capture = FakeBackupCapture(self.repository_path)

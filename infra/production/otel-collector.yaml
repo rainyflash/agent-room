@@ -10,9 +10,11 @@ processors:
   batch:
     send_batch_size: 1024
     timeout: 5s
+  # 容器的内存上限是 128 MB（compose.yaml），收集器自己先在 100 MB 处停收。
   memory_limiter:
     check_interval: 1s
-    limit_mib: 384
+    limit_mib: 100
+    spike_limit_mib: 20
 
 exporters:
   debug:

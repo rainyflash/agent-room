@@ -2,7 +2,12 @@
 
 本 Runbook 只处理可操作故障。Prometheus 和 Grafana 默认仅监听主机回环地址，运营者通过 SSH 隧道访问；不要把 3000 或 9090 暴露到公网。
 
-2026-10-18 只读核对：当前生产的 `telemetry.enabled=false`，**没有自动告警**。下面的告警名和仪表盘只适用于已经启用监控的部署；首发期间的人工查看、待确认的值守与决策安排见[首发预案](./launch-day.md)。
+2026-10-28：生产的 `telemetry.enabled` 还是 `false`，**没有自动告警**。阶段 0 的测量（[specs/measurement/design.md](../../specs/measurement/design.md)）打算在下一次发版时打开，告警去处用 `"alerts": "ops-issues"`。在那之前，下面的告警名和仪表盘只适用于已经启用监控的部署；首发期间的人工查看、待确认的值守与决策安排见[首发预案](./launch-day.md)。
+
+告警有两种去处，在部署配置的 `telemetry` 里二选一：
+
+- `"alerts": "ops-issues"`（官方部署）：不起 Alertmanager。每小时的错误汇总（`error-digest --post`）读 Prometheus 正在响的告警，`critical` 记成 p1、`warning` 记成 p2，和日志里的错一样按指纹开成 `agent-room-ops` 的 issue（服务写 `alerts`）；`info` 只进每周报告，不开 issue。Prometheus 本身读不到时也开一条（“Prometheus 读不到告警”）。告警停了 issue 不会自己关，看过就关。
+- `alertWebhookUrl`：Alertmanager 按 Bearer 认证发到自己的接收端。
 
 ## SLO 与证据
 
@@ -17,8 +22,13 @@
 ```bash
 python3 tools/observability.py validate
 
+# 开、关监控或换告警去处：重新渲染，起或停监控容器，再只重建控制面
+python3 tools/production.py telemetry-apply --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+
 ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 operator@HOST
 ```
+
+发版部署只重建身份服务、控制面和网关，不会替你起监控容器，所以改了 `telemetry` 要单独跑 `telemetry-apply`。监控容器和生产跑在同一台机器上，都设了内存上限（一直开着的合起来约 700 MB）；刚打开的头一天看一眼 `docker stats`。
 
 首次登录 Grafana 的用户名为 `agent-room-admin`，密码位于状态目录的 `secrets/grafana_admin_password`。不要复制到聊天、工单或 shell 历史。
 
@@ -64,7 +74,7 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 ## AgentRoomEmailQuotaNearlyUsed
 
-这条既有告警按滚动 24 小时成功发信达到 80 封提醒（`agent_room:emails_sent:increase_24h`，仪表盘上的 “Emails sent, last 24h”），来自原免费档每天 100 封的假设。规则与仪表盘的文字尚未调整，不能把它当成实时套餐或剩余额度。它与 `launch-status` 按 UTC 当天注册账户数达到 80 个的提醒口径不同；当前生产未开监控，不会自动收到这条告警。
+这条既有告警按滚动 24 小时成功发信达到 80 封提醒（`agent_room:emails_sent:increase_24h`，仪表盘上的 “Emails sent, last 24h”），来自原免费档每天 100 封的假设。2026-10-28 起它是 `info`：只进每周报告，不开 issue，因为生产发信的套餐还没核实，不能把它当成实时套餐或剩余额度；真发不出去时由 AgentRoomEmailSendFailed 报。它与 `launch-status` 按 UTC 当天注册账户数达到 80 个的提醒口径不同。
 
 先核对实际 SMTP 账户的用量与发信错误。正常高峰继续观察，不因旧阈值自动关注册；如确认被刷，由首发值守表中确认的决策人决定是否关注册，执行按[首发预案第 2 步](./launch-day.md#第-2-步关注册被刷信时)。关注册还会暂停验证信、重发和忘记密码邮件，必须记录影响与恢复条件。
 
@@ -122,7 +132,8 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 ## 数据保留与隐私
 
-- Prometheus 保留 45 天；Alertmanager、Prometheus 与 Grafana 状态使用独立命名卷。
+- Prometheus 保留 45 天、最多 2 GB（满了先删最旧的）；Alertmanager、Prometheus 与 Grafana 状态使用独立命名卷。
+- 主机指标（`host-metrics`）只开 CPU、内存、负载、压力、文件系统和磁盘读写几项，不看进程和用户；它只读挂载主机的根目录。
 - 前端只上报受限枚举的耗时或分数；不上报 URL、资源名、消息正文、标识符或本地文件路径。
 - API 路由使用框架匹配模板，未知方法收敛为 `OTHER`；不得把原始路径或自定义方法写入标签。
-- 备份与恢复 textfile 指标仅含时间戳、目标秒数、耗时和备份仓库的总字节数，目录 `0755`、文件 `0644`，备份正文仍保持私有。
+- 备份与恢复 textfile 指标仅含时间戳、目标秒数、耗时、备份仓库的总字节数和其中对象镜像的字节数（`agent_room_backup_object_bytes`），目录 `0755`、文件 `0644`，备份正文仍保持私有。
