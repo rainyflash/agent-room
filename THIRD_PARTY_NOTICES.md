@@ -10,7 +10,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - npm packages: 718
 - Total locked package versions: 1607
 - `Cargo.lock` SHA-256: `ad56c7c4b136a8608c74d465868030e94faf66a4aabde2f844c6e98d810c5e7c`
-- `pnpm-lock.yaml` SHA-256: `a2b0972236040643a978875fe98ce4c676c6fa15561da4344e3177751888e369`
+- `pnpm-lock.yaml` SHA-256: `79c6ae60fe7591212baca7130c4f882b689948e438a50288d50728bf732b7be0`
 
 ## License expressions
 
@@ -1172,14 +1172,14 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@typescript-eslint/visitor-keys](https://www.npmjs.com/package/@typescript-eslint/visitor-keys/v/8.67.0) | 8.67.0 | `MIT` |
 | npm | [@typescript/typescript6](https://www.npmjs.com/package/@typescript/typescript6/v/6.0.2) | 6.0.2 | `Apache-2.0` |
 | npm | [@vitejs/plugin-react](https://www.npmjs.com/package/@vitejs/plugin-react/v/6.1.0) | 6.1.0 | `MIT` |
-| npm | [@vitest/coverage-v8](https://www.npmjs.com/package/@vitest/coverage-v8/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/expect](https://www.npmjs.com/package/@vitest/expect/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/mocker](https://www.npmjs.com/package/@vitest/mocker/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/pretty-format](https://www.npmjs.com/package/@vitest/pretty-format/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/runner](https://www.npmjs.com/package/@vitest/runner/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/snapshot](https://www.npmjs.com/package/@vitest/snapshot/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/spy](https://www.npmjs.com/package/@vitest/spy/v/4.1.11) | 4.1.11 | `MIT` |
-| npm | [@vitest/utils](https://www.npmjs.com/package/@vitest/utils/v/4.1.11) | 4.1.11 | `MIT` |
+| npm | [@vitest/coverage-v8](https://www.npmjs.com/package/@vitest/coverage-v8/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/expect](https://www.npmjs.com/package/@vitest/expect/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/mocker](https://www.npmjs.com/package/@vitest/mocker/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/pretty-format](https://www.npmjs.com/package/@vitest/pretty-format/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/runner](https://www.npmjs.com/package/@vitest/runner/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/snapshot](https://www.npmjs.com/package/@vitest/snapshot/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/spy](https://www.npmjs.com/package/@vitest/spy/v/4.1.12) | 4.1.12 | `MIT` |
+| npm | [@vitest/utils](https://www.npmjs.com/package/@vitest/utils/v/4.1.12) | 4.1.12 | `MIT` |
 | npm | [@webgpu/types](https://www.npmjs.com/package/@webgpu/types/v/0.1.72) | 0.1.72 | `BSD-3-Clause` |
 | npm | [@xmldom/xmldom](https://www.npmjs.com/package/@xmldom/xmldom/v/0.8.15) | 0.8.15 | `MIT` |
 | npm | [@xstate/react](https://www.npmjs.com/package/@xstate/react/v/6.1.0) | 6.1.0 | `MIT` |
@@ -1312,7 +1312,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [fast-deep-equal](https://www.npmjs.com/package/fast-deep-equal/v/3.1.3) | 3.1.3 | `MIT` |
 | npm | [fast-json-stable-stringify](https://www.npmjs.com/package/fast-json-stable-stringify/v/2.1.0) | 2.1.0 | `MIT` |
 | npm | [fast-levenshtein](https://www.npmjs.com/package/fast-levenshtein/v/2.0.6) | 2.0.6 | `MIT` |
-| npm | [fast-uri](https://www.npmjs.com/package/fast-uri/v/3.1.8) | 3.1.8 | `BSD-3-Clause` |
+| npm | [fast-uri](https://www.npmjs.com/package/fast-uri/v/3.1.9) | 3.1.9 | `BSD-3-Clause` |
 | npm | [fdir](https://www.npmjs.com/package/fdir/v/6.5.0) | 6.5.0 | `MIT` |
 | npm | [file-entry-cache](https://www.npmjs.com/package/file-entry-cache/v/8.0.0) | 8.0.0 | `MIT` |
 | npm | [filelist](https://www.npmjs.com/package/filelist/v/1.0.6) | 1.0.6 | `Apache-2.0` |
@@ -1542,7 +1542,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [sdp-transform](https://www.npmjs.com/package/sdp-transform/v/3.0.0) | 3.0.0 | `MIT` |
 | npm | [semver](https://www.npmjs.com/package/semver/v/6.3.1) | 6.3.1 | `ISC` |
 | npm | [semver](https://www.npmjs.com/package/semver/v/7.8.5) | 7.8.5 | `ISC` |
-| npm | [serialize-javascript](https://www.npmjs.com/package/serialize-javascript/v/7.1.2) | 7.1.2 | `BSD-3-Clause` |
+| npm | [serialize-javascript](https://www.npmjs.com/package/serialize-javascript/v/7.1.4) | 7.1.4 | `BSD-3-Clause` |
 | npm | [seroval](https://www.npmjs.com/package/seroval/v/1.6.3) | 1.6.3 | `MIT` |
 | npm | [seroval-plugins](https://www.npmjs.com/package/seroval-plugins/v/1.6.3) | 1.6.3 | `MIT` |
 | npm | [set-function-length](https://www.npmjs.com/package/set-function-length/v/1.2.2) | 1.2.2 | `MIT` |
@@ -1635,7 +1635,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [vary](https://www.npmjs.com/package/vary/v/1.1.2) | 1.1.2 | `MIT` |
 | npm | [vite](https://www.npmjs.com/package/vite/v/8.2.4) | 8.2.4 | `MIT` |
 | npm | [vite-plugin-pwa](https://www.npmjs.com/package/vite-plugin-pwa/v/1.3.0) | 1.3.0 | `MIT` |
-| npm | [vitest](https://www.npmjs.com/package/vitest/v/4.1.11) | 4.1.11 | `MIT` |
+| npm | [vitest](https://www.npmjs.com/package/vitest/v/4.1.12) | 4.1.12 | `MIT` |
 | npm | [w3c-xmlserializer](https://www.npmjs.com/package/w3c-xmlserializer/v/5.0.0) | 5.0.0 | `MIT` |
 | npm | [walk-up-path](https://www.npmjs.com/package/walk-up-path/v/4.0.0) | 4.0.0 | `ISC` |
 | npm | [webidl-conversions](https://www.npmjs.com/package/webidl-conversions/v/8.0.1) | 8.0.1 | `BSD-2-Clause` |
