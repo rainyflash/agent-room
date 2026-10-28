@@ -174,7 +174,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 第 4 步（#624）：`production.py capacity-report [--post]`，每周一开一条 `capacity-report` 的 issue、关掉上一条。没有按房间数消息的指标，“忙不忙”看 Synapse 存下的事件。定时器（`capacity-report-schedule-install`）在生产上打开监控那天装。
 - 第 5 步：Alpha 86 发完（2026-10-28）在生产上打开了监控（原配置在 `deployment.json.before-telemetry`），容量周报的定时器也装了；看满一天内存再记进设计文档。
   - 单独重建控制面别只用 `compose_command()`：发版部署多带一份钉死签名镜像的 `compose.images.json`，不带的话控制面的 `build:` 生效，在 2 核的生产机上从源码编 Rust（第一次跑 `telemetry-apply` 就这样，停掉后手动重建）。现在 `telemetry-apply`、`control-plane-reload` 读控制面容器上记着的 compose 文件、`--no-build --pull never`，不是发版部署起的就停下（#632）。以后加单独重建某个服务的命令也这样做。
-  - 开监控以后头两条告警都是规则本身不对（#635）：Outbox 只写不读（控制面往 `outbox_event` 里写，没有发布器读），别给它加告警，要用它得先接上发布器；桌面 Bridge 可用率改看 `bridge_uptime`（每 15 分钟一段里连着的时间比例），别再按状态变化报 0/1。这批告警以前没在生产上开过，新响的先查规则对不对。
+  - 开监控以后头两条告警都是规则本身不对（#635）：Outbox 只写不读，后来整个停写了（见下面“没人读的 Outbox”）；桌面 Bridge 可用率改看 `bridge_uptime`（每 15 分钟一段里连着的时间比例），别再按状态变化报 0/1。这批告警以前没在生产上开过，新响的先查规则对不对。
 
 ### Codex 包里的本机数据
 
@@ -209,7 +209,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 - 2026-10-28 开监控后 Outbox 积压的告警一直响（agent-room-ops#36，#635 去掉了告警）：控制面往 `outbox_event` 里写七种事件，从来没有发布器读，生产上 413 行一行也没发布。每种事件该跟着做的事，都已经在请求里直接做，或者有自己的任务表。
 - 设计在 [specs/outbox/design.md](./specs/outbox/design.md)（#636），进度记在它的“状态”一节。维护者当天定了去掉：先停写、删代码和指标，停写的那一版发出去以后，下一版再带删表的迁移（回滚只换镜像、不退数据库，上一版还在写这张表）。撤销以后 Matrix 设备注销的后台重试另做一步。
-- 别再加写 Outbox 的地方，也别给它接一个“读到就标成已发布”的消费者：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表。
+- 第 2 步（#PRNUM）停写、删了代码和指标。改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，带它的那一版实机验收要走一次新设备授权。第 3 步删表的迁移等这一版发出去以后的下一版再合，合之前只读查一次行数报给维护者。
+- 别再加回 Outbox，也别给它接一个“读到就标成已发布”的消费者：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表。
 
 ### 网站被搜到
 

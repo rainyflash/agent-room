@@ -204,7 +204,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | 表 | 关键字段 | 约束与用途 |
 | --- | --- | --- |
 | `agent_creation_request` | `id`、`principal_id`、`agent_id`、`request_fingerprint`、`state` | UUIDv7 幂等键预留唯一 Agent ID；只有实际 Agent 已落库后才能转为 `completed` |
-| `agent_instance_registration_request` | `id`、`principal_id`、`device_id`、`agent_id`、`adapter_binding_id`、`agent_instance_id`、`request_fingerprint` | 与 Binding、Instance 和 Outbox 在同一事务提交；重复请求只能恢复原记录 |
+| `agent_instance_registration_request` | `id`、`principal_id`、`device_id`、`agent_id`、`adapter_binding_id`、`agent_instance_id`、`request_fingerprint` | 与 Binding、Instance 在同一事务提交；重复请求只能恢复原记录 |
 
 两个回执都只保存 SHA-256 请求指纹，不保存访问令牌、Application Service Token 或设备私钥。同一回执 ID 被另一主体、设备或请求正文复用时必须拒绝，不能返回原身份信息。
 
@@ -457,7 +457,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `correlation_id` | UUIDv7 | 非空 |
 | `metadata` | jsonb | 严格白名单、禁止正文和凭据 |
 
-## 8. 投影与 Outbox
+## 8. 投影
 
 ### 8.1 `matrix_projection_cursor`
 
@@ -477,25 +477,9 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 消费者先写回执，再在同一事务更新成员、人数、活动度和游标。相同事件 ID 与相同摘要是安全重放；相同事件 ID 携带不同摘要属于损坏或伪造输入，必须终止批次并报警。
 
-### 8.3 `outbox_event`
+### 8.3 `outbox_event`（停用，待删）
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | UUIDv7 | 事件主键 |
-| `aggregate_type` | text | 聚合类型 |
-| `aggregate_id` | UUIDv7 | 聚合标识 |
-| `event_type` | text | 领域事件类型 |
-| `payload` | jsonb | 版本化结构 |
-| `occurred_at` | timestamptz | 发生时间 |
-| `published_at` | timestamptz? | 发布完成时间 |
-| `attempt_count` | integer | 重试次数 |
-| `next_attempt_at` | timestamptz | 退避时间 |
-| `claimed_by` | text? | 当前租约持有者 |
-| `claim_expires_at` | timestamptz? | 租约到期时间 |
-| `last_error_code` | text? | 最近稳定错误码 |
-| `dead_lettered_at` | timestamptz? | 达到阈值后的死信时间 |
-
-写业务聚合与写 Outbox 必须处于同一事务。并发消费者使用有序 `FOR UPDATE SKIP LOCKED` 批量领取；发布端必须使用事件 ID 作为幂等键。租约到期后其他消费者可以接管，瞬时失败按有界指数退避，永久失败或达到阈值后进入死信并报警，不能无限吞错。
+原先给通用 Outbox 用，一直没有消费者。控制面 2026-10-28 起不再写这张表，停写的那一版发出去以后，下一版加迁移连索引一起删掉（[没人读的 Outbox](../outbox/design.md)）。要后台补做的事各自一张任务表，不经这张表。
 
 ## 9. 索引设计
 
@@ -521,8 +505,6 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - `automation_grant (agent_id, room_catalog_id, state, expires_at)`。
 - `moderation_case (state, created_at)`。
 - `audit_event (occurred_at, action)` 和 `(target_kind, target_reference, occurred_at)`。
-- `outbox_event (next_attempt_at, claim_expires_at, occurred_at, id)` 部分索引未发布且未死信行。
-- `outbox_event (dead_lettered_at, event_type)` 部分索引死信行。
 - `matrix_projection_event_receipt (consumer_name, processed_at, event_id)`。
 
 所有索引在真实查询计划和数据规模下验证，不为了“以后可能查询”无限加索引。
@@ -535,7 +517,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - 跨 PostgreSQL/Matrix 操作使用 Saga/补偿，不伪造两阶段提交。
 - 内容上传采用状态机：`uploading → active/orphaned`。
 - 上下文交付状态转换使用比较并交换，重复回执幂等。
-- 撤销设备和授权后更新数据库，再通过 Outbox 传播；高风险校验直接查询权威状态。
+- 撤销设备和授权时先更新数据库，Matrix 那一步在请求里直接做，没做成的由专门的任务表接着做（比如 `revoked_agent_departure`）；高风险校验直接查询权威状态。
 
 ## 11. 保留与删除
 
