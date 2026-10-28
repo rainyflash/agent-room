@@ -172,6 +172,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2a（监控能开起来，#623）：部署配置的 `telemetry` 多了 `"alerts": "ops-issues"`，和 `alertWebhookUrl` 二选一；选它时不起 Alertmanager，每小时的错误汇总读 Prometheus 正在响的告警（服务写 `alerts`）。发版部署不起监控容器，改了 `telemetry` 要跑 `production.py telemetry-apply`（只碰监控容器和控制面）。监控容器都设了内存上限，加起来别超过 720 MB，有测试卡着。改了 `render.py`，随下一版发布要设备码；生产上打开放在发版以后（第 5 步）。
 - 2b：`agent-room-ops` 的 `.github/workflows/external-probe.yml` 每 30 分钟从 GitHub 的机器上探控制面、网页和网站，两次都不通开一条 p1 的 `prod-error`、恢复了自动关。私有仓库的 Actions 每月 2000 分钟免费，它约用 1440 分钟，那个仓库别再加常跑的工作流。
 - 第 4 步（#624）：`production.py capacity-report [--post]`，每周一开一条 `capacity-report` 的 issue、关掉上一条。没有按房间数消息的指标，“忙不忙”看 Synapse 存下的事件。定时器（`capacity-report-schedule-install`）在生产上打开监控那天装。
+- 第 5 步：Alpha 86 发完（2026-10-28）在生产上打开了监控（原配置在 `deployment.json.before-telemetry`），容量周报的定时器也装了；看满一天内存再记进设计文档。
+  - 单独重建控制面别只用 `compose_command()`：发版部署多带一份钉死签名镜像的 `compose.images.json`，不带的话控制面的 `build:` 生效，在 2 核的生产机上从源码编 Rust（第一次跑 `telemetry-apply` 就这样，停掉后手动重建）。现在 `telemetry-apply`、`control-plane-reload` 读控制面容器上记着的 compose 文件、`--no-build --pull never`，不是发版部署起的就停下（#632）。以后加单独重建某个服务的命令也这样做。
 
 ### Codex 包里的本机数据
 
