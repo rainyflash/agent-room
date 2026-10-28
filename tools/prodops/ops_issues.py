@@ -459,6 +459,10 @@ class GitHubIssueTracker:
     def append(self, number: int, body: str) -> None:
         self.comment(number, body)
 
+    def close(self, number: int, comment: str) -> None:
+        self.comment(number, comment)
+        self._request("PATCH", f"/repos/{self._repository}/issues/{number}", {"state": "closed"})
+
     def _request(
         self, method: str, path: str, payload: object | None = None, *, allow_missing: bool = False
     ) -> object:

@@ -217,6 +217,13 @@ python3 tools/production.py error-digest --since 24h --config /etc/agent-room/de
 sudo python3 tools/production.py error-digest-schedule-install --issue-repository rainyflash/agent-room-ops --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
 ```
 
+开了监控以后，每周一份容量报告：问本机的 Prometheus 这一周按地区的活跃账户和快慢、Synapse 和整机的 CPU、内存、各个库和对象存储多大、比上周涨了多少、盘还能撑几周、最忙的一小时、响过的告警，再读主机的 `/proc/net/dev` 算这一周的网络流量。只读，不带 `--post` 只打印。带 `--post` 时开成私有仓库里的 issue（标 `capacity-report`，不标 `prod-error`），关掉上一周的；网卡读数和发到哪一周记在 `<状态目录>/capacity-report/state.json`，手动打印不动它。令牌和错误汇总用同一个。每周一 01:23 UTC 跑的定时器也是装一次就好：
+
+```bash
+python3 tools/production.py capacity-report --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+sudo python3 tools/production.py capacity-report-schedule-install --issue-repository rainyflash/agent-room-ops --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room
+```
+
 控制平面必须显式允许桌面壳的精确源站：Windows 是 `http://tauri.localhost`，macOS 是自定义协议 `tauri://localhost`。生产 Compose 已固定 `AGENT_ROOM_DESKTOP_ORIGIN` 为这两个值；启用凭据时禁止使用 `*`。云端优先版本的迁移顺序、CORS 核验、Go/No-Go 和无破坏回滚流程见[云端优先发布 Runbook](../../docs/operations/cloud-first-rollout.md)。
 
 ## 外部 PostgreSQL 与对象存储

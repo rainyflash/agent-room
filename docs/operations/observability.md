@@ -9,6 +9,11 @@
 - `"alerts": "ops-issues"`（官方部署）：不起 Alertmanager。每小时的错误汇总（`error-digest --post`）读 Prometheus 正在响的告警，`critical` 记成 p1、`warning` 记成 p2，和日志里的错一样按指纹开成 `agent-room-ops` 的 issue（服务写 `alerts`）；`info` 只进每周报告，不开 issue。Prometheus 本身读不到时也开一条（“Prometheus 读不到告警”）。告警停了 issue 不会自己关，看过就关。
 - `alertWebhookUrl`：Alertmanager 按 Bearer 认证发到自己的接收端。
 
+另外两样不靠服务器自己的监控：
+
+- 每周一的容量报告（`production.py capacity-report --post`，标 `capacity-report`）：这周按地区的用量和快慢、机器、存储、最忙的时候、响过的告警。`info` 的告警在这里看。
+- 外部探测：`agent-room-ops` 仓库的 `.github/workflows/external-probe.yml` 每 30 分钟从 GitHub 的机器上探控制面、网页和网站，隔两分钟两次都不通才开一条 p1 的 `prod-error`，恢复了自动关。整台服务器挂了时，只有它报得出来。
+
 ## SLO 与证据
 
 - 控制平面 API 月度可用性目标：99.9%；服务端 5xx 计为失败，4xx 计为成功处理的客户端请求。网络 Agent 的位置满了、总开关关着时回的 503（`network_agent.capacity_reached`、`network_agent.room_capacity_reached`、`network_agent.disabled`）是我们自己挡的，指标上带 `refusal` 标签，不算失败。
