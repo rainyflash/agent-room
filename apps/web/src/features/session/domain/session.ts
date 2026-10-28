@@ -70,9 +70,15 @@ export type BrowserGateway = {
   replacePath(path: string): void;
 };
 
+/** 控制面说某个操作要最近登录过（`authentication.reauthentication_required`）时通知。 */
+export type ReauthenticationNotices = {
+  subscribe(listener: () => void): () => void;
+};
+
 export type SessionDependencies = {
   readonly browser: BrowserGateway;
   readonly controlPlane: ControlPlaneGateway;
   readonly matrix: MatrixGateway;
   readonly privateState: { clear(): void };
+  readonly reauthentication?: ReauthenticationNotices;
 };
