@@ -277,13 +277,17 @@ class ProductionRuntime:
             if ids:
                 self._run(["docker", "rm", "--force", *ids], capture=True)
 
+    @staticmethod
+    def prometheus_url() -> str:
+        """Prometheus 只开在本机端口上，和 Compose 里一样（`AGENT_ROOM_PROMETHEUS_PORT`，默认 9090）。"""
+
+        return f"http://127.0.0.1:{os.environ.get('AGENT_ROOM_PROMETHEUS_PORT') or '9090'}"
+
     def firing_alerts(self) -> list[str]:
         """Prometheus 的告警，一条一行（JSON），交给错误汇总；正在响的、快要响的都在里面，汇总只认正在响的。
-        Prometheus 只开在本机端口上（和 Compose 里一样，`AGENT_ROOM_PROMETHEUS_PORT` 默认 9090）。
         读不到时交一条 `unreachable`：监控停了也要有人知道。"""
 
-        port = os.environ.get("AGENT_ROOM_PROMETHEUS_PORT") or "9090"
-        url = f"http://127.0.0.1:{port}/api/v1/alerts"
+        url = f"{self.prometheus_url()}/api/v1/alerts"
         try:
             with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=10) as response:
                 alerts = json.load(response)["data"]["alerts"]

@@ -12,6 +12,7 @@ from tools.prodops.render import DeploymentPaths
 from tools.prodops.schedule import (
     BackupScheduleError,
     BackupScheduleInstaller,
+    CapacityReportScheduleInstaller,
     ErrorDigestScheduleInstaller,
     _systemd_path,
 )
@@ -124,6 +125,29 @@ class ErrorDigestScheduleTests(unittest.TestCase):
         )
         self.assertIn(f'"{self.config_path.as_posix()}"', files.service_content)
         self.assertIn("TimeoutStartSec=20min", files.service_content)
+
+    def test_weekly_capacity_report_uses_the_same_repository_and_token(self) -> None:
+        installer = CapacityReportScheduleInstaller(
+            self.installer.config,
+            self.installer.paths,
+            self.config_path,
+            "rainyflash/agent-room-ops",
+            Path("/etc/agent-room/ops-issues.token"),
+        )
+
+        files = installer.render()
+
+        self.assertEqual(
+            (files.service_name, files.timer_name),
+            ("agent-room-capacity-report.service", "agent-room-capacity-report.timer"),
+        )
+        self.assertIn("OnCalendar=Mon *-*-* 01:23:00", files.timer_content)
+        self.assertIn("Persistent=true", files.timer_content)
+        self.assertIn(
+            '"capacity-report" "--post" "--issue-repository" "rainyflash/agent-room-ops" '
+            '"--issue-token-file" "/etc/agent-room/ops-issues.token"',
+            files.service_content,
+        )
 
     @unittest.skipUnless(
         sys.platform.startswith("linux") and shutil.which("systemd-analyze"),
