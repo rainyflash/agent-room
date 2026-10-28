@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 
 use crate::persistence::RepositoryResult;
 
-use super::{DeviceSignature, PortFuture, SecretDigest};
+use super::{DeviceSignature, PendingAgentMatrixDeviceRevocation, PortFuture, SecretDigest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRegistration {
@@ -255,6 +255,16 @@ pub trait AgentInstanceMatrixCleanupStore: Send + Sync {
         instance_id: AgentInstanceId,
         revoked_at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>>;
+}
+
+/// 撤销了、Matrix 设备还没注销成的连接：撤销那一刻聊天服务器不通，请求里没注销成。
+pub trait PendingAgentMatrixDeviceStore: Send + Sync {
+    /// 撤销时间不晚于 `revoked_before` 的，先撤销的在前，最多 `limit` 个。
+    fn list_pending_matrix_devices(
+        &self,
+        revoked_before: UtcMillis,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PendingAgentMatrixDeviceRevocation>>>;
 }
 
 pub trait AgentInstanceSignatureVerifier: Send + Sync {

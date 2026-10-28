@@ -12,11 +12,12 @@ use agent_room_application::{
         AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
         AgentMembershipTransaction, AgentRegistration, AgentRepository, AgentRetirementOutcome,
         AgentRetirementTransaction, ClaimTargetedHandoff, DeviceRevocationOutcome,
-        DeviceRevocationTransaction, HandoffAccessRepository, MatrixUserId, PrincipalRegistration,
-        PrincipalRepository, QueueTargetedHandoff, QueueTargetedHandoffOutcome,
-        RecordTargetedHandoffReceipt, SealedSecret, SecretDigest, SignInAccount,
-        StoredAgentInstanceRegistration, StoredEncryptionKey, TargetedHandoffReceiptOutcome,
-        TargetedHandoffRepository, TargetedHandoffRequestFingerprint,
+        DeviceRevocationTransaction, HandoffAccessRepository, MatrixUserId,
+        PendingAgentMatrixDeviceStore, PrincipalRegistration, PrincipalRepository,
+        QueueTargetedHandoff, QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt,
+        SealedSecret, SecretDigest, SignInAccount, StoredAgentInstanceRegistration,
+        StoredEncryptionKey, TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
+        TargetedHandoffRequestFingerprint,
     },
 };
 use agent_room_domain::{
@@ -671,6 +672,9 @@ async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销
     assert_instance_management_visibility(&repositories, &fixture, outsider_id).await;
     assert_hidden_instance_revocation(&repositories, outsider_id, instance_id).await;
     assert_local_instance_revocation(&repositories, fixture.owner_id, instance_id).await;
+    let just_before = UtcMillis::new(test_time().value() - 1).expect("时间有效");
+    assert!(!pending_matrix_device(&repositories, just_before, instance_id).await);
+    assert!(pending_matrix_device(&repositories, test_time(), instance_id).await);
 
     AgentInstanceMatrixCleanupStore::mark_matrix_device_revoked(
         &repositories,
@@ -684,6 +688,7 @@ async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销
             .await
             .expect("可读取清理后的状态");
     assert!(completed[0].matrix_device_revoked_at.is_some());
+    assert!(!pending_matrix_device(&repositories, test_time(), instance_id).await);
 
     database.close().await;
 }
@@ -1723,6 +1728,19 @@ async fn assert_hidden_instance_revocation(
     .await
     .expect("无权撤销不会泄漏实例是否存在");
     assert_eq!(hidden, AgentInstanceRevocationOutcome::NotFound);
+}
+
+/// 后台再试注销时读不读得到这个连接（撤销时间不晚于 `revoked_before`、还没注销成）。
+async fn pending_matrix_device(
+    repositories: &PostgresRepositories,
+    revoked_before: UtcMillis,
+    instance_id: AgentInstanceId,
+) -> bool {
+    PendingAgentMatrixDeviceStore::list_pending_matrix_devices(repositories, revoked_before, 200)
+        .await
+        .expect("可读取待注销的 Matrix 设备")
+        .iter()
+        .any(|pending| pending.instance_id == instance_id)
 }
 
 async fn assert_local_instance_revocation(
