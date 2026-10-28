@@ -331,12 +331,15 @@ def build_report(
 def _usage_section(values: dict[str, list[Sample]], latency: dict[tuple[str, float], list[Sample]]) -> list[str]:
     accounts = _by(values["accounts"], "region", "kind")
     requests = _by(values["requests"], "region", "kind")
+    # 控制面每个地区、每种账户都报，没人来的是 0：只列这周真有人来过的地区。
     regions = sorted(
-        {region for region, _ in accounts} | {region for region, _ in requests},
+        {region for (region, _), value in [*accounts.items(), *requests.items()] if value > 0},
         key=lambda region: -sum(value for (other, _), value in accounts.items() if other == region),
     )
     lines = ["## 谁在用、快不快", ""]
     if not regions:
+        if accounts or requests:
+            return [*lines, "这周哪个地区都没有登录的人和 Agent 来过。", ""]
         return [*lines, "还没有按地区的数（地区汇总上线、有人用过以后才有）。", ""]
     lines.extend(
         [

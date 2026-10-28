@@ -69,8 +69,13 @@ def busy_week() -> FakePrometheus:
             Sample({"region": "cn", "kind": "local_agent"}, 30),
             Sample({"region": "europe", "kind": "person"}, 5),
             Sample({"region": "europe", "kind": "network_agent"}, 9),
+            # 控制面每个组合都报，没人来的是 0。
+            Sample({"region": "jp_kr", "kind": "person"}, 0),
         ],
-        QUERIES["requests"]: [Sample({"region": "cn", "kind": "person"}, 15234)],
+        QUERIES["requests"]: [
+            Sample({"region": "cn", "kind": "person"}, 15234),
+            Sample({"region": "jp_kr", "kind": "person"}, 0),
+        ],
         QUERIES["samples"]: [Sample({"region": "cn"}, 410), Sample({"region": "europe"}, 88)],
         latency_query("api_round_trip", 0.5): [Sample({"region": "cn"}, 0.21)],
         latency_query("api_round_trip", 0.95): [Sample({"region": "cn"}, 0.84)],
@@ -136,6 +141,16 @@ class ReportTests(unittest.TestCase):
         # 只出中文的地区名，不出标签的原样。
         for raw in ("cn", "europe", "local_agent", "network_agent"):
             self.assertNotIn(f"| {raw} ", report)
+        # 这周没人来的地区不列。
+        self.assertNotIn("日韩", report)
+
+    def test_a_week_with_only_zeros_says_nobody_came(self) -> None:
+        zeros = [Sample({"region": "cn", "kind": "person"}, 0), Sample({"region": "europe", "kind": "local_agent"}, 0)]
+        prometheus = FakePrometheus({QUERIES["accounts"]: zeros, QUERIES["requests"]: zeros})
+        report = "\n".join(build_report(prometheus, now=NOW, network=None, previous_network=None, version="v"))
+
+        self.assertIn("这周哪个地区都没有登录的人和 Agent 来过。", report)
+        self.assertNotIn("| 中国大陆 |", report)
 
     def test_fresh_monitoring_says_there_is_nothing_yet(self) -> None:
         report = "\n".join(build_report(FakePrometheus(), now=NOW, network=None, previous_network=None, version="v"))
