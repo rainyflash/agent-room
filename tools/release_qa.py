@@ -1299,7 +1299,15 @@ def relaunch_script(executable: str, cdp_port: int | None) -> str:
         "foreach ($p in $open) { $null = $p.CloseMainWindow(); if (-not $p.WaitForExit(5000)) "
         "{ Stop-Process -Id $p.Id -ErrorAction SilentlyContinue; $p.WaitForExit(5000) | Out-Null } }; "
         "if ($open.Count -eq 0 -and (Get-Views).Count -eq 0) { break }; Start-Sleep -Milliseconds 200 }; "
-        "$started = Start-Process -FilePath $app -PassThru; Start-Sleep -Seconds 5; "
+        "$started = Start-Process -FilePath $app -PassThru; "
+        # Ours must end up the only one. In Alpha 86 an agent's background launch took the turn in the same
+        # instant; ours stayed alive behind it (so the old 5-second check passed) but could not hand over its
+        # arguments, and its WebView never opened. Closing every other instance for a while lets ours take the
+        # turn; later launches queue behind it.
+        "$until = (Get-Date).AddSeconds(20); "
+        "while ((Get-Date) -lt $until -and -not $started.HasExited) { "
+        "foreach ($p in Get-Desktops) { if ($p.Id -ne $started.Id) "
+        "{ Stop-Process -Id $p.Id -ErrorAction SilentlyContinue } }; Start-Sleep -Milliseconds 200 }; "
         "if (-not $started.HasExited) { exit 0 } }; "
         "exit 1"
     )
