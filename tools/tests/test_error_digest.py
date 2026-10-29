@@ -407,6 +407,30 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_knock_check_with_a_revoked_token_is_noise(self) -> None:
+        def failure(kind: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-10-29T02:16:42.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "等消息时没看成有没有人敲它建的房间的门，过一会儿再看",
+                        "correlation.id": CORRELATION_ID,
+                        "failure": kind,
+                    },
+                    "target": "agent_room_control_plane::network_gateway::knocks",
+                    "span": {"http.request.method": "GET", "url.path": "/v1/network-agents/me/messages"},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {"control-plane": [failure("Unauthorized"), failure("Internal")]}, load_noise(NOISE_FILE)
+        )
+        [finding] = digest.findings
+        self.assertIn("failure=Internal", finding.signature.summary)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
 
 class SummaryTests(unittest.TestCase):
     def test_counts_and_accounts_without_keeping_who(self) -> None:

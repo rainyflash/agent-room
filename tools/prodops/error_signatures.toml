@@ -26,6 +26,11 @@ service = "control-plane"
 summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
 reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
 
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ 等消息时没看成有没有人敲它建的房间的门，过一会儿再看 failure=Unauthorized @ '
+reason = "网络 Agent 等消息的途中令牌失效（被停用、删除或换了令牌），这一次查敲门用的还是旧令牌；这次请求本身已经通过了认证，下一次带旧令牌的请求会照常被拒，不是控制面的毛病（2026-10-29 生产上出现过一次）。别的失败类型照旧报出来"
+
 # 身份服务
 
 [[ignore]]
