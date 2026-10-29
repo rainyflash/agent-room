@@ -95,6 +95,11 @@ reason = "拿已经注册过的邮箱又注册一次，注册页上直接说这�
 
 [[ignore]]
 service = "identity"
+summary = '^REGISTER_ERROR error=(already_logged_in|invalid_code)$'
+reason = "已经登录过了，浏览器里留着的旧注册页又提交了一次；Keycloak 把人送回网页，网页登录还有效就直接回房间。旧页面上的步骤号对不上时先记一条 invalid_code，紧接着就是这条 already_logged_in，和重开登录那两条一样（2026-10-28 生产上两条在同一毫秒，agent-room-ops#42、#43）"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=expired_code$'
 reason = "账户已经建好了，留着的旧注册页又被提交，Keycloak 给“页面已过期”；2026-10-25 生产上那次是验证完邮箱又点了旧标签页里的注册"
 

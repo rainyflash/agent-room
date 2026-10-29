@@ -336,6 +336,8 @@ class NoiseTableTests(unittest.TestCase):
                     event("CUSTOM_REQUIRED_ACTION_ERROR", "invalid_code"),
                     event("REGISTER_ERROR", "invalid_registration"),
                     event("REGISTER_ERROR", "expired_code"),
+                    event("REGISTER_ERROR", "already_logged_in"),
+                    event("REGISTER_ERROR", "invalid_code"),
                     event("OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR", "invalid_oauth2_user_code"),
                     event("LOGIN_ERROR", "user_not_found"),
                     event("LOGIN_ERROR", "expired_code"),
@@ -354,7 +356,7 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 11)
+        self.assertEqual(sum(digest.ignored.values()), 13)
 
     def test_opening_a_room_you_are_not_in_is_noise(self) -> None:
         not_found = CONTROL_WARN.replace('"failure": "Internal"', '"failure": "NotFound"')
