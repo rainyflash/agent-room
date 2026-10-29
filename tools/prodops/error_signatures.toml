@@ -95,6 +95,11 @@ reason = "已经登录的浏览器又提交了一次登录页（点了两次登�
 
 [[ignore]]
 service = "identity"
+summary = '^REGISTER_ERROR error=(already_logged_in|invalid_code)$'
+reason = "别的标签页已经登录完了，这个标签页留着的注册页又被提交：先记 invalid_code，紧接着 already_logged_in，Keycloak 把人送回网页，#588 起网页登录还有效就送回房间（2026-10-28 生产上那次，同一个浏览器两秒里留着的验证邮箱页、注册页、登录页各来了一对，每对只差 6 毫秒，控制面都说网页登录还有效、送回了房间）。和上面 LOGIN_ERROR 那条是同一件事，只是事件类型不同"
+
+[[ignore]]
+service = "identity"
 summary = '^CUSTOM_REQUIRED_ACTION_ERROR error=(already_logged_in|invalid_code)$'
 reason = "别的标签页已经登录完了（比如在新标签页里点了验证邮件），这个标签页留着的验证邮箱这类页面自己刷新或又被提交：登录页模板里的 startSessionPolling 盯着别的标签页。Keycloak 把人送回网页，#588 起网页登录还有效就直接回房间（2026-10-25 生产上看到的，9 秒前同一个浏览器刚有一条 RESTART_AUTHENTICATION_ERROR）"
 
@@ -169,6 +174,11 @@ reason = "PostgreSQL 的可重复读事务撞上并发更新，Synapse 会自动
 service = "synapse"
 summary = '^WARNING synapse\.http\.server Not sending response to request '
 reason = "客户端在回答之前断开了（长轮询被取消、页面关了）"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.http\.site Aborting connection from .* because `content-type: multipart/form-data` is unsupported: '
+reason = "有人往聊天服务器发 multipart 表单，Synapse 读完请求头就断开、不处理。Matrix 客户端从来不这样发（传文件是原样的正文），是扫描器在试上传接口（2026-10-28 生产上一秒里往根路径 POST / 连发 4 次，前后没有登录了的请求）"
 
 [[ignore]]
 service = "synapse"

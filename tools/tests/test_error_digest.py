@@ -405,6 +405,8 @@ class NoiseTableTests(unittest.TestCase):
                     event("RESTART_AUTHENTICATION_ERROR", "invalid_code"),
                     event("LOGIN_ERROR", "invalid_code"),
                     event("LOGIN_ERROR", "already_logged_in"),
+                    event("REGISTER_ERROR", "invalid_code"),
+                    event("REGISTER_ERROR", "already_logged_in"),
                     KEYCLOAK_SERVICES.replace("ERROR [org.keycloak.services]", "WARN  [org.hibernate.orm.session]")
                     .replace(
                         "KC-SERVICES0093: Invalid parameter value for: scope",
@@ -417,7 +419,20 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 13)
+        self.assertEqual(sum(digest.ignored.values()), 15)
+
+    def test_multipart_probe_at_the_chat_server_is_noise(self) -> None:
+        probe = (
+            "2026-10-28 14:47:16,222 WARNING synapse.http.site Aborting connection from "
+            f"IPv4Address(type='TCP', host='{IP}', port=57362) because "
+            "`content-type: multipart/form-data` is unsupported: POST /"
+        )
+        other = probe.replace("multipart/form-data", "application/x-www-form-urlencoded")
+        digest = summarize({"synapse": [probe, probe.replace("57362", "45484"), other]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("application/x-www-form-urlencoded", summaries[0])
+        self.assertEqual(sum(digest.ignored.values()), 2)
 
     def test_confirming_just_after_the_recent_sign_in_window_is_noise(self) -> None:
         def failure(kind: str, path: str) -> str:
