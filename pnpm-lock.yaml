@@ -10,6 +10,8 @@ overrides:
   fast-uri@>=3.0.0 <3.1.9: 3.1.9
   qs@>=6.0.0 <6.16.0: 6.16.0
   serialize-javascript@<7.1.3: 7.1.4
+  seroval-plugins@<1.6.8: 1.6.12
+  seroval@<1.6.8: 1.6.12
   source-map-js@>=1.0.0 <1.2.2: 1.2.2
   undici@>=7.0.0 <7.30.1: 7.30.1
   undici@>=8.0.0 <8.12.2: 8.12.2
@@ -3502,14 +3504,14 @@ packages:
     resolution: {integrity: sha512-FqlEuoTq/zRmA4Lg6aOqyH3lCHbUtCB0bmHCeFniX2GBdDqMJM3FwdvEhlE5Pim1dlt2FfBdVPmUNNiGhhKqpw==}
     engines: {node: '>=20.0.0'}
 
-  seroval-plugins@1.6.3:
-    resolution: {integrity: sha512-zQIy62HW683pMIUOKv9yKueQmOr+xMjpP2eH/qEPhr6nTAC+pJTh508md571Oduf/K/QpAoyeWpOhOp1+RFeDA==}
+  seroval-plugins@1.6.12:
+    resolution: {integrity: sha512-+reiwp/lYxiyctSrdvX7OQ1YLrcbWYgBiZrhSFL+V43b0/DGRLNVSDyZINbQe+tWplPOI2fw2dPrdv6hcc09kQ==}
     engines: {node: '>=10'}
     peerDependencies:
-      seroval: ^1.0
+      seroval: 1.6.12
 
-  seroval@1.6.3:
-    resolution: {integrity: sha512-5PwLbVPpT4DEki1hYVSSsoxWY6xCNMVucAVLK/CH0mXSDfp/I4KaAex72q80GNt5hpn7CCMGdSpIg4YGqH/wXQ==}
+  seroval@1.6.12:
+    resolution: {integrity: sha512-CqbIVfk/7GL3ITwZI55lcPbpQbjHZ2DD5cUj4iH7E9YsCfHNJV1mx7yNp86Z84w5IpmkZZS/2s5vPOWmVWSdQg==}
     engines: {node: '>=10'}
 
   set-function-length@1.2.2:
@@ -5513,8 +5515,8 @@ snapshots:
     dependencies:
       '@tanstack/history': 1.162.1
       cookie-es: 3.1.1
-      seroval: 1.6.3
-      seroval-plugins: 1.6.3(seroval@1.6.3)
+      seroval: 1.6.12
+      seroval-plugins: 1.6.12(seroval@1.6.12)
 
   '@tanstack/store@0.9.3': {}
 
@@ -7489,11 +7491,11 @@ snapshots:
 
   serialize-javascript@7.1.4: {}
 
-  seroval-plugins@1.6.3(seroval@1.6.3):
+  seroval-plugins@1.6.12(seroval@1.6.12):
     dependencies:
-      seroval: 1.6.3
+      seroval: 1.6.12
 
-  seroval@1.6.3: {}
+  seroval@1.6.12: {}
 
   set-function-length@1.2.2:
     dependencies:

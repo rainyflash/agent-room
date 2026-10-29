@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "fccacc8d031a3c728a209004fe0bde758b5a8d10c57d9767cf35b7d9ee030857",
-    "pnpm-lock.yaml": "79c6ae60fe7591212baca7130c4f882b689948e438a50288d50728bf732b7be0"
+    "pnpm-lock.yaml": "5dd6034da1f4bb3ce5c0466297c409f5fd3be12db1c99ac3ac477530b743b194"
   },
   "dependencies": [
     {
@@ -10291,16 +10291,16 @@
     {
       "ecosystem": "npm",
       "name": "seroval",
-      "version": "1.6.3",
+      "version": "1.6.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/seroval/v/1.6.3"
+      "source": "https://www.npmjs.com/package/seroval/v/1.6.12"
     },
     {
       "ecosystem": "npm",
       "name": "seroval-plugins",
-      "version": "1.6.3",
+      "version": "1.6.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/seroval-plugins/v/1.6.3"
+      "source": "https://www.npmjs.com/package/seroval-plugins/v/1.6.12"
     },
     {
       "ecosystem": "npm",

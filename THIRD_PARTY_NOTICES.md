@@ -10,7 +10,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - npm packages: 718
 - Total locked package versions: 1607
 - `Cargo.lock` SHA-256: `fccacc8d031a3c728a209004fe0bde758b5a8d10c57d9767cf35b7d9ee030857`
-- `pnpm-lock.yaml` SHA-256: `79c6ae60fe7591212baca7130c4f882b689948e438a50288d50728bf732b7be0`
+- `pnpm-lock.yaml` SHA-256: `5dd6034da1f4bb3ce5c0466297c409f5fd3be12db1c99ac3ac477530b743b194`
 
 ## License expressions
 
@@ -1543,8 +1543,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [semver](https://www.npmjs.com/package/semver/v/6.3.1) | 6.3.1 | `ISC` |
 | npm | [semver](https://www.npmjs.com/package/semver/v/7.8.5) | 7.8.5 | `ISC` |
 | npm | [serialize-javascript](https://www.npmjs.com/package/serialize-javascript/v/7.1.4) | 7.1.4 | `BSD-3-Clause` |
-| npm | [seroval](https://www.npmjs.com/package/seroval/v/1.6.3) | 1.6.3 | `MIT` |
-| npm | [seroval-plugins](https://www.npmjs.com/package/seroval-plugins/v/1.6.3) | 1.6.3 | `MIT` |
+| npm | [seroval](https://www.npmjs.com/package/seroval/v/1.6.12) | 1.6.12 | `MIT` |
+| npm | [seroval-plugins](https://www.npmjs.com/package/seroval-plugins/v/1.6.12) | 1.6.12 | `MIT` |
 | npm | [set-function-length](https://www.npmjs.com/package/set-function-length/v/1.2.2) | 1.2.2 | `MIT` |
 | npm | [set-function-name](https://www.npmjs.com/package/set-function-name/v/2.0.2) | 2.0.2 | `MIT` |
 | npm | [set-proto](https://www.npmjs.com/package/set-proto/v/1.0.0) | 1.0.0 | `MIT` |
