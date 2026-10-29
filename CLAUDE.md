@@ -212,6 +212,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 第 2 步（#637）停写、删了代码和指标。改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，带它的那一版实机验收要走一次新设备授权。第 3 步删表的迁移等这一版发出去以后的下一版再合，合之前只读查一次行数报给维护者。
 - 第 4 步（#638）：撤销以后 Matrix 设备没注销成的，控制面每 30 秒再试（`agent_matrix_device_retry.rs`），以前要人再点一次撤销，换账号那条路上没人能点。不另建表，只扫 `agent_instance` 上撤销了、`matrix_device_revoked_at` 为空的；注销幂等，所以不领租约，退避只记在内存里、不放弃。撤销后 30 秒以内的留给撤销请求自己做。
 - 别再加回 Outbox，也别给它接一个“读到就标成已发布”的消费者：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表，或者像第 4 步那样直接扫原表上记着的状态。
+- 同一批做的 Matrix 投影也没人用：`MatrixProjectionStore` 产品代码里没有一处调用，`matrix_projection_cursor`、`matrix_projection_event_receipt`、`room_membership_projection` 生产上都是空的，`room_instance` 的 `member_count_projection`、`activity_score` 全是 0，所以“房间”页大厅卡片、网络 Agent 和远程 MCP 列房间的 `onlineAgentCount` 一直是 0。查的结果和建议（照 Outbox 分两版去掉，卡片改成按 `allocated_slots` 说“大厅里有 N 个 Agent”）在 [specs/matrix-projection/design.md](./specs/matrix-projection/design.md)，等维护者定。`onlineAgentCount` 这个字段别去掉：网页 `.strict()` 校验、必填。
 
 ### 网站被搜到
 
