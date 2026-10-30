@@ -26,6 +26,11 @@ service = "control-plane"
 summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
 reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
 
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ Agent 大厅入口失败 failure=NotFound @ GET /agents/\{id\}/rooms$'
+reason = "“我的 Agent”给每张卡片各问一次它在哪些房间，刷新时一起重问。问的 Agent 已经被删除（别的标签页、别的设备上删的，或刚删完页面上的列表还没换）时，服务器只认还在用的 Agent，回 404；网页把没问成的当作没有、卡片不写房间数，列表一刷新那张卡片就没了（2026-10-30 生产上那次，十几分钟里 11 次、三个关联号）。只放行这个读的接口：带进房间、离开那几个接口的 NotFound 照旧报出来"
+
 # 身份服务
 
 [[ignore]]
