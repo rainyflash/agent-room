@@ -516,6 +516,16 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_agent_asking_about_a_room_it_never_entered_is_noise(self) -> None:
+        member = SYNAPSE_ACCESS_403.replace(
+            f"/presence/{USER_ID}/status", f"/rooms/{ROOM_ID}/state/m.room.member/{USER_ID}"
+        ).replace('"Mozilla/5.0 (Macintosh)"', '"matrix-rust-sdk"')
+        room_name = member.replace(f"m.room.member/{USER_ID}", "m.room.name/")
+        digest = summarize({"synapse": [member, room_name]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(summaries, ["GET /_matrix/client/v3/rooms/{id}/state/m.room.name/ → 403"])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_asking_for_a_room_code_before_there_is_one_is_noise(self) -> None:
         web = CONTROL_JOIN_CODE.replace(
             f"/devices/current/private-rooms/{CATALOG_ID}/code", f"/private-rooms/{CATALOG_ID}/agent-access/code"

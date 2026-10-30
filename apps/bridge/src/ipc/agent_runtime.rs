@@ -280,16 +280,24 @@ impl BridgeAgentRuntimeSnapshot {
             .map_err(|_| invalid_request("bridge.ipc.room_id_invalid"))?
             .unwrap_or_else(|| self.room_id.clone());
         // 等消息的 Agent 每秒都会读一次，只查成员资格与加密状态，不查 Power Level。
-        let access = authority
+        // 问的是 Agent 自己：没进过的房间 Synapse 回 403，离开了的读回 leave，网关都答 Forbidden。
+        // 这就是不在房间里，别说成查不了（ops#52）。
+        let access = match authority
             .inspect_room_access(&room, self.identity.matrix_user_id())
             .await
-            .map_err(|failure| {
-                BridgeIpcDispatchFailure::new(
+        {
+            Ok(access) => access,
+            Err(failure) if failure.kind() == MatrixFailureKind::Forbidden => {
+                MatrixRoomAccess::NotJoined
+            }
+            Err(_) => {
+                return Err(BridgeIpcDispatchFailure::new(
                     "bridge.room_authority_unavailable",
                     IpcErrorCategory::DependencyUnavailable,
-                    failure.kind() != MatrixFailureKind::Forbidden,
-                )
-            })?;
+                    true,
+                ));
+            }
+        };
         match access {
             MatrixRoomAccess::Joined(encryption) => Ok((room, encryption)),
             MatrixRoomAccess::NotJoined => Err(BridgeIpcDispatchFailure::new(
@@ -2321,8 +2329,8 @@ fn bounded_preview_response(
 mod conversation_tests {
     use super::*;
     use agent_room_application::ports::{
-        MatrixPowerLevel, MatrixResult, MatrixRoomAuthority, MatrixRoomAuthorityGateway,
-        MatrixUserId,
+        MatrixFailure, MatrixOperation, MatrixPowerLevel, MatrixResult, MatrixRoomAuthority,
+        MatrixRoomAuthorityGateway, MatrixUserId,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -2374,6 +2382,55 @@ mod conversation_tests {
             .await
             .expect_err("权限变更后不可读");
         assert_eq!(failure.code, "bridge.room_not_joined");
+    }
+
+    /// 真的网关问 Agent 自己时，不在房间里答的是 Forbidden（`sdk.rs` 的 `inspect_room_access`）。
+    struct OwnMembershipFails(MatrixFailureKind);
+    impl MatrixRoomAuthorityGateway for OwnMembershipFails {
+        fn inspect_room_authority<'a>(
+            &'a self,
+            _room_id: &'a MatrixRoomId,
+            _user_id: &'a MatrixUserId,
+        ) -> PortFuture<'a, MatrixResult<MatrixRoomAuthority>> {
+            let kind = self.0;
+            Box::pin(async move {
+                Err(MatrixFailure::new(
+                    MatrixOperation::InspectRoomAuthority,
+                    kind,
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn 自己不在房间里时服务器拒绝就答不在房间里_别的失败照旧可重试() {
+        let ask = |kind| async move {
+            let identity = BridgeAgentIdentity::new(
+                AgentId::from_uuid(Uuid::now_v7()),
+                "Agent",
+                "@agent:matrix.test",
+                AgentInstanceId::from_uuid(Uuid::now_v7()),
+            )
+            .expect("身份有效");
+            BridgeAgentRuntimeSnapshot::new(
+                identity,
+                "DEVICE",
+                MatrixRoomId::new("!public:matrix.test").expect("大厅"),
+                ["previews.read"],
+            )
+            .with_room_authority(Arc::new(OwnMembershipFails(kind)))
+            .message_room(Some("!private:matrix.test".to_owned()))
+            .await
+            .expect_err("查不成")
+        };
+
+        let refused = ask(MatrixFailureKind::Forbidden).await;
+        assert_eq!(refused.code, "bridge.room_not_joined");
+        assert!(!refused.retryable);
+
+        let unavailable = ask(MatrixFailureKind::Timeout).await;
+        assert_eq!(unavailable.code, "bridge.room_authority_unavailable");
+        assert!(unavailable.retryable);
     }
 
     #[test]
