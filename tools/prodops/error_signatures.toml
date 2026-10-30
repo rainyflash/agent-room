@@ -45,6 +45,11 @@ reason = "登录时填的邮箱没有对应的账户（打错了、换了个邮�
 
 [[ignore]]
 service = "identity"
+summary = "^LOGIN_ERROR error=invalid_request clientId=null reason=Parameter 'client_id' not present or present multiple times in the HTTP request parameters"
+reason = "有人打开了没带任何参数的身份服务登录地址（扫描器、手敲的网址、被截掉参数的书签）。我们的网页和桌面端发起登录时一定带 client_id，所以这不是正常登录被挡；2026-10-30 生产上那次只有一条。别和 Invalid scopes 那种混：那个 clientId 是 agent-room-web，不在这条规则里，仍会报出来"
+
+[[ignore]]
+service = "identity"
 summary = '^RESET_PASSWORD_ERROR error=user_not_found$'
 reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注册过）。页面照样说邮件已发出，不透露有没有这个账户"
 
