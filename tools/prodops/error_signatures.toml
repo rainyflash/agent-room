@@ -55,6 +55,11 @@ reason = "登录页开着超过身份服务的登录时限（30 分钟）才提�
 
 [[ignore]]
 service = "identity"
+summary = '^RESTART_AUTHENTICATION_ERROR error=expired_code$'
+reason = "登录页开着超过身份服务的登录时限才点“重新开始登录”之类的链接，Keycloak 说登录超时、让人从头再来；和上面 LOGIN_ERROR 的 expired_code 是同一件事，只是点的是重新开始（2026-10-30 生产上那次只有一条）"
+
+[[ignore]]
+service = "identity"
 summary = '^VERIFY_EMAIL_ERROR error=email_already_verified$'
 reason = "验证链接被点了不止一次（邮箱的链接安全扫描也会去点），邮箱已经验证过了"
 
