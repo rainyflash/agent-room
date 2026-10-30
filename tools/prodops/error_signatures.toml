@@ -206,3 +206,8 @@ reason = "客户端在流式回答（长轮询、下载）中途断开"
 service = "gateway"
 summary = '^warn http looking up info for HTTP challenge$'
 reason = "有人拿不是我们申请的令牌来访问 /.well-known/acme-challenge/（别处替指到这台服务器的域名验证证书，或者扫描器），Caddy 认不出就回 404。我们自己申请证书时令牌就在 Caddy 的内存里，不会走到这一行；自己的证书没申请成报的是别的行。2026-10-27 www 改 DNS 那半小时有 87 次，当晚没改什么又来了 1 次（agent-room-ops#26）"
+
+[[ignore]]
+service = "identity"
+summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.endpoints\\.request\\.AuthorizationEndpointRequestParserProcessor Parameter '[^']*' not present or present multiple times in the HTTP request parameters$"
+reason = "有人打开了登录地址却没带 client_id 之类的必填参数（扫描器、手敲或截断的链接），Keycloak 直接回错误页，没有登录被挡住；我们自己发起的登录总是带齐参数（2026-10-30 生产上只出现一次，缺的是 client_id，agent-room-ops#50）"
