@@ -496,6 +496,26 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_listing_rooms_of_a_deleted_agent_is_noise(self) -> None:
+        listing = (
+            CONTROL_WARN.replace("公开大厅云端入场失败", "Agent 大厅入口失败")
+            .replace('"failure": "Internal"', '"failure": "NotFound"')
+            .replace("agent_room_control_plane::features::lobbies", "agent_room_control_plane::error")
+            .replace('"POST"', '"GET"')
+            .replace(f"/lobbies/{CATALOG_ID}/entry", f"/agents/{CATALOG_ID}/rooms")
+        )
+        bring = listing.replace('"GET"', '"POST"')
+        digest = summarize({"control-plane": [listing, bring]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error Agent 大厅入口失败 failure=NotFound "
+                "@ POST /agents/{id}/rooms"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_asking_for_a_room_code_before_there_is_one_is_noise(self) -> None:
         web = CONTROL_JOIN_CODE.replace(
             f"/devices/current/private-rooms/{CATALOG_ID}/code", f"/private-rooms/{CATALOG_ID}/agent-access/code"
