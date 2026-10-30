@@ -122,6 +122,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Windows 具名管道会踩坏堆。** tokio 的客户端在“丢弃连接”与“I/O 驱动处理同一管道”并发时会出这个问题（上游 mio#2011）。#145 起，本地客户端连接都放在专用的单线程运行时线程上跑；上游修好之前别拆。
 - **Windows 凭据管理器会吞掉重叠的写入和删除。** 产品代码经 `SystemCredentialStore` 逐个调用，新代码别直接用 `keyring`。
 - **网页加密库的锁同一个页面里也会抢。** 每台设备的加密库由一把 Web Locks 锁守着，拿锁只等 1 秒，等不到就报“已在另一个窗口打开”。睡眠醒来、网络断了又连上时会接连恢复会话，上一次还拿着锁，2026-10-09 维护者的 Mac 就因此停住。现在新的一次先叫停上一次、等它放开锁（`RESTORE_HANDOFF_WAIT_MS`），等不到报 `matrix.restore_stuck`。改恢复流程时，被取代的那次也要尽快收尾、放开锁。
+- **网页的“最近登录过”只在读会话的那一刻作数**（agent-room-ops#34）。会话打开时只读一次，以前登录过了 5 分钟，删账户、删 Agent 这类确认框还让人勾选、打字，点了才被服务器拒；关掉再开又让人填一遍、再拒一次。现在会话机读到以后照页面自己的钟 5 分钟就改成没有（`RECENT_AUTHENTICATION_WINDOW_MS`，和控制面默认的窗口一样，改控制面的默认值要一起改），发往控制面的请求回 `authentication.reauthentication_required` 时也马上改（`ReauthenticationWatch`，包在注入的控制面 fetch 外面）。新加要最近登录的操作照 `principal.recentlyAuthenticated` 显示就行，不用自己接。
 - **同一个浏览器里一次只让一个标签页走聊天登录。** Synapse 把一次 SSO 的凭据记在一个整个浏览器共用的 Cookie 里，两个标签页前后脚开始，先开始的那个回来时停在 Synapse 的报错页上（`Could not verify session for OIDC callback`，agent-room-ops#17）。新注册的人最常碰上：在新标签页里点了验证邮件，那边登录完，原来那个标签页的登录页（模板里的 `startSessionPolling` 盯着别的标签页）也自己刷新，#588 起也直接回房间，两边不到半秒都开始聊天登录；2026-10-25 四次网页聊天登录里有三次这样。现在开始前在 localStorage 排队（`matrix-sign-in-turn.ts`），等过别人的就用它存下的登录，回来换好登录再撤掉记号。别去掉。
 - **macOS 不让给还没绑定的 socket 设权限。** interprocess 的 `ListenerOptionsExt::mode` 在绑定前调 `fchmod()`，Linux 支持，macOS 一律返回 EINVAL。Bridge 从第一版起就用它，每台 Mac 授权完都报 `bridge.ipc_bind_failed`、建不起本地连接，Linux 和 Windows 的测试照样全过。#320 起绑定后再用 `restrict_socket_to_owner` 收紧到 0600（运行目录先验过 0700），别再用 `mode()`。
 - **macOS 的 WKWebView 不替跨站请求带 Cookie。** 页面在 `tauri://localhost`，控制面在 `api.agentroom.chat`，WebKit 默认挡第三方 Cookie（Windows 的 WebView2 不挡）。以前原生层把桌面登录写进 WebView 的 Cookie，Mac 上浏览器里登录完、钥匙串也存好了，界面问 `/auth/session` 还是 401，一直停在欢迎页。现在桌面端发往控制面的请求一律交给原生层代发（#325，命令 `desktop_control_plane_request`，前端 `desktopControlPlaneFetch`），由它带上登录和窗口 Origin，WebView 里没有登录。新加控制面客户端要用组合根注入的 fetch，别直接 `fetch(..., { credentials: 'include' })`。
@@ -137,6 +138,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **交给宿主读的文件，写完就关掉句柄**（#389）。Windows 上只要有人开着可写句柄，.NET 的 `File.ReadAllText` 就打不开（“文件正由另一进程使用”），因为它只许别人一起读；Codex 读附件用的正是它。Bridge 的附件缓存和 doctor 的验证码附件都只留 `TempPath`。新加交给宿主的文件也这样做，别让 `NamedTempFile` 一直开着。
 - **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。
 - **端到端加密房间里的自动发言不做服务器扫描。** 私人房间和私聊建房时就开了端到端加密，Bridge 不把正文交给服务器扫描（`crates/bridge-core/src/messages/outgoing.rs`）。后台回复的授权受众是“房间里任何人”，按规则必须扫描，以前在这两种房间里每条都被拦成 `bridge.automation_risk_scan_required`：后台回复在私人房间里从来没发出去过，直到 Alpha 84 第一次在私人房间里做发版验收才抓到。现在服务器按房间类型认定加密（`inspect_send_authority` 的 `end_to_end_encrypted`，不信客户端说的），加密房间不交正文时放过；交了正文照常扫描，公共大厅不交正文照旧拒绝。存下的扫描结果照旧是 `not_requested`：数据库的约束只认四个值，别加新值。
+- **远程 MCP 的工具不在请求的任务里跑。** rmcp 的无状态 Streamable HTTP 把每次调用另起一个任务（`tokio::spawn`），控制面中间件放的任务局部变量带不过去。按粗地区汇总（`request_regions.rs`）就靠 `NetworkAgentMcpServer::call_tool` 从请求扩展里取出这次请求再接上（`within`），有测试卡着。以后再有按请求记的东西，MCP 那条路也要这样接。
 
 ## 产品决定（已定，别再问）
 
@@ -162,6 +164,18 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
 
 ## 当前进度（2026-10-24）
+
+### 生产测量（阶段 0）
+
+- 2026-10-27 维护者问联邦部署怎么走，目的是在世界各地铺开、降低延迟、别把第一台服务器压垮。后面怎么铺开他要从网络的本质重新想，先做阶段 0：维持单一站点，补上测量（分地区的延迟、Synapse 的 CPU、数据库和磁盘的增长、用户在哪），CDN 按数据再定。
+- 设计在 [specs/measurement/design.md](./specs/measurement/design.md)，进度记在它的“状态”一节。维护者 2026-10-28 定了：按粗地区汇总人数和快慢、不按人记、不存 IP，隐私说明页照实改；告警开成 `agent-room-ops` 的 issue，不接外部服务；CDN 先量两三周再按数据选（国外 CDN 在中国大陆基本没有节点）。
+- 2a（监控能开起来，#623）：部署配置的 `telemetry` 多了 `"alerts": "ops-issues"`，和 `alertWebhookUrl` 二选一；选它时不起 Alertmanager，每小时的错误汇总读 Prometheus 正在响的告警（服务写 `alerts`）。发版部署不起监控容器，改了 `telemetry` 要跑 `production.py telemetry-apply`（只碰监控容器和控制面）。监控容器都设了内存上限，加起来别超过 720 MB，有测试卡着。改了 `render.py`，随下一版发布要设备码；生产上打开放在发版以后（第 5 步）。
+- 2b：`agent-room-ops` 的 `.github/workflows/external-probe.yml` 每 30 分钟从 GitHub 的机器上探控制面、网页和网站，两次都不通开一条 p1 的 `prod-error`、恢复了自动关。私有仓库的 Actions 每月 2000 分钟免费，它约用 1440 分钟，那个仓库别再加常跑的工作流。
+- 第 4 步（#624）：`production.py capacity-report [--post]`，每周一开一条 `capacity-report` 的 issue、关掉上一条。没有按房间数消息的指标，“忙不忙”看 Synapse 存下的事件。定时器（`capacity-report-schedule-install`）在生产上打开监控那天装。
+- 第 5 步：Alpha 86 发完（2026-10-28）在生产上打开了监控（原配置在 `deployment.json.before-telemetry`），容量周报的定时器也装了；看满一天内存再记进设计文档。
+  - 单独重建控制面别只用 `compose_command()`：发版部署多带一份钉死签名镜像的 `compose.images.json`，不带的话控制面的 `build:` 生效，在 2 核的生产机上从源码编 Rust（第一次跑 `telemetry-apply` 就这样，停掉后手动重建）。现在 `telemetry-apply`、`control-plane-reload` 读控制面容器上记着的 compose 文件、`--no-build --pull never`，不是发版部署起的就停下（#632）。以后加单独重建某个服务的命令也这样做。
+  - 开监控以后头两条告警都是规则本身不对（#635）：Outbox 只写不读，后来整个停写了（见下面“没人读的 Outbox”）；桌面 Bridge 可用率改看 `bridge_uptime`（每 15 分钟一段里连着的时间比例），别再按状态变化报 0/1。这批告警以前没在生产上开过，新响的先查规则对不对。
+  - Keycloak 的用户事件计数要等第一次发生才建出来，一出现就是 1，`increase` 看不出它涨过：2026-10-29 头一封发不出去的验证信，“发信失败”告警就没响。#645 起它另把十分钟前 Keycloak 还采得到、却还没有的失败计数算上。新加按 Keycloak 计数报的告警也要这样。
 
 ### Codex 包里的本机数据
 
@@ -191,6 +205,14 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 改提示词要两边一起改：文档开 PR，合并后在 routine 上改成一样的。
   - 事件触发器按不了标签，提示词让它碰到不带 `prod-error` 的直接结束；云端的 `gh` 用不了 GraphQL，走会话的 GitHub 工具或 `gh api`。
 - Keycloak 的事件（`LOGIN_ERROR` 等）只在 identity 容器日志里，realm 没开存事件；容器日志只回看到上一次部署，Synapse 的大约三天半。
+
+### 没人读的 Outbox
+
+- 2026-10-28 开监控后 Outbox 积压的告警一直响（agent-room-ops#36，#635 去掉了告警）：控制面往 `outbox_event` 里写七种事件，从来没有发布器读，生产上 413 行一行也没发布。每种事件该跟着做的事，都已经在请求里直接做，或者有自己的任务表。
+- 设计在 [specs/outbox/design.md](./specs/outbox/design.md)（#636），进度记在它的“状态”一节。维护者当天定了去掉：先停写、删代码和指标，停写的那一版发出去以后，下一版再带删表的迁移（回滚只换镜像、不退数据库，上一版还在写这张表）。撤销以后 Matrix 设备注销的后台重试另做一步。
+- 第 2 步（#637）停写、删了代码和指标。改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，带它的那一版实机验收要走一次新设备授权。第 3 步删表的迁移等这一版发出去以后的下一版再合，合之前只读查一次行数报给维护者。
+- 第 4 步（#638）：撤销以后 Matrix 设备没注销成的，控制面每 30 秒再试（`agent_matrix_device_retry.rs`），以前要人再点一次撤销，换账号那条路上没人能点。不另建表，只扫 `agent_instance` 上撤销了、`matrix_device_revoked_at` 为空的；注销幂等，所以不领租约，退避只记在内存里、不放弃。撤销后 30 秒以内的留给撤销请求自己做。
+- 别再加回 Outbox，也别给它接一个“读到就标成已发布”的消费者：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表，或者像第 4 步那样直接扫原表上记着的状态。
 
 ### 网站被搜到
 
@@ -572,6 +594,17 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 86 已于 2026-10-28 公开，见 [发布记录](./specs/agent-access/alpha86-release.md)。
+  - 要最近登录过的操作过了 5 分钟就先请人重新登录、服务器拒过一次各处一起改（#627），生产测量阶段 0（监控能开起来、告警开成 ops 的 issue #623，容量周报 #624、#626，按粗地区汇总和隐私说明页 #625），别人的证书验证不再开 issue（#628），开发依赖的安全升级（#629）。
+  - #623 改了 `tools/prodops/render.py`，#625 改了 `authentication.rs` 和 `devices.rs`，实机验收走了一次新设备授权：第一个码过期，重发的 1 分钟内批准；长期验收设备换成 Alpha 86 那台（`agent-room.alpha86.acceptance.fresh-device`，人物在“发布验收”里）。
+  - 完整 CI 的无头验收偶发红（网络 Agent 私人房间那一轮，人的这句没发出去），只重跑那个作业就过。升级验收时 Agent 在后台拉起的桌面端抢在验收以调试端口重启的那份前面，用本机补丁接着跑完，工具的修复是 #631。更新下载地址时 SSH 断了，服务器上已经跑完，从下一步接着走。
+  - 发完做了测量第 5 步（见上面“生产测量”）。第一次 `telemetry-apply` 在生产上编起了控制面，停掉后手动重建，修复是 #632；编到一半的构建缓存维护者同意后删了。
+  - 版本 PR #630 合并到网页上线约 1 小时 54 分钟，其中约 21 分钟在等设备码、约 17 分钟在等 CI 重跑。
+- Alpha 85 已于 2026-10-28 公开，见 [发布记录](./specs/agent-access/alpha85-release.md)。
+  - “接入 Agent”的方式按命令行、MCP、网络排、各说适合什么时候（#613），多开登录标签页时被换掉的那次回调不再算失败、也不清别人的登录 Cookie（#618），“你进不了这个房间”那一页直接给出账户 ID（#619），后台回复授权里私人房间那句照实讲（#616），以及 agent-room-ops #25–#33 带出来的噪音规则（#617、#619）和验收发的话带上发布提交（#614）。
+  - #618 改了 `authentication.rs`，实机验收走了一次新设备授权；第一个设备码没人看到就过期，维护者要链接时重发、马上批准。长期验收设备换成 Alpha 85 那台（`agent-room.alpha85.acceptance.fresh-device`，人物在“发布验收”里）。
+  - 核验 CI 时碰上一次 GitHub 的 TLS 握手超时，服务器还没动，重启后半段接着走；验收停在绑定宿主，Codex 在发布途中自动更新删掉了记着的程序，照 Alpha 74、76 的做法改位置、从 `run` 接着跑完。
+  - 版本 PR #620 合并到网页上线约 2 小时 16 分钟，其中约 1 小时 13 分钟在等设备码。
 - Alpha 84 已于 2026-10-27 公开，见 [发布记录](./specs/agent-access/alpha84-release.md)。
   - 私人房间和私聊里的后台回复不再被扫描要求拦下（#611），“房间”页把别人的房间分开、写上房主（#605），只有服务器说是你的 Agent 才给“私聊”（#607），登录页没留住 Cookie 的错误页说清楚（#604），`www` 跳到裸域、接入说明只留裸域一份进搜索（#608），发版验收改在私人房间“发布验收”里做（#606）。
   - 第一个发布提交 `018b2b4c`（#610）部署到了生产、装到了本机，实机验收发现私人房间里的后台回复全被 `bridge.automation_risk_scan_required` 拦下（以前验收在公共大厅里，碰不到）。维护者选了先修好再发，#611 的合并提交成为发布提交；验收重启桌面端时被 Agent 拉起的那份抢走调试端口的问题由 #612 修了。
@@ -752,3 +785,4 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 错误汇总的定时器 Alpha 81 公开时由发布脚本最后一步装上了（`install_error_digest_schedule.py`），之后跟着源码走，以后的版本不用再装，派生发布脚本时去掉这一步。换了服务器才要重装，命令在 `infra/production/README.md`。
 - 通道清单签名后 7 天过期（`tools/release_ci.py`）。过期以后在设置里手动“检查更新”会报 `desktop.update.manifest_rejected`（启动时的自动检查不提示），所以两次发版最好别隔一周以上。
+- 发版前看一眼控制面镜像里 IP 库的月份（`infra/production/Containerfile.control-plane` 的 `dbip-country-lite-YYYY-MM`）。DB-IP 只留当月和上个月的文件，再早的回 404，控制面镜像就建不起来；PR 上不建这个镜像，要到发布候选才红。过了当月就先开个小 PR 换成当月那份：下载、算出 `.gz` 和解开后的 SHA-256，Containerfile 里的日期和 `.gz` 的摘要一起改，两个摘要都写进 PR 描述（[设计](./specs/measurement/design.md)第 3 步）。

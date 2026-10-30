@@ -10,9 +10,18 @@ from pathlib import Path
 import sys
 
 from prodops.backup import BackupError
+from prodops.capacity_report import (
+    CapacityReportError,
+    HttpPrometheus,
+    ReportState,
+    build_report as capacity_report,
+    post_report as post_capacity_report,
+    read_network,
+    week_label,
+)
 from prodops.config import DeploymentConfig, DeploymentConfigError, load_deployment_config
 from prodops.error_digest import (
-    SERVICES as ERROR_DIGEST_SERVICES,
+    LOG_SERVICES as ERROR_DIGEST_SERVICES,
     Digest,
     NoiseTableError,
     load_noise,
@@ -33,7 +42,12 @@ from prodops.ops_issues import (
 from prodops.render import DeploymentPaths
 from prodops.runtime import ProductionRuntime, ProductionRuntimeError
 from prodops.restore import RestoreDrillError, RestoreTarget, parse_target_time
-from prodops.schedule import BackupScheduleError, BackupScheduleInstaller, ErrorDigestScheduleInstaller
+from prodops.schedule import (
+    BackupScheduleError,
+    BackupScheduleInstaller,
+    CapacityReportScheduleInstaller,
+    ErrorDigestScheduleInstaller,
+)
 from prodops.secrets import SecretStoreError
 
 
@@ -59,10 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
             "network-agent-disable",
             "control-plane-reload",
             "registration-apply",
+            "telemetry-apply",
             "launch-status",
             "error-digest",
             "error-digest-schedule-install",
             "error-digest-schedule-verify",
+            "capacity-report",
+            "capacity-report-schedule-install",
+            "capacity-report-schedule-verify",
             "down",
         ),
     )
@@ -94,9 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--post",
         action="store_true",
-        help="error-digest 接着上一次读到的地方汇总，发到 --issue-repository 的 issue 里",
+        help="error-digest 接着上一次读到的地方汇总、capacity-report 出这一周的报告，发到 --issue-repository 的 issue 里",
     )
-    parser.add_argument("--issue-repository", help="error-digest --post 开 issue 的私有仓库，比如 owner/repo")
+    parser.add_argument("--issue-repository", help="--post 开 issue 的私有仓库，比如 owner/repo")
     parser.add_argument(
         "--issue-token-file",
         type=Path,
@@ -191,6 +209,14 @@ def main() -> int:
                 runtime.apply_registration()
                 state = "开放" if config.identity.registration.is_open else "关闭"
                 print(f"Keycloak 注册已{state}。")
+            case "telemetry-apply":
+                runtime.apply_telemetry()
+                if not config.telemetry_enabled:
+                    print("监控已关，监控容器已删（数据卷留着），控制面已重建。")
+                elif config.alerts_to_ops_issues:
+                    print("监控已开，告警由每小时的错误汇总开成 ops 的 issue；控制面已重建。")
+                else:
+                    print("监控已开，告警发到接收端；控制面已重建。")
             case "launch-status":
                 for line in launch_report(runtime.launch_status(), config.network_agents.limits):
                     print(line)
@@ -200,12 +226,21 @@ def main() -> int:
                 else:
                     _print_error_digest(arguments, runtime)
             case "error-digest-schedule-install":
-                files = _error_digest_schedule(arguments, config, paths).install()
+                files = _ops_issue_schedule(ErrorDigestScheduleInstaller, arguments, config, paths).install()
                 print(f"错误汇总调度已启用：{files.timer_name}")
             case "error-digest-schedule-verify":
-                installer = _error_digest_schedule(arguments, config, paths)
+                installer = _ops_issue_schedule(ErrorDigestScheduleInstaller, arguments, config, paths)
                 installer.verify(installer.render())
                 print("错误汇总调度已启用且正在运行。")
+            case "capacity-report":
+                _capacity_report(arguments, paths, runtime)
+            case "capacity-report-schedule-install":
+                files = _ops_issue_schedule(CapacityReportScheduleInstaller, arguments, config, paths).install()
+                print(f"容量周报调度已启用：{files.timer_name}")
+            case "capacity-report-schedule-verify":
+                installer = _ops_issue_schedule(CapacityReportScheduleInstaller, arguments, config, paths)
+                installer.verify(installer.render())
+                print("容量周报调度已启用且正在运行。")
             case "down":
                 runtime.down()
             case _:
@@ -213,6 +248,7 @@ def main() -> int:
     except (
         BackupError,
         BackupScheduleError,
+        CapacityReportError,
         DeploymentConfigError,
         NoiseTableError,
         OpsIssueError,
@@ -230,6 +266,9 @@ def main() -> int:
 
 def _read_error_digest(runtime: ProductionRuntime, since: datetime, until: datetime) -> Digest:
     logs = {service: runtime.service_logs(service, since, until) for service in ERROR_DIGEST_SERVICES}
+    # 告警交给 ops 的 issue 时，此刻正在响的告警也汇总进来；告警发到接收端时不重复报。
+    if runtime.config.alerts_to_ops_issues:
+        logs["alerts"] = runtime.firing_alerts()
     return summarize(logs, load_noise())
 
 
@@ -271,14 +310,53 @@ def _post_error_digest(
     )
 
 
-def _error_digest_schedule(
-    arguments: argparse.Namespace, config: DeploymentConfig, paths: DeploymentPaths
-) -> ErrorDigestScheduleInstaller:
+def _ops_issue_schedule(
+    kind: type[ErrorDigestScheduleInstaller] | type[CapacityReportScheduleInstaller],
+    arguments: argparse.Namespace,
+    config: DeploymentConfig,
+    paths: DeploymentPaths,
+) -> ErrorDigestScheduleInstaller | CapacityReportScheduleInstaller:
     if not arguments.issue_repository:
-        raise ValueError("错误汇总调度必须提供 --issue-repository。")
-    return ErrorDigestScheduleInstaller(
-        config, paths, arguments.config, arguments.issue_repository, arguments.issue_token_file
+        raise ValueError(f"{kind.DESCRIPTION}的调度必须提供 --issue-repository。")
+    return kind(config, paths, arguments.config, arguments.issue_repository, arguments.issue_token_file)
+
+
+def _capacity_report(arguments: argparse.Namespace, paths: DeploymentPaths, runtime: ProductionRuntime) -> None:
+    """只读：问本机的 Prometheus、读主机网卡，出这一周的容量报告；`--post` 时开成私有仓库的 issue、关掉上一份。
+
+    网卡读数只在发出去以后记下，手动打印不动它，下周的“这一周”照样从上一份报告算起。
+    """
+    now = datetime.now(UTC)
+    state_path = paths.state / "capacity-report" / "state.json"
+    state = ReportState.load(state_path)
+    network = read_network(now)
+    lines = capacity_report(
+        HttpPrometheus(runtime.prometheus_url()),
+        now=now,
+        network=network,
+        previous_network=state.network,
+        version=runtime.release_version(),
     )
+    if not arguments.post:
+        for line in lines:
+            print(line)
+        return
+    if not arguments.issue_repository:
+        raise ValueError("capacity-report --post 必须提供 --issue-repository。")
+    tracker = GitHubIssueTracker.from_token_file(arguments.issue_repository, arguments.issue_token_file)
+    posted_week = state.last_week
+    try:
+        number = post_capacity_report(tracker, state, lines, now=now)
+    finally:
+        # 开出来了就记下，哪怕关上一份时 GitHub 断了：不然下一次会再开一份。
+        if state.last_week != posted_week:
+            if network is not None:
+                state.network = network
+            state.save(state_path)
+    if number is None:
+        print(f"{week_label(now)} 的容量周报已经发过了。")
+    else:
+        print(f"容量周报已发：{arguments.issue_repository}#{number}")
 
 
 if __name__ == "__main__":

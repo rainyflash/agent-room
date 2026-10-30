@@ -56,6 +56,19 @@ describe('隐私说明', () => {
     expect(screen.queryByText(/can(?:no|’)t read/u)).not.toBeInTheDocument();
   });
 
+  it('照实说按粗地区汇总使用的总数，不再说不收集使用统计', () => {
+    renderPage();
+
+    expect(screen.getByText(/Totals by coarse region/u)).toBeVisible();
+    expect(screen.getByText(/DB-IP’s free country database/u)).toBeVisible();
+    for (const text of [
+      ...Object.values(privacyResources.en),
+      ...Object.values(privacyResources['zh-CN']),
+    ]) {
+      expect(text).not.toMatch(/no usage statistics|不收集使用统计|不做统计分析/u);
+    }
+  });
+
   it('每条小标题都有正文，中英文条目一一对应，页面上不出现邮箱地址', () => {
     const keys = Object.keys(privacyResources.en);
     expect(Object.keys(privacyResources['zh-CN'])).toEqual(keys);

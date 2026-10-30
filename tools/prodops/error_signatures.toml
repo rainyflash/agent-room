@@ -23,6 +23,11 @@ reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生�
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 认证请求失败 failure=ReauthenticationRequired operation=authentication\.authenticate @ '
+reason = "要最近登录过的操作（删账户、删 Agent、撤销电脑）在 5 分钟窗口刚过时点了确认：网页从读到会话那一刻起按自己的钟算，只会比服务器晚几秒，晚的那一段由服务器拒了以后的通知补上，确认框马上改成“重新登录”（#627，session-machine.ts 的 RECENT_AUTHENTICATION_WINDOW_MS）。2026-10-28 生产上那次是撤销验收电脑时卡在边上；以前网页不知道、让人白填的那种是 agent-room-ops#34，已经修了"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
 reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
 
@@ -30,6 +35,11 @@ reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里�
 service = "control-plane"
 summary = '^WARN \S+ Agent 大厅入口失败 failure=NotFound @ GET /agents/\{id\}/rooms$'
 reason = "“我的 Agent”给每张卡片各问一次它在哪些房间，刷新时一起重问。问的 Agent 已经被删除（别的标签页、别的设备上删的，或刚删完页面上的列表还没换）时，服务器只认还在用的 Agent，回 404；网页把没问成的当作没有、卡片不写房间数，列表一刷新那张卡片就没了（2026-10-30 生产上那次，十几分钟里 11 次、三个关联号）。只放行这个读的接口：带进房间、离开那几个接口的 NotFound 照旧报出来"
+
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ 等消息时没看成有没有人敲它建的房间的门，过一会儿再看 failure=Unauthorized @ '
+reason = "网络 Agent 等消息的途中令牌失效（被停用、删除或换了令牌），这一次查敲门用的还是旧令牌；这次请求本身已经通过了认证，下一次带旧令牌的请求会照常被拒，不是控制面的毛病（2026-10-29 生产上出现过一次）。别的失败类型照旧报出来"
 
 # 身份服务
 
@@ -47,6 +57,11 @@ reason = "输错密码"
 service = "identity"
 summary = '^LOGIN_ERROR error=user_not_found$'
 reason = "登录时填的邮箱没有对应的账户（打错了、换了个邮箱），页面上和输错密码一样提示；2026-10-26 生产上那次，近两天注册的账户都已验证，没有卡住的新账户"
+
+[[ignore]]
+service = "identity"
+summary = "^LOGIN_ERROR error=invalid_request clientId=null reason=Parameter 'client_id' not present or present multiple times in the HTTP request parameters"
+reason = "有人打开了没带任何参数的身份服务登录地址（扫描器、手敲的网址、被截掉参数的书签）。我们的网页和桌面端发起登录时一定带 client_id，所以这不是正常登录被挡；2026-10-30 生产上那次只有一条。别和 Invalid scopes 那种混：那个 clientId 是 agent-room-web，不在这条规则里，仍会报出来"
 
 [[ignore]]
 service = "identity"
@@ -82,6 +97,16 @@ reason = "点了过期的验证邮件链接（1 小时有效），走到验证�
 service = "identity"
 summary = '^RESTART_AUTHENTICATION_ERROR error=(already_logged_in|invalid_code)$'
 reason = "已经登录过了，浏览器里留着的旧登录页又提交了一次；Keycloak 把人送回网页，#573 起网页替没登录的人重开一次登录。旧页面上的登录步骤号对不上时先记一条 invalid_code，紧接着就是这条 already_logged_in（2026-10-27 生产上两条只差 9 毫秒，之后回调说网页登录还有效、送回了房间）"
+
+[[ignore]]
+service = "identity"
+summary = '^LOGIN_ERROR error=(already_logged_in|invalid_code)$'
+reason = "已经登录的浏览器又提交了一次登录页（点了两次登录、别的标签页留着旧登录页）：先记 invalid_code，紧接着 already_logged_in，Keycloak 带着 authentication_expired 回到回调，#588 起网页登录还有效就送回房间（2026-10-28 生产上两次，每次两条只差 30 毫秒以内，控制面随即回 303 送回房间）。和上面 RESTART_AUTHENTICATION_ERROR 那条是同一件事，只是事件类型不同"
+
+[[ignore]]
+service = "identity"
+summary = '^REGISTER_ERROR error=(already_logged_in|invalid_code)$'
+reason = "别的标签页已经登录完了，这个标签页留着的注册页又被提交：先记 invalid_code，紧接着 already_logged_in，Keycloak 把人送回网页，#588 起网页登录还有效就送回房间（2026-10-28 生产上那次，同一个浏览器两秒里留着的验证邮箱页、注册页、登录页各来了一对，每对只差 6 毫秒，控制面都说网页登录还有效、送回了房间）。和上面 LOGIN_ERROR 那条是同一件事，只是事件类型不同"
 
 [[ignore]]
 service = "identity"
@@ -162,6 +187,11 @@ reason = "客户端在回答之前断开了（长轮询被取消、页面关了�
 
 [[ignore]]
 service = "synapse"
+summary = '^WARNING synapse\.http\.site Aborting connection from .* because `content-type: multipart/form-data` is unsupported: '
+reason = "有人往聊天服务器发 multipart 表单，Synapse 读完请求头就断开、不处理。Matrix 客户端从来不这样发（传文件是原样的正文），是扫描器在试上传接口（2026-10-28 生产上一秒里往根路径 POST / 连发 4 次，前后没有登录了的请求）"
+
+[[ignore]]
+service = "synapse"
 summary = '^WARNING synapse\.handlers\.pagination \[purge\] purging events not possible: No event found'
 reason = "按保留期清理时这一段没有要删的事件"
 
@@ -181,3 +211,13 @@ reason = "Caddy 启动时的提示：管理端口关着，TLS 在前面一层"
 service = "gateway"
 summary = '^warn http\.handlers\.reverse_proxy aborting with incomplete response$'
 reason = "客户端在流式回答（长轮询、下载）中途断开"
+
+[[ignore]]
+service = "gateway"
+summary = '^warn http looking up info for HTTP challenge$'
+reason = "有人拿不是我们申请的令牌来访问 /.well-known/acme-challenge/（别处替指到这台服务器的域名验证证书，或者扫描器），Caddy 认不出就回 404。我们自己申请证书时令牌就在 Caddy 的内存里，不会走到这一行；自己的证书没申请成报的是别的行。2026-10-27 www 改 DNS 那半小时有 87 次，当晚没改什么又来了 1 次（agent-room-ops#26）"
+
+[[ignore]]
+service = "identity"
+summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.endpoints\\.request\\.AuthorizationEndpointRequestParserProcessor Parameter '[^']*' not present or present multiple times in the HTTP request parameters$"
+reason = "有人打开了登录地址却没带 client_id 之类的必填参数（扫描器、手敲或截断的链接），Keycloak 直接回错误页，没有登录被挡住；我们自己发起的登录总是带齐参数（2026-10-30 生产上只出现一次，缺的是 client_id，agent-room-ops#50）"

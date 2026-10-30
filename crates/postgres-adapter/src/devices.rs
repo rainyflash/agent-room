@@ -3,10 +3,9 @@ use agent_room_application::{
     ports::{
         DeviceProofNonceStore, DeviceRefreshContext, DeviceRefreshOutcome, DeviceRefreshReplay,
         DeviceRefreshReplaySalt, DeviceRegistrationTransaction, DeviceRepository,
-        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-        DeviceSessionRegistration, DeviceSessionStore, DeviceTokenReplacement, OutboxMessage,
-        PendingAgentMatrixDeviceRevocation, PortFuture, PrincipalAccount, PrincipalRegistration,
-        SecretDigest, StoredDeviceSession,
+        DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSessionRegistration,
+        DeviceSessionStore, DeviceTokenReplacement, PendingAgentMatrixDeviceRevocation, PortFuture,
+        PrincipalAccount, PrincipalRegistration, SecretDigest, StoredDeviceSession,
     },
 };
 use agent_room_domain::{
@@ -17,7 +16,6 @@ use agent_room_domain::{
     ids::{AgentInstanceId, DeviceId, DeviceTokenFamilyId, PrincipalId},
     time::UtcMillis,
 };
-use serde_json::{Map, Value};
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use uuid::Uuid;
 
@@ -26,7 +24,6 @@ use crate::{
     authentication::{decode_principal_account, insert_principal_if_absent, lock_account_by_oidc},
     error::map_sqlx_error,
     handoffs::fail_targeted_handoffs_for_device,
-    outbox::insert_outbox_event,
     rooms::queue_revoked_agent_departures,
 };
 
@@ -140,16 +137,9 @@ impl DeviceSessionStore for PostgresRepositories {
         &'a self,
         refresh_token_digest: &'a SecretDigest,
         replacement: &'a DeviceTokenReplacement,
-        security_event: DeviceSecurityEvent,
     ) -> PortFuture<'a, RepositoryResult<DeviceRefreshOutcome>> {
         Box::pin(async move {
-            rotate_refresh_transaction(
-                &self.pool,
-                refresh_token_digest,
-                replacement,
-                security_event,
-            )
-            .await
+            rotate_refresh_transaction(&self.pool, refresh_token_digest, replacement).await
         })
     }
 }
@@ -236,10 +226,10 @@ impl DeviceRevocationTransaction for PostgresRepositories {
         &self,
         principal_id: PrincipalId,
         device_id: DeviceId,
-        security_event: DeviceSecurityEvent,
+        revoked_at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<DeviceRevocationOutcome>> {
         Box::pin(async move {
-            revoke_device_transaction(&self.pool, principal_id, device_id, security_event).await
+            revoke_device_transaction(&self.pool, principal_id, device_id, revoked_at).await
         })
     }
 }
@@ -427,7 +417,6 @@ async fn rotate_refresh_transaction(
     pool: &sqlx::PgPool,
     refresh_token_digest: &SecretDigest,
     replacement: &DeviceTokenReplacement,
-    security_event: DeviceSecurityEvent,
 ) -> RepositoryResult<DeviceRefreshOutcome> {
     let operation = "device.refresh";
     let mut transaction = pool
@@ -477,7 +466,7 @@ async fn rotate_refresh_transaction(
             &mut transaction,
             &locked.device,
             locked.family.id(),
-            security_event,
+            replacement.issued_at,
             operation,
         )
         .await?;
@@ -782,7 +771,7 @@ async fn revoke_device_transaction(
     pool: &sqlx::PgPool,
     principal_id: PrincipalId,
     device_id: DeviceId,
-    security_event: DeviceSecurityEvent,
+    revoked_at: UtcMillis,
 ) -> RepositoryResult<DeviceRevocationOutcome> {
     let operation = "device.revoke";
     let mut transaction = pool
@@ -811,30 +800,10 @@ async fn revoke_device_transaction(
     let device = decode_device(&row, operation)?;
     let already_revoked = device.trust_state() == DeviceTrustState::Revoked;
     if !already_revoked {
-        revoke_device_and_tokens(
-            &mut transaction,
-            device.id(),
-            security_event.occurred_at,
-            operation,
-        )
-        .await?;
-        let event = device_event(
-            security_event,
-            device.id(),
-            principal_id,
-            "device.revoked.v1",
-            "user_requested",
-        )?;
-        insert_outbox_event(&mut transaction, &event).await?;
+        revoke_device_and_tokens(&mut transaction, device.id(), revoked_at, operation).await?;
     }
     // 已经撤销过的再点一次也记：以前撤销、还挂在房间里的 Agent 这样也能离开，记着的不重记。
-    queue_revoked_agent_departures(
-        &mut transaction,
-        device.id(),
-        security_event.occurred_at,
-        operation,
-    )
-    .await?;
+    queue_revoked_agent_departures(&mut transaction, device.id(), revoked_at, operation).await?;
     let pending =
         pending_agent_matrix_device_revocations(&mut transaction, device.id(), operation).await?;
     transaction
@@ -888,7 +857,7 @@ async fn compromise_device(
     transaction: &mut Transaction<'_, Postgres>,
     device: &Device,
     family_id: DeviceTokenFamilyId,
-    security_event: DeviceSecurityEvent,
+    compromised_at: UtcMillis,
     operation: &'static str,
 ) -> RepositoryResult<()> {
     sqlx::query(
@@ -899,25 +868,11 @@ async fn compromise_device(
            WHERE id = $1 AND state = 'active'",
     )
     .bind(family_id.as_uuid())
-    .bind(security_event.occurred_at.value())
+    .bind(compromised_at.value())
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
-    revoke_device_and_tokens(
-        transaction,
-        device.id(),
-        security_event.occurred_at,
-        operation,
-    )
-    .await?;
-    let event = device_event(
-        security_event,
-        device.id(),
-        device.principal_id(),
-        "device.compromised.v1",
-        "refresh_token_reuse",
-    )?;
-    insert_outbox_event(transaction, &event).await
+    revoke_device_and_tokens(transaction, device.id(), compromised_at, operation).await
 }
 
 async fn insert_device_if_absent(
@@ -1232,32 +1187,6 @@ fn decode_token_family(
             .map_err(|_| corrupt_data(operation)),
         None => Ok(family),
     }
-}
-
-fn device_event(
-    security_event: DeviceSecurityEvent,
-    device_id: DeviceId,
-    principal_id: PrincipalId,
-    event_type: &str,
-    reason: &str,
-) -> RepositoryResult<OutboxMessage> {
-    let payload = Map::from_iter([
-        ("deviceId".to_owned(), Value::String(device_id.to_string())),
-        (
-            "principalId".to_owned(),
-            Value::String(principal_id.to_string()),
-        ),
-        ("reason".to_owned(), Value::String(reason.to_owned())),
-    ]);
-    OutboxMessage::new(
-        security_event.id,
-        "device".to_owned(),
-        device_id.as_uuid(),
-        event_type.to_owned(),
-        payload,
-        security_event.occurred_at,
-    )
-    .map_err(|_| corrupt_data("device.event"))
 }
 
 fn decode<T>(row: &PgRow, column: &str, operation: &'static str) -> RepositoryResult<T>

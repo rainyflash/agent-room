@@ -1,5 +1,7 @@
 mod account_deletion;
+mod agent_matrix_device_retry;
 mod agent_room_departures;
+mod client_address;
 mod config;
 mod content_cleanup;
 mod content_runtime;
@@ -12,6 +14,7 @@ mod network_gateway;
 mod observability;
 mod operational_metrics;
 mod public_watch;
+mod request_regions;
 mod runtime;
 mod shutdown;
 mod telemetry_metrics;
@@ -36,6 +39,9 @@ use agent_room_application::{
         AgentInstanceVerificationDependencies, AgentInstanceVerificationService,
     },
     agent_lobbies::{AgentLobbyEntryDependencies, AgentLobbyEntryService},
+    agent_matrix_device_retry::{
+        AgentMatrixDeviceRetryDependencies, AgentMatrixDeviceRetryService,
+    },
     agent_room_departures::{AgentRoomDepartureDependencies, AgentRoomDepartureService},
     agent_room_placements::{AgentRoomPlacementDependencies, AgentRoomPlacementService},
     agents::{AgentManagementDependencies, AgentManagementService},
@@ -134,6 +140,8 @@ struct IdentityRuntime {
     moderation_expiry: moderation_expiry::ModerationExpiryWorker,
     /// 撤销电脑以后让它的 Agent 离开房间，撤销的请求里没做成的由它接着做。
     agent_room_departures: agent_room_departures::AgentRoomDepartureWorker,
+    /// 撤销以后 Matrix 设备没注销成的，由它接着试。
+    matrix_device_retry: agent_matrix_device_retry::AgentMatrixDeviceRetryWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -214,6 +222,8 @@ pub async fn run() -> Result<(), StartupError> {
         }
     };
     let metrics = observability.metrics();
+    let regions =
+        request_regions::RegionUsage::open(&config.observability.region_database, metrics.clone());
     let identity_runtime = match build_identity_router(&config, &runtime, metrics.clone()).await {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -230,6 +240,7 @@ pub async fn run() -> Result<(), StartupError> {
         operational_metrics,
         moderation_expiry,
         agent_room_departures,
+        matrix_device_retry,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -239,6 +250,7 @@ pub async fn run() -> Result<(), StartupError> {
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
         metrics,
+        regions,
     )?;
 
     tracing::info!(
@@ -256,6 +268,7 @@ pub async fn run() -> Result<(), StartupError> {
     operational_metrics.shutdown().await;
     moderation_expiry.shutdown().await;
     agent_room_departures.shutdown().await;
+    matrix_device_retry.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -276,6 +289,7 @@ fn build_router(
     frontend_origin: &url::Url,
     desktop_origins: &DesktopOrigins,
     metrics: TelemetryMetrics,
+    regions: request_regions::RegionUsage,
 ) -> Result<Router, StartupError> {
     let origins = std::iter::once(frontend_origin.origin().ascii_serialization())
         .chain(desktop_origins.values().iter().cloned())
@@ -323,6 +337,10 @@ fn build_router(
         .layer(cors)
         // 这些路由自带不带凭据、允许任何来源的 CORS，不能套上面那层。
         .merge(open_routes)
+        .layer(middleware::from_fn_with_state(
+            regions,
+            request_regions::attach,
+        ))
         .layer(middleware::from_fn_with_state(
             metrics,
             telemetry_metrics::record_http_request,
@@ -427,6 +445,7 @@ async fn build_identity_router(
         operational_metrics,
         moderation_expiry: start_moderation_expiry(&agent_dependencies),
         agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
+        matrix_device_retry: start_matrix_device_retry(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -586,6 +605,20 @@ fn start_operational_metrics(
 }
 
 /// 治理动作到期自动解除，用自己的一份治理服务。
+/// 撤销以后 Matrix 设备没注销成的，后台再试（specs/outbox/design.md 第 4 步）。
+fn start_matrix_device_retry(
+    dependencies: &AgentFeatureDependencies,
+) -> agent_matrix_device_retry::AgentMatrixDeviceRetryWorker {
+    agent_matrix_device_retry::AgentMatrixDeviceRetryWorker::start(Arc::new(
+        AgentMatrixDeviceRetryService::new(AgentMatrixDeviceRetryDependencies {
+            pending: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            cleanup: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        }),
+    ))
+}
+
 fn start_moderation_expiry(
     dependencies: &AgentFeatureDependencies,
 ) -> moderation_expiry::ModerationExpiryWorker {
@@ -1200,6 +1233,7 @@ fn build_network_agent_routes(
         pause: dependencies.system_runtime.clone(),
         policy,
         source_weights: sources.clone(),
+        activity: Arc::new(request_regions::NetworkAgentRegions),
         matrix_server_name: config.authentication.matrix_server_name.clone(),
     }));
     let agents: Arc<dyn agent_room_application::network_agents::NetworkAgentUseCases> =
@@ -1641,7 +1675,6 @@ fn build_agent_instance_management(
             revocations: repositories.clone(),
             matrix_cleanup: repositories,
             matrix,
-            identifiers: system_runtime.clone(),
             clock: system_runtime,
         },
     ))
@@ -1887,6 +1920,7 @@ mod tests {
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
+            crate::request_regions::RegionUsage::unknown(),
         )
         .expect("测试 CORS 配置有效")
     }
@@ -2112,6 +2146,7 @@ mod tests {
             &url::Url::parse(FRONTEND_ORIGIN).expect("测试前端 Origin 有效"),
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
+            crate::request_regions::RegionUsage::unknown(),
         )
         .expect("测试 CORS 配置有效");
 
@@ -2182,6 +2217,7 @@ mod real_dependency_tests {
             &frontend_origin,
             &DesktopOrigins::for_tests(),
             TelemetryMetrics::new(),
+            crate::request_regions::RegionUsage::unknown(),
         )
         .expect("测试 CORS 配置有效")
         .oneshot(

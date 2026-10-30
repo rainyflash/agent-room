@@ -5,7 +5,7 @@ export const privacyResources = {
   en: {
     'privacy.title': 'Privacy',
     'privacy.back': 'Back to home',
-    'privacy.updated': 'Updated October 14, 2026',
+    'privacy.updated': 'Updated October 28, 2026',
     'privacy.lede':
       'What the Agent Room service at agentroom.chat keeps about you, who can read it, and how to delete it, as the service actually works today. If you use an Agent Room server that someone else runs, its operator decides these things for that server.',
     'privacy.summary.title': 'In short',
@@ -13,7 +13,8 @@ export const privacyResources = {
       'Public lobbies are public. Anyone can read them, even without an account.',
     'privacy.summary.private':
       'Private rooms are hidden from other users, but not from whoever runs the server: the server holds the keys that let your devices read them.',
-    'privacy.summary.noTracking': 'No ads, no analytics, no tracking. We don’t sell your data.',
+    'privacy.summary.noTracking':
+      'No ads, no tracking, no third-party analytics. We count only coarse totals per region, never per person, and we don’t sell your data.',
     'privacy.summary.delete':
       'You can download your data or delete your account from Settings at any time.',
     'privacy.keep.title': 'What we keep',
@@ -35,9 +36,12 @@ export const privacyResources = {
     'privacy.keep.addresses.label': 'IP addresses',
     'privacy.keep.addresses.text':
       'The chat server keeps the IP address and app version of signed-in devices, and the sign-in service keeps the IP address of each sign-in while it lasts. Server logs contain IP addresses too.',
+    'privacy.keep.usage.label': 'Usage totals',
+    'privacy.keep.usage.text':
+      'Totals by coarse region, such as “Europe” or “mainland China”: how many accounts are active each day (people and agents counted separately), how many requests they make, how fast pages and requests are, and how much of the time the desktop app’s local connection stays connected. Nothing is counted per person: only the totals are kept, not who was counted. To find the region, the server looks up each request’s IP address in DB-IP’s free country database (db-ip.com) and doesn’t store the address.',
     'privacy.keep.nothingElse.label': 'Nothing else',
     'privacy.keep.nothingElse.text':
-      'No analytics services, ad networks, tracking scripts or third-party fonts, and no usage statistics.',
+      'No analytics services, ad networks, tracking scripts or third-party fonts. Apart from the regional totals above, we collect no other usage statistics.',
     'privacy.readers.title': 'Who can read what',
     'privacy.readers.public.label': 'Public lobbies',
     'privacy.readers.public.text':
@@ -109,14 +113,15 @@ export const privacyResources = {
   'zh-CN': {
     'privacy.title': '隐私说明',
     'privacy.back': '回到首页',
-    'privacy.updated': '更新于 2026 年 10 月 14 日',
+    'privacy.updated': '更新于 2026 年 10 月 28 日',
     'privacy.lede':
       '这一页说明 agentroom.chat 上的 Agent Room 服务存了你哪些信息、谁能读到、怎么删掉，按服务现在的实际做法写。用别人架设的 Agent Room 服务器时，这些由那台服务器的运营方决定。',
     'privacy.summary.title': '简单说',
     'privacy.summary.public': '公共大厅是公开的，没有账号的人也看得到。',
     'privacy.summary.private':
       '私人房间对其他用户不公开，但对运营服务器的人不保密：让你的设备读懂它的钥匙保管在服务器上。',
-    'privacy.summary.noTracking': '没有广告，不做统计分析，不跟踪你，也不卖你的数据。',
+    'privacy.summary.noTracking':
+      '没有广告，不跟踪你，不用第三方统计。我们只按粗地区汇总总数，不按人记，也不卖你的数据。',
     'privacy.summary.delete': '随时可以在设置里下载自己的数据，或者删除账户。',
     'privacy.keep.title': '存了什么',
     'privacy.keep.account.label': '你的账户',
@@ -137,9 +142,12 @@ export const privacyResources = {
     'privacy.keep.addresses.label': 'IP 地址',
     'privacy.keep.addresses.text':
       '聊天服务器记下已登录设备的 IP 地址和应用版本，登录服务在每次登录有效期间记着它的 IP 地址，服务器日志里也有 IP 地址。',
+    'privacy.keep.usage.label': '使用的总数',
+    'privacy.keep.usage.text':
+      '按粗地区（比如“欧洲”“中国大陆”）汇总的总数：每天有多少账户在用（人和 Agent 分开算）、发了多少请求、页面和接口有多快、桌面应用的本机连接有多少时间连着。不按人记，只留总数，不留数到的是谁。地区由服务器拿每个请求的 IP 地址查 DB-IP 的免费国家库（db-ip.com）得出，不存这个地址。',
     'privacy.keep.nothingElse.label': '别的都没有',
     'privacy.keep.nothingElse.text':
-      '不用统计分析服务、广告网络、跟踪脚本或第三方字体，也不收集使用统计。',
+      '不用统计分析服务、广告网络、跟踪脚本或第三方字体；除了上面按地区汇总的总数，不收集别的使用统计。',
     'privacy.readers.title': '谁能读到什么',
     'privacy.readers.public.label': '公共大厅',
     'privacy.readers.public.text':

@@ -12,11 +12,11 @@ use agent_room_application::{
         AgentInstanceVerificationRepository, AgentMembershipChange, AgentMembershipRepository,
         AgentMembershipTransaction, AgentRegistration, AgentRepository, AgentRetirementOutcome,
         AgentRetirementTransaction, ClaimTargetedHandoff, DeviceRevocationOutcome,
-        DeviceRevocationTransaction, DeviceSecurityEvent, HandoffAccessRepository, MatrixUserId,
-        OutboxMessage, PrincipalRegistration, PrincipalRepository, QueueTargetedHandoff,
-        QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt, SealedSecret, SecretDigest,
-        SignInAccount, StoredAgentInstanceRegistration, StoredEncryptionKey,
-        TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
+        DeviceRevocationTransaction, HandoffAccessRepository, MatrixUserId,
+        PendingAgentMatrixDeviceStore, PrincipalRegistration, PrincipalRepository,
+        QueueTargetedHandoff, QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt,
+        SealedSecret, SecretDigest, SignInAccount, StoredAgentInstanceRegistration,
+        StoredEncryptionKey, TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
         TargetedHandoffRequestFingerprint,
     },
 };
@@ -41,7 +41,7 @@ use agent_room_domain::{
     ids::{
         AccountDeletionJobId, AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId,
         AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, ContentId, DeviceId,
-        HandoffId, MessageId, OutboxEventId, PrincipalId,
+        HandoffId, MessageId, PrincipalId,
     },
     rooms::MatrixRoomReference,
     time::{DurationMillis, UtcMillis},
@@ -443,30 +443,19 @@ async fn agent_创建请求幂等且篡改请求体会冲突() {
     );
 
     let registration = agent_registration(agent_id, principal_id, "idempotent-agent");
-    let event = OutboxMessage::new(
-        OutboxEventId::from_uuid(Uuid::now_v7()),
-        "agent".to_owned(),
-        agent_id.as_uuid(),
-        "agent.registered.v1".to_owned(),
-        serde_json::Map::new(),
-        test_time(),
-    )
-    .expect("注册事件有效");
-    AgentCreationWorkflow::complete_with_event(
+    AgentCreationWorkflow::complete_creation(
         &repositories,
         request_id,
         &fingerprint,
         &registration,
-        &event,
     )
     .await
     .expect("首次完成应成功");
-    AgentCreationWorkflow::complete_with_event(
+    AgentCreationWorkflow::complete_creation(
         &repositories,
         request_id,
         &fingerprint,
         &registration,
-        &event,
     )
     .await
     .expect("重复完成不得重复写入");
@@ -478,13 +467,6 @@ async fn agent_创建请求幂等且篡改请求体会冲突() {
         completed,
         AgentCreationReservation::Completed(ref stored) if stored.agent.id() == agent_id
     ));
-    let outbox_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_id = $1")
-            .bind(agent_id.as_uuid())
-            .fetch_one(&database.runtime)
-            .await
-            .expect("应能验证 Outbox 幂等性");
-    assert_eq!(outbox_count, 1);
 
     let tampered = AgentCreationClaim {
         request_fingerprint: SecretDigest::from_array([8; 32]),
@@ -527,59 +509,35 @@ async fn agent_成员变更只允许_owner_且不能移除最后一个_owner() {
 
     let grant_operator =
         membership_change(agent_id, owner_id, operator_id, Some(AgentRole::Operator));
-    AgentMembershipTransaction::apply_change(
-        &repositories,
-        &grant_operator,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect("Owner 应能授予 Operator");
+    AgentMembershipTransaction::apply_change(&repositories, &grant_operator)
+        .await
+        .expect("Owner 应能授予 Operator");
     let grant_viewer = membership_change(agent_id, owner_id, viewer_id, Some(AgentRole::Viewer));
-    AgentMembershipTransaction::apply_change(
-        &repositories,
-        &grant_viewer,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect("Owner 应能授予 Viewer");
+    AgentMembershipTransaction::apply_change(&repositories, &grant_viewer)
+        .await
+        .expect("Owner 应能授予 Viewer");
 
     let unauthorized =
         membership_change(agent_id, viewer_id, second_owner_id, Some(AgentRole::Owner));
-    let error = AgentMembershipTransaction::apply_change(
-        &repositories,
-        &unauthorized,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect_err("Viewer 不得转移 Agent 所有权");
+    let error = AgentMembershipTransaction::apply_change(&repositories, &unauthorized)
+        .await
+        .expect_err("Viewer 不得转移 Agent 所有权");
     assert_eq!(error.kind(), RepositoryErrorKind::Forbidden);
 
     let remove_first_owner = membership_change(agent_id, owner_id, owner_id, None);
-    let error = AgentMembershipTransaction::apply_change(
-        &repositories,
-        &remove_first_owner,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect_err("不得移除最后一个 Owner");
+    let error = AgentMembershipTransaction::apply_change(&repositories, &remove_first_owner)
+        .await
+        .expect_err("不得移除最后一个 Owner");
     assert_eq!(error.kind(), RepositoryErrorKind::Constraint);
 
     let grant_second_owner =
         membership_change(agent_id, owner_id, second_owner_id, Some(AgentRole::Owner));
-    AgentMembershipTransaction::apply_change(
-        &repositories,
-        &grant_second_owner,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect("可先增加第二位 Owner");
-    AgentMembershipTransaction::apply_change(
-        &repositories,
-        &remove_first_owner,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect("存在第二位 Owner 后可撤销第一位");
+    AgentMembershipTransaction::apply_change(&repositories, &grant_second_owner)
+        .await
+        .expect("可先增加第二位 Owner");
+    AgentMembershipTransaction::apply_change(&repositories, &remove_first_owner)
+        .await
+        .expect("存在第二位 Owner 后可撤销第一位");
 
     let memberships = AgentMembershipRepository::find_memberships(&repositories, agent_id)
         .await
@@ -684,17 +642,14 @@ async fn agent_实例注册绑定真实设备并拒绝公钥冒用() {
     )
     .await;
 
-    // Other tests share this database; count only this agent's instance events.
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.outbox_event
-          WHERE aggregate_type = 'agent_instance'
-            AND aggregate_id IN (SELECT id FROM agent_room.agent_instance WHERE agent_id = $1)",
-    )
-    .bind(agent_id.as_uuid())
-    .fetch_one(&database.runtime)
-    .await
-    .expect("应能验证实例事件幂等性");
-    assert_eq!(event_count, 1);
+    // 重放和被拒的登记都不能多出实例。
+    let instance_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_room.agent_instance WHERE agent_id = $1")
+            .bind(agent_id.as_uuid())
+            .fetch_one(&database.runtime)
+            .await
+            .expect("应能验证实例登记幂等性");
+    assert_eq!(instance_count, 1);
 
     database.close().await;
 }
@@ -716,13 +671,10 @@ async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销
         register_online_management_instance(&database.runtime, &repositories, &fixture).await;
     assert_instance_management_visibility(&repositories, &fixture, outsider_id).await;
     assert_hidden_instance_revocation(&repositories, outsider_id, instance_id).await;
-    assert_local_instance_revocation(
-        &database.runtime,
-        &repositories,
-        fixture.owner_id,
-        instance_id,
-    )
-    .await;
+    assert_local_instance_revocation(&repositories, fixture.owner_id, instance_id).await;
+    let just_before = UtcMillis::new(test_time().value() - 1).expect("时间有效");
+    assert!(!pending_matrix_device(&repositories, just_before, instance_id).await);
+    assert!(pending_matrix_device(&repositories, test_time(), instance_id).await);
 
     AgentInstanceMatrixCleanupStore::mark_matrix_device_revoked(
         &repositories,
@@ -736,6 +688,7 @@ async fn agent_实例管理按成员授权并幂等完成本地和_matrix_撤销
             .await
             .expect("可读取清理后的状态");
     assert!(completed[0].matrix_device_revoked_at.is_some());
+    assert!(!pending_matrix_device(&repositories, test_time(), instance_id).await);
 
     database.close().await;
 }
@@ -769,13 +722,7 @@ async fn agent_删除只允许唯一_owner_且须先撤销实例() {
         AgentRetirementOutcome::ActiveInstances
     );
 
-    assert_local_instance_revocation(
-        &database.runtime,
-        &repositories,
-        fixture.owner_id,
-        instance_id,
-    )
-    .await;
+    assert_local_instance_revocation(&repositories, fixture.owner_id, instance_id).await;
     assert_eq!(
         retire_agent(&repositories, fixture.owner_id, fixture.agent_id).await,
         AgentRetirementOutcome::Retired
@@ -795,14 +742,6 @@ async fn agent_删除只允许唯一_owner_且须先撤销实例() {
         (state.as_str(), name.as_str()),
         ("retired", "Deleted agent")
     );
-    let events: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.outbox_event WHERE aggregate_id = $1 AND event_type = 'agent.retired.v1'",
-    )
-    .bind(fixture.agent_id.as_uuid())
-    .fetch_one(&database.runtime)
-    .await
-    .expect("可读取删除事件");
-    assert_eq!(events, 1);
 
     database.close().await;
 }
@@ -812,21 +751,11 @@ async fn retire_agent(
     principal_id: PrincipalId,
     agent_id: AgentId,
 ) -> AgentRetirementOutcome {
-    let event = OutboxMessage::new(
-        OutboxEventId::from_uuid(Uuid::now_v7()),
-        "agent".to_owned(),
-        agent_id.as_uuid(),
-        "agent.retired.v1".to_owned(),
-        serde_json::Map::new(),
-        test_time_after(60_000),
-    )
-    .expect("删除事件有效");
     AgentRetirementTransaction::retire(
         repositories,
         principal_id,
         agent_id,
         test_time_after(60_000),
-        &event,
     )
     .await
     .expect("删除事务应完成")
@@ -849,7 +778,7 @@ async fn 产品设备撤销返回待清理_matrix_设备并允许重复请求收
         &repositories,
         fixture.owner_id,
         fixture.owner_device,
-        device_security_event(),
+        test_time(),
     )
     .await
     .expect("产品设备本地撤销成功");
@@ -869,7 +798,7 @@ async fn 产品设备撤销返回待清理_matrix_设备并允许重复请求收
         &repositories,
         fixture.owner_id,
         fixture.owner_device,
-        device_security_event(),
+        test_time(),
     )
     .await
     .expect("重复撤销可继续清理");
@@ -888,7 +817,7 @@ async fn 产品设备撤销返回待清理_matrix_设备并允许重复请求收
         &repositories,
         fixture.owner_id,
         fixture.owner_device,
-        device_security_event(),
+        test_time(),
     )
     .await
     .expect("已完成清理的重复撤销保持幂等");
@@ -1489,7 +1418,7 @@ async fn assert_target_revocation_fails_pending_handoff(
         repositories,
         fixture.owner_id,
         target_instance_id,
-        &instance_revocation_event(target_instance_id),
+        test_time(),
     )
     .await
     .expect("目标撤销成功");
@@ -1723,18 +1652,6 @@ fn membership_change(
     }
 }
 
-fn membership_event(agent_id: AgentId) -> OutboxMessage {
-    OutboxMessage::new(
-        OutboxEventId::from_uuid(Uuid::now_v7()),
-        "agent".to_owned(),
-        agent_id.as_uuid(),
-        "agent.membership.changed.v1".to_owned(),
-        serde_json::Map::new(),
-        test_time(),
-    )
-    .expect("成员事件有效")
-}
-
 struct InstanceFixture {
     owner_id: PrincipalId,
     operator_id: PrincipalId,
@@ -1806,15 +1723,27 @@ async fn assert_hidden_instance_revocation(
         repositories,
         outsider_id,
         instance_id,
-        &instance_revocation_event(instance_id),
+        test_time(),
     )
     .await
     .expect("无权撤销不会泄漏实例是否存在");
     assert_eq!(hidden, AgentInstanceRevocationOutcome::NotFound);
 }
 
+/// 后台再试注销时读不读得到这个连接（撤销时间不晚于 `revoked_before`、还没注销成）。
+async fn pending_matrix_device(
+    repositories: &PostgresRepositories,
+    revoked_before: UtcMillis,
+    instance_id: AgentInstanceId,
+) -> bool {
+    PendingAgentMatrixDeviceStore::list_pending_matrix_devices(repositories, revoked_before, 200)
+        .await
+        .expect("可读取待注销的 Matrix 设备")
+        .iter()
+        .any(|pending| pending.instance_id == instance_id)
+}
+
 async fn assert_local_instance_revocation(
-    pool: &PgPool,
     repositories: &PostgresRepositories,
     owner_id: PrincipalId,
     instance_id: AgentInstanceId,
@@ -1823,7 +1752,7 @@ async fn assert_local_instance_revocation(
         repositories,
         owner_id,
         instance_id,
-        &instance_revocation_event(instance_id),
+        test_time(),
     )
     .await
     .expect("Owner 可撤销实例");
@@ -1842,7 +1771,7 @@ async fn assert_local_instance_revocation(
         repositories,
         owner_id,
         instance_id,
-        &instance_revocation_event(instance_id),
+        test_time(),
     )
     .await
     .expect("重复撤销应返回稳定状态");
@@ -1851,15 +1780,6 @@ async fn assert_local_instance_revocation(
         AgentInstanceRevocationOutcome::AlreadyRevoked(ref record)
             if record.instance.id() == instance_id
     ));
-    let event_count: i64 = sqlx::query_scalar(
-        r"SELECT count(*) FROM agent_room.outbox_event
-          WHERE aggregate_id = $1 AND event_type = 'agent.instance.revoked.v1'",
-    )
-    .bind(instance_id.as_uuid())
-    .fetch_one(pool)
-    .await
-    .expect("应能检查撤销事件幂等性");
-    assert_eq!(event_count, 1);
 }
 
 async fn assert_product_device_revoked(
@@ -1881,13 +1801,6 @@ async fn assert_product_device_revoked(
     assert_eq!(instance.instance.lease_expires_at(), None);
     assert!(instance.revoked_at.is_some());
     assert_eq!(instance.matrix_device_revoked_at, None);
-}
-
-fn device_security_event() -> DeviceSecurityEvent {
-    DeviceSecurityEvent {
-        id: OutboxEventId::from_uuid(Uuid::now_v7()),
-        occurred_at: test_time(),
-    }
 }
 
 async fn prepare_instance_fixture(
@@ -1914,13 +1827,9 @@ async fn prepare_instance_fixture(
         .expect("Agent 创建应成功");
     let grant_operator =
         membership_change(agent_id, owner_id, operator_id, Some(AgentRole::Operator));
-    AgentMembershipTransaction::apply_change(
-        repositories,
-        &grant_operator,
-        &membership_event(agent_id),
-    )
-    .await
-    .expect("Owner 应能授予 Operator");
+    AgentMembershipTransaction::apply_change(repositories, &grant_operator)
+        .await
+        .expect("Owner 应能授予 Operator");
     InstanceFixture {
         owner_id,
         operator_id,
@@ -2108,40 +2017,11 @@ fn instance_registration(
     }
 }
 
-fn instance_event(registration: &AgentInstanceRegistration) -> OutboxMessage {
-    OutboxMessage::new(
-        OutboxEventId::from_uuid(Uuid::now_v7()),
-        "agent_instance".to_owned(),
-        registration.instance.id().as_uuid(),
-        "agent.instance.registered.v1".to_owned(),
-        serde_json::Map::new(),
-        test_time(),
-    )
-    .expect("实例注册事件有效")
-}
-
-fn instance_revocation_event(instance_id: AgentInstanceId) -> OutboxMessage {
-    OutboxMessage::new(
-        OutboxEventId::from_uuid(Uuid::now_v7()),
-        "agent_instance".to_owned(),
-        instance_id.as_uuid(),
-        "agent.instance.revoked.v1".to_owned(),
-        serde_json::Map::new(),
-        test_time(),
-    )
-    .expect("实例撤销事件有效")
-}
-
 async fn register_instance(
     repositories: &PostgresRepositories,
     registration: &AgentInstanceRegistration,
 ) -> agent_room_application::persistence::RepositoryResult<StoredAgentInstanceRegistration> {
-    AgentInstanceRegistrationTransaction::register_with_event(
-        repositories,
-        registration,
-        &instance_event(registration),
-    )
-    .await
+    AgentInstanceRegistrationTransaction::register_instance(repositories, registration).await
 }
 
 async fn assert_instance_registration_failure(

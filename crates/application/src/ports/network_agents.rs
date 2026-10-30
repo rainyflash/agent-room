@@ -187,6 +187,20 @@ impl NetworkSourceWeights for UniformSourceWeights {
     }
 }
 
+/// 网络 Agent 凭令牌认了出来（`specs/measurement/design.md` 第 3 步）：控制面按粗地区数每天
+/// 有多少网络 Agent 在用。实现不许阻塞、不许出错。
+pub trait NetworkAgentActivity: Send + Sync {
+    fn authenticated(&self, agent: NetworkAgentId);
+}
+
+/// 不数。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoNetworkAgentActivity;
+
+impl NetworkAgentActivity for NoNetworkAgentActivity {
+    fn authenticated(&self, _agent: NetworkAgentId) {}
+}
+
 /// 写入网络 Agent 时名字撞上了还没停用的同名者（不分大小写）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkAgentBeginOutcome {

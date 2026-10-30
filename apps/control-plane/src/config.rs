@@ -117,6 +117,8 @@ pub(crate) struct ObservabilityConfig {
     pub(crate) otlp_metrics_endpoint: Option<Url>,
     pub(crate) export_timeout: Duration,
     pub(crate) operational_sample_interval: Duration,
+    /// 按粗地区汇总用的 IP 库（`specs/measurement/design.md` 第 3 步）。没有这个文件时地区一律算未知。
+    pub(crate) region_database: PathBuf,
 }
 
 #[derive(Clone)]
@@ -741,7 +743,24 @@ fn read_observability_config(
             15_000,
             5_000..=5 * 60 * 1_000,
         )?,
+        region_database: read_region_database(source)?,
     })
+}
+
+/// 镜像里放 IP 库的位置；本地开发可以用环境变量指到别处。
+const DEFAULT_REGION_DATABASE: &str = "/usr/share/agent-room/dbip-country-lite.mmdb";
+
+fn read_region_database(source: &impl EnvironmentSource) -> Result<PathBuf, ConfigError> {
+    const REGION_DATABASE: &str = "AGENT_ROOM_REGION_DATABASE";
+    let Some(value) = read_optional(source, REGION_DATABASE) else {
+        return Ok(PathBuf::from(DEFAULT_REGION_DATABASE));
+    };
+    let path = PathBuf::from(value.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(ConfigError::invalid(REGION_DATABASE, "必须是绝对路径"))
+    }
 }
 
 fn read_optional(source: &impl EnvironmentSource, name: &'static str) -> Option<String> {

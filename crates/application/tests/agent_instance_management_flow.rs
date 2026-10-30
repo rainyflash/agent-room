@@ -15,9 +15,9 @@ use agent_room_application::{
     ports::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceMatrixCleanupStore, AgentInstanceRevocationOutcome,
-        AgentInstanceRevocationTransaction, Clock, IdentifierFactory,
-        MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionTarget, MatrixFailure,
-        MatrixFailureKind, MatrixOperation, MatrixResult, OutboxMessage, PortFuture,
+        AgentInstanceRevocationTransaction, Clock, MatrixAgentDeviceSessionRevoker,
+        MatrixAgentDeviceSessionTarget, MatrixFailure, MatrixFailureKind, MatrixOperation,
+        MatrixResult, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -25,12 +25,7 @@ use agent_room_domain::{
         AgentInstance, AgentInstancePublicSigningKey, AgentInstanceStatus, AgentMatrixDeviceId,
     },
     devices::{DevicePlatform, DeviceTrustState},
-    ids::{
-        AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
-        ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomReservationId, WebSessionId,
-    },
+    ids::{AdapterBindingId, AgentId, AgentInstanceId, DeviceId, PrincipalId},
     time::UtcMillis,
 };
 use uuid::Uuid;
@@ -42,80 +37,6 @@ struct StaticRuntime;
 impl Clock for StaticRuntime {
     fn now(&self) -> UtcMillis {
         time(NOW)
-    }
-}
-
-impl IdentifierFactory for StaticRuntime {
-    fn principal_id(&self) -> PrincipalId {
-        PrincipalId::from_uuid(Uuid::now_v7())
-    }
-
-    fn login_attempt_id(&self) -> LoginAttemptId {
-        LoginAttemptId::from_uuid(Uuid::now_v7())
-    }
-
-    fn web_session_id(&self) -> WebSessionId {
-        WebSessionId::from_uuid(Uuid::now_v7())
-    }
-
-    fn device_id(&self) -> DeviceId {
-        DeviceId::from_uuid(Uuid::now_v7())
-    }
-
-    fn device_token_family_id(&self) -> DeviceTokenFamilyId {
-        DeviceTokenFamilyId::from_uuid(Uuid::now_v7())
-    }
-
-    fn device_access_token_id(&self) -> DeviceAccessTokenId {
-        DeviceAccessTokenId::from_uuid(Uuid::now_v7())
-    }
-
-    fn device_refresh_token_id(&self) -> DeviceRefreshTokenId {
-        DeviceRefreshTokenId::from_uuid(Uuid::now_v7())
-    }
-
-    fn agent_id(&self) -> AgentId {
-        AgentId::from_uuid(Uuid::now_v7())
-    }
-
-    fn agent_card_snapshot_id(&self) -> AgentCardSnapshotId {
-        AgentCardSnapshotId::from_uuid(Uuid::now_v7())
-    }
-
-    fn adapter_binding_id(&self) -> AdapterBindingId {
-        AdapterBindingId::from_uuid(Uuid::now_v7())
-    }
-
-    fn agent_instance_id(&self) -> AgentInstanceId {
-        AgentInstanceId::from_uuid(Uuid::now_v7())
-    }
-
-    fn room_catalog_id(&self) -> RoomCatalogId {
-        RoomCatalogId::from_uuid(Uuid::now_v7())
-    }
-
-    fn room_instance_id(&self) -> RoomInstanceId {
-        RoomInstanceId::from_uuid(Uuid::now_v7())
-    }
-
-    fn room_reservation_id(&self) -> RoomReservationId {
-        RoomReservationId::from_uuid(Uuid::now_v7())
-    }
-
-    fn content_id(&self) -> ContentId {
-        ContentId::from_uuid(Uuid::now_v7())
-    }
-
-    fn handoff_id(&self) -> HandoffId {
-        HandoffId::from_uuid(Uuid::now_v7())
-    }
-
-    fn automation_grant_id(&self) -> AutomationGrantId {
-        AutomationGrantId::from_uuid(Uuid::now_v7())
-    }
-
-    fn outbox_event_id(&self) -> OutboxEventId {
-        OutboxEventId::from_uuid(Uuid::now_v7())
     }
 }
 
@@ -170,21 +91,21 @@ impl AgentInstanceManagementRepository for FakeInstances {
 struct FakeRevocations {
     outcome: AgentInstanceRevocationOutcome,
     calls: Arc<AtomicUsize>,
-    events: Mutex<Vec<OutboxMessage>>,
+    revoked_at: Mutex<Vec<UtcMillis>>,
 }
 
 impl AgentInstanceRevocationTransaction for FakeRevocations {
-    fn revoke<'a>(
-        &'a self,
+    fn revoke(
+        &self,
         _principal_id: PrincipalId,
         _instance_id: AgentInstanceId,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<AgentInstanceRevocationOutcome>> {
+        revoked_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<AgentInstanceRevocationOutcome>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        self.events
+        self.revoked_at
             .lock()
             .expect("测试锁不得中毒")
-            .push(event.clone());
+            .push(revoked_at);
         let outcome = self.outcome.clone();
         Box::pin(async move { Ok(outcome) })
     }
@@ -296,7 +217,7 @@ impl Fixture {
         let revocations = Arc::new(FakeRevocations {
             outcome,
             calls: local_revoke_calls.clone(),
-            events: Mutex::new(Vec::new()),
+            revoked_at: Mutex::new(Vec::new()),
         });
         let matrix = Arc::new(FakeMatrix {
             local_revoke_calls,
@@ -314,7 +235,6 @@ impl Fixture {
             revocations: revocations.clone(),
             matrix_cleanup: cleanup.clone(),
             matrix: matrix.clone(),
-            identifiers: runtime.clone(),
             clock: runtime,
         });
         Self {
@@ -401,8 +321,12 @@ async fn 撤销严格先关闭本地授权再删除_matrix_令牌并持久化结
     assert_eq!(fixture.matrix.calls.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.cleanup.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
-        fixture.revocations.events.lock().expect("测试锁不得中毒")[0].event_type(),
-        "agent.instance.revoked.v1"
+        *fixture
+            .revocations
+            .revoked_at
+            .lock()
+            .expect("测试锁不得中毒"),
+        [time(NOW)]
     );
     let target = fixture.matrix.targets.lock().expect("测试锁不得中毒")[0].clone();
     assert_eq!(target.user_id().as_str(), record.agent_matrix_user_id);

@@ -1,4 +1,4 @@
-import { assign, fromPromise, setup } from 'xstate';
+import { assign, enqueueActions, fromCallback, fromPromise, setup } from 'xstate';
 
 import type {
   AuthenticationMode,
@@ -13,6 +13,15 @@ import { cleanupSession } from './session-cleanup';
 import { authenticationCallbackFailure } from './authentication-callback';
 
 export type AuthenticationTarget = 'control' | 'matrix';
+
+/**
+ * 要最近登录过的操作（删账户、删 Agent、撤销电脑、房间治理）认的窗口，和控制面默认的
+ * `DEFAULT_RECENT_AUTHENTICATION_MILLIS` 一样。会话只在读的那一刻说“最近登录过”，之后不再读，
+ * 各处的确认框却一直照它显示：从读到的那一刻起按页面自己的钟算，到点就改成没有。只会比服务器
+ * 晚、不会比它早，电脑的钟不准也一样；晚的那一段由服务器拒了以后的通知补上（agent-room-ops#34）。
+ */
+export const RECENT_AUTHENTICATION_WINDOW_MS = 5 * 60 * 1_000;
+const RECENT_AUTHENTICATION_EXPIRY = 'recent-authentication-expiry';
 
 export type SessionContext = {
   readonly authenticationMode: AuthenticationMode;
@@ -39,6 +48,7 @@ export type SessionEvent =
   | { readonly type: 'MATRIX_RESTORED' }
   | { readonly type: 'OFFLINE' }
   | { readonly type: 'ONLINE' }
+  | { readonly type: 'RECENT_AUTHENTICATION_EXPIRED' }
   | { readonly type: 'RETRY' }
   | { readonly type: 'SWITCH_ACCOUNT' };
 
@@ -103,6 +113,13 @@ export function createSessionMachine(dependencies: SessionDependencies) {
 
   const signOut = fromPromise(() => cleanupSession(dependencies));
 
+  const watchReauthentication = fromCallback<SessionEvent>(
+    ({ sendBack }) =>
+      dependencies.reauthentication?.subscribe(() => {
+        sendBack({ type: 'RECENT_AUTHENTICATION_EXPIRED' });
+      }) ?? (() => undefined),
+  );
+
   return setup({
     types: {
       context: {} as SessionContext,
@@ -114,8 +131,25 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       restoreMatrix,
       signOut,
       synchronize,
+      watchReauthentication,
     },
     actions: {
+      expireRecentAuthentication: assign({
+        principal: ({ context }) =>
+          context.principal === null
+            ? null
+            : { ...context.principal, recentlyAuthenticated: false },
+      }),
+      // 每读到一次会话重新起算；读到的不是“最近登录过”就不用等。
+      scheduleRecentAuthenticationExpiry: enqueueActions(({ context, enqueue }) => {
+        enqueue.cancel(RECENT_AUTHENTICATION_EXPIRY);
+        if (context.principal?.recentlyAuthenticated === true) {
+          enqueue.raise(
+            { type: 'RECENT_AUTHENTICATION_EXPIRED' },
+            { delay: RECENT_AUTHENTICATION_WINDOW_MS, id: RECENT_AUTHENTICATION_EXPIRY },
+          );
+        }
+      }),
       automaticAuthentication: assign({ authenticationMode: 'automatic' }),
       interactiveAuthentication: assign({ authenticationMode: 'interactive' }),
       clearFailure: assign({ failure: null }),
@@ -175,8 +209,10 @@ export function createSessionMachine(dependencies: SessionDependencies) {
       resumePath: null,
       switchingAccount: false,
     },
+    invoke: { id: 'watch-reauthentication', src: 'watchReauthentication' },
     on: {
       LOGOUT: { target: '.signingOut', actions: assign({ switchingAccount: false }) },
+      RECENT_AUTHENTICATION_EXPIRED: { actions: 'expireRecentAuthentication' },
       SWITCH_ACCOUNT: { target: '.signingOut', actions: assign({ switchingAccount: true }) },
     },
     states: {
@@ -191,17 +227,20 @@ export function createSessionMachine(dependencies: SessionDependencies) {
                 event.output.kind === 'authenticated' &&
                 authenticationCallbackFailure(dependencies.browser.currentPath()) !== null,
               target: 'degraded',
-              actions: assign({
-                controlStatus: 'ready',
-                principal: ({ event }) =>
-                  event.output.kind === 'authenticated' ? event.output.session : null,
-                failure: {
-                  boundary: 'identity',
-                  code: 'authentication.callback_failed',
-                  offline: false,
-                  retryable: true,
-                },
-              }),
+              actions: [
+                assign({
+                  controlStatus: 'ready',
+                  principal: ({ event }) =>
+                    event.output.kind === 'authenticated' ? event.output.session : null,
+                  failure: {
+                    boundary: 'identity',
+                    code: 'authentication.callback_failed',
+                    offline: false,
+                    retryable: true,
+                  },
+                }),
+                'scheduleRecentAuthenticationExpiry',
+              ],
             },
             {
               guard: ({ event }) => event.output.kind === 'authenticated',
@@ -223,6 +262,7 @@ export function createSessionMachine(dependencies: SessionDependencies) {
                     return event.output.kind === 'authenticated' ? event.output.session : null;
                   },
                 }),
+                'scheduleRecentAuthenticationExpiry',
               ],
             },
             {

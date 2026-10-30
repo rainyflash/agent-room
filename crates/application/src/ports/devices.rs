@@ -4,7 +4,7 @@ use agent_room_domain::{
     devices::{Device, DevicePublicSigningKey, DeviceTokenFamily},
     ids::{
         AgentInstanceId, DeviceAccessTokenId, DeviceId, DeviceRefreshAttemptId,
-        DeviceRefreshTokenId, OutboxEventId, PrincipalId,
+        DeviceRefreshTokenId, PrincipalId,
     },
     time::{SlidingLifetime, UtcMillis},
 };
@@ -148,12 +148,6 @@ pub struct DeviceRefreshContext {
     pub family: DeviceTokenFamily,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeviceSecurityEvent {
-    pub id: OutboxEventId,
-    pub occurred_at: UtcMillis,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceRefreshOutcome {
     Rotated {
@@ -246,11 +240,11 @@ pub trait DeviceSessionStore: Send + Sync {
         refresh_token_digest: &'a SecretDigest,
     ) -> PortFuture<'a, RepositoryResult<Option<DeviceRefreshContext>>>;
 
+    /// 发现刷新令牌被重复使用时，按 `replacement.issued_at` 记下这组令牌失守。
     fn rotate_refresh<'a>(
         &'a self,
         refresh_token_digest: &'a SecretDigest,
         replacement: &'a DeviceTokenReplacement,
-        security_event: DeviceSecurityEvent,
     ) -> PortFuture<'a, RepositoryResult<DeviceRefreshOutcome>>;
 }
 
@@ -285,6 +279,6 @@ pub trait DeviceRevocationTransaction: Send + Sync {
         &self,
         principal_id: PrincipalId,
         device_id: DeviceId,
-        security_event: DeviceSecurityEvent,
+        revoked_at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<DeviceRevocationOutcome>>;
 }

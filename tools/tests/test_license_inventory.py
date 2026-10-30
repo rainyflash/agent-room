@@ -95,6 +95,8 @@ class LicenseInventoryTests(unittest.TestCase):
         self.assertIn("Cargo packages: 1", markdown)
         self.assertIn("npm packages: 1", markdown)
         self.assertIn("[alpha](https://www.npmjs.com/package/alpha/v/2.0.0)", markdown)
+        # 控制面镜像里的 IP 库要按 CC BY 4.0 署名。
+        self.assertIn("[IP Geolocation by DB-IP](https://db-ip.com)", markdown)
 
     def test_missing_license_fails_loudly(self) -> None:
         with self.assertRaises(LicenseInventoryError):

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "9ab2bd62a61f5c91d89d777bb3e6d72dcc6a0a9062b253ce1314108e4988adb9",
-    "pnpm-lock.yaml": "a2b0972236040643a978875fe98ce4c676c6fa15561da4344e3177751888e369"
+    "Cargo.lock": "fccacc8d031a3c728a209004fe0bde758b5a8d10c57d9767cf35b7d9ee030857",
+    "pnpm-lock.yaml": "5dd6034da1f4bb3ce5c0466297c409f5fd3be12db1c99ac3ac477530b743b194"
   },
   "dependencies": [
     {
@@ -2366,6 +2366,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "ipnetwork",
+      "version": "0.21.1",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/achanda/ipnetwork"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "is-docker",
       "version": "0.2.0",
       "license": "MIT",
@@ -2881,6 +2888,13 @@
       "version": "1.0.0",
       "license": "MIT",
       "source": "https://github.com/matrix-org/rust-indexed-db"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "maxminddb",
+      "version": "0.32.0",
+      "license": "ISC",
+      "source": "https://github.com/oschwald/maxminddb-rust"
     },
     {
       "ecosystem": "cargo",
@@ -7680,58 +7694,58 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/coverage-v8",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/coverage-v8/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/coverage-v8/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/expect",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/expect/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/expect/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/mocker",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/mocker/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/mocker/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/pretty-format",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/pretty-format/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/pretty-format/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/runner",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/runner/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/runner/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/snapshot",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/snapshot/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/snapshot/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/spy",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/spy/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/spy/v/4.1.12"
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/utils",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/@vitest/utils/v/4.1.11"
+      "source": "https://www.npmjs.com/package/@vitest/utils/v/4.1.12"
     },
     {
       "ecosystem": "npm",
@@ -8660,9 +8674,9 @@
     {
       "ecosystem": "npm",
       "name": "fast-uri",
-      "version": "3.1.8",
+      "version": "3.1.9",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/fast-uri/v/3.1.8"
+      "source": "https://www.npmjs.com/package/fast-uri/v/3.1.9"
     },
     {
       "ecosystem": "npm",
@@ -10270,23 +10284,23 @@
     {
       "ecosystem": "npm",
       "name": "serialize-javascript",
-      "version": "7.1.2",
+      "version": "7.1.4",
       "license": "BSD-3-Clause",
-      "source": "https://www.npmjs.com/package/serialize-javascript/v/7.1.2"
+      "source": "https://www.npmjs.com/package/serialize-javascript/v/7.1.4"
     },
     {
       "ecosystem": "npm",
       "name": "seroval",
-      "version": "1.6.3",
+      "version": "1.6.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/seroval/v/1.6.3"
+      "source": "https://www.npmjs.com/package/seroval/v/1.6.12"
     },
     {
       "ecosystem": "npm",
       "name": "seroval-plugins",
-      "version": "1.6.3",
+      "version": "1.6.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/seroval-plugins/v/1.6.3"
+      "source": "https://www.npmjs.com/package/seroval-plugins/v/1.6.12"
     },
     {
       "ecosystem": "npm",
@@ -10921,9 +10935,9 @@
     {
       "ecosystem": "npm",
       "name": "vitest",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://www.npmjs.com/package/vitest/v/4.1.11"
+      "source": "https://www.npmjs.com/package/vitest/v/4.1.12"
     },
     {
       "ecosystem": "npm",

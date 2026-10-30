@@ -158,7 +158,7 @@ To-Device 事件不是聊天历史。需要审计的结果只保存摘要、主�
 - `ModerationActionApplied`
 - `FederationPeerBlocked`
 
-内部事件通过 PostgreSQL Outbox 发布，消费者必须幂等。
+这些是领域上的说法，不经消息总线发布：要跟着做的事在请求里直接做，或者由各自的任务表接着做（[没人读的 Outbox](../outbox/design.md)）。
 
 ## 5. 通用事件约束
 

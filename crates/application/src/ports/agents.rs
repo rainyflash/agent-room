@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 
 use crate::persistence::RepositoryResult;
 
-use super::{DeviceSignature, OutboxMessage, PortFuture, SecretDigest};
+use super::{DeviceSignature, PendingAgentMatrixDeviceRevocation, PortFuture, SecretDigest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRegistration {
@@ -159,12 +159,11 @@ pub trait AgentCreationWorkflow: Send + Sync {
         claim: &'a AgentCreationClaim,
     ) -> PortFuture<'a, RepositoryResult<AgentCreationReservation>>;
 
-    fn complete_with_event<'a>(
+    fn complete_creation<'a>(
         &'a self,
         request_id: AgentCreationRequestId,
         request_fingerprint: &'a SecretDigest,
         registration: &'a AgentRegistration,
-        event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<Agent>>;
 }
 
@@ -182,13 +181,12 @@ pub enum AgentRetirementOutcome {
 ///
 /// 仍有未撤销的运行实例时不删除：实例撤销还要清理 Matrix 设备，由实例管理流程单独完成。
 pub trait AgentRetirementTransaction: Send + Sync {
-    fn retire<'a>(
-        &'a self,
+    fn retire(
+        &self,
         principal_id: PrincipalId,
         agent_id: AgentId,
         retired_at: UtcMillis,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<AgentRetirementOutcome>>;
+    ) -> PortFuture<'_, RepositoryResult<AgentRetirementOutcome>>;
 }
 
 pub trait AgentMembershipRepository: Send + Sync {
@@ -202,15 +200,13 @@ pub trait AgentMembershipTransaction: Send + Sync {
     fn apply_change<'a>(
         &'a self,
         change: &'a AgentMembershipChange,
-        event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<AgentMemberships>>;
 }
 
 pub trait AgentInstanceRegistrationTransaction: Send + Sync {
-    fn register_with_event<'a>(
+    fn register_instance<'a>(
         &'a self,
         registration: &'a AgentInstanceRegistration,
-        event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<StoredAgentInstanceRegistration>>;
 }
 
@@ -245,12 +241,12 @@ pub trait AgentInstanceManagementRepository: Send + Sync {
 }
 
 pub trait AgentInstanceRevocationTransaction: Send + Sync {
-    fn revoke<'a>(
-        &'a self,
+    fn revoke(
+        &self,
         principal_id: PrincipalId,
         instance_id: AgentInstanceId,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<AgentInstanceRevocationOutcome>>;
+        revoked_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<AgentInstanceRevocationOutcome>>;
 }
 
 pub trait AgentInstanceMatrixCleanupStore: Send + Sync {
@@ -261,6 +257,16 @@ pub trait AgentInstanceMatrixCleanupStore: Send + Sync {
     ) -> PortFuture<'_, RepositoryResult<()>>;
 }
 
+/// 撤销了、Matrix 设备还没注销成的连接：撤销那一刻聊天服务器不通，请求里没注销成。
+pub trait PendingAgentMatrixDeviceStore: Send + Sync {
+    /// 撤销时间不晚于 `revoked_before` 的，先撤销的在前，最多 `limit` 个。
+    fn list_pending_matrix_devices(
+        &self,
+        revoked_before: UtcMillis,
+        limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PendingAgentMatrixDeviceRevocation>>>;
+}
+
 pub trait AgentInstanceSignatureVerifier: Send + Sync {
     fn verify(
         &self,
@@ -268,13 +274,4 @@ pub trait AgentInstanceSignatureVerifier: Send + Sync {
         signed_message: &[u8],
         signature: &DeviceSignature,
     ) -> bool;
-}
-
-/// 持久化 Agent 注册及其领域事件的单一事务边界。
-pub trait AgentRegistrationTransaction: Send + Sync {
-    fn create_with_event<'a>(
-        &'a self,
-        registration: &'a AgentRegistration,
-        event: &'a OutboxMessage,
-    ) -> PortFuture<'a, RepositoryResult<Agent>>;
 }

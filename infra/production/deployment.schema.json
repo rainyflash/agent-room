@@ -125,7 +125,8 @@
           "format": "uri",
           "pattern": "^https://",
           "maxLength": 1024
-        }
+        },
+        "alerts": { "enum": ["ops-issues"] }
       },
       "allOf": [
         {
@@ -133,8 +134,14 @@
             "properties": { "enabled": { "const": true } },
             "required": ["enabled"]
           },
-          "then": { "required": ["alertWebhookUrl"] },
-          "else": { "not": { "required": ["alertWebhookUrl"] } }
+          "then": {
+            "oneOf": [{ "required": ["alertWebhookUrl"] }, { "required": ["alerts"] }]
+          },
+          "else": {
+            "not": {
+              "anyOf": [{ "required": ["alertWebhookUrl"] }, { "required": ["alerts"] }]
+            }
+          }
         }
       ]
     },

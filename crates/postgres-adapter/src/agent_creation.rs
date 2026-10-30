@@ -2,7 +2,7 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentCreationClaim, AgentCreationReservation, AgentCreationWorkflow, AgentRegistration,
-        OutboxMessage, PortFuture, SecretDigest,
+        PortFuture, SecretDigest,
     },
 };
 use agent_room_domain::{
@@ -15,7 +15,6 @@ use crate::{
     PostgresRepositories,
     agents::{decode_registered_agent, insert_agent_registration},
     error::map_sqlx_error,
-    outbox::insert_outbox_event,
 };
 
 impl AgentCreationWorkflow for PostgresRepositories {
@@ -26,15 +25,14 @@ impl AgentCreationWorkflow for PostgresRepositories {
         Box::pin(async move { self.reserve_agent_creation(claim).await })
     }
 
-    fn complete_with_event<'a>(
+    fn complete_creation<'a>(
         &'a self,
         request_id: AgentCreationRequestId,
         request_fingerprint: &'a SecretDigest,
         registration: &'a AgentRegistration,
-        event: &'a OutboxMessage,
     ) -> PortFuture<'a, RepositoryResult<Agent>> {
         Box::pin(async move {
-            self.complete_agent_creation(request_id, request_fingerprint, registration, event)
+            self.complete_agent_creation(request_id, request_fingerprint, registration)
                 .await
         })
     }
@@ -101,10 +99,8 @@ impl PostgresRepositories {
         request_id: AgentCreationRequestId,
         request_fingerprint: &SecretDigest,
         registration: &AgentRegistration,
-        event: &OutboxMessage,
     ) -> RepositoryResult<Agent> {
         let operation = "agent_creation.complete";
-        ensure_registration_event_contract(registration, event)?;
         let mut transaction = self
             .pool()
             .begin()
@@ -132,7 +128,6 @@ impl PostgresRepositories {
                 }
                 "reserved" => {
                     insert_agent_registration(&mut transaction, registration).await?;
-                    insert_outbox_event(&mut transaction, event).await?;
                     let updated = sqlx::query(
                         r"UPDATE agent_room.agent_creation_request
                            SET state = 'completed',
@@ -140,7 +135,7 @@ impl PostgresRepositories {
                            WHERE id = $1 AND state = 'reserved'",
                     )
                     .bind(request_id.as_uuid())
-                    .bind(event.occurred_at().value())
+                    .bind(registration.registered_at.value())
                     .execute(&mut *transaction)
                     .await
                     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -219,23 +214,6 @@ async fn load_registered_agent(
     .map_err(|error| map_sqlx_error(operation, &error))?;
     row.map(|row| decode_registered_agent(&row, agent_id, operation))
         .transpose()
-}
-
-fn ensure_registration_event_contract(
-    registration: &AgentRegistration,
-    event: &OutboxMessage,
-) -> RepositoryResult<()> {
-    if event.aggregate_type() == "agent"
-        && event.aggregate_id() == registration.agent.id().as_uuid()
-        && event.event_type() == "agent.registered.v1"
-    {
-        Ok(())
-    } else {
-        Err(RepositoryError::new(
-            "agent_creation.complete.event_contract",
-            RepositoryErrorKind::Constraint,
-        ))
-    }
 }
 
 fn decode_column<T>(row: &PgRow, column: &str, operation: &'static str) -> RepositoryResult<T>

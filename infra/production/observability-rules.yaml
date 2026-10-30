@@ -33,7 +33,7 @@ groups:
           summary: 控制平面 API 正在快速消耗错误预算
           impact: 用户登录、状态同步或消息操作可能失败
           diagnostic: 检查控制平面 5xx、依赖可用性与数据库连接池
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomapiavailabilityfastburn
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomapiavailabilityfastburn
       - alert: AgentRoomApiLatencyHigh
         expr: agent_room:api_request_rate:sum_5m > 0 and agent_room:api_latency:p95_5m > 0.8
         for: 10m
@@ -44,7 +44,7 @@ groups:
           summary: 控制平面 API P95 延迟持续超过 800ms
           impact: 大厅、私信与状态操作出现可感知卡顿
           diagnostic: 对照数据库、Matrix、对象存储依赖探测耗时
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomapilatencyhigh
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomapilatencyhigh
       - alert: AgentRoomPublicLobbyFull
         expr: sum(increase(agent_room_api_server_requests_total{refusal="lobby_full"}[5m])) > 0
         for: 10m
@@ -55,9 +55,12 @@ groups:
           summary: 公开大厅里的网络 Agent 满了
           impact: 新来的网络 Agent 进不了公开大厅，收到 capacity_reached；私人房间不受影响
           diagnostic: 看服务器负载和大厅里的网络 Agent 数，决定要不要调高 networkAgents.limits.maxLobbyAgents
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroompubliclobbyfull
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroompubliclobbyfull
+      # Keycloak 的计数要等第一次发生才有：它起来以后头一次发信失败，失败计数一出现就是 1，
+      # increase 看不出它涨过（2026-10-29 那一封就没响）。所以十分钟前 Keycloak 还采得到、
+      # 却还没有的失败计数也算。监控自己停过时十分钟前什么都没采到，回来时不把早就有的计数当成新的。
       - alert: AgentRoomEmailSendFailed
-        expr: sum(increase(keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""}[10m])) > 0
+        expr: sum(increase(keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""}[10m])) > 0 or sum((keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""} unless keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""} offset 10m) and on() (up{job="keycloak"} offset 10m == 1)) > 0
         labels:
           severity: warning
           service: agent-room
@@ -65,17 +68,19 @@ groups:
           summary: 有验证信或重设密码信发不出去
           impact: 刚注册的人收不到验证信、忘了密码的人收不到重设信；登录页让他们过几个小时再试
           diagnostic: 看 Keycloak 日志里的发信错误和 Resend 后台的当天用量；额度用完要等 UTC 零点
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomemailsendfailed
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomemailsendfailed
+      # 只进每周的容量报告，不开 issue：每天 100 封是旧的基线，生产发信的套餐还没核实（首发预案），
+      # 真发不出去时由 AgentRoomEmailSendFailed 报。
       - alert: AgentRoomEmailQuotaNearlyUsed
         expr: agent_room:emails_sent:increase_24h >= 80
         labels:
-          severity: warning
+          severity: info
           service: agent-room
         annotations:
           summary: 最近 24 小时已经发了 80 封邮件，快到 Resend 每天 100 封的额度了
           impact: 额度用完以后注册和重设密码的邮件都发不出去，到 UTC 零点才恢复
           diagnostic: 看注册是不是被刷了（同一来源大量注册）；被刷时按首发预案临时关注册
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomemailquotanearlyused
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomemailquotanearlyused
       - alert: AgentRoomDependencyUnavailable
         expr: min_over_time(agent_room_dependency_available[5m]) < 1
         for: 5m
@@ -86,29 +91,7 @@ groups:
           summary: 控制平面核心依赖不可用
           impact: 依赖相关业务路径会失败关闭
           diagnostic: 按 dependency 标签检查 PostgreSQL、Matrix、OIDC 或对象存储
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
-      - alert: AgentRoomOutboxBacklog
-        expr: agent_room_operational_value{metric="outbox_pending"} > 1000 or agent_room_operational_age_seconds{metric="outbox_oldest_pending"} > 300
-        for: 10m
-        labels:
-          severity: warning
-          service: agent-room
-        annotations:
-          summary: Outbox 发布持续积压
-          impact: 控制平面已接受的变更不能及时投影到 Matrix
-          diagnostic: 检查发布进程、Matrix 可用性与最旧待发布年龄
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxbacklog
-      - alert: AgentRoomOutboxDeadLetters
-        expr: agent_room_operational_value{metric="outbox_dead_lettered"} > 0
-        for: 5m
-        labels:
-          severity: critical
-          service: agent-room
-        annotations:
-          summary: Outbox 出现死信
-          impact: 至少一个业务事件已停止自动发布
-          diagnostic: 按 Runbook 查询结构化日志并执行受控重放
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomoutboxdeadletters
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
       - alert: AgentRoomProjectionStalled
         expr: agent_room_operational_value{metric="projection_unhealthy"} > 0 or agent_room_operational_age_seconds{metric="projection_oldest_update"} > 120
         for: 5m
@@ -119,7 +102,7 @@ groups:
           summary: Matrix 投影停滞或不健康
           impact: 大厅和成员状态可能不再反映权威事件
           diagnostic: 检查投影游标、Matrix 同步与重建工具
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomprojectionstalled
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomprojectionstalled
       - alert: AgentRoomCoreEndpointUnavailable
         expr: probe_success{instance=~"control-plane|matrix|oidc|object-store|web"} == 0
         for: 2m
@@ -130,7 +113,7 @@ groups:
           summary: 核心服务端点不可达
           impact: 对应核心能力对用户不可用
           diagnostic: 按 instance 标签检查容器健康、网络和上游日志
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomcoreendpointunavailable
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomcoreendpointunavailable
       - alert: AgentRoomFederationEndpointUnavailable
         expr: probe_success{instance=~"federation-.*"} == 0
         for: 5m
@@ -141,9 +124,9 @@ groups:
           summary: Matrix 联邦公开入口不可达
           impact: 其他 homeserver 无法发现或连接本站
           diagnostic: 检查 well-known、TLS、DNS 与 federation version 入口
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomfederationendpointunavailable
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomfederationendpointunavailable
       - alert: AgentRoomBridgeAvailabilityLow
-        expr: sum(rate(agent_room_frontend_score_sum{metric="bridge_availability"}[15m])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric="bridge_availability"}[15m])), 0.000001) < 0.95
+        expr: (sum(rate(agent_room_frontend_score_sum{metric="bridge_uptime"}[1h])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])), 0.000001) < 0.95) and on() sum(increase(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])) >= 4
         for: 15m
         labels:
           severity: warning
@@ -152,7 +135,7 @@ groups:
           summary: 桌面 Bridge 群体可用率低于 95%
           impact: Agent 状态上报和本机消息投递可能中断
           diagnostic: 检查 Bridge 版本、认证与重连时延聚合指标
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombridgeavailabilitylow
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroombridgeavailabilitylow
       - alert: AgentRoomPostgresExporterDown
         expr: up{job="postgres"} == 0
         for: 5m
@@ -163,7 +146,7 @@ groups:
           summary: PostgreSQL 指标采集失败
           impact: 数据库容量与连接故障变为不可观测
           diagnostic: 检查指标专用角色、TLS 和 exporter 容器
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroompostgresexporterdown
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroompostgresexporterdown
       - alert: AgentRoomBackupRpoBreached
         expr: time() - agent_room_backup_last_success_timestamp_seconds > agent_room_backup_rpo_target_seconds
         for: 5m
@@ -174,7 +157,7 @@ groups:
           summary: 最近成功备份已超过 RPO
           impact: 故障时的数据丢失窗口超过承诺值
           diagnostic: 检查定时器、备份仓库空间和 PostgreSQL 归档
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombackuprpobreached
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroombackuprpobreached
       - alert: AgentRoomBackupFullStale
         expr: time() - agent_room_backup_last_full_timestamp_seconds > 93600
         for: 30m
@@ -185,7 +168,7 @@ groups:
           summary: 超过 26 小时没有新的全量备份
           impact: 恢复要从更早的全量重放更多 WAL，恢复时间变长
           diagnostic: 检查 UTC 零点后第一次定时备份的日志、磁盘余量和逻辑导出
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroombackupfullstale
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroombackupfullstale
       - alert: AgentRoomRestoreDrillStale
         expr: time() - agent_room_restore_drill_last_success_timestamp_seconds > 604800
         for: 30m
@@ -196,7 +179,7 @@ groups:
           summary: 一周内没有成功恢复演练
           impact: 备份可恢复性已经失去新鲜证据
           diagnostic: 运行隔离恢复演练并核对签名证据
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomrestoredrillstale
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomrestoredrillstale
       - alert: AgentRoomRestoreRtoExceeded
         expr: agent_room_restore_drill_duration_seconds > agent_room_restore_rto_target_seconds
         for: 5m
@@ -207,4 +190,4 @@ groups:
           summary: 最近恢复演练超过 RTO
           impact: 真实灾难恢复可能无法按目标时间完成
           diagnostic: 分解数据库、对象和身份恢复阶段耗时
-          runbook_url: https://github.com/agent-room/agent-room/blob/main/docs/operations/observability.md#agentroomrestorertoexceeded
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomrestorertoexceeded

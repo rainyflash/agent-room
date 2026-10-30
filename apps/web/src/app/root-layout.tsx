@@ -50,10 +50,10 @@ function WebRootLayout({ pathname }: { readonly pathname: string }) {
 
 function WebSessionRuntime({ pathname }: { readonly pathname: string }) {
   const { t } = useTranslation();
-  const { session, telemetry } = useAppServices();
+  const { roundTrip, session, telemetry } = useAppServices();
   return (
     <SessionProvider dependencies={session}>
-      <FrontendTelemetryObserver gateway={telemetry} />
+      <FrontendTelemetryObserver gateway={telemetry} roundTrip={roundTrip} />
       <ConversationSessionOutlet />
       {/* “我的 Agent”页自己有“这台电脑”一节，不再重复提示。 */}
       <ThisComputerBanner hidden={pathname === '/workspace'} />

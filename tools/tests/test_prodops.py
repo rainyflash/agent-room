@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import base64
+import io
 from pathlib import Path
 import re
 import shutil
@@ -12,6 +13,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import URLError
 import uuid
 
 from tools.prodops.config import (
@@ -34,8 +36,10 @@ from tools.prodops.render import (
     render_deployment,
 )
 from tools.prodops.runtime import (
+    COMPOSE_FILE,
     ProductionRuntime,
     ProductionRuntimeError,
+    TELEMETRY_SERVICES,
     _meets_nominal_memory,
 )
 from tools.prodops.secrets import (
@@ -306,6 +310,30 @@ class ProductionConfigTests(unittest.TestCase):
         with self.assertRaises(DeploymentConfigError):
             DeploymentConfig.from_mapping(insecure)
 
+    def test_telemetry_alerts_go_to_a_receiver_or_to_ops_issues_but_not_both(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["telemetry"] = {"enabled": True, "alerts": "ops-issues"}
+
+        config = DeploymentConfig.from_mapping(value)
+
+        self.assertTrue(config.alerts_to_ops_issues)
+        self.assertFalse(config.alertmanager_enabled)
+        self.assertEqual(
+            json.loads(SCHEMA.read_text(encoding="utf-8"))["properties"]["telemetry"]["properties"][
+                "alerts"
+            ]["enum"],
+            ["ops-issues"],
+        )
+        for telemetry in (
+            {"enabled": True, "alerts": "ops-issues", "alertWebhookUrl": "https://alerts.example/events"},
+            {"enabled": True, "alerts": "email"},
+            {"enabled": False, "alerts": "ops-issues"},
+        ):
+            with self.subTest(telemetry=telemetry):
+                value["telemetry"] = telemetry
+                with self.assertRaises(DeploymentConfigError):
+                    DeploymentConfig.from_mapping(value)
+
     def test_missing_identity_configuration_defaults_to_closed_registration(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         value.pop("identity")
@@ -560,7 +588,10 @@ class ProductionRenderingTests(unittest.TestCase):
         runtime_password = self.secrets.read("agent_room_db_runtime_password")
 
         self.assertNotIn(runtime_password, environment)
-        self.assertIn("COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry", environment)
+        self.assertIn(
+            "COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry,telemetry-webhook\n",
+            environment,
+        )
         self.assertIn("AGENT_ROOM_CONTENT_S3_CREATE_BUCKET=true", environment)
         self.assertIn("AGENT_ROOM_BACKUP_ARCHIVE_TIMEOUT_SECONDS=900", environment)
         self.assertIn("AGENT_ROOM_IDENTITY_REGISTRATION_MODE=closed", environment)
@@ -651,6 +682,25 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("/run/secrets/alertmanager_webhook_token", alertmanager)
         self.assertIn(self.config.telemetry.alert_webhook_url or "", alertmanager)
         self.assertNotIn(self.secrets.read("alertmanager_webhook_token"), alertmanager)
+
+    def test_ops_issue_alerts_render_without_alertmanager(self) -> None:
+        # 先按接收端渲染一次，再换成开 ops 的 issue：上一次的接收端配置不能留着。
+        render_deployment(self.config, self.paths, self.secrets)
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["telemetry"] = {"enabled": True, "alerts": "ops-issues"}
+
+        render_deployment(DeploymentConfig.from_mapping(value), self.paths, self.secrets)
+
+        observability = self.paths.generated / "observability"
+        prometheus = observability.joinpath("prometheus.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("alerting:", prometheus)
+        self.assertNotIn("alertmanager", prometheus)
+        self.assertIn('targets: ["host-metrics:9100"]', prometheus)
+        self.assertFalse(observability.joinpath("alertmanager.yaml").exists())
+        self.assertIn(
+            "COMPOSE_PROFILES=embedded-database,embedded-object-store,telemetry\n",
+            self.paths.compose_environment.read_text(encoding="utf-8"),
+        )
 
     def test_disabled_telemetry_does_not_render_observability_secrets(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
@@ -1124,18 +1174,44 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn(str(self.paths.compose_environment), command)
         self.assertIn(str(self.paths.worker_override), command)
 
+    SIGNED_IMAGES = "/var/lib/agent-room/releases/abc/compose.images.json"
+    RECREATE = [
+        "up",
+        "--detach",
+        "--wait",
+        "--no-deps",
+        "--force-recreate",
+        "--no-build",
+        "--pull",
+        "never",
+        "control-plane",
+    ]
+
+    def released_control_plane(self, *, files: str | None = None):
+        """假的 `_run`：控制面是发版部署钉死签名镜像起的，容器上记着三份 compose 文件。"""
+
+        recorded = files or ",".join([str(COMPOSE_FILE), str(self.paths.worker_override), self.SIGNED_IMAGES])
+
+        def run(command: list[str], capture: bool = False) -> str:
+            if command[:2] == ["docker", "ps"]:
+                return "0123abcd\n"
+            if command[:2] == ["docker", "inspect"]:
+                return recorded + "\n"
+            return ""
+
+        return run
+
     def test_launch_day_reloads_touch_only_what_changed(self) -> None:
         runtime = ProductionRuntime(self.config, self.paths)
         with (
-            patch.object(ProductionRuntime, "_run") as run,
+            patch.object(ProductionRuntime, "_run", side_effect=self.released_control_plane()) as run,
             patch.object(ProductionRuntime, "health") as health,
         ):
             runtime.reload_control_plane()
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(
-            commands[-1][-6:],
-            ["up", "--detach", "--wait", "--no-deps", "--force-recreate", "control-plane"],
-        )
+        self.assertEqual(commands[-1][-len(self.RECREATE):], self.RECREATE)
+        # 照正在跑的那份起：带着钉死签名镜像的文件，不会在生产上现场编译（Alpha 86）。
+        self.assertEqual(commands[-1][commands[-1].index(self.SIGNED_IMAGES) - 1], "--file")
         self.assertFalse(any("identity" in command or "synapse" in command for command in commands))
         health.assert_called_once()
         self.assertTrue(self.paths.compose_environment.exists())
@@ -1143,6 +1219,84 @@ class ProductionRenderingTests(unittest.TestCase):
         with patch.object(ProductionRuntime, "_run") as run:
             runtime.apply_registration()
         self.assertEqual(run.call_args_list[-1].args[0][-1], "identity-registration-close")
+
+    def test_telemetry_apply_touches_only_monitoring_and_the_control_plane(self) -> None:
+        value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        value["telemetry"] = {"enabled": True, "alerts": "ops-issues"}
+        runtime = ProductionRuntime(DeploymentConfig.from_mapping(value), self.paths)
+        with (
+            patch.object(ProductionRuntime, "_run", side_effect=self.released_control_plane()) as run,
+            patch.object(ProductionRuntime, "health") as health,
+        ):
+            runtime.apply_telemetry()
+        commands = [call.args[0] for call in run.call_args_list]
+        ups = [command[command.index("up"):] for command in commands if "up" in command]
+        self.assertEqual(
+            ups,
+            [
+                ["up", "--detach", "--wait", "--no-deps", "--force-recreate", *TELEMETRY_SERVICES],
+                self.RECREATE,
+            ],
+        )
+        self.assertTrue(all(self.SIGNED_IMAGES in command for command in commands if "up" in command))
+        # 告警开成 issue 时不起 alertmanager，以前起过的删掉。
+        self.assertIn(
+            "label=com.docker.compose.service=alertmanager",
+            [part for command in commands if command[:2] == ["docker", "ps"] for part in command],
+        )
+        for command in commands:
+            for untouched in ("postgres", "synapse", "identity", "gateway", "object-store"):
+                self.assertNotIn(untouched, command)
+        health.assert_called_once()
+
+        value["telemetry"] = {"enabled": False}
+        runtime = ProductionRuntime(DeploymentConfig.from_mapping(value), self.paths)
+        with (
+            patch.object(ProductionRuntime, "_run", side_effect=self.released_control_plane()) as run,
+            patch.object(ProductionRuntime, "health"),
+        ):
+            runtime.apply_telemetry()
+        commands = [call.args[0] for call in run.call_args_list]
+        removed = [command for command in commands if command[:2] == ["docker", "rm"]]
+        self.assertEqual(len(removed), len(TELEMETRY_SERVICES) + 1)
+        ups = [command[command.index("up"):] for command in commands if "up" in command]
+        self.assertEqual(ups, [self.RECREATE])
+
+    def test_single_service_recreates_refuse_a_control_plane_without_signed_images(self) -> None:
+        runtime = ProductionRuntime(self.config, self.paths)
+        unpinned = ",".join([str(COMPOSE_FILE), str(self.paths.worker_override)])
+        for fake in (
+            self.released_control_plane(files=unpinned),
+            lambda command, capture=False: "" if command[:2] == ["docker", "ps"] else "x",
+        ):
+            with (
+                patch.object(ProductionRuntime, "_run", side_effect=fake) as run,
+                patch.object(ProductionRuntime, "health") as health,
+                self.assertRaisesRegex(ProductionRuntimeError, "发版部署"),
+            ):
+                runtime.reload_control_plane()
+            self.assertFalse(any("up" in call.args[0] for call in run.call_args_list))
+            health.assert_not_called()
+
+    def test_firing_alerts_come_one_per_line_and_unreachable_prometheus_is_said(self) -> None:
+        runtime = ProductionRuntime(self.config, self.paths)
+        document = {"status": "success", "data": {"alerts": [{"labels": {"alertname": "A"}, "state": "firing"}]}}
+
+        class Response(io.BytesIO):
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                self.close()
+
+        with patch("tools.prodops.runtime.urlopen", return_value=Response(json.dumps(document).encode())) as opened:
+            lines = runtime.firing_alerts()
+        self.assertEqual([json.loads(line) for line in lines], document["data"]["alerts"])
+        self.assertEqual(opened.call_args.args[0].full_url, "http://127.0.0.1:9090/api/v1/alerts")
+
+        with patch("tools.prodops.runtime.urlopen", side_effect=URLError("connection refused")):
+            (line,) = runtime.firing_alerts()
+        self.assertIn("connection refused", json.loads(line)["unreachable"])
 
     def test_identity_reconcile_selects_fail_closed_or_open_service(self) -> None:
         closed_runtime = ProductionRuntime(self.config, self.paths)
@@ -1287,6 +1441,31 @@ class ProductionRenderingTests(unittest.TestCase):
                 services[current] = True
         self.assertGreater(len(services), 20)
         self.assertEqual([name for name, limited in services.items() if not limited], [])
+
+    def test_监控容器都有内存上限_告警接收只在_webhook_档(self) -> None:
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+        blocks: dict[str, list[str]] = {}
+        current: list[str] = []
+        for line in compose.split("\nservices:\n", 1)[1].splitlines():
+            if line and not line.startswith(" "):
+                break
+            if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
+                current = blocks.setdefault(line.strip().removesuffix(":"), [])
+            current.append(line)
+        # 和生产跑在同一台 8 GB 的机器上（specs/measurement/design.md），一直开着的合起来不超过 720 MB。
+        limits = {}
+        for name in ("telemetry", "prometheus", "alertmanager", "blackbox", "postgres-exporter",
+                     "recovery-metrics", "host-metrics", "grafana"):
+            limit = [line for line in blocks[name] if line.startswith("    mem_limit: ")]
+            self.assertEqual(len(limit), 1, name)
+            limits[name] = int(limit[0].removeprefix("    mem_limit: ").removesuffix("m"))
+        # 告警开成 ops 的 issue 时 alertmanager 不起。
+        self.assertLessEqual(sum(limits.values()) - limits["alertmanager"], 720)
+        text = {name: "\n".join(lines) for name, lines in blocks.items()}
+        self.assertIn("--storage.tsdb.retention.size=", text["prometheus"])
+        self.assertIn("profiles: [telemetry-webhook]", text["alertmanager"])
+        self.assertIn("profiles: [telemetry]", text["host-metrics"])
+        self.assertIn("/:/host:ro,rslave", text["host-metrics"])
 
     def test_控制平面只显式允许_windows_tauri_源站(self) -> None:
         compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(

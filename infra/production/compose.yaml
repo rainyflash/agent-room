@@ -254,6 +254,8 @@ services:
     logging: *container-logging
     profiles: [telemetry]
     image: otel/opentelemetry-collector-contrib:0.159.0
+    # 监控的容器都设内存上限，加起来约 700 MB；服务器只有 3.9 GB（specs/measurement/design.md）。
+    mem_limit: 128m
     command: [--config=/etc/otelcol/config.yaml]
     volumes:
       - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
@@ -272,10 +274,13 @@ services:
     logging: *container-logging
     profiles: [telemetry]
     image: prom/prometheus:v3.13.1
+    mem_limit: 256m
     command:
       - --config.file=/etc/prometheus/prometheus.yaml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=45d
+      # 盘也有上限：Synapse 的指标很多，满了先删最旧的。长期的走势记在每周的容量周报里。
+      - --storage.tsdb.retention.size=2GB
       - --storage.tsdb.wal-compression
     labels:
       org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
@@ -291,8 +296,10 @@ services:
 
   alertmanager:
     logging: *container-logging
-    profiles: [telemetry]
+    # 只有告警发到接收端（telemetry.alertWebhookUrl）时才起；开成 ops 的 issue 时由错误汇总去读 Prometheus。
+    profiles: [telemetry-webhook]
     image: prom/alertmanager:v0.33.1
+    mem_limit: 64m
     command:
       - --config.file=/etc/alertmanager/alertmanager.yaml
       - --storage.path=/alertmanager
@@ -310,6 +317,7 @@ services:
     logging: *container-logging
     profiles: [telemetry]
     image: prom/blackbox-exporter:v0.28.0
+    mem_limit: 32m
     command: [--config.file=/etc/blackbox/blackbox.yaml]
     volumes:
       - ./blackbox.yaml:/etc/blackbox/blackbox.yaml:ro
@@ -323,6 +331,7 @@ services:
     logging: *container-logging
     profiles: [telemetry]
     image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    mem_limit: 48m
     environment:
       DATA_SOURCE_URI: ${AGENT_ROOM_DB_HOST}:${AGENT_ROOM_DB_PORT}/postgres?sslmode=${AGENT_ROOM_DB_TLS_MODE}
       DATA_SOURCE_USER: ${AGENT_ROOM_DB_METRICS_USER}
@@ -339,6 +348,7 @@ services:
     logging: *container-logging
     profiles: [telemetry]
     image: quay.io/prometheus/node-exporter:v1.12.1
+    mem_limit: 24m
     command:
       - --collector.disable-defaults
       - --collector.textfile.directory=/metrics
@@ -351,10 +361,37 @@ services:
     tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     networks: [backend]
 
+  # 整机的 CPU、内存、负载和磁盘：只读挂主机的根分区，和主机共用 PID 命名空间才看得到主机的挂载。
+  # 网卡不收：容器里看到的是它自己的网卡，不是整机的。
+  host-metrics:
+    logging: *container-logging
+    profiles: [telemetry]
+    image: quay.io/prometheus/node-exporter:v1.12.1
+    mem_limit: 32m
+    command:
+      - --path.rootfs=/host
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.loadavg
+      - --collector.pressure
+      - --collector.filesystem
+      - --collector.diskstats
+      - --web.listen-address=:9100
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    read_only: true
+    restart: unless-stopped
+    <<: *common-security
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
+    networks: [backend]
+
   grafana:
     logging: *container-logging
     profiles: [telemetry]
     image: grafana/grafana:13.1.0
+    mem_limit: 192m
     environment:
       GF_ANALYTICS_REPORTING_ENABLED: 'false'
       GF_AUTH_ANONYMOUS_ENABLED: 'false'

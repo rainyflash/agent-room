@@ -12,28 +12,28 @@ mod matrix;
 mod moderation;
 mod network_agents;
 mod notifications;
-mod outbox;
 mod projections;
+mod regions;
 mod rooms;
 mod runtime;
 
 pub use inbox::{InboxHandoff, InboxRoom, PersonalInboxIndex, PersonalInboxRepository};
 pub use network_agents::{
-    GeneratedSigningKey, NetworkAgentAckOutcome, NetworkAgentActivation, NetworkAgentBeforeJoinGap,
-    NetworkAgentBeginOutcome, NetworkAgentGapReason, NetworkAgentHistoryDirection,
-    NetworkAgentHistoryFilter, NetworkAgentHistorySender, NetworkAgentIdleLobby,
-    NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome, NetworkAgentInboxChange,
-    NetworkAgentInboxEntry, NetworkAgentInboxMessage, NetworkAgentInboxPage,
-    NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLobbyAway, NetworkAgentLookup,
-    NetworkAgentMatrixGateway, NetworkAgentMessageActor, NetworkAgentMessageHistory,
-    NetworkAgentMessageRef, NetworkAgentMessageRetention, NetworkAgentPause,
-    NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
-    NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
+    GeneratedSigningKey, NetworkAgentAckOutcome, NetworkAgentActivation, NetworkAgentActivity,
+    NetworkAgentBeforeJoinGap, NetworkAgentBeginOutcome, NetworkAgentGapReason,
+    NetworkAgentHistoryDirection, NetworkAgentHistoryFilter, NetworkAgentHistorySender,
+    NetworkAgentIdleLobby, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
+    NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
+    NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentKeyFactory, NetworkAgentLobbyAway,
+    NetworkAgentLookup, NetworkAgentMatrixGateway, NetworkAgentMessageActor,
+    NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
+    NetworkAgentPause, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
+    NetworkAgentSecretKind, NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore,
     NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
     NetworkAgentSubmissionKind, NetworkAgentSubmissionRecord, NetworkAgentSubmissionState,
     NetworkAgentSubmissionStore, NetworkAgentSyncRequest, NetworkAgentTimelineGap,
-    NetworkSourceWeights, RateWindowBucket, RateWindowDecision, RateWindowPolicy, SealedSecret,
-    SecretSealingFailure, UniformSourceWeights,
+    NetworkSourceWeights, NoNetworkAgentActivity, RateWindowBucket, RateWindowDecision,
+    RateWindowPolicy, SealedSecret, SecretSealingFailure, UniformSourceWeights,
 };
 use std::{future::Future, pin::Pin};
 
@@ -55,9 +55,9 @@ pub use agents::{
     AgentInstanceRegistrationTransaction, AgentInstanceRevocationOutcome,
     AgentInstanceRevocationTransaction, AgentInstanceSignatureVerifier,
     AgentInstanceVerificationRecord, AgentInstanceVerificationRepository, AgentMembershipChange,
-    AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration,
-    AgentRegistrationTransaction, AgentRepository, AgentRetirementOutcome,
-    AgentRetirementTransaction, RegisteredAgent, StoredAgentInstanceRegistration,
+    AgentMembershipRepository, AgentMembershipTransaction, AgentRegistration, AgentRepository,
+    AgentRetirementOutcome, AgentRetirementTransaction, PendingAgentMatrixDeviceStore,
+    RegisteredAgent, StoredAgentInstanceRegistration,
 };
 pub use audit::{AuditRecord, AuditSink};
 pub use automation::{
@@ -87,8 +87,8 @@ pub use devices::{
     DerivedDeviceTokens, DeviceProofNonceStore, DeviceProofValueError, DeviceProofVerifier,
     DeviceRefreshContext, DeviceRefreshOutcome, DeviceRefreshReplay, DeviceRefreshReplaySalt,
     DeviceRefreshTokenDerivation, DeviceRegistrationTransaction, DeviceRepository,
-    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSecurityEvent,
-    DeviceSessionRegistration, DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
+    DeviceRevocationOutcome, DeviceRevocationTransaction, DeviceSessionRegistration,
+    DeviceSessionStore, DeviceSignature, DeviceTokenReplacement,
     PendingAgentMatrixDeviceRevocation, StoredDeviceSession,
 };
 pub use handoffs::{
@@ -136,16 +136,13 @@ pub use moderation::{
     StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
-pub use outbox::{
-    ClaimedOutboxEvent, OutboxBacklog, OutboxClaim, OutboxFailure, OutboxFailureOutcome,
-    OutboxMessage, OutboxPublisher, OutboxRepository, PublishFailure, PublishFailureKind,
-};
 pub use projections::{
     ActivityScoreMillis, MatrixMembership, MatrixProjectionBatch, MatrixProjectionEvent,
     MatrixProjectionEventKind, MatrixProjectionRebuild, MatrixProjectionStore,
     MembershipProjectionLookup, MembershipReadPlan, ProjectionApplyOutcome, ProjectionCursor,
     ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport, ROOM_PROJECTION_CONSUMER,
 };
+pub use regions::{CountryLookup, NoCountryLookup};
 pub use rooms::{
     AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomKind, AgentRoomMembershipFactory,
     AgentRoomPlacement, AgentRoomPlacementStore, DirectAgentBlock, DirectAgentProfile,

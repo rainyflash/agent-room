@@ -31,8 +31,8 @@ use agent_room_domain::{
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, OutboxEventId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomReservationId, WebSessionId,
+        HandoffId, LoginAttemptId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId,
+        WebSessionId,
     },
     private_rooms::{PrivateRoomCapability, PrivateRoomMembershipStatus, PrivateRoomPermissions},
     rooms::MatrixRoomReference,
@@ -1762,9 +1762,6 @@ impl IdentifierFactory for TestRuntime {
     }
     fn automation_grant_id(&self) -> AutomationGrantId {
         AutomationGrantId::from_uuid(uuid(117))
-    }
-    fn outbox_event_id(&self) -> OutboxEventId {
-        OutboxEventId::from_uuid(uuid(118))
     }
 }
 

@@ -15,8 +15,9 @@ use agent_room_application::{
         NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{
-        Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentRoomRecord, PortFuture,
-        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, SecretValue,
+        Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentActivity as _,
+        NetworkAgentRoomRecord, PortFuture, PrivateRoomAgentKnockRecord,
+        PrivateRoomAgentMemberRecord, SecretValue,
     },
     private_rooms::AdmittedKnock,
 };
@@ -91,6 +92,9 @@ impl FakeAgents {
             return Err(failure);
         }
         if token == TOKEN {
+            // 和真的用例一样：凭令牌认出来了就告诉按地区汇总的那边。
+            crate::request_regions::NetworkAgentRegions
+                .authenticated(NetworkAgentId::from_uuid(uuid(NETWORK_AGENT_UUID)));
             Ok(())
         } else {
             Err(NetworkAgentFailure::new(

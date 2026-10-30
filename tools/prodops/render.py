@@ -205,11 +205,14 @@ def render_deployment(
             _prometheus_config(config),
             PUBLIC_FILE_MODE,
         )
-        _write_text(
-            paths.generated / "observability" / "alertmanager.yaml",
-            _alertmanager_config(config),
-            CONTAINER_CONFIG_FILE_MODE,
-        )
+    alertmanager = paths.generated / "observability" / "alertmanager.yaml"
+    if config.alertmanager_enabled:
+        _write_text(alertmanager, _alertmanager_config(config), CONTAINER_CONFIG_FILE_MODE)
+    elif alertmanager.exists():
+        # 从发到接收端换成开 ops 的 issue 以后，上一次渲染的接收端配置不该留着、算进配置摘要。
+        # Windows 删不掉只读文件，先放开。
+        alertmanager.chmod(0o600)
+        alertmanager.unlink()
     generated_config_digest = _generated_config_digest(paths)
     _write_text(
         paths.compose_environment,
@@ -232,6 +235,8 @@ def _compose_environment(
     profiles = [*config.compose_profiles]
     if config.telemetry_enabled:
         profiles.append("telemetry")
+    if config.alertmanager_enabled:
+        profiles.append("telemetry-webhook")
     if config.capacity.synapse_workers > 0:
         profiles.append("workers")
     values = {
@@ -836,6 +841,17 @@ def _prometheus_config(config: DeploymentConfig) -> str:
         f"      - targets: [{_yaml(url)}]\n        labels:\n          probe_name: {_yaml(name)}"
         for name, url in targets
     )
+    # 告警开成 ops 的 issue 时不起 Alertmanager：Prometheus 照旧按规则算，错误汇总每小时去读正在响的。
+    alerting = (
+        '''alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+'''
+        if config.alertmanager_enabled
+        else ""
+    )
     return f'''global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -845,12 +861,7 @@ def _prometheus_config(config: DeploymentConfig) -> str:
 rule_files:
   - /etc/prometheus/rules.yaml
 
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets: ["alertmanager:9093"]
-
-scrape_configs:
+{alerting}scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["127.0.0.1:9090"]
@@ -871,6 +882,9 @@ scrape_configs:
   - job_name: recovery
     static_configs:
       - targets: ["recovery-metrics:9100"]
+  - job_name: host
+    static_configs:
+      - targets: ["host-metrics:9100"]
   - job_name: blackbox-exporter
     static_configs:
       - targets: ["blackbox:9115"]

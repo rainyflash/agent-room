@@ -67,6 +67,16 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertIn("if (-not $started.HasExited) { exit 0 }", script)
         self.assertTrue(script.endswith("exit 1"))
 
+    def test_desktop_relaunch_leaves_only_the_debug_instance(self):
+        # Alpha 86: an agent's background launch took the turn in the same instant. The debug launch stayed
+        # alive behind it, so "still running after five seconds" passed, but its WebView never opened.
+        script = release_qa.relaunch_script("C:/Agent Room/agent-room-desktop.exe", 14222)
+        closing = script.index("if ($p.Id -ne $started.Id)")
+        self.assertLess(script.index("$started = Start-Process"), closing)
+        self.assertLess(closing, script.index("if (-not $started.HasExited) { exit 0 }"))
+        self.assertIn("$until = (Get-Date).AddSeconds(20)", script)
+        self.assertNotIn("Start-Sleep -Seconds 5", script)
+
     def test_liveness_check_answers_for_exited_processes(self):
         script = release_qa.liveness_script(4242, r"C:\qa\o'k.exe")
         self.assertIn(r"'C:\qa\o''k.exe'", script)

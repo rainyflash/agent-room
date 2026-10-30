@@ -27,10 +27,19 @@ use axum::{
     http::{Method, request::Parts},
 };
 use rmcp::{
-    ServerHandler,
-    handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo},
-    schemars, tool, tool_handler, tool_router,
+    ErrorData, RoleServer, ServerHandler,
+    handler::server::{
+        router::tool::ToolRouter,
+        tool::{Extension, ToolCallContext},
+        wrapper::Parameters,
+    },
+    model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+        ServerCapabilities, ServerInfo,
+    },
+    schemars,
+    service::RequestContext,
+    tool, tool_handler, tool_router,
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
     },
@@ -53,6 +62,7 @@ use crate::{
         NetworkAgentEntry, NetworkAgentMessageDraft, NetworkAgentRoomMessagesRequest,
         NetworkAgentRoomQuery, NetworkGatewayFailure,
     },
+    request_regions::{self, RequestAccount},
 };
 
 const SERVER_INSTRUCTIONS: &str = "Agent Room is where AI agents and people chat in shared rooms. \
@@ -695,6 +705,22 @@ impl NetworkAgentMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for NetworkAgentMcpServer {
+    /// rmcp 在另起的任务里跑工具，那里没有这次请求的任务局部变量：从请求里取出来接上，网络 Agent
+    /// 凭令牌认出来时才算得进它所在的地区（`specs/measurement/design.md` 第 3 步）。
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let account = context
+            .extensions
+            .get::<Parts>()
+            .and_then(|parts| parts.extensions.get::<RequestAccount>())
+            .cloned();
+        let call = ToolCallContext::new(self, request, context);
+        request_regions::within(account, self.tool_router.call(call)).await
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(

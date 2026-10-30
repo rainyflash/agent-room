@@ -1,0 +1,161 @@
+# 生产测量：先有数，再定怎么铺开（阶段 0）：设计
+
+2026-10-27 维护者问联邦部署怎么走：目的是让 Agent Room 在世界各地铺开，一是降低延迟，二是用户多了以后别把第一台服务器的计算和存储压垮。讨论下来分了几个阶段，维护者觉得后面的阶段还要从网络的本质重新想，但阶段 0 是对的，先做：
+
+- 维持单一站点，先补测量。之后每一个决策都要有数：分地区的延迟、Synapse 的 CPU、数据库和磁盘的增长、用户在哪。
+- 把静态页面放到 CDN。
+
+这份文档回答两件事：测什么、怎么测；CDN 什么时候定、按什么定。按步交付，进度记在最后的“状态”一节。
+
+## 背景
+
+查于 2026-10-28。
+
+- **生产没开监控。** `telemetry.enabled` 是 false。Prometheus、Grafana、Alertmanager、OpenTelemetry Collector、几个 exporter、告警规则和仪表盘都写好了（`infra/production/compose.yaml` 的 `telemetry` profile，`infra/production/observability-rules.yaml`，`docs/operations/observability.md`），就是没在跑。首发周靠只读的 `production.py launch-status` 看数。
+- **开起来缺一个告警去处。** 部署配置要求开监控时必须给一个 HTTPS 的告警接收地址（`telemetry.alertWebhookUrl`，带 Bearer 令牌），我们没有这样的接收端。
+- **发版部署起不了监控的容器。** `release_deploy.py` 只换控制面、身份服务和网关，别的容器有意钉住不动（`verify_running`）。监控那几个容器要单独起。
+- **服务器不宽裕。** 2 核、3.9 GB 内存（可用约 1.7 GB）、79 GB 盘（剩 33 GB）。现在很闲：`docker stats` 看 Synapse 约 2.5% 的 CPU，整机负载 0.1 上下。
+- **已有的测量：**
+  - Synapse 的指标端口开着（`synapse:9001`，`enable_metrics: true`），能看它自己的 CPU、请求、同步。
+  - 网页和桌面端已经会报加载快慢（`/telemetry/frontend`：LCP、INP、CLS、可交互时间、场景初始化、打开消息、Bridge 重连），只收固定的几种数，不带地址、名字和 ID；要登录才收。没开监控时控制面收下就丢。
+  - 备份每次写一份指标文件（时间、耗时、仓库总字节数）。
+  - 数据库大小、磁盘、各容器的 CPU 和内存现在只能登上服务器手动看。
+- **不知道用户在哪。** 没有任何地区的数。Search Console 只有搜索展示的国家，不是用户。
+- **隐私说明页写着“不收集使用统计”。** 维护者 2026-10-28 定了：按粗地区汇总人数和快慢，不按人记、不存 IP，隐私说明照实改（见下面第 3 步）。
+- **静态资源已经做了的：** HTTP/3、zstd 压缩、带哈希的资源一年缓存（`immutable`），应用有离线缓存，第二次打开基本不走网络。首屏要下的是应用的脚本（主包 zstd 压缩后约 170 KB，加上加密库的 WASM）。
+- **从维护者这台电脑量不准。** 这台电脑的请求走本机代理（解析出来是 `198.18.x.x`），量到的是代理的路。分地区的快慢要从真实用户那边量。
+
+## 要回答的问题
+
+阶段 0 的数要能回答这几个问题，后面每个阶段该不该开始都看它们：
+
+1. **用户在哪：** 每个地区每天多少账户在用，人和 Agent 分开算。
+2. **各地有多慢：** 每个地区打开页面、调一次接口要多久（P50、P95）。
+3. **哪样先撑不住：** Synapse 的 CPU、整机 CPU 和内存、数据库连接、公开大厅说话的快慢。
+4. **存储涨多快：** 数据库、对象存储、备份仓库、Prometheus 自己，每周涨多少，照这个速度盘还够多久。
+
+## 怎么做
+
+### 1. 监控开起来，告警开成 ops 的 issue
+
+- **告警去处（维护者 2026-10-28 定）：** 不接外部服务，告警和生产错误汇总走同一套。
+  - 部署配置的 `telemetry` 加一种告警去处 `"alerts": "ops-issues"`，和 `alertWebhookUrl` 二选一。自建的人照旧可以填接收地址。
+  - 选 `ops-issues` 时 Alertmanager 不起（省内存），Prometheus 照旧按规则算告警。
+  - 每小时的错误汇总（`production.py error-digest --post`）多读一处：Prometheus 的 `/api/v1/alerts` 里正在响的告警。每条告警算一个指纹（告警名加固定的标签，比如 `service`、`dependency`），开 `prod-error` 的 issue，和日志里的错一样去重、关了再响就重开，写上规则里的 `impact`、`diagnostic` 和 Runbook 链接。告警的标签本来就不许带用户、房间、Agent 和地址（Runbook 的“通用处置纪律”），issue 里也就没有这些。
+  - 慢一点：最多晚一小时。阶段 0 要的是数，告警不靠它抢时间。
+- **整台服务器挂了也要知道：** 服务器自己挂了就什么都报不出来。在私有仓库 `agent-room-ops` 里加一个定时工作流，每 30 分钟从 GitHub 的机器上探一次 `https://api.agentroom.chat/health/ready`、`https://app.agentroom.chat/` 和 `https://agentroom.chat/`。连续两次不通就用仓库自带的令牌开一个 `prod-error` 的 issue，恢复了在上面说一声、关掉。私有仓库的 Actions 每月有 2000 分钟免费额度，每 30 分钟一次约 1440 分钟。不用新令牌。
+- **起监控的容器：** 新加 `production.py telemetry-apply`，照 `control-plane-reload` 的做法：重新渲染、校验，起或停 `telemetry` profile 的容器，再重建控制面（它要知道往哪发指标）。不碰 Synapse、数据库和网关。开和关都用它，不用整个重新部署。
+- **补上缺的数：**
+  - 整机的 CPU、内存、磁盘：加一个只读挂载主机根目录的 node-exporter（现在的 `recovery-metrics` 只读备份的指标文件）。整机的网络流量它在容器的网络里看不到，由每周报告在主机上读（见“状态”）。
+  - 数据库每个库多大：postgres-exporter 已经有。
+  - 对象存储多大：备份同步对象时顺手把镜像的总字节数写进指标文件。
+  - 各容器的 CPU：不加 cAdvisor（太重）。Synapse 和 Keycloak 自己报进程 CPU，整机的由 node-exporter 报，够分辨是谁。
+- **别把服务器挤爆：**
+  - 每个监控容器设内存上限（`mem_limit`），一直开着的合计约 700 MB（2a 定的数，见“状态”）。
+  - Prometheus 除了留 45 天，再加一个总大小上限 2 GB（`--storage.tsdb.retention.size`）。
+  - 开起来以后看一天：可用内存不到 500 MB 就先停 Grafana（周报不靠它）。
+- **规则逐条过一遍：** 有几条是按以前的假设写的。比如“一天发信快到 80 封”是按 Resend 免费档每天 100 封定的，生产已经是付费档、而且生产凭据归属还没核实（见[首发预案](../../docs/operations/launch-day.md#发信套餐与配额依据)），这条先改成只进周报、不开 issue。打开前每条确认响了有人知道怎么办，没有就只进周报。
+
+### 2. 每周一份容量周报
+
+数在服务器上，可 Grafana 只在本机回环上（要 SSH 隧道），维护者不会去看。所以每周一由定时器出一份周报，开在 `agent-room-ops`，标 `capacity-report`（不标 `prod-error`，不叫醒开发 Agent）：
+
+- 每个地区的活跃账户数（人和 Agent 分开）、打开页面和调接口的 P50、P95；
+- Synapse 一周的 CPU P95、整机 CPU 和内存的 P95、可用内存最低点；
+- 数据库、对象存储、备份仓库、Prometheus 各多大，比上周涨了多少，照这个速度盘还能撑几周；
+- 公开大厅每分钟说话的条数，最忙的一小时；
+- 这周响过的告警。
+
+入口是 `production.py capacity-report [--post]`，只读，问的是本机的 Prometheus。不带 `--post` 只打印，方便手动看。Prometheus 只留 45 天，周报留在 issue 里，就成了长期的记录，看几个月的走势翻 issue 就行。
+
+### 3. 按粗地区汇总（维护者 2026-10-28 定）
+
+- **怎么判断地区：** 控制面收到请求时用来源 IP 查一下属于哪个地区，查完就丢，IP 不写进库、日志和指标。IP 库用 DB-IP 的免费国家库（CC BY 4.0，要署名，隐私说明页写上），打进控制面镜像，几个月换一次新的，换的时候核对摘要。
+- **地区只分十来个**，按我们以后要做的决定来分：中国大陆单列（墙内墙外的网络和 CDN 完全是两回事），港澳台、日韩、东南亚、南亚、大洋洲、欧洲、北美、拉美、中东和非洲，查不出来的算“未知”。国家到地区的对照放在领域层，有测试卡着。
+- **记什么：**
+  - 前端报的那几种快慢加一个 `region` 标签。
+  - 新加一种前端的数 `api_round_trip`：网页打开时调一次很轻的接口花了多久，只有一个毫秒数。看的是网络本身慢不慢，和页面加载分开。
+  - 每个地区每天有多少账户在用：控制面在内存里按地区记当天见过的账户，只往外报个数，UTC 零点清空，重启丢了就从头数（数会偏小，不影响看大概）。人（网页登录）、本机 Agent（Bridge）、网络 Agent 分开算：网络 Agent 多半从聊天助手平台的机房来，不分开会把人的分布拉歪。
+  - 每个地区每种请求的次数，同样分人和 Agent。
+- **数不准的地方，周报里写明：** 用代理、VPN 的人算在出口那个地区（中国大陆的用户很多走代理，大陆会被算少）；没登录的访客（官网、围观页）不算进去，围观页本来就不上报。
+- **隐私说明页：** 同一个 PR 里改。不再说“不收集使用统计”，改成照实说：按粗地区（比如“欧洲”“中国大陆”）汇总有多少账户在用、页面和接口有多快，不按人记，IP 只用来判断地区、不存；地区由 DB-IP 的免费数据库判断。顶上的日期和 [specs/privacy-page/design.md](../privacy-page/design.md) 一起改。
+- **做成的样子（#625）：**
+  - 指标：
+    - `agent_room_frontend_duration_seconds{metric,surface,region}`，`metric` 多了 `api_round_trip`；`agent_room_frontend_score{metric,surface,region}`。
+    - `agent_room_active_accounts{region,kind}`：今天（UTC）见过几个。每次导出都报全部 33 个组合，没人的报 0，过了零点没人来也是 0。
+    - `agent_room_requests_by_region_total{region,kind}`：认证通过的请求数。
+    - `region` 只取 `cn`、`hk_mo_tw`、`jp_kr`、`southeast_asia`、`south_asia`、`oceania`、`europe`、`north_america`、`latin_america`、`middle_east_africa`、`unknown`；`kind` 只取 `person`、`local_agent`、`network_agent`。
+  - 怎么算：人的登录认证通过时算 `person`（按账户）；Bridge 的设备请求认证通过时算 `local_agent`（按电脑所属的账户）；网络 Agent 凭令牌认出来时算 `network_agent`（按网络 Agent，应用层的 `NetworkAgentActivity` 告诉控制面）。同一个请求只算一次，没认证的请求不算。远程 MCP 的工具在 rmcp 另起的任务里跑，`call_tool` 从请求里取出这次请求接上，有测试卡着。见过的账户只存每次启动随机加盐的摘要，一天最多记 10 万个。
+  - `api_round_trip`：网页和桌面端登录以后用注入的 fetch 问一次 `/health/live`（不要登录、不碰数据库），量到的毫秒数照常报给 `/telemetry/frontend`。
+  - 国家到地区的对照在 `crates/domain/src/regions.rs`：249 个国家加上科索沃都有地区，DB-IP 的库里只有 `ZZ` 算未知（2026-10 那份逐条核对过）。没单列的放进最近的地区：
+    - 俄罗斯、白俄罗斯、外高加索、中亚和土耳其算欧洲，网络多半经莫斯科、法兰克福、伊斯坦布尔走；
+    - 蒙古和朝鲜算日韩，阿富汗和英属印度洋领地算南亚；
+    - 南极洲和澳新的海外领地算大洋洲，格陵兰算北美，加勒比海的美、英、法、荷属地算拉美；
+    - 以色列、伊朗和整个非洲算中东和非洲。
+  - IP 库：控制面镜像构建时下载 `dbip-country-lite-2026-10.mmdb.gz`，核对 SHA-256（`4cd44536ddfd40fec7eca94a233f7d19f38d470e6522e653cb8d27001f5fe177`）后解压到 `/usr/share/agent-room/dbip-country-lite.mmdb`（`infra/production/Containerfile.control-plane`）。本地可以用 `AGENT_ROOM_REGION_DATABASE` 指到别处。没有这个文件时启动记一条告警，地区一律算未知。CC BY 4.0 的署名在 `THIRD_PARTY_NOTICES.md`。
+  - **和上面说的不一样：** DB-IP 的下载站只留当月和上个月的文件（2026-10-28 查：9 月、10 月的在，8 月和更早的都是 404），“几个月换一次”做不到。10 月这份大约 12 月初就下不到了，从那以后控制面镜像建不起来，发布候选也一样。所以先每个月换一次日期和摘要：发版前看一眼月份，过了当月就开个小 PR 换成新的那份（下载、核对 `.gz` 和解开后的摘要，两个都写进 PR 描述）。PR 上不建控制面镜像，下不到的话要到发布候选才发现。把核对过的文件放到我们自己管的地方（比如公开仓库的一个 Release 资产）就不用每月换，但那是公开发一份文件，要先问维护者。
+
+### 4. CDN：先量两三周，按数据再选（维护者 2026-10-28 定）
+
+监控和地区上线以后量两到三周，按周报定：
+
+- **用户主要在中国大陆：** 新加坡离大陆不远，国外的 CDN（比如 Cloudflare 免费版）在大陆基本没有节点，大陆用户可能反而更慢；大陆的节点要 ICP 备案，要在国内有主体和服务器。这种情况多半先不上 CDN，或者只给官网上。
+- **用户主要在欧美：** 静态页面和应用的脚本放 CDN 收益最大。候选：
+  - Cloudflare：免费、节点多；要把域名的 DNS 从 Vercel 搬过去（维护者自己操作），它经手所有经过它的流量，隐私说明页的“经谁的手”要加上它。
+  - Bunny 这类按流量付费的 CDN：用 CNAME 接，不用搬 DNS；裸域 `agentroom.chat` 接不了 CNAME，要用 Vercel DNS 的 ALIAS 记录接。
+- **分散在各地：** 先只把官网（`agentroom.chat`，纯静态）和应用的静态资源（`app.agentroom.chat/assets/`）放上去，接口和聊天服务器照旧直连。
+- **要守住的：** 官网和应用的安全头（内容安全策略、`noindex`、指回裸域的 `Link`）原样到达用户；应用的离线缓存照常更新；Caddy 照旧能续证书。上了以后拿上线前后两周的周报比。
+
+## 什么时候进下一阶段
+
+先定一个起点，有了数再调：
+
+- Synapse 一周的 CPU P95 超过一个核的 70%，或者整机可用内存最低点连续一周低于 500 MB：开始阶段 1（在这台上把 Synapse 拆成 workers、换大一点的机器、对象存储搬到托管 S3）。
+- 照周报的增长速度，剩余磁盘 60 天内会低于部署预检要的 20 GiB：同上。
+- 某个地区的活跃账户占到两成以上，而且那里调接口的 P95 一直比新加坡附近慢 300 毫秒以上：考虑在那里加节点或上 CDN。后面怎么铺开，维护者要从网络的本质重新想，到时另写设计。
+
+## 不做的
+
+- 不加第三方统计、广告或跟踪脚本，网页的内容安全策略不放宽。
+- 指标不带用户、房间、Agent、消息、地址和 IP（Runbook 的“通用处置纪律”照旧）。
+- 不把 Grafana、Prometheus 暴露到公网。
+- 不量没登录的访客。
+
+## 交付步骤
+
+1. 这份设计。
+2. 监控能开起来：
+   - 2a `telemetry.alerts = "ops-issues"`、错误汇总读正在响的告警、node-exporter、内存和存储上限、规则过一遍、`production.py telemetry-apply`。改了 `tools/prodops/render.py`，随下一版发布时实机验收要设备码。
+   - 2b `agent-room-ops` 里的定时外部探测。
+3. 按粗地区汇总：IP 库、地区对照、前端的数加 `region`、`api_round_trip`、每天的活跃账户和请求次数，隐私说明页同一个 PR 改。
+4. 容量周报：`production.py capacity-report [--post]` 和每周的定时器。
+5. 生产上打开：发版以后跑 `telemetry-apply`，看一天内存和磁盘，出第一份周报。
+6. 两三周以后按周报定 CDN，结论记在这份文档。
+
+第 2 到第 4 步可以分开合并，第 3 步和第 2a 步最好同一版上线，打开监控的那天就有地区的数。
+
+## 状态
+
+- 2026-10-28：写了设计。维护者当天定了三件事：按粗地区汇总并改隐私说明页；告警开成 `agent-room-ops` 的 issue；CDN 先量两三周再按数据选。
+- 2026-10-28：2a 做完（#623）。和上面写的不一样的几处：
+  - 内存上限：Collector 128 MB、Prometheus 256 MB、Grafana 192 MB、postgres-exporter 48 MB、blackbox 和主机指标各 32 MB、备份指标 24 MB，一直开着的合计 712 MB，比原先说的 600 MB 多。Prometheus 和 Grafana 再压就有被杀的风险；开起来看一天，不够就先停 Grafana。Alertmanager（64 MB）只在发到接收端时起。
+  - Synapse 的指标没有在抓取时挑着丢：盘有 2 GB 的上限兜着，先看实际涨多快，真挤了再丢。
+  - 主机指标只开 CPU、内存、负载、压力、文件系统、磁盘读写。整机网络流量没做：node-exporter 在容器自己的网络里，读到的是容器的网卡；要看主机的就得用主机网络、把端口开在主机上。每周报告本来就在主机上跑，由它读 `/proc/net/dev`、和上一周的比（第 4 步）。
+  - 对象存储多大写成 `agent_room_backup_object_bytes`（备份仓库 `objects/` 下的镜像和挪走的旧版本），和仓库总大小一起，每次备份成功时写。
+  - Prometheus 读不到时错误汇总单开一条（p2）；告警停了 issue 不会自己关。
+  - 规则：Runbook 链接改到 `rainyflash/agent-room`（以前写的组织不对）；发信快到 80 封改成 `info`。别的几条看过，响了都有 Runbook 里写的处置，留着。
+- 2026-10-28：2b 做完，直接推到了 `agent-room-ops` 的 main（那个仓库原来是空的）：`.github/workflows/external-probe.yml`，每小时第 7、37 分钟跑，`ubuntu-slim`、不检出代码，手动跑一次 4 秒。不通就隔两分钟再探，两次都不通才开一条 `[p1] 外部探测：从外面连不上 Agent Room`（`prod-error`、`p1`），还没好时不重复开、不刷评论，恢复了评论一句再关。开 issue 的那段在本机拿假的 `gh` 走过一遍。
+- 2026-10-28：第 4 步做完（#624）。和上面写的不一样的几处：
+  - “公开大厅每分钟说话的条数”没有现成的数（控制面不按房间数消息），换成 Synapse 每分钟存下的事件（所有房间的消息、进出房间都算）的 P95 和最忙的一小时，另报控制面接口请求最忙的一小时、公开大厅占着的位置最多多少。
+  - 主机网络流量由报告在主机上读 `/proc/net/dev`（不算回环和本机容器的虚拟网卡），和上一份报告记下的读数比；重启过就这一周不算。读数只在 `--post` 发出去以后记下。
+  - 每周开一条新的、关掉上一条，开着的永远只有最新那份；同一周重跑不再开。
+  - 进下一阶段的三个起点（Synapse CPU P95 超过 0.7 个核、可用内存最低低于 500 MB、盘 60 天内不够 20 GiB）报告最后照着说一句。
+  - 定时器每周一 01:23 UTC，和错误汇总共用一个令牌，安装放在第 5 步。
+- 2026-10-28：第 3 步 #625（IP 库、地区对照、前端的数加 `region`、`api_round_trip`、每天的活跃账户和请求次数，隐私说明页一起改）。DB-IP 只留两个月的文件，镜像构建时下载的那份 12 月初会失效，先每个月换一次（见第 3 步“和上面说的不一样”）。合并前在本机下载核对过：`.gz` 和解开后的 `.mmdb` 都和钉住的摘要一样，8 月的已经 404、9 月的还在。
+- 2026-10-28：第 5 步，Alpha 86 发完以后在生产上打开了：`deployment.json` 的 `telemetry` 改成 `{"enabled": true, "alerts": "ops-issues"}`（原样留在 `deployment.json.before-telemetry`），跑了 `telemetry-apply`，装了容量周报的定时器。
+  - 第一次跑 `telemetry-apply` 时，监控容器起好了，重建控制面那一步却在服务器上从源码编起了 Rust：它只用了 `compose.yaml` 和工作进程那份文件，没带发版部署钉死签名镜像的 `compose.images.json`，控制面的 `build:` 就生效了。编了几分钟、控制面还没动时停掉，手动带上那份文件、`--no-build --pull never` 重建，健康检查通过。编了一半的构建缓存约 3.1 GB，维护者同意后删了。
+  - 修正（#632）：`telemetry-apply` 和 `control-plane-reload` 读控制面容器上记着的 compose 文件，带上那份签名镜像的，`--no-build --pull never`；不是发版部署起的就停下、什么都不动。
+  - 打开后约 30 分钟的读数：监控容器合计约 320 MB，Grafana 154 MB 最贴近上限（192 MB），Prometheus 70 MB；整机可用内存约 2 GB，盘剩 26 GB。看满一天再记一次。
+  - 打开后头几个小时响了两条告警，都是规则本身不对，不是生产出了事（#635）：
+    - Outbox 积压（agent-room-ops#36）：控制面只往 `outbox_event` 里写，一直没有发布器去读（`OutboxProcessor` 只在测试里用），9 月 18 日以来的 410 条全是待发布，最旧的已经 39 天，这条告警会一直响。里面只有 ID（Agent 登记、实例登记、撤销电脑），没有名字。去掉了 Outbox 的两条告警，仪表盘照旧显示。
+    - 桌面 Bridge 可用率（agent-room-ops#39）：桌面端只在本机连接的状态变了时报一个 0 或 1，每次启动先报一个“正在启动”，比例到不了一半；一段时间没有样本时还按 0 算。改成桌面端开着时每 15 分钟报一次这段时间连着的比例（`bridge_uptime`，还没授权、停下了、还在找 Bridge 的时间不算），告警看一小时的平均、少于 4 个样本不算；旧版的 `bridge_availability` 照收、不进告警。每分钟报一次会让每台开着的桌面端每小时多 60 个请求、把按地区数的请求次数撑大，所以按 15 分钟一段报。

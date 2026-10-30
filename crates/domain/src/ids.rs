@@ -64,4 +64,3 @@ define_id!(ModerationCaseId);
 define_id!(ModerationActionId);
 define_id!(AuditEventId);
 define_id!(FederationRuleId);
-define_id!(OutboxEventId);

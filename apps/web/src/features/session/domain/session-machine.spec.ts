@@ -10,7 +10,7 @@ import type {
   SessionFailure,
   WebSession,
 } from './session';
-import { createSessionMachine } from './session-machine';
+import { createSessionMachine, RECENT_AUTHENTICATION_WINDOW_MS } from './session-machine';
 import { err, ok } from '@/shared/result';
 
 const session: WebSession = {
@@ -115,6 +115,59 @@ describe('Web 会话状态机', () => {
       actor.stop();
     },
   );
+
+  it('读到的“最近登录过”到点就改成没有，不再让确认框白白提交', async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = dependencies();
+      const actor = createActor(createSessionMachine(runtime.value)).start();
+      await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+      expect(actor.getSnapshot().context.principal?.recentlyAuthenticated).toBe(true);
+
+      vi.advanceTimersByTime(RECENT_AUTHENTICATION_WINDOW_MS - 1);
+      expect(actor.getSnapshot().context.principal?.recentlyAuthenticated).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(actor.getSnapshot().context.principal).toEqual({
+        ...session,
+        recentlyAuthenticated: false,
+      });
+      expect(actor.getSnapshot().matches('ready')).toBe(true);
+      actor.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('服务器说要重新登录，马上改成没有；退出登录以后通知也不碍事', async () => {
+    const listeners = new Set<() => void>();
+    const runtime = dependencies();
+    const actor = createActor(
+      createSessionMachine({
+        ...runtime.value,
+        reauthentication: {
+          subscribe: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+        },
+      }),
+    ).start();
+    await waitFor(actor, (snapshot) => snapshot.matches('ready'));
+
+    for (const listener of listeners) listener();
+    expect(actor.getSnapshot().context.principal?.recentlyAuthenticated).toBe(false);
+    expect(actor.getSnapshot().matches('ready')).toBe(true);
+
+    actor.send({ type: 'LOGOUT' });
+    await waitFor(actor, (snapshot) => snapshot.matches('unauthenticated'));
+    for (const listener of listeners) listener();
+    expect(actor.getSnapshot().context.principal).toBeNull();
+
+    actor.stop();
+    expect(listeners.size).toBe(0);
+  });
 
   it('依赖健康报告降级不会撤销已经验证的云端账户能力', async () => {
     const runtime = dependencies();

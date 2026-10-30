@@ -56,6 +56,17 @@ RECOMMENDED_MEMORY_BYTES: Final = 8 * 1024**3
 MEMORY_RESERVATION_ALLOWANCE_BYTES: Final = 256 * 1024**2
 MINIMUM_DISK_BYTES: Final = 20 * 1024**3
 RECOMMENDED_DISK_BYTES: Final = 100 * 1024**3
+# `telemetry` 档里一直开着的监控容器；`alertmanager` 只在告警发到接收端（`telemetry-webhook` 档）时开。
+TELEMETRY_SERVICES: Final = (
+    "telemetry",
+    "prometheus",
+    "blackbox",
+    "postgres-exporter",
+    "recovery-metrics",
+    "host-metrics",
+    "grafana",
+)
+ALERTMANAGER_SERVICE: Final = "alertmanager"
 
 
 class ProductionRuntimeError(RuntimeError):
@@ -204,17 +215,7 @@ class ProductionRuntime:
 
         self.prepare(generate_signing_key=False)
         self.validate_compose()
-        self._run(
-            [
-                *self.compose_command(),
-                "up",
-                "--detach",
-                "--wait",
-                "--no-deps",
-                "--force-recreate",
-                "control-plane",
-            ]
-        )
+        self._recreate_control_plane(self.running_compose_command("control-plane"))
         self.health(timeout_seconds=180)
 
     def apply_registration(self) -> None:
@@ -224,6 +225,117 @@ class ProductionRuntime:
         self.prepare(generate_signing_key=False)
         self.validate_compose()
         self.reconcile_identity()
+
+    def apply_telemetry(self) -> None:
+        """改了 telemetry 以后：重新渲染，按它起或停监控容器，再只重建控制面，让它往新的地方发指标
+        （`specs/measurement/design.md`）。发版部署只重建身份服务、控制面和网关，监控容器要用这个单独起。
+        数据库、Synapse 这些不动：`--no-deps`，监控容器自己连得上它们。"""
+
+        self.prepare(generate_signing_key=False)
+        self.validate_compose()
+        compose = self.running_compose_command("control-plane")
+        if self.config.telemetry_enabled:
+            services = [*TELEMETRY_SERVICES]
+            if self.config.alertmanager_enabled:
+                services.append(ALERTMANAGER_SERVICE)
+            else:
+                self._remove_service_containers((ALERTMANAGER_SERVICE,))
+            self._run([*compose, "up", "--detach", "--wait", "--no-deps", "--force-recreate", *services])
+        else:
+            self._remove_service_containers((*TELEMETRY_SERVICES, ALERTMANAGER_SERVICE))
+        self._recreate_control_plane(compose)
+        self.health(timeout_seconds=180)
+
+    def running_compose_command(self, service: str) -> list[str]:
+        """照正在跑的这个服务起的时候用的那几份 compose 文件来。
+
+        发版部署在 `compose_command()` 之外多带一份钉死签名镜像的 `compose.images.json`
+        （`release_deploy.py`）。只用 `compose_command()` 重建的话，控制面这种带 `build:` 的服务会在生产上
+        现场从源码编译：Alpha 86 发完开监控时，`telemetry-apply` 就在 2 核的服务器上编起了 Rust，编出来的
+        也不是验过签名的镜像。所以只重建一个服务时读它容器上记着的文件；不是发版部署起的就停下。"""
+
+        project = self.config.project_name
+        ids = self._run(
+            [
+                "docker",
+                "ps",
+                "--quiet",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+                "--filter",
+                f"label=com.docker.compose.service={service}",
+            ],
+            capture=True,
+        ).split()
+        if len(ids) != 1:
+            raise ProductionRuntimeError(f"{service} 没有正好一个在跑的容器，先走一次发版部署。")
+        label = '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
+        files = self._run(["docker", "inspect", "--format", label, ids[0]], capture=True).strip().split(",")
+        base = [str(COMPOSE_FILE), str(self.paths.worker_override)]
+        if len(files) != 3 or files[:2] != base or Path(files[2]).name != "compose.images.json":
+            raise ProductionRuntimeError(
+                f"{service} 不是由发版部署钉死签名镜像起的（compose 文件：{files}），不在这里重建。"
+            )
+        return [*self.compose_command(), "--file", files[2]]
+
+    def _recreate_control_plane(self, compose: list[str]) -> None:
+        # 镜像就是正在跑的那个签名镜像：不许编译，也不去拉。
+        self._run(
+            [
+                *compose,
+                "up",
+                "--detach",
+                "--wait",
+                "--no-deps",
+                "--force-recreate",
+                "--no-build",
+                "--pull",
+                "never",
+                "control-plane",
+            ]
+        )
+
+    def _remove_service_containers(self, services: tuple[str, ...]) -> None:
+        """停掉并删掉这几个服务的容器，数据卷留着。档没开的服务 Compose 不认，所以按标签找。"""
+
+        project = self.config.project_name
+        for service in services:
+            ids = self._run(
+                [
+                    "docker",
+                    "ps",
+                    "--all",
+                    "--quiet",
+                    "--filter",
+                    f"label=com.docker.compose.project={project}",
+                    "--filter",
+                    f"label=com.docker.compose.service={service}",
+                ],
+                capture=True,
+            ).split()
+            if ids:
+                self._run(["docker", "rm", "--force", *ids], capture=True)
+
+    @staticmethod
+    def prometheus_url() -> str:
+        """Prometheus 只开在本机端口上，和 Compose 里一样（`AGENT_ROOM_PROMETHEUS_PORT`，默认 9090）。"""
+
+        return f"http://127.0.0.1:{os.environ.get('AGENT_ROOM_PROMETHEUS_PORT') or '9090'}"
+
+    def firing_alerts(self) -> list[str]:
+        """Prometheus 的告警，一条一行（JSON），交给错误汇总；正在响的、快要响的都在里面，汇总只认正在响的。
+        读不到时交一条 `unreachable`：监控停了也要有人知道。"""
+
+        url = f"{self.prometheus_url()}/api/v1/alerts"
+        try:
+            with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=10) as response:
+                alerts = json.load(response)["data"]["alerts"]
+            if not isinstance(alerts, list):
+                raise TypeError("data.alerts 不是列表")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            moment = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return [json.dumps({"unreachable": f"{type(error).__name__}: {error}", "at": moment})]
+        return [json.dumps(alert, ensure_ascii=False) for alert in alerts if isinstance(alert, dict)]
 
     def reconcile_identity(self) -> None:
         self._run([*self.compose_command(), "up", "--detach", "--wait", "identity"])

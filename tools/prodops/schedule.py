@@ -1,4 +1,4 @@
-"""生产备份和错误汇总的 systemd 调度单元：确定性生成、安装与核验。"""
+"""生产备份、错误汇总和容量周报的 systemd 调度单元：确定性生成、安装与核验。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from typing import Final
+from typing import ClassVar, Final
 
 from .config import DeploymentConfig
 from .render import DeploymentPaths
@@ -102,11 +102,16 @@ WantedBy=timers.target
 
 
 @dataclass(frozen=True, slots=True)
-class ErrorDigestScheduleInstaller:
-    """每小时把生产错误汇总发成私有仓库里的 issue（`specs/error-triage/design.md`）。
+class _OpsIssueSchedule:
+    """定时往私有仓库发 issue 的任务（错误汇总、容量周报）。
 
-    只读日志，往 GitHub 发；令牌放在 `token_file`，单元里只有它的路径。
+    只读生产，往 GitHub 发；令牌放在 `token_file`，单元里只有它的路径。子类给动作名、说明和什么时候跑。
     """
+
+    ACTION: ClassVar[str]
+    DESCRIPTION: ClassVar[str]
+    TIMER_DESCRIPTION: ClassVar[str]
+    CALENDAR: ClassVar[str]
 
     config: DeploymentConfig
     paths: DeploymentPaths
@@ -117,14 +122,14 @@ class ErrorDigestScheduleInstaller:
     def render(self) -> BackupScheduleFiles:
         config_path = _existing_config(self.deployment_config)
         python = _python()
-        service_name = f"{self.config.project_name}-error-digest.service"
-        timer_name = f"{self.config.project_name}-error-digest.timer"
+        service_name = f"{self.config.project_name}-{self.ACTION}.service"
+        timer_name = f"{self.config.project_name}-{self.ACTION}.timer"
         command = " ".join(
             _systemd_argument(value)
             for value in (
                 python.as_posix(),
                 PRODUCTION_SCRIPT.as_posix(),
-                "error-digest",
+                self.ACTION,
                 "--post",
                 "--issue-repository",
                 self.repository,
@@ -137,7 +142,7 @@ class ErrorDigestScheduleInstaller:
             )
         )
         service = f"""[Unit]
-Description=Agent Room 生产错误汇总
+Description={self.DESCRIPTION}
 Documentation=https://github.com/rainyflash/agent-room
 Requires=docker.service
 Wants=network-online.target
@@ -155,13 +160,13 @@ NoNewPrivileges=true
 PrivateTmp=true
 TimeoutStartSec=20min
 """
-        # 错开备份（每 15 分钟的整点刻），每小时第 7 分钟跑；停机错过的开机后补一次。
+        # 停机错过的开机后补一次。
         timer = f"""[Unit]
-Description=每小时汇总一次 Agent Room 生产错误
+Description={self.TIMER_DESCRIPTION}
 Documentation=https://github.com/rainyflash/agent-room
 
 [Timer]
-OnCalendar=*-*-* *:07:00
+OnCalendar={self.CALENDAR}
 Persistent=true
 Unit={service_name}
 
@@ -179,6 +184,28 @@ WantedBy=timers.target
     @staticmethod
     def verify(files: BackupScheduleFiles) -> None:
         _verify_enabled(files)
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorDigestScheduleInstaller(_OpsIssueSchedule):
+    """每小时把生产错误汇总发成私有仓库里的 issue（`specs/error-triage/design.md`）。"""
+
+    ACTION: ClassVar[str] = "error-digest"
+    DESCRIPTION: ClassVar[str] = "Agent Room 生产错误汇总"
+    TIMER_DESCRIPTION: ClassVar[str] = "每小时汇总一次 Agent Room 生产错误"
+    # 错开备份（每 15 分钟的整点刻），每小时第 7 分钟跑。
+    CALENDAR: ClassVar[str] = "*-*-* *:07:00"
+
+
+@dataclass(frozen=True, slots=True)
+class CapacityReportScheduleInstaller(_OpsIssueSchedule):
+    """每周一出一份容量报告，开成私有仓库里的 issue（`specs/measurement/design.md`）。"""
+
+    ACTION: ClassVar[str] = "capacity-report"
+    DESCRIPTION: ClassVar[str] = "Agent Room 容量周报"
+    TIMER_DESCRIPTION: ClassVar[str] = "每周一出一份 Agent Room 容量周报"
+    # 周一北京时间上午九点多；错开备份的整刻和错误汇总的第 7 分钟。
+    CALENDAR: ClassVar[str] = "Mon *-*-* 01:23:00"
 
 
 def _existing_config(path: Path) -> Path:

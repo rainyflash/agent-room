@@ -634,10 +634,13 @@ class BackupCoordinator:
     def _report_success(self, last_success: datetime) -> None:
         # 只在成功时写：失败的那几次靠“最近成功”变旧叫人，归档积压也由它报。
         backups = self.repository.published()
+        total, objects = _repository_bytes(self.repository.root, backups)
         lines = [
             f"agent_room_backup_last_success_timestamp_seconds {last_success.timestamp():.3f}",
             f"agent_room_backup_rpo_target_seconds {self.config.backup.rpo_minutes * 60}",
-            f"agent_room_backup_repository_bytes {_repository_bytes(self.repository.root, backups)}",
+            f"agent_room_backup_repository_bytes {total}",
+            # 对象镜像和挪走的旧版本，差不多就是线上存着的附件和正文有多大；每周的容量报告看它长得多快。
+            f"agent_room_backup_object_bytes {objects}",
         ]
         if backups:
             lines.append(
@@ -688,8 +691,8 @@ class BackupCoordinator:
         _write_json(staging / "database" / "provider-pitr-evidence.json", evidence)
 
 
-def _repository_bytes(root: Path, backups: tuple[PublishedBackup, ...]) -> int:
-    """仓库里常规文件加起来多大，不算指标文件和仓库锁。
+def _repository_bytes(root: Path, backups: tuple[PublishedBackup, ...]) -> tuple[int, int]:
+    """仓库里常规文件加起来多大（不算指标文件和仓库锁），和其中 `objects/` 下的有多大。
 
     发布了的快照按清单记着的字节数算，再加上清单：以前的快照每套都带着整份对象和数据库的散文件，
     整个仓库几十万个文件，冷缓存下逐个 `lstat` 要读几分钟磁盘元数据（Alpha 69 上线那天每次备份因此
@@ -697,7 +700,8 @@ def _repository_bytes(root: Path, backups: tuple[PublishedBackup, ...]) -> int:
     """
 
     published = {backup.backup_id for backup in backups}
-    total = 0
+    objects_root = root / OBJECT_BACKUPS
+    total = objects = 0
     for backup in backups:
         try:
             total += backup.artifact_bytes + os.lstat(root / backup.backup_id / MANIFEST_NAME).st_size
@@ -707,6 +711,7 @@ def _repository_bytes(root: Path, backups: tuple[PublishedBackup, ...]) -> int:
         if Path(directory) == root:
             children[:] = [name for name in children if name not in published and name != "metrics"]
             files = [name for name in files if name != LOCK_NAME]
+        in_objects = Path(directory).is_relative_to(objects_root)
         for name in files:
             try:
                 status = os.lstat(os.path.join(directory, name))
@@ -714,7 +719,9 @@ def _repository_bytes(root: Path, backups: tuple[PublishedBackup, ...]) -> int:
                 continue
             if S_ISREG(status.st_mode):
                 total += status.st_size
-    return total
+                if in_objects:
+                    objects += status.st_size
+    return total, objects
 
 
 def _inventory(directory: Path) -> tuple[BackupArtifact, ...]:

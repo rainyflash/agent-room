@@ -108,7 +108,7 @@ impl KnockListener<'_> {
             Ok(knocks) => self.current = Some(knocks),
             Err(failure) => tracing::warn!(
                 network_agent.id = %self.agent,
-                kind = ?failure.kind(),
+                failure = ?failure.kind(),
                 "等消息时没看成有没有人敲它建的房间的门，过一会儿再看"
             ),
         }

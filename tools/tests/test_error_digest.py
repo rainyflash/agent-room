@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+from pathlib import Path
 import re
 import unittest
 
@@ -9,6 +10,7 @@ from tools.prodops.error_digest import (
     NOISE_FILE,
     SERVICES,
     load_noise,
+    parse_alerts,
     parse_control_plane,
     parse_gateway,
     parse_identity,
@@ -19,6 +21,8 @@ from tools.prodops.error_digest import (
     sanitize,
     summarize,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
 
 # 下面的日志行照 2026-10-24 生产上的格式写，账户、房间、IP、邮箱、令牌都是编的。
 USER_ID = "@user-594e1f403740d561dd0176d9ba58c5de:agentroom.chat"
@@ -290,6 +294,63 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(observation.timestamp[:4], "2026")
         self.assertIsNone(parse_gateway(json.dumps({"level": "info", "msg": "ok"})))
 
+    def test_alerts_report_only_what_is_firing_and_needs_someone(self) -> None:
+        def alert(name: str, severity: str, state: str = "firing", **labels: str) -> str:
+            # 照 Prometheus `/api/v1/alerts` 里一条的样子。
+            return json.dumps(
+                {
+                    "labels": {"alertname": name, "severity": severity, "service": "agent-room", **labels},
+                    "annotations": {
+                        "summary": "核心服务端点不可达",
+                        "impact": "对应核心能力对用户不可用",
+                        "runbook_url": "https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md",
+                    },
+                    "state": state,
+                    "activeAt": "2026-10-28T03:10:00.123456789Z",
+                    "value": "0e+00",
+                }
+            )
+
+        firing = parse_alerts(alert("AgentRoomCoreEndpointUnavailable", "critical", instance="web"))
+        assert firing is not None
+        self.assertEqual(firing.signature.service, "alerts")
+        self.assertEqual(firing.signature.severity, "p1")
+        self.assertEqual(firing.signature.summary, "AgentRoomCoreEndpointUnavailable instance=web")
+        self.assertEqual(firing.timestamp, "2026-10-28T03:10:00Z")
+        self.assertEqual(firing.sample, "核心服务端点不可达 对应核心能力对用户不可用")
+        warning = parse_alerts(alert("AgentRoomApiLatencyHigh", "warning"))
+        assert warning is not None
+        self.assertEqual(
+            (warning.signature.summary, warning.signature.severity), ("AgentRoomApiLatencyHigh", "p2")
+        )
+        # 快要响的、只进每周报告的（info）不报。
+        self.assertIsNone(parse_alerts(alert("AgentRoomApiLatencyHigh", "warning", state="pending")))
+        self.assertIsNone(parse_alerts(alert("AgentRoomEmailQuotaNearlyUsed", "info")))
+        self.assertIsNone(parse_alerts("not json"))
+
+    def test_unreachable_prometheus_is_its_own_finding(self) -> None:
+        observation = parse_alerts(
+            json.dumps(
+                {
+                    "unreachable": "URLError: <urlopen error [Errno 111] Connection refused> 127.0.0.1:9090",
+                    "at": "2026-10-28T04:07:00Z",
+                }
+            )
+        )
+        assert observation is not None
+        self.assertEqual(
+            (observation.signature.summary, observation.signature.severity), ("Prometheus 读不到告警", "p2")
+        )
+        self.assertNotIn("127.0.0.1", observation.sample)
+        self.assertEqual(observation.timestamp, "2026-10-28T04:07:00Z")
+
+    def test_every_production_alert_has_a_severity_the_digest_knows(self) -> None:
+        rules = (ROOT / "infra" / "production" / "observability-rules.yaml").read_text(encoding="utf-8")
+        severities = re.findall(r"^\s+severity: (\w+)$", rules, re.MULTILINE)
+        self.assertGreater(len(severities), 10)
+        # critical 和 warning 开 issue，info 只进每周报告。
+        self.assertLessEqual(set(severities), {"critical", "warning", "info"})
+
 
 class NoiseTableTests(unittest.TestCase):
     def test_every_rule_has_a_reason_and_compiles(self) -> None:
@@ -342,6 +403,10 @@ class NoiseTableTests(unittest.TestCase):
                     event("RESET_PASSWORD_ERROR", "user_not_found"),
                     event("REGISTER_ERROR", "email_in_use"),
                     event("RESTART_AUTHENTICATION_ERROR", "invalid_code"),
+                    event("LOGIN_ERROR", "invalid_code"),
+                    event("LOGIN_ERROR", "already_logged_in"),
+                    event("REGISTER_ERROR", "invalid_code"),
+                    event("REGISTER_ERROR", "already_logged_in"),
                     KEYCLOAK_SERVICES.replace("ERROR [org.keycloak.services]", "WARN  [org.hibernate.orm.session]")
                     .replace(
                         "KC-SERVICES0093: Invalid parameter value for: scope",
@@ -354,7 +419,69 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 11)
+        self.assertEqual(sum(digest.ignored.values()), 15)
+
+    def test_multipart_probe_at_the_chat_server_is_noise(self) -> None:
+        probe = (
+            "2026-10-28 14:47:16,222 WARNING synapse.http.site Aborting connection from "
+            f"IPv4Address(type='TCP', host='{IP}', port=57362) because "
+            "`content-type: multipart/form-data` is unsupported: POST /"
+        )
+        other = probe.replace("multipart/form-data", "application/x-www-form-urlencoded")
+        digest = summarize({"synapse": [probe, probe.replace("57362", "45484"), other]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("application/x-www-form-urlencoded", summaries[0])
+        self.assertEqual(sum(digest.ignored.values()), 2)
+
+    def test_confirming_just_after_the_recent_sign_in_window_is_noise(self) -> None:
+        def failure(kind: str, path: str) -> str:
+            return (
+                CONTROL_JOIN_CODE.replace("Agent 口令请求失败", "认证请求失败")
+                .replace("private_room.join_code.reveal", "authentication.authenticate")
+                .replace('"failure": "NotFound"', f'"failure": "{kind}"')
+                .replace('"GET"', '"DELETE"')
+                .replace(f"/devices/current/private-rooms/{CATALOG_ID}/code", path)
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    failure("ReauthenticationRequired", f"/auth/devices/{CATALOG_ID}"),
+                    failure("ReauthenticationRequired", "/account"),
+                    failure("Internal", "/account"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error 认证请求失败 failure=Internal "
+                "operation=authentication.authenticate @ DELETE /account"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 2)
+
+    def test_someone_elses_certificate_challenge_is_noise(self) -> None:
+        challenge = json.dumps(
+            {
+                "level": "warn",
+                "ts": 1792712032.5,
+                "logger": "http",
+                "msg": "looking up info for HTTP challenge",
+                "host": "www.agentroom.chat",
+                "remote_addr": f"{IP}:51234",
+                "user_agent": "Mozilla/5.0 (compatible; Let's Encrypt validation server)",
+                "error": "no information found to solve challenge for identifier: www.agentroom.chat",
+            }
+        )
+        digest = summarize({"gateway": [challenge, GATEWAY_ERROR]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertFalse(any("HTTP challenge" in summary for summary in summaries))
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(sum(digest.ignored.values()), 1)
 
     def test_opening_a_room_you_are_not_in_is_noise(self) -> None:
         not_found = CONTROL_WARN.replace('"failure": "Internal"', '"failure": "NotFound"')
@@ -425,6 +552,30 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(
             summaries, ["WARN agent_room_control_plane::error 网络 Agent 请求失败 failure=Internal @ POST /mcp"]
         )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_knock_check_with_a_revoked_token_is_noise(self) -> None:
+        def failure(kind: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-10-29T02:16:42.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "等消息时没看成有没有人敲它建的房间的门，过一会儿再看",
+                        "correlation.id": CORRELATION_ID,
+                        "failure": kind,
+                    },
+                    "target": "agent_room_control_plane::network_gateway::knocks",
+                    "span": {"http.request.method": "GET", "url.path": "/v1/network-agents/me/messages"},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {"control-plane": [failure("Unauthorized"), failure("Internal")]}, load_noise(NOISE_FILE)
+        )
+        [finding] = digest.findings
+        self.assertIn("failure=Internal", finding.signature.summary)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
 

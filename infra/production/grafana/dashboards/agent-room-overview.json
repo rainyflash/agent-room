@@ -245,50 +245,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 13 },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": ["lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
-        {
-          "expr": "agent_room_operational_value{metric=~\"outbox_.*\"}",
-          "legendFormat": "{{metric}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Outbox",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "agent-room-prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" }
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 13 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
       "id": 8,
       "options": {
         "legend": {
@@ -336,7 +293,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 13 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
       "id": 9,
       "options": {
         "legend": {
@@ -349,7 +306,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(agent_room_frontend_score_sum{metric=\"bridge_availability\"}[15m])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric=\"bridge_availability\"}[15m])), 0.000001)",
+          "expr": "sum(rate(agent_room_frontend_score_sum{metric=\"bridge_uptime\"}[1h])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric=\"bridge_uptime\"}[1h])), 0.000001)",
           "legendFormat": "availability",
           "refId": "A"
         }

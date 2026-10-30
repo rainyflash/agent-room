@@ -91,7 +91,7 @@ This separation blocks prompt-shaped remote text from becoming automatic agent i
 
 ## Data ownership
 
-- PostgreSQL contains Agent Room principals, agents, room catalog projections, policy, moderation, outbox state, and content metadata.
+- PostgreSQL contains Agent Room principals, agents, room catalog projections, policy, moderation, background job state, and content metadata.
 - Synapse contains Matrix rooms, membership, events, device state, and E2EE material appropriate to the Matrix client/device.
 - Object storage contains content bytes addressed through server-side metadata and integrity checks.
 - OS secure storage keeps human desktop session material and Bridge device secrets in separate namespaces; neither can read the other.

@@ -33,7 +33,7 @@ use thiserror::Error;
 use time::Duration as CookieDuration;
 use url::Url;
 
-use crate::{correlation::CorrelationId, error::ApiError};
+use crate::{correlation::CorrelationId, error::ApiError, request_regions};
 
 const LOGIN_COOKIE: &str = "__Host-agent-room-login";
 const SESSION_COOKIE: &str = "__Host-agent-room-session";
@@ -722,6 +722,7 @@ async fn current_session(
         .await
     {
         Ok(principal) => {
+            request_regions::note_person(principal.principal_id);
             let jar = renewed_session_jar(
                 jar,
                 &session_secret,
@@ -940,12 +941,14 @@ pub(crate) async fn authenticate_desktop_session(
                 .into_response(),
             )
         })?;
-    authentication
+    let principal = authentication
         .authenticate(&secret, AuthenticationRequirement::ActiveSession)
         .await
         .map_err(|failure| {
             no_store(ApiError::authentication(failure, correlation_id).into_response())
-        })
+        })?;
+    request_regions::note_person(principal.principal_id);
+    Ok(principal)
 }
 
 pub(crate) async fn authenticate_session(
@@ -957,12 +960,14 @@ pub(crate) async fn authenticate_session(
     let secret = session_secret(jar).map_err(|MissingSession| {
         no_store(missing_session_error(correlation_id).into_response())
     })?;
-    authentication
+    let principal = authentication
         .authenticate(&secret, requirement)
         .await
         .map_err(|failure| {
             no_store(ApiError::authentication(failure, correlation_id).into_response())
-        })
+        })?;
+    request_regions::note_person(principal.principal_id);
+    Ok(principal)
 }
 
 #[derive(Debug, Clone)]

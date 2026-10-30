@@ -59,6 +59,7 @@ import { ControlPlaneEncryptionKeyEscrow } from '@/features/session/adapters/con
 import { MatrixWebGateway } from '@/features/session/adapters/matrix-web-gateway';
 import { TauriMatrixSessionVault } from '@/features/session/adapters/tauri-matrix-session-vault';
 import { ControlPlaneFrontendTelemetryClient } from '@/features/telemetry/adapters/control-plane-frontend-telemetry-client';
+import { ControlPlaneRoundTripProbe } from '@/features/telemetry/adapters/control-plane-round-trip-probe';
 import { WindowBrowserGateway } from '@/shared/browser/window-browser-gateway';
 import type { RuntimeConfig } from '@/shared/config/runtime-config';
 import { readLanguagePreference } from '@/shared/i18n/i18n';
@@ -66,6 +67,7 @@ import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { MatrixSecretStorageKeyCache } from '@/shared/matrix/matrix-secret-storage-key-cache';
 import { ControlPlaneAgentDirectoryClient } from '@/features/workspace/adapters/control-plane-agent-directory-client';
+import { ReauthenticationWatch } from '@/shared/http/reauthentication-watch';
 import { SessionRequestScope } from '@/shared/http/session-request-scope';
 import { MatrixWorkspaceGateway } from '@/features/personal-workspace/adapters/matrix-workspace-gateway';
 import { BrowserWorkspaceCache } from '@/features/personal-workspace/adapters/browser-workspace-cache';
@@ -114,9 +116,13 @@ export function createCloudRuntime(
     defaultOptions: { queries: { refetchOnWindowFocus: true, retry: false } },
   });
   // 桌面端发往控制面的请求一律由原生层带上登录代发：macOS 的 WKWebView 不替跨站请求带 Cookie。
-  const controlPlaneFetch = localRuntime.isAvailable()
-    ? desktopControlPlaneFetch(config.controlPlaneUrl, localRuntime)
-    : globalThis.fetch.bind(globalThis);
+  // 服务器说要重新登录时，会话里的“最近登录过”跟着改成没有。
+  const reauthentication = new ReauthenticationWatch(
+    localRuntime.isAvailable()
+      ? desktopControlPlaneFetch(config.controlPlaneUrl, localRuntime)
+      : globalThis.fetch.bind(globalThis),
+  );
+  const controlPlaneFetch = reauthentication.fetch;
   const privateRequests = new SessionRequestScope(controlPlaneFetch);
   const businessApi = { baseUrl: config.controlPlaneUrl, fetch: privateRequests.fetch };
   // Authentication must remain usable while private requests are being cancelled.
@@ -129,6 +135,10 @@ export function createCloudRuntime(
     : browserControlPlane;
   const roomDirectory = new ControlPlanePublicRoomDirectoryClient(businessApi);
   const telemetry = new ControlPlaneFrontendTelemetryClient({
+    baseUrl: config.controlPlaneUrl,
+    fetch: controlPlaneFetch,
+  });
+  const roundTrip = new ControlPlaneRoundTripProbe({
     baseUrl: config.controlPlaneUrl,
     fetch: controlPlaneFetch,
   });
@@ -243,6 +253,7 @@ export function createCloudRuntime(
       fetch: controlPlaneFetch,
     }),
     roomDirectory,
+    roundTrip,
     security: new MatrixSdkSecurityGateway(matrixClients),
     session: {
       browser: new WindowBrowserGateway(),
@@ -255,6 +266,7 @@ export function createCloudRuntime(
           agentOwners.clear();
         },
       },
+      reauthentication,
     },
     telemetry,
     typing: new MatrixTypingNotifier(matrixClients),
