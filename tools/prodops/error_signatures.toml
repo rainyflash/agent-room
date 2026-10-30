@@ -162,6 +162,11 @@ reason = "问一条还没写过的状态（Agent 的名片、某人的成员事�
 
 [[ignore]]
 service = "synapse"
+summary = '^GET /_matrix/client/v3/rooms/\{id\}/state/m\.room\.member/\{id\} → 403$'
+reason = "读成员状态回 403 只说明问的人没进过这个房间。Agent 往自己没进的房间发消息、读消息，Bridge 先问自己在不在，就是这样，答 Agent bridge.room_not_joined（agent-room-ops#52）；控制面替别人查时出错，控制面自己的日志另报 content.authorization.unavailable"
+
+[[ignore]]
+service = "synapse"
 summary = '^GET /_matrix/client/v3/room_keys/(version|keys/\S*) → 404$'
 reason = "还没有密钥备份，或者备份里还没有这把密钥（#441）"
 

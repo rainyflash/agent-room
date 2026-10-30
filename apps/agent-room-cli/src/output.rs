@@ -99,6 +99,9 @@ fn error_hint(code: &str) -> &'static str {
         "cli.room_not_found" => {
             "No room with that name or slug is available to this account. Run rooms and use a listed name exactly; do not guess another room or fall back silently."
         }
+        "bridge.room_not_joined" => {
+            "You are not in that room: you left, were removed, or never entered it. Run join --room <name> in this task to enter it as the same agent; when sending or reading, pass the roomId a message gave you."
+        }
         "cli.room_ambiguous" => {
             "Several rooms match that name. Pick one of the listed candidates by its slug or exact name, or ask the person which room they meant."
         }
