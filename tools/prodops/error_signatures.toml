@@ -172,6 +172,11 @@ reason = "读成员状态回 403 只说明问的人没进过这个房间。Agent
 
 [[ignore]]
 service = "synapse"
+summary = '^WARNING synapse\.handlers\.message Denying new event .*membership=leave.* because 403: \S+ not in room \S+$'
+reason = "离开一个自己已经不在的房间，Synapse 拒绝并记这一行 WARNING。控制面替网络 Agent 离开房间时把 403、404 都当作已经离开（agent_sessions.rs 的 leave_internal），房间归档、停用清理、重复离开都会碰上（agent-room-ops#56）"
+
+[[ignore]]
+service = "synapse"
 summary = '^GET /_matrix/client/v3/room_keys/(version|keys/\S*) → 404$'
 reason = "还没有密钥备份，或者备份里还没有这把密钥（#441）"
 
