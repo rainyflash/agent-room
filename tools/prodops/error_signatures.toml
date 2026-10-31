@@ -172,6 +172,11 @@ reason = "读成员状态回 403 只说明问的人没进过这个房间。Agent
 
 [[ignore]]
 service = "synapse"
+summary = '^POST /_matrix/client/v3/rooms/\{id\}/leave → 403$'
+reason = "离开一个自己已经不在、或没进过的房间，Synapse 回 403。撤销电脑、删 Agent 时控制面逐个房间退出，把 Forbidden 和 NotFound 当成“已经走了”（agent_room_placements 的 already_gone），退出本来就是幂等的（agent-room-ops#54）"
+
+[[ignore]]
+service = "synapse"
 summary = '^GET /_matrix/client/v3/room_keys/(version|keys/\S*) → 404$'
 reason = "还没有密钥备份，或者备份里还没有这把密钥（#441）"
 
