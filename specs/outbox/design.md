@@ -86,14 +86,14 @@
 ## 顺带发现的
 
 - 撤销以后 Matrix 设备没注销成时，没有后台重试（`specs/computer-revocation/design.md` 的“不做”里记过）。撤销那一刻 Synapse 不通，Agent 的 Matrix 设备就一直登着，要人再点一次撤销；桌面端换账号、移出这台电脑的那条路上，这台电脑的凭据已经删了，没人能再点。生产上现在一个也没有。建议另做一小步：照 `agent_room_departures.rs` 的样子，后台每 30 秒找 `revoked_at` 有值、`matrix_device_revoked_at` 为空的连接再注销一次，用上已有的部分索引。它和去掉 Outbox 互不依赖。（第 4 步做了，见“状态”。）
-- 和 Outbox 同一批做的 Matrix 投影（`matrix_projection_cursor`、`matrix_projection_event_receipt`，`crates/postgres-adapter/src/projections.rs`）看着也没接上：`MatrixProjectionStore` 只有 Postgres 那一份实现，没有用例用它，控制面里只有运行指标读这两张表（表是空的，所以“投影停滞”的告警不会响）。没细查，要不要一起清另说。
+- 和 Outbox 同一批做的 Matrix 投影（`matrix_projection_cursor`、`matrix_projection_event_receipt`，`crates/postgres-adapter/src/projections.rs`）看着也没接上：`MatrixProjectionStore` 只有 Postgres 那一份实现，没有用例用它，控制面里只有运行指标读这两张表（表是空的，所以“投影停滞”的告警不会响）。没细查，要不要一起清另说。（后来查了，见 [specs/matrix-projection/design.md](../matrix-projection/design.md)：还有第三张表和 `room_instance` 上的两列，“房间”页的“在线 Agent 数”因此一直是 0。）
 
 ## 要维护者定的
 
 1. 走甲还是乙（建议甲）。
 2. 第 3 步删表，同意吗（不可逆；合并前再只读查一次行数报给你）。
 3. 撤销以后 Matrix 设备注销的后台重试，要不要做（建议做，另开一步）。
-4. Matrix 投影那两张表要不要另查（建议另开任务）。
+4. Matrix 投影那两张表要不要另查（建议另开任务）。查完的结果和建议在 [specs/matrix-projection/design.md](../matrix-projection/design.md)。
 
 ## 分步交付（走甲时）
 
