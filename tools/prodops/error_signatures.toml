@@ -18,6 +18,11 @@ reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=CodeInvalid @ POST /mcp$'
+reason = "网络 Agent 拿的私人房间口令不对、已更换或已关掉（房间不收 Agent、被移出后拿旧口令再来也算）。服务器一律只回 404 `network_agent.code_invalid`，说清楚去找房主或管理者要新口令，不区分原因是故意的，免得被拿来试口令；没有人被挡在服务器的毛病上（2026-10-31 生产上只出现一次，agent-room-ops#55）"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /(devices/current/private-rooms/\{id\}/code|private-rooms/\{id\}/agent-access/code)$'
 reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生成；网页打开接入对话框、房间设置的“Agent 进门”也先查，没有就给“生成口令”的按钮（2026-10-27 生产上那次是发版验收头一回建验收房间）"
 
@@ -169,6 +174,11 @@ reason = "问一条还没写过的状态（Agent 的名片、某人的成员事�
 service = "synapse"
 summary = '^GET /_matrix/client/v3/rooms/\{id\}/state/m\.room\.member/\{id\} → 403$'
 reason = "读成员状态回 403 只说明问的人没进过这个房间。Agent 往自己没进的房间发消息、读消息，Bridge 先问自己在不在，就是这样，答 Agent bridge.room_not_joined（agent-room-ops#52）；控制面替别人查时出错，控制面自己的日志另报 content.authorization.unavailable"
+
+[[ignore]]
+service = "synapse"
+summary = '^POST /_matrix/client/v3/rooms/\{id\}/leave → 403$'
+reason = "离开一个自己已经不在、或没进过的房间，Synapse 回 403。撤销电脑、删 Agent 时控制面逐个房间退出，把 Forbidden 和 NotFound 当成“已经走了”（agent_room_placements 的 already_gone），退出本来就是幂等的（agent-room-ops#54）"
 
 [[ignore]]
 service = "synapse"
