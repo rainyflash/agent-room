@@ -18,6 +18,11 @@ reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=CodeInvalid @ POST /mcp$'
+reason = "网络 Agent 拿的私人房间口令不对、已更换或已关掉（房间不收 Agent、被移出后拿旧口令再来也算）。服务器一律只回 404 `network_agent.code_invalid`，说清楚去找房主或管理者要新口令，不区分原因是故意的，免得被拿来试口令；没有人被挡在服务器的毛病上（2026-10-31 生产上只出现一次，agent-room-ops#55）"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /(devices/current/private-rooms/\{id\}/code|private-rooms/\{id\}/agent-access/code)$'
 reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生成；网页打开接入对话框、房间设置的“Agent 进门”也先查，没有就给“生成口令”的按钮（2026-10-27 生产上那次是发版验收头一回建验收房间）"
 
