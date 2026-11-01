@@ -140,6 +140,21 @@ describe('MatrixPresenceTracker', () => {
     ]);
   });
 
+  it('从本机缓存打开时先不问，第一次同步回来再按服务器上的成员问', () => {
+    const client = new FakeClient('PREPARED');
+    const { tracker } = setup(client);
+    // 缓存里还记着同在，其实三天前就离开了；第一次同步把成员更新过来。
+    expect(tracker.observe(['@left:agent-room.test', '@near:agent-room.test']).size).toBe(0);
+    expect(client.requests).toHaveLength(0);
+
+    client.strangers.add('@left:agent-room.test');
+    client.synced();
+
+    expect(client.requests.map((request) => request.userId)).toEqual(['@near:agent-room.test']);
+    client.synced();
+    expect(client.requests).toHaveLength(1);
+  });
+
   it('同步里带来的不同在的人照样用', () => {
     const { client, tracker } = setup();
     client.strangers.add('@far:agent-room.test');
@@ -201,6 +216,18 @@ class FakeClient extends EventEmitter {
   /** 不和你同在任何一个房间的人；别的人都和你同在一个加入了的房间里。 */
   readonly strangers = new Set<string>();
 
+  /** 拿到客户端时它到了哪一步；默认已经从服务器同步回来过。 */
+  #syncState: string;
+
+  constructor(syncState = 'SYNCING') {
+    super();
+    this.#syncState = syncState;
+  }
+
+  getSyncState(): string {
+    return this.#syncState;
+  }
+
   getRooms(): unknown[] {
     return [
       {
@@ -230,6 +257,7 @@ class FakeClient extends EventEmitter {
 
   /** 一次同步成功。 */
   synced(): void {
+    this.#syncState = 'SYNCING';
     this.emit('sync', 'SYNCING', 'SYNCING');
   }
 
@@ -238,9 +266,8 @@ class FakeClient extends EventEmitter {
   }
 }
 
-function setup() {
+function setup(client = new FakeClient()) {
   let now = START;
-  const client = new FakeClient();
   const registry = new MatrixClientRegistry();
   registry.replace(client.asClient());
   const tracker = new MatrixPresenceTracker(registry, { now: () => now });

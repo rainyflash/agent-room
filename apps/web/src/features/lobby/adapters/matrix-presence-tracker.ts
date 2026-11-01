@@ -61,6 +61,8 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
   readonly #queued = new Set<string>();
   #client: MatrixClient | null = null;
   #detach: (() => void) | null = null;
+  /** 这个客户端从服务器同步回来过：之前的房间成员是本机缓存里的，可能是几天前的。 */
+  #synced = false;
 
   constructor(clients: MatrixClientSource, options: { readonly now?: () => number } = {}) {
     this.#clients = clients;
@@ -101,7 +103,9 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
     this.#failedAt.clear();
     this.#inFlight.clear();
     this.#queued.clear();
+    this.#synced = false;
     if (client === null) return;
+    this.#synced = client.getSyncState() === SYNC_STATE_SYNCING;
     client.on(CLIENT_EVENT_EVENT, this.#onEvent);
     client.on(CLIENT_EVENT_SYNC, this.#onSync);
     this.#detach = () => {
@@ -120,7 +124,7 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
 
   /**
    * 每次同步成功，就确认了没在这次同步里变的人还是原来的样子。从缓存读出的那次不算：
-   * 它只发“准备好了”，不发“同步中”。
+   * 它只发“准备好了”，不发“同步中”。第一次同步回来，排着的再按服务器上的成员看一遍。
    */
   readonly #onSync = (state: SyncState): void => {
     if (state !== SYNC_STATE_SYNCING) return;
@@ -128,6 +132,10 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
     for (const [userId, entry] of this.#entries) {
       if (entry.state !== 'offline')
         this.#entries.set(userId, { ...entry, confirmedAtUnixMs: now });
+    }
+    if (!this.#synced) {
+      this.#synced = true;
+      this.#pump();
     }
   };
 
@@ -165,7 +173,9 @@ export class MatrixPresenceTracker implements AgentPresenceSource {
 
   #pump(): void {
     const client = this.#client;
-    if (client === null) return;
+    // 从本机缓存打开时，缓存里的成员可能早就离开了房间（agent-room-ops#58：隔了几天打开网页，
+    // 一下问了 7 个三天半前就走了的 Agent，都是 403）。等第一次同步回来再按成员问。
+    if (client === null || !this.#synced) return;
     for (const userId of this.#queued) {
       if (this.#inFlight.size >= FETCH_CONCURRENCY) return;
       this.#queued.delete(userId);
