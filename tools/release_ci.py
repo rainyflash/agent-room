@@ -22,6 +22,9 @@ else:
 ROOT: Final = Path(__file__).resolve().parent.parent
 TAG_PATTERN: Final = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$")
 REVISION_PATTERN: Final = re.compile(r"^[0-9a-f]{40}$")
+# 通道清单多久过期：防的是有人一直拿旧清单挡住更新。已装的桌面端最多认 30 天
+# （`crates/release-manifest` 的 `MAX_MANIFEST_LIFETIME_SECONDS`），再长就整份拒收。
+MANIFEST_LIFETIME_SECONDS: Final = 30 * 24 * 60 * 60
 
 
 class ReleaseCiFailure(RuntimeError):
@@ -89,7 +92,7 @@ def build_metadata(args: argparse.Namespace) -> dict[str, object]:
         "rollbackFrom": args.rollback_from or None,
         "revision": args.revision,
         "publishedAtUnixSeconds": now,
-        "expiresAtUnixSeconds": now + 7 * 24 * 60 * 60,
+        "expiresAtUnixSeconds": now + MANIFEST_LIFETIME_SECONDS,
         "releaseBaseUrl": base_url,
         "imageBase": f"ghcr.io/{args.repository.lower()}",
         "tauriManifestName": tauri_name,

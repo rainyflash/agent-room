@@ -49,7 +49,7 @@ class ReleaseCiTests(unittest.TestCase):
         metadata = build_metadata(self.arguments())
 
         self.assertEqual(metadata["version"], "0.2.0")
-        self.assertEqual(metadata["expiresAtUnixSeconds"], 1_800_604_800)
+        self.assertEqual(metadata["expiresAtUnixSeconds"], 1_802_592_000)
         self.assertEqual(metadata["imageBase"], "ghcr.io/example/agent-room")
         self.assertEqual(
             metadata["tauriManifestUrl"],
