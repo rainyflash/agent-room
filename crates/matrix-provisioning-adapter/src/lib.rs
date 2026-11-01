@@ -3,13 +3,13 @@
 use std::{net::IpAddr, time::Duration};
 
 use agent_room_application::ports::{
-    MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
-    MatrixAgentDeviceSessionRotator, MatrixAgentDeviceSessionTarget,
-    MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
-    MatrixDeviceId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixSession,
-    MatrixSessionMetadata, MatrixUserId, PortFuture, SecretValue,
+    MatrixAgentDeviceActivityReader, MatrixAgentDeviceSessionRequest,
+    MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionRotator,
+    MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+    MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailure, MatrixFailureKind, MatrixOperation,
+    MatrixResult, MatrixSession, MatrixSessionMetadata, MatrixUserId, PortFuture, SecretValue,
 };
-use agent_room_domain::time::DurationMillis;
+use agent_room_domain::time::{DurationMillis, UtcMillis};
 use futures_util::StreamExt;
 use reqwest::{Client, Response, StatusCode, Url, redirect::Policy};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -259,6 +259,38 @@ impl MatrixApplicationServiceProvisioner {
         Err(map_matrix_error(operation, status, &error))
     }
 
+    /// `GET /devices/{deviceId}?user_id=`：以应用服务身份替 Agent 问它这台设备的 `last_seen_ts`。
+    /// 回答里的 `last_seen_ip` 不读、不记。
+    async fn device_last_seen_internal(
+        &self,
+        target: &MatrixAgentDeviceSessionTarget,
+    ) -> MatrixResult<Option<UtcMillis>> {
+        let operation = MatrixOperation::ReadAgentDeviceActivity;
+        self.ensure_managed_user(target.user_id(), operation)?;
+        let endpoint = self.device_endpoint(target.device_id(), target.user_id(), operation)?;
+        let response = self
+            .client
+            .get(endpoint)
+            .bearer_auth(self.access_token.expose())
+            .send()
+            .await
+            .map_err(|error| map_transport_error(operation, &error))?;
+        let status = response.status();
+        let body = read_limited_body(response, operation).await?;
+        if status.is_success() {
+            let device: DeviceAnswer = decode_json(&body, operation)?;
+            return device
+                .last_seen_ts
+                .map(|value| UtcMillis::new(value).map_err(|_| invalid_response(operation)))
+                .transpose();
+        }
+        let error = decode_matrix_error(&body, operation)?;
+        if status == StatusCode::NOT_FOUND && error.errcode == "M_NOT_FOUND" {
+            return Ok(None);
+        }
+        Err(map_matrix_error(operation, status, &error))
+    }
+
     fn expected_user_id(
         &self,
         registration: &MatrixAgentUserRegistration,
@@ -336,6 +368,22 @@ impl MatrixAgentDeviceSessionRevoker for MatrixApplicationServiceProvisioner {
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(self.revoke_device_session_internal(target))
     }
+}
+
+impl MatrixAgentDeviceActivityReader for MatrixApplicationServiceProvisioner {
+    fn device_last_seen<'a>(
+        &'a self,
+        target: &'a MatrixAgentDeviceSessionTarget,
+    ) -> PortFuture<'a, MatrixResult<Option<UtcMillis>>> {
+        Box::pin(self.device_last_seen_internal(target))
+    }
+}
+
+/// `GET /devices/{deviceId}` 的回答里只用得到 `last_seen_ts`。
+#[derive(Deserialize)]
+struct DeviceAnswer {
+    #[serde(default)]
+    last_seen_ts: Option<i64>,
 }
 
 impl MatrixAgentDeviceSessionRotator for MatrixApplicationServiceProvisioner {
@@ -574,12 +622,12 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        MatrixAgentDeviceSessionRequest, MatrixAgentDeviceSessionRevoker,
-        MatrixAgentDeviceSessionRotator, MatrixAgentDeviceSessionTarget,
-        MatrixAgentIdentityProvisioner, MatrixAgentLocalpart, MatrixAgentUserRegistration,
-        MatrixDeviceId, MatrixFailureKind, MatrixUserId, SecretValue,
+        MatrixAgentDeviceActivityReader, MatrixAgentDeviceSessionRequest,
+        MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionRotator,
+        MatrixAgentDeviceSessionTarget, MatrixAgentIdentityProvisioner, MatrixAgentLocalpart,
+        MatrixAgentUserRegistration, MatrixDeviceId, MatrixFailureKind, MatrixUserId, SecretValue,
     };
-    use agent_room_domain::ids::AgentId;
+    use agent_room_domain::{ids::AgentId, time::UtcMillis};
     use axum::{
         Json, Router,
         body::Body,
@@ -684,6 +732,41 @@ mod tests {
             .expect("设备已不存在等价于撤销完成");
 
         server.assert_authenticated_requests(1).await;
+    }
+
+    #[tokio::test]
+    async fn 问得到_agent_设备上次用的时间_设备不在了就是没有() {
+        let target = MatrixAgentDeviceSessionTarget::new(
+            managed_user_id(),
+            MatrixDeviceId::new("AR_INSTANCE_1").expect("设备标识有效"),
+        );
+        let server = TestServer::start(TestMode::Success).await;
+        let seen = provisioner(&server.url)
+            .device_last_seen(&target)
+            .await
+            .expect("问得到设备");
+        assert_eq!(seen.map(UtcMillis::value), Some(1_790_000_000_000));
+
+        let server = TestServer::start(TestMode::MissingDevice).await;
+        let seen = provisioner(&server.url)
+            .device_last_seen(&target)
+            .await
+            .expect("设备不在了不算失败");
+        assert_eq!(seen, None);
+        server.assert_authenticated_requests(1).await;
+    }
+
+    #[tokio::test]
+    async fn 不问受控命名空间以外用户的设备() {
+        let target = MatrixAgentDeviceSessionTarget::new(
+            MatrixUserId::new("@human:matrix.agent-room.localhost").expect("用户标识有效"),
+            MatrixDeviceId::new("HUMAN_DEVICE").expect("设备标识有效"),
+        );
+        let failure = provisioner("http://127.0.0.1:9")
+            .device_last_seen(&target)
+            .await
+            .expect_err("人的设备不归应用服务问");
+        assert_eq!(failure.kind(), MatrixFailureKind::Forbidden);
     }
 
     #[tokio::test]
@@ -813,7 +896,7 @@ mod tests {
                 .route("/_matrix/client/v3/login", post(login))
                 .route(
                     "/_matrix/client/v3/devices/{device_id}",
-                    delete(revoke_device),
+                    delete(revoke_device).get(read_device),
                 )
                 .with_state(state.clone());
             let listener = TcpListener::bind("127.0.0.1:0")
@@ -917,6 +1000,32 @@ mod tests {
             )
         } else {
             (StatusCode::OK, Json(json!({})))
+        }
+    }
+
+    async fn read_device(
+        State(state): State<Arc<TestState>>,
+        Path(device_id): Path<String>,
+        Query(query): Query<RevokeQuery>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        record_authentication(&state, &headers).await;
+        assert_eq!(device_id, "AR_INSTANCE_1");
+        assert_eq!(query.user_id, managed_user_id().as_str());
+        if matches!(state.mode, TestMode::MissingDevice) {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "errcode": "M_NOT_FOUND" })),
+            )
+        } else {
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "device_id": "AR_INSTANCE_1",
+                    "last_seen_ip": "203.0.113.7",
+                    "last_seen_ts": 1_790_000_000_000_i64
+                })),
+            )
         }
     }
 
