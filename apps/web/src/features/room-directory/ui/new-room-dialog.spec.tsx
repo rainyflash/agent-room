@@ -163,4 +163,31 @@ describe('新建房间', () => {
     const [firstCall, secondCall] = onCreate.mock.calls;
     expect(secondCall).toEqual(firstCall);
   });
+
+  it('服务器说这样填不行时放开表单，改好以后按新请求再建', async () => {
+    const onCreate = vi
+      .fn<CreateCall>()
+      .mockResolvedValueOnce(err({ code: 'private_room.invalid_request', retryable: false }))
+      .mockResolvedValueOnce(ok(created));
+    const { onClose } = renderForm(onCreate);
+
+    const name = screen.getByRole('textbox', { name: 'Name' });
+    fireEvent.change(name, { target: { value: 'Release workshop' } });
+    submit();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "A room can't be created with these details.",
+    );
+    expect(name).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Create and enter' })).toBeEnabled();
+    fireEvent.change(name, { target: { value: 'Release room' } });
+    submit();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    const [firstCall, secondCall] = onCreate.mock.calls;
+    expect(secondCall?.[0]).not.toBe(firstCall?.[0]);
+    expect(secondCall?.[1]).toMatchObject({ name: 'Release room' });
+  });
 });

@@ -54,6 +54,8 @@ const en = {
   'rooms.create.creating': 'Creating…',
   'rooms.create.failed':
     'Could not finish creating the room. Try again; it will not create a second one.',
+  'rooms.create.rejected':
+    "A room can't be created with these details. Check the name and purpose, and don't put your own account ID in the invites, then create it again.",
 } as const;
 
 export const roomsResources = {
@@ -110,5 +112,7 @@ export const roomsResources = {
     'rooms.create.submit': '创建并进入',
     'rooms.create.creating': '正在创建…',
     'rooms.create.failed': '没能建好房间。重试即可，不会再建一个。',
+    'rooms.create.rejected':
+      '这样填建不了房间。看看名字和用途，邀请里别写你自己的账户 ID，改好以后再建。',
   } satisfies Record<keyof typeof en, string>,
 } as const;
