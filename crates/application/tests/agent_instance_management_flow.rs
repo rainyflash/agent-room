@@ -15,9 +15,9 @@ use agent_room_application::{
     ports::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceMatrixCleanupStore, AgentInstanceRevocationOutcome,
-        AgentInstanceRevocationTransaction, Clock, MatrixAgentDeviceSessionRevoker,
-        MatrixAgentDeviceSessionTarget, MatrixFailure, MatrixFailureKind, MatrixOperation,
-        MatrixResult, PortFuture,
+        AgentInstanceRevocationTransaction, Clock, MatrixAgentDeviceActivityReader,
+        MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionTarget, MatrixFailure,
+        MatrixFailureKind, MatrixOperation, MatrixResult, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -115,7 +115,29 @@ struct FakeMatrix {
     local_revoke_calls: Arc<AtomicUsize>,
     calls: AtomicUsize,
     targets: Mutex<Vec<MatrixAgentDeviceSessionTarget>>,
+    activity_targets: Mutex<Vec<MatrixAgentDeviceSessionTarget>>,
     failure: Option<MatrixFailureKind>,
+}
+
+impl MatrixAgentDeviceActivityReader for FakeMatrix {
+    fn device_last_seen<'a>(
+        &'a self,
+        target: &'a MatrixAgentDeviceSessionTarget,
+    ) -> PortFuture<'a, MatrixResult<Option<UtcMillis>>> {
+        self.activity_targets
+            .lock()
+            .expect("测试锁不得中毒")
+            .push(target.clone());
+        let failure = self.failure;
+        Box::pin(async move {
+            failure.map_or(Ok(Some(time(NOW - 5_000))), |kind| {
+                Err(MatrixFailure::new(
+                    MatrixOperation::ReadAgentDeviceActivity,
+                    kind,
+                ))
+            })
+        })
+    }
 }
 
 impl MatrixAgentDeviceSessionRevoker for FakeMatrix {
@@ -223,6 +245,7 @@ impl Fixture {
             local_revoke_calls,
             calls: AtomicUsize::new(0),
             targets: Mutex::new(Vec::new()),
+            activity_targets: Mutex::new(Vec::new()),
             failure: matrix_failure,
         });
         let cleanup = Arc::new(FakeCleanupStore {
@@ -235,6 +258,7 @@ impl Fixture {
             revocations: revocations.clone(),
             matrix_cleanup: cleanup.clone(),
             matrix: matrix.clone(),
+            matrix_activity: matrix.clone(),
             clock: runtime,
         });
         Self {
@@ -261,6 +285,64 @@ async fn 列表保留每个实例和所属设备的独立状态() {
     assert_eq!(records[0].device_label, "Windows 工作站");
     assert_eq!(records[0].instance.status(), AgentInstanceStatus::Revoked);
     assert_eq!(fixture.instances.list_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn 设备上次用的时间只问还在用的连接() {
+    let live = instance_with(AgentInstanceStatus::Offline, None);
+    let fixture = Fixture::listing(vec![live, managed_instance(false)]);
+
+    let activity = fixture
+        .service
+        .matrix_activity(ListAgentInstances { actor: actor(true) })
+        .await
+        .expect("活跃会话可以读取");
+
+    assert_eq!(activity.len(), 1);
+    assert_eq!(activity[0].instance_id, agent_instance_id());
+    assert_eq!(activity[0].last_seen_at, Some(time(NOW - 5_000)));
+    let asked = fixture
+        .matrix
+        .activity_targets
+        .lock()
+        .expect("测试锁不得中毒");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].device_id().as_str(), "AR_TEST_INSTANCE");
+}
+
+#[tokio::test]
+async fn 设备上次用的时间一个都问不到时报依赖不可用_没有连接时不问() {
+    let fixture = Fixture::with_records(
+        AgentInstanceRevocationOutcome::NotFound,
+        Some(MatrixFailureKind::DependencyUnavailable),
+        false,
+        vec![instance_with(AgentInstanceStatus::Offline, None)],
+    );
+    let failure = fixture
+        .service
+        .matrix_activity(ListAgentInstances { actor: actor(true) })
+        .await
+        .expect_err("Synapse 不通时不能说成都没用过");
+    assert_eq!(
+        failure.kind(),
+        AgentInstanceManagementFailureKind::DependencyUnavailable
+    );
+
+    let fixture = Fixture::listing(vec![managed_instance(false)]);
+    let activity = fixture
+        .service
+        .matrix_activity(ListAgentInstances { actor: actor(true) })
+        .await
+        .expect("全撤销了也能读");
+    assert!(activity.is_empty());
+    assert!(
+        fixture
+            .matrix
+            .activity_targets
+            .lock()
+            .expect("测试锁不得中毒")
+            .is_empty()
+    );
 }
 
 #[tokio::test]

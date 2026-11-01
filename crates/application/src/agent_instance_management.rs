@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agent_room_domain::{agents::AgentInstanceStatus, ids::AgentInstanceId, time::UtcMillis};
+use futures_util::stream::{self, StreamExt as _};
 
 use crate::{
     authentication::AuthenticatedPrincipal,
@@ -9,10 +10,16 @@ use crate::{
     ports::{
         AgentInstanceManagementRecord, AgentInstanceManagementRepository,
         AgentInstanceMatrixCleanupStore, AgentInstanceRevocationOutcome,
-        AgentInstanceRevocationTransaction, Clock, MatrixAgentDeviceSessionRevoker,
-        MatrixFailureKind, PortFuture,
+        AgentInstanceRevocationTransaction, Clock, MatrixAgentDeviceActivityReader,
+        MatrixAgentDeviceSessionRevoker, MatrixAgentDeviceSessionTarget, MatrixDeviceId,
+        MatrixFailureKind, MatrixUserId, PortFuture,
     },
 };
+
+/// 一次最多问几个连接的设备：一个账户攒下的连接再多也不至于这么多，超出的不问。
+const MAX_ACTIVITY_LOOKUPS: usize = 500;
+/// 同时问 Synapse 的个数。
+const ACTIVITY_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListAgentInstances {
@@ -46,6 +53,16 @@ pub enum AgentInstanceMatrixCleanup {
 pub struct RevokedAgentInstance {
     pub instance: AgentInstanceManagementRecord,
     pub matrix_cleanup: AgentInstanceMatrixCleanup,
+}
+
+/// 一个还在用的连接，它的 Matrix 设备上次用是什么时候（`specs/workspace-tidy/design.md`“30 天没上线的
+/// Agent”）。连接上记的 `last_seen_at` 只在控制后台回复时写，看不出 Agent 上没上线；Synapse 记的是这台
+/// 设备最后一次发请求，等消息、发言、报在线状态都算。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentInstanceMatrixActivity {
+    pub instance_id: AgentInstanceId,
+    /// 设备已经不在了、或者 Synapse 没记过时为 `None`。
+    pub last_seen_at: Option<UtcMillis>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +105,12 @@ pub trait AgentInstanceManagementUseCases: Send + Sync {
         &self,
         request: RevokeAgentInstance,
     ) -> PortFuture<'_, AgentInstanceManagementResult<RevokedAgentInstance>>;
+
+    /// 每个还在用的连接的设备上次用的时间。问不到的连接不在结果里；一个都问不到时报依赖不可用。
+    fn matrix_activity(
+        &self,
+        request: ListAgentInstances,
+    ) -> PortFuture<'_, AgentInstanceManagementResult<Vec<AgentInstanceMatrixActivity>>>;
 }
 
 pub struct AgentInstanceManagementService {
@@ -95,6 +118,7 @@ pub struct AgentInstanceManagementService {
     revocations: Arc<dyn AgentInstanceRevocationTransaction>,
     matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
     matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
+    matrix_activity: Arc<dyn MatrixAgentDeviceActivityReader>,
     clock: Arc<dyn Clock>,
 }
 
@@ -103,6 +127,7 @@ pub struct AgentInstanceManagementDependencies {
     pub revocations: Arc<dyn AgentInstanceRevocationTransaction>,
     pub matrix_cleanup: Arc<dyn AgentInstanceMatrixCleanupStore>,
     pub matrix: Arc<dyn MatrixAgentDeviceSessionRevoker>,
+    pub matrix_activity: Arc<dyn MatrixAgentDeviceActivityReader>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -113,8 +138,51 @@ impl AgentInstanceManagementService {
             revocations: dependencies.revocations,
             matrix_cleanup: dependencies.matrix_cleanup,
             matrix: dependencies.matrix,
+            matrix_activity: dependencies.matrix_activity,
             clock: dependencies.clock,
         }
+    }
+
+    async fn matrix_activity_internal(
+        &self,
+        request: ListAgentInstances,
+    ) -> AgentInstanceManagementResult<Vec<AgentInstanceMatrixActivity>> {
+        let operation = "agent_instance.matrix_activity";
+        ensure_active_actor(&request.actor, self.clock.now(), operation)?;
+        let records = self
+            .instances
+            .list_for_principal(request.actor.principal_id)
+            .await
+            .map_err(|error| map_repository_failure(operation, &error))?;
+        // 先拿成自己的数据再并发去问：借着 `records` 的闭包放进 `buffer_unordered`，整个 future
+        // 就证明不了对任意生命周期都 `Send`。
+        let targets: Vec<(AgentInstanceId, MatrixAgentDeviceSessionTarget)> = records
+            .iter()
+            .filter(|record| {
+                record.revoked_at.is_none() && record.matrix_device_revoked_at.is_none()
+            })
+            .take(MAX_ACTIVITY_LOOKUPS)
+            .filter_map(activity_target)
+            .collect();
+        let asked = targets.len();
+        let answers: Vec<Option<AgentInstanceMatrixActivity>> = stream::iter(targets)
+            .map(|(instance_id, target)| async move {
+                let last_seen_at = self.matrix_activity.device_last_seen(&target).await.ok()?;
+                Some(AgentInstanceMatrixActivity {
+                    instance_id,
+                    last_seen_at,
+                })
+            })
+            .buffer_unordered(ACTIVITY_CONCURRENCY)
+            .collect()
+            .await;
+        if asked > 0 && answers.iter().all(Option::is_none) {
+            return Err(failure(
+                operation,
+                AgentInstanceManagementFailureKind::DependencyUnavailable,
+            ));
+        }
+        Ok(answers.into_iter().flatten().collect())
     }
 
     async fn list_instances_internal(
@@ -196,6 +264,18 @@ const CONNECTING_WINDOW_MS: i64 = 90_000;
 /// 或命令行等消息的从来不续、一直是正在连接。所以列连接时按时间算：租约过了的、登记以后一直没续上
 /// 的都按离线报，“上次在线”照旧是最后那次活动。库里不动。在不在线以 Matrix 的在线状态为准
 /// （`specs/agent-liveness/design.md`），这里只是不再报一个早就不对的状态。
+fn activity_target(
+    record: &AgentInstanceManagementRecord,
+) -> Option<(AgentInstanceId, MatrixAgentDeviceSessionTarget)> {
+    let user_id = MatrixUserId::new(record.agent_matrix_user_id.clone()).ok()?;
+    let device_id =
+        MatrixDeviceId::new(record.instance.matrix_device_id().as_str().to_owned()).ok()?;
+    Some((
+        record.instance.id(),
+        MatrixAgentDeviceSessionTarget::new(user_id, device_id),
+    ))
+}
+
 fn settle_status(record: &mut AgentInstanceManagementRecord, now: UtcMillis) {
     record.instance.expire(now);
     let since = record.last_seen_at.unwrap_or(record.created_at);
@@ -219,6 +299,13 @@ impl AgentInstanceManagementUseCases for AgentInstanceManagementService {
         request: RevokeAgentInstance,
     ) -> PortFuture<'_, AgentInstanceManagementResult<RevokedAgentInstance>> {
         Box::pin(self.revoke_instance_internal(request))
+    }
+
+    fn matrix_activity(
+        &self,
+        request: ListAgentInstances,
+    ) -> PortFuture<'_, AgentInstanceManagementResult<Vec<AgentInstanceMatrixActivity>>> {
+        Box::pin(self.matrix_activity_internal(request))
     }
 }
 

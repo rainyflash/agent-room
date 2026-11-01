@@ -13,6 +13,9 @@ const AGENT = {
   visibility: 'private',
 } as const;
 
+const INSTANCE = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
+const OTHER_INSTANCE = '0198b601-77a1-7bb8-83eb-a8fe68c97e49';
+
 describe('ControlPlaneAgentDirectoryClient', () => {
   it('读取当前账户拥有的稳定 Agent 身份', async () => {
     const fetch = vi
@@ -135,6 +138,42 @@ describe('Agent 在哪些房间', () => {
 
     expect(await createClient(fetch).bringAgentIntoRoom(AGENT.agentId, CATALOG)).toEqual({
       error: { code: 'agent_room.busy', retryAfterSeconds: 3, retryable: true },
+      ok: false,
+    });
+  });
+
+  it('读每个连接的设备上次用的时间，设备不在了的是 null', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      Response.json({
+        instances: [
+          { agentInstanceId: INSTANCE, matrixLastSeenAtUnixMs: 1_700_000_000_000 },
+          { agentInstanceId: OTHER_INSTANCE, matrixLastSeenAtUnixMs: null },
+        ],
+      }),
+    );
+
+    expect(await createClient(fetch).listInstanceActivity()).toEqual({
+      ok: true,
+      value: new Map([
+        [INSTANCE, 1_700_000_000_000],
+        [OTHER_INSTANCE, null],
+      ]),
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL('https://control.agent-room.test/agent-instances/matrix-activity'),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+  });
+
+  it('设备上次用的时间的回答多了字段，就当回答损坏', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      Response.json({
+        instances: [{ agentInstanceId: INSTANCE, matrixLastSeenAtUnixMs: 1, ip: 'x' }],
+      }),
+    );
+
+    expect(await createClient(fetch).listInstanceActivity()).toEqual({
+      error: { code: 'workspace.invalid_instance_activity', retryable: false },
       ok: false,
     });
   });

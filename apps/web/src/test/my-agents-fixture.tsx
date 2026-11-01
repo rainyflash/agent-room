@@ -186,7 +186,7 @@ const fixtureDevices: readonly ProductDevice[] = [
   },
 ];
 // 我的 Agent 列表里的一份连接：Studio companion 在 Studio desktop 上在线。
-const fixtureInstances: readonly AgentInstance[] = [
+let fixtureInstances: readonly AgentInstance[] = [
   {
     adapterType: 'agent-room-mcp',
     agentAvatarContentId: null,
@@ -208,6 +208,30 @@ const fixtureInstances: readonly AgentInstance[] = [
     status: 'online',
   },
 ];
+if (new URLSearchParams(location.search).has('stale')) {
+  const studio = fixtureInstances[0];
+  if (studio !== undefined) {
+    fixtureInstances = [
+      ...fixtureInstances,
+      {
+        ...studio,
+        agentDisplayName: 'Old helper',
+        agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e4a',
+        agentInstanceId: '0198b601-77a1-7bb8-83eb-a8fe68c97e4c',
+        createdAtUnixMs: 1,
+        device: {
+          deviceId: '0198b601-77a5-74f1-b4f4-940f291951d2',
+          label: 'Travel laptop',
+          platform: 'macos',
+          trustState: 'verified',
+        },
+        lastSeenAtUnixMs: 1,
+        matrixDeviceId: 'AR-LAPTOP',
+        status: 'offline',
+      },
+    ];
+  }
+}
 // 夹具 Agent 在两个房间里（公共大厅和一个私人房间），“带进房间”还能选两个私人房间和一个公共大厅；
 // 其中 Board notes 里你没有“自动发言”，带进去只能看。?bring=none 时带进去回 0 个连接。
 const privateRoom = (
@@ -276,7 +300,32 @@ const fixturePresence: AgentPresenceSource | undefined =
       }
     : undefined;
 // ?agents=none 模拟还没有 Agent 的新账户。
-const fixtureAgents = new URLSearchParams(location.search).get('agents') === 'none' ? [] : [agent];
+// ?stale 再加两个 30 天以上没上线的：Old helper 在 Travel laptop 上有一个连接，设备 45 天前用过；
+// Weekend bot 60 天前注册、从没连上过。只有 ?stale 时删除和撤销连接会成功（从列表里拿掉）。
+const staleScenario = new URLSearchParams(location.search).has('stale');
+const DAY_MS = 24 * 60 * 60 * 1000;
+const staleHelper = {
+  ...agent,
+  agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e4a',
+  displayName: 'Old helper',
+  matrixUserId: '@old-helper:matrix.test',
+  slug: 'old-helper',
+};
+const staleWeekendBot = {
+  ...agent,
+  agentId: '0198b601-77a1-7bb8-83eb-a8fe68c97e4b',
+  displayName: 'Weekend bot',
+  matrixUserId: '@weekend-bot:matrix.test',
+  registeredAtUnixMs: Date.now() - 60 * DAY_MS,
+  slug: 'weekend-bot',
+};
+const staleHelperInstanceId = '0198b601-77a1-7bb8-83eb-a8fe68c97e4c';
+let fixtureAgents =
+  new URLSearchParams(location.search).get('agents') === 'none'
+    ? []
+    : staleScenario
+      ? [agent, staleHelper, staleWeekendBot]
+      : [agent];
 // ?update=current|failed|expired|translocated|none 看更新的几种情况：已是最新、没查成、
 // 通道清单过期、Mac 上应用在只读位置运行、还没查过。不带时上次检查查到了 0.1.0-alpha.24。
 const updateState = new URLSearchParams(location.search).get('update');
@@ -516,8 +565,25 @@ async function bootstrapFixture() {
     },
     agentDirectory: {
       listOwnedAgents: () => ready(fixtureAgents),
-      deleteAgent: unavailable,
+      deleteAgent: (agentId: string) => {
+        if (!staleScenario) return unavailable();
+        fixtureAgents = fixtureAgents.filter((entry) => entry.agentId !== agentId);
+        return ready(undefined);
+      },
       listAgentRooms: () => ready([...agentRooms]),
+      listInstanceActivity: () =>
+        ready(
+          new Map(
+            fixtureInstances
+              .filter((instance) => instance.revokedAtUnixMs === null)
+              .map((instance) => [
+                instance.agentInstanceId,
+                instance.agentInstanceId === staleHelperInstanceId
+                  ? Date.now() - 45 * DAY_MS
+                  : Date.now() - 5_000,
+              ]),
+          ),
+        ),
       bringAgentIntoRoom: (_agentId: string, catalogId: string) => {
         if (bringNothing) return ready(0);
         const known = [
@@ -544,7 +610,23 @@ async function bootstrapFixture() {
     accessManagement: {
       listProductDevices: () => ready(fixtureDevices),
       listAgentInstances: () => ready(fixtureAgents.length === 0 ? [] : fixtureInstances),
-      revokeAgentInstance: unavailable,
+      revokeAgentInstance: (agentInstanceId: string) => {
+        if (!staleScenario) return unavailable();
+        fixtureInstances = fixtureInstances.map((instance) =>
+          instance.agentInstanceId === agentInstanceId
+            ? { ...instance, revokedAtUnixMs: Date.now(), status: 'revoked' as const }
+            : instance,
+        );
+        const revoked = fixtureInstances.find(
+          (instance) => instance.agentInstanceId === agentInstanceId,
+        );
+        if (revoked === undefined) return unavailable();
+        return ready({
+          instance: revoked,
+          matrixCleanup: 'complete' as const,
+          matrixCleanupPendingReason: null,
+        });
+      },
       revokeProductDevice: unavailable,
     },
     automation: { ...runtime.services.automation, list: () => ready([reception.grant]) },

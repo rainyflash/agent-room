@@ -41,6 +41,8 @@ pub enum MatrixOperation {
     ReadPresence,
     /// 报自己的 Matrix 在线状态。
     ReportPresence,
+    /// 问 Agent 的一台 Matrix 设备上次用是什么时候。
+    ReadAgentDeviceActivity,
 }
 
 impl MatrixOperation {
@@ -77,6 +79,7 @@ impl MatrixOperation {
                 | Self::ReadRoomEvent
                 | Self::ReadPresence
                 | Self::ReportPresence
+                | Self::ReadAgentDeviceActivity
         )
     }
 }

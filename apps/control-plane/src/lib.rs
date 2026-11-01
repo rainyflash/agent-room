@@ -1674,7 +1674,8 @@ fn build_agent_instance_management(
             instances: repositories.clone(),
             revocations: repositories.clone(),
             matrix_cleanup: repositories,
-            matrix,
+            matrix: matrix.clone(),
+            matrix_activity: matrix,
             clock: system_runtime,
         },
     ))

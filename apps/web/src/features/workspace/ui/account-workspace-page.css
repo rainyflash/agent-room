@@ -133,6 +133,80 @@
   color: var(--ar-muted);
 }
 
+/* 30 天没上线的那一行：在不在线那一组上面，不用展开就看得到。 */
+.agent-groups__stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  border: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.agent-groups__stale > p {
+  min-width: 0;
+  margin: 0;
+  color: var(--ar-muted);
+}
+
+/* 一键删除对话框：和“设置 → 安全”里一键撤销电脑的那张一个样子。 */
+.stale-agent-cleanup__list {
+  display: grid;
+  max-height: min(50vh, 420px);
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.stale-agent-cleanup__list > li + li {
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.stale-agent-cleanup__list label {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  cursor: pointer;
+}
+
+.stale-agent-cleanup__list input {
+  margin-top: 0.2rem;
+}
+
+.stale-agent-cleanup__identity {
+  display: grid;
+  min-width: 0;
+  gap: 0.22rem;
+}
+
+.stale-agent-cleanup__identity strong {
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  font-weight: 620;
+}
+
+.stale-agent-cleanup__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  color: var(--ar-muted);
+  font-size: 0.78rem;
+}
+
+.stale-agent-cleanup__failure {
+  padding: 0.75rem 0.85rem;
+  margin: 0;
+  color: color-mix(in srgb, var(--color-alert) 76%, var(--color-ink));
+  background: var(--ar-danger-soft);
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 16px;
+}
+
 /* Agent 卡片：头像、名字、在不在线、在哪儿。 */
 .agent-cards {
   display: grid;

@@ -1258,6 +1258,7 @@ const services: AppServices = {
     listOwnedAgents: () => Promise.resolve(ok([])),
     deleteAgent: () => Promise.resolve(ok(undefined)),
     listAgentRooms: () => Promise.resolve(ok([])),
+    listInstanceActivity: () => Promise.resolve(ok(new Map())),
     bringAgentIntoRoom: () => Promise.resolve(ok(0)),
     leaveAgentRoom: () => Promise.resolve(ok(false)),
   },

@@ -36,6 +36,8 @@ export type AccountWorkspaceViewProps = {
   readonly roomCounts?: ReadonlyMap<string, number>;
   /** 详情里“在哪些房间”那一节。 */
   readonly agentRooms?: (agent: FleetAgent) => ReactNode;
+  /** 30 天没上线的有几个，点了打开一键删除。 */
+  readonly staleCleanup?: { readonly count: number; readonly onOpen: () => void };
 };
 
 /**
@@ -58,6 +60,7 @@ export function AccountWorkspaceView({
   agentDeletion,
   roomCounts,
   agentRooms,
+  staleCleanup,
 }: AccountWorkspaceViewProps) {
   const { t } = useTranslation();
   const [now] = useState(() => Date.now());
@@ -141,6 +144,7 @@ export function AccountWorkspaceView({
             now={now}
             onOpen={onSelectAgent}
             roomCounts={roomCounts}
+            staleCleanup={staleCleanup}
           />
         )}
       </section>

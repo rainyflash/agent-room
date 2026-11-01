@@ -24,6 +24,7 @@ import { AgentGroups } from '@/features/workspace/ui/agent-groups';
 import { AgentRoomsView, BringCandidates } from '@/features/workspace/ui/agent-rooms-section';
 import { ConnectionStatusStrip } from '@/features/workspace/ui/connection-status-strip';
 import { DeviceRail } from '@/features/workspace/ui/device-rail';
+import { StaleAgentCleanupDialog } from '@/features/workspace/ui/stale-agent-cleanup-dialog';
 import { WorkspaceDiagnostics } from '@/features/workspace/ui/workspace-diagnostics';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { RouterTestProvider } from '@/test/router-test-provider';
@@ -383,6 +384,116 @@ describe('账号工作区组件', () => {
     expect(invite).toHaveBeenCalledTimes(2);
     // 设备和服务连接这类排查信息默认收起。
     expect(screen.getByRole('region', { name: 'Service connections' })).not.toBeVisible();
+  });
+
+  it('有 30 天没上线的，不用展开不在线那一组就看得到一键删除', async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const fleet = projectAgentFleet({
+      agents: [agent(), agent(SCOUT_ID, 'Research Scout')],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [{ ...instance(), status: 'offline' }],
+    });
+    renderWithI18n(
+      <AgentGroups
+        agents={fleet.agents}
+        now={NOW}
+        onOpen={vi.fn()}
+        staleCleanup={{ count: 2, onOpen }}
+      />,
+    );
+
+    expect(screen.getByText('2 agents haven’t been online for 30 days or more.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Delete them…' }));
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('没有 30 天没上线的就不写那一行', () => {
+    const fleet = projectAgentFleet({
+      agents: [agent()],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [{ ...instance(), status: 'offline' }],
+    });
+    renderWithI18n(
+      <AgentGroups
+        agents={fleet.agents}
+        now={NOW}
+        onOpen={vi.fn()}
+        staleCleanup={{ count: 0, onOpen: vi.fn() }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Delete them…' })).not.toBeInTheDocument();
+  });
+
+  it('一键删除默认都勾上，取消勾选的留着；没删成的说有几个、能再点', async () => {
+    const user = userEvent.setup();
+    const fleet = projectAgentFleet({
+      agents: [agent(), agent(SCOUT_ID, 'Research Scout'), agent(REMOTE_ID, 'Old Helper')],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [],
+    });
+    const stale = fleet.agents.map((entry) => ({ entry, lastOnlineAtUnixMs: 1 }));
+    const onRetire = vi.fn((entry: (typeof fleet.agents)[number]) =>
+      Promise.resolve(entry.agent.agentId === SCOUT_ID ? 'agent.unavailable' : null),
+    );
+    const onClose = vi.fn();
+    renderWithI18n(
+      <StaleAgentCleanupDialog
+        agents={stale}
+        now={NOW}
+        onClose={onClose}
+        onDone={() => Promise.resolve()}
+        onRetire={onRetire}
+        reauthentication={{ recentlyAuthenticated: true, signInAgain: vi.fn() }}
+      />,
+    );
+
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes).toHaveLength(3);
+    for (const box of boxes) expect(box).toBeChecked();
+    await user.click(
+      within(screen.getByText('Old Helper').closest('label') as HTMLElement).getByRole('checkbox'),
+    );
+    await user.click(screen.getByRole('button', { name: 'Delete 2 agents' }));
+
+    expect(onRetire.mock.calls.map(([entry]) => entry.agent.displayName).sort()).toEqual([
+      'Build Agent',
+      'Research Scout',
+    ]);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '1 agent was not deleted. Try again.',
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('一键删除时服务器要重新登录，就停下来换成重新登录', async () => {
+    const user = userEvent.setup();
+    const fleet = projectAgentFleet({
+      agents: [agent(), agent(SCOUT_ID, 'Research Scout')],
+      currentMatrixDeviceId: 'WEB-CURRENT',
+      devices: [device()],
+      instances: [],
+    });
+    const onRetire = vi.fn(() => Promise.resolve('authentication.reauthentication_required'));
+    renderWithI18n(
+      <StaleAgentCleanupDialog
+        agents={fleet.agents.map((entry) => ({ entry, lastOnlineAtUnixMs: 1 }))}
+        now={NOW}
+        onClose={vi.fn()}
+        onDone={() => Promise.resolve()}
+        onRetire={onRetire}
+        reauthentication={{ recentlyAuthenticated: true, signInAgain: vi.fn() }}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Delete 2 agents' }));
+
+    expect(onRetire).toHaveBeenCalledOnce();
+    expect(await screen.findByRole('button', { name: 'Sign in again' })).toBeVisible();
   });
 
   it('设备目录为空时给出明确状态', () => {
