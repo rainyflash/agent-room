@@ -162,8 +162,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - Mac 版已经过苹果公证。别再在文档里教用户去“隐私与安全性”里放行。
 - 人的设备自动签名，不要恢复密钥（[ADR 0011](./docs/adr/0011-automatic-device-signing.md)，维护者 2026-10-02 定）：服务器保管账户签名用的钥匙，任何设备登录就自动签名、自动找回加密历史；界面上不再有恢复密钥、恢复口令和设备核对，别加回来。代价是部署方能替账户签设备，维护者接受。设计在 [specs/device-signing/design.md](./specs/device-signing/design.md)。
 - 这台电脑的授权和账户登录，连续 30 天不用才过期，用着就续，最长一年（维护者 2026-10-09 定，设计在 [specs/session-lifetime/design.md](./specs/session-lifetime/design.md)）。一年从上一次真正输密码或批准设备码算起。退出登录、移除设备、刷新令牌被重复使用、停用和删除账户照旧立刻作废。代价是被偷走的登录只要一直在用，最长能用一年，维护者接受。
+- 公开房间（维护者 2026-11-01 定，[设计](./specs/public-rooms/design.md)）：谁都能把自己的房间设成公开、进目录，房主定加入方式（直接进、申请后批准、只能邀请）；新建的公开房间不加密，房主自己管，平台不审内容；已有的房间随时能切换公开和私密（加密只能开、不能关）。房主和管理员能把管房间交给自己的 Agent，Agent 照主人定的规则自己动手，能禁言、踢人、封禁。
 
 ## 当前进度（2026-10-24）
+
+### 公开房间
+
+- 2026-11-01 维护者问能不能照 QQ 群那样随便建房间：房主定别人怎么进，房主、管理员和房主的 Agent 能踢人禁言。设计在 [specs/public-rooms/design.md](./specs/public-rooms/design.md)，进度记在它的“状态”一节，维护者定的见上面“产品决定”。
+- 同一天维护者还问私人房间能不能不经过中心服务器、点对点。他要的是服务器少存、不靠一台服务器，不是运营方读不到。当天只读量了：盘上 45 GB 里备份 16.4 GiB、旧镜像 13.7 GiB（清掉了，见下面“发布”）、三个库 1.1 GB，正文和附件约 10 MB，对话本身不到百分之一，挪到设备上省不了什么。不靠一台服务器走 Matrix 联邦（一个房间每台有成员的服务器各存一整份）加上拆控制面，放进测量阶段 0 之后的多站点设计。
+- Synapse 库里最大的表是 `device_inbox`：给很久没上线的设备排着的钥匙消息（11-01 8.3 万条、258 MB）。七成多在一个账户以前的本机 Agent 上（有 Windows 也有 Mac，看着是维护者的）（电脑天天用，这些 Agent 两三周以上没上线），两成多在人很久没用的浏览器上。别直接删它们的 Matrix 设备：Agent 再被用时会连不上；要清就在“我的 Agent”里删掉不用的 Agent。
 
 ### 生产测量（阶段 0）
 
@@ -790,6 +797,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 远程命令长时间不出声时，SSH 会被路上的设备掐断：服务器的 sshd 不发保活（`ClientAliveInterval 0`）。Alpha 69 部署前的全量五分半没有输出，`deploy_remote.py` 退出码 255，部署在服务器上照样跑完。Alpha 69 起 `run_remote.py` 和 `deploy_remote.py` 的 ssh 带 `ServerAliveInterval=20`，派生时别丢。再遇到断线，先只读看服务器上的 `release_deploy.py` 还在不在、检查点（`deployment_status.py`）到了哪一步，等它自己跑完，别重跑部署。
 - 发版部署先把生产的源码切到候选，再拿上一版渲染的 `compose.env` 做部署前备份（故意不重新渲染，留住上一版的配置）。候选在 `infra/production/compose.yaml` 里新加的必填变量（`${名字:?…}`）上一版的 `compose.env` 里没有，compose 整个起不来。Alpha 73 切完源码半分钟就部署，停在 `AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS is missing a value`，没动任何服务；等 00:00Z 的定时备份按候选重新渲染了一遍（定时备份不留旧配置），重跑才过。以前几版碰巧在切换和部署之间赶上一次定时备份。所以新变量先带默认值（`${名字:-值}`），发出去一版以后再改成必填，`test_prodops` 的 `REQUIRED_COMPOSE_VARIABLES` 卡着。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
+- 生产上我们自己的镜像每版多 3 个（控制面、网页、身份服务），2026-11-01 攒到 105 个、13.7 GiB。维护者同意后只留当前和上一版（回滚用），删了 99 个、腾出 8.6 GB。发布目录的 `cleanup_old_images.py` 做这件事：按部署目录里的 `compose.images.json` 认当前和上一版，只删我们自己的，第三方的一个不碰（`alpine`、`rclone`、`golang` 平时没容器在用，别用 `docker image prune -a`）。派生发布脚本时带上，发完和 `cleanup_old_releases.py` 一起跑。
 - 错误汇总的定时器 Alpha 81 公开时由发布脚本最后一步装上了（`install_error_digest_schedule.py`），之后跟着源码走，以后的版本不用再装，派生发布脚本时去掉这一步。换了服务器才要重装，命令在 `infra/production/README.md`。
 - 通道清单签名后 30 天过期（`tools/release_ci.py` 的 `MANIFEST_LIFETIME_SECONDS`，2026-11-01 以前是 7 天）。过期只是查不了更新：设置里写“暂时查不到新版本，下次发版以后就好”（`desktop.update.manifest_expired`），应用照常用，不用为它赶着发版。已装的桌面端最多认 30 天，别再加长。
 - 发版前看一眼控制面镜像里 IP 库的月份（`infra/production/Containerfile.control-plane` 的 `dbip-country-lite-YYYY-MM`）。DB-IP 只留当月和上个月的文件，再早的回 404，控制面镜像就建不起来；PR 上不建这个镜像，要到发布候选才红。新月份的文件不是 1 号一早就有（2026-11-01 02:22Z 11 月的还是 404），以下载页 db-ip.com/db/download/ip-to-country-lite 上写的为准；出了新的就先开个小 PR 换成它：下载、算出 `.gz` 和解开后的 SHA-256，Containerfile 里的日期和 `.gz` 的摘要一起改，两个摘要都写进 PR 描述（[设计](./specs/measurement/design.md)第 3 步）。
