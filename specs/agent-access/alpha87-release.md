@@ -107,7 +107,7 @@
   - 监控容器合计约 415 MB；Grafana 约 165 MB，上限 192 MB，最贴近上限，再涨先停它。整机可用内存约 1.7 GB。
 - Outbox 第 3 步之前要的只读行数（`BEGIN READ ONLY` 里查，没改任何东西）：`agent_room.outbox_event` 有 573 行（10-28 是 413 行），一行也没发布、没有进死信，最早 2026-09-19、最晚 2026-10-31 22:17Z。按事件分：`agent.registered.v1` 262、`agent.instance.registered.v1` 261、`device.revoked.v1` 28、`agent.retired.v1` 11、`agent.instance.revoked.v1` 11。部署以后验收登记了新的 Agent，表里一行也没多，停写确实生效了。删表的迁移等维护者同意再合（[设计](../outbox/design.md)第 3 步）。
 - DB-IP 11 月的国家库出了以后开个小 PR 换上，12 月初之前要换，不然控制面镜像建不起来。
-- 本机发布脚本：`server_fetch.py` 里拷回大文件的 `scp` 和打包小文件的 `ssh` 还没设超时，下一版派生前补上（`server_fetch.py` 照原样从 alpha87 拷，这次的改动会带过去）。
+- 本机发布脚本：发完以后 `server_fetch.py` 里拷回大文件的 `scp` 和打包小文件的 `ssh` 也不接标准输入、各设了 15 分钟超时。下一版派生时它照原样从 alpha87 拷，这些改动会带过去。
 - 维护者在设置里撤销以前的验收电脑（Alpha 74、77–86 那几台），“发布验收”里以前各轮的验收人物可以在“我的 Agent”里删掉。
 - #592 还要在真实场景里看一次；跟维护者约时间清理 Codex 包里的那份本机数据。
 - 以前让位的草稿、`release/alpha76-version` 分支照旧等维护者定。

@@ -597,7 +597,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - Alpha 87 已于 2026-11-01 公开，见 [发布记录](./specs/agent-access/alpha87-release.md)。
   - 新建私人房间时说明能换行、长中文名能建、被拒以后能改了再建（#654），Agent 不在房间里时照实说（#649），撤销电脑以后没注销成的 Matrix 设备后台再试（#638），控制面不再写 Outbox（#637），通道清单改成 30 天过期（#655），告警规则的修正（#635、#645），以及 agent-room-ops 带出来的噪音规则（#634、#641、#644、#646–#648、#650–#653）和 seroval 的安全升级（#643）。
   - #637 改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，实机验收走了一次新设备授权：第一个码过期，重发的 4 分钟内批准；长期验收设备换成 Alpha 87 那台（`agent-room.alpha87.acceptance.fresh-device`，人物在“发布验收”里）。
-  - 服务器下草稿资产时，本机的第一条 ssh 在服务器早就做完以后两个多小时没返回，原因没查实。发布目录的 `server_fetch.py` 给 ssh 加了超时、不接标准输入，派生时照原样拷过去；拷回用的 `scp` 还没设超时。
+  - 服务器下草稿资产时，本机的第一条 ssh 在服务器早就做完以后两个多小时没返回，原因没查实。发布目录的 `server_fetch.py` 里 ssh 和 scp 都加了超时、不接标准输入，派生时照原样拷过去。
   - DB-IP 11 月的国家库 11-01 还没出，这一版照旧用 2026-10 那份，12 月初之前要换。发完跑了 `telemetry-apply`，#635、#645 的规则已生效；`outbox_event` 573 行、部署以后不再增加，删表的迁移（Outbox 第 3 步）等维护者同意再合。
   - 版本 PR #656 合并到网页上线约 3 小时 58 分钟，其中约 2 小时 21 分钟是 ssh 挂住的空等、约 24 分钟在等设备码。
 - Alpha 86 已于 2026-10-28 公开，见 [发布记录](./specs/agent-access/alpha86-release.md)。
