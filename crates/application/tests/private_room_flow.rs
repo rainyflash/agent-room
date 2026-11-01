@@ -80,6 +80,42 @@ async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
 }
 
 #[tokio::test]
+async fn 说明分行的房间建得了_目录不收的名字在建_matrix_房间之前就拒() {
+    let fixture = Fixture::new();
+    let mut multiline = fixture.creation_request(speaker_permissions());
+    multiline.description = "第一行\n第二行".to_owned();
+    let snapshot = fixture
+        .service
+        .create(multiline)
+        .await
+        .expect("说明里能换行（agent-room-ops#57）");
+    assert_eq!(snapshot.catalog().description(), "第一行\n第二行");
+    let creation = fixture.matrix.creation().expect("应记录真实建房请求");
+    assert_eq!(creation.request().topic(), Some("第一行\n第二行"));
+
+    let fixture = Fixture::new();
+    let mut too_long = fixture.creation_request(speaker_permissions());
+    too_long.name = "a".repeat(129);
+    let rejected = fixture
+        .service
+        .create(too_long)
+        .await
+        .expect_err("目录只收 128 个字的名字");
+    assert_eq!(rejected.kind(), PrivateRoomFailureKind::InvalidRequest);
+    assert_eq!(rejected.rejected(), Some("room_name"));
+    assert!(fixture.events().is_empty(), "没过校验就一间也不建");
+
+    let mut myself = fixture.creation_request(speaker_permissions());
+    myself.invitations[0].principal_id = fixture.owner;
+    let rejected = fixture
+        .service
+        .create(myself)
+        .await
+        .expect_err("不能邀请自己");
+    assert_eq!(rejected.rejected(), Some("invitations.owner"));
+}
+
+#[tokio::test]
 async fn 列表只返回当前主体受邀或已加入的权威房间() {
     let fixture = Fixture::new();
     fixture

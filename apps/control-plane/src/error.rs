@@ -649,6 +649,7 @@ impl ApiError {
             operation = failure.operation(),
             stage = ?failure.stage(),
             failure = ?failure.kind(),
+            rejected = failure.rejected().unwrap_or("-"),
             "私人房间请求失败"
         );
         Self::new(status, code, category, message, correlation_id)

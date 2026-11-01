@@ -202,7 +202,13 @@ impl PrivateRoomService {
             .set_speaking_batch(&matrix_room_id, &prepared.speaking_assignments)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
-        let snapshot = self.build_snapshot(&request, prepared.room, &matrix_room_id, OPERATION)?;
+        let snapshot = self.build_snapshot(
+            &request,
+            prepared.catalog,
+            prepared.room,
+            &matrix_room_id,
+            OPERATION,
+        )?;
         let now = self.clock.now();
         match self.store.create(&snapshot, now).await {
             Ok(()) => Ok(snapshot),
@@ -866,6 +872,8 @@ impl PrivateRoomService {
         owner_matrix_user: Option<MatrixUserId>,
         operation: &'static str,
     ) -> PrivateRoomResult<PreparedPrivateRoomCreation> {
+        // 目录的规则先查：查不过的别等 Matrix 房间建好了才发现（agent-room-ops#57）。
+        let catalog = new_catalog(request, operation)?;
         let owner = request.actor.principal_id();
         let mut room = match request.created_by_agent {
             Some(agent_id) => PrivateRoom::create_by_agent(request.catalog_id, owner, agent_id),
@@ -889,11 +897,17 @@ impl PrivateRoomService {
             if invitation.principal_id == owner
                 || !invited_principals.insert(invitation.principal_id)
             {
+                let field = if invitation.principal_id == owner {
+                    "invitations.owner"
+                } else {
+                    "invitations.duplicate"
+                };
                 return Err(failure(
                     operation,
                     PrivateRoomFailureStage::Validation,
                     PrivateRoomFailureKind::InvalidRequest,
-                ));
+                )
+                .rejecting(field));
             }
             room.invite(owner, invitation.principal_id, invitation.permissions)
                 .map_err(|error| domain(operation, &error))?;
@@ -943,6 +957,7 @@ impl PrivateRoomService {
         let matrix = PrivateMatrixRoomCreation::new(matrix_request, alias)
             .map_err(|error| domain(operation, &error))?;
         Ok(PreparedPrivateRoomCreation {
+            catalog,
             room,
             matrix,
             speaking_assignments,
@@ -952,26 +967,11 @@ impl PrivateRoomService {
     fn build_snapshot(
         &self,
         request: &CreatePrivateRoom,
+        catalog: RoomCatalog,
         room: PrivateRoom,
         matrix_room_id: &MatrixRoomId,
         operation: &'static str,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
-        let catalog = RoomCatalog::new(
-            request.catalog_id,
-            RoomCatalogFields {
-                kind: RoomCatalogKind::PrivateRoom,
-                slug: None,
-                name: request.name.clone(),
-                description: request.description.clone(),
-                language: None,
-                matrix_space_id: None,
-                owner_principal_id: Some(request.actor.principal_id()),
-                visibility: RoomCatalogVisibility::Private,
-                retention_days: request.retention_days,
-                status: RoomCatalogStatus::Active,
-            },
-        )
-        .map_err(|error| domain(operation, &error))?;
         let matrix_reference = MatrixRoomReference::new(matrix_room_id.as_str().to_owned())
             .map_err(|error| domain(operation, &error))?;
         let instance = RoomInstance::restore(
@@ -1309,6 +1309,7 @@ enum MatrixMembershipRequirement {
 }
 
 struct PreparedPrivateRoomCreation {
+    catalog: RoomCatalog,
     room: PrivateRoom,
     matrix: PrivateMatrixRoomCreation,
     speaking_assignments: Vec<PrivateMatrixSpeakingAssignment>,
@@ -1323,6 +1324,28 @@ impl MatrixMembershipRequirement {
             }
         }
     }
+}
+
+fn new_catalog(
+    request: &CreatePrivateRoom,
+    operation: &'static str,
+) -> PrivateRoomResult<RoomCatalog> {
+    RoomCatalog::new(
+        request.catalog_id,
+        RoomCatalogFields {
+            kind: RoomCatalogKind::PrivateRoom,
+            slug: None,
+            name: request.name.clone(),
+            description: request.description.clone(),
+            language: None,
+            matrix_space_id: None,
+            owner_principal_id: Some(request.actor.principal_id()),
+            visibility: RoomCatalogVisibility::Private,
+            retention_days: request.retention_days,
+            status: RoomCatalogStatus::Active,
+        },
+    )
+    .map_err(|error| domain(operation, &error))
 }
 
 fn ensure_same_creation(

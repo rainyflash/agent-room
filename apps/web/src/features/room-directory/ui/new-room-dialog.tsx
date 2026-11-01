@@ -18,6 +18,15 @@ import type { Result } from '@/shared/result';
 
 const RETENTION_CHOICES = [7, 30, 90, 365] as const;
 
+/**
+ * 服务器说这份填写本身不行（400）：什么都没建，再发同一个请求也只会再被拒。放开表单让人改，
+ * 下次是一个新请求（agent-room-ops#57）。
+ */
+const REJECTED_INPUT = new Set([
+  'private_room.invalid_request',
+  'private_room.invalid_creation_body',
+]);
+
 /** 新建房间：连着服务，建好后直接进去。 */
 export function NewRoomDialog({ onClose }: { readonly onClose: () => void }) {
   const commands = useRoomCommands();
@@ -56,6 +65,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
     null,
   );
   const locked = attempt.current !== null;
+  const rejected = failure !== null && REJECTED_INPUT.has(failure);
   const invitations = parseInvitationList(inviteText);
   const inviteError = invitations.ok
     ? undefined
@@ -91,6 +101,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
         onClose();
         return;
       }
+      if (REJECTED_INPUT.has(result.error.code)) attempt.current = null;
       setFailure(result.error.code);
     } catch {
       setFailure('rooms.create_interrupted');
@@ -115,7 +126,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
           {t(
             pending
               ? 'rooms.create.creating'
-              : failure === null
+              : failure === null || rejected
                 ? 'rooms.create.submit'
                 : 'rooms.retry',
           )}
@@ -203,7 +214,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
         </Details>
       </form>
       {failure === null ? null : (
-        <Banner tone="danger" title={t('rooms.create.failed')}>
+        <Banner tone="danger" title={t(rejected ? 'rooms.create.rejected' : 'rooms.create.failed')}>
           <Details summary={t('rooms.details')}>
             <code>{failure}</code>
           </Details>
