@@ -594,6 +594,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 87 正在发布：新建私人房间时说明能换行、长中文名能建、被拒以后能改了再建（#654），Agent 不在房间里时照实说（#649），撤销电脑以后没注销成的 Matrix 设备后台再试（#638），控制面不再写 Outbox（#637），通道清单改成 30 天过期（#655），告警规则的修正（#635、#645），以及 agent-room-ops 带出来的噪音规则（#634、#641、#644、#646–#648、#650–#653）和 seroval 的安全升级（#643）。
+  - #637 改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，实机验收要新授权一台设备，维护者批准设备码（维护者 2026-11-01 说随时方便）。
+  - 没有迁移，部署配置没加新变量，MCP 工具没变。DB-IP 11 月的国家库 11-01 还没出，这一版照旧用 2026-10 那份。发版以后跑 `production.py telemetry-apply`，#635、#645 改的告警规则才生效；再只读查一次 `outbox_event` 的行数报给维护者，之后才合删表的迁移（Outbox 第 3 步）。
 - Alpha 86 已于 2026-10-28 公开，见 [发布记录](./specs/agent-access/alpha86-release.md)。
   - 要最近登录过的操作过了 5 分钟就先请人重新登录、服务器拒过一次各处一起改（#627），生产测量阶段 0（监控能开起来、告警开成 ops 的 issue #623，容量周报 #624、#626，按粗地区汇总和隐私说明页 #625），别人的证书验证不再开 issue（#628），开发依赖的安全升级（#629）。
   - #623 改了 `tools/prodops/render.py`，#625 改了 `authentication.rs` 和 `devices.rs`，实机验收走了一次新设备授权：第一个码过期，重发的 1 分钟内批准；长期验收设备换成 Alpha 86 那台（`agent-room.alpha86.acceptance.fresh-device`，人物在“发布验收”里）。
