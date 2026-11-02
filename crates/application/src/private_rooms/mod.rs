@@ -1,6 +1,7 @@
 mod agent_access;
 mod failure;
 mod invite_links;
+mod listing;
 mod models;
 mod service;
 
@@ -19,6 +20,11 @@ pub use invite_links::{
     CreateInviteLink, InviteLink, InviteLinkFailure, InviteLinkFailureKind, InviteLinkResult,
     InvitePreview, InviteeMembership, ManageInviteLink, PrivateRoomInviteLinkDependencies,
     PrivateRoomInviteLinkService, PrivateRoomInviteLinkUseCases, RedeemedInvite, UseInviteLink,
+};
+pub use listing::{
+    InspectListing, ListingFailure, ListingFailureKind, ListingResult, ListingView,
+    PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomListingUseCases,
+    UpdateListing,
 };
 pub use models::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,

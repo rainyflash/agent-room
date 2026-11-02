@@ -20,6 +20,7 @@ pub mod private_rooms;
 pub mod reception;
 pub mod regions;
 pub mod room_invites;
+pub mod room_listing;
 pub mod rooms;
 pub mod time;
 pub mod version;

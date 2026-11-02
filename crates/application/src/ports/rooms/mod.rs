@@ -22,6 +22,7 @@ mod direct_sessions;
 mod people;
 mod private_room_agents;
 mod private_room_invites;
+mod private_room_listing;
 mod private_rooms;
 mod provisioning;
 
@@ -45,6 +46,10 @@ pub use private_room_agents::{
 };
 pub use private_room_invites::{
     PrivateRoomInviteLinkRecord, PrivateRoomInviteLinkStore, SealedInviteLink,
+};
+pub use private_room_listing::{
+    PrivateRoomListingMatrix, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
+    PrivateRoomListingStore,
 };
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,

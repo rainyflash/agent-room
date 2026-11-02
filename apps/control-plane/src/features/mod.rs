@@ -22,6 +22,7 @@ pub(crate) mod network_agent_lookup;
 pub(crate) mod network_agents;
 pub(crate) mod private_room_agents;
 pub(crate) mod private_room_invites;
+pub(crate) mod private_room_listing;
 pub(crate) mod private_rooms;
 pub(crate) mod public_watch;
 pub(crate) mod reception;

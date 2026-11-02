@@ -5,6 +5,7 @@ mod departures;
 mod direct_sessions;
 mod directory;
 mod invite_links;
+mod listing;
 mod people;
 mod placements;
 mod private_room_agents;
