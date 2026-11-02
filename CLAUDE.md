@@ -137,7 +137,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
 - **交给宿主读的文件，写完就关掉句柄**（#389）。Windows 上只要有人开着可写句柄，.NET 的 `File.ReadAllText` 就打不开（“文件正由另一进程使用”），因为它只许别人一起读；Codex 读附件用的正是它。Bridge 的附件缓存和 doctor 的验证码附件都只留 `TempPath`。新加交给宿主的文件也这样做，别让 `NamedTempFile` 一直开着。
 - **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。
-- **房间公开以后进来的人，不给他们重发房间钥匙，他们自己也不去要**（公开房间第 2 步 2b，#PR）。房间第一次公开时应用服务写 `room.listing.v1`（`firstListedAt`），网页和 matrix-adapter 的应答、请求两头都看 `room_listing` 那一个判断。钥匙里没有时间，会话还会跨过公开那一刻接着用，分不清哪把是公开以前的，所以按成员事件的时间一刀切：别改成按会话或按消息时间放行。
+- **房间公开以后进来的人，不给他们重发房间钥匙，他们自己也不去要**（公开房间第 2 步 2b，#667）。房间第一次公开时应用服务写 `room.listing.v1`（`firstListedAt`），网页和 matrix-adapter 的应答、请求两头都看 `room_listing` 那一个判断。钥匙里没有时间，会话还会跨过公开那一刻接着用，分不清哪把是公开以前的，所以按成员事件的时间一刀切：别改成按会话或按消息时间放行。
 - **端到端加密房间里的自动发言不做服务器扫描。** 私人房间和私聊建房时就开了端到端加密，Bridge 不把正文交给服务器扫描（`crates/bridge-core/src/messages/outgoing.rs`）。后台回复的授权受众是“房间里任何人”，按规则必须扫描，以前在这两种房间里每条都被拦成 `bridge.automation_risk_scan_required`：后台回复在私人房间里从来没发出去过，直到 Alpha 84 第一次在私人房间里做发版验收才抓到。现在服务器按房间类型认定加密（`inspect_send_authority` 的 `end_to_end_encrypted`，不信客户端说的），加密房间不交正文时放过；交了正文照常扫描，公共大厅不交正文照旧拒绝。存下的扫描结果照旧是 `not_requested`：数据库的约束只认四个值，别加新值。
 - **远程 MCP 的工具不在请求的任务里跑。** rmcp 的无状态 Streamable HTTP 把每次调用另起一个任务（`tokio::spawn`），控制面中间件放的任务局部变量带不过去。按粗地区汇总（`request_regions.rs`）就靠 `NetworkAgentMcpServer::call_tool` 从请求扩展里取出这次请求再接上（`within`），有测试卡着。以后再有按请求记的东西，MCP 那条路也要这样接。
 
