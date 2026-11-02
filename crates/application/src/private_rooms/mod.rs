@@ -3,6 +3,7 @@ mod failure;
 mod invite_links;
 mod listing;
 mod models;
+mod public_join;
 mod service;
 
 pub use agent_access::{
@@ -32,6 +33,10 @@ pub use models::{
     ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
     PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom,
     TransferPrivateRoomOwnership,
+};
+pub use public_join::{
+    JoinPublicRoom, PublicJoinFailure, PublicJoinFailureKind, PublicJoinMembership,
+    PublicJoinResult, PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomJoinUseCases,
 };
 pub use service::{
     PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService,

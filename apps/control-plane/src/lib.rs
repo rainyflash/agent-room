@@ -69,6 +69,7 @@ use agent_room_application::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
         PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
         PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomService,
+        PublicRoomJoinDependencies, PublicRoomJoinService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     rooms::{
@@ -153,6 +154,7 @@ struct AgentFeatureHttpStates {
     room_people: features::room_people::RoomPeopleHttpState,
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
+    room_joins: features::public_room_join::PublicRoomJoinHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -591,6 +593,7 @@ fn compose_identity_routes(
         .merge(features::room_people::router(agents.room_people))
         .merge(features::private_room_invites::router(agents.room_invites))
         .merge(features::private_room_listing::router(agents.room_listing))
+        .merge(features::public_room_join::router(agents.room_joins))
         .merge(content)
 }
 
@@ -857,6 +860,7 @@ fn build_agent_feature_states(
         room_people: build_room_people_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
+        room_joins: build_room_join_http_state(config, dependencies)?,
         agents,
         instances,
         cards,
@@ -974,6 +978,25 @@ fn build_room_listing_http_state(
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
     )
+}
+
+/// 进公开房间（`specs/public-rooms/design.md`）：以房主的名义邀请，走私人房间服务。
+fn build_room_join_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<features::public_room_join::PublicRoomJoinHttpState, StartupError> {
+    let joins = Arc::new(PublicRoomJoinService::new(PublicRoomJoinDependencies {
+        rooms: dependencies.repositories.clone(),
+        listings: dependencies.repositories.clone(),
+        invitations: build_private_room_service(config, dependencies)?,
+        clock: dependencies.system_runtime.clone(),
+    }));
+    Ok(features::public_room_join::PublicRoomJoinHttpState::new(
+        joins,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    ))
 }
 
 /// 房间里的人叫什么、Agent 是谁的（`specs/room-people/design.md`）。
