@@ -14,6 +14,7 @@ mod network_agent_cleanup;
 mod network_gateway;
 mod observability;
 mod operational_metrics;
+mod public_room_activity;
 mod public_watch;
 mod request_regions;
 mod runtime;
@@ -73,6 +74,7 @@ use agent_room_application::{
         PublicRoomJoinDependencies, PublicRoomJoinService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
+    public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
     public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
@@ -148,6 +150,8 @@ struct IdentityRuntime {
     matrix_device_retry: agent_matrix_device_retry::AgentMatrixDeviceRetryWorker,
     /// 申请进公开房间的记录：不公开了的作废、处理完 30 天的删掉。
     join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker,
+    /// 发现页的“最近有人说话”：每 5 分钟读一次每间公开房间最新一条消息的时间。
+    public_room_activity: public_room_activity::PublicRoomActivityWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -251,6 +255,7 @@ pub async fn run() -> Result<(), StartupError> {
         agent_room_departures,
         matrix_device_retry,
         join_request_cleanup,
+        public_room_activity,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -280,6 +285,7 @@ pub async fn run() -> Result<(), StartupError> {
     agent_room_departures.shutdown().await;
     matrix_device_retry.shutdown().await;
     join_request_cleanup.shutdown().await;
+    public_room_activity.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -460,6 +466,7 @@ async fn build_identity_router(
         join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker::start(
             build_public_room_joins(config, &agent_dependencies)?,
         ),
+        public_room_activity: start_public_room_activity(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -1012,6 +1019,19 @@ fn build_room_join_http_state(
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
     ))
+}
+
+/// 发现页的“最近有人说话”由应用服务读时间、写进公开设置那一行。
+fn start_public_room_activity(
+    dependencies: &AgentFeatureDependencies,
+) -> public_room_activity::PublicRoomActivityWorker {
+    public_room_activity::PublicRoomActivityWorker::start(Arc::new(PublicRoomActivityService::new(
+        PublicRoomActivityDependencies {
+            store: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    )))
 }
 
 /// 进公开房间、申请和审批，定时清理申请也用它。

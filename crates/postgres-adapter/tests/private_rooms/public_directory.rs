@@ -1,6 +1,6 @@
 //! 发现页的目录（`specs/public-rooms/design.md`）：只列公开着、还在用的房间；搜名字、简介和房主昵称
 //! @ 前面那段，通配符照字面；按加入方式、最近有人说话、加不加密筛；三种排序；按分享码找详情；
-//! 登录的人在每间房的处境。
+//! 登录的人在每间房的处境；“最近有人说话”只给公开着的房间读、记的时间只往后走、不算改设置。
 //!
 //! 同一个库里别的测试也建公开房间，所以这里的房间名都带一个只属于这次的记号，按它搜。
 
@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use agent_room_application::ports::{
     JoinRequestRecord, PrivateRoomJoinRequestStore, PrivateRoomListingRecord,
-    PublicRoomDirectoryStore, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
-    PublicRoomViewerState,
+    PrivateRoomListingStore, PublicRoomActivityStore, PublicRoomDirectoryStore, PublicRoomRecord,
+    PublicRoomSearch, PublicRoomSort, PublicRoomViewerState,
 };
 use agent_room_domain::{
     room_join_requests::{JoinRequestMessage, JoinRequestStatus},
@@ -157,9 +157,67 @@ async fn 按分享码找详情_带管理员_登录的人看得到自己的处境
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 最近说话只读公开着的房间_时间只往后走_不动设置的版本() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let token = Uuid::now_v7().simple().to_string();
+    let rooms = seed_rooms(&database, &repositories, &token).await;
+
+    let listed: BTreeMap<_, _> = PublicRoomActivityStore::listed_rooms_for_activity(&repositories)
+        .await
+        .expect("可读")
+        .into_iter()
+        .collect();
+    for (room, expected) in [
+        (rooms.open, true),
+        (rooms.request, true),
+        (rooms.archived, false),
+        (rooms.unlisted, false),
+    ] {
+        assert_eq!(listed.contains_key(&room), expected, "{room:?}");
+    }
+    let open_room = PrivateRoomStore::find_by_catalog(&repositories, rooms.open)
+        .await
+        .expect("可读")
+        .expect("有房间");
+    assert_eq!(
+        listed[&rooms.open].as_str(),
+        open_room.instance().matrix_room_id().as_str()
+    );
+
+    let before = listing(&repositories, rooms.open).await;
+    for (at, expected) in [(5_000, 9_000), (12_000, 12_000)] {
+        PublicRoomActivityStore::record_last_message(&repositories, rooms.open, time(at))
+            .await
+            .expect("写入");
+        let found = search(&repositories, &token, PublicRoomSort::Active).await;
+        assert_eq!(found[0].last_message_at, Some(time(expected)), "{at}");
+    }
+    PublicRoomActivityStore::record_last_message(&repositories, rooms.request, time(1))
+        .await
+        .expect("还没说过话的也能写");
+    let after = listing(&repositories, rooms.open).await;
+    assert_eq!(after, before, "版本、改的人、改的时间都不动");
+    database.close().await;
+}
+
+async fn listing(
+    repositories: &PostgresRepositories,
+    catalog_id: RoomCatalogId,
+) -> PrivateRoomListingRecord {
+    PrivateRoomListingStore::listing(repositories, catalog_id)
+        .await
+        .expect("可读")
+        .expect("有公开设置")
+}
+
 struct SeededRooms {
     open: RoomCatalogId,
     request: RoomCatalogId,
+    archived: RoomCatalogId,
+    unlisted: RoomCatalogId,
     request_code: RoomShareCode,
     archived_code: RoomShareCode,
     unlisted_code: RoomShareCode,
@@ -256,6 +314,8 @@ async fn seed_rooms(
     SeededRooms {
         open: open.catalog().id(),
         request,
+        archived,
+        unlisted,
         request_code: request_listing.share_code,
         archived_code: archived_listing.share_code,
         unlisted_code: unlisted_listing.share_code,
