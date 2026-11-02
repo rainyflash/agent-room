@@ -4,7 +4,7 @@
 //!
 //! 第一次公开时先在 Matrix 上写 `room.listing.v1`，再存设置：之后进来的人别人不给他们重发公开
 //! 以前的房间钥匙。不加密的房间改回私密时先在 Matrix 上打开加密，再把目录上的加密标记改成 true；
-//! 写不进 Matrix 就什么都不改，房主可以再点。
+//! 写不进 Matrix 就什么都不改，房主可以再点。改回私密以后，在等的申请一起作废。
 
 use std::sync::Arc;
 
@@ -22,9 +22,9 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, PortFuture,
-        PrivateRoomListingMatrix, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-        PrivateRoomListingStore, PrivateRoomSnapshot, PrivateRoomStore, RoomContentPolicyLookup,
-        SecretFactory,
+        PrivateRoomJoinRequestStore, PrivateRoomListingMatrix, PrivateRoomListingRecord,
+        PrivateRoomListingSaveOutcome, PrivateRoomListingStore, PrivateRoomSnapshot,
+        PrivateRoomStore, RoomContentPolicyLookup, SecretFactory,
     },
 };
 
@@ -103,6 +103,8 @@ pub struct PrivateRoomListingDependencies {
     pub listings: Arc<dyn PrivateRoomListingStore>,
     pub policies: Arc<dyn RoomContentPolicyLookup>,
     pub matrix: Arc<dyn PrivateRoomListingMatrix>,
+    /// 改回私密时作废在等的申请。
+    pub requests: Arc<dyn PrivateRoomJoinRequestStore>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -112,6 +114,7 @@ pub struct PrivateRoomListingService {
     listings: Arc<dyn PrivateRoomListingStore>,
     policies: Arc<dyn RoomContentPolicyLookup>,
     matrix: Arc<dyn PrivateRoomListingMatrix>,
+    requests: Arc<dyn PrivateRoomJoinRequestStore>,
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -131,6 +134,7 @@ impl PrivateRoomListingService {
             listings: dependencies.listings,
             policies: dependencies.policies,
             matrix: dependencies.matrix,
+            requests: dependencies.requests,
             secrets: dependencies.secrets,
             clock: dependencies.clock,
         }
@@ -266,7 +270,14 @@ impl PrivateRoomListingService {
             )
             .await?
         {
-            PrivateRoomListingSaveOutcome::Saved => Ok(view(Some(&record), true)),
+            PrivateRoomListingSaveOutcome::Saved => {
+                // 作废没成也不算改回私密没成：控制面每小时清理一次，会把不公开的房间里在等的作废。
+                let _ = self
+                    .requests
+                    .void_pending_join_requests(request.catalog_id, record.updated_at)
+                    .await;
+                Ok(view(Some(&record), true))
+            }
             // 分享码没换，撞不上；真撞上了是库里的数据不对。
             PrivateRoomListingSaveOutcome::ShareCodeTaken
             | PrivateRoomListingSaveOutcome::OwnerLimitReached

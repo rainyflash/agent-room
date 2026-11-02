@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 64] = [
+const EXPECTED_TABLES: [&str; 65] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -104,6 +104,7 @@ const EXPECTED_TABLES: [&str; 64] = [
     "private_room_agent_member",
     "private_room_invite_link",
     "private_room_join_code",
+    "private_room_join_request",
     "private_room_listing",
     "private_room_membership",
     "private_room_state",
@@ -267,6 +268,7 @@ async fn 账户导出与删除状态机在真实事务中完成() {
         .expect("账户导出应成功")
         .expect("活动账户必须存在");
     assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
+    assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
 
     store_encryption_key_twice(&repositories, principal_id).await;
 

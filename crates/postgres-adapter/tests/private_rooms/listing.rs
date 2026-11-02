@@ -311,7 +311,7 @@ async fn 新建时就公开_房间记成不加密_设置一起存_超了限额�
     database.close().await;
 }
 
-use PrivateRoomListingSaveOutcome::Saved;
+pub(super) use PrivateRoomListingSaveOutcome::Saved;
 
 async fn create_listed(
     repositories: &PostgresRepositories,
@@ -323,7 +323,10 @@ async fn create_listed(
         .expect("写入不报错")
 }
 
-async fn create_room(repositories: &PostgresRepositories, owner: PrincipalId) -> RoomCatalogId {
+pub(super) async fn create_room(
+    repositories: &PostgresRepositories,
+    owner: PrincipalId,
+) -> RoomCatalogId {
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
     PrivateRoomStore::create(repositories, &snapshot(catalog_id, owner), time(0))
         .await
@@ -331,7 +334,7 @@ async fn create_room(repositories: &PostgresRepositories, owner: PrincipalId) ->
     catalog_id
 }
 
-async fn archive(
+pub(super) async fn archive(
     repositories: &PostgresRepositories,
     catalog_id: RoomCatalogId,
     owner: PrincipalId,
@@ -347,7 +350,7 @@ async fn archive(
         .expect("归档成功");
 }
 
-async fn save(
+pub(super) async fn save(
     repositories: &PostgresRepositories,
     record: &PrivateRoomListingRecord,
     expected: Option<AggregateVersion>,
@@ -358,7 +361,7 @@ async fn save(
         .expect("写入不报错")
 }
 
-fn record(
+pub(super) fn record(
     catalog_id: RoomCatalogId,
     owner: PrincipalId,
     listed: bool,
@@ -386,6 +389,6 @@ fn settings(listed: bool, join_mode: RoomJoinMode) -> RoomListingSettings {
     .unwrap()
 }
 
-fn version(value: i64) -> AggregateVersion {
+pub(super) fn version(value: i64) -> AggregateVersion {
     AggregateVersion::new(value).unwrap()
 }

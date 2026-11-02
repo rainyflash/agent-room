@@ -5,6 +5,7 @@ mod departures;
 mod direct_sessions;
 mod directory;
 mod invite_links;
+mod join_requests;
 mod listing;
 mod people;
 mod placements;

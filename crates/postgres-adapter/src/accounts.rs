@@ -235,6 +235,17 @@ async fn export_account(
                 FROM agent_room.moderation_case AS moderation
                 WHERE moderation.reporter_principal_id = principal.id
             ), '[]'::jsonb),
+            'joinRequests', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', request.catalog_entry_id,
+                    'message', request.message,
+                    'status', request.status,
+                    'requestedAt', request.requested_at,
+                    'decidedAt', request.decided_at
+                ) ORDER BY request.requested_at, request.id)
+                FROM agent_room.private_room_join_request AS request
+                WHERE request.requester_principal_id = principal.id
+            ), '[]'::jsonb),
             'externalData', jsonb_build_object(
                 'matrixTimeline', 'export_with_matrix_client_before_deletion',
                 'federatedCopies', 'controlled_by_receiving_homeservers_and_recipients',
@@ -559,6 +570,14 @@ async fn finalize_local(
             .await
             .map_err(|error| map_sqlx_error(OPERATION, &error))?;
     }
+    // 申请进公开房间时留的话跟着账户删掉（隐私说明页）。
+    sqlx::query(
+        r"DELETE FROM agent_room.private_room_join_request WHERE requester_principal_id = $1",
+    )
+    .bind(claim.principal_id.as_uuid())
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| map_sqlx_error(OPERATION, &error))?;
 
     let principal_result = sqlx::query(
         r"UPDATE agent_room.principal

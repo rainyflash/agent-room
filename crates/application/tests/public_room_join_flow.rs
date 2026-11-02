@@ -1,5 +1,6 @@
 //! 进公开房间（`specs/public-rooms/design.md`）：直接进的以房主的名义邀请、拿房主定的默认权限；
 //! 要申请的、只能邀请的不邀请；不公开的、归档的和没有的一样回答；封禁的进不来；已经在里面的照实说。
+//! 申请和审批在 `public_room_join_flow/requests.rs`。
 
 use std::sync::{Arc, Mutex};
 
@@ -7,8 +8,10 @@ use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     persistence::RepositoryResult,
     ports::{
-        Clock, PortFuture, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-        PrivateRoomListingStore, PrivateRoomSnapshot, PrivateRoomStore,
+        Clock, JoinRequestCreateOutcome, JoinRequestRecord, JoinRequestSweep, PendingJoinRequest,
+        PortFuture, PrivateRoomJoinRequestStore, PrivateRoomListingRecord,
+        PrivateRoomListingSaveOutcome, PrivateRoomListingStore, PrivateRoomSnapshot,
+        PrivateRoomStore,
     },
     private_rooms::{
         InviteByLink, JoinPublicRoom, PrivateRoomFailure, PrivateRoomFailureKind,
@@ -22,6 +25,7 @@ use agent_room_domain::{
     private_rooms::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomLifecycleStatus, PrivateRoomPermissions,
     },
+    room_join_requests::JoinRequestStatus,
     room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
@@ -34,6 +38,9 @@ use agent_room_domain::{
 use uuid::Uuid;
 
 const NOW: i64 = 1_790_000_000_000;
+
+#[path = "public_room_join_flow/requests.rs"]
+mod requests;
 
 #[tokio::test]
 async fn 直接进的房间_以房主的名义邀请_给房主定的默认权限() {
@@ -184,20 +191,24 @@ async fn 邀请那一步没成_按原因回答() {
 struct Fixture {
     service: PublicRoomJoinService,
     invitations: Arc<RecordingInvitations>,
+    requests: Arc<MemoryRequests>,
 }
 
 impl Fixture {
     fn new(room: PrivateRoom, listing: Option<PrivateRoomListingRecord>) -> Self {
         let invitations = Arc::new(RecordingInvitations::default());
+        let requests = Arc::new(MemoryRequests::default());
         let service = PublicRoomJoinService::new(PublicRoomJoinDependencies {
             rooms: Arc::new(MemoryRooms(room)),
             listings: Arc::new(MemoryListings(listing)),
+            requests: requests.clone(),
             invitations: invitations.clone(),
             clock: Arc::new(TestClock),
         });
         Self {
             service,
             invitations,
+            requests,
         }
     }
 }
@@ -445,5 +456,145 @@ impl PrivateRoomListingStore for MemoryListings {
         _catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async { unreachable!("进房间不改加密") })
+    }
+}
+
+/// 申请记在内存里；申请人的昵称都是一个像邮箱的名字。`sweeps` 记下每次清理的参数。
+#[derive(Default)]
+struct MemoryRequests {
+    records: Mutex<Vec<JoinRequestRecord>>,
+    sweeps: Mutex<Vec<(UtcMillis, UtcMillis)>>,
+}
+
+impl MemoryRequests {
+    fn records(&self) -> Vec<JoinRequestRecord> {
+        self.records.lock().unwrap().clone()
+    }
+
+    fn seed(&self, record: JoinRequestRecord) {
+        self.records.lock().unwrap().push(record);
+    }
+
+    fn pending(
+        &self,
+        catalog_id: RoomCatalogId,
+        requester: PrincipalId,
+    ) -> Option<JoinRequestRecord> {
+        self.records
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|record| {
+                record.catalog_id == catalog_id
+                    && record.requester == requester
+                    && record.status == JoinRequestStatus::Pending
+            })
+            .cloned()
+    }
+}
+
+impl PrivateRoomJoinRequestStore for MemoryRequests {
+    fn pending_join_request(
+        &self,
+        catalog_id: RoomCatalogId,
+        requester: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<JoinRequestRecord>>> {
+        let found = self.pending(catalog_id, requester);
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn last_rejected_at(
+        &self,
+        catalog_id: RoomCatalogId,
+        requester: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<UtcMillis>>> {
+        let rejected_at = self
+            .records
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|record| {
+                record.catalog_id == catalog_id
+                    && record.requester == requester
+                    && record.status == JoinRequestStatus::Rejected
+            })
+            .filter_map(|record| record.decided_at)
+            .max();
+        Box::pin(async move { Ok(rejected_at) })
+    }
+
+    fn create_join_request<'a>(
+        &'a self,
+        record: &'a JoinRequestRecord,
+    ) -> PortFuture<'a, RepositoryResult<JoinRequestCreateOutcome>> {
+        let outcome = if let Some(existing) = self.pending(record.catalog_id, record.requester) {
+            JoinRequestCreateOutcome::AlreadyPending(existing)
+        } else {
+            self.seed(record.clone());
+            JoinRequestCreateOutcome::Created
+        };
+        Box::pin(async move { Ok(outcome) })
+    }
+
+    fn pending_join_requests(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PendingJoinRequest>>> {
+        let pending = self
+            .records()
+            .into_iter()
+            .filter(|record| {
+                record.catalog_id == catalog_id && record.status == JoinRequestStatus::Pending
+            })
+            .map(|record| PendingJoinRequest {
+                record,
+                requester_display_name: "xiaolin@example.test".to_owned(),
+            })
+            .collect();
+        Box::pin(async move { Ok(pending) })
+    }
+
+    fn decide_join_request(
+        &self,
+        catalog_id: RoomCatalogId,
+        requester: PrincipalId,
+        status: JoinRequestStatus,
+        decided_by: Option<PrincipalId>,
+        decided_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let decided = self
+            .records
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|record| {
+                record.catalog_id == catalog_id
+                    && record.requester == requester
+                    && record.status == JoinRequestStatus::Pending
+            })
+            .map(|record| {
+                record.status = status;
+                record.decided_by = decided_by;
+                record.decided_at = Some(decided_at.max(record.requested_at));
+            })
+            .is_some();
+        Box::pin(async move { Ok(decided) })
+    }
+
+    fn void_pending_join_requests(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _voided_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u64>> {
+        Box::pin(async { unreachable!("改回私密时作废，进房间不作废") })
+    }
+
+    fn sweep_join_requests(
+        &self,
+        now: UtcMillis,
+        decided_before: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<JoinRequestSweep>> {
+        self.sweeps.lock().unwrap().push((now, decided_before));
+        Box::pin(async { Ok(JoinRequestSweep::default()) })
     }
 }
