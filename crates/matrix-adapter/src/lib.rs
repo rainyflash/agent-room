@@ -9,6 +9,7 @@ mod owner;
 mod provisioning;
 mod room_key_requests;
 mod room_keys;
+mod room_listing;
 mod sdk;
 mod security;
 mod store_recovery;

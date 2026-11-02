@@ -319,11 +319,84 @@ async fn 后加入的_agent_请发送者重发后读到加入前的消息且判�
 }
 
 async fn exercise_pre_join_history() {
-    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
-    let provisioner = application_service_provisioner(
-        &base_url,
-        required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN"),
+    let scene = pre_join_scene(false).await;
+    await_recovered_keys(&scene.early, &scene.late, &scene.room_id).await;
+    let after = scene
+        .late
+        .matrix()
+        .gateway()
+        .fetch_event(&scene.room_id, &scene.before_join)
+        .await
+        .expect("后来者可以重读这条消息");
+    assert_eq!(
+        after.event_type().as_str(),
+        "io.github.rainyflash.agentroom.message.preview.v1",
+        "导入早到一方重发的密钥后，加入前的消息必须解得开"
     );
+    assert!(after.end_to_end_encrypted());
+    assert!(
+        after.end_to_end_sender_trusted(),
+        "导入的会话要按发送设备判信任：设备由主人签名，就不能被当成不可信隔离"
+    );
+}
+
+/// 公开房间第 2 步（`specs/public-rooms/design.md`）：房间第一次公开（`room.listing.v1`）以后
+/// 进来的 Agent，不去要公开以前的房间密钥，早到的一方也不给。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "需要由 tools/matrix.py 提供真实 Synapse Application Service 配置"]
+async fn 房间公开以后进来的_agent_拿不到公开以前的房间密钥() {
+    timeout(
+        Duration::from_mins(5),
+        exercise_listed_room_withholds_history(),
+    )
+    .await
+    .expect("公开以后不重发房间密钥的场景必须在预算内完成");
+}
+
+async fn exercise_listed_room_withholds_history() {
+    let scene = pre_join_scene(true).await;
+    let (mut early_since, mut late_since) = (None, None);
+    // 和找得回来的那一轮一样轮流同步，给足请求、应答来回的时间。
+    for _ in 0..20 {
+        let batch = sync(scene.late.matrix().gateway(), late_since).await;
+        late_since = Some(batch.next_batch().clone());
+        let batch = sync(scene.early.matrix().gateway(), early_since).await;
+        early_since = Some(batch.next_batch().clone());
+        assert!(
+            !scene
+                .late
+                .matrix()
+                .gateway()
+                .take_recovered_sessions()
+                .iter()
+                .any(|(recovered_room, _)| recovered_room == &scene.room_id),
+            "房间公开以后进来的不能拿到公开以前的房间密钥"
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
+    let after = scene
+        .late
+        .matrix()
+        .gateway()
+        .fetch_event(&scene.room_id, &scene.before_join)
+        .await
+        .expect("后来者可以取到这条消息");
+    assert_eq!(after.event_type().as_str(), "m.room.encrypted");
+}
+
+/// 早到的一方在房间里说了一句，后来者再进来：这时它解不开那一句。`listed` 时，后来者进来之前
+/// 应用服务先写一条房间第一次公开的状态。
+struct PreJoinScene {
+    early: MatrixSdkHandoffConnection,
+    late: MatrixSdkHandoffConnection,
+    room_id: MatrixRoomId,
+    before_join: MatrixEventId,
+}
+
+async fn pre_join_scene(listed: bool) -> PreJoinScene {
+    let base_url = required_environment("AGENT_ROOM_MATRIX_TEST_BASE_URL");
+    let application_service_token = required_environment("AGENT_ROOM_MATRIX_TEST_APPSERVICE_TOKEN");
+    let provisioner = application_service_provisioner(&base_url, application_service_token.clone());
     let factory = factory(&base_url, TEST_REQUEST_TIMEOUT, 5);
     let early = managed_device(&provisioner, &factory).await;
     establish_identity(&early).await;
@@ -362,6 +435,9 @@ async fn exercise_pre_join_history() {
         &message_event(unique_value("before-join"), "后来者加入之前的消息"),
     )
     .await;
+    if listed {
+        write_room_listing(&base_url, &application_service_token, &room_id).await;
+    }
 
     let late = managed_device(&provisioner, &factory).await;
     establish_identity(&late).await;
@@ -381,24 +457,47 @@ async fn exercise_pre_join_history() {
         "m.room.encrypted",
         "房间密钥没发给后来者，它本来解不开"
     );
+    PreJoinScene {
+        early,
+        late,
+        room_id,
+        before_join: sent.event_id().clone(),
+    }
+}
 
-    await_recovered_keys(&early, &late, &room_id).await;
-    let after = late
-        .matrix()
-        .gateway()
-        .fetch_event(&room_id, sent.event_id())
+/// 以应用服务（建房的账号，权力级别够得着）写房间第一次公开的状态，时间是现在。
+async fn write_room_listing(
+    base_url: &str,
+    application_service_token: &str,
+    room_id: &MatrixRoomId,
+) {
+    let mut endpoint = reqwest::Url::parse(base_url).expect("Matrix 基础地址有效");
+    endpoint
+        .path_segments_mut()
+        .expect("Matrix 基础地址可追加路径")
+        .extend([
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            room_id.as_str(),
+            "state",
+            "io.github.rainyflash.agentroom.room.listing.v1",
+            "",
+        ]);
+    reqwest::Client::new()
+        .put(endpoint)
+        .bearer_auth(application_service_token)
+        .json(&json!({
+            "schemaVersion": "1.0",
+            "eventType": "io.github.rainyflash.agentroom.room.listing.v1",
+            "firstListedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        }))
+        .send()
         .await
-        .expect("后来者可以重读这条消息");
-    assert_eq!(
-        after.event_type().as_str(),
-        "io.github.rainyflash.agentroom.message.preview.v1",
-        "导入早到一方重发的密钥后，加入前的消息必须解得开"
-    );
-    assert!(after.end_to_end_encrypted());
-    assert!(
-        after.end_to_end_sender_trusted(),
-        "导入的会话要按发送设备判信任：设备由主人签名，就不能被当成不可信隔离"
-    );
+        .expect("写房间状态必须返回 HTTP 响应")
+        .error_for_status()
+        .expect("应用服务可以写房间第一次公开的状态");
 }
 
 /// 两边轮流同步：后来者发出请求，早到的一方收到后应答，后来者收到应答并导入。

@@ -9,6 +9,7 @@ import {
   roomKeyRequestEventType,
   roomKeysEventType,
 } from './matrix-room-key-recovery';
+import { roomListingEventType } from './room-listing';
 
 const ROOM = '!private:agent-room.test';
 const ME = '@human:agent-room.test';
@@ -69,6 +70,9 @@ class FakeCrypto {
 class FakeClient {
   readonly crypto = new FakeCrypto();
   readonly queueToDevice = vi.fn(() => Promise.resolve());
+  /** 房间第一次公开的状态的内容；没公开过是 null。 */
+  listing: Record<string, unknown> | null = null;
+  myJoinedAt = Date.UTC(2026, 8, 1);
   readonly #handlers = new Map<string, Set<Handler>>();
 
   on(event: string, handler: Handler): void {
@@ -104,10 +108,21 @@ class FakeClient {
   getRoom(roomId: string) {
     if (roomId !== ROOM) return null;
     const state = {
-      getStateEvents: (type: string) =>
-        type === matrixAgentStatusEventType ? [{ getSender: () => AGENT }] : [],
+      getStateEvents: (type: string, stateKey?: string) => {
+        if (stateKey !== undefined) {
+          const listing = this.listing;
+          return type === roomListingEventType && listing !== null
+            ? { getContent: () => listing }
+            : null;
+        }
+        return type === matrixAgentStatusEventType ? [{ getSender: () => AGENT }] : [];
+      },
     };
-    return { getLiveTimeline: () => ({ getState: () => state }) };
+    const joinedAt = this.myJoinedAt;
+    return {
+      getLiveTimeline: () => ({ getState: () => state }),
+      getMember: () => ({ events: { member: { getTs: () => joinedAt } } }),
+    };
   }
 
   asClient(): MatrixClient {
@@ -240,6 +255,25 @@ describe('请 Agent 重发房间密钥', () => {
     await new Promise((settle) => setTimeout(settle, 20));
 
     expect(client.crypto.encryptToDeviceMessages).toHaveBeenCalledOnce();
+  });
+
+  it('房间公开以后才进来的不去要以前的房间密钥，公开以前就在的照常要', async () => {
+    const listedAt = Date.UTC(2026, 8, 15);
+    const late = harness();
+    late.client.listing = { firstListedAt: new Date(listedAt).toISOString() };
+    late.client.myJoinedAt = listedAt;
+    late.client.emit('Event.decrypted', undecryptable(SESSION_A));
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(late.client.crypto.encryptToDeviceMessages).not.toHaveBeenCalled();
+    expect(late.recovery.pending(ROOM)).toBe(0);
+
+    const early = harness();
+    early.client.listing = { firstListedAt: new Date(listedAt).toISOString() };
+    early.client.myJoinedAt = listedAt - 1;
+    early.client.emit('Event.decrypted', undecryptable(SESSION_A));
+    await vi.waitFor(() => {
+      expect(early.client.queueToDevice).toHaveBeenCalledOnce();
+    });
   });
 
   it('这台设备还没由主人签名时先扣着（Agent 反正不会回答），签名以后一起发', async () => {

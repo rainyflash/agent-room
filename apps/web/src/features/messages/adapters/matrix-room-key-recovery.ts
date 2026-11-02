@@ -12,6 +12,8 @@ import {
   MATRIX_EVENT_DECRYPTED,
 } from '@/shared/matrix/matrix-sdk-enums';
 
+import { joinedAfterListing } from './room-listing';
+
 export const roomKeyRequestEventType = 'io.github.rainyflash.agentroom.room_keys.request.v1';
 export const roomKeysEventType = 'io.github.rainyflash.agentroom.room_keys.v1';
 
@@ -189,16 +191,21 @@ export class MatrixRoomKeyRecovery implements RoomKeyRecoveryStatus {
     if (code === null || !recoverableCodes.has(code)) return;
     const roomId = event.getRoomId();
     const sender = event.getSender();
+    const ownUserId = client.getUserId();
     const wire = event.getWireContent() as { session_id?: unknown; device_id?: unknown };
     if (
       roomId === undefined ||
       sender === undefined ||
-      sender === client.getUserId() ||
+      ownUserId === null ||
+      sender === ownUserId ||
       typeof wire.session_id !== 'string' ||
       !isAgentRoomAgent(client, roomId, sender)
     ) {
       return;
     }
+    // 房间公开以后才进来的，不去要以前的房间密钥：Agent 也不该给。
+    const room = client.getRoom(roomId);
+    if (room === null || joinedAfterListing(room, ownUserId)) return;
     const sessionKey = `${roomId}\u0000${wire.session_id}`;
     const last = this.#requestedAt.get(sessionKey);
     if (last !== undefined && this.#now() - last < REQUEST_TTL_MS) return;
