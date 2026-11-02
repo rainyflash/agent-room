@@ -30,7 +30,7 @@ use crate::{
 
 /// 新生成的分享码撞上别的房间时最多再换几次。约 568 亿种里撞上一次已经很难，连撞几次多半是
 /// 随机数坏了。
-const SHARE_CODE_ATTEMPTS: usize = 4;
+pub(super) const SHARE_CODE_ATTEMPTS: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingFailureKind {
@@ -302,12 +302,9 @@ impl PrivateRoomListingService {
     }
 
     fn new_share_code(&self, operation: &'static str) -> ListingResult<RoomShareCode> {
-        let random = self.secrets.generate().map_err(|_| {
+        random_share_code(self.secrets.as_ref()).ok_or_else(|| {
             ListingFailure::new(operation, ListingFailureKind::DependencyUnavailable)
-        })?;
-        let mut entropy = [0_u8; 16];
-        entropy.copy_from_slice(&self.secrets.digest(random.expose()).as_bytes()[..16]);
-        Ok(RoomShareCode::from_entropy(entropy))
+        })
     }
 
     /// 登录有效、房间在、操作者已加入。看不到的和没有这个房间一样回答。
@@ -368,6 +365,14 @@ impl PrivateRoomListingUseCases for PrivateRoomListingService {
     fn update(&self, request: UpdateListing) -> PortFuture<'_, ListingResult<ListingView>> {
         Box::pin(self.update_internal(request))
     }
+}
+
+/// 新的分享码，取安全随机数的前 16 字节。随机源不可用时是 `None`。
+pub(super) fn random_share_code(secrets: &dyn SecretFactory) -> Option<RoomShareCode> {
+    let random = secrets.generate().ok()?;
+    let mut entropy = [0_u8; 16];
+    entropy.copy_from_slice(&secrets.digest(random.expose()).as_bytes()[..16]);
+    Some(RoomShareCode::from_entropy(entropy))
 }
 
 fn view(listing: Option<&PrivateRoomListingRecord>, encrypted: bool) -> ListingView {

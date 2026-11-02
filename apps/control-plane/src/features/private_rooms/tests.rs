@@ -17,9 +17,10 @@ use agent_room_application::{
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
         GovernPrivateRoomMember, InspectPrivateRoom, InvitePrivateRoomMember, ListPrivateRooms,
-        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent,
-        PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult, PrivateRoomUseCases,
-        RenamePrivateRoom, TransferPrivateRoomOwnership,
+        ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomFailure,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
+        PrivateRoomOrigin, PrivateRoomResult, PrivateRoomUseCases, RenamePrivateRoom,
+        TransferPrivateRoomOwnership,
     },
 };
 use agent_room_domain::{
@@ -27,6 +28,7 @@ use agent_room_domain::{
     identity::Principal,
     ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId},
     private_rooms::{PrivateRoom, PrivateRoomPermissions},
+    room_listing::{RoomJoinMode, RoomListingSettings},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
@@ -71,6 +73,10 @@ struct FakeRooms {
     /// 建房、邀请是谁做的：网页上的人（`person`）还是本机设备（`device`）。
     actors: Mutex<Vec<&'static str>>,
     created_by_agent: Mutex<Option<AgentId>>,
+    /// 建房时带的公开设置；没带是 `None`。
+    listing: Mutex<Option<RoomListingSettings>>,
+    /// 设上时建房回答它。
+    create_failure: Mutex<Option<PrivateRoomFailure>>,
 }
 
 impl FakeRooms {
@@ -80,6 +86,8 @@ impl FakeRooms {
             snapshot: snapshot(),
             actors: Mutex::new(Vec::new()),
             created_by_agent: Mutex::new(None),
+            listing: Mutex::new(None),
+            create_failure: Mutex::new(None),
         }
     }
 
@@ -105,6 +113,10 @@ impl PrivateRoomUseCases for FakeRooms {
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         self.note(&request.actor);
         *self.created_by_agent.lock().unwrap() = request.created_by_agent;
+        *self.listing.lock().unwrap() = request.listing;
+        if let Some(failure) = self.create_failure.lock().unwrap().take() {
+            return Box::pin(async move { Err(failure) });
+        }
         self.record(ObservedCall {
             operation: "create",
             catalog_id: request.catalog_id,
@@ -572,6 +584,96 @@ async fn 创建要求同源会话与_uuidv7_幂等键并返回真实房间投影
             permissions: Some(speaker_permissions()),
             name: Some("Incident Room".to_owned()),
         }]
+    );
+}
+
+#[tokio::test]
+async fn 新建时可以选公开_设置原样交给用例_不合规的在用例之前拒绝() {
+    let rooms = Arc::new(FakeRooms::new());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let app = test_router(rooms.clone(), authentication);
+    let mut payload = valid_creation_body();
+    payload["listing"] = json!({
+        "listed": true,
+        "joinMode": "request",
+        "memberPermissions": { "capabilities": ["view", "speak"] },
+        "allowNetworkAgents": false,
+    });
+    let response = app
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/private-rooms",
+            &payload,
+            true,
+            true,
+        ))
+        .await
+        .expect("创建路由可调用");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let listing = rooms.listing.lock().unwrap().expect("带上了公开设置");
+    assert!(listing.listed());
+    assert_eq!(listing.join_mode(), RoomJoinMode::Request);
+    assert!(listing.member_permissions().speak());
+    assert!(!listing.member_permissions().automate());
+    assert!(!listing.allow_network_agents());
+
+    // 不带就是私密的。
+    let response = app
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/private-rooms",
+            &valid_creation_body(),
+            true,
+            true,
+        ))
+        .await
+        .expect("创建路由可调用");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert!(rooms.listing.lock().unwrap().is_none());
+
+    for bad in [
+        json!({ "listed": true, "joinMode": "open", "memberPermissions": { "capabilities": ["view", "manage"] }, "allowNetworkAgents": true }),
+        json!({ "listed": true, "joinMode": "anyone", "memberPermissions": { "capabilities": ["view"] }, "allowNetworkAgents": true }),
+        json!({ "listed": true }),
+    ] {
+        let mut payload = valid_creation_body();
+        payload["listing"] = bad.clone();
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/private-rooms",
+                &payload,
+                true,
+                true,
+            ))
+            .await
+            .expect("创建路由可调用");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(rooms.calls.lock().unwrap().len(), 2);
+
+    *rooms.create_failure.lock().unwrap() = Some(PrivateRoomFailure::new(
+        "test",
+        PrivateRoomFailureStage::Validation,
+        PrivateRoomFailureKind::PublicRoomLimitReached,
+    ));
+    let response = app
+        .oneshot(request(
+            Method::POST,
+            "/private-rooms",
+            &payload,
+            true,
+            true,
+        ))
+        .await
+        .expect("创建路由可调用");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(response).await["code"],
+        "private_room.public_limit_reached"
     );
 }
 

@@ -74,9 +74,10 @@ pub(crate) fn router(state: PrivateRoomListingHttpState) -> Router {
         .with_state(state)
 }
 
+/// 公开设置的请求正文。新建房间时选公开也用它（`POST /private-rooms` 的 `listing`）。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ListingBody {
+pub(crate) struct ListingBody {
     listed: bool,
     join_mode: JoinModeWire,
     member_permissions: PermissionsBody,
@@ -203,15 +204,22 @@ async fn update(
     )
 }
 
+impl ListingBody {
+    pub(crate) fn into_settings(self) -> Option<RoomListingSettings> {
+        RoomListingSettings::new(
+            self.listed,
+            self.join_mode.into(),
+            self.member_permissions.into_domain()?,
+            self.allow_network_agents,
+        )
+        .ok()
+    }
+}
+
 fn parse_settings(body: &[u8]) -> Option<RoomListingSettings> {
-    let body: ListingBody = serde_json::from_slice(body).ok()?;
-    RoomListingSettings::new(
-        body.listed,
-        body.join_mode.into(),
-        body.member_permissions.into_domain()?,
-        body.allow_network_agents,
-    )
-    .ok()
+    serde_json::from_slice::<ListingBody>(body)
+        .ok()?
+        .into_settings()
 }
 
 async fn session(

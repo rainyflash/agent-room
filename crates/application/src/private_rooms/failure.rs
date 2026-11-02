@@ -21,6 +21,8 @@ pub enum PrivateRoomFailureKind {
     Conflict,
     DependencyUnavailable,
     UnknownCommit,
+    /// 新建时就公开，可房主名下已经有一间公开房间（每个账户最多 1 间）。
+    PublicRoomLimitReached,
     Internal,
 }
 

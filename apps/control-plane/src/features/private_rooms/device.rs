@@ -98,6 +98,7 @@ pub(super) async fn create(
             retention_days: None,
             invitations: Vec::new(),
             created_by_agent: Some(agent_id),
+            listing: None,
         })
         .await;
     match created {

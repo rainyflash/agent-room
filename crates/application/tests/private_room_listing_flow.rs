@@ -557,6 +557,15 @@ impl PrivateRoomListingStore for MemoryListings {
         Box::pin(async move { Ok(outcome) })
     }
 
+    fn create_listed_room<'a>(
+        &'a self,
+        _snapshot: &'a PrivateRoomSnapshot,
+        _listing: &'a PrivateRoomListingRecord,
+        _created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async { unreachable!("改设置不建房") })
+    }
+
     fn mark_room_encrypted(
         &self,
         _catalog_id: RoomCatalogId,
