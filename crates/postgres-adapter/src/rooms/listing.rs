@@ -1,11 +1,11 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）。房间第一次公开时才有一行；每个账户最多 1 间
-//! 公开房间，公开时在同一个事务里锁住房主再数一遍。
+//! 公开房间，公开时（包括新建时就公开）在同一个事务里锁住房主再数一遍。
 
 use agent_room_application::{
-    persistence::RepositoryResult,
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         PortFuture, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-        PrivateRoomListingStore,
+        PrivateRoomListingStore, PrivateRoomSnapshot,
     },
 };
 use agent_room_domain::{
@@ -22,7 +22,11 @@ use crate::{
     error::{map_domain_error, map_sqlx_error},
 };
 
-use super::{decode::corrupt_data, private_room_agents::permissions};
+use super::{
+    decode::corrupt_data,
+    private_room_agents::permissions,
+    private_rooms::{create_private_room, ensure_creatable},
+};
 
 const SHARE_CODE_INDEX: &str = "private_room_listing_share_code_unique";
 const PRIMARY_KEY: &str = "private_room_listing_pkey";
@@ -99,6 +103,52 @@ impl PrivateRoomListingStore for PostgresRepositories {
                     update_listing(&mut transaction, record, expected, operation).await?
                 }
             };
+            if outcome == PrivateRoomListingSaveOutcome::Saved {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?;
+            }
+            Ok(outcome)
+        })
+    }
+
+    fn create_listed_room<'a>(
+        &'a self,
+        snapshot: &'a PrivateRoomSnapshot,
+        listing: &'a PrivateRoomListingRecord,
+        created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async move {
+            let operation = "private_room.listing.create_room";
+            ensure_creatable(snapshot, operation)?;
+            if listing.catalog_id != snapshot.catalog().id() || !listing.settings.listed() {
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Constraint,
+                ));
+            }
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let owner = snapshot.room().owner_principal_id();
+            if owner_lists_another(&mut transaction, owner, listing.catalog_id, operation).await? {
+                return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
+            }
+            // 新建时就公开的房间在 Matrix 上没开加密。
+            match create_private_room(&mut transaction, snapshot, created_at, false, operation)
+                .await
+            {
+                Ok(()) => {}
+                // 同一个请求重试时房间已经建好了，交给调用方看是不是同一次。
+                Err(error) if error.kind() == RepositoryErrorKind::Conflict => {
+                    return Ok(PrivateRoomListingSaveOutcome::Stale);
+                }
+                Err(error) => return Err(error),
+            }
+            let outcome = insert_listing(&mut transaction, listing, operation).await?;
             if outcome == PrivateRoomListingSaveOutcome::Saved {
                 transaction
                     .commit()

@@ -1,6 +1,7 @@
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::PrivateRoomPermissions,
+    room_listing::RoomListingSettings,
     time::UtcMillis,
 };
 
@@ -73,6 +74,9 @@ pub struct CreatePrivateRoom {
     pub invitations: Vec<PrivateRoomInvitation>,
     /// 建房的 Agent：Agent 建房时必须给，且是操作者账号名下的；人建房时为空。
     pub created_by_agent: Option<AgentId>,
+    /// 新建时就公开（`specs/public-rooms/design.md`）：房间不加密，建好就进目录。给了就得是公开的
+    /// 设置；只有人建房时能给。
+    pub listing: Option<RoomListingSettings>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

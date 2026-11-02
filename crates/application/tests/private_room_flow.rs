@@ -41,6 +41,11 @@ use agent_room_domain::{
 };
 use uuid::Uuid;
 
+#[path = "private_room_flow/public_creation.rs"]
+mod public_creation;
+
+use public_creation::TestListings;
+
 #[tokio::test]
 async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
     let fixture = Fixture::new();
@@ -1171,6 +1176,7 @@ struct Fixture {
     service: PrivateRoomService,
     store: Arc<TestStore>,
     matrix: Arc<TestMatrix>,
+    listings: Arc<TestListings>,
     agents: Arc<TestAgentDirectory>,
     events: Arc<Mutex<Vec<&'static str>>>,
     catalog: RoomCatalogId,
@@ -1197,6 +1203,7 @@ impl Fixture {
         ])));
         let runtime = Arc::new(TestRuntime);
         let agents = Arc::new(TestAgentDirectory::default());
+        let listings = Arc::new(TestListings::new(store.clone(), events.clone()));
         let service = PrivateRoomService::new(PrivateRoomDependencies {
             store: store.clone(),
             matrix_provisioner: matrix.clone(),
@@ -1206,6 +1213,9 @@ impl Fixture {
             trusted_matrix_readers: vec![
                 MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
             ],
+            listings: listings.clone(),
+            listing_matrix: listings.clone(),
+            secrets: listings.clone(),
             identifiers: runtime.clone(),
             clock: runtime,
         });
@@ -1213,6 +1223,7 @@ impl Fixture {
             service,
             store,
             matrix,
+            listings,
             agents,
             events,
             catalog: catalog_id(10),
@@ -1251,6 +1262,7 @@ impl Fixture {
                 permissions,
             }],
             created_by_agent: None,
+            listing: None,
         }
     }
 
@@ -1268,6 +1280,7 @@ impl Fixture {
             retention_days: None,
             invitations: Vec::new(),
             created_by_agent: Some(agent_id),
+            listing: None,
         }
     }
 

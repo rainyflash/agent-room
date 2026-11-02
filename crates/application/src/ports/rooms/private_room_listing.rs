@@ -10,7 +10,7 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{MatrixResult, MatrixRoomId, PortFuture},
+    ports::{MatrixResult, MatrixRoomId, PortFuture, PrivateRoomSnapshot},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +55,15 @@ pub trait PrivateRoomListingStore: Send + Sync {
         record: &'a PrivateRoomListingRecord,
         expected: Option<AggregateVersion>,
         owner: PrincipalId,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
+
+    /// 新建时就公开的房间：在同一个事务里建房（目录上记成不加密）、写下设置，先锁住房主再查限额。
+    /// 这个房间已经有了时回答 [`PrivateRoomListingSaveOutcome::Stale`]，交给调用方按幂等重试处理。
+    fn create_listed_room<'a>(
+        &'a self,
+        snapshot: &'a PrivateRoomSnapshot,
+        listing: &'a PrivateRoomListingRecord,
+        created_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
 
     /// 房间在 Matrix 上开了加密以后，把目录上的加密标记改成 true。

@@ -10,7 +10,7 @@ use agent_room_domain::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::features::resource_ids::parse_uuid_v7;
+use crate::features::{private_room_listing::ListingBody, resource_ids::parse_uuid_v7};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -22,6 +22,9 @@ pub(super) struct CreatePrivateRoomBody {
     retention_days: Option<u16>,
     #[serde(default)]
     invitations: Vec<InvitationBody>,
+    /// 新建时就公开（`specs/public-rooms/design.md`）：房间不加密，建好就公开。不带就是私密的。
+    #[serde(default)]
+    listing: Option<ListingBody>,
 }
 
 impl CreatePrivateRoomBody {
@@ -35,6 +38,10 @@ impl CreatePrivateRoomBody {
             .into_iter()
             .map(InvitationBody::into_invitation)
             .collect::<Option<Vec<_>>>()?;
+        let listing = match self.listing {
+            Some(listing) => Some(listing.into_settings()?),
+            None => None,
+        };
         Some(CreatePrivateRoom {
             actor: actor.into(),
             catalog_id,
@@ -43,6 +50,7 @@ impl CreatePrivateRoomBody {
             retention_days: self.retention_days,
             invitations,
             created_by_agent: None,
+            listing,
         })
     }
 }

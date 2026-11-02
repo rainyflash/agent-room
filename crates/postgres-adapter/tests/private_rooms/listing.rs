@@ -222,7 +222,106 @@ async fn 打开加密以后目录上的标记是加密的() {
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 新建时就公开_房间记成不加密_设置一起存_超了限额或撞了码什么都不留() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "listing-create").await;
+    let other_owner = seed_principal(&database.runtime, "listing-create-b").await;
+
+    let first = snapshot(RoomCatalogId::from_uuid(Uuid::now_v7()), owner);
+    let first_listing = record(first.catalog().id(), owner, true, "New001", 1);
+    assert_eq!(
+        create_listed(&repositories, &first, &first_listing).await,
+        Saved
+    );
+    let stored = PrivateRoomStore::find_by_catalog(&repositories, first.catalog().id())
+        .await
+        .expect("可读")
+        .expect("房间存上了");
+    assert_eq!(stored.room(), first.room());
+    assert_eq!(
+        PrivateRoomListingStore::listing(&repositories, first.catalog().id())
+            .await
+            .expect("可读"),
+        Some(first_listing.clone())
+    );
+    let matrix_room =
+        MatrixRoomId::new(first.instance().matrix_room_id().as_str().to_owned()).unwrap();
+    assert!(
+        !RoomContentPolicyLookup::content_policy(&repositories, &matrix_room)
+            .await
+            .expect("可读")
+            .expect("是我们的房间")
+            .end_to_end_encrypted,
+        "新建时就公开的房间不加密"
+    );
+    assert_eq!(
+        create_listed(&repositories, &first, &first_listing).await,
+        PrivateRoomListingSaveOutcome::Stale,
+        "同一间再建一次"
+    );
+
+    // 名下已经有一间公开的：第二间连房间也不留。
+    let second = snapshot(RoomCatalogId::from_uuid(Uuid::now_v7()), owner);
+    assert_eq!(
+        create_listed(
+            &repositories,
+            &second,
+            &record(second.catalog().id(), owner, true, "New002", 1)
+        )
+        .await,
+        PrivateRoomListingSaveOutcome::OwnerLimitReached
+    );
+    assert_eq!(
+        PrivateRoomStore::find_by_catalog(&repositories, second.catalog().id())
+            .await
+            .expect("可读"),
+        None
+    );
+
+    // 分享码撞了别的房间：房间也不留，换个码再建就好。
+    let third = snapshot(RoomCatalogId::from_uuid(Uuid::now_v7()), other_owner);
+    assert_eq!(
+        create_listed(
+            &repositories,
+            &third,
+            &record(third.catalog().id(), other_owner, true, "New001", 1)
+        )
+        .await,
+        PrivateRoomListingSaveOutcome::ShareCodeTaken
+    );
+    assert_eq!(
+        PrivateRoomStore::find_by_catalog(&repositories, third.catalog().id())
+            .await
+            .expect("可读"),
+        None
+    );
+    assert_eq!(
+        create_listed(
+            &repositories,
+            &third,
+            &record(third.catalog().id(), other_owner, true, "New003", 1)
+        )
+        .await,
+        Saved
+    );
+
+    database.close().await;
+}
+
 use PrivateRoomListingSaveOutcome::Saved;
+
+async fn create_listed(
+    repositories: &PostgresRepositories,
+    snapshot: &PrivateRoomSnapshot,
+    listing: &PrivateRoomListingRecord,
+) -> PrivateRoomListingSaveOutcome {
+    PrivateRoomListingStore::create_listed_room(repositories, snapshot, listing, time(0))
+        .await
+        .expect("写入不报错")
+}
 
 async fn create_room(repositories: &PostgresRepositories, owner: PrincipalId) -> RoomCatalogId {
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());

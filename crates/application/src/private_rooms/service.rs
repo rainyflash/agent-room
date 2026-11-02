@@ -21,8 +21,9 @@ use crate::{
         Clock, IdentifierFactory, MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomId,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomAgentDirectory, PrivateRoomListingMatrix, PrivateRoomListingStore,
+        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
+        PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
     },
 };
 
@@ -34,6 +35,10 @@ use super::{
     RenamePrivateRoom, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
+
+mod public_creation;
+
+use public_creation::ensure_public_creator;
 
 pub trait PrivateRoomUseCases: Send + Sync {
     fn create(
@@ -149,6 +154,11 @@ pub struct PrivateRoomDependencies {
     pub agents: Arc<dyn PrivateRoomAgentDirectory>,
     /// 必须能读取当前 Matrix 房间状态的受信服务身份，例如内容授权服务。
     pub trusted_matrix_readers: Vec<MatrixUserId>,
+    /// 下面三样只有新建时就公开的房间用（`specs/public-rooms/design.md`）：存设置、在 Matrix 上
+    /// 写下公开的时间、生成分享码。
+    pub listings: Arc<dyn PrivateRoomListingStore>,
+    pub listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
+    pub secrets: Arc<dyn SecretFactory>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -160,6 +170,9 @@ pub struct PrivateRoomService {
     principals: Arc<dyn PrivateRoomPrincipalDirectory>,
     agents: Arc<dyn PrivateRoomAgentDirectory>,
     trusted_matrix_readers: Vec<MatrixUserId>,
+    listings: Arc<dyn PrivateRoomListingStore>,
+    listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
+    secrets: Arc<dyn SecretFactory>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -173,6 +186,9 @@ impl PrivateRoomService {
             principals: dependencies.principals,
             agents: dependencies.agents,
             trusted_matrix_readers: dependencies.trusted_matrix_readers,
+            listings: dependencies.listings,
+            listing_matrix: dependencies.listing_matrix,
+            secrets: dependencies.secrets,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }
@@ -186,8 +202,12 @@ impl PrivateRoomService {
         let owner_matrix_user =
             active_room_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
         self.ensure_creator(&request, OPERATION).await?;
+        ensure_public_creator(&request, OPERATION)?;
         if let Some(existing) = self.find(request.catalog_id, OPERATION).await? {
-            return ensure_same_creation(&request, existing, OPERATION);
+            return self.ensure_same_room(&request, existing, OPERATION).await;
+        }
+        if request.listing.is_some() {
+            self.ensure_public_room_quota(&request, OPERATION).await?;
         }
 
         let prepared = self
@@ -209,21 +229,16 @@ impl PrivateRoomService {
             &matrix_room_id,
             OPERATION,
         )?;
+        if let Some(settings) = request.listing {
+            return self
+                .save_public_room(&request, settings, snapshot, &matrix_room_id, OPERATION)
+                .await;
+        }
         let now = self.clock.now();
         match self.store.create(&snapshot, now).await {
             Ok(()) => Ok(snapshot),
             Err(error) if error.kind() == RepositoryErrorKind::Conflict => {
-                let existing =
-                    self.find(request.catalog_id, OPERATION)
-                        .await?
-                        .ok_or_else(|| {
-                            failure(
-                                OPERATION,
-                                PrivateRoomFailureStage::Persistence,
-                                PrivateRoomFailureKind::Conflict,
-                            )
-                        })?;
-                ensure_same_creation(&request, existing, OPERATION)
+                self.ensure_created_by_retry(&request, OPERATION).await
             }
             Err(error) => Err(repository(
                 OPERATION,
@@ -936,7 +951,8 @@ impl PrivateRoomService {
             }
         }
 
-        let alias = private_room_alias(request.catalog_id, operation)?;
+        let public = request.listing.is_some();
+        let alias = private_room_alias(request.catalog_id, public, operation)?;
         let mut matrix_request = MatrixCreateRoom::new(
             Some(request.name.clone()),
             (!request.description.is_empty()).then(|| request.description.clone()),
@@ -947,15 +963,21 @@ impl PrivateRoomService {
         )
         .map_err(|error| domain(operation, &error))?
         .with_alias_localpart(alias.clone())
-        .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+        if !public {
+            matrix_request = matrix_request.with_end_to_end_encryption();
+        }
         if let Some(retention_days) = request.retention_days {
             matrix_request = matrix_request
                 .with_retention_days(retention_days)
                 .map_err(|error| domain(operation, &error))?;
         }
-        let matrix = PrivateMatrixRoomCreation::new(matrix_request, alias)
-            .map_err(|error| domain(operation, &error))?;
+        let matrix = if public {
+            PrivateMatrixRoomCreation::new_public(matrix_request, alias)
+        } else {
+            PrivateMatrixRoomCreation::new(matrix_request, alias)
+        }
+        .map_err(|error| domain(operation, &error))?;
         Ok(PreparedPrivateRoomCreation {
             catalog,
             room,
@@ -1369,12 +1391,17 @@ fn ensure_same_creation(
     }
 }
 
+/// 房间在 Matrix 上的稳定别名，建房重试时照它找回上一次建好的房间。新建时就公开的房间不加密，
+/// 换一个前缀：同一个房间号先按私密建了一半、再按公开重试（或者反过来）时各建各的，不会把加密的
+/// 房间当成不加密的记下来。
 fn private_room_alias(
     catalog_id: RoomCatalogId,
+    public: bool,
     operation: &'static str,
 ) -> PrivateRoomResult<MatrixRoomAliasLocalpart> {
+    let prefix = if public { "public-room" } else { "private" };
     MatrixRoomAliasLocalpart::new(format!(
-        "agent-room-private-{}",
+        "agent-room-{prefix}-{}",
         catalog_id.as_uuid().simple()
     ))
     .map_err(|_| {

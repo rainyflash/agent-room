@@ -238,6 +238,7 @@ impl NetworkAgentService {
                 retention_days: None,
                 invitations: Vec::new(),
                 created_by_agent: Some(agent_id),
+                listing: None,
             })
             .await
             .map_err(creation_failure)?;
@@ -733,7 +734,10 @@ fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
         PrivateRoomFailureKind::Conflict
         | PrivateRoomFailureKind::DependencyUnavailable
         | PrivateRoomFailureKind::UnknownCommit => dependency(),
-        PrivateRoomFailureKind::InvalidRequest | PrivateRoomFailureKind::Internal => internal(),
+        // 网络 Agent 建的房间不公开，碰不上限额。
+        PrivateRoomFailureKind::InvalidRequest
+        | PrivateRoomFailureKind::PublicRoomLimitReached
+        | PrivateRoomFailureKind::Internal => internal(),
     }
 }
 

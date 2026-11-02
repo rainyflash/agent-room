@@ -637,6 +637,12 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "私人房间操作提交状态未知，必须先对账。",
             ),
+            PrivateRoomFailureKind::PublicRoomLimitReached => (
+                StatusCode::CONFLICT,
+                "private_room.public_limit_reached",
+                ErrorCategory::Conflict,
+                "每个账户只能有一间公开房间，先把另一间改回私密。",
+            ),
             PrivateRoomFailureKind::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "private_room.internal",
