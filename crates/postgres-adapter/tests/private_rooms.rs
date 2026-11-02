@@ -508,12 +508,16 @@ async fn 乐观锁拒绝并发覆盖且数据库约束拒绝伪造房主() {
     .expect("延迟约束应在提交点校验");
     assert!(corrupt.commit().await.is_err());
 
+    // 公共大厅不加密（立即检查的约束），改成大厅时一起改掉，留给提交时的约束触发器拒绝。
     let mut public_escape = database.runtime.begin().await.expect("事务应启动");
-    sqlx::query("UPDATE agent_room.room_catalog_entry SET kind = 'public_lobby' WHERE id = $1")
-        .bind(catalog_id.as_uuid())
-        .execute(&mut *public_escape)
-        .await
-        .expect("延迟约束应在提交点校验");
+    sqlx::query(
+        "UPDATE agent_room.room_catalog_entry \
+         SET kind = 'public_lobby', end_to_end_encrypted = false WHERE id = $1",
+    )
+    .bind(catalog_id.as_uuid())
+    .execute(&mut *public_escape)
+    .await
+    .expect("延迟约束应在提交点校验");
     assert!(public_escape.commit().await.is_err());
 
     let mut lifecycle_split = database.runtime.begin().await.expect("事务应启动");
