@@ -43,3 +43,7 @@ CREATE UNIQUE INDEX private_room_listing_share_code_unique
 CREATE INDEX private_room_listing_listed_idx
     ON agent_room.private_room_listing (last_message_at DESC NULLS LAST)
     WHERE listed;
+
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON agent_room.private_room_listing
+    TO agent_room_runtime;
