@@ -191,6 +191,52 @@ async fn 迁移可重复执行且运行时角色没有建表权限() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房间目录记着加不加密_公共大厅不能记成加密的() {
+    let database = TestDatabase::connect().await;
+
+    let default_lobby_encrypted: bool = sqlx::query_scalar(
+        "SELECT end_to_end_encrypted FROM agent_room.room_catalog_entry \
+         WHERE id = '01a04772-3804-72f9-b1cd-51ca3f730b3d'::uuid",
+    )
+    .fetch_one(&database.runtime)
+    .await
+    .expect("应能读取默认公共大厅");
+    assert!(!default_lobby_encrypted, "公共大厅不加密");
+
+    // 在事务里试，看完就回滚，别的测试看不到这两条。
+    let mut transaction = database.runtime.begin().await.expect("应能开启显式事务");
+    // 没写加密标记的按加密的算：回滚到上一版时，旧代码建的私人房间和私聊都是加密的。
+    let direct_encrypted: bool = sqlx::query_scalar(
+        "INSERT INTO agent_room.room_catalog_entry ( \
+             id, kind, name, visibility, status, created_at, updated_at \
+         ) VALUES ($1, 'direct', '加密标记测试私聊', 'private', 'archived', \
+                   statement_timestamp(), statement_timestamp()) \
+         RETURNING end_to_end_encrypted",
+    )
+    .bind(Uuid::now_v7())
+    .fetch_one(&mut *transaction)
+    .await
+    .expect("私聊目录写入应成功");
+    assert!(direct_encrypted);
+
+    let error = sqlx::query(
+        "INSERT INTO agent_room.room_catalog_entry ( \
+             id, kind, name, visibility, status, created_at, updated_at \
+         ) VALUES ($1, 'public_lobby', '加密标记测试大厅', 'unlisted', 'archived', \
+                   statement_timestamp(), statement_timestamp())",
+    )
+    .bind(Uuid::now_v7())
+    .execute(&mut *transaction)
+    .await
+    .expect_err("没写 false 的公共大厅必须被约束拒绝");
+    assert_eq!(database_code(&error).as_deref(), Some("23514"));
+    transaction.rollback().await.expect("显式回滚应成功");
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 账户导出与删除状态机在真实事务中完成() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());

@@ -5,7 +5,8 @@ use agent_room_application::{
     ports::{
         ContentAccessMode, ContentAccessPolicy, ContentEventBinding, ContentLifecycleTransition,
         ContentRepository, ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint,
-        MatrixEventId, MatrixRoomId, ReclaimableContentQuery, RoomRetentionLookup,
+        MatrixEventId, MatrixRoomId, ReclaimableContentQuery, RoomContentPolicy,
+        RoomContentPolicyLookup,
     },
 };
 use agent_room_domain::{
@@ -296,19 +297,31 @@ async fn 按房间保留期的到期时间存得下_过了保留期才进回收(
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
-async fn 房间保留期按聊天房间查到目录上的设置() {
+async fn 房间保留期和加密按聊天房间查到目录上的设置() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
-    let week = seed_archived_lobby(&database.migration, Some(7)).await;
-    let unset = seed_archived_lobby(&database.migration, None).await;
+    let week = seed_archived_room(&database.migration, "public_lobby", Some(7)).await;
+    let unset = seed_archived_room(&database.migration, "public_lobby", None).await;
+    let direct = seed_archived_room(&database.migration, "direct", None).await;
     let unknown = MatrixRoomId::new(format!("!unknown-{}:matrix.test", Uuid::now_v7().simple()))
         .expect("房间 ID 有效");
+    let policy = |retention_days, end_to_end_encrypted| {
+        Some(RoomContentPolicy {
+            retention_days,
+            end_to_end_encrypted,
+        })
+    };
 
-    for (room, expected) in [(week, Some(7)), (unset, None), (unknown, None)] {
-        let days = RoomRetentionLookup::retention_days(&repositories, &room)
+    for (room, expected) in [
+        (week, policy(Some(7), false)),
+        (unset, policy(None, false)),
+        (direct, policy(None, true)),
+        (unknown, None),
+    ] {
+        let found = RoomContentPolicyLookup::content_policy(&repositories, &room)
             .await
-            .expect("保留期可查");
-        assert_eq!(days, expected, "{room:?}");
+            .expect("房间可查");
+        assert_eq!(found, expected, "{room:?}");
     }
 
     database.close().await;
@@ -320,7 +333,7 @@ async fn 补设已经存着的正文到期时间_按房间保留期再多留一�
     let database = TestDatabase::connect().await;
     let owner = seed_principal(&database.runtime).await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
-    let week = seed_archived_lobby(&database.migration, Some(7)).await;
+    let week = seed_archived_room(&database.migration, "public_lobby", Some(7)).await;
     let weekly = bound_content(&repositories, owner, 51, Some(week), None).await;
     let unlisted = bound_content(&repositories, owner, 52, None, None).await;
     let already = bound_content(&repositories, owner, 53, None, Some(time(5_000))).await;
@@ -431,19 +444,25 @@ async fn reclaimable_ids(repositories: &PostgresRepositories, now: UtcMillis) ->
     .collect()
 }
 
-/// 归档、不公开的大厅：私人房间要连带成员和状态记录，这里只要目录上的保留期；归档了也不会被
-/// 别的测试当成可进的公共大厅。
-async fn seed_archived_lobby(pool: &PgPool, retention_days: Option<i32>) -> MatrixRoomId {
+/// 归档、不公开的大厅或私聊：私人房间要连带成员和状态记录，这里只要目录上的保留期和加密；
+/// 归档了也不会被别的测试当成可进的公共大厅。公共大厅不加密，别的加密。
+async fn seed_archived_room(
+    pool: &PgPool,
+    kind: &str,
+    retention_days: Option<i32>,
+) -> MatrixRoomId {
     let catalog_id = Uuid::now_v7();
     let room = MatrixRoomId::new(format!("!retention-{}:matrix.test", catalog_id.simple()))
         .expect("房间 ID 有效");
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
-               id, kind, name, visibility, retention_days, status, created_at, updated_at
-           ) VALUES ($1, 'public_lobby', '保留期测试大厅', 'unlisted', $2, 'archived',
-                     statement_timestamp(), statement_timestamp())",
+               id, kind, name, visibility, retention_days, status, end_to_end_encrypted,
+               created_at, updated_at
+           ) VALUES ($1, $2, '保留期测试房间', 'unlisted', $3, 'archived',
+                     $2 <> 'public_lobby', statement_timestamp(), statement_timestamp())",
     )
     .bind(catalog_id)
+    .bind(kind)
     .bind(retention_days)
     .execute(pool)
     .await

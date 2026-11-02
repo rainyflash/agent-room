@@ -156,13 +156,22 @@ pub trait ContentScanner: Send + Sync {
     ) -> PortFuture<'a, ContentScanResult<ContentScanState>>;
 }
 
-/// 房间的消息保留期。聊天服务器按它删消息，存成对象的正文和附件也跟着到期。
-pub trait RoomRetentionLookup: Send + Sync {
-    /// 房间建的时候选的保留期（天）；没选过或不是我们建的房间返回 `None`，按服务器默认算。
-    fn retention_days<'a>(
+/// 房间目录上和正文有关的两样：消息保留期、加没加密。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoomContentPolicy {
+    /// 房间建的时候选的保留期（天）；没选过是 `None`，按服务器默认算。聊天服务器按它删消息，
+    /// 存成对象的正文和附件也跟着到期。
+    pub retention_days: Option<u16>,
+    /// 房间开没开端到端加密。不加密的房间不收声明成加密的正文，不然就跳过了扫描。
+    pub end_to_end_encrypted: bool,
+}
+
+pub trait RoomContentPolicyLookup: Send + Sync {
+    /// 不是我们建的房间返回 `None`。
+    fn content_policy<'a>(
         &'a self,
         matrix_room_id: &'a MatrixRoomId,
-    ) -> PortFuture<'a, RepositoryResult<Option<u16>>>;
+    ) -> PortFuture<'a, RepositoryResult<Option<RoomContentPolicy>>>;
 }
 
 /// 使用加密安全随机源生成与用户、房间和原文件名无关的对象键。

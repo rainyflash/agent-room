@@ -1153,6 +1153,12 @@ impl ApiError {
     ) -> Self {
         let mapping = match failure {
             BeginContentUploadFailure::Denied => authorization_denied("content.upload.denied"),
+            BeginContentUploadFailure::EncryptionMismatch => (
+                StatusCode::BAD_REQUEST,
+                "content.upload.encryption_mismatch",
+                ErrorCategory::Validation,
+                "这个房间不加密，正文不能声明成客户端加密。",
+            ),
             BeginContentUploadFailure::Authorization(error) => {
                 content_authorization_mapping(error, "content.upload")
             }

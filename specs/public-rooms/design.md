@@ -186,7 +186,8 @@ Matrix 的加密只能开、不能关，所以：
   - `GET|POST /private-rooms/{c}/moderation-grants`、`DELETE .../{id}`：管理授权。
   - Agent 动手：本机 Agent 走设备签名的 `/devices/current/rooms/{c}/moderation/actions`，网络 Agent 走 `/v1/network-agents/me/rooms/{c}/moderation/actions`。都进同一个治理服务，执行人记成“某人的 Agent，按某份授权”，不要最近登录，按授权查能做什么。
   - 台账里“是哪个 Agent 做的”单独一个 `GET /rooms/{c}/moderation/actions/agents`：网页对治理动作严格校验（`moderationActionSchema`），动作里多一个字段，旧版的台账整个读不出来。
-- **改成看加密标记：** `inspect_send_authority`、上传正文时核对加密方式、“@所有人”。
+- **改成看加密标记：** `inspect_send_authority`、上传正文时核对加密方式（`RoomContentPolicyLookup`，不加密的房间里声明成 `client_e2ee` 回 400 `content.upload.encryption_mismatch`）。“@所有人”不用改：网关本来就看 Matrix 上这间房到底加没加密，接收方也只认加密消息上的。
+  - 公共大厅从来不加密，约束 `room_catalog_entry_lobby_unencrypted` 卡着：哪里建大厅（测试、`tools/vertical.py`）要写 `end_to_end_encrypted = false`，不然插入失败。
 - **公开改回私密：** 应用服务往房间里写 `m.room.encryption`，再把标记改成 true。写不进 Matrix 就不改标记，告诉房主没改成、可以再点。
 - **公开以后不再重发以前的房间钥匙：** 房间第一次公开时，应用服务写一条房间状态 `io.github.rainyflash.agentroom.room.listing.v1`（`firstListedAt`，第一次公开的时间，协议里是 `RoomListingState`）。
   - 房间钥匙里没有时间，分不清哪个会话是公开以前建的，同一个会话还可能跨过这一刻接着用，所以一刀切：成员事件在这一刻以后的人，别人不给他们重发房间钥匙（网页的 `MatrixRoomKeyResponder`、matrix-adapter 的 `room_keys`），他们自己也不去要（网页的 `MatrixRoomKeyRecovery`、matrix-adapter 的 `room_key_requests`）。两边都在 `room_listing` 那一个判断里。
@@ -328,4 +329,5 @@ Matrix 的加密只能开、不能关，所以：
 - 2026-11-01 写设计（#660）。维护者当天看过，定了六条（见“维护者定的”），按这份做。
 - 2026-11-01 维护者又补充：加常驻公告（第 6 步，原来的第 6、7 步顺延成第 7、8 步），去掉每间 500 人的上限（#661）。
 - 2026-11-02 加发现页和分享链接（#665）：维护者看过设计稿（Artifact“公开房间：发现与分享”，六张）同意。和设计稿不一样的一处：卡片上不写在线人数，改写多久以前有人说话。第 3、4 步各拆成三个 PR。
+- 2026-11-02 第 2 步拆成 2a、2b。2a（#PR）：迁移 `202611020001_room_catalog_encryption.sql` 给房间目录加 `end_to_end_encrypted`（默认 true，公共大厅写 false，约束卡着大厅不能是加密的），自动发言要不要扫描、上传正文核对加密方式都看它。“@所有人”本来就看 Matrix 上的加密，没改。
 - 2026-11-02 第 2 步 2b（#667）：协议加 `RoomListingState`；网页和 matrix-adapter 看到它，就不给公开以后进来的人重发房间钥匙，他们自己也不去要。和设计不一样：原来写的是“不重发这一刻以前的钥匙”，可钥匙里没有时间、会话还会跨过这一刻接着用，分不出来，所以改成公开以后进来的人一律不重发（见上面“公开以后不再重发以前的房间钥匙”）。真实 Synapse 的测试 `房间公开以后进来的_agent_拿不到公开以前的房间密钥` 只在派发 `suite=all` 时跑。

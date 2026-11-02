@@ -480,9 +480,9 @@ async fn seed_public_room(pool: &PgPool, fixture: &AutomationFixture, room_insta
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
                id, kind, slug, name, description, visibility, status,
-               created_at, updated_at
+               end_to_end_encrypted, created_at, updated_at
             ) VALUES ($1, 'public_lobby', $2, '自动化测试大厅', '', 'public',
-                      'active', statement_timestamp(), statement_timestamp())",
+                      'active', false, statement_timestamp(), statement_timestamp())",
     )
     .bind(fixture.catalog.as_uuid())
     .bind(format!("automation-{}", fixture.catalog.as_uuid().simple()))

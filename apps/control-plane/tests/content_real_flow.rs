@@ -11,7 +11,8 @@ use agent_room_application::{
     ports::{
         Clock, ContentAccessMode, ContentAuthorizationDecision, ContentAuthorizationRequest,
         ContentAuthorizationResult, ContentByteStream, ContentMembershipAuthorizer,
-        ContentRepository, PortFuture, PrivateContentObjectStore, RoomRetentionLookup, SecretValue,
+        ContentRepository, PortFuture, PrivateContentObjectStore, RoomContentPolicyLookup,
+        SecretValue,
     },
 };
 use agent_room_content_adapter::{
@@ -168,7 +169,7 @@ impl ContentPipeline {
         let database = TestDatabase::connect().await;
         let owner = seed_principal(&database.runtime).await;
         let repositories = Arc::new(PostgresRepositories::new(database.runtime.clone()));
-        let retention: Arc<dyn RoomRetentionLookup> = repositories.clone();
+        let rooms: Arc<dyn RoomContentPolicyLookup> = repositories.clone();
         let repository: Arc<dyn ContentRepository> = repositories;
         let object_store = object_store();
         let scanner = Arc::new(ClamAvContentScanner::new(
@@ -181,7 +182,7 @@ impl ContentPipeline {
             storage_keys: Arc::new(SecureContentStorageKeyFactory),
             repository: repository.clone(),
             authorizer: Arc::new(AllowRoomMembership),
-            retention,
+            rooms,
         });
         let complete = CompleteContentUploadService::new(CompleteContentUploadDependencies {
             clock: Arc::new(FixedClock::at(2_000)),

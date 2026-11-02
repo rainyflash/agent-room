@@ -3,7 +3,7 @@ use agent_room_application::{
     ports::{
         ContentAccessPolicy, ContentEventBinding, ContentLifecycleTransition, ContentRepository,
         ContentUploadClaim, ContentUploadClaimOutcome, MatrixRoomId, PortFuture,
-        ReclaimableContentQuery, RoomRetentionLookup,
+        ReclaimableContentQuery, RoomContentPolicy, RoomContentPolicyLookup,
     },
 };
 use agent_room_domain::{
@@ -30,16 +30,16 @@ pub use rate_limit::{
     ContentDownloadLimitPolicy, ContentDownloadLimitPolicyError, PostgresContentDownloadLimiter,
 };
 
-impl RoomRetentionLookup for PostgresRepositories {
-    fn retention_days<'a>(
+impl RoomContentPolicyLookup for PostgresRepositories {
+    fn content_policy<'a>(
         &'a self,
         matrix_room_id: &'a MatrixRoomId,
-    ) -> PortFuture<'a, RepositoryResult<Option<u16>>> {
+    ) -> PortFuture<'a, RepositoryResult<Option<RoomContentPolicy>>> {
         Box::pin(async move {
-            let operation = "content.room_retention";
-            // 公共大厅可能有好几个分片，同一个目录条目，保留期一样。
-            let days: Option<Option<i32>> = sqlx::query_scalar(
-                r"SELECT catalog.retention_days
+            let operation = "content.room_policy";
+            // 公共大厅可能有好几个分片，同一个目录条目，保留期和加密都一样。
+            let row: Option<(Option<i32>, bool)> = sqlx::query_as(
+                r"SELECT catalog.retention_days, catalog.end_to_end_encrypted
                   FROM agent_room.room_instance AS instance
                   JOIN agent_room.room_catalog_entry AS catalog
                     ON catalog.id = instance.catalog_entry_id
@@ -50,9 +50,16 @@ impl RoomRetentionLookup for PostgresRepositories {
             .fetch_optional(self.pool())
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
-            days.flatten()
-                .map(|days| u16::try_from(days).map_err(|_| constraint(operation)))
-                .transpose()
+            row.map(|(days, end_to_end_encrypted)| {
+                let retention_days = days
+                    .map(|days| u16::try_from(days).map_err(|_| constraint(operation)))
+                    .transpose()?;
+                Ok(RoomContentPolicy {
+                    retention_days,
+                    end_to_end_encrypted,
+                })
+            })
+            .transpose()
         })
     }
 }

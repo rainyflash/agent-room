@@ -80,7 +80,7 @@ pub use content::{
     ContentStreamResult, ContentTicketFailure, ContentTicketFailureKind, ContentTicketResult,
     ContentUploadClaim, ContentUploadClaimOutcome, ContentUploadFingerprint, ObjectStoreFailure,
     ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
-    PrivateContentObjectStore, ReclaimableContentQuery, RoomRetentionLookup,
+    PrivateContentObjectStore, ReclaimableContentQuery, RoomContentPolicy, RoomContentPolicyLookup,
 };
 pub use devices::{
     ComputerGrantRecord, ComputerGrantStore, DEVICE_REFRESH_REPLAY_SALT_LENGTH,

@@ -915,11 +915,11 @@ def seed_public_catalog() -> str:
         f"""
 INSERT INTO agent_room.room_catalog_entry (
     id, kind, slug, name, description, language,
-    visibility, status, created_at, updated_at
+    visibility, status, end_to_end_encrypted, created_at, updated_at
 ) VALUES (
     '{CATALOG_SEED_ID}', 'public_lobby', '{CATALOG_SLUG}',
     'Vertical Codex Lobby', 'Task 24 real vertical slice', 'en',
-    'public', 'active', now(), now()
+    'public', 'active', false, now(), now()
 )
 ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
     name = EXCLUDED.name,
