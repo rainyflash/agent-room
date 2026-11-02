@@ -50,7 +50,7 @@ reason = "设密码时两次输入不一样，页面上直接提示了"
 
 [[ignore]]
 service = "identity"
-summary = '^UPDATE_PASSWORD_ERROR error=password_rejected$'
+summary = '^(UPDATE_PASSWORD_ERROR|UPDATE_CREDENTIAL_ERROR) error=password_rejected$'
 reason = "设新密码时不合要求（太短、没带数字之类），页面上直接用 reason 里那句提示了，人改一下就行；2026-11-02 生产上那次是 invalidPasswordMinLengthMessage，只有一条。汇总的指纹里只有事件类型和 error，看不到 reason；真出毛病时会和别的错一起出现在别的指纹里"
 
 [[ignore]]
