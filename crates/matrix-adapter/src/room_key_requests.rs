@@ -44,6 +44,7 @@ use crate::{
         ROOM_KEYS_EVENT_TYPE, RequestOrigin, SCHEMA_VERSION, is_key_like, random_passphrase,
         request_origin,
     },
+    room_listing::joined_after_listing,
     trust::SenderTrustUpgrades,
 };
 
@@ -191,6 +192,10 @@ impl RoomKeyRequester {
             std::mem::take(&mut *self.queued.lock().unwrap_or_else(PoisonError::into_inner));
         let encryption = client.encryption();
         for (target, session_ids) in batches {
+            if let Err(reason) = joined_before_listing(client, &target.room).await {
+                tracing::debug!(room = %target.room, reason, "没有请求重发房间密钥");
+                continue;
+            }
             if let Err(reason) = self.request(&encryption, &target, session_ids).await {
                 tracing::debug!(
                     room = %target.room,
@@ -419,6 +424,16 @@ impl RoomKeyRequester {
                 );
         }
     }
+}
+
+/// 房间公开以后才进来的，不去要以前的房间密钥（`room_listing`）：别人也不该给。
+async fn joined_before_listing(client: &Client, room_id: &RoomId) -> Result<(), &'static str> {
+    let room = client.get_room(room_id).ok_or("不在这个房间")?;
+    let own_user_id = client.user_id().ok_or("还没登录")?;
+    if joined_after_listing(&room, own_user_id).await? {
+        return Err("这台设备是房间公开以后才进来的");
+    }
+    Ok(())
 }
 
 /// 这个事件值得请求吗：缺会话或缺消息序号、不是自己发的，并且带着会话 ID。

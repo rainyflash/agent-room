@@ -14,7 +14,8 @@
     { "$ref": "#/$defs/HandoffRequestEvent" },
     { "$ref": "#/$defs/HandoffReceiptEvent" },
     { "$ref": "#/$defs/RoomKeyRequestEvent" },
-    { "$ref": "#/$defs/RoomKeysEvent" }
+    { "$ref": "#/$defs/RoomKeysEvent" },
+    { "$ref": "#/$defs/RoomListingState" }
   ],
   "$defs": {
     "ErrorCategory": {
@@ -879,6 +880,17 @@
       ],
       "additionalProperties": true,
       "maxProperties": 20
+    },
+    "RoomListingState": {
+      "type": "object",
+      "required": ["schemaVersion", "eventType", "firstListedAt"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.room.listing.v1" },
+        "firstListedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
     },
     "RoomKeyRequestEvent": {
       "type": "object",

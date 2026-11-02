@@ -11,6 +11,7 @@ mod tests {
         AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffReceiptEvent,
         HandoffRequestEvent, MessagePreviewEvent, MessagePreviewEventV2, MessageRevisionEvent,
         MessageRevisionEventV2, ModerationNoticeEvent, RoomKeyRequestEvent, RoomKeysEvent,
+        RoomListingState,
     };
 
     fn project_path(relative: &str) -> PathBuf {
@@ -39,103 +40,59 @@ mod tests {
     }
 
     fn assert_generated_type_deserializes(value: Value) {
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.message.preview.v1".into(),
-            ))
-        {
-            serde_json::from_value::<MessagePreviewEvent>(value)
-                .expect("消息预览必须符合生成的 Rust 类型");
-            return;
+        let event_type = value
+            .get("eventType")
+            .and_then(Value::as_str)
+            .and_then(|event_type| event_type.strip_prefix("io.github.rainyflash.agentroom."))
+            .map(str::to_owned);
+        match event_type.as_deref() {
+            Some("message.preview.v1") => {
+                deserializes::<MessagePreviewEvent>(value, "消息预览必须符合生成的 Rust 类型");
+            }
+            Some("message.preview.v2") => {
+                deserializes::<MessagePreviewEventV2>(value, "v2 消息预览必须符合生成的 Rust 类型");
+            }
+            Some("message.revision.v1") => {
+                deserializes::<MessageRevisionEvent>(value, "消息修订必须符合生成的 Rust 类型");
+            }
+            Some("message.revision.v2") => {
+                deserializes::<MessageRevisionEventV2>(
+                    value,
+                    "v2 消息修订必须符合生成的 Rust 类型",
+                );
+            }
+            Some("moderation.notice.v1") => {
+                deserializes::<ModerationNoticeEvent>(value, "治理通知必须符合生成的 Rust 类型");
+            }
+            Some("agent.status.v1") => {
+                deserializes::<AgentStatusEvent>(value, "状态事件必须符合生成的 Rust 类型");
+            }
+            Some("handoff.request.v1") => {
+                deserializes::<HandoffRequestEvent>(value, "交付事件必须符合生成的 Rust 类型");
+            }
+            Some("handoff.receipt.v1") => {
+                deserializes::<HandoffReceiptEvent>(value, "交付回执必须符合生成的 Rust 类型");
+            }
+            Some("room_keys.request.v1") => deserializes::<RoomKeyRequestEvent>(
+                value,
+                "房间密钥重发请求必须符合生成的 Rust 类型",
+            ),
+            Some("room_keys.v1") => {
+                deserializes::<RoomKeysEvent>(value, "重发的房间密钥必须符合生成的 Rust 类型");
+            }
+            Some("room.listing.v1") => deserializes::<RoomListingState>(
+                value,
+                "房间第一次公开的状态必须符合生成的 Rust 类型",
+            ),
+            _ if value.get("protocolVersions").is_some() => {
+                deserializes::<CapabilityManifest>(value, "能力清单必须符合生成的 Rust 类型");
+            }
+            _ => deserializes::<ErrorEnvelope>(value, "错误信封必须符合生成的 Rust 类型"),
         }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.message.preview.v2".into(),
-            ))
-        {
-            serde_json::from_value::<MessagePreviewEventV2>(value)
-                .expect("v2 消息预览必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.message.revision.v1".into(),
-            ))
-        {
-            serde_json::from_value::<MessageRevisionEvent>(value)
-                .expect("消息修订必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.message.revision.v2".into(),
-            ))
-        {
-            serde_json::from_value::<MessageRevisionEventV2>(value)
-                .expect("v2 消息修订必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.moderation.notice.v1".into(),
-            ))
-        {
-            serde_json::from_value::<ModerationNoticeEvent>(value)
-                .expect("治理通知必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.agent.status.v1".into(),
-            ))
-        {
-            serde_json::from_value::<AgentStatusEvent>(value)
-                .expect("状态事件必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.handoff.request.v1".into(),
-            ))
-        {
-            serde_json::from_value::<HandoffRequestEvent>(value)
-                .expect("交付事件必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.handoff.receipt.v1".into(),
-            ))
-        {
-            serde_json::from_value::<HandoffReceiptEvent>(value)
-                .expect("交付回执必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.room_keys.request.v1".into(),
-            ))
-        {
-            serde_json::from_value::<RoomKeyRequestEvent>(value)
-                .expect("房间密钥重发请求必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("eventType")
-            == Some(&Value::String(
-                "io.github.rainyflash.agentroom.room_keys.v1".into(),
-            ))
-        {
-            serde_json::from_value::<RoomKeysEvent>(value)
-                .expect("重发的房间密钥必须符合生成的 Rust 类型");
-            return;
-        }
-        if value.get("protocolVersions").is_some() {
-            serde_json::from_value::<CapabilityManifest>(value)
-                .expect("能力清单必须符合生成的 Rust 类型");
-            return;
-        }
+    }
 
-        serde_json::from_value::<ErrorEnvelope>(value).expect("错误信封必须符合生成的 Rust 类型");
+    fn deserializes<T: serde::de::DeserializeOwned>(value: Value, message: &str) {
+        serde_json::from_value::<T>(value).expect(message);
     }
 
     #[test]
