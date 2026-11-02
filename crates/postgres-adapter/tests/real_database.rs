@@ -206,14 +206,30 @@ async fn 房间目录记着加不加密_公共大厅不能记成加密的() {
     // 在事务里试，看完就回滚，别的测试看不到这两条。
     let mut transaction = database.runtime.begin().await.expect("应能开启显式事务");
     // 没写加密标记的按加密的算：回滚到上一版时，旧代码建的私人房间和私聊都是加密的。
+    // 私聊要有主人。
+    let owner = PrincipalId::from_uuid(Uuid::now_v7());
+    sqlx::query(
+        "INSERT INTO agent_room.principal (\
+            id, oidc_issuer, oidc_subject, matrix_user_id, display_name, locale,\
+            status, created_at, updated_at, version\
+         ) VALUES ($1, 'https://issuer.test', $2, $3, '加密标记测试主体', 'zh-CN',\
+            'active', clock_timestamp(), clock_timestamp(), 0)",
+    )
+    .bind(owner.as_uuid())
+    .bind(format!("subject-{owner}"))
+    .bind(format!("@encryption-{owner}:matrix.agent-room.localhost"))
+    .execute(&mut *transaction)
+    .await
+    .expect("测试主体写入应成功");
     let direct_encrypted: bool = sqlx::query_scalar(
         "INSERT INTO agent_room.room_catalog_entry ( \
-             id, kind, name, visibility, status, created_at, updated_at \
-         ) VALUES ($1, 'direct', '加密标记测试私聊', 'private', 'archived', \
+             id, kind, name, visibility, status, owner_principal_id, created_at, updated_at \
+         ) VALUES ($1, 'direct', '加密标记测试私聊', 'private', 'archived', $2, \
                    statement_timestamp(), statement_timestamp()) \
          RETURNING end_to_end_encrypted",
     )
     .bind(Uuid::now_v7())
+    .bind(owner.as_uuid())
     .fetch_one(&mut *transaction)
     .await
     .expect("私聊目录写入应成功");
