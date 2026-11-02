@@ -73,6 +73,7 @@ use agent_room_application::{
         PublicRoomJoinDependencies, PublicRoomJoinService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
+    public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
         LobbyProvisioningPolicy, LobbyProvisioningService,
@@ -158,6 +159,7 @@ struct AgentFeatureHttpStates {
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
+    public_rooms: features::public_rooms::PublicRoomsHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -602,6 +604,7 @@ fn compose_identity_routes(
         .merge(features::private_room_invites::router(agents.room_invites))
         .merge(features::private_room_listing::router(agents.room_listing))
         .merge(features::public_room_join::router(agents.room_joins))
+        .merge(features::public_rooms::router(agents.public_rooms))
         .merge(content)
 }
 
@@ -869,6 +872,15 @@ fn build_agent_feature_states(
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
+        public_rooms: features::public_rooms::PublicRoomsHttpState {
+            directory: Arc::new(PublicRoomDirectoryService::new(
+                PublicRoomDirectoryDependencies {
+                    directory: dependencies.repositories.clone(),
+                    clock: dependencies.system_runtime.clone(),
+                },
+            )),
+            authentication: dependencies.authentication.clone(),
+        },
         agents,
         instances,
         cards,

@@ -29,6 +29,8 @@ use uuid::Uuid;
 mod join_requests;
 #[path = "private_rooms/listing.rs"]
 mod listing;
+#[path = "private_rooms/public_directory.rs"]
+mod public_directory;
 
 struct TestDatabase {
     migration: PgPool,

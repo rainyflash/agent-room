@@ -313,7 +313,7 @@ async fn 新建时就公开_房间记成不加密_设置一起存_超了限额�
 
 pub(super) use PrivateRoomListingSaveOutcome::Saved;
 
-async fn create_listed(
+pub(super) async fn create_listed(
     repositories: &PostgresRepositories,
     snapshot: &PrivateRoomSnapshot,
     listing: &PrivateRoomListingRecord,
@@ -379,7 +379,7 @@ pub(super) fn record(
     }
 }
 
-fn settings(listed: bool, join_mode: RoomJoinMode) -> RoomListingSettings {
+pub(super) fn settings(listed: bool, join_mode: RoomJoinMode) -> RoomListingSettings {
     RoomListingSettings::new(
         listed,
         join_mode,

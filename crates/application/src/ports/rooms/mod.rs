@@ -26,6 +26,7 @@ mod private_room_join_requests;
 mod private_room_listing;
 mod private_rooms;
 mod provisioning;
+mod public_room_directory;
 
 use std::sync::Arc;
 
@@ -66,6 +67,10 @@ pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
     RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
     RoomProvisioningTarget,
+};
+pub use public_room_directory::{
+    PublicRoomDetailRecord, PublicRoomDirectoryStore, PublicRoomRecord, PublicRoomSearch,
+    PublicRoomSort, PublicRoomViewerState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
