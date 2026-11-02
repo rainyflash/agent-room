@@ -421,6 +421,16 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
         self.assertEqual(sum(digest.ignored.values()), 15)
 
+    def test_rejected_new_password_is_noise(self) -> None:
+        line = (
+            KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", "UPDATE_PASSWORD_ERROR")
+            .replace("invalid_request", "password_rejected")
+            .replace("Invalid scopes: openidprofile", "invalidPasswordMinLengthMessage")
+        )
+        digest = summarize({"identity": [line]}, load_noise(NOISE_FILE))
+        self.assertEqual(digest.findings, [])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_multipart_probe_at_the_chat_server_is_noise(self) -> None:
         probe = (
             "2026-10-28 14:47:16,222 WARNING synapse.http.site Aborting connection from "
