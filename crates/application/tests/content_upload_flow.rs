@@ -22,7 +22,8 @@ use agent_room_application::{
         ContentStorageKeyFactory, ContentStorageKeyGenerationResult, ContentUploadClaim,
         ContentUploadClaimOutcome, ContentUploadFingerprint, MatrixRoomId, ObjectStoreFailure,
         ObjectStoreFailureKind, ObjectStoreResult, ObjectWriteReceipt, OpenedContentObject,
-        PortFuture, PrivateContentObjectStore, ReclaimableContentQuery, RoomRetentionLookup,
+        PortFuture, PrivateContentObjectStore, ReclaimableContentQuery, RoomContentPolicy,
+        RoomContentPolicyLookup,
     },
 };
 use agent_room_domain::{
@@ -74,9 +75,9 @@ async fn 正文跟着房间保留期到期_客户端声明的到期时间不变(
     const DAY: i64 = 86_400_000;
     for (retention_days, lifetime_days) in [(None, 31), (Some(7), 8), (Some(365), 366)] {
         let repository = Arc::new(MemoryContentRepository::default());
-        let service = begin_service_with_retention(
+        let service = begin_service_with_room(
             Arc::clone(&repository),
-            Arc::new(FixedRetention(Ok(retention_days))),
+            Arc::new(FixedRoom(Ok(Some(room_policy(retention_days, false))))),
         );
 
         let outcome = service
@@ -95,17 +96,65 @@ async fn 正文跟着房间保留期到期_客户端声明的到期时间不变(
 }
 
 #[tokio::test]
-async fn 查不到房间保留期时不建上传() {
+async fn 不加密的房间不收声明成客户端加密的正文() {
     let repository = Arc::new(MemoryContentRepository::default());
-    let service = begin_service_with_retention(
+    let service = begin_service_with_room(
         Arc::clone(&repository),
-        Arc::new(FixedRetention(Err(RepositoryErrorKind::Unavailable))),
+        Arc::new(FixedRoom(Ok(Some(room_policy(None, false))))),
+    );
+
+    let failure = service
+        .begin(upload_request(b"hello", ContentEncryptionMode::ClientE2ee))
+        .await
+        .expect_err("声明成加密就跳过了扫描");
+    assert!(matches!(
+        failure,
+        BeginContentUploadFailure::EncryptionMismatch
+    ));
+    assert_eq!(repository.content_count(), 0);
+
+    let outcome = service
+        .begin(upload_request(b"hello", ContentEncryptionMode::ServerSide))
+        .await
+        .expect("服务端可见的照收");
+    assert_eq!(
+        outcome_content(&outcome).scan_state(),
+        ContentScanState::Pending
+    );
+}
+
+#[tokio::test]
+async fn 加密的房间两种声明都收() {
+    for mode in [
+        ContentEncryptionMode::ClientE2ee,
+        ContentEncryptionMode::ServerSide,
+    ] {
+        let repository = Arc::new(MemoryContentRepository::default());
+        let service = begin_service_with_room(
+            Arc::clone(&repository),
+            Arc::new(FixedRoom(Ok(Some(room_policy(None, true))))),
+        );
+
+        let outcome = service
+            .begin(upload_request(b"hello", mode))
+            .await
+            .expect("加密的房间照收");
+        assert_eq!(outcome_content(&outcome).encryption_mode(), mode);
+    }
+}
+
+#[tokio::test]
+async fn 查不到房间时不建上传() {
+    let repository = Arc::new(MemoryContentRepository::default());
+    let service = begin_service_with_room(
+        Arc::clone(&repository),
+        Arc::new(FixedRoom(Err(RepositoryErrorKind::Unavailable))),
     );
 
     let failure = service
         .begin(upload_request(b"hello", ContentEncryptionMode::ServerSide))
         .await
-        .expect_err("保留期查不到");
+        .expect_err("房间查不到");
 
     assert!(matches!(failure, BeginContentUploadFailure::Repository(_)));
     assert_eq!(repository.content_count(), 0);
@@ -297,13 +346,13 @@ fn begin_service_with_authorizer(
         storage_keys: Arc::new(TestStorageKeys),
         repository,
         authorizer,
-        retention: Arc::new(FixedRetention(Ok(None))),
+        rooms: Arc::new(FixedRoom(Ok(None))),
     })
 }
 
-fn begin_service_with_retention(
+fn begin_service_with_room(
     repository: Arc<MemoryContentRepository>,
-    retention: Arc<dyn RoomRetentionLookup>,
+    rooms: Arc<dyn RoomContentPolicyLookup>,
 ) -> BeginContentUploadService {
     BeginContentUploadService::new(BeginContentUploadDependencies {
         clock: Arc::new(FixedClock),
@@ -311,7 +360,7 @@ fn begin_service_with_retention(
         storage_keys: Arc::new(TestStorageKeys),
         repository,
         authorizer: Arc::new(FixedAuthorizer(ContentAuthorizationDecision::Allowed)),
-        retention,
+        rooms,
     })
 }
 
@@ -389,17 +438,24 @@ impl ContentMembershipAuthorizer for FixedAuthorizer {
     }
 }
 
-struct FixedRetention(Result<Option<u16>, RepositoryErrorKind>);
+struct FixedRoom(Result<Option<RoomContentPolicy>, RepositoryErrorKind>);
 
-impl RoomRetentionLookup for FixedRetention {
-    fn retention_days<'a>(
+impl RoomContentPolicyLookup for FixedRoom {
+    fn content_policy<'a>(
         &'a self,
         _matrix_room_id: &'a MatrixRoomId,
-    ) -> PortFuture<'a, RepositoryResult<Option<u16>>> {
+    ) -> PortFuture<'a, RepositoryResult<Option<RoomContentPolicy>>> {
         Box::pin(async move {
             self.0
-                .map_err(|kind| repository_error("content.room_retention", kind))
+                .map_err(|kind| repository_error("content.room_policy", kind))
         })
+    }
+}
+
+const fn room_policy(retention_days: Option<u16>, end_to_end_encrypted: bool) -> RoomContentPolicy {
+    RoomContentPolicy {
+        retention_days,
+        end_to_end_encrypted,
     }
 }
 

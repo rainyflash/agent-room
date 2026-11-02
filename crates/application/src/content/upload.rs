@@ -20,7 +20,7 @@ use crate::{
         ContentRepository, ContentScanFailure, ContentScanner, ContentStorageKeyFactory,
         ContentStorageKeyGenerationFailure, ContentUploadClaim, ContentUploadClaimOutcome,
         ContentUploadFingerprint, IdentifierFactory, MatrixRoomId, ObjectStoreFailure,
-        PrivateContentObjectStore, RoomRetentionLookup,
+        PrivateContentObjectStore, RoomContentPolicy, RoomContentPolicyLookup,
     },
 };
 
@@ -59,6 +59,8 @@ pub enum BeginContentUploadOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BeginContentUploadFailure {
     Denied,
+    /// 房间不加密，客户端却声明正文是它自己加密的：服务器不能扫描，这种正文不收。
+    EncryptionMismatch,
     Authorization(ContentAuthorizationFailure),
     Domain(DomainError),
     StorageKey(ContentStorageKeyGenerationFailure),
@@ -86,7 +88,7 @@ pub struct BeginContentUploadDependencies {
     pub storage_keys: Arc<dyn ContentStorageKeyFactory>,
     pub repository: Arc<dyn ContentRepository>,
     pub authorizer: Arc<dyn ContentMembershipAuthorizer>,
-    pub retention: Arc<dyn RoomRetentionLookup>,
+    pub rooms: Arc<dyn RoomContentPolicyLookup>,
 }
 
 pub struct BeginContentUploadService {
@@ -95,7 +97,7 @@ pub struct BeginContentUploadService {
     storage_keys: Arc<dyn ContentStorageKeyFactory>,
     repository: Arc<dyn ContentRepository>,
     authorizer: Arc<dyn ContentMembershipAuthorizer>,
-    retention: Arc<dyn RoomRetentionLookup>,
+    rooms: Arc<dyn RoomContentPolicyLookup>,
 }
 
 impl BeginContentUploadService {
@@ -106,7 +108,7 @@ impl BeginContentUploadService {
             storage_keys: dependencies.storage_keys,
             repository: dependencies.repository,
             authorizer: dependencies.authorizer,
-            retention: dependencies.retention,
+            rooms: dependencies.rooms,
         }
     }
 
@@ -114,16 +116,21 @@ impl BeginContentUploadService {
     ///
     /// # Errors
     ///
-    /// 声明违反领域约束、随机对象键生成失败或仓储不可用时返回错误。
+    /// 声明违反领域约束、在不加密的房间里声明成客户端加密、随机对象键生成失败或仓储不可用时返回错误。
     pub async fn begin(
         &self,
         request: BeginContentUploadRequest,
     ) -> BeginContentUploadResult<BeginContentUploadOutcome> {
         self.ensure_room_membership(&request).await?;
+        let room = self
+            .rooms
+            .content_policy(&request.matrix_room_id)
+            .await
+            .map_err(BeginContentUploadFailure::Repository)?;
+        ensure_encryption_matches(room, request.encryption_mode)?;
         let created_at = self.clock.now();
-        let retention_expires_at = self
-            .retention_expiry(&request.matrix_room_id, created_at)
-            .await?;
+        let retention_expires_at =
+            retention_expiry(room.and_then(|room| room.retention_days), created_at)?;
         let content_id = self.identifiers.content_id();
         let storage_key = self
             .storage_keys
@@ -184,25 +191,6 @@ impl BeginContentUploadService {
         })
     }
 
-    /// 正文和附件跟着房间的保留期到期：保留期再加一天，等聊天服务器先删掉这条消息。
-    async fn retention_expiry(
-        &self,
-        matrix_room_id: &MatrixRoomId,
-        created_at: UtcMillis,
-    ) -> BeginContentUploadResult<UtcMillis> {
-        let days = self
-            .retention
-            .retention_days(matrix_room_id)
-            .await
-            .map_err(BeginContentUploadFailure::Repository)?
-            .unwrap_or(DEFAULT_ROOM_RETENTION_DAYS);
-        let lifetime = DurationMillis::new((u64::from(days) + RETENTION_GRACE_DAYS) * DAY_MILLIS)
-            .map_err(BeginContentUploadFailure::Domain)?;
-        created_at
-            .checked_add(lifetime)
-            .map_err(BeginContentUploadFailure::Domain)
-    }
-
     async fn ensure_room_membership(
         &self,
         request: &BeginContentUploadRequest,
@@ -223,6 +211,34 @@ impl BeginContentUploadService {
             ContentAuthorizationDecision::Allowed => Ok(()),
             ContentAuthorizationDecision::Denied => Err(BeginContentUploadFailure::Denied),
         }
+    }
+}
+
+/// 正文和附件跟着房间的保留期到期：保留期再加一天，等聊天服务器先删掉这条消息。
+/// 没选过保留期或不是我们建的房间，按服务器默认算。
+fn retention_expiry(
+    retention_days: Option<u16>,
+    created_at: UtcMillis,
+) -> BeginContentUploadResult<UtcMillis> {
+    let days = retention_days.unwrap_or(DEFAULT_ROOM_RETENTION_DAYS);
+    let lifetime = DurationMillis::new((u64::from(days) + RETENTION_GRACE_DAYS) * DAY_MILLIS)
+        .map_err(BeginContentUploadFailure::Domain)?;
+    created_at
+        .checked_add(lifetime)
+        .map_err(BeginContentUploadFailure::Domain)
+}
+
+/// 声明的加密方式要和房间对得上：不加密的房间里声明成客户端加密，就跳过了扫描。
+/// 加密的房间里声明成服务端可见的照收，那样反而要扫描。不是我们建的房间不核对。
+fn ensure_encryption_matches(
+    room: Option<RoomContentPolicy>,
+    mode: ContentEncryptionMode,
+) -> BeginContentUploadResult<()> {
+    match room {
+        Some(room) if !room.end_to_end_encrypted && mode == ContentEncryptionMode::ClientE2ee => {
+            Err(BeginContentUploadFailure::EncryptionMismatch)
+        }
+        _ => Ok(()),
     }
 }
 

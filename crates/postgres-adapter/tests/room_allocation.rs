@@ -582,9 +582,10 @@ async fn insert_lobby(
 ) -> Vec<RoomInstanceId> {
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
-              id, kind, slug, name, language, visibility, status, created_at, updated_at
+              id, kind, slug, name, language, visibility, status, end_to_end_encrypted,
+              created_at, updated_at
           ) VALUES (
-              $1, 'public_lobby', $2, '公开测试大厅', 'zh-CN', 'public', 'active',
+              $1, 'public_lobby', $2, '公开测试大厅', 'zh-CN', 'public', 'active', false,
               to_timestamp(1700000000), to_timestamp(1700000000)
           )",
     )

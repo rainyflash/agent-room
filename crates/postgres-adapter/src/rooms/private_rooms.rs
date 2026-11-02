@@ -171,12 +171,13 @@ async fn create_private_room(
         i64::try_from(instance.activity_score_millis()).map_err(|_| constraint(operation))?;
 
     sqlx::query(
+        // 私人房间建房时就写了 `m.room.encryption`，所以记成加密的。
         r"INSERT INTO agent_room.room_catalog_entry (
                id, kind, slug, name, description, language, matrix_space_id,
                owner_principal_id, visibility, retention_days, status,
-               created_at, updated_at
+               end_to_end_encrypted, created_at, updated_at
            ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true,
                to_timestamp($12::double precision / 1000.0),
                to_timestamp($12::double precision / 1000.0)
            )",
