@@ -352,6 +352,17 @@ impl RoomCatalog {
         Self::new(self.id, fields)
     }
 
+    /// 换一段简介，其余字段与校验规则不变；空的就是没有简介。
+    ///
+    /// # Errors
+    ///
+    /// 新简介太长或带着不许的控制字符时返回错误。
+    pub fn described(&self, description: String) -> DomainResult<Self> {
+        let mut fields = self.fields.clone();
+        fields.description = description;
+        Self::new(self.id, fields)
+    }
+
     pub fn name(&self) -> &str {
         &self.fields.name
     }

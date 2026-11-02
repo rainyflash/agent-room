@@ -1,4 +1,5 @@
 mod agent_access;
+mod description;
 mod failure;
 mod invite_links;
 mod listing;
@@ -13,6 +14,11 @@ pub use agent_access::{
     PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService,
     PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
     ResolveJoinCode,
+};
+pub use description::{
+    DescribePrivateRoom, DescriptionFailure, DescriptionFailureKind, DescriptionResult,
+    PrivateRoomDescriptionDependencies, PrivateRoomDescriptionService,
+    PrivateRoomDescriptionUseCases,
 };
 pub use failure::{
     PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult,

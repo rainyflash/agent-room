@@ -12,8 +12,8 @@ use agent_room_application::ports::{
     MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomEncryption, MatrixRoomId, MatrixRoomKind,
     MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, RoomMembershipGateway,
-    RoomProvisioningGateway,
+    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomTopicGateway,
+    RoomMembershipGateway, RoomProvisioningGateway,
 };
 use agent_room_domain::{ids::AgentId, rooms::MatrixRoomReference};
 use reqwest::Url;
@@ -453,6 +453,42 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
                 apply_archived_private_policy,
             )
             .await
+        })
+    }
+}
+
+/// 房主改简介时写话题（`specs/public-rooms/design.md`），和改名同一种写法。
+impl PrivateRoomTopicGateway for MatrixApplicationServiceProvisioner {
+    fn set_topic<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        topic: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::SendStateEvent;
+            let endpoint = endpoint_with_segments(
+                &self.homeserver_url,
+                &[
+                    "_matrix",
+                    "client",
+                    "v3",
+                    "rooms",
+                    room_id.as_str(),
+                    "state",
+                    "m.room.topic",
+                    "",
+                ],
+                operation,
+            )?;
+            let response = self
+                .client
+                .put(endpoint)
+                .bearer_auth(self.access_token.expose())
+                .json(&serde_json::json!({ "topic": topic }))
+                .send()
+                .await
+                .map_err(|error| map_transport_error(operation, &error))?;
+            expect_empty_success(response, operation).await
         })
     }
 }
@@ -1619,6 +1655,7 @@ mod tests {
     struct PrivateRoomTestState {
         actions: tokio::sync::Mutex<Vec<&'static str>>,
         power_level_writes: tokio::sync::Mutex<Vec<Value>>,
+        topic_writes: tokio::sync::Mutex<Vec<Value>>,
         /// 最近一次写入的权限；读取时返回它，才能看出重复授予是否还会再写一次。
         current_power_levels: tokio::sync::Mutex<Option<Value>>,
         /// 读权限时先等这么久，好让同时来的请求都在写之前读到。
@@ -1647,6 +1684,10 @@ mod tests {
                 .route(
                     "/_matrix/client/v3/rooms/{room}/state/m.room.power_levels/",
                     put(write_private_power_levels),
+                )
+                .route(
+                    "/_matrix/client/v3/rooms/{room}/state/m.room.topic/",
+                    put(write_private_topic),
                 )
                 .route(
                     "/_matrix/client/v3/rooms/{room}/{action}",
@@ -1942,5 +1983,43 @@ mod tests {
         *state.current_power_levels.lock().await = Some(body.clone());
         state.power_level_writes.lock().await.push(body);
         Json(json!({ "event_id": "$power-level" }))
+    }
+
+    async fn write_private_topic(
+        axum::extract::State(state): axum::extract::State<Arc<PrivateRoomTestState>>,
+        Path(room): Path<String>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        assert_authentication(&headers);
+        assert_eq!(room, "!private:matrix.agent-room.localhost");
+        state.topic_writes.lock().await.push(body);
+        Json(json!({ "event_id": "$topic" }))
+    }
+
+    #[tokio::test]
+    async fn 改简介以应用服务写房间话题_空的就是去掉() {
+        let server = PrivateRoomTestServer::start().await;
+        let provisioner = provisioner(&server.url);
+        let room = MatrixRoomId::new("!private:matrix.agent-room.localhost").expect("房间有效");
+
+        for topic in [
+            "每周读一本书
+周五晚上聊",
+            "",
+        ] {
+            super::PrivateRoomTopicGateway::set_topic(&provisioner, &room, topic)
+                .await
+                .expect("写得进话题");
+        }
+
+        assert_eq!(
+            *server.state.topic_writes.lock().await,
+            [
+                json!({ "topic": "每周读一本书
+周五晚上聊" }),
+                json!({ "topic": "" }),
+            ]
+        );
     }
 }

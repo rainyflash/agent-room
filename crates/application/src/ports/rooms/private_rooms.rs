@@ -305,6 +305,16 @@ impl PrivateRoomSnapshot {
         Self::new(catalog, self.instance, self.room)
     }
 
+    /// 换上新简介的同一个房间。
+    ///
+    /// # Errors
+    ///
+    /// 新简介不满足房间简介规则时返回错误。
+    pub fn describing(self, description: String) -> DomainResult<Self> {
+        let catalog = self.catalog.described(description)?;
+        Self::new(catalog, self.instance, self.room)
+    }
+
     /// 用新的权限聚合重建生命周期一致的组合快照。
     ///
     /// 房主与归档状态只有一个事实源：`PrivateRoom`。目录和实例只是同一事务中的持久化投影。
@@ -401,6 +411,27 @@ pub trait PrivateRoomStore: Send + Sync {
         name: &'a str,
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>>;
+}
+
+/// 房主改房间简介（`specs/public-rooms/design.md`）：简介也是 Matrix 房间的话题。单独两个端口，
+/// 不往 [`PrivateRoomStore`] 和 [`PrivateRoomMatrixGateway`] 里加：用到它们的地方太多。
+pub trait PrivateRoomDescriptionStore: Send + Sync {
+    /// 改房间目录上的简介；与成员版本无关，不动成员与权限。
+    fn describe<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        description: &'a str,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+}
+
+pub trait PrivateRoomTopicGateway: Send + Sync {
+    /// 设置 Matrix 房间的话题（`m.room.topic`），空的就是去掉。重复设置同一段幂等。
+    fn set_topic<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        topic: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
 const fn invariant(entity: &'static str, rule: &'static str) -> DomainError {

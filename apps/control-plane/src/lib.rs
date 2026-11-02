@@ -69,6 +69,7 @@ use agent_room_application::{
     },
     private_rooms::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
+        PrivateRoomDescriptionDependencies, PrivateRoomDescriptionService,
         PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
         PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomService,
         PublicRoomJoinDependencies, PublicRoomJoinService,
@@ -162,6 +163,7 @@ struct AgentFeatureHttpStates {
     room_people: features::room_people::RoomPeopleHttpState,
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
+    room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
     public_rooms: features::public_rooms::PublicRoomsHttpState,
     agents: AgentHttpState,
@@ -610,6 +612,9 @@ fn compose_identity_routes(
         .merge(features::room_people::router(agents.room_people))
         .merge(features::private_room_invites::router(agents.room_invites))
         .merge(features::private_room_listing::router(agents.room_listing))
+        .merge(features::private_room_description::router(
+            agents.room_descriptions,
+        ))
         .merge(features::public_room_join::router(agents.room_joins))
         .merge(features::public_rooms::router(agents.public_rooms))
         .merge(content)
@@ -878,6 +883,7 @@ fn build_agent_feature_states(
         room_people: build_room_people_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
+        room_descriptions: build_room_description_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
             directory: Arc::new(PublicRoomDirectoryService::new(
@@ -1003,6 +1009,27 @@ fn build_room_listing_http_state(
     ));
     features::private_room_listing::PrivateRoomListingHttpState::new(
         listings,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主改房间简介（`specs/public-rooms/design.md`）：Matrix 房间的话题以应用服务写。
+fn build_room_description_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::private_room_description::PrivateRoomDescriptionHttpState {
+    let descriptions = Arc::new(PrivateRoomDescriptionService::new(
+        PrivateRoomDescriptionDependencies {
+            rooms: dependencies.repositories.clone(),
+            descriptions: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::private_room_description::PrivateRoomDescriptionHttpState::new(
+        descriptions,
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
