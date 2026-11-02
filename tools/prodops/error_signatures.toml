@@ -55,6 +55,11 @@ reason = "设密码时两次输入不一样，页面上直接提示了"
 
 [[ignore]]
 service = "identity"
+summary = '^UPDATE_CREDENTIAL_ERROR error=password_rejected clientId=\S+ reason=invalidPassword\w+Message '
+reason = "设新密码时没达到密码规则（比如太短），Keycloak 在设密码页上就说了是哪一条、让人重填，没有账户被挡住；只认 invalidPassword 开头的规则提示，别的拒绝原因照旧报（2026-11-02 生产上那次是 invalidPasswordMinLengthMessage，agent-room-ops#63）"
+
+[[ignore]]
+service = "identity"
 summary = '^LOGIN_ERROR error=invalid_user_credentials$'
 reason = "输错密码"
 
