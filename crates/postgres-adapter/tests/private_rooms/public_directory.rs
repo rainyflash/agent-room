@@ -294,13 +294,18 @@ async fn add_admin(
         .await
         .expect("可读")
         .expect("有房间");
+    // 存一次只能往前走一个版本：邀请、接受各存一次。
     let mut room = snapshot.room().clone();
     room.invite(owner, admin, PrivateRoomPermissions::ALL)
         .expect("房主能邀请管理员");
-    room.accept_invitation(admin).expect("管理员接受");
     PrivateRoomStore::save(repositories, &room, snapshot.room().version(), time(20))
         .await
-        .expect("存上");
+        .expect("存上邀请");
+    let invited = room.version();
+    room.accept_invitation(admin).expect("管理员接受");
+    PrivateRoomStore::save(repositories, &room, invited, time(21))
+        .await
+        .expect("存上接受");
 }
 
 async fn search(
