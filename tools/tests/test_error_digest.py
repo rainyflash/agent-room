@@ -360,6 +360,18 @@ class NoiseTableTests(unittest.TestCase):
             self.assertIn(rule.service, SERVICES)
             self.assertTrue(rule.reason)
 
+    def test_leave_denied_because_not_in_room_is_noise(self) -> None:
+        # 汇总里数字已经换成 N，规则里写 403 永远对不上（agent-room-ops#56 又出现过一次）。
+        line = (
+            "2026-11-02 00:01:27,123 WARNING synapse.handlers.message Denying new event "
+            "<FrozenEventV3 event_id=$abc, type=m.room.member, state_key=@u:example.org, membership=leave> "
+            "because 403: @u:example.org not in room !r:example.org"
+        )
+        observation = parse_synapse(line)
+        self.assertIsNotNone(observation)
+        digest = summarize({"control-plane": [], "identity": [], "synapse": [line], "gateway": []}, load_noise(NOISE_FILE))
+        self.assertEqual([], [f.signature.summary for f in digest.findings])
+
     def test_known_noise_is_not_reported_but_real_problems_are(self) -> None:
         presence_429 = SYNAPSE_ACCESS_403.replace(" 77B 403 ", " 77B 429 ").replace('"GET ', '"PUT ')
         account_data_404 = SYNAPSE_ACCESS_403.replace(" 77B 403 ", " 77B 404 ").replace(
