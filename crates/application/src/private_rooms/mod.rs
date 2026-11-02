@@ -35,8 +35,9 @@ pub use models::{
     TransferPrivateRoomOwnership,
 };
 pub use public_join::{
-    JoinPublicRoom, PublicJoinFailure, PublicJoinFailureKind, PublicJoinMembership,
-    PublicJoinResult, PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomJoinUseCases,
+    AnswerJoinRequest, JoinPublicRoom, JoinRequestCleanupUseCases, JoinRequestState,
+    PublicJoinFailure, PublicJoinFailureKind, PublicJoinMembership, PublicJoinResult,
+    PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomJoinUseCases, RequestToJoin,
 };
 pub use service::{
     PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService,

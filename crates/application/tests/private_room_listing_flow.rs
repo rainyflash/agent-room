@@ -1,5 +1,5 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：只有房主能改；第一次公开先在 Matrix 上记下
-//! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密。
+//! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密、作废在等的申请。
 
 use std::sync::{Arc, Mutex};
 
@@ -7,11 +7,12 @@ use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     persistence::RepositoryResult,
     ports::{
-        Clock, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-        PortFuture, PrivateRoomListingMatrix, PrivateRoomListingRecord,
-        PrivateRoomListingSaveOutcome, PrivateRoomListingStore, PrivateRoomSnapshot,
-        PrivateRoomStore, RoomContentPolicy, RoomContentPolicyLookup, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue,
+        Clock, JoinRequestCreateOutcome, JoinRequestRecord, JoinRequestSweep, MatrixFailure,
+        MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, PendingJoinRequest,
+        PortFuture, PrivateRoomJoinRequestStore, PrivateRoomListingMatrix,
+        PrivateRoomListingRecord, PrivateRoomListingSaveOutcome, PrivateRoomListingStore,
+        PrivateRoomSnapshot, PrivateRoomStore, RoomContentPolicy, RoomContentPolicyLookup,
+        SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
     },
     private_rooms::{
         InspectListing, ListingFailureKind, PrivateRoomListingDependencies,
@@ -21,6 +22,7 @@ use agent_room_application::{
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId, RoomInstanceId},
     private_rooms::{PrivateRoom, PrivateRoomCapability, PrivateRoomPermissions},
+    room_join_requests::JoinRequestStatus,
     room_listing::{RoomJoinMode, RoomListingSettings},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
@@ -212,6 +214,11 @@ async fn 不加密的房间改回私密_先打开加密再改标记_matrix_写�
     assert!(*fixture.encrypted.lock().unwrap());
     assert_eq!(*fixture.matrix.encryption.lock().unwrap(), 1);
     assert!(unlisted.share_code.is_some(), "改回私密分享码留着");
+    assert_eq!(
+        *fixture.requests.voided.lock().unwrap(),
+        [(catalog_id(), time(NOW))],
+        "改成了才作废在等的申请"
+    );
 
     // 已经加密了，再公开、再改回私密都不再动加密。
     fixture
@@ -226,6 +233,7 @@ async fn 不加密的房间改回私密_先打开加密再改标记_matrix_写�
         .expect("再改回私密");
     assert_eq!(*fixture.matrix.encryption.lock().unwrap(), 1);
     assert_eq!(fixture.matrix.listed.lock().unwrap().len(), 1);
+    assert_eq!(fixture.requests.voided.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -238,6 +246,7 @@ async fn 从没公开过的房间改成私密什么都不写_登录过期的一�
         .expect("没什么可改的");
     assert_eq!(view.settings, RoomListingSettings::UNLISTED);
     assert!(fixture.listings.record.lock().unwrap().is_none());
+    assert!(fixture.requests.voided.lock().unwrap().is_empty());
 
     let mut expired = principal(owner());
     expired.expires_at = time(NOW);
@@ -259,6 +268,7 @@ struct Fixture {
     service: PrivateRoomListingService,
     listings: Arc<MemoryListings>,
     matrix: Arc<RecordingMatrix>,
+    requests: Arc<RecordingVoids>,
     encrypted: Arc<Mutex<bool>>,
     clock: Arc<TestClock>,
 }
@@ -271,12 +281,14 @@ impl Fixture {
             ..MemoryListings::default()
         });
         let matrix = Arc::new(RecordingMatrix::default());
+        let requests = Arc::new(RecordingVoids::default());
         let clock = Arc::new(TestClock(Mutex::new(NOW)));
         let service = PrivateRoomListingService::new(PrivateRoomListingDependencies {
             rooms: Arc::new(MemoryRooms(room())),
             listings: listings.clone(),
             policies: Arc::new(Policies(encrypted.clone())),
             matrix: matrix.clone(),
+            requests: requests.clone(),
             secrets: Arc::new(CountingSecrets(Mutex::new(0))),
             clock: clock.clone(),
         });
@@ -284,6 +296,7 @@ impl Fixture {
             service,
             listings,
             matrix,
+            requests,
             encrypted,
             clock,
         }
@@ -634,5 +647,71 @@ impl PrivateRoomListingMatrix for RecordingMatrix {
             *self.encryption.lock().unwrap() += 1;
         }
         Box::pin(async move { result })
+    }
+}
+
+/// 只记下改回私密时作废了哪间房的申请。
+#[derive(Default)]
+struct RecordingVoids {
+    voided: Mutex<Vec<(RoomCatalogId, UtcMillis)>>,
+}
+
+impl PrivateRoomJoinRequestStore for RecordingVoids {
+    fn pending_join_request(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _requester: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<JoinRequestRecord>>> {
+        Box::pin(async { unreachable!("改设置不看申请") })
+    }
+
+    fn last_rejected_at(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _requester: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<UtcMillis>>> {
+        Box::pin(async { unreachable!("改设置不看申请") })
+    }
+
+    fn create_join_request<'a>(
+        &'a self,
+        _record: &'a JoinRequestRecord,
+    ) -> PortFuture<'a, RepositoryResult<JoinRequestCreateOutcome>> {
+        Box::pin(async { unreachable!("改设置不记申请") })
+    }
+
+    fn pending_join_requests(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PendingJoinRequest>>> {
+        Box::pin(async { unreachable!("改设置不看申请") })
+    }
+
+    fn decide_join_request(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _requester: PrincipalId,
+        _status: JoinRequestStatus,
+        _decided_by: Option<PrincipalId>,
+        _decided_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("改设置不处理申请") })
+    }
+
+    fn void_pending_join_requests(
+        &self,
+        catalog_id: RoomCatalogId,
+        voided_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u64>> {
+        self.voided.lock().unwrap().push((catalog_id, voided_at));
+        Box::pin(async { Ok(0) })
+    }
+
+    fn sweep_join_requests(
+        &self,
+        _now: UtcMillis,
+        _decided_before: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<JoinRequestSweep>> {
+        Box::pin(async { unreachable!("改设置不清理") })
     }
 }

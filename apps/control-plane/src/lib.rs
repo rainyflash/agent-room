@@ -8,6 +8,7 @@ mod content_runtime;
 mod correlation;
 mod error;
 mod features;
+mod join_request_cleanup;
 mod moderation_expiry;
 mod network_agent_cleanup;
 mod network_gateway;
@@ -144,6 +145,8 @@ struct IdentityRuntime {
     agent_room_departures: agent_room_departures::AgentRoomDepartureWorker,
     /// 撤销以后 Matrix 设备没注销成的，由它接着试。
     matrix_device_retry: agent_matrix_device_retry::AgentMatrixDeviceRetryWorker,
+    /// 申请进公开房间的记录：不公开了的作废、处理完 30 天的删掉。
+    join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -245,6 +248,7 @@ pub async fn run() -> Result<(), StartupError> {
         moderation_expiry,
         agent_room_departures,
         matrix_device_retry,
+        join_request_cleanup,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -273,6 +277,7 @@ pub async fn run() -> Result<(), StartupError> {
     moderation_expiry.shutdown().await;
     agent_room_departures.shutdown().await;
     matrix_device_retry.shutdown().await;
+    join_request_cleanup.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -450,6 +455,9 @@ async fn build_identity_router(
         moderation_expiry: start_moderation_expiry(&agent_dependencies),
         agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
         matrix_device_retry: start_matrix_device_retry(&agent_dependencies),
+        join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker::start(
+            build_public_room_joins(config, &agent_dependencies)?,
+        ),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -968,6 +976,7 @@ fn build_room_listing_http_state(
             listings: dependencies.repositories.clone(),
             policies: dependencies.repositories.clone(),
             matrix: dependencies.matrix_identities.clone(),
+            requests: dependencies.repositories.clone(),
             secrets: dependencies.secrets.clone(),
             clock: dependencies.system_runtime.clone(),
         },
@@ -985,18 +994,28 @@ fn build_room_join_http_state(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
 ) -> Result<features::public_room_join::PublicRoomJoinHttpState, StartupError> {
-    let joins = Arc::new(PublicRoomJoinService::new(PublicRoomJoinDependencies {
-        rooms: dependencies.repositories.clone(),
-        listings: dependencies.repositories.clone(),
-        invitations: build_private_room_service(config, dependencies)?,
-        clock: dependencies.system_runtime.clone(),
-    }));
     Ok(features::public_room_join::PublicRoomJoinHttpState::new(
-        joins,
+        build_public_room_joins(config, dependencies)?,
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
     ))
+}
+
+/// 进公开房间、申请和审批，定时清理申请也用它。
+fn build_public_room_joins(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Arc<PublicRoomJoinService>, StartupError> {
+    Ok(Arc::new(PublicRoomJoinService::new(
+        PublicRoomJoinDependencies {
+            rooms: dependencies.repositories.clone(),
+            listings: dependencies.repositories.clone(),
+            requests: dependencies.repositories.clone(),
+            invitations: build_private_room_service(config, dependencies)?,
+            clock: dependencies.system_runtime.clone(),
+        },
+    )))
 }
 
 /// 房间里的人叫什么、Agent 是谁的（`specs/room-people/design.md`）。
