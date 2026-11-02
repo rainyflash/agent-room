@@ -22,6 +22,7 @@ mod cross_signing;
 mod human_sessions;
 mod moderation;
 mod public_lobby;
+mod room_listing;
 mod rooms;
 
 pub use accounts::{

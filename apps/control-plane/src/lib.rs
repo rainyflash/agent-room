@@ -67,7 +67,8 @@ use agent_room_application::{
     },
     private_rooms::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
-        PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService, PrivateRoomService,
+        PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
+        PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     rooms::{
@@ -151,6 +152,7 @@ struct AgentFeatureHttpStates {
     agent_rooms: AgentRoomHttpState,
     room_people: features::room_people::RoomPeopleHttpState,
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
+    room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -588,6 +590,7 @@ fn compose_identity_routes(
         .merge(features::agent_roster::router(agents.roster))
         .merge(features::room_people::router(agents.room_people))
         .merge(features::private_room_invites::router(agents.room_invites))
+        .merge(features::private_room_listing::router(agents.room_listing))
         .merge(content)
 }
 
@@ -853,6 +856,7 @@ fn build_agent_feature_states(
         agent_rooms: build_agent_room_http_state(config, dependencies, placements),
         room_people: build_room_people_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
+        room_listing: build_room_listing_http_state(config, dependencies),
         agents,
         instances,
         cards,
@@ -946,6 +950,29 @@ fn build_room_invite_http_state(
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origins,
         ),
+    )
+}
+
+/// 公开房间的设置（`specs/public-rooms/design.md`）：Matrix 上的两样副作用以应用服务写。
+fn build_room_listing_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::private_room_listing::PrivateRoomListingHttpState {
+    let listings = Arc::new(PrivateRoomListingService::new(
+        PrivateRoomListingDependencies {
+            rooms: dependencies.repositories.clone(),
+            listings: dependencies.repositories.clone(),
+            policies: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            secrets: dependencies.secrets.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::private_room_listing::PrivateRoomListingHttpState::new(
+        listings,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
     )
 }
 

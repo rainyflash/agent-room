@@ -851,6 +851,21 @@ impl PrivateRoom {
         self.ensure_active("renamed")
     }
 
+    /// 切换公开和私密、改加入方式（`specs/public-rooms/design.md`）：只有房主，管理员不能，
+    /// 这是房间的性质，不是日常管理。房间还要在使用中。
+    ///
+    /// # Errors
+    ///
+    /// 不是房主，或房间已归档时返回错误。
+    pub fn authorize_listing_change(&self, actor: PrincipalId) -> DomainResult<()> {
+        if actor != self.owner_principal_id {
+            return Err(DomainError::Forbidden {
+                action: "修改私人房间的公开设置",
+            });
+        }
+        self.ensure_active("listing_changed")
+    }
+
     /// 归档房间，重复归档保持幂等。
     ///
     /// # Errors
@@ -1574,6 +1589,26 @@ mod tests {
         room.archive(principal(1)).expect("归档成功");
         assert!(matches!(
             room.authorize_agent_access(principal(1)),
+            Err(crate::DomainError::InvalidTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn 只有房主能改公开设置_管理员也不能_归档后谁都不能() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        room.update_permissions(principal(1), principal(2), PrivateRoomPermissions::ALL)
+            .expect("房主可以把成员设成管理员");
+        assert!(room.authorize_listing_change(principal(1)).is_ok());
+        for actor in [principal(2), principal(9)] {
+            assert!(matches!(
+                room.authorize_listing_change(actor),
+                Err(crate::DomainError::Forbidden { .. })
+            ));
+        }
+        room.archive(principal(1)).expect("归档成功");
+        assert!(matches!(
+            room.authorize_listing_change(principal(1)),
             Err(crate::DomainError::InvalidTransition { .. })
         ));
     }
