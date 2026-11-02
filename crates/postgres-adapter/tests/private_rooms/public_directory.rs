@@ -1,6 +1,7 @@
 //! 发现页的目录（`specs/public-rooms/design.md`）：只列公开着、还在用的房间；搜名字、简介和房主昵称
 //! @ 前面那段，通配符照字面；按加入方式、最近有人说话、加不加密筛；三种排序；按分享码找详情；
-//! 登录的人在每间房的处境；“最近有人说话”只给公开着的房间读、记的时间只往后走、不算改设置。
+//! 登录的人在每间房的处境；“最近有人说话”只给公开着的房间读、记的时间只往后走、不算改设置；
+//! 在线人数问的是已加入的人，最近进来的在前。
 //!
 //! 同一个库里别的测试也建公开房间，所以这里的房间名都带一个只属于这次的记号，按它搜。
 
@@ -203,6 +204,43 @@ async fn 最近说话只读公开着的房间_时间只往后走_不动设置的
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 在线人数问已加入的人_最近进来的在前_在等批准的不问() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let token = Uuid::now_v7().simple().to_string();
+    let rooms = seed_rooms(&database, &repositories, &token).await;
+    let pool = &database.runtime;
+    let admin = matrix_user(pool, rooms.admin).await;
+    let request_owner = matrix_user(pool, rooms.request_owner).await;
+    let open_owner = matrix_user(pool, rooms.open_owner).await;
+
+    for (room, limit, expected) in [
+        (rooms.request, 10, vec![admin.clone(), request_owner]),
+        (rooms.request, 1, vec![admin]),
+        (rooms.open, 10, vec![open_owner]),
+    ] {
+        let found: Vec<String> =
+            PublicRoomDirectoryStore::public_room_presence_candidates(&repositories, room, limit)
+                .await
+                .expect("可读")
+                .iter()
+                .map(|user| user.as_str().to_owned())
+                .collect();
+        assert_eq!(found, expected, "{room:?} {limit}");
+    }
+    database.close().await;
+}
+
+async fn matrix_user(pool: &PgPool, principal: PrincipalId) -> String {
+    sqlx::query_scalar("SELECT matrix_user_id FROM agent_room.principal WHERE id = $1")
+        .bind(principal.as_uuid())
+        .fetch_one(pool)
+        .await
+        .expect("有这个主体")
+}
+
 async fn listing(
     repositories: &PostgresRepositories,
     catalog_id: RoomCatalogId,
@@ -218,6 +256,8 @@ struct SeededRooms {
     request: RoomCatalogId,
     archived: RoomCatalogId,
     unlisted: RoomCatalogId,
+    open_owner: PrincipalId,
+    request_owner: PrincipalId,
     request_code: RoomShareCode,
     archived_code: RoomShareCode,
     unlisted_code: RoomShareCode,
@@ -316,6 +356,8 @@ async fn seed_rooms(
         request,
         archived,
         unlisted,
+        open_owner,
+        request_owner,
         request_code: request_listing.share_code,
         archived_code: archived_listing.share_code,
         unlisted_code: unlisted_listing.share_code,

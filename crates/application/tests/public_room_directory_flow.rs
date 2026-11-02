@@ -7,16 +7,18 @@ use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     persistence::RepositoryResult,
     ports::{
-        Clock, PortFuture, PublicRoomDetailRecord, PublicRoomDirectoryStore, PublicRoomRecord,
-        PublicRoomSearch, PublicRoomSort, PublicRoomViewerState,
+        Clock, MatrixResult, MatrixUserId, PortFuture, PublicRoomDetailRecord,
+        PublicRoomDirectoryStore, PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch,
+        PublicRoomSort, PublicRoomViewerState,
     },
     public_room_directory::{
         BrowsePublicRooms, MAX_PUBLIC_ROOM_OFFSET, PUBLIC_ROOM_PAGE_SIZE,
         PublicDirectoryFailureKind, PublicRoomDirectoryDependencies, PublicRoomDirectoryService,
-        PublicRoomDirectoryUseCases, RECENTLY_ACTIVE_MILLIS,
+        PublicRoomDirectoryUseCases, PublicRoomOnline, RECENTLY_ACTIVE_MILLIS,
     },
 };
 use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState,
     ids::{PrincipalId, RoomCatalogId},
     room_listing::{RoomJoinMode, RoomShareCode},
     time::UtcMillis,
@@ -159,6 +161,13 @@ async fn 分享码对得上才有详情_管理员的昵称也处理过() {
     assert_eq!(detail.room.room.catalog_id, room_id(0));
     assert_eq!(detail.room.viewer, Some(PublicRoomViewerState::Pending));
     assert_eq!(detail.admin_display_names, ["xiaolin", "老王"]);
+    assert_eq!(
+        detail.online,
+        Some(PublicRoomOnline {
+            count: 1,
+            at_least: false,
+        })
+    );
 
     for code in ["Gone99", "bad code", ""] {
         let failure = fixture
@@ -192,6 +201,7 @@ impl Fixture {
         });
         let service = PublicRoomDirectoryService::new(PublicRoomDirectoryDependencies {
             directory: store.clone(),
+            presence: Arc::new(EveryoneOnline),
             clock: Arc::new(TestClock),
         });
         Self { service, store }
@@ -316,5 +326,24 @@ impl PublicRoomDirectoryStore for MemoryDirectory {
             .map(|room| (*room, PublicRoomViewerState::Pending))
             .collect();
         Box::pin(async move { Ok(states) })
+    }
+
+    fn public_room_presence_candidates(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>> {
+        Box::pin(async { Ok(vec![MatrixUserId::new("@aming:matrix.test").unwrap()]) })
+    }
+}
+
+struct EveryoneOnline;
+
+impl PublicRoomPresenceMatrix for EveryoneOnline {
+    fn presence<'a>(
+        &'a self,
+        _user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>> {
+        Box::pin(async { Ok(MatrixPresenceState::Online) })
     }
 }

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use agent_room_application::{
     persistence::RepositoryResult,
     ports::{
-        MatrixRoomId, PortFuture, PublicRoomActivityStore, PublicRoomDetailRecord,
+        MatrixRoomId, MatrixUserId, PortFuture, PublicRoomActivityStore, PublicRoomDetailRecord,
         PublicRoomDirectoryStore, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
         PublicRoomViewerState,
     },
@@ -196,6 +196,53 @@ impl PublicRoomDirectoryStore for PostgresRepositories {
                 .into_iter()
                 .map(|(catalog_id, state)| (RoomCatalogId::from_uuid(catalog_id), state))
                 .collect())
+        })
+    }
+
+    fn public_room_presence_candidates(
+        &self,
+        catalog_id: RoomCatalogId,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>> {
+        Box::pin(async move {
+            let operation = "public_room.presence_candidates";
+            // 和人数、Agent 数数的是同一批；同一个 Agent 两边都记着时只算一次，按最近进来的那次排。
+            let users: Vec<String> = sqlx::query_scalar(
+                r"SELECT present.matrix_user_id
+                    FROM (
+                          SELECT principal.matrix_user_id, member.status_changed_at AS since
+                            FROM agent_room.private_room_membership AS member
+                            JOIN agent_room.principal AS principal
+                              ON principal.id = member.principal_id
+                           WHERE member.catalog_entry_id = $1
+                             AND member.membership_status = 'joined'
+                          UNION ALL
+                          SELECT agent.matrix_user_id, reservation.finalized_at
+                            FROM agent_room.room_capacity_reservation AS reservation
+                            JOIN agent_room.agent AS agent ON agent.id = reservation.agent_id
+                           WHERE reservation.catalog_entry_id = $1
+                             AND reservation.state = 'committed'
+                          UNION ALL
+                          SELECT agent.matrix_user_id, room.joined_at
+                            FROM agent_room.network_agent_room AS room
+                            JOIN agent_room.network_agent AS network
+                              ON network.id = room.network_agent_id
+                            JOIN agent_room.agent AS agent ON agent.id = network.agent_id
+                           WHERE room.catalog_entry_id = $1
+                         ) AS present
+                   GROUP BY present.matrix_user_id
+                   ORDER BY max(present.since) DESC NULLS LAST, present.matrix_user_id
+                   LIMIT $2",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(i64::from(limit))
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            users
+                .into_iter()
+                .map(|user| MatrixUserId::new(user).map_err(|_| corrupt_data(operation)))
+                .collect()
         })
     }
 }

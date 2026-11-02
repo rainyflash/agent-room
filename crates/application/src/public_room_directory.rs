@@ -3,6 +3,10 @@
 //!
 //! 昵称里像邮箱的只留 @ 前面那段，和房间里的名字一样；按房主找时也只认这一段，免得拿邮箱的后半段
 //! 搜出谁用的是哪家邮箱。
+//!
+//! 详情另带“现在几个在线”，见 [`online`]。
+
+mod online;
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -16,11 +20,15 @@ use crate::{
     authentication::AuthenticatedPrincipal,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, PortFuture, PublicRoomDetailRecord, PublicRoomDirectoryStore, PublicRoomRecord,
-        PublicRoomSearch, PublicRoomSort, PublicRoomViewerState,
+        Clock, PortFuture, PublicRoomDetailRecord, PublicRoomDirectoryStore,
+        PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
+        PublicRoomViewerState,
     },
     room_people::shown_display_name,
 };
+
+use online::OnlineCounter;
+pub use online::{MAX_PRESENCE_CHECKS, ONLINE_COUNT_TTL_MILLIS, PublicRoomOnline};
 
 /// 一页最多几间。
 pub const PUBLIC_ROOM_PAGE_SIZE: u32 = 24;
@@ -96,6 +104,8 @@ pub struct PublicRoomPage {
 pub struct PublicRoomDetailView {
     pub room: PublicRoomView,
     pub admin_display_names: Vec<String>,
+    /// 问不到时是 `None`。
+    pub online: Option<PublicRoomOnline>,
 }
 
 pub trait PublicRoomDirectoryUseCases: Send + Sync {
@@ -114,17 +124,20 @@ pub trait PublicRoomDirectoryUseCases: Send + Sync {
 
 pub struct PublicRoomDirectoryDependencies {
     pub directory: Arc<dyn PublicRoomDirectoryStore>,
+    pub presence: Arc<dyn PublicRoomPresenceMatrix>,
     pub clock: Arc<dyn Clock>,
 }
 
 pub struct PublicRoomDirectoryService {
     directory: Arc<dyn PublicRoomDirectoryStore>,
+    online: OnlineCounter,
     clock: Arc<dyn Clock>,
 }
 
 impl PublicRoomDirectoryService {
     pub fn new(dependencies: PublicRoomDirectoryDependencies) -> Self {
         Self {
+            online: OnlineCounter::new(dependencies.directory.clone(), dependencies.presence),
             directory: dependencies.directory,
             clock: dependencies.clock,
         }
@@ -200,8 +213,10 @@ impl PublicRoomDirectoryService {
             .await
             .map_err(|error| repository(OPERATION, &error))?
             .ok_or_else(not_found)?;
+        let now = self.clock.now();
+        let online = self.online.count(room.catalog_id, now).await;
         let room = self
-            .with_viewer(viewer.as_ref(), vec![room], self.clock.now(), OPERATION)
+            .with_viewer(viewer.as_ref(), vec![room], now, OPERATION)
             .await?
             .pop()
             .ok_or_else(not_found)?;
@@ -211,6 +226,7 @@ impl PublicRoomDirectoryService {
                 .iter()
                 .map(|name| shown_display_name(name))
                 .collect(),
+            online,
         })
     }
 
