@@ -398,6 +398,17 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(sum(digest.ignored.values()), 6)
         self.assertEqual(digest.findings[0].signature.severity, "p1")
 
+    def test_synapse_message_rate_limit_is_noise(self) -> None:
+        send_429 = SYNAPSE_ACCESS_403.replace(" 77B 403 ", " 77B 429 ").replace('"GET ', '"PUT ').replace(
+            f"/presence/{USER_ID}/status", "/rooms/!room:example.org/send/m.room.message/txn1"
+        )
+        digest = summarize(
+            {"control-plane": [], "identity": [], "synapse": [send_429], "gateway": []},
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual([], [f.signature.summary for f in digest.findings])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_identity_events_seen_in_production_are_noise(self) -> None:
         def event(kind: str, error: str) -> str:
             return KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", kind).replace("invalid_request", error)

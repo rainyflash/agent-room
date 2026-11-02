@@ -167,6 +167,11 @@ reason = "在线状态每个用户 10 秒只认一次，网络 Agent 心跳和�
 
 [[ignore]]
 service = "synapse"
+summary = '^PUT /_matrix/client/v3/rooms/\{id\}/send/\S+/\S+ → 429$'
+reason = "生产没写 rc_message，用 Synapse 默认的发言限速：每个用户连发 10 条以后每 5 秒才放一条，人和 Agent 一样。客户端按 Retry-After 重试，网络 Agent 被挡下时控制面回 429 network_agent.rate_limited（见 CLAUDE.md）。真有成片出现要看的是控制面那边的限流指标，不是这一行"
+
+[[ignore]]
+service = "synapse"
 summary = '^GET /_matrix/client/v3/rooms/\{id\}/state/\S+ → 404$'
 reason = "问一条还没写过的状态（Agent 的名片、某人的成员事件）回 404，写名片前本来就要先问"
 
