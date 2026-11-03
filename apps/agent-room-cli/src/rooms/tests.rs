@@ -3,6 +3,7 @@ use crate::profile::host_task_id;
 use agent_room_agent_client::{BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcBridgeState, IpcHostSessionState, IpcHostSessionSummary,
+    IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcModerationOutcome,
     IpcOpenHostSessionRequest, IpcRoomKind, IpcRoomKnock, IpcRoomMembership,
 };
 use std::{collections::BTreeMap, sync::Mutex};
@@ -118,6 +119,11 @@ impl RoomsBridge {
                 self.managed.lock().unwrap().push(method);
                 Ok(IpcResponse::RoomUpdated { catalog_id })
             }
+            IpcMethod::ModerateRoom(request) => Ok(moderated(
+                &mut self.managed.lock().unwrap(),
+                request,
+                catalog_id,
+            )),
             _ => Err(refusal("test.unexpected_call")),
         }
     }
@@ -682,4 +688,106 @@ async fn 带_profile_管房间时用档案的会话() {
     assert_eq!(bridge.opened.lock().unwrap().len(), 3);
     assert_eq!(bridge.actions.lock().unwrap().len(), 2);
     assert_eq!(bridge.managed.lock().unwrap().len(), 1);
+}
+
+/// 像 Bridge 一样管房间：读规则给一份授权，动手回台账里的那一条。
+fn moderated(
+    managed: &mut Vec<IpcMethod>,
+    request: IpcModerateRoomRequest,
+    catalog_id: String,
+) -> IpcResponse {
+    let action = request.action;
+    managed.push(IpcMethod::ModerateRoom(request));
+    if action == IpcModerationAction::Rules {
+        return IpcResponse::RoomModerationRules {
+            catalog_id,
+            grant: Some(IpcModerationGrant {
+                rules: "Mute anyone who posts ads.".into(),
+                actions: vec!["mute".into()],
+                expires_at_unix_ms: 9_000,
+            }),
+        };
+    }
+    IpcResponse::RoomModerated {
+        catalog_id,
+        outcome: IpcModerationOutcome {
+            action_id: "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b49".into(),
+            action: action.as_str().into(),
+            status: "applied".into(),
+            expires_at_unix_ms: Some(600_000),
+        },
+    }
+}
+
+fn moderate_args(words: &[&str]) -> crate::cli::ModerateArgs {
+    let cli = <crate::cli::Cli as clap::Parser>::try_parse_from(
+        ["agent-room", "moderate"].iter().chain(words),
+    )
+    .expect("命令行认得 moderate");
+    let Command::Moderate(mut args) = cli.command else {
+        panic!("应是 moderate");
+    };
+    args.session = Some(uuid::Uuid::now_v7().to_string());
+    args
+}
+
+#[tokio::test]
+async fn 先读规则再照规则禁言_原因用下划线写法_不合规的在本机就报() {
+    let bridge = RoomsBridge::new();
+    let rules = moderation::moderate(&bridge, moderate_args(&["rules"]))
+        .await
+        .unwrap();
+    assert_eq!(rules["grant"]["rules"], "Mute anyone who posts ads.");
+    assert!(
+        rules["next"]
+            .as_str()
+            .unwrap()
+            .contains("only as these rules say")
+    );
+
+    let muted = moderation::moderate(
+        &bridge,
+        moderate_args(&[
+            "mute",
+            "@spammer:test.invalid",
+            "--reason",
+            "malicious_content",
+            "--note",
+            "Posted the same link five times.",
+            "--duration",
+            "600",
+        ]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(muted["outcome"]["status"], "applied");
+    let managed = bridge.managed.lock().unwrap().clone();
+    assert_eq!(
+        managed[1],
+        IpcMethod::ModerateRoom(IpcModerateRoomRequest {
+            action: IpcModerationAction::Mute,
+            catalog_id: None,
+            room_id: None,
+            target: Some("@spammer:test.invalid".into()),
+            reason: Some("malicious_content".into()),
+            note: Some("Posted the same link five times.".into()),
+            duration_seconds: Some(600),
+        })
+    );
+
+    // 没给对象、没给原因都在本机报出来，不去问 Bridge。
+    for (words, code) in [
+        (&["ban"][..], "bridge.ipc.moderation_target_invalid"),
+        (
+            &["ban", "@spammer:test.invalid", "--note", "Spam."][..],
+            "bridge.ipc.moderation_reason_invalid",
+        ),
+    ] {
+        let error = moderation::moderate(&bridge, moderate_args(words))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, code);
+        assert!(moderation_hint(code).is_some(), "{code} 有说明");
+    }
+    assert_eq!(bridge.managed.lock().unwrap().len(), 2);
 }

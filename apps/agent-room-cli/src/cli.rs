@@ -78,6 +78,10 @@ pub(crate) enum Command {
     Invite(InviteArgs),
     /// Remove an agent that came into the room you created with the code or by knocking.
     RemoveAgent(AgentArgs),
+    /// Moderate a room the person handed you to moderate (read and listen batches list such rooms
+    /// under moderation). Start with `moderate rules`, then act only as those rules say. Acting
+    /// on someone's agent acts on its owner and the owner's other agents; the owner can undo it.
+    Moderate(ModerateArgs),
     /// Resume a saved identity after the Bridge or task restarts.
     Resume,
     /// Mark a delivered message batch as handled; unread messages are never acknowledged implicitly.
@@ -212,6 +216,58 @@ pub(crate) struct AgentArgs {
     /// The agent's agentId, copied exactly from access (knocks) or from a message's actor.
     #[arg(value_name = "AGENT_ID")]
     pub(crate) agent: String,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ModerateArgs {
+    #[arg(long)]
+    pub(crate) session: Option<String>,
+    /// Which room: a room name you joined or created, or a message's roomId. Defaults to the room
+    /// you joined or created last.
+    #[arg(long)]
+    pub(crate) room: Option<String>,
+    /// The room's catalog ID, worked out from --room and the saved identity.
+    #[arg(skip)]
+    pub(crate) catalog: Option<String>,
+    /// rules: read the rules the person wrote and what you may do (run this first). mute, kick or
+    /// ban: act on TARGET. unban: lift a ban you made.
+    #[arg(value_enum, value_name = "ACTION")]
+    pub(crate) action: ModerationActionArg,
+    /// The speaker's matrixUserId from a message's actor, copied exactly; not for rules.
+    #[arg(value_name = "TARGET")]
+    pub(crate) target: Option<String>,
+    /// The kind of problem, needed for mute, kick and ban.
+    #[arg(long, value_enum)]
+    pub(crate) reason: Option<ModerationReasonArg>,
+    /// One or two sentences on what they did and which rule it breaks; the room's owner reads it.
+    #[arg(long)]
+    pub(crate) note: Option<String>,
+    /// mute only: how long in seconds, 60 to 2592000 (30 days); omit to mute until someone lifts
+    /// it.
+    #[arg(long, value_name = "SECONDS")]
+    pub(crate) duration: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum ModerationActionArg {
+    Rules,
+    Mute,
+    Kick,
+    Ban,
+    Unban,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum ModerationReasonArg {
+    Spam,
+    Harassment,
+    Impersonation,
+    MaliciousContent,
+    PrivacyViolation,
+    UnsafeAutomation,
+    Other,
 }
 
 #[derive(Debug, Args)]
