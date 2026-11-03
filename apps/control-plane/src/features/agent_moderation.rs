@@ -4,9 +4,11 @@
 //! - `GET /agents/{a}/instances/{i}/rooms/{c}/moderation`：它在这个房间里的授权（规则、能做哪几样、到什么
 //!   时候），没有就回 404 `agent_moderation.not_granted`。
 //! - `POST /agents/{a}/instances/{i}/rooms/{c}/moderation/actions`：动手，`Idempotency-Key` 是动作 ID（UUID v7）。
-//!   正文 `{"action": "mute", "target": "<发言人的聊天账号>", "reason", "note", "durationSeconds"?}`，回 201。
-//! - `GET /rooms/{c}/moderation/actions/agents`：房主和管理员看台账时，哪些是 Agent 做的、它写的理由。单独
-//!   一个接口：网页对治理动作严格校验（`moderationActionSchema`），动作里多一个字段，旧版的台账整个读不出来。
+//!   正文 `{"action": "mute"|"kick"|"ban"|"unban", "target": "<发言人的聊天账号>", "reason"?, "note",
+//!   "durationSeconds"?}`，回 201。解封不用 `reason`、回的是它撤回的那条封禁；只有禁言收时长。
+//! - `GET /rooms/{c}/moderation/actions/agents`：房主和管理员看台账时，哪些是 Agent 做的、哪些是 Agent 撤回
+//!   的（解封）、它写的理由。单独一个接口：网页对治理动作严格校验（`moderationActionSchema`），动作里多一个
+//!   字段，旧版的台账整个读不出来。
 //!
 //! 给 Agent 看的错误说明是英文，和两份 MCP 的说法一样。
 
@@ -127,7 +129,8 @@ impl From<AgentModerationView> for RulesResponse {
 struct ActionBody {
     action: String,
     target: String,
-    reason: String,
+    #[serde(default)]
+    reason: Option<String>,
     note: String,
     #[serde(default)]
     duration_seconds: Option<u64>,
@@ -180,6 +183,8 @@ impl From<AgentModerationRecord> for AgentActionResponse {
 #[derive(Debug, Serialize)]
 struct AgentActionsResponse {
     actions: Vec<AgentActionResponse>,
+    /// Agent 撤回的动作（解封）：`actionId` 是被撤回的那条。
+    reversals: Vec<AgentActionResponse>,
 }
 
 /// 路径里的 Agent、连接和房间，都是 UUID v7。
@@ -307,7 +312,10 @@ impl ActionBody {
             action_id,
             power: RoomModerationPower::try_from(self.action.as_str()).ok()?,
             target: MatrixUserId::new(self.target.trim()).ok()?,
-            reason: ModerationReason::try_from(self.reason.as_str()).ok()?,
+            reason: match self.reason {
+                None => None,
+                Some(reason) => Some(ModerationReason::try_from(reason.as_str()).ok()?),
+            },
             note: AgentModerationNote::parse(&self.note).ok()?,
             duration,
         })
@@ -342,9 +350,18 @@ async fn list_agent_actions(
         })
         .await
     {
-        Ok(records) => no_store(
+        Ok(ledger) => no_store(
             Json(AgentActionsResponse {
-                actions: records.into_iter().map(AgentActionResponse::from).collect(),
+                actions: ledger
+                    .actions
+                    .into_iter()
+                    .map(AgentActionResponse::from)
+                    .collect(),
+                reversals: ledger
+                    .reversals
+                    .into_iter()
+                    .map(AgentActionResponse::from)
+                    .collect(),
             })
             .into_response(),
         ),
@@ -386,17 +403,35 @@ fn failure_response(failure: AgentModerationFailure, correlation_id: Correlation
             ErrorCategory::Validation,
             "No person or agent uses that chat account. Pass the sender's Matrix user ID from the message.",
         ),
+        Kind::NotInRoom => (
+            StatusCode::CONFLICT,
+            "agent_moderation.not_in_room",
+            ErrorCategory::Conflict,
+            "That person is no longer in this room.",
+        ),
+        Kind::NotBanned => (
+            StatusCode::CONFLICT,
+            "agent_moderation.not_banned",
+            ErrorCategory::Conflict,
+            "That person is not banned from this room.",
+        ),
+        Kind::BannedByPerson => (
+            StatusCode::FORBIDDEN,
+            "agent_moderation.banned_by_person",
+            ErrorCategory::Authorization,
+            "A person banned them. Only the room owner or an admin can lift that ban.",
+        ),
         Kind::Unsupported => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "agent_moderation.unsupported",
             ErrorCategory::Validation,
-            "Only muting people and their local agents is available for now.",
+            "Acting on network agents is not available yet.",
         ),
         Kind::InvalidRequest => (
             StatusCode::BAD_REQUEST,
             "agent_moderation.invalid",
             ErrorCategory::Validation,
-            "Check the action, the target, the reason, a note of 1 to 500 characters, and a duration between 1 minute and 30 days.",
+            "Check the action, the target, a reason (not needed to unban), a note of 1 to 500 characters, and a duration between 1 minute and 30 days (mute only).",
         ),
         Kind::Forbidden => (
             StatusCode::FORBIDDEN,

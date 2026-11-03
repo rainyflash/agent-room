@@ -1,12 +1,13 @@
 //! 房主的 Agent 管房间（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：认人（人的账号是他，Agent 的
 //! 账号认成它的主人，网络 Agent 标出来）；Agent 做的动作和台账同一个事务记下，重放不再记；授权删了，理由
-//! 跟着删、动作照旧留着；下载的数据里带着他的 Agent 写下的理由。
+//! 跟着删、动作照旧留着；下载的数据里带着他的 Agent 写下的理由。Agent 解封撤回的封禁也一样：和撤回同一个
+//! 事务记下，按请求 ID 找得回来，授权删了理由跟着删。
 
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        AccountDeletionRepository, AgentModerationAttribution, AgentModerationStore,
-        ModerationSubject, RoomModerationGrant, RoomModerationGrantStore,
+        AccountDeletionRepository, AgentModerationAttribution, AgentModerationReversal,
+        AgentModerationStore, ModerationSubject, RoomModerationGrant, RoomModerationGrantStore,
     },
 };
 use agent_room_domain::{
@@ -164,6 +165,192 @@ async fn agent_做的动作和台账一起记下_重放不再记_删了授权理
         "台账里的动作照旧留着"
     );
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_解封撤回的封禁和台账一起记下_按请求找得回来_删了授权理由跟着删() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "agent-unban-owner").await;
+    let target = seed_principal(&database.runtime, "agent-unban-target").await;
+    let agent_id = agent_of(
+        &database.runtime,
+        &seed_agent(&database.runtime, owner).await,
+    )
+    .await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    PrivateRoomStore::create(
+        &repositories,
+        &private_room_snapshot(catalog_id, owner),
+        time(0),
+    )
+    .await
+    .expect("私人房间夹具应创建");
+    let grant = grant(catalog_id, agent_id, owner);
+    repositories
+        .replace_room_moderation_grant(&grant)
+        .await
+        .expect("给上");
+    let person_ban = applied_ban(&repositories, owner, catalog_id, target, None).await;
+    let attribution = |action_id| AgentModerationAttribution {
+        action_id,
+        agent_id,
+        grant_id: grant.id,
+        note: AgentModerationNote::parse("连发了五条广告链接。").expect("理由有效"),
+    };
+    let agent_ban_id = ModerationActionId::from_uuid(Uuid::now_v7());
+    let agent_ban = applied_ban(
+        &repositories,
+        owner,
+        catalog_id,
+        target,
+        Some(attribution(agent_ban_id)),
+    )
+    .await;
+    let bans = repositories.applied_bans(catalog_id).await.expect("可读");
+    assert_eq!(
+        bans.iter()
+            .map(|ban| (ban.action.id(), ban.by_agent))
+            .collect::<Vec<_>>(),
+        [(person_ban.id(), false), (agent_ban.id(), true)]
+    );
+
+    let reversal = AgentModerationReversal {
+        request_id: ModerationActionId::from_uuid(Uuid::now_v7()),
+        attribution: AgentModerationAttribution {
+            note: AgentModerationNote::parse("他说以后不发了。").expect("理由有效"),
+            ..attribution(agent_ban.id())
+        },
+    };
+    let mismatched = AgentModerationReversal {
+        attribution: attribution(person_ban.id()),
+        ..reversal.clone()
+    };
+    unban_and_check(&repositories, agent_ban, &reversal, &mismatched).await;
+    assert_eq!(
+        repositories
+            .applied_bans(catalog_id)
+            .await
+            .expect("可读")
+            .len(),
+        1
+    );
+    let exported = AccountDeletionRepository::export(&repositories, owner, time(20))
+        .await
+        .expect("导出")
+        .expect("账户还在");
+    assert_eq!(
+        exported.data["agentModerationReversalNotes"][0]["note"],
+        "他说以后不发了。"
+    );
+
+    sqlx::query("DELETE FROM agent_room.room_moderation_grant WHERE id = $1")
+        .bind(grant.id.as_uuid())
+        .execute(&database.runtime)
+        .await
+        .expect("删授权");
+    assert!(
+        repositories
+            .agent_reversals(catalog_id)
+            .await
+            .expect("可读")
+            .is_empty()
+    );
+    let kept = ModerationRepository::find_action(&repositories, agent_ban_id)
+        .await
+        .expect("可读")
+        .expect("台账里的撤回照旧留着");
+    assert_eq!(kept.status(), ModerationActionStatus::Reversed);
+    database.close().await;
+}
+
+/// 撤回记不成别的动作的；记成以后按请求 ID 找得回来，列出来带着 Agent 的名字。
+async fn unban_and_check(
+    repositories: &PostgresRepositories,
+    mut ban: ModerationAction,
+    reversal: &AgentModerationReversal,
+    mismatched: &AgentModerationReversal,
+) {
+    ban.reverse(time(30)).expect("已生效的能撤");
+    let audit = action_audit(
+        &ban,
+        "moderation.action.reversed",
+        ModerationAuditOutcome::Allowed,
+    );
+    let error = repositories
+        .finalize_agent_reversal(&ban, &audit, mismatched)
+        .await
+        .expect_err("记的不是这个动作");
+    assert_eq!(error.kind(), RepositoryErrorKind::Constraint);
+    let reversed = repositories
+        .finalize_agent_reversal(&ban, &audit, reversal)
+        .await
+        .expect("撤回");
+    assert_eq!(reversed.status(), ModerationActionStatus::Reversed);
+    assert_eq!(
+        repositories
+            .agent_reversal(reversal.request_id)
+            .await
+            .expect("可读"),
+        Some(reversal.clone())
+    );
+    let records = repositories
+        .agent_reversals(ban.room_catalog_id())
+        .await
+        .expect("可读");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].attribution, reversal.attribution);
+    assert_eq!(records[0].agent_display_name, "治理测试 Agent");
+}
+
+/// 落下一条封禁；给了 `attribution` 就记成是 Agent 做的（动作 ID 用它的）。
+async fn applied_ban(
+    repositories: &PostgresRepositories,
+    actor: PrincipalId,
+    catalog_id: RoomCatalogId,
+    target: PrincipalId,
+    attribution: Option<AgentModerationAttribution>,
+) -> ModerationAction {
+    let id = attribution.as_ref().map_or_else(
+        || ModerationActionId::from_uuid(Uuid::now_v7()),
+        |attribution| attribution.action_id,
+    );
+    let mut action = ModerationAction::reserve(
+        id,
+        None,
+        actor,
+        catalog_id,
+        ModerationActionKind::Ban,
+        person(target),
+        ModerationReason::Spam,
+        time(0),
+        None,
+    )
+    .expect("封禁有效");
+    let requested = action_audit(
+        &action,
+        "moderation.action.requested",
+        ModerationAuditOutcome::Allowed,
+    );
+    match &attribution {
+        Some(attribution) => repositories
+            .reserve_agent_action(&action, &requested, attribution)
+            .await
+            .expect("预留"),
+        None => ModerationRepository::reserve_action(repositories, &action, &requested)
+            .await
+            .expect("预留"),
+    };
+    action.mark_applied().expect("落下");
+    let applied = action_audit(
+        &action,
+        "moderation.action.applied",
+        ModerationAuditOutcome::Allowed,
+    );
+    ModerationRepository::finalize_action(repositories, &action, &applied)
+        .await
+        .expect("落下")
 }
 
 async fn no_grant(

@@ -1,12 +1,16 @@
 //! 房主的 Agent 管房间（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：Agent 按管理授权动手时，台账
 //! 里照旧记一条治理动作，`moderation_action_agent` 另记是哪个 Agent、按哪份授权、它写的理由，和动作同一个
-//! 事务写下。认人也在这里：人的账号就是他，Agent 的账号认成它的主人。
+//! 事务写下。Agent 解封时撤回的封禁另记在 `moderation_action_agent_reversal`，和撤回同一个事务。认人也在
+//! 这里：人的账号就是他，Agent 的账号认成它的主人。
+
+mod reversals;
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentModerationAttribution, AgentModerationRecord, AgentModerationStore, MatrixUserId,
-        ModerationActionReservationOutcome, ModerationSubject, PortFuture, RoomModerationGrant,
+        AgentModerationAttribution, AgentModerationRecord, AgentModerationReversal,
+        AgentModerationStore, AppliedBan, MatrixUserId, ModerationActionReservationOutcome,
+        ModerationSubject, PortFuture, RoomModerationGrant,
     },
 };
 use agent_room_domain::{
@@ -34,7 +38,7 @@ struct SubjectRow {
 }
 
 #[derive(FromRow)]
-struct AttributionRow {
+pub(super) struct AttributionRow {
     action_id: Uuid,
     agent_id: Uuid,
     grant_id: Uuid,
@@ -85,6 +89,46 @@ impl AgentModerationStore for PostgresRepositories {
         room_catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>> {
         Box::pin(async move { agent_actions(self, room_catalog_id).await })
+    }
+
+    fn applied_bans(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AppliedBan>>> {
+        Box::pin(async move { reversals::applied_bans(self, room_catalog_id).await })
+    }
+
+    fn finalize_agent_reversal<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        audit: &'a ModerationAuditEvent,
+        reversal: &'a AgentModerationReversal,
+    ) -> PortFuture<'a, RepositoryResult<ModerationAction>> {
+        Box::pin(async move {
+            const OPERATION: &str = "agent_moderation.finalize_reversal";
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(OPERATION, &error))?;
+            let result =
+                reversals::finalize_with_reversal(&mut transaction, action, audit, reversal).await;
+            transaction::finish(transaction, result, OPERATION).await
+        })
+    }
+
+    fn agent_reversal(
+        &self,
+        request_id: ModerationActionId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentModerationReversal>>> {
+        Box::pin(async move { reversals::agent_reversal(self, request_id).await })
+    }
+
+    fn agent_reversals(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>> {
+        Box::pin(async move { reversals::agent_reversals(self, room_catalog_id).await })
     }
 }
 
@@ -178,18 +222,37 @@ async fn agent_actions(
     .fetch_all(repositories.pool())
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(AgentModerationRecord {
-                attribution: AgentModerationAttribution {
-                    action_id: ModerationActionId::from_uuid(row.action_id),
-                    agent_id: AgentId::from_uuid(row.agent_id),
-                    grant_id: RoomModerationGrantId::from_uuid(row.grant_id),
-                    note: AgentModerationNote::parse(&row.note)
-                        .map_err(|error| map_domain_error(operation, &error))?,
-                },
-                agent_display_name: row.display_name,
-            })
-        })
-        .collect()
+    rows.into_iter().map(|row| record(row, operation)).collect()
+}
+
+pub(super) fn record(
+    row: AttributionRow,
+    operation: &'static str,
+) -> RepositoryResult<AgentModerationRecord> {
+    Ok(AgentModerationRecord {
+        attribution: attribution(
+            row.action_id,
+            row.agent_id,
+            row.grant_id,
+            &row.note,
+            operation,
+        )?,
+        agent_display_name: row.display_name,
+    })
+}
+
+pub(super) fn attribution(
+    action_id: Uuid,
+    agent_id: Uuid,
+    grant_id: Uuid,
+    note: &str,
+    operation: &'static str,
+) -> RepositoryResult<AgentModerationAttribution> {
+    Ok(AgentModerationAttribution {
+        action_id: ModerationActionId::from_uuid(action_id),
+        agent_id: AgentId::from_uuid(agent_id),
+        grant_id: RoomModerationGrantId::from_uuid(grant_id),
+        note: AgentModerationNote::parse(note)
+            .map_err(|error| map_domain_error(operation, &error))?,
+    })
 }

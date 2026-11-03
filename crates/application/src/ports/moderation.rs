@@ -355,6 +355,21 @@ pub struct AgentModerationRecord {
     pub agent_display_name: String,
 }
 
+/// Agent 解封时撤回的一条封禁：`attribution.action_id` 是那条封禁，另记是哪个 Agent、按哪份授权、它写的
+/// 理由，和解封请求自带的 ID（同一个请求再来一次时认出来）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationReversal {
+    pub request_id: ModerationActionId,
+    pub attribution: AgentModerationAttribution,
+}
+
+/// 房间里已经落下、还没撤的一条封禁，和它是不是 Agent 做的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedBan {
+    pub action: ModerationAction,
+    pub by_agent: bool,
+}
+
 /// Agent 按管理授权动手：查它的授权、认人、和台账同一个事务记下是它做的。
 pub trait AgentModerationStore: Send + Sync {
     /// 这个 Agent 在这个房间里此刻在用的授权（没撤、没到期）。
@@ -383,6 +398,33 @@ pub trait AgentModerationStore: Send + Sync {
 
     /// 这个房间里 Agent 做的动作，后做的在前。
     fn agent_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>>;
+
+    /// 这个房间里已经落下、还没撤的封禁，先做的在前，不限条数（台账的列表只给最近的 200 条）。
+    fn applied_bans(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AppliedBan>>>;
+
+    /// 和 [`ModerationRepository::finalize_action`] 一样把封禁记成撤回、写审计，同一个事务里再记下是哪个
+    /// Agent 按哪份授权撤的。
+    fn finalize_agent_reversal<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        audit: &'a ModerationAuditEvent,
+        reversal: &'a AgentModerationReversal,
+    ) -> PortFuture<'a, RepositoryResult<ModerationAction>>;
+
+    /// 这个解封请求撤回的那条封禁；一次撤了几条的，交回最后撤的那条。
+    fn agent_reversal(
+        &self,
+        request_id: ModerationActionId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentModerationReversal>>>;
+
+    /// 这个房间里 Agent 撤回的动作，后撤的在前。
+    fn agent_reversals(
         &self,
         room_catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>>;
