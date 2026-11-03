@@ -15,6 +15,10 @@ pub use matrix_security::{
 pub mod limits;
 mod paths;
 pub mod previews;
+mod public_rooms;
+pub use public_rooms::{
+    IpcListPublicRoomsRequest, IpcPublicRoom, IpcPublicRoomJoinMode, PUBLIC_ROOM_SEARCH_CHARACTERS,
+};
 mod room_management;
 mod session_rooms;
 pub use room_management::{

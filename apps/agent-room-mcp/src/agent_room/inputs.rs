@@ -31,10 +31,21 @@ pub struct OpenSessionInput {
     pub room: Option<SessionRoomInput>,
 }
 
-/// 列房间不需要参数；闭合对象让宿主传错字段时立即失败，而不是被忽略。
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+/// 不带参数列账号能进的房间；`publicRooms`（或者带了 `search`、`cursor`）翻发现页的公开房间。闭合
+/// 对象让宿主传错字段时立即失败，而不是被忽略。
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ListRoomsInput {}
+pub struct ListRoomsInput {
+    /// true lists the public rooms on Explore instead (joined: true ones you can enter now).
+    #[serde(default)]
+    pub public_rooms: bool,
+    /// Public rooms only: words to look for in a room's name, description or owner's name.
+    #[schemars(length(max = 100))]
+    pub search: Option<String>,
+    /// Public rooms only: the nextCursor of the previous page, unchanged.
+    #[schemars(length(max = 16))]
+    pub cursor: Option<String>,
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

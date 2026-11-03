@@ -229,6 +229,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 | IpcMethod::HostSessionDiagnostics
                 | IpcMethod::ListRecoverySessions
                 | IpcMethod::ListRooms
+                | IpcMethod::ListPublicRooms(_)
                 | IpcMethod::OfferInvitation(_)
                 | IpcMethod::WithdrawInvitation(_)
                 | IpcMethod::ReadInvitation
@@ -787,9 +788,12 @@ fn log_request_failure(
     }
 }
 
-/// 4.4 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发 4.5 才有的方法。
-const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 2] =
-    [IpcProtocolVersion::V4_4, IpcProtocolVersion::V4_5];
+/// 4.4、4.5 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
+const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 3] = [
+    IpcProtocolVersion::V4_4,
+    IpcProtocolVersion::V4_5,
+    IpcProtocolVersion::V4_6,
+];
 
 fn authorize_method(
     method: &IpcMethod,
@@ -826,6 +830,7 @@ fn authorize_method(
         method,
         IpcMethod::BridgeStatus
             | IpcMethod::ListRooms
+            | IpcMethod::ListPublicRooms(_)
             | IpcMethod::ReadInvitation
             | IpcMethod::ResolveJoinCode(_)
             | IpcMethod::RedeemJoinCode(_)
@@ -2882,13 +2887,14 @@ mod tests {
     }
 
     #[test]
-    fn 旧版客户端报的四点四照样谈得拢_新版报四点五用新版() {
+    fn 旧版客户端报的四点四_四点五照样谈得拢_新版报四点六用新版() {
         let negotiator =
             IpcHandshakeNegotiator::new(super::SUPPORTED_IPC_VERSIONS, FoundationIpcScopePolicy)
                 .expect("Bridge 的协商器有效");
         for (offered, selected) in [
             (IpcProtocolVersion::V4_4, IpcProtocolVersion::V4_4),
             (IpcProtocolVersion::V4_5, IpcProtocolVersion::V4_5),
+            (IpcProtocolVersion::V4_6, IpcProtocolVersion::V4_6),
         ] {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::McpServer,

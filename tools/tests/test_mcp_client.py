@@ -26,6 +26,12 @@ def session_tool_definitions() -> list[dict[str, object]]:
     for name in AGENT_ROOM_TOOLS:
         if name in SESSIONLESS_TOOLS:
             schema: dict[str, object] = {"type": "object", "additionalProperties": False}
+            if name == "agent_room_list_rooms":
+                schema["properties"] = {
+                    "publicRooms": {"type": "boolean", "default": False},
+                    "search": {"type": ["string", "null"], "maxLength": 100},
+                    "cursor": {"type": ["string", "null"], "maxLength": 16},
+                }
             if name == "agent_room_join":
                 schema["properties"] = {
                     "room": {"type": ["string", "null"], "maxLength": 256},
@@ -204,6 +210,22 @@ class McpSessionSchemaTests(unittest.TestCase):
                 else:
                     properties["room"] = {"type": "string"}
                 with self.assertRaises(McpClientFailure):
+                    validate_session_tool_schemas(tools)
+
+    def test_列房间只收有界的搜索和翻页记号(self) -> None:
+        for mutation in ("unbounded", "extra"):
+            with self.subTest(mutation=mutation):
+                tools = session_tool_definitions()
+                schema = next(
+                    tool for tool in tools if tool["name"] == "agent_room_list_rooms"
+                )["inputSchema"]
+                properties = schema["properties"]
+                assert isinstance(properties, dict)
+                if mutation == "unbounded":
+                    del properties["search"]["maxLength"]
+                else:
+                    properties["sort"] = {"type": "string"}
+                with self.assertRaisesRegex(McpClientFailure, "list_rooms"):
                     validate_session_tool_schemas(tools)
 
     def test_join_的口令必须有界(self) -> None:

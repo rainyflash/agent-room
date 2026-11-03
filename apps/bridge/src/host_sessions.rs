@@ -12,15 +12,16 @@ use agent_room_bridge_core::{
     onboarding::ControlPlaneOnboardingFailureKind,
     room_directory::{
         AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership,
-        ControlPlaneRoomDirectoryGateway, RoomDirectoryFailure, RoomDirectoryFailureKind,
+        ControlPlaneRoomDirectoryGateway, PublicRoomListing, RoomDirectoryFailure,
+        RoomDirectoryFailureKind,
     },
 };
 use agent_room_bridge_ipc::{
-    IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcMethod,
-    IpcOpenHostSessionRequest, IpcResponse, IpcRoomKind, IpcRoomMembership, IpcRoomSummary,
-    IpcSelfSummary, IpcSessionRoom,
+    IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcListPublicRoomsRequest,
+    IpcMethod, IpcOpenHostSessionRequest, IpcPublicRoom, IpcPublicRoomJoinMode, IpcResponse,
+    IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
 };
-use agent_room_domain::ids::RoomCatalogId;
+use agent_room_domain::{ids::RoomCatalogId, room_listing::RoomJoinMode};
 use tokio::{
     sync::{Mutex, RwLock, watch},
     task::{JoinHandle, JoinSet},
@@ -676,6 +677,53 @@ fn room_summary(room: AccessibleRoom) -> IpcRoomSummary {
     }
 }
 
+/// 发现页的一页公开房间，标出账号已经加入的：本机 Agent 跟着主人进，只进得去那几间。
+async fn public_rooms(
+    directory: &dyn ControlPlaneRoomDirectoryGateway,
+    request: IpcListPublicRoomsRequest,
+) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
+    let page = directory
+        .list_public(request.search.as_deref(), request.cursor.as_deref())
+        .await
+        .map_err(room_directory_failure)?;
+    let joined: Vec<RoomCatalogId> = directory
+        .list_accessible()
+        .await
+        .map_err(room_directory_failure)?
+        .into_iter()
+        .filter(|room| room.membership == Some(AccessibleRoomMembership::Joined))
+        .map(|room| room.catalog_id)
+        .collect();
+    Ok(IpcResponse::PublicRooms {
+        rooms: page
+            .rooms
+            .into_iter()
+            .map(|room| public_room(room, &joined))
+            .collect(),
+        next_cursor: page.next_cursor,
+    })
+}
+
+fn public_room(room: PublicRoomListing, joined: &[RoomCatalogId]) -> IpcPublicRoom {
+    IpcPublicRoom {
+        joined: joined.contains(&room.catalog_id),
+        catalog_id: room.catalog_id.to_string(),
+        name: room.name,
+        description: room.description,
+        owner_name: room.owner_name,
+        join_mode: match room.join_mode {
+            RoomJoinMode::Open => IpcPublicRoomJoinMode::Open,
+            RoomJoinMode::Request => IpcPublicRoomJoinMode::Request,
+            RoomJoinMode::InviteOnly => IpcPublicRoomJoinMode::InviteOnly,
+        },
+        end_to_end_encrypted: room.end_to_end_encrypted,
+        member_count: room.member_count,
+        agent_count: room.agent_count,
+        last_message_at_unix_ms: room.last_message_at_unix_ms,
+        share_url: room.share_url,
+    }
+}
+
 fn room_directory_failure(failure: RoomDirectoryFailure) -> BridgeIpcDispatchFailure {
     match failure.kind() {
         RoomDirectoryFailureKind::NotAuthorized => BridgeIpcDispatchFailure::new(
@@ -759,6 +807,9 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                         rooms: rooms.into_iter().map(room_summary).collect(),
                     })
                     .map_err(room_directory_failure),
+                IpcMethod::ListPublicRooms(request) => {
+                    public_rooms(self.room_directory.as_ref(), request).await
+                }
                 IpcMethod::OfferInvitation(request) => {
                     // 已经开出会话的键不再挂出去，否则第二个 Agent 会接上同一个人物。
                     let invitation = if self.sessions.contains_key(&request.session_key).await {

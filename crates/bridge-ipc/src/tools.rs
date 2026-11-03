@@ -5,9 +5,9 @@ use uuid::Uuid;
 use crate::{
     IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcCreateRoomRequest, IpcEnterRoomRequest,
     IpcHostSessionSummary, IpcInvitationOffer, IpcInvitePersonRequest, IpcLeaveRoomRequest,
-    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcRedeemJoinCodeRequest,
-    IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess, IpcRoomAccessRequest,
-    IpcRoomCursor, IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
+    IpcListPublicRoomsRequest, IpcOpenHostSessionRequest, IpcPendingInvitation, IpcPublicRoom,
+    IpcRedeemJoinCodeRequest, IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess,
+    IpcRoomAccessRequest, IpcRoomCursor, IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +30,9 @@ pub enum IpcMethod {
     GetSelf,
     /// 这台设备的账号能进的房间，供 CLI/MCP 按名字解析房间；不需要先开会话。
     ListRooms,
+    /// 发现页的一页公开房间，标出账号已经加入的（4.6 起，`specs/public-rooms/design.md` 5c）；
+    /// 不需要先开会话。
+    ListPublicRooms(IpcListPublicRoomsRequest),
     /// 桌面端接入面板把准备好的人物挂在 Bridge 上等 Agent 来接；同一时间只挂一份，后挂的替换先挂的。
     OfferInvitation(IpcInvitationOffer),
     /// 面板关闭时撤回自己挂的那份。
@@ -96,6 +99,7 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::ListRooms => "list_rooms",
+            Self::ListPublicRooms(_) => "list_public_rooms",
             Self::OfferInvitation(_) => "offer_invitation",
             Self::WithdrawInvitation(_) => "withdraw_invitation",
             Self::ReadInvitation => "read_invitation",
@@ -164,7 +168,8 @@ impl IpcMethod {
             | Self::RoomHistory(_)
             // 确认位置只是这个 Agent 自己读到哪了，和读收件箱同一类权限。
             | Self::AckInbox(_)
-            | Self::ListRooms => IpcScope::PreviewsRead,
+            | Self::ListRooms
+            | Self::ListPublicRooms(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
@@ -189,6 +194,7 @@ impl IpcMethod {
             | Self::ReadInvitation
             | Self::ListRecoverySessions
             | Self::HostSessionDiagnostics => Ok(()),
+            Self::ListPublicRooms(request) => request.validate(),
             Self::RoomAccess(request) => request.validate(),
             Self::WithdrawInvitation(request) => request.validate(),
             Self::ResolveJoinCode(request) => request.validate(),
@@ -228,6 +234,7 @@ impl IpcMethod {
                         | Self::HostSessionDiagnostics
                         | Self::ListRecoverySessions
                         | Self::ListRooms
+                        | Self::ListPublicRooms(_)
                         | Self::OfferInvitation(_)
                         | Self::WithdrawInvitation(_)
                         | Self::ReadInvitation
@@ -817,6 +824,16 @@ pub enum IpcResponse {
     },
     Rooms {
         rooms: Vec<IpcRoomSummary>,
+    },
+    /// 一页公开房间；还有下一页时带着 `nextCursor`。
+    PublicRooms {
+        rooms: Vec<IpcPublicRoom>,
+        #[serde(
+            rename = "nextCursor",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        next_cursor: Option<String>,
     },
     /// 挂上、撤回或查看等待接入的人物；没有等待中的邀请时为空。
     Invitation {
