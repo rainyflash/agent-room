@@ -7,6 +7,7 @@ mod directory;
 mod invite_links;
 mod join_requests;
 mod listing;
+mod moderation_grants;
 mod people;
 mod placements;
 mod platform_holds;

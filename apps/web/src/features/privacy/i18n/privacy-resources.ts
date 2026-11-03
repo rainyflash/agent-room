@@ -55,6 +55,9 @@ export const privacyResources = {
     'privacy.readers.notices.label': 'Room notices',
     'privacy.readers.notices.text':
       'The notice an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
+    'privacy.readers.moderationGrants.label': 'Agents looking after a room',
+    'privacy.readers.moderationGrants.text':
+      'When an owner or admin hands a room to one of their own agents to look after, the rules they write and the actions they allow can be seen by the room’s owner and admins and by whoever runs the server, and the agent reads them. Others in the room can’t see them. Revoked and expired ones stay with the room, along with who gave them and when, so the moderation log shows which rules an agent was following. They’re deleted when the person who gave them deletes their account.',
     'privacy.readers.agents.label': 'Agents',
     'privacy.readers.agents.text':
       'An agent reads the rooms it’s in and passes what it reads to the AI service that runs it. That service’s own privacy terms apply.',
@@ -102,9 +105,9 @@ export const privacyResources = {
     'privacy.retention.account.text': 'Until you delete it.',
     'privacy.delete.title': 'Download or delete your data',
     'privacy.delete.how':
-      'Open Settings → Account. “Download my data” saves your profile, computers, agents, rooms, requests to join and reports, plus a list of your files, as a JSON file. Messages aren’t included. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
+      'Open Settings → Account. “Download my data” saves your profile, computers, agents, rooms, requests to join, rooms you handed to an agent and reports, plus a list of your files, as a JSON file. Messages aren’t included. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
     'privacy.delete.removed':
-      'Deleting your account signs you out everywhere and removes your computers’ access. It deletes your sign-in account (email address, nickname and password), your files, the text of your messages and your requests to join, and closes your chat account, so what you said is hidden from anyone who joins your rooms later. Private rooms and agents that only you owned are closed.',
+      'Deleting your account signs you out everywhere and removes your computers’ access. It deletes your sign-in account (email address, nickname and password), your files, the text of your messages, your requests to join and the rules you gave agents for looking after rooms, and closes your chat account, so what you said is hidden from anyone who joins your rooms later. Private rooms and agents that only you owned are closed.',
     'privacy.delete.kept':
       'Some things stay: copies that people and agents in your rooms already received, copies on other Matrix servers, backups for up to 30 days, and a short record that the deletion happened, without your name or email, so that it’s applied again if a backup is ever restored.',
     'privacy.contact.title': 'Questions and requests',
@@ -170,6 +173,9 @@ export const privacyResources = {
     'privacy.readers.notices.label': '房间公告',
     'privacy.readers.notices.text':
       '房主和管理员挂在房间顶上的公告，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
+    'privacy.readers.moderationGrants.label': '交给 Agent 管的房间',
+    'privacy.readers.moderationGrants.text':
+      '房主和管理员把房间交给自己的一个 Agent 管时写的规则、勾的能做哪几样，房主、管理员和运营服务器的人看得到，这个 Agent 也读得到，房间里别的人看不到。撤了、到期了的照旧跟着房间留着，连同是谁给的、什么时候给的，台账里看得出 Agent 当时照的是什么规则；给的人删账户时一起删掉。',
     'privacy.readers.agents.label': 'Agent',
     'privacy.readers.agents.text':
       'Agent 读得到它所在的房间，并把读到的内容交给驱动它的 AI 服务，那个服务按它自己的隐私条款处理。',
@@ -214,9 +220,9 @@ export const privacyResources = {
     'privacy.retention.account.text': '直到你删除它。',
     'privacy.delete.title': '下载或删除你的数据',
     'privacy.delete.how':
-      '打开“设置 → 账户”。“下载我的数据”把你的资料、电脑、Agent、房间、加入申请、举报和文件清单存成一个 JSON 文件，消息不在里面；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
+      '打开“设置 → 账户”。“下载我的数据”把你的资料、电脑、Agent、房间、加入申请、交给 Agent 管的房间、举报和文件清单存成一个 JSON 文件，消息不在里面；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
     'privacy.delete.removed':
-      '删除账户后，所有设备都会退出登录，电脑的授权失效；登录账户（邮箱、昵称和密码）、你的文件、消息正文和加入申请都会删除；聊天账户会关闭，之后加入你房间的人看不到你说过的话。只有你拥有的私人房间和 Agent 会关闭。',
+      '删除账户后，所有设备都会退出登录，电脑的授权失效；登录账户（邮箱、昵称和密码）、你的文件、消息正文、加入申请和交给 Agent 管房间时写的规则都会删除；聊天账户会关闭，之后加入你房间的人看不到你说过的话。只有你拥有的私人房间和 Agent 会关闭。',
     'privacy.delete.kept':
       '仍会留下的：房间里的人和 Agent 已经收到的副本、其他 Matrix 服务器上的副本、最多 30 天的备份，以及一条不含名字和邮箱的删除记录，万一从备份恢复，会据此再删一次。',
     'privacy.contact.title': '问题和请求',

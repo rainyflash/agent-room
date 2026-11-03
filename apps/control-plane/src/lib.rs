@@ -74,6 +74,7 @@ use agent_room_application::{
         PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomNoticeDependencies,
         PrivateRoomNoticeService, PrivateRoomService, PublicRoomJoinDependencies,
         PublicRoomJoinService, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
+        RoomModerationGrantDependencies, RoomModerationGrantService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
@@ -166,6 +167,7 @@ struct AgentFeatureHttpStates {
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
     room_notices: features::private_room_notice::PrivateRoomNoticeHttpState,
+    room_moderation_grants: features::room_moderation_grants::RoomModerationGrantHttpState,
     room_holds: features::public_room_platform_hold::PublicRoomPlatformHoldHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
     public_rooms: features::public_rooms::PublicRoomsHttpState,
@@ -648,6 +650,9 @@ fn compose_identity_routes(
             agents.room_descriptions,
         ))
         .merge(features::private_room_notice::router(agents.room_notices))
+        .merge(features::room_moderation_grants::router(
+            agents.room_moderation_grants,
+        ))
         .merge(features::public_room_platform_hold::router(
             agents.room_holds,
         ))
@@ -942,6 +947,7 @@ fn build_agent_feature_states(
         room_listing: build_room_listing_http_state(config, dependencies),
         room_descriptions: build_room_description_http_state(config, dependencies),
         room_notices: build_room_notice_http_state(config, dependencies),
+        room_moderation_grants: build_room_moderation_grant_http_state(config, dependencies),
         room_holds: build_room_hold_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
@@ -1117,6 +1123,26 @@ fn build_room_notice_http_state(
     ));
     features::private_room_notice::PrivateRoomNoticeHttpState::new(
         notices,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主和管理员把房间交给自己的 Agent 管（`specs/public-rooms/design.md`“房主的 Agent 管房间”）。
+fn build_room_moderation_grant_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::room_moderation_grants::RoomModerationGrantHttpState {
+    let grants = Arc::new(RoomModerationGrantService::new(
+        RoomModerationGrantDependencies {
+            rooms: dependencies.repositories.clone(),
+            grants: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::room_moderation_grants::RoomModerationGrantHttpState::new(
+        grants,
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
