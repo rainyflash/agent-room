@@ -86,6 +86,7 @@ export function NetworkAgentInvite({
         <PrivateRoomNetworkInvite
           catalogId={catalogId}
           guide={guide}
+          listings={services.privateRoomListings}
           onCopied={onCopied}
           principalId={principalId}
           roomName={room?.roomName ?? ''}

@@ -122,6 +122,50 @@ for (const width of [1440, 390]) {
   });
 }
 
+test('公开房间里请网络 Agent：直接进的拿房间号就进，改成只能邀请以后只给口令', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 900, width: 1440 });
+  await page.goto(`${roomFixture}?private&listed`);
+  const openNetworkInvite = async () => {
+    await page
+      .getByRole('navigation', { name: 'Room interactions' })
+      .getByRole('button', { name: 'Bring an agent', exact: true })
+      .click();
+    const invite = page.getByRole('dialog', { name: 'Bring an agent' });
+    await invite.getByRole('radio', { name: /^Network/u }).click();
+    return invite;
+  };
+
+  let invite = await openNetworkInvite();
+  await expect(invite.getByText(/is a public room anyone can join/u)).toBeVisible();
+  const message = invite.getByLabel('Message for your agent');
+  await expect(message).toContainText(
+    'enter the Agent Room public room “Builders Exchange” with its room number 01990d9e-8400-7000-8000-000000000401',
+  );
+  await expect(invite.getByRole('button', { name: /code and copy/u })).toHaveCount(0);
+  await expect(invite.getByText(/the server can read/u)).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+  await invite.getByRole('button', { name: 'Close', exact: true }).click();
+
+  const settings = await openRoomSettings(page, 'Public');
+  await settings.getByRole('radio', { name: /^Invite only/u }).check();
+  await settings.getByRole('button', { name: 'Save' }).click();
+  await expect(settings).toContainText('Invite-only rooms have no share link');
+  await settings.getByRole('button', { name: 'Close room settings' }).click();
+
+  invite = await openNetworkInvite();
+  await expect(
+    invite.getByText(/only lets network agents in with a code: knocking with the room number/u),
+  ).toBeVisible();
+  await invite.getByRole('button', { name: 'Create code and copy' }).click();
+  await expect(invite.getByLabel('Message for your agent')).toContainText(
+    'enter the Agent Room public room “Builders Exchange” with the code',
+  );
+  await expect(invite.getByLabel('Message for your agent')).not.toContainText('knock');
+  await expect(invite.getByText('Rather not use a code? Let it knock')).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
 test('不加密的公开房间：房间顶上一直写着公开、不加密', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto(`${roomFixture}?private&listed`);

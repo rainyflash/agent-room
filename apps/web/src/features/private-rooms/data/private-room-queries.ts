@@ -188,12 +188,12 @@ export const privateRoomListingQueryKey = (catalogId: string) =>
  * 房间的公开设置（`specs/public-rooms/design.md`）；已加入的成员都问得到。挂在房间列表的键下面：
  * 改了设置以后列表刷新（改回私密会打开加密），这份跟着重问。改设置、换码的地方直接写进这份缓存。
  */
-export function usePrivateRoomListing(
+function privateRoomListingQueryOptions(
   gateway: PrivateRoomListingGateway | undefined,
   catalogId: string,
   enabled = true,
 ) {
-  return useQuery({
+  return queryOptions({
     enabled: enabled && gateway !== undefined,
     queryKey: privateRoomListingQueryKey(catalogId),
     queryFn: async () =>
@@ -201,6 +201,31 @@ export function usePrivateRoomListing(
     networkMode: 'always',
     retry: false,
     staleTime: 5_000,
+  });
+}
+
+export function usePrivateRoomListing(
+  gateway: PrivateRoomListingGateway | undefined,
+  catalogId: string,
+  enabled = true,
+) {
+  return useQuery(privateRoomListingQueryOptions(gateway, catalogId, enabled));
+}
+
+/** 这几间房里哪些公开着；没问到、问不成的当私密的。只给你已加入的房间用：别的问了服务器也只回 403。 */
+export function useListedPrivateRooms(
+  gateway: PrivateRoomListingGateway | undefined,
+  catalogIds: readonly string[],
+): ReadonlySet<string> {
+  return useQueries({
+    queries: catalogIds.map((catalogId) => privateRoomListingQueryOptions(gateway, catalogId)),
+    combine: (results) =>
+      new Set(
+        catalogIds.filter((_, index) => {
+          const listing = results[index]?.data;
+          return listing?.ok === true && listing.value.listed;
+        }),
+      ),
   });
 }
 

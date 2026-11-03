@@ -5,6 +5,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { useListedPrivateRooms } from '@/features/private-rooms/data/private-room-queries';
 import { usePublicRoomDirectory } from '@/features/room-directory/data/public-room-directory-query';
 import { useMyPrivateRooms } from '@/features/room-directory/ui/use-rooms';
 import { agentRoomsQueryKey, useAgentRooms } from '@/features/workspace/data/agent-rooms-query';
@@ -29,6 +30,22 @@ const FORBIDDEN = 'lobby.unauthorized';
 const sleep = async (milliseconds: number): Promise<void> => {
   await new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 };
+
+/**
+ * 有房间号的房间里哪些公开着：只问你已加入的（别的服务器只回 403），读不到的照旧写私人房间。
+ * 公开房间也是私人房间那一套，带进带出都一样，只是说法不同（`specs/public-rooms/design.md`）。
+ */
+function useListedRooms(rooms: readonly { readonly catalogId: string; readonly kind: string }[]) {
+  const { privateRoomListings } = useAppServices();
+  const mine = useMyPrivateRooms();
+  const joined = new Set(mine.joined.map((room) => room.catalogId));
+  return useListedPrivateRooms(
+    privateRoomListings,
+    rooms
+      .filter((room) => room.kind === 'private_room' && joined.has(room.catalogId))
+      .map((room) => room.catalogId),
+  );
+}
 
 /**
  * Agent 详情里的“在哪些房间”（`specs/agent-identity/design.md`“网页”）：每个房间一行，带“离开”；
@@ -81,9 +98,11 @@ export function AgentRoomsSection({ agent }: { readonly agent: FleetAgent }) {
     });
 
   const current = rooms.data?.ok === true ? rooms.data.value : [];
+  const listed = useListedRooms(current);
   return (
     <AgentRoomsView
       agentName={agent.agent.displayName}
+      listed={listed}
       managed={!liveInstances(agent).some(isNetworkInstance)}
       notice={notice}
       onLeave={leave}
@@ -121,14 +140,17 @@ function BringPicker({
       : mine.state === 'loading' || directory.isPending
         ? 'loading'
         : 'ready';
+  const candidates = bringCandidates({
+    current,
+    principalId: mine.principalId,
+    privateRooms: mine.joined,
+    publicRooms: publicRooms ?? [],
+  });
+  const listed = useListedRooms(candidates);
   return (
     <BringCandidates
-      candidates={bringCandidates({
-        current,
-        principalId: mine.principalId,
-        privateRooms: mine.joined,
-        publicRooms: publicRooms ?? [],
-      })}
+      candidates={candidates}
+      listed={listed}
       onBring={onBring}
       pendingCatalogId={pendingCatalogId}
       state={state}
@@ -138,6 +160,8 @@ function BringPicker({
 
 export type AgentRoomsViewProps = {
   readonly agentName: string;
+  /** 公开着的房间（房间 ID）：写“公开房间”，不写“私人房间”。 */
+  readonly listed?: ReadonlySet<string>;
   /** 本机的 Agent 能带进、离开；网络 Agent 自己决定进出，只看不动。 */
   readonly managed: boolean;
   readonly notice: AgentRoomNotice | null;
@@ -154,6 +178,7 @@ export type AgentRoomsViewProps = {
 
 export function AgentRoomsView({
   agentName,
+  listed = noRooms,
   managed,
   notice,
   onLeave,
@@ -187,15 +212,9 @@ export function AgentRoomsView({
         <ul>
           {rooms.map((room) => (
             <li key={room.catalogId}>
-              <RoomIcon kind={room.kind} />
+              <RoomIcon kind={roomKind(room, listed)} />
               <strong>{room.name}</strong>
-              <span className="agent-details__muted">
-                {t(
-                  room.kind === 'public_lobby'
-                    ? 'workspace.rooms.public'
-                    : 'workspace.rooms.private',
-                )}
-              </span>
+              <span className="agent-details__muted">{t(roomKindKey(room, listed))}</span>
               {room.archived ? (
                 <span className="agent-details__tag">{t('workspace.rooms.archived')}</span>
               ) : null}
@@ -260,11 +279,14 @@ export function AgentRoomsView({
 
 export function BringCandidates({
   candidates,
+  listed = noRooms,
   onBring,
   pendingCatalogId = null,
   state,
 }: {
   readonly candidates: readonly BringCandidate[];
+  /** 公开着的房间（房间 ID）：写“公开房间”，不写“私人房间”。 */
+  readonly listed?: ReadonlySet<string>;
   readonly onBring: (room: BringCandidate) => void;
   readonly pendingCatalogId?: string | null;
   readonly state: 'failed' | 'loading' | 'ready';
@@ -297,16 +319,10 @@ export function BringCandidates({
                 }}
                 type="button"
               >
-                <RoomIcon kind={room.kind} />
+                <RoomIcon kind={roomKind(room, listed)} />
                 <span>
                   <strong>{room.name}</strong>
-                  <small>
-                    {t(
-                      room.kind === 'public_lobby'
-                        ? 'workspace.rooms.public'
-                        : 'workspace.rooms.private',
-                    )}
-                  </small>
+                  <small>{t(roomKindKey(room, listed))}</small>
                   {room.viewOnly ? (
                     <small className="agent-details__view-only">
                       {t('workspace.rooms.viewOnly')}
@@ -323,11 +339,36 @@ export function BringCandidates({
   );
 }
 
-function RoomIcon({ kind }: { readonly kind: AgentRoom['kind'] }) {
-  return kind === 'public_lobby' ? (
-    <Globe2 aria-hidden="true" className="agent-details__room-icon" />
-  ) : (
+const noRooms: ReadonlySet<string> = new Set();
+
+type RoomKind = AgentRoom['kind'] | 'public_room';
+
+function roomKind(
+  room: { readonly catalogId: string; readonly kind: AgentRoom['kind'] },
+  listed: ReadonlySet<string>,
+): RoomKind {
+  return room.kind === 'private_room' && listed.has(room.catalogId) ? 'public_room' : room.kind;
+}
+
+function roomKindKey(
+  room: { readonly catalogId: string; readonly kind: AgentRoom['kind'] },
+  listed: ReadonlySet<string>,
+) {
+  switch (roomKind(room, listed)) {
+    case 'public_lobby':
+      return 'workspace.rooms.public';
+    case 'public_room':
+      return 'workspace.rooms.publicRoom';
+    case 'private_room':
+      return 'workspace.rooms.private';
+  }
+}
+
+function RoomIcon({ kind }: { readonly kind: RoomKind }) {
+  return kind === 'private_room' ? (
     <LockKeyhole aria-hidden="true" className="agent-details__room-icon" />
+  ) : (
+    <Globe2 aria-hidden="true" className="agent-details__room-icon" />
   );
 }
 
