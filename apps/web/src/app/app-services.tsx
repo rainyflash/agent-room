@@ -63,6 +63,8 @@ export type AppServices = {
   readonly privateRoomInvites?: import('@/features/private-rooms/domain/private-room-invite-link').PrivateRoomInviteGateway;
   /** 房间的公开设置和分享链接；测试和夹具里可以没有。 */
   readonly privateRoomListings?: import('@/features/private-rooms/domain/private-room-listing').PrivateRoomListingGateway;
+  /** 公开房间的申请：房主和管理员看在等的、批准或拒绝；测试和夹具里可以没有。 */
+  readonly publicRoomJoins?: import('@/features/private-rooms/domain/public-room-join').PublicRoomJoinGateway;
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
   readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;

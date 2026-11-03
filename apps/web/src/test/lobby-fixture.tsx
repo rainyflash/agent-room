@@ -105,6 +105,10 @@ import type {
   PrivateRoomListing,
   PrivateRoomListingGateway,
 } from '@/features/private-rooms/domain/private-room-listing';
+import type {
+  PendingJoinRequest,
+  PublicRoomJoinGateway,
+} from '@/features/private-rooms/domain/public-room-join';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -145,6 +149,9 @@ const inviteLinkFixture =
   privateFixture && new URLSearchParams(window.location.search).has('invite-link');
 // `?private&listed` 里房间是公开的、不加密、能直接进，房间设置的“公开”一节有分享链接；不带时是私密的。
 const listedFixture = privateFixture && new URLSearchParams(window.location.search).has('listed');
+// `?private&listed&requests` 里房间要申请才能进，有两个人在等批准：齿轮上亮点，“成员”一节列出申请。
+const requestsFixture =
+  listedFixture && new URLSearchParams(window.location.search).has('requests');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -817,7 +824,11 @@ const privateRooms: PrivateRoomGateway = {
   unban: privateFixture
     ? (_catalogId, principalId) => changeFixtureMember(principalId, { status: 'removed' })
     : unavailablePrivateRoom,
-  updatePermissions: unavailablePrivateRoom,
+  // 设、撤管理员和改成员权限走这里。
+  updatePermissions: privateFixture
+    ? (_catalogId, principalId, nextPermissions) =>
+        changeFixtureMember(principalId, { permissions: nextPermissions })
+    : unavailablePrivateRoom,
 };
 const privateRoomMatrix: PrivateRoomMatrixGateway = {
   join:
@@ -1212,7 +1223,7 @@ let fixtureListing: PrivateRoomListing = {
   allowNetworkAgents: true,
   endToEndEncrypted: !listedFixture,
   firstListedAtUnixMs: listedFixture ? Date.now() - 86_400_000 : null,
-  joinMode: 'open',
+  joinMode: requestsFixture ? 'request' : 'open',
   listed: listedFixture,
   memberPermissions: DEFAULT_INVITE_PERMISSIONS,
   platformHold: null,
@@ -1248,6 +1259,32 @@ const privateRoomListings: PrivateRoomListingGateway = {
       shareUrl: `https://agentroom.test/r/${next}`,
     };
     return Promise.resolve(ok(fixtureListing));
+  },
+};
+
+let fixtureJoinRequests: readonly PendingJoinRequest[] = requestsFixture
+  ? [
+      {
+        displayName: 'Lin',
+        message: 'I run the weekly eval review.\nCan I bring my agent?',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e50',
+        requestedAtUnixMs: Date.now() - 3_600_000,
+      },
+      {
+        displayName: 'Mo',
+        message: '',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e51',
+        requestedAtUnixMs: Date.now() - 600_000,
+      },
+    ]
+  : [];
+const publicRoomJoins: PublicRoomJoinGateway = {
+  joinRequests: () => Promise.resolve(ok(fixtureJoinRequests)),
+  answerJoinRequest: (_catalogId, principalId) => {
+    fixtureJoinRequests = fixtureJoinRequests.filter(
+      (request) => request.principalId !== principalId,
+    );
+    return Promise.resolve(ok(undefined));
   },
 };
 
@@ -1337,7 +1374,7 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
-  ...(privateFixture ? { privateRoomInvites, privateRoomListings } : {}),
+  ...(privateFixture ? { privateRoomInvites, privateRoomListings, publicRoomJoins } : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
     shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),

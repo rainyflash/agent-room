@@ -68,6 +68,24 @@ const en = {
   'privateRooms.listing.share.replaced': 'Share code changed. Share the new link.',
   'privateRooms.listing.share.inviteOnly':
     'Invite-only rooms have no share link: people who opened it couldn’t come in.',
+  'privateRooms.governance.public': 'Public · {{joinMode}}',
+  'privateRooms.governance.notEncrypted':
+    'Not encrypted: the people in it and the server can read it.',
+  'privateRooms.governance.members.admin': 'Admin',
+  'privateRooms.governance.members.makeAdmin': 'Make admin',
+  'privateRooms.governance.members.removeAdmin': 'Remove admin',
+  'privateRooms.joinRequests.title': 'Requests to join',
+  'privateRooms.joinRequests.detail':
+    'People asking to come in. Approve and they join right away, without asking again.',
+  'privateRooms.joinRequests.none': 'No one is waiting.',
+  'privateRooms.joinRequests.requestedAt': 'Asked {{date}}',
+  'privateRooms.joinRequests.approve': 'Approve',
+  'privateRooms.joinRequests.reject': 'Reject',
+  'privateRooms.joinRequests.approveLabel': 'Approve {{name}}',
+  'privateRooms.joinRequests.rejectLabel': 'Reject {{name}}',
+  'privateRooms.joinRequests.banned':
+    'This person is banned here. Unban them in the member list first.',
+  'privateRooms.joinRequests.attention': 'Requests to join: {{count}}',
 } as const;
 
 export const roomListingResources = {
@@ -133,5 +151,20 @@ export const roomListingResources = {
     'privateRooms.listing.share.replaceYes': '换一个',
     'privateRooms.listing.share.replaced': '分享码换好了，发新的链接。',
     'privateRooms.listing.share.inviteOnly': '只能邀请的房间没有分享链接：别人打开了也进不来。',
+    'privateRooms.governance.public': '公开 · {{joinMode}}',
+    'privateRooms.governance.notEncrypted': '不加密：进来的人和服务器都读得到。',
+    'privateRooms.governance.members.admin': '管理员',
+    'privateRooms.governance.members.makeAdmin': '设为管理员',
+    'privateRooms.governance.members.removeAdmin': '撤掉管理员',
+    'privateRooms.joinRequests.title': '申请',
+    'privateRooms.joinRequests.detail': '想进来的人。批准以后他们直接进来，不用再点一次。',
+    'privateRooms.joinRequests.none': '没有在等的申请。',
+    'privateRooms.joinRequests.requestedAt': '{{date}} 申请',
+    'privateRooms.joinRequests.approve': '批准',
+    'privateRooms.joinRequests.reject': '拒绝',
+    'privateRooms.joinRequests.approveLabel': '批准{{name}}',
+    'privateRooms.joinRequests.rejectLabel': '拒绝{{name}}',
+    'privateRooms.joinRequests.banned': '这个人在这里被封禁了，先在成员里解封再批准。',
+    'privateRooms.joinRequests.attention': '有 {{count}} 个申请',
   } satisfies Record<keyof typeof en, string>,
 } as const;

@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowLeft, Hash, Settings2, UsersRound } from 'lucide-react';
-import type { Ref } from 'react';
+import { useId, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export type RoomBeaconProps = {
@@ -16,6 +16,8 @@ export type RoomBeaconProps = {
   readonly topic?: string;
   /** 没登录时没有房间设置。 */
   readonly onOpenSettings: (() => void) | null;
+  /** 公开房间里有几个申请在等你批准；齿轮上亮一个点。 */
+  readonly pendingJoinRequests?: number;
   readonly onOpenMembers: () => void;
 };
 
@@ -30,8 +32,10 @@ export function RoomBeacon({
   topic,
   onOpenSettings,
   onOpenMembers,
+  pendingJoinRequests = 0,
 }: RoomBeaconProps) {
   const { t } = useTranslation();
+  const attentionId = useId();
   return (
     <header className="workspace-header">
       <Link
@@ -73,10 +77,18 @@ export function RoomBeacon({
           className="workspace-header__settings"
           aria-haspopup="dialog"
           aria-label={t('roomSettings.open')}
+          aria-describedby={pendingJoinRequests > 0 ? attentionId : undefined}
           title={t('roomSettings.open')}
           onClick={onOpenSettings}
         >
           <Settings2 aria-hidden="true" />
+          {pendingJoinRequests > 0 ? (
+            <span className="workspace-header__attention" id={attentionId}>
+              <span className="sr-only">
+                {t('privateRooms.joinRequests.attention', { count: pendingJoinRequests })}
+              </span>
+            </span>
+          ) : null}
         </button>
       )}
       <button

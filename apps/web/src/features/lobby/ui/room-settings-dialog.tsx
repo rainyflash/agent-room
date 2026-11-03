@@ -182,6 +182,7 @@ function RoomSettingsContent({
     privateRoomListings,
     privateRoomMatrix,
     privateRooms,
+    publicRoomJoins,
   } = useAppServices();
   const coordinator = useMemo(
     () => new PrivateRoomCoordinator(privateRooms, privateRoomMatrix),
@@ -198,6 +199,8 @@ function RoomSettingsContent({
       return room === null ? null : (
         <PrivateRoomMembers
           coordinator={coordinator}
+          joins={publicRoomJoins}
+          listings={privateRoomListings}
           onExitRoom={() => {
             onClose();
             onExitRoom();
