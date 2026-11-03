@@ -36,6 +36,7 @@ use super::{
     failure::{domain, failure, matrix, repository},
 };
 
+mod moderation_members;
 mod public_creation;
 
 use public_creation::ensure_public_creator;
@@ -519,30 +520,48 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.remove";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.remove_as(
+            request.actor.principal_id,
+            request.catalog_id,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 移出一个成员：改成员记录，在聊天服务器上踢出，把他名下在房间里的 Agent 移出。成员一节和台账的
+    /// 踢出都走这里。
+    async fn remove_as(
+        &self,
+        actor: PrincipalId,
+        catalog_id: RoomCatalogId,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let snapshot = self.load(catalog_id, operation).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .remove_member(request.actor.principal_id, request.target_principal_id)
-            .map_err(|error| domain(OPERATION, &error))?;
+            .remove_member(actor, target_principal_id)
+            .map_err(|error| domain(operation, &error))?;
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .kick(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
+            .map_err(|error| matrix(operation, error))?;
         self.govern_member_agents(
             &matrix_room,
-            request.target_principal_id,
+            target_principal_id,
             MemberAgentChange::Evict,
-            OPERATION,
+            operation,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn ban_internal(
@@ -551,31 +570,49 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.ban";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.ban_as(
+            request.actor.principal_id,
+            request.catalog_id,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 封禁一个人：改成员记录，在聊天服务器上封禁，把他名下在房间里的 Agent 移出。成员一节和台账的封禁
+    /// 都走这里。
+    async fn ban_as(
+        &self,
+        actor: PrincipalId,
+        catalog_id: RoomCatalogId,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let snapshot = self.load(catalog_id, operation).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .ban_member(request.actor.principal_id, request.target_principal_id)
-            .map_err(|error| domain(OPERATION, &error))?;
+            .ban_member(actor, target_principal_id)
+            .map_err(|error| domain(operation, &error))?;
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .ban(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
+            .map_err(|error| matrix(operation, error))?;
         // Agent 只移出不封禁：封禁针对成员本人，Agent 仍可能被其他能发言的共同所有者带进来。
         self.govern_member_agents(
             &matrix_room,
-            request.target_principal_id,
+            target_principal_id,
             MemberAgentChange::Evict,
-            OPERATION,
+            operation,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn unban_internal(
@@ -584,28 +621,45 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.unban";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.unban_as(
+            request.actor.principal_id,
+            request.catalog_id,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 解封：这个人回到“已移出”，之后能再邀请。没有封着的什么都不改。成员一节和台账撤回封禁都走这里。
+    async fn unban_as(
+        &self,
+        actor: PrincipalId,
+        catalog_id: RoomCatalogId,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let snapshot = self.load(catalog_id, operation).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .unban_member(request.actor.principal_id, request.target_principal_id)
-            .map_err(|error| domain(OPERATION, &error))?;
+            .unban_member(actor, target_principal_id)
+            .map_err(|error| domain(operation, &error))?;
         if !changed {
-            return replace_room(snapshot, room, OPERATION);
+            return replace_room(snapshot, room, operation);
         }
         // 先在 Matrix 上解开再保存，和封禁同一个顺序：保存失败时产品上还封着，重试会再解一次
         // （已经解开的跳过）再保存。他的 Agent 封禁时只移出没封，这里不用管。
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .unban(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+            .map_err(|error| matrix(operation, error))?;
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn update_permissions_internal(

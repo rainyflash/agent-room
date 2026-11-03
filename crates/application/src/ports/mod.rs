@@ -133,10 +133,10 @@ pub use moderation::{
     AgentModerationAttribution, AgentModerationRecord, AgentModerationStore,
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
     ModerationEffectTarget, ModerationExpiryClaim, ModerationExpiryRepository,
-    ModerationExpiryReschedule, ModerationIdentifierFactory, ModerationMuteLedger,
-    ModerationMuteLock, ModerationMuteStanding, ModerationReportPolicy,
-    ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
-    ModerationSubject, StandingModeration, StandingModerationSource,
+    ModerationExpiryReschedule, ModerationIdentifierFactory, ModerationMemberGateway,
+    ModerationMemberRefusal, ModerationMuteLedger, ModerationMuteLock, ModerationMuteStanding,
+    ModerationReportPolicy, ModerationReportSubmissionOutcome, ModerationRepository,
+    ModerationRoomContext, ModerationSubject, StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
 pub use projections::{

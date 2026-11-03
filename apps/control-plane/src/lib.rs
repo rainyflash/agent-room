@@ -500,7 +500,7 @@ async fn build_identity_router(
         content_cleanup,
         account_deletion,
         operational_metrics,
-        moderation_expiry: start_moderation_expiry(&agent_dependencies),
+        moderation_expiry: start_moderation_expiry(config, &agent_dependencies)?,
         agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
         matrix_device_retry: start_matrix_device_retry(&agent_dependencies),
         join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker::start(
@@ -696,9 +696,12 @@ fn start_matrix_device_retry(
 }
 
 fn start_moderation_expiry(
+    config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
-) -> moderation_expiry::ModerationExpiryWorker {
-    moderation_expiry::ModerationExpiryWorker::start(build_moderation_management(dependencies))
+) -> Result<moderation_expiry::ModerationExpiryWorker, StartupError> {
+    Ok(moderation_expiry::ModerationExpiryWorker::start(
+        build_moderation_management(config, dependencies)?,
+    ))
 }
 
 fn build_frontend_telemetry_state(
@@ -953,7 +956,7 @@ fn build_agent_feature_states(
         room_descriptions: build_room_description_http_state(config, dependencies),
         room_notices: build_room_notice_http_state(config, dependencies),
         room_moderation_grants: build_room_moderation_grant_http_state(config, dependencies),
-        agent_moderation: build_agent_moderation_http_state(dependencies),
+        agent_moderation: build_agent_moderation_http_state(config, dependencies)?,
         room_holds: build_room_hold_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
@@ -1158,22 +1161,23 @@ fn build_room_moderation_grant_http_state(
 /// 房主的 Agent 照管理授权动手（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：落进的是网页治理
 /// 用的那一套台账。
 fn build_agent_moderation_http_state(
+    config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
-) -> features::agent_moderation::AgentModerationHttpState {
+) -> Result<features::agent_moderation::AgentModerationHttpState, StartupError> {
     let moderation = Arc::new(AgentModerationService::new(AgentModerationDependencies {
-        moderation: build_moderation_management(dependencies),
+        moderation: build_moderation_management(config, dependencies)?,
         store: dependencies.repositories.clone(),
         access: dependencies.repositories.clone(),
         rooms: dependencies.repositories.clone(),
     }));
-    features::agent_moderation::AgentModerationHttpState::new(
+    Ok(features::agent_moderation::AgentModerationHttpState::new(
         features::agent_moderation::AgentModerationHttpDependencies {
             moderation,
             authentication: dependencies.authentication.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
         },
-    )
+    ))
 }
 
 /// 平台把公开房间从目录里拿掉（`specs/public-rooms/design.md`）：平台治理的人，按 `moderation_operator`。
@@ -1330,7 +1334,7 @@ fn build_agent_collaboration_http_states(
     ));
     let private_rooms = build_private_room_service(config, dependencies)?;
     let automation = build_automation_http_state(config, dependencies)?;
-    let moderation = build_moderation_management(dependencies);
+    let moderation = build_moderation_management(config, dependencies)?;
     let direct_sessions = build_direct_session_management(dependencies);
     Ok(AgentCollaborationHttpStates {
         handoffs: HandoffHttpState::new(
@@ -1667,21 +1671,26 @@ fn join_code_attempt_policy() -> agent_room_application::ports::JoinCodeAttemptP
     }
 }
 
-/// 网页上的治理接口和到期自动解除的定时任务各用一个，读写的是同一套。
-fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<ModerationService> {
-    Arc::new(ModerationService::new(ModerationDependencies {
+/// 网页上的治理接口和到期自动解除的定时任务各用一个，读写的是同一套。私人房间里的踢出、封禁照成员一节
+/// 那一套落，所以带着一个私人房间的服务。
+fn build_moderation_management(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Arc<ModerationService>, StartupError> {
+    Ok(Arc::new(ModerationService::new(ModerationDependencies {
         repository: dependencies.repositories.clone(),
         authority: dependencies.repositories.clone(),
         expiry: dependencies.repositories.clone(),
         mutes: dependencies.repositories.clone(),
         effects: dependencies.matrix_identities.clone(),
+        members: build_private_room_service(config, dependencies)?,
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
         report_policy: agent_room_application::ports::ModerationReportPolicy {
             maximum_reports: 5,
             window: DurationMillis::new(10 * 60 * 1_000).expect("固定举报限速窗口必须有效"),
         },
-    }))
+    })))
 }
 
 fn build_direct_session_management(
