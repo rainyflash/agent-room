@@ -48,11 +48,11 @@ export type LobbyMemberName = {
 export type LobbyRoom = {
   /** 你此刻能不能在这里发消息：房间归档、你被禁言或只能查看时不能。不给算能。 */
   readonly canSpeak?: boolean;
-  /** 私人房间都是端到端加密的；公开大厅不加密。 */
+  /** 私人房间都是端到端加密的；公开大厅和新建时就公开的房间不加密。 */
   readonly encrypted?: boolean;
   readonly joinedMemberIds?: readonly string[];
   /**
-   * 已加入的成员叫什么，只有私人房间有：Agent 点了没说过话的人时，对话里靠它写出名字。
+   * 已加入的成员叫什么，只有有房间号的房间（私人房间、公开房间）有：Agent 点了没说过话的人时，对话里靠它写出名字。
    * 公开大厅不给成员名字（`specs/room-people/design.md`）。没设名字的人不在里面。
    */
   readonly memberNames?: readonly LobbyMemberName[];

@@ -12,7 +12,6 @@ import {
 import type { PrivateRoom, PrivateRoomFailure } from '@/features/private-rooms/domain/private-room';
 import {
   grantableToNewMembers,
-  roomJoinModes,
   sameSettings,
   settingsOf,
   shareable,
@@ -22,6 +21,7 @@ import {
 } from '@/features/private-rooms/domain/private-room-listing';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
+import { RoomListingChoices } from '@/features/private-rooms/ui/room-listing-choices';
 import type { Result } from '@/shared/result';
 
 import './private-room-public-settings.css';
@@ -131,49 +131,14 @@ function OwnerSettings({
 
   return (
     <>
-      <fieldset className="room-listing__choices" disabled={update.isPending}>
-        <legend>{t('privateRooms.listing.visibility.legend')}</legend>
-        {(['private', 'public'] as const).map((visibility) => (
-          <label key={visibility}>
-            <input
-              checked={shown.listed === (visibility === 'public')}
-              name={`room-listing-visibility-${room.catalogId}`}
-              onChange={() => {
-                change({ listed: visibility === 'public' });
-              }}
-              type="radio"
-            />
-            <span>
-              <strong>{t(`privateRooms.listing.visibility.${visibility}.label`)}</strong>
-              <small>{t(`privateRooms.listing.visibility.${visibility}.detail`)}</small>
-            </span>
-          </label>
-        ))}
-      </fieldset>
+      <RoomListingChoices
+        disabled={update.isPending}
+        name={room.catalogId}
+        onChange={change}
+        value={shown}
+      />
       {shown.listed ? (
         <>
-          <fieldset
-            className="room-listing__choices room-listing__choices--three"
-            disabled={update.isPending}
-          >
-            <legend>{t('privateRooms.listing.joinMode.legend')}</legend>
-            {roomJoinModes.map((joinMode) => (
-              <label key={joinMode}>
-                <input
-                  checked={shown.joinMode === joinMode}
-                  name={`room-listing-join-${room.catalogId}`}
-                  onChange={() => {
-                    change({ joinMode });
-                  }}
-                  type="radio"
-                />
-                <span>
-                  <strong>{t(`privateRooms.listing.joinMode.${joinMode}.label`)}</strong>
-                  <small>{t(`privateRooms.listing.joinMode.${joinMode}.detail`)}</small>
-                </span>
-              </label>
-            ))}
-          </fieldset>
           <PrivateRoomCapabilityEditor
             disabled={update.isPending}
             grantable={grantableToNewMembers}

@@ -68,6 +68,7 @@ import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import {
   usePrivateRoomList,
+  usePrivateRoomListing,
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
 import type { WebSession } from '@/features/session/domain/session';
@@ -188,6 +189,7 @@ function ReadyLobby({
     localRuntime,
     messages: messageGateway,
     privateRoomInvites,
+    privateRoomListings,
     privateRooms,
   } = useAppServices();
   const reception = useReceptionEvidence();
@@ -212,16 +214,23 @@ function ReadyLobby({
       : { principalId: principal.principalId, displayName: principal.displayName };
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
-  const origin = usePrivateRoomOrigin(
-    privateRooms,
-    catalogId,
-    principal !== null && room.encrypted === true,
-  );
   // 归档了的私人房间照样打得开、看得到之前的消息，只是谁都不能再说话、也不能再接入 Agent。
   const privateRoomList = usePrivateRoomList(
     privateRooms,
     principal?.principalId,
-    principal !== null && room.encrypted === true,
+    principal !== null,
+  );
+  // 有房间号的房间（私人房间、公开房间）和公共大厅分开：加密的都是；不加密的公开房间在你的房间里，
+  // 公共大厅不在（`specs/public-rooms/design.md`）。
+  const catalogRoom =
+    room.encrypted === true ||
+    (privateRoomList.data?.ok === true &&
+      privateRoomList.data.value.some((entry) => entry.catalogId === catalogId));
+  const origin = usePrivateRoomOrigin(privateRooms, catalogId, principal !== null && catalogRoom);
+  const listing = usePrivateRoomListing(
+    privateRoomListings,
+    catalogId,
+    principal !== null && catalogRoom,
   );
   const archived =
     privateRoomList.data?.ok === true &&
@@ -349,7 +358,9 @@ function ReadyLobby({
       </div>
       <RoomBeacon
         agentCount={attendance.present}
-        privateRoom={room.encrypted === true}
+        privateRoom={catalogRoom}
+        listed={listing.data?.ok === true && listing.data.value.listed}
+        unencrypted={catalogRoom && room.encrypted !== true}
         archived={archived}
         serverReadable={origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent}
         membersButtonRef={membersButton}

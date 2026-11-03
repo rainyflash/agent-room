@@ -121,3 +121,41 @@ for (const width of [1440, 390]) {
     await expect(gear.locator('.workspace-header__attention')).toHaveCount(0);
   });
 }
+
+test('不加密的公开房间：房间顶上一直写着公开、不加密', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(`${roomFixture}?private&listed`);
+  const identity = page.locator('.workspace-header__identity');
+  await expect(identity).toContainText('Public room · Not encrypted');
+  await expect(identity.locator('.workspace-header__notice')).toHaveAttribute(
+    'title',
+    'This public room is not encrypted: everyone who joins can read what’s said here, and so can the server.',
+  );
+  expect(failures).toEqual([]);
+});
+
+for (const width of [1440, 390]) {
+  test(`新建房间能选公开：先说不加密，再选别人怎么进：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${roomFixture}?features=1`);
+    await page.getByRole('button', { name: 'New room', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New room' });
+    const visibility = dialog.getByRole('group', { name: 'Who can find this room' });
+    await expect(visibility.getByRole('radio', { name: /^Private/u })).toBeChecked();
+    await expect(dialog.getByRole('group', { name: 'How people join' })).toHaveCount(0);
+
+    await visibility.getByRole('radio', { name: /^Public/u }).check();
+    await expect(dialog).toContainText('Public rooms are not encrypted');
+    await expect(dialog.getByRole('radio', { name: /^Join directly/u })).toBeChecked();
+    await dialog.getByRole('radio', { name: /^Ask to join/u }).check();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessible(page, '.ar-dialog');
+    await page.screenshot({
+      path: testInfo.outputPath(`new-public-room-${String(width)}.png`),
+    });
+    expect(failures).toEqual([]);
+  });
+}
