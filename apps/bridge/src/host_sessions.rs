@@ -41,7 +41,7 @@ mod room_moderation;
 pub(crate) use invitation::InvitationSlot;
 pub(crate) use join_codes::JoinCodeAccess;
 pub(crate) use room_management::RoomManagementAccess;
-use room_moderation::ModerationScope;
+use room_moderation::{ModerationScope, RoomRef};
 
 const MAX_HOST_SESSIONS: usize = 16;
 const IDLE_LIFETIME: Duration = Duration::from_mins(15);
@@ -421,17 +421,20 @@ impl HostSessionRegistry {
         session_id: &str,
         requested: Option<&str>,
     ) -> Result<RoomCatalogId, BridgeIpcDispatchFailure> {
-        self.moderation_scope(session_id, requested)
-            .await
-            .map(|scope| scope.room)
+        self.moderation_scope(
+            session_id,
+            requested.map_or(RoomRef::Session, RoomRef::Catalog),
+        )
+        .await
+        .map(|scope| scope.room)
     }
 
     /// 会话的 Agent 和它管的房间：没说就是开会话时进的那个；说了就要是它在的（开会话时进的，
-    /// 或者之后用 `EnterRoom` 进的）。
+    /// 或者之后用 `EnterRoom` 进的），用目录 ID 或者消息里的 Matrix 房间 ID 说都行。
     async fn moderation_scope(
         &self,
         session_id: &str,
-        requested: Option<&str>,
+        requested: RoomRef<'_>,
     ) -> Result<ModerationScope, BridgeIpcDispatchFailure> {
         let IpcResponse::SelfSummary { summary } =
             self.execute(session_id, IpcMethod::GetSelf).await?
@@ -451,11 +454,14 @@ impl HostSessionRegistry {
             ));
         };
         let catalog_id = match requested {
-            None => summary.room_catalog_id,
-            Some(requested) if summary.room_catalog_id.as_deref() == Some(requested) => {
+            RoomRef::Session => summary.room_catalog_id,
+            RoomRef::Catalog(requested)
+                if summary.room_catalog_id.as_deref() == Some(requested) =>
+            {
                 summary.room_catalog_id
             }
-            Some(requested) => {
+            RoomRef::Matrix(requested) if summary.room_id == requested => summary.room_catalog_id,
+            RoomRef::Catalog(_) | RoomRef::Matrix(_) => {
                 let entered = self
                     .find(session_id)
                     .await?
@@ -464,15 +470,16 @@ impl HostSessionRegistry {
                     .await
                     .entered_rooms
                     .iter()
-                    .any(|room| room.catalog_id == requested);
-                if !entered {
+                    .find(|room| requested.names(room))
+                    .map(|room| room.catalog_id.clone());
+                if entered.is_none() {
                     return Err(BridgeIpcDispatchFailure::new(
                         "bridge.room_not_joined",
                         IpcErrorCategory::Authorization,
                         false,
                     ));
                 }
-                Some(requested.to_owned())
+                entered
             }
         };
         catalog_id
@@ -878,7 +885,7 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                     };
                     let scope = self
                         .sessions
-                        .moderation_scope(&session_id, request.catalog_id.as_deref())
+                        .moderation_scope(&session_id, RoomRef::of(&request))
                         .await?;
                     self.rooms.moderate(scope, request).await
                 }

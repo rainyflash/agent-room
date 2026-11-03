@@ -146,6 +146,7 @@ fn 工具交回去的提示_出错说明和启动失败里没有中文() {
     let sources = [
         ("server.rs", include_str!("server.rs")),
         ("rooms.rs", include_str!("rooms.rs")),
+        ("moderation.rs", include_str!("moderation.rs")),
         ("join.rs", include_str!("join.rs")),
         ("main.rs", include_str!("../main.rs")),
     ];

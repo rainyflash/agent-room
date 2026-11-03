@@ -19,7 +19,9 @@ use agent_room_bridge_ipc::{
 };
 use tokio::time::Instant;
 
-use crate::{BridgeToolClient, BridgeToolFailure, MessageWait, notices};
+use crate::{
+    BridgeToolClient, BridgeToolFailure, MessageWait, RoomModeration, moderation, notices,
+};
 
 /// 最多攒这么多条还没交的，和网络 Agent 的收件箱一样；再多就丢掉最早的，交的时候算进跳过的。
 const HELD_CAPACITY: usize = 200;
@@ -61,6 +63,8 @@ pub struct WokenBatch {
     /// 交这一批时房间公告改了的（撤掉也算），每一版只交一次；没开 [`InboxWaiter::with_notices`]
     /// 时总是空的。
     pub notices: Vec<IpcRoomNotice>,
+    /// 这一批里主人交给它管的房间；没开 [`InboxWaiter::with_moderation`] 时总是空的。
+    pub moderation: Vec<RoomModeration>,
 }
 
 impl WokenBatch {
@@ -81,6 +85,9 @@ impl WokenBatch {
         }
         if !self.notices.is_empty() {
             value["notices"] = self.notices.iter().map(notices::notice_json).collect();
+        }
+        if !self.moderation.is_empty() {
+            value["moderation"] = serde_json::json!(self.moderation);
         }
         value
     }
@@ -208,6 +215,17 @@ pub struct InboxWaiter {
     reported_gaps: HashSet<(String, String)>,
     /// 交一批时要不要顺带拿改了的房间公告。
     notices: Notices,
+    /// 交一批时要不要顺带问这一批里的房间有没有交给它管。
+    moderation: Moderation,
+}
+
+/// 交一批时要不要顺带问这一批里的房间有没有交给它管。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Moderation {
+    /// 不问（后台回复）。
+    Skip,
+    /// 问（MCP 和命令行）。
+    Ask,
 }
 
 /// 交一批时要不要顺带拿房间公告改了的那一版。
@@ -260,6 +278,7 @@ impl InboxWaiter {
             gaps: Vec::new(),
             reported_gaps: HashSet::new(),
             notices: Notices::Skip,
+            moderation: Moderation::Skip,
         }
     }
 
@@ -291,6 +310,14 @@ impl InboxWaiter {
     #[must_use]
     pub const fn with_notices(mut self) -> Self {
         self.notices = Notices::Changed;
+        self
+    }
+
+    /// 交一批时顺带问这一批里的房间有没有交给它管（MCP 和命令行用），放在
+    /// [`WokenBatch::moderation`]。后台回复不用：宿主那边只许读、不许动手。
+    #[must_use]
+    pub const fn with_moderation(mut self) -> Self {
+        self.moderation = Moderation::Ask;
         self
     }
 
@@ -364,6 +391,7 @@ impl InboxWaiter {
                 WaitDecision::Deliver(delivery) => {
                     let mut batch = self.take(delivery);
                     batch.notices = self.changed_notices(backend).await;
+                    batch.moderation = self.granted_rooms(backend, &batch.previews).await;
                     if !matches!(wait, MessageWait::Continuous(_)) {
                         self.stop_waiting(backend).await;
                     }
@@ -424,6 +452,7 @@ impl InboxWaiter {
         } else {
             IpcWake::empty(WakeReason::Messages)
         };
+        let moderation = self.granted_rooms(backend, &previews).await;
         Ok(WokenBatch {
             previews,
             wake,
@@ -432,7 +461,20 @@ impl InboxWaiter {
             cursor: cursor.cursor(),
             gaps,
             notices: self.changed_notices(backend).await,
+            moderation,
         })
+    }
+
+    /// 这一批里交给它管的房间；没开 [`Self::with_moderation`] 时不问。
+    async fn granted_rooms(
+        &self,
+        backend: &dyn BridgeToolClient,
+        previews: &[IpcMessagePreviewSummary],
+    ) -> Vec<RoomModeration> {
+        if self.moderation == Moderation::Skip {
+            return Vec::new();
+        }
+        moderation::granted_rooms(backend, &self.session_id, previews).await
     }
 
     /// 交这一批时房间公告改了的；没开 [`Self::with_notices`] 时不问。看的房间和等消息一样。
@@ -655,6 +697,7 @@ impl InboxWaiter {
             cursor: self.delivered_through.cursor(),
             gaps,
             notices: Vec::new(),
+            moderation: Vec::new(),
         }
     }
 

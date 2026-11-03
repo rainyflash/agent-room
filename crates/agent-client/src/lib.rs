@@ -2,6 +2,7 @@
 mod bridge;
 mod desktop_launch;
 mod inbox;
+mod moderation;
 mod notices;
 pub mod reception;
 pub mod rooms;
@@ -13,5 +14,6 @@ pub use desktop_launch::{
     launching_desktop_when_absent,
 };
 pub use inbox::{MAX_EXPLICIT_WAIT_SECONDS, MessageReadMode, MessageWait, wait_for_messages};
+pub use moderation::RoomModeration;
 pub use notices::{notice_json, room_notice};
 pub use waiting::{CURSOR_BYTES, InboxWaiter, WokenBatch, cursor_events};

@@ -3,14 +3,14 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcMethod, IpcOwnerSummary, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice,
-    IpcSelfSummary, IpcTimelineGap,
+    IpcMethod, IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcOwnerSummary,
+    IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice, IpcSelfSummary, IpcTimelineGap,
     wake::{IpcTyping, WaitOptions, WaitRules, WakeReason},
 };
 use tokio::time::Instant;
 
 use super::InboxWaiter;
-use crate::{BridgeToolClient, BridgeToolFailure, BridgeToolFuture, MessageWait};
+use crate::{BridgeToolClient, BridgeToolFailure, BridgeToolFuture, MessageWait, RoomModeration};
 
 const ME: &str = "@scout:room.test";
 const ADA: &str = "@ada:room.test";
@@ -100,6 +100,8 @@ struct Room {
     gaps: Vec<IpcTimelineGap>,
     /// 改了还没交的公告：读一次就交出去，和 Bridge 一样同一版只交一次。
     notices: Mutex<Vec<IpcRoomNotice>>,
+    /// 主人交给它管的房间（Matrix 房间 ID）。
+    granted: Vec<String>,
     calls: Mutex<Vec<(String, bool)>>,
 }
 
@@ -118,7 +120,30 @@ impl Room {
             typists: Vec::new(),
             gaps: Vec::new(),
             notices: Mutex::new(Vec::new()),
+            granted: Vec::new(),
             calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// 等消息时只读授权：这个房间交给它管了就给一份。
+    fn moderation_grant(&self, request: &IpcModerateRoomRequest) -> IpcResponse {
+        assert_eq!(
+            request.action,
+            IpcModerationAction::Rules,
+            "等消息时只读授权"
+        );
+        let room_id = request.room_id.clone().expect("用消息里的房间说");
+        self.calls
+            .lock()
+            .unwrap()
+            .push((format!("moderate_room {room_id}"), false));
+        IpcResponse::RoomModerationRules {
+            catalog_id: "catalog".to_owned(),
+            grant: self.granted.contains(&room_id).then(|| IpcModerationGrant {
+                rules: "Mute anyone who posts ads.".to_owned(),
+                actions: vec!["mute".to_owned()],
+                expires_at_unix_ms: 9_000,
+            }),
         }
     }
 
@@ -300,6 +325,7 @@ impl BridgeToolClient for Room {
                 }
             }
             IpcMethod::ReadRoomNotices(request) => self.changed_notices(&request),
+            IpcMethod::ModerateRoom(request) => self.moderation_grant(&request),
             IpcMethod::GetSelf => IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
                     owner: self.owner.clone().map(|matrix_user_id| IpcOwnerSummary {
@@ -496,6 +522,53 @@ async fn 开了公告_交一批时带上改了的_同一版只交一次() {
         [("read_inbox".to_owned(), false)],
         "没开不问"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn 开了管房间_交一批时带上交给它管的房间_每个房间问一次() {
+    let mut room = Room::new(vec![(0, named("Scout 在吗")), (0, chatter("闲聊"))]);
+    room.granted.push("!lobby:room.test".to_owned());
+    let batch = waiter(WaitRules::default())
+        .with_moderation()
+        .next(&room, MessageWait::For(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(
+        batch.moderation,
+        [RoomModeration {
+            room_id: "!lobby:room.test".to_owned(),
+            actions: vec!["mute".to_owned()],
+            expires_at_unix_ms: 9_000,
+        }]
+    );
+    assert_eq!(
+        batch.to_json()["moderation"],
+        serde_json::json!([{"roomId": "!lobby:room.test", "actions": ["mute"], "expiresAtUnixMs": 9_000}]),
+        "规则本身不带，要读另外问"
+    );
+    let asked = |room: &Room| {
+        room.calls()
+            .iter()
+            .filter(|(call, _)| call.starts_with("moderate_room"))
+            .count()
+    };
+    assert_eq!(asked(&room), 1, "两条在同一个房间，只问一次");
+
+    let ungranted = Room::new(vec![(1_000, named("Scout 在吗"))]);
+    let batch = waiter(WaitRules::default())
+        .with_moderation()
+        .next(&ungranted, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert!(batch.moderation.is_empty() && batch.to_json().get("moderation").is_none());
+    assert_eq!(asked(&ungranted), 1, "等到了也问");
+
+    let plain = Room::new(vec![(0, named("Scout 在吗"))]);
+    waiter(WaitRules::default())
+        .next(&plain, MessageWait::For(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(asked(&plain), 0, "没开不问");
 }
 
 #[tokio::test(start_paused = true)]
