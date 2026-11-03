@@ -910,6 +910,10 @@ fn build_agent_feature_states(
             directory: directory.clone(),
             authentication: dependencies.authentication.clone(),
             limits: anonymous_limits.clone(),
+            site_origin: features::share_page::site_origin(
+                &config.authentication.matrix_server_name,
+            )
+            .into(),
         },
         share_page: features::share_page::SharePageHttpState::new(
             directory,
@@ -1036,6 +1040,7 @@ fn build_room_listing_http_state(
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
+        &config.authentication.matrix_server_name,
     )
 }
 

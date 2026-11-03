@@ -114,6 +114,7 @@ async fn 不登录也能翻目录_带着登录的多一个处境() {
             "rooms": [{
                 "catalogId": CATALOG_UUID,
                 "shareCode": "Club01",
+                "shareUrl": "https://agent-room.test/r/Club01",
                 "name": "读书会",
                 "description": "每周读一本",
                 "ownerName": "阿明",
@@ -286,6 +287,7 @@ fn test_router(directory: Arc<FakeDirectory>) -> Router {
         directory,
         authentication: Arc::new(FakeAuthentication),
         limits: Arc::new(AnonymousLimiter::new(Vec::new(), Arc::new(FixedClock))),
+        site_origin: "https://agent-room.test".into(),
     })
     .layer(middleware::from_fn(crate::correlation::attach))
 }

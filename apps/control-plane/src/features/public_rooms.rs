@@ -3,6 +3,7 @@
 //! - `GET /public-rooms?q=&join=&active=&encrypted=&sort=&cursor=`：公开房间的目录。`join` 是
 //!   `open` 或 `request`；`active=true` 只要一小时内有人说话的；`encrypted=false` 只要不加密的；
 //!   `sort` 是 `active`（默认）、`members` 或 `newest`；`cursor` 照上一页的 `nextCursor` 原样带回。
+//! - 每间房带 `shareUrl`：整条分享链接（裸域上的 `/r/<分享码>`），网页不知道裸域在哪。
 //! - `GET /public-rooms/{分享码}`：一间房的详情，多几位管理员和 `online`（`count` 个在线，
 //!   `atLeast` 是没问全、可能更多；问不到时是 `null`，60 秒算一次）。不公开、关了、没有这个码都回
 //!   同一个 404，不写房间名。
@@ -42,6 +43,7 @@ use crate::{
     features::{
         anonymous_limits::{AnonymousLimiter, Limited},
         authentication::{no_store, session_secret},
+        share_page::share_url,
     },
     request_regions,
 };
@@ -51,6 +53,8 @@ pub(crate) struct PublicRoomsHttpState {
     pub(crate) directory: Arc<dyn PublicRoomDirectoryUseCases>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) limits: Arc<AnonymousLimiter>,
+    /// 分享链接所在的网站，`https://<Matrix 服务器名>`。
+    pub(crate) site_origin: Arc<str>,
 }
 
 pub(crate) fn router(state: PublicRoomsHttpState) -> Router {
@@ -83,6 +87,7 @@ struct PageResponse {
 struct RoomResponse {
     catalog_id: String,
     share_code: String,
+    share_url: String,
     name: String,
     description: String,
     owner_name: String,
@@ -131,7 +136,7 @@ async fn browse(
         ..request
     };
     match state.directory.browse(request).await {
-        Ok(page) => no_store(Json(page_response(page)).into_response()),
+        Ok(page) => no_store(Json(page_response(page, &state.site_origin)).into_response()),
         Err(failure) => failure_response(failure, correlation_id),
     }
 }
@@ -148,7 +153,7 @@ async fn detail(
     }
     let viewer = viewer(&state, &jar).await;
     match state.directory.detail(viewer, share_code).await {
-        Ok(detail) => no_store(Json(detail_response(detail)).into_response()),
+        Ok(detail) => no_store(Json(detail_response(detail, &state.site_origin)).into_response()),
         Err(failure) => failure_response(failure, correlation_id),
     }
 }
@@ -221,16 +226,20 @@ fn browse_request(query: BrowseQuery) -> Option<BrowsePublicRooms> {
     })
 }
 
-fn page_response(page: PublicRoomPage) -> PageResponse {
+fn page_response(page: PublicRoomPage, site_origin: &str) -> PageResponse {
     PageResponse {
-        rooms: page.rooms.into_iter().map(room_response).collect(),
+        rooms: page
+            .rooms
+            .into_iter()
+            .map(|room| room_response(room, site_origin))
+            .collect(),
         next_cursor: page.next_offset.map(|offset| offset.to_string()),
     }
 }
 
-fn detail_response(detail: PublicRoomDetailView) -> DetailResponse {
+fn detail_response(detail: PublicRoomDetailView, site_origin: &str) -> DetailResponse {
     DetailResponse {
-        room: room_response(detail.room),
+        room: room_response(detail.room, site_origin),
         admins: detail.admin_display_names,
         online: detail
             .online
@@ -238,7 +247,7 @@ fn detail_response(detail: PublicRoomDetailView) -> DetailResponse {
     }
 }
 
-fn room_response(view: PublicRoomView) -> RoomResponse {
+fn room_response(view: PublicRoomView, site_origin: &str) -> RoomResponse {
     let PublicRoomRecord {
         catalog_id,
         name,
@@ -254,6 +263,7 @@ fn room_response(view: PublicRoomView) -> RoomResponse {
     } = view.room;
     RoomResponse {
         catalog_id: catalog_id.as_uuid().to_string(),
+        share_url: share_url(site_origin, share_code.as_str()),
         share_code: share_code.as_str().to_owned(),
         name,
         description,

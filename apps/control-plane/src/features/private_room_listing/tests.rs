@@ -91,6 +91,7 @@ async fn 读设置回答公开着的样子_分享码和加不加密都在() {
             "memberPermissions": { "capabilities": ["view", "speak", "automate"] },
             "allowNetworkAgents": false,
             "shareCode": "aB3xYz",
+            "shareUrl": "https://agent-room.test/r/aB3xYz",
             "firstListedAtUnixMs": 1_000,
             "endToEndEncrypted": false,
             "platformHold": { "reason": "冒充官方客服", "heldAtUnixMs": 2_000 },
@@ -273,6 +274,7 @@ fn test_router(listings: Arc<FakeListings>) -> Router {
         Arc::new(FakeAuthentication),
         &Url::parse(FRONTEND_ORIGIN).unwrap(),
         &crate::config::DesktopOrigins::for_tests(),
+        "agent-room.test",
     ))
     .layer(middleware::from_fn(crate::correlation::attach))
 }

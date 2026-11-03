@@ -1,6 +1,7 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：`GET`、`PUT /private-rooms/{c}/listing`。
 //! 房间里已加入的人都看得到（公开房间的成员都能分享），只有房主能改。房主
-//! `POST /private-rooms/{c}/listing/share-code` 换一个分享码，回换好以后的设置。
+//! `POST /private-rooms/{c}/listing/share-code` 换一个分享码，回换好以后的设置。回答里的
+//! `shareUrl` 是整条分享链接（裸域上的 `/r/<分享码>`）：网页不知道裸域在哪。
 //!
 //! 单独一个接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段，
 //! 整个房间都读不出来。
@@ -39,6 +40,7 @@ use crate::{
         private_rooms::{PermissionsBody, PermissionsResponse},
         public_room_platform_hold::PlatformHoldResponse,
         resource_ids::parse_uuid_v7,
+        share_page::{share_url, site_origin},
     },
 };
 
@@ -49,6 +51,7 @@ pub(crate) struct PrivateRoomListingHttpState {
     listings: Arc<dyn PrivateRoomListingUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
     trusted_origins: TrustedOrigins,
+    site_origin: Arc<str>,
 }
 
 impl PrivateRoomListingHttpState {
@@ -57,11 +60,13 @@ impl PrivateRoomListingHttpState {
         authentication: Arc<dyn AuthenticationUseCases>,
         frontend_origin: &url::Url,
         desktop_origins: &crate::config::DesktopOrigins,
+        server_name: &str,
     ) -> Self {
         Self {
             listings,
             authentication,
             trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
+            site_origin: site_origin(server_name).into(),
         }
     }
 }
@@ -127,19 +132,24 @@ struct ListingResponse {
     allow_network_agents: bool,
     /// 从没公开过的房间没有分享码。
     share_code: Option<String>,
+    share_url: Option<String>,
     first_listed_at_unix_ms: Option<i64>,
     end_to_end_encrypted: bool,
     /// 平台把房间从目录里拿掉了：原因和时间。没拿掉是 `null`。
     platform_hold: Option<PlatformHoldResponse>,
 }
 
-impl From<ListingView> for ListingResponse {
-    fn from(view: ListingView) -> Self {
+impl ListingResponse {
+    fn new(view: ListingView, site_origin: &str) -> Self {
         Self {
             listed: view.settings.listed(),
             join_mode: view.settings.join_mode().into(),
             member_permissions: PermissionsResponse::from(view.settings.member_permissions()),
             allow_network_agents: view.settings.allow_network_agents(),
+            share_url: view
+                .share_code
+                .as_ref()
+                .map(|code| share_url(site_origin, code.as_str())),
             share_code: view.share_code.map(|code| code.as_str().to_owned()),
             first_listed_at_unix_ms: view.first_listed_at.map(UtcMillis::value),
             end_to_end_encrypted: view.end_to_end_encrypted,
@@ -168,6 +178,7 @@ async fn inspect(
             .listings
             .inspect(InspectListing { actor, catalog_id })
             .await,
+        &state.site_origin,
         correlation_id,
     )
 }
@@ -211,6 +222,7 @@ async fn update(
                 settings,
             })
             .await,
+        &state.site_origin,
         correlation_id,
     )
 }
@@ -247,6 +259,7 @@ async fn change_share_code(
             .listings
             .change_share_code(ChangeShareCode { actor, catalog_id })
             .await,
+        &state.site_origin,
         correlation_id,
     )
 }
@@ -285,10 +298,17 @@ async fn session(
 
 fn listing_response(
     result: Result<ListingView, ListingFailure>,
+    site_origin: &str,
     correlation_id: CorrelationId,
 ) -> Response {
     match result {
-        Ok(view) => no_store((StatusCode::OK, Json(ListingResponse::from(view))).into_response()),
+        Ok(view) => no_store(
+            (
+                StatusCode::OK,
+                Json(ListingResponse::new(view, site_origin)),
+            )
+                .into_response(),
+        ),
         Err(failure) => failure_response(failure, correlation_id),
     }
 }
