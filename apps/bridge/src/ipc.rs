@@ -240,6 +240,7 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 | IpcMethod::AnswerKnock(_)
                 | IpcMethod::InvitePerson(_)
                 | IpcMethod::RemoveAgent(_)
+                | IpcMethod::ModerateRoom(_)
                 | IpcMethod::CloseHostSession(_)
                 | IpcMethod::WithSession { .. } => Err(BridgeIpcDispatchFailure::new(
                     "bridge.host_session.unavailable",

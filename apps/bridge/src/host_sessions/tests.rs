@@ -713,7 +713,7 @@ impl ControlPlaneRoomDirectoryGateway for DirectoryFake {
 #[derive(Default)]
 struct JoinCodesFake {
     resolved: std::sync::Mutex<Vec<String>>,
-    redeemed: std::sync::Mutex<Vec<(agent_room_domain::ids::AgentId, String)>>,
+    redeemed: std::sync::Mutex<Vec<(AgentId, String)>>,
 }
 
 impl ControlPlaneJoinCodeGateway for JoinCodesFake {
@@ -724,7 +724,7 @@ impl ControlPlaneJoinCodeGateway for JoinCodesFake {
 
     fn redeem<'a>(
         &'a self,
-        agent_id: agent_room_domain::ids::AgentId,
+        agent_id: AgentId,
         code: &'a str,
     ) -> PortFuture<'a, JoinCodeResult<JoinCodeRoom>> {
         self.redeemed
@@ -768,7 +768,7 @@ impl HostAgentRegistrationGateway for HostAgentsFake {
             .unwrap()
             .push((session_key, display_name.to_owned()));
         let agent = BridgeDefaultAgent {
-            agent_id: agent_room_domain::ids::AgentId::from_uuid(session_key.as_uuid()),
+            agent_id: AgentId::from_uuid(session_key.as_uuid()),
             display_name: display_name.to_owned(),
         };
         Box::pin(async move { Ok(agent) })
@@ -1076,10 +1076,7 @@ async fn 凭口令查看房间不建人物_兑换先按会话键建好人物再�
     );
     assert_eq!(
         gateway.redeemed.lock().unwrap().as_slice(),
-        &[(
-            agent_room_domain::ids::AgentId::from_uuid(session_key),
-            JOIN_CODE.to_owned()
-        )]
+        &[(AgentId::from_uuid(session_key), JOIN_CODE.to_owned())]
     );
 
     let wrong = handler
