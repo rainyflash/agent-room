@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use agent_room_application::{
     persistence::RepositoryResult,
     ports::{
-        PortFuture, PublicRoomDetailRecord, PublicRoomDirectoryStore, PublicRoomRecord,
-        PublicRoomSearch, PublicRoomSort, PublicRoomViewerState,
+        MatrixRoomId, PortFuture, PublicRoomActivityStore, PublicRoomDetailRecord,
+        PublicRoomDirectoryStore, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
+        PublicRoomViewerState,
     },
 };
 use agent_room_domain::{
@@ -195,6 +196,64 @@ impl PublicRoomDirectoryStore for PostgresRepositories {
                 .into_iter()
                 .map(|(catalog_id, state)| (RoomCatalogId::from_uuid(catalog_id), state))
                 .collect())
+        })
+    }
+}
+
+impl PublicRoomActivityStore for PostgresRepositories {
+    fn listed_rooms_for_activity(
+        &self,
+    ) -> PortFuture<'_, RepositoryResult<Vec<(RoomCatalogId, MatrixRoomId)>>> {
+        Box::pin(async move {
+            let operation = "public_room.activity.list";
+            let rows: Vec<(Uuid, String)> = sqlx::query_as(
+                r"SELECT catalog.id, instance.matrix_room_id
+                    FROM agent_room.private_room_listing AS listing
+                    JOIN agent_room.room_catalog_entry AS catalog
+                      ON catalog.id = listing.catalog_entry_id
+                    JOIN agent_room.room_instance AS instance
+                      ON instance.catalog_entry_id = catalog.id
+                   WHERE listing.listed
+                     AND catalog.kind = 'private_room'
+                     AND catalog.status = 'active'
+                     AND instance.state = 'active'
+                   ORDER BY catalog.id",
+            )
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.into_iter()
+                .map(|(catalog_id, matrix_room)| {
+                    let matrix_room =
+                        MatrixRoomId::new(matrix_room).map_err(|_| corrupt_data(operation))?;
+                    Ok((RoomCatalogId::from_uuid(catalog_id), matrix_room))
+                })
+                .collect()
+        })
+    }
+
+    fn record_last_message(
+        &self,
+        catalog_id: RoomCatalogId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "public_room.activity.record";
+            // 不算改设置：不动版本和改的人，房主同时改设置不会撞上。
+            sqlx::query(
+                r"UPDATE agent_room.private_room_listing
+                     SET last_message_at = greatest(
+                             last_message_at,
+                             to_timestamp($2::double precision / 1000.0)
+                         )
+                   WHERE catalog_entry_id = $1",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(at.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(())
         })
     }
 }

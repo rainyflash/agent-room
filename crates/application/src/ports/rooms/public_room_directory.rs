@@ -7,7 +7,10 @@ use agent_room_domain::{
     time::UtcMillis,
 };
 
-use crate::{persistence::RepositoryResult, ports::PortFuture};
+use crate::{
+    persistence::RepositoryResult,
+    ports::{MatrixResult, MatrixRoomId, PortFuture},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicRoomSort {
@@ -86,4 +89,28 @@ pub trait PublicRoomDirectoryStore: Send + Sync {
         viewer: PrincipalId,
         rooms: &'a [RoomCatalogId],
     ) -> PortFuture<'a, RepositoryResult<Vec<(RoomCatalogId, PublicRoomViewerState)>>>;
+}
+
+/// 发现页的“最近有人说话”：控制面定时替每间公开房间记下来。
+pub trait PublicRoomActivityStore: Send + Sync {
+    /// 公开着、还在用的房间和它们在 Matrix 上的房间。
+    fn listed_rooms_for_activity(
+        &self,
+    ) -> PortFuture<'_, RepositoryResult<Vec<(RoomCatalogId, MatrixRoomId)>>>;
+
+    /// 记下这间房最近有人说话的时间，只往后挪。
+    fn record_last_message(
+        &self,
+        catalog_id: RoomCatalogId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>>;
+}
+
+pub trait PublicRoomActivityMatrix: Send + Sync {
+    /// 以应用服务读这间房最新一条消息事件的时间。只看时间、不读内容，加密的房间也一样；
+    /// 一条都没有时回 `None`。
+    fn latest_message_at<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Option<UtcMillis>>>;
 }
