@@ -842,4 +842,5 @@ async fn 远程_mcp_里凭令牌认出来的网络_agent_也按地区算() {
     );
 }
 
+mod notices;
 mod rooms;

@@ -29,8 +29,8 @@ use agent_room_application::{
         MatrixFailureKind, MatrixRoomEncryption, MatrixRoomId, MatrixSyncBatch, MatrixSyncToken,
         MatrixUserId, NetworkAgentAckOutcome, NetworkAgentInboxAppend, NetworkAgentInboxChange,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMatrixGateway,
-        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentSubmissionStore,
-        NetworkAgentSyncRequest, PortFuture,
+        NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentRoomNotice,
+        NetworkAgentSubmissionStore, NetworkAgentSyncRequest, PortFuture,
     },
     private_rooms::PrivateRoomRetirement,
 };
@@ -85,6 +85,7 @@ mod before_join;
 mod cleanup;
 mod encrypted;
 mod knocks;
+mod notices;
 mod presence;
 pub(crate) mod projection;
 mod rooms;
@@ -186,6 +187,8 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) gaps: Vec<IpcTimelineGap>,
     /// 敲它建的房间的门、在等它回答的，先敲的在前。被新的等待顶掉时不列。
     pub(crate) incoming_knocks: Vec<NetworkAgentIncomingKnock>,
+    /// 交这一批时房间公告改了的（撤掉也算），每一版只交一次。被新的等待顶掉时不列。
+    pub(crate) notices: Vec<NetworkAgentRoomNotice>,
 }
 
 /// 一次等消息：最多等多久、一次最多取几条、听什么（`specs/agent-reading/waiting.md`）。
@@ -225,6 +228,14 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         room: NetworkAgentRoomRequest,
         source_digest: [u8; 32],
     ) -> PortFuture<'a, Result<NetworkAgentEntry, NetworkGatewayFailure>>;
+
+    /// 进房间以后，这个房间现在的公告（`specs/public-rooms/design.md`“常驻公告”），记成交过了。
+    /// 没有公告、撤掉了或者读不到都是没有。
+    fn current_notice<'a>(
+        &'a self,
+        token: &'a str,
+        room_id: &'a str,
+    ) -> PortFuture<'a, Option<NetworkAgentRoomNotice>>;
 
     /// 等消息：按 `request` 的规则等到有事，防抖后交出去；等满时间就空手返回。
     fn wait_for_messages<'a>(
@@ -577,12 +588,16 @@ impl NetworkGateway {
             let (ready, recheck_at_ms) =
                 match judge(&page, rules, context, limit, now_ms, deadline_ms) {
                     WaitDecision::Deliver(delivery) if synced => {
-                        return Ok(knocks.attach(delivered(page, delivery)));
+                        let mut batch = knocks.attach(delivered(page, delivery));
+                        batch.notices = self.changed_notices(&session, room.as_ref()).await;
+                        return Ok(batch);
                     }
                     WaitDecision::Deliver(delivery) => (Some(delivery), None),
                     // 有人敲它建的房间的门：没有要交的消息也叫醒它。
                     WaitDecision::Wait { .. } if knocked && synced => {
-                        return Ok(knocks.attach(nothing(&page, WakeReason::Knocks)));
+                        let mut batch = knocks.attach(nothing(&page, WakeReason::Knocks));
+                        batch.notices = self.changed_notices(&session, room.as_ref()).await;
+                        return Ok(batch);
                     }
                     WaitDecision::Wait { recheck_at_ms } => (None, recheck_at_ms),
                 };
@@ -691,6 +706,7 @@ impl NetworkGateway {
                 capacity: INBOX_CAPACITY,
                 history_capacity: HISTORY_CAPACITY,
                 undecryptable_before_join,
+                room_notices: notices::synced(batch, &session.agent_matrix_user_id),
             })
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
@@ -1117,6 +1133,14 @@ impl NetworkAgentMessaging for NetworkGateway {
         Box::pin(self.enter_room_internal(token, room, source_digest))
     }
 
+    fn current_notice<'a>(
+        &'a self,
+        token: &'a str,
+        room_id: &'a str,
+    ) -> PortFuture<'a, Option<NetworkAgentRoomNotice>> {
+        Box::pin(self.current_notice_internal(token, room_id))
+    }
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -1474,6 +1498,7 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
             .saturating_add(unread),
         gaps,
         incoming_knocks: Vec::new(),
+        notices: Vec::new(),
     }
 }
 
@@ -1511,6 +1536,7 @@ fn nothing(page: &NetworkAgentInboxPage, reason: WakeReason) -> NetworkAgentMess
         remaining: page.pending,
         gaps: Vec::new(),
         incoming_knocks: Vec::new(),
+        notices: Vec::new(),
     }
 }
 
