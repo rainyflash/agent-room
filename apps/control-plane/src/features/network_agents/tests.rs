@@ -773,13 +773,24 @@ pub(super) fn app_with(
     messaging: Arc<FakeMessaging>,
     now: i64,
 ) -> axum::Router {
+    router(state_with(agents, messaging, now))
+        .layer(middleware::from_fn(crate::correlation::attach))
+}
+
+/// 总开关开着的状态；找公开房间的目录不给（`public_rooms` 的测试自己换上）。
+pub(super) fn state_with(
+    agents: Arc<FakeAgents>,
+    messaging: Arc<FakeMessaging>,
+    now: i64,
+) -> NetworkAgentHttpState {
     let key = NetworkAgentSealKey::from_bytes([7; 32]);
     *messaging.agents.lock().unwrap() = Some(agents.clone());
-    router(NetworkAgentHttpState {
+    NetworkAgentHttpState {
         agents,
         rooms: messaging.clone(),
         owned_rooms: messaging.clone(),
         messaging,
+        public_rooms: None,
         sources: Arc::new(NetworkSources::new(
             NetworkSourceDigester::new(Some(&key)),
             Vec::new(),
@@ -793,8 +804,7 @@ pub(super) fn app_with(
         guide_url: guide_url(Some(
             &url::Url::parse("https://api.agent-room.example").unwrap(),
         )),
-    })
-    .layer(middleware::from_fn(crate::correlation::attach))
+    }
 }
 
 fn app(agents: Arc<FakeAgents>) -> axum::Router {
@@ -1309,6 +1319,7 @@ pub(crate) fn disabled_router() -> axum::Router {
         rooms: messaging.clone(),
         owned_rooms: messaging.clone(),
         messaging,
+        public_rooms: None,
         sources: Arc::new(NetworkSources::new(
             NetworkSourceDigester::new(Some(&key)),
             Vec::new(),
@@ -1967,5 +1978,6 @@ fn 错误说明都是英文() {
     }
 }
 
+pub(super) mod public_rooms;
 mod rooms;
 mod viewing;

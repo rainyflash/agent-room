@@ -16,7 +16,7 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::{
     room_join_requests::{JoinRequestMessage, JoinRequestStatus},
-    room_listing::{RoomJoinMode, RoomShareCode},
+    room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode},
 };
 
 use super::{
@@ -111,6 +111,96 @@ async fn 目录能筛能翻页_搜的字照字面_房主只认_at_前面() {
         assert_eq!(found, expected, "{search:?}");
     }
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 网络_agent_只看到进得去的_关了网络_agent_的和只能邀请的不列() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let token = Uuid::now_v7().simple().to_string();
+    let open = listed_room(
+        &database,
+        &repositories,
+        &token,
+        RoomJoinMode::Open,
+        true,
+        1_000,
+    )
+    .await;
+    let request = listed_room(
+        &database,
+        &repositories,
+        &token,
+        RoomJoinMode::Request,
+        true,
+        2_000,
+    )
+    .await;
+    let closed = listed_room(
+        &database,
+        &repositories,
+        &token,
+        RoomJoinMode::Open,
+        false,
+        3_000,
+    )
+    .await;
+    let invite_only = listed_room(
+        &database,
+        &repositories,
+        &token,
+        RoomJoinMode::InviteOnly,
+        true,
+        4_000,
+    )
+    .await;
+
+    let everyone = search(&repositories, &token, PublicRoomSort::Newest).await;
+    assert_eq!(ids(&everyone), [invite_only, closed, request, open]);
+    let network = PublicRoomDirectoryStore::search_public_rooms(
+        &repositories,
+        &PublicRoomSearch {
+            network_agents_only: true,
+            ..query(&token, PublicRoomSort::Newest)
+        },
+    )
+    .await
+    .expect("可读");
+    assert_eq!(ids(&network), [request, open]);
+    database.close().await;
+}
+
+/// 一间公开的房间，名字带着这次的记号。每个人只能公开一间，所以每间房另建一个房主。
+async fn listed_room(
+    database: &TestDatabase,
+    repositories: &PostgresRepositories,
+    token: &str,
+    join_mode: RoomJoinMode,
+    allow_network_agents: bool,
+    first_listed_at: i64,
+) -> RoomCatalogId {
+    let owner = seed_principal(&database.runtime, "dir-network").await;
+    let catalog_id = create_room(repositories, owner).await;
+    let listing = listing_record(catalog_id, owner, join_mode, first_listed_at);
+    let listing = PrivateRoomListingRecord {
+        settings: RoomListingSettings::new(
+            true,
+            join_mode,
+            RoomListingSettings::DEFAULT_MEMBER_PERMISSIONS,
+            allow_network_agents,
+        )
+        .unwrap(),
+        ..listing
+    };
+    assert_eq!(save(repositories, &listing, None, owner).await, Saved);
+    rename(
+        repositories,
+        catalog_id,
+        &format!("目录 {token} {first_listed_at}"),
+    )
+    .await;
+    catalog_id
 }
 
 #[tokio::test]
@@ -519,6 +609,7 @@ fn query(token: &str, sort: PublicRoomSort) -> PublicRoomSearch {
         join_mode: None,
         active_since: None,
         unencrypted_only: false,
+        network_agents_only: false,
         sort,
         offset: 0,
         limit: 10,

@@ -82,6 +82,8 @@ pub struct BrowsePublicRooms {
     pub join_mode: Option<RoomJoinMode>,
     pub recently_active: bool,
     pub unencrypted_only: bool,
+    /// 只要没有账号的网络 Agent 拿房间号进得去的：房主允许网络 Agent，也不是只能邀请的。
+    pub network_agents_only: bool,
     pub sort: PublicRoomSort,
     pub offset: u32,
 }
@@ -175,6 +177,7 @@ impl PublicRoomDirectoryService {
             join_mode: request.join_mode,
             active_since,
             unencrypted_only: request.unencrypted_only,
+            network_agents_only: request.network_agents_only,
             sort: request.sort,
             offset: request.offset,
             // 多拿一间，看还有没有下一页。

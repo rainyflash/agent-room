@@ -208,22 +208,28 @@ fn browse_request(query: BrowseQuery) -> Option<BrowsePublicRooms> {
         Some("newest") => PublicRoomSort::Newest,
         Some(_) => return None,
     };
-    let offset = match query.cursor.as_deref() {
-        None | Some("") => 0,
-        Some(cursor) => cursor
-            .parse()
-            .ok()
-            .filter(|_| cursor.bytes().all(|byte| byte.is_ascii_digit()))?,
-    };
+    let offset = page_offset(query.cursor.as_deref())?;
     Some(BrowsePublicRooms {
         viewer: None,
         text: query.q.unwrap_or_default(),
         join_mode,
         recently_active,
         unencrypted_only,
+        network_agents_only: false,
         sort,
         offset,
     })
+}
+
+/// 上一页给的 `nextCursor` 换成从第几间开始；没给的是第一页，认不出的回 `None`。
+pub(crate) fn page_offset(cursor: Option<&str>) -> Option<u32> {
+    match cursor {
+        None | Some("") => Some(0),
+        Some(cursor) => cursor
+            .parse()
+            .ok()
+            .filter(|_| cursor.bytes().all(|byte| byte.is_ascii_digit())),
+    }
 }
 
 fn page_response(page: PublicRoomPage, site_origin: &str) -> PageResponse {
