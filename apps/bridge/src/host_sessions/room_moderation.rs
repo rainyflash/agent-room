@@ -4,7 +4,7 @@
 use agent_room_bridge_core::room_management::RoomModerationRequest;
 use agent_room_bridge_ipc::{
     IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcModerationOutcome,
-    IpcResponse,
+    IpcResponse, IpcSessionRoom,
 };
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
@@ -14,6 +14,37 @@ use uuid::Uuid;
 
 use super::room_management::{RoomManagementAccess, room_failure};
 use crate::ipc::BridgeIpcDispatchFailure;
+
+/// 会话的 Agent 要管的房间是怎么说的。
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RoomRef<'a> {
+    /// 没说：开会话时进的那个。
+    Session,
+    /// 目录 ID。
+    Catalog(&'a str),
+    /// 消息里的 Matrix 房间 ID（`roomId`）。
+    Matrix(&'a str),
+}
+
+impl<'a> RoomRef<'a> {
+    /// 管房间的请求说的房间：两样只会给一样（IPC 那一层查过）。
+    pub(crate) fn of(request: &'a IpcModerateRoomRequest) -> Self {
+        match (request.catalog_id.as_deref(), request.room_id.as_deref()) {
+            (Some(catalog_id), _) => Self::Catalog(catalog_id),
+            (None, Some(room_id)) => Self::Matrix(room_id),
+            (None, None) => Self::Session,
+        }
+    }
+
+    /// 会话的 Agent 进过的这个房间是不是说的这个。
+    pub(crate) fn names(self, room: &IpcSessionRoom) -> bool {
+        match self {
+            Self::Session => false,
+            Self::Catalog(catalog_id) => room.catalog_id == catalog_id,
+            Self::Matrix(room_id) => room.room_id == room_id,
+        }
+    }
+}
 
 /// 会话的 Agent 和它要管的房间。
 pub(crate) struct ModerationScope {

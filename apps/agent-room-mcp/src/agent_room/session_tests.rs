@@ -1833,3 +1833,6 @@ fn 所有工具的_schema_都公开强制的会话边界() {
 
 #[path = "rooms_tests.rs"]
 mod rooms;
+
+#[path = "moderation_tests.rs"]
+mod moderation;

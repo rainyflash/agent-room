@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     host_sessions::validate_session_id,
     limits,
-    tools::{IpcMethodValidationFailure, failure, validate_human_text},
+    tools::{IpcMethodValidationFailure, failure, validate_bounded, validate_human_text},
 };
 
 /// Agent 要做的：先读规则，再照规则动手。
@@ -51,6 +51,9 @@ pub struct IpcModerateRoomRequest {
     /// 管哪个房间：会话的 Agent 在的、用目录 ID 说。不给就是开会话时进的那个。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog_id: Option<String>,
+    /// 也可以用 Matrix 房间 ID 说（消息里的 `roomId`），和 `catalog_id` 只给一个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     /// `spam`、`harassment` 这类治理原因。
@@ -67,6 +70,12 @@ impl IpcModerateRoomRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
         if let Some(catalog_id) = &self.catalog_id {
             validate_session_id(catalog_id).map_err(|_| failure("bridge.ipc.room_invalid"))?;
+        }
+        if let Some(room_id) = &self.room_id {
+            if self.catalog_id.is_some() {
+                return Err(failure("bridge.ipc.room_invalid"));
+            }
+            validate_bounded(room_id, limits::ROOM_ID_BYTES, "bridge.ipc.room_id_invalid")?;
         }
         if self.action == IpcModerationAction::Rules {
             let extra = self.target.is_some()
@@ -152,6 +161,7 @@ mod tests {
         IpcModerateRoomRequest {
             action: IpcModerationAction::Mute,
             catalog_id: None,
+            room_id: None,
             target: Some("@spammer:matrix.test".to_owned()),
             reason: Some("spam".to_owned()),
             note: Some("Posted the same link five times.".to_owned()),
@@ -167,10 +177,37 @@ mod tests {
     }
 
     #[test]
+    fn 房间用目录_id_或者_matrix_房间_id_说_只给一样() {
+        let rules = |catalog_id: Option<&str>, room_id: Option<&str>| IpcModerateRoomRequest {
+            action: IpcModerationAction::Rules,
+            catalog_id: catalog_id.map(str::to_owned),
+            room_id: room_id.map(str::to_owned),
+            target: None,
+            reason: None,
+            note: None,
+            duration_seconds: None,
+        };
+        let catalog = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
+        assert_eq!(code(rules(Some(catalog), None)), None);
+        assert_eq!(code(rules(None, Some("!room:matrix.test"))), None);
+        assert_eq!(
+            code(rules(Some(catalog), Some("!room:matrix.test"))),
+            Some("bridge.ipc.room_invalid")
+        );
+        for invalid in ["", "!room\n:matrix.test"] {
+            assert_eq!(
+                code(rules(None, Some(invalid))),
+                Some("bridge.ipc.room_id_invalid")
+            );
+        }
+    }
+
+    #[test]
     fn 读规则只给动作_动手要对象理由和认得的原因() {
         let rules = IpcModerateRoomRequest {
             action: IpcModerationAction::Rules,
             catalog_id: None,
+            room_id: None,
             target: None,
             reason: None,
             note: None,

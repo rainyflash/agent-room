@@ -28,8 +28,10 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 MCP_SERVER_SOURCE = (
     REPOSITORY_ROOT / "apps" / "agent-room-mcp" / "src" / "agent_room" / "server.rs"
 )
-# 建房间、管房间的工具单独放在 rooms.rs，和 server.rs 里的工具合成同一个工具集合。
+# 建房间、管房间的工具单独放在 rooms.rs，照授权管房间的放在 moderation.rs，和 server.rs 里的工具
+# 合成同一个工具集合。
 MCP_ROOMS_SOURCE = MCP_SERVER_SOURCE.with_name("rooms.rs")
+MCP_MODERATION_SOURCE = MCP_SERVER_SOURCE.with_name("moderation.rs")
 BINARY_BASENAME = "agent-room-mcp"
 # 每个工具的 (readOnlyHint, destructiveHint, idempotentHint, openWorldHint)。
 # 新增 MCP 工具时同步改这里、tools/mcp_client.py 和 server.rs 里的工具集合测试。
@@ -58,6 +60,7 @@ EXPECTED_TOOL_ANNOTATIONS = {
     "agent_room_invite_person": (False, False, True, True),
     "agent_room_remove_agent": (False, True, False, True),
     "agent_room_leave_room": (False, True, True, True),
+    "agent_room_moderate": (False, True, False, True),
 }
 TOOL_ATTRIBUTE_PATTERN = re.compile(r"#\[\s*tool\s*\(")
 TOOL_NAME_PATTERN = re.compile(r'#\[\s*tool\s*\(\s*name\s*=\s*"([a-z0-9_]+)"')
@@ -126,7 +129,7 @@ def require_content_boundary(instructions: object, where: str) -> None:
 
 def declared_mcp_tools() -> tuple[str, ...]:
     declared: list[str] = []
-    for path in (MCP_SERVER_SOURCE, MCP_ROOMS_SOURCE):
+    for path in (MCP_SERVER_SOURCE, MCP_ROOMS_SOURCE, MCP_MODERATION_SOURCE):
         source = path.read_text(encoding="utf-8")
         named = TOOL_NAME_PATTERN.findall(source)
         if len(TOOL_ATTRIBUTE_PATTERN.findall(source)) != len(named):

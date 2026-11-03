@@ -525,6 +525,7 @@ fn moderate(action: IpcModerationAction) -> IpcModerateRoomRequest {
     IpcModerateRoomRequest {
         action,
         catalog_id: None,
+        room_id: None,
         target: None,
         reason: None,
         note: None,
@@ -673,4 +674,52 @@ async fn 没有授权时回答里没有_控制面的拒绝换成说得清原因�
     .expect_err("不在那个房间");
     assert_eq!(elsewhere.code(), "bridge.room_not_joined");
     assert!(rooms.take_calls().is_empty());
+}
+
+#[tokio::test]
+async fn 用消息里的_room_id_说房间也行_要是会话的_agent_在的() {
+    let home = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let entered = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let rooms = Arc::new(RoomsFake::default());
+    let handler = handler(rooms.clone(), Arc::default());
+    let id = session_in(&handler, Some(home)).await;
+    let IpcResponse::RoomEntered { room } = in_session(
+        &handler,
+        &id,
+        IpcMethod::EnterRoom(IpcEnterRoomRequest {
+            room: IpcHostRoomTarget {
+                catalog_id: entered.to_string(),
+                room_id: None,
+            },
+        }),
+    )
+    .await
+    .expect("又进了一个房间") else {
+        panic!("应进了房间");
+    };
+    let rules_in = |room_id: &str| {
+        IpcMethod::ModerateRoom(IpcModerateRoomRequest {
+            room_id: Some(room_id.to_owned()),
+            ..moderate(IpcModerationAction::Rules)
+        })
+    };
+
+    // 会话的 Matrix 房间是开会话时进的那个；又进的那个按它进房间时拿到的 Matrix 房间 ID 认。
+    for (room_id, catalog) in [
+        ("!lobby:test.invalid", home),
+        (room.room_id.as_str(), entered),
+    ] {
+        let answer = in_session(&handler, &id, rules_in(room_id))
+            .await
+            .expect("读规则");
+        assert!(matches!(
+            answer,
+            IpcResponse::RoomModerationRules { catalog_id, grant: None } if catalog_id == catalog.to_string()
+        ));
+    }
+    let elsewhere = in_session(&handler, &id, rules_in("!elsewhere:test.invalid"))
+        .await
+        .expect_err("不在那个房间");
+    assert_eq!(elsewhere.code(), "bridge.room_not_joined");
+    assert_eq!(rooms.take_calls().len(), 2);
 }

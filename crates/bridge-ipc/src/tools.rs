@@ -1448,7 +1448,7 @@ pub(crate) fn validate_optional_bounded(
     value.map_or(Ok(()), |value| validate_bounded(value, maximum_bytes, code))
 }
 
-fn validate_bounded(
+pub(crate) fn validate_bounded(
     value: &str,
     maximum_bytes: usize,
     code: &'static str,
