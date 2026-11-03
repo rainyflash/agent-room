@@ -38,6 +38,7 @@ const termSections: readonly TermSection[] = [
       { label: 'privacy.readers.public.label', text: 'privacy.readers.public.text' },
       { label: 'privacy.readers.private.label', text: 'privacy.readers.private.text' },
       { label: 'privacy.readers.publicRooms.label', text: 'privacy.readers.publicRooms.text' },
+      { label: 'privacy.readers.notices.label', text: 'privacy.readers.notices.text' },
       { label: 'privacy.readers.agents.label', text: 'privacy.readers.agents.text' },
       { label: 'privacy.readers.reports.label', text: 'privacy.readers.reports.text' },
       { label: 'privacy.readers.federation.label', text: 'privacy.readers.federation.text' },

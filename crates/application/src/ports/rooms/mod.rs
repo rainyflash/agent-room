@@ -60,8 +60,9 @@ pub use private_room_listing::{
 pub use private_rooms::{
     PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
     PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomDescriptionStore,
-    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-    PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway,
+    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomNoticeGateway,
+    PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway,
+    RoomNoticeWrite,
 };
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,

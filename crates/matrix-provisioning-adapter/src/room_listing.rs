@@ -69,7 +69,7 @@ static ENCRYPTION_CONTENT: std::sync::LazyLock<Value> = std::sync::LazyLock::new
 
 /// 以应用服务写一条 `state_key` 为空的房间状态。和当前状态一模一样时 Synapse 直接回旧的事件，
 /// 所以重写是幂等的。
-async fn put_room_state(
+pub(super) async fn put_room_state(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
     event_type: &str,

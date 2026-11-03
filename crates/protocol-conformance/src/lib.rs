@@ -11,7 +11,7 @@ mod tests {
         AgentStatusEvent, CapabilityManifest, ErrorEnvelope, HandoffReceiptEvent,
         HandoffRequestEvent, MessagePreviewEvent, MessagePreviewEventV2, MessageRevisionEvent,
         MessageRevisionEventV2, ModerationNoticeEvent, RoomKeyRequestEvent, RoomKeysEvent,
-        RoomListingState,
+        RoomListingState, RoomNoticeState,
     };
 
     fn project_path(relative: &str) -> PathBuf {
@@ -84,6 +84,9 @@ mod tests {
                 value,
                 "房间第一次公开的状态必须符合生成的 Rust 类型",
             ),
+            Some("room.notice.v1") => {
+                deserializes::<RoomNoticeState>(value, "房间常驻公告必须符合生成的 Rust 类型");
+            }
             _ if value.get("protocolVersions").is_some() => {
                 deserializes::<CapabilityManifest>(value, "能力清单必须符合生成的 Rust 类型");
             }

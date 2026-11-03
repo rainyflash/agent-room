@@ -2,6 +2,7 @@ use agent_room_domain::{
     DomainError, DomainResult,
     ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus},
+    room_notices::RoomNoticeText,
     rooms::{
         MatrixRoomReference, RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus,
         RoomInstance, RoomInstanceFields, RoomInstanceState,
@@ -431,6 +432,24 @@ pub trait PrivateRoomTopicGateway: Send + Sync {
         &'a self,
         room_id: &'a MatrixRoomId,
         topic: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
+/// 写进 Matrix 的一版常驻公告（`room.notice.v1`）：正文（空的就是撤掉）、改的人、改的时间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomNoticeWrite {
+    pub text: RoomNoticeText,
+    /// 改的人在 Matrix 上的 ID。状态事件是应用服务发的，读的一边按它说“某某更新了公告”。
+    pub updated_by: MatrixUserId,
+    pub updated_at: UtcMillis,
+}
+
+pub trait PrivateRoomNoticeGateway: Send + Sync {
+    /// 以应用服务写 `io.github.rainyflash.agentroom.room.notice.v1`（`state_key` 为空），盖掉上一版。
+    fn set_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        notice: &'a RoomNoticeWrite,
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
