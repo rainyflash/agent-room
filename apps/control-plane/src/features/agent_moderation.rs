@@ -9,6 +9,9 @@
 //! - `GET /rooms/{c}/moderation/actions/agents`：房主和管理员看台账时，哪些是 Agent 做的、哪些是 Agent 撤回
 //!   的（解封）、它写的理由。单独一个接口：网页对治理动作严格校验（`moderationActionSchema`），动作里多一个
 //!   字段，旧版的台账整个读不出来。
+//! - `POST /rooms/{c}/moderation/grants/{g}/reverse`：房主和管理员把这份授权下 Agent 做的、还生效着的动作
+//!   一次全撤，要最近登录，正文 `{"impactAcknowledged": true}`。回 200
+//!   `{"reversed": ["<动作 ID>"], "failed": [{"actionId", "code"}]}`，一条没撤成不挡别的，再来一次只会再试没撤成的。
 //!
 //! 给 Agent 看的错误说明是英文，和两份 MCP 的说法一样。
 
@@ -19,12 +22,13 @@ use agent_room_application::{
     devices::DeviceAuthorizationUseCases,
     moderation::{
         AgentModerate, AgentModerationFailure, AgentModerationFailureKind, AgentModerationScope,
-        AgentModerationUseCases, AgentModerationView, ListAgentModeration,
+        AgentModerationUseCases, AgentModerationView, GrantReversal, ListAgentModeration,
+        ModerationFailureKind, ReverseGrantModeration,
     },
     ports::{AgentModerationRecord, MatrixUserId, SecretFactory},
 };
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, ModerationActionId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceId, ModerationActionId, RoomCatalogId, RoomModerationGrantId},
     moderation::{ModerationAction, ModerationReason},
     room_moderation_grants::{AgentModerationNote, RoomModerationPower},
     time::{DurationMillis, UtcMillis},
@@ -45,7 +49,7 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{
-        authentication::{authenticate_session, no_store},
+        authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
         devices::authenticate_signed_device_request,
         resource_ids::parse_uuid_v7,
     },
@@ -61,6 +65,7 @@ pub(crate) struct AgentModerationHttpState {
     authentication: Arc<dyn AuthenticationUseCases>,
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
+    trusted_origins: TrustedOrigins,
 }
 
 pub(crate) struct AgentModerationHttpDependencies {
@@ -68,6 +73,8 @@ pub(crate) struct AgentModerationHttpDependencies {
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
+    /// 一次全撤是网页发的写请求，和人工撤回一样只认这些来源。
+    pub(crate) trusted_origins: TrustedOrigins,
 }
 
 impl AgentModerationHttpState {
@@ -77,6 +84,7 @@ impl AgentModerationHttpState {
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
+            trusted_origins: dependencies.trusted_origins,
         }
     }
 }
@@ -94,6 +102,10 @@ pub(crate) fn router(state: AgentModerationHttpState) -> Router {
         .route(
             "/rooms/{catalog_id}/moderation/actions/agents",
             get(list_agent_actions),
+        )
+        .route(
+            "/rooms/{catalog_id}/moderation/grants/{grant_id}/reverse",
+            post(reverse_grant),
         )
         .layer(DefaultBodyLimit::max(MAX_ACTION_BODY_BYTES))
         .with_state(state)
@@ -365,6 +377,113 @@ async fn list_agent_actions(
             })
             .into_response(),
         ),
+        Err(failure) => failure_response(failure, correlation_id),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReverseGrantBody {
+    impact_acknowledged: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FailedReversal {
+    action_id: String,
+    code: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct GrantReversalResponse {
+    reversed: Vec<String>,
+    failed: Vec<FailedReversal>,
+}
+
+impl From<GrantReversal> for GrantReversalResponse {
+    fn from(outcome: GrantReversal) -> Self {
+        Self {
+            reversed: outcome
+                .reversed
+                .iter()
+                .map(|action| action.id().to_string())
+                .collect(),
+            failed: outcome
+                .failed
+                .into_iter()
+                .map(|(action_id, kind)| FailedReversal {
+                    action_id: action_id.to_string(),
+                    code: ledger_code(kind),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// 和人工撤回回的错误码一样（`ApiError::moderation`）。
+const fn ledger_code(kind: ModerationFailureKind) -> &'static str {
+    match kind {
+        ModerationFailureKind::InvalidRequest => "moderation.invalid_request",
+        ModerationFailureKind::Forbidden => "moderation.forbidden",
+        ModerationFailureKind::NotFound => "moderation.not_found",
+        ModerationFailureKind::Conflict => "moderation.conflict",
+        ModerationFailureKind::RateLimited => "moderation.rate_limited",
+        ModerationFailureKind::DependencyUnavailable => "moderation.dependency_unavailable",
+        ModerationFailureKind::Internal => "moderation.internal",
+    }
+}
+
+async fn reverse_grant(
+    State(state): State<AgentModerationHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((catalog, grant)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    body: Bytes,
+) -> Response {
+    if !origin_matches(&headers, &state.trusted_origins) {
+        return no_store(
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                "agent_moderation.invalid_origin",
+                ErrorCategory::Authorization,
+                "This request did not come from an Agent Room page.",
+                correlation_id,
+            )
+            .into_response(),
+        );
+    }
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::RecentAuthentication,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let (Ok(room_catalog_id), Ok(grant_id)) = (
+        parse_uuid_v7(&catalog).map(RoomCatalogId::from_uuid),
+        parse_uuid_v7(&grant).map(RoomModerationGrantId::from_uuid),
+    ) else {
+        return invalid("agent_moderation.invalid_resource", correlation_id);
+    };
+    let Ok(body) = serde_json::from_slice::<ReverseGrantBody>(&body) else {
+        return invalid("agent_moderation.invalid", correlation_id);
+    };
+    match state
+        .moderation
+        .reverse_grant(ReverseGrantModeration {
+            actor,
+            room_catalog_id,
+            grant_id,
+            impact_acknowledged: body.impact_acknowledged,
+        })
+        .await
+    {
+        Ok(outcome) => no_store(Json(GrantReversalResponse::from(outcome)).into_response()),
         Err(failure) => failure_response(failure, correlation_id),
     }
 }

@@ -2,6 +2,8 @@
 //! 禁言、踢出、封禁、解封。落进的是同一套台账，执行人是给授权的人，另记是哪个 Agent 做的；动别人的 Agent 等于
 //! 动它的主人；房主、管理员、给授权的人和他们的 Agent 动不了。
 
+#[path = "agents/grant_reversal.rs"]
+mod grant_reversal;
 #[path = "agents/kick_ban.rs"]
 mod kick_ban;
 
@@ -185,6 +187,33 @@ impl AgentModerationStore for FakeAgentStore {
             .find(|reversal| reversal.request_id == request_id)
             .cloned();
         Box::pin(async move { Ok(found) })
+    }
+
+    fn grant_actions(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        grant_id: RoomModerationGrantId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationActionId>>> {
+        let made: Vec<_> = self
+            .attributions
+            .lock()
+            .expect("记账锁可用")
+            .iter()
+            .filter(|attribution| attribution.grant_id == grant_id)
+            .map(|attribution| attribution.action_id)
+            .collect();
+        let applied = self
+            .repository
+            .actions
+            .lock()
+            .expect("动作锁可用")
+            .iter()
+            .filter(|action| {
+                made.contains(&action.id()) && action.status() == ModerationActionStatus::Applied
+            })
+            .map(ModerationAction::id)
+            .collect();
+        Box::pin(async move { Ok(applied) })
     }
 
     fn agent_reversals(

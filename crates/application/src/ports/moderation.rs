@@ -429,6 +429,13 @@ pub trait AgentModerationStore: Send + Sync {
         &self,
         room_catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>>;
+
+    /// 这个房间里按这份授权做的、还生效着（`applied`）的动作，先做的在前，不限条数。
+    fn grant_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        grant_id: RoomModerationGrantId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationActionId>>>;
 }
 
 pub trait ModerationIdentifierFactory: Send + Sync {

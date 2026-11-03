@@ -13,7 +13,7 @@ use agent_room_application::{
     moderation::{
         AgentModerate, AgentModerationFailure, AgentModerationFailureKind, AgentModerationLedger,
         AgentModerationResult, AgentModerationScope, AgentModerationUseCases, AgentModerationView,
-        ListAgentModeration,
+        GrantReversal, ListAgentModeration, ModerationFailureKind, ReverseGrantModeration,
     },
     ports::{
         AgentModerationAttribution, AgentModerationRecord, MatrixUserId, PortFuture,
@@ -49,6 +49,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::{AgentModerationHttpDependencies, AgentModerationHttpState, router};
+use crate::features::authentication::TrustedOrigins;
 
 const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const DEVICE_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
@@ -58,6 +59,8 @@ const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
 const ACTION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
 const GRANT_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e4a";
 const TARGET_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e4b";
+const FAILED_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e4c";
+const ORIGIN: &str = "https://app.agent-room.test";
 const NOW: i64 = 1_700_000_100_000;
 const EXPIRES_AT: i64 = 1_702_592_100_000;
 
@@ -67,6 +70,7 @@ struct FakeModeration {
     scopes: Mutex<Vec<AgentModerationScope>>,
     moderated: Mutex<Vec<AgentModerate>>,
     listed: Mutex<Vec<ListAgentModeration>>,
+    reversed_grants: Mutex<Vec<ReverseGrantModeration>>,
     failure: Mutex<Option<AgentModerationFailure>>,
 }
 
@@ -149,6 +153,36 @@ impl AgentModerationUseCases for FakeModeration {
         });
         Box::pin(async move { answer })
     }
+
+    /// 撤成了一条禁言，另一条聊天服务器没撤成。
+    fn reverse_grant(
+        &self,
+        request: ReverseGrantModeration,
+    ) -> PortFuture<'_, AgentModerationResult<GrantReversal>> {
+        self.reversed_grants.lock().unwrap().push(request);
+        let mut action = ModerationAction::reserve(
+            action_id(),
+            None,
+            PrincipalId::from_uuid(uuid(PRINCIPAL_UUID)),
+            catalog_id(),
+            ModerationActionKind::Mute,
+            ModerationTarget::new(ModerationTargetKind::Principal, TARGET_UUID).unwrap(),
+            ModerationReason::Spam,
+            time(NOW),
+            None,
+        )
+        .unwrap();
+        action.mark_applied().unwrap();
+        action.reverse(time(NOW)).unwrap();
+        let answer = self.answer(GrantReversal {
+            reversed: vec![action],
+            failed: vec![(
+                ModerationActionId::from_uuid(uuid(FAILED_UUID)),
+                ModerationFailureKind::DependencyUnavailable,
+            )],
+        });
+        Box::pin(async move { answer })
+    }
 }
 
 struct FakeAuthentication;
@@ -174,8 +208,13 @@ impl AuthenticationUseCases for FakeAuthentication {
         requirement: AuthenticationRequirement,
     ) -> PortFuture<'a, AuthenticationResult<AuthenticatedPrincipal>> {
         assert_eq!(session_secret.expose(), "session-secret");
-        assert_eq!(requirement, AuthenticationRequirement::ActiveSession);
-        Box::pin(async { Ok(principal()) })
+        let recent = requirement == AuthenticationRequirement::RecentAuthentication;
+        Box::pin(async move {
+            Ok(AuthenticatedPrincipal {
+                recently_authenticated: recent,
+                ..principal()
+            })
+        })
     }
 
     fn logout<'a>(
@@ -502,12 +541,63 @@ async fn 房主看台账时知道哪些是_agent_做的() {
     assert_eq!(listed[0].room_catalog_id, catalog_id());
 }
 
+#[tokio::test]
+async fn 一份授权做的一次全撤_要最近登录_回撤成的和没撤成的() {
+    let moderation = Arc::new(FakeModeration::default());
+    let path = format!("/rooms/{CATALOG_UUID}/moderation/grants/{GRANT_UUID}/reverse");
+    let request = |origin: &str| {
+        Request::builder()
+            .method(Method::POST)
+            .uri(&path)
+            .header(header::ORIGIN, origin)
+            .header(header::COOKIE, "__Host-agent-room-session=session-secret")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"impactAcknowledged": true}).to_string()))
+            .unwrap()
+    };
+
+    let response = test_router(moderation.clone(), devices("POST", "", ""))
+        .oneshot(request(ORIGIN))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "reversed": [ACTION_UUID],
+            "failed": [{"actionId": FAILED_UUID, "code": "moderation.dependency_unavailable"}]
+        })
+    );
+    let requests = moderation.reversed_grants.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].actor.recently_authenticated, "要最近登录");
+    assert_eq!(requests[0].room_catalog_id, catalog_id());
+    assert_eq!(requests[0].grant_id, grant_id());
+    assert!(requests[0].impact_acknowledged);
+
+    let refused = test_router(moderation.clone(), devices("POST", "", ""))
+        .oneshot(request("https://evil.example"))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(refused).await["code"],
+        "agent_moderation.invalid_origin"
+    );
+    assert_eq!(moderation.reversed_grants.lock().unwrap().len(), 1);
+}
+
 fn test_router(moderation: Arc<FakeModeration>, devices: FakeDevices) -> Router {
     let state = AgentModerationHttpState::new(AgentModerationHttpDependencies {
         moderation,
         authentication: Arc::new(FakeAuthentication),
         devices: Arc::new(devices),
         secrets: Arc::new(SecureSecretFactory),
+        trusted_origins: TrustedOrigins::new(
+            &url::Url::parse(ORIGIN).unwrap(),
+            &crate::config::DesktopOrigins::for_tests(),
+        ),
     });
     router(state).layer(middleware::from_fn(crate::correlation::attach))
 }

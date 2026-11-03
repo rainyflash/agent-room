@@ -8,7 +8,8 @@ mod service;
 pub use agents::{
     AgentModerate, AgentModerationDependencies, AgentModerationFailure, AgentModerationFailureKind,
     AgentModerationLedger, AgentModerationResult, AgentModerationScope, AgentModerationService,
-    AgentModerationUseCases, AgentModerationView, ListAgentModeration,
+    AgentModerationUseCases, AgentModerationView, GrantReversal, ListAgentModeration,
+    ReverseGrantModeration,
 };
 pub(crate) use expiry::homeserver_unavailable;
 pub use expiry::{ModerationExpiryOutcome, ModerationExpiryRetry, ModerationExpiryUseCases};

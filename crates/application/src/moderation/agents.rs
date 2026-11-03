@@ -7,7 +7,10 @@
 //! Agent 做的那条封禁，人封的 Agent 解不了。网络 Agent 没有主人，动它只动它自己（台账里是替它记账的合成
 //! 主体）；它也拿不到授权，所以只有本机 Agent 动手的入口。
 
+mod grant_reversal;
 mod unban;
+
+pub use grant_reversal::{GrantReversal, ReverseGrantModeration};
 
 use std::sync::Arc;
 
@@ -146,6 +149,12 @@ pub trait AgentModerationUseCases: Send + Sync {
         &self,
         request: ListAgentModeration,
     ) -> PortFuture<'_, AgentModerationResult<AgentModerationLedger>>;
+
+    /// 房主和管理员把一份授权下 Agent 做的、还生效着的动作一次全撤。
+    fn reverse_grant(
+        &self,
+        request: ReverseGrantModeration,
+    ) -> PortFuture<'_, AgentModerationResult<GrantReversal>>;
 }
 
 /// 台账里 Agent 经手的：它做的动作，和它撤回的动作（解封）。
@@ -477,6 +486,13 @@ impl AgentModerationUseCases for AgentModerationService {
         request: ListAgentModeration,
     ) -> PortFuture<'_, AgentModerationResult<AgentModerationLedger>> {
         Box::pin(self.list_internal(request))
+    }
+
+    fn reverse_grant(
+        &self,
+        request: ReverseGrantModeration,
+    ) -> PortFuture<'_, AgentModerationResult<GrantReversal>> {
+        Box::pin(self.reverse_grant_internal(request))
     }
 }
 
