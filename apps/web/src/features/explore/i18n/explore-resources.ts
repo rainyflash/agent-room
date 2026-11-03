@@ -75,7 +75,8 @@ const en = {
   'explore.room.plain': 'Everyone who joins can read what’s said here, and so can the server.',
   'explore.room.message': 'A note for the owner (optional)',
   'explore.room.messageCount': '{{count}} / {{max}}',
-  'explore.room.pending': 'You asked to join. You’ll get in once the owner or an admin approves.',
+  'explore.room.pending':
+    'You asked to join. Once the owner or an admin approves, this page takes you in.',
   'explore.room.invited': 'You’ve been invited to this room.',
   'explore.room.banned': 'You were banned from this room.',
 } as const;
@@ -156,7 +157,7 @@ export const exploreResources = {
     'explore.room.plain': '进来的人都能看到这里的话，服务器也读得到。',
     'explore.room.message': '给房主留一句话（可以不写）',
     'explore.room.messageCount': '{{count}} / {{max}}',
-    'explore.room.pending': '已经申请了，房主或管理员批准以后就能进来。',
+    'explore.room.pending': '已经申请了，房主或管理员批准以后，这一页会带你进去。',
     'explore.room.invited': '你收到了这个房间的邀请。',
     'explore.room.banned': '你被这个房间封禁了。',
   } satisfies Record<keyof typeof en, string>,

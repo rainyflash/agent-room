@@ -7,7 +7,7 @@ import {
   useLocation,
   useNavigate,
 } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { I18nextProvider } from 'react-i18next';
 
@@ -26,9 +26,11 @@ import {
   type ExploreAccount,
   type ExploreRoomsState,
 } from '@/features/explore/ui/explore-view';
+import { useApprovedJoin } from '@/features/explore/ui/use-approved-join';
 import type { ExploreActionKind, ExploreActions } from '@/features/explore/ui/use-explore-actions';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { ok } from '@/shared/result';
 
 /**
  * 发现页的夹具（specs/public-rooms/design.md“发现页”）：
@@ -36,6 +38,7 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
  * - `?signed-out`：没登录，顶栏是“登录”“注册”，卡片上是“登录后加入”（记下回来接着加入的那间房）；
  * - `?empty`：什么都没搜到；`?failed`：没读到；`?limited`：被限流；`?loading`：还在读。
  * 点卡片打开详情（`/explore/<分享码>`），加入、申请、撤回照着做（见 `useFixtureActions`）。
+ * `window.__agentRoomFixtureControls.approveRequests()` 像房主批准了一样，把这一页上申请的都改成收到邀请。
  * 点筛选、排序、搜索在这一页里照着筛；点了什么记在 `document.body.dataset` 上。语言跟着浏览器走。
  */
 const search = new URLSearchParams(location.search);
@@ -208,6 +211,23 @@ function useFixtureActions(): {
   const [viewers, setViewers] = useState<Record<string, ExploreRoom['viewer']>>({});
   const [busy, setBusy] = useState<ExploreActions['busy']>(null);
   const [failure, setFailure] = useState<ExploreActions['failure']>(null);
+  useEffect(() => {
+    Object.defineProperty(window, '__agentRoomFixtureControls', {
+      configurable: true,
+      value: {
+        approveRequests: () => {
+          setViewers((current) =>
+            Object.fromEntries(
+              Object.entries(current).map(([catalogId, viewer]) => [
+                catalogId,
+                viewer === 'pending' ? 'invited' : viewer,
+              ]),
+            ),
+          );
+        },
+      },
+    });
+  }, []);
   const later = (catalogId: string, kind: ExploreActionKind, then: () => void) => {
     setBusy({ catalogId, kind });
     setFailure(null);
@@ -264,6 +284,12 @@ function Fixture() {
     selected === undefined
       ? { kind: 'failed', failure: { code: 'public_room.not_found', retryable: false } }
       : { kind: 'ready', room: { ...withViewer(selected), ...detailFacts } };
+  // 像发现页那样，批准了的直接进房间。
+  useApprovedJoin({
+    detail: detail.kind === 'ready' ? ok(detail.room) : undefined,
+    onJoin: account.kind === 'signed-in' ? actions.onJoin : undefined,
+    pages: [ok({ nextCursor: null, rooms: listed })],
+  });
   return (
     <ExploreView
       account={account}

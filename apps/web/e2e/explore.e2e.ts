@@ -262,6 +262,32 @@ test('房间详情：留一句话申请，在等批准时能撤回', async ({ pa
   expect(failures).toEqual([]);
 });
 
+type ExploreFixtureWindow = Window &
+  typeof globalThis & {
+    readonly __agentRoomFixtureControls: { approveRequests(): void };
+  };
+
+test('申请被批准以后，停在详情上的人自动进房间', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(fixture);
+  await card(page, 'Design critiques')
+    .getByRole('link', { name: 'Ask to join · Design critiques' })
+    .click();
+  const panel = page.getByRole('dialog', { name: 'Design critiques' });
+  await panel.getByRole('button', { name: 'Ask to join' }).click();
+  await expect(panel).toContainText('Once the owner or an admin approves, this page takes you in.');
+  await expect(page.locator('body')).toHaveAttribute('data-fixture-opened', '/explore/Rm0003');
+
+  await page.evaluate(() => {
+    (window as ExploreFixtureWindow).__agentRoomFixtureControls.approveRequests();
+  });
+  await expect(page.locator('body')).toHaveAttribute(
+    'data-fixture-opened',
+    /^\/lobby\/[0-9a-f-]{36}$/u,
+  );
+  expect(failures).toEqual([]);
+});
+
 test('卡片上：撤回申请、没进成时说为什么', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto(fixture);

@@ -159,6 +159,37 @@ export function joinContinuationStep(room: ExploreRoom): 'enter' | 'join' | 'req
   }
 }
 
+/** 有在等批准的申请时，目录和详情多久重读一次：批准了好马上带他进去。 */
+export const JOIN_REQUEST_POLL_MS = 10_000;
+
+export function hasPendingRequest(rooms: readonly ExploreRoom[]): boolean {
+  return rooms.some((room) => room.viewer === 'pending');
+}
+
+/**
+ * 申请被批准了的房间（`specs/public-rooms/design.md`“加入方式”）：批准以房主的名义邀请，所以这一页看到过
+ * 在等批准、现在收到了邀请的，就是批准了。`waiting` 记着这一页看到过在等批准的房间，原地更新；撤回了、
+ * 被拒了的拿掉，不算批准。没看到过在等批准的邀请不算：别的邀请照旧要人自己点“接受邀请”。
+ *
+ * 同一间房目录和详情里都有时，看走得远的那个：详情刚重读过，目录可能还是旧的“在等批准”。
+ */
+export function approvedRequests(
+  waiting: Set<string>,
+  rooms: readonly ExploreRoom[],
+): ExploreRoom[] {
+  const latest = new Map<string, ExploreRoom>();
+  for (const room of rooms) {
+    const seen = latest.get(room.catalogId);
+    if (seen === undefined || seen.viewer === 'pending') latest.set(room.catalogId, room);
+  }
+  const approved: ExploreRoom[] = [];
+  for (const room of latest.values()) {
+    if (room.viewer === 'pending') waiting.add(room.catalogId);
+    else if (waiting.delete(room.catalogId) && room.viewer === 'invited') approved.push(room);
+  }
+  return approved;
+}
+
 export function exploreFilterFromSearch(search: ExploreSearch): ExploreFilter {
   return { q: search.q ?? '', quick: search.quick ?? 'all', sort: search.sort ?? 'active' };
 }

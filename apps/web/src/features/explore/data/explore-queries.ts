@@ -1,10 +1,12 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 
-import type {
-  ExploreFilter,
-  ExploreGateway,
-  ExplorePage,
-  ExploreFailure,
+import {
+  hasPendingRequest,
+  JOIN_REQUEST_POLL_MS,
+  type ExploreFilter,
+  type ExploreGateway,
+  type ExplorePage,
+  type ExploreFailure,
 } from '@/features/explore/domain/explore';
 import { err, type Result } from '@/shared/result';
 
@@ -30,6 +32,13 @@ export function useExploreRooms(
     queryFn: async ({ pageParam }) =>
       gateway === undefined ? err(unavailable) : await gateway.browse(filter, pageParam),
     queryKey: [...exploreQueryKey, 'browse', viewer, filter] as const,
+    // 有在等批准的申请时隔一会儿重读，批准了好马上带他进去（`useApprovedJoin`）。
+    refetchInterval: (query) =>
+      hasPendingRequest(
+        (query.state.data?.pages ?? []).flatMap((page) => (page.ok ? page.value.rooms : [])),
+      )
+        ? JOIN_REQUEST_POLL_MS
+        : false,
     retry: false,
     staleTime: 30_000,
   });
@@ -49,6 +58,10 @@ export function useExploreRoom(
         ? err(unavailable)
         : await gateway.detail(shareCode),
     queryKey: [...exploreQueryKey, 'detail', viewer, shareCode] as const,
+    refetchInterval: (query) =>
+      query.state.data?.ok === true && hasPendingRequest([query.state.data.value])
+        ? JOIN_REQUEST_POLL_MS
+        : false,
     retry: false,
     staleTime: 30_000,
   });
