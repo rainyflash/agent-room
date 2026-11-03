@@ -851,6 +851,20 @@ impl PrivateRoom {
         self.ensure_active("renamed")
     }
 
+    /// 只有房主能给还在使用中的房间改简介，和改名一样（`specs/public-rooms/design.md`）。
+    ///
+    /// # Errors
+    ///
+    /// 不是房主，或房间已归档时返回错误。
+    pub fn authorize_description_change(&self, actor: PrincipalId) -> DomainResult<()> {
+        if actor != self.owner_principal_id {
+            return Err(DomainError::Forbidden {
+                action: "修改私人房间简介",
+            });
+        }
+        self.ensure_active("described")
+    }
+
     /// 切换公开和私密、改加入方式（`specs/public-rooms/design.md`）：只有房主，管理员不能，
     /// 这是房间的性质，不是日常管理。房间还要在使用中。
     ///

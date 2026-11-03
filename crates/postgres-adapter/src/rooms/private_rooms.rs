@@ -1,6 +1,6 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
-    ports::{PortFuture, PrivateRoomSnapshot, PrivateRoomStore},
+    ports::{PortFuture, PrivateRoomDescriptionStore, PrivateRoomSnapshot, PrivateRoomStore},
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
@@ -155,6 +155,39 @@ impl PrivateRoomStore for PostgresRepositories {
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(rename_private_room(self, catalog_id, name, changed_at))
+    }
+}
+
+impl PrivateRoomDescriptionStore for PostgresRepositories {
+    fn describe<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        description: &'a str,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "private_room.describe";
+            let updated = sqlx::query_scalar::<_, uuid::Uuid>(
+                r"UPDATE agent_room.room_catalog_entry
+                   SET description = $2,
+                       updated_at = greatest(
+                           updated_at,
+                           to_timestamp($3::double precision / 1000.0)
+                       )
+                   WHERE id = $1 AND kind = 'private_room' AND status = 'active'
+                   RETURNING id",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(description)
+            .bind(changed_at.value())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            if updated.is_none() {
+                return Err(conflict(operation));
+            }
+            Ok(())
+        })
     }
 }
 
