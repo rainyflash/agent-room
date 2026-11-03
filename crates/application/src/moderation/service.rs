@@ -85,7 +85,7 @@ pub struct ModerationDependencies {
 
 pub struct ModerationService {
     pub(super) repository: Arc<dyn ModerationRepository>,
-    authority: Arc<dyn ModerationAuthority>,
+    pub(super) authority: Arc<dyn ModerationAuthority>,
     pub(super) expiry: Arc<dyn ModerationExpiryRepository>,
     pub(super) mutes: Arc<dyn ModerationMuteLedger>,
     effects: Arc<dyn ModerationEffectGateway>,
@@ -276,7 +276,7 @@ impl ModerationService {
     }
 
     /// 记下副作用的结果：每个分片都落了就是已应用；有一个没落就记成失败，照实报依赖不可用。
-    async fn finish_applied(
+    pub(super) async fn finish_applied(
         &self,
         mut action: ModerationAction,
         applied: MatrixResult<()>,
@@ -535,7 +535,7 @@ impl ModerationService {
             .map_err(|error| repository_failure(OPERATION, &error))
     }
 
-    async fn require_room_moderator(
+    pub(super) async fn require_room_moderator(
         &self,
         actor: &crate::authentication::AuthenticatedPrincipal,
         room_catalog_id: agent_room_domain::ids::RoomCatalogId,

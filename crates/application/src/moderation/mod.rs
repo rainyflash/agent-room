@@ -1,9 +1,15 @@
+mod agents;
 mod expiry;
 mod failure;
 mod models;
 mod mutes;
 mod service;
 
+pub use agents::{
+    AgentModerate, AgentModerationDependencies, AgentModerationFailure, AgentModerationFailureKind,
+    AgentModerationResult, AgentModerationScope, AgentModerationService, AgentModerationUseCases,
+    AgentModerationView, ListAgentModeration,
+};
 pub(crate) use expiry::homeserver_unavailable;
 pub use expiry::{ModerationExpiryOutcome, ModerationExpiryRetry, ModerationExpiryUseCases};
 pub use failure::{ModerationFailure, ModerationFailureKind, ModerationResult};

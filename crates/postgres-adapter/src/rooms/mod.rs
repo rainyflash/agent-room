@@ -17,3 +17,4 @@ mod provisioning;
 mod public_directory;
 
 pub(crate) use departures::queue_revoked_agent_departures;
+pub(crate) use moderation_grants::active_agent_grant;

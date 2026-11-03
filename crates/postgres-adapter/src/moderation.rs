@@ -403,7 +403,7 @@ async fn insert_case(
     Ok(())
 }
 
-async fn reserve_action_in_transaction(
+pub(crate) async fn reserve_action_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
     action: &ModerationAction,
     audit: &ModerationAuditEvent,

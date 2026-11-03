@@ -1,15 +1,21 @@
 use agent_room_domain::{
-    ids::{AuditEventId, ModerationActionId, ModerationCaseId, PrincipalId, RoomCatalogId},
+    ids::{
+        AgentId, AuditEventId, ModerationActionId, ModerationCaseId, PrincipalId, RoomCatalogId,
+        RoomModerationGrantId,
+    },
     moderation::{
         ModerationAction, ModerationAuditEvent, ModerationCase, ModerationRole, ModerationTarget,
     },
+    room_moderation_grants::AgentModerationNote,
     rooms::RoomCatalogKind,
     time::{DurationMillis, UtcMillis},
 };
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixEventId, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture};
+use super::{
+    MatrixEventId, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture, RoomModerationGrant,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModerationReportPolicy {
@@ -279,6 +285,63 @@ pub trait ModerationEffectGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         event_id: &'a MatrixEventId,
     ) -> PortFuture<'a, MatrixResult<bool>>;
+}
+
+/// Agent 在消息里看到的一个发言人认成的人（维护者 2026-11-03 定：动别人的 Agent 等于动它的主人）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModerationSubject {
+    pub principal_id: PrincipalId,
+    /// 认出来的是网络 Agent 替它记账的合成主体：它在房间里没有自己的账号，只有它的 Agent 账号。
+    pub network_agent: bool,
+}
+
+/// 台账里 Agent 做的一条：是哪个 Agent、按哪份授权、它写的理由。执行人照旧是给授权的人。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationAttribution {
+    pub action_id: ModerationActionId,
+    pub agent_id: AgentId,
+    pub grant_id: RoomModerationGrantId,
+    pub note: AgentModerationNote,
+}
+
+/// 给房主和管理员看的一条，带着 Agent 此刻的名字。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationRecord {
+    pub attribution: AgentModerationAttribution,
+    pub agent_display_name: String,
+}
+
+/// Agent 按管理授权动手：查它的授权、认人、和台账同一个事务记下是它做的。
+pub trait AgentModerationStore: Send + Sync {
+    /// 这个 Agent 在这个房间里此刻在用的授权（没撤、没到期）。
+    fn active_agent_grant(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Option<RoomModerationGrant>>>;
+
+    /// 一个聊天账号是谁：人的账号就是他（账号还在用）；Agent 的账号认成它的主人，网络 Agent 认成替它记账的
+    /// 合成主体。认不出来的为 `None`。
+    fn moderation_subject<'a>(
+        &'a self,
+        matrix_user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, RepositoryResult<Option<ModerationSubject>>>;
+
+    /// 和 [`ModerationRepository::reserve_action`] 一样预留动作、写审计，同一个事务里再记下是哪个 Agent
+    /// 按哪份授权做的。同一个动作已经在了就交回它，不再记。
+    fn reserve_agent_action<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        audit: &'a ModerationAuditEvent,
+        attribution: &'a AgentModerationAttribution,
+    ) -> PortFuture<'a, RepositoryResult<ModerationActionReservationOutcome>>;
+
+    /// 这个房间里 Agent 做的动作，后做的在前。
+    fn agent_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>>;
 }
 
 pub trait ModerationIdentifierFactory: Send + Sync {
