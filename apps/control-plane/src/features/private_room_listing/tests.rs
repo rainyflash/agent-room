@@ -8,7 +8,7 @@ use agent_room_application::{
     ports::{PortFuture, SecretValue},
     private_rooms::{
         InspectListing, ListingFailure, ListingFailureKind, ListingResult, ListingView,
-        PrivateRoomListingUseCases, UpdateListing,
+        PlatformHoldNotice, PrivateRoomListingUseCases, UpdateListing,
     },
 };
 use agent_room_domain::{
@@ -84,6 +84,7 @@ async fn 读设置回答公开着的样子_分享码和加不加密都在() {
             "shareCode": "aB3xYz",
             "firstListedAtUnixMs": 1_000,
             "endToEndEncrypted": false,
+            "platformHold": { "reason": "冒充官方客服", "heldAtUnixMs": 2_000 },
         })
     );
     let inspected = listings.inspected.lock().unwrap();
@@ -198,6 +199,10 @@ fn view() -> ListingView {
         share_code: Some(RoomShareCode::parse("aB3xYz").unwrap()),
         first_listed_at: Some(time(1_000)),
         end_to_end_encrypted: false,
+        platform_hold: Some(PlatformHoldNotice {
+            reason: "冒充官方客服".to_owned(),
+            held_at: time(2_000),
+        }),
     }
 }
 

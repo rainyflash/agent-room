@@ -1,5 +1,6 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：只有房主能改；第一次公开先在 Matrix 上记下
-//! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密、作废在等的申请。
+//! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密、作废在等的申请；
+//! 平台拿掉了照样能看能改，回答里带着原因和时间。
 
 use std::sync::{Arc, Mutex};
 
@@ -11,11 +12,12 @@ use agent_room_application::{
         MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, PendingJoinRequest,
         PortFuture, PrivateRoomJoinRequestStore, PrivateRoomListingMatrix,
         PrivateRoomListingRecord, PrivateRoomListingSaveOutcome, PrivateRoomListingStore,
-        PrivateRoomSnapshot, PrivateRoomStore, RoomContentPolicy, RoomContentPolicyLookup,
-        SecretDigest, SecretFactory, SecretGenerationFailure, SecretValue,
+        PrivateRoomSnapshot, PrivateRoomStore, PublicRoomPlatformHold, PublicRoomPlatformHoldStore,
+        RoomContentPolicy, RoomContentPolicyLookup, SecretDigest, SecretFactory,
+        SecretGenerationFailure, SecretValue,
     },
     private_rooms::{
-        InspectListing, ListingFailureKind, PrivateRoomListingDependencies,
+        InspectListing, ListingFailureKind, PlatformHoldNotice, PrivateRoomListingDependencies,
         PrivateRoomListingService, PrivateRoomListingUseCases, UpdateListing,
     },
 };
@@ -86,6 +88,36 @@ async fn 房主第一次公开_先在_matrix_上记下时间_有了分享码_再
     let stored = fixture.listings.record.lock().unwrap().clone().unwrap();
     assert_eq!(stored.version, AggregateVersion::new(2).unwrap());
     assert_eq!(stored.updated_at, time(NOW + 60_000));
+}
+
+#[tokio::test]
+async fn 平台拿掉了照样能看能改_回答里带着原因和时间_不带是谁() {
+    let fixture = Fixture::new(true);
+    *fixture.holds.0.lock().unwrap() = Some(PublicRoomPlatformHold {
+        catalog_id: catalog_id(),
+        held_by: person(9),
+        reason: "冒充官方客服".to_owned(),
+        held_at: time(NOW - 1_000),
+    });
+    let notice = Some(PlatformHoldNotice {
+        reason: "冒充官方客服".to_owned(),
+        held_at: time(NOW - 1_000),
+    });
+    let seen = fixture.service.inspect(inspect(speaker())).await.unwrap();
+    assert_eq!(seen.platform_hold, notice);
+
+    let listed = fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .expect("拿掉了房主也能改设置");
+    assert!(listed.settings.listed(), "房主的设置原样存着");
+    assert_eq!(listed.platform_hold, notice);
+
+    *fixture.holds.0.lock().unwrap() = None;
+    let released = fixture.service.inspect(inspect(owner())).await.unwrap();
+    assert_eq!(released.platform_hold, None);
+    assert!(released.settings.listed(), "放回去以后照房主的设置来");
 }
 
 #[tokio::test]
@@ -269,6 +301,7 @@ struct Fixture {
     listings: Arc<MemoryListings>,
     matrix: Arc<RecordingMatrix>,
     requests: Arc<RecordingVoids>,
+    holds: Arc<MemoryHolds>,
     encrypted: Arc<Mutex<bool>>,
     clock: Arc<TestClock>,
 }
@@ -283,12 +316,14 @@ impl Fixture {
         let matrix = Arc::new(RecordingMatrix::default());
         let requests = Arc::new(RecordingVoids::default());
         let clock = Arc::new(TestClock(Mutex::new(NOW)));
+        let holds = Arc::new(MemoryHolds::default());
         let service = PrivateRoomListingService::new(PrivateRoomListingDependencies {
             rooms: Arc::new(MemoryRooms(room())),
             listings: listings.clone(),
             policies: Arc::new(Policies(encrypted.clone())),
             matrix: matrix.clone(),
             requests: requests.clone(),
+            holds: holds.clone(),
             secrets: Arc::new(CountingSecrets(Mutex::new(0))),
             clock: clock.clone(),
         });
@@ -297,6 +332,7 @@ impl Fixture {
             listings,
             matrix,
             requests,
+            holds,
             encrypted,
             clock,
         }
@@ -651,6 +687,34 @@ impl PrivateRoomListingMatrix for RecordingMatrix {
 }
 
 /// 只记下改回私密时作废了哪间房的申请。
+/// 平台拿掉没有；看设置只读，不拿掉也不放回。
+#[derive(Default)]
+struct MemoryHolds(Mutex<Option<PublicRoomPlatformHold>>);
+
+impl PublicRoomPlatformHoldStore for MemoryHolds {
+    fn platform_hold(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PublicRoomPlatformHold>>> {
+        let hold = self.0.lock().unwrap().clone();
+        Box::pin(async move { Ok(hold) })
+    }
+
+    fn place_platform_hold<'a>(
+        &'a self,
+        _hold: &'a PublicRoomPlatformHold,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("改设置不拿掉房间") })
+    }
+
+    fn release_platform_hold(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("改设置不放回房间") })
+    }
+}
+
 #[derive(Default)]
 struct RecordingVoids {
     voided: Mutex<Vec<(RoomCatalogId, UtcMillis)>>,

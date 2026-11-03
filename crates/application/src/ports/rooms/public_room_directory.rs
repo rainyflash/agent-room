@@ -131,3 +131,32 @@ pub trait PublicRoomActivityMatrix: Send + Sync {
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, MatrixResult<Option<UtcMillis>>>;
 }
+
+/// 平台把房间从目录里拿掉（3b-4b）。房主的“公开”设置不动；拿掉期间发现页、详情、分享页都不列，
+/// 也不能直接进、申请。原因写给房主看。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicRoomPlatformHold {
+    pub catalog_id: RoomCatalogId,
+    pub held_by: PrincipalId,
+    pub reason: String,
+    pub held_at: UtcMillis,
+}
+
+pub trait PublicRoomPlatformHoldStore: Send + Sync {
+    fn platform_hold(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PublicRoomPlatformHold>>>;
+
+    /// 拿掉；已经拿掉的换成这一次的人、原因和时间。
+    fn place_platform_hold<'a>(
+        &'a self,
+        hold: &'a PublicRoomPlatformHold,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 放回目录，回答原来有没有拿掉。
+    fn release_platform_hold(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
+}

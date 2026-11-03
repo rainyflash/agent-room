@@ -278,6 +278,32 @@ async fn 批准时房间刚改回私密算刚变了_封禁的要先解封_拒绝
 }
 
 #[tokio::test]
+async fn 平台拿掉的房间申请不了_在等的批不了_拒绝照样能拒() {
+    let fixture = request_room();
+    fixture.holds.hold();
+    let failure = fixture
+        .service
+        .request(ask(person(5), "想来"))
+        .await
+        .unwrap_err();
+    assert_eq!(failure.kind(), PublicJoinFailureKind::NotFound);
+
+    fixture.requests.seed(waiting(stranger()));
+    let failure = fixture.service.answer(answer(owner(), true)).await;
+    assert_eq!(failure.unwrap_err().kind(), PublicJoinFailureKind::Conflict);
+    assert_eq!(
+        fixture
+            .service
+            .answer(answer(owner(), false))
+            .await
+            .unwrap(),
+        JoinRequestStatus::Rejected
+    );
+    assert!(fixture.invitations.calls().is_empty());
+    assert_eq!(fixture.requests.records().len(), 1, "没记新的申请");
+}
+
+#[tokio::test]
 async fn 登录过期的申请_撤回_查看_处理都不行() {
     let fixture = request_room();
     fixture.requests.seed(waiting(stranger()));

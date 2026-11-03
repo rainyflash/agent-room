@@ -4,6 +4,7 @@ mod failure;
 mod invite_links;
 mod listing;
 mod models;
+mod platform_hold;
 mod public_join;
 mod service;
 
@@ -30,8 +31,8 @@ pub use invite_links::{
 };
 pub use listing::{
     InspectListing, ListingFailure, ListingFailureKind, ListingResult, ListingView,
-    PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomListingUseCases,
-    UpdateListing,
+    PlatformHoldNotice, PrivateRoomListingDependencies, PrivateRoomListingService,
+    PrivateRoomListingUseCases, UpdateListing,
 };
 pub use models::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
@@ -39,6 +40,11 @@ pub use models::{
     ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
     PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom,
     TransferPrivateRoomOwnership,
+};
+pub use platform_hold::{
+    HoldPublicRoom, MAX_PLATFORM_HOLD_REASON_CHARS, PlatformHoldFailure, PlatformHoldFailureKind,
+    PlatformHoldResult, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
+    PublicRoomPlatformHoldUseCases, ReleasePublicRoom,
 };
 pub use public_join::{
     AnswerJoinRequest, JoinPublicRoom, JoinRequestCleanupUseCases, JoinRequestState,

@@ -9,6 +9,7 @@ mod join_requests;
 mod listing;
 mod people;
 mod placements;
+mod platform_holds;
 mod private_room_agents;
 mod private_rooms;
 mod provisioning;

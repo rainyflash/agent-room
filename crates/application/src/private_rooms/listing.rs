@@ -5,6 +5,9 @@
 //! 第一次公开时先在 Matrix 上写 `room.listing.v1`，再存设置：之后进来的人别人不给他们重发公开
 //! 以前的房间钥匙。不加密的房间改回私密时先在 Matrix 上打开加密，再把目录上的加密标记改成 true；
 //! 写不进 Matrix 就什么都不改，房主可以再点。改回私密以后，在等的申请一起作废。
+//!
+//! 平台把房间从目录里拿掉（`platform_hold`）以后，设置照旧能看能改，回答里带着拿掉的原因和时间，
+//! 不带是谁拿掉的。
 
 use std::sync::Arc;
 
@@ -24,7 +27,7 @@ use crate::{
         Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, PortFuture,
         PrivateRoomJoinRequestStore, PrivateRoomListingMatrix, PrivateRoomListingRecord,
         PrivateRoomListingSaveOutcome, PrivateRoomListingStore, PrivateRoomSnapshot,
-        PrivateRoomStore, RoomContentPolicyLookup, SecretFactory,
+        PrivateRoomStore, PublicRoomPlatformHoldStore, RoomContentPolicyLookup, SecretFactory,
     },
 };
 
@@ -90,6 +93,15 @@ pub struct ListingView {
     pub first_listed_at: Option<UtcMillis>,
     /// 房间开没开端到端加密。新建时选了公开的不加密，改回私密以后加密。
     pub end_to_end_encrypted: bool,
+    /// 平台把房间从目录里拿掉了：这时房主的设置不起作用，发现页、分享页都不列。
+    pub platform_hold: Option<PlatformHoldNotice>,
+}
+
+/// 给房间里的人看的拿掉原因和时间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformHoldNotice {
+    pub reason: String,
+    pub held_at: UtcMillis,
 }
 
 pub trait PrivateRoomListingUseCases: Send + Sync {
@@ -105,6 +117,7 @@ pub struct PrivateRoomListingDependencies {
     pub matrix: Arc<dyn PrivateRoomListingMatrix>,
     /// 改回私密时作废在等的申请。
     pub requests: Arc<dyn PrivateRoomJoinRequestStore>,
+    pub holds: Arc<dyn PublicRoomPlatformHoldStore>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -115,16 +128,18 @@ pub struct PrivateRoomListingService {
     policies: Arc<dyn RoomContentPolicyLookup>,
     matrix: Arc<dyn PrivateRoomListingMatrix>,
     requests: Arc<dyn PrivateRoomJoinRequestStore>,
+    holds: Arc<dyn PublicRoomPlatformHoldStore>,
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
 }
 
-/// 读到的这间房：快照、Matrix 房间、设置记录、此刻加没加密。
+/// 读到的这间房：快照、Matrix 房间、设置记录、此刻加没加密、平台拿掉没有。
 struct LoadedRoom {
     snapshot: PrivateRoomSnapshot,
     matrix_room: MatrixRoomId,
     listing: Option<PrivateRoomListingRecord>,
     encrypted: bool,
+    hold: Option<PlatformHoldNotice>,
 }
 
 impl PrivateRoomListingService {
@@ -135,6 +150,7 @@ impl PrivateRoomListingService {
             policies: dependencies.policies,
             matrix: dependencies.matrix,
             requests: dependencies.requests,
+            holds: dependencies.holds,
             secrets: dependencies.secrets,
             clock: dependencies.clock,
         }
@@ -145,7 +161,7 @@ impl PrivateRoomListingService {
         let loaded = self
             .joined_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
-        Ok(view(loaded.listing.as_ref(), loaded.encrypted))
+        Ok(view(loaded.listing.as_ref(), loaded.encrypted, loaded.hold))
     }
 
     async fn update_internal(&self, request: UpdateListing) -> ListingResult<ListingView> {
@@ -221,7 +237,7 @@ impl PrivateRoomListingService {
                     record.share_code = self.new_share_code(operation)?;
                 }
                 PrivateRoomListingSaveOutcome::Saved => {
-                    return Ok(view(Some(&record), loaded.encrypted));
+                    return Ok(view(Some(&record), loaded.encrypted, loaded.hold));
                 }
                 // 分享码没换也撞了是库里的数据不对；超限额和版本不对 `save` 已经报了错。
                 PrivateRoomListingSaveOutcome::ShareCodeTaken
@@ -242,7 +258,7 @@ impl PrivateRoomListingService {
     ) -> ListingResult<ListingView> {
         let Some(previous) = loaded.listing else {
             // 从没公开过：没什么可改的，也不给没公开过的房间记设置。
-            return Ok(view(None, loaded.encrypted));
+            return Ok(view(None, loaded.encrypted, loaded.hold));
         };
         if !loaded.encrypted {
             self.matrix
@@ -276,7 +292,7 @@ impl PrivateRoomListingService {
                     .requests
                     .void_pending_join_requests(request.catalog_id, record.updated_at)
                     .await;
-                Ok(view(Some(&record), true))
+                Ok(view(Some(&record), true, loaded.hold))
             }
             // 分享码没换，撞不上；真撞上了是库里的数据不对。
             PrivateRoomListingSaveOutcome::ShareCodeTaken
@@ -359,11 +375,21 @@ impl PrivateRoomListingService {
             .listing(catalog_id)
             .await
             .map_err(|error| repository(operation, &error))?;
+        let hold = self
+            .holds
+            .platform_hold(catalog_id)
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .map(|hold| PlatformHoldNotice {
+                reason: hold.reason,
+                held_at: hold.held_at,
+            });
         Ok(LoadedRoom {
             snapshot,
             matrix_room,
             listing,
             encrypted,
+            hold,
         })
     }
 }
@@ -386,12 +412,17 @@ pub(super) fn random_share_code(secrets: &dyn SecretFactory) -> Option<RoomShare
     Some(RoomShareCode::from_entropy(entropy))
 }
 
-fn view(listing: Option<&PrivateRoomListingRecord>, encrypted: bool) -> ListingView {
+fn view(
+    listing: Option<&PrivateRoomListingRecord>,
+    encrypted: bool,
+    platform_hold: Option<PlatformHoldNotice>,
+) -> ListingView {
     ListingView {
         settings: listing.map_or(RoomListingSettings::UNLISTED, |listing| listing.settings),
         share_code: listing.map(|listing| listing.share_code.clone()),
         first_listed_at: listing.map(|listing| listing.first_listed_at),
         end_to_end_encrypted: encrypted,
+        platform_hold,
     }
 }
 

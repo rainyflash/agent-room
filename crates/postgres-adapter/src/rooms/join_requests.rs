@@ -239,7 +239,7 @@ const VOID_PENDING_OF_ROOM: &str = r"
            decided_at = greatest(requested_at, to_timestamp($2::double precision / 1000.0))
      WHERE catalog_entry_id = $1 AND status = 'pending'";
 
-/// 房间不公开了（从没公开过、改回私密）、或者归档了：在等的作废。
+/// 房间不公开了（从没公开过、改回私密）、归档了、平台拿掉了：在等的作废。
 const VOID_PENDING_OF_CLOSED_ROOMS: &str = r"
     UPDATE agent_room.private_room_join_request AS request
        SET status = 'voided',
@@ -253,6 +253,11 @@ const VOID_PENDING_OF_CLOSED_ROOMS: &str = r"
             WHERE listing.catalog_entry_id = request.catalog_entry_id
               AND listing.listed
               AND catalog.status = 'active'
+              AND NOT EXISTS (
+                  SELECT 1
+                    FROM agent_room.public_room_platform_hold AS hold
+                   WHERE hold.catalog_entry_id = catalog.id
+              )
        )";
 
 fn decode_request(row: &PgRow, operation: &'static str) -> RepositoryResult<JoinRequestRecord> {

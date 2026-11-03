@@ -72,7 +72,8 @@ use agent_room_application::{
         PrivateRoomDescriptionDependencies, PrivateRoomDescriptionService,
         PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
         PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomService,
-        PublicRoomJoinDependencies, PublicRoomJoinService,
+        PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomPlatformHoldDependencies,
+        PublicRoomPlatformHoldService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
@@ -164,6 +165,7 @@ struct AgentFeatureHttpStates {
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
+    room_holds: features::public_room_platform_hold::PublicRoomPlatformHoldHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
     public_rooms: features::public_rooms::PublicRoomsHttpState,
     agents: AgentHttpState,
@@ -615,6 +617,9 @@ fn compose_identity_routes(
         .merge(features::private_room_description::router(
             agents.room_descriptions,
         ))
+        .merge(features::public_room_platform_hold::router(
+            agents.room_holds,
+        ))
         .merge(features::public_room_join::router(agents.room_joins))
         .merge(features::public_rooms::router(agents.public_rooms))
         .merge(content)
@@ -884,6 +889,7 @@ fn build_agent_feature_states(
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
         room_descriptions: build_room_description_http_state(config, dependencies),
+        room_holds: build_room_hold_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
             directory: Arc::new(PublicRoomDirectoryService::new(
@@ -1003,6 +1009,7 @@ fn build_room_listing_http_state(
             policies: dependencies.repositories.clone(),
             matrix: dependencies.matrix_identities.clone(),
             requests: dependencies.repositories.clone(),
+            holds: dependencies.repositories.clone(),
             secrets: dependencies.secrets.clone(),
             clock: dependencies.system_runtime.clone(),
         },
@@ -1030,6 +1037,28 @@ fn build_room_description_http_state(
     ));
     features::private_room_description::PrivateRoomDescriptionHttpState::new(
         descriptions,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 平台把公开房间从目录里拿掉（`specs/public-rooms/design.md`）：平台治理的人，按 `moderation_operator`。
+fn build_room_hold_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::public_room_platform_hold::PublicRoomPlatformHoldHttpState {
+    let holds = Arc::new(PublicRoomPlatformHoldService::new(
+        PublicRoomPlatformHoldDependencies {
+            rooms: dependencies.repositories.clone(),
+            holds: dependencies.repositories.clone(),
+            authority: dependencies.repositories.clone(),
+            requests: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::public_room_platform_hold::PublicRoomPlatformHoldHttpState::new(
+        holds,
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
@@ -1073,6 +1102,7 @@ fn build_public_room_joins(
             listings: dependencies.repositories.clone(),
             requests: dependencies.repositories.clone(),
             invitations: build_private_room_service(config, dependencies)?,
+            holds: dependencies.repositories.clone(),
             clock: dependencies.system_runtime.clone(),
         },
     )))

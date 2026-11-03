@@ -1,7 +1,8 @@
 //! 发现页的目录（`specs/public-rooms/design.md`）：只列公开着、还在用的房间；搜名字、简介和房主昵称
 //! @ 前面那段，通配符照字面；按加入方式、最近有人说话、加不加密筛；三种排序；按分享码找详情；
 //! 登录的人在每间房的处境；“最近有人说话”只给公开着的房间读、记的时间只往后走、不算改设置；
-//! 在线人数问的是已加入的人，最近进来的在前。
+//! 在线人数问的是已加入的人，最近进来的在前；平台拿掉的房间目录、分享码、“最近有人说话”都不算，
+//! 在等的申请清理时作废，放回去又照房主的设置列出来。
 //!
 //! 同一个库里别的测试也建公开房间，所以这里的房间名都带一个只属于这次的记号，按它搜。
 
@@ -9,8 +10,9 @@ use std::collections::BTreeMap;
 
 use agent_room_application::ports::{
     JoinRequestRecord, PrivateRoomJoinRequestStore, PrivateRoomListingRecord,
-    PrivateRoomListingStore, PublicRoomActivityStore, PublicRoomDirectoryStore, PublicRoomRecord,
-    PublicRoomSearch, PublicRoomSort, PublicRoomViewerState,
+    PrivateRoomListingStore, PublicRoomActivityStore, PublicRoomDirectoryStore,
+    PublicRoomPlatformHold, PublicRoomPlatformHoldStore, PublicRoomRecord, PublicRoomSearch,
+    PublicRoomSort, PublicRoomViewerState,
 };
 use agent_room_domain::{
     room_join_requests::{JoinRequestMessage, JoinRequestStatus},
@@ -233,6 +235,95 @@ async fn 在线人数问已加入的人_最近进来的在前_在等批准的不
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 平台拿掉的房间不列_分享码找不到_不读最近说话_申请清理时作废_放回去又列() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let token = Uuid::now_v7().simple().to_string();
+    let rooms = seed_rooms(&database, &repositories, &token).await;
+    let moderator = seed_principal(&database.runtime, "dir-moderator").await;
+    let before = listing(&repositories, rooms.open).await;
+
+    let hold = PublicRoomPlatformHold {
+        catalog_id: rooms.open,
+        held_by: moderator,
+        reason: "冒充官方客服".to_owned(),
+        held_at: time(20_000),
+    };
+    PublicRoomPlatformHoldStore::place_platform_hold(&repositories, &hold)
+        .await
+        .expect("拿掉");
+    // 再拿一次：原因换成这一次的，时间不往回走。
+    let again = PublicRoomPlatformHold {
+        reason: "换个原因".to_owned(),
+        held_at: time(10_000),
+        ..hold.clone()
+    };
+    PublicRoomPlatformHoldStore::place_platform_hold(&repositories, &again)
+        .await
+        .expect("再拿一次");
+    assert_eq!(
+        PublicRoomPlatformHoldStore::platform_hold(&repositories, rooms.open)
+            .await
+            .expect("可读"),
+        Some(PublicRoomPlatformHold {
+            reason: "换个原因".to_owned(),
+            ..hold
+        })
+    );
+
+    let found = search(&repositories, &token, PublicRoomSort::Active).await;
+    assert_eq!(ids(&found), [rooms.request]);
+    assert_eq!(
+        PublicRoomDirectoryStore::public_room_by_share_code(&repositories, &rooms.open_code)
+            .await
+            .expect("可读"),
+        None
+    );
+    let active = PublicRoomActivityStore::listed_rooms_for_activity(&repositories)
+        .await
+        .expect("可读");
+    assert!(!active.iter().any(|(room, _)| *room == rooms.open));
+    assert_eq!(
+        listing(&repositories, rooms.open).await,
+        before,
+        "房主的设置不动"
+    );
+
+    PrivateRoomJoinRequestStore::sweep_join_requests(&repositories, time(30_000), time(1))
+        .await
+        .expect("清理");
+    assert_eq!(
+        PrivateRoomJoinRequestStore::pending_join_request(&repositories, rooms.open, rooms.admin)
+            .await
+            .expect("可读"),
+        None,
+        "拿掉的房间里在等的作废"
+    );
+
+    assert!(
+        PublicRoomPlatformHoldStore::release_platform_hold(&repositories, rooms.open)
+            .await
+            .expect("放回去")
+    );
+    assert!(
+        !PublicRoomPlatformHoldStore::release_platform_hold(&repositories, rooms.open)
+            .await
+            .expect("再放一次"),
+        "本来就没拿掉"
+    );
+    let found = search(&repositories, &token, PublicRoomSort::Active).await;
+    assert_eq!(ids(&found), [rooms.open, rooms.request]);
+    assert!(
+        PublicRoomDirectoryStore::public_room_by_share_code(&repositories, &rooms.open_code)
+            .await
+            .expect("可读")
+            .is_some()
+    );
+    database.close().await;
+}
+
 async fn matrix_user(pool: &PgPool, principal: PrincipalId) -> String {
     sqlx::query_scalar("SELECT matrix_user_id FROM agent_room.principal WHERE id = $1")
         .bind(principal.as_uuid())
@@ -258,6 +349,7 @@ struct SeededRooms {
     unlisted: RoomCatalogId,
     open_owner: PrincipalId,
     request_owner: PrincipalId,
+    open_code: RoomShareCode,
     request_code: RoomShareCode,
     archived_code: RoomShareCode,
     unlisted_code: RoomShareCode,
@@ -358,6 +450,7 @@ async fn seed_rooms(
         unlisted,
         open_owner,
         request_owner,
+        open_code: open_listing.share_code,
         request_code: request_listing.share_code,
         archived_code: archived_listing.share_code,
         unlisted_code: unlisted_listing.share_code,

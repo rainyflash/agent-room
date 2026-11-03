@@ -1,5 +1,5 @@
-//! 发现页的目录（`specs/public-rooms/design.md`）：公开着、还在用的私人房间。人数只数已加入的人；
-//! Agent 数和房间页一样，本机的有确认了的位置、网络的记着在这间房。
+//! 发现页的目录（`specs/public-rooms/design.md`）：公开着、还在用、平台没拿掉的私人房间。人数只数
+//! 已加入的人；Agent 数和房间页一样，本机的有确认了的位置、网络的记着在这间房。
 
 use std::collections::BTreeMap;
 
@@ -63,7 +63,12 @@ const ROOM_COLUMNS: &str = r"
       JOIN agent_room.principal AS owner ON owner.id = catalog.owner_principal_id
      WHERE listing.listed
        AND catalog.kind = 'private_room'
-       AND catalog.status = 'active'";
+       AND catalog.status = 'active'
+       AND NOT EXISTS (
+           SELECT 1
+             FROM agent_room.public_room_platform_hold AS hold
+            WHERE hold.catalog_entry_id = catalog.id
+       )";
 
 /// 搜名字、简介和房主昵称 @ 前面那段；`$1` 是转义好的模糊匹配，空的就是不搜。
 const SEARCH_FILTERS: &str = r"
@@ -264,6 +269,11 @@ impl PublicRoomActivityStore for PostgresRepositories {
                      AND catalog.kind = 'private_room'
                      AND catalog.status = 'active'
                      AND instance.state = 'active'
+                     AND NOT EXISTS (
+                         SELECT 1
+                           FROM agent_room.public_room_platform_hold AS hold
+                          WHERE hold.catalog_entry_id = catalog.id
+                     )
                    ORDER BY catalog.id",
             )
             .fetch_all(self.pool())
