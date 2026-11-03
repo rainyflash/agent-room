@@ -19,6 +19,7 @@ mod moderation;
 mod network_agent_history;
 mod network_agent_inbox;
 mod network_agent_lobby_away;
+mod network_agent_notices;
 mod network_agent_submissions;
 mod network_agents;
 mod principals;

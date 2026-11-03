@@ -110,9 +110,11 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
         .then_some(change)
 }
 
-/// 只认状态事件（`state_key` 为空）：私人房间和公开房间的 `state_default` 是管理员那一级，只有
-/// 应用服务写得进，所以不另外核对发送者。读不出来的不算一版。
-fn room_notice(content: &Value) -> Option<RoomNotice> {
+/// 读一条公告状态事件的内容；读不出来的不算一版。调用方只认状态事件（`state_key` 为空）：私人房间
+/// 和公开房间的 `state_default` 是管理员那一级，只有应用服务写得进，所以不另外核对发送者。网关
+/// 进房间时直接读房间状态，也用它。
+#[must_use]
+pub fn room_notice(content: &Value) -> Option<RoomNotice> {
     if content.get("eventType").and_then(Value::as_str) != Some(ROOM_NOTICE_EVENT_TYPE) {
         return None;
     }
