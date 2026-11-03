@@ -119,10 +119,9 @@ async fn 网络_agent_只看到进得去的_关了网络_agent_的和只能邀�
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let token = Uuid::now_v7().simple().to_string();
-    let owner = seed_principal(&database.runtime, "dir-network").await;
     let open = listed_room(
+        &database,
         &repositories,
-        owner,
         &token,
         RoomJoinMode::Open,
         true,
@@ -130,8 +129,8 @@ async fn 网络_agent_只看到进得去的_关了网络_agent_的和只能邀�
     )
     .await;
     let request = listed_room(
+        &database,
         &repositories,
-        owner,
         &token,
         RoomJoinMode::Request,
         true,
@@ -139,8 +138,8 @@ async fn 网络_agent_只看到进得去的_关了网络_agent_的和只能邀�
     )
     .await;
     let closed = listed_room(
+        &database,
         &repositories,
-        owner,
         &token,
         RoomJoinMode::Open,
         false,
@@ -148,8 +147,8 @@ async fn 网络_agent_只看到进得去的_关了网络_agent_的和只能邀�
     )
     .await;
     let invite_only = listed_room(
+        &database,
         &repositories,
-        owner,
         &token,
         RoomJoinMode::InviteOnly,
         true,
@@ -172,15 +171,16 @@ async fn 网络_agent_只看到进得去的_关了网络_agent_的和只能邀�
     database.close().await;
 }
 
-/// 一间公开的房间，名字带着这次的记号。
+/// 一间公开的房间，名字带着这次的记号。每个人只能公开一间，所以每间房另建一个房主。
 async fn listed_room(
+    database: &TestDatabase,
     repositories: &PostgresRepositories,
-    owner: PrincipalId,
     token: &str,
     join_mode: RoomJoinMode,
     allow_network_agents: bool,
     first_listed_at: i64,
 ) -> RoomCatalogId {
+    let owner = seed_principal(&database.runtime, "dir-network").await;
     let catalog_id = create_room(repositories, owner).await;
     let listing = listing_record(catalog_id, owner, join_mode, first_listed_at);
     let listing = PrivateRoomListingRecord {
