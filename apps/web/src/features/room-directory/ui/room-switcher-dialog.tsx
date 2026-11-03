@@ -1,6 +1,15 @@
 import { Banner, Button, Details, Dialog, Spinner } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Globe2, LockKeyhole, MailOpen, Plus, Search, ShieldAlert } from 'lucide-react';
+import {
+  ArrowRight,
+  DoorOpen,
+  Globe2,
+  MailOpen,
+  Plus,
+  Search,
+  ShieldAlert,
+  Telescope,
+} from 'lucide-react';
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -112,8 +121,8 @@ export type RoomSwitcherViewProps = {
 };
 
 /**
- * 换个房间：别人的邀请在最上面（加入或拒绝），然后是你的私人房间和公共大厅，一个搜索框
- * 过滤全部。底部是“新建房间”。
+ * 换个房间：别人的邀请在最上面（加入或拒绝），然后是你的房间和公共大厅，一个搜索框过滤全部，再往下是
+ * “去发现页找更多”。底部是“新建房间”。
  */
 export function RoomSwitcherView({
   currentCatalogId,
@@ -233,7 +242,7 @@ export function RoomSwitcherView({
                 type="button"
               >
                 <span aria-hidden="true" className="room-row__icon">
-                  <LockKeyhole />
+                  <DoorOpen />
                 </span>
                 <RoomText description={room.description} name={room.name} />
                 <RoomMark current={current} pending={pendingCatalogId === room.catalogId} />
@@ -278,6 +287,22 @@ export function RoomSwitcherView({
           state={publicState}
         />
       </RoomSection>
+
+      {/* 公开房间不在这里列：太多了，去发现页搜。 */}
+      <Link
+        className="room-row room-row--link room-switcher__explore"
+        onClick={onClose}
+        search={{}}
+        to="/explore"
+      >
+        <span aria-hidden="true" className="room-row__icon">
+          <Telescope />
+        </span>
+        <span className="room-row__text">
+          <strong>{t('rooms.explore')}</strong>
+        </span>
+        <ArrowRight aria-hidden="true" className="room-row__mark" />
+      </Link>
 
       {principalId === undefined ? null : <AccountIdCopy principalId={principalId} />}
     </Dialog>

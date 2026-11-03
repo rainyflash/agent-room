@@ -24,7 +24,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${fixture}&failJoin=1`);
-    await expect(page.getByRole('heading', { name: 'Your private rooms' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your rooms' })).toBeVisible();
     await page.getByRole('button', { name: 'New room', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'New room' });
     await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Release workshop');
@@ -190,7 +190,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto(fixture);
-    const mine = page.getByRole('region', { name: 'Your private rooms' });
+    const mine = page.getByRole('region', { name: 'Your rooms' });
     const archived = mine.locator('details', { hasText: 'Archived rooms (1)' });
     await expect(archived).toBeVisible();
     // 默认收起：卡片看不见；上面已加入的房间里也没有它。
@@ -216,7 +216,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto(fixture);
-    const mine = page.getByRole('region', { name: 'Your private rooms' });
+    const mine = page.getByRole('region', { name: 'Your rooms' });
     const created = mine.getByRole('region', { name: 'Rooms you created' });
     const joined = mine.getByRole('region', { name: 'Rooms you joined' });
     // Design studio 是你的 Agent 替你建的，房主是你：归“你建的”，不写房主。
@@ -261,7 +261,7 @@ test('中文：“你建的房间”“你加入的房间”和房主', async ({
     localStorage.setItem('agent-room.language', 'zh-CN');
   });
   await page.goto(fixture);
-  const mine = page.getByRole('region', { name: '你的私人房间' });
+  const mine = page.getByRole('region', { name: '你的房间' });
   await expect(mine.getByRole('region', { name: '你建的房间' })).toContainText('Design studio');
   const joined = mine.getByRole('region', { name: '你加入的房间' });
   await expect(joined.getByRole('link', { name: /Partner workshop/ })).toContainText('房主：Mia');
@@ -277,7 +277,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${fixture}&unread`);
-    const mine = page.getByRole('region', { name: 'Your private rooms' });
+    const mine = page.getByRole('region', { name: 'Your rooms' });
     // Design studio 读到一半，后面三条里有一条点名你；Engineering room 积了 120 条。
     await expect(mine.getByRole('link', { name: /Design studio/ })).toContainText(
       'Someone mentioned you, 3 unread messages',
@@ -286,10 +286,6 @@ for (const width of [1440, 390]) {
       'At least 99 unread messages',
     );
     await expect(mine.getByRole('link', { name: /Engineering room/ })).toContainText('99+');
-    // 公开大厅只标 @，不写条数。
-    const lobby = page.locator('.room-card', { hasText: 'Global lobby' });
-    await expect(lobby).toContainText('Someone mentioned you');
-    await expect(lobby.locator('.room-unread-mark__count')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
       path: testInfo.outputPath(`room-unread-${String(width)}.png`),

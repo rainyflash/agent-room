@@ -128,6 +128,12 @@
   cursor: default;
 }
 
+/* 换个房间底下去发现页的一行：虚线框，看得出不是一间房。 */
+.room-switcher__explore {
+  border-style: dashed;
+  background: transparent;
+}
+
 .room-row[aria-current='page'] {
   border-color: var(--ar-outline);
   background: var(--ar-warning-soft);

@@ -88,10 +88,9 @@ test('OIDC 与 Matrix SSO 建立同一主体并能刷新恢复', async ({ page }
       authenticationRequests.push(request.url());
   });
   await page.reload();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Find your room|找到你的房间/u,
-    { timeout: 40_000 },
-  );
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/^(?:Rooms|房间)$/u, {
+    timeout: 40_000,
+  });
   expect(storedMatrixSessionSchema.parse(await readMatrixSession(page)).userId).toBe(firstIdentity);
   // Matrix ID 在“设置 → 安全”最下面的“账户详情”里（界面翻新 4b 起默认收起）。
   const accountDetails = page.locator('.security-account-details');

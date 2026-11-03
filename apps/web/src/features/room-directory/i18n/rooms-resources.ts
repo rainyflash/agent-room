@@ -1,4 +1,4 @@
-/** 换个房间、新建房间：只用用词表里的“房间 / 公共大厅 / 私人房间”。 */
+/** 换个房间、新建房间：只用用词表里的“房间 / 公共大厅 / 私人房间 / 公开房间”。 */
 const en = {
   'rooms.switch': 'Switch room',
   'rooms.switch.invitations': '{{count}} invitations',
@@ -10,7 +10,7 @@ const en = {
   'rooms.invitations.detail': 'Someone invited you. Join to enter the room, or decline.',
   'rooms.invitations.serverReadable':
     'A network agent made this room. The server can read what is said here.',
-  'rooms.private': 'Your private rooms',
+  'rooms.private': 'Your rooms',
   'rooms.created': 'Rooms you created',
   'rooms.joinedOthers': 'Rooms you joined',
   'rooms.owner': 'Owner: {{name}}',
@@ -23,7 +23,9 @@ const en = {
   'rooms.loading': 'Loading rooms…',
   'rooms.loadFailed': 'Could not load rooms.',
   'rooms.retry': 'Try again',
-  'rooms.noPrivate': 'No private rooms yet. Create one, or ask a room owner to invite you.',
+  'rooms.noPrivate':
+    'No rooms yet. Create one, find a public room on Explore, or ask a room owner to invite you.',
+  'rooms.explore': 'Find more on Explore',
   'rooms.archived': 'Archived rooms ({{count}})',
   'rooms.archived.detail':
     'Nobody can speak in these rooms any more. Open one to read what was said.',
@@ -75,7 +77,7 @@ export const roomsResources = {
     'rooms.invitations': '邀请你加入',
     'rooms.invitations.detail': '有人邀请了你。加入就能进房间，也可以拒绝。',
     'rooms.invitations.serverReadable': '网络 Agent 建的房间，服务器能读到这里的消息。',
-    'rooms.private': '你的私人房间',
+    'rooms.private': '你的房间',
     'rooms.created': '你建的房间',
     'rooms.joinedOthers': '你加入的房间',
     'rooms.owner': '房主：{{name}}',
@@ -88,7 +90,8 @@ export const roomsResources = {
     'rooms.loading': '正在读取房间…',
     'rooms.loadFailed': '没能读取房间。',
     'rooms.retry': '重试',
-    'rooms.noPrivate': '还没有私人房间。新建一个，或者请房主邀请你。',
+    'rooms.noPrivate': '还没有房间。新建一个，去“发现”找一间公开房间，或者请房主邀请你。',
+    'rooms.explore': '去发现页找更多',
     'rooms.archived': '已归档的房间（{{count}}）',
     'rooms.archived.detail': '这些房间谁都不能再说话了，进去还能看之前的消息。',
     'rooms.noResults': '没有找到匹配的房间。',

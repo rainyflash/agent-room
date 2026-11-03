@@ -28,6 +28,7 @@ import {
   type ExploreFilter,
   type ExploreRoom,
 } from '@/features/explore/domain/explore';
+import { RoomUnreadMark, useCatalogMentioned } from '@/features/inbox/ui/room-unread-mark';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import { WebHeaderLinks } from '@/features/updates/ui/web-header-links';
@@ -251,6 +252,11 @@ function ExploreFilters({
   );
 }
 
+/** 大厅里有人点名你时标个 @（以前在“房间”页上，挪到这里）。没登录时没有收件箱，不标。 */
+function LobbyMention({ catalogId }: { readonly catalogId: string }) {
+  return <RoomUnreadMark mentioned={useCatalogMentioned(catalogId)} />;
+}
+
 /** 平台建的公共大厅：登录了直接进，没登录先围观。 */
 function LobbyRow({
   lobbies,
@@ -279,6 +285,7 @@ function LobbyRow({
               <strong>{lobby.name}</strong>
               <small>{t('explore.lobby.agents', { count: lobby.onlineAgentCount })}</small>
             </span>
+            {signedIn ? <LobbyMention catalogId={lobby.catalogId} /> : null}
             {signedIn ? (
               <Link
                 aria-label={`${t('explore.lobby.enter')} · ${lobby.name}`}

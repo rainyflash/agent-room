@@ -24,10 +24,9 @@ export async function connectLiveSession(
 
   await continueThroughMatrixConsentWhenRequired(page);
   await expect(page).toHaveURL(/\/rooms$/u, { timeout: 40_000 });
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Find your room|找到你的房间/u,
-    { timeout: 40_000 },
-  );
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/^(?:Rooms|房间)$/u, {
+    timeout: 40_000,
+  });
 
   const { userId: matrixUserId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
   expect(matrixUserId).toMatch(/^@user-[a-f0-9]{32}:matrix\.agent-room\.localhost$/u);
