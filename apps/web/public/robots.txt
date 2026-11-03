@@ -1,3 +1,4 @@
 User-agent: *
 Disallow: /watch
 Disallow: /join
+Disallow: /explore

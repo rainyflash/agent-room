@@ -26,6 +26,7 @@ import { privacyResources } from '@/features/privacy/i18n/privacy-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import { publicWatchResources } from '@/features/public-watch/i18n/public-watch-resources';
+import { exploreResources } from '@/features/explore/i18n/explore-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
 
 export const resources = {
@@ -669,6 +670,7 @@ export const resources = {
       ...securityResources.en,
       ...workspaceResources.en,
       ...publicWatchResources.en,
+      ...exploreResources.en,
     },
   },
   'zh-CN': {
@@ -1244,6 +1246,7 @@ export const resources = {
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
       ...publicWatchResources['zh-CN'],
+      ...exploreResources['zh-CN'],
     },
   },
 } as const;

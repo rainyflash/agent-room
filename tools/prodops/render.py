@@ -27,6 +27,8 @@ APP_PAGE_PATHS: Final = (
     "/about",
     "/admin/*",
     "/connect",
+    "/explore",
+    "/explore/*",
     "/guide",
     "/inbox",
     "/join",

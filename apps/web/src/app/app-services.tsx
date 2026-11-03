@@ -53,6 +53,8 @@ export type AppServices = {
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly lobbyEntry: PublicLobbyEntryCoordinator;
+  /** 发现页的公开房间目录和详情；不带登录范围。测试和夹具里可以没有。 */
+  readonly explore?: import('@/features/explore/domain/explore').ExploreGateway;
   readonly messages: MessageGateway;
   readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;

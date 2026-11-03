@@ -47,6 +47,7 @@ import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
 import { ControlPlanePublicRoomDirectoryClient } from '@/features/room-directory/adapters/control-plane-public-room-directory-client';
 import { ControlPlanePublicWatchClient } from '@/features/public-watch/adapters/control-plane-public-watch-client';
+import { ControlPlaneExploreClient } from '@/features/explore/adapters/control-plane-explore-client';
 import { ControlPlaneAccessManagementClient } from '@/features/security/adapters/control-plane-access-management-client';
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
@@ -236,6 +237,11 @@ export function createCloudRuntime(
     directSessionCoordinator,
     directSessions,
     deviceSigning,
+    // 发现页不登录也能看：和围观页一样不放进登录范围。
+    explore: new ControlPlaneExploreClient({
+      baseUrl: config.controlPlaneUrl,
+      fetch: controlPlaneFetch,
+    }),
     handoffs: new ControlPlaneHandoffGateway(businessApi),
     lobby,
     lobbyEntry,
