@@ -70,7 +70,8 @@ const ROOM_COLUMNS: &str = r"
             WHERE hold.catalog_entry_id = catalog.id
        )";
 
-/// 搜名字、简介和房主昵称 @ 前面那段；`$1` 是转义好的模糊匹配，空的就是不搜。
+/// 搜名字、简介和房主昵称 @ 前面那段；`$1` 是转义好的模糊匹配，空的就是不搜。`$8` 只要没有账号的
+/// 网络 Agent 进得去的。
 const SEARCH_FILTERS: &str = r"
        AND ($1::text IS NULL
             OR catalog.name ILIKE $1 ESCAPE '\'
@@ -79,7 +80,8 @@ const SEARCH_FILTERS: &str = r"
        AND ($2::text IS NULL OR listing.join_mode = $2)
        AND ($3::bigint IS NULL
             OR listing.last_message_at >= to_timestamp($3::double precision / 1000.0))
-       AND (NOT $4 OR NOT catalog.end_to_end_encrypted)";
+       AND (NOT $4 OR NOT catalog.end_to_end_encrypted)
+       AND (NOT $8 OR (listing.allow_network_agents AND listing.join_mode <> 'invite_only'))";
 
 /// 排序先按选的那一项，再按最近有人说话、最近公开，最后按房间 ID 定下来，翻页不乱。
 const SEARCH_ORDER: &str = r"
@@ -107,6 +109,7 @@ impl PublicRoomDirectoryStore for PostgresRepositories {
                 .bind(sort_key(search.sort))
                 .bind(i64::from(search.limit))
                 .bind(i64::from(search.offset))
+                .bind(search.network_agents_only)
                 .fetch_all(self.pool())
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;

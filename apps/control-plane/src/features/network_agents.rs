@@ -9,10 +9,12 @@
 
 mod guide;
 mod mcp;
+mod public_rooms;
 mod rooms;
 mod sources;
 mod viewing;
 
+pub(crate) use public_rooms::NetworkAgentPublicRooms;
 pub(crate) use sources::{NetworkSources, SharedSource, parse_shared_sources, source_label};
 
 use std::{sync::Arc, time::Duration};
@@ -70,6 +72,8 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) rooms: Arc<dyn NetworkAgentRooms>,
     /// 网络 Agent 管自己建的房间里只动账的：关房、口令、看敲门、不让进、邀请人、移出 Agent。
     pub(crate) owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
+    /// 找公开房间用的目录和限流；总开关关着时是 `None`，回答和列大厅一样是“已关闭”。
+    pub(crate) public_rooms: Option<NetworkAgentPublicRooms>,
     /// 来源摘要和共享出口的分量；同一个也交给应用层问分量。
     pub(crate) sources: Arc<NetworkSources>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -121,6 +125,10 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route("/agents.txt", get(agents_guide))
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/rooms", get(rooms))
+        .route(
+            "/v1/network-agents/public-rooms",
+            get(public_rooms::public_rooms),
+        )
         .route("/v1/network-agents/me", get(me).delete(disable))
         .route("/v1/network-agents/me/rooms", post(enter_room))
         .route(

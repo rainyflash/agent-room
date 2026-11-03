@@ -209,6 +209,37 @@ struct AgentFeatureDependencies {
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
     content_authorizer: Arc<dyn ContentMembershipAuthorizer>,
     content: Arc<dyn agent_room_application::content::ContentUseCases>,
+    public_rooms: PublicRoomShared,
+}
+
+/// 发现页、分享页和网络 Agent 找公开房间共用的目录和限流。
+#[derive(Clone)]
+struct PublicRoomShared {
+    /// 每间房的在线人数留 60 秒，几处一起用。
+    directory: Arc<PublicRoomDirectoryService>,
+    /// 不要登录的这几处合起来按来源限流。
+    limits: Arc<features::anonymous_limits::AnonymousLimiter>,
+}
+
+fn build_public_room_shared(
+    config: &ControlPlaneConfig,
+    repositories: &Arc<PostgresRepositories>,
+    matrix_identities: &Arc<MatrixApplicationServiceProvisioner>,
+    system_runtime: &Arc<SystemRuntime>,
+) -> PublicRoomShared {
+    PublicRoomShared {
+        directory: Arc::new(PublicRoomDirectoryService::new(
+            PublicRoomDirectoryDependencies {
+                directory: repositories.clone(),
+                presence: matrix_identities.clone(),
+                clock: system_runtime.clone(),
+            },
+        )),
+        limits: Arc::new(features::anonymous_limits::AnonymousLimiter::new(
+            config.network_agents.shared_sources.clone(),
+            system_runtime.clone(),
+        )),
+    }
 }
 
 /// 从进程环境启动控制平面，并在终止信号后释放数据库与遥测资源。
@@ -432,6 +463,8 @@ async fn build_identity_router(
         build_account_deletion_worker(config, &synapse_accounts, &repositories, &system_runtime)?;
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
+    let public_rooms =
+        build_public_room_shared(config, &repositories, &matrix_identities, &system_runtime);
     let agent_dependencies = AgentFeatureDependencies {
         repositories: repositories.clone(),
         system_runtime: system_runtime.clone(),
@@ -442,15 +475,10 @@ async fn build_identity_router(
         matrix_authority,
         content_authorizer,
         content: content_use_cases,
+        public_rooms,
     };
-    // 先建网络 Agent 的网关：管理者放行敲门时，私人房间的接口要用它替 Agent 进房间。
-    let network_agents = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
-    let agent_features = build_agent_feature_states(
-        config,
-        request_timeout,
-        &agent_dependencies,
-        network_agents.entry.clone(),
-    )?;
+    let (network_agents, agent_features) =
+        build_agent_routes(config, request_timeout, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -862,6 +890,22 @@ fn build_account_lifecycle_service(
     )))
 }
 
+/// 先建网络 Agent 的网关：管理者放行敲门时，私人房间的接口要用它替 Agent 进房间。
+fn build_agent_routes(
+    config: &ControlPlaneConfig,
+    request_timeout: Duration,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<(NetworkAgentRuntime, AgentFeatureHttpStates), StartupError> {
+    let network_agents = build_network_agent_routes(config, request_timeout, dependencies)?;
+    let agent_features = build_agent_feature_states(
+        config,
+        request_timeout,
+        dependencies,
+        network_agents.entry.clone(),
+    )?;
+    Ok((network_agents, agent_features))
+}
+
 fn build_agent_feature_states(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
@@ -869,19 +913,10 @@ fn build_agent_feature_states(
     admitted_entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 ) -> Result<AgentFeatureHttpStates, StartupError> {
     let placements = build_agent_room_placements(config, dependencies)?;
-    // 发现页的接口和分享页共用一个：每间房的在线人数留 60 秒，两边一起用。
-    let directory = Arc::new(PublicRoomDirectoryService::new(
-        PublicRoomDirectoryDependencies {
-            directory: dependencies.repositories.clone(),
-            presence: dependencies.matrix_identities.clone(),
-            clock: dependencies.system_runtime.clone(),
-        },
-    ));
-    // 发现页的两个接口和分享页合起来按来源限流，也共用一个。
-    let anonymous_limits = Arc::new(features::anonymous_limits::AnonymousLimiter::new(
-        config.network_agents.shared_sources.clone(),
-        dependencies.system_runtime.clone(),
-    ));
+    let PublicRoomShared {
+        directory,
+        limits: anonymous_limits,
+    } = dependencies.public_rooms.clone();
     let AgentIdentityHttpStates {
         agents,
         instances,
@@ -1353,6 +1388,24 @@ struct NetworkAgentRuntime {
 }
 
 /// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
+/// 网络 Agent 找公开房间用发现页那一份；总开关关着时不给，回答“已关闭”。
+fn network_agent_public_rooms(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Option<features::network_agents::NetworkAgentPublicRooms> {
+    config.network_agents.enabled.then(|| {
+        let PublicRoomShared { directory, limits } = dependencies.public_rooms.clone();
+        features::network_agents::NetworkAgentPublicRooms {
+            directory,
+            limits,
+            site_origin: features::share_page::site_origin(
+                &config.authentication.matrix_server_name,
+            )
+            .into(),
+        }
+    })
+}
+
 fn build_network_agent_routes(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
@@ -1432,6 +1485,7 @@ fn build_network_agent_routes(
             messaging: gateway.clone(),
             rooms: gateway,
             owned_rooms: service,
+            public_rooms: network_agent_public_rooms(config, dependencies),
             sources,
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(

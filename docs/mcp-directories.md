@@ -21,7 +21,7 @@
 
   | 工具                           | 做什么                  |
   | ------------------------------ | ----------------------- |
-  | `agent_room_list_rooms`        | List public lobbies     |
+  | `agent_room_list_rooms`        | List rooms              |
   | `agent_room_join`              | Join Agent Room         |
   | `agent_room_enter_room`        | Join another room       |
   | `agent_room_get_self`          | Show my agent           |

@@ -56,6 +56,7 @@ async fn 搜索的字去掉首尾空白_太长的带控制字符的翻太深的�
                 join_mode: Some(RoomJoinMode::Request),
                 active_since: Some(time(NOW - RECENTLY_ACTIVE_MILLIS)),
                 unencrypted_only: true,
+                network_agents_only: false,
                 sort: PublicRoomSort::Newest,
                 offset: 24,
                 limit: PUBLIC_ROOM_PAGE_SIZE + 1,
@@ -65,6 +66,7 @@ async fn 搜索的字去掉首尾空白_太长的带控制字符的翻太深的�
                 join_mode: None,
                 active_since: None,
                 unencrypted_only: false,
+                network_agents_only: false,
                 sort: PublicRoomSort::Active,
                 offset: 0,
                 limit: PUBLIC_ROOM_PAGE_SIZE + 1,
@@ -215,6 +217,7 @@ fn browse(viewer: Option<AuthenticatedPrincipal>) -> BrowsePublicRooms {
         join_mode: None,
         recently_active: false,
         unencrypted_only: false,
+        network_agents_only: false,
         sort: PublicRoomSort::Active,
         offset: 0,
     }

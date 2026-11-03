@@ -31,6 +31,8 @@ pub struct PublicRoomSearch {
     /// 只要这个时间以后有人说过话的。
     pub active_since: Option<UtcMillis>,
     pub unencrypted_only: bool,
+    /// 只要没有账号的网络 Agent 拿房间号进得去的：房主允许网络 Agent，也不是只能邀请的。
+    pub network_agents_only: bool,
     pub sort: PublicRoomSort,
     pub offset: u32,
     pub limit: u32,
