@@ -4,8 +4,8 @@
 //! 按哪份授权、它写的理由。动手不用最近登录，授权本身就是主人的同意；房主、管理员和给授权的人动不了。
 //!
 //! 禁言可以限时；踢出、封禁照成员一节那一套落（[`crate::ports::ModerationMemberGateway`]）；解封就是撤回
-//! Agent 做的那条封禁，人封的 Agent 解不了。网络 Agent 当对象留到第 7a-2c-3 步。网络 Agent 没有主人，拿不到
-//! 授权，所以只有本机 Agent 动手的入口。
+//! Agent 做的那条封禁，人封的 Agent 解不了。网络 Agent 没有主人，动它只动它自己（台账里是替它记账的合成
+//! 主体）；它也拿不到授权，所以只有本机 Agent 动手的入口。
 
 mod unban;
 
@@ -60,8 +60,6 @@ pub enum AgentModerationFailureKind {
     NotBanned,
     /// 解封时封着他的是人，不是 Agent。
     BannedByPerson,
-    /// 这一步还做不了：对象是网络 Agent（第 7a-2c-3 步）。
-    Unsupported,
     InvalidRequest,
     Forbidden,
     NotFound,
@@ -386,22 +384,18 @@ impl AgentModerationService {
         Ok((grant, access.principal_id))
     }
 
-    /// 认人：人的账号就是他，Agent 认成它的主人。网络 Agent 的合成主体在房间里没有账号，这一步先不动它。
+    /// 认人：人的账号就是他，本机 Agent 认成它的主人，网络 Agent 认成替它记账的合成主体（只动它自己）。
     async fn subject(
         &self,
         target: &MatrixUserId,
         operation: &'static str,
     ) -> AgentModerationResult<PrincipalId> {
-        let subject = self
-            .store
+        self.store
             .moderation_subject(target)
             .await
             .map_err(|error| repository(operation, &error))?
-            .ok_or_else(|| failure(operation, AgentModerationFailureKind::TargetNotFound))?;
-        if subject.network_agent {
-            return Err(failure(operation, AgentModerationFailureKind::Unsupported));
-        }
-        Ok(subject.principal_id)
+            .map(|subject| subject.principal_id)
+            .ok_or_else(|| failure(operation, AgentModerationFailureKind::TargetNotFound))
     }
 
     /// 房主、管理员（受邀和已加入的都算）、给授权的人和这个连接代表的人动不了，连同他们的 Agent：Agent

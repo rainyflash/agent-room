@@ -1619,6 +1619,7 @@ fn build_private_room_service(
         matrix: dependencies.matrix_identities.clone(),
         principals: dependencies.repositories.clone(),
         agents: dependencies.repositories.clone(),
+        agent_members: dependencies.repositories.clone(),
         trusted_matrix_readers: vec![content_authority_matrix_user(config)?],
         listings: dependencies.repositories.clone(),
         listing_matrix: dependencies.matrix_identities.clone(),

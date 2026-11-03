@@ -43,7 +43,7 @@ pub use direct_sessions::{
 };
 pub use people::{RoomAgentKind, RoomAgentOwnerRecord, RoomPeopleDirectory, RoomPersonName};
 pub use private_room_agents::{
-    JoinCodeAttemptPolicy, JoinCodeSealer, PrivateRoomAgentAccessStore,
+    JoinCodeAttemptPolicy, JoinCodeSealer, PrivateRoomAgentAccessStore, PrivateRoomAgentEviction,
     PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberLookup,
     PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, SealedJoinCode,
 };
@@ -59,11 +59,11 @@ pub use private_room_listing::{
     PrivateRoomListingStore,
 };
 pub use private_rooms::{
-    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-    PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomDescriptionStore,
-    PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomNoticeGateway,
-    PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway,
-    RoomNoticeWrite,
+    PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+    PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+    PrivateRoomDescriptionStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+    PrivateRoomNoticeGateway, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+    PrivateRoomTopicGateway, RoomNoticeWrite,
 };
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,

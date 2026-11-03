@@ -3,7 +3,7 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        NetworkAgentStore, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+        NetworkAgentStore, PrincipalAgents, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
         PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
     },
 };
@@ -251,6 +251,51 @@ async fn 只认主体名下还在用的_agent() {
         !owns(owner, AgentId::from_uuid(Uuid::now_v7())).await,
         "不存在的 Agent 不算"
     );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 治理找得到一个人名下的_agent_认得出网络_agent_的合成主体() {
+    let database = TestDatabase::connect().await;
+    let person = seed_principal(&database.runtime, "principal-agents-person").await;
+    let first = seed_agent(&database.runtime, person).await;
+    let second = seed_agent(&database.runtime, person).await;
+    let network = seed_principal_from(
+        &database.runtime,
+        "principal-agents-network",
+        NETWORK_AGENT_ISSUER,
+    )
+    .await;
+    let remote = seed_agent(&database.runtime, network).await;
+    seed_network_agent(&database.runtime, network, remote).await;
+    let stranger = seed_principal(&database.runtime, "principal-agents-stranger").await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let agents = |principal| {
+        let repositories = &repositories;
+        async move {
+            PrivateRoomAgentDirectory::principal_agents(repositories, principal)
+                .await
+                .expect("查询应成功")
+        }
+    };
+
+    assert_eq!(
+        agents(person).await,
+        PrincipalAgents {
+            agent_ids: vec![first, second],
+            network: false,
+        }
+    );
+    assert_eq!(
+        agents(network).await,
+        PrincipalAgents {
+            agent_ids: vec![remote],
+            network: true,
+        }
+    );
+    assert_eq!(agents(stranger).await, PrincipalAgents::default());
 
     database.close().await;
 }

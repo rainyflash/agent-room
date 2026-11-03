@@ -12,10 +12,10 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, IdentifierFactory, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
-        PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomMatrixGateway,
-        PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-        PrivateRoomStore,
+        PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+        PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
+        PrivateRoomSnapshot, PrivateRoomStore,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -41,6 +41,8 @@ use agent_room_domain::{
 };
 use uuid::Uuid;
 
+#[path = "private_room_flow/agent_members.rs"]
+mod agent_members;
 #[path = "private_room_flow/moderation_members.rs"]
 mod moderation_members;
 #[path = "private_room_flow/public_creation.rs"]
@@ -1180,6 +1182,7 @@ struct Fixture {
     matrix: Arc<TestMatrix>,
     listings: Arc<TestListings>,
     agents: Arc<TestAgentDirectory>,
+    agent_members: Arc<agent_members::TestAgentMembers>,
     events: Arc<Mutex<Vec<&'static str>>>,
     catalog: RoomCatalogId,
     owner: PrincipalId,
@@ -1205,6 +1208,7 @@ impl Fixture {
         ])));
         let runtime = Arc::new(TestRuntime);
         let agents = Arc::new(TestAgentDirectory::default());
+        let agent_members = Arc::new(agent_members::TestAgentMembers::default());
         let listings = Arc::new(TestListings::new(store.clone(), events.clone()));
         let service = PrivateRoomService::new(PrivateRoomDependencies {
             store: store.clone(),
@@ -1212,6 +1216,7 @@ impl Fixture {
             matrix: matrix.clone(),
             principals,
             agents: agents.clone(),
+            agent_members: agent_members.clone(),
             trusted_matrix_readers: vec![
                 MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
             ],
@@ -1227,6 +1232,7 @@ impl Fixture {
             matrix,
             listings,
             agents,
+            agent_members,
             events,
             catalog: catalog_id(10),
             owner,
@@ -1658,6 +1664,8 @@ struct TestAgentDirectory {
     agents: Mutex<BTreeMap<PrincipalId, Vec<MatrixUserId>>>,
     owned: Mutex<Vec<(PrincipalId, AgentId)>>,
     described: Mutex<BTreeMap<AgentId, PrivateRoomAgentDescription>>,
+    /// 替网络 Agent 记账的合成主体。
+    network: Mutex<Vec<PrincipalId>>,
 }
 
 impl TestAgentDirectory {
@@ -1732,6 +1740,28 @@ impl PrivateRoomAgentDirectory for TestAgentDirectory {
             .get(&agent_id)
             .cloned();
         Box::pin(async move { Ok(described) })
+    }
+
+    fn principal_agents(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<PrincipalAgents>> {
+        let agents = PrincipalAgents {
+            agent_ids: self
+                .owned
+                .lock()
+                .expect("Agent 锁正常")
+                .iter()
+                .filter(|(owner, _)| *owner == principal_id)
+                .map(|(_, agent)| *agent)
+                .collect(),
+            network: self
+                .network
+                .lock()
+                .expect("Agent 锁正常")
+                .contains(&principal_id),
+        };
+        Box::pin(async move { Ok(agents) })
     }
 }
 

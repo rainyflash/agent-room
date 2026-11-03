@@ -215,6 +215,50 @@ pub trait PrivateRoomAgentAccessStore: Send + Sync {
 }
 
 /// 只读一个 Agent 成员：内容授权只需要知道某个 Agent 是不是凭口令进来的有效成员。
+/// 治理在私人房间里踢出、封禁一个人时，连他名下凭口令或敲门进来的 Agent 一起移出
+/// （`specs/public-rooms/design.md`“房主的 Agent 管房间”）。只要这两样，测试不用实现整个
+/// [`PrivateRoomAgentAccessStore`]。
+pub trait PrivateRoomAgentEviction: Send + Sync {
+    /// 这个房间里此刻已加入的、凭口令或敲门进来的 Agent。
+    fn joined_agent_members(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentMemberRecord>>>;
+
+    /// 记为已移出；原本不是已加入时返回 `false`。
+    fn mark_agent_removed(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
+}
+
+impl<T: PrivateRoomAgentAccessStore + ?Sized> PrivateRoomAgentEviction for T {
+    fn joined_agent_members(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentMemberRecord>>> {
+        Box::pin(async move {
+            Ok(self
+                .agent_members(catalog_id)
+                .await?
+                .into_iter()
+                .filter(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
+                .collect())
+        })
+    }
+
+    fn mark_agent_removed(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        self.remove_agent(catalog_id, agent_id, now)
+    }
+}
+
 pub trait PrivateRoomAgentMemberLookup: Send + Sync {
     fn agent_member(
         &self,

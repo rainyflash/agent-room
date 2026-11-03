@@ -21,9 +21,9 @@ use crate::{
         Clock, IdentifierFactory, MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomId,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDirectory, PrivateRoomListingMatrix, PrivateRoomListingStore,
-        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
+        PrivateRoomAgentDirectory, PrivateRoomAgentEviction, PrivateRoomListingMatrix,
+        PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
     },
 };
 
@@ -153,6 +153,8 @@ pub struct PrivateRoomDependencies {
     pub principals: Arc<dyn PrivateRoomPrincipalDirectory>,
     /// 成员能力变化时找到其名下 Agent，让它们在 Matrix 上的能力随之收紧或恢复。
     pub agents: Arc<dyn PrivateRoomAgentDirectory>,
+    /// 治理踢出、封禁一个人时，连他名下凭口令或敲门进来的 Agent 一起移出。
+    pub agent_members: Arc<dyn PrivateRoomAgentEviction>,
     /// 必须能读取当前 Matrix 房间状态的受信服务身份，例如内容授权服务。
     pub trusted_matrix_readers: Vec<MatrixUserId>,
     /// 下面三样只有新建时就公开的房间用（`specs/public-rooms/design.md`）：存设置、在 Matrix 上
@@ -170,6 +172,7 @@ pub struct PrivateRoomService {
     matrix: Arc<dyn PrivateRoomMatrixGateway>,
     principals: Arc<dyn PrivateRoomPrincipalDirectory>,
     agents: Arc<dyn PrivateRoomAgentDirectory>,
+    agent_members: Arc<dyn PrivateRoomAgentEviction>,
     trusted_matrix_readers: Vec<MatrixUserId>,
     listings: Arc<dyn PrivateRoomListingStore>,
     listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
@@ -186,6 +189,7 @@ impl PrivateRoomService {
             matrix: dependencies.matrix,
             principals: dependencies.principals,
             agents: dependencies.agents,
+            agent_members: dependencies.agent_members,
             trusted_matrix_readers: dependencies.trusted_matrix_readers,
             listings: dependencies.listings,
             listing_matrix: dependencies.listing_matrix,

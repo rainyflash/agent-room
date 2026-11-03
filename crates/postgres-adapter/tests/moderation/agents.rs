@@ -353,6 +353,56 @@ async fn applied_ban(
         .expect("落下")
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 读禁言时_不是房间里的人看他凭口令进来的_agent_成员能不能说() {
+    let database = TestDatabase::connect().await;
+    let pool = &database.runtime;
+    let repositories = PostgresRepositories::new(pool.clone());
+    let owner = seed_principal(pool, "agent-speak-owner").await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    PrivateRoomStore::create(
+        &repositories,
+        &private_room_snapshot(catalog_id, owner),
+        time(0),
+    )
+    .await
+    .expect("私人房间夹具应创建");
+    let speaking = seed_network_principal(pool).await;
+    let silent = seed_principal(pool, "agent-speak-silent").await;
+    // 他自己在房间里只能看：照他自己的算，不看他的 Agent 成员。
+    let watcher = seed_principal(pool, "agent-speak-watcher").await;
+    seed_membership(pool, catalog_id, watcher, "joined", 1).await;
+    for (principal, bits) in [(speaking, 3), (silent, 1), (watcher, 3)] {
+        let agent = agent_of(pool, &seed_agent(pool, principal).await).await;
+        seed_agent_member(pool, catalog_id, agent, bits).await;
+    }
+
+    for (principal, may_speak) in [(speaking, true), (silent, false), (watcher, false)] {
+        let standing = mute_standing(&repositories, catalog_id, &person(principal))
+            .await
+            .expect("目录存在");
+        assert_eq!(standing.may_speak, may_speak, "{principal}");
+    }
+    database.close().await;
+}
+
+/// 凭口令进来、已加入的 Agent 成员。
+async fn seed_agent_member(pool: &PgPool, catalog_id: RoomCatalogId, agent: AgentId, bits: i16) {
+    sqlx::query(
+        r"INSERT INTO agent_room.private_room_agent_member
+              (catalog_entry_id, agent_id, membership_status, permission_bits, created_at,
+               status_changed_at)
+          VALUES ($1, $2, 'joined', $3, now(), now())",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(agent.as_uuid())
+    .bind(bits)
+    .execute(pool)
+    .await
+    .expect("记 Agent 成员");
+}
+
 async fn no_grant(
     repositories: &PostgresRepositories,
     catalog_id: RoomCatalogId,

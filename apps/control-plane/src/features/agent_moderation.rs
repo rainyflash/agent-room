@@ -421,12 +421,6 @@ fn failure_response(failure: AgentModerationFailure, correlation_id: Correlation
             ErrorCategory::Authorization,
             "A person banned them. Only the room owner or an admin can lift that ban.",
         ),
-        Kind::Unsupported => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "agent_moderation.unsupported",
-            ErrorCategory::Validation,
-            "Acting on network agents is not available yet.",
-        ),
         Kind::InvalidRequest => (
             StatusCode::BAD_REQUEST,
             "agent_moderation.invalid",

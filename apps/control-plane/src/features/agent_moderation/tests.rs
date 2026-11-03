@@ -443,11 +443,6 @@ async fn 用例的失败照种类回英文说明() {
             "agent_moderation.banned_by_person",
         ),
         (
-            AgentModerationFailureKind::Unsupported,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "agent_moderation.unsupported",
-        ),
-        (
             AgentModerationFailureKind::Unauthorized,
             StatusCode::UNAUTHORIZED,
             "agent_moderation.unauthorized",

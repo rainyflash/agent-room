@@ -1,8 +1,8 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        AgentRegistration, AgentRepository, MatrixUserId, PortFuture, PrivateRoomAgentDescription,
-        PrivateRoomAgentDirectory, RegisteredAgent,
+        AgentRegistration, AgentRepository, MatrixUserId, PortFuture, PrincipalAgents,
+        PrivateRoomAgentDescription, PrivateRoomAgentDirectory, RegisteredAgent,
     },
 };
 use agent_room_domain::{
@@ -61,6 +61,39 @@ impl PrivateRoomAgentDirectory for PostgresRepositories {
             .fetch_one(&self.pool)
             .await
             .map_err(|error| map_sqlx_error("private_room_agent.owns_active_agent", &error))
+        })
+    }
+
+    fn principal_agents(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<PrincipalAgents>> {
+        Box::pin(async move {
+            let operation = "private_room_agent.principal_agents";
+            // 和 `agent_matrix_users` 同一批：他是主人或操作人、还没撤的。
+            let row = sqlx::query(
+                r"SELECT ARRAY(
+                          SELECT ownership.agent_id
+                          FROM agent_room.agent_ownership AS ownership
+                          JOIN agent_room.agent AS agent ON agent.id = ownership.agent_id
+                          WHERE ownership.principal_id = $1
+                            AND ownership.revoked_at IS NULL
+                          ORDER BY agent.created_at ASC, agent.id ASC
+                      ) AS agent_ids,
+                      EXISTS (
+                          SELECT 1 FROM agent_room.network_agent AS network
+                          WHERE network.principal_id = $1
+                      ) AS network",
+            )
+            .bind(principal_id.as_uuid())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let agent_ids: Vec<uuid::Uuid> = decode_column(&row, "agent_ids", operation)?;
+            Ok(PrincipalAgents {
+                agent_ids: agent_ids.into_iter().map(AgentId::from_uuid).collect(),
+                network: decode_column(&row, "network", operation)?,
+            })
         })
     }
 
