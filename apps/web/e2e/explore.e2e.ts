@@ -48,19 +48,17 @@ for (const width of [1440, 390]) {
     await expect(rust).toContainText('Last message 7 minutes ago');
     await expect(rust).toContainText('Join directly');
     await expect(rust).toContainText('Not encrypted');
-    await expect(rust.getByRole('link', { name: 'Join · Rust help desk' })).toHaveAttribute(
-      'href',
-      '/explore/Rm0001',
-    );
+    await expect(rust.getByRole('button', { name: 'Join · Rust help desk' })).toBeVisible();
 
     // 按钮看你的处境。
-    await expect(card(page, '周末读书会').getByRole('link')).toHaveText([
-      '周末读书会',
-      'Waiting for approval',
-    ]);
+    const reading = card(page, '周末读书会');
+    await expect(reading).toContainText('Waiting for approval');
+    await expect(
+      reading.getByRole('button', { name: 'Withdraw request · 周末读书会' }),
+    ).toBeVisible();
     await expect(
       card(page, 'Design critiques').getByRole('link', { name: 'Ask to join · Design critiques' }),
-    ).toBeVisible();
+    ).toHaveAttribute('href', '/explore/Rm0003');
     const tinkering = card(page, 'Agent tinkering');
     await expect(tinkering).toContainText('Nobody has spoken yet');
     await expect(tinkering).toContainText('Encrypted');
@@ -70,7 +68,7 @@ for (const width of [1440, 390]) {
     await expect(card(page, 'Board game nights')).toContainText('Invite only');
     await expect(card(page, 'Board game nights').getByRole('link')).toHaveCount(1);
     await expect(
-      card(page, 'Paper club').getByRole('link', { name: 'Accept invitation · Paper club' }),
+      card(page, 'Paper club').getByRole('button', { name: 'Accept invitation · Paper club' }),
     ).toBeVisible();
     await expect(card(page, 'Old arguments').getByRole('link')).toHaveCount(1);
 
@@ -81,9 +79,13 @@ for (const width of [1440, 390]) {
       path: testInfo.outputPath(`explore-${String(width)}.png`),
     });
 
-    // 名字的链接铺满卡片：点在人数那一行上，接住点击的是它。
+    // 名字的链接铺满卡片：点在人数那一行上，接住点击的是它，打开详情。
     await rust.locator('.explore-room__facts').click({ force: true });
     await expect(page.locator('body')).toHaveAttribute('data-fixture-opened', '/explore/Rm0001');
+    await expect(page.getByRole('dialog', { name: 'Rust help desk' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('body')).toHaveAttribute('data-fixture-opened', '/explore');
 
     // 筛选和排序。
     await page.getByRole('button', { name: 'Ask to join' }).click();
@@ -183,7 +185,103 @@ test('发现页：中文', async ({ browser }) => {
   await expect(rust).toContainText('18 个人');
   await expect(rust).toContainText('直接进');
   await expect(page.getByRole('searchbox')).toHaveAttribute('placeholder', '搜房间、房主');
-  await expect(rust.getByRole('link', { name: '加入 · Rust help desk' })).toBeVisible();
+  await expect(rust.getByRole('button', { name: '加入 · Rust help desk' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await context.close();
+});
+
+for (const width of [1440, 390]) {
+  test(`房间详情：管理员、在线人数、加入方式和加密的说明，点“加入”就进房间：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await page.goto(fixture);
+    await card(page, 'Rust help desk').getByRole('link', { name: 'Rust help desk' }).click();
+
+    const panel = page.getByRole('dialog', { name: 'Rust help desk' });
+    await expect(panel).toContainText('Owner: Grace');
+    await expect(panel).toContainText('Admins: Lin, Mo');
+    await expect(panel).toContainText('3 online now');
+    await expect(panel).toContainText('Opened yesterday');
+    await expect(panel).toContainText('Anyone can come straight in.');
+    await expect(panel).toContainText('so can the server');
+    await expect(panel).toContainText('Long questions are welcome.');
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .include('.explore-panel')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(scan.violations.map(({ id }) => id)).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`explore-room-${String(width)}.png`) });
+
+    await panel.getByRole('button', { name: 'Join · Rust help desk' }).click();
+    await expect(page.locator('body')).toHaveAttribute(
+      'data-fixture-opened',
+      '/lobby/0198c000-0000-7000-8000-000000000001',
+    );
+    expect(failures).toEqual([]);
+  });
+}
+
+test('房间详情：留一句话申请，在等批准时能撤回', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(fixture);
+  await card(page, 'Design critiques')
+    .getByRole('link', { name: 'Ask to join · Design critiques' })
+    .click();
+
+  const panel = page.getByRole('dialog', { name: 'Design critiques' });
+  await expect(panel).toContainText('Ask to join; the owner or an admin lets you in.');
+  const note = panel.getByRole('textbox', { name: 'A note for the owner (optional)' });
+  await note.fill('x'.repeat(201));
+  await expect(panel.getByText('201 / 200')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Ask to join' })).toBeDisabled();
+  await note.fill('I review UI for a living 🙂');
+  await panel.getByRole('button', { name: 'Ask to join' }).click();
+  await expect(panel).toContainText('You asked to join.');
+  await expect(page.locator('body')).toHaveAttribute(
+    'data-fixture-request',
+    'I review UI for a living 🙂',
+  );
+
+  await panel.getByRole('button', { name: 'Withdraw request · Design critiques' }).click();
+  await expect(
+    panel.getByRole('textbox', { name: 'A note for the owner (optional)' }),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(
+    card(page, 'Design critiques').getByRole('link', { name: 'Ask to join · Design critiques' }),
+  ).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
+test('卡片上：撤回申请、没进成时说为什么', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(fixture);
+  const reading = card(page, '周末读书会');
+  await reading.getByRole('button', { name: 'Withdraw request · 周末读书会' }).click();
+  await expect(reading.getByRole('link', { name: 'Ask to join · 周末读书会' })).toBeVisible();
+
+  const changing = card(page, 'Changing rooms');
+  await changing.getByRole('button', { name: 'Join · Changing rooms' }).click();
+  await expect(changing.getByRole('alert')).toHaveText(
+    'This room now needs approval. Open it and ask to join.',
+  );
+  expect(failures).toEqual([]);
+});
+
+test('房间详情：不公开了的房间', async ({ page }) => {
+  await page.goto(`${fixture}?open=Gone00`);
+  const panel = page.getByRole('dialog');
+  await expect(panel.getByRole('alert')).toContainText('This room isn’t public anymore');
+  await panel.getByRole('button', { name: 'Close room details' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('房间详情：没登录时是“登录后加入”', async ({ page }) => {
+  await page.goto(`${fixture}?signed-out&open=Rm0003`);
+  const panel = page.getByRole('dialog', { name: 'Design critiques' });
+  await panel.getByRole('button', { name: 'Sign in to join · Design critiques' }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-fixture-authentication', 'sign-in');
 });

@@ -34,6 +34,10 @@ import { WebHeaderLinks } from '@/features/updates/ui/web-header-links';
 import { formatRelativeTime } from '@/shared/i18n/formatters';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 
+import { ExploreRoomActions } from './explore-room-actions';
+import { ExploreRoomPanel, type ExploreRoomDetailState } from './explore-room-panel';
+import type { ExploreActions } from './use-explore-actions';
+
 import './explore.css';
 
 /** 搜索框停手这么久才去问服务器，打一个字问一次太多（还按来源限流）。 */
@@ -61,6 +65,8 @@ export type ExploreRoomsState =
 
 export type ExploreViewProps = {
   readonly account: ExploreAccount;
+  /** 登录了才有：加入、申请、撤回。 */
+  readonly actions?: ExploreActions | undefined;
   readonly filter: ExploreFilter;
   readonly lobbies: readonly PublicRoomSummary[];
   readonly now: number;
@@ -69,6 +75,9 @@ export type ExploreViewProps = {
   readonly onFilterChange: (filter: ExploreFilter) => void;
   readonly onLoadMore: () => void;
   readonly onRetry: () => void;
+  /** 打开着一间房的详情（`/explore/<分享码>`）。 */
+  readonly panel?:
+    { readonly detail: ExploreRoomDetailState; readonly onClose: () => void } | undefined;
   readonly rooms: ExploreRoomsState;
 };
 
@@ -78,6 +87,7 @@ export type ExploreViewProps = {
  */
 export function ExploreView({
   account,
+  actions,
   filter,
   lobbies,
   now,
@@ -85,6 +95,7 @@ export function ExploreView({
   onFilterChange,
   onLoadMore,
   onRetry,
+  panel,
   rooms,
 }: ExploreViewProps) {
   const { t } = useTranslation();
@@ -112,6 +123,7 @@ export function ExploreView({
         </h2>
         <RoomResults
           account={account}
+          actions={actions}
           filter={filter}
           now={now}
           onCreatePublicRoom={onCreatePublicRoom}
@@ -120,6 +132,16 @@ export function ExploreView({
           rooms={rooms}
         />
       </section>
+      {panel === undefined ? null : (
+        <ExploreRoomPanel
+          account={account}
+          actions={actions}
+          detail={panel.detail}
+          filter={filter}
+          now={now}
+          onClose={panel.onClose}
+        />
+      )}
     </main>
   );
 }
@@ -299,6 +321,7 @@ function LobbyRow({
 
 function RoomResults({
   account,
+  actions,
   filter,
   now,
   onCreatePublicRoom,
@@ -307,6 +330,7 @@ function RoomResults({
   rooms,
 }: {
   readonly account: ExploreAccount;
+  readonly actions?: ExploreActions | undefined;
   readonly filter: ExploreFilter;
   readonly now: number;
   readonly onCreatePublicRoom?: (() => void) | undefined;
@@ -365,6 +389,7 @@ function RoomResults({
         {rooms.rooms.map((room) => (
           <ExploreRoomCard
             account={account}
+            actions={actions}
             filter={filter}
             key={room.catalogId}
             now={now}
@@ -398,11 +423,13 @@ function RoomResults({
  */
 function ExploreRoomCard({
   account,
+  actions,
   filter,
   now,
   room,
 }: {
   readonly account: ExploreAccount;
+  readonly actions?: ExploreActions | undefined;
   readonly filter: ExploreFilter;
   readonly now: number;
   readonly room: ExploreRoom;
@@ -460,7 +487,13 @@ function ExploreRoomCard({
         </ul>
       </div>
       <div className="explore-room__action">
-        <RoomAction account={account} filter={filter} room={room} />
+        <ExploreRoomActions
+          account={account}
+          actions={actions}
+          filter={filter}
+          place="card"
+          room={room}
+        />
       </div>
     </li>
   );
@@ -472,72 +505,6 @@ function RoomFact({ children, icon }: { readonly children: ReactNode; readonly i
       {icon}
       <span>{children}</span>
     </li>
-  );
-}
-
-/**
- * 卡片上的按钮：已经在里面的直接进；没登录的先登录。加入、申请、撤回在详情里做，按钮先打开详情。
- */
-function RoomAction({
-  account,
-  filter,
-  room,
-}: {
-  readonly account: ExploreAccount;
-  readonly filter: ExploreFilter;
-  readonly room: ExploreRoom;
-}) {
-  const { t } = useTranslation();
-  const label = room.name;
-  if (room.viewer === 'joined') {
-    return (
-      <Link
-        aria-label={`${t('explore.action.enter')} · ${label}`}
-        className="ar-button ar-button--compact ar-button--primary"
-        params={{ catalogId: room.catalogId }}
-        search={{}}
-        to="/lobby/$catalogId"
-      >
-        {t('explore.action.enter')}
-        <ArrowRight aria-hidden="true" />
-      </Link>
-    );
-  }
-  // 被封禁的不给按钮；只能邀请的标签上已经写了，也不给按钮。
-  if (room.viewer === 'banned') return null;
-  if (room.joinMode === 'invite_only' && room.viewer !== 'invited') return null;
-  if (account.kind === 'signed-out') {
-    return (
-      <Button
-        aria-label={`${t('explore.action.signIn')} · ${label}`}
-        onClick={account.onSignIn}
-        size="compact"
-        tone="ghost"
-      >
-        {t('explore.action.signIn')}
-      </Button>
-    );
-  }
-  const action =
-    room.viewer === 'pending'
-      ? 'pending'
-      : room.viewer === 'invited'
-        ? 'invited'
-        : room.joinMode === 'request'
-          ? 'request'
-          : 'join';
-  return (
-    <Link
-      aria-label={`${t(`explore.action.${action}`)} · ${label}`}
-      className={`ar-button ar-button--compact ${
-        action === 'pending' ? 'ar-button--ghost' : 'ar-button--primary'
-      }`}
-      params={{ code: room.shareCode }}
-      search={exploreSearchFromFilter(filter)}
-      to="/explore/$code"
-    >
-      {t(`explore.action.${action}`)}
-    </Link>
   );
 }
 
