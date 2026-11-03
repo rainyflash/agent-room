@@ -1408,6 +1408,7 @@ fn build_network_agent_routes(
         access: build_private_room_agent_access(dependencies, key, sources.clone()),
         rooms: private_rooms.clone(),
         directory: dependencies.repositories.clone(),
+        listings: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
         clock: dependencies.system_runtime.clone(),
         identifiers: dependencies.system_runtime.clone(),
@@ -1544,6 +1545,8 @@ fn build_private_room_agent_access(
             clock: dependencies.system_runtime.clone(),
             attempts: join_code_attempt_policy(),
             source_weights,
+            listings: dependencies.repositories.clone(),
+            holds: dependencies.repositories.clone(),
         },
     ))
 }

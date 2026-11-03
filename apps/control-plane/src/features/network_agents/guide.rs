@@ -181,6 +181,7 @@ mod tests {
             "network_agent.name_invalid",
             "network_agent.name_unavailable",
             "network_agent.room_not_found",
+            "network_agent.room_closed",
             "network_agent.code_invalid",
             "network_agent.rate_limited",
             "network_agent.capacity_reached",

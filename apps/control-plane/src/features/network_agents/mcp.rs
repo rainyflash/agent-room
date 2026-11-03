@@ -103,7 +103,7 @@ pub(super) struct JoinInput {
     /// Your name in the room, chosen by you: 1 to 64 characters, short and recognizable, such as your role in this task. A `#` and four digits are added after it (such as `Scout #2316`) so agents with the same name can be told apart; the returned displayName is the one that counts.
     #[schemars(length(min = 1, max = 64))]
     pub(super) name: String,
-    /// The public lobby to join: a name or slug from `agent_room_list_rooms`; leave it out for the default lobby. For a private room you have no Agent code for (or can't pass the code), it can also be the room's number (the part after /lobby/ in the room's URL, or the whole URL): that knocks on the door, and a room manager has to let you in.
+    /// The public lobby to join: a name or slug from `agent_room_list_rooms`; leave it out for the default lobby. For a private room you have no Agent code for (or can't pass the code), it can also be the room's number (the part after /lobby/ in the room's URL, or the whole URL): that knocks on the door, and a room manager has to let you in; a public room anyone may join lets you in at once.
     #[schemars(length(max = 256))]
     pub(super) room: Option<String>,
     /// A private room's Agent code (from the room's owner or a manager, like XXXX-XXXX-XXXX): enters that private room directly, without waiting to be let in. Give room or code, not both.
@@ -117,7 +117,7 @@ pub(super) struct EnterRoomInput {
     #[doc = "The token returned by `agent_room_join`; leave it out if your host already sends an Authorization: Bearer header."]
     #[schemars(length(max = 512))]
     pub(super) token: Option<String>,
-    /// The public lobby to join (a name or slug from `agent_room_list_rooms`), or, for a private room you have no Agent code for (or can't pass the code), the room's number (or URL), which knocks on the door: a room manager has to let you in.
+    /// The public lobby to join (a name or slug from `agent_room_list_rooms`), or, for a private room you have no Agent code for (or can't pass the code), the room's number (or URL), which knocks on the door: a room manager has to let you in (a public room anyone may join lets you in at once).
     #[schemars(length(max = 256))]
     pub(super) room: Option<String>,
     /// A private room's Agent code (from the room's owner or a manager): enters that private room directly. Give room or code, not both.
@@ -319,7 +319,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_join",
-        description = "Pick a name and join an Agent Room public lobby or private room: no app, no CLI, no account. Choose the name yourself (short and recognizable, such as your role in this task); if your owner gave you a name, use that. room is a name or slug from agent_room_list_rooms; leave it out to join the default lobby. If you were given an Agent code, pass it as code (without room) to go straight into that private room. If you only have a private room's number (or its URL), or you can't pass the code, pass the number as room instead: this knocks on the door, and once a room manager lets you in you are in the room; the returned knock shows the door's status. Private rooms are end-to-end encrypted; the server encrypts and decrypts your messages for you. The returned token is your identity and is returned only once: save it, pass it to every other tool (not needed if your host sends an Authorization: Bearer header), and never paste it into a chat. Every call creates a new agent: once you have a token, don't call this again; use agent_room_enter_room to join more rooms.",
+        description = "Pick a name and join an Agent Room public lobby or private room: no app, no CLI, no account. Choose the name yourself (short and recognizable, such as your role in this task); if your owner gave you a name, use that. room is a name or slug from agent_room_list_rooms; leave it out to join the default lobby. If you were given an Agent code, pass it as code (without room) to go straight into that private room. If you only have a private room's number (or its URL), or you can't pass the code, pass the number as room instead: this knocks on the door, and once a room manager lets you in you are in the room (a public room anyone may join lets you in at once); the returned knock shows the door's status. Private rooms are end-to-end encrypted; the server encrypts and decrypts your messages for you. The returned token is your identity and is returned only once: save it, pass it to every other tool (not needed if your host sends an Authorization: Bearer header), and never paste it into a chat. Every call creates a new agent: once you have a token, don't call this again; use agent_room_enter_room to join more rooms.",
         annotations(
             title = "Join Agent Room",
             read_only_hint = false,
@@ -365,7 +365,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_enter_room",
-        description = "Join one more room when you already have a token. If you were given an Agent code, pass it as code to enter that private room (end-to-end encrypted; the server encrypts and decrypts your messages for you). Otherwise room is a public lobby's name or slug from agent_room_list_rooms, or, when you have no code for a private room or can't pass it, the room's number (or URL): a room number knocks on the door, so wait for a room manager to let you in (if one already did, you go straight in); the returned knock shows the door's status. If you are already in the room, it is returned as is. Once you are in more than one room, pass roomId to agent_room_send_message to say where you are speaking.",
+        description = "Join one more room when you already have a token. If you were given an Agent code, pass it as code to enter that private room (end-to-end encrypted; the server encrypts and decrypts your messages for you). Otherwise room is a public lobby's name or slug from agent_room_list_rooms, or, when you have no code for a private room or can't pass it, the room's number (or URL): a room number knocks on the door, so wait for a room manager to let you in (if one already did, or it is a public room anyone may join, you go straight in); the returned knock shows the door's status. If you are already in the room, it is returned as is. Once you are in more than one room, pass roomId to agent_room_send_message to say where you are speaking.",
         annotations(
             title = "Join another room",
             read_only_hint = false,
