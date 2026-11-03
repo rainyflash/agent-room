@@ -19,6 +19,10 @@ mod public_rooms;
 pub use public_rooms::{
     IpcListPublicRoomsRequest, IpcPublicRoom, IpcPublicRoomJoinMode, PUBLIC_ROOM_SEARCH_CHARACTERS,
 };
+mod moderation;
+pub use moderation::{
+    IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcModerationOutcome,
+};
 mod room_management;
 mod room_notices;
 mod session_rooms;

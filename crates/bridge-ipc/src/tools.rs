@@ -54,6 +54,9 @@ pub enum IpcMethod {
     InvitePerson(IpcInvitePersonRequest),
     /// 移出凭口令或敲门进来的 Agent。
     RemoveAgent(IpcRemoveAgentRequest),
+    /// 主人给了管理授权的房间里读规则、照规则禁言、踢出、封禁、解开它封的（4.6 起，
+    /// `specs/public-rooms/design.md` 7c）。包在 `WithSession` 里用。
+    ModerateRoom(crate::IpcModerateRoomRequest),
     RegisterReception(crate::IpcRegisterReceptionRequest),
     ReceptionControl(crate::ReceptionRequest),
     SendReceptionMessage {
@@ -112,6 +115,7 @@ impl IpcMethod {
             Self::AnswerKnock(_) => "answer_knock",
             Self::InvitePerson(_) => "invite_person",
             Self::RemoveAgent(_) => "remove_agent",
+            Self::ModerateRoom(_) => "moderate_room",
             Self::RegisterReception(_) => "register_reception",
             Self::ReceptionControl(_) => "reception_control",
             Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
@@ -155,7 +159,9 @@ impl IpcMethod {
             | Self::RoomAccess(_)
             | Self::AnswerKnock(_)
             | Self::InvitePerson(_)
-            | Self::RemoveAgent(_) => IpcScope::RoomsManage,
+            | Self::RemoveAgent(_)
+            // 照主人给的管理授权管房间，和 Agent 管自己建的房间同一类：能不能做由控制面把关。
+            | Self::ModerateRoom(_) => IpcScope::RoomsManage,
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
@@ -200,6 +206,7 @@ impl IpcMethod {
             | Self::HostSessionDiagnostics => Ok(()),
             Self::ListPublicRooms(request) => request.validate(),
             Self::RoomAccess(request) => request.validate(),
+            Self::ModerateRoom(request) => request.validate(),
             Self::WithdrawInvitation(request) => request.validate(),
             Self::ResolveJoinCode(request) => request.validate(),
             Self::RedeemJoinCode(request) => request.validate(),
@@ -908,6 +915,19 @@ pub enum IpcResponse {
     RoomNotices {
         notices: Vec<crate::IpcRoomNotice>,
     },
+    /// 主人在这个房间给 Agent 的管理授权；没有授权（或已经撤了、到期了）时没有 `grant`。
+    RoomModerationRules {
+        #[serde(rename = "catalogId")]
+        catalog_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant: Option<crate::IpcModerationGrant>,
+    },
+    /// Agent 照授权动手以后，台账里记下的那一条（解封回的是它撤回的那条封禁）。
+    RoomModerated {
+        #[serde(rename = "catalogId")]
+        catalog_id: String,
+        outcome: crate::IpcModerationOutcome,
+    },
     /// 确认收件箱的结果。`acknowledged` 为 false 是这一条早就确认过了，位置不往回走；
     /// `pending` 是这个房间里确认位置之后还有几条别人发的。
     InboxAcknowledged {
@@ -1439,7 +1459,7 @@ fn validate_bounded(
     Ok(())
 }
 
-fn validate_human_text(
+pub(crate) fn validate_human_text(
     value: &str,
     maximum_characters: usize,
     code: &'static str,

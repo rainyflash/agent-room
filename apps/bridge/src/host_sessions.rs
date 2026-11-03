@@ -21,7 +21,10 @@ use agent_room_bridge_ipc::{
     IpcMethod, IpcOpenHostSessionRequest, IpcPublicRoom, IpcPublicRoomJoinMode, IpcResponse,
     IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
 };
-use agent_room_domain::{ids::RoomCatalogId, room_listing::RoomJoinMode};
+use agent_room_domain::{
+    ids::{AgentId, AgentInstanceId, RoomCatalogId},
+    room_listing::RoomJoinMode,
+};
 use tokio::{
     sync::{Mutex, RwLock, watch},
     task::{JoinHandle, JoinSet},
@@ -34,9 +37,11 @@ use crate::ipc::{BridgeIpcDispatchFailure, BridgeIpcDispatchFuture, BridgeIpcReq
 mod invitation;
 mod join_codes;
 mod room_management;
+mod room_moderation;
 pub(crate) use invitation::InvitationSlot;
 pub(crate) use join_codes::JoinCodeAccess;
 pub(crate) use room_management::RoomManagementAccess;
+use room_moderation::ModerationScope;
 
 const MAX_HOST_SESSIONS: usize = 16;
 const IDLE_LIFETIME: Duration = Duration::from_mins(15);
@@ -411,16 +416,35 @@ impl HostSessionRegistry {
     }
 
     /// 会话所在的房间：管房间的方法管的就是它。
-    /// 会话的 Agent 管的房间：没说就是开会话时进的那个；说了就要是它在的（开会话时进的，或者
-    /// 之后用 `EnterRoom` 进的）。
     async fn room(
         &self,
         session_id: &str,
         requested: Option<&str>,
     ) -> Result<RoomCatalogId, BridgeIpcDispatchFailure> {
+        self.moderation_scope(session_id, requested)
+            .await
+            .map(|scope| scope.room)
+    }
+
+    /// 会话的 Agent 和它管的房间：没说就是开会话时进的那个；说了就要是它在的（开会话时进的，
+    /// 或者之后用 `EnterRoom` 进的）。
+    async fn moderation_scope(
+        &self,
+        session_id: &str,
+        requested: Option<&str>,
+    ) -> Result<ModerationScope, BridgeIpcDispatchFailure> {
         let IpcResponse::SelfSummary { summary } =
             self.execute(session_id, IpcMethod::GetSelf).await?
         else {
+            return Err(session_failure(
+                "bridge.host_session.response_invalid",
+                false,
+            ));
+        };
+        let (Ok(agent_id), Ok(instance_id)) = (
+            Uuid::parse_str(&summary.agent.agent_id),
+            Uuid::parse_str(&summary.instance_id),
+        ) else {
             return Err(session_failure(
                 "bridge.host_session.response_invalid",
                 false,
@@ -454,7 +478,11 @@ impl HostSessionRegistry {
         catalog_id
             .as_deref()
             .and_then(|id| Uuid::parse_str(id).ok())
-            .map(RoomCatalogId::from_uuid)
+            .map(|catalog_id| ModerationScope {
+                agent: AgentId::from_uuid(agent_id),
+                instance: AgentInstanceId::from_uuid(instance_id),
+                room: RoomCatalogId::from_uuid(catalog_id),
+            })
             .ok_or_else(|| {
                 BridgeIpcDispatchFailure::new(
                     "bridge.rooms.not_found",
@@ -841,6 +869,18 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 }
                 IpcMethod::CloseHostSession(request) => {
                     self.sessions.close(&request.session_id).await
+                }
+                IpcMethod::WithSession { session_id, method }
+                    if matches!(*method, IpcMethod::ModerateRoom(_)) =>
+                {
+                    let IpcMethod::ModerateRoom(request) = *method else {
+                        unreachable!("上面的条件只放过管房间的请求");
+                    };
+                    let scope = self
+                        .sessions
+                        .moderation_scope(&session_id, request.catalog_id.as_deref())
+                        .await?;
+                    self.rooms.moderate(scope, request).await
                 }
                 IpcMethod::WithSession { session_id, method }
                     if room_management::manages_room(&method) =>

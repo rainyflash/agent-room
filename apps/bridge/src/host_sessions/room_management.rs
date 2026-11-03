@@ -182,7 +182,7 @@ fn knock_summary(knock: RoomKnock) -> IpcRoomKnock {
     }
 }
 
-fn room_failure(failure: RoomManagementFailure) -> BridgeIpcDispatchFailure {
+pub(super) fn room_failure(failure: RoomManagementFailure) -> BridgeIpcDispatchFailure {
     let (code, category, retryable) = match failure.kind() {
         RoomManagementFailureKind::InvalidRequest => (
             "bridge.rooms.invalid_request",
@@ -205,6 +205,42 @@ fn room_failure(failure: RoomManagementFailure) -> BridgeIpcDispatchFailure {
         // 要等上一阵子才能再试；不标成可重试，免得调用方立刻重发。
         RoomManagementFailureKind::RateLimited => (
             "bridge.rooms.rate_limited",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        // 照管理授权动手时的几种：说清楚为什么不行，Agent 好照着办。
+        RoomManagementFailureKind::NotGranted => (
+            "bridge.moderation.not_granted",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        RoomManagementFailureKind::NotAllowed => (
+            "bridge.moderation.not_allowed",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        RoomManagementFailureKind::Protected => (
+            "bridge.moderation.protected",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        RoomManagementFailureKind::TargetNotFound => (
+            "bridge.moderation.target_not_found",
+            IpcErrorCategory::Validation,
+            false,
+        ),
+        RoomManagementFailureKind::NotInRoom => (
+            "bridge.moderation.not_in_room",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        RoomManagementFailureKind::NotBanned => (
+            "bridge.moderation.not_banned",
+            IpcErrorCategory::Conflict,
+            false,
+        ),
+        RoomManagementFailureKind::BannedByPerson => (
+            "bridge.moderation.banned_by_person",
             IpcErrorCategory::Authorization,
             false,
         ),

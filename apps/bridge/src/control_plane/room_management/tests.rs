@@ -11,11 +11,12 @@ use agent_room_application::{
 use agent_room_bridge_core::{
     room_management::{
         ControlPlaneRoomManagementGateway, RoomCodeState, RoomManagementFailureKind,
+        RoomModerationRequest,
     },
     session::{AuthorizedControlPlaneRequest, BridgeSessionResult, ControlPlaneRequestAuthorizer},
 };
 use agent_room_domain::{
-    ids::{AgentId, DeviceId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId},
     time::UtcMillis,
 };
 use agent_room_identity_adapter::SecureSecretFactory;
@@ -36,6 +37,8 @@ use super::{ControlPlaneHttpConfig, ReqwestControlPlaneRoomManagementGateway};
 const AGENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e44";
 const ACCOUNT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e45";
 const CATALOG_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
+const INSTANCE_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
+const ACTION_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
 
 #[derive(Default)]
 struct 测试请求授权器 {
@@ -486,6 +489,7 @@ async fn spawn(control_plane: Arc<假控制面>) -> String {
         Router::new()
             .route("/devices/current/private-rooms", any(answer))
             .route("/devices/current/private-rooms/{*rest}", any(answer))
+            .route("/agents/{*rest}", any(answer))
             .with_state(control_plane),
     )
     .await
@@ -512,6 +516,10 @@ fn agent_id() -> AgentId {
     AgentId::from_uuid(Uuid::parse_str(AGENT_ID).expect("测试 UUID 有效"))
 }
 
+fn instance_id() -> AgentInstanceId {
+    AgentInstanceId::from_uuid(Uuid::parse_str(INSTANCE_ID).expect("测试 UUID 有效"))
+}
+
 fn account_id() -> PrincipalId {
     PrincipalId::from_uuid(Uuid::parse_str(ACCOUNT_ID).expect("测试 UUID 有效"))
 }
@@ -522,4 +530,169 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 
 fn secret(value: &str) -> SecretValue {
     SecretValue::new(value).expect("测试秘密有效")
+}
+
+fn moderation_path() -> String {
+    format!("/agents/{AGENT_ID}/instances/{INSTANCE_ID}/rooms/{CATALOG_ID}/moderation")
+}
+
+#[tokio::test]
+async fn 管房间的授权用_get_读_没授权不算失败_只是没有() {
+    let control_plane = 假控制面::answering([
+        (
+            StatusCode::OK,
+            json!({
+                "grantId": "0198b601-77a1-7bb8-83eb-a8fe68c97e49",
+                "rules": "Mute anyone who posts ads.",
+                "actions": ["mute", "kick"],
+                "expiresAtUnixMs": 9_000,
+            }),
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            json!({"code": "agent_moderation.not_granted"}),
+        ),
+    ]);
+    let authorizer = Arc::new(测试请求授权器::default());
+    let gateway = gateway(spawn(control_plane.clone()).await, authorizer.clone());
+
+    let grant = gateway
+        .moderation_grant(agent_id(), instance_id(), catalog_id())
+        .await
+        .expect("读授权")
+        .expect("有授权");
+    assert_eq!(grant.rules, "Mute anyone who posts ads.");
+    assert_eq!(grant.actions, ["mute", "kick"]);
+    assert_eq!(grant.expires_at.value(), 9_000);
+    assert!(
+        gateway
+            .moderation_grant(agent_id(), instance_id(), catalog_id())
+            .await
+            .expect("没授权不算失败")
+            .is_none()
+    );
+
+    let path = moderation_path();
+    let request = |path: &str| ("GET".to_owned(), path.to_owned(), None, String::new());
+    assert_eq!(control_plane.received(), [request(&path), request(&path)]);
+    assert_eq!(
+        authorizer.signed()[0],
+        ("GET".to_owned(), path, String::new())
+    );
+}
+
+fn mute() -> RoomModerationRequest {
+    RoomModerationRequest {
+        action: "mute",
+        target: "@spammer:matrix.test".to_owned(),
+        reason: Some("spam".to_owned()),
+        note: "Posted the same link five times.".to_owned(),
+        duration_seconds: Some(600),
+    }
+}
+
+#[tokio::test]
+async fn 照授权动手拿动作_id_当幂等键_拒绝按原因分开报() {
+    let control_plane = 假控制面::answering([(
+        StatusCode::CREATED,
+        json!({
+            "actionId": ACTION_ID,
+            "action": "mute",
+            "status": "applied",
+            "expiresAtUnixMs": 600_000,
+        }),
+    )]);
+    let gateway = gateway(
+        spawn(control_plane.clone()).await,
+        Arc::new(测试请求授权器::default()),
+    );
+    let action_id = Uuid::parse_str(ACTION_ID).expect("测试 UUID 有效");
+
+    let outcome = gateway
+        .moderate(agent_id(), instance_id(), catalog_id(), action_id, &mute())
+        .await
+        .expect("禁言");
+    assert_eq!(
+        (outcome.action_id.as_str(), outcome.status.as_str()),
+        (ACTION_ID, "applied")
+    );
+    assert_eq!(outcome.expires_at.map(UtcMillis::value), Some(600_000));
+    let received = control_plane.received();
+    let (method, path, key, body) = &received[0];
+    assert_eq!(
+        (method.as_str(), path.as_str(), key.as_deref()),
+        (
+            "POST",
+            format!("{}/actions", moderation_path()).as_str(),
+            Some(ACTION_ID)
+        )
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(body).expect("正文是 JSON"),
+        json!({
+            "action": "mute",
+            "target": "@spammer:matrix.test",
+            "reason": "spam",
+            "note": "Posted the same link five times.",
+            "durationSeconds": 600,
+        })
+    );
+
+    for (status, code, expected) in [
+        (
+            StatusCode::FORBIDDEN,
+            "agent_moderation.not_granted",
+            RoomManagementFailureKind::NotGranted,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            "agent_moderation.not_allowed",
+            RoomManagementFailureKind::NotAllowed,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            "agent_moderation.protected",
+            RoomManagementFailureKind::Protected,
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            "agent_moderation.target_not_found",
+            RoomManagementFailureKind::TargetNotFound,
+        ),
+        (
+            StatusCode::CONFLICT,
+            "agent_moderation.not_in_room",
+            RoomManagementFailureKind::NotInRoom,
+        ),
+        (
+            StatusCode::CONFLICT,
+            "agent_moderation.not_banned",
+            RoomManagementFailureKind::NotBanned,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            "agent_moderation.banned_by_person",
+            RoomManagementFailureKind::BannedByPerson,
+        ),
+        (
+            StatusCode::UNAUTHORIZED,
+            "agent_moderation.unauthorized",
+            RoomManagementFailureKind::NotAuthorized,
+        ),
+    ] {
+        let control_plane = 假控制面::answering([(status, json!({"code": code}))]);
+        let failure = gateway_for(control_plane)
+            .await
+            .moderate(agent_id(), instance_id(), catalog_id(), action_id, &mute())
+            .await
+            .expect_err("控制面拒绝");
+        assert_eq!(failure.kind(), expected, "{status} {code}");
+    }
+}
+
+async fn gateway_for(control_plane: Arc<假控制面>) -> ReqwestControlPlaneRoomManagementGateway {
+    gateway(
+        spawn(control_plane).await,
+        Arc::new(测试请求授权器::default()),
+    )
 }

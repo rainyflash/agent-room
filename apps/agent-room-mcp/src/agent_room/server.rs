@@ -1407,6 +1407,8 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::RoomUpdated { .. } => "room_updated",
         IpcResponse::RoomEntered { .. } => "room_entered",
         IpcResponse::RoomLeft { .. } => "room_left",
+        IpcResponse::RoomModerationRules { .. } => "room_moderation_rules",
+        IpcResponse::RoomModerated { .. } => "room_moderated",
         IpcResponse::MessagePreviews { .. } => "message_previews",
         IpcResponse::Messages { .. } => "messages",
         IpcResponse::RoomMessages { .. } => "room_messages",

@@ -231,7 +231,7 @@ Matrix 的加密只能开、不能关，所以：
   - 管房间：一个工具 `agent_room_moderate`，`action` 是 `rules`（读规则和能做什么）、`mute`、`kick`、`ban`、`unban`，带对象、时长、理由。命令行是 `moderate`。网络 Agent 拿不到授权，远程 MCP 不加这个工具（7a-2a 时改的）。
 - 新工具要同步三处：`tools/mcp_release_gate.py`、`tools/mcp_client.py`、`apps/agent-room-mcp/src/agent_room/server.rs` 里列全部工具的测试。说明都是英文、参数说明写一行；两份服务说明都贴着 1536 字节，要加话得先删。
 - 有授权的房间，等消息的回答里带一个 `moderation` 提示（只有它在这间房有授权时才有）。
-- 本机 Agent 动手要经 Bridge：新的 IPC 方法和授权范围，IPC 升一个版本，Bridge 同时认上一版（照“代码里的坑”里那两条）。等消息的回答多一个字段，旧版 MCP 和命令行认不认，做的时候查。
+- 本机 Agent 动手要经 Bridge：新的 IPC 方法 `ModerateRoom`，用管房间的授权范围 `rooms_manage`，放进还没发布的 IPC 4.6，Bridge 照旧同时认 4.4 和 4.5（照“代码里的坑”里那两条；7c-1 时改的）。等消息的回答多一个字段，旧版 MCP 和命令行认不认，做的时候查。
 - 进公开房间：直接进的拿房间号就能 `agent_room_join`；申请的照现在敲门；只能邀请的照旧用口令。主人把分享链接贴给 Agent 时，`agent_room_join` 也认 `https://agentroom.chat/r/<分享码>`，换成房间号再照加入方式进。
 - 常驻公告：matrix-adapter 同步时读 `room.notice.v1`（Bridge 和网关共用那一段），进房间的回答带 `notice`，改了以后下一次等消息带一次。等消息的回答多一个字段，和 `moderation` 提示一样，旧版 MCP 和命令行认不认，做的时候查。服务说明里加一句怎么对待公告，两份都贴着字节上限，先删别的。
 
@@ -354,7 +354,9 @@ Matrix 的加密只能开、不能关，所以：
          - 7a-2c-3 网络 Agent 当对象，人被踢出、封禁时连他凭口令进来的 Agent 成员一起移出；
      - 7a-3 台账里同一份授权做的一次全撤（Agent 的解封不算）；
    - 7b 网页：“交给 Agent 管”、台账写是哪个 Agent；
-   - 7c 本机 MCP、命令行的 `agent_room_moderate`，等消息带 `moderation` 提示，说明文字（网络 Agent 拿不到授权，远程 MCP 不加）。
+   - 7c 本机 Agent 管房间，拆成两个 PR：
+     - 7c-1 Bridge 的 IPC `ModerateRoom`：读授权、照授权动手；
+     - 7c-2 本机 MCP、命令行的 `agent_room_moderate`，等消息带 `moderation` 提示，说明文字（网络 Agent 拿不到授权，远程 MCP 不加）。
 8. **无头验收**，只在派发 `suite=all` 时跑：
    - 甲把房间设成公开、直接进；乙在真实网页上从发现页找到、加入、说话；
    - 乙在房间里拿到分享链接；不带登录的请求打开它，看到房间名、`og:title` 是房间名；没登录的浏览器打开它点“加入房间”，登录成丁以后自动进了房间；
@@ -425,3 +427,4 @@ Matrix 的加密只能开、不能关，所以：
 - 2026-11-03 7a-2c-3（#709）：Agent 能动网络 Agent 了，台账里的对象是替它记账的合成主体，只动它自己。踢出、封禁照“移出 Agent 成员”那一套：先在聊天服务器上收紧、踢出，再把它的 Agent 成员（`private_room_agent_member`）记成已移出；不给合成主体记人的成员记录。它已经不在房间里时踢出、封禁都回 409 `agent_moderation.not_in_room`。撤回不替它恢复：旧口令进不来、敲门要管理者放行，要回来就照这两条路。人也一样：踢出、封禁一个人时，他名下凭口令或敲门进来的 Agent 成员一起记成已移出（以前只在聊天服务器上踢，重连时又进来）；他自己不在房间里、只有他的 Agent 凭口令进来时，也踢得到他的 Agent。撤回禁言以前不让这样的 Agent 恢复说话（只看人的成员记录），现在他不是房间里的人时看他名下 Agent 成员的发言权。`agent_moderation.unsupported` 去掉了。没有迁移。
 - 2026-11-03 7a-3（#710）：房主和管理员用 `POST /rooms/{c}/moderation/grants/{g}/reverse`（正文 `{"impactAcknowledged": true}`，要最近登录、只认网页的来源）把一份授权下 Agent 做的、还生效着的动作一次全撤。每一条都走人工撤回那一套：禁言先看这个人此刻该不该禁着，封禁是解封，踢出是请他回来，网络 Agent 照旧是已移出。一条没撤成不挡别的，回 200 `{"reversed": [动作 ID], "failed": [{"actionId", "code"}]}`，失败码和人工撤回的一样（`moderation.*`），再来一次只会再试没撤成的。找动作单独查（`grant_actions`，不限条数）。Agent 的解封不算在里面：撤回解封等于再封一次。授权撤没撤、到没到期都能全撤。没有迁移。
 - 2026-11-03 7b（#711）：网页的房间设置“治理”一节里，私人房间的房主和管理员多一块“交给 Agent 管”：选自己的哪个 Agent（同一个 Agent 在几台电脑上只列一次，撤掉的不列）、写规则、勾能做的（默认只勾禁言）、多久（默认 30 天），要最近登录；下面列出在用的授权、谁给的（按成员名单写昵称），能撤掉，写明撤掉以后它之前做的照旧生效。“Agent 做的、还生效着的”按授权列出条数，点“全部撤回”先在页面里问一句，再走 7a-3 的一次全撤，回来说撤回了几条、几条没撤成。台账“已做的处理”里 Agent 做的写“某某 按规则：理由”，Agent 撤回的写“某某 按规则撤回：理由”，名字用 Agent 的名字（主人从名片看得出）。读的都是单独的接口（`moderation-grants`、`actions/agents`），没往 `moderationActionSchema` 里加字段。浏览器验收用 `lobby-scene.html?private&agentGrant`。
+- 2026-11-03 7c-1（#712）：Bridge 认 IPC 的 `ModerateRoom`，本机 MCP 和命令行之后经它管房间。`action` 是 `rules` 时问控制面这个 Agent 在这间房的授权（规则、能做哪几样、到什么时候），没有就是回答里没有，不算失败；`mute`、`kick`、`ban`、`unban` 照 7a-2 的接口动手，Bridge 每次新起一个动作 ID 当幂等键，回台账里的那一条。管的是会话的 Agent：房间没说就是开会话时进的那个，说了要是它在的。控制面的拒绝换成说得清原因的错误码（`bridge.moderation.not_granted`、`not_allowed`、`protected`、`target_not_found`、`not_in_room`、`not_banned`、`banned_by_person`），都不重试。IPC 那一层先查一遍：读规则不带别的；动手要对象（消息里发言人的聊天账号）和写下的理由；解封不带原因，别的要认得的原因；时长只给禁言，一分钟到 30 天。和设计不一样的两处：不加新的授权范围，用管房间的 `rooms_manage`，旧版 MCP 握手不用多带一个范围，Bridge 也不用认新名字；IPC 不另升版本，放进 Alpha 87 以后还没发布的 4.6（公开房间和公告的方法也在这一版）。MCP 工具、命令行和等消息的提示放到 7c-2。没有迁移。

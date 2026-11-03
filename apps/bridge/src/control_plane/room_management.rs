@@ -9,11 +9,12 @@ use agent_room_bridge_core::{
     room_management::{
         ControlPlaneRoomManagementGateway, CreatedRoom, RoomCodeState, RoomJoinCode, RoomKnock,
         RoomManagementFailure, RoomManagementFailureKind, RoomManagementResult,
+        RoomModerationGrant, RoomModerationOutcome, RoomModerationRequest,
     },
     session::{BridgeSessionFailure, BridgeSessionFailureKind, ControlPlaneRequestAuthorizer},
 };
 use agent_room_domain::{
-    ids::{AgentId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, AgentInstanceId, PrincipalId, RoomCatalogId},
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
@@ -274,6 +275,26 @@ impl ControlPlaneRoomManagementGateway for ReqwestControlPlaneRoomManagementGate
                 .map(drop)
         })
     }
+
+    fn moderation_grant(
+        &self,
+        agent_id: AgentId,
+        instance_id: AgentInstanceId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RoomManagementResult<Option<RoomModerationGrant>>> {
+        Box::pin(self.moderation_grant_internal(agent_id, instance_id, catalog_id))
+    }
+
+    fn moderate<'a>(
+        &'a self,
+        agent_id: AgentId,
+        instance_id: AgentInstanceId,
+        catalog_id: RoomCatalogId,
+        action_id: uuid::Uuid,
+        request: &'a RoomModerationRequest,
+    ) -> PortFuture<'a, RoomManagementResult<RoomModerationOutcome>> {
+        Box::pin(self.moderate_internal(agent_id, instance_id, catalog_id, action_id, request))
+    }
 }
 
 #[derive(Serialize)]
@@ -402,6 +423,15 @@ fn status_failure(status: StatusCode, code: Option<&str>) -> RoomManagementFailu
             RoomManagementFailureKind::InvalidRequest
         }
         Some("forbidden") => RoomManagementFailureKind::Forbidden,
+        // 照管理授权动手时控制面回的几种（`agent_moderation.*`）。
+        Some("unauthorized") => RoomManagementFailureKind::NotAuthorized,
+        Some("not_granted") => RoomManagementFailureKind::NotGranted,
+        Some("not_allowed") => RoomManagementFailureKind::NotAllowed,
+        Some("protected") => RoomManagementFailureKind::Protected,
+        Some("target_not_found") => RoomManagementFailureKind::TargetNotFound,
+        Some("not_in_room") => RoomManagementFailureKind::NotInRoom,
+        Some("not_banned") => RoomManagementFailureKind::NotBanned,
+        Some("banned_by_person") => RoomManagementFailureKind::BannedByPerson,
         Some("not_found" | "not_revealable") => RoomManagementFailureKind::NotFound,
         Some("conflict") => RoomManagementFailureKind::Conflict,
         Some("rate_limited") => RoomManagementFailureKind::RateLimited,
@@ -444,6 +474,8 @@ const fn invalid_response() -> RoomManagementFailure {
 const fn failure(kind: RoomManagementFailureKind) -> RoomManagementFailure {
     RoomManagementFailure::new(kind)
 }
+
+mod moderation;
 
 #[cfg(test)]
 mod tests;
