@@ -1,5 +1,5 @@
 //! 私人房间 Agent 口令：房主生成、再看与停用、Agent 凭口令加入、猜错限流、移出与再加入；
-//! 敲门：记下与再敲、放行与不让进、作废与房间满了限流。
+//! 敲门：记下与再敲、放行与不让进、作废与房间满了限流；公开房间按加入方式和房主的设置敲门。
 
 use std::{
     collections::BTreeMap,
@@ -15,15 +15,17 @@ use agent_room_application::{
         MatrixRoomId, MatrixUserId, NetworkSourceWeights, PortFuture, PrincipalAccount,
         PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore,
         PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
-        SealedJoinCode, SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure,
-        SecretSealingFailure, SecretValue,
+        PrivateRoomJoinCodeRecord, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
+        PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
+        PublicRoomPlatformHold, PublicRoomPlatformHoldStore, SealedJoinCode, SealedSecret,
+        SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
     },
     private_rooms::{
         AGENT_KNOCK_TTL_MILLIS, AgentAccessFailureKind, AnswerKnock, InspectAgentAccess,
-        JoinCodeCaller, KnockOnRoom, KnockResult, MAX_WAITING_AGENT_KNOCKS, ManageJoinCode,
-        PrivateRoomActor, PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService,
-        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RemoveAgentMember, ResolveJoinCode,
+        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, MAX_WAITING_AGENT_KNOCKS,
+        ManageJoinCode, PrivateRoomActor, PrivateRoomAgentAccessDependencies,
+        PrivateRoomAgentAccessService, PrivateRoomAgentAccessUseCases, RedeemJoinCode,
+        RemoveAgentMember, ResolveJoinCode,
     },
 };
 use agent_room_domain::{
@@ -37,6 +39,7 @@ use agent_room_domain::{
     private_rooms::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomLifecycleStatus, PrivateRoomPermissions,
     },
+    room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
@@ -777,7 +780,10 @@ async fn 只能带自己的_agent_敲门_房间不对一律说找不到() {
         fixture.service.knock(request).await.unwrap_err().kind(),
         AgentAccessFailureKind::NotFound
     );
-    assert_eq!(fixture.service.knockable(catalog_id()).await, Ok(()));
+    assert_eq!(
+        fixture.service.knockable(catalog_id()).await,
+        Ok(KnockEntry::Knock)
+    );
     assert_eq!(
         fixture.service.knockable(unknown).await.unwrap_err().kind(),
         AgentAccessFailureKind::NotFound
@@ -847,6 +853,123 @@ fn inspect(actor: PrincipalId) -> InspectAgentAccess {
     }
 }
 
+#[tokio::test]
+async fn 直接进的公开房间敲门就记成_agent_成员_要申请的照旧等放行() {
+    let fixture = Fixture::new();
+    fixture.list(RoomJoinMode::Request, true);
+    assert_eq!(
+        fixture.service.knockable(catalog_id()).await,
+        Ok(KnockEntry::Knock)
+    );
+    let waiting = fixture.service.knock(knock_request()).await.unwrap();
+    assert!(matches!(waiting, KnockResult::Waiting(_)), "{waiting:?}");
+    assert_eq!(fixture.store.status(agent_id()), None, "要申请的等放行");
+
+    fixture.list(RoomJoinMode::Open, true);
+    assert_eq!(
+        fixture.service.knockable(catalog_id()).await,
+        Ok(KnockEntry::Open)
+    );
+    let member = fixture.service.knock(knock_request()).await.unwrap();
+    assert!(
+        matches!(&member, KnockResult::Member(room) if room.catalog_id == catalog_id() && room.matrix_room_id == matrix_room()),
+        "{member:?}"
+    );
+    assert_eq!(
+        fixture.store.status(agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Joined)
+    );
+    assert_eq!(
+        fixture.store.joined_via(agent_id()),
+        Some(PrivateRoomAgentJoinedVia::Knock)
+    );
+
+    // 平台从目录里拿掉的不直接放进来，敲门等管理者。
+    let held = Fixture::new();
+    held.list(RoomJoinMode::Open, true);
+    *held.holds.0.lock().unwrap() = true;
+    assert_eq!(
+        held.service.knockable(catalog_id()).await,
+        Ok(KnockEntry::Knock)
+    );
+    let waiting = held.service.knock(knock_request()).await.unwrap();
+    assert!(matches!(waiting, KnockResult::Waiting(_)), "{waiting:?}");
+    assert_eq!(held.store.status(agent_id()), None);
+}
+
+#[tokio::test]
+async fn 被移出过的_agent_在直接进的公开房间也要敲门() {
+    let fixture = Fixture::new();
+    fixture.list(RoomJoinMode::Open, true);
+    fixture.service.knock(knock_request()).await.unwrap();
+    fixture
+        .service
+        .remove_agent(RemoveAgentMember {
+            actor: principal_actor(owner()).into(),
+            catalog_id: catalog_id(),
+            agent_id: agent_id(),
+        })
+        .await
+        .expect("房主移出");
+    assert_eq!(
+        fixture.store.status(agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Removed)
+    );
+    let waiting = fixture.service.knock(knock_request()).await.unwrap();
+    assert!(
+        matches!(waiting, KnockResult::Waiting(_)),
+        "被移出过的由管理者决定：{waiting:?}"
+    );
+    assert_eq!(
+        fixture.store.status(agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Removed)
+    );
+}
+
+#[tokio::test]
+async fn 只能邀请的和关了网络_agent_的公开房间拿房间号进不来_改回私密照旧敲门() {
+    let fixture = Fixture::new();
+    for (join_mode, network_agents) in [
+        (RoomJoinMode::InviteOnly, true),
+        (RoomJoinMode::Open, false),
+        (RoomJoinMode::Request, false),
+    ] {
+        fixture.list(join_mode, network_agents);
+        // 平台拿掉了也一样：房主的设置照旧作数。
+        for held in [false, true] {
+            *fixture.holds.0.lock().unwrap() = held;
+            assert_eq!(
+                fixture
+                    .service
+                    .knockable(catalog_id())
+                    .await
+                    .unwrap_err()
+                    .kind(),
+                AgentAccessFailureKind::ClosedToNetworkAgents,
+                "{join_mode:?} {network_agents} {held}"
+            );
+            assert_eq!(
+                fixture
+                    .service
+                    .knock(knock_request())
+                    .await
+                    .unwrap_err()
+                    .kind(),
+                AgentAccessFailureKind::ClosedToNetworkAgents
+            );
+        }
+    }
+    assert_eq!(fixture.store.knock_status(agent_id()), None, "什么都没记");
+    assert_eq!(fixture.store.status(agent_id()), None);
+
+    fixture.unlist();
+    assert_eq!(
+        fixture.service.knockable(catalog_id()).await,
+        Ok(KnockEntry::Knock),
+        "私密的房间不看公开时的设置"
+    );
+}
+
 async fn waiting_agents(fixture: &Fixture, actor: PrincipalId) -> Vec<AgentId> {
     fixture
         .service
@@ -864,6 +987,8 @@ struct Fixture {
     sealer: Arc<FakeSealer>,
     matrix: Arc<RecordingMatrix>,
     clock: Arc<TestClock>,
+    listing: Arc<FixedListing>,
+    holds: Arc<FixedHold>,
 }
 
 /// 来源 `[9; 32]` 是一段共享出口，算两个来源；别的都算一个。
@@ -891,6 +1016,8 @@ impl Fixture {
         let sealer = Arc::new(FakeSealer::default());
         let matrix = Arc::new(RecordingMatrix::default());
         let clock = Arc::new(TestClock(Mutex::new(NOW)));
+        let listing = Arc::new(FixedListing::default());
+        let holds = Arc::new(FixedHold::default());
         let service = PrivateRoomAgentAccessService::new(PrivateRoomAgentAccessDependencies {
             rooms: Arc::new(FixedRooms(snapshot(room))),
             access: store.clone(),
@@ -904,6 +1031,8 @@ impl Fixture {
                 max_failures: 3,
             },
             source_weights: Arc::new(SharedNine),
+            listings: listing.clone(),
+            holds: holds.clone(),
         });
         Self {
             service,
@@ -911,7 +1040,125 @@ impl Fixture {
             sealer,
             matrix,
             clock,
+            listing,
+            holds,
         }
+    }
+
+    /// 把房间设成公开的：`join_mode` 是别人怎么进，`network_agents` 让不让没有账号的网络 Agent 进。
+    fn list(&self, join_mode: RoomJoinMode, network_agents: bool) {
+        *self.listing.0.lock().unwrap() = Some(PrivateRoomListingRecord {
+            catalog_id: catalog_id(),
+            settings: RoomListingSettings::new(
+                true,
+                join_mode,
+                RoomListingSettings::DEFAULT_MEMBER_PERMISSIONS,
+                network_agents,
+            )
+            .unwrap(),
+            share_code: RoomShareCode::parse("Knock1").unwrap(),
+            first_listed_at: time(NOW - HOUR),
+            updated_by: owner(),
+            updated_at: time(NOW - HOUR),
+            version: AggregateVersion::INITIAL.next().unwrap(),
+        });
+    }
+
+    /// 改回私密：设置留着，`listed` 是 false。
+    fn unlist(&self) {
+        let mut listing = self.listing.0.lock().unwrap();
+        let record = listing.as_mut().expect("公开过才改得回私密");
+        record.settings = RoomListingSettings::new(
+            false,
+            record.settings.join_mode(),
+            record.settings.member_permissions(),
+            record.settings.allow_network_agents(),
+        )
+        .unwrap();
+    }
+}
+
+/// 房间的公开设置：没有记录就是私密的。
+#[derive(Default)]
+struct FixedListing(Mutex<Option<PrivateRoomListingRecord>>);
+
+impl PrivateRoomListingStore for FixedListing {
+    fn listing(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomListingRecord>>> {
+        let found = self
+            .0
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|record| record.catalog_id == catalog_id);
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn listed_rooms_owned_by(
+        &self,
+        _owner: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
+        Box::pin(async { unreachable!("口令和敲门不查公开房间的限额") })
+    }
+
+    fn save_listing<'a>(
+        &'a self,
+        _record: &'a PrivateRoomListingRecord,
+        _expected: Option<AggregateVersion>,
+        _owner: PrincipalId,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async { unreachable!("口令和敲门不改公开设置") })
+    }
+
+    fn create_listed_room<'a>(
+        &'a self,
+        _snapshot: &'a PrivateRoomSnapshot,
+        _listing: &'a PrivateRoomListingRecord,
+        _created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async { unreachable!("口令和敲门不建房间") })
+    }
+
+    fn mark_room_encrypted(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("口令和敲门不改加密") })
+    }
+}
+
+/// 平台有没有把房间从目录里拿掉。
+#[derive(Default)]
+struct FixedHold(Mutex<bool>);
+
+impl PublicRoomPlatformHoldStore for FixedHold {
+    fn platform_hold(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PublicRoomPlatformHold>>> {
+        let hold = (*self.0.lock().unwrap()).then(|| PublicRoomPlatformHold {
+            catalog_id,
+            held_by: outsider(),
+            reason: "测试".to_owned(),
+            held_at: time(NOW),
+        });
+        Box::pin(async move { Ok(hold) })
+    }
+
+    fn place_platform_hold<'a>(
+        &'a self,
+        _hold: &'a PublicRoomPlatformHold,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("口令和敲门不拿掉房间") })
+    }
+
+    fn release_platform_hold(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("口令和敲门不放回房间") })
     }
 }
 

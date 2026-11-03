@@ -752,7 +752,8 @@ fn access_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         | AgentAccessFailureKind::UnknownCommit => dependency(),
         AgentAccessFailureKind::InvalidRequest
         | AgentAccessFailureKind::Internal
-        | AgentAccessFailureKind::NotRevealable => internal(),
+        | AgentAccessFailureKind::NotRevealable
+        | AgentAccessFailureKind::ClosedToNetworkAgents => internal(),
     }
 }
 
