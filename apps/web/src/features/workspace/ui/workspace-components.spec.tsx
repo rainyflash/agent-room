@@ -281,11 +281,18 @@ describe('账号工作区组件', () => {
         kind: 'private_room' as const,
         name: 'Weekly review',
       },
+      {
+        archived: false,
+        catalogId: '0198b601-77a7-7bb8-83eb-a8fe68c97e63',
+        kind: 'private_room' as const,
+        name: 'Book club',
+      },
     ];
     const view = (managed: boolean) => (
       <I18nextProvider i18n={i18n}>
         <AgentRoomsView
           agentName="Build Agent"
+          listed={new Set(['0198b601-77a7-7bb8-83eb-a8fe68c97e63'])}
           managed={managed}
           notice={{ kind: 'brought', room: 'Design crit', entered: 0 }}
           onLeave={onLeave}
@@ -302,6 +309,8 @@ describe('账号工作区组件', () => {
 
     const section = screen.getByRole('region', { name: 'Rooms' });
     expect(within(section).getByText('Public lobby')).toBeVisible();
+    expect(within(section).getByText('Private room')).toBeVisible();
+    expect(within(section).getByText('Public room')).toBeVisible();
     expect(within(section).getByText('Archived')).toBeVisible();
     expect(within(section).getByRole('status')).toHaveTextContent('no working connection');
     await user.click(

@@ -220,7 +220,9 @@ function RoomSettingsContent({
         />
       );
     case 'agent-code':
-      return room === null ? null : <PrivateRoomAgentAccess room={room} rooms={privateRooms} />;
+      return room === null ? null : (
+        <PrivateRoomAgentAccess listings={privateRoomListings} room={room} rooms={privateRooms} />
+      );
     case 'automation':
       return (
         <AutomationSettings

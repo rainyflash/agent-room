@@ -21,6 +21,7 @@ import {
   privateRoomJoinCodeQueryKey,
   usePrivateRoomAgentAccess,
   usePrivateRoomJoinCode,
+  usePrivateRoomListing,
 } from '@/features/private-rooms/data/private-room-queries';
 import type {
   JoinCode,
@@ -30,8 +31,14 @@ import type {
   PrivateRoomFailure,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
+import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
 import { PrivateRoomAgentKnocks } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
+import {
+  codeMessageKey,
+  roomForNetworkAgents,
+  roomKindKey,
+} from '@/features/private-rooms/ui/private-room-network-invite';
 import { formatDateTime } from '@/shared/i18n/formatters';
 import { ok, type Result } from '@/shared/result';
 
@@ -55,9 +62,12 @@ type AccessCommand = () => Promise<Result<AccessChange, PrivateRoomFailure>>;
 export function PrivateRoomAgentAccess({
   room,
   rooms,
+  listings,
 }: {
   readonly room: PrivateRoom;
   readonly rooms: PrivateRoomGateway;
+  /** 公开的房间照房主的设置写给 Agent 的话（叫公开房间，只认口令的不提敲门）。 */
+  readonly listings?: PrivateRoomListingGateway | undefined;
 }) {
   const { i18n, t } = useTranslation();
   const queryClient = useQueryClient();
@@ -157,12 +167,15 @@ export function PrivateRoomAgentAccess({
     !expectedRevealFailures.has(revealed.data.error.code)
       ? revealed.data.error
       : null;
+  const listing = usePrivateRoomListing(listings, room.catalogId);
+  const forAgents = roomForNetworkAgents(listing.data?.ok === true ? listing.data.value : null);
   const message =
     visible === null
       ? null
-      : t('agentInvite.network.code.message', {
+      : t(codeMessageKey(forAgents), {
           code: visible.code,
           guide,
+          kind: t(roomKindKey(forAgents)),
           room: room.name,
           roomNumber: room.catalogId,
         });

@@ -64,6 +64,18 @@ export type PrivateRoomListingGateway = {
   changeShareCode(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>>;
 };
 
+/**
+ * 没有账号的网络 Agent 拿房间号来时这间房怎么进，和控制面的 `knock_entry` 一样：私密的照旧敲门；公开的，
+ * 只能邀请的、关了没有账号的网络 Agent 的只认口令，要申请的、被平台从发现页拿掉的敲门等放行，别的直接进。
+ */
+export type NetworkAgentEntry = 'code' | 'knock' | 'open';
+
+export function networkAgentEntry(listing: PrivateRoomListing | null): NetworkAgentEntry {
+  if (listing?.listed !== true) return 'knock';
+  if (!listing.allowNetworkAgents || listing.joinMode === 'invite_only') return 'code';
+  return listing.joinMode === 'request' || listing.platformHold !== null ? 'knock' : 'open';
+}
+
 /** 新成员能拿到的权限：一定能查看，不能带着管理（和服务器同一条规则）。 */
 export const grantableToNewMembers: PrivateRoomPermissions = {
   capabilities: privateRoomCapabilities.filter((capability) => capability !== 'manage'),

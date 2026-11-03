@@ -10,6 +10,7 @@ import {
   usePrivateRoomAgentAccess,
   usePrivateRoomJoinCode,
   usePrivateRoomList,
+  usePrivateRoomListing,
 } from '@/features/private-rooms/data/private-room-queries';
 import {
   allows,
@@ -19,6 +20,12 @@ import {
   type PrivateRoomFailure,
   type PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
+import {
+  networkAgentEntry,
+  type NetworkAgentEntry,
+  type PrivateRoomListing,
+  type PrivateRoomListingGateway,
+} from '@/features/private-rooms/domain/private-room-listing';
 import { PrivateRoomAgentKnocks } from '@/features/private-rooms/ui/private-room-agent-knocks';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { ok, type Result } from '@/shared/result';
@@ -33,10 +40,44 @@ type InviteProps = {
   readonly guide: string;
   readonly roomName: string;
   readonly rooms: PrivateRoomGateway;
+  /** 读这间房的公开设置：公开的照房主的设置说网络 Agent 怎么进。没有就当私密的。 */
+  readonly listings?: PrivateRoomListingGateway | undefined;
   readonly onCopied?: (() => void) | undefined;
   /** 看的人是谁。知道了就先按房间列表判断是不是管理者，不是就不去问口令状态。 */
   readonly principalId?: string | null | undefined;
 };
+
+/**
+ * 这间房对网络 Agent 是什么样：拿房间号来怎么进，话里叫它私人房间还是公开房间，要不要提醒服务器
+ * 读得到它进来以后的消息（只有加密的房间要提醒，不加密的服务器本来就读得到）。
+ */
+export type RoomForNetworkAgents = {
+  readonly entry: NetworkAgentEntry;
+  readonly listed: boolean;
+  readonly relay: boolean;
+};
+
+export function roomForNetworkAgents(listing: PrivateRoomListing | null): RoomForNetworkAgents {
+  return {
+    entry: networkAgentEntry(listing),
+    listed: listing?.listed === true,
+    relay: listing?.endToEndEncrypted ?? true,
+  };
+}
+
+/** 给 Agent 的话里这间房叫什么。 */
+export function roomKindKey(room: RoomForNetworkAgents) {
+  return room.listed ? 'agentInvite.network.kind.public' : 'agentInvite.network.kind.private';
+}
+
+/** 凭口令的那段话：只认口令的房间不说“传不进去就敲门”。 */
+export function codeMessageKey(room: RoomForNetworkAgents) {
+  return room.entry === 'code'
+    ? 'agentInvite.network.codeOnly.message'
+    : 'agentInvite.network.code.message';
+}
+
+type GatedProps = InviteProps & { readonly room: RoomForNetworkAgents };
 
 /** 管理者这边的口令：看得到就放进话里；没有，或者有却看不到，就给一个生成的按钮。 */
 type CodeState =
@@ -45,13 +86,67 @@ type CodeState =
   | { readonly kind: 'hidden'; readonly failure: PrivateRoomFailure | null };
 
 /**
- * 在“接入 Agent”里请网络 Agent 进私人房间（`specs/network-agents/code-first.md`）。管理者给 Agent 的话里
- * 带着口令，Agent 凭它直接进来；同一段话里还有房间号，口令传不进去的 Agent（有的应用不让把口令交给工具）
- * 拿它敲门，管理者在下面放它进来。还没有口令，或者口令看不到（能再看之前生成的），一个按钮生成并复制。
- * 不是管理者的成员看不到口令，话里只有房间号。房间号不是秘密：房间里每个人的地址栏里都有。
+ * 在“接入 Agent”里请网络 Agent 进私人房间（`specs/network-agents/code-first.md`）或公开房间
+ * （`specs/public-rooms/design.md`）。直接进的公开房间拿房间号就进，谁都给同一段话。别的房间管理者给 Agent
+ * 的话里带着口令，Agent 凭它直接进来；同一段话里还有房间号，口令传不进去的 Agent（有的应用不让把口令交给
+ * 工具）拿它敲门，管理者在下面放它进来。只认口令的公开房间（只能邀请的、关了网络 Agent 的）不提敲门。
+ * 还没有口令，或者口令看不到（能再看之前生成的），一个按钮生成并复制。不是管理者的成员看不到口令，话里只有
+ * 房间号。房间号不是秘密：房间里每个人的地址栏里都有。
  */
 export function PrivateRoomNetworkInvite(props: InviteProps) {
+  const listing = usePrivateRoomListing(props.listings, props.catalogId);
+  if (props.listings !== undefined && listing.isPending) return <Checking />;
+  const room = roomForNetworkAgents(listing.data?.ok === true ? listing.data.value : null);
+  return room.entry === 'open' ? (
+    <OpenInvite {...props} room={room} />
+  ) : (
+    <GatedInvite {...props} room={room} />
+  );
+}
+
+function Checking() {
   const { t } = useTranslation();
+  return (
+    <p className="agent-invite__waiting">
+      <Spinner />
+      {t('agentInvite.network.checking')}
+    </p>
+  );
+}
+
+/** 加密的房间才提醒：服务器代网络 Agent 收发，它进来以后的消息服务器读得到。 */
+function RelayNote({ room }: { readonly room: RoomForNetworkAgents }) {
+  const { t } = useTranslation();
+  return room.relay ? (
+    <p className="agent-invite__note">{t('agentInvite.network.private.relay')}</p>
+  ) : null;
+}
+
+/** 直接进的公开房间：拿房间号就进来，不用口令、不用放行，管理者和成员拿到的是同一段话。 */
+function OpenInvite({ catalogId, guide, roomName, onCopied, room }: GatedProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="agent-invite__private-code">
+      <p className="agent-invite__note">{t('agentInvite.network.open.note', { room: roomName })}</p>
+      <CopyBlock
+        copiedLabel={t('agentInvite.message.copied')}
+        copyLabel={t('agentInvite.message.copy')}
+        failedLabel={t('agentInvite.message.failed')}
+        onCopied={onCopied}
+        text={t('agentInvite.network.open.message', {
+          guide,
+          room: roomName,
+          roomNumber: catalogId,
+        })}
+        textLabel={t('agentInvite.message.label')}
+      />
+      <RelayNote room={room} />
+    </div>
+  );
+}
+
+/** 要口令或者要放行的房间：先看是不是管理者，管理者才问得到口令。 */
+function GatedInvite(props: GatedProps) {
   const { catalogId, principalId = null, rooms } = props;
   const manages = useManagesRoom(rooms, catalogId, principalId);
   // 口令状态只有管理者查得到，顺便知道这段话能不能带口令。房间列表说了不是管理者就不问：
@@ -62,12 +157,7 @@ export function PrivateRoomNetworkInvite(props: InviteProps) {
   const revealed = usePrivateRoomJoinCode(rooms, catalogId, createdAt);
   if (manages === false) return <MemberInvite {...props} failure={null} />;
   if (manages === 'pending' || access.isPending || (createdAt !== null && revealed.isPending)) {
-    return (
-      <p className="agent-invite__waiting">
-        <Spinner />
-        {t('agentInvite.network.checking')}
-      </p>
-    );
+    return <Checking />;
   }
   if (access.data?.ok !== true) {
     const failure =
@@ -111,19 +201,35 @@ function codeState(
   };
 }
 
-/** 不是管理者：看不到口令，话里只有房间号，Agent 敲门后等房间的管理者放行。 */
+/**
+ * 不是管理者：看不到口令，话里只有房间号，Agent 敲门后等房间的管理者放行。只认口令的房间敲门进不来，
+ * 只说请管理者来生成。
+ */
 function MemberInvite({
   catalogId,
   guide,
   roomName,
   onCopied,
   failure,
-}: InviteProps & { readonly failure: PrivateRoomFailure | null }) {
+  room,
+}: GatedProps & { readonly failure: PrivateRoomFailure | null }) {
   const { t } = useTranslation();
+  if (room.entry === 'code') {
+    return (
+      <Banner role={null} tone="info">
+        {t('agentInvite.network.codeOnly.member', { room: roomName })}
+      </Banner>
+    );
+  }
   return (
     <div className="agent-invite__private-code">
       <p className="agent-invite__note">
-        {t('agentInvite.network.privateRoomMember', { room: roomName })}
+        {t(
+          room.listed
+            ? 'agentInvite.network.publicKnock.member'
+            : 'agentInvite.network.privateRoomMember',
+          { room: roomName },
+        )}
       </p>
       <CopyBlock
         copiedLabel={t('agentInvite.message.copied')}
@@ -132,6 +238,7 @@ function MemberInvite({
         onCopied={onCopied}
         text={t('agentInvite.network.knock.messageMember', {
           guide,
+          kind: t(roomKindKey(room)),
           room: roomName,
           roomNumber: catalogId,
         })}
@@ -139,14 +246,21 @@ function MemberInvite({
       />
       <p className="agent-invite__note">{t('agentInvite.network.knock.memberNote')}</p>
       {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
-      <p className="agent-invite__note">{t('agentInvite.network.private.relay')}</p>
+      <RelayNote room={room} />
     </div>
   );
 }
 
+function managerNoteKey(room: RoomForNetworkAgents) {
+  if (room.entry === 'code') return 'agentInvite.network.codeOnly.manager';
+  return room.listed
+    ? 'agentInvite.network.publicKnock.manager'
+    : 'agentInvite.network.privateRoom';
+}
+
 /**
  * 管理者：看得到口令就把它放进话里，打开就能复制；没有口令或者看不到，一个按钮生成、把整段话复制好。
- * 不想用口令的，折叠里有只带房间号的那段话。在敲门的 Agent 列在下面，放行照旧。
+ * 不想用口令的，折叠里有只带房间号的那段话。在敲门的 Agent 列在下面，放行照旧。只认口令的房间不提敲门。
  */
 function ManagerInvite({
   catalogId,
@@ -155,14 +269,18 @@ function ManagerInvite({
   rooms,
   onCopied,
   code,
-}: InviteProps & { readonly code: CodeState }) {
+  room,
+}: GatedProps & { readonly code: CodeState }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [autoCopied, setAutoCopied] = useState(false);
+  const knocks = room.entry === 'knock';
+  const kind = t(roomKindKey(room));
   const messageFor = (value: string) =>
-    t('agentInvite.network.code.message', {
+    t(codeMessageKey(room), {
       code: value,
       guide,
+      kind,
       room: roomName,
       roomNumber: catalogId,
     });
@@ -202,9 +320,7 @@ function ManagerInvite({
 
   return (
     <div className="agent-invite__private-code">
-      <p className="agent-invite__note">
-        {t('agentInvite.network.privateRoom', { room: roomName })}
-      </p>
+      <p className="agent-invite__note">{t(managerNoteKey(room), { room: roomName })}</p>
       {code.kind === 'shown' ? (
         <>
           {autoCopied ? <Banner tone="success">{t('agentInvite.message.copied')}</Banner> : null}
@@ -247,34 +363,39 @@ function ManagerInvite({
           {code.kind === 'hidden' && code.failure !== null ? (
             <PrivateRoomFailureNotice failure={code.failure} />
           ) : null}
-          <Details
-            className="agent-invite__knock-only"
-            summary={t('agentInvite.network.knock.summary')}
-          >
-            <CopyBlock
-              copiedLabel={t('agentInvite.message.copied')}
-              copyLabel={t('agentInvite.message.copy')}
-              failedLabel={t('agentInvite.message.failed')}
-              onCopied={onCopied}
-              text={t('agentInvite.network.knock.message', {
-                guide,
-                room: roomName,
-                roomNumber: catalogId,
-              })}
-              textLabel={t('agentInvite.message.label')}
-              tone="ghost"
-            />
-          </Details>
+          {knocks ? (
+            <Details
+              className="agent-invite__knock-only"
+              summary={t('agentInvite.network.knock.summary')}
+            >
+              <CopyBlock
+                copiedLabel={t('agentInvite.message.copied')}
+                copyLabel={t('agentInvite.message.copy')}
+                failedLabel={t('agentInvite.message.failed')}
+                onCopied={onCopied}
+                text={t('agentInvite.network.knock.message', {
+                  guide,
+                  kind,
+                  room: roomName,
+                  roomNumber: catalogId,
+                })}
+                textLabel={t('agentInvite.message.label')}
+                tone="ghost"
+              />
+            </Details>
+          ) : null}
         </>
       )}
       {failure === null || forbidden ? null : <PrivateRoomFailureNotice failure={failure} />}
-      <PrivateRoomAgentKnocks
-        catalogId={catalogId}
-        emptySpinner={false}
-        emptyText={t('agentInvite.network.knock.waiting')}
-        rooms={rooms}
-      />
-      <p className="agent-invite__note">{t('agentInvite.network.private.relay')}</p>
+      {knocks ? (
+        <PrivateRoomAgentKnocks
+          catalogId={catalogId}
+          emptySpinner={false}
+          emptyText={t('agentInvite.network.knock.waiting')}
+          rooms={rooms}
+        />
+      ) : null}
+      <RelayNote room={room} />
     </div>
   );
 }
