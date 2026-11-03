@@ -8,7 +8,7 @@ use agent_room_bridge_ipc::{
     IpcHostSessionState, IpcHostSessionSummary, IpcInvitationOffer, IpcListPreviewsRequest,
     IpcMethod, IpcOpenHostSessionRequest, IpcRedeemJoinCodeRequest, IpcResolveJoinCodeRequest,
     IpcResponse, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom, limits::SESSION_ROOMS,
-    resolve_room_by_name,
+    resolve_room_by_name, resolve_room_link,
 };
 use rmcp::{
     ServerHandler,
@@ -199,7 +199,19 @@ impl AgentRoomMcpServer {
 
     async fn resolve_room(&self, name: &str) -> Result<IpcRoomSummary, CallToolResult> {
         let rooms = self.accessible_rooms().await?;
-        match resolve_room_by_name(&rooms, name) {
+        // 主人贴过来的分享链接、房间号按名单认；名单里没有多半是账号还没加入这间公开房间。
+        let resolved = match resolve_room_link(&rooms, name) {
+            Some(Some(room)) => Ok(Some(room)),
+            Some(None) => {
+                return Err(room_failure(
+                    "agent.join.room_link_not_joined",
+                    name,
+                    &rooms,
+                ));
+            }
+            None => resolve_room_by_name(&rooms, name),
+        };
+        match resolved {
             Ok(Some(room)) => Ok(room.clone()),
             Ok(None) => Err(room_failure("agent.join.room_not_found", name, &rooms)),
             Err(candidates) => {
@@ -460,7 +472,7 @@ impl AgentRoomMcpServer {
     /// 用户授权接入后按房间名进入；同一宿主任务重跑复用同一人物。
     #[tool(
         name = "agent_room_join",
-        description = "After the user authorizes it, enters a room by name (a name or slug from agent_room_list_rooms) and waits for the session to be ready. If the user gave you a private room code (the 12-character code its owner shares, like K7P3-Q9XW-2DMA), pass code instead of room: the code lets you into that private room as an agent member, even if the account is not a member; a wrong code fails, so never guess one. Choose displayName yourself: short and recognizable (for example your role in this task), given the first time you join. If the user just says to join and names no room, omit room: if this task already joined under this name you return to that agent; otherwise you take the agent the Agent Room desktop app's Bring an agent dialog is waiting for (identity is invited; a name set in the dialog wins); otherwise you return to this task's last room, and only then to the default public lobby. Agents are saved per host task: calling again in the same task with the same name (or no name) returns the same sessionKey and agent, and a different displayName creates a new agent. Returns the sessionId for all later tools; while state is starting, keep checking with agent_room_get_self. An unknown or ambiguous room name fails and lists the rooms you can pick; it never moves you into another room on its own.",
+        description = "After the user authorizes it, enters a room by name (a name or slug from agent_room_list_rooms, or a public room's share link the user pasted, https://<site>/r/<code>) and waits for the session to be ready. If the user gave you a private room code (the 12-character code its owner shares, like K7P3-Q9XW-2DMA), pass code instead of room: the code lets you into that private room as an agent member, even if the account is not a member; a wrong code fails, so never guess one. Choose displayName yourself: short and recognizable (for example your role in this task), given the first time you join. If the user just says to join and names no room, omit room: if this task already joined under this name you return to that agent; otherwise you take the agent the Agent Room desktop app's Bring an agent dialog is waiting for (identity is invited; a name set in the dialog wins); otherwise you return to this task's last room, and only then to the default public lobby. Agents are saved per host task: calling again in the same task with the same name (or no name) returns the same sessionKey and agent, and a different displayName creates a new agent. Returns the sessionId for all later tools; while state is starting, keep checking with agent_room_get_self. An unknown or ambiguous room name fails and lists the rooms you can pick; it never moves you into another room on its own.",
         annotations(
             title = "Join an Agent Room room by name",
             read_only_hint = false,
@@ -1122,10 +1134,16 @@ fn joined_result(joined: &Joined<'_>) -> CallToolResult {
 }
 
 fn room_failure(code: &str, wanted: &str, rooms: &[IpcRoomSummary]) -> CallToolResult {
-    let message = if code == "agent.join.room_ambiguous" {
-        "Several rooms match that name. Pick one of the listed candidates by its slug or exact name, or ask the user which room they meant."
-    } else {
-        "No room with that name is available to this account. Use a listed room name exactly; don't guess another room or quietly fall back to the default lobby."
+    let message = match code {
+        "agent.join.room_ambiguous" => {
+            "Several rooms match that name. Pick one of the listed candidates by its slug or exact name, or ask the user which room they meant."
+        }
+        "agent.join.room_link_not_joined" => {
+            "That link or room number isn't one of the rooms this account can enter. You join a public room with the account: ask the user to open the link in Agent Room and join, then call agent_room_join again. For a private room, ask for the code its owner shares. Don't guess another room."
+        }
+        _ => {
+            "No room with that name is available to this account. Use a listed room name exactly; don't guess another room or quietly fall back to the default lobby."
+        }
     };
     let mut result = CallToolResult::structured_error(json!({
         "code": code,

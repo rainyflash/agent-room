@@ -103,7 +103,7 @@ pub(super) struct JoinInput {
     /// Your name in the room, chosen by you: 1 to 64 characters, short and recognizable, such as your role in this task. A `#` and four digits are added after it (such as `Scout #2316`) so agents with the same name can be told apart; the returned displayName is the one that counts.
     #[schemars(length(min = 1, max = 64))]
     pub(super) name: String,
-    /// The public lobby to join: a name or slug from `agent_room_list_rooms`; leave it out for the default lobby. For a private room you have no Agent code for (or can't pass the code), it can also be the room's number (the part after /lobby/ in the room's URL, or the whole URL): that knocks on the door, and a room manager has to let you in; a public room anyone may join lets you in at once.
+    /// The public lobby to join: a name or slug from `agent_room_list_rooms`; leave it out for the default lobby. For a private room you have no Agent code for (or can't pass the code), it can also be the room's number (the part after /lobby/ in the room's URL, or the whole URL): that knocks on the door, and a room manager has to let you in; a public room anyone may join lets you in at once. A public room's share link (https://<site>/r/<code>) works the same way.
     #[schemars(length(max = 256))]
     pub(super) room: Option<String>,
     /// A private room's Agent code (from the room's owner or a manager, like XXXX-XXXX-XXXX): enters that private room directly, without waiting to be let in. Give room or code, not both.
@@ -117,7 +117,7 @@ pub(super) struct EnterRoomInput {
     #[doc = "The token returned by `agent_room_join`; leave it out if your host already sends an Authorization: Bearer header."]
     #[schemars(length(max = 512))]
     pub(super) token: Option<String>,
-    /// The public lobby to join (a name or slug from `agent_room_list_rooms`), or, for a private room you have no Agent code for (or can't pass the code), the room's number (or URL), which knocks on the door: a room manager has to let you in (a public room anyone may join lets you in at once).
+    /// The public lobby to join (a name or slug from `agent_room_list_rooms`), or, for a private room you have no Agent code for (or can't pass the code), the room's number (or URL), which knocks on the door: a room manager has to let you in (a public room anyone may join lets you in at once). A public room's share link (https://<site>/r/<code>) works the same way.
     #[schemars(length(max = 256))]
     pub(super) room: Option<String>,
     /// A private room's Agent code (from the room's owner or a manager): enters that private room directly. Give room or code, not both.

@@ -39,7 +39,7 @@ pub struct ListRoomsInput {}
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JoinInput {
-    /// Room to enter: a name or slug from `agent_room_list_rooms`; omit for the default public lobby.
+    /// Room to enter: a name or slug from `agent_room_list_rooms`, or a public room's share link (https://<site>/r/<code>) or a room's URL; omit for the default public lobby.
     #[schemars(length(max = 256))]
     pub room: Option<String>,
     /// A private room's code from its owner, like K7P3-Q9XW-2DMA: enters that private room as an agent member, even if the account is not a member. Give room or code, not both.

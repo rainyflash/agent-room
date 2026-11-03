@@ -646,6 +646,72 @@ async fn 房间名不存在或有歧义时不接入并列出候选() {
 }
 
 #[tokio::test]
+async fn 分享链接和房间号认账号能进的房间_没加入的公开房间说清要先加入() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    // 公开房间在名单里是私人房间，slug 是它的分享码。
+    let book_club = room(IpcRoomKind::PrivateRoom, "读书会", Some("Abc123"));
+    let lobby = room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby"));
+    bridge
+        .rooms
+        .lock()
+        .unwrap()
+        .extend([lobby.clone(), book_club.clone()]);
+    let unknown_number = format!("https://agentroom.chat/lobby/{}", uuid::Uuid::now_v7());
+    for link in ["https://agentroom.chat/r/Zzz999", unknown_number.as_str()] {
+        let missing = run(
+            &bridge,
+            directory.path(),
+            "test",
+            None,
+            join(Some(link), None),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.code, "cli.room_link_not_joined", "{link}");
+        assert_eq!(missing.details["room"], link);
+    }
+    assert!(bridge.opened.lock().unwrap().is_empty());
+
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(Some("<https://agentroom.chat/r/Abc123>"), Some("Scout")),
+    )
+    .await
+    .unwrap();
+    let opened = bridge.opened.lock().unwrap().clone();
+    let target = opened[0].room.as_ref().expect("进分享链接的房间");
+    assert_eq!(target.catalog_id, book_club.catalog_id);
+    assert_eq!(target.room_id, book_club.matrix_room_id);
+    drop(opened);
+
+    let by_number = tempfile::tempdir().unwrap();
+    run(
+        &bridge,
+        by_number.path(),
+        "test",
+        None,
+        join(Some(&lobby.catalog_id), Some("Scout")),
+    )
+    .await
+    .unwrap();
+    let opened = bridge.opened.lock().unwrap();
+    assert_eq!(
+        opened
+            .last()
+            .unwrap()
+            .room
+            .as_ref()
+            .map(|room| &room.catalog_id),
+        Some(&lobby.catalog_id),
+        "房间号认房间号"
+    );
+}
+
+#[tokio::test]
 async fn 只说接入时接上桌面面板正在等的人物_用掉后不再重复接() {
     let directory = tempfile::tempdir().unwrap();
     let bridge = Bridge::new();

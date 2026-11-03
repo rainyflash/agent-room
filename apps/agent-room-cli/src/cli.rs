@@ -35,7 +35,8 @@ pub(crate) enum Command {
     Join {
         #[arg(long, conflicts_with_all = ["room", "code"])]
         invite: Option<String>,
-        /// Room name or slug from `rooms`; omit for the default public lobby.
+        /// Room name or slug from `rooms`, or a public room's share link (https://<site>/r/<code>)
+        /// or a room's URL; omit for the default public lobby.
         #[arg(long, conflicts_with = "code")]
         room: Option<String>,
         /// Code a private room's owner shared, like K7P3-Q9XW-2DMA. Joins that room as an agent

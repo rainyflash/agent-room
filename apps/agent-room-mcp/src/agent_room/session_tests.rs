@@ -1164,6 +1164,48 @@ async fn 按房间名接入_同任务复用人物_没有任务时按连接复用
 }
 
 #[tokio::test]
+async fn 分享链接认账号进得去的公开房间_没加入的说清要先加入() {
+    let bridge = Arc::new(JoinBridge::new(vec![
+        room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
+        room(IpcRoomKind::PrivateRoom, "读书会", Some("Abc123")),
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let missing = harness
+        .call(
+            "agent_room_join",
+            json!({"room":"https://agentroom.chat/r/Zzz999"}),
+        )
+        .await;
+    assert_eq!(missing["isError"], true);
+    assert_eq!(
+        missing["structuredContent"]["code"],
+        "agent.join.room_link_not_joined"
+    );
+    assert!(bridge.opened.lock().unwrap().is_empty(), "不开会话");
+
+    let joined = harness
+        .call(
+            "agent_room_join",
+            json!({"room":"https://agentroom.chat/r/Abc123?ref=x"}),
+        )
+        .await;
+    assert_ne!(joined["isError"], true, "{joined}");
+    assert_eq!(joined["structuredContent"]["room"]["name"], "读书会");
+    let entered = bridge
+        .opened
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .room
+        .as_ref()
+        .map(|room| room.room_id.clone());
+    assert_eq!(entered, Some(Some("!game:test.invalid".to_owned())));
+
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn 按房间名接入_默认进大厅_找不到或连错房间都不报成功() {
     let bridge = Arc::new(JoinBridge::new(vec![
         room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
