@@ -1176,6 +1176,10 @@ fn build_agent_moderation_http_state(
             authentication: dependencies.authentication.clone(),
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
+            trusted_origins: features::authentication::TrustedOrigins::new(
+                &config.authentication.frontend_origin,
+                &config.authentication.desktop_origins,
+            ),
         },
     ))
 }

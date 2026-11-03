@@ -265,6 +265,90 @@ async fn agent_解封撤回的封禁和台账一起记下_按请求找得回来_
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 一份授权下还生效着的动作_先做的在前_别的授权和人做的不算() {
+    let database = TestDatabase::connect().await;
+    let pool = &database.runtime;
+    let repositories = PostgresRepositories::new(pool.clone());
+    let owner = seed_principal(pool, "grant-actions-owner").await;
+    let target = seed_principal(pool, "grant-actions-target").await;
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    PrivateRoomStore::create(
+        &repositories,
+        &private_room_snapshot(catalog_id, owner),
+        time(0),
+    )
+    .await
+    .expect("私人房间夹具应创建");
+    let mut grants = Vec::new();
+    for _ in 0..2 {
+        let agent_id = agent_of(pool, &seed_agent(pool, owner).await).await;
+        let grant = grant(catalog_id, agent_id, owner);
+        repositories
+            .replace_room_moderation_grant(&grant)
+            .await
+            .expect("给上");
+        grants.push(grant);
+    }
+    let by = |grant: &RoomModerationGrant| AgentModerationAttribution {
+        action_id: ModerationActionId::from_uuid(Uuid::now_v7()),
+        agent_id: grant.agent_id,
+        grant_id: grant.id,
+        note: AgentModerationNote::parse("连发了五条广告链接。").expect("理由有效"),
+    };
+    let first = applied_ban(
+        &repositories,
+        owner,
+        catalog_id,
+        target,
+        Some(by(&grants[0])),
+    )
+    .await;
+    let mut undone = applied_ban(
+        &repositories,
+        owner,
+        catalog_id,
+        target,
+        Some(by(&grants[0])),
+    )
+    .await;
+    undone.reverse(time(10)).expect("已生效的能撤");
+    let audit = action_audit(
+        &undone,
+        "moderation.action.reversed",
+        ModerationAuditOutcome::Allowed,
+    );
+    ModerationRepository::finalize_action(&repositories, &undone, &audit)
+        .await
+        .expect("撤回");
+    let other = applied_ban(
+        &repositories,
+        owner,
+        catalog_id,
+        target,
+        Some(by(&grants[1])),
+    )
+    .await;
+    applied_ban(&repositories, owner, catalog_id, target, None).await;
+
+    assert_eq!(
+        repositories
+            .grant_actions(catalog_id, grants[0].id)
+            .await
+            .expect("可读"),
+        [first.id()]
+    );
+    assert_eq!(
+        repositories
+            .grant_actions(catalog_id, grants[1].id)
+            .await
+            .expect("可读"),
+        [other.id()]
+    );
+    database.close().await;
+}
+
 /// 撤回记不成别的动作的；记成以后按请求 ID 找得回来，列出来带着 Agent 的名字。
 async fn unban_and_check(
     repositories: &PostgresRepositories,

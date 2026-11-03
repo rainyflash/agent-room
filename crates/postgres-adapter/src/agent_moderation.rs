@@ -130,6 +130,38 @@ impl AgentModerationStore for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>> {
         Box::pin(async move { reversals::agent_reversals(self, room_catalog_id).await })
     }
+
+    fn grant_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        grant_id: RoomModerationGrantId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationActionId>>> {
+        Box::pin(async move { grant_actions(self, room_catalog_id, grant_id).await })
+    }
+}
+
+/// 这份授权下还生效着的动作，先做的在前。
+async fn grant_actions(
+    repositories: &PostgresRepositories,
+    room_catalog_id: RoomCatalogId,
+    grant_id: RoomModerationGrantId,
+) -> RepositoryResult<Vec<ModerationActionId>> {
+    let operation = "agent_moderation.grant_actions";
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        r"SELECT attribution.action_id
+            FROM agent_room.moderation_action_agent AS attribution
+            JOIN agent_room.moderation_action AS action ON action.id = attribution.action_id
+           WHERE attribution.grant_id = $2
+             AND action.room_catalog_id = $1
+             AND action.status = 'applied'
+           ORDER BY action.starts_at, action.id",
+    )
+    .bind(room_catalog_id.as_uuid())
+    .bind(grant_id.as_uuid())
+    .fetch_all(repositories.pool())
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(ids.into_iter().map(ModerationActionId::from_uuid).collect())
 }
 
 /// 人的账号（还在用、不是网络 Agent 的合成主体：那个账号从不进房间）就是他；不然看是不是 Agent 的账号，
