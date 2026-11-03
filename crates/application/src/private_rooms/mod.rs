@@ -4,6 +4,7 @@ mod failure;
 mod invite_links;
 mod listing;
 mod models;
+mod moderation_grants;
 mod notice;
 mod platform_hold;
 mod public_join;
@@ -41,6 +42,11 @@ pub use models::{
     ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
     PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom,
     TransferPrivateRoomOwnership,
+};
+pub use moderation_grants::{
+    GrantRoomModeration, ListRoomModerationGrants, ModerationGrantFailure,
+    ModerationGrantFailureKind, ModerationGrantResult, RevokeRoomModerationGrant,
+    RoomModerationGrantDependencies, RoomModerationGrantService, RoomModerationGrantUseCases,
 };
 pub use notice::{
     NOTICES_PER_HOUR, NoticeFailure, NoticeFailureKind, NoticeResult,

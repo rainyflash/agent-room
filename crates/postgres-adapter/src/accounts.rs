@@ -246,6 +246,19 @@ async fn export_account(
                 FROM agent_room.private_room_join_request AS request
                 WHERE request.requester_principal_id = principal.id
             ), '[]'::jsonb),
+            'moderationGrants', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', grant_row.catalog_entry_id,
+                    'agentId', grant_row.agent_id,
+                    'rules', grant_row.rules,
+                    'actions', grant_row.allowed_actions,
+                    'createdAt', grant_row.created_at,
+                    'expiresAt', grant_row.expires_at,
+                    'revokedAt', grant_row.revoked_at
+                ) ORDER BY grant_row.created_at, grant_row.id)
+                FROM agent_room.room_moderation_grant AS grant_row
+                WHERE grant_row.granted_by = principal.id
+            ), '[]'::jsonb),
             'externalData', jsonb_build_object(
                 'matrixTimeline', 'export_with_matrix_client_before_deletion',
                 'federatedCopies', 'controlled_by_receiving_homeservers_and_recipients',
@@ -570,14 +583,17 @@ async fn finalize_local(
             .await
             .map_err(|error| map_sqlx_error(OPERATION, &error))?;
     }
-    // 申请进公开房间时留的话跟着账户删掉（隐私说明页）。
-    sqlx::query(
+    // 申请进公开房间时留的话、交给 Agent 管房间时写的规则跟着账户删掉（隐私说明页）。
+    for statement in [
         r"DELETE FROM agent_room.private_room_join_request WHERE requester_principal_id = $1",
-    )
-    .bind(claim.principal_id.as_uuid())
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| map_sqlx_error(OPERATION, &error))?;
+        r"DELETE FROM agent_room.room_moderation_grant WHERE granted_by = $1",
+    ] {
+        sqlx::query(statement)
+            .bind(claim.principal_id.as_uuid())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(OPERATION, &error))?;
+    }
 
     let principal_result = sqlx::query(
         r"UPDATE agent_room.principal

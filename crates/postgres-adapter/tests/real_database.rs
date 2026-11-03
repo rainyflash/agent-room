@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 66] = [
+const EXPECTED_TABLES: [&str; 67] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -115,6 +115,7 @@ const EXPECTED_TABLES: [&str; 66] = [
     "room_catalog_entry",
     "room_instance",
     "room_membership_projection",
+    "room_moderation_grant",
     "room_provisioning_job",
     "web_session",
 ];
@@ -254,6 +255,17 @@ async fn 房间目录记着加不加密_公共大厅不能记成加密的() {
     database.close().await;
 }
 
+/// 刚建好的账户导出得出来，申请和管理授权都还是空的。
+async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: PrincipalId) {
+    let exported = AccountDeletionRepository::export(repositories, principal_id, test_time())
+        .await
+        .expect("账户导出应成功")
+        .expect("活动账户必须存在");
+    assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
+    assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
+    assert_eq!(exported.data["moderationGrants"], serde_json::json!([]));
+}
+
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 账户导出与删除状态机在真实事务中完成() {
@@ -264,12 +276,7 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     PrincipalRepository::create(&repositories, &registration)
         .await
         .expect("主体创建应成功");
-    let exported = AccountDeletionRepository::export(&repositories, principal_id, test_time())
-        .await
-        .expect("账户导出应成功")
-        .expect("活动账户必须存在");
-    assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
-    assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
+    assert_fresh_export(&repositories, principal_id).await;
 
     store_encryption_key_twice(&repositories, principal_id).await;
 
