@@ -41,6 +41,14 @@ async fn 公开设置往返_改回私密分享码留着_版本对不上不覆盖
             .expect("可读"),
         [room]
     );
+    let never_listed = create_room(&repositories, owner).await;
+    assert_eq!(
+        PrivateRoomListingStore::listed_share_codes(&repositories, &[room, never_listed])
+            .await
+            .expect("可读"),
+        [(room, listed.share_code.clone())],
+        "只给公开着的房间分享码"
+    );
 
     let unlisted = PrivateRoomListingRecord {
         settings: settings(false, RoomJoinMode::Request),
@@ -76,6 +84,13 @@ async fn 公开设置往返_改回私密分享码留着_版本对不上不覆盖
             .await
             .expect("可读")
             .is_empty()
+    );
+    assert!(
+        PrivateRoomListingStore::listed_share_codes(&repositories, &[room])
+            .await
+            .expect("可读")
+            .is_empty(),
+        "改回私密以后分享链接不再认"
     );
 
     database.close().await;

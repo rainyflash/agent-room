@@ -63,6 +63,31 @@ impl PrivateRoomListingStore for PostgresRepositories {
         })
     }
 
+    fn listed_share_codes<'a>(
+        &'a self,
+        catalog_ids: &'a [RoomCatalogId],
+    ) -> PortFuture<'a, RepositoryResult<Vec<(RoomCatalogId, RoomShareCode)>>> {
+        Box::pin(async move {
+            let operation = "private_room.listing.share_codes";
+            let ids: Vec<uuid::Uuid> = catalog_ids.iter().map(|id| id.as_uuid()).collect();
+            let rows: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+                "SELECT catalog_entry_id, share_code FROM agent_room.private_room_listing
+                  WHERE catalog_entry_id = ANY($1) AND listed",
+            )
+            .bind(&ids)
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.into_iter()
+                .map(|(catalog_id, code)| {
+                    RoomShareCode::parse(&code)
+                        .map(|code| (RoomCatalogId::from_uuid(catalog_id), code))
+                        .map_err(|_| corrupt_data(operation))
+                })
+                .collect()
+        })
+    }
+
     fn listed_rooms_owned_by(
         &self,
         owner: PrincipalId,

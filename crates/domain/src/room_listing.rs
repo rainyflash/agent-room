@@ -110,6 +110,8 @@ impl RoomListingSettings {
 const SHARE_CODE_ALPHABET: &[u8; 62] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const SHARE_CODE_LENGTH: usize = 6;
+/// 贴进来的分享链接最长多少字节，再长的不看。
+const MAX_SHARE_LINK_INPUT: usize = 512;
 
 /// 公开房间的分享码：`/r/<分享码>`。6 位大小写字母和数字（约 568 亿种），不用房间名，房间改名
 /// 链接也不断。它不是秘密：拿到它只看得到目录里本来就看得到的，进门照样按加入方式来。
@@ -145,6 +147,39 @@ impl RoomShareCode {
             });
         }
         Ok(Self(input.to_owned()))
+    }
+
+    /// 从分享链接里取分享码：`https://<网站>/r/<分享码>`，发现页的 `/explore/<分享码>` 也认。主人
+    /// 常把整条链接贴给 Agent：前后的引号、尖括号、查询串、井号和末尾的斜杠都去掉，没写 `https://`
+    /// 的也认。光是 6 位的码不认，和公共大厅的名字分不开。
+    #[must_use]
+    pub fn from_link(input: &str) -> Option<Self> {
+        if input.len() > MAX_SHARE_LINK_INPUT {
+            return None;
+        }
+        let value = input
+            .trim()
+            .trim_matches(|character| matches!(character, '`' | '"' | '\'' | '<' | '>'))
+            .trim();
+        let rest = match value.split_once("://") {
+            Some((scheme, rest)) => {
+                if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+                    return None;
+                }
+                rest
+            }
+            None => value,
+        };
+        let path = rest.split(['?', '#']).next().unwrap_or_default();
+        let path = path.strip_suffix('/').unwrap_or(path);
+        let (host, path) = path.split_once('/')?;
+        if host.is_empty() || host.contains(char::is_whitespace) {
+            return None;
+        }
+        let code = path
+            .strip_prefix("r/")
+            .or_else(|| path.strip_prefix("explore/"))?;
+        Self::parse(code).ok()
     }
 
     #[must_use]
@@ -222,5 +257,40 @@ mod tests {
         for input in ["", "aB3xY", "aB3xYz0", "aB3x_z", "aB3xY ", "ä1234"] {
             assert!(RoomShareCode::parse(input).is_err(), "{input:?}");
         }
+    }
+
+    #[test]
+    fn 分享链接里取得出分享码_光是码或别的地址不认() {
+        for link in [
+            "https://agentroom.chat/r/Abc123",
+            "http://agentroom.chat/r/Abc123/",
+            "HTTPS://agentroom.chat/r/Abc123?utm=x#top",
+            "agentroom.chat/r/Abc123",
+            "<https://agentroom.chat/r/Abc123>",
+            " `https://app.agentroom.chat/explore/Abc123?join=1` ",
+            "\"https://localhost:5173/explore/Abc123\"",
+        ] {
+            assert_eq!(
+                RoomShareCode::from_link(link).map(|code| code.as_str().to_owned()),
+                Some("Abc123".to_owned()),
+                "{link}"
+            );
+        }
+        for not_link in [
+            "Abc123",
+            "/r/Abc123",
+            "https://agentroom.chat/r/Abc12",
+            "https://agentroom.chat/r/Abc1234",
+            "https://agentroom.chat/r/Abc123/more",
+            "https://agentroom.chat/x/r/Abc123",
+            "https://agentroom.chat/lobby/Abc123",
+            "ftp://agentroom.chat/r/Abc123",
+            "agent room/r/Abc123",
+            "https://agentroom.chat/r/Abc-12",
+        ] {
+            assert_eq!(RoomShareCode::from_link(not_link), None, "{not_link}");
+        }
+        let long = format!("https://agentroom.chat/{}/r/Abc123", "a".repeat(600));
+        assert_eq!(RoomShareCode::from_link(&long), None);
     }
 }

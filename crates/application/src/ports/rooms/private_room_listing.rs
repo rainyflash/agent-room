@@ -42,6 +42,25 @@ pub trait PrivateRoomListingStore: Send + Sync {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomListingRecord>>>;
 
+    /// 这几间房里正公开着的那些的分享码。本机 Agent 列能进的房间时给公开房间带上，主人贴过来的
+    /// 分享链接按它认（`specs/public-rooms/design.md` 第 5 步）。默认一间一间问，库里一条语句查完。
+    fn listed_share_codes<'a>(
+        &'a self,
+        catalog_ids: &'a [RoomCatalogId],
+    ) -> PortFuture<'a, RepositoryResult<Vec<(RoomCatalogId, RoomShareCode)>>> {
+        Box::pin(async move {
+            let mut codes = Vec::new();
+            for &catalog_id in catalog_ids {
+                if let Some(listing) = self.listing(catalog_id).await?
+                    && listing.settings.listed()
+                {
+                    codes.push((catalog_id, listing.share_code));
+                }
+            }
+            Ok(codes)
+        })
+    }
+
     /// 房主名下还在使用中、正公开着的房间，供公开之前先查一遍限额。
     fn listed_rooms_owned_by(
         &self,

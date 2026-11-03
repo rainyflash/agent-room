@@ -11,7 +11,8 @@
 //! 网络 Agent 也能自己建私人房间、当房主（`specs/agent-rooms/design.md` 第 4 步），见 [`rooms`]。
 //!
 //! 公开房间（`specs/public-rooms/design.md` 第 5 步）：拿直接进的公开房间的房间号，敲门就直接放进来，
-//! 和进公共大厅一样占来源的起名名额；在公共大厅和公开房间里说话都按大厅的条数算。
+//! 和进公共大厅一样占来源的起名名额；在公共大厅和公开房间里说话都按大厅的条数算。分享链接
+//! （`/r/<分享码>`）换成房间号再照加入方式进。
 
 mod rooms;
 
@@ -31,6 +32,7 @@ use agent_room_domain::{
     },
     join_codes::{PrivateRoomAgentKnockStatus, parse_room_number},
     network_agents::{NetworkAgentName, NetworkAgentStatus},
+    room_listing::RoomShareCode,
     rooms::{MatrixRoomReference, RoomCatalogKind, RoomSlug},
     time::{DurationMillis, UtcMillis},
 };
@@ -51,8 +53,8 @@ use crate::{
         NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
         NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights,
         PortFuture, PrincipalAccount, PrincipalRegistration, PrivateRoomAgentKnockRecord,
-        PrivateRoomListingStore, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
-        RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
+        PrivateRoomListingStore, PublicRoomDirectoryStore, RateWindowBucket, RateWindowDecision,
+        RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockEntry, KnockOnRoom,
@@ -563,6 +565,8 @@ pub struct NetworkAgentDependencies {
     pub directory: Arc<dyn RoomDirectory>,
     /// 公开房间的设置：公开房间和公共大厅一样按条数限流。
     pub listings: Arc<dyn PrivateRoomListingStore>,
+    /// 公开房间的目录：分享链接按分享码换成房间号。
+    pub public_rooms: Arc<dyn PublicRoomDirectoryStore>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
     pub identifiers: Arc<dyn IdentifierFactory>,
@@ -586,6 +590,7 @@ pub struct NetworkAgentService {
     rooms: Arc<dyn PrivateRoomUseCases>,
     directory: Arc<dyn RoomDirectory>,
     listings: Arc<dyn PrivateRoomListingStore>,
+    public_rooms: Arc<dyn PublicRoomDirectoryStore>,
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
     identifiers: Arc<dyn IdentifierFactory>,
@@ -626,6 +631,7 @@ impl NetworkAgentService {
             rooms: dependencies.rooms,
             directory: dependencies.directory,
             listings: dependencies.listings,
+            public_rooms: dependencies.public_rooms,
             secrets: dependencies.secrets,
             clock: dependencies.clock,
             identifiers: dependencies.identifiers,
@@ -1727,7 +1733,11 @@ impl NetworkAgentService {
     /// 认出要进的房间：房间号是公开大厅的就进那间，不是的当作私人房间（敲门时再核对）；别的按公开
     /// 大厅的名字或 slug 找。
     async fn place(&self, wanted: Option<&str>) -> NetworkAgentResult<Place> {
-        let Some(catalog) = wanted.and_then(parse_room_number) else {
+        let catalog = match wanted {
+            Some(wanted) => self.room_by_number_or_link(wanted).await?,
+            None => None,
+        };
+        let Some(catalog) = catalog else {
             return self.lobby(wanted).await.map(Place::Lobby);
         };
         let lobbies = self
@@ -1742,6 +1752,27 @@ impl NetworkAgentService {
                 Place::Private(catalog)
             },
         )
+    }
+
+    /// 房间号、`/lobby/<房间号>` 的网址，或公开房间的分享链接（`/r/<分享码>`，发现页的
+    /// `/explore/<分享码>`）。分享码对不上公开着的房间时回 `None`，按大厅的名字也找不到，照样说
+    /// 找不到并列出能进的大厅。
+    async fn room_by_number_or_link(
+        &self,
+        wanted: &str,
+    ) -> NetworkAgentResult<Option<RoomCatalogId>> {
+        if let Some(catalog) = parse_room_number(wanted) {
+            return Ok(Some(catalog));
+        }
+        let Some(code) = RoomShareCode::from_link(wanted) else {
+            return Ok(None);
+        };
+        Ok(self
+            .public_rooms
+            .public_room_by_share_code(&code)
+            .await
+            .map_err(repository)?
+            .map(|detail| detail.room.catalog_id))
     }
 
     /// 按名字或 slug 找公开大厅：先精确，再忽略大小写；不给名字就是默认公开大厅。

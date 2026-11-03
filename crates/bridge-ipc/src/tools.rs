@@ -963,6 +963,19 @@ impl agent_room_bridge_core::room_directory::NamedRoom for IpcRoomSummary {
     fn room_slug(&self) -> Option<&str> {
         self.slug.as_deref()
     }
+
+    fn room_catalog_id(&self) -> Option<agent_room_domain::ids::RoomCatalogId> {
+        Uuid::parse_str(&self.catalog_id)
+            .ok()
+            .map(agent_room_domain::ids::RoomCatalogId::from_uuid)
+    }
+
+    fn room_share_code(&self) -> Option<&str> {
+        match self.kind {
+            IpcRoomKind::PrivateRoom => self.slug.as_deref(),
+            IpcRoomKind::PublicLobby => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1209,19 +1209,7 @@ fn build_agent_collaboration_http_states(
 ) -> Result<AgentCollaborationHttpStates, StartupError> {
     let handoffs = build_handoff_access_service(dependencies);
     let targeted_handoffs = build_targeted_handoff_service(dependencies);
-    let lobby_provisioning = build_lobby_provisioning(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-    )?;
-    let entries = build_agent_lobby_entry(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-        lobby_provisioning.clone(),
-    )?;
+    let (entries, lobby_provisioning) = build_lobby_entry_with_provisioning(config, dependencies)?;
     let public_entries = Arc::new(PublicLobbyEntryService::new(PublicLobbyEntryDependencies {
         directory: dependencies.repositories.clone(),
         provisioning: lobby_provisioning,
@@ -1254,6 +1242,7 @@ fn build_agent_collaboration_http_states(
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
             private_rooms: private_rooms.clone(),
+            listings: dependencies.repositories.clone(),
         }),
         private_rooms: PrivateRoomHttpState::new(
             PrivateRoomHttpDependencies {
@@ -1374,19 +1363,7 @@ fn build_network_agent_routes(
     {
         prepare_network_agent_store(directory)?;
     }
-    let provisioning = build_lobby_provisioning(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-    )?;
-    let lobbies = build_agent_lobby_entry(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-        provisioning,
-    )?;
+    let (lobbies, _) = build_lobby_entry_with_provisioning(config, dependencies)?;
     let key = config.network_agents.seal_key.as_ref();
     let policy = config.network_agents.policy;
     let sources = Arc::new(features::network_agents::NetworkSources::new(
@@ -1409,6 +1386,7 @@ fn build_network_agent_routes(
         rooms: private_rooms.clone(),
         directory: dependencies.repositories.clone(),
         listings: dependencies.repositories.clone(),
+        public_rooms: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
         clock: dependencies.system_runtime.clone(),
         identifiers: dependencies.system_runtime.clone(),
@@ -1634,6 +1612,27 @@ fn content_authority_matrix_user(
             "内容授权 Matrix 用户标识无效".to_owned(),
         )
     })
+}
+
+/// 大厅分片的建房服务和 Agent 进大厅的用例：本机 Agent 和网络 Agent 两边各建一份，配置一样。
+fn build_lobby_entry_with_provisioning(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<(Arc<AgentLobbyEntryService>, Arc<LobbyProvisioningService>), StartupError> {
+    let provisioning = build_lobby_provisioning(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+    )?;
+    let entries = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+        provisioning.clone(),
+    )?;
+    Ok((entries, provisioning))
 }
 
 fn build_agent_lobby_entry(
