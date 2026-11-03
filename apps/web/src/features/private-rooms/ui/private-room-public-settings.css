@@ -1,0 +1,145 @@
+/* 房间设置的“公开”一节（specs/public-rooms）：几组单选、一个开关、分享链接。 */
+.room-listing {
+  display: grid;
+  min-width: 0;
+  gap: 0.85rem;
+}
+
+.room-listing__state {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.room-listing__note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.room-listing__note--plain {
+  padding: 0.6rem 0.85rem;
+  border-left: 4px solid var(--ar-coral);
+  border-radius: 10px;
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+
+.room-listing__choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.room-listing__choices--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.room-listing__choices legend {
+  grid-column: 1 / -1;
+  padding: 0;
+  margin-bottom: 0.25rem;
+  color: var(--ar-ink-72);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.room-listing__choices label,
+.room-listing__toggle {
+  display: grid;
+  min-width: 0;
+  cursor: pointer;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 16px;
+  background: var(--color-paper);
+}
+
+.room-listing__choices label:has(input:checked),
+.room-listing__toggle:has(input:checked) {
+  border-color: var(--ar-outline);
+  background: var(--ar-warning-soft);
+}
+
+.room-listing__choices:disabled label,
+.room-listing__toggle:has(input:disabled) {
+  cursor: default;
+}
+
+.room-listing__choices input,
+.room-listing__toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0.1rem 0 0;
+  accent-color: var(--ar-accent);
+}
+
+.room-listing__choices span,
+.room-listing__toggle span {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.room-listing__choices strong,
+.room-listing__toggle strong {
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+}
+
+.room-listing__choices small,
+.room-listing__toggle small {
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.room-listing__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.room-listing__confirm {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.room-listing__share {
+  display: grid;
+  min-width: 0;
+  gap: 0.6rem;
+  padding-top: 0.85rem;
+  border-top: var(--ar-outline-thin) solid var(--ar-line);
+}
+
+.room-listing__share h3 {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+}
+
+.room-listing__share > .ar-button {
+  justify-self: start;
+}
+
+@media (max-width: 640px) {
+  .room-listing__choices,
+  .room-listing__choices--three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

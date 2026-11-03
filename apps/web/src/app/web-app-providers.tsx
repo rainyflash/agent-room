@@ -247,6 +247,7 @@ export function createCloudRuntime(
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms,
     privateRoomInvites: privateRooms,
+    privateRoomListings: privateRooms,
     // 不登录也能看：不放进登录范围，没登录的人打开别的页面时清理登录状态也不会中止它。
     publicWatch: new ControlPlanePublicWatchClient({
       baseUrl: config.controlPlaneUrl,

@@ -15,6 +15,7 @@ import { automationResources } from '@/features/automation/i18n/automation-resou
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
+import { roomListingResources } from '@/features/private-rooms/i18n/room-listing-resources';
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { roomsResources } from '@/features/room-directory/i18n/rooms-resources';
 import { roomSettingsResources } from '@/features/lobby/i18n/room-settings-resources';
@@ -657,6 +658,7 @@ export const resources = {
       ...thisComputerResources.en,
       ...settingsResources.en,
       ...privateRoomResources.en,
+      ...roomListingResources.en,
       ...roomDirectoryResources.en,
       ...roomsResources.en,
       ...roomSettingsResources.en,
@@ -1231,6 +1233,7 @@ export const resources = {
       ...thisComputerResources['zh-CN'],
       ...settingsResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
+      ...roomListingResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
       ...roomsResources['zh-CN'],
       ...roomSettingsResources['zh-CN'],

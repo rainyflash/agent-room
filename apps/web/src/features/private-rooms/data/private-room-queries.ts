@@ -2,6 +2,7 @@ import { queryOptions, useQueries, useQuery } from '@tanstack/react-query';
 
 import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private-room';
 import type { PrivateRoomInviteGateway } from '@/features/private-rooms/domain/private-room-invite-link';
+import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
 
 export const privateRoomListQueryKey = ['control-plane', 'private-rooms'] as const;
 
@@ -168,6 +169,28 @@ export function usePrivateRoomInviteLink(gateway: PrivateRoomInviteGateway, cata
   return useQuery({
     queryKey: privateRoomInviteLinkQueryKey(catalogId),
     queryFn: async () => await gateway.inviteLink(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
+}
+
+export const privateRoomListingQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'listing', catalogId] as const;
+
+/**
+ * 房间的公开设置（`specs/public-rooms/design.md`）；已加入的成员都问得到。挂在房间列表的键下面：
+ * 改了设置以后列表刷新（改回私密会打开加密），这份跟着重问。改设置、换码的地方直接写进这份缓存。
+ */
+export function usePrivateRoomListing(
+  gateway: PrivateRoomListingGateway,
+  catalogId: string,
+  enabled = true,
+) {
+  return useQuery({
+    enabled,
+    queryKey: privateRoomListingQueryKey(catalogId),
+    queryFn: async () => await gateway.listing(catalogId),
     networkMode: 'always',
     retry: false,
     staleTime: 5_000,

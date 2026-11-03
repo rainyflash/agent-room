@@ -32,6 +32,12 @@ import {
   type PrivateRoomInvitePreview,
   type RedeemedPrivateRoomInvite,
 } from '@/features/private-rooms/domain/private-room-invite-link';
+import {
+  privateRoomListingSchema,
+  type PrivateRoomListing,
+  type PrivateRoomListingGateway,
+  type PrivateRoomListingSettings,
+} from '@/features/private-rooms/domain/private-room-listing';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -50,7 +56,9 @@ export type ControlPlanePrivateRoomClientOptions = {
   readonly timeoutMs?: number;
 };
 
-export class ControlPlanePrivateRoomClient implements PrivateRoomGateway, PrivateRoomInviteGateway {
+export class ControlPlanePrivateRoomClient
+  implements PrivateRoomGateway, PrivateRoomInviteGateway, PrivateRoomListingGateway
+{
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
   readonly #timeoutMs: number;
@@ -282,10 +290,45 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway, Privat
     );
   }
 
+  listing(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
+    return this.#request(this.#listingPath(catalogId), { method: 'GET' }, privateRoomListingSchema);
+  }
+
+  updateListing(
+    catalogId: string,
+    settings: PrivateRoomListingSettings,
+  ): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
+    return this.#request(
+      this.#listingPath(catalogId),
+      {
+        body: JSON.stringify({
+          allowNetworkAgents: settings.allowNetworkAgents,
+          joinMode: settings.joinMode,
+          listed: settings.listed,
+          memberPermissions: settings.memberPermissions,
+        }),
+        method: 'PUT',
+      },
+      privateRoomListingSchema,
+    );
+  }
+
+  changeShareCode(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
+    return this.#request(
+      `${this.#listingPath(catalogId)}/share-code`,
+      { method: 'POST' },
+      privateRoomListingSchema,
+    );
+  }
+
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
     return this.#send(`${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`, {
       method: 'DELETE',
     });
+  }
+
+  #listingPath(catalogId: string): string {
+    return `/private-rooms/${encodeURIComponent(catalogId)}/listing`;
   }
 
   #inviteLinkPath(catalogId: string): string {

@@ -101,6 +101,10 @@ import {
   type PrivateRoomInviteGateway,
   type PrivateRoomInviteLink,
 } from '@/features/private-rooms/domain/private-room-invite-link';
+import type {
+  PrivateRoomListing,
+  PrivateRoomListingGateway,
+} from '@/features/private-rooms/domain/private-room-listing';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -139,6 +143,8 @@ const speakOnlyFixture =
 // `?private&invite-link` 里房间已经有一条邀请链接；不带时还没有，“邀请人”里能生成。
 const inviteLinkFixture =
   privateFixture && new URLSearchParams(window.location.search).has('invite-link');
+// `?private&listed` 里房间是公开的、不加密、能直接进，房间设置的“公开”一节有分享链接；不带时是私密的。
+const listedFixture = privateFixture && new URLSearchParams(window.location.search).has('listed');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -1202,6 +1208,49 @@ const privateRoomInvites: PrivateRoomInviteGateway = {
     Promise.resolve(err({ code: 'fixture.external_action_unavailable', retryable: false })),
 };
 
+let fixtureListing: PrivateRoomListing = {
+  allowNetworkAgents: true,
+  endToEndEncrypted: !listedFixture,
+  firstListedAtUnixMs: listedFixture ? Date.now() - 86_400_000 : null,
+  joinMode: 'open',
+  listed: listedFixture,
+  memberPermissions: DEFAULT_INVITE_PERMISSIONS,
+  platformHold: null,
+  shareCode: listedFixture ? 'aB3xYz' : null,
+  shareUrl: listedFixture ? 'https://agentroom.test/r/aB3xYz' : null,
+};
+const fixtureShareCodes = ['aB3xYz', 'Q7mPz2', 'Zz9Zz9'];
+const privateRoomListings: PrivateRoomListingGateway = {
+  listing: () => Promise.resolve(ok(fixtureListing)),
+  updateListing: (_catalogId, settings) => {
+    const shareCode = fixtureListing.shareCode ?? (settings.listed ? 'aB3xYz' : null);
+    fixtureListing = {
+      ...fixtureListing,
+      ...settings,
+      // 和服务器一样：改回私密时打开加密，以后再公开也还是加密的。
+      endToEndEncrypted: fixtureListing.endToEndEncrypted || !settings.listed,
+      firstListedAtUnixMs:
+        fixtureListing.firstListedAtUnixMs ?? (settings.listed ? Date.now() : null),
+      shareCode,
+      shareUrl: shareCode === null ? null : `https://agentroom.test/r/${shareCode}`,
+    };
+    return Promise.resolve(ok(fixtureListing));
+  },
+  changeShareCode: () => {
+    if (fixtureListing.shareCode === null) {
+      return Promise.resolve(err({ code: 'room_listing.never_listed', retryable: false }));
+    }
+    const next =
+      fixtureShareCodes[(fixtureShareCodes.indexOf(fixtureListing.shareCode) + 1) % 3] ?? 'aB3xYz';
+    fixtureListing = {
+      ...fixtureListing,
+      shareCode: next,
+      shareUrl: `https://agentroom.test/r/${next}`,
+    };
+    return Promise.resolve(ok(fixtureListing));
+  },
+};
+
 /** 夹具 Agent 的 ID 末尾是它的序号（从 1 起）。 */
 function fixtureAgentOwner(agentId: string): AgentOwnerRecord | null {
   const index = Number(agentId.slice(-12)) - 1;
@@ -1288,7 +1337,7 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
-  ...(privateFixture ? { privateRoomInvites } : {}),
+  ...(privateFixture ? { privateRoomInvites, privateRoomListings } : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
     shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
