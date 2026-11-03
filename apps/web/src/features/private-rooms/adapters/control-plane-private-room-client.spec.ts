@@ -565,6 +565,75 @@ describe('ControlPlanePrivateRoomClient 的公开设置', () => {
   });
 });
 
+describe('ControlPlanePrivateRoomClient 的申请', () => {
+  const REQUESTER = '0198b601-77a1-7bb8-83eb-a8fe68c97e50';
+  const REQUEST = {
+    displayName: 'Lin',
+    message: 'Can I bring my agent?',
+    principalId: REQUESTER,
+    requestedAtUnixMs: 1_780_000_000_000,
+  } as const;
+
+  it('列出在等的申请，批准和拒绝用 PUT 发决定', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ requests: [REQUEST] }))
+      .mockResolvedValueOnce(Response.json({ status: 'approved' }))
+      .mockResolvedValueOnce(Response.json({ status: 'rejected' }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+    const path = `https://control.agent-room.test/private-rooms/${ROOM.catalogId}/join-requests`;
+
+    expect(await client.joinRequests(ROOM.catalogId)).toEqual({ ok: true, value: [REQUEST] });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(path),
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    expect(await client.answerJoinRequest(ROOM.catalogId, REQUESTER, 'approve')).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`${path}/${REQUESTER}`),
+      expect.objectContaining({ body: JSON.stringify({ decision: 'approve' }), method: 'PUT' }),
+    );
+
+    await client.answerJoinRequest(ROOM.catalogId, REQUESTER, 'reject');
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`${path}/${REQUESTER}`),
+      expect.objectContaining({ body: JSON.stringify({ decision: 'reject' }), method: 'PUT' }),
+    );
+  });
+
+  it('看不懂的申请列表当作无效响应，被封禁的人批准不了时交出服务器的错误码', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ requests: [{ ...REQUEST, email: 'x' }] }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { code: 'room_join.banned', correlationId: 'c-2', retryable: false },
+          { status: 409 },
+        ),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.joinRequests(ROOM.catalogId)).toEqual({
+      ok: false,
+      error: { code: 'private_room.invalid_response', retryable: false },
+    });
+    expect(await client.answerJoinRequest(ROOM.catalogId, REQUESTER, 'approve')).toEqual({
+      ok: false,
+      error: { code: 'room_join.banned', correlationId: 'c-2', retryable: false },
+    });
+  });
+});
+
 function href(target: Parameters<typeof globalThis.fetch>[0]): string {
   return typeof target === 'string' ? target : target instanceof URL ? target.href : target.url;
 }

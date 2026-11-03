@@ -200,7 +200,19 @@
 }
 /* 房间设置和在场的 Agent 挨着放在右边。 */
 .workspace-header__settings {
+  position: relative;
   margin-left: auto;
+}
+/* 公开房间里有人在等批准：齿轮右上角亮一个点，和导航上的提醒点一样。 */
+.workspace-header__attention {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  background: var(--ar-sunny);
 }
 .workspace-header__settings + .workspace-header__members {
   margin-left: 0;

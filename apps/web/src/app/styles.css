@@ -1296,6 +1296,74 @@
   gap: 0.35rem;
 }
 
+/* 名字旁边的“管理员”（specs/public-rooms）：有“管理”这一位的人，房主不写。 */
+.private-room-member__role {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.45rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 999px;
+  color: var(--color-ink);
+  background: var(--ar-sky);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: 1px;
+}
+
+/* 成员下面的“申请”：谁、什么时候、留的话，批准或拒绝。 */
+.private-room-join-requests {
+  padding: 0 0 1.25rem;
+}
+
+.private-room-join-requests > ol {
+  padding: 0;
+  margin: 0;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  list-style: none;
+}
+
+.private-room-join-requests > ol > li {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 0;
+  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+}
+
+.private-room-join-requests__who {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.private-room-join-requests__who strong {
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-room-join-requests__who small,
+.private-room-join-requests__empty {
+  margin: 0;
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.private-room-join-requests__message {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px;
+  background: var(--ar-surface-muted);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
 .private-room-agent-access {
   padding: 1.25rem 0;
   border-top: var(--ar-outline-thin) dashed var(--ar-line);

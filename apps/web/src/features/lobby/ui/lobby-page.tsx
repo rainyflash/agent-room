@@ -60,6 +60,7 @@ import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
+import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
@@ -238,6 +239,11 @@ function ReadyLobby({
     catalogId,
     privateRoomInvites === undefined ? null : (principal?.principalId ?? null),
   );
+  const pendingJoinRequests = usePendingJoinRequestCount(
+    privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+    catalogId,
+    principal?.principalId ?? null,
+  );
   // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
   const writesAllowed = !archived && room.canSpeak !== false;
   const projection = useMemo(
@@ -358,6 +364,7 @@ function ReadyLobby({
         onOpenMembers={() => {
           setDrawer('members');
         }}
+        pendingJoinRequests={pendingJoinRequests}
         {...(room.topic === undefined ? {} : { topic: room.topic })}
       />
       <p className="room-scene-hint">{t('roomGame.hint')}</p>

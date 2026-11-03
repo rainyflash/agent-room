@@ -7,6 +7,8 @@ import {
   LoaderCircle,
   LogOut,
   PencilLine,
+  ShieldCheck,
+  ShieldOff,
   UserCheck,
   UserMinus,
   X,
@@ -18,6 +20,7 @@ import type { PrivateRoomCoordinator } from '@/features/private-rooms/applicatio
 import {
   privateRoomListQueryKey,
   usePrivateRoomAgentAccess,
+  usePrivateRoomListing,
   usePrivateRoomOrigin,
   usePrivateRoomPeople,
 } from '@/features/private-rooms/data/private-room-queries';
@@ -33,14 +36,24 @@ import {
   type PrivateRoomMember,
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
+import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
+import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
 import { PrivateRoomAccountInvite } from '@/features/private-rooms/ui/private-room-account-invite';
-import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
+import {
+  PrivateRoomCapabilityEditor,
+  toggleCapability,
+} from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
+import { PrivateRoomJoinRequests } from '@/features/private-rooms/ui/private-room-join-requests';
 import { useNetworkAgentIds } from '@/features/lobby/ui/network-agent-labels';
 import type { Result } from '@/shared/result';
 
 export type PrivateRoomMembersProps = {
   readonly coordinator: PrivateRoomCoordinator;
+  /** 公开房间的申请；测试和夹具里可以没有，没有就不列申请。 */
+  readonly joins?: PublicRoomJoinGateway | undefined;
+  /** 公开设置：概况里的“可见性”和“加密”按它写；测试和夹具里可以没有。 */
+  readonly listings?: PrivateRoomListingGateway | undefined;
   readonly onExitRoom: () => void;
   readonly principalId: string;
   readonly recentlyAuthenticated: boolean;
@@ -104,11 +117,14 @@ type RoomCommand = {
 };
 
 /**
- * 房间设置里的“成员”：房间概况（房主可以改名）、邀请、成员和权限、退出或归档。
- * Agent 进门（敲门、进来的 Agent、口令）是房间设置里单独的一节。
+ * 房间设置里的“成员”：房间概况（房主可以改名）、邀请、成员和权限（有“管理”的写“管理员”，一键设、
+ * 一键撤）、公开房间的申请、退出或归档。Agent 进门（敲门、进来的 Agent、口令）和公开设置是房间设置里
+ * 单独的两节。
  */
 export function PrivateRoomMembers({
   coordinator,
+  joins,
+  listings,
   onExitRoom,
   principalId,
   recentlyAuthenticated,
@@ -129,6 +145,8 @@ export function PrivateRoomMembers({
   const relayed = useHasNetworkAgents(rooms, room, canManage);
   const origin = usePrivateRoomOrigin(rooms, room.catalogId);
   const known = origin.data?.ok === true ? origin.data.value : null;
+  const listingQuery = usePrivateRoomListing(listings, room.catalogId);
+  const listing = listingQuery.data?.ok === true ? listingQuery.data.value : null;
   const creator = known?.createdByAgent ?? null;
   const creatorName = creator?.displayName ?? null;
   // 网络 Agent 当房主时，成员里那一行写它的名字，不写合成主体的 ID。
@@ -186,7 +204,13 @@ export function PrivateRoomMembers({
           )}
           <div>
             <dt>{t('privateRooms.governance.visibility')}</dt>
-            <dd>{t('privateRooms.governance.inviteOnly')}</dd>
+            <dd>
+              {listing?.listed === true
+                ? t('privateRooms.governance.public', {
+                    joinMode: t(`privateRooms.listing.joinMode.${listing.joinMode}.label`),
+                  })
+                : t('privateRooms.governance.inviteOnly')}
+            </dd>
           </div>
           <div>
             <dt>{t('privateRooms.governance.retention')}</dt>
@@ -200,11 +224,13 @@ export function PrivateRoomMembers({
             <dt>{t('privateRooms.governance.encryption')}</dt>
             <dd>
               {t(
-                known?.ownerIsNetworkAgent === true
-                  ? 'privateRooms.governance.encryptedServerReadable'
-                  : relayed
-                    ? 'privateRooms.governance.encryptedRelayed'
-                    : 'privateRooms.governance.encrypted',
+                listing?.endToEndEncrypted === false
+                  ? 'privateRooms.governance.notEncrypted'
+                  : known?.ownerIsNetworkAgent === true
+                    ? 'privateRooms.governance.encryptedServerReadable'
+                    : relayed
+                      ? 'privateRooms.governance.encryptedRelayed'
+                      : 'privateRooms.governance.encrypted',
               )}
             </dd>
           </div>
@@ -310,6 +336,10 @@ export function PrivateRoomMembers({
           ))}
         </ol>
       </div>
+
+      {canManage && joins !== undefined && room.status === 'active' ? (
+        <PrivateRoomJoinRequests catalogId={room.catalogId} joins={joins} listing={listing} />
+      ) : null}
 
       {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
       {mutation.isPending ? (
@@ -462,12 +492,22 @@ function MemberRow({
   const { t } = useTranslation();
   const active = member.status === 'invited' || member.status === 'joined';
   const editable = canManage && active && !isOwner && !self;
+  const admin = !isOwner && active && member.permissions.capabilities.includes('manage');
+  // 改不出自己没有的：只有房主和有“管理”的人能设管理员。
+  const canAppoint = editable && grantable.capabilities.includes('manage');
   return (
     <li className={active ? undefined : 'private-room-member--inactive'}>
       <div className="private-room-member__identity">
         <span>{isOwner ? <Crown aria-hidden="true" /> : null}</span>
         <div>
-          <strong>{name}</strong>
+          <strong>
+            {name}
+            {admin ? (
+              <span className="private-room-member__role">
+                {t('privateRooms.governance.members.admin')}
+              </span>
+            ) : null}
+          </strong>
           <small>{t(`privateRooms.membership.${member.status}`)}</small>
         </div>
       </div>
@@ -503,6 +543,23 @@ function MemberRow({
       )}
       {editable ? (
         <div className="private-room-member__actions">
+          {canAppoint ? (
+            <Button
+              disabled={disabled}
+              icon={admin ? <ShieldOff aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
+              onClick={() => {
+                onPermissionsChange(toggleCapability(member.permissions, 'manage', !admin));
+              }}
+              size="compact"
+              tone="quiet"
+            >
+              {t(
+                admin
+                  ? 'privateRooms.governance.members.removeAdmin'
+                  : 'privateRooms.governance.members.makeAdmin',
+              )}
+            </Button>
+          ) : null}
           {onTransfer === undefined ? null : (
             <Button
               disabled={disabled}

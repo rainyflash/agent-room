@@ -15,6 +15,11 @@ import type {
   PrivateRoomAgentKnock,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
+import type {
+  PrivateRoomListing,
+  PrivateRoomListingGateway,
+} from '@/features/private-rooms/domain/private-room-listing';
+import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -140,6 +145,9 @@ function gateway(
   const transferOwnership = vi.fn<PrivateRoomGateway['transferOwnership']>(() =>
     Promise.resolve(ok(room)),
   );
+  const updatePermissions = vi.fn<PrivateRoomGateway['updatePermissions']>(() =>
+    Promise.resolve(ok(room)),
+  );
   const value: PrivateRoomGateway = {
     accept: unavailable,
     admitKnock,
@@ -164,7 +172,7 @@ function gateway(
     revealJoinCode,
     transferOwnership,
     unban,
-    updatePermissions: unavailable,
+    updatePermissions,
   };
   return {
     admitKnock,
@@ -179,9 +187,42 @@ function gateway(
     revealJoinCode,
     transferOwnership,
     unban,
+    updatePermissions,
     value,
   };
 }
+
+/** 公开了、要申请才能进、不加密的房间，Lin 在等批准。 */
+const publicListing: PrivateRoomListing = {
+  allowNetworkAgents: true,
+  endToEndEncrypted: false,
+  firstListedAtUnixMs: CREATED,
+  joinMode: 'request',
+  listed: true,
+  memberPermissions: { capabilities: ['view', 'speak', 'automate'] },
+  platformHold: null,
+  shareCode: 'aB3xYz',
+  shareUrl: 'https://agentroom.test/r/aB3xYz',
+};
+const listings: PrivateRoomListingGateway = {
+  changeShareCode: () => Promise.resolve(ok(publicListing)),
+  listing: () => Promise.resolve(ok(publicListing)),
+  updateListing: () => Promise.resolve(ok(publicListing)),
+};
+const joins: PublicRoomJoinGateway = {
+  answerJoinRequest: () => Promise.resolve(ok(undefined)),
+  joinRequests: () =>
+    Promise.resolve(
+      ok([
+        {
+          displayName: 'Lin',
+          message: '',
+          principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e50',
+          requestedAtUnixMs: CREATED,
+        },
+      ]),
+    ),
+};
 
 /**
  * 和房间设置里一样，“成员”和“Agent 进门”两节同时挂着；只有能管理房间的人有“Agent 进门”一节。
@@ -191,7 +232,11 @@ function renderGovernance(
   principalId: string,
   rooms: PrivateRoomGateway,
   networkAgents: readonly string[] = [],
-  { recentlyAuthenticated = false, subject = room } = {},
+  {
+    recentlyAuthenticated = false,
+    subject = room,
+    publicRoom = false,
+  }: { recentlyAuthenticated?: boolean; subject?: PrivateRoom; publicRoom?: boolean } = {},
 ) {
   const labels = new NetworkAgentLabelStore(
     {
@@ -209,6 +254,7 @@ function renderGovernance(
         <NetworkAgentLabelsProvider store={labels}>
           <PrivateRoomMembers
             coordinator={{} as PrivateRoomCoordinator}
+            {...(publicRoom ? { joins, listings } : {})}
             onExitRoom={() => undefined}
             principalId={principalId}
             recentlyAuthenticated={recentlyAuthenticated}
@@ -415,6 +461,64 @@ describe('私人房间的成员与 Agent 口令', () => {
         targetPrincipalId: MEMBER,
       });
     });
+  });
+
+  it('房主一键设、撤管理员：有“管理”的写着“管理员”', async () => {
+    const rooms = gateway();
+    const plain = renderGovernance(OWNER, rooms.value);
+    expect(await screen.findByText('Grace')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Make admin' }));
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view', 'speak', 'manage'],
+      });
+    });
+    plain.unmount();
+
+    renderGovernance(OWNER, rooms.value, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view', 'speak', 'manage'] },
+        principalId: MEMBER,
+        status: 'joined',
+      }),
+    });
+    expect(await screen.findByText('Admin')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove admin' }));
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenLastCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view', 'speak'],
+      });
+    });
+  });
+
+  it('不能管理的成员看得到谁是管理员，设不了', async () => {
+    renderGovernance(MEMBER, gateway().value, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view', 'speak'] },
+        principalId: MEMBER,
+        status: 'joined',
+      }),
+    });
+    expect(await screen.findByText('Ada')).toBeVisible();
+    // 房主不写“管理员”，房主就是房主。
+    expect(screen.queryByText('Admin')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Make admin' })).toBeNull();
+  });
+
+  it('公开房间：概况照公开设置写，房主看得到在等的申请', async () => {
+    renderGovernance(OWNER, gateway().value, [], { publicRoom: true });
+    expect(await screen.findByText('Public · Ask to join')).toBeVisible();
+    expect(
+      screen.getByText('Not encrypted: the people in it and the server can read it.'),
+    ).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Requests to join' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Approve Lin' })).toBeVisible();
+  });
+
+  it('公开房间里不能管理的成员看不到申请', async () => {
+    renderGovernance(MEMBER, gateway().value, [], { publicRoom: true });
+    expect(await screen.findByText('Public · Ask to join')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Requests to join' })).toBeNull();
   });
 
   it('成员只看到房间名，不能改', () => {

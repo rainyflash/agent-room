@@ -71,3 +71,53 @@ test('房间设置的“公开”：公开着的不加密房间写清楚谁读�
   await expect(dialog).toContainText('Invite-only rooms have no share link');
   expect(failures).toEqual([]);
 });
+
+for (const width of [1440, 390]) {
+  test(`公开房间有人申请：齿轮上亮点，“成员”一节里批准、拒绝，设管理员：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${roomFixture}?private&listed&requests`);
+
+    const gear = page.getByRole('button', { name: 'Room settings', exact: true });
+    await expect(gear).toHaveAccessibleDescription('Requests to join: 2');
+    await expect(gear.locator('.workspace-header__attention')).toBeVisible();
+    await page.locator('.workspace-header').screenshot({
+      path: testInfo.outputPath(`room-join-request-dot-${String(width)}.png`),
+    });
+
+    const dialog = await openRoomSettings(page, 'Members');
+    await expect(dialog).toContainText('Public · Ask to join');
+    const requests = dialog.locator('.private-room-join-requests');
+    await expect(requests.getByRole('heading', { name: 'Requests to join' })).toBeVisible();
+    await expect(requests).toContainText('Can I bring my agent?');
+    await requests.scrollIntoViewIfNeeded();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessible(page, '.ar-dialog');
+    await page.screenshot({
+      path: testInfo.outputPath(`room-join-requests-${String(width)}.png`),
+    });
+
+    await requests.getByRole('button', { name: 'Approve Lin' }).click();
+    await expect(requests).not.toContainText('Lin');
+    await requests.getByRole('button', { name: 'Reject Mo' }).click();
+    await expect(requests).toContainText('No one is waiting.');
+
+    // Grace 原来只能查看和发言：设成管理员以后写着“管理员”，能撤回去。
+    await dialog.getByRole('button', { name: 'Make admin' }).click();
+    const grace = dialog.locator('.private-room-members > ol > li', { hasText: 'Grace' });
+    await expect(grace.locator('.private-room-member__role')).toHaveText('Admin');
+    await grace.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: testInfo.outputPath(`room-admin-${String(width)}.png`),
+    });
+    await grace.getByRole('button', { name: 'Remove admin' }).click();
+    await expect(grace.locator('.private-room-member__role')).toHaveCount(0);
+    expect(failures).toEqual([]);
+
+    await dialog.getByRole('button', { name: 'Close room settings' }).click();
+    await expect(gear).not.toHaveAccessibleDescription('Requests to join: 2');
+    await expect(gear.locator('.workspace-header__attention')).toHaveCount(0);
+  });
+}

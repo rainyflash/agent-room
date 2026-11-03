@@ -1,8 +1,14 @@
 import { queryOptions, useQueries, useQuery } from '@tanstack/react-query';
 
+import { err } from '@/shared/result';
+
 import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private-room';
 import type { PrivateRoomInviteGateway } from '@/features/private-rooms/domain/private-room-invite-link';
 import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
+import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
+
+/** 测试和夹具里没有这项服务时不去问；查询本来也不会跑。 */
+const unavailable = { code: 'private_room.unavailable', retryable: false } as const;
 
 export const privateRoomListQueryKey = ['control-plane', 'private-rooms'] as const;
 
@@ -183,16 +189,43 @@ export const privateRoomListingQueryKey = (catalogId: string) =>
  * 改了设置以后列表刷新（改回私密会打开加密），这份跟着重问。改设置、换码的地方直接写进这份缓存。
  */
 export function usePrivateRoomListing(
-  gateway: PrivateRoomListingGateway,
+  gateway: PrivateRoomListingGateway | undefined,
   catalogId: string,
   enabled = true,
 ) {
   return useQuery({
-    enabled,
+    enabled: enabled && gateway !== undefined,
     queryKey: privateRoomListingQueryKey(catalogId),
-    queryFn: async () => await gateway.listing(catalogId),
+    queryFn: async () =>
+      gateway === undefined ? err(unavailable) : await gateway.listing(catalogId),
     networkMode: 'always',
     retry: false,
     staleTime: 5_000,
+  });
+}
+
+export const privateRoomJoinRequestsQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'join-requests', catalogId] as const;
+
+/**
+ * 在等的申请（`specs/public-rooms/design.md`“加入方式”）；只有房主和管理员问得到。`intervalMs` 给了
+ * 就按它定时再问（房间页 10 秒，齿轮上的点跟着它），页面在后台时不问，回到前台时马上问一次。
+ */
+export function usePrivateRoomJoinRequests(
+  gateway: PublicRoomJoinGateway | undefined,
+  catalogId: string,
+  { enabled = true, intervalMs }: { readonly enabled?: boolean; readonly intervalMs?: number } = {},
+) {
+  return useQuery({
+    enabled: enabled && gateway !== undefined,
+    queryKey: privateRoomJoinRequestsQueryKey(catalogId),
+    queryFn: async () =>
+      gateway === undefined ? err(unavailable) : await gateway.joinRequests(catalogId),
+    networkMode: 'always',
+    refetchInterval: intervalMs ?? false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: 'always',
+    retry: false,
+    staleTime: 1_000,
   });
 }

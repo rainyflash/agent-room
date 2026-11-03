@@ -38,6 +38,13 @@ import {
   type PrivateRoomListingGateway,
   type PrivateRoomListingSettings,
 } from '@/features/private-rooms/domain/private-room-listing';
+import {
+  answeredJoinRequestSchema,
+  pendingJoinRequestsSchema,
+  type JoinRequestDecision,
+  type PendingJoinRequest,
+  type PublicRoomJoinGateway,
+} from '@/features/private-rooms/domain/public-room-join';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -57,7 +64,11 @@ export type ControlPlanePrivateRoomClientOptions = {
 };
 
 export class ControlPlanePrivateRoomClient
-  implements PrivateRoomGateway, PrivateRoomInviteGateway, PrivateRoomListingGateway
+  implements
+    PrivateRoomGateway,
+    PrivateRoomInviteGateway,
+    PrivateRoomListingGateway,
+    PublicRoomJoinGateway
 {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
@@ -321,10 +332,38 @@ export class ControlPlanePrivateRoomClient
     );
   }
 
+  async joinRequests(
+    catalogId: string,
+  ): Promise<Result<readonly PendingJoinRequest[], PrivateRoomFailure>> {
+    const response = await this.#request(
+      this.#joinRequestsPath(catalogId),
+      { method: 'GET' },
+      pendingJoinRequestsSchema,
+    );
+    return response.ok ? ok(response.value.requests) : response;
+  }
+
+  async answerJoinRequest(
+    catalogId: string,
+    principalId: string,
+    decision: JoinRequestDecision,
+  ): Promise<Result<void, PrivateRoomFailure>> {
+    const response = await this.#request(
+      `${this.#joinRequestsPath(catalogId)}/${encodeURIComponent(principalId)}`,
+      { body: JSON.stringify({ decision }), method: 'PUT' },
+      answeredJoinRequestSchema,
+    );
+    return response.ok ? ok(undefined) : response;
+  }
+
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
     return this.#send(`${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`, {
       method: 'DELETE',
     });
+  }
+
+  #joinRequestsPath(catalogId: string): string {
+    return `/private-rooms/${encodeURIComponent(catalogId)}/join-requests`;
   }
 
   #listingPath(catalogId: string): string {
