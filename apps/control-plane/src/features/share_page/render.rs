@@ -378,7 +378,7 @@ fn actions(join_mode: RoomJoinMode, text: &Wording, origins: &Origins<'_>, code:
 }
 
 fn agents_panel(text: &Wording, origins: &Origins<'_>, code: &str) -> String {
-    let link = format!("{}/r/{code}", origins.site);
+    let link = super::share_url(origins.site, code);
     format!(
         "<section class=\"share-panel\"><h2>{heading}</h2><p>{body}</p>\
          <div class=\"share-row share-wide\">\

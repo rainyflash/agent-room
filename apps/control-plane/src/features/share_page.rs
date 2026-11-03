@@ -59,7 +59,7 @@ impl SharePageHttpState {
             directory,
             clock,
             limits,
-            site_origin: format!("https://{server_name}").into(),
+            site_origin: site_origin(server_name).into(),
             app_origin: frontend_origin.origin().ascii_serialization().into(),
         }
     }
@@ -167,6 +167,16 @@ fn html_response(status: StatusCode, cache: &'static str, html: String) -> Respo
         HeaderValue::from_static("nosniff"),
     );
     response
+}
+
+/// 分享链接所在的网站：`https://<Matrix 服务器名>`，也就是裸域。
+pub(crate) fn site_origin(server_name: &str) -> String {
+    format!("https://{server_name}")
+}
+
+/// 一间公开房间的分享链接。分享页、公开设置和发现页的回答都用它，网页不用自己猜裸域在哪。
+pub(crate) fn share_url(site_origin: &str, share_code: &str) -> String {
+    format!("{site_origin}/r/{share_code}")
 }
 
 /// 按 `Accept-Language` 的先后（`q` 大的在前）找第一个中文或英文。没有这个头、或者里面两种都没有
