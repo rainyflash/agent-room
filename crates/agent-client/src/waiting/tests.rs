@@ -3,7 +3,8 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
-    IpcMethod, IpcOwnerSummary, IpcResponse, IpcSelfSummary, IpcTimelineGap,
+    IpcMethod, IpcOwnerSummary, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice,
+    IpcSelfSummary, IpcTimelineGap,
     wake::{IpcTyping, WaitOptions, WaitRules, WakeReason},
 };
 use tokio::time::Instant;
@@ -97,6 +98,8 @@ struct Room {
     typists: Vec<(Duration, Duration, String)>,
     /// 补不回来的那几段：读到它后面那条时一起给，和 Bridge 一样。
     gaps: Vec<IpcTimelineGap>,
+    /// 改了还没交的公告：读一次就交出去，和 Bridge 一样同一版只交一次。
+    notices: Mutex<Vec<IpcRoomNotice>>,
     calls: Mutex<Vec<(String, bool)>>,
 }
 
@@ -114,7 +117,20 @@ impl Room {
             owner: None,
             typists: Vec::new(),
             gaps: Vec::new(),
+            notices: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// 交一批时要改了的公告：改了的交出去就没了，和 Bridge 一样同一版只交一次。
+    fn changed_notices(&self, request: &IpcReadRoomNoticesRequest) -> IpcResponse {
+        assert!(request.changed_only, "交一批时只要改了的");
+        self.calls
+            .lock()
+            .unwrap()
+            .push(("read_room_notices".to_owned(), request.every_room));
+        IpcResponse::RoomNotices {
+            notices: std::mem::take(&mut *self.notices.lock().unwrap()),
         }
     }
 
@@ -283,6 +299,7 @@ impl BridgeToolClient for Room {
                     more: Vec::new(),
                 }
             }
+            IpcMethod::ReadRoomNotices(request) => self.changed_notices(&request),
             IpcMethod::GetSelf => IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
                     owner: self.owner.clone().map(|matrix_user_id| IpcOwnerSummary {
@@ -437,6 +454,48 @@ async fn 只看一眼_读一次_有什么给什么() {
     assert_eq!(texts(&batch.previews), ["闲聊"]);
     assert_eq!(batch.cursor.as_deref(), Some("$我说的:room.test"));
     assert_eq!(room.calls(), [("read_inbox".to_owned(), false)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn 开了公告_交一批时带上改了的_同一版只交一次() {
+    let room = Room::new(vec![(1_000, named("Scout 在吗"))]);
+    let changed = IpcRoomNotice {
+        room_id: "!lobby:room.test".to_owned(),
+        text: None,
+        updated_by: "@owner:room.test".to_owned(),
+        updated_at_unix_ms: 1_000,
+    };
+    room.notices.lock().unwrap().push(changed.clone());
+    let mut noticing = waiter(WaitRules::default()).with_notices().every_room();
+    let batch = noticing
+        .next(&room, MessageWait::For(Duration::from_secs(30)))
+        .await
+        .unwrap();
+    assert_eq!(texts(&batch.previews), ["Scout 在吗"]);
+    assert_eq!(batch.notices, [changed]);
+    assert_eq!(batch.to_json()["notices"][0]["removed"], true, "撤掉的写明");
+    assert!(
+        room.calls()
+            .contains(&("read_room_notices".to_owned(), true)),
+        "看所有房间时公告也看所有房间"
+    );
+
+    let peek = noticing
+        .next(&room, MessageWait::For(Duration::ZERO))
+        .await
+        .unwrap();
+    assert!(peek.notices.is_empty() && peek.to_json().get("notices").is_none());
+
+    let plain = Room::new(vec![(0, chatter("闲聊"))]);
+    waiter(WaitRules::default())
+        .next(&plain, MessageWait::For(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(
+        plain.calls(),
+        [("read_inbox".to_owned(), false)],
+        "没开不问"
+    );
 }
 
 #[tokio::test(start_paused = true)]

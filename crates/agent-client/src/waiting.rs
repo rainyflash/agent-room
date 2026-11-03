@@ -9,7 +9,7 @@ use std::{
 
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcGetMessagesRequest, IpcListPreviewsRequest, IpcMessagePreviewSummary,
-    IpcMethod, IpcResponse, IpcRoomCursor, IpcTimelineGap,
+    IpcMethod, IpcResponse, IpcRoomCursor, IpcRoomNotice, IpcTimelineGap,
     limits::{INBOX_BLOCK_MILLIS, MESSAGE_LOOKUP_IDS},
     typing::TypingRooms,
     wake::{
@@ -19,7 +19,7 @@ use agent_room_bridge_ipc::{
 };
 use tokio::time::Instant;
 
-use crate::{BridgeToolClient, BridgeToolFailure, MessageWait};
+use crate::{BridgeToolClient, BridgeToolFailure, MessageWait, notices};
 
 /// 最多攒这么多条还没交的，和网络 Agent 的收件箱一样；再多就丢掉最早的，交的时候算进跳过的。
 const HELD_CAPACITY: usize = 200;
@@ -58,6 +58,9 @@ pub struct WokenBatch {
     pub cursor: Option<String>,
     /// 这一批里哪几条前面少了一段补不回来的消息（同步时一次来得太多）。
     pub gaps: Vec<IpcTimelineGap>,
+    /// 交这一批时房间公告改了的（撤掉也算），每一版只交一次；没开 [`InboxWaiter::with_notices`]
+    /// 时总是空的。
+    pub notices: Vec<IpcRoomNotice>,
 }
 
 impl WokenBatch {
@@ -75,6 +78,9 @@ impl WokenBatch {
         }
         if !self.gaps.is_empty() {
             value["gaps"] = serde_json::json!(self.gaps);
+        }
+        if !self.notices.is_empty() {
+            value["notices"] = self.notices.iter().map(notices::notice_json).collect();
         }
         value
     }
@@ -200,6 +206,17 @@ pub struct InboxWaiter {
     gaps: Vec<IpcTimelineGap>,
     /// 交过的缺口（房间、后面那条），重读时不再交。
     reported_gaps: HashSet<(String, String)>,
+    /// 交一批时要不要顺带拿改了的房间公告。
+    notices: Notices,
+}
+
+/// 交一批时要不要顺带拿房间公告改了的那一版。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Notices {
+    /// 不拿（后台回复）。
+    Skip,
+    /// 拿（MCP 和命令行）。
+    Changed,
 }
 
 /// 没给位置时从哪里开始读。
@@ -242,6 +259,7 @@ impl InboxWaiter {
             start: Start::Earliest,
             gaps: Vec::new(),
             reported_gaps: HashSet::new(),
+            notices: Notices::Skip,
         }
     }
 
@@ -265,6 +283,14 @@ impl InboxWaiter {
             self.fetched_through = Position::EveryRoom(BTreeMap::new());
             self.held_after = Position::EveryRoom(BTreeMap::new());
         }
+        self
+    }
+
+    /// 交一批时顺带拿房间公告改了的那一版（MCP 和命令行用），放在 [`WokenBatch::notices`]。公告改了不叫醒
+    /// 它，跟着下一批交。后台回复不用：宿主那边只处理这一批。
+    #[must_use]
+    pub const fn with_notices(mut self) -> Self {
+        self.notices = Notices::Changed;
         self
     }
 
@@ -336,7 +362,8 @@ impl InboxWaiter {
             }
             match decision {
                 WaitDecision::Deliver(delivery) => {
-                    let batch = self.take(delivery);
+                    let mut batch = self.take(delivery);
+                    batch.notices = self.changed_notices(backend).await;
                     if !matches!(wait, MessageWait::Continuous(_)) {
                         self.stop_waiting(backend).await;
                     }
@@ -404,7 +431,23 @@ impl InboxWaiter {
             remaining: 0,
             cursor: cursor.cursor(),
             gaps,
+            notices: self.changed_notices(backend).await,
         })
+    }
+
+    /// 交这一批时房间公告改了的；没开 [`Self::with_notices`] 时不问。看的房间和等消息一样。
+    async fn changed_notices(&self, backend: &dyn BridgeToolClient) -> Vec<IpcRoomNotice> {
+        if self.notices == Notices::Skip {
+            return Vec::new();
+        }
+        let every_room = matches!(self.delivered_through, Position::EveryRoom(_));
+        notices::changed_notices(
+            backend,
+            &self.session_id,
+            self.room_id.as_deref(),
+            every_room,
+        )
+        .await
     }
 
     /// 从上次取到的地方接着取，直到取完或者攒满；`block` 不为零时，第一页请 Bridge 挂着等。
@@ -611,6 +654,7 @@ impl InboxWaiter {
             remaining: delivery.remaining,
             cursor: self.delivered_through.cursor(),
             gaps,
+            notices: Vec::new(),
         }
     }
 

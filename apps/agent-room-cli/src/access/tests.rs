@@ -31,6 +31,8 @@ struct Bridge {
     /// 开好会话以后又进的房间、离开的房间（目录 ID）。
     entered: Mutex<Vec<IpcHostRoomTarget>>,
     left: Mutex<Vec<String>>,
+    /// 进房间时要的是哪个房间现在的公告。
+    notice_rooms: Mutex<Vec<Option<String>>>,
 }
 impl Bridge {
     fn new() -> Self {
@@ -66,6 +68,7 @@ impl Bridge {
             ack_position: Mutex::new(None),
             entered: Mutex::new(Vec::new()),
             left: Mutex::new(Vec::new()),
+            notice_rooms: Mutex::new(Vec::new()),
         }
     }
 
@@ -90,6 +93,13 @@ impl Bridge {
                     catalog_id: request.catalog_id,
                     left: true,
                 })
+            }
+            IpcMethod::ReadRoomNotices(request) => {
+                // 交一批消息时要改了的，进房间时要现在的；这里只记进房间的。
+                if !request.changed_only {
+                    self.notice_rooms.lock().unwrap().push(request.room_id);
+                }
+                Ok(IpcResponse::RoomNotices { notices: vec![] })
             }
             _ => Err(refusal("test.unexpected_call")),
         }
@@ -393,6 +403,45 @@ async fn 按房间名接入会合成邀请_同一档案重跑复用身份_默认
     assert_eq!(opened.len(), 4);
     assert!(opened[3].room.is_none());
     assert!(!opened[3].display_name.is_empty());
+}
+
+#[tokio::test]
+async fn 接入时问这次进的房间现在的公告() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = Bridge::new();
+    bridge.rooms.lock().unwrap().extend([
+        room(IpcRoomKind::PublicLobby, "Lobby", None),
+        room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev")),
+    ]);
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        None,
+        join(Some("game dev"), Some("Scout")),
+    )
+    .await
+    .unwrap();
+    let key = saved_profiles(directory.path())[0]
+        .invitation
+        .session_key
+        .clone();
+    run(
+        &bridge,
+        directory.path(),
+        "test",
+        Some(key),
+        join(Some("Lobby"), None),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *bridge.notice_rooms.lock().unwrap(),
+        [
+            Some("!room:test.invalid".to_owned()),
+            Some("!entered:test.invalid".to_owned())
+        ]
+    );
 }
 
 #[tokio::test]
