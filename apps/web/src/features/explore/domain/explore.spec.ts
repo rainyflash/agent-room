@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  approvedRequests,
   avatarLetter,
   avatarTone,
   exploreAvatarTones,
@@ -8,6 +9,7 @@ import {
   exploreJoinPath,
   exploreSearchFromFilter,
   exploreSearchParams,
+  hasPendingRequest,
   joinContinuationStep,
   normalizeExploreSearch,
   type ExploreRoom,
@@ -76,6 +78,51 @@ describe('从分享页点“加入”过来', () => {
     expect(joinContinuationStep({ ...base, joinMode: 'request', viewer: 'pending' })).toBe('none');
     expect(joinContinuationStep({ ...base, viewer: 'banned' })).toBe('none');
     expect(joinContinuationStep({ ...base, joinMode: 'invite_only' })).toBe('none');
+  });
+});
+
+describe('申请被批准以后自动进房间', () => {
+  const first: ExploreRoom = {
+    agentCount: 0,
+    catalogId: '0198c000-0000-7000-8000-000000000001',
+    createdAtUnixMs: 1_792_483_200_000,
+    description: '',
+    endToEndEncrypted: false,
+    joinMode: 'request',
+    lastMessageAtUnixMs: null,
+    memberCount: 1,
+    name: 'Rust help desk',
+    ownerName: 'Grace',
+    shareCode: 'aB3xYz',
+    shareUrl: 'https://agentroom.test/r/aB3xYz',
+    viewer: 'pending',
+  };
+  const second: ExploreRoom = {
+    ...first,
+    catalogId: '0198c000-0000-7000-8000-000000000002',
+    shareCode: 'Zz9Zz9',
+  };
+
+  it('看到过在等批准、现在收到邀请的才算批准了，只算一次', () => {
+    const waiting = new Set<string>();
+    expect(hasPendingRequest([first, { ...second, viewer: null }])).toBe(true);
+    expect(approvedRequests(waiting, [first, { ...second, viewer: 'invited' }])).toEqual([]);
+
+    const invited = { ...first, viewer: 'invited' } as const;
+    expect(approvedRequests(waiting, [invited])).toEqual([invited]);
+    expect(approvedRequests(waiting, [invited])).toEqual([]);
+    expect(hasPendingRequest([invited])).toBe(false);
+  });
+
+  it('撤回、被拒的不算；详情已经收到邀请、目录还是旧的在等批准时照详情算', () => {
+    const waiting = new Set<string>();
+    approvedRequests(waiting, [first, second]);
+    expect(approvedRequests(waiting, [{ ...first, viewer: null }])).toEqual([]);
+    expect(approvedRequests(waiting, [{ ...first, viewer: 'invited' }])).toEqual([]);
+
+    const invited = { ...second, viewer: 'invited' } as const;
+    expect(approvedRequests(waiting, [invited, second])).toEqual([invited]);
+    expect(approvedRequests(waiting, [second, invited])).toEqual([]);
   });
 });
 

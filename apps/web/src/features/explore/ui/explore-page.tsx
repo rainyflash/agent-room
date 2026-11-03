@@ -11,6 +11,7 @@ import { useSession } from '@/features/session/ui/session-provider';
 
 import type { ExploreRoomDetailState } from './explore-room-panel';
 import { ExploreView, type ExploreAccount, type ExploreRoomsState } from './explore-view';
+import { useApprovedJoin } from './use-approved-join';
 import { useExploreActions } from './use-explore-actions';
 import { useJoinContinuation, type JoinContinuation } from './use-join-continuation';
 
@@ -51,6 +52,11 @@ export function ExplorePage({
   const rooms = useExploreRooms(explore, filter, viewer, settled);
   const detail = useExploreRoom(explore, selectedCode, viewer, settled);
   const actions = useExploreActions();
+  useApprovedJoin({
+    detail: detail.data,
+    onJoin: signedIn ? actions.onJoin : undefined,
+    pages: rooms.data?.pages,
+  });
   const lobbies = useQuery({ ...publicRoomDirectoryQueryOptions(roomDirectory), enabled: settled });
   const [creating, setCreating] = useState(false);
   const registrationOpen = config.registrationMode === 'open-email';
