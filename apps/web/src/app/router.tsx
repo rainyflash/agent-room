@@ -412,8 +412,10 @@ function ExploreBoundary() {
   return (
     <ExplorePage
       filter={exploreFilterFromSearch(search)}
+      onClosePanel={() => undefined}
       onFilterChange={onFilterChange}
       returnPath="/explore"
+      selectedCode={null}
     />
   );
 }
@@ -429,11 +431,16 @@ function ExploreRoomBoundary() {
     },
     [navigate],
   );
+  const onClosePanel = useCallback(() => {
+    void navigate({ search, to: '/explore' });
+  }, [navigate, search]);
   return (
     <ExplorePage
       filter={exploreFilterFromSearch(search)}
+      onClosePanel={onClosePanel}
       onFilterChange={onFilterChange}
       returnPath={`/explore/${encodeURIComponent(code)}`}
+      selectedCode={code}
     />
   );
 }

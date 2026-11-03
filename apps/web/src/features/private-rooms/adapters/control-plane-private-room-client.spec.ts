@@ -637,3 +637,70 @@ describe('ControlPlanePrivateRoomClient 的申请', () => {
 function href(target: Parameters<typeof globalThis.fetch>[0]): string {
   return typeof target === 'string' ? target : target instanceof URL ? target.href : target.url;
 }
+
+describe('ControlPlanePrivateRoomClient 从发现页进公开房间', () => {
+  it('直接进、申请（带上留言）、撤回自己的申请', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ catalogId: ROOM.catalogId, membership: 'invited' }))
+      .mockResolvedValueOnce(
+        Response.json({
+          catalogId: ROOM.catalogId,
+          membership: 'pending',
+          requestedAtUnixMs: 1_780_000_000_000,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+    const room = `https://control.agent-room.test/private-rooms/${ROOM.catalogId}`;
+
+    expect(await client.join(ROOM.catalogId)).toEqual({
+      ok: true,
+      value: { catalogId: ROOM.catalogId, membership: 'invited' },
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`${room}/join`),
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    expect(await client.requestToJoin(ROOM.catalogId, 'Hi')).toEqual({
+      ok: true,
+      value: {
+        catalogId: ROOM.catalogId,
+        membership: 'pending',
+        requestedAtUnixMs: 1_780_000_000_000,
+      },
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`${room}/join-requests`),
+      expect.objectContaining({ body: JSON.stringify({ message: 'Hi' }), method: 'POST' }),
+    );
+
+    expect(await client.withdrawJoinRequest(ROOM.catalogId)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`${room}/join-requests`),
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+
+  it('要申请的房间直接进时交出服务器的错误码', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json({ code: 'room_join.approval_required', retryable: false }, { status: 409 }),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    const joined = await client.join(ROOM.catalogId);
+    expect(joined.ok ? null : joined.error.code).toBe('room_join.approval_required');
+  });
+});

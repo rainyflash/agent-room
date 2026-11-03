@@ -41,9 +41,12 @@ import {
 import {
   answeredJoinRequestSchema,
   pendingJoinRequestsSchema,
+  publicRoomMembershipSchema,
   type JoinRequestDecision,
   type PendingJoinRequest,
+  type PublicRoomEntryGateway,
   type PublicRoomJoinGateway,
+  type PublicRoomMembership,
 } from '@/features/private-rooms/domain/public-room-join';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
@@ -68,6 +71,7 @@ export class ControlPlanePrivateRoomClient
     PrivateRoomGateway,
     PrivateRoomInviteGateway,
     PrivateRoomListingGateway,
+    PublicRoomEntryGateway,
     PublicRoomJoinGateway
 {
   readonly #baseUrl: string;
@@ -330,6 +334,29 @@ export class ControlPlanePrivateRoomClient
       { method: 'POST' },
       privateRoomListingSchema,
     );
+  }
+
+  join(catalogId: string): Promise<Result<PublicRoomMembership, PrivateRoomFailure>> {
+    return this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/join`,
+      { method: 'POST' },
+      publicRoomMembershipSchema,
+    );
+  }
+
+  requestToJoin(
+    catalogId: string,
+    message: string,
+  ): Promise<Result<PublicRoomMembership, PrivateRoomFailure>> {
+    return this.#request(
+      this.#joinRequestsPath(catalogId),
+      { body: JSON.stringify({ message }), method: 'POST' },
+      publicRoomMembershipSchema,
+    );
+  }
+
+  withdrawJoinRequest(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#send(this.#joinRequestsPath(catalogId), { method: 'DELETE' });
   }
 
   async joinRequests(
