@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { Result } from '@/shared/result';
+import type { PrivateRoomListingSettings } from './private-room-listing';
 import { uuidV7Schema } from '@/shared/validation/identifiers';
 
 export const privateRoomCapabilities = ['view', 'speak', 'invite', 'manage', 'automate'] as const;
@@ -147,6 +148,8 @@ export type PrivateRoomInvitationInput = {
 export type CreatePrivateRoomInput = {
   readonly description: string;
   readonly invitations: readonly PrivateRoomInvitationInput[];
+  /** 新建时就公开（`specs/public-rooms/design.md`）：房间不加密，建好就公开。不带就是私密的。 */
+  readonly listing?: PrivateRoomListingSettings;
   readonly name: string;
   readonly retentionDays?: number;
 };

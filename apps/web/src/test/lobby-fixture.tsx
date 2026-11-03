@@ -166,7 +166,8 @@ const matrixJoins: string[] = [];
 const ownersFixture = new URLSearchParams(window.location.search).has('owners');
 let room: LobbyRoom = {
   ...testRoom(fixtureAgentCount),
-  ...(privateFixture ? { encrypted: true } : {}),
+  // 公开着的夹具房间是新建时就公开的那种：不加密。
+  ...(privateFixture ? { encrypted: !listedFixture } : {}),
   ...(archivedFixture || mutedFixture ? { canSpeak: false } : {}),
 };
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };

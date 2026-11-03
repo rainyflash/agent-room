@@ -5,8 +5,15 @@ import { useTranslation } from 'react-i18next';
 
 export type RoomBeaconProps = {
   readonly agentCount: number;
-  /** 私人房间还是公共大厅，写在房间名上面。公共大厅不登录也能看（/watch），一直提醒着。 */
+  /**
+   * 有房间号的房间（私人房间、公开房间）还是公共大厅，写在房间名上面。公共大厅不登录也能看（/watch），
+   * 一直提醒着。
+   */
   readonly privateRoom: boolean;
+  /** 公开了的房间：写“公开房间”，不写“私人房间”。 */
+  readonly listed?: boolean;
+  /** 不加密的公开房间：进来的人和服务器都读得到，一直提醒着。 */
+  readonly unencrypted?: boolean;
   /** 网络 Agent 建的私人房间：服务器代它收发，读得到这里所有的消息，同样一直提醒着。 */
   readonly serverReadable?: boolean;
   /** 归档了的私人房间：之前的消息照样看，谁都不能再说话。比“服务器能读到”先说。 */
@@ -25,6 +32,8 @@ export type RoomBeaconProps = {
 export function RoomBeacon({
   agentCount,
   privateRoom,
+  listed = false,
+  unencrypted = false,
   serverReadable = false,
   archived = false,
   membersButtonRef,
@@ -61,6 +70,12 @@ export function RoomBeacon({
           >
             {t('roomWorkspace.privateRoomServerReadable')}
           </span>
+        ) : privateRoom && unencrypted ? (
+          <span className="workspace-header__notice" title={t('roomWorkspace.unencryptedNotice')}>
+            {t('roomWorkspace.publicRoomUnencrypted')}
+          </span>
+        ) : privateRoom && listed ? (
+          <span>{t('roomWorkspace.publicRoom')}</span>
         ) : privateRoom ? (
           <span>{t('roomWorkspace.privateRoom')}</span>
         ) : (

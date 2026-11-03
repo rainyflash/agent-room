@@ -54,9 +54,11 @@ describe('MatrixSdkLobbySource', () => {
   });
 
   it('私人房间带上已加入成员的 Matrix 显示名，按用户 ID 排好；公开大厅不带', () => {
-    const named = (encrypted: boolean) => {
+    const named = (encrypted: boolean, joinRule?: string) => {
       const registry = new MatrixClientRegistry();
-      registry.replace(matrixClient(matrixRoom(matrixState({}, encrypted))).value);
+      registry.replace(
+        matrixClient(matrixRoom(matrixState({}, encrypted, [SELF], joinRule))).value,
+      );
       const read = new MatrixSdkLobbySource(registry).read('!public:agent-room.test');
       return read.kind === 'ready' ? read.room.memberNames : 'not ready';
     };
@@ -66,6 +68,9 @@ describe('MatrixSdkLobbySource', () => {
       { displayName: 'Name of @z:agent-room.test', matrixUserId: '@z:agent-room.test' },
     ]);
     expect(named(false)).toBeUndefined();
+    expect(named(false, 'public')).toBeUndefined();
+    // 不加密的公开房间要邀请才进得来，和私人房间一样带名字。
+    expect(named(false, 'invite')).toEqual(named(true));
   });
 
   it('按 Matrix 的发言门槛说这台设备上的人能不能在这里发消息', () => {
@@ -166,6 +171,7 @@ function matrixState(
   statusContent: unknown,
   encrypted = false,
   speakers: readonly string[] = [SELF],
+  joinRule?: string,
 ): RoomState {
   const statusEvent = {
     getContent: () => statusContent,
@@ -178,6 +184,9 @@ function matrixState(
   const encryptionEvent = {
     getContent: () => ({ algorithm: 'm.megolm.v1.aes-sha2' }),
   } as unknown as MatrixEvent;
+  const joinRulesEvent = {
+    getContent: () => ({ join_rule: joinRule }),
+  } as unknown as MatrixEvent;
   return {
     getStateEvents: (eventType: string, stateKey?: string) => {
       if (eventType === matrixAgentStatusEventType) {
@@ -185,6 +194,9 @@ function matrixState(
       }
       if (eventType === 'm.room.encryption' && stateKey === '') {
         return encrypted ? encryptionEvent : null;
+      }
+      if (eventType === 'm.room.join_rules' && stateKey === '') {
+        return joinRule === undefined ? null : joinRulesEvent;
       }
       return eventType === 'm.room.topic' && stateKey === '' ? topicEvent : null;
     },

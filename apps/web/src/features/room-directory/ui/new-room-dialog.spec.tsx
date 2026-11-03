@@ -69,7 +69,7 @@ describe('新建房间', () => {
     const { onClose } = renderForm(onCreate);
 
     expect(screen.getByRole('dialog', { name: 'New room' })).toHaveAccessibleDescription(
-      'Private rooms are invite only, and messages are end-to-end encrypted.',
+      'Private rooms are invite only and end-to-end encrypted. Public rooms are listed on Explore and not encrypted.',
     );
     expect(screen.getByRole('button', { name: 'Create and enter' })).toBeDisabled();
     fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
@@ -189,5 +189,66 @@ describe('新建房间', () => {
     const [firstCall, secondCall] = onCreate.mock.calls;
     expect(secondCall?.[0]).not.toBe(firstCall?.[0]);
     expect(secondCall?.[1]).toMatchObject({ name: 'Release room' });
+  });
+
+  it('默认私密、不问怎么进；选公开先说不加密，带上加入方式和默认的新成员权限', async () => {
+    const onCreate = vi.fn<CreateCall>(() => Promise.resolve(ok(created)));
+    renderForm(onCreate);
+
+    expect(screen.getByRole('radio', { name: /^Private/u })).toBeChecked();
+    expect(screen.queryByRole('group', { name: 'How people join' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Public rooms are not encrypted/u)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /^Public/u }));
+    expect(screen.getByText(/Public rooms are not encrypted/u)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^Join directly/u })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /^Ask to join/u }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
+      target: { value: 'Eval club' },
+    });
+    submit();
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(expect.any(String), {
+        description: '',
+        invitations: [],
+        listing: {
+          allowNetworkAgents: true,
+          joinMode: 'request',
+          listed: true,
+          memberPermissions: { capabilities: ['view', 'speak', 'automate'] },
+        },
+        name: 'Eval club',
+      });
+    });
+  });
+
+  it('已经有一间公开房间：说清楚，放开表单，改成私密就能建', async () => {
+    const onCreate = vi
+      .fn<CreateCall>()
+      .mockResolvedValueOnce(err({ code: 'private_room.public_limit_reached', retryable: false }))
+      .mockResolvedValueOnce(ok(created));
+    const { onClose } = renderForm(onCreate);
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
+      target: { value: 'Eval club' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: /^Public/u }));
+    submit();
+
+    expect(
+      await screen.findByText(
+        'Each account can have one public room. Choose Private, or make your other public room private first.',
+      ),
+    ).toBeInTheDocument();
+    const privateChoice = screen.getByRole('radio', { name: /^Private/u });
+    expect(privateChoice).toBeEnabled();
+    fireEvent.click(privateChoice);
+    submit();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    expect(onCreate.mock.calls[1]?.[1]).not.toHaveProperty('listing');
   });
 });
