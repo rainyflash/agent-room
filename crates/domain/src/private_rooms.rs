@@ -865,6 +865,17 @@ impl PrivateRoom {
         self.ensure_active("described")
     }
 
+    /// 写、改、撤常驻公告（`specs/public-rooms/design.md`“常驻公告”）：房主和管理员（有“管理”这一位
+    /// 的已加入成员）都能，不用最近登录过，这是日常管理。房间归档以后公告还看得到，不能再改。
+    ///
+    /// # Errors
+    ///
+    /// 房间已归档，或操作者没有管理权限时返回错误。
+    pub fn authorize_notice_change(&self, actor: PrincipalId) -> DomainResult<()> {
+        self.ensure_active("notice_changed")?;
+        self.require(actor, PrivateRoomCapability::Manage, "修改房间公告")
+    }
+
     /// 切换公开和私密、改加入方式（`specs/public-rooms/design.md`）：只有房主，管理员不能，
     /// 这是房间的性质，不是日常管理。房间还要在使用中。
     ///
@@ -1603,6 +1614,27 @@ mod tests {
         room.archive(principal(1)).expect("归档成功");
         assert!(matches!(
             room.authorize_agent_access(principal(1)),
+            Err(crate::DomainError::InvalidTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn 房主和管理员能改公告_普通成员不能_归档后谁都不能() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        join(&mut room, principal(3));
+        room.update_permissions(principal(1), principal(2), PrivateRoomPermissions::ALL)
+            .expect("房主可以授予管理权限");
+        assert!(room.authorize_notice_change(principal(1)).is_ok());
+        assert!(room.authorize_notice_change(principal(2)).is_ok());
+        assert!(matches!(
+            room.authorize_notice_change(principal(3)),
+            Err(crate::DomainError::Forbidden { .. })
+        ));
+        assert!(room.authorize_notice_change(principal(9)).is_err());
+        room.archive(principal(1)).expect("归档成功");
+        assert!(matches!(
+            room.authorize_notice_change(principal(1)),
             Err(crate::DomainError::InvalidTransition { .. })
         ));
     }

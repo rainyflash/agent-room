@@ -71,9 +71,9 @@ use agent_room_application::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
         PrivateRoomDescriptionDependencies, PrivateRoomDescriptionService,
         PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
-        PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomService,
-        PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomPlatformHoldDependencies,
-        PublicRoomPlatformHoldService,
+        PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomNoticeDependencies,
+        PrivateRoomNoticeService, PrivateRoomService, PublicRoomJoinDependencies,
+        PublicRoomJoinService, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
@@ -165,6 +165,7 @@ struct AgentFeatureHttpStates {
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
+    room_notices: features::private_room_notice::PrivateRoomNoticeHttpState,
     room_holds: features::public_room_platform_hold::PublicRoomPlatformHoldHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
     public_rooms: features::public_rooms::PublicRoomsHttpState,
@@ -646,6 +647,7 @@ fn compose_identity_routes(
         .merge(features::private_room_description::router(
             agents.room_descriptions,
         ))
+        .merge(features::private_room_notice::router(agents.room_notices))
         .merge(features::public_room_platform_hold::router(
             agents.room_holds,
         ))
@@ -939,6 +941,7 @@ fn build_agent_feature_states(
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
         room_descriptions: build_room_description_http_state(config, dependencies),
+        room_notices: build_room_notice_http_state(config, dependencies),
         room_holds: build_room_hold_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
@@ -1094,6 +1097,26 @@ fn build_room_description_http_state(
     ));
     features::private_room_description::PrivateRoomDescriptionHttpState::new(
         descriptions,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主和管理员改常驻公告（`specs/public-rooms/design.md`“常驻公告”）：以应用服务写房间状态。
+fn build_room_notice_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::private_room_notice::PrivateRoomNoticeHttpState {
+    let notices = Arc::new(PrivateRoomNoticeService::new(
+        PrivateRoomNoticeDependencies {
+            rooms: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::private_room_notice::PrivateRoomNoticeHttpState::new(
+        notices,
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,

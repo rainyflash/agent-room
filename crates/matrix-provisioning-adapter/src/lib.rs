@@ -23,6 +23,7 @@ mod human_sessions;
 mod moderation;
 mod public_lobby;
 mod room_listing;
+mod room_notices;
 mod rooms;
 
 pub use accounts::{

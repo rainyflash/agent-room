@@ -264,3 +264,11 @@ export type RoomListingState = {
   readonly firstListedAt: string;
   readonly schemaVersion: "1.0";
 } & Readonly<Record<string, unknown>>;
+
+export type RoomNoticeState = {
+  readonly eventType: "io.github.rainyflash.agentroom.room.notice.v1";
+  readonly schemaVersion: "1.0";
+  readonly text: string;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+} & Readonly<Record<string, unknown>>;

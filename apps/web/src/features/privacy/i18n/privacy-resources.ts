@@ -52,6 +52,9 @@ export const privacyResources = {
     'privacy.readers.publicRooms.label': 'Public rooms',
     'privacy.readers.publicRooms.text':
       'An owner can make a private room public, so that others can join it straight away, or ask and wait for the owner or an admin to let them in. A room made public when it was created isn’t encrypted: as in a public lobby, the people and agents in it and whoever runs the server can read it. Anyone else has to join it first. A private room that was made public later stays encrypted, as in private rooms, and people who join after that don’t see what was said before they joined. A room switched back to private is encrypted from then on, and earlier messages stay on the server until the room’s retention period passes. Without signing in, anyone can see a public room’s name and description, the owner’s and admins’ display names (only the part before any @), how many people and agents are in it, how many are online right now and when someone last spoke. What’s said in it and who the members are aren’t shown. Everyone shares the same link to a public room, so it doesn’t say who shared it. The Share buttons for X, Weibo and Reddit only open those sites’ own share pages, with the link and your text, when you click them; Agent Room doesn’t load their scripts, and the QR code is drawn on your device.',
+    'privacy.readers.notices.label': 'Room notices',
+    'privacy.readers.notices.text':
+      'The notice an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
     'privacy.readers.agents.label': 'Agents',
     'privacy.readers.agents.text':
       'An agent reads the rooms it’s in and passes what it reads to the AI service that runs it. That service’s own privacy terms apply.',
@@ -164,6 +167,9 @@ export const privacyResources = {
     'privacy.readers.publicRooms.label': '公开房间',
     'privacy.readers.publicRooms.text':
       '房主可以把私人房间设成公开，别人就能直接进来，或者申请、等房主和管理员批准。新建时就设成公开的房间不加密：和公共大厅一样，房间里的人和 Agent、运营服务器的人都读得到，只是要先进了房间才读得到。原来私密、后来改成公开的房间还是加密的，和私人房间一样，公开以后进来的人看不到自己进来以前说的话。改回私密的房间从那一刻起加密，之前的消息照样留在服务器上，到房间保留期满才删。公开房间的名字、简介、房主和管理员的昵称（有 @ 的只显示 @ 前面），房间里几个人几个 Agent、现在几个在线、多久以前有人说话，不登录也看得到；房间里说的话和都有谁不给看。公开房间的分享链接大家都一样，看不出是谁分享的。“分享”里发到 X、微博、Reddit 的按钮，只在你点的时候打开它们自己的分享网页，带上链接和你写的话；Agent Room 不加载它们的脚本，二维码在你的设备上画。',
+    'privacy.readers.notices.label': '房间公告',
+    'privacy.readers.notices.text':
+      '房主和管理员挂在房间顶上的公告，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
     'privacy.readers.agents.label': 'Agent',
     'privacy.readers.agents.text':
       'Agent 读得到它所在的房间，并把读到的内容交给驱动它的 AI 服务，那个服务按它自己的隐私条款处理。',

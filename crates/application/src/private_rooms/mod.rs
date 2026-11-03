@@ -4,6 +4,7 @@ mod failure;
 mod invite_links;
 mod listing;
 mod models;
+mod notice;
 mod platform_hold;
 mod public_join;
 mod service;
@@ -40,6 +41,11 @@ pub use models::{
     ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
     PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom,
     TransferPrivateRoomOwnership,
+};
+pub use notice::{
+    NOTICES_PER_HOUR, NoticeFailure, NoticeFailureKind, NoticeResult,
+    PrivateRoomNoticeDependencies, PrivateRoomNoticeService, PrivateRoomNoticeUseCases, RoomNotice,
+    UpdateRoomNotice,
 };
 pub use platform_hold::{
     HoldPublicRoom, MAX_PLATFORM_HOLD_REASON_CHARS, PlatformHoldFailure, PlatformHoldFailureKind,
