@@ -1,5 +1,6 @@
 //! 进公开房间（`specs/public-rooms/design.md`）：直接进的以房主的名义邀请、拿房主定的默认权限；
-//! 要申请的、只能邀请的不邀请；不公开的、归档的和没有的一样回答；封禁的进不来；已经在里面的照实说。
+//! 要申请的、只能邀请的不邀请；不公开的、归档的、平台拿掉的和没有的一样回答；封禁的进不来；已经在
+//! 里面的照实说。
 //! 申请和审批在 `public_room_join_flow/requests.rs`。
 
 use std::sync::{Arc, Mutex};
@@ -11,7 +12,7 @@ use agent_room_application::{
         Clock, JoinRequestCreateOutcome, JoinRequestRecord, JoinRequestSweep, PendingJoinRequest,
         PortFuture, PrivateRoomJoinRequestStore, PrivateRoomListingRecord,
         PrivateRoomListingSaveOutcome, PrivateRoomListingStore, PrivateRoomSnapshot,
-        PrivateRoomStore,
+        PrivateRoomStore, PublicRoomPlatformHold, PublicRoomPlatformHoldStore,
     },
     private_rooms::{
         InviteByLink, JoinPublicRoom, PrivateRoomFailure, PrivateRoomFailureKind,
@@ -114,6 +115,25 @@ async fn 不公开的_归档的_没有的_都说没有这个房间() {
 }
 
 #[tokio::test]
+async fn 平台拿掉的房间进不来_放回去以后照房主的设置来() {
+    let open = Fixture::new(
+        PrivateRoom::create(catalog_id(), owner()),
+        Some(listing(true, RoomJoinMode::Open)),
+    );
+    open.holds.hold();
+    let failure = open.service.join(join(stranger())).await.unwrap_err();
+    assert_eq!(failure.kind(), PublicJoinFailureKind::NotFound);
+    assert!(open.invitations.calls().is_empty());
+
+    open.holds.release();
+    assert_eq!(
+        open.service.join(join(stranger())).await.unwrap(),
+        PublicJoinMembership::Invited,
+        "放回去以后照房主的设置来"
+    );
+}
+
+#[tokio::test]
 async fn 要申请的_只能邀请的_封禁的_登录过期的都不邀请() {
     let request = Fixture::new(
         PrivateRoom::create(catalog_id(), owner()),
@@ -192,23 +212,27 @@ struct Fixture {
     service: PublicRoomJoinService,
     invitations: Arc<RecordingInvitations>,
     requests: Arc<MemoryRequests>,
+    holds: Arc<MemoryHolds>,
 }
 
 impl Fixture {
     fn new(room: PrivateRoom, listing: Option<PrivateRoomListingRecord>) -> Self {
         let invitations = Arc::new(RecordingInvitations::default());
         let requests = Arc::new(MemoryRequests::default());
+        let holds = Arc::new(MemoryHolds::default());
         let service = PublicRoomJoinService::new(PublicRoomJoinDependencies {
             rooms: Arc::new(MemoryRooms(room)),
             listings: Arc::new(MemoryListings(listing)),
             requests: requests.clone(),
             invitations: invitations.clone(),
+            holds: holds.clone(),
             clock: Arc::new(TestClock),
         });
         Self {
             service,
             invitations,
             requests,
+            holds,
         }
     }
 }
@@ -409,6 +433,49 @@ impl PrivateRoomStore for MemoryRooms {
         _changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async { unreachable!("进房间不改名") })
+    }
+}
+
+/// 平台拿掉没有。进房间只问有没有，原因和是谁不看。
+#[derive(Default)]
+struct MemoryHolds(Mutex<bool>);
+
+impl MemoryHolds {
+    fn hold(&self) {
+        *self.0.lock().unwrap() = true;
+    }
+
+    fn release(&self) {
+        *self.0.lock().unwrap() = false;
+    }
+}
+
+impl PublicRoomPlatformHoldStore for MemoryHolds {
+    fn platform_hold(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PublicRoomPlatformHold>>> {
+        let hold = (*self.0.lock().unwrap()).then(|| PublicRoomPlatformHold {
+            catalog_id,
+            held_by: person(9),
+            reason: String::new(),
+            held_at: time(NOW - 1_000),
+        });
+        Box::pin(async move { Ok(hold) })
+    }
+
+    fn place_platform_hold<'a>(
+        &'a self,
+        _hold: &'a PublicRoomPlatformHold,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async { unreachable!("进房间不拿掉房间") })
+    }
+
+    fn release_platform_hold(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("进房间不放回房间") })
     }
 }
 

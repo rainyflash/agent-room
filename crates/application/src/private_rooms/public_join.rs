@@ -22,6 +22,7 @@ use crate::{
     ports::{
         Clock, JoinRequestSweep, PendingJoinRequest, PortFuture, PrivateRoomJoinRequestStore,
         PrivateRoomListingRecord, PrivateRoomListingStore, PrivateRoomSnapshot, PrivateRoomStore,
+        PublicRoomPlatformHoldStore,
     },
 };
 
@@ -163,6 +164,8 @@ pub struct PublicRoomJoinDependencies {
     pub requests: Arc<dyn PrivateRoomJoinRequestStore>,
     /// 以房主的名义邀请：和邀请链接以创建人的名义邀请是同一个入口。
     pub invitations: Arc<dyn PrivateRoomLinkInvitations>,
+    /// 平台拿掉的房间不能直接进、申请，在等的也不能批。
+    pub holds: Arc<dyn PublicRoomPlatformHoldStore>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -171,6 +174,7 @@ pub struct PublicRoomJoinService {
     listings: Arc<dyn PrivateRoomListingStore>,
     requests: Arc<dyn PrivateRoomJoinRequestStore>,
     invitations: Arc<dyn PrivateRoomLinkInvitations>,
+    holds: Arc<dyn PublicRoomPlatformHoldStore>,
     clock: Arc<dyn Clock>,
 }
 
@@ -181,6 +185,7 @@ impl PublicRoomJoinService {
             listings: dependencies.listings,
             requests: dependencies.requests,
             invitations: dependencies.invitations,
+            holds: dependencies.holds,
             clock: dependencies.clock,
         }
     }
@@ -266,7 +271,7 @@ impl PublicRoomJoinService {
             .ok_or_else(|| PublicJoinFailure::new(operation, PublicJoinFailureKind::NotFound))
     }
 
-    /// 房间此刻公开着、还在使用中。
+    /// 房间此刻公开着、还在使用中，平台没拿掉。
     async fn listed(
         &self,
         snapshot: &PrivateRoomSnapshot,
@@ -276,12 +281,20 @@ impl PublicRoomJoinService {
         if snapshot.room().status() != PrivateRoomLifecycleStatus::Active {
             return Err(not_found());
         }
-        self.listings
+        let listing = self
+            .listings
             .listing(snapshot.catalog().id())
             .await
             .map_err(|error| repository(operation, &error))?
             .filter(|listing| listing.settings.listed())
-            .ok_or_else(not_found)
+            .ok_or_else(not_found)?;
+        let held = self
+            .holds
+            .platform_hold(snapshot.catalog().id())
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .is_some();
+        if held { Err(not_found()) } else { Ok(listing) }
     }
 }
 

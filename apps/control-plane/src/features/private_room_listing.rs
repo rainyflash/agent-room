@@ -36,6 +36,7 @@ use crate::{
     features::{
         authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
         private_rooms::{PermissionsBody, PermissionsResponse},
+        public_room_platform_hold::PlatformHoldResponse,
         resource_ids::parse_uuid_v7,
     },
 };
@@ -123,6 +124,8 @@ struct ListingResponse {
     share_code: Option<String>,
     first_listed_at_unix_ms: Option<i64>,
     end_to_end_encrypted: bool,
+    /// 平台把房间从目录里拿掉了：原因和时间。没拿掉是 `null`。
+    platform_hold: Option<PlatformHoldResponse>,
 }
 
 impl From<ListingView> for ListingResponse {
@@ -135,6 +138,9 @@ impl From<ListingView> for ListingResponse {
             share_code: view.share_code.map(|code| code.as_str().to_owned()),
             first_listed_at_unix_ms: view.first_listed_at.map(UtcMillis::value),
             end_to_end_encrypted: view.end_to_end_encrypted,
+            platform_hold: view
+                .platform_hold
+                .map(|hold| PlatformHoldResponse::new(hold.reason, hold.held_at)),
         }
     }
 }

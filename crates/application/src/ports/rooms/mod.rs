@@ -70,8 +70,9 @@ pub use provisioning::{
 };
 pub use public_room_directory::{
     PublicRoomActivityMatrix, PublicRoomActivityStore, PublicRoomDetailRecord,
-    PublicRoomDirectoryStore, PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch,
-    PublicRoomSort, PublicRoomViewerState,
+    PublicRoomDirectoryStore, PublicRoomPlatformHold, PublicRoomPlatformHoldStore,
+    PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
+    PublicRoomViewerState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
