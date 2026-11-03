@@ -3,8 +3,11 @@
 //! 等于动它的主人），照房主和管理员自己动手的那一套落进台账，执行人记成给授权的人，另记是他的哪个 Agent、
 //! 按哪份授权、它写的理由。动手不用最近登录，授权本身就是主人的同意；房主、管理员和给授权的人动不了。
 //!
-//! 这一步只有禁言（可以限时），踢出、封禁、解封要改成员记录，是第 7a-2c 步；网络 Agent 当对象也留到那一步。
-//! 网络 Agent 没有主人，拿不到授权，所以只有本机 Agent 动手的入口。
+//! 禁言可以限时；踢出、封禁照成员一节那一套落（[`crate::ports::ModerationMemberGateway`]）；解封就是撤回
+//! Agent 做的那条封禁，人封的 Agent 解不了。网络 Agent 当对象留到第 7a-2c-3 步。网络 Agent 没有主人，拿不到
+//! 授权，所以只有本机 Agent 动手的入口。
+
+mod unban;
 
 use std::sync::Arc;
 
@@ -31,8 +34,9 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         AgentLobbyAccessRepository, AgentModerationAttribution, AgentModerationRecord,
-        AgentModerationStore, MatrixUserId, ModerationActionReservationOutcome, PortFuture,
-        PrivateRoomStore, RoomModerationGrant,
+        AgentModerationStore, MatrixUserId, ModerationActionReservationOutcome,
+        ModerationMemberRefusal, ModerationRoomContext, PortFuture, PrivateRoomStore,
+        RoomModerationGrant,
     },
 };
 
@@ -50,7 +54,13 @@ pub enum AgentModerationFailureKind {
     Protected,
     /// 认不出这个聊天账号是谁。
     TargetNotFound,
-    /// 这一步还做不了：踢出、封禁、解封，或者对象是网络 Agent（第 7a-2c 步）。
+    /// 踢出时他已经不在房间里。
+    NotInRoom,
+    /// 解封时他没被封着。
+    NotBanned,
+    /// 解封时封着他的是人，不是 Agent。
+    BannedByPerson,
+    /// 这一步还做不了：对象是网络 Agent（第 7a-2c-3 步）。
     Unsupported,
     InvalidRequest,
     Forbidden,
@@ -107,9 +117,10 @@ pub struct AgentModerate {
     pub power: RoomModerationPower,
     /// 它在消息里看到的发言人的聊天账号。
     pub target: MatrixUserId,
-    pub reason: ModerationReason,
+    /// 禁言、踢出、封禁要给；解封不用。
+    pub reason: Option<ModerationReason>,
     pub note: AgentModerationNote,
-    /// 限时禁言多久；不给就一直禁着，直到有人撤回。
+    /// 限时禁言多久；不给就一直禁着，直到有人撤回。别的不收时长。
     pub duration: Option<DurationMillis>,
 }
 
@@ -126,17 +137,24 @@ pub trait AgentModerationUseCases: Send + Sync {
         scope: AgentModerationScope,
     ) -> PortFuture<'_, AgentModerationResult<AgentModerationView>>;
 
-    /// 照授权动手。同一个动作 ID 再来一次交回已经记下的那条。
+    /// 照授权动手。同一个动作 ID 再来一次交回已经记下的那条。解封交回被撤回的那条封禁。
     fn moderate(
         &self,
         request: AgentModerate,
     ) -> PortFuture<'_, AgentModerationResult<ModerationAction>>;
 
-    /// 房主和管理员看台账时，哪些是 Agent 做的。
+    /// 房主和管理员看台账时，哪些是 Agent 做的、哪些是 Agent 撤回的。
     fn list(
         &self,
         request: ListAgentModeration,
-    ) -> PortFuture<'_, AgentModerationResult<Vec<AgentModerationRecord>>>;
+    ) -> PortFuture<'_, AgentModerationResult<AgentModerationLedger>>;
+}
+
+/// 台账里 Agent 经手的：它做的动作，和它撤回的动作（解封）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationLedger {
+    pub actions: Vec<AgentModerationRecord>,
+    pub reversals: Vec<AgentModerationRecord>,
 }
 
 pub struct AgentModerationDependencies {
@@ -186,45 +204,59 @@ impl AgentModerationService {
         if !grant.powers.allows(request.power) {
             return Err(failure(OPERATION, AgentModerationFailureKind::NotAllowed));
         }
-        if request.power != RoomModerationPower::Mute {
-            return Err(failure(OPERATION, AgentModerationFailureKind::Unsupported));
-        }
-        let duration = agent_mute_duration(request.duration)
-            .map_err(|_| failure(OPERATION, AgentModerationFailureKind::InvalidRequest))?;
+        let (kind, duration) = match request.power {
+            RoomModerationPower::Mute => (
+                Some(ModerationActionKind::Mute),
+                agent_mute_duration(request.duration)
+                    .map_err(|_| failure(OPERATION, AgentModerationFailureKind::InvalidRequest))?,
+            ),
+            _ if request.duration.is_some() => {
+                return Err(failure(
+                    OPERATION,
+                    AgentModerationFailureKind::InvalidRequest,
+                ));
+            }
+            RoomModerationPower::Kick => (Some(ModerationActionKind::Kick), None),
+            RoomModerationPower::Ban => (Some(ModerationActionKind::Ban), None),
+            RoomModerationPower::Unban => (None, None),
+        };
         let subject = self.subject(&request.target, OPERATION).await?;
         self.ensure_unprotected(&grant, device_principal, subject, OPERATION)
             .await?;
         let target = ModerationTarget::new(ModerationTargetKind::Principal, subject.to_string())
             .map_err(|_| failure(OPERATION, AgentModerationFailureKind::Internal))?;
-        self.mute(&request, &grant, target, duration, OPERATION)
+        let Some(kind) = kind else {
+            return self.unban(&request, &grant, &target, OPERATION).await;
+        };
+        self.act(&request, &grant, kind, target, duration, OPERATION)
             .await
     }
 
-    /// 落一条禁言：照房主和管理员自己动手那一套，执行人是给授权的人，预留时同一个事务记下是这个 Agent。
-    async fn mute(
+    /// 落一条禁言、踢出或封禁：照房主和管理员自己动手那一套，执行人是给授权的人，预留时同一个事务记下是
+    /// 这个 Agent。
+    async fn act(
         &self,
         request: &AgentModerate,
         grant: &RoomModerationGrant,
+        kind: ModerationActionKind,
         target: ModerationTarget,
         duration: Option<DurationMillis>,
         operation: &'static str,
     ) -> AgentModerationResult<ModerationAction> {
         let moderation = &self.moderation;
         let now = moderation.clock.now();
-        // 给授权的人此刻还得是房主或管理员：撤了他的管理，他的 Agent 也跟着管不了。
-        let context = moderation
-            .authority
-            .inspect_room(grant.granted_by, grant.catalog_id, &target)
-            .await
-            .map_err(|error| repository(operation, &error))?
-            .ok_or_else(|| failure(operation, AgentModerationFailureKind::NotFound))?;
-        if !context.role.can_moderate_room() {
-            return Err(failure(operation, AgentModerationFailureKind::NotGranted));
-        }
+        let reason = request
+            .reason
+            .ok_or_else(|| failure(operation, AgentModerationFailureKind::InvalidRequest))?;
+        let context = self
+            .granter_context(grant, kind, &target, operation)
+            .await?;
         let rooms = moderation
-            .effect_rooms(&context, ModerationActionKind::Mute, &target, operation)
+            .effect_rooms(&context, kind, &target, operation)
             .await
             .map_err(ledger)?;
+        self.ensure_member_action(&context, grant, kind, &target, operation)
+            .await?;
         let expires_at = duration
             .map(|duration| now.checked_add(duration))
             .transpose()
@@ -234,9 +266,9 @@ impl AgentModerationService {
             None,
             grant.granted_by,
             grant.catalog_id,
-            ModerationActionKind::Mute,
+            kind,
             target,
-            request.reason,
+            reason,
             now,
             expires_at,
         )
@@ -272,6 +304,55 @@ impl AgentModerationService {
             .finish_applied(action, applied, correlation_id, operation)
             .await
             .map_err(ledger)
+    }
+
+    /// 给授权的人此刻还得管得了这个房间：撤了他的管理，他的 Agent 也跟着管不了。
+    async fn granter_context(
+        &self,
+        grant: &RoomModerationGrant,
+        kind: ModerationActionKind,
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> AgentModerationResult<ModerationRoomContext> {
+        let context = self
+            .moderation
+            .authority
+            .inspect_room(grant.granted_by, grant.catalog_id, target)
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .ok_or_else(|| failure(operation, AgentModerationFailureKind::NotFound))?;
+        if !context.role.allows(kind) {
+            return Err(failure(operation, AgentModerationFailureKind::NotGranted));
+        }
+        Ok(context)
+    }
+
+    /// 踢出、封禁照成员一节那一套落之前先看做不做得了：踢出时他得还在房间里。
+    async fn ensure_member_action(
+        &self,
+        context: &ModerationRoomContext,
+        grant: &RoomModerationGrant,
+        kind: ModerationActionKind,
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> AgentModerationResult<()> {
+        let refusal = self
+            .moderation
+            .member_refusal(context, grant.catalog_id, kind, target, operation)
+            .await
+            .map_err(ledger)?;
+        match refusal {
+            None => Ok(()),
+            Some(ModerationMemberRefusal::Owner) => {
+                Err(failure(operation, AgentModerationFailureKind::Protected))
+            }
+            Some(ModerationMemberRefusal::NotInRoom) => {
+                Err(failure(operation, AgentModerationFailureKind::NotInRoom))
+            }
+            Some(ModerationMemberRefusal::RoomUnavailable) => {
+                Err(failure(operation, AgentModerationFailureKind::NotFound))
+            }
+        }
     }
 
     /// 设备签名的请求对得上这个 Agent 的这个连接，它在这个房间里有在用的授权。交回授权和连接代表的账号。
@@ -359,7 +440,7 @@ impl AgentModerationService {
     async fn list_internal(
         &self,
         request: ListAgentModeration,
-    ) -> AgentModerationResult<Vec<AgentModerationRecord>> {
+    ) -> AgentModerationResult<AgentModerationLedger> {
         const OPERATION: &str = "agent_moderation.list";
         if request.actor.expires_at <= self.moderation.clock.now() {
             return Err(failure(OPERATION, AgentModerationFailureKind::Forbidden));
@@ -368,10 +449,17 @@ impl AgentModerationService {
             .require_room_moderator(&request.actor, request.room_catalog_id, OPERATION)
             .await
             .map_err(ledger)?;
-        self.store
+        let actions = self
+            .store
             .agent_actions(request.room_catalog_id)
             .await
-            .map_err(|error| repository(OPERATION, &error))
+            .map_err(|error| repository(OPERATION, &error))?;
+        let reversals = self
+            .store
+            .agent_reversals(request.room_catalog_id)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?;
+        Ok(AgentModerationLedger { actions, reversals })
     }
 }
 
@@ -393,7 +481,7 @@ impl AgentModerationUseCases for AgentModerationService {
     fn list(
         &self,
         request: ListAgentModeration,
-    ) -> PortFuture<'_, AgentModerationResult<Vec<AgentModerationRecord>>> {
+    ) -> PortFuture<'_, AgentModerationResult<AgentModerationLedger>> {
         Box::pin(self.list_internal(request))
     }
 }

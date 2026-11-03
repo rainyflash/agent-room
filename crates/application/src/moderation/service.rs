@@ -449,16 +449,9 @@ impl ModerationService {
         target: &ModerationTarget,
         operation: &'static str,
     ) -> ModerationResult<()> {
-        if !through_members(context, kind) {
-            return Ok(());
-        }
-        let principal = member_target(target)
-            .ok_or_else(|| failure(operation, ModerationFailureKind::InvalidRequest))?;
         match self
-            .members
-            .check(kind, room_catalog_id, principal)
-            .await
-            .map_err(|error| repository_failure(operation, &error))?
+            .member_refusal(context, room_catalog_id, kind, target, operation)
+            .await?
         {
             None => Ok(()),
             Some(ModerationMemberRefusal::Owner) => {
@@ -471,6 +464,26 @@ impl ModerationService {
                 Err(failure(operation, ModerationFailureKind::NotFound))
             }
         }
+    }
+
+    /// 照成员一节那一套为什么做不了；不走成员记录的动作总是做得了。
+    pub(super) async fn member_refusal(
+        &self,
+        context: &ModerationRoomContext,
+        room_catalog_id: RoomCatalogId,
+        kind: ModerationActionKind,
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> ModerationResult<Option<ModerationMemberRefusal>> {
+        if !through_members(context, kind) {
+            return Ok(None);
+        }
+        let principal = member_target(target)
+            .ok_or_else(|| failure(operation, ModerationFailureKind::InvalidRequest))?;
+        self.members
+            .check(kind, room_catalog_id, principal)
+            .await
+            .map_err(|error| repository_failure(operation, &error))
     }
 
     async fn reverse_action_internal(
@@ -565,7 +578,7 @@ impl ModerationService {
 
     /// 撤回落库时动作已经被撤掉了：多半是刚好到期、定时任务先一步解除了，或者另一个管理员同时点了
     /// 撤回。已经撤销的就照实交回当前记录，不当成冲突报给管理员。
-    async fn ended_meanwhile(
+    pub(super) async fn ended_meanwhile(
         &self,
         action_id: ModerationActionId,
         error: &RepositoryError,
@@ -814,7 +827,7 @@ fn through_members(context: &ModerationRoomContext, kind: ModerationActionKind) 
 }
 
 /// 管人的动作的对象是账户 ID。
-fn member_target(target: &ModerationTarget) -> Option<PrincipalId> {
+pub(super) fn member_target(target: &ModerationTarget) -> Option<PrincipalId> {
     (target.kind() == ModerationTargetKind::Principal)
         .then(|| Uuid::parse_str(target.reference()).ok())
         .flatten()

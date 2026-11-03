@@ -11,8 +11,9 @@ use agent_room_application::{
         RevokedDevice,
     },
     moderation::{
-        AgentModerate, AgentModerationFailure, AgentModerationFailureKind, AgentModerationResult,
-        AgentModerationScope, AgentModerationUseCases, AgentModerationView, ListAgentModeration,
+        AgentModerate, AgentModerationFailure, AgentModerationFailureKind, AgentModerationLedger,
+        AgentModerationResult, AgentModerationScope, AgentModerationUseCases, AgentModerationView,
+        ListAgentModeration,
     },
     ports::{
         AgentModerationAttribution, AgentModerationRecord, MatrixUserId, PortFuture,
@@ -101,19 +102,28 @@ impl AgentModerationUseCases for FakeModeration {
         let expires_at = request
             .duration
             .map(|duration| time(NOW).checked_add(duration).unwrap());
+        // 解封交回它撤回的那条封禁。
+        let kind = match request.power {
+            RoomModerationPower::Mute => ModerationActionKind::Mute,
+            RoomModerationPower::Kick => ModerationActionKind::Kick,
+            RoomModerationPower::Ban | RoomModerationPower::Unban => ModerationActionKind::Ban,
+        };
         let mut action = ModerationAction::reserve(
             request.action_id,
             None,
             PrincipalId::from_uuid(uuid(PRINCIPAL_UUID)),
             request.scope.room_catalog_id,
-            ModerationActionKind::Mute,
+            kind,
             ModerationTarget::new(ModerationTargetKind::Principal, TARGET_UUID).unwrap(),
-            request.reason,
+            request.reason.unwrap_or(ModerationReason::Spam),
             time(NOW),
             expires_at,
         )
         .unwrap();
         action.mark_applied().unwrap();
+        if request.power == RoomModerationPower::Unban {
+            action.reverse(time(NOW)).unwrap();
+        }
         self.moderated.lock().unwrap().push(request);
         let answer = self.answer(action);
         Box::pin(async move { answer })
@@ -122,17 +132,21 @@ impl AgentModerationUseCases for FakeModeration {
     fn list(
         &self,
         request: ListAgentModeration,
-    ) -> PortFuture<'_, AgentModerationResult<Vec<AgentModerationRecord>>> {
+    ) -> PortFuture<'_, AgentModerationResult<AgentModerationLedger>> {
         self.listed.lock().unwrap().push(request);
-        let answer = self.answer(vec![AgentModerationRecord {
+        let record = |note: &str| AgentModerationRecord {
             attribution: AgentModerationAttribution {
                 action_id: action_id(),
                 agent_id: AgentId::from_uuid(uuid(AGENT_UUID)),
                 grant_id: grant_id(),
-                note: AgentModerationNote::parse("连发了五条广告链接。").unwrap(),
+                note: AgentModerationNote::parse(note).unwrap(),
             },
             agent_display_name: "门卫 #2316".to_owned(),
-        }]);
+        };
+        let answer = self.answer(AgentModerationLedger {
+            actions: vec![record("连发了五条广告链接。")],
+            reversals: vec![record("他说以后不发了。")],
+        });
         Box::pin(async move { answer })
     }
 }
@@ -295,12 +309,42 @@ async fn agent_禁言带着动作_id_和理由_回_201() {
             action_id: action_id(),
             power: RoomModerationPower::Mute,
             target: MatrixUserId::new("@spammer:matrix.agent-room.test").unwrap(),
-            reason: ModerationReason::Spam,
+            reason: Some(ModerationReason::Spam),
             note: AgentModerationNote::parse("连发了五条广告链接，按“发广告的禁言十分钟”。")
                 .unwrap(),
             duration: Some(DurationMillis::new(600_000).unwrap()),
         }]
     );
+}
+
+#[tokio::test]
+async fn agent_解封不用理由_回它撤回的那条封禁() {
+    let moderation = Arc::new(FakeModeration::default());
+    let body = json!({
+        "action": "unban",
+        "target": "@spammer:matrix.agent-room.test",
+        "note": "他说以后不发了。"
+    })
+    .to_string();
+    let response = test_router(moderation.clone(), devices("POST", &actions_path(), &body))
+        .oneshot(signed(
+            Method::POST,
+            &actions_path(),
+            Some(ACTION_UUID),
+            &body,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"actionId": ACTION_UUID, "action": "ban", "status": "reversed"})
+    );
+    let requests = moderation.moderated.lock().unwrap();
+    assert_eq!(requests[0].power, RoomModerationPower::Unban);
+    assert_eq!(requests[0].reason, None);
+    assert_eq!(requests[0].duration, None);
 }
 
 #[tokio::test]
@@ -331,6 +375,13 @@ async fn 没有动作_id_或者正文认不出来时不碰用例() {
             Some(ACTION_UUID),
             json!({"action": "mute", "target": "@a:matrix.agent-room.test",
                 "reason": "spam", "note": "  "})
+            .to_string(),
+            "agent_moderation.invalid",
+        ),
+        (
+            Some(ACTION_UUID),
+            json!({"action": "ban", "target": "@a:matrix.agent-room.test",
+                "reason": "rude", "note": "广告"})
             .to_string(),
             "agent_moderation.invalid",
         ),
@@ -375,6 +426,21 @@ async fn 用例的失败照种类回英文说明() {
             AgentModerationFailureKind::TargetNotFound,
             StatusCode::NOT_FOUND,
             "agent_moderation.target_not_found",
+        ),
+        (
+            AgentModerationFailureKind::NotInRoom,
+            StatusCode::CONFLICT,
+            "agent_moderation.not_in_room",
+        ),
+        (
+            AgentModerationFailureKind::NotBanned,
+            StatusCode::CONFLICT,
+            "agent_moderation.not_banned",
+        ),
+        (
+            AgentModerationFailureKind::BannedByPerson,
+            StatusCode::FORBIDDEN,
+            "agent_moderation.banned_by_person",
         ),
         (
             AgentModerationFailureKind::Unsupported,
@@ -426,6 +492,13 @@ async fn 房主看台账时知道哪些是_agent_做的() {
                 "agentName": "门卫 #2316",
                 "grantId": GRANT_UUID,
                 "note": "连发了五条广告链接。"
+            }],
+            "reversals": [{
+                "actionId": ACTION_UUID,
+                "agentId": AGENT_UUID,
+                "agentName": "门卫 #2316",
+                "grantId": GRANT_UUID,
+                "note": "他说以后不发了。"
             }]
         })
     );

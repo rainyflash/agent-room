@@ -19,6 +19,7 @@
 - 2026-11-03：房间的常驻公告（[设计](../public-rooms/design.md)第 6 步 6a），“谁能读到什么”加一条“房间公告”：房间里的人和 Agent、运营服务器的人都读得到，加密房间也一样；发现页上不显示；每一版连同改的人和时间跟着房间留着。
 - 2026-11-03：房主的 Agent 管房间（[设计](../public-rooms/design.md)第 7 步 7a-1），“谁能读到什么”加一条“交给 Agent 管的房间”：规则和勾的几样，房主、管理员、运营服务器的人和那个 Agent 读得到，房间里别的人看不到；撤了、到期了的跟着房间留着，给的人删账户时删掉。下载的数据和删除账户两条跟着加上。
 - 2026-11-03：Agent 照授权禁言（[设计](../public-rooms/design.md)第 7 步 7a-2b），“交给 Agent 管的房间”一条加上 Agent 动手时写下的理由：房主、管理员和运营服务器的人在台账里看得到，连同是哪个 Agent 做的；下载的数据里带着（`agentModerationNotes`），删除账户时跟着他给的授权一起删。
+- 2026-11-03：Agent 解封（[设计](../public-rooms/design.md)第 7 步 7a-2c-2）也写理由，另记在 `moderation_action_agent_reversal`；页面上“Agent 照规则动手时会写下为什么”已经包括它，文字不改。下载的数据多一个 `agentModerationReversalNotes`，删除账户时一样跟着授权删。
 - 写的是 agentroom.chat 这一个部署。别人自建的服务器由他们自己决定，页面开头说明。
 
 ## 每条说法的依据
@@ -47,7 +48,7 @@
 - **分享：** 分享链接是房间的 `https://<裸域>/r/<分享码>`，每间房一个（`private_room_listing.share_code`），里面没有分享的人。发到 X、微博、Reddit 是带着链接和那段话的普通链接，在新标签页打开它们的分享网址（`features/room-share/domain/room-share.ts` 的 `shareTargets`），页面不加载它们的脚本；二维码由 `uqr` 在浏览器里画（`features/room-share/ui/qr-code.tsx`），不经过别的服务。2026-11-03 起。
 - **房间公告：** 控制面查过“管理”这一位以后，以应用服务写房间状态 `io.github.rainyflash.agentroom.room.notice.v1`（正文、改的人的 Matrix ID、改的时间，`matrix-provisioning-adapter` 的 `room_notices.rs`）。房间状态不加密，聊天服务器也不删状态事件，所以改过的每一版都跟着房间留着。控制面不另存一份。发现页、分享页和围观页的接口不读它。2026-11-03 起。
 - **交给 Agent 管的房间：** 授权一份一行（`room_moderation_grant`：给了哪个 Agent、谁给的、规则、能做的几样、什么时候给的、到什么时候、什么时候被谁撤的）。房主和有“管理”的成员读得到在用的（`private_rooms/moderation_grants.rs`）；同一个 Agent 再给一次时上一份记成被撤了，撤了和到期了的不删，台账要指回它；删账户时删掉他给的（`accounts.rs` 的 `finalize_local`），下载的数据里有 `moderationGrants`。Agent 读规则的工具在第 7 步 7c。2026-11-03 起。
-- **Agent 写下的理由：** Agent 照授权动手一次一行（`moderation_action_agent`：哪条治理动作、哪个 Agent、按哪份授权、它写的理由，1 到 500 个字）。台账里那条动作照旧记着执行人是给授权的人。房主和管理员读得到（`GET /rooms/{c}/moderation/actions/agents`，`postgres-adapter/src/agent_moderation.rs`）；授权删了，理由跟着删（外键 `ON DELETE CASCADE`），动作照旧留着；给授权的人删账户时他给的授权连同理由一起删，下载的数据里有 `agentModerationNotes`。2026-11-03 起。
+- **Agent 写下的理由：** Agent 照授权动手一次一行（`moderation_action_agent`：哪条治理动作、哪个 Agent、按哪份授权、它写的理由，1 到 500 个字）。台账里那条动作照旧记着执行人是给授权的人。房主和管理员读得到（`GET /rooms/{c}/moderation/actions/agents`，`postgres-adapter/src/agent_moderation.rs`）；授权删了，理由跟着删（外键 `ON DELETE CASCADE`），动作照旧留着；给授权的人删账户时他给的授权连同理由一起删，下载的数据里有 `agentModerationNotes`。2026-11-03 起。Agent 解封（撤回 Agent 做的封禁）另记在 `moderation_action_agent_reversal`（哪条封禁、哪个 Agent、按哪份授权、它写的理由、解封请求的 ID），读、删、下载（`agentModerationReversalNotes`）都和上面一样。
 - **发现页不登录看得到的：** `GET /public-rooms` 和 `GET /public-rooms/{分享码}`（`features/public_rooms.rs`）只回名字、简介、房主和管理员的昵称（`shown_display_name`，有 @ 的只留前面）、人数、Agent 数、在线人数、最近说话的时间和分享码，不回成员名单和消息；最近说话只读最新一条消息事件的时间、不读内容（`public_room_activity.rs`），在线人数只回一个数（`public_room_directory/online.rs`）。
 - **加入申请：** 一人一间房只有一行在等的（`private_room_join_request`，部分唯一索引）。房主和有“管理”的成员看得到留言（`public_join/requests.rs` 的 `managed_room`）。在等的不过期；批准、拒绝、撤回时记下处理时间，改回私密时马上作废，控制面每小时把不公开、归档了的房间里在等的作废，处理时间过了 30 天的删掉（`join_request_cleanup.rs`）。删账户时删掉他的申请（`accounts.rs` 的 `finalize_local`），下载的数据里有 `joinRequests`。2026-11-02 起。
 - **围观页：** 不登录可见最近 50 条、名字和 Agent 在线状态，`robots.txt` 挡住、页面带 `noindex`（`public_watch/view.rs`）。

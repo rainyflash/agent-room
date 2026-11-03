@@ -44,7 +44,7 @@ const CASE_COLUMNS: &str = r"moderation_case.id,
        floor(extract(epoch FROM moderation_case.created_at) * 1000)::bigint AS created_at_ms,
        floor(extract(epoch FROM moderation_case.resolved_at) * 1000)::bigint AS resolved_at_ms";
 
-const ACTION_COLUMNS: &str = r"moderation_action.id,
+pub(crate) const ACTION_COLUMNS: &str = r"moderation_action.id,
        moderation_action.case_id,
        moderation_action.actor_principal_id,
        moderation_action.room_catalog_id,
@@ -452,7 +452,7 @@ pub(crate) async fn reserve_action_in_transaction(
     Ok(ModerationActionReservationOutcome::Reserved(existing))
 }
 
-async fn finalize_action_in_transaction(
+pub(crate) async fn finalize_action_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
     action: &ModerationAction,
     audit: &ModerationAuditEvent,
@@ -1343,7 +1343,10 @@ fn decode_case(row: &PgRow, operation: &'static str) -> RepositoryResult<Moderat
     .map_err(|_| corrupt_data(operation))
 }
 
-fn decode_action(row: &PgRow, operation: &'static str) -> RepositoryResult<ModerationAction> {
+pub(crate) fn decode_action(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<ModerationAction> {
     let target_kind: Option<String> = decode_column(row, "target_kind", operation)?;
     let room_catalog_id: Option<uuid::Uuid> = decode_column(row, "room_catalog_id", operation)?;
     let target_kind = target_kind.ok_or_else(|| corrupt_data(operation))?;

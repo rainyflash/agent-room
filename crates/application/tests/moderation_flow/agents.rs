@@ -1,6 +1,9 @@
 //! 房主的 Agent 管房间（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：本机 Agent 照主人给的管理授权
-//! 禁言。落进的是同一套台账，执行人是给授权的人，另记是哪个 Agent 做的；动别人的 Agent 等于动它的主人；房主、
-//! 管理员、给授权的人和他们的 Agent 动不了。
+//! 禁言、踢出、封禁、解封。落进的是同一套台账，执行人是给授权的人，另记是哪个 Agent 做的；动别人的 Agent 等于
+//! 动它的主人；房主、管理员、给授权的人和他们的 Agent 动不了。
+
+#[path = "agents/kick_ban.rs"]
+mod kick_ban;
 
 use agent_room_application::{
     devices::AuthenticatedDevice,
@@ -11,8 +14,9 @@ use agent_room_application::{
     },
     ports::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentModerationAttribution,
-        AgentModerationRecord, AgentModerationStore, ModerationSubject, PrincipalAccount,
-        PrivateRoomSnapshot, PrivateRoomStore, RoomModerationGrant,
+        AgentModerationRecord, AgentModerationReversal, AgentModerationStore, AppliedBan,
+        ModerationSubject, PrincipalAccount, PrivateRoomSnapshot, PrivateRoomStore,
+        RoomModerationGrant,
     },
 };
 use agent_room_domain::{
@@ -31,12 +35,20 @@ use agent_room_domain::{
 
 use super::*;
 
-/// 记着授权、认人表和 Agent 做的那几条；预留动作照台账的假仓库记。
+/// 记着授权、认人表、Agent 做的和撤回的那几条；预留动作、记成撤回照台账的假仓库记。
 struct FakeAgentStore {
     repository: Arc<FakeRepository>,
     grant: Mutex<Option<RoomModerationGrant>>,
     subjects: HashMap<String, ModerationSubject>,
     attributions: Mutex<Vec<AgentModerationAttribution>>,
+    reversals: Mutex<Vec<AgentModerationReversal>>,
+}
+
+fn record(attribution: &AgentModerationAttribution) -> AgentModerationRecord {
+    AgentModerationRecord {
+        attribution: attribution.clone(),
+        agent_display_name: "门卫 #2316".to_owned(),
+    }
 }
 
 impl AgentModerationStore for FakeAgentStore {
@@ -113,10 +125,78 @@ impl AgentModerationStore for FakeAgentStore {
             .lock()
             .expect("记账锁可用")
             .iter()
-            .map(|attribution| AgentModerationRecord {
-                attribution: attribution.clone(),
-                agent_display_name: "门卫 #2316".to_owned(),
+            .map(record)
+            .collect();
+        Box::pin(async move { Ok(records) })
+    }
+
+    fn applied_bans(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AppliedBan>>> {
+        let attributions = self.attributions.lock().expect("记账锁可用").clone();
+        let bans = self
+            .repository
+            .actions
+            .lock()
+            .expect("动作锁可用")
+            .iter()
+            .filter(|action| {
+                action.kind() == ModerationActionKind::Ban
+                    && action.status() == ModerationActionStatus::Applied
             })
+            .map(|action| AppliedBan {
+                action: action.clone(),
+                by_agent: attributions
+                    .iter()
+                    .any(|attribution| attribution.action_id == action.id()),
+            })
+            .collect();
+        Box::pin(async move { Ok(bans) })
+    }
+
+    /// 照台账的假仓库记成撤回；成了再记下是哪个 Agent 撤的。
+    fn finalize_agent_reversal<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        audit: &'a ModerationAuditEvent,
+        reversal: &'a AgentModerationReversal,
+    ) -> PortFuture<'a, RepositoryResult<ModerationAction>> {
+        Box::pin(async move {
+            let reversed = self.repository.finalize_action(action, audit).await?;
+            self.reversals
+                .lock()
+                .expect("撤回锁可用")
+                .push(reversal.clone());
+            Ok(reversed)
+        })
+    }
+
+    fn agent_reversal(
+        &self,
+        request_id: ModerationActionId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentModerationReversal>>> {
+        let found = self
+            .reversals
+            .lock()
+            .expect("撤回锁可用")
+            .iter()
+            .rev()
+            .find(|reversal| reversal.request_id == request_id)
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn agent_reversals(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>> {
+        let records = self
+            .reversals
+            .lock()
+            .expect("撤回锁可用")
+            .iter()
+            .map(|reversal| record(&reversal.attribution))
             .collect();
         Box::pin(async move { Ok(records) })
     }
@@ -150,7 +230,7 @@ impl AgentLobbyAccessRepository for FakeAccess {
     }
 }
 
-struct FakeRooms(PrivateRoomSnapshot);
+struct FakeRooms(Mutex<PrivateRoomSnapshot>);
 
 impl PrivateRoomStore for FakeRooms {
     fn create<'a>(
@@ -165,7 +245,8 @@ impl PrivateRoomStore for FakeRooms {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
-        let found = (catalog_id == self.0.catalog().id()).then(|| self.0.clone());
+        let snapshot = self.0.lock().expect("房间锁可用").clone();
+        let found = (catalog_id == snapshot.catalog().id()).then_some(snapshot);
         Box::pin(async move { Ok(found) })
     }
 
@@ -206,6 +287,7 @@ struct AgentFixture {
     ledger: Fixture,
     store: Arc<FakeAgentStore>,
     access: Arc<FakeAccess>,
+    rooms: Arc<FakeRooms>,
     service: AgentModerationService,
 }
 
@@ -218,6 +300,7 @@ impl AgentFixture {
             grant: Mutex::new(Some(grant(&[RoomModerationPower::Mute]))),
             subjects: subjects(),
             attributions: Mutex::new(Vec::new()),
+            reversals: Mutex::new(Vec::new()),
         });
         let access = Arc::new(FakeAccess(Mutex::new(AgentLobbyAccessRecord {
             agent_id: agent_id(),
@@ -227,18 +310,24 @@ impl AgentFixture {
             matrix_user_id: MatrixUserId::new("@doorkeeper:matrix.test").expect("Agent 有效"),
             active: true,
         })));
+        let rooms = Arc::new(FakeRooms(Mutex::new(snapshot())));
         let service = AgentModerationService::new(AgentModerationDependencies {
             moderation: ledger.service.clone(),
             store: store.clone(),
             access: access.clone(),
-            rooms: Arc::new(FakeRooms(snapshot())),
+            rooms: rooms.clone(),
         });
         Self {
             ledger,
             store,
             access,
+            rooms,
             service,
         }
+    }
+
+    fn grant(&self, powers: &[RoomModerationPower]) {
+        *self.store.grant.lock().expect("授权锁可用") = Some(grant(powers));
     }
 
     async fn mute(&self, target: &str) -> Result<ModerationAction, AgentModerationFailureKind> {
@@ -295,8 +384,12 @@ async fn agent_照授权禁言_执行人是给授权的人_另记是它做的() 
         })
         .await
         .expect("房主和管理员看得到");
-    assert_eq!(records[0].attribution.action_id, action.id());
-    assert_eq!(records[0].attribution.note.as_str(), "连发了五条广告链接。");
+    assert_eq!(records.actions[0].attribution.action_id, action.id());
+    assert_eq!(
+        records.actions[0].attribution.note.as_str(),
+        "连发了五条广告链接。"
+    );
+    assert!(records.reversals.is_empty());
 }
 
 #[tokio::test]
@@ -344,10 +437,11 @@ async fn 房主_管理员_给授权的人和他们的_agent_都动不了() {
 }
 
 #[tokio::test]
-async fn 授权里没有这一样_或者这一步还做不了时不动手() {
+async fn 授权里没有这一样_或者时长和理由不对时不动手() {
     let fixture = AgentFixture::new();
     let kick = AgentModerate {
         power: RoomModerationPower::Kick,
+        duration: None,
         ..request("@spammer:matrix.test")
     };
     assert_eq!(
@@ -360,14 +454,23 @@ async fn 授权里没有这一样_或者这一步还做不了时不动手() {
         AgentModerationFailureKind::NotAllowed
     );
 
-    *fixture.store.grant.lock().unwrap() = Some(grant(&[
-        RoomModerationPower::Mute,
-        RoomModerationPower::Kick,
-    ]));
-    assert_eq!(
-        fixture.service.moderate(kick).await.unwrap_err().kind(),
-        AgentModerationFailureKind::Unsupported
-    );
+    fixture.grant(&[RoomModerationPower::Mute, RoomModerationPower::Kick]);
+    for invalid in [
+        // 只有禁言收时长。
+        AgentModerate {
+            duration: Some(DurationMillis::new(600_000).unwrap()),
+            ..kick.clone()
+        },
+        AgentModerate {
+            reason: None,
+            ..kick
+        },
+    ] {
+        assert_eq!(
+            fixture.service.moderate(invalid).await.unwrap_err().kind(),
+            AgentModerationFailureKind::InvalidRequest
+        );
+    }
 
     let too_short = AgentModerate {
         duration: Some(DurationMillis::new(30_000).unwrap()),
@@ -446,7 +549,7 @@ fn request(target: &str) -> AgentModerate {
         action_id: ModerationActionId::from_uuid(Uuid::now_v7()),
         power: RoomModerationPower::Mute,
         target: MatrixUserId::new(target).expect("测试账号有效"),
-        reason: ModerationReason::Spam,
+        reason: Some(ModerationReason::Spam),
         note: AgentModerationNote::parse("连发了五条广告链接。").expect("理由有效"),
         duration: Some(DurationMillis::new(600_000).expect("十分钟有效")),
     }
