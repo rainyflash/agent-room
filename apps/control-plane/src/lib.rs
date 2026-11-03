@@ -168,6 +168,7 @@ struct AgentFeatureHttpStates {
     room_holds: features::public_room_platform_hold::PublicRoomPlatformHoldHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
     public_rooms: features::public_rooms::PublicRoomsHttpState,
+    share_page: features::share_page::SharePageHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -622,6 +623,7 @@ fn compose_identity_routes(
         ))
         .merge(features::public_room_join::router(agents.room_joins))
         .merge(features::public_rooms::router(agents.public_rooms))
+        .merge(features::share_page::router(agents.share_page))
         .merge(content)
 }
 
@@ -867,6 +869,14 @@ fn build_agent_feature_states(
     admitted_entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 ) -> Result<AgentFeatureHttpStates, StartupError> {
     let placements = build_agent_room_placements(config, dependencies)?;
+    // 发现页的接口和分享页共用一个：每间房的在线人数留 60 秒，两边一起用。
+    let directory = Arc::new(PublicRoomDirectoryService::new(
+        PublicRoomDirectoryDependencies {
+            directory: dependencies.repositories.clone(),
+            presence: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
     let AgentIdentityHttpStates {
         agents,
         instances,
@@ -892,15 +902,15 @@ fn build_agent_feature_states(
         room_holds: build_room_hold_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
-            directory: Arc::new(PublicRoomDirectoryService::new(
-                PublicRoomDirectoryDependencies {
-                    directory: dependencies.repositories.clone(),
-                    presence: dependencies.matrix_identities.clone(),
-                    clock: dependencies.system_runtime.clone(),
-                },
-            )),
+            directory: directory.clone(),
             authentication: dependencies.authentication.clone(),
         },
+        share_page: features::share_page::SharePageHttpState::new(
+            directory,
+            dependencies.system_runtime.clone(),
+            &config.authentication.matrix_server_name,
+            &config.authentication.frontend_origin,
+        ),
         agents,
         instances,
         cards,
