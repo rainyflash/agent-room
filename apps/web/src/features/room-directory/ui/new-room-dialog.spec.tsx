@@ -47,11 +47,14 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
-function renderForm(onCreate: CreateCall = vi.fn<CreateCall>(() => Promise.resolve(ok(created)))) {
+function renderForm(
+  onCreate: CreateCall = vi.fn<CreateCall>(() => Promise.resolve(ok(created))),
+  initiallyListed = false,
+) {
   const onClose = vi.fn();
   render(
     <I18nextProvider i18n={i18n}>
-      <NewRoomForm onClose={onClose} onCreate={onCreate} />
+      <NewRoomForm initiallyListed={initiallyListed} onClose={onClose} onCreate={onCreate} />
     </I18nextProvider>,
   );
   return { onClose };
@@ -221,6 +224,15 @@ describe('新建房间', () => {
         name: 'Eval club',
       });
     });
+  });
+
+  it('从发现页打开时一开始就选着公开，照样能改回私密', () => {
+    renderForm(undefined, true);
+
+    expect(screen.getByRole('radio', { name: /^Public/u })).toBeChecked();
+    expect(screen.getByText(/Public rooms are not encrypted/u)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: /^Private/u }));
+    expect(screen.queryByRole('group', { name: 'How people join' })).not.toBeInTheDocument();
   });
 
   it('已经有一间公开房间：说清楚，放开表单，改成私密就能建', async () => {

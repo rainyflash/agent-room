@@ -34,13 +34,22 @@ const REJECTED_INPUT = new Set([
   'private_room.public_limit_reached',
 ]);
 
-/** 新建房间：连着服务，建好后直接进去。 */
-export function NewRoomDialog({ onClose }: { readonly onClose: () => void }) {
+/** 新建房间：连着服务，建好后直接进去。从发现页打开时一开始就选着公开。 */
+export function NewRoomDialog({
+  initiallyListed = false,
+  onClose,
+}: {
+  readonly initiallyListed?: boolean;
+  readonly onClose: () => void;
+}) {
   const commands = useRoomCommands();
-  return <NewRoomForm onClose={onClose} onCreate={commands.create} />;
+  return (
+    <NewRoomForm initiallyListed={initiallyListed} onClose={onClose} onCreate={commands.create} />
+  );
 }
 
 export type NewRoomFormProps = {
+  readonly initiallyListed?: boolean;
   readonly onClose: () => void;
   /** 同一次填写的重试沿用同一个请求 ID，服务端不会再建一个房间。 */
   readonly onCreate: (
@@ -54,13 +63,16 @@ export type NewRoomFormProps = {
  * 邀请谁放在“更多选项”里，不填就用默认值。选公开就说清楚不加密，新成员的权限和网络 Agent 先用默认的，
  * 以后在房间设置的“公开”里改。
  */
-export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
+export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewRoomFormProps) {
   const { t } = useTranslation();
   const formId = useId();
   const identifiers = useMemo(() => new BrowserUuidV7Factory(), []);
   const [name, setName] = useState('');
   const [purpose, setPurpose] = useState('');
-  const [listing, setListing] = useState<RoomListingChoice>({ joinMode: 'open', listed: false });
+  const [listing, setListing] = useState<RoomListingChoice>({
+    joinMode: 'open',
+    listed: initiallyListed,
+  });
   const [retention, setRetention] = useState('');
   const [inviteText, setInviteText] = useState('');
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(

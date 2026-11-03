@@ -214,8 +214,8 @@ const MAC_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 const MAC_INSTALLER = 'https://download.fixture.invalid/agent-room.dmg';
 
-// 网页登录以后也一眼找得到 GitHub 和下载：顶栏右边，地方不够时收成图标，名字、标志和四个去处
-// 都不被挤；桌面端顶栏没有这两样。
+// 网页登录以后也一眼找得到 GitHub 和下载：顶栏右边，地方不够时收成图标，名字、标志和五个去处
+// 都不被挤，中英文都量；桌面端顶栏没有这两样。
 for (const width of [1440, 1024, 390]) {
   test(`网页顶栏：${String(width)}px 有 GitHub 和下载应用，桌面端没有`, async ({ browser }) => {
     const context = await browser.newContext({
@@ -250,6 +250,17 @@ for (const width of [1440, 1024, 390]) {
       .analyze();
     expect(scan.violations.map(({ id }) => id)).toEqual([]);
 
+    await page.evaluate(() => {
+      localStorage.setItem('agent-room.language', 'zh-CN');
+    });
+    await page.reload();
+    await expect(header.getByRole('link', { name: '发现' })).toBeVisible();
+    expect(await crowdedHeaderParts(page)).toEqual([]);
+    await expectNoHorizontalOverflow(page);
+    await page.evaluate(() => {
+      localStorage.removeItem('agent-room.language');
+    });
+
     await page.goto('/e2e/fixtures/my-agents.html');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Source code on GitHub' })).toHaveCount(0);
@@ -260,7 +271,7 @@ for (const width of [1440, 1024, 390]) {
   });
 }
 
-/** 顶栏里被挤得放不下的部分：名字和标志、四个去处。 */
+/** 顶栏里被挤得放不下的部分：名字和标志、五个去处。 */
 async function crowdedHeaderParts(page: Page): Promise<string[]> {
   return await page.locator('.app-navigation').evaluate((header) =>
     ['.app-navigation__identity', '.app-navigation__links'].filter((selector) => {

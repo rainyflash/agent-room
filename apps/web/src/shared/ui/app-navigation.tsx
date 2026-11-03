@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { Compass, Footprints, Inbox, Settings } from 'lucide-react';
+import { Compass, Footprints, Inbox, Settings, Telescope } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -9,16 +9,17 @@ import { useInbox } from '@/features/inbox/ui/inbox-provider';
 import { SettingsAttentionDot } from '@/features/settings/ui/settings-attention';
 import { WebHeaderLinks } from '@/features/updates/ui/web-header-links';
 
-type Destination = 'rooms' | 'agents' | 'inbox' | 'settings';
+type Destination = 'rooms' | 'explore' | 'agents' | 'inbox' | 'settings';
 const destinations = [
   { id: 'rooms', to: '/rooms', icon: Compass },
+  { id: 'explore', to: '/explore', search: {}, icon: Telescope },
   { id: 'inbox', to: '/inbox', icon: Inbox },
   { id: 'agents', to: '/workspace', search: {}, icon: Footprints },
   { id: 'settings', to: '/settings/$section', params: { section: 'general' }, icon: Settings },
 ] as const;
 
 /**
- * 顶栏：房间 / 收件箱 / 我的 Agent / 设置。语言、版本和更新都在“设置”里；这台设备需要签名，
+ * 顶栏：房间 / 发现 / 收件箱 / 我的 Agent / 设置。语言、版本和更新都在“设置”里；这台设备需要签名，
  * 或者桌面端查到新版本时，“设置”上有一个提醒点。网页上右边还有 GitHub 和下载应用。
  */
 export function AppNavigation({
@@ -50,7 +51,7 @@ export function AppNavigation({
   );
 }
 
-/** 顶栏的四个去处：收件箱带未读数，“设置”带提醒点。 */
+/** 顶栏的五个去处：收件箱带未读数，“设置”带提醒点。 */
 function AppDestinationLinks({
   active,
   className,
