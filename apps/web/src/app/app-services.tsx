@@ -69,6 +69,8 @@ export type AppServices = {
   readonly publicRoomEntry?: import('@/features/private-rooms/domain/public-room-join').PublicRoomEntryGateway;
   /** 公开房间的申请：房主和管理员看在等的、批准或拒绝；测试和夹具里可以没有。 */
   readonly publicRoomJoins?: import('@/features/private-rooms/domain/public-room-join').PublicRoomJoinGateway;
+  /** 房主和管理员改房间的常驻公告；测试和夹具里可以没有。 */
+  readonly roomNotices?: import('@/features/room-notice/domain/room-notice').RoomNoticeGateway;
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
   readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;

@@ -61,6 +61,7 @@ import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
+import { RoomNoticeBar } from '@/features/room-notice/ui/room-notice-bar';
 import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
@@ -195,6 +196,7 @@ function ReadyLobby({
     privateRoomInvites,
     privateRoomListings,
     privateRooms,
+    roomNotices,
   } = useAppServices();
   const reception = useReceptionEvidence();
   const { url: downloadUrl } = usePublishedDownload(config);
@@ -273,6 +275,15 @@ function ReadyLobby({
   );
   // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
   const writesAllowed = !archived && room.canSpeak !== false;
+  // 房主和管理员能改公告；归档了谁都不能。
+  const noticeEditable =
+    roomNotices !== undefined &&
+    !archived &&
+    managesRoom(
+      privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+      catalogId,
+      principal?.principalId ?? null,
+    );
   const projection = useMemo(
     () => ({
       ...scene,
@@ -553,6 +564,7 @@ function ReadyLobby({
           onClose={() => {
             setRoomSettings(null);
           }}
+          notice={room.notice}
           onExitRoom={onExitRoom}
           principal={principal}
           roomName={room.name}
@@ -655,6 +667,22 @@ function ReadyLobby({
               <X aria-hidden="true" />
             </button>
           </div>
+        ) : null}
+        {publicConversationVisible && room.notice !== undefined ? (
+          <RoomNoticeBar
+            key={room.roomId}
+            memberNames={room.memberNames}
+            notice={room.notice}
+            onEdit={
+              noticeEditable && principal !== null
+                ? () => {
+                    setRoomSettings({ section: 'notice' });
+                  }
+                : undefined
+            }
+            roomId={room.roomId}
+            selfMatrixUserId={principal?.matrixUserId ?? null}
+          />
         ) : null}
         <div
           className="room-panel__content"
@@ -768,6 +796,17 @@ function invitableRoom(
 }
 
 /** 你在这个私人房间里带进来的 Agent 能不能说话：房主都能，成员要有“自动发言”。不是私人房间的都能。 */
+/** 你是这间房的房主，或者有“管理”。公共大厅和你不在里面的房间都不算。 */
+function managesRoom(
+  rooms: readonly PrivateRoom[],
+  catalogId: string,
+  principalId: string | null,
+): boolean {
+  const room = rooms.find((entry) => entry.catalogId === catalogId);
+  if (room === undefined || principalId === null) return false;
+  return room.ownerPrincipalId === principalId || allows(memberFor(room, principalId), 'manage');
+}
+
 function agentsSpeakIn(
   rooms: readonly PrivateRoom[],
   catalogId: string,

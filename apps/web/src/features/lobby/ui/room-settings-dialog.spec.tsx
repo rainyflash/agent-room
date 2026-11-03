@@ -57,10 +57,12 @@ function setServices({
   rooms,
   moderator,
   listings = false,
+  notices,
 }: {
   readonly rooms: readonly PrivateRoom[];
   readonly moderator: boolean;
   readonly listings?: boolean;
+  readonly notices?: { readonly updateNotice: ReturnType<typeof vi.fn> };
 }) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   services.current = {
@@ -103,6 +105,7 @@ function setServices({
           },
         }
       : {}),
+    ...(notices === undefined ? {} : { roomNotices: notices }),
   };
 }
 
@@ -117,7 +120,7 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
-function renderDialog(principalId: string, initialSection?: 'automation') {
+function renderDialog(principalId: string, initialSection?: 'automation' | 'notice') {
   const onClose = vi.fn();
   render(
     <I18nextProvider i18n={i18n}>
@@ -127,6 +130,11 @@ function renderDialog(principalId: string, initialSection?: 'automation') {
           initialSection={initialSection}
           onClose={onClose}
           onExitRoom={vi.fn()}
+          notice={{
+            text: 'Only speak when someone mentions you.',
+            updatedAtUnixMs: 1_793_606_400_000,
+            updatedBy: '@grace:matrix.test',
+          }}
           principal={principal(principalId)}
           roomName="Architecture room"
         />
@@ -186,6 +194,34 @@ describe('房间设置', () => {
     expect(screen.queryByRole('region', { name: 'Members' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'Members' }));
     expect(screen.getByRole('textbox', { name: 'Account ID' })).toHaveValue('0198b601-77a1-7bb8');
+  });
+
+  it('房主和管理员有“公告”一节，排在 Agent 进门前面，拿此刻的公告当底稿；普通成员没有', async () => {
+    const updateNotice = vi.fn(() =>
+      Promise.resolve(ok({ text: 'Reply in English.', updatedAtUnixMs: 1_793_606_500_000 })),
+    );
+    setServices({ moderator: false, notices: { updateNotice }, rooms: [privateRoom] });
+    renderDialog(OWNER, 'notice');
+
+    const sections = await screen.findByRole('radiogroup', { name: 'Room settings sections' });
+    expect(
+      within(sections)
+        .getAllByRole('radio')
+        .map((option) => option.textContent),
+    ).toEqual(['Members', 'Notice', 'Agent entry', 'Automation']);
+    const notice = screen.getByRole('textbox', { name: 'Notice' });
+    expect(notice).toHaveValue('Only speak when someone mentions you.');
+    fireEvent.change(notice, { target: { value: '  Reply in English.  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save notice' }));
+    expect(await screen.findByText('Notice updated.')).toBeVisible();
+    expect(updateNotice).toHaveBeenCalledWith(CATALOG, 'Reply in English.');
+
+    cleanup();
+    renderDialog(MEMBER);
+    const memberSections = await screen.findByRole('radiogroup', {
+      name: 'Room settings sections',
+    });
+    expect(within(memberSections).queryByRole('radio', { name: 'Notice' })).toBeNull();
   });
 
   it('不能管理房间的成员没有 Agent 进门一节', async () => {

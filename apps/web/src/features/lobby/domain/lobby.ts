@@ -1,4 +1,5 @@
 import type { Result } from '@/shared/result';
+import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
 import type { AgentLifecycle, MatrixPresenceObservation } from '@agent-room/protocol';
 
 export const lobbyAgentStatuses = [
@@ -58,6 +59,8 @@ export type LobbyRoom = {
   readonly memberNames?: readonly LobbyMemberName[];
   readonly agents: readonly LobbyAgent[];
   readonly name: string;
+  /** 房主和管理员挂在对话上方的常驻公告；没有或撤掉了不给。公共大厅没有。 */
+  readonly notice?: RoomNotice;
   readonly observedAtUnixMs: number;
   readonly roomId: string;
   readonly archiveAfterDays?: number;

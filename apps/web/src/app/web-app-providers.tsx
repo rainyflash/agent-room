@@ -254,6 +254,7 @@ export function createCloudRuntime(
     privateRooms,
     privateRoomInvites: privateRooms,
     privateRoomListings: privateRooms,
+    roomNotices: privateRooms,
     publicRoomEntry: privateRooms,
     publicRoomJoins: privateRooms,
     // 不登录也能看：不放进登录范围，没登录的人打开别的页面时清理登录状态也不会中止它。

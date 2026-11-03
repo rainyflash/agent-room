@@ -203,6 +203,34 @@ describe('MatrixLobbyGateway', () => {
     expect(result.ok && result.value.canSpeak).toBe(false);
   });
 
+  it('房间状态里的公告交给房间页；撤掉了的、读不出来的当没有', () => {
+    const read = (notice: unknown) => {
+      const room = { ...snapshot([]), notice };
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+        room.roomId,
+      );
+      return result.ok ? result.value.notice : 'failed';
+    };
+    const notice = (text: string, updatedBy = '@owner:agent-room.test') => ({
+      eventType: 'io.github.rainyflash.agentroom.room.notice.v1',
+      schemaVersion: '1.0',
+      text,
+      updatedAt: '2026-11-03T08:00:00.000Z',
+      updatedBy,
+    });
+
+    expect(read(notice('  只在被点名时说话。\n回复要短。 '))).toEqual({
+      text: '只在被点名时说话。\n回复要短。',
+      updatedAtUnixMs: Date.parse('2026-11-03T08:00:00.000Z'),
+      updatedBy: '@owner:agent-room.test',
+    });
+    expect(read(notice('   '))).toBeUndefined();
+    expect(read(notice('公'.repeat(2_001)))).toBeUndefined();
+    expect(read(notice('不是账户', 'owner'))).toBeUndefined();
+    expect(read({ text: '少了别的字段' })).toBeUndefined();
+    expect(read(undefined)).toBeUndefined();
+  });
+
   it('成员的名字只留认得出的，邮箱只留 @ 前面那段；源里没有就不给', () => {
     const owner = '@user-3412b8ab0ef3cf6a658cbdcf29595500:agent-room.test';
     const unnamed = '@user-0123456789abcdef0123456789abcdef:agent-room.test';
