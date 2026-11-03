@@ -275,6 +275,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::ReadInbox(request) => self.agent_runtime()?.read_inbox(request).await,
                 IpcMethod::WaitInbox(request) => self.agent_runtime()?.wait_inbox(request).await,
                 IpcMethod::AckInbox(request) => self.agent_runtime()?.ack_inbox(request).await,
+                IpcMethod::ReadRoomNotices(request) => {
+                    self.agent_runtime()?.read_room_notices(request).await
+                }
                 view @ (IpcMethod::GetMessages(_)
                 | IpcMethod::MessagesAround(_)
                 | IpcMethod::RoomHistory(_)) => self.agent_runtime()?.view(view).await,
@@ -1048,6 +1051,7 @@ mod tests {
     mod every_room;
     mod inbox_ack;
     mod room_membership;
+    mod room_notices;
     mod viewing;
 
     use std::{

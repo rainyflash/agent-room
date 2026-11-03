@@ -1390,6 +1390,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::Messages { .. } => "messages",
         IpcResponse::RoomMessages { .. } => "room_messages",
         IpcResponse::InboxAcknowledged { .. } => "inbox_acknowledged",
+        IpcResponse::RoomNotices { .. } => "room_notices",
         IpcResponse::Presence { .. } => "presence",
         IpcResponse::OpenedContent { .. } => "opened_content",
         IpcResponse::PublishedStatus { .. } => "published_status",

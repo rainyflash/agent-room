@@ -714,6 +714,17 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         Box::pin(async { Ok(MessageRoomContext::default()) })
     }
 
+    /// 交给 Agent 的房间公告，交出去就记下交过了这一版。`changed_only` 时只交这个 Agent 还没拿到
+    /// 过的那一版（等消息时用；从没拿到过公告时撤掉也不交）；不设时交现在的（进房间时用），没有
+    /// 公告或撤掉了就没有。
+    fn take_room_notice<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _changed_only: bool,
+    ) -> PortFuture<'a, Result<Option<super::RoomNotice>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// 按 ID 找仍然有效的消息，不限房间；找不到的跳过，不保证顺序。能不能看那个房间由调用方查。
     fn lookup_messages<'a>(
         &'a self,

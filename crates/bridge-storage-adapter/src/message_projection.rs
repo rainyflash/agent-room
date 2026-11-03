@@ -12,7 +12,8 @@ use agent_room_bridge_core::messages::{
     MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
     MessageTimelineQueryRepository, MessagesAround, OwnMembership, PendingTimelineGap,
     ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
-    ReservedIsolatedEvent, RoomName, RoomStateChange, TimelineLoss, UndecryptableSession,
+    ReservedIsolatedEvent, RoomName, RoomNotice, RoomStateChange, TimelineLoss,
+    UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -485,6 +486,14 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
         })
     }
 
+    fn take_room_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        changed_only: bool,
+    ) -> PortFuture<'a, Result<Option<RoomNotice>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.take_notice(room_id, changed_only).await })
+    }
+
     fn lookup_messages<'a>(
         &'a self,
         ids: &'a [MessageLookupId],
@@ -585,8 +594,77 @@ impl SqliteMessageTimelineRepository {
                 .await
                 .map_err(|error| map_sqlx_error(&error))?;
             }
+            if let Some(notice) = &change.notice {
+                self.record_notice(&change.room_id, notice, now).await?;
+            }
         }
         Ok(())
+    }
+
+    /// 公告只往新的改：每次连上的全量同步会把同一版再给一遍，那不算改了。
+    async fn record_notice(
+        &self,
+        room_id: &MatrixRoomId,
+        notice: &RoomNotice,
+        now: UtcMillis,
+    ) -> Result<(), MessageProjectionStoreFailure> {
+        sqlx::query(
+            "INSERT INTO message_room_state (
+                 room_id, notice_text, notice_updated_by, notice_updated_at_unix_ms,
+                 updated_at_unix_ms
+             ) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(room_id) DO UPDATE SET
+                 notice_text = excluded.notice_text,
+                 notice_updated_by = excluded.notice_updated_by,
+                 notice_updated_at_unix_ms = excluded.notice_updated_at_unix_ms,
+                 updated_at_unix_ms = excluded.updated_at_unix_ms
+             WHERE message_room_state.notice_updated_at_unix_ms IS NULL
+                OR message_room_state.notice_updated_at_unix_ms
+                   < excluded.notice_updated_at_unix_ms",
+        )
+        .bind(room_id.as_str())
+        .bind(notice.text.as_deref())
+        .bind(notice.updated_by.as_str())
+        .bind(notice.updated_at_ms)
+        .bind(now.value())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
+        Ok(())
+    }
+
+    /// 交出公告的同时记下交过了这一版，一条语句做完，同时等消息的两个请求不会都交。
+    async fn take_notice(
+        &self,
+        room_id: &MatrixRoomId,
+        changed_only: bool,
+    ) -> Result<Option<RoomNotice>, MessageTimelineQueryFailure> {
+        let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>)>(
+            "UPDATE message_room_state
+                SET notice_given_at_unix_ms = notice_updated_at_unix_ms
+              WHERE room_id = ?1
+                AND notice_updated_at_unix_ms IS NOT NULL
+                AND (?2 = 0
+                     OR (notice_given_at_unix_ms IS NULL AND notice_text IS NOT NULL)
+                     OR notice_given_at_unix_ms < notice_updated_at_unix_ms)
+             RETURNING notice_text, notice_updated_by, notice_updated_at_unix_ms",
+        )
+        .bind(room_id.as_str())
+        .bind(changed_only)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?;
+        Ok(row.and_then(|(text, updated_by, updated_at_ms)| {
+            // 进房间时撤掉了就是没有公告；等消息时撤掉也是一次改动。
+            if text.is_none() && !changed_only {
+                return None;
+            }
+            Some(RoomNotice {
+                text,
+                updated_by: updated_by?,
+                updated_at_ms: updated_at_ms?,
+            })
+        }))
     }
 }
 
