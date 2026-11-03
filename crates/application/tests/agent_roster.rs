@@ -49,6 +49,7 @@ impl ModerationAuthority for Authority {
                     .map(|room| MatrixRoomId::new(*room).unwrap())
                     .collect(),
                 target_matrix_user_id: None,
+                target_agent_matrix_user_ids: Vec::new(),
             }))
         })
     }

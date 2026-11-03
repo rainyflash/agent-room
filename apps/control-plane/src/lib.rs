@@ -1755,11 +1755,14 @@ fn build_agent_lobby_entry(
             // 私人房间的入场资格由成员事实裁决，Matrix 侧按同一网关补发受邀。
             private_rooms: repositories.clone(),
             // 凭口令进来的 Agent 成员不随任何成员入场，按它自己的成员记录裁决。
-            private_agents: repositories,
+            private_agents: repositories.clone(),
             private_matrix: matrix.clone(),
-            memberships: matrix,
+            memberships: matrix.clone(),
             provisioning,
             identifiers: system_runtime.clone(),
+            // 它代表的人被禁言着时，进来、重连都不给它说话，和管理员落禁言走同一套 Matrix 效果。
+            standing_moderation: repositories,
+            moderation_effects: matrix,
             clock: system_runtime,
         },
         join_policy,

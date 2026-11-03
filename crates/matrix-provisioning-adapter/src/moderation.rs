@@ -1,7 +1,7 @@
 use agent_room_application::ports::{
     MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
     MatrixUserId, ModerationEffectGateway, ModerationEffectTarget, PortFuture,
-    PrivateRoomMatrixGateway,
+    PrivateMatrixMembership, PrivateRoomMatrixGateway,
 };
 use agent_room_domain::{
     moderation::{ModerationAction, ModerationActionKind},
@@ -54,7 +54,7 @@ async fn apply_effect(
         ModerationActionKind::Hide => {
             write_moderation_notice(provisioner, action, target, true).await
         }
-        ModerationActionKind::Mute => set_speaking(provisioner, target, false).await,
+        ModerationActionKind::Mute => set_speaking_with_agents(provisioner, target, false).await,
         ModerationActionKind::Kick => {
             PrivateRoomMatrixGateway::kick(
                 provisioner,
@@ -84,7 +84,7 @@ async fn reverse_effect(
         ModerationActionKind::Hide => {
             write_moderation_notice(provisioner, action, target, false).await
         }
-        ModerationActionKind::Mute => set_speaking(provisioner, target, true).await,
+        ModerationActionKind::Mute => set_speaking_with_agents(provisioner, target, true).await,
         // 公开大厅谁都能进：被踢出的人自己回来就行，不在每个分片里发邀请。
         ModerationActionKind::Kick if target.room_kind == RoomCatalogKind::PublicLobby => Ok(()),
         ModerationActionKind::Kick => {
@@ -106,15 +106,42 @@ async fn reverse_effect(
     }
 }
 
-/// 禁言或撤销禁言。私人房间按成员发言权那一套（发言级别就是 `events_default`）。公开大厅谁都能
-/// 说话，不能套私人房间那套：那会把整个大厅的门槛抬到发言级别，谁都说不了话。这里只把这个人压到
-/// 门槛以下，撤销时去掉这一项。
-async fn set_speaking(
+/// 禁言或撤销禁言：这个人，再加上他名下此刻在这个分片里（已加入或受邀）的 Agent。Agent 的能力不超过
+/// 它代表的人，不然人被禁言了，他的 Agent 照样替他说话。不在分片里的 Agent 不写进权限表，它之后进来
+/// 时由进房间那一步看他是不是被禁言着。
+async fn set_speaking_with_agents(
     provisioner: &MatrixApplicationServiceProvisioner,
     target: &ModerationEffectTarget,
     allowed: bool,
 ) -> MatrixResult<()> {
-    let user_id = required_matrix_user(target)?;
+    let person = required_matrix_user(target)?;
+    set_speaking(provisioner, target, person, allowed).await?;
+    for agent in &target.target_agent_matrix_user_ids {
+        if agent == person {
+            continue;
+        }
+        let membership =
+            PrivateRoomMatrixGateway::membership(provisioner, &target.matrix_room_id, agent)
+                .await?;
+        if matches!(
+            membership,
+            Some(PrivateMatrixMembership::Joined | PrivateMatrixMembership::Invited)
+        ) {
+            set_speaking(provisioner, target, agent, allowed).await?;
+        }
+    }
+    Ok(())
+}
+
+/// 给一个账号禁言或撤销禁言。私人房间按成员发言权那一套（发言级别就是 `events_default`）。公开大厅
+/// 谁都能说话，不能套私人房间那套：那会把整个大厅的门槛抬到发言级别，谁都说不了话。这里只把这个人
+/// 压到门槛以下，撤销时去掉这一项。
+async fn set_speaking(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    target: &ModerationEffectTarget,
+    user_id: &MatrixUserId,
+    allowed: bool,
+) -> MatrixResult<()> {
     if target.room_kind != RoomCatalogKind::PublicLobby {
         return PrivateRoomMatrixGateway::set_speaking(
             provisioner,
@@ -326,6 +353,8 @@ mod tests {
 
     const MEMBER: &str = "@member:matrix.agent-room.localhost";
     const SERVICE: &str = "@agent-room:matrix.agent-room.localhost";
+    const MEMBER_AGENT: &str = "@agent-0001:matrix.agent-room.localhost";
+    const MEMBER_AGENT_ELSEWHERE: &str = "@agent-0002:matrix.agent-room.localhost";
 
     #[tokio::test]
     async fn 四类治理动作与撤销都落到可重试_matrix_端点() {
@@ -358,6 +387,7 @@ mod tests {
             room_kind: RoomCatalogKind::PrivateRoom,
             target: hide.target().clone(),
             target_matrix_user_id: None,
+            target_agent_matrix_user_ids: Vec::new(),
         };
         ModerationEffectGateway::apply(&provisioner, &hide, &hide_target)
             .await
@@ -420,6 +450,62 @@ mod tests {
         let writes = server.power_writes().await;
         assert_eq!(writes.len(), 2, "已经撤销的不再写");
         assert_eq!(writes[1], lobby_levels, "撤销时去掉这一项，回到原来的样子");
+    }
+
+    #[tokio::test]
+    async fn 禁言连他在分片里的_agent_一起压下去_撤销时一起放开_不在的不写() {
+        let server = ModerationTestServer::start().await;
+        let provisioner = provisioner(&server.url);
+        let room = MatrixRoomId::new("!lobby:matrix.agent-room.localhost").expect("房间有效");
+        let lobby_levels = json!({
+            "users": { SERVICE: 100 },
+            "users_default": 0,
+            "events_default": 0,
+            "state_default": 50
+        });
+        server.set_power_levels(lobby_levels.clone()).await;
+        server.join(MEMBER_AGENT).await;
+        let action = action(
+            ModerationActionKind::Mute,
+            PrincipalId::from_uuid(Uuid::now_v7()),
+        );
+        let mut target = person_target(&room, RoomCatalogKind::PublicLobby, &action);
+        target.target_agent_matrix_user_ids = vec![
+            MatrixUserId::new(MEMBER_AGENT).expect("Agent 有效"),
+            MatrixUserId::new(MEMBER_AGENT_ELSEWHERE).expect("Agent 有效"),
+            MatrixUserId::new(MEMBER).expect("成员有效"),
+        ];
+
+        ModerationEffectGateway::apply(&provisioner, &action, &target)
+            .await
+            .expect("禁言应成功");
+        let mut muted = lobby_levels.clone();
+        muted["users"][MEMBER] = json!(-1);
+        muted["users"][MEMBER_AGENT] = json!(-1);
+        assert_eq!(
+            server.power_writes().await.last(),
+            Some(&muted),
+            "人和他在分片里的 Agent 都压到门槛下面，不在的那个不写进权限表"
+        );
+        assert_eq!(
+            server
+                .take_calls()
+                .await
+                .iter()
+                .filter(|call| *call == "membership")
+                .count(),
+            2,
+            "人自己不当成他的 Agent 再看一遍"
+        );
+
+        ModerationEffectGateway::reverse(&provisioner, &action, &target)
+            .await
+            .expect("撤销禁言应成功");
+        assert_eq!(
+            server.power_writes().await.last(),
+            Some(&lobby_levels),
+            "撤销时人和 Agent 一起放开"
+        );
     }
 
     #[tokio::test]
@@ -516,6 +602,7 @@ mod tests {
             )
             .expect("另一目标有效"),
             target_matrix_user_id: Some(MatrixUserId::new(MEMBER).expect("成员有效")),
+            target_agent_matrix_user_ids: Vec::new(),
         };
 
         let failure = ModerationEffectGateway::apply(&provisioner, &action, &target)
@@ -534,6 +621,7 @@ mod tests {
             room_kind,
             target: action.target().clone(),
             target_matrix_user_id: Some(MatrixUserId::new(MEMBER).expect("成员有效")),
+            target_agent_matrix_user_ids: Vec::new(),
         }
     }
 

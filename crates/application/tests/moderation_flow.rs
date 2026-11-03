@@ -347,12 +347,14 @@ impl ModerationAuthority for FakeAuthority {
         let matrix_room_ids = self.rooms.lock().expect("分片锁可用").clone();
         let target_matrix_user_id = (target.kind() == ModerationTargetKind::Principal)
             .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效"));
+        let target_agent_matrix_user_ids = target_agents(target.kind());
         Box::pin(async move {
             Ok(Some(ModerationRoomContext {
                 role,
                 room_kind,
                 matrix_room_ids,
                 target_matrix_user_id,
+                target_agent_matrix_user_ids,
             }))
         })
     }
@@ -485,6 +487,7 @@ impl ModerationExpiryRepository for FakeExpiry {
             matrix_room_ids: self.authority.rooms.lock().expect("分片锁可用").clone(),
             target_matrix_user_id: (action.target().kind() == ModerationTargetKind::Principal)
                 .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效")),
+            target_agent_matrix_user_ids: target_agents(action.target().kind()),
         };
         Box::pin(async move { Ok(Some(context)) })
     }
@@ -559,6 +562,7 @@ impl ModerationMuteLedger for FakeMutes {
             matrix_room_ids: self.authority.rooms.lock().expect("分片锁可用").clone(),
             target_matrix_user_id: (!*self.account_gone.lock().expect("账号锁可用"))
                 .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效")),
+            target_agent_matrix_user_ids: target_agents(ModerationTargetKind::Principal),
             may_speak: *self.may_speak.lock().expect("发言权锁可用"),
             mutes,
         };
@@ -647,6 +651,24 @@ impl FakeEffects {
     fn looked_up(&self) -> Vec<String> {
         self.lookups.lock().expect("查找锁可用").clone()
     }
+}
+
+/// 被管的人名下的 Agent：管人的动作才有。
+fn target_agents(kind: ModerationTargetKind) -> Vec<MatrixUserId> {
+    if kind == ModerationTargetKind::Principal {
+        vec![MatrixUserId::new("@target-agent:matrix.test").expect("测试 Agent 有效")]
+    } else {
+        Vec::new()
+    }
+}
+
+/// 每个副作用都带着被管的人名下的 Agent，禁言和撤销禁言由 Matrix 那边跟着这个人一起动它们。
+fn all_carry_agents(targets: &Mutex<Vec<ModerationEffectTarget>>) -> bool {
+    let targets = targets.lock().expect("副作用锁可用");
+    !targets.is_empty()
+        && targets.iter().all(|target| {
+            target.target_agent_matrix_user_ids == target_agents(ModerationTargetKind::Principal)
+        })
 }
 
 fn rooms_of(targets: &[ModerationEffectTarget]) -> Vec<String> {
@@ -1127,6 +1149,7 @@ async fn 禁言踢出封禁落到每个活跃分片_撤销也在每个分片上�
                         .map(MatrixUserId::as_str)
                         == Some("@target:matrix.test"))
         );
+        assert!(all_carry_agents(&fixture.effects.applied));
         assert!(fixture.effects.looked_up().is_empty());
 
         fixture
@@ -1143,6 +1166,7 @@ async fn 禁言踢出封禁落到每个活跃分片_撤销也在每个分片上�
             ["!busy:matrix.test", "!quiet:matrix.test"],
             "{kind:?} 要在每个分片上撤"
         );
+        assert!(all_carry_agents(&fixture.effects.reversed));
     }
 }
 
@@ -1194,6 +1218,10 @@ async fn 到期的禁言自动解除_每个活跃分片都撤到并留下审计(
     assert_eq!(
         fixture.effects.reversed_rooms(),
         ["!busy:matrix.test", "!quiet:matrix.test"]
+    );
+    assert!(
+        all_carry_agents(&fixture.effects.reversed),
+        "到期解除时他名下的 Agent 也一起放开"
     );
     let expired = fixture.repository.action(action.id());
     assert_eq!(expired.status(), ModerationActionStatus::Reversed);

@@ -99,6 +99,7 @@ async fn mute_everywhere(
             room_kind: RoomCatalogKind::PublicLobby,
             target: mute.target().clone(),
             target_matrix_user_id: Some(ledger.target_user.clone()),
+            target_agent_matrix_user_ids: Vec::new(),
         };
         ModerationEffectGateway::apply(provisioner, mute, &target)
             .await
@@ -455,6 +456,7 @@ impl ModerationMuteLedger for MemoryLedger {
             room_kind: RoomCatalogKind::PublicLobby,
             matrix_room_ids: self.rooms.clone(),
             target_matrix_user_id: Some(self.target_user.clone()),
+            target_agent_matrix_user_ids: Vec::new(),
             may_speak: true,
             mutes,
         };
