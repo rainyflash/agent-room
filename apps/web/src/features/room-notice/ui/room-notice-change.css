@@ -1,0 +1,22 @@
+.room-notice-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  margin: 0 0 22px;
+  color: var(--ar-muted);
+  font-size: 12px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.room-notice-change svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.room-notice-change time {
+  font-variant-numeric: tabular-nums;
+}

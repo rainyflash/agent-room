@@ -113,6 +113,12 @@ export function MessageLayer({
             {...(state.kind === 'ready' && state.room.undecryptable !== undefined
               ? { recovery, undecryptable: state.room.undecryptable }
               : {})}
+            /* 私聊没有公告：两边都能写房间状态（trusted_private_chat），有也是冒充的。 */
+            {...(variant !== 'direct' &&
+            state.kind === 'ready' &&
+            state.room.noticeChanges !== undefined
+              ? { noticeChanges: state.room.noticeChanges }
+              : {})}
           />
         </div>
         <section className="message-workspace__resources" hidden={view !== 'resources'}>

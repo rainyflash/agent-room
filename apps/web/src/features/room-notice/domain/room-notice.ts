@@ -65,6 +65,20 @@ export function parseRoomNotice(content: unknown): RoomNotice | undefined {
   });
 }
 
+/** 公告的一次改动：写了新的，或者撤掉了（正文是空的）。 */
+export type RoomNoticeChangeKind = 'updated' | 'removed';
+
+/** 状态事件里这次是写还是撤、谁改的。读不出来的、超长的不算一次改动。 */
+export function parseRoomNoticeChange(
+  content: unknown,
+): { readonly kind: RoomNoticeChangeKind; readonly updatedBy: string } | undefined {
+  const parsed = noticeStateSchema.safeParse(content);
+  if (!parsed.success) return undefined;
+  const text = parsed.data.text.trim();
+  if (characterCount(text) > ROOM_NOTICE_MAX_CHARACTERS) return undefined;
+  return { kind: text === '' ? 'removed' : 'updated', updatedBy: parsed.data.updatedBy };
+}
+
 export type RoomNoticeProblem = 'control_character' | 'too_long';
 
 /** 按控制面的规则先看一遍，免得发出去才被拒：去掉首尾空白以后最多 2000 个字，只能带换行和制表符。 */
