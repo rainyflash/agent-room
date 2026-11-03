@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 67] = [
+const EXPECTED_TABLES: [&str; 68] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -86,6 +86,7 @@ const EXPECTED_TABLES: [&str; 67] = [
     "matrix_projection_cursor",
     "matrix_projection_event_receipt",
     "moderation_action",
+    "moderation_action_agent",
     "moderation_case",
     "moderation_operator",
     "moderation_report_rate",
@@ -264,6 +265,7 @@ async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: 
     assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
     assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
     assert_eq!(exported.data["moderationGrants"], serde_json::json!([]));
+    assert_eq!(exported.data["agentModerationNotes"], serde_json::json!([]));
 }
 
 #[tokio::test]

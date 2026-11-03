@@ -65,6 +65,31 @@ impl GrantRow {
     }
 }
 
+/// 这个 Agent 在这个房间里此刻在用的授权（没撤、没到期）：Agent 动手时按它查。没撤的最多一份。
+pub(crate) async fn active_agent_grant(
+    pool: &sqlx::PgPool,
+    catalog_id: RoomCatalogId,
+    agent_id: AgentId,
+    now: UtcMillis,
+) -> RepositoryResult<Option<RoomModerationGrant>> {
+    let operation = "room_moderation_grant.active_for_agent";
+    let row: Option<GrantRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        r"SELECT {GRANT_COLUMNS}
+            FROM agent_room.room_moderation_grant AS grant_row
+           WHERE grant_row.catalog_entry_id = $1
+             AND grant_row.agent_id = $2
+             AND grant_row.revoked_at IS NULL
+             AND grant_row.expires_at > to_timestamp($3::double precision / 1000.0)"
+    )))
+    .bind(catalog_id.as_uuid())
+    .bind(agent_id.as_uuid())
+    .bind(now.value())
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    row.map(|row| row.decode(operation)).transpose()
+}
+
 impl RoomModerationGrantStore for PostgresRepositories {
     fn owned_agent_name(
         &self,

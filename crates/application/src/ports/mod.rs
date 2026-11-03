@@ -130,12 +130,13 @@ pub use matrix::{
     MatrixUserPresence, MatrixValueError,
 };
 pub use moderation::{
+    AgentModerationAttribution, AgentModerationRecord, AgentModerationStore,
     ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
     ModerationEffectTarget, ModerationExpiryClaim, ModerationExpiryRepository,
     ModerationExpiryReschedule, ModerationIdentifierFactory, ModerationMuteLedger,
     ModerationMuteLock, ModerationMuteStanding, ModerationReportPolicy,
     ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
-    StandingModeration, StandingModerationSource,
+    ModerationSubject, StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
 pub use projections::{

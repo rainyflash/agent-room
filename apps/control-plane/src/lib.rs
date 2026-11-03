@@ -60,7 +60,10 @@ use agent_room_application::{
     },
     health::ReadinessService,
     lobby_observation::PublicLobbyObservationService,
-    moderation::{ModerationDependencies, ModerationService},
+    moderation::{
+        AgentModerationDependencies, AgentModerationService, ModerationDependencies,
+        ModerationService,
+    },
     network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
@@ -168,6 +171,7 @@ struct AgentFeatureHttpStates {
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
     room_notices: features::private_room_notice::PrivateRoomNoticeHttpState,
     room_moderation_grants: features::room_moderation_grants::RoomModerationGrantHttpState,
+    agent_moderation: features::agent_moderation::AgentModerationHttpState,
     room_holds: features::public_room_platform_hold::PublicRoomPlatformHoldHttpState,
     room_joins: features::public_room_join::PublicRoomJoinHttpState,
     public_rooms: features::public_rooms::PublicRoomsHttpState,
@@ -653,6 +657,7 @@ fn compose_identity_routes(
         .merge(features::room_moderation_grants::router(
             agents.room_moderation_grants,
         ))
+        .merge(features::agent_moderation::router(agents.agent_moderation))
         .merge(features::public_room_platform_hold::router(
             agents.room_holds,
         ))
@@ -948,6 +953,7 @@ fn build_agent_feature_states(
         room_descriptions: build_room_description_http_state(config, dependencies),
         room_notices: build_room_notice_http_state(config, dependencies),
         room_moderation_grants: build_room_moderation_grant_http_state(config, dependencies),
+        agent_moderation: build_agent_moderation_http_state(dependencies),
         room_holds: build_room_hold_http_state(config, dependencies),
         room_joins: build_room_join_http_state(config, dependencies)?,
         public_rooms: features::public_rooms::PublicRoomsHttpState {
@@ -1146,6 +1152,27 @@ fn build_room_moderation_grant_http_state(
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主的 Agent 照管理授权动手（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：落进的是网页治理
+/// 用的那一套台账。
+fn build_agent_moderation_http_state(
+    dependencies: &AgentFeatureDependencies,
+) -> features::agent_moderation::AgentModerationHttpState {
+    let moderation = Arc::new(AgentModerationService::new(AgentModerationDependencies {
+        moderation: build_moderation_management(dependencies),
+        store: dependencies.repositories.clone(),
+        access: dependencies.repositories.clone(),
+        rooms: dependencies.repositories.clone(),
+    }));
+    features::agent_moderation::AgentModerationHttpState::new(
+        features::agent_moderation::AgentModerationHttpDependencies {
+            moderation,
+            authentication: dependencies.authentication.clone(),
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+        },
     )
 }
 

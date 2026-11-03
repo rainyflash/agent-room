@@ -12,6 +12,13 @@ pub const MAX_ROOM_MODERATION_GRANT_LIFETIME_MILLIS: u64 = 30 * 24 * 60 * 60 * 1
 /// 一份授权最短多久（毫秒）。
 pub const MIN_ROOM_MODERATION_GRANT_LIFETIME_MILLIS: u64 = 60 * 1_000;
 
+/// Agent 动手时写的理由最多多少个字（按 Unicode 字符数）。
+pub const MAX_AGENT_MODERATION_NOTE_CHARACTERS: usize = 500;
+
+/// Agent 限时禁言最短、最长多久（毫秒）：一分钟到 30 天。不给时长就一直禁着，直到有人撤回。
+pub const MIN_AGENT_MUTE_MILLIS: u64 = 60 * 1_000;
+pub const MAX_AGENT_MUTE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
+
 /// Agent 能做的一样。禁言可以限时；解封只解它自己封的（第 7a-2 步）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RoomModerationPower {
@@ -115,6 +122,58 @@ impl RoomModerationRules {
     }
 }
 
+/// Agent 动手时写的理由：它照规则的哪一条、看到了什么。去掉首尾空白，1 到 500 个字；控制字符和规则一样，
+/// 只收换行和制表符。房主和管理员在台账里看得到。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationNote(String);
+
+impl AgentModerationNote {
+    /// # Errors
+    ///
+    /// 空的、超过 500 个字，或带着换行和制表符以外的控制字符时返回错误。
+    pub fn parse(input: &str) -> DomainResult<Self> {
+        let note = input.trim();
+        if note.is_empty()
+            || note.chars().count() > MAX_AGENT_MODERATION_NOTE_CHARACTERS
+            || note
+                .chars()
+                .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+        {
+            return Err(DomainError::Validation {
+                field: "agent_moderation_note",
+                reason: "理由要写 1 到 500 个字，只能带换行和制表符这两种控制字符",
+            });
+        }
+        Ok(Self(note.to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Agent 限时禁言的时长：不给就是一直禁着；给了要在一分钟到 30 天之间。
+///
+/// # Errors
+///
+/// 不在这个范围里时返回错误。
+pub fn agent_mute_duration(
+    requested: Option<DurationMillis>,
+) -> DomainResult<Option<DurationMillis>> {
+    match requested {
+        Some(duration)
+            if !(MIN_AGENT_MUTE_MILLIS..=MAX_AGENT_MUTE_MILLIS).contains(&duration.value()) =>
+        {
+            Err(DomainError::Validation {
+                field: "agent_mute_duration",
+                reason: "限时禁言要在一分钟到 30 天之间",
+            })
+        }
+        requested => Ok(requested),
+    }
+}
+
 /// 授权多久：不填是 30 天，填了要在一分钟到 30 天之间。
 ///
 /// # Errors
@@ -194,5 +253,30 @@ mod tests {
         );
         let longer = DurationMillis::new(30 * 24 * 60 * 60 * 1_000 + 1).unwrap();
         assert!(room_moderation_grant_lifetime(Some(longer)).is_err());
+    }
+
+    #[test]
+    fn 理由去掉首尾空白_空的太长的带回车的不行() {
+        let note =
+            AgentModerationNote::parse("  连发了五条广告链接，按“发广告的封禁”。\n ").unwrap();
+        assert_eq!(note.as_str(), "连发了五条广告链接，按“发广告的封禁”。");
+        assert!(AgentModerationNote::parse("  ").is_err());
+        assert!(AgentModerationNote::parse("回车\r不行").is_err());
+        let longest = "理".repeat(MAX_AGENT_MODERATION_NOTE_CHARACTERS);
+        assert!(AgentModerationNote::parse(&longest).is_ok());
+        assert!(AgentModerationNote::parse(&format!("{longest}由")).is_err());
+    }
+
+    #[test]
+    fn 限时禁言不给就一直禁着_给了要在一分钟到三十天之间() {
+        assert_eq!(agent_mute_duration(None).unwrap(), None);
+        let ten_minutes = DurationMillis::new(10 * 60 * 1_000).unwrap();
+        assert_eq!(
+            agent_mute_duration(Some(ten_minutes)).unwrap(),
+            Some(ten_minutes)
+        );
+        assert!(agent_mute_duration(Some(DurationMillis::new(59_999).unwrap())).is_err());
+        let longer = DurationMillis::new(MAX_AGENT_MUTE_MILLIS + 1).unwrap();
+        assert!(agent_mute_duration(Some(longer)).is_err());
     }
 }

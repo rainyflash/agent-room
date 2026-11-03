@@ -36,6 +36,9 @@ use agent_room_domain::{
 };
 use uuid::Uuid;
 
+#[path = "moderation_flow/agents.rs"]
+mod agents;
+
 const NOW: i64 = 1_700_000_000_000;
 
 /// 从 `NOW` 起走的时钟，测到期时往后拨。
@@ -742,7 +745,7 @@ impl ModerationEffectGateway for FakeEffects {
 }
 
 struct Fixture {
-    service: ModerationService,
+    service: Arc<ModerationService>,
     repository: Arc<FakeRepository>,
     authority: Arc<FakeAuthority>,
     expiry: Arc<FakeExpiry>,
@@ -781,7 +784,7 @@ impl Fixture {
             held: Arc::new(Mutex::new(HashSet::new())),
             between_reads: Mutex::new(None),
         });
-        let service = ModerationService::new(ModerationDependencies {
+        let service = Arc::new(ModerationService::new(ModerationDependencies {
             repository: repository.clone(),
             authority: authority.clone(),
             expiry: expiry.clone(),
@@ -793,7 +796,7 @@ impl Fixture {
                 maximum_reports: 5,
                 window: DurationMillis::new(600_000).expect("窗口有效"),
             },
-        });
+        }));
         Self {
             service,
             repository,

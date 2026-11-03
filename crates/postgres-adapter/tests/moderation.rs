@@ -29,6 +29,9 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+#[path = "moderation/agents.rs"]
+mod agents;
+
 struct TestDatabase {
     migration: PgPool,
     runtime: PgPool,
