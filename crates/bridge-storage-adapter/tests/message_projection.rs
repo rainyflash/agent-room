@@ -1495,6 +1495,71 @@ async fn 增量分页不遗漏突发消息且拒绝跨房间游标() {
     );
 }
 
+async fn record_notice(
+    store: &SqliteMessageTimelineRepository,
+    room_id: &MatrixRoomId,
+    text: Option<&str>,
+    updated_at_ms: i64,
+) {
+    use agent_room_bridge_core::messages::{RoomNotice, RoomStateChange};
+    let change = RoomStateChange {
+        room_id: room_id.clone(),
+        name: None,
+        membership: None,
+        notice: Some(RoomNotice {
+            text: text.map(str::to_owned),
+            updated_by: "@owner:matrix.test".to_owned(),
+            updated_at_ms,
+        }),
+    };
+    store
+        .record_room_state(&[change], UtcMillis::new(9_000).expect("时间有效"))
+        .await
+        .expect("可以记");
+}
+
+#[tokio::test]
+async fn 公告进房间交现在的_改了以后只交一次_同一版再同步一遍不算改() {
+    use agent_room_bridge_core::messages::MessageTimelineQueryRepository as _;
+    let (_directory, store, _inspector) = open_store().await;
+    let room_id = MatrixRoomId::new("!room:matrix.test").expect("房间标识有效");
+    let take = |changed_only| store.take_room_notice(&room_id, changed_only);
+    let text = |notice: Option<agent_room_bridge_core::messages::RoomNotice>| {
+        notice.map(|notice| (notice.text, notice.updated_at_ms))
+    };
+    assert_eq!(take(false).await.expect("可以读"), None, "没记过就没有");
+
+    record_notice(&store, &room_id, Some("只在被点名时说话。"), 1_000).await;
+    let first = take(true).await.expect("可以读").expect("还没交过");
+    assert_eq!(first.updated_by, "@owner:matrix.test");
+    assert_eq!(text(Some(first)), Some((Some("只在被点名时说话。".to_owned()), 1_000)));
+    assert_eq!(take(true).await.expect("可以读"), None, "交过一次就不再交");
+    // 进房间时照样交现在的；重连的全量同步把同一版再给一遍、晚到的旧版都不算改。
+    assert_eq!(
+        text(take(false).await.expect("可以读")),
+        Some((Some("只在被点名时说话。".to_owned()), 1_000))
+    );
+    record_notice(&store, &room_id, Some("只在被点名时说话。"), 1_000).await;
+    record_notice(&store, &room_id, Some("更早的一版"), 500).await;
+    assert_eq!(take(true).await.expect("可以读"), None);
+
+    record_notice(&store, &room_id, Some("回复要短。"), 2_000).await;
+    assert_eq!(
+        text(take(true).await.expect("可以读")),
+        Some((Some("回复要短。".to_owned()), 2_000))
+    );
+    // 撤掉也是一次改动，等消息时交一次；进房间时就是没有公告。
+    record_notice(&store, &room_id, None, 3_000).await;
+    assert_eq!(text(take(true).await.expect("可以读")), Some((None, 3_000)));
+    assert_eq!(take(true).await.expect("可以读"), None);
+    assert_eq!(take(false).await.expect("可以读"), None);
+
+    // 从没拿到过公告的房间，撤掉不用告诉它。
+    let other = MatrixRoomId::new("!other:matrix.test").expect("房间标识有效");
+    record_notice(&store, &other, None, 4_000).await;
+    assert_eq!(store.take_room_notice(&other, true).await.expect("可以读"), None);
+}
+
 #[tokio::test]
 async fn 记下房间名和加入时间_离开清掉_再加入重新记() {
     use agent_room_bridge_core::messages::{
@@ -1509,6 +1574,7 @@ async fn 记下房间名和加入时间_离开清掉_再加入重新记() {
         room_id: room_id.clone(),
         name,
         membership,
+        notice: None,
     };
     assert_eq!(
         store.room_context(&room_id).await.expect("可以读"),

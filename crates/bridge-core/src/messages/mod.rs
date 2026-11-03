@@ -13,7 +13,9 @@ mod recovery;
 mod room_state;
 mod wire;
 
-pub use room_state::{OwnMembership, RoomName, RoomStateChange, room_state_changes};
+pub use room_state::{
+    OwnMembership, ROOM_NOTICE_EVENT_TYPE, RoomName, RoomNotice, RoomStateChange, room_state_changes,
+};
 
 pub use automation::{
     AutomationAuthorizationDenial, AutomationAuthorizationFailure,

@@ -74,6 +74,7 @@ use crate::agent_status::AgentStatusPublicationHandle;
 mod every_room;
 mod inbox_ack;
 mod room_membership;
+mod room_notices;
 mod viewing;
 
 pub(crate) use room_membership::AgentRoomEntry;

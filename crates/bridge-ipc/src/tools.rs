@@ -75,6 +75,8 @@ pub enum IpcMethod {
     RoomHistory(IpcRoomHistoryRequest),
     /// 确认收件箱处理到某一条（含）：它和它之前收到的都不再交。位置按房间记，只往前走。
     AckInbox(IpcAckInboxRequest),
+    /// 房间的常驻公告：进房间时要现在的，交一批消息时要改了的（4.6 起）。包在 `WithSession` 里用。
+    ReadRoomNotices(crate::IpcReadRoomNoticesRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     /// 旧版 MCP 和命令行还会发，新版已经去掉：Agent 自己报的工作状态不再发布
@@ -124,6 +126,7 @@ impl IpcMethod {
             Self::MessagesAround(_) => "messages_around",
             Self::RoomHistory(_) => "room_history",
             Self::AckInbox(_) => "ack_inbox",
+            Self::ReadRoomNotices(_) => "read_room_notices",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -168,6 +171,7 @@ impl IpcMethod {
             | Self::RoomHistory(_)
             // 确认位置只是这个 Agent 自己读到哪了，和读收件箱同一类权限。
             | Self::AckInbox(_)
+            | Self::ReadRoomNotices(_)
             | Self::ListRooms
             | Self::ListPublicRooms(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
@@ -264,6 +268,7 @@ impl IpcMethod {
             Self::MessagesAround(request) => request.validate(),
             Self::RoomHistory(request) => request.validate(),
             Self::AckInbox(request) => validate_message_reference(&request.id),
+            Self::ReadRoomNotices(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),
@@ -899,6 +904,10 @@ pub enum IpcResponse {
         )]
         next_cursor: Option<String>,
     },
+    /// 房间的常驻公告，一个房间一条；没有就是空的。
+    RoomNotices {
+        notices: Vec<crate::IpcRoomNotice>,
+    },
     /// 确认收件箱的结果。`acknowledged` 为 false 是这一条早就确认过了，位置不往回走；
     /// `pending` 是这个房间里确认位置之后还有几条别人发的。
     InboxAcknowledged {
@@ -1411,7 +1420,7 @@ impl IpcMethodValidationFailure {
     }
 }
 
-fn validate_optional_bounded(
+pub(crate) fn validate_optional_bounded(
     value: Option<&str>,
     maximum_bytes: usize,
     code: &'static str,

@@ -20,12 +20,14 @@ pub use public_rooms::{
     IpcListPublicRoomsRequest, IpcPublicRoom, IpcPublicRoomJoinMode, PUBLIC_ROOM_SEARCH_CHARACTERS,
 };
 mod room_management;
+mod room_notices;
 mod session_rooms;
 pub use room_management::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
     IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
     managed_room,
 };
+pub use room_notices::{IpcReadRoomNoticesRequest, IpcRoomNotice, ROOM_NOTICES_PER_RESPONSE};
 pub use session_rooms::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcRoomCursor, IpcSessionRoom};
 pub mod typing;
 pub mod wake;

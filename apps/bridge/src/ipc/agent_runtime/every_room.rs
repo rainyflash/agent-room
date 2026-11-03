@@ -145,7 +145,7 @@ impl AgentRuntimeIpcFacade {
 
 /// Agent 此刻在的房间：会话的那个在前（照旧问服务器），再加上这次连上以后同步里看到的，最多
 /// [`limits::SESSION_ROOMS`] 个。被移出了会话的那个房间就只看别的；一个也不在时照旧说不在房间里。
-async fn rooms_of(
+pub(super) async fn rooms_of(
     runtime: &BridgeAgentRuntimeSnapshot,
 ) -> Result<Vec<MatrixRoomId>, BridgeIpcDispatchFailure> {
     let mut rooms = runtime
