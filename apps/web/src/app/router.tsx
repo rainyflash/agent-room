@@ -431,13 +431,25 @@ function ExploreRoomBoundary() {
     },
     [navigate],
   );
+  const filter = exploreFilterFromSearch(search);
   const onClosePanel = useCallback(() => {
-    void navigate({ search, to: '/explore' });
-  }, [navigate, search]);
+    void navigate({ search: exploreSearchFromFilter(filter), to: '/explore' });
+  }, [filter, navigate]);
+  // 从分享页点“加入”过来的（`?join=1`）：接着做了就从地址上去掉，刷新、后退不再做一遍。
+  const onContinuationHandled = useCallback(() => {
+    void navigate({
+      params: { code },
+      replace: true,
+      search: exploreSearchFromFilter(filter),
+      to: '/explore/$code',
+    });
+  }, [code, filter, navigate]);
   return (
     <ExplorePage
-      filter={exploreFilterFromSearch(search)}
+      continuation={search.join === 1 ? { signup: search.signup === 1 } : null}
+      filter={filter}
       onClosePanel={onClosePanel}
+      onContinuationHandled={onContinuationHandled}
       onFilterChange={onFilterChange}
       returnPath={`/explore/${encodeURIComponent(code)}`}
       selectedCode={code}
