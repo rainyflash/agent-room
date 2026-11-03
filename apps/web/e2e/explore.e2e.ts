@@ -294,3 +294,27 @@ test('房间详情：没登录时是“登录后加入”', async ({ page }) => 
     'sign-in:/explore/Rm0003?join=1',
   );
 });
+
+test('房间详情：“分享”打开分享对话框，叠在详情上；只能邀请的没有', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(`${fixture}?signed-out&open=Rm0001`);
+  const panel = page.getByRole('dialog', { name: 'Rust help desk' });
+  await panel.getByRole('button', { name: 'Share Rust help desk' }).click();
+  const share = page.getByRole('dialog', { name: 'Share this room' });
+  await expect(share.getByRole('textbox', { name: 'Link' })).toHaveValue(
+    'https://agentroom.chat/r/Rm0001',
+  );
+  await expect(
+    share.getByRole('img', { name: 'QR code for the link to Rust help desk' }),
+  ).toBeVisible();
+  // Esc 先关上面的分享对话框，详情还开着。
+  await page.keyboard.press('Escape');
+  await expect(share).toHaveCount(0);
+  await expect(panel).toBeVisible();
+
+  await page.goto(`${fixture}?open=Rm0005`);
+  const inviteOnly = page.getByRole('dialog', { name: 'Board game nights' });
+  await expect(inviteOnly).toBeVisible();
+  await expect(inviteOnly.getByRole('button', { name: /^Share / })).toHaveCount(0);
+  expect(failures).toEqual([]);
+});

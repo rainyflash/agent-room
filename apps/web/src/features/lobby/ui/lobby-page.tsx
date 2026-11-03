@@ -7,6 +7,7 @@ import {
   MessageCircle,
   MessageSquareOff,
   Minimize2,
+  Share2,
   UserPlus,
   UsersRound,
   X,
@@ -71,6 +72,9 @@ import {
   usePrivateRoomListing,
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
+import { shareable } from '@/features/private-rooms/domain/private-room-listing';
+import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
+import type { ShareableRoom } from '@/features/room-share/domain/room-share';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
 import './lobby-game.css';
@@ -206,6 +210,7 @@ function ReadyLobby({
   );
   const [inviteOpen, setInviteOpen] = useState(false);
   const [peopleInviteOpen, setPeopleInviteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [invitation, setInvitation] = useState<ConnectedInvitation | null>(null);
   const [panelSize, setPanelSize] = useState<PanelSize>(readPanelSize);
   const owner =
@@ -248,6 +253,19 @@ function ReadyLobby({
     catalogId,
     privateRoomInvites === undefined ? null : (principal?.principalId ?? null),
   );
+  // 公开房间（不是只能邀请的、没被平台拿掉）给“分享”：链接打开了别人进得来才给。
+  const shareRoom: ShareableRoom | null =
+    !archived && listing.data?.ok === true && shareable(listing.data.value)
+      ? {
+          description:
+            (privateRoomList.data?.ok === true
+              ? privateRoomList.data.value.find((entry) => entry.catalogId === catalogId)
+                  ?.description
+              : undefined) ?? '',
+          name: room.name,
+          shareUrl: listing.data.value.shareUrl,
+        }
+      : null;
   const pendingJoinRequests = usePendingJoinRequestCount(
     privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
     catalogId,
@@ -503,7 +521,31 @@ function ReadyLobby({
             </span>
           </button>
         )}
+        {shareRoom === null ? null : (
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={shareOpen}
+            onClick={() => {
+              setShareOpen(true);
+            }}
+          >
+            <Share2 aria-hidden="true" />
+            <span className="room-toolbelt__label">{t('roomShare.open')}</span>
+            <span className="room-toolbelt__short" aria-hidden="true">
+              {t('roomShare.open')}
+            </span>
+          </button>
+        )}
       </nav>
+      {shareOpen && shareRoom !== null ? (
+        <ShareRoomDialog
+          onClose={() => {
+            setShareOpen(false);
+          }}
+          room={shareRoom}
+        />
+      ) : null}
       {roomSettings === null || principal === null ? null : (
         <RoomSettingsDialog
           catalogId={catalogId}

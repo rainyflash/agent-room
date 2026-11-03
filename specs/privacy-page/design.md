@@ -15,6 +15,7 @@
 - 2026-10-28：按粗地区汇总（[生产测量](../measurement/design.md)第 3 步），“简单说”和“别的都没有”不再说不做统计，“存了什么”加一条“使用的总数”。
 - 2026-11-02：公开房间（[设计](../public-rooms/design.md)第 3 步 3a-4），“谁能读到什么”加一条“公开房间”，“你发的内容”加上申请时留的话，“保留多久”加一条“加入申请”，下载和删除账户都带上加入申请。
 - 2026-11-02：发现页（[设计](../public-rooms/design.md)第 3 步 3b），“公开房间”一条加上不登录看得到的几样：名字、简介、房主和管理员的昵称（@ 前面那段）、人数和 Agent 数、现在几个在线、多久以前有人说话；说的话和成员名单不给。
+- 2026-11-03：公开房间的“分享”（[设计](../public-rooms/design.md)第 4 步 4c-2），“公开房间”一条加上分享链接大家都一样、看不出谁分享的，发到 X、微博、Reddit 只在点的时候打开它们自己的分享网页，不加载它们的脚本，二维码在本机画。
 - 写的是 agentroom.chat 这一个部署。别人自建的服务器由他们自己决定，页面开头说明。
 
 ## 每条说法的依据
@@ -40,6 +41,7 @@
 - **网络 Agent：** 记录里有令牌散列、名字、按天换钥匙打乱的来源 IP 和六份加密保存的秘密（`crates/identity-adapter/src/network_agents.rs`，`network_agents.rs` 的 IP 散列）；收件箱和消息记录每个房间最多 500 条，撤回的跟着删；30 天没用或它自己要求就停用，停用后离开所有房间时删掉收件箱和消息记录，接着删掉加密的秘密、磁盘上的加密存储和发言限流记录，来源 IP 清零（#347）。只离开一个房间时，那个房间的记录不删。2026-10-12 起，停用后先归档它当房主的私人房间（`network_gateway/cleanup.rs` 的 `archive_owned_rooms`），再照上面离开、删除。
 - **私人房间读得到：** 服务器保管每个账户签名和找回历史用的钥匙（[ADR 0011](../../docs/adr/0011-automatic-device-signing.md)），网络 Agent 的钥匙也在服务器上（[ADR 0010](../../docs/adr/0010-network-agents.md)）。README 开头已经这么说。网络 Agent 自己建的私人房间，它从建房起就在里面，每条消息都由网关替它解密；房间顶上、设置里和邀请上都写着（[Agent 建房间、管房间](../agent-rooms/design.md)的“谁读得到”，ADR 0010 的 2026-10-12 修订）。
 - **公开房间：** 新建时就公开的房间不写 `m.room.encryption`，目录记成不加密（`private_rooms/service.rs`、`room_catalog_entry.end_to_end_encrypted`）；私密改成公开的照旧加密，公开以后进来的人不重发以前的房间钥匙（[设计](../public-rooms/design.md)的 2b）；改回私密时先在 Matrix 上打开加密（`private_rooms/listing.rs` 的 `unlist`）。2026-11-02 起。
+- **分享：** 分享链接是房间的 `https://<裸域>/r/<分享码>`，每间房一个（`private_room_listing.share_code`），里面没有分享的人。发到 X、微博、Reddit 是带着链接和那段话的普通链接，在新标签页打开它们的分享网址（`features/room-share/domain/room-share.ts` 的 `shareTargets`），页面不加载它们的脚本；二维码由 `uqr` 在浏览器里画（`features/room-share/ui/qr-code.tsx`），不经过别的服务。2026-11-03 起。
 - **发现页不登录看得到的：** `GET /public-rooms` 和 `GET /public-rooms/{分享码}`（`features/public_rooms.rs`）只回名字、简介、房主和管理员的昵称（`shown_display_name`，有 @ 的只留前面）、人数、Agent 数、在线人数、最近说话的时间和分享码，不回成员名单和消息；最近说话只读最新一条消息事件的时间、不读内容（`public_room_activity.rs`），在线人数只回一个数（`public_room_directory/online.rs`）。
 - **加入申请：** 一人一间房只有一行在等的（`private_room_join_request`，部分唯一索引）。房主和有“管理”的成员看得到留言（`public_join/requests.rs` 的 `managed_room`）。在等的不过期；批准、拒绝、撤回时记下处理时间，改回私密时马上作废，控制面每小时把不公开、归档了的房间里在等的作废，处理时间过了 30 天的删掉（`join_request_cleanup.rs`）。删账户时删掉他的申请（`accounts.rs` 的 `finalize_local`），下载的数据里有 `joinRequests`。2026-11-02 起。
 - **围观页：** 不登录可见最近 50 条、名字和 Agent 在线状态，`robots.txt` 挡住、页面带 `noindex`（`public_watch/view.rs`）。
@@ -87,3 +89,4 @@
 - 2026-10-28：桌面应用改报本机连接连着的时间比例（agent-room-ops#39），“使用的总数”加上“桌面应用的本机连接有多少时间连着”。日期还是 10 月 28 日，和代码同一个 PR。
 - 2026-11-02：公开房间的申请和审批（[设计](../public-rooms/design.md)第 3 步 3a-4），页面上加“公开房间”“加入申请”，“你发的内容”和下载、删除账户两条跟着改，日期改成 11 月 2 日，和代码同一个 PR。公开房间要等网页（第 4 步）一起发版才用得上，发现页和分享页不登录看得到什么在 3b、3c 再加。
 - 2026-11-02：发现页的目录、详情和最近说话的时间（[设计](../public-rooms/design.md)第 3 步 3b-1 到 3b-3），“公开房间”一条加上不登录看得到的几样，日期还是 11 月 2 日，在 3b-3 的 PR 里改（3b-1、3b-2 的 PR 没改，要等网页一起发版才看得到，3c 的分享页再看一遍）。
+- 2026-11-03：公开房间的“分享”对话框（[设计](../public-rooms/design.md)第 4 步 4c-2），“公开房间”一条加上分享链接和发到社交平台、二维码的说法，日期改成 11 月 3 日，和对话框同一个 PR。

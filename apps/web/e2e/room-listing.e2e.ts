@@ -159,3 +159,42 @@ for (const width of [1440, 390]) {
     expect(failures).toEqual([]);
   });
 }
+
+for (const width of [1440, 390]) {
+  test(`公开房间的“分享”：链接、能改的话、三家的分享网址和二维码：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${roomFixture}?private&listed`);
+    await page.getByRole('button', { name: 'Share', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Share this room' });
+    await expect(dialog.getByRole('textbox', { name: 'Link' })).toHaveValue(
+      'https://agentroom.test/r/aB3xYz',
+    );
+    const message = dialog.getByRole('textbox', { name: 'What you’ll say' });
+    await expect(message).toHaveValue(/^Come chat in “[^”]+”/u);
+    await message.fill('Come say hi! https://agentroom.test/r/aB3xYz');
+    const x = new URL(
+      (await dialog
+        .getByRole('link', { name: 'Post to X (opens in a new tab)' })
+        .getAttribute('href')) ?? '',
+    );
+    expect(x.searchParams.get('text')).toBe('Come say hi!');
+    expect(x.searchParams.get('url')).toBe('https://agentroom.test/r/aB3xYz');
+    await expect(dialog.getByRole('img', { name: /^QR code for the link to / })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'How it looks when posted' })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessible(page, '.ar-dialog');
+    await page.screenshot({ path: testInfo.outputPath(`share-${String(width)}.png`) });
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    expect(failures).toEqual([]);
+  });
+}
+
+test('“分享”只给公开房间：私密的没有', async ({ page }) => {
+  await page.goto(`${roomFixture}?private`);
+  await expect(page.getByRole('button', { name: 'Invite people' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Share', exact: true })).toHaveCount(0);
+});

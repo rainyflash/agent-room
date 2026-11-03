@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 889
-- npm packages: 718
-- Total locked package versions: 1607
+- npm packages: 719
+- Total locked package versions: 1608
 - `Cargo.lock` SHA-256: `4d0fcf01309b873afb17e67e6be218f4c5a94be4d1b1d9b8a96f04bb28fade3c`
-- `pnpm-lock.yaml` SHA-256: `5dd6034da1f4bb3ce5c0466297c409f5fd3be12db1c99ac3ac477530b743b194`
+- `pnpm-lock.yaml` SHA-256: `52ea6e013c9eaf364e25039a131989a9bc3a307baaa8f2183a682dc2c4216d93`
 
 ## License expressions
 
@@ -51,7 +51,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 57 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 769 |
+| `MIT` | 770 |
 | `MIT AND BSD-3-Clause` | 1 |
 | `MIT OR Apache-2.0` | 379 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
@@ -1627,6 +1627,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [unpipe](https://www.npmjs.com/package/unpipe/v/1.0.0) | 1.0.0 | `MIT` |
 | npm | [upath](https://www.npmjs.com/package/upath/v/1.2.0) | 1.2.0 | `MIT` |
 | npm | [update-browserslist-db](https://www.npmjs.com/package/update-browserslist-db/v/1.3.3) | 1.3.3 | `MIT` |
+| npm | [uqr](https://www.npmjs.com/package/uqr/v/0.1.3) | 0.1.3 | `MIT` |
 | npm | [uri-js](https://www.npmjs.com/package/uri-js/v/4.4.1) | 4.4.1 | `BSD-2-Clause` |
 | npm | [use-isomorphic-layout-effect](https://www.npmjs.com/package/use-isomorphic-layout-effect/v/1.2.1) | 1.2.1 | `MIT` |
 | npm | [use-sync-external-store](https://www.npmjs.com/package/use-sync-external-store/v/1.6.0) | 1.6.0 | `MIT` |

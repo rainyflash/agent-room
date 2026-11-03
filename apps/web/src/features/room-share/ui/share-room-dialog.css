@@ -1,0 +1,142 @@
+.room-share__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 24px;
+  align-items: start;
+}
+.room-share__main,
+.room-share__side {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+}
+.room-share__field {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.room-share__field > label,
+.room-share h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+.room-share__link {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+}
+.room-share__link input,
+.room-share__field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font: inherit;
+  font-size: 0.9375rem;
+}
+.room-share__link input {
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+}
+.room-share__field textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.room-share__link .ar-copy-block,
+.room-share__message-footer .ar-copy-block {
+  flex: 0 0 auto;
+}
+.room-share__message-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+.room-share__message-footer small,
+.room-share__qr p,
+.room-share__note {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.room-share__targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.room-share__targets a {
+  text-decoration: none;
+}
+.room-share__qr {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.qr-code {
+  display: block;
+  width: 160px;
+  max-width: 100%;
+  height: auto;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: 8px;
+}
+.room-share__preview {
+  display: grid;
+  gap: 8px;
+}
+.room-share__preview figure {
+  margin: 0;
+  overflow: hidden;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-radius);
+  background: var(--color-paper);
+}
+.room-share__preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.room-share__preview figcaption {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+.room-share__preview figcaption small {
+  color: var(--ar-muted);
+}
+.room-share__preview figcaption strong,
+.room-share__preview figcaption span {
+  overflow-wrap: anywhere;
+}
+.room-share__preview figcaption span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ar-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.room-share__note {
+  padding-top: 12px;
+  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+}
+@media (max-width: 640px) {
+  .room-share__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .room-share__side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .room-share__link {
+    flex-wrap: wrap;
+  }
+}
