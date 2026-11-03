@@ -11,16 +11,17 @@ use super::{
 };
 
 impl AgentRuntimeIpcFacade {
-    /// 给了房间只看它（要在里面）；没给看 Agent 在的所有房间，会话的那个在前。一次最多交
-    /// [`ROOM_NOTICES_PER_RESPONSE`] 个，剩下的没记成交过，下次再交。
+    /// 默认看会话的那个房间，给了房间看它（要在里面），`everyRoom` 看 Agent 在的所有房间、会话的
+    /// 那个在前。一次最多交 [`ROOM_NOTICES_PER_RESPONSE`] 个，剩下的没记成交过，下次再交。
     pub(in crate::ipc) async fn read_room_notices(
         &self,
         request: IpcReadRoomNoticesRequest,
     ) -> Result<IpcResponse, BridgeIpcDispatchFailure> {
         let runtime = self.runtime_snapshot()?;
-        let rooms = match request.room_id {
-            Some(room) => vec![runtime.message_room(Some(room)).await?.0],
-            None => rooms_of(&runtime).await?,
+        let rooms = if request.every_room {
+            rooms_of(&runtime).await?
+        } else {
+            vec![runtime.message_room(request.room_id).await?.0]
         };
         let mut notices = Vec::new();
         for room in rooms {

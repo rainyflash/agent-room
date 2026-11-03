@@ -12,7 +12,8 @@ use agent_room_bridge_core::messages::{
     MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
     MessageTimelineQueryRepository, MessagesAround, OwnMembership, PendingTimelineGap,
     ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
-    ReservedIsolatedEvent, RoomName, RoomNotice, RoomStateChange, TimelineLoss, UndecryptableSession,
+    ReservedIsolatedEvent, RoomName, RoomNotice, RoomStateChange, TimelineLoss,
+    UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::limits;
-use crate::tools::{IpcMethodValidationFailure, validate_optional_bounded};
+use crate::tools::{IpcMethodValidationFailure, failure, validate_optional_bounded};
 
 /// 一次最多交几个房间的公告。一条最多 2000 个字，四条放得进一帧；剩下的下次再交。
 pub const ROOM_NOTICES_PER_RESPONSE: usize = 4;
@@ -16,9 +16,12 @@ pub const ROOM_NOTICES_PER_RESPONSE: usize = 4;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcReadRoomNoticesRequest {
-    /// 看哪个房间；不给时看 Agent 在的所有房间。
+    /// 看哪个房间；不给时是会话的那一个，和读收件箱一样。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_id: Option<String>,
+    /// 看 Agent 在的所有房间，会话的那个在前；这时不给 `roomId`。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub every_room: bool,
     /// 只要这个 Agent 还没拿到过的那一版（交一批消息时用，撤掉也算一次改动）；不设时要现在的
     /// （进房间时用，没有公告或撤掉了就不给）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -27,6 +30,9 @@ pub struct IpcReadRoomNoticesRequest {
 
 impl IpcReadRoomNoticesRequest {
     pub(crate) fn validate(&self) -> Result<(), IpcMethodValidationFailure> {
+        if self.every_room && self.room_id.is_some() {
+            return Err(failure("bridge.ipc.room_id_invalid"));
+        }
         validate_optional_bounded(
             self.room_id.as_deref(),
             limits::ROOM_ID_BYTES,
@@ -57,23 +63,38 @@ mod tests {
     #[test]
     fn 不设的字段不写出去_房间号要像样() {
         let request = IpcReadRoomNoticesRequest::default();
-        assert_eq!(serde_json::to_value(&request).unwrap(), serde_json::json!({}));
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({})
+        );
         assert!(IpcMethod::ReadRoomNotices(request).validate().is_ok());
         let changed = IpcReadRoomNoticesRequest {
-            room_id: Some("!room:matrix.test".to_owned()),
+            every_room: true,
             changed_only: true,
+            ..IpcReadRoomNoticesRequest::default()
         };
         assert_eq!(
             serde_json::to_value(&changed).unwrap(),
-            serde_json::json!({"roomId": "!room:matrix.test", "changedOnly": true})
+            serde_json::json!({"everyRoom": true, "changedOnly": true})
         );
-        let bad = IpcReadRoomNoticesRequest {
-            room_id: Some("坏\n的".to_owned()),
-            changed_only: false,
-        };
-        assert_eq!(
-            IpcMethod::ReadRoomNotices(bad).validate().map_err(|failure| failure.code()),
-            Err("bridge.ipc.room_id_invalid")
-        );
+        for bad in [
+            IpcReadRoomNoticesRequest {
+                room_id: Some("坏\n的".to_owned()),
+                ..IpcReadRoomNoticesRequest::default()
+            },
+            // 看所有房间时不给房间。
+            IpcReadRoomNoticesRequest {
+                room_id: Some("!room:matrix.test".to_owned()),
+                every_room: true,
+                changed_only: false,
+            },
+        ] {
+            assert_eq!(
+                IpcMethod::ReadRoomNotices(bad)
+                    .validate()
+                    .map_err(crate::tools::IpcMethodValidationFailure::code),
+                Err("bridge.ipc.room_id_invalid")
+            );
+        }
     }
 }

@@ -1532,7 +1532,10 @@ async fn 公告进房间交现在的_改了以后只交一次_同一版再同步
     record_notice(&store, &room_id, Some("只在被点名时说话。"), 1_000).await;
     let first = take(true).await.expect("可以读").expect("还没交过");
     assert_eq!(first.updated_by, "@owner:matrix.test");
-    assert_eq!(text(Some(first)), Some((Some("只在被点名时说话。".to_owned()), 1_000)));
+    assert_eq!(
+        text(Some(first)),
+        Some((Some("只在被点名时说话。".to_owned()), 1_000))
+    );
     assert_eq!(take(true).await.expect("可以读"), None, "交过一次就不再交");
     // 进房间时照样交现在的；重连的全量同步把同一版再给一遍、晚到的旧版都不算改。
     assert_eq!(
@@ -1557,7 +1560,10 @@ async fn 公告进房间交现在的_改了以后只交一次_同一版再同步
     // 从没拿到过公告的房间，撤掉不用告诉它。
     let other = MatrixRoomId::new("!other:matrix.test").expect("房间标识有效");
     record_notice(&store, &other, None, 4_000).await;
-    assert_eq!(store.take_room_notice(&other, true).await.expect("可以读"), None);
+    assert_eq!(
+        store.take_room_notice(&other, true).await.expect("可以读"),
+        None
+    );
 }
 
 #[tokio::test]

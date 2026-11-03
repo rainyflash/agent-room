@@ -121,8 +121,9 @@ fn room_notice(content: &Value) -> Option<RoomNotice> {
     if !updated_by.starts_with('@') || updated_by.len() > 255 {
         return None;
     }
-    let updated_at_ms =
-        DateTime::parse_from_rfc3339(content.get("updatedAt")?.as_str()?).ok()?.timestamp_millis();
+    let updated_at_ms = DateTime::parse_from_rfc3339(content.get("updatedAt")?.as_str()?)
+        .ok()?
+        .timestamp_millis();
     Some(RoomNotice {
         text: (!text.is_removal()).then(|| text.as_str().to_owned()),
         updated_by: updated_by.to_owned(),
@@ -225,7 +226,11 @@ mod tests {
         let notices = batch(
             MatrixRoomSyncKind::Joined,
             vec![
-                notice_state(" 只在被点名时说话。\n回复要短。 ", "2026-11-03T08:00:00.000Z", 1_000),
+                notice_state(
+                    " 只在被点名时说话。\n回复要短。 ",
+                    "2026-11-03T08:00:00.000Z",
+                    1_000,
+                ),
                 notice_state("改过的", "2026-11-03T09:00:00.500+08:00", 2_000),
             ],
         );
