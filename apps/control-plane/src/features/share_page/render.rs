@@ -64,6 +64,8 @@ struct Wording {
     gone_text: &'static str,
     unavailable_title: &'static str,
     unavailable_text: &'static str,
+    busy_title: &'static str,
+    busy_text: &'static str,
 }
 
 const CHINESE: Wording = Wording {
@@ -108,6 +110,8 @@ const CHINESE: Wording = Wording {
     gone_text: "可能改回了私密、关了，或者分享链接换了。",
     unavailable_title: "暂时打不开",
     unavailable_text: "过一会儿再试一次。",
+    busy_title: "这一会儿打开得太多了",
+    busy_text: "等一分钟再打开。",
 };
 
 const ENGLISH: Wording = Wording {
@@ -158,6 +162,8 @@ const ENGLISH: Wording = Wording {
     gone_text: "It may have been made private or closed, or its share link was changed.",
     unavailable_title: "Can’t open this right now",
     unavailable_text: "Please try again in a moment.",
+    busy_title: "Too many requests",
+    busy_text: "Please wait a minute and try again.",
 };
 
 const fn text(language: Language) -> &'static Wording {
@@ -196,6 +202,12 @@ pub(super) fn gone_page(language: Language, origins: &Origins<'_>) -> String {
 pub(super) fn unavailable_page(language: Language, origins: &Origins<'_>) -> String {
     let text = text(language);
     notice_page(text, origins, text.unavailable_title, text.unavailable_text)
+}
+
+/// 这个来源一分钟里打开得太多（`features/anonymous_limits.rs`）。
+pub(super) fn busy_page(language: Language, origins: &Origins<'_>) -> String {
+    let text = text(language);
+    notice_page(text, origins, text.busy_title, text.busy_text)
 }
 
 fn notice_page(text: &Wording, origins: &Origins<'_>, title: &str, message: &str) -> String {

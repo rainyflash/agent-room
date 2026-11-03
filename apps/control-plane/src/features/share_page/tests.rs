@@ -24,6 +24,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::{SharePageHttpState, router};
+use crate::features::anonymous_limits::{AnonymousLimiter, PER_MINUTE};
 
 const NOW: i64 = 1_790_000_000_000;
 const DAY: i64 = 24 * 60 * 60 * 1_000;
@@ -247,10 +248,50 @@ async fn 样式和脚本是两个固定名字的文件() {
     );
 }
 
+#[tokio::test]
+async fn 一个来源一分钟打开太多次就请它等一分钟_样式和脚本不限() {
+    let directory = FakeDirectory::new(detail("读书会", "", RoomJoinMode::Open, true));
+    let app = test_router(directory.clone());
+    let from = |path: &str| {
+        Request::builder()
+            .uri(path)
+            .header("x-forwarded-for", "203.0.113.7")
+            .header(header::ACCEPT_LANGUAGE, "zh-CN")
+            .body(Body::empty())
+            .unwrap()
+    };
+    for index in 0..PER_MINUTE {
+        let response = app.clone().oneshot(from("/r/aB3xYz")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "第 {index} 次");
+    }
+
+    let response = app.clone().oneshot(from("/r/aB3xYz")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let headers = response.headers().clone();
+    assert_eq!(headers[header::RETRY_AFTER], "60");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers["x-robots-tag"], "noindex");
+    let body = to_bytes(response.into_body(), 256 * 1_024).await.unwrap();
+    let html = String::from_utf8(body.to_vec()).unwrap();
+    assert!(html.contains("<h1>这一会儿打开得太多了</h1>"));
+    assert!(!html.contains("读书会"));
+    assert_eq!(
+        directory.asked.lock().unwrap().len(),
+        usize::try_from(PER_MINUTE).unwrap(),
+        "超了的那次不去查"
+    );
+
+    for path in ["/r/_/share.css", "/r/_/share.js"] {
+        let response = app.clone().oneshot(from(path)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+}
+
 fn test_router(directory: Arc<FakeDirectory>) -> Router {
     router(SharePageHttpState::new(
         directory,
         Arc::new(TestClock),
+        Arc::new(AnonymousLimiter::new(Vec::new(), Arc::new(TestClock))),
         "agent-room.test",
         &Url::parse("https://app.agent-room.test").unwrap(),
     ))

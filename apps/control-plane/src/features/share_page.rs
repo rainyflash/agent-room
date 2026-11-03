@@ -7,6 +7,8 @@
 //! 公开着的房间缓存 60 秒，房间改名、改回私密以后一分钟内就变；不公开了、关了、码换了、没有这个码
 //! 一律回同一个 404，不写房间名，也不缓存。都带 `X-Robots-Tag: noindex`：房间名和简介是用户写的，
 //! 平台不审，不替它们进搜索结果。
+//!
+//! 页面和发现页的两个接口合起来按来源限流（[`AnonymousLimiter`]），样式和脚本不限。
 
 use std::sync::Arc;
 
@@ -26,6 +28,8 @@ mod render;
 
 use render::{Language, Origins};
 
+use crate::features::anonymous_limits::AnonymousLimiter;
+
 const STYLESHEET: &str = include_str!("share_page/share.css");
 const SCRIPT: &str = include_str!("share_page/share.js");
 const ROOM_CACHE: &str = "public, max-age=60";
@@ -36,6 +40,7 @@ const ASSET_CACHE: &str = "public, max-age=300";
 pub(crate) struct SharePageHttpState {
     directory: Arc<dyn PublicRoomDirectoryUseCases>,
     clock: Arc<dyn Clock>,
+    limits: Arc<AnonymousLimiter>,
     /// 分享链接所在的网站，`https://<Matrix 服务器名>`。
     site_origin: Arc<str>,
     /// 网页应用，按钮去它的 `/explore/<分享码>`。
@@ -46,12 +51,14 @@ impl SharePageHttpState {
     pub(crate) fn new(
         directory: Arc<dyn PublicRoomDirectoryUseCases>,
         clock: Arc<dyn Clock>,
+        limits: Arc<AnonymousLimiter>,
         server_name: &str,
         frontend_origin: &url::Url,
     ) -> Self {
         Self {
             directory,
             clock,
+            limits,
             site_origin: format!("https://{server_name}").into(),
             app_origin: frontend_origin.origin().ascii_serialization().into(),
         }
@@ -79,6 +86,15 @@ async fn page(
     headers: HeaderMap,
 ) -> Response {
     let accepted = accepted_language(&headers);
+    if let Err(limited) = state.limits.admit(&headers) {
+        let html = render::busy_page(accepted.unwrap_or(Language::English), &state.origins());
+        let mut response = html_response(StatusCode::TOO_MANY_REQUESTS, "no-store", html);
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            HeaderValue::from(limited.retry_after_seconds),
+        );
+        return response;
+    }
     match state.directory.detail(None, share_code).await {
         Ok(detail) => {
             let language = accepted.unwrap_or_else(|| guess_language(&detail.room.room.name));

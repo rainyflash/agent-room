@@ -13,7 +13,7 @@ mod rooms;
 mod sources;
 mod viewing;
 
-pub(crate) use sources::{NetworkSources, SharedSource, parse_shared_sources};
+pub(crate) use sources::{NetworkSources, SharedSource, parse_shared_sources, source_label};
 
 use std::{sync::Arc, time::Duration};
 

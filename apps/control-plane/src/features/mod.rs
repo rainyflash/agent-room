@@ -5,6 +5,7 @@ pub(crate) mod agent_instances;
 pub(crate) mod agent_rooms;
 pub(crate) mod agent_roster;
 pub(crate) mod agents;
+pub(crate) mod anonymous_limits;
 pub(crate) mod authentication;
 pub(crate) mod automation;
 pub(crate) mod capabilities;
