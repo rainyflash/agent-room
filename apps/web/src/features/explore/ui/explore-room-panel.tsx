@@ -1,3 +1,4 @@
+import { Button } from '@agent-room/ui-system';
 import {
   Bot,
   CalendarDays,
@@ -7,10 +8,11 @@ import {
   LockOpen,
   LoaderCircle,
   Radio,
+  Share2,
   UsersRound,
   X,
 } from 'lucide-react';
-import { useId, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -20,6 +22,7 @@ import {
   type ExploreFilter,
   type ExploreRoomDetail,
 } from '@/features/explore/domain/explore';
+import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
 import { formatRelativeTime } from '@/shared/i18n/formatters';
 
 import { ExploreRoomActions } from './explore-room-actions';
@@ -76,6 +79,8 @@ export function ExploreRoomPanel({
       aria-label={detail.kind === 'ready' ? undefined : t('explore.room.loading')}
       className="explore-panel"
       onCancel={(event) => {
+        // 叠在上面的分享对话框按 Esc 时，React 把它的 cancel 顺着组件树也传到这里：只管自己的。
+        if (event.target !== event.currentTarget) return;
         event.preventDefault();
         onClose();
       }}
@@ -159,6 +164,7 @@ function RoomDetail({
   const { i18n, t } = useTranslation();
   const language = i18n.resolvedLanguage;
   const listFormat = new Intl.ListFormat(language, { style: 'narrow', type: 'conjunction' });
+  const [sharing, setSharing] = useState(false);
   return (
     <article className="explore-panel__room">
       <header className="explore-panel__header">
@@ -176,8 +182,32 @@ function RoomDetail({
           {room.admins.length === 0 ? null : (
             <p>{t('explore.room.admins', { names: listFormat.format(room.admins) })}</p>
           )}
+          {/* 没进房间的人也能转给朋友；只能邀请的不给，链接打开了也进不来。 */}
+          {room.joinMode === 'invite_only' ? null : (
+            <Button
+              aria-haspopup="dialog"
+              aria-label={t('roomShare.openRoom', { name: room.name })}
+              className="explore-panel__share"
+              icon={<Share2 aria-hidden="true" />}
+              onClick={() => {
+                setSharing(true);
+              }}
+              size="compact"
+              tone="ghost"
+            >
+              {t('roomShare.open')}
+            </Button>
+          )}
         </div>
       </header>
+      {sharing ? (
+        <ShareRoomDialog
+          onClose={() => {
+            setSharing(false);
+          }}
+          room={room}
+        />
+      ) : null}
       {room.description === '' ? null : (
         <p className="explore-panel__description">{room.description}</p>
       )}

@@ -645,6 +645,9 @@
   font-size: 14px;
   line-height: 1.5;
 }
+.explore-panel__share {
+  margin-top: 8px;
+}
 .explore-panel__actions {
   display: flex;
   justify-content: flex-end;
