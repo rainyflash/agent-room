@@ -105,6 +105,7 @@ import type {
   PrivateRoomListing,
   PrivateRoomListingGateway,
 } from '@/features/private-rooms/domain/private-room-listing';
+import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
 import type {
   PendingJoinRequest,
   PublicRoomJoinGateway,
@@ -152,6 +153,9 @@ const listedFixture = privateFixture && new URLSearchParams(window.location.sear
 // `?private&listed&requests` 里房间要申请才能进，有两个人在等批准：齿轮上亮点，“成员”一节列出申请。
 const requestsFixture =
   listedFixture && new URLSearchParams(window.location.search).has('requests');
+// `?private&notice` 里房间有一条 Grace 写的三行公告（时间固定，重新打开还是同一版）；不带时没有公告，
+// 房主能在设置的“公告”里写。
+const noticeFixture = privateFixture && new URLSearchParams(window.location.search).has('notice');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -169,6 +173,16 @@ let room: LobbyRoom = {
   // 公开着的夹具房间是新建时就公开的那种：不加密。
   ...(privateFixture ? { encrypted: !listedFixture } : {}),
   ...(archivedFixture || mutedFixture ? { canSpeak: false } : {}),
+  ...(noticeFixture
+    ? {
+        memberNames: [{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }],
+        notice: {
+          text: 'Only speak when someone mentions you.\nKeep replies short.\nAsk Grace before changing the release checklist.',
+          updatedAtUnixMs: Date.parse('2026-11-03T08:00:00.000Z'),
+          updatedBy: '@grace:matrix.test',
+        },
+      }
+    : {}),
 };
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
 let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
@@ -1232,6 +1246,20 @@ let fixtureListing: PrivateRoomListing = {
   shareUrl: listedFixture ? 'https://agentroom.test/r/aB3xYz' : null,
 };
 const fixtureShareCodes = ['aB3xYz', 'Q7mPz2', 'Zz9Zz9'];
+/** 改公告：像同步回来一样换掉房间状态里的公告，改的人是你。 */
+const roomNotices: RoomNoticeGateway = {
+  updateNotice: (_catalogId, text) => {
+    const updatedAtUnixMs = Date.now();
+    const { notice, ...rest } = room;
+    void notice;
+    room =
+      text === ''
+        ? rest
+        : { ...rest, notice: { text, updatedAtUnixMs, updatedBy: fixtureIdentity.matrixUserId } };
+    for (const listener of lobbyListeners) listener();
+    return Promise.resolve(ok({ text, updatedAtUnixMs }));
+  },
+};
 const privateRoomListings: PrivateRoomListingGateway = {
   listing: () => Promise.resolve(ok(fixtureListing)),
   updateListing: (_catalogId, settings) => {
@@ -1375,7 +1403,9 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
-  ...(privateFixture ? { privateRoomInvites, privateRoomListings, publicRoomJoins } : {}),
+  ...(privateFixture
+    ? { privateRoomInvites, privateRoomListings, publicRoomJoins, roomNotices }
+    : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
     shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),

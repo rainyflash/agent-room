@@ -142,6 +142,41 @@ describe('ControlPlanePrivateRoomClient', () => {
     );
   });
 
+  it('改公告用 PUT 发正文，回写进去的那一版；限速时把错误码交给界面', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ text: 'Reply in English.', updatedAtUnixMs: 1_793_606_400_000 }),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          { code: 'room_notice.rate_limited', retryable: true },
+          { headers: { 'Retry-After': '60' }, status: 429 },
+        ),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    const written = await client.updateNotice(ROOM.catalogId, 'Reply in English.');
+    const limited = await client.updateNotice(ROOM.catalogId, '');
+
+    expect(written).toEqual({
+      ok: true,
+      value: { text: 'Reply in English.', updatedAtUnixMs: 1_793_606_400_000 },
+    });
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/notice`),
+      expect.objectContaining({
+        body: JSON.stringify({ text: 'Reply in English.' }),
+        method: 'PUT',
+      }),
+    );
+    expect(limited.ok ? null : limited.error.code).toBe('room_notice.rate_limited');
+  });
+
   it('改名用 PUT 发送名字并返回权威房间', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

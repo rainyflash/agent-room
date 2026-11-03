@@ -48,6 +48,11 @@ import {
   type PublicRoomJoinGateway,
   type PublicRoomMembership,
 } from '@/features/private-rooms/domain/public-room-join';
+import {
+  writtenRoomNoticeSchema,
+  type RoomNoticeGateway,
+  type WrittenRoomNotice,
+} from '@/features/room-notice/domain/room-notice';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -72,7 +77,8 @@ export class ControlPlanePrivateRoomClient
     PrivateRoomInviteGateway,
     PrivateRoomListingGateway,
     PublicRoomEntryGateway,
-    PublicRoomJoinGateway
+    PublicRoomJoinGateway,
+    RoomNoticeGateway
 {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
@@ -196,6 +202,17 @@ export class ControlPlanePrivateRoomClient
       body: JSON.stringify({ name }),
       method: 'PUT',
     });
+  }
+
+  updateNotice(
+    catalogId: string,
+    text: string,
+  ): Promise<Result<WrittenRoomNotice, PrivateRoomFailure>> {
+    return this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/notice`,
+      { body: JSON.stringify({ text }), method: 'PUT' },
+      writtenRoomNoticeSchema,
+    );
   }
 
   archive(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {

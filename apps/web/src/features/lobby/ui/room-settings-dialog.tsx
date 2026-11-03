@@ -1,5 +1,5 @@
 import { Banner, Button, Dialog, Segmented, Spinner } from '@agent-room/ui-system';
-import { Bot, Gavel, Globe2, KeyRound, Settings2, UsersRound } from 'lucide-react';
+import { Bot, Gavel, Globe2, KeyRound, Pin, Settings2, UsersRound } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -16,12 +16,14 @@ import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/do
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomMembers } from '@/features/private-rooms/ui/private-room-members';
 import { PrivateRoomPublicSettings } from '@/features/private-rooms/ui/private-room-public-settings';
+import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
+import { RoomNoticeEditor } from '@/features/room-notice/ui/room-notice-editor';
 import type { WebSession } from '@/features/session/domain/session';
 
 import './room-settings.css';
 
 export type RoomSettingsSection =
-  'agent-code' | 'automation' | 'listing' | 'members' | 'moderation';
+  'agent-code' | 'automation' | 'listing' | 'members' | 'moderation' | 'notice';
 
 const sectionIcons: Readonly<Record<RoomSettingsSection, ReactNode>> = {
   'agent-code': <KeyRound aria-hidden="true" />,
@@ -29,12 +31,15 @@ const sectionIcons: Readonly<Record<RoomSettingsSection, ReactNode>> = {
   listing: <Globe2 aria-hidden="true" />,
   members: <UsersRound aria-hidden="true" />,
   moderation: <Gavel aria-hidden="true" />,
+  notice: <Pin aria-hidden="true" />,
 };
 
 export type RoomSettingsDialogProps = {
   readonly catalogId: string;
   readonly roomName: string;
   readonly principal: WebSession;
+  /** 房间状态里此刻的常驻公告，“公告”一节拿它当底稿。 */
+  readonly notice?: RoomNotice | undefined;
   /** 打开时先看哪一节；不给就是第一节。 */
   readonly initialSection?: RoomSettingsSection | undefined;
   readonly onClose: () => void;
@@ -43,7 +48,7 @@ export type RoomSettingsDialogProps = {
 };
 
 /**
- * 房间设置：一个对话框，分节切换。私人房间有“成员”和“公开”（管理者还有“Agent 进门”），每个房间都有
+ * 房间设置：一个对话框，分节切换。私人房间有“成员”和“公开”（管理者还有“公告”和“Agent 进门”），每个房间都有
  * “自动发言”，房间管理者还有“治理”。几节同时挂着、只显示一节：切过去再切回来，填到一半的内容
  * 和刚生成的口令都还在。
  */
@@ -51,12 +56,13 @@ export function RoomSettingsDialog({
   catalogId,
   roomName,
   principal,
+  notice,
   initialSection,
   onClose,
   onExitRoom,
 }: RoomSettingsDialogProps) {
   const { t } = useTranslation();
-  const { privateRoomListings, privateRooms, moderation } = useAppServices();
+  const { privateRoomListings, privateRooms, moderation, roomNotices } = useAppServices();
   const list = usePrivateRoomList(privateRooms, principal.principalId);
   const capabilities = useModerationCapabilities(moderation, catalogId);
   const room = list.data?.ok === true ? joinedRoom(list.data.value, catalogId, principal) : null;
@@ -73,6 +79,7 @@ export function RoomSettingsDialog({
   const sections: readonly RoomSettingsSection[] = [
     ...(room === null ? [] : (['members'] as const)),
     ...(room === null || privateRoomListings === undefined ? [] : (['listing'] as const)),
+    ...(canManageRoom && roomNotices !== undefined ? (['notice'] as const) : []),
     ...(canManageRoom ? (['agent-code'] as const) : []),
     'automation',
     ...(canModerate ? (['moderation'] as const) : []),
@@ -142,6 +149,7 @@ export function RoomSettingsDialog({
             >
               <RoomSettingsContent
                 catalogId={catalogId}
+                notice={notice}
                 onClose={onClose}
                 onExitRoom={onExitRoom}
                 principal={principal}
@@ -163,12 +171,14 @@ function RoomSettingsContent({
   roomName,
   principal,
   room,
+  notice,
   onClose,
   onExitRoom,
 }: {
   readonly section: RoomSettingsSection;
   readonly catalogId: string;
   readonly roomName: string;
+  readonly notice: RoomNotice | undefined;
   readonly principal: WebSession;
   readonly room: PrivateRoom | null;
   readonly onClose: () => void;
@@ -183,6 +193,7 @@ function RoomSettingsContent({
     privateRoomMatrix,
     privateRooms,
     publicRoomJoins,
+    roomNotices,
   } = useAppServices();
   const coordinator = useMemo(
     () => new PrivateRoomCoordinator(privateRooms, privateRoomMatrix),
@@ -218,6 +229,10 @@ function RoomSettingsContent({
           principalId={principal.principalId}
           room={room}
         />
+      );
+    case 'notice':
+      return roomNotices === undefined ? null : (
+        <RoomNoticeEditor catalogId={catalogId} gateway={roomNotices} notice={notice} />
       );
     case 'agent-code':
       return room === null ? null : (

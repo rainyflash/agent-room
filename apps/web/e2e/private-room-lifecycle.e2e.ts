@@ -70,7 +70,7 @@ test('新建房间在手机上是底部面板，不产生横向溢出', async ({
 });
 
 for (const width of [1_440, 390]) {
-  test(`私人房间的房间设置：五节在一个对话框里 ${String(width)}`, async ({ page }) => {
+  test(`私人房间的房间设置：六节在一个对话框里 ${String(width)}`, async ({ page }) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ height: 900, width });
     await page.goto(`${fixturePath}?private`);
@@ -81,6 +81,7 @@ for (const width of [1_440, 390]) {
     await expect(sections.getByRole('radio')).toHaveText([
       'Members',
       'Public',
+      'Notice',
       'Agent entry',
       'Automation',
       'Moderation',
