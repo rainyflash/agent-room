@@ -222,6 +222,11 @@ reason = "客户端在回答之前断开了（长轮询被取消、页面关了�
 
 [[ignore]]
 service = "synapse"
+summary = '^WARNING synapse\.handlers\.oidc Could not exchange OAuth2 code: invalid_grant: Code not valid$'
+reason = "身份服务说这次登录的一次性代码已经用过或过期了：回调地址被刷新、重复打开，或者同一个浏览器里几个标签页前后脚登录（见 CLAUDE.md 的聊天登录排队），没有登录被挡住，人重新登录就好。只认这一句完整的消息，换成别的 OAuth2 错误（如 invalid_client）照旧报出来（2026-11-03 生产上只出现一次，agent-room-ops#67）"
+
+[[ignore]]
+service = "synapse"
 summary = '^WARNING synapse\.http\.site Aborting connection from .* because `content-type: multipart/form-data` is unsupported: '
 reason = "有人往聊天服务器发 multipart 表单，Synapse 读完请求头就断开、不处理。Matrix 客户端从来不这样发（传文件是原样的正文），是扫描器在试上传接口（2026-10-28 生产上一秒里往根路径 POST / 连发 4 次，前后没有登录了的请求）"
 
