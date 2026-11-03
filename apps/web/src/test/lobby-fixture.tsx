@@ -81,6 +81,11 @@ import type {
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
 import type {
+  AgentModerationGateway,
+  AgentModerationLedger,
+  RoomModerationGrant,
+} from '@/features/moderation/domain/agent-moderation';
+import type {
   ModerationAction,
   ModerationCase,
   ModerationGateway,
@@ -136,6 +141,9 @@ const privateFixture = new URLSearchParams(window.location.search).has('private'
 const cardFixture = new URLSearchParams(window.location.search).has('cards');
 // `?private&knock` 里一个网络 Agent（Sol）拿房间号在敲门，房间页的提示栈和接入对话框都能放它进来。
 const knockFixture = privateFixture && new URLSearchParams(window.location.search).has('knock');
+/** 私人房间交给了 Agent 管：一份在用的授权、它照规则禁言了一个人（`?private&agentGrant`）。 */
+const agentGrantFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('agentGrant');
 // `?private&code` 里房间已经有口令，管理者看得到；`?private&code=hidden` 的口令是能再看之前生成的，看不到。
 const codeFixture = privateFixture ? new URLSearchParams(window.location.search).get('code') : null;
 // `?private&origin=local` 是本机 Agent 替你建的私人房间，房主还是你；`?private&origin=network` 是网络 Agent
@@ -549,7 +557,24 @@ function updateFixtureScene(): void {
 }
 
 let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
-let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
+const fixtureAgentAction: ModerationAction = Object.freeze({
+  actionId: '01990d9e-8400-7000-8000-000000000601',
+  actorPrincipalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+  caseId: null,
+  expiresAtUnixMs: Date.now() + 24 * 60 * 60 * 1_000,
+  failureCode: null,
+  kind: 'mute',
+  reason: 'spam',
+  reversedAtUnixMs: null,
+  roomCatalogId: '01990d9e-8400-7000-8000-000000000401',
+  startsAtUnixMs: Date.now() - 10 * 60 * 1_000,
+  status: 'applied',
+  targetKind: 'principal',
+  targetReference: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
+});
+let fixtureModerationActions: readonly ModerationAction[] = Object.freeze(
+  agentGrantFixture ? [fixtureAgentAction] : [],
+);
 const moderation: ModerationGateway = {
   applyAction: (actionId, roomCatalogId, input) => {
     const action: ModerationAction = Object.freeze({
@@ -621,6 +646,78 @@ const moderation: ModerationGateway = {
       ),
     );
     return Promise.resolve(ok(reversed));
+  },
+};
+const fixtureModerationGrantId = '01990d9e-8400-7000-8000-000000000602';
+let fixtureModerationGrants: readonly RoomModerationGrant[] = agentGrantFixture
+  ? [
+      {
+        actions: ['mute', 'kick'],
+        agentId: '01990d9e-8400-7000-8000-000000000001',
+        agentName: 'Fixture Codex Agent',
+        createdAtUnixMs: Date.now() - 60 * 60 * 1_000,
+        expiresAtUnixMs: Date.now() + 29 * 24 * 60 * 60 * 1_000,
+        grantedBy: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+        id: fixtureModerationGrantId,
+        rules: 'Mute anyone who keeps posting ads or links, for a day the first time.',
+      },
+    ]
+  : [];
+const fixtureAgentLedger: AgentModerationLedger = {
+  actions: agentGrantFixture
+    ? [
+        {
+          actionId: fixtureAgentAction.actionId,
+          agentId: '01990d9e-8400-7000-8000-000000000001',
+          agentName: 'Fixture Codex Agent',
+          grantId: fixtureModerationGrantId,
+          note: 'Posted the same link five times in a minute.',
+        },
+      ]
+    : [],
+  reversals: [],
+};
+const agentModeration: AgentModerationGateway = {
+  grant: (_catalogId, input) => {
+    const grant: RoomModerationGrant = {
+      actions: [...input.actions],
+      agentId: input.agentId,
+      agentName: 'Fixture Codex Agent',
+      createdAtUnixMs: Date.now(),
+      expiresAtUnixMs: Date.now() + input.lifetimeSeconds * 1_000,
+      grantedBy: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+      id: '01990d9e-8400-7000-8000-000000000603',
+      rules: input.rules.trim(),
+    };
+    fixtureModerationGrants = [
+      grant,
+      ...fixtureModerationGrants.filter((candidate) => candidate.agentId !== input.agentId),
+    ];
+    return Promise.resolve(ok(grant));
+  },
+  listAgentActions: () => Promise.resolve(ok(fixtureAgentLedger)),
+  listGrants: () => Promise.resolve(ok(fixtureModerationGrants)),
+  reverseGrant: (_catalogId, grantId) => {
+    const madeHere = new Set(
+      fixtureAgentLedger.actions
+        .filter((record) => record.grantId === grantId)
+        .map((record) => record.actionId),
+    );
+    const reversed = fixtureModerationActions
+      .filter((action) => action.status === 'applied' && madeHere.has(action.actionId))
+      .map((action) => action.actionId);
+    fixtureModerationActions = Object.freeze(
+      fixtureModerationActions.map((action) =>
+        reversed.includes(action.actionId)
+          ? Object.freeze({ ...action, reversedAtUnixMs: Date.now(), status: 'reversed' as const })
+          : action,
+      ),
+    );
+    return Promise.resolve(ok({ failed: [], reversed }));
+  },
+  revokeGrant: (_catalogId, grantId) => {
+    fixtureModerationGrants = fixtureModerationGrants.filter((grant) => grant.id !== grantId);
+    return Promise.resolve(ok(undefined));
   },
 };
 const unavailablePrivateRoom = () =>
@@ -1430,7 +1527,7 @@ const services: AppServices = {
   privateRoomMatrix,
   privateRooms,
   ...(privateFixture
-    ? { privateRoomInvites, privateRoomListings, publicRoomJoins, roomNotices }
+    ? { agentModeration, privateRoomInvites, privateRoomListings, publicRoomJoins, roomNotices }
     : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),

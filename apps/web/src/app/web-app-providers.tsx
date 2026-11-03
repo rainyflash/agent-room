@@ -222,11 +222,13 @@ export function createCloudRuntime(
     new MatrixSdkDirectSessionGateway(matrixClients),
     new BrowserDirectBlockRegistry(window.localStorage),
   );
+  const moderation = new ControlPlaneModerationClient(businessApi);
   const services: AppServices = {
     account: new ControlPlaneAccountClient(businessApi),
     receptionOwnership: new ReceptionOwnershipClient(businessApi),
     accessManagement: new ControlPlaneAccessManagementClient(businessApi),
     agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),
+    agentModeration: moderation,
     agentPresence,
     agentRosterPolicy: new ControlPlaneAgentRosterPolicy(businessApi.baseUrl, businessApi.fetch),
     automation: new ControlPlaneAutomationGrantClient(businessApi),
@@ -249,7 +251,7 @@ export function createCloudRuntime(
     messagePublisher,
     messages,
     messageTranslation: new BrowserMachineTranslationGateway(),
-    moderation: new ControlPlaneModerationClient(businessApi),
+    moderation,
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms,
     privateRoomInvites: privateRooms,
