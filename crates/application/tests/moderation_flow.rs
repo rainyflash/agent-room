@@ -20,8 +20,9 @@ use agent_room_application::{
         MatrixRoomId, MatrixUserId, ModerationActionReservationOutcome, ModerationAuthority,
         ModerationEffectGateway, ModerationEffectTarget, ModerationExpiryClaim,
         ModerationExpiryRepository, ModerationExpiryReschedule, ModerationIdentifierFactory,
-        ModerationMuteLedger, ModerationMuteLock, ModerationMuteStanding, ModerationReportPolicy,
-        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
+        ModerationMemberGateway, ModerationMemberRefusal, ModerationMuteLedger, ModerationMuteLock,
+        ModerationMuteStanding, ModerationReportPolicy, ModerationReportSubmissionOutcome,
+        ModerationRepository, ModerationRoomContext, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -38,6 +39,8 @@ use uuid::Uuid;
 
 #[path = "moderation_flow/agents.rs"]
 mod agents;
+#[path = "moderation_flow/members.rs"]
+mod members;
 
 const NOW: i64 = 1_700_000_000_000;
 
@@ -744,6 +747,55 @@ impl ModerationEffectGateway for FakeEffects {
     }
 }
 
+/// 私人房间里的踢出、封禁照成员一节那一套落：记下落了、撤了哪些，能预先拒绝或者落不成。
+#[derive(Default)]
+struct FakeMembers {
+    refusal: Mutex<Option<ModerationMemberRefusal>>,
+    failure: Mutex<Option<MatrixFailure>>,
+    applied: Mutex<Vec<(ModerationActionKind, PrincipalId)>>,
+    reversed: Mutex<Vec<(ModerationActionKind, PrincipalId)>>,
+}
+
+impl ModerationMemberGateway for FakeMembers {
+    fn check(
+        &self,
+        _kind: ModerationActionKind,
+        _room_catalog_id: RoomCatalogId,
+        _target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<ModerationMemberRefusal>>> {
+        let refusal = *self.refusal.lock().expect("成员锁可用");
+        Box::pin(async move { Ok(refusal) })
+    }
+
+    fn apply(
+        &self,
+        kind: ModerationActionKind,
+        _room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>> {
+        self.applied
+            .lock()
+            .expect("成员锁可用")
+            .push((kind, target));
+        let result = self.failure.lock().expect("成员锁可用").map_or(Ok(()), Err);
+        Box::pin(async move { result })
+    }
+
+    fn reverse(
+        &self,
+        kind: ModerationActionKind,
+        _room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>> {
+        self.reversed
+            .lock()
+            .expect("成员锁可用")
+            .push((kind, target));
+        let result = self.failure.lock().expect("成员锁可用").map_or(Ok(()), Err);
+        Box::pin(async move { result })
+    }
+}
+
 struct Fixture {
     service: Arc<ModerationService>,
     repository: Arc<FakeRepository>,
@@ -751,6 +803,7 @@ struct Fixture {
     expiry: Arc<FakeExpiry>,
     mutes: Arc<FakeMutes>,
     effects: Arc<FakeEffects>,
+    members: Arc<FakeMembers>,
     runtime: Arc<TestRuntime>,
     calls: Arc<Mutex<Vec<&'static str>>>,
 }
@@ -771,6 +824,7 @@ impl Fixture {
             ..FakeEffects::default()
         });
         let runtime = Arc::new(TestRuntime::default());
+        let members = Arc::new(FakeMembers::default());
         let expiry = Arc::new(FakeExpiry {
             repository: repository.clone(),
             authority: authority.clone(),
@@ -790,6 +844,7 @@ impl Fixture {
             expiry: expiry.clone(),
             mutes: mutes.clone(),
             effects: effects.clone(),
+            members: members.clone(),
             identifiers: runtime.clone(),
             clock: runtime.clone(),
             report_policy: ModerationReportPolicy {
@@ -804,6 +859,7 @@ impl Fixture {
             expiry,
             mutes,
             effects,
+            members,
             runtime,
             calls,
         }
@@ -1620,6 +1676,7 @@ async fn 踢出到期只记解除_不替管理员发邀请() {
     assert_eq!(expire(&fixture).await.expired, 1);
 
     assert!(fixture.effects.reversed_rooms().is_empty());
+    assert!(fixture.members.reversed.lock().unwrap().is_empty());
     assert_eq!(status_of(&fixture, &kick), ModerationActionStatus::Reversed);
 }
 

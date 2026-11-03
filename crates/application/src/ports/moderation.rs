@@ -4,7 +4,8 @@ use agent_room_domain::{
         RoomModerationGrantId,
     },
     moderation::{
-        ModerationAction, ModerationAuditEvent, ModerationCase, ModerationRole, ModerationTarget,
+        ModerationAction, ModerationActionKind, ModerationAuditEvent, ModerationCase,
+        ModerationRole, ModerationTarget,
     },
     room_moderation_grants::AgentModerationNote,
     rooms::RoomCatalogKind,
@@ -285,6 +286,49 @@ pub trait ModerationEffectGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         event_id: &'a MatrixEventId,
     ) -> PortFuture<'a, MatrixResult<bool>>;
+}
+
+/// 私人房间里台账的踢出、封禁为什么做不了。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModerationMemberRefusal {
+    /// 对象是房主。
+    Owner,
+    /// 踢出时他已经不在房间里：没有受邀，也没有加入。
+    NotInRoom,
+    /// 房间不在了，或者已经归档。
+    RoomUnavailable,
+}
+
+/// 私人房间里台账的踢出、封禁照成员一节那一套落，不只动聊天服务器（`specs/public-rooms/design.md`
+/// “落到哪”）：只在聊天服务器上踢了、成员记录还是已加入的话，网页会把他当成还在房间里，又替他加入。
+/// 台账已经核过动手的人管得了这个房间，这里以房主的身份改成员记录。成员记录和目录的失败也报成聊天
+/// 服务器的失败（取最接近的种类）：对台账来说都是这一下没落成。
+pub trait ModerationMemberGateway: Send + Sync {
+    /// 落之前先看做不做得了，做不了交回为什么：不预留一条注定失败的动作。
+    fn check(
+        &self,
+        kind: ModerationActionKind,
+        room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<ModerationMemberRefusal>>>;
+
+    /// 踢出就是移出，封禁就是封禁：改成员记录，在聊天服务器上踢出或封禁，把他名下在房间里的 Agent
+    /// 移出。
+    fn apply(
+        &self,
+        kind: ModerationActionKind,
+        room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>>;
+
+    /// 撤回和到期解除：封禁就是解封，他回到“已移出”，之后能再邀请他或者他自己进来；踢出是照房间
+    /// 新成员的默认权限重新邀请他。他已经不被封着、已经回到房间里了，什么也不做。
+    fn reverse(
+        &self,
+        kind: ModerationActionKind,
+        room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>>;
 }
 
 /// Agent 在消息里看到的一个发言人认成的人（维护者 2026-11-03 定：动别人的 Agent 等于动它的主人）。

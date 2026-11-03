@@ -1,19 +1,22 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
-    ids::{AuditEventId, ModerationActionId},
+    ids::{AuditEventId, ModerationActionId, PrincipalId, RoomCatalogId},
     moderation::{
         ModerationAction, ModerationActionKind, ModerationActionStatus, ModerationAuditEvent,
-        ModerationAuditOutcome, ModerationCase, ModerationTarget,
+        ModerationAuditOutcome, ModerationCase, ModerationTarget, ModerationTargetKind,
     },
+    rooms::RoomCatalogKind,
 };
+use uuid::Uuid;
 
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, MatrixEventId, MatrixFailure, MatrixResult, MatrixRoomId,
-        ModerationActionReservationOutcome, ModerationAuthority, ModerationEffectGateway,
-        ModerationEffectTarget, ModerationExpiryRepository, ModerationIdentifierFactory,
+        Clock, MatrixEventId, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+        MatrixRoomId, ModerationActionReservationOutcome, ModerationAuthority,
+        ModerationEffectGateway, ModerationEffectTarget, ModerationExpiryRepository,
+        ModerationIdentifierFactory, ModerationMemberGateway, ModerationMemberRefusal,
         ModerationMuteLedger, ModerationReportPolicy, ModerationReportSubmissionOutcome,
         ModerationRepository, ModerationRoomContext, PortFuture,
     },
@@ -78,6 +81,8 @@ pub struct ModerationDependencies {
     /// 结束禁言之前读这个人此刻的禁言情况，同一个人一次只做一个。
     pub mutes: Arc<dyn ModerationMuteLedger>,
     pub effects: Arc<dyn ModerationEffectGateway>,
+    /// 私人房间里的踢出、封禁照成员一节那一套落。
+    pub members: Arc<dyn ModerationMemberGateway>,
     pub identifiers: Arc<dyn ModerationIdentifierFactory>,
     pub clock: Arc<dyn Clock>,
     pub report_policy: ModerationReportPolicy,
@@ -89,6 +94,7 @@ pub struct ModerationService {
     pub(super) expiry: Arc<dyn ModerationExpiryRepository>,
     pub(super) mutes: Arc<dyn ModerationMuteLedger>,
     effects: Arc<dyn ModerationEffectGateway>,
+    members: Arc<dyn ModerationMemberGateway>,
     pub(super) identifiers: Arc<dyn ModerationIdentifierFactory>,
     pub(super) clock: Arc<dyn Clock>,
     report_policy: ModerationReportPolicy,
@@ -102,6 +108,7 @@ impl ModerationService {
             expiry: dependencies.expiry,
             mutes: dependencies.mutes,
             effects: dependencies.effects,
+            members: dependencies.members,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
             report_policy: dependencies.report_policy,
@@ -115,7 +122,7 @@ impl ModerationService {
         const OPERATION: &str = "moderation.inspect_capabilities";
         require_active_actor(&request.actor, self.clock.now(), OPERATION)?;
         let target = ModerationTarget::new(
-            agent_room_domain::moderation::ModerationTargetKind::Room,
+            ModerationTargetKind::Room,
             request.room_catalog_id.to_string(),
         )
         .map_err(|_| failure(OPERATION, ModerationFailureKind::Internal))?;
@@ -240,6 +247,14 @@ impl ModerationService {
         let rooms = self
             .effect_rooms(&context, request.kind, &request.target, OPERATION)
             .await?;
+        self.check_members(
+            &context,
+            request.room_catalog_id,
+            request.kind,
+            &request.target,
+            OPERATION,
+        )
+        .await?;
         let action = ModerationAction::reserve(
             request.action_id,
             request.case_id,
@@ -388,6 +403,13 @@ impl ModerationService {
         context: &ModerationRoomContext,
         rooms: &[MatrixRoomId],
     ) -> MatrixResult<()> {
+        if through_members(context, action.kind()) {
+            let target = member_target(action.target()).ok_or_else(|| member_failure(action))?;
+            return self
+                .members
+                .apply(action.kind(), action.room_catalog_id(), target)
+                .await;
+        }
         for room in rooms {
             let target = effect_target(context, room, action.target().clone());
             self.effects.apply(action, &target).await?;
@@ -403,11 +425,52 @@ impl ModerationService {
         context: &ModerationRoomContext,
         rooms: &[MatrixRoomId],
     ) -> MatrixResult<()> {
+        if through_members(context, action.kind()) {
+            let target = member_target(action.target()).ok_or_else(|| member_failure(action))?;
+            return self
+                .members
+                .reverse(action.kind(), action.room_catalog_id(), target)
+                .await;
+        }
         for room in rooms {
             let target = effect_target(context, room, action.target().clone());
             self.effects.reverse(action, &target).await?;
         }
         Ok(())
+    }
+
+    /// 私人房间里的踢出、封禁落之前先看照成员一节那一套做不做得了：房主动不了，不在房间里的人踢不了，
+    /// 房间归档了什么也做不了。别的动作不看。
+    pub(super) async fn check_members(
+        &self,
+        context: &ModerationRoomContext,
+        room_catalog_id: RoomCatalogId,
+        kind: ModerationActionKind,
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> ModerationResult<()> {
+        if !through_members(context, kind) {
+            return Ok(());
+        }
+        let principal = member_target(target)
+            .ok_or_else(|| failure(operation, ModerationFailureKind::InvalidRequest))?;
+        match self
+            .members
+            .check(kind, room_catalog_id, principal)
+            .await
+            .map_err(|error| repository_failure(operation, &error))?
+        {
+            None => Ok(()),
+            Some(ModerationMemberRefusal::Owner) => {
+                Err(failure(operation, ModerationFailureKind::Forbidden))
+            }
+            Some(ModerationMemberRefusal::NotInRoom) => {
+                Err(failure(operation, ModerationFailureKind::Conflict))
+            }
+            Some(ModerationMemberRefusal::RoomUnavailable) => {
+                Err(failure(operation, ModerationFailureKind::NotFound))
+            }
+        }
     }
 
     async fn reverse_action_internal(
@@ -538,14 +601,11 @@ impl ModerationService {
     pub(super) async fn require_room_moderator(
         &self,
         actor: &crate::authentication::AuthenticatedPrincipal,
-        room_catalog_id: agent_room_domain::ids::RoomCatalogId,
+        room_catalog_id: RoomCatalogId,
         operation: &'static str,
     ) -> ModerationResult<()> {
-        let target = ModerationTarget::new(
-            agent_room_domain::moderation::ModerationTargetKind::Room,
-            room_catalog_id.to_string(),
-        )
-        .map_err(|_| failure(operation, ModerationFailureKind::Internal))?;
+        let target = ModerationTarget::new(ModerationTargetKind::Room, room_catalog_id.to_string())
+            .map_err(|_| failure(operation, ModerationFailureKind::Internal))?;
         let context = self
             .authority
             .inspect_room(actor.principal_id, room_catalog_id, &target)
@@ -584,7 +644,7 @@ impl ModerationService {
     async fn authorized_room_context(
         &self,
         actor: &crate::authentication::AuthenticatedPrincipal,
-        room_catalog_id: agent_room_domain::ids::RoomCatalogId,
+        room_catalog_id: RoomCatalogId,
         target: &ModerationTarget,
         kind: ModerationActionKind,
         operation: &'static str,
@@ -714,7 +774,7 @@ fn audit_event(
     target: ModerationTarget,
     outcome: ModerationAuditOutcome,
     reason: Option<agent_room_domain::moderation::ModerationReason>,
-    room_catalog_id: Option<agent_room_domain::ids::RoomCatalogId>,
+    room_catalog_id: Option<RoomCatalogId>,
     occurred_at: agent_room_domain::time::UtcMillis,
     operation: &'static str,
 ) -> ModerationResult<ModerationAuditEvent> {
@@ -744,6 +804,30 @@ fn effect_target(
         target_matrix_user_id: context.target_matrix_user_id.clone(),
         target_agent_matrix_user_ids: context.target_agent_matrix_user_ids.clone(),
     }
+}
+
+/// 私人房间里管人的踢出、封禁照成员一节那一套落（[`ModerationMemberGateway`]）；公开大厅和别的动作照旧
+/// 只在聊天服务器上做。
+fn through_members(context: &ModerationRoomContext, kind: ModerationActionKind) -> bool {
+    context.room_kind == RoomCatalogKind::PrivateRoom
+        && matches!(kind, ModerationActionKind::Kick | ModerationActionKind::Ban)
+}
+
+/// 管人的动作的对象是账户 ID。
+fn member_target(target: &ModerationTarget) -> Option<PrincipalId> {
+    (target.kind() == ModerationTargetKind::Principal)
+        .then(|| Uuid::parse_str(target.reference()).ok())
+        .flatten()
+        .map(PrincipalId::from_uuid)
+}
+
+/// 对象认不出是谁：这一下落不成。
+const fn member_failure(action: &ModerationAction) -> MatrixFailure {
+    let operation = match action.kind() {
+        ModerationActionKind::Ban => MatrixOperation::Ban,
+        _ => MatrixOperation::Kick,
+    };
+    MatrixFailure::new(operation, MatrixFailureKind::NotFound)
 }
 
 fn require_active_actor(
@@ -790,22 +874,20 @@ pub(super) fn repository_failure(
 
 pub(crate) fn matrix_failure_code(failure: MatrixFailure) -> &'static str {
     match failure.kind() {
-        crate::ports::MatrixFailureKind::InvalidConfiguration => "matrix.invalid_configuration",
-        crate::ports::MatrixFailureKind::Unauthenticated => "matrix.unauthenticated",
-        crate::ports::MatrixFailureKind::AuthenticationRejected => "matrix.auth_rejected",
-        crate::ports::MatrixFailureKind::Forbidden => "matrix.forbidden",
-        crate::ports::MatrixFailureKind::NotFound => "matrix.not_found",
-        crate::ports::MatrixFailureKind::Conflict => "matrix.conflict",
-        crate::ports::MatrixFailureKind::RateLimited => "matrix.rate_limited",
-        crate::ports::MatrixFailureKind::Timeout => "matrix.timeout",
-        crate::ports::MatrixFailureKind::DependencyUnavailable => "matrix.unavailable",
-        crate::ports::MatrixFailureKind::CryptographicIdentityConflict => {
-            "matrix.crypto_identity_conflict"
-        }
-        crate::ports::MatrixFailureKind::InvalidResponse => "matrix.invalid_response",
-        crate::ports::MatrixFailureKind::UnknownCommit => "matrix.unknown_commit",
-        crate::ports::MatrixFailureKind::StaleSyncToken => "matrix.stale_sync_token",
-        crate::ports::MatrixFailureKind::UnsupportedVersion => "matrix.unsupported_version",
+        MatrixFailureKind::InvalidConfiguration => "matrix.invalid_configuration",
+        MatrixFailureKind::Unauthenticated => "matrix.unauthenticated",
+        MatrixFailureKind::AuthenticationRejected => "matrix.auth_rejected",
+        MatrixFailureKind::Forbidden => "matrix.forbidden",
+        MatrixFailureKind::NotFound => "matrix.not_found",
+        MatrixFailureKind::Conflict => "matrix.conflict",
+        MatrixFailureKind::RateLimited => "matrix.rate_limited",
+        MatrixFailureKind::Timeout => "matrix.timeout",
+        MatrixFailureKind::DependencyUnavailable => "matrix.unavailable",
+        MatrixFailureKind::CryptographicIdentityConflict => "matrix.crypto_identity_conflict",
+        MatrixFailureKind::InvalidResponse => "matrix.invalid_response",
+        MatrixFailureKind::UnknownCommit => "matrix.unknown_commit",
+        MatrixFailureKind::StaleSyncToken => "matrix.stale_sync_token",
+        MatrixFailureKind::UnsupportedVersion => "matrix.unsupported_version",
     }
 }
 
