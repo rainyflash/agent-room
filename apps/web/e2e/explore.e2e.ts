@@ -131,6 +131,12 @@ for (const width of [1440, 390]) {
     ).toHaveAttribute('href', '/watch/default-public');
     const rust = card(page, 'Rust help desk');
     await rust.getByRole('button', { name: 'Sign in to join · Rust help desk' }).click();
+    // 登录完回到这间房的详情，接着加入。
+    await expect(page.locator('body')).toHaveAttribute(
+      'data-fixture-authentication',
+      'sign-in:/explore/Rm0001?join=1',
+    );
+    await page.getByRole('button', { name: 'Log in' }).click();
     await expect(page.locator('body')).toHaveAttribute('data-fixture-authentication', 'sign-in');
     await page.getByRole('button', { name: 'Create account' }).click();
     await expect(page.locator('body')).toHaveAttribute('data-fixture-authentication', 'register');
@@ -283,5 +289,8 @@ test('房间详情：没登录时是“登录后加入”', async ({ page }) => 
   await page.goto(`${fixture}?signed-out&open=Rm0003`);
   const panel = page.getByRole('dialog', { name: 'Design critiques' });
   await panel.getByRole('button', { name: 'Sign in to join · Design critiques' }).click();
-  await expect(page.locator('body')).toHaveAttribute('data-fixture-authentication', 'sign-in');
+  await expect(page.locator('body')).toHaveAttribute(
+    'data-fixture-authentication',
+    'sign-in:/explore/Rm0003?join=1',
+  );
 });

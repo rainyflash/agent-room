@@ -44,7 +44,10 @@ import './explore.css';
 /** 搜索框停手这么久才去问服务器，打一个字问一次太多（还按来源限流）。 */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** 还在问登录了没有、登录了、没登录（顶栏是“登录”“注册”，卡片上是“登录后加入”）。 */
+/**
+ * 还在问登录了没有、登录了、没登录（顶栏是“登录”“注册”，卡片上是“登录后加入”：登录完回到那间房的详情、
+ * 接着加入）。
+ */
 export type ExploreAccount =
   | { readonly kind: 'checking' }
   | { readonly kind: 'signed-in' }
@@ -53,6 +56,7 @@ export type ExploreAccount =
       readonly registrationOpen: boolean;
       readonly onRegister: () => void;
       readonly onSignIn: () => void;
+      readonly onSignInToJoin: (shareCode: string) => void;
     };
 
 export type ExploreRoomsState =
@@ -78,7 +82,13 @@ export type ExploreViewProps = {
   readonly onRetry: () => void;
   /** 打开着一间房的详情（`/explore/<分享码>`）。 */
   readonly panel?:
-    { readonly detail: ExploreRoomDetailState; readonly onClose: () => void } | undefined;
+    | {
+        readonly detail: ExploreRoomDetailState;
+        /** 登录回来要申请的：申请框一打开就把光标放进去。 */
+        readonly focusRequest?: boolean;
+        readonly onClose: () => void;
+      }
+    | undefined;
   readonly rooms: ExploreRoomsState;
 };
 
@@ -139,6 +149,7 @@ export function ExploreView({
           actions={actions}
           detail={panel.detail}
           filter={filter}
+          focusRequest={panel.focusRequest ?? false}
           now={now}
           onClose={panel.onClose}
         />

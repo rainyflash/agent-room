@@ -5,9 +5,12 @@ import {
   avatarTone,
   exploreAvatarTones,
   exploreFilterFromSearch,
+  exploreJoinPath,
   exploreSearchFromFilter,
   exploreSearchParams,
+  joinContinuationStep,
   normalizeExploreSearch,
+  type ExploreRoom,
 } from '@/features/explore/domain/explore';
 
 describe('发现页的搜索和筛选', () => {
@@ -33,6 +36,46 @@ describe('发现页的搜索和筛选', () => {
     const filter = { q: 'rust', quick: 'plain', sort: 'newest' } as const;
     expect(exploreFilterFromSearch(exploreSearchFromFilter(filter))).toEqual(filter);
     expect(exploreFilterFromSearch({})).toEqual({ q: '', quick: 'all', sort: 'active' });
+  });
+});
+
+describe('从分享页点“加入”过来', () => {
+  it('地址上认 join=1，signup 只跟着 join 一起才算；换筛选时不带它们', () => {
+    expect(normalizeExploreSearch({ join: 1 })).toEqual({ join: 1 });
+    expect(normalizeExploreSearch({ join: '1', signup: 1 })).toEqual({ join: 1, signup: 1 });
+    expect(normalizeExploreSearch({ signup: 1 })).toEqual({});
+    expect(normalizeExploreSearch({ join: 2 })).toEqual({});
+    expect(exploreSearchFromFilter(exploreFilterFromSearch({ join: 1, q: 'rust' }))).toEqual({
+      q: 'rust',
+    });
+    expect(exploreJoinPath('aB3xYz')).toBe('/explore/aB3xYz?join=1');
+  });
+
+  it('登录回来：在里面的进房间，直接进的和受邀的加入，要申请的去留话，别的不动', () => {
+    const base: ExploreRoom = {
+      agentCount: 0,
+      catalogId: '0198c000-0000-7000-8000-000000000001',
+      createdAtUnixMs: 0,
+      description: '',
+      endToEndEncrypted: false,
+      joinMode: 'open',
+      lastMessageAtUnixMs: null,
+      memberCount: 1,
+      name: 'Room',
+      ownerName: 'Ada',
+      shareCode: 'aB3xYz',
+      shareUrl: 'https://agentroom.test/r/aB3xYz',
+      viewer: null,
+    };
+    expect(joinContinuationStep({ ...base, viewer: 'joined' })).toBe('enter');
+    expect(joinContinuationStep(base)).toBe('join');
+    expect(joinContinuationStep({ ...base, joinMode: 'invite_only', viewer: 'invited' })).toBe(
+      'join',
+    );
+    expect(joinContinuationStep({ ...base, joinMode: 'request' })).toBe('request');
+    expect(joinContinuationStep({ ...base, joinMode: 'request', viewer: 'pending' })).toBe('none');
+    expect(joinContinuationStep({ ...base, viewer: 'banned' })).toBe('none');
+    expect(joinContinuationStep({ ...base, joinMode: 'invite_only' })).toBe('none');
   });
 });
 

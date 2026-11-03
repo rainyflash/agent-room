@@ -38,6 +38,8 @@ export type ExploreRoomPanelProps = {
   readonly filter: ExploreFilter;
   readonly now: number;
   readonly onClose: () => void;
+  /** 登录回来要申请的：申请框一打开就把光标放进去。 */
+  readonly focusRequest?: boolean;
 };
 
 /**
@@ -49,6 +51,7 @@ export function ExploreRoomPanel({
   actions,
   detail,
   filter,
+  focusRequest = false,
   now,
   onClose,
 }: ExploreRoomPanelProps) {
@@ -103,6 +106,7 @@ export function ExploreRoomPanel({
             account={account}
             actions={actions}
             filter={filter}
+            focusRequest={focusRequest}
             now={now}
             room={detail.room}
             titleId={titleId}
@@ -139,6 +143,7 @@ function RoomDetail({
   account,
   actions,
   filter,
+  focusRequest,
   now,
   room,
   titleId,
@@ -146,6 +151,7 @@ function RoomDetail({
   readonly account: ExploreAccount;
   readonly actions?: ExploreActions | undefined;
   readonly filter: ExploreFilter;
+  readonly focusRequest: boolean;
   readonly now: number;
   readonly room: ExploreRoomDetail;
   readonly titleId: string;
@@ -221,6 +227,7 @@ function RoomDetail({
           account={account}
           actions={actions}
           filter={filter}
+          focusRequest={focusRequest}
           place="panel"
           room={room}
         />

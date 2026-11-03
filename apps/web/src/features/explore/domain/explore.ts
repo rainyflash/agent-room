@@ -97,22 +97,66 @@ export type ExploreGateway = {
 /**
  * 发现页地址上的搜索、筛选和排序（`/explore?q=&quick=&sort=`），刷新、分享、后退都还在。默认的不写进地址；
  * 认不出的值当默认的。
+ *
+ * `join=1` 是从分享页点“加入”过来的（`/explore/<分享码>?join=1`）：没登录的先去登录，`signup=1` 时去注册，
+ * 回来以后接着加入（见 `joinContinuationStep`）。
  */
 export type ExploreSearch = {
   readonly q?: string;
   readonly quick?: Exclude<ExploreQuickFilter, 'all'>;
   readonly sort?: Exclude<ExploreSort, 'active'>;
+  readonly join?: 1;
+  readonly signup?: 1;
 };
 
 export function normalizeExploreSearch(search: Record<string, unknown>): ExploreSearch {
   const q = typeof search.q === 'string' ? search.q.slice(0, EXPLORE_SEARCH_MAX_LENGTH) : '';
   const quick = exploreQuickFilters.find((value) => value === search.quick && value !== 'all');
   const sort = exploreSorts.find((value) => value === search.sort && value !== 'active');
+  const join = isFlag(search.join);
   return {
     ...(q.trim() === '' ? {} : { q }),
     ...(quick === undefined || quick === 'all' ? {} : { quick }),
     ...(sort === undefined || sort === 'active' ? {} : { sort }),
+    ...(join ? { join: 1 as const } : {}),
+    ...(join && isFlag(search.signup) ? { signup: 1 as const } : {}),
   };
+}
+
+/** 路由把 `?join=1` 读成数字 1；手写的 `true`、`"1"` 也认。 */
+function isFlag(value: unknown): boolean {
+  return value === 1 || value === '1' || value === true || value === 'true';
+}
+
+/** 登录、注册完回来接着加入的地址。 */
+export function exploreJoinPath(shareCode: string): string {
+  return `/explore/${encodeURIComponent(shareCode)}?join=1`;
+}
+
+/**
+ * 从分享页点“加入”、登录回来以后做什么：已经在里面的直接进房间；直接进的、收到过邀请的加入；要申请的
+ * 打开申请框；在等批准、被封禁、只能邀请的什么都不做，详情上自己会说。
+ */
+export function joinContinuationStep(room: ExploreRoom): 'enter' | 'join' | 'request' | 'none' {
+  switch (room.viewer) {
+    case 'joined':
+      return 'enter';
+    case 'invited':
+      return 'join';
+    case 'pending':
+    case 'banned':
+      return 'none';
+    case null:
+      break;
+  }
+  switch (room.joinMode) {
+    case 'open':
+      return 'join';
+    case 'request':
+      return 'request';
+    case 'invite_only':
+      return 'none';
+  }
 }
 
 export function exploreFilterFromSearch(search: ExploreSearch): ExploreFilter {

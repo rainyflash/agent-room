@@ -1,7 +1,7 @@
 import { Button } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, LoaderCircle } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 
@@ -43,12 +43,14 @@ export function ExploreRoomActions({
   account,
   actions,
   filter,
+  focusRequest = false,
   place,
   room,
 }: {
   readonly account: ExploreAccount;
   readonly actions?: ExploreActions | undefined;
   readonly filter: ExploreFilter;
+  readonly focusRequest?: boolean;
   readonly place: 'card' | 'panel';
   readonly room: ExploreRoom;
 }) {
@@ -74,7 +76,9 @@ export function ExploreRoomActions({
     return (
       <Button
         aria-label={`${t('explore.action.signIn')} · ${name}`}
-        onClick={account.onSignIn}
+        onClick={() => {
+          account.onSignInToJoin(room.shareCode);
+        }}
         size="compact"
         tone="ghost"
       >
@@ -113,7 +117,13 @@ export function ExploreRoomActions({
   }
   if (room.viewer !== 'invited' && room.joinMode === 'request') {
     return place === 'panel' ? (
-      <RequestForm actions={actions} busy={busy} failureNote={failureNote} room={room} />
+      <RequestForm
+        actions={actions}
+        busy={busy}
+        failureNote={failureNote}
+        focus={focusRequest}
+        room={room}
+      />
     ) : (
       <Link
         aria-label={`${t('explore.action.request')} · ${name}`}
@@ -179,17 +189,23 @@ function RequestForm({
   actions,
   busy,
   failureNote,
+  focus,
   room,
 }: {
   readonly actions: ExploreActions;
   readonly busy: ExploreActionKind | null;
   readonly failureNote: ReactNode;
+  readonly focus: boolean;
   readonly room: ExploreRoom;
 }) {
   const { i18n, t } = useTranslation();
   const messageId = useId();
   const countId = useId();
   const [message, setMessage] = useState('');
+  const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (focus) field.current?.focus();
+  }, [focus]);
   // 和服务器一样按字算：表情、汉字都算一个。
   const length = Array.from(message).length;
   const tooLong = length > JOIN_REQUEST_MESSAGE_MAX_LENGTH;
@@ -210,6 +226,7 @@ function RequestForm({
         onChange={(event) => {
           setMessage(event.target.value);
         }}
+        ref={field}
         rows={3}
         value={message}
       />

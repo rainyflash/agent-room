@@ -33,7 +33,7 @@ import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 /**
  * 发现页的夹具（specs/public-rooms/design.md“发现页”）：
  * - 默认：登录了，几间公开房间，你在不同的处境里（已加入、在等批准、收到邀请、被封禁、只能邀请），还有更多；
- * - `?signed-out`：没登录，顶栏是“登录”“注册”，卡片上是“登录后加入”；
+ * - `?signed-out`：没登录，顶栏是“登录”“注册”，卡片上是“登录后加入”（记下回来接着加入的那间房）；
  * - `?empty`：什么都没搜到；`?failed`：没读到；`?limited`：被限流；`?loading`：还在读。
  * 点卡片打开详情（`/explore/<分享码>`），加入、申请、撤回照着做（见 `useFixtureActions`）。
  * 点筛选、排序、搜索在这一页里照着筛；点了什么记在 `document.body.dataset` 上。语言跟着浏览器走。
@@ -172,6 +172,9 @@ function fixtureAccount(): ExploreAccount {
         },
         onSignIn: () => {
           document.body.dataset.fixtureAuthentication = 'sign-in';
+        },
+        onSignInToJoin: (shareCode) => {
+          document.body.dataset.fixtureAuthentication = `sign-in:/explore/${shareCode}?join=1`;
         },
         registrationOpen: true,
       }
