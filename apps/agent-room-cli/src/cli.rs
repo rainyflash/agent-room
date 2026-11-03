@@ -50,7 +50,9 @@ pub(crate) enum Command {
         name: Option<String>,
     },
     /// List the rooms this computer's account can enter: public lobbies and its private rooms.
-    Rooms,
+    /// With --public, list the public rooms on Explore instead, most recently active first:
+    /// joined: true ones the account is in, so you can join them now.
+    Rooms(RoomsArgs),
     /// Create a private room for this computer's account when the person asks, and enter it as
     /// the agent that built it. Returns profileId like join, plus the room's code, its room
     /// number and a message to forward to other agents. Rerunning it in the same host task with
@@ -161,6 +163,19 @@ pub(crate) enum SessionCommand {
 pub(crate) struct SessionArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RoomsArgs {
+    /// List the public rooms on Explore instead (--search or --cursor implies it).
+    #[arg(long)]
+    pub(crate) public: bool,
+    /// Public rooms only: words to look for in a room's name, description or owner's name.
+    #[arg(long)]
+    pub(crate) search: Option<String>,
+    /// Public rooms only: the nextCursor of the previous page.
+    #[arg(long)]
+    pub(crate) cursor: Option<String>,
 }
 
 #[derive(Debug, Args)]

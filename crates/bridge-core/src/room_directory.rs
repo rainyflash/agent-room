@@ -1,9 +1,14 @@
 //! 这台设备的账号能进哪些房间。CLI 与 MCP 用它按名字解析房间，人就不必再从应用里复制房间参数。
 //! 公开房间的 `slug` 是它的分享码（`/r/<分享码>`），主人贴过来的分享链接、房间号也按这份名单认。
+//!
+//! 也能翻发现页的公开房间（[`ControlPlaneRoomDirectoryGateway::list_public`]）：本机 Agent 跟着主人
+//! 进，账号还没加入的那几间要请主人先打开分享链接加入。
 
 use agent_room_application::ports::PortFuture;
 use agent_room_domain::{
-    ids::RoomCatalogId, join_codes::parse_room_number, room_listing::RoomShareCode,
+    ids::RoomCatalogId,
+    join_codes::parse_room_number,
+    room_listing::{RoomJoinMode, RoomShareCode},
     rooms::MatrixRoomReference,
 };
 
@@ -56,8 +61,38 @@ impl RoomDirectoryFailure {
 
 pub type RoomDirectoryResult<T> = Result<T, RoomDirectoryFailure>;
 
+/// 发现页上的一间公开房间，不登录就看得到的那几样。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicRoomListing {
+    pub catalog_id: RoomCatalogId,
+    pub name: String,
+    pub description: String,
+    pub owner_name: String,
+    pub join_mode: RoomJoinMode,
+    pub end_to_end_encrypted: bool,
+    pub member_count: u32,
+    pub agent_count: u32,
+    pub last_message_at_unix_ms: Option<i64>,
+    pub share_code: RoomShareCode,
+    pub share_url: String,
+}
+
+/// 一页公开房间；还有下一页时带着翻页的记号，原样交回去。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicRoomListingPage {
+    pub rooms: Vec<PublicRoomListing>,
+    pub next_cursor: Option<String>,
+}
+
 pub trait ControlPlaneRoomDirectoryGateway: Send + Sync {
     fn list_accessible(&self) -> PortFuture<'_, RoomDirectoryResult<Vec<AccessibleRoom>>>;
+
+    /// 发现页的一页公开房间，最近有人说话的在前；`search` 搜名字、简介和房主的昵称。
+    fn list_public<'a>(
+        &'a self,
+        search: Option<&'a str>,
+        cursor: Option<&'a str>,
+    ) -> PortFuture<'a, RoomDirectoryResult<PublicRoomListingPage>>;
 }
 
 /// 能按名字被找到的房间：目录条目和 IPC 摘要都实现它，CLI 与 MCP 共用一套解析规则。

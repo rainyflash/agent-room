@@ -151,7 +151,7 @@ fn handler(rooms: Arc<RoomsFake>, host_agents: Arc<HostAgentsFake>) -> SessionAw
         default: Arc::new(RefusingHandler),
         sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
         connection_status: Arc::new(ReadyStatus),
-        room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
+        room_directory: Arc::new(DirectoryFake::default()),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), host_agents.clone()),
         rooms: access(rooms, host_agents),

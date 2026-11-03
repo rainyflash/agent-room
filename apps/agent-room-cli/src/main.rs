@@ -10,7 +10,8 @@ use agent_room_agent_client::{
     launching_desktop_when_absent,
 };
 use agent_room_bridge_ipc::{
-    IpcCloseHostSessionRequest, IpcMethod, IpcOpenHostSessionRequest, IpcResponse,
+    IpcCloseHostSessionRequest, IpcListPublicRoomsRequest, IpcMethod, IpcOpenHostSessionRequest,
+    IpcResponse,
 };
 use agent_room_bridge_local_adapter::{
     bridge_data_root_from_environment, bridge_runtime_root, secure_storage_service_from_environment,
@@ -129,7 +130,7 @@ async fn run_command(
             Err(CliFailure::validation("cli.profile.required"))
         }
         Command::Guide => success(access::guide()),
-        Command::Rooms => success(call(backend, IpcMethod::ListRooms).await?),
+        Command::Rooms(args) => success(call(backend, rooms_method(args)).await?),
         command @ (Command::CreateRoom { .. }
         | Command::Access(_)
         | Command::Admit(_)
@@ -317,6 +318,20 @@ pub(crate) fn scoped(session_id: String, method: IpcMethod) -> IpcMethod {
     }
 }
 
+/// 不带选项列账号能进的房间；`--public`（或者带了 `--search`、`--cursor`）翻发现页的公开房间。
+fn rooms_method(args: cli::RoomsArgs) -> IpcMethod {
+    let cli::RoomsArgs {
+        public,
+        search,
+        cursor,
+    } = args;
+    if public || search.is_some() || cursor.is_some() {
+        IpcMethod::ListPublicRooms(IpcListPublicRoomsRequest { search, cursor })
+    } else {
+        IpcMethod::ListRooms
+    }
+}
+
 fn chat_request(args: cli::SendArgs, body: String) -> CliResult<IpcMethod> {
     use agent_room_bridge_ipc::{
         IpcMessageProvenance, IpcMessageSensitivity, IpcSendMessageRequest,
@@ -444,9 +459,35 @@ async fn register(backend: &dyn BridgeToolClient, args: cli::RegisterArgs) -> Cl
 
 #[cfg(test)]
 mod tests {
-    use agent_room_bridge_ipc::IpcMethod;
+    use agent_room_bridge_ipc::{IpcListPublicRoomsRequest, IpcMethod};
+    use clap::Parser;
 
-    use super::{chat_request, cli};
+    use super::{chat_request, cli, rooms_method};
+
+    #[test]
+    fn rooms_带_public_或_search_翻公开房间_不带照旧列能进的房间() {
+        let method = |args: &[&str]| {
+            let parsed =
+                cli::Cli::try_parse_from(std::iter::once("agent-room").chain(args.iter().copied()))
+                    .expect("参数认得");
+            let cli::Command::Rooms(args) = parsed.command else {
+                panic!("是 rooms");
+            };
+            rooms_method(args)
+        };
+        assert_eq!(method(&["rooms"]), IpcMethod::ListRooms);
+        assert_eq!(
+            method(&["rooms", "--public"]),
+            IpcMethod::ListPublicRooms(IpcListPublicRoomsRequest::default())
+        );
+        assert_eq!(
+            method(&["rooms", "--search", "读书", "--cursor", "24"]),
+            IpcMethod::ListPublicRooms(IpcListPublicRoomsRequest {
+                search: Some("读书".into()),
+                cursor: Some("24".into()),
+            })
+        );
+    }
 
     #[test]
     fn 多行的消息也能发_回车换行统一成换行_标题和摘要压成一行() {

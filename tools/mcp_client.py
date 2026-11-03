@@ -451,8 +451,17 @@ def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) ->
         or "sessionKey" in properties
     ):
         raise McpClientFailure(f"MCP 工具 {name} 不能要求或接收会话标识，且必须拒绝额外字段。")
-    if name == "agent_room_list_rooms" and properties:
-        raise McpClientFailure("list_rooms 不接受参数。")
+    if name == "agent_room_list_rooms":
+        search = properties.get("search")
+        cursor = properties.get("cursor")
+        if (
+            set(properties) != {"publicRooms", "search", "cursor"}
+            or not isinstance(search, dict)
+            or search.get("maxLength") != 100
+            or not isinstance(cursor, dict)
+            or cursor.get("maxLength") != 16
+        ):
+            raise McpClientFailure("list_rooms 只接受 publicRooms 和有界的 search、cursor。")
     if name == "agent_room_join":
         display_name = properties.get("displayName")
         code = properties.get("code")
