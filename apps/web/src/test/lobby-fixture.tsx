@@ -70,7 +70,11 @@ import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-la
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
-import type { MessageGateway, RoomMessageSignal } from '@/features/messages/domain/message';
+import type {
+  MessageGateway,
+  RoomMessageSignal,
+  RoomNoticeChange,
+} from '@/features/messages/domain/message';
 import type {
   MessagePublicationRequest,
   MessagePublisher,
@@ -300,6 +304,18 @@ const fixtureHistory = historyFixture
     })
   : [];
 let historyWindow = historyPage;
+// 公告每改一次，对话里多一行“某某更新了公告”；`?notice` 一开始就有 Grace 那一次。
+const noticeChanges: RoomNoticeChange[] =
+  room.notice === undefined
+    ? []
+    : [
+        {
+          kind: 'updated',
+          matrixEventId: '$fixture-notice',
+          serverTimestamp: room.notice.updatedAtUnixMs,
+          updatedBy: room.notice.updatedBy,
+        },
+      ];
 const displayedEvents: { readonly roomId: string; readonly matrixEventId: string }[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
@@ -314,6 +330,9 @@ const messages: MessageGateway = {
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
+      ...(requestedRoomId === room.roomId && noticeChanges.length > 0
+        ? { noticeChanges: [...noticeChanges] }
+        : {}),
       ...(historyFixture
         ? { history: { canLoadMore: historyWindow < fixtureHistory.length, limited: false } }
         : {}),
@@ -1256,7 +1275,14 @@ const roomNotices: RoomNoticeGateway = {
       text === ''
         ? rest
         : { ...rest, notice: { text, updatedAtUnixMs, updatedBy: fixtureIdentity.matrixUserId } };
+    noticeChanges.push({
+      kind: text === '' ? 'removed' : 'updated',
+      matrixEventId: `$fixture-notice-${String(noticeChanges.length)}`,
+      serverTimestamp: updatedAtUnixMs,
+      updatedBy: fixtureIdentity.matrixUserId,
+    });
     for (const listener of lobbyListeners) listener();
+    for (const listener of conversationListeners) listener();
     return Promise.resolve(ok({ text, updatedAtUnixMs }));
   },
 };

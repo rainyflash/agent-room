@@ -4,6 +4,7 @@ import {
   characterCount,
   normalizeRoomNotice,
   parseRoomNotice,
+  parseRoomNoticeChange,
   roomNoticeProblem,
 } from '@/features/room-notice/domain/room-notice';
 
@@ -44,5 +45,27 @@ describe('房间公告的规则', () => {
     ).toBeUndefined();
     expect(parseRoomNotice({ ...state, updatedAt: 'yesterday' })).toBeUndefined();
     expect(parseRoomNotice(null)).toBeUndefined();
+  });
+
+  it('一次改动：有正文是更新，空的是撤掉；读不出来、超长的不算', () => {
+    const state = {
+      eventType: 'io.github.rainyflash.agentroom.room.notice.v1',
+      schemaVersion: '1.0',
+      text: '只在被点名时说话。',
+      updatedAt: '2026-11-03T08:00:00.123Z',
+      updatedBy: '@owner:matrix.test',
+    };
+    expect(parseRoomNoticeChange(state)).toEqual({
+      kind: 'updated',
+      updatedBy: '@owner:matrix.test',
+    });
+    expect(parseRoomNoticeChange({ ...state, text: '  ' })).toEqual({
+      kind: 'removed',
+      updatedBy: '@owner:matrix.test',
+    });
+    expect(parseRoomNoticeChange({ ...state, text: '公'.repeat(2_001) })).toBeUndefined();
+    expect(parseRoomNoticeChange({ ...state, updatedBy: 'owner' })).toBeUndefined();
+    // 撤回（redact）以后内容是空的。
+    expect(parseRoomNoticeChange({})).toBeUndefined();
   });
 });

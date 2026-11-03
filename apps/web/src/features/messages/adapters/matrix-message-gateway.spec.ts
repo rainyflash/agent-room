@@ -247,6 +247,76 @@ describe('MatrixMessageGateway', () => {
     expect(Object.isFrozen(result.value.readOnlyFederatedEvents)).toBe(true);
   });
 
+  it('公告的状态事件变成一行改动；我们自己的房间状态不列成看不懂的事件，同类型的普通事件照旧列', () => {
+    const room = snapshot([
+      noticeState('$notice', 300, '只在被点名时说话。'),
+      // 成员谁都发得了同类型的普通事件，冒充不了改公告。
+      noticeState('$forged', 350, '冒充的公告', { stateKey: null }),
+      noticeState('$other-key', 360, '不是这一条', { stateKey: 'other' }),
+      roomState('$listing', 310, 'io.github.rainyflash.agentroom.room.listing.v1'),
+      roomState('$roster', 320, 'io.github.rainyflash.agentroom.roster.policy.v1'),
+      roomState('$future-state', 380, 'io.github.rainyflash.agentroom.room.future.v9'),
+      noticeState('$removed', 400, ''),
+    ]);
+    const gateway = new MatrixMessageGateway(source({ kind: 'ready', room }));
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.noticeChanges).toEqual([
+      {
+        kind: 'updated',
+        matrixEventId: '$notice',
+        serverTimestamp: 300,
+        updatedBy: '@owner:agent-room.test',
+      },
+      {
+        kind: 'removed',
+        matrixEventId: '$removed',
+        serverTimestamp: 400,
+        updatedBy: '@owner:agent-room.test',
+      },
+    ]);
+    expect(Object.isFrozen(result.value.noticeChanges)).toBe(true);
+    expect(result.value.readOnlyFederatedEvents.map((event) => event.matrixEventId)).toEqual([
+      '$future-state',
+      '$forged',
+    ]);
+  });
+
+  it('消息多过窗口时，比留下的最早一条还早的改动不给；没改过公告时不给', () => {
+    const previews = Array.from({ length: 201 }, (_, index) =>
+      previewEvent({
+        eventId: `$m${String(index)}`,
+        messageId: `01990d9e-8400-7000-8000-${String(index).padStart(12, '0')}`,
+        serverTimestamp: 1_000 + index,
+      }),
+    );
+    const crowded = new MatrixMessageGateway(
+      source({
+        kind: 'ready',
+        room: snapshot([
+          ...previews,
+          noticeState('$too-early', 1_000, '早于留下的消息'),
+          noticeState('$kept', 1_100, '留下'),
+        ]),
+      }),
+    );
+    const quiet = new MatrixMessageGateway(
+      source({ kind: 'ready', room: snapshot(previews.slice(0, 3)) }),
+    );
+
+    const crowdedResult = crowded.read(ROOM_ID);
+    const quietResult = quiet.read(ROOM_ID);
+
+    expect(crowdedResult.ok && crowdedResult.value.messages).toHaveLength(200);
+    expect(
+      crowdedResult.ok && crowdedResult.value.noticeChanges?.map((change) => change.matrixEventId),
+    ).toEqual(['$kept']);
+    expect(quietResult.ok && quietResult.value).not.toHaveProperty('noticeChanges');
+  });
+
   it('解不开的加密事件汇总成一条提示：条数、按用户能做什么归好的原因、发送者', () => {
     const failed = (
       eventId: string,
@@ -470,6 +540,43 @@ describe('MatrixMessageGateway', () => {
     expect(restoredMessage?.preview?.title).toBe('协议生成完成');
   });
 });
+
+/** 应用服务写的公告；`stateKey: null` 是成员发的同类型普通事件。 */
+function noticeState(
+  eventId: string,
+  serverTimestamp: number,
+  text: string,
+  options: { readonly stateKey?: string | null } = {},
+): MatrixMessageTimelineEvent {
+  const stateKey = options.stateKey === undefined ? '' : options.stateKey;
+  return {
+    content: {
+      eventType: 'io.github.rainyflash.agentroom.room.notice.v1',
+      schemaVersion: '1.0',
+      text,
+      updatedAt: new Date(serverTimestamp).toISOString(),
+      updatedBy: '@owner:agent-room.test',
+    },
+    endToEndEncrypted: false,
+    eventId,
+    sender: stateKey === null ? '@member:agent-room.test' : '@_agent_room:agent-room.test',
+    serverTimestamp,
+    ...(stateKey === null ? {} : { stateKey }),
+    type: 'io.github.rainyflash.agentroom.room.notice.v1',
+  };
+}
+
+function roomState(eventId: string, serverTimestamp: number, type: string) {
+  return {
+    content: { eventType: type, schemaVersion: '1.0' },
+    endToEndEncrypted: false,
+    eventId,
+    sender: '@_agent_room:agent-room.test',
+    serverTimestamp,
+    stateKey: '',
+    type,
+  } satisfies MatrixMessageTimelineEvent;
+}
 
 function source(read: MatrixMessageSourceRead): MatrixMessageSource {
   return { read: () => read, subscribe: () => noop };

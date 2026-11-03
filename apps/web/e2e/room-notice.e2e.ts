@@ -15,8 +15,11 @@ for (const width of [1440, 390]) {
     await page.goto(`${roomFixture}?private&notice&view=conversation`);
 
     const notice = page.getByRole('region', { name: 'Room notice' });
+    const log = page.getByRole('log', { name: /conversation/iu });
     await expect(notice).toContainText('Only speak when someone mentions you.');
     await expect(notice.getByText('Updated since you last looked')).toBeAttached();
+    // 对话里按时间写着这一次改动。
+    await expect(log.locator('.room-notice-change')).toHaveText([/Grace updated the notice/u]);
     const text = notice.locator('.room-notice__text');
     // 三行的公告平时只显示两行。
     const clamped = await text.evaluate((element) => element.scrollHeight > element.clientHeight);
@@ -59,6 +62,13 @@ for (const width of [1440, 390]) {
     await expect(settings).toContainText('Notice removed.');
     await settings.getByRole('button', { name: 'Close room settings' }).click();
     await expect(page.getByRole('region', { name: 'Room notice' })).toHaveCount(0);
+    // 重新加载以后改动还按 Grace 那一次算；这一页里改的两次跟在后面。
+    await expect(log.locator('.room-notice-change')).toHaveText([
+      /Grace updated the notice/u,
+      /You updated the notice/u,
+      /You removed the notice/u,
+    ]);
+    await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
   });
 }
@@ -80,5 +90,8 @@ test('没有公告的房间：对话上方什么都不多，房主在设置的�
   await expect(notice).toContainText('Be kind.');
   // 自己写的不算没看过。
   await expect(notice.getByText('Updated since you last looked')).toHaveCount(0);
+  await expect(
+    page.getByRole('log', { name: /conversation/iu }).locator('.room-notice-change'),
+  ).toHaveText([/You updated the notice/u]);
   expect(failures).toEqual([]);
 });

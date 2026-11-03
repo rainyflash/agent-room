@@ -204,8 +204,13 @@
 }
 .conversation-panel__timeline:has(.conversation-panel__empty) {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+/* 还没有消息、公告却改过时，那几行排在“还没有消息”下面，占满一行。 */
+.conversation-panel__notice-entry {
+  align-self: stretch;
 }
 .conversation-panel__empty {
   width: 100%;
