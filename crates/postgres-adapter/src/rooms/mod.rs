@@ -12,5 +12,6 @@ mod placements;
 mod private_room_agents;
 mod private_rooms;
 mod provisioning;
+mod public_directory;
 
 pub(crate) use departures::queue_revoked_agent_departures;
