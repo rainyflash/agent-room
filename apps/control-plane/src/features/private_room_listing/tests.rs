@@ -7,8 +7,8 @@ use agent_room_application::{
     },
     ports::{PortFuture, SecretValue},
     private_rooms::{
-        InspectListing, ListingFailure, ListingFailureKind, ListingResult, ListingView,
-        PlatformHoldNotice, PrivateRoomListingUseCases, UpdateListing,
+        ChangeShareCode, InspectListing, ListingFailure, ListingFailureKind, ListingResult,
+        ListingView, PlatformHoldNotice, PrivateRoomListingUseCases, UpdateListing,
     },
 };
 use agent_room_domain::{
@@ -39,6 +39,7 @@ const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 struct FakeListings {
     inspected: Mutex<Vec<InspectListing>>,
     updated: Mutex<Vec<UpdateListing>>,
+    changed: Mutex<Vec<ChangeShareCode>>,
     failure: Mutex<Option<ListingFailure>>,
 }
 
@@ -57,6 +58,14 @@ impl PrivateRoomListingUseCases for FakeListings {
 
     fn update(&self, request: UpdateListing) -> PortFuture<'_, ListingResult<ListingView>> {
         self.updated.lock().unwrap().push(request);
+        self.answer()
+    }
+
+    fn change_share_code(
+        &self,
+        request: ChangeShareCode,
+    ) -> PortFuture<'_, ListingResult<ListingView>> {
+        self.changed.lock().unwrap().push(request);
         self.answer()
     }
 }
@@ -150,6 +159,58 @@ async fn 改设置要来自自己的网页_正文要对得上() {
         );
     }
     assert_eq!(listings.updated.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn 换分享码要来自自己的网页_回换好以后的设置() {
+    let listings = Arc::new(FakeListings::default());
+    let app = test_router(listings.clone());
+
+    let refused = app
+        .clone()
+        .oneshot(share_code_request(false))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(refused).await["code"],
+        "room_listing.invalid_origin"
+    );
+    assert!(listings.changed.lock().unwrap().is_empty());
+
+    let response = app.oneshot(share_code_request(true)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response_json(response).await["shareCode"], "aB3xYz");
+    {
+        let changed = listings.changed.lock().unwrap();
+        assert_eq!(changed[0].actor, actor());
+        assert_eq!(changed[0].catalog_id, catalog());
+    }
+
+    let never = Arc::new(FakeListings::default());
+    *never.failure.lock().unwrap() =
+        Some(ListingFailure::new("test", ListingFailureKind::NeverListed));
+    let response = test_router(never)
+        .oneshot(share_code_request(true))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(response).await["code"],
+        "room_listing.never_listed"
+    );
+}
+
+fn share_code_request(origin: bool) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/private-rooms/{CATALOG_UUID}/listing/share-code"))
+        .header(header::COOKIE, "__Host-agent-room-session=session-secret");
+    if origin {
+        request = request.header(header::ORIGIN, FRONTEND_ORIGIN);
+    }
+    request.body(Body::empty()).unwrap()
 }
 
 #[tokio::test]

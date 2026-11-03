@@ -30,8 +30,8 @@ pub use invite_links::{
     PrivateRoomInviteLinkService, PrivateRoomInviteLinkUseCases, RedeemedInvite, UseInviteLink,
 };
 pub use listing::{
-    InspectListing, ListingFailure, ListingFailureKind, ListingResult, ListingView,
-    PlatformHoldNotice, PrivateRoomListingDependencies, PrivateRoomListingService,
+    ChangeShareCode, InspectListing, ListingFailure, ListingFailureKind, ListingResult,
+    ListingView, PlatformHoldNotice, PrivateRoomListingDependencies, PrivateRoomListingService,
     PrivateRoomListingUseCases, UpdateListing,
 };
 pub use models::{

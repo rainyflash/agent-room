@@ -1,5 +1,6 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：`GET`、`PUT /private-rooms/{c}/listing`。
-//! 房间里已加入的人都看得到（公开房间的成员都能分享），只有房主能改。
+//! 房间里已加入的人都看得到（公开房间的成员都能分享），只有房主能改。房主
+//! `POST /private-rooms/{c}/listing/share-code` 换一个分享码，回换好以后的设置。
 //!
 //! 单独一个接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段，
 //! 整个房间都读不出来。
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use agent_room_application::{
     authentication::{AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationUseCases},
     private_rooms::{
-        InspectListing, ListingFailure, ListingFailureKind, ListingView,
+        ChangeShareCode, InspectListing, ListingFailure, ListingFailureKind, ListingView,
         PrivateRoomListingUseCases, UpdateListing,
     },
 };
@@ -25,7 +26,7 @@ use axum::{
     extract::{DefaultBodyLimit, Extension, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,10 @@ pub(crate) fn router(state: PrivateRoomListingHttpState) -> Router {
         .route(
             "/private-rooms/{catalog_id}/listing",
             get(inspect).put(update),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/listing/share-code",
+            post(change_share_code),
         )
         .layer(DefaultBodyLimit::max(MAX_LISTING_BODY_BYTES))
         .with_state(state)
@@ -210,6 +215,42 @@ async fn update(
     )
 }
 
+/// 不要正文。
+async fn change_share_code(
+    State(state): State<PrivateRoomListingHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    if !origin_matches(&headers, &state.trusted_origins) {
+        return no_store(
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                "room_listing.invalid_origin",
+                ErrorCategory::Authorization,
+                "公开设置的请求来源无效。",
+                correlation_id,
+            )
+            .into_response(),
+        );
+    }
+    let actor = match session(&state, &jar, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let Some(catalog_id) = catalog_id(&catalog) else {
+        return invalid("room_listing.invalid_resource", correlation_id);
+    };
+    listing_response(
+        state
+            .listings
+            .change_share_code(ChangeShareCode { actor, catalog_id })
+            .await,
+        correlation_id,
+    )
+}
+
 impl ListingBody {
     pub(crate) fn into_settings(self) -> Option<RoomListingSettings> {
         RoomListingSettings::new(
@@ -278,6 +319,12 @@ fn failure_response(failure: ListingFailure, correlation_id: CorrelationId) -> R
             "room_listing.limit_reached",
             ErrorCategory::Conflict,
             "每个账户只能有一间公开房间，先把另一间改回私密。",
+        ),
+        ListingFailureKind::NeverListed => (
+            StatusCode::CONFLICT,
+            "room_listing.never_listed",
+            ErrorCategory::Conflict,
+            "房间还没公开过，没有分享码可换。",
         ),
         ListingFailureKind::Conflict => (
             StatusCode::CONFLICT,
