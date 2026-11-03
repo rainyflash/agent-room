@@ -70,6 +70,14 @@ pub struct PrivateRoomAgentDescription {
     pub network_principal_id: Option<PrincipalId>,
 }
 
+/// 一个主体名下（他是主人或操作人、还没撤的）的 Agent。`network` 为真时这个主体是替一个网络 Agent
+/// 记账的合成主体，名下只有这个网络 Agent。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PrincipalAgents {
+    pub agent_ids: Vec<AgentId>,
+    pub network: bool,
+}
+
 /// 列出某个主体名下全部 Agent 的 Matrix 用户。
 ///
 /// Agent 不是私人房间成员，它随主体入场，在 Matrix 上的能力不能超过该主体。主体的发言被收回、
@@ -94,6 +102,13 @@ pub trait PrivateRoomAgentDirectory: Send + Sync {
         &self,
         agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentDescription>>>;
+
+    /// 这个主体名下的 Agent，和它是不是网络 Agent 的合成主体：治理踢出、封禁他时连他凭口令进来的
+    /// Agent 一起移出，网络 Agent 只移出它自己。
+    fn principal_agents(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<PrincipalAgents>>;
 }
 
 /// 私人房间在 Matrix 上的最小硬边界能力。

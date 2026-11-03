@@ -393,7 +393,7 @@ async fn agent_照授权禁言_执行人是给授权的人_另记是它做的() 
 }
 
 #[tokio::test]
-async fn 动别人的_agent_等于动它的主人_网络_agent_这一步还动不了() {
+async fn 动别人的_agent_等于动它的主人_网络_agent_只动它自己() {
     let fixture = AgentFixture::new();
 
     let action = fixture
@@ -402,13 +402,11 @@ async fn 动别人的_agent_等于动它的主人_网络_agent_这一步还动�
         .expect("认成它的主人");
     assert_eq!(action.target().reference(), spammer().to_string());
 
-    assert_eq!(
-        fixture
-            .mute("@network-agent:matrix.test")
-            .await
-            .unwrap_err(),
-        AgentModerationFailureKind::Unsupported
-    );
+    let network = fixture
+        .mute("@network-agent:matrix.test")
+        .await
+        .expect("网络 Agent 认成替它记账的合成主体");
+    assert_eq!(network.target().reference(), Uuid::from_u128(9).to_string());
     assert_eq!(
         fixture.mute("@nobody:matrix.test").await.unwrap_err(),
         AgentModerationFailureKind::TargetNotFound

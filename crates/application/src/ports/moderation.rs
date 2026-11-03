@@ -182,7 +182,8 @@ pub struct ModerationMuteStanding {
     pub target_matrix_user_id: Option<MatrixUserId>,
     /// 他名下 Agent 的 Matrix 账号，和 [`ModerationRoomContext::target_agent_matrix_user_ids`] 一样。
     pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
-    /// 撇开禁言，他此刻能不能说话：私人房间要受邀或者已经加入、权限里开着发言；公开大厅和私聊总是能。
+    /// 撇开禁言，他此刻能不能说话：私人房间要受邀或者已经加入、权限里开着发言；他不是房间里的人时（比如
+    /// 网络 Agent 的合成主体），看他名下凭口令或敲门进来的 Agent 成员开没开发言。公开大厅和私聊总是能。
     pub may_speak: bool,
     /// 他在这个房间里已经落下（`applied`）和正在落（`pending`）的禁言，按 UUID 认人，先做的在前。
     pub mutes: Vec<ModerationAction>,

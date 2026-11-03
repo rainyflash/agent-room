@@ -855,6 +855,25 @@ async fn mute_standing(
                       AND membership.principal_id = $2
                       AND membership.membership_status IN ('invited', 'joined')
                       AND (membership.permission_bits & 2) = 2
+                  ) OR (
+                    -- 他不是房间里的人（网络 Agent 的合成主体从来不是）时，看他名下凭口令或敲门
+                    -- 进来的 Agent 成员能不能说话。
+                    NOT EXISTS (
+                      SELECT 1 FROM agent_room.private_room_membership AS membership
+                      WHERE membership.catalog_entry_id = catalog.id
+                        AND membership.principal_id = $2
+                        AND membership.membership_status IN ('invited', 'joined')
+                    )
+                    AND EXISTS (
+                      SELECT 1 FROM agent_room.private_room_agent_member AS agent_member
+                      JOIN agent_room.agent_ownership AS ownership
+                        ON ownership.agent_id = agent_member.agent_id
+                      WHERE agent_member.catalog_entry_id = catalog.id
+                        AND ownership.principal_id = $2
+                        AND ownership.revoked_at IS NULL
+                        AND agent_member.membership_status = 'joined'
+                        AND (agent_member.permission_bits & 2) = 2
+                    )
                   ) AS member_may_speak
            FROM agent_room.room_catalog_entry AS catalog
            LEFT JOIN agent_room.principal AS target ON target.id = $2
