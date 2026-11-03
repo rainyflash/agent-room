@@ -877,6 +877,11 @@ fn build_agent_feature_states(
             clock: dependencies.system_runtime.clone(),
         },
     ));
+    // 发现页的两个接口和分享页合起来按来源限流，也共用一个。
+    let anonymous_limits = Arc::new(features::anonymous_limits::AnonymousLimiter::new(
+        config.network_agents.shared_sources.clone(),
+        dependencies.system_runtime.clone(),
+    ));
     let AgentIdentityHttpStates {
         agents,
         instances,
@@ -904,10 +909,12 @@ fn build_agent_feature_states(
         public_rooms: features::public_rooms::PublicRoomsHttpState {
             directory: directory.clone(),
             authentication: dependencies.authentication.clone(),
+            limits: anonymous_limits.clone(),
         },
         share_page: features::share_page::SharePageHttpState::new(
             directory,
             dependencies.system_runtime.clone(),
+            anonymous_limits,
             &config.authentication.matrix_server_name,
             &config.authentication.frontend_origin,
         ),

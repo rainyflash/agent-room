@@ -6,7 +6,9 @@ use agent_room_application::{
         AuthenticationRequirement, AuthenticationResult, AuthenticationUseCases, BeginLogin,
         CompleteLogin, LoginCompletion, LoginRedirect,
     },
-    ports::{PortFuture, PublicRoomRecord, PublicRoomSort, PublicRoomViewerState, SecretValue},
+    ports::{
+        Clock, PortFuture, PublicRoomRecord, PublicRoomSort, PublicRoomViewerState, SecretValue,
+    },
     public_room_directory::{
         BrowsePublicRooms, PublicDirectoryFailure, PublicDirectoryFailureKind,
         PublicDirectoryResult, PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomOnline,
@@ -21,7 +23,7 @@ use agent_room_domain::{
 use axum::{
     Router,
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header},
+    http::{HeaderValue, Request, StatusCode, header},
     middleware,
 };
 use serde_json::{Value, json};
@@ -29,6 +31,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::{PublicRoomsHttpState, router};
+use crate::features::anonymous_limits::{AnonymousLimiter, PER_MINUTE};
 
 const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
@@ -225,10 +228,64 @@ async fn 一间房的详情多几位管理员_没有的回_404_不写房间名()
     );
 }
 
+#[tokio::test]
+async fn 两个接口合起来按来源限流_超了回_429_带重试时间() {
+    let directory = Arc::new(FakeDirectory::default());
+    let app = test_router(directory.clone());
+    let from = |uri: &str, address: &str| {
+        let mut request = get(uri, None);
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", HeaderValue::from_str(address).unwrap());
+        request
+    };
+    for index in 0..PER_MINUTE {
+        let uri = if index % 2 == 0 {
+            "/public-rooms"
+        } else {
+            "/public-rooms/Club01"
+        };
+        let response = app.clone().oneshot(from(uri, "203.0.113.7")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "第 {index} 次");
+    }
+
+    let response = app
+        .clone()
+        .oneshot(from("/public-rooms/Club01", "203.0.113.7"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = response_json(response).await;
+    assert_eq!(body["code"], "public_rooms.rate_limited");
+    assert_eq!(body["retryAfterSeconds"], 60);
+    assert_eq!(
+        directory.details.lock().unwrap().len(),
+        usize::try_from(PER_MINUTE / 2).unwrap(),
+        "超了的那次不去查"
+    );
+
+    let response = app
+        .oneshot(from("/public-rooms", "203.0.113.8"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "别的来源照常");
+}
+
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now(&self) -> UtcMillis {
+        UtcMillis::new(1_790_000_000_000).unwrap()
+    }
+}
+
 fn test_router(directory: Arc<FakeDirectory>) -> Router {
     router(PublicRoomsHttpState {
         directory,
         authentication: Arc::new(FakeAuthentication),
+        limits: Arc::new(AnonymousLimiter::new(Vec::new(), Arc::new(FixedClock))),
     })
     .layer(middleware::from_fn(crate::correlation::attach))
 }

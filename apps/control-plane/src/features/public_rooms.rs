@@ -9,6 +9,9 @@
 //!
 //! 带着有效的登录时，每间房多一个 `viewer`：`joined`、`invited`、`pending`（在等批准）或 `banned`；
 //! 没登录、登录过期的照样回答，只是没有它。
+//!
+//! 两个接口和分享页合起来按来源限流（[`AnonymousLimiter`]），超了回 429
+//! `public_rooms.rate_limited` 带 `Retry-After`。登录了也照来源算：挡的是挨个猜分享码。
 
 use std::sync::Arc;
 
@@ -26,7 +29,7 @@ use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State, rejection::QueryRejection},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -36,7 +39,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     correlation::CorrelationId,
     error::ApiError,
-    features::authentication::{no_store, session_secret},
+    features::{
+        anonymous_limits::{AnonymousLimiter, Limited},
+        authentication::{no_store, session_secret},
+    },
     request_regions,
 };
 
@@ -44,6 +50,7 @@ use crate::{
 pub(crate) struct PublicRoomsHttpState {
     pub(crate) directory: Arc<dyn PublicRoomDirectoryUseCases>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
+    pub(crate) limits: Arc<AnonymousLimiter>,
 }
 
 pub(crate) fn router(state: PublicRoomsHttpState) -> Router {
@@ -108,8 +115,12 @@ async fn browse(
     State(state): State<PublicRoomsHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
     jar: CookieJar,
+    headers: HeaderMap,
     query: Result<Query<BrowseQuery>, QueryRejection>,
 ) -> Response {
+    if let Err(limited) = state.limits.admit(&headers) {
+        return rate_limited(limited, correlation_id);
+    }
     let Some(request) = query.ok().and_then(|Query(query)| browse_request(query)) else {
         return no_store(
             ApiError::invalid_request("public_room.invalid_query", correlation_id).into_response(),
@@ -129,13 +140,31 @@ async fn detail(
     State(state): State<PublicRoomsHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
     jar: CookieJar,
+    headers: HeaderMap,
     Path(share_code): Path<String>,
 ) -> Response {
+    if let Err(limited) = state.limits.admit(&headers) {
+        return rate_limited(limited, correlation_id);
+    }
     let viewer = viewer(&state, &jar).await;
     match state.directory.detail(viewer, share_code).await {
         Ok(detail) => no_store(Json(detail_response(detail)).into_response()),
         Err(failure) => failure_response(failure, correlation_id),
     }
+}
+
+fn rate_limited(limited: Limited, correlation_id: CorrelationId) -> Response {
+    no_store(
+        ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "public_rooms.rate_limited",
+            ErrorCategory::Transient,
+            "请求太频繁，请稍后再试。",
+            correlation_id,
+        )
+        .retry_after_seconds(limited.retry_after_seconds)
+        .into_response(),
+    )
 }
 
 /// 有登录就认，没有、过期了、对不上的都当没登录：这两个接口本来就不要登录。
