@@ -1,6 +1,6 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：只有房主能改；第一次公开先在 Matrix 上记下
 //! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密、作废在等的申请；
-//! 平台拿掉了照样能看能改，回答里带着原因和时间。
+//! 平台拿掉了照样能看能改，回答里带着原因和时间；房主能换分享码，撞上别的房间就再换。
 
 use std::sync::{Arc, Mutex};
 
@@ -17,8 +17,9 @@ use agent_room_application::{
         SecretGenerationFailure, SecretValue,
     },
     private_rooms::{
-        InspectListing, ListingFailureKind, PlatformHoldNotice, PrivateRoomListingDependencies,
-        PrivateRoomListingService, PrivateRoomListingUseCases, UpdateListing,
+        ChangeShareCode, InspectListing, ListingFailureKind, PlatformHoldNotice,
+        PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomListingUseCases,
+        UpdateListing,
     },
 };
 use agent_room_domain::{
@@ -88,6 +89,94 @@ async fn 房主第一次公开_先在_matrix_上记下时间_有了分享码_再
     let stored = fixture.listings.record.lock().unwrap().clone().unwrap();
     assert_eq!(stored.version, AggregateVersion::new(2).unwrap());
     assert_eq!(stored.updated_at, time(NOW + 60_000));
+}
+
+#[tokio::test]
+async fn 房主换分享码_旧的作废_改回私密以后也能换_撞上别的房间就再换() {
+    let fixture = Fixture::new(true);
+    let listed = fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .unwrap();
+    let original = listed.share_code.clone().unwrap();
+
+    fixture.clock.advance(60_000);
+    *fixture.listings.taken_codes.lock().unwrap() = 1;
+    let changed = fixture
+        .service
+        .change_share_code(change(owner()))
+        .await
+        .expect("房主能换");
+    let code = changed.share_code.clone().unwrap();
+    assert_ne!(code, original);
+    assert_eq!(changed.settings, listed.settings, "别的设置不动");
+    assert_eq!(changed.first_listed_at, listed.first_listed_at);
+    let stored = fixture.listings.record.lock().unwrap().clone().unwrap();
+    assert_eq!(stored.share_code, code);
+    assert_eq!(stored.version, AggregateVersion::new(2).unwrap());
+    assert_eq!(stored.updated_at, time(NOW + 60_000));
+    assert_eq!(
+        *fixture.listings.attempts.lock().unwrap(),
+        3,
+        "公开一次，换码撞上一次再存一次"
+    );
+
+    fixture
+        .service
+        .update(update(owner(), settings(false, RoomJoinMode::Open)))
+        .await
+        .unwrap();
+    let unlisted = fixture
+        .service
+        .change_share_code(change(owner()))
+        .await
+        .expect("改回私密以后也能换");
+    assert!(!unlisted.settings.listed());
+    assert_ne!(unlisted.share_code, Some(code));
+}
+
+#[tokio::test]
+async fn 换分享码只有房主_从没公开过的没有码可换() {
+    let fixture = Fixture::new(true);
+    assert_eq!(
+        fixture
+            .service
+            .change_share_code(change(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        ListingFailureKind::NeverListed
+    );
+    fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .unwrap();
+    for (actor, expected) in [
+        (manager(), ListingFailureKind::Forbidden),
+        (speaker(), ListingFailureKind::Forbidden),
+        (person(9), ListingFailureKind::NotFound),
+    ] {
+        let failure = fixture
+            .service
+            .change_share_code(change(actor))
+            .await
+            .unwrap_err();
+        assert_eq!(failure.kind(), expected, "{actor:?}");
+    }
+    assert_eq!(
+        *fixture.listings.attempts.lock().unwrap(),
+        1,
+        "只存过公开那一次"
+    );
+}
+
+fn change(actor: PrincipalId) -> ChangeShareCode {
+    ChangeShareCode {
+        actor: principal(actor),
+        catalog_id: catalog_id(),
+    }
 }
 
 #[tokio::test]

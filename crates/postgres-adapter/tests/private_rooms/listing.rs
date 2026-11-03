@@ -1,9 +1,9 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：往返、乐观锁、每个账户 1 间、分享码不重复、
-//! 改回私密时打开加密标记。
+//! 换分享码以后旧码马上找不到、改回私密时打开加密标记。
 
 use agent_room_application::ports::{
     MatrixRoomId, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome, PrivateRoomListingStore,
-    RoomContentPolicyLookup,
+    PublicRoomDirectoryStore, RoomContentPolicyLookup,
 };
 use agent_room_domain::{
     room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode},
@@ -180,6 +180,77 @@ async fn 分享码被别的房间占了就说出来_不改那间房() {
         Some(taken)
     );
 
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 换分享码以后旧码马上找不到_新码撞上别的房间就不改() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "listing-swap-a").await;
+    let other_owner = seed_principal(&database.runtime, "listing-swap-b").await;
+    let room = create_room(&repositories, owner).await;
+    let other = create_room(&repositories, other_owner).await;
+    assert_eq!(
+        save(
+            &repositories,
+            &record(room, owner, true, "Swap01", 1),
+            None,
+            owner
+        )
+        .await,
+        Saved
+    );
+    assert_eq!(
+        save(
+            &repositories,
+            &record(other, other_owner, true, "Swap03", 1),
+            None,
+            other_owner
+        )
+        .await,
+        Saved
+    );
+
+    let changed = record(room, owner, true, "Swap02", 2);
+    assert_eq!(
+        save(&repositories, &changed, Some(version(1)), owner).await,
+        Saved
+    );
+    let find = |code: &'static str| {
+        let repositories = &repositories;
+        async move {
+            PublicRoomDirectoryStore::public_room_by_share_code(
+                repositories,
+                &RoomShareCode::parse(code).unwrap(),
+            )
+            .await
+            .expect("可读")
+            .map(|detail| detail.room.catalog_id)
+        }
+    };
+    assert_eq!(find("Swap01").await, None, "旧码作废");
+    assert_eq!(find("Swap02").await, Some(room));
+
+    assert_eq!(
+        save(
+            &repositories,
+            &record(room, owner, true, "Swap03", 3),
+            Some(version(2)),
+            owner
+        )
+        .await,
+        PrivateRoomListingSaveOutcome::ShareCodeTaken
+    );
+    assert_eq!(
+        PrivateRoomListingStore::listing(&repositories, room)
+            .await
+            .expect("可读"),
+        Some(changed),
+        "撞上了就不改"
+    );
+    assert_eq!(find("Swap03").await, Some(other));
     database.close().await;
 }
 

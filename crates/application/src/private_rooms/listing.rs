@@ -8,6 +8,8 @@
 //!
 //! 平台把房间从目录里拿掉（`platform_hold`）以后，设置照旧能看能改，回答里带着拿掉的原因和时间，
 //! 不带是谁拿掉的。
+//!
+//! 房主能换一个分享码（比如链接被贴到了不想要的地方），旧的马上作废；改回私密时码留着，只有换码才变。
 
 use std::sync::Arc;
 
@@ -44,6 +46,8 @@ pub enum ListingFailureKind {
     NotFound,
     /// 房主名下已经有一间公开房间。
     LimitReached,
+    /// 从没公开过，还没有分享码可换。
+    NeverListed,
     /// 别人刚改过，或者房间刚归档。
     Conflict,
     DependencyUnavailable,
@@ -104,10 +108,22 @@ pub struct PlatformHoldNotice {
     pub held_at: UtcMillis,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeShareCode {
+    pub actor: AuthenticatedPrincipal,
+    pub catalog_id: RoomCatalogId,
+}
+
 pub trait PrivateRoomListingUseCases: Send + Sync {
     fn inspect(&self, request: InspectListing) -> PortFuture<'_, ListingResult<ListingView>>;
 
     fn update(&self, request: UpdateListing) -> PortFuture<'_, ListingResult<ListingView>>;
+
+    /// 换一个分享码，回换好以后的设置。
+    fn change_share_code(
+        &self,
+        request: ChangeShareCode,
+    ) -> PortFuture<'_, ListingResult<ListingView>>;
 }
 
 pub struct PrivateRoomListingDependencies {
@@ -303,6 +319,73 @@ impl PrivateRoomListingService {
         }
     }
 
+    /// 换一个分享码：只有房主，从没公开过的没有码可换。新码撞上别的房间就再换。
+    async fn change_share_code_internal(
+        &self,
+        request: ChangeShareCode,
+    ) -> ListingResult<ListingView> {
+        const OPERATION: &str = "private_room.listing.share_code";
+        let loaded = self
+            .joined_room(&request.actor, request.catalog_id, OPERATION)
+            .await?;
+        loaded
+            .snapshot
+            .room()
+            .authorize_listing_change(request.actor.principal_id)
+            .map_err(|error| domain(OPERATION, &error))?;
+        let Some(previous) = loaded.listing.as_ref() else {
+            return Err(ListingFailure::new(
+                OPERATION,
+                ListingFailureKind::NeverListed,
+            ));
+        };
+        let mut record = PrivateRoomListingRecord {
+            share_code: self.replacement_share_code(&previous.share_code, OPERATION)?,
+            updated_by: request.actor.principal_id,
+            updated_at: self.clock.now().max(previous.first_listed_at),
+            version: next_version(Some(previous), OPERATION)?,
+            ..previous.clone()
+        };
+        for _ in 0..SHARE_CODE_ATTEMPTS {
+            match self
+                .save(
+                    &record,
+                    Some(previous.version),
+                    request.actor.principal_id,
+                    OPERATION,
+                )
+                .await?
+            {
+                PrivateRoomListingSaveOutcome::Saved => {
+                    return Ok(view(Some(&record), loaded.encrypted, loaded.hold));
+                }
+                PrivateRoomListingSaveOutcome::ShareCodeTaken => {
+                    record.share_code =
+                        self.replacement_share_code(&previous.share_code, OPERATION)?;
+                }
+                // 超限额和版本不对 `save` 已经报了错。
+                PrivateRoomListingSaveOutcome::OwnerLimitReached
+                | PrivateRoomListingSaveOutcome::Stale => break,
+            }
+        }
+        Err(ListingFailure::new(OPERATION, ListingFailureKind::Internal))
+    }
+
+    /// 和原来不一样的新码。随机出一样的几乎不可能，真碰上就再要一个。
+    fn replacement_share_code(
+        &self,
+        previous: &RoomShareCode,
+        operation: &'static str,
+    ) -> ListingResult<RoomShareCode> {
+        for _ in 0..SHARE_CODE_ATTEMPTS {
+            let code = self.new_share_code(operation)?;
+            if code != *previous {
+                return Ok(code);
+            }
+        }
+        Err(ListingFailure::new(operation, ListingFailureKind::Internal))
+    }
+
     /// 存设置。超了限额、版本对不上直接报错；分享码撞了交给调用方换一个。
     async fn save(
         &self,
@@ -401,6 +484,13 @@ impl PrivateRoomListingUseCases for PrivateRoomListingService {
 
     fn update(&self, request: UpdateListing) -> PortFuture<'_, ListingResult<ListingView>> {
         Box::pin(self.update_internal(request))
+    }
+
+    fn change_share_code(
+        &self,
+        request: ChangeShareCode,
+    ) -> PortFuture<'_, ListingResult<ListingView>> {
+        Box::pin(self.change_share_code_internal(request))
     }
 }
 
