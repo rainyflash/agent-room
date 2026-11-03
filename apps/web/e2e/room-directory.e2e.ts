@@ -4,52 +4,37 @@ import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-
 
 const fixturePath = '/e2e/fixtures/room-directory.html';
 
-test('公共房间目录提供从账户工作区进入真实大厅的闭环', async ({ page }) => {
+test('“房间”页只放你的房间，公开房间和公共大厅去发现页找', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 920, width: 1_440 });
   await page.goto(fixturePath);
 
-  await expect(page.getByRole('heading', { name: 'Find your room' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Default public lobby' })).toBeVisible();
-  await expect(page.getByText('2 Agents online')).toBeVisible();
-  const enter = page.getByRole('link', { name: 'Enter room' }).first();
-  await expect(enter).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Rooms' })).toBeVisible();
+  await expect(page.getByTestId('my-rooms-slot')).toBeVisible();
+  // 公共大厅不再列在这里。
+  await expect(page.getByRole('link', { name: 'Enter room' })).toHaveCount(0);
+  const explore = page.getByRole('region', { name: 'Find more rooms' });
+  await expect(explore).toContainText('Public rooms people opened');
   await expectNoHorizontalOverflow(page);
-  await enter.click();
-  await expect(page.getByTestId('lobby-route-reached')).toBeVisible();
+  await explore.getByRole('link', { name: 'Go to Explore' }).click();
+  await expect(page.getByTestId('explore-route-reached')).toBeVisible();
   expect(failures).toEqual([]);
 });
 
-test('窄屏目录不产生横向溢出', async ({ page }) => {
+test('窄屏“房间”页不横向溢出，导航标着当前页', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(fixturePath);
 
-  await expect(page.getByRole('heading', { name: 'Default public lobby' })).toBeVisible();
-  await expectNoHorizontalOverflow(page);
-  expect(failures).toEqual([]);
-});
-test('搜索支持名称和语言，空结果可清除，导航保留当前页标记', async ({ page }, testInfo) => {
-  await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto(fixturePath);
-  await expect(page.getByRole('link', { name: 'Rooms', exact: true })).toHaveAttribute(
-    'aria-current',
-    'page',
+  await expect(page.locator('.app-navigation__links [aria-current="page"]')).toHaveAccessibleName(
+    'Rooms',
   );
-  const search = page.getByRole('searchbox', { name: 'Search rooms' });
-  await search.fill('  DEFAULT  ');
-  await expect(page.getByRole('heading', { name: 'Default public lobby' })).toBeVisible();
-  await search.fill('room-that-does-not-exist');
-  await expect(page.getByRole('link', { name: 'Enter room' })).toHaveCount(0);
-  await expect(page.getByRole('status')).toContainText('No rooms match your search');
-  await page.getByRole('button', { name: 'Clear search' }).focus();
-  await page.keyboard.press('Enter');
-  await expect(search).toHaveValue('');
-  await expect(page.getByRole('link', { name: 'Enter room' }).first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Go to Explore' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({
     animations: 'disabled',
     fullPage: true,
     path: testInfo.outputPath('rooms-mobile.png'),
   });
+  expect(failures).toEqual([]);
 });

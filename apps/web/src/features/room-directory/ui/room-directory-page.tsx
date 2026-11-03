@@ -1,43 +1,23 @@
-import { Button } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import {
-  ArrowRight,
-  CircleAlert,
-  CloudOff,
-  Globe2,
-  LoaderCircle,
-  RefreshCw,
-  UsersRound,
-  Search,
-} from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
-import { useState, type ReactNode } from 'react';
+import { ArrowRight, Telescope } from 'lucide-react';
+import { useId, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useAppServices } from '@/app/app-services';
-import { RoomUnreadMark, useCatalogMentioned } from '@/features/inbox/ui/room-unread-mark';
 import { AppNavigation } from '@/shared/ui/app-navigation';
-import { RoomIllustration } from '@/features/lobby/ui/room-illustration';
-import { usePublicRoomDirectory } from '@/features/room-directory/data/public-room-directory-query';
-import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 
 import './room-directory-page.css';
 import { MyRoomsSection } from './my-rooms-section';
 import { RoomActions } from './room-actions';
 
+/**
+ * “房间”页只列你在的房间：你建的、加入的、收到的邀请（`specs/public-rooms/design.md`“别的页跟着改”）。
+ * 公开房间和公共大厅挪到发现页，页面底下给一条去那里的路。
+ */
 export function RoomDirectoryPage() {
-  const { roomDirectory } = useAppServices();
-  const query = usePublicRoomDirectory(roomDirectory);
-  const result = query.data;
-
   return (
     <RoomDirectoryView
-      roomActions={<RoomActions showSwitch={false} />}
       myRooms={<MyRoomsSection />}
-      failureCode={result?.ok === false ? result.error.code : null}
-      loading={query.isPending}
-      onRefresh={() => void query.refetch()}
-      rooms={result?.ok === true ? result.value : []}
+      roomActions={<RoomActions showSwitch={false} />}
     />
   );
 }
@@ -45,30 +25,10 @@ export function RoomDirectoryPage() {
 export type RoomDirectoryViewProps = {
   readonly roomActions?: ReactNode;
   readonly myRooms?: ReactNode;
-  readonly failureCode: string | null;
-  readonly loading: boolean;
-  readonly onRefresh: () => void;
-  readonly rooms: readonly PublicRoomSummary[];
 };
 
-export function RoomDirectoryView({
-  roomActions,
-  myRooms,
-  failureCode,
-  loading,
-  onRefresh,
-  rooms,
-}: RoomDirectoryViewProps) {
+export function RoomDirectoryView({ roomActions, myRooms }: RoomDirectoryViewProps) {
   const { t } = useTranslation();
-  const reduceMotion = useReducedMotion();
-  const [search, setSearch] = useState('');
-  const term = search.trim().toLowerCase();
-  const visibleRooms = rooms.filter((room) =>
-    [room.name, room.description, room.language, room.slug].some((value) =>
-      value?.toLowerCase().includes(term),
-    ),
-  );
-
   return (
     <main className="room-directory" id="main-content">
       <AppNavigation active="rooms" />
@@ -78,168 +38,34 @@ export function RoomDirectoryView({
           <h1>{t('roomDirectory.title')}</h1>
           <p>{t('roomDirectory.description')}</p>
         </div>
-        <div className="room-directory__tools">
-          {roomActions}
-          <label className="room-directory__search">
-            <Search aria-hidden="true" />
-            <input
-              aria-label={t('roomDirectory.search')}
-              placeholder={t('roomDirectory.search')}
-              type="search"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-              }}
-            />
-          </label>
-          <Button icon={<RefreshCw aria-hidden="true" />} onClick={onRefresh} tone="ghost">
-            {t('roomDirectory.refresh')}
-          </Button>
-        </div>
+        <div className="room-directory__tools">{roomActions}</div>
       </section>
 
       {myRooms}
 
-      <h2 className="room-directory__heading">{t('rooms.public')}</h2>
-
-      {loading ? (
-        <DirectoryBoundary
-          detail={t('roomDirectory.description')}
-          icon={<LoaderCircle aria-hidden="true" className="room-directory__spin" />}
-          role="status"
-          title={t('roomDirectory.loading')}
-        />
-      ) : null}
-
-      {!loading && failureCode !== null ? (
-        <DirectoryBoundary
-          action={
-            <Button icon={<RefreshCw aria-hidden="true" />} onClick={onRefresh} tone="alert">
-              {t('roomDirectory.refresh')}
-            </Button>
-          }
-          detail={t('roomDirectory.failed.detail')}
-          icon={<CircleAlert aria-hidden="true" />}
-          role="alert"
-          title={t('roomDirectory.failed.title')}
-        >
-          <code>{failureCode}</code>
-        </DirectoryBoundary>
-      ) : null}
-
-      {!loading && failureCode === null && rooms.length === 0 ? (
-        <DirectoryBoundary
-          detail={t('roomDirectory.empty.detail')}
-          icon={<CloudOff aria-hidden="true" />}
-          role="status"
-          title={t('roomDirectory.empty.title')}
-        />
-      ) : null}
-
-      {!loading && failureCode === null && rooms.length > 0 ? (
-        <section aria-label={t('roomDirectory.title')} className="room-directory__grid">
-          {visibleRooms.map((room, index) => (
-            <motion.article
-              animate={{ opacity: 1, y: 0 }}
-              className="room-card"
-              initial={reduceMotion ? false : { opacity: 0, y: 14 }}
-              key={room.catalogId}
-              transition={{ damping: 26, delay: index * 0.045, stiffness: 260, type: 'spring' }}
-            >
-              <div className="room-card__scene">
-                <RoomIllustration />
-              </div>
-              <div className="room-card__body">
-                <header className="room-card__heading">
-                  <h3>{room.name}</h3>
-                  <LobbyMention catalogId={room.catalogId} />
-                </header>
-                <p className="room-card__description">{room.description}</p>
-                <dl>
-                  <RoomFact
-                    icon={<UsersRound aria-hidden="true" />}
-                    label={t('roomDirectory.onlineAgents', { count: room.onlineAgentCount })}
-                  />
-                  <RoomFact
-                    icon={<Globe2 aria-hidden="true" />}
-                    label={`${t('roomDirectory.language')}: ${room.language ?? t('roomDirectory.anyLanguage')}`}
-                  />
-                </dl>
-              </div>
-              <Link
-                className="room-card__enter ar-button ar-button--default ar-button--primary"
-                params={{ catalogId: room.catalogId }}
-                search={{}}
-                to="/lobby/$catalogId"
-              >
-                <span>{t('roomDirectory.enter')}</span>
-                <ArrowRight aria-hidden="true" />
-              </Link>
-            </motion.article>
-          ))}
-          {visibleRooms.length === 0 ? (
-            <DirectoryBoundary
-              title={t('roomDirectory.noMatches')}
-              detail={t('roomDirectory.noMatches.detail')}
-              icon={<Search aria-hidden="true" />}
-              role="status"
-              action={
-                <Button
-                  onClick={() => {
-                    setSearch('');
-                  }}
-                  tone="ghost"
-                >
-                  {t('roomDirectory.clear')}
-                </Button>
-              }
-            />
-          ) : null}
-        </section>
-      ) : null}
+      <ExploreInvitation />
       <p className="room-directory__note">{t('roomDirectory.note')}</p>
     </main>
   );
 }
 
-function RoomFact({ icon, label }: { readonly icon: ReactNode; readonly label: string }) {
+/** 去发现页找更多：公开房间和公共大厅都在那里。 */
+function ExploreInvitation() {
+  const { t } = useTranslation();
+  const headingId = useId();
   return (
-    <div>
-      <dt>{icon}</dt>
-      <dd>{label}</dd>
-    </div>
-  );
-}
-
-function DirectoryBoundary({
-  action,
-  children,
-  detail,
-  icon,
-  role,
-  title,
-}: {
-  readonly action?: ReactNode;
-  readonly children?: ReactNode;
-  readonly detail: string;
-  readonly icon: ReactNode;
-  readonly role: 'alert' | 'status';
-  readonly title: string;
-}) {
-  return (
-    <section className="room-directory__boundary" role={role}>
-      <span>{icon}</span>
+    <section aria-labelledby={headingId} className="room-directory__explore">
+      <span aria-hidden="true" className="room-directory__explore-icon">
+        <Telescope />
+      </span>
       <div>
-        <h2>{title}</h2>
-        <p>{detail}</p>
-        {children}
+        <h2 id={headingId}>{t('roomDirectory.explore.title')}</h2>
+        <p>{t('roomDirectory.explore.detail')}</p>
       </div>
-      {action}
+      <Link className="ar-button ar-button--default ar-button--primary" search={{}} to="/explore">
+        {t('roomDirectory.explore.go')}
+        <ArrowRight aria-hidden="true" />
+      </Link>
     </section>
   );
-}
-
-/** 公开大厅只标有没有人点名你，不写条数：人多，条数很快就是 99+（维护者 2026-10-17 定）。 */
-function LobbyMention({ catalogId }: { readonly catalogId: string }) {
-  return <RoomUnreadMark mentioned={useCatalogMentioned(catalogId)} />;
 }
