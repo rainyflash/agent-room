@@ -9,8 +9,8 @@ use agent_room_application::{
     ports::{PortFuture, PublicRoomRecord, PublicRoomSort, PublicRoomViewerState, SecretValue},
     public_room_directory::{
         BrowsePublicRooms, PublicDirectoryFailure, PublicDirectoryFailureKind,
-        PublicDirectoryResult, PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomPage,
-        PublicRoomView,
+        PublicDirectoryResult, PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomOnline,
+        PublicRoomPage, PublicRoomView,
     },
 };
 use agent_room_domain::{
@@ -79,6 +79,10 @@ impl PublicRoomDirectoryUseCases for FakeDirectory {
                         viewer: None,
                     },
                     admin_display_names: vec!["小林".to_owned()],
+                    online: Some(PublicRoomOnline {
+                        count: 200,
+                        at_least: true,
+                    }),
                 })
             } else {
                 Err(PublicDirectoryFailure::new(
@@ -202,6 +206,7 @@ async fn 一间房的详情多几位管理员_没有的回_404_不写房间名()
     let body = response_json(response).await;
     assert_eq!(body["name"], "读书会");
     assert_eq!(body["admins"], json!(["小林"]));
+    assert_eq!(body["online"], json!({"count": 200, "atLeast": true}));
 
     let response = app
         .oneshot(get("/public-rooms/Gone99", None))

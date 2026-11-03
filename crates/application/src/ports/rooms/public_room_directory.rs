@@ -2,6 +2,7 @@
 //! 人数这些，房间里说的话和成员名单都不给。
 
 use agent_room_domain::{
+    agent_lifecycle::MatrixPresenceState,
     ids::{PrincipalId, RoomCatalogId},
     room_listing::{RoomJoinMode, RoomShareCode},
     time::UtcMillis,
@@ -9,7 +10,7 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{MatrixResult, MatrixRoomId, PortFuture},
+    ports::{MatrixResult, MatrixRoomId, MatrixUserId, PortFuture},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +90,22 @@ pub trait PublicRoomDirectoryStore: Send + Sync {
         viewer: PrincipalId,
         rooms: &'a [RoomCatalogId],
     ) -> PortFuture<'a, RepositoryResult<Vec<(RoomCatalogId, PublicRoomViewerState)>>>;
+
+    /// 详情里“现在几个在线”要问的人：已加入的人和此刻在房间里的 Agent，最近进来的在前，最多
+    /// `limit` 个。
+    fn public_room_presence_candidates(
+        &self,
+        catalog_id: RoomCatalogId,
+        limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>>;
+}
+
+pub trait PublicRoomPresenceMatrix: Send + Sync {
+    /// 以应用服务问一个人的在线状态。公开房间都是应用服务建的，它和房间里的人同在，问得到。
+    fn presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>>;
 }
 
 /// 发现页的“最近有人说话”：控制面定时替每间公开房间记下来。

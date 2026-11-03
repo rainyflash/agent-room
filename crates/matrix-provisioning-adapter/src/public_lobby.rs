@@ -11,7 +11,7 @@
 use agent_room_application::ports::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
     MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture, PublicLobbyMatrixReader,
-    PublicRoomActivityMatrix,
+    PublicRoomActivityMatrix, PublicRoomPresenceMatrix,
 };
 use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
 use reqwest::Url;
@@ -216,6 +216,19 @@ impl PublicRoomActivityMatrix for MatrixApplicationServiceProvisioner {
     }
 }
 
+impl PublicRoomPresenceMatrix for MatrixApplicationServiceProvisioner {
+    fn presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>> {
+        Box::pin(async move {
+            self.user_presence_internal(user_id)
+                .await
+                .map(|presence| presence.state())
+        })
+    }
+}
+
 /// `/rooms/{roomId}/messages` 的回答里只用得到 `chunk`。
 #[derive(Deserialize)]
 struct MessagesPage {
@@ -241,7 +254,8 @@ mod tests {
 
     use agent_room_application::ports::{
         MatrixFailureKind, MatrixOperation, MatrixRoomId, MatrixUserId,
-        PublicLobbyMatrixReader as _, PublicRoomActivityMatrix as _, SecretValue,
+        PublicLobbyMatrixReader as _, PublicRoomActivityMatrix as _, PublicRoomPresenceMatrix,
+        SecretValue,
     };
     use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
     use axum::{
@@ -510,6 +524,17 @@ mod tests {
             .unwrap_err();
         assert_eq!(stranger.kind(), MatrixFailureKind::Forbidden);
         assert_eq!(stranger.operation(), MatrixOperation::ReadPresence);
+
+        // 发现页数在线人数用的是同一个问法，只要状态。
+        assert_eq!(
+            PublicRoomPresenceMatrix::presence(
+                &reader,
+                &MatrixUserId::new("@_agent_x:matrix.test").unwrap()
+            )
+            .await
+            .unwrap(),
+            MatrixPresenceState::Unavailable
+        );
 
         let seen = seen.lock().unwrap();
         assert_eq!(seen.requests[0].0, "@_agent_x:matrix.test");

@@ -3,8 +3,9 @@
 //! - `GET /public-rooms?q=&join=&active=&encrypted=&sort=&cursor=`：公开房间的目录。`join` 是
 //!   `open` 或 `request`；`active=true` 只要一小时内有人说话的；`encrypted=false` 只要不加密的；
 //!   `sort` 是 `active`（默认）、`members` 或 `newest`；`cursor` 照上一页的 `nextCursor` 原样带回。
-//! - `GET /public-rooms/{分享码}`：一间房的详情，多几位管理员。不公开、关了、没有这个码都回同一个
-//!   404，不写房间名。
+//! - `GET /public-rooms/{分享码}`：一间房的详情，多几位管理员和 `online`（`count` 个在线，
+//!   `atLeast` 是没问全、可能更多；问不到时是 `null`，60 秒算一次）。不公开、关了、没有这个码都回
+//!   同一个 404，不写房间名。
 //!
 //! 带着有效的登录时，每间房多一个 `viewer`：`joined`、`invited`、`pending`（在等批准）或 `banned`；
 //! 没登录、登录过期的照样回答，只是没有它。
@@ -16,7 +17,8 @@ use agent_room_application::{
     ports::{PublicRoomRecord, PublicRoomSort, PublicRoomViewerState},
     public_room_directory::{
         BrowsePublicRooms, PublicDirectoryFailure, PublicDirectoryFailureKind,
-        PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomPage, PublicRoomView,
+        PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomOnline, PublicRoomPage,
+        PublicRoomView,
     },
 };
 use agent_room_domain::{room_listing::RoomJoinMode, time::UtcMillis};
@@ -92,6 +94,14 @@ struct DetailResponse {
     #[serde(flatten)]
     room: RoomResponse,
     admins: Vec<String>,
+    online: Option<OnlineResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnlineResponse {
+    count: u32,
+    at_least: bool,
 }
 
 async fn browse(
@@ -193,6 +203,9 @@ fn detail_response(detail: PublicRoomDetailView) -> DetailResponse {
     DetailResponse {
         room: room_response(detail.room),
         admins: detail.admin_display_names,
+        online: detail
+            .online
+            .map(|PublicRoomOnline { count, at_least }| OnlineResponse { count, at_least }),
     }
 }
 

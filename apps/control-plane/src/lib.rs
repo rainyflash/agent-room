@@ -883,6 +883,7 @@ fn build_agent_feature_states(
             directory: Arc::new(PublicRoomDirectoryService::new(
                 PublicRoomDirectoryDependencies {
                     directory: dependencies.repositories.clone(),
+                    presence: dependencies.matrix_identities.clone(),
                     clock: dependencies.system_runtime.clone(),
                 },
             )),
