@@ -56,9 +56,11 @@ const privateRoom: PrivateRoom = {
 function setServices({
   rooms,
   moderator,
+  listings = false,
 }: {
   readonly rooms: readonly PrivateRoom[];
   readonly moderator: boolean;
+  readonly listings?: boolean;
 }) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   services.current = {
@@ -79,6 +81,28 @@ function setServices({
       agentAccess: () => Promise.resolve(ok({ agents: [], joinCode: null })),
       list: () => Promise.resolve(ok(rooms)),
     },
+    ...(listings
+      ? {
+          privateRoomListings: {
+            changeShareCode: unavailable,
+            listing: () =>
+              Promise.resolve(
+                ok({
+                  allowNetworkAgents: true,
+                  endToEndEncrypted: true,
+                  firstListedAtUnixMs: null,
+                  joinMode: 'open',
+                  listed: false,
+                  memberPermissions: { capabilities: ['view', 'speak', 'automate'] },
+                  platformHold: null,
+                  shareCode: null,
+                  shareUrl: null,
+                }),
+              ),
+            updateListing: unavailable,
+          },
+        }
+      : {}),
   };
 }
 
@@ -135,6 +159,20 @@ describe('房间设置', () => {
     ).toEqual(['Members', 'Agent entry', 'Automation', 'Moderation']);
     expect(within(sections).getByRole('radio', { name: 'Members' })).toBeChecked();
     expect(screen.getByLabelText('Room name')).toHaveValue('Architecture room');
+  });
+
+  it('有公开设置时私人房间多一节“公开”，排在成员后面', async () => {
+    setServices({ listings: true, moderator: false, rooms: [privateRoom] });
+    renderDialog(MEMBER);
+
+    const sections = await screen.findByRole('radiogroup', { name: 'Room settings sections' });
+    expect(
+      within(sections)
+        .getAllByRole('radio')
+        .map((option) => option.textContent),
+    ).toEqual(['Members', 'Public', 'Automation']);
+    fireEvent.click(within(sections).getByRole('radio', { name: 'Public' }));
+    expect(await screen.findByText('This room is private.')).toBeVisible();
   });
 
   it('切到别的节再切回来，填到一半的内容还在', async () => {

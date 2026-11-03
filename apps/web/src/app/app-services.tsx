@@ -61,6 +61,8 @@ export type AppServices = {
   readonly privateRooms: PrivateRoomGateway;
   /** 私人房间的邀请链接：生成、复制、停用，打开别人给的链接；测试和夹具里可以没有。 */
   readonly privateRoomInvites?: import('@/features/private-rooms/domain/private-room-invite-link').PrivateRoomInviteGateway;
+  /** 房间的公开设置和分享链接；测试和夹具里可以没有。 */
+  readonly privateRoomListings?: import('@/features/private-rooms/domain/private-room-listing').PrivateRoomListingGateway;
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
   readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;

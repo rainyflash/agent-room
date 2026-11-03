@@ -1,5 +1,5 @@
 import { Banner, Button, Dialog, Segmented, Spinner } from '@agent-room/ui-system';
-import { Bot, Gavel, KeyRound, Settings2, UsersRound } from 'lucide-react';
+import { Bot, Gavel, Globe2, KeyRound, Settings2, UsersRound } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -15,15 +15,18 @@ import {
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomMembers } from '@/features/private-rooms/ui/private-room-members';
+import { PrivateRoomPublicSettings } from '@/features/private-rooms/ui/private-room-public-settings';
 import type { WebSession } from '@/features/session/domain/session';
 
 import './room-settings.css';
 
-export type RoomSettingsSection = 'agent-code' | 'automation' | 'members' | 'moderation';
+export type RoomSettingsSection =
+  'agent-code' | 'automation' | 'listing' | 'members' | 'moderation';
 
 const sectionIcons: Readonly<Record<RoomSettingsSection, ReactNode>> = {
   'agent-code': <KeyRound aria-hidden="true" />,
   automation: <Bot aria-hidden="true" />,
+  listing: <Globe2 aria-hidden="true" />,
   members: <UsersRound aria-hidden="true" />,
   moderation: <Gavel aria-hidden="true" />,
 };
@@ -40,7 +43,7 @@ export type RoomSettingsDialogProps = {
 };
 
 /**
- * 房间设置：一个对话框，分节切换。私人房间有“成员”（管理者还有“Agent 进门”），每个房间都有
+ * 房间设置：一个对话框，分节切换。私人房间有“成员”和“公开”（管理者还有“Agent 进门”），每个房间都有
  * “自动发言”，房间管理者还有“治理”。几节同时挂着、只显示一节：切过去再切回来，填到一半的内容
  * 和刚生成的口令都还在。
  */
@@ -53,7 +56,7 @@ export function RoomSettingsDialog({
   onExitRoom,
 }: RoomSettingsDialogProps) {
   const { t } = useTranslation();
-  const { privateRooms, moderation } = useAppServices();
+  const { privateRoomListings, privateRooms, moderation } = useAppServices();
   const list = usePrivateRoomList(privateRooms, principal.principalId);
   const capabilities = useModerationCapabilities(moderation, catalogId);
   const room = list.data?.ok === true ? joinedRoom(list.data.value, catalogId, principal) : null;
@@ -69,6 +72,7 @@ export function RoomSettingsDialog({
     (capabilities.data.value.canModerateRoom || capabilities.data.value.canReadAudit);
   const sections: readonly RoomSettingsSection[] = [
     ...(room === null ? [] : (['members'] as const)),
+    ...(room === null || privateRoomListings === undefined ? [] : (['listing'] as const)),
     ...(canManageRoom ? (['agent-code'] as const) : []),
     'automation',
     ...(canModerate ? (['moderation'] as const) : []),
@@ -175,6 +179,7 @@ function RoomSettingsContent({
     automation,
     controlPlane,
     moderation,
+    privateRoomListings,
     privateRoomMatrix,
     privateRooms,
   } = useAppServices();
@@ -201,6 +206,14 @@ function RoomSettingsContent({
           recentlyAuthenticated={principal.recentlyAuthenticated}
           room={room}
           rooms={privateRooms}
+        />
+      );
+    case 'listing':
+      return room === null || privateRoomListings === undefined ? null : (
+        <PrivateRoomPublicSettings
+          listings={privateRoomListings}
+          principalId={principal.principalId}
+          room={room}
         />
       );
     case 'agent-code':
