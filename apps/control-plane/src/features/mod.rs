@@ -32,4 +32,5 @@ pub(crate) mod public_watch;
 pub(crate) mod reception;
 mod resource_ids;
 pub(crate) mod room_people;
+pub(crate) mod share_page;
 pub(crate) mod telemetry;
