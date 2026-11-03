@@ -8,6 +8,7 @@ import {
   moderationActionListQueryKey,
   moderationAuditListQueryKey,
   moderationRoomCaseListQueryKey,
+  useAgentModerationLedger,
   useModerationActions,
   useModerationAudit,
   useModerationCapabilities,
@@ -20,6 +21,10 @@ import {
   type ModerationFailure,
   type ModerationGateway,
 } from '@/features/moderation/domain/moderation';
+import {
+  AgentModerationSettings,
+  type AgentModerationSettingsProps,
+} from '@/features/moderation/ui/agent-moderation-settings';
 import { ModerationActionForm } from '@/features/moderation/ui/moderation-action-form';
 import {
   ModerationActionLedger,
@@ -28,7 +33,15 @@ import {
 } from '@/features/moderation/ui/moderation-ledger';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 
+/** “交给 Agent 管”要的那几样；只有私人房间的房主和管理员有。 */
+export type ModerationAgentsProps = Omit<
+  AgentModerationSettingsProps,
+  'actions' | 'catalogId' | 'onReauthenticate' | 'recentlyAuthenticated'
+>;
+
 export type ModerationSettingsProps = {
+  /** 给了就有“交给 Agent 管”，台账里写哪条是哪个 Agent 照规则做的。 */
+  readonly agents?: ModerationAgentsProps | undefined;
   readonly catalogId: string;
   readonly gateway: ModerationGateway;
   readonly onReauthenticate: () => void;
@@ -47,6 +60,7 @@ const MAXIMUM_TIMER_MS = 2_147_483_647;
  * 没有权限时不去读任何受限资源。
  */
 export function ModerationSettings({
+  agents,
   catalogId,
   gateway,
   onReauthenticate,
@@ -61,9 +75,11 @@ export function ModerationSettings({
   const casesQuery = useModerationRoomCases(gateway, catalogId, canModerateRoom);
   const actionsQuery = useModerationActions(gateway, catalogId, canModerateRoom);
   const auditQuery = useModerationAudit(gateway, catalogId, canReadAudit);
+  const agentLedgerQuery = useAgentModerationLedger(agents?.gateway, catalogId, canModerateRoom);
   const cases = casesQuery.data?.ok === true ? casesQuery.data.value : null;
   const actions = actionsQuery.data?.ok === true ? actionsQuery.data.value : null;
   const audit = auditQuery.data?.ok === true ? auditQuery.data.value : null;
+  const agentLedger = agentLedgerQuery.data?.ok === true ? agentLedgerQuery.data.value : null;
   const now = useLedgerClock(actions);
   const hasVisibleData = cases !== null || actions !== null || audit !== null;
   const mutation = useMutation({
@@ -131,11 +147,21 @@ export function ModerationSettings({
                 recentlyAuthenticated={recentlyAuthenticated}
               />
             )}
+            {actions === null || agents === undefined ? null : (
+              <AgentModerationSettings
+                {...agents}
+                actions={actions}
+                catalogId={catalogId}
+                onReauthenticate={onReauthenticate}
+                recentlyAuthenticated={recentlyAuthenticated}
+              />
+            )}
           </div>
           <div className="moderation-governance__secondary">
             {actions === null ? null : (
               <ModerationActionLedger
                 actions={actions}
+                agentLedger={agentLedger}
                 now={now}
                 onReverse={(actionId) => {
                   mutation.mutate({ actionId, kind: 'reverse' });

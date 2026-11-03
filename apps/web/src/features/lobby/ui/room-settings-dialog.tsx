@@ -11,6 +11,7 @@ import { PrivateRoomCoordinator } from '@/features/private-rooms/application/pri
 import {
   usePrivateRoomList,
   usePrivateRoomOrigin,
+  usePrivateRoomPeople,
 } from '@/features/private-rooms/data/private-room-queries';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
@@ -148,6 +149,7 @@ export function RoomSettingsDialog({
               key={section}
             >
               <RoomSettingsContent
+                canManageRoom={canManageRoom}
                 catalogId={catalogId}
                 notice={notice}
                 onClose={onClose}
@@ -167,6 +169,7 @@ export function RoomSettingsDialog({
 
 function RoomSettingsContent({
   section,
+  canManageRoom,
   catalogId,
   roomName,
   principal,
@@ -176,6 +179,7 @@ function RoomSettingsContent({
   onExitRoom,
 }: {
   readonly section: RoomSettingsSection;
+  readonly canManageRoom: boolean;
   readonly catalogId: string;
   readonly roomName: string;
   readonly notice: RoomNotice | undefined;
@@ -249,7 +253,14 @@ function RoomSettingsContent({
         />
       );
     case 'moderation':
-      return (
+      return canManageRoom && room !== null ? (
+        <ManagedRoomModeration
+          catalogId={catalogId}
+          onReauthenticate={reauthenticate}
+          principal={principal}
+          roomName={roomName}
+        />
+      ) : (
         <ModerationSettings
           catalogId={catalogId}
           gateway={moderation}
@@ -258,6 +269,49 @@ function RoomSettingsContent({
         />
       );
   }
+}
+
+/** 私人房间的房主和管理员：治理里多一块“交给 Agent 管”，给授权的人按成员名单写昵称。 */
+function ManagedRoomModeration({
+  catalogId,
+  onReauthenticate,
+  principal,
+  roomName,
+}: {
+  readonly catalogId: string;
+  readonly onReauthenticate: () => void;
+  readonly principal: WebSession;
+  readonly roomName: string;
+}) {
+  const { accessManagement, agentModeration, moderation, privateRooms } = useAppServices();
+  const people = usePrivateRoomPeople(privateRooms, catalogId);
+  const names = new Map(
+    people.data?.ok === true
+      ? people.data.value.map((person) => [person.principalId, person.displayName.trim()])
+      : [],
+  );
+  return (
+    <ModerationSettings
+      agents={
+        agentModeration === undefined
+          ? undefined
+          : {
+              accessManagement,
+              gateway: agentModeration,
+              nameOf: (principalId) => {
+                const name = names.get(principalId);
+                return name === undefined || name === '' ? undefined : name;
+              },
+              principalId: principal.principalId,
+              roomName,
+            }
+      }
+      catalogId={catalogId}
+      gateway={moderation}
+      onReauthenticate={onReauthenticate}
+      recentlyAuthenticated={principal.recentlyAuthenticated}
+    />
+  );
 }
 
 /** 你已经加入、还在用的这间私人房间；公共大厅和没加入的都不算。 */
