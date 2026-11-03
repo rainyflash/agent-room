@@ -136,7 +136,8 @@ async fn run_command(
         | Command::Admit(_)
         | Command::Deny(_)
         | Command::Invite(_)
-        | Command::RemoveAgent(_)) => rooms::run(backend, command).await,
+        | Command::RemoveAgent(_)
+        | Command::Moderate(_)) => rooms::run(backend, command).await,
         Command::Id => success(json!({"id": uuid::Uuid::now_v7()})),
         Command::Doctor => success(call(backend, IpcMethod::BridgeStatus).await?),
         Command::Session {
@@ -285,6 +286,7 @@ pub(crate) fn waiter(args: &cli::ReadArgs) -> CliResult<InboxWaiter> {
     .with_owner_lookup()
     .from_acknowledged()
     .every_room()
+    .with_moderation()
     .with_notices())
 }
 

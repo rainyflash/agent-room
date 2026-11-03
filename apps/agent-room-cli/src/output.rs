@@ -80,7 +80,10 @@ impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
 }
 
 fn error_hint(code: &str) -> &'static str {
-    if let Some(hint) = viewing_hint(code).or_else(|| rooms_hint(code)) {
+    if let Some(hint) = viewing_hint(code)
+        .or_else(|| rooms_hint(code))
+        .or_else(|| crate::rooms::moderation_hint(code))
+    {
         return hint;
     }
     match code {
