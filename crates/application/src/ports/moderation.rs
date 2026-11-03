@@ -99,6 +99,9 @@ pub struct ModerationRoomContext {
     /// 是同一个）。私人房间和私聊只有一个；公开大厅人多了会分成好几个分片。
     pub matrix_room_ids: Vec<MatrixRoomId>,
     pub target_matrix_user_id: Option<MatrixUserId>,
+    /// 被管的人名下 Agent 的 Matrix 账号（他是主人或操作人、还没撤的）。禁言和撤销禁言跟着这个人一起
+    /// 动它们，只动此刻在分片里的：Agent 的能力不能超过它代表的人。不是管人的动作时是空的。
+    pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
 }
 
 /// 领到的一个到期动作。
@@ -170,6 +173,8 @@ pub struct ModerationMuteStanding {
     pub matrix_room_ids: Vec<MatrixRoomId>,
     /// 这个人的 Matrix 账号，账号停用了也照样给；查不到这个人时为 `None`。
     pub target_matrix_user_id: Option<MatrixUserId>,
+    /// 他名下 Agent 的 Matrix 账号，和 [`ModerationRoomContext::target_agent_matrix_user_ids`] 一样。
+    pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
     /// 撇开禁言，他此刻能不能说话：私人房间要受邀或者已经加入、权限里开着发言；公开大厅和私聊总是能。
     pub may_speak: bool,
     /// 他在这个房间里已经落下（`applied`）和正在落（`pending`）的禁言，按 UUID 认人，先做的在前。
@@ -249,6 +254,9 @@ pub struct ModerationEffectTarget {
     pub room_kind: RoomCatalogKind,
     pub target: ModerationTarget,
     pub target_matrix_user_id: Option<MatrixUserId>,
+    /// 被管的人名下 Agent 的 Matrix 账号。禁言和撤销禁言对此刻在这个分片里的跟着这个人一起做，别的
+    /// 动作不看它。
+    pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
 }
 
 /// Matrix 只执行已经通过产品权限裁决并被持久化为 pending 的治理副作用。

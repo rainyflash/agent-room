@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, RoomCatalogId, RoomInstanceId},
-    rooms::{MatrixRoomReference, RoomLanguage, RoomRegion},
+    ids::{AgentId, AgentInstanceId, PrincipalId, RoomCatalogId, RoomInstanceId},
+    moderation::ModerationActionKind,
+    rooms::{MatrixRoomReference, RoomCatalogKind, RoomInstance, RoomLanguage, RoomRegion},
 };
 
 use crate::{
@@ -10,9 +11,10 @@ use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
-        MatrixFailure, MatrixFailureKind, MatrixRoomId, PortFuture, PrivateMatrixMembership,
-        PrivateRoomAgentAccessStore, PrivateRoomMatrixGateway, PrivateRoomStore,
-        RoomAllocationEvidence, RoomAllocationMode, RoomAllocationStore,
+        MatrixFailure, MatrixFailureKind, MatrixRoomId, ModerationEffectGateway,
+        ModerationEffectTarget, PortFuture, PrivateMatrixMembership, PrivateRoomAgentAccessStore,
+        PrivateRoomMatrixGateway, PrivateRoomStore, RoomAllocationEvidence, RoomAllocationMode,
+        RoomAllocationStore, StandingModeration, StandingModerationSource,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyFailure, EnterLobbyOutcome, EnterLobbyService,
@@ -95,7 +97,19 @@ pub struct AgentLobbyEntryDependencies {
     pub memberships: Arc<dyn AgentRoomMembershipFactory>,
     pub provisioning: Arc<dyn LobbyProvisioningOperation>,
     pub identifiers: Arc<dyn RoomReservationIdentifierFactory>,
+    /// Agent 代表的人此刻在房间里生效的禁言：人被禁言时，他的 Agent 进来、重连也不能说话。
+    pub standing_moderation: Arc<dyn StandingModerationSource>,
+    /// 公共大厅里照那条禁言把进来的 Agent 压下去。
+    pub moderation_effects: Arc<dyn ModerationEffectGateway>,
     pub clock: Arc<dyn Clock>,
+}
+
+/// 进的是哪种房间。私人房间在准入时就照主人的禁言给不给发言级别；公共大厅谁都能说话，进去以后再照
+/// 那条禁言把它压下去。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Destination {
+    PublicLobby,
+    PrivateRoom,
 }
 
 /// 在设备、Agent 实例与 Matrix 身份三者严格绑定后执行现有大厅 Saga。
@@ -108,6 +122,8 @@ pub struct AgentLobbyEntryService {
     memberships: Arc<dyn AgentRoomMembershipFactory>,
     provisioning: Arc<dyn LobbyProvisioningOperation>,
     identifiers: Arc<dyn RoomReservationIdentifierFactory>,
+    standing_moderation: Arc<dyn StandingModerationSource>,
+    moderation_effects: Arc<dyn ModerationEffectGateway>,
     clock: Arc<dyn Clock>,
     join_policy: LobbyJoinPolicy,
 }
@@ -123,6 +139,8 @@ impl AgentLobbyEntryService {
             memberships: dependencies.memberships,
             provisioning: dependencies.provisioning,
             identifiers: dependencies.identifiers,
+            standing_moderation: dependencies.standing_moderation,
+            moderation_effects: dependencies.moderation_effects,
             clock: dependencies.clock,
             join_policy,
         }
@@ -148,13 +166,15 @@ impl AgentLobbyEntryService {
         {
             return Err(AgentLobbyEntryFailure::Unauthorized);
         }
-        let mode = if let Some(room) = &request.target_room {
-            RoomAllocationMode::Manual(self.resolve_target(&request, &access, room).await?)
+        let (mode, destination) = if let Some(room) = &request.target_room {
+            let (target, destination) = self.resolve_target(&request, &access, room).await?;
+            (RoomAllocationMode::Manual(target), destination)
         } else {
-            RoomAllocationMode::Automatic
+            (RoomAllocationMode::Automatic, Destination::PublicLobby)
         };
         self.join(
             &access,
+            destination,
             JoinLobbyRequest {
                 agent_id: request.agent_id,
                 agent_instance_id: request.agent_instance_id,
@@ -178,19 +198,21 @@ impl AgentLobbyEntryService {
         if !access.active {
             return Err(AgentLobbyEntryFailure::Unauthorized);
         }
-        let mode = match self
+        let (mode, destination) = match self
             .private_rooms
             .find_by_catalog(catalog_id)
             .await
             .map_err(AgentLobbyEntryFailure::Access)?
         {
-            Some(snapshot) => {
-                RoomAllocationMode::Manual(self.admit_private(&snapshot, access).await?)
-            }
-            None => RoomAllocationMode::Automatic,
+            Some(snapshot) => (
+                RoomAllocationMode::Manual(self.admit_private(&snapshot, access).await?),
+                Destination::PrivateRoom,
+            ),
+            None => (RoomAllocationMode::Automatic, Destination::PublicLobby),
         };
         self.join(
             access,
+            destination,
             JoinLobbyRequest {
                 agent_id: access.agent_id,
                 agent_instance_id: access.agent_instance_id,
@@ -204,10 +226,12 @@ impl AgentLobbyEntryService {
         .await
     }
 
-    /// 预约位置、在 Matrix 上加入、确认：Agent 自己进来和主人带进来共用。
+    /// 预约位置、在 Matrix 上加入、确认：Agent 自己进来和主人带进来共用。进了公共大厅以后，它代表的人
+    /// 在这里被禁言着就把它也压下去。
     async fn join(
         &self,
         access: &AgentLobbyAccessRecord,
+        destination: Destination,
         request: JoinLobbyRequest,
     ) -> AgentLobbyEntryResult<EnterLobbyOutcome> {
         let membership = self
@@ -223,13 +247,64 @@ impl AgentLobbyEntryService {
             },
             self.join_policy,
         ));
-        EnterLobbyService::new(EnterLobbyDependencies {
+        let outcome = EnterLobbyService::new(EnterLobbyDependencies {
             joins,
             provisioning: self.provisioning.clone(),
         })
         .enter(request)
         .await
-        .map_err(AgentLobbyEntryFailure::Lobby)
+        .map_err(AgentLobbyEntryFailure::Lobby)?;
+        if destination == Destination::PublicLobby
+            && let EnterLobbyOutcome::Joined { room, .. } = &outcome
+        {
+            self.follow_mute_in_lobby(access, room).await?;
+        }
+        Ok(outcome)
+    }
+
+    /// 它代表的人在这个大厅里被禁言着：在它进的这个分片上照那条禁言把它也压下去。已经压着的（比如
+    /// 重连）什么也不写。
+    async fn follow_mute_in_lobby(
+        &self,
+        access: &AgentLobbyAccessRecord,
+        room: &RoomInstance,
+    ) -> AgentLobbyEntryResult<()> {
+        let Some(mute) = self
+            .standing_mute(room.catalog_id(), access.principal_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        let target = ModerationEffectTarget {
+            matrix_room_id: MatrixRoomId::new(room.matrix_room_id().as_str().to_owned())
+                .map_err(|_| AgentLobbyEntryFailure::NotFound)?,
+            room_kind: RoomCatalogKind::PublicLobby,
+            target: mute.action.target().clone(),
+            target_matrix_user_id: Some(mute.target_matrix_user_id),
+            target_agent_matrix_user_ids: vec![access.matrix_user_id.clone()],
+        };
+        self.moderation_effects
+            .apply(&mute.action, &target)
+            .await
+            .map_err(AgentLobbyEntryFailure::Membership)
+    }
+
+    /// 这个人在这个房间里此刻生效的禁言，最早的那条。治理按 UUID 认人，写法不一样也是同一个人。
+    async fn standing_mute(
+        &self,
+        catalog_id: RoomCatalogId,
+        principal_id: PrincipalId,
+    ) -> AgentLobbyEntryResult<Option<StandingModeration>> {
+        let standing = self
+            .standing_moderation
+            .standing_person_actions(catalog_id, self.clock.now())
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?;
+        Ok(standing.into_iter().find(|item| {
+            item.action.kind() == ModerationActionKind::Mute
+                && uuid::Uuid::parse_str(item.action.target().reference())
+                    .is_ok_and(|id| id == principal_id.as_uuid())
+        }))
     }
 
     /// 解析指名房间。公共大厅按目录可见性放行，其余交给私人房间的成员事实裁决。
@@ -238,16 +313,17 @@ impl AgentLobbyEntryService {
         request: &EnterAgentLobby,
         access: &AgentLobbyAccessRecord,
         room: &MatrixRoomReference,
-    ) -> AgentLobbyEntryResult<RoomInstanceId> {
+    ) -> AgentLobbyEntryResult<(RoomInstanceId, Destination)> {
         if let Some(target) = self
             .access
             .find_public_lobby_room(request.catalog_id, room)
             .await
             .map_err(AgentLobbyEntryFailure::Access)?
         {
-            return Ok(target);
+            return Ok((target, Destination::PublicLobby));
         }
-        self.resolve_private_target(request, access, room).await
+        let target = self.resolve_private_target(request, access, room).await?;
+        Ok((target, Destination::PrivateRoom))
     }
 
     /// 私人房间不在公共目录里，Agent 随它此次代表的主体入场，或者它本身是凭口令进来的 Agent 成员。
@@ -303,9 +379,14 @@ impl AgentLobbyEntryService {
         // 私人房间默认只让成员旁观；Agent 要上线（发布状态）和回复都需要发言级别。上面的准入
         // 已确认它代表的主体此刻已加入且能发言，或它本身是能发言的 Agent 成员，所以按同样的能力
         // 授予。主体失去发言、被移除或离开时由私人房间服务收回，Agent 成员被移出时由口令服务收回。
+        // 它代表的人在这里被禁言着就不给：不然 Agent 一重连就把禁言冲掉了，禁言撤了由治理一起放开。
         // 重连时重复授予不会再写权限状态。
+        let muted = self
+            .standing_mute(snapshot.catalog().id(), access.principal_id)
+            .await?
+            .is_some();
         self.private_matrix
-            .set_speaking(&matrix_room, &access.matrix_user_id, true)
+            .set_speaking(&matrix_room, &access.matrix_user_id, !muted)
             .await
             .map_err(AgentLobbyEntryFailure::Membership)?;
         Ok(snapshot.instance().id())

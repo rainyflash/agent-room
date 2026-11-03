@@ -9,13 +9,14 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomMembershipFactory, Clock,
-        JoinCodeAttemptPolicy, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
-        PrincipalAccount, PrivateMatrixMembership, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord,
-        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway,
-        PrivateRoomSnapshot, PrivateRoomStore, RoomAllocationMode, RoomAllocationStore,
-        RoomMembershipGateway, RoomReservationClaim, RoomReservationOutcome, SealedJoinCode,
-        SealedSecret, SecretDigest,
+        JoinCodeAttemptPolicy, MatrixEventId, MatrixResult, MatrixRoomId, MatrixUserId,
+        ModerationEffectGateway, ModerationEffectTarget, PortFuture, PrincipalAccount,
+        PrivateMatrixMembership, PrivateMatrixSpeakingAssignment, PrivateRoomAgentAccessStore,
+        PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
+        RoomAllocationMode, RoomAllocationStore, RoomMembershipGateway, RoomReservationClaim,
+        RoomReservationOutcome, SealedJoinCode, SealedSecret, SecretDigest, StandingModeration,
+        StandingModerationSource,
     },
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningOperation, LobbyProvisioningOutcome,
@@ -25,11 +26,15 @@ use agent_room_application::{
 use agent_room_domain::{
     identity::Principal,
     ids::{
-        AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId,
-        RoomReservationId,
+        AgentId, AgentInstanceId, DeviceId, ModerationActionId, PrincipalId, RoomCatalogId,
+        RoomInstanceId, RoomReservationId,
     },
     join_codes::{
         PrivateRoomAgentJoinedVia, PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus,
+    },
+    moderation::{
+        ModerationAction, ModerationActionKind, ModerationReason, ModerationTarget,
+        ModerationTargetKind,
     },
     private_rooms::{PrivateRoom, PrivateRoomCapability, PrivateRoomPermissions},
     rooms::{
@@ -431,6 +436,87 @@ impl PrivateRoomStore for 固定私人房间仓储 {
 }
 
 /// 记录受邀的 Matrix 身份与发言授予，并可模拟 Agent 已经在房间内的重连情形。
+/// 此刻生效的禁言和公共大厅里照着它落的效果。默认谁都没被禁言。
+#[derive(Default)]
+struct 治理 {
+    禁言: Vec<StandingModeration>,
+    效果: Arc<记录治理效果>,
+}
+
+struct 固定禁言(Vec<StandingModeration>);
+
+impl StandingModerationSource for 固定禁言 {
+    fn standing_person_actions(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>> {
+        let standing = self.0.clone();
+        Box::pin(async move { Ok(standing) })
+    }
+}
+
+#[derive(Default)]
+struct 记录治理效果(Mutex<Vec<ModerationEffectTarget>>);
+
+impl 记录治理效果 {
+    fn 记录(&self) -> Vec<ModerationEffectTarget> {
+        self.0.lock().expect("锁可用").clone()
+    }
+}
+
+impl ModerationEffectGateway for 记录治理效果 {
+    fn apply<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        target: &'a ModerationEffectTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        assert_eq!(
+            action.kind(),
+            ModerationActionKind::Mute,
+            "进房间只照禁言来"
+        );
+        self.0.lock().expect("锁可用").push(target.clone());
+        Box::pin(async { Ok(()) })
+    }
+    fn reverse<'a>(
+        &'a self,
+        _action: &'a ModerationAction,
+        _target: &'a ModerationEffectTarget,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { unreachable!("进房间不撤治理") })
+    }
+    fn contains_event<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _event_id: &'a MatrixEventId,
+    ) -> PortFuture<'a, MatrixResult<bool>> {
+        Box::pin(async { unreachable!("进房间不找消息") })
+    }
+}
+
+/// `principal` 在这个房间里有一条已经落下、没到期的禁言。
+fn 生效的禁言(principal: PrincipalId, catalog_id: RoomCatalogId) -> StandingModeration {
+    let mut action = ModerationAction::reserve(
+        ModerationActionId::from_uuid(Uuid::from_u128(6_001)),
+        None,
+        PrincipalId::from_uuid(Uuid::from_u128(6_002)),
+        catalog_id,
+        ModerationActionKind::Mute,
+        ModerationTarget::new(ModerationTargetKind::Principal, principal.to_string())
+            .expect("目标有效"),
+        ModerationReason::Spam,
+        time(NOW - 10_000),
+        None,
+    )
+    .expect("禁言有效");
+    action.mark_applied().expect("落下了");
+    StandingModeration {
+        action,
+        target_matrix_user_id: MatrixUserId::new("@owner:matrix.test").expect("账号有效"),
+    }
+}
+
 struct 记录私人Matrix {
     已加入: bool,
     邀请: Mutex<Vec<String>>,
@@ -615,7 +701,7 @@ fn service_with_mode(
         memberships,
         expected_mode,
         (None, None),
-        Arc::new(记录私人Matrix::new(false)),
+        (Arc::new(记录私人Matrix::new(false)), &治理::default()),
         room(),
         reservation(),
     )
@@ -629,7 +715,7 @@ fn private_service(
         Option<PrivateRoomSnapshot>,
         Option<PrivateRoomAgentMemberStatus>,
     ),
-    private_matrix: Arc<记录私人Matrix>,
+    (private_matrix, moderation): (Arc<记录私人Matrix>, &治理),
     room: RoomInstance,
     reservation: RoomReservation,
 ) -> AgentLobbyEntryService {
@@ -648,6 +734,8 @@ fn private_service(
             memberships,
             provisioning: Arc::new(禁止供给),
             identifiers: runtime.clone(),
+            standing_moderation: Arc::new(固定禁言(moderation.禁言.clone())),
+            moderation_effects: moderation.效果.clone(),
             clock: runtime,
         },
         LobbyJoinPolicy::new(DurationMillis::new(60_000).expect("时限有效")).expect("策略有效"),
@@ -715,6 +803,15 @@ fn private_request_with(
     agent_member: Option<PrivateRoomAgentMemberStatus>,
     private_matrix: &Arc<记录私人Matrix>,
 ) -> (AgentLobbyEntryService, EnterAgentLobby, Arc<记录成员能力>) {
+    private_request_moderated(snapshot, agent_member, private_matrix, &治理::default())
+}
+
+fn private_request_moderated(
+    snapshot: Option<PrivateRoomSnapshot>,
+    agent_member: Option<PrivateRoomAgentMemberStatus>,
+    private_matrix: &Arc<记录私人Matrix>,
+    moderation: &治理,
+) -> (AgentLobbyEntryService, EnterAgentLobby, Arc<记录成员能力>) {
     let membership = Arc::new(记录成员能力::default());
     let factory = Arc::new(记录成员工厂 {
         users: Mutex::new(Vec::new()),
@@ -739,7 +836,7 @@ fn private_request_with(
         factory,
         RoomAllocationMode::Manual(private_room_instance_id()),
         (snapshot, agent_member),
-        private_matrix.clone(),
+        (private_matrix.clone(), moderation),
         instance,
         private_reservation(),
     );
@@ -782,6 +879,80 @@ async fn agent_随已加入且可发言的主体进入私人房间并被邀请�
     assert_eq!(
         *membership.joins.lock().expect("锁可用"),
         [private_matrix_room().as_str()]
+    );
+}
+
+#[tokio::test]
+async fn 主人在私人房间里被禁言着_agent_进来和重连都不给发言() {
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    let moderation = 治理 {
+        禁言: vec![
+            // 别人的禁言、别的房间里的禁言都不算。
+            生效的禁言(
+                PrincipalId::from_uuid(Uuid::from_u128(8_888)),
+                private_catalog_id(),
+            ),
+            生效的禁言(operator_principal_id(), private_catalog_id()),
+        ],
+        ..治理::default()
+    };
+    let snapshot = 私人房间快照(Some((operator_principal_id(), 可发言权限())));
+    let (service, request, _membership) =
+        private_request_moderated(Some(snapshot), None, &matrix, &moderation);
+
+    service.enter(request.clone()).await.expect("入场成功");
+    service.enter(request).await.expect("重连照样进得来");
+
+    assert_eq!(
+        matrix.发言授予记录(),
+        [
+            (matrix_user_id().as_str().to_owned(), false),
+            (matrix_user_id().as_str().to_owned(), false)
+        ],
+        "重连也不能把禁言冲掉"
+    );
+    assert!(
+        moderation.效果.记录().is_empty(),
+        "私人房间在准入时就不给发言，不再另落一次"
+    );
+}
+
+#[tokio::test]
+async fn 主人在公共大厅里被禁言着_agent_进来以后在它的分片上也压下去() {
+    let moderation = 治理 {
+        禁言: vec![生效的禁言(
+            operator_principal_id(),
+            room().catalog_id(),
+        )],
+        ..治理::default()
+    };
+    let factory = Arc::new(记录成员工厂 {
+        users: Mutex::new(Vec::new()),
+        membership: Arc::new(记录成员能力::default()),
+    });
+    let service = private_service(
+        access(true, device_id()),
+        factory,
+        RoomAllocationMode::Automatic,
+        (None, None),
+        (Arc::new(记录私人Matrix::new(false)), &moderation),
+        room(),
+        reservation(),
+    );
+
+    service.enter(request(device_id())).await.expect("入场成功");
+
+    let targets = moderation.效果.记录();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(
+        targets[0].matrix_room_id.as_str(),
+        room().matrix_room_id().as_str()
+    );
+    assert_eq!(targets[0].room_kind, RoomCatalogKind::PublicLobby);
+    assert_eq!(targets[0].target_agent_matrix_user_ids, [matrix_user_id()]);
+    assert_eq!(
+        targets[0].target.reference(),
+        operator_principal_id().to_string()
     );
 }
 

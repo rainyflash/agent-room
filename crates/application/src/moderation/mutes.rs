@@ -206,6 +206,7 @@ impl ModerationService {
             room_kind: standing.room_kind,
             matrix_room_ids: standing.matrix_room_ids.clone(),
             target_matrix_user_id: standing.target_matrix_user_id.clone(),
+            target_agent_matrix_user_ids: standing.target_agent_matrix_user_ids.clone(),
         };
         match course {
             MuteCourse::KeepMuted(effective) => {

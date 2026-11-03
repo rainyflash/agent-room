@@ -537,6 +537,7 @@ async fn 真实_synapse_治理隐藏和禁言均可撤销() {
         room_kind: RoomCatalogKind::PrivateRoom,
         target: hide_target,
         target_matrix_user_id: None,
+        target_agent_matrix_user_ids: Vec::new(),
     };
     ModerationEffectGateway::apply(&scenario.provisioner, &hide_action, &hide_effect)
         .await
@@ -562,6 +563,7 @@ async fn 真实_synapse_治理隐藏和禁言均可撤销() {
         room_kind: RoomCatalogKind::PrivateRoom,
         target: mute_target,
         target_matrix_user_id: Some(scenario.member_user_id.clone()),
+        target_agent_matrix_user_ids: Vec::new(),
     };
     ModerationEffectGateway::apply(&scenario.provisioner, &mute_action, &mute_effect)
         .await

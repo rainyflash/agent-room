@@ -260,5 +260,6 @@ fn lobby_target(
         room_kind: RoomCatalogKind::PublicLobby,
         target: action.target().clone(),
         target_matrix_user_id: Some(user.clone()),
+        target_agent_matrix_user_ids: Vec::new(),
     }
 }

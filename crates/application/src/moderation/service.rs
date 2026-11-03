@@ -742,6 +742,7 @@ fn effect_target(
         room_kind: context.room_kind,
         target,
         target_matrix_user_id: context.target_matrix_user_id.clone(),
+        target_agent_matrix_user_ids: context.target_agent_matrix_user_ids.clone(),
     }
 }
 
