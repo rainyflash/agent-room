@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
 import {
@@ -10,6 +10,7 @@ import {
   type Locator,
   type Page,
 } from '@playwright/test';
+import { z } from 'zod';
 
 import {
   apiOrigin,
@@ -29,9 +30,42 @@ const roomName = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NAME;
 const saidInPublic = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SAID_PUBLIC;
 const saidInPrivate = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SAID_PRIVATE;
 const resultPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_RESULT;
+const firstNotice = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NOTICE_FIRST;
+const secondNotice = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NOTICE_SECOND;
+const agentName = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_AGENT;
+const moderationRules = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_RULES;
+const spamLine = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SPAM;
+// 和纵向验收靠这几个文件对步子。
+const noticedPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NOTICED;
+const agentReadFirstPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_AGENT_READ_FIRST;
+const agentReadSecondPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_AGENT_READ_SECOND;
+const grantedPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_GRANTED;
+const mutedPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_MUTED;
+const revokedPath = process.env.AGENT_ROOM_VERTICAL_PUBLIC_ROOM_REVOKED;
 
 const roomPathPattern = /\/lobby\/([0-9a-f-]{36})\/instance\//u;
 const shareCodePattern = /\/r\/([A-Za-z0-9]{6})/u;
+const mutedSchema = z.object({ note: z.string().min(1) }).strict();
+
+async function waitForStep(path: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        try {
+          await access(path);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { intervals: [1_000], timeout: 420_000 },
+    )
+    .toBe(true);
+}
+
+async function markStep(path: string): Promise<void> {
+  await writeFile(path, `${JSON.stringify({ done: true })}\n`, 'utf8');
+}
 
 function inRoom(catalogId: string): RegExp {
   return new RegExp(`/lobby/${catalogId}/instance/`, 'u');
@@ -228,6 +262,98 @@ async function approve(owner: Page, displayName: string): Promise<void> {
   await closeRoomSettings(owner, settings);
 }
 
+async function writeNotice(owner: Page, text: string): Promise<void> {
+  const settings = await openRoomSettings(owner, 'Notice');
+  await settings.getByRole('textbox', { name: 'Notice', exact: true }).fill(text);
+  await settings.getByRole('button', { name: 'Save notice', exact: true }).click();
+  await expect(settings.getByText('Notice updated.', { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await closeRoomSettings(owner, settings);
+}
+
+// 甲写公告，乙的网页上马上看到；本机 Agent 进房间时拿到；甲改了以后，它下一批消息带着新的那条。
+async function noticeRound(owner: Page, member: Page, catalogId: string): Promise<void> {
+  await writeNotice(owner, firstNotice ?? '');
+  await expect(member.getByRole('region', { name: 'Room notice', exact: true })).toContainText(
+    firstNotice ?? '',
+    { timeout: 30_000 },
+  );
+  await writeFile(
+    noticedPath ?? '',
+    `${JSON.stringify({ catalogId })}
+`,
+    'utf8',
+  );
+  await waitForStep(agentReadFirstPath ?? '');
+  await writeNotice(owner, secondNotice ?? '');
+  await expect(member.getByRole('region', { name: 'Room notice', exact: true })).toContainText(
+    secondNotice ?? '',
+    { timeout: 30_000 },
+  );
+  // 公告改了不叫醒 Agent，跟着下一批消息交。
+  await say(member, 'The notice changed, did everyone see it?');
+  await waitForStep(agentReadSecondPath ?? '');
+}
+
+async function handOverToAgent(moderator: Page, name: string, rules: string): Promise<void> {
+  const settings = await openRoomSettings(moderator, 'Moderation');
+  const form = settings.locator('.moderation-agent-grant');
+  const agent = form.getByLabel('Agent', { exact: true });
+  const value = await agent.locator('option', { hasText: name }).getAttribute('value');
+  await agent.selectOption(value ?? '');
+  await form.getByLabel('Rules', { exact: true }).fill(rules);
+  await form.getByRole('button', { name: 'Hand it over', exact: true }).click();
+  await expect(
+    settings.getByRole('region', { name: 'Agents moderating this room', exact: true }),
+  ).toContainText(name, { timeout: 30_000 });
+  await closeRoomSettings(moderator, settings);
+}
+
+// 台账写着是哪个 Agent 照规则做的；甲一次全撤，再把授权收回来。
+async function undoAndRevoke(moderator: Page, name: string, note: string): Promise<void> {
+  const settings = await openRoomSettings(moderator, 'Moderation');
+  await expect(settings).toContainText(
+    new RegExp(`${name} #\\d{4}, following the rules: ${note}`, 'u'),
+    { timeout: 30_000 },
+  );
+  const inEffect = settings.getByRole('region', {
+    name: 'Still in effect from agents',
+    exact: true,
+  });
+  await expect(inEffect).toContainText('1 action still in effect', { timeout: 30_000 });
+  await inEffect.getByRole('button', { name: 'Undo all', exact: true }).click();
+  await inEffect.getByRole('group').getByRole('button', { name: 'Undo all', exact: true }).click();
+  await expect(inEffect).toContainText('Undid 1 action.', { timeout: 60_000 });
+  const grants = settings.getByRole('region', {
+    name: 'Agents moderating this room',
+    exact: true,
+  });
+  await grants.getByRole('button', { name: 'Revoke', exact: true }).click();
+  await expect(grants).toContainText('No agent is moderating this room.', { timeout: 30_000 });
+  await closeRoomSettings(moderator, settings);
+}
+
+// 甲把房间交给自己的 Agent，规则是说 spam 的禁言；乙说了，Agent 照规则禁言他，甲再撤回。
+async function agentModerationRound(moderator: Page, member: Page, room: string): Promise<void> {
+  await moderator.goto(room);
+  await handOverToAgent(moderator, agentName ?? '', moderationRules ?? '');
+  await markStep(grantedPath ?? '');
+  await say(member, spamLine ?? '');
+
+  await waitForStep(mutedPath ?? '');
+  const { note } = mutedSchema.parse(JSON.parse(await readFile(mutedPath ?? '', 'utf8')));
+  const box = member
+    .getByRole('region', { name: 'Conversation', exact: true })
+    .getByRole('textbox', { name: 'Message', exact: true });
+  await expect(box).toBeDisabled({ timeout: 60_000 });
+
+  await moderator.reload();
+  await undoAndRevoke(moderator, agentName ?? '', note);
+  await expect(box).toBeEnabled({ timeout: 60_000 });
+  await markStep(revokedPath ?? '');
+}
+
 async function changeShareCode(owner: Page): Promise<string> {
   const settings = await openRoomSettings(owner, 'Public');
   await settings.getByRole('button', { name: 'New share code', exact: true }).click();
@@ -264,11 +390,32 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
       roomName === undefined ||
       saidInPublic === undefined ||
       saidInPrivate === undefined ||
-      resultPath === undefined,
+      resultPath === undefined ||
+      firstNotice === undefined ||
+      secondNotice === undefined ||
+      agentName === undefined ||
+      moderationRules === undefined ||
+      spamLine === undefined ||
+      noticedPath === undefined ||
+      agentReadFirstPath === undefined ||
+      agentReadSecondPath === undefined ||
+      grantedPath === undefined ||
+      mutedPath === undefined ||
+      revokedPath === undefined,
     '缺少公开房间纵向验收变量。',
   );
-  test.setTimeout(900_000);
-  expect(isAbsolute(resultPath ?? '')).toBe(true);
+  test.setTimeout(1_500_000);
+  for (const path of [
+    resultPath,
+    noticedPath,
+    agentReadFirstPath,
+    agentReadSecondPath,
+    grantedPath,
+    mutedPath,
+    revokedPath,
+  ]) {
+    expect(isAbsolute(path ?? '')).toBe(true);
+  }
   const name = roomName ?? '';
   const said = { encrypted: saidInPrivate ?? '', plain: saidInPublic ?? '' };
 
@@ -278,17 +425,20 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
     const owner = await openIsolatedPage(browser, contexts);
     const member = await openIsolatedPage(browser, contexts);
     const visitor = await openIsolatedPage(browser, contexts);
+    const moderator = await openIsolatedPage(browser, contexts);
     const failures = {
       member: collectUnhandledFailures(member),
+      moderator: collectUnhandledFailures(moderator),
       owner: collectUnhandledFailures(owner),
       visitor: collectUnhandledFailures(visitor),
     };
 
-    await connectLiveSession(owner, {
+    const ownerCredentials = {
       expectedDisplayName: 'Local Developer',
       password: ownerPassword ?? '',
       username: ownerUsername ?? '',
-    });
+    };
+    await connectLiveSession(owner, ownerCredentials);
     await waitUntilDeviceReady(owner);
     const catalogId = await createPublicRoom(owner, name);
 
@@ -323,6 +473,12 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
     await approve(owner, 'Local Visitor');
     await expect(visitor).toHaveURL(inRoom(catalogId), { timeout: 90_000 });
 
+    await noticeRound(owner, member, catalogId);
+    // 给授权、一次全撤都要最近登录过（5 分钟）。走到这里已经花了好几分钟，换一个刚登录的页面来做。
+    await connectLiveSession(moderator, ownerCredentials);
+    await waitUntilDeviceReady(moderator);
+    await agentModerationRound(moderator, member, new URL(owner.url()).pathname);
+
     const secondCode = await changeShareCode(owner);
     await expectShareGone(api, firstCode, name);
     await expectSharePage(api, secondCode, name);
@@ -331,7 +487,7 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
     await expectShareGone(api, secondCode, name);
     await say(owner, said.encrypted);
     await expectSaid(member, said.encrypted);
-    expect(failures).toEqual({ member: [], owner: [], visitor: [] });
+    expect(failures).toEqual({ member: [], moderator: [], owner: [], visitor: [] });
     await writeFile(resultPath ?? '', `${JSON.stringify({ catalogId })}\n`, 'utf8');
   } finally {
     await api.dispose();
