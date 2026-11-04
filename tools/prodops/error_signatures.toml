@@ -1,10 +1,16 @@
 # 生产错误汇总的噪音表（`tools/prodops/error_digest.py`，设计在 specs/error-triage/design.md）。
 #
 # 这里写的是“看着像错、其实正常”的几种，汇总时不报。每条都要写清楚为什么正常；拿不准的别加，
-# 让它报出来、看过再说。`summary` 是正则，对着汇总里那一行（已经打码、换过占位）搜。
+# 让它报出来、看过再说。`summary` 是正则，对着汇总里那一行（已经打码、换过占位）搜，也对着样例搜：
+# 身份服务的事件汇总只有类型和错误，要按 clientId、reason 分就写样例里的那一串。
 # 2026-10-24 按生产上 48 小时的日志定的第一版。
 
 # 控制面
+
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ 设备认证请求失败 failure=InvalidToken operation=device\.authenticate @ POST /agent-instances/\{id\}/handoffs/claim$'
+reason = "Bridge 约 5 秒问一次有没有交给 Agent 的任务，刷新令牌的那一刻还在路上的这一问拿的是旧令牌，回 401，下一问用新令牌就好了。2026-11-02 生产上那次，1 秒前刚有一次成功的刷新，之后这个接口都是 200，部署以来就这 1 次。只认这个接口：令牌真坏了，刷新和别的接口也会报"
 
 [[ignore]]
 service = "control-plane"
@@ -67,6 +73,16 @@ reason = "输错密码"
 service = "identity"
 summary = '^LOGIN_ERROR error=user_not_found$'
 reason = "登录时填的邮箱没有对应的账户（打错了、换了个邮箱），页面上和输错密码一样提示；2026-10-26 生产上那次，近两天注册的账户都已验证，没有卡住的新账户"
+
+[[ignore]]
+service = "identity"
+summary = '^CODE_TO_TOKEN_ERROR error=invalid_code clientId=agent-room-matrix\b'
+reason = "聊天服务器拿登录回调里的授权码换令牌，同一个回调被提交了第二次（刷新、后退），第二次必然被拒。2026-11-03 生产上那次：第一次回调 302 成功，3 秒后同一个授权码 400，之后 POST /login 成功。成片出现、之后又没有成功的登录，才要查"
+
+[[ignore]]
+service = "identity"
+summary = '^ERROR org\.keycloak\.services KC-SERVICES0029: Failed to send email: jakarta\.mail\.SendFailedException: Invalid Addresses;'
+reason = "发信服务拒收了这个收件地址（550），是这一个地址的事：2026-11-02 生产上那次，人填的地址 @ 后面只有数字。发信整体出问题是别的异常（连不上、握手超时、认证失败），照旧报；这次失败另外两行（Failed to send verification email、email_send_failed）也照旧报，发信告警也不受影响"
 
 [[ignore]]
 service = "identity"
@@ -261,3 +277,8 @@ reason = "有人拿不是我们申请的令牌来访问 /.well-known/acme-challe
 service = "identity"
 summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.endpoints\\.request\\.AuthorizationEndpointRequestParserProcessor Parameter '[^']*' not present or present multiple times in the HTTP request parameters$"
 reason = "有人打开了登录地址却没带 client_id 之类的必填参数（扫描器、手敲或截断的链接），Keycloak 直接回错误页，没有登录被挡住；我们自己发起的登录总是带齐参数（2026-10-30 生产上只出现一次，缺的是 client_id，agent-room-ops#50）"
+
+[[ignore]]
+service = "identity"
+summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.utils\\.OAuth2CodeParser Code '<id>' already used for userSession '<x>' and client '<id>'\\.$"
+reason = "同一个登录回调带着的授权码被换了第二次（刷新回调页、同一浏览器多个登录标签页前后脚回来、邮箱或浏览器预取），Keycloak 拒掉第二次，第一次已经登录成功；控制面对回调重复早有处理，会按登录是否还在等记 INFO 并送回房间或重开登录（#588、#618）。2026-11-03 生产上只出现一次（agent-room-ops#66）。同一时间成片出现、而且回调之后人没登录上，才是要查的"
