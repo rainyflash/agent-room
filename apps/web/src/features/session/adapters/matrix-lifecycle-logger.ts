@@ -1,16 +1,41 @@
 import type { Logger } from 'matrix-js-sdk/lib/logger.js';
 
+/** 退出以后多久之内还算退出留下的请求。SDK 接着往下走只隔几毫秒，这里留够余地。 */
+const ABANDONED_REQUEST_WINDOW_MS = 10_000;
+
 /** SDK sync startup logs an intentional HTTP abort as an error after stopClient. */
 export class MatrixLifecycleLogger {
   #stopping = false;
+  readonly #sink: Logger;
   readonly logger: Logger;
 
   constructor(sink: Logger = consoleLogger('')) {
+    this.#sink = sink;
     this.logger = this.#scope(sink);
   }
 
   beginShutdown(): void {
+    if (this.#stopping) return;
     this.#stopping = true;
+    this.#quietAbandonedRequests();
+  }
+
+  /**
+   * 退出正好落在启动同步的半路时，SDK 接着用已经中止的信号发第一个同步请求，再看到已经停了就退出，
+   * 谁也不 await 那个请求（`SyncApi.sync`），页面上就多一条没人接的 AbortError。拿不到那个 Promise，
+   * 所以退出后这一小段时间里，把没人接的 AbortError 记成调试信息。别的错照常报。
+   */
+  #quietAbandonedRequests(): void {
+    if (typeof window === 'undefined') return;
+    const onRejection = (event: PromiseRejectionEvent): void => {
+      if (!isAbortError(event.reason)) return;
+      event.preventDefault();
+      this.#sink.debug('Abandoned Matrix request after shutdown', event.reason);
+    };
+    window.addEventListener('unhandledrejection', onRejection);
+    window.setTimeout(() => {
+      window.removeEventListener('unhandledrejection', onRejection);
+    }, ABANDONED_REQUEST_WINDOW_MS);
   }
 
   #scope(sink: Logger): Logger {

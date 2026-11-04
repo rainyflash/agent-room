@@ -1,4 +1,5 @@
 import type { Logger } from 'matrix-js-sdk/lib/logger.js';
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { MatrixLifecycleLogger } from './matrix-lifecycle-logger';
 
@@ -14,7 +15,38 @@ function sink() {
   return output;
 }
 
+/** jsdom 没有 PromiseRejectionEvent，造一个长得一样的；返回有没有被当成已处理。 */
+function rejectUnhandled(reason: unknown): boolean {
+  const event = Object.assign(new Event('unhandledrejection', { cancelable: true }), { reason });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 describe('Matrix shutdown logging', () => {
+  it('退出留下的、没人接的 AbortError 只记成调试信息，别的错和过了这段时间的照常报', () => {
+    // Alpha 88 的发布 CI 红在这里：退出落在启动同步的半路，SDK 发完第一个同步请求就不管了。
+    vi.useFakeTimers();
+    try {
+      const output = sink();
+      const lifecycle = new MatrixLifecycleLogger(output);
+      const abort = new DOMException('signal is aborted without reason', 'AbortError');
+
+      expect(rejectUnhandled(abort)).toBe(false);
+
+      lifecycle.beginShutdown();
+      lifecycle.beginShutdown();
+      expect(rejectUnhandled(abort)).toBe(true);
+      expect(output.debug).toHaveBeenCalledTimes(1);
+      expect(output.debug).toHaveBeenCalledWith('Abandoned Matrix request after shutdown', abort);
+      expect(rejectUnhandled(new Error('Server rejected logout'))).toBe(false);
+
+      vi.advanceTimersByTime(10_000);
+      expect(rejectUnhandled(abort)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps verbose SDK trace output disabled by default', () => {
     const trace = vi.spyOn(console, 'trace').mockImplementation(() => undefined);
     try {
