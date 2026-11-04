@@ -278,8 +278,11 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
     const owner = await openIsolatedPage(browser, contexts);
     const member = await openIsolatedPage(browser, contexts);
     const visitor = await openIsolatedPage(browser, contexts);
-    const failures = [...collectUnhandledFailures(owner), ...collectUnhandledFailures(member)];
-    const visitorFailures = collectUnhandledFailures(visitor);
+    const failures = {
+      member: collectUnhandledFailures(member),
+      owner: collectUnhandledFailures(owner),
+      visitor: collectUnhandledFailures(visitor),
+    };
 
     await connectLiveSession(owner, {
       expectedDisplayName: 'Local Developer',
@@ -307,17 +310,16 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
       password: visitorPassword ?? '',
       username: visitorUsername ?? '',
     });
-    expect(visitorFailures).toEqual([]);
 
     // 改成要申请。丙先退出来，这一次要申请、等批准；批准以后他的网页自己进来，不用再点。
     await requireApproval(owner);
     await leaveRoom(visitor);
-    // 退出时还在路上的请求可能被拒，这一段不算。
-    visitorFailures.length = 0;
+    // 退出时还在路上的请求可能被拒，这时候之前的看过就清掉，这一段不算。
+    expect(failures.visitor).toEqual([]);
+    failures.visitor.length = 0;
     await askToJoin(visitor, firstCode, name);
     await approve(owner, 'Local Visitor');
     await expect(visitor).toHaveURL(inRoom(catalogId), { timeout: 90_000 });
-    expect(visitorFailures).toEqual([]);
 
     const secondCode = await changeShareCode(owner);
     await expectShareGone(api, firstCode, name);
@@ -327,7 +329,7 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
     await expectShareGone(api, secondCode, name);
     await say(owner, said.encrypted);
     await expectSaid(member, said.encrypted);
-    expect(failures).toEqual([]);
+    expect(failures).toEqual({ member: [], owner: [], visitor: [] });
     await writeFile(resultPath ?? '', `${JSON.stringify({ catalogId })}\n`, 'utf8');
   } finally {
     await api.dispose();
