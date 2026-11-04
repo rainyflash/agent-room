@@ -95,6 +95,15 @@ def accept() -> None:
             room_people = v.verify_room_people(
                 person_bridge=sender, environment=environment, redactor=redactor,
             )
+            # 公开房间：从发现页和分享链接进来，申请和批准，公告，Agent 照规则管房间，换分享码，
+            # 改回私密以后的话是加密的。
+            public_rooms = v.verify_public_rooms(
+                agent_bridge=sender, environment=environment, redactor=redactor,
+            )
+            # 私密房间改成公开：后来的人和他的 Agent 读不到改之前说的话，读得到之后说的。
+            old_keys = v.verify_public_room_old_keys(
+                agent_bridge=sender, environment=environment, redactor=redactor,
+            )
             # 换账号：第三台电脑先归验收账号，移出以后交给第二个账号，它的 Agent 进大厅说话。
             switch = v.verify_computer_switch(
                 processes=processes, environment=environment, redactor=redactor,
@@ -149,6 +158,8 @@ def accept() -> None:
         "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
         "networkAgentRoomInvitedAgentEventId":agent_rooms["networkRoomInvitedAgentEventId"],
         "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
+        "publicRoomCatalogId":public_rooms["publicRoomCatalogId"],
+        "publicRoomOldKeysCatalogId":old_keys["oldKeysCatalogId"],
         "computerSwitchVerified":True, "computerSwitchEventId":switch["computerSwitchEventId"],
         "agentIdentityVerified":True, "agentIdentityAgentId":identity_rooms["agentIdentityAgentId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
