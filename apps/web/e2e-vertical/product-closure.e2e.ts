@@ -109,9 +109,9 @@ test('三套独立浏览器会话完成云端工作区、跨账户消息与定�
     await grantAgentMembership(ownerPrimary, scenario.agentId, collaboratorSession.principalId);
 
     await Promise.all([
-      verifyCloudWorkspace(ownerPrimary, 'Local Developer'),
-      verifyCloudWorkspace(ownerSecondary, 'Local Developer'),
-      verifyCloudWorkspace(collaborator, 'Local Collaborator'),
+      verifyCloudWorkspace(ownerPrimary, 'Local Developer', scenario.agentName),
+      verifyCloudWorkspace(ownerSecondary, 'Local Developer', scenario.agentName),
+      verifyCloudWorkspace(collaborator, 'Local Collaborator', scenario.agentName),
     ]);
 
     const [ownerPrimaryRoomId, ownerSecondaryRoomId, collaboratorRoomId] = await Promise.all([
@@ -126,7 +126,6 @@ test('三套独立浏览器会话完成云端工作区、跨账户消息与定�
     const messageBody = `Second Agent Room account verified cloud delivery at ${new Date().toISOString()}.`;
     await publishHumanMessage(collaborator, messageTitle, messageBody);
     await verifyRemoteMessage(ownerPrimary, messageTitle, messageBody);
-    await ownerSecondary.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
     await expect(ownerSecondary.locator('.message-dock__list')).toContainText(messageTitle, {
       timeout: 45_000,
     });
@@ -175,6 +174,7 @@ test('三套独立浏览器会话完成云端工作区、跨账户消息与定�
 
 type ProductClosureInput = Readonly<{
   agentId: string;
+  agentName: string;
   catalogId: string;
   collaboratorPassword: string;
   collaboratorUsername: string;
@@ -234,15 +234,20 @@ async function grantAgentMembership(
   expect(status).toBe(204);
 }
 
-async function verifyCloudWorkspace(page: Page, expectedDisplayName: string): Promise<void> {
+async function verifyCloudWorkspace(
+  page: Page,
+  expectedDisplayName: string,
+  agentName: string,
+): Promise<void> {
   await page.goto('/workspace');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Every Agent\. Every device\. One account truth\.|所有 Agent、所有设备，共用一个账户事实。/u,
-    { timeout: 40_000 },
-  );
+  await expect(page.getByRole('heading', { level: 1, name: /My agents|我的 Agent/u })).toBeVisible({
+    timeout: 40_000,
+  });
   await expect(page.locator('.account-workspace__intro')).toContainText(expectedDisplayName);
-  await expect(page.locator('.workspace-fleet')).toContainText('Vertical Codex Agent');
-  await expect(page.locator('.desktop-runtime')).toHaveCount(0);
+  // 这时 Bridge 都停了，这个 Agent 在收起的“不在线”那一组里，所以只看文字、不看是否可见。
+  await expect(page.locator('.account-workspace__agents')).toContainText(agentName, {
+    timeout: 45_000,
+  });
   expect(await page.evaluate(() => '__TAURI_INTERNALS__' in window)).toBe(false);
 }
 
@@ -257,11 +262,18 @@ async function enterPublicLobby(page: Page, catalogId: string): Promise<string> 
   }
   const roomId = decodeURIComponent(encodedRoomId);
   expect(roomId).toMatch(/^!.+:.+$/u);
+  // 进房间默认看场景，面板是藏着的，标签页点不到，要从工具栏打开资料。
+  await page
+    .getByRole('button', { name: /^(Shared resources|共享资料)$/u })
+    .click({ timeout: 45_000 });
+  await expect(page.getByRole('tab', { name: /^(Resources|资料)$/u })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   return roomId;
 }
 
 async function publishHumanMessage(page: Page, title: string, body: string): Promise<void> {
-  await page.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
   await page.getByRole('button', { name: /Share a resource|分享资料/u }).click();
   await expect(page.locator('.message-composer__identity')).toContainText('Local Collaborator', {
     timeout: 40_000,
@@ -279,7 +291,6 @@ async function publishHumanMessage(page: Page, title: string, body: string): Pro
 }
 
 async function verifyRemoteMessage(page: Page, title: string, body: string): Promise<void> {
-  await page.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
   const headline = page.locator('.message-signal').filter({ hasText: title });
   await expect(headline).toBeVisible({ timeout: 45_000 });
   await headline.click();
@@ -297,7 +308,6 @@ async function createTargetedHandoffFromMessage(
   body: string,
   targetInstanceId: string,
 ) {
-  await page.getByRole('tab', { name: /^(Resources|资料)$/u }).click();
   const headline = page.locator('.message-signal').filter({ hasText: title });
   await expect(headline).toBeVisible({ timeout: 45_000 });
   await headline.click();
@@ -305,17 +315,15 @@ async function createTargetedHandoffFromMessage(
   await expect(page.locator('.content-inspector__verified')).toContainText(body, {
     timeout: 45_000,
   });
-  await page.getByRole('button', { name: /Give to Agent|交给 Agent/u }).click();
-  await expect(
-    page.getByRole('heading', { name: /Approve one-time context|批准一次性上下文/u }),
-  ).toBeVisible({
+  await page.getByRole('button', { name: /Give to agent|交给 Agent/u }).click();
+  await expect(page.getByRole('heading', { name: /Give it to an agent|交给 Agent/u })).toBeVisible({
     timeout: 45_000,
   });
   const target = page.locator(`input[name="handoff-target"][value="${targetInstanceId}"]`);
   await expect(target).toBeVisible({ timeout: 45_000 });
   await target.check();
   const responsePromise = page.waitForResponse(isHandoffCreationResponse);
-  await page.getByRole('button', { name: /Confirm handoff|确认交付/u }).click();
+  await page.getByRole('button', { name: /Confirm handoff|确认交给它/u }).click();
   const response = await responsePromise;
   expect([200, 201]).toContain(response.status());
   return handoffResponseSchema.parse(await response.json());
@@ -333,6 +341,7 @@ function isHandoffCreationResponse(response: Response): boolean {
 function readInput(environment: NodeJS.ProcessEnv): ProductClosureInput | null {
   const candidate = {
     agentId: environment.AGENT_ROOM_PRODUCT_CLOSURE_AGENT_ID,
+    agentName: environment.AGENT_ROOM_PRODUCT_CLOSURE_AGENT_NAME,
     catalogId: environment.AGENT_ROOM_PRODUCT_CLOSURE_CATALOG_ID,
     collaboratorPassword: environment.AGENT_ROOM_PRODUCT_CLOSURE_COLLABORATOR_PASSWORD,
     collaboratorUsername: environment.AGENT_ROOM_PRODUCT_CLOSURE_COLLABORATOR_USERNAME,
@@ -347,6 +356,7 @@ function readInput(environment: NodeJS.ProcessEnv): ProductClosureInput | null {
   return z
     .object({
       agentId: uuidV7Schema,
+      agentName: z.string().min(1),
       catalogId: uuidV7Schema,
       collaboratorPassword: z.string().min(1),
       collaboratorUsername: z.string().min(1),
