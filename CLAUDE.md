@@ -185,7 +185,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 应用里的路由不能叫 `/r/...`：裸域上应用的路径都 302 到 app 子域。发现页是 `/explore`、`/explore/$code`，要加进 `APP_PAGE_PATHS`。
   - 房间目录 `room_catalog_entry.end_to_end_encrypted` 记着每间房到底加没加密（第 2 步 2a，#666），用到“加不加密”的地方都看它，别再按种类猜。默认 true（回滚时旧代码建的私人房间、私聊都是加密的）；公共大厅从来不加密，约束卡着，测试和 `tools/vertical.py` 里建大厅要写 `false`。这张表上有提交时才查的约束触发器（`room_catalog_private_integrity`），迁移里先改了行再 `ALTER` 它会报 `pending trigger events`：`ALTER` 都放在改行前面（第一次派发就红在这里）。
   - 公告存成房间状态 `room.notice.v1`，由控制面查过“管理”这一位后以应用服务写：Matrix 上管理员并没有更高的权力级别（`state_default` 只有应用服务够得着），网页没法自己写。读的一边只认应用服务写的那条。加密房间里公告也不加密，界面上照实说。
-  - 无头验收（第 8 步，#716–#718）只在派发 `suite=all` 时跑：`public-rooms.e2e.ts`、`public-room-old-keys.e2e.ts`，共用的网页操作在 `e2e-vertical/support/room-pages.ts`。第 2 到第 8 步都在 main 上，还没发版，这批改了界面，发版前派发一次 `suite=session`。写这类用例的三个坑：纵向配置没有动作上限，一个动作找不到东西会一直等，最后只看到外面的脚本超时，所以这两个用例设了 `actionTimeout`；`<select>` 包在 `<label>` 里时选项的字也算进标签，`getByLabel` 精确匹配找不到它，按角色找（`getByRole('combobox', { name })`）；退出房间那一刻页面还在读这间房的设置和成员，回 404 是正常的，查网页报错要在退出之前查。
+  - 无头验收（第 8 步，#716–#718）只在派发 `suite=all` 时跑：`public-rooms.e2e.ts`、`public-room-old-keys.e2e.ts`，共用的网页操作在 `e2e-vertical/support/room-pages.ts`。第 2 到第 8 步都随 Alpha 88 发布（2026-11-04）。写这类用例的三个坑：纵向配置没有动作上限，一个动作找不到东西会一直等，最后只看到外面的脚本超时，所以这两个用例设了 `actionTimeout`；`<select>` 包在 `<label>` 里时选项的字也算进标签，`getByLabel` 精确匹配找不到它，按角色找（`getByRole('combobox', { name })`）；退出房间那一刻页面还在读这间房的设置和成员，回 404 是正常的，查网页报错要在退出之前查。
 - 同一天维护者还问私人房间能不能不经过中心服务器、点对点。他要的是服务器少存、不靠一台服务器，不是运营方读不到。当天只读量了：盘上 45 GB 里备份 16.4 GiB、旧镜像 13.7 GiB（清掉了，见下面“发布”）、三个库 1.1 GB，正文和附件约 10 MB，对话本身不到百分之一，挪到设备上省不了什么。不靠一台服务器走 Matrix 联邦（一个房间每台有成员的服务器各存一整份）加上拆控制面，放进测量阶段 0 之后的多站点设计。
 - Synapse 库里最大的表是 `device_inbox`：给很久没上线的设备排着的钥匙消息（11-01 8.3 万条、258 MB）。七成多在一个账户以前的本机 Agent 上（有 Windows 也有 Mac，看着是维护者的）（电脑天天用，这些 Agent 两三周以上没上线），两成多在人很久没用的浏览器上。别直接删它们的 Matrix 设备：Agent 再被用时会连不上；要清就在“我的 Agent”里删掉不用的 Agent。维护者当天要了“30 天没上线的一键删除”（#662，[设计](./specs/workspace-tidy/design.md)）：控制面以应用服务问 Synapse 每个连接的设备上次用的时间（`GET /agent-instances/matrix-activity`），连接上记的“上次使用”只在后台回复、自动发言时写，别拿它单独判断。问不到的、正在线的、网络 Agent 一律不算，宁可漏掉。
 
@@ -236,7 +236,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-10-28 开监控后 Outbox 积压的告警一直响（agent-room-ops#36，#635 去掉了告警）：控制面往 `outbox_event` 里写七种事件，从来没有发布器读，生产上 413 行一行也没发布。每种事件该跟着做的事，都已经在请求里直接做，或者有自己的任务表。
 - 设计在 [specs/outbox/design.md](./specs/outbox/design.md)（#636），进度记在它的“状态”一节。维护者当天定了去掉：先停写、删代码和指标，停写的那一版发出去以后，下一版再带删表的迁移（回滚只换镜像、不退数据库，上一版还在写这张表）。撤销以后 Matrix 设备注销的后台重试另做一步。
 - 第 2 步（#637）停写、删了代码和指标。改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，随 Alpha 87 发布，实机验收走了一次新设备授权。
-- 第 3 步（#658）：维护者 2026-11-01 看过只读查的行数（573 行，部署以后不再增加）同意删表，迁移 `202611010001_drop_outbox_event.sql`。带它的那一版上线以后，回滚只能退到 Alpha 87，不能再退到还在写这张表的 Alpha 86 及更早的版本。
+- 第 3 步（#658）：维护者 2026-11-01 看过只读查的行数（573 行，部署以后不再增加）同意删表，迁移 `202611010001_drop_outbox_event.sql`。随 Alpha 88 上线（2026-11-04），上线后查过表已经没了。回滚只能退到 Alpha 87，不能再退到还在写这张表的 Alpha 86 及更早的版本。
 - 第 4 步（#638）：撤销以后 Matrix 设备没注销成的，控制面每 30 秒再试（`agent_matrix_device_retry.rs`），以前要人再点一次撤销，换账号那条路上没人能点。不另建表，只扫 `agent_instance` 上撤销了、`matrix_device_revoked_at` 为空的；注销幂等，所以不领租约，退避只记在内存里、不放弃。撤销后 30 秒以内的留给撤销请求自己做。
 - 别再加回 Outbox，也别给它接一个“读到就标成已发布”的消费者：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表，或者像第 4 步那样直接扫原表上记着的状态。
 - 同一批做的 Matrix 投影也没人用：`MatrixProjectionStore` 产品代码里没有一处调用，`matrix_projection_cursor`、`matrix_projection_event_receipt`、`room_membership_projection` 生产上都是空的，`room_instance` 的 `member_count_projection`、`activity_score` 全是 0，所以“发现”页大厅那一行、网络 Agent 和远程 MCP 列房间的 `onlineAgentCount` 一直是 0。设计在 [specs/matrix-projection/design.md](./specs/matrix-projection/design.md)（#639），进度记在它的“状态”一节。维护者 2026-11-04 定了去掉：先删代码、指标和恢复演练那一步，下一版再删表和列；大厅那一行按 `allocated_slots` 写“大厅里有 N 个 Agent”。`onlineAgentCount` 这个字段别去掉：网页 `.strict()` 校验、必填。
@@ -621,14 +621,19 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 88 正在发布：公开房间（设计 #660、#661、#665，实现 #666–#718：设成公开、加入方式、发现页、分享链接、管理员、常驻公告、房间交给本机 Agent 管），踢出和封禁在私人房间里真的生效（#707），30 天没上线的 Agent 一键删除（#662），注册页拦下没有域名后缀的邮箱（#723），两台设备同时第一次登录都签得上（#725），删掉 `outbox_event`（#658），DB-IP 换成 11 月那份（#720）。
-  - 公开房间改了 `tools/prodops/render.py`（`/r/*`、`/explore`）、#723 改了登录主题，实机验收要新授权一台设备，维护者批准设备码（维护者 2026-11-04 说现在发版）。
-  - 带 9 个控制面迁移，其中 `202611010001_drop_outbox_event.sql` 删表：这一版上线以后回滚只能退到 Alpha 87。Bridge 的消息库也多一个迁移（`0009_message_room_notice`）。部署配置没加新变量，MCP 多了列公开房间和管房间的工具。
+- Alpha 88 已于 2026-11-04 公开，见 [发布记录](./specs/agent-access/alpha88-release.md)。
+  - 公开房间（设计 #660、#661、#665，实现 #666–#718：设成公开、加入方式、发现页、分享链接、管理员、常驻公告、房间交给本机 Agent 管），踢出和封禁在私人房间里真的生效（#707），30 天没上线的 Agent 一键删除（#662），注册页拦下没有域名后缀的邮箱（#723），两台设备同时第一次登录都签得上（#725），删掉 `outbox_event`（#658），DB-IP 换成 11 月那份（#720）。
+  - 带 9 个控制面迁移，其中 `202611010001_drop_outbox_event.sql` 删表：回滚只能退到 Alpha 87。Bridge 的消息库多一个迁移（`0009_message_room_notice`），IPC 升到 4.6，部署配置没加新变量。
+  - 公开房间改了 `tools/prodops/render.py`、#723 改了登录主题，实机验收走了一次新设备授权：前两个码过期（维护者不在电脑前），第三个贴过去半分钟内批准；长期验收设备换成 Alpha 88 那台（`agent-room.alpha88.acceptance.fresh-device`，人物在“发布验收”里）。
+  - 完整 CI 第一次红在真实网页登录的一种新偶发，读了 trace 和 SDK 源码，确认和这一版无关才重跑；修复 #728 随下一版。`verify_candidate.py` 报缺发布工具（11-01 清编译缓存时删了），编一下 8.5 秒接着走。
+  - 公开工作流碰上 GitHub Actions 事故：排了约 25 分钟；`16:17Z` 已经公开，运行状态到 `16:29Z` 才更新。
+  - `16:29:50Z` Windows 结束登录会话，发布链死在核对公开资产这一步，网页 `23:40Z` 才上线，这 7 个多小时网页和下载链接还是 Alpha 87（和服务端兼容，没出错）。维护者说“继续”后用 `publish_resume.sh` 从那一步接着跑，77 秒跑完。
+  - 版本 PR #727 合并到网页上线约 9 小时 21 分钟，去掉那段空等约 2 小时 11 分钟，其中约 25 分钟等 GitHub、约 22 分钟等设备码、约 12 分钟重跑 CI。
 - Alpha 87 已于 2026-11-01 公开，见 [发布记录](./specs/agent-access/alpha87-release.md)。
   - 新建私人房间时说明能换行、长中文名能建、被拒以后能改了再建（#654），Agent 不在房间里时照实说（#649），撤销电脑以后没注销成的 Matrix 设备后台再试（#638），控制面不再写 Outbox（#637），通道清单改成 30 天过期（#655），告警规则的修正（#635、#645），以及 agent-room-ops 带出来的噪音规则（#634、#641、#644、#646–#648、#650–#653）和 seroval 的安全升级（#643）。
   - #637 改了 `crates/application/src/devices.rs` 和 `crates/postgres-adapter/src/devices.rs`，实机验收走了一次新设备授权：第一个码过期，重发的 4 分钟内批准；长期验收设备换成 Alpha 87 那台（`agent-room.alpha87.acceptance.fresh-device`，人物在“发布验收”里）。
   - 服务器下草稿资产时，本机的第一条 ssh 在服务器早就做完以后两个多小时没返回，原因没查实。发布目录的 `server_fetch.py` 里 ssh 和 scp 都加了超时、不接标准输入，派生时照原样拷过去。
-  - DB-IP 11 月的国家库 11-01 还没出，这一版照旧用 2026-10 那份，11-04 换成了 11 月那份（#720）。发完跑了 `telemetry-apply`，#635、#645 的规则已生效；`outbox_event` 573 行、部署以后不再增加，删表的迁移（Outbox 第 3 步）等维护者同意再合。
+  - DB-IP 11 月的国家库 11-01 还没出，这一版照旧用 2026-10 那份，11-04 换成了 11 月那份（#720）。发完跑了 `telemetry-apply`，#635、#645 的规则已生效；`outbox_event` 573 行、部署以后不再增加；删表的迁移（Outbox 第 3 步）维护者当天同意，随 Alpha 88 上线。
   - 版本 PR #656 合并到网页上线约 3 小时 58 分钟，其中约 2 小时 21 分钟是 ssh 挂住的空等、约 24 分钟在等设备码。
 - Alpha 86 已于 2026-10-28 公开，见 [发布记录](./specs/agent-access/alpha86-release.md)。
   - 要最近登录过的操作过了 5 分钟就先请人重新登录、服务器拒过一次各处一起改（#627），生产测量阶段 0（监控能开起来、告警开成 ops 的 issue #623，容量周报 #624、#626，按粗地区汇总和隐私说明页 #625），别人的证书验证不再开 issue（#628），开发依赖的安全升级（#629）。
@@ -820,6 +825,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 发版部署先把生产的源码切到候选，再拿上一版渲染的 `compose.env` 做部署前备份（故意不重新渲染，留住上一版的配置）。候选在 `infra/production/compose.yaml` 里新加的必填变量（`${名字:?…}`）上一版的 `compose.env` 里没有，compose 整个起不来。Alpha 73 切完源码半分钟就部署，停在 `AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS is missing a value`，没动任何服务；等 00:00Z 的定时备份按候选重新渲染了一遍（定时备份不留旧配置），重跑才过。以前几版碰巧在切换和部署之间赶上一次定时备份。所以新变量先带默认值（`${名字:-值}`），发出去一版以后再改成必填，`test_prodops` 的 `REQUIRED_COMPOSE_VARIABLES` 卡着。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 生产上我们自己的镜像每版多 3 个（控制面、网页、身份服务），2026-11-01 攒到 105 个、13.7 GiB。维护者同意后只留当前和上一版（回滚用），删了 99 个、腾出 8.6 GB。发布目录的 `cleanup_old_images.py` 做这件事：按部署目录里的 `compose.images.json` 认当前和上一版，只删我们自己的，第三方的一个不碰（`alpine`、`rclone`、`golang` 平时没容器在用，别用 `docker image prune -a`）。派生发布脚本时带上，发完和 `cleanup_old_releases.py` 一起跑。
+- 发布链经 WMI 启动，应用退出带不走它，可 Windows 结束登录会话时一样带走（2026-11-04 Alpha 88，`bash` 报 `dofork … 0xC000026B`，网页晚了 7 个多小时才上线）。新会话接手发版，先看发布目录的日志停在哪、进程还在不在，再从停下的那一步接着跑（`publish_resume.sh`）。
+- GitHub 故障时运行状态可能不更新：Alpha 88 的公开作业 `16:17Z` 已经跑完，`gh run view`、`gh run watch` 到 `16:29Z` 还说 `waiting`。说“还没公开”之前连作业的步骤和 Release 本身一起看。
+- 发布工具 `target/release/agent-room-release-tool.exe` 是本机编的，清了编译缓存就没了，`verify_candidate.py` 会失败（Alpha 88）。本机发布目录的 `after_candidate.py` 现在先编好它。
 - 错误汇总的定时器 Alpha 81 公开时由发布脚本最后一步装上了（`install_error_digest_schedule.py`），之后跟着源码走，以后的版本不用再装，派生发布脚本时去掉这一步。换了服务器才要重装，命令在 `infra/production/README.md`。
 - 通道清单签名后 30 天过期（`tools/release_ci.py` 的 `MANIFEST_LIFETIME_SECONDS`，2026-11-01 以前是 7 天）。过期只是查不了更新：设置里写“暂时查不到新版本，下次发版以后就好”（`desktop.update.manifest_expired`），应用照常用，不用为它赶着发版。已装的桌面端最多认 30 天，别再加长。
 - 发版前看一眼控制面镜像里 IP 库的月份（`infra/production/Containerfile.control-plane` 的 `dbip-country-lite-YYYY-MM`）。DB-IP 只留当月和上个月的文件，再早的回 404，控制面镜像就建不起来；PR 上不建这个镜像，要到发布候选才红。新月份的文件不是 1 号一早就有（2026-11-01 02:22Z 11 月的还是 404），以下载页 db-ip.com/db/download/ip-to-country-lite 上写的为准；出了新的就先开个小 PR 换成它：下载、算出 `.gz` 和解开后的 SHA-256，Containerfile 里的日期和 `.gz` 的摘要一起改，两个摘要都写进 PR 描述（[设计](./specs/measurement/design.md)第 3 步）。
