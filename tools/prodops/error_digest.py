@@ -216,7 +216,7 @@ def summarize(
             observation = parse(line)
             if observation is None:
                 continue
-            rule = _matching_rule(observation.signature, noise)
+            rule = _matching_rule(observation, noise)
             if rule is not None:
                 ignored[rule.reason] = ignored.get(rule.reason, 0) + 1
                 continue
@@ -229,9 +229,13 @@ def summarize(
     return Digest(findings=ordered, ignored=ignored, lines=lines)
 
 
-def _matching_rule(signature: Signature, noise: tuple[NoiseRule, ...]) -> NoiseRule | None:
+def _matching_rule(observation: Observation, noise: tuple[NoiseRule, ...]) -> NoiseRule | None:
+    # 身份服务的事件汇总只有类型和错误，要按 clientId、reason 分的规则得看样例。
+    signature = observation.signature
     for rule in noise:
-        if rule.service == signature.service and rule.pattern.search(signature.summary):
+        if rule.service == signature.service and (
+            rule.pattern.search(signature.summary) or rule.pattern.search(observation.sample)
+        ):
             return rule
     return None
 
