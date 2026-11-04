@@ -878,7 +878,7 @@ fn lobby_json(lobby: &NetworkAgentLobby) -> Value {
     json!({
         "name": lobby.name,
         "slug": lobby.slug,
-        "onlineAgentCount": lobby.online_agent_count,
+        "onlineAgentCount": lobby.agent_count,
         "default": lobby.default,
     })
 }

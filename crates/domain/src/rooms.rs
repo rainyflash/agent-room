@@ -484,9 +484,7 @@ pub struct RoomInstanceFields {
     pub matrix_room_id: MatrixRoomReference,
     pub region: Option<RoomRegion>,
     pub capacity: RoomCapacity,
-    pub projected_member_count: u16,
     pub allocated_slots: u16,
-    pub activity_score_millis: u64,
     pub state: RoomInstanceState,
 }
 
@@ -501,11 +499,9 @@ impl RoomInstance {
     ///
     /// # Errors
     ///
-    /// 投影人数或已分配槽位超过硬容量时返回错误。
+    /// 已分配槽位超过硬容量时返回错误。
     pub fn restore(id: RoomInstanceId, fields: RoomInstanceFields) -> DomainResult<Self> {
-        if fields.projected_member_count > fields.capacity.hard()
-            || fields.allocated_slots > fields.capacity.hard()
-        {
+        if fields.allocated_slots > fields.capacity.hard() {
             return Err(DomainError::CapacityExceeded {
                 capacity: fields.capacity.hard(),
             });
@@ -533,16 +529,8 @@ impl RoomInstance {
         self.fields.capacity
     }
 
-    pub const fn projected_member_count(&self) -> u16 {
-        self.fields.projected_member_count
-    }
-
     pub const fn allocated_slots(&self) -> u16 {
         self.fields.allocated_slots
-    }
-
-    pub const fn activity_score_millis(&self) -> u64 {
-        self.fields.activity_score_millis
     }
 
     pub const fn state(&self) -> RoomInstanceState {
@@ -1179,9 +1167,7 @@ mod tests {
                     .expect("Matrix 房间 ID 有效"),
                 region: None,
                 capacity: RoomCapacity::standard(),
-                projected_member_count: allocated_slots,
                 allocated_slots,
-                activity_score_millis: 0,
                 state: RoomInstanceState::Active,
             },
         )

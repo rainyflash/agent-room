@@ -492,8 +492,8 @@ async fn seed_public_room(pool: &PgPool, fixture: &AutomationFixture, room_insta
     sqlx::query(
         r"INSERT INTO agent_room.room_instance (
                id, catalog_entry_id, matrix_room_id, soft_capacity, hard_capacity,
-               member_count_projection, activity_score, state, created_at, updated_at, version
-            ) VALUES ($1, $2, $3, 180, 250, 1, 0, 'active',
+               state, created_at, updated_at, version
+            ) VALUES ($1, $2, $3, 180, 250, 'active',
                       statement_timestamp(), statement_timestamp(), 0)",
     )
     .bind(room_instance_id)

@@ -202,9 +202,7 @@ fn snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
             matrix_room_id: MatrixRoomReference::new("!club:matrix.test".to_owned()).unwrap(),
             region: None,
             capacity: RoomCapacity::standard(),
-            projected_member_count: 0,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: if archived {
                 RoomInstanceState::Archived
             } else {

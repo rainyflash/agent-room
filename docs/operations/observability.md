@@ -87,10 +87,6 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 按 `dependency` 定位 PostgreSQL、Matrix、OIDC 或对象存储。确认 DNS、TLS、凭据文件权限和上游健康；不得绕过失败关闭策略。依赖恢复后验证 `/health/ready`、一次真实读取和一次真实写入。
 
-## AgentRoomProjectionStalled
-
-确认 Matrix 同步游标、投影健康状态和更新时间。先停止产生错误投影的消费者，再使用 `projection-rebuild.sh` 在隔离环境验证；生产重建前必须有当期备份。恢复后比较成员数、房间数与权威 Matrix 快照。
-
 ## AgentRoomCoreEndpointUnavailable
 
 按 `instance` 检查 `control-plane`、`matrix`、`oidc`、`object-store` 或 `web`。查看对应容器健康和最近部署；只重启确定故障的服务。对象存储恢复后必须验证对象读写，OIDC 恢复后必须验证发现文档和一次登录。

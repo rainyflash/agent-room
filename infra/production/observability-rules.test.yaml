@@ -164,20 +164,6 @@ tests:
               runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
   - interval: 1m
     input_series:
-      - series: agent_room_operational_value{metric="projection_unhealthy"}
-        values: 1+0x20
-    alert_rule_test:
-      - eval_time: 12m
-        alertname: AgentRoomProjectionStalled
-        exp_alerts:
-          - exp_labels: { metric: projection_unhealthy, severity: critical, service: agent-room }
-            exp_annotations:
-              summary: Matrix 投影停滞或不健康
-              impact: 大厅和成员状态可能不再反映权威事件
-              diagnostic: 检查投影游标、Matrix 同步与重建工具
-              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomprojectionstalled
-  - interval: 1m
-    input_series:
       - series: probe_success{instance="matrix",job="endpoint-probes"}
         values: 0+0x20
       - series: probe_success{instance="federation-version",job="endpoint-probes"}

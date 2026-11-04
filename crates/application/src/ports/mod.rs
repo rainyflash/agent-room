@@ -12,7 +12,6 @@ mod matrix;
 mod moderation;
 mod network_agents;
 mod notifications;
-mod projections;
 mod regions;
 mod rooms;
 mod runtime;
@@ -140,12 +139,6 @@ pub use moderation::{
     StandingModerationSource,
 };
 pub use notifications::NotificationSink;
-pub use projections::{
-    ActivityScoreMillis, MatrixMembership, MatrixProjectionBatch, MatrixProjectionEvent,
-    MatrixProjectionEventKind, MatrixProjectionRebuild, MatrixProjectionStore,
-    MembershipProjectionLookup, MembershipReadPlan, ProjectionApplyOutcome, ProjectionCursor,
-    ProjectionFreshnessPolicy, ProjectionHealth, ProjectionHealthReport, ROOM_PROJECTION_CONSUMER,
-};
 pub use regions::{CountryLookup, NoCountryLookup};
 pub use rooms::{
     ActiveRoomModerationGrant, AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomKind,

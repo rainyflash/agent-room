@@ -1061,9 +1061,7 @@ impl PrivateRoomService {
                 matrix_room_id: matrix_reference,
                 region: None,
                 capacity: RoomCapacity::standard(),
-                projected_member_count: 0,
                 allocated_slots: 0,
-                activity_score_millis: 0,
                 state: RoomInstanceState::Active,
             },
         )

@@ -193,10 +193,10 @@ async fn 公开大厅的治理拿到全部活跃分片_最活跃的在前() {
         &database.runtime,
         catalog_id,
         &[
-            ("quiet", "active", "1.5", 3),
-            ("busy", "active", "9.25", 40),
-            ("broken", "failed", "99", 0),
-            ("tied", "active", "1.5", 7),
+            ("quiet", "active", 3),
+            ("busy", "active", 40),
+            ("broken", "failed", 0),
+            ("tied", "active", 7),
         ],
     )
     .await;
@@ -259,8 +259,8 @@ async fn 新开分片要补的只有此刻生效的禁言和封禁() {
     let pool = &database.runtime;
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
     let other_lobby = RoomCatalogId::from_uuid(Uuid::now_v7());
-    seed_public_lobby(pool, catalog_id, &[("live", "active", "1", 1)]).await;
-    seed_public_lobby(pool, other_lobby, &[("other", "active", "1", 1)]).await;
+    seed_public_lobby(pool, catalog_id, &[("live", "active", 1)]).await;
+    seed_public_lobby(pool, other_lobby, &[("other", "active", 1)]).await;
     let moderator = seed_principal(pool, "carry-moderator").await;
     let lobby = Ledger::new(pool, moderator, catalog_id);
     let banned = seed_principal(pool, "banned").await;
@@ -466,12 +466,7 @@ async fn 到期解除一个一个地领_租约没过不再领_排下次只认自
     let first = person(seed_principal(&database.runtime, "expiry-first").await);
     let second = person(seed_principal(&database.runtime, "expiry-second").await);
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
-    seed_public_lobby(
-        &database.runtime,
-        catalog_id,
-        &[("expiry", "active", "1", 1)],
-    )
-    .await;
+    seed_public_lobby(&database.runtime, catalog_id, &[("expiry", "active", 1)]).await;
     let room = (&repositories, moderator, catalog_id);
     let early = applied_action(room, Mute, &first, Some(time(1_000))).await;
     let tied = applied_action(room, Mute, &second, Some(time(1_000))).await;
@@ -566,7 +561,7 @@ async fn 两个实例同时领同一个到期的动作_只有一个领到() {
     let moderator = seed_principal(&database.runtime, "race-moderator").await;
     let target = person(seed_principal(&database.runtime, "race-target").await);
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
-    seed_public_lobby(&database.runtime, catalog_id, &[("race", "active", "1", 1)]).await;
+    seed_public_lobby(&database.runtime, catalog_id, &[("race", "active", 1)]).await;
     let mute = applied_action(
         (&repositories, moderator, catalog_id),
         ModerationActionKind::Mute,
@@ -602,12 +597,7 @@ async fn 还有没有别的生效的同类动作按_uuid_认人() {
     let first = person(first_id);
     let second = person(seed_principal(&database.runtime, "effective-second").await);
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
-    seed_public_lobby(
-        &database.runtime,
-        catalog_id,
-        &[("effective", "active", "1", 1)],
-    )
-    .await;
+    seed_public_lobby(&database.runtime, catalog_id, &[("effective", "active", 1)]).await;
     let room = (&repositories, moderator, catalog_id);
     let early = applied_action(room, Mute, &first, Some(time(1_000))).await;
     let late = applied_action(room, Mute, &first, Some(time(5_000))).await;
@@ -659,13 +649,13 @@ async fn 读一个人的禁言_只读这个房间这个人已经落下和正在�
         pool,
         catalog_id,
         &[
-            ("quiet", "active", "1.5", 3),
-            ("busy", "active", "9.25", 40),
-            ("gone", "draining", "99", 0),
+            ("quiet", "active", 3),
+            ("busy", "active", 40),
+            ("gone", "draining", 0),
         ],
     )
     .await;
-    seed_public_lobby(pool, other_lobby, &[("elsewhere", "active", "1", 1)]).await;
+    seed_public_lobby(pool, other_lobby, &[("elsewhere", "active", 1)]).await;
     let room = (&repositories, moderator, catalog_id);
     let applied = applied_action(room, Mute, &target, Some(time(1_000))).await;
     let landing = reserved_action(room, Mute, &shouted, None).await;
@@ -821,7 +811,7 @@ async fn 读一个人的禁言_账号删了照样给出_matrix_账号_分片都�
     let repositories = PostgresRepositories::new(pool.clone());
     let target_id = seed_principal(pool, "standing-deleted").await;
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
-    seed_public_lobby(pool, catalog_id, &[("closing", "active", "1", 1)]).await;
+    seed_public_lobby(pool, catalog_id, &[("closing", "active", 1)]).await;
     sqlx::query("UPDATE agent_room.principal SET status = 'deleted' WHERE id = $1")
         .bind(target_id.as_uuid())
         .execute(pool)
@@ -871,9 +861,9 @@ async fn 到期解除拿到全部活跃分片_账号删了也照样给出它的_
         &database.runtime,
         catalog_id,
         &[
-            ("quiet", "active", "1.5", 3),
-            ("busy", "active", "9.25", 40),
-            ("broken", "failed", "99", 0),
+            ("quiet", "active", 3),
+            ("busy", "active", 40),
+            ("broken", "failed", 0),
         ],
     )
     .await;
@@ -1148,11 +1138,11 @@ fn room_ids(context: &ModerationRoomContext) -> Vec<&str> {
         .collect()
 }
 
-/// 建一个公开大厅和它的分片：（名字、状态、活跃度、人数），交回各分片的 Matrix 房间 ID。
+/// 建一个公开大厅和它的分片：（名字、状态、占着的位置），交回各分片的 Matrix 房间 ID。
 async fn seed_public_lobby(
     pool: &PgPool,
     catalog_id: RoomCatalogId,
-    shards: &[(&str, &str, &str, i32)],
+    shards: &[(&str, &str, i32)],
 ) -> Vec<String> {
     let suffix = catalog_id.as_uuid().simple().to_string();
     sqlx::query(
@@ -1170,22 +1160,21 @@ async fn seed_public_lobby(
     .await
     .expect("公开大厅目录应创建");
     let mut matrix_room_ids = Vec::with_capacity(shards.len());
-    for (name, state, activity, members) in shards {
+    for (name, state, slots) in shards {
         let matrix_room_id = format!("!{name}-{suffix}:matrix.test");
         sqlx::query(
             r"INSERT INTO agent_room.room_instance (
-                  id, catalog_entry_id, matrix_room_id, member_count_projection,
-                  allocated_slots, activity_score, state, created_at, updated_at
+                  id, catalog_entry_id, matrix_room_id, allocated_slots, state,
+                  created_at, updated_at
               ) VALUES (
-                  $1, $2, $3, $4, $4, $5::numeric, $6,
+                  $1, $2, $3, $4, $5,
                   to_timestamp(1700000000), to_timestamp(1700000000)
               )",
         )
         .bind(Uuid::now_v7())
         .bind(catalog_id.as_uuid())
         .bind(&matrix_room_id)
-        .bind(members)
-        .bind(activity)
+        .bind(slots)
         .bind(state)
         .execute(pool)
         .await
@@ -1424,9 +1413,7 @@ fn private_room_snapshot(catalog_id: RoomCatalogId, owner: PrincipalId) -> Priva
             .expect("Matrix 房间标识有效"),
             region: None,
             capacity: RoomCapacity::new(8, 16).expect("容量有效"),
-            projected_member_count: 1,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )

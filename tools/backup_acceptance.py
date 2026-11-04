@@ -71,8 +71,6 @@ def main() -> int:
                     "replayReachedTarget": report.database.replay_reached_target,
                     "logicalArchivesVerified": report.database.logical_archives_verified,
                     "databasesVerified": list(report.database.databases_verified),
-                    "projectionMemberships": report.database.projection_memberships,
-                    "projectionRooms": report.database.projection_rooms,
                 },
             }
             if arguments.evidence is not None:

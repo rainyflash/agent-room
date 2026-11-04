@@ -571,9 +571,7 @@ fn build_room_instance(
             matrix_room_id,
             region: job.target().region().cloned(),
             capacity: RoomCapacity::standard(),
-            projected_member_count: 0,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )

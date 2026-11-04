@@ -1154,9 +1154,7 @@ pub(crate) fn snapshot() -> PrivateRoomSnapshot {
                 .expect("Matrix 房间标识有效"),
             region: None,
             capacity: RoomCapacity::standard(),
-            projected_member_count: 1,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )

@@ -7,11 +7,10 @@ use tokio::task::JoinSet;
 
 const AGENT_COUNT: i64 = 10_000;
 const INSTANCE_COUNT: i64 = 1_000;
-const LOBBY_MEMBER_COUNT: i64 = 250;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "需要由 tools/capacity_database.py 提供隔离的真实 PostgreSQL"]
-async fn 设计容量下的目录实例租约与大厅投影达到预算() {
+async fn 设计容量下的目录实例和租约达到预算() {
     let migration = connect("AGENT_ROOM_TEST_MIGRATION_DATABASE_URL", 4).await;
     run_migrations(&migration).await.expect("迁移必须成功");
     let runtime = connect("AGENT_ROOM_TEST_RUNTIME_DATABASE_URL", 64).await;
@@ -20,7 +19,7 @@ async fn 设计容量下的目录实例租约与大厅投影达到预算() {
     seed_dataset(&migration).await;
     let seed_milliseconds = seed_started.elapsed().as_secs_f64() * 1_000.0;
 
-    let (agent_count, instance_count, lobby_member_count) = assert_seed_counts(&runtime).await;
+    let (agent_count, instance_count) = assert_seed_counts(&runtime).await;
 
     let directory_samples = directory_samples(&runtime).await;
     let directory_p95 = percentile(&directory_samples, 95, 100);
@@ -39,26 +38,7 @@ async fn 设计容量下的目录实例租约与大厅投影达到预算() {
     .rows_affected();
     let lease_milliseconds = lease_started.elapsed().as_secs_f64() * 1_000.0;
 
-    let roster_started = Instant::now();
-    let roster = sqlx::query(
-        "SELECT agent.display_name, membership.power_level \
-         FROM agent_room.room_membership_projection membership \
-         JOIN agent_room.agent ON agent.id = membership.agent_id \
-         JOIN agent_room.room_instance room ON room.id = membership.room_instance_id \
-         WHERE room.matrix_room_id = '!capacity-1:agent-room.test' \
-           AND membership.matrix_membership = 'join' \
-         ORDER BY agent.slug",
-    )
-    .fetch_all(&runtime)
-    .await
-    .expect("250 人大厅投影可读取");
-    let roster_milliseconds = roster_started.elapsed().as_secs_f64() * 1_000.0;
-
     assert_eq!(renewed, u64::try_from(INSTANCE_COUNT).expect("数量可转换"));
-    assert_eq!(
-        roster.len(),
-        usize::try_from(LOBBY_MEMBER_COUNT).expect("数量可转换")
-    );
     assert!(
         directory_p95 <= 100.0,
         "目录搜索 P95 超出 100 ms：{directory_p95}"
@@ -75,26 +55,19 @@ async fn 设计容量下的目录实例租约与大厅投影达到预算() {
         lease_milliseconds <= 2_000.0,
         "1,000 个实例续租超过 2 秒：{lease_milliseconds}"
     );
-    assert!(
-        roster_milliseconds <= 500.0,
-        "250 人大厅投影超过 500 ms：{roster_milliseconds}"
-    );
 
     let observation = json!({
         "agents": agent_count,
         "onlineInstances": instance_count,
-        "lobbyMembers": lobby_member_count,
         "seedMilliseconds": round(seed_milliseconds),
         "directorySearchSamples": directory_samples.len(),
         "directorySearchP95Milliseconds": round(directory_p95),
         "instanceLookupTotalMilliseconds": round(lookup_total),
         "instanceLookupP95Milliseconds": round(lookup_p95),
         "leaseRenewalMilliseconds": round(lease_milliseconds),
-        "rosterProjectionMilliseconds": round(roster_milliseconds),
         "nextCapacityThreshold": {
             "agents": 20_000,
-            "onlineInstances": 2_000,
-            "lobbyMembers": 300
+            "onlineInstances": 2_000
         }
     });
     println!("CAPACITY_OBSERVATION={observation}");
@@ -112,7 +85,7 @@ async fn connect(name: &str, maximum_connections: u32) -> PgPool {
         .unwrap_or_else(|error| panic!("无法连接容量数据库：{error}"))
 }
 
-async fn assert_seed_counts(pool: &PgPool) -> (i64, i64, i64) {
+async fn assert_seed_counts(pool: &PgPool) -> (i64, i64) {
     let agent_count = sqlx::query_scalar(
         "SELECT count(*) FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%'",
     )
@@ -126,17 +99,9 @@ async fn assert_seed_counts(pool: &PgPool) -> (i64, i64, i64) {
     .fetch_one(pool)
     .await
     .expect("运行时角色可统计在线实例");
-    let lobby_member_count = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.room_membership_projection \
-         WHERE matrix_membership = 'join' AND last_event_id LIKE '$capacity-%'",
-    )
-    .fetch_one(pool)
-    .await
-    .expect("运行时角色可统计大厅成员");
     assert_eq!(agent_count, AGENT_COUNT);
     assert_eq!(instance_count, INSTANCE_COUNT);
-    assert_eq!(lobby_member_count, LOBBY_MEMBER_COUNT);
-    (agent_count, instance_count, lobby_member_count)
+    (agent_count, instance_count)
 }
 
 async fn seed_dataset(pool: &PgPool) {
@@ -294,12 +259,10 @@ async fn seed_rooms(transaction: &mut Transaction<'_, Postgres>) {
     sqlx::query(
         "INSERT INTO agent_room.room_instance ( \
              id, catalog_entry_id, matrix_room_id, region_hint, soft_capacity, \
-             hard_capacity, member_count_projection, allocated_slots, activity_score, \
-             state, created_at, updated_at \
+             hard_capacity, allocated_slots, state, created_at, updated_at \
          ) \
          SELECT uuidv7(), catalog.id, '!capacity-' || value || ':agent-room.test', \
-                'test', 180, 250, CASE WHEN value <= 4 THEN 250 ELSE 0 END, \
-                CASE WHEN value <= 4 THEN 250 ELSE 0 END, value, 'active', \
+                'test', 180, 250, CASE WHEN value <= 4 THEN 250 ELSE 0 END, 'active', \
                 statement_timestamp(), statement_timestamp() \
          FROM agent_room.room_catalog_entry catalog \
          CROSS JOIN generate_series(1, 5) AS series(value) \
@@ -308,26 +271,6 @@ async fn seed_rooms(transaction: &mut Transaction<'_, Postgres>) {
     .execute(&mut **transaction)
     .await
     .expect("生成容量分片成功");
-
-    sqlx::query(
-        "WITH agents AS ( \
-             SELECT id, row_number() OVER (ORDER BY slug) AS ordinal \
-             FROM agent_room.agent WHERE slug LIKE 'capacity-agent-%' LIMIT 250 \
-         ), room AS ( \
-             SELECT id FROM agent_room.room_instance \
-             WHERE matrix_room_id = '!capacity-1:agent-room.test' \
-         ) \
-         INSERT INTO agent_room.room_membership_projection ( \
-             room_instance_id, agent_id, matrix_membership, power_level, \
-             last_event_id, projected_at \
-         ) \
-         SELECT room.id, agents.id, 'join', 0, '$capacity-' || agents.ordinal, \
-                statement_timestamp() \
-         FROM agents CROSS JOIN room",
-    )
-    .execute(&mut **transaction)
-    .await
-    .expect("生成 250 人大厅投影成功");
 }
 
 async fn directory_samples(pool: &PgPool) -> Vec<f64> {

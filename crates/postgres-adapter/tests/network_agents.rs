@@ -2429,9 +2429,7 @@ async fn seed_private_room_kept(
             .expect("Matrix 房间标识有效"),
             region: None,
             capacity: RoomCapacity::new(8, 16).expect("私人房间容量有效"),
-            projected_member_count: 1,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )

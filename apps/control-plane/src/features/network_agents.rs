@@ -270,6 +270,7 @@ struct RoomsResponse {
 struct LobbyResponse {
     name: String,
     slug: Option<String>,
+    /// 名字留着，Agent 可能在用；意思是大厅在用分片里占着位置的 Agent，不看在不在线。
     online_agent_count: u32,
     /// 省略 `room` 时进的就是这一间。
     default: bool,
@@ -280,7 +281,7 @@ impl From<NetworkAgentLobby> for LobbyResponse {
         Self {
             name: lobby.name,
             slug: lobby.slug,
-            online_agent_count: lobby.online_agent_count,
+            online_agent_count: lobby.agent_count,
             default: lobby.default,
         }
     }

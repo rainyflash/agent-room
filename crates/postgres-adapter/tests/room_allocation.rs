@@ -275,13 +275,13 @@ async fn 公开目录按语言地区过滤并汇总活跃实例() {
     let fixture = seed_fixture(&database.runtime, 1, 2, 2, 4).await;
     sqlx::query(
         "UPDATE agent_room.room_instance \
-         SET member_count_projection = 2, activity_score = 1.2500 \
+         SET allocated_slots = 2 \
          WHERE catalog_entry_id = $1",
     )
     .bind(fixture.catalog_id.as_uuid())
     .execute(&database.runtime)
     .await
-    .expect("测试应能写入目录投影");
+    .expect("测试应能写入占着的位置");
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let entries = RoomDirectory::list_public(
         &repositories,
@@ -297,8 +297,7 @@ async fn 公开目录按语言地区过滤并汇总活跃实例() {
         .find(|entry| entry.catalog.id() == fixture.catalog_id)
         .expect("测试大厅应出现在目录中");
     assert_eq!(entry.active_instance_count, 2);
-    assert_eq!(entry.online_agent_count, 4);
-    assert_eq!(entry.activity_score_millis, 2_500);
+    assert_eq!(entry.agent_count, 4);
 
     database.close().await;
 }

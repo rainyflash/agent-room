@@ -69,9 +69,7 @@ pub(super) fn decode_instance(
     let region: Option<String> = decode_column(row, "region_hint", operation)?;
     let soft_capacity: i32 = decode_column(row, "soft_capacity", operation)?;
     let hard_capacity: i32 = decode_column(row, "hard_capacity", operation)?;
-    let projected_member_count: i32 = decode_column(row, "member_count_projection", operation)?;
     let allocated_slots: i32 = decode_column(row, "allocated_slots", operation)?;
-    let activity_score_millis: i64 = decode_column(row, "activity_score_millis", operation)?;
     let state: String = decode_column(row, "instance_state", operation)?;
 
     RoomInstance::restore(
@@ -89,10 +87,7 @@ pub(super) fn decode_instance(
                 decode_u16(hard_capacity, operation)?,
             )
             .map_err(|_| corrupt_data(operation))?,
-            projected_member_count: decode_u16(projected_member_count, operation)?,
             allocated_slots: decode_u16(allocated_slots, operation)?,
-            activity_score_millis: u64::try_from(activity_score_millis)
-                .map_err(|_| corrupt_data(operation))?,
             state: RoomInstanceState::try_from(state.as_str())
                 .map_err(|_| corrupt_data(operation))?,
         },
@@ -148,9 +143,7 @@ pub(super) const INSTANCE_COLUMNS: &str = r"
     instance.region_hint,
     instance.soft_capacity,
     instance.hard_capacity,
-    instance.member_count_projection,
     instance.allocated_slots,
-    floor(instance.activity_score * 1000)::bigint AS activity_score_millis,
     instance.state AS instance_state";
 
 pub(super) const RESERVATION_COLUMNS: &str = r"

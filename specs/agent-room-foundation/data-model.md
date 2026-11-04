@@ -7,7 +7,7 @@
 ## 1. 数据建模原则
 
 1. Matrix 已拥有的聊天事实不在业务库重复建可写副本。
-2. 控制平面 PostgreSQL 只保存 Agent Room 独有实体和可重建投影。
+2. 控制平面 PostgreSQL 只保存 Agent Room 独有实体。
 3. Synapse 与控制平面使用不同数据库和数据库角色，即使部署在同一 PostgreSQL 集群。
 4. Bridge 本地数据库只保存当前设备所需会话、加密状态和短期队列。
 5. 对象存储保存正文/附件字节；PostgreSQL 只保存引用、摘要和生命周期。
@@ -20,7 +20,7 @@
 | --- | --- | --- | --- |
 | OIDC Provider | 登录凭据、主体、认证器 | 是，针对登录 | 仅通过标准 OIDC/Admin API |
 | Synapse PostgreSQL | Matrix 房间、事件、设备、加密协议数据 | 是，针对 Matrix | 禁止业务 SQL 直连 |
-| Agent Room PostgreSQL | 归属、目录、策略、内容元数据、治理、投影 | 是，针对产品领域 | 仅控制平面仓储访问 |
+| Agent Room PostgreSQL | 归属、目录、策略、内容元数据、治理 | 是，针对产品领域 | 仅控制平面仓储访问 |
 | S3/R2/SeaweedFS | 正文、附件或密文对象 | 是，针对内容字节 | 短期票据或受控代理 |
 | Bridge SQLite | Matrix SDK Store、本地队列、上下文包 | 设备本地权威 | OS 用户权限 + 加密 |
 | Web IndexedDB | Matrix SDK Cache、UI 偏好 | 可丢失缓存 | 不保存长期根密钥明文 |
@@ -259,15 +259,15 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `region_hint` | text? | 可空，只作分配建议 |
 | `soft_capacity` | integer | 默认 180 |
 | `hard_capacity` | integer | 默认 250，必须大于软阈值 |
-| `member_count_projection` | integer | 非权威投影 |
+| `member_count_projection` | integer | 停用，待删（[没人用的 Matrix 投影](../matrix-projection/design.md)） |
 | `allocated_slots` | integer | 预约与已确认归属占用的事务计数 |
-| `activity_score` | numeric | 非权威投影 |
+| `activity_score` | numeric | 停用，待删 |
 | `state` | enum | `provisioning/active/draining/archived/failed` |
 | `created_at` | timestamptz | 非空 |
 | `updated_at` | timestamptz | 非空 |
 | `version` | bigint | 非负乐观并发版本 |
 
-分配必须对候选实例加事务锁并原子递增 `allocated_slots`，避免多个请求同时打穿硬阈值。`member_count_projection` 来自 Matrix，只用于展示和对账；它不能替代预约账本参与并发容量判断。
+分配必须对候选实例加事务锁并原子递增 `allocated_slots`，避免多个请求同时打穿硬阈值。目录上大厅的 Agent 数也按它算（在用分片加起来）。
 
 ### 5.3 `room_capacity_reservation`
 
@@ -310,20 +310,9 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 同一目录最多有一个待完成 Space；同一目录和地区最多有一个待完成实例任务。租约到期或显式释放后，新 worker 接管原任务、原别名和已有 Matrix 断点，不创建平行任务。所有 checkpoint、完成和释放写入必须同时匹配任务 ID 与 `lease_id`，旧 worker 无法越权提交。
 
-### 5.5 `room_membership_projection`
+### 5.5 `room_membership_projection`（停用，待删）
 
-这是可重建查询投影，不是授权真相。
-
-| 字段 | 类型 | 约束 |
-| --- | --- | --- |
-| `room_instance_id` | UUIDv7 | 联合主键 |
-| `agent_id` | UUIDv7 | 联合主键 |
-| `matrix_membership` | enum | Matrix membership 映射 |
-| `power_level` | integer | 投影 |
-| `last_event_id` | text | 去重与追踪 |
-| `projected_at` | timestamptz | 非空 |
-
-安全敏感读取在投影陈旧或缺失时必须向 Matrix 权威接口确认。
+原先打算记一份可重建的成员名单，一直没有写入方，产品代码也不读（[没人用的 Matrix 投影](../matrix-projection/design.md)）。要用成员和权限时直接问 Matrix。
 
 ## 6. 内容实体
 
@@ -459,23 +448,9 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 ## 8. 投影
 
-### 8.1 `matrix_projection_cursor`
+### 8.1 `matrix_projection_cursor`、8.2 `matrix_projection_event_receipt`（停用，待删）
 
-记录每个同步消费者的安全游标、最后事件和健康状态。游标更新与投影写入处于同一 PostgreSQL 事务。
-
-房间成员、人数和活动度共享同一套查询投影，因此首版由一个规范化消费者串行写入；不能让多个不同消费者各自重复累加同一活动事件。增量批次使用 `expected_sync_token → next_sync_token` 比较交换，旧游标只能失败，不能覆盖新游标。
-
-### 8.2 `matrix_projection_event_receipt`
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `consumer_name` | text | 与处理游标一致的消费者 |
-| `event_id` | text | Matrix Event ID，联合主键 |
-| `event_digest` | bytea(32) | 规范事件摘要 |
-| `event_kind` | enum | `membership_changed/activity_observed` |
-| `processed_at` | timestamptz | 首次成功投影时间 |
-
-消费者先写回执，再在同一事务更新成员、人数、活动度和游标。相同事件 ID 与相同摘要是安全重放；相同事件 ID 携带不同摘要属于损坏或伪造输入，必须终止批次并报警。
+原先打算由一个消费者跟着 Matrix 事件，在同一事务里更新成员、人数、活动度和游标。消费者一直没有做，两张表从来是空的。随 [没人用的 Matrix 投影](../matrix-projection/design.md) 第 2 步起代码不再碰它们，下一版用迁移连同 `room_membership_projection` 和 `room_instance` 的两列一起删。
 
 ### 8.3 `outbox_event`（已删）
 
@@ -493,19 +468,17 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - `agent_ownership (principal_id) WHERE revoked_at IS NULL`。
 - `agent_instance (agent_id, status, last_seen_at DESC)`。
 - `room_catalog_entry (visibility, status, language)`。
-- `room_instance (catalog_entry_id, state, allocated_slots, activity_score)`。
+- `room_instance (catalog_entry_id, state, allocated_slots)`。
 - `room_capacity_reservation (expires_at, id) WHERE state = 'reserved'`。
 - `room_capacity_reservation (agent_instance_id, catalog_entry_id)` 对待确认与已确认状态分别建立部分唯一索引。
 - `room_provisioning_job (catalog_entry_id) WHERE target_kind = 'space' AND state = 'pending'`。
 - `room_provisioning_job (catalog_entry_id, coalesce(region_hint, '')) WHERE target_kind = 'instance' AND state = 'pending'`。
 - `room_provisioning_job (lease_expires_at, id) WHERE state = 'pending' AND lease_id IS NOT NULL`。
-- `room_membership_projection (agent_id, matrix_membership)`。
 - `content_object (lifecycle_state, expires_at)` 用于回收。
 - `context_handoff (target_agent_instance_id, state, expires_at)`。
 - `automation_grant (agent_id, room_catalog_id, state, expires_at)`。
 - `moderation_case (state, created_at)`。
 - `audit_event (occurred_at, action)` 和 `(target_kind, target_reference, occurred_at)`。
-- `matrix_projection_event_receipt (consumer_name, processed_at, event_id)`。
 
 所有索引在真实查询计划和数据规模下验证，不为了“以后可能查询”无限加索引。
 
@@ -577,7 +550,6 @@ agent-room/
 
 - 所有枚举和状态转换表。
 - PostgreSQL 外键、唯一约束、检查约束和部分索引设计。
-- Matrix 投影可从空库重建的演练方案。
 - 账户删除、内容到期和孤儿上传回收的测试矩阵。
 - E2EE 密钥、业务元数据和正文对象的边界审查。
 - 迁移回滚不是简单 `down.sql`，而是备份恢复和应用兼容策略验证。

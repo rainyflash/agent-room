@@ -668,9 +668,7 @@ fn snapshot() -> PrivateRoomSnapshot {
                 .expect("房间有效"),
             region: None,
             capacity: RoomCapacity::standard(),
-            projected_member_count: 0,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )

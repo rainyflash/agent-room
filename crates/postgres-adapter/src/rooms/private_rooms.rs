@@ -203,8 +203,6 @@ pub(super) async fn create_private_room(
     let catalog = snapshot.catalog();
     let instance = snapshot.instance();
     let room = snapshot.room();
-    let activity_score =
-        i64::try_from(instance.activity_score_millis()).map_err(|_| constraint(operation))?;
 
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
@@ -241,14 +239,12 @@ pub(super) async fn create_private_room(
     sqlx::query(
         r"INSERT INTO agent_room.room_instance (
                id, catalog_entry_id, matrix_room_id, region_hint,
-               soft_capacity, hard_capacity, member_count_projection,
-               allocated_slots, activity_score, state,
+               soft_capacity, hard_capacity, allocated_slots, state,
                created_at, updated_at, version
            ) VALUES (
                $1, $2, $3, $4, $5, $6, $7, $8,
-               $9::double precision / 1000.0, $10,
-               to_timestamp($11::double precision / 1000.0),
-               to_timestamp($11::double precision / 1000.0), 0
+               to_timestamp($9::double precision / 1000.0),
+               to_timestamp($9::double precision / 1000.0), 0
            )",
     )
     .bind(instance.id().as_uuid())
@@ -257,9 +253,7 @@ pub(super) async fn create_private_room(
     .bind(instance.region().map(RoomRegion::as_str))
     .bind(i32::from(instance.capacity().soft()))
     .bind(i32::from(instance.capacity().hard()))
-    .bind(i32::from(instance.projected_member_count()))
     .bind(i32::from(instance.allocated_slots()))
-    .bind(activity_score)
     .bind(instance.state().as_str())
     .bind(created_at.value())
     .execute(&mut **transaction)

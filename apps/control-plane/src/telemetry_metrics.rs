@@ -65,7 +65,6 @@ pub(crate) struct TelemetryMetrics {
     dependency_available: Gauge<u64>,
     dependency_duration: Histogram<f64>,
     operational_value: Gauge<i64>,
-    operational_age: Gauge<f64>,
     sampler_failures: Counter<u64>,
     frontend_duration: Histogram<f64>,
     frontend_score: Histogram<f64>,
@@ -102,12 +101,7 @@ impl TelemetryMetrics {
                 .build(),
             operational_value: meter
                 .i64_gauge("agent_room.operational.value")
-                .with_description("数据库、投影和内容生命周期的低基数运行值")
-                .build(),
-            operational_age: meter
-                .f64_gauge("agent_room.operational.age")
-                .with_description("队列或投影最旧项目的年龄")
-                .with_unit("s")
+                .with_description("数据库、内容生命周期和公开大厅的低基数运行值")
                 .build(),
             sampler_failures: meter
                 .u64_counter("agent_room.operational.sampler.failures")
@@ -151,11 +145,6 @@ impl TelemetryMetrics {
     pub(crate) fn record_operational_value(&self, metric: &'static str, value: i64) {
         self.operational_value
             .record(value, &[KeyValue::new("metric", metric)]);
-    }
-
-    pub(crate) fn record_operational_age(&self, metric: &'static str, seconds: f64) {
-        self.operational_age
-            .record(seconds.max(0.0), &[KeyValue::new("metric", metric)]);
     }
 
     pub(crate) fn record_sampler_failure(&self) {
