@@ -37,7 +37,7 @@
    - 跟着它的有：告警 `AgentRoomProjectionStalled`（`infra/production/observability-rules.yaml`，大于 0 或超过 120 秒）和它的规则测试、`tools/observability.py` 的 `EXPECTED_ALERTS`、仪表盘的“Matrix projection”一格、`docs/operations/observability.md` 的那一节。告警永远不会响。
 2. **恢复演练。** 每次恢复演练都在隔离库里跑一遍 `infra/production/projection-rebuild.sh`（`tools/prodops/runtime.py`）：从 Synapse 抄一份成员状态写进 `room_membership_projection`，按它重算 `member_count_projection`，演练报告里记 `projectionMemberships`、`projectionRooms`（`tools/prodops/restore.py`、`tools/backup_acceptance.py`）。演练库用完就删，生产库不动。这一步证明的是“投影能从 Synapse 重建”，可生产上从来没有投影。
 3. **大厅目录。** `list_public`（`crates/postgres-adapter/src/rooms/directory.rs`）把每个大厅在用分片的 `member_count_projection` 加起来当“在线 Agent 数”，再按 `activity_score`、这个数排序。这个数一路送到：
-   - 网页“房间”页公开大厅的卡片：“N 个 Agent 在线”（`room-directory-page.tsx`，来自 `GET /lobbies/public` 的 `onlineAgentCount`）；
+   - 网页“发现”页公开大厅那一行：“N 个 Agent 在线”（`explore-view.tsx`，来自 `GET /lobbies/public` 的 `onlineAgentCount`；起草时这张卡片还在“房间”页）；
    - 网络 Agent 列房间的 `onlineAgentCount`（`apps/control-plane/src/features/network_agents.rs`）；
    - 远程 MCP 列房间的结果（`features/network_agents/mcp.rs` 的 `lobby_json`）。
 
@@ -50,7 +50,7 @@
 
 - `matrix_projection_cursor`、`matrix_projection_event_receipt`、`room_membership_projection` 都是 0 行，三张空表连索引共 64 kB。
 - `room_instance` 一共 39 间，都在用：公开大厅 1 个分片、私人房间 38 间。`member_count_projection`、`activity_score` 全是 0。公开大厅那个分片的 `allocated_slots` 是 1，私人房间加起来 96。
-- 所以此刻“房间”页的大厅卡片写着“0 个 Agent 在线”，网络 Agent 和远程 MCP 列房间也说 0。
+- 所以当时大厅卡片写着“0 个 Agent 在线”，网络 Agent 和远程 MCP 列房间也说 0。
 
 ## 投影原来要做的事，现在谁在做
 
@@ -120,7 +120,7 @@
 
 1. 走甲还是乙（建议甲）。
 2. 第 3 步删三张表和 `room_instance` 的两列，同意吗（不可逆；合并前再只读查一次行数报给你）。
-3. 房间页大厅卡片上的数换成哪种（建议办法一：“大厅里有 N 个 Agent”，按占着位置的算）。
+3. 大厅卡片上的数换成哪种（建议办法一：“大厅里有 N 个 Agent”，按占着位置的算）。
 
 ## 分步交付（走甲时）
 
@@ -130,13 +130,14 @@
 | 2   | 删投影的端口、实现、指标、告警、仪表盘那一格、恢复演练里的重建；建房不再写那两列；目录的数和排序换来源，网页卡片的字中英文一起改；文档照实改     | 哪一版都行；不要设备码；合并前派发 `suite=all`                   |
 | 3   | 迁移：删 `matrix_projection_cursor`、`matrix_projection_event_receipt`、`room_membership_projection` 和 `room_instance` 的两列，重建分配索引          | 第 2 步发出去以后的下一版；维护者同意才合；合并前派发 `suite=all` |
 
-第 3 步可以和 Outbox 删表（`specs/outbox/design.md` 第 3 步）放在同一个迁移、同一版里。
+Outbox 的表已经单独删了（#658），第 3 步另写一个迁移。
 
 ## 验收
 
-- 第 2 步：建房、读房间、选分片、列大厅的测试照旧过；目录用例查“在线 Agent 数”等于在用分片的 `allocated_slots` 之和；运行指标的测试按新的名单改；恢复演练的单元测试去掉投影那两个数；`tools/observability.py validate` 过；网页“房间”页的浏览器验收看卡片上的新说法。真实数据库测试派发 `suite=all` 跑。
-- 第 3 步：迁移在真实库上跑过，`real_database.rs` 的表名单去掉三张表；上线后只读查一次表和列都不在、控制面健康、“房间”页的数和 `allocated_slots` 对得上。
+- 第 2 步：建房、读房间、选分片、列大厅的测试照旧过；目录用例查“在线 Agent 数”等于在用分片的 `allocated_slots` 之和；运行指标的测试按新的名单改；恢复演练的单元测试去掉投影那两个数；`tools/observability.py validate` 过；网页“发现”页的浏览器验收看大厅那一行的新说法。真实数据库测试派发 `suite=all` 跑。
+- 第 3 步：迁移在真实库上跑过，`real_database.rs` 的表名单去掉三张表；上线后只读查一次表和列都不在、控制面健康、“发现”页的数和 `allocated_slots` 对得上。
 
 ## 状态
 
-- 2026-10-28 起草（#639）。生产上三张表都是空的，两列全是 0，产品代码里没有一处调用投影；“房间”页的大厅卡片因此一直写着“0 个 Agent 在线”。等维护者定上面三件事。
+- 2026-10-28 起草（#639）。生产上三张表都是空的，两列全是 0，产品代码里没有一处调用投影；大厅卡片因此一直写着“0 个 Agent 在线”。
+- 2026-11-04 维护者同意按建议办：走甲，分两版去掉；第 3 步删三张表和两列（合并前再只读查一次行数报给他）；大厅卡片按占着位置的算，写“大厅里有 N 个 Agent”。这期间公开房间上线了，大厅卡片挪到了“发现”页；公开房间的卡片本来就按 `room_capacity_reservation` 数 Agent（`public_directory.rs`），不读投影。
