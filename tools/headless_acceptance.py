@@ -108,10 +108,17 @@ def accept() -> None:
             switch = v.verify_computer_switch(
                 processes=processes, environment=environment, redactor=redactor,
             )
-            # 放在最后：这一轮会重启控制面。
+            # 放在后面：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
                 environment=environment, redactor=redactor,
+            )
+            # 放在最后：这一轮停掉两个 Bridge，发送方不再起来。Bridge 都不在时，两个账号三个网页在大厅里
+            # 分享资料、交给主人共享的 Agent，目标 Bridge 起来以后领走。
+            product_closure = v.verify_product_closure_workflow(
+                environment=environment, agent_id=result["agentId"], catalog_id=catalog,
+                target_bridge=target, sender_bridge=sender,
+                target_instance_id=result["agentInstanceId"], redactor=redactor,
             )
             # 全部轮次跑完：重启、断线恢复、控制面重启以后，每个实例在每个房间里还是只有一张名片。
             status_cards = v.verify_status_events_written_once()
@@ -167,6 +174,7 @@ def accept() -> None:
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
         "privateRoomSurvivedStoreRebuild":private["rebuiltReplyEventId"],
         "privateRoomKnockAdmitted":True, "privateRoomKnockReplyEventId":private["knockReplyEventId"],
+        "productClosureHandoffId":product_closure["handoffId"],
         "keycloakUserEventMetrics":keycloak_events,
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))

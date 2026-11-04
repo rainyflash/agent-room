@@ -391,6 +391,8 @@ class ManagedProcess(AbstractContextManager["ManagedProcess"]):
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
         self._log: TextIO | None = None
+        # 同一个对象再启动一次时接着写：盖掉的话前面的日志没了，脱敏检查也查不到。
+        self._log_mode = "w"
 
     @property
     def process(self) -> subprocess.Popen[str]:
@@ -402,7 +404,8 @@ class ManagedProcess(AbstractContextManager["ManagedProcess"]):
         if self._process is not None:
             raise VerticalFailure(f"进程 {self._name} 不能重复启动。")
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._log = self._log_path.open("w", encoding="utf-8", newline="\n")
+        self._log = self._log_path.open(self._log_mode, encoding="utf-8", newline="\n")
+        self._log_mode = "a"
         creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         self._process = subprocess.Popen(
             self._command,
@@ -1299,6 +1302,7 @@ def run_product_closure_browser(
     *,
     environment: Mapping[str, str],
     agent_id: str,
+    agent_name: str,
     catalog_id: str,
     target_instance_id: str,
 ) -> dict[str, str]:
@@ -1315,6 +1319,7 @@ def run_product_closure_browser(
     playwright_environment.update(
         {
             "AGENT_ROOM_PRODUCT_CLOSURE_AGENT_ID": agent_id,
+            "AGENT_ROOM_PRODUCT_CLOSURE_AGENT_NAME": agent_name,
             "AGENT_ROOM_PRODUCT_CLOSURE_CATALOG_ID": catalog_id,
             "AGENT_ROOM_PRODUCT_CLOSURE_COLLABORATOR_PASSWORD": required_value(
                 environment, "SEED_MEMBER_PASSWORD"
@@ -4739,6 +4744,7 @@ def verify_product_closure_workflow(
     result = run_product_closure_browser(
         environment=environment,
         agent_id=agent_id,
+        agent_name=target_bridge.display_name,
         catalog_id=catalog_id,
         target_instance_id=target_instance_id,
     )

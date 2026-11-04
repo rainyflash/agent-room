@@ -30,14 +30,123 @@ describe('ensureDeviceSigned', () => {
     await expect(run(account)).resolves.toBe('established');
 
     // 从头建（连备份一起），第一次上传签名公钥不用交互认证，也不经控制面。
-    expect(account.crypto.resetEncryption).toHaveBeenCalledOnce();
+    expect(account.crypto.bootstrapCrossSigning).toHaveBeenCalledOnce();
+    expect(account.crypto.bootstrapCrossSigning).toHaveBeenCalledWith(
+      expect.objectContaining({ setupNewCrossSigning: true }),
+    );
     expect(account.resetAuth).toEqual([null]);
-    expect(account.crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
+    expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
     expect(account.crypto.bootstrapSecretStorage).toHaveBeenCalledWith(
-      expect.objectContaining({ setupNewKeyBackup: false, setupNewSecretStorage: true }),
+      expect.objectContaining({ setupNewKeyBackup: true, setupNewSecretStorage: true }),
     );
     expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
     expect(account.escrow.replaceCrossSigningKeys).not.toHaveBeenCalled();
+  });
+
+  it('先传公钥，传成了才建备份和密钥存储', async () => {
+    const account = fakeAccount({ identity: false });
+
+    await run(account);
+
+    const [upload] = account.crypto.bootstrapCrossSigning.mock.invocationCallOrder;
+    const [storage] = account.crypto.bootstrapSecretStorage.mock.invocationCallOrder;
+    expect(upload).toBeLessThan(storage ?? 0);
+  });
+
+  describe('两台设备同时第一次登录，这台传公钥晚了一步', () => {
+    /** 服务器拒绝这次上传的时候，另一台设备已经建好了签名身份；钥匙要等它做完才交。 */
+    const beatenToUpload = () => {
+      const account = fakeAccount({ identity: false });
+      account.crypto.bootstrapCrossSigning.mockImplementationOnce(() => {
+        account.someoneElseEstablished();
+        return Promise.reject(new Error('HTTP 401'));
+      });
+      return account;
+    };
+    const winnerKey = (account: ReturnType<typeof fakeAccount>) => ({
+      key: Uint8Array.from(account.escrowedKey),
+      keyId: 'CURRENT',
+    });
+
+    it('什么都不删，等先到的那台交了钥匙，用它签好自己', async () => {
+      const account = beatenToUpload();
+      account.escrow.fetch
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockImplementation(() => Promise.resolve(winnerKey(account)));
+
+      await expect(withTimers(run(account))).resolves.toBe('signed');
+
+      expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
+      expect(account.crypto.bootstrapSecretStorage).not.toHaveBeenCalled();
+      expect(account.stored).toEqual([]);
+      expect(account.unlock).toHaveBeenCalledWith('CURRENT', expect.anything());
+      expect(account.crypto.crossSignDevice).toHaveBeenCalledExactlyOnceWith(DEVICE);
+    });
+
+    it('等钥匙时取到的那份用完就抹掉', async () => {
+      const account = beatenToUpload();
+      const seen: Uint8Array[] = [];
+      account.escrow.fetch.mockImplementation(() => {
+        const answer = winnerKey(account);
+        seen.push(answer.key);
+        return Promise.resolve(answer);
+      });
+
+      await withTimers(run(account));
+
+      expect(seen.length).toBeGreaterThan(1);
+      for (const key of seen) expect(key.every((byte) => byte === 0)).toBe(true);
+    });
+
+    it('一直等不到钥匙（先到的那台中途走了）：照常重建一次，新公钥由控制面代传', async () => {
+      const account = beatenToUpload();
+
+      await expect(withTimers(run(account))).resolves.toBe('reset');
+
+      expect(account.escrow.fetch.mock.calls.length).toBeGreaterThan(1);
+      expect(account.resetAuth).toEqual([{ type: CONTROL_PLANE_UPLOAD }]);
+    });
+
+    it('第二遍还被拒绝：算出错，不一直重来', async () => {
+      const account = fakeAccount({ identity: false });
+      account.escrow.fetch.mockImplementation(() => Promise.resolve(winnerKey(account)));
+      // 服务器上有了，加密库还是说不认得：第二遍又走到从头建，又被拒绝。
+      account.crypto.bootstrapCrossSigning.mockImplementation(() => {
+        account.server.identity = true;
+        return Promise.reject(new Error('HTTP 401'));
+      });
+
+      await expect(withTimers(run(account))).rejects.toThrow('抢先');
+
+      expect(account.crypto.bootstrapCrossSigning).toHaveBeenCalledTimes(2);
+      expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
+    });
+
+    it('等钥匙的时候叫停：马上停下，不再问', async () => {
+      const account = beatenToUpload();
+      const stop = new AbortController();
+      account.escrow.fetch.mockImplementation(() => {
+        stop.abort(new DOMException('退出登录', 'AbortError'));
+        return Promise.resolve(null);
+      });
+
+      await expect(withTimers(run(account, stop.signal))).rejects.toThrow('退出登录');
+
+      expect(account.escrow.fetch).toHaveBeenCalledOnce();
+      expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
+    });
+  });
+
+  it('上传没成、服务器上也没有签名身份（比如断网）：抛给调用方，不等也不重建', async () => {
+    const account = fakeAccount({ identity: false });
+    account.crypto.bootstrapCrossSigning.mockRejectedValue(new Error('offline'));
+
+    await expect(withTimers(run(account))).rejects.toThrow('offline');
+
+    expect(account.escrow.fetch).not.toHaveBeenCalled();
+    expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
+    expect(account.crypto.bootstrapSecretStorage).not.toHaveBeenCalled();
   });
 
   it('上次建到一半、本机留着没传上去的身份和私钥：照样从头建，公钥一定传上去', async () => {
@@ -59,9 +168,11 @@ describe('ensureDeviceSigned', () => {
 
       await expect(run(account)).resolves.toBe('established');
 
-      expect(account.crypto.resetEncryption).toHaveBeenCalledOnce();
+      expect(account.crypto.bootstrapCrossSigning).toHaveBeenCalledWith(
+        expect.objectContaining({ setupNewCrossSigning: true }),
+      );
       expect(account.resetAuth).toEqual([null]);
-      expect(account.crypto.bootstrapCrossSigning).not.toHaveBeenCalled();
+      expect(account.crypto.resetEncryption).not.toHaveBeenCalled();
       expect(account.crypto.crossSignDevice).not.toHaveBeenCalled();
       expect(account.escrow.fetch).not.toHaveBeenCalled();
       expect(account.stored).toEqual([{ keyId: 'NEW', key: GENERATED }]);
@@ -311,10 +422,33 @@ function fakeAccount({
   const generatedKey = new Uint8Array(32).fill(7);
   const escrowedKey = new Uint8Array(32).fill(9);
   const stored: EscrowedEncryptionKey[] = [];
-  /** 重建签名身份时，上传新签名公钥带的认证。 */
+  /** 建立或重建签名身份时，上传新签名公钥带的认证。 */
   const resetAuth: unknown[] = [];
+  /** 服务器上有没有签名身份、有没有这台设备的密钥；测试可以改。 */
+  const server = { identity, uploaded };
+  /** 这台设备亲手把新的签名身份传上去了：服务器上有了，这台设备也算签上了。 */
+  let rebuilt = false;
+  const upload = async (
+    authorize: (makeRequest: (auth: unknown) => Promise<unknown>) => Promise<unknown>,
+  ): Promise<void> => {
+    await authorize((auth) => {
+      resetAuth.push(auth);
+      return Promise.resolve({});
+    });
+    rebuilt = true;
+    server.identity = true;
+  };
   const crypto = {
-    bootstrapCrossSigning: vi.fn(() => Promise.resolve()),
+    bootstrapCrossSigning: vi.fn(
+      async (opts: {
+        readonly authUploadDeviceSigningKeys?: Parameters<typeof upload>[0];
+        readonly setupNewCrossSigning?: boolean;
+      }) => {
+        if (opts.setupNewCrossSigning === true && opts.authUploadDeviceSigningKeys !== undefined) {
+          await upload(opts.authUploadDeviceSigningKeys);
+        }
+      },
+    ),
     bootstrapSecretStorage: vi.fn(
       async (opts: { readonly createSecretStorageKey?: () => Promise<unknown> }) => {
         await opts.createSecretStorageKey?.();
@@ -335,31 +469,27 @@ function fakeAccount({
           selfSigningKey: holdsKeys,
           userSigningKey: holdsKeys,
         },
-        privateKeysInSecretStorage: identity && keysInStorage,
-        publicKeysOnDevice: identity,
+        privateKeysInSecretStorage: server.identity && keysInStorage,
+        publicKeysOnDevice: server.identity,
       }),
     ),
     getDeviceVerificationStatus: vi.fn(() => Promise.resolve({ signedByOwner: signed })),
     loadSessionBackupPrivateKeyFromSecretStorage: vi.fn(() => Promise.resolve()),
-    resetEncryption: vi.fn(
-      async (upload: (makeRequest: (auth: unknown) => Promise<unknown>) => Promise<unknown>) => {
-        await upload((auth) => {
-          resetAuth.push(auth);
-          return Promise.resolve({});
-        });
-      },
-    ),
+    resetEncryption: vi.fn(upload),
     restoreKeyBackup: vi.fn(() => Promise.resolve({ imported: 0, total: 0 })),
     userHasCrossSigningKeys: vi.fn(() => Promise.resolve(localIdentity)),
   };
-  /** 服务器上有没有这台设备的密钥；测试可以改。 */
-  const server = { uploaded };
-  const reset = (): boolean => crypto.resetEncryption.mock.calls.length > 0;
+  /** 别的设备建好了签名身份和密钥存储，加密库一问服务器就认得。 */
+  const someoneElseEstablished = (): void => {
+    server.identity = true;
+    defaultKey = 'CURRENT';
+    crypto.userHasCrossSigningKeys.mockResolvedValue(true);
+  };
   const signedOnServer = (): boolean =>
-    signed || reset() || crypto.crossSignDevice.mock.calls.length > 0;
+    signed || rebuilt || crypto.crossSignDevice.mock.calls.length > 0;
   /** 服务器的 `keys/query`：有签名身份时带着主签名公钥和自签公钥，这台设备带着签名。 */
   const answer = () => {
-    const hasIdentity = identity || reset();
+    const hasIdentity = server.identity;
     return Promise.resolve({
       device_keys: server.uploaded
         ? {
@@ -399,7 +529,7 @@ function fakeAccount({
   } as unknown as DeviceSigningClient;
   const escrow = {
     replaceCrossSigningKeys: vi.fn(() => Promise.resolve()),
-    fetch: vi.fn(() =>
+    fetch: vi.fn((): Promise<EscrowedEncryptionKey | null> =>
       Promise.resolve(escrowed === null ? null : { key: escrowedKey, keyId: escrowed }),
     ),
     store: vi.fn((key: EscrowedEncryptionKey) => {
@@ -420,6 +550,7 @@ function fakeAccount({
     resetAuth,
     server,
     serverKeys,
+    someoneElseEstablished,
     stored,
     unlock,
   };

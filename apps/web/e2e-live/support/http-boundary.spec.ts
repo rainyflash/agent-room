@@ -17,6 +17,19 @@ describe('真实验收的 HTTP 边界', () => {
     expect(isExpectedHttpBoundary(404, `${matrixOrigin}${workspacePath}`, method)).toBe(false);
   });
 
+  it('传签名公钥回 401 算正常（后到的设备被要求交互认证），别的状态和写法照旧算失败', () => {
+    const upload = '/_matrix/client/v3/keys/device_signing/upload';
+    expect(isExpectedHttpBoundary(401, `${matrixOrigin}${upload}`, 'POST')).toBe(true);
+    for (const status of [400, 403, 404, 429, 500, 503]) {
+      expect(isExpectedHttpBoundary(status, `${matrixOrigin}${upload}`, 'POST')).toBe(false);
+    }
+    expect(isExpectedHttpBoundary(401, `${matrixOrigin}${upload}`, 'GET')).toBe(false);
+    expect(isExpectedHttpBoundary(401, `https://wrong.example${upload}`, 'POST')).toBe(false);
+    expect(
+      isExpectedHttpBoundary(401, `${matrixOrigin}/_matrix/client/v3/keys/upload`, 'POST'),
+    ).toBe(false);
+  });
+
   it('不加密的房间读加密状态回 404 算正常，别的状态和写法照旧算失败', () => {
     const state =
       '/_matrix/client/v3/rooms/!zxYPnxbHLjLJyPJptT%3Amatrix.agent-room.localhost/state/m.room.encryption/';
