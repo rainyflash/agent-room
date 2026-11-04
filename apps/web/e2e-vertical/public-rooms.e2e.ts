@@ -313,9 +313,11 @@ test('公开房间：从发现页和分享链接进来，申请和批准，换�
 
     // 改成要申请。丙先退出来，这一次要申请、等批准；批准以后他的网页自己进来，不用再点。
     await requireApproval(owner);
-    await leaveRoom(visitor);
-    // 退出时还在路上的请求可能被拒，这时候之前的看过就清掉，这一段不算。
+    // 退出那一刻房间页还在读这间房的设置和成员，人已经不在了，回 404 是正常的。
+    // 所以退出之前先查一遍，重新打开页面、路上的请求都落定了再清。
     expect(failures.visitor).toEqual([]);
+    await leaveRoom(visitor);
+    await waitUntilDeviceReady(visitor);
     failures.visitor.length = 0;
     await askToJoin(visitor, firstCode, name);
     await approve(owner, 'Local Visitor');
