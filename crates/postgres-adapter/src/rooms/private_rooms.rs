@@ -1,6 +1,6 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
-    ports::{PortFuture, PrivateRoomSnapshot, PrivateRoomStore},
+    ports::{PortFuture, PrivateRoomDescriptionStore, PrivateRoomSnapshot, PrivateRoomStore},
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
@@ -50,7 +50,7 @@ impl PrivateRoomStore for PostgresRepositories {
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             let result =
-                create_private_room(&mut transaction, snapshot, created_at, operation).await;
+                create_private_room(&mut transaction, snapshot, created_at, true, operation).await;
             finish(transaction, result, operation).await
         })
     }
@@ -158,10 +158,46 @@ impl PrivateRoomStore for PostgresRepositories {
     }
 }
 
-async fn create_private_room(
+impl PrivateRoomDescriptionStore for PostgresRepositories {
+    fn describe<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        description: &'a str,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "private_room.describe";
+            let updated = sqlx::query_scalar::<_, uuid::Uuid>(
+                r"UPDATE agent_room.room_catalog_entry
+                   SET description = $2,
+                       updated_at = greatest(
+                           updated_at,
+                           to_timestamp($3::double precision / 1000.0)
+                       )
+                   WHERE id = $1 AND kind = 'private_room' AND status = 'active'
+                   RETURNING id",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(description)
+            .bind(changed_at.value())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            if updated.is_none() {
+                return Err(conflict(operation));
+            }
+            Ok(())
+        })
+    }
+}
+
+/// 写下一间新的私人房间。`end_to_end_encrypted` 照建房时写进 Matrix 的：一般的私人房间建房时
+/// 就写了 `m.room.encryption`；新建时就选了公开的不写（`specs/public-rooms/design.md`）。
+pub(super) async fn create_private_room(
     transaction: &mut Transaction<'_, Postgres>,
     snapshot: &PrivateRoomSnapshot,
     created_at: UtcMillis,
+    end_to_end_encrypted: bool,
     operation: &'static str,
 ) -> RepositoryResult<()> {
     let catalog = snapshot.catalog();
@@ -174,9 +210,9 @@ async fn create_private_room(
         r"INSERT INTO agent_room.room_catalog_entry (
                id, kind, slug, name, description, language, matrix_space_id,
                owner_principal_id, visibility, retention_days, status,
-               created_at, updated_at
+               end_to_end_encrypted, created_at, updated_at
            ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $13,
                to_timestamp($12::double precision / 1000.0),
                to_timestamp($12::double precision / 1000.0)
            )",
@@ -197,6 +233,7 @@ async fn create_private_room(
     .bind(catalog.retention_days().map(i32::from))
     .bind(catalog.status().as_str())
     .bind(created_at.value())
+    .bind(end_to_end_encrypted)
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -511,7 +548,7 @@ fn decode_member(row: &PgRow, operation: &'static str) -> RepositoryResult<Priva
     .map_err(|_| corrupt_data(operation))
 }
 
-fn ensure_creatable(
+pub(super) fn ensure_creatable(
     snapshot: &PrivateRoomSnapshot,
     operation: &'static str,
 ) -> RepositoryResult<()> {

@@ -984,6 +984,21 @@ class ProductionRenderingTests(unittest.TestCase):
             for domain in (public.app_domain, public.api_domain, public.matrix_domain):
                 self.assertIn('X-Robots-Tag "noindex"', self._caddy_block(caddyfile, domain))
 
+    def test_share_page_reaches_the_control_plane_in_both_site_modes(self) -> None:
+        for site in ("redirect", "static"):
+            value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+            value["public"]["site"] = site
+            config = DeploymentConfig.from_mapping(value)
+            render_deployment(config, self.paths, self.secrets)
+            caddyfile = self.paths.generated.joinpath("caddy", "Caddyfile").read_text(
+                encoding="utf-8"
+            )
+            # 分享链接 https://<裸域>/r/<分享码>：不管裸域跳不跳网页、出不出网站，都由控制面出整页。
+            bare = self._caddy_block(caddyfile, config.public.server_name)
+            self.assertIn("\thandle /r/* {\n\t\treverse_proxy control-plane:8090\n\t}", bare, site)
+            app = self._caddy_block(caddyfile, config.public.app_domain)
+            self.assertNotIn("handle /r/*", app, site)
+
     def test_network_agent_switch_and_guide_reach_the_control_plane(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         value["networkAgents"] = {"enabled": True}

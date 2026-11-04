@@ -4,12 +4,16 @@
 //! 请求不带 `user_id`，用的就是应用服务自己的账号：每个大厅分片都是它建的，它一直在里面，不冒充
 //! 任何人。公开大厅不加密，读到的就是明文事件。写名片的 Agent 在不在线，也以它的身份问
 //! （同在大厅里才问得到）。
+//!
+//! 发现页的“最近有人说话”（specs/public-rooms/design.md）也以它的身份读：公开房间都是它建的，只取
+//! 最新一条消息事件的时间，不看内容。
 
 use agent_room_application::ports::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
     MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture, PublicLobbyMatrixReader,
+    PublicRoomActivityMatrix, PublicRoomPresenceMatrix,
 };
-use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,6 +27,8 @@ use crate::{
 
 /// 一次最多读这么多条消息事件。
 const MAX_MESSAGES_LIMIT: u16 = 100;
+/// 只读最新一条时最多这么多字节：一条加密事件正常远小于这个数。
+const MAX_LATEST_RESPONSE_BYTES: usize = 256 * 1_024;
 /// 最近的消息一次最多读这么多字节：100 条消息事件正常远小于这个数。
 const MAX_MESSAGES_RESPONSE_BYTES: usize = 4 * 1_024 * 1_024;
 /// 房间状态最多读这么多字节。每个进过大厅的 Agent 实例都留着一条在线状态，日积月累，给足余量。
@@ -166,6 +172,63 @@ impl PublicLobbyMatrixReader for MatrixApplicationServiceProvisioner {
     }
 }
 
+impl PublicRoomActivityMatrix for MatrixApplicationServiceProvisioner {
+    fn latest_message_at<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Option<UtcMillis>>> {
+        Box::pin(async move {
+            let operation = MatrixOperation::Backfill;
+            let mut url = endpoint_with_segments(
+                &self.homeserver_url,
+                &[
+                    "_matrix",
+                    "client",
+                    "v3",
+                    "rooms",
+                    room_id.as_str(),
+                    "messages",
+                ],
+                operation,
+            )?;
+            // 加密房间里的消息是 m.room.encrypted，只看它的时间。
+            let mut types = MESSAGE_EVENT_TYPES.to_vec();
+            types.push("m.room.encrypted");
+            url.query_pairs_mut()
+                .append_pair("dir", "b")
+                .append_pair("limit", "1")
+                .append_pair("filter", &json!({"types": types}).to_string());
+            let body = self
+                .read_as_service(url, operation, MAX_LATEST_RESPONSE_BYTES)
+                .await?;
+            let page: MessagesPage = decode_json(&body, operation)?;
+            page.chunk
+                .first()
+                .and_then(|event| event.get("origin_server_ts"))
+                .and_then(Value::as_i64)
+                .map(|at| {
+                    UtcMillis::new(at).map_err(|_| {
+                        MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
+                    })
+                })
+                .transpose()
+        })
+    }
+}
+
+impl PublicRoomPresenceMatrix for MatrixApplicationServiceProvisioner {
+    fn presence<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<MatrixPresenceState>> {
+        Box::pin(async move {
+            self.user_presence_internal(user_id)
+                .await
+                .map(|presence| presence.state())
+        })
+    }
+}
+
 /// `/rooms/{roomId}/messages` 的回答里只用得到 `chunk`。
 #[derive(Deserialize)]
 struct MessagesPage {
@@ -191,9 +254,10 @@ mod tests {
 
     use agent_room_application::ports::{
         MatrixFailureKind, MatrixOperation, MatrixRoomId, MatrixUserId,
-        PublicLobbyMatrixReader as _, SecretValue,
+        PublicLobbyMatrixReader as _, PublicRoomActivityMatrix as _, PublicRoomPresenceMatrix,
+        SecretValue,
     };
-    use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+    use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
     use axum::{
         Json, Router,
         extract::{Path, Query, State},
@@ -461,6 +525,17 @@ mod tests {
         assert_eq!(stranger.kind(), MatrixFailureKind::Forbidden);
         assert_eq!(stranger.operation(), MatrixOperation::ReadPresence);
 
+        // 发现页数在线人数用的是同一个问法，只要状态。
+        assert_eq!(
+            PublicRoomPresenceMatrix::presence(
+                &reader,
+                &MatrixUserId::new("@_agent_x:matrix.test").unwrap()
+            )
+            .await
+            .unwrap(),
+            MatrixPresenceState::Unavailable
+        );
+
         let seen = seen.lock().unwrap();
         assert_eq!(seen.requests[0].0, "@_agent_x:matrix.test");
         assert_eq!(
@@ -486,5 +561,49 @@ mod tests {
         assert_eq!(messages.operation(), MatrixOperation::Backfill);
         assert_eq!(state.kind(), MatrixFailureKind::Forbidden);
         assert_eq!(state.operation(), MatrixOperation::ReadRoomState);
+    }
+
+    #[tokio::test]
+    async fn 最近说话只读最新一条的时间_加密的也算_没有消息回空() {
+        let (url, seen) = serve(
+            StatusCode::OK,
+            json!({
+                "chunk": [{
+                    "event_id": "$latest:matrix.test",
+                    "type": "m.room.encrypted",
+                    "sender": "@ada:matrix.test",
+                    "origin_server_ts": 1_790_000_000_000_i64,
+                    "content": {"ciphertext": "..."},
+                }],
+            }),
+            json!([]),
+        )
+        .await;
+        let latest = reader(&url).latest_message_at(&room()).await.unwrap();
+        assert_eq!(latest, Some(UtcMillis::new(1_790_000_000_000).unwrap()));
+        {
+            let seen = seen.lock().unwrap();
+            let (path, query, _) = &seen.requests[0];
+            assert_eq!(path, "!lobby:matrix.test/messages");
+            assert_eq!(query["dir"], "b");
+            assert_eq!(query["limit"], "1");
+            let filter: Value = serde_json::from_str(&query["filter"]).unwrap();
+            let types = filter["types"].as_array().unwrap();
+            assert!(types.contains(&json!("m.room.encrypted")));
+            assert!(types.contains(&json!("io.github.rainyflash.agentroom.message.preview.v2")));
+            assert!(!query.contains_key("user_id"), "不冒充任何人");
+        }
+
+        let (url, _) = serve(StatusCode::OK, json!({"chunk": []}), json!([])).await;
+        assert_eq!(reader(&url).latest_message_at(&room()).await.unwrap(), None);
+
+        let (url, _) = serve(
+            StatusCode::FORBIDDEN,
+            json!({"errcode": "M_FORBIDDEN"}),
+            json!([]),
+        )
+        .await;
+        let failure = reader(&url).latest_message_at(&room()).await.unwrap_err();
+        assert_eq!(failure.kind(), MatrixFailureKind::Forbidden);
     }
 }

@@ -16,7 +16,7 @@ use agent_room_application::{
     },
     ports::{
         Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentActivity as _,
-        NetworkAgentRoomRecord, PortFuture, PrivateRoomAgentKnockRecord,
+        NetworkAgentRoomNotice, NetworkAgentRoomRecord, PortFuture, PrivateRoomAgentKnockRecord,
         PrivateRoomAgentMemberRecord, SecretValue,
     },
     private_rooms::AdmittedKnock,
@@ -315,6 +315,11 @@ pub(super) struct FakeMessaging {
     pub(super) room_code: Mutex<Option<NetworkAgentRoomCode>>,
     /// 等消息时一起交出去的、敲它建的房间的门的。
     pub(super) incoming: Mutex<Vec<NetworkAgentIncomingKnock>>,
+    /// 进房间时那个房间现在的公告，和问过哪个房间（令牌、房间）。
+    pub(super) notice: Mutex<Option<NetworkAgentRoomNotice>>,
+    pub(super) notice_reads: Mutex<Vec<(String, String)>>,
+    /// 等消息时一起交出去的、改了的公告。
+    pub(super) changed_notices: Mutex<Vec<NetworkAgentRoomNotice>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -404,6 +409,19 @@ impl NetworkAgentMessaging for FakeMessaging {
         Box::pin(async move { failure.map_or(Ok(entry), Err) })
     }
 
+    fn current_notice<'a>(
+        &'a self,
+        token: &'a str,
+        room_id: &'a str,
+    ) -> PortFuture<'a, Option<NetworkAgentRoomNotice>> {
+        self.notice_reads
+            .lock()
+            .unwrap()
+            .push((token.to_owned(), room_id.to_owned()));
+        let notice = self.notice.lock().unwrap().clone();
+        Box::pin(async move { notice })
+    }
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -413,6 +431,7 @@ impl NetworkAgentMessaging for FakeMessaging {
         let failure = self.failure.lock().unwrap().clone();
         let gaps = self.gaps.lock().unwrap().clone();
         let incoming_knocks = self.incoming.lock().unwrap().clone();
+        let notices = self.changed_notices.lock().unwrap().clone();
         Box::pin(async move {
             if let Some(failure) = failure {
                 return Err(failure);
@@ -430,6 +449,7 @@ impl NetworkAgentMessaging for FakeMessaging {
                 remaining: 4,
                 gaps,
                 incoming_knocks,
+                notices,
             })
         })
     }
@@ -773,13 +793,24 @@ pub(super) fn app_with(
     messaging: Arc<FakeMessaging>,
     now: i64,
 ) -> axum::Router {
+    router(state_with(agents, messaging, now))
+        .layer(middleware::from_fn(crate::correlation::attach))
+}
+
+/// 总开关开着的状态；找公开房间的目录不给（`public_rooms` 的测试自己换上）。
+pub(super) fn state_with(
+    agents: Arc<FakeAgents>,
+    messaging: Arc<FakeMessaging>,
+    now: i64,
+) -> NetworkAgentHttpState {
     let key = NetworkAgentSealKey::from_bytes([7; 32]);
     *messaging.agents.lock().unwrap() = Some(agents.clone());
-    router(NetworkAgentHttpState {
+    NetworkAgentHttpState {
         agents,
         rooms: messaging.clone(),
         owned_rooms: messaging.clone(),
         messaging,
+        public_rooms: None,
         sources: Arc::new(NetworkSources::new(
             NetworkSourceDigester::new(Some(&key)),
             Vec::new(),
@@ -793,8 +824,7 @@ pub(super) fn app_with(
         guide_url: guide_url(Some(
             &url::Url::parse("https://api.agent-room.example").unwrap(),
         )),
-    })
-    .layer(middleware::from_fn(crate::correlation::attach))
+    }
 }
 
 fn app(agents: Arc<FakeAgents>) -> axum::Router {
@@ -1144,6 +1174,11 @@ async fn 失败按稳定错误码映射_限流带_retry_after_找不到大厅时
             "network_agent.code_invalid",
         ),
         (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::RoomClosed),
+            StatusCode::FORBIDDEN,
+            "network_agent.room_closed",
+        ),
+        (
             NetworkAgentFailure::new(NetworkAgentFailureKind::CapacityReached),
             StatusCode::SERVICE_UNAVAILABLE,
             "network_agent.capacity_reached",
@@ -1304,6 +1339,7 @@ pub(crate) fn disabled_router() -> axum::Router {
         rooms: messaging.clone(),
         owned_rooms: messaging.clone(),
         messaging,
+        public_rooms: None,
         sources: Arc::new(NetworkSources::new(
             NetworkSourceDigester::new(Some(&key)),
             Vec::new(),
@@ -1962,5 +1998,7 @@ fn 错误说明都是英文() {
     }
 }
 
+pub(super) mod notices;
+pub(super) mod public_rooms;
 mod rooms;
 mod viewing;

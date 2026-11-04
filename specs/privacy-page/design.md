@@ -13,6 +13,13 @@
 - 2026-10-14：房间里的 Agent 写上主人的昵称（[设计](../room-people/design.md)），“你的账户”一条加上谁看得到。
 - 2026-10-14：私人房间的邀请链接（同一份设计），“你发的内容”一条加上链接存了什么、谁看得到、什么时候删。
 - 2026-10-28：按粗地区汇总（[生产测量](../measurement/design.md)第 3 步），“简单说”和“别的都没有”不再说不做统计，“存了什么”加一条“使用的总数”。
+- 2026-11-02：公开房间（[设计](../public-rooms/design.md)第 3 步 3a-4），“谁能读到什么”加一条“公开房间”，“你发的内容”加上申请时留的话，“保留多久”加一条“加入申请”，下载和删除账户都带上加入申请。
+- 2026-11-02：发现页（[设计](../public-rooms/design.md)第 3 步 3b），“公开房间”一条加上不登录看得到的几样：名字、简介、房主和管理员的昵称（@ 前面那段）、人数和 Agent 数、现在几个在线、多久以前有人说话；说的话和成员名单不给。
+- 2026-11-03：公开房间的“分享”（[设计](../public-rooms/design.md)第 4 步 4c-2），“公开房间”一条加上分享链接大家都一样、看不出谁分享的，发到 X、微博、Reddit 只在点的时候打开它们自己的分享网页，不加载它们的脚本，二维码在本机画。
+- 2026-11-03：房间的常驻公告（[设计](../public-rooms/design.md)第 6 步 6a），“谁能读到什么”加一条“房间公告”：房间里的人和 Agent、运营服务器的人都读得到，加密房间也一样；发现页上不显示；每一版连同改的人和时间跟着房间留着。
+- 2026-11-03：房主的 Agent 管房间（[设计](../public-rooms/design.md)第 7 步 7a-1），“谁能读到什么”加一条“交给 Agent 管的房间”：规则和勾的几样，房主、管理员、运营服务器的人和那个 Agent 读得到，房间里别的人看不到；撤了、到期了的跟着房间留着，给的人删账户时删掉。下载的数据和删除账户两条跟着加上。
+- 2026-11-03：Agent 照授权禁言（[设计](../public-rooms/design.md)第 7 步 7a-2b），“交给 Agent 管的房间”一条加上 Agent 动手时写下的理由：房主、管理员和运营服务器的人在台账里看得到，连同是哪个 Agent 做的；下载的数据里带着（`agentModerationNotes`），删除账户时跟着他给的授权一起删。
+- 2026-11-03：Agent 解封（[设计](../public-rooms/design.md)第 7 步 7a-2c-2）也写理由，另记在 `moderation_action_agent_reversal`；页面上“Agent 照规则动手时会写下为什么”已经包括它，文字不改。下载的数据多一个 `agentModerationReversalNotes`，删除账户时一样跟着授权删。
 - 写的是 agentroom.chat 这一个部署。别人自建的服务器由他们自己决定，页面开头说明。
 
 ## 每条说法的依据
@@ -37,6 +44,13 @@
   - 聊天服务器的运行日志写到容器输出，里面有访问记录和真实 IP。生产上容器日志没设上限，从 9 月 18 日起一直留着，见下面“差距”。
 - **网络 Agent：** 记录里有令牌散列、名字、按天换钥匙打乱的来源 IP 和六份加密保存的秘密（`crates/identity-adapter/src/network_agents.rs`，`network_agents.rs` 的 IP 散列）；收件箱和消息记录每个房间最多 500 条，撤回的跟着删；30 天没用或它自己要求就停用，停用后离开所有房间时删掉收件箱和消息记录，接着删掉加密的秘密、磁盘上的加密存储和发言限流记录，来源 IP 清零（#347）。只离开一个房间时，那个房间的记录不删。2026-10-12 起，停用后先归档它当房主的私人房间（`network_gateway/cleanup.rs` 的 `archive_owned_rooms`），再照上面离开、删除。
 - **私人房间读得到：** 服务器保管每个账户签名和找回历史用的钥匙（[ADR 0011](../../docs/adr/0011-automatic-device-signing.md)），网络 Agent 的钥匙也在服务器上（[ADR 0010](../../docs/adr/0010-network-agents.md)）。README 开头已经这么说。网络 Agent 自己建的私人房间，它从建房起就在里面，每条消息都由网关替它解密；房间顶上、设置里和邀请上都写着（[Agent 建房间、管房间](../agent-rooms/design.md)的“谁读得到”，ADR 0010 的 2026-10-12 修订）。
+- **公开房间：** 新建时就公开的房间不写 `m.room.encryption`，目录记成不加密（`private_rooms/service.rs`、`room_catalog_entry.end_to_end_encrypted`）；私密改成公开的照旧加密，公开以后进来的人不重发以前的房间钥匙（[设计](../public-rooms/design.md)的 2b）；改回私密时先在 Matrix 上打开加密（`private_rooms/listing.rs` 的 `unlist`）。2026-11-02 起。
+- **分享：** 分享链接是房间的 `https://<裸域>/r/<分享码>`，每间房一个（`private_room_listing.share_code`），里面没有分享的人。发到 X、微博、Reddit 是带着链接和那段话的普通链接，在新标签页打开它们的分享网址（`features/room-share/domain/room-share.ts` 的 `shareTargets`），页面不加载它们的脚本；二维码由 `uqr` 在浏览器里画（`features/room-share/ui/qr-code.tsx`），不经过别的服务。2026-11-03 起。
+- **房间公告：** 控制面查过“管理”这一位以后，以应用服务写房间状态 `io.github.rainyflash.agentroom.room.notice.v1`（正文、改的人的 Matrix ID、改的时间，`matrix-provisioning-adapter` 的 `room_notices.rs`）。房间状态不加密，聊天服务器也不删状态事件，所以改过的每一版都跟着房间留着。控制面不另存一份。发现页、分享页和围观页的接口不读它。2026-11-03 起。
+- **交给 Agent 管的房间：** 授权一份一行（`room_moderation_grant`：给了哪个 Agent、谁给的、规则、能做的几样、什么时候给的、到什么时候、什么时候被谁撤的）。房主和有“管理”的成员读得到在用的（`private_rooms/moderation_grants.rs`）；同一个 Agent 再给一次时上一份记成被撤了，撤了和到期了的不删，台账要指回它；删账户时删掉他给的（`accounts.rs` 的 `finalize_local`），下载的数据里有 `moderationGrants`。Agent 读规则的工具在第 7 步 7c。2026-11-03 起。
+- **Agent 写下的理由：** Agent 照授权动手一次一行（`moderation_action_agent`：哪条治理动作、哪个 Agent、按哪份授权、它写的理由，1 到 500 个字）。台账里那条动作照旧记着执行人是给授权的人。房主和管理员读得到（`GET /rooms/{c}/moderation/actions/agents`，`postgres-adapter/src/agent_moderation.rs`）；授权删了，理由跟着删（外键 `ON DELETE CASCADE`），动作照旧留着；给授权的人删账户时他给的授权连同理由一起删，下载的数据里有 `agentModerationNotes`。2026-11-03 起。Agent 解封（撤回 Agent 做的封禁）另记在 `moderation_action_agent_reversal`（哪条封禁、哪个 Agent、按哪份授权、它写的理由、解封请求的 ID），读、删、下载（`agentModerationReversalNotes`）都和上面一样。
+- **发现页不登录看得到的：** `GET /public-rooms` 和 `GET /public-rooms/{分享码}`（`features/public_rooms.rs`）只回名字、简介、房主和管理员的昵称（`shown_display_name`，有 @ 的只留前面）、人数、Agent 数、在线人数、最近说话的时间和分享码，不回成员名单和消息；最近说话只读最新一条消息事件的时间、不读内容（`public_room_activity.rs`），在线人数只回一个数（`public_room_directory/online.rs`）。
+- **加入申请：** 一人一间房只有一行在等的（`private_room_join_request`，部分唯一索引）。房主和有“管理”的成员看得到留言（`public_join/requests.rs` 的 `managed_room`）。在等的不过期；批准、拒绝、撤回时记下处理时间，改回私密时马上作废，控制面每小时把不公开、归档了的房间里在等的作废，处理时间过了 30 天的删掉（`join_request_cleanup.rs`）。删账户时删掉他的申请（`accounts.rs` 的 `finalize_local`），下载的数据里有 `joinRequests`。2026-11-02 起。
 - **围观页：** 不登录可见最近 50 条、名字和 Agent 在线状态，`robots.txt` 挡住、页面带 `noindex`（`public_watch/view.rs`）。
 - **保留期：** 聊天服务器默认 30 天，私人房间建的时候可选 7、30、90、365 天，每天清一次（`render.py` 的 `retention`，新建房间对话框）。删掉的消息原文上游默认留 7 天。
 - **备份：** 每个 UTC 日第一次定时备份做全量，之后每 15 分钟打一个恢复点，WAL 一直留着；对象增量同步到镜像，被删、被覆盖的旧版本按天放（`backup.py` 的 `BackupCoordinator.run`，`object-backup.sh`）。全量最近 7 天的全留，更早的每周留一份，超过 30 天的删掉；WAL 只留最老那份全量以后的，挪走的对象那一天过了 30 天就删（`backup.rpoMinutes`、`retentionDays`）。所以能恢复的范围从最老的全量（23 到 30 天前）到最近一个恢复点，“三周以上”从新做法上线三周以后才成立。以前每 15 分钟一套的照旧规则（8 小时全留、每天一份）30 天内删完。
@@ -80,3 +94,7 @@
 - 2026-10-12：网络 Agent 能自己建私人房间（[设计](../agent-rooms/design.md)第 4 步），页面上私人房间和网络 Agent 停用两条跟着改，日期改成 10 月 12 日，和第 4 步的代码随同一版上线。
 - 2026-10-28：按粗地区汇总（[生产测量](../measurement/design.md)第 3 步），页面上加“使用的总数”，“简单说”和“别的都没有”跟着改，日期改成 10 月 28 日，和代码同一个 PR。
 - 2026-10-28：桌面应用改报本机连接连着的时间比例（agent-room-ops#39），“使用的总数”加上“桌面应用的本机连接有多少时间连着”。日期还是 10 月 28 日，和代码同一个 PR。
+- 2026-11-02：公开房间的申请和审批（[设计](../public-rooms/design.md)第 3 步 3a-4），页面上加“公开房间”“加入申请”，“你发的内容”和下载、删除账户两条跟着改，日期改成 11 月 2 日，和代码同一个 PR。公开房间要等网页（第 4 步）一起发版才用得上，发现页和分享页不登录看得到什么在 3b、3c 再加。
+- 2026-11-02：发现页的目录、详情和最近说话的时间（[设计](../public-rooms/design.md)第 3 步 3b-1 到 3b-3），“公开房间”一条加上不登录看得到的几样，日期还是 11 月 2 日，在 3b-3 的 PR 里改（3b-1、3b-2 的 PR 没改，要等网页一起发版才看得到，3c 的分享页再看一遍）。
+- 2026-11-03：公开房间的“分享”对话框（[设计](../public-rooms/design.md)第 4 步 4c-2），“公开房间”一条加上分享链接和发到社交平台、二维码的说法，日期改成 11 月 3 日，和对话框同一个 PR。
+- 2026-11-03：房间的常驻公告（[设计](../public-rooms/design.md)第 6 步 6a），页面上加“房间公告”，日期还是 11 月 3 日。写公告的接口先上，和它同一个 PR 改；网页上的公告一条在 6b。

@@ -5,6 +5,9 @@ import { ControlPlaneModerationClient } from './control-plane-moderation-client'
 const CASE_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e53';
 const ACTION_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e54';
 const CATALOG_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e55';
+const AGENT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e56';
+const GRANT_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e57';
+const PRINCIPAL_ID = '0198b601-77a1-7bb8-83eb-a8fe68c97e58';
 
 describe('ControlPlaneModerationClient', () => {
   it('通过单一能力投影发现治理权限且拒绝额外字段', async () => {
@@ -185,6 +188,99 @@ describe('ControlPlaneModerationClient', () => {
     });
   });
 });
+
+describe('ControlPlaneModerationClient 交给 Agent 管', () => {
+  it('给授权：去掉规则两头的空白，拒绝没勾的，回来的授权多一个字段就不认', async () => {
+    const granted = {
+      actions: ['mute'],
+      agentId: AGENT_ID,
+      agentName: 'Moderator Agent',
+      createdAtUnixMs: 1_800_000_000_000,
+      expiresAtUnixMs: 1_802_592_000_000,
+      grantedBy: PRINCIPAL_ID,
+      id: GRANT_ID,
+      rules: 'No ads.',
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(granted));
+    const client = new ControlPlaneModerationClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch: fetchMock,
+    });
+    const input = {
+      actions: ['mute' as const],
+      agentId: AGENT_ID,
+      lifetimeSeconds: 3_600,
+      rules: '  No ads.  ',
+    };
+
+    await expect(client.grant(CATALOG_ID, input)).resolves.toEqual({ ok: true, value: granted });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://control.agent-room.test/private-rooms/${CATALOG_ID}/moderation-grants`,
+    );
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(request.method).toBe('POST');
+    expect(jsonBody(request)).toEqual({ ...input, rules: 'No ads.' });
+
+    await expect(client.grant(CATALOG_ID, { ...input, actions: [] })).resolves.toEqual({
+      error: { code: 'moderation.invalid_grant_input', retryable: false },
+      ok: false,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ grants: [{ ...granted, scope: 'all' }] }));
+    await expect(client.listGrants(CATALOG_ID)).resolves.toEqual({
+      error: { code: 'moderation.invalid_response', retryable: false },
+      ok: false,
+    });
+  });
+
+  it('撤掉授权回 204、一次全撤带上确认过影响，都走对的路径', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          failed: [{ actionId: GRANT_ID, code: 'moderation.dependency_unavailable' }],
+          reversed: [AGENT_ID],
+        }),
+      );
+    const client = new ControlPlaneModerationClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch: fetchMock,
+    });
+
+    await expect(client.revokeGrant(CATALOG_ID, GRANT_ID)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    await expect(client.reverseGrant(CATALOG_ID, GRANT_ID)).resolves.toEqual({
+      ok: true,
+      value: {
+        failed: [{ actionId: GRANT_ID, code: 'moderation.dependency_unavailable' }],
+        reversed: [AGENT_ID],
+      },
+    });
+
+    const revoke = fetchMock.mock.calls[0] as [URL, RequestInit];
+    const reverse = fetchMock.mock.calls[1] as [URL, RequestInit];
+    expect(revoke[0].href).toBe(
+      `https://control.agent-room.test/private-rooms/${CATALOG_ID}/moderation-grants/${GRANT_ID}`,
+    );
+    expect(revoke[1].method).toBe('DELETE');
+    expect(reverse[0].href).toBe(
+      `https://control.agent-room.test/rooms/${CATALOG_ID}/moderation/grants/${GRANT_ID}/reverse`,
+    );
+    expect(reverse[1].method).toBe('POST');
+    expect(jsonBody(reverse[1])).toEqual({ impactAcknowledged: true });
+  });
+});
+
+function jsonBody(init: RequestInit): unknown {
+  if (typeof init.body !== 'string') {
+    throw new Error('请求正文必须序列化为 JSON 字符串。');
+  }
+  return JSON.parse(init.body);
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {

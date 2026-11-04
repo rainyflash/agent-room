@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useAppServices } from '@/app/app-services';
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
@@ -21,14 +21,20 @@ import {
   useOwnedAgents,
 } from '@/features/workspace/data/agent-directory-query';
 import {
+  agentInstanceActivityQueryKey,
+  useAgentInstanceActivity,
+} from '@/features/workspace/data/agent-instance-activity-query';
+import {
   agentRoomsQueryKey,
   useAgentRoomCounts,
 } from '@/features/workspace/data/agent-rooms-query';
 import { useAgentPresence } from '@/features/workspace/data/use-agent-presence';
 import { projectAgentFleet, type FleetAgent } from '@/features/workspace/domain/agent-fleet';
 import { projectWorkspaceConnectionHealth } from '@/features/workspace/domain/connection-health';
+import { staleAgentCandidates, staleAgents } from '@/features/workspace/domain/stale-agents';
 import { AccountWorkspaceView } from '@/features/workspace/ui/account-workspace-view';
 import { AgentRoomsSection } from '@/features/workspace/ui/agent-rooms-section';
+import { StaleAgentCleanupDialog } from '@/features/workspace/ui/stale-agent-cleanup-dialog';
 import { DesktopAppCard } from '@/features/updates/ui/desktop-app-card';
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 
@@ -50,6 +56,8 @@ export function AccountWorkspacePage({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [now] = useState(() => Date.now());
   const download = usePublishedDownload(services.config);
   const agents = useOwnedAgents(services.agentDirectory);
   const devices = useProductDevices(services.accessManagement);
@@ -76,6 +84,28 @@ export function AccountWorkspacePage({
         presence,
       }),
     [agents.data, devices.data, instances.data, matrixSecurity.data, presence],
+  );
+  const canDelete = useCallback(
+    (agent: FleetAgent) => agent.agent.agentId !== principal.principalId,
+    [principal.principalId],
+  );
+  const staleCandidates = useMemo(
+    () => staleAgentCandidates({ agents: fleet.agents, canDelete, now }),
+    [canDelete, fleet.agents, now],
+  );
+  const instanceActivity = useAgentInstanceActivity(
+    services.agentDirectory,
+    staleCandidates.length > 0,
+  );
+  const stale = useMemo(
+    () =>
+      staleAgents({
+        activity: instanceActivity.data?.ok === true ? instanceActivity.data.value : null,
+        agents: fleet.agents,
+        canDelete,
+        now,
+      }),
+    [canDelete, fleet.agents, instanceActivity.data, now],
   );
   const roomCounts = useAgentRoomCounts(
     services.agentDirectory,
@@ -143,44 +173,45 @@ export function AccountWorkspacePage({
       queryClient.invalidateQueries({ queryKey: productDeviceQueryKey }),
       queryClient.invalidateQueries({ queryKey: agentInstanceQueryKey }),
       queryClient.invalidateQueries({ queryKey: agentRoomsQueryKey }),
+      queryClient.invalidateQueries({ queryKey: agentInstanceActivityQueryKey }),
       matrixSecurity.refetch(),
     ]);
   };
 
   // Deletion revokes every live connection first (each also retires its Matrix device), then retires
-  // the agent itself; the server refuses while any instance is still live.
+  // the agent itself; the server refuses while any instance is still live. Returns the failure code.
+  const retireAgent = async (agent: FleetAgent): Promise<string | null> => {
+    for (const instance of agent.instances.filter((entry) => entry.revokedAtUnixMs === null)) {
+      const revoked = await services.accessManagement.revokeAgentInstance(instance.agentInstanceId);
+      if (!revoked.ok) return revoked.error.code;
+    }
+    const deleted = await services.agentDirectory.deleteAgent(agent.agent.agentId);
+    return deleted.ok ? null : deleted.error.code;
+  };
+
   const deleteAgent = async (agent: FleetAgent): Promise<void> => {
     const agentId = agent.agent.agentId;
     setDeletion({ pendingAgentId: agentId, failure: null });
-    for (const instance of agent.instances.filter((entry) => entry.revokedAtUnixMs === null)) {
-      const revoked = await services.accessManagement.revokeAgentInstance(instance.agentInstanceId);
-      if (!revoked.ok) {
-        setDeletion({ pendingAgentId: null, failure: { agentId, code: revoked.error.code } });
-        await refresh();
-        return;
-      }
-    }
-    const deleted = await services.agentDirectory.deleteAgent(agentId);
-    setDeletion({
-      pendingAgentId: null,
-      failure: deleted.ok ? null : { agentId, code: deleted.error.code },
-    });
+    const code = await retireAgent(agent);
+    setDeletion({ pendingAgentId: null, failure: code === null ? null : { agentId, code } });
     await refresh();
+  };
+
+  const reauthenticate = (): void => {
+    void services.controlPlane.beginAuthentication(
+      `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      'reauthenticate',
+    );
   };
 
   return (
     <>
       <AccountWorkspaceView
         agentDeletion={{
-          canDelete: (agent) => agent.agent.agentId !== principal.principalId,
+          canDelete,
           failure: deletion.failure,
           onDelete: (agent) => void deleteAgent(agent),
-          onReauthenticate: () => {
-            void services.controlPlane.beginAuthentication(
-              `${window.location.pathname}${window.location.search}${window.location.hash}`,
-              'reauthenticate',
-            );
-          },
+          onReauthenticate: reauthenticate,
           pendingAgentId: deletion.pendingAgentId,
           recentlyAuthenticated: principal.recentlyAuthenticated,
         }}
@@ -212,7 +243,28 @@ export function AccountWorkspacePage({
           )
         }
         roomCounts={roomCounts}
+        staleCleanup={{
+          count: stale.length,
+          onOpen: () => {
+            setCleanupOpen(true);
+          },
+        }}
       />
+      {cleanupOpen && stale.length > 0 ? (
+        <StaleAgentCleanupDialog
+          agents={stale}
+          now={now}
+          onClose={() => {
+            setCleanupOpen(false);
+          }}
+          onDone={refresh}
+          onRetire={retireAgent}
+          reauthentication={{
+            recentlyAuthenticated: principal.recentlyAuthenticated,
+            signInAgain: reauthenticate,
+          }}
+        />
+      ) : null}
       {inviteOpen ? (
         <AgentInviteDialog
           downloadUrl={download.url}

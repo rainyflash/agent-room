@@ -39,8 +39,8 @@ use agent_room_application::{
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxPage,
         NetworkAgentInboxStore, NetworkAgentLobbyAway, NetworkAgentMatrixGateway,
         NetworkAgentMessageActor, NetworkAgentMessageHistory, NetworkAgentMessageRef,
-        NetworkAgentMessageRetention, NetworkAgentRoomRecord, NetworkAgentStoredMessage,
-        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentMessageRetention, NetworkAgentRoomNotice, NetworkAgentRoomRecord,
+        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentSyncRequest, NetworkAgentTimelineGap, PortFuture, PrivateRoomAgentKnockRecord,
         SecretValue,
@@ -823,6 +823,8 @@ struct InboxState {
     history: Vec<HistoryRow>,
     /// 加入之前解不开的一段：哪一次加入（服务器收到加入的时间），说过没有。
     before_join: HashMap<MatrixRoomId, (UtcMillis, bool)>,
+    /// 每个房间现在的公告，和交过的是哪一版（改的时间）。
+    notices: HashMap<MatrixRoomId, (NetworkAgentRoomNotice, Option<i64>)>,
 }
 
 struct HistoryRow {
@@ -892,6 +894,56 @@ impl InboxState {
                     .insert(gap.room_id.clone(), (gap.joined_at, false));
             }
         }
+    }
+
+    /// 和数据库一样只往新的改；进房间时交的（`given`）和记着的一样新也算交过。
+    fn record_notice(&mut self, notice: &NetworkAgentRoomNotice, given: bool) {
+        let at = notice.updated_at_ms;
+        let current = self.notices.get(&notice.room_id);
+        let newer = current.is_none_or(|(known, _)| {
+            known.updated_at_ms < at || (given && known.updated_at_ms == at)
+        });
+        if newer {
+            let given_at = if given {
+                Some(at)
+            } else {
+                current.and_then(|(_, given_at)| *given_at)
+            };
+            self.notices
+                .insert(notice.room_id.clone(), (notice.clone(), given_at));
+        }
+    }
+
+    /// 交一批时改了的：从没交过的（撤掉的不算），或者交过以后又改了的。
+    fn take_notices(
+        &mut self,
+        room: Option<&MatrixRoomId>,
+        limit: u16,
+    ) -> Vec<NetworkAgentRoomNotice> {
+        let mut changed: Vec<&MatrixRoomId> = self
+            .notices
+            .iter()
+            .filter(|(id, _)| room.is_none_or(|room| room == *id))
+            .filter(|(_, (notice, given_at))| match given_at {
+                None => notice.text.is_some(),
+                Some(given_at) => *given_at < notice.updated_at_ms,
+            })
+            .map(|(id, _)| id)
+            .collect();
+        changed.sort_by_key(|id| id.as_str().to_owned());
+        let changed: Vec<MatrixRoomId> = changed
+            .into_iter()
+            .take(usize::from(limit))
+            .cloned()
+            .collect();
+        changed
+            .into_iter()
+            .filter_map(|id| {
+                let (notice, given_at) = self.notices.get_mut(&id)?;
+                *given_at = Some(notice.updated_at_ms);
+                Some(notice.clone())
+            })
+            .collect()
     }
 
     /// 欠着加入之前那一段的房间，挂到第一条进收件箱的消息上，这次加入只说一次。
@@ -986,6 +1038,9 @@ impl NetworkAgentInboxStore for MemoryInbox {
         let outcome = if state.sync_token == append.expected_sync_token {
             let mut appended = 0;
             state.owe_before_join(&append.undecryptable_before_join);
+            for notice in &append.room_notices {
+                state.record_notice(notice, false);
+            }
             for change in &append.changes {
                 match change {
                     NetworkAgentInboxChange::Message(message) => {
@@ -1102,6 +1157,25 @@ impl NetworkAgentInboxStore for MemoryInbox {
         Box::pin(async move { Ok(outcome) })
     }
 
+    fn take_room_notices<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomNotice>>> {
+        let notices = self.state.lock().unwrap().take_notices(room, limit);
+        Box::pin(async move { Ok(notices) })
+    }
+
+    fn give_room_notice<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        notice: &'a NetworkAgentRoomNotice,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        self.state.lock().unwrap().record_notice(notice, true);
+        Box::pin(async { Ok(()) })
+    }
+
     fn prune_expired(
         &self,
         now: UtcMillis,
@@ -1183,6 +1257,8 @@ struct ScriptedMatrix {
     states: Mutex<Vec<(String, Value)>>,
     /// 读房间里的那条状态时一律失败。
     state_read_fails: Mutex<bool>,
+    /// 每个房间现在的公告（状态事件的内容）。
+    notices: Mutex<HashMap<String, Value>>,
     left: Mutex<Vec<String>>,
     leave_fails: Mutex<bool>,
     /// 往回翻的结果，按顺序给出；给完之后都是“翻到了房间最早的历史”。
@@ -1421,10 +1497,15 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
         &'a self,
         access_token: &'a SecretValue,
         room_id: &'a MatrixRoomId,
-        _event_type: &'a MatrixEventType,
+        event_type: &'a MatrixEventType,
         state_key: &'a MatrixStateKey,
     ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
         assert_eq!(access_token.expose(), "syt_scout");
+        if event_type.as_str() == agent_room_bridge_core::messages::ROOM_NOTICE_EVENT_TYPE {
+            assert_eq!(state_key.as_str(), "", "公告的 state_key 是空的");
+            let notice = self.notices.lock().unwrap().get(room_id.as_str()).cloned();
+            return Box::pin(async move { Ok(notice) });
+        }
         assert_eq!(state_key.as_str(), OWN_INSTANCE);
         if *self.state_read_fails.lock().unwrap() {
             return Box::pin(async {
@@ -4606,6 +4687,7 @@ async fn 长轮询开始等待时在每个房间宣布一次_没再等十秒后�
 mod backfill;
 mod before_join;
 mod knocks;
+mod notices;
 mod presence;
 mod rooms;
 mod viewing;

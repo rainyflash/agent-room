@@ -2,6 +2,9 @@
 //! 移出进来的 Agent；Agent 凭口令或经放行以“Agent 成员”身份加入。口令和敲门不改变任何人的成员资格，
 //! 只决定 Agent 能否入场（`specs/network-agents/knock.md`）。口令封存后存着，管理者能再看到
 //! （`specs/network-agents/code-first.md`）。
+//!
+//! 公开房间（`specs/public-rooms/design.md` 第 5 步）：直接进的房间敲门就直接放进来，要申请的敲门等放行；
+//! 只能邀请的、房主关了“没有账号的网络 Agent”的拿房间号进不来，口令照旧能用。
 
 use std::{fmt::Write as _, sync::Arc};
 
@@ -13,6 +16,7 @@ use agent_room_domain::{
         PrivateRoomJoinCode,
     },
     private_rooms::{PrivateRoomMembershipStatus, PrivateRoomPermissions},
+    room_listing::RoomJoinMode,
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
@@ -25,8 +29,9 @@ use crate::{
         AgentMembershipRepository, Clock, JoinCodeAttemptPolicy, JoinCodeSealer, MatrixFailure,
         MatrixFailureKind, MatrixRoomId, NetworkSourceWeights, PortFuture,
         PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord,
-        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomMatrixGateway,
-        PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
+        PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomListingStore,
+        PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
+        PublicRoomPlatformHoldStore, SecretFactory,
     },
 };
 
@@ -49,6 +54,8 @@ pub enum AgentAccessFailureKind {
     Internal,
     /// 房间有口令，可管理者看不到：封存之前生成的只有摘要，或者这台服务器没配封存密钥。
     NotRevealable,
+    /// 只能邀请的公开房间，或者房主关了“没有账号的网络 Agent”：拿房间号进不来，要管理者给口令。
+    ClosedToNetworkAgents,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +161,15 @@ pub enum KnockResult {
     Declined(PrivateRoomAgentKnockRecord),
 }
 
+/// 拿房间号来时这间房怎么进。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnockEntry {
+    /// 私密的房间、要申请的公开房间：敲门，等管理者放行。
+    Knock,
+    /// 直接进的公开房间：敲门就直接放进来，和公共大厅一样算进来的名额。
+    Open,
+}
+
 /// 管理者对一次敲门的回答：放行或不让进。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnswerKnock {
@@ -216,11 +232,13 @@ pub trait PrivateRoomAgentAccessUseCases: Send + Sync {
 
     fn redeem(&self, request: RedeemJoinCode) -> PortFuture<'_, AgentAccessResult<RedeemedRoom>>;
 
-    /// 房间号对应的私人房间在使用中、收 Agent。敲门之前先核对，房间不对时什么都不建。
-    fn knockable(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>>;
+    /// 房间号对应的私人房间在使用中、收 Agent。敲门之前先核对，房间不对时什么都不建；回答是敲门
+    /// 等放行，还是直接进的公开房间。
+    fn knockable(&self, catalog_id: RoomCatalogId)
+    -> PortFuture<'_, AgentAccessResult<KnockEntry>>;
 
-    /// Agent 拿房间号敲门。已经是 Agent 成员的直接进；在等的再敲从现在重新算；以前没让进的不再
-    /// 打扰管理者；房间里在等的满了按限流回答。
+    /// Agent 拿房间号敲门。已经是 Agent 成员的直接进；直接进的公开房间直接放进来（被移出过的照旧
+    /// 敲门）；在等的再敲从现在重新算；以前没让进的不再打扰管理者；房间里在等的满了按限流回答。
     fn knock(&self, request: KnockOnRoom) -> PortFuture<'_, AgentAccessResult<KnockResult>>;
 
     /// 这个 Agent 一天以内敲过的门，不论结果，先敲的在前。
@@ -258,6 +276,9 @@ pub struct PrivateRoomAgentAccessDependencies {
     /// 网络 Agent 按来源计猜错次数，共享出口的上限乘上它的分量（`specs/launch-capacity/design.md`
     /// 第 13 步）。
     pub source_weights: Arc<dyn NetworkSourceWeights>,
+    /// 公开房间的设置和平台拿掉的记录：直接进的敲门就放进来，关了网络 Agent 的拿房间号进不来。
+    pub listings: Arc<dyn PrivateRoomListingStore>,
+    pub holds: Arc<dyn PublicRoomPlatformHoldStore>,
 }
 
 pub struct PrivateRoomAgentAccessService {
@@ -270,6 +291,8 @@ pub struct PrivateRoomAgentAccessService {
     clock: Arc<dyn Clock>,
     attempts: JoinCodeAttemptPolicy,
     source_weights: Arc<dyn NetworkSourceWeights>,
+    listings: Arc<dyn PrivateRoomListingStore>,
+    holds: Arc<dyn PublicRoomPlatformHoldStore>,
 }
 
 impl PrivateRoomAgentAccessService {
@@ -284,6 +307,8 @@ impl PrivateRoomAgentAccessService {
             clock: dependencies.clock,
             attempts: dependencies.attempts,
             source_weights: dependencies.source_weights,
+            listings: dependencies.listings,
+            holds: dependencies.holds,
         }
     }
 
@@ -494,12 +519,32 @@ impl PrivateRoomAgentAccessService {
             .ensure_can_register_instance(request.actor.account.principal.id())
             .map_err(|error| domain(OPERATION, &error))?;
         let snapshot = self.knock_target(request.catalog_id, OPERATION).await?;
+        let entry = self.knock_entry(&snapshot, OPERATION).await?;
         let member = self
             .access
             .agent_member(request.catalog_id, request.agent_id)
             .await
             .map_err(|error| repository(OPERATION, &error))?;
-        if member.is_some_and(|member| member.status == PrivateRoomAgentMemberStatus::Joined) {
+        if member
+            .as_ref()
+            .is_some_and(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
+        {
+            return Ok(KnockResult::Member(redeemed_room(&snapshot)));
+        }
+        // 直接进的公开房间：直接记成 Agent 成员。被移出过的照旧敲门，由管理者决定。
+        let removed =
+            member.is_some_and(|member| member.status == PrivateRoomAgentMemberStatus::Removed);
+        if entry == KnockEntry::Open && !removed {
+            self.access
+                .admit_agent(
+                    request.catalog_id,
+                    request.agent_id,
+                    PrivateRoomPermissions::AGENT_MEMBER,
+                    PrivateRoomAgentJoinedVia::Knock,
+                    now,
+                )
+                .await
+                .map_err(|error| repository(OPERATION, &error))?;
             return Ok(KnockResult::Member(redeemed_room(&snapshot)));
         }
         let expires_at = UtcMillis::new(now.value().saturating_add(AGENT_KNOCK_TTL_MILLIS))
@@ -611,6 +656,48 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?;
         Ok(())
+    }
+
+    /// 拿房间号来时怎么进。私密的照旧敲门；公开着的照房主的设置：只能邀请的、关了没有账号的网络
+    /// Agent 的拿房间号进不来（只能用口令），要申请的敲门，直接进的直接进。平台从目录里拿掉的不直接
+    /// 放进来，敲门等管理者。
+    async fn knock_entry(
+        &self,
+        snapshot: &PrivateRoomSnapshot,
+        operation: &'static str,
+    ) -> AgentAccessResult<KnockEntry> {
+        let catalog_id = snapshot.catalog().id();
+        let Some(listing) = self
+            .listings
+            .listing(catalog_id)
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .filter(|listing| listing.settings.listed())
+        else {
+            return Ok(KnockEntry::Knock);
+        };
+        let closed = !listing.settings.allow_network_agents()
+            || listing.settings.join_mode() == RoomJoinMode::InviteOnly;
+        if closed {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::ClosedToNetworkAgents,
+            ));
+        }
+        if listing.settings.join_mode() == RoomJoinMode::Request {
+            return Ok(KnockEntry::Knock);
+        }
+        let held = self
+            .holds
+            .platform_hold(catalog_id)
+            .await
+            .map_err(|error| repository(operation, &error))?
+            .is_some();
+        Ok(if held {
+            KnockEntry::Knock
+        } else {
+            KnockEntry::Open
+        })
     }
 
     /// 敲门的房间：使用中的私人房间。不存在、不是私人房间、已归档的都说找不到，不说是哪一种。
@@ -792,11 +879,14 @@ impl PrivateRoomAgentAccessUseCases for PrivateRoomAgentAccessService {
         Box::pin(self.redeem_internal(request))
     }
 
-    fn knockable(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>> {
+    fn knockable(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, AgentAccessResult<KnockEntry>> {
         Box::pin(async move {
-            self.knock_target(catalog_id, "private_room.agent_knock.check")
-                .await
-                .map(|_| ())
+            const OPERATION: &str = "private_room.agent_knock.check";
+            let snapshot = self.knock_target(catalog_id, OPERATION).await?;
+            self.knock_entry(&snapshot, OPERATION).await
         })
     }
 

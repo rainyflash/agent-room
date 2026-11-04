@@ -133,12 +133,7 @@ impl NetworkSources {
     /// 来源地址按 UTC 日加盐后的摘要。共享出口里的地址都算成同一个来源。
     pub(crate) fn digest(&self, headers: &HeaderMap, utc_day: i64) -> [u8; 32] {
         let address = forwarded_address(headers);
-        let shared = address.and_then(|address| {
-            self.shared
-                .iter()
-                .find(|source| source.ranges.iter().any(|range| range.contains(address)))
-        });
-        let Some(shared) = shared else {
+        let Some(shared) = shared_source_of(&self.shared, address) else {
             return self
                 .digester
                 .digest(&address_source(address), &utc_day.to_string());
@@ -164,6 +159,24 @@ impl NetworkSourceWeights for NetworkSources {
             .get(source)
             .map_or(1, |(_, weight)| *weight)
     }
+}
+
+/// 不按天加盐的来源和它的分量：共享出口里的地址都算成 `shared:<名字>`、带上它的分量，别的照
+/// [`address_source`]、分量是 1。不要登录的发现页和分享页在内存里按它限流
+/// （`features/anonymous_limits.rs`）。
+pub(crate) fn source_label(shared: &[SharedSource], headers: &HeaderMap) -> (String, u32) {
+    let address = forwarded_address(headers);
+    match shared_source_of(shared, address) {
+        Some(source) => (format!("shared:{}", source.name), source.weight),
+        None => (address_source(address), 1),
+    }
+}
+
+fn shared_source_of(shared: &[SharedSource], address: Option<IpAddr>) -> Option<&SharedSource> {
+    let address = address?;
+    shared
+        .iter()
+        .find(|source| source.ranges.iter().any(|range| range.contains(address)))
 }
 
 /// IPv6 按 /64 归并：同一网段里换地址绕不过限流。取不到地址时所有这类请求共用一个来源（只在本地

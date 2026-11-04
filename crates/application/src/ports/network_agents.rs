@@ -522,6 +522,20 @@ pub struct NetworkAgentInboxAppend {
     /// 这一批里看到它加入、加入之前又有解不开的加密消息的房间。这一段记在这个房间之后第一条
     /// 进收件箱的消息上（这一批没有就等下一批），每次加入只说一次。
     pub undecryptable_before_join: Vec<NetworkAgentBeforeJoinGap>,
+    /// 这一批里看到的房间公告，每个房间最新的一版。只记比记着的新的：重新同步到同一版不算改。
+    pub room_notices: Vec<NetworkAgentRoomNotice>,
+}
+
+/// 房间的常驻公告（`specs/public-rooms/design.md`“常驻公告”）：房主和管理员写的这间房的规矩。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentRoomNotice {
+    pub room_id: MatrixRoomId,
+    /// 公告正文；撤掉了没有。
+    pub text: Option<String>,
+    /// 改的人在 Matrix 上的 ID。
+    pub updated_by: String,
+    /// 改的时间（Unix 毫秒）：按它认哪一版新、交过的是哪一版。
+    pub updated_at_ms: i64,
 }
 
 /// 刚进的房间里，加入之前有一段它解不开。
@@ -598,6 +612,23 @@ pub trait NetworkAgentInboxStore: Send + Sync {
         event_id: &'a MatrixEventId,
         room: Option<&'a MatrixRoomId>,
     ) -> PortFuture<'a, RepositoryResult<NetworkAgentAckOutcome>>;
+
+    /// 交一批消息时拿房间公告改了的那一版，记成交过了：从没交过的（撤掉的不算），或者交过以后
+    /// 又改了的（撤掉也算）。给了 `room` 只看这个房间。一次最多 `limit` 个房间，剩下的下次再交。
+    fn take_room_notices<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomNotice>>>;
+
+    /// 进房间时交了这一版：记下它（不比记着的旧时），也记成交过了，之后同步到同一版不再交。
+    /// 它不在这个房间里时什么都不记。
+    fn give_room_notice<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        notice: &'a NetworkAgentRoomNotice,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
 
     /// 删掉所有网络 Agent 过了房间保留期的收件箱和消息记录，按消息发出的时间算（之前存的没记，
     /// 按收到的时间）。没确认就删掉的计进它的丢弃条数。返回一共删了几条。

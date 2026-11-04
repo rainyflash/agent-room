@@ -14,8 +14,8 @@ use agent_room_application::{
         NetworkAgentInboxChange, NetworkAgentInboxMessage, NetworkAgentInboxPage,
         NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentMessageActor,
         NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
-        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomRecord,
-        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomNotice,
+        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
         NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
@@ -1034,6 +1034,166 @@ async fn 补不回来的一段记在后面那条上_读收件箱时一起给_确
         page.entries[0].gaps.is_empty(),
         "带着它的那条确认了，这一段也就交过了"
     );
+    database.close().await;
+}
+
+/// 网络 Agent 在 den 和默认大厅里；`elsewhere` 是它不在的房间。
+async fn in_two_rooms(
+    database: &TestDatabase,
+    repositories: &PostgresRepositories,
+) -> NetworkAgentId {
+    let provisioning = provisioning(&unique_name("Reader"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let id = provisioning.id;
+    let catalog = default_lobby(&database.runtime).await;
+    for room in [den(), lobby()] {
+        repositories
+            .record_room(id, &room_record(catalog, room.as_str(), time(10)))
+            .await
+            .expect("记房间");
+    }
+    id
+}
+
+fn room_notice(room: &MatrixRoomId, text: Option<&str>, at_ms: i64) -> NetworkAgentRoomNotice {
+    NetworkAgentRoomNotice {
+        room_id: room.clone(),
+        text: text.map(str::to_owned),
+        updated_by: "@owner:matrix.test".to_owned(),
+        updated_at_ms: at_ms,
+    }
+}
+
+/// 同步到这几版公告：`expected` 到 `next`。
+async fn sync_notices(
+    repositories: &PostgresRepositories,
+    id: NetworkAgentId,
+    (expected, next): (Option<&str>, &str),
+    notices: Vec<NetworkAgentRoomNotice>,
+) {
+    let mut synced = append(id, expected, next, Vec::new(), 10);
+    synced.room_notices = notices;
+    repositories.append(&synced).await.expect("写入");
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 同步到的公告交一次_同一版和晚到的旧版不算改_撤掉也交一次() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let id = in_two_rooms(&database, &repositories).await;
+    let elsewhere = MatrixRoomId::new("!elsewhere:matrix.test").expect("房间 ID 有效");
+    let rule = room_notice(&den(), Some("只在被点名时说话。"), 100);
+    // 不在的房间不记；从没交过公告的房间撤掉了不说。
+    sync_notices(
+        &repositories,
+        id,
+        (None, "s1"),
+        vec![
+            rule.clone(),
+            room_notice(&lobby(), None, 100),
+            room_notice(&elsewhere, Some("别处的"), 100),
+        ],
+    )
+    .await;
+    assert_eq!(
+        repositories
+            .take_room_notices(id, None, 4)
+            .await
+            .expect("读"),
+        std::slice::from_ref(&rule)
+    );
+    assert!(
+        repositories
+            .take_room_notices(id, None, 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+
+    // 从头同步又给了同一版、晚到了一版旧的：都不算改。
+    sync_notices(&repositories, id, (Some("s1"), "s2"), vec![rule]).await;
+    sync_notices(
+        &repositories,
+        id,
+        (Some("s2"), "s3"),
+        vec![room_notice(&den(), Some("旧的"), 50)],
+    )
+    .await;
+    assert!(
+        repositories
+            .take_room_notices(id, None, 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+
+    // 撤掉交一次；只看别的房间时不交这个房间的。
+    let removed = room_notice(&den(), None, 200);
+    sync_notices(&repositories, id, (Some("s3"), "s4"), vec![removed.clone()]).await;
+    assert!(
+        repositories
+            .take_room_notices(id, Some(&lobby()), 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+    assert_eq!(
+        repositories
+            .take_room_notices(id, Some(&den()), 4)
+            .await
+            .expect("读"),
+        [removed]
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 进房间时交了的那一版之后同步到不再交_改了再交_一次最多几个房间() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let id = in_two_rooms(&database, &repositories).await;
+    let short = room_notice(&den(), Some("回复要短。"), 300);
+    repositories
+        .give_room_notice(id, &short)
+        .await
+        .expect("写入");
+    sync_notices(&repositories, id, (None, "s1"), vec![short]).await;
+    // 晚到的旧版进房间时读到也不改回去。
+    repositories
+        .give_room_notice(id, &room_notice(&den(), Some("更旧的"), 250))
+        .await
+        .expect("写入");
+    assert!(
+        repositories
+            .take_room_notices(id, None, 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+
+    let changed = room_notice(&den(), Some("回复要短，用中文。"), 400);
+    let lobby_rule = room_notice(&lobby(), Some("在大厅里少说话。"), 400);
+    sync_notices(
+        &repositories,
+        id,
+        (Some("s1"), "s2"),
+        vec![changed.clone(), lobby_rule.clone()],
+    )
+    .await;
+    let first = repositories
+        .take_room_notices(id, None, 1)
+        .await
+        .expect("读");
+    let second = repositories
+        .take_room_notices(id, None, 1)
+        .await
+        .expect("读");
+    assert_eq!(first.len(), 1, "一次最多给的那几个房间");
+    let mut both: Vec<_> = first.into_iter().chain(second).collect();
+    both.sort_by(|left, right| left.room_id.as_str().cmp(right.room_id.as_str()));
+    assert_eq!(both, [changed, lobby_rule], "剩下的下次再交");
     database.close().await;
 }
 
@@ -2372,9 +2532,10 @@ async fn seed_lobby(pool: &PgPool) -> (RoomCatalogId, RoomInstanceId, String) {
     let room_id = format!("!shard-{suffix}:matrix.test");
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
-              id, kind, slug, name, language, visibility, status, created_at, updated_at
+              id, kind, slug, name, language, visibility, status, end_to_end_encrypted,
+              created_at, updated_at
           ) VALUES (
-              $1, 'public_lobby', $2, '测试大厅', 'zh-CN', 'public', 'active',
+              $1, 'public_lobby', $2, '测试大厅', 'zh-CN', 'public', 'active', false,
               to_timestamp(1700000000), to_timestamp(1700000000)
           )",
     )
@@ -2624,6 +2785,7 @@ fn append(
         capacity,
         history_capacity: 500,
         undecryptable_before_join: Vec::new(),
+        room_notices: Vec::new(),
     }
 }
 

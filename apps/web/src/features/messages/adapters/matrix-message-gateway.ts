@@ -13,6 +13,12 @@ import {
   type MatrixMessageSource,
   type MatrixMessageTimelineEvent,
 } from './matrix-message-source';
+import { roomListingEventType } from './room-listing';
+import { matrixRosterPolicyEventType } from '@/features/lobby/adapters/matrix-lobby-source';
+import {
+  parseRoomNoticeChange,
+  roomNoticeEventType,
+} from '@/features/room-notice/domain/room-notice';
 import {
   messageProvenances,
   messageSensitivities,
@@ -24,6 +30,7 @@ import {
   type MessageRelation,
   type MessageRoomProjection,
   type ReadOnlyFederatedEvent,
+  type RoomNoticeChange,
   type MessageSignatureStatus,
   type RoomMessageSignal,
   type UndecryptableReason,
@@ -33,6 +40,16 @@ import { err, ok } from '@/shared/result';
 
 const MAX_PROJECTED_MESSAGES = 200;
 const MAX_PROJECTED_READ_ONLY_EVENTS = 50;
+const MAX_PROJECTED_NOTICE_CHANGES = 50;
+/**
+ * 我们自己写的房间状态：第一次公开的时间、公告、Agent 名册的设置。大厅和公告条从房间状态里读，
+ * 不是聊天记录，也不是看不懂的事件；公告另在对话里写一行。
+ */
+const ownRoomStateEventTypes = new Set([
+  roomListingEventType,
+  roomNoticeEventType,
+  matrixRosterPolicyEventType,
+]);
 const legacyMatrixAgentRoomEventNamespace = ['org', 'agentroom'].join('.');
 const uuidV7Schema = z
   .string()
@@ -385,6 +402,7 @@ function projectRoom(
   const pendingRevisions = new Map<string, ParsedRevision[]>();
   const moderationNotices = new Map<string, ParsedModerationNotice>();
   const readOnlyFederatedEvents: ReadOnlyFederatedEvent[] = [];
+  const noticeChanges: RoomNoticeChange[] = [];
   const undecryptable = new UndecryptableTally();
   const seenMatrixEventIds = new Set<string>();
 
@@ -441,6 +459,11 @@ function projectRoom(
       }
       continue;
     }
+    if (timelineEvent.stateKey !== undefined && ownRoomStateEventTypes.has(timelineEvent.type)) {
+      const change = parseNoticeChange(timelineEvent);
+      if (change !== null) noticeChanges.push(change);
+      continue;
+    }
     const readOnlyEvent = projectReadOnlyFederatedEvent(timelineEvent);
     if (readOnlyEvent !== null) {
       readOnlyFederatedEvents.push(readOnlyEvent);
@@ -466,6 +489,10 @@ function projectRoom(
     .slice(0, windowSize)
     .map(freezeMessage);
   const undecryptableSummary = undecryptable.summary();
+  const projectedNoticeChanges = noticeChangesWithin(
+    noticeChanges,
+    messages.size > windowSize ? projected.at(-1)?.serverTimestamp : undefined,
+  );
   return Object.freeze({
     ...(room.windowSize === undefined
       ? {}
@@ -473,6 +500,7 @@ function projectRoom(
           history: { canLoadMore: more && windowSize < 5000, limited: more && windowSize >= 5000 },
         }),
     messages: Object.freeze(projected),
+    ...(projectedNoticeChanges.length === 0 ? {} : { noticeChanges: projectedNoticeChanges }),
     observedAtUnixMs,
     readOnlyFederatedEvents: Object.freeze(
       readOnlyFederatedEvents
@@ -568,6 +596,49 @@ function projectReadOnlyFederatedEvent(
     sender: event.sender,
     serverTimestamp: event.serverTimestamp,
   });
+}
+
+/**
+ * 公告只认 `state_key` 为空的状态事件：同一个类型的普通事件谁都发得了，状态事件只有应用服务写得进
+ * （房间的 `state_default` 是管理员那一级），所以内容里写的改的人可以照着显示。
+ */
+function parseNoticeChange(event: MatrixMessageTimelineEvent): RoomNoticeChange | null {
+  if (
+    event.type !== roomNoticeEventType ||
+    event.stateKey !== '' ||
+    event.eventId === undefined ||
+    !validServerTimestamp(event.serverTimestamp)
+  ) {
+    return null;
+  }
+  const change = parseRoomNoticeChange(event.content);
+  if (change === undefined) return null;
+  return Object.freeze({
+    kind: change.kind,
+    matrixEventId: event.eventId,
+    serverTimestamp: event.serverTimestamp,
+    updatedBy: change.updatedBy,
+  });
+}
+
+/**
+ * 按时间先后，最多留最近的这么多次。消息多过窗口、最早的被截掉时，比留下的最早一条还早的改动也不要，
+ * 不然它们会堆在对话最前面，跟前后的话对不上。
+ */
+function noticeChangesWithin(
+  changes: readonly RoomNoticeChange[],
+  earliest: number | undefined,
+): readonly RoomNoticeChange[] {
+  return Object.freeze(
+    changes
+      .filter((change) => earliest === undefined || change.serverTimestamp >= earliest)
+      .toSorted(
+        (left, right) =>
+          left.serverTimestamp - right.serverTimestamp ||
+          left.matrixEventId.localeCompare(right.matrixEventId),
+      )
+      .slice(-MAX_PROJECTED_NOTICE_CHANGES),
+  );
 }
 
 function parseModerationNotice(event: MatrixMessageTimelineEvent): ParsedModerationNotice | null {

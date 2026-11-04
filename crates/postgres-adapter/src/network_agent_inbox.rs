@@ -9,6 +9,8 @@
 //! 房间之后第一条进收件箱的消息上；每次加入只说一次。
 //!
 //! 过了房间保留期的收件箱和消息记录，由定时清理按消息发出的时间删掉（`prune_expired`）。
+//!
+//! 房间公告也在同一次写入里记在房间上，交给 Agent 时记下交的是哪一版（见 `network_agent_notices.rs`）。
 
 use std::collections::HashSet;
 
@@ -19,7 +21,7 @@ use agent_room_application::{
         NetworkAgentGapReason, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMessageRetention,
-        NetworkAgentRoomRecord, NetworkAgentTimelineGap, PortFuture,
+        NetworkAgentRoomNotice, NetworkAgentRoomRecord, NetworkAgentTimelineGap, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -33,6 +35,7 @@ use crate::{
     PostgresRepositories,
     agents::corrupt_data,
     error::{map_domain_error, map_sqlx_error},
+    network_agent_notices,
 };
 
 impl PostgresRepositories {
@@ -202,6 +205,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
             before_join
                 .record_reported(&mut transaction, append, operation)
                 .await?;
+            network_agent_notices::record_synced(&mut transaction, append, operation).await?;
             let dropped = trim_to_capacity(&mut transaction, append, operation).await?;
             trim_history(&mut transaction, append, operation).await?;
             sqlx::query(
@@ -298,6 +302,23 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                 NetworkAgentAckOutcome::NotPending { pending }
             })
         })
+    }
+
+    fn take_room_notices<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomNotice>>> {
+        Box::pin(network_agent_notices::take(self.pool(), id, room, limit))
+    }
+
+    fn give_room_notice<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        notice: &'a NetworkAgentRoomNotice,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(network_agent_notices::give(self.pool(), id, notice))
     }
 
     fn prune_expired(

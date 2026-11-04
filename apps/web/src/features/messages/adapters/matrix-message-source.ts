@@ -57,6 +57,8 @@ export type MatrixMessageTimelineEvent = {
   readonly eventId: string | undefined;
   readonly sender: string | undefined;
   readonly serverTimestamp: number;
+  /** 状态事件才有。同一个类型的普通事件谁都发得了，状态事件要管理员那一级，读的时候要分开。 */
+  readonly stateKey?: string;
   readonly type: string;
 };
 
@@ -523,12 +525,14 @@ function isNamespacedEvent(eventType: string, namespace: string): boolean {
 }
 
 function toTimelineEvent(event: MatrixEvent): MatrixMessageTimelineEvent {
+  const stateKey = event.getStateKey();
   return Object.freeze({
     content: event.getContent(),
     endToEndEncrypted: event.isEncrypted(),
     eventId: event.getId(),
     sender: event.getSender(),
     serverTimestamp: event.getTs(),
+    ...(stateKey === undefined ? {} : { stateKey }),
     type: event.getType(),
   });
 }

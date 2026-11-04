@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 agent-room-application.workspace = true
 agent-room-domain.workspace = true
+chrono.workspace = true
 futures-util.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true

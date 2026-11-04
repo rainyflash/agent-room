@@ -60,6 +60,10 @@ impl IpcProtocolVersion {
     /// 接受 4.4：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不会发这两个方法。新版客户端
     /// 只报 4.5，碰上旧 Bridge 握手时就说清版本不兼容。
     pub const V4_5: Self = Self { major: 4, minor: 5 };
+    /// 4.6：找公开房间（`ListPublicRooms`，`specs/public-rooms/design.md` 5c）、读房间的常驻公告
+    /// （`ReadRoomNotices`，6c）和照主人给的管理授权管房间（`ModerateRoom`，7c）。Bridge 同时接受
+    /// 4.4 和 4.5：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不会发这几个方法。
+    pub const V4_6: Self = Self { major: 4, minor: 6 };
 
     /// 构造本地 IPC 协议版本。
     ///

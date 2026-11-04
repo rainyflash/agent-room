@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 64] = [
+const EXPECTED_TABLES: [&str; 69] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -86,6 +86,8 @@ const EXPECTED_TABLES: [&str; 64] = [
     "matrix_projection_cursor",
     "matrix_projection_event_receipt",
     "moderation_action",
+    "moderation_action_agent",
+    "moderation_action_agent_reversal",
     "moderation_case",
     "moderation_operator",
     "moderation_report_rate",
@@ -98,21 +100,24 @@ const EXPECTED_TABLES: [&str; 64] = [
     "network_agent_secret",
     "network_agent_submission",
     "oidc_login_attempt",
-    "outbox_event",
     "principal",
     "principal_encryption_key",
     "private_room_agent_knock",
     "private_room_agent_member",
     "private_room_invite_link",
     "private_room_join_code",
+    "private_room_join_request",
+    "private_room_listing",
     "private_room_membership",
     "private_room_state",
+    "public_room_platform_hold",
     "reception_execution",
     "revoked_agent_departure",
     "room_capacity_reservation",
     "room_catalog_entry",
     "room_instance",
     "room_membership_projection",
+    "room_moderation_grant",
     "room_provisioning_job",
     "web_session",
 ];
@@ -192,6 +197,84 @@ async fn 迁移可重复执行且运行时角色没有建表权限() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房间目录记着加不加密_公共大厅不能记成加密的() {
+    let database = TestDatabase::connect().await;
+
+    let default_lobby_encrypted: bool = sqlx::query_scalar(
+        "SELECT end_to_end_encrypted FROM agent_room.room_catalog_entry \
+         WHERE id = '01a04772-3804-72f9-b1cd-51ca3f730b3d'::uuid",
+    )
+    .fetch_one(&database.runtime)
+    .await
+    .expect("应能读取默认公共大厅");
+    assert!(!default_lobby_encrypted, "公共大厅不加密");
+
+    // 在事务里试，看完就回滚，别的测试看不到这两条。
+    let mut transaction = database.runtime.begin().await.expect("应能开启显式事务");
+    // 没写加密标记的按加密的算：回滚到上一版时，旧代码建的私人房间和私聊都是加密的。
+    // 私聊要有主人。
+    let owner = PrincipalId::from_uuid(Uuid::now_v7());
+    sqlx::query(
+        "INSERT INTO agent_room.principal (\
+            id, oidc_issuer, oidc_subject, matrix_user_id, display_name, locale,\
+            status, created_at, updated_at, version\
+         ) VALUES ($1, 'https://issuer.test', $2, $3, '加密标记测试主体', 'zh-CN',\
+            'active', clock_timestamp(), clock_timestamp(), 0)",
+    )
+    .bind(owner.as_uuid())
+    .bind(format!("subject-{owner}"))
+    .bind(format!("@encryption-{owner}:matrix.agent-room.localhost"))
+    .execute(&mut *transaction)
+    .await
+    .expect("测试主体写入应成功");
+    let direct_encrypted: bool = sqlx::query_scalar(
+        "INSERT INTO agent_room.room_catalog_entry ( \
+             id, kind, name, visibility, status, owner_principal_id, created_at, updated_at \
+         ) VALUES ($1, 'direct', '加密标记测试私聊', 'private', 'archived', $2, \
+                   statement_timestamp(), statement_timestamp()) \
+         RETURNING end_to_end_encrypted",
+    )
+    .bind(Uuid::now_v7())
+    .bind(owner.as_uuid())
+    .fetch_one(&mut *transaction)
+    .await
+    .expect("私聊目录写入应成功");
+    assert!(direct_encrypted);
+
+    let error = sqlx::query(
+        "INSERT INTO agent_room.room_catalog_entry ( \
+             id, kind, name, visibility, status, created_at, updated_at \
+         ) VALUES ($1, 'public_lobby', '加密标记测试大厅', 'unlisted', 'archived', \
+                   statement_timestamp(), statement_timestamp())",
+    )
+    .bind(Uuid::now_v7())
+    .execute(&mut *transaction)
+    .await
+    .expect_err("没写 false 的公共大厅必须被约束拒绝");
+    assert_eq!(database_code(&error).as_deref(), Some("23514"));
+    transaction.rollback().await.expect("显式回滚应成功");
+
+    database.close().await;
+}
+
+/// 刚建好的账户导出得出来，申请和管理授权都还是空的。
+async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: PrincipalId) {
+    let exported = AccountDeletionRepository::export(repositories, principal_id, test_time())
+        .await
+        .expect("账户导出应成功")
+        .expect("活动账户必须存在");
+    assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
+    assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
+    assert_eq!(exported.data["moderationGrants"], serde_json::json!([]));
+    assert_eq!(exported.data["agentModerationNotes"], serde_json::json!([]));
+    assert_eq!(
+        exported.data["agentModerationReversalNotes"],
+        serde_json::json!([])
+    );
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 账户导出与删除状态机在真实事务中完成() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -200,11 +283,7 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     PrincipalRepository::create(&repositories, &registration)
         .await
         .expect("主体创建应成功");
-    let exported = AccountDeletionRepository::export(&repositories, principal_id, test_time())
-        .await
-        .expect("账户导出应成功")
-        .expect("活动账户必须存在");
-    assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
+    assert_fresh_export(&repositories, principal_id).await;
 
     store_encryption_key_twice(&repositories, principal_id).await;
 

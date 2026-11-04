@@ -558,7 +558,7 @@ async fn inspect_send_authority(
     request: &AutomationSendAuthorityRequest,
 ) -> RepositoryResult<Option<AutomationSendAuthority>> {
     let row = sqlx::query(
-        r"SELECT agent.matrix_user_id, catalog.kind
+        r"SELECT agent.matrix_user_id, catalog.kind, catalog.end_to_end_encrypted
           FROM agent_room.principal AS principal
           JOIN agent_room.device AS device
             ON device.id = $2
@@ -632,6 +632,8 @@ async fn inspect_send_authority(
         let matrix_user_id: String =
             decode_column(&row, "matrix_user_id", "automation_authority.send")?;
         let kind: String = decode_column(&row, "kind", "automation_authority.send")?;
+        let end_to_end_encrypted: bool =
+            decode_column(&row, "end_to_end_encrypted", "automation_authority.send")?;
         Ok(AutomationSendAuthority {
             agent_matrix_user_id: MatrixUserId::new(matrix_user_id).map_err(|_| {
                 RepositoryError::new(
@@ -640,8 +642,7 @@ async fn inspect_send_authority(
                 )
             })?,
             contains_unknown_recipients: kind != "private_room",
-            // 只有公共大厅不加密；私人房间和私聊建房时就开了端到端加密。
-            end_to_end_encrypted: kind != "public_lobby",
+            end_to_end_encrypted,
         })
     })
     .transpose()

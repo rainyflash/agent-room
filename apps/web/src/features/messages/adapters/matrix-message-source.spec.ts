@@ -136,6 +136,18 @@ describe('MatrixSdkMessageSource', () => {
     expect(room.history().live.events).not.toContain(ordinary);
   });
 
+  it('状态事件带着 state_key 交出去，普通事件不带：同类型的两种要分得开', () => {
+    const noticeType = 'io.github.rainyflash.agentroom.room.notice.v1';
+    const state = new FakeEvent(noticeType, '$state', 10, { stateKey: '' }).asEvent();
+    const plain = new FakeEvent(noticeType, '$plain', 20).asEvent();
+    const { source } = harness(new FakeRoom([state, plain]));
+
+    expect(snapshot(source.read(ROOM_ID)).timelineEvents).toEqual([
+      { ...timelineEvent(noticeType, '$state', 10), stateKey: '' },
+      timelineEvent(noticeType, '$plain', 20),
+    ]);
+  });
+
   it('往回翻页的过滤器排除在线状态，并按线上类型留下解密失败的加密事件', async () => {
     const room = new FakeRoom([]);
     const { source } = harness(room);
@@ -677,20 +689,30 @@ class FakeEvent {
   readonly #content: { readonly eventType: string };
   readonly #roomId: string;
   readonly #serverTimestamp: number;
+  readonly #stateKey: string | undefined;
   readonly #wireType: string;
 
   constructor(
     type: string,
     eventId: string,
     serverTimestamp: number,
-    options: { readonly roomId?: string; readonly wireType?: string } = {},
+    options: {
+      readonly roomId?: string;
+      readonly stateKey?: string;
+      readonly wireType?: string;
+    } = {},
   ) {
     this.type = type;
     this.eventId = eventId;
     this.#serverTimestamp = serverTimestamp;
     this.#roomId = options.roomId ?? ROOM_ID;
+    this.#stateKey = options.stateKey;
     this.#wireType = options.wireType ?? type;
     this.#content = { eventType: type };
+  }
+
+  getStateKey(): string | undefined {
+    return this.#stateKey;
   }
 
   decryptAs(type: string): void {

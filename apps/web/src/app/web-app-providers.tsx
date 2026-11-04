@@ -47,6 +47,7 @@ import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
 import { ControlPlanePublicRoomDirectoryClient } from '@/features/room-directory/adapters/control-plane-public-room-directory-client';
 import { ControlPlanePublicWatchClient } from '@/features/public-watch/adapters/control-plane-public-watch-client';
+import { ControlPlaneExploreClient } from '@/features/explore/adapters/control-plane-explore-client';
 import { ControlPlaneAccessManagementClient } from '@/features/security/adapters/control-plane-access-management-client';
 import { MatrixSdkSecurityGateway } from '@/features/security/adapters/matrix-sdk-security-gateway';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
@@ -221,11 +222,13 @@ export function createCloudRuntime(
     new MatrixSdkDirectSessionGateway(matrixClients),
     new BrowserDirectBlockRegistry(window.localStorage),
   );
+  const moderation = new ControlPlaneModerationClient(businessApi);
   const services: AppServices = {
     account: new ControlPlaneAccountClient(businessApi),
     receptionOwnership: new ReceptionOwnershipClient(businessApi),
     accessManagement: new ControlPlaneAccessManagementClient(businessApi),
     agentDirectory: new ControlPlaneAgentDirectoryClient(businessApi),
+    agentModeration: moderation,
     agentPresence,
     agentRosterPolicy: new ControlPlaneAgentRosterPolicy(businessApi.baseUrl, businessApi.fetch),
     automation: new ControlPlaneAutomationGrantClient(businessApi),
@@ -236,6 +239,11 @@ export function createCloudRuntime(
     directSessionCoordinator,
     directSessions,
     deviceSigning,
+    // 发现页不登录也能看：和围观页一样不放进登录范围。
+    explore: new ControlPlaneExploreClient({
+      baseUrl: config.controlPlaneUrl,
+      fetch: controlPlaneFetch,
+    }),
     handoffs: new ControlPlaneHandoffGateway(businessApi),
     lobby,
     lobbyEntry,
@@ -243,10 +251,14 @@ export function createCloudRuntime(
     messagePublisher,
     messages,
     messageTranslation: new BrowserMachineTranslationGateway(),
-    moderation: new ControlPlaneModerationClient(businessApi),
+    moderation,
     privateRoomMatrix: new MatrixSdkPrivateRoomGateway(matrixClients),
     privateRooms,
     privateRoomInvites: privateRooms,
+    privateRoomListings: privateRooms,
+    roomNotices: privateRooms,
+    publicRoomEntry: privateRooms,
+    publicRoomJoins: privateRooms,
     // 不登录也能看：不放进登录范围，没登录的人打开别的页面时清理登录状态也不会中止它。
     publicWatch: new ControlPlanePublicWatchClient({
       baseUrl: config.controlPlaneUrl,

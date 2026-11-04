@@ -3,12 +3,20 @@
 //!
 //! 加入时间只认亲眼看到的加入：成员状态从别的变成 `join` 的那条事件。改昵称、换头像也是一条
 //! `join` 事件，靠它的上一个成员状态区分；分不清时宁可不记，读消息时就不标。
+//!
+//! 房间的常驻公告（`room.notice.v1`，`specs/public-rooms/design.md`“常驻公告”）也从这里挑出来，
+//! 记下以后进房间、改了以后等消息时交给 Agent。
 
 use agent_room_application::ports::{
     MatrixRoomId, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch,
     MatrixTimelineEvent,
 };
+use agent_room_domain::room_notices::RoomNoticeText;
+use chrono::DateTime;
 use serde_json::Value;
+
+/// 房间公告的状态事件类型，由控制面以应用服务写。
+pub const ROOM_NOTICE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.room.notice.v1";
 
 /// 一个房间这段同步里的变化。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +26,19 @@ pub struct RoomStateChange {
     pub name: Option<RoomName>,
     /// 自己的成员状态变了。
     pub membership: Option<OwnMembership>,
+    /// 这段同步里看到的公告（最新的那一版）；没看到就没有。
+    pub notice: Option<RoomNotice>,
+}
+
+/// 房间的常驻公告，某一版。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomNotice {
+    /// 公告正文；撤掉了是 `None`。
+    pub text: Option<String>,
+    /// 改的人在 Matrix 上的 ID。
+    pub updated_by: String,
+    /// 改的时间（Unix 毫秒），按它分新旧。
+    pub updated_at_ms: i64,
 }
 
 /// 房间名变成了什么。
@@ -51,6 +72,7 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
         room_id: room.room_id().clone(),
         name: None,
         membership: None,
+        notice: None,
     };
     match room.kind() {
         MatrixRoomSyncKind::Joined => {}
@@ -76,10 +98,39 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
                     change.membership = Some(membership);
                 }
             }
+            ROOM_NOTICE_EVENT_TYPE if event.state_key() == Some("") => {
+                if let Some(notice) = room_notice(event.content()) {
+                    change.notice = Some(notice);
+                }
+            }
             _ => {}
         }
     }
-    (change.name.is_some() || change.membership.is_some()).then_some(change)
+    (change.name.is_some() || change.membership.is_some() || change.notice.is_some())
+        .then_some(change)
+}
+
+/// 读一条公告状态事件的内容；读不出来的不算一版。调用方只认状态事件（`state_key` 为空）：私人房间
+/// 和公开房间的 `state_default` 是管理员那一级，只有应用服务写得进，所以不另外核对发送者。网关
+/// 进房间时直接读房间状态，也用它。
+#[must_use]
+pub fn room_notice(content: &Value) -> Option<RoomNotice> {
+    if content.get("eventType").and_then(Value::as_str) != Some(ROOM_NOTICE_EVENT_TYPE) {
+        return None;
+    }
+    let text = RoomNoticeText::parse(content.get("text")?.as_str()?).ok()?;
+    let updated_by = content.get("updatedBy")?.as_str()?;
+    if !updated_by.starts_with('@') || updated_by.len() > 255 {
+        return None;
+    }
+    let updated_at_ms = DateTime::parse_from_rfc3339(content.get("updatedAt")?.as_str()?)
+        .ok()?
+        .timestamp_millis();
+    Some(RoomNotice {
+        text: (!text.is_removal()).then(|| text.as_str().to_owned()),
+        updated_by: updated_by.to_owned(),
+        updated_at_ms,
+    })
 }
 
 fn room_name(content: &Value) -> RoomName {
@@ -153,7 +204,66 @@ mod tests {
             room_id: MatrixRoomId::new(ROOM).unwrap(),
             name,
             membership,
+            notice: None,
         }
+    }
+
+    fn notice_state(text: &str, updated_at: &str, at: u64) -> MatrixTimelineEvent {
+        state(
+            super::ROOM_NOTICE_EVENT_TYPE,
+            "",
+            json!({
+                "schemaVersion": "1.0",
+                "eventType": super::ROOM_NOTICE_EVENT_TYPE,
+                "text": text,
+                "updatedBy": "@owner:matrix.test",
+                "updatedAt": updated_at,
+            }),
+            at,
+        )
+    }
+
+    #[test]
+    fn 公告认最新的一版_撤掉的没有正文_读不出来和不是状态的不算() {
+        let notices = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![
+                notice_state(
+                    " 只在被点名时说话。\n回复要短。 ",
+                    "2026-11-03T08:00:00.000Z",
+                    1_000,
+                ),
+                notice_state("改过的", "2026-11-03T09:00:00.500+08:00", 2_000),
+            ],
+        );
+        let [change] = room_state_changes(&notices, ME).try_into().unwrap();
+        assert_eq!(
+            change.notice,
+            Some(super::RoomNotice {
+                text: Some("改过的".to_owned()),
+                updated_by: "@owner:matrix.test".to_owned(),
+                updated_at_ms: 1_793_667_600_500,
+            })
+        );
+        let removed = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![notice_state("  ", "2026-11-03T10:00:00Z", 3_000)],
+        );
+        let [change] = room_state_changes(&removed, ME).try_into().unwrap();
+        assert_eq!(change.notice.and_then(|notice| notice.text), None);
+
+        let ignored = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![
+                // 回车不收，和网页、控制面一样。
+                notice_state("一\r二", "2026-11-03T10:00:00Z", 4_000),
+                notice_state("时间不对", "yesterday", 5_000),
+                state(super::ROOM_NOTICE_EVENT_TYPE, "other", json!({}), 6_000),
+                // 撤回以后内容是空的。
+                state(super::ROOM_NOTICE_EVENT_TYPE, "", json!({}), 7_000),
+            ],
+        );
+        assert!(room_state_changes(&ignored, ME).is_empty());
     }
 
     #[test]

@@ -18,8 +18,9 @@ use agent_room_application::{
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
         AgentAccessView, AnswerKnock, GeneratedJoinCode, InspectAgentAccess, JoinCodeCaller,
-        KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomActor, PrivateRoomAgentAccessUseCases,
-        RedeemJoinCode, RedeemedRoom, RemoveAgentMember, ResolveJoinCode,
+        KnockEntry, KnockOnRoom, KnockResult, ManageJoinCode, PrivateRoomActor,
+        PrivateRoomAgentAccessUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember,
+        ResolveJoinCode,
     },
 };
 use agent_room_domain::{
@@ -195,7 +196,10 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         })
     }
 
-    fn knockable(&self, _catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>> {
+    fn knockable(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, AgentAccessResult<KnockEntry>> {
         unreachable!("敲门由网络 Agent 的接口做")
     }
 

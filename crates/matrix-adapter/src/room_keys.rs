@@ -2,8 +2,9 @@
 //!
 //! 人的设备因为缺密钥解不开 Agent 的消息时，会经 Olm 发来 `room_keys.request.v1`
 //! （设计见 `specs/room-key-recovery/design.md`）。这里核对请求设备由主人交叉签名、此刻在
-//! 房间里、房间历史可见性是 `shared` 或 `world_readable`，再把点名的、由这台设备建的会话导出来，
-//! 只发回请求的那台设备。任何一条不满足都不回答，只记调试日志，免得被人用来探测。
+//! 房间里、房间历史可见性是 `shared` 或 `world_readable`、不是房间公开以后才进来的
+//! （`room_listing`），再把点名的、由这台设备建的会话导出来，只发回请求的那台设备。
+//! 任何一条不满足都不回答，只记调试日志，免得被人用来探测。
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
@@ -36,7 +37,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use uuid::{Uuid, Variant};
 
-use crate::room_key_requests::RoomKeyRequester;
+use crate::{room_key_requests::RoomKeyRequester, room_listing::joined_after_listing};
 
 pub(crate) const ROOM_KEY_REQUEST_EVENT_TYPE: &str =
     "io.github.rainyflash.agentroom.room_keys.request.v1";
@@ -277,6 +278,9 @@ async fn answer(
         .ok_or("请求者不是房间成员")?;
     if *member.membership() != MembershipState::Join {
         return Err("请求者此刻不在房间里");
+    }
+    if joined_after_listing(&room, &origin.user_id).await? {
+        return Err("请求者是房间公开以后才进来的");
     }
     let encryption = client.encryption();
     let device = requesting_device(&encryption, origin).await?;

@@ -15,8 +15,9 @@ use agent_room_application::{
     moderation::{ModerationDependencies, ModerationExpiryUseCases, ModerationService},
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        Clock, ModerationActionReservationOutcome, ModerationAuthority, ModerationExpiryClaim,
-        ModerationExpiryRepository, ModerationExpiryReschedule, ModerationIdentifierFactory,
+        Clock, MatrixResult, ModerationActionReservationOutcome, ModerationAuthority,
+        ModerationExpiryClaim, ModerationExpiryRepository, ModerationExpiryReschedule,
+        ModerationIdentifierFactory, ModerationMemberGateway, ModerationMemberRefusal,
         ModerationMuteLedger, ModerationMuteLock, ModerationMuteStanding, ModerationReportPolicy,
         ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
     },
@@ -99,6 +100,7 @@ async fn mute_everywhere(
             room_kind: RoomCatalogKind::PublicLobby,
             target: mute.target().clone(),
             target_matrix_user_id: Some(ledger.target_user.clone()),
+            target_agent_matrix_user_ids: Vec::new(),
         };
         ModerationEffectGateway::apply(provisioner, mute, &target)
             .await
@@ -142,6 +144,7 @@ fn expiry_service(
         expiry: ledger.clone(),
         mutes: ledger.clone(),
         effects: provisioner,
+        members: Arc::new(LobbyOnly),
         identifiers: clock.clone(),
         clock: clock.clone(),
         report_policy: ModerationReportPolicy {
@@ -149,6 +152,38 @@ fn expiry_service(
             window: DurationMillis::new(60_000).expect("限速窗口有效"),
         },
     })
+}
+
+/// 这里只有公开大厅，不走私人房间的成员记录。
+struct LobbyOnly;
+
+impl ModerationMemberGateway for LobbyOnly {
+    fn check(
+        &self,
+        _kind: ModerationActionKind,
+        _room_catalog_id: RoomCatalogId,
+        _target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<ModerationMemberRefusal>>> {
+        Box::pin(async { unreachable!("公开大厅不走成员记录") })
+    }
+
+    fn apply(
+        &self,
+        _kind: ModerationActionKind,
+        _room_catalog_id: RoomCatalogId,
+        _target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>> {
+        Box::pin(async { unreachable!("公开大厅不走成员记录") })
+    }
+
+    fn reverse(
+        &self,
+        _kind: ModerationActionKind,
+        _room_catalog_id: RoomCatalogId,
+        _target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>> {
+        Box::pin(async { unreachable!("公开大厅不走成员记录") })
+    }
 }
 
 /// 从 `START` 起走的时钟。
@@ -455,6 +490,7 @@ impl ModerationMuteLedger for MemoryLedger {
             room_kind: RoomCatalogKind::PublicLobby,
             matrix_room_ids: self.rooms.clone(),
             target_matrix_user_id: Some(self.target_user.clone()),
+            target_agent_matrix_user_ids: Vec::new(),
             may_speak: true,
             mutes,
         };

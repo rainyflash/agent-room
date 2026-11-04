@@ -22,8 +22,12 @@ mod direct_sessions;
 mod people;
 mod private_room_agents;
 mod private_room_invites;
+mod private_room_join_requests;
+mod private_room_listing;
 mod private_rooms;
 mod provisioning;
+mod public_room_directory;
+mod room_moderation_grants;
 
 use std::sync::Arc;
 
@@ -39,23 +43,41 @@ pub use direct_sessions::{
 };
 pub use people::{RoomAgentKind, RoomAgentOwnerRecord, RoomPeopleDirectory, RoomPersonName};
 pub use private_room_agents::{
-    JoinCodeAttemptPolicy, JoinCodeSealer, PrivateRoomAgentAccessStore,
+    JoinCodeAttemptPolicy, JoinCodeSealer, PrivateRoomAgentAccessStore, PrivateRoomAgentEviction,
     PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberLookup,
     PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, SealedJoinCode,
 };
 pub use private_room_invites::{
     PrivateRoomInviteLinkRecord, PrivateRoomInviteLinkStore, SealedInviteLink,
 };
+pub use private_room_join_requests::{
+    JoinRequestCreateOutcome, JoinRequestRecord, JoinRequestSweep, PendingJoinRequest,
+    PrivateRoomJoinRequestStore,
+};
+pub use private_room_listing::{
+    PrivateRoomListingMatrix, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
+    PrivateRoomListingStore,
+};
 pub use private_rooms::{
-    PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-    PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomMatrixGateway,
-    PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-    PrivateRoomStore,
+    PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+    PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+    PrivateRoomDescriptionStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+    PrivateRoomNoticeGateway, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+    PrivateRoomTopicGateway, RoomNoticeWrite,
 };
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,
     RoomProvisioningGateway, RoomProvisioningJob, RoomProvisioningKind, RoomProvisioningStore,
     RoomProvisioningTarget,
+};
+pub use public_room_directory::{
+    PublicRoomActivityMatrix, PublicRoomActivityStore, PublicRoomDetailRecord,
+    PublicRoomDirectoryStore, PublicRoomPlatformHold, PublicRoomPlatformHoldStore,
+    PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
+    PublicRoomViewerState,
+};
+pub use room_moderation_grants::{
+    ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

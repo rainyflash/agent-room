@@ -15,13 +15,23 @@ pub use matrix_security::{
 pub mod limits;
 mod paths;
 pub mod previews;
+mod public_rooms;
+pub use public_rooms::{
+    IpcListPublicRoomsRequest, IpcPublicRoom, IpcPublicRoomJoinMode, PUBLIC_ROOM_SEARCH_CHARACTERS,
+};
+mod moderation;
+pub use moderation::{
+    IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcModerationOutcome,
+};
 mod room_management;
+mod room_notices;
 mod session_rooms;
 pub use room_management::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
     IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
     managed_room,
 };
+pub use room_notices::{IpcReadRoomNoticesRequest, IpcRoomNotice, ROOM_NOTICES_PER_RESPONSE};
 pub use session_rooms::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcRoomCursor, IpcSessionRoom};
 pub mod typing;
 pub mod wake;
@@ -39,7 +49,9 @@ pub use host_sessions::{
 };
 mod wire;
 
-pub use agent_room_bridge_core::room_directory::{NamedRoom, resolve_room_by_name};
+pub use agent_room_bridge_core::room_directory::{
+    NamedRoom, resolve_room_by_name, resolve_room_link,
+};
 pub use authentication::{
     IpcAuthenticationFailure, IpcChallenge, IpcChallengeProof, IpcSharedSecret,
     create_challenge_proof, verify_challenge_proof,

@@ -4,10 +4,9 @@ import '@testing-library/jest-dom/vitest';
 
 import { cleanup, render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
-import type { ComponentProps, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import { RoomDirectoryView } from '@/features/room-directory/ui/room-directory-page';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
@@ -16,25 +15,6 @@ vi.mock('@tanstack/react-router', () => ({
     <a href={to}>{children}</a>
   ),
 }));
-
-vi.mock('motion/react', () => ({
-  motion: {
-    article: ({ children, className }: ComponentProps<'article'>) => (
-      <article className={className}>{children}</article>
-    ),
-  },
-  useReducedMotion: () => true,
-}));
-
-const room: PublicRoomSummary = {
-  activeInstanceCount: 1,
-  catalogId: '0198b601-77a2-7f41-b4f4-940f291951b8',
-  description: 'A room backed by the live Matrix timeline.',
-  language: 'en',
-  name: 'Default public lobby',
-  onlineAgentCount: 2,
-  slug: 'default-public',
-};
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
@@ -47,35 +27,18 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
-describe('公共房间目录界面', () => {
-  it('展示服务端房间事实和可操作入口', () => {
-    renderView({ failureCode: null, loading: false, rooms: [room] });
+describe('“房间”页', () => {
+  it('只放你的房间，底下给一条去发现页的路', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RoomDirectoryView myRooms={<section>mine</section>} roomActions={<button>New</button>} />
+      </I18nextProvider>,
+    );
 
-    expect(screen.getByRole('heading', { name: 'Find your room' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Default public lobby' })).toBeVisible();
-    expect(screen.getByText('2 Agents online')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Enter room' })).toBeVisible();
-  });
-
-  it('目录故障时显示稳定诊断码和重试动作', () => {
-    renderView({
-      failureCode: 'room_directory.unreachable',
-      loading: false,
-      rooms: [],
-    });
-
-    expect(screen.getByText('The room directory could not be loaded')).toBeVisible();
-    expect(screen.getByText('room_directory.unreachable')).toBeVisible();
-    expect(screen.getAllByRole('button', { name: 'Refresh' })).toHaveLength(2);
+    expect(screen.getByRole('heading', { level: 1, name: 'Rooms' })).toBeVisible();
+    expect(screen.getByText('mine')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Find more rooms' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Go to Explore' })).toHaveAttribute('href', '/explore');
   });
 });
-
-function renderView(
-  props: Pick<React.ComponentProps<typeof RoomDirectoryView>, 'failureCode' | 'loading' | 'rooms'>,
-) {
-  return render(
-    <I18nextProvider i18n={i18n}>
-      <RoomDirectoryView {...props} onRefresh={() => undefined} />
-    </I18nextProvider>,
-  );
-}

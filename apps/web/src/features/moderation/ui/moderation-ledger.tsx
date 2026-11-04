@@ -2,6 +2,10 @@ import { Button, Details, StatusMark } from '@agent-room/ui-system';
 import { FileWarning, RotateCcw, ScrollText, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import type {
+  AgentModerationLedger,
+  AgentModerationRecord,
+} from '@/features/moderation/domain/agent-moderation';
 import {
   moderationActionDisplayStatus,
   type ModerationAction,
@@ -71,12 +75,15 @@ export function ModerationCaseLedger({ cases }: { readonly cases: readonly Moder
 
 export function ModerationActionLedger({
   actions,
+  agentLedger = null,
   now,
   onReverse,
   pendingActionId,
   recentlyAuthenticated,
 }: {
   readonly actions: readonly ModerationAction[];
+  /** 哪些是 Agent 照规则做的、撤回的；读不到就只写人做的那些。 */
+  readonly agentLedger?: AgentModerationLedger | null;
   /** 按这个时刻算哪些过了期限。 */
   readonly now: number;
   readonly onReverse: (actionId: string) => void;
@@ -85,6 +92,8 @@ export function ModerationActionLedger({
 }) {
   const { i18n, t } = useTranslation();
   const formatter = dateFormatter(i18n.resolvedLanguage);
+  const madeBy = byAction(agentLedger?.actions);
+  const undoneBy = byAction(agentLedger?.reversals);
   return (
     <section aria-labelledby="moderation-actions-title" className="moderation-ledger">
       <header>
@@ -112,6 +121,8 @@ export function ModerationActionLedger({
                     tone={action.status === 'applied' ? 'network' : 'offline'}
                   />
                 </div>
+                <AgentNote record={madeBy.get(action.actionId)} undo={false} />
+                <AgentNote record={undoneBy.get(action.actionId)} undo />
                 <LedgerDetails
                   facts={[
                     [t(`moderation.target.${action.targetKind}`), action.targetReference],
@@ -187,6 +198,34 @@ export function ModerationAuditLedger({
         </ol>
       )}
     </section>
+  );
+}
+
+function byAction(
+  records: readonly AgentModerationRecord[] | undefined,
+): ReadonlyMap<string, AgentModerationRecord> {
+  return new Map((records ?? []).map((record) => [record.actionId, record]));
+}
+
+/** Agent 照规则做的（或撤回的）写“某某按规则：理由”，理由是它自己写的。 */
+function AgentNote({
+  record,
+  undo,
+}: {
+  readonly record: AgentModerationRecord | undefined;
+  readonly undo: boolean;
+}) {
+  const { t } = useTranslation();
+  if (record === undefined) {
+    return null;
+  }
+  return (
+    <p className="moderation-ledger__agent">
+      {t(undo ? 'moderation.agents.undoneByAgent' : 'moderation.agents.byAgent', {
+        agent: record.agentName,
+        note: record.note,
+      })}
+    </p>
   );
 }
 

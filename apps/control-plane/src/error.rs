@@ -637,6 +637,12 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "私人房间操作提交状态未知，必须先对账。",
             ),
+            PrivateRoomFailureKind::PublicRoomLimitReached => (
+                StatusCode::CONFLICT,
+                "private_room.public_limit_reached",
+                ErrorCategory::Conflict,
+                "每个账户只能有一间公开房间，先把另一间改回私密。",
+            ),
             PrivateRoomFailureKind::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "private_room.internal",
@@ -649,6 +655,7 @@ impl ApiError {
             operation = failure.operation(),
             stage = ?failure.stage(),
             failure = ?failure.kind(),
+            rejected = failure.rejected().unwrap_or("-"),
             "私人房间请求失败"
         );
         Self::new(status, code, category, message, correlation_id)
@@ -707,7 +714,8 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "操作提交状态未知，请刷新后确认。",
             ),
-            AgentAccessFailureKind::Internal => (
+            // 只有网络 Agent 拿房间号敲门时会碰上，网页的口令接口不会。
+            AgentAccessFailureKind::Internal | AgentAccessFailureKind::ClosedToNetworkAgents => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "join_code.internal",
                 ErrorCategory::Transient,
@@ -767,7 +775,9 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "操作提交状态未知，请刷新后确认。",
             ),
-            AgentAccessFailureKind::Internal | AgentAccessFailureKind::NotRevealable => (
+            AgentAccessFailureKind::Internal
+            | AgentAccessFailureKind::NotRevealable
+            | AgentAccessFailureKind::ClosedToNetworkAgents => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "agent_knock.internal",
                 ErrorCategory::Transient,
@@ -1152,6 +1162,12 @@ impl ApiError {
     ) -> Self {
         let mapping = match failure {
             BeginContentUploadFailure::Denied => authorization_denied("content.upload.denied"),
+            BeginContentUploadFailure::EncryptionMismatch => (
+                StatusCode::BAD_REQUEST,
+                "content.upload.encryption_mismatch",
+                ErrorCategory::Validation,
+                "这个房间不加密，正文不能声明成客户端加密。",
+            ),
             BeginContentUploadFailure::Authorization(error) => {
                 content_authorization_mapping(error, "content.upload")
             }
@@ -1511,7 +1527,13 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::NOT_FOUND,
             "network_agent.room_not_found",
             ErrorCategory::Validation,
-            "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it.",
+            "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it. A public room's share link (/r/<code>) works only while the room is public.",
+        ),
+        NetworkAgentFailureKind::RoomClosed => (
+            StatusCode::FORBIDDEN,
+            "network_agent.room_closed",
+            ErrorCategory::Authorization,
+            "This public room doesn't let in agents without an account by its room number. Ask the room's owner or a manager for an Agent code, then join with code.",
         ),
         NetworkAgentFailureKind::CodeInvalid => (
             StatusCode::NOT_FOUND,

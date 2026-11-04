@@ -235,6 +235,56 @@ async fn export_account(
                 FROM agent_room.moderation_case AS moderation
                 WHERE moderation.reporter_principal_id = principal.id
             ), '[]'::jsonb),
+            'joinRequests', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', request.catalog_entry_id,
+                    'message', request.message,
+                    'status', request.status,
+                    'requestedAt', request.requested_at,
+                    'decidedAt', request.decided_at
+                ) ORDER BY request.requested_at, request.id)
+                FROM agent_room.private_room_join_request AS request
+                WHERE request.requester_principal_id = principal.id
+            ), '[]'::jsonb),
+            'moderationGrants', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', grant_row.catalog_entry_id,
+                    'agentId', grant_row.agent_id,
+                    'rules', grant_row.rules,
+                    'actions', grant_row.allowed_actions,
+                    'createdAt', grant_row.created_at,
+                    'expiresAt', grant_row.expires_at,
+                    'revokedAt', grant_row.revoked_at
+                ) ORDER BY grant_row.created_at, grant_row.id)
+                FROM agent_room.room_moderation_grant AS grant_row
+                WHERE grant_row.granted_by = principal.id
+            ), '[]'::jsonb),
+            'agentModerationNotes', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', grant_row.catalog_entry_id,
+                    'actionId', attribution.action_id,
+                    'agentId', attribution.agent_id,
+                    'grantId', attribution.grant_id,
+                    'note', attribution.note
+                ) ORDER BY attribution.action_id)
+                FROM agent_room.moderation_action_agent AS attribution
+                JOIN agent_room.room_moderation_grant AS grant_row
+                  ON grant_row.id = attribution.grant_id
+                WHERE grant_row.granted_by = principal.id
+            ), '[]'::jsonb),
+            'agentModerationReversalNotes', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', grant_row.catalog_entry_id,
+                    'actionId', reversal.action_id,
+                    'agentId', reversal.agent_id,
+                    'grantId', reversal.grant_id,
+                    'note', reversal.note
+                ) ORDER BY reversal.action_id)
+                FROM agent_room.moderation_action_agent_reversal AS reversal
+                JOIN agent_room.room_moderation_grant AS grant_row
+                  ON grant_row.id = reversal.grant_id
+                WHERE grant_row.granted_by = principal.id
+            ), '[]'::jsonb),
             'externalData', jsonb_build_object(
                 'matrixTimeline', 'export_with_matrix_client_before_deletion',
                 'federatedCopies', 'controlled_by_receiving_homeservers_and_recipients',
@@ -555,6 +605,18 @@ async fn finalize_local(
         sqlx::query(statement)
             .bind(claim.principal_id.as_uuid())
             .bind(changed_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(OPERATION, &error))?;
+    }
+    // 申请进公开房间时留的话、交给 Agent 管房间时写的规则跟着账户删掉（隐私说明页）。Agent 照规则动手时
+    // 写下的理由跟着授权删（`moderation_action_agent` 和 `moderation_action_agent_reversal` 的外键）。
+    for statement in [
+        r"DELETE FROM agent_room.private_room_join_request WHERE requester_principal_id = $1",
+        r"DELETE FROM agent_room.room_moderation_grant WHERE granted_by = $1",
+    ] {
+        sqlx::query(statement)
+            .bind(claim.principal_id.as_uuid())
             .execute(&mut *transaction)
             .await
             .map_err(|error| map_sqlx_error(OPERATION, &error))?;

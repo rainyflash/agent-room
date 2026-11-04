@@ -167,7 +167,8 @@ impl InProcessContent {
                 agent_room_application::content::BeginContentUploadFailure::Denied => {
                     content_failure(MessageContentFailureKind::Denied)
                 }
-                agent_room_application::content::BeginContentUploadFailure::Domain(_) => {
+                agent_room_application::content::BeginContentUploadFailure::Domain(_)
+                | agent_room_application::content::BeginContentUploadFailure::EncryptionMismatch => {
                     content_failure(MessageContentFailureKind::InvalidRequest)
                 }
                 agent_room_application::content::BeginContentUploadFailure::Repository(error)

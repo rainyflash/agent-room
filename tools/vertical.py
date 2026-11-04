@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 import ctypes
 from dataclasses import dataclass
@@ -87,6 +87,20 @@ ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
 ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
 ROOM_PEOPLE_CHECKED: Final = VERTICAL_ROOT / "room-people-checked.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
+# 公开房间那一轮：网页上走完了，记下是哪间房。
+PUBLIC_ROOM_RESULT: Final = VERTICAL_ROOT / "public-room.json"
+# 公开房间那一轮里网页和本机 Agent 对步子：写了公告、Agent 读到第一条和改过的那条、给了授权、
+# Agent 禁言了（写着理由）、撤回并收回了授权。
+PUBLIC_ROOM_NOTICED: Final = VERTICAL_ROOT / "public-room-noticed.json"
+PUBLIC_ROOM_AGENT_READ_FIRST: Final = VERTICAL_ROOT / "public-room-agent-read-first.json"
+PUBLIC_ROOM_AGENT_READ_SECOND: Final = VERTICAL_ROOT / "public-room-agent-read-second.json"
+PUBLIC_ROOM_GRANTED: Final = VERTICAL_ROOT / "public-room-granted.json"
+PUBLIC_ROOM_MUTED: Final = VERTICAL_ROOT / "public-room-muted.json"
+PUBLIC_ROOM_REVOKED: Final = VERTICAL_ROOT / "public-room-revoked.json"
+# 私密改成公开那一轮：后来的人进来了、他的 Agent 进来了、Agent 那边看完了。
+OLD_KEYS_JOINED: Final = VERTICAL_ROOT / "old-keys-joined.json"
+OLD_KEYS_AGENT_IN: Final = VERTICAL_ROOT / "old-keys-agent-in.json"
+OLD_KEYS_CHECKED: Final = VERTICAL_ROOT / "old-keys-checked.json"
 # 同一个身份那一轮里主人在网页会话里做的事（建房间、带进房间、让它离开、删掉它）的结果。
 AGENT_IDENTITY_RESULT: Final = VERTICAL_ROOT / "agent-identity.json"
 AGENT_IDENTITY_ROOMS: Final = ("Vertical Identity A", "Vertical Identity B", "Vertical Identity C")
@@ -915,11 +929,11 @@ def seed_public_catalog() -> str:
         f"""
 INSERT INTO agent_room.room_catalog_entry (
     id, kind, slug, name, description, language,
-    visibility, status, created_at, updated_at
+    visibility, status, end_to_end_encrypted, created_at, updated_at
 ) VALUES (
     '{CATALOG_SEED_ID}', 'public_lobby', '{CATALOG_SLUG}',
     'Vertical Codex Lobby', 'Task 24 real vertical slice', 'en',
-    'public', 'active', now(), now()
+    'public', 'active', false, now(), now()
 )
 ON CONFLICT (slug) WHERE slug IS NOT NULL DO UPDATE SET
     name = EXCLUDED.name,
@@ -3552,6 +3566,346 @@ def verify_room_people(
         )
     browser.finish(timeout_seconds=120)
     return {"roomPeopleAgentEventId": event_id}
+
+
+PUBLIC_ROOM_NAME: Final = "Vertical Public Room"
+PUBLIC_ROOM_AGENT: Final = "Vertical Public Room Agent"
+PUBLIC_ROOM_RULES: Final = "Mute anyone who says spam, for ten minutes."
+
+
+@dataclass(frozen=True)
+class PublicRoomAgentTexts:
+    """公开房间那一轮里，本机 Agent 要认出来的几句话。"""
+
+    first_notice: str
+    second_notice: str
+    spam: str
+
+
+def public_room_agent_pages(
+    agent: McpAgentSession, browser: BrowserRun, *, failure: str
+) -> Iterator[Mapping[str, object]]:
+    """一批一批等消息，确认过了再交出来；等了 4 分钟还要接着等就算失败。"""
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        browser.ensure_running()
+        page = agent.call_tool(
+            "agent_room_wait_for_messages", {"wake": "all", "settleSeconds": 0, "waitSeconds": 15}
+        )
+        cursor = page.get("nextCursor")
+        if isinstance(cursor, str) and cursor:
+            agent.call_tool("agent_room_ack", {"eventId": cursor})
+        yield page
+    raise VerticalFailure(failure)
+
+
+def public_room_agent_joins(
+    transport: McpStdioClient, browser: BrowserRun, catalog_id: str, first_notice: str
+) -> McpAgentSession:
+    """验收账号的本机 Agent 按房间名进公开房间，回答里带着这间房现在的公告。Bridge 同步到公告要一小会儿，
+    同一个任务同一个名字再进一次回到同一个 Agent，多问几次。"""
+    arguments = {"room": PUBLIC_ROOM_NAME, "displayName": PUBLIC_ROOM_AGENT}
+    entered = transport.call_tool("agent_room_join", arguments)
+    if require_object(entered.get("room"), "Agent 进的房间").get("catalogId") != catalog_id:
+        raise VerticalFailure("本机 Agent 按房间名进了别的房间。")
+    agent = transport.bind_session(require_text(entered.get("sessionId"), "Agent 的会话"))
+    wait_for_session_identity(agent, timeout_seconds=180)
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        browser.ensure_running()
+        notice = transport.call_tool("agent_room_join", arguments).get("notice")
+        if isinstance(notice, dict) and notice.get("text") == first_notice:
+            return agent
+        time.sleep(2)
+    raise VerticalFailure("本机 Agent 进公开房间时没有拿到公告。")
+
+
+def public_room_agent_round(
+    transport: McpStdioClient,
+    browser: BrowserRun,
+    catalog_id: str,
+    texts: PublicRoomAgentTexts,
+) -> None:
+    """本机 Agent 拿到公告和改过的公告；房间交给它以后读规则，把说 spam 的人禁言十分钟；授权收回以后
+    规则读不到了（public-rooms.e2e.ts）。"""
+    agent = public_room_agent_joins(transport, browser, catalog_id, texts.first_notice)
+    room_id = wait_for_session_identity(agent, timeout_seconds=60)["matrixRoomId"]
+    PUBLIC_ROOM_AGENT_READ_FIRST.write_text(json.dumps({"done": True}) + "\n", encoding="utf-8")
+    for page in public_room_agent_pages(agent, browser, failure="本机 Agent 没拿到改过的公告。"):
+        notices = [require_object(item, "公告") for item in require_list(page.get("notices", []))]
+        if any(notice.get("text") == texts.second_notice for notice in notices):
+            break
+    PUBLIC_ROOM_AGENT_READ_SECOND.write_text(json.dumps({"done": True}) + "\n", encoding="utf-8")
+
+    wait_for_browser_step(
+        PUBLIC_ROOM_GRANTED, browser, timeout_seconds=300, failure="网页 5 分钟内没把房间交给 Agent。"
+    )
+    target = public_room_agent_sees_spam(agent, browser, room_id, texts.spam)
+    rules = agent.call_tool("agent_room_moderate", {"room": room_id, "action": "rules"})
+    if require_object(rules.get("grant"), "管理授权").get("rules") != PUBLIC_ROOM_RULES:
+        raise VerticalFailure("本机 Agent 读到的规则和主人写的不一样。")
+    note = "Said spam, which the rules say to mute for ten minutes."
+    muted = agent.call_tool(
+        "agent_room_moderate",
+        {
+            "room": room_id,
+            "action": "mute",
+            "target": target,
+            "reason": "spam",
+            "note": note,
+            "durationSeconds": 600,
+        },
+    )
+    if require_object(muted.get("outcome"), "禁言的结果").get("status") != "applied":
+        raise VerticalFailure(f"本机 Agent 禁言没有生效：{muted}")
+    PUBLIC_ROOM_MUTED.write_text(json.dumps({"note": note}) + "\n", encoding="utf-8")
+
+    wait_for_browser_step(
+        PUBLIC_ROOM_REVOKED, browser, timeout_seconds=300, failure="网页 5 分钟内没撤回、没收回授权。"
+    )
+    if agent.call_tool("agent_room_moderate", {"room": room_id, "action": "rules"}).get("grant"):
+        raise VerticalFailure("授权收回以后，本机 Agent 还读得到规则。")
+
+
+def public_room_agent_sees_spam(
+    agent: McpAgentSession, browser: BrowserRun, room_id: str, spam: str
+) -> str:
+    """等到有人说 spam 的那一批：批里写着这间房交给它管了。回答说话人的聊天账号。"""
+    for page in public_room_agent_pages(agent, browser, failure="本机 Agent 没等到说 spam 的那句。"):
+        for item in require_list(page.get("previews")):
+            preview = require_object(item, "等到的消息")
+            conversation = preview.get("conversation")
+            if not isinstance(conversation, dict) or conversation.get("text") != spam:
+                continue
+            hints = [
+                require_object(hint, "管理提示") for hint in require_list(page.get("moderation", []))
+            ]
+            if not any(hint.get("roomId") == room_id for hint in hints):
+                raise VerticalFailure("这一批没写着这间房交给 Agent 管了。")
+            actor = require_object(preview.get("actor"), "说话的人")
+            return require_text(actor.get("matrixUserId"), "说话的人的聊天账号")
+    raise VerticalFailure("本机 Agent 没等到说 spam 的那句。")
+
+
+def verify_public_rooms(
+    *,
+    agent_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """公开房间（specs/public-rooms/design.md 第 8 步）：验收账号在真实网页上开一间公开、不加密的房间；
+    第二个账号从发现页找到、加入、说话；第三个账号没登录就打开分享链接，登录回来自动进了房间。改成要申请，
+    第三个账号退出来再申请，批准以后网页自己进来。验收账号写公告，第二个账号的网页和验收账号的本机 Agent
+    都拿到；房间交给这个 Agent，第二个账号说了规则不让说的话，Agent 禁言他，台账写着是它做的，验收账号撤回。
+    换了分享码旧链接回 404，改回私密以后分享页也回 404、页面上没有房间名（public-rooms.e2e.ts）。
+    最后到 Synapse 里看：之前的话是明文，之后的话只有密文。"""
+    steps = (
+        PUBLIC_ROOM_RESULT,
+        PUBLIC_ROOM_NOTICED,
+        PUBLIC_ROOM_AGENT_READ_FIRST,
+        PUBLIC_ROOM_AGENT_READ_SECOND,
+        PUBLIC_ROOM_GRANTED,
+        PUBLIC_ROOM_MUTED,
+        PUBLIC_ROOM_REVOKED,
+    )
+    PUBLIC_ROOM_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    for path in steps:
+        path.unlink(missing_ok=True)
+    nonce = new_uuid_v7()[-8:]
+    texts = PublicRoomAgentTexts(
+        first_notice=f"Be kind to each other {nonce}.",
+        second_notice=f"Be kind, and stay on topic {nonce}.",
+        spam=f"spam spam spam {nonce}",
+    )
+    said_public = f"Said while the room is public {nonce}."
+    said_private = f"Said after the room went private {nonce}."
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_MEMBER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_MEMBER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_VISITOR_USERNAME": "visitor",
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_VISITOR_PASSWORD": required_value(
+                environment, "SEED_VISITOR_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NAME": PUBLIC_ROOM_NAME,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SAID_PUBLIC": said_public,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SAID_PRIVATE": said_private,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_RESULT": str(PUBLIC_ROOM_RESULT),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NOTICE_FIRST": texts.first_notice,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NOTICE_SECOND": texts.second_notice,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_AGENT": PUBLIC_ROOM_AGENT,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_RULES": PUBLIC_ROOM_RULES,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SPAM": texts.spam,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NOTICED": str(PUBLIC_ROOM_NOTICED),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_AGENT_READ_FIRST": str(PUBLIC_ROOM_AGENT_READ_FIRST),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_AGENT_READ_SECOND": str(PUBLIC_ROOM_AGENT_READ_SECOND),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_GRANTED": str(PUBLIC_ROOM_GRANTED),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_MUTED": str(PUBLIC_ROOM_MUTED),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_REVOKED": str(PUBLIC_ROOM_REVOKED),
+        }
+    )
+    browser = BrowserRun("public-rooms.e2e.ts", playwright_environment)
+    noticed = wait_for_browser_step(
+        PUBLIC_ROOM_NOTICED, browser, timeout_seconds=600, failure="网页 10 分钟内没走到写公告。"
+    )
+    with bridge_mcp_client(agent_bridge, redactor) as transport:
+        public_room_agent_round(
+            transport, browser, require_text(noticed.get("catalogId"), "公开房间的目录 ID"), texts
+        )
+    browser.finish(timeout_seconds=600)
+    result = require_object(
+        json.loads(PUBLIC_ROOM_RESULT.read_text(encoding="utf-8")), PUBLIC_ROOM_RESULT.name
+    )
+    catalog_id = require_text(result.get("catalogId"), "公开房间的目录 ID")
+    require_uuid_v7(catalog_id, "公开房间的目录 ID")
+    require_room_encrypted_from_private(catalog_id, said_public, said_private)
+    return {"publicRoomCatalogId": catalog_id}
+
+
+def require_room_encrypted_from_private(
+    catalog_id: str, said_public: str, said_private: str
+) -> None:
+    """公开时的话 Synapse 上是明文；改回私密以后房间有了 `m.room.encryption`，之后的话只有密文。"""
+    if (
+        compose_psql(
+            "SELECT end_to_end_encrypted FROM agent_room.room_catalog_entry "
+            f"WHERE id = '{catalog_id}';"
+        )
+        != "t"
+    ):
+        raise VerticalFailure("改回私密以后，房间目录上没有记成加密。")
+    room_id = compose_psql(
+        f"SELECT matrix_room_id FROM agent_room.room_instance WHERE catalog_entry_id = '{catalog_id}';"
+    )
+    if re.fullmatch(r"![A-Za-z0-9._~-]+:[A-Za-z0-9.:-]+", room_id) is None:
+        raise VerticalFailure("公开房间的 Matrix 房间 ID 格式不对。")
+    types = compose_psql(
+        f"""
+SELECT type FROM events
+WHERE room_id = '{room_id}'
+  AND (type IN ('m.room.encryption', 'm.room.encrypted')
+       OR type LIKE 'io.github.rainyflash.agentroom.message.%')
+ORDER BY stream_ordering;
+""",
+        database="synapse",
+    ).split()
+    if types.count("m.room.encryption") != 1:
+        raise VerticalFailure("改回私密以后，Synapse 里房间该有一条 m.room.encryption。")
+    boundary = types.index("m.room.encryption")
+    before, after = types[:boundary], types[boundary + 1 :]
+    if not before or "m.room.encrypted" in before:
+        raise VerticalFailure("公开时说的话在 Synapse 上该是明文。")
+    if not after or set(after) != {"m.room.encrypted"}:
+        raise VerticalFailure("改回私密以后说的话在 Synapse 上该只有密文。")
+
+    if synapse_events_containing(room_id, said_public) == 0:
+        raise VerticalFailure("公开时说的话 Synapse 该读得到。")
+    if synapse_events_containing(room_id, said_private) != 0:
+        raise VerticalFailure("改回私密以后说的话 Synapse 不该读得到。")
+
+
+def synapse_events_containing(room_id: str, text: str) -> int:
+    return int(
+        compose_psql(
+            "SELECT count(*) FROM event_json "
+            f"WHERE room_id = '{room_id}' AND strpos(json, '{text}') > 0;",
+            database="synapse",
+        )
+    )
+
+
+OLD_KEYS_ROOM: Final = "Vertical Private Then Public"
+OLD_KEYS_AGENT: Final = "Vertical Newcomer Agent"
+# 真有人补发钥匙的话，等这么久也该到了。
+OLD_KEYS_SETTLE_SECONDS: Final = 30
+
+
+def message_texts(messages: object) -> list[str]:
+    texts = []
+    for item in require_list(messages):
+        conversation = require_object(item, "消息").get("conversation")
+        if isinstance(conversation, dict) and isinstance(conversation.get("text"), str):
+            texts.append(conversation["text"])
+    return texts
+
+
+def verify_public_room_old_keys(
+    *,
+    agent_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """私密改成公开（specs/public-rooms/design.md 第 8 步）：第二个账号在自己的加密房间里先说一句，再改成公开；
+    验收账号从发现页进来，他的本机 Agent 也进来。房主接着说一句：人和 Agent 都读得到这句，读不到改之前的那句，
+    房主的网页一直在线也没人补发钥匙（public-room-old-keys.e2e.ts）。"""
+    for path in (OLD_KEYS_JOINED, OLD_KEYS_AGENT_IN, OLD_KEYS_CHECKED):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    nonce = new_uuid_v7()[-8:]
+    said_before = f"Said while the room was private {nonce}."
+    said_after = f"Said after the room went public {nonce}."
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_OWNER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_OWNER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_ROOM": OLD_KEYS_ROOM,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_AGENT": OLD_KEYS_AGENT,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_SAID_BEFORE": said_before,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_SAID_AFTER": said_after,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_JOINED": str(OLD_KEYS_JOINED),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_AGENT_IN": str(OLD_KEYS_AGENT_IN),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_CHECKED": str(OLD_KEYS_CHECKED),
+        }
+    )
+    browser = BrowserRun("public-room-old-keys.e2e.ts", playwright_environment)
+    joined = wait_for_browser_step(
+        OLD_KEYS_JOINED, browser, timeout_seconds=420, failure="验收账号 7 分钟内没从发现页进来。"
+    )
+    catalog_id = require_text(joined.get("catalogId"), "私密改公开的房间")
+    with bridge_mcp_client(agent_bridge, redactor) as transport:
+        entered = transport.call_tool(
+            "agent_room_join", {"room": OLD_KEYS_ROOM, "displayName": OLD_KEYS_AGENT}
+        )
+        if require_object(entered.get("room"), "Agent 进的房间").get("catalogId") != catalog_id:
+            raise VerticalFailure("后来的人的 Agent 按房间名进了别的房间。")
+        agent = transport.bind_session(require_text(entered.get("sessionId"), "Agent 的会话"))
+        room_id = wait_for_session_identity(agent, timeout_seconds=180)["matrixRoomId"]
+        OLD_KEYS_AGENT_IN.write_text(json.dumps({"done": True}) + "\n", encoding="utf-8")
+        require_old_line_stays_unreadable(agent, browser, room_id, said_before, said_after)
+        OLD_KEYS_CHECKED.write_text(json.dumps({"done": True}) + "\n", encoding="utf-8")
+    browser.finish(timeout_seconds=120)
+    if synapse_events_containing(room_id, said_before) != 0:
+        raise VerticalFailure("私密时说的话 Synapse 不该读得到。")
+    return {"oldKeysCatalogId": catalog_id}
+
+
+def require_old_line_stays_unreadable(
+    agent: McpAgentSession, browser: BrowserRun, room_id: str, said_before: str, said_after: str
+) -> None:
+    """Agent 等到改公开以后的那句；再等一会儿翻历史，改之前那句还是读不到。"""
+    for page in public_room_agent_pages(agent, browser, failure="Agent 没等到改公开以后的那句。"):
+        texts = message_texts(page.get("previews", []))
+        if said_before in texts:
+            raise VerticalFailure("Agent 不该读到房间改公开之前说的话。")
+        if said_after in texts:
+            break
+    time.sleep(OLD_KEYS_SETTLE_SECONDS)
+    history = agent.call_tool("agent_room_room_messages", {"roomId": room_id, "limit": 50})
+    texts = message_texts(history.get("messages", []))
+    if said_after not in texts:
+        raise VerticalFailure("翻历史时 Agent 该读得到改公开以后的那句。")
+    if said_before in texts:
+        raise VerticalFailure("翻历史时 Agent 不该读到房间改公开之前说的话。")
 
 
 @dataclass(frozen=True)

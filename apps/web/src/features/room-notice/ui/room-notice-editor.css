@@ -1,0 +1,32 @@
+.room-notice-editor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.room-notice-editor textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.room-notice-editor__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  justify-content: space-between;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.room-notice-editor__count {
+  font-variant-numeric: tabular-nums;
+}
+.room-notice-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.room-notice-editor__status {
+  margin: 0;
+  color: var(--ar-success);
+  font-size: 0.8125rem;
+}

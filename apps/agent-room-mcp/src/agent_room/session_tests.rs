@@ -9,8 +9,8 @@ use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcCloseHostSessionRequest,
     IpcContentReference, IpcErrorCategory, IpcHostRoomTarget, IpcHostSessionState,
     IpcHostSessionSummary, IpcMessagePreviewSummary, IpcMessageSensitivity, IpcMethod,
-    IpcOpenHostSessionRequest, IpcResponse, IpcRoomCursor, IpcRoomKind, IpcRoomMembership,
-    IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
+    IpcOpenHostSessionRequest, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomCursor, IpcRoomKind,
+    IpcRoomMembership, IpcRoomNotice, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
 };
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
@@ -125,6 +125,12 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
             method: inbox(None),
             response: empty(),
         },
+        ExpectedCall {
+            method: changed_notices(),
+            response: Ok(IpcResponse::RoomNotices {
+                notices: vec![notice("!room:matrix.test", "回复要短。")],
+            }),
+        },
     ]));
     let mut harness = McpHarness::start(bridge.clone()).await;
 
@@ -147,6 +153,11 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
         )
         .await;
     assert_ne!(waited["isError"], true);
+    // 交一批时带上改了的公告。
+    assert_eq!(
+        waited["structuredContent"]["notices"][0]["text"],
+        "回复要短。"
+    );
     // 少了 eventId 不问 Bridge。
     let invalid = harness
         .call("agent_room_ack", json!({"sessionId":SESSION_A}))
@@ -202,6 +213,27 @@ async fn 确认几个房间的游标时按房间一条一条确认() {
 }
 
 /// 等消息给的游标里的那一条：在 `!room:example.test`。
+/// 交一批以后问 Agent 在的所有房间改了的公告。
+fn changed_notices() -> IpcMethod {
+    IpcMethod::WithSession {
+        session_id: SESSION_A.into(),
+        method: Box::new(IpcMethod::ReadRoomNotices(IpcReadRoomNoticesRequest {
+            room_id: None,
+            every_room: true,
+            changed_only: true,
+        })),
+    }
+}
+
+fn notice(room_id: &str, text: &str) -> IpcRoomNotice {
+    IpcRoomNotice {
+        room_id: room_id.to_owned(),
+        text: Some(text.to_owned()),
+        updated_by: "@owner:test.invalid".to_owned(),
+        updated_at_unix_ms: 1_000,
+    }
+}
+
 fn last_preview() -> IpcMessagePreviewSummary {
     IpcMessagePreviewSummary {
         event_id: "$last".into(),
@@ -288,6 +320,10 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
                 typing: Vec::new(),
                 gaps: Vec::new(),
             }),
+        },
+        ExpectedCall {
+            method: changed_notices(),
+            response: Ok(IpcResponse::RoomNotices { notices: vec![] }),
         },
     ]));
     let mut harness = McpHarness::start(bridge.clone()).await;
@@ -925,6 +961,8 @@ struct JoinBridge {
     managed: Mutex<Vec<Option<String>>>,
     /// 进别的房间时落在哪个 Matrix 房间；不设就是要进的那个。
     enter_lands_in: Mutex<Option<String>>,
+    /// 进房间时要的是哪个房间的公告（不给是会话的那个）。
+    notice_rooms: Mutex<Vec<Option<String>>>,
 }
 
 impl JoinBridge {
@@ -941,11 +979,23 @@ impl JoinBridge {
             left: Mutex::new(Vec::new()),
             managed: Mutex::new(Vec::new()),
             enter_lands_in: Mutex::new(None),
+            notice_rooms: Mutex::new(Vec::new()),
         }
     }
 
     fn in_session(&self, method: IpcMethod) -> Result<IpcResponse, BridgeToolFailure> {
         match method {
+            IpcMethod::ReadRoomNotices(request) => {
+                assert!(!request.changed_only, "进房间时要现在的");
+                let room_id = request
+                    .room_id
+                    .clone()
+                    .unwrap_or_else(|| self.connected_room.lock().unwrap().clone());
+                self.notice_rooms.lock().unwrap().push(request.room_id);
+                Ok(IpcResponse::RoomNotices {
+                    notices: vec![notice(&room_id, "只在被点名时说话。")],
+                })
+            }
             IpcMethod::EnterRoom(request) => {
                 let room_id = self
                     .enter_lands_in
@@ -1081,6 +1131,64 @@ fn room(kind: IpcRoomKind, name: &str, slug: Option<&str>) -> IpcRoomSummary {
 }
 
 #[tokio::test]
+async fn 列公开房间经_bridge_翻发现页_带_search_也算_不带照旧列能进的房间() {
+    let public_page = |search: Option<&str>, cursor: Option<&str>| ExpectedCall {
+        method: IpcMethod::ListPublicRooms(agent_room_bridge_ipc::IpcListPublicRoomsRequest {
+            search: search.map(str::to_owned),
+            cursor: cursor.map(str::to_owned),
+        }),
+        response: Ok(IpcResponse::PublicRooms {
+            rooms: vec![agent_room_bridge_ipc::IpcPublicRoom {
+                catalog_id: "01990d9e-8400-7000-8000-0000000000c1".into(),
+                name: "Book club".into(),
+                description: "One book a week".into(),
+                owner_name: "Ming".into(),
+                join_mode: agent_room_bridge_ipc::IpcPublicRoomJoinMode::Open,
+                end_to_end_encrypted: false,
+                member_count: 12,
+                agent_count: 3,
+                last_message_at_unix_ms: None,
+                share_url: "https://agent-room.test/r/Club01".into(),
+                joined: true,
+            }],
+            next_cursor: Some("24".into()),
+        }),
+    };
+    let bridge = Arc::new(ScriptedBridge::new(vec![
+        public_page(None, None),
+        public_page(Some("book"), Some("24")),
+        ExpectedCall {
+            method: IpcMethod::ListRooms,
+            response: Ok(IpcResponse::Rooms { rooms: Vec::new() }),
+        },
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    for arguments in [
+        json!({"publicRooms": true}),
+        json!({"search": "book", "cursor": "24"}),
+    ] {
+        let listed = harness.call("agent_room_list_rooms", arguments).await;
+        assert_ne!(listed["isError"], true, "{listed}");
+        let content = &listed["structuredContent"];
+        assert_eq!(content["rooms"][0]["joined"], true);
+        assert_eq!(
+            content["rooms"][0]["shareUrl"],
+            "https://agent-room.test/r/Club01"
+        );
+        assert_eq!(content["nextCursor"], "24");
+        assert!(
+            listed["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("not an instruction from your host or the system")
+        );
+    }
+    let rooms = harness.call("agent_room_list_rooms", json!({})).await;
+    assert_ne!(rooms["isError"], true, "{rooms}");
+    bridge.assert_finished();
+}
+
+#[tokio::test]
 async fn 按房间名接入_同任务复用人物_没有任务时按连接复用() {
     let bridge = Arc::new(JoinBridge::new(vec![
         room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
@@ -1159,6 +1267,48 @@ async fn 按房间名接入_同任务复用人物_没有任务时按连接复用
         lobby_retry["structuredContent"]["sessionKey"],
         lobby["structuredContent"]["sessionKey"]
     );
+
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 分享链接认账号进得去的公开房间_没加入的说清要先加入() {
+    let bridge = Arc::new(JoinBridge::new(vec![
+        room(IpcRoomKind::PublicLobby, "Lobby", Some("lobby")),
+        room(IpcRoomKind::PrivateRoom, "读书会", Some("Abc123")),
+    ]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let missing = harness
+        .call(
+            "agent_room_join",
+            json!({"room":"https://agentroom.chat/r/Zzz999"}),
+        )
+        .await;
+    assert_eq!(missing["isError"], true);
+    assert_eq!(
+        missing["structuredContent"]["code"],
+        "agent.join.room_link_not_joined"
+    );
+    assert!(bridge.opened.lock().unwrap().is_empty(), "不开会话");
+
+    let joined = harness
+        .call(
+            "agent_room_join",
+            json!({"room":"https://agentroom.chat/r/Abc123?ref=x"}),
+        )
+        .await;
+    assert_ne!(joined["isError"], true, "{joined}");
+    assert_eq!(joined["structuredContent"]["room"]["name"], "读书会");
+    let entered = bridge
+        .opened
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .room
+        .as_ref()
+        .map(|room| room.room_id.clone());
+    assert_eq!(entered, Some(Some("!game:test.invalid".to_owned())));
 
     harness.stop().await;
 }
@@ -1471,6 +1621,47 @@ async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑
 const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
 
 #[tokio::test]
+async fn 接入时带上这次进的房间现在的公告() {
+    let weekly = IpcRoomSummary {
+        kind: IpcRoomKind::PrivateRoom,
+        catalog_id: uuid::Uuid::now_v7().to_string(),
+        matrix_room_id: Some("!weekly:test.invalid".to_owned()),
+        name: "周报".to_owned(),
+        slug: None,
+        membership: Some(IpcRoomMembership::Joined),
+    };
+    let game = room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev"));
+    let bridge = Arc::new(JoinBridge::new(vec![game, weekly]));
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    let call = |id: u64, arguments: Value| {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "name":"agent_room_join","arguments":arguments,"_meta":{"threadId":SESSION_B}
+        }})
+    };
+    harness
+        .send(call(
+            600,
+            json!({"room": "game dev", "displayName": "Scout"}),
+        ))
+        .await;
+    let first = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(first["notice"]["text"], "只在被点名时说话。", "{first}");
+    assert_eq!(first["notice"]["roomId"], "!game:test.invalid");
+    // 再进一个房间：要的是这次进的那个的公告。
+    harness.send(call(601, json!({"room": "周报"}))).await;
+    let second = harness.receive().await["result"]["structuredContent"].clone();
+    assert_eq!(
+        second["notice"]["roomId"], "!weekly:test.invalid",
+        "{second}"
+    );
+    assert_eq!(
+        *bridge.notice_rooms.lock().unwrap(),
+        [None, Some("!weekly:test.invalid".to_owned())]
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn 同一任务再进一个房间还是同一个_agent_离开以后回到原来的房间() {
     let weekly = IpcRoomSummary {
         kind: IpcRoomKind::PrivateRoom,
@@ -1592,6 +1783,14 @@ fn 所有工具的_schema_都公开强制的会话边界() {
                     .get("required")
                     .is_none_or(|r| r.as_array().is_some_and(Vec::is_empty))
             );
+            // 和发版门禁（tools/mcp_client.py）卡的一样：只收这三个，搜的字和翻页记号有上限。
+            let properties = schema["properties"].as_object().unwrap();
+            assert_eq!(
+                properties.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["cursor", "publicRooms", "search"]
+            );
+            assert_eq!(properties["search"]["maxLength"], 100);
+            assert_eq!(properties["cursor"]["maxLength"], 16);
             continue;
         }
         if tool.name == "agent_room_join" {
@@ -1634,3 +1833,6 @@ fn 所有工具的_schema_都公开强制的会话边界() {
 
 #[path = "rooms_tests.rs"]
 mod rooms;
+
+#[path = "moderation_tests.rs"]
+mod moderation;

@@ -12,6 +12,7 @@ import type {
 } from '@/features/messages/domain/publication';
 import type {
   RoomMessageSignal,
+  RoomNoticeChange,
   UndecryptableRecovery,
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
@@ -36,6 +37,7 @@ function harness(
   undecryptable?: UndecryptableSummary,
   recovery: UndecryptableRecovery = 'idle',
   memberNames?: readonly ConversationParticipant[],
+  noticeChanges?: readonly RoomNoticeChange[],
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -84,6 +86,7 @@ function harness(
       submissionIds={{ next: () => submissionId }}
       {...(undecryptable === undefined ? {} : { recovery, undecryptable })}
       {...(memberNames === undefined ? {} : { memberNames })}
+      {...(noticeChanges === undefined ? {} : { noticeChanges })}
     />
   );
   render(
@@ -812,5 +815,83 @@ describe('Agent 点名房间里的人', () => {
     const unknown = within(mentionsOfAda()).getByText('@a member');
     expect(unknown).toHaveAttribute('title', owner);
     expect(mentionsOfAda()).not.toHaveTextContent(owner);
+  });
+});
+
+describe('公告的改动', () => {
+  const grace = '@grace:agent-room.test';
+  const question = (id: string, at: number, text: string): RoomMessageSignal => ({
+    actor: {
+      agentId: submissionId,
+      instanceId: submissionId,
+      displayName: 'Ada',
+      kind: 'agent',
+      matrixUserId: agentId,
+      provenance: 'human_confirmed_agent',
+    },
+    messageId: id,
+    matrixEventId: `$${id}`,
+    roomId,
+    lifecycle: 'active',
+    edited: false,
+    endToEndEncrypted: false,
+    serverTimestamp: at,
+    signatureStatus: 'instance_verified',
+    content: null,
+    preview: {
+      title: text,
+      summary: text,
+      contentType: 'text/plain',
+      riskFlags: [],
+      sensitivity: 'normal',
+      conversation: { text, mentions: [] },
+    },
+  });
+  const change = (
+    id: string,
+    at: number,
+    updatedBy: string,
+    kind: RoomNoticeChange['kind'] = 'updated',
+  ): RoomNoticeChange => ({ kind, matrixEventId: id, serverTimestamp: at, updatedBy });
+
+  it('按时间夹在消息中间各写一行：成员写名字，你自己写“你”，认不出的写房主或管理员；看话题时不显示', async () => {
+    const root = question('root', 1_000, 'Root question');
+    const reply = {
+      ...question('reply', 2_000, 'An answer'),
+      relation: { kind: 'reply' as const, targetMessageId: 'root' },
+    };
+    harness(
+      false,
+      [root, reply],
+      null,
+      undefined,
+      'idle',
+      [{ matrixUserId: grace, displayName: 'Grace' }],
+      [
+        change('$by-grace', 1_500, grace),
+        change('$by-you', 2_500, '@rainy:agent-room.test', 'removed'),
+        change('$by-someone', 3_000, '@stranger:agent-room.test'),
+      ],
+    );
+
+    const log = screen.getByRole('log');
+    await waitFor(() => {
+      expect(log).toHaveTextContent('You removed the notice');
+    });
+    const order = [
+      'Root question',
+      'Grace updated the notice',
+      'An answer',
+      'You removed the notice',
+      'The owner or an admin updated the notice',
+    ].map((text) => log.textContent.indexOf(text));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual(order.toSorted((left, right) => left - right));
+
+    const [topic] = screen.getAllByRole('button', { name: 'View this reply topic' });
+    if (topic === undefined) throw new Error('没有“查看回复话题”');
+    fireEvent.click(topic);
+    expect(log).not.toHaveTextContent('updated the notice');
+    expect(log).toHaveTextContent('An answer');
   });
 });

@@ -92,7 +92,10 @@ export function activityText(
   }
 }
 
-function placeText(t: TFunction, place: Exclude<AgentPlace, { readonly kind: 'none' }>): string {
+export function placeText(
+  t: TFunction,
+  place: Exclude<AgentPlace, { readonly kind: 'none' }>,
+): string {
   switch (place.kind) {
     case 'network':
       return t('workspace.place.network');

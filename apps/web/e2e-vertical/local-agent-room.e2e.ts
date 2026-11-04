@@ -41,9 +41,9 @@ test('房主在“房间”页点一下就进了本机 Agent 替他建的房间�
     username: username ?? '',
   });
 
-  // 服务器记着房主已经在里面：列在“你的私人房间”里，不在邀请里，也没有“加入”按钮。
+  // 服务器记着房主已经在里面：列在“你的房间”里，不在邀请里，也没有“加入”按钮。
   const card = page
-    .getByRole('region', { name: 'Your private rooms', exact: true })
+    .getByRole('region', { name: 'Your rooms', exact: true })
     .getByRole('link')
     .filter({ hasText: roomName ?? '' });
   await expect(card).toBeVisible({ timeout: 60_000 });

@@ -130,6 +130,13 @@
   }
 }
 @media (max-width: 1140px) {
+  /* 五个去处：中等宽度上收窄一点，名字和标志才不被挤。 */
+  .app-navigation {
+    gap: 16px;
+  }
+  .app-navigation__links a {
+    padding-inline: 10px;
+  }
   .app-navigation__external--download {
     min-width: 44px;
     justify-content: center;
@@ -145,7 +152,7 @@
     white-space: nowrap;
   }
 }
-@media (min-width: 761px) and (max-width: 1000px) {
+@media (min-width: 761px) and (max-width: 1040px) {
   .app-navigation__brand > span {
     display: none;
   }
@@ -214,13 +221,45 @@
     min-height: 44px;
   }
 }
-@media (max-width: 480px) {
+/*
+ * 手机上和平板宽度上，五个去处排成一排标签：图标在上、名字在下。手机上每个一样宽；平板宽度上桌面端
+ * 右边还有“这台电脑”，横着排英文放不下。
+ */
+@media (max-width: 480px), (min-width: 761px) and (max-width: 1000px) {
   .app-navigation__links a {
-    gap: 5px;
-    padding: 0 6px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 4px 2px;
+    border-radius: 16px;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .app-navigation__links a > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .app-navigation__links svg {
-    width: 15px;
-    height: 15px;
+    width: 16px;
+    height: 16px;
+  }
+  /* 收件箱的未读数和“设置”的提醒点贴在图标右上角。 */
+  .app-navigation__links small,
+  .app-navigation__links .app-navigation__dot {
+    position: absolute;
+    top: 2px;
+    left: calc(50% + 6px);
+  }
+  .app-navigation__links small {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
+}
+@media (max-width: 480px) {
+  .app-navigation__links a {
+    flex: 1 1 0;
   }
 }

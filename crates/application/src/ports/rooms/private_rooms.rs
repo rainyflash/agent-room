@@ -2,6 +2,7 @@ use agent_room_domain::{
     DomainError, DomainResult,
     ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus},
+    room_notices::RoomNoticeText,
     rooms::{
         MatrixRoomReference, RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus,
         RoomInstance, RoomInstanceFields, RoomInstanceState,
@@ -69,6 +70,14 @@ pub struct PrivateRoomAgentDescription {
     pub network_principal_id: Option<PrincipalId>,
 }
 
+/// 一个主体名下（他是主人或操作人、还没撤的）的 Agent。`network` 为真时这个主体是替一个网络 Agent
+/// 记账的合成主体，名下只有这个网络 Agent。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PrincipalAgents {
+    pub agent_ids: Vec<AgentId>,
+    pub network: bool,
+}
+
 /// 列出某个主体名下全部 Agent 的 Matrix 用户。
 ///
 /// Agent 不是私人房间成员，它随主体入场，在 Matrix 上的能力不能超过该主体。主体的发言被收回、
@@ -93,6 +102,13 @@ pub trait PrivateRoomAgentDirectory: Send + Sync {
         &self,
         agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentDescription>>>;
+
+    /// 这个主体名下的 Agent，和它是不是网络 Agent 的合成主体：治理踢出、封禁他时连他凭口令进来的
+    /// Agent 一起移出，网络 Agent 只移出它自己。
+    fn principal_agents(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<PrincipalAgents>>;
 }
 
 /// 私人房间在 Matrix 上的最小硬边界能力。
@@ -166,15 +182,43 @@ impl PrivateMatrixRoomCreation {
     ///
     /// 请求不满足私人房间硬边界时返回错误。
     pub fn new(request: MatrixCreateRoom, alias: MatrixRoomAliasLocalpart) -> DomainResult<Self> {
+        if request.encryption() != MatrixRoomEncryption::EndToEnd {
+            return Err(invariant(
+                "private_matrix_room_creation",
+                "私人 Matrix 房间必须端到端加密",
+            ));
+        }
+        Self::managed(request, alias)
+    }
+
+    /// 新建时就公开的房间（`specs/public-rooms/design.md`）：不加密，别的和私人房间一样，在 Matrix
+    /// 上照旧隐藏、邀请制，进门都经控制面。
+    ///
+    /// # Errors
+    ///
+    /// 请求加了密，或不满足私人房间的其他硬边界时返回错误。
+    pub fn new_public(
+        request: MatrixCreateRoom,
+        alias: MatrixRoomAliasLocalpart,
+    ) -> DomainResult<Self> {
+        if request.encryption() != MatrixRoomEncryption::Unencrypted {
+            return Err(invariant(
+                "private_matrix_room_creation",
+                "新建时就公开的房间不加密",
+            ));
+        }
+        Self::managed(request, alias)
+    }
+
+    fn managed(request: MatrixCreateRoom, alias: MatrixRoomAliasLocalpart) -> DomainResult<Self> {
         let valid = request.visibility() == MatrixRoomVisibility::Private
             && request.preset() == MatrixRoomPreset::PrivateChat
-            && request.encryption() == MatrixRoomEncryption::EndToEnd
             && request.power_profile() == MatrixRoomPowerProfile::ManagedPrivate
             && request.alias_localpart() == Some(&alias);
         if !valid {
             return Err(invariant(
                 "private_matrix_room_creation",
-                "私人 Matrix 房间必须隐藏、邀请制、端到端加密、受管且带稳定别名",
+                "私人 Matrix 房间必须隐藏、邀请制、受管且带稳定别名",
             ));
         }
         Ok(Self { request, alias })
@@ -277,6 +321,16 @@ impl PrivateRoomSnapshot {
         Self::new(catalog, self.instance, self.room)
     }
 
+    /// 换上新简介的同一个房间。
+    ///
+    /// # Errors
+    ///
+    /// 新简介不满足房间简介规则时返回错误。
+    pub fn describing(self, description: String) -> DomainResult<Self> {
+        let catalog = self.catalog.described(description)?;
+        Self::new(catalog, self.instance, self.room)
+    }
+
     /// 用新的权限聚合重建生命周期一致的组合快照。
     ///
     /// 房主与归档状态只有一个事实源：`PrivateRoom`。目录和实例只是同一事务中的持久化投影。
@@ -375,6 +429,45 @@ pub trait PrivateRoomStore: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<()>>;
 }
 
+/// 房主改房间简介（`specs/public-rooms/design.md`）：简介也是 Matrix 房间的话题。单独两个端口，
+/// 不往 [`PrivateRoomStore`] 和 [`PrivateRoomMatrixGateway`] 里加：用到它们的地方太多。
+pub trait PrivateRoomDescriptionStore: Send + Sync {
+    /// 改房间目录上的简介；与成员版本无关，不动成员与权限。
+    fn describe<'a>(
+        &'a self,
+        catalog_id: RoomCatalogId,
+        description: &'a str,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+}
+
+pub trait PrivateRoomTopicGateway: Send + Sync {
+    /// 设置 Matrix 房间的话题（`m.room.topic`），空的就是去掉。重复设置同一段幂等。
+    fn set_topic<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        topic: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
+/// 写进 Matrix 的一版常驻公告（`room.notice.v1`）：正文（空的就是撤掉）、改的人、改的时间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomNoticeWrite {
+    pub text: RoomNoticeText,
+    /// 改的人在 Matrix 上的 ID。状态事件是应用服务发的，读的一边按它说“某某更新了公告”。
+    pub updated_by: MatrixUserId,
+    pub updated_at: UtcMillis,
+}
+
+pub trait PrivateRoomNoticeGateway: Send + Sync {
+    /// 以应用服务写 `io.github.rainyflash.agentroom.room.notice.v1`（`state_key` 为空），盖掉上一版。
+    fn set_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        notice: &'a RoomNoticeWrite,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
 const fn invariant(entity: &'static str, rule: &'static str) -> DomainError {
     DomainError::InvariantViolation { entity, rule }
 }
@@ -424,9 +517,18 @@ mod tests {
         )
         .expect("基础请求有效")
         .with_alias_localpart(alias.clone())
-        .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
-        assert!(PrivateMatrixRoomCreation::new(private, alias).is_ok());
+        assert!(
+            PrivateMatrixRoomCreation::new(private.clone(), alias.clone()).is_err(),
+            "私人房间要加密"
+        );
+        assert!(PrivateMatrixRoomCreation::new_public(private.clone(), alias.clone()).is_ok());
+        let encrypted = private.with_end_to_end_encryption();
+        assert!(PrivateMatrixRoomCreation::new(encrypted.clone(), alias.clone()).is_ok());
+        assert!(
+            PrivateMatrixRoomCreation::new_public(encrypted, alias).is_err(),
+            "新建时就公开的不加密"
+        );
     }
 
     #[test]

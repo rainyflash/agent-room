@@ -1,6 +1,18 @@
 import { z } from 'zod';
 
 import {
+  agentModerationLedgerSchema,
+  grantReversalSchema,
+  grantRoomModerationInputSchema,
+  roomModerationGrantListSchema,
+  roomModerationGrantSchema,
+  type AgentModerationGateway,
+  type AgentModerationLedger,
+  type GrantReversal,
+  type GrantRoomModerationInput,
+  type RoomModerationGrant,
+} from '@/features/moderation/domain/agent-moderation';
+import {
   applyModerationActionInputSchema,
   moderationActionListSchema,
   moderationActionSchema,
@@ -34,7 +46,7 @@ export type ControlPlaneModerationClientOptions = {
   readonly timeoutMs?: number;
 };
 
-export class ControlPlaneModerationClient implements ModerationGateway {
+export class ControlPlaneModerationClient implements ModerationGateway, AgentModerationGateway {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
   readonly #timeoutMs: number;
@@ -147,6 +159,59 @@ export class ControlPlaneModerationClient implements ModerationGateway {
       moderationAuditListSchema,
     );
     return response.ok ? ok(response.value.events) : response;
+  }
+
+  async listGrants(
+    catalogId: string,
+  ): Promise<Result<readonly RoomModerationGrant[], ModerationFailure>> {
+    const response = await this.#jsonRequest(
+      `/private-rooms/${encodeURIComponent(catalogId)}/moderation-grants`,
+      { method: 'GET' },
+      roomModerationGrantListSchema,
+    );
+    return response.ok ? ok(response.value.grants) : response;
+  }
+
+  async grant(
+    catalogId: string,
+    input: GrantRoomModerationInput,
+  ): Promise<Result<RoomModerationGrant, ModerationFailure>> {
+    const parsed = grantRoomModerationInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return err({ code: 'moderation.invalid_grant_input', retryable: false });
+    }
+    return await this.#jsonRequest(
+      `/private-rooms/${encodeURIComponent(catalogId)}/moderation-grants`,
+      { body: JSON.stringify(parsed.data), method: 'POST' },
+      roomModerationGrantSchema,
+    );
+  }
+
+  async revokeGrant(catalogId: string, grantId: string): Promise<Result<void, ModerationFailure>> {
+    const response = await this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/moderation-grants/${encodeURIComponent(grantId)}`,
+      { method: 'DELETE' },
+    );
+    return response.ok ? ok(undefined) : response;
+  }
+
+  listAgentActions(catalogId: string): Promise<Result<AgentModerationLedger, ModerationFailure>> {
+    return this.#jsonRequest(
+      `/rooms/${encodeURIComponent(catalogId)}/moderation/actions/agents`,
+      { method: 'GET' },
+      agentModerationLedgerSchema,
+    );
+  }
+
+  reverseGrant(
+    catalogId: string,
+    grantId: string,
+  ): Promise<Result<GrantReversal, ModerationFailure>> {
+    return this.#jsonRequest(
+      `/rooms/${encodeURIComponent(catalogId)}/moderation/grants/${encodeURIComponent(grantId)}/reverse`,
+      { body: JSON.stringify({ impactAcknowledged: true }), method: 'POST' },
+      grantReversalSchema,
+    );
   }
 
   async #jsonRequest<T>(

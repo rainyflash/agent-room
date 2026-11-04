@@ -664,9 +664,12 @@ async fn 登记仅保存本任务资料且不会改变身份或自动发送() {
     registry.shutdown().await;
 }
 
-/// 可进房间目录：CLI/MCP 在开会话之前就能按名字解析房间。
+/// 可进房间目录：CLI/MCP 在开会话之前就能按名字解析房间。发现页那一页原样给，记下问的什么。
+#[derive(Default)]
 struct DirectoryFake {
     rooms: Vec<AccessibleRoom>,
+    public: Vec<PublicRoomListing>,
+    asked: std::sync::Mutex<Vec<(Option<String>, Option<String>)>>,
 }
 
 impl ControlPlaneRoomDirectoryGateway for DirectoryFake {
@@ -679,13 +682,38 @@ impl ControlPlaneRoomDirectoryGateway for DirectoryFake {
         let rooms = self.rooms.clone();
         Box::pin(async move { Ok(rooms) })
     }
+
+    fn list_public<'a>(
+        &'a self,
+        search: Option<&'a str>,
+        cursor: Option<&'a str>,
+    ) -> PortFuture<
+        'a,
+        agent_room_bridge_core::room_directory::RoomDirectoryResult<
+            agent_room_bridge_core::room_directory::PublicRoomListingPage,
+        >,
+    > {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((search.map(str::to_owned), cursor.map(str::to_owned)));
+        let rooms = self.public.clone();
+        Box::pin(async move {
+            Ok(
+                agent_room_bridge_core::room_directory::PublicRoomListingPage {
+                    rooms,
+                    next_cursor: Some("24".to_owned()),
+                },
+            )
+        })
+    }
 }
 
 /// 控制面的口令接口：只认一个口令，记下查看与兑换的调用。
 #[derive(Default)]
 struct JoinCodesFake {
     resolved: std::sync::Mutex<Vec<String>>,
-    redeemed: std::sync::Mutex<Vec<(agent_room_domain::ids::AgentId, String)>>,
+    redeemed: std::sync::Mutex<Vec<(AgentId, String)>>,
 }
 
 impl ControlPlaneJoinCodeGateway for JoinCodesFake {
@@ -696,7 +724,7 @@ impl ControlPlaneJoinCodeGateway for JoinCodesFake {
 
     fn redeem<'a>(
         &'a self,
-        agent_id: agent_room_domain::ids::AgentId,
+        agent_id: AgentId,
         code: &'a str,
     ) -> PortFuture<'a, JoinCodeResult<JoinCodeRoom>> {
         self.redeemed
@@ -740,7 +768,7 @@ impl HostAgentRegistrationGateway for HostAgentsFake {
             .unwrap()
             .push((session_key, display_name.to_owned()));
         let agent = BridgeDefaultAgent {
-            agent_id: agent_room_domain::ids::AgentId::from_uuid(session_key.as_uuid()),
+            agent_id: AgentId::from_uuid(session_key.as_uuid()),
             display_name: display_name.to_owned(),
         };
         Box::pin(async move { Ok(agent) })
@@ -771,6 +799,83 @@ impl crate::ipc::BridgeStatusReader for ReadyStatus {
             started_at_unix_ms: 1,
         }
     }
+}
+
+fn listing(catalog_id: RoomCatalogId, code: &str) -> PublicRoomListing {
+    PublicRoomListing {
+        catalog_id,
+        name: format!("Room {code}"),
+        description: "Open to all".to_owned(),
+        owner_name: "Ming".to_owned(),
+        join_mode: RoomJoinMode::Request,
+        end_to_end_encrypted: false,
+        member_count: 4,
+        agent_count: 1,
+        last_message_at_unix_ms: Some(2_000),
+        share_code: agent_room_domain::room_listing::RoomShareCode::parse(code).unwrap(),
+        share_url: format!("https://agent-room.test/r/{code}"),
+    }
+}
+
+fn private_room(catalog_id: RoomCatalogId, membership: AccessibleRoomMembership) -> AccessibleRoom {
+    AccessibleRoom {
+        kind: AccessibleRoomKind::PrivateRoom,
+        catalog_id,
+        matrix_room_id: None,
+        name: "listed".to_owned(),
+        slug: None,
+        membership: Some(membership),
+    }
+}
+
+#[tokio::test]
+async fn 翻公开房间不需要会话_账号已经加入的标出来_受邀的不算() {
+    let [joined, invited, other] = [(); 3].map(|()| RoomCatalogId::from_uuid(Uuid::now_v7()));
+    let directory = Arc::new(DirectoryFake {
+        rooms: vec![
+            private_room(joined, AccessibleRoomMembership::Joined),
+            private_room(invited, AccessibleRoomMembership::Invited),
+        ],
+        public: vec![
+            listing(joined, "Join01"),
+            listing(invited, "Invt01"),
+            listing(other, "Othr01"),
+        ],
+        ..DirectoryFake::default()
+    });
+    let handler = SessionAwareIpcHandler {
+        default: Arc::new(RefusingHandler),
+        sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
+        connection_status: Arc::new(ReadyStatus),
+        room_directory: directory.clone(),
+        invitations: InvitationSlot::default(),
+        join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
+        rooms: rooms::access(Arc::default(), Arc::default()),
+    };
+
+    let response = handler
+        .dispatch(IpcMethod::ListPublicRooms(IpcListPublicRoomsRequest {
+            search: Some("open".to_owned()),
+            cursor: Some("24".to_owned()),
+        }))
+        .await
+        .expect("目录可读");
+    let IpcResponse::PublicRooms { rooms, next_cursor } = response else {
+        panic!("应返回公开房间");
+    };
+    assert_eq!(next_cursor.as_deref(), Some("24"));
+    assert_eq!(
+        rooms.iter().map(|room| room.joined).collect::<Vec<_>>(),
+        [true, false, false]
+    );
+    assert_eq!(rooms[0].catalog_id, joined.to_string());
+    assert_eq!(rooms[0].share_url, "https://agent-room.test/r/Join01");
+    assert_eq!(rooms[0].join_mode, IpcPublicRoomJoinMode::Request);
+    assert_eq!(rooms[0].last_message_at_unix_ms, Some(2_000));
+    assert_eq!(
+        *directory.asked.lock().unwrap(),
+        [(Some("open".to_owned()), Some("24".to_owned()))]
+    );
 }
 
 #[tokio::test]
@@ -804,6 +909,7 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
                     membership: Some(AccessibleRoomMembership::Joined),
                 },
             ],
+            ..DirectoryFake::default()
         }),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
@@ -835,7 +941,7 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         default: Arc::new(RefusingHandler),
         sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
         connection_status: Arc::new(ReadyStatus),
-        room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
+        room_directory: Arc::new(DirectoryFake::default()),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
         rooms: rooms::access(Arc::default(), Arc::default()),
@@ -917,7 +1023,7 @@ async fn 凭口令查看房间不建人物_兑换先按会话键建好人物再�
         default: Arc::new(RefusingHandler),
         sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
         connection_status: Arc::new(ReadyStatus),
-        room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
+        room_directory: Arc::new(DirectoryFake::default()),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(gateway.clone(), host_agents.clone()),
         rooms: rooms::access(Arc::default(), host_agents.clone()),
@@ -970,10 +1076,7 @@ async fn 凭口令查看房间不建人物_兑换先按会话键建好人物再�
     );
     assert_eq!(
         gateway.redeemed.lock().unwrap().as_slice(),
-        &[(
-            agent_room_domain::ids::AgentId::from_uuid(session_key),
-            JOIN_CODE.to_owned()
-        )]
+        &[(AgentId::from_uuid(session_key), JOIN_CODE.to_owned())]
     );
 
     let wrong = handler

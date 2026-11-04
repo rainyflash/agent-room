@@ -6,6 +6,7 @@ import { MatrixClientRegistry } from '@/shared/matrix/matrix-client-registry';
 
 import { roomKeyRequestEventType, roomKeysEventType } from './matrix-room-key-recovery';
 import { MatrixRoomKeyResponder } from './matrix-room-key-responder';
+import { roomListingEventType } from './room-listing';
 
 const ROOM = '!private:agent-room.test';
 const OTHER_ROOM = '!other:agent-room.test';
@@ -18,6 +19,9 @@ const STRANGER = '@stranger:agent-room.test';
 const OTHER_CURVE = 'o'.repeat(43);
 const REQUEST_ID = '01990d9e-8400-7000-8000-000000000301';
 const ANSWER_ID = '01990d9e-8400-7000-8000-000000000401';
+/** 成员事件默认的时间，比房间公开早。 */
+const JOINED_AT = Date.UTC(2026, 8, 1);
+const LISTED_AT = Date.UTC(2026, 8, 15);
 
 type Handler = (...args: unknown[]) => void;
 
@@ -83,10 +87,13 @@ class FakeCrypto {
 class FakeRoom {
   myMembership = 'join';
   historyVisibility = 'shared';
+  /** 房间第一次公开的状态的内容；没公开过是 null。 */
+  listing: Record<string, unknown> | null = null;
   readonly members = new Map([
     [AGENT, 'join'],
     [STRANGER, 'join'],
   ]);
+  readonly joinedAt = new Map<string, number>();
 
   getMyMembership(): string {
     return this.myMembership;
@@ -98,14 +105,24 @@ class FakeRoom {
 
   getMember(userId: string) {
     const membership = this.members.get(userId);
-    return membership === undefined ? null : { membership };
+    const joinedAt = this.joinedAt.get(userId) ?? JOINED_AT;
+    return membership === undefined
+      ? null
+      : { events: { member: { getTs: () => joinedAt } }, membership };
   }
 
   getLiveTimeline() {
     // 只有 AGENT 在房间里发过 Agent 在线状态事件。
     const state = {
-      getStateEvents: (type: string) =>
-        type === matrixAgentStatusEventType ? [{ getSender: () => AGENT }] : [],
+      getStateEvents: (type: string, stateKey?: string) => {
+        if (stateKey !== undefined) {
+          const listing = this.listing;
+          return type === roomListingEventType && listing !== null
+            ? { getContent: () => listing }
+            : null;
+        }
+        return type === matrixAgentStatusEventType ? [{ getSender: () => AGENT }] : [];
+      },
     };
     return { getState: () => state };
   }
@@ -229,6 +246,19 @@ const silentCases: readonly SilentCase[] = [
     },
   },
   {
+    label: '请求者是房间公开以后才进来的',
+    prepare: (client) => {
+      client.room.listing = { firstListedAt: new Date(LISTED_AT).toISOString() };
+      client.room.joinedAt.set(AGENT, LISTED_AT + 1);
+    },
+  },
+  {
+    label: '房间公开过、时间却读不出来',
+    prepare: (client) => {
+      client.room.listing = { firstListedAt: '昨天' };
+    },
+  },
+  {
     label: '请求者不是 Agent Room 的 Agent',
     message: () => delivered(request(), { sender: STRANGER }),
   },
@@ -286,6 +316,18 @@ describe('回答新请进房间的 Agent 的房间密钥请求', () => {
         senderKey: MY_CURVE,
       },
     );
+  });
+
+  it('房间公开以前就在的照常回答', async () => {
+    const { client } = harness();
+    client.room.listing = { firstListedAt: new Date(LISTED_AT).toISOString() };
+    client.crypto.keys = [exported(session(1))];
+
+    client.emit('receivedToDeviceMessage', delivered(request()));
+
+    await vi.waitFor(() => {
+      expect(client.queueToDevice).toHaveBeenCalledOnce();
+    });
   });
 
   it('多于 20 个会话时分几条发', async () => {

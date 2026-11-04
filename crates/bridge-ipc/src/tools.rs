@@ -5,9 +5,9 @@ use uuid::Uuid;
 use crate::{
     IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcCreateRoomRequest, IpcEnterRoomRequest,
     IpcHostSessionSummary, IpcInvitationOffer, IpcInvitePersonRequest, IpcLeaveRoomRequest,
-    IpcOpenHostSessionRequest, IpcPendingInvitation, IpcRedeemJoinCodeRequest,
-    IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess, IpcRoomAccessRequest,
-    IpcRoomCursor, IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
+    IpcListPublicRoomsRequest, IpcOpenHostSessionRequest, IpcPendingInvitation, IpcPublicRoom,
+    IpcRedeemJoinCodeRequest, IpcRemoveAgentRequest, IpcResolveJoinCodeRequest, IpcRoomAccess,
+    IpcRoomAccessRequest, IpcRoomCursor, IpcSessionRoom, IpcWithdrawInvitationRequest, limits,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +30,9 @@ pub enum IpcMethod {
     GetSelf,
     /// 这台设备的账号能进的房间，供 CLI/MCP 按名字解析房间；不需要先开会话。
     ListRooms,
+    /// 发现页的一页公开房间，标出账号已经加入的（4.6 起，`specs/public-rooms/design.md` 5c）；
+    /// 不需要先开会话。
+    ListPublicRooms(IpcListPublicRoomsRequest),
     /// 桌面端接入面板把准备好的人物挂在 Bridge 上等 Agent 来接；同一时间只挂一份，后挂的替换先挂的。
     OfferInvitation(IpcInvitationOffer),
     /// 面板关闭时撤回自己挂的那份。
@@ -51,6 +54,9 @@ pub enum IpcMethod {
     InvitePerson(IpcInvitePersonRequest),
     /// 移出凭口令或敲门进来的 Agent。
     RemoveAgent(IpcRemoveAgentRequest),
+    /// 主人给了管理授权的房间里读规则、照规则禁言、踢出、封禁、解开它封的（4.6 起，
+    /// `specs/public-rooms/design.md` 7c）。包在 `WithSession` 里用。
+    ModerateRoom(crate::IpcModerateRoomRequest),
     RegisterReception(crate::IpcRegisterReceptionRequest),
     ReceptionControl(crate::ReceptionRequest),
     SendReceptionMessage {
@@ -72,6 +78,8 @@ pub enum IpcMethod {
     RoomHistory(IpcRoomHistoryRequest),
     /// 确认收件箱处理到某一条（含）：它和它之前收到的都不再交。位置按房间记，只往前走。
     AckInbox(IpcAckInboxRequest),
+    /// 房间的常驻公告：进房间时要现在的，交一批消息时要改了的（4.6 起）。包在 `WithSession` 里用。
+    ReadRoomNotices(crate::IpcReadRoomNoticesRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     /// 旧版 MCP 和命令行还会发，新版已经去掉：Agent 自己报的工作状态不再发布
@@ -96,6 +104,7 @@ impl IpcMethod {
             Self::WithSession { method, .. } => method.name(),
             Self::GetSelf => "get_self",
             Self::ListRooms => "list_rooms",
+            Self::ListPublicRooms(_) => "list_public_rooms",
             Self::OfferInvitation(_) => "offer_invitation",
             Self::WithdrawInvitation(_) => "withdraw_invitation",
             Self::ReadInvitation => "read_invitation",
@@ -106,6 +115,7 @@ impl IpcMethod {
             Self::AnswerKnock(_) => "answer_knock",
             Self::InvitePerson(_) => "invite_person",
             Self::RemoveAgent(_) => "remove_agent",
+            Self::ModerateRoom(_) => "moderate_room",
             Self::RegisterReception(_) => "register_reception",
             Self::ReceptionControl(_) => "reception_control",
             Self::SendReceptionMessage { .. } | Self::SendMessage(_) => "send_message",
@@ -120,6 +130,7 @@ impl IpcMethod {
             Self::MessagesAround(_) => "messages_around",
             Self::RoomHistory(_) => "room_history",
             Self::AckInbox(_) => "ack_inbox",
+            Self::ReadRoomNotices(_) => "read_room_notices",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -148,7 +159,9 @@ impl IpcMethod {
             | Self::RoomAccess(_)
             | Self::AnswerKnock(_)
             | Self::InvitePerson(_)
-            | Self::RemoveAgent(_) => IpcScope::RoomsManage,
+            | Self::RemoveAgent(_)
+            // 照主人给的管理授权管房间，和 Agent 管自己建的房间同一类：能不能做由控制面把关。
+            | Self::ModerateRoom(_) => IpcScope::RoomsManage,
             Self::GetSelf => IpcScope::SelfRead,
             Self::MatrixSecurity(_) => IpcScope::MatrixSecurityManage,
             Self::ListRecoverySessions | Self::MatrixRecovery(_) => IpcScope::MatrixRecoveryManage,
@@ -164,7 +177,9 @@ impl IpcMethod {
             | Self::RoomHistory(_)
             // 确认位置只是这个 Agent 自己读到哪了，和读收件箱同一类权限。
             | Self::AckInbox(_)
-            | Self::ListRooms => IpcScope::PreviewsRead,
+            | Self::ReadRoomNotices(_)
+            | Self::ListRooms
+            | Self::ListPublicRooms(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
             Self::OpenContent(_) => IpcScope::ContentRead,
             Self::PublishStatus(_) => IpcScope::StatusPublish,
@@ -189,7 +204,9 @@ impl IpcMethod {
             | Self::ReadInvitation
             | Self::ListRecoverySessions
             | Self::HostSessionDiagnostics => Ok(()),
+            Self::ListPublicRooms(request) => request.validate(),
             Self::RoomAccess(request) => request.validate(),
+            Self::ModerateRoom(request) => request.validate(),
             Self::WithdrawInvitation(request) => request.validate(),
             Self::ResolveJoinCode(request) => request.validate(),
             Self::RedeemJoinCode(request) => request.validate(),
@@ -228,6 +245,7 @@ impl IpcMethod {
                         | Self::HostSessionDiagnostics
                         | Self::ListRecoverySessions
                         | Self::ListRooms
+                        | Self::ListPublicRooms(_)
                         | Self::OfferInvitation(_)
                         | Self::WithdrawInvitation(_)
                         | Self::ReadInvitation
@@ -257,6 +275,7 @@ impl IpcMethod {
             Self::MessagesAround(request) => request.validate(),
             Self::RoomHistory(request) => request.validate(),
             Self::AckInbox(request) => validate_message_reference(&request.id),
+            Self::ReadRoomNotices(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),
@@ -818,6 +837,16 @@ pub enum IpcResponse {
     Rooms {
         rooms: Vec<IpcRoomSummary>,
     },
+    /// 一页公开房间；还有下一页时带着 `nextCursor`。
+    PublicRooms {
+        rooms: Vec<IpcPublicRoom>,
+        #[serde(
+            rename = "nextCursor",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        next_cursor: Option<String>,
+    },
     /// 挂上、撤回或查看等待接入的人物；没有等待中的邀请时为空。
     Invitation {
         invitation: Option<IpcPendingInvitation>,
@@ -881,6 +910,23 @@ pub enum IpcResponse {
             skip_serializing_if = "Option::is_none"
         )]
         next_cursor: Option<String>,
+    },
+    /// 房间的常驻公告，一个房间一条；没有就是空的。
+    RoomNotices {
+        notices: Vec<crate::IpcRoomNotice>,
+    },
+    /// 主人在这个房间给 Agent 的管理授权；没有授权（或已经撤了、到期了）时没有 `grant`。
+    RoomModerationRules {
+        #[serde(rename = "catalogId")]
+        catalog_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant: Option<crate::IpcModerationGrant>,
+    },
+    /// Agent 照授权动手以后，台账里记下的那一条（解封回的是它撤回的那条封禁）。
+    RoomModerated {
+        #[serde(rename = "catalogId")]
+        catalog_id: String,
+        outcome: crate::IpcModerationOutcome,
     },
     /// 确认收件箱的结果。`acknowledged` 为 false 是这一条早就确认过了，位置不往回走；
     /// `pending` 是这个房间里确认位置之后还有几条别人发的。
@@ -962,6 +1008,19 @@ impl agent_room_bridge_core::room_directory::NamedRoom for IpcRoomSummary {
 
     fn room_slug(&self) -> Option<&str> {
         self.slug.as_deref()
+    }
+
+    fn room_catalog_id(&self) -> Option<agent_room_domain::ids::RoomCatalogId> {
+        Uuid::parse_str(&self.catalog_id)
+            .ok()
+            .map(agent_room_domain::ids::RoomCatalogId::from_uuid)
+    }
+
+    fn room_share_code(&self) -> Option<&str> {
+        match self.kind {
+            IpcRoomKind::PrivateRoom => self.slug.as_deref(),
+            IpcRoomKind::PublicLobby => None,
+        }
     }
 }
 
@@ -1381,7 +1440,7 @@ impl IpcMethodValidationFailure {
     }
 }
 
-fn validate_optional_bounded(
+pub(crate) fn validate_optional_bounded(
     value: Option<&str>,
     maximum_bytes: usize,
     code: &'static str,
@@ -1389,7 +1448,7 @@ fn validate_optional_bounded(
     value.map_or(Ok(()), |value| validate_bounded(value, maximum_bytes, code))
 }
 
-fn validate_bounded(
+pub(crate) fn validate_bounded(
     value: &str,
     maximum_bytes: usize,
     code: &'static str,
@@ -1400,7 +1459,7 @@ fn validate_bounded(
     Ok(())
 }
 
-fn validate_human_text(
+pub(crate) fn validate_human_text(
     value: &str,
     maximum_characters: usize,
     code: &'static str,

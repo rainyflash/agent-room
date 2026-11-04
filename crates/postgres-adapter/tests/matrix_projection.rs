@@ -332,10 +332,10 @@ async fn create_room(pool: &PgPool) -> RoomInstanceId {
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
             id, kind, slug, name, description, language, visibility,
-            status, created_at, updated_at
+            status, end_to_end_encrypted, created_at, updated_at
         ) VALUES (
             $1, 'public_lobby', $2, '投影测试大厅', '', 'zh-CN', 'public',
-            'active', to_timestamp($3::double precision / 1000.0),
+            'active', false, to_timestamp($3::double precision / 1000.0),
             to_timestamp($3::double precision / 1000.0)
         )",
     )

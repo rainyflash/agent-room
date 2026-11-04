@@ -1,15 +1,22 @@
 use agent_room_domain::{
-    ids::{AuditEventId, ModerationActionId, ModerationCaseId, PrincipalId, RoomCatalogId},
-    moderation::{
-        ModerationAction, ModerationAuditEvent, ModerationCase, ModerationRole, ModerationTarget,
+    ids::{
+        AgentId, AuditEventId, ModerationActionId, ModerationCaseId, PrincipalId, RoomCatalogId,
+        RoomModerationGrantId,
     },
+    moderation::{
+        ModerationAction, ModerationActionKind, ModerationAuditEvent, ModerationCase,
+        ModerationRole, ModerationTarget,
+    },
+    room_moderation_grants::AgentModerationNote,
     rooms::RoomCatalogKind,
     time::{DurationMillis, UtcMillis},
 };
 
 use crate::persistence::RepositoryResult;
 
-use super::{MatrixEventId, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture};
+use super::{
+    MatrixEventId, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture, RoomModerationGrant,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModerationReportPolicy {
@@ -99,6 +106,9 @@ pub struct ModerationRoomContext {
     /// 是同一个）。私人房间和私聊只有一个；公开大厅人多了会分成好几个分片。
     pub matrix_room_ids: Vec<MatrixRoomId>,
     pub target_matrix_user_id: Option<MatrixUserId>,
+    /// 被管的人名下 Agent 的 Matrix 账号（他是主人或操作人、还没撤的）。禁言和撤销禁言跟着这个人一起
+    /// 动它们，只动此刻在分片里的：Agent 的能力不能超过它代表的人。不是管人的动作时是空的。
+    pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
 }
 
 /// 领到的一个到期动作。
@@ -170,7 +180,10 @@ pub struct ModerationMuteStanding {
     pub matrix_room_ids: Vec<MatrixRoomId>,
     /// 这个人的 Matrix 账号，账号停用了也照样给；查不到这个人时为 `None`。
     pub target_matrix_user_id: Option<MatrixUserId>,
-    /// 撇开禁言，他此刻能不能说话：私人房间要受邀或者已经加入、权限里开着发言；公开大厅和私聊总是能。
+    /// 他名下 Agent 的 Matrix 账号，和 [`ModerationRoomContext::target_agent_matrix_user_ids`] 一样。
+    pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
+    /// 撇开禁言，他此刻能不能说话：私人房间要受邀或者已经加入、权限里开着发言；他不是房间里的人时（比如
+    /// 网络 Agent 的合成主体），看他名下凭口令或敲门进来的 Agent 成员开没开发言。公开大厅和私聊总是能。
     pub may_speak: bool,
     /// 他在这个房间里已经落下（`applied`）和正在落（`pending`）的禁言，按 UUID 认人，先做的在前。
     pub mutes: Vec<ModerationAction>,
@@ -249,6 +262,9 @@ pub struct ModerationEffectTarget {
     pub room_kind: RoomCatalogKind,
     pub target: ModerationTarget,
     pub target_matrix_user_id: Option<MatrixUserId>,
+    /// 被管的人名下 Agent 的 Matrix 账号。禁言和撤销禁言对此刻在这个分片里的跟着这个人一起做，别的
+    /// 动作不看它。
+    pub target_agent_matrix_user_ids: Vec<MatrixUserId>,
 }
 
 /// Matrix 只执行已经通过产品权限裁决并被持久化为 pending 的治理副作用。
@@ -271,6 +287,155 @@ pub trait ModerationEffectGateway: Send + Sync {
         room_id: &'a MatrixRoomId,
         event_id: &'a MatrixEventId,
     ) -> PortFuture<'a, MatrixResult<bool>>;
+}
+
+/// 私人房间里台账的踢出、封禁为什么做不了。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModerationMemberRefusal {
+    /// 对象是房主。
+    Owner,
+    /// 踢出时他已经不在房间里：没有受邀，也没有加入。
+    NotInRoom,
+    /// 房间不在了，或者已经归档。
+    RoomUnavailable,
+}
+
+/// 私人房间里台账的踢出、封禁照成员一节那一套落，不只动聊天服务器（`specs/public-rooms/design.md`
+/// “落到哪”）：只在聊天服务器上踢了、成员记录还是已加入的话，网页会把他当成还在房间里，又替他加入。
+/// 台账已经核过动手的人管得了这个房间，这里以房主的身份改成员记录。成员记录和目录的失败也报成聊天
+/// 服务器的失败（取最接近的种类）：对台账来说都是这一下没落成。
+pub trait ModerationMemberGateway: Send + Sync {
+    /// 落之前先看做不做得了，做不了交回为什么：不预留一条注定失败的动作。
+    fn check(
+        &self,
+        kind: ModerationActionKind,
+        room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Option<ModerationMemberRefusal>>>;
+
+    /// 踢出就是移出，封禁就是封禁：改成员记录，在聊天服务器上踢出或封禁，把他名下在房间里的 Agent
+    /// 移出。
+    fn apply(
+        &self,
+        kind: ModerationActionKind,
+        room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>>;
+
+    /// 撤回和到期解除：封禁就是解封，他回到“已移出”，之后能再邀请他或者他自己进来；踢出是照房间
+    /// 新成员的默认权限重新邀请他。他已经不被封着、已经回到房间里了，什么也不做。
+    fn reverse(
+        &self,
+        kind: ModerationActionKind,
+        room_catalog_id: RoomCatalogId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, MatrixResult<()>>;
+}
+
+/// Agent 在消息里看到的一个发言人认成的人（维护者 2026-11-03 定：动别人的 Agent 等于动它的主人）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModerationSubject {
+    pub principal_id: PrincipalId,
+    /// 认出来的是网络 Agent 替它记账的合成主体：它在房间里没有自己的账号，只有它的 Agent 账号。
+    pub network_agent: bool,
+}
+
+/// 台账里 Agent 做的一条：是哪个 Agent、按哪份授权、它写的理由。执行人照旧是给授权的人。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationAttribution {
+    pub action_id: ModerationActionId,
+    pub agent_id: AgentId,
+    pub grant_id: RoomModerationGrantId,
+    pub note: AgentModerationNote,
+}
+
+/// 给房主和管理员看的一条，带着 Agent 此刻的名字。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationRecord {
+    pub attribution: AgentModerationAttribution,
+    pub agent_display_name: String,
+}
+
+/// Agent 解封时撤回的一条封禁：`attribution.action_id` 是那条封禁，另记是哪个 Agent、按哪份授权、它写的
+/// 理由，和解封请求自带的 ID（同一个请求再来一次时认出来）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModerationReversal {
+    pub request_id: ModerationActionId,
+    pub attribution: AgentModerationAttribution,
+}
+
+/// 房间里已经落下、还没撤的一条封禁，和它是不是 Agent 做的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedBan {
+    pub action: ModerationAction,
+    pub by_agent: bool,
+}
+
+/// Agent 按管理授权动手：查它的授权、认人、和台账同一个事务记下是它做的。
+pub trait AgentModerationStore: Send + Sync {
+    /// 这个 Agent 在这个房间里此刻在用的授权（没撤、没到期）。
+    fn active_agent_grant(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Option<RoomModerationGrant>>>;
+
+    /// 一个聊天账号是谁：人的账号就是他（账号还在用）；Agent 的账号认成它的主人，网络 Agent 认成替它记账的
+    /// 合成主体。认不出来的为 `None`。
+    fn moderation_subject<'a>(
+        &'a self,
+        matrix_user_id: &'a MatrixUserId,
+    ) -> PortFuture<'a, RepositoryResult<Option<ModerationSubject>>>;
+
+    /// 和 [`ModerationRepository::reserve_action`] 一样预留动作、写审计，同一个事务里再记下是哪个 Agent
+    /// 按哪份授权做的。同一个动作已经在了就交回它，不再记。
+    fn reserve_agent_action<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        audit: &'a ModerationAuditEvent,
+        attribution: &'a AgentModerationAttribution,
+    ) -> PortFuture<'a, RepositoryResult<ModerationActionReservationOutcome>>;
+
+    /// 这个房间里 Agent 做的动作，后做的在前。
+    fn agent_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>>;
+
+    /// 这个房间里已经落下、还没撤的封禁，先做的在前，不限条数（台账的列表只给最近的 200 条）。
+    fn applied_bans(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AppliedBan>>>;
+
+    /// 和 [`ModerationRepository::finalize_action`] 一样把封禁记成撤回、写审计，同一个事务里再记下是哪个
+    /// Agent 按哪份授权撤的。
+    fn finalize_agent_reversal<'a>(
+        &'a self,
+        action: &'a ModerationAction,
+        audit: &'a ModerationAuditEvent,
+        reversal: &'a AgentModerationReversal,
+    ) -> PortFuture<'a, RepositoryResult<ModerationAction>>;
+
+    /// 这个解封请求撤回的那条封禁；一次撤了几条的，交回最后撤的那条。
+    fn agent_reversal(
+        &self,
+        request_id: ModerationActionId,
+    ) -> PortFuture<'_, RepositoryResult<Option<AgentModerationReversal>>>;
+
+    /// 这个房间里 Agent 撤回的动作，后撤的在前。
+    fn agent_reversals(
+        &self,
+        room_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AgentModerationRecord>>>;
+
+    /// 这个房间里按这份授权做的、还生效着（`applied`）的动作，先做的在前，不限条数。
+    fn grant_actions(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        grant_id: RoomModerationGrantId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ModerationActionId>>>;
 }
 
 pub trait ModerationIdentifierFactory: Send + Sync {

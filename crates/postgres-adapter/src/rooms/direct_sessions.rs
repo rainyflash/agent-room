@@ -269,13 +269,14 @@ async fn reserve_record(
 ) -> RepositoryResult<bool> {
     let catalog = record.catalog();
     sqlx::query(
+        // 私聊建房时就写了 `m.room.encryption`，所以记成加密的。
         r"INSERT INTO agent_room.room_catalog_entry (
                id, kind, slug, name, description, language, matrix_space_id,
                owner_principal_id, visibility, retention_days, status,
-               created_at, updated_at
+               end_to_end_encrypted, created_at, updated_at
            ) VALUES (
                $1, 'direct', NULL, $2, $3, NULL, NULL,
-               $4, 'private', NULL, 'frozen',
+               $4, 'private', NULL, 'frozen', true,
                to_timestamp($5::double precision / 1000.0),
                to_timestamp($5::double precision / 1000.0)
            )",

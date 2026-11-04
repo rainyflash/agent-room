@@ -7,6 +7,7 @@ import {
   MessageCircle,
   MessageSquareOff,
   Minimize2,
+  Share2,
   UserPlus,
   UsersRound,
   X,
@@ -60,6 +61,8 @@ import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
+import { RoomNoticeBar } from '@/features/room-notice/ui/room-notice-bar';
+import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
@@ -67,8 +70,12 @@ import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import {
   usePrivateRoomList,
+  usePrivateRoomListing,
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
+import { shareable } from '@/features/private-rooms/domain/private-room-listing';
+import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
+import type { ShareableRoom } from '@/features/room-share/domain/room-share';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
 import './lobby-game.css';
@@ -187,7 +194,9 @@ function ReadyLobby({
     localRuntime,
     messages: messageGateway,
     privateRoomInvites,
+    privateRoomListings,
     privateRooms,
+    roomNotices,
   } = useAppServices();
   const reception = useReceptionEvidence();
   const { url: downloadUrl } = usePublishedDownload(config);
@@ -203,6 +212,7 @@ function ReadyLobby({
   );
   const [inviteOpen, setInviteOpen] = useState(false);
   const [peopleInviteOpen, setPeopleInviteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [invitation, setInvitation] = useState<ConnectedInvitation | null>(null);
   const [panelSize, setPanelSize] = useState<PanelSize>(readPanelSize);
   const owner =
@@ -211,16 +221,23 @@ function ReadyLobby({
       : { principalId: principal.principalId, displayName: principal.displayName };
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
-  const origin = usePrivateRoomOrigin(
-    privateRooms,
-    catalogId,
-    principal !== null && room.encrypted === true,
-  );
   // 归档了的私人房间照样打得开、看得到之前的消息，只是谁都不能再说话、也不能再接入 Agent。
   const privateRoomList = usePrivateRoomList(
     privateRooms,
     principal?.principalId,
-    principal !== null && room.encrypted === true,
+    principal !== null,
+  );
+  // 有房间号的房间（私人房间、公开房间）和公共大厅分开：加密的都是；不加密的公开房间在你的房间里，
+  // 公共大厅不在（`specs/public-rooms/design.md`）。
+  const catalogRoom =
+    room.encrypted === true ||
+    (privateRoomList.data?.ok === true &&
+      privateRoomList.data.value.some((entry) => entry.catalogId === catalogId));
+  const origin = usePrivateRoomOrigin(privateRooms, catalogId, principal !== null && catalogRoom);
+  const listing = usePrivateRoomListing(
+    privateRoomListings,
+    catalogId,
+    principal !== null && catalogRoom,
   );
   const archived =
     privateRoomList.data?.ok === true &&
@@ -238,8 +255,35 @@ function ReadyLobby({
     catalogId,
     privateRoomInvites === undefined ? null : (principal?.principalId ?? null),
   );
+  // 公开房间（不是只能邀请的、没被平台拿掉）给“分享”：链接打开了别人进得来才给。
+  const shareRoom: ShareableRoom | null =
+    !archived && listing.data?.ok === true && shareable(listing.data.value)
+      ? {
+          description:
+            (privateRoomList.data?.ok === true
+              ? privateRoomList.data.value.find((entry) => entry.catalogId === catalogId)
+                  ?.description
+              : undefined) ?? '',
+          name: room.name,
+          shareUrl: listing.data.value.shareUrl,
+        }
+      : null;
+  const pendingJoinRequests = usePendingJoinRequestCount(
+    privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+    catalogId,
+    principal?.principalId ?? null,
+  );
   // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
   const writesAllowed = !archived && room.canSpeak !== false;
+  // 房主和管理员能改公告；归档了谁都不能。
+  const noticeEditable =
+    roomNotices !== undefined &&
+    !archived &&
+    managesRoom(
+      privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+      catalogId,
+      principal?.principalId ?? null,
+    );
   const projection = useMemo(
     () => ({
       ...scene,
@@ -343,7 +387,9 @@ function ReadyLobby({
       </div>
       <RoomBeacon
         agentCount={attendance.present}
-        privateRoom={room.encrypted === true}
+        privateRoom={catalogRoom}
+        listed={listing.data?.ok === true && listing.data.value.listed}
+        unencrypted={catalogRoom && room.encrypted !== true}
         archived={archived}
         serverReadable={origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent}
         membersButtonRef={membersButton}
@@ -358,6 +404,7 @@ function ReadyLobby({
         onOpenMembers={() => {
           setDrawer('members');
         }}
+        pendingJoinRequests={pendingJoinRequests}
         {...(room.topic === undefined ? {} : { topic: room.topic })}
       />
       <p className="room-scene-hint">{t('roomGame.hint')}</p>
@@ -485,7 +532,31 @@ function ReadyLobby({
             </span>
           </button>
         )}
+        {shareRoom === null ? null : (
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={shareOpen}
+            onClick={() => {
+              setShareOpen(true);
+            }}
+          >
+            <Share2 aria-hidden="true" />
+            <span className="room-toolbelt__label">{t('roomShare.open')}</span>
+            <span className="room-toolbelt__short" aria-hidden="true">
+              {t('roomShare.open')}
+            </span>
+          </button>
+        )}
       </nav>
+      {shareOpen && shareRoom !== null ? (
+        <ShareRoomDialog
+          onClose={() => {
+            setShareOpen(false);
+          }}
+          room={shareRoom}
+        />
+      ) : null}
       {roomSettings === null || principal === null ? null : (
         <RoomSettingsDialog
           catalogId={catalogId}
@@ -493,6 +564,7 @@ function ReadyLobby({
           onClose={() => {
             setRoomSettings(null);
           }}
+          notice={room.notice}
           onExitRoom={onExitRoom}
           principal={principal}
           roomName={room.name}
@@ -595,6 +667,22 @@ function ReadyLobby({
               <X aria-hidden="true" />
             </button>
           </div>
+        ) : null}
+        {publicConversationVisible && room.notice !== undefined ? (
+          <RoomNoticeBar
+            key={room.roomId}
+            memberNames={room.memberNames}
+            notice={room.notice}
+            onEdit={
+              noticeEditable && principal !== null
+                ? () => {
+                    setRoomSettings({ section: 'notice' });
+                  }
+                : undefined
+            }
+            roomId={room.roomId}
+            selfMatrixUserId={principal?.matrixUserId ?? null}
+          />
         ) : null}
         <div
           className="room-panel__content"
@@ -708,6 +796,17 @@ function invitableRoom(
 }
 
 /** 你在这个私人房间里带进来的 Agent 能不能说话：房主都能，成员要有“自动发言”。不是私人房间的都能。 */
+/** 你是这间房的房主，或者有“管理”。公共大厅和你不在里面的房间都不算。 */
+function managesRoom(
+  rooms: readonly PrivateRoom[],
+  catalogId: string,
+  principalId: string | null,
+): boolean {
+  const room = rooms.find((entry) => entry.catalogId === catalogId);
+  if (room === undefined || principalId === null) return false;
+  return room.ownerPrincipalId === principalId || allows(memberFor(room, principalId), 'manage');
+}
+
 function agentsSpeakIn(
   rooms: readonly PrivateRoom[],
   catalogId: string,

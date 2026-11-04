@@ -24,7 +24,7 @@ test('新建房间一屏：保留多久、现在就邀请谁放在更多选项�
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 900, width: 1_440 });
   await page.goto(`${fixturePath}?features=1&failJoin=1`);
-  await expect(page.getByRole('heading', { name: 'Your private rooms' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your rooms' })).toBeVisible();
   await page.getByRole('button', { name: 'New room', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New room' });
   await expect(dialog).toContainText('Private rooms are invite only');
@@ -60,7 +60,7 @@ test('新建房间在手机上是底部面板，不产生横向溢出', async ({
   const failures = collectPageFailures(page);
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto(`${fixturePath}?features=1`);
-  await expect(page.getByRole('heading', { name: 'Your private rooms' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your rooms' })).toBeVisible();
   await page.getByRole('button', { name: 'New room', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New room' });
   await expect(dialog).toBeVisible();
@@ -70,7 +70,7 @@ test('新建房间在手机上是底部面板，不产生横向溢出', async ({
 });
 
 for (const width of [1_440, 390]) {
-  test(`私人房间的房间设置：四节在一个对话框里 ${String(width)}`, async ({ page }) => {
+  test(`私人房间的房间设置：六节在一个对话框里 ${String(width)}`, async ({ page }) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ height: 900, width });
     await page.goto(`${fixturePath}?private`);
@@ -80,6 +80,8 @@ for (const width of [1_440, 390]) {
     const sections = dialog.getByRole('radiogroup', { name: 'Room settings sections' });
     await expect(sections.getByRole('radio')).toHaveText([
       'Members',
+      'Public',
+      'Notice',
       'Agent entry',
       'Automation',
       'Moderation',

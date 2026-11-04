@@ -1,0 +1,340 @@
+/*
+ * 公开房间的分享页（/r/<分享码>）。令牌的值和 packages/ui-system/src/styles.css 一样（网页的测试卡着），
+ * 看起来和网站、应用是一家：奶油色底、墨色粗描边、不模糊的按压阴影。字体只用系统自带的：网站的字体
+ * 文件带着内容摘要，控制面不知道它叫什么。没有脚本也完整，脚本只管“复制链接”。
+ */
+:root {
+  --color-ink: #2a2733;
+  --color-paper: #ffffff;
+  --ar-canvas: #fff4dc;
+  --ar-surface: #fffdf7;
+  --ar-surface-muted: #fff6e3;
+  --ar-accent: #247a77;
+  --ar-accent-hover: #1c6562;
+  --ar-accent-soft: #eaf5f2;
+  --ar-muted: #5c5866;
+  --ar-line: #e8d9b8;
+  --ar-outline: #2a2733;
+  --ar-sunny: #ffc53d;
+  --ar-sunny-hover: #ffb81f;
+  --ar-mint: #bde8d8;
+  --ar-sky: #8ec5f5;
+  --ar-coral: #f07058;
+  --outline: 2.5px;
+  --outline-thin: 2px;
+  --press: 0 4px 0 var(--ar-outline);
+  --press-small: 0 3px 0 var(--ar-outline);
+  --radius-panel: 28px;
+  --radius-card: 20px;
+  --page: 720px;
+  --gutter: clamp(16px, 4vw, 32px);
+  --font-sans:
+    ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-ink: #f1ece2;
+    --color-paper: #1b1a21;
+    --ar-canvas: #131217;
+    --ar-surface: #1e1c24;
+    --ar-surface-muted: #28252f;
+    --ar-accent: #5cc0b8;
+    --ar-accent-hover: #75cfc8;
+    --ar-accent-soft: #163230;
+    --ar-muted: #aaa4b4;
+    --ar-line: #37333f;
+    --ar-outline: #8e879d;
+    --ar-sunny: #8a6414;
+    --ar-sunny-hover: #9b711a;
+    --ar-mint: #1f4d43;
+    --ar-sky: #24527a;
+    --ar-coral: #8e3a2b;
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding-block: 0 48px;
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--ar-accent);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--ar-accent-hover);
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(1.6rem, 5vw, 2.2rem);
+  overflow-wrap: anywhere;
+}
+
+h2 {
+  font-size: 1.2rem;
+}
+
+p {
+  margin: 0;
+}
+
+.share-header,
+.share-main {
+  width: min(var(--page), 100% - 2 * var(--gutter));
+  margin: 0 auto;
+}
+
+.share-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 20px;
+}
+
+.share-brand {
+  color: var(--color-ink);
+  font-weight: 700;
+  font-size: 1.15rem;
+  text-decoration: none;
+}
+
+.share-main {
+  display: grid;
+  gap: 24px;
+}
+
+.share-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: clamp(20px, 5vw, 32px);
+  border: var(--outline) solid var(--ar-outline);
+  border-radius: var(--radius-panel);
+  background: var(--ar-surface);
+  box-shadow: var(--press);
+}
+
+.share-room-head {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  min-width: 0;
+}
+
+.share-room-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.share-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: var(--outline-thin) solid var(--ar-outline);
+  border-radius: var(--radius-card);
+  color: var(--color-ink);
+  background: var(--ar-mint);
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.share-owner,
+.share-quiet {
+  color: var(--ar-muted);
+}
+
+.share-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.share-tags li {
+  padding: 2px 12px;
+  border: var(--outline-thin) solid var(--ar-outline);
+  border-radius: 999px;
+  background: var(--ar-surface-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.share-tags .share-tag--open {
+  background: var(--ar-sky);
+}
+
+.share-tags .share-tag--plain {
+  background: var(--ar-sunny);
+}
+
+.share-description {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.share-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.share-stats div {
+  padding: 10px 14px;
+  border: var(--outline-thin) solid var(--ar-line);
+  border-radius: var(--radius-card);
+  background: var(--ar-surface-muted);
+}
+
+.share-stats dt {
+  color: var(--ar-muted);
+  font-size: 0.85rem;
+}
+
+.share-stats dd {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.share-note {
+  padding: 12px 16px;
+  border-left: 6px solid var(--ar-coral);
+  border-radius: 12px;
+  background: var(--ar-surface-muted);
+}
+
+.share-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.share-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 0.7rem 1.5rem;
+  border: var(--outline-thin) solid var(--ar-outline);
+  border-radius: 999px;
+  color: var(--color-ink);
+  background: var(--ar-surface);
+  box-shadow: var(--press-small);
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.share-button:hover {
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+
+.share-button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ar-outline);
+}
+
+.share-button--primary {
+  background: var(--ar-sunny);
+  font-size: 1.05rem;
+}
+
+.share-button--primary:hover {
+  background: var(--ar-sunny-hover);
+}
+
+.share-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.share-link {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 14px;
+  border: var(--outline-thin) solid var(--ar-outline);
+  border-radius: 12px;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.share-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 1.4rem;
+}
+
+.share-disclaimer {
+  color: var(--ar-muted);
+  font-size: 0.85rem;
+}
+
+/* 手机上不给下载，给“复制链接”；“加入房间”写成“登录并加入”。 */
+.share-narrow {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .share-wide {
+    display: none;
+  }
+
+  .share-narrow {
+    display: revert;
+  }
+
+  .share-actions,
+  .share-actions .share-button {
+    justify-items: stretch;
+    width: 100%;
+  }
+}

@@ -78,8 +78,8 @@ test('Matrix 连接失败时仍能从连接页进入云端工作区和房间目�
   const documentLoads = await page.evaluate(() => performance.timeOrigin);
   await page.getByRole('link', { name: 'Rooms', exact: true }).click();
   expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentLoads);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Find your room');
-  await expect(page.getByText('No public room is available', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Rooms');
+  await expect(page.getByRole('link', { name: 'Go to Explore' })).toBeVisible();
 });
 
 test('云端会话过期后立刻撤下工作区的旧账户信息', async ({ page }) => {

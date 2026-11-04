@@ -23,6 +23,8 @@ pub mod persistence;
 pub mod ports;
 pub mod private_rooms;
 pub mod public_lobby_entry;
+pub mod public_room_activity;
+pub mod public_room_directory;
 pub mod reception;
 pub mod room_people;
 pub mod rooms;

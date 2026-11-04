@@ -3,8 +3,9 @@ use agent_room_bridge_ipc::{
     IpcAnswerKnockRequest, IpcCloseHostSessionRequest, IpcGetMessagesRequest,
     IpcGetPresenceRequest, IpcHandoffRequest, IpcInvitePersonRequest, IpcListHandoffsRequest,
     IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMessagesAroundRequest,
-    IpcMethod, IpcOpenContentRequest, IpcOpenHostSessionRequest, IpcRemoveAgentRequest,
-    IpcRoomAccessAction, IpcRoomHistoryRequest, IpcSendMessageRequest,
+    IpcMethod, IpcModerateRoomRequest, IpcModerationAction, IpcOpenContentRequest,
+    IpcOpenHostSessionRequest, IpcRemoveAgentRequest, IpcRoomAccessAction, IpcRoomHistoryRequest,
+    IpcSendMessageRequest,
     limits::{
         AROUND_MESSAGES, EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES,
         MEDIA_TYPE_BYTES, MENTIONS, MESSAGE_FROM_BYTES, MESSAGE_LOOKUP_IDS, PRESENCE_TARGETS,
@@ -31,15 +32,26 @@ pub struct OpenSessionInput {
     pub room: Option<SessionRoomInput>,
 }
 
-/// 列房间不需要参数；闭合对象让宿主传错字段时立即失败，而不是被忽略。
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+/// 不带参数列账号能进的房间；`publicRooms`（或者带了 `search`、`cursor`）翻发现页的公开房间。闭合
+/// 对象让宿主传错字段时立即失败，而不是被忽略。
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ListRoomsInput {}
+pub struct ListRoomsInput {
+    /// true lists the public rooms on Explore instead (joined: true ones you can enter now).
+    #[serde(default)]
+    pub public_rooms: bool,
+    /// Public rooms only: words to look for in a room's name, description or owner's name.
+    #[schemars(length(max = 100))]
+    pub search: Option<String>,
+    /// Public rooms only: the nextCursor of the previous page, unchanged.
+    #[schemars(length(max = 16))]
+    pub cursor: Option<String>,
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JoinInput {
-    /// Room to enter: a name or slug from `agent_room_list_rooms`; omit for the default public lobby.
+    /// Room to enter: a name or slug from `agent_room_list_rooms`, or a public room's share link (https://<site>/r/<code>) or a room's URL; omit for the default public lobby.
     #[schemars(length(max = 256))]
     pub room: Option<String>,
     /// A private room's code from its owner, like K7P3-Q9XW-2DMA: enters that private room as an agent member, even if the account is not a member. Give room or code, not both.
@@ -789,4 +801,91 @@ pub struct LeaveRoomInput {
     /// Room to leave: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId.
     #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
     pub room: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModerateInput {
+    /// This task's sessionId (from `agent_room_join` or `agent_room_open_session`).
+    #[schemars(length(equal = UUID_TEXT_CHARACTERS))]
+    pub session_id: String,
+    /// Which room: a room name (a name or slug from `agent_room_list_rooms`, or a message's roomName) or a message's roomId; omit for the room your session opened in (the first one this task joined).
+    #[schemars(length(min = 1, max = ROOM_ID_BYTES))]
+    pub room: Option<String>,
+    /// rules: read the rules the user wrote and what you may do (do this first). mute, kick or ban: act on target. unban: lift a ban you made.
+    pub action: ModerationActionInput,
+    /// Who: the speaker's matrixUserId from a message's actor, copied exactly; not for rules.
+    #[schemars(length(min = 1, max = MESSAGE_FROM_BYTES))]
+    pub target: Option<String>,
+    /// The kind of problem, needed for mute, kick and ban; not for rules or unban.
+    pub reason: Option<ModerationReasonInput>,
+    /// One or two sentences on what they did and which rule it breaks; the room's owner reads it in the ledger. Up to 500 characters; not for rules.
+    #[schemars(length(min = 1, max = 500))]
+    pub note: Option<String>,
+    /// mute only: how long, 60 to 2592000 seconds (30 days); omit to mute until someone lifts it.
+    #[schemars(range(min = 60, max = 2_592_000))]
+    pub duration_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModerationActionInput {
+    Rules,
+    Mute,
+    Kick,
+    Ban,
+    Unban,
+}
+
+impl From<ModerationActionInput> for IpcModerationAction {
+    fn from(action: ModerationActionInput) -> Self {
+        match action {
+            ModerationActionInput::Rules => Self::Rules,
+            ModerationActionInput::Mute => Self::Mute,
+            ModerationActionInput::Kick => Self::Kick,
+            ModerationActionInput::Ban => Self::Ban,
+            ModerationActionInput::Unban => Self::Unban,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModerationReasonInput {
+    Spam,
+    Harassment,
+    Impersonation,
+    MaliciousContent,
+    PrivacyViolation,
+    UnsafeAutomation,
+    Other,
+}
+
+impl ModerationReasonInput {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Spam => "spam",
+            Self::Harassment => "harassment",
+            Self::Impersonation => "impersonation",
+            Self::MaliciousContent => "malicious_content",
+            Self::PrivacyViolation => "privacy_violation",
+            Self::UnsafeAutomation => "unsafe_automation",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl From<ModerateInput> for IpcModerateRoomRequest {
+    /// 房间另外换：MCP 认房间名，Bridge 只认目录 ID 和 Matrix 房间 ID。
+    fn from(input: ModerateInput) -> Self {
+        Self {
+            action: input.action.into(),
+            catalog_id: None,
+            room_id: None,
+            target: input.target,
+            reason: input.reason.map(|reason| reason.as_str().to_owned()),
+            note: input.note,
+            duration_seconds: input.duration_seconds,
+        }
+    }
 }

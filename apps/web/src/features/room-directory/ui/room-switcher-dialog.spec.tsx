@@ -132,7 +132,7 @@ describe('换个房间', () => {
   it('你的私人房间：当前的标着“你在这里”，点别的就进去', () => {
     const props = renderView();
 
-    const mine = section('Your private rooms');
+    const mine = section('Your rooms');
     const current = within(mine).getByRole('button', { name: /Design studio/ });
     expect(current).toHaveAttribute('aria-current', 'page');
     expect(current).toHaveTextContent('You are here');
@@ -155,8 +155,8 @@ describe('换个房间', () => {
       target: { value: 'engineering' },
     });
     expect(screen.queryByRole('region', { name: 'Invitations' })).not.toBeInTheDocument();
-    expect(section('Your private rooms')).toHaveTextContent('Engineering room');
-    expect(section('Your private rooms')).not.toHaveTextContent('Design studio');
+    expect(section('Your rooms')).toHaveTextContent('Engineering room');
+    expect(section('Your rooms')).not.toHaveTextContent('Design studio');
     expect(section('Public lobbies')).toHaveTextContent('No rooms match.');
   });
 
@@ -168,17 +168,17 @@ describe('换个房间', () => {
       publicState: 'loading',
     });
 
-    fireEvent.click(
-      within(section('Your private rooms')).getByRole('button', { name: 'Try again' }),
-    );
+    fireEvent.click(within(section('Your rooms')).getByRole('button', { name: 'Try again' }));
     expect(props.onRetryPrivate).toHaveBeenCalledOnce();
     expect(section('Public lobbies')).toHaveTextContent('Loading rooms…');
     cleanup();
 
     renderView({ invitations: [], joined: [] });
-    expect(section('Your private rooms')).toHaveTextContent(
-      'No private rooms yet. Create one, or ask a room owner to invite you.',
+    expect(section('Your rooms')).toHaveTextContent(
+      'No rooms yet. Create one, find a public room on Explore, or ask a room owner to invite you.',
     );
+    // 公开房间不在这里列，给一条去发现页的路。
+    expect(screen.getByRole('link', { name: 'Find more on Explore' })).toBeVisible();
   });
 
   it('进行中别的操作先停着；没成功时一句话，错误码收进详情', () => {
@@ -189,7 +189,7 @@ describe('换个房间', () => {
 
     expect(within(section('Invitations')).getByRole('button', { name: 'Decline' })).toBeDisabled();
     expect(
-      within(section('Your private rooms')).getByRole('button', { name: /Engineering/ }),
+      within(section('Your rooms')).getByRole('button', { name: /Engineering/ }),
     ).toBeDisabled();
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent('That did not go through. Try again.');

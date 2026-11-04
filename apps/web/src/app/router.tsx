@@ -9,6 +9,12 @@ import { type ComponentProps, type ComponentType, lazy, Suspense, useCallback } 
 
 import { RootLayout } from '@/app/root-layout';
 import { RouteUnavailable } from '@/app/route-unavailable';
+import {
+  exploreFilterFromSearch,
+  exploreSearchFromFilter,
+  normalizeExploreSearch,
+  type ExploreFilter,
+} from '@/features/explore/domain/explore';
 import { normalizeWatchSearch } from '@/features/public-watch/domain/public-watch';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
@@ -63,6 +69,10 @@ const RoomDirectoryPage = lazyPage(
 // 围观页带着大厅场景（Pixi），打开时再下载。
 const PublicWatchPage = lazyPage(
   async () => (await import('@/features/public-watch/ui/public-watch-page')).PublicWatchPage,
+);
+// 发现页：公开房间的目录（specs/public-rooms/design.md“发现页”）。
+const ExplorePage = lazyPage(
+  async () => (await import('@/features/explore/ui/explore-page')).ExplorePage,
 );
 const AccountWorkspacePage = lazyPage(
   async () => (await import('@/features/workspace/ui/account-workspace-page')).AccountWorkspacePage,
@@ -159,6 +169,20 @@ const roomDirectoryRoute = createRoute({
   path: '/rooms',
   component: RoomDirectoryBoundary,
 });
+// 发现页不登录也能看，但放在登录会话里：从顶栏点过来、点回去都不会断开消息。
+// `/explore/$code` 是打开着一间房的详情；搜索、筛选和排序都在地址上。
+const exploreRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/explore',
+  validateSearch: normalizeExploreSearch,
+  component: ExploreBoundary,
+});
+const exploreRoomRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/explore/$code',
+  validateSearch: normalizeExploreSearch,
+  component: ExploreRoomBoundary,
+});
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/inbox',
@@ -204,6 +228,8 @@ const routeTree = rootRoute.addChildren([
   onboardingRoute,
   workspaceRoute,
   roomDirectoryRoute,
+  exploreRoute,
+  exploreRoomRoute,
   joinRoute,
   inboxRoute,
   lobbyRoute,
@@ -372,6 +398,63 @@ function RoomDirectoryBoundary() {
     return <ConnectionPage />;
   }
   return <RoomDirectoryPage />;
+}
+
+function ExploreBoundary() {
+  const search = exploreRoute.useSearch();
+  const navigate = exploreRoute.useNavigate();
+  const onFilterChange = useCallback(
+    (next: ExploreFilter) => {
+      void navigate({ replace: true, search: exploreSearchFromFilter(next), to: '/explore' });
+    },
+    [navigate],
+  );
+  return (
+    <ExplorePage
+      filter={exploreFilterFromSearch(search)}
+      onClosePanel={() => undefined}
+      onFilterChange={onFilterChange}
+      returnPath="/explore"
+      selectedCode={null}
+    />
+  );
+}
+
+function ExploreRoomBoundary() {
+  const { code } = exploreRoomRoute.useParams();
+  const search = exploreRoomRoute.useSearch();
+  const navigate = exploreRoomRoute.useNavigate();
+  // 换了搜索或筛选，详情就关上，回到列表。
+  const onFilterChange = useCallback(
+    (next: ExploreFilter) => {
+      void navigate({ replace: true, search: exploreSearchFromFilter(next), to: '/explore' });
+    },
+    [navigate],
+  );
+  const filter = exploreFilterFromSearch(search);
+  const onClosePanel = useCallback(() => {
+    void navigate({ search: exploreSearchFromFilter(filter), to: '/explore' });
+  }, [filter, navigate]);
+  // 从分享页点“加入”过来的（`?join=1`）：接着做了就从地址上去掉，刷新、后退不再做一遍。
+  const onContinuationHandled = useCallback(() => {
+    void navigate({
+      params: { code },
+      replace: true,
+      search: exploreSearchFromFilter(filter),
+      to: '/explore/$code',
+    });
+  }, [code, filter, navigate]);
+  return (
+    <ExplorePage
+      continuation={search.join === 1 ? { signup: search.signup === 1 } : null}
+      filter={filter}
+      onClosePanel={onClosePanel}
+      onContinuationHandled={onContinuationHandled}
+      onFilterChange={onFilterChange}
+      returnPath={`/explore/${encodeURIComponent(code)}`}
+      selectedCode={code}
+    />
+  );
 }
 
 function InboxBoundary() {

@@ -1,12 +1,14 @@
 import { z } from 'zod';
 
 import {
+  agentInstanceActivityListSchema,
   agentRoomListSchema,
   broughtAgentSchema,
   leftAgentRoomSchema,
   ownedAgentListSchema,
   type AgentDirectoryFailure,
   type AgentDirectoryGateway,
+  type AgentInstanceActivity,
   type AgentRoom,
   type OwnedAgent,
 } from '@/features/workspace/domain/agent-directory';
@@ -105,6 +107,25 @@ export class ControlPlaneAgentDirectoryClient implements AgentDirectoryGateway {
     });
   }
 
+  async listInstanceActivity(): Promise<Result<AgentInstanceActivity, AgentDirectoryFailure>> {
+    return await this.#request(
+      '/agent-instances/matrix-activity',
+      { method: 'GET' },
+      (body) => {
+        const parsed = agentInstanceActivityListSchema.safeParse(body);
+        return parsed.success
+          ? new Map(
+              parsed.data.instances.map((entry) => [
+                entry.agentInstanceId,
+                entry.matrixLastSeenAtUnixMs,
+              ]),
+            )
+          : null;
+      },
+      'workspace.invalid_instance_activity',
+    );
+  }
+
   async bringAgentIntoRoom(
     agentId: string,
     catalogId: string,
@@ -137,7 +158,7 @@ export class ControlPlaneAgentDirectoryClient implements AgentDirectoryGateway {
     );
   }
 
-  /** 发一个带登录的请求，按 `read` 读出回答；读不出来（返回 `null`）算回答损坏。 */
+  /** 发一个带登录的请求，按 `read` 读出回答；读不出来（返回 `null`）算回答损坏，报 `invalidCode`。 */
   async #request<T>(
     path: string,
     init: {
@@ -146,6 +167,7 @@ export class ControlPlaneAgentDirectoryClient implements AgentDirectoryGateway {
       readonly method: string;
     },
     read: (body: unknown) => T | null,
+    invalidCode = 'workspace.invalid_agent_rooms',
   ): Promise<Result<T, AgentDirectoryFailure>> {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => {
@@ -163,9 +185,7 @@ export class ControlPlaneAgentDirectoryClient implements AgentDirectoryGateway {
         return err(await readFailure(response));
       }
       const value = read(await response.json());
-      return value === null
-        ? err({ code: 'workspace.invalid_agent_rooms', retryable: false })
-        : ok(value);
+      return value === null ? err({ code: invalidCode, retryable: false }) : ok(value);
     } catch (error) {
       return err({
         code: error instanceof SyntaxError ? 'workspace.invalid_json' : 'workspace.unreachable',

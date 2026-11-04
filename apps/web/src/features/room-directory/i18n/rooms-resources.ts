@@ -1,4 +1,4 @@
-/** 换个房间、新建房间：只用用词表里的“房间 / 公共大厅 / 私人房间”。 */
+/** 换个房间、新建房间：只用用词表里的“房间 / 公共大厅 / 私人房间 / 公开房间”。 */
 const en = {
   'rooms.switch': 'Switch room',
   'rooms.switch.invitations': '{{count}} invitations',
@@ -10,7 +10,7 @@ const en = {
   'rooms.invitations.detail': 'Someone invited you. Join to enter the room, or decline.',
   'rooms.invitations.serverReadable':
     'A network agent made this room. The server can read what is said here.',
-  'rooms.private': 'Your private rooms',
+  'rooms.private': 'Your rooms',
   'rooms.created': 'Rooms you created',
   'rooms.joinedOthers': 'Rooms you joined',
   'rooms.owner': 'Owner: {{name}}',
@@ -23,7 +23,9 @@ const en = {
   'rooms.loading': 'Loading rooms…',
   'rooms.loadFailed': 'Could not load rooms.',
   'rooms.retry': 'Try again',
-  'rooms.noPrivate': 'No private rooms yet. Create one, or ask a room owner to invite you.',
+  'rooms.noPrivate':
+    'No rooms yet. Create one, find a public room on Explore, or ask a room owner to invite you.',
+  'rooms.explore': 'Find more on Explore',
   'rooms.archived': 'Archived rooms ({{count}})',
   'rooms.archived.detail':
     'Nobody can speak in these rooms any more. Open one to read what was said.',
@@ -35,11 +37,16 @@ const en = {
   'rooms.accountId.copy': 'Copy ID',
   'rooms.accountId.copied': 'Copied',
   'rooms.accountId.copyFailed': 'Copy failed. Select the ID above and copy it by hand.',
-  'rooms.create.detail': 'Private rooms are invite only, and messages are end-to-end encrypted.',
+  'rooms.create.detail':
+    'Private rooms are invite only and end-to-end encrypted. Public rooms are listed on Explore and not encrypted.',
   'rooms.create.name': 'Name',
   'rooms.create.namePlaceholder': 'Architecture review',
   'rooms.create.purpose': 'Purpose (optional)',
   'rooms.create.purposePlaceholder': 'What will people and agents work on here?',
+  'rooms.create.publicNote':
+    'Public rooms are not encrypted: everyone who joins and the server can read them. New members’ permissions and network agents can be changed later in room settings, under Public.',
+  'rooms.create.publicLimit':
+    'Each account can have one public room. Choose Private, or make your other public room private first.',
   'rooms.create.more': 'More options',
   'rooms.create.retention': 'Keep messages for',
   'rooms.create.retentionDefault': 'Server default',
@@ -54,6 +61,8 @@ const en = {
   'rooms.create.creating': 'Creating…',
   'rooms.create.failed':
     'Could not finish creating the room. Try again; it will not create a second one.',
+  'rooms.create.rejected':
+    "A room can't be created with these details. Check the name and purpose, and don't put your own account ID in the invites, then create it again.",
 } as const;
 
 export const roomsResources = {
@@ -68,7 +77,7 @@ export const roomsResources = {
     'rooms.invitations': '邀请你加入',
     'rooms.invitations.detail': '有人邀请了你。加入就能进房间，也可以拒绝。',
     'rooms.invitations.serverReadable': '网络 Agent 建的房间，服务器能读到这里的消息。',
-    'rooms.private': '你的私人房间',
+    'rooms.private': '你的房间',
     'rooms.created': '你建的房间',
     'rooms.joinedOthers': '你加入的房间',
     'rooms.owner': '房主：{{name}}',
@@ -81,7 +90,8 @@ export const roomsResources = {
     'rooms.loading': '正在读取房间…',
     'rooms.loadFailed': '没能读取房间。',
     'rooms.retry': '重试',
-    'rooms.noPrivate': '还没有私人房间。新建一个，或者请房主邀请你。',
+    'rooms.noPrivate': '还没有房间。新建一个，去“发现”找一间公开房间，或者请房主邀请你。',
+    'rooms.explore': '去发现页找更多',
     'rooms.archived': '已归档的房间（{{count}}）',
     'rooms.archived.detail': '这些房间谁都不能再说话了，进去还能看之前的消息。',
     'rooms.noResults': '没有找到匹配的房间。',
@@ -92,11 +102,14 @@ export const roomsResources = {
     'rooms.accountId.copy': '复制 ID',
     'rooms.accountId.copied': '已复制',
     'rooms.accountId.copyFailed': '复制失败，请手动选中上面的 ID 复制。',
-    'rooms.create.detail': '私人房间只有受邀的人能进，消息端到端加密。',
+    'rooms.create.detail': '私密的房间只有受邀的人能进，端到端加密；公开的房间进发现页，不加密。',
     'rooms.create.name': '名字',
     'rooms.create.namePlaceholder': '架构评审',
     'rooms.create.purpose': '用途（选填）',
     'rooms.create.purposePlaceholder': '人和 Agent 在这里一起做什么？',
+    'rooms.create.publicNote':
+      '公开的房间不加密：进来的人和服务器都读得到。新成员的权限、网络 Agent 以后在房间设置的“公开”里改。',
+    'rooms.create.publicLimit': '每个账户只能有一间公开房间：选“私密”，或者先把另一间改回私密。',
     'rooms.create.more': '更多选项',
     'rooms.create.retention': '消息保留',
     'rooms.create.retentionDefault': '按服务器默认',
@@ -110,5 +123,7 @@ export const roomsResources = {
     'rooms.create.submit': '创建并进入',
     'rooms.create.creating': '正在创建…',
     'rooms.create.failed': '没能建好房间。重试即可，不会再建一个。',
+    'rooms.create.rejected':
+      '这样填建不了房间。看看名字和用途，邀请里别写你自己的账户 ID，改好以后再建。',
   } satisfies Record<keyof typeof en, string>,
 } as const;

@@ -249,10 +249,12 @@ describe('agentroom.chat 的静态网站', () => {
   });
 });
 
-describe('网站的颜色和应用一样', () => {
+describe('网站和分享页的颜色和应用一样', () => {
   const read = (relative: string) =>
     readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
   const site = read('../../site/site.css');
+  // 公开房间的分享页由控制面出（/r/<分享码>），样式跟着控制面走。
+  const share = read('../../../control-plane/src/features/share_page/share.css');
   const app = read('../../../../packages/ui-system/src/styles.css');
 
   /** 从 `marker` 开始到下一个顶格的 `}` 为止，里面所有 `--ar-*`、`--color-*` 的取值。 */
@@ -276,6 +278,12 @@ describe('网站的颜色和应用一样', () => {
       new Map([...tokens(app, '@theme {'), ...tokens(app, ':root {')]),
     ],
     ['暗色', tokens(site, dark), tokens(app, dark)],
+    [
+      '分享页亮色',
+      tokens(share, ':root {'),
+      new Map([...tokens(app, '@theme {'), ...tokens(app, ':root {')]),
+    ],
+    ['分享页暗色', tokens(share, dark), tokens(app, dark)],
   ])('%s的令牌取值和 ui-system 一样', (_name, siteTokens, appTokens) => {
     expect(siteTokens.size).toBeGreaterThan(10);
     for (const [name, value] of siteTokens) {

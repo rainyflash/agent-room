@@ -87,6 +87,15 @@ export type ReadOnlyFederatedEvent = {
   readonly serverTimestamp: number;
 };
 
+/** 房间公告改了一次（`room.notice.v1` 的状态事件），对话里按时间写一行“某某更新了公告”。 */
+export type RoomNoticeChange = {
+  readonly kind: 'updated' | 'removed';
+  readonly matrixEventId: string;
+  readonly serverTimestamp: number;
+  /** 改的人在 Matrix 上的 ID。 */
+  readonly updatedBy: string;
+};
+
 /**
  * 解不开的原因，按用户能做什么来分：
  * 没收到密钥、发送方不肯给（这台设备当时还没签好）、发送方设备不可信、消息早于加入、其他。
@@ -112,6 +121,8 @@ export type UndecryptableRecovery = 'idle' | 'requested' | 'awaiting_signing';
 export type MessageRoomProjection = {
   readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };
   readonly messages: readonly RoomMessageSignal[];
+  /** 公告改过几次，按时间先后；没改过时不给。 */
+  readonly noticeChanges?: readonly RoomNoticeChange[];
   /**
    * 这份投影算出来的时间。房间没变时网关交回同一份投影，这个时间也不变，
    * 所以它不是“现在”；需要当前时间的地方自己取时钟。

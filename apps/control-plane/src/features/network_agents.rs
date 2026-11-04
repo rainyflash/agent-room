@@ -9,11 +9,14 @@
 
 mod guide;
 mod mcp;
+mod notices;
+mod public_rooms;
 mod rooms;
 mod sources;
 mod viewing;
 
-pub(crate) use sources::{NetworkSources, SharedSource, parse_shared_sources};
+pub(crate) use public_rooms::NetworkAgentPublicRooms;
+pub(crate) use sources::{NetworkSources, SharedSource, parse_shared_sources, source_label};
 
 use std::{sync::Arc, time::Duration};
 
@@ -70,6 +73,8 @@ pub(crate) struct NetworkAgentHttpState {
     pub(crate) rooms: Arc<dyn NetworkAgentRooms>,
     /// 网络 Agent 管自己建的房间里只动账的：关房、口令、看敲门、不让进、邀请人、移出 Agent。
     pub(crate) owned_rooms: Arc<dyn NetworkAgentRoomUseCases>,
+    /// 找公开房间用的目录和限流；总开关关着时是 `None`，回答和列大厅一样是“已关闭”。
+    pub(crate) public_rooms: Option<NetworkAgentPublicRooms>,
     /// 来源摘要和共享出口的分量；同一个也交给应用层问分量。
     pub(crate) sources: Arc<NetworkSources>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -121,6 +126,10 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route("/agents.txt", get(agents_guide))
         .route("/v1/network-agents", post(create))
         .route("/v1/network-agents/rooms", get(rooms))
+        .route(
+            "/v1/network-agents/public-rooms",
+            get(public_rooms::public_rooms),
+        )
         .route("/v1/network-agents/me", get(me).delete(disable))
         .route("/v1/network-agents/me/rooms", post(enter_room))
         .route(
@@ -198,6 +207,9 @@ struct EnterRoomBody {
 struct EnteredResponse {
     schema_version: u8,
     room: RoomResponse,
+    /// 这个房间现在的公告；没有时不给。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notice: Option<notices::NoticeResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +234,9 @@ struct CreatedResponse {
     /// 拿私人房间的房间号敲了门：等房间的管理者放行，放行后它就在房间里了。
     #[serde(skip_serializing_if = "Option::is_none")]
     knock: Option<KnockResponse>,
+    /// 进了的房间现在的公告；没有时不给。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notice: Option<notices::NoticeResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -416,6 +431,10 @@ struct MessagesResponse {
     /// （`wake.reason` 是 `knocks`）。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     incoming_knocks: Vec<rooms::IncomingKnockResponse>,
+    /// 你在的房间里公告改了的（撤掉的写 `removed`），每一版只给一次；没有时不给。公告改了不叫醒你，
+    /// 跟着下一次交。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    notices: Vec<notices::NoticeResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -483,6 +502,7 @@ impl From<CreatedNetworkAgent> for CreatedResponse {
             token: created.token.expose().to_owned(),
             room,
             knock,
+            notice: None,
         }
     }
 }
@@ -567,7 +587,10 @@ async fn create(
     };
     match state.messaging.create(request).await {
         Ok(created) => {
-            no_store((StatusCode::CREATED, Json(CreatedResponse::from(created))).into_response())
+            let mut response = CreatedResponse::from(created);
+            response.notice =
+                notices::entered(&state, &response.token, response.room.as_ref()).await;
+            no_store((StatusCode::CREATED, Json(response)).into_response())
         }
         Err(failure) => gateway_failure(&failure, correlation_id),
     }
@@ -603,13 +626,18 @@ async fn enter_room(
         .enter_room(token, room, state.source_digest(&headers))
         .await
     {
-        Ok(NetworkAgentEntry::Entered(room)) => no_store(
-            Json(EnteredResponse {
-                schema_version: SCHEMA_VERSION,
-                room: RoomResponse::from(room),
-            })
-            .into_response(),
-        ),
+        Ok(NetworkAgentEntry::Entered(room)) => {
+            let room = RoomResponse::from(room);
+            let notice = notices::entered(&state, token, Some(&room)).await;
+            no_store(
+                Json(EnteredResponse {
+                    schema_version: SCHEMA_VERSION,
+                    room,
+                    notice,
+                })
+                .into_response(),
+            )
+        }
         Ok(NetworkAgentEntry::Knocked(knock)) => no_store(
             (
                 StatusCode::ACCEPTED,
@@ -774,6 +802,7 @@ async fn wait_for_messages(
                     .into_iter()
                     .map(rooms::IncomingKnockResponse::from)
                     .collect(),
+                notices: notices::changed(batch.notices),
             })
             .into_response(),
         ),

@@ -38,6 +38,8 @@ export type AppServices = {
   readonly receptionOwnership?: import('@/features/desktop/domain/reception-ownership').ReceptionOwnershipGateway;
   readonly accessManagement: AccessManagementGateway;
   readonly agentDirectory: AgentDirectoryGateway;
+  /** 房主和管理员把私人房间交给自己的 Agent 管、看 Agent 做了什么；测试和夹具里可以没有。 */
+  readonly agentModeration?: import('@/features/moderation/domain/agent-moderation').AgentModerationGateway;
   /** Agent 的 Matrix 在线状态，房间页和“我的 Agent”共用一份；测试和夹具里可以没有。 */
   readonly agentPresence?: import('@/features/lobby/adapters/matrix-presence-tracker').AgentPresenceSource;
   readonly automation: AutomationGrantGateway;
@@ -53,6 +55,8 @@ export type AppServices = {
   readonly handoffs: HandoffGateway;
   readonly lobby: LobbyGateway;
   readonly lobbyEntry: PublicLobbyEntryCoordinator;
+  /** 发现页的公开房间目录和详情；不带登录范围。测试和夹具里可以没有。 */
+  readonly explore?: import('@/features/explore/domain/explore').ExploreGateway;
   readonly messages: MessageGateway;
   readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;
@@ -61,6 +65,14 @@ export type AppServices = {
   readonly privateRooms: PrivateRoomGateway;
   /** 私人房间的邀请链接：生成、复制、停用，打开别人给的链接；测试和夹具里可以没有。 */
   readonly privateRoomInvites?: import('@/features/private-rooms/domain/private-room-invite-link').PrivateRoomInviteGateway;
+  /** 房间的公开设置和分享链接；测试和夹具里可以没有。 */
+  readonly privateRoomListings?: import('@/features/private-rooms/domain/private-room-listing').PrivateRoomListingGateway;
+  /** 从发现页进公开房间：直接进、申请、撤回；测试和夹具里可以没有。 */
+  readonly publicRoomEntry?: import('@/features/private-rooms/domain/public-room-join').PublicRoomEntryGateway;
+  /** 公开房间的申请：房主和管理员看在等的、批准或拒绝；测试和夹具里可以没有。 */
+  readonly publicRoomJoins?: import('@/features/private-rooms/domain/public-room-join').PublicRoomJoinGateway;
+  /** 房主和管理员改房间的常驻公告；测试和夹具里可以没有。 */
+  readonly roomNotices?: import('@/features/room-notice/domain/room-notice').RoomNoticeGateway;
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
   readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;

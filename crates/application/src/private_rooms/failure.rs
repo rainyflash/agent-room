@@ -21,6 +21,8 @@ pub enum PrivateRoomFailureKind {
     Conflict,
     DependencyUnavailable,
     UnknownCommit,
+    /// 新建时就公开，可房主名下已经有一间公开房间（每个账户最多 1 间）。
+    PublicRoomLimitReached,
     Internal,
 }
 
@@ -29,6 +31,8 @@ pub struct PrivateRoomFailure {
     operation: &'static str,
     stage: PrivateRoomFailureStage,
     kind: PrivateRoomFailureKind,
+    /// 请求里哪一项没过校验（固定的字段名，比如 `room_name`），只给日志看。
+    rejected: Option<&'static str>,
 }
 
 impl PrivateRoomFailure {
@@ -41,7 +45,14 @@ impl PrivateRoomFailure {
             operation,
             stage,
             kind,
+            rejected: None,
         }
+    }
+
+    #[must_use]
+    pub const fn rejecting(mut self, field: &'static str) -> Self {
+        self.rejected = Some(field);
+        self
     }
 
     pub const fn operation(self) -> &'static str {
@@ -55,6 +66,10 @@ impl PrivateRoomFailure {
     pub const fn kind(self) -> PrivateRoomFailureKind {
         self.kind
     }
+
+    pub const fn rejected(self) -> Option<&'static str> {
+        self.rejected
+    }
 }
 
 pub type PrivateRoomResult<T> = Result<T, PrivateRoomFailure>;
@@ -62,7 +77,14 @@ pub type PrivateRoomResult<T> = Result<T, PrivateRoomFailure>;
 pub(crate) const fn domain(operation: &'static str, error: &DomainError) -> PrivateRoomFailure {
     let kind = match error {
         DomainError::Forbidden { .. } => PrivateRoomFailureKind::Forbidden,
-        DomainError::Validation { .. } => PrivateRoomFailureKind::InvalidRequest,
+        DomainError::Validation { field, .. } => {
+            return PrivateRoomFailure::new(
+                operation,
+                PrivateRoomFailureStage::Validation,
+                PrivateRoomFailureKind::InvalidRequest,
+            )
+            .rejecting(field);
+        }
         DomainError::InvalidTransition { .. } => PrivateRoomFailureKind::Conflict,
         DomainError::InvariantViolation { .. }
         | DomainError::CapacityExceeded { .. }

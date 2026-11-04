@@ -9,6 +9,10 @@
 //! 放行后由网关按 Agent 取它的会话、调用 `enter_admitted` 替它进去。
 //!
 //! 网络 Agent 也能自己建私人房间、当房主（`specs/agent-rooms/design.md` 第 4 步），见 [`rooms`]。
+//!
+//! 公开房间（`specs/public-rooms/design.md` 第 5 步）：拿直接进的公开房间的房间号，敲门就直接放进来，
+//! 和进公共大厅一样占来源的起名名额；在公共大厅和公开房间里说话都按大厅的条数算。分享链接
+//! （`/r/<分享码>`）换成房间号再照加入方式进。
 
 mod rooms;
 
@@ -28,6 +32,7 @@ use agent_room_domain::{
     },
     join_codes::{PrivateRoomAgentKnockStatus, parse_room_number},
     network_agents::{NetworkAgentName, NetworkAgentStatus},
+    room_listing::RoomShareCode,
     rooms::{MatrixRoomReference, RoomCatalogKind, RoomSlug},
     time::{DurationMillis, UtcMillis},
 };
@@ -48,13 +53,13 @@ use crate::{
         NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
         NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights,
         PortFuture, PrincipalAccount, PrincipalRegistration, PrivateRoomAgentKnockRecord,
-        RateWindowBucket, RateWindowDecision, RateWindowPolicy, RoomDirectory, RoomDirectoryQuery,
-        SecretFactory, SecretValue,
+        PrivateRoomListingStore, PublicRoomDirectoryStore, RateWindowBucket, RateWindowDecision,
+        RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockOnRoom, KnockResult,
-        PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
-        ResolveJoinCode,
+        AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockEntry, KnockOnRoom,
+        KnockResult, PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode,
+        RedeemedRoom, ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -356,6 +361,8 @@ pub enum NetworkAgentFailureKind {
     AccountNotFound,
     /// 要移出的 Agent 不是凭口令或敲门进这个房间的。
     AgentNotInRoom,
+    /// 公开房间的房主关了没有账号的网络 Agent：拿房间号进不来，口令照旧能用。
+    RoomClosed,
     DependencyUnavailable,
     Internal,
 }
@@ -556,6 +563,10 @@ pub struct NetworkAgentDependencies {
     /// 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。
     pub rooms: Arc<dyn PrivateRoomUseCases>,
     pub directory: Arc<dyn RoomDirectory>,
+    /// 公开房间的设置：公开房间和公共大厅一样按条数限流。
+    pub listings: Arc<dyn PrivateRoomListingStore>,
+    /// 公开房间的目录：分享链接按分享码换成房间号。
+    pub public_rooms: Arc<dyn PublicRoomDirectoryStore>,
     pub secrets: Arc<dyn SecretFactory>,
     pub clock: Arc<dyn Clock>,
     pub identifiers: Arc<dyn IdentifierFactory>,
@@ -578,6 +589,8 @@ pub struct NetworkAgentService {
     access: Arc<dyn PrivateRoomAgentAccessUseCases>,
     rooms: Arc<dyn PrivateRoomUseCases>,
     directory: Arc<dyn RoomDirectory>,
+    listings: Arc<dyn PrivateRoomListingStore>,
+    public_rooms: Arc<dyn PublicRoomDirectoryStore>,
     secrets: Arc<dyn SecretFactory>,
     clock: Arc<dyn Clock>,
     identifiers: Arc<dyn IdentifierFactory>,
@@ -594,7 +607,7 @@ enum CreationTarget {
     Lobby(RoomCatalogId),
     /// 口令已经核对过；建好人物后以它的网络设备兑换。
     Private(String),
-    /// 私人房间已经核对过在使用中；建好人物后以它的网络设备敲门。
+    /// 私人房间已经核对过在使用中；建好人物后以它的网络设备敲门（直接进的公开房间敲门就放进来）。
     Knock(RoomCatalogId),
 }
 
@@ -617,6 +630,8 @@ impl NetworkAgentService {
             access: dependencies.access,
             rooms: dependencies.rooms,
             directory: dependencies.directory,
+            listings: dependencies.listings,
+            public_rooms: dependencies.public_rooms,
             secrets: dependencies.secrets,
             clock: dependencies.clock,
             identifiers: dependencies.identifiers,
@@ -858,12 +873,20 @@ impl NetworkAgentService {
             NetworkAgentRoomRequest::Lobby(room) => match self.place(room.as_deref()).await? {
                 Place::Lobby(catalog) => Ok((CreationTarget::Lobby(catalog), None)),
                 Place::Private(catalog) => {
-                    self.access
+                    let entry = self
+                        .access
                         .knockable(catalog)
                         .await
                         .map_err(knock_failure)?;
-                    self.take_knock(source_digest).await?;
-                    Ok((CreationTarget::Knock(catalog), None))
+                    // 直接进的公开房间和公共大厅一样占起名的名额；别的敲门按敲门算。
+                    let naming = match entry {
+                        KnockEntry::Open => Some(self.take_naming(source_digest).await?),
+                        KnockEntry::Knock => {
+                            self.take_knock(source_digest).await?;
+                            None
+                        }
+                    };
+                    Ok((CreationTarget::Knock(catalog), naming))
                 }
             },
             NetworkAgentRoomRequest::Code(code) => {
@@ -926,8 +949,7 @@ impl NetworkAgentService {
                         )))
                     }
                     Place::Private(catalog) => {
-                        self.take_knock(&source_digest).await?;
-                        self.knock(self.actor_of(&record, now)?, agent_id, catalog, now)
+                        self.knock_by_number(&record, &rooms, catalog, &source_digest, now)
                             .await
                     }
                 }
@@ -971,11 +993,8 @@ impl NetworkAgentService {
         record: &NetworkAgentRecord,
         target: NetworkAgentTarget,
     ) -> NetworkAgentResult<NetworkAgentRoom> {
-        let naming = if matches!(target, NetworkAgentTarget::Lobby(_)) {
-            self.take_pending_naming(record.id)
-        } else {
-            None
-        };
+        // 进公共大厅、直接进的公开房间时占的起名名额：没进成就退回去。
+        let naming = self.take_pending_naming(record.id);
         let (Some(agent_id), Some(agent_instance_id)) = (record.agent_id, record.agent_instance_id)
         else {
             self.give_back(naming).await;
@@ -1035,6 +1054,46 @@ impl NetworkAgentService {
             )
             .await
             .map_err(repository)
+    }
+
+    /// 已有的网络 Agent 拿房间号来。直接进的公开房间占起名的名额（已经在公共大厅或公开房间里的
+    /// 不再算，和换大厅一样），放进来了才留着、等进了房间再算数，没放进来（被移出过的照旧敲门）就
+    /// 退回；别的按敲门算。
+    async fn knock_by_number(
+        &self,
+        record: &NetworkAgentRecord,
+        rooms: &[NetworkAgentRoomRecord],
+        catalog: RoomCatalogId,
+        source_digest: &[u8; 32],
+        now: UtcMillis,
+    ) -> NetworkAgentResult<NetworkAgentAdmission> {
+        let agent_id = record.agent_id.ok_or_else(internal)?;
+        let entry = self
+            .access
+            .knockable(catalog)
+            .await
+            .map_err(knock_failure)?;
+        let naming = match entry {
+            KnockEntry::Open if !self.in_public_space(rooms).await? => {
+                Some(self.take_naming(source_digest).await?)
+            }
+            KnockEntry::Open => None,
+            KnockEntry::Knock => {
+                self.take_knock(source_digest).await?;
+                None
+            }
+        };
+        let admission = match self.actor_of(record, now) {
+            Ok(actor) => self.knock(actor, agent_id, catalog, now).await,
+            Err(failure) => Err(failure),
+        };
+        match (&admission, naming) {
+            (Ok(NetworkAgentAdmission::Admitted(_)), Some(naming)) => {
+                self.remember_naming(record.id, naming).await;
+            }
+            (_, naming) => self.give_back(naming).await,
+        }
+        admission
     }
 
     /// 以这个网络 Agent 的网络设备敲门：已经是 Agent 成员的直接放行。
@@ -1560,7 +1619,7 @@ impl NetworkAgentService {
         if !self.policy.enabled {
             return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
         }
-        if !self.is_public_lobby(catalog_id).await? {
+        if !self.is_public_space(catalog_id).await? {
             return Ok(());
         }
         let agent = id.as_uuid().simple().to_string();
@@ -1674,7 +1733,11 @@ impl NetworkAgentService {
     /// 认出要进的房间：房间号是公开大厅的就进那间，不是的当作私人房间（敲门时再核对）；别的按公开
     /// 大厅的名字或 slug 找。
     async fn place(&self, wanted: Option<&str>) -> NetworkAgentResult<Place> {
-        let Some(catalog) = wanted.and_then(parse_room_number) else {
+        let catalog = match wanted {
+            Some(wanted) => self.room_by_number_or_link(wanted).await?,
+            None => None,
+        };
+        let Some(catalog) = catalog else {
             return self.lobby(wanted).await.map(Place::Lobby);
         };
         let lobbies = self
@@ -1689,6 +1752,27 @@ impl NetworkAgentService {
                 Place::Private(catalog)
             },
         )
+    }
+
+    /// 房间号、`/lobby/<房间号>` 的网址，或公开房间的分享链接（`/r/<分享码>`，发现页的
+    /// `/explore/<分享码>`）。分享码对不上公开着的房间时回 `None`，按大厅的名字也找不到，照样说
+    /// 找不到并列出能进的大厅。
+    async fn room_by_number_or_link(
+        &self,
+        wanted: &str,
+    ) -> NetworkAgentResult<Option<RoomCatalogId>> {
+        if let Some(catalog) = parse_room_number(wanted) {
+            return Ok(Some(catalog));
+        }
+        let Some(code) = RoomShareCode::from_link(wanted) else {
+            return Ok(None);
+        };
+        Ok(self
+            .public_rooms
+            .public_room_by_share_code(&code)
+            .await
+            .map_err(repository)?
+            .map(|detail| detail.room.catalog_id))
     }
 
     /// 按名字或 slug 找公开大厅：先精确，再忽略大小写；不给名字就是默认公开大厅。
@@ -1847,6 +1931,28 @@ impl NetworkAgentService {
             .await
             .map_err(repository)?
             .is_some_and(|catalog| catalog.kind() == RoomCatalogKind::PublicLobby))
+    }
+
+    /// 公共大厅或公开着的房间：网络 Agent 的条数限额在这两种房间里都算（私密房间不设限，#408）。
+    async fn is_public_space(&self, catalog_id: RoomCatalogId) -> NetworkAgentResult<bool> {
+        if self.is_public_lobby(catalog_id).await? {
+            return Ok(true);
+        }
+        Ok(self
+            .listings
+            .listing(catalog_id)
+            .await
+            .map_err(repository)?
+            .is_some_and(|listing| listing.settings.listed()))
+    }
+
+    async fn in_public_space(&self, rooms: &[NetworkAgentRoomRecord]) -> NetworkAgentResult<bool> {
+        for room in rooms {
+            if self.is_public_space(room.catalog_id).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     async fn in_public_lobby(&self, rooms: &[NetworkAgentRoomRecord]) -> NetworkAgentResult<bool> {
@@ -2162,6 +2268,9 @@ fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::DependencyUnavailable | AgentAccessFailureKind::UnknownCommit => {
             dependency()
         }
+        AgentAccessFailureKind::ClosedToNetworkAgents => {
+            NetworkAgentFailure::new(NetworkAgentFailureKind::RoomClosed)
+        }
         AgentAccessFailureKind::Forbidden
         | AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable => internal(),
@@ -2191,7 +2300,9 @@ fn code_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::DependencyUnavailable | AgentAccessFailureKind::UnknownCommit => {
             dependency()
         }
-        AgentAccessFailureKind::Internal | AgentAccessFailureKind::NotRevealable => internal(),
+        AgentAccessFailureKind::Internal
+        | AgentAccessFailureKind::NotRevealable
+        | AgentAccessFailureKind::ClosedToNetworkAgents => internal(),
     }
 }
 

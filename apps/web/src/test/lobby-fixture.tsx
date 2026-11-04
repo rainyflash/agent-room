@@ -70,12 +70,21 @@ import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-la
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
 import { PublicLobbyEntryCoordinator } from '@/features/lobby-entry/application/public-lobby-entry-coordinator';
 import type { ContentGateway, ContentVerifier } from '@/features/messages/domain/content';
-import type { MessageGateway, RoomMessageSignal } from '@/features/messages/domain/message';
+import type {
+  MessageGateway,
+  RoomMessageSignal,
+  RoomNoticeChange,
+} from '@/features/messages/domain/message';
 import type {
   MessagePublicationRequest,
   MessagePublisher,
   PublicationProgressStage,
 } from '@/features/messages/domain/publication';
+import type {
+  AgentModerationGateway,
+  AgentModerationLedger,
+  RoomModerationGrant,
+} from '@/features/moderation/domain/agent-moderation';
 import type {
   ModerationAction,
   ModerationCase,
@@ -101,6 +110,15 @@ import {
   type PrivateRoomInviteGateway,
   type PrivateRoomInviteLink,
 } from '@/features/private-rooms/domain/private-room-invite-link';
+import type {
+  PrivateRoomListing,
+  PrivateRoomListingGateway,
+} from '@/features/private-rooms/domain/private-room-listing';
+import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
+import type {
+  PendingJoinRequest,
+  PublicRoomJoinGateway,
+} from '@/features/private-rooms/domain/public-room-join';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -123,6 +141,9 @@ const privateFixture = new URLSearchParams(window.location.search).has('private'
 const cardFixture = new URLSearchParams(window.location.search).has('cards');
 // `?private&knock` 里一个网络 Agent（Sol）拿房间号在敲门，房间页的提示栈和接入对话框都能放它进来。
 const knockFixture = privateFixture && new URLSearchParams(window.location.search).has('knock');
+/** 私人房间交给了 Agent 管：一份在用的授权、它照规则禁言了一个人（`?private&agentGrant`）。 */
+const agentGrantFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('agentGrant');
 // `?private&code` 里房间已经有口令，管理者看得到；`?private&code=hidden` 的口令是能再看之前生成的，看不到。
 const codeFixture = privateFixture ? new URLSearchParams(window.location.search).get('code') : null;
 // `?private&origin=local` 是本机 Agent 替你建的私人房间，房主还是你；`?private&origin=network` 是网络 Agent
@@ -139,6 +160,14 @@ const speakOnlyFixture =
 // `?private&invite-link` 里房间已经有一条邀请链接；不带时还没有，“邀请人”里能生成。
 const inviteLinkFixture =
   privateFixture && new URLSearchParams(window.location.search).has('invite-link');
+// `?private&listed` 里房间是公开的、不加密、能直接进，房间设置的“公开”一节有分享链接；不带时是私密的。
+const listedFixture = privateFixture && new URLSearchParams(window.location.search).has('listed');
+// `?private&listed&requests` 里房间要申请才能进，有两个人在等批准：齿轮上亮点，“成员”一节列出申请。
+const requestsFixture =
+  listedFixture && new URLSearchParams(window.location.search).has('requests');
+// `?private&notice` 里房间有一条 Grace 写的三行公告（时间固定，重新打开还是同一版）；不带时没有公告，
+// 房主能在设置的“公告”里写。
+const noticeFixture = privateFixture && new URLSearchParams(window.location.search).has('notice');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -153,8 +182,19 @@ const matrixJoins: string[] = [];
 const ownersFixture = new URLSearchParams(window.location.search).has('owners');
 let room: LobbyRoom = {
   ...testRoom(fixtureAgentCount),
-  ...(privateFixture ? { encrypted: true } : {}),
+  // 公开着的夹具房间是新建时就公开的那种：不加密。
+  ...(privateFixture ? { encrypted: !listedFixture } : {}),
   ...(archivedFixture || mutedFixture ? { canSpeak: false } : {}),
+  ...(noticeFixture
+    ? {
+        memberNames: [{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }],
+        notice: {
+          text: 'Only speak when someone mentions you.\nKeep replies short.\nAsk Grace before changing the release checklist.',
+          updatedAtUnixMs: Date.parse('2026-11-03T08:00:00.000Z'),
+          updatedBy: '@grace:matrix.test',
+        },
+      }
+    : {}),
 };
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
 let fixtureScene = projectLobbyScene(room, null, { humans: roomHumans(room, [], fixtureIdentity) });
@@ -272,6 +312,18 @@ const fixtureHistory = historyFixture
     })
   : [];
 let historyWindow = historyPage;
+// 公告每改一次，对话里多一行“某某更新了公告”；`?notice` 一开始就有 Grace 那一次。
+const noticeChanges: RoomNoticeChange[] =
+  room.notice === undefined
+    ? []
+    : [
+        {
+          kind: 'updated',
+          matrixEventId: '$fixture-notice',
+          serverTimestamp: room.notice.updatedAtUnixMs,
+          updatedBy: room.notice.updatedBy,
+        },
+      ];
 const displayedEvents: { readonly roomId: string; readonly matrixEventId: string }[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
@@ -286,6 +338,9 @@ const messages: MessageGateway = {
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
+      ...(requestedRoomId === room.roomId && noticeChanges.length > 0
+        ? { noticeChanges: [...noticeChanges] }
+        : {}),
       ...(historyFixture
         ? { history: { canLoadMore: historyWindow < fixtureHistory.length, limited: false } }
         : {}),
@@ -502,7 +557,24 @@ function updateFixtureScene(): void {
 }
 
 let fixtureModerationCases: readonly ModerationCase[] = Object.freeze([]);
-let fixtureModerationActions: readonly ModerationAction[] = Object.freeze([]);
+const fixtureAgentAction: ModerationAction = Object.freeze({
+  actionId: '01990d9e-8400-7000-8000-000000000601',
+  actorPrincipalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+  caseId: null,
+  expiresAtUnixMs: Date.now() + 24 * 60 * 60 * 1_000,
+  failureCode: null,
+  kind: 'mute',
+  reason: 'spam',
+  reversedAtUnixMs: null,
+  roomCatalogId: '01990d9e-8400-7000-8000-000000000401',
+  startsAtUnixMs: Date.now() - 10 * 60 * 1_000,
+  status: 'applied',
+  targetKind: 'principal',
+  targetReference: '0198b601-77a1-7bb8-83eb-a8fe68c97e48',
+});
+let fixtureModerationActions: readonly ModerationAction[] = Object.freeze(
+  agentGrantFixture ? [fixtureAgentAction] : [],
+);
 const moderation: ModerationGateway = {
   applyAction: (actionId, roomCatalogId, input) => {
     const action: ModerationAction = Object.freeze({
@@ -574,6 +646,78 @@ const moderation: ModerationGateway = {
       ),
     );
     return Promise.resolve(ok(reversed));
+  },
+};
+const fixtureModerationGrantId = '01990d9e-8400-7000-8000-000000000602';
+let fixtureModerationGrants: readonly RoomModerationGrant[] = agentGrantFixture
+  ? [
+      {
+        actions: ['mute', 'kick'],
+        agentId: '01990d9e-8400-7000-8000-000000000001',
+        agentName: 'Fixture Codex Agent',
+        createdAtUnixMs: Date.now() - 60 * 60 * 1_000,
+        expiresAtUnixMs: Date.now() + 29 * 24 * 60 * 60 * 1_000,
+        grantedBy: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+        id: fixtureModerationGrantId,
+        rules: 'Mute anyone who keeps posting ads or links, for a day the first time.',
+      },
+    ]
+  : [];
+const fixtureAgentLedger: AgentModerationLedger = {
+  actions: agentGrantFixture
+    ? [
+        {
+          actionId: fixtureAgentAction.actionId,
+          agentId: '01990d9e-8400-7000-8000-000000000001',
+          agentName: 'Fixture Codex Agent',
+          grantId: fixtureModerationGrantId,
+          note: 'Posted the same link five times in a minute.',
+        },
+      ]
+    : [],
+  reversals: [],
+};
+const agentModeration: AgentModerationGateway = {
+  grant: (_catalogId, input) => {
+    const grant: RoomModerationGrant = {
+      actions: [...input.actions],
+      agentId: input.agentId,
+      agentName: 'Fixture Codex Agent',
+      createdAtUnixMs: Date.now(),
+      expiresAtUnixMs: Date.now() + input.lifetimeSeconds * 1_000,
+      grantedBy: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+      id: '01990d9e-8400-7000-8000-000000000603',
+      rules: input.rules.trim(),
+    };
+    fixtureModerationGrants = [
+      grant,
+      ...fixtureModerationGrants.filter((candidate) => candidate.agentId !== input.agentId),
+    ];
+    return Promise.resolve(ok(grant));
+  },
+  listAgentActions: () => Promise.resolve(ok(fixtureAgentLedger)),
+  listGrants: () => Promise.resolve(ok(fixtureModerationGrants)),
+  reverseGrant: (_catalogId, grantId) => {
+    const madeHere = new Set(
+      fixtureAgentLedger.actions
+        .filter((record) => record.grantId === grantId)
+        .map((record) => record.actionId),
+    );
+    const reversed = fixtureModerationActions
+      .filter((action) => action.status === 'applied' && madeHere.has(action.actionId))
+      .map((action) => action.actionId);
+    fixtureModerationActions = Object.freeze(
+      fixtureModerationActions.map((action) =>
+        reversed.includes(action.actionId)
+          ? Object.freeze({ ...action, reversedAtUnixMs: Date.now(), status: 'reversed' as const })
+          : action,
+      ),
+    );
+    return Promise.resolve(ok({ failed: [], reversed }));
+  },
+  revokeGrant: (_catalogId, grantId) => {
+    fixtureModerationGrants = fixtureModerationGrants.filter((grant) => grant.id !== grantId);
+    return Promise.resolve(ok(undefined));
   },
 };
 const unavailablePrivateRoom = () =>
@@ -811,7 +955,11 @@ const privateRooms: PrivateRoomGateway = {
   unban: privateFixture
     ? (_catalogId, principalId) => changeFixtureMember(principalId, { status: 'removed' })
     : unavailablePrivateRoom,
-  updatePermissions: unavailablePrivateRoom,
+  // 设、撤管理员和改成员权限走这里。
+  updatePermissions: privateFixture
+    ? (_catalogId, principalId, nextPermissions) =>
+        changeFixtureMember(principalId, { permissions: nextPermissions })
+    : unavailablePrivateRoom,
 };
 const privateRoomMatrix: PrivateRoomMatrixGateway = {
   join:
@@ -1202,6 +1350,96 @@ const privateRoomInvites: PrivateRoomInviteGateway = {
     Promise.resolve(err({ code: 'fixture.external_action_unavailable', retryable: false })),
 };
 
+let fixtureListing: PrivateRoomListing = {
+  allowNetworkAgents: true,
+  endToEndEncrypted: !listedFixture,
+  firstListedAtUnixMs: listedFixture ? Date.now() - 86_400_000 : null,
+  joinMode: requestsFixture ? 'request' : 'open',
+  listed: listedFixture,
+  memberPermissions: DEFAULT_INVITE_PERMISSIONS,
+  platformHold: null,
+  shareCode: listedFixture ? 'aB3xYz' : null,
+  shareUrl: listedFixture ? 'https://agentroom.test/r/aB3xYz' : null,
+};
+const fixtureShareCodes = ['aB3xYz', 'Q7mPz2', 'Zz9Zz9'];
+/** 改公告：像同步回来一样换掉房间状态里的公告，改的人是你。 */
+const roomNotices: RoomNoticeGateway = {
+  updateNotice: (_catalogId, text) => {
+    const updatedAtUnixMs = Date.now();
+    const { notice, ...rest } = room;
+    void notice;
+    room =
+      text === ''
+        ? rest
+        : { ...rest, notice: { text, updatedAtUnixMs, updatedBy: fixtureIdentity.matrixUserId } };
+    noticeChanges.push({
+      kind: text === '' ? 'removed' : 'updated',
+      matrixEventId: `$fixture-notice-${String(noticeChanges.length)}`,
+      serverTimestamp: updatedAtUnixMs,
+      updatedBy: fixtureIdentity.matrixUserId,
+    });
+    for (const listener of lobbyListeners) listener();
+    for (const listener of conversationListeners) listener();
+    return Promise.resolve(ok({ text, updatedAtUnixMs }));
+  },
+};
+const privateRoomListings: PrivateRoomListingGateway = {
+  listing: () => Promise.resolve(ok(fixtureListing)),
+  updateListing: (_catalogId, settings) => {
+    const shareCode = fixtureListing.shareCode ?? (settings.listed ? 'aB3xYz' : null);
+    fixtureListing = {
+      ...fixtureListing,
+      ...settings,
+      // 和服务器一样：改回私密时打开加密，以后再公开也还是加密的。
+      endToEndEncrypted: fixtureListing.endToEndEncrypted || !settings.listed,
+      firstListedAtUnixMs:
+        fixtureListing.firstListedAtUnixMs ?? (settings.listed ? Date.now() : null),
+      shareCode,
+      shareUrl: shareCode === null ? null : `https://agentroom.test/r/${shareCode}`,
+    };
+    return Promise.resolve(ok(fixtureListing));
+  },
+  changeShareCode: () => {
+    if (fixtureListing.shareCode === null) {
+      return Promise.resolve(err({ code: 'room_listing.never_listed', retryable: false }));
+    }
+    const next =
+      fixtureShareCodes[(fixtureShareCodes.indexOf(fixtureListing.shareCode) + 1) % 3] ?? 'aB3xYz';
+    fixtureListing = {
+      ...fixtureListing,
+      shareCode: next,
+      shareUrl: `https://agentroom.test/r/${next}`,
+    };
+    return Promise.resolve(ok(fixtureListing));
+  },
+};
+
+let fixtureJoinRequests: readonly PendingJoinRequest[] = requestsFixture
+  ? [
+      {
+        displayName: 'Lin',
+        message: 'I run the weekly eval review.\nCan I bring my agent?',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e50',
+        requestedAtUnixMs: Date.now() - 3_600_000,
+      },
+      {
+        displayName: 'Mo',
+        message: '',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e51',
+        requestedAtUnixMs: Date.now() - 600_000,
+      },
+    ]
+  : [];
+const publicRoomJoins: PublicRoomJoinGateway = {
+  joinRequests: () => Promise.resolve(ok(fixtureJoinRequests)),
+  answerJoinRequest: (_catalogId, principalId) => {
+    fixtureJoinRequests = fixtureJoinRequests.filter(
+      (request) => request.principalId !== principalId,
+    );
+    return Promise.resolve(ok(undefined));
+  },
+};
+
 /** 夹具 Agent 的 ID 末尾是它的序号（从 1 起）。 */
 function fixtureAgentOwner(agentId: string): AgentOwnerRecord | null {
   const index = Number(agentId.slice(-12)) - 1;
@@ -1258,6 +1496,7 @@ const services: AppServices = {
     listOwnedAgents: () => Promise.resolve(ok([])),
     deleteAgent: () => Promise.resolve(ok(undefined)),
     listAgentRooms: () => Promise.resolve(ok([])),
+    listInstanceActivity: () => Promise.resolve(ok(new Map())),
     bringAgentIntoRoom: () => Promise.resolve(ok(0)),
     leaveAgentRoom: () => Promise.resolve(ok(false)),
   },
@@ -1287,7 +1526,9 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
-  ...(privateFixture ? { privateRoomInvites } : {}),
+  ...(privateFixture
+    ? { agentModeration, privateRoomInvites, privateRoomListings, publicRoomJoins, roomNotices }
+    : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
     shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),

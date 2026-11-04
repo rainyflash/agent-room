@@ -13,9 +13,12 @@ import {
 } from 'react';
 import type {
   MessageRoomProjection,
+  RoomNoticeChange,
   UndecryptableRecovery,
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
+import { RoomNoticeChangeLine } from '@/features/room-notice/ui/room-notice-change';
+import { withNoticeChanges, type ConversationEntry } from '../domain/conversation-entries';
 import type { Result } from '@/shared/result';
 import { emptyConversationFilter, searchConversation } from '../domain/conversation-search';
 import { ConversationSearch } from './conversation-search';
@@ -38,6 +41,7 @@ import { conversationDeliveries } from '../domain/message-delivery';
 import './conversation-panel.css';
 
 const emptyParticipants: readonly ConversationParticipant[] = [];
+const emptyNoticeChanges: readonly RoomNoticeChange[] = [];
 // 进房间时本地通常只有同步带来的最近一小段记录。内容撑不满这么多屏、或者上次读到的位置还没加载，
 // 就自动往前补；每次打开最多补这么多次，剩下的交给“加载更早的消息”。
 const historyFillScreens = 1.5;
@@ -69,6 +73,8 @@ export type ConversationPanelProps = {
   readonly undecryptable?: UndecryptableSummary;
   /** 找回这些消息走到了哪一步。 */
   readonly recovery?: UndecryptableRecovery;
+  /** 公告改过几次，按时间夹在消息中间各写一行；查找时不显示。 */
+  readonly noticeChanges?: readonly RoomNoticeChange[];
   readonly variant?: 'room' | 'direct';
   /** 私人房间：@ 菜单里多一项“所有人”。 */
   readonly privateRoom?: boolean;
@@ -91,6 +97,7 @@ export function ConversationPanel({
   submissionIds,
   undecryptable,
   recovery = 'idle',
+  noticeChanges = emptyNoticeChanges,
   variant = 'room',
   privateRoom = false,
 }: ConversationPanelProps) {
@@ -109,6 +116,10 @@ export function ConversationPanel({
   );
   const filtered = Object.entries(filter).some(
     ([key, value]) => value !== (key === 'topic' ? null : ''),
+  );
+  const entries = useMemo(
+    () => withNoticeChanges(visibleTimeline, filtered ? emptyNoticeChanges : noticeChanges),
+    [visibleTimeline, filtered, noticeChanges],
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const searchId = useId();
@@ -298,7 +309,7 @@ export function ConversationPanel({
     if (following.current) element.scrollTop = element.scrollHeight;
     else if (bottomDistance.current !== null)
       element.scrollTop = element.scrollHeight - bottomDistance.current;
-  }, [active, focusMessageId, timeline]);
+  }, [active, focusMessageId, timeline, noticeChanges]);
   return (
     <section className="conversation-panel" aria-label={t('conversation.title')}>
       <h2 className="sr-only">{t('conversation.title')}</h2>
@@ -415,9 +426,33 @@ export function ConversationPanel({
           {filtered && visibleTimeline.length === 0 ? (
             <p className="conversation-panel__boundary">{t('history.empty')}</p>
           ) : null}
-          {visibleTimeline.map((message, index) => {
-            const previous = visibleTimeline[index - 1];
-            const day = new Date(message.serverTimestamp).toDateString();
+          {entries.map((entry, index) => {
+            const at = entryTimestamp(entry);
+            const previous = entries[index - 1];
+            const separator =
+              previous === undefined ||
+              new Date(entryTimestamp(previous)).toDateString() !== new Date(at).toDateString() ? (
+                <div className="conversation-day">
+                  <span>{date.format(at)}</span>
+                </div>
+              ) : null;
+            if (entry.kind === 'notice') {
+              return (
+                <div
+                  className="conversation-panel__notice-entry"
+                  key={`notice:${entry.change.matrixEventId}`}
+                >
+                  {separator}
+                  <RoomNoticeChangeLine
+                    change={entry.change}
+                    names={names}
+                    selfMatrixUserId={self?.matrixUserId ?? null}
+                    time={time}
+                  />
+                </div>
+              );
+            }
+            const message = entry.message;
             return (
               <div
                 key={message.messageId}
@@ -426,12 +461,7 @@ export function ConversationPanel({
                 tabIndex={-1}
                 ref={message.messageId === focusMessageId ? focusedMessage : undefined}
               >
-                {previous === undefined ||
-                new Date(previous.serverTimestamp).toDateString() !== day ? (
-                  <div className="conversation-day">
-                    <span>{date.format(message.serverTimestamp)}</span>
-                  </div>
-                ) : null}
+                {separator}
                 <ConversationMessage
                   delivery={deliveries.get(message.messageId) ?? []}
                   expanded={
@@ -506,6 +536,10 @@ export function ConversationPanel({
       />
     </section>
   );
+}
+
+function entryTimestamp(entry: ConversationEntry): number {
+  return entry.kind === 'message' ? entry.message.serverTimestamp : entry.change.serverTimestamp;
 }
 
 /** 最多点名这么多个发送者，再多就只说人数。 */

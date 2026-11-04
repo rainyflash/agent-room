@@ -410,6 +410,8 @@ impl LobbyProvisioningService {
                 room_kind: job.catalog().kind(),
                 target: item.action.target().clone(),
                 target_matrix_user_id: Some(item.target_matrix_user_id.clone()),
+                // 刚开的分片里还没有人，他的 Agent 进来时由进房间那一步看他是不是被禁言着。
+                target_agent_matrix_user_ids: Vec::new(),
             };
             if let Err(source) = self.moderation_effects.apply(&item.action, &target).await {
                 return Err(self

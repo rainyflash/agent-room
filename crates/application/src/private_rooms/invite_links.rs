@@ -324,9 +324,9 @@ impl PrivateRoomInviteLinkService {
                     | PrivateRoomFailureKind::UnknownCommit => {
                         InviteLinkFailureKind::DependencyUnavailable
                     }
-                    PrivateRoomFailureKind::InvalidRequest | PrivateRoomFailureKind::Internal => {
-                        InviteLinkFailureKind::Internal
-                    }
+                    PrivateRoomFailureKind::InvalidRequest
+                    | PrivateRoomFailureKind::PublicRoomLimitReached
+                    | PrivateRoomFailureKind::Internal => InviteLinkFailureKind::Internal,
                 };
                 InviteLinkFailure::new(OPERATION, kind)
             })?;

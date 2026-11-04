@@ -21,8 +21,9 @@ use crate::{
         Clock, IdentifierFactory, MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomId,
         MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomAgentDirectory, PrivateRoomAgentEviction, PrivateRoomListingMatrix,
+        PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
     },
 };
 
@@ -34,6 +35,11 @@ use super::{
     RenamePrivateRoom, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
+
+mod moderation_members;
+mod public_creation;
+
+use public_creation::ensure_public_creator;
 
 pub trait PrivateRoomUseCases: Send + Sync {
     fn create(
@@ -147,8 +153,15 @@ pub struct PrivateRoomDependencies {
     pub principals: Arc<dyn PrivateRoomPrincipalDirectory>,
     /// 成员能力变化时找到其名下 Agent，让它们在 Matrix 上的能力随之收紧或恢复。
     pub agents: Arc<dyn PrivateRoomAgentDirectory>,
+    /// 治理踢出、封禁一个人时，连他名下凭口令或敲门进来的 Agent 一起移出。
+    pub agent_members: Arc<dyn PrivateRoomAgentEviction>,
     /// 必须能读取当前 Matrix 房间状态的受信服务身份，例如内容授权服务。
     pub trusted_matrix_readers: Vec<MatrixUserId>,
+    /// 下面三样只有新建时就公开的房间用（`specs/public-rooms/design.md`）：存设置、在 Matrix 上
+    /// 写下公开的时间、生成分享码。
+    pub listings: Arc<dyn PrivateRoomListingStore>,
+    pub listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
+    pub secrets: Arc<dyn SecretFactory>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -159,7 +172,11 @@ pub struct PrivateRoomService {
     matrix: Arc<dyn PrivateRoomMatrixGateway>,
     principals: Arc<dyn PrivateRoomPrincipalDirectory>,
     agents: Arc<dyn PrivateRoomAgentDirectory>,
+    agent_members: Arc<dyn PrivateRoomAgentEviction>,
     trusted_matrix_readers: Vec<MatrixUserId>,
+    listings: Arc<dyn PrivateRoomListingStore>,
+    listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
+    secrets: Arc<dyn SecretFactory>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -172,7 +189,11 @@ impl PrivateRoomService {
             matrix: dependencies.matrix,
             principals: dependencies.principals,
             agents: dependencies.agents,
+            agent_members: dependencies.agent_members,
             trusted_matrix_readers: dependencies.trusted_matrix_readers,
+            listings: dependencies.listings,
+            listing_matrix: dependencies.listing_matrix,
+            secrets: dependencies.secrets,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }
@@ -186,8 +207,12 @@ impl PrivateRoomService {
         let owner_matrix_user =
             active_room_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
         self.ensure_creator(&request, OPERATION).await?;
+        ensure_public_creator(&request, OPERATION)?;
         if let Some(existing) = self.find(request.catalog_id, OPERATION).await? {
-            return ensure_same_creation(&request, existing, OPERATION);
+            return self.ensure_same_room(&request, existing, OPERATION).await;
+        }
+        if request.listing.is_some() {
+            self.ensure_public_room_quota(&request, OPERATION).await?;
         }
 
         let prepared = self
@@ -202,22 +227,23 @@ impl PrivateRoomService {
             .set_speaking_batch(&matrix_room_id, &prepared.speaking_assignments)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
-        let snapshot = self.build_snapshot(&request, prepared.room, &matrix_room_id, OPERATION)?;
+        let snapshot = self.build_snapshot(
+            &request,
+            prepared.catalog,
+            prepared.room,
+            &matrix_room_id,
+            OPERATION,
+        )?;
+        if let Some(settings) = request.listing {
+            return self
+                .save_public_room(&request, settings, snapshot, &matrix_room_id, OPERATION)
+                .await;
+        }
         let now = self.clock.now();
         match self.store.create(&snapshot, now).await {
             Ok(()) => Ok(snapshot),
             Err(error) if error.kind() == RepositoryErrorKind::Conflict => {
-                let existing =
-                    self.find(request.catalog_id, OPERATION)
-                        .await?
-                        .ok_or_else(|| {
-                            failure(
-                                OPERATION,
-                                PrivateRoomFailureStage::Persistence,
-                                PrivateRoomFailureKind::Conflict,
-                            )
-                        })?;
-                ensure_same_creation(&request, existing, OPERATION)
+                self.ensure_created_by_retry(&request, OPERATION).await
             }
             Err(error) => Err(repository(
                 OPERATION,
@@ -498,30 +524,48 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.remove";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.remove_as(
+            request.actor.principal_id,
+            request.catalog_id,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 移出一个成员：改成员记录，在聊天服务器上踢出，把他名下在房间里的 Agent 移出。成员一节和台账的
+    /// 踢出都走这里。
+    async fn remove_as(
+        &self,
+        actor: PrincipalId,
+        catalog_id: RoomCatalogId,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let snapshot = self.load(catalog_id, operation).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .remove_member(request.actor.principal_id, request.target_principal_id)
-            .map_err(|error| domain(OPERATION, &error))?;
+            .remove_member(actor, target_principal_id)
+            .map_err(|error| domain(operation, &error))?;
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .kick(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
+            .map_err(|error| matrix(operation, error))?;
         self.govern_member_agents(
             &matrix_room,
-            request.target_principal_id,
+            target_principal_id,
             MemberAgentChange::Evict,
-            OPERATION,
+            operation,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn ban_internal(
@@ -530,31 +574,49 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.ban";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.ban_as(
+            request.actor.principal_id,
+            request.catalog_id,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 封禁一个人：改成员记录，在聊天服务器上封禁，把他名下在房间里的 Agent 移出。成员一节和台账的封禁
+    /// 都走这里。
+    async fn ban_as(
+        &self,
+        actor: PrincipalId,
+        catalog_id: RoomCatalogId,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let snapshot = self.load(catalog_id, operation).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .ban_member(request.actor.principal_id, request.target_principal_id)
-            .map_err(|error| domain(OPERATION, &error))?;
+            .ban_member(actor, target_principal_id)
+            .map_err(|error| domain(operation, &error))?;
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .ban(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
+            .map_err(|error| matrix(operation, error))?;
         // Agent 只移出不封禁：封禁针对成员本人，Agent 仍可能被其他能发言的共同所有者带进来。
         self.govern_member_agents(
             &matrix_room,
-            request.target_principal_id,
+            target_principal_id,
             MemberAgentChange::Evict,
-            OPERATION,
+            operation,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn unban_internal(
@@ -563,28 +625,45 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.unban";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
-        let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        self.unban_as(
+            request.actor.principal_id,
+            request.catalog_id,
+            request.target_principal_id,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 解封：这个人回到“已移出”，之后能再邀请。没有封着的什么都不改。成员一节和台账撤回封禁都走这里。
+    async fn unban_as(
+        &self,
+        actor: PrincipalId,
+        catalog_id: RoomCatalogId,
+        target_principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let snapshot = self.load(catalog_id, operation).await?;
         let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
-            .unban_member(request.actor.principal_id, request.target_principal_id)
-            .map_err(|error| domain(OPERATION, &error))?;
+            .unban_member(actor, target_principal_id)
+            .map_err(|error| domain(operation, &error))?;
         if !changed {
-            return replace_room(snapshot, room, OPERATION);
+            return replace_room(snapshot, room, operation);
         }
         // 先在 Matrix 上解开再保存，和封禁同一个顺序：保存失败时产品上还封着，重试会再解一次
         // （已经解开的跳过）再保存。他的 Agent 封禁时只移出没封，这里不用管。
         let target = self
-            .principal_matrix_user(request.target_principal_id, OPERATION)
+            .principal_matrix_user(target_principal_id, operation)
             .await?;
-        let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
+        let matrix_room = matrix_room_id(&snapshot, operation)?;
         self.matrix
             .unban(&matrix_room, &target)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
+            .map_err(|error| matrix(operation, error))?;
+        self.save_if_changed(&room, expected, changed, operation)
             .await?;
-        replace_room(snapshot, room, OPERATION)
+        replace_room(snapshot, room, operation)
     }
 
     async fn update_permissions_internal(
@@ -866,6 +945,8 @@ impl PrivateRoomService {
         owner_matrix_user: Option<MatrixUserId>,
         operation: &'static str,
     ) -> PrivateRoomResult<PreparedPrivateRoomCreation> {
+        // 目录的规则先查：查不过的别等 Matrix 房间建好了才发现（agent-room-ops#57）。
+        let catalog = new_catalog(request, operation)?;
         let owner = request.actor.principal_id();
         let mut room = match request.created_by_agent {
             Some(agent_id) => PrivateRoom::create_by_agent(request.catalog_id, owner, agent_id),
@@ -889,11 +970,17 @@ impl PrivateRoomService {
             if invitation.principal_id == owner
                 || !invited_principals.insert(invitation.principal_id)
             {
+                let field = if invitation.principal_id == owner {
+                    "invitations.owner"
+                } else {
+                    "invitations.duplicate"
+                };
                 return Err(failure(
                     operation,
                     PrivateRoomFailureStage::Validation,
                     PrivateRoomFailureKind::InvalidRequest,
-                ));
+                )
+                .rejecting(field));
             }
             room.invite(owner, invitation.principal_id, invitation.permissions)
                 .map_err(|error| domain(operation, &error))?;
@@ -922,7 +1009,8 @@ impl PrivateRoomService {
             }
         }
 
-        let alias = private_room_alias(request.catalog_id, operation)?;
+        let public = request.listing.is_some();
+        let alias = private_room_alias(request.catalog_id, public, operation)?;
         let mut matrix_request = MatrixCreateRoom::new(
             Some(request.name.clone()),
             (!request.description.is_empty()).then(|| request.description.clone()),
@@ -933,16 +1021,23 @@ impl PrivateRoomService {
         )
         .map_err(|error| domain(operation, &error))?
         .with_alias_localpart(alias.clone())
-        .with_end_to_end_encryption()
         .with_power_profile(MatrixRoomPowerProfile::ManagedPrivate);
+        if !public {
+            matrix_request = matrix_request.with_end_to_end_encryption();
+        }
         if let Some(retention_days) = request.retention_days {
             matrix_request = matrix_request
                 .with_retention_days(retention_days)
                 .map_err(|error| domain(operation, &error))?;
         }
-        let matrix = PrivateMatrixRoomCreation::new(matrix_request, alias)
-            .map_err(|error| domain(operation, &error))?;
+        let matrix = if public {
+            PrivateMatrixRoomCreation::new_public(matrix_request, alias)
+        } else {
+            PrivateMatrixRoomCreation::new(matrix_request, alias)
+        }
+        .map_err(|error| domain(operation, &error))?;
         Ok(PreparedPrivateRoomCreation {
+            catalog,
             room,
             matrix,
             speaking_assignments,
@@ -952,26 +1047,11 @@ impl PrivateRoomService {
     fn build_snapshot(
         &self,
         request: &CreatePrivateRoom,
+        catalog: RoomCatalog,
         room: PrivateRoom,
         matrix_room_id: &MatrixRoomId,
         operation: &'static str,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
-        let catalog = RoomCatalog::new(
-            request.catalog_id,
-            RoomCatalogFields {
-                kind: RoomCatalogKind::PrivateRoom,
-                slug: None,
-                name: request.name.clone(),
-                description: request.description.clone(),
-                language: None,
-                matrix_space_id: None,
-                owner_principal_id: Some(request.actor.principal_id()),
-                visibility: RoomCatalogVisibility::Private,
-                retention_days: request.retention_days,
-                status: RoomCatalogStatus::Active,
-            },
-        )
-        .map_err(|error| domain(operation, &error))?;
         let matrix_reference = MatrixRoomReference::new(matrix_room_id.as_str().to_owned())
             .map_err(|error| domain(operation, &error))?;
         let instance = RoomInstance::restore(
@@ -1309,6 +1389,7 @@ enum MatrixMembershipRequirement {
 }
 
 struct PreparedPrivateRoomCreation {
+    catalog: RoomCatalog,
     room: PrivateRoom,
     matrix: PrivateMatrixRoomCreation,
     speaking_assignments: Vec<PrivateMatrixSpeakingAssignment>,
@@ -1323,6 +1404,28 @@ impl MatrixMembershipRequirement {
             }
         }
     }
+}
+
+fn new_catalog(
+    request: &CreatePrivateRoom,
+    operation: &'static str,
+) -> PrivateRoomResult<RoomCatalog> {
+    RoomCatalog::new(
+        request.catalog_id,
+        RoomCatalogFields {
+            kind: RoomCatalogKind::PrivateRoom,
+            slug: None,
+            name: request.name.clone(),
+            description: request.description.clone(),
+            language: None,
+            matrix_space_id: None,
+            owner_principal_id: Some(request.actor.principal_id()),
+            visibility: RoomCatalogVisibility::Private,
+            retention_days: request.retention_days,
+            status: RoomCatalogStatus::Active,
+        },
+    )
+    .map_err(|error| domain(operation, &error))
 }
 
 fn ensure_same_creation(
@@ -1346,12 +1449,17 @@ fn ensure_same_creation(
     }
 }
 
+/// 房间在 Matrix 上的稳定别名，建房重试时照它找回上一次建好的房间。新建时就公开的房间不加密，
+/// 换一个前缀：同一个房间号先按私密建了一半、再按公开重试（或者反过来）时各建各的，不会把加密的
+/// 房间当成不加密的记下来。
 fn private_room_alias(
     catalog_id: RoomCatalogId,
+    public: bool,
     operation: &'static str,
 ) -> PrivateRoomResult<MatrixRoomAliasLocalpart> {
+    let prefix = if public { "public-room" } else { "private" };
     MatrixRoomAliasLocalpart::new(format!(
-        "agent-room-private-{}",
+        "agent-room-{prefix}-{}",
         catalog_id.as_uuid().simple()
     ))
     .map_err(|_| {

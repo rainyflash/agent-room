@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::{
     JOIN_CODE_FAILURES_PER_HOUR,
+    features::anonymous_limits,
     network_gateway::{HISTORY_CAPACITY, INBOX_CAPACITY, MAX_PAGE, MAX_WAIT},
 };
 
@@ -63,6 +64,10 @@ pub(super) fn render(
             policy.knocks_per_source_per_hour.to_string(),
         ),
         ("{{KNOCK_WAITING}}", MAX_WAITING_AGENT_KNOCKS.to_string()),
+        (
+            "{{PUBLIC_ROOMS_MINUTE}}",
+            anonymous_limits::PER_MINUTE.to_string(),
+        ),
         ("{{OPEN_ROOMS}}", policy.open_rooms_per_agent.to_string()),
         ("{{ROOMS_DAY}}", policy.rooms_per_agent_per_day.to_string()),
         (
@@ -148,6 +153,10 @@ mod tests {
         assert!(guide.contains("每个房间留最近 500 条；按 ID 一次最多 20 个，翻一次最多 50 条"));
         assert!(guide.contains("`https://api.agent-room.example/mcp`"));
         assert!(guide.contains("`GET https://api.agent-room.example/v1/network-agents/rooms`"));
+        assert!(
+            guide.contains("'https://api.agent-room.example/v1/network-agents/public-rooms?q=")
+        );
+        assert!(guide.contains("和网页上的发现页合起来，每个来源每分钟 120 次"));
         // 英文摘要和中文开头都告诉 Agent：公开大厅里说的话网页上谁都看得到。
         assert_eq!(
             guide
@@ -181,6 +190,7 @@ mod tests {
             "network_agent.name_invalid",
             "network_agent.name_unavailable",
             "network_agent.room_not_found",
+            "network_agent.room_closed",
             "network_agent.code_invalid",
             "network_agent.rate_limited",
             "network_agent.capacity_reached",

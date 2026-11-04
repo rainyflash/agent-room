@@ -2,14 +2,16 @@
 
 use agent_room_bridge_core::room_management::{
     ControlPlaneRoomManagementGateway, CreatedRoom, RoomCodeState, RoomJoinCode, RoomKnock,
-    RoomManagementFailure, RoomManagementFailureKind, RoomManagementResult,
+    RoomManagementFailure, RoomManagementFailureKind, RoomManagementResult, RoomModerationGrant,
+    RoomModerationOutcome, RoomModerationRequest,
 };
 use agent_room_bridge_ipc::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcHostRoomTarget, IpcInvitePersonRequest,
-    IpcRemoveAgentRequest, IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode,
+    IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcRemoveAgentRequest,
+    IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode,
 };
 use agent_room_domain::{
-    ids::{AgentId, PrincipalId},
+    ids::{AgentId, AgentInstanceId, PrincipalId},
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
@@ -25,6 +27,8 @@ pub(super) struct RoomsFake {
     knocks: Vec<RoomKnock>,
     calls: std::sync::Mutex<Vec<String>>,
     failure: std::sync::Mutex<Option<RoomManagementFailureKind>>,
+    /// 主人给的管理授权；没有就是这个房间没交给 Agent 管。
+    grant: Option<RoomModerationGrant>,
 }
 
 impl RoomsFake {
@@ -133,6 +137,46 @@ impl ControlPlaneRoomManagementGateway for RoomsFake {
         let removed = self.record(format!("remove {catalog_id} {agent_id}"));
         Box::pin(async move { removed })
     }
+
+    fn moderation_grant(
+        &self,
+        agent_id: AgentId,
+        instance_id: AgentInstanceId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RoomManagementResult<Option<RoomModerationGrant>>> {
+        let grant = self
+            .record(format!("rules {agent_id} {instance_id} {catalog_id}"))
+            .map(|()| self.grant.clone());
+        Box::pin(async move { grant })
+    }
+
+    fn moderate<'a>(
+        &'a self,
+        agent_id: AgentId,
+        instance_id: AgentInstanceId,
+        catalog_id: RoomCatalogId,
+        _action_id: Uuid,
+        request: &'a RoomModerationRequest,
+    ) -> PortFuture<'a, RoomManagementResult<RoomModerationOutcome>> {
+        let outcome = self
+            .record(format!(
+                "{} {agent_id} {instance_id} {catalog_id} {} {:?} {} {:?}",
+                request.action,
+                request.target,
+                request.reason,
+                request.note,
+                request.duration_seconds
+            ))
+            .map(|()| RoomModerationOutcome {
+                action_id: "0198b601-77a1-7bb8-83eb-a8fe68c97e60".to_owned(),
+                action: request.action.to_owned(),
+                status: "applied".to_owned(),
+                expires_at: request
+                    .duration_seconds
+                    .map(|_| UtcMillis::new(600_000).expect("时间有效")),
+            });
+        Box::pin(async move { outcome })
+    }
 }
 
 pub(super) fn access(
@@ -151,7 +195,7 @@ fn handler(rooms: Arc<RoomsFake>, host_agents: Arc<HostAgentsFake>) -> SessionAw
         default: Arc::new(RefusingHandler),
         sessions: Arc::new(HostSessionRegistry::new(Arc::new(TestFactory::default()))),
         connection_status: Arc::new(ReadyStatus),
-        room_directory: Arc::new(DirectoryFake { rooms: vec![] }),
+        room_directory: Arc::new(DirectoryFake::default()),
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), host_agents.clone()),
         rooms: access(rooms, host_agents),
@@ -475,4 +519,207 @@ async fn 说了房间就管那一间_要是会话的_agent_在的() {
             format!("remove {home} {agent}"),
         ]
     );
+}
+
+fn moderate(action: IpcModerationAction) -> IpcModerateRoomRequest {
+    IpcModerateRoomRequest {
+        action,
+        catalog_id: None,
+        room_id: None,
+        target: None,
+        reason: None,
+        note: None,
+        duration_seconds: None,
+    }
+}
+
+#[tokio::test]
+async fn 管房间读规则_照授权禁言_用的是会话的_agent_和它所在的房间() {
+    let rooms = Arc::new(RoomsFake {
+        grant: Some(RoomModerationGrant {
+            rules: "Mute anyone who posts ads.".to_owned(),
+            actions: vec!["mute".to_owned()],
+            expires_at: UtcMillis::new(9_000).expect("时间有效"),
+        }),
+        ..RoomsFake::default()
+    });
+    let handler = handler(rooms.clone(), Arc::default());
+    let catalog = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let id = session_in(&handler, Some(catalog)).await;
+    let me = identity(&handler.sessions, &id).await;
+    let who = format!("{} {} {catalog}", me.agent.agent_id, me.instance_id);
+
+    let rules = in_session(
+        &handler,
+        &id,
+        IpcMethod::ModerateRoom(moderate(IpcModerationAction::Rules)),
+    )
+    .await
+    .expect("读规则");
+    let IpcResponse::RoomModerationRules { catalog_id, grant } = rules else {
+        panic!("应返回授权：{rules:?}");
+    };
+    assert_eq!(catalog_id, catalog.to_string());
+    assert_eq!(
+        grant,
+        Some(IpcModerationGrant {
+            rules: "Mute anyone who posts ads.".to_owned(),
+            actions: vec!["mute".to_owned()],
+            expires_at_unix_ms: 9_000,
+        })
+    );
+
+    let muted = in_session(
+        &handler,
+        &id,
+        IpcMethod::ModerateRoom(IpcModerateRoomRequest {
+            target: Some("@spammer:matrix.test".to_owned()),
+            reason: Some("spam".to_owned()),
+            note: Some("Posted the same link five times.".to_owned()),
+            duration_seconds: Some(600),
+            ..moderate(IpcModerationAction::Mute)
+        }),
+    )
+    .await
+    .expect("禁言");
+    let IpcResponse::RoomModerated { outcome, .. } = muted else {
+        panic!("应返回台账里的那一条：{muted:?}");
+    };
+    assert_eq!(outcome.status, "applied");
+    assert_eq!(outcome.expires_at_unix_ms, Some(600_000));
+    assert_eq!(
+        rooms.take_calls(),
+        [
+            format!("rules {who}"),
+            format!(
+                "mute {who} @spammer:matrix.test Some(\"spam\") Posted the same link five times. Some(600)"
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn 没有授权时回答里没有_控制面的拒绝换成说得清原因的错误码() {
+    let rooms = Arc::new(RoomsFake::default());
+    let handler = handler(rooms.clone(), Arc::default());
+    let id = session_in(&handler, Some(RoomCatalogId::from_uuid(Uuid::now_v7()))).await;
+
+    let rules = in_session(
+        &handler,
+        &id,
+        IpcMethod::ModerateRoom(moderate(IpcModerationAction::Rules)),
+    )
+    .await
+    .expect("读规则");
+    assert!(matches!(
+        rules,
+        IpcResponse::RoomModerationRules { grant: None, .. }
+    ));
+
+    let unban = || {
+        IpcMethod::ModerateRoom(IpcModerateRoomRequest {
+            target: Some("@someone:matrix.test".to_owned()),
+            note: Some("They said they will stop.".to_owned()),
+            ..moderate(IpcModerationAction::Unban)
+        })
+    };
+    for (kind, code) in [
+        (
+            RoomManagementFailureKind::NotGranted,
+            "bridge.moderation.not_granted",
+        ),
+        (
+            RoomManagementFailureKind::NotAllowed,
+            "bridge.moderation.not_allowed",
+        ),
+        (
+            RoomManagementFailureKind::Protected,
+            "bridge.moderation.protected",
+        ),
+        (
+            RoomManagementFailureKind::TargetNotFound,
+            "bridge.moderation.target_not_found",
+        ),
+        (
+            RoomManagementFailureKind::NotInRoom,
+            "bridge.moderation.not_in_room",
+        ),
+        (
+            RoomManagementFailureKind::NotBanned,
+            "bridge.moderation.not_banned",
+        ),
+        (
+            RoomManagementFailureKind::BannedByPerson,
+            "bridge.moderation.banned_by_person",
+        ),
+    ] {
+        *rooms.failure.lock().unwrap() = Some(kind);
+        let failure = in_session(&handler, &id, unban())
+            .await
+            .expect_err("控制面拒绝");
+        assert_eq!((failure.code(), failure.retryable()), (code, false));
+    }
+
+    // 说了不是会话的 Agent 在的房间：什么都不问控制面。
+    rooms.take_calls();
+    let elsewhere = in_session(
+        &handler,
+        &id,
+        IpcMethod::ModerateRoom(IpcModerateRoomRequest {
+            catalog_id: Some(Uuid::now_v7().to_string()),
+            ..moderate(IpcModerationAction::Rules)
+        }),
+    )
+    .await
+    .expect_err("不在那个房间");
+    assert_eq!(elsewhere.code(), "bridge.room_not_joined");
+    assert!(rooms.take_calls().is_empty());
+}
+
+#[tokio::test]
+async fn 用消息里的_room_id_说房间也行_要是会话的_agent_在的() {
+    let home = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let entered = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let rooms = Arc::new(RoomsFake::default());
+    let handler = handler(rooms.clone(), Arc::default());
+    let id = session_in(&handler, Some(home)).await;
+    let IpcResponse::RoomEntered { room } = in_session(
+        &handler,
+        &id,
+        IpcMethod::EnterRoom(IpcEnterRoomRequest {
+            room: IpcHostRoomTarget {
+                catalog_id: entered.to_string(),
+                room_id: None,
+            },
+        }),
+    )
+    .await
+    .expect("又进了一个房间") else {
+        panic!("应进了房间");
+    };
+    let rules_in = |room_id: &str| {
+        IpcMethod::ModerateRoom(IpcModerateRoomRequest {
+            room_id: Some(room_id.to_owned()),
+            ..moderate(IpcModerationAction::Rules)
+        })
+    };
+
+    // 会话的 Matrix 房间是开会话时进的那个；又进的那个按它进房间时拿到的 Matrix 房间 ID 认。
+    for (room_id, catalog) in [
+        ("!lobby:test.invalid", home),
+        (room.room_id.as_str(), entered),
+    ] {
+        let answer = in_session(&handler, &id, rules_in(room_id))
+            .await
+            .expect("读规则");
+        assert!(matches!(
+            answer,
+            IpcResponse::RoomModerationRules { catalog_id, grant: None } if catalog_id == catalog.to_string()
+        ));
+    }
+    let elsewhere = in_session(&handler, &id, rules_in("!elsewhere:test.invalid"))
+        .await
+        .expect_err("不在那个房间");
+    assert_eq!(elsewhere.code(), "bridge.room_not_joined");
+    assert_eq!(rooms.take_calls().len(), 2);
 }

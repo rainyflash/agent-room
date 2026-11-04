@@ -1,4 +1,5 @@
-//! 向控制面询问这台设备的账号能进哪些房间（`GET /lobbies/accessible`，设备签名）。
+//! 向控制面询问这台设备的账号能进哪些房间（`GET /lobbies/accessible`，设备签名），也翻发现页的公开
+//! 房间（`GET /public-rooms`，不要登录，不签名）。
 
 use std::sync::Arc;
 
@@ -6,12 +7,16 @@ use agent_room_application::ports::PortFuture;
 use agent_room_bridge_core::{
     room_directory::{
         AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership,
-        ControlPlaneRoomDirectoryGateway, RoomDirectoryFailure, RoomDirectoryFailureKind,
-        RoomDirectoryResult,
+        ControlPlaneRoomDirectoryGateway, PublicRoomListing, PublicRoomListingPage,
+        RoomDirectoryFailure, RoomDirectoryFailureKind, RoomDirectoryResult,
     },
     session::{BridgeSessionFailure, BridgeSessionFailureKind, ControlPlaneRequestAuthorizer},
 };
-use agent_room_domain::{ids::RoomCatalogId, rooms::MatrixRoomReference};
+use agent_room_domain::{
+    ids::RoomCatalogId,
+    room_listing::{RoomJoinMode, RoomShareCode},
+    rooms::MatrixRoomReference,
+};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use url::Url;
@@ -22,6 +27,7 @@ use super::{
 };
 
 const ACCESSIBLE_ROOMS_TARGET: &str = "/lobbies/accessible";
+const PUBLIC_ROOMS_TARGET: &str = "/public-rooms";
 
 pub struct ReqwestControlPlaneRoomDirectoryGateway {
     client: Client,
@@ -88,9 +94,127 @@ impl ReqwestControlPlaneRoomDirectoryGateway {
     }
 }
 
+impl ReqwestControlPlaneRoomDirectoryGateway {
+    async fn list_public_internal(
+        &self,
+        search: Option<&str>,
+        cursor: Option<&str>,
+    ) -> RoomDirectoryResult<PublicRoomListingPage> {
+        let mut request_url = self
+            .base_url
+            .join(PUBLIC_ROOMS_TARGET.trim_start_matches('/'))
+            .map_err(|_| failure(RoomDirectoryFailureKind::Internal))?;
+        {
+            let mut query = request_url.query_pairs_mut();
+            if let Some(search) = search {
+                query.append_pair("q", search);
+            }
+            if let Some(cursor) = cursor {
+                query.append_pair("cursor", cursor);
+            }
+        }
+        if request_url.query() == Some("") {
+            request_url.set_query(None);
+        }
+        let response = self.client.get(request_url).send().await.map_err(|error| {
+            if error.is_connect() || error.is_timeout() {
+                failure(RoomDirectoryFailureKind::ControlPlaneUnavailable)
+            } else {
+                failure(RoomDirectoryFailureKind::Internal)
+            }
+        })?;
+        let status = response.status();
+        let body = read_limited_response_body(response)
+            .await
+            .map_err(|()| failure(RoomDirectoryFailureKind::InvalidControlPlaneResponse))?;
+        if !status.is_success() {
+            return Err(status_failure(status));
+        }
+        let decoded: PublicRoomsResponse = serde_json::from_slice(&body)
+            .map_err(|_| failure(RoomDirectoryFailureKind::InvalidControlPlaneResponse))?;
+        Ok(PublicRoomListingPage {
+            rooms: decoded
+                .rooms
+                .into_iter()
+                .map(PublicRoomListing::try_from)
+                .collect::<RoomDirectoryResult<_>>()?,
+            next_cursor: decoded.next_cursor,
+        })
+    }
+}
+
 impl ControlPlaneRoomDirectoryGateway for ReqwestControlPlaneRoomDirectoryGateway {
     fn list_accessible(&self) -> PortFuture<'_, RoomDirectoryResult<Vec<AccessibleRoom>>> {
         Box::pin(self.list_internal())
+    }
+
+    fn list_public<'a>(
+        &'a self,
+        search: Option<&'a str>,
+        cursor: Option<&'a str>,
+    ) -> PortFuture<'a, RoomDirectoryResult<PublicRoomListingPage>> {
+        Box::pin(self.list_public_internal(search, cursor))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicRoomsResponse {
+    rooms: Vec<PublicRoomResponse>,
+    #[serde(default)]
+    next_cursor: Option<String>,
+}
+
+/// 发现页回答里的一间房；登录的人才有的 `viewer` 和这里用不上的几样不读。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicRoomResponse {
+    catalog_id: String,
+    share_code: String,
+    share_url: String,
+    name: String,
+    description: String,
+    owner_name: String,
+    member_count: u32,
+    agent_count: u32,
+    join_mode: String,
+    end_to_end_encrypted: bool,
+    #[serde(default)]
+    last_message_at_unix_ms: Option<i64>,
+}
+
+impl TryFrom<PublicRoomResponse> for PublicRoomListing {
+    type Error = RoomDirectoryFailure;
+
+    fn try_from(value: PublicRoomResponse) -> Result<Self, Self::Error> {
+        let invalid = || failure(RoomDirectoryFailureKind::InvalidControlPlaneResponse);
+        let catalog_id = uuid::Uuid::parse_str(&value.catalog_id)
+            .ok()
+            .filter(|id| id.get_version() == Some(uuid::Version::SortRand))
+            .map(RoomCatalogId::from_uuid)
+            .ok_or_else(invalid)?;
+        let share_code = RoomShareCode::parse(&value.share_code).map_err(|_| invalid())?;
+        let join_mode = RoomJoinMode::try_from(value.join_mode.as_str()).map_err(|_| invalid())?;
+        let share_url = Url::parse(&value.share_url)
+            .ok()
+            .filter(|url| matches!(url.scheme(), "https" | "http"))
+            .ok_or_else(invalid)?;
+        if value.name.trim().is_empty() {
+            return Err(invalid());
+        }
+        Ok(Self {
+            catalog_id,
+            name: value.name,
+            description: value.description,
+            owner_name: value.owner_name,
+            join_mode,
+            end_to_end_encrypted: value.end_to_end_encrypted,
+            member_count: value.member_count,
+            agent_count: value.agent_count,
+            last_message_at_unix_ms: value.last_message_at_unix_ms,
+            share_code,
+            share_url: share_url.into(),
+        })
     }
 }
 
@@ -191,8 +315,9 @@ fn map_session_failure(session_failure: BridgeSessionFailure) -> RoomDirectoryFa
 mod tests {
     use super::{AccessibleRoomResponse, RoomDirectoryFailureKind};
     use agent_room_bridge_core::room_directory::{
-        AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership,
+        AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership, PublicRoomListing,
     };
+    use agent_room_domain::room_listing::RoomJoinMode;
 
     fn response(kind: &str, membership: Option<&str>) -> AccessibleRoomResponse {
         AccessibleRoomResponse {
@@ -226,5 +351,62 @@ mod tests {
         let mut blank = response("public_lobby", None);
         blank.name = "  ".to_owned();
         assert!(AccessibleRoom::try_from(blank).is_err());
+    }
+
+    #[test]
+    fn 发现页的回答认得出_登录才有的字段不读_格式不对的整页不收() {
+        let body = serde_json::json!({
+            "rooms": [{
+                "catalogId": "0198b601-77a1-7bb8-83eb-a8fe68c97e46",
+                "shareCode": "Club01",
+                "shareUrl": "https://agent-room.test/r/Club01",
+                "name": "Book club",
+                "description": "One book a week",
+                "ownerName": "Ming",
+                "memberCount": 12,
+                "agentCount": 3,
+                "joinMode": "invite_only",
+                "endToEndEncrypted": true,
+                "createdAtUnixMs": 1_000,
+                "lastMessageAtUnixMs": 2_000,
+                "viewer": "joined"
+            }],
+            "nextCursor": "24"
+        });
+        let decoded: super::PublicRoomsResponse = serde_json::from_value(body).unwrap();
+        assert_eq!(decoded.next_cursor.as_deref(), Some("24"));
+        let room = decoded.rooms.into_iter().next().unwrap();
+        let listing = PublicRoomListing::try_from(room).expect("认得");
+        assert_eq!(listing.join_mode, RoomJoinMode::InviteOnly);
+        assert_eq!(listing.share_code.as_str(), "Club01");
+        assert_eq!(listing.share_url, "https://agent-room.test/r/Club01");
+        assert_eq!(listing.last_message_at_unix_ms, Some(2_000));
+
+        for (field, value) in [
+            ("joinMode", "everyone"),
+            ("shareUrl", "javascript:alert(1)"),
+            ("shareCode", "no"),
+            ("catalogId", "not-a-uuid"),
+        ] {
+            let mut room = serde_json::json!({
+                "catalogId": "0198b601-77a1-7bb8-83eb-a8fe68c97e46",
+                "shareCode": "Club01",
+                "shareUrl": "https://agent-room.test/r/Club01",
+                "name": "Book club",
+                "description": "",
+                "ownerName": "Ming",
+                "memberCount": 1,
+                "agentCount": 0,
+                "joinMode": "open",
+                "endToEndEncrypted": false
+            });
+            room[field] = serde_json::Value::from(value);
+            let room: super::PublicRoomResponse = serde_json::from_value(room).unwrap();
+            assert_eq!(
+                PublicRoomListing::try_from(room).unwrap_err().kind(),
+                RoomDirectoryFailureKind::InvalidControlPlaneResponse,
+                "{field}"
+            );
+        }
     }
 }

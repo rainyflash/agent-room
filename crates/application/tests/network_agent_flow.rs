@@ -28,22 +28,24 @@ use agent_room_application::{
         NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
         NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights,
         PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
-        PrivateRoomJoinCodeRecord, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
-        PublicLobbyObservationRoom, RateWindowBucket, RateWindowDecision, RateWindowPolicy,
-        RegisteredAgent, RoomDirectory, RoomDirectoryQuery, SealedSecret, SecretDigest,
-        SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
-        StoredAgentInstanceRegistration, UniformSourceWeights,
+        PrivateRoomJoinCodeRecord, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
+        PrivateRoomListingStore, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
+        PublicLobbyObservationRoom, PublicRoomDetailRecord, PublicRoomDirectoryStore,
+        PublicRoomRecord, PublicRoomSearch, PublicRoomViewerState, RateWindowBucket,
+        RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
+        SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
+        SecretValue, StoredAgentInstanceRegistration, UniformSourceWeights,
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
         AgentAccessView, AnswerKnock, ArchivePrivateRoom, ChangePrivateRoomPermissions,
         CreatePrivateRoom, GeneratedJoinCode, GovernPrivateRoomMember, InspectAgentAccess,
-        InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller, KnockOnRoom, KnockResult,
-        ListPrivateRooms, ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
-        PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
-        PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
-        PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember, RenamePrivateRoom,
-        ResolveJoinCode, TransferPrivateRoomOwnership,
+        InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller, KnockEntry, KnockOnRoom,
+        KnockResult, ListPrivateRooms, ListPrivateRoomsForAccount, ManageJoinCode,
+        PrivateRoomActor, PrivateRoomAgentAccessUseCases, PrivateRoomFailure,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
+        PrivateRoomOrigin, PrivateRoomResult, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
+        RemoveAgentMember, RenamePrivateRoom, ResolveJoinCode, TransferPrivateRoomOwnership,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -63,12 +65,14 @@ use agent_room_domain::{
     join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus, PrivateRoomJoinCode},
     network_agents::{NETWORK_AGENT_ISSUER, NetworkAgentStatus},
     private_rooms::{PrivateRoom, PrivateRoomPermissions},
+    room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode},
     rooms::{
         MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
         RoomInstanceState, RoomReservation, RoomReservationFields, RoomReservationState, RoomSlug,
     },
     time::UtcMillis,
+    version::AggregateVersion,
 };
 use uuid::Uuid;
 
@@ -78,6 +82,8 @@ const MATRIX_TOKEN: &str = "syt_network_agent_session";
 /// 对得上的 Agent 口令。
 const CODE: &str = "ABCD-EFGH-JKLM";
 const PRIVATE_ROOM: &str = "!private:matrix.test";
+/// 直接进的公开房间。
+const OPEN_ROOM: &str = "!open:matrix.test";
 
 // ---------- 假实现 ----------
 
@@ -900,6 +906,8 @@ impl AgentLobbyEntryUseCases for ScriptedLobbies {
 /// 私人房间的口令：`CODE` 对得上；`REMOVED` 是被移出后拿来的旧口令（能看不能进）；
 /// `LIMITED` 表示这个来源猜错到了上限；其余都不对。
 /// 敲门：只有 `catalog_id(9)` 是私人房间；`members` 里的已经是 Agent 成员，`declined` 里的没让进过。
+/// `open_catalog()` 是直接进的公开房间，敲门就放进来（`removed` 里的照旧敲门）；`closed_catalog()`
+/// 不让没有账号的网络 Agent 拿房间号进。
 #[derive(Default)]
 struct FakeAccess {
     resolved: Mutex<Vec<(JoinCodeCaller, String)>>,
@@ -1121,9 +1129,19 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         Box::pin(async move { result })
     }
 
-    fn knockable(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, AgentAccessResult<()>> {
+    fn knockable(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, AgentAccessResult<KnockEntry>> {
         let result = if catalog_id == private_catalog() {
-            Ok(())
+            Ok(KnockEntry::Knock)
+        } else if catalog_id == open_catalog() {
+            Ok(KnockEntry::Open)
+        } else if catalog_id == closed_catalog() {
+            Err(AgentAccessFailure::new(
+                "test.knockable",
+                AgentAccessFailureKind::ClosedToNetworkAgents,
+            ))
         } else {
             Err(AgentAccessFailure::new(
                 "test.knockable",
@@ -1139,7 +1157,11 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
             request.actor.device_id,
             request.catalog_id,
         ));
-        let result = if request.catalog_id != private_catalog() {
+        let open = request.catalog_id == open_catalog()
+            && !self.removed.lock().unwrap().contains(&request.agent_id);
+        let result = if open {
+            Ok(KnockResult::Member(open_redeemed()))
+        } else if request.catalog_id != private_catalog() && request.catalog_id != open_catalog() {
             Err(AgentAccessFailure::new(
                 "test.knock",
                 AgentAccessFailureKind::NotFound,
@@ -1255,6 +1277,131 @@ fn private_redeemed() -> RedeemedRoom {
         catalog_id: catalog_id(9),
         matrix_room_id: MatrixRoomReference::new(PRIVATE_ROOM.to_owned()).unwrap(),
         name: "项目室".to_owned(),
+    }
+}
+
+fn open_redeemed() -> RedeemedRoom {
+    RedeemedRoom {
+        catalog_id: open_catalog(),
+        matrix_room_id: MatrixRoomReference::new(OPEN_ROOM.to_owned()).unwrap(),
+        name: "读书会".to_owned(),
+    }
+}
+
+/// 公开着的房间：直接进的 `open_catalog()` 和不让网络 Agent 进的 `closed_catalog()`。
+struct FakeListings;
+
+impl PrivateRoomListingStore for FakeListings {
+    fn listing(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomListingRecord>>> {
+        let network_agents = if catalog_id == open_catalog() {
+            Some(true)
+        } else if catalog_id == closed_catalog() {
+            Some(false)
+        } else {
+            None
+        };
+        let found = network_agents.map(|network_agents| PrivateRoomListingRecord {
+            catalog_id,
+            settings: RoomListingSettings::new(
+                true,
+                RoomJoinMode::Open,
+                RoomListingSettings::DEFAULT_MEMBER_PERMISSIONS,
+                network_agents,
+            )
+            .unwrap(),
+            share_code: RoomShareCode::parse("Open01").unwrap(),
+            first_listed_at: UtcMillis::new(START).unwrap(),
+            updated_by: PrincipalId::from_uuid(Uuid::from_u128(1)),
+            updated_at: UtcMillis::new(START).unwrap(),
+            version: AggregateVersion::INITIAL.next().unwrap(),
+        });
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn listed_rooms_owned_by(
+        &self,
+        _owner: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
+        unreachable!("网络 Agent 不查公开房间的限额")
+    }
+
+    fn save_listing<'a>(
+        &'a self,
+        _record: &'a PrivateRoomListingRecord,
+        _expected: Option<AggregateVersion>,
+        _owner: PrincipalId,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        unreachable!("网络 Agent 不改公开设置")
+    }
+
+    fn create_listed_room<'a>(
+        &'a self,
+        _snapshot: &'a PrivateRoomSnapshot,
+        _listing: &'a PrivateRoomListingRecord,
+        _created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        unreachable!("网络 Agent 不建公开房间")
+    }
+
+    fn mark_room_encrypted(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        unreachable!("网络 Agent 不改加密")
+    }
+}
+
+/// 公开房间的目录：只有分享码 `Open01` 对得上，是直接进的 `open_catalog()`。
+struct FakePublicRooms;
+
+impl PublicRoomDirectoryStore for FakePublicRooms {
+    fn search_public_rooms<'a>(
+        &'a self,
+        _search: &'a PublicRoomSearch,
+    ) -> PortFuture<'a, RepositoryResult<Vec<PublicRoomRecord>>> {
+        unreachable!("网络 Agent 进房间不翻目录")
+    }
+
+    fn public_room_by_share_code<'a>(
+        &'a self,
+        share_code: &'a RoomShareCode,
+    ) -> PortFuture<'a, RepositoryResult<Option<PublicRoomDetailRecord>>> {
+        let found = (share_code.as_str() == "Open01").then(|| PublicRoomDetailRecord {
+            room: PublicRoomRecord {
+                catalog_id: open_catalog(),
+                name: "读书会".to_owned(),
+                description: String::new(),
+                owner_display_name: "Owner".to_owned(),
+                member_count: 1,
+                agent_count: 0,
+                join_mode: RoomJoinMode::Open,
+                end_to_end_encrypted: false,
+                share_code: share_code.clone(),
+                created_at: UtcMillis::new(START).unwrap(),
+                last_message_at: None,
+            },
+            admin_display_names: Vec::new(),
+        });
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn public_room_viewer_states<'a>(
+        &'a self,
+        _viewer: PrincipalId,
+        _rooms: &'a [RoomCatalogId],
+    ) -> PortFuture<'a, RepositoryResult<Vec<(RoomCatalogId, PublicRoomViewerState)>>> {
+        unreachable!("网络 Agent 没有登录的处境")
+    }
+
+    fn public_room_presence_candidates(
+        &self,
+        _catalog_id: RoomCatalogId,
+        _limit: u32,
+    ) -> PortFuture<'_, RepositoryResult<Vec<MatrixUserId>>> {
+        unreachable!("网络 Agent 进房间不问在线")
     }
 }
 
@@ -1778,6 +1925,8 @@ impl Harness {
             access: access.clone(),
             rooms: rooms.clone(),
             directory: Arc::new(FakeDirectory::standard()),
+            listings: Arc::new(FakeListings),
+            public_rooms: Arc::new(FakePublicRooms),
             secrets: Arc::new(CountingSecrets::default()),
             clock: runtime.clone(),
             identifiers: runtime.clone(),
@@ -3482,6 +3631,254 @@ fn private_catalog() -> RoomCatalogId {
 
 fn knock_on_private() -> NetworkAgentRoomRequest {
     NetworkAgentRoomRequest::Lobby(Some(private_catalog().to_string()))
+}
+
+/// 直接进的公开房间：在 `FakeListings` 里公开着，`FakeAccess` 敲门就放进来。
+fn open_catalog() -> RoomCatalogId {
+    catalog_id(10)
+}
+
+/// 房主关了没有账号的网络 Agent 的公开房间。
+fn closed_catalog() -> RoomCatalogId {
+    catalog_id(11)
+}
+
+fn knock_on(catalog: RoomCatalogId) -> NetworkAgentRoomRequest {
+    NetworkAgentRoomRequest::Lobby(Some(catalog.to_string()))
+}
+
+/// 这个来源这一小时占了几次起名的名额。
+fn naming_used(harness: &Harness, source: [u8; 32]) -> u32 {
+    use std::fmt::Write as _;
+    let source = source.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    harness
+        .store
+        .windows
+        .lock()
+        .unwrap()
+        .get(&format!("create:hour:{source}"))
+        .map_or(0, |(_, count)| *count)
+}
+
+#[tokio::test]
+async fn 分享链接换成房间号再照加入方式进_对不上的说找不到并列出大厅() {
+    let harness = Harness::enabled();
+    let created = harness
+        .create("Scout", Some("https://agentroom.chat/r/Open01"))
+        .await
+        .unwrap();
+    assert!(
+        matches!(created.placement, NetworkAgentPlacement::Admitted(_)),
+        "{:?}",
+        created.placement
+    );
+    assert_eq!(room_of(&created).catalog_id, open_catalog());
+
+    let failure = harness
+        .service
+        .create(CreateNetworkAgent {
+            name: "Lost".to_owned(),
+            room: NetworkAgentRoomRequest::Lobby(Some(
+                "https://agentroom.chat/r/Nope00".to_owned(),
+            )),
+            source_digest: [2; 32],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(failure.kind(), NetworkAgentFailureKind::RoomNotFound);
+    assert!(!failure.rooms().is_empty(), "列出能进的大厅");
+
+    // 已有的网络 Agent 拿发现页的地址也一样。
+    let lobby = harness.create("Other", None).await.unwrap();
+    let admitted = harness
+        .service
+        .admit(
+            lobby.token.expose(),
+            NetworkAgentRoomRequest::Lobby(Some(
+                "https://app.agentroom.chat/explore/Open01?join=1".to_owned(),
+            )),
+            [1; 32],
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(&admitted, NetworkAgentAdmission::Admitted(NetworkAgentTarget::Private(room)) if room.catalog_id == open_catalog()),
+        "{admitted:?}"
+    );
+}
+
+#[tokio::test]
+async fn 拿直接进的公开房间的房间号_建好就放进来_和进大厅一样占起名的名额() {
+    let harness = Harness::enabled();
+    let address = format!("https://agentroom.chat/lobby/{}", open_catalog());
+    let created = harness
+        .create_from("Scout", Some(&address), [7; 32])
+        .await
+        .unwrap();
+    assert!(
+        matches!(created.placement, NetworkAgentPlacement::Admitted(_)),
+        "直接进的公开房间放进来：{:?}",
+        created.placement
+    );
+    assert_eq!(room_of(&created).catalog_id, open_catalog());
+    assert_eq!(room_of(&created).matrix_room_id.as_str(), OPEN_ROOM);
+    let record = harness.store.only();
+    assert_eq!(
+        harness.access.knocked.lock().unwrap().clone(),
+        [(created.agent_id, record.device_id, open_catalog())],
+        "以它自己的网络设备敲门，敲了就进"
+    );
+    assert_eq!(naming_used(&harness, [7; 32]), 1);
+
+    // 同一个来源一小时五次：公开房间和公共大厅共用这五次，敲门的名额另算。
+    for index in 1..5 {
+        harness
+            .create_from(&format!("Scout {index}"), Some(&address), [7; 32])
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        harness
+            .create_from("Scout 5", Some(&address), [7; 32])
+            .await
+            .err(),
+        Some(NetworkAgentFailureKind::RateLimited)
+    );
+    assert_eq!(
+        harness.create_from("Lobby", None, [7; 32]).await.err(),
+        Some(NetworkAgentFailureKind::RateLimited),
+        "进大厅也用完了"
+    );
+    let knocked = harness
+        .create_from("Knocker", Some(&private_catalog().to_string()), [7; 32])
+        .await
+        .unwrap();
+    assert!(matches!(
+        knocked.placement,
+        NetworkAgentPlacement::Knocked(_)
+    ));
+}
+
+#[tokio::test]
+async fn 公开房间里说话和公共大厅一样按条数算() {
+    let harness = Harness::enabled();
+    let created = harness
+        .create("Talker", Some(&open_catalog().to_string()))
+        .await
+        .unwrap();
+    let id = created.network_agent_id;
+    for _ in 0..12 {
+        harness
+            .service
+            .take_message_quota(id, open_catalog())
+            .await
+            .expect("整间每分钟前十二条");
+    }
+    let limited = harness
+        .service
+        .take_message_quota(id, open_catalog())
+        .await
+        .unwrap_err();
+    assert_eq!(limited.kind(), NetworkAgentFailureKind::RateLimited);
+    assert_eq!(
+        limited.retry_at(),
+        Some(UtcMillis::new(START + 60_000).unwrap())
+    );
+    assert!(
+        harness
+            .store
+            .windows
+            .lock()
+            .unwrap()
+            .contains_key(&format!("send:minute:{}", id.as_uuid().simple())),
+        "它自己每分钟的条数也记着"
+    );
+}
+
+#[tokio::test]
+async fn 关了网络_agent_的公开房间拿房间号进不来_什么都不建也不占名额() {
+    let harness = Harness::enabled();
+    assert_eq!(
+        harness
+            .create("Scout", Some(&closed_catalog().to_string()))
+            .await
+            .err(),
+        Some(NetworkAgentFailureKind::RoomClosed)
+    );
+    assert!(
+        harness.store.agents.lock().unwrap().is_empty(),
+        "进不来什么都不建"
+    );
+    assert_eq!(naming_used(&harness, [1; 32]), 0);
+
+    let created = harness.create("Other", None).await.unwrap();
+    assert_eq!(
+        harness
+            .service
+            .admit(created.token.expose(), knock_on(closed_catalog()), [1; 32])
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::RoomClosed
+    );
+    assert!(harness.access.knocked.lock().unwrap().is_empty());
+    assert_eq!(naming_used(&harness, [1; 32]), 1, "只有进大厅那一次");
+}
+
+#[tokio::test]
+async fn 已有的网络_agent_拿直接进的公开房间的房间号_在大厅里的不再占名额_没放进来的退回() {
+    let harness = Harness::enabled();
+    // 已经在公共大厅里：和换大厅一样不再算。
+    let lobby = harness.create_from("Scout", None, [3; 32]).await.unwrap();
+    let token = lobby.token.expose();
+    let admitted = harness
+        .service
+        .admit(token, knock_on(open_catalog()), [3; 32])
+        .await
+        .unwrap();
+    let NetworkAgentAdmission::Admitted(target) = admitted else {
+        panic!("直接进的公开房间放进来：{admitted:?}");
+    };
+    let room = harness.service.enter(token, target).await.unwrap();
+    assert_eq!(room.matrix_room_id.as_str(), OPEN_ROOM);
+    assert_eq!(naming_used(&harness, [3; 32]), 1, "只有进大厅那一次");
+
+    // 只在私人房间里的：头一回进公开的地方要算。
+    let private = harness.create_with_code("Cipher", CODE).await.unwrap();
+    let token = private.token.expose();
+    let NetworkAgentAdmission::Admitted(target) = harness
+        .service
+        .admit(token, knock_on(open_catalog()), [4; 32])
+        .await
+        .unwrap()
+    else {
+        panic!("放进来");
+    };
+    assert_eq!(naming_used(&harness, [4; 32]), 1);
+    harness.service.enter(token, target).await.unwrap();
+    assert_eq!(naming_used(&harness, [4; 32]), 1, "进去了才算数");
+
+    // 被移出过的照旧敲门：占的名额退回去。
+    let removed = harness.create_with_code("Ghost", CODE).await.unwrap();
+    harness
+        .access
+        .removed
+        .lock()
+        .unwrap()
+        .insert(removed.agent_id);
+    let knocked = harness
+        .service
+        .admit(removed.token.expose(), knock_on(open_catalog()), [5; 32])
+        .await
+        .unwrap();
+    assert!(
+        matches!(&knocked, NetworkAgentAdmission::Knocked(knock) if knock.status == NetworkAgentKnockStatus::Waiting),
+        "{knocked:?}"
+    );
+    assert_eq!(naming_used(&harness, [5; 32]), 0, "没放进来的退回");
 }
 
 #[tokio::test]

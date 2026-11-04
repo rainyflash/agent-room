@@ -2,7 +2,7 @@ mod failure;
 mod models;
 mod values;
 
-use agent_room_domain::agent_lifecycle::MatrixPresenceState;
+use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
 
 use super::PortFuture;
 
@@ -50,6 +50,16 @@ pub trait MatrixAgentDeviceSessionRevoker: Send + Sync {
         &'a self,
         target: &'a MatrixAgentDeviceSessionTarget,
     ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
+/// 问 Agent 实例的 Matrix 设备上次用是什么时候（Synapse 记的 `last_seen_ts`，只要这台设备发过请求就会更新）。
+///
+/// 设备已经不在了回 `Ok(None)`，Synapse 没记过也是 `None`。实现不得接受受控 Agent 命名空间之外的用户。
+pub trait MatrixAgentDeviceActivityReader: Send + Sync {
+    fn device_last_seen<'a>(
+        &'a self,
+        target: &'a MatrixAgentDeviceSessionTarget,
+    ) -> PortFuture<'a, MatrixResult<Option<UtcMillis>>>;
 }
 
 /// 为稳定 Agent 实例轮换唯一有效的 Matrix 设备会话。

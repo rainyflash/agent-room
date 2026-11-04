@@ -13,6 +13,10 @@ import type {
   PrivateRoomFailure,
   PrivateRoomGateway,
 } from '@/features/private-rooms/domain/private-room';
+import type {
+  PrivateRoomListing,
+  PrivateRoomListingGateway,
+} from '@/features/private-rooms/domain/private-room-listing';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -160,7 +164,36 @@ async function clickWhenReady(name: string): Promise<void> {
   fireEvent.click(button);
 }
 
-function renderInvite(rooms: PrivateRoomGateway, principalId: string | null = null) {
+/** 公开着的房间：默认直接进、让没有账号的网络 Agent 进、不加密。 */
+function publicListing(changes: Partial<PrivateRoomListing> = {}): PrivateRoomListing {
+  return {
+    allowNetworkAgents: true,
+    endToEndEncrypted: false,
+    firstListedAtUnixMs: CREATED,
+    joinMode: 'open',
+    listed: true,
+    memberPermissions: { capabilities: ['view', 'speak', 'automate'] },
+    platformHold: null,
+    shareCode: 'aB3xYz',
+    shareUrl: 'https://agentroom.test/r/aB3xYz',
+    ...changes,
+  };
+}
+
+function listingGateway(listing: PrivateRoomListing): PrivateRoomListingGateway {
+  const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
+  return {
+    changeShareCode: unavailable,
+    listing: () => Promise.resolve(ok(listing)),
+    updateListing: unavailable,
+  };
+}
+
+function renderInvite(
+  rooms: PrivateRoomGateway,
+  principalId: string | null = null,
+  listing?: PrivateRoomListing,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -168,6 +201,7 @@ function renderInvite(rooms: PrivateRoomGateway, principalId: string | null = nu
         <PrivateRoomNetworkInvite
           catalogId={CATALOG}
           guide={GUIDE}
+          listings={listing === undefined ? undefined : listingGateway(listing)}
           principalId={principalId}
           roomName="new game dev"
           rooms={rooms}
@@ -385,5 +419,108 @@ describe('私人房间里请网络 Agent：先看自己是不是管理者', () =
       await screen.findByText(/Once one of the room’s managers lets you in/u),
     ).toHaveTextContent(CATALOG);
     expect(rooms.agentAccess).toHaveBeenCalledWith(CATALOG);
+  });
+});
+
+describe('公开房间里请网络 Agent：照房主的设置', () => {
+  it('直接进的：谁都拿到同一段话，拿房间号就进，不查口令、不列敲门；不加密的不提服务器读得到', async () => {
+    const rooms = gateway('shown', ok([]), [listedRoom]);
+    renderInvite(rooms.value, MEMBER, publicListing());
+
+    expect(
+      await screen.findByText(
+        /enter the Agent Room public room “new game dev” with its room number/u,
+      ),
+    ).toHaveTextContent(CATALOG);
+    expect(screen.getByText(/anyone can join/u)).toBeVisible();
+    expect(screen.queryByText(/the server can read/u)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /code/u })).not.toBeInTheDocument();
+    expect(rooms.agentAccess).not.toHaveBeenCalled();
+    expect(rooms.agentKnocks).not.toHaveBeenCalled();
+  });
+
+  it('直接进、但是加密的（私密改成公开的）：照旧提醒服务器读得到它进来以后的消息', async () => {
+    const rooms = gateway('shown', ok([]), [listedRoom]);
+    renderInvite(rooms.value, OWNER, publicListing({ endToEndEncrypted: true }));
+
+    expect(await screen.findByText(/anyone can join/u)).toBeVisible();
+    expect(screen.getByText(/the server can read/u)).toBeVisible();
+  });
+
+  it('要申请的：管理者的话叫它公开房间，口令和敲门都给；平台拿掉的直接进的房间也一样要敲门', async () => {
+    for (const listing of [
+      publicListing({ joinMode: 'request' }),
+      publicListing({ platformHold: { heldAtUnixMs: CREATED, reason: 'spam' } }),
+    ]) {
+      const rooms = gateway('shown', ok([]), [listedRoom]);
+      renderInvite(rooms.value, OWNER, listing);
+
+      const message = await screen.findByText(
+        /enter the Agent Room public room “new game dev” with the code/u,
+      );
+      expect(message).toHaveTextContent(CODE);
+      expect(message).toHaveTextContent(/knock with the room number/u);
+      expect(screen.getByText(/a network agent knocks first/u)).toBeVisible();
+      expect(await screen.findByText(/it shows up here for you to let in/u)).toBeVisible();
+      cleanup();
+    }
+  });
+
+  it('要申请的，不是管理者：话里只有房间号，说它是公开房间、等管理者放行', async () => {
+    const rooms = gateway('forbidden', ok([]), [listedRoom]);
+    renderInvite(rooms.value, MEMBER, publicListing({ joinMode: 'request' }));
+
+    expect(
+      await screen.findByText(/knock on the Agent Room public room “new game dev”/u),
+    ).toHaveTextContent(CATALOG);
+    expect(screen.getByText(/a network agent knocks first/u)).toBeVisible();
+  });
+
+  it('只能邀请的、关了网络 Agent 的：管理者的话只带口令，不提敲门、不列敲门的 Agent', async () => {
+    for (const listing of [
+      publicListing({ joinMode: 'invite_only' }),
+      publicListing({ allowNetworkAgents: false }),
+    ]) {
+      const rooms = gateway('shown', ok([]), [listedRoom]);
+      renderInvite(rooms.value, OWNER, listing);
+
+      const message = await screen.findByText(
+        /enter the Agent Room public room “new game dev” with the code/u,
+      );
+      expect(message).toHaveTextContent(CODE);
+      expect(message).not.toHaveTextContent(/knock/u);
+      expect(screen.getByText(/knocking with the room number won’t work/u)).toBeVisible();
+      expect(screen.queryByText(/it shows up here for you to let in/u)).not.toBeInTheDocument();
+      expect(rooms.agentKnocks).not.toHaveBeenCalled();
+      cleanup();
+    }
+  });
+
+  it('只能邀请的，不是管理者：没有能复制的话，只说请管理者生成口令', async () => {
+    const rooms = gateway('forbidden', ok([]), [listedRoom]);
+    renderInvite(rooms.value, MEMBER, publicListing({ joinMode: 'invite_only' }));
+
+    expect(await screen.findByText(/only the room’s managers can create one/u)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(CATALOG, 'u'))).not.toBeInTheDocument();
+  });
+
+  it('改回私密的房间照私人房间说', async () => {
+    const rooms = gateway('shown', ok([]), [listedRoom]);
+    renderInvite(rooms.value, OWNER, publicListing({ endToEndEncrypted: true, listed: false }));
+
+    const message = await screen.findByText(
+      /enter the Agent Room private room “new game dev” with the code/u,
+    );
+    expect(message).toHaveTextContent(CODE);
+    expect(message).toHaveTextContent(/knock with the room number/u);
+  });
+
+  it('只能邀请的、还没有口令：生成口令的按钮照旧，没有“不想用口令”的折叠', async () => {
+    const rooms = gateway('none', ok([]), [listedRoom]);
+    renderInvite(rooms.value, OWNER, publicListing({ joinMode: 'invite_only' }));
+
+    expect(await screen.findByRole('button', { name: 'Create code and copy' })).toBeVisible();
+    expect(screen.queryByText('Rather not use a code? Let it knock')).not.toBeInTheDocument();
   });
 });

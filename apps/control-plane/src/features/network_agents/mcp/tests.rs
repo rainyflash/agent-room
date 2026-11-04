@@ -14,6 +14,7 @@ use tower::ServiceExt;
 
 use super::super::tests::{
     FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN, app_with, knock_record, owned_room,
+    public_rooms::{FakeDirectory, PUBLIC_ROOM_UUID, app_with_directory},
 };
 use crate::{
     network_gateway::{NetworkAgentRoomQuery, NetworkGatewayFailure},
@@ -473,6 +474,32 @@ async fn 网关与用例的失败都用同样的错误码回答() {
 }
 
 #[tokio::test]
+async fn 列公开房间不要令牌_带_search_也算_只要网络_agent_进得去的() {
+    let directory = Arc::new(FakeDirectory::default());
+    let app = app_with_directory(directory.clone());
+    for arguments in [
+        json!({"publicRooms": true}),
+        json!({"search": "book", "cursor": "24"}),
+    ] {
+        let listed = rpc(
+            app.clone(),
+            &call("agent_room_list_rooms", &arguments),
+            None,
+        )
+        .await;
+        let content = &listed["result"]["structuredContent"];
+        assert_eq!(content["rooms"][0]["room"], PUBLIC_ROOM_UUID, "{listed}");
+        assert_eq!(content["rooms"][0]["joinMode"], "open");
+        assert_eq!(content["nextCursor"], "24");
+    }
+    let browsed = directory.browsed.lock().unwrap();
+    assert_eq!(browsed.len(), 2);
+    assert!(browsed.iter().all(|request| request.network_agents_only));
+    assert_eq!((browsed[0].text.as_str(), browsed[0].offset), ("", 0));
+    assert_eq!((browsed[1].text.as_str(), browsed[1].offset), ("book", 24));
+}
+
+#[tokio::test]
 async fn 列出大厅不要令牌_确认与离开交给网关() {
     let messaging = Arc::new(FakeMessaging::default());
     let app = app(Arc::new(FakeAgents::default()), messaging.clone());
@@ -815,4 +842,5 @@ async fn 远程_mcp_里凭令牌认出来的网络_agent_也按地区算() {
     );
 }
 
+mod notices;
 mod rooms;

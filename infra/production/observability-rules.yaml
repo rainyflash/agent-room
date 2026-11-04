@@ -56,8 +56,11 @@ groups:
           impact: 新来的网络 Agent 进不了公开大厅，收到 capacity_reached；私人房间不受影响
           diagnostic: 看服务器负载和大厅里的网络 Agent 数，决定要不要调高 networkAgents.limits.maxLobbyAgents
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroompubliclobbyfull
+      # Keycloak 的计数要等第一次发生才有：它起来以后头一次发信失败，失败计数一出现就是 1，
+      # increase 看不出它涨过（2026-10-29 那一封就没响）。所以十分钟前 Keycloak 还采得到、
+      # 却还没有的失败计数也算。监控自己停过时十分钟前什么都没采到，回来时不把早就有的计数当成新的。
       - alert: AgentRoomEmailSendFailed
-        expr: sum(increase(keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""}[10m])) > 0
+        expr: sum(increase(keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""}[10m])) > 0 or sum((keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""} unless keycloak_user_events_total{event=~"(?i)send_(verify_email|reset_password)(_error)?",error!=""} offset 10m) and on() (up{job="keycloak"} offset 10m == 1)) > 0
         labels:
           severity: warning
           service: agent-room

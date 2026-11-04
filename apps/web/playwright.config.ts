@@ -43,9 +43,10 @@ const skipped: Record<Exclude<(typeof browsers)[number], 'chromium'>, string[]> 
     'application-features.e2e.ts',
     // 用例断言控制台无错，WebKit 上多出一条，尚未定位。
     'automatic-conversations.e2e.ts',
-    // 这两个用例一开场就打开房间设置抽屉，而抽屉在 WebKit 上没有出现，30 秒超时。
+    // 这三个用例一开场就打开房间设置抽屉，而抽屉在 WebKit 上没有出现，30 秒超时。
     // 夹具冷启动无法复现（Chromium 和 WebKit 都不渲染导航），需要带上用例前置状态再查。
     // moderation-governance 用同一个 helper 但先与时间线交互，所以不受影响。
+    'agent-moderation.e2e.ts',
     'automation-grants.e2e.ts',
     'private-room-lifecycle.e2e.ts',
     // WebKit 默认不给链接和按钮键盘焦点（Full Keyboard Access 默认关闭），toBeFocused 失败。

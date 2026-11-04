@@ -11,20 +11,45 @@ import {
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
 import { parseInvitationList } from '@/features/private-rooms/domain/private-room-invitations';
+import { DEFAULT_INVITE_PERMISSIONS } from '@/features/private-rooms/domain/private-room-invite-link';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
+import {
+  RoomListingChoices,
+  type RoomListingChoice,
+} from '@/features/private-rooms/ui/room-listing-choices';
 import { useRoomCommands } from '@/features/room-directory/ui/use-rooms';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import type { Result } from '@/shared/result';
 
 const RETENTION_CHOICES = [7, 30, 90, 365] as const;
 
-/** 新建房间：连着服务，建好后直接进去。 */
-export function NewRoomDialog({ onClose }: { readonly onClose: () => void }) {
+/**
+ * 服务器说这份填写本身不行（400）：什么都没建，再发同一个请求也只会再被拒。放开表单让人改，
+ * 下次是一个新请求（agent-room-ops#57）。
+ */
+const REJECTED_INPUT = new Set([
+  'private_room.invalid_request',
+  'private_room.invalid_creation_body',
+  // 已经有一间公开房间：改成私密或者先去改另一间，再建。
+  'private_room.public_limit_reached',
+]);
+
+/** 新建房间：连着服务，建好后直接进去。从发现页打开时一开始就选着公开。 */
+export function NewRoomDialog({
+  initiallyListed = false,
+  onClose,
+}: {
+  readonly initiallyListed?: boolean;
+  readonly onClose: () => void;
+}) {
   const commands = useRoomCommands();
-  return <NewRoomForm onClose={onClose} onCreate={commands.create} />;
+  return (
+    <NewRoomForm initiallyListed={initiallyListed} onClose={onClose} onCreate={commands.create} />
+  );
 }
 
 export type NewRoomFormProps = {
+  readonly initiallyListed?: boolean;
   readonly onClose: () => void;
   /** 同一次填写的重试沿用同一个请求 ID，服务端不会再建一个房间。 */
   readonly onCreate: (
@@ -34,15 +59,20 @@ export type NewRoomFormProps = {
 };
 
 /**
- * 一屏建好房间：名字和用途；保留多久、现在就邀请谁放在“更多选项”里，不填就用默认值。
- * 能建的只有私人房间（公共大厅每种语言一个，由服务器开好），所以不让人选公开还是私人。
+ * 一屏建好房间：名字、用途、私密还是公开（`specs/public-rooms/design.md`“网页”）；保留多久、现在就
+ * 邀请谁放在“更多选项”里，不填就用默认值。选公开就说清楚不加密，新成员的权限和网络 Agent 先用默认的，
+ * 以后在房间设置的“公开”里改。
  */
-export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
+export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewRoomFormProps) {
   const { t } = useTranslation();
   const formId = useId();
   const identifiers = useMemo(() => new BrowserUuidV7Factory(), []);
   const [name, setName] = useState('');
   const [purpose, setPurpose] = useState('');
+  const [listing, setListing] = useState<RoomListingChoice>({
+    joinMode: 'open',
+    listed: initiallyListed,
+  });
   const [retention, setRetention] = useState('');
   const [inviteText, setInviteText] = useState('');
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
@@ -56,6 +86,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
     null,
   );
   const locked = attempt.current !== null;
+  const rejected = failure !== null && REJECTED_INPUT.has(failure);
   const invitations = parseInvitationList(inviteText);
   const inviteError = invitations.ok
     ? undefined
@@ -81,6 +112,16 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
             }))
           : [],
         ...(retention === '' ? {} : { retentionDays: Number(retention) }),
+        ...(listing.listed
+          ? {
+              listing: {
+                allowNetworkAgents: true,
+                joinMode: listing.joinMode,
+                listed: true,
+                memberPermissions: DEFAULT_INVITE_PERMISSIONS,
+              },
+            }
+          : {}),
       },
     };
     setPending(true);
@@ -91,6 +132,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
         onClose();
         return;
       }
+      if (REJECTED_INPUT.has(result.error.code)) attempt.current = null;
       setFailure(result.error.code);
     } catch {
       setFailure('rooms.create_interrupted');
@@ -115,7 +157,7 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
           {t(
             pending
               ? 'rooms.create.creating'
-              : failure === null
+              : failure === null || rejected
                 ? 'rooms.create.submit'
                 : 'rooms.retry',
           )}
@@ -160,6 +202,19 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
             value={purpose}
           />
         </Field>
+        <RoomListingChoices
+          disabled={pending || locked}
+          name={formId}
+          onChange={(next) => {
+            setListing((current) => ({ ...current, ...next }));
+          }}
+          value={listing}
+        />
+        {listing.listed ? (
+          <p className="room-listing__note room-listing__note--plain">
+            {t('rooms.create.publicNote')}
+          </p>
+        ) : null}
         <Details className="new-room__more" summary={t('rooms.create.more')}>
           <Field label={t('rooms.create.retention')}>
             <select
@@ -202,8 +257,10 @@ export function NewRoomForm({ onClose, onCreate }: NewRoomFormProps) {
           ) : null}
         </Details>
       </form>
-      {failure === null ? null : (
-        <Banner tone="danger" title={t('rooms.create.failed')}>
+      {failure === 'private_room.public_limit_reached' ? (
+        <Banner tone="warning">{t('rooms.create.publicLimit')}</Banner>
+      ) : failure === null ? null : (
+        <Banner tone="danger" title={t(rejected ? 'rooms.create.rejected' : 'rooms.create.failed')}>
           <Details summary={t('rooms.details')}>
             <code>{failure}</code>
           </Details>

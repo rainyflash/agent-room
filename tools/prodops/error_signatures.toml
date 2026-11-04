@@ -18,6 +18,11 @@ reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=CodeInvalid @ POST /mcp$'
+reason = "网络 Agent 拿的私人房间口令不对、已更换或已关掉（房间不收 Agent、被移出后拿旧口令再来也算）。服务器一律只回 404 `network_agent.code_invalid`，说清楚去找房主或管理者要新口令，不区分原因是故意的，免得被拿来试口令；没有人被挡在服务器的毛病上（2026-10-31 生产上只出现一次，agent-room-ops#55）"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ Agent 口令请求失败 failure=NotFound operation=private_room\.join_code\.reveal @ GET /(devices/current/private-rooms/\{id\}/code|private-rooms/\{id\}/agent-access/code)$'
 reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生成；网页打开接入对话框、房间设置的“Agent 进门”也先查，没有就给“生成口令”的按钮（2026-10-27 生产上那次是发版验收头一回建验收房间）"
 
@@ -31,12 +36,27 @@ service = "control-plane"
 summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
 reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
 
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ Agent 大厅入口失败 failure=NotFound @ GET /agents/\{id\}/rooms$'
+reason = "“我的 Agent”给每张卡片各问一次它在哪些房间，刷新时一起重问。问的 Agent 已经被删除（别的标签页、别的设备上删的，或刚删完页面上的列表还没换）时，服务器只认还在用的 Agent，回 404；网页把没问成的当作没有、卡片不写房间数，列表一刷新那张卡片就没了（2026-10-30 生产上那次，十几分钟里 11 次、三个关联号）。只放行这个读的接口：带进房间、离开那几个接口的 NotFound 照旧报出来"
+
+[[ignore]]
+service = "control-plane"
+summary = '^WARN \S+ 等消息时没看成有没有人敲它建的房间的门，过一会儿再看 failure=Unauthorized @ '
+reason = "网络 Agent 等消息的途中令牌失效（被停用、删除或换了令牌），这一次查敲门用的还是旧令牌；这次请求本身已经通过了认证，下一次带旧令牌的请求会照常被拒，不是控制面的毛病（2026-10-29 生产上出现过一次）。别的失败类型照旧报出来"
+
 # 身份服务
 
 [[ignore]]
 service = "identity"
 summary = '^(UPDATE_PASSWORD_ERROR|UPDATE_CREDENTIAL_ERROR) error=password_confirm_error$'
 reason = "设密码时两次输入不一样，页面上直接提示了"
+
+[[ignore]]
+service = "identity"
+summary = '^(UPDATE_PASSWORD_ERROR|UPDATE_CREDENTIAL_ERROR) error=password_rejected$'
+reason = "设新密码时不合要求（太短、没带数字之类），页面上直接用 reason 里那句提示了，人改一下就行；2026-11-02 生产上那次是 invalidPasswordMinLengthMessage，只有一条。汇总的指纹里只有事件类型和 error，看不到 reason；真出毛病时会和别的错一起出现在别的指纹里"
 
 [[ignore]]
 service = "identity"
@@ -50,6 +70,11 @@ reason = "登录时填的邮箱没有对应的账户（打错了、换了个邮�
 
 [[ignore]]
 service = "identity"
+summary = "^LOGIN_ERROR error=invalid_request clientId=null reason=Parameter 'client_id' not present or present multiple times in the HTTP request parameters"
+reason = "有人打开了没带任何参数的身份服务登录地址（扫描器、手敲的网址、被截掉参数的书签）。我们的网页和桌面端发起登录时一定带 client_id，所以这不是正常登录被挡；2026-10-30 生产上那次只有一条。别和 Invalid scopes 那种混：那个 clientId 是 agent-room-web，不在这条规则里，仍会报出来"
+
+[[ignore]]
+service = "identity"
 summary = '^RESET_PASSWORD_ERROR error=user_not_found$'
 reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注册过）。页面照样说邮件已发出，不透露有没有这个账户"
 
@@ -57,6 +82,11 @@ reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注�
 service = "identity"
 summary = '^LOGIN_ERROR error=expired_code$'
 reason = "登录页开着超过身份服务的登录时限（30 分钟）才提交，Keycloak 说登录超时、在原地从头再来；2026-10-26 生产上那次，同一个浏览器 22 秒后就登录上了"
+
+[[ignore]]
+service = "identity"
+summary = '^RESTART_AUTHENTICATION_ERROR error=expired_code$'
+reason = "登录页开着超过身份服务的登录时限才点“重新开始登录”之类的链接，Keycloak 说登录超时、让人从头再来；和上面 LOGIN_ERROR 的 expired_code 是同一件事，只是点的是重新开始（2026-10-30 生产上那次只有一条）"
 
 [[ignore]]
 service = "identity"
@@ -87,6 +117,11 @@ reason = "已经登录过了，浏览器里留着的旧登录页又提交了一�
 service = "identity"
 summary = '^LOGIN_ERROR error=(already_logged_in|invalid_code)$'
 reason = "已经登录的浏览器又提交了一次登录页（点了两次登录、别的标签页留着旧登录页）：先记 invalid_code，紧接着 already_logged_in，Keycloak 带着 authentication_expired 回到回调，#588 起网页登录还有效就送回房间（2026-10-28 生产上两次，每次两条只差 30 毫秒以内，控制面随即回 303 送回房间）。和上面 RESTART_AUTHENTICATION_ERROR 那条是同一件事，只是事件类型不同"
+
+[[ignore]]
+service = "identity"
+summary = '^REGISTER_ERROR error=(already_logged_in|invalid_code)$'
+reason = "别的标签页已经登录完了，这个标签页留着的注册页又被提交：先记 invalid_code，紧接着 already_logged_in，Keycloak 把人送回网页，#588 起网页登录还有效就送回房间（2026-10-28 生产上那次，同一个浏览器两秒里留着的验证邮箱页、注册页、登录页各来了一对，每对只差 6 毫秒，控制面都说网页登录还有效、送回了房间）。和上面 LOGIN_ERROR 那条是同一件事，只是事件类型不同"
 
 [[ignore]]
 service = "identity"
@@ -137,8 +172,28 @@ reason = "在线状态每个用户 10 秒只认一次，网络 Agent 心跳和�
 
 [[ignore]]
 service = "synapse"
+summary = '^PUT /_matrix/client/v3/rooms/\{id\}/send/\S+/\S+ → 429$'
+reason = "生产没写 rc_message，用 Synapse 默认的发言限速：每个用户连发 10 条以后每 5 秒才放一条，人和 Agent 一样。客户端按 Retry-After 重试，网络 Agent 被挡下时控制面回 429 network_agent.rate_limited（见 CLAUDE.md）。真有成片出现要看的是控制面那边的限流指标，不是这一行"
+
+[[ignore]]
+service = "synapse"
 summary = '^GET /_matrix/client/v3/rooms/\{id\}/state/\S+ → 404$'
 reason = "问一条还没写过的状态（Agent 的名片、某人的成员事件）回 404，写名片前本来就要先问"
+
+[[ignore]]
+service = "synapse"
+summary = '^GET /_matrix/client/v3/rooms/\{id\}/state/m\.room\.member/\{id\} → 403$'
+reason = "读成员状态回 403 只说明问的人没进过这个房间。Agent 往自己没进的房间发消息、读消息，Bridge 先问自己在不在，就是这样，答 Agent bridge.room_not_joined（agent-room-ops#52）；控制面替别人查时出错，控制面自己的日志另报 content.authorization.unavailable"
+
+[[ignore]]
+service = "synapse"
+summary = '^POST /_matrix/client/v3/rooms/\{id\}/leave → 403$'
+reason = "离开一个自己已经不在、或没进过的房间，Synapse 回 403。撤销电脑、删 Agent 时控制面逐个房间退出，把 Forbidden 和 NotFound 当成“已经走了”（agent_room_placements 的 already_gone），退出本来就是幂等的（agent-room-ops#54）"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.handlers\.message Denying new event .*membership=leave.* because N: \S+ not in room \S+$'
+reason = "离开一个自己已经不在的房间，Synapse 拒绝并记这一行 WARNING。控制面替网络 Agent 离开房间时把 403、404 都当作已经离开（agent_sessions.rs 的 leave_internal），房间归档、停用清理、重复离开都会碰上（agent-room-ops#56）"
 
 [[ignore]]
 service = "synapse"
@@ -167,6 +222,16 @@ reason = "客户端在回答之前断开了（长轮询被取消、页面关了�
 
 [[ignore]]
 service = "synapse"
+summary = '^WARNING synapse\.handlers\.oidc Could not exchange OAuth2 code: invalid_grant: Code not valid$'
+reason = "身份服务说这次登录的一次性代码已经用过或过期了：回调地址被刷新、重复打开，或者同一个浏览器里几个标签页前后脚登录（见 CLAUDE.md 的聊天登录排队），没有登录被挡住，人重新登录就好。只认这一句完整的消息，换成别的 OAuth2 错误（如 invalid_client）照旧报出来（2026-11-03 生产上只出现一次，agent-room-ops#67）"
+
+[[ignore]]
+service = "synapse"
+summary = '^WARNING synapse\.http\.site Aborting connection from .* because `content-type: multipart/form-data` is unsupported: '
+reason = "有人往聊天服务器发 multipart 表单，Synapse 读完请求头就断开、不处理。Matrix 客户端从来不这样发（传文件是原样的正文），是扫描器在试上传接口（2026-10-28 生产上一秒里往根路径 POST / 连发 4 次，前后没有登录了的请求）"
+
+[[ignore]]
+service = "synapse"
 summary = '^WARNING synapse\.handlers\.pagination \[purge\] purging events not possible: No event found'
 reason = "按保留期清理时这一段没有要删的事件"
 
@@ -191,3 +256,8 @@ reason = "客户端在流式回答（长轮询、下载）中途断开"
 service = "gateway"
 summary = '^warn http looking up info for HTTP challenge$'
 reason = "有人拿不是我们申请的令牌来访问 /.well-known/acme-challenge/（别处替指到这台服务器的域名验证证书，或者扫描器），Caddy 认不出就回 404。我们自己申请证书时令牌就在 Caddy 的内存里，不会走到这一行；自己的证书没申请成报的是别的行。2026-10-27 www 改 DNS 那半小时有 87 次，当晚没改什么又来了 1 次（agent-room-ops#26）"
+
+[[ignore]]
+service = "identity"
+summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.endpoints\\.request\\.AuthorizationEndpointRequestParserProcessor Parameter '[^']*' not present or present multiple times in the HTTP request parameters$"
+reason = "有人打开了登录地址却没带 client_id 之类的必填参数（扫描器、手敲或截断的链接），Keycloak 直接回错误页，没有登录被挡住；我们自己发起的登录总是带齐参数（2026-10-30 生产上只出现一次，缺的是 client_id，agent-room-ops#50）"

@@ -3,7 +3,8 @@ use std::sync::Arc;
 use agent_room_application::{
     agent_instance_management::{
         AgentInstanceCleanupFailureKind, AgentInstanceManagementUseCases,
-        AgentInstanceMatrixCleanup, ListAgentInstances, RevokeAgentInstance, RevokedAgentInstance,
+        AgentInstanceMatrixActivity, AgentInstanceMatrixCleanup, ListAgentInstances,
+        RevokeAgentInstance, RevokedAgentInstance,
     },
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
     ports::AgentInstanceManagementRecord,
@@ -59,6 +60,10 @@ pub(crate) fn router(state: AgentInstanceHttpState) -> Router {
     Router::new()
         .route("/agent-instances", get(list_instances))
         .route(
+            "/agent-instances/matrix-activity",
+            get(list_matrix_activity),
+        )
+        .route(
             "/agent-instances/{instance_id}",
             axum::routing::delete(revoke_instance),
         )
@@ -98,6 +103,30 @@ struct AgentInstanceDeviceResponse {
     trust_state: &'static str,
 }
 
+/// 每个还在用的连接的设备上次用的时间（“我的 Agent”里 30 天没上线的一键删除）。单独一个接口：网页对
+/// 连接列表的回答严格校验，多一个字段旧版就整个读不出来。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstanceActivityListResponse {
+    instances: Vec<AgentInstanceActivityResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstanceActivityResponse {
+    agent_instance_id: String,
+    matrix_last_seen_at_unix_ms: Option<i64>,
+}
+
+impl From<AgentInstanceMatrixActivity> for AgentInstanceActivityResponse {
+    fn from(value: AgentInstanceMatrixActivity) -> Self {
+        Self {
+            agent_instance_id: value.instance_id.to_string(),
+            matrix_last_seen_at_unix_ms: value.last_seen_at.map(UtcMillis::value),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentInstanceRevocationResponse {
@@ -132,6 +161,42 @@ async fn list_instances(
                 instances: instances
                     .into_iter()
                     .map(AgentInstanceSummaryResponse::from)
+                    .collect(),
+            })
+            .into_response(),
+        ),
+        Err(failure) => {
+            no_store(ApiError::agent_instance_management(failure, correlation_id).into_response())
+        }
+    }
+}
+
+async fn list_matrix_activity(
+    State(state): State<AgentInstanceHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    jar: CookieJar,
+) -> Response {
+    let actor = match authenticate_session(
+        state.authentication.as_ref(),
+        &jar,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    match state
+        .instances
+        .matrix_activity(ListAgentInstances { actor })
+        .await
+    {
+        Ok(instances) => no_store(
+            Json(AgentInstanceActivityListResponse {
+                instances: instances
+                    .into_iter()
+                    .map(AgentInstanceActivityResponse::from)
                     .collect(),
             })
             .into_response(),
@@ -258,8 +323,8 @@ mod tests {
     use agent_room_application::{
         agent_instance_management::{
             AgentInstanceManagementResult, AgentInstanceManagementUseCases,
-            AgentInstanceMatrixCleanup, ListAgentInstances, RevokeAgentInstance,
-            RevokedAgentInstance,
+            AgentInstanceMatrixActivity, AgentInstanceMatrixCleanup, ListAgentInstances,
+            RevokeAgentInstance, RevokedAgentInstance,
         },
         authentication::{
             AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
@@ -325,6 +390,25 @@ mod tests {
                     instance: management_record(AgentInstanceStatus::Revoked),
                     matrix_cleanup,
                 })
+            })
+        }
+
+        fn matrix_activity(
+            &self,
+            request: ListAgentInstances,
+        ) -> PortFuture<'_, AgentInstanceManagementResult<Vec<AgentInstanceMatrixActivity>>>
+        {
+            self.list_requests
+                .lock()
+                .expect("实例列表请求锁可用")
+                .push(request);
+            Box::pin(async {
+                Ok(vec![AgentInstanceMatrixActivity {
+                    instance_id: AgentInstanceId::from_uuid(
+                        Uuid::parse_str(INSTANCE_UUID).expect("测试实例 UUID 有效"),
+                    ),
+                    last_seen_at: Some(UtcMillis::new(NOW - 1_000).expect("时间有效")),
+                }])
             })
         }
     }
@@ -443,6 +527,52 @@ mod tests {
                 .lock()
                 .expect("认证要求锁可用"),
             vec![AuthenticationRequirement::ActiveSession]
+        );
+    }
+
+    #[tokio::test]
+    async fn 设备上次用的时间用活跃会话就能读() {
+        let fixture = Fixture::new(AgentInstanceMatrixCleanup::Complete);
+        let response = fixture
+            .app
+            .oneshot(
+                Request::builder()
+                    .uri("/agent-instances/matrix-activity")
+                    .header(header::COOKIE, SESSION_COOKIE)
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("no-store"))
+        );
+        let body: Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("响应体可读"),
+        )
+        .expect("响应是 JSON");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "instances": [{
+                    "agentInstanceId": INSTANCE_UUID,
+                    "matrixLastSeenAtUnixMs": NOW - 1_000
+                }]
+            })
+        );
+        assert_eq!(
+            fixture
+                .authentication
+                .requirements
+                .lock()
+                .expect("认证要求锁可用")
+                .as_slice(),
+            [AuthenticationRequirement::ActiveSession]
         );
     }
 

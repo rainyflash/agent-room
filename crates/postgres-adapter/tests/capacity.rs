@@ -280,10 +280,10 @@ async fn seed_rooms(transaction: &mut Transaction<'_, Postgres>) {
     sqlx::query(
         "INSERT INTO agent_room.room_catalog_entry ( \
              id, kind, slug, name, description, language, visibility, status, \
-             created_at, updated_at \
+             end_to_end_encrypted, created_at, updated_at \
          ) VALUES ( \
              uuidv7(), 'public_lobby', 'capacity-lobby', 'Capacity Lobby', \
-             'Task 39 capacity room', 'en', 'public', 'active', \
+             'Task 39 capacity room', 'en', 'public', 'active', false, \
              statement_timestamp(), statement_timestamp() \
          )",
     )

@@ -8,11 +8,13 @@ mod content_runtime;
 mod correlation;
 mod error;
 mod features;
+mod join_request_cleanup;
 mod moderation_expiry;
 mod network_agent_cleanup;
 mod network_gateway;
 mod observability;
 mod operational_metrics;
+mod public_room_activity;
 mod public_watch;
 mod request_regions;
 mod runtime;
@@ -58,7 +60,10 @@ use agent_room_application::{
     },
     health::ReadinessService,
     lobby_observation::PublicLobbyObservationService,
-    moderation::{ModerationDependencies, ModerationService},
+    moderation::{
+        AgentModerationDependencies, AgentModerationService, ModerationDependencies,
+        ModerationService,
+    },
     network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
@@ -67,9 +72,16 @@ use agent_room_application::{
     },
     private_rooms::{
         PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
-        PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService, PrivateRoomService,
+        PrivateRoomDescriptionDependencies, PrivateRoomDescriptionService,
+        PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
+        PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomNoticeDependencies,
+        PrivateRoomNoticeService, PrivateRoomService, PublicRoomJoinDependencies,
+        PublicRoomJoinService, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
+        RoomModerationGrantDependencies, RoomModerationGrantService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
+    public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
+    public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
         LobbyProvisioningPolicy, LobbyProvisioningService,
@@ -142,6 +154,10 @@ struct IdentityRuntime {
     agent_room_departures: agent_room_departures::AgentRoomDepartureWorker,
     /// 撤销以后 Matrix 设备没注销成的，由它接着试。
     matrix_device_retry: agent_matrix_device_retry::AgentMatrixDeviceRetryWorker,
+    /// 申请进公开房间的记录：不公开了的作废、处理完 30 天的删掉。
+    join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker,
+    /// 发现页的“最近有人说话”：每 5 分钟读一次每间公开房间最新一条消息的时间。
+    public_room_activity: public_room_activity::PublicRoomActivityWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -151,6 +167,15 @@ struct AgentFeatureHttpStates {
     agent_rooms: AgentRoomHttpState,
     room_people: features::room_people::RoomPeopleHttpState,
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
+    room_listing: features::private_room_listing::PrivateRoomListingHttpState,
+    room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
+    room_notices: features::private_room_notice::PrivateRoomNoticeHttpState,
+    room_moderation_grants: features::room_moderation_grants::RoomModerationGrantHttpState,
+    agent_moderation: features::agent_moderation::AgentModerationHttpState,
+    room_holds: features::public_room_platform_hold::PublicRoomPlatformHoldHttpState,
+    room_joins: features::public_room_join::PublicRoomJoinHttpState,
+    public_rooms: features::public_rooms::PublicRoomsHttpState,
+    share_page: features::share_page::SharePageHttpState,
     agents: AgentHttpState,
     instances: AgentInstanceHttpState,
     cards: AgentCardHttpState,
@@ -191,6 +216,37 @@ struct AgentFeatureDependencies {
     matrix_authority: Arc<dyn MatrixRoomAuthorityGateway>,
     content_authorizer: Arc<dyn ContentMembershipAuthorizer>,
     content: Arc<dyn agent_room_application::content::ContentUseCases>,
+    public_rooms: PublicRoomShared,
+}
+
+/// 发现页、分享页和网络 Agent 找公开房间共用的目录和限流。
+#[derive(Clone)]
+struct PublicRoomShared {
+    /// 每间房的在线人数留 60 秒，几处一起用。
+    directory: Arc<PublicRoomDirectoryService>,
+    /// 不要登录的这几处合起来按来源限流。
+    limits: Arc<features::anonymous_limits::AnonymousLimiter>,
+}
+
+fn build_public_room_shared(
+    config: &ControlPlaneConfig,
+    repositories: &Arc<PostgresRepositories>,
+    matrix_identities: &Arc<MatrixApplicationServiceProvisioner>,
+    system_runtime: &Arc<SystemRuntime>,
+) -> PublicRoomShared {
+    PublicRoomShared {
+        directory: Arc::new(PublicRoomDirectoryService::new(
+            PublicRoomDirectoryDependencies {
+                directory: repositories.clone(),
+                presence: matrix_identities.clone(),
+                clock: system_runtime.clone(),
+            },
+        )),
+        limits: Arc::new(features::anonymous_limits::AnonymousLimiter::new(
+            config.network_agents.shared_sources.clone(),
+            system_runtime.clone(),
+        )),
+    }
 }
 
 /// 从进程环境启动控制平面，并在终止信号后释放数据库与遥测资源。
@@ -241,6 +297,8 @@ pub async fn run() -> Result<(), StartupError> {
         moderation_expiry,
         agent_room_departures,
         matrix_device_retry,
+        join_request_cleanup,
+        public_room_activity,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -269,6 +327,8 @@ pub async fn run() -> Result<(), StartupError> {
     moderation_expiry.shutdown().await;
     agent_room_departures.shutdown().await;
     matrix_device_retry.shutdown().await;
+    join_request_cleanup.shutdown().await;
+    public_room_activity.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -410,6 +470,8 @@ async fn build_identity_router(
         build_account_deletion_worker(config, &synapse_accounts, &repositories, &system_runtime)?;
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
+    let public_rooms =
+        build_public_room_shared(config, &repositories, &matrix_identities, &system_runtime);
     let agent_dependencies = AgentFeatureDependencies {
         repositories: repositories.clone(),
         system_runtime: system_runtime.clone(),
@@ -420,15 +482,10 @@ async fn build_identity_router(
         matrix_authority,
         content_authorizer,
         content: content_use_cases,
+        public_rooms,
     };
-    // 先建网络 Agent 的网关：管理者放行敲门时，私人房间的接口要用它替 Agent 进房间。
-    let network_agents = build_network_agent_routes(config, request_timeout, &agent_dependencies)?;
-    let agent_features = build_agent_feature_states(
-        config,
-        request_timeout,
-        &agent_dependencies,
-        network_agents.entry.clone(),
-    )?;
+    let (network_agents, agent_features) =
+        build_agent_routes(config, request_timeout, &agent_dependencies)?;
     let routes = compose_identity_routes(
         state,
         telemetry_state,
@@ -443,9 +500,13 @@ async fn build_identity_router(
         content_cleanup,
         account_deletion,
         operational_metrics,
-        moderation_expiry: start_moderation_expiry(&agent_dependencies),
+        moderation_expiry: start_moderation_expiry(config, &agent_dependencies)?,
         agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
         matrix_device_retry: start_matrix_device_retry(&agent_dependencies),
+        join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker::start(
+            build_public_room_joins(config, &agent_dependencies)?,
+        ),
+        public_room_activity: start_public_room_activity(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -588,6 +649,21 @@ fn compose_identity_routes(
         .merge(features::agent_roster::router(agents.roster))
         .merge(features::room_people::router(agents.room_people))
         .merge(features::private_room_invites::router(agents.room_invites))
+        .merge(features::private_room_listing::router(agents.room_listing))
+        .merge(features::private_room_description::router(
+            agents.room_descriptions,
+        ))
+        .merge(features::private_room_notice::router(agents.room_notices))
+        .merge(features::room_moderation_grants::router(
+            agents.room_moderation_grants,
+        ))
+        .merge(features::agent_moderation::router(agents.agent_moderation))
+        .merge(features::public_room_platform_hold::router(
+            agents.room_holds,
+        ))
+        .merge(features::public_room_join::router(agents.room_joins))
+        .merge(features::public_rooms::router(agents.public_rooms))
+        .merge(features::share_page::router(agents.share_page))
         .merge(content)
 }
 
@@ -620,9 +696,12 @@ fn start_matrix_device_retry(
 }
 
 fn start_moderation_expiry(
+    config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
-) -> moderation_expiry::ModerationExpiryWorker {
-    moderation_expiry::ModerationExpiryWorker::start(build_moderation_management(dependencies))
+) -> Result<moderation_expiry::ModerationExpiryWorker, StartupError> {
+    Ok(moderation_expiry::ModerationExpiryWorker::start(
+        build_moderation_management(config, dependencies)?,
+    ))
 }
 
 fn build_frontend_telemetry_state(
@@ -826,6 +905,22 @@ fn build_account_lifecycle_service(
     )))
 }
 
+/// 先建网络 Agent 的网关：管理者放行敲门时，私人房间的接口要用它替 Agent 进房间。
+fn build_agent_routes(
+    config: &ControlPlaneConfig,
+    request_timeout: Duration,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<(NetworkAgentRuntime, AgentFeatureHttpStates), StartupError> {
+    let network_agents = build_network_agent_routes(config, request_timeout, dependencies)?;
+    let agent_features = build_agent_feature_states(
+        config,
+        request_timeout,
+        dependencies,
+        network_agents.entry.clone(),
+    )?;
+    Ok((network_agents, agent_features))
+}
+
 fn build_agent_feature_states(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
@@ -833,6 +928,10 @@ fn build_agent_feature_states(
     admitted_entry: Arc<dyn network_gateway::AdmittedAgentEntry>,
 ) -> Result<AgentFeatureHttpStates, StartupError> {
     let placements = build_agent_room_placements(config, dependencies)?;
+    let PublicRoomShared {
+        directory,
+        limits: anonymous_limits,
+    } = dependencies.public_rooms.clone();
     let AgentIdentityHttpStates {
         agents,
         instances,
@@ -853,6 +952,29 @@ fn build_agent_feature_states(
         agent_rooms: build_agent_room_http_state(config, dependencies, placements),
         room_people: build_room_people_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
+        room_listing: build_room_listing_http_state(config, dependencies),
+        room_descriptions: build_room_description_http_state(config, dependencies),
+        room_notices: build_room_notice_http_state(config, dependencies),
+        room_moderation_grants: build_room_moderation_grant_http_state(config, dependencies),
+        agent_moderation: build_agent_moderation_http_state(config, dependencies)?,
+        room_holds: build_room_hold_http_state(config, dependencies),
+        room_joins: build_room_join_http_state(config, dependencies)?,
+        public_rooms: features::public_rooms::PublicRoomsHttpState {
+            directory: directory.clone(),
+            authentication: dependencies.authentication.clone(),
+            limits: anonymous_limits.clone(),
+            site_origin: features::share_page::site_origin(
+                &config.authentication.matrix_server_name,
+            )
+            .into(),
+        },
+        share_page: features::share_page::SharePageHttpState::new(
+            directory,
+            dependencies.system_runtime.clone(),
+            anonymous_limits,
+            &config.authentication.matrix_server_name,
+            &config.authentication.frontend_origin,
+        ),
         agents,
         instances,
         cards,
@@ -949,6 +1071,184 @@ fn build_room_invite_http_state(
     )
 }
 
+/// 公开房间的设置（`specs/public-rooms/design.md`）：Matrix 上的两样副作用以应用服务写。
+fn build_room_listing_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::private_room_listing::PrivateRoomListingHttpState {
+    let listings = Arc::new(PrivateRoomListingService::new(
+        PrivateRoomListingDependencies {
+            rooms: dependencies.repositories.clone(),
+            listings: dependencies.repositories.clone(),
+            policies: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            requests: dependencies.repositories.clone(),
+            holds: dependencies.repositories.clone(),
+            secrets: dependencies.secrets.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::private_room_listing::PrivateRoomListingHttpState::new(
+        listings,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+        &config.authentication.matrix_server_name,
+    )
+}
+
+/// 房主改房间简介（`specs/public-rooms/design.md`）：Matrix 房间的话题以应用服务写。
+fn build_room_description_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::private_room_description::PrivateRoomDescriptionHttpState {
+    let descriptions = Arc::new(PrivateRoomDescriptionService::new(
+        PrivateRoomDescriptionDependencies {
+            rooms: dependencies.repositories.clone(),
+            descriptions: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::private_room_description::PrivateRoomDescriptionHttpState::new(
+        descriptions,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主和管理员改常驻公告（`specs/public-rooms/design.md`“常驻公告”）：以应用服务写房间状态。
+fn build_room_notice_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::private_room_notice::PrivateRoomNoticeHttpState {
+    let notices = Arc::new(PrivateRoomNoticeService::new(
+        PrivateRoomNoticeDependencies {
+            rooms: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::private_room_notice::PrivateRoomNoticeHttpState::new(
+        notices,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主和管理员把房间交给自己的 Agent 管（`specs/public-rooms/design.md`“房主的 Agent 管房间”）。
+fn build_room_moderation_grant_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::room_moderation_grants::RoomModerationGrantHttpState {
+    let grants = Arc::new(RoomModerationGrantService::new(
+        RoomModerationGrantDependencies {
+            rooms: dependencies.repositories.clone(),
+            grants: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::room_moderation_grants::RoomModerationGrantHttpState::new(
+        grants,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 房主的 Agent 照管理授权动手（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：落进的是网页治理
+/// 用的那一套台账。
+fn build_agent_moderation_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<features::agent_moderation::AgentModerationHttpState, StartupError> {
+    let moderation = Arc::new(AgentModerationService::new(AgentModerationDependencies {
+        moderation: build_moderation_management(config, dependencies)?,
+        store: dependencies.repositories.clone(),
+        access: dependencies.repositories.clone(),
+        rooms: dependencies.repositories.clone(),
+    }));
+    Ok(features::agent_moderation::AgentModerationHttpState::new(
+        features::agent_moderation::AgentModerationHttpDependencies {
+            moderation,
+            authentication: dependencies.authentication.clone(),
+            devices: dependencies.devices.clone(),
+            secrets: dependencies.secrets.clone(),
+            trusted_origins: features::authentication::TrustedOrigins::new(
+                &config.authentication.frontend_origin,
+                &config.authentication.desktop_origins,
+            ),
+        },
+    ))
+}
+
+/// 平台把公开房间从目录里拿掉（`specs/public-rooms/design.md`）：平台治理的人，按 `moderation_operator`。
+fn build_room_hold_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::public_room_platform_hold::PublicRoomPlatformHoldHttpState {
+    let holds = Arc::new(PublicRoomPlatformHoldService::new(
+        PublicRoomPlatformHoldDependencies {
+            rooms: dependencies.repositories.clone(),
+            holds: dependencies.repositories.clone(),
+            authority: dependencies.repositories.clone(),
+            requests: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    features::public_room_platform_hold::PublicRoomPlatformHoldHttpState::new(
+        holds,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 进公开房间（`specs/public-rooms/design.md`）：以房主的名义邀请，走私人房间服务。
+fn build_room_join_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<features::public_room_join::PublicRoomJoinHttpState, StartupError> {
+    Ok(features::public_room_join::PublicRoomJoinHttpState::new(
+        build_public_room_joins(config, dependencies)?,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    ))
+}
+
+/// 发现页的“最近有人说话”由应用服务读时间、写进公开设置那一行。
+fn start_public_room_activity(
+    dependencies: &AgentFeatureDependencies,
+) -> public_room_activity::PublicRoomActivityWorker {
+    public_room_activity::PublicRoomActivityWorker::start(Arc::new(PublicRoomActivityService::new(
+        PublicRoomActivityDependencies {
+            store: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    )))
+}
+
+/// 进公开房间、申请和审批，定时清理申请也用它。
+fn build_public_room_joins(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Arc<PublicRoomJoinService>, StartupError> {
+    Ok(Arc::new(PublicRoomJoinService::new(
+        PublicRoomJoinDependencies {
+            rooms: dependencies.repositories.clone(),
+            listings: dependencies.repositories.clone(),
+            requests: dependencies.repositories.clone(),
+            invitations: build_private_room_service(config, dependencies)?,
+            holds: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        },
+    )))
+}
+
 /// 房间里的人叫什么、Agent 是谁的（`specs/room-people/design.md`）。
 fn build_room_people_http_state(
     dependencies: &AgentFeatureDependencies,
@@ -1028,19 +1328,7 @@ fn build_agent_collaboration_http_states(
 ) -> Result<AgentCollaborationHttpStates, StartupError> {
     let handoffs = build_handoff_access_service(dependencies);
     let targeted_handoffs = build_targeted_handoff_service(dependencies);
-    let lobby_provisioning = build_lobby_provisioning(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-    )?;
-    let entries = build_agent_lobby_entry(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-        lobby_provisioning.clone(),
-    )?;
+    let (entries, lobby_provisioning) = build_lobby_entry_with_provisioning(config, dependencies)?;
     let public_entries = Arc::new(PublicLobbyEntryService::new(PublicLobbyEntryDependencies {
         directory: dependencies.repositories.clone(),
         provisioning: lobby_provisioning,
@@ -1050,7 +1338,7 @@ fn build_agent_collaboration_http_states(
     ));
     let private_rooms = build_private_room_service(config, dependencies)?;
     let automation = build_automation_http_state(config, dependencies)?;
-    let moderation = build_moderation_management(dependencies);
+    let moderation = build_moderation_management(config, dependencies)?;
     let direct_sessions = build_direct_session_management(dependencies);
     Ok(AgentCollaborationHttpStates {
         handoffs: HandoffHttpState::new(
@@ -1073,6 +1361,7 @@ fn build_agent_collaboration_http_states(
             devices: dependencies.devices.clone(),
             secrets: dependencies.secrets.clone(),
             private_rooms: private_rooms.clone(),
+            listings: dependencies.repositories.clone(),
         }),
         private_rooms: PrivateRoomHttpState::new(
             PrivateRoomHttpDependencies {
@@ -1183,6 +1472,24 @@ struct NetworkAgentRuntime {
 }
 
 /// 只凭网络接入的 Agent（ADR 0010）。总开关关着时路由照样挂上，统一回答“已关闭”。
+/// 网络 Agent 找公开房间用发现页那一份；总开关关着时不给，回答“已关闭”。
+fn network_agent_public_rooms(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Option<features::network_agents::NetworkAgentPublicRooms> {
+    config.network_agents.enabled.then(|| {
+        let PublicRoomShared { directory, limits } = dependencies.public_rooms.clone();
+        features::network_agents::NetworkAgentPublicRooms {
+            directory,
+            limits,
+            site_origin: features::share_page::site_origin(
+                &config.authentication.matrix_server_name,
+            )
+            .into(),
+        }
+    })
+}
+
 fn build_network_agent_routes(
     config: &ControlPlaneConfig,
     request_timeout: Duration,
@@ -1193,19 +1500,7 @@ fn build_network_agent_routes(
     {
         prepare_network_agent_store(directory)?;
     }
-    let provisioning = build_lobby_provisioning(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-    )?;
-    let lobbies = build_agent_lobby_entry(
-        &config.lobby,
-        dependencies.repositories.clone(),
-        dependencies.system_runtime.clone(),
-        dependencies.matrix_identities.clone(),
-        provisioning,
-    )?;
+    let (lobbies, _) = build_lobby_entry_with_provisioning(config, dependencies)?;
     let key = config.network_agents.seal_key.as_ref();
     let policy = config.network_agents.policy;
     let sources = Arc::new(features::network_agents::NetworkSources::new(
@@ -1227,6 +1522,8 @@ fn build_network_agent_routes(
         access: build_private_room_agent_access(dependencies, key, sources.clone()),
         rooms: private_rooms.clone(),
         directory: dependencies.repositories.clone(),
+        listings: dependencies.repositories.clone(),
+        public_rooms: dependencies.repositories.clone(),
         secrets: dependencies.secrets.clone(),
         clock: dependencies.system_runtime.clone(),
         identifiers: dependencies.system_runtime.clone(),
@@ -1272,6 +1569,7 @@ fn build_network_agent_routes(
             messaging: gateway.clone(),
             rooms: gateway,
             owned_rooms: service,
+            public_rooms: network_agent_public_rooms(config, dependencies),
             sources,
             clock: dependencies.system_runtime.clone(),
             guide: features::network_agents::render_guide(
@@ -1325,7 +1623,11 @@ fn build_private_room_service(
         matrix: dependencies.matrix_identities.clone(),
         principals: dependencies.repositories.clone(),
         agents: dependencies.repositories.clone(),
+        agent_members: dependencies.repositories.clone(),
         trusted_matrix_readers: vec![content_authority_matrix_user(config)?],
+        listings: dependencies.repositories.clone(),
+        listing_matrix: dependencies.matrix_identities.clone(),
+        secrets: dependencies.secrets.clone(),
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
     })))
@@ -1360,6 +1662,8 @@ fn build_private_room_agent_access(
             clock: dependencies.system_runtime.clone(),
             attempts: join_code_attempt_policy(),
             source_weights,
+            listings: dependencies.repositories.clone(),
+            holds: dependencies.repositories.clone(),
         },
     ))
 }
@@ -1372,21 +1676,26 @@ fn join_code_attempt_policy() -> agent_room_application::ports::JoinCodeAttemptP
     }
 }
 
-/// 网页上的治理接口和到期自动解除的定时任务各用一个，读写的是同一套。
-fn build_moderation_management(dependencies: &AgentFeatureDependencies) -> Arc<ModerationService> {
-    Arc::new(ModerationService::new(ModerationDependencies {
+/// 网页上的治理接口和到期自动解除的定时任务各用一个，读写的是同一套。私人房间里的踢出、封禁照成员一节
+/// 那一套落，所以带着一个私人房间的服务。
+fn build_moderation_management(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Arc<ModerationService>, StartupError> {
+    Ok(Arc::new(ModerationService::new(ModerationDependencies {
         repository: dependencies.repositories.clone(),
         authority: dependencies.repositories.clone(),
         expiry: dependencies.repositories.clone(),
         mutes: dependencies.repositories.clone(),
         effects: dependencies.matrix_identities.clone(),
+        members: build_private_room_service(config, dependencies)?,
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
         report_policy: agent_room_application::ports::ModerationReportPolicy {
             maximum_reports: 5,
             window: DurationMillis::new(10 * 60 * 1_000).expect("固定举报限速窗口必须有效"),
         },
-    }))
+    })))
 }
 
 fn build_direct_session_management(
@@ -1449,6 +1758,27 @@ fn content_authority_matrix_user(
     })
 }
 
+/// 大厅分片的建房服务和 Agent 进大厅的用例：本机 Agent 和网络 Agent 两边各建一份，配置一样。
+fn build_lobby_entry_with_provisioning(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<(Arc<AgentLobbyEntryService>, Arc<LobbyProvisioningService>), StartupError> {
+    let provisioning = build_lobby_provisioning(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+    )?;
+    let entries = build_agent_lobby_entry(
+        &config.lobby,
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+        dependencies.matrix_identities.clone(),
+        provisioning.clone(),
+    )?;
+    Ok((entries, provisioning))
+}
+
 fn build_agent_lobby_entry(
     config: &LobbyConfig,
     repositories: Arc<PostgresRepositories>,
@@ -1466,11 +1796,14 @@ fn build_agent_lobby_entry(
             // 私人房间的入场资格由成员事实裁决，Matrix 侧按同一网关补发受邀。
             private_rooms: repositories.clone(),
             // 凭口令进来的 Agent 成员不随任何成员入场，按它自己的成员记录裁决。
-            private_agents: repositories,
+            private_agents: repositories.clone(),
             private_matrix: matrix.clone(),
-            memberships: matrix,
+            memberships: matrix.clone(),
             provisioning,
             identifiers: system_runtime.clone(),
+            // 它代表的人被禁言着时，进来、重连都不给它说话，和管理员落禁言走同一套 Matrix 效果。
+            standing_moderation: repositories,
+            moderation_effects: matrix,
             clock: system_runtime,
         },
         join_policy,
@@ -1674,7 +2007,8 @@ fn build_agent_instance_management(
             instances: repositories.clone(),
             revocations: repositories.clone(),
             matrix_cleanup: repositories,
-            matrix,
+            matrix: matrix.clone(),
+            matrix_activity: matrix,
             clock: system_runtime,
         },
     ))

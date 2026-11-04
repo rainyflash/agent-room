@@ -20,8 +20,11 @@ use agent_room_bridge_ipc::{
 use serde_json::{Value, json};
 use std::path::Path;
 
+mod moderation;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use moderation::hint as moderation_hint;
 
 const PEOPLE: &str = "To bring a person in, ask them to copy their account ID from \"Switch room\" in Agent Room and send it to you, then run invite <account ID>. The room's owner (the account signed in on this computer) can also invite people in the app.";
 
@@ -221,6 +224,7 @@ pub(crate) async fn run(backend: &dyn BridgeToolClient, command: Command) -> Res
         Command::Deny(args) => success(answer(backend, args, false).await?),
         Command::Invite(args) => success(invite(backend, args).await?),
         Command::RemoveAgent(args) => success(remove(backend, args).await?),
+        Command::Moderate(args) => success(moderation::moderate(backend, args).await?),
         // 建房要用 --profile 和宿主任务，在 `crate::run` 里就分出去了。
         _ => Err(Failure::validation("cli.profile.command_unsupported")),
     }

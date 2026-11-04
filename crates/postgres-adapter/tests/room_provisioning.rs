@@ -439,10 +439,10 @@ async fn seed_catalog(pool: &PgPool, with_space: bool) -> RoomCatalogId {
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
               id, kind, slug, name, description, language, matrix_space_id,
-              visibility, status, created_at, updated_at
+              visibility, status, end_to_end_encrypted, created_at, updated_at
           ) VALUES (
               $1, 'public_lobby', $2, '供给测试大厅', '验证可恢复建房流程', 'zh-CN', $3,
-              'public', 'active', to_timestamp(1700000000), to_timestamp(1700000000)
+              'public', 'active', false, to_timestamp(1700000000), to_timestamp(1700000000)
           )",
     )
     .bind(catalog_id.as_uuid())

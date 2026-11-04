@@ -2,6 +2,7 @@ import type { MatrixPresenceObservation } from '@agent-room/protocol';
 import type { Direction, RoomState } from 'matrix-js-sdk';
 
 import type { AgentPresenceSource } from './matrix-presence-tracker';
+import { roomNoticeEventType } from '@/features/room-notice/domain/room-notice';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
 export const matrixAgentStatusEventType = 'io.github.rainyflash.agentroom.agent.status.v1';
@@ -29,10 +30,13 @@ export type MatrixLobbyRoomSnapshot = {
   readonly joinedMemberIds: readonly string[];
   /**
    * 已加入的成员在 Matrix 上的显示名，按用户 ID 排好；没设名字的，SDK 给的是用户 ID。
-   * 只有加密的房间（私人房间）读：公开大厅不给成员名字，人多时也省得每次同步都抄一遍。
+   * 只有有房间号的房间读（私人房间、公开房间，加不加密都算）：公共大厅不给成员名字，人多时也省得每次
+   * 同步都抄一遍。公共大厅谁都能进（`public` 加入规则），别的房间都要邀请。
    */
   readonly memberNames?: readonly MatrixLobbyMemberName[];
   readonly name: string;
+  /** 房间状态里的常驻公告（`room.notice.v1`），原样；没有这条状态时不给。 */
+  readonly notice?: unknown;
   readonly roomId: string;
   readonly statusEvents: readonly MatrixLobbyStateEvent[];
   readonly rosterPolicy?: unknown;
@@ -79,7 +83,10 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
     }
     const topic = readRoomTopic(state);
     const rosterPolicy = state.getStateEvents(matrixRosterPolicyEventType, '');
+    const notice = state.getStateEvents(roomNoticeEventType, '');
     const encrypted = state.getStateEvents('m.room.encryption', '') !== null;
+    const joinRule: unknown = state.getStateEvents('m.room.join_rules', '')?.getContent().join_rule;
+    const named = encrypted || (typeof joinRule === 'string' && joinRule !== 'public');
     // 按用户 ID 的字面排好：同步时成员的先后会变，排好了没变的快照才认得出没变。
     const joinedMembers = room
       .getJoinedMembers()
@@ -102,7 +109,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
         canSpeak: self !== null && state.maySendMessage(self),
         encrypted,
         joinedMemberIds: Object.freeze(joinedMemberIds),
-        ...(encrypted
+        ...(named
           ? {
               memberNames: Object.freeze(
                 joinedMembers.map((member) =>
@@ -115,6 +122,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
             }
           : {}),
         name: room.name.trim() || roomId,
+        ...(notice === null ? {} : { notice: notice.getContent() }),
         roomId,
         ...(rosterPolicy === null ? {} : { rosterPolicy: rosterPolicy.getContent() }),
         statusEvents: Object.freeze(statusEvents),

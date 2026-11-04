@@ -77,7 +77,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ReleaseCiFailure):
                 validate_metadata({**self.metadata, key: value}, self.args,
                                   self.args.revision, 1_800_000_010)
-        for now in (1_799_999_999, 1_800_604_800):
+        for now in (1_799_999_999, 1_802_592_000):
             with self.subTest(now=now), self.assertRaises(ReleaseCiFailure):
                 validate_metadata(self.metadata, self.args, self.args.revision, now)
 

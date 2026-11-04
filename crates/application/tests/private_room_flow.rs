@@ -12,10 +12,10 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, IdentifierFactory, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
-        PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDescription, PrivateRoomAgentDirectory, PrivateRoomMatrixGateway,
-        PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-        PrivateRoomStore,
+        PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+        PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
+        PrivateRoomSnapshot, PrivateRoomStore,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -40,6 +40,15 @@ use agent_room_domain::{
     version::AggregateVersion,
 };
 use uuid::Uuid;
+
+#[path = "private_room_flow/agent_members.rs"]
+mod agent_members;
+#[path = "private_room_flow/moderation_members.rs"]
+mod moderation_members;
+#[path = "private_room_flow/public_creation.rs"]
+mod public_creation;
+
+use public_creation::TestListings;
 
 #[tokio::test]
 async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
@@ -77,6 +86,42 @@ async fn 创建完成前先合并初始发言硬边界再发布真实房间() {
             .speaking_allowed("@content-authority:matrix.test"),
         Some(false)
     );
+}
+
+#[tokio::test]
+async fn 说明分行的房间建得了_目录不收的名字在建_matrix_房间之前就拒() {
+    let fixture = Fixture::new();
+    let mut multiline = fixture.creation_request(speaker_permissions());
+    multiline.description = "第一行\n第二行".to_owned();
+    let snapshot = fixture
+        .service
+        .create(multiline)
+        .await
+        .expect("说明里能换行（agent-room-ops#57）");
+    assert_eq!(snapshot.catalog().description(), "第一行\n第二行");
+    let creation = fixture.matrix.creation().expect("应记录真实建房请求");
+    assert_eq!(creation.request().topic(), Some("第一行\n第二行"));
+
+    let fixture = Fixture::new();
+    let mut too_long = fixture.creation_request(speaker_permissions());
+    too_long.name = "a".repeat(129);
+    let rejected = fixture
+        .service
+        .create(too_long)
+        .await
+        .expect_err("目录只收 128 个字的名字");
+    assert_eq!(rejected.kind(), PrivateRoomFailureKind::InvalidRequest);
+    assert_eq!(rejected.rejected(), Some("room_name"));
+    assert!(fixture.events().is_empty(), "没过校验就一间也不建");
+
+    let mut myself = fixture.creation_request(speaker_permissions());
+    myself.invitations[0].principal_id = fixture.owner;
+    let rejected = fixture
+        .service
+        .create(myself)
+        .await
+        .expect_err("不能邀请自己");
+    assert_eq!(rejected.rejected(), Some("invitations.owner"));
 }
 
 #[tokio::test]
@@ -1135,7 +1180,9 @@ struct Fixture {
     service: PrivateRoomService,
     store: Arc<TestStore>,
     matrix: Arc<TestMatrix>,
+    listings: Arc<TestListings>,
     agents: Arc<TestAgentDirectory>,
+    agent_members: Arc<agent_members::TestAgentMembers>,
     events: Arc<Mutex<Vec<&'static str>>>,
     catalog: RoomCatalogId,
     owner: PrincipalId,
@@ -1161,15 +1208,21 @@ impl Fixture {
         ])));
         let runtime = Arc::new(TestRuntime);
         let agents = Arc::new(TestAgentDirectory::default());
+        let agent_members = Arc::new(agent_members::TestAgentMembers::default());
+        let listings = Arc::new(TestListings::new(store.clone(), events.clone()));
         let service = PrivateRoomService::new(PrivateRoomDependencies {
             store: store.clone(),
             matrix_provisioner: matrix.clone(),
             matrix: matrix.clone(),
             principals,
             agents: agents.clone(),
+            agent_members: agent_members.clone(),
             trusted_matrix_readers: vec![
                 MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
             ],
+            listings: listings.clone(),
+            listing_matrix: listings.clone(),
+            secrets: listings.clone(),
             identifiers: runtime.clone(),
             clock: runtime,
         });
@@ -1177,7 +1230,9 @@ impl Fixture {
             service,
             store,
             matrix,
+            listings,
             agents,
+            agent_members,
             events,
             catalog: catalog_id(10),
             owner,
@@ -1215,6 +1270,7 @@ impl Fixture {
                 permissions,
             }],
             created_by_agent: None,
+            listing: None,
         }
     }
 
@@ -1232,6 +1288,7 @@ impl Fixture {
             retention_days: None,
             invitations: Vec::new(),
             created_by_agent: Some(agent_id),
+            listing: None,
         }
     }
 
@@ -1607,6 +1664,8 @@ struct TestAgentDirectory {
     agents: Mutex<BTreeMap<PrincipalId, Vec<MatrixUserId>>>,
     owned: Mutex<Vec<(PrincipalId, AgentId)>>,
     described: Mutex<BTreeMap<AgentId, PrivateRoomAgentDescription>>,
+    /// 替网络 Agent 记账的合成主体。
+    network: Mutex<Vec<PrincipalId>>,
 }
 
 impl TestAgentDirectory {
@@ -1681,6 +1740,28 @@ impl PrivateRoomAgentDirectory for TestAgentDirectory {
             .get(&agent_id)
             .cloned();
         Box::pin(async move { Ok(described) })
+    }
+
+    fn principal_agents(
+        &self,
+        principal_id: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<PrincipalAgents>> {
+        let agents = PrincipalAgents {
+            agent_ids: self
+                .owned
+                .lock()
+                .expect("Agent 锁正常")
+                .iter()
+                .filter(|(owner, _)| *owner == principal_id)
+                .map(|(_, agent)| *agent)
+                .collect(),
+            network: self
+                .network
+                .lock()
+                .expect("Agent 锁正常")
+                .contains(&principal_id),
+        };
+        Box::pin(async move { Ok(agents) })
     }
 }
 

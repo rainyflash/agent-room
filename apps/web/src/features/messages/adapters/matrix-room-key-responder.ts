@@ -20,6 +20,7 @@ import {
   roomKeyRequestEventType,
   roomKeysEventType,
 } from './matrix-room-key-recovery';
+import { joinedAfterListing } from './room-listing';
 
 /** 同一台请求设备在同一个房间里，隔多久才再答一次。 */
 const REPEAT_INTERVAL_MS = 10 * 60 * 1_000;
@@ -62,7 +63,8 @@ export type MatrixRoomKeyResponderOptions = {
  *
  * 请求必须全部满足才回答，否则一声不吭：请求者此刻在房间里、是 Agent Room 的 Agent，请求设备
  * 由主人签名、就是经 Olm 发来请求的那一台，房间历史对成员开放（这时服务器本来就给成员看加入前
- * 的密文）。同一台设备在同一个房间十分钟答一次，这台设备每分钟最多答 20 次。
+ * 的密文），请求者不是房间公开以后才进来的（`joinedAfterListing`）。同一台设备在同一个房间
+ * 十分钟答一次，这台设备每分钟最多答 20 次。
  */
 export class MatrixRoomKeyResponder {
   readonly #ids: UuidV7Factory;
@@ -115,6 +117,7 @@ export class MatrixRoomKeyResponder {
     if (!this.#admit(message.sender, deviceId, request.roomId)) return;
     if (
       room.getMember(message.sender)?.membership !== 'join' ||
+      joinedAfterListing(room, message.sender) ||
       !isAgentRoomAgent(client, request.roomId, message.sender)
     ) {
       return;

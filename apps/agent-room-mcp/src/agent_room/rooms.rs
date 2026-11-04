@@ -359,7 +359,7 @@ impl AgentRoomMcpServer {
     }
 
     /// 管哪个房间：没说就是会话开在的那个（交给 Bridge 定），说了就换成目录 ID。
-    async fn managed_room(
+    pub(super) async fn managed_room(
         &self,
         context: &RequestContext<RoleServer>,
         session_id: &str,
@@ -498,7 +498,7 @@ fn access_next(access: &IpcRoomAccess) -> &'static str {
 }
 
 /// 敲门者的名字、房间名来自远端：前面照例加上提示。
-fn remote_result(value: Value) -> CallToolResult {
+pub(super) fn remote_result(value: Value) -> CallToolResult {
     let mut result = CallToolResult::structured(value);
     result
         .content
@@ -576,7 +576,7 @@ fn unknown_room(wanted: &str, ambiguous: bool) -> CallToolResult {
     result
 }
 
-fn room_failure(failure: &BridgeToolFailure) -> CallToolResult {
+pub(super) fn room_failure(failure: &BridgeToolFailure) -> CallToolResult {
     if !bridge_outdated(failure) {
         return failure_result(failure);
     }

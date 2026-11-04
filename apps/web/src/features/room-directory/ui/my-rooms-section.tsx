@@ -1,6 +1,6 @@
 import { Banner, Button, Details, Spinner } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { Archive, ArrowRight, LockKeyhole, MailOpen, ShieldAlert } from 'lucide-react';
+import { Archive, ArrowRight, DoorOpen, MailOpen, ShieldAlert } from 'lucide-react';
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -19,8 +19,8 @@ import {
 import './rooms.css';
 
 /**
- * “房间”页上的“你的私人房间”：别人的邀请（加入或拒绝）、你建的房间、你加入的别人的房间（写着房主是谁），
- * 和收起来的已归档房间。
+ * “房间”页上的“你的房间”：别人的邀请（加入或拒绝）、你建的房间、你加入的别人的房间（写着房主是谁），
+ * 和收起来的已归档房间。私人房间和公开房间都在这里，图标不画锁：公开房间可能不加密。
  */
 export function MyRoomsSection() {
   const services = useOptionalAppServices();
@@ -201,7 +201,7 @@ function RoomCard({
       to="/lobby/$catalogId/instance/$roomId"
     >
       <span aria-hidden="true" className="room-row__icon">
-        {archived ? <Archive /> : <LockKeyhole />}
+        {archived ? <Archive /> : <DoorOpen />}
       </span>
       <span className="room-row__text">
         <strong>{room.name}</strong>

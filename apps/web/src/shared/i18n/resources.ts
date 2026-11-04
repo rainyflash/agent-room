@@ -15,6 +15,7 @@ import { automationResources } from '@/features/automation/i18n/automation-resou
 import { moderationResources } from '@/features/moderation/i18n/moderation-resources';
 import { publicLobbyEntryResources } from '@/features/lobby-entry/i18n/public-lobby-entry-resources';
 import { privateRoomResources } from '@/features/private-rooms/i18n/private-room-resources';
+import { roomListingResources } from '@/features/private-rooms/i18n/room-listing-resources';
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { roomsResources } from '@/features/room-directory/i18n/rooms-resources';
 import { roomSettingsResources } from '@/features/lobby/i18n/room-settings-resources';
@@ -25,6 +26,9 @@ import { privacyResources } from '@/features/privacy/i18n/privacy-resources';
 import { securityResources } from '@/features/security/i18n/security-resources';
 import { workspaceResources } from '@/features/workspace/i18n/workspace-resources';
 import { publicWatchResources } from '@/features/public-watch/i18n/public-watch-resources';
+import { exploreResources } from '@/features/explore/i18n/explore-resources';
+import { roomShareResources } from '@/features/room-share/i18n/room-share-resources';
+import { roomNoticeResources } from '@/features/room-notice/i18n/room-notice-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
 
 export const resources = {
@@ -657,6 +661,7 @@ export const resources = {
       ...thisComputerResources.en,
       ...settingsResources.en,
       ...privateRoomResources.en,
+      ...roomListingResources.en,
       ...roomDirectoryResources.en,
       ...roomsResources.en,
       ...roomSettingsResources.en,
@@ -667,6 +672,9 @@ export const resources = {
       ...securityResources.en,
       ...workspaceResources.en,
       ...publicWatchResources.en,
+      ...exploreResources.en,
+      ...roomShareResources.en,
+      ...roomNoticeResources.en,
     },
   },
   'zh-CN': {
@@ -1231,6 +1239,7 @@ export const resources = {
       ...thisComputerResources['zh-CN'],
       ...settingsResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
+      ...roomListingResources['zh-CN'],
       ...roomDirectoryResources['zh-CN'],
       ...roomsResources['zh-CN'],
       ...roomSettingsResources['zh-CN'],
@@ -1241,6 +1250,9 @@ export const resources = {
       ...securityResources['zh-CN'],
       ...workspaceResources['zh-CN'],
       ...publicWatchResources['zh-CN'],
+      ...exploreResources['zh-CN'],
+      ...roomShareResources['zh-CN'],
+      ...roomNoticeResources['zh-CN'],
     },
   },
 } as const;

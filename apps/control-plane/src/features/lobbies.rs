@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agent_room_application::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
@@ -9,7 +9,7 @@ use agent_room_application::{
         ResolvePublicLobbyObservation,
     },
     persistence::RepositoryErrorKind,
-    ports::{RoomDirectory, RoomDirectoryQuery, SecretFactory},
+    ports::{PrivateRoomListingStore, RoomDirectory, RoomDirectoryQuery, SecretFactory},
     private_rooms::{ListPrivateRoomsForAccount, PrivateRoomUseCases},
     public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryFailureKind, PublicLobbyEntryUseCases},
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
@@ -17,6 +17,7 @@ use agent_room_application::{
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
     private_rooms::PrivateRoomMembershipStatus,
+    room_listing::RoomShareCode,
     rooms::{RoomLanguage, RoomRegion},
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -53,6 +54,7 @@ pub(crate) struct LobbyHttpState {
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
     private_rooms: Arc<dyn PrivateRoomUseCases>,
+    listings: Arc<dyn PrivateRoomListingStore>,
 }
 
 pub(crate) struct LobbyHttpDependencies {
@@ -64,6 +66,8 @@ pub(crate) struct LobbyHttpDependencies {
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
     pub(crate) private_rooms: Arc<dyn PrivateRoomUseCases>,
+    /// 公开房间的分享码：列能进的房间时当它的 `slug`。
+    pub(crate) listings: Arc<dyn PrivateRoomListingStore>,
 }
 
 impl LobbyHttpState {
@@ -77,6 +81,7 @@ impl LobbyHttpState {
             devices: dependencies.devices,
             secrets: dependencies.secrets,
             private_rooms: dependencies.private_rooms,
+            listings: dependencies.listings,
         }
     }
 }
@@ -204,6 +209,17 @@ async fn list_accessible_rooms(
             return no_store(ApiError::private_room(failure, correlation_id).into_response());
         }
     };
+    // 公开房间的 slug 是它的分享码：本机 Agent 拿主人贴过来的分享链接按它认，旧版 Bridge、MCP
+    // 和命令行本来就认 slug，也能按它进。私人房间以前都没有 slug。
+    let catalog_ids: Vec<RoomCatalogId> = private
+        .iter()
+        .map(|snapshot| snapshot.catalog().id())
+        .collect();
+    let share_codes: HashMap<RoomCatalogId, RoomShareCode> =
+        match state.listings.listed_share_codes(&catalog_ids).await {
+            Ok(codes) => codes.into_iter().collect(),
+            Err(error) => return no_store(directory_failure(&error, correlation_id)),
+        };
     let mut rooms: Vec<AccessibleRoomResponse> = public
         .into_iter()
         .map(|entry| AccessibleRoomResponse {
@@ -221,7 +237,9 @@ async fn list_accessible_rooms(
             catalog_id: snapshot.catalog().id().to_string(),
             matrix_room_id: Some(snapshot.instance().matrix_room_id().as_str().to_owned()),
             name: snapshot.catalog().name().to_owned(),
-            slug: None,
+            slug: share_codes
+                .get(&snapshot.catalog().id())
+                .map(|code| code.as_str().to_owned()),
             // 用例只返回账号已加入的房间，这里总是 joined；字段留着，已装的 Bridge 照旧解析。
             // 其他状态不该出现，出现也不当成可进。
             membership: snapshot.room().member(principal_id).and_then(|member| {
@@ -594,7 +612,8 @@ mod tests {
         lobby_observation::PublicLobbyObservationService,
         persistence::RepositoryResult,
         ports::{
-            PortFuture, PrincipalAccount, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
+            PortFuture, PrincipalAccount, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
+            PrivateRoomListingStore, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
             PublicLobbyObservationRoom, RoomDirectory, RoomDirectoryQuery, SecretFactory,
             SecretValue,
         },
@@ -609,11 +628,13 @@ mod tests {
             AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId, RoomInstanceId,
             RoomReservationId,
         },
+        room_listing::RoomShareCode,
         rooms::{
             MatrixRoomReference, RoomCapacity, RoomCatalog, RoomInstance, RoomInstanceFields,
             RoomInstanceState, RoomReservation,
         },
         time::UtcMillis,
+        version::AggregateVersion,
     };
     use agent_room_identity_adapter::SecureSecretFactory;
     use axum::{
@@ -963,6 +984,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn 公开着的房间在能进的房间里以分享码当_slug() {
+        let devices = Arc::new(FakeDevices::default());
+        *devices
+            .expected_request
+            .lock()
+            .expect("设备请求目标记录锁可用") =
+            Some(("GET".to_owned(), "/lobbies/accessible".to_owned()));
+        *devices
+            .expected_body
+            .lock()
+            .expect("设备请求正文记录锁可用") = Some(String::new());
+        let app = test_router_listing(
+            Arc::new(FakeEntries::default()),
+            devices.clone(),
+            Some("Abc123"),
+        );
+        let mut request = Request::builder()
+            .method("GET")
+            .uri("/lobbies/accessible")
+            .header(header::AUTHORIZATION, "Bearer device-access-token")
+            .header("x-agent-room-device-id", DEVICE_UUID)
+            .header("x-agent-room-proof-issued-at", "1700000000000")
+            .header("x-agent-room-proof-nonce", "nonce-0123456789abcdef")
+            .header(
+                "x-agent-room-proof-signature",
+                URL_SAFE_NO_PAD.encode([9_u8; 64]),
+            )
+            .body(Body::empty())
+            .expect("列房间请求有效");
+        request.headers_mut().remove(header::CONTENT_TYPE);
+        let response = app.oneshot(request).await.expect("列房间可调用");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["rooms"][0]["kind"], "private_room");
+        assert_eq!(body["rooms"][0]["slug"], "Abc123");
+    }
+
+    #[tokio::test]
     async fn 未签名的列房间请求被拒绝且不触碰目录() {
         let devices = Arc::new(FakeDevices::default());
         let app = test_router(Arc::new(FakeEntries::default()), devices.clone());
@@ -1120,6 +1180,15 @@ mod tests {
     }
 
     fn test_router(entries: Arc<FakeEntries>, devices: Arc<FakeDevices>) -> axum::Router {
+        test_router_listing(entries, devices, None)
+    }
+
+    /// `listed_share_code`：设备账号名下那间私人房间公开着时的分享码。
+    fn test_router_listing(
+        entries: Arc<FakeEntries>,
+        devices: Arc<FakeDevices>,
+        listed_share_code: Option<&'static str>,
+    ) -> axum::Router {
         let directory = Arc::new(FakeDirectory);
         let state = LobbyHttpState::new(LobbyHttpDependencies {
             entries,
@@ -1130,11 +1199,72 @@ mod tests {
             devices,
             secrets: Arc::new(SecureSecretFactory),
             private_rooms: Arc::new(FakePrivateRooms),
+            listings: Arc::new(FakeListings(listed_share_code)),
         });
         router(state).layer(middleware::from_fn(crate::correlation::attach))
     }
 
     /// 只回答「这个账号能进哪些私人房间」；其他用例不该被大厅路由碰到。
+    /// 只答分享码：给了码就当设备账号名下那间房公开着。
+    struct FakeListings(Option<&'static str>);
+
+    impl PrivateRoomListingStore for FakeListings {
+        fn listing(
+            &self,
+            _catalog_id: RoomCatalogId,
+        ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomListingRecord>>> {
+            unreachable!("列房间一次查完分享码")
+        }
+
+        fn listed_share_codes<'a>(
+            &'a self,
+            catalog_ids: &'a [RoomCatalogId],
+        ) -> PortFuture<'a, RepositoryResult<Vec<(RoomCatalogId, RoomShareCode)>>> {
+            let codes = self
+                .0
+                .map(|code| {
+                    catalog_ids
+                        .iter()
+                        .map(|&catalog_id| (catalog_id, RoomShareCode::parse(code).unwrap()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Box::pin(async move { Ok(codes) })
+        }
+
+        fn listed_rooms_owned_by(
+            &self,
+            _owner: PrincipalId,
+        ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
+            unreachable!("列房间不查公开房间的限额")
+        }
+
+        fn save_listing<'a>(
+            &'a self,
+            _record: &'a PrivateRoomListingRecord,
+            _expected: Option<AggregateVersion>,
+            _owner: PrincipalId,
+        ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+            unreachable!("列房间不改公开设置")
+        }
+
+        fn create_listed_room<'a>(
+            &'a self,
+            _snapshot: &'a PrivateRoomSnapshot,
+            _listing: &'a PrivateRoomListingRecord,
+            _created_at: UtcMillis,
+        ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+            unreachable!("列房间不建房间")
+        }
+
+        fn mark_room_encrypted(
+            &self,
+            _catalog_id: RoomCatalogId,
+        ) -> PortFuture<'_, RepositoryResult<()>> {
+            unreachable!("列房间不改加密")
+        }
+    }
+
     struct FakePrivateRooms;
 
     impl PrivateRoomUseCases for FakePrivateRooms {

@@ -29,6 +29,9 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+#[path = "moderation/agents.rs"]
+mod agents;
+
 struct TestDatabase {
     migration: PgPool,
     runtime: PgPool,
@@ -146,6 +149,8 @@ async fn 治理权限动作撤销和审计访问都读取当前事实() {
         .expect("房间案件队列应可读取");
     assert_eq!(visible_cases, vec![room_case]);
 
+    let target_agent = seed_agent(&database.runtime, target).await;
+    seed_agent(&database.runtime, owner).await;
     let authority =
         ModerationAuthority::inspect_room(&repositories, owner, catalog_id, &target_reference)
             .await
@@ -153,6 +158,11 @@ async fn 治理权限动作撤销和审计访问都读取当前事实() {
             .expect("活跃房间应存在");
     assert_eq!(authority.role, ModerationRole::RoomManager);
     assert!(authority.target_matrix_user_id.is_some());
+    assert_eq!(
+        user_ids(&authority.target_agent_matrix_user_ids),
+        [target_agent.as_str()],
+        "只给被管的人名下的 Agent"
+    );
 
     apply_and_reverse_action(&repositories, owner, catalog_id, target_reference).await;
     verify_operator_roles(&database, &repositories, owner, auditor).await;
@@ -870,6 +880,7 @@ async fn 到期解除拿到全部活跃分片_账号删了也照样给出它的_
     let repositories = PostgresRepositories::new(database.runtime.clone());
     let room = (&repositories, moderator, catalog_id);
     let target = person(target_id);
+    let target_agent = seed_agent(&database.runtime, target_id).await;
     let mute = applied_action(room, ModerationActionKind::Mute, &target, Some(time(1_000))).await;
     sqlx::query("UPDATE agent_room.principal SET status = 'deleted' WHERE id = $1")
         .bind(target_id.as_uuid())
@@ -892,6 +903,20 @@ async fn 到期解除拿到全部活跃分片_账号删了也照样给出它的_
             .map(MatrixUserId::as_str),
         Some(target_user.as_str())
     );
+    assert_eq!(
+        user_ids(&context.target_agent_matrix_user_ids),
+        [target_agent.as_str()]
+    );
+    assert_eq!(
+        user_ids(
+            &mute_standing(&repositories, catalog_id, &target)
+                .await
+                .expect("房间还在")
+                .target_agent_matrix_user_ids
+        ),
+        [target_agent.as_str()],
+        "撤销禁言时他名下的 Agent 一起放开"
+    );
     assert!(
         ModerationAuthority::inspect_room(&repositories, moderator, catalog_id, &target)
             .await
@@ -906,6 +931,7 @@ async fn 到期解除拿到全部活跃分片_账号删了也照样给出它的_
     let hidden = expiry_room(&repositories, &hide).await;
     assert_eq!(room_ids(&hidden), [shards[1].as_str(), shards[0].as_str()]);
     assert!(hidden.target_matrix_user_id.is_none());
+    assert!(hidden.target_agent_matrix_user_ids.is_empty());
 
     sqlx::query(
         "UPDATE agent_room.room_instance SET state = 'draining' \
@@ -1131,9 +1157,10 @@ async fn seed_public_lobby(
     let suffix = catalog_id.as_uuid().simple().to_string();
     sqlx::query(
         r"INSERT INTO agent_room.room_catalog_entry (
-              id, kind, slug, name, language, visibility, status, created_at, updated_at
+              id, kind, slug, name, language, visibility, status, end_to_end_encrypted,
+              created_at, updated_at
           ) VALUES (
-              $1, 'public_lobby', $2, '治理分片测试大厅', 'zh-CN', 'public', 'active',
+              $1, 'public_lobby', $2, '治理分片测试大厅', 'zh-CN', 'public', 'active', false,
               to_timestamp(1700000000), to_timestamp(1700000000)
           )",
     )
@@ -1435,6 +1462,45 @@ async fn seed_principal(pool: &PgPool, suffix: &str) -> PrincipalId {
     .await
     .expect("主体写入应成功");
     principal_id
+}
+
+/// 主体名下一个还在用的 Agent，交回它的 Matrix 账号：先以停用状态写入，有了主人再激活。
+async fn seed_agent(pool: &PgPool, owner: PrincipalId) -> String {
+    let agent = Uuid::now_v7();
+    let matrix_user_id = format!("@_agent_{}:matrix.test", agent.simple());
+    sqlx::query(
+        r"INSERT INTO agent_room.agent (
+               id, matrix_user_id, slug, display_name, description, visibility,
+               lifecycle_state, created_at, updated_at, version
+            ) VALUES ($1, $2, $3, '治理测试 Agent', '', 'private',
+                      'suspended', statement_timestamp(), statement_timestamp(), 0)",
+    )
+    .bind(agent)
+    .bind(&matrix_user_id)
+    .bind(format!("agent-{}", agent.simple()))
+    .execute(pool)
+    .await
+    .expect("Agent 写入应成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.agent_ownership (
+               principal_id, agent_id, role, granted_by, created_at
+           ) VALUES ($1, $2, 'owner', $1, clock_timestamp())",
+    )
+    .bind(owner.as_uuid())
+    .bind(agent)
+    .execute(pool)
+    .await
+    .expect("Agent 所有权写入应成功");
+    sqlx::query("UPDATE agent_room.agent SET lifecycle_state = 'active' WHERE id = $1")
+        .bind(agent)
+        .execute(pool)
+        .await
+        .expect("建立主人后应能激活 Agent");
+    matrix_user_id
+}
+
+fn user_ids(users: &[MatrixUserId]) -> Vec<&str> {
+    users.iter().map(MatrixUserId::as_str).collect()
 }
 
 fn time(offset: i64) -> UtcMillis {

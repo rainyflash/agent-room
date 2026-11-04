@@ -3,7 +3,7 @@ use std::env;
 use agent_room_application::{
     persistence::RepositoryErrorKind,
     ports::{
-        NetworkAgentStore, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
+        NetworkAgentStore, PrincipalAgents, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
         PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
     },
 };
@@ -24,6 +24,17 @@ use agent_room_domain::{
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
+
+#[path = "private_rooms/description.rs"]
+mod description;
+#[path = "private_rooms/join_requests.rs"]
+mod join_requests;
+#[path = "private_rooms/listing.rs"]
+mod listing;
+#[path = "private_rooms/moderation_grants.rs"]
+mod moderation_grants;
+#[path = "private_rooms/public_directory.rs"]
+mod public_directory;
 
 struct TestDatabase {
     migration: PgPool,
@@ -240,6 +251,51 @@ async fn 只认主体名下还在用的_agent() {
         !owns(owner, AgentId::from_uuid(Uuid::now_v7())).await,
         "不存在的 Agent 不算"
     );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 治理找得到一个人名下的_agent_认得出网络_agent_的合成主体() {
+    let database = TestDatabase::connect().await;
+    let person = seed_principal(&database.runtime, "principal-agents-person").await;
+    let first = seed_agent(&database.runtime, person).await;
+    let second = seed_agent(&database.runtime, person).await;
+    let network = seed_principal_from(
+        &database.runtime,
+        "principal-agents-network",
+        NETWORK_AGENT_ISSUER,
+    )
+    .await;
+    let remote = seed_agent(&database.runtime, network).await;
+    seed_network_agent(&database.runtime, network, remote).await;
+    let stranger = seed_principal(&database.runtime, "principal-agents-stranger").await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let agents = |principal| {
+        let repositories = &repositories;
+        async move {
+            PrivateRoomAgentDirectory::principal_agents(repositories, principal)
+                .await
+                .expect("查询应成功")
+        }
+    };
+
+    assert_eq!(
+        agents(person).await,
+        PrincipalAgents {
+            agent_ids: vec![first, second],
+            network: false,
+        }
+    );
+    assert_eq!(
+        agents(network).await,
+        PrincipalAgents {
+            agent_ids: vec![remote],
+            network: true,
+        }
+    );
+    assert_eq!(agents(stranger).await, PrincipalAgents::default());
 
     database.close().await;
 }
@@ -508,12 +564,16 @@ async fn 乐观锁拒绝并发覆盖且数据库约束拒绝伪造房主() {
     .expect("延迟约束应在提交点校验");
     assert!(corrupt.commit().await.is_err());
 
+    // 公共大厅不加密（立即检查的约束），改成大厅时一起改掉，留给提交时的约束触发器拒绝。
     let mut public_escape = database.runtime.begin().await.expect("事务应启动");
-    sqlx::query("UPDATE agent_room.room_catalog_entry SET kind = 'public_lobby' WHERE id = $1")
-        .bind(catalog_id.as_uuid())
-        .execute(&mut *public_escape)
-        .await
-        .expect("延迟约束应在提交点校验");
+    sqlx::query(
+        "UPDATE agent_room.room_catalog_entry \
+         SET kind = 'public_lobby', end_to_end_encrypted = false WHERE id = $1",
+    )
+    .bind(catalog_id.as_uuid())
+    .execute(&mut *public_escape)
+    .await
+    .expect("延迟约束应在提交点校验");
     assert!(public_escape.commit().await.is_err());
 
     let mut lifecycle_split = database.runtime.begin().await.expect("事务应启动");

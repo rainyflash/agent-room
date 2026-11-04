@@ -44,7 +44,7 @@ const CASE_COLUMNS: &str = r"moderation_case.id,
        floor(extract(epoch FROM moderation_case.created_at) * 1000)::bigint AS created_at_ms,
        floor(extract(epoch FROM moderation_case.resolved_at) * 1000)::bigint AS resolved_at_ms";
 
-const ACTION_COLUMNS: &str = r"moderation_action.id,
+pub(crate) const ACTION_COLUMNS: &str = r"moderation_action.id,
        moderation_action.case_id,
        moderation_action.actor_principal_id,
        moderation_action.room_catalog_id,
@@ -403,7 +403,7 @@ async fn insert_case(
     Ok(())
 }
 
-async fn reserve_action_in_transaction(
+pub(crate) async fn reserve_action_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
     action: &ModerationAction,
     audit: &ModerationAuditEvent,
@@ -452,7 +452,7 @@ async fn reserve_action_in_transaction(
     Ok(ModerationActionReservationOutcome::Reserved(existing))
 }
 
-async fn finalize_action_in_transaction(
+pub(crate) async fn finalize_action_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
     action: &ModerationAction,
     audit: &ModerationAuditEvent,
@@ -780,7 +780,15 @@ async fn expiry_room(
                              room.created_at ASC,
                              room.id ASC
                   ) AS matrix_room_ids,
-                  target.matrix_user_id AS target_matrix_user_id
+                  target.matrix_user_id AS target_matrix_user_id,
+                  ARRAY(
+                    SELECT agent.matrix_user_id
+                    FROM agent_room.agent_ownership AS ownership
+                    JOIN agent_room.agent AS agent ON agent.id = ownership.agent_id
+                    WHERE ownership.principal_id = target.id
+                      AND ownership.revoked_at IS NULL
+                    ORDER BY agent.created_at ASC, agent.id ASC
+                  ) AS target_agent_matrix_user_ids
            FROM agent_room.room_catalog_entry AS catalog
            LEFT JOIN agent_room.principal AS target ON target.id = $2
            WHERE catalog.id = $1",
@@ -810,6 +818,7 @@ async fn expiry_room(
             .map(MatrixUserId::new)
             .transpose()
             .map_err(|_| corrupt_data(operation))?,
+        target_agent_matrix_user_ids: decode_agent_matrix_users(&row, operation)?,
     }))
 }
 
@@ -832,12 +841,39 @@ async fn mute_standing(
                              room.id ASC
                   ) AS matrix_room_ids,
                   target.matrix_user_id AS target_matrix_user_id,
+                  ARRAY(
+                    SELECT agent.matrix_user_id
+                    FROM agent_room.agent_ownership AS ownership
+                    JOIN agent_room.agent AS agent ON agent.id = ownership.agent_id
+                    WHERE ownership.principal_id = target.id
+                      AND ownership.revoked_at IS NULL
+                    ORDER BY agent.created_at ASC, agent.id ASC
+                  ) AS target_agent_matrix_user_ids,
                   EXISTS (
                     SELECT 1 FROM agent_room.private_room_membership AS membership
                     WHERE membership.catalog_entry_id = catalog.id
                       AND membership.principal_id = $2
                       AND membership.membership_status IN ('invited', 'joined')
                       AND (membership.permission_bits & 2) = 2
+                  ) OR (
+                    -- 他不是房间里的人（网络 Agent 的合成主体从来不是）时，看他名下凭口令或敲门
+                    -- 进来的 Agent 成员能不能说话。
+                    NOT EXISTS (
+                      SELECT 1 FROM agent_room.private_room_membership AS membership
+                      WHERE membership.catalog_entry_id = catalog.id
+                        AND membership.principal_id = $2
+                        AND membership.membership_status IN ('invited', 'joined')
+                    )
+                    AND EXISTS (
+                      SELECT 1 FROM agent_room.private_room_agent_member AS agent_member
+                      JOIN agent_room.agent_ownership AS ownership
+                        ON ownership.agent_id = agent_member.agent_id
+                      WHERE agent_member.catalog_entry_id = catalog.id
+                        AND ownership.principal_id = $2
+                        AND ownership.revoked_at IS NULL
+                        AND agent_member.membership_status = 'joined'
+                        AND (agent_member.permission_bits & 2) = 2
+                    )
                   ) AS member_may_speak
            FROM agent_room.room_catalog_entry AS catalog
            LEFT JOIN agent_room.principal AS target ON target.id = $2
@@ -869,6 +905,7 @@ async fn mute_standing(
             .map(MatrixUserId::new)
             .transpose()
             .map_err(|_| corrupt_data(operation))?,
+        target_agent_matrix_user_ids: decode_agent_matrix_users(&row, operation)?,
         may_speak: room_kind != RoomCatalogKind::PrivateRoom || member_may_speak,
         mutes: person_mutes(pool, room_catalog_id, target, operation).await?,
     }))
@@ -1181,6 +1218,14 @@ async fn inspect_room_authority(
                              room.id ASC
                   ) AS matrix_room_ids,
                   target.matrix_user_id AS target_matrix_user_id,
+                  ARRAY(
+                    SELECT agent.matrix_user_id
+                    FROM agent_room.agent_ownership AS ownership
+                    JOIN agent_room.agent AS agent ON agent.id = ownership.agent_id
+                    WHERE ownership.principal_id = target.id
+                      AND ownership.revoked_at IS NULL
+                    ORDER BY agent.created_at ASC, agent.id ASC
+                  ) AS target_agent_matrix_user_ids,
                   EXISTS (
                     SELECT 1 FROM agent_room.moderation_operator AS operator
                     WHERE operator.principal_id = $1
@@ -1222,6 +1267,7 @@ async fn inspect_room_authority(
         RoomCatalogKind::try_from(catalog_kind.as_str()).map_err(|_| corrupt_data(operation))?;
     let is_platform_moderator: bool = decode_column(&row, "is_platform_moderator", operation)?;
     let is_room_manager: bool = decode_column(&row, "is_room_manager", operation)?;
+    let target_agent_matrix_user_ids = decode_agent_matrix_users(&row, operation)?;
     let role = if is_platform_moderator {
         ModerationRole::PlatformModerator
     } else if room_kind == RoomCatalogKind::PrivateRoom && is_room_manager {
@@ -1241,7 +1287,21 @@ async fn inspect_room_authority(
             .map(MatrixUserId::new)
             .transpose()
             .map_err(|_| corrupt_data(operation))?,
+        target_agent_matrix_user_ids,
     }))
+}
+
+/// 被管的人名下的 Agent（他是主人或操作人、还没撤的），先建的在前。和私人房间收紧成员能力时一并收紧的
+/// 是同一批（`PrivateRoomAgentDirectory::agent_matrix_users`）。
+fn decode_agent_matrix_users(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<Vec<MatrixUserId>> {
+    decode_column::<Vec<String>>(row, "target_agent_matrix_user_ids", operation)?
+        .into_iter()
+        .map(MatrixUserId::new)
+        .collect::<Result<_, _>>()
+        .map_err(|_| corrupt_data(operation))
 }
 
 async fn platform_role(
@@ -1302,7 +1362,10 @@ fn decode_case(row: &PgRow, operation: &'static str) -> RepositoryResult<Moderat
     .map_err(|_| corrupt_data(operation))
 }
 
-fn decode_action(row: &PgRow, operation: &'static str) -> RepositoryResult<ModerationAction> {
+pub(crate) fn decode_action(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<ModerationAction> {
     let target_kind: Option<String> = decode_column(row, "target_kind", operation)?;
     let room_catalog_id: Option<uuid::Uuid> = decode_column(row, "room_catalog_id", operation)?;
     let target_kind = target_kind.ok_or_else(|| corrupt_data(operation))?;

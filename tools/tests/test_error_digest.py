@@ -360,6 +360,18 @@ class NoiseTableTests(unittest.TestCase):
             self.assertIn(rule.service, SERVICES)
             self.assertTrue(rule.reason)
 
+    def test_leave_denied_because_not_in_room_is_noise(self) -> None:
+        # 汇总里数字已经换成 N，规则里写 403 永远对不上（agent-room-ops#56 又出现过一次）。
+        line = (
+            "2026-11-02 00:01:27,123 WARNING synapse.handlers.message Denying new event "
+            "<FrozenEventV3 event_id=$abc, type=m.room.member, state_key=@u:example.org, membership=leave> "
+            "because 403: @u:example.org not in room !r:example.org"
+        )
+        observation = parse_synapse(line)
+        self.assertIsNotNone(observation)
+        digest = summarize({"control-plane": [], "identity": [], "synapse": [line], "gateway": []}, load_noise(NOISE_FILE))
+        self.assertEqual([], [f.signature.summary for f in digest.findings])
+
     def test_known_noise_is_not_reported_but_real_problems_are(self) -> None:
         presence_429 = SYNAPSE_ACCESS_403.replace(" 77B 403 ", " 77B 429 ").replace('"GET ', '"PUT ')
         account_data_404 = SYNAPSE_ACCESS_403.replace(" 77B 403 ", " 77B 404 ").replace(
@@ -386,6 +398,17 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(sum(digest.ignored.values()), 6)
         self.assertEqual(digest.findings[0].signature.severity, "p1")
 
+    def test_synapse_message_rate_limit_is_noise(self) -> None:
+        send_429 = SYNAPSE_ACCESS_403.replace(" 77B 403 ", " 77B 429 ").replace('"GET ', '"PUT ').replace(
+            f"/presence/{USER_ID}/status", "/rooms/!room:example.org/send/m.room.message/txn1"
+        )
+        digest = summarize(
+            {"control-plane": [], "identity": [], "synapse": [send_429], "gateway": []},
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual([], [f.signature.summary for f in digest.findings])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_identity_events_seen_in_production_are_noise(self) -> None:
         def event(kind: str, error: str) -> str:
             return KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", kind).replace("invalid_request", error)
@@ -405,6 +428,8 @@ class NoiseTableTests(unittest.TestCase):
                     event("RESTART_AUTHENTICATION_ERROR", "invalid_code"),
                     event("LOGIN_ERROR", "invalid_code"),
                     event("LOGIN_ERROR", "already_logged_in"),
+                    event("REGISTER_ERROR", "invalid_code"),
+                    event("REGISTER_ERROR", "already_logged_in"),
                     KEYCLOAK_SERVICES.replace("ERROR [org.keycloak.services]", "WARN  [org.hibernate.orm.session]")
                     .replace(
                         "KC-SERVICES0093: Invalid parameter value for: scope",
@@ -417,7 +442,30 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 13)
+        self.assertEqual(sum(digest.ignored.values()), 15)
+
+    def test_rejected_new_password_is_noise(self) -> None:
+        line = (
+            KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", "UPDATE_PASSWORD_ERROR")
+            .replace("invalid_request", "password_rejected")
+            .replace("Invalid scopes: openidprofile", "invalidPasswordMinLengthMessage")
+        )
+        digest = summarize({"identity": [line]}, load_noise(NOISE_FILE))
+        self.assertEqual(digest.findings, [])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_multipart_probe_at_the_chat_server_is_noise(self) -> None:
+        probe = (
+            "2026-10-28 14:47:16,222 WARNING synapse.http.site Aborting connection from "
+            f"IPv4Address(type='TCP', host='{IP}', port=57362) because "
+            "`content-type: multipart/form-data` is unsupported: POST /"
+        )
+        other = probe.replace("multipart/form-data", "application/x-www-form-urlencoded")
+        digest = summarize({"synapse": [probe, probe.replace("57362", "45484"), other]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("application/x-www-form-urlencoded", summaries[0])
+        self.assertEqual(sum(digest.ignored.values()), 2)
 
     def test_confirming_just_after_the_recent_sign_in_window_is_noise(self) -> None:
         def failure(kind: str, path: str) -> str:
@@ -481,6 +529,36 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_listing_rooms_of_a_deleted_agent_is_noise(self) -> None:
+        listing = (
+            CONTROL_WARN.replace("公开大厅云端入场失败", "Agent 大厅入口失败")
+            .replace('"failure": "Internal"', '"failure": "NotFound"')
+            .replace("agent_room_control_plane::features::lobbies", "agent_room_control_plane::error")
+            .replace('"POST"', '"GET"')
+            .replace(f"/lobbies/{CATALOG_ID}/entry", f"/agents/{CATALOG_ID}/rooms")
+        )
+        bring = listing.replace('"GET"', '"POST"')
+        digest = summarize({"control-plane": [listing, bring]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error Agent 大厅入口失败 failure=NotFound "
+                "@ POST /agents/{id}/rooms"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_agent_asking_about_a_room_it_never_entered_is_noise(self) -> None:
+        member = SYNAPSE_ACCESS_403.replace(
+            f"/presence/{USER_ID}/status", f"/rooms/{ROOM_ID}/state/m.room.member/{USER_ID}"
+        ).replace('"Mozilla/5.0 (Macintosh)"', '"matrix-rust-sdk"')
+        room_name = member.replace(f"m.room.member/{USER_ID}", "m.room.name/")
+        digest = summarize({"synapse": [member, room_name]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(summaries, ["GET /_matrix/client/v3/rooms/{id}/state/m.room.name/ → 403"])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_asking_for_a_room_code_before_there_is_one_is_noise(self) -> None:
         web = CONTROL_JOIN_CODE.replace(
             f"/devices/current/private-rooms/{CATALOG_ID}/code", f"/private-rooms/{CATALOG_ID}/agent-access/code"
@@ -517,6 +595,30 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(
             summaries, ["WARN agent_room_control_plane::error 网络 Agent 请求失败 failure=Internal @ POST /mcp"]
         )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_knock_check_with_a_revoked_token_is_noise(self) -> None:
+        def failure(kind: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-10-29T02:16:42.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "等消息时没看成有没有人敲它建的房间的门，过一会儿再看",
+                        "correlation.id": CORRELATION_ID,
+                        "failure": kind,
+                    },
+                    "target": "agent_room_control_plane::network_gateway::knocks",
+                    "span": {"http.request.method": "GET", "url.path": "/v1/network-agents/me/messages"},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {"control-plane": [failure("Unauthorized"), failure("Internal")]}, load_noise(NOISE_FILE)
+        )
+        [finding] = digest.findings
+        self.assertIn("failure=Internal", finding.signature.summary)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
 

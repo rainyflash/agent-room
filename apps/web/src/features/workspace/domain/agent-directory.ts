@@ -51,6 +51,24 @@ export const leftAgentRoomSchema = z.object({ left: z.boolean() }).strict();
 
 export type AgentRoom = z.output<typeof agentRoomSchema>;
 
+/**
+ * 一个还在用的连接，它的 Matrix 设备上次用是什么时候（Synapse 记的，等消息、发言都算）。`null` 是设备
+ * 已经不在了或者从没用过。问不到的连接不在列表里。
+ */
+export const agentInstanceActivitySchema = z
+  .object({
+    agentInstanceId: uuidV7Schema,
+    matrixLastSeenAtUnixMs: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+
+export const agentInstanceActivityListSchema = z
+  .object({ instances: z.array(agentInstanceActivitySchema).max(2_000) })
+  .strict();
+
+/** 按连接 ID 记的设备上次用的时间。 */
+export type AgentInstanceActivity = ReadonlyMap<string, number | null>;
+
 export type AgentDirectoryFailure = {
   readonly code: string;
   readonly correlationId?: string;
@@ -65,6 +83,8 @@ export type AgentDirectoryGateway = {
   deleteAgent(agentId: string): Promise<Result<void, AgentDirectoryFailure>>;
   /** 它在哪些房间。 */
   listAgentRooms(agentId: string): Promise<Result<readonly AgentRoom[], AgentDirectoryFailure>>;
+  /** 每个还在用的连接的设备上次用的时间（`GET /agent-instances/matrix-activity`）。 */
+  listInstanceActivity(): Promise<Result<AgentInstanceActivity, AgentDirectoryFailure>>;
   /** 把它在你电脑上的连接带进一个房间，回答进去了几个连接。 */
   bringAgentIntoRoom(
     agentId: string,

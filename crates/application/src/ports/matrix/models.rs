@@ -15,8 +15,10 @@ use super::{
 
 const MAX_LOGIN_ID_LENGTH: usize = 512;
 const MAX_DISPLAY_NAME_LENGTH: usize = 128;
-const MAX_ROOM_NAME_LENGTH: usize = 255;
-const MAX_ROOM_TOPIC_LENGTH: usize = 2_048;
+// 房间名和说明在房间目录里按字数限（128、2048 个字，`agent_room_domain::rooms`），这里按字节，
+// 要装得下目录收下的最长内容：一个字最多 4 个字节。
+const MAX_ROOM_NAME_LENGTH: usize = 512;
+const MAX_ROOM_TOPIC_LENGTH: usize = 8_192;
 const MAX_EVENT_PAYLOAD_BYTES: usize = 65_536;
 const MAX_ROOM_INVITES: usize = 250;
 const MAX_ROOM_RETENTION_DAYS: u16 = 3_650;
@@ -456,7 +458,7 @@ impl MatrixCreateRoom {
             validate_text("matrix_room_name", name, MAX_ROOM_NAME_LENGTH, false)?;
         }
         if let Some(topic) = topic.as_deref() {
-            validate_text("matrix_room_topic", topic, MAX_ROOM_TOPIC_LENGTH, true)?;
+            validate_room_topic(topic)?;
         }
         if invite.len() > MAX_ROOM_INVITES {
             return Err(DomainError::Validation {
@@ -1165,6 +1167,21 @@ fn validate_text(
     Ok(())
 }
 
+/// 说明可以分行，和房间目录一样只收换行，别的控制字符不收（agent-room-ops#57）。
+fn validate_room_topic(topic: &str) -> DomainResult<()> {
+    if topic.len() > MAX_ROOM_TOPIC_LENGTH
+        || topic
+            .chars()
+            .any(|character| character.is_control() && character != '\n')
+    {
+        return Err(DomainError::Validation {
+            field: "matrix_room_topic",
+            reason: "文本超出允许范围",
+        });
+    }
+    Ok(())
+}
+
 fn validate_event_content(content: &Value) -> DomainResult<()> {
     if !content.is_object() {
         return Err(DomainError::Validation {
@@ -1231,6 +1248,26 @@ mod tests {
         .with_member_writable_state_event_type(event_type.clone());
 
         assert_eq!(request.member_writable_state_event_types(), &[event_type]);
+    }
+
+    #[test]
+    fn 房间目录收下的名字和说明都建得了房_说明里只收换行() {
+        let create = |name: String, topic: String| {
+            MatrixCreateRoom::new(
+                Some(name),
+                Some(topic),
+                MatrixRoomVisibility::Private,
+                MatrixRoomPreset::PrivateChat,
+                false,
+                Vec::new(),
+            )
+        };
+        // 目录的上限是 128 和 2048 个字；汉字一个 3 字节，表情一个 4 字节。
+        assert!(create("房".repeat(128), "第一行\n第二行".to_owned()).is_ok());
+        assert!(create("🚀".repeat(128), "🚀".repeat(2_048)).is_ok());
+        assert!(create("Lab".to_owned(), "一\t二".to_owned()).is_err());
+        assert!(create("Lab".to_owned(), "一\r\n二".to_owned()).is_err());
+        assert!(create("A\nB".to_owned(), String::new()).is_err());
     }
 
     #[test]

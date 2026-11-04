@@ -32,6 +32,27 @@ import {
   type PrivateRoomInvitePreview,
   type RedeemedPrivateRoomInvite,
 } from '@/features/private-rooms/domain/private-room-invite-link';
+import {
+  privateRoomListingSchema,
+  type PrivateRoomListing,
+  type PrivateRoomListingGateway,
+  type PrivateRoomListingSettings,
+} from '@/features/private-rooms/domain/private-room-listing';
+import {
+  answeredJoinRequestSchema,
+  pendingJoinRequestsSchema,
+  publicRoomMembershipSchema,
+  type JoinRequestDecision,
+  type PendingJoinRequest,
+  type PublicRoomEntryGateway,
+  type PublicRoomJoinGateway,
+  type PublicRoomMembership,
+} from '@/features/private-rooms/domain/public-room-join';
+import {
+  writtenRoomNoticeSchema,
+  type RoomNoticeGateway,
+  type WrittenRoomNotice,
+} from '@/features/room-notice/domain/room-notice';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -50,7 +71,15 @@ export type ControlPlanePrivateRoomClientOptions = {
   readonly timeoutMs?: number;
 };
 
-export class ControlPlanePrivateRoomClient implements PrivateRoomGateway, PrivateRoomInviteGateway {
+export class ControlPlanePrivateRoomClient
+  implements
+    PrivateRoomGateway,
+    PrivateRoomInviteGateway,
+    PrivateRoomListingGateway,
+    PublicRoomEntryGateway,
+    PublicRoomJoinGateway,
+    RoomNoticeGateway
+{
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
   readonly #timeoutMs: number;
@@ -175,6 +204,17 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway, Privat
     });
   }
 
+  updateNotice(
+    catalogId: string,
+    text: string,
+  ): Promise<Result<WrittenRoomNotice, PrivateRoomFailure>> {
+    return this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/notice`,
+      { body: JSON.stringify({ text }), method: 'PUT' },
+      writtenRoomNoticeSchema,
+    );
+  }
+
   archive(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
     return this.#roomRequest(`/private-rooms/${encodeURIComponent(catalogId)}`, {
       method: 'DELETE',
@@ -282,10 +322,96 @@ export class ControlPlanePrivateRoomClient implements PrivateRoomGateway, Privat
     );
   }
 
+  listing(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
+    return this.#request(this.#listingPath(catalogId), { method: 'GET' }, privateRoomListingSchema);
+  }
+
+  updateListing(
+    catalogId: string,
+    settings: PrivateRoomListingSettings,
+  ): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
+    return this.#request(
+      this.#listingPath(catalogId),
+      {
+        body: JSON.stringify({
+          allowNetworkAgents: settings.allowNetworkAgents,
+          joinMode: settings.joinMode,
+          listed: settings.listed,
+          memberPermissions: settings.memberPermissions,
+        }),
+        method: 'PUT',
+      },
+      privateRoomListingSchema,
+    );
+  }
+
+  changeShareCode(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
+    return this.#request(
+      `${this.#listingPath(catalogId)}/share-code`,
+      { method: 'POST' },
+      privateRoomListingSchema,
+    );
+  }
+
+  join(catalogId: string): Promise<Result<PublicRoomMembership, PrivateRoomFailure>> {
+    return this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/join`,
+      { method: 'POST' },
+      publicRoomMembershipSchema,
+    );
+  }
+
+  requestToJoin(
+    catalogId: string,
+    message: string,
+  ): Promise<Result<PublicRoomMembership, PrivateRoomFailure>> {
+    return this.#request(
+      this.#joinRequestsPath(catalogId),
+      { body: JSON.stringify({ message }), method: 'POST' },
+      publicRoomMembershipSchema,
+    );
+  }
+
+  withdrawJoinRequest(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
+    return this.#send(this.#joinRequestsPath(catalogId), { method: 'DELETE' });
+  }
+
+  async joinRequests(
+    catalogId: string,
+  ): Promise<Result<readonly PendingJoinRequest[], PrivateRoomFailure>> {
+    const response = await this.#request(
+      this.#joinRequestsPath(catalogId),
+      { method: 'GET' },
+      pendingJoinRequestsSchema,
+    );
+    return response.ok ? ok(response.value.requests) : response;
+  }
+
+  async answerJoinRequest(
+    catalogId: string,
+    principalId: string,
+    decision: JoinRequestDecision,
+  ): Promise<Result<void, PrivateRoomFailure>> {
+    const response = await this.#request(
+      `${this.#joinRequestsPath(catalogId)}/${encodeURIComponent(principalId)}`,
+      { body: JSON.stringify({ decision }), method: 'PUT' },
+      answeredJoinRequestSchema,
+    );
+    return response.ok ? ok(undefined) : response;
+  }
+
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
     return this.#send(`${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`, {
       method: 'DELETE',
     });
+  }
+
+  #joinRequestsPath(catalogId: string): string {
+    return `/private-rooms/${encodeURIComponent(catalogId)}/join-requests`;
+  }
+
+  #listingPath(catalogId: string): string {
+    return `/private-rooms/${encodeURIComponent(catalogId)}/listing`;
   }
 
   #inviteLinkPath(catalogId: string): string {

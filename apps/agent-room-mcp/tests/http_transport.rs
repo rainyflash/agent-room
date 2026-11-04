@@ -253,7 +253,15 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
     assert!(matches!(lookup, IpcMethod::GetMessages(request) if request.ids == ["$last"]));
     let (first, inner) = inner.split_first().unwrap();
     assert!(matches!(first, IpcMethod::GetSelf));
-    let (last, holds) = inner.split_last().unwrap();
+    let (last, inner) = inner.split_last().unwrap();
+    // 交之前问一次这一批的房间有没有交给它管（这个假 Bridge 不认，就当没有）。
+    let (moderation, inner) = inner.split_last().unwrap();
+    assert!(matches!(moderation, IpcMethod::ModerateRoom(request) if request.room_id.is_some()));
+    // 再之前问一次改了的公告（也当没有）。
+    let (notices, holds) = inner.split_last().unwrap();
+    assert!(
+        matches!(notices, IpcMethod::ReadRoomNotices(request) if request.every_room && request.changed_only)
+    );
     // 等的时候一直算在等；人说的话到了、防抖以后交出去，再告诉 Bridge 不等了。
     assert!(
         holds
@@ -314,7 +322,7 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
     let list = server
         .rpc(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
         .await;
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 24);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 25);
     let open = server.rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
         "name":"agent_room_open_session","arguments":{"sessionKey":SESSION,"displayName":"HTTP test"}
     }})).await;
@@ -324,12 +332,15 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
     }})).await;
     assert_ne!(wait["result"]["isError"], true);
     let calls = server.bridge.calls.lock().unwrap();
-    assert_eq!(calls.len(), 3);
+    assert_eq!(calls.len(), 4);
     assert!(
         matches!(&calls[2], IpcMethod::WithSession { session_id, method }
         if session_id == SESSION && matches!(method.as_ref(), IpcMethod::ReadInbox(request)
             if request.every_room && after(request) == Some("$last")))
     );
+    // 看一眼也顺带问改了的公告。
+    assert!(matches!(&calls[3], IpcMethod::WithSession { method, .. }
+        if matches!(method.as_ref(), IpcMethod::ReadRoomNotices(request) if request.every_room)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -459,7 +470,7 @@ async fn 新版无状态协议可直接发现工具并拒绝重复认证头() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let result = common::rpc_result(response).await;
-    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 24);
+    assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 25);
     let response = server
         .client
         .post(&server.url)
