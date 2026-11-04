@@ -149,7 +149,10 @@ test('房主生成邀请链接，第二个人登录后加入，他的 Agent 进�
   try {
     const owner = await openIsolatedPage(browser, contexts);
     const guest = await openIsolatedPage(browser, contexts);
-    const failures = [...collectUnhandledFailures(owner), ...collectUnhandledFailures(guest)];
+    const failures = {
+      guest: collectUnhandledFailures(guest),
+      owner: collectUnhandledFailures(owner),
+    };
 
     await connectLiveSession(owner, {
       expectedDisplayName: 'Local Collaborator',
@@ -188,7 +191,7 @@ test('房主生成邀请链接，第二个人登录后加入，他的 Agent 进�
     }
     await expectOwnerLabel(owner, spoke.agentName, 'Local Developer’s agent');
     await expectOwnerLabel(guest, spoke.agentName, 'Your agent');
-    expect(failures).toEqual([]);
+    expect(failures).toEqual({ guest: [], owner: [] });
     await writeFile(checkedPath ?? '', `${JSON.stringify({ checked: true })}\n`, 'utf8');
   } finally {
     await Promise.all(
