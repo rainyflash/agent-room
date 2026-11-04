@@ -444,6 +444,91 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
         self.assertEqual(sum(digest.ignored.values()), 15)
 
+    def test_opening_the_sign_in_address_without_parameters_is_noise(self) -> None:
+        bare = KEYCLOAK_LOGIN_ERROR.replace('clientId="agent-room-web"', 'clientId="null"').replace(
+            "Invalid scopes: openidprofile",
+            "Parameter 'client_id' not present or present multiple times in the HTTP request parameters",
+        )
+        digest = summarize({"identity": [bare, KEYCLOAK_LOGIN_ERROR]}, load_noise(NOISE_FILE))
+        self.assertEqual(
+            [finding.signature.summary for finding in digest.findings],
+            ["LOGIN_ERROR error=invalid_request"],
+        )
+        self.assertEqual(digest.findings[0].count, 1)
+        self.assertIn("Invalid scopes", digest.findings[0].sample)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_second_use_of_a_chat_sign_in_code_is_noise(self) -> None:
+        def exchange(client: str) -> str:
+            return (
+                KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", "CODE_TO_TOKEN_ERROR")
+                .replace("invalid_request", "invalid_code")
+                .replace('clientId="agent-room-web"', f'clientId="{client}"')
+            )
+
+        digest = summarize(
+            {"identity": [exchange("agent-room-matrix"), exchange("agent-room-web")]},
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(
+            [finding.sample.split(" reason=")[0] for finding in digest.findings],
+            ["CODE_TO_TOKEN_ERROR error=invalid_code clientId=agent-room-web"],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_recipient_refused_by_the_mail_server_is_noise(self) -> None:
+        def failure(exception: str) -> str:
+            return KEYCLOAK_SERVICES.replace(
+                "KC-SERVICES0093: Invalid parameter value for: scope",
+                f"KC-SERVICES0029: Failed to send email: {exception}",
+            )
+
+        digest = summarize(
+            {
+                "identity": [
+                    failure("jakarta.mail.SendFailedException: Invalid Addresses;"),
+                    failure("org.keycloak.email.EmailException: Password based SMTP connect failed"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(
+            [finding.signature.summary for finding in digest.findings],
+            [
+                "ERROR org.keycloak.services KC-SERVICES0029: Failed to send email: "
+                "org.keycloak.email.EmailException: Password based SMTP connect failed"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_token_replaced_while_polling_for_handoffs_is_noise(self) -> None:
+        def failure(path: str) -> str:
+            return (
+                CONTROL_JOIN_CODE.replace("Agent 口令请求失败", "设备认证请求失败")
+                .replace("private_room.join_code.reveal", "device.authenticate")
+                .replace('"failure": "NotFound"', '"failure": "InvalidToken"')
+                .replace('"GET"', '"POST"')
+                .replace(f"/devices/current/private-rooms/{CATALOG_ID}/code", path)
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    failure(f"/agent-instances/{CATALOG_ID}/handoffs/claim"),
+                    failure(f"/agent-instances/{CATALOG_ID}/verification"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(
+            [finding.signature.summary for finding in digest.findings],
+            [
+                "WARN agent_room_control_plane::error 设备认证请求失败 failure=InvalidToken "
+                "operation=device.authenticate @ POST /agent-instances/{id}/verification"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_rejected_new_password_is_noise(self) -> None:
         line = (
             KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", "UPDATE_PASSWORD_ERROR")
