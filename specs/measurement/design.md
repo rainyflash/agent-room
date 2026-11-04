@@ -92,7 +92,7 @@
     - 蒙古和朝鲜算日韩，阿富汗和英属印度洋领地算南亚；
     - 南极洲和澳新的海外领地算大洋洲，格陵兰算北美，加勒比海的美、英、法、荷属地算拉美；
     - 以色列、伊朗和整个非洲算中东和非洲。
-  - IP 库：控制面镜像构建时下载 `dbip-country-lite-2026-10.mmdb.gz`，核对 SHA-256（`4cd44536ddfd40fec7eca94a233f7d19f38d470e6522e653cb8d27001f5fe177`）后解压到 `/usr/share/agent-room/dbip-country-lite.mmdb`（`infra/production/Containerfile.control-plane`）。本地可以用 `AGENT_ROOM_REGION_DATABASE` 指到别处。没有这个文件时启动记一条告警，地区一律算未知。CC BY 4.0 的署名在 `THIRD_PARTY_NOTICES.md`。
+  - IP 库：控制面镜像构建时下载当月的 `dbip-country-lite-YYYY-MM.mmdb.gz`，核对 SHA-256（月份和摘要写在 Containerfile 里）后解压到 `/usr/share/agent-room/dbip-country-lite.mmdb`（`infra/production/Containerfile.control-plane`）。本地可以用 `AGENT_ROOM_REGION_DATABASE` 指到别处。没有这个文件时启动记一条告警，地区一律算未知。CC BY 4.0 的署名在 `THIRD_PARTY_NOTICES.md`。
   - **和上面说的不一样：** DB-IP 的下载站只留当月和上个月的文件（2026-10-28 查：9 月、10 月的在，8 月和更早的都是 404），“几个月换一次”做不到。10 月这份大约 12 月初就下不到了，从那以后控制面镜像建不起来，发布候选也一样。所以先每个月换一次日期和摘要：发版前看一眼月份，过了当月就开个小 PR 换成新的那份（下载、核对 `.gz` 和解开后的摘要，两个都写进 PR 描述）。PR 上不建控制面镜像，下不到的话要到发布候选才发现。把核对过的文件放到我们自己管的地方（比如公开仓库的一个 Release 资产）就不用每月换，但那是公开发一份文件，要先问维护者。
 
 ### 4. CDN：先量两三周，按数据再选（维护者 2026-10-28 定）
@@ -159,3 +159,4 @@
   - 打开后头几个小时响了两条告警，都是规则本身不对，不是生产出了事（#635）：
     - Outbox 积压（agent-room-ops#36）：控制面只往 `outbox_event` 里写，一直没有发布器去读（`OutboxProcessor` 只在测试里用），9 月 18 日以来的 410 条全是待发布，最旧的已经 39 天，这条告警会一直响。里面只有 ID（Agent 登记、实例登记、撤销电脑），没有名字。去掉了 Outbox 的两条告警，仪表盘照旧显示。
     - 桌面 Bridge 可用率（agent-room-ops#39）：桌面端只在本机连接的状态变了时报一个 0 或 1，每次启动先报一个“正在启动”，比例到不了一半；一段时间没有样本时还按 0 算。改成桌面端开着时每 15 分钟报一次这段时间连着的比例（`bridge_uptime`，还没授权、停下了、还在找 Bridge 的时间不算），告警看一小时的平均、少于 4 个样本不算；旧版的 `bridge_availability` 照收、不进告警。每分钟报一次会让每台开着的桌面端每小时多 60 个请求、把按地区数的请求次数撑大，所以按 15 分钟一段报。
+- 2026-11-04：IP 库换成 11 月那份（#720）。解开后的 MD5、SHA1 和 DB-IP 下载页上写的一致；库里 251 个国家代码都在 `regions.rs` 里，没有新的未知地区。下一次要在 2027 年 1 月初之前换。
