@@ -261,3 +261,8 @@ reason = "有人拿不是我们申请的令牌来访问 /.well-known/acme-challe
 service = "identity"
 summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.endpoints\\.request\\.AuthorizationEndpointRequestParserProcessor Parameter '[^']*' not present or present multiple times in the HTTP request parameters$"
 reason = "有人打开了登录地址却没带 client_id 之类的必填参数（扫描器、手敲或截断的链接），Keycloak 直接回错误页，没有登录被挡住；我们自己发起的登录总是带齐参数（2026-10-30 生产上只出现一次，缺的是 client_id，agent-room-ops#50）"
+
+[[ignore]]
+service = "identity"
+summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.utils\\.OAuth2CodeParser Code '<id>' already used for userSession '<x>' and client '<id>'\\.$"
+reason = "同一个登录回调带着的授权码被换了第二次（刷新回调页、同一浏览器多个登录标签页前后脚回来、邮箱或浏览器预取），Keycloak 拒掉第二次，第一次已经登录成功；控制面对回调重复早有处理，会按登录是否还在等记 INFO 并送回房间或重开登录（#588、#618）。2026-11-03 生产上只出现一次（agent-room-ops#66）。同一时间成片出现、而且回调之后人没登录上，才是要查的"
