@@ -50,7 +50,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 最后两个只在 `gh workflow run ci.yml --ref <分支> -f suite=all` 派发时才真跑。在 pull_request 里它们是 skipped，也算满足。
 - 真实数据库、真实 Synapse 的测试标了 `#[ignore]`，只在派发的集成作业里跑。例如控制面的 `real_dependency_tests::` 和 matrix-adapter 的 `real_synapse`。
 - 改到这些地方时，在 PR 分支上派发一次 `suite=all` 拿证据。派发里的红不挡合并，但会挡下一次发布（发布调度跑的也是 `suite=all`），所以要单独跟进。
-- `apps/web/e2e-vertical/` 下不是每个用例都在 `suite=all` 里。`targeted-handoff.e2e.ts`、`security.e2e.ts` 只走 `tools/vertical.py` 的 `bootstrap`、`security`，CI 上只有 `closed-test.yml` 调，那个工作流上一次跑是 2026-08-26，之后界面翻新过，它们没再跑过。派发绿了不代表这两个过了。`product-closure.e2e.ts` 以前也这样，要的标题和按钮界面上早就没有了；2026-11-04 修活，放在无头验收的最后一轮（它要停掉两个 Bridge）。
+- `apps/web/e2e-vertical/` 下不是每个用例都在 `suite=all` 里。`targeted-handoff.e2e.ts`、`security.e2e.ts` 只走 `tools/vertical.py` 的 `bootstrap`、`security`，CI 上只有 `closed-test.yml` 调，那个工作流上一次跑是 2026-08-26，之后界面翻新过，它们没再跑过。派发绿了不代表这两个过了。`product-closure.e2e.ts` 以前也这样，要的标题和按钮界面上早就没有了；2026-11-04 修活（#725），放在无头验收的最后一轮（它要停掉两个 Bridge）。
 - “macOS 客户端运行时原生检查”（#320）也只在派发 `suite=all` 时跑，PR 上不跑，因为 macOS 编译慢。它在 Mac 上跑和 Windows 相同的 `node tools/desktop.mjs native-check`，发布调度要求它通过。改 Bridge 本机连接、平台存储、桌面端这类跟系统打交道的代码时，派发一次看它。
 - 改 `apps/desktop/src-tauri/windows/` 下的安装器钩子时，PR 上会跑“Windows 安装器钩子”工作流（`tools/windows_installer_hooks.py`）：编译精简安装器，实跑运行中覆盖安装与卸载，一分钟左右。
   - 它按路径触发，不是必需检查，红了同样不能合。
@@ -102,7 +102,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **删除账户连 Keycloak 里的登录账户一起删**（#346，[设计](./specs/account-deletion/sign-in-account.md)）。删除任务先删 Keycloak 用户，再停用聊天账户，最后匿名化本地记录。控制面用只开服务账号的客户端 `agent-room-account-admin`（realm-management 的 `manage-users`）经内部地址删；生产由每次部署的身份同步建好它，本地和 CI 由 `dev-infra.ps1` 同步。只删签发方是本部署的账户，网络 Agent 没有登录账户。
 - **matrix-js-sdk 的 `bootstrapCrossSigning` 不带 `setupNewCrossSigning` 时，看到本机有签名私钥就不上传公钥。** 上次上传被打断（页面跳走）时，本机留着私钥、服务器上却没有签名身份，它也照样跳过。账户还没有签名身份时要带 `setupNewCrossSigning: true` 从头建。第一份别用 `resetEncryption` 建：它先删密钥存储和备份、后传公钥。
   - “账户还没有签名身份”要直接问服务器（`keys/query` 的 `master_keys`），别只信 `userHasCrossSigningKeys`：它对自己的账户答的是本机记着的身份，Rust 加密库建身份时先存本机再上传，上传被打断后它照样说有（2026-10-09 派发 CI 偶发抓到，#356）。
-  - 账户的两台设备同时第一次登录时，都看到没有签名身份、都去建，后传公钥的那台 Synapse 回 401（换身份要交互认证）。以前它这时可能已经把先到那台刚建好的删掉了，自己也停在出错、一直签不上（2026-11-04 修活 `product-closure` 时抓到）。现在先传，传成了才建备份和密钥存储；传不上就问服务器，有了就等先到那台交钥匙，再用钥匙签好自己（`signDeviceOrFollow`，只再走一遍）。真实登录验收有一条专门把两台的上传扣住、撞在一起。
+  - 账户的两台设备同时第一次登录时，都看到没有签名身份、都去建，后传公钥的那台 Synapse 回 401（换身份要交互认证）。以前它这时可能已经把先到那台刚建好的删掉了，自己也停在出错、一直签不上（2026-11-04 修活 `product-closure` 时抓到，#725）。现在先传，传成了才建备份和密钥存储；传不上就问服务器，有了就等先到那台交钥匙，再用钥匙签好自己（`signDeviceOrFollow`，只再走一遍）。真实登录验收有一条专门把两台的上传扣住、撞在一起。
 - **matrix-js-sdk 同步时不等解密。** 同步带来的加密事件它拿去解（`processPollEvents`），不等解完就发出 `sync` 事件，这时新消息多半还是 `m.room.encrypted`。只在 `sync` 时重读的话，这条消息要等下一次同步才显示，没有新事件时长轮询要等 30 秒（2026-10-17 录视频时组长的网页抓到）。网页的消息源（`matrix-message-source.ts`）订阅期间也听 `Event.decrypted`，别去掉；新加读加密内容的地方也要这样。
 - **网页构建不补内置函数。** Vite 只把语法降到 Safari 16.4，`Promise.withResolvers`、`AbortSignal.any` 这类 iOS/Safari 17.4 起才有的函数不补。matrix-js-sdk 的加密库每次同步完都用 `Promise.withResolvers`，缺了它同步一次就停住：这台设备的密钥传不上服务器、签不好，加密房间里发不出消息，安全页却说“已就绪”（2026-10-19 维护者的 iPhone，iOS 17.2）。#534 起 `main.tsx` 第一个导入 `shared/browser/builtin-polyfills.ts` 补上这两个。升级 matrix-js-sdk 或加依赖以后，在生产构建里搜一遍更新的内置函数（`Promise.try`、`Object.groupBy`、`URL.parse`、迭代器方法之类），用到了就补进去。新版 Chrome 自带的新函数越来越多，库里“有就用、没有就退回”的那条退回的路只有旧 iPhone 走得到，所以真实登录验收有一条照 MDN 兼容数据拿掉 iOS 17.2 缺的全部内置函数再登录的用例（`e2e-live/support/old-safari.ts`），要求设备密钥传上服务器、重新打开后接着同步；以后再碰上旧浏览器的坑，名单补进去。
   - 网页有离线缓存（Service Worker，`registerType: 'prompt'`）：发了修复以后，旧设备打开时先拿到的还是缓存里的旧版，要点“重新加载更新”或者把标签页彻底关掉再开。排查某台手机、某个浏览器上的问题，先请人看“设置 → 关于”里的版本号。
