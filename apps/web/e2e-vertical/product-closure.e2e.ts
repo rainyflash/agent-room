@@ -75,11 +75,11 @@ test('三套独立浏览器会话完成云端工作区、跨账户消息与定�
     const ownerPrimary = await openIsolatedPage(browser, contexts);
     const ownerSecondary = await openIsolatedPage(browser, contexts);
     const collaborator = await openIsolatedPage(browser, contexts);
-    const failures = [
-      ...collectUnhandledFailures(ownerPrimary),
-      ...collectUnhandledFailures(ownerSecondary),
-      ...collectUnhandledFailures(collaborator),
-    ];
+    const failures = {
+      collaborator: collectUnhandledFailures(collaborator),
+      ownerPrimary: collectUnhandledFailures(ownerPrimary),
+      ownerSecondary: collectUnhandledFailures(ownerSecondary),
+    };
 
     const ownerCredentials: LiveSessionCredentials = {
       expectedDisplayName: 'Local Developer',
@@ -163,7 +163,7 @@ test('三套独立浏览器会话完成云端工作区、跨账户消息与定�
       )}\n`,
       'utf8',
     );
-    expect(failures).toEqual([]);
+    expect(failures).toEqual({ collaborator: [], ownerPrimary: [], ownerSecondary: [] });
   } finally {
     await Promise.all(
       contexts.map(async (context) => {
