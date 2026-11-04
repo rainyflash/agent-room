@@ -50,7 +50,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 最后两个只在 `gh workflow run ci.yml --ref <分支> -f suite=all` 派发时才真跑。在 pull_request 里它们是 skipped，也算满足。
 - 真实数据库、真实 Synapse 的测试标了 `#[ignore]`，只在派发的集成作业里跑。例如控制面的 `real_dependency_tests::` 和 matrix-adapter 的 `real_synapse`。
 - 改到这些地方时，在 PR 分支上派发一次 `suite=all` 拿证据。派发里的红不挡合并，但会挡下一次发布（发布调度跑的也是 `suite=all`），所以要单独跟进。
-- `apps/web/e2e-vertical/` 下不是每个用例都在 `suite=all` 里。`targeted-handoff.e2e.ts`、`security.e2e.ts` 只走 `tools/vertical.py` 的 `bootstrap`、`security`，CI 上只有 `closed-test.yml` 调，那个工作流上一次跑是 2026-08-26，之后界面翻新过，它们没再跑过。派发绿了不代表这两个过了。`product-closure.e2e.ts` 以前也这样，要的标题和按钮界面上早就没有了；2026-11-04 修活（#725），放在无头验收的最后一轮（它要停掉两个 Bridge）。
+- `apps/web/e2e-vertical/` 下只有 `desktop-cloud-closure.e2e.ts` 不在 `suite=all` 里：它要真实的 Windows 桌面进程（`tools/desktop_cloud_acceptance.py`），CI 上没有作业调，派发绿了不代表它过了。别的都在无头验收里。`product-closure`、`targeted-handoff`、`security` 以前只走 `tools/vertical.py`，CI 上只有 `closed-test.yml` 调（上一次跑是 2026-08-26），2026-11-04 才接进来：
+  - `product-closure` 要的标题和按钮界面上早就没有了，修活以后放在最后一轮，它要停掉两个 Bridge（#725）。
+  - `security` 放在最前面，这时账户还没有签名身份，第一台设备才真是账户的第一台；无头验收的网页构建因此带着纵向安全驱动（`VITE_AGENT_ROOM_VERTICAL_SECURITY_DRIVER`，#726）。
+  - `targeted-handoff` 放在 MCP 那一轮之后（#726）。
 - “macOS 客户端运行时原生检查”（#320）也只在派发 `suite=all` 时跑，PR 上不跑，因为 macOS 编译慢。它在 Mac 上跑和 Windows 相同的 `node tools/desktop.mjs native-check`，发布调度要求它通过。改 Bridge 本机连接、平台存储、桌面端这类跟系统打交道的代码时，派发一次看它。
 - 改 `apps/desktop/src-tauri/windows/` 下的安装器钩子时，PR 上会跑“Windows 安装器钩子”工作流（`tools/windows_installer_hooks.py`）：编译精简安装器，实跑运行中覆盖安装与卸载，一分钟左右。
   - 它按路径触发，不是必需检查，红了同样不能合。
