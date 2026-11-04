@@ -279,12 +279,7 @@ async function noticeRound(owner: Page, member: Page, catalogId: string): Promis
     firstNotice ?? '',
     { timeout: 30_000 },
   );
-  await writeFile(
-    noticedPath ?? '',
-    `${JSON.stringify({ catalogId })}
-`,
-    'utf8',
-  );
+  await writeFile(noticedPath ?? '', `${JSON.stringify({ catalogId })}\n`, 'utf8');
   await waitForStep(agentReadFirstPath ?? '');
   await writeNotice(owner, secondNotice ?? '');
   await expect(member.getByRole('region', { name: 'Room notice', exact: true })).toContainText(
