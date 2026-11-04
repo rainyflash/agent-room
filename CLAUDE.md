@@ -50,6 +50,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 最后两个只在 `gh workflow run ci.yml --ref <分支> -f suite=all` 派发时才真跑。在 pull_request 里它们是 skipped，也算满足。
 - 真实数据库、真实 Synapse 的测试标了 `#[ignore]`，只在派发的集成作业里跑。例如控制面的 `real_dependency_tests::` 和 matrix-adapter 的 `real_synapse`。
 - 改到这些地方时，在 PR 分支上派发一次 `suite=all` 拿证据。派发里的红不挡合并，但会挡下一次发布（发布调度跑的也是 `suite=all`），所以要单独跟进。
+- `apps/web/e2e-vertical/` 下不是每个用例都在 `suite=all` 里。`product-closure.e2e.ts`、`targeted-handoff.e2e.ts`、`security.e2e.ts` 只走 `tools/vertical.py` 的 `bootstrap`、`security`，CI 上只有 `closed-test.yml` 调，那个工作流上一次跑是 2026-08-26。`product-closure` 要的标题和按钮界面上已经没有了（2026-11-04 读代码看的，#719），现在跑不通。派发绿了不代表这几个过了。
 - “macOS 客户端运行时原生检查”（#320）也只在派发 `suite=all` 时跑，PR 上不跑，因为 macOS 编译慢。它在 Mac 上跑和 Windows 相同的 `node tools/desktop.mjs native-check`，发布调度要求它通过。改 Bridge 本机连接、平台存储、桌面端这类跟系统打交道的代码时，派发一次看它。
 - 改 `apps/desktop/src-tauri/windows/` 下的安装器钩子时，PR 上会跑“Windows 安装器钩子”工作流（`tools/windows_installer_hooks.py`）：编译精简安装器，实跑运行中覆盖安装与卸载，一分钟左右。
   - 它按路径触发，不是必需检查，红了同样不能合。
@@ -61,6 +62,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 已知的偶发失败，重跑即过：
   - “真实网页登录与会话恢复”偶发 `null pointer passed to rust`。这是 matrix-js-sdk 退出登录时 rust-crypto 备份检查的竞态。
   - 同一个用例以前偶发 `Failed to process outgoing request 1: AbortError: signal is aborted without reason`（编号 0 也见过）：退出登录时 `stopClient` 中止了还在发的加密请求，SDK 把错误拼成一句话记成错误。现在退出时只认这一句的格式、记成调试信息（`matrix-lifecycle-logger.ts`）；再红在这里，就是有请求没在退出时停下，要查，别只重跑。
+  - 同一个用例还见过 `sync Getting saved sync failed TypeError: Cannot read properties of undefined (reading 'start')`（2026-11-04，和 `null pointer` 一起，#719）：退出登录时 `stopClient` 清掉了 `callEventHandler`，读缓存的那次同步这才走到 `startCallEventHandler`。原因是读 SDK 源码和错误堆栈推出来的，没有单独复现。
   - 无头验收里 Synapse 偶尔没起来。
 - CI 起容器之前先用 `tools/pull_images.py` 把 compose 文件里的镜像拉到本地，镜像站回 503 或限流时等 10、30、60 秒再拉；compose 只拉本地没有的，之后就不再去镜像站。以前 compose 拉镜像出一次错整个作业就红（2026-10-24 quay.io 回 503）。新加起容器的作业也先加这一步，`test_pull_images` 卡着。
 - 依赖的安全公告每天查一次（`advisories.yml`，UTC 23:23，只跑 `pnpm audit:node` 和 `cargo deny check`，几分钟）；改了 `Cargo.lock`、`pnpm-lock.yaml`、`package.json`、`deny.toml` 的 PR 上也跑。以前只有发布调度的完整 CI 查，发布提交切好以后才撞上（Alpha 59、80、81 都换过发布提交）。
