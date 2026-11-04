@@ -66,6 +66,9 @@ async function waitForAgentInRoster(owner: Page, name: string): Promise<void> {
   ).toHaveCount(1, { timeout: 120_000 });
 }
 
+// 没有这个上限时，一个动作找不到东西会一直等，最后只看到外面的脚本超时，不知道卡在哪。
+test.use({ actionTimeout: 90_000 });
+
 test('私密房间改成公开：后来的人和他的 Agent 读不到改之前说的话，读得到之后说的', async ({
   browser,
 }) => {
