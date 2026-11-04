@@ -294,7 +294,8 @@ async function noticeRound(owner: Page, member: Page, catalogId: string): Promis
 async function handOverToAgent(moderator: Page, name: string, rules: string): Promise<void> {
   const settings = await openRoomSettings(moderator, 'Moderation');
   const form = settings.locator('.moderation-agent-grant');
-  const agent = form.getByLabel('Agent', { exact: true });
+  // `<select>` 包在 `<label>` 里，选项的字也算进标签，按标签的字一模一样地找是找不到的。
+  const agent = form.getByRole('combobox', { name: 'Agent', exact: true });
   const value = await agent.locator('option', { hasText: name }).getAttribute('value');
   await agent.selectOption(value ?? '');
   await form.getByLabel('Rules', { exact: true }).fill(rules);
@@ -370,6 +371,9 @@ async function makePrivate(owner: Page): Promise<void> {
   await expect(settings.getByText('Saved.', { exact: true })).toBeVisible({ timeout: 60_000 });
   await closeRoomSettings(owner, settings);
 }
+
+// 没有这个上限时，一个动作找不到东西会一直等，最后只看到外面的脚本超时，不知道卡在哪。
+test.use({ actionTimeout: 90_000 });
 
 test('公开房间：从发现页和分享链接进来，申请和批准，换分享码，改回私密以后的话是加密的', async ({
   browser,
