@@ -16,6 +16,9 @@ const roomKeyBackupSession = /^\/_matrix\/client\/v3\/room_keys\/keys\/[^/]+\/[^
 // 私人房间现在的邀请链接；还没生成过时回 404 `invite_link.not_found`，“邀请人”里说还没有链接。
 const privateRoomInviteLink = /^\/private-rooms\/[0-9a-f-]{36}\/invite-link$/u;
 
+// 发话前问房间加没加密（`matrix-human-message-gateway.ts`）：不加密的公开房间、公共大厅没有这条状态，回 404。
+const roomEncryptionState = /^\/_matrix\/client\/v3\/rooms\/[^/]+\/state\/m\.room\.encryption\/?$/u;
+
 export function isExpectedHttpBoundary(status: number, rawUrl: string, method: string): boolean {
   const url = new URL(rawUrl);
   const accountDataType = /^\/_matrix\/client\/v3\/user\/[^/]+\/account_data\/([^/]+)$/u.exec(
@@ -46,6 +49,10 @@ export function isExpectedHttpBoundary(status: number, rawUrl: string, method: s
       method === 'GET' &&
       url.origin === apiOrigin &&
       privateRoomInviteLink.test(url.pathname)) ||
+    (status === 404 &&
+      method === 'GET' &&
+      url.origin === matrixOrigin &&
+      roomEncryptionState.test(url.pathname)) ||
     (status === 404 &&
       method === 'GET' &&
       url.origin === matrixOrigin &&

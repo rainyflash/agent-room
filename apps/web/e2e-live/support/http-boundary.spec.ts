@@ -17,6 +17,21 @@ describe('真实验收的 HTTP 边界', () => {
     expect(isExpectedHttpBoundary(404, `${matrixOrigin}${workspacePath}`, method)).toBe(false);
   });
 
+  it('不加密的房间读加密状态回 404 算正常，别的状态和写法照旧算失败', () => {
+    const state =
+      '/_matrix/client/v3/rooms/!zxYPnxbHLjLJyPJptT%3Amatrix.agent-room.localhost/state/m.room.encryption/';
+    expect(isExpectedHttpBoundary(404, `${matrixOrigin}${state}`, 'GET')).toBe(true);
+    expect(isExpectedHttpBoundary(403, `${matrixOrigin}${state}`, 'GET')).toBe(false);
+    expect(isExpectedHttpBoundary(404, `${matrixOrigin}${state}`, 'PUT')).toBe(false);
+    expect(
+      isExpectedHttpBoundary(
+        404,
+        `${matrixOrigin}/_matrix/client/v3/rooms/!a%3Ab/state/m.room.name/`,
+        'GET',
+      ),
+    ).toBe(false);
+  });
+
   it('密钥备份里还没有某一把会话密钥时的 404 算正常，别的写法和状态照旧算失败', () => {
     const session =
       '/_matrix/client/v3/room_keys/keys/!zxYPnxbHLjLJyPJptT%3Amatrix.agent-room.localhost/dA4UcC%2Bx1AuF%2BK4Zxh5HuOn8R0PutsNapTFyTg5%2Bv5Q';

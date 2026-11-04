@@ -87,6 +87,8 @@ ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
 ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
 ROOM_PEOPLE_CHECKED: Final = VERTICAL_ROOT / "room-people-checked.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
+# 公开房间那一轮：网页上走完了，记下是哪间房。
+PUBLIC_ROOM_RESULT: Final = VERTICAL_ROOT / "public-room.json"
 # 同一个身份那一轮里主人在网页会话里做的事（建房间、带进房间、让它离开、删掉它）的结果。
 AGENT_IDENTITY_RESULT: Final = VERTICAL_ROOT / "agent-identity.json"
 AGENT_IDENTITY_ROOMS: Final = ("Vertical Identity A", "Vertical Identity B", "Vertical Identity C")
@@ -3552,6 +3554,99 @@ def verify_room_people(
         )
     browser.finish(timeout_seconds=120)
     return {"roomPeopleAgentEventId": event_id}
+
+
+PUBLIC_ROOM_NAME: Final = "Vertical Public Room"
+
+
+def verify_public_rooms(*, environment: Mapping[str, str]) -> dict[str, str]:
+    """公开房间（specs/public-rooms/design.md 第 8 步）：验收账号在真实网页上开一间公开、不加密的房间；
+    第二个账号从发现页找到、加入、说话；第三个账号没登录就打开分享链接，登录回来自动进了房间。改成要申请，
+    第三个账号退出来再申请，批准以后网页自己进来。换了分享码旧链接回 404，改回私密以后分享页也回 404、
+    页面上没有房间名（public-rooms.e2e.ts）。最后到 Synapse 里看：之前的话是明文，之后的话只有密文。"""
+    PUBLIC_ROOM_RESULT.parent.mkdir(parents=True, exist_ok=True)
+    PUBLIC_ROOM_RESULT.unlink(missing_ok=True)
+    nonce = new_uuid_v7()[-8:]
+    said_public = f"Said while the room is public {nonce}."
+    said_private = f"Said after the room went private {nonce}."
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_MEMBER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_MEMBER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_VISITOR_USERNAME": "visitor",
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_VISITOR_PASSWORD": required_value(
+                environment, "SEED_VISITOR_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_NAME": PUBLIC_ROOM_NAME,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SAID_PUBLIC": said_public,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_SAID_PRIVATE": said_private,
+            "AGENT_ROOM_VERTICAL_PUBLIC_ROOM_RESULT": str(PUBLIC_ROOM_RESULT),
+        }
+    )
+    BrowserRun("public-rooms.e2e.ts", playwright_environment).finish(timeout_seconds=960)
+    result = require_object(
+        json.loads(PUBLIC_ROOM_RESULT.read_text(encoding="utf-8")), PUBLIC_ROOM_RESULT.name
+    )
+    catalog_id = require_text(result.get("catalogId"), "公开房间的目录 ID")
+    require_uuid_v7(catalog_id, "公开房间的目录 ID")
+    require_room_encrypted_from_private(catalog_id, said_public, said_private)
+    return {"publicRoomCatalogId": catalog_id}
+
+
+def require_room_encrypted_from_private(
+    catalog_id: str, said_public: str, said_private: str
+) -> None:
+    """公开时的话 Synapse 上是明文；改回私密以后房间有了 `m.room.encryption`，之后的话只有密文。"""
+    if (
+        compose_psql(
+            "SELECT end_to_end_encrypted FROM agent_room.room_catalog_entry "
+            f"WHERE id = '{catalog_id}';"
+        )
+        != "t"
+    ):
+        raise VerticalFailure("改回私密以后，房间目录上没有记成加密。")
+    room_id = compose_psql(
+        f"SELECT matrix_room_id FROM agent_room.room_instance WHERE catalog_entry_id = '{catalog_id}';"
+    )
+    if re.fullmatch(r"![A-Za-z0-9._~-]+:[A-Za-z0-9.:-]+", room_id) is None:
+        raise VerticalFailure("公开房间的 Matrix 房间 ID 格式不对。")
+    types = compose_psql(
+        f"""
+SELECT type FROM events
+WHERE room_id = '{room_id}'
+  AND (type IN ('m.room.encryption', 'm.room.encrypted')
+       OR type LIKE 'io.github.rainyflash.agentroom.message.%')
+ORDER BY stream_ordering;
+""",
+        database="synapse",
+    ).split()
+    if types.count("m.room.encryption") != 1:
+        raise VerticalFailure("改回私密以后，Synapse 里房间该有一条 m.room.encryption。")
+    boundary = types.index("m.room.encryption")
+    before, after = types[:boundary], types[boundary + 1 :]
+    if not before or "m.room.encrypted" in before:
+        raise VerticalFailure("公开时说的话在 Synapse 上该是明文。")
+    if not after or set(after) != {"m.room.encrypted"}:
+        raise VerticalFailure("改回私密以后说的话在 Synapse 上该只有密文。")
+
+    def stored(text: str) -> int:
+        return int(
+            compose_psql(
+                "SELECT count(*) FROM event_json "
+                f"WHERE room_id = '{room_id}' AND strpos(json, '{text}') > 0;",
+                database="synapse",
+            )
+        )
+
+    if stored(said_public) == 0:
+        raise VerticalFailure("公开时说的话 Synapse 该读得到。")
+    if stored(said_private) != 0:
+        raise VerticalFailure("改回私密以后说的话 Synapse 不该读得到。")
 
 
 @dataclass(frozen=True)

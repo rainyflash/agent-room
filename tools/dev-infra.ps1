@@ -152,6 +152,9 @@ function Write-Environment {
     if (-not $current.ContainsKey('SEED_MEMBER_PASSWORD')) {
       $missingValues.SEED_MEMBER_PASSWORD = New-RandomSecret
     }
+    if (-not $current.ContainsKey('SEED_VISITOR_PASSWORD')) {
+      $missingValues.SEED_VISITOR_PASSWORD = New-RandomSecret
+    }
     if ($missingValues.Count -gt 0) {
       $existing = [System.IO.File]::ReadAllText($EnvFile).TrimEnd()
       $appended = ($missingValues.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
@@ -189,6 +192,7 @@ function Write-Environment {
     CONTENT_MATRIX_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a4'
     SEED_ADMIN_PASSWORD = New-RandomSecret
     SEED_MEMBER_PASSWORD = New-RandomSecret
+    SEED_VISITOR_PASSWORD = New-RandomSecret
     SEED_AGENT_PASSWORD = New-RandomSecret
     SEED_AGENT_ID = '01945c1e-7b5a-7c7f-8a28-2de53f56a9a3'
   }
@@ -291,6 +295,21 @@ function Write-KeycloakRealm {
           [ordered]@{
             type = 'password'
             value = $Environment.SEED_MEMBER_PASSWORD
+            temporary = $false
+          }
+        )
+      }
+      [ordered]@{
+        username = 'visitor'
+        enabled = $true
+        emailVerified = $true
+        email = 'visitor@agent-room.test'
+        firstName = 'Local'
+        lastName = 'Visitor'
+        credentials = @(
+          [ordered]@{
+            type = 'password'
+            value = $Environment.SEED_VISITOR_PASSWORD
             temporary = $false
           }
         )
