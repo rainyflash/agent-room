@@ -97,6 +97,10 @@ PUBLIC_ROOM_AGENT_READ_SECOND: Final = VERTICAL_ROOT / "public-room-agent-read-s
 PUBLIC_ROOM_GRANTED: Final = VERTICAL_ROOT / "public-room-granted.json"
 PUBLIC_ROOM_MUTED: Final = VERTICAL_ROOT / "public-room-muted.json"
 PUBLIC_ROOM_REVOKED: Final = VERTICAL_ROOT / "public-room-revoked.json"
+# 私密改成公开那一轮：后来的人进来了、他的 Agent 进来了、Agent 那边看完了。
+OLD_KEYS_JOINED: Final = VERTICAL_ROOT / "old-keys-joined.json"
+OLD_KEYS_AGENT_IN: Final = VERTICAL_ROOT / "old-keys-agent-in.json"
+OLD_KEYS_CHECKED: Final = VERTICAL_ROOT / "old-keys-checked.json"
 # 同一个身份那一轮里主人在网页会话里做的事（建房间、带进房间、让它离开、删掉它）的结果。
 AGENT_IDENTITY_RESULT: Final = VERTICAL_ROOT / "agent-identity.json"
 AGENT_IDENTITY_ROOMS: Final = ("Vertical Identity A", "Vertical Identity B", "Vertical Identity C")
@@ -3799,19 +3803,109 @@ ORDER BY stream_ordering;
     if not after or set(after) != {"m.room.encrypted"}:
         raise VerticalFailure("改回私密以后说的话在 Synapse 上该只有密文。")
 
-    def stored(text: str) -> int:
-        return int(
-            compose_psql(
-                "SELECT count(*) FROM event_json "
-                f"WHERE room_id = '{room_id}' AND strpos(json, '{text}') > 0;",
-                database="synapse",
-            )
-        )
-
-    if stored(said_public) == 0:
+    if synapse_events_containing(room_id, said_public) == 0:
         raise VerticalFailure("公开时说的话 Synapse 该读得到。")
-    if stored(said_private) != 0:
+    if synapse_events_containing(room_id, said_private) != 0:
         raise VerticalFailure("改回私密以后说的话 Synapse 不该读得到。")
+
+
+def synapse_events_containing(room_id: str, text: str) -> int:
+    return int(
+        compose_psql(
+            "SELECT count(*) FROM event_json "
+            f"WHERE room_id = '{room_id}' AND strpos(json, '{text}') > 0;",
+            database="synapse",
+        )
+    )
+
+
+OLD_KEYS_ROOM: Final = "Vertical Private Then Public"
+OLD_KEYS_AGENT: Final = "Vertical Newcomer Agent"
+# 真有人补发钥匙的话，等这么久也该到了。
+OLD_KEYS_SETTLE_SECONDS: Final = 30
+
+
+def message_texts(messages: object) -> list[str]:
+    texts = []
+    for item in require_list(messages):
+        conversation = require_object(item, "消息").get("conversation")
+        if isinstance(conversation, dict) and isinstance(conversation.get("text"), str):
+            texts.append(conversation["text"])
+    return texts
+
+
+def verify_public_room_old_keys(
+    *,
+    agent_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """私密改成公开（specs/public-rooms/design.md 第 8 步）：第二个账号在自己的加密房间里先说一句，再改成公开；
+    验收账号从发现页进来，他的本机 Agent 也进来。房主接着说一句：人和 Agent 都读得到这句，读不到改之前的那句，
+    房主的网页一直在线也没人补发钥匙（public-room-old-keys.e2e.ts）。"""
+    for path in (OLD_KEYS_JOINED, OLD_KEYS_AGENT_IN, OLD_KEYS_CHECKED):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    nonce = new_uuid_v7()[-8:]
+    said_before = f"Said while the room was private {nonce}."
+    said_after = f"Said after the room went public {nonce}."
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_OWNER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_OWNER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_ROOM": OLD_KEYS_ROOM,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_AGENT": OLD_KEYS_AGENT,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_SAID_BEFORE": said_before,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_SAID_AFTER": said_after,
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_JOINED": str(OLD_KEYS_JOINED),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_AGENT_IN": str(OLD_KEYS_AGENT_IN),
+            "AGENT_ROOM_VERTICAL_OLD_KEYS_CHECKED": str(OLD_KEYS_CHECKED),
+        }
+    )
+    browser = BrowserRun("public-room-old-keys.e2e.ts", playwright_environment)
+    joined = wait_for_browser_step(
+        OLD_KEYS_JOINED, browser, timeout_seconds=420, failure="验收账号 7 分钟内没从发现页进来。"
+    )
+    catalog_id = require_text(joined.get("catalogId"), "私密改公开的房间")
+    with bridge_mcp_client(agent_bridge, redactor) as transport:
+        entered = transport.call_tool(
+            "agent_room_join", {"room": OLD_KEYS_ROOM, "displayName": OLD_KEYS_AGENT}
+        )
+        if require_object(entered.get("room"), "Agent 进的房间").get("catalogId") != catalog_id:
+            raise VerticalFailure("后来的人的 Agent 按房间名进了别的房间。")
+        agent = transport.bind_session(require_text(entered.get("sessionId"), "Agent 的会话"))
+        room_id = wait_for_session_identity(agent, timeout_seconds=180)["matrixRoomId"]
+        OLD_KEYS_AGENT_IN.write_text(json.dumps({"done": True}) + "\n", encoding="utf-8")
+        require_old_line_stays_unreadable(agent, browser, room_id, said_before, said_after)
+        OLD_KEYS_CHECKED.write_text(json.dumps({"done": True}) + "\n", encoding="utf-8")
+    browser.finish(timeout_seconds=120)
+    if synapse_events_containing(room_id, said_before) != 0:
+        raise VerticalFailure("私密时说的话 Synapse 不该读得到。")
+    return {"oldKeysCatalogId": catalog_id}
+
+
+def require_old_line_stays_unreadable(
+    agent: McpAgentSession, browser: BrowserRun, room_id: str, said_before: str, said_after: str
+) -> None:
+    """Agent 等到改公开以后的那句；再等一会儿翻历史，改之前那句还是读不到。"""
+    for page in public_room_agent_pages(agent, browser, failure="Agent 没等到改公开以后的那句。"):
+        texts = message_texts(page.get("previews", []))
+        if said_before in texts:
+            raise VerticalFailure("Agent 不该读到房间改公开之前说的话。")
+        if said_after in texts:
+            break
+    time.sleep(OLD_KEYS_SETTLE_SECONDS)
+    history = agent.call_tool("agent_room_room_messages", {"roomId": room_id, "limit": 50})
+    texts = message_texts(history.get("messages", []))
+    if said_after not in texts:
+        raise VerticalFailure("翻历史时 Agent 该读得到改公开以后的那句。")
+    if said_before in texts:
+        raise VerticalFailure("翻历史时 Agent 不该读到房间改公开之前说的话。")
 
 
 @dataclass(frozen=True)
