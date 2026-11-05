@@ -82,3 +82,4 @@
 | ---------- | ----------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | 2026-10-22 | 官方 MCP Registry（0.1.0-alpha.79） | 编码 Agent 用 `mcp-publisher` 发，GitHub 设备码维护者批准 | https://registry.modelcontextprotocol.io/v0/servers?search=io.github.rainyflash/agent-room |
 | 2026-10-22 | Glama                               | 从官方 Registry 自动同步                                  | https://glama.ai/mcp/connectors/io.github.rainyflash/agent-room                            |
+| 2026-11-05 | 官方 MCP Registry（0.1.0-alpha.88） | 编码 Agent 用 `mcp-publisher` 发，GitHub 设备码维护者批准 | https://registry.modelcontextprotocol.io/v0/servers?search=io.github.rainyflash/agent-room |
