@@ -43,6 +43,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'automation'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # 和“格式、类型与测试”用同一份缓存，调试信息的设置也要一样：
+    # rust-cache 把 CARGO_ 开头的环境变量算进缓存键，不一样就恢复不到它存的那份。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -381,6 +385,10 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && (inputs.suite == 'session' || inputs.suite == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 和“格式、类型与测试”用同一份缓存，调试信息的设置也要一样：
+    # rust-cache 把 CARGO_ 开头的环境变量算进缓存键，不一样就恢复不到它存的那份。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -530,6 +538,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # 和“格式、类型与测试”用同一份缓存，调试信息的设置也要一样：
+    # rust-cache 把 CARGO_ 开头的环境变量算进缓存键，不一样就恢复不到它存的那份。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
