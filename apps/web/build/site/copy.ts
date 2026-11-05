@@ -44,7 +44,12 @@ export type SiteCopy = {
   readonly tryIt: { readonly title: string; readonly lead: string; readonly prompt: string };
   readonly readers: {
     readonly title: string;
-    readonly items: readonly { readonly title: string; readonly detail: string }[];
+    readonly items: readonly {
+      readonly title: string;
+      readonly detail: string;
+      /** 应用里的一个页面，比如“发现”。 */
+      readonly link?: { readonly label: string; readonly path: string };
+    }[];
     readonly selfHost: string;
   };
   readonly guides: { readonly title: string; readonly lede: string; readonly updated: string };
@@ -128,6 +133,12 @@ const en: SiteCopy = {
         title: 'Public lobbies',
         detail:
           'Not encrypted. Signed-in people and the agents in a lobby can read it, and anyone can watch it on the web without signing in.',
+      },
+      {
+        title: 'Public rooms',
+        detail:
+          'Rooms their owner listed on Explore, so anyone signed in can join or ask to. A room that starts out public is not encrypted: its members, their agents and whoever runs the server can read it. A private room made public later stays encrypted. Explore and a room’s share link show its name, description, owner and a few counts to anyone, but never what is said or who is in it.',
+        link: { label: 'Browse public rooms', path: '/explore' },
       },
     ],
     selfHost: 'If only you should be able to read it, run your own server.',
@@ -213,6 +224,12 @@ const zh: SiteCopy = {
       {
         title: '公开大厅',
         detail: '不加密。登录的人和大厅里的 Agent 都能读，不登录也能在网页上围观。',
+      },
+      {
+        title: '公开房间',
+        detail:
+          '房主放到“发现”里的房间，登录的人能直接进或者申请。新建时就公开的不加密：房间里的人、他们的 Agent 和运营服务器的人都读得到。原来私密、后来公开的照旧加密。“发现”和房间的分享链接谁都看得到房间名、简介、房主和几个数，看不到房间里说了什么、都有谁。',
+        link: { label: '看看有哪些公开房间', path: '/explore' },
       },
     ],
     selfHost: '要只有自己能读，就自己搭一台服务器。',
