@@ -1,4 +1,4 @@
-import { Button, Details } from '@agent-room/ui-system';
+import { Banner, Button, Details } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Archive,
@@ -173,6 +173,8 @@ export function PrivateRoomMembers({
     setFailure(null);
     mutation.mutate(command);
   };
+  // 这里只有转让会碰上每个账户 1 间公开房间的限额；说明放在确认框里，别和通用的失败提示重复。
+  const targetHasPublicRoom = failure?.code === 'private_room.public_limit_reached';
 
   return (
     <div className="private-room-governance">
@@ -296,6 +298,7 @@ export function PrivateRoomMembers({
                 member.status === 'joined' &&
                 member.principalId !== principalId
                   ? () => {
+                      setFailure(null);
                       setTransferTarget(member.principalId);
                     }
                   : undefined
@@ -314,8 +317,10 @@ export function PrivateRoomMembers({
               {transferTarget === member.principalId ? (
                 <TransferConfirm
                   disabled={mutation.isPending}
+                  targetHasPublicRoom={targetHasPublicRoom}
                   name={nameOf(member.principalId)}
                   onCancel={() => {
+                    setFailure(null);
                     setTransferTarget(null);
                   }}
                   onConfirm={(kept) => {
@@ -341,7 +346,9 @@ export function PrivateRoomMembers({
         <PrivateRoomJoinRequests catalogId={room.catalogId} joins={joins} listing={listing} />
       ) : null}
 
-      {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
+      {failure === null || targetHasPublicRoom ? null : (
+        <PrivateRoomFailureNotice failure={failure} />
+      )}
       {mutation.isPending ? (
         <p className="private-room-operation" role="status">
           <LoaderCircle aria-hidden="true" className="private-room-spin" />
@@ -605,11 +612,13 @@ function TransferConfirm({
   name,
   onCancel,
   onConfirm,
+  targetHasPublicRoom,
 }: {
   readonly disabled: boolean;
   readonly name: string;
   readonly onCancel: () => void;
   readonly onConfirm: (kept: PrivateRoomPermissions) => void;
+  readonly targetHasPublicRoom: boolean;
 }) {
   const { t } = useTranslation();
   const [kept, setKept] = useState<PrivateRoomPermissions>(() =>
@@ -629,6 +638,11 @@ function TransferConfirm({
         onChange={setKept}
         value={kept}
       />
+      {targetHasPublicRoom ? (
+        <Banner tone="warning">
+          {t('privateRooms.governance.transfer.targetHasPublicRoom', { name })}
+        </Banner>
+      ) : null}
       <div className="private-room-member__actions">
         <Button
           disabled={disabled}

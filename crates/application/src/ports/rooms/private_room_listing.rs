@@ -3,6 +3,7 @@
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
+    private_rooms::PrivateRoom,
     room_listing::{RoomListingSettings, RoomShareCode},
     time::UtcMillis,
     version::AggregateVersion,
@@ -83,6 +84,16 @@ pub trait PrivateRoomListingStore: Send + Sync {
         snapshot: &'a PrivateRoomSnapshot,
         listing: &'a PrivateRoomListingRecord,
         created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
+
+    /// 存下转让了房主的房间。这间正公开着、接手的人（`room` 现在的房主）名下又有别的公开房间时不存，
+    /// 回答 [`PrivateRoomListingSaveOutcome::OwnerLimitReached`]。和 [`Self::save_listing`] 一样在
+    /// 事务里查，接手的人同时公开别的房间、原房主同时公开这一间，都只成一样。
+    fn save_transferred_room<'a>(
+        &'a self,
+        room: &'a PrivateRoom,
+        expected: AggregateVersion,
+        changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
 
     /// 房间在 Matrix 上开了加密以后，把目录上的加密标记改成 true。

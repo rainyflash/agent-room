@@ -38,8 +38,9 @@ use super::{
 
 mod moderation_members;
 mod public_creation;
+mod public_transfer;
 
-use public_creation::ensure_public_creator;
+use public_creation::{ensure_public_creator, limit_reached};
 
 pub trait PrivateRoomUseCases: Send + Sync {
     fn create(
@@ -783,6 +784,8 @@ impl PrivateRoomService {
                 request.former_owner_permissions,
             )
             .map_err(|error| domain(OPERATION, &error))?;
+        self.ensure_transfer_quota(request.catalog_id, request.target_principal_id, OPERATION)
+            .await?;
         if !request.former_owner_permissions.speak() {
             self.set_speaking(&matrix_room, &actor_matrix, false, OPERATION)
                 .await?;
@@ -794,8 +797,25 @@ impl PrivateRoomService {
             )
             .await?;
         }
-        self.save_if_changed(&room, expected, changed, OPERATION)
-            .await?;
+        if changed
+            && !self
+                .save_transferred_room(&room, expected, OPERATION)
+                .await?
+        {
+            // 接手的人刚好同时公开了别的房间。他还是房主，把刚压下去的发言权还给他。
+            if !request.former_owner_permissions.speak() {
+                self.set_speaking(&matrix_room, &actor_matrix, true, OPERATION)
+                    .await?;
+                self.govern_member_agents(
+                    &matrix_room,
+                    request.actor.principal_id,
+                    MemberAgentChange::Speak(true),
+                    OPERATION,
+                )
+                .await?;
+            }
+            return Err(limit_reached(OPERATION));
+        }
         if !target_previous_speaks {
             self.set_speaking(&matrix_room, &target_matrix, true, OPERATION)
                 .await?;

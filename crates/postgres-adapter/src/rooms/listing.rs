@@ -1,5 +1,5 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）。房间第一次公开时才有一行；每个账户最多 1 间
-//! 公开房间，公开时（包括新建时就公开）在同一个事务里锁住房主再数一遍。
+//! 公开房间，公开时（包括新建时就公开）和转让房主时，在同一个事务里锁住房主再数一遍。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
@@ -10,6 +10,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
+    private_rooms::PrivateRoom,
     room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode},
     time::UtcMillis,
     version::AggregateVersion,
@@ -25,7 +26,7 @@ use crate::{
 use super::{
     decode::corrupt_data,
     private_room_agents::permissions,
-    private_rooms::{create_private_room, ensure_creatable},
+    private_rooms::{create_private_room, ensure_creatable, save_private_room},
 };
 
 const SHARE_CODE_INDEX: &str = "private_room_listing_share_code_unique";
@@ -116,11 +117,16 @@ impl PrivateRoomListingStore for PostgresRepositories {
                 .begin()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
-            if record.settings.listed()
-                && owner_lists_another(&mut transaction, owner, record.catalog_id, operation)
+            if record.settings.listed() {
+                // 读到房主以后房间转给了别人：这次公开算的是原房主的名额，让调用方重新读。
+                if !still_owned_by(&mut transaction, record.catalog_id, owner, operation).await? {
+                    return Ok(PrivateRoomListingSaveOutcome::Stale);
+                }
+                if owner_lists_another(&mut transaction, owner, record.catalog_id, operation)
                     .await?
-            {
-                return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
+                {
+                    return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
+                }
             }
             let outcome = match expected {
                 None => insert_listing(&mut transaction, record, operation).await?,
@@ -184,6 +190,49 @@ impl PrivateRoomListingStore for PostgresRepositories {
         })
     }
 
+    fn save_transferred_room<'a>(
+        &'a self,
+        room: &'a PrivateRoom,
+        expected: AggregateVersion,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async move {
+            let operation = "private_room.listing.save_transferred";
+            if expected
+                .next()
+                .map_err(|error| map_domain_error(operation, &error))?
+                != room.version()
+            {
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Constraint,
+                ));
+            }
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            if lock_room_and_read_listed(&mut transaction, room.catalog_id(), operation).await?
+                && owner_lists_another(
+                    &mut transaction,
+                    room.owner_principal_id(),
+                    room.catalog_id(),
+                    operation,
+                )
+                .await?
+            {
+                return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
+            }
+            save_private_room(&mut transaction, room, expected, changed_at, operation).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(PrivateRoomListingSaveOutcome::Saved)
+        })
+    }
+
     fn mark_room_encrypted(
         &self,
         catalog_id: RoomCatalogId,
@@ -233,6 +282,45 @@ async fn owner_lists_another(
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(listed.iter().any(|room| *room != catalog_id.as_uuid()))
+}
+
+/// 转让时先锁房间目录那一行，再看这间公开着没有：和 [`still_owned_by`] 抢同一行，同时公开这一间的
+/// 请求要么先存完、这里读得到它公开了，要么等转让存完、发现房主已经换了。
+async fn lock_room_and_read_listed(
+    transaction: &mut Transaction<'_, Postgres>,
+    catalog_id: RoomCatalogId,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    sqlx::query("SELECT 1 FROM agent_room.room_catalog_entry WHERE id = $1 FOR NO KEY UPDATE")
+        .bind(catalog_id.as_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let listed: Option<bool> = sqlx::query_scalar(
+        "SELECT listed FROM agent_room.private_room_listing WHERE catalog_entry_id = $1",
+    )
+    .bind(catalog_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(listed == Some(true))
+}
+
+/// 公开之前看房主还是不是这个人。拿着房间目录那一行直到事务结束，转让要等这次存完。
+async fn still_owned_by(
+    transaction: &mut Transaction<'_, Postgres>,
+    catalog_id: RoomCatalogId,
+    owner: PrincipalId,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let current: Option<Option<uuid::Uuid>> = sqlx::query_scalar(
+        "SELECT owner_principal_id FROM agent_room.room_catalog_entry WHERE id = $1 FOR SHARE",
+    )
+    .bind(catalog_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(current.flatten() == Some(owner.as_uuid()))
 }
 
 async fn insert_listing(
