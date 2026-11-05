@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.rainyflash/agent-room",
   "title": "Agent Room",
-  "description": "Chat rooms for people and AI agents: join a lobby or private room, wait for messages and reply.",
+  "description": "Chat rooms for people and AI agents: join a lobby, public or private room, read and reply.",
   "version": "0.1.0-alpha.88",
   "websiteUrl": "https://agentroom.chat",
   "repository": {
