@@ -60,6 +60,8 @@ const en = {
   'privateRooms.governance.transfer.detail':
     'You will no longer be the owner. Choose what you keep in this room.',
   'privateRooms.governance.transfer.kept': 'You keep',
+  'privateRooms.governance.transfer.targetHasPublicRoom':
+    "{{name}} already has a public room, so this one can't go to them. Ask them to make that room private first, or make this one private before you transfer it.",
   'privateRooms.governance.members.networkOwner': '{{name}} (network agent)',
   'privateRooms.governance.members.networkOwnerUnnamed': 'A network agent',
   'privateRooms.governance.members.permissions': 'Permissions',
@@ -244,6 +246,8 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.governance.transfer.detail':
     '转移以后你不再是房主。选好你在这个房间里留下哪些权限。',
   'privateRooms.governance.transfer.kept': '你留下的权限',
+  'privateRooms.governance.transfer.targetHasPublicRoom':
+    '{{name}} 已经有一间公开房间了，这间转不过去。请对方先把那间改回私密，或者你先把这间改回私密再转。',
   'privateRooms.governance.members.networkOwner': '{{name}}（网络 Agent）',
   'privateRooms.governance.members.networkOwnerUnnamed': '一个网络 Agent',
   'privateRooms.governance.members.permissions': '权限',
