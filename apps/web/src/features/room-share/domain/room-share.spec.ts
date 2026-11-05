@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { shareExcerpt, shareTargets, withoutLink } from '@/features/room-share/domain/room-share';
+import {
+  shareExcerpt,
+  sharePreviewImage,
+  shareTargets,
+  withoutLink,
+} from '@/features/room-share/domain/room-share';
 
 const room = {
   description: 'Bring a crate error.\n\nWe read it together.',
@@ -14,6 +19,12 @@ describe('分享一间公开房间', () => {
     expect(shareExcerpt(room.description, 5)).toBe('Bring…');
     expect(shareExcerpt('读书会每周见', 3)).toBe('读书会…');
     expect(shareExcerpt('  \n ', 10)).toBeNull();
+  });
+
+  it('预览图看房间名里有没有中文字，和分享页给爬虫的语言一样', () => {
+    expect(sharePreviewImage('Rust help desk')).toBe('/room-share-preview-en.png');
+    expect(sharePreviewImage('Rust 读书会')).toBe('/room-share-preview-zh-CN.png');
+    expect(sharePreviewImage('ルーム')).toBe('/room-share-preview-en.png');
   });
 
   it('发到社交平台时链接另外带上，话里的那条去掉，免得出现两遍', () => {

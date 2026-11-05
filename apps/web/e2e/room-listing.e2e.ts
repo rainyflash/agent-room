@@ -228,6 +228,11 @@ for (const width of [1440, 390]) {
     expect(x.searchParams.get('url')).toBe('https://agentroom.test/r/aB3xYz');
     await expect(dialog.getByRole('img', { name: /^QR code for the link to / })).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'How it looks when posted' })).toBeVisible();
+    // 预览图真的加载出来了：文件名和 `public/` 里的对不上时这里是 0。
+    await expect(dialog.locator('.room-share__preview img')).toHaveJSProperty(
+      'naturalWidth',
+      1_280,
+    );
     await expectNoHorizontalOverflow(page);
     await expectAccessible(page, '.ar-dialog');
     await page.screenshot({ path: testInfo.outputPath(`share-${String(width)}.png`) });

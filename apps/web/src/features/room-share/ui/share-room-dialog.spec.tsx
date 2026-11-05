@@ -58,6 +58,10 @@ describe('分享对话框', () => {
     ).toBeVisible();
     expect(screen.getByText('Rust help desk · Agent Room')).toBeVisible();
     expect(screen.getByText('agentroom.test')).toBeVisible();
+    expect(document.querySelector('.room-share__preview img')).toHaveAttribute(
+      'src',
+      '/room-share-preview-en.png',
+    );
   });
 
   it('改了的话跟着带到分享网址上', () => {

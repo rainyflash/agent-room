@@ -24,6 +24,16 @@ export function shareExcerpt(description: string, max: number): string | null {
   return characters.length <= max ? line : `${characters.slice(0, max).join('')}…`;
 }
 
+/**
+ * 发到社交媒体上用哪张通用的预览图。抓预览的爬虫多半不带 `Accept-Language`，分享页这时看房间名里有没有
+ * 中文字（控制面 `share_page.rs` 的 `guess_language`），这里照同一条规则，预览才和发出去的一样。
+ */
+export function sharePreviewImage(roomName: string): string {
+  return /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/u.test(roomName)
+    ? '/room-share-preview-zh-CN.png'
+    : '/room-share-preview-en.png';
+}
+
 /** 去掉话里的链接：发到社交平台时链接另外带上，免得出现两遍。 */
 export function withoutLink(text: string, shareUrl: string): string {
   return text.split(shareUrl).join(' ').split(/\s+/u).filter(Boolean).join(' ');

@@ -182,6 +182,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 - 2026-11-01 维护者问能不能照 QQ 群那样随便建房间：房主定别人怎么进，房主、管理员和房主的 Agent 能踢人禁言。设计在 [specs/public-rooms/design.md](./specs/public-rooms/design.md)（#660），进度记在它的“状态”一节，维护者定的见上面“产品决定”。当天又补了常驻公告、去掉每间 500 人的上限（#661）。11-02 加了发现页和分享链接（#665），设计稿是 Artifact“公开房间：发现与分享”。
   - 分享页 `/r/<分享码>` 在裸域上由控制面出整页 HTML（`og:` 标签要在服务器上写好），Caddy 把 `/r/*` 转给它。裸域的内容安全策略不许内联，样式和脚本用控制面带着的固定名字的文件；用户写的房间名、简介一律转义。不公开、关了、换了码、没有这个码都回同一个 404，不写房间名。
+  - 分享页和“发出去长这样”用的预览图是 `public/room-share-preview-<语言>.png`，不是首页那张 `social-preview.png`：爬虫多半不带 `Accept-Language`，按房间名里有没有中文字选，网页 `sharePreviewImage` 和控制面 `guess_language` 是同一条规则。改图上的字以后设 `AGENT_ROOM_WRITE_ROOM_SHARE_PREVIEW=1` 跑 `e2e/social-preview.e2e.ts` 重新生成。
   - 应用里的路由不能叫 `/r/...`：裸域上应用的路径都 302 到 app 子域。发现页是 `/explore`、`/explore/$code`，要加进 `APP_PAGE_PATHS`。
   - 房间目录 `room_catalog_entry.end_to_end_encrypted` 记着每间房到底加没加密（第 2 步 2a，#666），用到“加不加密”的地方都看它，别再按种类猜。默认 true（回滚时旧代码建的私人房间、私聊都是加密的）；公共大厅从来不加密，约束卡着，测试和 `tools/vertical.py` 里建大厅要写 `false`。这张表上有提交时才查的约束触发器（`room_catalog_private_integrity`），迁移里先改了行再 `ALTER` 它会报 `pending trigger events`：`ALTER` 都放在改行前面（第一次派发就红在这里）。
   - 公告存成房间状态 `room.notice.v1`，由控制面查过“管理”这一位后以应用服务写：Matrix 上管理员并没有更高的权力级别（`state_default` 只有应用服务够得着），网页没法自己写。读的一边只认应用服务写的那条。加密房间里公告也不加密，界面上照实说。

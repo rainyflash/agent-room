@@ -242,7 +242,7 @@ fn page(
          <meta property=\"og:site_name\" content=\"Agent Room\">\n\
          <meta property=\"og:title\" content=\"{title}\">\n\
          <meta property=\"og:description\" content=\"{description}\">\n\
-         <meta property=\"og:image\" content=\"{app}/social-preview.png\">\n\
+         <meta property=\"og:image\" content=\"{app}/room-share-preview-{lang}.png\">\n\
          <meta property=\"og:image:width\" content=\"1280\">\n\
          <meta property=\"og:image:height\" content=\"640\">\n\
          <meta name=\"twitter:card\" content=\"summary_large_image\">\n\
