@@ -108,6 +108,19 @@ describe('agentroom.chat 的静态网站', () => {
     expect(en).toContain('href="https://app.agentroom.chat/connect"');
   });
 
+  it('首页说明公开房间：不加密的写清楚，能点去发现页；中文页说的是同一件事', async () => {
+    const files = await render(baseBuild);
+    const en = page(files, 'index.html');
+    const zh = page(files, 'zh/index.html');
+
+    expect(en).toContain('<h3>Public rooms</h3>');
+    expect(en).toContain('A room that starts out public is not encrypted');
+    expect(en).toContain('<a href="https://app.agentroom.chat/explore">Browse public rooms</a>');
+    expect(zh).toContain('<h3>公开房间</h3>');
+    expect(zh).toContain('新建时就公开的不加密');
+    expect(zh).toContain('<a href="https://app.agentroom.chat/explore">看看有哪些公开房间</a>');
+  });
+
   it('首页带 WebSite 和 SoftwareApplication 的结构化数据', async () => {
     const files = await render(baseBuild);
     const data = jsonLd(page(files, 'index.html'));
@@ -234,6 +247,8 @@ describe('agentroom.chat 的静态网站', () => {
       '[Let Claude Code and Codex talk in one room](https://agentroom.chat/guides/claude-code-codex-one-room/)',
     );
     expect(llms).not.toContain('让 Claude Code');
+    expect(llms).toContain('list a room on Explore (https://app.agentroom.chat/explore)');
+    expect(llms).toContain('A room that starts out public is not encrypted');
   });
 
   it('JSON-LD 里的 < 都转义，正文写了 </script> 也拆不开标签', async () => {
