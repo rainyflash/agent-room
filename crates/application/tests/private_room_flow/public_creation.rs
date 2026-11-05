@@ -1,12 +1,12 @@
 //! 新建时就选公开（`specs/public-rooms/design.md` 第 3a-2 步）：房间不加密、换一个别名，建好先写下
-//! 公开的时间，再把房间和设置一起存；每个账户只能有一间公开房间；只给人自己建。
+//! 公开的时间，再把房间和设置一起存；每个账户只能有一间公开房间，转让房主也算；只给人自己建。
 
 use agent_room_application::ports::{
     MatrixRoomEncryption, PrivateRoomListingMatrix, PrivateRoomListingRecord,
     PrivateRoomListingSaveOutcome, PrivateRoomListingStore, SecretDigest, SecretFactory,
     SecretGenerationFailure, SecretValue,
 };
-use agent_room_domain::room_listing::{RoomJoinMode, RoomListingSettings};
+use agent_room_domain::room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode};
 use sha2::{Digest as _, Sha256};
 
 use super::*;
@@ -123,6 +123,103 @@ async fn 名下已经有公开房间_建之前就拦下_存的时候撞上也拦
         PrivateRoomFailureKind::PublicRoomLimitReached
     );
     assert!(fixture.store.snapshot.lock().unwrap().is_none());
+}
+
+fn transfer_request(fixture: &Fixture) -> TransferPrivateRoomOwnership {
+    TransferPrivateRoomOwnership {
+        actor: fixture.owner_actor(),
+        catalog_id: fixture.catalog,
+        target_principal_id: fixture.member,
+        former_owner_permissions: viewer_permissions(),
+    }
+}
+
+/// 把 [`Fixture::joined`] 建好的房间记成公开着的。
+fn list_room(fixture: &Fixture) {
+    *fixture.listings.record.lock().unwrap() = Some(PrivateRoomListingRecord {
+        catalog_id: fixture.catalog,
+        settings: listed_settings(),
+        share_code: RoomShareCode::parse("Trn001").unwrap(),
+        first_listed_at: UtcMillis::new(500).unwrap(),
+        updated_by: fixture.owner,
+        updated_at: UtcMillis::new(500).unwrap(),
+        version: AggregateVersion::INITIAL.next().unwrap(),
+    });
+}
+
+#[tokio::test]
+async fn 公开房间转给已有公开房间的人_什么都不动就拦下() {
+    let fixture = Fixture::joined(viewer_permissions()).await;
+    list_room(&fixture);
+    *fixture.listings.owner_listed_elsewhere.lock().unwrap() = true;
+    fixture.clear_events();
+
+    let failure = fixture
+        .service
+        .transfer_ownership(transfer_request(&fixture))
+        .await
+        .expect_err("对方已经有一间公开房间");
+
+    assert_eq!(
+        failure.kind(),
+        PrivateRoomFailureKind::PublicRoomLimitReached
+    );
+    assert!(fixture.events().is_empty(), "没去改 Matrix 上的发言权");
+    let stored = fixture.store.snapshot.lock().unwrap().clone().unwrap();
+    assert_eq!(stored.room().owner_principal_id(), fixture.owner);
+}
+
+#[tokio::test]
+async fn 事务里才撞上限额_房主不变_压下去的发言权还回去() {
+    let fixture = Fixture::joined(viewer_permissions()).await;
+    list_room(&fixture);
+    *fixture.listings.limit_on_save.lock().unwrap() = true;
+    fixture.clear_events();
+
+    let failure = fixture
+        .service
+        .transfer_ownership(transfer_request(&fixture))
+        .await
+        .expect_err("对方同时公开了别的房间");
+
+    assert_eq!(
+        failure.kind(),
+        PrivateRoomFailureKind::PublicRoomLimitReached
+    );
+    assert_eq!(
+        fixture.events(),
+        vec!["matrix.speak.off", "matrix.speak.on"]
+    );
+    let stored = fixture.store.snapshot.lock().unwrap().clone().unwrap();
+    assert_eq!(stored.room().owner_principal_id(), fixture.owner);
+}
+
+#[tokio::test]
+async fn 公开房间转给名下没有公开房间的人_照常转() {
+    let fixture = Fixture::joined(viewer_permissions()).await;
+    list_room(&fixture);
+
+    let transferred = fixture
+        .service
+        .transfer_ownership(transfer_request(&fixture))
+        .await
+        .expect("这间自己不算第二间");
+
+    assert_eq!(transferred.room().owner_principal_id(), fixture.member);
+}
+
+#[tokio::test]
+async fn 私密房间照常转给已有公开房间的人() {
+    let fixture = Fixture::joined(viewer_permissions()).await;
+    *fixture.listings.owner_listed_elsewhere.lock().unwrap() = true;
+
+    let transferred = fixture
+        .service
+        .transfer_ownership(transfer_request(&fixture))
+        .await
+        .expect("私密的不占名额");
+
+    assert_eq!(transferred.room().owner_principal_id(), fixture.member);
 }
 
 #[tokio::test]
@@ -290,6 +387,21 @@ impl PrivateRoomListingStore for TestListings {
             }
             *stored = Some(snapshot.clone());
             *self.record.lock().unwrap() = Some(listing.clone());
+            Ok(PrivateRoomListingSaveOutcome::Saved)
+        })
+    }
+
+    fn save_transferred_room<'a>(
+        &'a self,
+        room: &'a agent_room_domain::private_rooms::PrivateRoom,
+        expected: AggregateVersion,
+        changed_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async move {
+            if *self.limit_on_save.lock().unwrap() {
+                return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
+            }
+            self.store.save(room, expected, changed_at).await?;
             Ok(PrivateRoomListingSaveOutcome::Saved)
         })
     }

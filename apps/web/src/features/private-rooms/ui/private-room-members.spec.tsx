@@ -463,6 +463,27 @@ describe('私人房间的成员与 Agent 口令', () => {
     });
   });
 
+  it('对方已有公开房间时，确认框里说清楚转不过去，取消以后说明一起收掉', async () => {
+    const rooms = gateway();
+    rooms.transferOwnership.mockResolvedValueOnce(
+      err({ code: 'private_room.public_limit_reached', retryable: false }),
+    );
+    renderGovernance(OWNER, rooms.value, [], { recentlyAuthenticated: true });
+    expect(await screen.findByText('Grace')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
+    const confirm = within(screen.getByRole('group', { name: 'Make Grace the owner?' }));
+    fireEvent.click(confirm.getByRole('button', { name: 'Transfer' }));
+
+    expect(await confirm.findByText(/^Grace already has a public room/u)).toBeVisible();
+    expect(screen.queryByText('private_room.public_limit_reached')).toBeNull();
+
+    fireEvent.click(confirm.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByText(/already has a public room/u)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
+    expect(screen.queryByText(/already has a public room/u)).toBeNull();
+  });
+
   it('房主一键设、撤管理员：有“管理”的写着“管理员”', async () => {
     const rooms = gateway();
     const plain = renderGovernance(OWNER, rooms.value);

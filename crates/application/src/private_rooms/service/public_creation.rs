@@ -169,7 +169,7 @@ fn conflict(operation: &'static str) -> PrivateRoomFailure {
     )
 }
 
-fn limit_reached(operation: &'static str) -> PrivateRoomFailure {
+pub(super) fn limit_reached(operation: &'static str) -> PrivateRoomFailure {
     failure(
         operation,
         PrivateRoomFailureStage::Validation,
