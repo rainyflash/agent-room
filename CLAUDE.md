@@ -241,7 +241,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 第 3 步（#658）：维护者 2026-11-01 看过只读查的行数（573 行，部署以后不再增加）同意删表，迁移 `202611010001_drop_outbox_event.sql`。随 Alpha 88 上线（2026-11-04），上线后查过表已经没了。回滚只能退到 Alpha 87，不能再退到还在写这张表的 Alpha 86 及更早的版本。
 - 第 4 步（#638）：撤销以后 Matrix 设备没注销成的，控制面每 30 秒再试（`agent_matrix_device_retry.rs`），以前要人再点一次撤销，换账号那条路上没人能点。不另建表，只扫 `agent_instance` 上撤销了、`matrix_device_revoked_at` 为空的；注销幂等，所以不领租约，退避只记在内存里、不放弃。撤销后 30 秒以内的留给撤销请求自己做。
 - 别再加回 Outbox，也别给它接一个“读到就标成已发布”的消费者：要后台补做的事照 `revoked_agent_departure` 那样单独一张任务表，或者像第 4 步那样直接扫原表上记着的状态。
-- 同一批做的 Matrix 投影也没人用：`MatrixProjectionStore` 产品代码里没有一处调用，`matrix_projection_cursor`、`matrix_projection_event_receipt`、`room_membership_projection` 生产上都是空的，`room_instance` 的 `member_count_projection`、`activity_score` 全是 0，所以“发现”页大厅那一行、网络 Agent 和远程 MCP 列房间的 `onlineAgentCount` 一直是 0。设计在 [specs/matrix-projection/design.md](./specs/matrix-projection/design.md)（#639），进度记在它的“状态”一节。维护者 2026-11-04 定了去掉：先删代码、指标和恢复演练那一步，下一版再删表和列；大厅那一行按 `allocated_slots` 写“大厅里有 N 个 Agent”。`onlineAgentCount` 这个字段别去掉：网页 `.strict()` 校验、必填。第 2 步（#722）删了代码、指标、告警和恢复演练那一步，建房不再写那两列，卡片按 `allocated_slots` 写“大厅里有 N 个 Agent”。第 3 步删三张表和两列的迁移，等第 2 步发出去以后的下一版再合，合之前只读查一次行数报给维护者。
+- 同一批做的 Matrix 投影也没人用：`MatrixProjectionStore` 产品代码里没有一处调用，`matrix_projection_cursor`、`matrix_projection_event_receipt`、`room_membership_projection` 生产上都是空的，`room_instance` 的 `member_count_projection`、`activity_score` 全是 0，所以“发现”页大厅那一行、网络 Agent 和远程 MCP 列房间的 `onlineAgentCount` 一直是 0。设计在 [specs/matrix-projection/design.md](./specs/matrix-projection/design.md)（#639），进度记在它的“状态”一节。维护者 2026-11-04 定了去掉：先删代码、指标和恢复演练那一步，下一版再删表和列；大厅那一行按 `allocated_slots` 写“大厅里有 N 个 Agent”。`onlineAgentCount` 这个字段别去掉：网页 `.strict()` 校验、必填。第 2 步（#722）删了代码、指标、告警和恢复演练那一步，建房不再写那两列，卡片按 `allocated_slots` 写“大厅里有 N 个 Agent”。第 2 步随 Alpha 89 发布。第 3 步（#738）：迁移 `202611060001_drop_matrix_projection.sql` 删三张表、`room_instance` 的两列和它们的约束，分配索引去掉 `activity_score` 重建；合并前只读查过生产（三张表 0 行，两列全是 0），维护者 2026-11-06 让做。上线以后回滚只能退到 Alpha 89（Alpha 88 及更早的控制面建房时写着这两列）。
 
 ### 网站被搜到
 
@@ -626,7 +626,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - Alpha 89 已于 2026-11-06 公开，见 [发布记录](./specs/agent-access/alpha89-release.md)。
   - “发现”页大厅那一行按占着位置的写 Agent 数（#722，没人用的 Matrix 投影第 2 步），公开房间分享用专门的预览图（#732），转让公开房间也守每个账户 1 间（#730），首页和 `llms.txt` 提到公开房间（#731），minimatch、glob 的安全升级（#735），退出时没人接的 AbortError 只记成调试信息（#728）。
   - 没改登录相关代码，复用 Alpha 88 那台长期验收设备，没要设备码；没有迁移，部署配置没加新变量。
-  - 发完跑了 `telemetry-apply`（#722 去掉了投影的告警），14 条规则、没有在响的。投影第 3 步（删三张表和两列）现在可以做了，合之前只读查一次行数报给维护者。
+  - 发完跑了 `telemetry-apply`（#722 去掉了投影的告警），14 条规则、没有在响的。投影第 3 步（删三张表和两列）是 #738，随下一版发布。
   - 版本 PR #736 合并到网页上线约 1 小时 2 分钟，整条链一次也没停。发版前在 #735 分支上派发的 `suite=all` 里，“真实网页登录”两次卡在装 Linux 依赖（apt 镜像站慢、到 30 分钟上限），和代码无关。
 - Alpha 88 已于 2026-11-04 公开，见 [发布记录](./specs/agent-access/alpha88-release.md)。
   - 公开房间（设计 #660、#661、#665，实现 #666–#718：设成公开、加入方式、发现页、分享链接、管理员、常驻公告、房间交给本机 Agent 管），踢出和封禁在私人房间里真的生效（#707），30 天没上线的 Agent 一键删除（#662），注册页拦下没有域名后缀的邮箱（#723），两台设备同时第一次登录都签得上（#725），删掉 `outbox_event`（#658），DB-IP 换成 11 月那份（#720）。
