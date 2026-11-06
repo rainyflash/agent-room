@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 889
-- npm packages: 719
-- Total locked package versions: 1608
+- npm packages: 714
+- Total locked package versions: 1603
 - `Cargo.lock` SHA-256: `df0fe13509b792b573f88c7c0f8969a7f0b536b4a57ac7f9ce0b2a7e3e308ced`
-- `pnpm-lock.yaml` SHA-256: `52ea6e013c9eaf364e25039a131989a9bc3a307baaa8f2183a682dc2c4216d93`
+- `pnpm-lock.yaml` SHA-256: `98de0fdddd7d4ac05962a941c73372d559e02dfea828cf543d7c1a868c29998e`
 
 ## License expressions
 
@@ -34,7 +34,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `Apache-2.0 WITH LLVM-exception` | 1 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 5 |
 | `Apache-2.0/MIT` | 7 |
-| `BlueOak-1.0.0` | 14 |
+| `BlueOak-1.0.0` | 11 |
 | `BSD-2-Clause` | 22 |
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 2 |
 | `BSD-3-Clause` | 19 |
@@ -48,7 +48,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception` | 1 |
 | `CC0-1.0 OR MIT-0 OR Apache-2.0` | 2 |
 | `CDLA-Permissive-2.0` | 2 |
-| `ISC` | 57 |
+| `ISC` | 55 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
 | `MIT` | 770 |
@@ -1104,8 +1104,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@humanwhocodes/module-importer](https://www.npmjs.com/package/@humanwhocodes/module-importer/v/1.0.1) | 1.0.1 | `Apache-2.0` |
 | npm | [@humanwhocodes/retry](https://www.npmjs.com/package/@humanwhocodes/retry/v/0.4.3) | 0.4.3 | `Apache-2.0` |
 | npm | [@iarna/toml](https://www.npmjs.com/package/@iarna/toml/v/2.2.5) | 2.2.5 | `ISC` |
-| npm | [@isaacs/cliui](https://www.npmjs.com/package/@isaacs/cliui/v/9.0.0) | 9.0.0 | `BlueOak-1.0.0` |
 | npm | [@isaacs/fs-minipass](https://www.npmjs.com/package/@isaacs/fs-minipass/v/4.0.1) | 4.0.1 | `ISC` |
+| npm | [@isaacs/nonrecursive-glob-match](https://www.npmjs.com/package/@isaacs/nonrecursive-glob-match/v/1.1.0) | 1.1.0 | `BlueOak-1.0.0` |
 | npm | [@isaacs/string-locale-compare](https://www.npmjs.com/package/@isaacs/string-locale-compare/v/1.1.0) | 1.1.0 | `ISC` |
 | npm | [@jridgewell/gen-mapping](https://www.npmjs.com/package/@jridgewell/gen-mapping/v/0.3.13) | 0.3.13 | `MIT` |
 | npm | [@jridgewell/remapping](https://www.npmjs.com/package/@jridgewell/remapping/v/2.3.5) | 2.3.5 | `MIT` |
@@ -1321,7 +1321,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [flat-cache](https://www.npmjs.com/package/flat-cache/v/4.0.1) | 4.0.1 | `MIT` |
 | npm | [flatted](https://www.npmjs.com/package/flatted/v/3.4.4) | 3.4.4 | `ISC` |
 | npm | [for-each](https://www.npmjs.com/package/for-each/v/0.3.5) | 0.3.5 | `MIT` |
-| npm | [foreground-child](https://www.npmjs.com/package/foreground-child/v/3.3.1) | 3.3.1 | `ISC` |
 | npm | [framer-motion](https://www.npmjs.com/package/framer-motion/v/13.1.1) | 13.1.1 | `MIT` |
 | npm | [fs-extra](https://www.npmjs.com/package/fs-extra/v/9.1.0) | 9.1.0 | `MIT` |
 | npm | [function-bind](https://www.npmjs.com/package/function-bind/v/1.1.2) | 1.1.2 | `MIT` |
@@ -1336,8 +1335,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [get-proto](https://www.npmjs.com/package/get-proto/v/1.0.1) | 1.0.1 | `MIT` |
 | npm | [get-symbol-description](https://www.npmjs.com/package/get-symbol-description/v/1.1.0) | 1.1.0 | `MIT` |
 | npm | [gifuct-js](https://www.npmjs.com/package/gifuct-js/v/2.1.2) | 2.1.2 | `MIT` |
-| npm | [glob](https://www.npmjs.com/package/glob/v/11.1.0) | 11.1.0 | `BlueOak-1.0.0` |
-| npm | [glob](https://www.npmjs.com/package/glob/v/13.0.6) | 13.0.6 | `BlueOak-1.0.0` |
+| npm | [glob](https://www.npmjs.com/package/glob/v/14.0.4) | 14.0.4 | `BlueOak-1.0.0` |
 | npm | [glob-parent](https://www.npmjs.com/package/glob-parent/v/6.0.2) | 6.0.2 | `ISC` |
 | npm | [globalthis](https://www.npmjs.com/package/globalthis/v/1.0.4) | 1.0.4 | `MIT` |
 | npm | [gopd](https://www.npmjs.com/package/gopd/v/1.2.0) | 1.2.0 | `MIT` |
@@ -1407,7 +1405,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [istanbul-lib-coverage](https://www.npmjs.com/package/istanbul-lib-coverage/v/3.2.2) | 3.2.2 | `BSD-3-Clause` |
 | npm | [istanbul-lib-report](https://www.npmjs.com/package/istanbul-lib-report/v/3.0.1) | 3.0.1 | `BSD-3-Clause` |
 | npm | [istanbul-reports](https://www.npmjs.com/package/istanbul-reports/v/3.2.0) | 3.2.0 | `BSD-3-Clause` |
-| npm | [jackspeak](https://www.npmjs.com/package/jackspeak/v/4.2.3) | 4.2.3 | `BlueOak-1.0.0` |
 | npm | [jake](https://www.npmjs.com/package/jake/v/10.9.4) | 10.9.4 | `Apache-2.0` |
 | npm | [jiti](https://www.npmjs.com/package/jiti/v/2.7.0) | 2.7.0 | `MIT` |
 | npm | [js-binary-schema-parser](https://www.npmjs.com/package/js-binary-schema-parser/v/2.0.3) | 2.0.3 | `MIT` |
@@ -1452,7 +1449,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [mime-db](https://www.npmjs.com/package/mime-db/v/1.54.0) | 1.54.0 | `MIT` |
 | npm | [mime-types](https://www.npmjs.com/package/mime-types/v/3.0.2) | 3.0.2 | `MIT` |
 | npm | [min-indent](https://www.npmjs.com/package/min-indent/v/1.0.1) | 1.0.1 | `MIT` |
-| npm | [minimatch](https://www.npmjs.com/package/minimatch/v/10.2.6) | 10.2.6 | `BlueOak-1.0.0` |
+| npm | [minimatch](https://www.npmjs.com/package/minimatch/v/11.0.5) | 11.0.5 | `BlueOak-1.0.0` |
 | npm | [minimatch](https://www.npmjs.com/package/minimatch/v/5.1.9) | 5.1.9 | `ISC` |
 | npm | [minipass](https://www.npmjs.com/package/minipass/v/7.1.3) | 7.1.3 | `BlueOak-1.0.0` |
 | npm | [minizlib](https://www.npmjs.com/package/minizlib/v/3.1.0) | 3.1.0 | `MIT` |
@@ -1483,7 +1480,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [p-limit](https://www.npmjs.com/package/p-limit/v/3.1.0) | 3.1.0 | `MIT` |
 | npm | [p-locate](https://www.npmjs.com/package/p-locate/v/5.0.0) | 5.0.0 | `MIT` |
 | npm | [p-retry](https://www.npmjs.com/package/p-retry/v/8.0.0) | 8.0.0 | `MIT` |
-| npm | [package-json-from-dist](https://www.npmjs.com/package/package-json-from-dist/v/1.0.1) | 1.0.1 | `BlueOak-1.0.0` |
 | npm | [packageurl-js](https://www.npmjs.com/package/packageurl-js/v/1.0.2) | 1.0.2 | `MIT` |
 | npm | [parse-conflict-json](https://www.npmjs.com/package/parse-conflict-json/v/5.0.1) | 5.0.1 | `ISC` |
 | npm | [parse-svg-path](https://www.npmjs.com/package/parse-svg-path/v/0.2.0) | 0.2.0 | `MIT` |
@@ -1495,7 +1491,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [path-exists](https://www.npmjs.com/package/path-exists/v/4.0.0) | 4.0.0 | `MIT` |
 | npm | [path-key](https://www.npmjs.com/package/path-key/v/3.1.1) | 3.1.1 | `MIT` |
 | npm | [path-parse](https://www.npmjs.com/package/path-parse/v/1.0.7) | 1.0.7 | `MIT` |
-| npm | [path-scurry](https://www.npmjs.com/package/path-scurry/v/2.0.2) | 2.0.2 | `BlueOak-1.0.0` |
+| npm | [path-scurry](https://www.npmjs.com/package/path-scurry/v/3.0.0) | 3.0.0 | `BlueOak-1.0.0` |
 | npm | [pathe](https://www.npmjs.com/package/pathe/v/2.0.3) | 2.0.3 | `MIT` |
 | npm | [picocolors](https://www.npmjs.com/package/picocolors/v/1.1.1) | 1.1.1 | `ISC` |
 | npm | [picomatch](https://www.npmjs.com/package/picomatch/v/4.0.5) | 4.0.5 | `MIT` |
@@ -1556,7 +1552,6 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [side-channel-map](https://www.npmjs.com/package/side-channel-map/v/1.0.1) | 1.0.1 | `MIT` |
 | npm | [side-channel-weakmap](https://www.npmjs.com/package/side-channel-weakmap/v/1.0.2) | 1.0.2 | `MIT` |
 | npm | [siginfo](https://www.npmjs.com/package/siginfo/v/2.0.0) | 2.0.0 | `ISC` |
-| npm | [signal-exit](https://www.npmjs.com/package/signal-exit/v/4.1.0) | 4.1.0 | `ISC` |
 | npm | [smob](https://www.npmjs.com/package/smob/v/1.6.2) | 1.6.2 | `MIT` |
 | npm | [source-map](https://www.npmjs.com/package/source-map/v/0.6.1) | 0.6.1 | `BSD-3-Clause` |
 | npm | [source-map](https://www.npmjs.com/package/source-map/v/0.8.0) | 0.8.0 | `BSD-3-Clause` |
