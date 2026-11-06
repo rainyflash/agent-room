@@ -22,10 +22,21 @@ pub trait IpcCredentialSource: Send + Sync {
     ///
     /// 凭据不存在、OS 安全存储不可用或持久值损坏时返回明确错误。
     fn load(&self) -> Result<IpcClientCredentials, IpcCredentialFailure>;
+
+    /// Bridge 不认上次读到的凭据：作废进程里缓存的值，下一次 [`Self::load`] 重新读取。
+    ///
+    /// 返回之前有没有缓存着；没有时重读也是同样的值，不必重试。
+    fn forget_cached(&self) -> bool {
+        false
+    }
 }
 
 trait CredentialBackend: Send + Sync {
     fn read(&self, account: &str) -> Result<Option<String>, IpcCredentialFailure>;
+
+    fn forget_cached(&self, _account: &str) -> bool {
+        false
+    }
 }
 
 struct ConfiguredCredentialBackend {
@@ -48,6 +59,10 @@ impl CredentialBackend for ConfiguredCredentialBackend {
             | SecretStoreFailure::Unavailable
             | SecretStoreFailure::Full => unavailable(),
         })
+    }
+
+    fn forget_cached(&self, account: &str) -> bool {
+        self.store.forget_cached(account)
     }
 }
 
@@ -88,6 +103,13 @@ impl IpcCredentialSource for OsIpcCredentialReader {
             installation_id,
             IpcSharedSecret::new(shared_secret),
         ))
+    }
+
+    fn forget_cached(&self) -> bool {
+        // 两项都要作废，别短路。
+        let installation_id = self.backend.forget_cached(IPC_INSTALLATION_ID_ACCOUNT);
+        let shared_secret = self.backend.forget_cached(IPC_SHARED_SECRET_ACCOUNT);
+        installation_id || shared_secret
     }
 }
 

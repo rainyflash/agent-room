@@ -6,6 +6,9 @@
 //! Windows 上每次调用都独占凭据库：进程内所有线程共用一把锁，同一用户的 Agent Room 进程
 //! （桌面、Bridge、CLI、MCP）再通过一个按用户的锁文件一个接一个执行。同时使用凭据管理器的
 //! 其他程序不在这把锁之内。
+//!
+//! macOS 上读到的值留在进程里，不再每次都去读钥匙串：每读一次，Security 框架都漏掉一页内存，
+//! 见 `read_cache`。
 
 use keyring::{Entry, Error as KeyringError};
 
@@ -27,18 +30,34 @@ impl SystemCredentialStore {
     /// # Errors
     /// 凭据库不可用时返回错误；凭据不存在时返回 `None`。
     pub fn read(&self, account: &str) -> Result<Option<String>, SecretStoreFailure> {
+        let generation = match read_cache::lookup(&self.service, account) {
+            read_cache::Lookup::Cached(value) => return Ok(Some(value)),
+            read_cache::Lookup::Missing(generation) => generation,
+        };
         match self.with_entry(account, Entry::get_password) {
-            Ok(value) => Ok(Some(value)),
+            Ok(value) => {
+                read_cache::fill(&self.service, account, generation, &value);
+                Ok(Some(value))
+            }
             Err(KeyringError::NoEntry) => Ok(None),
             Err(_) => Err(SecretStoreFailure::Unavailable),
         }
     }
 
+    /// 作废本进程缓存的值，下次读取回到系统凭据库。别的进程改了这项凭据、这里读到的旧值被拒时用。
+    ///
+    /// 返回之前有没有缓存着值；没有时重读也是同一个结果。
+    pub fn forget_cached(&self, account: &str) -> bool {
+        read_cache::forget(&self.service, account)
+    }
+
     /// # Errors
     /// 凭据库拒绝写入时返回错误。
     pub fn write(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
-        self.with_entry(account, |entry| entry.set_password(value))
-            .map_err(|error| write_failure(&error))
+        self.changing(account, || {
+            self.with_entry(account, |entry| entry.set_password(value))
+                .map_err(|error| write_failure(&error))
+        })
     }
 
     /// 写入同一安装里的桌面、MCP 和命令行也要读取的凭据。
@@ -52,16 +71,18 @@ impl SystemCredentialStore {
     pub fn write_shared(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
         #[cfg(target_os = "macos")]
         {
-            self.delete(account)?;
-            let readers = installation::programs();
-            let readers: Vec<_> = readers.iter().map(std::path::PathBuf::as_path).collect();
-            agent_room_macos_keychain::add_generic_password(
-                &self.service,
-                account,
-                value.as_bytes(),
-                &readers,
-            )
-            .map_err(|_| SecretStoreFailure::Unavailable)
+            self.changing(account, || {
+                self.delete(account)?;
+                let readers = installation::programs();
+                let readers: Vec<_> = readers.iter().map(std::path::PathBuf::as_path).collect();
+                agent_room_macos_keychain::add_generic_password(
+                    &self.service,
+                    account,
+                    value.as_bytes(),
+                    &readers,
+                )
+                .map_err(|_| SecretStoreFailure::Unavailable)
+            })
         }
         #[cfg(not(target_os = "macos"))]
         self.write(account, value)
@@ -70,10 +91,19 @@ impl SystemCredentialStore {
     /// # Errors
     /// 凭据库拒绝删除时返回错误；删除不存在的凭据视为成功。
     pub fn delete(&self, account: &str) -> Result<(), SecretStoreFailure> {
-        match self.with_entry(account, Entry::delete_credential) {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(_) => Err(SecretStoreFailure::Unavailable),
-        }
+        self.changing(account, || {
+            match self.with_entry(account, Entry::delete_credential) {
+                Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+                Err(_) => Err(SecretStoreFailure::Unavailable),
+            }
+        })
+    }
+
+    /// 改动凭据的调用。做完以后不论成败都作废缓存的旧值，写完回读核对的那一次照旧去凭据库。
+    fn changing<TValue>(&self, account: &str, operation: impl FnOnce() -> TValue) -> TValue {
+        let result = operation();
+        read_cache::forget(&self.service, account);
+        result
     }
 
     /// 条目只在这里创建，所以每次凭据库调用都在独占期间内完成。
@@ -100,6 +130,154 @@ fn write_failure(error: &KeyringError) -> SecretStoreFailure {
 
 fn store_full(platform_message: &str) -> bool {
     cfg!(windows) && platform_message == "Windows error code 8"
+}
+
+/// 读到的凭据留在进程里，只在 macOS 上这样做。
+///
+/// macOS 上每读一次文件钥匙串里的凭据（`SecKeychainFindGenericPassword` 和 `SecItemCopyMatching`
+/// 都一样），Security 框架做完整性检查时向 securityd 要这项凭据的访问控制表，回复带来的一页内存
+/// 从不归还：每读一次漏 16 KB，vmmap 里记作 `VM_ALLOCATE`。读不到的凭据不走这一步，不漏。
+/// 桌面端每 2 秒探一次 Bridge、每次读 4 次 IPC 凭据，Bridge 每个控制面请求都读一次设备会话，
+/// 2026-11-06 维护者的 Mac（macOS 15.7）上两边各跑了 8 天左右，都漏到 8 GB 多。
+///
+/// 所以读到的值留在进程里，同一进程再读直接给出；本进程写入、删除时作废。读不到时不留：客户端
+/// 要等 Bridge 把 IPC 凭据写进来。别的进程改了凭据，这里不知道。眼下别的进程写、这里读的只有
+/// IPC 凭据，它的值 Bridge 每次启动原样重写，只在丢了时才换新的；换了以后客户端握手被拒，
+/// 由 `LocalBridgeClient` 作废缓存、重读一次。新加跨进程共用的凭据也要这样接住。
+///
+/// 正在读钥匙串时本进程又写了这一项，读回来的就是旧值，不能留下：每次作废换一代，只收在同一代里
+/// 开始读的值。其他系统没有发现这个问题，照旧每次都读。
+mod read_cache {
+    use std::{
+        collections::HashMap,
+        sync::{LazyLock, Mutex, MutexGuard, PoisonError},
+    };
+
+    use zeroize::Zeroizing;
+
+    const ENABLED: bool = cfg!(target_os = "macos");
+
+    static SLOTS: LazyLock<Mutex<Slots>> = LazyLock::new(Mutex::default);
+
+    pub(super) enum Lookup {
+        Cached(String),
+        /// 没有缓存。从凭据库读到的值连同这一代交给 `fill`。
+        Missing(u64),
+    }
+
+    pub(super) fn lookup(service: &str, account: &str) -> Lookup {
+        if !ENABLED {
+            return Lookup::Missing(0);
+        }
+        slots().lookup(service, account)
+    }
+
+    pub(super) fn fill(service: &str, account: &str, generation: u64, value: &str) {
+        if ENABLED {
+            slots().fill(service, account, generation, value);
+        }
+    }
+
+    /// 返回之前有没有缓存着值。
+    pub(super) fn forget(service: &str, account: &str) -> bool {
+        ENABLED && slots().forget(service, account)
+    }
+
+    fn slots() -> MutexGuard<'static, Slots> {
+        // 锁里只有缓存；持锁时恐慌最多留下一项该作废的值，照常用下去。
+        SLOTS.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[derive(Default)]
+    struct Slots(HashMap<(String, String), Slot>);
+
+    #[derive(Default)]
+    struct Slot {
+        generation: u64,
+        value: Option<Zeroizing<String>>,
+    }
+
+    impl Slots {
+        fn lookup(&self, service: &str, account: &str) -> Lookup {
+            match self.0.get(&key(service, account)) {
+                Some(Slot {
+                    value: Some(value), ..
+                }) => Lookup::Cached(value.as_str().to_owned()),
+                Some(slot) => Lookup::Missing(slot.generation),
+                None => Lookup::Missing(0),
+            }
+        }
+
+        fn fill(&mut self, service: &str, account: &str, generation: u64, value: &str) {
+            let slot = self.0.entry(key(service, account)).or_default();
+            if slot.generation == generation {
+                slot.value = Some(Zeroizing::new(value.to_owned()));
+            }
+        }
+
+        fn forget(&mut self, service: &str, account: &str) -> bool {
+            let slot = self.0.entry(key(service, account)).or_default();
+            slot.generation = slot.generation.wrapping_add(1);
+            slot.value.take().is_some()
+        }
+    }
+
+    fn key(service: &str, account: &str) -> (String, String) {
+        (service.to_owned(), account.to_owned())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{Lookup, Slots};
+
+        fn cached(slots: &Slots, account: &str) -> Option<String> {
+            match slots.lookup("service", account) {
+                Lookup::Cached(value) => Some(value),
+                Lookup::Missing(_) => None,
+            }
+        }
+
+        fn generation(slots: &Slots, account: &str) -> u64 {
+            match slots.lookup("service", account) {
+                Lookup::Missing(generation) => generation,
+                Lookup::Cached(_) => panic!("不该有缓存"),
+            }
+        }
+
+        #[test]
+        fn 读到的值留到作废为止() {
+            let mut slots = Slots::default();
+            let first = generation(&slots, "ipc");
+            slots.fill("service", "ipc", first, "secret");
+            assert_eq!(cached(&slots, "ipc").as_deref(), Some("secret"));
+            assert!(slots.forget("service", "ipc"));
+            assert_eq!(cached(&slots, "ipc"), None);
+            assert!(!slots.forget("service", "ipc"), "已经作废过，没有可作废的");
+        }
+
+        #[test]
+        fn 作废以前开始读的旧值不留下() {
+            let mut slots = Slots::default();
+            let before_write = generation(&slots, "ipc");
+            slots.forget("service", "ipc");
+            slots.fill("service", "ipc", before_write, "old");
+            assert_eq!(cached(&slots, "ipc"), None);
+
+            let after_write = generation(&slots, "ipc");
+            slots.fill("service", "ipc", after_write, "new");
+            assert_eq!(cached(&slots, "ipc").as_deref(), Some("new"));
+        }
+
+        #[test]
+        fn 不同服务名和账户各留各的() {
+            let mut slots = Slots::default();
+            slots.fill("service", "ipc", 0, "ours");
+            slots.fill("other", "ipc", 0, "theirs");
+            slots.forget("other", "ipc");
+            assert_eq!(cached(&slots, "ipc").as_deref(), Some("ours"));
+            assert_eq!(cached(&slots, "device"), None);
+        }
+    }
 }
 
 #[cfg(test)]
