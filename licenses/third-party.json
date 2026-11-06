@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "df0fe13509b792b573f88c7c0f8969a7f0b536b4a57ac7f9ce0b2a7e3e308ced",
-    "pnpm-lock.yaml": "52ea6e013c9eaf364e25039a131989a9bc3a307baaa8f2183a682dc2c4216d93"
+    "pnpm-lock.yaml": "98de0fdddd7d4ac05962a941c73372d559e02dfea828cf543d7c1a868c29998e"
   },
   "dependencies": [
     {
@@ -7217,17 +7217,17 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@isaacs/cliui",
-      "version": "9.0.0",
-      "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/@isaacs/cliui/v/9.0.0"
-    },
-    {
-      "ecosystem": "npm",
       "name": "@isaacs/fs-minipass",
       "version": "4.0.1",
       "license": "ISC",
       "source": "https://www.npmjs.com/package/@isaacs/fs-minipass/v/4.0.1"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@isaacs/nonrecursive-glob-match",
+      "version": "1.1.0",
+      "license": "BlueOak-1.0.0",
+      "source": "https://www.npmjs.com/package/@isaacs/nonrecursive-glob-match/v/1.1.0"
     },
     {
       "ecosystem": "npm",
@@ -8736,13 +8736,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "foreground-child",
-      "version": "3.3.1",
-      "license": "ISC",
-      "source": "https://www.npmjs.com/package/foreground-child/v/3.3.1"
-    },
-    {
-      "ecosystem": "npm",
       "name": "framer-motion",
       "version": "13.1.1",
       "license": "MIT",
@@ -8842,16 +8835,9 @@
     {
       "ecosystem": "npm",
       "name": "glob",
-      "version": "11.1.0",
+      "version": "14.0.4",
       "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/glob/v/11.1.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "glob",
-      "version": "13.0.6",
-      "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/glob/v/13.0.6"
+      "source": "https://www.npmjs.com/package/glob/v/14.0.4"
     },
     {
       "ecosystem": "npm",
@@ -9338,13 +9324,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "jackspeak",
-      "version": "4.2.3",
-      "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/jackspeak/v/4.2.3"
-    },
-    {
-      "ecosystem": "npm",
       "name": "jake",
       "version": "10.9.4",
       "license": "Apache-2.0",
@@ -9654,9 +9633,9 @@
     {
       "ecosystem": "npm",
       "name": "minimatch",
-      "version": "10.2.6",
+      "version": "11.0.5",
       "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/minimatch/v/10.2.6"
+      "source": "https://www.npmjs.com/package/minimatch/v/11.0.5"
     },
     {
       "ecosystem": "npm",
@@ -9870,13 +9849,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "package-json-from-dist",
-      "version": "1.0.1",
-      "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/package-json-from-dist/v/1.0.1"
-    },
-    {
-      "ecosystem": "npm",
       "name": "packageurl-js",
       "version": "1.0.2",
       "license": "MIT",
@@ -9955,9 +9927,9 @@
     {
       "ecosystem": "npm",
       "name": "path-scurry",
-      "version": "2.0.2",
+      "version": "3.0.0",
       "license": "BlueOak-1.0.0",
-      "source": "https://www.npmjs.com/package/path-scurry/v/2.0.2"
+      "source": "https://www.npmjs.com/package/path-scurry/v/3.0.0"
     },
     {
       "ecosystem": "npm",
@@ -10378,13 +10350,6 @@
       "version": "2.0.0",
       "license": "ISC",
       "source": "https://www.npmjs.com/package/siginfo/v/2.0.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "signal-exit",
-      "version": "4.1.0",
-      "license": "ISC",
-      "source": "https://www.npmjs.com/package/signal-exit/v/4.1.0"
     },
     {
       "ecosystem": "npm",
