@@ -155,6 +155,128 @@ async fn 每个账户最多一间公开房间_改回私密和归档的不算() {
     database.close().await;
 }
 
+/// 把 `new_owner` 拉进房间、让他加入，再转让给他（还没存）。
+async fn transfer_room(
+    repositories: &PostgresRepositories,
+    catalog_id: RoomCatalogId,
+    owner: PrincipalId,
+    new_owner: PrincipalId,
+) -> (PrivateRoom, AggregateVersion) {
+    let loaded = PrivateRoomStore::find_by_catalog(repositories, catalog_id)
+        .await
+        .expect("可读")
+        .expect("有房间");
+    let mut room = loaded.room().clone();
+    let expected = room.version();
+    room.invite(owner, new_owner, ordinary_permissions())
+        .expect("房主能邀请");
+    PrivateRoomStore::save(repositories, &room, expected, time(1))
+        .await
+        .expect("邀请存下");
+    let expected = room.version();
+    room.accept_invitation(new_owner).expect("能接受邀请");
+    PrivateRoomStore::save(repositories, &room, expected, time(2))
+        .await
+        .expect("加入存下");
+    let expected = room.version();
+    room.transfer_ownership(owner, new_owner, ordinary_permissions())
+        .expect("房主能转让");
+    (room, expected)
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 转让公开房间也守每个账户一间_私密的照常_转走以后原房主不能再公开() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "transfer-owner").await;
+    let receiver = seed_principal(&database.runtime, "transfer-receiver").await;
+    let listed_room = create_room(&repositories, owner).await;
+    let private_room = create_room(&repositories, owner).await;
+    let receivers_room = create_room(&repositories, receiver).await;
+    assert_eq!(
+        save(
+            &repositories,
+            &record(listed_room, owner, true, "Trn001", 1),
+            None,
+            owner
+        )
+        .await,
+        Saved
+    );
+    assert_eq!(
+        save(
+            &repositories,
+            &record(receivers_room, receiver, true, "Trn002", 1),
+            None,
+            receiver
+        )
+        .await,
+        Saved
+    );
+
+    // 私密的房间转给已有公开房间的人：不占名额。
+    let (room, expected) = transfer_room(&repositories, private_room, owner, receiver).await;
+    assert_eq!(
+        PrivateRoomListingStore::save_transferred_room(&repositories, &room, expected, time(3))
+            .await
+            .expect("写入不报错"),
+        Saved
+    );
+
+    // 公开的那间转不过去，房主和版本都没动。
+    let (room, expected) = transfer_room(&repositories, listed_room, owner, receiver).await;
+    assert_eq!(
+        PrivateRoomListingStore::save_transferred_room(&repositories, &room, expected, time(3))
+            .await
+            .expect("写入不报错"),
+        PrivateRoomListingSaveOutcome::OwnerLimitReached
+    );
+    let stored = PrivateRoomStore::find_by_catalog(&repositories, listed_room)
+        .await
+        .expect("可读")
+        .expect("有房间");
+    assert_eq!(stored.room().owner_principal_id(), owner);
+    assert_eq!(stored.room().version(), expected);
+
+    // 对方把自己那间改回私密以后就转得过去，公开房间算到他名下。
+    let unlisted = record(receivers_room, receiver, false, "Trn002", 2);
+    assert_eq!(
+        save(&repositories, &unlisted, Some(version(1)), receiver).await,
+        Saved
+    );
+    assert_eq!(
+        PrivateRoomListingStore::save_transferred_room(&repositories, &room, expected, time(3))
+            .await
+            .expect("写入不报错"),
+        Saved
+    );
+    assert_eq!(
+        PrivateRoomListingStore::listed_rooms_owned_by(&repositories, receiver)
+            .await
+            .expect("可读"),
+        [listed_room]
+    );
+    assert!(
+        PrivateRoomListingStore::listed_rooms_owned_by(&repositories, owner)
+            .await
+            .expect("可读")
+            .is_empty()
+    );
+
+    // 原房主手里还拿着旧的读取结果，这时再公开：房主已经换了，不算数。
+    let stale = PrivateRoomListingRecord {
+        settings: settings(true, RoomJoinMode::InviteOnly),
+        ..record(listed_room, owner, true, "Trn001", 2)
+    };
+    assert_eq!(
+        save(&repositories, &stale, Some(version(1)), owner).await,
+        PrivateRoomListingSaveOutcome::Stale
+    );
+
+    database.close().await;
+}
+
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 分享码被别的房间占了就说出来_不改那间房() {

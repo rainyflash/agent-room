@@ -43,6 +43,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'automation'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # 和“格式、类型与测试”用同一份缓存，调试信息的设置也要一样：
+    # rust-cache 把 CARGO_ 开头的环境变量算进缓存键，不一样就恢复不到它存的那份。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -129,8 +133,8 @@ jobs:
             VITE_AGENT_ROOM_CONTROL_PLANE_URL=https://app.agentroom.chat/_agent-room/api
             VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE=${{ vars.AGENT_ROOM_IDENTITY_REGISTRATION_MODE }}
             VITE_AGENT_ROOM_MATRIX_HOMESERVER_URL=https://matrix.agentroom.chat
-            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.87/agent-room-installer-v0.1.0-alpha.87-windows-x86_64.exe
-            VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.87/agent-room-installer-v0.1.0-alpha.87-darwin-aarch64.dmg
+            VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.88/agent-room-installer-v0.1.0-alpha.88-windows-x86_64.exe
+            VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL=https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.88/agent-room-installer-v0.1.0-alpha.88-darwin-aarch64.dmg
       - name: 保存不可变镜像摘要
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -170,6 +174,10 @@ jobs:
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # 整个 workspace 的测试程序带完整调试信息会写满托管 Runner 的盘（2026-11-03、11-04 都红在 No space left on device）。
+    # 只留行号，出错时的调用栈照样看得到。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -319,8 +327,8 @@ jobs:
       - name: 验收已发布 Alpha 的版本化下载入口
         env:
           VITE_AGENT_ROOM_IDENTITY_REGISTRATION_MODE: open-email
-          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.87/agent-room-installer-v0.1.0-alpha.87-windows-x86_64.exe
-          VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.87/agent-room-installer-v0.1.0-alpha.87-darwin-aarch64.dmg
+          VITE_AGENT_ROOM_WINDOWS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.88/agent-room-installer-v0.1.0-alpha.88-windows-x86_64.exe
+          VITE_AGENT_ROOM_MACOS_DOWNLOAD_URL: https://github.com/rainyflash/agent-room/releases/download/v0.1.0-alpha.88/agent-room-installer-v0.1.0-alpha.88-darwin-aarch64.dmg
         run: corepack pnpm@10.28.0 --filter @agent-room/web exec playwright test e2e/public-alpha-landing.e2e.ts
       - name: 上传浏览器验收产物
         if: ${{ !cancelled() }}
@@ -377,6 +385,10 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && (inputs.suite == 'session' || inputs.suite == 'all') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 和“格式、类型与测试”用同一份缓存，调试信息的设置也要一样：
+    # rust-cache 把 CARGO_ 开头的环境变量算进缓存键，不一样就恢复不到它存的那份。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
@@ -526,6 +538,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # 和“格式、类型与测试”用同一份缓存，调试信息的设置也要一样：
+    # rust-cache 把 CARGO_ 开头的环境变量算进缓存键，不一样就恢复不到它存的那份。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: 检出代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1

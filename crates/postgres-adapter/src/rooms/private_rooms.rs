@@ -319,7 +319,7 @@ async fn rename_private_room(
     Ok(())
 }
 
-async fn save_private_room(
+pub(super) async fn save_private_room(
     transaction: &mut Transaction<'_, Postgres>,
     room: &PrivateRoom,
     expected_version: AggregateVersion,

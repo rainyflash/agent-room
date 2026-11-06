@@ -25,7 +25,9 @@
 
             <div class="ar-field">
                 <label for="email" class="ar-label">${msg("email")}</label>
+                <#-- 浏览器的 type="email" 和身份服务都收 a@1234，发信服务不收：验证信发不出去，这个人就卡在这里。 -->
                 <input id="email" class="ar-input" name="email" type="email" value="${emailValue}" autofocus
+                       pattern="[^@\s]+@[^@\s]+\.[^@\s.]{2,}" title="${msg("invalidEmailMessage")}"
                        autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com"
                        aria-invalid="<#if messagesPerField.existsError('email')>true</#if>"
                        <#if messagesPerField.existsError('email')>aria-describedby="input-error-email"</#if> dir="ltr"/>

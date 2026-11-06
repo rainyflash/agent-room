@@ -51,7 +51,11 @@ def accept() -> None:
         redactor = v.LogRedactor(environment)
         with v.IsolatedBridgeState(vault=True), v.ProcessStack() as processes:
             control_plane = v.start_control_plane(processes, environment, redactor)
-            v.start_web(processes, redactor)
+            v.start_web(
+                processes, redactor, environment_overrides={"VITE_AGENT_ROOM_VERTICAL_SECURITY_DRIVER": "enabled"},
+            )
+            # 放在最前面：这时账户还没有签名身份。第一台设备建好，第二台自动签上、读回加密历史。
+            v.verify_browser_security(environment)
             agent = v.bootstrap_agent(environment)
             runtimes = []
             for name, data_root, service in zip(
@@ -69,6 +73,12 @@ def accept() -> None:
                 principal_id=agent["principalId"], redactor=redactor)
             if result["agentInstanceId"] != identity["agentInstanceId"]:
                 raise v.VerticalFailure("Server restart changed the Agent instance.")
+            # 目标 Bridge 不在时，人在网页上把上面那条消息交给它，起来以后领走、读到原文；第二次交接它拒绝。
+            # 发送方的 Bridge 两次都看不到。
+            targeted = v.verify_cloud_targeted_handoff_workflow(
+                environment=environment, catalog_id=catalog, target_bridge=target, sender_bridge=sender,
+                source=result, principal_id=agent["principalId"], redactor=redactor,
+            )
             network = v.verify_network_agent_workflow(sender_bridge=sender, redactor=redactor)
             network_mcp = v.verify_network_agent_mcp(
                 room_id=v.require_bridge_session(sender)["matrixRoomId"]
@@ -108,10 +118,17 @@ def accept() -> None:
             switch = v.verify_computer_switch(
                 processes=processes, environment=environment, redactor=redactor,
             )
-            # 放在最后：这一轮会重启控制面。
+            # 放在后面：这一轮会重启控制面。
             private = v.verify_private_room_network_agent(
                 sender_bridge=sender, processes=processes, control_plane=control_plane,
                 environment=environment, redactor=redactor,
+            )
+            # 放在最后：这一轮停掉两个 Bridge，发送方不再起来。Bridge 都不在时，两个账号三个网页在大厅里
+            # 分享资料、交给主人共享的 Agent，目标 Bridge 起来以后领走。
+            product_closure = v.verify_product_closure_workflow(
+                environment=environment, agent_id=result["agentId"], catalog_id=catalog,
+                target_bridge=target, sender_bridge=sender,
+                target_instance_id=result["agentInstanceId"], redactor=redactor,
             )
             # 全部轮次跑完：重启、断线恢复、控制面重启以后，每个实例在每个房间里还是只有一张名片。
             status_cards = v.verify_status_events_written_once()
@@ -167,6 +184,10 @@ def accept() -> None:
         "privateRoomSurvivedControlPlaneRestart":private["restartedReplyEventId"],
         "privateRoomSurvivedStoreRebuild":private["rebuiltReplyEventId"],
         "privateRoomKnockAdmitted":True, "privateRoomKnockReplyEventId":private["knockReplyEventId"],
+        "automaticDeviceSigningVerified":True,
+        "targetedHandoffConsumedId":targeted["consumedHandoffId"],
+        "targetedHandoffDeclinedId":targeted["declinedHandoffId"],
+        "productClosureHandoffId":product_closure["handoffId"],
         "keycloakUserEventMetrics":keycloak_events,
         "hostModelInvoked":False}, indent=2) + "\n", encoding="utf-8")
     print(report.read_text(encoding="utf-8"))

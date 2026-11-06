@@ -91,7 +91,7 @@ export async function ensureDeviceSigned(
   // 加密库不当成错误。2026-10-19 维护者的 iPhone 上加密库的请求一个也发不出去，这台设备从没传过
   // 密钥，安全页却一直说“已就绪”。所以签之前等它传上去，签完再问服务器签名落上没有。
   await waitForServerDevice(client, userId, deviceId, 'uploaded', UPLOAD_WAIT_MS, signal);
-  const outcome = await signDevice(client, crypto, escrow, keys, signal);
+  const outcome = await signDeviceOrFollow(client, crypto, escrow, keys, signal);
   await waitForServerDevice(client, userId, deviceId, 'signed', SIGNATURE_WAIT_MS, signal);
   return outcome;
 }
@@ -100,6 +100,52 @@ export async function ensureDeviceSigned(
 const UPLOAD_WAIT_MS = [1_000, 2_000, 4_000, 8_000] as const;
 /** 签名上传回来以后服务器马上就查得到，多问两次只为躲开偶尔慢一拍。 */
 const SIGNATURE_WAIT_MS = [1_000, 2_000] as const;
+/** 先到的那台传完公钥还要建备份和密钥存储，最后才交钥匙，要等它几秒。 */
+const WINNER_KEY_WAIT_MS = [1_000, 2_000, 4_000, 8_000] as const;
+
+/** 别的设备抢先建好了账户的签名身份，这台设备的第一次上传没成。 */
+class BeatenToFirstUpload extends Error {
+  constructor() {
+    super('别的设备抢先建好了账户的签名身份。');
+    this.name = 'BeatenToFirstUpload';
+  }
+}
+
+/**
+ * 账户的两台设备同时第一次登录时，都看到还没有签名身份、都去建，后传公钥的那台被 Synapse 拒绝
+ * （换签名身份要交互认证）。它等先到的那台把钥匙交给服务器，再从头走一遍，就走到用服务器的钥匙
+ * 签好自己那一步；本机刚建的那份对不上服务器，查身份时随之清掉。只再走一遍：第二遍还被拒绝就算出错。
+ */
+async function signDeviceOrFollow(
+  client: DeviceSigningClient,
+  crypto: CryptoApi,
+  escrow: EncryptionKeyEscrow,
+  keys: MatrixSecretStorageKeyCache,
+  signal: AbortSignal | undefined,
+): Promise<DeviceSigningOutcome> {
+  try {
+    return await signDevice(client, crypto, escrow, keys, signal);
+  } catch (error) {
+    if (!(error instanceof BeatenToFirstUpload)) throw error;
+  }
+  await waitForWinnerKey(escrow, signal);
+  return await signDevice(client, crypto, escrow, keys, signal);
+}
+
+/** 等先到的那台把钥匙交给服务器。等不到（它中途走了）也往下走：下一遍照常重建一次。 */
+async function waitForWinnerKey(
+  escrow: EncryptionKeyEscrow,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  for (const delay of WINNER_KEY_WAIT_MS) {
+    await pause(delay, signal);
+    const escrowed = await escrow.fetch();
+    // 只看有没有，下一遍会再取。
+    escrowed?.key.fill(0);
+    signal?.throwIfAborted();
+    if (escrowed !== null) return;
+  }
+}
 
 /** 服务器上这台设备的样子：还没有它的密钥、有密钥但没由账户签过、签好了。 */
 type ServerDeviceState = 'missing' | 'uploaded' | 'signed';
@@ -191,10 +237,13 @@ async function signDevice(
   const known = await step(crypto.userHasCrossSigningKeys(userId, true));
   if (!known || !(await step(serverHasSigningIdentity(client, userId)))) {
     // 服务器上还没有签名身份：从头建，第一次上传不用交互认证。上次建到一半（上传公钥时页面跳走了）
-    // 留下的本机身份、私钥、密钥存储和备份都不沿用：本机有私钥时 bootstrapCrossSigning 会跳过上传；
+    // 留下的本机身份、私钥和备份都不沿用：不带 setupNewCrossSigning 时，本机有私钥就会跳过上传；
     // 照着本机记着的身份往下走，又会说“已就绪”。服务器上就一直没有签名身份，别的设备也签不上。
-    await crypto.resetEncryption(uploadWithoutAuthentication);
-    await createSecretStorage(client, crypto, escrow, false);
+    //
+    // 先传公钥，传成了才建备份和密钥存储。别用 resetEncryption，它先删后传：两台设备同时第一次
+    // 登录时，后传的那台被拒绝之前，已经把先传的那台刚建好的备份和密钥存储删掉了。
+    await uploadFirstIdentity(client, crypto, userId);
+    await createSecretStorage(client, crypto, escrow, true);
     return 'established';
   }
   const escrowed = await escrow.fetch();
@@ -246,6 +295,25 @@ async function serverHasSigningIdentity(
 ): Promise<boolean> {
   const response = masterKeysSchema.parse(await client.downloadKeysForUsers([userId]));
   return Object.keys(response.master_keys?.[userId]?.keys ?? {}).length > 0;
+}
+
+/**
+ * 新建签名身份并上传公钥。没传成时不看错误长什么样，直接问服务器：有签名身份了，就是别的设备抢先了。
+ */
+async function uploadFirstIdentity(
+  client: DeviceSigningClient,
+  crypto: CryptoApi,
+  userId: string,
+): Promise<void> {
+  try {
+    await crypto.bootstrapCrossSigning({
+      authUploadDeviceSigningKeys: uploadWithoutAuthentication,
+      setupNewCrossSigning: true,
+    });
+  } catch (error) {
+    if (await serverHasSigningIdentity(client, userId)) throw new BeatenToFirstUpload();
+    throw error;
+  }
 }
 
 /** 账户第一次建立签名身份时，上传不需要交互认证。 */

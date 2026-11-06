@@ -1,6 +1,10 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
-import { connectLiveSession } from '../e2e-live/support/live-session';
+import {
+  collectUnhandledFailures,
+  connectLiveSession,
+  serverDeviceSigned,
+} from '../e2e-live/support/live-session';
 import type {
   VerticalSecuritySample,
   VerticalSecurityWindow,
@@ -17,14 +21,21 @@ test('真实 Synapse 上登录即签好设备，新设备自动签上并读回�
 
   const additionalContexts: BrowserContext[] = [];
   try {
+    const second = await openDevice(browser, additionalContexts);
+    const failures = {
+      first: collectUnhandledFailures(page),
+      second: collectUnhandledFailures(second),
+    };
+
     await connectDeveloperSession(page);
     await expectDeviceReady(page);
     const sample = await createRecoverySample(page);
 
-    const second = await openDevice(browser, additionalContexts);
     await connectDeveloperSession(second);
     await expectDeviceReady(second);
     await expectSampleReadable(second, sample);
+
+    expect(failures).toEqual({ first: [], second: [] });
   } finally {
     await Promise.all(
       additionalContexts.map(async (context) => {
@@ -52,7 +63,7 @@ async function openDevice(browser: Browser, contexts: BrowserContext[]): Promise
   return await context.newPage();
 }
 
-/** 安全页说这台设备已就绪，设备列表里它也标着已由你签名。 */
+/** 安全页说这台设备已就绪，设备列表里它也标着已由你签名，服务器上也真的签好了。 */
 async function expectDeviceReady(page: Page): Promise<void> {
   await page.goto('/settings/security');
   await expect(page.getByText(/^(?:This device is ready|这台设备已就绪)$/u)).toBeVisible({
@@ -63,6 +74,7 @@ async function expectDeviceReady(page: Page): Promise<void> {
     { timeout: 60_000 },
   );
   await expect(page.getByText(/recovery key|恢复密钥/iu)).toHaveCount(0);
+  await expect.poll(async () => await serverDeviceSigned(page), { timeout: 60_000 }).toBe(true);
 }
 
 async function createRecoverySample(page: Page): Promise<VerticalSecuritySample> {

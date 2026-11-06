@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page, type Route } from '@playwright/test';
 import { storedMatrixSessionSchema } from '../../src/features/session/domain/matrix-session-vault';
 import { isExpectedHttpBoundary, matrixOrigin } from './http-boundary';
 
@@ -183,6 +183,65 @@ export async function interruptFirstSigningUpload(page: Page): Promise<() => boo
     await route.abort('connectionreset');
   });
   return () => state !== 'waiting';
+}
+
+/**
+ * 让两台设备第一次传签名公钥时撞上：先都扣住，返回的函数等两边都到了再放行，先放第一台、等它传完
+ * 才放第二台，回答第二台收到的状态码。这时两边都已经看到账户没有签名身份、各自建好了一份。
+ */
+export async function holdFirstSigningUploads(
+  pages: readonly [Page, Page],
+): Promise<() => Promise<number | undefined>> {
+  const held = new Map<Page, Route>();
+  let released = false;
+  for (const page of pages) {
+    // 翻页时这一页的请求跟着没了，新的一页会重新传。
+    page.on('domcontentloaded', () => {
+      held.delete(page);
+    });
+    await page.route('**/_matrix/client/v3/keys/device_signing/upload', async (route) => {
+      if (released) await route.continue();
+      else held.set(page, route);
+    });
+  }
+  return async () => {
+    await expect.poll(() => held.size, { timeout: 60_000 }).toBe(2);
+    released = true;
+    const [first, second] = pages.map((page) => held.get(page));
+    if (first === undefined || second === undefined) throw new Error('两台设备没有都等着上传。');
+    await first.continue();
+    await first.request().response();
+    await second.continue();
+    return (await second.request().response())?.status();
+  };
+}
+
+/** 服务器上这台设备有没有由账户的自签公钥签过：本机说“已就绪”不算。 */
+export async function serverDeviceSigned(page: Page): Promise<boolean> {
+  const { accessToken, deviceId, userId } = storedMatrixSessionSchema.parse(
+    await readMatrixSession(page),
+  );
+  return await page.evaluate(
+    async ({ device, homeserver, token, user }) => {
+      const response = await fetch(`${homeserver}/_matrix/client/v3/keys/query`, {
+        body: JSON.stringify({ device_keys: { [user]: [] } }),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      const body = (await response.json()) as {
+        device_keys?: Record<
+          string,
+          Record<string, { signatures?: Record<string, Record<string, string>> }>
+        >;
+        self_signing_keys?: Record<string, { keys: Record<string, string> }>;
+      };
+      const signatures = body.device_keys?.[user]?.[device]?.signatures?.[user] ?? {};
+      return Object.keys(body.self_signing_keys?.[user]?.keys ?? {}).some(
+        (keyId) => keyId in signatures,
+      );
+    },
+    { device: deviceId, homeserver: matrixOrigin, token: accessToken, user: userId },
+  );
 }
 
 /** 服务器上这个账户有没有签名身份（主签名公钥）：本机说“已就绪”不算，要服务器上真的有。 */

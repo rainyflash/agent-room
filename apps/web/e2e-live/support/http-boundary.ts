@@ -29,6 +29,12 @@ export function isExpectedHttpBoundary(status: number, rawUrl: string, method: s
     accountDataType !== undefined && optionalAccountData.has(accountDataType);
   return (
     (status === 401 && url.origin === apiOrigin && url.pathname === '/auth/session') ||
+    // 账户的两台设备同时第一次登录：都去建签名身份，后传公钥的那台被要求交互认证。它什么都没动，
+    // 随后用先到那台交给服务器的钥匙签好自己（`matrix-device-signing.ts`，登录验收有一条专门走这里）。
+    (status === 401 &&
+      method === 'POST' &&
+      url.origin === matrixOrigin &&
+      url.pathname === '/_matrix/client/v3/keys/device_signing/upload') ||
     // 全新账户的第一台设备：服务器上还没有替账户保管的签名钥匙（ADR 0011），设备随后新建一把。
     (status === 404 &&
       method === 'GET' &&

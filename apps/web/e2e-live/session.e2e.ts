@@ -8,9 +8,11 @@ import {
   connectLiveSession,
   continueThroughMatrixConsentWhenRequired,
   deleteLocalCryptoStores,
+  holdFirstSigningUploads,
   interruptFirstSigningUpload,
   readMatrixSession,
   serverDeviceIds,
+  serverDeviceSigned,
   serverHasSigningIdentity,
   submitIdentityForm,
 } from './support/live-session';
@@ -252,6 +254,62 @@ test.describe('本机加密库丢了', () => {
     expect(devices).not.toContain(lost.deviceId);
     expect(failures).toEqual([]);
   });
+});
+
+// 要第二个账户还没有签名身份，所以放在下面那条用到它的用例前面。
+test('账户的两台设备同时第一次登录：后传公钥的那台也签好，先到那台建的钥匙还能用', async ({
+  baseURL,
+  browser,
+}) => {
+  test.skip(secondUsername === undefined || secondPassword === undefined, '缺少第二个验收账户。');
+  test.setTimeout(240_000);
+  const contexts = await Promise.all(
+    [0, 1].map(() =>
+      browser.newContext({
+        ...(baseURL === undefined ? {} : { baseURL }),
+        ignoreHTTPSErrors: true,
+      }),
+    ),
+  );
+  try {
+    const [first, second] = await Promise.all(
+      contexts.map(async (context) => await context.newPage()),
+    );
+    if (first === undefined || second === undefined) throw new Error('页面没有开好。');
+    const failures = {
+      first: collectUnhandledFailures(first),
+      second: collectUnhandledFailures(second),
+    };
+    const collide = await holdFirstSigningUploads([first, second]);
+    // 一台一台登录就够了：公钥都扣着，等第二台也到了，谁都还没传上去。
+    for (const page of [first, second]) {
+      await connectLiveSession(page, {
+        expectedDisplayName: 'Local Collaborator',
+        password: secondPassword ?? '',
+        username: secondUsername ?? '',
+      });
+    }
+
+    // 换身份要交互认证，后传的那台被拒绝。这之后不翻页，要它自己在这一页上签好。
+    expect(await collide()).toBe(401);
+    for (const page of [first, second]) {
+      await expect.poll(async () => await serverDeviceSigned(page), { timeout: 60_000 }).toBe(true);
+    }
+
+    // 重新打开两台都说已就绪：先到那台建的钥匙和密钥存储没被后到的那台删掉。
+    for (const page of [first, second]) {
+      await page.goto('/settings/security');
+      await expect(page.getByText(thisDeviceReady)).toBeVisible({ timeout: 60_000 });
+      expect(await serverDeviceSigned(page)).toBe(true);
+    }
+    expect(failures).toEqual({ first: [], second: [] });
+  } finally {
+    await Promise.all(
+      contexts.map(async (context) => {
+        await context.close();
+      }),
+    );
+  }
 });
 
 test('设置里换个账号：退出这个账户，在身份服务的登录页登录另一个账户', async ({ page }) => {
