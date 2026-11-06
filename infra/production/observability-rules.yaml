@@ -92,17 +92,6 @@ groups:
           impact: 依赖相关业务路径会失败关闭
           diagnostic: 按 dependency 标签检查 PostgreSQL、Matrix、OIDC 或对象存储
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdependencyunavailable
-      - alert: AgentRoomProjectionStalled
-        expr: agent_room_operational_value{metric="projection_unhealthy"} > 0 or agent_room_operational_age_seconds{metric="projection_oldest_update"} > 120
-        for: 5m
-        labels:
-          severity: critical
-          service: agent-room
-        annotations:
-          summary: Matrix 投影停滞或不健康
-          impact: 大厅和成员状态可能不再反映权威事件
-          diagnostic: 检查投影游标、Matrix 同步与重建工具
-          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomprojectionstalled
       - alert: AgentRoomCoreEndpointUnavailable
         expr: probe_success{instance=~"control-plane|matrix|oidc|object-store|web"} == 0
         for: 2m

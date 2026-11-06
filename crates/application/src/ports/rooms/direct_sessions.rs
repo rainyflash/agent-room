@@ -239,9 +239,7 @@ impl DirectSessionRecord {
                 matrix_room_id,
                 region: None,
                 capacity: RoomCapacity::new(2, 3)?,
-                projected_member_count: 1,
                 allocated_slots: 0,
-                activity_score_millis: 0,
                 state: RoomInstanceState::Active,
             },
         )?;

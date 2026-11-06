@@ -361,19 +361,15 @@ async fn activate_record(
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
 
-    let activity_score =
-        i64::try_from(instance.activity_score_millis()).map_err(|_| constraint(operation))?;
     sqlx::query(
         r"INSERT INTO agent_room.room_instance (
                id, catalog_entry_id, matrix_room_id, region_hint,
-               soft_capacity, hard_capacity, member_count_projection,
-               allocated_slots, activity_score, state,
+               soft_capacity, hard_capacity, allocated_slots, state,
                created_at, updated_at, version
            ) VALUES (
-               $1, $2, $3, NULL, $4, $5, $6, $7,
-               $8::double precision / 1000.0, 'active',
-               to_timestamp($9::double precision / 1000.0),
-               to_timestamp($9::double precision / 1000.0), 0
+               $1, $2, $3, NULL, $4, $5, $6, 'active',
+               to_timestamp($7::double precision / 1000.0),
+               to_timestamp($7::double precision / 1000.0), 0
            )",
     )
     .bind(instance.id().as_uuid())
@@ -381,9 +377,7 @@ async fn activate_record(
     .bind(instance.matrix_room_id().as_str())
     .bind(i32::from(instance.capacity().soft()))
     .bind(i32::from(instance.capacity().hard()))
-    .bind(i32::from(instance.projected_member_count()))
     .bind(i32::from(instance.allocated_slots()))
-    .bind(activity_score)
     .bind(changed_at.value())
     .execute(&mut **transaction)
     .await

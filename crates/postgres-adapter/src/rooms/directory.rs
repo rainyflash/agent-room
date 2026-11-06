@@ -25,16 +25,11 @@ impl RoomDirectory for PostgresRepositories {
             let statement = format!(
                 r"SELECT {CATALOG_COLUMNS},
                           statistics.active_instance_count,
-                          statistics.online_agent_count,
-                          statistics.activity_score_millis
+                          statistics.agent_count
                    FROM agent_room.room_catalog_entry AS catalog
                    CROSS JOIN LATERAL (
                        SELECT count(instance.id)::bigint AS active_instance_count,
-                              coalesce(sum(instance.member_count_projection), 0)::bigint
-                                  AS online_agent_count,
-                              coalesce(
-                                  sum(floor(instance.activity_score * 1000)), 0
-                              )::bigint AS activity_score_millis
+                              coalesce(sum(instance.allocated_slots), 0)::bigint AS agent_count
                        FROM agent_room.room_instance AS instance
                        WHERE instance.catalog_entry_id = catalog.id
                          AND instance.state = 'active'
@@ -53,8 +48,7 @@ impl RoomDirectory for PostgresRepositories {
                                AND regional_instance.region_hint = $2
                          )
                      )
-                   ORDER BY statistics.activity_score_millis DESC,
-                            statistics.online_agent_count DESC,
+                   ORDER BY statistics.agent_count DESC,
                             catalog.slug ASC"
             );
             let language = query.language.as_ref().map(RoomLanguage::as_str);
@@ -71,17 +65,12 @@ impl RoomDirectory for PostgresRepositories {
                 .map(|row| {
                     let active_instance_count: i64 =
                         decode_column(row, "active_instance_count", operation)?;
-                    let online_agent_count: i64 =
-                        decode_column(row, "online_agent_count", operation)?;
-                    let activity_score_millis: i64 =
-                        decode_column(row, "activity_score_millis", operation)?;
+                    let agent_count: i64 = decode_column(row, "agent_count", operation)?;
                     Ok(PublicLobbyDirectoryEntry {
                         catalog: decode_catalog(row, operation)?,
                         active_instance_count: u16::try_from(active_instance_count)
                             .map_err(|_| corrupt_data(operation))?,
-                        online_agent_count: u32::try_from(online_agent_count)
-                            .map_err(|_| corrupt_data(operation))?,
-                        activity_score_millis: u64::try_from(activity_score_millis)
+                        agent_count: u32::try_from(agent_count)
                             .map_err(|_| corrupt_data(operation))?,
                     })
                 })

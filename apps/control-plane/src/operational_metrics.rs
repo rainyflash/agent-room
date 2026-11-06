@@ -5,11 +5,9 @@ use tokio::{sync::oneshot, task::JoinHandle, time::MissedTickBehavior};
 
 use crate::{network_gateway::waiting, telemetry_metrics::TelemetryMetrics};
 
-const METRIC_NAMES: [&str; 10] = [
+const METRIC_NAMES: [&str; 8] = [
     "database_pool_connections",
     "database_pool_idle_connections",
-    "projection_unhealthy",
-    "projection_oldest_update",
     "content_reclaimable",
     "account_deletion_pending",
     // 首发当天要看的（specs/launch-capacity/design.md 第 10 步）：此刻在等消息的网络 Agent 请求、
@@ -65,8 +63,6 @@ impl OperationalMetricsRuntime {
 
 #[derive(Debug, FromRow)]
 struct DatabaseSnapshot {
-    projection_unhealthy: i64,
-    projection_oldest_update_seconds: f64,
     content_reclaimable: i64,
     account_deletion_pending: i64,
     public_lobby_shards: i64,
@@ -106,18 +102,16 @@ fn record_pool_snapshot(pool: &PgPool, metrics: &TelemetryMetrics) {
         METRIC_NAMES[1],
         i64::try_from(pool.num_idle()).unwrap_or(i64::MAX),
     );
-    metrics.record_operational_value(METRIC_NAMES[6], waiting::now());
+    metrics.record_operational_value(METRIC_NAMES[4], waiting::now());
 }
 
 async fn sample_database(pool: &PgPool, metrics: &TelemetryMetrics) -> Result<(), sqlx::Error> {
     let snapshot = read_snapshot(pool).await?;
-    metrics.record_operational_value(METRIC_NAMES[2], snapshot.projection_unhealthy);
-    metrics.record_operational_age(METRIC_NAMES[3], snapshot.projection_oldest_update_seconds);
-    metrics.record_operational_value(METRIC_NAMES[4], snapshot.content_reclaimable);
-    metrics.record_operational_value(METRIC_NAMES[5], snapshot.account_deletion_pending);
-    metrics.record_operational_value(METRIC_NAMES[7], snapshot.public_lobby_shards);
-    metrics.record_operational_value(METRIC_NAMES[8], snapshot.public_lobby_occupied_slots);
-    metrics.record_operational_value(METRIC_NAMES[9], snapshot.public_lobby_network_agents);
+    metrics.record_operational_value(METRIC_NAMES[2], snapshot.content_reclaimable);
+    metrics.record_operational_value(METRIC_NAMES[3], snapshot.account_deletion_pending);
+    metrics.record_operational_value(METRIC_NAMES[5], snapshot.public_lobby_shards);
+    metrics.record_operational_value(METRIC_NAMES[6], snapshot.public_lobby_occupied_slots);
+    metrics.record_operational_value(METRIC_NAMES[7], snapshot.public_lobby_network_agents);
     Ok(())
 }
 
@@ -125,12 +119,6 @@ async fn read_snapshot(pool: &PgPool) -> Result<DatabaseSnapshot, sqlx::Error> {
     sqlx::query_as::<_, DatabaseSnapshot>(
         r"
         SELECT
-            (SELECT count(*)::bigint
-               FROM agent_room.matrix_projection_cursor
-              WHERE health_state <> 'healthy') AS projection_unhealthy,
-            COALESCE((SELECT max(EXTRACT(EPOCH FROM (clock_timestamp() - updated_at)))::double precision
-                        FROM agent_room.matrix_projection_cursor), 0.0)
-                AS projection_oldest_update_seconds,
             (SELECT count(*)::bigint
                FROM agent_room.content_object
               WHERE lifecycle_state IN ('orphaned', 'redacted', 'expired')) AS content_reclaimable,
@@ -198,7 +186,7 @@ mod tests {
 
     #[test]
     fn 运行指标名是固定低基数集合() {
-        assert_eq!(METRIC_NAMES.len(), 10);
+        assert_eq!(METRIC_NAMES.len(), 8);
         for name in METRIC_NAMES {
             assert!(name.is_ascii());
             assert!(!name.contains(['/', '\\', '@', ':']));

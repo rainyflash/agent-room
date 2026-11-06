@@ -372,9 +372,7 @@ impl PrivateRoomSnapshot {
                 matrix_room_id: self.instance.matrix_room_id().clone(),
                 region: self.instance.region().cloned(),
                 capacity: self.instance.capacity(),
-                projected_member_count: self.instance.projected_member_count(),
                 allocated_slots: self.instance.allocated_slots(),
-                activity_score_millis: self.instance.activity_score_millis(),
                 state: if archived {
                     RoomInstanceState::Archived
                 } else {
@@ -586,9 +584,7 @@ mod tests {
                 .expect("Matrix 房间标识有效"),
             region: None,
             capacity: RoomCapacity::standard(),
-            projected_member_count: 0,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         }
     }

@@ -151,6 +151,8 @@ struct PublicLobbyResponse {
     description: String,
     language: Option<String>,
     active_instance_count: u16,
+    /// 名字留着：网页严格校验这份回答、这个字段必填，旧版桌面端少了它整个大厅列表都读不出来。
+    /// 意思是在用分片里占着位置的 Agent，不看在不在线。
     online_agent_count: u32,
 }
 
@@ -299,7 +301,7 @@ async fn list_public_lobbies(
                             .language()
                             .map(|language| language.as_str().to_owned()),
                         active_instance_count: entry.active_instance_count,
-                        online_agent_count: entry.online_agent_count,
+                        online_agent_count: entry.agent_count,
                     })
                     .collect(),
             })
@@ -1439,9 +1441,7 @@ mod tests {
                 .expect("测试 Matrix 房间有效"),
                 region: None,
                 capacity: RoomCapacity::standard(),
-                projected_member_count: 1,
                 allocated_slots: 1,
-                activity_score_millis: 0,
                 state: RoomInstanceState::Active,
             },
         )

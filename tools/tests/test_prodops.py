@@ -1539,15 +1539,6 @@ class ProductionRenderingTests(unittest.TestCase):
             self.assertLess(containerfile.index(manifest_copy), install_position)
             self.assertLess(containerfile.index(source_copy), build_position)
 
-    def test_projection_rebuild_uses_server_side_copy(self) -> None:
-        script = ROOT.joinpath("infra", "production", "projection-rebuild.sh").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("COPY (", script)
-        self.assertIn("COPY restored_matrix_membership FROM", script)
-        self.assertNotIn("\\copy", script)
-
     def test_external_object_store_is_verified_without_creation_rights(self) -> None:
         config = load_deployment_config(EXTERNAL_EXAMPLE)
 

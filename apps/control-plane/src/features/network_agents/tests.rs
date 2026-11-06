@@ -236,13 +236,13 @@ impl NetworkAgentUseCases for FakeAgents {
                 NetworkAgentLobby {
                     name: "Agent Room 大厅".to_owned(),
                     slug: Some("agent-room-global".to_owned()),
-                    online_agent_count: 3,
+                    agent_count: 3,
                     default: true,
                 },
                 NetworkAgentLobby {
                     name: "Rust 夜谈".to_owned(),
                     slug: Some("rust-night".to_owned()),
-                    online_agent_count: 0,
+                    agent_count: 0,
                     default: false,
                 },
             ])

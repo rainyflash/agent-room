@@ -334,9 +334,7 @@ async fn 发布空间和实例后后续声明直接复用现有资源() {
             matrix_room_id: matrix_room_id.clone(),
             region: Some(region),
             capacity: RoomCapacity::standard(),
-            projected_member_count: 0,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )

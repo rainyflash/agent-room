@@ -249,8 +249,6 @@ impl PostgresRepositories {
         {
             return Err(constraint(operation));
         }
-        let activity_score =
-            i64::try_from(room.activity_score_millis()).map_err(|_| constraint(operation))?;
         let mut transaction = self
             .pool()
             .begin()
@@ -268,14 +266,12 @@ impl PostgresRepositories {
             sqlx::query(
                 r"INSERT INTO agent_room.room_instance (
                        id, catalog_entry_id, matrix_room_id, region_hint,
-                       soft_capacity, hard_capacity, member_count_projection,
-                       allocated_slots, activity_score, state,
+                       soft_capacity, hard_capacity, allocated_slots, state,
                        created_at, updated_at, version
                    ) VALUES (
                        $1, $2, $3, $4, $5, $6, $7, $8,
-                       $9::double precision / 1000.0, $10,
-                       to_timestamp($11::double precision / 1000.0),
-                       to_timestamp($11::double precision / 1000.0), 0
+                       to_timestamp($9::double precision / 1000.0),
+                       to_timestamp($9::double precision / 1000.0), 0
                    )",
             )
             .bind(room.id().as_uuid())
@@ -284,9 +280,7 @@ impl PostgresRepositories {
             .bind(room.region().map(RoomRegion::as_str))
             .bind(i32::from(room.capacity().soft()))
             .bind(i32::from(room.capacity().hard()))
-            .bind(i32::from(room.projected_member_count()))
             .bind(i32::from(room.allocated_slots()))
-            .bind(activity_score)
             .bind(room.state().as_str())
             .bind(completed_at.value())
             .execute(&mut *transaction)
@@ -375,7 +369,6 @@ async fn lock_ready_instance(
              AND instance.state = 'active'
              AND instance.allocated_slots < instance.soft_capacity
            ORDER BY instance.allocated_slots ASC,
-                    instance.activity_score DESC,
                     instance.id ASC
            LIMIT 1
            FOR UPDATE"

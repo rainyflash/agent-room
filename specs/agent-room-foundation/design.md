@@ -86,7 +86,7 @@ flowchart LR
 | 用户登录主体 | OIDC 身份提供方 | 控制平面用户投影 | 用 Codex 昵称或头像当根身份 |
 | Agent 归属与适配器绑定 | 控制平面 PostgreSQL | Bridge 本地只读缓存 | 从 Matrix 昵称反推所有权 |
 | Matrix 设备与加密密钥 | 各客户端 Matrix 加密存储 | 加密备份 | 把设备私钥上传到控制平面业务表 |
-| 房间成员与权限 | Matrix 房间状态 | 控制平面目录投影 | 直接修改 Synapse 数据库表 |
+| 房间成员与权限 | Matrix 房间状态 | 无，要用时直接问 Matrix | 直接修改 Synapse 数据库表 |
 | 聊天时间线与已读状态 | Matrix | 客户端事件缓存 | 在业务库再维护一份可写消息表 |
 | 消息正文与附件字节 | 内容服务/对象存储 | 设备加密缓存 | 把完整正文塞进预览事件 |
 | 消息预览与内容引用 | Matrix 自定义事件 | 客户端时间线缓存 | 仅靠对象存储列表恢复聊天顺序 |
@@ -120,7 +120,6 @@ flowchart LR
 - `content`：内容上传会话、访问票据、摘要和生命周期。
 - `policy`：自动发言授权、可见性和房间策略。
 - `moderation`：举报、封禁、禁言和联邦对端治理。
-- `projections`：从 Matrix 事件构建目录与查询模型。
 - `audit`：不可变安全审计接口。
 
 选 Rust 不是为了炫技：Bridge 必须是低内存、跨平台的常驻进程，控制平面与其共享领域约束、签名验证和协议测试能显著减少双实现偏差。代价是开发门槛更高，因此前端不共享 Rust 领域代码，只共享生成的协议契约。
@@ -226,7 +225,7 @@ agent-room/
 │   ├── application/            # 用例和端口
 │   ├── matrix-adapter/         # Matrix Client-Server SDK 适配
 │   ├── matrix-provisioning-adapter/ # Matrix Application Service 身份签发适配
-│   ├── postgres-adapter/       # SQLx 仓储与投影
+│   ├── postgres-adapter/       # SQLx 仓储
 │   ├── content-adapter/        # S3/本地对象存储
 │   ├── identity-adapter/       # OIDC/JWT/设备授权
 │   ├── bridge-core/            # Bridge 应用逻辑
@@ -325,11 +324,11 @@ apps/web/src/
 
 ## 10. 状态一致性与错误模型
 
-### 10.1 命令和投影
+### 10.1 命令和 Matrix 上的事实
 
 - 写命令首先提交给权威系统，再更新本地乐观状态。
 - 控制平面跨 PostgreSQL 与 Matrix 的动作不使用虚假的分布式事务：Matrix 那一步在请求里直接做（幂等，没做成就整个请求重来）；要后台接着做的，各自一张任务表加定时任务（租约、退避），比如撤销电脑后离开房间的 `revoked_agent_departure`。原先设想的通用 Outbox 一直没有消费者，2026-10-28 起停写、随后删表（[没人读的 Outbox](../outbox/design.md)）。
-- Matrix 事件投影允许最终一致；权限校验在不确定时拒绝，而不是相信陈旧投影。
+- 控制面不在库里记 Matrix 的成员和活动度，要用时直接问 Matrix；权限校验在不确定时拒绝。原先设想的 Matrix 投影一直没接上（[没人用的 Matrix 投影](../matrix-projection/design.md)）。
 - 客户端使用事件标识去重，不以时间戳作为唯一键。
 
 ### 10.2 发送状态
@@ -410,7 +409,7 @@ Matrix 联邦时间线可能在迟到事件或回填时调整顺序。客户端�
 - Bridge 在消费上下文包前崩溃。
 - 设备被撤销但仍持有旧访问令牌。
 - 联邦对端延迟、乱序、重复和回填事件。
-- 房间成员投影落后于真实权限。
+- 本机记着的成员名单落后于真实权限。
 - E2EE 密钥缺失、设备未验证和密钥轮换。
 - PixiJS 初始化失败时切换到列表模式。
 

@@ -39,6 +39,9 @@ for (const width of [1440, 390]) {
     await expect(
       lobbies.getByRole('link', { name: 'Enter · Default public lobby' }),
     ).toHaveAttribute('href', '/lobby/0198b601-77a2-7f41-b4f4-940f291951b8');
+    // 数的是占着位置的 Agent，不是在线的（specs/matrix-projection/design.md）。
+    await expect(lobbies).toContainText('12 agents in the lobby');
+    await expect(lobbies).toContainText('1 agent in the lobby');
 
     // 卡片：房主、人数、多久以前有人说话、加入方式和加不加密。
     const rust = card(page, 'Rust help desk');
@@ -186,6 +189,9 @@ test('发现页：中文', async ({ browser }) => {
   const page = await context.newPage();
   await page.goto(fixture);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('发现公开房间');
+  await expect(page.getByRole('region', { name: '公共大厅' })).toContainText(
+    '大厅里有 12 个 Agent',
+  );
   const rust = card(page, 'Rust help desk');
   await expect(rust).toContainText('房主：Grace');
   await expect(rust).toContainText('18 个人');

@@ -229,8 +229,6 @@ class DatabaseRestoreEvidence:
     replay_reached_target: bool
     logical_archives_verified: int
     databases_verified: tuple[str, ...]
-    projection_memberships: int
-    projection_rooms: int
     deletion_ledger_entries: int
     deletion_replays_queued: int
     target_time: str | None = None
@@ -282,8 +280,6 @@ class RestoreDrillReport:
                 "replayReachedTarget": self.database.replay_reached_target,
                 "logicalArchivesVerified": self.database.logical_archives_verified,
                 "databasesVerified": list(self.database.databases_verified),
-                "projectionMemberships": self.database.projection_memberships,
-                "projectionRooms": self.database.projection_rooms,
                 "deletionLedgerEntries": self.database.deletion_ledger_entries,
                 "deletionReplaysQueued": self.database.deletion_replays_queued,
             },

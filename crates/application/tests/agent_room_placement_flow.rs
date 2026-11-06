@@ -831,9 +831,7 @@ fn joined(instance_id: AgentInstanceId, catalog_id: RoomCatalogId) -> EnterLobby
                 matrix_room_id: matrix_room(30),
                 region: None,
                 capacity: RoomCapacity::standard(),
-                projected_member_count: 0,
                 allocated_slots: 0,
-                activity_score_millis: 0,
                 state: RoomInstanceState::Active,
             },
         )

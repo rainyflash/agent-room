@@ -417,8 +417,7 @@ fn lobby_entry(slug: &str) -> PublicLobbyDirectoryEntry {
         )
         .unwrap(),
         active_instance_count: 1,
-        online_agent_count: 0,
-        activity_score_millis: 0,
+        agent_count: 0,
     }
 }
 

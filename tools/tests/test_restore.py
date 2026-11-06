@@ -99,8 +99,6 @@ class FakeRestoreBackend:
             True,
             3,
             ("agent_room", "keycloak", "synapse"),
-            2,
-            1,
             0,
             0,
             recovery.time_text,
@@ -151,7 +149,6 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertEqual(report.duration_seconds, 12)
         self.assertEqual(report.object_count, 1)
         self.assertEqual(report.object_bytes, 6)
-        self.assertEqual(report.database.projection_memberships, 2)
         self.assertTrue((backend.drill_directory / "report.json").is_file())
         self.assertTrue((backend.drill_directory / "identity" / "synapse.signing.key").is_file())
         self.assertTrue(backend.account_deletion_ledger.is_file())

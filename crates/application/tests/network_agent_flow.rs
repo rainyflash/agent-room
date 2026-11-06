@@ -1484,9 +1484,7 @@ fn owned_snapshot(
             matrix_room_id: owned_matrix_room(catalog_id),
             region: None,
             capacity: RoomCapacity::new(8, 16).unwrap(),
-            projected_member_count: 1,
             allocated_slots: 0,
-            activity_score_millis: 0,
             state: instance_state,
         },
     )
@@ -1710,8 +1708,7 @@ impl RoomDirectory for FakeDirectory {
             .map(|catalog| PublicLobbyDirectoryEntry {
                 catalog: catalog.clone(),
                 active_instance_count: 1,
-                online_agent_count: 0,
-                activity_score_millis: 0,
+                agent_count: 0,
             })
             .collect();
         Box::pin(async move { Ok(entries) })
@@ -2068,9 +2065,7 @@ fn joined_in(
                 }),
                 region: None,
                 capacity: RoomCapacity::standard(),
-                projected_member_count: 1,
                 allocated_slots: 1,
-                activity_score_millis: 0,
                 state: RoomInstanceState::Active,
             },
         )

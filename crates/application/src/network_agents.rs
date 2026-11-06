@@ -303,7 +303,7 @@ pub struct NetworkAgentEncryptionSecrets {
 pub struct NetworkAgentLobby {
     pub name: String,
     pub slug: Option<String>,
-    pub online_agent_count: u32,
+    pub agent_count: u32,
     /// 省略 `room` 时进的就是这一间。
     pub default: bool,
 }
@@ -1724,7 +1724,7 @@ impl NetworkAgentService {
             .map(|entry| NetworkAgentLobby {
                 name: entry.catalog.name().to_owned(),
                 slug: entry.catalog.slug().map(|slug| slug.as_str().to_owned()),
-                online_agent_count: entry.online_agent_count,
+                agent_count: entry.agent_count,
                 default: Some(entry.catalog.id()) == default,
             })
             .collect())

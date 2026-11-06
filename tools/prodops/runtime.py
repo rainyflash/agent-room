@@ -483,7 +483,6 @@ class ProductionRuntime:
         container_name = f"{self.config.project_name}-restore-{backup_directory.name[-8:]}"
         data_volume = f"{container_name}-data"
         wal_volume = f"{container_name}-wal"
-        projection_script = ROOT / "infra" / "production" / "projection-rebuild.sh"
         deletion_replay_script = ROOT / "infra" / "production" / "account-deletion-replay.sh"
         created_volumes: list[str] = []
         started = False
@@ -544,8 +543,6 @@ class ProductionRuntime:
                     "--volume",
                     f"{wal_volume}:/wal:ro",
                     "--volume",
-                    f"{projection_script.as_posix()}:/scripts/projection-rebuild.sh:ro",
-                    "--volume",
                     f"{deletion_replay_script.as_posix()}:/scripts/account-deletion-replay.sh:ro",
                     "--tmpfs",
                     "/tmp:rw,noexec,nosuid,size=128m,uid=70,gid=70",
@@ -598,28 +595,12 @@ class ProductionRuntime:
             )
             deletion_entries = _named_integer(deletion_output, "deletion_ledger_entries")
             deletion_replays = _named_integer(deletion_output, "deletion_replays_queued")
-            projection_output = self._run(
-                [
-                    "docker",
-                    "exec",
-                    "--user",
-                    "postgres",
-                    container_name,
-                    "/bin/sh",
-                    "/scripts/projection-rebuild.sh",
-                ],
-                capture=True,
-            )
-            memberships = _named_integer(projection_output, "memberships")
-            rooms = _named_integer(projection_output, "rooms")
             return DatabaseRestoreEvidence(
                 restore_point_name=recovery.name,
                 restore_point_lsn=recovery.lsn,
                 replay_reached_target=True,
                 logical_archives_verified=3,
                 databases_verified=databases,
-                projection_memberships=memberships,
-                projection_rooms=rooms,
                 deletion_ledger_entries=deletion_entries,
                 deletion_replays_queued=deletion_replays,
                 target_time=recovery.time_text,

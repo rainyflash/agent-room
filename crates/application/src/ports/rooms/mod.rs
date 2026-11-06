@@ -131,8 +131,8 @@ pub struct RoomDirectoryQuery {
 pub struct PublicLobbyDirectoryEntry {
     pub catalog: RoomCatalog,
     pub active_instance_count: u16,
-    pub online_agent_count: u32,
-    pub activity_score_millis: u64,
+    /// 在用分片里占着位置的 Agent（`allocated_slots` 加起来）。
+    pub agent_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

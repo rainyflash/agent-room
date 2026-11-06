@@ -131,7 +131,6 @@ def run() -> dict[str, object]:
             "database": "PostgreSQL 18 isolated capacity database",
             "agents": 10_000,
             "onlineInstances": 1_000,
-            "lobbyMembers": 250,
         },
         "metrics": metrics,
     }

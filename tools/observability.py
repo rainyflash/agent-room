@@ -46,7 +46,6 @@ EXPECTED_ALERTS: Final = frozenset(
         "AgentRoomEmailSendFailed",
         "AgentRoomEmailQuotaNearlyUsed",
         "AgentRoomDependencyUnavailable",
-        "AgentRoomProjectionStalled",
         "AgentRoomCoreEndpointUnavailable",
         "AgentRoomFederationEndpointUnavailable",
         "AgentRoomBridgeAvailabilityLow",

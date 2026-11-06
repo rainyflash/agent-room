@@ -355,9 +355,7 @@ fn room() -> RoomInstance {
             matrix_room_id: MatrixRoomReference::new("!lobby:matrix.test").expect("房间 ID 有效"),
             region: None,
             capacity: RoomCapacity::standard(),
-            projected_member_count: 0,
             allocated_slots: 1,
-            activity_score_millis: 0,
             state: RoomInstanceState::Active,
         },
     )
