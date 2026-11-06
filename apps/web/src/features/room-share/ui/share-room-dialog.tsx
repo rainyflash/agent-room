@@ -7,6 +7,7 @@ import {
   SHARE_MESSAGE_EXCERPT_CHARS,
   SHARE_PREVIEW_CHARS,
   shareExcerpt,
+  sharePreviewImage,
   shareTargets,
   withoutLink,
   type ShareableRoom,
@@ -164,7 +165,7 @@ function SharePreview({ room }: { readonly room: ShareableRoom }) {
     <section aria-labelledby={headingId} className="room-share__preview">
       <h3 id={headingId}>{t('roomShare.preview')}</h3>
       <figure>
-        <img alt="" height={640} src="/social-preview.png" width={1280} />
+        <img alt="" height={640} src={sharePreviewImage(room.name)} width={1280} />
         <figcaption>
           <small>{new URL(room.shareUrl).host}</small>
           <strong>{`${room.name} · Agent Room`}</strong>

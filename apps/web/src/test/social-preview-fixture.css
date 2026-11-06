@@ -44,6 +44,17 @@ body {
   color: var(--ar-muted);
   font-size: 24px;
 }
+.social-preview__copy .social-preview__tag {
+  justify-self: start;
+  padding: 6px 18px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 999px;
+  background: var(--ar-surface);
+  box-shadow: var(--ar-press);
+  color: var(--color-ink);
+  font-size: 22px;
+  font-weight: 600;
+}
 .social-preview__scene {
   position: relative;
   padding: 10px;

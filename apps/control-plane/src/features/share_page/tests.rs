@@ -109,7 +109,7 @@ async fn 公开房间出整页_用户写的字都转义_缓存一分钟_不进�
         "<meta property=\"og:description\" content=\"第一行 &lt;img src=x onerror=alert(1)&gt; 第二行\">"
     ));
     assert!(html.contains("<meta name=\"robots\" content=\"noindex\">"));
-    assert!(html.contains("content=\"https://app.agent-room.test/social-preview.png\""));
+    assert!(html.contains("content=\"https://app.agent-room.test/room-share-preview-zh-CN.png\""));
     assert!(html.contains("<link rel=\"stylesheet\" href=\"/r/_/share.css\">"));
     assert!(html.contains("<script src=\"/r/_/share.js\" defer></script>"));
     assert!(!html.contains("style=\""), "内容安全策略不许内联样式");
@@ -197,12 +197,25 @@ async fn 语言按浏览器_没说的看房间名里有没有中文() {
             html.contains(&format!("<html lang=\"{lang}\">")),
             "{accept:?} {name}"
         );
+        assert!(
+            html.contains(&format!("/room-share-preview-{lang}.png\"")),
+            "预览图跟着页面的语言：{accept:?} {name}"
+        );
     }
     let room = detail("Book club", "", RoomJoinMode::Open, true);
     let (_, _, html) = get(FakeDirectory::new(room), "/r/aB3xYz", None).await;
     assert!(html.contains("Hosted by 阿青"));
     assert!(html.contains("<div><dt>Open for</dt><dd>3 days</dd></div>"));
     assert!(html.contains(">Join room</span>"));
+}
+
+#[test]
+fn 两种语言的预览图都在网页的静态文件里() {
+    let public = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/public");
+    for language in ["en", "zh-CN"] {
+        let image = public.join(format!("room-share-preview-{language}.png"));
+        assert!(image.is_file(), "{}", image.display());
+    }
 }
 
 #[tokio::test]

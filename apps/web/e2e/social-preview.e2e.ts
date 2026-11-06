@@ -31,6 +31,36 @@ test('分享预览图按 1280×640 画出来，标题和首页一样', async ({ 
 });
 
 /**
+ * 公开房间分享出去时的通用图（`src/test/social-preview-fixture.tsx` 的 `?room=`），中英文各一张，分享页和
+ * “发出去长这样”按房间名选。设了 AGENT_ROOM_WRITE_ROOM_SHARE_PREVIEW=1 时写进 `public/`：改了图上的字以后用它重新生成。
+ */
+for (const [language, title] of [
+  ['en', 'Come and join this room.'],
+  ['zh-CN', '来这个房间一起聊。'],
+] as const) {
+  test(`公开房间的通用预览图（${language}）按 1280×640 画出来`, async ({ page }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 640, width: 1_280 });
+    await page.goto(`/e2e/fixtures/social-preview.html?room=${language}`);
+
+    const card = page.locator('#social-preview');
+    await expect(card.getByRole('heading', { level: 1 })).toHaveText(title);
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
+    expect(await card.boundingBox()).toEqual({ height: 640, width: 1_280, x: 0, y: 0 });
+
+    const file = `room-share-preview-${language}.png`;
+    const output =
+      process.env.AGENT_ROOM_WRITE_ROOM_SHARE_PREVIEW === '1'
+        ? path.join(testInfo.project.testDir, '..', 'public', file)
+        : testInfo.outputPath(file);
+    await card.screenshot({ path: output });
+    expect(failures).toEqual([]);
+  });
+}
+
+/**
  * agentroom.chat 首屏的房间插图（`site/room.png`，静态网站用，见 specs/site-discovery/design.md）。
  * 设了 AGENT_ROOM_WRITE_SITE_ART=1 时写进 `site/room.png`：人物或房间的画法变了以后用它重新生成。
  */
