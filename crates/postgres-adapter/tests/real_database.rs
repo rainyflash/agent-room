@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 69] = [
+const EXPECTED_TABLES: [&str; 66] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -83,8 +83,6 @@ const EXPECTED_TABLES: [&str; 69] = [
     "federation_governance_rule",
     "federation_peer",
     "join_code_attempt_window",
-    "matrix_projection_cursor",
-    "matrix_projection_event_receipt",
     "moderation_action",
     "moderation_action_agent",
     "moderation_action_agent_reversal",
@@ -116,7 +114,6 @@ const EXPECTED_TABLES: [&str; 69] = [
     "room_capacity_reservation",
     "room_catalog_entry",
     "room_instance",
-    "room_membership_projection",
     "room_moderation_grant",
     "room_provisioning_job",
     "web_session",

@@ -143,3 +143,5 @@ Outbox 的表已经单独删了（#658），第 3 步另写一个迁移。
 - 2026-11-04 维护者同意按建议办：走甲，分两版去掉；第 3 步删三张表和两列（合并前再只读查一次行数报给他）；大厅卡片按占着位置的算，写“大厅里有 N 个 Agent”。这期间公开房间上线了，大厅卡片挪到了“发现”页；公开房间的卡片本来就按 `room_capacity_reservation` 数 Agent（`public_directory.rs`），不读投影。
 - 第 2 步（#722）：删了端口、实现和测试，两个运行指标（`agent_room.operational.age` 这个 gauge 没别的指标用，一起去掉），告警、规则测试、仪表盘那一格（“Desktop Bridge availability”占满那一行）和运维手册那一节，恢复演练的重建和报告里的两个数，容量基准的 250 人名册。建房不再写那两列，靠默认值 0。列大厅按 `allocated_slots` 加起来排序、填数；内部字段改名 `agent_count`，接口里的 `onlineAgentCount` 不动。“发现”页写“大厅里有 N 个 Agent”。`real_database.rs` 的表名单第 3 步再改。
   - 第 3 步的迁移等带它的那一版发出去以后再合，合之前只读查一次行数报给维护者。
+- 第 2 步随 Alpha 89 发布（2026-11-06），发完跑了 `telemetry-apply`，投影的告警不在了。
+- 第 3 步：维护者 2026-11-06 让做，合并前只读查了生产：三张表都是 0 行（连索引共 64 kB），`room_instance` 100 行、两列全是 0；没有别的表、视图或函数引用它们，只有两个 CHECK 约束（`room_instance_member_count`、`room_instance_activity_score`）和分配索引用到这两列。迁移 `202611060001_drop_matrix_projection.sql` 删三张表、两个约束和两列，`room_instance_allocation_idx` 去掉 `activity_score` 重建成（`catalog_entry_id`、`state`、`allocated_slots`、`id`），和选分片的查法一致；`real_database.rs` 的表名单去掉三张表。上线以后回滚只能退到 Alpha 89：Alpha 88 及更早的控制面建房时写着这两列。
