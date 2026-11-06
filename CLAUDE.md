@@ -76,7 +76,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   1. 先试升级依赖；
   2. 升不了，就按 `deny.toml` 里已有例外的写法加一条带理由的精确例外；
   3. 再开一个 `security-dependency` issue 跟踪。
-- “格式、类型与测试”只留行号、不带完整调试信息（`CARGO_PROFILE_DEV_DEBUG`）：整个 workspace 的测试程序会写满托管 Runner 的盘。以前红在 `No space left on device` 时自动合并就一直卡着，没人知道（#692 卡了一天）。PR 一直没合，先看是不是这个。
+- “格式、类型与测试”只留行号、不带完整调试信息（`CARGO_PROFILE_DEV_DEBUG`）：整个 workspace 的测试程序会写满托管 Runner 的盘。以前红在 `No space left on device` 时自动合并就一直卡着，没人知道（#692 卡了一天）。PR 一直没合，先看是不是这个。同用这份缓存（`linux-quality`）的作业要带一样的设置：rust-cache 把 `CARGO_` 开头的环境变量算进缓存键，不带的话恢复的是 #724 之前那份、再也不更新的缓存，离 main 越来越远、要重编的越来越多（2026-11-05 派发里“真实网页登录”拉镜像时盘满）。这样红的作业读不到日志（`BlobNotFound`），看 `gh api repos/rainyflash/agent-room/check-runs/<作业号>/annotations`。
 - CI 里的 Web 单元测试跑的是根目录的 vitest 配置，不加载 `apps/web` 的 setup。跨平台断言要在用例里写明访客系统。
 
 ## 代码里的坑
