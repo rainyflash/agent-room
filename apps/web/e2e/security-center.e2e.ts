@@ -49,7 +49,7 @@ test('安全中心在桌面端说这台设备已就绪，没有恢复密钥和�
     path: '../../artifacts/browser/task-28/security-desktop.png',
   });
 
-  await page.getByRole('button', { name: 'Disconnect' }).first().click();
+  await page.getByRole('button', { name: 'Disconnect', exact: true }).first().click();
   await expect(page.getByText('Disconnect this agent?')).toBeVisible();
   await expect(
     page.getByText('Release architect will be disconnected. It can join again later.'),
@@ -120,19 +120,66 @@ test('7 天以上没用的电脑收着，一键撤销时可以留下几台', asy
   expect(failures).toEqual([]);
 });
 
-test('没有最近登录时，一键撤销先请人重新登录', async ({ page }) => {
+test('服务器说撤销要先重新登录（回滚到旧控制面）：停下，给“重新登录”', async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto(`${fixturePath}?reauth`);
+  await page.goto(`${fixturePath}?reauthRejected`);
 
   await page.getByText('Not used for 7 days or more · 2').click();
   await page.getByRole('button', { name: 'Revoke all' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('Revoking computers needs a fresh sign-in first.')).toBeVisible();
-  await expect(dialog.getByRole('button', { name: /^Revoke \d/u })).toHaveCount(0);
+  // 撤销不要最近登录过，不先拦着。
+  await expect(dialog.getByRole('button', { name: 'Sign in again' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Revoke 2 computers' }).click();
+  await expect(
+    dialog.getByText('The server asked you to sign in again. Then try once more.'),
+  ).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await dialog.getByRole('button', { name: 'Sign in again' }).click();
   await expect(page.locator('body')).toHaveAttribute('data-sign-in-requested', 'true');
 });
+
+for (const width of [1_440, 390]) {
+  test(`${String(width)}px 挑几台电脑、几个 Agent 一起撤，不用重新登录`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: width < 768 ? 844 : 1_000, width });
+    await page.goto(fixturePath);
+
+    const computers = page.locator('article', {
+      has: page.getByRole('heading', { name: 'Computers and browsers' }),
+    });
+    await computers.getByRole('button', { name: 'Choose computers to revoke' }).click();
+    const pickComputers = page.getByRole('dialog', { name: 'Revoke computers' });
+    // 还登录着的四台都列着，正在用的也在里面，默认一台都不勾。
+    await expect(pickComputers.getByRole('checkbox')).toHaveCount(4);
+    await expect(pickComputers.getByRole('checkbox', { checked: true })).toHaveCount(0);
+    await expect(pickComputers.getByRole('button', { name: 'Revoke', exact: true })).toBeDisabled();
+    await pickComputers.getByRole('checkbox', { name: /Travel notebook/u }).check();
+    await pickComputers
+      .getByRole('checkbox', { name: /Alpha 70 fresh-device acceptance/u })
+      .check();
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath(`choose-computers-${String(width)}.png`) });
+    await pickComputers.getByRole('button', { name: 'Revoke 2 computers' }).click();
+    await expect(pickComputers).toHaveCount(0);
+    await expect(computers.getByText('Revoked · 3')).toBeVisible();
+
+    const agents = page.locator('article', { has: page.getByRole('heading', { name: 'Agents' }) });
+    await agents.getByRole('button', { name: 'Choose agents to disconnect' }).click();
+    const pickAgents = page.getByRole('dialog', { name: 'Disconnect agents' });
+    await expect(pickAgents.getByRole('checkbox')).toHaveCount(4);
+    await pickAgents.getByRole('button', { name: 'Select all' }).click();
+    await pickAgents.getByRole('checkbox', { name: /Release architect/u }).uncheck();
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({ path: testInfo.outputPath(`choose-agents-${String(width)}.png`) });
+    await pickAgents.getByRole('button', { name: 'Disconnect 3 agents' }).click();
+    await expect(pickAgents).toHaveCount(0);
+    await expect(agents.getByText('Disconnected · 4')).toBeVisible();
+    await expect(agents.getByText('Release architect')).toBeVisible();
+    expect(failures).toEqual([]);
+  });
+}
 
 for (const width of [1_440, 390]) {
   test(`${String(width)}px 安全里列出屏蔽的 Agent，解除以后拿掉`, async ({ page }) => {

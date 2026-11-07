@@ -15,7 +15,7 @@ import type {
   MatrixSecuritySnapshot,
 } from '@/features/security/domain/matrix-security';
 import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
-import type { Reauthentication } from '@/features/security/ui/bulk-device-revocation-dialog';
+import type { Reauthentication } from '@/features/security/ui/bulk-revocation-dialog';
 import { AgentRecoveryPanel } from '@/features/security/ui/agent-recovery-panel';
 import {
   BlockedAgentsPanel,
@@ -53,7 +53,6 @@ export function SecuritySettings() {
         ? {}
         : {
             reauthentication: {
-              recentlyAuthenticated: principal.recentlyAuthenticated,
               signInAgain: () => {
                 void controlPlane.beginAuthentication(SECURITY_PATH, 'reauthenticate');
               },
@@ -74,7 +73,7 @@ export type SecurityWorkspaceProps = {
   /** 这台设备的自动签名（ADR 0011）：准备中、就绪、出错可重试。 */
   readonly deviceSigning: DeviceSigningStatus;
   readonly gateway: MatrixSecurityGateway;
-  /** 撤销电脑要最近登录过：登录着的时候给，没登录（测试）就不先拦着。 */
+  /** 服务器说撤销要先重新登录时（回滚到旧版控制面）去哪里重新登录；没登录（测试）就不给。 */
   readonly reauthentication?: Reauthentication;
 };
 

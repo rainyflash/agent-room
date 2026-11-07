@@ -14,7 +14,7 @@ import type {
   ProductDevice,
 } from '@/features/security/domain/access-management';
 import { AccessManagementLedger } from '@/features/security/ui/access-management-ledger';
-import type { Reauthentication } from '@/features/security/ui/bulk-device-revocation-dialog';
+import type { Reauthentication } from '@/features/security/ui/bulk-revocation-dialog';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -90,24 +90,109 @@ describe('AccessManagementLedger', () => {
     ]);
   });
 
-  it('没有最近登录先请人重新登录，不去撤销', async () => {
+  it('撤销不要最近登录过：不先请人重新登录，直接撤', async () => {
     const user = userEvent.setup();
-    const revokeProductDevice = vi.fn<AccessManagementGateway['revokeProductDevice']>();
+    const revokeProductDevice = vi.fn<AccessManagementGateway['revokeProductDevice']>(() =>
+      Promise.resolve(ok({ matrixCleanup: 'complete' as const, pendingAgentInstanceCount: 0 })),
+    );
     const signInAgain = vi.fn();
     show(gateway({ devices: [device(2, 'Alpha 70 acceptance', 10)], revokeProductDevice }), {
-      recentlyAuthenticated: false,
       signInAgain,
     });
 
     await user.click(await screen.findByRole('button', { name: 'Revoke all' }));
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: 'Sign in again' })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke 1 computer' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(revokeProductDevice).toHaveBeenCalledOnce();
+    expect(signInAgain).not.toHaveBeenCalled();
+  });
+
+  it('在还登录着的电脑里自己挑：默认都不勾，正在用的也在里面，只撤勾上的', async () => {
+    const user = userEvent.setup();
+    const revokeProductDevice = vi.fn<AccessManagementGateway['revokeProductDevice']>(() =>
+      Promise.resolve(ok({ matrixCleanup: 'complete' as const, pendingAgentInstanceCount: 0 })),
+    );
+    show(
+      gateway({
+        devices: [
+          device(1, 'Windows desktop', 1),
+          device(2, 'Travel notebook', 2),
+          device(3, 'Alpha 70 acceptance', 10),
+          { ...device(4, 'Old laptop', 50), trustState: 'revoked', revokedAtUnixMs: Date.now() },
+        ],
+        revokeProductDevice,
+      }),
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Choose computers to revoke' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Revoke computers' });
+    const boxes = within(dialog).getAllByRole('checkbox');
+    // 撤销了的不列；还登录着的三台都列，默认一个都不勾。
+    expect(boxes).toHaveLength(3);
+    for (const box of boxes) expect(box).not.toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: /Windows desktop/u })).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Revoke' })).toBeDisabled();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Travel notebook/u }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /Alpha 70 acceptance/u }));
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke 2 computers' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(revokeProductDevice.mock.calls.map(([id]) => id)).toEqual([
+      device(2, '', 0).deviceId,
+      device(3, '', 0).deviceId,
+    ]);
+  });
+
+  it('Agent 连接里挑几个断开：只列没断开的，能全选，没断开的留着、还勾着', async () => {
+    const user = userEvent.setup();
+    const failing = instance(2, '', 'offline').agentInstanceId;
+    const revokeAgentInstance = vi.fn<AccessManagementGateway['revokeAgentInstance']>(
+      (instanceId) =>
+        Promise.resolve(
+          instanceId === failing
+            ? err({ code: 'network.unavailable', retryable: true })
+            : ok({
+                instance: instance(1, 'Build agent', 'revoked'),
+                matrixCleanup: 'complete' as const,
+                matrixCleanupPendingReason: null,
+              }),
+        ),
+    );
+    show(
+      gateway({
+        devices: [device(1, 'Windows desktop', 1)],
+        instances: [
+          instance(1, 'Build agent', 'online'),
+          instance(2, 'Release QA', 'offline'),
+          instance(3, 'Old QA', 'offline'),
+          instance(4, 'Gone', 'revoked'),
+        ],
+        revokeAgentInstance,
+      }),
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Choose agents to disconnect' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Disconnect agents' });
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(3);
+    expect(within(dialog).queryByText('Gone')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Select all' }));
+    expect(within(dialog).getByRole('button', { name: 'Clear selection' })).toBeVisible();
+    await user.click(within(dialog).getByRole('button', { name: 'Disconnect 3 agents' }));
+
     expect(
-      within(dialog).getByText('Revoking computers needs a fresh sign-in first.'),
+      await within(dialog).findByText('1 agent could not be disconnected. Try again.'),
     ).toBeVisible();
-    expect(within(dialog).queryByRole('button', { name: /^Revoke \d/u })).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: 'Sign in again' }));
-    expect(signInAgain).toHaveBeenCalledOnce();
-    expect(revokeProductDevice).not.toHaveBeenCalled();
+    expect(revokeAgentInstance).toHaveBeenCalledTimes(3);
+    expect(within(dialog).getByRole('checkbox', { name: /Release QA/u })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: /Build agent/u })).not.toBeChecked();
   });
 
   it('撤到一半服务器说要重新登录：停下，改成请人重新登录', async () => {
@@ -120,7 +205,7 @@ describe('AccessManagementLedger', () => {
         devices: [device(2, 'Alpha 70 acceptance', 10), device(3, 'Alpha 60 acceptance', 40)],
         revokeProductDevice,
       }),
-      { recentlyAuthenticated: true, signInAgain: vi.fn() },
+      { signInAgain: vi.fn() },
     );
 
     await user.click(await screen.findByRole('button', { name: 'Revoke all' }));
@@ -130,6 +215,9 @@ describe('AccessManagementLedger', () => {
     expect(
       await within(dialog).findByRole('button', { name: 'Sign in again' }),
     ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('The server asked you to sign in again. Then try once more.'),
+    ).toBeVisible();
     expect(revokeProductDevice).toHaveBeenCalledOnce();
   });
 
@@ -196,17 +284,20 @@ async function panel(name: string): Promise<HTMLElement> {
 function gateway({
   devices,
   instances = [],
+  revokeAgentInstance,
   revokeProductDevice,
 }: {
   readonly devices: readonly ProductDevice[];
   readonly instances?: readonly AgentInstance[];
+  readonly revokeAgentInstance?: AccessManagementGateway['revokeAgentInstance'];
   readonly revokeProductDevice?: AccessManagementGateway['revokeProductDevice'];
 }): AccessManagementGateway {
   return {
     listAgentInstances: () => Promise.resolve(ok(instances)),
     listProductDevices: () => Promise.resolve(ok(devices)),
-    revokeAgentInstance: () =>
-      Promise.resolve(err({ code: 'access.not_configured', retryable: false })),
+    revokeAgentInstance:
+      revokeAgentInstance ??
+      (() => Promise.resolve(err({ code: 'access.not_configured', retryable: false }))),
     revokeProductDevice:
       revokeProductDevice ??
       (() => Promise.resolve(err({ code: 'access.not_configured', retryable: false }))),
