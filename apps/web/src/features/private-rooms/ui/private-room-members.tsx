@@ -13,7 +13,7 @@ import {
   UserMinus,
   X,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
@@ -38,6 +38,7 @@ import {
 } from '@/features/private-rooms/domain/private-room';
 import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
 import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
+import { ArchiveRoomConfirm } from '@/features/private-rooms/ui/archive-room-confirm';
 import { PrivateRoomAccountInvite } from '@/features/private-rooms/ui/private-room-account-invite';
 import {
   PrivateRoomCapabilityEditor,
@@ -141,6 +142,8 @@ export function PrivateRoomMembers({
   const canInvite = owner || allows(currentMember, 'invite');
   const grantable = grantableBy(room, principalId);
   const [transferTarget, setTransferTarget] = useState<string | null>(null);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
+  const archiveButton = useRef<HTMLButtonElement>(null);
   const nameOf = useMemberNames(rooms, room, currentMember?.status === 'joined');
   const relayed = useHasNetworkAgents(rooms, room, canManage);
   const origin = usePrivateRoomOrigin(rooms, room.catalogId);
@@ -377,22 +380,37 @@ export function PrivateRoomMembers({
             {t('privateRooms.action.leave')}
           </Button>
         ) : (
+          // 归档不要最近登录过（specs/cleanup-without-reauth），先在原处确认一次。
           <Button
-            disabled={mutation.isPending || !recentlyAuthenticated}
+            aria-expanded={confirmingArchive}
+            disabled={mutation.isPending}
             icon={<Archive aria-hidden="true" />}
             onClick={() => {
-              run({
-                execute: async () => await rooms.archive(room.catalogId),
-                onSuccess: onExitRoom,
-              });
+              setConfirmingArchive((open) => !open);
             }}
+            ref={archiveButton}
             size="compact"
-            title={recentlyAuthenticated ? undefined : t('privateRooms.governance.reauthRequired')}
             tone="alert"
           >
             {t('privateRooms.action.archive')}
           </Button>
         )}
+        {owner && confirmingArchive ? (
+          <ArchiveRoomConfirm
+            name={room.name}
+            onCancel={() => {
+              setConfirmingArchive(false);
+              archiveButton.current?.focus();
+            }}
+            onConfirm={() => {
+              run({
+                execute: async () => await rooms.archive(room.catalogId),
+                onSuccess: onExitRoom,
+              });
+            }}
+            pending={mutation.isPending}
+          />
+        ) : null}
       </footer>
 
       <Details summary={t('privateRooms.governance.details')}>

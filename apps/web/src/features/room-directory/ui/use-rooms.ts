@@ -86,6 +86,11 @@ export type RoomCommands = {
   readonly decline: (room: PrivateRoom) => Promise<RoomResult>;
   /** 同一个请求 ID 重试不会再建一个房间。成功后直接跳进新房间。 */
   readonly create: (requestId: string, input: CreatePrivateRoomInput) => Promise<RoomResult>;
+  /**
+   * 房主归档自己的房间。不要最近登录过（`specs/cleanup-without-reauth/design.md`），页面上先确认；
+   * 成功后重读房间列表，卡片挪进“已归档的房间”。
+   */
+  readonly archive: (room: PrivateRoom) => Promise<RoomResult>;
 };
 
 export function useRoomCommands(): RoomCommands {
@@ -117,6 +122,7 @@ export function useRoomCommands(): RoomCommands {
       decline: async (room) => await settle(await coordinator.decline(room)),
       create: async (requestId, input) =>
         await go(await settle(await coordinator.createAndJoin(requestId, input))),
+      archive: async (room) => await settle(await privateRooms.archive(room.catalogId)),
     };
-  }, [coordinator, navigate, queries]);
+  }, [coordinator, navigate, privateRooms, queries]);
 }

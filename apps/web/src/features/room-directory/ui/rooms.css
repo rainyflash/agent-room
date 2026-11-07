@@ -294,6 +294,41 @@
   padding: 14px;
 }
 
+/*
+ * 你当房主的房间：卡片下面多一条“归档”（specs/cleanup-without-reauth）。外框挪到外面这一层，
+ * 链接和下面这一条共用一个框；链接本身还是整块可点。
+ */
+.room-card {
+  display: grid;
+  min-width: 0;
+  /* 一张卡片展开确认时只有它变高，同一行的别的卡片不跟着拉长。 */
+  align-self: start;
+  border: var(--ar-outline-thin) solid var(--ar-line);
+  border-radius: var(--ar-radius);
+  background: var(--color-paper);
+}
+
+.room-card:has(> .room-row--link:hover) {
+  border-color: var(--ar-outline);
+}
+
+.room-card > .room-row--card {
+  border: 0;
+  border-radius: var(--ar-radius) var(--ar-radius) 0 0;
+}
+
+.room-card__footer {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+  padding: 6px 10px 10px;
+  border-top: var(--ar-outline-thin) solid var(--ar-line);
+}
+
+.room-card__footer > .archive-room-confirm {
+  flex: 1 1 100%;
+}
+
 /* 已归档的房间：默认收起；点开是和上面一样的房间卡片，图标换成灰底，进去只能看之前的消息。 */
 .my-rooms__archived > .ar-disclosure__body {
   display: grid;

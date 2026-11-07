@@ -1698,6 +1698,16 @@
   line-height: 1.45;
 }
 
+/* 归档前的确认占满一行，放在说明和按钮下面。 */
+.private-room-danger-zone {
+  flex-wrap: wrap;
+}
+
+.private-room-danger-zone > .archive-room-confirm {
+  flex: 1 1 100%;
+  background: var(--color-paper);
+}
+
 .lobby-stage {
   position: absolute;
   inset: 0;

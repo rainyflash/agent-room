@@ -7,6 +7,7 @@ import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-
 type FeatureWindow = Window &
   typeof globalThis & {
     readonly __applicationFeatureEvidence: {
+      readonly archives: readonly string[];
       readonly creates: readonly string[];
       readonly uploads: readonly { readonly submissionId: string; readonly digest: string }[];
       readonly publishes: number;
@@ -250,6 +251,52 @@ for (const width of [1440, 390]) {
     });
     await fieldNotes.click();
     await expect(page.getByRole('heading', { name: 'Field notes', exact: true })).toBeVisible();
+    expect(failures).toEqual([]);
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`你建的房间卡片上直接归档：不用重新登录，先确认，取消不归档 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(fixture);
+    const mine = page.getByRole('region', { name: 'Your rooms' });
+    const created = mine.getByRole('region', { name: 'Rooms you created' });
+    const joined = mine.getByRole('region', { name: 'Rooms you joined' });
+    // 只有你当房主的才有“归档”。
+    await expect(created.getByRole('button', { name: /^Archive “/u })).toHaveCount(2);
+    await expect(joined.getByRole('button', { name: /^Archive/u })).toHaveCount(0);
+
+    const archive = created.getByRole('button', { name: 'Archive “Engineering room”' });
+    await archive.click();
+    const confirm = created.getByRole('group', { name: 'Archive “Engineering room”?' });
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await expectNoHorizontalOverflow(page);
+    await page.screenshot({
+      path: testInfo.outputPath(`room-card-archive-${String(width)}.png`),
+      fullPage: true,
+    });
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toHaveCount(0);
+    await expect(archive).toBeFocused();
+
+    await archive.click();
+    await created
+      .getByRole('group', { name: 'Archive “Engineering room”?' })
+      .getByRole('button', { name: 'Archive', exact: true })
+      .click();
+    const archived = mine.locator('details', { hasText: 'Archived rooms (2)' });
+    await expect(archived).toBeVisible();
+    await expect(created.getByRole('link', { name: /Engineering room/ })).toHaveCount(0);
+    await archived.getByText('Archived rooms (2)').click();
+    await expect(archived.getByRole('link', { name: /Engineering room/ })).toBeVisible();
+    // 归档了的卡片不再有“归档”。
+    await expect(archived.getByRole('button', { name: /^Archive/u })).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as FeatureWindow).__applicationFeatureEvidence.archives),
+    ).toEqual(['01990d9e-8400-7000-8000-000000000402']);
     expect(failures).toEqual([]);
   });
 }

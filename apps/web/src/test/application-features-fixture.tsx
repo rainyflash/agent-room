@@ -172,6 +172,7 @@ const transactions = new Map<string, string>();
 const listeners = new Set<() => void>();
 let messages: readonly RoomMessageSignal[] = [];
 const counters = {
+  archives: [] as string[],
   creates: [] as string[],
   uploads: [] as { submissionId: string; digest: string }[],
   publishes: 0,
@@ -240,6 +241,16 @@ function featureServices(base: AppServices): AppServices {
           : err({ code: 'fixture.missing', retryable: false }),
       ),
     people: roomPeople,
+    // 房主归档：不要最近登录过（这位用户没有），卡片挪进“已归档的房间”。
+    archive: (id) => {
+      const room = rooms.get(id);
+      if (room === undefined)
+        return Promise.resolve(err({ code: 'fixture.missing', retryable: false }));
+      counters.archives.push(id);
+      const archived: PrivateRoom = { ...room, status: 'archived' };
+      rooms.set(id, archived);
+      return Promise.resolve(ok(archived));
+    },
     accept: (id) => answerInvitation(id, 'joined'),
     decline: (id) => answerInvitation(id, 'declined'),
     inspect: (id) => {
