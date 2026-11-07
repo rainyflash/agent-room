@@ -729,7 +729,7 @@ async fn 不可执行权限组合在进入用例前被拒绝() {
 }
 
 #[tokio::test]
-async fn 房主转移和归档明确要求近期认证() {
+async fn 房主转移要求近期认证而归档只要活跃会话() {
     let rooms = Arc::new(FakeRooms::new());
     let authentication = Arc::new(FakeAuthentication::default());
     let app = test_router(rooms.clone(), authentication.clone());
@@ -768,7 +768,7 @@ async fn 房主转移和归档明确要求近期认证() {
             .as_slice(),
         &[
             AuthenticationRequirement::RecentAuthentication,
-            AuthenticationRequirement::RecentAuthentication,
+            AuthenticationRequirement::ActiveSession,
         ]
     );
     let calls = rooms.calls.lock().expect("房间记录锁可用");

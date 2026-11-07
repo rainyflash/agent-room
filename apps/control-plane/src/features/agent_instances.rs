@@ -225,7 +225,7 @@ async fn revoke_instance(
     let actor = match authenticate_session(
         state.authentication.as_ref(),
         &jar,
-        AuthenticationRequirement::RecentAuthentication,
+        AuthenticationRequirement::ActiveSession,
         correlation_id,
     )
     .await
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 远端清理暂挂返回_202_并强制同源近期认证() {
+    async fn 远端清理暂挂返回_202_撤销要同源和活跃会话() {
         let fixture = Fixture::new(AgentInstanceMatrixCleanup::Pending {
             reason: agent_room_application::agent_instance_management::AgentInstanceCleanupFailureKind::DependencyUnavailable,
         });
@@ -615,7 +615,8 @@ mod tests {
                 .requirements
                 .lock()
                 .expect("认证要求锁可用"),
-            vec![AuthenticationRequirement::RecentAuthentication]
+            vec![AuthenticationRequirement::ActiveSession],
+            "撤销 Agent 连接不再要求近期认证（specs/cleanup-without-reauth）"
         );
     }
 

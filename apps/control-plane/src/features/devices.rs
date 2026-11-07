@@ -344,7 +344,7 @@ async fn revoke_device(
     let principal = match authenticate_session(
         state.authentication.as_ref(),
         &jar,
-        AuthenticationRequirement::RecentAuthentication,
+        AuthenticationRequirement::ActiveSession,
         correlation_id,
     )
     .await
@@ -1069,7 +1069,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 设备列表使用活跃会话而撤销额外要求同源和近期认证() {
+    async fn 设备列表和撤销都只要活跃会话_撤销另要同源() {
         let devices = Arc::new(FakeDevices::default());
         let authentication = Arc::new(FakeAuthentication::default());
         let app = test_router(devices.clone(), authentication.clone());
@@ -1125,8 +1125,9 @@ mod tests {
                 .as_slice(),
             [
                 AuthenticationRequirement::ActiveSession,
-                AuthenticationRequirement::RecentAuthentication
-            ]
+                AuthenticationRequirement::ActiveSession
+            ],
+            "撤销电脑不再要求近期认证（specs/cleanup-without-reauth）"
         );
         assert_eq!(
             *devices.revocation.lock().expect("撤销记录锁可用"),
