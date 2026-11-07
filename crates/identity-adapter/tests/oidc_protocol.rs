@@ -292,6 +292,30 @@ async fn 创建账户交互使用标准_prompt_create_参数() {
 }
 
 #[tokio::test]
+async fn 改密码交互让身份服务登录完接着改密码_照旧要求最近登录过() {
+    let provider = 假提供者::启动(令牌变体::有效).await;
+    let gateway = provider.网关();
+
+    let authorization = gateway
+        .begin_authorization(OidcAuthorizationOptions {
+            request_profile: false,
+            maximum_authentication_age: DurationMillis::new(300_000).expect("时长有效"),
+            interaction: OidcInteraction::ChangePassword,
+        })
+        .await
+        .expect("改密码授权请求应成功");
+    let url = Url::parse(&authorization.authorization_url).expect("授权 URL 有效");
+    let parameters: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .collect();
+
+    assert!(parameters.contains(&("kc_action".to_owned(), "UPDATE_PASSWORD".to_owned())));
+    assert!(parameters.contains(&("max_age".to_owned(), "300".to_owned())));
+    assert!(!parameters.iter().any(|(name, _)| name == "prompt"));
+}
+
+#[tokio::test]
 async fn 错误_pkce_verifier_由提供者拒绝() {
     let provider = 假提供者::启动(令牌变体::有效).await;
     let gateway = provider.网关();

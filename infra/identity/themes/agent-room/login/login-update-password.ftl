@@ -3,9 +3,11 @@
 <#-- Keycloak's "update your password" warning repeats this page's own lead. -->
 <@layout.registrationLayout displayMessage=!messagesPerField.existsError('password','password-confirm') && !(message?? && message.type == 'warning'); section>
     <#if section = "header">
-        ${msg("updatePasswordTitle")}
+        <#if isAppInitiatedAction??>${msg("arChangePasswordTitle")}<#else>${msg("updatePasswordTitle")}</#if>
     <#elseif section = "form">
-        <p class="ar-lead">${msg("arUpdatePasswordLead")}</p>
+        <#-- 从应用的“修改密码”来的（specs/change-password/design.md）：改好以后别处的登录一律退出，
+             不给勾选框。Keycloak 默认不勾，不勾的话别的浏览器在这里的登录还在，悄悄就能再登录回来。 -->
+        <p class="ar-lead"><#if isAppInitiatedAction??>${msg("arChangePasswordLead")}<#else>${msg("arUpdatePasswordLead")}</#if></p>
         <form id="kc-passwd-update-form" class="ar-form" onsubmit="login.disabled = true; return true;" action="${url.loginAction}" method="post">
             <#list ["password-new", "password-confirm"] as field>
                 <div class="ar-field">
@@ -29,11 +31,15 @@
                 <span id="input-error-password" class="ar-field-error" aria-live="polite">${kcSanitize(messagesPerField.getFirstError('password','password-confirm'))?no_esc}</span>
             </#if>
 
-            <@passwordCommons.logoutOtherSessions/>
+            <#if isAppInitiatedAction??>
+                <input type="hidden" name="logout-sessions" value="on"/>
+            <#else>
+                <@passwordCommons.logoutOtherSessions/>
+            </#if>
 
             <#if isAppInitiatedAction??>
                 <div class="ar-actions">
-                    <button class="ar-button ar-button--primary" name="login" type="submit">${msg("doSubmit")}</button>
+                    <button class="ar-button ar-button--primary" name="login" type="submit">${msg("arSavePassword")}</button>
                     <button class="ar-button ar-button--secondary" type="submit" name="cancel-aia" value="true">${msg("doCancel")}</button>
                 </div>
             <#else>

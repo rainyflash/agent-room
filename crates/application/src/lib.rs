@@ -28,6 +28,7 @@ pub mod public_room_directory;
 pub mod reception;
 pub mod room_people;
 pub mod rooms;
+pub mod sign_out_elsewhere;
 
 pub mod agent_roster;
 mod hourly_limit;

@@ -175,6 +175,8 @@ pub struct OidcAuthorizationRequest {
 pub enum OidcInteraction {
     SignIn,
     CreateAccount,
+    /// 登录完接着改密码（Keycloak 的 `kc_action=UPDATE_PASSWORD`）。
+    ChangePassword,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -503,6 +505,13 @@ pub struct StoredWebSession {
     pub expires_at: UtcMillis,
 }
 
+/// 撤销了这个人别的几份登录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherSessionsRevoked {
+    pub revoked: u64,
+    pub account: SignInAccount,
+}
+
 pub trait LoginCompletionTransaction: Send + Sync {
     fn complete<'a>(
         &'a self,
@@ -555,6 +564,15 @@ pub trait WebSessionStore: Send + Sync {
         secret_digest: &'a SecretDigest,
         now: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<Option<SignInAccount>>>;
+
+    /// 撤销这个人别的登录（网页的、桌面端的），`keep` 那份不动（`specs/change-password/design.md`）。
+    /// 回撤了几份和这个人在登录服务上的账户；没有这个人时回 `None`。
+    fn revoke_others<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        keep: Option<&'a SecretDigest>,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<OtherSessionsRevoked>>>;
 
     /// 用着就续：把这份登录的到期时间往后挪到 `expires_at`。
     /// 已经撤销，或者到期时间本来就不早于它时不改，回 `false`。

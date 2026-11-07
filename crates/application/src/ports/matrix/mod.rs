@@ -115,6 +115,17 @@ pub trait MatrixHumanSessionIssuer: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<MatrixSession>>;
 }
 
+/// 改密码以后替这个本地的人注销别的聊天设备（`specs/change-password/design.md`）：以应用服务的
+/// 身份冒充本人列出 Synapse 上的设备，除了 `keep` 那台全部注销，回注销了几台。
+/// 实现不得碰 Agent 的用户或别的服务器的用户。
+pub trait MatrixHumanDeviceSignOut: Send + Sync {
+    fn sign_out_other_devices<'a>(
+        &'a self,
+        user_id: &'a MatrixUserId,
+        keep: Option<&'a MatrixDeviceId>,
+    ) -> PortFuture<'a, MatrixResult<usize>>;
+}
+
 /// 新的签名公钥：Matrix `keys/device_signing/upload` 的正文，不带交互认证。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixCrossSigningKeys(serde_json::Map<String, serde_json::Value>);

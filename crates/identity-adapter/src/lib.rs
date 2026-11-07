@@ -356,6 +356,11 @@ impl OidcGateway for DiscoveredOidcGateway {
             let authorization = match options.interaction {
                 OidcInteraction::SignIn => authorization,
                 OidcInteraction::CreateAccount => authorization.add_extra_param("prompt", "create"),
+                // Keycloak 的“应用发起的动作”：登录（最近没登录过就先输现在的密码）完接着改密码，
+                // 回到回调时带 `kc_action` 和 `kc_action_status`。
+                OidcInteraction::ChangePassword => {
+                    authorization.add_extra_param("kc_action", "UPDATE_PASSWORD")
+                }
             };
             let (authorization_url, state, nonce) = authorization.url();
 

@@ -35,6 +35,7 @@ use agent_room_application::{
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, PrivateRoomFailure, PrivateRoomFailureKind,
     },
+    sign_out_elsewhere::SignOutElsewhereFailure,
 };
 use agent_room_domain::content::ContentLifecycleState;
 use agent_room_protocol_conformance::generated::{ErrorCategory, ErrorEnvelope};
@@ -855,6 +856,29 @@ impl ApiError {
                 "matrix_session.unavailable",
                 ErrorCategory::DependencyUnavailable,
                 "聊天服务暂时登录不上，请稍后再试。",
+                correlation_id,
+            ),
+        }
+    }
+
+    /// 改好密码以后退出别的地方没退成（`specs/change-password/design.md`）。再来一次是安全的。
+    pub(crate) fn sign_out_elsewhere(
+        failure: SignOutElsewhereFailure,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        match failure {
+            SignOutElsewhereFailure::AccountSessionsUnavailable => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sign_out_elsewhere.unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "暂时退不了别的地方的登录，请稍后再试。",
+                correlation_id,
+            ),
+            SignOutElsewhereFailure::ChatUnavailable => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sign_out_elsewhere.chat_unavailable",
+                ErrorCategory::DependencyUnavailable,
+                "别的地方的账户登录已经退出了，聊天登录暂时退不了，请稍后再试。",
                 correlation_id,
             ),
         }

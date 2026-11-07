@@ -4,10 +4,10 @@ use agent_room_application::{
         DesktopAuthorizationCodeRegistration, DesktopAuthorizationGrant, DesktopClientState,
         DesktopLoginCompletionTransaction, DesktopSessionAuthorizationTransaction,
         DesktopSessionExchangeTransaction, DesktopSessionRegistration, LoginAttempt,
-        LoginAttemptStore, LoginCompletionTransaction, LoginDelivery, PkceCodeChallenge,
-        PortFuture, PrincipalAccount, PrincipalRegistration, PrincipalSuspensionTransaction,
-        SafeReturnPath, SecretDigest, SecretValue, SignInAccount, StoredWebSession,
-        WebSessionRegistration, WebSessionStore,
+        LoginAttemptStore, LoginCompletionTransaction, LoginDelivery, OtherSessionsRevoked,
+        PkceCodeChallenge, PortFuture, PrincipalAccount, PrincipalRegistration,
+        PrincipalSuspensionTransaction, SafeReturnPath, SecretDigest, SecretValue, SignInAccount,
+        StoredWebSession, WebSessionRegistration, WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -441,6 +441,50 @@ impl WebSessionStore for PostgresRepositories {
             })
             .transpose()
             .map_err(|error: sqlx::Error| map_sqlx_error("web_session.revoke", &error))
+        })
+    }
+
+    fn revoke_others<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        keep: Option<&'a SecretDigest>,
+        now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<OtherSessionsRevoked>>> {
+        Box::pin(async move {
+            // 过期了的不算：本来就用不了，算进去“退出了几处”就虚高了。
+            let row = sqlx::query(
+                r"WITH revoked AS (
+                     UPDATE agent_room.web_session
+                     SET revoked_at = to_timestamp($3::double precision / 1000.0)
+                     WHERE principal_id = $1
+                       AND revoked_at IS NULL
+                       AND expires_at > to_timestamp($3::double precision / 1000.0)
+                       AND ($2::bytea IS NULL OR secret_digest <> $2::bytea)
+                     RETURNING 1
+                   )
+                   SELECT principal.oidc_issuer, principal.oidc_subject,
+                     (SELECT count(*) FROM revoked)::bigint AS revoked
+                   FROM agent_room.principal AS principal
+                   WHERE principal.id = $1",
+            )
+            .bind(principal_id.as_uuid())
+            .bind(keep.map(|digest| digest.as_bytes().as_slice()))
+            .bind(now.value())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| map_sqlx_error("web_session.revoke_others", &error))?;
+            row.map(|row| {
+                let revoked: i64 = row.try_get("revoked")?;
+                Ok(OtherSessionsRevoked {
+                    revoked: u64::try_from(revoked).unwrap_or_default(),
+                    account: SignInAccount {
+                        issuer: row.try_get("oidc_issuer")?,
+                        subject: row.try_get("oidc_subject")?,
+                    },
+                })
+            })
+            .transpose()
+            .map_err(|error: sqlx::Error| map_sqlx_error("web_session.revoke_others", &error))
         })
     }
 
