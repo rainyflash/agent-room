@@ -1,0 +1,44 @@
+/* 归档前的确认（specs/cleanup-without-reauth）：房间设置和“房间”页的卡片里原地展开。 */
+.archive-room-confirm {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 14px;
+  color: var(--color-ink);
+  background: var(--ar-danger-soft);
+}
+
+.archive-room-confirm__text {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 14rem;
+  gap: 0.25rem;
+}
+
+.archive-room-confirm__text > strong {
+  overflow-wrap: anywhere;
+}
+
+.archive-room-confirm .archive-room-confirm__text > p {
+  margin: 0;
+  color: var(--ar-ink-72);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.archive-room-confirm__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.archive-room-confirm__spin {
+  animation: ar-spin 1s linear infinite;
+}

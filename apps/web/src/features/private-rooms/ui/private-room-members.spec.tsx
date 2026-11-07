@@ -142,6 +142,9 @@ function gateway(
     ),
   );
   const unban = vi.fn<PrivateRoomGateway['unban']>(() => Promise.resolve(ok(room)));
+  const archive = vi.fn<PrivateRoomGateway['archive']>(() =>
+    Promise.resolve(ok({ ...room, status: 'archived' as const })),
+  );
   const transferOwnership = vi.fn<PrivateRoomGateway['transferOwnership']>(() =>
     Promise.resolve(ok(room)),
   );
@@ -153,7 +156,7 @@ function gateway(
     admitKnock,
     agentAccess,
     agentKnocks,
-    archive: unavailable,
+    archive,
     ban: unavailable,
     create: unavailable,
     decline: unavailable,
@@ -178,6 +181,7 @@ function gateway(
     admitKnock,
     agentAccess,
     agentKnocks,
+    archive,
     disableJoinCode,
     generateJoinCode,
     origin,
@@ -233,10 +237,16 @@ function renderGovernance(
   rooms: PrivateRoomGateway,
   networkAgents: readonly string[] = [],
   {
+    onExitRoom = () => undefined,
     recentlyAuthenticated = false,
     subject = room,
     publicRoom = false,
-  }: { recentlyAuthenticated?: boolean; subject?: PrivateRoom; publicRoom?: boolean } = {},
+  }: {
+    onExitRoom?: () => void;
+    recentlyAuthenticated?: boolean;
+    subject?: PrivateRoom;
+    publicRoom?: boolean;
+  } = {},
 ) {
   const labels = new NetworkAgentLabelStore(
     {
@@ -255,7 +265,7 @@ function renderGovernance(
           <PrivateRoomMembers
             coordinator={{} as PrivateRoomCoordinator}
             {...(publicRoom ? { joins, listings } : {})}
-            onExitRoom={() => undefined}
+            onExitRoom={onExitRoom}
             principalId={principalId}
             recentlyAuthenticated={recentlyAuthenticated}
             room={subject}
@@ -482,6 +492,41 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(screen.queryByText(/already has a public room/u)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
     expect(screen.queryByText(/already has a public room/u)).toBeNull();
+  });
+
+  it('归档不要最近登录过：先在原处确认，取消不归档，确认以后归档并退出房间', async () => {
+    const rooms = gateway();
+    const onExitRoom = vi.fn();
+    renderGovernance(OWNER, rooms.value, [], { onExitRoom });
+    expect(await screen.findByText('Grace')).toBeVisible();
+
+    const archive = screen.getByRole('button', { name: 'Archive room' });
+    expect(archive).toBeEnabled();
+    fireEvent.click(archive);
+    const confirm = within(screen.getByRole('group', { name: 'Archive “Architecture room”?' }));
+    expect(confirm.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    fireEvent.click(confirm.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('group', { name: 'Archive “Architecture room”?' })).toBeNull();
+    expect(archive).toHaveFocus();
+    expect(rooms.archive).not.toHaveBeenCalled();
+
+    fireEvent.click(archive);
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Archive “Architecture room”?' })).getByRole(
+        'button',
+        { name: 'Archive' },
+      ),
+    );
+    await waitFor(() => {
+      expect(onExitRoom).toHaveBeenCalledOnce();
+    });
+    expect(rooms.archive).toHaveBeenCalledWith(room.catalogId);
+  });
+
+  it('成员没有归档，只有退出', async () => {
+    renderGovernance(MEMBER, gateway().value);
+    expect(await screen.findByRole('button', { name: 'Leave room' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Archive room' })).toBeNull();
   });
 
   it('房主一键设、撤管理员：有“管理”的写着“管理员”', async () => {

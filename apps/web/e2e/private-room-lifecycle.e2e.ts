@@ -133,6 +133,33 @@ for (const width of [1_440, 390]) {
 }
 
 for (const width of [1_440, 390]) {
+  test(`归档房间不用最近登录过，先在原处确认，取消就不归档 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    // olderSession：登录已经超过 5 分钟，以前归档按钮是灰的。
+    await page.goto(`${fixturePath}?private&olderSession`);
+
+    const dialog = await openRoomSettings(page, 'Members');
+    const archive = dialog.getByRole('button', { name: 'Archive room' });
+    await expect(archive).toBeEnabled();
+    await archive.click();
+    const confirm = dialog.getByRole('group', { name: /^Archive “.+”\?$/u });
+    await expect(confirm).toContainText('Archiving can’t be undone.');
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await confirm.scrollIntoViewIfNeeded();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessibleDialog(page);
+    await page.screenshot({ path: testInfo.outputPath(`settings-archive-${String(width)}.png`) });
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toHaveCount(0);
+    await expect(archive).toBeFocused();
+    expect(failures).toEqual([]);
+  });
+}
+
+for (const width of [1_440, 390]) {
   test(`网络 Agent 建的私人房间：房间顶上、设置里都说服务器能读到 ${String(width)}`, async ({
     page,
   }, testInfo) => {

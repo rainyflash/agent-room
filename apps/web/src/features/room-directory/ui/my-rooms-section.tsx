@@ -1,12 +1,13 @@
 import { Banner, Button, Details, Spinner } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
 import { Archive, ArrowRight, DoorOpen, MailOpen, ShieldAlert } from 'lucide-react';
-import { useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
 import { RoomUnreadMark, useRoomUnread } from '@/features/inbox/ui/room-unread-mark';
 import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
+import { ArchiveRoomConfirm } from '@/features/private-rooms/ui/archive-room-confirm';
 import { splitByOwner, type RoomOwner } from '@/features/room-directory/domain/my-private-rooms';
 import { AccountIdCopy } from '@/features/room-directory/ui/account-id-copy';
 import {
@@ -133,7 +134,17 @@ function ConnectedMyRooms() {
       {joined.created.length === 0 ? null : (
         <RoomGroup title={t('rooms.created')}>
           {joined.created.map((room) => (
-            <RoomCard key={room.catalogId} room={room} />
+            <RoomCard
+              archive={{
+                busy,
+                pending: pendingCatalogId === room.catalogId,
+                run: async () => {
+                  await run(room, async () => await commands.archive(room));
+                },
+              }}
+              key={room.catalogId}
+              room={room}
+            />
           ))}
         </RoomGroup>
       )}
@@ -178,18 +189,95 @@ function RoomGroup({ title, children }: { readonly title: string; readonly child
   );
 }
 
+type RoomCardArchive = {
+  /** 这一页上有别的操作正在做。 */
+  readonly busy: boolean;
+  /** 正在归档这一间。 */
+  readonly pending: boolean;
+  readonly run: () => Promise<void>;
+};
+
 /**
  * 一间私人房间的卡片，点了就进去。归档了的换个图标：进去只能看之前的消息。别人的房间写着房主是谁；
- * 名字还没问到或没问成时先不写，房间照样列出来。
+ * 名字还没问到或没问成时先不写，房间照样列出来。你当房主的房间卡片下面多一条“归档”，先在卡片上确认
+ * （`specs/cleanup-without-reauth/design.md`）；卡片本身是链接，按钮放在链接外面。
  */
 function RoomCard({
   room,
   archived = false,
+  archive,
   owner,
 }: {
   readonly room: PrivateRoom;
   readonly archived?: boolean;
+  readonly archive?: RoomCardArchive | undefined;
   readonly owner?: RoomOwner | undefined;
+}) {
+  const link = <RoomCardLink archived={archived} owner={owner} room={room} />;
+  if (archive === undefined) return link;
+  return (
+    <div className="room-card">
+      {link}
+      <RoomCardArchiveBar archive={archive} name={room.name} />
+    </div>
+  );
+}
+
+function RoomCardArchiveBar({
+  archive,
+  name,
+}: {
+  readonly archive: RoomCardArchive;
+  readonly name: string;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  useEffect(() => {
+    if (confirming || !returnFocus.current) return;
+    returnFocus.current = false;
+    trigger.current?.focus();
+  }, [confirming]);
+  return (
+    <div className="room-card__footer">
+      {confirming ? (
+        <ArchiveRoomConfirm
+          name={name}
+          onCancel={() => {
+            returnFocus.current = true;
+            setConfirming(false);
+          }}
+          onConfirm={() => void archive.run()}
+          pending={archive.pending}
+        />
+      ) : (
+        <Button
+          aria-label={t('rooms.archive.label', { name })}
+          disabled={archive.busy}
+          icon={<Archive aria-hidden="true" />}
+          onClick={() => {
+            setConfirming(true);
+          }}
+          ref={trigger}
+          size="compact"
+          tone="quiet"
+        >
+          {t('rooms.archive')}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function RoomCardLink({
+  room,
+  archived,
+  owner,
+}: {
+  readonly room: PrivateRoom;
+  readonly archived: boolean;
+  readonly owner: RoomOwner | undefined;
 }) {
   const { t } = useTranslation();
   const unread = useRoomUnread(room.matrixRoomId);

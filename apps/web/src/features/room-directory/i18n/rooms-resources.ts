@@ -26,6 +26,8 @@ const en = {
   'rooms.noPrivate':
     'No rooms yet. Create one, find a public room on Explore, or ask a room owner to invite you.',
   'rooms.explore': 'Find more on Explore',
+  'rooms.archive': 'Archive',
+  'rooms.archive.label': 'Archive “{{name}}”',
   'rooms.archived': 'Archived rooms ({{count}})',
   'rooms.archived.detail':
     'Nobody can speak in these rooms any more. Open one to read what was said.',
@@ -92,6 +94,8 @@ export const roomsResources = {
     'rooms.retry': '重试',
     'rooms.noPrivate': '还没有房间。新建一个，去“发现”找一间公开房间，或者请房主邀请你。',
     'rooms.explore': '去发现页找更多',
+    'rooms.archive': '归档',
+    'rooms.archive.label': '归档“{{name}}”',
     'rooms.archived': '已归档的房间（{{count}}）',
     'rooms.archived.detail': '这些房间谁都不能再说话了，进去还能看之前的消息。',
     'rooms.noResults': '没有找到匹配的房间。',

@@ -1,5 +1,10 @@
 const en = {
   'privateRooms.action.archive': 'Archive room',
+  'privateRooms.archiveConfirm.title': 'Archive “{{name}}”?',
+  'privateRooms.archiveConfirm.detail':
+    'After that nobody can speak here, people or agents. Everyone can still open it and read what was said. Archiving can’t be undone.',
+  'privateRooms.archiveConfirm.confirm': 'Archive',
+  'privateRooms.archiveConfirm.archiving': 'Archiving…',
   'privateRooms.action.rename': 'Rename',
   'privateRooms.action.ban': 'Ban',
   'privateRooms.action.invite': 'Send invitation',
@@ -123,7 +128,6 @@ const en = {
   'privateRooms.governance.access.title': 'Leave or archive',
   'privateRooms.governance.access.detail':
     'Leaving or archiving removes access first, then updates your room list.',
-  'privateRooms.governance.reauthRequired': 'Please sign in again to continue.',
   'privateRooms.membership.invited': 'Invited',
   'privateRooms.membership.joined': 'Joined',
   'privateRooms.membership.declined': 'Declined',
@@ -189,6 +193,11 @@ const en = {
 
 const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.action.archive': '归档房间',
+  'privateRooms.archiveConfirm.title': '归档“{{name}}”？',
+  'privateRooms.archiveConfirm.detail':
+    '归档以后谁都不能再在这里说话，人和 Agent 都一样；进去还能看之前的消息。归档撤不回来。',
+  'privateRooms.archiveConfirm.confirm': '归档',
+  'privateRooms.archiveConfirm.archiving': '正在归档…',
   'privateRooms.action.rename': '改名',
   'privateRooms.action.ban': '封禁',
   'privateRooms.action.invite': '发送邀请',
@@ -303,7 +312,6 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.knock.toast.moreDetail': '回答完上面这个，就轮到下一个。',
   'privateRooms.governance.access.title': '退出或归档',
   'privateRooms.governance.access.detail': '退出或归档会先撤销访问，再更新你的房间列表。',
-  'privateRooms.governance.reauthRequired': '请重新登录后继续。',
   'privateRooms.membership.invited': '已邀请',
   'privateRooms.membership.joined': '已加入',
   'privateRooms.membership.declined': '已拒绝',
