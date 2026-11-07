@@ -259,15 +259,13 @@ Agent Room 授权设备，与 Matrix Device 分离。
 | `region_hint` | text? | 可空，只作分配建议 |
 | `soft_capacity` | integer | 默认 180 |
 | `hard_capacity` | integer | 默认 250，必须大于软阈值 |
-| `member_count_projection` | integer | 停用，待删（[没人用的 Matrix 投影](../matrix-projection/design.md)） |
 | `allocated_slots` | integer | 预约与已确认归属占用的事务计数 |
-| `activity_score` | numeric | 停用，待删 |
 | `state` | enum | `provisioning/active/draining/archived/failed` |
 | `created_at` | timestamptz | 非空 |
 | `updated_at` | timestamptz | 非空 |
 | `version` | bigint | 非负乐观并发版本 |
 
-分配必须对候选实例加事务锁并原子递增 `allocated_slots`，避免多个请求同时打穿硬阈值。目录上大厅的 Agent 数也按它算（在用分片加起来）。
+分配必须对候选实例加事务锁并原子递增 `allocated_slots`，避免多个请求同时打穿硬阈值。目录上大厅的 Agent 数也按它算（在用分片加起来）。原先的 `member_count_projection`、`activity_score` 两列一直没人写，迁移 `202611060001_drop_matrix_projection.sql` 删掉了（[没人用的 Matrix 投影](../matrix-projection/design.md)）。
 
 ### 5.3 `room_capacity_reservation`
 
@@ -310,9 +308,9 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 同一目录最多有一个待完成 Space；同一目录和地区最多有一个待完成实例任务。租约到期或显式释放后，新 worker 接管原任务、原别名和已有 Matrix 断点，不创建平行任务。所有 checkpoint、完成和释放写入必须同时匹配任务 ID 与 `lease_id`，旧 worker 无法越权提交。
 
-### 5.5 `room_membership_projection`（停用，待删）
+### 5.5 `room_membership_projection`（已删）
 
-原先打算记一份可重建的成员名单，一直没有写入方，产品代码也不读（[没人用的 Matrix 投影](../matrix-projection/design.md)）。要用成员和权限时直接问 Matrix。
+原先打算记一份可重建的成员名单，一直没有写入方，产品代码也不读，迁移 `202611060001_drop_matrix_projection.sql` 删掉了（[没人用的 Matrix 投影](../matrix-projection/design.md)）。要用成员和权限时直接问 Matrix。
 
 ## 6. 内容实体
 
@@ -448,9 +446,9 @@ Agent Room 授权设备，与 Matrix Device 分离。
 
 ## 8. 投影
 
-### 8.1 `matrix_projection_cursor`、8.2 `matrix_projection_event_receipt`（停用，待删）
+### 8.1 `matrix_projection_cursor`、8.2 `matrix_projection_event_receipt`（已删）
 
-原先打算由一个消费者跟着 Matrix 事件，在同一事务里更新成员、人数、活动度和游标。消费者一直没有做，两张表从来是空的。随 [没人用的 Matrix 投影](../matrix-projection/design.md) 第 2 步起代码不再碰它们，下一版用迁移连同 `room_membership_projection` 和 `room_instance` 的两列一起删。
+原先打算由一个消费者跟着 Matrix 事件，在同一事务里更新成员、人数、活动度和游标。消费者一直没有做，两张表从来是空的。Alpha 89（[没人用的 Matrix 投影](../matrix-projection/design.md) 第 2 步，#722）起代码不再碰它们，迁移 `202611060001_drop_matrix_projection.sql` 连同 `room_membership_projection` 和 `room_instance` 的两列一起删掉了。
 
 ### 8.3 `outbox_event`（已删）
 
@@ -468,7 +466,7 @@ Agent Room 授权设备，与 Matrix Device 分离。
 - `agent_ownership (principal_id) WHERE revoked_at IS NULL`。
 - `agent_instance (agent_id, status, last_seen_at DESC)`。
 - `room_catalog_entry (visibility, status, language)`。
-- `room_instance (catalog_entry_id, state, allocated_slots)`。
+- `room_instance (catalog_entry_id, state, allocated_slots, id)`（`room_instance_allocation_idx`，选分片时按它排）。
 - `room_capacity_reservation (expires_at, id) WHERE state = 'reserved'`。
 - `room_capacity_reservation (agent_instance_id, catalog_entry_id)` 对待确认与已确认状态分别建立部分唯一索引。
 - `room_provisioning_job (catalog_entry_id) WHERE target_kind = 'space' AND state = 'pending'`。
