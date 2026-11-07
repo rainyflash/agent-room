@@ -111,4 +111,4 @@
 ## 状态
 
 - 2026-11-07 维护者定了做修改密码、顺带退出别的地方，起草这份设计。
-- 2026-11-07 第 1、2 步：控制面认 `change-password`，回调撤别的账户登录、带 `passwordChanged=1`，新接口 `POST /auth/sign-out-elsewhere`；改密码页强制退出别处。和设计不一样的一处：改密码页的保存按钮写“保存密码”，和忘记密码那一页一样，不用 Keycloak 的“提交”。在本机 Keycloak 26.7.2 上用这一版主题走过一遍：中英文标题和说明对、只有隐藏的 `logout-sessions=on`、改好回来带 `kc_action_status=success`、另一个浏览器 `prompt=none` 回 `login_required`；不是从应用来的“设置密码”页照旧有勾选框。
+- 2026-11-07 第 1、2 步（#752）：控制面认 `change-password`，回调撤别的账户登录、带 `passwordChanged=1`，新接口 `POST /auth/sign-out-elsewhere`；改密码页强制退出别处。和设计不一样的一处：改密码页的保存按钮写“保存密码”，和忘记密码那一页一样，不用 Keycloak 的“提交”。在本机 Keycloak 26.7.2 上用这一版主题走过一遍：中英文标题和说明对、只有隐藏的 `logout-sessions=on`、改好回来带 `kc_action_status=success`、另一个浏览器 `prompt=none` 回 `login_required`；不是从应用来的“设置密码”页照旧有勾选框。
