@@ -139,6 +139,52 @@ groups:
           impact: 余量变小，Synapse 只用得满一个核，人一多消息就会变慢
           diagnostic: 在服务器上用 top 看是哪个进程；是 dockerd 就照 Runbook 查有没有卡住的日志读者
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomhostcpuhigh
+      # 发版前的预检要根目录至少剩 20 GiB；备份、WAL 和镜像都写在这块盘上。
+      - alert: AgentRoomDiskSpaceLow
+        expr: min(node_filesystem_avail_bytes{job="host",mountpoint="/"}) < 20 * 1024 * 1024 * 1024
+        for: 30m
+        labels:
+          severity: warning
+          service: agent-room
+        annotations:
+          summary: 服务器根目录剩下不到 20 GiB
+          impact: 下次发版的部署预检过不了；再少下去数据库和备份会写不进去
+          diagnostic: 用 du 看是备份仓库、Docker 镜像、容器日志还是旧发布目录在长；别手动截短容器日志
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdiskspacelow
+      - alert: AgentRoomDiskSpaceCritical
+        expr: min(node_filesystem_avail_bytes{job="host",mountpoint="/"}) < 8 * 1024 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: critical
+          service: agent-room
+        annotations:
+          summary: 服务器根目录剩下不到 8 GiB
+          impact: PostgreSQL、WAL 归档和备份随时会写满，服务会停
+          diagnostic: 马上照 Runbook 腾地方，先动能重来的（旧镜像、旧发布目录、超过保留期的恢复演练），备份最后动
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdiskspacecritical
+      # 平时可用内存在 1.7 GiB 上下（4 GiB 的机器）；ClamAV 每天重载病毒库时会掉到 400 多 MiB，但只有几分钟，
+      # 所以看 30 分钟的平均。内存“全部卡住”的时间比例平时最高 2%，过 10% 就是在换页里打转了。
+      - alert: AgentRoomMemoryLow
+        expr: min(avg_over_time(node_memory_MemAvailable_bytes{job="host"}[30m])) < 400 * 1024 * 1024 or max(rate(node_pressure_memory_stalled_seconds_total{job="host"}[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          service: agent-room
+        annotations:
+          summary: 服务器可用内存长时间不够
+          impact: 服务在换页里变慢，再紧就会有进程被内核杀掉
+          diagnostic: 用 docker stats 和每个进程的 VmSwap 看是谁占着；先看 ClamAV 和身份服务
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroommemorylow
+      - alert: AgentRoomOomKill
+        expr: sum(increase(node_vmstat_oom_kill{job="host"}[30m])) > 0
+        labels:
+          severity: critical
+          service: agent-room
+        annotations:
+          summary: 服务器上有进程因为内存不够被内核杀了
+          impact: 被杀的服务会重启，重启那一会儿相关的功能用不了
+          diagnostic: 用 journalctl -k 找 oom-kill 那一行，看杀的是哪个进程、当时谁占内存最多
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoomkill
       - alert: AgentRoomPostgresExporterDown
         expr: up{job="postgres"} == 0
         for: 5m

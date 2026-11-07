@@ -275,6 +275,128 @@ tests:
       - eval_time: 110m
         alertname: AgentRoomHostCpuHigh
         exp_alerts: []
+  # 根目录剩 15 GiB：半小时以后报“不到 20 GiB”，不报“不到 8 GiB”。
+  - interval: 1m
+    input_series:
+      - series: node_filesystem_avail_bytes{job="host",device="/dev/sda",fstype="ext4",mountpoint="/"}
+        values: 16106127360+0x60
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AgentRoomDiskSpaceLow
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: AgentRoomDiskSpaceLow
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 服务器根目录剩下不到 20 GiB
+              impact: 下次发版的部署预检过不了；再少下去数据库和备份会写不进去
+              diagnostic: 用 du 看是备份仓库、Docker 镜像、容器日志还是旧发布目录在长；别手动截短容器日志
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdiskspacelow
+      - eval_time: 40m
+        alertname: AgentRoomDiskSpaceCritical
+        exp_alerts: []
+  # 剩 5 GiB：五分钟以后报“不到 8 GiB”。
+  - interval: 1m
+    input_series:
+      - series: node_filesystem_avail_bytes{job="host",device="/dev/sda",fstype="ext4",mountpoint="/"}
+        values: 5368709120+0x20
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentRoomDiskSpaceCritical
+        exp_alerts:
+          - exp_labels: { severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 服务器根目录剩下不到 8 GiB
+              impact: PostgreSQL、WAL 归档和备份随时会写满，服务会停
+              diagnostic: 马上照 Runbook 腾地方，先动能重来的（旧镜像、旧发布目录、超过保留期的恢复演练），备份最后动
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomdiskspacecritical
+  # 根目录剩 25 GiB 不报；别的挂载点（/run 这类 tmpfs）小也不算。
+  - interval: 1m
+    input_series:
+      - series: node_filesystem_avail_bytes{job="host",device="/dev/sda",fstype="ext4",mountpoint="/"}
+        values: 26843545600+0x60
+      - series: node_filesystem_avail_bytes{job="host",device="tmpfs",fstype="tmpfs",mountpoint="/run"}
+        values: 5242880+0x60
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: AgentRoomDiskSpaceLow
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: AgentRoomDiskSpaceCritical
+        exp_alerts: []
+  # 可用内存一直只有 300 MiB：响。
+  - interval: 1m
+    input_series:
+      - series: node_memory_MemAvailable_bytes{job="host"}
+        values: 314572800+0x60
+      - series: node_pressure_memory_stalled_seconds_total{job="host"}
+        values: 0+0x60
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AgentRoomMemoryLow
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 服务器可用内存长时间不够
+              impact: 服务在换页里变慢，再紧就会有进程被内核杀掉
+              diagnostic: 用 docker stats 和每个进程的 VmSwap 看是谁占着；先看 ClamAV 和身份服务
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroommemorylow
+  # 平时 1.7 GiB，ClamAV 重载病毒库掉到 400 MiB 五分钟：不响。
+  - interval: 1m
+    input_series:
+      - series: node_memory_MemAvailable_bytes{job="host"}
+        values: 1800000000+0x30 420000000+0x5 1800000000+0x30
+      - series: node_pressure_memory_stalled_seconds_total{job="host"}
+        values: 0+0x66
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: AgentRoomMemoryLow
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: AgentRoomMemoryLow
+        exp_alerts: []
+  # 可用内存还有 1 GiB，可两成的时间所有进程都卡在内存上（在换页里打转）：响。
+  - interval: 1m
+    input_series:
+      - series: node_memory_MemAvailable_bytes{job="host"}
+        values: 1073741824+0x60
+      - series: node_pressure_memory_stalled_seconds_total{job="host"}
+        values: 0+12x60
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentRoomMemoryLow
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AgentRoomMemoryLow
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 服务器可用内存长时间不够
+              impact: 服务在换页里变慢，再紧就会有进程被内核杀掉
+              diagnostic: 用 docker stats 和每个进程的 VmSwap 看是谁占着；先看 ClamAV 和身份服务
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroommemorylow
+  # 开机以来杀过 3 次、这段时间没再杀：不响。第 11 分钟杀了一次：马上响，半小时后不再响。
+  - interval: 1m
+    input_series:
+      - series: node_vmstat_oom_kill{job="host"}
+        values: 3+0x10 4+0x40
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentRoomOomKill
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: AgentRoomOomKill
+        exp_alerts:
+          - exp_labels: { severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 服务器上有进程因为内存不够被内核杀了
+              impact: 被杀的服务会重启，重启那一会儿相关的功能用不了
+              diagnostic: 用 journalctl -k 找 oom-kill 那一行，看杀的是哪个进程、当时谁占内存最多
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoomkill
+      - eval_time: 50m
+        alertname: AgentRoomOomKill
+        exp_alerts: []
   - interval: 1m
     input_series:
       - series: up{job="postgres"}
