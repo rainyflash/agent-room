@@ -259,11 +259,9 @@ services:
     command: [--config=/etc/otelcol/config.yaml]
     volumes:
       - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
-    healthcheck:
-      test: [CMD, /otelcol-contrib, validate, --config=/etc/otelcol/config.yaml]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+    # 不设健康检查：镜像里只有一个几百 MB 的收集器程序，没有 shell 和 curl，以前只能每 30 秒再起一份它去
+    # validate。容器上限 128 MB、主进程占着大半，每次都把程序从盘上重读一遍，生产上一直在读盘（每秒 8–10 MiB）。
+    # 它停了由 Prometheus 采不到它的指标来报（AgentRoomTelemetryCollectorDown）。
     read_only: true
     restart: unless-stopped
     <<: *common-security

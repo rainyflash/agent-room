@@ -143,6 +143,16 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 确认 exporter 容器、`agent_room_metrics` 角色、`pg_monitor` 成员资格、TLS 和 `postgres_metrics_password` 文件。该角色只能用于指标，不得复用迁移或应用运行角色。恢复后确认 `up{job="postgres"} == 1`。
 
+## AgentRoomTelemetryCollectorDown
+
+Prometheus 5 分钟采不到指标收集器（`telemetry:8889`，作业 `control-plane-otel`）。控制面的指标都经它出来，它停了，按这些指标报的告警（接口可用率、延迟、发信）都不会再响。
+
+- `docker ps -a --filter name=telemetry` 看容器在不在跑、重启了几次；`docker logs --tail 100 agent-room-telemetry-1` 看报错。别用 `--follow`，也别截短容器日志（见 `AgentRoomHostCpuHigh`）。
+- 内存顶在 128 MB 的上限上时会频繁重启：`cat /sys/fs/cgroup/system.slice/docker-<容器 ID>.scope/memory.events` 看 `oom_kill`。
+- 配置写错时收集器起不来：改好 `otel-collector.yaml` 以后跑 `production.py telemetry-apply`。
+
+这个容器没有健康检查（`compose.yaml` 里写了原因），`docker ps` 里不会显示 healthy，以这条告警和 `up{job="control-plane-otel"}` 为准。
+
 ## AgentRoomBackupRpoBreached
 
 检查 `agent-room-backup.timer`、最近服务日志、仓库空间、WAL 归档和 `metrics/backup.prom`。不要在失败时先清理旧备份；先保证至少一个已验证恢复点仍在。补做备份后运行摘要验证，确认年龄低于配置 RPO。
