@@ -125,6 +125,20 @@ groups:
           impact: Agent 状态上报和本机消息投递可能中断
           diagnostic: 检查 Bridge 版本、认证与重连时延聚合指标
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroombridgeavailabilitylow
+      # 平时整机 CPU 在 13% 上下（2 核）。2026-11-01 dockerd 里一个卡住的日志读者空转、一直吃满一个核，
+      # 整机 62% 挂了 5 天没人知道。按最近 15 分钟的平均，持续一小时过半才响：ClamAV 每天更新病毒库
+      # 那几分钟的高峰不算。
+      - alert: AgentRoomHostCpuHigh
+        expr: 100 * (1 - avg(rate(node_cpu_seconds_total{job="host",mode="idle"}[15m]))) > 50
+        for: 1h
+        labels:
+          severity: warning
+          service: agent-room
+        annotations:
+          summary: 服务器 CPU 一小时以上都在 50% 以上
+          impact: 余量变小，Synapse 只用得满一个核，人一多消息就会变慢
+          diagnostic: 在服务器上用 top 看是哪个进程；是 dockerd 就照 Runbook 查有没有卡住的日志读者
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomhostcpuhigh
       - alert: AgentRoomPostgresExporterDown
         expr: up{job="postgres"} == 0
         for: 5m

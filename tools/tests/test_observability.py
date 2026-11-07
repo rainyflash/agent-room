@@ -17,7 +17,7 @@ class ObservabilityContractTests(unittest.TestCase):
             set(DRILL_TARGETS),
             {"control-plane", "matrix", "object-store", "oidc", "federation", "bridge"},
         )
-        self.assertEqual(len(EXPECTED_ALERTS), 14)
+        self.assertEqual(len(EXPECTED_ALERTS), 15)
 
     def test_sensitive_or_high_cardinality_rule_labels_are_rejected(self) -> None:
         for label in ("user_id", "room", "message_digest", "local_path", "token_kind"):

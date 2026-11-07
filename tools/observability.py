@@ -49,6 +49,7 @@ EXPECTED_ALERTS: Final = frozenset(
         "AgentRoomCoreEndpointUnavailable",
         "AgentRoomFederationEndpointUnavailable",
         "AgentRoomBridgeAvailabilityLow",
+        "AgentRoomHostCpuHigh",
         "AgentRoomPostgresExporterDown",
         "AgentRoomBackupRpoBreached",
         "AgentRoomBackupFullStale",
