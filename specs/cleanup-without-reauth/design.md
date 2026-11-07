@@ -81,4 +81,4 @@
 ## 状态
 
 - 2026-11-07 维护者提出并定了范围（见上），起草这份设计。第 1、2 步 #743：控制面三个接口只要有效登录。
-- 2026-11-07 第 3 步：确认框是共用的 `ArchiveRoomConfirm`（`features/private-rooms/ui/archive-room-confirm.tsx`），打开时焦点在“取消”上，取消后焦点回到“归档”。和设计不一样的两处：卡片上的“归档”放在卡片下面一条，不在右边（右边是进房间的箭头，挤在一起分不清）；回滚时不另给“重新登录”按钮（见上）。浏览器验收：`lobby-scene.html?private&olderSession`（登录超过 5 分钟）的设置里确认、取消；`lobby-scene.html?features=1`（夹具用户没有最近登录）的“房间”页卡片上确认、取消、真归档。
+- 2026-11-07 第 3 步 #744：确认框是共用的 `ArchiveRoomConfirm`（`features/private-rooms/ui/archive-room-confirm.tsx`），打开时焦点在“取消”上，取消后焦点回到“归档”。和设计不一样的两处：卡片上的“归档”放在卡片下面一条，不在右边（右边是进房间的箭头，挤在一起分不清）；回滚时不另给“重新登录”按钮（见上）。浏览器验收：`lobby-scene.html?private&olderSession`（登录超过 5 分钟）的设置里确认、取消；`lobby-scene.html?features=1`（夹具用户没有最近登录）的“房间”页卡片上确认、取消、真归档。
