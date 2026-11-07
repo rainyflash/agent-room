@@ -82,3 +82,4 @@
 
 - 2026-11-07 维护者提出并定了范围（见上），起草这份设计。第 1、2 步 #743：控制面三个接口只要有效登录。
 - 2026-11-07 第 3 步 #744：确认框是共用的 `ArchiveRoomConfirm`（`features/private-rooms/ui/archive-room-confirm.tsx`），打开时焦点在“取消”上，取消后焦点回到“归档”。和设计不一样的两处：卡片上的“归档”放在卡片下面一条，不在右边（右边是进房间的箭头，挤在一起分不清）；回滚时不另给“重新登录”按钮（见上）。浏览器验收：`lobby-scene.html?private&olderSession`（登录超过 5 分钟）的设置里确认、取消；`lobby-scene.html?features=1`（夹具用户没有最近登录）的“房间”页卡片上确认、取消、真归档。
+- 2026-11-07 第 4 步 #745：“7 天以上没用的”一键撤销和新的两种挑着撤共用一个对话框（`BulkRevocationDialog`，原来的 `bulk-device-revocation-dialog.tsx` 改名为 `bulk-revocation-dialog.tsx`）。“选几台撤销”“选几个断开”放在两栏标题下面，还在用的超过一项才出现；挑着撤的默认都不勾，多一个“全选 / 全不选”。Agent 连接列的是还没断开的（连着的和不在线的）。网页不再先拦着请人重新登录，`Reauthentication` 只剩 `signInAgain`，服务器回 `authentication.reauthentication_required` 时停下、给“重新登录”。浏览器验收用 `security-center.html`：挑两台电脑撤、全选以后留一个 Agent 断开其余三个；`?reauth`（没有最近登录）换成 `?reauthRejected`（服务器说要重新登录）。

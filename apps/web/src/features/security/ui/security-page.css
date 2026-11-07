@@ -462,6 +462,18 @@
   justify-content: flex-start;
 }
 
+/* 标题下面“选几台撤销”“选几个断开”（specs/cleanup-without-reauth）。 */
+.security-access-panel__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 1rem;
+}
+
+.security-bulk-revocation__select {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .security-access-status.is-expired {
   color: var(--ar-muted);
 }
@@ -470,7 +482,7 @@
   color: var(--ar-muted);
 }
 
-/* 一键撤销：每台一行勾选框，名字和上次使用上下排。 */
+/* 一次撤几个：每项一行勾选框，名字和上次使用上下排。 */
 .security-bulk-revocation__list {
   display: grid;
   max-height: min(50vh, 420px);

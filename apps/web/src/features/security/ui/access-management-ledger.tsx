@@ -31,16 +31,20 @@ import type {
   ProductDevice,
 } from '@/features/security/domain/access-management';
 import {
-  BulkDeviceRevocationDialog,
+  BulkRevocationDialog,
   DeviceUsage,
+  type BulkRevocation,
   type Reauthentication,
-} from '@/features/security/ui/bulk-device-revocation-dialog';
+} from '@/features/security/ui/bulk-revocation-dialog';
 
 const REAUTHENTICATION_REQUIRED = 'authentication.reauthentication_required';
 
 export type AccessManagementLedgerProps = {
   readonly gateway: AccessManagementGateway;
-  /** 撤销要最近登录过；不给就不先拦着，服务器说要重新登录时只报错。 */
+  /**
+   * 撤销不要最近登录过（`specs/cleanup-without-reauth/design.md`）；回滚到旧版控制面时服务器会说要
+   * 重新登录，给了这个就给“重新登录”按钮，不给只报错。
+   */
   readonly reauthentication?: Reauthentication | undefined;
 };
 
@@ -54,10 +58,14 @@ export function AccessManagementLedger({ gateway, reauthentication }: AccessMana
   const devices = useProductDevices(gateway);
   const instances = useAgentInstances(gateway);
   const [intent, setIntent] = useState<RevocationIntent | null>(null);
-  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulk, setBulk] = useState<BulkRevocation['kind'] | null>(null);
   const [bulkCleanupPending, setBulkCleanupPending] = useState(false);
   const now = Date.now();
-  const idleDevices = groupDevices(resultValue(devices.data), now).idle;
+  const bulkRevocation = bulkRevocationOf(
+    bulk,
+    groupDevices(resultValue(devices.data), now),
+    groupInstances(resultValue(instances.data)),
+  );
   const refresh = async (): Promise<void> => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: productDeviceQueryKey }),
@@ -177,9 +185,9 @@ export function AccessManagementLedger({ gateway, reauthentication }: AccessMana
           failure={resultFailure(devices.data)}
           loading={devices.isPending}
           now={now}
-          onBulkRevoke={() => {
+          onBulkRevoke={(kind) => {
             setIntent(null);
-            setBulkOpen(true);
+            setBulk(kind);
           }}
           onRetry={() => void devices.refetch()}
           onRevoke={(device) => {
@@ -192,6 +200,10 @@ export function AccessManagementLedger({ gateway, reauthentication }: AccessMana
           failure={resultFailure(instances.data)}
           instances={resultValue(instances.data)}
           loading={instances.isPending}
+          onChoose={() => {
+            setIntent(null);
+            setBulk('instances');
+          }}
           onRetry={() => void instances.refetch()}
           onRevoke={(instance) => {
             setIntent({
@@ -203,23 +215,41 @@ export function AccessManagementLedger({ gateway, reauthentication }: AccessMana
           pendingId={revokeInstance.isPending ? revokeInstance.variables : null}
         />
       </div>
-      {bulkOpen && idleDevices.length > 0 ? (
-        <BulkDeviceRevocationDialog
-          devices={idleDevices}
+      {bulkRevocation === null ? null : (
+        <BulkRevocationDialog
           gateway={gateway}
           now={now}
           onCleanupPending={() => {
             setBulkCleanupPending(true);
           }}
           onClose={() => {
-            setBulkOpen(false);
+            setBulk(null);
           }}
           onRevoked={refresh}
           reauthentication={reauthentication}
+          revocation={bulkRevocation}
         />
-      ) : null}
+      )}
     </section>
   );
+}
+
+/**
+ * 打开的是哪一种一次撤几个：7 天以上没用的电脑、还登录着的电脑、还没断开的 Agent 连接。
+ * 一个可撤的都没有了（比如刚全撤完）就不开。
+ */
+function bulkRevocationOf(
+  kind: BulkRevocation['kind'] | null,
+  devices: ReturnType<typeof groupDevices>,
+  instances: ReturnType<typeof groupInstances>,
+): BulkRevocation | null {
+  if (kind === 'instances') {
+    const active = [...instances.connected, ...instances.offline];
+    return active.length === 0 ? null : { kind, instances: active };
+  }
+  if (kind === null) return null;
+  const active = kind === 'idleDevices' ? devices.idle : [...devices.recent, ...devices.idle];
+  return active.length === 0 ? null : { kind, devices: active };
 }
 
 type ProductDevicePanelProps = {
@@ -227,7 +257,8 @@ type ProductDevicePanelProps = {
   readonly failure: AccessManagementFailure | null;
   readonly loading: boolean;
   readonly now: number;
-  readonly onBulkRevoke: () => void;
+  /** 一次撤几台：`idleDevices` 是“7 天以上没用的”全部撤销，`devices` 是在还登录着的里自己挑。 */
+  readonly onBulkRevoke: (kind: 'devices' | 'idleDevices') => void;
   readonly onRetry: () => void;
   readonly onRevoke: (device: ProductDevice) => void;
   readonly pendingCleanup: ReadonlySet<string>;
@@ -273,6 +304,20 @@ function ProductDevicePanel({
         icon={<MonitorSmartphone aria-hidden="true" />}
         title={t('security.access.devices.title')}
       />
+      {groups.recent.length + groups.idle.length > 1 ? (
+        <div className="security-access-panel__actions">
+          <Button
+            disabled={pendingId !== null}
+            onClick={() => {
+              onBulkRevoke('devices');
+            }}
+            size="compact"
+            tone="quiet"
+          >
+            {t('security.access.bulk.chooseDevices')}
+          </Button>
+        </div>
+      ) : null}
       <AccessPanelBoundary failure={failure} loading={loading} onRetry={onRetry}>
         {devices.length === 0 ? (
           <p className="security-access-panel__empty">{t('security.access.devices.empty')}</p>
@@ -293,7 +338,9 @@ function ProductDevicePanel({
                 <div className="security-access-group__actions">
                   <Button
                     disabled={pendingId !== null}
-                    onClick={onBulkRevoke}
+                    onClick={() => {
+                      onBulkRevoke('idleDevices');
+                    }}
                     size="compact"
                     tone="alert"
                   >
@@ -366,6 +413,8 @@ type AgentInstancePanelProps = {
   readonly failure: AccessManagementFailure | null;
   readonly instances: readonly AgentInstance[];
   readonly loading: boolean;
+  /** 在还没断开的里自己挑几个一起断开。 */
+  readonly onChoose: () => void;
   readonly onRetry: () => void;
   readonly onRevoke: (instance: AgentInstance) => void;
   readonly pendingId: string | null;
@@ -376,6 +425,7 @@ function AgentInstancePanel({
   failure,
   instances,
   loading,
+  onChoose,
   onRetry,
   onRevoke,
   pendingId,
@@ -398,6 +448,13 @@ function AgentInstancePanel({
         icon={<Bot aria-hidden="true" />}
         title={t('security.access.instances.title')}
       />
+      {groups.connected.length + groups.offline.length > 1 ? (
+        <div className="security-access-panel__actions">
+          <Button disabled={pendingId !== null} onClick={onChoose} size="compact" tone="quiet">
+            {t('security.access.bulk.chooseInstances')}
+          </Button>
+        </div>
+      ) : null}
       <AccessPanelBoundary failure={failure} loading={loading} onRetry={onRetry}>
         {instances.length === 0 ? (
           <p className="security-access-panel__empty">{t('security.access.instances.empty')}</p>

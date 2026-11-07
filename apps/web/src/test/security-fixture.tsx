@@ -64,7 +64,8 @@ const DAY = 24 * 60 * MINUTE;
 const fixtureNow = Date.now();
 /**
  * 两台在用的电脑，加上以前发布验收留下的：一台 10 天没用、一台 40 天没用（授权已过期）、
- * 一台撤销了的。撤销照真的走：撤完挪进“已撤销的”。`?reauth` 是没有最近登录过。
+ * 一台撤销了的。撤销照真的走：撤完挪进“已撤销的”，Agent 断开也一样。`?reauthRejected` 是服务器说撤销要先
+ * 重新登录（回滚到旧版控制面时才会这样，`specs/cleanup-without-reauth/design.md`）。
  */
 let fixtureDevices: readonly ProductDevice[] = [
   {
@@ -156,7 +157,7 @@ const [studio, travel, alpha70, alpha60, alpha55] = fixtureDevices as [
   ProductDevice,
   ProductDevice,
 ];
-const fixtureInstances: readonly AgentInstance[] = [
+let fixtureInstances: readonly AgentInstance[] = [
   fixtureInstance(1, 'Release architect', 'online', studio, MINUTE),
   fixtureInstance(2, 'Research scout', 'offline', travel, 2 * DAY),
   fixtureInstance(3, 'Alpha 70 acceptance agent', 'offline', alpha70, 10 * DAY),
@@ -164,11 +165,29 @@ const fixtureInstances: readonly AgentInstance[] = [
   fixtureInstance(5, 'Alpha 55 acceptance agent', 'revoked', alpha55, 48 * DAY),
 ];
 
+const reauthRejected = new URLSearchParams(window.location.search).has('reauthRejected');
+const rejectedForReauth = () =>
+  Promise.resolve(err({ code: 'authentication.reauthentication_required', retryable: false }));
 const accessManagement: AccessManagementGateway = {
   listAgentInstances: () => Promise.resolve(ok(fixtureInstances)),
   listProductDevices: () => Promise.resolve(ok(fixtureDevices)),
-  revokeAgentInstance: () => Promise.resolve(err({ code: 'access.fixture', retryable: false })),
+  revokeAgentInstance: (instanceId) => {
+    if (reauthRejected) return rejectedForReauth();
+    const now = Date.now();
+    fixtureInstances = fixtureInstances.map((instance) =>
+      instance.agentInstanceId === instanceId
+        ? { ...instance, matrixDeviceRevokedAtUnixMs: now, revokedAtUnixMs: now, status: 'revoked' }
+        : instance,
+    );
+    const revoked = fixtureInstances.find((instance) => instance.agentInstanceId === instanceId);
+    return Promise.resolve(
+      revoked === undefined
+        ? err({ code: 'agent_instance.not_found', retryable: false })
+        : ok({ instance: revoked, matrixCleanup: 'complete', matrixCleanupPendingReason: null }),
+    );
+  },
   revokeProductDevice: (deviceId) => {
+    if (reauthRejected) return rejectedForReauth();
     fixtureDevices = fixtureDevices.map((device) =>
       device.deviceId === deviceId
         ? { ...device, revokedAtUnixMs: Date.now(), trustState: 'revoked' }
@@ -277,7 +296,6 @@ async function bootstrapFixture(): Promise<void> {
                 deviceSigning={deviceSigning}
                 gateway={security}
                 reauthentication={{
-                  recentlyAuthenticated: !search.has('reauth'),
                   signInAgain: () => {
                     document.body.dataset.signInRequested = 'true';
                   },
