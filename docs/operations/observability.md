@@ -112,6 +112,33 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 - **clamd**：重载病毒库会占一会儿，一小时以上不下来就看扫描容器的日志有没有一直在重载。
 - **PostgreSQL**：看 `pg_stat_activity` 里有没有跑了很久的查询。
 
+## AgentRoomDiskSpaceLow
+
+根目录（80 GB 的系统盘，备份、WAL、Docker 镜像和容器日志都在上面）剩下不到 20 GiB。发版部署的预检要至少 20 GiB，所以这条响着就发不了版。2026-11-07 平时剩 40 GiB 上下。
+
+用 `du -xh --max-depth=2 / | sort -h | tail -20` 看是哪一块在长，常见的几样：
+
+- 备份仓库：每天一份全量，WAL 一直留着，按保留规则自己删；突然变大先看保留的定时清理有没有跑（`agent-room-backup` 服务日志）。别为腾地方先删备份。
+- Docker 镜像：我们自己的镜像每版多 3 个，用本机发布目录里的 `cleanup_old_images.py` 只留当前和上一版（第三方的别删，别用 `docker image prune -a`）。
+- 旧发布目录：本机发布目录里的 `cleanup_old_releases.py`；恢复演练按规则只留 2 份。
+- 容器日志：都有 `logging:` 上限，**别手动截短**（见 [AgentRoomHostCpuHigh](#agentroomhostcpuhigh)）；没有上限的容器重建一次就换上了。
+
+## AgentRoomDiskSpaceCritical
+
+根目录剩下不到 8 GiB，PostgreSQL、WAL 归档和备份随时会写满，写满以后数据库停写、服务跟着出错。马上按上一节腾地方，先动能重来的（旧镜像、旧发布目录、超过保留期的恢复演练），备份最后动、动之前确认至少一个核对过的恢复点还在。腾不出来就跟维护者说，要扩盘。
+
+## AgentRoomMemoryLow
+
+机器是 4 GiB 内存加 4.5 GiB 交换分区，平时可用内存在 1.7 GiB 上下。ClamAV 每天重载病毒库时会掉到 400 多 MiB，但只有几分钟，所以这条看 30 分钟的平均低于 400 MiB；另外内存“所有进程都卡住”的时间（PSI 的 `full`）平时最高 2%，15 分钟里超过 10% 也响，那是在换页里打转了。
+
+- `docker stats --no-stream` 看各容器占多少；`for f in /proc/[0-9]*/status; do awk '/^Name:/{n=$2} /^VmSwap:/{print $2, n}' $f; done | sort -rn | head` 看谁被换出去最多。平时大头是 ClamAV（约 1 GB）和身份服务（Java，约 500 MB）。
+- 某个容器一直在涨，看它是不是漏内存，重建它能先顶住。
+- 用户多了以后整体不够，就该看升配了，先跟维护者说。
+
+## AgentRoomOomKill
+
+内核因为内存不够杀了一个进程（`/proc/vmstat` 的 `oom_kill` 涨了）。`journalctl -k --since "-1h" | grep -i -A5 oom-kill` 看杀的是谁、当时谁占内存最多；被杀的容器会按 `restart: unless-stopped` 自己起来，看它恢复健康没有。之后按上一节查内存为什么不够。
+
 ## AgentRoomPostgresExporterDown
 
 确认 exporter 容器、`agent_room_metrics` 角色、`pg_monitor` 成员资格、TLS 和 `postgres_metrics_password` 文件。该角色只能用于指标，不得复用迁移或应用运行角色。恢复后确认 `up{job="postgres"} == 1`。
