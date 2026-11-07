@@ -413,6 +413,23 @@ tests:
               runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroompostgresexporterdown
   - interval: 1m
     input_series:
+      - series: up{job="control-plane-otel"}
+        values: 1+0x5 0+0x20
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: AgentRoomTelemetryCollectorDown
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: AgentRoomTelemetryCollectorDown
+        exp_alerts:
+          - exp_labels: { job: control-plane-otel, severity: critical, service: agent-room }
+            exp_annotations:
+              summary: 指标收集器采不到了
+              impact: 控制面的请求、延迟和发信这些指标都断了，靠它们的告警不会再响
+              diagnostic: 看 telemetry 容器在不在跑、日志里有没有报错、内存是不是顶在上限
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomtelemetrycollectordown
+  - interval: 1m
+    input_series:
       - series: agent_room_backup_last_success_timestamp_seconds
         values: 0+0x40
       - series: agent_room_backup_rpo_target_seconds

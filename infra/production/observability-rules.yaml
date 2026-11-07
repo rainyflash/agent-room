@@ -196,6 +196,17 @@ groups:
           impact: 数据库容量与连接故障变为不可观测
           diagnostic: 检查指标专用角色、TLS 和 exporter 容器
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroompostgresexporterdown
+      - alert: AgentRoomTelemetryCollectorDown
+        expr: up{job="control-plane-otel"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: agent-room
+        annotations:
+          summary: 指标收集器采不到了
+          impact: 控制面的请求、延迟和发信这些指标都断了，靠它们的告警不会再响
+          diagnostic: 看 telemetry 容器在不在跑、日志里有没有报错、内存是不是顶在上限
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomtelemetrycollectordown
       - alert: AgentRoomBackupRpoBreached
         expr: time() - agent_room_backup_last_success_timestamp_seconds > agent_room_backup_rpo_target_seconds
         for: 5m
