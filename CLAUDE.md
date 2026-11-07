@@ -110,6 +110,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 改密码页（“应用发起的动作”）上 `logout-sessions` 强制是 `on`、不给勾选框（`login-update-password.ftl`）。Keycloak 默认不勾，不勾的话别的浏览器在身份服务上的登录还在，悄悄就能再登录回来；忘记密码那一路照旧给人自己选。
   - 回调看到 `kc_action=UPDATE_PASSWORD&kc_action_status=success` 就撤这个人别的账户登录，回跳地址带 `passwordChanged=1`；页面接着调 `POST /auth/sign-out-elsewhere` 注销别的聊天设备（以应用服务冒充本人，`delete_devices` 对应用服务不要交互认证）、结束身份服务上的登录。电脑授权和 Agent 连接不动。
   - 改密码的回调认证时间放宽到“最近登录的 5 分钟”加“一次登录最长的 10 分钟”：人在改密码页上停了几分钟，不放宽的话密码改好了、回来却说登录没完成。只对带 `kc_action=UPDATE_PASSWORD` 的回调放宽，普通登录照旧。
+  - 设置页回来以后等聊天连上、带着这一台的聊天设备号再调退出别处（`password-settings.tsx`），别改成一回来就调：那时聊天多半还在恢复，不带设备号会把这一台的聊天登录也注销。桌面端原生层的回环回调认 `passwordChanged=1`，加在交给网页的回跳地址上。
 - **删除账户连 Keycloak 里的登录账户一起删**（#346，[设计](./specs/account-deletion/sign-in-account.md)）。删除任务先删 Keycloak 用户，再停用聊天账户，最后匿名化本地记录。控制面用只开服务账号的客户端 `agent-room-account-admin`（realm-management 的 `manage-users`）经内部地址删；生产由每次部署的身份同步建好它，本地和 CI 由 `dev-infra.ps1` 同步。只删签发方是本部署的账户，网络 Agent 没有登录账户。
 - **matrix-js-sdk 的 `bootstrapCrossSigning` 不带 `setupNewCrossSigning` 时，看到本机有签名私钥就不上传公钥。** 上次上传被打断（页面跳走）时，本机留着私钥、服务器上却没有签名身份，它也照样跳过。账户还没有签名身份时要带 `setupNewCrossSigning: true` 从头建。第一份别用 `resetEncryption` 建：它先删密钥存储和备份、后传公钥。
   - “账户还没有签名身份”要直接问服务器（`keys/query` 的 `master_keys`），别只信 `userHasCrossSigningKeys`：它对自己的账户答的是本机记着的身份，Rust 加密库建身份时先存本机再上传，上传被打断后它照样说有（2026-10-09 派发 CI 偶发抓到，#356）。

@@ -130,6 +130,18 @@ describe('设置里的账户', () => {
     expect(account.requestDeletion).not.toHaveBeenCalled();
   });
 
+  it('修改密码去身份服务改，改好回到账户这一页', async () => {
+    beginAuthentication.mockResolvedValue(ok({ kind: 'browser-navigation' }));
+    signedIn(true);
+    render(<AccountSettings />, { wrapper: Translations });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
+
+    await waitFor(() => {
+      expect(beginAuthentication).toHaveBeenCalledWith('/settings/account', 'change-password');
+    });
+  });
+
   it('勾选并输入 DELETE 才能删；删完退出登录、回首页说一声', async () => {
     signedIn(true);
     render(<AccountSettings />, { wrapper: Translations });

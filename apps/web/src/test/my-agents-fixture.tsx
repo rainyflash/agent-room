@@ -508,6 +508,8 @@ const gateway: DesktopRuntimeGateway = {
 
 // ?settings=general|account|this-computer|about 显示设置页的这一节（安全一节有自己的测试页）。
 const settingsSection = new URLSearchParams(location.search).get('settings');
+// 账户一节加 &passwordChanged=1 是改好密码回来；再加 &signOut=failed 时第一次退出别的地方没成。
+let signOutFailures = new URLSearchParams(location.search).get('signOut') === 'failed' ? 1 : 0;
 
 function AuthenticatedMyAgentsFixture() {
   const { snapshot } = useSession();
@@ -552,12 +554,36 @@ async function bootstrapFixture() {
     },
     gateway,
   );
+  // 设置里的“修改密码”、删除账户前的“重新登录”和会话一样只记下意图，不真去登录。
+  const beginAuthentication: SessionDependencies['controlPlane']['beginAuthentication'] = (
+    _returnPath,
+    intent,
+  ) => {
+    signInIntents.push(intent ?? 'default');
+    return ready({ kind: 'session-established' as const });
+  };
+  const cloudControlPlane = runtime.services.controlPlane;
   const services = {
     ...runtime.services,
     ...(fixturePresence === undefined ? {} : { agentPresence: fixturePresence }),
+    controlPlane: {
+      beginAuthentication,
+      logout: () => cloudControlPlane.logout(),
+      readReadiness: () => cloudControlPlane.readReadiness(),
+      readSession: () => cloudControlPlane.readSession(),
+    },
     account: {
       exportData: () => ready({ fileName: 'agent-room-account-fixture.json', json: '{}\n' }),
       requestDeletion: () => ready(undefined),
+      signOutElsewhere: () => {
+        if (signOutFailures > 0) {
+          signOutFailures -= 1;
+          return Promise.resolve(
+            err({ code: 'sign_out_elsewhere.chat_unavailable', retryable: true }),
+          );
+        }
+        return ready({ accountSessions: 2, chatDevices: 1 });
+      },
     },
     receptionOwnership: {
       list: () => ready({ receptions: ownershipRecords, limited: false }),
@@ -634,10 +660,7 @@ async function bootstrapFixture() {
   const sessionDependencies: SessionDependencies = {
     ...runtime.services.session,
     controlPlane: {
-      beginAuthentication: (_returnPath, intent) => {
-        signInIntents.push(intent ?? 'default');
-        return ready({ kind: 'session-established' });
-      },
+      beginAuthentication,
       logout: () => ready(undefined),
       readSession: () => ready(principal),
     },

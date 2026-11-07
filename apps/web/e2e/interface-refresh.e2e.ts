@@ -127,6 +127,46 @@ for (const width of [1440, 390]) {
     await expect.poll(controls).toEqual({ releases: 2, intents: ['reauthenticate'] });
     expect(failures).toEqual([]);
   });
+  test(`设置 · 账户：${String(width)}px 修改密码，改好回来退出别的地方，没退成能再试`, async ({
+    page,
+  }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    // 改好密码回来（specs/change-password/design.md）：第一次退出别的地方没成。
+    await page.goto(
+      '/e2e/fixtures/my-agents.html?settings=account&update=current&passwordChanged=1&signOut=failed',
+    );
+    const content = page.getByRole('region', { name: 'Account', exact: true });
+    await expect(
+      content.getByText('Password changed, but you’re not signed out everywhere else yet.'),
+    ).toBeVisible();
+    await expect(content.getByText(/sign_out_elsewhere\.chat_unavailable/u)).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(scan.violations.map(({ id }) => id)).toEqual([]);
+
+    await content.getByRole('button', { name: 'Try again' }).click();
+    await expect(
+      content.getByText(
+        'Password changed. You’re signed out in every other browser and on every other computer.',
+      ),
+    ).toBeVisible();
+    await expect(content.getByText(/Authorized computers and agent connections/u)).toBeVisible();
+
+    await content.getByRole('button', { name: 'Change password', exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(() =>
+            (window as MyAgentsFixtureWindow).__agentRoomFixtureControls.signInIntents(),
+          ),
+      )
+      .toEqual(['change-password']);
+    expect(failures).toEqual([]);
+  });
   test(`设置 · 这台电脑：${String(width)}px 有新版本、自动打开与更新`, async ({
     page,
   }, testInfo) => {

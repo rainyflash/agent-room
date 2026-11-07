@@ -14,6 +14,12 @@ export type AccountExport = {
   readonly json: string;
 };
 
+/** 改好密码以后退出别的地方的登录：撤了几份账户登录、注销了几台聊天设备。 */
+export type SignedOutElsewhere = {
+  readonly accountSessions: number;
+  readonly chatDevices: number;
+};
+
 export type AccountGateway = {
   /** 资料、电脑、Agent、房间、举报和文件清单；消息不在里面。 */
   exportData(): Promise<Result<AccountExport, AccountFailure>>;
@@ -22,6 +28,14 @@ export type AccountGateway = {
    * 成功以后服务器已经让这次登录失效，界面要接着退出登录、清掉本机数据。
    */
   requestDeletion(idempotencyKey: string): Promise<Result<void, AccountFailure>>;
+  /**
+   * 退出这个账户在别的浏览器和电脑上的登录：账户登录、聊天登录、身份服务上的登录
+   * （`specs/change-password/design.md`）。`keepChatDeviceId` 是这一台的聊天设备，留着；`null` 时连
+   * 这一台的一起注销。电脑授权和 Agent 连接不动。只要有效登录，再调一次是安全的。
+   */
+  signOutElsewhere(
+    keepChatDeviceId: string | null,
+  ): Promise<Result<SignedOutElsewhere, AccountFailure>>;
 };
 
 /** 服务器要求的确认词，界面上让人照着输入。 */
@@ -33,6 +47,11 @@ export const accountExportSchema = z.looseObject({
   schemaVersion: z.number().int().positive(),
   generatedAtUnixMs: z.number().int().nonnegative(),
   data: z.record(z.string(), z.unknown()),
+});
+
+export const signedOutElsewhereSchema = z.looseObject({
+  accountSessions: z.number().int().nonnegative(),
+  chatDevices: z.number().int().nonnegative(),
 });
 
 export const accountDeletionStartedSchema = z.looseObject({

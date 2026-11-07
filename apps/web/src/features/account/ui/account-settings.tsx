@@ -11,8 +11,10 @@ import {
   type AccountGateway,
 } from '@/features/account/domain/account';
 import { rememberAccountDeletion } from '@/features/account/ui/account-deleted-notice';
+import { PasswordRow } from '@/features/account/ui/password-settings';
 import type { DesktopRuntimeController } from '@/features/desktop/ui/use-desktop-runtime';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
+import { sessionStateName } from '@/features/session/ui/connection-model';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import './account-settings.css';
@@ -20,13 +22,14 @@ import './account-settings.css';
 const RETURN_PATH = '/settings/account';
 
 /**
- * 账户：退出登录、换个账号登录（`specs/sign-out/design.md`），下载我的数据、删除账户（隐私说明里
- * 写的两条路）。删除要几分钟内登录过、输入 DELETE；成功后服务器已让这次登录失效，这里接着退出登录、
- * 清掉本机数据，回到首页说一声。桌面端换账号先确认、把这台电脑移出原来的账户，再照常换。
+ * 账户：退出登录、换个账号登录（`specs/sign-out/design.md`），修改密码（`specs/change-password/design.md`），
+ * 下载我的数据、删除账户（隐私说明里写的两条路）。删除要几分钟内登录过、输入 DELETE；成功后服务器已让
+ * 这次登录失效，这里接着退出登录、清掉本机数据，回到首页说一声。桌面端换账号先确认、把这台电脑移出原来
+ * 的账户，再照常换。
  */
 export function AccountSettings() {
   const { t } = useTranslation();
-  const { account } = useAppServices();
+  const { account, controlPlane } = useAppServices();
   const session = useOptionalSession();
   const desktop = useOptionalDesktopRuntimeController();
   const navigate = useNavigate();
@@ -79,6 +82,18 @@ export function AccountSettings() {
           </Button>
         </div>
       )}
+      <PasswordRow
+        account={account}
+        beginChangePassword={async () => {
+          const started = await controlPlane.beginAuthentication(RETURN_PATH, 'change-password');
+          return started.ok ? null : { code: started.error.code };
+        }}
+        chat={{
+          deviceId: session.snapshot.context.connection?.deviceId ?? null,
+          state: sessionStateName(session.snapshot.value),
+        }}
+        desktop={desktop?.available === true}
+      />
       <ExportRow account={account} />
       <DeletionRow
         account={account}
