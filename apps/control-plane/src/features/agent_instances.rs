@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 远端清理暂挂返回_202_并强制同源近期认证() {
+    async fn 远端清理暂挂返回_202_撤销要同源和活跃会话() {
         let fixture = Fixture::new(AgentInstanceMatrixCleanup::Pending {
             reason: agent_room_application::agent_instance_management::AgentInstanceCleanupFailureKind::DependencyUnavailable,
         });
