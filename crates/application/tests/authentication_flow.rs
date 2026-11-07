@@ -11,7 +11,8 @@ use agent_room_application::{
         AuthenticationDependencies, AuthenticationFailureKind, AuthenticationIntent,
         AuthenticationPolicy, AuthenticationRequirement, AuthenticationService,
         AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin, CompleteLogin,
-        DesktopLoginCompletion, ExchangeDesktopAuthorization, LoginCompletion, WebLoginCompletion,
+        DesktopLoginCompletion, ExchangeDesktopAuthorization, LoginCompletion, PasswordChange,
+        WebLoginCompletion,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -20,11 +21,12 @@ use agent_room_application::{
         DesktopSessionExchangeTransaction, DesktopSessionRegistration, IdentifierFactory,
         LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
         OidcAuthorizationOptions, OidcAuthorizationRequest, OidcCodeExchange, OidcFailure,
-        OidcFailureKind, OidcGateway, OidcInteraction, OidcResult, PkceCodeChallenge, PortFuture,
-        PrincipalAccount, PrincipalRegistration, PrincipalSuspensionTransaction,
-        ProfileImportConsent, SafeReturnPath, SecretDigest, SecretFactory, SecretGenerationFailure,
-        SecretValue, SignInAccount, SignInSessionTermination, StoredWebSession,
-        VerifiedOidcIdentity, WebSessionRegistration, WebSessionStore,
+        OidcFailureKind, OidcGateway, OidcInteraction, OidcResult, OtherSessionsRevoked,
+        PkceCodeChallenge, PortFuture, PrincipalAccount, PrincipalRegistration,
+        PrincipalSuspensionTransaction, ProfileImportConsent, SafeReturnPath, SecretDigest,
+        SecretFactory, SecretGenerationFailure, SecretValue, SignInAccount,
+        SignInSessionTermination, StoredWebSession, VerifiedOidcIdentity, WebSessionRegistration,
+        WebSessionStore,
     },
 };
 use agent_room_domain::{
@@ -229,9 +231,28 @@ struct IdentityState {
     desktop_authorizations:
         HashMap<SecretDigest, (DesktopAuthorizationCodeRegistration, PrincipalAccount)>,
     sessions: HashMap<SecretDigest, StoredWebSession>,
+    /// 和真的库一样：同一个登录服务账户再登录，还是同一个人。
+    principals: HashMap<String, Principal>,
     last_registration: Option<PrincipalRegistration>,
     /// 续期写库的次数，用来确认一小时之内不重复写。
     extensions: usize,
+}
+
+impl IdentityState {
+    fn account(&mut self, registration: &PrincipalRegistration) -> PrincipalAccount {
+        let principal = self
+            .principals
+            .entry(registration.oidc_subject.clone())
+            .or_insert_with(|| registration.principal.clone())
+            .clone();
+        PrincipalAccount {
+            principal,
+            matrix_user_id: registration.matrix_user_id.clone(),
+            display_name: registration.display_name.clone(),
+            avatar_content_id: registration.avatar_content_id,
+            locale: registration.locale.clone(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -290,20 +311,14 @@ impl LoginCompletionTransaction for InMemoryIdentity {
         session: &'a WebSessionRegistration,
     ) -> PortFuture<'a, RepositoryResult<StoredWebSession>> {
         Box::pin(async move {
+            let mut state = self.0.lock().expect("测试锁可用");
             let stored = StoredWebSession {
                 id: session.id,
-                account: PrincipalAccount {
-                    principal: registration.principal.clone(),
-                    matrix_user_id: registration.matrix_user_id.clone(),
-                    display_name: registration.display_name.clone(),
-                    avatar_content_id: registration.avatar_content_id,
-                    locale: registration.locale.clone(),
-                },
+                account: state.account(registration),
                 authenticated_at: session.authenticated_at,
                 created_at: session.created_at,
                 expires_at: session.expires_at,
             };
-            let mut state = self.0.lock().expect("测试锁可用");
             state.last_registration = Some(registration.clone());
             state.sessions.insert(session.secret_digest, stored.clone());
             Ok(stored)
@@ -318,14 +333,8 @@ impl DesktopLoginCompletionTransaction for InMemoryIdentity {
         authorization: &'a DesktopAuthorizationCodeRegistration,
     ) -> PortFuture<'a, RepositoryResult<PrincipalAccount>> {
         Box::pin(async move {
-            let account = PrincipalAccount {
-                principal: registration.principal.clone(),
-                matrix_user_id: registration.matrix_user_id.clone(),
-                display_name: registration.display_name.clone(),
-                avatar_content_id: registration.avatar_content_id,
-                locale: registration.locale.clone(),
-            };
             let mut state = self.0.lock().expect("测试锁可用");
+            let account = state.account(registration);
             state.last_registration = Some(registration.clone());
             state.desktop_authorizations.insert(
                 authorization.code_digest,
@@ -449,6 +458,32 @@ impl WebSessionStore for InMemoryIdentity {
         })
     }
 
+    fn revoke_others<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        keep: Option<&'a SecretDigest>,
+        _now: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<Option<OtherSessionsRevoked>>> {
+        Box::pin(async move {
+            let mut state = self.0.lock().expect("测试锁可用");
+            let before = state.sessions.len();
+            state.sessions.retain(|digest, session| {
+                session.account.principal.id() != principal_id || Some(digest) == keep
+            });
+            let revoked = u64::try_from(before - state.sessions.len()).expect("个数放得下");
+            Ok(state
+                .last_registration
+                .as_ref()
+                .map(|registration| OtherSessionsRevoked {
+                    revoked,
+                    account: SignInAccount {
+                        issuer: registration.oidc_issuer.clone(),
+                        subject: registration.oidc_subject.clone(),
+                    },
+                }))
+        })
+    }
+
     fn extend(
         &self,
         session_id: WebSessionId,
@@ -536,16 +571,49 @@ impl Harness {
         &self,
         profile_import: ProfileImportConsent,
     ) -> agent_room_application::authentication::LoginRedirect {
+        self.begin_intent(profile_import, AuthenticationIntent::SignIn)
+            .await
+    }
+
+    async fn begin_intent(
+        &self,
+        profile_import: ProfileImportConsent,
+        intent: AuthenticationIntent,
+    ) -> agent_room_application::authentication::LoginRedirect {
         self.service
             .begin_login(BeginLogin {
                 delivery: LoginDelivery::Web {
                     return_path: SafeReturnPath::new("/rooms/lobby").expect("返回路径有效"),
                 },
                 profile_import,
-                intent: AuthenticationIntent::SignIn,
+                intent,
             })
             .await
             .expect("登录应开始")
+    }
+
+    /// 登录一次，回这份登录。
+    async fn sign_in(&self) -> SecretValue {
+        let redirect = self.begin(ProfileImportConsent::default()).await;
+        self.complete(&redirect.browser_secret, STATE)
+            .await
+            .expect("登录成功")
+            .session_secret
+    }
+
+    /// 走一次改密码的登录，身份服务回来说的是 `outcome`。
+    async fn change_password(
+        &self,
+        outcome: PasswordChange,
+    ) -> agent_room_application::authentication::AuthenticationResult<WebLoginCompletion> {
+        let redirect = self
+            .begin_intent(
+                ProfileImportConsent::default(),
+                AuthenticationIntent::ChangePassword,
+            )
+            .await;
+        self.complete_with(&redirect.browser_secret, STATE, Some(outcome))
+            .await
     }
 
     async fn complete(
@@ -553,12 +621,22 @@ impl Harness {
         browser_secret: &SecretValue,
         state: &str,
     ) -> agent_room_application::authentication::AuthenticationResult<WebLoginCompletion> {
+        self.complete_with(browser_secret, state, None).await
+    }
+
+    async fn complete_with(
+        &self,
+        browser_secret: &SecretValue,
+        state: &str,
+        password_change: Option<PasswordChange>,
+    ) -> agent_room_application::authentication::AuthenticationResult<WebLoginCompletion> {
         let completion = self
             .service
             .complete_login(CompleteLogin {
                 code: "authorization-code",
                 returned_state: state,
                 browser_secret,
+                password_change,
             })
             .await?;
         match completion {
@@ -591,6 +669,168 @@ async fn 注册意图被明确映射为_oidc_创建账户交互() {
             .lock()
             .expect("测试锁可用"),
         Some(OidcInteraction::CreateAccount)
+    );
+}
+
+#[tokio::test]
+async fn 改密码的登录让身份服务登录完接着改密码() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+
+    harness
+        .begin_intent(
+            ProfileImportConsent::default(),
+            AuthenticationIntent::ChangePassword,
+        )
+        .await;
+
+    assert_eq!(
+        *harness
+            .oidc
+            .requested_interaction
+            .lock()
+            .expect("测试锁可用"),
+        Some(OidcInteraction::ChangePassword)
+    );
+}
+
+#[tokio::test]
+async fn 改好密码回来撤掉这个人别的登录_留着刚建的这一份() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let elsewhere = harness.sign_in().await;
+    let other_desktop = harness.sign_in().await;
+
+    let changed = harness
+        .change_password(PasswordChange::Changed)
+        .await
+        .expect("改好密码照常登录");
+
+    for revoked in [&elsewhere, &other_desktop] {
+        assert_eq!(
+            authenticate(&harness, revoked)
+                .await
+                .expect_err("别的登录撤掉了")
+                .kind(),
+            AuthenticationFailureKind::InvalidSession
+        );
+    }
+    authenticate(&harness, &changed.session_secret)
+        .await
+        .expect("刚建的这一份留着");
+}
+
+#[tokio::test]
+async fn 取消改密码时照常登录_什么都不撤() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let elsewhere = harness.sign_in().await;
+
+    let unchanged = harness
+        .change_password(PasswordChange::Unchanged)
+        .await
+        .expect("取消了也照常登录");
+
+    authenticate(&harness, &elsewhere)
+        .await
+        .expect("别的登录还在");
+    authenticate(&harness, &unchanged.session_secret)
+        .await
+        .expect("这一份也能用");
+}
+
+#[tokio::test]
+async fn 改好密码以后桌面端的登录要等换授权码_别的全撤() {
+    let harness = Harness::new(valid_identity(Some(time(NOW))));
+    let elsewhere = harness.sign_in().await;
+    let verifier = "d".repeat(43);
+    let challenge =
+        PkceCodeChallenge::new(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())))
+            .expect("PKCE challenge 有效");
+    let redirect = harness
+        .service
+        .begin_login(BeginLogin {
+            delivery: LoginDelivery::Desktop {
+                client_state: DesktopClientState::new("c".repeat(43)).expect("桌面 state 有效"),
+                code_challenge: challenge,
+                return_path: SafeReturnPath::new("/settings/account").expect("返回路径有效"),
+            },
+            profile_import: ProfileImportConsent::default(),
+            intent: AuthenticationIntent::ChangePassword,
+        })
+        .await
+        .expect("桌面端改密码应开始");
+    let LoginCompletion::Desktop(completion) = harness
+        .service
+        .complete_login(CompleteLogin {
+            code: "authorization-code",
+            returned_state: STATE,
+            browser_secret: &redirect.browser_secret,
+            password_change: Some(PasswordChange::Changed),
+        })
+        .await
+        .expect("改好密码照常发桌面授权码")
+    else {
+        panic!("桌面端改密码回来的是桌面授权码");
+    };
+
+    assert_eq!(
+        authenticate(&harness, &elsewhere)
+            .await
+            .expect_err("别的登录撤掉了")
+            .kind(),
+        AuthenticationFailureKind::InvalidSession
+    );
+    let exchanged = harness
+        .service
+        .exchange_desktop_authorization(ExchangeDesktopAuthorization {
+            authorization_code: completion.authorization_code.expose(),
+            pkce_verifier: &verifier,
+        })
+        .await
+        .expect("撤完以后照样换得到桌面登录");
+    authenticate(&harness, &exchanged.session_secret)
+        .await
+        .expect("换来的桌面登录能用");
+}
+
+#[tokio::test]
+async fn 改密码的页面上停了几分钟回来照收_普通登录照旧不收() {
+    // 发起前四分钟登录过，身份服务不再要密码；人在改密码的页面上停了五分钟。
+    let authenticated_at = time(NOW - 4 * 60_000);
+    let late = NOW + 5 * 60_000;
+
+    let harness = Harness::new(valid_identity(Some(authenticated_at)));
+    let redirect = harness
+        .begin_intent(
+            ProfileImportConsent::default(),
+            AuthenticationIntent::ChangePassword,
+        )
+        .await;
+    harness.clock.set(late);
+    let completion = harness
+        .complete_with(
+            &redirect.browser_secret,
+            STATE,
+            Some(PasswordChange::Changed),
+        )
+        .await
+        .expect("改密码回来照收");
+    assert_eq!(
+        authenticate(&harness, &completion.session_secret)
+            .await
+            .expect("登录能用")
+            .authenticated_at,
+        authenticated_at
+    );
+
+    let harness = Harness::new(valid_identity(Some(authenticated_at)));
+    let redirect = harness.begin(ProfileImportConsent::default()).await;
+    harness.clock.set(late);
+    assert_eq!(
+        harness
+            .complete(&redirect.browser_secret, STATE)
+            .await
+            .expect_err("普通登录还是只收五分钟以内的")
+            .kind(),
+        AuthenticationFailureKind::InvalidIdentityToken
     );
 }
 
@@ -790,6 +1030,7 @@ async fn issue_desktop_authorization(
             code: "authorization-code",
             returned_state: STATE,
             browser_secret: &redirect.browser_secret,
+            password_change: None,
         })
         .await
         .expect("OIDC 回调应创建桌面授权码");

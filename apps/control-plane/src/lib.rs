@@ -86,6 +86,7 @@ use agent_room_application::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
         LobbyProvisioningPolicy, LobbyProvisioningService,
     },
+    sign_out_elsewhere::{SignOutElsewhereDependencies, SignOutElsewhereService},
 };
 use agent_room_domain::time::{DurationMillis, SlidingLifetime};
 use agent_room_identity_adapter::{
@@ -492,7 +493,7 @@ async fn build_identity_router(
         account_state,
         device_state,
         agent_features,
-        content_routes.merge(personal_routes(config, &agent_dependencies)),
+        content_routes.merge(personal_routes(config, &agent_dependencies)?),
     );
     Ok(IdentityRuntime {
         routes,
@@ -539,8 +540,11 @@ fn public_watch_state(
     })
 }
 
-fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDependencies) -> Router {
-    features::inbox::router(features::inbox::InboxHttpState {
+fn personal_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Router, StartupError> {
+    Ok(features::inbox::router(features::inbox::InboxHttpState {
         repository: dependencies.repositories.clone(),
         authentication: dependencies.authentication.clone(),
     })
@@ -565,6 +569,30 @@ fn personal_routes(config: &ControlPlaneConfig, dependencies: &AgentFeatureDepen
     .merge(account_encryption_routes(config, dependencies))
     .merge(desktop_matrix_session_routes(config, dependencies))
     .merge(computer_grant_routes(config, dependencies))
+    .merge(sign_out_elsewhere_routes(config, dependencies)?))
+}
+
+/// 改好密码以后退出别的地方的登录（`specs/change-password/design.md`）。身份服务上的登录没结束成时，
+/// 由接口自己记告警，不用退出登录的那句，所以拿的是没包过的那一份。
+fn sign_out_elsewhere_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Router, StartupError> {
+    let service = Arc::new(SignOutElsewhereService::new(SignOutElsewhereDependencies {
+        sessions: dependencies.repositories.clone(),
+        chat_devices: dependencies.matrix_identities.clone(),
+        sign_in_sessions: build_sign_in_account_removal(config)?,
+        secrets: dependencies.secrets.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
+    Ok(features::sign_out_elsewhere::router(
+        features::sign_out_elsewhere::SignOutElsewhereHttpState::new(
+            service,
+            dependencies.authentication.clone(),
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+        ),
+    ))
 }
 
 fn build_authentication_runtime(

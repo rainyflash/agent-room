@@ -5,7 +5,7 @@ use agent_room_application::{
         AuthenticatedPrincipal, AuthenticationFailure, AuthenticationFailureKind,
         AuthenticationIntent, AuthenticationRequirement, AuthenticationUseCases,
         AuthorizeDesktopSession, BeginLogin, CompleteLogin, DesktopLoginCompletion,
-        ExchangeDesktopAuthorization, LoginCompletion,
+        ExchangeDesktopAuthorization, LoginCompletion, PasswordChange, WebLoginCompletion,
     },
     ports::{
         Clock, DesktopClientState, LoginDelivery, PkceCodeChallenge, ProfileImportConsent,
@@ -41,6 +41,11 @@ const DESKTOP_SESSION_COOKIE: &str = "__Secure-agent-room-desktop-session";
 const DESKTOP_CALLBACK_COOKIE: &str = "__Host-agent-room-desktop-callback";
 const LEGACY_DESKTOP_CALLBACK_URL: &str = "agent-room://auth/callback";
 const LOOPBACK_CALLBACK_PATH: &str = "/auth/callback";
+/// 改好密码回到网页（回跳地址）、回到桌面端（回环地址）时带上它，页面接着退出别的地方的登录
+/// （`specs/change-password/design.md`）。
+const PASSWORD_CHANGED_PARAMETER: &str = "passwordChanged";
+/// Keycloak 的“应用发起的动作”里改密码的那一个。
+const UPDATE_PASSWORD_ACTION: &str = "UPDATE_PASSWORD";
 
 #[derive(Clone)]
 pub(crate) struct AuthenticationHttpState {
@@ -142,6 +147,8 @@ enum BeginLoginIntent {
     /// 要“最近登录过”的操作（撤销电脑、删账户等）请人再登录一次：一定去身份服务，
     /// 不拿浏览器里已有的网页登录换桌面登录，那份的认证时间是当初登录的时候，不算最近。
     Reauthenticate,
+    /// 修改密码：身份服务登录完接着改密码（`specs/change-password/design.md`）。和上面一样一定去身份服务。
+    ChangePassword,
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +188,7 @@ impl DesktopCallbackDestination {
         Ok(Self::Loopback(url))
     }
 
-    fn redirect_url(&self, completion: &DesktopLoginCompletion) -> Url {
+    fn redirect_url(&self, completion: &DesktopLoginCompletion, password_changed: bool) -> Url {
         let mut destination = match self {
             Self::LegacyProtocol => {
                 Url::parse(LEGACY_DESKTOP_CALLBACK_URL).expect("固定桌面回调 URL 必须有效")
@@ -192,6 +199,11 @@ impl DesktopCallbackDestination {
             ("code", completion.authorization_code.expose()),
             ("state", completion.client_state.expose()),
         ]);
+        if password_changed {
+            destination
+                .query_pairs_mut()
+                .append_pair(PASSWORD_CHANGED_PARAMETER, "1");
+        }
         destination
     }
 
@@ -212,6 +224,24 @@ struct CompleteLoginQuery {
     #[serde(default, rename = "session_state")]
     _session_state: Option<String>,
     state: String,
+    /// 登录页上顺带做的事（“应用发起的动作”）和它的结果：`success`、`cancelled`、`error`。
+    #[serde(default)]
+    kc_action: Option<String>,
+    #[serde(default)]
+    kc_action_status: Option<String>,
+}
+
+impl CompleteLoginQuery {
+    /// 这是浏览器带回来的，谁都能自己加上；加上的人只能撤掉自己别的登录。
+    fn password_change(&self) -> Option<PasswordChange> {
+        (self.kc_action.as_deref() == Some(UPDATE_PASSWORD_ACTION)).then(|| {
+            if self.kc_action_status.as_deref() == Some("success") {
+                PasswordChange::Changed
+            } else {
+                PasswordChange::Unchanged
+            }
+        })
+    }
 }
 
 /// 身份服务没给授权码、带着错误回到回调（RFC 6749 4.1.2.1）。
@@ -227,6 +257,10 @@ struct ReturnedErrorQuery {
     iss: Option<String>,
     #[serde(default, rename = "state")]
     _state: Option<String>,
+    #[serde(default, rename = "kc_action")]
+    _kc_action: Option<String>,
+    #[serde(default, rename = "kc_action_status")]
+    _kc_action_status: Option<String>,
 }
 
 impl ReturnedErrorQuery {
@@ -385,7 +419,7 @@ async fn begin_desktop_login(
             .await
         {
             Ok(completion) => {
-                return desktop_login_success(jar, &completion, &callback_destination);
+                return desktop_login_success(jar, &completion, &callback_destination, false);
             }
             Err(failure) if failure.kind() == AuthenticationFailureKind::InvalidSession => {
                 jar = expired_session_jar(jar);
@@ -476,12 +510,15 @@ async fn complete_login(
             ApiError::invalid_request("authentication.missing_login_cookie", correlation_id),
         );
     };
+    let password_change = query.password_change();
+    let password_changed = password_change == Some(PasswordChange::Changed);
     let completion = match state
         .authentication
         .complete_login(CompleteLogin {
             code: &query.code,
             returned_state: &query.state,
             browser_secret: &browser_secret,
+            password_change,
         })
         .await
     {
@@ -499,23 +536,14 @@ async fn complete_login(
         }
     };
     match completion {
-        LoginCompletion::Web(completion) => {
-            let Ok(destination) = state.frontend_origin.join(completion.return_path.as_str())
-            else {
-                return login_failure(
-                    &state,
-                    &headers,
-                    jar,
-                    ApiError::invalid_request("authentication.unsafe_return_path", correlation_id),
-                );
-            };
-            let jar = jar.add(expired_cookie(LOGIN_COOKIE)).add(session_cookie(
-                completion.session_secret.expose(),
-                completion.principal.expires_at,
-                state.clock.now(),
-            ));
-            no_store((jar, Redirect::to(destination.as_str())).into_response())
-        }
+        LoginCompletion::Web(completion) => web_login_success(
+            &state,
+            &headers,
+            jar,
+            &completion,
+            password_changed,
+            correlation_id,
+        ),
         LoginCompletion::Desktop(completion) => {
             let Ok(callback_destination) = DesktopCallbackDestination::from_cookie(&jar) else {
                 return login_failure(
@@ -528,17 +556,48 @@ async fn complete_login(
                     ),
                 );
             };
-            desktop_login_success(jar, &completion, &callback_destination)
+            desktop_login_success(jar, &completion, &callback_destination, password_changed)
         }
     }
+}
+
+/// 网页登录完成：换上会话 Cookie，回到登录前的地方；改好了密码时带上标记。
+fn web_login_success(
+    state: &AuthenticationHttpState,
+    headers: &HeaderMap,
+    jar: CookieJar,
+    completion: &WebLoginCompletion,
+    password_changed: bool,
+    correlation_id: CorrelationId,
+) -> Response {
+    let Ok(mut destination) = state.frontend_origin.join(completion.return_path.as_str()) else {
+        return login_failure(
+            state,
+            headers,
+            jar,
+            ApiError::invalid_request("authentication.unsafe_return_path", correlation_id),
+        );
+    };
+    if password_changed {
+        destination
+            .query_pairs_mut()
+            .append_pair(PASSWORD_CHANGED_PARAMETER, "1");
+    }
+    let jar = jar.add(expired_cookie(LOGIN_COOKIE)).add(session_cookie(
+        completion.session_secret.expose(),
+        completion.principal.expires_at,
+        state.clock.now(),
+    ));
+    no_store((jar, Redirect::to(destination.as_str())).into_response())
 }
 
 fn desktop_login_success(
     jar: CookieJar,
     completion: &DesktopLoginCompletion,
     callback_destination: &DesktopCallbackDestination,
+    password_changed: bool,
 ) -> Response {
-    let destination = callback_destination.redirect_url(completion);
+    let destination = callback_destination.redirect_url(completion, password_changed);
     let jar = jar
         .add(expired_cookie(LOGIN_COOKIE))
         .add(expired_cookie(DESKTOP_CALLBACK_COOKIE));
@@ -829,6 +888,7 @@ const fn map_login_intent(intent: BeginLoginIntent) -> AuthenticationIntent {
     match intent {
         BeginLoginIntent::SignIn | BeginLoginIntent::Reauthenticate => AuthenticationIntent::SignIn,
         BeginLoginIntent::Register => AuthenticationIntent::Register,
+        BeginLoginIntent::ChangePassword => AuthenticationIntent::ChangePassword,
     }
 }
 
@@ -1058,7 +1118,7 @@ pub(crate) enum AuthenticationHttpConfigurationError {
 mod tests {
     use std::{
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::Duration,
@@ -1070,7 +1130,7 @@ mod tests {
             AuthenticationIntent, AuthenticationRequirement, AuthenticationResult,
             AuthenticationUseCases, AuthorizeDesktopSession, BeginLogin, CompleteLogin,
             DesktopLoginCompletion, DesktopSessionCompletion, ExchangeDesktopAuthorization,
-            LoginCompletion, LoginRedirect, WebLoginCompletion,
+            LoginCompletion, LoginRedirect, PasswordChange, WebLoginCompletion,
         },
         ports::{Clock, LoginDelivery, PortFuture, SafeReturnPath, SecretValue},
     };
@@ -1093,7 +1153,10 @@ mod tests {
         desktop_session_authorization: AtomicUsize,
         desktop_exchange: AtomicUsize,
         register_begin: AtomicUsize,
+        change_password_begin: AtomicUsize,
         complete: AtomicUsize,
+        /// 每次回调交给用例的“顺带改了密码”。
+        password_changes: Mutex<Vec<Option<PasswordChange>>>,
         logout: AtomicUsize,
         /// 回调没带登录 Cookie 时问过几次、答这次登录还在不在等。
         awaits_asked: AtomicUsize,
@@ -1108,8 +1171,14 @@ mod tests {
             request: BeginLogin,
         ) -> PortFuture<'_, AuthenticationResult<LoginRedirect>> {
             self.begin.fetch_add(1, Ordering::SeqCst);
-            if request.intent == AuthenticationIntent::Register {
-                self.register_begin.fetch_add(1, Ordering::SeqCst);
+            match request.intent {
+                AuthenticationIntent::Register => {
+                    self.register_begin.fetch_add(1, Ordering::SeqCst);
+                }
+                AuthenticationIntent::ChangePassword => {
+                    self.change_password_begin.fetch_add(1, Ordering::SeqCst);
+                }
+                AuthenticationIntent::SignIn => {}
             }
             Box::pin(async move {
                 if matches!(request.delivery, LoginDelivery::Desktop { .. }) {
@@ -1126,6 +1195,9 @@ mod tests {
                     AuthenticationIntent::Register => {
                         assert_eq!(request.delivery.return_path().as_str(), "/onboarding");
                     }
+                    AuthenticationIntent::ChangePassword => {
+                        assert_eq!(request.delivery.return_path().as_str(), "/settings/account");
+                    }
                 }
                 Ok(LoginRedirect {
                     authorization_url: "https://identity.example/authorize?state=opaque".to_owned(),
@@ -1140,6 +1212,10 @@ mod tests {
             request: CompleteLogin<'a>,
         ) -> PortFuture<'a, AuthenticationResult<LoginCompletion>> {
             self.complete.fetch_add(1, Ordering::SeqCst);
+            self.password_changes
+                .lock()
+                .expect("测试锁可用")
+                .push(request.password_change);
             Box::pin(async move {
                 assert_eq!(request.code, "authorization-code");
                 assert_eq!(request.returned_state, "returned-state");
@@ -1354,6 +1430,114 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(fake.begin.load(Ordering::SeqCst), 1);
         assert_eq!(fake.register_begin.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn 改密码起点让身份服务登录完接着改密码() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let response = test_router(fake.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/start?returnTo=%2Fsettings%2Faccount&intent=change-password")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("路由执行成功");
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(fake.change_password_begin.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn 改好密码回到网页时带上标记_取消了不带() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let app = test_router(fake.clone());
+        for (extra, expected) in [
+            (
+                "&kc_action=UPDATE_PASSWORD&kc_action_status=success",
+                "https://app.agent-room.test/rooms/42?tab=chat&passwordChanged=1",
+            ),
+            (
+                "&kc_action=UPDATE_PASSWORD&kc_action_status=cancelled",
+                "https://app.agent-room.test/rooms/42?tab=chat",
+            ),
+            ("", "https://app.agent-room.test/rooms/42?tab=chat"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/auth/oidc/callback?code=authorization-code&state=returned-state{extra}"
+                        ))
+                        .header(header::COOKIE, "__Host-agent-room-login=browser-secret")
+                        .body(Body::empty())
+                        .expect("请求有效"),
+                )
+                .await
+                .expect("路由执行成功");
+            assert_eq!(response.status(), StatusCode::SEE_OTHER, "{extra}");
+            assert_eq!(location(&response), expected);
+        }
+        assert_eq!(
+            *fake.password_changes.lock().expect("测试锁可用"),
+            [
+                Some(PasswordChange::Changed),
+                Some(PasswordChange::Unchanged),
+                None
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn 改好密码回到桌面端时回环地址带上标记_不拿浏览器里的网页登录换() {
+        let fake = Arc::new(FakeAuthentication::default());
+        let app = test_router(fake.clone());
+        let start = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/auth/desktop/start?clientState={}&codeChallenge={}&callbackUrl=http%3A%2F%2F127.0.0.1%3A49152%2Fauth%2Fcallback&returnTo=%2Fsettings%2Faccount&intent=change-password",
+                        "s".repeat(43),
+                        "c".repeat(43)
+                    ))
+                    .header(header::COOKIE, "__Host-agent-room-session=web-session")
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面端改密码起点可执行");
+        assert_eq!(start.status(), StatusCode::SEE_OTHER);
+        assert_eq!(fake.desktop_session_authorization.load(Ordering::SeqCst), 0);
+        assert_eq!(fake.change_password_begin.load(Ordering::SeqCst), 1);
+        let callback_cookie = set_cookies(&start)
+            .into_iter()
+            .find(|cookie| cookie.starts_with("__Host-agent-room-desktop-callback="))
+            .and_then(|cookie| cookie.split(';').next().map(str::to_owned))
+            .expect("桌面本机回调必须绑定到登录事务");
+
+        let callback = app
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/oidc/callback?code=authorization-code&state=returned-state&kc_action=UPDATE_PASSWORD&kc_action_status=success")
+                    .header(
+                        header::COOKIE,
+                        format!("__Host-agent-room-login=browser-secret; {callback_cookie}"),
+                    )
+                    .body(Body::empty())
+                    .expect("请求有效"),
+            )
+            .await
+            .expect("桌面 OIDC 回调可执行");
+        assert_eq!(
+            location(&callback),
+            format!(
+                "http://127.0.0.1:49152/auth/callback?code=desktop-authorization-code&state={}&passwordChanged=1",
+                "s".repeat(43)
+            )
+        );
     }
 
     #[tokio::test]
@@ -1923,6 +2107,8 @@ mod tests {
             _error_uri: None,
             iss: None,
             _state: None,
+            _kc_action: None,
+            _kc_action_status: None,
         };
         assert_eq!(returned("access_denied").error_kind(), "access_denied");
         assert_eq!(

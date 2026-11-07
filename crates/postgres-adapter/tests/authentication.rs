@@ -146,6 +146,88 @@ async fn 撤销登录时回它属于哪个登录账户_已经撤销的回空() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 改好密码撤掉这个人别的登录_留着指定那份_不碰别人的() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example/realms/agent-room",
+        "change-password-subject",
+        "改密码的人",
+    );
+    let stranger = principal_registration(
+        PrincipalId::from_uuid(Uuid::now_v7()),
+        "https://issuer.example/realms/agent-room",
+        "change-password-stranger",
+        "别人",
+    );
+    // 登录的秘密要和别的用例都不一样，撞上就是 Conflict。
+    let current = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 101);
+    let elsewhere = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 102);
+    let expired = WebSessionRegistration {
+        expires_at: test_time(1_000),
+        ..session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 103)
+    };
+    let strangers = session_registration(WebSessionId::from_uuid(Uuid::now_v7()), 104);
+    for (registration, session) in [
+        (&owner, &current),
+        (&owner, &elsewhere),
+        (&owner, &expired),
+        (&stranger, &strangers),
+    ] {
+        LoginCompletionTransaction::complete(&repositories, registration, session)
+            .await
+            .expect("登录应成功");
+    }
+    let owner_account = SignInAccount {
+        issuer: "https://issuer.example/realms/agent-room".to_owned(),
+        subject: "change-password-subject".to_owned(),
+    };
+
+    let revoked = WebSessionStore::revoke_others(
+        &repositories,
+        owner.principal.id(),
+        Some(&current.secret_digest),
+        test_time(2_000),
+    )
+    .await
+    .expect("撤销应成功")
+    .expect("这个人在");
+    assert_eq!(revoked.account, owner_account);
+    assert_eq!(revoked.revoked, 1, "过期了的不算");
+    for (session, active) in [(&current, true), (&elsewhere, false), (&strangers, true)] {
+        assert_eq!(
+            WebSessionStore::find_active(&repositories, &session.secret_digest, test_time(2_000))
+                .await
+                .expect("查登录应成功")
+                .is_some(),
+            active
+        );
+    }
+
+    let all =
+        WebSessionStore::revoke_others(&repositories, owner.principal.id(), None, test_time(3_000))
+            .await
+            .expect("撤销应成功")
+            .expect("这个人在");
+    assert_eq!(all.revoked, 1, "不留的时候正在用的那份也撤");
+    assert!(
+        WebSessionStore::revoke_others(
+            &repositories,
+            PrincipalId::from_uuid(Uuid::now_v7()),
+            None,
+            test_time(3_000)
+        )
+        .await
+        .expect("没有这个人也不出错")
+        .is_none()
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 并发首次登录只建立一个主体但分别建立会话() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());

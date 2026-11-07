@@ -106,6 +106,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **Synapse 没接 MAS 时，已有签名身份的账户换签名身份一律要交互认证。** 管理接口 `_allow_cross_signing_replacement_without_uia` 只在接了 MAS 时起作用，只有应用服务的请求例外（MSC4190）。所以人的设备自动签名重建签名身份时，新签名公钥由控制面以应用服务身份冒充本人上传；应用服务注册为此有一个覆盖所有本地用户的非独占命名空间（ADR 0011 的“修订”）。
 - **Keycloak 26 开着邮箱验证时，注册页不收密码**，验证完才让人设（`RegistrationPassword.isVerifyEmail`）。人在另一台设备上点验证链接、或者邮箱的链接扫描先点了一次，那边只说“验证好了”，不接着让人设密码，人就停在“验证了却没有密码”上（2026-11-07 生产上查到两个登录不了的）。维护者当天定了注册时就设密码：每次部署的身份同步在开放注册前给注册流程里密码那一步（`registration-password-action`）配上 `always_set_password_on_register_form`，先问 `config-description` 它还认不认这个开关，不认就失败、注册保持关闭（`reconcile_registration_password`）。Keycloak 把这个开关标成了以后要去掉：升级镜像前先在新版的 `RegistrationPassword` 里核对，`test_prodops` 卡着版本号。
   - 以前注册、没设过密码的账户靠“忘记密码”出来，登录页“邮箱或密码不对”、注册页“邮箱已注册”、“已经验证过了”几处都这么指。还没验证的要收两封信：先是重设密码的，点了以后 Keycloak 还要验证邮箱，再寄一封验证信，在同一个浏览器里点了才让设密码（本机 26.7.2 走通过）。
+- **改了密码要退三样登录**（#752，[设计](./specs/change-password/design.md)）。控制面的账户登录（`web_session`）不靠身份服务的登录续命，聊天登录是 Synapse 上这个人的设备，身份服务的会话只管它自己：只结束身份服务那边，别处的网页和桌面端照样能用。所以：
+  - 改密码页（“应用发起的动作”）上 `logout-sessions` 强制是 `on`、不给勾选框（`login-update-password.ftl`）。Keycloak 默认不勾，不勾的话别的浏览器在身份服务上的登录还在，悄悄就能再登录回来；忘记密码那一路照旧给人自己选。
+  - 回调看到 `kc_action=UPDATE_PASSWORD&kc_action_status=success` 就撤这个人别的账户登录，回跳地址带 `passwordChanged=1`；页面接着调 `POST /auth/sign-out-elsewhere` 注销别的聊天设备（以应用服务冒充本人，`delete_devices` 对应用服务不要交互认证）、结束身份服务上的登录。电脑授权和 Agent 连接不动。
+  - 改密码的回调认证时间放宽到“最近登录的 5 分钟”加“一次登录最长的 10 分钟”：人在改密码页上停了几分钟，不放宽的话密码改好了、回来却说登录没完成。只对带 `kc_action=UPDATE_PASSWORD` 的回调放宽，普通登录照旧。
 - **删除账户连 Keycloak 里的登录账户一起删**（#346，[设计](./specs/account-deletion/sign-in-account.md)）。删除任务先删 Keycloak 用户，再停用聊天账户，最后匿名化本地记录。控制面用只开服务账号的客户端 `agent-room-account-admin`（realm-management 的 `manage-users`）经内部地址删；生产由每次部署的身份同步建好它，本地和 CI 由 `dev-infra.ps1` 同步。只删签发方是本部署的账户，网络 Agent 没有登录账户。
 - **matrix-js-sdk 的 `bootstrapCrossSigning` 不带 `setupNewCrossSigning` 时，看到本机有签名私钥就不上传公钥。** 上次上传被打断（页面跳走）时，本机留着私钥、服务器上却没有签名身份，它也照样跳过。账户还没有签名身份时要带 `setupNewCrossSigning: true` 从头建。第一份别用 `resetEncryption` 建：它先删密钥存储和备份、后传公钥。
   - “账户还没有签名身份”要直接问服务器（`keys/query` 的 `master_keys`），别只信 `userHasCrossSigningKeys`：它对自己的账户答的是本机记着的身份，Rust 加密库建身份时先存本机再上传，上传被打断后它照样说有（2026-10-09 派发 CI 偶发抓到，#356）。
@@ -181,6 +185,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 有管理授权的 Agent 动别人的 Agent 等于动它的主人：把主人连同他的 Agent 一起禁言、踢出、封禁；网络 Agent 没有主人，只动它自己；台账照旧只记人（维护者 2026-11-03 定）。
 - 注册时就设密码（维护者 2026-11-07 定）：注册页填邮箱、昵称和密码，验证邮箱只是确认地址；没验证的人用密码登录会停在验证页，能重发验证信。以前先验证、后设密码，在别的设备上点验证链接的人会卡住（见上面“代码里的坑”）。
 - 归档房间、撤销电脑、撤销 Agent 连接不要最近登录过，页面里确认一下就做（维护者 2026-11-07 定，[设计](./specs/cleanup-without-reauth/design.md)）：“房间”页你建的房间卡片上直接归档，设置的“安全”里能勾几台电脑、几个 Agent 连接一起撤。代价是拿到登录的人不用输密码就能归档你的房间、撤你的设备，维护者接受。删账户、删 Agent、移出成员、转让房主、治理动作照旧要最近登录过，别顺手一起去掉。
+- 修改密码在设置的“账户”里，改好以后别的浏览器和电脑上的登录都退出（账户登录、聊天登录、身份服务的登录），电脑授权和 Agent 连接不动（维护者 2026-11-07 定，[设计](./specs/change-password/design.md)）。退出别处的接口只要有效登录：退出别处是保护自己的动作，和上一条一样。邮箱验证码登录没做：等于把账户交给邮箱，验证信还常被邮箱的链接扫描先点掉。
 
 ## 当前进度（2026-10-24）
 

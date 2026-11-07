@@ -12,6 +12,8 @@ pub enum MatrixOperation {
     ReplaceCrossSigningKeys,
     /// 替人登录 Matrix（桌面端的聊天登录）。
     IssueHumanSession,
+    /// 改密码以后替人注销别的聊天设备。
+    SignOutHumanDevices,
     Login,
     RestoreSession,
     Sync,
@@ -56,6 +58,7 @@ impl MatrixOperation {
                 | Self::DeactivateAccount
                 | Self::ReplaceCrossSigningKeys
                 | Self::IssueHumanSession
+                | Self::SignOutHumanDevices
                 | Self::Login
                 | Self::RestoreSession
                 | Self::Sync

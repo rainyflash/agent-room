@@ -92,7 +92,7 @@ impl MatrixApplicationServiceProvisioner {
     }
 
     /// 只替本服务器上的人登录。Agent 的用户由 Agent 那一套发，这里不碰。
-    fn human_localpart<'a>(
+    pub(crate) fn human_localpart<'a>(
         &self,
         user_id: &'a MatrixUserId,
         operation: MatrixOperation,

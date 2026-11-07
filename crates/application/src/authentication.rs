@@ -15,9 +15,9 @@ use crate::{
         DesktopSessionExchangeTransaction, DesktopSessionRegistration, IdentifierFactory,
         LoginAttempt, LoginAttemptStore, LoginCompletionTransaction, LoginDelivery,
         OidcAuthorizationOptions, OidcCodeExchange, OidcFailureKind, OidcGateway, OidcInteraction,
-        PkceCodeChallenge, PortFuture, PrincipalSuspensionTransaction, ProfileImportConsent,
-        SafeReturnPath, SecretFactory, SecretValue, SignInSessionTermination, StoredWebSession,
-        WebSessionRegistration, WebSessionStore,
+        PkceCodeChallenge, PortFuture, PrincipalRegistration, PrincipalSuspensionTransaction,
+        ProfileImportConsent, SafeReturnPath, SecretDigest, SecretFactory, SecretValue,
+        SignInSessionTermination, StoredWebSession, WebSessionRegistration, WebSessionStore,
     },
 };
 
@@ -93,6 +93,18 @@ pub struct BeginLogin {
 pub enum AuthenticationIntent {
     SignIn,
     Register,
+    /// 登录完接着改密码（`specs/change-password/design.md`）。
+    ChangePassword,
+}
+
+/// 登录页上顺带改密码，回到回调时身份服务说的结果（Keycloak 的 `kc_action_status`）。
+/// 这是浏览器带回来的，谁都能自己加上；加上的人只能撤掉自己别的登录。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordChange {
+    /// 改好了：这个人别的登录都撤掉。
+    Changed,
+    /// 没改（取消了、出错了）：照常登录，什么都不撤。
+    Unchanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +119,8 @@ pub struct CompleteLogin<'a> {
     pub code: &'a str,
     pub returned_state: &'a str,
     pub browser_secret: &'a SecretValue,
+    /// 这次登录顺带改了密码时，身份服务说的结果；普通登录是 `None`。
+    pub password_change: Option<PasswordChange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +277,14 @@ pub trait AuthenticationUseCases: Send + Sync {
     ) -> PortFuture<'_, AuthenticationResult<()>>;
 }
 
+/// 身份服务那边认过了的这一次登录，接下来按送回网页还是桌面端分开收尾。
+struct CompletedAuthentication {
+    principal: PrincipalRegistration,
+    authenticated_at: UtcMillis,
+    password_changed: bool,
+    now: UtcMillis,
+}
+
 pub struct AuthenticationService {
     oidc: Arc<dyn OidcGateway>,
     login_attempts: Arc<dyn LoginAttemptStore>,
@@ -330,6 +352,7 @@ impl AuthenticationService {
                 interaction: match request.intent {
                     AuthenticationIntent::SignIn => OidcInteraction::SignIn,
                     AuthenticationIntent::Register => OidcInteraction::CreateAccount,
+                    AuthenticationIntent::ChangePassword => OidcInteraction::ChangePassword,
                 },
             })
             .await
@@ -397,7 +420,14 @@ impl AuthenticationService {
             })
             .await
             .map_err(|failure| map_oidc_failure("authentication.complete_login", failure.kind()))?;
-        let authenticated_at = validate_authentication_time(&identity, now, &self.policy)?;
+        // 改密码的页面上可能停了几分钟：发起时身份服务按最近登录的时限把过关，回来时再多给一次登录
+        // 最长能等的时间，不然密码改好了、回来却说登录没完成。
+        let extra_age = request
+            .password_change
+            .map(|_| self.policy.login_attempt_ttl);
+        let authenticated_at =
+            validate_authentication_time(&identity, now, &self.policy, extra_age)?;
+        let password_changed = request.password_change == Some(PasswordChange::Changed);
         let principal_id = self.identifiers.principal_id();
         let principal_registration = crate::principal_projection::principal_registration(
             principal_id,
@@ -406,63 +436,102 @@ impl AuthenticationService {
             now,
             &self.policy.matrix_server_name,
         );
+        let completed = CompletedAuthentication {
+            principal: principal_registration,
+            authenticated_at,
+            password_changed,
+            now,
+        };
         match attempt.delivery {
             LoginDelivery::Web { return_path } => {
-                let session_secret = self
-                    .secrets
-                    .generate()
-                    .map_err(|_| internal_failure("authentication.complete_login"))?;
-                let session_registration = self.session_registration(
-                    &session_secret,
-                    authenticated_at,
-                    now,
-                    "authentication.complete_login",
-                )?;
-                let session = self
-                    .login_completion
-                    .complete(&principal_registration, &session_registration)
-                    .await
-                    .map_err(|error| {
-                        map_repository_failure("authentication.complete_login", &error)
-                    })?;
-                Ok(LoginCompletion::Web(WebLoginCompletion {
-                    session_secret,
-                    return_path,
-                    principal: session_view(&session, now, &self.policy),
-                }))
+                self.complete_web_login(completed, return_path).await
             }
             LoginDelivery::Desktop {
                 client_state,
                 code_challenge,
                 return_path,
             } => {
-                let authorization_code = self
-                    .secrets
-                    .generate()
-                    .map_err(|_| internal_failure("authentication.complete_desktop_login"))?;
-                let expires_at = now
-                    .checked_add(self.policy.login_attempt_ttl)
-                    .map_err(|_| internal_failure("authentication.complete_desktop_login"))?;
-                let authorization = DesktopAuthorizationCodeRegistration {
-                    code_digest: self.secrets.digest(authorization_code.expose()),
-                    code_challenge,
-                    authenticated_at,
-                    created_at: now,
-                    expires_at,
-                };
-                self.desktop_login_completion
-                    .complete_desktop(&principal_registration, &authorization)
+                self.complete_desktop_login(completed, client_state, code_challenge, return_path)
                     .await
-                    .map_err(|error| {
-                        map_repository_failure("authentication.complete_desktop_login", &error)
-                    })?;
-                Ok(LoginCompletion::Desktop(DesktopLoginCompletion {
-                    authorization_code,
-                    client_state,
-                    return_path,
-                }))
             }
         }
+    }
+
+    async fn complete_web_login(
+        &self,
+        completed: CompletedAuthentication,
+        return_path: SafeReturnPath,
+    ) -> AuthenticationResult<LoginCompletion> {
+        let now = completed.now;
+        let session_secret = self
+            .secrets
+            .generate()
+            .map_err(|_| internal_failure("authentication.complete_login"))?;
+        let session_registration = self.session_registration(
+            &session_secret,
+            completed.authenticated_at,
+            now,
+            "authentication.complete_login",
+        )?;
+        let session = self
+            .login_completion
+            .complete(&completed.principal, &session_registration)
+            .await
+            .map_err(|error| map_repository_failure("authentication.complete_login", &error))?;
+        if completed.password_changed {
+            self.revoke_other_sessions(
+                session.account.principal.id(),
+                Some(&session_registration.secret_digest),
+                now,
+            )
+            .await;
+        }
+        Ok(LoginCompletion::Web(WebLoginCompletion {
+            session_secret,
+            return_path,
+            principal: session_view(&session, now, &self.policy),
+        }))
+    }
+
+    async fn complete_desktop_login(
+        &self,
+        completed: CompletedAuthentication,
+        client_state: DesktopClientState,
+        code_challenge: PkceCodeChallenge,
+        return_path: SafeReturnPath,
+    ) -> AuthenticationResult<LoginCompletion> {
+        let now = completed.now;
+        let authorization_code = self
+            .secrets
+            .generate()
+            .map_err(|_| internal_failure("authentication.complete_desktop_login"))?;
+        let expires_at = now
+            .checked_add(self.policy.login_attempt_ttl)
+            .map_err(|_| internal_failure("authentication.complete_desktop_login"))?;
+        let authorization = DesktopAuthorizationCodeRegistration {
+            code_digest: self.secrets.digest(authorization_code.expose()),
+            code_challenge,
+            authenticated_at: completed.authenticated_at,
+            created_at: now,
+            expires_at,
+        };
+        let account = self
+            .desktop_login_completion
+            .complete_desktop(&completed.principal, &authorization)
+            .await
+            .map_err(|error| {
+                map_repository_failure("authentication.complete_desktop_login", &error)
+            })?;
+        if completed.password_changed {
+            // 桌面端的这一份要等它拿授权码去换，现在还没有，别的全撤。
+            self.revoke_other_sessions(account.principal.id(), None, now)
+                .await;
+        }
+        Ok(LoginCompletion::Desktop(DesktopLoginCompletion {
+            authorization_code,
+            client_state,
+            return_path,
+        }))
     }
 
     async fn exchange_desktop_authorization_internal(
@@ -595,6 +664,17 @@ impl AuthenticationService {
             client_state: request.client_state,
             return_path: request.return_path,
         })
+    }
+
+    /// 改好密码以后撤销这个人别的登录。库出了错不挡这次登录（密码已经改好了）：
+    /// 页面回来以后调的 `POST /auth/sign-out-elsewhere` 会再撤一遍，出错在那边报。
+    async fn revoke_other_sessions(
+        &self,
+        principal_id: PrincipalId,
+        keep: Option<&SecretDigest>,
+        now: UtcMillis,
+    ) {
+        let _ = self.sessions.revoke_others(principal_id, keep, now).await;
     }
 
     fn session_registration(
@@ -811,6 +891,7 @@ fn validate_authentication_time(
     identity: &crate::ports::VerifiedOidcIdentity,
     now: UtcMillis,
     policy: &AuthenticationPolicy,
+    extra_age: Option<DurationMillis>,
 ) -> AuthenticationResult<UtcMillis> {
     let authenticated_at = identity.authenticated_at().ok_or_else(|| {
         AuthenticationFailure::new(
@@ -823,6 +904,7 @@ fn validate_authentication_time(
         .map_err(|_| internal_failure("authentication.complete_login"))?;
     let oldest_allowed = authenticated_at
         .checked_add(policy.recent_authentication_window)
+        .and_then(|value| extra_age.map_or(Ok(value), |extra| value.checked_add(extra)))
         .and_then(|value| value.checked_add(policy.allowed_clock_skew))
         .map_err(|_| internal_failure("authentication.complete_login"))?;
     if authenticated_at > latest_allowed || now > oldest_allowed {
