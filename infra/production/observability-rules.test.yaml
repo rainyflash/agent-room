@@ -231,6 +231,50 @@ tests:
       - eval_time: 115m
         alertname: AgentRoomBridgeAvailabilityLow
         exp_alerts: []
+  # 两个核里一个吃满、另一个闲一半（整机 75%）：一小时以后才响。
+  - interval: 1m
+    input_series:
+      - series: node_cpu_seconds_total{job="host",cpu="0",mode="idle"}
+        values: 0+30x120
+      - series: node_cpu_seconds_total{job="host",cpu="1",mode="idle"}
+        values: 0+0x120
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: AgentRoomHostCpuHigh
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: AgentRoomHostCpuHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 服务器 CPU 一小时以上都在 50% 以上
+              impact: 余量变小，Synapse 只用得满一个核，人一多消息就会变慢
+              diagnostic: 在服务器上用 top 看是哪个进程；是 dockerd 就照 Runbook 查有没有卡住的日志读者
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomhostcpuhigh
+  # 平时（13% 上下）不响；吃满半小时又降下来（比如病毒库更新）也不响。
+  - interval: 1m
+    input_series:
+      - series: node_cpu_seconds_total{job="host",cpu="0",mode="idle"}
+        values: 0+52x120
+      - series: node_cpu_seconds_total{job="host",cpu="1",mode="idle"}
+        values: 0+52x120
+    alert_rule_test:
+      - eval_time: 110m
+        alertname: AgentRoomHostCpuHigh
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: node_cpu_seconds_total{job="host",cpu="0",mode="idle"}
+        values: 0+0x30 0+60x90
+      - series: node_cpu_seconds_total{job="host",cpu="1",mode="idle"}
+        values: 0+0x30 0+60x90
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: AgentRoomHostCpuHigh
+        exp_alerts: []
+      - eval_time: 110m
+        alertname: AgentRoomHostCpuHigh
+        exp_alerts: []
   - interval: 1m
     input_series:
       - series: up{job="postgres"}

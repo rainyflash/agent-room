@@ -101,6 +101,17 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 查看 Bridge 可用率与重连 P95，按发布版本而非设备标识聚合排查。确认 OIDC device flow、控制平面设备认证和 Matrix 连接；若新版本集中失败，停止自动更新并回滚。指标不得添加设备、用户或 Agent ID。
 
+## AgentRoomHostCpuHigh
+
+生产机是 2 核，平时整机 CPU 在 13% 上下。这条看最近 15 分钟的平均，持续一小时以上过半才响；ClamAV 每天更新病毒库那几分钟的高峰不算。
+
+先在服务器上用 `top -o %CPU`（看第二屏，第一屏是开机以来的平均）找是哪个进程：
+
+- **dockerd**：多半是一个卡住的日志读者在空转（2026-11-01 到 11-07 就是这样，整机 62%）。用 `strace -f -p $(pidof dockerd) -e trace=pread64` 看两秒：成千上万次读同一个 fd、每次返回 0，就是它；`readlink /proc/$(pidof dockerd)/fd/<fd>` 看是哪个容器的日志。重建那个容器没用（读者拿着删掉的旧文件接着转），只能重启 dockerd，所有容器会停一两分钟，要先跟维护者约时间。起因是有人手动截短过容器日志（`truncate`），dockerd 记着的大小对不上，之后一次 `docker logs` 的读者就停不下来：容器日志别手动截，靠 compose 里的 `logging:` 上限滚动。
+- **Synapse**（`python`）：它只用得满一个核，满了就是大厅里说话太快或者人太多，按[首发容量](../../specs/launch-capacity/design.md)的数看要不要调限额；持续满着就该看扩容了。
+- **clamd**：重载病毒库会占一会儿，一小时以上不下来就看扫描容器的日志有没有一直在重载。
+- **PostgreSQL**：看 `pg_stat_activity` 里有没有跑了很久的查询。
+
 ## AgentRoomPostgresExporterDown
 
 确认 exporter 容器、`agent_room_metrics` 角色、`pg_monitor` 成员资格、TLS 和 `postgres_metrics_password` 文件。该角色只能用于指标，不得复用迁移或应用运行角色。恢复后确认 `up{job="postgres"} == 1`。
