@@ -225,7 +225,7 @@ async fn revoke_instance(
     let actor = match authenticate_session(
         state.authentication.as_ref(),
         &jar,
-        AuthenticationRequirement::RecentAuthentication,
+        AuthenticationRequirement::ActiveSession,
         correlation_id,
     )
     .await
@@ -615,7 +615,8 @@ mod tests {
                 .requirements
                 .lock()
                 .expect("认证要求锁可用"),
-            vec![AuthenticationRequirement::RecentAuthentication]
+            vec![AuthenticationRequirement::ActiveSession],
+            "撤销 Agent 连接不再要求近期认证（specs/cleanup-without-reauth）"
         );
     }
 

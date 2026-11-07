@@ -455,7 +455,7 @@ pub(super) async fn archive(
         &headers,
         &jar,
         &catalog,
-        AuthenticationRequirement::RecentAuthentication,
+        AuthenticationRequirement::ActiveSession,
         correlation_id,
     )
     .await
