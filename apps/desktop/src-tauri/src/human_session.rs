@@ -39,6 +39,8 @@ pub(crate) enum DesktopAuthenticationIntent {
     SignIn,
     /// 要“最近登录过”的操作请人再登录一次：控制面不拿浏览器里的网页登录换，一定去身份服务。
     Reauthenticate,
+    /// 修改密码（`specs/change-password/design.md`）：身份服务登录完接着让人改密码，也一定去身份服务。
+    ChangePassword,
 }
 
 impl DesktopAuthenticationIntent {
@@ -47,6 +49,7 @@ impl DesktopAuthenticationIntent {
             Self::Register => "register",
             Self::SignIn => "sign-in",
             Self::Reauthenticate => "reauthenticate",
+            Self::ChangePassword => "change-password",
         }
     }
 }
@@ -71,6 +74,8 @@ struct PersistedHumanSession {
 pub(crate) struct HumanAuthenticationCallback {
     authorization_code: String,
     client_state: String,
+    /// 控制面说密码改好了（`passwordChanged=1`）：交给网页的回跳地址带上它，网页接着退出别的地方。
+    password_changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,8 +335,13 @@ impl HumanSessionRuntime {
             self.vault.delete_pending()?;
             self.set_active(Some(persisted))?;
         }
+        let return_path = if callback.password_changed {
+            with_password_changed(&pending.return_path)
+        } else {
+            pending.return_path
+        };
         Ok(HumanSessionChanged {
-            return_path: pending.return_path,
+            return_path,
             session: exchange.session,
         })
     }
@@ -583,10 +593,12 @@ fn parse_loopback_authentication_callback(
 fn parse_callback_parameters(url: &Url) -> HumanSessionResult<HumanAuthenticationCallback> {
     let mut authorization_code = None;
     let mut client_state = None;
+    let mut password_changed = false;
     for (name, value) in url.query_pairs() {
         match name.as_ref() {
             "code" if authorization_code.is_none() => authorization_code = Some(value.into_owned()),
             "state" if client_state.is_none() => client_state = Some(value.into_owned()),
+            "passwordChanged" if !password_changed && value == "1" => password_changed = true,
             _ => return Err(invalid_callback()),
         }
     }
@@ -602,7 +614,29 @@ fn parse_callback_parameters(url: &Url) -> HumanSessionResult<HumanAuthenticatio
     Ok(HumanAuthenticationCallback {
         authorization_code,
         client_state,
+        password_changed,
     })
+}
+
+/// 回跳地址带上 `passwordChanged=1`，放在 `#` 前面。带不上（太长）就照原样回去：密码已经改好了，
+/// 只是网页不会自己接着退出别的地方，设置的“账户”里还能再改一次。
+fn with_password_changed(return_path: &str) -> String {
+    let (path, fragment) = return_path
+        .split_once('#')
+        .map_or((return_path, None), |(path, fragment)| {
+            (path, Some(fragment))
+        });
+    let separator = if path.contains('?') { '&' } else { '?' };
+    let mut marked = format!("{path}{separator}passwordChanged=1");
+    if let Some(fragment) = fragment {
+        marked.push('#');
+        marked.push_str(fragment);
+    }
+    if is_valid_return_path(&marked) {
+        marked
+    } else {
+        return_path.to_owned()
+    }
 }
 
 fn focus_main_window(app: &AppHandle) {
@@ -758,7 +792,7 @@ mod tests {
         HumanSessionRuntime, HumanSessionVault, PendingAuthentication, PersistedHumanSession,
         authentication_callback, now_unix_ms, parse_authentication_callback,
         parse_loopback_authentication_callback, pkce_challenge, validate_pending,
-        validate_persisted_session, validate_return_path,
+        validate_persisted_session, validate_return_path, with_password_changed,
     };
     use url::Url;
 
@@ -769,6 +803,60 @@ mod tests {
         assert_eq!(intent, DesktopAuthenticationIntent::Reauthenticate);
         assert_eq!(intent.as_str(), "reauthenticate");
         assert!(serde_json::from_str::<DesktopAuthenticationIntent>("\"fresh\"").is_err());
+    }
+
+    #[test]
+    fn 改密码的意图照原样交给控制面() {
+        let intent: DesktopAuthenticationIntent =
+            serde_json::from_str("\"change-password\"").expect("网页传来的意图有效");
+        assert_eq!(intent, DesktopAuthenticationIntent::ChangePassword);
+        assert_eq!(intent.as_str(), "change-password");
+    }
+
+    #[test]
+    fn 回调说密码改好了时记下来_别的值照旧拒收() {
+        let changed = Url::parse(
+            "http://127.0.0.1:43123/auth/callback?code=one-time-code&state=abcdefghijklmnopqrstuvwxyzABCDEF&passwordChanged=1",
+        )
+        .expect("回调 URL 有效");
+        assert!(
+            parse_loopback_authentication_callback(&changed)
+                .expect("带改好密码标记的回调有效")
+                .password_changed
+        );
+        let plain = Url::parse(
+            "http://127.0.0.1:43123/auth/callback?code=one-time-code&state=abcdefghijklmnopqrstuvwxyzABCDEF",
+        )
+        .expect("回调 URL 有效");
+        assert!(
+            !parse_loopback_authentication_callback(&plain)
+                .expect("普通回调有效")
+                .password_changed
+        );
+        for invalid in [
+            "http://127.0.0.1:43123/auth/callback?code=x&state=abcdefghijklmnopqrstuvwxyzABCDEF&passwordChanged=0",
+            "http://127.0.0.1:43123/auth/callback?code=x&state=abcdefghijklmnopqrstuvwxyzABCDEF&passwordChanged=1&passwordChanged=1",
+        ] {
+            let url = Url::parse(invalid).expect("测试 URL 可解析");
+            assert!(
+                parse_loopback_authentication_callback(&url).is_err(),
+                "应拒绝 {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn 密码改好了回跳地址带上标记() {
+        assert_eq!(
+            with_password_changed("/settings/account"),
+            "/settings/account?passwordChanged=1"
+        );
+        assert_eq!(
+            with_password_changed("/settings/account?tab=1#top"),
+            "/settings/account?tab=1&passwordChanged=1#top"
+        );
+        let long = format!("/{}", "a".repeat(2_046));
+        assert_eq!(with_password_changed(&long), long);
     }
 
     #[test]
@@ -833,12 +921,14 @@ mod tests {
         let valid = HumanAuthenticationCallback {
             authorization_code: "code".to_owned(),
             client_state: pending.client_state.clone(),
+            password_changed: false,
         };
         assert!(validate_pending(&pending, &valid, 1_001).is_ok());
 
         let mismatch = HumanAuthenticationCallback {
             authorization_code: "code".to_owned(),
             client_state: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef".to_owned(),
+            password_changed: false,
         };
         assert_eq!(
             validate_pending(&pending, &mismatch, 1_001)

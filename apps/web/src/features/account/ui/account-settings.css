@@ -3,6 +3,16 @@
   flex-wrap: wrap;
 }
 
+/* 改好密码以后的提示占满“密码”这一行的下方。 */
+.account-password-status {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.account-password-status .ar-banner p {
+  margin: 0;
+}
+
 .account-deletion {
   display: grid;
   flex: 1 1 100%;
@@ -47,7 +57,8 @@
     flex-wrap: nowrap;
   }
 
-  .account-deletion {
+  .account-deletion,
+  .account-password-status {
     flex: 0 0 auto;
     width: 100%;
   }

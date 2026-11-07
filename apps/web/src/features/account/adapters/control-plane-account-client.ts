@@ -4,9 +4,11 @@ import {
   ACCOUNT_DELETION_CONFIRMATION,
   accountDeletionStartedSchema,
   accountExportSchema,
+  signedOutElsewhereSchema,
   type AccountExport,
   type AccountFailure,
   type AccountGateway,
+  type SignedOutElsewhere,
 } from '@/features/account/domain/account';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 import { err, ok, type Result } from '@/shared/result';
@@ -24,7 +26,10 @@ export type ControlPlaneAccountClientOptions = {
   readonly timeoutMs?: number;
 };
 
-/** 控制面的 `/account/export` 和 `DELETE /account`。桌面端由组合根注入原生层代发的 fetch。 */
+/**
+ * 控制面的 `/account/export`、`DELETE /account` 和 `/auth/sign-out-elsewhere`。桌面端由组合根注入原生层
+ * 代发的 fetch。
+ */
 export class ControlPlaneAccountClient implements AccountGateway {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
@@ -76,6 +81,27 @@ export class ControlPlaneAccountClient implements AccountGateway {
         : err({ code: 'account.invalid_deletion_response', retryable: false });
     } catch {
       return err({ code: 'account.invalid_deletion_response', retryable: false });
+    }
+  }
+
+  async signOutElsewhere(
+    keepChatDeviceId: string | null,
+  ): Promise<Result<SignedOutElsewhere, AccountFailure>> {
+    const response = await this.#request('/auth/sign-out-elsewhere', {
+      body: JSON.stringify(keepChatDeviceId === null ? {} : { keepChatDeviceId }),
+      method: 'POST',
+    });
+    if (!response.ok) return response;
+    try {
+      const parsed = signedOutElsewhereSchema.safeParse(await response.value.json());
+      return parsed.success
+        ? ok({
+            accountSessions: parsed.data.accountSessions,
+            chatDevices: parsed.data.chatDevices,
+          })
+        : err({ code: 'account.invalid_sign_out_response', retryable: false });
+    } catch {
+      return err({ code: 'account.invalid_sign_out_response', retryable: false });
     }
   }
 

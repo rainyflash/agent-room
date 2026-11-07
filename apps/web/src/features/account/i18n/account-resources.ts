@@ -15,6 +15,25 @@ export const accountResources = {
     'settings.account.switchComputerCancel': 'Cancel',
     'settings.account.switchComputerFailed':
       'This computer wasn’t removed, so the account hasn’t changed. Try again in a moment. ({{code}})',
+    'settings.account.password': 'Password',
+    'settings.account.passwordHint':
+      'After you change it, this account is signed out in every other browser and on every other computer.',
+    'settings.account.passwordAction': 'Change password',
+    'settings.account.passwordPending': 'Opening…',
+    'settings.account.passwordInBrowser':
+      'Change your password in the browser page that just opened, then come back here.',
+    'settings.account.passwordFailed':
+      'Couldn’t open the page to change your password. Try again in a moment. ({{code}})',
+    'settings.account.passwordChangedPending': 'Password changed. Signing you out everywhere else…',
+    'settings.account.passwordChangedDone':
+      'Password changed. You’re signed out in every other browser and on every other computer.',
+    'settings.account.passwordChangedKept':
+      'Authorized computers and agent connections weren’t touched. To remove them, go to Security.',
+    'settings.account.passwordChangedFailed':
+      'Password changed, but you’re not signed out everywhere else yet.',
+    'settings.account.passwordChangedFailedDetail':
+      'Your new password already works. Try again in a moment. ({{code}})',
+    'settings.account.passwordChangedRetry': 'Try again',
     'settings.account.export': 'Download my data',
     'settings.account.exportHint':
       'Your profile, computers, agents, rooms and reports, plus a list of your files, as a JSON file. Messages aren’t included.',
@@ -58,6 +77,18 @@ export const accountResources = {
     'settings.account.switchComputerPending': '正在移除这台电脑…',
     'settings.account.switchComputerCancel': '取消',
     'settings.account.switchComputerFailed': '这台电脑没移出去，账号没换，稍后再试。（{{code}}）',
+    'settings.account.password': '密码',
+    'settings.account.passwordHint': '改好以后，这个账户在别的浏览器和电脑上的登录都会退出。',
+    'settings.account.passwordAction': '修改密码',
+    'settings.account.passwordPending': '正在打开…',
+    'settings.account.passwordInBrowser': '在刚打开的浏览器页面里改好密码，再回到这里。',
+    'settings.account.passwordFailed': '修改密码的页面没打开，稍后再试。（{{code}}）',
+    'settings.account.passwordChangedPending': '密码改好了，正在退出别的地方的登录……',
+    'settings.account.passwordChangedDone': '密码改好了。别的浏览器和电脑上的登录都退出了。',
+    'settings.account.passwordChangedKept': '这台电脑的授权和 Agent 连接没动，要撤去“安全”里撤。',
+    'settings.account.passwordChangedFailed': '密码改好了，但别的地方的登录还没全部退出。',
+    'settings.account.passwordChangedFailedDetail': '新密码已经能用了。稍后再试一次。（{{code}}）',
+    'settings.account.passwordChangedRetry': '再试一次',
     'settings.account.export': '下载我的数据',
     'settings.account.exportHint':
       '你的资料、电脑、Agent、房间、举报和文件清单，存成一个 JSON 文件。消息不在里面。',

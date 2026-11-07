@@ -85,4 +85,47 @@ describe('ControlPlaneAccountClient', () => {
       },
     });
   });
+
+  it('退出别的地方带上这一台的聊天设备号，回撤了几处', async () => {
+    const fetch = vi.fn(() =>
+      Promise.resolve(Response.json({ accountSessions: 2, chatDevices: 3 })),
+    );
+    const client = new ControlPlaneAccountClient({ baseUrl: BASE_URL, fetch });
+
+    expect(await client.signOutElsewhere('THISDEVICE')).toEqual({
+      ok: true,
+      value: { accountSessions: 2, chatDevices: 3 },
+    });
+    const [url, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe(`${BASE_URL}/auth/sign-out-elsewhere`);
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    expect(JSON.parse(init.body as string)).toEqual({ keepChatDeviceId: 'THISDEVICE' });
+  });
+
+  it('这一台没连上聊天时不带设备号；聊天服务器不通时带回错误码', async () => {
+    const fetch = vi.fn(() =>
+      Promise.resolve(
+        Response.json({ code: 'sign_out_elsewhere.chat_unavailable' }, { status: 503 }),
+      ),
+    );
+    const client = new ControlPlaneAccountClient({ baseUrl: BASE_URL, fetch });
+
+    expect(await client.signOutElsewhere(null)).toEqual({
+      ok: false,
+      error: { code: 'sign_out_elsewhere.chat_unavailable', retryable: true },
+    });
+    const [, init] = fetch.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
+  it('退出别的地方回来的不是计数时算没成', async () => {
+    const fetch = vi.fn(() => Promise.resolve(Response.json({ accountSessions: -1 })));
+    const client = new ControlPlaneAccountClient({ baseUrl: BASE_URL, fetch });
+
+    expect(await client.signOutElsewhere(null)).toEqual({
+      ok: false,
+      error: { code: 'account.invalid_sign_out_response', retryable: false },
+    });
+  });
 });

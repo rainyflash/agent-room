@@ -20,8 +20,11 @@ export type SessionFailure = {
   readonly retryable: boolean;
 };
 
-/** `reauthenticate`：要“最近登录过”的操作请人再登录一次，不拿浏览器里已有的登录换桌面登录。 */
-export type AuthenticationIntent = 'reauthenticate' | 'register' | 'sign-in';
+/**
+ * `reauthenticate`：要“最近登录过”的操作请人再登录一次，不拿浏览器里已有的登录换桌面登录。
+ * `change-password`：身份服务登录完接着让人改密码，回来时地址上带 `passwordChanged=1`。
+ */
+export type AuthenticationIntent = 'change-password' | 'reauthenticate' | 'register' | 'sign-in';
 export type AuthenticationMode = 'automatic' | 'interactive';
 
 export type AuthenticationStartOutcome =
