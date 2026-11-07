@@ -8,7 +8,7 @@ export const guideResources = {
     'guide.optional': 'Optional',
     'guide.step.account.title': 'Create an account',
     'guide.step.account.detail':
-      'An email address and a nickname are all we ask. Verify the address, choose a password, and you can look around any room from the browser — on a phone too, with nothing installed.',
+      'An email address, a nickname and a password are all we ask. Verify the address and you can look around any room from the browser — on a phone too, with nothing installed.',
     'guide.step.install.title': 'The desktop app',
     'guide.step.install.detail':
       'Only needed to bring in an agent that runs on your own computer, through MCP or the command line. Its credentials and keys stay on your machine. Sign in to the app, then approve this computer: the approval page shows a code, and you confirm it matches the one in the app.',
@@ -56,7 +56,7 @@ export const guideResources = {
     'guide.optional': '可选',
     'guide.step.account.title': '注册账号',
     'guide.step.account.detail':
-      '只需要邮箱和昵称。验证邮箱、设置密码之后，在浏览器里就能进房间看看，手机也可以，不用安装任何东西。',
+      '只需要邮箱、昵称和一个密码。验证邮箱之后，在浏览器里就能进房间看看，手机也可以，不用安装任何东西。',
     'guide.step.install.title': '桌面应用',
     'guide.step.install.detail':
       '只有想让你电脑上的 Agent 经 MCP 或命令行进来时才需要，它的凭据和密钥都留在你自己的电脑上。在应用里登录后批准这台电脑：批准页面会显示一个设备码，和应用里的核对一致再确认。',

@@ -34,6 +34,13 @@ DEFAULT_LOCALE: Final = "en"
 MINIMUM_PASSWORD_LENGTH: Final = 8
 # 登录主题在没有客户端的错误页（邮件里过期的链接）上，用它给“回到 Agent Room”。
 APP_URL_ATTRIBUTE: Final = "agentRoomAppUrl"
+# Keycloak 26 开着邮箱验证时，注册页不收密码，验证完才让人设（RegistrationPassword.isVerifyEmail）。
+# 在另一台设备上点验证链接、或者邮箱的链接扫描先点了的人，就停在“验证了却没有密码”上，登录不了。
+# 维护者 2026-11-07 定了注册时就设密码：给注册流程里密码那一步配上它认的开关。Keycloak 把这个开关
+# 标成了以后要去掉，所以同步时先问它还认不认，不认就失败（注册保持关闭）；升级镜像时先核对。
+REGISTRATION_PASSWORD_PROVIDER: Final = "registration-password-action"
+ALWAYS_SET_PASSWORD_ON_REGISTER_FORM: Final = "always_set_password_on_register_form"
+REGISTRATION_PASSWORD_CONFIG_ALIAS: Final = "agent-room-password-on-register-form"
 
 
 class ReconcileError(RuntimeError):
@@ -414,6 +421,102 @@ def reconcile_user_profile(base_url: str, token: str) -> None:
         )
 
 
+def load_admin_json(base_url: str, token: str, label: str, *segments: str) -> object:
+    return load_json(request(realm_admin_url(base_url, *segments), token=token), label)
+
+
+def registration_password_execution(executions: object) -> dict[str, object]:
+    """注册流程里收密码的那一步：只能有一个，而且是必需的，不然注册页根本不收密码。"""
+    matches = (
+        [
+            execution
+            for execution in executions
+            if isinstance(execution, dict)
+            and execution.get("providerId") == REGISTRATION_PASSWORD_PROVIDER
+        ]
+        if isinstance(executions, list)
+        else []
+    )
+    if len(matches) != 1:
+        raise ReconcileError("Keycloak 注册流程里找不到唯一的密码那一步。")
+    execution = matches[0]
+    if execution.get("requirement") != "REQUIRED":
+        raise ReconcileError("Keycloak 注册流程里密码那一步没有设成必需。")
+    if not isinstance(execution.get("id"), str) or not execution["id"]:
+        raise ReconcileError("Keycloak 注册流程里密码那一步缺少 ID。")
+    return execution
+
+
+def password_on_register_form(config: dict[str, object]) -> dict[str, object]:
+    """开关打开，配置里别的项原样留着。"""
+    updated = copy.deepcopy(config)
+    values = updated.get("config")
+    values = dict(values) if isinstance(values, dict) else {}
+    values[ALWAYS_SET_PASSWORD_ON_REGISTER_FORM] = "true"
+    updated["config"] = values
+    updated.setdefault("alias", REGISTRATION_PASSWORD_CONFIG_ALIAS)
+    return updated
+
+
+def require_password_switch(base_url: str, token: str) -> None:
+    description = load_admin_json(
+        base_url,
+        token,
+        "注册密码配置说明",
+        "authentication",
+        "config-description",
+        REGISTRATION_PASSWORD_PROVIDER,
+    )
+    properties = description.get("properties") if isinstance(description, dict) else None
+    names = {item.get("name") for item in properties or [] if isinstance(item, dict)}
+    if ALWAYS_SET_PASSWORD_ON_REGISTER_FORM not in names:
+        raise ReconcileError("这个版本的 Keycloak 不再认“注册时就设密码”的开关，注册保持关闭。")
+
+
+def reconcile_registration_password(base_url: str, token: str, realm: dict[str, object]) -> None:
+    require_password_switch(base_url, token)
+    flow = realm.get("registrationFlow")
+    flow = flow if isinstance(flow, str) and flow else "registration"
+    executions = ("authentication", "flows", flow, "executions")
+    execution = registration_password_execution(
+        load_admin_json(base_url, token, "注册流程", *executions)
+    )
+    config_id = execution.get("authenticationConfig")
+    if isinstance(config_id, str) and config_id:
+        current = load_admin_json(base_url, token, "注册密码配置", "authentication", "config", config_id)
+        if not isinstance(current, dict):
+            raise ReconcileError("Keycloak 注册密码配置结构无效。")
+        updated = password_on_register_form(current)
+        if updated != current:
+            request(
+                realm_admin_url(base_url, "authentication", "config", config_id),
+                method="PUT",
+                token=token,
+                body=json.dumps(updated, ensure_ascii=False).encode("utf-8"),
+                content_type="application/json",
+            )
+    else:
+        request(
+            realm_admin_url(base_url, "authentication", "executions", str(execution["id"]), "config"),
+            method="POST",
+            token=token,
+            body=json.dumps(password_on_register_form({})).encode("utf-8"),
+            content_type="application/json",
+        )
+    # 写完再读一遍：开关没落到这一步上就不开放注册。
+    config_id = registration_password_execution(
+        load_admin_json(base_url, token, "注册流程", *executions)
+    ).get("authenticationConfig")
+    saved = (
+        load_admin_json(base_url, token, "注册密码配置", "authentication", "config", config_id)
+        if isinstance(config_id, str) and config_id
+        else None
+    )
+    values = saved.get("config") if isinstance(saved, dict) else None
+    if not isinstance(values, dict) or values.get(ALWAYS_SET_PASSWORD_ON_REGISTER_FORM) != "true":
+        raise ReconcileError("Keycloak 注册流程里密码那一步没配上开关。")
+
+
 def update_realm(base_url: str, token: str, realm: dict[str, object]) -> None:
     request(
         f"{base_url}/admin/realms/{quote(REALM, safe='')}",
@@ -534,6 +637,8 @@ def reconcile() -> None:
     )
     smtp = smtp_settings(smtp_password)
     verify_smtp_transport(smtp)
+    # 注册关着时用不到它，只在开放前配上；Keycloak 不认了就停在这里，注册保持关闭。
+    reconcile_registration_password(base_url, token, closed_realm)
     open_realm = apply_registration_policy(closed_realm, enabled=True, smtp=smtp)
     update_realm(base_url, token, open_realm)
     print("Keycloak 邮箱验证注册已开放。")

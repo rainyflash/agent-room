@@ -844,6 +844,109 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(calls.count(("POST", "clients")), 1)
         self.assertEqual(calls.count(("PUT", "clients/aa")), 1)
 
+    def _fake_registration_flow(
+        self,
+        *,
+        properties: list[str],
+        requirement: str = "REQUIRED",
+        config: dict[str, object] | None = None,
+    ) -> tuple[object, dict[str, dict[str, object]], list[tuple[str, str]]]:
+        """注册流程里密码那一步，按 Keycloak 管理接口的样子回答。"""
+        configs: dict[str, dict[str, object]] = {} if config is None else {"cfg": config}
+        execution: dict[str, object] = {
+            "id": "pw",
+            "providerId": "registration-password-action",
+            "requirement": requirement,
+        }
+        if config is not None:
+            execution["authenticationConfig"] = "cfg"
+        calls: list[tuple[str, str]] = []
+
+        def fake_request(
+            url: str,
+            *,
+            method: str = "GET",
+            token: str | None = None,
+            body: bytes | None = None,
+            content_type: str | None = None,
+        ) -> bytes:
+            del content_type
+            self.assertEqual(token, "admin-token")
+            path = url.split("/admin/realms/agent-room/", 1)[1]
+            calls.append((method, path))
+            if path == "authentication/config-description/registration-password-action":
+                return json.dumps({"properties": [{"name": name} for name in properties]}).encode()
+            if path == "authentication/flows/registration/executions":
+                user_creation = {"id": "uc", "providerId": "registration-user-creation", "requirement": "REQUIRED"}
+                return json.dumps([user_creation, execution]).encode()
+            if method == "POST" and path == "authentication/executions/pw/config":
+                assert body is not None
+                configs["new"] = {**json.loads(body), "id": "new"}
+                execution["authenticationConfig"] = "new"
+                return b""
+            if path.startswith("authentication/config/"):
+                config_id = path.rsplit("/", 1)[1]
+                if method == "PUT":
+                    assert body is not None
+                    configs[config_id] = json.loads(body)
+                    return b""
+                return json.dumps(configs[config_id]).encode()
+            raise AssertionError(f"没想到的请求：{method} {path}")
+
+        return fake_request, configs, calls
+
+    def test_身份同步让注册页就收密码(self) -> None:
+        module = _load_keycloak_reconcile()
+        key = "always_set_password_on_register_form"
+        realm = {"realm": "agent-room", "registrationFlow": "registration"}
+
+        # 还没配过：给密码那一步建一份配置，写完再读一遍。
+        fake_request, configs, calls = self._fake_registration_flow(properties=[key])
+        with patch.object(module, "request", fake_request):
+            module.reconcile_registration_password("http://identity:8080", "admin-token", realm)
+        self.assertEqual(configs["new"]["config"], {key: "true"})
+        self.assertTrue(configs["new"]["alias"])
+        self.assertEqual(calls.count(("POST", "authentication/executions/pw/config")), 1)
+
+        # 配过别的项：打开开关，别的项原样留着；已经打开的不再写。
+        existing = {"id": "cfg", "alias": "kept", "config": {"other": "x"}}
+        fake_request, configs, calls = self._fake_registration_flow(properties=[key], config=existing)
+        with patch.object(module, "request", fake_request):
+            module.reconcile_registration_password("http://identity:8080", "admin-token", realm)
+            module.reconcile_registration_password("http://identity:8080", "admin-token", realm)
+        self.assertEqual(configs["cfg"], {"id": "cfg", "alias": "kept", "config": {"other": "x", key: "true"}})
+        self.assertEqual(calls.count(("PUT", "authentication/config/cfg")), 1)
+
+    def test_身份同步在keycloak不认开关时不开放注册(self) -> None:
+        module = _load_keycloak_reconcile()
+        realm = {"realm": "agent-room"}
+
+        # Keycloak 把这个开关标成了以后要去掉：去掉了就失败，什么都不写。
+        fake_request, configs, calls = self._fake_registration_flow(properties=[])
+        with patch.object(module, "request", fake_request), self.assertRaises(module.ReconcileError):
+            module.reconcile_registration_password("http://identity:8080", "admin-token", realm)
+        self.assertEqual(configs, {})
+        self.assertFalse([call for call in calls if call[0] != "GET"])
+
+        # 密码那一步被关掉了：注册页根本不收密码，也不开放。
+        fake_request, configs, calls = self._fake_registration_flow(
+            properties=["always_set_password_on_register_form"], requirement="DISABLED"
+        )
+        with patch.object(module, "request", fake_request), self.assertRaises(module.ReconcileError):
+            module.reconcile_registration_password("http://identity:8080", "admin-token", realm)
+        self.assertFalse([call for call in calls if call[0] != "GET"])
+
+    def test_升级keycloak时先核对注册时设密码的开关还在(self) -> None:
+        # “注册时就设密码”靠 Keycloak 26 的 always_set_password_on_register_form（已标为以后去掉）。
+        # 换镜像以前在新版本的 RegistrationPassword 里核对它还在，再改这里的版本号。
+        images = {
+            path: re.findall(r"quay\.io/keycloak/keycloak:([0-9.]+)", (ROOT / path).read_text(encoding="utf-8"))
+            for path in ("infra/production/Containerfile.identity", "infra/compose/compose.yaml")
+        }
+        for path, versions in images.items():
+            self.assertTrue(versions, path)
+            self.assertEqual(set(versions), {"26.7.2"}, path)
+
     def test_browser_control_plane_uses_same_origin_gateway_without_removing_machine_api(self) -> None:
         render_deployment(self.config, self.paths, self.secrets)
         environment = self.paths.compose_environment.read_text(encoding="utf-8")
