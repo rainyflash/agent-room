@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
-use agent_room_bridge_core::ipc::IpcCallerKind;
+use agent_room_bridge_core::ipc::{IpcCallerKind, IpcScope};
 use agent_room_bridge_ipc::{
     IpcClientFailure, IpcClientFailureKind, IpcClientSession, IpcErrorCategory, IpcMethod,
     IpcResponse,
@@ -101,6 +101,21 @@ impl LocalBridgeClient {
         method: IpcMethod,
     ) -> Result<IpcResponse, LocalBridgeClientFailure> {
         let required_scope = method.required_scope();
+        let mut client = match self.authenticate(required_scope).await {
+            // 凭据读过一次就留在进程里（见 `SystemCredentialStore`）。Bridge 重建过凭据时握手被拒：
+            // 作废留着的、重读一次再连。没留着的话重读也一样，直接报错。
+            Err(failure) if rejects_credentials(&failure) && self.credentials.forget_cached() => {
+                self.authenticate(required_scope).await?
+            }
+            result => result?,
+        };
+        self.request(&mut client, method).await
+    }
+
+    async fn authenticate(
+        &self,
+        required_scope: IpcScope,
+    ) -> Result<IpcClientSession<Stream>, LocalBridgeClientFailure> {
         // Unix 套接字的路径与安装身份无关，先确认有 Bridge 在监听再读取凭据。Bridge 写好 IPC 凭据
         // 才开始监听，macOS 上读到的因此总是它重写过、本机程序可以直接读取的凭据，而不是旧版
         // Bridge 留下、读取时会弹窗要钥匙串密码的那份。Windows 的管道名取自安装身份，只能先读凭据。
@@ -119,14 +134,13 @@ impl LocalBridgeClient {
                 credentials.installation_id(),
             ))
             .await?;
-        let mut client = timeout(
+        timeout(
             self.operation_timeout,
             IpcClientSession::authenticate(stream, &credentials, self.caller, [required_scope]),
         )
         .await
         .map_err(|_| LocalBridgeClientFailure::timeout())?
-        .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))?;
-        self.request(&mut client, method).await
+        .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))
     }
 
     async fn connect(
@@ -162,6 +176,15 @@ impl LocalBridgeClient {
             .map_err(|_| LocalBridgeClientFailure::timeout())?
             .map_err(|failure| LocalBridgeClientFailure::ipc(&failure))
     }
+}
+
+/// 握手时 Bridge 不认这份凭据：安装身份或共享秘密对不上。
+fn rejects_credentials(failure: &LocalBridgeClientFailure) -> bool {
+    failure.category() == IpcErrorCategory::Authentication
+        && matches!(
+            failure.kind(),
+            LocalBridgeClientFailureKind::Authentication | LocalBridgeClientFailureKind::Remote
+        )
 }
 
 /// Windows 具名管道客户端在一个线程上丢弃连接、运行时的 I/O 驱动同时在另一个线程上处理

@@ -203,3 +203,173 @@ async fn unix_有_bridge_监听才读取凭据() {
     );
     assert_eq!(credentials.0.load(Ordering::SeqCst), 1);
 }
+
+/// 记着读了几次、作废了几次的凭据；`cached` 表示进程里还留着一份。
+#[cfg(unix)]
+struct 留着的凭据 {
+    loads: std::sync::atomic::AtomicUsize,
+    forgets: std::sync::atomic::AtomicUsize,
+    cached: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(unix)]
+impl 留着的凭据 {
+    fn new(cached: bool) -> Arc<Self> {
+        Arc::new(Self {
+            loads: 0.into(),
+            forgets: 0.into(),
+            cached: cached.into(),
+        })
+    }
+}
+
+#[cfg(unix)]
+impl IpcCredentialSource for 留着的凭据 {
+    fn load(&self) -> Result<IpcClientCredentials, IpcCredentialFailure> {
+        self.loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(IpcClientCredentials::new(
+            IpcInstallationId::new("cached_test").unwrap(),
+            IpcSharedSecret::new([7; 32]),
+        ))
+    }
+
+    fn forget_cached(&self) -> bool {
+        self.forgets
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.cached.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// 在 `bridge.sock` 上起一个假 Bridge：前 `rejected` 个连接在握手时说不认这份凭据，之后的照常
+/// 完成握手、回答一个请求。返回它一共接了几个连接。
+#[cfg(unix)]
+fn rejecting_bridge(
+    runtime_root: &std::path::Path,
+    rejected: usize,
+    scope: IpcScope,
+) -> JoinHandle<usize> {
+    let listener = tokio::net::UnixListener::bind(runtime_root.join("bridge.sock")).unwrap();
+    tokio::spawn(async move {
+        let mut accepted = 0;
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            accepted += 1;
+            assert!(matches!(
+                IpcFrameCodec::read(&mut stream).await.unwrap(),
+                IpcFrame::ClientHello { .. }
+            ));
+            if accepted <= rejected {
+                IpcFrameCodec::write(
+                    &mut stream,
+                    &IpcFrame::Error {
+                        correlation_id: None,
+                        code: "bridge.ipc.installation_rejected".to_owned(),
+                        category: IpcErrorCategory::Authentication,
+                        retryable: false,
+                        details: BTreeMap::new(),
+                    },
+                )
+                .await
+                .unwrap();
+                continue;
+            }
+            IpcFrameCodec::write(
+                &mut stream,
+                &IpcFrame::ServerChallenge {
+                    challenge_id: SESSION_ID.parse().unwrap(),
+                    challenge: URL_SAFE_NO_PAD.encode([9_u8; 32]),
+                    selected_version: IpcProtocolVersion::V4_6.into(),
+                    granted_scopes: vec![IpcScopeName::from(scope)],
+                },
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                IpcFrameCodec::read(&mut stream).await.unwrap(),
+                IpcFrame::ClientProof { .. }
+            ));
+            IpcFrameCodec::write(
+                &mut stream,
+                &IpcFrame::ServerReady {
+                    server_instance_id: SESSION_ID.parse().unwrap(),
+                    selected_version: IpcProtocolVersion::V4_6.into(),
+                    granted_scopes: vec![IpcScopeName::from(scope)],
+                },
+            )
+            .await
+            .unwrap();
+            let IpcFrame::Request { correlation_id, .. } =
+                IpcFrameCodec::read(&mut stream).await.unwrap()
+            else {
+                panic!("已鉴权连接应收到请求");
+            };
+            IpcFrameCodec::write(
+                &mut stream,
+                &IpcFrame::Response {
+                    correlation_id,
+                    result: closed_response(),
+                },
+            )
+            .await
+            .unwrap();
+            return accepted;
+        }
+    })
+}
+
+#[cfg(unix)]
+fn client_with(
+    runtime_root: &std::path::Path, credentials: Arc<留着的凭据>
+) -> LocalBridgeClient {
+    LocalBridgeClient {
+        runtime_root: runtime_root.to_path_buf(),
+        credentials,
+        caller: IpcCallerKind::McpServer,
+        connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+        operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_bridge_不认留着的凭据时作废重读再连一次() {
+    use std::sync::atomic::Ordering;
+
+    let runtime_root = tempfile::tempdir().unwrap();
+    let bridge = rejecting_bridge(runtime_root.path(), 1, close_method().required_scope());
+    let credentials = 留着的凭据::new(true);
+
+    let response = client_with(runtime_root.path(), credentials.clone())
+        .invoke(close_method())
+        .await
+        .unwrap();
+
+    assert_eq!(response, closed_response());
+    assert_eq!(bridge.await.unwrap(), 2);
+    assert_eq!(credentials.forgets.load(Ordering::SeqCst), 1);
+    assert_eq!(credentials.loads.load(Ordering::SeqCst), 2);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_没有留着的凭据时被拒不再重连() {
+    use std::sync::atomic::Ordering;
+
+    let runtime_root = tempfile::tempdir().unwrap();
+    let bridge = rejecting_bridge(
+        runtime_root.path(),
+        usize::MAX,
+        close_method().required_scope(),
+    );
+    let credentials = 留着的凭据::new(false);
+
+    let failure = client_with(runtime_root.path(), credentials.clone())
+        .invoke(close_method())
+        .await
+        .unwrap_err();
+
+    assert_eq!(failure.code(), "bridge.ipc.installation_rejected");
+    assert_eq!(credentials.forgets.load(Ordering::SeqCst), 1);
+    assert_eq!(credentials.loads.load(Ordering::SeqCst), 1);
+    bridge.abort();
+}

@@ -98,6 +98,16 @@ impl LocalSecretStore {
         }
     }
 
+    /// Drops the value this process cached for `account`, so the next read goes back to the store.
+    /// Returns whether a value was cached; only the macOS system store caches, see
+    /// [`SystemCredentialStore::forget_cached`].
+    pub fn forget_cached(&self, account: &str) -> bool {
+        match &self.backend {
+            Ok(Backend::System(store)) => store.forget_cached(account),
+            Ok(Backend::Encrypted(_)) | Err(_) => false,
+        }
+    }
+
     /// # Errors
     /// Reports invalid input, key or storage failures. Never writes plaintext files.
     pub fn write(&self, account: &str, value: &str) -> Result<(), SecretStoreFailure> {
