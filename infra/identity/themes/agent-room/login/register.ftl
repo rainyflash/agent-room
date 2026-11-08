@@ -34,6 +34,9 @@
                 <#if messagesPerField.existsError('email')>
                     <span id="input-error-email" class="ar-field-error" aria-live="polite">${kcSanitize(messagesPerField.get('email'))?no_esc}</span>
                 </#if>
+                <#-- 打错的常见邮箱（gmial.com、gmail.comm）收不到验证信：email-suggestion.js 在这里问一句，不拦提交。 -->
+                <p id="email-suggestion" class="ar-hint ar-email-suggestion" aria-live="polite" hidden
+                   data-template="${msg('arEmailSuggestion', '{email}')}" data-apply="${msg('arEmailSuggestionApply')}"></p>
             </div>
 
             <div class="ar-field">
@@ -104,5 +107,6 @@
             </script>
         </#if>
         <script type="module" src="${url.resourcesPath}/js/passwordVisibility.js"></script>
+        <script type="module" src="${url.resourcesPath}/js/email-suggestion.js"></script>
     </#if>
 </@layout.registrationLayout>

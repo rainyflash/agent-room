@@ -745,7 +745,14 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertTrue(realm["registrationEmailAsUsername"])
         self.assertEqual(realm["actionTokenGeneratedByUserLifespan"], 60 * 60)
         self.assertEqual(realm["accessCodeLifespanUserAction"], 60 * 60)
-        self.assertEqual(realm["attributes"], {"agentRoomAppUrl": f"{self.config.public.app_origin}/"})
+        self.assertEqual(
+            realm["attributes"],
+            {
+                "agentRoomAppUrl": f"{self.config.public.app_origin}/",
+                # 验证邮件的链接一天有效，重设密码等别的链接照旧一小时。
+                "actionTokenGeneratedByUserLifespan.verify-email": str(24 * 60 * 60),
+            },
+        )
         self.assertEqual(
             web_client["redirectUris"],
             [f"{self.config.public.app_origin}/connect/finalize"],
@@ -1455,6 +1462,15 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertEqual(closed["accessCodeLifespanUserAction"], 60 * 60)
         self.assertEqual(opened["actionTokenGeneratedByUserLifespan"], 60 * 60)
         self.assertEqual(opened["accessCodeLifespanUserAction"], 60 * 60)
+        # 验证邮件的链接一天有效，重设密码等别的链接照旧一小时；realm 上别的属性原样留着。
+        verify_link = {"actionTokenGeneratedByUserLifespan.verify-email": str(24 * 60 * 60)}
+        self.assertEqual(opened["attributes"], verify_link)
+        kept = {"attributes": {"agentRoomAppUrl": "https://app.example/"}}
+        self.assertEqual(
+            module.apply_registration_policy(kept, enabled=True, smtp=None)["attributes"],
+            {"agentRoomAppUrl": "https://app.example/", **verify_link},
+        )
+        self.assertEqual(kept["attributes"], {"agentRoomAppUrl": "https://app.example/"})
         self.assertEqual(original["smtpServer"], {"password": "old"})
 
         original_client = {
@@ -1496,10 +1512,10 @@ class ProductionRenderingTests(unittest.TestCase):
             with_app_url["attributes"],
             {"frontendUrl": "https://id.example", "agentRoomAppUrl": "https://app.example/"},
         )
-        self.assertNotIn("attributes", presented)
+        self.assertEqual(presented["attributes"], verify_link)
         self.assertEqual(
             module.apply_app_url(presented, frontend_origin="https://app.example")["attributes"],
-            {"agentRoomAppUrl": "https://app.example/"},
+            {**verify_link, "agentRoomAppUrl": "https://app.example/"},
         )
         # Other operator rules stay; a stricter minimum is never lowered.
         self.assertEqual(module.password_policy("length(12) and digits(1)"), "length(12) and digits(1)")
