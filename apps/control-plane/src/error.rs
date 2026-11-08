@@ -561,6 +561,13 @@ impl ApiError {
                 ErrorCategory::Authorization,
                 "当前设备无权让该 Agent 实例进入大厅。",
             ),
+            // 仍回 403：已经装着的 Bridge 只看状态码，照旧报“进不了这个房间”。
+            AgentLobbyEntryFailureKind::RoomRefused => (
+                StatusCode::FORBIDDEN,
+                "lobby.room_refused",
+                ErrorCategory::Authorization,
+                "这个私人房间不接这个 Agent：房间已归档，或者它代表的账号不在房间里、不能发言，它也没凭口令进来过。",
+            ),
             AgentLobbyEntryFailureKind::NotFound => (
                 StatusCode::NOT_FOUND,
                 "lobby.not_found",
@@ -592,11 +599,21 @@ impl ApiError {
                 "大厅服务发生内部错误。",
             ),
         };
-        tracing::warn!(
-            correlation.id = %correlation_id.as_uuid(),
-            failure = ?failure,
-            "Agent 大厅入口失败"
-        );
+        // 房间不接（比如归档以后 Agent 还在重连）是房间此刻的状态，不是毛病，只记 INFO；别的照旧
+        // WARN，进生产错误汇总（agent-room-ops#74）。
+        if failure.kind() == AgentLobbyEntryFailureKind::RoomRefused {
+            tracing::info!(
+                correlation.id = %correlation_id.as_uuid(),
+                failure = ?failure,
+                "私人房间不接这个 Agent"
+            );
+        } else {
+            tracing::warn!(
+                correlation.id = %correlation_id.as_uuid(),
+                failure = ?failure,
+                "Agent 大厅入口失败"
+            );
+        }
         Self::new(status, code, category, message, correlation_id)
     }
 

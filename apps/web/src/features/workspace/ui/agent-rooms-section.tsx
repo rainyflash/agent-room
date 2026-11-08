@@ -25,7 +25,8 @@ export type AgentRoomNotice =
   | { readonly kind: 'left'; readonly room: string; readonly left: boolean }
   | { readonly kind: 'failed'; readonly room: string; readonly code: string };
 
-const FORBIDDEN = 'lobby.unauthorized';
+// 私人房间不接（`lobby.room_refused`）和连接带不了它说的是同一件事：你在那里不能发言，或房间已归档。
+const FORBIDDEN = new Set(['lobby.unauthorized', 'lobby.room_refused']);
 
 const sleep = async (milliseconds: number): Promise<void> => {
   await new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
@@ -396,7 +397,7 @@ function RoomNotice({ notice }: { readonly notice: AgentRoomNotice }) {
         <p className="agent-details__notice" role="alert">
           {notice.code === AGENT_ROOM_BUSY
             ? t('workspace.rooms.busy', { room: notice.room })
-            : notice.code === FORBIDDEN
+            : FORBIDDEN.has(notice.code)
               ? t('workspace.rooms.forbidden')
               : t('workspace.rooms.actionFailed', { code: notice.code })}
         </p>

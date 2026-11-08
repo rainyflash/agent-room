@@ -620,12 +620,22 @@ impl PrivateRoomMatrixGateway for 记录私人Matrix {
 fn 私人房间快照(
     成员: Option<(PrincipalId, PrivateRoomPermissions)>
 ) -> PrivateRoomSnapshot {
+    私人房间快照_归档(成员, false)
+}
+
+fn 私人房间快照_归档(
+    成员: Option<(PrincipalId, PrivateRoomPermissions)>,
+    归档: bool,
+) -> PrivateRoomSnapshot {
     let owner = PrincipalId::from_uuid(Uuid::from_u128(7_777));
     let mut room = PrivateRoom::create(private_catalog_id(), owner);
     if let Some((principal_id, permissions)) = 成员 {
         room.invite(owner, principal_id, permissions)
             .expect("邀请成功");
         room.accept_invitation(principal_id).expect("接受邀请成功");
+    }
+    if 归档 {
+        room.archive(owner).expect("房主可以归档");
     }
     let catalog = RoomCatalog::new(
         private_catalog_id(),
@@ -639,7 +649,11 @@ fn 私人房间快照(
             owner_principal_id: Some(owner),
             visibility: RoomCatalogVisibility::Private,
             retention_days: Some(30),
-            status: RoomCatalogStatus::Active,
+            status: if 归档 {
+                RoomCatalogStatus::Archived
+            } else {
+                RoomCatalogStatus::Active
+            },
         },
     )
     .expect("私人目录有效");
@@ -651,7 +665,11 @@ fn 私人房间快照(
             region: None,
             capacity: RoomCapacity::standard(),
             allocated_slots: 0,
-            state: RoomInstanceState::Active,
+            state: if 归档 {
+                RoomInstanceState::Archived
+            } else {
+                RoomInstanceState::Active
+            },
         },
     )
     .expect("私人实例有效");
@@ -964,11 +982,33 @@ async fn 非成员与只读成员的_agent_都进不了私人房间且不会被�
 
         let failure = service.enter(request).await.expect_err("必须拒绝");
 
-        assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+        assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::RoomRefused);
         assert!(matrix.邀请记录().is_empty(), "被拒绝时不得发出 Matrix 邀请");
         assert!(matrix.发言授予记录().is_empty(), "被拒绝时不得授予发言");
         assert!(membership.joins.lock().expect("锁可用").is_empty());
     }
+}
+
+/// 房间归档以后 Agent 还在重连（agent-room-ops#74）：主人原来能发言也进不来，说的是房间不接，不是连接无权。
+#[tokio::test]
+async fn 房间归档以后_能发言的成员的_agent_也进不来_说是房间不接() {
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    let (service, request, membership) = private_request(
+        Some(私人房间快照_归档(
+            Some((operator_principal_id(), 可发言权限())),
+            true,
+        )),
+        &matrix,
+    );
+
+    let failure = service
+        .enter(request)
+        .await
+        .expect_err("归档的房间必须拒绝");
+
+    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::RoomRefused);
+    assert!(matrix.邀请记录().is_empty());
+    assert!(membership.joins.lock().expect("锁可用").is_empty());
 }
 
 #[tokio::test]
@@ -998,7 +1038,7 @@ async fn 凭口令进来的_agent_不需要主人是成员_移出后就进不来
         &matrix,
     );
     let failure = service.enter(request).await.expect_err("移出后必须拒绝");
-    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::RoomRefused);
     assert!(matrix.邀请记录().is_empty());
     assert!(membership.joins.lock().expect("锁可用").is_empty());
 }
@@ -1057,7 +1097,14 @@ async fn 主人带进私人房间_按目录找到房间_照样邀请并给发言
 
 #[tokio::test]
 async fn 主人带进房间_连接失效或连接的账号带不了_agent_都不碰_matrix() {
-    for (active, permissions) in [(false, 可发言权限()), (true, 只读权限())] {
+    for (active, permissions, expected) in [
+        (
+            false,
+            可发言权限(),
+            AgentLobbyEntryFailureKind::Unauthorized,
+        ),
+        (true, 只读权限(), AgentLobbyEntryFailureKind::RoomRefused),
+    ] {
         let matrix = Arc::new(记录私人Matrix::new(false));
         let snapshot = 私人房间快照(Some((operator_principal_id(), permissions)));
         let (service, _, membership) = private_request(Some(snapshot), &matrix);
@@ -1067,7 +1114,7 @@ async fn 主人带进房间_连接失效或连接的账号带不了_agent_都不
             .await
             .expect_err("必须拒绝");
 
-        assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::Unauthorized);
+        assert_eq!(failure.kind(), expected);
         assert!(matrix.邀请记录().is_empty());
         assert!(matrix.发言授予记录().is_empty());
         assert!(membership.joins.lock().expect("锁可用").is_empty());

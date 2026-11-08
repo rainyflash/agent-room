@@ -38,6 +38,9 @@ pub struct EnterAgentLobby {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentLobbyEntryFailureKind {
     Unauthorized,
+    /// 私人房间不接这个 Agent：房间已归档，或者它代表的账号没加入、不能发言，它自己也没凭口令进来过。
+    /// 是房间此刻的状态，不是连接或设备出了问题（agent-room-ops#74）。
+    RoomRefused,
     NotFound,
     Conflict,
     DependencyUnavailable,
@@ -48,6 +51,7 @@ pub enum AgentLobbyEntryFailureKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentLobbyEntryFailure {
     Unauthorized,
+    RoomRefused,
     NotFound,
     Access(RepositoryError),
     Membership(MatrixFailure),
@@ -58,6 +62,7 @@ impl AgentLobbyEntryFailure {
     pub const fn kind(&self) -> AgentLobbyEntryFailureKind {
         match self {
             Self::Unauthorized => AgentLobbyEntryFailureKind::Unauthorized,
+            Self::RoomRefused => AgentLobbyEntryFailureKind::RoomRefused,
             Self::NotFound => AgentLobbyEntryFailureKind::NotFound,
             Self::Access(error) => repository_failure_kind(error.kind()),
             Self::Membership(error) => matrix_failure_kind(error.kind()),
@@ -359,7 +364,7 @@ impl AgentLobbyEntryService {
         if !snapshot.room().admits_agent_of(access.principal_id)
             && !self.admitted_by_code(snapshot, access.agent_id).await?
         {
-            return Err(AgentLobbyEntryFailure::Unauthorized);
+            return Err(AgentLobbyEntryFailure::RoomRefused);
         }
         let matrix_room =
             MatrixRoomId::new(snapshot.instance().matrix_room_id().as_str().to_owned())

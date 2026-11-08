@@ -421,6 +421,18 @@ async fn 带进房间时大厅正忙回_503_带_retry_after_带不了回_403() {
         .unwrap();
     assert_eq!(refused.status(), StatusCode::FORBIDDEN);
     assert_eq!(response_json(refused).await["code"], "lobby.unauthorized");
+
+    // 房间不接（比如已归档）仍是 403，只换了说法：已经装着的 Bridge 只看状态码。
+    *placements.failure.lock().unwrap() = Some(AgentLobbyEntryFailure::RoomRefused);
+    let room_refused = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, true, &body))
+        .await
+        .unwrap();
+    assert_eq!(room_refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(room_refused).await["code"],
+        "lobby.room_refused"
+    );
 }
 
 #[tokio::test]
