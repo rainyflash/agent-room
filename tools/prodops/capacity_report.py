@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import json
@@ -279,8 +280,13 @@ def build_report(
     network: NetworkReading | None,
     previous_network: NetworkReading | None,
     version: str,
+    onboarding: Sequence[str] = (),
 ) -> list[str]:
-    """给人看的报告，每一行都只有汇总的数。Prometheus 读不到时照样出网络那一节，并写明读不到。"""
+    """给人看的报告，每一行都只有汇总的数。Prometheus 读不到时照样出网络那一节，并写明读不到。
+
+    `onboarding` 是“新用户走到哪一步”那一节（`onboarding_funnel.report_section`），从数据库里数，
+    不靠 Prometheus，读不到 Prometheus 时也照样出。
+    """
 
     lines = [
         f"# {title(now)}",
@@ -305,10 +311,12 @@ def build_report(
             for name, expression in BUSIEST.items()
         }
     except CapacityReportError as error:
-        lines.extend([f"**Prometheus 读不到（{error}），这周只有网络流量。**", ""])
+        lines.extend([f"**Prometheus 读不到（{error}），这周只有新用户和网络流量。**", ""])
+        lines.extend(onboarding)
         lines.extend(_network_section(network, previous_network))
         return lines
     lines.extend(_usage_section(values, latency))
+    lines.extend(onboarding)
     lines.extend(_machine_section(values))
     storage_lines, disk_runway = _storage_section(storage)
     lines.extend(storage_lines)
