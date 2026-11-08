@@ -677,6 +677,24 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 2)
 
+    def test_polling_knocks_of_a_just_archived_room_is_noise(self) -> None:
+        knocks = (
+            CONTROL_JOIN_CODE.replace("private_room.join_code.reveal", "private_room.agent_knock.waiting")
+            .replace('"failure": "NotFound"', '"failure": "Conflict"')
+            .replace(f"/devices/current/private-rooms/{CATALOG_ID}/code", f"/private-rooms/{CATALOG_ID}/agent-access/knocks")
+        )
+        other = knocks.replace("private_room.agent_knock.waiting", "private_room.agent_knock.admit")
+        digest = summarize({"control-plane": [knocks, other]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error Agent 口令请求失败 failure=Conflict "
+                "operation=private_room.agent_knock.admit @ GET /private-rooms/{id}/agent-access/knocks"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_network_agent_naming_a_room_that_is_not_there_is_noise(self) -> None:
         def failure(kind: str) -> str:
             return json.dumps(
