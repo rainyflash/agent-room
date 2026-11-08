@@ -231,6 +231,21 @@ tests:
       - eval_time: 115m
         alertname: AgentRoomBridgeAvailabilityLow
         exp_alerts: []
+  # 2026-11-07 那样：五台左右开着（一小时 20 个样本），一台断了二十来分钟，报了 0.2 和 0.75，
+  # 平均掉到 94% 多。人这么少时是这一个人的事，不报（agent-room-ops#39）。
+  - interval: 3m
+    input_series:
+      - series: agent_room_frontend_score_sum{metric="bridge_uptime",surface="desktop"}
+        values: 0+1x19 19.2 19.95 20.95+1x18
+      - series: agent_room_frontend_score_count{metric="bridge_uptime",surface="desktop"}
+        values: 0+1x40
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: AgentRoomBridgeAvailabilityLow
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: AgentRoomBridgeAvailabilityLow
+        exp_alerts: []
   # 两个核里一个吃满、另一个闲一半（整机 75%）：一小时以后才响。
   - interval: 1m
     input_series:
