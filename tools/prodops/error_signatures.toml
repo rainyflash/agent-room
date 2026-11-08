@@ -34,6 +34,11 @@ reason = "房间还没有口令时先查一次：Agent 回 404 以后再去生�
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ Agent 口令请求失败 failure=Conflict operation=private_room\.agent_access\.inspect @ GET /private-rooms/\{id\}/agent-access$'
+reason = "房间已归档时读 Agent 口令和成员：领域层要求房间还在使用中（`authorize_agent_access` 的 `ensure_active`），归档后回 409。多半是房间刚被归档、另一个标签页或设置对话框还开着，随后一次读取撞上（2026-11-08 生产上一分钟内两次，agent-room-ops#77）；没有人被挡在服务器的毛病上"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ Agent 口令请求失败 failure=Conflict operation=private_room\.agent_knock\.waiting @ GET /private-rooms/\{id\}/agent-access/knocks$'
 reason = "房主刚归档房间，已经开着的页面（接入对话框 3 秒、房间页 10 秒一问）在读到“已归档”之前又问了一两次敲门名单；归档的房间不再收 Agent，服务器回 409 是对的，页面随后就不问了。2026-11-08 生产上那次只出现 2 次、相隔一分钟（agent-room-ops#76）。只认这一个操作和接口：别的操作报 Conflict 仍要看"
 
