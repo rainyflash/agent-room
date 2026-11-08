@@ -31,8 +31,9 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
     def test_签名和验证统一锁定已修补的_cosign(self) -> None:
         candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertEqual(self.workflow.count("cosign-release: v3.1.3"), 1)
-        self.assertEqual(candidate.count("cosign-release: v3.1.3"), 3)
+        # 每处安装都带两次隔一会的重试（GitHub Releases 偶尔回 504），三次装的都是同一个版本。
+        self.assertEqual(self.workflow.count("cosign-release: v3.1.3"), 3)
+        self.assertEqual(candidate.count("cosign-release: v3.1.3"), 9)
         self.assertEqual(
             self.workflow.count("sigstore/cosign-installer"),
             self.workflow.count("cosign-release: v3.1.3"),
@@ -41,6 +42,18 @@ class ReleasePublishWorkflowTests(unittest.TestCase):
             candidate.count("sigstore/cosign-installer"),
             candidate.count("cosign-release: v3.1.3"),
         )
+
+    def test_下载签名工具失败时隔一会再试(self) -> None:
+        candidate = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+        for text, tools in ((self.workflow, ("cosign",)), (candidate, ("cosign", "syft"))):
+            for tool in tools:
+                first = text.count(f"id: {tool}_1\n")
+                self.assertGreater(first, 0)
+                # 第一次和第二次失败不挡作业，第三次才算数；每次重试前先等。
+                self.assertEqual(text.count(f"if: steps.{tool}_1.outcome == 'failure'"), 2 * first)
+                self.assertEqual(text.count(f"if: steps.{tool}_2.outcome == 'failure'"), 2 * first)
+                self.assertEqual(text.count("run: sleep 60\n"), first * len(tools))
+                self.assertEqual(text.count("run: sleep 180\n"), first * len(tools))
 
     def test_发布前后都整理普通用户下载入口(self) -> None:
         command = "python tools/release_surface.py apply"
