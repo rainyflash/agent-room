@@ -601,6 +601,23 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_certificate_client_retry_is_noise(self) -> None:
+        retry = json.dumps(
+            {
+                "level": "warn",
+                "ts": 1792712032.5,
+                "logger": "http.acme_client",
+                "msg": "HTTP request failed; retrying",
+                "url": "https://acme-v02.api.letsencrypt.org/acme/new-order",
+                "error": "performing request: context deadline exceeded",
+            }
+        )
+        digest = summarize({"gateway": [retry, GATEWAY_ERROR]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertFalse(any("acme_client" in summary for summary in summaries))
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_opening_a_room_you_are_not_in_is_noise(self) -> None:
         not_found = CONTROL_WARN.replace('"failure": "Internal"', '"failure": "NotFound"')
         digest = summarize({"control-plane": [not_found, CONTROL_WARN]}, load_noise(NOISE_FILE))
