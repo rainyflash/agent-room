@@ -636,9 +636,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 92 正在发布：Agent 每说一句不再换一把房间密钥（#758）；私人房间不接 Agent 时单独说、不再记成告警（#760）；新装的电脑等人登录那段不算本机连接没连上（#757）；桌面端太少时不报 Bridge 群体可用率低（#756）；证书客户端重试的提示不再开 issue（#759）。
-  - 没改登录相关路径，复用 Alpha 91 那台长期验收设备，不要设备码。没有迁移，部署配置没加新变量。
-  - #756 改了告警规则：发版部署不碰监控容器，发完要跑 `telemetry-apply`。发完以后只读查一次 Agent 的消息每把房间密钥用了几条（#758 以前一条一把）。
+- Alpha 92 已于 2026-11-08 公开，见 [发布记录](./specs/agent-access/alpha92-release.md)。
+  - Agent 每说一句不再换一把房间密钥（#758）；私人房间不接 Agent 时单独说、不再记成告警（#760）；新装的电脑等人登录那段不算本机连接没连上（#757）；桌面端太少时不报 Bridge 群体可用率低（#756）；证书客户端重试的提示不再开 issue（#759）。
+  - 没改登录相关路径，复用 Alpha 91 那台长期验收设备，没要设备码。没有迁移，回滚可以退到 Alpha 91。发完跑了 `telemetry-apply`：20 条告警规则，没有在响的。
+  - GitHub Releases 断断续续回 504，签名候选红在下载 cosign、syft，重跑三次才全绿（#762 让这两步隔一会再试）。本机网络丢包 20–50%，SSH 一再被断开，实机验收的第 1 条回复也被挡下一次。发布脚本因此改成服务器上的步骤在 SSH 会话外跑（发布目录的 `remote_detached.py`，见下面“发布”一节）。
+  - #758 上线后只读查了一次：每个 Agent 都只用一把房间密钥。流量还少，本机 Agent 的桌面端陆续更新以后再看一次。
+  - 版本 PR #761 合并到网页上线约 2 小时 30 分钟，其中约 1 小时花在候选重跑上、约 1 小时花在本机网络上。
 - Alpha 91 已于 2026-11-07 公开，见 [发布记录](./specs/agent-access/alpha91-release.md)。
   - 设置“账户”里修改密码，改好以后退出别的浏览器和电脑上的登录（#752、#753）；注册时就设密码（#750）；指标收集器不再每 30 秒重读一遍程序（#751）。
   - #750、#752 改了登录相关路径，实机验收新授权了一台设备：码发出约 2 分钟维护者就批准了；长期验收设备换成 Alpha 91 那台（`agent-room.alpha91.acceptance.fresh-device`，人物在“发布验收”里）。
@@ -855,6 +858,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - Alpha 71 起的长期验收设备是 #372 以后加入的，人物不绑任务（`profileTaskId` 为空），按理换了 Codex 任务也能复用、不用再批准设备码。还没在换了任务的情况下试过，第一次换任务时看一眼 `start` 有没有改走新设备授权。
 - 本机的发布脚本每版从上一版的发布目录派生。Alpha 67 补了两处，派生时别丢：切换生产源码的脚本只核对“生产现在跑的提交是这个候选的祖先”，不再写死上一版的提交（同一版的候选部署过又被取代时，生产跑的是那个候选）；`publish_chain.sh` 上传验收报告前，先把服务器候选目录里的四份部署记录拷回本机（`fetch_deploy_records.sh`）。
 - 远程命令长时间不出声时，SSH 会被路上的设备掐断：服务器的 sshd 不发保活（`ClientAliveInterval 0`）。Alpha 69 部署前的全量五分半没有输出，`deploy_remote.py` 退出码 255，部署在服务器上照样跑完。Alpha 69 起 `run_remote.py` 和 `deploy_remote.py` 的 ssh 带 `ServerAliveInterval=20`，派生时别丢。再遇到断线，先只读看服务器上的 `release_deploy.py` 还在不在、检查点（`deployment_status.py`）到了哪一步，等它自己跑完，别重跑部署。
+  - Alpha 92 起这两个脚本经发布目录的 `remote_detached.py` 在服务器上脱离 SSH 会话跑：脚本传上去、sha256 对上才用 `setsid -f` 启动，输出和退出码写进服务器上的 `/var/lib/agent-room/releases/<版本>/jobs/<时间>-<名字>-<随机>/`，本机只用短连接查。那天本机网络丢包 20–50%，到 GitHub 和 1.1.1.1 也丢，SSH 握手要 6 秒以上、连着连着被断开；改了以后切源码那一步查结果时断过一次，照样跑完。断线时看那个作业目录里有没有 `exit`，别重跑。
+  - 同一天 `server_fetch.py` 的网络调用、各处 scp 都加了重试，SSH 连接超时放宽到 30 秒。派生时这些都带下去；一次性的重跑脚本（`rerun_candidate.py`、`rerun_until_green.py`、`qa_rerun.py`）别带。
+  - 丢包时实机验收的回复可能发不出去：Bridge 发回复前要向控制面要后台回复的授权，请求丢了就报 `bridge.automation_authorization_unavailable`，接收端把那次投递记成 `needs_review` 后退出。这时别整个重来：用验收工具同一套连接跑 `receiver resolve --binding <binding.private.json> --event <第 1 条的事件 ID> --action retry`，把接收端的旧记录（`receiver-process.json`、`receiver.private.jsonl`、`receiver.private.stderr`）挪开，再跑 `run`（Alpha 92 的 `qa_rerun.py`）。
 - 发版部署先把生产的源码切到候选，再拿上一版渲染的 `compose.env` 做部署前备份（故意不重新渲染，留住上一版的配置）。候选在 `infra/production/compose.yaml` 里新加的必填变量（`${名字:?…}`）上一版的 `compose.env` 里没有，compose 整个起不来。Alpha 73 切完源码半分钟就部署，停在 `AGENT_ROOM_CONTROL_PLANE_DB_MAX_CONNECTIONS is missing a value`，没动任何服务；等 00:00Z 的定时备份按候选重新渲染了一遍（定时备份不留旧配置），重跑才过。以前几版碰巧在切换和部署之间赶上一次定时备份。所以新变量先带默认值（`${名字:-值}`），发出去一版以后再改成必填，`test_prodops` 的 `REQUIRED_COMPOSE_VARIABLES` 卡着。
 - 公开的版本发成正式 Release 并标为 Latest（版本号照旧带 alpha）；`channel-testing` 只给应用自动更新读，是预发布。2026-10-09 以前所有版本都是预发布，GitHub 的 Latest 一直落在通道指针上，维护者看着像漏了最新版。
 - 生产上我们自己的镜像每版多 3 个（控制面、网页、身份服务），2026-11-01 攒到 105 个、13.7 GiB。维护者同意后只留当前和上一版（回滚用），删了 99 个、腾出 8.6 GB。发布目录的 `cleanup_old_images.py` 做这件事：按部署目录里的 `compose.images.json` 认当前和上一版，只删我们自己的，第三方的一个不碰（`alpine`、`rclone`、`golang` 平时没容器在用，别用 `docker image prune -a`）。派生发布脚本时带上，发完和 `cleanup_old_releases.py` 一起跑。
