@@ -14,6 +14,9 @@ const AUTHORIZATION_FAILED_DIAGNOSTIC: &str = "desktop.authorization.failed";
 const OTHER_INSTANCE_DIAGNOSTIC: &str = "desktop.bridge.other_instance_running";
 /// Bridge 因为这台电脑的授权失效而退出时报的代码（Bridge `BridgeRuntimeError::session`）。
 pub(crate) const AUTHORIZATION_LOST_DIAGNOSTIC: &str = "bridge.not_authorized";
+/// 托管的 Bridge 在等电脑授权，应用里却还没登录：人登录以前本来就连不上。阶段照旧是“正在启动”，
+/// 网页算本机连接连着的比例时不算这段（agent-room-ops#39）。
+const WAITING_FOR_SIGN_IN_DIAGNOSTIC: &str = "desktop.bridge.waiting_for_sign_in";
 /// Bridge 重连退避允许配置的最大间隔；更长的值只可能来自损坏的输出。
 const MAX_SERVER_RETRY_DELAY: Duration = Duration::from_mins(15);
 /// 另一个 Bridge 进程占着实例锁时最多等这么久再停机提示。上一个桌面留下的 Bridge 要逐个排空宿主
@@ -308,6 +311,27 @@ impl BridgeRestartPolicy {
         self.snapshot.changed_at_unix_ms = now_unix_ms;
     }
 
+    /// 正在启动的托管 Bridge 等电脑授权时，记下是不是在等人登录。只换说明、不换阶段，所以
+    /// `changed_at` 不动；有变化时返回 `true`，由调用的一方发布。
+    pub(crate) fn waiting_for_sign_in(&mut self, waiting: bool) -> bool {
+        if self.snapshot.phase != BridgePhase::Starting {
+            return false;
+        }
+        let current = self.snapshot.diagnostic_code.as_deref();
+        let diagnostic = if waiting {
+            Some(WAITING_FOR_SIGN_IN_DIAGNOSTIC)
+        } else if current == Some(WAITING_FOR_SIGN_IN_DIAGNOSTIC) {
+            None
+        } else {
+            current
+        };
+        if diagnostic == current {
+            return false;
+        }
+        self.snapshot.diagnostic_code = diagnostic.map(str::to_owned);
+        true
+    }
+
     pub(crate) fn authorization_required(&mut self, now_unix_ms: i64) {
         self.snapshot.phase = BridgePhase::AuthorizationRequired;
         self.snapshot.ownership = Some(BridgeOwnership::Managed);
@@ -489,6 +513,41 @@ mod tests {
             policy.snapshot().diagnostic_code.as_deref(),
             Some("desktop.bridge.session_pending")
         );
+    }
+
+    #[test]
+    fn 等人登录只在正在启动时记下_登录以后去掉() {
+        let mut policy = BridgeRestartPolicy::new(1_000);
+        policy.starting(1_100);
+        assert!(policy.waiting_for_sign_in(true));
+        assert!(!policy.waiting_for_sign_in(true), "没变化就不用再发布");
+        let snapshot = policy.snapshot();
+        assert_eq!(snapshot.phase, BridgePhase::Starting);
+        assert_eq!(
+            snapshot.diagnostic_code.as_deref(),
+            Some("desktop.bridge.waiting_for_sign_in")
+        );
+        assert_eq!(snapshot.changed_at_unix_ms, 1_100, "阶段没变，时间不动");
+        assert_eq!(snapshot.last_failure_code, None, "这不是失败");
+
+        assert!(policy.waiting_for_sign_in(false));
+        assert_eq!(policy.snapshot().diagnostic_code, None);
+        assert!(!policy.waiting_for_sign_in(false));
+
+        policy.discovered_pending(
+            1_200,
+            BridgeOwnership::Managed,
+            ConnectionProgress::Starting,
+        );
+        assert!(!policy.waiting_for_sign_in(false), "别的说明不该被去掉");
+        assert_eq!(
+            policy.snapshot().diagnostic_code.as_deref(),
+            Some("desktop.bridge.session_pending")
+        );
+
+        policy.halt(1_300, "bridge.secure_storage_unavailable");
+        assert!(!policy.waiting_for_sign_in(true), "停下了就不再改说明");
+        assert_eq!(policy.snapshot().phase, BridgePhase::Halted);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { createContext, useContext, type PropsWithChildren } from 'react';
 
+import { bridgeUptimeState } from '@/features/desktop/domain/bridge-uptime';
 import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import { useDesktopRuntimeTelemetry } from './use-desktop-runtime-telemetry';
@@ -23,7 +24,7 @@ export function DesktopRuntimeProvider({
   const controller = useDesktopRuntime(gateway);
   useDesktopRuntimeTelemetry(
     controller.available,
-    controller.snapshot?.bridge.lifecycle.phase ?? 'discovering',
+    bridgeUptimeState(controller.snapshot?.bridge.lifecycle),
     telemetry,
   );
   return (

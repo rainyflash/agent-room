@@ -2,8 +2,10 @@
 
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BRIDGE_UPTIME_WINDOW_MS } from '@/features/desktop/domain/bridge-uptime';
-import type { BridgePhase } from '@/features/desktop/domain/desktop-runtime';
+import {
+  BRIDGE_UPTIME_WINDOW_MS,
+  type BridgeUptimeState,
+} from '@/features/desktop/domain/bridge-uptime';
 import { useDesktopRuntimeTelemetry } from './use-desktop-runtime-telemetry';
 
 afterEach(() => {
@@ -27,7 +29,7 @@ describe('桌面运行时观测', () => {
     const telemetry = { record: vi.fn().mockResolvedValue(undefined) };
     const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
     const { rerender } = renderHook(
-      ({ phase }: { readonly phase: BridgePhase }) => {
+      ({ phase }: { readonly phase: BridgeUptimeState }) => {
         useDesktopRuntimeTelemetry(true, phase, telemetry);
       },
       { initialProps: { phase: 'starting' } },
@@ -49,7 +51,7 @@ describe('桌面运行时观测', () => {
     const telemetry = { record: vi.fn().mockResolvedValue(undefined) };
     const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
     const { rerender } = renderHook(
-      ({ phase }: { readonly phase: BridgePhase }) => {
+      ({ phase }: { readonly phase: BridgeUptimeState }) => {
         useDesktopRuntimeTelemetry(true, phase, telemetry);
       },
       { initialProps: { phase: 'reconnecting' } },
@@ -63,12 +65,34 @@ describe('桌面运行时观测', () => {
     });
   });
 
+  it('重连耗时从登录好了算起，不算等人登录的那段', () => {
+    const telemetry = { record: vi.fn().mockResolvedValue(undefined) };
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { rerender } = renderHook(
+      ({ phase }: { readonly phase: BridgeUptimeState }) => {
+        useDesktopRuntimeTelemetry(true, phase, telemetry);
+      },
+      { initialProps: { phase: 'starting' } },
+    );
+    clock.mockReturnValue(1_000);
+    rerender({ phase: 'waiting_for_sign_in' });
+    clock.mockReturnValue(600_000);
+    rerender({ phase: 'starting' });
+    clock.mockReturnValue(602_500);
+    rerender({ phase: 'authorized' });
+    expect(telemetry.record).toHaveBeenCalledExactlyOnceWith({
+      metric: 'bridge_reconnect',
+      surface: 'desktop',
+      value: 2_500,
+    });
+  });
+
   it('开着时每 15 分钟报一次这段时间连着的比例，启动那几秒不拉低它', () => {
     vi.useFakeTimers();
     const telemetry = { record: vi.fn().mockResolvedValue(undefined) };
     const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
     const { rerender, unmount } = renderHook(
-      ({ phase }: { readonly phase: BridgePhase }) => {
+      ({ phase }: { readonly phase: BridgeUptimeState }) => {
         useDesktopRuntimeTelemetry(true, phase, telemetry);
       },
       { initialProps: { phase: 'starting' } },
