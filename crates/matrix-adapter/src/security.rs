@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -15,7 +15,8 @@ use matrix_sdk::{
     Client,
     encryption::verification::{SasVerification, VerificationRequest, VerificationRequestState},
     ruma::{
-        OwnedDeviceId, RoomId, UserId,
+        OwnedDeviceId, OwnedUserId, RoomId, UserId,
+        api::client::membership::joined_members,
         events::{
             StateEventType,
             key::verification::VerificationMethod,
@@ -437,13 +438,9 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
                 .client
                 .get_room(&room)
                 .ok_or(MatrixSecurityFailure::NotJoined)?;
-            // 成员名单只在第一次真去服务器拉，之后靠同步更新。有人经服务器进了房间（放行敲门、凭
-            // 口令进来、接受邀请）而本机还没同步到时，名单是旧的：房间密钥不发给新来的人，这条和
-            // 之后的消息他都解不开。网络 Agent 只在等消息时同步，最容易碰上；本机 Bridge 在两次
-            // 同步之间也会。所以每次发送前都重新拉一次，matrix-sdk 自己邀请人以后也是这么做的。
-            room.mark_members_missing();
+            refresh_members_if_changed(&self.client, &room).await?;
             let members = room
-                .members(matrix_sdk::RoomMemberships::JOIN)
+                .members_no_sync(matrix_sdk::RoomMemberships::JOIN)
                 .await
                 .map_err(|_| MatrixSecurityFailure::Unavailable)?;
             let own = self
@@ -507,4 +504,81 @@ impl MatrixSecurityGateway for MatrixSdkSecurityGateway {
 
 fn sas_decimals(sas: &SasVerification) -> Option<[u16; 3]> {
     sas.decimals().map(|(a, b, c)| [a, b, c])
+}
+
+/// 发送前让本机的成员名单跟上服务器。
+///
+/// 成员名单只在第一次真去服务器拉，之后靠同步更新。有人经服务器进了房间（放行敲门、凭口令进来、
+/// 接受邀请）而本机还没同步到时，名单是旧的：房间密钥不发给新来的人，这条和之后的消息他都解不开
+/// （#435）。网络 Agent 只在等消息时同步，最容易碰上；本机 Bridge 在两次同步之间也会。
+///
+/// 所以先问服务器此刻谁在房间里（`joined_members`，很轻），和本机名单不一样才重新拉整份名单。别每次
+/// 都整份重拉：matrix-sdk 0.18 每整份重拉一次就丢掉当前的房间密钥（`receive_all_members`），下一条
+/// 换一把新的、再挨个发给房间里的每台设备。#435 以后 Agent 每说一句都换一把，离线设备的待收消息
+/// 一直涨（2026-11-08 生产上查到）。名单真变了才换，和有人离开时 SDK 自己换是一个道理。
+async fn refresh_members_if_changed(
+    client: &Client,
+    room: &matrix_sdk::Room,
+) -> Result<(), MatrixSecurityFailure> {
+    if room.are_members_synced() {
+        let joined = client
+            .send(joined_members::v3::Request::new(room.room_id().to_owned()))
+            .await
+            .map_err(|_| MatrixSecurityFailure::Unavailable)?
+            .joined;
+        let local = room
+            .members_no_sync(matrix_sdk::RoomMemberships::JOIN)
+            .await
+            .map_err(|_| MatrixSecurityFailure::Unavailable)?;
+        if same_members(joined.keys(), local.iter().map(|member| member.user_id())) {
+            return Ok(());
+        }
+        room.mark_members_missing();
+    }
+    room.sync_members()
+        .await
+        .map_err(|_| MatrixSecurityFailure::Unavailable)
+}
+
+fn same_members<'a>(
+    server: impl Iterator<Item = &'a OwnedUserId>,
+    local: impl Iterator<Item = &'a UserId>,
+) -> bool {
+    let server: BTreeSet<&UserId> = server.map(OwnedUserId::as_ref).collect();
+    let local: BTreeSet<&UserId> = local.collect();
+    server == local
+}
+
+#[cfg(test)]
+mod member_tests {
+    use matrix_sdk::ruma::{OwnedUserId, UserId, owned_user_id, user_id};
+
+    use super::same_members;
+
+    #[test]
+    fn 名单一样就不重拉_顺序不同也算一样() {
+        let server: Vec<OwnedUserId> = vec![
+            owned_user_id!("@b:agentroom.chat"),
+            owned_user_id!("@a:agentroom.chat"),
+        ];
+        let local: Vec<&UserId> =
+            vec![user_id!("@a:agentroom.chat"), user_id!("@b:agentroom.chat")];
+        assert!(same_members(server.iter(), local.into_iter()));
+    }
+
+    #[test]
+    fn 有人进来或离开就重拉() {
+        let server: Vec<OwnedUserId> = vec![
+            owned_user_id!("@a:agentroom.chat"),
+            owned_user_id!("@c:agentroom.chat"),
+        ];
+        assert!(!same_members(
+            server.iter(),
+            [user_id!("@a:agentroom.chat")].into_iter()
+        ));
+        assert!(!same_members(
+            server[..1].iter(),
+            [user_id!("@a:agentroom.chat"), user_id!("@c:agentroom.chat")].into_iter()
+        ));
+    }
 }

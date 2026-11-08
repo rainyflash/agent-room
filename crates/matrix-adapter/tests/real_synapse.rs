@@ -321,12 +321,19 @@ async fn 真实_synapse_说过话以后有人进来_没同步就发言也给他�
         .ensure_room_ready(&room_id)
         .await
         .expect("说话的一方可以发送");
-    send_with_retry(
+    let first = send_with_retry(
         speaker.matrix().gateway(),
         &room_id,
         &message_event(unique_value("before-newcomer"), "新来的人进来之前的消息"),
     )
     .await;
+    // 名单没变时接着说，用同一把房间密钥：以前发送前每次整份重拉成员，SDK 每次都换一把（#435 以后）。
+    let second = send_ready(&speaker, &room_id, "名单没变时的第二句").await;
+    assert_eq!(
+        encrypted_event_session_id(&base_url, speaker.matrix(), &room_id, first.event_id()).await,
+        encrypted_event_session_id(&base_url, speaker.matrix(), &room_id, second.event_id()).await,
+        "成员没变时接连两句要用同一把房间密钥"
+    );
 
     // 新来的人由服务器邀请后自己加入；说话的一方不再同步，看不到这次加入。
     let newcomer = managed_device(&provisioner, &factory).await;
@@ -337,17 +344,7 @@ async fn 真实_synapse_说过话以后有人进来_没同步就发言也给他�
         .expect("可以邀请新来的人");
     join_with_retry(newcomer.matrix().gateway(), &room_id).await;
 
-    speaker
-        .security_gateway_handle()
-        .ensure_room_ready(&room_id)
-        .await
-        .expect("发送前必须能重新拉成员名单");
-    let sent = send_with_retry(
-        speaker.matrix().gateway(),
-        &room_id,
-        &message_event(unique_value("after-newcomer"), "新来的人进来以后的消息"),
-    )
-    .await;
+    let sent = send_ready(&speaker, &room_id, "新来的人进来以后的消息").await;
     let received = sync_until_event(newcomer.matrix().gateway(), &room_id, sent.event_id()).await;
     assert_eq!(
         received.event_type().as_str(),
@@ -1552,6 +1549,25 @@ fn status_state_event(revision: u8) -> MatrixStateEvent {
         }),
     )
     .expect("测试状态事件有效")
+}
+
+/// 像 Bridge 和网关那样发：先 `ensure_room_ready`，再发一句。
+async fn send_ready(
+    speaker: &MatrixSdkHandoffConnection,
+    room_id: &MatrixRoomId,
+    body: &str,
+) -> MatrixAcceptedEvent {
+    speaker
+        .security_gateway_handle()
+        .ensure_room_ready(room_id)
+        .await
+        .expect("发送前必须能让成员名单跟上服务器");
+    send_with_retry(
+        speaker.matrix().gateway(),
+        room_id,
+        &message_event(unique_value("ready"), body),
+    )
+    .await
 }
 
 async fn send_with_retry(
