@@ -67,7 +67,29 @@ jobs:
           gh release download "$TAG" --dir candidate
       - name: 安装 Rust 与 Cosign
         run: rustup toolchain install 1.97.1 --profile minimal
+      # 安装器从 GitHub Releases 下 cosign，GitHub 偶尔连着几十分钟断断续续回 504（2026-11-08 Alpha 92 的
+      # 签名候选因此整轮重跑了三次）。下载失败就等一会再试，最多三次；装上的版本一样。
       - name: 安装 Cosign
+        id: cosign_1
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 1 分钟再装 Cosign
+        if: steps.cosign_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Cosign（等 1 分钟后重试）
+        id: cosign_2
+        if: steps.cosign_1.outcome == 'failure'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 3 分钟再装 Cosign
+        if: steps.cosign_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Cosign（等 3 分钟后最后一次）
+        if: steps.cosign_2.outcome == 'failure'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
         with:
           cosign-release: v3.1.3

@@ -184,11 +184,49 @@ jobs:
         run: corepack pnpm@10.28.0 install --frozen-lockfile
       # 桌面接入门禁（node tools/desktop.mjs native-check）由同一提交的完整 CI 在 Windows 上执行，
       # 发布调度要求该 CI 通过后才继续核验与发布；候选里不再重复这 5 分钟的编译与测试。
+      # 安装器从 GitHub Releases 下 cosign，GitHub 偶尔连着几十分钟断断续续回 504（2026-11-08 Alpha 92 的
+      # 签名候选因此整轮重跑了三次）。下载失败就等一会再试，最多三次；装上的版本一样。
       - name: 安装 Cosign
+        id: cosign_1
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 1 分钟再装 Cosign
+        if: steps.cosign_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Cosign（等 1 分钟后重试）
+        id: cosign_2
+        if: steps.cosign_1.outcome == 'failure'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 3 分钟再装 Cosign
+        if: steps.cosign_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Cosign（等 3 分钟后最后一次）
+        if: steps.cosign_2.outcome == 'failure'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
         with:
           cosign-release: v3.1.3
       - name: 安装 Syft
+        id: syft_1
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 等 1 分钟再装 Syft
+        if: steps.syft_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Syft（等 1 分钟后重试）
+        id: syft_2
+        if: steps.syft_1.outcome == 'failure'
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 等 3 分钟再装 Syft
+        if: steps.syft_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Syft（等 3 分钟后最后一次）
+        if: steps.syft_2.outcome == 'failure'
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 构建带强制签名更新的桌面端
         env:
@@ -439,11 +477,49 @@ jobs:
           test "$(printf '%s' "$INDEX_DIGEST" | grep -Ec '^sha256:[0-9a-f]{64}$')" = 1
           docker buildx imagetools inspect "$IMAGE_REPOSITORY@$INDEX_DIGEST" >/dev/null
           printf 'digest=%s\n' "$INDEX_DIGEST" >> "$GITHUB_OUTPUT"
+      # 安装器从 GitHub Releases 下 cosign，GitHub 偶尔连着几十分钟断断续续回 504（2026-11-08 Alpha 92 的
+      # 签名候选因此整轮重跑了三次）。下载失败就等一会再试，最多三次；装上的版本一样。
       - name: 安装 Cosign
+        id: cosign_1
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 1 分钟再装 Cosign
+        if: steps.cosign_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Cosign（等 1 分钟后重试）
+        id: cosign_2
+        if: steps.cosign_1.outcome == 'failure'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 3 分钟再装 Cosign
+        if: steps.cosign_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Cosign（等 3 分钟后最后一次）
+        if: steps.cosign_2.outcome == 'failure'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
         with:
           cosign-release: v3.1.3
       - name: 安装 Syft
+        id: syft_1
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 等 1 分钟再装 Syft
+        if: steps.syft_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Syft（等 1 分钟后重试）
+        id: syft_2
+        if: steps.syft_1.outcome == 'failure'
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 等 3 分钟再装 Syft
+        if: steps.syft_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Syft（等 3 分钟后最后一次）
+        if: steps.syft_2.outcome == 'failure'
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 为镜像生成 SBOM、签名与描述
         env:
@@ -495,11 +571,49 @@ jobs:
           merge-multiple: true
           run-id: ${{ needs.metadata.outputs.artifact_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      # 安装器从 GitHub Releases 下 cosign，GitHub 偶尔连着几十分钟断断续续回 504（2026-11-08 Alpha 92 的
+      # 签名候选因此整轮重跑了三次）。下载失败就等一会再试，最多三次；装上的版本一样。
       - name: 安装 Cosign
+        id: cosign_1
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 1 分钟再装 Cosign
+        if: steps.cosign_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Cosign（等 1 分钟后重试）
+        id: cosign_2
+        if: steps.cosign_1.outcome == 'failure'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: 等 3 分钟再装 Cosign
+        if: steps.cosign_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Cosign（等 3 分钟后最后一次）
+        if: steps.cosign_2.outcome == 'failure'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # 版本 4.1.2
         with:
           cosign-release: v3.1.3
       - name: 安装 Syft
+        id: syft_1
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 等 1 分钟再装 Syft
+        if: steps.syft_1.outcome == 'failure'
+        run: sleep 60
+      - name: 安装 Syft（等 1 分钟后重试）
+        id: syft_2
+        if: steps.syft_1.outcome == 'failure'
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
+      - name: 等 3 分钟再装 Syft
+        if: steps.syft_2.outcome == 'failure'
+        run: sleep 180
+      - name: 安装 Syft（等 3 分钟后最后一次）
+        if: steps.syft_2.outcome == 'failure'
         uses: anchore/sbom-action/download-syft@a930d0ac434e3182448fe678398ba5713717112a # 版本 0.21.0
       - name: 生成并证明跨平台 Tauri 更新清单
         env:
