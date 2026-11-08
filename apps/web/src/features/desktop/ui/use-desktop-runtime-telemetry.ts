@@ -2,26 +2,28 @@ import { useEffect, useRef, useState } from 'react';
 import {
   BRIDGE_UPTIME_WINDOW_MS,
   BridgeUptimeWindow,
+  bridgeUptimeReady,
+  type BridgeUptimeState,
 } from '@/features/desktop/domain/bridge-uptime';
-import type { BridgePhase } from '@/features/desktop/domain/desktop-runtime';
-import { localConnectionReady } from '@/features/desktop/domain/desktop-connection';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 
 export function useDesktopRuntimeTelemetry(
   available: boolean,
-  phase: BridgePhase,
+  state: BridgeUptimeState,
   telemetry: FrontendTelemetryGateway | undefined,
 ): void {
-  const previousPhase = useRef<BridgePhase | null>(null);
+  const previousState = useRef<BridgeUptimeState | null>(null);
   const reconnectStartedAt = useRef<number | null>(null);
   const [uptime] = useState(() => new BridgeUptimeWindow());
   useEffect(() => {
-    if (!available || telemetry === undefined || previousPhase.current === phase) return;
+    if (!available || telemetry === undefined || previousState.current === state) return;
     const now = performance.now();
-    uptime.observe(phase, now);
-    if (phase === 'retry_scheduled' || phase === 'starting' || phase === 'reconnecting')
+    uptime.observe(state, now);
+    // 等人登录的那段不算重连用的时间：登录好了才开始算。
+    if (state === 'waiting_for_sign_in') reconnectStartedAt.current = null;
+    if (state === 'retry_scheduled' || state === 'starting' || state === 'reconnecting')
       reconnectStartedAt.current ??= now;
-    if (localConnectionReady(phase) && reconnectStartedAt.current !== null) {
+    if (bridgeUptimeReady(state) && reconnectStartedAt.current !== null) {
       void telemetry.record({
         metric: 'bridge_reconnect',
         surface: 'desktop',
@@ -29,8 +31,8 @@ export function useDesktopRuntimeTelemetry(
       });
       reconnectStartedAt.current = null;
     }
-    previousPhase.current = phase;
-  }, [available, phase, telemetry, uptime]);
+    previousState.current = state;
+  }, [available, state, telemetry, uptime]);
   useEffect(() => {
     if (!available || telemetry === undefined) return;
     const timer = window.setInterval(() => {

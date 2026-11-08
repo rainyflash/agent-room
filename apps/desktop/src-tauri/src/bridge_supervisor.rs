@@ -944,8 +944,10 @@ impl BridgeSupervisorActor {
             .and_then(|sessions| sessions.session_secret().ok().flatten());
         let Some(secret) = secret else {
             tracing::info!("应用里还没登录，登录以后再连上这台电脑");
+            self.waiting_for_sign_in(true);
             return;
         };
+        self.waiting_for_sign_in(false);
         let Some(client) = ComputerGrantClient::new(self.config.control_plane_url()) else {
             self.follow_grant_step(GrantStep::DeviceCode);
             return;
@@ -981,6 +983,13 @@ impl BridgeSupervisorActor {
         });
     }
 
+    /// 界面照旧是“正在连接”；网页靠这个说明知道人还没登录，这段不算本机连接没连上。
+    fn waiting_for_sign_in(&mut self, waiting: bool) {
+        if self.policy.waiting_for_sign_in(waiting) {
+            self.publish();
+        }
+    }
+
     fn follow_grant_step(&mut self, step: GrantStep) {
         match step {
             GrantStep::Wait => {}
@@ -1003,6 +1012,7 @@ impl BridgeSupervisorActor {
             }
             GrantStep::ForgetSession => {
                 tracing::info!("控制面说应用里的登录无效，重新登录以后再连上这台电脑");
+                self.waiting_for_sign_in(true);
             }
             GrantStep::DeviceCode => {
                 tracing::warn!("要不到电脑授权，请 Bridge 改走设备码");
