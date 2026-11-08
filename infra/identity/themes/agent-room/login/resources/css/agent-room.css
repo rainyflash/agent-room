@@ -503,6 +503,26 @@ textarea.ar-input {
   font-size: 15px;
 }
 
+.ar-email-suggestion strong {
+  color: var(--ar-ink);
+  overflow-wrap: anywhere;
+}
+
+.ar-email-suggestion__apply {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ar-accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ar-email-suggestion__apply:hover {
+  color: var(--ar-accent-hover);
+}
+
 /* ------------------------------------------------------------------ feedback */
 
 .ar-alert {

@@ -117,12 +117,12 @@ reason = "邮箱的链接安全扫描一两秒里从二十多个地址去点验�
 [[ignore]]
 service = "identity"
 summary = '^EXECUTE_ACTION_TOKEN_ERROR error=expired_code$'
-reason = "点了过期的邮件链接（验证链接 1 小时有效）。#574 起错误页说清楚设过密码就登录、没设就点“忘记密码？”，并给回到 Agent Room 的按钮"
+reason = "点了过期的邮件链接（验证链接以前 1 小时有效，2026-11-08 起一天；重设密码的照旧 1 小时）。#574 起错误页说清楚设过密码就登录、没设就点“忘记密码？”，并给回到 Agent Room 的按钮"
 
 [[ignore]]
 service = "identity"
 summary = '^CUSTOM_REQUIRED_ACTION_ERROR error=expired_code$'
-reason = "点了过期的验证邮件链接（1 小时有效），走到验证那一步才发现过期，和 EXECUTE_ACTION_TOKEN_ERROR 的过期是同一件事；#574 起错误页说清楚怎么办"
+reason = "点了过期的验证邮件链接（以前 1 小时有效，2026-11-08 起一天），走到验证那一步才发现过期，和 EXECUTE_ACTION_TOKEN_ERROR 的过期是同一件事；#574 起错误页说清楚怎么办"
 
 [[ignore]]
 service = "identity"

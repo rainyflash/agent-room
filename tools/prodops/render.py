@@ -50,6 +50,10 @@ PRIVATE_DIRECTORY_MODE: Final = 0o700
 PUBLIC_FILE_MODE: Final = 0o644
 POSTGRES_MOUNT_PARENT_MODE: Final = 0o711
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
+# 验证邮件的链接单独放到一天：注册完隔几个小时才去看信的人，点开时链接已经过期（生产错误汇总里
+# 常见的 expired_code）。注册时已经设了密码，验证链接只确认地址；重设密码的链接照旧一小时。
+VERIFY_EMAIL_LINK_LIFESPAN_SECONDS: Final = 24 * 60 * 60
+VERIFY_EMAIL_LINK_ATTRIBUTE: Final = "actionTokenGeneratedByUserLifespan.verify-email"
 # 控制面所有副本加起来用的数据库连接。Synapse 20 个、Keycloak 20 个、控制面 20 个，再加迁移、备份和
 # 指标采集几个，PostgreSQL 默认的 100 个够用（specs/launch-capacity/design.md 第 5 步）。
 CONTROL_PLANE_DATABASE_CONNECTIONS: Final = 20
@@ -346,7 +350,11 @@ def _keycloak_realm(config: DeploymentConfig, secrets: SecretStore) -> dict[str,
         "defaultLocale": "en",
         "passwordPolicy": "length(8)",
         # 与 keycloak-registration-reconcile.py 的 APP_URL_ATTRIBUTE 一致：没有客户端的错误页靠它给“回到 Agent Room”。
-        "attributes": {"agentRoomAppUrl": f"{public.app_origin}/"},
+        # 验证链接的有效期按动作单独覆盖，Keycloak 读 realm 属性 actionTokenGeneratedByUserLifespan.<动作>。
+        "attributes": {
+            "agentRoomAppUrl": f"{public.app_origin}/",
+            VERIFY_EMAIL_LINK_ATTRIBUTE: str(VERIFY_EMAIL_LINK_LIFESPAN_SECONDS),
+        },
         "clients": [
             {
                 "clientId": "agent-room-web",

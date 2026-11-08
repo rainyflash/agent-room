@@ -26,6 +26,10 @@ ACCOUNT_ADMIN_ROLE: Final = "manage-users"
 ADMIN_USERNAME: Final = "agent-room-admin"
 REQUEST_TIMEOUT_SECONDS: Final = 20
 USER_IDENTITY_ACTION_LIFESPAN_SECONDS: Final = 60 * 60
+# 验证邮件的链接单独放到一天：注册完隔几个小时才去看信的人，点开时链接已经过期（生产错误汇总里
+# 常见的 expired_code）。注册时已经设了密码，验证链接只确认地址；重设密码的链接照旧一小时。
+VERIFY_EMAIL_LINK_LIFESPAN_SECONDS: Final = 24 * 60 * 60
+VERIFY_EMAIL_LINK_ATTRIBUTE: Final = "actionTokenGeneratedByUserLifespan.verify-email"
 # 身份镜像自带的登录与邮件主题；提供简体中文和英文，按浏览器语言选择。
 # 默认语言只在浏览器语言不是这两种时兜底，与网页端一致用英文。
 THEME: Final = "agent-room"
@@ -337,6 +341,10 @@ def apply_registration_policy(
             "bruteForceProtected": True,
         }
     )
+    attributes = updated.get("attributes")
+    attributes = dict(attributes) if isinstance(attributes, dict) else {}
+    attributes[VERIFY_EMAIL_LINK_ATTRIBUTE] = str(VERIFY_EMAIL_LINK_LIFESPAN_SECONDS)
+    updated["attributes"] = attributes
     if smtp is None:
         updated.pop("smtpServer", None)
     else:
