@@ -114,8 +114,11 @@ groups:
           impact: 其他 homeserver 无法发现或连接本站
           diagnostic: 检查 well-known、TLS、DNS 与 federation version 入口
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomfederationendpointunavailable
+      # 看的是一群桌面端合起来的比例，人少时就成了某一个人的：2026-11-07 一小时里只有五台左右在报，
+      # 其中一台断了二十来分钟（服务器那头的日志都正常），平均就掉到 94%（agent-room-ops#39）。
+      # 一小时样本少于 40 个（约 10 台桌面端开满一小时）不报；服务器那头出了事由探测和健康检查的告警报。
       - alert: AgentRoomBridgeAvailabilityLow
-        expr: (sum(rate(agent_room_frontend_score_sum{metric="bridge_uptime"}[1h])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])), 0.000001) < 0.95) and on() sum(increase(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])) >= 4
+        expr: (sum(rate(agent_room_frontend_score_sum{metric="bridge_uptime"}[1h])) / clamp_min(sum(rate(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])), 0.000001) < 0.95) and on() sum(increase(agent_room_frontend_score_count{metric="bridge_uptime"}[1h])) >= 40
         for: 15m
         labels:
           severity: warning
