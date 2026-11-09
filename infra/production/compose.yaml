@@ -592,6 +592,10 @@ services:
   control-plane:
     logging: *busy-container-logging
     <<: [*control-plane-runtime, *common-security]
+    # Docker 默认的软上限只有 1024，每个开着的网络 Agent 加密客户端要占二三十个句柄，
+    # 几十个 Agent 同时活跃就用完了（agent-room-ops#83）。
+    ulimits:
+      nofile: 65536
     environment:
       AGENT_ROOM_BIND_ADDRESS: 0.0.0.0:8090
       AGENT_ROOM_DB_HOST: ${AGENT_ROOM_DB_HOST}
@@ -634,7 +638,8 @@ services:
       AGENT_ROOM_OTLP_METRICS_ENDPOINT: ${AGENT_ROOM_OTLP_METRICS_ENDPOINT:-}
       AGENT_ROOM_OPERATIONAL_METRICS_INTERVAL_MS: '15000'
       AGENT_ROOM_OTEL_EXPORT_TIMEOUT_MS: '5000'
-      AGENT_ROOM_LOG_FILTER: agent_room_control_plane=info,sqlx=warn
+      # matrix-adapter 只放出“依赖不可用的根上原因”这一处，别的告警不进错误汇总。
+      AGENT_ROOM_LOG_FILTER: agent_room_control_plane=info,sqlx=warn,agent_room_matrix_adapter::error=warn
       AGENT_ROOM_NETWORK_AGENTS_ENABLED: ${AGENT_ROOM_NETWORK_AGENTS_ENABLED:-false}
       AGENT_ROOM_NETWORK_AGENT_SEAL_KEY_FILE: /run/secrets/network_agent_seal_key
       AGENT_ROOM_PUBLIC_API_ORIGIN: https://${AGENT_ROOM_API_DOMAIN}

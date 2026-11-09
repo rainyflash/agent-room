@@ -139,6 +139,15 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 内核因为内存不够杀了一个进程（`/proc/vmstat` 的 `oom_kill` 涨了）。`journalctl -k --since "-1h" | grep -i -A5 oom-kill` 看杀的是谁、当时谁占内存最多；被杀的容器会按 `restart: unless-stopped` 自己起来，看它恢复健康没有。之后按上一节查内存为什么不够。
 
+## AgentRoomControlPlaneOpenFilesHigh
+
+控制面打开的文件和连接超过了软上限的八成（`agent_room_operational_value` 的 `process_open_files` 除以 `process_open_files_limit`）。每个开着的网络 Agent 加密客户端占二三十个句柄，忙的时候更多，用完最后一次 10 分钟才关。句柄用完以后，进过加密房间的网络 Agent 打不开客户端、一律回 503，新的数据库连接和入站请求也开始失败。2026-11-09 上限还是 Docker 默认的 1024 时，大概就是这样出的事（agent-room-ops#83）：8 分钟里新建了 32 个网络 Agent，Synapse 没有 5xx，控制面回了 7 分钟 503。
+
+- 先确认上限对不对：`cat /proc/$(docker inspect agent-room-control-plane-1 --format '{{.State.Pid}}')/limits | grep 'open files'`，应该是 65536。
+- 看什么占得最多：`ls -l /proc/<pid>/fd | awk '{print $NF}'`，路径里的 ID 打码后再贴到 issue 里。
+- 看控制面日志里“Matrix 客户端的依赖不可用”的 `cause`：`Too many open files` 或 `Unable to open the database file` 都是句柄用完的样子。
+- 句柄一直涨、Agent 却不多，就是哪里漏了，重建控制面能先顶住（`production.py control-plane-reload`）。Agent 真的多，看内存够不够再调上限，改 `compose.yaml` 里控制面的 `ulimits`。
+
 ## AgentRoomPostgresExporterDown
 
 确认 exporter 容器、`agent_room_metrics` 角色、`pg_monitor` 成员资格、TLS 和 `postgres_metrics_password` 文件。该角色只能用于指标，不得复用迁移或应用运行角色。恢复后确认 `up{job="postgres"} == 1`。

@@ -1576,6 +1576,12 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertGreater(len(services), 20)
         self.assertEqual([name for name, limited in services.items() if not limited], [])
 
+    def test_控制面的句柄上限不是_docker_默认的_1024_日志放出依赖不可用的原因(self) -> None:
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+        block = compose.split("\n  control-plane:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("    ulimits:\n      nofile: 65536\n", block)
+        self.assertIn("agent_room_matrix_adapter::error=warn", block)
+
     def test_监控容器都有内存上限_告警接收只在_webhook_档(self) -> None:
         compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
         blocks: dict[str, list[str]] = {}

@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Duration};
+use std::{error::Error as StdError, str::FromStr, time::Duration};
 
 use agent_room_application::ports::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
@@ -26,8 +26,35 @@ pub(crate) fn map_sdk_error(operation: MatrixOperation, error: &Error) -> Matrix
             MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
         }
         Error::SerdeJson(_) => MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse),
-        _ => MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable),
+        _ => dependency_unavailable(operation, error),
     }
+}
+
+/// 归成“依赖不可用”时把根上的原因记下来：`MatrixFailure` 只带种类，上层的日志看不出是
+/// 本机 `SQLite` 打不开、文件句柄用完了，还是连不上服务器（agent-room-ops#83）。
+pub(crate) fn dependency_unavailable(
+    operation: MatrixOperation,
+    error: &(dyn StdError + 'static),
+) -> MatrixFailure {
+    log_dependency_cause(operation, error);
+    MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable)
+}
+
+fn log_dependency_cause(operation: MatrixOperation, error: &(dyn StdError + 'static)) {
+    tracing::warn!(
+        operation = ?operation,
+        cause = %root_cause(error),
+        "Matrix 客户端的依赖不可用"
+    );
+}
+
+/// 错误链最底下那一层。只记这一层：`reqwest` 那一层的说明带着完整的请求地址，里面有账户和房间。
+fn root_cause<'a>(error: &'a (dyn StdError + 'static)) -> &'a (dyn StdError + 'static) {
+    let mut current = error;
+    while let Some(next) = current.source() {
+        current = next;
+    }
+    current
 }
 
 pub(crate) fn map_build_error(
@@ -45,8 +72,8 @@ pub(crate) fn map_build_error(
         ClientBuildError::AutoDiscovery(_) => {
             MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
         }
-        ClientBuildError::SqliteStore(_) => {
-            MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable)
+        ClientBuildError::SqliteStore(store_error) => {
+            dependency_unavailable(operation, store_error)
         }
     }
 }
@@ -65,10 +92,13 @@ pub(crate) fn map_http_error(operation: MatrixOperation, error: &HttpError) -> M
     match error {
         HttpError::Reqwest(request_error) => {
             if request_error.is_connect() {
-                MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable)
-            } else {
-                transport_failure(operation, request_error.is_timeout())
+                return dependency_unavailable(operation, request_error);
             }
+            let failure = transport_failure(operation, request_error.is_timeout());
+            if failure.kind() == MatrixFailureKind::DependencyUnavailable {
+                log_dependency_cause(operation, request_error);
+            }
+            failure
         }
         HttpError::Api(_) | HttpError::IntoHttp(_) => {
             MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse)
@@ -185,7 +215,24 @@ mod tests {
         ruma::api::error::{Error as ApiError, ErrorBody, ErrorKind, StandardErrorBody},
     };
 
-    use super::{map_api_error, map_sdk_error};
+    use super::{map_api_error, map_sdk_error, root_cause};
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("请求 http://synapse:8008/_matrix/client/v3/rooms/某个房间 失败")]
+    struct Outer(#[source] std::io::Error);
+
+    #[test]
+    fn 依赖不可用只记最底下那层原因_不带请求地址() {
+        let error = Outer(std::io::Error::other("Too many open files"));
+        let cause = root_cause(&error).to_string();
+        assert_eq!(cause, "Too many open files");
+    }
+
+    #[test]
+    fn 没有下一层时记它自己() {
+        let error = std::io::Error::other("打不开");
+        assert_eq!(root_cause(&error).to_string(), "打不开");
+    }
 
     #[test]
     fn 登录拒绝和房间权限拒绝不会混为一类() {

@@ -54,6 +54,7 @@ EXPECTED_ALERTS: Final = frozenset(
         "AgentRoomDiskSpaceCritical",
         "AgentRoomMemoryLow",
         "AgentRoomOomKill",
+        "AgentRoomControlPlaneOpenFilesHigh",
         "AgentRoomPostgresExporterDown",
         "AgentRoomTelemetryCollectorDown",
         "AgentRoomBackupRpoBreached",
