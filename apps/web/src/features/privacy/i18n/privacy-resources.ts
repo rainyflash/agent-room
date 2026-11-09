@@ -38,7 +38,7 @@ export const privacyResources = {
       'The chat server keeps the IP address and app version of signed-in devices, and the sign-in service keeps the IP address of each sign-in while it lasts. Server logs contain IP addresses too.',
     'privacy.keep.usage.label': 'Usage totals',
     'privacy.keep.usage.text':
-      'Totals by coarse region, such as “Europe” or “mainland China”: how many accounts are active each day (people and agents counted separately), how many requests they make, how fast pages and requests are, and how much of the time the desktop app’s local connection stays connected. Nothing is counted per person: only the totals are kept, not who was counted. To find the region, the server looks up each request’s IP address in DB-IP’s free country database (db-ip.com) and doesn’t store the address. Once a week we also count, from the account and room records we already keep, how many of the people who signed up each week verified their email, installed the desktop app, got an agent into a room, said something, or came back a week later. That count gives numbers only and doesn’t read any messages.',
+      'Totals by coarse region, such as “Europe” or “mainland China”: how many accounts are active each day (people and agents counted separately), how many requests they make, how fast pages and requests are, and how much of the time the desktop app’s local connection stays connected. Nothing is counted per person: only the totals are kept, not who was counted. To find the region, the server looks up each request’s IP address in DB-IP’s free country database (db-ip.com) and doesn’t store the address. Once a week we also count, from the account and room records we already keep, how many of the people who signed up each week verified their email, installed the desktop app, got an agent into a room, said something, or came back a week later. That count gives numbers only and doesn’t read any messages. We also count how many times people opened the “Bring an agent” dialog, copied what to give their agent, saw it arrive, or clicked to download the app. Each browser reports each step once per account. Those counts carry no account, room or region; the note that a step was already reported stays on your device.',
     'privacy.keep.nothingElse.label': 'Nothing else',
     'privacy.keep.nothingElse.text':
       'No analytics services, ad networks, tracking scripts or third-party fonts. Apart from the totals above, we collect no other usage statistics.',
@@ -156,7 +156,7 @@ export const privacyResources = {
       '聊天服务器记下已登录设备的 IP 地址和应用版本，登录服务在每次登录有效期间记着它的 IP 地址，服务器日志里也有 IP 地址。',
     'privacy.keep.usage.label': '使用的总数',
     'privacy.keep.usage.text':
-      '按粗地区（比如“欧洲”“中国大陆”）汇总的总数：每天有多少账户在用（人和 Agent 分开算）、发了多少请求、页面和接口有多快、桌面应用的本机连接有多少时间连着。不按人记，只留总数，不留数到的是谁。地区由服务器拿每个请求的 IP 地址查 DB-IP 的免费国家库（db-ip.com）得出，不存这个地址。每周还从已经存着的账户和房间记录里数一次：每一周注册的人里，有多少验证了邮箱、装了桌面应用、把 Agent 请进了房间、说过话、一周以后还来。也只出人数，不读消息内容。',
+      '按粗地区（比如“欧洲”“中国大陆”）汇总的总数：每天有多少账户在用（人和 Agent 分开算）、发了多少请求、页面和接口有多快、桌面应用的本机连接有多少时间连着。不按人记，只留总数，不留数到的是谁。地区由服务器拿每个请求的 IP 地址查 DB-IP 的免费国家库（db-ip.com）得出，不存这个地址。每周还从已经存着的账户和房间记录里数一次：每一周注册的人里，有多少验证了邮箱、装了桌面应用、把 Agent 请进了房间、说过话、一周以后还来。也只出人数，不读消息内容。另外记“接入 Agent”对话框里有多少次打开、复制给 Agent 的话、等到 Agent，以及点下载应用的次数：每个浏览器每个账户每一步只报一次，只有次数，不带账户、房间和地区，“报过了”的标记只留在你的设备上。',
     'privacy.keep.nothingElse.label': '别的都没有',
     'privacy.keep.nothingElse.text':
       '不用统计分析服务、广告网络、跟踪脚本或第三方字体；除了上面这些总数，不收集别的使用统计。',

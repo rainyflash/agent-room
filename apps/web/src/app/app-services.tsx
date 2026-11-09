@@ -61,6 +61,8 @@ export type AppServices = {
   readonly messageTranslation: MachineTranslationGateway;
   readonly messagePublisher: MessagePublisher;
   readonly moderation: ModerationGateway;
+  /** 接入 Agent 走到的几步，只记次数；测试和夹具里可以没有。 */
+  readonly onboardingSteps?: import('@/features/telemetry/domain/onboarding-step').OnboardingStepGateway;
   readonly privateRoomMatrix: PrivateRoomMatrixGateway;
   readonly privateRooms: PrivateRoomGateway;
   /** 私人房间的邀请链接：生成、复制、停用，打开别人给的链接；测试和夹具里可以没有。 */

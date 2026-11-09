@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
+import { useOnboardingStep } from '@/features/telemetry/ui/use-onboarding-step';
 import { GitHubMark } from '@/shared/ui/github-mark';
 import {
   REPOSITORY_URL,
@@ -25,6 +26,7 @@ export function WebHeaderLinks() {
 function WebHeaderLinkList({ config }: { readonly config: DownloadConfiguration }) {
   const { t } = useTranslation();
   const download = usePublishedDownload(config);
+  const reportStep = useOnboardingStep();
   const source = t('application.source');
   return (
     <>
@@ -44,6 +46,9 @@ function WebHeaderLinkList({ config }: { readonly config: DownloadConfiguration 
         <a
           className="ar-button ar-button--primary ar-button--default app-navigation__external app-navigation__external--download"
           href={download.url}
+          onClick={() => {
+            reportStep({ step: 'desktop_download' });
+          }}
           rel="noreferrer"
           target="_blank"
           title={t(
