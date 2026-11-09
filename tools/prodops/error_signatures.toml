@@ -253,6 +253,11 @@ reason = "身份服务说这次登录的一次性代码已经用过或过期了�
 
 [[ignore]]
 service = "synapse"
+summary = '^ERROR synapse\.handlers\.oidc Invalid session for OIDC callback$'
+reason = "聊天登录回调带回来的登录记号对不上 Synapse 记着的那次（登录页放得太久、回调地址被刷新或重复打开，或者同一浏览器里几个标签页前后脚登录、后一次盖掉了前一次的 Cookie），Synapse 回一页错误，没有数据被动；网页开始聊天登录前已经在 localStorage 里排队（matrix-sign-in-turn），人重新登录就好。只认这一句完整的消息；成片出现、而且回调之后人没登录上，才是要查的（2026-11-09 生产上只出现一次，agent-room-ops#90）"
+
+[[ignore]]
+service = "synapse"
 summary = '^WARNING synapse\.http\.site Aborting connection from .* because `content-type: multipart/form-data` is unsupported: '
 reason = "有人往聊天服务器发 multipart 表单，Synapse 读完请求头就断开、不处理。Matrix 客户端从来不这样发（传文件是原样的正文），是扫描器在试上传接口（2026-10-28 生产上一秒里往根路径 POST / 连发 4 次，前后没有登录了的请求）"
 
