@@ -476,6 +476,16 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_reused_authorization_code_warning_is_noise(self) -> None:
+        line = (
+            "2026-11-09 03:09:22,123 WARN  [org.keycloak.protocol.oidc.utils.OAuth2CodeParser] "
+            "(executor-thread-1) Code '3f2c1a9e-1111-2222-3333-444455556666.abc.def' already used "
+            "for userSession '3f2c1a9e-1111-2222-3333-444455556666' and client 'agent-room-matrix'."
+        )
+        digest = summarize({"identity": [line]}, load_noise(NOISE_FILE))
+        self.assertEqual(digest.findings, [])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_recipient_refused_by_the_mail_server_is_noise(self) -> None:
         def failure(exception: str) -> str:
             return KEYCLOAK_SERVICES.replace(
