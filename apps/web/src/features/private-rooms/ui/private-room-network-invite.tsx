@@ -1,5 +1,6 @@
 import { Banner, Button, CopyBlock, Details, Spinner } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { TFunction } from 'i18next';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -36,6 +37,8 @@ const forbiddenCodes = new Set(['join_code.forbidden', 'private_room.forbidden']
 const expectedRevealFailures = new Set(['join_code.not_found', 'join_code.not_revealable']);
 
 type InviteProps = {
+  /** 人替 Agent 起的名字；空的时候话里请 Agent 自己起。 */
+  readonly agentName?: string | undefined;
   readonly catalogId: string;
   readonly guide: string;
   readonly roomName: string;
@@ -46,6 +49,13 @@ type InviteProps = {
   /** 看的人是谁。知道了就先按房间列表判断是不是管理者，不是就不去问口令状态。 */
   readonly principalId?: string | null | undefined;
 };
+
+/** 给网络 Agent 的话里关于名字的那半句。 */
+export function networkNaming(t: TFunction, agentName: string): string {
+  return agentName === ''
+    ? t('agentInvite.naming.network.choose')
+    : t('agentInvite.naming.network.given', { name: agentName });
+}
 
 /**
  * 这间房对网络 Agent 是什么样：拿房间号来怎么进，话里叫它私人房间还是公开房间，要不要提醒服务器
@@ -123,7 +133,7 @@ function RelayNote({ room }: { readonly room: RoomForNetworkAgents }) {
 }
 
 /** 直接进的公开房间：拿房间号就进来，不用口令、不用放行，管理者和成员拿到的是同一段话。 */
-function OpenInvite({ catalogId, guide, roomName, onCopied, room }: GatedProps) {
+function OpenInvite({ agentName = '', catalogId, guide, roomName, onCopied, room }: GatedProps) {
   const { t } = useTranslation();
   return (
     <div className="agent-invite__private-code">
@@ -135,6 +145,7 @@ function OpenInvite({ catalogId, guide, roomName, onCopied, room }: GatedProps) 
         onCopied={onCopied}
         text={t('agentInvite.network.open.message', {
           guide,
+          naming: networkNaming(t, agentName),
           room: roomName,
           roomNumber: catalogId,
         })}
@@ -206,6 +217,7 @@ function codeState(
  * 只说请管理者来生成。
  */
 function MemberInvite({
+  agentName = '',
   catalogId,
   guide,
   roomName,
@@ -239,6 +251,7 @@ function MemberInvite({
         text={t('agentInvite.network.knock.messageMember', {
           guide,
           kind: t(roomKindKey(room)),
+          naming: networkNaming(t, agentName),
           room: roomName,
           roomNumber: catalogId,
         })}
@@ -263,6 +276,7 @@ function managerNoteKey(room: RoomForNetworkAgents) {
  * 不想用口令的，折叠里有只带房间号的那段话。在敲门的 Agent 列在下面，放行照旧。只认口令的房间不提敲门。
  */
 function ManagerInvite({
+  agentName = '',
   catalogId,
   guide,
   roomName,
@@ -276,11 +290,13 @@ function ManagerInvite({
   const [autoCopied, setAutoCopied] = useState(false);
   const knocks = room.entry === 'knock';
   const kind = t(roomKindKey(room));
+  const naming = networkNaming(t, agentName);
   const messageFor = (value: string) =>
     t(codeMessageKey(room), {
       code: value,
       guide,
       kind,
+      naming,
       room: roomName,
       roomNumber: catalogId,
     });
@@ -376,6 +392,7 @@ function ManagerInvite({
                 text={t('agentInvite.network.knock.message', {
                   guide,
                   kind,
+                  naming,
                   room: roomName,
                   roomNumber: catalogId,
                 })}

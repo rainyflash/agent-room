@@ -206,7 +206,7 @@ afterEach(() => {
 });
 
 describe('接入 Agent 对话框', () => {
-  it('一屏：网页端默认网络方式，一段话一个复制按钮，没有编号步骤、名字和人物', async () => {
+  it('一屏：网页端默认网络方式，一段话一个复制按钮，没有编号步骤和人物，名字选填', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     renderDialog(gateway({ available: false }).value);
@@ -215,7 +215,7 @@ describe('接入 Agent 对话框', () => {
     expect(screen.getByText('It joins “Builders Exchange”.')).toBeVisible();
     expect(screen.getByRole('radio', { name: 'Network' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('list', { name: /step/iu })).toBeNull();
-    expect(screen.queryByLabelText('Agent name')).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Give it a name (optional)' })).toHaveValue('');
     expect(screen.queryByText(/Saved characters|Invite another agent/u)).toBeNull();
 
     const message = await copyMessage(writeText);
@@ -268,6 +268,63 @@ describe('接入 Agent 对话框', () => {
     });
     expect(runtime.offerInvitation.mock.calls[0]?.[0]).not.toHaveProperty('displayName');
     expect(screen.getByText(/turn on background replies/u)).toBeVisible();
+  });
+
+  function nameIt(name: string) {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Give it a name (optional)' }), {
+      target: { value: name },
+    });
+  }
+
+  it('替 Agent 起了名字：三种方式的话里都用这个名字，不再请它自己起', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
+    renderDialog(gateway().value);
+    expect(await copyMessage(writeText)).toContain('Pick a short, recognizable name');
+
+    nameIt(" Scout's  ");
+    const cli = await copyMessage(writeText);
+    expect(cli).toContain("--name 'Scout''s'");
+    expect(cli).not.toContain('Pick a short, recognizable name');
+    expect(screen.getByText(/This message carries the name/u)).toBeVisible();
+
+    chooseMethod('MCP');
+    const mcp = await copyMessage(writeText);
+    expect(mcp).toContain("set displayName to “Scout's”");
+    expect(mcp).not.toContain('recognizable displayName');
+  });
+
+  it('网络方式的话里写上名字', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('network');
+    renderDialog(gateway().value, { room: null });
+
+    nameIt('Scout');
+    const message = await copyMessage(writeText);
+    expect(message).toContain('use the name “Scout”');
+    expect(message).not.toContain('recognizable name');
+  });
+
+  it('名字也跟着挂在这台电脑上的人物：改了就覆盖，不撤回', async () => {
+    rememberMethod('cli');
+    const runtime = gateway();
+    renderDialog(runtime.value);
+    await waitFor(() => {
+      expect(runtime.offerInvitation).toHaveBeenCalledTimes(1);
+    });
+    const sessionKey = runtime.offerInvitation.mock.calls[0]?.[0].sessionKey;
+
+    nameIt('Scout');
+    await waitFor(() => {
+      expect(runtime.offerInvitation).toHaveBeenCalledTimes(2);
+    });
+    expect(runtime.offerInvitation.mock.calls[1]?.[0]).toMatchObject({
+      displayName: 'Scout',
+      sessionKey,
+    });
+    expect(runtime.withdrawInvitation).not.toHaveBeenCalled();
   });
 
   it('MCP：一句用 agent_room_join 的话；第一次用的配置收在折叠里', async () => {
