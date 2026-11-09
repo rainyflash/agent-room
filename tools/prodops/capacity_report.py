@@ -53,6 +53,7 @@ _ROOT = f'{_HOST},mountpoint="/"'
 QUERIES = {
     "accounts": "max by (region, kind) (max_over_time(agent_room_active_accounts[7d]))",
     "requests": "sum by (region, kind) (increase(agent_room_requests_by_region_total[7d]))",
+    "onboarding_steps": "sum by (step, method) (increase(agent_room_onboarding_steps_total[7d]))",
     "samples": (
         'sum by (region) (increase(agent_room_frontend_duration_seconds_count{metric="api_round_trip"}[7d]))'
     ),
@@ -317,6 +318,7 @@ def build_report(
         return lines
     lines.extend(_usage_section(values, latency))
     lines.extend(onboarding)
+    lines.extend(_onboarding_steps_section(values["onboarding_steps"]))
     lines.extend(_machine_section(values))
     storage_lines, disk_runway = _storage_section(storage)
     lines.extend(storage_lines)
@@ -381,6 +383,31 @@ def _usage_section(values: dict[str, list[Sample]], latency: dict[tuple[str, flo
         ]
         lines.append(f"| {_region(region)} | {cells[0]} | {cells[1]} | {_count(samples.get((region,)))} |")
     return [*lines, ""]
+
+
+def _onboarding_steps_section(samples: list[Sample]) -> list[str]:
+    """接入对话框里只有前端知道的几步（`specs/onboarding-funnel/design.md` 第 2 节）。"""
+    counts = _by(samples, "step", "method")
+    lines = ["### 这一周的接入对话框", ""]
+    if not counts:
+        return [*lines, "还没有数。", ""]
+    methods = ("cli", "mcp", "network")
+    lines.extend(["| | 合计 | 命令行 | MCP | 网络 |", "| --- | ---: | ---: | ---: | ---: |"])
+    opened = counts.get(("invite_opened", "none"), 0.0)
+    lines.append(f"| 打开了对话框 | {_count(opened)} | | | |")
+    for step, label in (("invite_copied", "复制了给 Agent 的话"), ("invite_arrived", "对话框开着时等到了 Agent")):
+        by_method = [counts.get((step, method), 0.0) for method in methods]
+        lines.append(f"| {label} | {_count(sum(by_method))} | " + " | ".join(_count(value) for value in by_method) + " |")
+    lines.append(f"| 网页上点了下载应用 | {_count(counts.get(('desktop_download', 'none'), 0.0))} | | | |")
+    lines.extend(
+        [
+            "",
+            "每个账户在每个浏览器上，每一步只算一次（复制和等到按方式各一次），换浏览器、清了数据会多算。"
+            "“等到”记的是当时选着的方式。不只是新用户：上线头一周老用户第一次打开也算，比例从第二周起看。",
+            "",
+        ]
+    )
+    return lines
 
 
 def _machine_section(values: dict[str, list[Sample]]) -> list[str]:

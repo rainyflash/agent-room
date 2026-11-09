@@ -22,6 +22,11 @@ vi.mock('@tanstack/react-router', async (loadOriginal) => {
   return { ...original, useNavigate: () => router.navigate };
 });
 
+const onboarding = vi.hoisted(() => ({ report: vi.fn() }));
+vi.mock('@/features/telemetry/ui/use-onboarding-step', () => ({
+  useOnboardingStep: () => onboarding.report,
+}));
+
 const owner = { principalId: '0198b601-77a3-74f1-b4f4-940f291951b9', displayName: 'Ada' };
 const CATALOG = '0198b601-77a3-74f1-b4f4-940f291951b1';
 const room = { roomId: '!builders:matrix.test', roomName: 'Builders Exchange', catalogId: CATALOG };
@@ -192,6 +197,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   window.localStorage.clear();
+  onboarding.report.mockClear();
 });
 afterEach(() => {
   cleanup();
@@ -337,6 +343,40 @@ describe('接入 Agent 对话框', () => {
       );
     });
     expect(screen.getByRole('button', { name: 'Done' })).toBeVisible();
+  }, 10_000);
+
+  it('打开、复制和等到 Agent 各报一步，等到以后切方式不再报', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
+    let sessions: HostSessionDiagnostics[] = [];
+    let polls = 0;
+    renderDialog(
+      gateway({
+        sessions: () => {
+          polls += 1;
+          return ok(sessions);
+        },
+      }).value,
+    );
+    await waitFor(() => {
+      expect(polls).toBeGreaterThan(0);
+    });
+    expect(onboarding.report).toHaveBeenCalledWith({ step: 'invite_opened' });
+
+    await copyMessage(writeText);
+    await waitFor(() => {
+      expect(onboarding.report).toHaveBeenCalledWith({ step: 'invite_copied', method: 'cli' });
+    });
+
+    sessions = [session('0198b601-77a3-74f1-b4f4-940f291951d2', 'ready')];
+    expect(await screen.findByText('“Scout” joined', {}, { timeout: 5_000 })).toBeVisible();
+    await waitFor(() => {
+      expect(onboarding.report).toHaveBeenCalledWith({ step: 'invite_arrived', method: 'cli' });
+    });
+
+    chooseMethod('MCP');
+    expect(onboarding.report).not.toHaveBeenCalledWith({ step: 'invite_arrived', method: 'mcp' });
   }, 10_000);
 
   it('已经接入的 Agent 进了这个房间也算到了，并收回挂着的邀请', async () => {

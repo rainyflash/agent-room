@@ -2,6 +2,10 @@ import type {
   FrontendMetric,
   FrontendTelemetryGateway,
 } from '@/features/telemetry/domain/frontend-metric';
+import type {
+  OnboardingStepGateway,
+  OnboardingStepSample,
+} from '@/features/telemetry/domain/onboarding-step';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
 
 export type ControlPlaneFrontendTelemetryClientOptions = {
@@ -10,8 +14,11 @@ export type ControlPlaneFrontendTelemetryClientOptions = {
 };
 
 /** 只发送白名单数值；失败不会阻塞或改变用户流程。 */
-export class ControlPlaneFrontendTelemetryClient implements FrontendTelemetryGateway {
+export class ControlPlaneFrontendTelemetryClient
+  implements FrontendTelemetryGateway, OnboardingStepGateway
+{
   readonly #endpoint: URL;
+  readonly #onboardingEndpoint: URL;
   readonly #fetch: typeof globalThis.fetch;
 
   constructor({
@@ -19,13 +26,22 @@ export class ControlPlaneFrontendTelemetryClient implements FrontendTelemetryGat
     fetch: fetchImplementation = globalThis.fetch.bind(globalThis),
   }: ControlPlaneFrontendTelemetryClientOptions) {
     this.#endpoint = controlPlaneEndpoint(baseUrl, '/telemetry/frontend');
+    this.#onboardingEndpoint = controlPlaneEndpoint(baseUrl, '/telemetry/onboarding');
     this.#fetch = fetchImplementation;
   }
 
   async record(sample: FrontendMetric): Promise<void> {
+    await this.#send(this.#endpoint, sample);
+  }
+
+  async recordStep(sample: OnboardingStepSample): Promise<void> {
+    await this.#send(this.#onboardingEndpoint, sample);
+  }
+
+  async #send(endpoint: URL, body: FrontendMetric | OnboardingStepSample): Promise<void> {
     try {
-      await this.#fetch(this.#endpoint, {
-        body: JSON.stringify(sample),
+      await this.#fetch(endpoint, {
+        body: JSON.stringify(body),
         cache: 'no-store',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

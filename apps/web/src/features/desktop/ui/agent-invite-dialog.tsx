@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
+import { useOnboardingStep } from '@/features/telemetry/ui/use-onboarding-step';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import {
   hostBaseline,
@@ -174,6 +175,7 @@ function InviteBody({
   );
   useParkedInvitation(local && localReady, room, sessions, existingArrived);
   useConnectedCallback(arrivals, room, copiedAt ?? openedAt, onConnected);
+  useOnboardingReports(arrivals, method);
 
   const chooseMethod = (next: InviteMethod) => {
     if (next === method) return;
@@ -181,8 +183,10 @@ function InviteBody({
     saveInviteMethod(storage, next);
     setCopiedAt(null);
   };
+  const reportStep = useOnboardingStep();
   const copied = () => {
     setCopiedAt(Date.now());
+    reportStep({ step: 'invite_copied', method });
   };
 
   return (
@@ -313,6 +317,22 @@ function useParkedInvitation(
 }
 
 /** 第一个进了这个房间的 Agent：告诉房间页，它好在关掉对话框后接着显示首次回复的进度。 */
+/** 打开对话框、对话框开着时等到 Agent，各报一次（specs/onboarding-funnel/design.md）。 */
+function useOnboardingReports(arrivals: readonly AgentArrival[], method: InviteMethod) {
+  const reportStep = useOnboardingStep();
+  const arrived = arrivals.some((arrival) => arrival.state === 'ready' && !arrival.elsewhere);
+  useEffect(() => {
+    reportStep({ step: 'invite_opened' });
+  }, [reportStep]);
+  // 等到以后再切别的方式不算：记的是等到那一刻选着的方式。
+  const reportedArrival = useRef(false);
+  useEffect(() => {
+    if (!arrived || reportedArrival.current) return;
+    reportedArrival.current = true;
+    reportStep({ step: 'invite_arrived', method });
+  }, [arrived, method, reportStep]);
+}
+
 function useConnectedCallback(
   arrivals: readonly AgentArrival[],
   room: InviteRoom,

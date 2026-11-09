@@ -64,6 +64,8 @@ describe('隐私说明', () => {
     // 周报里按注册的那一周数新用户走到哪一步（specs/onboarding-funnel/design.md）。
     expect(screen.getByText(/how many of the people who signed up each week/u)).toBeVisible();
     expect(privacyResources['zh-CN']['privacy.keep.usage.text']).toMatch(/每一周注册的人里/u);
+    expect(privacyResources.en['privacy.keep.usage.text']).toMatch(/no account, room or region/u);
+    expect(privacyResources['zh-CN']['privacy.keep.usage.text']).toMatch(/不带账户、房间和地区/u);
     for (const text of [
       ...Object.values(privacyResources.en),
       ...Object.values(privacyResources['zh-CN']),

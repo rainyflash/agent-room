@@ -69,6 +69,7 @@ pub(crate) struct TelemetryMetrics {
     frontend_duration: Histogram<f64>,
     frontend_score: Histogram<f64>,
     requests_by_region: Counter<u64>,
+    onboarding_steps: Counter<u64>,
 }
 
 impl TelemetryMetrics {
@@ -124,6 +125,10 @@ impl TelemetryMetrics {
                     "认证通过的请求数，按粗地区和账户种类（人、本机 Agent、网络 Agent）",
                 )
                 .build(),
+            onboarding_steps: meter
+                .u64_counter("agent_room.onboarding.steps")
+                .with_description("接入 Agent 对话框里走到的几步，只有次数，不带账户和地区")
+                .build(),
         }
     }
 
@@ -169,6 +174,24 @@ impl TelemetryMetrics {
         } else {
             self.frontend_duration.record(value / 1_000.0, &attributes);
         }
+    }
+
+    /// 给定的标签加一次；`amount` 为 0 时只让这条序列存在（见 `FrontendTelemetryHttpState::new`）。
+    pub(crate) fn record_onboarding_step(
+        &self,
+        step: &'static str,
+        method: &'static str,
+        surface: &'static str,
+        amount: u64,
+    ) {
+        self.onboarding_steps.add(
+            amount,
+            &[
+                KeyValue::new("step", step),
+                KeyValue::new("method", method),
+                KeyValue::new("surface", surface),
+            ],
+        );
     }
 
     pub(crate) fn record_account_request(&self, region: &'static str, kind: &'static str) {

@@ -281,6 +281,7 @@ export function createCloudRuntime(
       reauthentication,
     },
     telemetry,
+    onboardingSteps: telemetry,
     typing: new MatrixTypingNotifier(matrixClients),
   };
   return {

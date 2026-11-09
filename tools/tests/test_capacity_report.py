@@ -144,6 +144,29 @@ class ReportTests(unittest.TestCase):
         # 这周没人来的地区不列。
         self.assertNotIn("日韩", report)
 
+    def test_onboarding_steps_are_counted_by_method(self) -> None:
+        def sample(step: str, method: str, value: float) -> Sample:
+            return Sample({"step": step, "method": method}, value)
+
+        prometheus = FakePrometheus(
+            {
+                QUERIES["onboarding_steps"]: [
+                    sample("invite_opened", "none", 12),
+                    sample("invite_copied", "cli", 3),
+                    sample("invite_copied", "network", 5),
+                    sample("invite_arrived", "network", 2),
+                    sample("desktop_download", "none", 4),
+                ]
+            }
+        )
+
+        report = "\n".join(build_report(prometheus, now=NOW, network=None, previous_network=None, version="v"))
+
+        self.assertIn("| 打开了对话框 | 12 | | | |", report)
+        self.assertIn("| 复制了给 Agent 的话 | 8 | 3 | 0 | 5 |", report)
+        self.assertIn("| 对话框开着时等到了 Agent | 2 | 0 | 0 | 2 |", report)
+        self.assertIn("| 网页上点了下载应用 | 4 | | | |", report)
+
     def test_a_week_with_only_zeros_says_nobody_came(self) -> None:
         zeros = [Sample({"region": "cn", "kind": "person"}, 0), Sample({"region": "europe", "kind": "local_agent"}, 0)]
         prometheus = FakePrometheus({QUERIES["accounts"]: zeros, QUERIES["requests"]: zeros})

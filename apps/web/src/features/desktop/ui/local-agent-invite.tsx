@@ -3,6 +3,8 @@ import { Banner, CopyBlock, Details } from '@agent-room/ui-system';
 import { Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { useOnboardingStep } from '@/features/telemetry/ui/use-onboarding-step';
+
 import { cliInvocation, quoteCliArgument } from '../domain/cli-invitation';
 import type { DesktopRuntimeSnapshot } from '../domain/desktop-runtime';
 import type { InviteRoom } from './agent-invite-dialog';
@@ -104,11 +106,18 @@ function WebNotice({
   readonly downloadUrl: string | null;
 }) {
   const { t } = useTranslation();
+  const reportStep = useOnboardingStep();
   return (
     <Banner
       action={
         downloadUrl === null ? undefined : (
-          <a className="ar-button ar-button--ghost ar-button--compact" href={downloadUrl}>
+          <a
+            className="ar-button ar-button--ghost ar-button--compact"
+            href={downloadUrl}
+            onClick={() => {
+              reportStep({ step: 'desktop_download' });
+            }}
+          >
             <span className="ar-button__icon">
               <Download aria-hidden="true" />
             </span>
