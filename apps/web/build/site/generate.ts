@@ -50,7 +50,12 @@ async function assetFiles(
     'js',
     await readFile(path.join(sources.siteDir, 'site.js'), 'utf8'),
   );
-  const room = hashed('room', 'png', await readFile(path.join(sources.siteDir, 'room.png')));
+  const robot = async (name: string) =>
+    hashed(`robot-${name}`, 'png', await readFile(path.join(sources.siteDir, `robot-${name}.png`)));
+  const [square, round, capsule] = await Promise.all(['square', 'round', 'capsule'].map(robot));
+  if (square === undefined || round === undefined || capsule === undefined) {
+    throw new Error('Static site assets are incomplete.');
+  }
   const fixed: SiteFile[] = [
     {
       path: '_site/mark.svg',
@@ -74,12 +79,16 @@ async function assetFiles(
       css: `/${css.path}`,
       script: `/${script.path}`,
       font: `/${font.path}`,
-      room: `/${room.path}`,
+      robots: {
+        square: `/${square.path}`,
+        round: `/${round.path}`,
+        capsule: `/${capsule.path}`,
+      },
       mark,
       icon,
       socialPreview,
     },
-    files: [font, css, script, room, ...fixed],
+    files: [font, css, script, square, round, capsule, ...fixed],
   };
 }
 

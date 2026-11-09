@@ -36,7 +36,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - `apps/agent-room-mcp/src/agent_room/server.rs` 里列出全部工具的测试。
 - 网络 Agent 远程 MCP 和本机 MCP 的服务说明都最多 1536 字节。两边给 Agent 和目录看的文字（服务说明、工具与参数说明、提示、错误说明）都用英文，参数说明写成一行（schemars 保留换行）。都有测试卡着；本机 MCP 的在 `language_tests.rs`，连工具结果和出错说明也查（直接查源码里的字符串，注释和测试不算）。2026-10-17 之前本机 MCP 是中文的，见 [specs/local-mcp-language/design.md](./specs/local-mcp-language/design.md)。
 - CLI 与 MCP 的测试，要在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都能过（`env -u CLAUDE_CODE_SESSION_ID cargo test …`）。
-- 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。README、网站（首页和指南）和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
+- 对外的说法（README、官网、发行说明、给维护者的发帖要点）照实讲加密：私人房间走端到端加密，防的是泄露；ADR 0011 起服务器保管备份钥匙，运营方读得到。别写“服务器也读不到”，口径以 README 的“谁能读到什么”为准。官网首页只说房间加不加密，不写“私人房间运营方读得到”，谁读得到指到隐私说明（维护者 2026-11-09 定）；README 和隐私说明照旧写全。README、网站（首页和指南）和发帖可以点名 Claude Code、Codex、ChatGPT 帮人认出来；产品界面、提示词和发行说明照旧不点名（`tools/tests/test_release_surface.py` 卡着发行说明）。
 
 ## CI
 
@@ -271,7 +271,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 部署配置 `public.site`：`redirect`（缺省，和以前一样）或 `static`（出网站）。
   - 网站的标题、简介和三个用法跟应用首页用同一份文字（`features/landing/i18n/landing-resources.ts`），改首页说法时两边一起变；别的文字在 `apps/web/build/site/copy.ts`。网站地址写死 `https://agentroom.chat`：换成构建参数要改工作流。
   - 裸域的内容安全策略不许内联脚本和样式，生成器的测试卡着；`site.css` 的颜色令牌和 ui-system 一致，也有测试卡着。
-  - 首页插图是一张 PNG，由 `AGENT_ROOM_WRITE_SITE_ART=1` 跑 `e2e/social-preview.e2e.ts` 截出来（场景的机器人是精灵图，画不成 SVG）。
+  - 首页的房间是 HTML 和 CSS（2026-11-09 重做，见设计文档“状态”）：机器人是从 `public/studio/flat-robots.png` 抠出来的 `site/robot-*.png`，家具和“你”是矢量（`build/site/room-art.ts`，只用表现属性，裸域不许 `style`）。房间和对话窗口在暗色下也是白天的配色（`.day`）。
   - 新加应用路由要加进 `tools/prodops/render.py` 的 `APP_PAGE_PATHS`，不然在 app 子域上回 404；测试拿它和 `router.tsx` 对比。
   - 指南是 `apps/web/site/guides/<slug>.<en|zh-CN>.md`，两种语言都要有，不然构建失败。改了指南顺手改 front matter 里的 `updated`。
   - MCP 目录：根目录的 `server.json` 跟着发布版本走（`bump_release_version.py`）；目录上用的英文文案、每个目录怎么提交和提交记录在 `docs/mcp-directories.md`。每个目录提交前先问维护者，要登录的由他自己登录；官方 Registry 同一个版本号只能发一次。
