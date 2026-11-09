@@ -717,6 +717,31 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_backfill_gap_notice_is_noise(self) -> None:
+        def line(message: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-09T02:43:55.000000Z",
+                    "level": "WARN",
+                    "fields": {"message": message, "correlation.id": CORRELATION_ID},
+                    "target": "agent_room_control_plane::network_gateway::backfill",
+                    "span": {"http.request.method": "POST", "url.path": "/mcp"},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    line("网络 Agent 两次同步之间这个房间来得太多，往回补到上限还没接上，更早的那段告诉它补不回来"),
+                    line("网络 Agent 往回补消息失败"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(len(digest.findings), 1)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_knock_check_with_a_revoked_token_is_noise(self) -> None:
         def failure(kind: str) -> str:
             return json.dumps(

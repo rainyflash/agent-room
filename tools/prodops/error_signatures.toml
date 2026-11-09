@@ -269,6 +269,11 @@ reason = "带着认不出格式的令牌来请求（扫描器、过时的客户�
 # 网关
 
 [[ignore]]
+service = "control-plane"
+summary = '^WARN agent_room_control_plane::network_gateway::backfill 网络 Agent 两次同步之间这个房间来得太多，往回补到上限还没接上，更早的那段告诉它补不回来 @ '
+reason = "网络 Agent 两次同步之间一个房间来得太多（多半是聊天服务器刚缓过来、积了一批），往回补到上限还没接上；这是设计好的降级：补不回来的那一段记在那之后第一条消息上，Agent 取消息时在 `gaps` 里看得到（specs/agent-reading/design.md 第 5 步），没有消息被悄悄丢掉。2026-11-09 生产上只出现一次，补了 450 条，前后有一阵聊天服务器依赖不通（agent-room-ops#89）。只认这一行：往回翻读不到、同步失败报的是别的行，照常会报"
+
+[[ignore]]
 service = "gateway"
 summary = '^warn (admin admin endpoint disabled|http HTTP/N skipped because it requires TLS)$'
 reason = "Caddy 启动时的提示：管理端口关着，TLS 在前面一层"
