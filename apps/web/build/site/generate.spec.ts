@@ -91,18 +91,22 @@ describe('agentroom.chat 的静态网站', () => {
     expect(attribute(en, /<title>(.*?)<\/title>/gu)).not.toEqual(
       attribute(zh, /<title>(.*?)<\/title>/gu),
     );
-    expect(en).toContain('<h1>Bring any AI agent into your room with one message.</h1>');
-    expect(zh).toContain('<h1>一句话，把任何 AI Agent 请进你的房间。</h1>');
+    expect(en).toContain(
+      '<h1 id="hero-title">Bring any AI agent into your room with one message.</h1>',
+    );
+    expect(zh).toContain('<h1 id="hero-title">一句话，把任何 AI Agent 请进你的房间。</h1>');
   });
 
-  it('首页正文不靠脚本：用法、接入方式、谁能读到什么都写在 HTML 里', async () => {
+  it('首页正文不靠脚本：用法、接入方式、房间加不加密都写在 HTML 里', async () => {
     const files = await render(baseBuild);
     const en = page(files, 'index.html');
 
     expect(en).toContain('Agents on two computers help each other');
     expect(en).toContain('https://agentroom.chat/agents.txt');
     expect(en).toContain('https://api.agentroom.chat/mcp');
-    expect(en).toContain('Whoever runs the server can therefore read your rooms');
+    expect(en).toContain('End-to-end encrypted');
+    // 首页不写谁读得到，指到隐私说明；也不能反过来说服务器读不到。
+    expect(en).toContain('<a href="https://app.agentroom.chat/privacy">');
     expect(en).not.toMatch(/server (?:also )?can(?:no|')t read/iu);
     expect(en).toContain('href="https://download.fixture.invalid/windows.exe"');
     expect(en).toContain('href="https://app.agentroom.chat/connect"');
@@ -113,12 +117,27 @@ describe('agentroom.chat 的静态网站', () => {
     const en = page(files, 'index.html');
     const zh = page(files, 'zh/index.html');
 
-    expect(en).toContain('<h3>Public rooms</h3>');
-    expect(en).toContain('A room that starts out public is not encrypted');
+    expect(en).toContain('<th scope="row">Public rooms</th>');
+    expect(en).toContain('Not encrypted if public from the start');
     expect(en).toContain('<a href="https://app.agentroom.chat/explore">Browse public rooms</a>');
-    expect(zh).toContain('<h3>公开房间</h3>');
-    expect(zh).toContain('新建时就公开的不加密');
+    expect(zh).toContain('<th scope="row">公开房间</th>');
+    expect(zh).toContain('新建就公开的不加密');
     expect(zh).toContain('<a href="https://app.agentroom.chat/explore">看看有哪些公开房间</a>');
+  });
+
+  it('三扇门按命令行、MCP、网络排，下载按钮没有脚本也有地方去', async () => {
+    const files = await render(baseBuild);
+    const zh = page(files, 'zh/index.html');
+
+    expect(attribute(zh, /<div class="door-copy">\s*<h3>(.*?)<\/h3>/gu)).toEqual([
+      '命令行',
+      'MCP',
+      '网络',
+    ]);
+    expect(zh).toContain('id="downloads"');
+    expect(zh).toContain(
+      'href="#downloads" data-windows="https://download.fixture.invalid/windows.exe"',
+    );
   });
 
   it('首页带 WebSite 和 SoftwareApplication 的结构化数据', async () => {
@@ -168,9 +187,13 @@ describe('agentroom.chat 的静态网站', () => {
     expect(css).toBeDefined();
     expect(font).toBeDefined();
     expect(page(files, css ?? '')).toContain(`url(/${font ?? ''})`);
-    expect([...files.keys()].some((path) => /^_site\/room\.[0-9a-f]{12}\.png$/u.test(path))).toBe(
-      true,
-    );
+    for (const robot of ['square', 'round', 'capsule']) {
+      const pattern = new RegExp(`^_site/robot-${robot}\\.[0-9a-f]{12}\\.png$`, 'u');
+      expect(
+        [...files.keys()].some((path) => pattern.test(path)),
+        robot,
+      ).toBe(true);
+    }
   });
 
   it('404 页不进索引，两种语言都说', async () => {

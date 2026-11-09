@@ -10,7 +10,11 @@ export type SiteAssets = {
   readonly css: string;
   readonly script: string;
   readonly font: string;
-  readonly room: string;
+  readonly robots: {
+    readonly square: string;
+    readonly round: string;
+    readonly capsule: string;
+  };
   readonly mark: string;
   readonly icon: string;
   readonly socialPreview: string;
@@ -144,7 +148,12 @@ function footer(page: PageHead): string {
 </footer>`;
 }
 
-export function layout(page: PageHead, context: PageContext, main: string): string {
+export function layout(
+  page: PageHead,
+  context: PageContext,
+  main: string,
+  mainClass?: string,
+): string {
   const copy = siteCopy[page.language];
   return `<!doctype html>
 <html lang="${page.language}">
@@ -154,7 +163,7 @@ ${head(page, context)}
 <body>
 <a class="site-skip" href="#main">${escapeHtml(copy.skipToContent)}</a>
 ${header(page, context)}
-<main id="main">
+<main id="main"${mainClass === undefined ? '' : ` class="${mainClass}"`}>
 ${main}
 </main>
 ${footer(page)}

@@ -11,6 +11,7 @@ import {
   SITE_ORIGIN,
   type PageContext,
 } from './html.js';
+import { DESK, PHONE, PLANT, SOFA, YOU } from './room-art.js';
 
 /** 一篇指南的一种语言。正文是已经转好的 HTML。 */
 export type GuidePage = {
@@ -84,78 +85,237 @@ function guideCards(language: SiteLanguage, build: SiteBuild): string {
     .join('\n');
 }
 
-function landingMain(language: SiteLanguage, context: PageContext, build: SiteBuild): string {
-  const copy = siteCopy[language];
-  const { landing, hero } = copy;
-  const uses = (['machines', 'phone', 'assistant'] as const)
+function guideList(language: SiteLanguage, build: SiteBuild): string {
+  return build.guides
+    .filter((guide) => guide.language === language)
+    .map(
+      (guide) =>
+        `<li><a href="${guidePath(language, guide.slug)}"><span>${escapeHtml(guide.title)}</span><span aria-hidden="true">→</span></a></li>`,
+    )
+    .join('\n');
+}
+
+/** 场景里的一个 Agent：气泡、机器人、名牌。 */
+function sceneAgent(
+  position: string,
+  bubble: string,
+  robot: { readonly src: string; readonly width: number },
+  tag: string,
+): string {
+  return `<div class="scene__who scene__who--${position}">
+<p class="bubble">${escapeHtml(bubble)}</p>
+<img class="scene__art scene__bob" src="${robot.src}" width="${String(robot.width)}" height="112" alt="">
+<span class="nametag">${escapeHtml(tag)}</span>
+</div>`;
+}
+
+function heroSection(language: SiteLanguage, context: PageContext, build: SiteBuild): string {
+  const { landing, hero } = siteCopy[language];
+  const { robots } = context.assets;
+  const desks = Array.from({ length: 4 }, () => DESK).join('');
+  const download = `<a class="site-button site-button--large" href="#downloads" data-windows="${escapeHtml(build.downloads.windows)}" data-macos="${escapeHtml(build.downloads.macos)}">${escapeHtml(hero.download)}</a>`;
+  return `<section class="room day" aria-labelledby="hero-title">
+<div class="room__wall" aria-hidden="true"></div>
+<div class="room__desks wide-only" aria-hidden="true">${desks}</div>
+<div class="room__body">
+<div class="room__copy">
+<p class="eyebrow">${escapeHtml(hero.eyebrow)}</p>
+<h1 id="hero-title">${escapeHtml(landing['landing.title'])}</h1>
+<p class="lede">${escapeHtml(landing['landing.description'])}</p>
+<div class="actions">
+<a class="site-button site-button--primary site-button--large" href="${appUrl('/connect')}">${escapeHtml(landing['landing.preview'])}</a>
+${download}
+</div>
+<p class="room__note" id="downloads">${escapeHtml(hero.downloads)}<a href="${escapeHtml(build.downloads.windows)}">${escapeHtml(hero.windows)}</a> · <a href="${escapeHtml(build.downloads.macos)}">${escapeHtml(hero.macos)}</a>${escapeHtml(hero.downloadsEnd)}${escapeHtml(hero.browserNote)}</p>
+<p class="room__note">${escapeHtml(hero.noInstall)}<a href="${appUrl('/watch')}">${escapeHtml(hero.watch)}</a>${escapeHtml(hero.noInstallEnd)}</p>
+</div>
+<figure class="scene" role="img" aria-label="${escapeHtml(hero.sceneAlt)}">
+${sceneAgent('top-left', hero.bubbles[0], { src: robots.capsule, width: 78 }, 'claude code #4821')}
+${sceneAgent('top-right', hero.bubbles[1], { src: robots.round, width: 81 }, 'codex #2316')}
+<div class="scene__who scene__who--middle wide-only">${YOU}<span class="nametag nametag--you">${escapeHtml(hero.you)}</span></div>
+${sceneAgent('bottom-left', hero.bubbles[2], { src: robots.square, width: 98 }, 'chatgpt #7730')}
+<div class="scene__who scene__who--bottom-right">
+<p class="bubble bubble--you">${escapeHtml(hero.bubbles[3])}</p>
+${PHONE}
+<span class="nametag nametag--you">${escapeHtml(hero.youOnPhone)}</span>
+</div>
+</figure>
+</div>
+<div class="room__furniture room__furniture--left wide-only" aria-hidden="true">${PLANT}${SOFA}</div>
+<div class="room__furniture room__furniture--right wide-only" aria-hidden="true">${SOFA}${PLANT}</div>
+</section>
+<div class="room-path" aria-hidden="true"></div>`;
+}
+
+function startSection(language: SiteLanguage): string {
+  const { start, tryIt } = siteCopy[language];
+  const steps = start.items
+    .map(
+      (item, index) => `<li>
+<span class="steps__number steps__number--${String(index + 1)}" aria-hidden="true">${String(index + 1)}</span>
+<h3>${escapeHtml(item.title)}</h3>
+<p>${escapeHtml(item.detail)}</p>
+</li>`,
+    )
+    .join('\n');
+  return `<section class="band" aria-labelledby="start-title">
+<div class="band__inner">
+<h2 id="start-title" class="band__title--center">${escapeHtml(start.title)}</h2>
+<ol class="steps">
+${steps}
+</ol>
+<div class="try">
+<div class="try__lead">
+<h3>${escapeHtml(tryIt.title)}</h3>
+<p>${escapeHtml(tryIt.lead)}</p>
+</div>
+<blockquote><p>${escapeHtml(tryIt.prompt)}</p></blockquote>
+</div>
+</div>
+</section>`;
+}
+
+function storySection(language: SiteLanguage): string {
+  const { landing, story } = siteCopy[language];
+  const others = (['phone', 'assistant'] as const)
     .map(
       (key) => `<li><h3>${escapeHtml(landing[`landing.flow.${key}.title`])}</h3>
 <p>${escapeHtml(landing[`landing.flow.${key}.detail`])}</p></li>`,
     )
     .join('\n');
-  const ways = copy.ways.items
-    .map(
-      (way) => `<li><h3>${escapeHtml(way.title)}</h3>
-<p>${escapeHtml(way.detail)}</p>${way.code === undefined ? '' : `\n<code>${escapeHtml(way.code)}</code>`}</li>`,
-    )
+  const messages = story.messages
+    .map((message) => {
+      const body =
+        message.log === undefined
+          ? `<p>${escapeHtml(message.text ?? '')}</p>`
+          : `<pre>${escapeHtml(message.log)}</pre>`;
+      return `<li>
+<span class="chat__avatar chat__avatar--${message.speaker}" aria-hidden="true"></span>
+<div class="chat__message"><p class="chat__who">${escapeHtml(message.who)} <span>${escapeHtml(message.where)}</span></p>
+${body}</div>
+</li>`;
+    })
     .join('\n');
-  const readers = copy.readers.items
-    .map(
-      (item) => `<li><h3>${escapeHtml(item.title)}</h3>
-<p>${escapeHtml(item.detail)}</p>${item.link === undefined ? '' : `\n<p><a href="${appUrl(item.link.path)}">${escapeHtml(item.link.label)}</a></p>`}</li>`,
-    )
-    .join('\n');
-  const guides = context.hasGuides[language]
-    ? `<section class="section" aria-labelledby="guides-title">
-<h2 id="guides-title">${escapeHtml(copy.guides.title)}</h2>
-<ul class="guide-cards">
-${guideCards(language, build)}
+  return `<section class="story" aria-labelledby="story-title">
+<div class="band__inner story__inner">
+<div class="story__copy">
+<p class="eyebrow">${escapeHtml(landing['landing.flowTitle'])}</p>
+<h2 id="story-title">${escapeHtml(landing['landing.flow.machines.title'])}</h2>
+<p class="story__lead">${escapeHtml(landing['landing.flow.machines.detail'])}</p>
+<ul class="story__others">
+${others}
 </ul>
-</section>`
-    : '';
-  return `<section class="hero">
-<div class="hero__copy">
-<p class="eyebrow">${escapeHtml(hero.eyebrow)}</p>
-<h1>${escapeHtml(landing['landing.title'])}</h1>
-<p class="lede">${escapeHtml(landing['landing.description'])}</p>
-<p class="hero__works">${escapeHtml(hero.worksWith)}</p>
-<div class="actions">
-<a class="site-button site-button--primary site-button--large" href="${appUrl('/connect')}">${escapeHtml(landing['landing.preview'])}</a>
-<a class="site-button site-button--large" href="${appUrl('/watch')}">${escapeHtml(landing['landing.watch'])}</a>
 </div>
-<p class="hero__downloads">${escapeHtml(hero.downloads)}<a href="${escapeHtml(build.downloads.windows)}">${escapeHtml(hero.windows)}</a> · <a href="${escapeHtml(build.downloads.macos)}">${escapeHtml(hero.macos)}</a>${escapeHtml(hero.downloadsEnd)}${escapeHtml(hero.browserNote)}</p>
+<figure class="story__chat">
+<div class="chat day">
+<p class="chat__title">${escapeHtml(story.room)}</p>
+<ol class="chat__messages">
+${messages}
+</ol>
 </div>
-<figure class="hero__scene">
-<img src="${context.assets.room}" width="1152" height="960" alt="${escapeHtml(hero.sceneAlt)}">
-<p class="bubble bubble--first" aria-hidden="true">${escapeHtml(hero.bubbles[0])}</p>
-<p class="bubble bubble--second" aria-hidden="true">${escapeHtml(hero.bubbles[1])}</p>
+<figcaption>${escapeHtml(story.caption)}</figcaption>
 </figure>
-</section>
-<section class="section" aria-labelledby="uses-title">
-<h2 id="uses-title">${escapeHtml(landing['landing.flowTitle'])}</h2>
-<ul class="cards">
-${uses}
-</ul>
-</section>
-<section class="section" aria-labelledby="ways-title">
-<h2 id="ways-title">${escapeHtml(copy.ways.title)}</h2>
-<ul class="cards">
-${ways}
-</ul>
-<div class="try">
-<h3>${escapeHtml(copy.tryIt.title)}</h3>
-<p>${escapeHtml(copy.tryIt.lead)}</p>
-<blockquote><p>${escapeHtml(copy.tryIt.prompt)}</p></blockquote>
 </div>
-</section>
-${guides}
-<section class="section" aria-labelledby="readers-title">
-<h2 id="readers-title">${escapeHtml(copy.readers.title)}</h2>
-<ul class="readers">
-${readers}
-</ul>
-<p class="readers__self-host"><a href="${REPOSITORY_URL}/blob/main/docs/self-hosting.md">${escapeHtml(copy.readers.selfHost)}</a></p>
 </section>`;
+}
+
+function doorsSection(language: SiteLanguage): string {
+  const { ways } = siteCopy[language];
+  const doors = ways.items
+    .map(
+      (way, index) => `<li>
+<div class="door-frame" aria-hidden="true"><div class="door door--${String(index + 1)}"><span class="door__window"></span><span class="door__knob"></span><span class="door__panel"></span></div></div>
+<div class="door-copy">
+<h3>${escapeHtml(way.title)}</h3>
+<p>${escapeHtml(way.detail)}</p>
+<code>${escapeHtml(way.code)}</code>
+</div>
+</li>`,
+    )
+    .join('\n');
+  return `<section class="band" aria-labelledby="ways-title">
+<div class="band__inner">
+<h2 id="ways-title" class="band__title--center">${escapeHtml(ways.title)}</h2>
+<p class="band__lede">${escapeHtml(ways.lede)}</p>
+<ul class="doors">
+${doors}
+</ul>
+</div>
+</section>`;
+}
+
+function readersSection(language: SiteLanguage): string {
+  const { readers } = siteCopy[language];
+  const rows = readers.items
+    .map(
+      (item) => `<tr>
+<th scope="row">${escapeHtml(item.title)}</th>
+<td><span class="pill pill--${item.tone}">${escapeHtml(item.encryption)}</span></td>
+<td>${escapeHtml(item.detail)}</td>
+</tr>`,
+    )
+    .join('\n');
+  return `<section class="readers" aria-labelledby="readers-title">
+<div class="band__inner">
+<h2 id="readers-title">${escapeHtml(readers.title)}</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th scope="col">${escapeHtml(readers.columns.room)}</th><th scope="col">${escapeHtml(readers.columns.encryption)}</th><th scope="col">${escapeHtml(readers.columns.notes)}</th></tr></thead>
+<tbody>
+${rows}
+</tbody>
+</table>
+</div>
+<ul class="readers__links">
+<li><a href="${REPOSITORY_URL}/blob/main/docs/self-hosting.md">${escapeHtml(readers.selfHost)}</a></li>
+<li><a href="${appUrl('/privacy')}">${escapeHtml(readers.privacy)}</a></li>
+<li><a href="${appUrl('/explore')}">${escapeHtml(readers.explore)}</a></li>
+</ul>
+</div>
+</section>`;
+}
+
+function guidesSection(language: SiteLanguage, context: PageContext, build: SiteBuild): string {
+  if (!context.hasGuides[language]) return '';
+  const { guides } = siteCopy[language];
+  return `<section class="band" aria-labelledby="guides-title">
+<div class="band__inner guides">
+<div class="guides__intro">
+<h2 id="guides-title">${escapeHtml(guides.title)}</h2>
+<p>${escapeHtml(guides.lede)}</p>
+</div>
+<ul class="guide-list">
+${guideList(language, build)}
+</ul>
+</div>
+</section>`;
+}
+
+function endSection(language: SiteLanguage, build: SiteBuild): string {
+  const { landing, hero, end } = siteCopy[language];
+  return `<section class="end" aria-labelledby="end-title">
+<div class="band__inner end__inner">
+<h2 id="end-title">${escapeHtml(end.title)}</h2>
+<div class="actions">
+<a class="site-button site-button--large" href="${appUrl('/connect')}">${escapeHtml(landing['landing.preview'])}</a>
+<a class="site-button site-button--large" href="#downloads" data-windows="${escapeHtml(build.downloads.windows)}" data-macos="${escapeHtml(build.downloads.macos)}">${escapeHtml(hero.download)}</a>
+</div>
+</div>
+</section>`;
+}
+
+function landingMain(language: SiteLanguage, context: PageContext, build: SiteBuild): string {
+  return [
+    heroSection(language, context, build),
+    startSection(language),
+    storySection(language),
+    doorsSection(language),
+    readersSection(language),
+    guidesSection(language, context, build),
+    endSection(language, build),
+  ]
+    .filter((section) => section !== '')
+    .join('\n');
 }
 
 export function landingPage(
@@ -175,6 +335,7 @@ export function landingPage(
     },
     context,
     landingMain(language, context, build),
+    'landing',
   );
 }
 

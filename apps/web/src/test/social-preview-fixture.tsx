@@ -13,7 +13,6 @@ import { resources } from '@/shared/i18n/resources';
  * 分享预览图（`public/social-preview.png`，1280×640）的底稿：链接发到别处时显示这张图，GitHub 仓库的
  * 社交预览也用它。标题取首页的英文说法；图上不写域名，自建的服务也用同一张图。
  * 改了首页说法以后重新生成：`AGENT_ROOM_WRITE_SOCIAL_PREVIEW=1` 跑 `e2e/social-preview.e2e.ts`。
- * 加 `?art` 只画房间插图：agentroom.chat 首屏用的 `site/room.png`（对话气泡由网站自己叠上，中英文各写各的）。
  * 加 `?room=en` 或 `?room=zh-CN` 画公开房间分享出去时的通用图（`public/room-share-preview-<语言>.png`）：
  * 不写具体房间的字，房间名和简介在图下面的 `og:` 标题和简介里。
  */
@@ -79,14 +78,6 @@ function RoomSharePreview({ language }: { readonly language: keyof typeof ROOM_S
   );
 }
 
-function SiteRoomArt() {
-  return (
-    <main className="site-room-art" id="site-room-art">
-      <RoomIllustration populated />
-    </main>
-  );
-}
-
 async function bootstrap(): Promise<void> {
   // 插图里的人物要用翻译（无障碍名称）；预览图只出英文版。
   await initializeI18n(window.localStorage, ['en']);
@@ -96,9 +87,7 @@ async function bootstrap(): Promise<void> {
   const roomLanguage = search.get('room');
   createRoot(root).render(
     <I18nextProvider i18n={i18n}>
-      {search.has('art') ? (
-        <SiteRoomArt />
-      ) : roomLanguage === 'en' || roomLanguage === 'zh-CN' ? (
+      {roomLanguage === 'en' || roomLanguage === 'zh-CN' ? (
         <RoomSharePreview language={roomLanguage} />
       ) : (
         <SocialPreview />

@@ -28,7 +28,7 @@
 - 生成器在 `apps/web/build/site/`（模板、页面、网站自己的文字），静态文件和内容在 `apps/web/site/`：
   - 一份样式。颜色、字体、圆角的取值和 `packages/ui-system` 一样（测试卡着），看起来和应用是一家。
   - 首页的标题、简介和三个用法直接取应用首页那份文案（`features/landing/i18n/landing-resources.ts`），网站和应用首页说的是同一句话，改一处两边都变。
-  - 首屏的房间插图 `room.png` 和分享预览图同一个画法，由 `e2e/social-preview.e2e.ts` 截出来（`AGENT_ROOM_WRITE_SITE_ART=1` 时写进去）；两句对话气泡由网站用 HTML 叠上，中英文各写各的。
+  - 首屏的房间是 HTML 和 CSS：机器人是 `site/robot-*.png`，家具和“你”是矢量，对话气泡中英文各写各的（2026-11-09 重做，见“状态”；以前是一张 `room.png`）。
   - 指南写成 Markdown，中英文各一份（`guides/<slug>.en.md`、`guides/<slug>.zh-CN.md`），开头写标题、简介、更新日期。
 - 网页构建（`pnpm --filter @agent-room/web build`）最后一步把它们生成到 `dist-site/`。网关镜像多拷一份到 `/srv/site`（`Containerfile.web`），Caddy 的裸域从那里出文件。不进应用的 `dist/`，PWA 的离线缓存不会带上它。
 - 网站的地址写死成 `https://agentroom.chat`，应用写死成 `https://app.agentroom.chat`：网站上写的本来就是这个部署的事，自建默认也不出网站。下载地址用应用首页同一套构建变量，没有时指向 GitHub 上最新的发行。只有正式构建（`vite build`）生成网站，桌面端和验收用的构建不生成。
@@ -138,3 +138,4 @@
   - “重复网页，用户未选定规范网页”：网站的每一页都有 `canonical`，没问题；一模一样的是接入说明，裸域和 API 域名上各有 `.md`、`.txt` 两份能被收录。改成上面第 4 节写的那样（#608），API 和聊天服务器的域名也不进搜索结果（接口里能 GET 的列表和 Synapse 的欢迎页以前都能被收录）。
 - 2026-10-27 03:15Z 前后，维护者同意后，编码 Agent 在 Vercel 的 DNS 里加了一条 `www` 的 A 记录指向生产服务器（TTL 60）。以前 www 没有自己的记录，落在 Vercel 自己管的通配 `*` ALIAS 上，所以指着 Vercel。新记录盖过通配，别的记录都没动；www 没有 IPv6 记录，CAA 沿用裸域的（含 letsencrypt.org）。Google 和 Cloudflare 的解析马上就是新地址。网关的 `www` 站点上线之前，`http://www` 由 Caddy 跳到 `https://www`，`https://www` 握手失败（以前是 Vercel 的 404），这是预料中的过渡。
 - 2026-11-04（#731）：首页和 `llms.txt` 写上公开房间。“谁能读到什么”原来三列三项，现在四项，改成两列。
+- 2026-11-09：维护者看过设计稿（Artifact“Agent Room 官网新稿”的 A 版）定了首页重做：首屏是一间房间，往下依次是三步上手、真事、三扇门、房间加不加密、指南和收尾。机器人从 `public/studio/flat-robots.png` 抠成 `site/robot-*.png`（按品红的程度算透明度，高 240 像素），家具和“你”是矢量，不再用 `room.png`。三种接入方式改按命令行、MCP、网络排，跟接入对话框一样。首页不再写“私人房间运营方读得到”，表头改成“房间加不加密”，谁读得到指到隐私说明（维护者定）；隐私说明页和 README 照旧写全。
