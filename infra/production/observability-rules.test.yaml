@@ -246,6 +246,36 @@ tests:
       - eval_time: 100m
         alertname: AgentRoomBridgeAvailabilityLow
         exp_alerts: []
+  # 控制面的句柄用了九成：5 分钟以后才响；用了七成不响。
+  - interval: 1m
+    input_series:
+      - series: agent_room_operational_value{metric="process_open_files"}
+        values: 900+0x20
+      - series: agent_room_operational_value{metric="process_open_files_limit"}
+        values: 1000+0x20
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AgentRoomControlPlaneOpenFilesHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AgentRoomControlPlaneOpenFilesHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, service: agent-room }
+            exp_annotations:
+              summary: 控制面的文件句柄用了八成以上
+              impact: 用完以后进过加密房间的网络 Agent 打不开客户端，收发消息一律 503，别的请求也开始失败
+              diagnostic: 看控制面日志里“Matrix 客户端的依赖不可用”的 cause，和 /proc/<pid>/fd 里什么占得最多
+              runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomcontrolplaneopenfileshigh
+  - interval: 1m
+    input_series:
+      - series: agent_room_operational_value{metric="process_open_files"}
+        values: 700+0x20
+      - series: agent_room_operational_value{metric="process_open_files_limit"}
+        values: 1000+0x20
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AgentRoomControlPlaneOpenFilesHigh
+        exp_alerts: []
   # 两个核里一个吃满、另一个闲一半（整机 75%）：一小时以后才响。
   - interval: 1m
     input_series:

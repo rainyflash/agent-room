@@ -71,7 +71,7 @@ use matrix_sdk_base::{
 
 use crate::{
     configuration::{MatrixSdkConfiguration, MatrixSdkStoreConfiguration},
-    error::{map_build_error, map_http_error, map_sdk_error},
+    error::{dependency_unavailable, map_build_error, map_http_error, map_sdk_error},
     handoff::MatrixSdkHandoffGateway,
     mapping::{map_backfill, map_sync_response, map_timeline_event},
     owner::{AgentOwner, accept_known_owner_identity},
@@ -253,7 +253,7 @@ async fn reject_recorded_crypto_identity_conflict(
         .state_store()
         .get_kv_data(StateStoreDataKey::OneTimeKeyAlreadyUploaded)
         .await
-        .map_err(|_| MatrixFailure::new(operation, MatrixFailureKind::DependencyUnavailable))?;
+        .map_err(|error| dependency_unavailable(operation, &error))?;
     if recorded.is_some() {
         return Err(MatrixFailure::new(
             operation,

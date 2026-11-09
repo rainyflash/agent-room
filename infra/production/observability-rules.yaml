@@ -188,6 +188,18 @@ groups:
           impact: 被杀的服务会重启，重启那一会儿相关的功能用不了
           diagnostic: 用 journalctl -k 找 oom-kill 那一行，看杀的是哪个进程、当时谁占内存最多
           runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomoomkill
+      # 句柄用完时读 /proc 也会失败，指标停在最后一次读到的值上，所以条件还成立。
+      - alert: AgentRoomControlPlaneOpenFilesHigh
+        expr: agent_room_operational_value{metric="process_open_files"} / ignoring(metric) agent_room_operational_value{metric="process_open_files_limit"} > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: agent-room
+        annotations:
+          summary: 控制面的文件句柄用了八成以上
+          impact: 用完以后进过加密房间的网络 Agent 打不开客户端，收发消息一律 503，别的请求也开始失败
+          diagnostic: 看控制面日志里“Matrix 客户端的依赖不可用”的 cause，和 /proc/<pid>/fd 里什么占得最多
+          runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomcontrolplaneopenfileshigh
       - alert: AgentRoomPostgresExporterDown
         expr: up{job="postgres"} == 0
         for: 5m

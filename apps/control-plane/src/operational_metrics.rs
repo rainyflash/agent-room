@@ -5,7 +5,7 @@ use tokio::{sync::oneshot, task::JoinHandle, time::MissedTickBehavior};
 
 use crate::{network_gateway::waiting, telemetry_metrics::TelemetryMetrics};
 
-const METRIC_NAMES: [&str; 8] = [
+const METRIC_NAMES: [&str; 10] = [
     "database_pool_connections",
     "database_pool_idle_connections",
     "content_reclaimable",
@@ -16,6 +16,9 @@ const METRIC_NAMES: [&str; 8] = [
     "public_lobby_shards",
     "public_lobby_occupied_slots",
     "public_lobby_network_agents",
+    // 每个开着的网络 Agent 加密客户端要占二三十个句柄，用完了只会回 503（agent-room-ops#83）。
+    "process_open_files",
+    "process_open_files_limit",
 ];
 
 /// 以固定指标名采样数据库运行状态，避免把租户、身份或对象标识写进标签。
@@ -103,6 +106,33 @@ fn record_pool_snapshot(pool: &PgPool, metrics: &TelemetryMetrics) {
         i64::try_from(pool.num_idle()).unwrap_or(i64::MAX),
     );
     metrics.record_operational_value(METRIC_NAMES[4], waiting::now());
+    record_open_files(metrics);
+}
+
+/// 只有 Linux 有 `/proc`，别的系统上读不到就不报。
+fn record_open_files(metrics: &TelemetryMetrics) {
+    if let Ok(entries) = std::fs::read_dir("/proc/self/fd") {
+        let open = i64::try_from(entries.count()).unwrap_or(i64::MAX);
+        metrics.record_operational_value(METRIC_NAMES[8], open);
+    }
+    let limit = std::fs::read_to_string("/proc/self/limits")
+        .ok()
+        .as_deref()
+        .and_then(open_files_limit);
+    if let Some(limit) = limit {
+        metrics.record_operational_value(METRIC_NAMES[9], limit);
+    }
+}
+
+/// `/proc/self/limits` 里的软上限。写着 `unlimited` 时没有数可报。
+fn open_files_limit(limits: &str) -> Option<i64> {
+    limits
+        .lines()
+        .find_map(|line| line.strip_prefix("Max open files"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 async fn sample_database(pool: &PgPool, metrics: &TelemetryMetrics) -> Result<(), sqlx::Error> {
@@ -182,14 +212,31 @@ mod real_dependency_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::METRIC_NAMES;
+    use super::{METRIC_NAMES, open_files_limit};
 
     #[test]
     fn 运行指标名是固定低基数集合() {
-        assert_eq!(METRIC_NAMES.len(), 8);
+        assert_eq!(METRIC_NAMES.len(), 10);
         for name in METRIC_NAMES {
             assert!(name.is_ascii());
             assert!(!name.contains(['/', '\\', '@', ':']));
         }
+    }
+
+    #[test]
+    fn 句柄上限取软上限() {
+        let limits = "Limit                     Soft Limit           Hard Limit           Units\n\
+                      Max processes             unlimited            unlimited            processes\n\
+                      Max open files            1024                 524288               files\n";
+        assert_eq!(open_files_limit(limits), Some(1024));
+    }
+
+    #[test]
+    fn 句柄上限写着_unlimited_或者没有这一行时不报() {
+        assert_eq!(
+            open_files_limit("Max open files unlimited unlimited files\n"),
+            None
+        );
+        assert_eq!(open_files_limit("Max processes 10 10 processes\n"), None);
     }
 }
