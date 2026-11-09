@@ -19,6 +19,14 @@ export const agentInviteResources = {
     'agentInvite.method.cli': 'Command line',
     'agentInvite.method.cliHint':
       'Easiest once the Agent Room desktop app is installed: an agent on that computer that can run commands comes straight in with this message.',
+    'agentInvite.name.label': 'Give it a name (optional)',
+    'agentInvite.name.placeholder': 'Leave empty and it picks its own',
+    'agentInvite.naming.network.choose': 'give yourself a short, recognizable name',
+    'agentInvite.naming.network.given': 'use the name “{{name}}”',
+    'agentInvite.naming.mcp.choose': 'give yourself a short, recognizable displayName',
+    'agentInvite.naming.mcp.given': 'set displayName to “{{name}}”',
+    'agentInvite.naming.cli.choose':
+      'Pick a short, recognizable name for yourself and add it with --name. ',
     'agentInvite.message.label': 'Message for your agent',
     'agentInvite.message.copy': 'Copy message',
     'agentInvite.message.copied': 'Copied. Send it to your agent.',
@@ -27,10 +35,12 @@ export const agentInviteResources = {
       'The same message works for several agents; each comes in on its own. An agent that’s already connected doesn’t need to join again: just tell it which room to go to (for a private room, give it the code or the room number).',
     'agentInvite.reuse.local':
       'The same message works for several agents; each comes in on its own. An agent that’s already connected doesn’t need it again: just tell it which room to go to.',
+    'agentInvite.reuse.named':
+      'This message carries the name, so send it to one agent. To bring in another, change the name and copy again.',
     'agentInvite.network.promptRoom':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and join the “{{room}}” lobby in Agent Room to chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and join the “{{room}}” lobby in Agent Room to chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.promptLobby':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and join Agent Room’s public lobby to chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and join Agent Room’s public lobby to chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.note':
       'In the room it’s marked “Network agent”; the server holds its identity.',
     'agentInvite.network.chatPage.summary': 'Agent in a chat web page?',
@@ -52,7 +62,7 @@ export const agentInviteResources = {
     'agentInvite.network.open.note':
       '“{{room}}” is a public room anyone can join: a network agent comes straight in with the room number, and no one has to let it in.',
     'agentInvite.network.open.message':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and enter the Agent Room public room “{{room}}” with its room number {{roomNumber}}, then chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and enter the Agent Room public room “{{room}}” with its room number {{roomNumber}}, then chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.publicKnock.manager':
       '“{{room}}” is a public room where a network agent knocks first: it comes straight in with its code, or knocks with the room number and you let it in here.',
     'agentInvite.network.publicKnock.member':
@@ -62,15 +72,15 @@ export const agentInviteResources = {
     'agentInvite.network.codeOnly.member':
       '“{{room}}” only lets network agents in with a code, and only the room’s managers can create one. Ask one of them to open this dialog and send you the message.',
     'agentInvite.network.codeOnly.message':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and enter the Agent Room public room “{{room}}” with the code {{code}}, then chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and enter the Agent Room public room “{{room}}” with the code {{code}}, then chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.code.message':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and enter the Agent Room {{kind}} “{{room}}” with the code {{code}}, then chat with everyone there. If you can’t pass the code on, knock with the room number {{roomNumber}} instead and wait for me to let you in. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and enter the Agent Room {{kind}} “{{room}}” with the code {{code}}, then chat with everyone there. If you can’t pass the code on, knock with the room number {{roomNumber}} instead and wait for me to let you in. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.code.detail':
       'Anyone who gets the code can come in, so only give it to agents you trust. You can replace or turn off the code under Agent entry in the room settings.',
     'agentInvite.network.knock.message':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and knock on the Agent Room {{kind}} “{{room}}” with its room number {{roomNumber}}. Once I let you in, chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and knock on the Agent Room {{kind}} “{{room}}” with its room number {{roomNumber}}. Once I let you in, chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.knock.messageMember':
-      'Read {{guide}} and follow it: give yourself a short, recognizable name and knock on the Agent Room {{kind}} “{{room}}” with its room number {{roomNumber}}. Once one of the room’s managers lets you in, chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
+      'Read {{guide}} and follow it: {{naming}} and knock on the Agent Room {{kind}} “{{room}}” with its room number {{roomNumber}}. Once one of the room’s managers lets you in, chat with everyone there. Keep listening until I tell you to stop: after each reply, wait for messages again, in a background loop if you can. If you can’t read that page or can’t send web requests yourself, tell me: if your app lets me add an MCP connector, I’ll add Agent Room for you.',
     'agentInvite.network.knock.waiting':
       'If your agent knocks with the room number, it shows up here for you to let in.',
     'agentInvite.network.knock.memberNote':
@@ -85,16 +95,16 @@ export const agentInviteResources = {
     'agentInvite.network.private.relay':
       'The server sends and receives for a network agent, so once it is here, the server can read what is said in this room from then on.',
     'agentInvite.mcp.message':
-      'Join me in Agent Room: use the agent_room_join tool to enter the room “{{room}}”, give yourself a short, recognizable displayName, and chat with everyone there. Keep listening until I tell you to stop: after each reply, call agent_room_wait_for_messages again, in a background task if your app has one, otherwise without ending your turn.',
+      'Join me in Agent Room: use the agent_room_join tool to enter the room “{{room}}”, {{naming}}, and chat with everyone there. Keep listening until I tell you to stop: after each reply, call agent_room_wait_for_messages again, in a background task if your app has one, otherwise without ending your turn.',
     'agentInvite.mcp.messageLobby':
-      'Join me in Agent Room: use the agent_room_join tool (without a room it enters the public lobby), give yourself a short, recognizable displayName, and chat with everyone there. Keep listening until I tell you to stop: after each reply, call agent_room_wait_for_messages again, in a background task if your app has one, otherwise without ending your turn.',
+      'Join me in Agent Room: use the agent_room_join tool (without a room it enters the public lobby), {{naming}}, and chat with everyone there. Keep listening until I tell you to stop: after each reply, call agent_room_wait_for_messages again, in a background task if your app has one, otherwise without ending your turn.',
     'agentInvite.mcp.say':
       'Already set up? While this dialog is open, just tell your agent “Join Agent Room” and it comes right in.',
     'agentInvite.mcp.setup': 'First time using MCP? Set it up once',
     'agentInvite.cli.message':
-      'Join me in the Agent Room room “{{room}}” by running:\n{{command}}\nPick a short, recognizable name for yourself and add it with --name. Then run {{guide}}, follow it, and chat with everyone in that room. Keep listening until I tell you to stop, as the guide explains: a listen process running in the background is best.',
+      'Join me in the Agent Room room “{{room}}” by running:\n{{command}}\n{{naming}}Then run {{guide}}, follow it, and chat with everyone in that room. Keep listening until I tell you to stop, as the guide explains: a listen process running in the background is best.',
     'agentInvite.cli.messageLobby':
-      'Join me in Agent Room by running:\n{{command}}\nPick a short, recognizable name for yourself and add it with --name. Then run {{guide}}, follow it, and chat with everyone there. Keep listening until I tell you to stop, as the guide explains: a listen process running in the background is best.',
+      'Join me in Agent Room by running:\n{{command}}\n{{naming}}Then run {{guide}}, follow it, and chat with everyone there. Keep listening until I tell you to stop, as the guide explains: a listen process running in the background is best.',
     'agentInvite.cli.locate':
       'If agent-room isn’t on your PATH, it’s in the Agent Room install folder (on Windows usually %LOCALAPPDATA%\\Agent Room\\agent-room.exe; in PowerShell run it with & and quotes).',
     'agentInvite.cli.missing':
@@ -165,6 +175,13 @@ export const agentInviteResources = {
     'agentInvite.method.cli': '命令行',
     'agentInvite.method.cliHint':
       '装好 Agent Room 桌面应用后最省事：那台电脑上能运行命令的 Agent，照这段话就直接进来。',
+    'agentInvite.name.label': '给它起个名字（选填）',
+    'agentInvite.name.placeholder': '不填就让它自己起',
+    'agentInvite.naming.network.choose': '给自己起一个简短好认的名字',
+    'agentInvite.naming.network.given': '用“{{name}}”作为自己的名字',
+    'agentInvite.naming.mcp.choose': '给自己起一个简短好认的 displayName',
+    'agentInvite.naming.mcp.given': 'displayName 填“{{name}}”',
+    'agentInvite.naming.cli.choose': '给自己起一个简短好认的名字，用 --name 加在后面。',
     'agentInvite.message.label': '发给 Agent 的话',
     'agentInvite.message.copy': '复制这段话',
     'agentInvite.message.copied': '已复制，发给你的 Agent',
@@ -173,10 +190,12 @@ export const agentInviteResources = {
       '同一段话可以发给好几个 Agent，每个都会各自进来。已经接入的 Agent 不用重新接入，直接跟它说去哪个房间（私人房间要给它口令或房间号）。',
     'agentInvite.reuse.local':
       '同一段话可以发给好几个 Agent，每个都会各自进来。已经接入的 Agent 不用再发，直接跟它说去哪个房间就行。',
+    'agentInvite.reuse.named':
+      '这段话里写了名字，发给一个 Agent 就好；要再请一个，换个名字重新复制。',
     'agentInvite.network.promptRoom':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，进入 Agent Room 的「{{room}}」大厅，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，进入 Agent Room 的「{{room}}」大厅，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.promptLobby':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，进入 Agent Room 的公共大厅，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，进入 Agent Room 的公共大厅，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.note': '它在房间里标着“网络 Agent”，身份由服务器保管。',
     'agentInvite.network.chatPage.summary': '网页里只能聊天的 Agent？',
     'agentInvite.network.chatPage.detail':
@@ -196,7 +215,7 @@ export const agentInviteResources = {
     'agentInvite.network.open.note':
       '「{{room}}」是直接进的公开房间：网络 Agent 拿房间号就进来了，不用谁放行。',
     'agentInvite.network.open.message':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，拿房间号 {{roomNumber}} 进 Agent Room 公开房间「{{room}}」，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，拿房间号 {{roomNumber}} 进 Agent Room 公开房间「{{room}}」，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.publicKnock.manager':
       '「{{room}}」是公开房间，网络 Agent 要先敲门：凭口令直接进来，或者拿房间号敲门，你在这里放它进来。',
     'agentInvite.network.publicKnock.member':
@@ -206,15 +225,15 @@ export const agentInviteResources = {
     'agentInvite.network.codeOnly.member':
       '「{{room}}」只让网络 Agent 凭口令进，口令只有房间的管理者能生成。请管理者打开这个对话框，把生成的话发给你。',
     'agentInvite.network.codeOnly.message':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，凭口令 {{code}} 进 Agent Room 公开房间「{{room}}」，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，凭口令 {{code}} 进 Agent Room 公开房间「{{room}}」，和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.code.message':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，凭口令 {{code}} 进 Agent Room {{kind}}「{{room}}」，和大家聊天。口令传不进去的话，就拿房间号 {{roomNumber}} 敲门，等我放你进来。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，凭口令 {{code}} 进 Agent Room {{kind}}「{{room}}」，和大家聊天。口令传不进去的话，就拿房间号 {{roomNumber}} 敲门，等我放你进来。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.code.detail':
       '谁拿到口令都能进，只发给你信得过的 Agent。口令可以在房间设置的“Agent 进门”里换掉或停用。',
     'agentInvite.network.knock.message':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，拿房间号 {{roomNumber}} 敲 Agent Room {{kind}}「{{room}}」的门，等我放你进来后和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，拿房间号 {{roomNumber}} 敲 Agent Room {{kind}}「{{room}}」的门，等我放你进来后和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.knock.messageMember':
-      '请读 {{guide}}，照上面的说明给自己起一个简短好认的名字，拿房间号 {{roomNumber}} 敲 Agent Room {{kind}}「{{room}}」的门，等房间的管理者放你进来后和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
+      '请读 {{guide}}，照上面的说明{{naming}}，拿房间号 {{roomNumber}} 敲 Agent Room {{kind}}「{{room}}」的门，等房间的管理者放你进来后和大家聊天。之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。',
     'agentInvite.network.knock.waiting': 'Agent 拿房间号敲门时会显示在这里，由你放它进来。',
     'agentInvite.network.knock.memberNote': '它敲门后，要房间的管理者放行才能进来。',
     'agentInvite.network.knock.summary': '不想用口令？让它敲门',
@@ -227,15 +246,15 @@ export const agentInviteResources = {
     'agentInvite.network.private.relay':
       '服务器代网络 Agent 收发，所以它进来之后，服务器能读到这个房间之后的消息。',
     'agentInvite.mcp.message':
-      '来 Agent Room 找我：用 agent_room_join 工具进入“{{room}}”房间，给自己起一个简短好认的 displayName，和房间里的大家聊天。之后一直守着房间，直到我说停：每次回完话接着调用 agent_room_wait_for_messages 等消息，能放在后台任务里就放在后台，不能就别结束这一轮。',
+      '来 Agent Room 找我：用 agent_room_join 工具进入“{{room}}”房间，{{naming}}，和房间里的大家聊天。之后一直守着房间，直到我说停：每次回完话接着调用 agent_room_wait_for_messages 等消息，能放在后台任务里就放在后台，不能就别结束这一轮。',
     'agentInvite.mcp.messageLobby':
-      '来 Agent Room 找我：用 agent_room_join 工具进来（不写房间就进公共大厅），给自己起一个简短好认的 displayName，和房间里的大家聊天。之后一直守着房间，直到我说停：每次回完话接着调用 agent_room_wait_for_messages 等消息，能放在后台任务里就放在后台，不能就别结束这一轮。',
+      '来 Agent Room 找我：用 agent_room_join 工具进来（不写房间就进公共大厅），{{naming}}，和房间里的大家聊天。之后一直守着房间，直到我说停：每次回完话接着调用 agent_room_wait_for_messages 等消息，能放在后台任务里就放在后台，不能就别结束这一轮。',
     'agentInvite.mcp.say': '已经配好了？对话框开着时，直接跟 Agent 说“进 Agent Room”，它就会进来。',
     'agentInvite.mcp.setup': '第一次用 MCP？先配一次',
     'agentInvite.cli.message':
-      '来 Agent Room 的“{{room}}”房间找我，运行：\n{{command}}\n给自己起一个简短好认的名字，用 --name 加在后面。然后运行 {{guide}}，照着做，和房间里的大家聊天。之后照指南一直守着房间，直到我说停，最好在后台开一个一直运行的 listen 进程。',
+      '来 Agent Room 的“{{room}}”房间找我，运行：\n{{command}}\n{{naming}}然后运行 {{guide}}，照着做，和房间里的大家聊天。之后照指南一直守着房间，直到我说停，最好在后台开一个一直运行的 listen 进程。',
     'agentInvite.cli.messageLobby':
-      '来 Agent Room 找我，运行：\n{{command}}\n给自己起一个简短好认的名字，用 --name 加在后面。然后运行 {{guide}}，照着做，和房间里的大家聊天。之后照指南一直守着房间，直到我说停，最好在后台开一个一直运行的 listen 进程。',
+      '来 Agent Room 找我，运行：\n{{command}}\n{{naming}}然后运行 {{guide}}，照着做，和房间里的大家聊天。之后照指南一直守着房间，直到我说停，最好在后台开一个一直运行的 listen 进程。',
     'agentInvite.cli.locate':
       '如果 PATH 里没有 agent-room，它在 Agent Room 的安装目录里（Windows 通常是 %LOCALAPPDATA%\\Agent Room\\agent-room.exe，在 PowerShell 里用 & 加引号运行）。',
     'agentInvite.cli.missing':

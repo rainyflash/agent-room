@@ -3,7 +3,10 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
-import { PrivateRoomNetworkInvite } from '@/features/private-rooms/ui/private-room-network-invite';
+import {
+  networkNaming,
+  PrivateRoomNetworkInvite,
+} from '@/features/private-rooms/ui/private-room-network-invite';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
@@ -39,9 +42,12 @@ export function networkInviteTarget(
  * 不用命令行。给一句现成的话复制给 Agent；私人房间的话里是房间号，Agent 敲门后在这里放它进来。
  */
 export function NetworkAgentInvite({
+  agentName = '',
   room,
   onCopied,
 }: {
+  /** 人替它起的名字；空的时候话里请 Agent 自己起。 */
+  readonly agentName?: string;
   readonly room: NetworkInviteRoom;
   readonly onCopied?: () => void;
 }) {
@@ -84,6 +90,7 @@ export function NetworkAgentInvite({
     ) : (
       <>
         <PrivateRoomNetworkInvite
+          agentName={agentName}
           catalogId={catalogId}
           guide={guide}
           listings={services.privateRoomListings}
@@ -96,10 +103,11 @@ export function NetworkAgentInvite({
       </>
     );
   }
+  const naming = networkNaming(t, agentName);
   const prompt =
     target.name === null
-      ? t('agentInvite.network.promptLobby', { guide })
-      : t('agentInvite.network.promptRoom', { guide, room: target.name });
+      ? t('agentInvite.network.promptLobby', { guide, naming })
+      : t('agentInvite.network.promptRoom', { guide, naming, room: target.name });
   return (
     <>
       {lobbies.kind === 'failed' ? (

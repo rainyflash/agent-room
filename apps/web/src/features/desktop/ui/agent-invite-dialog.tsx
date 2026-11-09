@@ -1,6 +1,6 @@
-import { Banner, Dialog, Segmented } from '@agent-room/ui-system';
+import { Banner, Dialog, Field, Segmented } from '@agent-room/ui-system';
 import { Bot, Globe, Plug, SquareTerminal } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
@@ -16,6 +16,7 @@ import {
   type HostBaseline,
   type PresentAgent,
 } from '../domain/agent-arrivals';
+import { cleanAgentName, MAX_AGENT_NAME_CHARACTERS } from '../domain/agent-naming';
 import { localConnectionReady } from '../domain/desktop-connection';
 import type { HostSessionDiagnostics, InvitationOffer } from '../domain/desktop-runtime';
 import type { ConnectedInvitation } from '../domain/invite-reply';
@@ -57,6 +58,8 @@ const inviteMethodKey = 'agent-room.invite-method';
 const SESSION_POLL_MS = 3_000;
 /** Bridge 十分钟不续期就撤掉挂着的人物；对话框开着时提前续上。 */
 const OFFER_REFRESH_MS = 3 * 60_000;
+/** 打字停下这么久再把名字换到挂着的人物上，不用每敲一个字问一次连接服务。 */
+const NAME_SETTLE_MS = 400;
 const uuid = new BrowserUuidV7Factory();
 const noAgents: readonly PresentAgent[] = [];
 
@@ -92,7 +95,8 @@ function localStorageOrNull(): Storage | null {
 
 /**
  * 接入 Agent：选一种方式，复制一段话发给 Agent，它进来时就显示在下面。三种方式并列，不按具体的
- * Agent 应用区分；Agent 自己起名，同一个任务再接入会回到同一个人物，所以这里不再管人物和名字。
+ * Agent 应用区分；同一个任务再接入会回到同一个人物，所以这里不管人物。名字可以替它起，写进话里；
+ * 不起就由 Agent 自己起。
  */
 export function AgentInviteDialog({
   agentsCanSpeak = true,
@@ -156,6 +160,8 @@ function InviteBody({
   const [method, setMethod] = useState<InviteMethod>(() => readInviteMethod(storage, available));
   const [openedAt] = useState(() => Date.now());
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const [nameInput, setNameInput] = useState('');
+  const agentName = cleanAgentName(nameInput);
   const local = method !== 'network';
   const { sessions, sessionsFailure, localReady, desktop } = useHostSessions(local);
   const [baseline, setBaseline] = useState<HostBaseline | null>(null);
@@ -173,7 +179,7 @@ function InviteBody({
   const existingArrived = arrivals.some(
     (arrival) => arrival.existing && arrival.state === 'ready' && !arrival.elsewhere,
   );
-  useParkedInvitation(local && localReady, room, sessions, existingArrived);
+  useParkedInvitation(local && localReady, room, sessions, existingArrived, agentName);
   useConnectedCallback(arrivals, room, copiedAt ?? openedAt, onConnected);
   useOnboardingReports(arrivals, method);
 
@@ -207,15 +213,30 @@ function InviteBody({
           {t('agentInvite.cannotSpeak')}
         </Banner>
       )}
+      <Field label={t('agentInvite.name.label')}>
+        <input
+          autoComplete="off"
+          maxLength={MAX_AGENT_NAME_CHARACTERS}
+          onChange={(event) => {
+            setNameInput(event.target.value);
+          }}
+          placeholder={t('agentInvite.name.placeholder')}
+          value={nameInput}
+        />
+      </Field>
       {method === 'network' ? (
-        <NetworkAgentInvite onCopied={copied} room={room} />
+        <NetworkAgentInvite agentName={agentName} onCopied={copied} room={room} />
       ) : (
-        <LocalAgentInvite downloadUrl={downloadUrl} method={method} onCopied={copied} room={room} />
+        <LocalAgentInvite
+          agentName={agentName}
+          downloadUrl={downloadUrl}
+          method={method}
+          onCopied={copied}
+          room={room}
+        />
       )}
       {/* 不用一个个复制：同一段话能发给好几个 Agent，已经接入的叫它换房间就行。 */}
-      <p className="agent-invite__note">
-        {t(method === 'network' ? 'agentInvite.reuse.network' : 'agentInvite.reuse.local')}
-      </p>
+      <p className="agent-invite__note">{t(reuseNoteKey(method, agentName))}</p>
       <AgentArrivalsPanel
         arrivals={arrivals}
         copiedAt={copiedAt}
@@ -239,6 +260,12 @@ function InviteBody({
       ) : null}
     </>
   );
+}
+
+/** 话里写了名字就只发给一个 Agent：发给几个，它们全叫同一个名字。 */
+function reuseNoteKey(method: InviteMethod, agentName: string) {
+  if (agentName !== '') return 'agentInvite.reuse.named';
+  return method === 'network' ? 'agentInvite.reuse.network' : 'agentInvite.reuse.local';
 }
 
 /** 本机方式时每 3 秒读一次这台电脑上的 Agent 会话；网络方式和网页端不读。 */
@@ -285,6 +312,7 @@ function useParkedInvitation(
   room: InviteRoom,
   sessions: readonly HostSessionDiagnostics[] | null,
   answered: boolean,
+  agentName: string,
 ): void {
   const controller = useDesktopRuntimeController();
   const { offerInvitation, withdrawInvitation } = controller;
@@ -292,18 +320,25 @@ function useParkedInvitation(
   const taken = answered || (sessions?.some((entry) => entry.sessionKey === sessionKey) ?? false);
   const catalogId = room?.catalogId;
   const roomId = room?.roomId;
-  useEffect(() => {
-    if (!active || taken) return undefined;
-    const invitation: InvitationOffer = {
+  const parked = active && !taken;
+  const latestName = useRef(agentName);
+  const offeredName = useRef<string | null>(null);
+  const currentOffer = useCallback((): InvitationOffer => {
+    offeredName.current = latestName.current;
+    return {
       sessionKey,
+      ...(latestName.current === '' ? {} : { displayName: latestName.current }),
       ...(catalogId === undefined
         ? {}
         : { room: { catalogId, ...(roomId === undefined ? {} : { roomId }) } }),
     };
+  }, [sessionKey, catalogId, roomId]);
+  useEffect(() => {
+    if (!parked) return undefined;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const offer = async () => {
-      await offerInvitation(invitation);
+      await offerInvitation(currentOffer());
       if (disposed) return;
       timer = setTimeout(() => void offer(), OFFER_REFRESH_MS);
     };
@@ -313,7 +348,16 @@ function useParkedInvitation(
       clearTimeout(timer);
       void withdrawInvitation(sessionKey);
     };
-  }, [active, taken, sessionKey, catalogId, roomId, offerInvitation, withdrawInvitation]);
+  }, [parked, sessionKey, currentOffer, offerInvitation, withdrawInvitation]);
+  // 名字改了就换掉挂着的那份。Bridge 只留一份，同一个会话键再挂就是覆盖，不用先撤回。
+  useEffect(() => {
+    latestName.current = agentName;
+    if (!parked || offeredName.current === agentName) return undefined;
+    const timer = setTimeout(() => void offerInvitation(currentOffer()), NAME_SETTLE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [agentName, parked, currentOffer, offerInvitation]);
 }
 
 /** 第一个进了这个房间的 Agent：告诉房间页，它好在关掉对话框后接着显示首次回复的进度。 */

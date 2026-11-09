@@ -21,11 +21,14 @@ type LocalMethod = 'mcp' | 'cli';
 export function LocalAgentInvite({
   method,
   room,
+  agentName,
   downloadUrl,
   onCopied,
 }: {
   readonly method: LocalMethod;
   readonly room: InviteRoom;
+  /** 人替它起的名字；空的时候话里请 Agent 自己起。 */
+  readonly agentName: string;
   readonly downloadUrl: string | null;
   readonly onCopied: () => void;
 }) {
@@ -37,12 +40,16 @@ export function LocalAgentInvite({
   // 这台电脑还没授权时，Agent 照着做也进不来：先把授权做完。
   const needsAuthorization =
     desktop && snapshot?.bridge.lifecycle.phase === 'authorization_required';
+  const mcpNaming =
+    agentName === ''
+      ? t('agentInvite.naming.mcp.choose')
+      : t('agentInvite.naming.mcp.given', { name: agentName });
   const message =
     method === 'mcp'
       ? room === null
-        ? t('agentInvite.mcp.messageLobby')
-        : t('agentInvite.mcp.message', { room: room.roomName })
-      : cliMessage(t, room, snapshot, desktop);
+        ? t('agentInvite.mcp.messageLobby', { naming: mcpNaming })
+        : t('agentInvite.mcp.message', { naming: mcpNaming, room: room.roomName })
+      : cliMessage(t, room, snapshot, desktop, agentName);
 
   return (
     <>
@@ -82,16 +89,20 @@ function cliMessage(
   room: InviteRoom,
   snapshot: DesktopRuntimeSnapshot | null,
   desktop: boolean,
+  agentName: string,
 ): string {
   const platform = snapshot?.platform ?? 'unknown';
   const invocation = cliInvocation(snapshot?.cliConfiguration, platform);
-  const command =
+  const join =
     room === null
       ? `${invocation} join`
       : `${invocation} join --room ${quoteCliArgument(room.roomName, platform)}`;
+  const command =
+    agentName === '' ? join : `${join} --name ${quoteCliArgument(agentName, platform)}`;
   const text = t(room === null ? 'agentInvite.cli.messageLobby' : 'agentInvite.cli.message', {
     command,
     guide: `${invocation} guide`,
+    naming: agentName === '' ? t('agentInvite.naming.cli.choose') : '',
     room: room?.roomName ?? '',
   });
   return desktop ? text : `${text}\n\n${t('agentInvite.cli.locate')}`;
