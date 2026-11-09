@@ -30,6 +30,7 @@ from prodops.error_digest import (
     summarize,
 )
 from prodops.launch_status import report as launch_report
+from prodops.onboarding_funnel import RuntimeDatabases, report_section as onboarding_section
 from prodops.ops_issues import (
     DEFAULT_TOKEN_FILE,
     DigestState,
@@ -336,6 +337,7 @@ def _capacity_report(arguments: argparse.Namespace, paths: DeploymentPaths, runt
         network=network,
         previous_network=state.network,
         version=runtime.release_version(),
+        onboarding=onboarding_section(RuntimeDatabases(runtime), now),
     )
     if not arguments.post:
         for line in lines:
