@@ -305,5 +305,5 @@ reason = "有人打开了登录地址却没带 client_id 之类的必填参数�
 
 [[ignore]]
 service = "identity"
-summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.utils\\.OAuth2CodeParser Code '<id>' already used for userSession '<x>' and client '<id>'\\.$"
-reason = "同一个登录回调带着的授权码被换了第二次（刷新回调页、同一浏览器多个登录标签页前后脚回来、邮箱或浏览器预取），Keycloak 拒掉第二次，第一次已经登录成功；控制面对回调重复早有处理，会按登录是否还在等记 INFO 并送回房间或重开登录（#588、#618）。2026-11-03 生产上只出现一次（agent-room-ops#66）。同一时间成片出现、而且回调之后人没登录上，才是要查的"
+summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.utils\\.OAuth2CodeParser Code '…' already used for userSession '…' and client '…'\\.$"
+reason = "同一个登录回调带着的授权码被换了第二次（刷新回调页、同一浏览器多个登录标签页前后脚回来、邮箱或浏览器预取），Keycloak 拒掉第二次，第一次已经登录成功；控制面对回调重复早有处理，会按登录是否还在等记 INFO 并送回房间或重开登录（#588、#618）。2026-11-03、11-09 生产上各出现一次（agent-room-ops#66）；汇总行里占位符是 …，不是 <id>，第一版规则写错了没生效。同一时间成片出现、而且回调之后人没登录上，才是要查的"
