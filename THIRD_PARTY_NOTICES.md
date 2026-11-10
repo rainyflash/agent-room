@@ -9,7 +9,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 889
 - npm packages: 714
 - Total locked package versions: 1603
-- `Cargo.lock` SHA-256: `f0eb18a8d905ac91d8da55c762f63831965d6b7e9fc2a725d5f40d6fba65a696`
+- `Cargo.lock` SHA-256: `b98b998ab3bc7add21b467204e9cbc2c8f9090163f51eea37e57eba551b0417a`
 - `pnpm-lock.yaml` SHA-256: `98de0fdddd7d4ac05962a941c73372d559e02dfea828cf543d7c1a868c29998e`
 
 ## License expressions
@@ -102,7 +102,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [async-broadcast](https://github.com/smol-rs/async-broadcast) | 0.7.2 | `MIT OR Apache-2.0` |
 | cargo | [async-channel](https://github.com/smol-rs/async-channel) | 2.5.0 | `Apache-2.0 OR MIT` |
 | cargo | [async-compression](https://github.com/Nullus157/async-compression) | 0.4.43 | `MIT OR Apache-2.0` |
-| cargo | [async-executor](https://github.com/smol-rs/async-executor) | 1.14.0 | `Apache-2.0 OR MIT` |
+| cargo | [async-executor](https://github.com/smol-rs/async-executor) | 1.14.1 | `Apache-2.0 OR MIT` |
 | cargo | [async-io](https://github.com/smol-rs/async-io) | 2.6.0 | `Apache-2.0 OR MIT` |
 | cargo | [async-lock](https://github.com/smol-rs/async-lock) | 3.4.2 | `Apache-2.0 OR MIT` |
 | cargo | [async-once-cell](https://github.com/danieldg/async-once-cell) | 0.5.4 | `MIT OR Apache-2.0` |
@@ -636,8 +636,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [reqwest](https://github.com/seanmonstar/reqwest) | 0.13.4 | `MIT OR Apache-2.0` |
 | cargo | [rfc6979](https://github.com/RustCrypto/signatures/tree/master/rfc6979) | 0.4.0 | `Apache-2.0 OR MIT` |
 | cargo | [ring](https://github.com/briansmith/ring) | 0.17.14 | `Apache-2.0 AND ISC` |
-| cargo | [rmcp](https://github.com/modelcontextprotocol/rust-sdk/) | 3.1.4 | `Apache-2.0` |
-| cargo | [rmcp-macros](https://github.com/modelcontextprotocol/rust-sdk/) | 3.1.4 | `Apache-2.0` |
+| cargo | [rmcp](https://github.com/modelcontextprotocol/rust-sdk/) | 3.9.0 | `Apache-2.0` |
+| cargo | [rmcp-macros](https://github.com/modelcontextprotocol/rust-sdk/) | 3.9.0 | `Apache-2.0` |
 | cargo | [rmp](https://github.com/3Hren/msgpack-rust) | 0.8.15 | `MIT` |
 | cargo | [rmp-serde](https://github.com/3Hren/msgpack-rust) | 1.3.1 | `MIT` |
 | cargo | [rsa](https://github.com/RustCrypto/RSA) | 0.9.10 | `MIT OR Apache-2.0` |

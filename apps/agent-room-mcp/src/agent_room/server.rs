@@ -14,7 +14,7 @@ use agent_room_bridge_ipc::{
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig},
     tool, tool_handler, tool_router,
 };
 use serde_json::json;
@@ -1240,8 +1240,8 @@ fn reception_binding_failure(code: &str) -> CallToolResult {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AgentRoomMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(
                 Implementation::new("agent-room-mcp", env!("CARGO_PKG_VERSION"))
                     .with_title("Agent Room")
