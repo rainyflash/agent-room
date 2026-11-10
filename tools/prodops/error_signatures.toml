@@ -24,8 +24,8 @@ reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房
 
 [[ignore]]
 service = "control-plane"
-summary = '^WARN \S+ 网络 Agent 请求失败 failure=CodeInvalid @ POST /mcp$'
-reason = "网络 Agent 拿的私人房间口令不对、已更换或已关掉（房间不收 Agent、被移出后拿旧口令再来也算）。服务器一律只回 404 `network_agent.code_invalid`，说清楚去找房主或管理者要新口令，不区分原因是故意的，免得被拿来试口令；没有人被挡在服务器的毛病上（2026-10-31 生产上只出现一次，agent-room-ops#55）"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=CodeInvalid @ POST /(mcp|v1/network-agents)$'
+reason = "网络 Agent 拿的私人房间口令不对、已更换或已关掉（房间不收 Agent、被移出后拿旧口令再来也算）。服务器一律只回 404 `network_agent.code_invalid`，说清楚去找房主或管理者要新口令，不区分原因是故意的，免得被拿来试口令；没有人被挡在服务器的毛病上（2026-10-31 生产上只出现一次，agent-room-ops#55；MCP 和直接调 REST 加入接口 `POST /v1/network-agents` 是同一个口令检查，2026-11-10 REST 上也出现一次，agent-room-ops#92）"
 
 [[ignore]]
 service = "control-plane"
