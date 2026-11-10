@@ -68,6 +68,7 @@ impl NetworkGateway {
             catalog_id: admitted.room.catalog_id,
             matrix_room_id: admitted.room.matrix_room_id,
             name: admitted.room.name,
+            archived: false,
         };
         self.enter_admitted_internal(agent_id, entered)
             .await

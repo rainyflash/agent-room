@@ -4077,6 +4077,7 @@ async fn 放行后按_agent_取会话替它进房间_不记活动_停用的不�
                 catalog_id: private_catalog(),
                 matrix_room_id: MatrixRoomReference::new(PRIVATE_ROOM.to_owned()).unwrap(),
                 name: "项目室".to_owned(),
+                archived: false,
             },
         )
         .await
@@ -4208,6 +4209,7 @@ async fn 放行后进大厅失败时退回名额_重进房间后迟到的请出�
         matrix_room_id: entered.matrix_room_id,
         joined_at: UtcMillis::new(START).unwrap(),
         name: None,
+        archived: false,
     };
     harness
         .service
@@ -4259,6 +4261,7 @@ async fn 已在别的大厅时即使在场人数已满也能回到暂离的其�
         matrix_room_id: second_entered.matrix_room_id,
         joined_at: UtcMillis::new(START).unwrap(),
         name: Some(second_entered.name),
+        archived: false,
     };
     harness
         .service

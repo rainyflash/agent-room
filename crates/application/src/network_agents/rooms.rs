@@ -716,6 +716,8 @@ fn owned_room(snapshot: &PrivateRoomSnapshot) -> NetworkAgentRoom {
         catalog_id: snapshot.catalog().id(),
         matrix_room_id: snapshot.instance().matrix_room_id().clone(),
         name: snapshot.catalog().name().to_owned(),
+        archived: snapshot.catalog().status()
+            == agent_room_domain::rooms::RoomCatalogStatus::Archived,
     }
 }
 

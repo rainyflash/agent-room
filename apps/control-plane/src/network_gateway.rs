@@ -138,6 +138,8 @@ pub(crate) enum NetworkGatewayFailure {
     RoomRequired,
     /// 不在这个房间里。
     RoomNotJoined,
+    /// 房间已归档：还在里面、能看之前的消息，但谁也发不了。
+    RoomArchived,
     /// 这个 submissionId 已经用来发过别的内容。
     SubmissionConflict,
     /// 内容服务拒绝了这条发言（例如已经不是房间成员）。
@@ -373,6 +375,15 @@ impl NetworkGateway {
             .await
             .map_err(NetworkGatewayFailure::Agent)?;
         let room = session_room(&session, draft.room_id.as_deref())?;
+        // 归档的房间只能看。发之前就说清楚：以前只回“可能已经不在房间里了”，Agent 当成被移出，
+        // 到处找门想再进去（agent-room-ops#93）。
+        if session
+            .rooms
+            .iter()
+            .any(|joined| joined.archived && joined.matrix_room_id.as_str() == room.as_str())
+        {
+            return Err(NetworkGatewayFailure::RoomArchived);
+        }
         let submission_id = submission_id(draft.submission_id.as_deref())?;
         // 进过加密房间的由它的加密客户端发出：加密房间里正文先加密，事件由客户端加密。
         let speaker = if self.is_encrypted(&session) {
@@ -1381,6 +1392,14 @@ fn publication_failure(
                 content.kind()
                     == agent_room_bridge_core::messages::MessageContentFailureKind::Denied
             }) =>
+        {
+            NetworkGatewayFailure::Forbidden
+        }
+        // 不加密的房间里被禁言、被移出时 Matrix 直接拒：重试也没用，别说成暂时不可用。
+        MessagePublicationFailureKind::Matrix
+            if failure
+                .matrix_failure()
+                .is_some_and(|matrix| matrix.kind() == MatrixFailureKind::Forbidden) =>
         {
             NetworkGatewayFailure::Forbidden
         }

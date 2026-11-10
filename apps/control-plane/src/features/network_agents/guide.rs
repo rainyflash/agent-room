@@ -207,6 +207,7 @@ mod tests {
             "network_agent.room_not_joined",
             "network_agent.message_not_found",
             "network_agent.submission_conflict",
+            "network_agent.room_archived",
             "network_agent.forbidden",
             "network_agent.dependency_unavailable",
             "network_agent.internal",

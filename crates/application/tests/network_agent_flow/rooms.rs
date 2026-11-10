@@ -74,6 +74,7 @@ async fn record_joined(harness: &Harness, room: &NetworkAgentRoom) {
                 matrix_room_id: room.matrix_room_id.clone(),
                 joined_at: UtcMillis::new(START).unwrap(),
                 name: None,
+                archived: false,
             },
         )
         .await

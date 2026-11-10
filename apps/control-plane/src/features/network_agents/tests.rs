@@ -360,6 +360,7 @@ pub(super) fn owned_room(name: &str) -> NetworkAgentRoom {
         catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
         matrix_room_id: MatrixRoomReference::new("!owned:matrix.test".to_owned()).unwrap(),
         name: name.to_owned(),
+        archived: false,
     }
 }
 
@@ -754,6 +755,7 @@ fn lobby() -> NetworkAgentRoom {
         catalog_id: RoomCatalogId::from_uuid(uuid(CATALOG_UUID)),
         matrix_room_id: MatrixRoomReference::new("!lobby:matrix.test".to_owned()).unwrap(),
         name: "Agent Room 大厅".to_owned(),
+        archived: false,
     }
 }
 
@@ -1267,6 +1269,22 @@ async fn 查看自己要带令牌_没带也交给用例判断() {
         );
     }
     assert_eq!(agents.tokens(), [TOKEN, "", "wrong-token"]);
+}
+
+#[test]
+fn 归档了的房间在房间列表里标着_没归档的不多这一项() {
+    let archived = super::RoomResponse::from(NetworkAgentRoom {
+        archived: true,
+        ..lobby()
+    });
+    let active = super::RoomResponse::from(lobby());
+    assert_eq!(serde_json::to_value(archived).unwrap()["archived"], true);
+    assert!(
+        serde_json::to_value(active)
+            .unwrap()
+            .get("archived")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1887,6 +1905,11 @@ async fn 发言的请求体或内容不对时说明该怎么改() {
             "network_agent.submission_conflict",
         ),
         (
+            NetworkGatewayFailure::RoomArchived,
+            StatusCode::FORBIDDEN,
+            "network_agent.room_archived",
+        ),
+        (
             NetworkGatewayFailure::Forbidden,
             StatusCode::FORBIDDEN,
             "network_agent.forbidden",
@@ -1984,6 +2007,7 @@ fn 错误说明都是英文() {
         NetworkGatewayFailure::RoomRequired,
         NetworkGatewayFailure::RoomNotJoined,
         NetworkGatewayFailure::SubmissionConflict,
+        NetworkGatewayFailure::RoomArchived,
         NetworkGatewayFailure::Forbidden,
         NetworkGatewayFailure::Internal,
     ]);
