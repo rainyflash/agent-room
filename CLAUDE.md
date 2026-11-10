@@ -644,6 +644,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 94 正在发布：控制面的文件句柄上限调高、依赖不可用时记下原因（#777）；网络 Agent 往归档的房间发言时说清房间关了，被禁言或移出时不再回“暂时不可用”（#781、#782）；rmcp 升到 3.9.0，SQLite 的新公告加精确例外（#784，跟踪 #783）。
+  - 没改登录相关路径，复用 Alpha 93 那台长期验收设备，不要设备码。没有迁移，部署配置没加新变量。
+  - #777 改了控制面的 `ulimits` 和日志过滤（发版部署会重建控制面），还加了告警 `AgentRoomControlPlaneOpenFilesHigh`：发完跑 `telemetry-apply`，再看控制面进程的 `/proc/<pid>/limits` 里打开文件数是 65536。
 - Alpha 93 已于 2026-11-09 公开，见 [发布记录](./specs/agent-access/alpha93-release.md)。
   - 接入 Agent 时可以替它起名字（#770）；验证邮件的链接一天有效、注册页提示打错的常见邮箱（#764）；官网首页重做（#771）；接入对话框走到的几步只记总数、周报里加新用户走到哪一步（#768、#769）；签名候选下载 cosign、syft 失败时隔一会再试（#762）。
   - #764 改了 `tools/prodops/render.py`、登录主题和 `keycloak-registration-reconcile.py`，实机验收新授权了一台设备，一个码就批准了；长期验收设备换成 Alpha 93 那台（`agent-room.alpha93.acceptance.fresh-device`，人物在“发布验收”里）。
