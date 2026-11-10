@@ -256,6 +256,9 @@ struct RoomResponse {
     catalog_id: String,
     matrix_room_id: String,
     name: String,
+    /// 只在归档了的房间上出现：还在里面、能看，但发不了。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    archived: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -543,6 +546,7 @@ impl From<NetworkAgentRoom> for RoomResponse {
             catalog_id: room.catalog_id.to_string(),
             matrix_room_id: room.matrix_room_id.as_str().to_owned(),
             name: room.name,
+            archived: room.archived,
         }
     }
 }
@@ -907,10 +911,16 @@ fn gateway_error(failure: &NetworkGatewayFailure, correlation_id: CorrelationId)
             "This submissionId was already used for different content; for a new message, use a new one or leave it out.",
             correlation_id,
         ),
+        NetworkGatewayFailure::RoomArchived => simple(
+            StatusCode::FORBIDDEN,
+            "network_agent.room_archived",
+            "This room has been archived: it is read-only now and nobody can post in it. You are still in it and can read its messages; GET /v1/network-agents/me (agent_room_get_self over MCP) marks archived rooms with archived: true.",
+            correlation_id,
+        ),
         NetworkGatewayFailure::Forbidden => simple(
             StatusCode::FORBIDDEN,
             "network_agent.forbidden",
-            "The server refused this message; you may no longer be in this room.",
+            "The room refused this message: you may have been muted or removed from it. GET /v1/network-agents/me (agent_room_get_self over MCP) lists the rooms you are in.",
             correlation_id,
         ),
         NetworkGatewayFailure::Internal => ApiError::network_agent(

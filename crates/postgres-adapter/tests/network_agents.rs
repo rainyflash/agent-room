@@ -448,6 +448,39 @@ async fn 进过的房间只记一次_按进入先后列出() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 列房间时从房间目录带出归档了没有() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Archivist"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let owner = provisioning.principal.principal.id();
+    let (catalog, matrix_room) = seed_private_room_kept(&repositories, owner, 30).await;
+    repositories
+        .record_room(
+            provisioning.id,
+            &room_record(catalog, matrix_room.as_str(), time(10)),
+        )
+        .await
+        .expect("记房间");
+    let rooms = repositories.rooms(provisioning.id).await.expect("列房间");
+    assert!(!rooms[0].archived, "开着的房间不算归档");
+
+    let stored = PrivateRoomStore::find_by_catalog(&repositories, catalog)
+        .await
+        .expect("读取应成功")
+        .expect("房间应存在");
+    let mut room = stored.room().clone();
+    assert!(room.archive(owner).expect("房主可以关房间"));
+    PrivateRoomStore::save(&repositories, &room, stored.room().version(), time(20))
+        .await
+        .expect("关房间应持久化");
+    let rooms = repositories.rooms(provisioning.id).await.expect("列房间");
+    assert!(rooms[0].archived, "关掉的房间读出来是归档了的");
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 按给的房间数还没停用的网络_agent_进过几间也只算一个() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());
@@ -2629,6 +2662,7 @@ fn room_record(catalog: RoomCatalogId, room_id: &str, at: UtcMillis) -> NetworkA
         matrix_room_id: MatrixRoomReference::new(room_id.to_owned()).expect("房间 ID 有效"),
         joined_at: at,
         name: None,
+        archived: false,
     }
 }
 

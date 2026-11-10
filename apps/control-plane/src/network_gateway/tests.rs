@@ -151,6 +151,7 @@ impl FakeAgents {
                     matrix_room_id: MatrixRoomReference::new((*room).to_owned()).unwrap(),
                     joined_at: UtcMillis::new(1).unwrap(),
                     name: None,
+                    archived: false,
                 })
                 .collect(),
             quota: Mutex::new(None),
@@ -412,6 +413,7 @@ impl NetworkAgentUseCases for FakeAgents {
                 catalog_id,
                 matrix_room_id: MatrixRoomReference::new(SECOND_ROOM.to_owned()).unwrap(),
                 name: "Rust 夜谈".to_owned(),
+                archived: false,
             },
         };
         Box::pin(async move { Ok(room) })
@@ -1984,6 +1986,7 @@ fn private_room() -> NetworkAgentRoom {
         catalog_id: RoomCatalogId::from_uuid(uuid(PRINCIPAL)),
         matrix_room_id: MatrixRoomReference::new(PRIVATE_ROOM.to_owned()).unwrap(),
         name: "项目室".to_owned(),
+        archived: false,
     }
 }
 
@@ -3435,6 +3438,42 @@ async fn matrix_限速时让_agent_按它给的时间再发_带同一个_submiss
 }
 
 #[tokio::test]
+async fn 往归档了的房间发言_直接说房间归档了_不碰内容服务也不发到_matrix() {
+    let mut agents = FakeAgents::in_rooms(&[ROOM]);
+    agents.rooms[0].archived = true;
+    let harness = harness_with(agents, true);
+
+    let refused = harness
+        .gateway
+        .send_message(TOKEN, draft("还有人吗"))
+        .await
+        .unwrap_err();
+
+    assert_eq!(refused, NetworkGatewayFailure::RoomArchived);
+    assert!(harness.matrix.sent().is_empty());
+    assert!(harness.content.uploads.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn matrix_拒绝发言时说可能被禁言或移出_不说暂时不可用() {
+    let harness = harness();
+    harness
+        .matrix
+        .send_failures
+        .lock()
+        .unwrap()
+        .push_back(MatrixFailureKind::Forbidden);
+
+    let refused = harness
+        .gateway
+        .send_message(TOKEN, draft("我被禁言了吗"))
+        .await
+        .unwrap_err();
+
+    assert_eq!(refused, NetworkGatewayFailure::Forbidden);
+}
+
+#[tokio::test]
 async fn matrix_没回话时返回待确认_带同一个_submission_id_重试就发出去() {
     let harness = harness();
     harness
@@ -3861,6 +3900,7 @@ async fn 再进一个房间_已经在里面原样返回_大厅直接进_私人�
         catalog_id: RoomCatalogId::from_uuid(uuid(OTHER_AGENT)),
         matrix_room_id: MatrixRoomReference::new(ROOM.to_owned()).unwrap(),
         name: "Agent Room 大厅".to_owned(),
+        archived: false,
     };
     harness.agents.admissions.lock().unwrap().extend([
         Ok(NetworkAgentAdmission::AlreadyIn(lobby.clone())),
@@ -4432,6 +4472,7 @@ fn idle_exit(room: &str, token: Option<&str>) -> NetworkAgentLobbyExit {
             matrix_room_id: MatrixRoomReference::new(room.to_owned()).unwrap(),
             joined_at: UtcMillis::new(1).unwrap(),
             name: None,
+            archived: false,
         },
         matrix_access_token: token.map(|token| SecretValue::new(token).unwrap()),
     }

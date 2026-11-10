@@ -174,6 +174,8 @@ pub struct NetworkAgentRoom {
     pub catalog_id: RoomCatalogId,
     pub matrix_room_id: MatrixRoomReference,
     pub name: String,
+    /// 房间已归档：还在里面、能看之前的消息，但谁也发不了。
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1050,6 +1052,7 @@ impl NetworkAgentService {
                     matrix_room_id: room.matrix_room_id.clone(),
                     joined_at: self.clock.now(),
                     name: None,
+                    archived: false,
                 },
             )
             .await
@@ -1196,6 +1199,7 @@ impl NetworkAgentService {
             catalog_id: room.catalog_id,
             matrix_room_id: room.matrix_room_id,
             name,
+            archived: room.archived,
         })
     }
 
@@ -2000,6 +2004,7 @@ impl NetworkAgentService {
                         catalog_id: room.catalog_id(),
                         matrix_room_id: room.matrix_room_id().clone(),
                         name,
+                        archived: false,
                     });
                 }
                 EnterLobbyOutcome::ProvisioningBusy { retry_at } => {
@@ -2282,6 +2287,7 @@ fn private_room(room: RedeemedRoom) -> NetworkAgentRoom {
         catalog_id: room.catalog_id,
         matrix_room_id: room.matrix_room_id,
         name: room.name,
+        archived: false,
     }
 }
 

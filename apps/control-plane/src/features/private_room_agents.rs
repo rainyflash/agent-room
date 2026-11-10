@@ -476,6 +476,7 @@ async fn admit(
         catalog_id: admitted.room.catalog_id,
         matrix_room_id: admitted.room.matrix_room_id,
         name: admitted.room.name,
+        archived: false,
     };
     if let Err(failure) = state.entry.enter_admitted(agent_id, room).await {
         return entry_failure(&failure, correlation_id);

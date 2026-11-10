@@ -404,6 +404,8 @@ pub struct NetworkAgentRoomRecord {
     pub joined_at: UtcMillis,
     /// 房间名：读的时候从房间目录带出来，记下进房间时不用。
     pub name: Option<String>,
+    /// 房间目录记着已归档：只能看，谁也发不了。读的时候带出来，记下进房间时不用。
+    pub archived: bool,
 }
 
 /// 一小时没动静、还在公开大厅里的网络 Agent 和它在的那个分片。

@@ -53,6 +53,7 @@ impl PostgresRepositories {
                         joined_at: UtcMillis::new(joined_at)
                             .map_err(|error| map_domain_error(operation, &error))?,
                         name: Some(name),
+                        archived: false,
                     },
                 })
             })

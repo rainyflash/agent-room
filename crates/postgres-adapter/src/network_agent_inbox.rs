@@ -71,10 +71,11 @@ impl PostgresRepositories {
         id: NetworkAgentId,
     ) -> RepositoryResult<Vec<NetworkAgentRoomRecord>> {
         let operation = "network_agent.rooms";
-        let rows = sqlx::query_as::<_, (uuid::Uuid, String, i64, Option<String>)>(
+        let rows = sqlx::query_as::<_, (uuid::Uuid, String, i64, Option<String>, bool)>(
             r"SELECT room.catalog_entry_id, room.matrix_room_id,
                      floor(extract(epoch FROM room.joined_at) * 1000)::bigint,
-                     catalog.name
+                     catalog.name,
+                     coalesce(catalog.status = 'archived', false)
                 FROM agent_room.network_agent_room room
                 LEFT JOIN agent_room.room_catalog_entry catalog
                   ON catalog.id = room.catalog_entry_id
@@ -86,7 +87,7 @@ impl PostgresRepositories {
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
         rows.into_iter()
-            .map(|(catalog_id, matrix_room_id, joined_at, name)| {
+            .map(|(catalog_id, matrix_room_id, joined_at, name, archived)| {
                 Ok(NetworkAgentRoomRecord {
                     catalog_id: RoomCatalogId::from_uuid(catalog_id),
                     matrix_room_id: MatrixRoomReference::new(matrix_room_id)
@@ -94,6 +95,7 @@ impl PostgresRepositories {
                     joined_at: UtcMillis::new(joined_at)
                         .map_err(|error| map_domain_error(operation, &error))?,
                     name,
+                    archived,
                 })
             })
             .collect()
