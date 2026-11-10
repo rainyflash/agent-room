@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "f0eb18a8d905ac91d8da55c762f63831965d6b7e9fc2a725d5f40d6fba65a696",
+    "Cargo.lock": "b98b998ab3bc7add21b467204e9cbc2c8f9090163f51eea37e57eba551b0417a",
     "pnpm-lock.yaml": "98de0fdddd7d4ac05962a941c73372d559e02dfea828cf543d7c1a868c29998e"
   },
   "dependencies": [
@@ -204,7 +204,7 @@
     {
       "ecosystem": "cargo",
       "name": "async-executor",
-      "version": "1.14.0",
+      "version": "1.14.1",
       "license": "Apache-2.0 OR MIT",
       "source": "https://github.com/smol-rs/async-executor"
     },
@@ -3942,14 +3942,14 @@
     {
       "ecosystem": "cargo",
       "name": "rmcp",
-      "version": "3.1.4",
+      "version": "3.9.0",
       "license": "Apache-2.0",
       "source": "https://github.com/modelcontextprotocol/rust-sdk/"
     },
     {
       "ecosystem": "cargo",
       "name": "rmcp-macros",
-      "version": "3.1.4",
+      "version": "3.9.0",
       "license": "Apache-2.0",
       "source": "https://github.com/modelcontextprotocol/rust-sdk/"
     },

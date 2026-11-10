@@ -9,6 +9,7 @@ ignore = [
   { id = "RUSTSEC-2026-0318", reason = "matrix-sdk-crypto 0.18 只在用 IdentityBasedStrategy 加密自定义设备间消息（OlmMachine::encrypt_content_for_devices、Device::encrypt_event_raw）且收件人没有交叉签名身份时 panic；本项目的交接、房间密钥重发和请求都经 encrypt_and_send_raw_to_device 用 CollectStrategy::AllDevices，IdentityBasedStrategy 只用于分发房间密钥，那条路径不调用出问题的函数；修复需 Matrix SDK 0.19，同样卡在 sqlx 0.9.0 的 libsqlite3-sys 上限，随 #101 升级后删除此例外（跟踪 #279）" },
   { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 只经 jsonwebtoken 11 与 openidconnect 4 依赖的 p256 0.13/ecdsa 0.16/elliptic-curve 0.13 传递引入，生产路径只用它拿公钥验签（身份服务 ID Token、本机 MCP 的 OAuth 令牌、A2A 名片签名），参与运算的都是公开数据，计时差异不泄露秘密；我们自己签的 JWT 用 HMAC，不走椭圆曲线；修复在 0.7.6，要等上游换到新一代 p256 才能升级，届时删除此例外（跟踪 #577）" },
   { id = "RUSTSEC-2026-0451", reason = "vodozemac 0.10.0 只经 Matrix SDK 0.18（matrix-sdk、matrix-sdk-crypto、matrix-sdk-sqlite）引入，Olm 根密钥棘轮用完 HKDF 输出不清零，旧的根密钥和链密钥留在已释放的堆内存里；要利用得先能读本机 Bridge 或控制面网关进程的内存，能读这些内存的人本来就拿得到同一进程里的加密存储钥匙和授权，控制面那边按 ADR 0011 运营方本来就读得到，多泄露的只是以前 Olm 链上的旧密钥；修复在 0.11.2，matrix-sdk-crypto 0.18 只认 0.10.x，要升 Matrix SDK 0.19，同样卡在 sqlx 0.9.0 的 libsqlite3-sys 上限，随 #101 升级后删除此例外（跟踪 #746）" },
+  { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys 0.35.0 带进来的 SQLite 3.53 在数据库文件和旁边的 -wal 页大小不一致时可能读回没初始化的页缓存，要让进程打开别人做过手脚的一对文件；我们打开的 SQLite 文件（Bridge 本地存储、Matrix 状态和加密存储、控制面替网络 Agent 管的加密存储）都由自己的进程写在当前用户或控制面自己的目录里，能在那里放文件的人本来就能改存储、拿同一用户的凭据，读回的只是本进程的旧内存；修复在 libsqlite3-sys 0.39（rusqlite 0.41），可 sqlx-sqlite 0.9.0 只认 <0.38，matrix-sdk 0.19.1 用的 rusqlite 0.40 还是 0.38，SQLite 只能链接一份，等两边上游都放开后一起升级并删除此例外（跟踪 #783，同 #101）" },
 ]
 
 [licenses]
