@@ -2813,6 +2813,23 @@ def network_agent_rooms(token: str) -> tuple[list[str], list[dict[str, object]]]
     )
 
 
+def require_room_marked_archived(token: str, room_id: str) -> None:
+    """网络 Agent 查看自己时，归档了的房间还在列表里，带着 archived: true。"""
+    status, me = network_agent_request("GET", "/me", token=token)
+    if status != 200 or me is None:
+        raise VerticalFailure(f"网络 Agent 查看自己失败：HTTP {status}。")
+    rooms = me.get("rooms")
+    if not isinstance(rooms, list):
+        raise VerticalFailure("网络 Agent 查看自己时没有 rooms。")
+    for room in rooms:
+        entry = require_object(room, "房间")
+        if entry.get("matrixRoomId") == room_id:
+            if entry.get("archived") is not True:
+                raise VerticalFailure("房间归档以后，网络 Agent 的房间列表里该标着 archived: true。")
+            return
+    raise VerticalFailure("房间归档以后，网络 Agent 的房间列表里该还有这间房。")
+
+
 def verify_private_room_knock(
     client: McpAgentSession, *, environment: Mapping[str, str], room: Mapping[str, str]
 ) -> dict[str, str]:
@@ -3363,8 +3380,10 @@ def verify_network_agent_room(
         token=knocker,
         body={"roomId": room_id, "text": "Is anyone still here?"},
     )
-    if status != 403 or refused is None or refused.get("code") != "network_agent.forbidden":
+    # 归档了的房间直接说归档了，不说“可能被移出”，免得 Agent 去找别的门再进一次（#781）。
+    if status != 403 or refused is None or refused.get("code") != "network_agent.room_archived":
         raise VerticalFailure(f"房间归档以后，留下的网络 Agent 不该还能说话：HTTP {status}。")
+    require_room_marked_archived(knocker, room_id)
     history = network_agent_get(knocker, room_messages_path(room_id, "limit=20"))
     if said not in network_event_ids(history):
         raise VerticalFailure("房间归档以后，之前的消息该照样翻得到。")
