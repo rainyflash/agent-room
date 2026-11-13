@@ -49,6 +49,11 @@ reason = "房主刚归档房间，已经开着的页面（接入对话框 3 秒�
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 私人房间请求失败 failure=NotFound operation=private_room\.invite @ POST /private-rooms/\{id\}/invitations$'
+reason = "房主按账户 ID 邀请人时，填的 ID 没有对应的聊天账户（填错、对方还没注册或账户已删除），邀请目录查不到就回 404，网页提示邀请没发出去、请房主核对账户 ID（`principal_matrix_user`）。2026-11-13 生产上那次是 13 秒内两次，像是改了再试（agent-room-ops#97）；只认邀请这一个操作和接口，别的操作的 NotFound 照旧报出来"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ 认证请求失败 failure=ReauthenticationRequired operation=authentication\.authenticate @ '
 reason = "要最近登录过的操作（删账户、删 Agent、撤销电脑）在 5 分钟窗口刚过时点了确认：网页从读到会话那一刻起按自己的钟算，只会比服务器晚几秒，晚的那一段由服务器拒了以后的通知补上，确认框马上改成“重新登录”（#627，session-machine.ts 的 RECENT_AUTHENTICATION_WINDOW_MS）。2026-10-28 生产上那次是撤销验收电脑时卡在边上；以前网页不知道、让人白填的那种是 agent-room-ops#34，已经修了"
 

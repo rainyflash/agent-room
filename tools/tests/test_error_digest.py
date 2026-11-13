@@ -687,6 +687,25 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 2)
 
+    def test_inviting_an_account_that_does_not_exist_is_noise(self) -> None:
+        invite = (
+            CONTROL_JOIN_CODE.replace("Agent 口令请求失败", "私人房间请求失败")
+            .replace("private_room.join_code.reveal", "private_room.invite")
+            .replace('"GET"', '"POST"')
+            .replace(f"/devices/current/private-rooms/{CATALOG_ID}/code", f"/private-rooms/{CATALOG_ID}/invitations")
+        )
+        other = invite.replace("private_room.invite", "private_room.accept")
+        digest = summarize({"control-plane": [invite, other]}, load_noise(NOISE_FILE))
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error 私人房间请求失败 failure=NotFound "
+                "operation=private_room.accept @ POST /private-rooms/{id}/invitations"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_polling_knocks_of_a_just_archived_room_is_noise(self) -> None:
         knocks = (
             CONTROL_JOIN_CODE.replace("private_room.join_code.reveal", "private_room.agent_knock.waiting")
