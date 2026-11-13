@@ -2,6 +2,8 @@
 
 这里放的是我们打过补丁的第三方 crate，由根目录 `Cargo.toml` 的 `[patch.crates-io]` 换掉 crates.io 上的同名版本。它们不是 workspace 的成员：不跑 fmt、clippy 和它们自己的测试。
 
+镜像只拷要用的目录，`infra` 下编 Rust 的 Containerfile 都要 `COPY third_party ./third_party`，不然 cargo 找不到补丁指的路径（`tools/tests/test_vendored_advisories.py` 卡着）。
+
 只在升不上去、又必须补的时候才这样做；能升级就升级，升上去以后把这里的那一份删掉。
 
 ## vodozemac 0.10.0

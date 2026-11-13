@@ -115,6 +115,19 @@ class RepositoryWiringTests(unittest.TestCase):
         self.assertEqual(sorted(manifest["workspace"].get("exclude", [])), sorted(listed.values()))
         self.assertEqual([crate.name for crate in load_vendored()], sorted(listed))
 
+    def test_container_builds_copy_the_vendored_crates(self) -> None:
+        # 镜像只拷了要用的目录；少拷 third_party，cargo 找不到 [patch.crates-io] 指的路径。
+        # 生产控制面的镜像要到发布候选才建，PR 上看不出来。
+        builds = [
+            path
+            for path in sorted((ROOT / "infra").rglob("Containerfile*"))
+            if "COPY Cargo.toml Cargo.lock" in path.read_text(encoding="utf-8")
+        ]
+
+        self.assertIn(ROOT / "infra" / "production" / "Containerfile.control-plane", builds)
+        for path in builds:
+            self.assertIn("COPY third_party ./third_party", path.read_text(encoding="utf-8"), path)
+
     def test_check_runs_after_cargo_deny(self) -> None:
         for workflow in ("advisories.yml", "ci.yml"):
             text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
