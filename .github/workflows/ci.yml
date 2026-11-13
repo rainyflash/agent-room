@@ -368,6 +368,9 @@ jobs:
           tool: cargo-deny@0.20.2
       - name: 审计 Rust 依赖与许可证
         run: cargo deny check
+      # cargo-deny 不查 third_party 里自带的 crate，对着它刚拉下来的公告库另看一遍。
+      - name: 审计仓库里自带的 crate
+        run: python tools/vendored_advisories.py
       - name: 验证开源文档与许可证清单
         run: python tools/license_inventory.py check && python tools/open_source.py
       - name: 生成物料清单

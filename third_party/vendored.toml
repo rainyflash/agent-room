@@ -1,0 +1,36 @@
+# 仓库里自带、打过补丁的第三方 crate，为什么自带、什么时候删见 third_party/README.md。
+#
+# cargo-deny 只拿 crates.io 来的包对安全公告，换成路径依赖的这些它不查。
+# tools/vendored_advisories.py 接在 `cargo deny check` 后面，读它拉下来的 RustSec 公告库：
+# 这里的 crate 只要有一条没记在下面的公告就失败。看过以后记上 status（patched：补上了；
+# unaffected：这个版本不受影响）和理由。
+
+[[crate]]
+name = "vodozemac"
+version = "0.10.0"
+path = "third_party/vodozemac"
+
+[[crate.advisory]]
+id = "RUSTSEC-2026-0510"
+status = "patched"
+note = "补上了上游 #453（d430afca）：公钥、私钥解出来不是 32 字节时返回错误，不再 panic。"
+
+[[crate.advisory]]
+id = "RUSTSEC-2026-0451"
+status = "patched"
+note = "补上了上游 #446（acf5a0b9）：根密钥棘轮的 HKDF 输出用完清零。"
+
+[[crate.advisory]]
+id = "RUSTSEC-2026-0445"
+status = "unaffected"
+note = "只影响 0.11.0 和 0.11.1，公告写明 0.11.0 以前不受影响。"
+
+[[crate.advisory]]
+id = "RUSTSEC-2024-0354"
+status = "unaffected"
+note = "0.7.0 起修好。"
+
+[[crate.advisory]]
+id = "RUSTSEC-2024-0342"
+status = "unaffected"
+note = "0.6.0 起修好。"

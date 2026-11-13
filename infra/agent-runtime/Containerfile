@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install --yes --no-install-recommends libdbus-1-de
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY apps ./apps
 COPY crates ./crates
+# 打过补丁的第三方 crate，根目录 Cargo.toml 的 [patch.crates-io] 指着它。
+COPY third_party ./third_party
 RUN --mount=type=cache,id=agent-room-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=agent-room-agent-runtime-target,target=/source/target \
     cargo build --locked --release -p agent-room-bridge -p agent-room-mcp -p agent-room-cli \

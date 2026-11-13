@@ -5,6 +5,8 @@ WORKDIR /source
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY apps ./apps
 COPY crates ./crates
+# 打过补丁的第三方 crate，根目录 Cargo.toml 的 [patch.crates-io] 指着它。
+COPY third_party ./third_party
 COPY infra/migrations ./infra/migrations
 RUN --mount=type=cache,id=agent-room-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=agent-room-control-plane-target,target=/source/target \

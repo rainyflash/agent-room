@@ -84,6 +84,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **SQLite 只能链接一份。** matrix-sdk-sqlite、rusqlite（`crates/matrix-adapter/src/store_recovery.rs`）和 Bridge 本地存储用的 sqlx-sqlite 共用 `libsqlite3-sys`。
   - 升级 matrix-sdk 或 rusqlite 之前，先查 sqlx-sqlite 允许的 `libsqlite3-sys` 版本范围。
   - matrix-sdk 0.19 目前就卡在这里，见 issue #101。
+  - 所以 vodozemac 用的是 `third_party/vodozemac` 里补过的 0.10.0（2026-11-13）：RUSTSEC-2026-0510 让服务器上谁都能发一条带畸形公钥的消息，让 Agent 一同步就崩、一直收不到消息，只发了 0.11.2 的修复，Matrix SDK 0.18 用不上。cargo-deny 不查路径依赖，自带 crate 的公告由 `tools/vendored_advisories.py` 对着 `third_party/vendored.toml` 查，出了新公告照 `third_party/README.md` 处理。升到 0.19 时把这一份删掉。
 - **加密房间首次见到即信任**（[ADR 0009](./docs/adr/0009-encryption-trust-on-first-use.md)）。只信任由主人签名的设备，不要求逐个核对安全码；维护者明确否决过“发送前强制核对”，别加回去。有两处刷新不能去掉（#116），去掉后 Agent 之间会收不到消息：
   - 发送前刷新成员身份；
   - 收到未签名或未知设备的消息时，刷新后再判一次。

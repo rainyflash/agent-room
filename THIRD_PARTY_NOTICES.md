@@ -9,8 +9,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 889
 - npm packages: 714
 - Total locked package versions: 1603
-- `Cargo.lock` SHA-256: `18176be5b55712a2e7274504da2ac5e7d46a345d88e8b584d570812231f1342d`
-- `pnpm-lock.yaml` SHA-256: `98de0fdddd7d4ac05962a941c73372d559e02dfea828cf543d7c1a868c29998e`
+- `Cargo.lock` SHA-256: `a261347fbb693ae4802c763f5391e02dd809fd16d48c318b4a2561eb86e33a1d`
+- `pnpm-lock.yaml` SHA-256: `7724ba582015b20007fd95f5eb49b1742427375c0983b1f999b90d8bc5f3e54f`
 
 ## License expressions
 
@@ -1113,7 +1113,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@jridgewell/source-map](https://www.npmjs.com/package/@jridgewell/source-map/v/0.3.11) | 0.3.11 | `MIT` |
 | npm | [@jridgewell/sourcemap-codec](https://www.npmjs.com/package/@jridgewell/sourcemap-codec/v/1.5.5) | 1.5.5 | `MIT` |
 | npm | [@jridgewell/trace-mapping](https://www.npmjs.com/package/@jridgewell/trace-mapping/v/0.3.31) | 0.3.31 | `MIT` |
-| npm | [@matrix-org/matrix-sdk-crypto-wasm](https://www.npmjs.com/package/@matrix-org/matrix-sdk-crypto-wasm/v/18.9.0) | 18.9.0 | `Apache-2.0` |
+| npm | [@matrix-org/matrix-sdk-crypto-wasm](https://www.npmjs.com/package/@matrix-org/matrix-sdk-crypto-wasm/v/18.9.2) | 18.9.2 | `Apache-2.0` |
 | npm | [@npmcli/fs](https://www.npmjs.com/package/@npmcli/fs/v/5.0.0) | 5.0.0 | `ISC` |
 | npm | [@npmcli/git](https://www.npmjs.com/package/@npmcli/git/v/7.0.2) | 7.0.2 | `ISC` |
 | npm | [@npmcli/map-workspaces](https://www.npmjs.com/package/@npmcli/map-workspaces/v/5.0.3) | 5.0.3 | `ISC` |

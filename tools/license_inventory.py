@@ -39,10 +39,15 @@ def parse_cargo_metadata(value: object) -> tuple[DependencyLicense, ...]:
     packages = root.get("packages")
     if not isinstance(packages, list):
         raise LicenseInventoryError("Cargo metadata 缺少 packages 数组。")
+    members = root.get("workspace_members")
+    if not isinstance(members, list):
+        raise LicenseInventoryError("Cargo metadata 缺少 workspace_members 数组。")
     records: list[DependencyLicense] = []
     for package in packages:
         entry = _mapping(package, "Cargo package")
-        if entry.get("source") is None:
+        # 没有来源的是本地路径上的包：workspace 里的是我们自己的；third_party 里打过补丁的
+        # 第三方 crate 也没有来源，可它照旧是别人的代码，要列进清单。
+        if entry.get("source") is None and entry.get("id") in members:
             continue
         name = _text(entry, "name", "Cargo package")
         version = _text(entry, "version", f"Cargo package {name}")
