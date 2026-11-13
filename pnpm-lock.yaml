@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@matrix-org/matrix-sdk-crypto-wasm@>=18.0.0 <18.9.1': 18.9.2
   body-parser@>=2.0.0 <2.4.0: 2.4.0
   compression@>=1.0.0 <1.8.2: 1.8.2
   fast-uri@>=3.0.0 <3.1.9: 3.1.9
@@ -1193,8 +1194,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@matrix-org/matrix-sdk-crypto-wasm@18.9.0':
-    resolution: {integrity: sha512-NtLzNDTEfNASBjNCTGZHuk7N0jrQhS6Zx2CM857rCHZYYh/rpbKGQNrJ7azktm4S1P5Jy3WU3nwJTGohGw26qQ==}
+  '@matrix-org/matrix-sdk-crypto-wasm@18.9.2':
+    resolution: {integrity: sha512-GHeuSeb5Fj6Wg2+NE/WoLJJs9U3nOzttO+2sj7lOaS5gNBpGIksc48N/Q/kK/Z+Lxh7YMhopB7M8b6HyASXnGQ==}
     engines: {node: '>= 18'}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
@@ -5187,7 +5188,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@matrix-org/matrix-sdk-crypto-wasm@18.9.0': {}
+  '@matrix-org/matrix-sdk-crypto-wasm@18.9.2': {}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
@@ -7020,7 +7021,7 @@ snapshots:
   matrix-js-sdk@42.4.0:
     dependencies:
       '@babel/runtime': 8.0.0
-      '@matrix-org/matrix-sdk-crypto-wasm': 18.9.0
+      '@matrix-org/matrix-sdk-crypto-wasm': 18.9.2
       another-json: 0.2.0
       bs58: 6.0.0
       content-type: 3.1.1

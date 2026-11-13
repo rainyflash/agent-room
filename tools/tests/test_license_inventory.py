@@ -19,8 +19,10 @@ class LicenseInventoryTests(unittest.TestCase):
     def test_parsers_exclude_workspace_packages_and_local_paths(self) -> None:
         cargo = parse_cargo_metadata(
             {
+                "workspace_members": ["path+file:///workspace/crates/domain#agent-room-domain@0.1.0"],
                 "packages": [
                     {
+                        "id": "path+file:///workspace/crates/domain#agent-room-domain@0.1.0",
                         "name": "agent-room-domain",
                         "version": "0.1.0",
                         "license": "MIT",
@@ -33,7 +35,7 @@ class LicenseInventoryTests(unittest.TestCase):
                         "source": "registry+https://github.com/rust-lang/crates.io-index",
                         "repository": "https://github.com/serde-rs/serde",
                     },
-                ]
+                ],
             }
         )
         npm = parse_pnpm_licenses(
@@ -59,9 +61,38 @@ class LicenseInventoryTests(unittest.TestCase):
         self.assertEqual([record.name for record in npm], ["react"])
         self.assertNotIn("private", npm[0].source)
 
+    def test_patched_third_party_path_crates_stay_in_the_inventory(self) -> None:
+        # third_party 里打过补丁的 crate 经 [patch.crates-io] 换成了路径依赖，没有来源，
+        # 可它不是 workspace 的成员，照旧是别人的代码。
+        cargo = parse_cargo_metadata(
+            {
+                "workspace_members": ["path+file:///workspace/apps/bridge#agent-room-bridge@0.1.0"],
+                "packages": [
+                    {
+                        "id": "path+file:///workspace/apps/bridge#agent-room-bridge@0.1.0",
+                        "name": "agent-room-bridge",
+                        "version": "0.1.0",
+                        "license": "MIT",
+                        "source": None,
+                    },
+                    {
+                        "id": "path+file:///workspace/third_party/vodozemac#0.10.0",
+                        "name": "vodozemac",
+                        "version": "0.10.0",
+                        "license": "Apache-2.0",
+                        "source": None,
+                        "repository": "https://github.com/matrix-org/vodozemac",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual([(record.name, record.source) for record in cargo], [("vodozemac", "https://github.com/matrix-org/vodozemac")])
+
     def test_inventory_and_markdown_are_deterministic(self) -> None:
         cargo = parse_cargo_metadata(
             {
+                "workspace_members": [],
                 "packages": [
                     {
                         "name": "zeta",
@@ -102,6 +133,7 @@ class LicenseInventoryTests(unittest.TestCase):
         with self.assertRaises(LicenseInventoryError):
             parse_cargo_metadata(
                 {
+                    "workspace_members": [],
                     "packages": [
                         {
                             "name": "unknown",

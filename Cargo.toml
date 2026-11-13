@@ -28,6 +28,8 @@ members = [
   "crates/release-manifest",
   "crates/windows-app-package",
 ]
+# 打过补丁的第三方源码，不是我们的包：不进 fmt、clippy 和测试。
+exclude = ["third_party/vodozemac"]
 resolver = "3"
 
 [workspace.package]
@@ -137,3 +139,9 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
+
+# Matrix SDK 0.18 只认 vodozemac 0.10.x，上游的修复只发在 0.11.2。
+# 这里用补上 RUSTSEC-2026-0510 的 0.10.0，升到 Matrix SDK 0.19（#101）时删掉，
+# 见 third_party/README.md。
+[patch.crates-io]
+vodozemac = { path = "third_party/vodozemac" }
