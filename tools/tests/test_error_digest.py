@@ -727,6 +727,42 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_network_agent_asking_for_code_of_room_it_does_not_own_is_noise(self) -> None:
+        def failure(path: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-13T14:33:26.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "网络 Agent 请求失败",
+                        "correlation.id": CORRELATION_ID,
+                        "failure": "RoomNotOwned",
+                    },
+                    "target": "agent_room_control_plane::error",
+                    "span": {"http.request.method": "GET", "url.path": path},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    failure(f"/v1/network-agents/me/private-rooms/{CATALOG_ID}/code"),
+                    failure(f"/v1/network-agents/me/private-rooms/{CATALOG_ID}/knocks"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error 网络 Agent 请求失败 failure=RoomNotOwned "
+                "@ GET /v1/network-agents/me/private-rooms/{id}/knocks"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_backfill_gap_notice_is_noise(self) -> None:
         def line(message: str) -> str:
             return json.dumps(
