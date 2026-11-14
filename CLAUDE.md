@@ -367,6 +367,13 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 禁言那一条用 `moderation_expiry.rs` 里内存的治理记录，`MemoryLedger::family` 摆成一间私人房间带几间子房间；它读禁言情况的规则要和存储的 `mute_standing` 一样，改了一边另一边跟着改。
     - 归档那一条故意断言“设一次发言级别就把归档解开”（`set_speaking` 把门槛写回在用的那一套）。哪天网关改成不碰门槛了，这一句会红：那时“归档了的子房间别设发言级别”可以放宽，两边一起改。
     - 断言“这个人说不了”用 `refused`：开发用的 Synapse 没调 `rc_message`，一个人连发多了先回限速，等一等再试才等得到 403。新加这类断言别直接 `expect_err` 再比 `Forbidden`。
+  - 子房间第 2d-1 步（#818）：门和“不在名单里显示”，设计文档的“换门”一节。建的时候可以带，之后走改子房间的那个 `PUT`（`access`、`hidden`）。别拆的几样：
+    - 换门之前在聊天服务器上先做、做成了才存门（`prepare_door`）：装门先开加密、再标目录（`mark_room_encrypted`），拆门先写 `room.listing.v1`。顺序别反过来：门开了才写那一刻的话，中间进来的人会被当成“拆门以前就在”。
+    - 拆门那一刻只写第一次（`door_opened_at` 空着才写，库里用 `COALESCE` 留住）。别改成每次拆门都写：往后挪等于把装着门那一段的钥匙放给第一次拆门以后自己进来的人。
+    - 换门的请求带着读到的旧门（`SubRoomDoorChange.from`），存的时候锁着那一行再比一次，不一样回 `DoorChanged`（接口上是 409）。只改名字、用途的请求 `door` 是空的，门那几列不碰。别改回“每次都把读到的门写回去”：别人刚装上的门会被一个改名的请求悄悄拆掉。
+    - 门的两样用领域层的 `SubRoomDoor` 造（没有门的不能藏），库里的约束 `private_room_parent_hidden_needs_door` 也卡着。
+    - 流程测试在 `private_room_flow/sub_room_doors.rs`：公开设置那两个口子的替身补在这个文件里（`TestMatrix` 记成这间房里的一次改动 `encrypt`、`listed <时间>`，`MemoryRooms::mark_room_encrypted`），`move_door_before_revision` 摆“存的当口别人换了门”。真实数据库的在 `tests/private_rooms/sub_room_doors.rs`。
+    - 在等的申请跟着门怎么变是 2d-2 的事；父房间以后开加密、没装过门的子房间跟着开是 2d-5。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。

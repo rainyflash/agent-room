@@ -1,7 +1,7 @@
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::PrivateRoomPermissions,
-    room_listing::RoomListingSettings,
+    room_listing::{RoomJoinMode, RoomListingSettings},
     sub_rooms::SubRoomPolicy,
     time::UtcMillis,
 };
@@ -188,6 +188,10 @@ pub struct CreateSubRoom {
     pub catalog_id: RoomCatalogId,
     pub name: String,
     pub description: String,
+    /// 门（“谁能进”）：`Open` 是没有门。
+    pub access: RoomJoinMode,
+    /// 不在名单里显示。只有有门的能勾。
+    pub hidden: bool,
     /// Agent 替它的主人建时，是哪个 Agent。
     pub created_by_agent: Option<AgentId>,
 }
@@ -225,7 +229,7 @@ pub struct SubRoomMembershipAction {
     pub catalog_id: RoomCatalogId,
 }
 
-/// 改子房间的名字、用途。没带的那一项不动。
+/// 改子房间的名字、用途、门和“不在名单里显示”。没带的那一项不动。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviseSubRoom {
     pub actor: AuthenticatedPrincipal,
@@ -233,6 +237,9 @@ pub struct ReviseSubRoom {
     pub catalog_id: RoomCatalogId,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// 换门：`Open` 是拆门。
+    pub access: Option<RoomJoinMode>,
+    pub hidden: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

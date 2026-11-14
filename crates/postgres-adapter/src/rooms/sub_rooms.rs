@@ -1,7 +1,7 @@
 //! 子房间（`specs/redesign/sub-rooms.md`）：父子关系、谁在管、一间房里子房间的三项设置。
 //!
-//! 建子房间、给子房间改名时先锁父房间在目录里的那一行：同一间房下面同时建、同时改名的排着队来，
-//! 重名和上限数得准；父房间这时候归档、转让也要等这一次存完。
+//! 建子房间、给子房间改名换门时先锁父房间在目录里的那一行：同一间房下面同时建、同时改名的排着队
+//! 来，重名和上限数得准；父房间这时候归档、转让也要等这一次存完。
 //!
 //! 父房间变了子房间怎么跟着变在 `sub_room_follow`。
 
@@ -19,7 +19,7 @@ use agent_room_domain::{
     room_listing::RoomJoinMode,
     sub_rooms::{
         MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SUB_ROOM_AUTO_ARCHIVE_DAYS,
-        SubRoomCreators, SubRoomPolicy,
+        SubRoomCreators, SubRoomDoor, SubRoomPolicy,
     },
     time::UtcMillis,
     version::AggregateVersion,
@@ -56,11 +56,16 @@ impl SubRoomStore for PostgresRepositories {
                          link.name_key,
                          link.access,
                          link.hidden,
+                         floor(extract(epoch FROM link.door_opened_at) * 1000)::bigint
+                             AS door_opened_at_ms,
+                         catalog.end_to_end_encrypted,
                          link.created_by_principal_id,
                          link.created_by_agent_id,
                          floor(extract(epoch FROM link.created_at) * 1000)::bigint
                              AS created_at_ms
                     FROM agent_room.private_room_parent AS link
+                    JOIN agent_room.room_catalog_entry AS catalog
+                      ON catalog.id = link.catalog_entry_id
                    WHERE link.catalog_entry_id = $1",
             )
             .bind(catalog_id.as_uuid())
@@ -533,7 +538,9 @@ async fn admit(
     Ok(true)
 }
 
-/// 改子房间的名字和用途。先锁父房间在目录里的那一行，和建子房间排同一个队，重名看得准。
+/// 改子房间的名字、用途和门。先锁父房间在目录里的那一行，和建子房间排同一个队，重名看得准。
+/// 从有门改成没有门的记下拆门的时间，只记第一次：这个时间和聊天服务器上那条“这以后进来的人不补发
+/// 钥匙”是同一刻，往后挪等于把门里的话放给第一次拆门以后自己进来的人。
 async fn revise(
     transaction: &mut Transaction<'_, Postgres>,
     revision: &SubRoomRevision,
@@ -551,8 +558,10 @@ async fn revise(
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
-    let open: Option<bool> = sqlx::query_scalar(
-        r"SELECT link.archived_at IS NULL AND catalog.status = 'active'
+    let current: Option<(bool, String, bool)> = sqlx::query_as(
+        r"SELECT link.archived_at IS NULL AND catalog.status = 'active',
+                 link.access,
+                 link.hidden
             FROM agent_room.private_room_parent AS link
             JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = link.catalog_entry_id
            WHERE link.catalog_entry_id = $1
@@ -564,8 +573,15 @@ async fn revise(
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
-    if open != Some(true) {
+    let Some((true, access, hidden)) = current else {
         return Ok(Some(SubRoomRevisionBlock::Unavailable));
+    };
+    // 新门是照读到的旧门算的，聊天服务器上也照它先做过了。这一行锁住以后再看一眼：不是那样了就不写。
+    let door_moved = revision
+        .door
+        .is_some_and(|door| access != door.from.access().as_str() || hidden != door.from.hidden());
+    if door_moved {
+        return Ok(Some(SubRoomRevisionBlock::DoorChanged));
     }
     let taken: bool = sqlx::query_scalar(
         r"SELECT EXISTS (
@@ -596,6 +612,16 @@ async fn revise(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
+    if let Some(door) = revision.door {
+        write_door(
+            transaction,
+            revision.catalog_id,
+            door.to,
+            revision.at,
+            operation,
+        )
+        .await?;
+    }
     let updated = sqlx::query_scalar::<_, uuid::Uuid>(
         r"UPDATE agent_room.room_catalog_entry
              SET name = $2,
@@ -615,6 +641,38 @@ async fn revise(
         return Err(corrupt_data(operation));
     }
     Ok(None)
+}
+
+/// 存换好的门。从有门改成没有门的记下拆门的时间，只记第一次。
+async fn write_door(
+    transaction: &mut Transaction<'_, Postgres>,
+    catalog_id: RoomCatalogId,
+    door: SubRoomDoor,
+    at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    // 右边读到的都是改之前的值：`access <> 'open'` 说的是原来有门。
+    sqlx::query(
+        r"UPDATE agent_room.private_room_parent
+             SET door_opened_at = CASE
+                     WHEN $2 = 'open' AND access <> 'open'
+                         THEN COALESCE(
+                             door_opened_at, to_timestamp($4::double precision / 1000.0)
+                         )
+                     ELSE door_opened_at
+                 END,
+                 access = $2,
+                 hidden = $3
+           WHERE catalog_entry_id = $1",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(door.access().as_str())
+    .bind(door.hidden())
+    .bind(at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(())
 }
 
 async fn insert_link(
@@ -668,12 +726,17 @@ fn decode_link(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoom
     let created_by_agent: Option<uuid::Uuid> =
         decode_column(row, "created_by_agent_id", operation)?;
     let created_at: i64 = decode_column(row, "created_at_ms", operation)?;
+    let door_opened_at: Option<i64> = decode_column(row, "door_opened_at_ms", operation)?;
     Ok(SubRoomLink {
         catalog_id: RoomCatalogId::from_uuid(catalog_id),
         parent_catalog_id: RoomCatalogId::from_uuid(parent),
         name_key: decode_column(row, "name_key", operation)?,
         access: RoomJoinMode::try_from(access.as_str()).map_err(|_| corrupt_data(operation))?,
         hidden: decode_column(row, "hidden", operation)?,
+        door_opened_at: door_opened_at
+            .map(|at| UtcMillis::new(at).map_err(|_| corrupt_data(operation)))
+            .transpose()?,
+        end_to_end_encrypted: decode_column(row, "end_to_end_encrypted", operation)?,
         created_by: PrincipalId::from_uuid(created_by),
         created_by_agent: created_by_agent.map(AgentId::from_uuid),
         created_at: UtcMillis::new(created_at).map_err(|_| corrupt_data(operation))?,

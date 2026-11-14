@@ -173,9 +173,9 @@ pub use rooms::{
     SealedInviteLink, SealedJoinCode,
 };
 pub use rooms::{
-    NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
-    SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
-    SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+    NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
+    SubRoomEntry, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
+    SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

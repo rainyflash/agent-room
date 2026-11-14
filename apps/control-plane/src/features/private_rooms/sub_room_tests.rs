@@ -1,5 +1,5 @@
 //! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
-//! 和用途（2b）。规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
+//! 和用途（2b），门和“不在名单里显示”（2d-1）。规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
     ports::SubRoomEntry,
@@ -165,6 +165,11 @@ async fn 建子房间要同源会话和幂等键_名字去掉两头的空白_回
     );
     assert_eq!(requests[0].name, "release");
     assert_eq!(requests[0].description, "Ship Alpha 95");
+    assert_eq!(
+        (requests[0].access, requests[0].hidden),
+        (RoomJoinMode::Open, false),
+        "没带门就是没有门、在名单里显示"
+    );
     assert_eq!(requests[0].created_by_agent, None);
     assert!(matches!(requests[0].actor, PrivateRoomActor::Person(_)));
     assert_eq!(
@@ -184,11 +189,22 @@ async fn 建子房间要同源会话和幂等键_名字去掉两头的空白_回
             "private_room.invalid_idempotency_key",
         ),
         (
-            // 门和分类还没有：带了不认识的字段就拒，免得人以为装上了门。
+            // 分类还没有：带了不认识的字段就拒，免得人以为放进了分类。
             sub_request(
                 Method::POST,
                 &uri,
-                &json!({ "name": "release", "access": "request" }),
+                &json!({ "name": "release", "category": "launch" }),
+                true,
+                Some(SUB_ROOM_UUID),
+            ),
+            StatusCode::BAD_REQUEST,
+            "sub_room.invalid_creation_body",
+        ),
+        (
+            sub_request(
+                Method::POST,
+                &uri,
+                &json!({ "name": "release", "access": "secret" }),
                 true,
                 Some(SUB_ROOM_UUID),
             ),
@@ -201,6 +217,21 @@ async fn 建子房间要同源会话和幂等键_名字去掉两头的空白_回
         assert_eq!(response_json(response).await["code"], code);
     }
     assert_eq!(sub_rooms.created.lock().unwrap().len(), 1, "被拒的没到用例");
+
+    // 建的时候就带门：三种门是公开房间加入方式的那一套词；藏不藏原样交给用例，规则由它管。
+    for (access, hidden, expected) in [
+        ("request", true, RoomJoinMode::Request),
+        ("invite_only", false, RoomJoinMode::InviteOnly),
+        ("open", true, RoomJoinMode::Open),
+    ] {
+        let body = json!({ "name": "security", "access": access, "hidden": hidden });
+        let request = sub_request(Method::POST, &uri, &body, true, Some(SUB_ROOM_UUID));
+        let created = app.clone().oneshot(request).await.expect("路由可调用");
+        assert_eq!(created.status(), StatusCode::CREATED, "{access}");
+        let requests = sub_rooms.created.lock().unwrap().clone();
+        let last = requests.last().expect("到了用例");
+        assert_eq!((last.access, last.hidden), (expected, hidden), "{access}");
+    }
 }
 
 #[tokio::test]
@@ -478,14 +509,26 @@ async fn 改名字和用途_没带的那一项不动_名字去掉两头的空白
             "sub_room.invalid_revision_body",
         ),
         (
-            // 门和分类还没有：带了不认识的字段就拒，免得人以为改上了。
-            json!({ "name": "launch", "access": "request" }),
+            // 分类还没有：带了不认识的字段就拒，免得人以为改上了。
+            json!({ "name": "launch", "category": "launch" }),
             true,
             StatusCode::BAD_REQUEST,
             "sub_room.invalid_revision_body",
         ),
         (
             json!({ "name": 7 }),
+            true,
+            StatusCode::BAD_REQUEST,
+            "sub_room.invalid_revision_body",
+        ),
+        (
+            json!({ "access": "secret" }),
+            true,
+            StatusCode::BAD_REQUEST,
+            "sub_room.invalid_revision_body",
+        ),
+        (
+            json!({ "hidden": "yes" }),
             true,
             StatusCode::BAD_REQUEST,
             "sub_room.invalid_revision_body",
@@ -500,6 +543,44 @@ async fn 改名字和用途_没带的那一项不动_名字去掉两头的空白
         assert_eq!(response_json(response).await["code"], code, "{body}");
     }
     assert_eq!(sub_rooms.revised.lock().unwrap().len(), 3, "被拒的没到用例");
+}
+
+#[tokio::test]
+async fn 换门和隐藏_只带哪一项就只交哪一项_名字和用途不带也行() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let app = sub_room_router(sub_rooms.clone(), Arc::default());
+    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms/{SUB_ROOM_UUID}");
+
+    for body in [
+        json!({ "access": "request", "hidden": true }),
+        json!({ "access": "invite_only" }),
+        json!({ "hidden": false }),
+        json!({ "name": "launch", "access": "open" }),
+    ] {
+        let revised = app
+            .clone()
+            .oneshot(sub_request(Method::PUT, &uri, &body, true, None))
+            .await
+            .expect("换门的路由可调用");
+        assert_eq!(revised.status(), StatusCode::OK, "{body}");
+    }
+    let asked: Vec<_> = sub_rooms
+        .revised
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| (request.name.clone(), request.access, request.hidden))
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            (None, Some(RoomJoinMode::Request), Some(true)),
+            (None, Some(RoomJoinMode::InviteOnly), None),
+            (None, None, Some(false)),
+            (Some("launch".to_owned()), Some(RoomJoinMode::Open), None),
+        ],
+        "没带的那一项是空的，由用例照原来的留着"
+    );
 }
 
 #[tokio::test]
