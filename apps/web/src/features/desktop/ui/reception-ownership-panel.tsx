@@ -4,7 +4,7 @@ import { RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button, Details } from '@agent-room/ui-system';
 import { useAppServices } from '@/app/app-services';
-import { useSession } from '@/features/session/ui/session-provider';
+import { useOptionalSession } from '@/features/session/ui/session-provider';
 import type { ProductDevice } from '@/features/security/domain/access-management';
 import { err } from '@/shared/result';
 import { encodeCliInvitation } from '../domain/cli-invitation';
@@ -27,9 +27,9 @@ export function ReceptionOwnershipPanel(props: OwnershipProps) {
 }
 function ConnectedOwnershipPanel({ agentId, roomId, embedded = false }: OwnershipProps) {
   const { receptionOwnership: gateway, accessManagement } = useAppServices();
-  const { snapshot } = useSession();
+  // 房间页的夹具单独渲染、外面没有会话：当没登录，什么都不画。
+  const principal = useOptionalSession()?.snapshot.context.principal ?? null;
   const { t } = useTranslation();
-  const principal = snapshot.context.principal;
   const records = useQuery({
     queryKey: receptionOwnershipQueryKeys.records(principal?.principalId ?? null),
     queryFn: () => gateway?.list() ?? err({ code: 'reception.unavailable', retryable: false }),

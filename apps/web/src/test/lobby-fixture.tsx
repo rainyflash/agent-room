@@ -61,6 +61,7 @@ import type {
 import type { LobbyFixtureControls } from './lobby-fixture-controls';
 import { AgentOwnerStore } from '@/features/lobby/application/agent-owner-store';
 import { NetworkAgentLabelStore } from '@/features/lobby/application/network-agent-label-store';
+import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
 import type { AgentOwnerRecord } from '@/features/lobby/domain/agent-owners';
 import { roomHumans } from '@/features/lobby/domain/room-participants';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
@@ -140,8 +141,10 @@ import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-inje
 import { ApplicationFeaturesFixture } from './application-features-fixture';
 
 const requestedCount = Number(new URLSearchParams(window.location.search).get('agents') ?? 24);
+// `?agents=0` 是一间还没有 Agent 的房间；别的个数从 6 起。
 const fixtureAgentCount =
-  Number.isSafeInteger(requestedCount) && requestedCount >= 6 && requestedCount <= 1000
+  requestedCount === 0 ||
+  (Number.isSafeInteger(requestedCount) && requestedCount >= 6 && requestedCount <= 1000)
     ? requestedCount
     : 24;
 // `?private` 把夹具房间当成你是房主的私人房间：房间设置里有“成员”和“Agent 进门”。
@@ -189,6 +192,9 @@ const matrixJoins: string[] = [];
 // `?owners` 里服务器回答 Agent 是谁的：依次是你的、Grace 的、Grace 放行的网络 Agent、
 // 没人放行的网络 Agent（公共大厅里的）。
 const ownersFixture = new URLSearchParams(window.location.search).has('owners');
+// `?wakes`（配 `?owners` 用）里你的两个 Agent 开着后台回复、有电脑正替它们收着：第 5 个连着没在等，
+// 第 21 个离线。表格里这两个都标“叫得醒”。
+const wakesFixture = new URLSearchParams(window.location.search).has('wakes');
 let room: LobbyRoom = {
   ...testRoom(fixtureAgentCount),
   // 公开着的夹具房间是新建时就公开的那种：不加密。
@@ -1069,7 +1075,9 @@ const security: MatrixSecurityGateway = {
   inspect: () => Promise.resolve(err({ code: 'security.matrix_unavailable', retryable: true })),
   subscribe: () => noop,
 };
-let fixtureDirectSessions: readonly DirectSession[] = Object.freeze([testDirectSession(1)]);
+let fixtureDirectSessions: readonly DirectSession[] = Object.freeze(
+  fixtureAgentCount === 0 ? [] : [testDirectSession(1)],
+);
 const directSessions: DirectSessionGateway = {
   inspect: (catalogId) => {
     const session = fixtureDirectSessions.find((candidate) => candidate.catalogId === catalogId);
@@ -1535,6 +1543,15 @@ const services: AppServices = {
   moderation,
   privateRoomMatrix,
   privateRooms,
+  ...(wakesFixture
+    ? {
+        receptionOwnership: {
+          list: () =>
+            Promise.resolve(ok({ receptions: [wakeRecord(4), wakeRecord(20)], limited: false })),
+          transfer: () => Promise.resolve(err({ code: 'reception.unavailable', retryable: false })),
+        },
+      }
+    : {}),
   ...(privateFixture
     ? { agentModeration, privateRoomInvites, privateRoomListings, publicRoomJoins, roomNotices }
     : {}),
@@ -1833,6 +1850,28 @@ function cardAgent(
     trust: 'unknown',
     visibility: 'coarse',
   });
+}
+
+/** 账户上记着的一条后台回复：刚报过到，算有电脑正替这个 Agent 收着。 */
+function wakeRecord(index: number): ReceptionRecord {
+  const agent = testAgent(index);
+  const suffix = String(index).padStart(2, '0');
+  return {
+    agentId: agent.agentId,
+    catalogId: '01990d9e-8400-7000-8000-000000000401',
+    roomId: room.roomId,
+    sessionKey: `0198b601-77a5-74f1-b4f4-940f291951${suffix}`,
+    displayName: agent.displayName,
+    instanceId: `0198b601-77a5-74f1-b4f4-940f291952${suffix}`,
+    deviceId: `0198b601-77a5-74f1-b4f4-940f291953${suffix}`,
+    deviceLabel: 'Studio desktop',
+    runId: `0198b601-77a5-74f1-b4f4-940f291954${suffix}`,
+    status: 'active',
+    nextDeviceId: null,
+    lastSeenUnixMs: Date.now(),
+    revision: 1,
+    progress: { afterEventId: '$fixture-latest', pending: null, retry: null },
+  };
 }
 
 function testDirectSession(index: number): DirectSession {

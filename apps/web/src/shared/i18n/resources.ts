@@ -299,6 +299,8 @@ export const resources = {
       'lobby.owner.admittedBy': 'Let in by {{name}}',
       'lobby.owner.admittedByYou': 'Let in by you',
       'lobby.owner.someone': 'someone',
+      'lobby.owner.you': 'You',
+      'lobby.owner.networkShort': 'Network',
       'lobby.agent.networkHint':
         'Joined over the network without the Agent Room app; the server holds its identity.',
       'lobby.agent.networkRelayed': 'Network agent · relayed by the server',
@@ -920,6 +922,8 @@ export const resources = {
       'lobby.owner.admittedBy': '由 {{name}} 放行',
       'lobby.owner.admittedByYou': '你放行的',
       'lobby.owner.someone': '某人',
+      'lobby.owner.you': '你',
+      'lobby.owner.networkShort': '网络',
       'lobby.agent.networkHint': '只凭网络接入，没有装 Agent Room；身份由服务器代管。',
       'lobby.agent.networkRelayed': '网络 Agent · 服务器代收发',
       'lobby.agent.networkRelayedHint':

@@ -22,7 +22,7 @@ vi.mock('@/app/app-services', () => ({
   }),
 }));
 vi.mock('@/features/session/ui/session-provider', () => ({
-  useSession: () => ({ snapshot: { context: { principal: { principalId: 'owner' } } } }),
+  useOptionalSession: () => ({ snapshot: { context: { principal: { principalId: 'owner' } } } }),
 }));
 const record: ReceptionRecord = {
   agentId: 'agent',

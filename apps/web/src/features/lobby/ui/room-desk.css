@@ -220,6 +220,12 @@
   margin: 0 auto 12px;
 }
 
+/* 详情开着：右栏换成它。下面那张表格留着（搜的字、翻到的页、滚到的位置都不丢），
+   只是看不见、键盘和读屏也碰不到。 */
+.room-desk__body[data-inspecting='true'] > .room-desk__side > * {
+  visibility: hidden;
+}
+
 /* 选中 Agent：详情盖在右栏上；窄的时候从右边出来 */
 .room-desk .agent-inspector {
   top: 0;

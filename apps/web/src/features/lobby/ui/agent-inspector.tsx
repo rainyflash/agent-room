@@ -1,5 +1,5 @@
 import { Button, Details } from '@agent-room/ui-system';
-import { LoaderCircle, MessageSquare, ShieldBan, ShieldCheck, X } from 'lucide-react';
+import { ArrowLeft, LoaderCircle, MessageSquare, ShieldBan, ShieldCheck, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
@@ -30,11 +30,18 @@ export type AgentInspectorFailure = {
 
 export type AgentInspectorProps = {
   readonly hasBackgroundReception?: boolean;
+  /** 此刻叫得醒：开着后台回复，而且有电脑正替它收着。头像上画成绿色的圈。 */
+  readonly wakeable?: boolean;
   readonly receptionControls?: ReactNode;
   readonly actionFailure?: AgentInspectorFailure | null;
   readonly agent: LobbyAgent;
   /** 你屏蔽着它：不给私聊，屏蔽按钮换成解除屏蔽。 */
   readonly blocked?: boolean;
+  /**
+   * 关掉它的那个控件长什么样。详情盖在 Agent 表格上（对话版面的右栏）时是上面一行“回到列表”；
+   * 别处是右上角的叉。
+   */
+  readonly closeAs?: 'back' | 'close';
   readonly observedAtUnixMs?: number;
   readonly onBlock?: (agentId: string) => void;
   readonly onClose: () => void;
@@ -73,10 +80,12 @@ function offlineDurationKey(group: AgentRosterGroup) {
  */
 export function AgentInspector({
   hasBackgroundReception = false,
+  wakeable = false,
   receptionControls,
   actionFailure = null,
   agent,
   blocked = false,
+  closeAs = 'close',
   observedAtUnixMs = Date.now(),
   onBlock,
   onClose,
@@ -119,9 +128,15 @@ export function AgentInspector({
       initial={reduceMotion === true ? false : { opacity: 0, x: 28 }}
       transition={{ bounce: 0.12, damping: 28, stiffness: 240, type: 'spring' }}
     >
+      {closeAs === 'back' ? (
+        <button autoFocus className="agent-inspector__back" onClick={onClose} type="button">
+          <ArrowLeft aria-hidden="true" />
+          {t('roomRoster.backToList')}
+        </button>
+      ) : null}
       <header className="agent-inspector__header">
         <div className="agent-inspector__portrait">
-          <LobbyAgentAvatar agent={agent} now={observedAtUnixMs} />
+          <LobbyAgentAvatar agent={agent} now={observedAtUnixMs} wakeable={wakeable} />
         </div>
         <div className="agent-inspector__who">
           <h2 id="agent-inspector-title">{agent.displayName}</h2>
@@ -133,15 +148,17 @@ export function AgentInspector({
           ) : null}
           {owner === null ? null : <p className="agent-inspector__owner">{owner}</p>}
         </div>
-        <button
-          aria-label={t('lobby.inspector.close')}
-          autoFocus
-          className="inspector-close ar-icon-button"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" />
-        </button>
+        {closeAs === 'back' ? null : (
+          <button
+            aria-label={t('lobby.inspector.close')}
+            autoFocus
+            className="inspector-close ar-icon-button"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" />
+          </button>
+        )}
       </header>
       <div className="agent-inspector__body">
         {message === undefined && toggleBlock === undefined ? null : (

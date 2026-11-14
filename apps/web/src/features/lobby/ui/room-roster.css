@@ -1,0 +1,338 @@
+/*
+ * 房间页右栏：两个标签（Agent、人），下面是表格（specs/redesign/room-page.md 的“Agent 表格”）。
+ * 只用令牌。不画框：表头和行之间靠留白，指着的那一行是浅一档的灰，选中的是深一档的灰。
+ */
+.room-roster {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  color: var(--color-ink);
+  /* 表格按这一栏自己的宽度换成两列（见最下面），不看整页多宽。 */
+  container: room-roster / inline-size;
+}
+
+/* 标签：和主栏的“对话 / 资料”一个样子，选中的底下一条墨色的线。 */
+.room-roster__tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 20px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ar-line);
+}
+.room-roster__tabs > button {
+  position: relative;
+  padding: 0 2px;
+  border: 0;
+  color: var(--ar-muted);
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.room-roster__tabs > button[aria-selected='true'] {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.room-roster__tabs > button[aria-selected='true']::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-ink);
+  content: '';
+}
+.room-roster__count {
+  margin-left: 2px;
+  color: var(--ar-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.room-roster__panel {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+/* 几个在等消息 · 几个叫得醒 · 几个离线 */
+.room-roster__summary {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin: 0;
+  padding: 12px 16px 0;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+.room-roster__summary > span + span::before {
+  margin-right: 6px;
+  content: '·';
+}
+
+.room-roster__search {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: 10px 16px 6px;
+}
+.room-roster__search > svg {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--ar-muted);
+  pointer-events: none;
+}
+.room-roster__search > input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px 0 32px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-size: 0.8125rem;
+}
+
+.room-roster__scroll {
+  /* 里面给读屏的字是绝对定位的：没有这一句，它们按外面的栏算位置，滚出去的那几行会把整页撑高。 */
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+}
+/* “人”那一栏上面没有汇总和搜索：表头别贴着标签。 */
+.room-roster__panel > .room-roster__scroll:first-child {
+  padding-top: 8px;
+}
+
+/* 表格 */
+.agent-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 0.8125rem;
+}
+.agent-table th,
+.agent-table td {
+  padding: 0 8px;
+  overflow: hidden;
+  font-weight: 400;
+  text-align: left;
+  vertical-align: middle;
+}
+.agent-table thead th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 30px;
+  color: var(--ar-muted);
+  background: var(--ar-surface);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.agent-table thead th:nth-child(2) {
+  width: 24%;
+}
+.agent-table thead th:nth-child(3) {
+  width: 30%;
+}
+.agent-table tbody tr {
+  height: 44px;
+}
+.agent-table tbody tr[data-state] {
+  cursor: pointer;
+}
+.agent-table tbody th:first-child {
+  border-radius: var(--ar-control-radius) 0 0 var(--ar-control-radius);
+}
+.agent-table tbody td:last-child {
+  border-radius: 0 var(--ar-control-radius) var(--ar-control-radius) 0;
+}
+.agent-table tbody tr[data-state]:hover > * {
+  background: var(--ar-surface-muted);
+}
+.agent-table tbody tr[data-selected='true'] > * {
+  background: var(--ar-selected);
+}
+.agent-table td {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.agent-table__owner {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 离线的整行淡一档；字照旧够看（--ar-muted 在这几种底上都过 4.5:1）。 */
+.agent-table tbody tr[data-state='offline'] .agent-table__name {
+  color: var(--ar-muted);
+}
+.agent-table tbody tr[data-state='waiting'] .agent-table__state,
+.agent-table tbody tr[data-state='wakes'] .agent-table__state {
+  color: var(--color-ink);
+}
+
+.agent-table__name {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  color: var(--color-ink);
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  --ar-avatar-size: 28px;
+}
+button.agent-table__name {
+  cursor: pointer;
+}
+.agent-table__who {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+/* 名字太长时截前面、留着后面的编号（“codex #2316”的“ #2316”）。 */
+.agent-table__label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+}
+.agent-table__label > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-table__label > span + span {
+  flex: 0 0 auto;
+  white-space: pre;
+}
+.agent-table__owner-line {
+  display: none;
+  overflow: hidden;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* “人”那一栏里你自己那一行，名字后面小小的一个“你”。 */
+.agent-table__you {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+.agent-table__favorite {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+}
+.agent-table__number {
+  font-variant-numeric: tabular-nums;
+}
+.agent-table--people thead th:nth-child(2) {
+  width: 26%;
+}
+.agent-table--people thead th:nth-child(3) {
+  width: 20%;
+}
+
+.room-roster__none,
+.room-roster__note {
+  margin: 0;
+  padding: 16px 8px;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.room-roster__note {
+  padding-top: 8px;
+  font-size: 0.75rem;
+}
+
+/* 没有 Agent：一句话加“接入 Agent” */
+.room-roster__empty {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding: 12px 8px 16px;
+  font-size: 0.8125rem;
+}
+.room-roster__empty > strong {
+  font-weight: 600;
+}
+.room-roster__empty > p {
+  margin: 0 0 6px;
+  color: var(--ar-muted);
+  line-height: 1.5;
+}
+
+.room-roster__pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 8px 2px;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}
+.room-roster__pages > button,
+.room-roster__archive {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.room-roster__pages > button:hover:not(:disabled),
+.room-roster__archive:hover {
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+.room-roster__pages > button:disabled {
+  opacity: 0.5;
+}
+.room-roster__archive {
+  display: block;
+  margin: 8px 0 0;
+}
+.room-roster .roster-policy {
+  margin: 8px 8px 0;
+}
+
+/* 这一栏窄的时候（右栏最窄的那一段、抽屉、手机）：只留名字和状态两列，“谁的”写在名字下面。 */
+@container room-roster (max-width: 349px) {
+  .agent-table--agents thead th:nth-child(2),
+  .agent-table--agents .agent-table__owner {
+    display: none;
+  }
+  .agent-table--agents thead th:nth-child(3) {
+    width: 34%;
+  }
+  .agent-table__owner-line {
+    display: block;
+  }
+}

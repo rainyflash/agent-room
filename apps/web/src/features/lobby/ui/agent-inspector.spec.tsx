@@ -243,6 +243,40 @@ describe('人物详情', () => {
     expect(onMessage).toHaveBeenCalledWith(online.agentId);
   });
 
+  it('盖在 Agent 表格上时，关掉的地方是上面一行“回到列表”，不再有叉', () => {
+    const onClose = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AgentInspector agent={online} closeAs="back" observedAtUnixMs={NOW} onClose={onClose} />
+      </I18nextProvider>,
+    );
+
+    const back = screen.getByRole('button', { name: 'Back to the list' });
+    expect(back).toHaveFocus();
+    expect(screen.queryByRole('button', { name: 'Close Agent details' })).not.toBeInTheDocument();
+    fireEvent.click(back);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('别处照旧是右上角的叉', () => {
+    renderInspector(online);
+
+    expect(screen.getByRole('button', { name: 'Close Agent details' })).toHaveFocus();
+    expect(screen.queryByRole('button', { name: 'Back to the list' })).not.toBeInTheDocument();
+  });
+
+  it('叫得醒的头像上是圈', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AgentInspector agent={offline} observedAtUnixMs={NOW} onClose={vi.fn()} wakeable />
+      </I18nextProvider>,
+    );
+
+    const portrait = document.querySelector('.agent-inspector__portrait');
+    expect(portrait?.querySelector('.ar-presence-dot--wakes')).not.toBeNull();
+    expect(portrait?.querySelector('.ar-avatar--dimmed')).toBeNull();
+  });
+
   it('服务器没说是你的就不给“私聊”：没回答（不在房间里）或者没写主人都算', async () => {
     // agent-room-ops#18：Alpha 83 上还有人点到“私聊出错了”，那时还不知道它是谁的。
     renderInspector(online, null);

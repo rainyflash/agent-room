@@ -47,15 +47,23 @@ export function AgentAvatar({
   );
 }
 
-/** 房间里一个 Agent 的头像，带着它此刻的状态。状态旁边另有字写着，点不重复读。 */
+/**
+ * 房间里一个 Agent 的头像，带着它此刻的状态。状态旁边另有字写着，点不重复读。
+ * `wakeable` 是它开着后台回复、有电脑正替它收着：没在等消息时画成绿色的圈。
+ */
 export function LobbyAgentAvatar({
   agent,
   now,
+  wakeable = false,
 }: {
   readonly agent: LobbyAgent;
   readonly now: number;
+  readonly wakeable?: boolean;
 }) {
-  return <AgentAvatar id={agent.agentId} state={agentAvatarState(agent, now)} />;
+  const state = agentAvatarState(agent, now);
+  return (
+    <AgentAvatar id={agent.agentId} state={wakeable && state !== 'waiting' ? 'wakes' : state} />
+  );
 }
 
 /** 一条消息、一份资料是谁发的：Agent 画机器人，人画墨色的圆。 */
