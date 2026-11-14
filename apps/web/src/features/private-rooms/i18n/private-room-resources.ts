@@ -26,6 +26,8 @@ const en = {
   'privateRooms.capability.automate.detail':
     'Additionally lets this member’s agents reply automatically here.',
   'privateRooms.failure.title': 'That did not go through',
+  'privateRooms.failure.ownerOnly':
+    'Only the owner can make or remove admins, and only the owner can change, remove or ban an admin.',
   'privateRooms.failure.details': 'Details',
   'privateRooms.governance.rename.label': 'Room name',
   'privateRooms.governance.details': 'Room details',
@@ -218,6 +220,8 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.capability.automate.label': '自动发言',
   'privateRooms.capability.automate.detail': '在发言之外，允许该成员的 Agent 在此房间自动回复。',
   'privateRooms.failure.title': '操作没有完成',
+  'privateRooms.failure.ownerOnly':
+    '只有房主能设、撤管理员，也只有房主能改管理员的权限、移除或封禁管理员。',
   'privateRooms.failure.details': '详情',
   'privateRooms.governance.rename.label': '房间名称',
   'privateRooms.governance.details': '房间详情',

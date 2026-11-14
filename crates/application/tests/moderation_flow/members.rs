@@ -134,3 +134,81 @@ async fn 公开大厅的踢出和封禁照旧在每个分片上做() {
     );
     assert!(fixture.members.applied.lock().unwrap().is_empty());
 }
+
+/// 房间里的管理员：对象是他时，只有房主动得了（`specs/redesign/room-roles.md` R1）。
+fn seat_admin(fixture: &Fixture, owner: PrincipalId) {
+    fixture.members.admins.lock().unwrap().push(target_id());
+    *fixture.members.owner.lock().unwrap() = Some(owner);
+}
+
+fn someone_else() -> PrincipalId {
+    PrincipalId::from_uuid(Uuid::from_u128(900))
+}
+
+#[tokio::test]
+async fn 对象是管理员时管理员动不了他_不留动作也不落副作用() {
+    for kind in [
+        ModerationActionKind::Mute,
+        ModerationActionKind::Kick,
+        ModerationActionKind::Ban,
+    ] {
+        let fixture = Fixture::new();
+        seat_admin(&fixture, someone_else());
+
+        let failure = fixture
+            .service
+            .apply_action(person_request(kind))
+            .await
+            .expect_err("管理员动不了另一位管理员");
+
+        assert_eq!(failure.kind(), ModerationFailureKind::OwnerOnly, "{kind:?}");
+        assert!(fixture.repository.actions.lock().unwrap().is_empty());
+        assert!(fixture.members.applied.lock().unwrap().is_empty());
+        assert!(fixture.effects.applied_rooms().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn 房主照旧禁言踢出封禁得了管理员() {
+    for kind in [
+        ModerationActionKind::Mute,
+        ModerationActionKind::Kick,
+        ModerationActionKind::Ban,
+    ] {
+        let fixture = Fixture::new();
+        seat_admin(&fixture, principal_id());
+
+        let action = apply(&fixture, person_request(kind)).await;
+
+        assert_eq!(action.status(), ModerationActionStatus::Applied, "{kind:?}");
+    }
+}
+
+#[tokio::test]
+async fn 房主给管理员的禁言_不是房主的人撤不了() {
+    let fixture = Fixture::new();
+    seat_admin(&fixture, principal_id());
+    let muted = apply(&fixture, person_request(ModerationActionKind::Mute)).await;
+
+    // 房主换了人：现在来撤的只是管理员。
+    *fixture.members.owner.lock().unwrap() = Some(someone_else());
+    let failure = reverse(&fixture, &muted).await.expect_err("只有房主撤得了");
+
+    assert_eq!(failure.kind(), ModerationFailureKind::OwnerOnly);
+    assert_eq!(status_of(&fixture, &muted), ModerationActionStatus::Applied);
+    assert!(fixture.effects.reversed_rooms().is_empty());
+}
+
+#[tokio::test]
+async fn 隐藏管理员的消息和公开大厅里的平台管理员不归这一条管() {
+    let fixture = Fixture::new();
+    seat_admin(&fixture, someone_else());
+    let hidden = apply(&fixture, hide_request("$event:matrix.test")).await;
+    assert_eq!(hidden.status(), ModerationActionStatus::Applied);
+
+    let fixture = Fixture::new();
+    seat_admin(&fixture, someone_else());
+    fixture.authority.public_lobby(&["!shard-a:matrix.test"]);
+    let banned = apply(&fixture, person_request(ModerationActionKind::Ban)).await;
+    assert_eq!(banned.status(), ModerationActionStatus::Applied);
+}

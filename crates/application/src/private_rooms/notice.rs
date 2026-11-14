@@ -169,7 +169,9 @@ impl PrivateRoomNoticeUseCases for PrivateRoomNoticeService {
 
 const fn domain(operation: &'static str, error: &DomainError) -> NoticeFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => NoticeFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            NoticeFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => NoticeFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => NoticeFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

@@ -571,6 +571,66 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(screen.queryByRole('button', { name: 'Make admin' })).toBeNull();
   });
 
+  it('管理员设不了管理员，也动不了另一位管理员；成员他照旧管得了', async () => {
+    const PLAIN = '0198b601-77a1-7bb8-83eb-a8fe68c97e4b';
+    renderGovernance(MEMBER, gateway().value, [], {
+      subject: roomWith(
+        {
+          permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
+          principalId: MEMBER,
+          status: 'joined',
+        },
+        {
+          permissions: { capabilities: ['view', 'speak', 'manage'] },
+          principalId: BANNED,
+          status: 'joined',
+        },
+        { permissions: { capabilities: ['view', 'speak'] }, principalId: PLAIN, status: 'joined' },
+      ),
+    });
+    const row = (name: string) => {
+      const item = screen.getByText(name).closest('li');
+      expect(item).not.toBeNull();
+      return within(item as HTMLElement);
+    };
+    expect(await screen.findByText('Mallory')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Make admin' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove admin' })).toBeNull();
+
+    // 另一位管理员那一行：写着“管理员”，没有移除、封禁，权限也改不了。
+    const admin = row('Mallory');
+    expect(admin.getByText('Admin')).toBeVisible();
+    expect(admin.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(admin.queryByRole('button', { name: 'Ban' })).toBeNull();
+    expect(admin.getByRole('checkbox', { name: /^Speak/u })).toBeDisabled();
+
+    // 成员那一行：移除、封禁、改别的权限照旧，“管理”勾不上。
+    const plain = row('Name not available');
+    expect(plain.getByRole('button', { name: 'Remove' })).toBeEnabled();
+    expect(plain.getByRole('button', { name: 'Ban' })).toBeEnabled();
+    expect(plain.getByRole('checkbox', { name: /^Speak/u })).toBeEnabled();
+    expect(plain.getByRole('checkbox', { name: /^Manage/u })).toBeDisabled();
+  });
+
+  it('服务器说只有房主能做时把原因写出来', async () => {
+    const remove = vi.fn<PrivateRoomGateway['remove']>(() =>
+      Promise.resolve(err({ code: 'private_room.owner_only', retryable: false })),
+    );
+    // 名单还没跟上：这一行在网页看来是成员，服务器上他刚被设成了管理员。
+    renderGovernance(BANNED, { ...gateway().value, remove }, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view', 'speak', 'manage'] },
+        principalId: BANNED,
+        status: 'joined',
+      }),
+    });
+    expect(await screen.findByText('Grace')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    expect(await screen.findByText(/^Only the owner can make or remove admins/u)).toBeVisible();
+    expect(remove).toHaveBeenCalledWith(room.catalogId, MEMBER);
+  });
+
   it('公开房间：概况照公开设置写，房主看得到在等的申请', async () => {
     renderGovernance(OWNER, gateway().value, [], { publicRoom: true });
     expect(await screen.findByText('Public · Ask to join')).toBeVisible();

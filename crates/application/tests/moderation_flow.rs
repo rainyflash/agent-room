@@ -750,6 +750,9 @@ impl ModerationEffectGateway for FakeEffects {
 /// 私人房间里的踢出、封禁照成员一节那一套落：记下落了、撤了哪些，能预先拒绝或者落不成。
 #[derive(Default)]
 struct FakeMembers {
+    /// 这间房的房主和管理员：对象是管理员时，只有房主动得了。
+    owner: Mutex<Option<PrincipalId>>,
+    admins: Mutex<Vec<PrincipalId>>,
     refusal: Mutex<Option<ModerationMemberRefusal>>,
     failure: Mutex<Option<MatrixFailure>>,
     applied: Mutex<Vec<(ModerationActionKind, PrincipalId)>>,
@@ -757,6 +760,17 @@ struct FakeMembers {
 }
 
 impl ModerationMemberGateway for FakeMembers {
+    fn owner_only(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        actor: PrincipalId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let owner = *self.owner.lock().expect("成员锁可用");
+        let admin = self.admins.lock().expect("成员锁可用").contains(&target);
+        Box::pin(async move { Ok(admin && owner != Some(actor)) })
+    }
+
     fn check(
         &self,
         _kind: ModerationActionKind,

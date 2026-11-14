@@ -377,6 +377,7 @@ fn ensure_not_banned(
 const fn invitation_failure(kind: PrivateRoomFailureKind) -> PublicJoinFailureKind {
     match kind {
         PrivateRoomFailureKind::Forbidden
+        | PrivateRoomFailureKind::OwnerOnly
         | PrivateRoomFailureKind::NotFound
         | PrivateRoomFailureKind::Conflict => PublicJoinFailureKind::Conflict,
         PrivateRoomFailureKind::DependencyUnavailable | PrivateRoomFailureKind::UnknownCommit => {

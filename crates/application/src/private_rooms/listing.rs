@@ -528,7 +528,9 @@ fn next_version(
 
 const fn domain(operation: &'static str, error: &DomainError) -> ListingFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => ListingFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            ListingFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => ListingFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => ListingFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

@@ -509,7 +509,9 @@ const fn ledger(failure: ModerationFailure) -> AgentModerationFailure {
         failure.operation(),
         match failure.kind() {
             ModerationFailureKind::InvalidRequest => AgentModerationFailureKind::InvalidRequest,
-            ModerationFailureKind::Forbidden => AgentModerationFailureKind::Forbidden,
+            ModerationFailureKind::Forbidden | ModerationFailureKind::OwnerOnly => {
+                AgentModerationFailureKind::Forbidden
+            }
             ModerationFailureKind::NotFound => AgentModerationFailureKind::NotFound,
             ModerationFailureKind::Conflict | ModerationFailureKind::RateLimited => {
                 AgentModerationFailureKind::Conflict

@@ -158,6 +158,15 @@ fn expiry_service(
 struct LobbyOnly;
 
 impl ModerationMemberGateway for LobbyOnly {
+    fn owner_only(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        _actor: PrincipalId,
+        _target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("公开大厅不走成员记录") })
+    }
+
     fn check(
         &self,
         _kind: ModerationActionKind,

@@ -291,7 +291,9 @@ const fn failure(
 
 const fn domain(operation: &'static str, error: &DomainError) -> ModerationGrantFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => ModerationGrantFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            ModerationGrantFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => ModerationGrantFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => ModerationGrantFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

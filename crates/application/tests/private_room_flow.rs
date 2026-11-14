@@ -41,6 +41,8 @@ use agent_room_domain::{
 };
 use uuid::Uuid;
 
+#[path = "private_room_flow/admins.rs"]
+mod admins;
 #[path = "private_room_flow/agent_members.rs"]
 mod agent_members;
 #[path = "private_room_flow/moderation_members.rs"]

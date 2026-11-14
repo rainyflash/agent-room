@@ -223,7 +223,9 @@ fn ensure_active_device(
 
 fn map_domain_failure(operation: &'static str, error: &DomainError) -> AgentCardManagementFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => AgentCardManagementFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            AgentCardManagementFailureKind::Forbidden
+        }
         DomainError::Validation { .. }
         | DomainError::InvalidTransition { .. }
         | DomainError::CapacityExceeded { .. } => AgentCardManagementFailureKind::InvalidRequest,

@@ -35,6 +35,8 @@ export const moderationResources = {
     'moderation.governance.failure': 'Could not load moderation: {{code}}',
     'moderation.governance.reverseBusy':
       'Can’t undo right now: this person’s mutes are being updated. Try again in a moment.',
+    'moderation.governance.ownerOnly':
+      'This person is an admin. Only the owner can mute, remove or ban an admin, or undo those.',
     'moderation.governance.cases': 'Reports',
     'moderation.governance.actions': 'Actions taken',
     'moderation.governance.audit': 'Record',
@@ -177,6 +179,8 @@ export const moderationResources = {
     'moderation.governance.retry': '重试',
     'moderation.governance.failure': '暂时读不到治理信息：{{code}}',
     'moderation.governance.reverseBusy': '现在撤不了：这个人的禁言正在处理，过一会儿再点撤回。',
+    'moderation.governance.ownerOnly':
+      '这个人是管理员。只有房主能禁言、移出、封禁管理员，也只有房主能撤回这些处理。',
     'moderation.governance.cases': '举报',
     'moderation.governance.actions': '已做的处理',
     'moderation.governance.audit': '记录',

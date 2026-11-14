@@ -86,6 +86,29 @@ describe('ModerationSettings', () => {
     expect(gateway.reverseAction).toHaveBeenCalledWith(ACTION_ID);
   });
 
+  it('对象是管理员时说只有房主能做，不说读不到治理信息', async () => {
+    const user = userEvent.setup();
+    const ban: ModerationAction = {
+      ...appliedAction(),
+      kind: 'ban',
+      targetKind: 'principal',
+      targetReference: ACTOR_ID,
+    };
+    const gateway = {
+      ...authorizedGateway(),
+      listActions: vi.fn(() => Promise.resolve(ok([ban]))),
+      reverseAction: vi.fn(() =>
+        Promise.resolve(err({ code: 'private_room.owner_only', retryable: false } as const)),
+      ),
+    } satisfies ModerationGateway;
+    renderSettings(gateway);
+
+    await user.click(await screen.findByRole('button', { name: 'Undo' }));
+
+    expect(await screen.findByText(/^This person is an admin/u)).toBeVisible();
+    expect(screen.queryByText(/Could not load moderation/u)).toBeNull();
+  });
+
   it('到了期限不用刷新就改说正在解除，正在解除时隔 15 秒再读一次台账', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

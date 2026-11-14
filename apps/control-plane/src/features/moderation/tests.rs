@@ -8,7 +8,8 @@ use agent_room_application::{
     moderation::{
         ApplyModerationAction, InspectModerationCapabilities, ListModerationAudit,
         ListMyModerationCases, ListRoomModeration, ListRoomModerationCases, ModerationCapabilities,
-        ModerationResult, ModerationUseCases, ReverseModerationAction, SubmitModerationReport,
+        ModerationFailure, ModerationFailureKind, ModerationResult, ModerationUseCases,
+        ReverseModerationAction, SubmitModerationReport,
     },
     ports::{PortFuture, SecretValue},
 };
@@ -49,6 +50,8 @@ struct FakeModeration {
     action: Mutex<Option<ApplyModerationAction>>,
     reversal: Mutex<Option<ReverseModerationAction>>,
     audit: Mutex<Option<ListModerationAudit>>,
+    /// 设上时落动作、撤回都回答它。
+    refusal: Mutex<Option<ModerationFailure>>,
 }
 
 impl ModerationUseCases for FakeModeration {
@@ -93,7 +96,8 @@ impl ModerationUseCases for FakeModeration {
         request: ApplyModerationAction,
     ) -> PortFuture<'_, ModerationResult<ModerationAction>> {
         *self.action.lock().expect("动作请求锁可用") = Some(request);
-        Box::pin(async { Ok(applied_action()) })
+        let refusal = *self.refusal.lock().expect("拒绝锁可用");
+        Box::pin(async move { refusal.map_or_else(|| Ok(applied_action()), Err) })
     }
 
     fn reverse_action(
@@ -101,7 +105,8 @@ impl ModerationUseCases for FakeModeration {
         request: ReverseModerationAction,
     ) -> PortFuture<'_, ModerationResult<ModerationAction>> {
         *self.reversal.lock().expect("撤销请求锁可用") = Some(request);
-        Box::pin(async { Ok(reversed_action()) })
+        let refusal = *self.refusal.lock().expect("拒绝锁可用");
+        Box::pin(async move { refusal.map_or_else(|| Ok(reversed_action()), Err) })
     }
 
     fn list_room_actions(
@@ -306,6 +311,45 @@ async fn 治理动作和撤销都要求同源近期认证与显式影响确认()
             AuthenticationRequirement::RecentAuthentication,
         ]
     );
+}
+
+#[tokio::test]
+async fn 对象是管理员时回的是只有房主能做_和成员一节同一个码() {
+    let moderation = Arc::new(FakeModeration::default());
+    *moderation.refusal.lock().expect("拒绝锁可用") = Some(ModerationFailure::new(
+        "test",
+        ModerationFailureKind::OwnerOnly,
+    ));
+    let app = test_router(moderation, Arc::new(FakeAuthentication::default()));
+    let applied = app
+        .clone()
+        .oneshot(session_request(
+            Method::POST,
+            &format!("/rooms/{CATALOG_UUID}/moderation/actions"),
+            &action_body(),
+            true,
+            Some(ACTION_UUID),
+        ))
+        .await
+        .expect("动作路由可调用");
+    let reversed = app
+        .oneshot(session_request(
+            Method::DELETE,
+            &format!("/moderation/actions/{ACTION_UUID}"),
+            &json!({ "impactAcknowledged": true }),
+            true,
+            None,
+        ))
+        .await
+        .expect("撤销路由可调用");
+
+    for response in [applied, reversed] {
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response_json(response).await["code"],
+            "private_room.owner_only"
+        );
+    }
 }
 
 #[tokio::test]
