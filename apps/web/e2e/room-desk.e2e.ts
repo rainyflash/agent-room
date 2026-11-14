@@ -1273,3 +1273,93 @@ test('点回复的是哪句：跳到那一句标出来；它折着的话那一�
   await expect(focused).toBeInViewport();
   expect(failures).toEqual([]);
 });
+
+// 正文里的表格（1f 的第一个 PR）。
+test('正文里管道线写的表格：画成表格，宽了在自己的框里左右滚；放得下的不占 Tab，手机上整页不横着滚', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(chatter);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  await expect(log.getByText('Send them to me for a read before posting.')).toBeInViewport();
+  await page.evaluate(() => {
+    const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
+    controls.receive({
+      agentIndex: 0,
+      text: [
+        'Image builds:',
+        '| Image | State | Time |',
+        '| :--- | :---: | ---: |',
+        '| Control plane | **passed** | 4m 12s |',
+        '| Identity | missing `LICENSE` | 41s |',
+        'The gateway one needs a rerun.',
+      ].join('\n'),
+    });
+  });
+  const small = log.getByRole('table').last();
+  await expect(small).toBeInViewport();
+  await expect(small.getByRole('columnheader')).toHaveText(['Image', 'State', 'Time']);
+  await expect(small.getByRole('row')).toHaveCount(3);
+  await expect(small.getByRole('cell', { name: '4m 12s', exact: true })).toHaveCSS(
+    'text-align',
+    'right',
+  );
+  await expect(small.locator('td strong')).toHaveText('passed');
+  await expect(small.locator('td code')).toHaveText('LICENSE');
+  // 表格上面、下面的字还是各一段。
+  const message = log.locator('.conversation-message').filter({ hasText: 'Image builds:' });
+  await expect(message.locator('.chat-markdown > p')).toHaveText([
+    'Image builds:',
+    'The gateway one needs a rerun.',
+  ]);
+  // 放得下：框不进键盘的顺序，也不当成一个有名字的区域。
+  const smallFrame = message.locator('.chat-markdown__table');
+  await expect(smallFrame).not.toHaveAttribute('tabindex');
+  await expect(
+    log.getByRole('group', { name: 'Table, scrolls sideways', exact: true }),
+  ).toHaveCount(0);
+
+  await page.evaluate(() => {
+    (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({
+      human: true,
+      text: [
+        '| Check | Runner | Started | Finished | Result | Notes | Follow-up owner | Linked run |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| Format, types and tests | ubuntu-latest | 12:01:10 | 12:09:44 | passed | 1592 unit tests | nobody | 43597141197 |',
+        '| Web browser acceptance | ubuntu-latest | 12:01:12 | 12:10:23 | flaky | The contrast check ran while the top bar buttons were still halfway through their color transition, so the measured colors were neither the light nor the dark ones. | Build Agent 002 | 43592713434 |',
+      ].join('\n'),
+    });
+  });
+  // 比消息那一列宽：框能聚焦、有名字，能用键盘往右滚；字不被拆开，一格里的字多了在格子里折行。
+  const wideFrame = log.getByRole('group', { name: 'Table, scrolls sideways', exact: true });
+  await expect(wideFrame).toHaveCount(1);
+  await expect(wideFrame).toHaveAttribute('tabindex', '0');
+  const wide = wideFrame.getByRole('table');
+  await expect(wide.getByRole('columnheader')).toHaveCount(8);
+  expect(
+    await wideFrame.evaluate((element) => element.scrollWidth > element.clientWidth + 100),
+  ).toBe(true);
+  const stamp = wide.getByRole('cell', { name: '12:01:10', exact: true });
+  const notes = wide.getByRole('cell', { name: /^The contrast check ran/u });
+  const [stampBox, notesBox] = [await stamp.boundingBox(), await notes.boundingBox()];
+  expect(notesBox?.width).toBeLessThanOrEqual(330);
+  expect(notesBox?.height).toBeGreaterThan((stampBox?.height ?? 0) * 2);
+  await wideFrame.focus();
+  await expect(wideFrame).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => wideFrame.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+  await useColorScheme(page, 'dark');
+  await expectAccessible(page);
+
+  // 手机上：小的那张照样放得下，宽的那张自己滚，整页不横着滚。
+  await useColorScheme(page, 'light');
+  await page.setViewportSize({ width: 390, height: 760 });
+  await expect(small).toBeVisible();
+  await expect(smallFrame).not.toHaveAttribute('tabindex');
+  await expect(wideFrame).toHaveAttribute('tabindex', '0');
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
