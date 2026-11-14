@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import {
   Fragment,
   useCallback,
+  useContext,
   useDeferredValue,
   useEffect,
   useId,
@@ -35,6 +36,7 @@ import { emptyConversationFilter, searchConversation } from '../domain/conversat
 import { ConversationFoldRow } from './conversation-fold';
 import { ExternalLinkGate } from './external-link';
 import { ConversationSearch } from './conversation-search';
+import { ConversationSearchRequestContext } from './conversation-search-request';
 import { useConversationPosition } from './use-conversation-position';
 import { useTranslation } from 'react-i18next';
 import {
@@ -249,6 +251,28 @@ function ConversationPanelView({
   }
   const [searchOpen, setSearchOpen] = useState(false);
   const searchId = useId();
+  // 外面请求打开查找（手机上房间页“更多”里的那一项）：只有正在眼前的这一段对话应，
+  // 打开以后焦点放进关键词那一格。一条消息都没有时没有查找，先告诉外面别摆那一项。
+  const searchRequests = useContext(ConversationSearchRequestContext);
+  const requestedTurn = searchRequests?.turn ?? 0;
+  const [answeredTurn, setAnsweredTurn] = useState(requestedTurn);
+  const [searchFocusTurn, setSearchFocusTurn] = useState(0);
+  if (answeredTurn !== requestedTurn) {
+    setAnsweredTurn(requestedTurn);
+    if (active && timeline.length > 0) {
+      setSearchOpen(true);
+      setSearchFocusTurn(requestedTurn);
+    }
+  }
+  useEffect(() => {
+    if (searchFocusTurn === 0) return;
+    document.getElementById(searchId)?.querySelector<HTMLElement>('input[type="search"]')?.focus();
+  }, [searchFocusTurn, searchId]);
+  const searchable = timeline.length > 0;
+  const reportSearchable = searchRequests?.onAvailable;
+  useEffect(() => {
+    if (active) reportSearchable?.(searchable);
+  }, [active, reportSearchable, searchable]);
   // 查看回复话题会直接打开查找区，关掉查找区就清除筛选。
   const searchVisible = searchOpen || filter.topic !== null;
   // 长消息默认收起；这里只记用户点过的，跳转定位到的那条和查找结果默认展开。

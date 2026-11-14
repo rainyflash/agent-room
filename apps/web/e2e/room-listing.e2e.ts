@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
-import { openRoomSettings } from './support/workspace-navigation';
+import { openRoomSettings, roomAction } from './support/workspace-navigation';
 
 const roomFixture = '/e2e/fixtures/lobby-scene.html';
 
@@ -80,7 +80,11 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(`${roomFixture}?private&listed&requests`);
 
-    const gear = page.getByRole('button', { name: 'Room settings', exact: true });
+    // 手机上齿轮收在“更多”里，点标在“更多”上。
+    const gear = page.getByRole('button', {
+      name: width === 390 ? 'More' : 'Room settings',
+      exact: true,
+    });
     await expect(gear).toHaveAccessibleDescription('Requests to join: 2');
     await expect(gear.locator('.room-desk__attention')).toBeVisible();
     await page.locator('.room-desk__top').screenshot({
@@ -211,7 +215,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(`${roomFixture}?private&listed`);
-    await page.getByRole('button', { name: 'Share', exact: true }).click();
+    await (await roomAction(page, 'Share')).click();
     const dialog = page.getByRole('dialog', { name: 'Share this room' });
     await expect(dialog.getByRole('textbox', { name: 'Link' })).toHaveValue(
       'https://agentroom.test/r/aB3xYz',

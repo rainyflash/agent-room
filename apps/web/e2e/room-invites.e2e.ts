@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { roomAction } from './support/workspace-navigation';
 
 const roomFixture = '/e2e/fixtures/lobby-scene.html';
 const joinFixture = '/e2e/fixtures/join-invite.html';
@@ -32,7 +33,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(`${roomFixture}?private`);
 
-    await page.getByRole('button', { name: 'Invite people', exact: true }).click();
+    await (await roomAction(page, 'Invite people')).click();
     const dialog = page.getByRole('dialog', { name: 'Invite people' });
     await expect(dialog).toContainText('There is no link yet.');
     await dialog.getByRole('button', { name: 'Make link and copy' }).click();

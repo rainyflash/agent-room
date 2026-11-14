@@ -16,6 +16,7 @@ import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
+import { ConversationSearchRequestContext } from '@/features/conversation/ui/conversation-search-request';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
 import { useLocalAgentIds } from '@/features/desktop/ui/use-local-agent-ids';
@@ -224,6 +225,14 @@ function ReadyLobby({
   const { url: downloadUrl } = usePublishedDownload(config);
   const directSessions = useDirectSessionController(principal !== null);
   const [drawer, setDrawer] = useState<'members' | null>(null);
+  // 手机上查找收在顶栏的“更多”里：点了就请眼前那段对话打开查找（`turn` 加一），
+  // 那段对话也告诉这里此刻有没有可查的。
+  const [searchable, setSearchable] = useState(false);
+  const [searchTurn, setSearchTurn] = useState(0);
+  const searchRequests = useMemo(
+    () => ({ turn: searchTurn, onAvailable: setSearchable }),
+    [searchTurn],
+  );
   // 重新登录回来时，没提交完的自动发言授权要接着填：直接打开房间设置的那一节。
   const [roomSettings, setRoomSettings] = useState<{
     readonly section?: RoomSettingsSection;
@@ -406,8 +415,9 @@ function ReadyLobby({
   useEffect(() => {
     if (!layoutChangedHere.current) return;
     layoutChangedHere.current = false;
+    // 手机上对话版面的切换收在“更多”里，焦点就落在“更多”上。
     const controls = document.querySelectorAll<HTMLElement>(
-      '.room-layout-switch [aria-checked="true"], .room-layout-toggle',
+      '.room-layout-switch [aria-checked="true"], .room-layout-toggle, .room-desk__more',
     );
     [...controls].find((control) => control.offsetParent !== null)?.focus();
   }, [layout]);
@@ -449,17 +459,25 @@ function ReadyLobby({
       [...origins].find((origin) => origin.offsetParent !== null)?.focus();
     }
   }, [agentsPage]);
-  const directNavigation =
+  // 私聊的列表。对话版面里它在左栏，窄了在房间名旁边的下拉里（点了一项先把下拉关上：`before`）；
+  // 场景里它在 Agent 抽屉里。
+  const directNavigation = (before?: () => void) =>
     principal === null ? null : (
       <DirectSessionNavigation
         activeCatalogId={selectedDirectSessionId}
         controller={directSessions}
         onActivate={(id) => {
+          before?.();
           closeDrawer();
           onSelectedDirectSessionChange(id);
         }}
       />
     );
+  const directName =
+    selectedDirectSessionId === null
+      ? null
+      : (directSessions.sessions.find((session) => session.catalogId === selectedDirectSessionId)
+          ?.target.displayName ?? t('roomWorkspace.direct'));
   const rosterPolicy = (
     <AgentRosterPolicyPanel
       key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
@@ -467,9 +485,9 @@ function ReadyLobby({
       days={room.archiveAfterDays ?? 7}
     />
   );
-  // 抽屉里连私聊一起列；对话版面的右栏只列 Agent 和人，私聊在左栏。
-  // 对话版面是表格（`RoomRoster`）；场景里照旧是原来那份紧凑的名册。
-  const rosterWith = (directMessages: boolean) =>
+  // 对话版面是表格（`RoomRoster`），右栏和窄的时候的抽屉里都只列 Agent 和人：私聊在左栏，
+  // 窄了在房间名旁边的下拉里。场景里照旧是原来那份紧凑的名册，抽屉里连私聊一起列。
+  const rosterPanel = () =>
     conversationLayout ? (
       <div className="workspace-members">
         <RoomRoster
@@ -494,7 +512,6 @@ function ReadyLobby({
           selectedAgentId={selectedAgentId}
           wakeableAgentIds={roster.wakeableAgentIds}
         />
-        {directMessages ? directNavigation : null}
       </div>
     ) : (
       <div className="workspace-members">
@@ -506,7 +523,7 @@ function ReadyLobby({
           variant="compact"
         />
         <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
-        {directMessages ? directNavigation : null}
+        {directNavigation()}
         {rosterPolicy}
       </div>
     );
@@ -661,7 +678,7 @@ function ReadyLobby({
   const agentDrawer =
     drawer === null ? null : (
       <WorkspaceDrawer label={t('roomWorkspace.members')} variant={drawer} onClose={closeDrawer}>
-        {rosterWith(true)}
+        {rosterPanel()}
       </WorkspaceDrawer>
     );
   const inspector = (
@@ -725,6 +742,7 @@ function ReadyLobby({
       <>
         <RoomDesk
           agentCount={roster.agentCount}
+          directName={directName}
           inspector={inspector}
           inspecting={selectedAgent !== null}
           inviteAgent={
@@ -762,8 +780,18 @@ function ReadyLobby({
                   setRoomSettings({});
                 }
           }
+          onSearch={
+            searchable && panelView === 'conversation' && !agentsPage
+              ? () => {
+                  setSearchTurn((turn) => turn + 1);
+                }
+              : null
+          }
           onSelectMainRoom={() => {
             openRoomPanel('conversation');
+          }}
+          onShowScene={() => {
+            changeLayout('scene');
           }}
           page={
             agentsPage
@@ -808,10 +836,12 @@ function ReadyLobby({
                   },
                 }
           }
-          side={rosterWith(false)}
+          side={rosterPanel()}
           view={panelView}
         >
-          {conversationContent}
+          <ConversationSearchRequestContext.Provider value={searchRequests}>
+            {conversationContent}
+          </ConversationSearchRequestContext.Provider>
         </RoomDesk>
         {dialogs}
         {agentDrawer}
