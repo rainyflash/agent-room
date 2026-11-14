@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { mentionsAccount, type RoomMessageSignal } from './message';
+import {
+  addressesAccount,
+  mentionsAccount,
+  messageAttentionId,
+  type RoomMessageSignal,
+} from './message';
 
 const me = '@me:agent-room.test';
 
@@ -60,6 +65,44 @@ describe('这条消息是不是在找你', () => {
   it('没有预览的消息不算', () => {
     expect(mentionsAccount({ ...message('@ada:agent-room.test', [me]), preview: null }, me)).toBe(
       false,
+    );
+  });
+});
+
+describe('这条消息是不是冲着你来的', () => {
+  const mine = { ...message(me, []), messageId: 'mine' };
+  const theirs = { ...message('@lin:agent-room.test', []), messageId: 'theirs' };
+  const byId = new Map([
+    [mine.messageId, mine],
+    [theirs.messageId, theirs],
+  ]);
+  const reply = (sender: string, target: string): RoomMessageSignal => ({
+    ...message(sender, []),
+    relation: { kind: 'reply', targetMessageId: target },
+  });
+
+  it('点了你是 mention，回复你说的话是 reply；两样都有时算 mention', () => {
+    expect(addressesAccount(message('@ada:agent-room.test', [me]), byId, me)).toBe('mention');
+    expect(addressesAccount(reply('@ada:agent-room.test', 'mine'), byId, me)).toBe('reply');
+    expect(
+      addressesAccount(
+        { ...reply('@ada:agent-room.test', 'mine'), preview: message(me, [me]).preview },
+        byId,
+        me,
+      ),
+    ).toBe('mention');
+  });
+
+  it('回复的是别人、被回复的那句没加载到、自己回复自己，都不算', () => {
+    expect(addressesAccount(reply('@ada:agent-room.test', 'theirs'), byId, me)).toBeNull();
+    expect(addressesAccount(reply('@ada:agent-room.test', 'not-loaded'), byId, me)).toBeNull();
+    expect(addressesAccount(reply(me, 'mine'), byId, me)).toBeNull();
+    expect(addressesAccount(message('@ada:agent-room.test', []), byId, me)).toBeNull();
+  });
+
+  it('收件箱里一条消息的编号带着房间和消息', () => {
+    expect(messageAttentionId('!room:agent-room.test', 'mine')).toBe(
+      'message:!room:agent-room.test:mine',
     );
   });
 });

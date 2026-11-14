@@ -138,6 +138,7 @@ import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-se
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { err, ok, type Result } from '@/shared/result';
+import { rememberAgentRunFolding } from '@/features/conversation/application/agent-run-folding';
 import { remotePromptInjectionFixture } from '@/test/fixtures/remote-prompt-injection';
 import { ApplicationFeaturesFixture } from './application-features-fixture';
 
@@ -327,6 +328,100 @@ const fixtureHistory = historyFixture
       };
     })
   : [];
+// `?chatter`：一段有人有 Agent 的对话，用来看“只看”和折叠。你点了第 1 个 Agent，它回你；
+// 第 1、2 个 Agent 之间又说了 6 句（折成一行）；第 2 个回你一句；Room visitor 点了你；
+// 最后第 3、1 个 Agent 各说一句（最下面那一串，不折）。
+const chatterFixture = new URLSearchParams(window.location.search).has('chatter');
+// `?unfolded`：这台设备关掉了“把 Agent 之间的长对话折起来”，每条消息都摆出来。
+if (new URLSearchParams(window.location.search).has('unfolded')) rememberAgentRunFolding(false);
+const chatterScript: readonly {
+  readonly by: 'you' | 'visitor' | number;
+  readonly text: string;
+  readonly mentions?: 'you' | number;
+  readonly replyTo?: number;
+}[] = [
+  {
+    by: 'you',
+    text: 'Take a look at the vendored crate check before we cut the release.',
+    mentions: 0,
+  },
+  { by: 0, text: 'One gap: both image builds skip that directory.', replyTo: 0 },
+  { by: 1, text: 'I can add the copy step to both build files.' },
+  { by: 0, text: 'Do the control plane image first, it fails earlier.', replyTo: 2 },
+  { by: 1, text: 'Control plane image builds now.' },
+  { by: 0, text: 'The gateway image still misses the license file.' },
+  { by: 1, text: 'Added the license file, rebuilding.', mentions: 0 },
+  { by: 0, text: 'Both images build. The dispatched run is green.' },
+  {
+    by: 1,
+    text: 'Fixed: both images copy the directory now, and the full run passes.',
+    replyTo: 0,
+  },
+  {
+    by: 'visitor',
+    text: 'Merged. Have a look at the release notes when you can.',
+    mentions: 'you',
+  },
+  { by: 2, text: 'I will draft the release notes.' },
+  { by: 0, text: 'Send them to me for a read before posting.' },
+];
+function chatterId(index: number): string {
+  return `01990d9e-8400-7000-8000-${String(2000 + index).padStart(12, '0')}`;
+}
+const fixtureChatter: readonly RoomMessageSignal[] = chatterFixture
+  ? chatterScript.map((line, index): RoomMessageSignal => {
+      const agent = typeof line.by === 'number' ? room.agents[line.by] : undefined;
+      if (typeof line.by === 'number' && agent === undefined) throw new Error('No fixture Agent');
+      const mentioned =
+        line.mentions === undefined
+          ? []
+          : line.mentions === 'you'
+            ? [fixtureIdentity.matrixUserId]
+            : [room.agents[line.mentions]?.matrixUserId ?? ''];
+      return {
+        ...conversationFixture(chatterId(index), {
+          roomId: room.roomId,
+          serverTimestamp: Date.now() - (chatterScript.length - index) * 60_000,
+        }),
+        actor:
+          agent !== undefined
+            ? {
+                kind: 'agent',
+                agentId: agent.agentId,
+                displayName: agent.displayName,
+                matrixUserId: agent.matrixUserId,
+                instanceId: agent.instanceIds[0] ?? agent.agentId,
+                provenance: 'autonomous_agent',
+              }
+            : line.by === 'you'
+              ? {
+                  kind: 'human',
+                  provenance: 'human',
+                  displayName: fixtureIdentity.displayName,
+                  matrixUserId: fixtureIdentity.matrixUserId,
+                  principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e42',
+                }
+              : {
+                  kind: 'human',
+                  provenance: 'human',
+                  matrixUserId: '@guest:matrix.test',
+                  displayName: 'Room visitor',
+                  principalId: 'fixture-guest',
+                },
+        preview: {
+          title: 'Conversation',
+          summary: line.text,
+          contentType: 'text/plain',
+          sensitivity: 'normal',
+          riskFlags: [],
+          conversation: { text: line.text, mentions: mentioned },
+        },
+        ...(line.replyTo === undefined
+          ? {}
+          : { relation: { kind: 'reply' as const, targetMessageId: chatterId(line.replyTo) } }),
+      };
+    })
+  : [];
 let historyWindow = historyPage;
 // 公告每改一次，对话里多一行“某某更新了公告”；`?notice` 一开始就有 Grace 那一次。
 const noticeChanges: RoomNoticeChange[] =
@@ -349,6 +444,7 @@ const messages: MessageGateway = {
         ...fixtureHistory
           .filter((message) => message.roomId === requestedRoomId)
           .slice(-historyWindow),
+        ...fixtureChatter.filter((message) => message.roomId === requestedRoomId),
         ...publishedConversations.filter((message) => message.roomId === requestedRoomId),
       ].toSorted((left, right) => right.serverTimestamp - left.serverTimestamp),
       observedAtUnixMs: Date.now(),
@@ -459,13 +555,19 @@ const fixtureControls: LobbyFixtureControls = {
       matrixEventId: `$fixture-${messageId}`,
       messageId,
       preview: {
-        conversation: { text: input.text, mentions: [] },
+        conversation: {
+          text: input.text,
+          mentions: input.mentionsYou === true ? [fixtureIdentity.matrixUserId] : [],
+        },
         contentType: 'text/plain',
         riskFlags: [],
         sensitivity: 'normal',
         summary: input.text,
         title: 'Room conversation',
       },
+      ...(input.replyTo === undefined
+        ? {}
+        : { relation: { kind: 'reply' as const, targetMessageId: input.replyTo } }),
       roomId: input.roomId ?? room.roomId,
       serverTimestamp: Date.now() - (input.ageMs ?? 0),
       signatureStatus: 'matrix_sender_matched',

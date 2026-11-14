@@ -256,6 +256,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 筛选的按钮和 Agent 的名字都是按钮：单元测试里给 Agent 起名别用 `Mine`、`Net…` 这种和筛选撞上的；浏览器验收里先圈到 `getByRole('group', { name })` 再找。
     - 做记号（收藏、标签）会弹一条“已保存”的提示，淡出要一会儿：axe 放在做记号之前跑。
     - 夹具 `lobby-scene.html`：`&cards` 的 Agent 写名片（三天前），才有进来的时间；`view=agents` 直接打开这一页。
+  - 第 1 块 1e 的第一个 PR（#803）：对话顶上“只看”一行（全部、人说的、提到我的）、右边的“资料”按钮、Agent 之间的长串折成一行。按窗口算未读、“新消息”那条线、点回复的那句跳过去是第二个 PR。
+    - 筛和折都是 `features/conversation/domain` 里的纯函数（`conversation-scope.ts`、`conversation-folds.ts`），画在 `ConversationPanel` 里。面板是主房间、私聊、场景里的面板共用的：“只看”和折叠只在 `variant === 'room'` 时有，私聊里没有。
+    - 算不算“找你”只有一处：`messages/domain/message.ts` 的 `addressesAccount`（点了你、@所有人、回复你说的话），收件箱和“提到我的”都用它。新加要分“是不是找我”的地方也用它。
+    - 折的是“Agent 之间的话”：Agent 说的、点的都是 Agent、回复的是 Agent 说的。认不出点的是谁、被回复的那句没加载到，一律当成对人说的，不折：宁可少折，别把找人的话藏起来。最下面那一串不折，别改成也折：正在说的话不该自己缩回去。
+    - 眼前不是完整的对话时（查找、“只看”筛着），不记读到哪儿、不算看过、不夹公告的改动、不折（`filtered`）。新加会改“看到了什么”的东西也看它。
+    - 折着的那一行顶着里面第一句的编号，还带着全部编号（`data-conversation-fold`）：读到的位置落在折着的一串里时靠它找回来（`findMessage`）。数 `[data-conversation-message-id]` 会把折着的行也数上，数消息用 `.conversation-message`。
+    - 对话版面里没有“对话 / 资料”标签了：`MessageLayer` 给了 `onViewChange` 就在顶上那一行放“资料”，看资料时顶上是“回到对话”；提示和公告经 `notices` 挂在那一行下面。场景里的面板照旧用 `WorkspaceViewTabs`。
+    - 夹具 `lobby-scene.html`：`&chatter` 是一段有人有 Agent 的对话，`&unfolded` 是这台设备关掉了折叠。`&history` 的消息都是 Agent 说的，默认几句一折：数条数、认某一条消息的用例带上 `&unfolded`。折着以后内容矮，进房间自动往前补的页数会变多。
+    - 私聊在主栏里是另一块（`DirectConversationDock`），在私聊里主房间那一块是 `hidden`：浏览器验收里找私聊的东西从 `.room-desk__main` 找。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。

@@ -88,6 +88,29 @@ export function mentionsAccount(message: RoomMessageSignal, matrixUserId: string
   );
 }
 
+/**
+ * 这条消息是不是冲着这个账户来的：别人发的，点了它或者 @了所有人（`mention`），
+ * 或者回复的是它说的话（`reply`）。收件箱、对话里的“提到我的”都用这一条。
+ * `byId` 用来找被回复的那句；没加载到的不算。
+ */
+export function addressesAccount(
+  message: RoomMessageSignal,
+  byId: ReadonlyMap<string, RoomMessageSignal>,
+  matrixUserId: string,
+): 'mention' | 'reply' | null {
+  if (message.actor.matrixUserId === matrixUserId) return null;
+  if (mentionsAccount(message, matrixUserId)) return 'mention';
+  return message.relation !== undefined &&
+    byId.get(message.relation.targetMessageId)?.actor.matrixUserId === matrixUserId
+    ? 'reply'
+    : null;
+}
+
+/** 收件箱里一条消息的编号；“标成看过了”记的就是它。 */
+export function messageAttentionId(roomId: string, messageId: string): string {
+  return `message:${roomId}:${messageId}`;
+}
+
 export type ReadOnlyFederatedEventReason = 'legacy_namespace' | 'unknown_event_type';
 
 export type ReadOnlyFederatedEvent = {

@@ -1,7 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures } from './support/page-assertions';
-import { openDirectConversation, openMainRoom } from './support/workspace-navigation';
+import {
+  backToConversation,
+  openDirectConversation,
+  openMainRoom,
+  openResources,
+} from './support/workspace-navigation';
 
 for (const width of [1440, 390]) {
   test(`离开私聊后恢复独立草稿与回复：${String(width)}`, async ({ page }, testInfo) => {
@@ -74,9 +79,9 @@ test('资料实际显示后标为已读，并且不提前读取隐藏的聊天�
   await page.goto('/e2e/fixtures/lobby-scene.html');
   await openExistingConversation(page);
   expect(await displayedEvents(page)).toEqual([]);
-  await page.getByRole('tab', { name: 'Resources', exact: true }).click();
+  await openResources(page);
   await expect.poll(async () => (await displayedEvents(page)).length).toBe(1);
-  await page.getByRole('tab', { name: 'Conversation', exact: true }).click();
+  await backToConversation(page);
   const firstId = await receivePrivate(page, 'First visible private message.');
   await expect
     .poll(async () => await displayedEvents(page))
@@ -84,14 +89,14 @@ test('资料实际显示后标为已读，并且不提前读取隐藏的聊天�
       roomId: '!direct-002:agent-room.test',
       matrixEventId: `$fixture-${firstId}`,
     });
-  await page.getByRole('tab', { name: 'Resources', exact: true }).click();
+  await openResources(page);
   const before = await displayedEvents(page);
   const hiddenId = await receivePrivate(page, 'Message received while reading resources.');
   await expect(
     page.locator('.direct-conversation').getByRole('log', { includeHidden: true }),
   ).toContainText('Message received while reading resources.');
   expect(await displayedEvents(page)).toEqual(before);
-  await page.getByRole('tab', { name: 'Conversation', exact: true }).click();
+  await backToConversation(page);
   await expect
     .poll(async () => await displayedEvents(page))
     .toContainEqual({

@@ -124,16 +124,63 @@
   outline: 2px solid var(--ar-accent);
   outline-offset: 2px;
 }
-/* 顶部一行：发给谁、查找、关于 Agent 回复。原来分占三行，挤掉了消息区的高度。 */
+/* 顶部一行：只看什么（私聊里是发给谁），右边是资料、查找、详情。 */
 .conversation-panel__bar {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   padding: 10px 26px 10px 30px;
   color: var(--ar-muted);
   font-size: 12px;
+}
+/* 只看：全部、人说的、提到我的。选中的垫一块灰，字重不变，换的时候宽度不跳。 */
+.conversation-panel__scopes {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin-right: auto;
+}
+.conversation-panel__scopes > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: none;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.conversation-panel__scopes > button:hover {
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+.conversation-panel__scopes > button[aria-pressed='true'] {
+  color: var(--color-ink);
+  background: var(--ar-selected);
+}
+/* 没读的、冲着你来的有几条：红底的数字，红只表示“找你”。 */
+.conversation-panel__scope-count {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: var(--ar-pill);
+  color: var(--ar-on-badge);
+  background: var(--ar-badge);
+  font-size: 0.71875rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
 }
 .conversation-panel__context {
   display: flex;
@@ -176,9 +223,65 @@
   color: var(--color-ink);
   background: var(--ar-surface-muted);
 }
-.conversation-panel__bar-button > svg {
+.conversation-panel__bar-button > svg,
+.conversation-panel__availability > summary > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+.conversation-panel__bar-button--icon,
+.conversation-panel__availability > summary {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+}
+/* Agent 之间折起来的一串：一行小字，和消息的正文对齐。 */
+.conversation-fold {
+  margin: 0 0 20px;
+}
+.conversation-fold__toggle {
+  display: inline-flex;
+  max-width: calc(100% - 44px);
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  margin-left: 44px;
+  padding: 0 12px 0 6px;
+  border: 0;
+  border-radius: var(--ar-pill);
+  color: var(--ar-muted);
+  background: var(--ar-surface-muted);
+  box-shadow: inset 0 0 0 1px var(--ar-line);
+  font-size: 0.8125rem;
+  text-align: left;
+}
+.conversation-fold__toggle:hover,
+.conversation-fold__toggle[aria-expanded='true'] {
+  color: var(--color-ink);
+}
+.conversation-fold__avatars {
+  display: inline-flex;
+  flex: 0 0 auto;
+  --ar-avatar-size: 18px;
+}
+.conversation-fold__avatars > * + * {
+  margin-left: -5px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--ar-surface-muted);
+}
+.conversation-fold__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-fold__toggle > svg {
   width: 13px;
   height: 13px;
+  flex: 0 0 auto;
+}
+.conversation-fold__toggle[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
 }
 .conversation-panel__history {
   position: relative;
@@ -625,10 +728,6 @@
 .conversation-panel__availability > summary::-webkit-details-marker {
   display: none;
 }
-.conversation-panel__availability > summary > svg {
-  width: 12px;
-  height: 12px;
-}
 .conversation-panel__availability > div {
   position: absolute;
   z-index: 4;
@@ -649,6 +748,31 @@
 }
 .conversation-panel__availability p + p {
   margin-top: 8px;
+}
+/* 详情里的开关：Agent 之间的长对话折不折。 */
+.conversation-panel__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ar-line);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.conversation-panel__option > input {
+  flex: 0 0 auto;
+  margin: 3px 0 0;
+  accent-color: var(--color-ink);
+}
+.conversation-panel__option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--ar-muted);
+  font-size: 12px;
+  font-weight: 400;
 }
 @media (hover: none) {
   .conversation-message .conversation-message__actions {
@@ -692,6 +816,10 @@
     gap: 9px;
     padding-right: 20px;
     margin-bottom: 21px;
+  }
+  .conversation-fold__toggle {
+    max-width: calc(100% - 37px);
+    margin-left: 37px;
   }
   .conversation-message__avatar {
     flex-basis: 28px;

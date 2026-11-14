@@ -2,7 +2,11 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
-import { openRoomSettings } from './support/workspace-navigation';
+import {
+  backToConversationButton,
+  openResources,
+  openRoomSettings,
+} from './support/workspace-navigation';
 
 // 房间页的对话版面（specs/redesign/room-page.md）。1b 起它是默认的，
 // 人在顶栏换成场景以后这台设备记着。
@@ -183,16 +187,18 @@ test('人不在主房间的对话里时来了新消息：回去的地方标着�
   await expect(log).toContainText('Arrived while in a direct message.');
   await expect(unread).toHaveCount(0);
 
-  // 在看资料：标在“对话”那个标签上。
-  await page.getByRole('tab', { name: 'Resources', exact: true }).click();
+  // 在看资料：标在“回到对话”上。点“资料”换过去，焦点落在“回到对话”上；回来落回“资料”。
+  await openResources(page);
+  const conversation = backToConversationButton(page);
+  await expect(conversation).toBeFocused();
   await receiveInMainRoom(page, 'Arrived while reading resources.');
   await receiveInMainRoom(page, 'And one more.');
-  const conversation = page.getByRole('tab', { name: 'Conversation', exact: true });
   await expect(conversation).toHaveAccessibleDescription('2 new messages');
   await expectAccessible(page);
   await conversation.click();
   await expect(log).toContainText('And one more.');
   await expect(unread).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Resources', exact: true })).toBeFocused();
   expect(failures).toEqual([]);
 });
 
@@ -763,5 +769,316 @@ test('还没有 Agent 的房间：右栏是一句话加“接入 Agent”，对�
   await expect(invite).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(invite).toBeHidden();
+  expect(failures).toEqual([]);
+});
+
+// 对话顶上“只看”那一行、Agent 之间的长串折起来（1e）。夹具 `&chatter` 是一段有人有 Agent 的对话：
+// 你点了第 1 个 Agent，它回你；第 2、1 个 Agent 之间说了 6 句；第 2 个回你一句；Room visitor 点了你；
+// 最后第 3、1 个 Agent 各说一句。
+const chatter = '/e2e/fixtures/lobby-scene.html?private&chatter&agents=8';
+const foldName = '6 more messages between Build Agent 002 and Build Agent 001';
+
+function conversationScope(page: Page, name: 'All' | 'From people' | 'Mentions me') {
+  return page
+    .locator('.workspace-room-content')
+    .getByRole('group', { name: 'Show', exact: true })
+    .getByRole('button', { name, exact: true });
+}
+
+test('只看：全部、人说的、提到我的；换了就从最新的看起，回到全部折着的还折着', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(chatter);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  const messages = log.locator('.conversation-message');
+  const fold = log.getByRole('button', { name: foldName, exact: true });
+  const all = conversationScope(page, 'All');
+  const humans = conversationScope(page, 'From people');
+  const addressed = conversationScope(page, 'Mentions me');
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  await expect(humans).toHaveAttribute('aria-pressed', 'false');
+  await expect(addressed).toHaveAttribute('aria-pressed', 'false');
+  await expect(messages).toHaveCount(6);
+  await expect(fold).toBeVisible();
+  // 都看过了：“提到我的”上没有条数。
+  await expect(addressed.locator('.conversation-panel__scope-count')).toHaveCount(0);
+
+  // 人说的：你自己说的也算，Agent 说的一条不留，也就没有可折的。
+  await humans.click();
+  await expect(humans).toHaveAttribute('aria-pressed', 'true');
+  await expect(all).toHaveAttribute('aria-pressed', 'false');
+  await expect(messages).toHaveCount(2);
+  await expect(log).toContainText('Take a look at the vendored crate check');
+  await expect(log).toContainText('Merged. Have a look at the release notes');
+  await expect(fold).toHaveCount(0);
+  await expectAccessible(page);
+
+  // 提到我的：点了你名字的，加上回复你那句话的两条；你自己说的不算。
+  await addressed.click();
+  await expect(addressed).toHaveAttribute('aria-pressed', 'true');
+  await expect(messages).toHaveCount(3);
+  await expect(log).toContainText('One gap: both image builds skip that directory.');
+  await expect(log).toContainText('Fixed: both images copy the directory now');
+  await expect(log).toContainText('Merged. Have a look at the release notes');
+  await expect(log.locator('.conversation-message--own')).toHaveCount(0);
+
+  await all.click();
+  await expect(messages).toHaveCount(6);
+  await expect(fold).toHaveAttribute('aria-expanded', 'false');
+
+  // 在“提到我的”里说了话：回到“全部”，刚说的那句看得到。
+  await addressed.click();
+  await expect(messages).toHaveCount(3);
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Reading them now.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
+  await expect(log.locator('.conversation-message--own').last()).toContainText('Reading them now.');
+  await expect(log.locator('.conversation-message--own').last()).toBeInViewport();
+  await useColorScheme(page, 'dark');
+  await expectAccessible(page);
+  expect(failures).toEqual([]);
+});
+
+test('只看：筛出来一条也没有时照实说；往上翻着的时候换一种，落在最新的那条上', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // 这间房的历史都是 Agent 说的，每隔几句点你一次。
+  await page.goto(`${room}&unfolded`);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  await expect(log).toContainText('Review milestone 80');
+  await conversationScope(page, 'From people').click();
+  await expect(
+    log.getByText('No person has said anything here yet.', { exact: true }),
+  ).toBeVisible();
+  await expect(log.locator('.conversation-message')).toHaveCount(0);
+
+  await conversationScope(page, 'All').click();
+  await expect(log).toContainText('Review milestone 80');
+  await log.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(log.getByText('Review milestone 80', { exact: false })).not.toBeInViewport();
+  await conversationScope(page, 'Mentions me').click();
+  const mentions = log.locator('.conversation-message');
+  await expect(mentions.last()).toContainText('Review milestone 79');
+  await expect(mentions.last()).toBeInViewport();
+  await expect(log.locator('.conversation-message:not([data-mentioned])')).toHaveCount(0);
+  await log.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await conversationScope(page, 'All').click();
+  await expect(log.getByText('Review milestone 80', { exact: false })).toBeInViewport();
+  expect(failures).toEqual([]);
+});
+
+test('Agent 之间的长串折成一行：点开就在原地，再点收回去；最下面那一串等有人说话才折', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(chatter);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  const messages = log.locator('.conversation-message');
+  const fold = log.getByRole('button', { name: foldName, exact: true });
+  await expect(fold).toHaveAttribute('aria-expanded', 'false');
+  await expect(messages).toHaveCount(6);
+  await expect(log).not.toContainText('Control plane image builds now.');
+  // 折着的那一行排在它那几句原来的地方：回你的那一句后面、下一句回你的前面。
+  await expect(log.locator('.conversation-message, .conversation-fold').nth(2)).toHaveClass(
+    /conversation-fold/u,
+  );
+  // 最下面那一串（两句）还在进行，不折。
+  await expect(log).toContainText('I will draft the release notes.');
+  await expect(log).toContainText('Send them to me for a read before posting.');
+  await expectAccessible(page);
+
+  await fold.click();
+  await expect(fold).toHaveAttribute('aria-expanded', 'true');
+  await expect(fold).toBeFocused();
+  await expect(messages).toHaveCount(12);
+  await expect(log).toContainText('Control plane image builds now.');
+  await expect(
+    log.getByText('Added the license file, rebuilding.', { exact: false }),
+  ).toBeVisible();
+  await expectAccessible(page);
+  await page.keyboard.press('Enter');
+  await expect(fold).toHaveAttribute('aria-expanded', 'false');
+  await expect(messages).toHaveCount(6);
+
+  // 最下面那一串长到 4 句也不折；有人说了话，它才算说完，折起来。
+  for (const text of ['Draft is in the shared notes.', 'Two typos fixed.'])
+    await receiveInMainRoom(page, text);
+  await expect(messages).toHaveCount(8);
+  await expect(log.locator('.conversation-fold')).toHaveCount(1);
+  await page.evaluate(() =>
+    (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({
+      human: true,
+      text: 'Thanks, both of you.',
+    }),
+  );
+  await expect(log.locator('.conversation-fold')).toHaveCount(2);
+  await expect(
+    log.getByRole('button', {
+      name: '4 more messages between Build Agent 003 and Build Agent 001',
+      exact: true,
+    }),
+  ).toHaveAttribute('aria-expanded', 'false');
+  await expect(messages).toHaveCount(5);
+  await expect(log.getByText('Thanks, both of you.', { exact: true })).toBeInViewport();
+  expect(failures).toEqual([]);
+});
+
+test('折叠能在“对话详情”里整个关掉，这台设备记着；去看折着的某一句时那一串自己打开', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(chatter);
+  const main = page.locator('.workspace-room-content');
+  const log = main.getByRole('log');
+  const messages = log.locator('.conversation-message');
+  const fold = log.getByRole('button', { name: foldName, exact: true });
+  await expect(fold).toBeVisible();
+  const details = main.locator('summary[aria-label="Conversation details"]');
+  const folding = main.getByRole('checkbox', { name: /^Fold long runs between agents/u });
+  await details.click();
+  await expect(folding).toBeChecked();
+  await expectAccessible(page);
+  await folding.uncheck();
+  await expect(fold).toHaveCount(0);
+  await expect(messages).toHaveCount(12);
+
+  await page.reload();
+  await expect(messages).toHaveCount(12);
+  await expect(fold).toHaveCount(0);
+  await details.click();
+  await expect(folding).not.toBeChecked();
+  await folding.check();
+  await expect(fold).toHaveAttribute('aria-expanded', 'false');
+  await expect(messages).toHaveCount(6);
+
+  // 地址里指着折着的那一句（收件箱、查找都是这样跳过来的）：那一串打开，这一句标出来。
+  await page.goto(`${chatter}&message=01990d9e-8400-7000-8000-000000002005`);
+  await expect(fold).toHaveAttribute('aria-expanded', 'true');
+  const focused = log.locator('[data-focused="true"]');
+  await expect(focused).toHaveCount(1);
+  await expect(focused).toContainText('The gateway image still misses the license file.');
+  await expect(focused).toBeInViewport();
+  expect(failures).toEqual([]);
+});
+
+test('“提到我的”上标着没读的条数：往上翻着时有人点你、回复你才数，看到了就没了', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  // 矮一点的窗口，对话才翻得动。
+  await page.setViewportSize({ width: 1440, height: 520 });
+  await page.goto(`${chatter}&unfolded`);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  const addressed = conversationScope(page, 'Mentions me');
+  const count = addressed.locator('.conversation-panel__scope-count');
+  await expect(log.getByText('Send them to me for a read before posting.')).toBeInViewport();
+  await expect(count).toHaveCount(0);
+
+  await log.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(log.getByText('Send them to me for a read before posting.')).not.toBeInViewport();
+  // 阅读位置在滚动停下 300ms 后保存；往上翻的那一下也要先落到面板上。
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
+    controls.receive({ agentIndex: 2, text: 'Not for you.' });
+    controls.receive({ human: true, mentionsYou: true, text: 'Can you approve the notes?' });
+    controls.receive({
+      agentIndex: 1,
+      replyTo: '01990d9e-8400-7000-8000-000000002000',
+      text: 'The vendored crate check is in CI now.',
+    });
+  });
+  await expect(count.locator('[aria-hidden="true"]')).toHaveText('2');
+  // 名字不变，条数读屏读得到。
+  await expect(addressed).toHaveAccessibleDescription('2 unread');
+  await expectAccessible(page);
+
+  await addressed.click();
+  await expect(log.locator('.conversation-message')).toHaveCount(5);
+  await expect(log.getByText('The vendored crate check is in CI now.')).toBeInViewport();
+  // 回到全部，落在最新的那条上，算看过了。
+  await conversationScope(page, 'All').click();
+  await expect(log.getByText('The vendored crate check is in CI now.')).toBeInViewport();
+  await expect(count).toHaveCount(0);
+  await expect(addressed).toHaveAccessibleDescription('');
+  expect(failures).toEqual([]);
+});
+
+test('对话顶上那一行：公告在它下面；私聊里没有“只看”，资料照样在；手机上放得下', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${chatter}&notice`);
+  const main = page.locator('.workspace-room-content');
+  const bar = main.locator('.conversation-panel__bar');
+  const scopes = main.getByRole('group', { name: 'Show', exact: true });
+  await expect(scopes.getByRole('button')).toHaveCount(3);
+  await expect(main.getByRole('button', { name: 'Resources', exact: true })).toBeVisible();
+  await expect(
+    main.getByRole('button', { name: 'Search this conversation', exact: true }),
+  ).toBeVisible();
+  // 对话版面里没有“对话 / 资料”两个标签了。
+  await expect(page.getByRole('tab', { name: 'Resources', exact: true })).toHaveCount(0);
+  const notice = main.locator('.room-notice');
+  await expect(notice).toBeVisible();
+  const barBox = await bar.boundingBox();
+  const noticeBox = await notice.boundingBox();
+  const logBox = await main.getByRole('log').boundingBox();
+  if (barBox === null || noticeBox === null || logBox === null) throw new Error('没有量到位置。');
+  expect(noticeBox.y).toBeGreaterThanOrEqual(barBox.y + barBox.height - 1);
+  expect(logBox.y).toBeGreaterThanOrEqual(noticeBox.y + noticeBox.height - 1);
+  // 那一行横着铺满主栏，不跟着正文收窄。
+  const mainBox = await page.locator('.room-desk__main').boundingBox();
+  if (mainBox === null) throw new Error('没有量到主栏。');
+  expect(Math.abs(barBox.width - mainBox.width)).toBeLessThanOrEqual(1);
+  await expectAccessible(page);
+
+  // 看资料时顶上换成“回到对话”；公告是跟着对话的，这时候不在。
+  await openResources(page);
+  await expect(notice).toHaveCount(0);
+  await expect(scopes).toBeHidden();
+  await backToConversationButton(page).click();
+  await expect(scopes).toBeVisible();
+
+  // 私聊在主栏里另一块：没有“只看”和折叠的开关，写着这是私聊；资料是这场私聊的资料。
+  await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeVisible();
+  const desk = page.locator('.room-desk__main');
+  await expect(desk.getByRole('group', { name: 'Show', exact: true })).toHaveCount(0);
+  await expect(desk.getByText('Only the two of you', { exact: true })).toBeVisible();
+  await expect(desk.getByRole('button', { name: 'Resources', exact: true })).toBeVisible();
+  // 这场私聊还一句话没有，查找先不出来。
+  await expect(
+    desk.getByRole('button', { name: 'Search this conversation', exact: true }),
+  ).toHaveCount(0);
+  await desk
+    .locator('summary[aria-label="Conversation details"]')
+    .filter({ visible: true })
+    .click();
+  await expect(desk.getByRole('checkbox', { name: /^Fold long runs/u })).toHaveCount(0);
+  await expectAccessible(page);
+
+  // 手机上：三项都在一行里，不横向滚动；折着的那一行放得下。
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(chatter);
+  for (const name of ['All', 'From people', 'Mentions me'] as const)
+    await expect(conversationScope(page, name)).toBeVisible();
+  await expect(main.getByRole('button', { name: 'Resources', exact: true })).toBeVisible();
+  const fold = main.getByRole('log').getByRole('button', { name: foldName, exact: true });
+  await expect(fold).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+  await fold.click();
+  await expect(main.getByRole('log').locator('.conversation-message')).toHaveCount(12);
+  await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });
