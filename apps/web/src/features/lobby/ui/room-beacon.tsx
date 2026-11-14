@@ -1,23 +1,14 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowLeft, Hash, Settings2, UsersRound } from 'lucide-react';
-import { useId, type Ref } from 'react';
+import { useId, type ReactNode, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 
-export type RoomBeaconProps = {
+import { RoomKindLabel, type RoomKind } from './room-kind-label';
+
+export type RoomBeaconProps = RoomKind & {
   readonly agentCount: number;
-  /**
-   * 有房间号的房间（私人房间、公开房间）还是公共大厅，写在房间名上面。公共大厅不登录也能看（/watch），
-   * 一直提醒着。
-   */
-  readonly privateRoom: boolean;
-  /** 公开了的房间：写“公开房间”，不写“私人房间”。 */
-  readonly listed?: boolean;
-  /** 不加密的公开房间：进来的人和服务器都读得到，一直提醒着。 */
-  readonly unencrypted?: boolean;
-  /** 网络 Agent 建的私人房间：服务器代它收发，读得到这里所有的消息，同样一直提醒着。 */
-  readonly serverReadable?: boolean;
-  /** 归档了的私人房间：之前的消息照样看，谁都不能再说话。比“服务器能读到”先说。 */
-  readonly archived?: boolean;
+  /** “对话 / 场景”的切换，排在房间设置前面。 */
+  readonly layoutSwitch?: ReactNode;
   readonly membersButtonRef: Ref<HTMLButtonElement>;
   readonly roomName: string;
   readonly topic?: string;
@@ -36,6 +27,7 @@ export function RoomBeacon({
   unencrypted = false,
   serverReadable = false,
   archived = false,
+  layoutSwitch,
   membersButtonRef,
   roomName,
   topic,
@@ -59,33 +51,17 @@ export function RoomBeacon({
         <Hash />
       </div>
       <div className="workspace-header__identity">
-        {privateRoom && archived ? (
-          <span className="workspace-header__notice" title={t('roomWorkspace.archivedNotice')}>
-            {t('roomWorkspace.privateRoomArchived')}
-          </span>
-        ) : privateRoom && serverReadable ? (
-          <span
-            className="workspace-header__notice"
-            title={t('roomWorkspace.serverReadableNotice')}
-          >
-            {t('roomWorkspace.privateRoomServerReadable')}
-          </span>
-        ) : privateRoom && unencrypted ? (
-          <span className="workspace-header__notice" title={t('roomWorkspace.unencryptedNotice')}>
-            {t('roomWorkspace.publicRoomUnencrypted')}
-          </span>
-        ) : privateRoom && listed ? (
-          <span>{t('roomWorkspace.publicRoom')}</span>
-        ) : privateRoom ? (
-          <span>{t('roomWorkspace.privateRoom')}</span>
-        ) : (
-          <span title={t('roomWorkspace.publicNotice')}>
-            {t('roomWorkspace.publicLobbyVisible')}
-          </span>
-        )}
+        <RoomKindLabel
+          archived={archived}
+          listed={listed}
+          privateRoom={privateRoom}
+          serverReadable={serverReadable}
+          unencrypted={unencrypted}
+        />
         <h1>{roomName}</h1>
       </div>
       {topic === undefined ? null : <p className="workspace-header__topic">{topic}</p>}
+      {layoutSwitch}
       {onOpenSettings === null ? null : (
         <button
           type="button"

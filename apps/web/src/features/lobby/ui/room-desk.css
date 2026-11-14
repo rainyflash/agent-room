@@ -1,0 +1,271 @@
+/*
+ * 房间页的对话版面（specs/redesign/room-page.md）：栏布局，不绝对定位。
+ * 只用令牌，不写死颜色、圆角和阴影：1c 换风格时改令牌就跟着变。
+ * - 1100px 以上三栏：左栏（主房间、私聊，有东西才出现）、主栏、右栏（Agent）。
+ * - 更窄：左右两栏收起来，Agent 从顶栏的按钮打开抽屉。
+ * - 每一栏自己滚动，整页不滚；输入框贴在主栏底下。
+ */
+.lobby-workspace.room-desk {
+  --room-desk-rail: 216px;
+  --room-desk-side: clamp(320px, 26vw, 380px);
+  --room-desk-measure: 760px;
+  --room-desk-gutter: 20px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--ar-surface);
+}
+
+/* 顶栏 */
+.room-desk__top {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  background: var(--ar-canvas);
+}
+.room-desk__back {
+  color: var(--color-ink);
+}
+.room-desk__identity {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.room-desk__identity h1 {
+  overflow: hidden;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-desk__meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.room-desk__meta > span + span::before {
+  margin-right: 6px;
+  content: '·';
+}
+.room-desk__meta > .workspace-header__notice {
+  color: var(--ar-warning);
+}
+.room-desk__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+.room-desk__settings {
+  position: relative;
+}
+/* 有人在等批准：齿轮右上角一个点。 */
+.room-desk__attention {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border-radius: 50%;
+  background: var(--ar-coral);
+}
+
+/* 三栏 */
+.room-desk__body {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+.room-desk__rail,
+.room-desk__side {
+  display: none;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ar-surface-muted);
+}
+.room-desk__rail {
+  border-right: var(--ar-outline-thin) solid var(--ar-line);
+}
+.room-desk__side {
+  border-left: var(--ar-outline-thin) solid var(--ar-line);
+}
+.room-desk__main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--ar-surface);
+}
+.room-desk__content {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.room-desk__content .workspace-room-content {
+  height: 100%;
+}
+
+/* 左栏：主房间，下面是私聊 */
+.room-desk__places {
+  flex: 0 0 auto;
+  padding: 12px 12px 4px;
+}
+.room-desk__place {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: var(--ar-outline-thin) solid transparent;
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+}
+.room-desk__place:hover {
+  background: var(--ar-surface);
+}
+.room-desk__place[aria-current='page'] {
+  border-color: var(--ar-outline);
+  background: var(--ar-surface);
+}
+.room-desk__place > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.room-desk__rail .workspace-direct {
+  max-height: none;
+  flex: 1 1 auto;
+}
+
+/* 在私聊里、左栏又收起来了：主栏顶上留一条回主房间的路。 */
+.room-desk__return {
+  display: flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: left;
+}
+.room-desk__return > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+/* 主栏：一行字别太宽，滚动条照旧贴在栏的右边 */
+.room-desk__main .workspace-view-tabs {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+.room-desk__main > .room-notice,
+.room-desk__main > .room-panel__read-only,
+.room-desk__main > .room-first-reply,
+.room-desk__main > .room-desk__return,
+.lobby-workspace.room-desk .direct-conversation__header,
+.room-desk__main .workspace-view-tabs,
+.room-desk__main .conversation-panel__bar,
+.room-desk__main .conversation-search,
+.room-desk__main .conversation-history-tools,
+.room-desk__main .conversation-panel__timeline {
+  padding-inline: max(var(--room-desk-gutter), calc((100% - var(--room-desk-measure)) / 2));
+}
+.room-desk__main .conversation-panel__composer {
+  width: min(var(--room-desk-measure), calc(100% - 2 * var(--room-desk-gutter)));
+  margin: 0 auto 12px;
+}
+
+/* 选中 Agent：详情盖在右栏上；窄的时候从右边出来 */
+.room-desk .agent-inspector {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(var(--room-desk-side), 100%);
+  overflow: hidden;
+  border-left: var(--ar-outline-thin) solid var(--ar-line);
+  background: var(--ar-surface);
+}
+
+@media (min-width: 1100px) {
+  .room-desk__body {
+    grid-template-columns: minmax(0, 1fr) var(--room-desk-side);
+  }
+  .room-desk__body[data-rail='true'] {
+    grid-template-columns: var(--room-desk-rail) minmax(0, 1fr) var(--room-desk-side);
+  }
+  .room-desk__rail,
+  .room-desk__side {
+    display: flex;
+  }
+  /* 右栏一直在，不用再从顶栏打开。 */
+  .room-desk__agents-button {
+    display: none;
+  }
+  /* 左栏在的时候，主房间就在那里。 */
+  .room-desk__body[data-rail='true'] .room-desk__return {
+    display: none;
+  }
+}
+
+/* 中等宽度：顶栏的动作只留图标，名字留给读屏 */
+@media (max-width: 1099px) {
+  .room-desk__action > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .room-desk__action {
+    gap: 0;
+  }
+}
+
+/* 手机：动作另起一行，放不下就左右滑 */
+@media (max-width: 767px) {
+  .lobby-workspace.room-desk {
+    --room-desk-gutter: 12px;
+  }
+  .room-desk__top {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 8px 12px;
+  }
+  .room-desk__actions {
+    max-width: 100%;
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    overflow-x: auto;
+  }
+  .room-desk .agent-inspector {
+    width: 100%;
+    border-left: 0;
+  }
+}

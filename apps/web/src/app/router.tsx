@@ -16,6 +16,11 @@ import {
   type ExploreFilter,
 } from '@/features/explore/domain/explore';
 import { normalizeWatchSearch } from '@/features/public-watch/domain/public-watch';
+import {
+  rememberRoomPageLayout,
+  rememberedRoomPageLayout,
+  resolveRoomPageLayout,
+} from '@/features/lobby/application/room-page-layout';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
 import { PublicLobbyEntryBoundary } from '@/features/lobby-entry/ui/public-lobby-entry-boundary';
 import { ConnectionPage } from '@/features/session/ui/connection-page';
@@ -26,6 +31,7 @@ import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
   lobbySearchWithDirectSession,
+  lobbySearchWithLayout,
   lobbySearchWithMessage,
   lobbySearchWithView,
   lobbySearchWithRoomPanel,
@@ -310,6 +316,8 @@ function LobbyInstanceBoundary() {
   const { catalogId, roomId } = lobbyInstanceRoute.useParams();
   const search = lobbyInstanceRoute.useSearch();
   const navigate = lobbyInstanceRoute.useNavigate();
+  // 地址里写了版面就照地址，不然看这台设备记着的。
+  const layout = resolveRoomPageLayout(search.layout, rememberedRoomPageLayout());
   const valid =
     routeIdentifierSchema.safeParse(catalogId).success &&
     contextIdentifierSchema.safeParse(roomId).success;
@@ -322,13 +330,21 @@ function LobbyInstanceBoundary() {
     >
       <LobbyPage
         catalogId={catalogId}
+        layout={layout}
         onExitRoom={() => {
           void navigate({ to: '/rooms' });
+        }}
+        onLayoutChange={(next) => {
+          rememberRoomPageLayout(next);
+          void navigate({
+            replace: true,
+            search: (previous) => lobbySearchWithLayout(previous, next),
+          });
         }}
         onSelectedAgentChange={(agentId) => {
           void navigate({
             replace: true,
-            search: (previous) => lobbySearchWithAgent(previous, agentId),
+            search: (previous) => lobbySearchWithAgent(previous, agentId, layout),
           });
         }}
         onSelectedDirectSessionChange={(catalogId) => {

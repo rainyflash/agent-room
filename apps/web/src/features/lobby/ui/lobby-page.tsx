@@ -41,7 +41,7 @@ import {
 import { projectRoomSpeech } from '@/features/lobby/domain/room-speech';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import { attendanceCounts } from '@/features/lobby/domain/agent-attendance';
-import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
+import type { RoomPageLayout, RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 import { AgentInspector, type AgentInspectorFailure } from '@/features/lobby/ui/agent-inspector';
 import { AgentRosterPolicyPanel } from './agent-roster-policy-panel';
@@ -64,6 +64,8 @@ import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-roo
 import { RoomNoticeBar } from '@/features/room-notice/ui/room-notice-bar';
 import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
+import { RoomDesk } from '@/features/lobby/ui/room-desk';
+import { RoomLayoutSwitch } from '@/features/lobby/ui/room-layout-switch';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
 import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
@@ -102,7 +104,10 @@ function writePanelSize(size: PanelSize): void {
 
 export type LobbyPageProps = {
   readonly catalogId: string;
+  /** 对话占主栏，还是原来的场景（`specs/redesign/room-page.md`）。 */
+  readonly layout: RoomPageLayout;
   readonly onExitRoom: () => void;
+  readonly onLayoutChange: (layout: RoomPageLayout) => void;
   readonly onSelectedAgentChange: (agentId: string | null) => void;
   readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -174,7 +179,9 @@ export function LobbyPage(props: LobbyPageProps) {
 
 function ReadyLobby({
   catalogId,
+  layout,
   onExitRoom,
+  onLayoutChange,
   onSelectedAgentChange,
   onSelectedDirectSessionChange,
   onSelectedMessageChange,
@@ -295,7 +302,12 @@ function ReadyLobby({
   );
   const selectedAgent = room.agents.find((agent) => agent.agentId === selectedAgentId) ?? null;
   const attendance = attendanceCounts(room.agents, room.observedAtUnixMs);
-  const activeView = selectedDirectSessionId !== null && view === 'space' ? 'conversation' : view;
+  // 对话版面里对话一直在：地址里不带 `view` 也是对话。场景里不带 `view` 是画面本身，私聊开着时才算对话。
+  const conversationLayout = layout === 'conversation';
+  const activeView =
+    view === 'space' && (conversationLayout || selectedDirectSessionId !== null)
+      ? 'conversation'
+      : view;
   const { store: messageStore } = useRoomMessages(room.roomId);
   const activityStore = useMemo(
     () => new RoomActivityStore(messageStore, principal?.matrixUserId ?? null),
@@ -334,11 +346,45 @@ function ReadyLobby({
   const closeDrawer = (): void => {
     setDrawer(null);
   };
+  const roomKind = {
+    archived,
+    listed: listing.data?.ok === true && listing.data.value.listed,
+    privateRoom: catalogRoom,
+    serverReadable: origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent,
+    unencrypted: catalogRoom && room.encrypted !== true,
+  };
+  // 换版面以后顶栏整个换了一份：焦点接着落在新顶栏的切换上，不掉回页面开头。
+  const layoutChangedHere = useRef(false);
+  const changeLayout = (next: RoomPageLayout): void => {
+    layoutChangedHere.current = true;
+    closeDrawer();
+    onLayoutChange(next);
+  };
+  useEffect(() => {
+    if (!layoutChangedHere.current) return;
+    layoutChangedHere.current = false;
+    const controls = document.querySelectorAll<HTMLElement>(
+      '.room-layout-switch [aria-checked="true"], .room-layout-toggle',
+    );
+    [...controls].find((control) => control.offsetParent !== null)?.focus();
+  }, [layout]);
   const selectAgent = (id: string | null): void => {
     closeDrawer();
     onSelectedAgentChange(id);
   };
-  const roster = (
+  const directNavigation =
+    principal === null ? null : (
+      <DirectSessionNavigation
+        activeCatalogId={selectedDirectSessionId}
+        controller={directSessions}
+        onActivate={(id) => {
+          closeDrawer();
+          onSelectedDirectSessionChange(id);
+        }}
+      />
+    );
+  // 抽屉里连私聊一起列；对话版面的右栏只列 Agent，私聊在左栏。
+  const rosterWith = (directMessages: boolean) => (
     <div className="workspace-members">
       <ListModeRoster
         agents={room.agents}
@@ -348,16 +394,7 @@ function ReadyLobby({
         variant="compact"
       />
       <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
-      {principal === null ? null : (
-        <DirectSessionNavigation
-          activeCatalogId={selectedDirectSessionId}
-          controller={directSessions}
-          onActivate={(id) => {
-            closeDrawer();
-            onSelectedDirectSessionChange(id);
-          }}
-        />
-      )}
+      {directMessages ? directNavigation : null}
       <AgentRosterPolicyPanel
         key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
         catalogId={catalogId}
@@ -365,6 +402,265 @@ function ReadyLobby({
       />
     </div>
   );
+  const layoutSwitch = <RoomLayoutSwitch onChange={changeLayout} value={layout} />;
+  const dialogs = (
+    <>
+      {shareOpen && shareRoom !== null ? (
+        <ShareRoomDialog
+          onClose={() => {
+            setShareOpen(false);
+          }}
+          room={shareRoom}
+        />
+      ) : null}
+      {roomSettings === null || principal === null ? null : (
+        <RoomSettingsDialog
+          catalogId={catalogId}
+          initialSection={roomSettings.section}
+          onClose={() => {
+            setRoomSettings(null);
+          }}
+          notice={room.notice}
+          onExitRoom={onExitRoom}
+          principal={principal}
+          roomName={room.name}
+        />
+      )}
+      {peopleInviteOpen &&
+      invitable !== null &&
+      principal !== null &&
+      privateRoomInvites !== undefined ? (
+        <PrivateRoomInviteDialog
+          invites={privateRoomInvites}
+          onClose={() => {
+            setPeopleInviteOpen(false);
+          }}
+          principalId={principal.principalId}
+          room={invitable}
+          rooms={privateRooms}
+        />
+      ) : null}
+      {inviteOpen ? (
+        <AgentInviteDialog
+          agentsCanSpeak={agentsCanSpeak}
+          onConnected={setInvitation}
+          onStartConversation={() => {
+            setInviteOpen(false);
+            onOpenRoomPanel('conversation');
+          }}
+          downloadUrl={downloadUrl}
+          onClose={() => {
+            setInviteOpen(false);
+          }}
+          owner={owner}
+          presentAgents={room.agents}
+          room={{ catalogId, roomId: room.roomId, roomName: room.name }}
+        />
+      ) : null}
+    </>
+  );
+  const conversationNotices = (
+    <>
+      {writesAllowed || selectedDirectSessionId !== null ? null : (
+        <p className="room-panel__read-only" role="status">
+          {archived ? <Archive aria-hidden="true" /> : <MessageSquareOff aria-hidden="true" />}
+          {t(archived ? 'roomWorkspace.archivedNotice' : 'roomWorkspace.readOnlyNotice')}
+        </p>
+      )}
+      {publicConversationVisible && invitation !== null && principal !== null ? (
+        <div className="room-first-reply">
+          <strong>{invitation.displayName}</strong>
+          <InviteReplyProgress
+            gateway={messageGateway}
+            agentId={invitation.agentId}
+            roomId={invitation.roomId}
+            startedAt={invitation.startedAt}
+            principalId={principal.principalId}
+          />
+          <button
+            type="button"
+            className="ar-icon-button"
+            aria-label={t('agentInvite.close')}
+            onClick={() => {
+              setInvitation(null);
+            }}
+          >
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+      {publicConversationVisible && room.notice !== undefined ? (
+        <RoomNoticeBar
+          key={room.roomId}
+          memberNames={room.memberNames}
+          notice={room.notice}
+          onEdit={
+            noticeEditable && principal !== null
+              ? () => {
+                  setRoomSettings({ section: 'notice' });
+                }
+              : undefined
+          }
+          roomId={room.roomId}
+          selfMatrixUserId={principal?.matrixUserId ?? null}
+        />
+      ) : null}
+    </>
+  );
+  const conversationContent = (
+    <div
+      className={conversationLayout ? 'room-desk__content' : 'room-panel__content'}
+      id="workspace-current-view"
+      role="tabpanel"
+      aria-labelledby={`workspace-tab-${panelView}`}
+    >
+      <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
+        <MessageLayer
+          active={publicConversationVisible}
+          focusedConversationMessageId={focusedConversationMessageId}
+          participants={room.agents}
+          {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
+          catalogId={catalogId}
+          onSelectedMessageChange={onSelectedMessageChange}
+          roomId={room.roomId}
+          roomName={room.name}
+          privateRoom={room.encrypted === true}
+          selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+          view={panelView}
+          writesAllowed={writesAllowed}
+        />
+      </div>
+      <DirectConversationDock
+        activeCatalogId={selectedDirectSessionId}
+        controller={directSessions}
+        onSelectedMessageChange={onSelectedMessageChange}
+        selectedMessageId={selectedMessageId}
+        view={panelView}
+      />
+    </div>
+  );
+  const agentDrawer =
+    drawer === null ? null : (
+      <WorkspaceDrawer label={t('roomWorkspace.members')} variant={drawer} onClose={closeDrawer}>
+        {rosterWith(true)}
+      </WorkspaceDrawer>
+    );
+  const inspector = (
+    <AnimatePresence>
+      {selectedAgent === null ? null : (
+        <AgentInspector
+          hasBackgroundReception={reception.some(
+            (view) =>
+              view.state.agentId === selectedAgent.agentId &&
+              view.state.binding.policy.roomId === room.roomId,
+          )}
+          receptionControls={
+            principal !== null && localRuntime.isAvailable() ? (
+              <ReceptionPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
+            ) : principal !== null ? (
+              <ReceptionOwnershipPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
+            ) : undefined
+          }
+          actionFailure={inspectorFailure(directSessions)}
+          agent={selectedAgent}
+          blocked={directSessions.isBlocked(selectedAgent)}
+          observedAtUnixMs={room.observedAtUnixMs}
+          key="agent-inspector"
+          pendingAction={
+            directSessions.opening ? 'message' : directSessions.blocking ? 'block' : null
+          }
+          // 屏蔽完详情留着：上面说已屏蔽，按钮换成解除屏蔽，点错了马上能改回来。
+          onBlock={() => {
+            void directSessions.setBlocked(selectedAgent, true);
+          }}
+          onUnblock={() => {
+            void directSessions.setBlocked(selectedAgent, false);
+          }}
+          onClose={() => {
+            spatial.current?.focus();
+            onSelectedAgentChange(null);
+          }}
+          onMessage={(agentId) => {
+            void directSessions.openAgent(agentId).then((result) => {
+              if (result.ok) {
+                onSelectedAgentChange(null);
+                onSelectedDirectSessionChange(result.value.catalogId);
+              }
+            });
+          }}
+        />
+      )}
+    </AnimatePresence>
+  );
+
+  if (conversationLayout)
+    return (
+      <>
+        <RoomDesk
+          agentCount={attendance.present}
+          inspector={inspector}
+          inviteAgent={
+            archived
+              ? null
+              : {
+                  open: inviteOpen,
+                  onOpen: () => {
+                    setInviteOpen(true);
+                  },
+                }
+          }
+          invitePeople={
+            invitable === null
+              ? null
+              : {
+                  open: peopleInviteOpen,
+                  onOpen: () => {
+                    setPeopleInviteOpen(true);
+                  },
+                }
+          }
+          kind={roomKind}
+          layoutSwitch={layoutSwitch}
+          liveSummary={t('lobby.liveSummary', { count: attendance.present, room: room.name })}
+          mainRoomSelected={selectedDirectSessionId === null}
+          onOpenAgents={() => {
+            setDrawer('members');
+          }}
+          onOpenSettings={
+            principal === null
+              ? null
+              : () => {
+                  setRoomSettings({});
+                }
+          }
+          onSelectMainRoom={() => {
+            openRoomPanel('conversation');
+          }}
+          pendingJoinRequests={pendingJoinRequests}
+          peopleCount={(projection.humans ?? []).length}
+          rail={directSessions.sessions.length === 0 ? null : directNavigation}
+          roomName={room.name}
+          share={
+            shareRoom === null
+              ? null
+              : {
+                  open: shareOpen,
+                  onOpen: () => {
+                    setShareOpen(true);
+                  },
+                }
+          }
+          side={rosterWith(false)}
+          view={panelView}
+        >
+          {conversationNotices}
+          <WorkspaceViewTabs allowSpace={false} onChange={onViewChange} value={panelView} />
+          {conversationContent}
+        </RoomDesk>
+        {dialogs}
+        {agentDrawer}
+      </>
+    );
 
   return (
     <main className="lobby-workspace lobby-game" id="main-content" data-view={activeView}>
@@ -387,11 +683,8 @@ function ReadyLobby({
       </div>
       <RoomBeacon
         agentCount={attendance.present}
-        privateRoom={catalogRoom}
-        listed={listing.data?.ok === true && listing.data.value.listed}
-        unencrypted={catalogRoom && room.encrypted !== true}
-        archived={archived}
-        serverReadable={origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent}
+        {...roomKind}
+        layoutSwitch={layoutSwitch}
         membersButtonRef={membersButton}
         roomName={room.name}
         onOpenSettings={
@@ -549,58 +842,7 @@ function ReadyLobby({
           </button>
         )}
       </nav>
-      {shareOpen && shareRoom !== null ? (
-        <ShareRoomDialog
-          onClose={() => {
-            setShareOpen(false);
-          }}
-          room={shareRoom}
-        />
-      ) : null}
-      {roomSettings === null || principal === null ? null : (
-        <RoomSettingsDialog
-          catalogId={catalogId}
-          initialSection={roomSettings.section}
-          onClose={() => {
-            setRoomSettings(null);
-          }}
-          notice={room.notice}
-          onExitRoom={onExitRoom}
-          principal={principal}
-          roomName={room.name}
-        />
-      )}
-      {peopleInviteOpen &&
-      invitable !== null &&
-      principal !== null &&
-      privateRoomInvites !== undefined ? (
-        <PrivateRoomInviteDialog
-          invites={privateRoomInvites}
-          onClose={() => {
-            setPeopleInviteOpen(false);
-          }}
-          principalId={principal.principalId}
-          room={invitable}
-          rooms={privateRooms}
-        />
-      ) : null}
-      {inviteOpen ? (
-        <AgentInviteDialog
-          agentsCanSpeak={agentsCanSpeak}
-          onConnected={setInvitation}
-          onStartConversation={() => {
-            setInviteOpen(false);
-            onOpenRoomPanel('conversation');
-          }}
-          downloadUrl={downloadUrl}
-          onClose={() => {
-            setInviteOpen(false);
-          }}
-          owner={owner}
-          presentAgents={room.agents}
-          room={{ catalogId, roomId: room.roomId, roomName: room.name }}
-        />
-      ) : null}
+      {dialogs}
       <section
         className="room-panel"
         data-size={panelSize}
@@ -640,131 +882,11 @@ function ReadyLobby({
             </button>
           </div>
         </header>
-        {writesAllowed || selectedDirectSessionId !== null ? null : (
-          <p className="room-panel__read-only" role="status">
-            {archived ? <Archive aria-hidden="true" /> : <MessageSquareOff aria-hidden="true" />}
-            {t(archived ? 'roomWorkspace.archivedNotice' : 'roomWorkspace.readOnlyNotice')}
-          </p>
-        )}
-        {publicConversationVisible && invitation !== null && principal !== null ? (
-          <div className="room-first-reply">
-            <strong>{invitation.displayName}</strong>
-            <InviteReplyProgress
-              gateway={messageGateway}
-              agentId={invitation.agentId}
-              roomId={invitation.roomId}
-              startedAt={invitation.startedAt}
-              principalId={principal.principalId}
-            />
-            <button
-              type="button"
-              className="ar-icon-button"
-              aria-label={t('agentInvite.close')}
-              onClick={() => {
-                setInvitation(null);
-              }}
-            >
-              <X aria-hidden="true" />
-            </button>
-          </div>
-        ) : null}
-        {publicConversationVisible && room.notice !== undefined ? (
-          <RoomNoticeBar
-            key={room.roomId}
-            memberNames={room.memberNames}
-            notice={room.notice}
-            onEdit={
-              noticeEditable && principal !== null
-                ? () => {
-                    setRoomSettings({ section: 'notice' });
-                  }
-                : undefined
-            }
-            roomId={room.roomId}
-            selfMatrixUserId={principal?.matrixUserId ?? null}
-          />
-        ) : null}
-        <div
-          className="room-panel__content"
-          id="workspace-current-view"
-          role="tabpanel"
-          aria-labelledby={`workspace-tab-${panelView}`}
-        >
-          <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
-            <MessageLayer
-              active={publicConversationVisible}
-              focusedConversationMessageId={focusedConversationMessageId}
-              participants={room.agents}
-              {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
-              catalogId={catalogId}
-              onSelectedMessageChange={onSelectedMessageChange}
-              roomId={room.roomId}
-              roomName={room.name}
-              privateRoom={room.encrypted === true}
-              selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
-              view={panelView}
-              writesAllowed={writesAllowed}
-            />
-          </div>
-          <DirectConversationDock
-            activeCatalogId={selectedDirectSessionId}
-            controller={directSessions}
-            onSelectedMessageChange={onSelectedMessageChange}
-            selectedMessageId={selectedMessageId}
-            view={panelView}
-          />
-        </div>
+        {conversationNotices}
+        {conversationContent}
       </section>
-      {drawer === null ? null : (
-        <WorkspaceDrawer label={t('roomWorkspace.members')} variant={drawer} onClose={closeDrawer}>
-          {roster}
-        </WorkspaceDrawer>
-      )}
-      <AnimatePresence>
-        {selectedAgent === null ? null : (
-          <AgentInspector
-            hasBackgroundReception={reception.some(
-              (view) =>
-                view.state.agentId === selectedAgent.agentId &&
-                view.state.binding.policy.roomId === room.roomId,
-            )}
-            receptionControls={
-              principal !== null && localRuntime.isAvailable() ? (
-                <ReceptionPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
-              ) : principal !== null ? (
-                <ReceptionOwnershipPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
-              ) : undefined
-            }
-            actionFailure={inspectorFailure(directSessions)}
-            agent={selectedAgent}
-            blocked={directSessions.isBlocked(selectedAgent)}
-            observedAtUnixMs={room.observedAtUnixMs}
-            key="agent-inspector"
-            pendingAction={
-              directSessions.opening ? 'message' : directSessions.blocking ? 'block' : null
-            }
-            // 屏蔽完详情留着：上面说已屏蔽，按钮换成解除屏蔽，点错了马上能改回来。
-            onBlock={() => {
-              void directSessions.setBlocked(selectedAgent, true);
-            }}
-            onUnblock={() => {
-              void directSessions.setBlocked(selectedAgent, false);
-            }}
-            onClose={() => {
-              spatial.current?.focus();
-              onSelectedAgentChange(null);
-            }}
-            onMessage={(agentId) => {
-              void directSessions.openAgent(agentId).then((result) => {
-                if (result.ok) {
-                  onSelectedAgentChange(null);
-                  onSelectedDirectSessionChange(result.value.catalogId);
-                }
-              });
-            }}
-          />
-        )}
-      </AnimatePresence>
+      {agentDrawer}
+      {inspector}
     </main>
   );
 }
