@@ -894,15 +894,17 @@ test('Agent 之间的长串折成一行：点开就在原地，再点收回去�
 
   await fold.click();
   await expect(fold).toHaveAttribute('aria-expanded', 'true');
-  await expect(fold).toBeFocused();
   await expect(messages).toHaveCount(12);
   await expect(log).toContainText('Control plane image builds now.');
   await expect(
     log.getByText('Added the license file, rebuilding.', { exact: false }),
   ).toBeVisible();
   await expectAccessible(page);
+  // 键盘也行，焦点留在这一行上。（Safari 里鼠标点按钮不给焦点，所以先放上去。）
+  await fold.focus();
   await page.keyboard.press('Enter');
   await expect(fold).toHaveAttribute('aria-expanded', 'false');
+  await expect(fold).toBeFocused();
   await expect(messages).toHaveCount(6);
 
   // 最下面那一串长到 4 句也不折；有人说了话，它才算说完，折起来。
