@@ -2,6 +2,9 @@
 //!
 //! 应用层的到期解除接真实 Synapse，治理记录放在内存里。两个公开大厅分片里禁言一个人，到期以后他在两个
 //! 分片里都能说话，旁人不受影响；同一个人还有一条不限时的禁言时，到期的那条只记成解除，他还是说不了。
+//!
+//! 内存里的治理记录也能摆成一间私人房间带几间子房间（`MemoryLedger::family`），`sub_rooms.rs` 里
+//! “父房间的禁言在子房间里一起算”用的是它。
 
 use std::{
     collections::HashMap,
@@ -19,7 +22,8 @@ use agent_room_application::{
         ModerationExpiryClaim, ModerationExpiryRepository, ModerationExpiryReschedule,
         ModerationIdentifierFactory, ModerationMemberGateway, ModerationMemberRefusal,
         ModerationMuteLedger, ModerationMuteLock, ModerationMuteStanding, ModerationReportPolicy,
-        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext, PortFuture,
+        ModerationReportSubmissionOutcome, ModerationRepository, ModerationRoomContext,
+        ModerationSubRoomStanding, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -30,7 +34,7 @@ use agent_room_domain::{
 use super::{public_lobby_moderation::create_lobby_shard, *};
 
 const START: i64 = 1_800_000_000_000;
-const HOUR: i64 = 3_600_000;
+pub(super) const HOUR: i64 = 3_600_000;
 
 #[tokio::test]
 #[ignore = "需要由 tools/matrix.py 提供真实 Synapse 治理配置"]
@@ -55,7 +59,7 @@ async fn 真实_synapse_禁言到期后台解除_两个分片都能说话_还有
         shards.clone(),
         speaker.session().metadata().user_id().clone(),
     ));
-    let clock = Arc::new(TestClock(AtomicI64::new(START)));
+    let clock = Arc::new(TestClock::starting());
     let service = expiry_service(&ledger, provisioner.clone(), &clock);
 
     // 一条一小时的禁言：两个分片都落下，他说不了，旁人照常。
@@ -94,17 +98,27 @@ async fn mute_everywhere(
     ledger: &MemoryLedger,
     mute: &ModerationAction,
 ) {
-    for room in &ledger.rooms {
+    land(provisioner, ledger, mute, &ledger.rooms).await;
+}
+
+/// 像落治理那样，在这几间房上禁言。
+pub(super) async fn land(
+    provisioner: &MatrixApplicationServiceProvisioner,
+    ledger: &MemoryLedger,
+    mute: &ModerationAction,
+    rooms: &[MatrixRoomId],
+) {
+    for room in rooms {
         let target = ModerationEffectTarget {
             matrix_room_id: room.clone(),
-            room_kind: RoomCatalogKind::PublicLobby,
+            room_kind: ledger.room_kind,
             target: mute.target().clone(),
             target_matrix_user_id: Some(ledger.target_user.clone()),
             target_agent_matrix_user_ids: Vec::new(),
         };
         ModerationEffectGateway::apply(provisioner, mute, &target)
             .await
-            .expect("公开大厅禁言应成功");
+            .expect("禁言应成功");
     }
 }
 
@@ -133,7 +147,7 @@ async fn assert_silenced(
     }
 }
 
-fn expiry_service(
+pub(super) fn expiry_service(
     ledger: &Arc<MemoryLedger>,
     provisioner: Arc<MatrixApplicationServiceProvisioner>,
     clock: &Arc<TestClock>,
@@ -144,7 +158,7 @@ fn expiry_service(
         expiry: ledger.clone(),
         mutes: ledger.clone(),
         effects: provisioner,
-        members: Arc::new(LobbyOnly),
+        members: Arc::new(MutesOnly),
         identifiers: clock.clone(),
         clock: clock.clone(),
         report_policy: ModerationReportPolicy {
@@ -154,10 +168,10 @@ fn expiry_service(
     })
 }
 
-/// 这里只有公开大厅，不走私人房间的成员记录。
-struct LobbyOnly;
+/// 这里只有禁言。禁言不走私人房间的成员记录，那是踢出和封禁的事。
+struct MutesOnly;
 
-impl ModerationMemberGateway for LobbyOnly {
+impl ModerationMemberGateway for MutesOnly {
     fn owner_only(
         &self,
         _room_catalog_id: RoomCatalogId,
@@ -196,10 +210,14 @@ impl ModerationMemberGateway for LobbyOnly {
 }
 
 /// 从 `START` 起走的时钟。
-struct TestClock(AtomicI64);
+pub(super) struct TestClock(AtomicI64);
 
 impl TestClock {
-    fn advance(&self, milliseconds: i64) {
+    pub(super) fn starting() -> Self {
+        Self(AtomicI64::new(START))
+    }
+
+    pub(super) fn advance(&self, milliseconds: i64) {
         self.0.fetch_add(milliseconds, Ordering::SeqCst);
     }
 }
@@ -224,12 +242,15 @@ impl ModerationIdentifierFactory for TestClock {
     }
 }
 
-/// 内存里的治理记录，只管一个公开大厅里的一个人。到期解除只用得到动作、领取和禁言情况，别的接口这个
-/// 用例不走。
-struct MemoryLedger {
+/// 内存里的治理记录，只管一间房里的一个人：一个公开大厅（几个分片），或者一间私人房间连它下面他在
+/// 的子房间。到期解除只用得到动作、领取和禁言情况，别的接口这个用例不走。
+pub(super) struct MemoryLedger {
     catalog_id: RoomCatalogId,
+    room_kind: RoomCatalogKind,
     person: ModerationTarget,
     rooms: Vec<MatrixRoomId>,
+    /// 这间房下面、他在里面的子房间。问的是其中一间时，禁言连这间房（它的父房间）的一起算。
+    sub_rooms: Vec<(RoomCatalogId, MatrixRoomId)>,
     target_user: MatrixUserId,
     actions: Mutex<Vec<ModerationAction>>,
     /// 每个动作领过几次、下次能领的时间。
@@ -237,9 +258,39 @@ struct MemoryLedger {
 }
 
 impl MemoryLedger {
+    /// 一个公开大厅，`rooms` 是它的分片。
     fn new(rooms: Vec<MatrixRoomId>, target_user: MatrixUserId) -> Self {
+        Self::of(RoomCatalogKind::PublicLobby, rooms, Vec::new(), target_user)
+    }
+
+    /// 一间私人房间，下面有他在里面的几间子房间。
+    pub(super) fn family(
+        parent: MatrixRoomId,
+        sub_rooms: &[MatrixRoomId],
+        target_user: MatrixUserId,
+    ) -> Self {
+        let sub_rooms = sub_rooms
+            .iter()
+            .map(|room| (RoomCatalogId::from_uuid(Uuid::now_v7()), room.clone()))
+            .collect();
+        Self::of(
+            RoomCatalogKind::PrivateRoom,
+            vec![parent],
+            sub_rooms,
+            target_user,
+        )
+    }
+
+    fn of(
+        room_kind: RoomCatalogKind,
+        rooms: Vec<MatrixRoomId>,
+        sub_rooms: Vec<(RoomCatalogId, MatrixRoomId)>,
+        target_user: MatrixUserId,
+    ) -> Self {
         Self {
             catalog_id: RoomCatalogId::from_uuid(Uuid::now_v7()),
+            room_kind,
+            sub_rooms,
             person: ModerationTarget::new(
                 ModerationTargetKind::Principal,
                 PrincipalId::from_uuid(Uuid::now_v7()).to_string(),
@@ -253,13 +304,36 @@ impl MemoryLedger {
     }
 
     /// 记一条已经落下的禁言，`expires_in` 是从此刻起过多久到期。
-    fn applied_mute(&self, clock: &TestClock, expires_in: Option<i64>) -> ModerationAction {
+    pub(super) fn applied_mute(
+        &self,
+        clock: &TestClock,
+        expires_in: Option<i64>,
+    ) -> ModerationAction {
+        self.applied_mute_in(self.catalog_id, clock, expires_in)
+    }
+
+    /// 只记在第几间子房间上的一条已经落下的禁言。
+    pub(super) fn applied_sub_room_mute(
+        &self,
+        sub_room: usize,
+        clock: &TestClock,
+        expires_in: Option<i64>,
+    ) -> ModerationAction {
+        self.applied_mute_in(self.sub_rooms[sub_room].0, clock, expires_in)
+    }
+
+    fn applied_mute_in(
+        &self,
+        catalog_id: RoomCatalogId,
+        clock: &TestClock,
+        expires_in: Option<i64>,
+    ) -> ModerationAction {
         let now = clock.now();
         let mut mute = ModerationAction::reserve(
             ModerationActionId::from_uuid(Uuid::now_v7()),
             None,
             PrincipalId::from_uuid(Uuid::now_v7()),
-            self.catalog_id,
+            catalog_id,
             ModerationActionKind::Mute,
             self.person.clone(),
             ModerationReason::Harassment,
@@ -272,7 +346,7 @@ impl MemoryLedger {
         mute
     }
 
-    fn status(&self, action: &ModerationAction) -> ModerationActionStatus {
+    pub(super) fn status(&self, action: &ModerationAction) -> ModerationActionStatus {
         self.actions
             .lock()
             .expect("动作锁可用")
@@ -477,32 +551,57 @@ impl ModerationExpiryRepository for MemoryLedger {
 }
 
 impl ModerationMuteLedger for MemoryLedger {
+    /// 和存储读的一样：问的是这间房，带上他在的子房间和那一间自己的禁言；问的是一间子房间，只有
+    /// 那一间的房间，禁言连这间房的一起算。
     fn mute_standing<'a>(
         &'a self,
-        _room_catalog_id: RoomCatalogId,
+        room_catalog_id: RoomCatalogId,
         _target: &'a ModerationTarget,
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationMuteStanding>>> {
-        let mutes = self
-            .actions
-            .lock()
-            .expect("动作锁可用")
+        let actions = self.actions.lock().expect("动作锁可用").clone();
+        let mutes_in = |catalogs: &[RoomCatalogId]| -> Vec<ModerationAction> {
+            actions
+                .iter()
+                .filter(|action| {
+                    catalogs.contains(&action.room_catalog_id())
+                        && matches!(
+                            action.status(),
+                            ModerationActionStatus::Applied | ModerationActionStatus::Pending
+                        )
+                })
+                .cloned()
+                .collect()
+        };
+        let asked = self
+            .sub_rooms
             .iter()
-            .filter(|action| {
-                matches!(
-                    action.status(),
-                    ModerationActionStatus::Applied | ModerationActionStatus::Pending
-                )
-            })
-            .cloned()
-            .collect();
+            .find(|(catalog, _)| *catalog == room_catalog_id);
+        let (matrix_room_ids, mutes, sub_rooms) = match asked {
+            Some((catalog, room)) => (
+                vec![room.clone()],
+                mutes_in(&[*catalog, self.catalog_id]),
+                Vec::new(),
+            ),
+            None => (
+                self.rooms.clone(),
+                mutes_in(&[self.catalog_id]),
+                self.sub_rooms
+                    .iter()
+                    .map(|(catalog, room)| ModerationSubRoomStanding {
+                        matrix_room_id: room.clone(),
+                        mutes: mutes_in(&[*catalog]),
+                    })
+                    .collect(),
+            ),
+        };
         let standing = ModerationMuteStanding {
-            room_kind: RoomCatalogKind::PublicLobby,
-            matrix_room_ids: self.rooms.clone(),
+            room_kind: self.room_kind,
+            matrix_room_ids,
             target_matrix_user_id: Some(self.target_user.clone()),
             target_agent_matrix_user_ids: Vec::new(),
             may_speak: true,
             mutes,
-            sub_rooms: Vec::new(),
+            sub_rooms,
         };
         Box::pin(async move { Ok(Some(standing)) })
     }

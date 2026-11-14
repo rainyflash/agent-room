@@ -362,6 +362,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 存储读“他在哪几间子房间里”只算没归档、房间在用的（`moderation/sub_rooms.rs` 的 `sub_room_standings`）：归档了的一设发言级别就解开了。2f 有了 Agent 成员以后，主人不在、只有他的 Agent 在的子房间也要加进来。
     - 还没管到：父房间自己的改权限、重新邀请、转让给发言级别时不看禁言（以前就这样，给被禁言的人改一次权限他就又能说了），单独修。
     - 流程测试的替身：`MemoryRooms` 记着谁在哪间房被禁言（`mute`、`unmute`，父房间的在子房间里一起算），`mute_after(n, …)` 是再问过 n 次才落下来，摆“给发言级别的当口禁言落了”；治理那边 `FakeAuthority.sub_rooms` 摆他在哪几间子房间里，`FakeMutes.unreadable` 让禁言情况读不出来。真实数据库的在 `tests/private_rooms/sub_room_mutes.rs`。
+  - 子房间第 2c-3b 步（#817）：真实 Synapse 的测试 `crates/matrix-adapter/tests/real_synapse/sub_rooms.rs`，只在派发的 `suite=all` 里跑；没改产品代码，2c 到这里做完。
+    - 放在网关和治理服务这一层：真实 Synapse 的测试里没有连着数据库的私人房间服务，“移出父房间以后子房间里也被踢”的整条链留给 2k 的无头验收。
+    - 禁言那一条用 `moderation_expiry.rs` 里内存的治理记录，`MemoryLedger::family` 摆成一间私人房间带几间子房间；它读禁言情况的规则要和存储的 `mute_standing` 一样，改了一边另一边跟着改。
+    - 归档那一条故意断言“设一次发言级别就把归档解开”（`set_speaking` 把门槛写回在用的那一套）。哪天网关改成不碰门槛了，这一句会红：那时“归档了的子房间别设发言级别”可以放宽，两边一起改。
+    - 断言“这个人说不了”用 `refused`：开发用的 Synapse 没调 `rc_message`，一个人连发多了先回限速，等一等再试才等得到 403。新加这类断言别直接 `expect_err` 再比 `Forbidden`。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。
