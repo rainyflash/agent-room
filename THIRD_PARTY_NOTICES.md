@@ -7,10 +7,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Inventory
 
 - Cargo packages: 889
-- npm packages: 714
-- Total locked package versions: 1603
+- npm packages: 713
+- Total locked package versions: 1602
 - `Cargo.lock` SHA-256: `a261347fbb693ae4802c763f5391e02dd809fd16d48c318b4a2561eb86e33a1d`
-- `pnpm-lock.yaml` SHA-256: `7724ba582015b20007fd95f5eb49b1742427375c0983b1f999b90d8bc5f3e54f`
+- `pnpm-lock.yaml` SHA-256: `f113a1cc754ea537fbb17fdc22f9bdd8915e5aecebcd8dfe991652c2663e0a27`
 
 ## License expressions
 
@@ -62,7 +62,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `MIT/Apache-2.0` | 42 |
 | `MPL-2.0` | 14 |
 | `MPL-2.0+` | 3 |
-| `OFL-1.1` | 4 |
+| `OFL-1.1` | 3 |
 | `Unicode-3.0` | 18 |
 | `Unlicense` | 1 |
 | `Unlicense OR MIT` | 9 |
@@ -1093,10 +1093,9 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | npm | [@eslint/object-schema](https://www.npmjs.com/package/@eslint/object-schema/v/3.0.5) | 3.0.5 | `Apache-2.0` |
 | npm | [@eslint/plugin-kit](https://www.npmjs.com/package/@eslint/plugin-kit/v/0.7.2) | 0.7.2 | `Apache-2.0` |
 | npm | [@exodus/bytes](https://www.npmjs.com/package/@exodus/bytes/v/1.15.1) | 1.15.1 | `MIT` |
-| npm | [@fontsource-variable/fredoka](https://www.npmjs.com/package/@fontsource-variable/fredoka/v/5.3.0) | 5.3.0 | `OFL-1.1` |
+| npm | [@fontsource-variable/geist](https://www.npmjs.com/package/@fontsource-variable/geist/v/5.3.0) | 5.3.0 | `OFL-1.1` |
+| npm | [@fontsource-variable/geist-mono](https://www.npmjs.com/package/@fontsource-variable/geist-mono/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@fontsource-variable/noto-sans-sc](https://www.npmjs.com/package/@fontsource-variable/noto-sans-sc/v/5.3.0) | 5.3.0 | `OFL-1.1` |
-| npm | [@fontsource/ibm-plex-mono](https://www.npmjs.com/package/@fontsource/ibm-plex-mono/v/5.3.0) | 5.3.0 | `OFL-1.1` |
-| npm | [@fontsource/zcool-kuaile](https://www.npmjs.com/package/@fontsource/zcool-kuaile/v/5.3.0) | 5.3.0 | `OFL-1.1` |
 | npm | [@gar/promise-retry](https://www.npmjs.com/package/@gar/promise-retry/v/1.0.3) | 1.0.3 | `MIT` |
 | npm | [@humanfs/core](https://www.npmjs.com/package/@humanfs/core/v/0.19.2) | 0.19.2 | `Apache-2.0` |
 | npm | [@humanfs/node](https://www.npmjs.com/package/@humanfs/node/v/0.16.8) | 0.16.8 | `Apache-2.0` |

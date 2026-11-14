@@ -1,58 +1,46 @@
 /*
  * 公开房间的分享页（/r/<分享码>）。令牌的值和 packages/ui-system/src/styles.css 一样（网页的测试卡着），
- * 看起来和网站、应用是一家：奶油色底、墨色粗描边、不模糊的按压阴影。字体只用系统自带的：网站的字体
+ * 看起来和网站、应用是一家：白底黑字，不画框，一页一个黑色的按钮。字体只用系统自带的：网站的字体
  * 文件带着内容摘要，控制面不知道它叫什么。没有脚本也完整，脚本只管“复制链接”。
  */
 :root {
-  --color-ink: #2a2733;
+  --color-ink: #18181b;
   --color-paper: #ffffff;
-  --ar-canvas: #fff4dc;
-  --ar-surface: #fffdf7;
-  --ar-surface-muted: #fff6e3;
-  --ar-accent: #247a77;
-  --ar-accent-hover: #1c6562;
-  --ar-accent-soft: #eaf5f2;
-  --ar-muted: #5c5866;
-  --ar-line: #e8d9b8;
-  --ar-outline: #2a2733;
-  --ar-sunny: #ffc53d;
-  --ar-sunny-hover: #ffb81f;
-  --ar-mint: #bde8d8;
-  --ar-sky: #8ec5f5;
-  --ar-coral: #f07058;
-  --outline: 2.5px;
-  --outline-thin: 2px;
-  --press: 0 4px 0 var(--ar-outline);
-  --press-small: 0 3px 0 var(--ar-outline);
-  --radius-panel: 28px;
-  --radius-card: 20px;
-  --page: 720px;
+  --ar-canvas: #ffffff;
+  --ar-surface: #fafafa;
+  --ar-surface-muted: #f4f4f5;
+  --ar-selected: #ececef;
+  --ar-muted: #686873;
+  --ar-line: #ededf0;
+  --ar-border: #dcdce1;
+  --ar-accent: #18181b;
+  --ar-accent-hover: #3f3f46;
+  --ar-warning-soft: #fff8e1;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --page: 640px;
   --gutter: clamp(16px, 4vw, 32px);
   --font-sans:
-    ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui,
-    sans-serif;
+    system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Noto Sans SC', sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-ink: #f1ece2;
-    --color-paper: #1b1a21;
-    --ar-canvas: #131217;
-    --ar-surface: #1e1c24;
-    --ar-surface-muted: #28252f;
-    --ar-accent: #5cc0b8;
-    --ar-accent-hover: #75cfc8;
-    --ar-accent-soft: #163230;
-    --ar-muted: #aaa4b4;
-    --ar-line: #37333f;
-    --ar-outline: #8e879d;
-    --ar-sunny: #8a6414;
-    --ar-sunny-hover: #9b711a;
-    --ar-mint: #1f4d43;
-    --ar-sky: #24527a;
-    --ar-coral: #8e3a2b;
+    --color-ink: #ededf0;
+    --color-paper: #141416;
+    --ar-canvas: #0f0f11;
+    --ar-surface: #141416;
+    --ar-surface-muted: #1c1c1f;
+    --ar-selected: #27272b;
+    --ar-muted: #a0a0ab;
+    --ar-line: #222226;
+    --ar-border: #34343a;
+    --ar-accent: #ededf0;
+    --ar-accent-hover: #d4d4d8;
+    --ar-warning-soft: #2a2512;
     color-scheme: dark;
   }
 }
@@ -70,37 +58,47 @@ html {
 
 body {
   margin: 0;
-  padding-block: 0 48px;
+  padding-block: 0 56px;
   color: var(--color-ink);
   background: var(--ar-canvas);
   font-family: var(--font-sans);
   font-size: 1rem;
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
-  color: var(--ar-accent);
-  text-underline-offset: 0.18em;
+  color: var(--color-ink);
+  font-weight: 500;
+  text-decoration-color: var(--ar-border);
+  text-underline-offset: 0.2em;
 }
 
 a:hover {
-  color: var(--ar-accent-hover);
+  text-decoration-color: currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 2px;
 }
 
 h1,
 h2 {
   margin: 0;
+  font-weight: 600;
   line-height: 1.25;
   text-wrap: balance;
 }
 
 h1 {
-  font-size: clamp(1.6rem, 5vw, 2.2rem);
+  font-size: clamp(1.5rem, 5vw, 1.875rem);
+  letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
 
 h2 {
-  font-size: 1.2rem;
+  font-size: 1.0625rem;
 }
 
 p {
@@ -119,30 +117,32 @@ p {
   gap: 8px 16px;
   align-items: center;
   justify-content: space-between;
-  padding-block: 20px;
+  padding-block: 18px 28px;
+  font-size: 0.9375rem;
 }
 
 .share-brand {
   color: var(--color-ink);
-  font-weight: 700;
-  font-size: 1.15rem;
+  font-weight: 600;
+  font-size: 1.0625rem;
   text-decoration: none;
 }
 
 .share-main {
   display: grid;
-  gap: 24px;
+  gap: 32px;
 }
 
+/* 几节之间靠留白和一条细线分，不画框。 */
 .share-panel {
   display: grid;
   gap: 16px;
   min-width: 0;
-  padding: clamp(20px, 5vw, 32px);
-  border: var(--outline) solid var(--ar-outline);
-  border-radius: var(--radius-panel);
-  background: var(--ar-surface);
-  box-shadow: var(--press);
+}
+
+.share-panel + .share-panel {
+  padding-top: 32px;
+  border-top: 1px solid var(--ar-line);
 }
 
 .share-room-head {
@@ -154,7 +154,7 @@ p {
 
 .share-room-head > div {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -162,45 +162,36 @@ p {
   display: grid;
   flex: none;
   place-items: center;
-  width: 64px;
-  height: 64px;
-  border: var(--outline-thin) solid var(--ar-outline);
+  width: 56px;
+  height: 56px;
   border-radius: var(--radius-card);
   color: var(--color-ink);
-  background: var(--ar-mint);
-  font-size: 1.8rem;
-  font-weight: 700;
+  background: var(--ar-surface-muted);
+  font-size: 1.5rem;
+  font-weight: 600;
 }
 
 .share-owner,
 .share-quiet {
   color: var(--ar-muted);
+  font-size: 0.9375rem;
 }
 
 .share-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .share-tags li {
-  padding: 2px 12px;
-  border: var(--outline-thin) solid var(--ar-outline);
+  padding: 2px 10px;
   border-radius: 999px;
   background: var(--ar-surface-muted);
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.share-tags .share-tag--open {
-  background: var(--ar-sky);
-}
-
-.share-tags .share-tag--plain {
-  background: var(--ar-sunny);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .share-description {
@@ -210,55 +201,49 @@ p {
 
 .share-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px 24px;
   margin: 0;
-}
-
-.share-stats div {
-  padding: 10px 14px;
-  border: var(--outline-thin) solid var(--ar-line);
-  border-radius: var(--radius-card);
-  background: var(--ar-surface-muted);
 }
 
 .share-stats dt {
   color: var(--ar-muted);
-  font-size: 0.85rem;
+  font-size: 0.8125rem;
 }
 
 .share-stats dd {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
+  font-size: 1.125rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .share-note {
-  padding: 12px 16px;
-  border-left: 6px solid var(--ar-coral);
-  border-radius: 12px;
-  background: var(--ar-surface-muted);
+  padding: 12px 14px;
+  border-radius: var(--radius-card);
+  background: var(--ar-warning-soft);
+  font-size: 0.9375rem;
 }
 
 .share-actions {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   justify-items: start;
 }
 
+/* 一页一个黑色的按钮（加入）；别的是浅灰底。 */
 .share-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 50px;
-  padding: 0.7rem 1.5rem;
-  border: var(--outline-thin) solid var(--ar-outline);
-  border-radius: 999px;
+  min-height: 40px;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: var(--radius-control);
   color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: var(--press-small);
+  background: var(--ar-surface-muted);
   font: inherit;
+  font-size: 0.9375rem;
   font-weight: 600;
   line-height: 1.2;
   text-align: center;
@@ -267,55 +252,52 @@ p {
 }
 
 .share-button:hover {
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-}
-
-.share-button:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ar-outline);
+  background: var(--ar-selected);
 }
 
 .share-button--primary {
-  background: var(--ar-sunny);
-  font-size: 1.05rem;
+  min-height: 46px;
+  padding-inline: 1.5rem;
+  color: var(--color-paper);
+  background: var(--color-ink);
+  font-size: 1rem;
 }
 
 .share-button--primary:hover {
-  background: var(--ar-sunny-hover);
+  background: var(--ar-accent-hover);
 }
 
 .share-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
 }
 
 .share-link {
   flex: 1 1 220px;
   min-width: 0;
-  min-height: 44px;
-  padding: 0 14px;
-  border: var(--outline-thin) solid var(--ar-outline);
-  border-radius: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--radius-control);
   color: var(--color-ink);
   background: var(--color-paper);
   font: inherit;
   font-family: var(--font-mono);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .share-steps {
   display: grid;
   gap: 8px;
   margin: 0;
-  padding-left: 1.4rem;
+  padding-left: 1.3rem;
 }
 
 .share-disclaimer {
   color: var(--ar-muted);
-  font-size: 0.85rem;
+  font-size: 0.8125rem;
 }
 
 /* 手机上不给下载，给“复制链接”；“加入房间”写成“登录并加入”。 */
@@ -336,5 +318,10 @@ p {
   .share-actions .share-button {
     justify-items: stretch;
     width: 100%;
+  }
+
+  .share-button,
+  .share-link {
+    min-height: 44px;
   }
 }

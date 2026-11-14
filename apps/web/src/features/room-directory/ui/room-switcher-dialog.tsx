@@ -218,6 +218,7 @@ export function RoomSwitcherView({
                     onEnter(room, true);
                   }}
                   size="compact"
+                  tone="ghost"
                 >
                   {t('rooms.join')}
                 </Button>

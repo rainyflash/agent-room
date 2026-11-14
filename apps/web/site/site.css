@@ -1,68 +1,67 @@
 /*
  * agentroom.chat 静态网站的样式。令牌的值和 packages/ui-system/src/styles.css 一样（测试卡着），
- * 网站和应用看起来是一家：奶油色底、墨色粗描边、不模糊的按压阴影。没有脚本也完整。
+ * 网站和应用看起来是一家：白底黑字，不画框，一页一个黑色的按钮。有颜色的只有画：首页那间房间、
+ * 三扇门和对话里的机器人，它们的墨线和颜色是画自己的（--draw-*），不跟界面的令牌走。没有脚本也完整。
  */
 @font-face {
-  font-family: 'Fredoka Variable';
+  font-family: 'Geist Variable';
   font-style: normal;
   font-display: swap;
-  font-weight: 300 700;
-  src: url(fredoka.woff2) format('woff2-variations');
+  font-weight: 100 900;
+  src: url(geist.woff2) format('woff2-variations');
   unicode-range:
     U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 :root {
-  --color-ink: #2a2733;
+  --color-ink: #18181b;
   --color-paper: #ffffff;
-  --ar-canvas: #fff4dc;
-  --ar-surface: #fffdf7;
-  --ar-surface-muted: #fff6e3;
-  --ar-accent: #247a77;
-  --ar-accent-hover: #1c6562;
-  --ar-accent-soft: #eaf5f2;
-  --ar-muted: #5c5866;
-  --ar-line: #e8d9b8;
-  --ar-outline: #2a2733;
-  --ar-sunny: #ffc53d;
-  --ar-sunny-hover: #ffb81f;
-  --ar-mint: #bde8d8;
-  --ar-sky: #8ec5f5;
-  --ar-coral: #f07058;
-  --outline: 2.5px;
-  --outline-thin: 2px;
-  --press: 0 4px 0 var(--ar-outline);
-  --press-small: 0 3px 0 var(--ar-outline);
-  --radius-panel: 28px;
-  --radius-card: 20px;
+  --ar-canvas: #ffffff;
+  --ar-surface: #fafafa;
+  --ar-surface-muted: #f4f4f5;
+  --ar-selected: #ececef;
+  --ar-muted: #686873;
+  --ar-faint: #a4a4ae;
+  --ar-line: #ededf0;
+  --ar-border: #dcdce1;
+  --ar-accent: #18181b;
+  --ar-accent-hover: #3f3f46;
+  /* 画里的墨线和颜色。--draw-edge 是画和页面交界的那条线，夜间换成浅的才看得见。 */
+  --draw-ink: #2a2733;
+  --draw-edge: #2a2733;
+  --draw-line: 2.5px;
+  --draw-line-thin: 2px;
+  --draw-sunny: #ffc53d;
+  --draw-sky: #8ec5f5;
+  --draw-mint: #bde8d8;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
   --page: 1180px;
   --gutter: clamp(16px, 4vw, 40px);
   --font-sans:
-    'Fredoka Variable', ui-rounded, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
-    'Noto Sans SC', system-ui, sans-serif;
+    'Geist Variable', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-ink: #f1ece2;
-    --color-paper: #1b1a21;
-    --ar-canvas: #131217;
-    --ar-surface: #1e1c24;
-    --ar-surface-muted: #28252f;
-    --ar-accent: #5cc0b8;
-    --ar-accent-hover: #75cfc8;
-    --ar-accent-soft: #163230;
-    --ar-muted: #aaa4b4;
-    --ar-line: #37333f;
-    --ar-outline: #8e879d;
-    --ar-sunny: #8a6414;
-    --ar-sunny-hover: #9b711a;
-    --ar-mint: #1f4d43;
-    --ar-sky: #24527a;
-    --ar-coral: #8e3a2b;
+    --color-ink: #ededf0;
+    --color-paper: #141416;
+    --ar-canvas: #0f0f11;
+    --ar-surface: #141416;
+    --ar-surface-muted: #1c1c1f;
+    --ar-selected: #27272b;
+    --ar-muted: #a0a0ab;
+    --ar-faint: #62626c;
+    --ar-line: #222226;
+    --ar-border: #34343a;
+    --ar-accent: #ededf0;
+    --ar-accent-hover: #d4d4d8;
+    --draw-edge: #62626c;
     color-scheme: dark;
   }
 }
@@ -83,10 +82,11 @@ body {
   color: var(--color-ink);
   background: var(--ar-canvas);
   font-family: var(--font-sans);
-  font-size: 17px;
+  font-size: 1rem;
   line-height: 1.6;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 img {
@@ -95,17 +95,19 @@ img {
 }
 
 a {
-  color: var(--ar-accent);
+  color: var(--color-ink);
   text-underline-offset: 0.18em;
+  text-decoration-color: var(--ar-border);
+  font-weight: 500;
 }
 
 a:hover {
-  color: var(--ar-accent-hover);
+  text-decoration-color: currentColor;
 }
 
 :focus-visible {
-  outline: 3px solid var(--ar-accent);
-  outline-offset: 3px;
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 2px;
 }
 
 h1,
@@ -115,6 +117,7 @@ h3 {
   line-height: 1.2;
   text-wrap: balance;
   font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 :lang(zh-CN) h1,
@@ -135,10 +138,9 @@ code {
   top: 8px;
   z-index: 10;
   padding: 8px 14px;
-  border: var(--outline-thin) solid var(--ar-outline);
-  border-radius: 999px;
-  color: var(--color-ink);
-  background: var(--ar-surface);
+  border-radius: var(--radius-control);
+  color: var(--color-paper);
+  background: var(--color-ink);
 }
 
 .site-skip:focus {
@@ -151,8 +153,8 @@ code {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 24px;
-  padding: 14px var(--gutter);
-  border-bottom: var(--outline-thin) solid var(--ar-line);
+  padding: 12px var(--gutter);
+  border-bottom: 1px solid var(--ar-line);
 }
 
 .site-brand {
@@ -161,7 +163,7 @@ code {
   gap: 10px;
   margin-right: auto;
   color: var(--color-ink);
-  font-size: 22px;
+  font-size: 17px;
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
@@ -175,64 +177,57 @@ code {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 20px;
-  font-weight: 500;
+  gap: 4px 22px;
+  font-weight: 400;
+  font-size: 0.9375rem;
 }
 
 .site-nav a {
-  color: var(--color-ink);
+  color: var(--ar-muted);
   text-decoration: none;
+  font-weight: 400;
 }
 
 .site-nav a:hover {
-  color: var(--ar-accent);
-  text-decoration: underline;
+  color: var(--color-ink);
 }
 
-/* 按钮：和应用的 .ar-button 一个样子 */
+/* 按钮：和应用的 .ar-button 一个样子。一页一个黑色的（primary），别的是浅灰底。 */
 .site-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
-  padding: 0.5rem 1.15rem;
-  border: var(--outline-thin) solid var(--ar-outline);
-  border-radius: 999px;
+  min-height: 40px;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: var(--radius-control);
   color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: var(--press-small);
+  background: var(--ar-surface-muted);
   font-weight: 600;
   line-height: 1.2;
   text-align: center;
   text-decoration: none;
-  transition:
-    background-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+  transition: background-color 120ms ease;
+  font-size: 0.9375rem;
 }
 
 .site-button:hover {
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-}
-
-.site-button:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ar-outline);
+  background: var(--ar-selected);
 }
 
 .site-button--primary {
-  background: var(--ar-sunny);
+  background: var(--color-ink);
+  color: var(--color-paper);
 }
 
 .site-button--primary:hover {
-  background: var(--ar-sunny-hover);
+  background: var(--ar-accent-hover);
 }
 
 .site-button--large {
-  min-height: 50px;
-  padding: 0.7rem 1.5rem;
-  font-size: 1.05rem;
+  min-height: 48px;
+  padding: 0.7rem 1.4rem;
+  font-size: 1rem;
 }
 
 /* 正文的宽度 */
@@ -257,22 +252,31 @@ main.landing + .site-footer {
 
 /* 房间和对话窗口在暗色下也是白天的配色：亮着灯的房间。 */
 .day {
-  --color-ink: #2a2733;
-  --ar-surface: #fffdf7;
-  --ar-surface-muted: #fff6e3;
-  --ar-accent: #247a77;
-  --ar-accent-hover: #1c6562;
-  --ar-muted: #5c5866;
-  --ar-line: #e8d9b8;
-  --ar-outline: #2a2733;
-  --ar-sunny: #ffc53d;
-  --ar-sunny-hover: #ffb81f;
+  --color-ink: #18181b;
+  --color-paper: #ffffff;
+  --ar-surface: #fafafa;
+  --ar-surface-muted: #f4f4f5;
+  --ar-selected: #ececef;
+  --ar-muted: #686873;
+  --ar-line: #ededf0;
+  --ar-border: #dcdce1;
+  --ar-accent: #18181b;
+  --ar-accent-hover: #3f3f46;
   color: var(--color-ink);
+}
+
+/* 房间地板上的次要按钮垫白底：浅灰底压在格子地板上是脏的。 */
+.room .site-button:not(.site-button--primary) {
+  background: var(--color-paper);
+}
+
+.room .site-button:not(.site-button--primary):hover {
+  background: var(--ar-surface-muted);
 }
 
 .eyebrow {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.9375rem;
   font-weight: 500;
 }
 
@@ -280,21 +284,21 @@ main.landing + .site-footer {
   max-width: 42ch;
   margin: 22px 0 0;
   color: var(--ar-muted);
-  font-size: 1.15rem;
+  font-size: 1.125rem;
   line-height: 1.65;
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 10px;
 }
 
 /* 首屏：一间房间，门开在底下正中，往下走就是后面几节。 */
 .room {
   position: relative;
   margin-inline: clamp(10px, 1.6vw, 24px);
-  border: 3px solid var(--ar-outline);
+  border: 3px solid var(--draw-ink);
   border-bottom: 0;
   background: repeating-conic-gradient(#f9e3b8 0 25%, #fff0d2 0 50%) 0 0 / 88px 88px #fff0d2;
 }
@@ -307,16 +311,16 @@ main.landing + .site-footer {
   height: 3px;
   background: linear-gradient(
     to right,
-    var(--ar-outline) calc(50% - 100px),
+    var(--draw-ink) calc(50% - 100px),
     transparent 0 calc(50% + 100px),
-    var(--ar-outline) 0
+    var(--draw-ink) 0
   );
   content: '';
 }
 
 .room__wall {
   height: 18px;
-  border-bottom: 3px solid var(--ar-outline);
+  border-bottom: 3px solid var(--draw-ink);
   background: #f28a6e;
 }
 
@@ -344,8 +348,9 @@ main.landing + .site-footer {
 
 .room h1 {
   font-size: clamp(2.6rem, 4.6vw, 4.1rem);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.1;
+  letter-spacing: -0.03em;
 }
 
 .room h1:lang(zh-CN) {
@@ -390,7 +395,7 @@ main.landing + .site-footer {
   width: 0;
   height: 64px;
   margin-inline: auto;
-  border-left: 3px dashed var(--ar-outline);
+  border-left: 3px dashed var(--draw-edge);
 }
 
 /* 房间里的人物：两边各两个，中间是你 */
@@ -480,7 +485,7 @@ main.landing + .site-footer {
   position: relative;
   margin: 0;
   padding: 10px 14px;
-  border: var(--outline) solid var(--ar-outline);
+  border: var(--draw-line) solid var(--draw-ink);
   border-radius: 16px;
   background: #fff;
   font-size: 1rem;
@@ -495,22 +500,22 @@ main.landing + .site-footer {
   width: 12px;
   height: 12px;
   margin-left: -6px;
-  border-right: var(--outline) solid var(--ar-outline);
-  border-bottom: var(--outline) solid var(--ar-outline);
+  border-right: var(--draw-line) solid var(--draw-ink);
+  border-bottom: var(--draw-line) solid var(--draw-ink);
   background: inherit;
   content: '';
   transform: rotate(45deg);
 }
 
 .bubble--you {
-  background: #bde8d8;
+  background: var(--draw-mint);
 }
 
 .nametag {
   padding: 3px 10px;
-  border: var(--outline-thin) solid var(--ar-outline);
+  border: var(--draw-line-thin) solid var(--draw-ink);
   border-radius: 999px;
-  background: var(--ar-surface);
+  background: #ffffff;
   font-size: 0.875rem;
   font-weight: 600;
   white-space: nowrap;
@@ -518,7 +523,7 @@ main.landing + .site-footer {
 
 .nametag--you {
   color: #fff;
-  background: var(--ar-accent);
+  background: var(--draw-ink);
 }
 
 /* 各节共用 */
@@ -539,8 +544,8 @@ main.landing + .site-footer {
 .story h2,
 .readers h2,
 .end h2 {
-  font-size: clamp(2rem, 3.6vw, 3.1rem);
-  font-weight: 700;
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-weight: 600;
 }
 
 .band__title--center {
@@ -550,7 +555,7 @@ main.landing + .site-footer {
 .band__lede {
   margin: 10px 0 0;
   color: var(--ar-muted);
-  font-size: 1.1rem;
+  font-size: 1.0625rem;
   text-align: center;
 }
 
@@ -572,37 +577,26 @@ main.landing + .site-footer {
 }
 
 .steps h3 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
 }
 
 .steps p {
   margin: 0;
   color: var(--ar-muted);
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .steps__number {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
-  border: var(--outline) solid var(--ar-outline);
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  font-size: 1.85rem;
-  font-weight: 700;
-}
-
-.steps__number--1 {
-  background: var(--ar-sunny);
-}
-
-.steps__number--2 {
-  background: var(--ar-sky);
-}
-
-.steps__number--3 {
-  background: var(--ar-mint);
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--ar-surface-muted);
 }
 
 .try {
@@ -612,9 +606,8 @@ main.landing + .site-footer {
   gap: 20px 40px;
   margin-top: 40px;
   padding: 28px clamp(20px, 3vw, 40px);
-  border: var(--outline) solid var(--ar-outline);
   border-radius: var(--radius-panel);
-  background: var(--ar-mint);
+  background: var(--ar-surface);
 }
 
 .try__lead {
@@ -623,12 +616,12 @@ main.landing + .site-footer {
 }
 
 .try h3 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
 }
 
 .try p {
   margin: 6px 0 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .try blockquote {
@@ -636,9 +629,9 @@ main.landing + .site-footer {
   min-width: 0;
   margin: 0;
   padding: 16px 20px;
-  border: var(--outline) solid var(--ar-outline);
-  border-radius: 16px;
-  background: var(--ar-surface);
+  border: 1px solid var(--ar-border);
+  border-radius: var(--radius-card);
+  background: var(--color-paper);
 }
 
 .try blockquote p {
@@ -649,8 +642,8 @@ main.landing + .site-footer {
 /* 真事：深色的一节，右边是当时的对话 */
 .story {
   padding-block: clamp(56px, 7vw, 88px);
-  color: #fff4dc;
-  background: #2a2733;
+  color: #ededf0;
+  background: #18181b;
 }
 
 .story__inner {
@@ -669,12 +662,12 @@ main.landing + .site-footer {
 }
 
 .story .eyebrow {
-  color: #ffc53d;
+  color: #a0a0ab;
 }
 
 .story__lead {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.0625rem;
   line-height: 1.65;
 }
 
@@ -684,17 +677,17 @@ main.landing + .site-footer {
   gap: 14px;
   margin: 0;
   padding: 14px 0 0;
-  border-top: 2px solid #5c5866;
+  border-top: 1px solid #34343a;
   list-style: none;
 }
 
 .story__others h3 {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
 }
 
 .story__others p {
   margin: 4px 0 0;
-  color: #d9d3e2;
+  color: #a0a0ab;
 }
 
 .story__chat {
@@ -705,23 +698,22 @@ main.landing + .site-footer {
 
 .story__chat figcaption {
   margin-top: 10px;
-  color: #d9d3e2;
+  color: #a0a0ab;
   font-size: 0.875rem;
 }
 
 .chat {
   overflow: hidden;
-  border: 3px solid #fff4dc;
-  border-radius: 24px;
-  background: var(--ar-surface);
+  border-radius: var(--radius-panel);
+  background: var(--color-paper);
 }
 
 .chat__title {
   margin: 0;
-  padding: 14px 20px;
-  border-bottom: 3px solid var(--ar-outline);
-  background: #f28a6e;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--ar-line);
   font-weight: 600;
+  font-size: 0.9375rem;
 }
 
 .chat__messages {
@@ -741,22 +733,21 @@ main.landing + .site-footer {
 
 .chat__avatar {
   flex: none;
-  width: 36px;
-  height: 36px;
-  border: var(--outline-thin) solid var(--ar-outline);
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
 }
 
 .chat__avatar--person {
-  background: #2a2733;
+  background: var(--color-ink);
 }
 
 .chat__avatar--windows {
-  background: #ffb400;
+  background: var(--draw-sunny);
 }
 
 .chat__avatar--mac {
-  background: #ff7051;
+  background: #f07058;
 }
 
 .chat__message {
@@ -783,9 +774,9 @@ main.landing + .site-footer {
   margin: 6px 0 0;
   padding: 10px 12px;
   overflow-x: auto;
-  border-radius: 10px;
-  color: #fff4dc;
-  background: #2a2733;
+  border-radius: var(--radius-control);
+  color: #ededf0;
+  background: #18181b;
   font-family: var(--font-mono);
   font-size: 0.8125rem;
   line-height: 1.5;
@@ -809,35 +800,35 @@ main.landing + .site-footer {
 .door-frame {
   display: flex;
   justify-content: center;
-  border-bottom: 3px solid var(--ar-outline);
+  border-bottom: 3px solid var(--draw-edge);
 }
 
 .door {
   position: relative;
   width: 180px;
   height: 248px;
-  border: 3px solid var(--ar-outline);
+  border: 3px solid var(--draw-ink);
   border-bottom: 0;
   border-radius: 90px 90px 0 0;
 }
 
 .door--1 {
-  background: var(--ar-sunny);
+  background: var(--draw-sunny);
 }
 
 .door--2 {
-  background: var(--ar-sky);
+  background: var(--draw-sky);
 }
 
 .door--3 {
-  background: var(--ar-mint);
+  background: var(--draw-mint);
 }
 
 .door__window,
 .door__panel,
 .door__knob {
   position: absolute;
-  border: var(--outline) solid var(--ar-outline);
+  border: var(--draw-line) solid var(--draw-ink);
 }
 
 .door__window {
@@ -846,7 +837,7 @@ main.landing + .site-footer {
   left: 30px;
   height: 70px;
   border-radius: 60px 60px 8px 8px;
-  background: var(--ar-canvas);
+  background: #ffffff;
 }
 
 .door__knob {
@@ -855,7 +846,7 @@ main.landing + .site-footer {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--ar-surface);
+  background: #ffffff;
 }
 
 .door__panel {
@@ -864,7 +855,7 @@ main.landing + .site-footer {
   left: 30px;
   height: 84px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--ar-surface) 35%, transparent);
+  background: color-mix(in srgb, #ffffff 35%, transparent);
 }
 
 .door-copy {
@@ -875,13 +866,13 @@ main.landing + .site-footer {
 }
 
 .door-copy h3 {
-  font-size: 1.65rem;
+  font-size: 1.25rem;
 }
 
 .door-copy p {
   margin: 0;
   color: var(--ar-muted);
-  font-size: 1.05rem;
+  font-size: 1rem;
 }
 
 .door-copy code {
@@ -889,15 +880,14 @@ main.landing + .site-footer {
   max-width: 100%;
   padding: 8px 12px;
   overflow-wrap: anywhere;
-  border: var(--outline-thin) solid var(--ar-line);
-  border-radius: 10px;
-  background: var(--ar-surface);
+  border-radius: var(--radius-control);
+  background: var(--ar-surface-muted);
 }
 
 /* 加不加密 */
 .readers {
   padding-block: clamp(56px, 7vw, 80px);
-  border-block: 3px solid var(--ar-outline);
+  border-block: 1px solid var(--ar-line);
   background: var(--ar-surface);
 }
 
@@ -931,13 +921,14 @@ main.landing + .site-footer {
 
 .readers thead th {
   padding-block: 10px;
-  border-bottom: 3px solid var(--ar-outline);
-  font-size: 0.95rem;
-  font-weight: 600;
+  border-bottom: 1px solid var(--ar-border);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ar-muted);
 }
 
 .readers tbody tr + tr {
-  border-top: 2px solid var(--ar-line);
+  border-top: 1px solid var(--ar-line);
 }
 
 .readers tbody th {
@@ -948,23 +939,11 @@ main.landing + .site-footer {
 .pill {
   display: inline-block;
   padding: 2px 10px;
-  border: var(--outline-thin) solid #2a2733;
   border-radius: 999px;
-  color: #2a2733;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.pill--encrypted {
-  background: #bde8d8;
-}
-
-.pill--server {
-  background: #ffd878;
-}
-
-.pill--open {
-  background: #f7b9a9;
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  background: var(--ar-selected);
 }
 
 .readers__links {
@@ -992,7 +971,7 @@ main.landing + .site-footer {
 .guides__intro p {
   margin: 10px 0 0;
   color: var(--ar-muted);
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .guide-list {
@@ -1001,37 +980,33 @@ main.landing + .site-footer {
   margin: 0;
   padding: 0;
   list-style: none;
-  border-bottom: 2px solid var(--ar-line);
-  font-size: 1.25rem;
+  border-bottom: 1px solid var(--ar-line);
+  font-size: 1.0625rem;
   font-weight: 500;
 }
 
 .guide-list li {
-  border-top: 2px solid var(--ar-line);
-}
-
-.guide-list li:first-child {
-  border-top-color: var(--ar-outline);
+  border-top: 1px solid var(--ar-line);
 }
 
 .guide-list a {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  padding-block: 18px;
+  padding-block: 16px;
   color: var(--color-ink);
   text-decoration: none;
 }
 
 .guide-list a:hover {
-  color: var(--ar-accent);
+  color: var(--ar-muted);
 }
 
 /* 收尾 */
 .end {
   padding-block: 64px;
-  border-top: 3px solid var(--ar-outline);
-  background: var(--ar-sunny);
+  border-top: 1px solid var(--ar-line);
+  background: var(--ar-surface);
 }
 
 .end__inner {
@@ -1061,22 +1036,19 @@ main.landing + .site-footer {
   flex-direction: column;
   gap: 8px;
   height: 100%;
-  padding: 22px;
-  border: var(--outline-thin) solid var(--ar-outline);
+  padding: 20px;
   border-radius: var(--radius-card);
   color: var(--color-ink);
   background: var(--ar-surface);
-  box-shadow: var(--press-small);
   text-decoration: none;
 }
 
 .guide-cards a:hover {
-  color: var(--color-ink);
   background: var(--ar-surface-muted);
 }
 
 .guide-cards h3 {
-  font-size: 1.15rem;
+  font-size: 1.0625rem;
 }
 
 .guide-cards p {
@@ -1096,7 +1068,7 @@ main.landing + .site-footer {
 }
 
 .page-intro h1 {
-  font-size: clamp(2rem, 4vw, 3rem);
+  font-size: clamp(1.75rem, 3.4vw, 2.5rem);
 }
 
 .page-intro + .guide-cards {
@@ -1115,7 +1087,7 @@ main.landing + .site-footer {
 }
 
 .guide h1 {
-  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-size: clamp(1.75rem, 3.4vw, 2.4rem);
 }
 
 .guide__date {
@@ -1124,12 +1096,12 @@ main.landing + .site-footer {
 
 .guide h2 {
   margin: 40px 0 12px;
-  font-size: 1.5rem;
+  font-size: 1.375rem;
 }
 
 .guide h3 {
   margin: 28px 0 8px;
-  font-size: 1.2rem;
+  font-size: 1.125rem;
 }
 
 .guide p,
@@ -1140,27 +1112,26 @@ main.landing + .site-footer {
 .guide pre {
   overflow-x: auto;
   padding: 14px 16px;
-  border: var(--outline-thin) solid var(--ar-line);
-  border-radius: 14px;
-  background: var(--ar-surface);
+  border-radius: var(--radius-card);
+  background: var(--ar-surface-muted);
 }
 
 .guide :not(pre) > code {
   padding: 1px 6px;
   border-radius: 6px;
-  background: var(--ar-accent-soft);
+  background: var(--ar-surface-muted);
 }
 
 .guide blockquote {
   margin: 20px 0;
   padding: 4px 18px;
-  border-left: 4px solid var(--ar-accent);
+  border-left: 2px solid var(--ar-border);
   color: var(--ar-muted);
 }
 
 .guide img {
-  border: var(--outline-thin) solid var(--ar-line);
-  border-radius: 14px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--radius-card);
 }
 
 .guide table {
@@ -1189,9 +1160,9 @@ main.landing + .site-footer {
   gap: 12px 28px;
   margin-top: 24px;
   padding: 26px var(--gutter) 36px;
-  border-top: var(--outline-thin) solid var(--ar-line);
+  border-top: 1px solid var(--ar-line);
   color: var(--ar-muted);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .site-footer p {

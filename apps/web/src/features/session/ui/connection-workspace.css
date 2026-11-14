@@ -28,13 +28,13 @@
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
-  color: var(--ar-success);
+  color: var(--ar-success-ink);
 }
 .connection-account-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-network);
+  color: var(--ar-muted);
   font-weight: 600;
   text-decoration: none;
 }

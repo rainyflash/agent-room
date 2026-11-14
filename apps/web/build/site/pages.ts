@@ -297,7 +297,7 @@ function endSection(language: SiteLanguage, build: SiteBuild): string {
 <div class="band__inner end__inner">
 <h2 id="end-title">${escapeHtml(end.title)}</h2>
 <div class="actions">
-<a class="site-button site-button--large" href="${appUrl('/connect')}">${escapeHtml(landing['landing.preview'])}</a>
+<a class="site-button site-button--primary site-button--large" href="${appUrl('/connect')}">${escapeHtml(landing['landing.preview'])}</a>
 <a class="site-button site-button--large" href="#downloads" data-windows="${escapeHtml(build.downloads.windows)}" data-macos="${escapeHtml(build.downloads.macos)}">${escapeHtml(hero.download)}</a>
 </div>
 </div>

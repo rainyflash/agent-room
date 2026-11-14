@@ -1,5 +1,4 @@
 import { Banner, Button, Dialog } from '@agent-room/ui-system';
-import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -96,7 +95,6 @@ export function StaleAgentCleanupDialog({
           )}
         </>
       }
-      icon={<Trash2 />}
       onClose={() => {
         if (!running) onClose();
       }}

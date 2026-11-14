@@ -23,7 +23,6 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
-  font-family: var(--font-display);
   font-size: 34px;
   font-weight: 600;
 }
@@ -33,7 +32,6 @@ body {
 }
 .social-preview h1 {
   margin: 0;
-  font-family: var(--font-display);
   font-size: 56px;
   font-weight: 600;
   line-height: 1.1;
@@ -47,10 +45,8 @@ body {
 .social-preview__copy .social-preview__tag {
   justify-self: start;
   padding: 6px 18px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 999px;
+  border-radius: var(--ar-pill);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
   color: var(--color-ink);
   font-size: 22px;
   font-weight: 600;
@@ -58,25 +54,22 @@ body {
 .social-preview__scene {
   position: relative;
   padding: 10px;
-  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
 }
 .social-preview__scene .room-illustration {
   display: block;
   width: 100%;
   aspect-ratio: 1.2;
-  border-radius: 20px;
+  border-radius: var(--ar-panel-radius);
 }
 .social-preview__bubble {
   position: absolute;
   margin: 0;
   padding: 8px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 14px;
-  background: var(--ar-surface);
-  box-shadow: var(--ar-press);
+  border: 1px solid var(--ar-border);
+  border-radius: 10px;
+  background: var(--color-paper);
   font-size: 16px;
   font-weight: 600;
   line-height: 1.3;
@@ -87,9 +80,9 @@ body {
   bottom: -8px;
   width: 14px;
   height: 14px;
-  border-right: var(--ar-outline-thin) solid var(--ar-outline);
-  border-bottom: var(--ar-outline-thin) solid var(--ar-outline);
-  background: var(--ar-surface);
+  border-right: 1px solid var(--ar-border);
+  border-bottom: 1px solid var(--ar-border);
+  background: var(--color-paper);
   content: '';
   transform: rotate(45deg);
 }

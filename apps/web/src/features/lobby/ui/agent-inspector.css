@@ -15,7 +15,7 @@
   align-items: flex-start;
   gap: 12px;
   padding-bottom: 14px;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+  border-bottom: 1px solid var(--ar-line);
 }
 
 .agent-inspector__portrait {
@@ -25,7 +25,6 @@
   flex: 0 0 56px;
   place-items: center;
   overflow: hidden;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
   background: var(--ar-surface-muted);
 }
@@ -45,9 +44,8 @@
 
 .agent-inspector__who h2 {
   margin: 0;
-  font-family: var(--font-display);
   font-size: 1.25rem;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -67,10 +65,9 @@
   align-items: center;
   margin: 0;
   padding: 1px 8px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: var(--ar-pill);
   color: var(--color-ink);
-  background: var(--ar-mint);
+  background: var(--ar-surface-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -108,8 +105,7 @@
   gap: 8px;
   margin: 0;
   padding: 10px 12px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 14px;
+  border-radius: 10px;
   color: var(--color-ink);
   background: var(--ar-surface-muted);
   font-size: 13px;
@@ -127,8 +123,7 @@
 .agent-inspector__failure {
   margin: 0;
   padding: 10px 12px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 14px;
+  border-radius: 10px;
   color: var(--color-ink);
   background: var(--ar-danger-soft);
   font-size: 13px;

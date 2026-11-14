@@ -184,8 +184,8 @@ async fn read_callback_url(stream: &mut TcpStream, callback_base: &Url) -> Resul
     Ok(callback)
 }
 
-const CHECK_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>"#;
-const ALERT_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>"#;
+const CHECK_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>"#;
+const ALERT_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>"#;
 
 #[derive(Clone, Copy)]
 enum CallbackResponse {
@@ -224,7 +224,7 @@ async fn write_response(
             "en",
         ),
     };
-    // 和网页端没进房间时的页面一样：细顶栏放标志，下面一张卡片，成功是对勾、失败是提醒。
+    // 和网页端没进房间时的页面一样：细顶栏放标志，下面几行字，成功是对勾、失败是提醒。
     let (status_class, icon) = match response {
         CallbackResponse::Authenticated => ("status", CHECK_ICON),
         CallbackResponse::Rejected => ("status status--failed", ALERT_ICON),

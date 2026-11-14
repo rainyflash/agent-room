@@ -6,9 +6,9 @@
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 24px;
-  min-height: 72px;
-  padding: 0 40px;
-  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  min-height: 60px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--ar-line);
   background: var(--ar-canvas);
 }
 .app-navigation__brand,
@@ -23,8 +23,8 @@
   justify-self: start;
   color: var(--color-ink);
   text-decoration: none;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
   white-space: nowrap;
   letter-spacing: 0;
 }
@@ -37,61 +37,55 @@
   min-width: 0;
 }
 .app-navigation__brand img {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
 }
-/* 与房间面板的标签同一套：胶囊按钮，当前页是墨色底。 */
+/* 五个去处：只有字和图标，当前页垫一块浅灰。 */
 .app-navigation__links {
   min-width: 0;
   overflow-x: auto;
-  gap: 6px;
+  gap: 2px;
   padding: 4px;
 }
 .app-navigation__links a {
   position: relative;
-  min-height: 44px;
-  padding: 0 16px;
-  border: var(--ar-outline-thin) solid transparent;
-  border-radius: var(--ar-pill);
-  color: var(--color-ink);
+  min-height: 36px;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
 }
 .app-navigation__links a[aria-current='page'] {
-  border-color: var(--color-ink);
-  background: var(--color-ink);
-  color: var(--ar-surface);
+  color: var(--color-ink);
+  background: var(--ar-selected);
+  font-weight: 600;
 }
 .app-navigation__links a:not([aria-current='page']):hover {
-  border-color: var(--ar-outline);
-  background: var(--ar-surface);
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
 }
 .app-navigation__links small {
   display: grid;
   place-items: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: var(--ar-pill);
-  background: var(--ar-coral);
-  color: var(--color-ink);
+  background: var(--ar-badge);
+  color: var(--ar-on-badge);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
-/* “设置”上的提醒点：有新版本可装是黄色，这台设备需要签名是珊瑚色。 */
+/* “设置”上的提醒点：有新版本可装、这台设备需要签名，都是要你动手的事，一个红点。 */
 .app-navigation__dot {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   flex: 0 0 auto;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
-  background: var(--ar-sunny);
-}
-
-.app-navigation__dot[data-reason='signing'] {
   background: var(--ar-coral);
 }
 .app-navigation__links svg {
@@ -231,7 +225,7 @@
     gap: 2px;
     min-width: 0;
     padding: 4px 2px;
-    border-radius: 16px;
+    border-radius: var(--ar-radius);
     font-size: 11px;
     line-height: 1.2;
   }

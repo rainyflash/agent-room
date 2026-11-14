@@ -7,10 +7,8 @@
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 0 auto 24px;
   padding: 20px 24px;
-  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: 0 6px 0 var(--ar-outline);
 }
 
 .desktop-app-card__icon {
@@ -19,9 +17,8 @@
   height: 44px;
   flex: 0 0 auto;
   place-items: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: var(--ar-control-radius);
-  background: var(--ar-sky);
+  background: var(--ar-surface-muted);
 }
 
 .desktop-app-card__icon > svg {
@@ -37,7 +34,7 @@
 .desktop-app-card__text h2 {
   margin: 0;
   font-size: 1.25rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .desktop-app-card__text p {

@@ -27,6 +27,6 @@
 }
 .room-notice-editor__status {
   margin: 0;
-  color: var(--ar-success);
+  color: var(--ar-success-ink);
   font-size: 0.8125rem;
 }

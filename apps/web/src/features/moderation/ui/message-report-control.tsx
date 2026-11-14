@@ -107,7 +107,6 @@ export function MessageReportControl({ catalogId, gateway, message }: MessageRep
               </>
             )
           }
-          icon={<Flag />}
           onClose={close}
           title={t('moderation.report.title')}
         >

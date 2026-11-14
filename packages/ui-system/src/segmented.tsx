@@ -25,7 +25,7 @@ const steps: Readonly<Record<string, number>> = {
 };
 
 /**
- * 一行分段选择：几个互斥的选项，选中的那个是黄色按下态。键盘上和原生单选组一样，
+ * 一行分段选择：几个互斥的选项，选中的那个垫一块白底。键盘上和原生单选组一样，
  * 方向键在选项间移动并选中，Home / End 到头尾；只有选中的那个在 Tab 顺序里。
  */
 export function Segmented<Value extends string>({

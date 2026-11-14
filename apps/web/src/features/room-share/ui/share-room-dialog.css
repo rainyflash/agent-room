@@ -19,7 +19,7 @@
 .room-share h3 {
   margin: 0;
   font-size: 0.875rem;
-  font-weight: 650;
+  font-weight: 600;
 }
 .room-share__link {
   display: flex;
@@ -33,8 +33,8 @@
   width: 100%;
   min-width: 0;
   padding: 10px 12px;
-  border: var(--ar-outline-thin) solid var(--ar-line);
-  border-radius: var(--ar-radius);
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-control-radius);
   color: var(--color-ink);
   background: var(--color-paper);
   font: inherit;
@@ -85,7 +85,7 @@
   width: 160px;
   max-width: 100%;
   height: auto;
-  border: var(--ar-outline-thin) solid var(--ar-line);
+  border: 1px solid var(--ar-line);
   border-radius: 8px;
 }
 .room-share__preview {
@@ -95,7 +95,7 @@
 .room-share__preview figure {
   margin: 0;
   overflow: hidden;
-  border: var(--ar-outline-thin) solid var(--ar-line);
+  border: 1px solid var(--ar-line);
   border-radius: var(--ar-radius);
   background: var(--color-paper);
 }
@@ -127,7 +127,7 @@
 }
 .room-share__note {
   padding-top: 12px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
 }
 @media (max-width: 640px) {
   .room-share__layout {

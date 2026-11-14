@@ -1,5 +1,5 @@
 import { Banner, Button, Details, Dialog, Field, Spinner } from '@agent-room/ui-system';
-import { DoorOpen, LockKeyhole } from 'lucide-react';
+import { DoorOpen } from 'lucide-react';
 import { useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -163,7 +163,6 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
           )}
         </Button>
       }
-      icon={<LockKeyhole />}
       onClose={() => {
         if (!pending) onClose();
       }}

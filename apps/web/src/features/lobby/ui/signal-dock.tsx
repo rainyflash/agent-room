@@ -36,7 +36,7 @@ export function SignalDock({
             onModeChange('scene');
           }}
           size="compact"
-          tone={mode === 'scene' ? 'primary' : 'quiet'}
+          tone={mode === 'scene' ? 'ghost' : 'quiet'}
         >
           <span className="signal-dock__mode-label">{t('lobby.dock.scene')}</span>
         </Button>
@@ -48,7 +48,7 @@ export function SignalDock({
             onModeChange('list');
           }}
           size="compact"
-          tone={mode === 'list' ? 'network' : 'quiet'}
+          tone={mode === 'list' ? 'ghost' : 'quiet'}
         >
           <span className="signal-dock__mode-label">{t('lobby.dock.list')}</span>
         </Button>

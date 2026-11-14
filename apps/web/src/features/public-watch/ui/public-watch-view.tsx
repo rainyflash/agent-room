@@ -104,9 +104,10 @@ export function PublicWatchView({
     const latest = watch.messages.findLast((message) => message.author === key);
     if (latest !== undefined) setFocus({ key: latest.key });
   };
-  const joinLink = (
+  // 一页只有一个黑按钮：顶栏那个是黑的（没登录时是“注册账户”），对话底下的是灰的。
+  const joinLink = (tone: 'primary' | 'ghost') => (
     <Link
-      className="ar-button ar-button--default ar-button--primary"
+      className={`ar-button ar-button--default ar-button--${tone}`}
       params={{ catalogId: watch.lobby.catalogId }}
       search={{}}
       to="/lobby/$catalogId"
@@ -157,7 +158,7 @@ export function PublicWatchView({
           <div className="public-watch__language">
             <LanguageControl />
           </div>
-          <AccountActions account={account} join={joinLink} />
+          <AccountActions account={account} join={joinLink('primary')} />
         </div>
       </header>
       {room.agents.length === 0 ? (
@@ -256,7 +257,7 @@ export function PublicWatchView({
             <span className="public-watch__footer-notice">{t('publicWatch.notice')} </span>
             {t('publicWatch.readOnly')}
           </p>
-          {joinLink}
+          {joinLink('ghost')}
         </footer>
       </section>
       {inviteOpen ? (
@@ -264,7 +265,6 @@ export function PublicWatchView({
           className="agent-invite"
           closeLabel={t('agentInvite.close')}
           description={t('publicWatch.invite.detail')}
-          icon={<Bot />}
           onClose={() => {
             setInviteOpen(false);
           }}

@@ -1,5 +1,4 @@
 import { Button, CopyBlock, Dialog } from '@agent-room/ui-system';
-import { Share2 } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -55,7 +54,6 @@ export function ShareRoomDialog({ onClose, room }: ShareRoomDialogProps) {
       className="room-share"
       closeLabel={t('roomShare.close')}
       description={t('roomShare.subtitle')}
-      icon={<Share2 />}
       onClose={onClose}
       size="wide"
       title={t('roomShare.title')}

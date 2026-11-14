@@ -60,7 +60,7 @@ export function ExploreRoomActions({
     return (
       <Link
         aria-label={`${t('explore.action.enter')} · ${name}`}
-        className="ar-button ar-button--compact ar-button--primary"
+        className={linkClass(place)}
         params={{ catalogId: room.catalogId }}
         search={{}}
         to="/lobby/$catalogId"
@@ -127,7 +127,7 @@ export function ExploreRoomActions({
     ) : (
       <Link
         aria-label={`${t('explore.action.request')} · ${name}`}
-        className="ar-button ar-button--compact ar-button--primary"
+        className={linkClass(place)}
         params={{ code: room.shareCode }}
         search={exploreSearchFromFilter(filter)}
         to="/explore/$code"
@@ -146,12 +146,20 @@ export function ExploreRoomActions({
         onClick={() => {
           actions.onJoin(room);
         }}
+        tone={place === 'panel' ? 'primary' : 'ghost'}
       >
         {t(`explore.action.${action}`)}
       </ActionButton>
       {failureNote}
     </div>
   );
+}
+
+/** 一页只有一个黑按钮：卡片上的都是灰的，黑的留给打开的那间房的详情。 */
+function linkClass(place: 'card' | 'panel') {
+  return place === 'panel'
+    ? 'ar-button ar-button--compact ar-button--primary'
+    : 'ar-button ar-button--compact ar-button--ghost';
 }
 
 function ActionButton({

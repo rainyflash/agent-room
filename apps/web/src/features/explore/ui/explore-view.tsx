@@ -300,7 +300,7 @@ function LobbyRow({
             {signedIn ? (
               <Link
                 aria-label={`${t('explore.lobby.enter')} · ${lobby.name}`}
-                className="ar-button ar-button--compact ar-button--primary"
+                className="ar-button ar-button--compact ar-button--ghost"
                 params={{ catalogId: lobby.catalogId }}
                 search={{}}
                 to="/lobby/$catalogId"
