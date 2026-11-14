@@ -1,12 +1,15 @@
 /**
- * 聊天正文用的受限 Markdown：只认代码块、行内代码、粗体、标题、列表、引用和管道线写的表格。
- * HTML 与链接一律当普通文字，渲染层不会生成任何可点击或可执行的节点。
+ * 聊天正文用的受限 Markdown：只认代码块、行内代码、粗体、标题、列表、引用、管道线写的表格，
+ * 和直接写出来的 `http`、`https` 地址。HTML、图片和 `[字](地址)` 这种写法一律当普通文字。
+ * 地址只是标出来：渲染层不生成能直接打开的链接，点了要先确认（见 `ui/external-link.tsx`）。
  */
 
 export type MarkdownInline =
   | { readonly kind: 'text'; readonly text: string }
   | { readonly kind: 'code'; readonly text: string }
-  | { readonly kind: 'strong'; readonly text: string };
+  | { readonly kind: 'strong'; readonly text: string }
+  /** `text` 是正文里写的样子，`href` 是浏览器认的写法：确认框里写它，打开的也是它。 */
+  | { readonly kind: 'link'; readonly text: string; readonly href: string };
 
 export type MarkdownAlign = 'left' | 'center' | 'right' | null;
 export type MarkdownCell = readonly MarkdownInline[];
@@ -41,6 +44,18 @@ const orderedPattern = /^\s*\d{1,3}[.)]\s+(.*)$/u;
 const quotePattern = /^>\s?(.*)$/u;
 const inlinePattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/u;
 const tableDelimiterPattern = /^:?-+:?$/u;
+/**
+ * 正文里直接写出来的地址。只认 ASCII 里地址用得到的那些字符：中文里地址后面常常直接跟着字
+ * （“打开https://example.com看看”），认别的字符的话后面的字会被吞进地址里。域名或者路径里带
+ * 别的字符的地址因此只认到那个字符为止，要点开整个地址得写成转码以后的样子。
+ * 字符一个个写出来，别换成 `\w` 加 `i`：两样一起用时 `\w` 还认两个不是 ASCII 的字母。
+ * 方括号不在里面：`[字](地址)` 这种写法里，字要是也写成地址，认到 `]` 就得停。
+ */
+const linkPattern = /[Hh][Tt][Tt][Pp][Ss]?:\/\/[A-Za-z0-9_\-.~:/?#@!$&'()*+,;=%]+/gu;
+/** 地址后面跟着的标点多半是句子的，不是地址的。 */
+const trailingPunctuation = new Set(['.', ',', ';', ':', '!', '?', "'", '*', '_', '~']);
+/** 再长的地址不标成能点的：确认框里看不过来，也多半不是给人点的。 */
+const maxLinkLength = 2048;
 /** 一张表最多几列。再多的不当表格，照原样显示：多半不是表格，是碰巧带着竖线的字。 */
 const maxTableColumns = 16;
 
@@ -139,15 +154,65 @@ export function parseInline(text: string): readonly MarkdownInline[] {
   return text
     .split(inlinePattern)
     .filter((piece) => piece.length > 0)
-    .map((piece) => {
+    .flatMap((piece): readonly MarkdownInline[] => {
       if (piece.startsWith('`') && piece.endsWith('`') && piece.length > 2) {
-        return { kind: 'code', text: piece.slice(1, -1) } as const;
+        return [{ kind: 'code', text: piece.slice(1, -1) }];
       }
       if (piece.startsWith('**') && piece.endsWith('**') && piece.length > 4) {
-        return { kind: 'strong', text: piece.slice(2, -2) } as const;
+        return [{ kind: 'strong', text: piece.slice(2, -2) }];
       }
-      return { kind: 'text', text: piece } as const;
+      return withLinks(piece);
     });
+}
+
+/** 一段普通的字里直接写出来的地址拆出来，别的照旧是字。 */
+function withLinks(text: string): readonly MarkdownInline[] {
+  const pieces: MarkdownInline[] = [];
+  let from = 0;
+  for (const match of text.matchAll(linkPattern)) {
+    const written = withoutTrailingPunctuation(match[0]);
+    const href = linkTarget(written);
+    if (href === null) continue;
+    if (match.index > from) pieces.push({ kind: 'text', text: text.slice(from, match.index) });
+    pieces.push({ kind: 'link', text: written, href });
+    from = match.index + written.length;
+  }
+  if (from < text.length) pieces.push({ kind: 'text', text: text.slice(from) });
+  return pieces;
+}
+
+/** 去掉末尾属于句子的标点；右括号只在落单时去掉，`…/wiki/A_(B)` 这样成对的留着。 */
+function withoutTrailingPunctuation(candidate: string): string {
+  let end = candidate.length;
+  while (end > 0) {
+    const last = candidate[end - 1] ?? '';
+    const kept = candidate.slice(0, end);
+    if (trailingPunctuation.has(last)) end -= 1;
+    else if (last === ')' && count(kept, ')') > count(kept, '(')) end -= 1;
+    else break;
+  }
+  return candidate.slice(0, end);
+}
+
+function count(text: string, char: string): number {
+  return text.split(char).length - 1;
+}
+
+/**
+ * 这个地址能不能标成能点的，能的话回浏览器认的写法。只认 `http`、`https`；带用户名、密码的不认：
+ * `https://认识的网站@别的网站/` 这种写法就是拿来骗人看错域名的。
+ */
+function linkTarget(written: string): string | null {
+  if (written.length > maxLinkLength) return null;
+  let url: URL;
+  try {
+    url = new URL(written);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.hostname.length === 0 || url.username.length > 0 || url.password.length > 0) return null;
+  return url.href;
 }
 
 /** 这一行按竖线拆成的格子；不带竖线、是空行就不是表格的一行。反斜杠加竖线是格子里的一条竖线。 */

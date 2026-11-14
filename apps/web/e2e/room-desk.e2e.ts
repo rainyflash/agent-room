@@ -1363,3 +1363,108 @@ test('正文里管道线写的表格：画成表格，宽了在自己的框里�
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });
+
+type OpenedWindows = Window & { __openedWindows?: unknown[][] };
+
+test('正文里的地址：点了先问，写出网站和完整的地址；取消什么也不开，确认了才开新标签页', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(chatter);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  await expect(log.getByText('Send them to me for a read before posting.')).toBeInViewport();
+  // 记下页面要开哪些新窗口，不真的开。
+  await page.evaluate(() => {
+    const opened: unknown[][] = [];
+    (window as OpenedWindows).__openedWindows = opened;
+    window.open = (...request: unknown[]) => {
+      opened.push(request);
+      return null;
+    };
+  });
+  const opened = () => page.evaluate(() => (window as OpenedWindows).__openedWindows);
+  const run =
+    'https://github.com/rainyflash/agent-room/actions/runs/43597141197?check_suite_focus=true';
+  await page.evaluate((run) => {
+    (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({
+      agentIndex: 0,
+      text: [
+        `The run: ${run}.`,
+        'Docs: [how CI works](https://docs.example.com/ci)',
+        'Not these: `https://example.com/in-code`, javascript:alert(1), ftp://example.com/file',
+      ].join('\n'),
+    });
+  }, run);
+  const message = log.locator('.conversation-message').filter({ hasText: 'The run:' });
+  const links = message.getByRole('link');
+  // 能点的只有直接写出来的两个地址；句号、`[字](…)` 的括号不算在地址里。
+  await expect(links).toHaveText([run, 'https://docs.example.com/ci']);
+  await expect(message.locator('.chat-markdown > p')).toHaveText(
+    [
+      `The run: ${run}.`,
+      'Docs: [how CI works](https://docs.example.com/ci)',
+      'Not these: https://example.com/in-code, javascript:alert(1), ftp://example.com/file',
+    ].join(''),
+  );
+  // 不是带地址的链接：中键、右键菜单绕不过确认。
+  await expect(message.locator('a')).toHaveCount(0);
+
+  // 键盘走到、回车：先问，网站单独一行，完整的地址原样写着。
+  await links.first().focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Open this link?', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.external-link__site')).toHaveText('github.com');
+  await expect(dialog.locator('.external-link__address')).toHaveText(run);
+  await expect(dialog.getByText('It opens in a new tab.', { exact: true })).toBeVisible();
+  await expectAccessible(page);
+  // Esc 关掉：什么也没开，焦点回到刚才那个地址上。
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(links.first()).toBeFocused();
+  expect(await opened()).toEqual([]);
+
+  // 点另一个，取消也什么都不开；确认了才开，开在新标签页里、不带来源。
+  await links.nth(1).click();
+  await expect(dialog.locator('.external-link__site')).toHaveText('docs.example.com');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(await opened()).toEqual([]);
+  await links.nth(1).click();
+  await dialog.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(await opened()).toEqual([
+    ['https://docs.example.com/ci', '_blank', 'noopener,noreferrer'],
+  ]);
+
+  // 暗色下地址和确认框一样看得清。
+  await useColorScheme(page, 'dark');
+  await expectAccessible(page);
+  await links.first().click();
+  await expect(dialog).toBeVisible();
+  await expectAccessible(page);
+  await page.keyboard.press('Escape');
+
+  // 手机上：很长的地址在消息里、确认框里都折行，整页不横着滚。
+  await useColorScheme(page, 'light');
+  await page.setViewportSize({ width: 390, height: 760 });
+  const long = `https://example.com/${'segment-'.repeat(40)}end`;
+  await page.evaluate((long) => {
+    (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({
+      agentIndex: 2,
+      text: long,
+    });
+  }, long);
+  const longLink = log.getByRole('link', { name: long, exact: true });
+  await expect(longLink).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await longLink.click({ position: { x: 8, y: 8 } });
+  await expect(dialog.locator('.external-link__address')).toHaveText(long);
+  await expect(dialog.getByRole('button', { name: 'Open', exact: true })).toBeInViewport();
+  await expectNoHorizontalOverflow(page);
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
+    true,
+  );
+  expect(failures).toEqual([]);
+});

@@ -4,6 +4,7 @@ import { bridgeUptimeState } from '@/features/desktop/domain/bridge-uptime';
 import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import type { FrontendTelemetryGateway } from '@/features/telemetry/domain/frontend-metric';
 import { useDesktopRuntimeTelemetry } from './use-desktop-runtime-telemetry';
+import { useExternalAnchors } from './use-external-anchors';
 import {
   useDesktopRuntime,
   type DesktopRuntimeController,
@@ -22,6 +23,7 @@ export function DesktopRuntimeProvider({
   telemetry,
 }: DesktopRuntimeProviderProps) {
   const controller = useDesktopRuntime(gateway);
+  useExternalAnchors(controller.available ? controller.openLink : undefined);
   useDesktopRuntimeTelemetry(
     controller.available,
     bridgeUptimeState(controller.snapshot?.bridge.lifecycle),

@@ -364,6 +364,7 @@ const arrivedSessions: HostSessionDiagnostics[] = [];
 const releaseFailsFirst = new URLSearchParams(location.search).get('release') === 'failed';
 let releaseCount = 0;
 const signInIntents: string[] = [];
+const openedLinks: string[] = [];
 
 const fixtureControls: MyAgentsFixtureControls = {
   arriveAgent: () => {
@@ -390,6 +391,7 @@ const fixtureControls: MyAgentsFixtureControls = {
   },
   releaseCount: () => releaseCount,
   signInIntents: () => [...signInIntents],
+  openedLinks: () => [...openedLinks],
 };
 Object.defineProperty(window, '__agentRoomFixtureControls', {
   configurable: true,
@@ -451,6 +453,10 @@ const gateway: DesktopRuntimeGateway = {
   },
   openAuthorization: () => ready(undefined),
   openLogs: () => ready(undefined),
+  openLink: (url) => {
+    openedLinks.push(url);
+    return ready(undefined);
+  },
   offerInvitation: (invitation) => {
     parkedInvitation = invitation;
     return ready({ invitation, expiresInMs: 600_000 });

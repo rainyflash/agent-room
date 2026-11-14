@@ -51,6 +51,7 @@ const desktopCommands = {
   agentRecoverySessions: 'desktop_agent_recovery_sessions',
   authorization: 'desktop_open_authorization',
   openLogs: 'desktop_open_logs',
+  openLink: 'desktop_open_link',
   notify: 'desktop_notify',
   autostart: 'desktop_set_autostart',
   language: 'desktop_set_language',
@@ -253,6 +254,17 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     return this.invokeValidated(
       desktopCommands.openLogs,
       {},
+      z
+        .undefined()
+        .or(z.null())
+        .transform(() => undefined),
+    );
+  }
+
+  async openLink(url: string): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.openLink,
+      { url },
       z
         .undefined()
         .or(z.null())

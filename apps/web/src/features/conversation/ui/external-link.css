@@ -1,0 +1,35 @@
+/* 打开正文里的地址之前问的那一句：域名单独一行写大，完整的地址原样写在下面。 */
+.external-link__facts {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+.external-link__facts > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.external-link__facts dt {
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+.external-link__facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.external-link__site {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.external-link__address {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+.external-link__note {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.875rem;
+}

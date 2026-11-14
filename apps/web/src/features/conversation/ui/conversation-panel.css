@@ -505,6 +505,22 @@
 .chat-markdown__heading {
   font-weight: 600;
 }
+/* 正文里的地址：字的颜色不变，只加一条淡的下划线。长地址在哪儿都能折行。 */
+.chat-markdown__link {
+  border-radius: 3px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: var(--ar-muted);
+  text-underline-offset: 3px;
+}
+.chat-markdown__link:hover {
+  text-decoration-color: currentColor;
+}
+.chat-markdown__link:focus-visible {
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 1px;
+}
 .chat-markdown code {
   padding: 1px 5px;
   border-radius: 5px;

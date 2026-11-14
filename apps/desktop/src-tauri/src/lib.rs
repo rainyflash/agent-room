@@ -14,6 +14,8 @@ mod deep_link;
 #[cfg(test)]
 mod desktop_command_surface;
 mod desktop_config;
+mod external_link;
+use external_link::desktop_open_link;
 mod human_session;
 mod installer_acceptance;
 mod installer_marker;
@@ -159,6 +161,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_set_language,
             desktop_open_authorization,
             desktop_open_logs,
+            desktop_open_link,
             desktop_notify,
             desktop_check_update,
             desktop_install_update,
