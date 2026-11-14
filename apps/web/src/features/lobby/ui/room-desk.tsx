@@ -15,6 +15,8 @@ import {
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import type { AgentFace } from '../domain/agent-table';
+import { AgentAvatar } from './avatars';
 import { RoomDeskMenu } from './room-desk-menu';
 import { RoomKindLabel, roomKindWarns, type RoomKind } from './room-kind-label';
 import { RoomUnreadCount } from './room-unread-count';
@@ -34,6 +36,8 @@ type DialogAction = { readonly open: boolean; readonly onOpen: () => void } | nu
 
 export type RoomDeskProps = {
   readonly agentCount: number;
+  /** 手机上叠在“Agent N”前面的头像（最多两个）；房间里没有 Agent 就是空的。 */
+  readonly agentFaces: readonly AgentFace[];
   /** 对话、须知和输入框。 */
   readonly children: ReactNode;
   /** 人在私聊里时对面叫什么，不在私聊里是 `null`。左栏收起来时写在房间名旁边的下拉上。 */
@@ -95,6 +99,7 @@ const stay = (): void => undefined;
  */
 export function RoomDesk({
   agentCount,
+  agentFaces,
   children,
   directName,
   inspector,
@@ -284,12 +289,26 @@ export function RoomDesk({
           )}
           <Button
             aria-label={t('roomWorkspace.openMembers')}
-            className="room-desk__agents-button"
+            className={
+              agentFaces.length === 0
+                ? 'room-desk__agents-button'
+                : 'room-desk__agents-button room-desk__agents-button--faces'
+            }
             icon={<UsersRound aria-hidden="true" />}
             onClick={onOpenAgents}
             size="compact"
             tone="quiet"
           >
+            {/* 只在手机上画（样式里）：表格最上面的两个 Agent。 */}
+            <span aria-hidden="true" className="room-desk__agents-faces">
+              {agentFaces.map((face) => (
+                <AgentAvatar
+                  id={face.agentId}
+                  key={face.agentId}
+                  state={face.offline ? 'offline' : 'idle'}
+                />
+              ))}
+            </span>
             <span className="room-desk__agents-word">{t('roomDesk.agentsButton')}</span>{' '}
             {agentCount}
           </Button>

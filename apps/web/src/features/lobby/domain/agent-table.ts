@@ -69,6 +69,20 @@ export function agentRowSummary(rows: readonly AgentRow[]): {
   return { waiting: count('waiting'), wakes: count('wakes'), offline: count('offline') };
 }
 
+/** 顶栏“Agent N”前面叠着的一个头像。 */
+export type AgentFace = { readonly agentId: string; readonly offline: boolean };
+
+/**
+ * 手机上顶栏的“Agent N”前面叠着的两个头像：表格最上面的两行（在等的在前），归档的不算。
+ * 一眼看得出房间里有谁、是不是都离线了。
+ */
+export function agentFaces(rows: readonly AgentRow[]): readonly AgentFace[] {
+  return rows
+    .filter((row) => !row.archived)
+    .slice(0, 2)
+    .map((row) => ({ agentId: row.agent.agentId, offline: row.state === 'offline' }));
+}
+
 /** Agent 名字后面的四位编号（`specs/agent-name-tag/design.md`），同名的靠它分开。 */
 const nameTag = / #\d{4}$/u;
 

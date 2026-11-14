@@ -496,15 +496,23 @@ test('手机上的下拉从下面出来；没有私聊的房间没有它，一�
   await page.goto('/e2e/fixtures/lobby-scene.html?private&listed&requests');
   await expect(more).toHaveAccessibleDescription('Requests to join: 2');
   await expect(more.locator('.room-desk__attention')).toBeVisible();
-  // 这间房不加密，是要一直提醒着的：第二行放不下时房间名让，这一句写全。
+  // 这间房不加密，是要一直提醒着的：手机上只写后一半“不加密”，写全；房间名让它。
   const warning = top.locator('.room-desk__meta > span').first();
   await expect(warning).toHaveText('Public room · Not encrypted');
-  expect(await warning.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-    true,
-  );
+  await expect(warning).toHaveText('Not encrypted', { useInnerText: true });
+  expect(await noticeFits(page)).toBe(true);
   await expect(
     top.getByRole('heading', { level: 1, name: 'Builders Exchange', exact: true }),
   ).toBeVisible();
+  await expect.poll(() => topBarHeight(page)).toBeLessThanOrEqual(60);
+  // 最窄的手机、最长的那一句（网络 Agent 建的房间，服务器读得到）：折成两行也写全，不截。
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.goto(`${room}&origin=network`);
+  await expect(warning).toHaveText('The server can read it', { useInnerText: true });
+  expect(await noticeFits(page)).toBe(true);
+  await expectNoHorizontalOverflow(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/lobby-scene.html?private&listed&requests');
   await more.click();
   const settingsItem = moreMenu.getByRole('button', { name: 'Room settings', exact: true });
   await expect(settingsItem).toHaveAccessibleDescription('Requests to join: 2');
@@ -522,6 +530,25 @@ test('手机上的下拉从下面出来；没有私聊的房间没有它，一�
   expect(failures).toEqual([]);
 });
 
+/** 顶栏上要一直提醒着的那一句是不是写全了：没被截掉，也没伸到顶栏那一条外面去。 */
+async function noticeFits(page: Page): Promise<boolean> {
+  return page.locator('.room-desk__top').evaluate((top) => {
+    const notice = top.querySelector('.room-desk__meta > span');
+    const identity = top.querySelector('.room-desk__identity');
+    if (notice === null || identity === null) return false;
+    const box = notice.getBoundingClientRect();
+    const bounds = identity.getBoundingClientRect();
+    const style = getComputedStyle(notice);
+    const clipped = style.overflow !== 'visible' && notice.scrollWidth > notice.clientWidth;
+    return (
+      !clipped &&
+      box.width > 0 &&
+      box.right <= bounds.right + 1 &&
+      box.bottom <= top.getBoundingClientRect().bottom
+    );
+  });
+}
+
 /**
  * 顶栏此刻多高。刚打开的页面还可能整个重画一遍，那一下量不到：量不到算很高，外面接着再量。
  */
@@ -529,6 +556,140 @@ async function topBarHeight(page: Page): Promise<number> {
   const box = await page.locator('.room-desk__top').boundingBox();
   return box === null ? Number.POSITIVE_INFINITY : box.height;
 }
+
+test('手机上点开“Agent N”：从下面出来的一整页，只有名字和状态两列，最下面是“接入 Agent”', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${room}&owners`);
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeInViewport();
+  // 顶栏的“Agent N”前面叠着表格最上面的两个头像，原来那个图标不画了；读屏照旧只读到名字。
+  const openAgents = page.getByRole('button', { name: 'View agents', exact: true });
+  const faces = openAgents.locator('.room-desk__agents-faces');
+  await expect(faces).toBeVisible();
+  await expect(faces.locator('.ar-avatar')).toHaveCount(2);
+  await expect(openAgents.locator('.ar-button__icon')).toBeHidden();
+  await expect.poll(() => topBarHeight(page)).toBeLessThanOrEqual(60);
+
+  await openAgents.click();
+  const sheet = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
+  // 占满宽度，从顶栏下面一直到底。
+  const sheetBox = async (): Promise<readonly number[] | null> => {
+    const box = await sheet.boundingBox();
+    return box === null
+      ? null
+      : [box.x, box.y, box.width, box.y + box.height].map((value) => Math.round(value));
+  };
+  await expect.poll(sheetBox).toEqual([0, 56, 390, 844]);
+  await expect(sheet.getByRole('columnheader')).toHaveText(['Name', 'Status']);
+  const mine = sheet
+    .getByRole('row')
+    .filter({ has: page.getByRole('button', { name: /^Build Agent 001/u }) });
+  await expect(mine.locator('.agent-table__owner-line')).toHaveText('You');
+  const rowBox = await mine.boundingBox();
+  if (rowBox === null) throw new Error('没有量到那一行。');
+  expect(rowBox.height).toBeGreaterThanOrEqual(48);
+  // 搜索框的字不小于 16px：再小 iPhone 点进去会把整页放大。
+  await expect(sheet.getByRole('searchbox')).toHaveCSS('font-size', '16px');
+  // 最下面钉着“接入 Agent”：够高，左右撑满，整个在屏幕里。
+  const invite = sheet.getByRole('button', { name: 'Bring an agent', exact: true });
+  const inviteBox = await invite.boundingBox();
+  if (inviteBox === null) throw new Error('没有量到“接入 Agent”。');
+  expect(inviteBox.height).toBeGreaterThanOrEqual(44);
+  expect(Math.round(inviteBox.width)).toBe(358);
+  expect(inviteBox.y + inviteBox.height).toBeLessThanOrEqual(844);
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+
+  // “人”那一栏：这一层不变高矮（上面的标签不跳），下面没有“接入 Agent”。
+  await sheet.getByRole('tab', { name: /^People/u }).click();
+  await expect(sheet.getByRole('columnheader').first()).toHaveText('Name');
+  await expect(invite).toHaveCount(0);
+  await expect.poll(sheetBox).toEqual([0, 56, 390, 844]);
+  await sheet.getByRole('tab', { name: /^Agents/u }).click();
+  await expect(invite).toBeVisible();
+
+  // 关掉它：点上面露着的那一条、Esc、右上角的叉。
+  await page.mouse.click(195, 28);
+  await expect(sheet).toBeHidden();
+  await openAgents.click();
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await openAgents.click();
+  await sheet.getByRole('button', { name: 'Close panel', exact: true }).click();
+  await expect(sheet).toBeHidden();
+  // 点在这一层自己的留白上不关。
+  await openAgents.click();
+  await sheet.getByRole('tablist').click({ position: { x: 300, y: 10 } });
+  await expect(sheet).toBeVisible();
+
+  // 点“接入 Agent”：这一层收起来，接入的对话框打开。
+  await invite.click();
+  await expect(sheet).toBeHidden();
+  const connect = page.getByRole('dialog', { name: 'Bring an agent' });
+  await expect(connect).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(connect).toBeHidden();
+
+  // 点一行：这一层收起来，出来的是它的详情。
+  await openAgents.click();
+  await sheet.getByRole('button', { name: /^Build Agent 003/u }).click();
+  await expect(sheet).toBeHidden();
+  const details = page.locator('.agent-inspector');
+  await expect(details).toContainText('Build Agent 003');
+  await details.getByRole('button', { name: 'Close Agent details', exact: true }).click();
+  await expect(details).toHaveCount(0);
+  await expect(openAgents).toBeFocused();
+  expect(failures).toEqual([]);
+});
+
+test('手机上那一整页：一个 Agent 都没有时只有那句话旁边的“接入 Agent”，归档了的房间没有；宽一些照旧从右边出来', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/e2e/fixtures/lobby-scene.html?private&agents=0');
+  const openAgents = page.getByRole('button', { name: 'View agents', exact: true });
+  // 没有 Agent：没有头像可叠，照旧是那个图标。
+  await expect(openAgents.locator('.room-desk__agents-faces .ar-avatar')).toHaveCount(0);
+  await expect(openAgents.locator('.ar-button__icon')).toBeVisible();
+  await openAgents.click();
+  const sheet = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
+  await expect(sheet).toContainText('No agents here yet');
+  await expect(sheet.getByRole('button', { name: 'Bring an agent', exact: true })).toHaveCount(1);
+  await expectAccessible(page);
+  await page.keyboard.press('Escape');
+
+  // 归档了的房间不能再接入。
+  await page.goto(`${room}&archived`);
+  await openAgents.click();
+  await expect(sheet.getByRole('columnheader')).toHaveText(['Name', 'Status']);
+  await expect(sheet.getByRole('button', { name: 'Bring an agent', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // 宽一些的窗口：照旧从右边出来、顶到头，按钮上是字，不叠头像，最下面没有“接入 Agent”（顶栏上有）。
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.goto(room);
+  await expect(openAgents).toHaveText(/Agent/u);
+  await expect(openAgents.locator('.room-desk__agents-faces')).toBeHidden();
+  await openAgents.click();
+  await expect
+    .poll(async () => {
+      const box = await sheet.boundingBox();
+      return box === null
+        ? null
+        : [box.x, box.y, box.width, box.height].map((value) => Math.round(value));
+    })
+    .toEqual([560, 0, 340, 700]);
+  await expect(sheet.getByRole('button', { name: 'Bring an agent', exact: true })).toHaveCount(0);
+  // 点外面也关。
+  await page.mouse.click(200, 300);
+  await expect(sheet).toBeHidden();
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
 
 test('认得出的记号：主房间前面是 #，在等消息的头像带绿点，找你的那一条整行铺一层浅黄', async ({
   page,

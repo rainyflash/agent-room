@@ -360,6 +360,22 @@ describe('RoomRoster 的 Agent 表格', () => {
     expect(screen.queryByRole('button', { name: 'Bring an agent' })).not.toBeInTheDocument();
   });
 
+  it('有 Agent 时表格下面另有一个“接入 Agent”（手机上那一整页用，别处样式里藏着）；不能接入时没有', async () => {
+    const user = userEvent.setup();
+    const { onInviteAgent } = renderRoster({ agents: [waiter] });
+    const invite = screen.getByRole('button', { name: 'Bring an agent' });
+    expect(invite.closest('.room-roster__invite')).not.toBeNull();
+    await user.click(invite);
+    expect(onInviteAgent).toHaveBeenCalledTimes(1);
+    // “人”那一栏下面没有。
+    await user.click(screen.getByRole('tab', { name: /^People/u }));
+    expect(screen.queryByRole('button', { name: 'Bring an agent' })).not.toBeInTheDocument();
+
+    cleanup();
+    renderRoster({ agents: [waiter], onInviteAgent: null });
+    expect(screen.queryByRole('button', { name: 'Bring an agent' })).not.toBeInTheDocument();
+  });
+
   it('表格下面能挂别的东西（离线归档的规则）', () => {
     renderRoster({ agents: [waiter], footer: <p>Offline archiving</p> });
 

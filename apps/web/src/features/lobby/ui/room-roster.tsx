@@ -120,6 +120,15 @@ export function RoomRoster({
               <ArrowRight aria-hidden="true" />
             </button>
           )}
+          {/* 只在手机上那一整页里画（样式里）：那里顶栏上的“接入 Agent”收进了“更多”。
+              一个 Agent 都没有时上面那句话旁边已经有一个。 */}
+          {onInviteAgent === null || memberCount === 0 ? null : (
+            <div className="room-roster__invite">
+              <Button icon={<Bot aria-hidden="true" />} onClick={onInviteAgent}>
+                {t('studio.inviteAgent')}
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <div
