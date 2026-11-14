@@ -27,14 +27,20 @@ async function receiveInMainRoom(page: Page, text: string): Promise<void> {
   );
 }
 
-/** 换配色以后等颜色过渡走完：走到一半时按钮上的字和底都还在半路上，量出来的对比度不作数。 */
+/**
+ * 换配色以后等颜色过渡走完：走到一半时按钮上的字和底都还在半路上，量出来的对比度不作数。
+ * 等到一个过渡都不剩为止：头一批走完时可能又起了新的（颜色是继承来的、自己又带过渡的元素，
+ * 上一层每走一帧它就重新起一次）。换了配色接着查对比度的用例都用它，别直接 `emulateMedia`。
+ */
 async function useColorScheme(page: Page, colorScheme: 'dark' | 'light'): Promise<void> {
   await page.emulateMedia({ colorScheme });
   await page.evaluate(async () => {
-    const transitions = document
-      .getAnimations()
-      .filter((animation) => animation instanceof CSSTransition);
-    await Promise.all(transitions.map((transition) => transition.finished.catch(() => null)));
+    const running = () =>
+      document.getAnimations().filter((animation) => animation instanceof CSSTransition);
+    for (let transitions = running(), round = 0; transitions.length > 0; transitions = running()) {
+      if ((round += 1) > 100) throw new Error('换配色以后颜色过渡一直没走完。');
+      await Promise.all(transitions.map((transition) => transition.finished.catch(() => null)));
+    }
   });
 }
 
@@ -315,7 +321,7 @@ test('认得出的记号：主房间前面是 #，在等消息的头像带绿点
   await expect(plain).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expectAccessible(page);
 
-  await page.emulateMedia({ colorScheme: 'dark' });
+  await useColorScheme(page, 'dark');
   await expect(mentioned).toHaveCSS('background-color', 'rgb(42, 37, 18)');
   await expectAccessible(page);
   expect(failures).toEqual([]);
