@@ -690,6 +690,8 @@ test('展开的 Agent 表格窄的时候：从抽屉里展开，列按宽度收�
 test('展开的 Agent 表格：地址里写着就直接打开，人多时一次列 100 个；场景里没有这一页', async ({
   page,
 }) => {
+  // 240 个 Agent 的房间在几个用例一起跑的时候画得慢（本机 WebKit 整套跑时超过 30 秒）。
+  test.setTimeout(60_000);
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/e2e/fixtures/lobby-scene.html?private&agents=240&view=agents');
