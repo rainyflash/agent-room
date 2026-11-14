@@ -1,11 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
+// 数消息条数、认某一条消息的用例在地址里带 `unfolded`：夹具里的历史都是 Agent 说的，
+// 不带的话几句一折，条数对不上，折着的那几条也找不到。折叠本身在 `room-desk.e2e.ts` 里看。
+
 for (const width of [1440, 390]) {
   test(`搜索真实分页投影并查看回复话题 ${String(width)}px`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 1000 });
-    await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1');
+    await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1&unfolded');
     await page.getByRole('button', { name: 'Search this conversation', exact: true }).click();
     await expect(page.getByText('20 messages loaded · search covers these messages')).toBeVisible();
     await page.getByLabel('Keyword', { exact: true }).fill('milestone 1:');
@@ -92,7 +95,7 @@ for (const width of [1440, 390]) {
   test(`加载更早消息和重新打开均保留阅读位置 ${String(width)}px`, async ({ page }) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 1000 });
-    await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1');
+    await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1&unfolded');
     const history = page.locator('.conversation-panel__timeline').first();
     await expect(history.locator('[data-conversation-message-id]')).toHaveCount(20);
     // “加载更早的消息”在时间线顶端：翻到顶再点，原来最早的那条要留在原处。
@@ -173,7 +176,7 @@ for (const width of [1440, 390]) {
 test('上次读到的位置还没加载时自动往前补，回到原处', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1');
+  await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1&unfolded');
   const history = page.locator('.conversation-panel__timeline').first();
   const messages = history.locator('[data-conversation-message-id]');
   await expect(messages).toHaveCount(20);
@@ -206,7 +209,9 @@ test('上次读到的位置还没加载时自动往前补，回到原处', async
 test('加载更早消息失败后接着往下翻，不会被拉回点加载时的位置', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1&historyFail=1');
+  await page.goto(
+    '/e2e/fixtures/lobby-scene.html?view=conversation&history=1&historyFail=1&unfolded',
+  );
   const history = page.locator('.conversation-panel__timeline').first();
   await expect(history.locator('[data-conversation-message-id]')).toHaveCount(20);
   await history.evaluate((element) => {

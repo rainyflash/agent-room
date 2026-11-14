@@ -1,5 +1,6 @@
 import {
-  mentionsAccount,
+  addressesAccount,
+  messageAttentionId,
   type MessageGateway,
   type RoomMessageSignal,
 } from '@/features/messages/domain/message';
@@ -121,7 +122,7 @@ export function projectInbox(
       const kind = attentionKind(message, byId, index.accountId, room.direct);
       if (kind === null) continue;
       remember(message, message.serverTimestamp);
-      const id = `message:${room.roomId}:${message.messageId}`;
+      const id = messageAttentionId(room.roomId, message.messageId);
       const read =
         preferences.acknowledged.has(id) ||
         (cursor !== undefined && compareCursors(position(message), cursor) <= 0);
@@ -255,8 +256,5 @@ function attentionKind(
   direct: boolean,
 ): InboxItem['kind'] | null {
   if (message.actor.matrixUserId === self) return null;
-  if (mentionsAccount(message, self)) return 'mention';
-  if (message.relation && byId.get(message.relation.targetMessageId)?.actor.matrixUserId === self)
-    return 'reply';
-  return direct ? 'direct' : null;
+  return addressesAccount(message, byId, self) ?? (direct ? 'direct' : null);
 }

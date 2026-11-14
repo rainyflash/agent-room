@@ -242,18 +242,22 @@
   line-height: 1;
 }
 
-/* 主栏：一行字别太宽，滚动条照旧贴在栏的右边 */
-.room-desk__main .workspace-view-tabs {
-  flex: 0 0 auto;
+/* 主栏顶上那一行（只看什么、资料、查找）从栏的这头到那头，下面画一条线。 */
+.room-desk__main .conversation-panel__bar {
   min-height: 44px;
+  padding: 0 14px 0 12px;
+  border-bottom: 1px solid var(--ar-line);
 }
-.room-desk__main > .room-notice,
-.room-desk__main > .room-panel__read-only,
-.room-desk__main > .room-first-reply,
+.room-desk__main .conversation-panel__bar-button,
+.room-desk__main .conversation-panel__scopes > button {
+  font-size: 0.8125rem;
+}
+/* 主栏：一行字别太宽，滚动条照旧贴在栏的右边 */
+.room-desk__main .room-notice,
+.room-desk__main .room-panel__read-only,
+.room-desk__main .room-first-reply,
 .room-desk__main > .room-desk__return,
 .lobby-workspace.room-desk .direct-conversation__header,
-.room-desk__main .workspace-view-tabs,
-.room-desk__main .conversation-panel__bar,
 .room-desk__main .conversation-search,
 .room-desk__main .conversation-history-tools,
 .room-desk__main .conversation-panel__timeline {

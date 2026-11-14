@@ -604,15 +604,25 @@ function ReadyLobby({
       ) : null}
     </>
   );
+  // 对话版面里没有“对话 / 资料”两个标签：换过去、换回来的按钮和须知都放进对话那一栏里。
+  const deskViews = conversationLayout ? { onViewChange } : {};
   const conversationContent = (
     <div
-      className={conversationLayout ? 'room-desk__content' : 'room-panel__content'}
-      id="workspace-current-view"
-      role="tabpanel"
-      aria-labelledby={`workspace-tab-${panelView}`}
+      {...(conversationLayout
+        ? { className: 'room-desk__content' }
+        : {
+            className: 'room-panel__content',
+            id: 'workspace-current-view',
+            role: 'tabpanel',
+            'aria-labelledby': `workspace-tab-${panelView}`,
+          })}
     >
       <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
         <MessageLayer
+          {...deskViews}
+          {...(conversationLayout
+            ? { conversationUnread: activity.unread, notices: conversationNotices }
+            : {})}
           active={publicConversationVisible}
           focusedConversationMessageId={focusedConversationMessageId}
           participants={room.agents}
@@ -628,6 +638,7 @@ function ReadyLobby({
         />
       </div>
       <DirectConversationDock
+        {...deskViews}
         activeCatalogId={selectedDirectSessionId}
         controller={directSessions}
         onSelectedMessageChange={onSelectedMessageChange}
@@ -789,14 +800,6 @@ function ReadyLobby({
           side={rosterWith(false)}
           view={panelView}
         >
-          {conversationNotices}
-          <WorkspaceViewTabs
-            allowSpace={false}
-            // 私聊里的“对话”是那场私聊，主房间的新消息标在回主房间的地方。
-            conversationUnread={selectedDirectSessionId === null ? activity.unread : 0}
-            onChange={onViewChange}
-            value={panelView}
-          />
           {conversationContent}
         </RoomDesk>
         {dialogs}

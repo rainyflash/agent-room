@@ -11,10 +11,10 @@ test('资料视图内可通过用户 Matrix 会话分享带摘要的资料', asy
 
   const launcher = page.getByRole('button', { name: 'Share a resource' });
   await expect(launcher).toBeInViewport();
-  await expect(page.getByRole('tab', { name: 'Resources', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  // 对话版面里资料顶上是一行“回到对话”。
+  await expect(
+    page.getByRole('button', { name: 'Back to the conversation', exact: true }),
+  ).toBeVisible();
 
   await launcher.click();
   const composer = page.getByRole('complementary', { name: 'Share a resource' });

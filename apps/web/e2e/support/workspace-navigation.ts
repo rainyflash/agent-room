@@ -36,6 +36,26 @@ export async function openDirectConversation(page: Page, agentName: string): Pro
 }
 
 /**
+ * 对话版面里去看资料：对话顶上那一行右边的“资料”。在私聊里就是那场私聊的资料。
+ * 场景版面的面板里还是“对话 / 资料”两个标签，不走这里。
+ */
+export async function openResources(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Resources', exact: true }).click();
+  await expect(backToConversationButton(page)).toBeVisible();
+}
+
+/** 对话版面里从资料回到对话。 */
+export async function backToConversation(page: Page): Promise<void> {
+  await backToConversationButton(page).click();
+  await expect(page.getByRole('button', { name: 'Resources', exact: true })).toBeVisible();
+}
+
+/** 资料顶上那一行的“回到对话”；有没读的消息时条数读在它的说明里。 */
+export function backToConversationButton(page: Page): Locator {
+  return page.getByRole('button', { name: 'Back to the conversation', exact: true });
+}
+
+/**
  * 对话版面里从私聊回到主房间：左栏在的时候点“主房间”，左栏收起来了点主栏顶上的“回到主房间”。
  */
 export async function openMainRoom(page: Page): Promise<void> {

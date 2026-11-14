@@ -12,6 +12,8 @@ import { MessageLayer } from '@/features/messages/ui/message-layer';
 
 export type DirectConversationDockProps = {
   readonly view: Exclude<RoomWorkspaceView, 'space'>;
+  /** 对话版面里换“对话 / 资料”靠它，见 `MessageLayer` 的同名参数。 */
+  readonly onViewChange?: ((view: Exclude<RoomWorkspaceView, 'space'>) => void) | undefined;
   readonly activeCatalogId: string | null;
   readonly controller: DirectSessionController;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
@@ -20,6 +22,7 @@ export type DirectConversationDockProps = {
 
 export function DirectConversationDock({
   view,
+  onViewChange,
   activeCatalogId,
   controller,
   onSelectedMessageChange,
@@ -82,6 +85,7 @@ export function DirectConversationDock({
         ) : (
           <Conversation
             view={view}
+            onViewChange={onViewChange}
             controller={controller}
             key={activeSession.catalogId}
             onSelectedMessageChange={onSelectedMessageChange}
@@ -97,6 +101,7 @@ export function DirectConversationDock({
 
 function Conversation({
   view,
+  onViewChange,
   controller,
   onSelectedMessageChange,
   reduceMotion,
@@ -104,6 +109,7 @@ function Conversation({
   session,
 }: {
   readonly view: Exclude<RoomWorkspaceView, 'space'>;
+  readonly onViewChange: ((view: Exclude<RoomWorkspaceView, 'space'>) => void) | undefined;
   readonly controller: DirectSessionController;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly reduceMotion: boolean;
@@ -211,6 +217,7 @@ function Conversation({
         <div className="direct-conversation__messages">
           <MessageLayer
             view={view}
+            onViewChange={onViewChange}
             writesAllowed={session.contactPolicy.deliveryAllowed}
             participants={[session.target]}
             catalogId={session.catalogId}

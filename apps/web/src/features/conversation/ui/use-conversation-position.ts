@@ -147,9 +147,15 @@ export function useConversationPosition({
   };
 }
 
+/** 找这条消息在哪儿；它折在 Agent 之间的一串里时，就是那一串占的那一行。 */
 function findMessage(container: HTMLElement, id: string): HTMLElement | undefined {
-  return [...container.querySelectorAll<HTMLElement>('[data-conversation-message-id]')].find(
-    (item) => item.dataset.conversationMessageId === id,
+  return (
+    [...container.querySelectorAll<HTMLElement>('[data-conversation-message-id]')].find(
+      (item) => item.dataset.conversationMessageId === id,
+    ) ??
+    [...container.querySelectorAll<HTMLElement>('[data-conversation-fold]')].find(
+      (item) => item.dataset.conversationFold?.split(' ').includes(id) === true,
+    )
   );
 }
 

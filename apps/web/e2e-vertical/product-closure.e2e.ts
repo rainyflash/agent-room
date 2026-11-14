@@ -262,10 +262,11 @@ async function enterPublicLobby(page: Page, catalogId: string): Promise<string> 
   }
   const roomId = decodeURIComponent(encodedRoomId);
   expect(roomId).toMatch(/^!.+:.+$/u);
-  // 进房间默认是对话版面，“资料”是主栏顶上的标签页。
-  const resources = page.getByRole('tab', { name: /^(Resources|资料)$/u });
-  await resources.click({ timeout: 45_000 });
-  await expect(resources).toHaveAttribute('aria-selected', 'true');
+  // 进房间默认是对话版面，“资料”在对话顶上那一行的右边；换过去以后顶上是“回到对话”。
+  await page.getByRole('button', { name: /^(Resources|资料)$/u }).click({ timeout: 45_000 });
+  await expect(
+    page.getByRole('button', { name: /^(Back to the conversation|回到对话)$/u }),
+  ).toBeVisible();
   return roomId;
 }
 

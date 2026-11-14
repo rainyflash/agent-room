@@ -14,6 +14,10 @@ export type LobbyFixtureControls = {
     readonly human?: boolean;
     readonly roomId?: string;
     readonly ageMs?: number;
+    /** 这一句点了你的名字。 */
+    readonly mentionsYou?: boolean;
+    /** 这一句回复的是哪条消息（消息编号）。 */
+    readonly replyTo?: string;
   }): string;
   redact(messageId: string): void;
   joinAgent(): string;

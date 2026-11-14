@@ -1,10 +1,12 @@
 import { ConversationPanel } from '@/features/conversation/ui/conversation-panel';
 import type { ConversationParticipant } from '@/features/conversation/domain/conversation';
+import { ArrowLeft, Files } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
-import { useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { RoomUnreadCount } from '@/features/lobby/ui/room-unread-count';
 import { useRoomMessages } from './room-messages-context';
 import type { MessageGateway, ReadOnlyFederatedEvent } from '@/features/messages/domain/message';
 import { ContentInspector } from '@/features/messages/ui/content-inspector';
@@ -31,6 +33,15 @@ export type MessageLayerProps = {
   readonly writesAllowed?: boolean;
   /** 私人房间：输入框的 @ 菜单里多一项“所有人”。 */
   readonly privateRoom?: boolean;
+  /**
+   * 对话版面里没有“对话 / 资料”两个标签：给了它，对话顶上那一行右边多一个“资料”，
+   * 资料顶上多一行“回到对话”。
+   */
+  readonly onViewChange?: ((view: 'conversation' | 'resources') => void) | undefined;
+  /** 人在看资料时对话里来了几条新消息：标在“回到对话”上。 */
+  readonly conversationUnread?: number;
+  /** 须知、只读的说明这些：跟在顶上那一行下面。只和 `onViewChange` 一起用。 */
+  readonly notices?: ReactNode;
 };
 
 export function MessageLayer({
@@ -48,8 +59,22 @@ export function MessageLayer({
   variant = 'room',
   writesAllowed = true,
   privateRoom = false,
+  onViewChange,
+  conversationUnread = 0,
+  notices,
 }: MessageLayerProps) {
   const { t } = useTranslation();
+  const unreadId = useId();
+  // 点“资料”“回到对话”换过去以后，焦点落在能换回来的那个按钮上；从别处换的（地址、键盘）不动焦点。
+  const openResources = useRef<HTMLButtonElement>(null);
+  const backToConversation = useRef<HTMLButtonElement>(null);
+  const moved = useRef(false);
+  useEffect(() => {
+    if (!moved.current) return;
+    moved.current = false;
+    (view === 'resources' ? backToConversation : openResources).current?.focus();
+  }, [view]);
+  const unread = view === 'resources' && conversationUnread > 0;
   const {
     content,
     contentVerifier,
@@ -107,6 +132,25 @@ export function MessageLayer({
             messages={projectedMessages}
             {...(participants === undefined ? {} : { participants })}
             {...(memberNames === undefined ? {} : { memberNames })}
+            {...(onViewChange === undefined
+              ? {}
+              : {
+                  barEnd: (
+                    <button
+                      type="button"
+                      className="conversation-panel__bar-button"
+                      ref={openResources}
+                      onClick={() => {
+                        moved.current = true;
+                        onViewChange('resources');
+                      }}
+                    >
+                      <Files aria-hidden="true" />
+                      <span>{t('roomWorkspace.resources')}</span>
+                    </button>
+                  ),
+                  belowBar: view === 'conversation' ? notices : null,
+                })}
             state={
               state.kind === 'ready' ? 'ready' : state.kind === 'loading' ? 'loading' : 'failed'
             }
@@ -122,6 +166,27 @@ export function MessageLayer({
           />
         </div>
         <section className="message-workspace__resources" hidden={view !== 'resources'}>
+          {onViewChange === undefined ? null : (
+            <div className="message-workspace__bar">
+              <button
+                type="button"
+                className="message-workspace__back"
+                ref={backToConversation}
+                // 名字不变，没读的条数经 aria-describedby 读出来。
+                aria-label={t('roomWorkspace.backToConversation')}
+                aria-describedby={unread ? unreadId : undefined}
+                onClick={() => {
+                  moved.current = true;
+                  onViewChange('conversation');
+                }}
+              >
+                <ArrowLeft aria-hidden="true" />
+                <span>{t('roomWorkspace.backToConversation')}</span>
+                {unread ? <RoomUnreadCount count={conversationUnread} id={unreadId} /> : null}
+              </button>
+            </div>
+          )}
+          {onViewChange !== undefined && view === 'resources' ? notices : null}
           <header className="message-workspace__intro">
             <h2>
               {t(
