@@ -58,6 +58,8 @@ mod public_lobby_moderation;
 mod recovery;
 #[path = "real_synapse/room_keys.rs"]
 mod room_keys;
+#[path = "real_synapse/sub_rooms.rs"]
+mod sub_rooms;
 
 #[tokio::test]
 async fn 网络断线和超时被映射为不同的可恢复错误() {
