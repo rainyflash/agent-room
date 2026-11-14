@@ -47,6 +47,7 @@
 - 768 到 1100px 两栏：右栏收成顶栏上的“Agent 5”按钮，点开是从右边出来的一栏；左栏收进房间名旁边的下拉。
 - 768px 以下一栏，见下面“手机宽度”。
 - 左栏收起来的时候，在私聊里主栏顶上留一条“回到主房间”。
+- 人不在主房间的对话里（在私聊里，或者在看资料）时主房间来了新消息：回去的地方标着条数，回去就没了。在私聊里标在左栏的“主房间”和主栏顶上的“回到主房间”上，在看资料时标在“对话”那个标签上。
 - 左栏只在有东西的时候出现：这间房里你有私聊，或者（第 2 块以后）有子房间。只有主房间一项时不占地方。
 - 每一栏自己滚动，整页不滚。输入框一直贴在主栏底下。
 
@@ -166,7 +167,7 @@
 - 对话视图直接用现成的：`MessageLayer`、`ConversationPanel`、`ConversationComposer`、`ConversationSearch`、`RoomNoticeBar`、`InviteReplyProgress`、`DirectConversationDock`、`DirectSessionNavigation`、`AgentInspector` 的内容，各个对话框（房间设置、邀请、分享、接入 Agent）。
 - 表格新写（现在的名册是一排按钮，不是表格），数据和排序用现成的 `LobbyAgent`、`agent-attendance.ts`、`filterLobbyAgents`、谁的和是不是网络 Agent 的查询。“展开成整页”用现在名册的筛选和翻页。
 - 路由：`shared/routing/route-state.ts` 的 `LobbySearch` 多一个 `layout`，各个 `lobbySearchWith…` 都带着它；换版面用 `lobbySearchWithLayout`；`lobbySearchWithAgent` 要知道现在是哪种版面。
-- 未读：`RoomActivityStore` 现在只在对话面板关着时数未读。对话视图里对话一直看得到，按“窗口在不在前台、是不是滚在最底下”算。
+- 未读：`RoomActivityStore` 只在主房间的对话看不到时数未读。对话视图里对话多半一直看得到，看不到的只有两种时候（在私聊里、在看资料），1b 起这两种时候把条数标出来（`RoomUnreadCount`：按钮的名字不变，条数经 `aria-describedby` 读出来）。按“窗口在不在前台、是不是滚在最底下”算留到 1e。
 - 折叠和筛选是纯函数，放在 `features/conversation/domain`，输入是已经投影好的消息，带单元测试。
 - 表格和链接改 `domain/chat-markdown.ts`：多两种节点。链接只认 `http`、`https`，确认框用 `ui-system` 的对话框；桌面端经现成的“在系统浏览器里打开”。
 - 不登录的围观页（`public-watch-view.tsx`）抄了房间页的类名和样式，这一块不动它，它照旧用场景那一套样式；所以 `lobby-game.css`、`lobby-workspace.css` 里场景视图用到的不能删。
@@ -180,9 +181,10 @@
 
 ### 测试
 
-- `apps/web/e2e` 里 22 个用例打开 `lobby-scene.html`。大约 10 个断言默认看到场景、3 个点“场景 / 列表”：这些在地址里加上 `layout=scene`，别的不改。
-- 大约 12 个点底部工具栏的（邀请、接入 Agent、分享、对话、资料）：改成在对话视图里点顶栏，因为那才是人默认用的；场景视图里各留一条冒烟。
-- 共用的 `openRoomSettings`、`openDirectConversation`、`expectCompleteRosterPages` 跟着改。
+- `apps/web/e2e` 里 22 个用例打开 `lobby-scene.html`。只看场景的（画面、人物、名牌、气泡、面板放大、“场景 / 列表”、不许动态求值时的 Pixi）在地址里加上 `layout=scene`，别的不改。
+- 点底部工具栏的（邀请、接入 Agent、分享、对话、资料）：改成在对话视图里点顶栏、左栏和右栏，因为那才是人默认用的；场景视图的底部工具栏留一条冒烟（`lobby-scene.e2e.ts` 最后一条，六个按钮都点一遍）。
+- 共用的操作在 `e2e/support/workspace-navigation.ts`，两种版面、宽窄都认：`openAgentRoster`（右栏在就用右栏，不在就从顶栏打开抽屉）、`openDirectConversation`（左栏有就点左栏，没有就去抽屉里点）、`openMainRoom`（“主房间”或者“回到主房间”）。新写用例别再直接点 `View agents`。
+- 顶栏上房间名下面那一小句，对话版面里是 `.room-desk__meta` 的第一个 `span`，场景里是 `.workspace-header__identity > span`。
 - 夹具 `lobby-scene.html` 不带 `layout` 时跟应用一样：先看这台设备记着的，没有就是默认（1b 起是对话视图）。对话视图的验收在 `e2e/room-desk.e2e.ts`。
 - 无头验收（`e2e-vertical`、`e2e-live`）里走房间页的也要过一遍，在 PR 分支上派发 `suite=all`。
 - 新加浏览器验收：三种宽度下三栏、两栏、一栏；筛选；折叠和展开；表格排序和点一行；链接确认；键盘能走完顶栏、表格和输入框。
@@ -214,7 +216,7 @@
 每步一个 PR，前一步合了再做下一步。
 
 1. **1a 对话视图**：栏布局、顶栏、须知一行、右栏先放现成的紧凑名册；地址 `layout`、这台设备记着的选择；默认还是场景，从顶栏切过去。带新的浏览器验收。新写的样式只用令牌，不写死颜色、圆角和阴影。
-2. **1b 换默认**：默认改成对话视图；用例照“测试”一节改；派发 `suite=all`。
+2. **1b 换默认**：默认改成对话视图；用例照“测试”一节改；人不在主房间的对话里时标未读；派发 `suite=all`。
 3. **1c 风格**：改令牌和字体、加状态的点、收写死的样式、同步登录主题和官网。
 4. **1d Agent 表格**：右栏换成表格、“人”标签、点一行看详情、展开成整页；你自己的 Agent 标“叫得醒”。
 5. **1e 筛选和折叠**：全部 / 人说的 / 提到我的；Agent 之间的长串折起来。
@@ -249,3 +251,9 @@
   - 选中 Agent 的详情这一步就盖在右栏上（现成的 `AgentInspector`），不等 1d。
   - “对话 / 资料”两个标签先留在主栏顶上，1e 做筛选那一行时换成右边的“资料”按钮。
   - 须知先用现成的公告条（`RoomNoticeBar`），收成一行是第 4 块的事。
+- 2026-11-14 1b 做完（#798）：默认换成对话版面，改的是 `defaultRoomPageLayout` 一处。没在顶栏选过的设备打开房间就是对话；选过场景的设备照旧是场景；带 `layout` 的链接照地址。
+  - 用例照“测试”一节改了，上面那一节也照实际做的重写了。无头验收里四处原来看场景的改成看对话版面：`local-agent-room` 看新顶栏上那一小句，`room-people`、`public-room-old-keys` 看右栏的 Agent 名单，`product-closure` 点“资料”标签。`e2e-live/private-chat`（手动跑，不在 CI）看的就是场景，在地址里写明 `layout=scene`。
+  - 补了未读（原来没分到哪一步）：对话版面里人在私聊或者在看资料时，主房间来了新消息一点提示也没有，场景里底部“对话”按钮上是有条数的。默认换过来以后这就是退步，所以这一步补上，规则写在“布局”一节。英文的条数顺手分了单复数。
+  - 换默认以后验收查出一处老问题，一起改了：房间设置“成员”一节里退出、移除、封禁的人那一行靠透明度压淡，字的对比度不到 4.5:1。以前对话框盖在场景上，axe 算不出底色，一直没报。现在字用淡一档的颜色（`--ar-muted`），只有头像还用透明度。
+  - `docs/manual-mcp-hosts` 两份里“房间底部工具栏”改成“房间顶栏”。
+

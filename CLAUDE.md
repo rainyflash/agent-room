@@ -217,7 +217,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 做的时候别忘的几样：
   - 对话还是场景记在这台设备上（`localStorage`），不进账户偏好：`lobbyView` 只认 `scene`、`list`，旧版客户端读到第三个值会出错。
   - 场景视图就是现在的房间页，原样留着（地址带 `layout=scene`）；不登录的围观页抄了它的类名和样式，场景用到的样式别删。
-  - 第 1 块 1a（#796）：顶栏能换“对话 / 场景”，对话视图是 `RoomDesk`（`room-desk.tsx`、`room-desk.css`），默认还是场景，1b 才换默认。地址里的 `layout` 比这台设备记着的优先。浏览器验收用 `lobby-scene.html?layout=conversation`（`e2e/room-desk.e2e.ts`）；夹具不带 `layout` 时也看设备记着的，用例之间靠各自的浏览器上下文隔开。新写的样式只用令牌，1c 换风格时才不用再改一遍。
+  - 第 1 块 1a（#796）、1b（#798）：房间页默认是对话版面（`RoomDesk`，`room-desk.tsx`、`room-desk.css`），顶栏能换成场景；默认值是 `room-page-layout.ts` 的 `defaultRoomPageLayout`。地址里的 `layout` 比这台设备记着的优先。新写的样式只用令牌，1c 换风格时才不用再改一遍。
+    - 浏览器验收：夹具 `lobby-scene.html` 不带 `layout` 时和应用一样（先看设备记着的，没有就是对话），用例之间靠各自的浏览器上下文隔开。只看场景的用例地址里要写 `layout=scene`；对话版面的验收在 `e2e/room-desk.e2e.ts`，场景的底部工具栏只在 `lobby-scene.e2e.ts` 留了一条冒烟。
+    - 用例里开 Agent 名单、开私聊、回主房间用 `e2e/support/workspace-navigation.ts` 的 `openAgentRoster`、`openDirectConversation`、`openMainRoom`：1100px 以上名单在右栏、私聊在左栏，窄了才从顶栏的按钮打开抽屉，直接点 `View agents` 在宽屏上点不到。
+    - 人不在主房间的对话里（在私聊里、在看资料）时来了新消息，条数标在“主房间”“回到主房间”和“对话”标签上（`RoomUnreadCount`）。按钮的名字不带条数，条数在 `aria-describedby` 里，用例照 `toHaveAccessibleDescription` 查。
+    - 对话框的无障碍检查在对话版面上比在场景上严：对话框盖在场景上时 axe 算不出底色，对比度的问题报不出来（1b 就这样查出成员一节里一处对比度不够的字）。新加的对话框在对话版面上跑一遍 axe。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。
