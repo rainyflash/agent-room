@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { conversationMessages } from '@/features/conversation/domain/conversation';
 import { cursorOf, newMessagesAfter } from '@/features/conversation/domain/new-messages';
 import { conversationFixture } from '@/features/conversation/testing/conversation-fixture';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
@@ -59,5 +60,20 @@ describe('上次看到的位置以后的新消息', () => {
   it('往前补出更早的消息不改变结果', () => {
     const older = [say('older', 1, ADA), ...timeline];
     expect(newMessagesAfter(older, YOU, at('first'))).toEqual({ firstId: 'second', count: 2 });
+  });
+
+  it('同一毫秒里的两条：摆出来谁在前和读到的位置是同一种比法，读过的不会被当成新的', () => {
+    // 按码位大写字母在小写前面；按系统语言排（localeCompare）正好反过来。
+    const shown = conversationMessages([say('a-same', 60, ADA), say('B-same', 60, ADA)]);
+    expect(shown.map((message) => message.messageId)).toEqual(['B-same', 'a-same']);
+    const [earlier, later] = shown;
+    if (earlier === undefined || later === undefined) throw new Error('应该有两条。');
+    // 读到了摆在最后的那一条：前面那条也读过了。
+    expect(newMessagesAfter(shown, YOU, cursorOf(later))).toEqual({ firstId: null, count: 0 });
+    // 只读到前面那条：后面那条是新的。
+    expect(newMessagesAfter(shown, YOU, cursorOf(earlier))).toEqual({
+      firstId: 'a-same',
+      count: 1,
+    });
   });
 });

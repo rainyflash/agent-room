@@ -1122,9 +1122,10 @@ test('往上翻着时来了新消息：按钮上写几条，点了到底，“�
   });
   await expect(log.getByText('Send them to me for a read before posting.')).not.toBeInViewport();
   await page.waitForTimeout(500);
+  // 两句的时间错开：同一毫秒里来的两句谁在前要看事件编号，编号是随机的。
   await page.evaluate(() => {
     const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
-    controls.receive({ agentIndex: 2, text: 'Release notes draft is ready.' });
+    controls.receive({ agentIndex: 2, ageMs: 20, text: 'Release notes draft is ready.' });
     controls.receive({ human: true, mentionsYou: true, text: 'Can you approve the notes?' });
   });
   await expect(latest).toHaveText('2 new messages');
@@ -1179,8 +1180,12 @@ test('窗口不在前台时来的话不算看到：窗口标题上写条数，�
   expect(title).not.toMatch(/^\(/u);
 
   await setWindowFocused(page, false);
-  await receiveInMainRoom(page, 'While you were away.');
-  await receiveInMainRoom(page, 'Still away.');
+  // 两句的时间错开，谁在前才是定的。
+  await page.evaluate(() => {
+    const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
+    controls.receive({ agentIndex: 2, ageMs: 20, text: 'While you were away.' });
+    controls.receive({ agentIndex: 2, text: 'Still away.' });
+  });
   await expect(page).toHaveTitle(`(2) ${title}`);
   await expect(line).toHaveCount(1);
   await expect(line.locator('xpath=following-sibling::*[1]')).toContainText('While you were away.');
