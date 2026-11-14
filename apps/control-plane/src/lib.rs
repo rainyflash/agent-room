@@ -19,6 +19,7 @@ mod public_watch;
 mod request_regions;
 mod runtime;
 mod shutdown;
+mod sub_room_sync;
 mod telemetry_metrics;
 
 use std::{error::Error, fmt, sync::Arc, time::Duration};
@@ -159,6 +160,8 @@ struct IdentityRuntime {
     join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker,
     /// 发现页的“最近有人说话”：每 5 分钟读一次每间公开房间最新一条消息的时间。
     public_room_activity: public_room_activity::PublicRoomActivityWorker,
+    /// 父房间变了以后，子房间在聊天服务器上跟着做：请求里没做成的、来不及做的由它补上。
+    sub_room_sync: sub_room_sync::SubRoomSyncWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -301,6 +304,7 @@ pub async fn run() -> Result<(), StartupError> {
         matrix_device_retry,
         join_request_cleanup,
         public_room_activity,
+        sub_room_sync,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -331,6 +335,7 @@ pub async fn run() -> Result<(), StartupError> {
     matrix_device_retry.shutdown().await;
     join_request_cleanup.shutdown().await;
     public_room_activity.shutdown().await;
+    sub_room_sync.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -509,6 +514,7 @@ async fn build_identity_router(
             build_public_room_joins(config, &agent_dependencies)?,
         ),
         public_room_activity: start_public_room_activity(&agent_dependencies),
+        sub_room_sync: start_sub_room_sync(config, &agent_dependencies)?,
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -733,6 +739,16 @@ fn start_moderation_expiry(
 ) -> Result<moderation_expiry::ModerationExpiryWorker, StartupError> {
     Ok(moderation_expiry::ModerationExpiryWorker::start(
         build_moderation_management(config, dependencies)?,
+    ))
+}
+
+/// 子房间在聊天服务器上跟着父房间变，用自己的一份私人房间服务。
+fn start_sub_room_sync(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<sub_room_sync::SubRoomSyncWorker, StartupError> {
+    Ok(sub_room_sync::SubRoomSyncWorker::start(
+        build_private_room_service(config, dependencies)?,
     ))
 }
 

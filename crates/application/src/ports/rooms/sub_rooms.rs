@@ -160,6 +160,29 @@ pub enum SubRoomRevisionBlock {
     Unavailable,
 }
 
+/// 子房间跟着父房间变了以后，聊天服务器上还没照着做的一件事（`private_room_sub_room_sync`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubRoomSyncTask {
+    pub id: i64,
+    /// 哪一间子房间。
+    pub catalog_id: RoomCatalogId,
+    /// 这个人在这间子房间里的成员记录变了。空：这间子房间自己的事（跟着父房间归档了）。
+    pub principal: Option<PrincipalId>,
+    /// 领到的是第几版。做完只删这一版：做的时候又排进来的留着。
+    pub generation: i64,
+    /// 连这一次，一共领过几次。
+    pub attempt: u32,
+}
+
+/// 领哪些排着的事。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomSyncScope {
+    /// 不分房间：后台每一轮用。
+    Everywhere,
+    /// 只领这间房下面的子房间的：改父房间的那个请求结束前先做一遍用。
+    Under(RoomCatalogId),
+}
+
 pub trait SubRoomStore: Send + Sync {
     /// 这间房是子房间时，它的父子关系。
     fn sub_room_link(
@@ -228,4 +251,27 @@ pub trait SubRoomStore: Send + Sync {
         limit: u16,
         at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<u32>>;
+
+    /// 领一批排着的事：到了能领的时间的（没领过的、租约过了的、退避到点的），按排进来的先后，最多
+    /// `limit` 件。领到的在 `lease_until` 之前别人领不到；做到一半进程断了，过了这个时间别人接着做。
+    fn claim_sub_room_sync(
+        &self,
+        scope: SubRoomSyncScope,
+        limit: u16,
+        now: UtcMillis,
+        lease_until: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomSyncTask>>>;
+
+    /// 做完了：删掉领到的那一版。做的时候又排进来过的（版本变了，或者已经被别处做完删掉了）再排
+    /// 一次：这一处照的可能是旧样子，它之后得还有一遍照新样子做的。
+    fn complete_sub_room_sync(&self, task: SubRoomSyncTask)
+    -> PortFuture<'_, RepositoryResult<()>>;
+
+    /// 没做成：记下原因，到 `retry_at` 再试。做的时候又排进来过的不记，和做完时一样再排一次。
+    fn retry_sub_room_sync(
+        &self,
+        task: SubRoomSyncTask,
+        retry_at: UtcMillis,
+        failure_code: &'static str,
+    ) -> PortFuture<'_, RepositoryResult<()>>;
 }

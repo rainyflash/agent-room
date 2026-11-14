@@ -67,5 +67,6 @@ pub use public_join::{
 };
 pub use service::{
     PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService,
-    PrivateRoomUseCases, SubRoomUseCases,
+    PrivateRoomUseCases, SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases,
+    SubRoomUseCases,
 };

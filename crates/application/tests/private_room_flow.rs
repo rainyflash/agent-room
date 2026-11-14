@@ -11,11 +11,12 @@ use agent_room_application::{
     devices::AuthenticatedDevice,
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        Clock, IdentifierFactory, MatrixResult, MatrixRoomId, MatrixUserId, PortFuture,
-        PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
-        PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
-        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway, RoomRoleChange,
+        Clock, IdentifierFactory, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+        MatrixRoomId, MatrixUserId, PortFuture, PrincipalAgents, PrivateMatrixMembership,
+        PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription,
+        PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomTopicGateway, RoomRoleChange,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -1507,6 +1508,13 @@ struct TestMatrix {
     speaking: Mutex<BTreeMap<String, bool>>,
     room_name: Mutex<Option<String>>,
     topic: Mutex<Option<String>>,
+    /// 邀请、踢出、设发言级别、归档各落在哪间房、动的是谁。成员状态不分房间，子房间的用例靠它
+    /// 分清是哪一间。
+    changes: Mutex<Vec<(String, String)>>,
+    /// 这些房间里上面那几样一律回这个错。
+    failing: Mutex<BTreeMap<String, MatrixFailureKind>>,
+    /// 个别人在个别房间里的成员状态。设了的只认这一份，没设的照 `memberships`（不分房间）。
+    memberships_in: Mutex<BTreeMap<(String, String), PrivateMatrixMembership>>,
 }
 
 impl TestMatrix {
@@ -1518,7 +1526,104 @@ impl TestMatrix {
             speaking: Mutex::new(BTreeMap::new()),
             room_name: Mutex::new(None),
             topic: Mutex::new(None),
+            changes: Mutex::new(Vec::new()),
+            failing: Mutex::new(BTreeMap::new()),
+            memberships_in: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// 单独说这个人在这间房里的成员状态，之后这间房里对他的邀请、踢出只改这一份。
+    fn set_membership_in(
+        &self,
+        room_id: &str,
+        user_id: &MatrixUserId,
+        membership: PrivateMatrixMembership,
+    ) {
+        self.memberships_in.lock().expect("成员锁正常").insert(
+            (room_id.to_owned(), user_id.as_str().to_owned()),
+            membership,
+        );
+    }
+
+    fn membership_in(
+        &self,
+        room_id: &MatrixRoomId,
+        user_id: &MatrixUserId,
+    ) -> Option<PrivateMatrixMembership> {
+        let key = (room_id.as_str().to_owned(), user_id.as_str().to_owned());
+        let singled_out = self
+            .memberships_in
+            .lock()
+            .expect("成员锁正常")
+            .get(&key)
+            .copied();
+        singled_out.or_else(|| self.membership_of(user_id))
+    }
+
+    fn move_member(
+        &self,
+        room_id: &MatrixRoomId,
+        user_id: &MatrixUserId,
+        membership: PrivateMatrixMembership,
+    ) {
+        let key = (room_id.as_str().to_owned(), user_id.as_str().to_owned());
+        if let Some(singled_out) = self
+            .memberships_in
+            .lock()
+            .expect("成员锁正常")
+            .get_mut(&key)
+        {
+            *singled_out = membership;
+            return;
+        }
+        self.set_membership(user_id, membership);
+    }
+
+    /// 记下落在这间房里的一次改动。这间房设了出错的回那个错，什么都不改。
+    fn change(
+        &self,
+        room_id: &MatrixRoomId,
+        operation: MatrixOperation,
+        what: String,
+    ) -> MatrixResult<()> {
+        if let Some(kind) = self
+            .failing
+            .lock()
+            .expect("出错锁正常")
+            .get(room_id.as_str())
+        {
+            return Err(MatrixFailure::new(operation, *kind));
+        }
+        self.changes
+            .lock()
+            .expect("改动锁正常")
+            .push((room_id.as_str().to_owned(), what));
+        Ok(())
+    }
+
+    fn changes_in(&self, room_id: &str) -> Vec<String> {
+        self.changes
+            .lock()
+            .expect("改动锁正常")
+            .iter()
+            .filter(|(room, _)| room == room_id)
+            .map(|(_, what)| what.clone())
+            .collect()
+    }
+
+    fn clear_changes(&self) {
+        self.changes.lock().expect("改动锁正常").clear();
+    }
+
+    fn fail_in(&self, room_id: &str, kind: MatrixFailureKind) {
+        self.failing
+            .lock()
+            .expect("出错锁正常")
+            .insert(room_id.to_owned(), kind);
+    }
+
+    fn recover(&self, room_id: &str) {
+        self.failing.lock().expect("出错锁正常").remove(room_id);
     }
 
     fn creation(&self) -> Option<PrivateMatrixRoomCreation> {
@@ -1572,47 +1677,57 @@ impl PrivateRoomMatrixProvisioner for TestMatrix {
 impl PrivateRoomMatrixGateway for TestMatrix {
     fn membership<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<Option<PrivateMatrixMembership>>> {
         Box::pin(async move {
             self.record("matrix.membership");
-            Ok(self.membership_of(user_id))
+            Ok(self.membership_in(room_id, user_id))
         })
     }
 
     fn invite<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
+            self.change(
+                room_id,
+                MatrixOperation::Invite,
+                format!("invite {}", user_id.as_str()),
+            )?;
             self.record("matrix.invite");
-            self.set_membership(user_id, PrivateMatrixMembership::Invited);
+            self.move_member(room_id, user_id, PrivateMatrixMembership::Invited);
             Ok(())
         })
     }
 
     fn kick<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
+            self.change(
+                room_id,
+                MatrixOperation::Kick,
+                format!("kick {}", user_id.as_str()),
+            )?;
             self.record("matrix.kick");
-            self.set_membership(user_id, PrivateMatrixMembership::Left);
+            self.move_member(room_id, user_id, PrivateMatrixMembership::Left);
             Ok(())
         })
     }
 
     fn ban<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
             self.record("matrix.ban");
-            self.set_membership(user_id, PrivateMatrixMembership::Banned);
+            self.move_member(room_id, user_id, PrivateMatrixMembership::Banned);
             Ok(())
         })
     }
@@ -1633,11 +1748,17 @@ impl PrivateRoomMatrixGateway for TestMatrix {
 
     fn set_speaking<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         user_id: &'a MatrixUserId,
         allowed: bool,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
+            let level = if allowed { "speak.on" } else { "speak.off" };
+            self.change(
+                room_id,
+                MatrixOperation::UpdatePowerLevels,
+                format!("{level} {}", user_id.as_str()),
+            )?;
             self.record(if allowed {
                 "matrix.speak.on"
             } else {
@@ -1669,8 +1790,9 @@ impl PrivateRoomMatrixGateway for TestMatrix {
         })
     }
 
-    fn archive<'a>(&'a self, _room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
+    fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async move {
+            self.change(room_id, MatrixOperation::ArchiveRoom, "archive".to_owned())?;
             self.record("matrix.archive");
             Ok(())
         })

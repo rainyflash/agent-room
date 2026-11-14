@@ -85,7 +85,7 @@ pub use room_moderation_grants::{
 pub use sub_rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
     SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
-    SubRoomStore,
+    SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

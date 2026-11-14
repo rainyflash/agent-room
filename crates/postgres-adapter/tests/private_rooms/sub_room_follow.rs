@@ -510,7 +510,7 @@ async fn 建子房间的当口父房间变了_照现在的父房间再算一遍(
     database.close().await;
 }
 
-fn id(sub_room: &NewSubRoom) -> RoomCatalogId {
+pub(super) fn id(sub_room: &NewSubRoom) -> RoomCatalogId {
     sub_room.snapshot.catalog().id()
 }
 
@@ -519,7 +519,9 @@ fn holding<const N: usize>(capabilities: [PrivateRoomCapability; N]) -> PrivateR
 }
 
 /// 排着的成员的事：谁、第几版。
-fn waiting<const N: usize>(members: [(PrincipalId, i64); N]) -> BTreeMap<Option<PrincipalId>, i64> {
+pub(super) fn waiting<const N: usize>(
+    members: [(PrincipalId, i64); N],
+) -> BTreeMap<Option<PrincipalId>, i64> {
     members
         .into_iter()
         .map(|(principal, generation)| (Some(principal), generation))
@@ -563,7 +565,10 @@ async fn applied(pool: &PgPool, sub_room: RoomCatalogId) -> AggregateVersion {
 }
 
 /// 这间子房间排着的、聊天服务器上还没做的事：成员的按人，房间自己的那一条没有人。值是第几版。
-async fn queued(pool: &PgPool, sub_room: RoomCatalogId) -> BTreeMap<Option<PrincipalId>, i64> {
+pub(super) async fn queued(
+    pool: &PgPool,
+    sub_room: RoomCatalogId,
+) -> BTreeMap<Option<PrincipalId>, i64> {
     let rows: Vec<(Option<Uuid>, i64)> = sqlx::query_as(
         r"SELECT principal_id, generation
             FROM agent_room.private_room_sub_room_sync

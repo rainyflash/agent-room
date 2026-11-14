@@ -15,24 +15,24 @@ use agent_room_domain::{
 
 use crate::{
     authentication::AuthenticatedPrincipal,
-    persistence::RepositoryErrorKind,
+    persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, IdentifierFactory, MatrixCreateRoom, MatrixRoomAliasLocalpart, MatrixRoomId,
-        MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId, PortFuture,
-        PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
-        PrivateRoomAgentDirectory, PrivateRoomAgentEviction, PrivateRoomListingMatrix,
-        PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
-        PrivateRoomTopicGateway, SecretFactory, SubRoomStore,
+        Clock, IdentifierFactory, MatrixCreateRoom, MatrixFailure, MatrixRoomAliasLocalpart,
+        MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
+        PortFuture, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+        PrivateMatrixSpeakingAssignment, PrivateRoomAgentDirectory, PrivateRoomAgentEviction,
+        PrivateRoomListingMatrix, PrivateRoomListingStore, PrivateRoomMatrixGateway,
+        PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
+        PrivateRoomStore, PrivateRoomTopicGateway, SecretFactory, SubRoomStore,
     },
 };
 
 use super::{
     ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
     InspectPrivateRoom, InviteByLink, InvitePrivateRoomMember, ListPrivateRooms,
-    ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomFailureKind,
-    PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
-    RenamePrivateRoom, TransferPrivateRoomOwnership,
+    ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomFailure,
+    PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
+    PrivateRoomOrigin, PrivateRoomResult, RenamePrivateRoom, TransferPrivateRoomOwnership,
     failure::{domain, failure, matrix, repository},
 };
 
@@ -41,10 +41,12 @@ mod public_creation;
 mod public_transfer;
 mod role_changes;
 mod sub_room_membership;
+mod sub_room_sync;
 mod sub_rooms;
 
 use public_creation::{ensure_public_creator, limit_reached};
 use role_changes::role_changes;
+pub use sub_room_sync::{SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases};
 pub use sub_rooms::SubRoomUseCases;
 use sub_rooms::{ensure_not_sub_room, ensure_parent_room};
 
@@ -554,6 +556,7 @@ impl PrivateRoomService {
             OPERATION,
         )
         .await?;
+        self.sync_sub_rooms_under(&snapshot).await;
         replace_room(snapshot, room, OPERATION)
     }
 
@@ -603,6 +606,7 @@ impl PrivateRoomService {
         .await?;
         self.save_if_changed(snapshot.room(), &room, actor, changed, operation)
             .await?;
+        self.sync_sub_rooms_under(&snapshot).await;
         replace_room(snapshot, room, operation)
     }
 
@@ -653,6 +657,7 @@ impl PrivateRoomService {
         .await?;
         self.save_if_changed(snapshot.room(), &room, actor, changed, operation)
             .await?;
+        self.sync_sub_rooms_under(&snapshot).await;
         replace_room(snapshot, room, operation)
     }
 
@@ -804,6 +809,7 @@ impl PrivateRoomService {
                 }
             }
         }
+        self.sync_sub_rooms_under(&snapshot).await;
         replace_room(snapshot, room, OPERATION)
     }
 
@@ -891,6 +897,7 @@ impl PrivateRoomService {
             self.set_speaking(&matrix_room, &actor_matrix, true, OPERATION)
                 .await?;
         }
+        self.sync_sub_rooms_under(&snapshot).await;
         replace_room(snapshot, room, OPERATION)
     }
 
@@ -955,6 +962,7 @@ impl PrivateRoomService {
             .map_err(|error| matrix(operation, error))?;
         self.save_if_changed(snapshot.room(), &room, owner, changed, operation)
             .await?;
+        self.sync_sub_rooms_under(&snapshot).await;
         replace_room(snapshot, room, operation)
     }
 
@@ -1273,17 +1281,29 @@ impl PrivateRoomService {
         change: MemberAgentChange,
         operation: &'static str,
     ) -> PrivateRoomResult<()> {
+        self.member_agents_follow(matrix_room, principal_id, change)
+            .await
+            .map_err(|trouble| trouble.failure(operation))
+    }
+
+    /// 上面那件事本身，出错时照原样说卡在哪：后台替子房间跟着做时要记下聊天服务器回的是哪一种错。
+    async fn member_agents_follow(
+        &self,
+        matrix_room: &MatrixRoomId,
+        principal_id: PrincipalId,
+        change: MemberAgentChange,
+    ) -> Result<(), MemberAgentTrouble> {
         let agents = self
             .agents
             .agent_matrix_users(principal_id)
             .await
-            .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?;
+            .map_err(MemberAgentTrouble::Directory)?;
         for agent in &agents {
             let membership = self
                 .matrix
                 .membership(matrix_room, agent)
                 .await
-                .map_err(|error| matrix(operation, error))?;
+                .map_err(MemberAgentTrouble::Matrix)?;
             // 只处理确实在房间里（已加入或受邀）的 Agent，不给无关用户写进权限表。
             if !matches!(
                 membership,
@@ -1297,7 +1317,7 @@ impl PrivateRoomService {
                 }
                 MemberAgentChange::Evict => self.matrix.kick(matrix_room, agent).await,
             }
-            .map_err(|error| matrix(operation, error))?;
+            .map_err(MemberAgentTrouble::Matrix)?;
         }
         Ok(())
     }
@@ -1314,6 +1334,7 @@ impl PrivateRoomService {
         if request.actor.principal_id == request.target_principal_id {
             self.set_speaking(matrix_room, target_matrix, true, operation)
                 .await?;
+            self.sync_sub_rooms_under(&snapshot).await;
             return Ok(snapshot);
         }
         let former_matches = snapshot
@@ -1345,6 +1366,8 @@ impl PrivateRoomService {
             )
             .await?;
         }
+        // 上一次转让存好了、后面没走完的：子房间那边也补一遍。
+        self.sync_sub_rooms_under(&snapshot).await;
         Ok(snapshot)
     }
 }
@@ -1679,4 +1702,22 @@ fn replace_room(
 enum MemberAgentChange {
     Speak(bool),
     Evict,
+}
+
+/// 让成员名下的 Agent 跟着变时卡在哪：查他名下的 Agent，还是动聊天服务器。
+#[derive(Debug)]
+enum MemberAgentTrouble {
+    Directory(RepositoryError),
+    Matrix(MatrixFailure),
+}
+
+impl MemberAgentTrouble {
+    const fn failure(&self, operation: &'static str) -> PrivateRoomFailure {
+        match self {
+            Self::Directory(error) => {
+                repository(operation, PrivateRoomFailureStage::Directory, error)
+            }
+            Self::Matrix(error) => matrix(operation, *error),
+        }
+    }
 }
