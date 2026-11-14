@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -164,5 +164,59 @@ describe('消息里被点名的人', () => {
     cleanup();
     await i18n.changeLanguage('zh-CN');
     expect(renderMentions(new Map())).toHaveTextContent('@某位成员');
+  });
+});
+
+describe('回复的是哪句', () => {
+  const reply: RoomMessageSignal = {
+    ...message,
+    messageId: '01990d9e-8400-7000-8000-000000000005',
+    matrixEventId: '$reply',
+    relation: { kind: 'reply', targetMessageId: message.messageId },
+  };
+
+  function renderReply(parent: RoomMessageSignal | undefined, onJump?: (id: string) => void) {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ConversationMessage
+          editable
+          message={reply}
+          names={new Map()}
+          onReply={vi.fn()}
+          {...(onJump === undefined ? {} : { onJump })}
+          own={false}
+          parent={parent}
+          time={new Intl.DateTimeFormat('en', { timeStyle: 'short' })}
+        />
+      </I18nextProvider>,
+    );
+  }
+  const quoteName = 'Rainy: Please review the release notes.';
+
+  it('能跳的时候是个按钮，点了说要去哪一句', () => {
+    const jump = vi.fn();
+    renderReply(message, jump);
+    const quote = screen.getByRole('button', { name: quoteName });
+    expect(quote).toHaveAttribute('title', 'Go to this message');
+    fireEvent.click(quote);
+    expect(jump).toHaveBeenCalledExactlyOnceWith(message.messageId);
+  });
+
+  it('不给跳的办法就只是一行字', () => {
+    renderReply(message);
+    expect(screen.getByText(quoteName)).toBeVisible();
+    expect(screen.queryByRole('button', { name: quoteName })).not.toBeInTheDocument();
+  });
+
+  it('那一句没加载到、撤回了：写“更早的消息”，没有按钮', () => {
+    const jump = vi.fn();
+    renderReply(undefined, jump);
+    expect(screen.getByText('Earlier message')).toBeVisible();
+    expect(screen.queryByTitle('Go to this message')).not.toBeInTheDocument();
+    cleanup();
+
+    renderReply({ ...message, lifecycle: 'redacted' }, jump);
+    expect(screen.getByText('Earlier message')).toBeVisible();
+    expect(screen.queryByTitle('Go to this message')).not.toBeInTheDocument();
   });
 });

@@ -265,6 +265,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 对话版面里没有“对话 / 资料”标签了：`MessageLayer` 给了 `onViewChange` 就在顶上那一行放“资料”，看资料时顶上是“回到对话”；提示和公告经 `notices` 挂在那一行下面。场景里的面板照旧用 `WorkspaceViewTabs`。
     - 夹具 `lobby-scene.html`：`&chatter` 是一段有人有 Agent 的对话，`&unfolded` 是这台设备关掉了折叠。`&history` 的消息都是 Agent 说的，默认几句一折：数条数、认某一条消息的用例带上 `&unfolded`。折着以后内容矮，进房间自动往前补的页数会变多。
     - 私聊在主栏里是另一块（`DirectConversationDock`），在私聊里主房间那一块是 `hidden`：浏览器验收里找私聊的东西从 `.room-desk__main` 找。
+  - 第 1 块 1e 的第二个 PR（#804）：按窗口在不在前台算看到、“新消息”那条线、回到最新的按钮上写条数、点回复的那句跳过去。
+    - 算“看到了最新的”要三样都在：对话在眼前、窗口在前台、滚在最底下（`ConversationPanel` 的 `markLatestDisplayed`）。窗口在不在前台只问 `shared/browser/window-foreground.ts` 的 `windowInForeground`（看得见而且有焦点），别再各写各的 `document.hasFocus()`。
+    - 账户偏好里读到的位置还在路上（账户没认出来、还在同步）时，面板看到了最底下也不记“读到这儿了”（`cursorSettled`）。别去掉：不等的话，新打开的设备先把别处同步下来的位置盖过去，“新消息”那条线就画不出来。
+    - 线的位置：没看到过最底下时跟着读到的位置；第一次看到底时定下来；再来一批没看到的才挪；你说了话撤掉（`anchor`、`seenThrough`）。看到底以后线留着是有意的，别改成一看到就消失。
+    - `RoomActivityStore.away` 是“对话在眼前、窗口却不在前台”时来的条数，只写在窗口标题上（`useUnreadTitle`）；页面里标的条数还是 `unread`，别把两个加在一起标到按钮上。
+    - 跳到回复的那句是面板自己记的（`jump`），和外面指着的那条（`focusMessageId`）分开：外面换了一条、说了话、换了“只看”、点了回到最新，都把它清掉。日期和“新消息”线画在消息的框外面（并排的两块），所以找“线下面那一条”用后一个兄弟节点。
+    - 浏览器验收里换配色用 `room-desk.e2e.ts` 的 `useColorScheme`，别直接 `emulateMedia`：它等到颜色过渡一个都不剩。#803 派发的 `suite=all` 就红在“认得出的记号”那一条上，换成夜间以后马上查对比度，顶栏的按钮还在半路（CI 上重试过了也算红）。
+    - Safari 点按钮不给它焦点：浏览器验收里要看“点了以后焦点在哪儿”，先 `focus()` 再按回车。Playwright 里每一页都当自己有焦点，窗口不在前台要自己装（`room-desk.e2e.ts` 的 `setWindowFocused`）。
+    - jsdom 不排版：面板量不出高度就不算看到。单元测试里要看“看到了最底下”，先给对话那一块一个高度（`conversation-panel-scope.spec.tsx` 的 `layout`），焦点用 `vi.spyOn(document, 'hasFocus')`；不在 `.tsx` 里的浏览器用例文件头上要写 `// @vitest-environment jsdom`。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。

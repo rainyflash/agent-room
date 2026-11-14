@@ -51,14 +51,58 @@ describe('房间发言与未读生命周期', () => {
     const detach = fixture.activity.subscribe(() => undefined);
     fixture.publish([presenceMessage('incoming')]);
     vi.advanceTimersByTime(roomSpeechLifetimeMs);
-    expect(fixture.activity.getSnapshot()).toEqual({ recent: [], unread: 1 });
+    expect(fixture.activity.getSnapshot()).toEqual({ recent: [], unread: 1, away: 0 });
     fixture.publish([presenceMessage('incoming', { lifecycle: 'redacted' })]);
-    expect(fixture.activity.getSnapshot()).toEqual({ recent: [], unread: 0 });
+    expect(fixture.activity.getSnapshot()).toEqual({ recent: [], unread: 0, away: 0 });
     fixture.publish([presenceMessage('another', { serverTimestamp: Date.now() })]);
     expect(vi.getTimerCount()).toBe(1);
     detach();
     expect(vi.getTimerCount()).toBe(0);
     expect(fixture.detachSource).toHaveBeenCalledOnce();
+  });
+
+  it('对话在眼前、窗口不在前台时来的话另记一个数，回到前台就清掉', () => {
+    const fixture = activityFixture([presenceMessage('history')]);
+    const detach = fixture.activity.subscribe(() => undefined);
+    fixture.activity.setVisible(true);
+    // 在前台看着：来了就看到了。
+    fixture.publish([presenceMessage('history'), presenceMessage('seen')]);
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 0, away: 0 });
+
+    fixture.activity.setForeground(false);
+    fixture.publish([
+      presenceMessage('history'),
+      presenceMessage('seen'),
+      presenceMessage('while-away'),
+      presenceMessage('own', { actor: { ...guestActor, ...selfIdentity } }),
+    ]);
+    // 你自己（在别的设备上）说的不算。
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 0, away: 1 });
+    // 撤回了的不再数。
+    fixture.publish([
+      presenceMessage('history'),
+      presenceMessage('seen'),
+      presenceMessage('while-away', { lifecycle: 'redacted' }),
+      presenceMessage('another'),
+    ]);
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 0, away: 1 });
+
+    fixture.activity.setForeground(true);
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 0, away: 0 });
+    detach();
+  });
+
+  it('对话不在眼前时照旧记在没读里，不管窗口在不在前台；回到前台不清它', () => {
+    const fixture = activityFixture([]);
+    const detach = fixture.activity.subscribe(() => undefined);
+    fixture.activity.setForeground(false);
+    fixture.publish([presenceMessage('incoming')]);
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 1, away: 0 });
+    fixture.activity.setForeground(true);
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 1, away: 0 });
+    fixture.activity.setVisible(true);
+    expect(fixture.activity.getSnapshot()).toMatchObject({ unread: 0, away: 0 });
+    detach();
   });
 
   it('编辑不重复计数，补入旧历史不冒充新消息', () => {

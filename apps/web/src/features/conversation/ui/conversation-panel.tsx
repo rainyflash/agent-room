@@ -23,6 +23,7 @@ import { RoomNoticeChangeLine } from '@/features/room-notice/ui/room-notice-chan
 import { agentRunFoldingEnabled, rememberAgentRunFolding } from '../application/agent-run-folding';
 import { withNoticeChanges } from '../domain/conversation-entries';
 import { foldAgentRuns, type ConversationItem } from '../domain/conversation-folds';
+import { cursorOf, newMessagesAfter } from '../domain/new-messages';
 import {
   conversationScopes,
   scopeConversation,
@@ -46,7 +47,12 @@ import type { MessageSubmissionIdFactory } from '@/features/messages/adapters/br
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { TypingNotifier } from '@/features/conversation/domain/typing';
 import { mentionsAccount, type RoomMessageSignal } from '@/features/messages/domain/message';
+import {
+  compareCursors,
+  type ReadingCursor,
+} from '@/features/personal-workspace/domain/workspace-document';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
+import { onWindowForegroundChange, windowInForeground } from '@/shared/browser/window-foreground';
 import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
 import { useReceptionEvidence } from '@/features/desktop/ui/reception-evidence-context';
 import { conversationDeliveries } from '../domain/message-delivery';
@@ -101,7 +107,7 @@ export function ConversationPanel({
   active = true,
   history,
   onLoadOlder,
-  focusMessageId = null,
+  focusMessageId: linkedMessageId = null,
   onLatestDisplayed,
   messages,
   participants = emptyParticipants,
@@ -128,6 +134,15 @@ export function ConversationPanel({
   const composer = useConversationComposer(publisher, roomId, submissionIds);
   const self = composer.publication.context.identity;
   const selfId = self?.matrixUserId ?? null;
+  // 要去看的那一条：外面指着的（收件箱、查找、地址），或者人点了“回复的是哪句”要跳过去的。
+  // 后点的算数；外面换了一条，跳过去的那条就作废。`turn` 让同一句点第二次也再跳一次。
+  const [jump, setJump] = useState<{ readonly id: string; readonly turn: number } | null>(null);
+  const [linked, setLinked] = useState(linkedMessageId);
+  if (linked !== linkedMessageId) {
+    setLinked(linkedMessageId);
+    setJump(null);
+  }
+  const focusMessageId = jump?.id ?? linkedMessageId;
   const timeline = useMemo(() => conversationMessages(messages), [messages]);
   const messagesById = useMemo(
     () => new Map(messages.map((message) => [message.messageId, message])),
@@ -145,6 +160,8 @@ export function ConversationPanel({
   if (seenOwn !== latestOwn) {
     setSeenOwn(latestOwn);
     if (latestOwn !== null && scope === 'addressed') setScope('all');
+    // 说了话就是回到了最新，跳过去看的那一句不再标着。
+    if (latestOwn !== null) setJump(null);
   }
   const visibleTimeline = useMemo(
     () =>
@@ -199,7 +216,8 @@ export function ConversationPanel({
     if (openFolds.get(focusedFold.key) !== true)
       setOpenFolds(new Map(openFolds).set(focusedFold.key, true));
   }
-  const workspace = usePersonalWorkspace()?.snapshot.index;
+  const personal = usePersonalWorkspace();
+  const workspace = personal?.snapshot.index;
   const readCursor = workspace?.read.get(roomId);
   const acknowledged = workspace?.acknowledged ?? noAcknowledged;
   const addressedUnread = useMemo(
@@ -240,16 +258,43 @@ export function ConversationPanel({
   });
   const markRead = position.markRead;
   const [unseen, setUnseen] = useState(false);
+  // “新消息”那条线画在哪儿：它后面别人说的算新的。人还没看到过最底下时，线跟着读到的位置走
+  // （别的设备上读了、刚同步下来的也算）；看到底的那一刻定下来，之后读到的位置往前走，线留在
+  // 原处，人看得出是从哪儿开始的。再来一批没看到的，挪到上一次看到底时最新的那一条后面；
+  // 你说了话就撤掉。
+  const [anchor, setAnchor] = useState<{ readonly after: ReadingCursor | null } | null>(null);
+  const newAfter = anchor === null ? (readCursor ?? null) : anchor.after;
+  // 读到的位置还在路上：账户没认出来，或者别的设备上读到哪儿还没同步下来。
+  const cursorSettled =
+    personal === null ||
+    (personal.snapshot.accountId !== null && personal.snapshot.status !== 'loading');
+  const cursorAtHand = useRef(readCursor);
+  useLayoutEffect(() => {
+    cursorAtHand.current = readCursor;
+  });
+  // 眼下这一批新消息看到底了没有；`seenThrough` 是上一次看到底时最新的那一条。
+  const [caughtUp, setCaughtUp] = useState(false);
+  const caughtUpNow = useRef(false);
+  const seenThrough = useRef<ReadingCursor | null>(null);
+  const fresh = useMemo(
+    () => newMessagesAfter(timeline, selfId, newAfter),
+    [timeline, selfId, newAfter],
+  );
+  // 正在筛、查找时不画线，按钮上也不写条数：数的是整个对话里的，眼前这几条里不一定有。
+  const lineBefore = filtered ? null : fresh.firstId;
+  const waiting = caughtUp || filtered ? 0 : fresh.count;
   const focusedMessage = useRef<HTMLDivElement>(null);
   const focusAvailable = visibleTimeline.some((message) => message.messageId === focusMessageId);
-  const latestEvent = timeline.at(-1)?.matrixEventId;
+  const latestEvent = latestMessage?.matrixEventId;
   const displayedEvent = useRef<string | null>(null);
+  // 人此刻看着最新的那一条：对话在眼前、窗口在前台、滚在最底下。看着才算看过、读到。
   const markLatestDisplayed = useCallback((): void => {
     const element = timelineElement.current;
     if (
       !active ||
       state !== 'ready' ||
-      document.visibilityState === 'hidden' ||
+      !windowInForeground() ||
+      latestMessage === undefined ||
       latestEvent === undefined ||
       filtered ||
       position.missing ||
@@ -263,9 +308,21 @@ export function ConversationPanel({
       displayedEvent.current = latestEvent;
       onLatestDisplayed?.(latestEvent);
     }
+    seenThrough.current = cursorOf(latestMessage);
+    if (!caughtUpNow.current) {
+      caughtUpNow.current = true;
+      setCaughtUp(true);
+    }
+    // 读到的位置还在路上时先不记“读到这儿了”：等它到了，线定在那以前读到的位置上，再往前挪。
+    // 不等的话，这台设备刚打开就把别处同步下来的位置盖过去，线就没处画了。
+    if (!cursorSettled) return;
+    const before = cursorAtHand.current ?? null;
+    setAnchor((current) => current ?? { after: before });
     markRead();
   }, [
     active,
+    cursorSettled,
+    latestMessage,
     latestEvent,
     onLatestDisplayed,
     state,
@@ -277,22 +334,46 @@ export function ConversationPanel({
   useEffect(() => {
     const element = timelineElement.current;
     if (!active) return;
-    if (following.current && element !== null && focusMessageId === null) {
+    // 外面指着某一条时不跟着新消息走；人自己跳过去看的那一句不拦，他滚回底下就接着跟。
+    if (following.current && element !== null && linkedMessageId === null) {
       element.scrollTop = element.scrollHeight;
     } else if (latestEvent !== undefined) setUnseen(true);
-  }, [active, latestEvent, focusMessageId]);
+  }, [active, latestEvent, linkedMessageId]);
   useEffect(() => {
     markLatestDisplayed();
-    document.addEventListener('visibilitychange', markLatestDisplayed);
-    return () => {
-      document.removeEventListener('visibilitychange', markLatestDisplayed);
-    };
+    // 窗口回到前台、标签页重新看得见时再看一眼：不在前台那阵子来的话这时才算看到。
+    return onWindowForegroundChange(markLatestDisplayed);
   }, [markLatestDisplayed]);
+  // 来了新的一条：没看着的话，从上一次看到底的地方起算新的一批。要排在上面那个后面，
+  // 看着的时候上面已经把它记成看过了。
+  const arrived = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (latestMessage === undefined || arrived.current === latestMessage.messageId) return;
+    const opening = arrived.current === undefined;
+    arrived.current = latestMessage.messageId;
+    // 打开时就在的：线照读到的位置画，不动。
+    if (opening) return;
+    if (latestMessage.actor.matrixUserId === selfId) {
+      setAnchor({ after: null });
+      return;
+    }
+    if (
+      seenThrough.current !== null &&
+      compareCursors(cursorOf(latestMessage), seenThrough.current) <= 0
+    )
+      return;
+    if (caughtUpNow.current) {
+      caughtUpNow.current = false;
+      setCaughtUp(false);
+      setAnchor({ after: seenThrough.current });
+    }
+  }, [latestMessage, selfId]);
+  const jumpTurn = jump?.turn ?? 0;
   useEffect(() => {
     if (!active || focusMessageId === null || focusedMessage.current === null) return;
     focusedMessage.current.scrollIntoView({ block: 'center' });
     focusedMessage.current.focus({ preventScroll: true });
-  }, [active, focusMessageId, focusAvailable]);
+  }, [active, focusMessageId, focusAvailable, jumpTurn]);
   // 换了“只看”：从最新的那条看起。回到“全部”时也是，等于点了一次“回到最新”。
   const shownScope = useRef(scope);
   useLayoutEffect(() => {
@@ -408,52 +489,66 @@ export function ConversationPanel({
     else if (bottomDistance.current !== null)
       element.scrollTop = element.scrollHeight - bottomDistance.current;
   }, [active, focusMessageId, timeline, noticeChanges]);
+  // 日期和“新消息”那两种线放在这条消息的框外面：标出要去看的那一条时只框住它自己。
   const renderMessage = (message: RoomMessageSignal, separator: ReactNode): ReactNode => (
-    <div
-      key={message.messageId}
-      data-conversation-message-id={message.messageId}
-      data-focused={message.messageId === focusMessageId}
-      tabIndex={-1}
-      ref={message.messageId === focusMessageId ? focusedMessage : undefined}
-    >
+    <Fragment key={message.messageId}>
       {separator}
-      <ConversationMessage
-        delivery={deliveries.get(message.messageId) ?? []}
-        expanded={
-          filter.text !== '' ||
-          (expansions.get(message.messageId) ?? message.messageId === focusMessageId)
-        }
-        onExpandedChange={(expanded) => {
-          setExpansions((current) => new Map(current).set(message.messageId, expanded));
-        }}
-        message={message}
-        parent={
-          message.relation === undefined
-            ? undefined
-            : messagesById.get(message.relation.targetMessageId)
-        }
-        names={names}
-        time={time}
-        editable={canEdit}
-        own={message.actor.matrixUserId === selfId}
-        mentioned={selfId !== null && mentionsAccount(message, selfId)}
-        onReply={(target) => {
-          composer.respond(target);
-          input.current?.focus();
-        }}
-      />
-      {topicMessageIds.has(message.messageId) ? (
-        <button
-          type="button"
-          className="conversation-topic-link"
-          onClick={() => {
-            following.current = false;
-            setFilter({ ...emptyConversationFilter, topic: message.messageId });
+      <div
+        data-conversation-message-id={message.messageId}
+        data-focused={message.messageId === focusMessageId}
+        tabIndex={-1}
+        ref={message.messageId === focusMessageId ? focusedMessage : undefined}
+      >
+        <ConversationMessage
+          delivery={deliveries.get(message.messageId) ?? []}
+          expanded={
+            filter.text !== '' ||
+            (expansions.get(message.messageId) ?? message.messageId === focusMessageId)
+          }
+          onExpandedChange={(expanded) => {
+            setExpansions((current) => new Map(current).set(message.messageId, expanded));
           }}
-        >
-          {t('history.viewTopic')}
-        </button>
-      ) : null}
+          message={message}
+          parent={
+            message.relation === undefined
+              ? undefined
+              : messagesById.get(message.relation.targetMessageId)
+          }
+          names={names}
+          time={time}
+          editable={canEdit}
+          own={message.actor.matrixUserId === selfId}
+          mentioned={selfId !== null && mentionsAccount(message, selfId)}
+          onReply={(target) => {
+            composer.respond(target);
+            input.current?.focus();
+          }}
+          onJump={(targetId) => {
+            // 被回复的那句多半不在查找、筛出来的那几条里：都放开，回到完整的对话。
+            setFilter(emptyConversationFilter);
+            setSearchOpen(false);
+            setScope('all');
+            setJump((current) => ({ id: targetId, turn: (current?.turn ?? 0) + 1 }));
+          }}
+        />
+        {topicMessageIds.has(message.messageId) ? (
+          <button
+            type="button"
+            className="conversation-topic-link"
+            onClick={() => {
+              following.current = false;
+              setFilter({ ...emptyConversationFilter, topic: message.messageId });
+            }}
+          >
+            {t('history.viewTopic')}
+          </button>
+        ) : null}
+      </div>
+    </Fragment>
+  );
+  const newLine = (
+    <div className="conversation-new" role="separator" aria-label={t('conversation.newLine')}>
+      <span aria-hidden="true">{t('conversation.newLine')}</span>
     </div>
   );
   return (
@@ -484,6 +579,7 @@ export function ConversationPanel({
                   onClick={() => {
                     if (value === scope) return;
                     setScope(value);
+                    setJump(null);
                     position.latest();
                     setUnseen(false);
                   }}
@@ -568,6 +664,7 @@ export function ConversationPanel({
             type="button"
             onClick={() => {
               setFilter(emptyConversationFilter);
+              setJump(null);
               position.latest();
               requestAnimationFrame(() => {
                 if (timelineElement.current)
@@ -660,14 +757,41 @@ export function ConversationPanel({
                 </div>
               );
             }
-            if (item.kind === 'message') return renderMessage(item.message, separator);
+            if (item.kind === 'message')
+              return renderMessage(
+                item.message,
+                item.message.messageId === lineBefore ? (
+                  <>
+                    {separator}
+                    {newLine}
+                  </>
+                ) : (
+                  separator
+                ),
+              );
             const open = openFolds.get(item.key) ?? false;
+            // 新消息从这一串里的哪一句起：折着的时候，或者就是第一句，线画在这一行上面；
+            // 展开了、又是中间的某一句，线画在那一句上面。
+            const newIndex =
+              lineBefore === null
+                ? -1
+                : item.messages.findIndex((message) => message.messageId === lineBefore);
+            const lineAbove = newIndex === 0 || (newIndex > 0 && !open);
             return (
               <Fragment key={`fold:${item.key}`}>
                 <ConversationFoldRow
                   fold={item}
                   open={open}
-                  separator={separator}
+                  separator={
+                    lineAbove ? (
+                      <>
+                        {separator}
+                        {newLine}
+                      </>
+                    ) : (
+                      separator
+                    )
+                  }
                   onToggle={() => {
                     setOpenFolds((current) => new Map(current).set(item.key, !open));
                     // 这一串在最下面那几句的上面：展开、收起以后人多半不在底下了，重新看一眼，
@@ -680,7 +804,11 @@ export function ConversationPanel({
                     });
                   }}
                 />
-                {open ? item.messages.map((message) => renderMessage(message, null)) : null}
+                {open
+                  ? item.messages.map((message, at) =>
+                      renderMessage(message, at > 0 && at === newIndex ? newLine : null),
+                    )
+                  : null}
               </Fragment>
             );
           })}
@@ -693,13 +821,14 @@ export function ConversationPanel({
               const element = timelineElement.current;
               if (element !== null) element.scrollTop = element.scrollHeight;
               following.current = true;
+              setJump(null);
               position.latest();
               setUnseen(false);
               markLatestDisplayed();
             }}
           >
             <ArrowDown aria-hidden="true" />
-            {t('conversation.latest')}
+            {waiting > 0 ? t('conversation.newCount', { count: waiting }) : t('history.latest')}
           </button>
         ) : null}
       </div>
