@@ -271,6 +271,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 线的位置：没看到过最底下时跟着读到的位置；第一次看到底时定下来；再来一批没看到的才挪；你说了话撤掉（`anchor`、`seenThrough`）。看到底以后线留着是有意的，别改成一看到就消失。
     - `RoomActivityStore.away` 是“对话在眼前、窗口却不在前台”时来的条数，只写在窗口标题上（`useUnreadTitle`）；页面里标的条数还是 `unread`，别把两个加在一起标到按钮上。
     - 跳到回复的那句是面板自己记的（`jump`），和外面指着的那条（`focusMessageId`）分开：外面换了一条、说了话、换了“只看”、点了回到最新，都把它清掉。日期和“新消息”线画在消息的框外面（并排的两块），所以找“线下面那一条”用后一个兄弟节点。
+    - 时间线上谁在前（`conversationMessages`）和读到的位置（`compareCursors`）是同一种比法：先看时间，同一毫秒再按事件编号的码位（#805）。别用 `localeCompare` 排消息：它看系统语言，大小写的先后和码位不一样，同一毫秒里读过的那条会被算成新的。浏览器验收里一次 `receive` 好几句、又要看谁在前时，用 `ageMs` 把时间错开：夹具的事件编号是随机的，同一毫秒里谁在前不一定（#804 合并后本机整套跑时“新消息”线那一条红过一次）。
     - 浏览器验收里换配色用 `room-desk.e2e.ts` 的 `useColorScheme`，别直接 `emulateMedia`：它等到颜色过渡一个都不剩。#803 派发的 `suite=all` 就红在“认得出的记号”那一条上，换成夜间以后马上查对比度，顶栏的按钮还在半路（CI 上重试过了也算红）。
     - Safari 点按钮不给它焦点：浏览器验收里要看“点了以后焦点在哪儿”，先 `focus()` 再按回车。Playwright 里每一页都当自己有焦点，窗口不在前台要自己装（`room-desk.e2e.ts` 的 `setWindowFocused`）。
     - jsdom 不排版：面板量不出高度就不算看到。单元测试里要看“看到了最底下”，先给对话那一块一个高度（`conversation-panel-scope.spec.tsx` 的 `layout`），焦点用 `vi.spyOn(document, 'hasFocus')`；不在 `.tsx` 里的浏览器用例文件头上要写 `// @vitest-environment jsdom`。

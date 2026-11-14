@@ -1,4 +1,7 @@
 import type { MessageRelation, RoomMessageSignal } from '@/features/messages/domain/message';
+import { compareCursors } from '@/features/personal-workspace/domain/workspace-document';
+
+import { cursorOf } from './new-messages';
 
 export type ConversationMessage = {
   readonly attachmentName?: string;
@@ -68,15 +71,16 @@ export function validAttachmentName(name: string): boolean {
 export function conversationMessages(
   messages: readonly RoomMessageSignal[],
 ): readonly RoomMessageSignal[] {
-  return messages
-    .filter(
-      (message) => message.lifecycle === 'active' && message.preview?.conversation !== undefined,
-    )
-    .toSorted(
-      (left, right) =>
-        left.serverTimestamp - right.serverTimestamp ||
-        left.matrixEventId.localeCompare(right.matrixEventId),
-    );
+  return (
+    messages
+      .filter(
+        (message) => message.lifecycle === 'active' && message.preview?.conversation !== undefined,
+      )
+      // 先后和“读到的位置”用同一种比法（先看时间，同一毫秒再按事件编号的码位）：摆出来谁在前、
+      // 算“读到哪儿以后是新的”要是一回事，不然同一毫秒里的两条，读过的那条会被当成新的。
+      // 别换成 `localeCompare`：它看系统语言，大小写字母的先后和码位不一样。
+      .toSorted((left, right) => compareCursors(cursorOf(left), cursorOf(right)))
+  );
 }
 
 export function replyRelation(message: Pick<RoomMessageSignal, 'messageId'>): MessageRelation {
