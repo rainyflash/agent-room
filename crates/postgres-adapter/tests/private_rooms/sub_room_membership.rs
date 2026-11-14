@@ -333,7 +333,7 @@ async fn 名字和用途一起改_撞了别的子房间不写_归档了的改不
 }
 
 /// 照用例的做法把一个人记进没有门的子房间：读房间、记成已加入、交给存储。回存储说的记没记上。
-async fn enter(
+pub(super) async fn enter(
     repositories: &PostgresRepositories,
     parent: RoomCatalogId,
     sub_room: RoomCatalogId,
@@ -360,7 +360,7 @@ async fn enter(
 }
 
 /// 直接改存着的一间房再存：退出、移出、封禁这些走的是私人房间自己的保存。
-async fn change(
+pub(super) async fn change(
     repositories: &PostgresRepositories,
     catalog: RoomCatalogId,
     at: UtcMillis,

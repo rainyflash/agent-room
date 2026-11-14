@@ -1330,6 +1330,14 @@ impl SubRoomStore for MemoryRooms {
             Ok(true)
         })
     }
+
+    fn follow_stale_sub_rooms(
+        &self,
+        _limit: u16,
+        _at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u32>> {
+        Box::pin(async { Ok(0) })
+    }
 }
 
 impl PrivateRoomStore for MemoryRooms {
