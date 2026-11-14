@@ -628,9 +628,12 @@ async fn finalize_local(
     }
     // 申请进公开房间时留的话、交给 Agent 管房间时写的规则跟着账户删掉（隐私说明页）。Agent 照规则动手时
     // 写下的理由跟着授权删（`moderation_action_agent` 和 `moderation_action_agent_reversal` 的外键）。
+    // 他在别人的子房间里已经记成移出，子房间管理员的记录跟着删（存房间时也是这样：管理员得是里面
+    // 已加入的人）。
     for statement in [
         r"DELETE FROM agent_room.private_room_join_request WHERE requester_principal_id = $1",
         r"DELETE FROM agent_room.room_moderation_grant WHERE granted_by = $1",
+        r"DELETE FROM agent_room.private_room_sub_room_manager WHERE principal_id = $1",
     ] {
         sqlx::query(statement)
             .bind(claim.principal_id.as_uuid())
@@ -738,6 +741,22 @@ async fn archive_private_rooms(
           SET status = 'archived', name = 'Deleted room', description = '',
               updated_at = to_timestamp($2::double precision / 1000.0)
           WHERE owner_principal_id = $1 AND kind = 'private_room'",
+    )
+    .bind(principal_id.as_uuid())
+    .bind(changed_at)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    // 他的房间下面的子房间房主也是他，上面两句已经一起归档了；这里补上子房间那张表里的归档时间和
+    // 原因（跟着父房间），名字一起让出来。
+    sqlx::query(
+        r"UPDATE agent_room.private_room_parent AS link
+          SET archived_at = to_timestamp($2::double precision / 1000.0),
+              archived_reason = 'parent'
+          FROM agent_room.room_catalog_entry AS room
+          WHERE room.id = link.catalog_entry_id
+            AND room.owner_principal_id = $1 AND room.kind = 'private_room'
+            AND link.archived_at IS NULL",
     )
     .bind(principal_id.as_uuid())
     .bind(changed_at)

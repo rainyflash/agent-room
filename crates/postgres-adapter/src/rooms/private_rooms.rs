@@ -30,6 +30,7 @@ use crate::{
 use super::{
     decode::{CATALOG_COLUMNS, INSTANCE_COLUMNS, corrupt_data, decode_catalog, decode_instance},
     role_changes::insert_role_changes,
+    sub_room_follow::{follow_saved_parent, members_before_save},
 };
 
 const PRIVATE_ROOM_COLUMNS: &str = r"
@@ -352,7 +353,48 @@ async fn rename_private_room(
     Ok(())
 }
 
+/// 存一间私人房间。它下面有子房间时，同一个事务里把受这次改动影响的子房间照它重算一遍
+/// （`sub_room_follow`）：存完以后，库里的子房间对得上这间房。
 pub(super) async fn save_private_room(
+    transaction: &mut Transaction<'_, Postgres>,
+    room: &PrivateRoom,
+    expected_version: AggregateVersion,
+    changed_at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    write_room_rows(transaction, room, expected_version, changed_at, operation).await?;
+    // 这时候这间房在目录里的那一行已经锁着，正在它下面建的子房间要么看得到、要么排在这次后面。
+    let before = members_before_save(transaction, room.catalog_id(), operation).await?;
+    write_members(transaction, room, changed_at, operation).await?;
+    if let Some(before) = before {
+        follow_saved_parent(
+            transaction,
+            room,
+            expected_version,
+            &before,
+            changed_at,
+            operation,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// 只把这一间写进去，不看它下面的子房间。跟着父房间改子房间时用：子房间下面没有子房间。
+pub(super) async fn write_private_room(
+    transaction: &mut Transaction<'_, Postgres>,
+    room: &PrivateRoom,
+    expected_version: AggregateVersion,
+    changed_at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    write_room_rows(transaction, room, expected_version, changed_at, operation).await?;
+    write_members(transaction, room, changed_at, operation).await
+}
+
+/// 房间自己的三行：版本、目录里的房主和状态、Matrix 房间那一行的状态。先后别换：先状态行、再目录
+/// 那一行，跟着父房间改子房间的也照这个先后锁。
+async fn write_room_rows(
     transaction: &mut Transaction<'_, Postgres>,
     room: &PrivateRoom,
     expected_version: AggregateVersion,
@@ -414,7 +456,15 @@ pub(super) async fn save_private_room(
     if updated_instance.is_none() {
         return Err(corrupt_data(operation));
     }
+    Ok(())
+}
 
+async fn write_members(
+    transaction: &mut Transaction<'_, Postgres>,
+    room: &PrivateRoom,
+    changed_at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<()> {
     for member in room.members() {
         upsert_member(
             transaction,
@@ -586,7 +636,10 @@ fn decode_private_room(
     })
 }
 
-fn decode_member(row: &PgRow, operation: &'static str) -> RepositoryResult<PrivateRoomMember> {
+pub(super) fn decode_member(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<PrivateRoomMember> {
     let principal_id: uuid::Uuid = decode_column(row, "private_member_principal_id", operation)?;
     let status: String = decode_column(row, "private_member_status", operation)?;
     let permission_bits: i16 = decode_column(row, "private_member_permission_bits", operation)?;

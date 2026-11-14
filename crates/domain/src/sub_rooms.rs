@@ -1,7 +1,10 @@
 //! 子房间（`specs/redesign/sub-rooms.md`）：挂在一间私人房间下面的房间，只有一层。
 //!
 //! 子房间自己照旧是一间私人房间（同一个 [`PrivateRoom`] 聚合），这里只放它多出来的规则：谁能建、
-//! 建好时里面有谁、一个人在子房间里的权限怎么从父房间里的算出来、名字怎么比重名。
+//! 建好时里面有谁、一个人在子房间里的权限怎么从父房间里的算出来、父房间变了它怎么跟着变、名字怎么
+//! 比重名。
+
+use std::collections::BTreeSet;
 
 use crate::{
     DomainError, DomainResult,
@@ -270,6 +273,84 @@ pub fn authorize_sub_room_join(
     }
     sub_room_permissions(in_parent.permissions(), runs_parent)
         .map_err(|_| SubRoomEntryRefusal::NotInParent)
+}
+
+/// 照父房间现在的样子重算一遍子房间（`specs/redesign/sub-rooms.md` 的“对账”）。做几遍结果都一样：
+///
+/// - 房主换成父房间的房主：他在每一间子房间里，权限全有；
+/// - 在父房间里已经不是已加入的人，从子房间移出；
+/// - 还在的人，查看、发言、自动发言照他在父房间里的，“管理”给父房间的管理员和这一间的子房间管理员
+///   （`managers`），“邀请”一律没有；
+/// - 父房间归档了，子房间跟着归档。父房间没归档时，子房间归没归档是它自己的事。
+///
+/// 已经移出、封禁、拒绝的人原样留着。没有要改的回 `None`；有就回改好的子房间，版本加一。
+///
+/// # Errors
+///
+/// 版本用尽时返回错误。
+pub fn follow_parent_room(
+    parent: &PrivateRoom,
+    sub_room: &PrivateRoom,
+    managers: &BTreeSet<PrincipalId>,
+) -> DomainResult<Option<PrivateRoom>> {
+    let owner = parent.owner_principal_id();
+    let owner_member = || {
+        PrivateRoomMember::restore(
+            owner,
+            PrivateRoomMembershipStatus::Joined,
+            PrivateRoomPermissions::ALL,
+        )
+    };
+    let mut members = Vec::with_capacity(sub_room.members().len() + 1);
+    for member in sub_room.members() {
+        let principal = member.principal_id();
+        let followed = if principal == owner {
+            owner_member()?
+        } else if !member.status().carries_permissions() {
+            member.clone()
+        } else if let Some(in_parent) = parent
+            .member(principal)
+            .filter(|in_parent| in_parent.has_joined())
+        {
+            let runs_it = in_parent.permissions().manage() || managers.contains(&principal);
+            PrivateRoomMember::restore(
+                principal,
+                member.status(),
+                sub_room_permissions(in_parent.permissions(), runs_it)?,
+            )?
+        } else {
+            PrivateRoomMember::restore(
+                principal,
+                PrivateRoomMembershipStatus::Removed,
+                PrivateRoomPermissions::NONE,
+            )?
+        };
+        members.push(followed);
+    }
+    if sub_room.member(owner).is_none() {
+        members.push(owner_member()?);
+    }
+    let status = match parent.status() {
+        PrivateRoomLifecycleStatus::Archived => PrivateRoomLifecycleStatus::Archived,
+        PrivateRoomLifecycleStatus::Active => sub_room.status(),
+    };
+    let unchanged = owner == sub_room.owner_principal_id()
+        && status == sub_room.status()
+        && members
+            .iter()
+            .all(|member| sub_room.member(member.principal_id()) == Some(member));
+    if unchanged {
+        return Ok(None);
+    }
+    PrivateRoom::restore(
+        sub_room.catalog_id(),
+        owner,
+        status,
+        members,
+        sub_room.version().next()?,
+        sub_room.created_by_agent(),
+    )
+    .map(Some)
 }
 
 /// 比重名用的键：去掉两头的空白、转成小写。同一间房里没归档的子房间不重名，不分大小写。
@@ -593,6 +674,237 @@ mod tests {
             .remove_member(parent.owner, parent.member)
             .expect("房主能移出");
         assert!(!manages_sub_room(&without, &sub_room, parent.member));
+    }
+
+    /// 父房间的成员、管理员、只能看的人都进了的一间子房间，成员建的（他是这一间的管理员）。
+    fn crowded(parent: &Parent) -> PrivateRoom {
+        let mut sub_room = new_sub_room(catalog(), &parent.room, parent.member).expect("成员能建");
+        for who in [parent.admin, parent.viewer] {
+            let granted = authorize_sub_room_join(&parent.room, &sub_room, who, RoomJoinMode::Open)
+                .expect("没有门，进得来");
+            sub_room.admit(who, granted).expect("记得进去");
+        }
+        sub_room
+    }
+
+    fn standing(room: &PrivateRoom, who: PrincipalId) -> (PrivateRoomMembershipStatus, u8) {
+        let member = room.member(who).expect("名单里有他");
+        (member.status(), member.permissions().bits())
+    }
+
+    #[test]
+    fn 父房间没变_子房间不用改_做几遍都一样() {
+        let parent = parent();
+        let sub_room = crowded(&parent);
+        let managers = BTreeSet::from([parent.member]);
+
+        assert_eq!(
+            follow_parent_room(&parent.room, &sub_room, &managers),
+            Ok(None)
+        );
+
+        // 改过一遍以后再做一遍，没有要改的。
+        let mut changed = parent.room.clone();
+        changed
+            .remove_member(parent.owner, parent.viewer)
+            .expect("房主能移出");
+        let followed = follow_parent_room(&changed, &sub_room, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+        assert_eq!(
+            followed.version(),
+            sub_room.version().next().expect("还有版本")
+        );
+        assert_eq!(follow_parent_room(&changed, &followed, &managers), Ok(None));
+    }
+
+    #[test]
+    fn 被移出父房间的人从子房间出去_退出的被封禁的一样_已经出去的原样留着() {
+        let parent = parent();
+        let mut sub_room = crowded(&parent);
+        // 只能看的人先被这一间封禁了：这一条不跟着父房间变。
+        sub_room
+            .ban_member(parent.owner, parent.viewer)
+            .expect("房主能封禁");
+        let managers = BTreeSet::from([parent.member]);
+
+        let mut changed = parent.room.clone();
+        changed
+            .remove_member(parent.owner, parent.member)
+            .expect("房主能移出");
+        changed
+            .ban_member(parent.owner, parent.admin)
+            .expect("房主能封禁");
+        changed
+            .remove_member(parent.owner, parent.viewer)
+            .expect("房主能移出");
+        let followed = follow_parent_room(&changed, &sub_room, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+
+        let removed = (PrivateRoomMembershipStatus::Removed, 0);
+        assert_eq!(standing(&followed, parent.member), removed);
+        assert_eq!(
+            standing(&followed, parent.admin),
+            removed,
+            "封禁只记在父房间里"
+        );
+        assert_eq!(
+            standing(&followed, parent.viewer),
+            (PrivateRoomMembershipStatus::Banned, 0)
+        );
+        assert_eq!(followed.owner_principal_id(), parent.owner);
+        assert!(followed.member(parent.owner).is_some_and(|owner| {
+            owner.has_joined() && owner.permissions() == PrivateRoomPermissions::ALL
+        }));
+    }
+
+    #[test]
+    fn 权限照父房间里的重算_管理给父房间的管理员和这一间的管理员() {
+        let parent = parent();
+        let sub_room = crowded(&parent);
+        let managers = BTreeSet::from([parent.member]);
+        let view = permissions(&[PrivateRoomCapability::View]);
+
+        let mut changed = parent.room.clone();
+        // 成员在父房间里改成只能看：子房间里跟着，他是这一间的管理员，“管理”还在。
+        changed
+            .update_permissions(parent.owner, parent.member, view)
+            .expect("房主能改");
+        // 管理员在父房间里不当了：子房间里的“管理”跟着没有。
+        changed
+            .update_permissions(parent.owner, parent.admin, permissions(&SPEAKER))
+            .expect("房主能改");
+        // 只能看的人当上了父房间的管理员：进了的子房间里也管。
+        let admin = permissions(&[
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Invite,
+            PrivateRoomCapability::Manage,
+        ]);
+        changed
+            .update_permissions(parent.owner, parent.viewer, admin)
+            .expect("房主能设管理员");
+        let followed = follow_parent_room(&changed, &sub_room, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+
+        let joined = PrivateRoomMembershipStatus::Joined;
+        assert_eq!(
+            standing(&followed, parent.member),
+            (
+                joined,
+                permissions(&[PrivateRoomCapability::View, PrivateRoomCapability::Manage]).bits()
+            )
+        );
+        assert_eq!(
+            standing(&followed, parent.admin),
+            (joined, permissions(&SPEAKER).bits())
+        );
+        assert_eq!(
+            standing(&followed, parent.viewer),
+            (
+                joined,
+                permissions(&[
+                    PrivateRoomCapability::View,
+                    PrivateRoomCapability::Speak,
+                    PrivateRoomCapability::Manage,
+                ])
+                .bits()
+            ),
+            "邀请不带进子房间"
+        );
+
+        // 不再是这一间的管理员以后，“管理”也没有了。
+        let demoted = follow_parent_room(&changed, &followed, &BTreeSet::new())
+            .expect("算得出")
+            .expect("有要改的");
+        assert_eq!(standing(&demoted, parent.member), (joined, view.bits()));
+    }
+
+    #[test]
+    fn 父房间转让了_子房间一起转_新房主没进来过也在里面_封禁着的也一样() {
+        let parent = parent();
+        let mut sub_room = crowded(&parent);
+        sub_room
+            .ban_member(parent.owner, parent.viewer)
+            .expect("房主能封禁");
+        let managers = BTreeSet::from([parent.member]);
+        let joined = PrivateRoomMembershipStatus::Joined;
+        let all = PrivateRoomPermissions::ALL.bits();
+
+        // 转给在这一间里被封禁着的人：子房间拦不住这间房自己的房主。原来的房主留下当成员。
+        let mut to_banned = parent.room.clone();
+        to_banned
+            .transfer_ownership(parent.owner, parent.viewer, permissions(&SPEAKER))
+            .expect("房主能转让");
+        let followed = follow_parent_room(&to_banned, &sub_room, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+        assert_eq!(followed.owner_principal_id(), parent.viewer);
+        assert_eq!(standing(&followed, parent.viewer), (joined, all));
+        assert_eq!(
+            standing(&followed, parent.owner),
+            (joined, permissions(&SPEAKER).bits())
+        );
+
+        // 转给从没进过这一间的人：名单里添上他。
+        let newcomer = principal();
+        let mut to_newcomer = parent.room.clone();
+        to_newcomer
+            .invite(parent.owner, newcomer, permissions(&SPEAKER))
+            .expect("房主能邀请");
+        to_newcomer.accept_invitation(newcomer).expect("能接受");
+        to_newcomer
+            .transfer_ownership(
+                parent.owner,
+                newcomer,
+                permissions(&[PrivateRoomCapability::View]),
+            )
+            .expect("房主能转让");
+        let followed = follow_parent_room(&to_newcomer, &sub_room, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+        assert_eq!(followed.owner_principal_id(), newcomer);
+        assert_eq!(standing(&followed, newcomer), (joined, all));
+        assert_eq!(
+            standing(&followed, parent.owner),
+            (joined, permissions(&[PrivateRoomCapability::View]).bits())
+        );
+        assert_eq!(
+            follow_parent_room(&to_newcomer, &followed, &managers),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn 父房间归档了_子房间跟着归档_子房间自己归档的不跟着回来() {
+        let parent = parent();
+        let sub_room = crowded(&parent);
+        let managers = BTreeSet::new();
+
+        let mut closed = parent.room.clone();
+        closed.archive(parent.owner).expect("房主能归档");
+        let followed = follow_parent_room(&closed, &sub_room, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+        assert_eq!(followed.status(), PrivateRoomLifecycleStatus::Archived);
+
+        // 子房间自己归档了、父房间还在用：那是它自己的事。归档了的照样跟着父房间的名单变。
+        let mut archived = sub_room.clone();
+        archived.archive(parent.owner).expect("房主能归档");
+        let mut changed = parent.room.clone();
+        changed
+            .remove_member(parent.owner, parent.viewer)
+            .expect("房主能移出");
+        let followed = follow_parent_room(&changed, &archived, &managers)
+            .expect("算得出")
+            .expect("有要改的");
+        assert_eq!(followed.status(), PrivateRoomLifecycleStatus::Archived);
+        assert_eq!(
+            standing(&followed, parent.viewer),
+            (PrivateRoomMembershipStatus::Removed, 0)
+        );
     }
 
     #[test]

@@ -2,6 +2,8 @@
 //!
 //! 建子房间、给子房间改名时先锁父房间在目录里的那一行：同一间房下面同时建、同时改名的排着队来，
 //! 重名和上限数得准；父房间这时候归档、转让也要等这一次存完。
+//!
+//! 父房间变了子房间怎么跟着变在 `sub_room_follow`。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
@@ -35,6 +37,7 @@ use super::{
     decode::corrupt_data,
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
     role_changes::insert_role_changes,
+    sub_room_follow::{follow_parent_at_creation, follow_stale_sub_rooms},
 };
 
 const HOUR_MS: i64 = 3_600_000;
@@ -153,6 +156,8 @@ impl SubRoomStore for PostgresRepositories {
             )
             .await?;
             insert_link(&mut transaction, sub_room, operation).await?;
+            // 这间子房间是照建之前读到的父房间算的；那以后父房间又存过的话，照现在的再算一遍。
+            follow_parent_at_creation(&mut transaction, sub_room, operation).await?;
             transaction
                 .commit()
                 .await
@@ -312,6 +317,19 @@ impl SubRoomStore for PostgresRepositories {
                 .rows_affected();
             Ok(written == 1)
         })
+    }
+
+    fn follow_stale_sub_rooms(
+        &self,
+        limit: u16,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u32>> {
+        Box::pin(follow_stale_sub_rooms(
+            self.pool(),
+            limit,
+            at,
+            "sub_room.follow_stale",
+        ))
     }
 }
 

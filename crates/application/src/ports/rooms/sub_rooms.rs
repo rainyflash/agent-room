@@ -219,4 +219,13 @@ pub trait SubRoomStore: Send + Sync {
         record: &'a SubRoomPolicyRecord,
         expected: Option<AggregateVersion>,
     ) -> PortFuture<'a, RepositoryResult<bool>>;
+
+    /// 补对账。平时存父房间的那个事务里就把子房间照它改好了；回滚到不认得子房间的旧版那段时间里
+    /// 父房间改过的，子房间照到的版本会比父房间旧。这里把这样的子房间找出来，一间一个事务地照父房间
+    /// 重算成员记录、房主和状态，聊天服务器上要跟着做的一起排上。一轮最多 `limit` 间，回补了几间。
+    fn follow_stale_sub_rooms(
+        &self,
+        limit: u16,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u32>>;
 }
