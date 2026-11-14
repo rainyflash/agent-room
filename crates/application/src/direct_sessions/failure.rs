@@ -62,7 +62,9 @@ pub type DirectSessionResult<T> = Result<T, DirectSessionFailure>;
 
 pub(crate) const fn domain(operation: &'static str, error: &DomainError) -> DirectSessionFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => DirectSessionFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            DirectSessionFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => DirectSessionFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => DirectSessionFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

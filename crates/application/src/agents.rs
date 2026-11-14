@@ -966,7 +966,9 @@ const fn map_domain_failure(
     error: &DomainError,
 ) -> AgentManagementFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => AgentManagementFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            AgentManagementFailureKind::Forbidden
+        }
         DomainError::Validation { .. }
         | DomainError::InvariantViolation { .. }
         | DomainError::InvalidTransition { .. }

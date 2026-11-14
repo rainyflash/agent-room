@@ -950,7 +950,9 @@ fn matrix_room_id(
 
 const fn domain(operation: &'static str, error: &DomainError) -> AgentAccessFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => AgentAccessFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            AgentAccessFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => AgentAccessFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => AgentAccessFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

@@ -4,6 +4,8 @@ use agent_room_domain::time::UtcMillis;
 pub enum ModerationFailureKind {
     InvalidRequest,
     Forbidden,
+    /// 管得了这间房，但对象是管理员：只有房主能动（`specs/redesign/room-roles.md`）。
+    OwnerOnly,
     NotFound,
     Conflict,
     RateLimited,
@@ -19,7 +21,7 @@ pub struct ModerationFailure {
 }
 
 impl ModerationFailure {
-    pub(crate) const fn new(operation: &'static str, kind: ModerationFailureKind) -> Self {
+    pub const fn new(operation: &'static str, kind: ModerationFailureKind) -> Self {
         Self {
             operation,
             kind,

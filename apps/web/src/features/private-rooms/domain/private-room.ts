@@ -289,11 +289,27 @@ export function intersectPermissions(
   );
 }
 
-/** 房主以外的人邀请、改权限时给不出自己没有的权限（和服务器同一条规则），房主什么都能给。 */
+/**
+ * 房主以外的人邀请、改权限时给不出自己没有的权限（和服务器同一条规则），房主什么都能给。
+ * “管理”只有房主给得出：管理员设不了管理员，邀请和邀请链接也带不上它（specs/redesign/room-roles.md）。
+ */
 export function grantableBy(room: PrivateRoom, principalId: string): PrivateRoomPermissions {
   if (room.ownerPrincipalId === principalId) {
     return permissions(...privateRoomCapabilities);
   }
   const member = memberFor(room, principalId);
-  return member?.status === 'joined' ? member.permissions : permissions();
+  return member?.status === 'joined'
+    ? permissions(
+        ...member.permissions.capabilities.filter((capability) => capability !== 'manage'),
+      )
+    : permissions();
+}
+
+/** 管理员：房主以外、还在房间里（受邀的也算）、有“管理”的人。动他的事只有房主能做。 */
+export function isRoomAdmin(room: PrivateRoom, member: PrivateRoomMember): boolean {
+  return (
+    member.principalId !== room.ownerPrincipalId &&
+    (member.status === 'invited' || member.status === 'joined') &&
+    member.permissions.capabilities.includes('manage')
+  );
 }

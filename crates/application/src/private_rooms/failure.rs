@@ -17,6 +17,9 @@ pub enum PrivateRoomFailureStage {
 pub enum PrivateRoomFailureKind {
     InvalidRequest,
     Forbidden,
+    /// 管得了这间房，但这件事只有房主能做：设、撤管理员，或者动一位管理员
+    /// （`specs/redesign/room-roles.md`）。
+    OwnerOnly,
     NotFound,
     Conflict,
     DependencyUnavailable,
@@ -77,6 +80,7 @@ pub type PrivateRoomResult<T> = Result<T, PrivateRoomFailure>;
 pub(crate) const fn domain(operation: &'static str, error: &DomainError) -> PrivateRoomFailure {
     let kind = match error {
         DomainError::Forbidden { .. } => PrivateRoomFailureKind::Forbidden,
+        DomainError::OwnerOnly { .. } => PrivateRoomFailureKind::OwnerOnly,
         DomainError::Validation { field, .. } => {
             return PrivateRoomFailure::new(
                 operation,

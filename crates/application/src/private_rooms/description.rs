@@ -150,7 +150,9 @@ impl PrivateRoomDescriptionUseCases for PrivateRoomDescriptionService {
 
 const fn domain(operation: &'static str, error: &DomainError) -> DescriptionFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => DescriptionFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            DescriptionFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => DescriptionFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => DescriptionFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

@@ -213,6 +213,13 @@ impl ApiError {
                 ErrorCategory::Authorization,
                 "当前主体无权执行该治理操作。",
             ),
+            // 和成员一节回的是同一个码：网页只认一种“只有房主能做”。
+            ModerationFailureKind::OwnerOnly => (
+                StatusCode::FORBIDDEN,
+                "private_room.owner_only",
+                ErrorCategory::Authorization,
+                "只有房主能设、撤管理员，也只有房主能动管理员。",
+            ),
             ModerationFailureKind::NotFound => (
                 StatusCode::NOT_FOUND,
                 "moderation.not_found",
@@ -630,6 +637,12 @@ impl ApiError {
                 "private_room.forbidden",
                 ErrorCategory::Authorization,
                 "无权访问或治理该私人房间。",
+            ),
+            PrivateRoomFailureKind::OwnerOnly => (
+                StatusCode::FORBIDDEN,
+                "private_room.owner_only",
+                ErrorCategory::Authorization,
+                "只有房主能设、撤管理员，也只有房主能动管理员。",
             ),
             PrivateRoomFailureKind::NotFound => (
                 StatusCode::NOT_FOUND,

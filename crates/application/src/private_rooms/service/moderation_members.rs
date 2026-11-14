@@ -229,6 +229,26 @@ fn in_room(snapshot: &PrivateRoomSnapshot, target: PrincipalId) -> bool {
 }
 
 impl ModerationMemberGateway for PrivateRoomService {
+    fn owner_only(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        actor: PrincipalId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            Ok(self
+                .store
+                .find_by_catalog(room_catalog_id)
+                .await?
+                .is_some_and(|snapshot| {
+                    snapshot
+                        .room()
+                        .authorize_acting_on(actor, target, "治理私人房间管理员")
+                        .is_err()
+                }))
+        })
+    }
+
     fn check(
         &self,
         kind: ModerationActionKind,
@@ -289,7 +309,9 @@ const fn as_matrix_failure(
     let kind = match failure.kind() {
         PrivateRoomFailureKind::DependencyUnavailable => MatrixFailureKind::DependencyUnavailable,
         PrivateRoomFailureKind::UnknownCommit => MatrixFailureKind::UnknownCommit,
-        PrivateRoomFailureKind::Forbidden => MatrixFailureKind::Forbidden,
+        PrivateRoomFailureKind::Forbidden | PrivateRoomFailureKind::OwnerOnly => {
+            MatrixFailureKind::Forbidden
+        }
         PrivateRoomFailureKind::NotFound => MatrixFailureKind::NotFound,
         PrivateRoomFailureKind::Conflict => MatrixFailureKind::Conflict,
         PrivateRoomFailureKind::InvalidRequest

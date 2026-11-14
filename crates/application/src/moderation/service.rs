@@ -4,7 +4,8 @@ use agent_room_domain::{
     ids::{AuditEventId, ModerationActionId, PrincipalId, RoomCatalogId},
     moderation::{
         ModerationAction, ModerationActionKind, ModerationActionStatus, ModerationAuditEvent,
-        ModerationAuditOutcome, ModerationCase, ModerationTarget, ModerationTargetKind,
+        ModerationAuditOutcome, ModerationCase, ModerationRole, ModerationTarget,
+        ModerationTargetKind,
     },
     rooms::RoomCatalogKind,
 };
@@ -241,6 +242,15 @@ impl ModerationService {
                 OPERATION,
             )
             .await?;
+        self.require_owner_over_admin(
+            request.actor.principal_id,
+            &context,
+            request.room_catalog_id,
+            request.kind,
+            &request.target,
+            OPERATION,
+        )
+        .await?;
         self.require_matching_case(request.case_id, &request.target, OPERATION)
             .await?;
         // 先找好落到哪些分片再预留：消息不在这个房间里时直接说找不到，不留一条失败的动作。
@@ -511,6 +521,15 @@ impl ModerationService {
                 OPERATION,
             )
             .await?;
+        self.require_owner_over_admin(
+            request.actor.principal_id,
+            &context,
+            action.room_catalog_id(),
+            action.kind(),
+            action.target(),
+            OPERATION,
+        )
+        .await?;
         // 撤禁言先看这个人此刻该不该禁着：还有别的禁言在生效时不解，私人房间看他此刻的发言权。
         if action.kind() == ModerationActionKind::Mute {
             return self.reverse_mute(action, OPERATION).await;
@@ -672,6 +691,38 @@ impl ModerationService {
             return Err(failure(operation, ModerationFailureKind::Forbidden));
         }
         Ok(context)
+    }
+
+    /// 私人房间里管人的动作（禁言、踢出、封禁）和撤回它们：对象是管理员时只有房主能动，管理员之间谁也
+    /// 动不了谁，自己也解不了房主给自己的禁言（`specs/redesign/room-roles.md`）。隐藏消息不看；平台
+    /// 管理员不归这一条管。Agent 动手的那一路本来就动不了管理员（`agents.rs` 的 `ensure_unprotected`）。
+    async fn require_owner_over_admin(
+        &self,
+        actor: PrincipalId,
+        context: &ModerationRoomContext,
+        room_catalog_id: RoomCatalogId,
+        kind: ModerationActionKind,
+        target: &ModerationTarget,
+        operation: &'static str,
+    ) -> ModerationResult<()> {
+        if context.room_kind != RoomCatalogKind::PrivateRoom
+            || context.role != ModerationRole::RoomManager
+            || kind == ModerationActionKind::Hide
+        {
+            return Ok(());
+        }
+        let Some(principal) = member_target(target) else {
+            return Ok(());
+        };
+        if self
+            .members
+            .owner_only(room_catalog_id, actor, principal)
+            .await
+            .map_err(|error| repository_failure(operation, &error))?
+        {
+            return Err(failure(operation, ModerationFailureKind::OwnerOnly));
+        }
+        Ok(())
     }
 
     async fn require_matching_case(

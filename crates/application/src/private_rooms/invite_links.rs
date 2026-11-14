@@ -315,10 +315,11 @@ impl PrivateRoomInviteLinkService {
             .await
             .map_err(|failure| {
                 let kind = match failure.kind() {
-                    // 刚刚检查过以后创建人没了邀请权限、房间归档了：链接不管用了。
-                    PrivateRoomFailureKind::Forbidden | PrivateRoomFailureKind::NotFound => {
-                        InviteLinkFailureKind::NotFound
-                    }
+                    // 刚刚检查过以后创建人没了邀请权限、房间归档了：链接不管用了。带“管理”的链接只有
+                    // 房主的还管用（以前管理员也建得出来）。
+                    PrivateRoomFailureKind::Forbidden
+                    | PrivateRoomFailureKind::OwnerOnly
+                    | PrivateRoomFailureKind::NotFound => InviteLinkFailureKind::NotFound,
                     PrivateRoomFailureKind::Conflict => InviteLinkFailureKind::Conflict,
                     PrivateRoomFailureKind::DependencyUnavailable
                     | PrivateRoomFailureKind::UnknownCommit => {
@@ -503,7 +504,9 @@ fn invitee_membership(
 
 const fn domain(operation: &'static str, error: &DomainError) -> InviteLinkFailure {
     let kind = match error {
-        DomainError::Forbidden { .. } => InviteLinkFailureKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            InviteLinkFailureKind::Forbidden
+        }
         DomainError::Validation { .. } => InviteLinkFailureKind::InvalidRequest,
         DomainError::InvalidTransition { .. } => InviteLinkFailureKind::Conflict,
         DomainError::InvariantViolation { .. }

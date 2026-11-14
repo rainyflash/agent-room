@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPrivateRoomPrincipalId, joinedPrivateRoom, type PrivateRoom } from './private-room';
+import {
+  grantableBy,
+  isPrivateRoomPrincipalId,
+  isRoomAdmin,
+  joinedPrivateRoom,
+  type PrivateRoom,
+  type PrivateRoomMember,
+} from './private-room';
 
 const OWNER = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
 const GUEST = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
@@ -47,6 +54,38 @@ describe('joinedPrivateRoom', () => {
       joinedPrivateRoom([ROOM], '0198b601-77a1-7bb8-83eb-a8fe68c97e40', ROOM.matrixRoomId, OWNER),
     ).toBeNull();
     expect(joinedPrivateRoom([], ROOM.catalogId, ROOM.matrixRoomId, OWNER)).toBeNull();
+  });
+});
+
+describe('管理员（specs/redesign/room-roles.md）', () => {
+  const ADMIN = '0198b601-77a1-7bb8-83eb-a8fe68c97e44';
+  const member = (
+    principalId: string,
+    status: PrivateRoomMember['status'],
+    ...capabilities: PrivateRoomMember['permissions']['capabilities']
+  ): PrivateRoomMember => ({ permissions: { capabilities }, principalId, status });
+  const owner = member(OWNER, 'joined', 'view', 'speak', 'invite', 'manage', 'automate');
+  const room = (...members: PrivateRoomMember[]): PrivateRoom => ({
+    ...ROOM,
+    members: [owner, ...members],
+  });
+
+  it('“管理”只有房主给得出：管理员给得出自己别的权限，给不出“管理”', () => {
+    const subject = room(member(ADMIN, 'joined', 'view', 'speak', 'invite', 'manage'));
+    expect(grantableBy(subject, OWNER).capabilities).toContain('manage');
+    expect(grantableBy(subject, ADMIN).capabilities).toEqual(['view', 'speak', 'invite']);
+    expect(grantableBy(subject, GUEST).capabilities).toEqual([]);
+  });
+
+  it('管理员是房主以外、还在房间里、有“管理”的人，受邀还没进来的也算', () => {
+    const joined = member(ADMIN, 'joined', 'view', 'speak', 'manage');
+    const invited = member(GUEST, 'invited', 'view', 'manage');
+    const subject = room(joined, invited);
+    expect(isRoomAdmin(subject, joined)).toBe(true);
+    expect(isRoomAdmin(subject, invited)).toBe(true);
+    expect(isRoomAdmin(subject, owner)).toBe(false);
+    expect(isRoomAdmin(subject, member(GUEST, 'joined', 'view', 'speak'))).toBe(false);
+    expect(isRoomAdmin(subject, member(GUEST, 'removed', 'view', 'manage'))).toBe(false);
   });
 });
 

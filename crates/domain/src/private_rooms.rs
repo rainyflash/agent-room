@@ -390,6 +390,34 @@ impl PrivateRoom {
         self.members.get(&principal_id)
     }
 
+    /// 这个人此刻是不是管理员：不是房主，受邀或已加入，身上有“管理”
+    /// （`specs/redesign/room-roles.md`）。
+    #[must_use]
+    pub fn is_admin(&self, principal_id: PrincipalId) -> bool {
+        principal_id != self.owner_principal_id
+            && self.members.get(&principal_id).is_some_and(|member| {
+                member.status.carries_permissions() && member.permissions.manage()
+            })
+    }
+
+    /// 移出、封禁、禁言一个人，或者撤回这些动作之前：对象是管理员时，动手的必须是房主。管理员之间
+    /// 谁也动不了谁，自己也解不了房主给自己的禁言。动手的人管不管得了这间房由调用的一方另外核。
+    ///
+    /// # Errors
+    ///
+    /// 对象是管理员而动手的不是房主时返回 [`DomainError::OwnerOnly`]。
+    pub fn authorize_acting_on(
+        &self,
+        actor: PrincipalId,
+        target: PrincipalId,
+        action: &'static str,
+    ) -> DomainResult<()> {
+        if actor != self.owner_principal_id && self.is_admin(target) {
+            return Err(DomainError::OwnerOnly { action });
+        }
+        Ok(())
+    }
+
     /// 计算当前产品策略是否授予某项能力。
     ///
     /// 归档房间保留历史查看能力，但关闭发言、邀请、治理和自动发送能力。
@@ -511,11 +539,12 @@ impl PrivateRoom {
         self.require(actor, PrivateRoomCapability::Invite, "管理私人房间邀请链接")
     }
 
-    /// 新链接带的权限：在 [`Self::authorize_invite_link`] 之上，能给成员、不超过自己有的。
+    /// 新链接带的权限：在 [`Self::authorize_invite_link`] 之上，能给成员、不超过自己有的；带“管理”
+    /// 的只有房主给得出。
     ///
     /// # Errors
     ///
-    /// 不能管理邀请链接、权限不能给成员或给了自己没有的权限时返回错误。
+    /// 不能管理邀请链接、权限不能给成员、给了自己没有的权限，或者房主以外的人带上了“管理”时返回错误。
     pub fn authorize_invite_link_permissions(
         &self,
         actor: PrincipalId,
@@ -523,6 +552,7 @@ impl PrivateRoom {
     ) -> DomainResult<()> {
         self.authorize_invite_link(actor)?;
         require_assignable_permissions(permissions)?;
+        self.require_owner_to_appoint(actor, permissions, "邀请链接带上私人房间的管理权限")?;
         self.require_grantable(actor, PrivateRoomPermissions::NONE, permissions)
     }
 
@@ -534,11 +564,12 @@ impl PrivateRoom {
         }
     }
 
-    /// 邀请成员进入活跃房间，给的权限不超过邀请人自己有的。
+    /// 邀请成员进入活跃房间，给的权限不超过邀请人自己有的；一进来就是管理员的只有房主请得了。
     ///
     /// # Errors
     ///
-    /// 操作者无邀请权限、给了自己没有的权限、房间已归档、目标已加入或被封禁时返回错误。
+    /// 操作者无邀请权限、给了自己没有的权限、房主以外的人带上了“管理”、房间已归档、目标已加入或
+    /// 被封禁时返回错误。
     pub fn invite(
         &mut self,
         actor: PrincipalId,
@@ -548,6 +579,7 @@ impl PrivateRoom {
         self.ensure_active("invited")?;
         self.require(actor, PrivateRoomCapability::Invite, "邀请私人房间成员")?;
         require_assignable_permissions(permissions)?;
+        self.require_owner_to_appoint(actor, permissions, "邀请时设置私人房间管理员")?;
         self.require_grantable(actor, PrivateRoomPermissions::NONE, permissions)?;
 
         match self.members.get(&target) {
@@ -666,27 +698,29 @@ impl PrivateRoom {
         )
     }
 
-    /// 移除已加入或待邀请成员。
+    /// 移除已加入或待邀请成员。管理员只有房主移得动。
     ///
     /// # Errors
     ///
-    /// 操作者无治理权限、目标是房主或房间已归档时返回错误。
+    /// 操作者无治理权限、目标是房主、目标是管理员而操作者不是房主，或房间已归档时返回错误。
     pub fn remove_member(&mut self, actor: PrincipalId, target: PrincipalId) -> DomainResult<bool> {
         self.ensure_active("removed")?;
         self.require(actor, PrivateRoomCapability::Manage, "移除私人房间成员")?;
         self.require_non_owner_target(target, "移除私人房间房主")?;
+        self.authorize_acting_on(actor, target, "移除私人房间管理员")?;
         self.terminate_membership(target, PrivateRoomMembershipStatus::Removed, "removed")
     }
 
-    /// 封禁主体并立即撤销其全部产品权限。
+    /// 封禁主体并立即撤销其全部产品权限。管理员只有房主封得了。
     ///
     /// # Errors
     ///
-    /// 操作者无治理权限、目标是房主或房间已归档时返回错误。
+    /// 操作者无治理权限、目标是房主、目标是管理员而操作者不是房主，或房间已归档时返回错误。
     pub fn ban_member(&mut self, actor: PrincipalId, target: PrincipalId) -> DomainResult<bool> {
         self.ensure_active("banned")?;
         self.require(actor, PrivateRoomCapability::Manage, "封禁私人房间成员")?;
         self.require_non_owner_target(target, "封禁私人房间房主")?;
+        self.authorize_acting_on(actor, target, "封禁私人房间管理员")?;
 
         if self
             .members
@@ -745,10 +779,13 @@ impl PrivateRoom {
 
     /// 更新已加入或待邀请成员的产品权限。加上的权限不超过操作者自己有的，收回不限。
     ///
+    /// 设、撤管理员（给出或拿掉“管理”）只有房主能做，管理员身上的任何一项也只有房主能改；例外是
+    /// 管理员自己不当了，把自己的“管理”拿掉（`specs/redesign/room-roles.md`）。
+    ///
     /// # Errors
     ///
-    /// 操作者无治理权限、加上了自己没有的权限、目标是房主、目标不在活跃成员态或权限为空时返回
-    /// 错误。
+    /// 操作者无治理权限、加上了自己没有的权限、目标是房主、动了“管理”或管理员而操作者不是房主、
+    /// 目标不在活跃成员态或权限为空时返回错误。
     pub fn update_permissions(
         &mut self,
         actor: PrincipalId,
@@ -773,6 +810,7 @@ impl PrivateRoom {
         if member.permissions == permissions {
             return Ok(false);
         }
+        self.require_owner_for_role_change(actor, target, member.permissions, permissions)?;
         self.require_grantable(actor, member.permissions, permissions)?;
         let next_version = self.next_version()?;
         self.members
@@ -1006,6 +1044,47 @@ impl PrivateRoom {
     ) -> DomainResult<()> {
         if target == self.owner_principal_id {
             return Err(DomainError::Forbidden { action });
+        }
+        Ok(())
+    }
+
+    /// 一进来就带“管理”的邀请和邀请链接：只有房主给得出。
+    fn require_owner_to_appoint(
+        &self,
+        actor: PrincipalId,
+        permissions: PrivateRoomPermissions,
+        action: &'static str,
+    ) -> DomainResult<()> {
+        if permissions.manage() && actor != self.owner_principal_id {
+            return Err(DomainError::OwnerOnly { action });
+        }
+        Ok(())
+    }
+
+    /// 改权限时：设、撤管理员只有房主能做，管理员身上的任何一项也只有房主能改。管理员自己不当了
+    /// （把自己的“管理”拿掉）不用房主点头。
+    fn require_owner_for_role_change(
+        &self,
+        actor: PrincipalId,
+        target: PrincipalId,
+        previous: PrivateRoomPermissions,
+        next: PrivateRoomPermissions,
+    ) -> DomainResult<()> {
+        if actor == self.owner_principal_id {
+            return Ok(());
+        }
+        if previous.manage() {
+            if actor == target && !next.manage() {
+                return Ok(());
+            }
+            return Err(DomainError::OwnerOnly {
+                action: "修改私人房间管理员的权限",
+            });
+        }
+        if next.manage() {
+            return Err(DomainError::OwnerOnly {
+                action: "设置私人房间管理员",
+            });
         }
         Ok(())
     }
@@ -1277,6 +1356,150 @@ mod tests {
             room.update_permissions(principal(2), principal(3), view_only)
                 .expect("收回自己没有的也行")
         );
+    }
+
+    #[test]
+    fn 只有房主能设撤管理员_管理员之间谁也动不了谁() {
+        let mut room = room();
+        let admin = admin_permissions();
+        room.invite(principal(1), principal(2), admin)
+            .expect("房主能请一位管理员进来");
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+        join(&mut room, principal(3));
+        join(&mut room, principal(4));
+        assert!(room.is_admin(principal(2)));
+        assert!(!room.is_admin(principal(1)), "房主不算管理员");
+        assert!(!room.is_admin(principal(3)));
+
+        // 管理员设不了管理员：改权限、邀请、邀请链接三条路都不行。
+        assert_eq!(
+            room.update_permissions(principal(2), principal(3), admin),
+            Err(owner_only("设置私人房间管理员"))
+        );
+        assert_eq!(
+            room.invite(principal(2), principal(5), admin),
+            Err(owner_only("邀请时设置私人房间管理员"))
+        );
+        assert_eq!(
+            room.authorize_invite_link_permissions(principal(2), admin),
+            Err(owner_only("邀请链接带上私人房间的管理权限"))
+        );
+        room.authorize_invite_link_permissions(principal(1), admin)
+            .expect("房主的链接能带管理");
+
+        // 房主再设一位。两位管理员互相改不了、移不出、封不了。
+        assert!(
+            room.update_permissions(principal(1), principal(3), admin)
+                .expect("房主设管理员")
+        );
+        assert_eq!(
+            room.update_permissions(principal(2), principal(3), ordinary_permissions()),
+            Err(owner_only("修改私人房间管理员的权限"))
+        );
+        assert_eq!(
+            room.remove_member(principal(2), principal(3)),
+            Err(owner_only("移除私人房间管理员"))
+        );
+        assert_eq!(
+            room.ban_member(principal(2), principal(3)),
+            Err(owner_only("封禁私人房间管理员"))
+        );
+        assert_eq!(
+            room.authorize_acting_on(principal(2), principal(3), "禁言私人房间管理员"),
+            Err(owner_only("禁言私人房间管理员"))
+        );
+        assert_eq!(
+            room.authorize_acting_on(principal(3), principal(3), "撤回私人房间管理员的禁言"),
+            Err(owner_only("撤回私人房间管理员的禁言")),
+            "房主给管理员的禁言，他自己解不了"
+        );
+        assert!(room.is_admin(principal(3)), "被拒以后什么都没变");
+
+        // 管理员照旧管得了普通成员。
+        room.authorize_acting_on(principal(2), principal(4), "禁言私人房间成员")
+            .expect("普通成员管理员管得了");
+        let view_only = PrivateRoomPermissions::from_capabilities([PrivateRoomCapability::View])
+            .expect("只能查看有效");
+        assert!(
+            room.update_permissions(principal(2), principal(4), view_only)
+                .expect("管理员能把成员设成只能看")
+        );
+        assert!(
+            room.remove_member(principal(2), principal(4))
+                .expect("管理员能移出成员")
+        );
+
+        // 房主什么都做得了。
+        assert!(
+            room.update_permissions(principal(1), principal(3), ordinary_permissions())
+                .expect("房主撤管理员")
+        );
+        assert!(
+            room.remove_member(principal(1), principal(2))
+                .expect("房主移出管理员")
+        );
+    }
+
+    #[test]
+    fn 管理员自己可以不当了_别的改不了自己() {
+        let mut room = room();
+        room.invite(principal(1), principal(2), admin_permissions())
+            .expect("房主能请一位管理员进来");
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+
+        let without_invite = PrivateRoomPermissions::from_capabilities([
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Manage,
+        ])
+        .expect("权限组合有效");
+        assert_eq!(
+            room.update_permissions(principal(2), principal(2), without_invite),
+            Err(owner_only("修改私人房间管理员的权限")),
+            "还当着管理员时自己的别的权限也改不了"
+        );
+        assert!(
+            room.update_permissions(
+                principal(2),
+                principal(2),
+                PrivateRoomPermissions::INVITED_BY_AGENT
+            )
+            .is_err(),
+            "不当了也不能顺手给自己加上原来没有的自动发言"
+        );
+        assert!(
+            room.update_permissions(principal(2), principal(2), ordinary_permissions())
+                .expect("自己把自己降成成员")
+        );
+        assert!(!room.is_admin(principal(2)));
+        assert!(
+            room.update_permissions(principal(2), principal(2), admin_permissions())
+                .is_err(),
+            "降了以后升不回来"
+        );
+    }
+
+    #[test]
+    fn 受邀还没进来的管理员也只有房主动得了() {
+        let mut room = room();
+        room.invite(principal(1), principal(2), admin_permissions())
+            .expect("房主能请一位管理员进来");
+        room.accept_invitation(principal(2)).expect("接受邀请成功");
+        room.invite(principal(1), principal(3), admin_permissions())
+            .expect("房主再请一位");
+
+        assert!(room.is_admin(principal(3)), "受邀的也算");
+        assert_eq!(
+            room.remove_member(principal(2), principal(3)),
+            Err(owner_only("移除私人房间管理员"))
+        );
+        assert!(
+            room.remove_member(principal(1), principal(3))
+                .expect("房主收回邀请")
+        );
+        assert!(!room.is_admin(principal(3)), "移出以后不再是管理员");
+        room.authorize_acting_on(principal(2), principal(3), "封禁私人房间成员")
+            .expect("已经移出的人管理员管得了");
     }
 
     #[test]
@@ -1686,6 +1909,20 @@ mod tests {
             PrivateRoomCapability::Speak,
         ])
         .expect("普通权限有效")
+    }
+
+    fn admin_permissions() -> PrivateRoomPermissions {
+        PrivateRoomPermissions::from_capabilities([
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Invite,
+            PrivateRoomCapability::Manage,
+        ])
+        .expect("管理员权限有效")
+    }
+
+    const fn owner_only(action: &'static str) -> crate::DomainError {
+        crate::DomainError::OwnerOnly { action }
     }
 
     fn catalog_id() -> RoomCatalogId {

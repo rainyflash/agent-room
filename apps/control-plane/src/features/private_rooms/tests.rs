@@ -77,6 +77,8 @@ struct FakeRooms {
     listing: Mutex<Option<RoomListingSettings>>,
     /// 设上时建房回答它。
     create_failure: Mutex<Option<PrivateRoomFailure>>,
+    /// 设上时改权限、移出、封禁回答它。
+    member_failure: Mutex<Option<PrivateRoomFailure>>,
 }
 
 impl FakeRooms {
@@ -88,7 +90,16 @@ impl FakeRooms {
             created_by_agent: Mutex::new(None),
             listing: Mutex::new(None),
             create_failure: Mutex::new(None),
+            member_failure: Mutex::new(None),
         }
+    }
+
+    /// 成员一节的用例：设了拒绝就回它，没设照常记下来。
+    fn govern(&self, call: ObservedCall) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        if let Some(failure) = *self.member_failure.lock().unwrap() {
+            return Box::pin(async move { Err(failure) });
+        }
+        self.record(call)
     }
 
     fn note(&self, actor: &PrivateRoomActor) {
@@ -214,7 +225,7 @@ impl PrivateRoomUseCases for FakeRooms {
         &self,
         request: GovernPrivateRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
-        self.record(call(
+        self.govern(call(
             "remove",
             request.catalog_id,
             Some(request.target_principal_id),
@@ -226,7 +237,7 @@ impl PrivateRoomUseCases for FakeRooms {
         &self,
         request: GovernPrivateRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
-        self.record(call(
+        self.govern(call(
             "ban",
             request.catalog_id,
             Some(request.target_principal_id),
@@ -250,7 +261,7 @@ impl PrivateRoomUseCases for FakeRooms {
         &self,
         request: ChangePrivateRoomPermissions,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
-        self.record(call(
+        self.govern(call(
             "permissions",
             request.catalog_id,
             Some(request.target_principal_id),
@@ -939,6 +950,38 @@ async fn 查看邀请和权限更新分别进入正确边界() {
     assert_eq!(calls[2].operation, "permissions");
     assert_eq!(calls[1].permissions, Some(viewer_speaker_permissions()));
     assert_eq!(calls[2].permissions, Some(viewer_speaker_permissions()));
+}
+
+#[tokio::test]
+async fn 只有房主能做的事被拒时回专门的码_网页好说清楚() {
+    let rooms = Arc::new(FakeRooms::new());
+    *rooms.member_failure.lock().unwrap() = Some(PrivateRoomFailure::new(
+        "test",
+        PrivateRoomFailureStage::Validation,
+        PrivateRoomFailureKind::OwnerOnly,
+    ));
+    let app = test_router(rooms.clone(), Arc::new(FakeAuthentication::default()));
+    let member = format!("/private-rooms/{CATALOG_UUID}/members/{TARGET_UUID}");
+
+    for (method, uri, body) in [
+        (
+            Method::PUT,
+            format!("{member}/permissions"),
+            json!({ "capabilities": ["view", "speak"] }),
+        ),
+        (Method::DELETE, member.clone(), json!({})),
+        (Method::POST, format!("{member}/ban"), json!({})),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(method.clone(), &uri, &body, true, false))
+            .await
+            .expect("成员路由可调用");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+        let body = response_json(response).await;
+        assert_eq!(body["code"], "private_room.owner_only", "{method} {uri}");
+    }
+    assert!(rooms.calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -25,6 +25,8 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+#[path = "private_rooms/admins.rs"]
+mod admins;
 #[path = "private_rooms/description.rs"]
 mod description;
 #[path = "private_rooms/join_requests.rs"]

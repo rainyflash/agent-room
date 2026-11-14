@@ -732,7 +732,9 @@ fn creation_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
 /// 房间不存在和不是它的都只说不是它的房间，不透露别人的房间在不在。
 fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
     match failure.kind() {
-        PrivateRoomFailureKind::NotFound | PrivateRoomFailureKind::Forbidden => not_owned(),
+        PrivateRoomFailureKind::NotFound
+        | PrivateRoomFailureKind::Forbidden
+        | PrivateRoomFailureKind::OwnerOnly => not_owned(),
         PrivateRoomFailureKind::Conflict
         | PrivateRoomFailureKind::DependencyUnavailable
         | PrivateRoomFailureKind::UnknownCommit => dependency(),

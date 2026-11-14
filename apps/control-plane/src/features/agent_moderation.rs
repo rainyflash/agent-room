@@ -425,6 +425,7 @@ const fn ledger_code(kind: ModerationFailureKind) -> &'static str {
     match kind {
         ModerationFailureKind::InvalidRequest => "moderation.invalid_request",
         ModerationFailureKind::Forbidden => "moderation.forbidden",
+        ModerationFailureKind::OwnerOnly => "private_room.owner_only",
         ModerationFailureKind::NotFound => "moderation.not_found",
         ModerationFailureKind::Conflict => "moderation.conflict",
         ModerationFailureKind::RateLimited => "moderation.rate_limited",

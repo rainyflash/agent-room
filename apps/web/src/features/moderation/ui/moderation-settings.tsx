@@ -210,13 +210,17 @@ function ModerationFailureNotice({
   const reauthenticate = failure.code === 'authentication.reauthentication_required';
   // 撤回禁言回冲突：这个人的禁言别处正在处理（后台在到期解除、另一个管理员在撤），或者有一条正在落。
   const busy = reversingMute && failure.code === 'moderation.conflict';
+  // 对象是这间房的管理员：禁言、踢出、封禁他，和撤回这些动作，都只有房主能做。
+  const ownerOnly = failure.code === 'private_room.owner_only';
   return (
     <div className="moderation-inline-failure" role="alert">
       {failure.retryable ? <LoaderCircle aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
       <span>
         {busy
           ? t('moderation.governance.reverseBusy')
-          : t('moderation.governance.failure', { code: failure.code })}
+          : ownerOnly
+            ? t('moderation.governance.ownerOnly')
+            : t('moderation.governance.failure', { code: failure.code })}
       </span>
       {reauthenticate ? (
         <Button onClick={onReauthenticate} size="compact" tone="quiet">

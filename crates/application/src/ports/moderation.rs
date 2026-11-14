@@ -313,6 +313,15 @@ pub trait ModerationMemberGateway: Send + Sync {
         target: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Option<ModerationMemberRefusal>>>;
 
+    /// 这个人是这间房的管理员、而动手的人不是房主：禁言、踢出、封禁他，和撤回这些动作，都只有房主
+    /// 能做（`specs/redesign/room-roles.md`）。房间不在了算不归这一条管，后面的检查会说找不到。
+    fn owner_only(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        actor: PrincipalId,
+        target: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
+
     /// 踢出就是移出，封禁就是封禁：改成员记录，在聊天服务器上踢出或封禁，把他名下在房间里的 Agent
     /// 移出。
     fn apply(

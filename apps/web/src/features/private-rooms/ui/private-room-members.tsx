@@ -27,6 +27,7 @@ import {
 import {
   allows,
   grantableBy,
+  isRoomAdmin,
   memberFor,
   permissions,
   privateRoomCapabilities,
@@ -137,7 +138,8 @@ export function PrivateRoomMembers({
   const [failure, setFailure] = useState<PrivateRoomFailure | null>(null);
   const currentMember = memberFor(room, principalId);
   const owner = room.ownerPrincipalId === principalId;
-  // 和服务器一致：邀请看“邀请”，移出、封禁、改权限看“管理”，两样各管各的。
+  // 和服务器一致：邀请看“邀请”，移出、封禁、改权限看“管理”，两样各管各的。管理员那几行只有房主
+  // 动得了，“管理”这一项也只有房主给得出、拿得掉（specs/redesign/room-roles.md）。
   const canManage = owner || allows(currentMember, 'manage');
   const canInvite = owner || allows(currentMember, 'invite');
   const grantable = grantableBy(room, principalId);
@@ -262,7 +264,8 @@ export function PrivateRoomMembers({
                   ? null
                   : member.principalId
               }
-              canManage={canManage}
+              admin={isRoomAdmin(room, member)}
+              canManage={canManage && (owner || !isRoomAdmin(room, member))}
               disabled={mutation.isPending}
               grantable={grantable}
               isOwner={member.principalId === room.ownerPrincipalId}
@@ -480,6 +483,9 @@ function RenameForm({
 type MemberRowProps = {
   /** 收在“详情”里的账户 ID；网络 Agent 当房主时那个主体不是谁的账户，不写。 */
   readonly account: string | null;
+  /** 这一行是管理员：名字后面写着，动他的事只有房主能做。 */
+  readonly admin: boolean;
+  /** 看的人动得了这一行：房主，或者管理员看一位不是管理员的成员。 */
   readonly canManage: boolean;
   /** 这一行底下另外摆的东西：转让房主的确认。 */
   readonly children?: ReactNode;
@@ -500,6 +506,7 @@ type MemberRowProps = {
 
 function MemberRow({
   account,
+  admin,
   canManage,
   children,
   disabled,
@@ -517,8 +524,7 @@ function MemberRow({
   const { t } = useTranslation();
   const active = member.status === 'invited' || member.status === 'joined';
   const editable = canManage && active && !isOwner && !self;
-  const admin = !isOwner && active && member.permissions.capabilities.includes('manage');
-  // 改不出自己没有的：只有房主和有“管理”的人能设管理员。
+  // “管理”只有房主给得出，所以“设为管理员”“撤销管理员”只有房主看得到。
   const canAppoint = editable && grantable.capabilities.includes('manage');
   return (
     <li className={active ? undefined : 'private-room-member--inactive'}>

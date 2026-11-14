@@ -33,7 +33,9 @@ pub(crate) const fn map_domain_error(
     error: &DomainError,
 ) -> RepositoryError {
     let kind = match error {
-        DomainError::Forbidden { .. } => RepositoryErrorKind::Forbidden,
+        DomainError::Forbidden { .. } | DomainError::OwnerOnly { .. } => {
+            RepositoryErrorKind::Forbidden
+        }
         DomainError::InvariantViolation { .. }
         | DomainError::InvalidTransition { .. }
         | DomainError::Validation { .. }
