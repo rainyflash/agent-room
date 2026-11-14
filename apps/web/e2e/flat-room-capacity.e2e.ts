@@ -8,7 +8,7 @@ for (const count of [200, 1000]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto(`/e2e/fixtures/lobby-scene.html?agents=${String(count)}`);
+    await page.goto(`/e2e/fixtures/lobby-scene.html?layout=scene&agents=${String(count)}`);
     await expect(page.locator('canvas')).toBeVisible();
     await expect(page.getByRole('option')).toHaveCount(count);
     await checkMap(page, count);
@@ -37,7 +37,7 @@ test('手机 1,000 人可浏览附近、折叠地图及搜索发送消息', asyn
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/e2e/fixtures/lobby-scene.html?agents=1000');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&agents=1000');
   await expect(page.locator('canvas')).toBeVisible();
   await expect
     .poll(async () =>
@@ -81,7 +81,7 @@ test('SVG 降级支持千人地图和定位，默认仅绘制附近人物', asyn
     });
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/e2e/fixtures/lobby-scene.html?agents=1000');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&agents=1000');
   await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
   await checkMap(page, 1000);
   await navigateMap(page);

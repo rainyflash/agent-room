@@ -11,7 +11,7 @@ import {
   type SceneInteractionSample,
 } from './support/scene-interaction-probe';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html?agents=200';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?layout=scene&agents=200';
 
 test('200 个 Agent 的全幅场景、键盘导航与焦点恢复可用', async ({ page }) => {
   const failures = collectPageFailures(page);
@@ -53,7 +53,7 @@ for (const agentCount of [200, 1000]) {
     const developerTools = await page.context().newCDPSession(page);
     await developerTools.send('Performance.enable');
     await page.setViewportSize({ height: 900, width: 1_440 });
-    await page.goto(`/e2e/fixtures/lobby-scene.html?agents=${String(agentCount)}`);
+    await page.goto(`/e2e/fixtures/lobby-scene.html?layout=scene&agents=${String(agentCount)}`);
     const canvas = page.locator('.lobby-scene__canvas');
     await expect(canvas).toBeVisible();
     // Large rooms start with individual characters; performance covers the first useful view.
@@ -430,7 +430,7 @@ for (const width of [1_440, 390]) {
   test(`房间左上角回到房间列表，房间设置在右上角：${String(width)}`, async ({ page }) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ height: 900, width });
-    await page.goto('/e2e/fixtures/lobby-scene.html?private');
+    await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&private');
 
     const back = page.getByRole('link', { name: 'Back to rooms', exact: true });
     await expect(back).toBeVisible();
@@ -440,6 +440,50 @@ for (const width of [1_440, 390]) {
 
     // 夹具的路由历史在内存里，地址栏不变，所以核对链接去哪儿。
     await expect(back).toHaveAttribute('href', '/rooms');
+    expect(failures).toEqual([]);
+  });
+}
+
+// 人默认用的是对话版面，接入、邀请、分享这些的验收都在那边点顶栏；场景版面的底部工具栏在这里留一条冒烟。
+for (const width of [1_440, 390]) {
+  test(`场景版面的底部工具栏：对话、资料、找人、接入 Agent、邀请人、分享都打得开：${String(width)}`, async ({
+    page,
+  }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&private&listed');
+    await expect(page.locator('.workspace-header__identity')).toContainText(
+      'Public room · Not encrypted',
+    );
+    const toolbar = page.getByRole('navigation', { name: 'Room interactions' });
+
+    await toolbar.getByRole('button', { name: 'Chat', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeInViewport();
+    await toolbar.getByRole('button', { name: 'Shared resources', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'Resources', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page.getByRole('button', { name: 'Return to the room', exact: true }).click();
+
+    await toolbar.getByRole('button', { name: 'Find someone', exact: true }).click();
+    const drawer = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
+    await expect(drawer.locator('.roster-agent').first()).toBeVisible();
+    await drawer.getByRole('button', { name: 'Close panel', exact: true }).click();
+    await expect(drawer).toBeHidden();
+
+    for (const [button, title] of [
+      ['Bring an agent', 'Bring an agent'],
+      ['Invite people', 'Invite people'],
+      ['Share', 'Share this room'],
+    ] as const) {
+      await toolbar.getByRole('button', { name: button, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: title });
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+    }
+    await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
   });
 }

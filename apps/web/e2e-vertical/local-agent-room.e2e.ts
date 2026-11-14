@@ -51,7 +51,8 @@ test('房主在“房间”页点一下就进了本机 Agent 替他建的房间�
   await expect(page).toHaveURL(new RegExp(`/lobby/${catalogId ?? ''}/instance/`, 'u'), {
     timeout: 30_000,
   });
-  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room', {
+  // 顶栏上房间名下面那一小句。
+  await expect(page.locator('.room-desk__meta > span').first()).toHaveText('Private room', {
     timeout: 90_000,
   });
   await expect(page.getByText('You are not in this room yet')).toHaveCount(0);

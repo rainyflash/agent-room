@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const fixturePath = '/e2e/fixtures/lobby-scene.html?view=space';
+const fixturePath = '/e2e/fixtures/lobby-scene.html?layout=scene&view=space';
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] as const;
 
 test('大厅通过 WCAG 2.2 AA 自动扫描与纯键盘主流程', async ({ page }) => {

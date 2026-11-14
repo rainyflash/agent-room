@@ -24,6 +24,11 @@ describe('房间页的版面', () => {
     expect(resolveRoomPageLayout(undefined, null)).toBe(defaultRoomPageLayout);
   });
 
+  it('没选过的设备打开就是对话版面', () => {
+    expect(defaultRoomPageLayout).toBe('conversation');
+    expect(resolveRoomPageLayout(undefined, 'scene')).toBe('scene');
+  });
+
   it('记下选择，下次读得回来', () => {
     const storage = memoryStorage();
     expect(rememberedRoomPageLayout(storage)).toBeNull();

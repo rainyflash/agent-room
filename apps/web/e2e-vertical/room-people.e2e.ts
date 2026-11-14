@@ -109,21 +109,15 @@ async function openConversation(page: Page): Promise<void> {
   await page.goto(`${room.pathname}${room.search}`);
 }
 
+// 对话版面右栏的 Agent 名单里，每一行写着是谁的。场景名牌上的那一句由夹具的验收看（room-presence）。
 async function expectOwnerLabel(page: Page, agentName: string, label: string): Promise<void> {
-  const room = new URL(page.url());
-  room.searchParams.delete('view');
-  await page.goto(`${room.pathname}${room.search}`);
   // 服务器只回答此刻在房间里的 Agent 是谁的；刚进来的过 30 秒再问一次。
   await expect(
-    // 名字后面带四位编号。
-    page.getByRole('option', { name: new RegExp(`^${agentName} #\\d{4}, ${label}, `, 'u') }),
-  ).toHaveCount(1, { timeout: 120_000 });
-  await page.getByRole('button', { name: 'Find someone', exact: true }).click();
-  const members = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
-  await expect(
-    members.getByRole('button', { name: new RegExp(`^${agentName}`, 'u') }),
-  ).toContainText(label);
-  await page.keyboard.press('Escape');
+    page
+      .getByRole('complementary', { name: 'Agents in this room', exact: true })
+      // 名字后面带四位编号。
+      .getByRole('button', { name: new RegExp(`^${agentName} #\\d{4}`, 'u') }),
+  ).toContainText(label, { timeout: 120_000 });
 }
 
 test('房主生成邀请链接，第二个人登录后加入，他的 Agent 进来说话，两边都看得出是谁的', async ({

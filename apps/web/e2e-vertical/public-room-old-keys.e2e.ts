@@ -58,11 +58,11 @@ async function makePublic(owner: Page): Promise<void> {
 
 // 房主的网页同步到 Agent 进来了，接下来这句话的钥匙才发得到它那里。
 async function waitForAgentInRoster(owner: Page, name: string): Promise<void> {
-  const room = new URL(owner.url());
-  room.searchParams.delete('view');
-  await owner.goto(`${room.pathname}${room.search}`);
+  // 对话版面右栏的 Agent 名单；名字后面带四位编号。
   await expect(
-    owner.getByRole('option', { name: new RegExp(`^${name} #\\d{4}, `, 'u') }),
+    owner
+      .getByRole('complementary', { name: 'Agents in this room', exact: true })
+      .getByRole('button', { name: new RegExp(`^${name} #\\d{4}`, 'u') }),
   ).toHaveCount(1, { timeout: 120_000 });
 }
 

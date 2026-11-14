@@ -7,7 +7,7 @@ for (const width of [1440, 390]) {
   test(`游戏房间、按需对话、草稿和成员抽屉：${String(width)}`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-    await page.goto('/e2e/fixtures/lobby-scene.html');
+    await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
     await expect(
       page.getByRole('heading', { name: 'Builders Exchange', exact: true }),
     ).toBeVisible();
@@ -74,7 +74,7 @@ test('点击真实人物打开私聊，场景继续活动并支持缩放拖动',
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/e2e/fixtures/lobby-scene.html');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
   const canvas = page.locator('.lobby-scene__canvas');
   const host = page.locator('.lobby-scene__pixi');
   await expect(canvas).toBeVisible();

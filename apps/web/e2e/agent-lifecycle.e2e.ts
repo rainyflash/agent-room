@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { openAgentRoster } from './support/workspace-navigation';
 
 for (const width of [1440, 390]) {
   test(`Agent reception, offline age and archive recovery at ${String(width)}px`, async ({
@@ -19,8 +20,7 @@ for (const width of [1440, 390]) {
       controls.setAgentReception(id(5), 'offline', 2 * 86_400_000);
       controls.setAgentReception(id(6), 'offline', 8 * 86_400_000);
     });
-    await page.getByRole('button', { name: 'View agents', exact: true }).click();
-    const roster = page.locator('.workspace-members .list-roster');
+    const roster = (await openAgentRoster(page)).locator('.list-roster');
     for (const name of [
       'Online · waiting for messages',
       'Online · reads on next run',
@@ -56,8 +56,7 @@ test('Agents that only write a card follow their Matrix presence', async ({ page
   const failures = collectPageFailures(page);
   // 名片都是三天前进房间时写的：依次在等消息、下次运行时读、20 分钟前离线。
   await page.goto('/e2e/fixtures/lobby-scene.html?agents=24&cards');
-  await page.getByRole('button', { name: 'View agents', exact: true }).click();
-  const roster = page.locator('.workspace-members .list-roster');
+  const roster = (await openAgentRoster(page)).locator('.list-roster');
   for (const name of [
     'Online · waiting for messages',
     'Online · reads on next run',
@@ -84,8 +83,7 @@ test('Room managers can change the shared archive rule and keep the same identit
       2 * 86_400_000,
     );
   });
-  await page.getByRole('button', { name: 'View agents', exact: true }).click();
-  const roster = page.locator('.workspace-members');
+  const roster = await openAgentRoster(page);
   await expect(roster.getByRole('button', { name: 'Archived (0)' })).toBeVisible();
   await roster.getByText('Offline archiving', { exact: true }).click();
   await roster.getByRole('combobox', { name: 'Archive offline agents after' }).selectOption('1');

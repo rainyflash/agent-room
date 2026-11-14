@@ -4,7 +4,7 @@ import { collectPageFailures } from './support/page-assertions';
 test('禁用动态代码求值时仍使用可交互的 Pixi 房间', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/e2e/fixtures/lobby-csp.html');
+  await page.goto('/e2e/fixtures/lobby-csp.html?layout=scene');
   const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
   await expect(scene.locator('.lobby-scene__canvas')).toBeVisible();
   await expect(scene.locator('[data-renderer="svg"]')).toHaveCount(0);

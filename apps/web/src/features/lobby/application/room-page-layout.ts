@@ -7,7 +7,7 @@ import { isRoomPageLayout, type RoomPageLayout } from '@/features/lobby/domain/w
 const storageKey = 'agent-room.room-page-layout';
 
 /** 地址里没写、这台设备也没选过时用哪个。 */
-export const defaultRoomPageLayout: RoomPageLayout = 'scene';
+export const defaultRoomPageLayout: RoomPageLayout = 'conversation';
 
 type LayoutStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
