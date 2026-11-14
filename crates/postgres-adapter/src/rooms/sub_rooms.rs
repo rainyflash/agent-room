@@ -10,7 +10,7 @@ use agent_room_application::{
     ports::{
         NewSubRoom, PortFuture, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck,
         SubRoomEntry, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-        SubRoomRevisionBlock, SubRoomStore,
+        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
 };
 use agent_room_domain::{
@@ -38,6 +38,7 @@ use super::{
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
     role_changes::insert_role_changes,
     sub_room_follow::{follow_parent_at_creation, follow_stale_sub_rooms},
+    sub_room_sync,
 };
 
 const HOUR_MS: i64 = 3_600_000;
@@ -329,6 +330,43 @@ impl SubRoomStore for PostgresRepositories {
             limit,
             at,
             "sub_room.follow_stale",
+        ))
+    }
+
+    fn claim_sub_room_sync(
+        &self,
+        scope: SubRoomSyncScope,
+        limit: u16,
+        now: UtcMillis,
+        lease_until: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomSyncTask>>> {
+        Box::pin(sub_room_sync::claim(
+            self.pool(),
+            scope,
+            limit,
+            now,
+            lease_until,
+        ))
+    }
+
+    fn complete_sub_room_sync(
+        &self,
+        task: SubRoomSyncTask,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(sub_room_sync::complete(self.pool(), task))
+    }
+
+    fn retry_sub_room_sync(
+        &self,
+        task: SubRoomSyncTask,
+        retry_at: UtcMillis,
+        failure_code: &'static str,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(sub_room_sync::retry(
+            self.pool(),
+            task,
+            retry_at,
+            failure_code,
         ))
     }
 }

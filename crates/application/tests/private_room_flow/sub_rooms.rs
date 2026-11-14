@@ -1,7 +1,8 @@
 //! 子房间（`specs/redesign/sub-rooms.md` 第 2a 步）：在一间房下面建、读名单、三项设置，和只有
 //! 父房间有的那几件事。存储是内存里的一份，重名、上限这些规则照真实存储的写；真实存储自己的
 //! 测试在 `postgres-adapter` 的 `tests/private_rooms/sub_rooms.rs`。人加入、退出和改名（2b）的
-//! 用例在旁边的 `sub_room_membership.rs`，用的是这里的夹具。
+//! 用例在旁边的 `sub_room_membership.rs`，父房间变了以后聊天服务器上跟着做（2c-2）的在
+//! `sub_room_sync.rs`，用的都是这里的夹具。
 
 use std::collections::BTreeSet;
 
@@ -9,11 +10,12 @@ use agent_room_application::{
     ports::{
         NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
         SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-        SubRoomRevisionBlock, SubRoomStore,
+        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
     private_rooms::{
         ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
-        SubRoomMembershipAction, SubRoomRefusal, SubRoomUseCases,
+        SubRoomMembershipAction, SubRoomRefusal, SubRoomSyncOutcome, SubRoomSyncUseCases,
+        SubRoomUseCases,
     },
 };
 use agent_room_domain::{
@@ -25,7 +27,7 @@ use agent_room_domain::{
     },
     sub_rooms::{
         MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SubRoomCreators,
-        SubRoomPolicy,
+        SubRoomPolicy, follow_parent_room,
     },
 };
 
@@ -33,6 +35,8 @@ use super::*;
 
 #[path = "sub_room_membership.rs"]
 mod membership;
+#[path = "sub_room_sync.rs"]
+mod sync;
 
 const PARENT: u128 = 10;
 const OWNER: u128 = 1;
@@ -761,6 +765,11 @@ impl Rooms {
             .await
     }
 
+    /// 后台的一轮：补对账，再把排着的事领一批出来做。
+    async fn sync(&self) -> SubRoomSyncOutcome {
+        self.service.sync_sub_rooms().await.expect("这一轮做得完")
+    }
+
     fn clear_events(&self) {
         self.events.lock().expect("事件锁正常").clear();
     }
@@ -911,6 +920,31 @@ struct StoredLink {
     archived: bool,
 }
 
+/// 排着的一件要在聊天服务器上跟着做的事，和真实存储的 `private_room_sub_room_sync` 一行一样。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QueuedSync {
+    id: i64,
+    catalog_id: RoomCatalogId,
+    principal: Option<PrincipalId>,
+    generation: i64,
+    attempts: u32,
+    /// 空着就是马上能领；领走以后是租约到期的时间，没做成以后是下次再试的时间。
+    next_attempt_at: Option<UtcMillis>,
+    failure_code: Option<&'static str>,
+}
+
+impl QueuedSync {
+    const fn task(&self) -> SubRoomSyncTask {
+        SubRoomSyncTask {
+            id: self.id,
+            catalog_id: self.catalog_id,
+            principal: self.principal,
+            generation: self.generation,
+            attempt: self.attempts,
+        }
+    }
+}
+
 /// 好几间房和它们的父子关系。重名、上限、限速照真实存储的规则。
 pub(super) struct MemoryRooms {
     events: Arc<Mutex<Vec<&'static str>>>,
@@ -922,7 +956,14 @@ pub(super) struct MemoryRooms {
     race_same_request: AtomicBool,
     /// 设上的人，在下一次往子房间里记人之前先被移出父房间。
     leaves_parent_before_admission: Mutex<Option<PrincipalId>>,
+    /// 聊天服务器上还没跟着做的事，照排进来的先后。
+    sync: Mutex<Vec<QueuedSync>>,
+    sync_ids: Mutex<i64>,
+    /// 设上以后，这间房再被读到第几次之前先改一下存着的东西：摆出“做的当口房间又变了”。
+    interrupts_read: Mutex<Option<(RoomCatalogId, u32, Interruption)>>,
 }
+
+type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
 
 impl MemoryRooms {
     pub(super) fn new(events: Arc<Mutex<Vec<&'static str>>>) -> Self {
@@ -935,6 +976,97 @@ impl MemoryRooms {
             policy_writes: Mutex::new(0),
             race_same_request: AtomicBool::new(false),
             leaves_parent_before_admission: Mutex::new(None),
+            sync: Mutex::new(Vec::new()),
+            sync_ids: Mutex::new(0),
+            interrupts_read: Mutex::new(None),
+        }
+    }
+
+    /// 排上一件要在聊天服务器上跟着做的事。已经排着的换成新的一版、从头再试。
+    fn queue_sync(&self, catalog_id: RoomCatalogId, principal: Option<PrincipalId>) {
+        let mut sync = self.sync.lock().expect("任务锁正常");
+        if let Some(queued) = sync
+            .iter_mut()
+            .find(|queued| queued.catalog_id == catalog_id && queued.principal == principal)
+        {
+            queued.generation += 1;
+            queued.attempts = 0;
+            queued.next_attempt_at = None;
+            queued.failure_code = None;
+            return;
+        }
+        let mut ids = self.sync_ids.lock().expect("编号锁正常");
+        *ids += 1;
+        sync.push(QueuedSync {
+            id: *ids,
+            catalog_id,
+            principal,
+            generation: 1,
+            attempts: 0,
+            next_attempt_at: None,
+            failure_code: None,
+        });
+    }
+
+    fn queued_sync(&self) -> Vec<QueuedSync> {
+        self.sync.lock().expect("任务锁正常").clone()
+    }
+
+    /// 过了足够久：租约都到期了，退避的也都到点了。
+    fn let_sync_come_due(&self) {
+        for queued in self.sync.lock().expect("任务锁正常").iter_mut() {
+            queued.next_attempt_at = None;
+        }
+    }
+
+    /// 这间房先照常被读 `untouched` 次，再读之前做 `change`。
+    fn interrupt_read(
+        &self,
+        catalog: u128,
+        untouched: u32,
+        change: impl FnOnce(&Self) + Send + 'static,
+    ) {
+        *self.interrupts_read.lock().expect("打断锁正常") =
+            Some((catalog_id(catalog), untouched, Box::new(change)));
+    }
+
+    /// 真实存储在存父房间的同一个事务里做的那一半：照它重算下面的子房间，聊天服务器上要跟着做的
+    /// 排上。
+    fn follow_parent(&self, parent: &PrivateRoom) {
+        let below: Vec<StoredLink> = self
+            .links
+            .lock()
+            .expect("关系锁正常")
+            .iter()
+            .filter(|stored| stored.link.parent_catalog_id == parent.catalog_id())
+            .cloned()
+            .collect();
+        for stored in below {
+            let sub_room = stored.link.catalog_id;
+            let before = self.rooms.lock().expect("房间锁正常")[&sub_room]
+                .room()
+                .clone();
+            let managers: BTreeSet<PrincipalId> = stored.managers.iter().copied().collect();
+            let Some(after) = follow_parent_room(parent, &before, &managers).expect("重算有效")
+            else {
+                continue;
+            };
+            self.replace(&after);
+            for member in after.members() {
+                if before.member(member.principal_id()) != Some(member) {
+                    self.queue_sync(sub_room, Some(member.principal_id()));
+                }
+            }
+            if before.status() == PrivateRoomLifecycleStatus::Active
+                && after.status() == PrivateRoomLifecycleStatus::Archived
+            {
+                for link in self.links.lock().expect("关系锁正常").iter_mut() {
+                    if link.link.catalog_id == sub_room {
+                        link.archived = true;
+                    }
+                }
+                self.queue_sync(sub_room, None);
+            }
         }
     }
 
@@ -1336,7 +1468,91 @@ impl SubRoomStore for MemoryRooms {
         _limit: u16,
         _at: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<u32>> {
-        Box::pin(async { Ok(0) })
+        Box::pin(async {
+            self.record("sub_rooms.follow_stale");
+            Ok(0)
+        })
+    }
+
+    fn claim_sub_room_sync(
+        &self,
+        scope: SubRoomSyncScope,
+        limit: u16,
+        now: UtcMillis,
+        lease_until: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomSyncTask>>> {
+        let below: Option<BTreeSet<RoomCatalogId>> = match scope {
+            SubRoomSyncScope::Everywhere => None,
+            SubRoomSyncScope::Under(parent) => Some(
+                self.links
+                    .lock()
+                    .expect("关系锁正常")
+                    .iter()
+                    .filter(|stored| stored.link.parent_catalog_id == parent)
+                    .map(|stored| stored.link.catalog_id)
+                    .collect(),
+            ),
+        };
+        let mut sync = self.sync.lock().expect("任务锁正常");
+        let mut due: Vec<&mut QueuedSync> = sync
+            .iter_mut()
+            .filter(|queued| queued.next_attempt_at.is_none_or(|at| at <= now))
+            .filter(|queued| {
+                below
+                    .as_ref()
+                    .is_none_or(|below| below.contains(&queued.catalog_id))
+            })
+            .collect();
+        // 没领过的在前，再照排进来的先后。
+        due.sort_by_key(|queued| (queued.next_attempt_at, queued.id));
+        let mut tasks: Vec<SubRoomSyncTask> = due
+            .into_iter()
+            .take(usize::from(limit))
+            .map(|queued| {
+                queued.attempts += 1;
+                queued.next_attempt_at = Some(lease_until);
+                queued.task()
+            })
+            .collect();
+        tasks.sort_by_key(|task| task.id);
+        Box::pin(async move { Ok(tasks) })
+    }
+
+    fn complete_sub_room_sync(
+        &self,
+        task: SubRoomSyncTask,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let mut sync = self.sync.lock().expect("任务锁正常");
+        let before = sync.len();
+        sync.retain(|queued| !(queued.id == task.id && queued.generation == task.generation));
+        let done = sync.len() < before;
+        drop(sync);
+        if !done {
+            self.queue_sync(task.catalog_id, task.principal);
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn retry_sub_room_sync(
+        &self,
+        task: SubRoomSyncTask,
+        retry_at: UtcMillis,
+        failure_code: &'static str,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let mut sync = self.sync.lock().expect("任务锁正常");
+        let postponed = sync
+            .iter_mut()
+            .find(|queued| queued.id == task.id && queued.generation == task.generation)
+            .map(|queued| {
+                queued.next_attempt_at = Some(retry_at);
+                queued.failure_code = Some(failure_code);
+            })
+            .is_some();
+        drop(sync);
+        if !postponed {
+            self.queue_sync(task.catalog_id, task.principal);
+        }
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -1356,6 +1572,21 @@ impl PrivateRoomStore for MemoryRooms {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
+        let interruption = {
+            let mut pending = self.interrupts_read.lock().expect("打断锁正常");
+            let due = match pending.as_mut() {
+                Some((room, untouched, _)) if *room == catalog_id => {
+                    let due = *untouched == 0;
+                    *untouched = untouched.saturating_sub(1);
+                    due
+                }
+                _ => false,
+            };
+            if due { pending.take() } else { None }
+        };
+        if let Some((_, _, change)) = interruption {
+            change(self);
+        }
         let found = self
             .rooms
             .lock()
@@ -1410,6 +1641,7 @@ impl PrivateRoomStore for MemoryRooms {
         Box::pin(async move {
             self.record("store.save");
             self.replace(room);
+            self.follow_parent(room);
             Ok(())
         })
     }
