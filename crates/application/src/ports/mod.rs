@@ -173,8 +173,9 @@ pub use rooms::{
     SealedInviteLink, SealedJoinCode,
 };
 pub use rooms::{
-    NewSubRoom, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomLink,
-    SubRoomParentFacts, SubRoomPolicyRecord, SubRoomStore,
+    NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
+    SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
+    SubRoomStore,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

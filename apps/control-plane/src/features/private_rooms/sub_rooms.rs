@@ -1,17 +1,18 @@
-//! 子房间（`specs/redesign/sub-rooms.md` 第 2a 步）：在一间房下面建子房间、读名单，和一间房里
-//! 子房间的三项设置（`specs/redesign/room-roles.md` R4）。
+//! 子房间（`specs/redesign/sub-rooms.md`）：在一间房下面建子房间、读名单（2a），人自己加入、退出，
+//! 改名字和用途（2b），和一间房里子房间的三项设置（`specs/redesign/room-roles.md` R4）。
 //!
 //! 都是新的接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段
 //! 整个房间都读不出来。建好的子房间照私人房间的样子回。
 
 use agent_room_application::{
-    authentication::AuthenticationRequirement,
+    authentication::{AuthenticatedPrincipal, AuthenticationRequirement},
     private_rooms::{
-        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, SubRoomList,
-        SubRoomPolicyView, SubRoomView,
+        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomView,
     },
 };
 use agent_room_domain::{
+    ids::RoomCatalogId,
     private_rooms::PrivateRoomMembershipStatus,
     sub_rooms::{SubRoomCreators, SubRoomPolicy},
     time::UtcMillis,
@@ -44,6 +45,16 @@ pub(super) struct CreateSubRoomBody {
     name: String,
     #[serde(default)]
     description: String,
+}
+
+/// 改名字、用途。没带的那一项不动；两项都没带就是没什么可改的。门、隐藏和分类跟后面几步。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ReviseSubRoomBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -254,6 +265,128 @@ pub(super) async fn list(
         Ok(list) => no_store(Json(SubRoomListResponse::from(list)).into_response()),
         Err(failure) => no_store(ApiError::private_room(failure, correlation_id).into_response()),
     }
+}
+
+/// 人自己进一间子房间。回的是照私人房间样子的这一间；网页接着照“服务器记着已加入、Matrix 上是
+/// 受邀”那一套替他加入。已经在里面的再来一次也回这一间。
+pub(super) async fn join(
+    State(state): State<PrivateRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((parent, sub_room)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    let (actor, parent_catalog_id, sub_room_catalog_id) =
+        match sub_room_write_context(&state, &headers, &jar, &parent, &sub_room, correlation_id)
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    respond(
+        state
+            .sub_rooms
+            .join_sub_room(SubRoomMembershipAction {
+                actor,
+                parent_catalog_id,
+                catalog_id: sub_room_catalog_id,
+            })
+            .await,
+        StatusCode::OK,
+        correlation_id,
+    )
+}
+
+/// 人从一间子房间退出。只要这一个请求：Matrix 那边由控制面替他离开。
+pub(super) async fn leave(
+    State(state): State<PrivateRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((parent, sub_room)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
+    let (actor, parent_catalog_id, sub_room_catalog_id) =
+        match sub_room_write_context(&state, &headers, &jar, &parent, &sub_room, correlation_id)
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    match state
+        .sub_rooms
+        .leave_sub_room(SubRoomMembershipAction {
+            actor,
+            parent_catalog_id,
+            catalog_id: sub_room_catalog_id,
+        })
+        .await
+    {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => no_store(ApiError::private_room(failure, correlation_id).into_response()),
+    }
+}
+
+/// 改子房间的名字、用途。
+pub(super) async fn revise(
+    State(state): State<PrivateRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path((parent, sub_room)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    body: Result<Json<ReviseSubRoomBody>, JsonRejection>,
+) -> Response {
+    let Ok(Json(body)) = body else {
+        return invalid("sub_room.invalid_revision_body", correlation_id);
+    };
+    if body.name.is_none() && body.description.is_none() {
+        return invalid("sub_room.invalid_revision_body", correlation_id);
+    }
+    let (actor, parent_catalog_id, sub_room_catalog_id) =
+        match sub_room_write_context(&state, &headers, &jar, &parent, &sub_room, correlation_id)
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return response,
+        };
+    respond(
+        state
+            .sub_rooms
+            .revise_sub_room(ReviseSubRoom {
+                actor,
+                parent_catalog_id,
+                catalog_id: sub_room_catalog_id,
+                // 两头的空白多半是手滑带上的，不为它拒绝。
+                name: body.name.map(|name| name.trim().to_owned()),
+                description: body.description,
+            })
+            .await,
+        StatusCode::OK,
+        correlation_id,
+    )
+}
+
+/// 动一间子房间的请求：同源、有效登录，地址里的两个房间号都得像样。
+async fn sub_room_write_context(
+    state: &PrivateRoomHttpState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    parent: &str,
+    sub_room: &str,
+    correlation_id: CorrelationId,
+) -> Result<(AuthenticatedPrincipal, RoomCatalogId, RoomCatalogId), Response> {
+    let (actor, parent_catalog_id) = required_write_context(
+        state,
+        headers,
+        jar,
+        parent,
+        AuthenticationRequirement::ActiveSession,
+        correlation_id,
+    )
+    .await?;
+    let Some(sub_room_catalog_id) = catalog_id(sub_room) else {
+        return Err(invalid_resource(correlation_id));
+    };
+    Ok((actor, parent_catalog_id, sub_room_catalog_id))
 }
 
 pub(super) async fn policy(

@@ -4,7 +4,7 @@
 
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
-    private_rooms::PrivateRoomMembershipStatus,
+    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
     sub_rooms::SubRoomPolicy,
     time::UtcMillis,
@@ -13,7 +13,7 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{PortFuture, PrivateRoomSnapshot},
+    ports::{PortFuture, PrivateRoomSnapshot, RoomRoleChange},
 };
 
 /// 建一间子房间要存的：房间本身，加上它挂在谁下面、谁建的、谁在管。
@@ -126,6 +126,40 @@ pub struct SubRoomPolicyRecord {
     pub version: AggregateVersion,
 }
 
+/// 把一个人记进子房间要存的：改好的子房间，和存之前要再看一眼的那件事。
+#[derive(Debug, Clone, Copy)]
+pub struct SubRoomAdmission<'a> {
+    /// 已经把他记成已加入的子房间。
+    pub room: &'a PrivateRoom,
+    /// 改之前读到的版本。
+    pub expected_version: AggregateVersion,
+    pub parent_catalog_id: RoomCatalogId,
+    pub principal: PrincipalId,
+    pub at: UtcMillis,
+    /// 这一次动了谁的身份，和房间在同一个事务里记下。
+    pub role_changes: &'a [RoomRoleChange],
+}
+
+/// 改子房间的名字和用途要存的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubRoomRevision {
+    pub catalog_id: RoomCatalogId,
+    pub parent_catalog_id: RoomCatalogId,
+    pub name: String,
+    pub name_key: String,
+    pub description: String,
+    pub at: UtcMillis,
+}
+
+/// 为什么这间子房间现在改不了。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomRevisionBlock {
+    /// 这间房里另一间没归档的子房间已经叫这个名字（不分大小写）。
+    NameTaken,
+    /// 这间子房间归档了、不在了，或者不挂在这间房下面。
+    Unavailable,
+}
+
 pub trait SubRoomStore: Send + Sync {
     /// 这间房是子房间时，它的父子关系。
     fn sub_room_link(
@@ -159,6 +193,20 @@ pub trait SubRoomStore: Send + Sync {
         parent: RoomCatalogId,
         viewer: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomEntry>>>;
+
+    /// 把一个人记进子房间。存之前在同一个事务里再看一眼他在父房间里还是不是已加入，不是就什么都
+    /// 不写、回 `false`：读到他在父房间里以后、存之前他被移出去的，不能留在子房间里。
+    fn admit_to_sub_room<'a>(
+        &'a self,
+        admission: &'a SubRoomAdmission<'a>,
+    ) -> PortFuture<'a, RepositoryResult<bool>>;
+
+    /// 改子房间的名字和用途：目录上的名字、用途和比重名用的键在同一个事务里。撞了名字、子房间归档
+    /// 了时什么都不写，回原因。
+    fn revise_sub_room<'a>(
+        &'a self,
+        revision: &'a SubRoomRevision,
+    ) -> PortFuture<'a, RepositoryResult<Option<SubRoomRevisionBlock>>>;
 
     fn sub_room_policy(
         &self,

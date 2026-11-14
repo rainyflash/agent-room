@@ -1,13 +1,14 @@
 //! 子房间（`specs/redesign/sub-rooms.md`）：父子关系、谁在管、一间房里子房间的三项设置。
 //!
-//! 建子房间时先锁父房间在目录里的那一行：同一间房下面同时建的排着队来，重名和上限数得准；父房间
-//! 这时候归档、转让也要等这一次存完。
+//! 建子房间、给子房间改名时先锁父房间在目录里的那一行：同一间房下面同时建、同时改名的排着队来，
+//! 重名和上限数得准；父房间这时候归档、转让也要等这一次存完。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        NewSubRoom, PortFuture, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
-        SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomStore,
+        NewSubRoom, PortFuture, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck,
+        SubRoomEntry, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
+        SubRoomRevisionBlock, SubRoomStore,
     },
 };
 use agent_room_domain::{
@@ -23,11 +24,17 @@ use agent_room_domain::{
 };
 use sqlx::{Postgres, Transaction, postgres::PgRow};
 
-use crate::{PostgresRepositories, agents::decode_column, error::map_sqlx_error};
+use crate::{
+    PostgresRepositories,
+    agents::decode_column,
+    error::{map_domain_error, map_sqlx_error},
+    transaction::finish,
+};
 
 use super::{
     decode::corrupt_data,
-    private_rooms::{create_private_room, ensure_creatable},
+    private_rooms::{create_private_room, ensure_creatable, save_private_room},
+    role_changes::insert_role_changes,
 };
 
 const HOUR_MS: i64 = 3_600_000;
@@ -170,6 +177,48 @@ impl SubRoomStore for PostgresRepositories {
             rows.iter()
                 .map(|row| decode_entry(row, operation))
                 .collect()
+        })
+    }
+
+    fn admit_to_sub_room<'a>(
+        &'a self,
+        admission: &'a SubRoomAdmission<'a>,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let operation = "sub_room.admit";
+            let next = admission
+                .expected_version
+                .next()
+                .map_err(|error| map_domain_error(operation, &error))?;
+            if next != admission.room.version() {
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Constraint,
+                ));
+            }
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let result = admit(&mut transaction, admission, operation).await;
+            finish(transaction, result, operation).await
+        })
+    }
+
+    fn revise_sub_room<'a>(
+        &'a self,
+        revision: &'a SubRoomRevision,
+    ) -> PortFuture<'a, RepositoryResult<Option<SubRoomRevisionBlock>>> {
+        Box::pin(async move {
+            let operation = "sub_room.revise";
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let result = revise(&mut transaction, revision, operation).await;
+            finish(transaction, result, operation).await
         })
     }
 
@@ -378,6 +427,136 @@ async fn block(
     .map_err(|error| map_sqlx_error(operation, &error))?;
     if recent >= i64::from(MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR) {
         return Ok(Some(SubRoomCreationBlock::CreatorLimitReached));
+    }
+    Ok(None)
+}
+
+/// 把一个人记进子房间。他在父房间里的那条成员记录锁到这次存完：同时把他移出父房间的请求排在
+/// 后面，它跟着清子房间时看得到这一条；已经被移出的，这里看得到，什么都不写。
+async fn admit(
+    transaction: &mut Transaction<'_, Postgres>,
+    admission: &SubRoomAdmission<'_>,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let in_parent: Option<bool> = sqlx::query_scalar(
+        r"SELECT true
+            FROM agent_room.private_room_membership AS member
+            JOIN agent_room.private_room_parent AS link
+              ON link.parent_catalog_entry_id = member.catalog_entry_id
+           WHERE link.catalog_entry_id = $1
+             AND member.catalog_entry_id = $2
+             AND member.principal_id = $3
+             AND member.membership_status = 'joined'
+             FOR SHARE OF member",
+    )
+    .bind(admission.room.catalog_id().as_uuid())
+    .bind(admission.parent_catalog_id.as_uuid())
+    .bind(admission.principal.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if in_parent != Some(true) {
+        return Ok(false);
+    }
+    save_private_room(
+        transaction,
+        admission.room,
+        admission.expected_version,
+        admission.at,
+        operation,
+    )
+    .await?;
+    insert_role_changes(
+        transaction,
+        admission.room.catalog_id(),
+        admission.role_changes,
+        admission.at,
+        operation,
+    )
+    .await?;
+    Ok(true)
+}
+
+/// 改子房间的名字和用途。先锁父房间在目录里的那一行，和建子房间排同一个队，重名看得准。
+async fn revise(
+    transaction: &mut Transaction<'_, Postgres>,
+    revision: &SubRoomRevision,
+    operation: &'static str,
+) -> RepositoryResult<Option<SubRoomRevisionBlock>> {
+    let catalog_id = revision.catalog_id.as_uuid();
+    let parent = revision.parent_catalog_id.as_uuid();
+    sqlx::query_scalar::<_, uuid::Uuid>(
+        r"SELECT catalog.id
+            FROM agent_room.room_catalog_entry AS catalog
+           WHERE catalog.id = $1
+             FOR NO KEY UPDATE",
+    )
+    .bind(parent)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let open: Option<bool> = sqlx::query_scalar(
+        r"SELECT link.archived_at IS NULL AND catalog.status = 'active'
+            FROM agent_room.private_room_parent AS link
+            JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = link.catalog_entry_id
+           WHERE link.catalog_entry_id = $1
+             AND link.parent_catalog_entry_id = $2
+             FOR NO KEY UPDATE OF link",
+    )
+    .bind(catalog_id)
+    .bind(parent)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if open != Some(true) {
+        return Ok(Some(SubRoomRevisionBlock::Unavailable));
+    }
+    let taken: bool = sqlx::query_scalar(
+        r"SELECT EXISTS (
+              SELECT 1
+                FROM agent_room.private_room_parent
+               WHERE parent_catalog_entry_id = $1
+                 AND archived_at IS NULL
+                 AND name_key = $2
+                 AND catalog_entry_id <> $3
+          )",
+    )
+    .bind(parent)
+    .bind(&revision.name_key)
+    .bind(catalog_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if taken {
+        return Ok(Some(SubRoomRevisionBlock::NameTaken));
+    }
+    sqlx::query(
+        r"UPDATE agent_room.private_room_parent
+             SET name_key = $2
+           WHERE catalog_entry_id = $1",
+    )
+    .bind(catalog_id)
+    .bind(&revision.name_key)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    let updated = sqlx::query_scalar::<_, uuid::Uuid>(
+        r"UPDATE agent_room.room_catalog_entry
+             SET name = $2,
+                 description = $3,
+                 updated_at = greatest(updated_at, to_timestamp($4::double precision / 1000.0))
+           WHERE id = $1 AND kind = 'private_room'
+           RETURNING id",
+    )
+    .bind(catalog_id)
+    .bind(&revision.name)
+    .bind(&revision.description)
+    .bind(revision.at.value())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if updated.is_none() {
+        return Err(corrupt_data(operation));
     }
     Ok(None)
 }

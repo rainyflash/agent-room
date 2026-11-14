@@ -15,7 +15,7 @@ use agent_room_application::{
         PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
         PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
         PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore, RoomRoleChange,
+        PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway, RoomRoleChange,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -1231,6 +1231,7 @@ impl Fixture {
             secrets: listings.clone(),
             // 这些用例里的房间都不是子房间，也不在它们下面建。
             sub_rooms: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
+            topics: matrix.clone(),
             identifiers: runtime.clone(),
             clock: runtime,
         });
@@ -1505,6 +1506,7 @@ struct TestMatrix {
     memberships: Mutex<BTreeMap<String, PrivateMatrixMembership>>,
     speaking: Mutex<BTreeMap<String, bool>>,
     room_name: Mutex<Option<String>>,
+    topic: Mutex<Option<String>>,
 }
 
 impl TestMatrix {
@@ -1515,6 +1517,7 @@ impl TestMatrix {
             memberships: Mutex::new(BTreeMap::new()),
             speaking: Mutex::new(BTreeMap::new()),
             room_name: Mutex::new(None),
+            topic: Mutex::new(None),
         }
     }
 
@@ -1681,6 +1684,20 @@ impl PrivateRoomMatrixGateway for TestMatrix {
         Box::pin(async move {
             self.record("matrix.set_name");
             *self.room_name.lock().expect("房间名锁正常") = Some(name.to_owned());
+            Ok(())
+        })
+    }
+}
+
+impl PrivateRoomTopicGateway for TestMatrix {
+    fn set_topic<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        topic: &'a str,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            self.record("matrix.set_topic");
+            *self.topic.lock().expect("话题锁正常") = Some(topic.to_owned());
             Ok(())
         })
     }

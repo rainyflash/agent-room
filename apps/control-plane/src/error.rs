@@ -1608,6 +1608,42 @@ const fn sub_room_refusal(
             ErrorCategory::Authorization,
             "只有房主能改子房间的这几项设置。",
         ),
+        SubRoomRefusal::Archived => (
+            StatusCode::CONFLICT,
+            "sub_room.archived",
+            ErrorCategory::Conflict,
+            "这间子房间归档了，要先恢复才能进、才能改。",
+        ),
+        SubRoomRefusal::Banned => (
+            StatusCode::FORBIDDEN,
+            "sub_room.banned",
+            ErrorCategory::Authorization,
+            "你在这间子房间里被封禁了，进不去。",
+        ),
+        SubRoomRefusal::ApprovalRequired => (
+            StatusCode::FORBIDDEN,
+            "sub_room.approval_required",
+            ErrorCategory::Authorization,
+            "这间子房间要批准才能进，先申请加入。",
+        ),
+        SubRoomRefusal::InviteOnly => (
+            StatusCode::FORBIDDEN,
+            "sub_room.invite_only",
+            ErrorCategory::Authorization,
+            "这间子房间只能请进来，请它的管理员把你加进去。",
+        ),
+        SubRoomRefusal::OwnerStays => (
+            StatusCode::CONFLICT,
+            "sub_room.owner_stays",
+            ErrorCategory::Conflict,
+            "房主在每一间子房间里，退不出去。",
+        ),
+        SubRoomRefusal::ManagersOnly => (
+            StatusCode::FORBIDDEN,
+            "sub_room.managers_only",
+            ErrorCategory::Authorization,
+            "只有这间子房间的管理员、房间的房主和管理员能改它。",
+        ),
     }
 }
 

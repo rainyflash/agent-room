@@ -425,6 +425,23 @@ pub(super) async fn save_private_room(
         )
         .await?;
     }
+    // 子房间管理员得是这一间里已加入的人：退出、被移出、被封禁的，这一间的管理员记录跟着删，再进来
+    // 就是普通成员（`specs/redesign/sub-rooms.md`）。不是子房间的房间没有这样的记录。
+    sqlx::query(
+        r"DELETE FROM agent_room.private_room_sub_room_manager AS manager
+           WHERE manager.catalog_entry_id = $1
+             AND NOT EXISTS (
+                 SELECT 1
+                   FROM agent_room.private_room_membership AS member
+                  WHERE member.catalog_entry_id = manager.catalog_entry_id
+                    AND member.principal_id = manager.principal_id
+                    AND member.membership_status = 'joined'
+             )",
+    )
+    .bind(room.catalog_id().as_uuid())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 

@@ -20,6 +20,9 @@ use super::{
     *,
 };
 
+#[path = "sub_room_membership.rs"]
+mod membership;
+
 const HOUR_MS: i64 = 3_600_000;
 
 #[tokio::test]

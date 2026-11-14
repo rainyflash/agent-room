@@ -1,5 +1,6 @@
 //! 子房间（`specs/redesign/sub-rooms.md` 第 2a 步）：在一间房下面建子房间、读名单，和一间房里
-//! 子房间的三项设置（`specs/redesign/room-roles.md` R4）。
+//! 子房间的三项设置（`specs/redesign/room-roles.md` R4）。人加入、退出和改名（2b）在旁边的
+//! `sub_room_membership`。
 //!
 //! 子房间自己是一间私人房间，建 Matrix 房间、存成员都走私人房间那一套；多出来的是它挂在谁下面、
 //! 谁建的、谁在管。口令、邀请链接、公开、往外请人这些只有父房间有，各自的用例读到房间以后先看
@@ -16,7 +17,7 @@ use agent_room_domain::{
     },
     sub_rooms::{
         SubRoomCreationRefusal, SubRoomPolicy, authorize_sub_room_creation, new_sub_room,
-        sub_room_name_key, validate_sub_room_name,
+        runs_parent_room, sub_room_name_key, validate_sub_room_name,
     },
     version::AggregateVersion,
 };
@@ -34,8 +35,8 @@ use crate::{
 use super::{
     super::{
         ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure,
-        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult, SubRoomList,
-        SubRoomPolicyView, SubRoomRefusal, SubRoomView,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult, ReviseSubRoom,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
         failure::{domain, failure, matrix, repository},
     },
     PrivateRoomService, active_room_actor_matrix_user, ensure_active_actor, private_room_alias,
@@ -65,6 +66,25 @@ pub trait SubRoomUseCases: Send + Sync {
         &self,
         request: ChangeSubRoomPolicy,
     ) -> PortFuture<'_, PrivateRoomResult<SubRoomPolicyView>>;
+
+    /// 人自己进一间子房间。没有门的，父房间里已加入的人点一下就进；有门的只有父房间的房主和管理员
+    /// 能这样进。已经在里面的再来一次不算错。
+    fn join_sub_room(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    /// 人从一间子房间退出，他的 Agent 跟着出去。本来就不在里面的不算错。
+    fn leave_sub_room(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 改子房间的名字、用途。管得了这一间的人能改。
+    fn revise_sub_room(
+        &self,
+        request: ReviseSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
 }
 
 impl SubRoomUseCases for PrivateRoomService {
@@ -94,6 +114,27 @@ impl SubRoomUseCases for PrivateRoomService {
         request: ChangeSubRoomPolicy,
     ) -> PortFuture<'_, PrivateRoomResult<SubRoomPolicyView>> {
         Box::pin(self.change_sub_room_policy_internal(request))
+    }
+
+    fn join_sub_room(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.join_sub_room_internal(request))
+    }
+
+    fn leave_sub_room(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.leave_sub_room_internal(request))
+    }
+
+    fn revise_sub_room(
+        &self,
+        request: ReviseSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.revise_sub_room_internal(request))
     }
 }
 
@@ -294,7 +335,7 @@ impl PrivateRoomService {
     }
 
     /// 读一间房，看的人得是里面已加入的成员；不是的话这间房对他来说不存在。
-    async fn load_as_member(
+    pub(super) async fn load_as_member(
         &self,
         catalog_id: RoomCatalogId,
         viewer: PrincipalId,
@@ -446,7 +487,7 @@ impl PrivateRoomService {
             return Err(not_found(OPERATION));
         }
         let parent_catalog_id = parent.catalog().id();
-        let runs_parent = runs(parent.room(), viewer);
+        let runs_parent = runs_parent_room(parent.room(), viewer);
         let entries = self
             .sub_rooms
             .list_sub_rooms(parent_catalog_id, viewer)
@@ -619,17 +660,9 @@ fn sub_room_catalog(
     .map_err(|error| domain(operation, &error))
 }
 
-fn has_joined(room: &PrivateRoom, principal: PrincipalId) -> bool {
+pub(super) fn has_joined(room: &PrivateRoom, principal: PrincipalId) -> bool {
     room.member(principal)
         .is_some_and(PrivateRoomMember::has_joined)
-}
-
-/// 父房间的房主和管理员：每一间子房间他们都看得到、进得去。
-fn runs(parent: &PrivateRoom, principal: PrincipalId) -> bool {
-    parent.owner_principal_id() == principal
-        || parent
-            .member(principal)
-            .is_some_and(|member| member.has_joined() && member.permissions().manage())
 }
 
 fn inside(entry: &SubRoomEntry) -> bool {
@@ -641,7 +674,10 @@ fn visible(entry: &SubRoomEntry, runs_parent: bool) -> bool {
     !entry.hidden || runs_parent || inside(entry)
 }
 
-const fn refused(operation: &'static str, refusal: SubRoomRefusal) -> PrivateRoomFailure {
+pub(super) const fn refused(
+    operation: &'static str,
+    refusal: SubRoomRefusal,
+) -> PrivateRoomFailure {
     failure(
         operation,
         PrivateRoomFailureStage::Validation,
@@ -686,7 +722,7 @@ const fn creation_blocked(
     failure(operation, PrivateRoomFailureStage::Persistence, kind)
 }
 
-const fn not_found(operation: &'static str) -> PrivateRoomFailure {
+pub(super) const fn not_found(operation: &'static str) -> PrivateRoomFailure {
     failure(
         operation,
         PrivateRoomFailureStage::Persistence,

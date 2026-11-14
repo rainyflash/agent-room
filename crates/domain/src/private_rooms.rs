@@ -622,6 +622,45 @@ impl PrivateRoom {
         Ok(true)
     }
 
+    /// 照规则直接记成已加入，不走“受邀再接受”两步：父房间里的人点一下就进子房间时是这样
+    /// （`specs/redesign/sub-rooms.md`）。谁能这样进由调用方照子房间的规则判断
+    /// （[`crate::sub_rooms::authorize_sub_room_join`]），这里只看这间房自己拦不拦他。已经在里面的
+    /// 不动，连权限也不换。
+    ///
+    /// # Errors
+    ///
+    /// 房间已归档、给的权限里没有查看，或者他在这间房里被封禁着时返回错误。
+    pub fn admit(
+        &mut self,
+        principal_id: PrincipalId,
+        permissions: PrivateRoomPermissions,
+    ) -> DomainResult<bool> {
+        self.ensure_active("joined")?;
+        require_assignable_permissions(permissions)?;
+        match self
+            .members
+            .get(&principal_id)
+            .map(PrivateRoomMember::status)
+        {
+            Some(PrivateRoomMembershipStatus::Joined) => return Ok(false),
+            Some(PrivateRoomMembershipStatus::Banned) => {
+                return Err(invalid_member_transition("banned", "joined"));
+            }
+            _ => {}
+        }
+        let next_version = self.next_version()?;
+        self.members.insert(
+            principal_id,
+            PrivateRoomMember {
+                principal_id,
+                status: PrivateRoomMembershipStatus::Joined,
+                permissions,
+            },
+        );
+        self.version = next_version;
+        Ok(true)
+    }
+
     /// 接受当前主体收到的邀请。
     ///
     /// # Errors
@@ -1189,6 +1228,62 @@ mod tests {
         assert!(!room.accept_invitation(principal(2)).expect("重复接受幂等"));
         assert!(room.allows(principal(2), PrivateRoomCapability::View));
         assert_eq!(room.version().value(), 2);
+    }
+
+    #[test]
+    fn 照规则直接进来的不用接受_已经在的不动_封禁着的和归档了的进不来() {
+        let view_only = PrivateRoomPermissions::from_capabilities([PrivateRoomCapability::View])
+            .expect("只能看是有效的权限");
+        let mut room = room();
+        let before = room.version();
+
+        assert!(
+            room.admit(principal(2), ordinary_permissions())
+                .expect("能进")
+        );
+        let admitted = room.member(principal(2)).expect("在里面");
+        assert!(admitted.has_joined(), "不用再点接受");
+        assert_eq!(admitted.permissions(), ordinary_permissions());
+        assert!(room.version() > before);
+
+        // 已经在里面的：不动，权限也不换；房主也一样。
+        let settled = room.version();
+        assert!(!room.admit(principal(2), view_only).expect("幂等"));
+        assert_eq!(
+            room.member(principal(2)).expect("在里面").permissions(),
+            ordinary_permissions()
+        );
+        assert!(!room.admit(principal(1), view_only).expect("幂等"));
+        assert_eq!(room.version(), settled);
+
+        // 受邀还没接受的、退出过的：直接记成已加入，照这一次给的权限。
+        room.invite(principal(1), principal(3), ordinary_permissions())
+            .expect("房主能邀请");
+        assert!(room.admit(principal(3), view_only).expect("能进"));
+        let invited = room.member(principal(3)).expect("在里面");
+        assert!(invited.has_joined());
+        assert_eq!(invited.permissions(), view_only);
+        room.leave(principal(2)).expect("能退出");
+        assert!(
+            room.admit(principal(2), ordinary_permissions())
+                .expect("退出过的能再进")
+        );
+
+        // 没有查看的权限不给进；封禁着的进不来；归档以后谁都进不来。
+        assert!(
+            room.admit(principal(4), PrivateRoomPermissions::NONE)
+                .is_err()
+        );
+        room.admit(principal(5), ordinary_permissions())
+            .expect("能进");
+        room.ban_member(principal(1), principal(5))
+            .expect("房主能封禁");
+        assert!(matches!(
+            room.admit(principal(5), ordinary_permissions()),
+            Err(crate::DomainError::InvalidTransition { from: "banned", .. })
+        ));
+        room.archive(principal(1)).expect("房主能归档");
+        assert!(room.admit(principal(6), ordinary_permissions()).is_err());
     }
 
     #[test]

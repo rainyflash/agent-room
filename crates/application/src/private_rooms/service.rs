@@ -22,8 +22,8 @@ use crate::{
         PrivateMatrixMembership, PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment,
         PrivateRoomAgentDirectory, PrivateRoomAgentEviction, PrivateRoomListingMatrix,
         PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
-        SubRoomStore,
+        PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomTopicGateway, SecretFactory, SubRoomStore,
     },
 };
 
@@ -40,6 +40,7 @@ mod moderation_members;
 mod public_creation;
 mod public_transfer;
 mod role_changes;
+mod sub_room_membership;
 mod sub_rooms;
 
 use public_creation::{ensure_public_creator, limit_reached};
@@ -170,6 +171,8 @@ pub struct PrivateRoomDependencies {
     pub secrets: Arc<dyn SecretFactory>,
     /// 子房间的父子关系、谁在管，和一间房里子房间的三项设置（`specs/redesign/sub-rooms.md`）。
     pub sub_rooms: Arc<dyn SubRoomStore>,
+    /// 改子房间的用途时写 Matrix 房间的话题。
+    pub topics: Arc<dyn PrivateRoomTopicGateway>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -186,6 +189,7 @@ pub struct PrivateRoomService {
     listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
     secrets: Arc<dyn SecretFactory>,
     sub_rooms: Arc<dyn SubRoomStore>,
+    topics: Arc<dyn PrivateRoomTopicGateway>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -204,6 +208,7 @@ impl PrivateRoomService {
             listing_matrix: dependencies.listing_matrix,
             secrets: dependencies.secrets,
             sub_rooms: dependencies.sub_rooms,
+            topics: dependencies.topics,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }

@@ -216,6 +216,25 @@ pub struct SubRoomView {
     pub inside_visible: bool,
 }
 
+/// 人自己进一间子房间，或者从里面退出（`specs/redesign/sub-rooms.md` 第 2b 步）。地址里带着它
+/// 所在的房间，对不上的当没有这间子房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubRoomMembershipAction {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+}
+
+/// 改子房间的名字、用途。没带的那一项不动。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviseSubRoom {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectSubRoomPolicy {
     pub actor: AuthenticatedPrincipal,

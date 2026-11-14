@@ -42,8 +42,8 @@ pub use models::{
     CreateSubRoom, GovernPrivateRoomMember, InspectPrivateRoom, InspectSubRoomPolicy, InviteByLink,
     InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount, ListSubRooms,
     PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomMembershipAction,
-    PrivateRoomOrigin, RenamePrivateRoom, SubRoomList, SubRoomPolicyView, SubRoomView,
-    TransferPrivateRoomOwnership,
+    PrivateRoomOrigin, RenamePrivateRoom, ReviseSubRoom, SubRoomList, SubRoomMembershipAction,
+    SubRoomPolicyView, SubRoomView, TransferPrivateRoomOwnership,
 };
 pub use moderation_grants::{
     GrantRoomModeration, ListRoomModerationGrants, ModerationGrantFailure,
