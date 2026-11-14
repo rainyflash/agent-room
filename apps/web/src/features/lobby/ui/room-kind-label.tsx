@@ -16,6 +16,19 @@ export type RoomKind = {
   readonly archived?: boolean;
 };
 
+/**
+ * 这一小句是不是要一直提醒着的那种：归档了、服务器读得到、不加密。
+ * 地方不够时先保住它（手机上的顶栏让房间名先收）。
+ */
+export function roomKindWarns({
+  privateRoom,
+  unencrypted = false,
+  serverReadable = false,
+  archived = false,
+}: RoomKind): boolean {
+  return privateRoom && (archived || serverReadable || unencrypted);
+}
+
 /** 房间名旁边那一小句：这是哪种房间、谁读得到。场景和对话两种版面的顶栏共用。 */
 export function RoomKindLabel({
   privateRoom,

@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
-import { openRoomSettings } from './support/workspace-navigation';
+import { openRoomSettings, roomAction } from './support/workspace-navigation';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
@@ -270,8 +270,11 @@ for (const width of [1_440, 390]) {
     );
     await expect(room.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
     await expect(room.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
-    await expect(page.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
+    // 房间设置还在（手机上在“更多”里），“接入 Agent”顶栏上、“更多”里都没有。
+    await expect(await roomAction(page, 'Room settings')).toBeVisible();
     await expect(bringAgent(page)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Bring an agent', exact: true })).toHaveCount(0);
+    if (width === 390) await page.keyboard.press('Escape');
     await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
     await page.screenshot({
@@ -303,9 +306,9 @@ test('私人房间：Agent 拿房间号敲门，房间页的提示栈里直接�
   expect(failures).toEqual([]);
 });
 
-/** 打开房间页上的“接入 Agent”，选网络接入。 */
+/** 打开房间页上的“接入 Agent”（手机上在“更多”里），选网络接入。 */
 async function openNetworkInvite(page: Page) {
-  await bringAgent(page).click();
+  await (await roomAction(page, 'Bring an agent')).click();
   const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
   await dialog.getByRole('radio', { name: /^Network/u }).click();
   return dialog;

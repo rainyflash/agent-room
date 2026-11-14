@@ -4,8 +4,10 @@ import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 import {
   backToConversationButton,
+  openMainRoom,
   openResources,
   openRoomSettings,
+  placesButton,
 } from './support/workspace-navigation';
 
 // 房间页的对话版面（specs/redesign/room-page.md）。1b 起它是默认的，
@@ -208,7 +210,9 @@ test('人不在主房间的对话里时来了新消息：回去的地方标着�
   expect(failures).toEqual([]);
 });
 
-test('对话版面窄的时候：两栏收起来，Agent 从顶栏打开，私聊里留着回主房间的路', async ({ page }) => {
+test('对话版面窄的时候：右栏收成顶栏上的按钮，左栏收进房间名旁边的下拉，私聊里留着回主房间的路', async ({
+  page,
+}) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1000, height: 760 });
   await page.goto(`${room}&layout=conversation`);
@@ -238,23 +242,80 @@ test('对话版面窄的时候：两栏收起来，Agent 从顶栏打开，私�
   await expect(details).toHaveCount(0);
   const openAgents = page.getByRole('button', { name: 'View agents', exact: true });
   await expect(openAgents).toBeFocused();
+  // 抽屉里只有 Agent 和人：私聊在房间名旁边的下拉里。
   await openAgents.click();
-  await drawer.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await expect(drawer.getByRole('button', { name: /^Open conversation with/u })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await expect(drawer).toBeHidden();
+
+  // 下拉上写着现在在哪儿，点开是主房间和私聊，贴在它下面。
+  const places = placesButton(page);
+  const nowIn = (place: string) => `Go to the main room or a direct message (now in ${place})`;
+  await expect(places).toHaveAccessibleName(nowIn('Main room'));
+  await expect(places).toHaveAttribute('aria-expanded', 'false');
+  await places.click();
+  await expect(places).toHaveAttribute('aria-expanded', 'true');
+  const menu = page.getByRole('dialog', { name: 'Main room and direct messages', exact: true });
+  const mainRoom = menu.getByRole('button', { name: 'Main room', exact: true });
+  await expect(mainRoom).toHaveAttribute('aria-current', 'page');
+  await expect(mainRoom).toBeFocused();
+  const placesBox = await places.boundingBox();
+  const menuBox = await menu.boundingBox();
+  if (placesBox === null || menuBox === null) throw new Error('没有量到下拉的位置。');
+  expect(menuBox.y).toBeGreaterThanOrEqual(placesBox.y + placesBox.height);
+  expect(menuBox.y).toBeLessThanOrEqual(placesBox.y + placesBox.height + 12);
+  expect(Math.abs(menuBox.x - placesBox.x)).toBeLessThanOrEqual(2);
+  await expectAccessible(page);
+  // Esc 收起来，焦点回到那个按钮上；点外面也收。
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(places).toBeFocused();
+  await places.click();
+  await expect(menu).toBeVisible();
+  await page.mouse.click(700, 520);
+  await expect(menu).toBeHidden();
+
+  // 点一场私聊：下拉收起来，上面写的换成对面的名字。
+  await places.click();
+  await menu.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await expect(menu).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeVisible();
-  // 在私聊里时主房间来了新消息：回去的那一条上标着。
+  await expect(places).toHaveAccessibleName(nowIn('Build Agent 002'));
+  // 在私聊里时主房间来了新消息：下拉上、主栏顶上回去的那一条上都标着。
   const back = page.getByRole('button', { name: 'Back to the main room', exact: true });
   await receiveInMainRoom(page, 'Arrived while in a direct message.');
   await expect(back).toHaveAccessibleDescription('1 new message');
   await expect(back.locator('.room-unread')).toBeVisible();
-  await back.click();
+  await expect(places).toHaveAccessibleDescription('1 new message');
+  await expect(places.locator('.room-unread')).toBeVisible();
+  await places.click();
+  await expect(mainRoom).not.toHaveAttribute('aria-current', 'page');
+  await expect(mainRoom).toHaveAccessibleDescription('1 new message');
+  await expectAccessible(page);
+  await mainRoom.click();
+  await expect(menu).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeHidden();
   await expect(page.getByText('Review milestone 80', { exact: false }).first()).toBeVisible();
-  await expectAccessible(page);
+  await expect(places).toHaveAccessibleName(nowIn('Main room'));
+  await expect(page.locator('.room-unread')).toHaveCount(0);
+
+  // 窗口拉宽到左栏出来：开着的下拉跟着收起来，不留一层挡着页面。
+  await places.click();
+  await expect(menu).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 760 });
+  await expect(menu).toHaveCount(0);
+  await expect(places).toBeHidden();
+  await expect(
+    page.getByRole('navigation', { name: 'Main room and direct messages' }),
+  ).toBeVisible();
+  await input.fill('Still usable.');
+  await expect(input).toHaveValue('Still usable.');
   expect(failures).toEqual([]);
 });
 
-test('对话版面在手机上：不横向滚动，输入框贴在底下，顶栏用一个按钮换版面', async ({ page }) => {
+test('对话版面在手机上：顶栏只有一行，别的动作都在“更多”里；不横向滚动，输入框贴在底下', async ({
+  page,
+}) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(room);
@@ -262,8 +323,6 @@ test('对话版面在手机上：不横向滚动，输入框贴在底下，顶�
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(input).toBeInViewport();
   await expect(canvas).toHaveCount(0);
-  // 手机上两段的切换换成一个按钮。
-  await expect(page.getByRole('radiogroup', { name: 'Room layout', exact: true })).toBeHidden();
   await expectNoHorizontalOverflow(page);
   const gap = await page.evaluate(() => {
     const composer = document.querySelector('.room-desk__main .conversation-panel__composer');
@@ -273,12 +332,91 @@ test('对话版面在手机上：不横向滚动，输入框贴在底下，顶�
   expect(gap).not.toBeNull();
   expect(gap).toBeGreaterThanOrEqual(0);
   expect(gap).toBeLessThanOrEqual(24);
-  // 顶栏的动作一个不少，放不下的那一行自己左右滑。
-  await expect(page.getByRole('button', { name: 'Bring an agent', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
+  // 顶栏一行：回到房间列表、在哪儿（下面一行是房间名）、“Agent N”、“更多”。
+  const top = page.locator('.room-desk__top');
+  await expect.poll(() => topBarHeight(page)).toBeLessThanOrEqual(60);
+  await expect(top.getByRole('link', { name: 'Back to rooms', exact: true })).toBeVisible();
+  const places = placesButton(page);
+  const roomName = top.getByRole('heading', { level: 1, name: 'Builders Exchange', exact: true });
+  const placesBox = await places.boundingBox();
+  const nameBox = await roomName.boundingBox();
+  if (placesBox === null || nameBox === null) throw new Error('没有量到房间名。');
+  expect(nameBox.y).toBeGreaterThanOrEqual(placesBox.y + placesBox.height - 2);
+  const openAgents = top.getByRole('button', { name: 'View agents', exact: true });
+  await expect(openAgents).toBeVisible();
+  await expect(openAgents.locator('.room-desk__agents-word')).toBeHidden();
+  const more = top.getByRole('button', { name: 'More', exact: true });
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('radiogroup', { name: 'Room layout', exact: true })).toBeHidden();
+  for (const name of [
+    'Bring an agent',
+    'Invite people',
+    'Room settings',
+    'Switch to the scene layout',
+  ])
+    await expect(page.getByRole('button', { name, exact: true })).toBeHidden();
   await expectAccessible(page);
 
-  await page.getByRole('button', { name: 'Switch to the scene layout', exact: true }).click();
+  // “更多”：从下面出来的一层，后面垫暗。
+  await more.click();
+  const menu = page.getByRole('dialog', { name: 'More', exact: true });
+  await expect(menu.getByRole('button')).toHaveText([
+    'Search this conversation',
+    'Invite people',
+    'Bring an agent',
+    'Room settings',
+    'Switch to the scene layout',
+  ]);
+  const menuBox = await menu.boundingBox();
+  if (menuBox === null) throw new Error('没有量到“更多”。');
+  expect(Math.round(menuBox.width)).toBe(390);
+  expect(Math.round(menuBox.y + menuBox.height)).toBe(844);
+  await expectAccessible(page);
+  // Esc 收起来，焦点回到“更多”；点外面也收。
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(more).toBeFocused();
+  await more.click();
+  await page.mouse.click(195, 200);
+  await expect(menu).toBeHidden();
+
+  // 点一项：这一层收起来，对话框打开；关掉以后焦点回到“更多”。
+  await more.click();
+  await menu.getByRole('button', { name: 'Bring an agent', exact: true }).click();
+  await expect(menu).toBeHidden();
+  const invite = page.getByRole('dialog', { name: 'Bring an agent' });
+  await expect(invite).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(invite).toBeHidden();
+  await expect(more).toBeFocused();
+  const settings = await openRoomSettings(page);
+  await expect(settings).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(settings).toBeHidden();
+  await expect(more).toBeFocused();
+
+  // 查找：对话顶上那一行不放它的按钮，从“更多”打开，焦点落在关键词那一格。
+  // 开着的时候按钮在那一行上，点了收起来。
+  const main = page.locator('.workspace-room-content');
+  const searchToggle = main.getByRole('button', { name: 'Search this conversation', exact: true });
+  await expect(searchToggle).toBeHidden();
+  await more.click();
+  await menu.getByRole('button', { name: 'Search this conversation', exact: true }).click();
+  await expect(menu).toBeHidden();
+  const search = main.getByRole('search', { name: 'Search this conversation', exact: true });
+  await expect(search).toBeVisible();
+  await expect(search.getByRole('searchbox')).toBeFocused();
+  await expect(searchToggle).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+  await searchToggle.click();
+  await expect(search).toBeHidden();
+  await input.click();
+  await expect(searchToggle).toBeHidden();
+
+  // 换成场景也在“更多”里。场景的顶栏上照旧是一个按钮，换回来焦点落在“更多”上。
+  await more.click();
+  await menu.getByRole('button', { name: 'Switch to the scene layout', exact: true }).click();
   await expect(canvas).toBeVisible();
   await expect(input).toBeHidden();
   await page
@@ -286,8 +424,111 @@ test('对话版面在手机上：不横向滚动，输入框贴在底下，顶�
     .click();
   await expect(input).toBeInViewport();
   await expect(canvas).toHaveCount(0);
+  await expect(more).toBeFocused();
   expect(failures).toEqual([]);
 });
+
+test('手机上的下拉从下面出来；没有私聊的房间没有它，一句话都没有时“更多”里没有查找；有人申请时“更多”上带点', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(room);
+  const input = page.getByRole('textbox', { name: 'Message', exact: true });
+  await expect(input).toBeInViewport();
+  const places = placesButton(page);
+  await places.click();
+  const placesMenu = page.getByRole('dialog', {
+    name: 'Main room and direct messages',
+    exact: true,
+  });
+  const placesBox = await placesMenu.boundingBox();
+  if (placesBox === null) throw new Error('没有量到下拉。');
+  expect(Math.round(placesBox.width)).toBe(390);
+  expect(Math.round(placesBox.y + placesBox.height)).toBe(844);
+  await expect(placesMenu.getByRole('button', { name: 'Main room', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expectAccessible(page);
+  await placesMenu.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await expect(placesMenu).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeVisible();
+  await expect(places).toHaveAccessibleName(/now in Build Agent 002/u);
+  await expectNoHorizontalOverflow(page);
+  // 这场私聊还一句话没有：“更多”里没有查找。
+  const more = page.getByRole('button', { name: 'More', exact: true });
+  const moreMenu = page.getByRole('dialog', { name: 'More', exact: true });
+  const searchItem = moreMenu.getByRole('button', {
+    name: 'Search this conversation',
+    exact: true,
+  });
+  await more.click();
+  await expect(moreMenu.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
+  await expect(searchItem).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await openMainRoom(page);
+  await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeHidden();
+  await more.click();
+  await expect(searchItem).toBeVisible();
+  await page.keyboard.press('Escape');
+  // 看资料时眼前不是对话，也没有查找。
+  await openResources(page);
+  await more.click();
+  await expect(moreMenu.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
+  await expect(searchItem).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // 没有私聊的房间：没有下拉，第一行就是房间名。
+  await page.goto('/e2e/fixtures/lobby-scene.html?private&agents=0');
+  const top = page.locator('.room-desk__top');
+  await expect(
+    top.getByRole('heading', { level: 1, name: 'Builders Exchange', exact: true }),
+  ).toBeVisible();
+  await expect(places).toHaveCount(0);
+  await more.click();
+  await expect(moreMenu.getByRole('button', { name: 'Bring an agent', exact: true })).toBeVisible();
+  await expect(searchItem).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expectNoHorizontalOverflow(page);
+
+  // 有人申请加入：齿轮收在“更多”里，点就标在“更多”上，里面“房间设置”那一项也带着。
+  await page.goto('/e2e/fixtures/lobby-scene.html?private&listed&requests');
+  await expect(more).toHaveAccessibleDescription('Requests to join: 2');
+  await expect(more.locator('.room-desk__attention')).toBeVisible();
+  // 这间房不加密，是要一直提醒着的：第二行放不下时房间名让，这一句写全。
+  const warning = top.locator('.room-desk__meta > span').first();
+  await expect(warning).toHaveText('Public room · Not encrypted');
+  expect(await warning.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+    true,
+  );
+  await expect(
+    top.getByRole('heading', { level: 1, name: 'Builders Exchange', exact: true }),
+  ).toBeVisible();
+  await more.click();
+  const settingsItem = moreMenu.getByRole('button', { name: 'Room settings', exact: true });
+  await expect(settingsItem).toHaveAccessibleDescription('Requests to join: 2');
+  await expect(settingsItem.locator('.room-desk-menu__attention')).toBeVisible();
+  await expect(moreMenu.getByRole('button', { name: 'Share', exact: true })).toBeVisible();
+  await expectAccessible(page);
+  await page.keyboard.press('Escape');
+
+  // 最窄的手机：顶栏还是一行，不横着滚。
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.goto(room);
+  await expect(input).toBeInViewport();
+  await expect.poll(() => topBarHeight(page)).toBeLessThanOrEqual(60);
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
+
+/**
+ * 顶栏此刻多高。刚打开的页面还可能整个重画一遍，那一下量不到：量不到算很高，外面接着再量。
+ */
+async function topBarHeight(page: Page): Promise<number> {
+  const box = await page.locator('.room-desk__top').boundingBox();
+  return box === null ? Number.POSITIVE_INFINITY : box.height;
+}
 
 test('认得出的记号：主房间前面是 #，在等消息的头像带绿点，找你的那一条整行铺一层浅黄', async ({
   page,

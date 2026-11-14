@@ -2,7 +2,8 @@
  * 房间页的对话版面（specs/redesign/room-page.md）：栏布局，不绝对定位。
  * 只用令牌，不写死颜色、圆角和阴影。底是白的，左右两栏垫一层很浅的灰，栏之间一条细线。
  * - 1100px 以上三栏：左栏（主房间、私聊，有东西才出现）、主栏、右栏（Agent）。
- * - 更窄：左右两栏收起来，Agent 从顶栏的按钮打开抽屉。
+ * - 更窄：右栏收成顶栏上的“Agent N”，左栏收进房间名旁边的下拉。
+ * - 手机（767px 以下）：顶栏只有一行，别的动作都在“更多”里；下拉和“更多”从下面出来。
  * - 每一栏自己滚动，整页不滚；输入框贴在主栏底下。
  */
 .lobby-workspace.room-desk {
@@ -34,6 +35,19 @@
   flex: 1 1 auto;
   align-items: baseline;
   gap: 10px;
+}
+/* 包着房间名和那一小句的一层，宽的时候不算数：两样直接排在这一行里，下拉夹在中间。 */
+.room-desk__titles {
+  display: contents;
+}
+.room-desk__place-slash {
+  order: 1;
+}
+.room-desk__place-trigger {
+  order: 2;
+}
+.room-desk__meta {
+  order: 3;
 }
 .room-desk__identity h1 {
   min-width: 0;
@@ -110,8 +124,13 @@
 .room-desk__actions > .ar-button--primary {
   margin-inline: 4px;
 }
-.room-desk__settings {
+.room-desk__settings,
+.room-desk__more {
   position: relative;
+}
+/* “更多”只在手机上有：宽的时候那几个动作都摆在顶栏上。 */
+.room-desk__actions > .room-desk__more {
+  display: none;
 }
 /* 有人在等批准：齿轮右上角一个点。 */
 .room-desk__attention {
@@ -123,6 +142,137 @@
   border-radius: 50%;
   background: var(--ar-coral);
   box-shadow: 0 0 0 2px var(--ar-canvas);
+}
+
+/* 左栏收起来时，房间名旁边的下拉：写着现在在哪儿，点开是主房间和私聊。 */
+.room-desk__place-slash {
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+  font-size: 0.9375rem;
+}
+.room-desk__place-trigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  margin-inline: -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: transparent;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.room-desk__place-trigger:hover,
+.room-desk__place-trigger[aria-expanded='true'] {
+  background: var(--ar-surface-muted);
+}
+.room-desk__place-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-desk__place-trigger > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+}
+
+/* 顶栏上点开的一小块（主房间和私聊、手机上的“更多”）：贴在打开它的按钮下面。 */
+.room-desk-menu {
+  /* 打开时量出来的按钮位置写在元素自己身上，盖过这两个数（`room-desk-menu.tsx`）。 */
+  --room-desk-menu-top: 52px;
+  --room-desk-menu-left: 12px;
+
+  position: fixed;
+  inset: var(--room-desk-menu-top) auto auto
+    max(12px, min(var(--room-desk-menu-left), calc(100vw - 292px)));
+  width: 280px;
+  max-width: none;
+  max-height: min(480px, calc(100dvh - var(--room-desk-menu-top) - 12px));
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-panel-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  box-shadow: var(--ar-overlay-shadow);
+}
+.room-desk-menu[open] {
+  display: flex;
+}
+.room-desk-menu::backdrop {
+  background: transparent;
+}
+.room-desk-menu__body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px;
+}
+.room-desk-menu .room-desk__places {
+  padding: 0;
+}
+.room-desk-menu .workspace-direct {
+  max-height: none;
+  min-height: 0;
+  flex: 0 0 auto;
+  margin-top: 6px;
+  padding: 10px 0 0;
+  overflow: visible;
+}
+.room-desk-menu__items {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.room-desk-menu__item {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: transparent;
+  font-size: 0.9375rem;
+  text-align: left;
+}
+.room-desk-menu__item:hover {
+  background: var(--ar-surface-muted);
+}
+.room-desk-menu__item > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+  stroke-width: 1.8;
+}
+.room-desk-menu__item > span:first-of-type {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* 这一项里有要人留意的事（有人在等批准）。 */
+.room-desk-menu__attention {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ar-coral);
 }
 
 /* 三栏 */
@@ -312,6 +462,11 @@
   .room-desk__agents-button {
     display: none;
   }
+  /* 左栏一直在，不用下拉。 */
+  .room-desk__place-trigger,
+  .room-desk__place-slash {
+    display: none;
+  }
   /* 左栏在的时候，主房间就在那里。 */
   .room-desk__body[data-rail='true'] .room-desk__return {
     display: none;
@@ -333,21 +488,154 @@
   }
 }
 
-/* 手机：动作另起一行，放不下就左右滑 */
+/* 手机：顶栏只有一行，回到房间列表、在哪儿、“Agent N”、“更多”。别的动作都在“更多”里。 */
 @media (max-width: 767px) {
   .lobby-workspace.room-desk {
     --room-desk-gutter: 12px;
   }
   .room-desk__top {
-    flex-wrap: wrap;
-    gap: 8px 10px;
-    padding: 8px 12px;
+    gap: 4px;
+    min-height: 56px;
+    padding: 6px 6px 6px 4px;
   }
-  .room-desk__actions {
+  /* 房间名一行，下面一行小字。 */
+  .room-desk__identity {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .room-desk__titles {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+  }
+  .room-desk__titles > h1 {
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+  .room-desk__meta {
+    font-size: 0.75rem;
+  }
+  /* Agent 有几个已经写在旁边的“Agent N”上了，那一小句里不再说一遍。 */
+  .room-desk:not([data-page]) .room-desk__meta > span:last-child {
+    display: none;
+  }
+  /* 有下拉时：第一行是现在在哪儿，第二行是房间名和它是哪种房间。 */
+  .room-desk__place-slash {
+    display: none;
+  }
+  .room-desk__identity[data-places] > .room-desk__place-trigger {
+    min-height: 26px;
+    order: -1;
+    align-self: flex-start;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .room-desk__identity[data-places] > .room-desk__titles {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+  /* 放不下时后面那一小句先让，让完了房间名才收。 */
+  .room-desk__identity[data-places] > .room-desk__titles > h1 {
     max-width: 100%;
-    flex: 1 0 100%;
-    justify-content: flex-end;
+    flex: 0 0 auto;
+    color: var(--ar-muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.5;
+  }
+  .room-desk__identity[data-places] .room-desk__meta {
+    flex: 0 1 auto;
+  }
+  .room-desk__identity[data-places] .room-desk__meta::before {
+    content: '·';
+  }
+  /* 这一行前面已经有房间名了：只写它是哪种房间，放不下时带省略号，人数不写。 */
+  .room-desk__identity[data-places] .room-desk__meta > span:first-of-type {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .room-desk__identity[data-places] .room-desk__meta > span:not(:first-of-type) {
+    display: none;
+  }
+  /* 要一直提醒着的那一句（归档了、服务器读得到、不加密）先保住：这时候房间名让。 */
+  .room-desk__identity[data-places] > .room-desk__titles[data-warns] > h1 {
+    min-width: 3.5em;
+    flex-shrink: 1;
+  }
+  .room-desk__identity[data-places] > .room-desk__titles[data-warns] > .room-desk__meta {
+    max-width: calc(100% - 3.5em - 6px);
+    flex-shrink: 0;
+  }
+  .room-desk__actions > .room-layout-switch,
+  .room-desk__actions > .room-layout-toggle,
+  .room-desk__actions > .room-desk__action,
+  .room-desk__actions > .room-desk__settings {
+    display: none;
+  }
+  .room-desk__actions > .room-desk__more {
+    display: inline-grid;
+  }
+  .room-desk__more > .room-desk__attention {
+    top: 10px;
+    right: 10px;
+  }
+  /* “Agent N”：一粒圆角的按钮，只写个数。 */
+  .room-desk__agents-word {
+    display: none;
+  }
+  .room-desk__actions > .room-desk__agents-button {
+    min-height: 36px;
+    padding: 0 12px 0 10px;
+    border-radius: var(--ar-pill);
+    background: var(--ar-surface-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  /* 下拉和“更多”：从下面出来的一层，后面垫暗。 */
+  .room-desk-menu {
+    inset: auto 0 0;
+    width: 100%;
+    max-height: min(80dvh, calc(100dvh - 56px));
+    border-width: 1px 0 0;
+    border-radius: var(--ar-panel-radius) var(--ar-panel-radius) 0 0;
+  }
+  .room-desk-menu::backdrop {
+    background: var(--ar-backdrop, rgb(0 0 0 / 45%));
+  }
+  .room-desk-menu__body {
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  /* 对话顶上那一行：查找收在“更多”里（开着的时候按钮留着，好关），“资料”只留图标；
+     “只看”三项放不下时自己左右滑。 */
+  .room-desk__main .conversation-panel__bar {
+    padding: 0 8px;
+  }
+  .room-desk__main .conversation-panel__scopes {
     overflow-x: auto;
+    scrollbar-width: none;
+  }
+  /* 用键盘把它关上的那一下焦点还在它身上：先留着，焦点走了再收。 */
+  .room-desk__main
+    .conversation-panel__bar-button--icon[aria-expanded='false']:not(:focus-visible) {
+    display: none;
+  }
+  .room-desk__main .conversation-panel__bar-button:not(.conversation-panel__bar-button--icon) {
+    width: 30px;
+    justify-content: center;
+    padding: 0;
+  }
+  .room-desk__main
+    .conversation-panel__bar-button:not(.conversation-panel__bar-button--icon)
+    > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .room-desk .agent-inspector {
     width: 100%;

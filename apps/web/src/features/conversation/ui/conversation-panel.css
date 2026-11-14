@@ -904,6 +904,11 @@
   .conversation-panel__composer > textarea {
     font-size: 16px;
   }
+  /* 查找也一样：字比 16px 小的输入框，iPhone 点进去会把整页放大。 */
+  .conversation-search input,
+  .conversation-search select {
+    font-size: 16px;
+  }
   .conversation-panel__tools select {
     width: 126px;
     font-size: 12px;
