@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentJoinedAtUnixMs,
   agentNameParts,
+  agentOrigin,
+  agentRowForKey,
   agentRowState,
   agentRowSummary,
   agentRows,
+  filterAgentRows,
+  noAgentRowFilter,
   searchAgentRows,
+  type AgentRowFacts,
 } from './agent-table';
 import type { LobbyAgent } from './lobby';
 
@@ -148,5 +154,89 @@ describe('agentNameParts', () => {
     expect(agentNameParts('Scout')).toEqual({ base: 'Scout', tag: '' });
     expect(agentNameParts('#2316 codex')).toEqual({ base: '#2316 codex', tag: '' });
     expect(agentNameParts('codex #231')).toEqual({ base: 'codex #231', tag: '' });
+  });
+});
+
+describe('filterAgentRows', () => {
+  const woken = offline('Woken', 30);
+  const gone = offline('Gone', 5);
+  const old = offline('Old', 20_000, true);
+  const rows = agentRows([waiting, resume, woken, gone, old], NOW, new Set([woken.agentId]));
+  const facts: AgentRowFacts = {
+    favorite: (agentId) => agentId === resume.agentId,
+    mine: (agentId) => agentId === waiting.agentId || agentId === old.agentId,
+    network: (agentId) => agentId === gone.agentId,
+    tags: (agentId) => (agentId === waiting.agentId ? ['release', 'evals'] : []),
+  };
+  const names = (filter: Partial<typeof noAgentRowFilter>) =>
+    filterAgentRows(rows, { ...noAgentRowFilter, ...filter }, facts).map(
+      (row) => row.agent.displayName,
+    );
+
+  it('什么都不筛时列没归档的；归档的只在筛“已归档”时列', () => {
+    expect(names({})).toEqual(['Waiter', 'Woken', 'Resume', 'Gone']);
+    expect(names({ state: 'archived' })).toEqual(['Old']);
+  });
+
+  it('按状态筛：在等消息、叫得醒、离线各是各的', () => {
+    expect(names({ state: 'waiting' })).toEqual(['Waiter']);
+    expect(names({ state: 'wakes' })).toEqual(['Woken']);
+    // 开着后台回复的那个离线 Agent 算叫得醒，不在“离线”里再数一遍。
+    expect(names({ state: 'offline' })).toEqual(['Gone']);
+  });
+
+  it('按谁的筛：我的、网络 Agent', () => {
+    expect(names({ owner: 'mine' })).toEqual(['Waiter']);
+    expect(names({ owner: 'network' })).toEqual(['Gone']);
+    expect(names({ owner: 'mine', state: 'archived' })).toEqual(['Old']);
+  });
+
+  it('按你做的记号筛：收藏的、带某个标签的；几样一起筛时都要对上', () => {
+    expect(names({ mark: { kind: 'favorites' } })).toEqual(['Resume']);
+    expect(names({ mark: { kind: 'tag', tag: 'evals' } })).toEqual(['Waiter']);
+    expect(names({ mark: { kind: 'tag', tag: 'nothing' } })).toEqual([]);
+    expect(names({ mark: { kind: 'favorites' }, owner: 'mine' })).toEqual([]);
+  });
+});
+
+describe('agentOrigin', () => {
+  it('网络 Agent 是网络；这台电脑的连接服务说它在这里才写这台电脑', () => {
+    expect(agentOrigin('a', true, new Set(['a']))).toBe('network');
+    expect(agentOrigin('a', false, new Set(['a']))).toBe('this_computer');
+    expect(agentOrigin('a', false, new Set(['b']))).toBe('computer');
+  });
+
+  it('问不到这台电脑上有谁（浏览器里、还没读到）时只说是电脑', () => {
+    expect(agentOrigin('a', false, null)).toBe('computer');
+  });
+});
+
+describe('agentJoinedAtUnixMs', () => {
+  it('写名片的 Agent 用名片的时间；续租约的那种不知道', () => {
+    const joined = NOW - 3_600_000;
+    expect(
+      agentJoinedAtUnixMs({ ...waiting, lastActiveAtUnixMs: joined, liveness: 'presence' }),
+    ).toBe(joined);
+    expect(agentJoinedAtUnixMs({ ...waiting, liveness: 'presence' })).toBeNull();
+    expect(agentJoinedAtUnixMs({ ...waiting, lastActiveAtUnixMs: joined })).toBeNull();
+  });
+});
+
+describe('agentRowForKey', () => {
+  const rows = agentRows([agent('Alpha'), agent('Beta'), agent('Gamma')], NOW, new Set());
+
+  it('上下键走一行，到头就停；Home、End 到两头', () => {
+    expect(agentRowForKey(rows, 'beta', 'ArrowDown')).toBe('gamma');
+    expect(agentRowForKey(rows, 'gamma', 'ArrowDown')).toBe('gamma');
+    expect(agentRowForKey(rows, 'beta', 'ArrowUp')).toBe('alpha');
+    expect(agentRowForKey(rows, 'alpha', 'ArrowUp')).toBe('alpha');
+    expect(agentRowForKey(rows, 'beta', 'Home')).toBe('alpha');
+    expect(agentRowForKey(rows, 'beta', 'End')).toBe('gamma');
+  });
+
+  it('别的键、不在表格里的行不动', () => {
+    expect(agentRowForKey(rows, 'beta', 'Enter')).toBeNull();
+    expect(agentRowForKey(rows, 'beta', 'toString')).toBeNull();
+    expect(agentRowForKey(rows, 'nobody', 'ArrowDown')).toBeNull();
   });
 });

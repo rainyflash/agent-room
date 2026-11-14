@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
 import { ConversationWorkspaceProvider } from '@/features/conversation/ui/conversation-workspace-context';
 import { AgentInviteDialog } from '@/features/desktop/ui/agent-invite-dialog';
+import { useLocalAgentIds } from '@/features/desktop/ui/use-local-agent-ids';
 import { ReceptionPanel } from '@/features/desktop/ui/reception-panel';
 import { ReceptionOwnershipPanel } from '@/features/desktop/ui/reception-ownership-panel';
 import { InviteReplyProgress } from '@/features/desktop/ui/invite-reply-progress';
@@ -41,11 +42,17 @@ import {
 import { projectRoomSpeech } from '@/features/lobby/domain/room-speech';
 import type { LobbyRoom } from '@/features/lobby/domain/lobby';
 import { attendanceCounts } from '@/features/lobby/domain/agent-attendance';
-import type { RoomPageLayout, RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
+import type {
+  RoomPageLayout,
+  RoomPageView,
+  RoomPanelView,
+  RoomWorkspaceView,
+} from '@/features/lobby/domain/workspace-view';
 import type { LobbySceneProjection } from '@/features/lobby/domain/scene-projection';
 import { AgentInspector, type AgentInspectorFailure } from '@/features/lobby/ui/agent-inspector';
 import { AgentRosterPolicyPanel } from './agent-roster-policy-panel';
 import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
+import { AgentTablePage } from '@/features/lobby/ui/agent-table-page';
 import { RoomRoster } from '@/features/lobby/ui/room-roster';
 import { useRoomRoster } from '@/features/lobby/ui/use-room-roster';
 import { useMediaQuery } from '@/shared/ui/use-media-query';
@@ -117,13 +124,14 @@ export type LobbyPageProps = {
   readonly onSelectedDirectSessionChange: (catalogId: string | null) => void;
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly onViewChange: (view: RoomWorkspaceView) => void;
-  readonly onOpenRoomPanel: (view: 'conversation' | 'resources') => void;
+  readonly onOpenRoomPanel: (view: RoomPanelView) => void;
   readonly principal: WebSession | null;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
   readonly selectedDirectSessionId: string | null;
   readonly selectedMessageId: string | null;
-  readonly view: RoomWorkspaceView;
+  /** `agents` 是对话版面里展开成整页的 Agent 表格；场景里没有那一页，按画面算。 */
+  readonly view: RoomPageView;
 };
 
 export function LobbyPage(props: LobbyPageProps) {
@@ -323,10 +331,14 @@ function ReadyLobby({
     spoken: projection.humans ?? noHumans,
   });
   const sideColumn = useMediaQuery(roomDeskSideQuery);
+  // Agent 表格展开成的整页：只在对话版面的主房间里有。开着私聊时地址里写了也先看私聊。
+  const agentsPage = conversationLayout && view === 'agents' && selectedDirectSessionId === null;
+  const localAgentIds = useLocalAgentIds(agentsPage);
+  const panel: RoomWorkspaceView = view === 'agents' ? 'space' : view;
   const activeView =
-    view === 'space' && (conversationLayout || selectedDirectSessionId !== null)
+    panel === 'space' && (conversationLayout || selectedDirectSessionId !== null)
       ? 'conversation'
-      : view;
+      : panel;
   const { store: messageStore } = useRoomMessages(room.roomId);
   const activityStore = useMemo(
     () => new RoomActivityStore(messageStore, principal?.matrixUserId ?? null),
@@ -341,15 +353,16 @@ function ReadyLobby({
     () => projectRoomSpeech(projection, activity.recent),
     [projection, activity.recent],
   );
+  // 展开的那一页上看不到对话：这时来的消息照样算没读，标在回对话的地方。
   const publicConversationVisible =
-    activeView === 'conversation' && selectedDirectSessionId === null;
+    activeView === 'conversation' && selectedDirectSessionId === null && !agentsPage;
   const [focusedConversationMessageId, setFocusedConversationMessageId] = useState<string | null>(
     null,
   );
   useEffect(() => {
     activityStore.setVisible(publicConversationVisible);
   }, [activityStore, publicConversationVisible]);
-  const openRoomPanel = (nextView: 'conversation' | 'resources'): void => {
+  const openRoomPanel = (nextView: RoomPanelView): void => {
     setFocusedConversationMessageId(null);
     onOpenRoomPanel(nextView);
   };
@@ -399,15 +412,32 @@ function ReadyLobby({
     if (agentId === null || selectedAgentId !== null) return;
     returnFocusFrom.current = null;
     const origins = [
-      ...document.querySelectorAll<HTMLElement>('.room-desk__side .agent-table__name'),
+      ...document.querySelectorAll<HTMLElement>(
+        '.room-desk__side .agent-table__name, .room-desk__page .agent-table__name',
+      ),
     ].filter((row) => row.dataset.agentId === agentId);
     origins.push(
       ...document.querySelectorAll<HTMLElement>(
-        '.room-desk__side [role="tab"][aria-selected="true"], .room-desk__agents-button',
+        '.room-desk__side [role="tab"][aria-selected="true"], .room-desk__agents-button, .room-desk__page input[type="search"]',
       ),
     );
     origins.find((origin) => origin.offsetParent !== null)?.focus();
   }, [selectedAgentId]);
+  // 展开成整页、从那一页回来，原来拿着焦点的东西都不在了：展开时焦点落到那一页的标题上，
+  // 点顶栏的房间名回来时落回“展开成整页”（右栏收着时是顶栏打开它的按钮）。
+  const pageFocus = useRef<'opened' | 'closed' | null>(null);
+  useEffect(() => {
+    const moved = pageFocus.current;
+    pageFocus.current = null;
+    if (moved === 'opened' && agentsPage)
+      document.querySelector<HTMLElement>('.room-desk__page h2')?.focus();
+    if (moved === 'closed' && !agentsPage) {
+      const origins = document.querySelectorAll<HTMLElement>(
+        '.room-desk__side .room-roster__expand, .room-desk__agents-button',
+      );
+      [...origins].find((origin) => origin.offsetParent !== null)?.focus();
+    }
+  }, [agentsPage]);
   const directNavigation =
     principal === null ? null : (
       <DirectSessionNavigation
@@ -443,6 +473,11 @@ function ReadyLobby({
                   setInviteOpen(true);
                 }
           }
+          onExpand={() => {
+            pageFocus.current = 'opened';
+            closeDrawer();
+            openRoomPanel('agents');
+          }}
           onSelectAgent={selectAgent}
           people={roster.people}
           selectedAgentId={selectedAgentId}
@@ -631,7 +666,8 @@ function ReadyLobby({
           agent={selectedAgent}
           blocked={directSessions.isBlocked(selectedAgent)}
           // 右栏在的时候详情盖在表格上，关掉就是回到表格；右栏收起来时它是从右边出来的一层。
-          closeAs={conversationLayout && sideColumn ? 'back' : 'close'}
+          // 展开的那一页上没有右栏，详情也是从右边出来的一层。
+          closeAs={conversationLayout && sideColumn && !agentsPage ? 'back' : 'close'}
           observedAtUnixMs={room.observedAtUnixMs}
           key="agent-inspector"
           pendingAction={
@@ -692,7 +728,7 @@ function ReadyLobby({
           kind={roomKind}
           layoutSwitch={layoutSwitch}
           liveSummary={t('lobby.liveSummary', { count: attendance.present, room: room.name })}
-          mainRoomSelected={selectedDirectSessionId === null}
+          mainRoomSelected={selectedDirectSessionId === null && !agentsPage}
           mainRoomUnread={activity.unread}
           onOpenAgents={() => {
             setDrawer('members');
@@ -707,6 +743,35 @@ function ReadyLobby({
           onSelectMainRoom={() => {
             openRoomPanel('conversation');
           }}
+          page={
+            agentsPage
+              ? {
+                  title: t('roomRoster.tab.agents'),
+                  onClose: () => {
+                    pageFocus.current = 'closed';
+                    openRoomPanel('conversation');
+                  },
+                  content: (
+                    <AgentTablePage
+                      agents={room.agents}
+                      footer={rosterPolicy}
+                      localAgentIds={localAgentIds}
+                      observedAtUnixMs={room.observedAtUnixMs}
+                      onInviteAgent={
+                        archived
+                          ? null
+                          : () => {
+                              setInviteOpen(true);
+                            }
+                      }
+                      onSelectAgent={selectAgent}
+                      selectedAgentId={selectedAgentId}
+                      wakeableAgentIds={roster.wakeableAgentIds}
+                    />
+                  ),
+                }
+              : null
+          }
           pendingJoinRequests={pendingJoinRequests}
           peopleCount={roster.people.people.length}
           rail={directSessions.sessions.length === 0 ? null : directNavigation}

@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import type { RoomPageLayout, RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
+import {
+  isRoomPanelView,
+  type RoomPageLayout,
+  type RoomPanelView,
+  type RoomWorkspaceView,
+} from '@/features/lobby/domain/workspace-view';
 
 import { safeInternalPath } from '@/shared/browser/window-browser-gateway';
 
@@ -23,7 +28,7 @@ export type ConnectSearch = {
 };
 
 export type LobbySearch = {
-  readonly view?: Exclude<RoomWorkspaceView, 'space'>;
+  readonly view?: RoomPanelView;
   readonly agent?: string;
   readonly direct?: string;
   readonly directory?: 'open';
@@ -58,7 +63,7 @@ export function normalizeLobbySearch(search: Record<string, unknown>): LobbySear
       ? { layout: search.layout }
       : {}),
     ...(message.success ? { message: message.data } : {}),
-    ...(search.view === 'resources' || search.view === 'conversation' ? { view: search.view } : {}),
+    ...(isRoomPanelView(search.view) ? { view: search.view } : {}),
   };
 }
 
@@ -105,12 +110,14 @@ export function lobbySearchWithDirectSession(
 }
 
 export function lobbySearchWithMessage(search: LobbySearch, messageId: string | null): LobbySearch {
+  // 要看的那条消息在对话里：人在展开的 Agent 表格上时先回到对话。
+  const view = messageId !== null && search.view === 'agents' ? undefined : search.view;
   return {
     ...(messageId === null && search.agent !== undefined ? { agent: search.agent } : {}),
     ...(search.direct === undefined ? {} : { direct: search.direct }),
     ...kept(search),
     ...(messageId === null ? {} : { message: messageId }),
-    ...(search.view === undefined ? {} : { view: search.view }),
+    ...(view === undefined ? {} : { view }),
   };
 }
 
@@ -123,10 +130,8 @@ export function lobbySearchWithView(search: LobbySearch, view: RoomWorkspaceView
   return normalizeLobbySearch({ ...search, view });
 }
 
-export function lobbySearchWithRoomPanel(
-  search: LobbySearch,
-  view: 'conversation' | 'resources',
-): LobbySearch {
+/** 打开对话、资料，或者把 Agent 表格展开成整页。选中的 Agent、私聊和正在看的消息都放开。 */
+export function lobbySearchWithRoomPanel(search: LobbySearch, view: RoomPanelView): LobbySearch {
   return { view, ...kept(search) };
 }
 

@@ -424,6 +424,303 @@ test('Agent 表格：谁的、什么状态一眼看到，叫得醒的标出来�
   expect(failures).toEqual([]);
 });
 
+test('展开成整页：Agent 表格占满主栏和右栏，多三列，能筛；详情在旁边，点房间名回对话', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // 夹具里第 1、5 个 Agent 是你的（第 5 个开着后台回复），第 3、7 个是 Grace 放行的网络 Agent，
+  // 第 4、8 个是没人放行的；`&cards` 里它们依次在等消息、下次运行时读、离线，名片是三天前写的。
+  await page.goto(`${room}&owners&wakes&cards`);
+  const input = page.getByRole('textbox', { name: 'Message', exact: true });
+  await input.fill('A draft that should stay.');
+  const side = page.getByRole('complementary', { name: 'Agents in this room', exact: true });
+  const expand = side.getByRole('button', { name: 'Open as a full page', exact: true });
+  await expand.click();
+
+  // 这一页占着主栏和右栏：对话和右栏都不在了，焦点落在这一页的标题上。
+  const agents = page.getByRole('region', { name: 'Agents in this room', exact: true });
+  await expect(agents.getByRole('heading', { level: 2 })).toBeFocused();
+  await expect(side).toHaveCount(0);
+  await expect(input).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.get('view')).toBe('agents');
+  // 顶栏：房间名 / Agent。左栏的“主房间”不再标成当前这一页。
+  const crumbs = page.getByRole('heading', { level: 1 });
+  await expect(crumbs.locator('[aria-current="page"]')).toHaveText('Agents');
+  const backToRoom = crumbs.getByRole('button', { name: 'Back to Builders Exchange', exact: true });
+  await expect(backToRoom).toHaveText('Builders Exchange');
+  const mainRoom = page
+    .getByRole('navigation', { name: 'Main room and direct messages' })
+    .getByRole('button', { name: 'Main room', exact: true });
+  await expect(mainRoom).not.toHaveAttribute('aria-current', 'page');
+
+  await expect(agents.locator('.agent-page__summary > span')).toHaveText([
+    '3 waiting',
+    '1 wakes on mention',
+    '2 offline',
+  ]);
+  await expect(agents.getByRole('columnheader')).toHaveText([
+    'Name',
+    'Owner',
+    'Status',
+    'How it joined',
+    'Joined',
+    'Your tags',
+  ]);
+  const labels = agents.locator('tbody .agent-table__label');
+  await expect(labels).toHaveText([
+    'Build Agent 001',
+    'Build Agent 004',
+    'Build Agent 007',
+    'Build Agent 005',
+    'Build Agent 002',
+    'Build Agent 008',
+    // 最后是离线的两个。它们差不多同时离线（夹具里各自取的“20 分钟前”），谁先谁后差在毫秒上。
+    /^Build Agent 00[36]$/u,
+    /^Build Agent 00[36]$/u,
+  ]);
+  const row = (name: string) =>
+    agents
+      .getByRole('row')
+      .filter({ has: page.getByRole('button', { name: new RegExp(`^${name}`, 'u') }) });
+  // 进来的时间是名片的时间：三天前，只写月和日（跨年时带上年）。
+  const joined = /^[A-Z][a-z]{2} \d{1,2}(, \d{4})?$/u;
+  // 浏览器里问不到这台电脑上有谁，自己的 Agent 也只说是从电脑上接进来的。
+  await expect(row('Build Agent 001').getByRole('cell')).toHaveText([
+    'You',
+    'Waiting',
+    'A computer',
+    joined,
+    '',
+  ]);
+  await expect(row('Build Agent 004').getByRole('cell')).toHaveText([
+    'Network',
+    'Waiting',
+    'Network',
+    joined,
+    '',
+  ]);
+  await expect(row('Build Agent 007').getByRole('cell')).toHaveText([
+    'Network',
+    'Waiting',
+    'Network · Let in by Grace',
+    joined,
+    '',
+  ]);
+  await expect(row('Build Agent 005').getByRole('cell')).toHaveText([
+    'You',
+    'Wakes on mention',
+    'A computer',
+    joined,
+    '',
+  ]);
+  await expect(row('Build Agent 006').getByRole('cell')).toHaveText([
+    'Grace',
+    /^Offline · \d+ minutes ago$/u,
+    'A computer',
+    joined,
+    '',
+  ]);
+  // 黑色的按钮还是只有顶栏那一个；这一页自己滚，不把整页撑高。
+  await expect(page.locator('.ar-button--primary').filter({ visible: true })).toHaveCount(1);
+  expect(await page.locator('main').evaluate((main) => main.scrollHeight - main.clientHeight)).toBe(
+    0,
+  );
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+  await useColorScheme(page, 'dark');
+  await expectAccessible(page);
+  await useColorScheme(page, 'light');
+
+  // 筛：谁的、状态，几样一起用；你还没做过记号，没有“你的标签”那一组。
+  const owner = agents.getByRole('group', { name: 'Owner', exact: true });
+  const state = agents.getByRole('group', { name: 'Status', exact: true });
+  await expect(agents.getByRole('group', { name: 'Your tags', exact: true })).toHaveCount(0);
+  await expect(state.getByRole('button')).toHaveText([
+    'All',
+    'Waiting',
+    'Wakes on mention',
+    'Offline',
+  ]);
+  await owner.getByRole('button', { name: 'Mine', exact: true }).click();
+  await expect(labels).toHaveText(['Build Agent 001', 'Build Agent 005']);
+  await expect(owner.getByRole('button', { name: 'Mine', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await state.getByRole('button', { name: 'Waiting', exact: true }).click();
+  await expect(labels).toHaveText(['Build Agent 001']);
+  await owner.getByRole('button', { name: 'Network agents', exact: true }).click();
+  await expect(labels).toHaveText(['Build Agent 004', 'Build Agent 007']);
+  await state.getByRole('button', { name: 'Wakes on mention', exact: true }).click();
+  await expect(agents.getByText('No agent matches that.', { exact: true })).toBeVisible();
+  await owner.getByRole('button', { name: 'Everyone’s', exact: true }).click();
+  await expect(labels).toHaveText(['Build Agent 005']);
+  await state.getByRole('button', { name: 'All', exact: true }).click();
+  const search = agents.getByRole('searchbox');
+  await search.fill('agent 007');
+  await expect(labels).toHaveText(['Build Agent 007']);
+  await search.fill('');
+  await expect(labels).toHaveCount(8);
+
+  // 键盘：上下键在行之间走，回车看详情。详情占着右栏那一格、带着叉，表格让出来、照剩下的宽度收列。
+  await agents.getByRole('button', { name: /^Build Agent 001/u }).focus();
+  await page.keyboard.press('ArrowDown');
+  const second = agents.getByRole('button', { name: /^Build Agent 004/u });
+  await expect(second).toBeFocused();
+  await page.keyboard.press('Enter');
+  const details = page.locator('.agent-inspector');
+  await expect(details).toContainText('Build Agent 004');
+  await expect(details).toHaveCSS('opacity', '1');
+  const close = details.getByRole('button', { name: 'Close Agent details', exact: true });
+  await expect(close).toBeFocused();
+  await expect(details.getByRole('button', { name: 'Back to the list', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(row('Build Agent 004')).toHaveAttribute('data-selected', 'true');
+  await expect(agents.getByRole('columnheader')).toHaveText([
+    'Name',
+    'Owner',
+    'Status',
+    'How it joined',
+  ]);
+  const beside = await page.evaluate(() => {
+    const box = (selector: string) => document.querySelector(selector)?.getBoundingClientRect();
+    const inspector = box('.agent-inspector');
+    const list = box('.room-desk__page');
+    return inspector === undefined || list === undefined ? null : inspector.left >= list.right - 1;
+  });
+  expect(beside).toBe(true);
+  await expectNoHorizontalOverflow(page);
+  // 在详情里收藏、打标签：关掉以后焦点回到那一行，记号写在最后一列，上面多出能按它们筛的一组。
+  await details.getByRole('button', { name: 'Add to favorites', exact: true }).click();
+  await details.getByRole('textbox', { name: 'Project tags', exact: true }).fill('release');
+  await details.getByRole('button', { name: 'Save tags', exact: true }).click();
+  await close.click();
+  await expect(details).toHaveCount(0);
+  await expect(second).toBeFocused();
+  await expect(agents.getByRole('columnheader')).toHaveCount(6);
+  await expect(row('Build Agent 004').locator('.agent-table__marks > span')).toHaveText([
+    'Favorite',
+    'release',
+  ]);
+  const marks = agents.getByRole('group', { name: 'Your tags', exact: true });
+  await expect(marks.getByRole('button')).toHaveText(['All', 'Favorites', 'release']);
+  await marks.getByRole('button', { name: 'release', exact: true }).click();
+  await expect(labels).toHaveText(['Build Agent 004']);
+  await marks.getByRole('button', { name: 'All', exact: true }).click();
+  await expect(labels).toHaveCount(8);
+
+  // 这时主房间来了新消息：标在回去的两个地方。点房间名回对话，草稿还在，焦点回到“展开成整页”。
+  await receiveInMainRoom(page, 'Arrived while looking at the table.');
+  await expect(backToRoom).toHaveAccessibleDescription('1 new message');
+  await expect(mainRoom).toHaveAccessibleDescription('1 new message');
+  await backToRoom.click();
+  await expect(agents).toHaveCount(0);
+  await expect(input).toHaveValue('A draft that should stay.');
+  await expect(page.locator('.workspace-room-content').getByRole('log')).toContainText(
+    'Arrived while looking at the table.',
+  );
+  await expect(page.locator('.room-unread')).toHaveCount(0);
+  await expect(expand).toBeFocused();
+  await expect(mainRoom).toHaveAttribute('aria-current', 'page');
+  expect(new URL(page.url()).searchParams.get('view')).toBe('conversation');
+  // 左栏的“主房间”也是回去的路。
+  await expand.click();
+  await expect(agents).toBeVisible();
+  await mainRoom.click();
+  await expect(agents).toHaveCount(0);
+  await expect(input).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
+test('展开的 Agent 表格窄的时候：从抽屉里展开，列按宽度收，详情是从右边出来的一层', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1000, height: 760 });
+  await page.goto(`${room}&owners&wakes&cards`);
+  const openAgents = page.getByRole('button', { name: 'View agents', exact: true });
+  await openAgents.click();
+  const drawer = page.getByRole('dialog', { name: 'Agents in this room', exact: true });
+  await drawer.getByRole('button', { name: 'Open as a full page', exact: true }).click();
+  await expect(drawer).toBeHidden();
+  const agents = page.getByRole('region', { name: 'Agents in this room', exact: true });
+  await expect(agents.getByRole('heading', { level: 2 })).toBeFocused();
+  // 已经在这一页上了，顶栏不再留打开抽屉的按钮。
+  await expect(openAgents).toBeHidden();
+  const headers = agents.getByRole('columnheader');
+  await expect(headers).toHaveCount(6);
+  await expectNoHorizontalOverflow(page);
+
+  // 没有右栏：详情是盖在右边的一层，带着叉；关掉以后焦点回到那一行。
+  const name = agents.getByRole('button', { name: /^Build Agent 004/u });
+  await name.click();
+  const details = page.locator('.agent-inspector');
+  await expect(details).toContainText('Build Agent 004');
+  await expect(headers).toHaveCount(6);
+  await details.getByRole('button', { name: 'Close Agent details', exact: true }).click();
+  await expect(details).toHaveCount(0);
+  await expect(name).toBeFocused();
+
+  // 越窄列越少：先收标签和进来的时间，再是怎么来的；最窄只留名字和状态，“谁的”写在名字下面。
+  await page.setViewportSize({ width: 820, height: 760 });
+  await expect(headers).toHaveText(['Name', 'Owner', 'Status', 'How it joined']);
+  await page.setViewportSize({ width: 600, height: 760 });
+  await expect(headers).toHaveText(['Name', 'Owner', 'Status']);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(headers).toHaveText(['Name', 'Status']);
+  const mine = agents
+    .getByRole('row')
+    .filter({ has: page.getByRole('button', { name: /^Build Agent 001/u }) });
+  await expect(mine.locator('.agent-table__owner-line')).toBeVisible();
+  await expect(mine.locator('.agent-table__owner-line')).toHaveText('You');
+  await expect(mine.getByRole('cell')).toHaveText(['Waiting']);
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+
+  // 点房间名回对话：焦点回到顶栏打开 Agent 的按钮。
+  await page.getByRole('button', { name: 'Back to Builders Exchange', exact: true }).click();
+  await expect(agents).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+  await expect(openAgents).toBeFocused();
+  expect(failures).toEqual([]);
+});
+
+test('展开的 Agent 表格：地址里写着就直接打开，人多时一次列 100 个；场景里没有这一页', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/e2e/fixtures/lobby-scene.html?private&agents=240&view=agents');
+  const agents = page.getByRole('region', { name: 'Agents in this room', exact: true });
+  const rows = agents.locator('tbody tr');
+  await expect(rows).toHaveCount(100);
+  await expect(agents.getByText('Showing 100 of 240', { exact: true })).toBeVisible();
+  await agents.getByRole('button', { name: 'Show 100 more', exact: true }).click();
+  await expect(rows).toHaveCount(200);
+  await agents.getByRole('button', { name: 'Show 40 more', exact: true }).click();
+  await expect(rows).toHaveCount(240);
+  await expect(agents.getByText('Showing 240 of 240', { exact: true })).toBeVisible();
+  await expect(agents.getByRole('button', { name: /^Show \d+ more$/u })).toHaveCount(0);
+  // 这一页自己滚；整页不跟着长高。
+  expect(await agents.evaluate((list) => list.scrollHeight > list.clientHeight)).toBe(true);
+  expect(await page.locator('main').evaluate((main) => main.scrollHeight - main.clientHeight)).toBe(
+    0,
+  );
+  // 搜一下从头列起；不到 100 个时下面什么都不写。
+  await agents.getByRole('searchbox').fill('agent 23');
+  await expect(rows).toHaveCount(10);
+  await expect(agents.getByText(/^Showing/u)).toHaveCount(0);
+
+  // 换成场景：那里没有这一页，回到画面本身。
+  await layoutOption(page, 'Scene').click();
+  await expect(agents).toHaveCount(0);
+  await expect(page.locator('.room-scene')).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('view')).toBeNull();
+  expect(failures).toEqual([]);
+});
+
 test('公共大厅没有成员名单：“人”列的是说过话的人和你自己，并且照实说', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });

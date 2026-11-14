@@ -47,6 +47,38 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 展开成整页时：房间名 / 这一页的名字。房间名太长时截它，后面那一段一直在。 */
+.room-desk__identity h1.room-desk__crumbs {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow: visible;
+}
+.room-desk__crumbs > button {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  color: var(--ar-muted);
+  background: transparent;
+  font: inherit;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-desk__crumbs > button:hover {
+  color: var(--color-ink);
+}
+.room-desk__crumbs > span {
+  flex: 0 0 auto;
+}
+.room-desk__crumbs > span[aria-hidden='true'] {
+  color: var(--ar-muted);
+  font-weight: 400;
+}
+.room-desk__crumbs > .room-unread {
+  align-self: center;
+}
 .room-desk__meta {
   display: flex;
   min-width: 0;
@@ -129,6 +161,18 @@
 }
 .room-desk__content .workspace-room-content {
   height: 100%;
+}
+
+/* 展开成整页的那一页：占着主栏和右栏，自己滚。 */
+.room-desk__page {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+/* 已经在这一页上了，顶栏不用再留打开抽屉的按钮。 */
+.room-desk[data-page] .room-desk__agents-button {
+  display: none;
 }
 
 /* 左栏：主房间，下面是私聊 */
@@ -249,6 +293,16 @@
   .room-desk__rail,
   .room-desk__side {
     display: flex;
+  }
+  .room-desk__page {
+    grid-column: 1 / -1;
+  }
+  .room-desk__body[data-rail='true'] > .room-desk__page {
+    grid-column: 2 / -1;
+  }
+  /* 这一页上看 Agent 详情：详情占着右栏那一格，这一页让出来，表格照自己剩下的宽度收列，不被盖住。 */
+  .room-desk__body[data-inspecting='true'] > .room-desk__page {
+    grid-column-end: -2;
   }
   /* 右栏一直在，不用再从顶栏打开。 */
   .room-desk__agents-button {

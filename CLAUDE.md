@@ -236,7 +236,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 一条消息算不算“找你”只有一条规则：`mentionsAccount`（`features/messages/domain/message.ts`），收件箱和对话里那层浅黄都用它。
     - axe 查对比度要等淡入的动画完（`explore.e2e.ts` 里等 `getAnimations()`），不然字还是半透明的，报的是假的。
     - 这个 PR 改了登录主题，发 Alpha 95 要设备码。
-  - 第 1 块 1d 的第一个 PR（#801）：对话版面的右栏是表格（`RoomRoster`，`room-roster.tsx`、`room-roster.css`），两个标签“Agent”和“人”；“展开成整页”是第二个 PR。场景版面的抽屉里照旧是 `ListModeRoster`。
+  - 第 1 块 1d 的第一个 PR（#801）：对话版面的右栏是表格（`RoomRoster`，`room-roster.tsx`、`room-roster.css`），两个标签“Agent”和“人”；“展开成整页”是第二个 PR（#802，见下一条）。场景版面的抽屉里照旧是 `ListModeRoster`。
     - 一行是什么状态、怎么排、汇总、搜索都在 `features/lobby/domain/agent-table.ts`。新加要按状态分的地方用它，别再另算一遍。
     - 顶栏的“几个人、几个 Agent”、标签上的个数、“人”那一栏、谁叫得醒都从 `useRoomRoster` 来，只算一遍。Agent 的个数不算归档的；公共大厅没有成员名单，“人”列的是说过话的人和你自己。
     - 叫得醒只知道你自己的 Agent：账户上的后台回复（`GET /receptions`，和 Agent 详情里那一块是同一个查询键）加上这台电脑上正在跑的接收（`wakeable-agents.ts`）。房间里没有你的 Agent 时不去问。离线的也算叫得醒。别人的要服务器新给，放在第 4 块。
@@ -247,6 +247,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - `AgentOwnerStore` 只认 UUID 样子的 Agent ID：单元测试里用别的样子，“谁的”永远查不到。
     - 换配色以后马上跑 axe，量到的是颜色过渡的半路，先等过渡走完（`room-desk.e2e.ts` 的 `useColorScheme`）。
     - 夹具 `lobby-scene.html`：`&owners` 给 Agent 配上主人（第 1、5 个是你的），再加 `&wakes` 让第 5、21 个开着后台回复；`agents=0` 是一间还没有 Agent 的房间（别和 `history` 一起用）。`ReceptionOwnershipPanel` 没有登录会话时也画得出来（夹具里没有）。
+  - 第 1 块 1d 的第二个 PR（#802）：Agent 表格展开成整页（`AgentTablePage`），地址里是 `view=agents`，只在对话版面的主房间里有；场景里写了也按画面算。1d 做完了。
+    - `RoomDesk` 的 `page` 给了就不画对话和右栏。对话是卸掉的，别改成 `hidden`：回去时它照上次读到的位置重新打开，藏着的话滚动位置反而丢。在这一页上时主房间的对话算看不到（`publicConversationVisible`），新消息照样数没读，标在顶栏的房间名和左栏的“主房间”上。
+    - “怎么来的”只有三种：这台电脑、电脑、网络。别加“别的电脑”：只有连接服务此刻记着的会话说得准（`useLocalAgentIds`，最多 16 个会话，浏览器里问不到，回 `null` 是不知道），别的可能就是这台电脑上早关掉的会话。
+    - “进来的时间”是名片的时间（`agentJoinedAtUnixMs`），只有写名片的 Agent（`liveness: 'presence'`）有；旧写法的 `lastActiveAtUnixMs` 是上次续租约的时间，别拿来当进来的时间。
+    - 这一页上看详情：1100px 以上详情放在右栏那一格，这一页让出来（`grid-column-end: -2`），表格照自己剩下的宽度收列（`@container agent-page`，900、640、460 三档）；窄的时候是盖在右边的一层。两种都带叉（`closeAs='close'`）。
+    - 展开、点房间名回来时原来拿着焦点的东西都卸掉了，房间页自己放焦点（`pageFocus`）：展开落到这一页的标题，回来落到“展开成整页”或顶栏的“Agent N”。
+    - 筛选的按钮和 Agent 的名字都是按钮：单元测试里给 Agent 起名别用 `Mine`、`Net…` 这种和筛选撞上的；浏览器验收里先圈到 `getByRole('group', { name })` 再找。
+    - 做记号（收藏、标签）会弹一条“已保存”的提示，淡出要一会儿：axe 放在做记号之前跑。
+    - 夹具 `lobby-scene.html`：`&cards` 的 Agent 写名片（三天前），才有进来的时间；`view=agents` 直接打开这一页。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。

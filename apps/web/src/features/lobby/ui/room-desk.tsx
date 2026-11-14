@@ -30,13 +30,22 @@ export type RoomDeskProps = {
   readonly kind: RoomKind;
   readonly layoutSwitch: ReactNode;
   readonly liveSummary: string;
-  /** 左栏里有没有选中私聊：没有就是在主房间。 */
+  /** 人是不是在主房间的对话里：在私聊里、在看展开的那一页时都不是。 */
   readonly mainRoomSelected: boolean;
-  /** 主房间里你还没看到的消息数：人在私聊里时标在回主房间的地方。 */
+  /** 主房间里你还没看到的消息数：人不在主房间的对话里时标在回去的地方。 */
   readonly mainRoomUnread: number;
   readonly onOpenAgents: () => void;
   readonly onOpenSettings: (() => void) | null;
   readonly onSelectMainRoom: () => void;
+  /**
+   * 展开成整页的东西（Agent 表格）：有的时候它占着主栏和右栏，对话和右栏都不画，
+   * 顶栏的房间名变成“房间名 / 这一页的名字”，点房间名回到对话（`onClose`）。
+   */
+  readonly page: {
+    readonly title: string;
+    readonly content: ReactNode;
+    readonly onClose: () => void;
+  } | null;
   readonly peopleCount: number;
   readonly pendingJoinRequests: number;
   /** 左栏里主房间下面的东西（私聊）。没有就不出左栏。 */
@@ -67,6 +76,7 @@ export function RoomDesk({
   onOpenAgents,
   onOpenSettings,
   onSelectMainRoom,
+  page,
   peopleCount,
   pendingJoinRequests,
   rail,
@@ -84,6 +94,7 @@ export function RoomDesk({
     <main
       className="lobby-workspace room-desk"
       data-layout="conversation"
+      data-page={page === null ? undefined : 'true'}
       data-view={view}
       id="main-content"
     >
@@ -100,7 +111,25 @@ export function RoomDesk({
           <ArrowLeft aria-hidden="true" />
         </Link>
         <div className="room-desk__identity">
-          <h1>{roomName}</h1>
+          {page === null ? (
+            <h1>{roomName}</h1>
+          ) : (
+            <h1 className="room-desk__crumbs">
+              <button
+                aria-describedby={unreadElsewhere ? `${unreadId}-crumb` : undefined}
+                aria-label={t('roomRoster.page.back', { room: roomName })}
+                onClick={page.onClose}
+                type="button"
+              >
+                {roomName}
+              </button>
+              {unreadElsewhere ? (
+                <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-crumb`} />
+              ) : null}
+              <span aria-hidden="true">/</span>
+              <span aria-current="page">{page.title}</span>
+            </h1>
+          )}
           <p className="room-desk__meta">
             <RoomKindLabel {...kind} />
             {peopleCount === 0 ? null : <span>{t('roomDesk.people', { count: peopleCount })}</span>}
@@ -206,27 +235,34 @@ export function RoomDesk({
             {rail}
           </div>
         )}
-        <section aria-label={t('roomGame.panel')} className="room-desk__main">
-          {mainRoomSelected ? null : (
-            <button
-              aria-describedby={unreadElsewhere ? `${unreadId}-return` : undefined}
-              aria-label={t('roomDesk.backToMainRoom')}
-              className="room-desk__return"
-              onClick={onSelectMainRoom}
-              type="button"
-            >
-              <ArrowLeft aria-hidden="true" />
-              <span>{t('roomDesk.backToMainRoom')}</span>
-              {unreadElsewhere ? (
-                <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-return`} />
-              ) : null}
-            </button>
-          )}
-          {children}
-        </section>
-        <aside aria-label={t('roomWorkspace.members')} className="room-desk__side">
-          {side}
-        </aside>
+        {page === null ? (
+          <>
+            <section aria-label={t('roomGame.panel')} className="room-desk__main">
+              {mainRoomSelected ? null : (
+                <button
+                  aria-describedby={unreadElsewhere ? `${unreadId}-return` : undefined}
+                  aria-label={t('roomDesk.backToMainRoom')}
+                  className="room-desk__return"
+                  onClick={onSelectMainRoom}
+                  type="button"
+                >
+                  <ArrowLeft aria-hidden="true" />
+                  <span>{t('roomDesk.backToMainRoom')}</span>
+                  {unreadElsewhere ? (
+                    <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-return`} />
+                  ) : null}
+                </button>
+              )}
+              {children}
+            </section>
+            <aside aria-label={t('roomWorkspace.members')} className="room-desk__side">
+              {side}
+            </aside>
+          </>
+        ) : (
+          // 对话和右栏这时不画：回去的时候对话照上次读到的地方重新打开，草稿存在页面外面。
+          <div className="room-desk__page">{page.content}</div>
+        )}
         {inspector}
       </div>
     </main>

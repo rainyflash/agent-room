@@ -315,6 +315,23 @@ describe('RoomRoster 的 Agent 表格', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('表格下面有“展开成整页”；没有 Agent、或者没处展开（场景的抽屉以外）时不给', async () => {
+    const user = userEvent.setup();
+    const onExpand = vi.fn();
+    renderRoster({ agents: [waiter, sleeper], onExpand });
+
+    await user.click(screen.getByRole('button', { name: 'Open as a full page' }));
+    expect(onExpand).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    renderRoster({ agents: [], onExpand });
+    expect(screen.queryByRole('button', { name: 'Open as a full page' })).not.toBeInTheDocument();
+    cleanup();
+
+    renderRoster({ agents: [waiter] });
+    expect(screen.queryByRole('button', { name: 'Open as a full page' })).not.toBeInTheDocument();
+  });
+
   it('一页最多 100 个，多了翻页', async () => {
     const user = userEvent.setup();
     renderRoster({
