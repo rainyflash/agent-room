@@ -4,9 +4,11 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ChatMarkdown } from './chat-markdown';
+import { ExternalLinkGate } from './external-link';
 import {
   chatMarkdownPlainText,
   parseChatMarkdown,
+  parseInline,
 } from '@/features/conversation/domain/chat-markdown';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
@@ -78,17 +80,160 @@ describe('聊天正文的受限 Markdown', () => {
     expect(chatMarkdownPlainText('')).toBe('');
   });
 
-  it('HTML 与链接只当文字，生成式攻击语料不产生任何可执行或可点击节点', () => {
-    const view = renderMarkdown(generatedAttackCorpus());
+  it('HTML 与别的协议只当文字，生成式攻击语料不产生任何可执行或可点击节点', () => {
+    // 外面有确认框接着也一样：能点的只有直接写出来的 `http`、`https` 地址。
+    const view = render(
+      <I18nextProvider i18n={i18n}>
+        <ExternalLinkGate>
+          <ChatMarkdown source={generatedAttackCorpus()} />
+        </ExternalLinkGate>
+      </I18nextProvider>,
+    );
 
     expect(
       view.container.querySelectorAll(
-        'a, applet, audio, button, embed, form, iframe, img, input, link, meta, object, script, style, svg, video',
+        'a, applet, audio, button, embed, form, iframe, img, input, link, meta, object, script, style, svg, video, [role="link"], [tabindex]',
       ),
     ).toHaveLength(0);
     expect(Reflect.get(window, '__agentRoomCompromised')).toBeUndefined();
     expect(view.container.textContent).toContain('javascript:');
     expect(view.container.textContent).toContain('<script>');
+  });
+});
+
+describe('直接写出来的地址', () => {
+  const text = (value: string) => ({ kind: 'text', text: value });
+  const link = (written: string, href = written) => ({ kind: 'link', text: written, href });
+
+  it('`http`、`https` 开头的认成地址，前后的字照旧', () => {
+    expect(parseInline('Docs: https://example.com/guide?tab=1#install and more')).toEqual([
+      text('Docs: '),
+      link('https://example.com/guide?tab=1#install'),
+      text(' and more'),
+    ]);
+    expect(parseInline('http://localhost:5173/app')).toEqual([link('http://localhost:5173/app')]);
+    // 手机输入法爱把句首改成大写；打开时用浏览器认的写法。
+    expect(parseInline('Https://Example.com/Path')).toEqual([
+      link('Https://Example.com/Path', 'https://example.com/Path'),
+    ]);
+  });
+
+  it('地址后面属于句子的标点不算进去；括号成对的留着，落单的不要', () => {
+    expect(parseInline('See https://example.com/a.')).toEqual([
+      text('See '),
+      link('https://example.com/a'),
+      text('.'),
+    ]);
+    expect(parseInline('Really (https://example.com/a)?!')).toEqual([
+      text('Really ('),
+      link('https://example.com/a'),
+      text(')?!'),
+    ]);
+    expect(parseInline('https://en.wikipedia.org/wiki/Rust_(programming_language)')).toEqual([
+      link('https://en.wikipedia.org/wiki/Rust_(programming_language)'),
+    ]);
+    expect(parseInline('*https://example.com/a*, https://example.com/b;')).toEqual([
+      text('*'),
+      link('https://example.com/a'),
+      text('*, '),
+      link('https://example.com/b'),
+      text(';'),
+    ]);
+  });
+
+  it('中文里地址后面直接跟着的字、全角标点不吞进地址', () => {
+    expect(parseInline('打开https://example.com/a看看，再去https://example.com/b。')).toEqual([
+      text('打开'),
+      link('https://example.com/a'),
+      text('看看，再去'),
+      link('https://example.com/b'),
+      text('。'),
+    ]);
+  });
+
+  it('`[字](地址)` 这种写法不认：字照旧是字，里面的地址照直接写的认，看得到真正去哪儿', () => {
+    expect(parseInline('[the docs](https://example.com/docs)')).toEqual([
+      text('[the docs]('),
+      link('https://example.com/docs'),
+      text(')'),
+    ]);
+    // 字写得像别的网站也没用：能点的只有后面真正的地址。
+    expect(parseInline('[https://bank.example](https://evil.example/login)')).toEqual([
+      text('['),
+      link('https://bank.example', 'https://bank.example/'),
+      text(']('),
+      link('https://evil.example/login'),
+      text(')'),
+    ]);
+  });
+
+  it('别的协议、带用户名密码的、不成地址的、太长的都只是字', () => {
+    for (const source of [
+      'ftp://example.com/file',
+      'javascript:alert(1)',
+      'file:///C:/Windows/System32/calc.exe',
+      'agent-room://lobby/abc',
+      'mailto:someone@example.com',
+      'www.example.com',
+      'example.com/path',
+      'https://',
+      'https://...',
+      'https://bank.example@evil.example/login',
+      'https://user:secret@example.com/',
+      `https://example.com/${'a'.repeat(2048)}`,
+    ]) {
+      expect(parseInline(source), source).toEqual([text(source)]);
+    }
+  });
+
+  it('域名、路径里带别的字符的只认到那个字符为止', () => {
+    expect(parseInline('https://zh.wikipedia.org/wiki/中文')).toEqual([
+      link('https://zh.wikipedia.org/wiki/'),
+      text('中文'),
+    ]);
+    expect(parseInline('https://例子.example/')).toEqual([text('https://例子.example/')]);
+    // 两个不是 ASCII 的字母（ſ、K）也一样，不因为正则不分大小写就被认进去。
+    expect(parseInline('https://example.com/\u017F\u212A')).toEqual([
+      link('https://example.com/'),
+      text('\u017F\u212A'),
+    ]);
+  });
+
+  it('写在行内代码、粗体、代码块里的不认；标题、列表、引用、表格里的认', () => {
+    expect(parseInline('`https://example.com/a` **https://example.com/b**')).toEqual([
+      { kind: 'code', text: 'https://example.com/a' },
+      text(' '),
+      { kind: 'strong', text: 'https://example.com/b' },
+    ]);
+    const blocks = parseChatMarkdown(
+      [
+        '```',
+        'curl https://example.com/install.sh',
+        '```',
+        '## https://example.com/h',
+        '- https://example.com/l',
+        '> https://example.com/q',
+        '| Site |',
+        '| --- |',
+        '| https://example.com/t |',
+      ].join('\n'),
+    );
+    expect(blocks).toEqual([
+      { kind: 'code', language: '', text: 'curl https://example.com/install.sh' },
+      { kind: 'heading', level: 2, inline: [link('https://example.com/h')] },
+      { kind: 'list', ordered: false, items: [[link('https://example.com/l')]] },
+      { kind: 'quote', lines: [[link('https://example.com/q')]] },
+      {
+        kind: 'table',
+        align: [null],
+        header: [[text('Site')]],
+        rows: [[[link('https://example.com/t')]]],
+      },
+    ]);
+  });
+
+  it('只要字时地址原样写着', () => {
+    expect(chatMarkdownPlainText('See https://example.com/a.')).toBe('See https://example.com/a.');
   });
 });
 

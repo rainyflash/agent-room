@@ -5,17 +5,29 @@ import {
   type MarkdownBlock,
   type MarkdownInline,
 } from '@/features/conversation/domain/chat-markdown';
+import { useExternalLinkRequest } from './external-link';
+
+type Rendering = {
+  readonly tableLabel: string;
+  /** 正文里的地址点了交给谁；`null` 是没人接，地址只当字。 */
+  readonly openLink: ((href: string) => void) | null;
+};
 
 /**
  * 聊天气泡里的正文：Agent 的回复常带代码块、列表和表格，纯文字显示读不了。
- * 只产生文字、粗体、行内代码、代码块、列表、引用和表格节点，永远没有链接、图片或 HTML。
+ * 只产生文字、粗体、行内代码、代码块、列表、引用和表格节点，永远没有图片或 HTML，也没有
+ * 能直接打开的链接：直接写出来的地址只是一个能点的记号，点了交给外面的确认框
+ * （`ExternalLinkGate`）；外面没有确认框时它就是字。
  */
 export function ChatMarkdown({ source }: { readonly source: string }) {
   const { t } = useTranslation();
-  const tableLabel = t('conversation.table');
+  const rendering: Rendering = {
+    tableLabel: t('conversation.table'),
+    openLink: useExternalLinkRequest(),
+  };
   return (
     <div className="chat-markdown">
-      {parseChatMarkdown(source).map((block, index) => renderBlock(block, index, tableLabel))}
+      {parseChatMarkdown(source).map((block, index) => renderBlock(block, index, rendering))}
     </div>
   );
 }
@@ -54,8 +66,17 @@ function TableFrame({ label, children }: { readonly label: string; readonly chil
   );
 }
 
-function renderBlock(block: MarkdownBlock, index: number, tableLabel: string) {
+function renderBlock(block: MarkdownBlock, index: number, rendering: Rendering) {
   const key = `${String(index)}-${block.kind}`;
+  const renderInline = (inline: readonly MarkdownInline[]) =>
+    renderInlinePieces(inline, rendering.openLink);
+  const renderLines = (lines: readonly (readonly MarkdownInline[])[]) =>
+    lines.map((line, lineIndex) => (
+      <Fragment key={String(lineIndex)}>
+        {lineIndex > 0 ? <br /> : null}
+        {renderInline(line)}
+      </Fragment>
+    ));
   switch (block.kind) {
     case 'code':
       return (
@@ -78,7 +99,7 @@ function renderBlock(block: MarkdownBlock, index: number, tableLabel: string) {
     }
     case 'table':
       return (
-        <TableFrame key={key} label={tableLabel}>
+        <TableFrame key={key} label={rendering.tableLabel}>
           <table>
             <thead>
               <tr>
@@ -118,16 +139,10 @@ function renderBlock(block: MarkdownBlock, index: number, tableLabel: string) {
   }
 }
 
-function renderLines(lines: readonly (readonly MarkdownInline[])[]) {
-  return lines.map((line, index) => (
-    <Fragment key={String(index)}>
-      {index > 0 ? <br /> : null}
-      {renderInline(line)}
-    </Fragment>
-  ));
-}
-
-function renderInline(inline: readonly MarkdownInline[]) {
+function renderInlinePieces(
+  inline: readonly MarkdownInline[],
+  openLink: ((href: string) => void) | null,
+) {
   return inline.map((piece, index) => {
     const key = String(index);
     switch (piece.kind) {
@@ -135,6 +150,27 @@ function renderInline(inline: readonly MarkdownInline[]) {
         return <code key={key}>{piece.text}</code>;
       case 'strong':
         return <strong key={key}>{piece.text}</strong>;
+      case 'link':
+        if (openLink === null) return <Fragment key={key}>{piece.text}</Fragment>;
+        // 不是 `<a href>`：带地址的链接中键、Ctrl 加点、右键菜单都能绕过确认直接打开。
+        return (
+          <span
+            className="chat-markdown__link"
+            key={key}
+            onClick={() => {
+              openLink(piece.href);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              openLink(piece.href);
+            }}
+            role="link"
+            tabIndex={0}
+          >
+            {piece.text}
+          </span>
+        );
       case 'text':
         return <Fragment key={key}>{piece.text}</Fragment>;
     }

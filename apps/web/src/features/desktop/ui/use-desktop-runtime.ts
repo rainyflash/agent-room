@@ -63,6 +63,11 @@ export type DesktopRuntimeController = {
   readonly dismissFailure: () => void;
   readonly openAuthorization: (promptId: string) => Promise<void>;
   readonly openLogs: () => Promise<void>;
+  /**
+   * 在系统浏览器里打开一个地址，回打开了没有。没打开由调用的地方自己说，不进全局的报错；
+   * 没有这条命令的桌面端（测试替身）不给这一项。
+   */
+  readonly openLink?: (url: string) => Promise<boolean>;
   readonly notify: (notification: DesktopNotification) => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
@@ -324,6 +329,13 @@ export function useDesktopRuntime(
       (await gateway.openLogs?.()) ?? err({ code: 'desktop.logs.unavailable', retryable: false });
     if (!result.ok) setFailure(result.error);
   }, [gateway]);
+  const openLink = useCallback(
+    async (url: string): Promise<boolean> => {
+      const result = await gateway.openLink?.(url).catch(() => null);
+      return result?.ok === true;
+    },
+    [gateway],
+  );
   // A notification that cannot be shown is not worth an error banner; the in-app notice remains.
   const notify = useCallback(
     async (notification: DesktopNotification): Promise<void> => {
@@ -440,6 +452,7 @@ export function useDesktopRuntime(
     },
     openAuthorization,
     openLogs,
+    ...(gateway.openLink === undefined ? {} : { openLink }),
     notify,
     refresh,
     retryBridge,

@@ -33,6 +33,7 @@ import {
 import type { Result } from '@/shared/result';
 import { emptyConversationFilter, searchConversation } from '../domain/conversation-search';
 import { ConversationFoldRow } from './conversation-fold';
+import { ExternalLinkGate } from './external-link';
 import { ConversationSearch } from './conversation-search';
 import { useConversationPosition } from './use-conversation-position';
 import { useTranslation } from 'react-i18next';
@@ -103,7 +104,19 @@ export type ConversationPanelProps = {
   readonly belowBar?: ReactNode;
 };
 
-export function ConversationPanel({
+/**
+ * 一段对话：顶上一行、时间线、输入框。正文里的地址点了先问一句，确认框（`ExternalLinkGate`）
+ * 包在这一层：主房间、私聊、场景旁边那一块都带着。
+ */
+export function ConversationPanel(props: ConversationPanelProps) {
+  return (
+    <ExternalLinkGate>
+      <ConversationPanelView {...props} />
+    </ExternalLinkGate>
+  );
+}
+
+function ConversationPanelView({
   active = true,
   history,
   onLoadOlder,

@@ -320,3 +320,28 @@ async function crowdedHeaderParts(page: Page): Promise<string[]> {
     }),
   );
 }
+
+test('桌面端页面里开新窗口的链接交给系统浏览器：窗口自己不开，地址原样交过去', async ({
+  page,
+  context,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // 已是最新：不弹“有新版本”的提示。
+  await page.goto('/e2e/fixtures/my-agents.html?settings=about&update=current');
+  const about = page.locator('.application-about__card');
+  const opened = () =>
+    page.evaluate(() => (window as MyAgentsFixtureWindow).__agentRoomFixtureControls.openedLinks());
+  await about.getByRole('link', { name: 'Release notes & downloads' }).click();
+  await expect.poll(opened).toEqual(['https://github.com/rainyflash/agent-room/releases']);
+  await about.getByRole('link', { name: 'Source code on GitHub' }).click();
+  await expect
+    .poll(opened)
+    .toEqual([
+      'https://github.com/rainyflash/agent-room/releases',
+      'https://github.com/rainyflash/agent-room',
+    ]);
+  // 窗口自己一个新标签页也没开。
+  expect(context.pages()).toHaveLength(1);
+  expect(failures).toEqual([]);
+});

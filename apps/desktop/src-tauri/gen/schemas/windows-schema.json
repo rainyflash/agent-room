@@ -645,6 +645,12 @@
           "markdownDescription": "Enables the desktop_open_authorization command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_open_link command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-open-link",
+          "markdownDescription": "Enables the desktop_open_link command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_open_logs command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-open-logs",
@@ -811,6 +817,12 @@
           "type": "string",
           "const": "deny-desktop-open-authorization",
           "markdownDescription": "Denies the desktop_open_authorization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_open_link command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-open-link",
+          "markdownDescription": "Denies the desktop_open_link command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_open_logs command without any pre-configured scope.",

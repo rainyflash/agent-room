@@ -13,6 +13,8 @@ export type MyAgentsFixtureControls = {
   releaseCount(): number;
   /** 每次开始登录用的意图，`default` 是没指定（普通登录）。 */
   signInIntents(): readonly string[];
+  /** 交给原生层在系统浏览器里打开的地址，按先后。 */
+  openedLinks(): readonly string[];
 };
 export type MyAgentsFixtureWindow = Window &
   typeof globalThis & {
