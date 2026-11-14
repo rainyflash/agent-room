@@ -23,6 +23,16 @@ export type AgentOwner =
 
 export type AgentOwnerRecord = AgentOwner & { readonly agentId: string };
 
+/** 每个人带了几个 Agent：照服务器说的主人数。网络 Agent 没有主人，不算在谁头上。 */
+export function agentCountsByOwner(owners: Iterable<AgentOwner>): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const owner of owners) {
+    if (owner.kind !== 'local' || owner.owner === undefined) continue;
+    counts.set(owner.owner.principalId, (counts.get(owner.owner.principalId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export type AgentOwnerLookupFailure = {
   readonly code: 'unavailable' | 'invalid_response';
 };

@@ -1,5 +1,6 @@
 //! 只有房主能设、撤管理员，管理员之间谁也动不了谁（`specs/redesign/room-roles.md` R1）。规则在领域层，
 //! 这里看用例：被拒时报的是“只有房主能做”，聊天服务器和存储都没动；管理员自己不当了做得到。
+//! 设、撤管理员还要最近登录过（R2）：登录有效但不是最近的，房主也做不成，别的权限照改。
 
 use agent_room_application::ports::ModerationMemberGateway;
 
@@ -140,6 +141,120 @@ async fn 房主设得了撤得了管理员() {
 }
 
 #[tokio::test]
+async fn 房主没最近登录过设不了撤不了管理员_别的权限照改() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    fixture.clear_events();
+    let change = |actor, permissions| {
+        fixture
+            .service
+            .update_permissions(ChangePrivateRoomPermissions {
+                actor,
+                catalog_id: fixture.catalog,
+                target_principal_id: fixture.member,
+                permissions,
+            })
+    };
+    let stale_owner = || stale(fixture.owner_actor());
+
+    let refused = change(stale_owner(), admin_permissions())
+        .await
+        .expect_err("设管理员要最近登录过");
+    assert_eq!(
+        refused.kind(),
+        PrivateRoomFailureKind::ReauthenticationRequired
+    );
+    assert!(fixture.events().is_empty(), "{:?}", fixture.events());
+    assert!(!stored_room(&fixture).is_admin(fixture.member));
+
+    // 不碰“管理”的照旧只要有效登录。
+    change(stale_owner(), inviter_permissions())
+        .await
+        .expect("改成员的别的权限");
+    assert!(stored_room(&fixture).allows(fixture.member, PrivateRoomCapability::Invite));
+
+    change(fixture.owner_actor(), admin_permissions())
+        .await
+        .expect("最近登录过的房主设管理员");
+    fixture.clear_events();
+    let refused = change(stale_owner(), speaker_permissions())
+        .await
+        .expect_err("撤管理员要最近登录过");
+    assert_eq!(
+        refused.kind(),
+        PrivateRoomFailureKind::ReauthenticationRequired
+    );
+    assert!(fixture.events().is_empty(), "{:?}", fixture.events());
+    assert!(stored_room(&fixture).is_admin(fixture.member));
+
+    change(stale_owner(), manager_without_invite())
+        .await
+        .expect("改管理员的别的权限");
+    assert!(stored_room(&fixture).is_admin(fixture.member));
+    assert!(!stored_room(&fixture).allows(fixture.member, PrivateRoomCapability::Invite));
+}
+
+#[tokio::test]
+async fn 管理员自己不当了不用最近登录过() {
+    let fixture = Fixture::joined(admin_permissions()).await;
+
+    fixture
+        .service
+        .update_permissions(ChangePrivateRoomPermissions {
+            actor: stale(fixture.admin_actor()),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions: speaker_permissions(),
+        })
+        .await
+        .expect("往下降不用重新登录");
+    assert!(!stored_room(&fixture).is_admin(fixture.member));
+}
+
+#[tokio::test]
+async fn 请一位管理员进来要最近登录过_请成员不用() {
+    let fixture = Fixture::joined(speaker_permissions()).await;
+    fixture
+        .service
+        .remove(GovernPrivateRoomMember {
+            actor: fixture.owner_actor(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+        })
+        .await
+        .expect("先移出，下面再请回来");
+    fixture.clear_events();
+    let invite = |permissions| {
+        fixture.service.invite(InvitePrivateRoomMember {
+            actor: stale(fixture.owner_actor()).into(),
+            catalog_id: fixture.catalog,
+            target_principal_id: fixture.member,
+            permissions,
+        })
+    };
+
+    let refused = invite(admin_permissions())
+        .await
+        .expect_err("请管理员要最近登录过");
+    assert_eq!(
+        refused.kind(),
+        PrivateRoomFailureKind::ReauthenticationRequired
+    );
+    assert!(fixture.events().is_empty(), "{:?}", fixture.events());
+    assert_eq!(
+        fixture.store.member_status(fixture.member),
+        PrivateRoomMembershipStatus::Removed
+    );
+
+    invite(speaker_permissions())
+        .await
+        .expect("请成员只要有效登录");
+    assert_eq!(
+        fixture.store.member_status(fixture.member),
+        PrivateRoomMembershipStatus::Invited
+    );
+}
+
+#[tokio::test]
 async fn 台账问得出对象是不是只有房主能动() {
     let fixture = Fixture::joined(admin_permissions()).await;
     let other = principal_id(3);
@@ -196,6 +311,32 @@ fn admin_permissions() -> PrivateRoomPermissions {
         PrivateRoomCapability::Manage,
     ])
     .expect("管理员权限有效")
+}
+
+fn inviter_permissions() -> PrivateRoomPermissions {
+    PrivateRoomPermissions::from_capabilities([
+        PrivateRoomCapability::View,
+        PrivateRoomCapability::Speak,
+        PrivateRoomCapability::Invite,
+    ])
+    .expect("能邀请的成员权限有效")
+}
+
+fn manager_without_invite() -> PrivateRoomPermissions {
+    PrivateRoomPermissions::from_capabilities([
+        PrivateRoomCapability::View,
+        PrivateRoomCapability::Speak,
+        PrivateRoomCapability::Manage,
+    ])
+    .expect("不能邀请的管理员权限有效")
+}
+
+/// 登录还有效，只是不算最近登录过。
+fn stale(actor: AuthenticatedPrincipal) -> AuthenticatedPrincipal {
+    AuthenticatedPrincipal {
+        recently_authenticated: false,
+        ..actor
+    }
 }
 
 fn stored_room(fixture: &Fixture) -> agent_room_domain::private_rooms::PrivateRoom {

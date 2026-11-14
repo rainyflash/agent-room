@@ -63,6 +63,23 @@ describe('roomPeople', () => {
     expect(people.map((person) => person.principalId)).toEqual([OWNER, ADMIN, MEMBER]);
   });
 
+  it('只能看的人写着身份，和成员混在一起按名字排', () => {
+    const VIEWER = id(7);
+    const room = { ...ROOM, members: [...ROOM.members, member(VIEWER, 'joined', ['view'])] };
+    const names = [...NAMES, { displayName: 'Bo', principalId: VIEWER }];
+    expect(
+      roomPeople(room, names, OWNER, SPOKEN).people.map((person) => [
+        person.displayName,
+        person.role,
+      ]),
+    ).toEqual([
+      ['Ada', 'owner'],
+      ['Grace', 'admin'],
+      ['Bo', 'viewer'],
+      ['Zed', null],
+    ]);
+  });
+
   it('受邀还没来的、被封禁的、没有昵称的（替网络 Agent 记账的主体）不列', () => {
     const names = roomPeople(ROOM, NAMES, OWNER, SPOKEN).people.map((person) => person.displayName);
     expect(names).not.toContain('Ivy');

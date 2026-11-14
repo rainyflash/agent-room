@@ -139,6 +139,46 @@ async fn 只有已加入且能邀请的人管链接_给不出自己没有的权�
 }
 
 #[tokio::test]
+async fn 带管理的链接要最近登录过才建得出() {
+    let fixture = Fixture::new(room_with_members());
+    let admin_link = PrivateRoomPermissions::from_capabilities([
+        PrivateRoomCapability::View,
+        PrivateRoomCapability::Speak,
+        PrivateRoomCapability::Manage,
+    ])
+    .unwrap();
+
+    assert_eq!(
+        fixture
+            .service
+            .create(create(owner(), Some(admin_link)))
+            .await
+            .expect_err("登录有效但不是最近的")
+            .kind(),
+        InviteLinkFailureKind::ReauthenticationRequired
+    );
+    let link = fixture
+        .service
+        .create(CreateInviteLink {
+            actor: AuthenticatedPrincipal {
+                recently_authenticated: true,
+                ..principal(owner())
+            },
+            catalog_id: catalog_id(),
+            permissions: Some(admin_link),
+        })
+        .await
+        .expect("最近登录过的房主建得出");
+    assert_eq!(link.record.permissions, admin_link);
+    // 不带“管理”的照旧只要有效登录。
+    fixture
+        .service
+        .create(create(owner(), None))
+        .await
+        .expect("普通链接");
+}
+
+#[tokio::test]
 async fn 拿着链接的人先看到房间和邀请人_用它进来成了受邀_再用不重复邀请() {
     let fixture = Fixture::new(room_with_members());
     let link = fixture

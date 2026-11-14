@@ -32,6 +32,8 @@ pub enum InviteLinkFailureKind {
     InvalidRequest,
     /// 登录过期，或者没有邀请权限。
     Forbidden,
+    /// 带“管理”的链接谁点了都是管理员，建它要最近登录过。
+    ReauthenticationRequired,
     /// 没有这条链接，或者它不管用了：过期、停用、房间归档、创建人不再能邀请。
     NotFound,
     /// 拿着链接的人被这个房间封禁了。
@@ -200,6 +202,12 @@ impl PrivateRoomInviteLinkService {
             .unwrap_or_else(|| room.default_invitation_for(actor));
         room.authorize_invite_link_permissions(actor, permissions)
             .map_err(|error| domain(OPERATION, &error))?;
+        if permissions.manage() && !request.actor.recently_authenticated {
+            return Err(InviteLinkFailure::new(
+                OPERATION,
+                InviteLinkFailureKind::ReauthenticationRequired,
+            ));
+        }
         let random = self.secrets.generate().map_err(|_| {
             InviteLinkFailure::new(OPERATION, InviteLinkFailureKind::DependencyUnavailable)
         })?;
@@ -325,7 +333,9 @@ impl PrivateRoomInviteLinkService {
                     | PrivateRoomFailureKind::UnknownCommit => {
                         InviteLinkFailureKind::DependencyUnavailable
                     }
+                    // 凭链接进来没有操作的人在场，碰不上“要最近登录过”。
                     PrivateRoomFailureKind::InvalidRequest
+                    | PrivateRoomFailureKind::ReauthenticationRequired
                     | PrivateRoomFailureKind::PublicRoomLimitReached
                     | PrivateRoomFailureKind::Internal => InviteLinkFailureKind::Internal,
                 };

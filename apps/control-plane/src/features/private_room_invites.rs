@@ -374,6 +374,12 @@ fn failure_response(failure: InviteLinkFailure, correlation_id: CorrelationId) -
             ErrorCategory::Authorization,
             "没有邀请权限，给不出这些权限，或者登录已失效。",
         ),
+        InviteLinkFailureKind::ReauthenticationRequired => (
+            StatusCode::UNAUTHORIZED,
+            "authentication.reauthentication_required",
+            ErrorCategory::Authentication,
+            "该操作需要近期重新认证。",
+        ),
         InviteLinkFailureKind::NotFound => (
             StatusCode::NOT_FOUND,
             "invite_link.not_found",

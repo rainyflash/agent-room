@@ -644,6 +644,12 @@ impl ApiError {
                 ErrorCategory::Authorization,
                 "只有房主能设、撤管理员，也只有房主能动管理员。",
             ),
+            PrivateRoomFailureKind::ReauthenticationRequired => (
+                StatusCode::UNAUTHORIZED,
+                "authentication.reauthentication_required",
+                ErrorCategory::Authentication,
+                "该操作需要近期重新认证。",
+            ),
             PrivateRoomFailureKind::NotFound => (
                 StatusCode::NOT_FOUND,
                 "private_room.not_found",

@@ -167,6 +167,30 @@ describe('邀请人', () => {
     });
   });
 
+  it('链接给不出“管理”，房主也一样；以前建的带着“管理”的，给出换一条，换了就不带', async () => {
+    const gateway = invites(
+      linkWith({ capabilities: ['view', 'speak', 'manage', 'automate'] }, '0'.repeat(26)),
+    );
+    renderDialog(gateway);
+    expect(await screen.findByText(`https://agentroom.test/join#${'0'.repeat(26)}`)).toBeVisible();
+    const manage = within(screen.getByRole('group', { name: 'Link permissions' })).getByRole(
+      'checkbox',
+      { name: /^Manage/u },
+    );
+    expect(manage).not.toBeChecked();
+    expect(manage).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New link with these' }));
+    await waitFor(() => {
+      expect(gateway.createInviteLink).toHaveBeenCalledWith(room.catalogId, {
+        capabilities: ['view', 'speak', 'automate'],
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'New link with these' })).toBeNull();
+    });
+  });
+
   it('看不到现在那条时让换一条；停用以后谁都用不了', async () => {
     const gateway = invites(linkWith({ capabilities: ['view'] }, '0'.repeat(26)), false);
     renderDialog(gateway);

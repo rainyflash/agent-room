@@ -1,4 +1,5 @@
-import { isRoomAdmin, type PrivateRoom, type PrivateRoomPerson } from './private-room';
+import type { PrivateRoom, PrivateRoomPerson } from './private-room';
+import { roomRole } from './room-roles';
 
 /** 房间页“人”那一栏的一行。 */
 export type RoomPerson = {
@@ -6,7 +7,8 @@ export type RoomPerson = {
   readonly key: string;
   readonly displayName: string;
   readonly self: boolean;
-  readonly role: 'owner' | 'admin' | null;
+  /** 身份：成员是大多数，不写；别的三种写出来。没有成员名单的房间里不知道。 */
+  readonly role: 'owner' | 'admin' | 'viewer' | null;
   /** 账户 ID：数他带了几个 Agent 用。没有成员名单的房间里不知道。 */
   readonly principalId: string | null;
 };
@@ -24,7 +26,7 @@ export type SpokenPerson = {
   readonly isSelf: boolean;
 };
 
-const roleOrder = { owner: 0, admin: 1, none: 2 } as const;
+const roleOrder = { owner: 0, admin: 1, viewer: 2, none: 2 } as const;
 
 /**
  * 房间里的人。
@@ -59,22 +61,23 @@ export function roomPeople(
         key: member.principalId,
         displayName,
         self: member.principalId === selfPrincipalId,
-        role:
-          member.principalId === room.ownerPrincipalId
-            ? 'owner'
-            : isRoomAdmin(room, member)
-              ? 'admin'
-              : null,
+        role: shownRole(room, member),
         principalId: member.principalId,
       },
     ];
   });
   return {
     listed: true,
+    // 房主在前、管理员其次；只能看的人和成员混在一起按名字排。
     people: people.toSorted(
       (a, b) =>
         roleOrder[a.role ?? 'none'] - roleOrder[b.role ?? 'none'] ||
         a.displayName.localeCompare(b.displayName),
     ),
   };
+}
+
+function shownRole(room: PrivateRoom, member: PrivateRoom['members'][number]): RoomPerson['role'] {
+  const role = roomRole(room, member);
+  return role === 'member' ? null : role;
 }

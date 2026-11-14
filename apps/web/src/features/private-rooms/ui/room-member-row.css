@@ -1,0 +1,273 @@
+/*
+ * 房间设置“成员”里的名单（specs/redesign/room-roles.md）：一人一行，名字、身份、带了几个 Agent、“更多”。
+ * 最上面一小块写四种身份各是什么。
+ */
+.room-roles {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  border-radius: 10px;
+  background: var(--ar-surface);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.room-roles > div {
+  display: grid;
+  grid-template-columns: 5.5em minmax(0, 1fr);
+  column-gap: 12px;
+}
+.room-roles dt {
+  font-weight: 500;
+}
+.room-roles dd {
+  margin: 0;
+  color: var(--ar-muted);
+}
+
+.room-members {
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--ar-line);
+  list-style: none;
+}
+.room-members__note {
+  margin: 10px 0 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.room-member {
+  border-bottom: 1px solid var(--ar-line);
+}
+.room-member__row {
+  display: grid;
+  min-height: 52px;
+  grid-template-columns: minmax(0, 1fr) 7.5rem 5.5rem 32px;
+  align-items: center;
+  column-gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.room-member__who {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  --ar-avatar-size: 28px;
+}
+.room-member__who > .ar-avatar {
+  flex: 0 0 auto;
+}
+.room-member__who > div {
+  min-width: 0;
+}
+.room-member__who strong,
+.room-member__who small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-member__who strong {
+  font-weight: 500;
+}
+.room-member__who small {
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+.room-member__you {
+  color: var(--ar-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+/* 退出、移出、封禁的人：字用淡一档的颜色，不用透明度（压出来的字对比度不够 4.5:1）。 */
+.room-member[data-inactive] .room-member__who strong {
+  color: var(--ar-muted);
+}
+
+.room-member__role {
+  min-width: 0;
+  font-weight: 500;
+}
+.room-member__role > select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font: inherit;
+  font-weight: 400;
+}
+.room-member__role > select:disabled {
+  color: var(--ar-muted);
+}
+.room-member__status {
+  color: var(--ar-muted);
+  font-weight: 400;
+}
+
+.room-member__agents {
+  overflow: hidden;
+  color: var(--ar-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-member__more {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: transparent;
+  cursor: pointer;
+  place-items: center;
+}
+.room-member__more:hover,
+.room-member__more[aria-expanded='true'] {
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+.room-member__more > svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 选了身份以后先问的那一句（先重新登录、自己不当了），和“更多”展开的那一块：都在这一行底下。 */
+.room-member__question,
+.room-member__panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0 0 10px 38px;
+  border-radius: 10px;
+  background: var(--ar-surface);
+  font-size: 13px;
+}
+.room-member__question > p {
+  margin: 0;
+  line-height: 1.5;
+}
+.room-member__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 6px;
+}
+
+.room-member__switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.room-member__switches > label {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.room-member__switches > label:has(input:disabled) {
+  color: var(--ar-muted);
+  cursor: default;
+}
+/* 开关：一个勾选框画成的。关着是空的槽、灰的圆点，开着是墨色的槽，圆点挪到右边。 */
+.room-member__switches input {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--ar-muted);
+  border-radius: var(--ar-pill);
+  appearance: none;
+  background: var(--color-paper);
+  cursor: inherit;
+  transition: background-color 120ms ease;
+}
+.room-member__switches input::before {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ar-muted);
+  content: '';
+  transition: transform 120ms ease;
+}
+.room-member__switches input:checked {
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+}
+.room-member__switches input:checked::before {
+  background: var(--color-paper);
+  transform: translateX(12px);
+}
+.room-member__switches input:disabled {
+  opacity: 0.55;
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-member__switches input,
+  .room-member__switches input::before {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .room-member__switches input {
+    border-color: ButtonText;
+    background: Canvas;
+  }
+  .room-member__switches input::before {
+    background: ButtonText;
+  }
+  .room-member__switches input:checked {
+    background: Highlight;
+  }
+}
+
+.room-member__account {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+.room-member__account > code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* 转让房主前的确认跟着这一行，和上面两块一样缩进。 */
+.room-member > .private-room-transfer {
+  margin: 0 0 10px 38px;
+}
+
+/* 窄的时候：带了几个 Agent 那一列收起来；选择框的字 16px（再小 iPhone 点进去会把整页放大）。 */
+@media (max-width: 560px) {
+  .room-member__row {
+    grid-template-columns: minmax(0, 1fr) 7rem 32px;
+    column-gap: 8px;
+  }
+  .room-member__agents {
+    display: none;
+  }
+  .room-member__role > select {
+    height: 36px;
+    font-size: 16px;
+  }
+  .room-member__question,
+  .room-member__panel,
+  .room-member > .private-room-transfer {
+    margin-left: 0;
+  }
+  /* 三个按钮一行放不下：折下来的那个跟着靠左，别孤零零挂在右边。 */
+  .room-member__panel > .room-member__actions {
+    justify-content: start;
+  }
+}

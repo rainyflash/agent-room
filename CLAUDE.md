@@ -306,7 +306,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。
   - 改风格要同步登录主题和官网（有测试卡着一致），发那一版要设备码。风格那一步（1c）排在换默认之后、表格和筛选之前。
-  - 只有房主能设、撤管理员，管理员之间谁也动不了谁（room-roles.md 的 R1，#797）。规则在领域层（`PrivateRoom` 的 `authorize_acting_on`、`require_owner_for_role_change`），被拒是 `DomainError::OwnerOnly`，接口回 403 `private_room.owner_only`。带“管理”的邀请和邀请链接也只有房主发得出。治理台账人动手的那一路动手前问 `ModerationMemberGateway::owner_only`，撤回也问；隐藏消息和平台治理的人不问。新加能动成员的入口（子房间管理员、身份选择框）都走这两个判断，别自己再写一份；管理员自己把自己降成成员是唯一的例外，别去掉。设、撤管理员要最近登录过还没做，跟 R2。
+  - 只有房主能设、撤管理员，管理员之间谁也动不了谁（room-roles.md 的 R1，#797）。规则在领域层（`PrivateRoom` 的 `authorize_acting_on`、`require_owner_for_role_change`），被拒是 `DomainError::OwnerOnly`，接口回 403 `private_room.owner_only`。带“管理”的邀请和邀请链接也只有房主发得出。治理台账人动手的那一路动手前问 `ModerationMemberGateway::owner_only`，撤回也问；隐藏消息和平台治理的人不问。新加能动成员的入口（子房间管理员、身份选择框）都走这两个判断，别自己再写一份；管理员自己把自己降成成员是唯一的例外，别去掉。
+  - 成员一节的身份选择框（room-roles.md 的 R2，#810）。身份由网页照权限算（`domain/room-roles.ts`：`roomRole`、`assignableRoles`、`permissionsForRole`），服务器存的、接口传的还是五项权限；成员的回答别加身份字段。
+    - 把“管理”交出去要最近登录过：改别人的“管理”、带“管理”的邀请和邀请链接。查在用例里（`ensure_recent_actor`），回 401 `authentication.reauthentication_required`；路由照旧只要有效登录，别改成整个改权限的接口都要：改别的权限、管理员自己不当了不用重新登录。
+    - 邀请人、邀请链接在网页上给不出“管理”，房主也一样（`invitableBy`）：别加回那个勾，设管理员只在名单里。
+    - 名单的每一行在 `room-member-row.tsx`。选了、拨了以后那一行马上照新的显示（`last` 和 `settled`）：`settled` 是名单“改完到了第几次”，从改动的结果里算，排在重新读到的名单后面才到。别换成在 `onSettled` 里另记一个状态、也别换成看“正在改”从真变假：前一种比新名单先到，那一行会闪一下旧的；后一种在服务器答得快时根本看不到“正在改”，那一行就一直锁着。
+    - Playwright 的 `check()`、`uncheck()` 点完马上核对，没变就报错：要等服务器答完才变的受控勾选框别用它（先 `click()` 再等）。这一行的两个开关能用，是因为马上照新的显示。
   - 身份变动另记一张表、另走一个接口，别往治理台账里加新的动作种类。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。

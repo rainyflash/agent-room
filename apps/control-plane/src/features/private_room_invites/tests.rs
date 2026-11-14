@@ -272,6 +272,11 @@ async fn 失败按种类回答_猜太多次带上要等多久() {
             "invite_link.not_revealable",
         ),
         (
+            InviteLinkFailure::new("test", InviteLinkFailureKind::ReauthenticationRequired),
+            StatusCode::UNAUTHORIZED,
+            "authentication.reauthentication_required",
+        ),
+        (
             InviteLinkFailure::rate_limited("test", time(i64::MAX / 2)),
             StatusCode::TOO_MANY_REQUESTS,
             "invite_link.rate_limited",

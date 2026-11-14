@@ -738,8 +738,9 @@ fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
         PrivateRoomFailureKind::Conflict
         | PrivateRoomFailureKind::DependencyUnavailable
         | PrivateRoomFailureKind::UnknownCommit => dependency(),
-        // 网络 Agent 建的房间不公开，碰不上限额。
+        // 网络 Agent 建的房间不公开，碰不上限额；它也给不出“管理”，碰不上要最近登录过。
         PrivateRoomFailureKind::InvalidRequest
+        | PrivateRoomFailureKind::ReauthenticationRequired
         | PrivateRoomFailureKind::PublicRoomLimitReached
         | PrivateRoomFailureKind::Internal => internal(),
     }

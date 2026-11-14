@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { openRoomSettings, roomAction } from './support/workspace-navigation';
@@ -16,6 +16,10 @@ async function expectAccessibleDialog(page: Page): Promise<void> {
   expect(
     scan.violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) })),
   ).toEqual([]);
+}
+/** 房间设置“成员”里某个人的那一行。 */
+function memberRow(dialog: Locator, name: string): Locator {
+  return dialog.locator('.room-members > li', { hasText: name });
 }
 /** 顶栏上房间名下面那一小句：这是哪种房间、谁读得到。 */
 function roomKind(page: Page) {
@@ -121,16 +125,22 @@ for (const width of [1_440, 390]) {
 
     const dialog = await openRoomSettings(page);
     const members = dialog.locator('.private-room-members');
-    await expect(members.getByText('Grace', { exact: true })).toBeVisible();
-    await expect(members.getByText('Mallory', { exact: true })).toBeVisible();
-    // 账户 ID 收在每一行的详情里。
-    await expect(members.getByText('0198b601-77a1-7bb8-83eb-a8fe68c97e43')).toBeHidden();
-
-    await members.getByRole('button', { name: 'Unban' }).click();
+    const grace = memberRow(dialog, 'Grace');
+    const mallory = memberRow(dialog, 'Mallory');
+    await expect(grace).toBeVisible();
+    await expect(mallory).toContainText('Banned');
+    // 账户 ID、解除封禁、转让房主都收在每一行的“更多”里。
+    await expect(members.getByText('0198b601-77a1-7bb8-83eb-a8fe68c97e43')).toHaveCount(0);
     await expect(members.getByRole('button', { name: 'Unban' })).toHaveCount(0);
-    await expect(members.locator('li', { hasText: 'Mallory' })).toContainText('Removed');
 
-    await members.getByRole('button', { name: 'Transfer ownership' }).click();
+    await mallory.getByRole('button', { name: 'More about Mallory' }).click();
+    await mallory.getByRole('button', { name: 'Unban' }).click();
+    await expect(members.getByRole('button', { name: 'Unban' })).toHaveCount(0);
+    await expect(mallory).toContainText('Removed');
+
+    await grace.getByRole('button', { name: 'More about Grace' }).click();
+    await expect(grace.getByText('0198b601-77a1-7bb8-83eb-a8fe68c97e43')).toBeVisible();
+    await grace.getByRole('button', { name: 'Transfer ownership' }).click();
     const confirm = members.getByRole('group', { name: 'Make Grace the owner?' });
     await expect(confirm).toBeVisible();
     await expect(confirm.getByRole('checkbox', { name: /^Manage/u })).toBeChecked();
@@ -138,6 +148,136 @@ for (const width of [1_440, 390]) {
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toHaveCount(0);
     await expectAccessibleDialog(page);
+    expect(failures).toEqual([]);
+  });
+}
+
+for (const width of [1_440, 390]) {
+  test(`成员的身份：四种身份的说明，身份选一下，更多里两个开关 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private&owners`);
+
+    const dialog = await openRoomSettings(page, 'Members');
+    const legend = dialog.locator('.room-roles');
+    for (const role of ['Owner', 'Admin', 'Member', 'View only']) {
+      await expect(legend.getByText(role, { exact: true })).toBeVisible();
+    }
+
+    // 你是房主：自己那一行只写字，没有选择框。
+    const ada = memberRow(dialog, 'Ada');
+    await expect(ada).toContainText('you');
+    await expect(ada.locator('.room-member__role')).toHaveText('Owner');
+    await expect(ada.getByRole('combobox')).toHaveCount(0);
+
+    const grace = memberRow(dialog, 'Grace');
+    const role = grace.getByRole('combobox', { name: 'Role of Grace' });
+    await expect(role).toHaveValue('member');
+    await expect(role.getByRole('option')).toHaveText(['Admin', 'Member', 'View only']);
+    // 每个人带了几个 Agent：窄了这一格收起来。
+    if (width === 390) await expect(grace.locator('.room-member__agents')).toBeHidden();
+    else await expect(grace.locator('.room-member__agents')).toHaveText('6 agents');
+
+    await grace.getByRole('button', { name: 'More about Grace' }).click();
+    const agentsSpeak = grace.getByRole('switch', { name: 'Agents they bring can speak' });
+    const canInvite = grace.getByRole('switch', { name: 'Can invite people' });
+    await expect(agentsSpeak).not.toBeChecked();
+    await expect(canInvite).not.toBeChecked();
+
+    // 只能看：两个开关都关着、动不了。改回成员，带来的 Agent 按默认能说话。
+    await role.selectOption('viewer');
+    await expect(role).toHaveValue('viewer');
+    await expect(agentsSpeak).toBeDisabled();
+    await expect(canInvite).toBeDisabled();
+    await role.selectOption('member');
+    await expect(agentsSpeak).toBeChecked();
+    await expect(canInvite).not.toBeChecked();
+    await canInvite.check();
+    await expect(canInvite).toBeChecked();
+    await agentsSpeak.uncheck();
+    await expect(agentsSpeak).not.toBeChecked();
+
+    // 设成管理员：能邀请人跟着开，带来的 Agent 能不能说话照旧。
+    await role.selectOption('admin');
+    await expect(role).toHaveValue('admin');
+    await expect(canInvite).toBeChecked();
+    await expect(agentsSpeak).not.toBeChecked();
+
+    await grace.scrollIntoViewIfNeeded();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessibleDialog(page);
+    await page.screenshot({ path: testInfo.outputPath(`member-roles-${String(width)}.png`) });
+    expect(failures).toEqual([]);
+  });
+
+  test(`设、撤管理员和转让房主要最近登录过，不是就先请人重新登录 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    // olderSession：登录已经超过 5 分钟。
+    await page.goto(`${fixturePath}?private&olderSession`);
+
+    const dialog = await openRoomSettings(page, 'Members');
+    const grace = memberRow(dialog, 'Grace');
+    const role = grace.getByRole('combobox', { name: 'Role of Grace' });
+
+    // 成员和只能看之间换不用重新登录。
+    await role.selectOption('viewer');
+    await expect(role).toHaveValue('viewer');
+    await role.selectOption('member');
+    await expect(role).toHaveValue('member');
+
+    await role.selectOption('admin');
+    const question = grace.getByRole('group', { name: /^This needs a fresh sign-in/u });
+    await expect(question).toBeVisible();
+    await expect(question.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+    await expect(role).toHaveValue('member');
+    await question.scrollIntoViewIfNeeded();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessibleDialog(page);
+    await page.screenshot({ path: testInfo.outputPath(`member-sign-in-${String(width)}.png`) });
+    await question.getByRole('button', { name: 'Cancel' }).click();
+    await expect(question).toHaveCount(0);
+
+    // 转让房主以前在这时候不给按钮；现在给，点了先请人重新登录。
+    await grace.getByRole('button', { name: 'More about Grace' }).click();
+    await grace.getByRole('button', { name: 'Transfer ownership' }).click();
+    await expect(question).toBeVisible();
+    await expect(dialog.getByRole('group', { name: 'Make Grace the owner?' })).toHaveCount(0);
+    expect(failures).toEqual([]);
+  });
+
+  test(`管理员动不了房主，能把自己降成成员，先确认一次 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private&asAdmin`);
+
+    const dialog = await openRoomSettings(page, 'Members');
+    const grace = memberRow(dialog, 'Grace');
+    await expect(grace.locator('.room-member__role')).toHaveText('Owner');
+    await expect(grace.getByRole('combobox')).toHaveCount(0);
+
+    const ada = memberRow(dialog, 'Ada');
+    const role = ada.getByRole('combobox', { name: 'Role of Ada' });
+    await expect(role).toHaveValue('admin');
+    await expect(role.getByRole('option')).toHaveText(['Admin', 'Member']);
+    await role.selectOption('member');
+    const question = ada.getByRole('group', { name: /^Stop being an admin\?/u });
+    await expect(question).toBeVisible();
+    await expect(role).toHaveValue('admin');
+    await question.scrollIntoViewIfNeeded();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessibleDialog(page);
+    await page.screenshot({ path: testInfo.outputPath(`member-step-down-${String(width)}.png`) });
+    await question.getByRole('button', { name: 'Step down' }).click();
+    // 不当了以后自己那一行只写字，别人的身份也换不了了。
+    await expect(ada.locator('.room-member__role')).toHaveText('Member');
+    await expect(dialog.locator('.room-members').getByRole('combobox')).toHaveCount(0);
     expect(failures).toEqual([]);
   });
 }
