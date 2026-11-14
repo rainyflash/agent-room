@@ -275,6 +275,12 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 浏览器验收里换配色用 `room-desk.e2e.ts` 的 `useColorScheme`，别直接 `emulateMedia`：它等到颜色过渡一个都不剩。#803 派发的 `suite=all` 就红在“认得出的记号”那一条上，换成夜间以后马上查对比度，顶栏的按钮还在半路（CI 上重试过了也算红）。
     - Safari 点按钮不给它焦点：浏览器验收里要看“点了以后焦点在哪儿”，先 `focus()` 再按回车。Playwright 里每一页都当自己有焦点，窗口不在前台要自己装（`room-desk.e2e.ts` 的 `setWindowFocused`）。
     - jsdom 不排版：面板量不出高度就不算看到。单元测试里要看“看到了最底下”，先给对话那一块一个高度（`conversation-panel-scope.spec.tsx` 的 `layout`），焦点用 `vi.spyOn(document, 'hasFocus')`；不在 `.tsx` 里的浏览器用例文件头上要写 `// @vitest-environment jsdom`。
+  - 第 1 块 1f 的第一个 PR（#806）：正文认管道线写的表格（`chat-markdown.ts` 的 `table` 节点，画在 `chat-markdown.tsx` 的 `TableFrame` 里）。链接是第二个 PR。
+    - 列宽靠“表格 `width: max-content`、格子 `max-width`”：每列照内容定宽，一格里字多了折行，整张表比框宽就滚。别给格子加 `overflow-wrap: anywhere`：浏览器会把字拆开挤进框里（`passed` 折成两行），框就不滚了。
+    - 能滚的框只在放不下时才有 `tabindex` 和名字（`TableFrame` 量 `scrollWidth`，`ResizeObserver` 盯着）：一段对话里表格多，每张都占一次 Tab 太碎。jsdom 里没有 `ResizeObserver`，只量一次。
+    - 是不是表格的判断排在标题、列表、引用前面，段落读到表格开头就停。
+    - `ChatMarkdown` 用了 `useTranslation`（框的名字）：单独渲染它的测试要包一层 `I18nextProvider`。围观页和房间页共用它，围观页也画表格。
+    - 桌面端没有通用的“在系统浏览器里打开”：只有 `desktop_open_authorization`、`desktop_open_logs` 两个专用命令，opener 插件关着 `open_js_links_on_click`。做链接要加一个只认 `http`、`https` 的原生命令（命令表在 `desktop_command_surface.rs`，权限在 `capabilities/main.json`）。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。
