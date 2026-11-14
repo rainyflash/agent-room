@@ -113,6 +113,14 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             get(sub_rooms::list).post(sub_rooms::create),
         )
         .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}",
+            put(sub_rooms::revise),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/membership",
+            post(sub_rooms::join).delete(sub_rooms::leave),
+        )
+        .route(
             "/private-rooms/{catalog_id}/sub-room-policy",
             get(sub_rooms::policy).put(sub_rooms::change_policy),
         )

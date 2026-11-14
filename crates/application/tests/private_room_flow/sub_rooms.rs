@@ -1,17 +1,19 @@
 //! 子房间（`specs/redesign/sub-rooms.md` 第 2a 步）：在一间房下面建、读名单、三项设置，和只有
 //! 父房间有的那几件事。存储是内存里的一份，重名、上限这些规则照真实存储的写；真实存储自己的
-//! 测试在 `postgres-adapter` 的 `tests/private_rooms/sub_rooms.rs`。
+//! 测试在 `postgres-adapter` 的 `tests/private_rooms/sub_rooms.rs`。人加入、退出和改名（2b）的
+//! 用例在旁边的 `sub_room_membership.rs`，用的是这里的夹具。
 
 use std::collections::BTreeSet;
 
 use agent_room_application::{
     ports::{
-        NewSubRoom, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomLink,
-        SubRoomParentFacts, SubRoomPolicyRecord, SubRoomStore,
+        NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
+        SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
+        SubRoomRevisionBlock, SubRoomStore,
     },
     private_rooms::{
-        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, SubRoomRefusal,
-        SubRoomUseCases,
+        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
+        SubRoomMembershipAction, SubRoomRefusal, SubRoomUseCases,
     },
 };
 use agent_room_domain::{
@@ -28,6 +30,9 @@ use agent_room_domain::{
 };
 
 use super::*;
+
+#[path = "sub_room_membership.rs"]
+mod membership;
 
 const PARENT: u128 = 10;
 const OWNER: u128 = 1;
@@ -652,6 +657,7 @@ impl Rooms {
             listing_matrix: listings.clone(),
             secrets: listings,
             sub_rooms: store.clone(),
+            topics: matrix.clone(),
             identifiers: runtime.clone(),
             clock: runtime,
         });
@@ -709,6 +715,48 @@ impl Rooms {
                 actor: person(actor),
                 parent_catalog_id: catalog_id(PARENT),
                 policy,
+            })
+            .await
+    }
+
+    fn membership(person: u128, catalog: u128) -> SubRoomMembershipAction {
+        SubRoomMembershipAction {
+            actor: self::person(person),
+            parent_catalog_id: catalog_id(PARENT),
+            catalog_id: catalog_id(catalog),
+        }
+    }
+
+    async fn join(
+        &self,
+        person: u128,
+        catalog: u128,
+    ) -> Result<PrivateRoomSnapshot, PrivateRoomFailure> {
+        self.service
+            .join_sub_room(Self::membership(person, catalog))
+            .await
+    }
+
+    async fn leave(&self, person: u128, catalog: u128) -> Result<(), PrivateRoomFailure> {
+        self.service
+            .leave_sub_room(Self::membership(person, catalog))
+            .await
+    }
+
+    async fn revise(
+        &self,
+        person: u128,
+        catalog: u128,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<PrivateRoomSnapshot, PrivateRoomFailure> {
+        self.service
+            .revise_sub_room(ReviseSubRoom {
+                actor: self::person(person),
+                parent_catalog_id: catalog_id(PARENT),
+                catalog_id: catalog_id(catalog),
+                name: name.map(str::to_owned),
+                description: description.map(str::to_owned),
             })
             .await
     }
@@ -872,6 +920,8 @@ pub(super) struct MemoryRooms {
     policy: Mutex<Option<SubRoomPolicyRecord>>,
     policy_writes: Mutex<u32>,
     race_same_request: AtomicBool,
+    /// 设上的人，在下一次往子房间里记人之前先被移出父房间。
+    leaves_parent_before_admission: Mutex<Option<PrincipalId>>,
 }
 
 impl MemoryRooms {
@@ -884,7 +934,46 @@ impl MemoryRooms {
             policy: Mutex::new(None),
             policy_writes: Mutex::new(0),
             race_same_request: AtomicBool::new(false),
+            leaves_parent_before_admission: Mutex::new(None),
         }
+    }
+
+    fn room(&self, catalog: u128) -> PrivateRoom {
+        self.rooms.lock().expect("房间锁正常")[&catalog_id(catalog)]
+            .room()
+            .clone()
+    }
+
+    /// 直接改存着的一间房，绕开用例：摆出封禁、移出这类别的入口留下的样子。
+    fn change(&self, catalog: u128, change: impl FnOnce(&mut PrivateRoom)) {
+        let mut room = self.room(catalog);
+        change(&mut room);
+        self.replace(&room);
+    }
+
+    /// 换上改过的房间。子房间管理员得是里面已加入的人，不在了的跟着删，和真实存储一样。
+    fn replace(&self, room: &PrivateRoom) {
+        let mut rooms = self.rooms.lock().expect("房间锁正常");
+        let current = rooms.remove(&room.catalog_id()).expect("房间存在");
+        rooms.insert(
+            room.catalog_id(),
+            current.replacing_room(room.clone()).expect("快照一致"),
+        );
+        for stored in self.links.lock().expect("关系锁正常").iter_mut() {
+            if stored.link.catalog_id == room.catalog_id() {
+                stored.managers.retain(|manager| {
+                    room.member(*manager)
+                        .is_some_and(PrivateRoomMember::has_joined)
+                });
+            }
+        }
+    }
+
+    fn leave_parent_before_admission(&self, person: u128) {
+        *self
+            .leaves_parent_before_admission
+            .lock()
+            .expect("移出锁正常") = Some(principal_id(person));
     }
 
     fn put(&self, snapshot: PrivateRoomSnapshot) {
@@ -1149,6 +1238,75 @@ impl SubRoomStore for MemoryRooms {
         Box::pin(async move { Ok(entries) })
     }
 
+    fn admit_to_sub_room<'a>(
+        &'a self,
+        admission: &'a SubRoomAdmission<'a>,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            self.record("sub_rooms.admit");
+            let leaver = self
+                .leaves_parent_before_admission
+                .lock()
+                .expect("移出锁正常")
+                .take();
+            if let Some(leaver) = leaver {
+                self.change(PARENT, |parent| {
+                    parent
+                        .remove_member(principal_id(OWNER), leaver)
+                        .expect("房主能移出");
+                });
+            }
+            let in_parent = self.rooms.lock().expect("房间锁正常")[&admission.parent_catalog_id]
+                .room()
+                .member(admission.principal)
+                .is_some_and(PrivateRoomMember::has_joined);
+            if !in_parent {
+                return Ok(false);
+            }
+            self.replace(admission.room);
+            Ok(true)
+        })
+    }
+
+    fn revise_sub_room<'a>(
+        &'a self,
+        revision: &'a SubRoomRevision,
+    ) -> PortFuture<'a, RepositoryResult<Option<SubRoomRevisionBlock>>> {
+        Box::pin(async move {
+            self.record("sub_rooms.revise");
+            let mut rooms = self.rooms.lock().expect("房间锁正常");
+            let mut links = self.links.lock().expect("关系锁正常");
+            let siblings = |stored: &&StoredLink| {
+                stored.link.parent_catalog_id == revision.parent_catalog_id && !stored.archived
+            };
+            if !links
+                .iter()
+                .filter(siblings)
+                .any(|stored| stored.link.catalog_id == revision.catalog_id)
+            {
+                return Ok(Some(SubRoomRevisionBlock::Unavailable));
+            }
+            if links.iter().filter(siblings).any(|stored| {
+                stored.link.catalog_id != revision.catalog_id
+                    && stored.link.name_key == revision.name_key
+            }) {
+                return Ok(Some(SubRoomRevisionBlock::NameTaken));
+            }
+            for stored in links.iter_mut() {
+                if stored.link.catalog_id == revision.catalog_id {
+                    stored.link.name_key.clone_from(&revision.name_key);
+                }
+            }
+            let current = rooms.remove(&revision.catalog_id).expect("房间存在");
+            let revised = current
+                .renaming(revision.name.clone())
+                .and_then(|renamed| renamed.describing(revision.description.clone()))
+                .expect("名字和用途有效");
+            rooms.insert(revision.catalog_id, revised);
+            Ok(None)
+        })
+    }
+
     fn sub_room_policy(
         &self,
         _parent: RoomCatalogId,
@@ -1243,12 +1401,7 @@ impl PrivateRoomStore for MemoryRooms {
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async move {
             self.record("store.save");
-            let mut rooms = self.rooms.lock().expect("房间锁正常");
-            let current = rooms.remove(&room.catalog_id()).expect("房间存在");
-            rooms.insert(
-                room.catalog_id(),
-                current.replacing_room(room.clone()).expect("快照一致"),
-            );
+            self.replace(room);
             Ok(())
         })
     }

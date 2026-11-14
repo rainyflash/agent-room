@@ -1,11 +1,12 @@
-//! 子房间的接口（`specs/redesign/sub-rooms.md` 第 2a 步）：建、读名单、三项设置。规则在用例里，
-//! 这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
+//! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
+//! 和用途（2b）。规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
     ports::SubRoomEntry,
     private_rooms::{
-        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, SubRoomList,
-        SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases, SubRoomView,
+        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
+        SubRoomView,
     },
 };
 use agent_room_domain::{
@@ -25,6 +26,10 @@ pub(super) struct FakeSubRooms {
     listed: Mutex<Vec<RoomCatalogId>>,
     inspected: Mutex<Vec<RoomCatalogId>>,
     changed: Mutex<Vec<(RoomCatalogId, SubRoomPolicy)>>,
+    /// 加入和退出：父房间、子房间。
+    joined: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
+    left: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
+    revised: Mutex<Vec<ReviseSubRoom>>,
     /// 设上时每个用例都回答它。
     failure: Mutex<Option<PrivateRoomFailure>>,
 }
@@ -91,6 +96,39 @@ impl SubRoomUseCases for FakeSubRooms {
             },
             Err,
         );
+        Box::pin(async move { result })
+    }
+
+    fn join_sub_room(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        self.joined
+            .lock()
+            .unwrap()
+            .push((request.parent_catalog_id, request.catalog_id));
+        let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
+        Box::pin(async move { result })
+    }
+
+    fn leave_sub_room(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        self.left
+            .lock()
+            .unwrap()
+            .push((request.parent_catalog_id, request.catalog_id));
+        let result = self.refusal().map_or(Ok(()), Err);
+        Box::pin(async move { result })
+    }
+
+    fn revise_sub_room(
+        &self,
+        request: ReviseSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
+        self.revised.lock().unwrap().push(request);
         Box::pin(async move { result })
     }
 }
@@ -312,6 +350,159 @@ async fn 三项设置能读能改_改要同源_多余的字段和不认识的值
 }
 
 #[tokio::test]
+async fn 加入和退出各一个请求_要同源和有效登录_退出不回内容() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let authentication = Arc::new(FakeAuthentication::default());
+    let app = sub_room_router(sub_rooms.clone(), authentication.clone());
+    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms/{SUB_ROOM_UUID}/membership");
+    let pair = (catalog_id(), RoomCatalogId::from_uuid(uuid(SUB_ROOM_UUID)));
+
+    let joined = app
+        .clone()
+        .oneshot(sub_request(Method::POST, &uri, &json!({}), true, None))
+        .await
+        .expect("加入的路由可调用");
+    assert_eq!(joined.status(), StatusCode::OK);
+    assert_eq!(joined.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response_json(joined).await["name"], "Incident Room");
+    assert_eq!(sub_rooms.joined.lock().unwrap().as_slice(), &[pair]);
+
+    let left = app
+        .clone()
+        .oneshot(sub_request(Method::DELETE, &uri, &json!({}), true, None))
+        .await
+        .expect("退出的路由可调用");
+    assert_eq!(left.status(), StatusCode::NO_CONTENT);
+    assert_eq!(left.headers()[header::CACHE_CONTROL], "no-store");
+    assert!(
+        to_bytes(left.into_body(), 64)
+            .await
+            .expect("读得出回答")
+            .is_empty()
+    );
+    assert_eq!(sub_rooms.left.lock().unwrap().as_slice(), &[pair]);
+    assert_eq!(
+        authentication.calls.lock().unwrap().as_slice(),
+        &[AuthenticationRequirement::ActiveSession; 2],
+        "加入、退出只要有效登录"
+    );
+
+    let malformed = format!("/private-rooms/{CATALOG_UUID}/sub-rooms/not-a-room/membership");
+    for method in [Method::POST, Method::DELETE] {
+        for (uri, origin, status, code) in [
+            (
+                &uri,
+                false,
+                StatusCode::FORBIDDEN,
+                "private_room.invalid_origin",
+            ),
+            (
+                &malformed,
+                true,
+                StatusCode::BAD_REQUEST,
+                "private_room.invalid_resource_id",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(sub_request(method.clone(), uri, &json!({}), origin, None))
+                .await
+                .expect("路由可调用");
+            assert_eq!(response.status(), status, "{method} {code}");
+            assert_eq!(response_json(response).await["code"], code);
+        }
+    }
+    assert_eq!(sub_rooms.joined.lock().unwrap().len(), 1, "被拒的没到用例");
+    assert_eq!(sub_rooms.left.lock().unwrap().len(), 1, "被拒的没到用例");
+}
+
+#[tokio::test]
+async fn 改名字和用途_没带的那一项不动_名字去掉两头的空白_多余的字段和空请求不收() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let app = sub_room_router(sub_rooms.clone(), Arc::default());
+    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms/{SUB_ROOM_UUID}");
+
+    for body in [
+        json!({ "name": "  launch ", "description": " Ship it " }),
+        json!({ "description": "" }),
+        json!({ "name": "launch" }),
+    ] {
+        let revised = app
+            .clone()
+            .oneshot(sub_request(Method::PUT, &uri, &body, true, None))
+            .await
+            .expect("改名的路由可调用");
+        assert_eq!(revised.status(), StatusCode::OK, "{body}");
+        assert_eq!(revised.headers()[header::CACHE_CONTROL], "no-store");
+    }
+    let requests = sub_rooms.revised.lock().unwrap().clone();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].parent_catalog_id, catalog_id());
+    assert_eq!(
+        requests[0].catalog_id,
+        RoomCatalogId::from_uuid(uuid(SUB_ROOM_UUID))
+    );
+    assert_eq!(requests[0].name.as_deref(), Some("launch"));
+    assert_eq!(
+        requests[0].description.as_deref(),
+        Some(" Ship it "),
+        "用途原样交给用例，由它去掉两头的空白"
+    );
+    assert_eq!(
+        (
+            requests[1].name.as_deref(),
+            requests[1].description.as_deref()
+        ),
+        (None, Some("")),
+        "只改用途，空的就是清掉"
+    );
+    assert_eq!(
+        (
+            requests[2].name.as_deref(),
+            requests[2].description.as_deref()
+        ),
+        (Some("launch"), None)
+    );
+
+    for (body, origin, status, code) in [
+        (
+            json!({ "name": "launch" }),
+            false,
+            StatusCode::FORBIDDEN,
+            "private_room.invalid_origin",
+        ),
+        (
+            json!({}),
+            true,
+            StatusCode::BAD_REQUEST,
+            "sub_room.invalid_revision_body",
+        ),
+        (
+            // 门和分类还没有：带了不认识的字段就拒，免得人以为改上了。
+            json!({ "name": "launch", "access": "request" }),
+            true,
+            StatusCode::BAD_REQUEST,
+            "sub_room.invalid_revision_body",
+        ),
+        (
+            json!({ "name": 7 }),
+            true,
+            StatusCode::BAD_REQUEST,
+            "sub_room.invalid_revision_body",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(sub_request(Method::PUT, &uri, &body, origin, None))
+            .await
+            .expect("路由可调用");
+        assert_eq!(response.status(), status, "{body}");
+        assert_eq!(response_json(response).await["code"], code, "{body}");
+    }
+    assert_eq!(sub_rooms.revised.lock().unwrap().len(), 3, "被拒的没到用例");
+}
+
+#[tokio::test]
 async fn 子房间这边被拒各有各的码_网页好说清楚() {
     let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms");
     for (refusal, status, code) in [
@@ -354,6 +545,36 @@ async fn 子房间这边被拒各有各的码_网页好说清楚() {
             SubRoomRefusal::PolicyOwnerOnly,
             StatusCode::FORBIDDEN,
             "sub_room.owner_only",
+        ),
+        (
+            SubRoomRefusal::Archived,
+            StatusCode::CONFLICT,
+            "sub_room.archived",
+        ),
+        (
+            SubRoomRefusal::Banned,
+            StatusCode::FORBIDDEN,
+            "sub_room.banned",
+        ),
+        (
+            SubRoomRefusal::ApprovalRequired,
+            StatusCode::FORBIDDEN,
+            "sub_room.approval_required",
+        ),
+        (
+            SubRoomRefusal::InviteOnly,
+            StatusCode::FORBIDDEN,
+            "sub_room.invite_only",
+        ),
+        (
+            SubRoomRefusal::OwnerStays,
+            StatusCode::CONFLICT,
+            "sub_room.owner_stays",
+        ),
+        (
+            SubRoomRefusal::ManagersOnly,
+            StatusCode::FORBIDDEN,
+            "sub_room.managers_only",
         ),
     ] {
         let sub_rooms = Arc::new(FakeSubRooms::default());

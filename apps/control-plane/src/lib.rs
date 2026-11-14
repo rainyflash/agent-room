@@ -1681,6 +1681,7 @@ fn build_private_room_service(
         listing_matrix: dependencies.matrix_identities.clone(),
         secrets: dependencies.secrets.clone(),
         sub_rooms: dependencies.repositories.clone(),
+        topics: dependencies.matrix_identities.clone(),
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
     })))

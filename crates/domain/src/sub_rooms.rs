@@ -10,6 +10,7 @@ use crate::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomLifecycleStatus, PrivateRoomMember,
         PrivateRoomMembershipStatus, PrivateRoomPermissions,
     },
+    room_listing::RoomJoinMode,
     version::AggregateVersion,
 };
 
@@ -182,6 +183,93 @@ pub fn new_sub_room(
         AggregateVersion::INITIAL,
         None,
     )
+}
+
+/// 为什么进不了这间子房间。分开说，回答里要写清原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomEntryRefusal {
+    /// 不是父房间里已加入的人。子房间的门只对房间里面的人开关。
+    NotInParent,
+    /// 子房间或者它的父房间归档了。
+    Archived,
+    /// 在这间子房间里被封禁着。
+    Banned,
+    /// 这间要批准：得先申请。
+    ApprovalRequired,
+    /// 这间只能请进来。
+    InviteOnly,
+}
+
+/// 父房间的房主和管理员：每一间子房间他们都看得到、进得去、管得了。
+#[must_use]
+pub fn runs_parent_room(parent: &PrivateRoom, principal: PrincipalId) -> bool {
+    parent.owner_principal_id() == principal
+        || parent
+            .member(principal)
+            .is_some_and(|member| member.has_joined() && member.permissions().manage())
+}
+
+/// 一个人管不管得了这间子房间：父房间的房主和管理员都管得了，进没进来都一样；别的人要在这一间
+/// 里、身上有“管理”（这一间的子房间管理员）。
+#[must_use]
+pub fn manages_sub_room(
+    parent: &PrivateRoom,
+    sub_room: &PrivateRoom,
+    principal: PrincipalId,
+) -> bool {
+    let in_parent = parent
+        .member(principal)
+        .is_some_and(PrivateRoomMember::has_joined);
+    in_parent
+        && (runs_parent_room(parent, principal)
+            || sub_room
+                .member(principal)
+                .is_some_and(|member| member.has_joined() && member.permissions().manage()))
+}
+
+/// 一个人自己点“加入”进一间子房间。他得是父房间里已加入的人、没在这一间里被封禁；有门的只有父房间
+/// 的房主和管理员不用批准。过了就回他在这一间里该有的权限（父房间的管理员进来就是这一间的管理员）。
+/// 已经在里面的不再看门，回的是他现在的权限。
+///
+/// # Errors
+///
+/// 进不了时返回原因。
+pub fn authorize_sub_room_join(
+    parent: &PrivateRoom,
+    sub_room: &PrivateRoom,
+    principal: PrincipalId,
+    access: RoomJoinMode,
+) -> Result<PrivateRoomPermissions, SubRoomEntryRefusal> {
+    let in_parent = parent
+        .member(principal)
+        .filter(|member| member.has_joined())
+        .ok_or(SubRoomEntryRefusal::NotInParent)?;
+    let active = PrivateRoomLifecycleStatus::Active;
+    if parent.status() != active || sub_room.status() != active {
+        return Err(SubRoomEntryRefusal::Archived);
+    }
+    let banned = sub_room
+        .member(principal)
+        .is_some_and(|member| member.status() == PrivateRoomMembershipStatus::Banned);
+    if banned {
+        return Err(SubRoomEntryRefusal::Banned);
+    }
+    if let Some(inside) = sub_room
+        .member(principal)
+        .filter(|member| member.has_joined())
+    {
+        return Ok(inside.permissions());
+    }
+    let runs_parent = runs_parent_room(parent, principal);
+    if !runs_parent {
+        match access {
+            RoomJoinMode::Open => {}
+            RoomJoinMode::Request => return Err(SubRoomEntryRefusal::ApprovalRequired),
+            RoomJoinMode::InviteOnly => return Err(SubRoomEntryRefusal::InviteOnly),
+        }
+    }
+    sub_room_permissions(in_parent.permissions(), runs_parent)
+        .map_err(|_| SubRoomEntryRefusal::NotInParent)
 }
 
 /// 比重名用的键：去掉两头的空白、转成小写。同一间房里没归档的子房间不重名，不分大小写。
@@ -401,6 +489,110 @@ mod tests {
             permissions(&SPEAKER)
         );
         assert!(sub_room_permissions(PrivateRoomPermissions::NONE, true).is_err());
+    }
+
+    #[test]
+    fn 没有门的父房间里的人都能进_权限照父房间里的_管理员进来就管这一间() {
+        let parent = parent();
+        let sub_room = new_sub_room(catalog(), &parent.room, parent.owner).expect("房主能建");
+        let join = |who| authorize_sub_room_join(&parent.room, &sub_room, who, RoomJoinMode::Open);
+
+        assert_eq!(join(parent.member), Ok(permissions(&SPEAKER)));
+        assert_eq!(
+            join(parent.viewer),
+            Ok(permissions(&[PrivateRoomCapability::View]))
+        );
+        // 父房间的管理员：发言照父房间里的，邀请不带进来，管理给上。
+        assert_eq!(
+            join(parent.admin),
+            Ok(permissions(&[
+                PrivateRoomCapability::View,
+                PrivateRoomCapability::Speak,
+                PrivateRoomCapability::Manage,
+            ]))
+        );
+        // 还没接受父房间邀请的、根本不在父房间里的，进不来。
+        assert_eq!(join(parent.invited), Err(SubRoomEntryRefusal::NotInParent));
+        assert_eq!(join(principal()), Err(SubRoomEntryRefusal::NotInParent));
+    }
+
+    #[test]
+    fn 有门的只有房主和管理员不用批准_封禁着的和归档了的谁都进不来() {
+        let parent = parent();
+        let mut sub_room = new_sub_room(catalog(), &parent.room, parent.owner).expect("房主能建");
+        for (access, refusal) in [
+            (RoomJoinMode::Request, SubRoomEntryRefusal::ApprovalRequired),
+            (RoomJoinMode::InviteOnly, SubRoomEntryRefusal::InviteOnly),
+        ] {
+            let join = |who| authorize_sub_room_join(&parent.room, &sub_room, who, access);
+            assert_eq!(join(parent.member), Err(refusal));
+            assert!(join(parent.admin).is_ok(), "父房间的管理员不看门");
+            assert!(join(parent.owner).is_ok(), "房主不看门");
+            assert_eq!(join(principal()), Err(SubRoomEntryRefusal::NotInParent));
+        }
+
+        // 已经在里面的再点一次不看门，权限还是他现在的。
+        sub_room
+            .admit(parent.viewer, permissions(&SPEAKER))
+            .expect("先进来");
+        assert_eq!(
+            authorize_sub_room_join(
+                &parent.room,
+                &sub_room,
+                parent.viewer,
+                RoomJoinMode::InviteOnly
+            ),
+            Ok(permissions(&SPEAKER))
+        );
+
+        // 在这一间里被封禁着：没有门也进不来，父房间的管理员也一样。
+        for who in [parent.member, parent.admin] {
+            sub_room.admit(who, permissions(&SPEAKER)).expect("先进来");
+            sub_room.ban_member(parent.owner, who).expect("房主能封禁");
+            assert_eq!(
+                authorize_sub_room_join(&parent.room, &sub_room, who, RoomJoinMode::Open),
+                Err(SubRoomEntryRefusal::Banned)
+            );
+        }
+
+        // 子房间归档了，或者父房间归档了。
+        let mut archived = sub_room.clone();
+        archived.archive(parent.owner).expect("房主能归档");
+        assert_eq!(
+            authorize_sub_room_join(&parent.room, &archived, parent.viewer, RoomJoinMode::Open),
+            Err(SubRoomEntryRefusal::Archived)
+        );
+        let mut closed = parent.room.clone();
+        closed.archive(parent.owner).expect("房主能归档");
+        assert_eq!(
+            authorize_sub_room_join(&closed, &sub_room, parent.viewer, RoomJoinMode::Open),
+            Err(SubRoomEntryRefusal::Archived)
+        );
+    }
+
+    #[test]
+    fn 管这一间的是父房间的房主和管理员_加上这一间里有管理的人() {
+        let parent = parent();
+        let sub_room = new_sub_room(catalog(), &parent.room, parent.member).expect("成员能建");
+
+        assert!(runs_parent_room(&parent.room, parent.owner));
+        assert!(runs_parent_room(&parent.room, parent.admin));
+        assert!(!runs_parent_room(&parent.room, parent.member));
+        assert!(!runs_parent_room(&parent.room, principal()));
+
+        // 建的人管这一间；父房间的房主和管理员进没进来都管得了；别的人管不了。
+        assert!(manages_sub_room(&parent.room, &sub_room, parent.member));
+        assert!(manages_sub_room(&parent.room, &sub_room, parent.owner));
+        assert!(manages_sub_room(&parent.room, &sub_room, parent.admin));
+        assert!(!manages_sub_room(&parent.room, &sub_room, parent.viewer));
+        assert!(!manages_sub_room(&parent.room, &sub_room, principal()));
+
+        // 建的人被移出父房间以后（子房间这边还没对账），也管不了了。
+        let mut without = parent.room.clone();
+        without
+            .remove_member(parent.owner, parent.member)
+            .expect("房主能移出");
+        assert!(!manages_sub_room(&without, &sub_room, parent.member));
     }
 
     #[test]

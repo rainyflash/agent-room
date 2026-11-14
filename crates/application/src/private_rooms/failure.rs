@@ -54,6 +54,18 @@ pub enum SubRoomRefusal {
     RateLimited,
     /// 谁能建子房间这几项设置只有房主能改。
     PolicyOwnerOnly,
+    /// 这间子房间（或者它所在的房间）归档了：进不去，也改不了。
+    Archived,
+    /// 他在这间子房间里被封禁着。
+    Banned,
+    /// 这间要批准：得先申请。
+    ApprovalRequired,
+    /// 这间只能请进来。
+    InviteOnly,
+    /// 房主在每一间子房间里，退不出去。
+    OwnerStays,
+    /// 改名、改用途要管得了这一间：这一间的管理员，或者房间的房主和管理员。
+    ManagersOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
