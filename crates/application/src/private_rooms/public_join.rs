@@ -384,6 +384,7 @@ const fn invitation_failure(kind: PrivateRoomFailureKind) -> PublicJoinFailureKi
             PublicJoinFailureKind::DependencyUnavailable
         }
         PrivateRoomFailureKind::InvalidRequest
+        | PrivateRoomFailureKind::ReauthenticationRequired
         | PrivateRoomFailureKind::PublicRoomLimitReached
         | PrivateRoomFailureKind::Internal => PublicJoinFailureKind::Internal,
     }

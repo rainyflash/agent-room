@@ -20,6 +20,9 @@ pub enum PrivateRoomFailureKind {
     /// 管得了这间房，但这件事只有房主能做：设、撤管理员，或者动一位管理员
     /// （`specs/redesign/room-roles.md`）。
     OwnerOnly,
+    /// 做得了，但要最近登录过：设、撤管理员，请一位管理员进来（`specs/redesign/room-roles.md` R2）。
+    /// 和别的要最近登录的操作回同一个码，网页据此请人重新登录。
+    ReauthenticationRequired,
     NotFound,
     Conflict,
     DependencyUnavailable,

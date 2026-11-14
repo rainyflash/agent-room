@@ -365,6 +365,13 @@ impl PrivateRoomService {
             room.invite(actor, request.target_principal_id, request.permissions)
         }
         .map_err(|error| domain(OPERATION, &error))?;
+        // 请一位管理员进来等于设一位管理员，要最近登录过。先过领域规则：管理员来做拿到的是
+        // “只有房主能做”，不是叫他重新登录。
+        if let PrivateRoomActor::Person(person) = &request.actor
+            && request.permissions.manage()
+        {
+            ensure_recent_actor(person, OPERATION)?;
+        }
         self.deliver_invitation(
             snapshot,
             room,
@@ -694,6 +701,13 @@ impl PrivateRoomService {
                 request.permissions,
             )
             .map_err(|error| domain(OPERATION, &error))?;
+        // 设、撤管理员是把权力交出去、收回来，要最近登录过。管理员自己不当了不用：那是往下降。
+        if changed
+            && previous.manage() != request.permissions.manage()
+            && request.actor.principal_id != request.target_principal_id
+        {
+            ensure_recent_actor(&request.actor, OPERATION)?;
+        }
         let target = self
             .principal_matrix_user(request.target_principal_id, OPERATION)
             .await?;
@@ -1501,6 +1515,22 @@ fn ensure_active_actor(
             operation,
             PrivateRoomFailureStage::Validation,
             PrivateRoomFailureKind::Forbidden,
+        ))
+    }
+}
+
+/// 这件事要最近登录过（登录有没有过期前面已经查了）。
+fn ensure_recent_actor(
+    actor: &AuthenticatedPrincipal,
+    operation: &'static str,
+) -> PrivateRoomResult<()> {
+    if actor.recently_authenticated {
+        Ok(())
+    } else {
+        Err(failure(
+            operation,
+            PrivateRoomFailureStage::Validation,
+            PrivateRoomFailureKind::ReauthenticationRequired,
         ))
     }
 }

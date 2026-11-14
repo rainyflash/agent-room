@@ -1277,29 +1277,7 @@
   font-size: 12px;
 }
 
-.private-room-members > ol {
-  padding: 0;
-  margin: 0;
-  border-top: 1px solid var(--ar-line);
-  list-style: none;
-}
-
-.private-room-members > ol > li {
-  padding: 0.9rem 0;
-  border-bottom: 1px solid var(--ar-line);
-}
-
-/*
- * 退出、移除、封禁的人：名字和状态淡一些，“解除封禁”照常。
- * 字用淡一档的颜色，不用透明度：透明度压出来的字对比度不够 4.5:1。头像不是字，照旧压淡。
- */
-.private-room-member--inactive > .private-room-member__identity,
-.private-room-member--inactive > .private-room-member__account {
-  color: var(--ar-muted);
-}
-.private-room-member--inactive > .private-room-member__identity > span {
-  opacity: 0.58;
-}
+/* 成员名单的每一行在 features/private-rooms/ui/room-member-row.css。 */
 
 .private-room-member__identity {
   display: grid;
@@ -1337,18 +1315,6 @@
   font-size: 13px;
 }
 
-/* 账户 ID 收在每一行的“详情”里，排查时才看。 */
-.private-room-member__account {
-  margin-top: 0.35rem;
-  margin-left: calc(28px + 0.6rem);
-  font-size: 12px;
-}
-
-.private-room-member__account code {
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
 /* 转移房主前的确认：在那一行底下展开。 */
 .private-room-transfer {
   display: grid;
@@ -1376,21 +1342,6 @@
   display: flex;
   justify-content: end;
   gap: 0.35rem;
-}
-
-/* 名字旁边的“管理员”（specs/public-rooms）：有“管理”这一位的人，房主不写。 */
-.private-room-member__role {
-  display: inline-block;
-  margin-left: 0.4rem;
-  padding: 0 0.45rem;
-  border-radius: var(--ar-pill);
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.5;
-  vertical-align: 1px;
 }
 
 /* 成员下面的“申请”：谁、什么时候、留的话，批准或拒绝。 */

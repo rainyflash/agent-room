@@ -108,16 +108,18 @@ for (const width of [1440, 390]) {
     await requests.getByRole('button', { name: 'Reject Mo' }).click();
     await expect(requests).toContainText('No one is waiting.');
 
-    // Grace 原来只能查看和发言：设成管理员以后写着“管理员”，能撤回去。
-    await dialog.getByRole('button', { name: 'Make admin' }).click();
-    const grace = dialog.locator('.private-room-members > ol > li', { hasText: 'Grace' });
-    await expect(grace.locator('.private-room-member__role')).toHaveText('Admin');
+    // Grace 原来是成员：身份选成管理员，再选回成员。
+    const grace = dialog.locator('.room-members > li', { hasText: 'Grace' });
+    const role = grace.getByRole('combobox', { name: 'Role of Grace' });
+    await expect(role).toHaveValue('member');
+    await role.selectOption('admin');
+    await expect(role).toHaveValue('admin');
     await grace.scrollIntoViewIfNeeded();
     await page.screenshot({
       path: testInfo.outputPath(`room-admin-${String(width)}.png`),
     });
-    await grace.getByRole('button', { name: 'Remove admin' }).click();
-    await expect(grace.locator('.private-room-member__role')).toHaveCount(0);
+    await role.selectOption('member');
+    await expect(role).toHaveValue('member');
     expect(failures).toEqual([]);
 
     await dialog.getByRole('button', { name: 'Close room settings' }).click();

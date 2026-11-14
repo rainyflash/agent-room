@@ -21,10 +21,15 @@ import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
 import { RoomNoticeEditor } from '@/features/room-notice/ui/room-notice-editor';
 import type { WebSession } from '@/features/session/domain/session';
 
+import { agentCountsByOwner } from '../domain/agent-owners';
+import { useAgentOwners } from './agent-owners';
 import './room-settings.css';
 
 export type RoomSettingsSection =
   'agent-code' | 'automation' | 'listing' | 'members' | 'moderation' | 'notice';
+
+/** 不替谁去问主人：只读房间页问到的那一份。 */
+const noAgents: readonly string[] = [];
 
 const sectionIcons: Readonly<Record<RoomSettingsSection, ReactNode>> = {
   'agent-code': <KeyRound aria-hidden="true" />,
@@ -208,10 +213,16 @@ function RoomSettingsContent({
       'reauthenticate',
     );
   };
+  // 这间房里的 Agent 是谁的，房间页已经问过了（右栏“人”那一栏也数它）：这里只读问到的。
+  const owners = useAgentOwners(noAgents);
+  const agentCounts = useMemo(() => agentCountsByOwner(owners.values()), [owners]);
   switch (section) {
     case 'members':
       return room === null ? null : (
         <PrivateRoomMembers
+          agentCountOf={
+            owners.size === 0 ? undefined : (principalId) => agentCounts.get(principalId) ?? 0
+          }
           coordinator={coordinator}
           joins={publicRoomJoins}
           listings={privateRoomListings}
@@ -219,6 +230,7 @@ function RoomSettingsContent({
             onClose();
             onExitRoom();
           }}
+          onReauthenticate={reauthenticate}
           principalId={principal.principalId}
           recentlyAuthenticated={principal.recentlyAuthenticated}
           room={room}

@@ -237,12 +237,16 @@ function renderGovernance(
   rooms: PrivateRoomGateway,
   networkAgents: readonly string[] = [],
   {
+    agentCountOf,
     onExitRoom = () => undefined,
+    onReauthenticate = () => undefined,
     recentlyAuthenticated = false,
     subject = room,
     publicRoom = false,
   }: {
+    agentCountOf?: (principalId: string) => number | null;
     onExitRoom?: () => void;
+    onReauthenticate?: () => void;
     recentlyAuthenticated?: boolean;
     subject?: PrivateRoom;
     publicRoom?: boolean;
@@ -263,9 +267,11 @@ function renderGovernance(
       <QueryClientProvider client={new QueryClient()}>
         <NetworkAgentLabelsProvider store={labels}>
           <PrivateRoomMembers
+            agentCountOf={agentCountOf}
             coordinator={{} as PrivateRoomCoordinator}
             {...(publicRoom ? { joins, listings } : {})}
             onExitRoom={onExitRoom}
+            onReauthenticate={onReauthenticate}
             principalId={principalId}
             recentlyAuthenticated={recentlyAuthenticated}
             room={subject}
@@ -285,6 +291,20 @@ function roomWith(...members: PrivateRoom['members']): PrivateRoom {
     ...room,
     members: [...room.members.filter((member) => !changed.has(member.principalId)), ...members],
   };
+}
+
+/** 成员名单里写着这个名字的那一行。 */
+function rowOf(name: string) {
+  const item = screen.getByText(name).closest('li');
+  if (item === null) throw new Error(`名单里没有 ${name} 那一行。`);
+  return within(item);
+}
+
+/** 这一行的身份选择框里有哪几种。 */
+function roleChoices(select: HTMLElement): (string | null)[] {
+  return within(select)
+    .getAllByRole('option')
+    .map((option) => option.textContent);
 }
 
 function codeAgent(agentId: string, ownerDisplayName: string | null) {
@@ -369,26 +389,82 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(screen.getByText('End-to-end encrypted')).toBeVisible();
   });
 
-  it('成员写昵称，账户 ID 收在每一行的详情里', async () => {
+  it('成员写昵称，自己那一行标着“你”；账户 ID 收在每一行的“更多”里', async () => {
     const rooms = gateway();
     renderGovernance(MEMBER, rooms.value);
     expect(await screen.findByText('Ada')).toBeVisible();
-    expect(screen.getByText('You')).toBeVisible();
+    expect(rowOf('Grace').getByText('you')).toBeVisible();
     expect(rooms.people).toHaveBeenCalledWith(room.catalogId);
-    const id = screen.getByText(OWNER);
-    expect(id).not.toBeVisible();
-    fireEvent.click(id.closest('details')?.querySelector('summary') ?? id);
-    expect(id).toBeVisible();
+    expect(screen.queryByText(OWNER)).toBeNull();
+    const more = screen.getByRole('button', { name: 'More about Ada' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(more);
+    expect(more).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(OWNER)).toBeVisible();
   });
 
-  it('问不到名字时说看不到，不露出账户 ID', async () => {
+  it('问不到名字时说看不到，不露出账户 ID；自己那一行写“你”', async () => {
     const rooms = gateway();
     rooms.people.mockResolvedValue(
       err({ code: 'room_people.dependency_unavailable', retryable: true }),
     );
     renderGovernance(MEMBER, rooms.value);
     expect(await screen.findByText('Name not available')).toBeVisible();
-    expect(screen.getByText(OWNER)).not.toBeVisible();
+    expect(screen.getByText('You')).toBeVisible();
+    expect(screen.queryByText(OWNER)).toBeNull();
+  });
+
+  it('最上面写着四种身份各是什么', () => {
+    renderGovernance(MEMBER, gateway().value);
+    for (const [role, detail] of [
+      ['Owner', 'One per room. Decides everything.'],
+      ['Admin', 'Chosen by the owner to help run the whole room.'],
+      ['Member', 'Reads, speaks, and can bring their own agents.'],
+      ['View only', 'Reads, but can’t speak.'],
+    ] as const) {
+      const term = screen.getAllByText(role).find((element) => element.tagName === 'DT');
+      expect(term?.nextElementSibling).toHaveTextContent(detail);
+    }
+  });
+
+  it('退出、移出、封禁的人留在名单里，身份那一格写状态，下面有一句说明', async () => {
+    const plain = renderGovernance(OWNER, gateway().value);
+    expect(await screen.findByText('Grace')).toBeVisible();
+    expect(screen.queryByText(/^People who left, were removed or were banned/u)).toBeNull();
+    plain.unmount();
+
+    renderGovernance(OWNER, gateway().value, [], {
+      subject: roomWith({
+        permissions: { capabilities: [] },
+        principalId: BANNED,
+        status: 'banned',
+      }),
+    });
+    expect(await screen.findByText('Mallory')).toBeVisible();
+    const banned = rowOf('Mallory');
+    expect(banned.getByText('Banned')).toBeVisible();
+    expect(banned.queryByRole('combobox')).toBeNull();
+    expect(screen.getByText(/^People who left, were removed or were banned/u)).toBeVisible();
+  });
+
+  it('带了几个 Agent 照房间页问到的写；不知道就不写', async () => {
+    const unknown = renderGovernance(OWNER, gateway().value);
+    expect(await screen.findByText('Grace')).toBeVisible();
+    expect(screen.queryByText(/agents?$/u)).toBeNull();
+    unknown.unmount();
+
+    renderGovernance(OWNER, gateway().value, [], {
+      agentCountOf: (principalId) => (principalId === MEMBER ? 2 : principalId === OWNER ? 1 : 0),
+      subject: roomWith({
+        permissions: { capabilities: ['view'] },
+        principalId: BANNED,
+        status: 'joined',
+      }),
+    });
+    expect(await screen.findByText('Grace')).toBeVisible();
+    expect(rowOf('Grace').getByText('2 agents')).toBeVisible();
+    expect(rowOf('Ada').getByText('1 agent')).toBeVisible();
+    expect(rowOf('Mallory').getByText('No agents')).toBeVisible();
   });
 
   it('邀请表单看“邀请”：只有“管理”的看不到，只有“邀请”的看得到、勾不上自己没有的', async () => {
@@ -429,6 +505,15 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(send).toBeEnabled();
   });
 
+  it('邀请时“管理”谁都勾不上，房主也一样：要设管理员到名单里选', async () => {
+    renderGovernance(OWNER, gateway().value, [], { recentlyAuthenticated: true });
+    const form = within(await screen.findByRole('group', { name: 'Invitation permissions' }));
+    expect(form.getByRole('checkbox', { name: /^Manage/u })).toBeDisabled();
+    expect(form.getByRole('checkbox', { name: /^Manage/u })).not.toBeChecked();
+    expect(form.getByRole('checkbox', { name: /^Invite/u })).toBeEnabled();
+    expect(form.getByRole('checkbox', { name: /^Automate/u })).toBeEnabled();
+  });
+
   it('能管理的人解除封禁；不能管理的看不到这个按钮', async () => {
     const banned = roomWith({
       permissions: { capabilities: [] },
@@ -437,12 +522,13 @@ describe('私人房间的成员与 Agent 口令', () => {
     });
     const rooms = gateway();
     const member = renderGovernance(MEMBER, rooms.value, [], { subject: banned });
-    expect(await screen.findByText('Mallory')).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Mallory' }));
     expect(screen.queryByRole('button', { name: 'Unban' })).toBeNull();
     member.unmount();
 
     renderGovernance(OWNER, rooms.value, [], { subject: banned });
-    fireEvent.click(await screen.findByRole('button', { name: 'Unban' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Mallory' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unban' }));
     await waitFor(() => {
       expect(rooms.unban).toHaveBeenCalledWith(room.catalogId, BANNED);
     });
@@ -451,7 +537,7 @@ describe('私人房间的成员与 Agent 口令', () => {
   it('转移房主先确认，默认留着全部权限，能少留几项，也能取消', async () => {
     const rooms = gateway();
     renderGovernance(OWNER, rooms.value, [], { recentlyAuthenticated: true });
-    expect(await screen.findByText('Grace')).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Grace' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
     const confirm = within(screen.getByRole('group', { name: 'Make Grace the owner?' }));
@@ -479,7 +565,7 @@ describe('私人房间的成员与 Agent 口令', () => {
       err({ code: 'private_room.public_limit_reached', retryable: false }),
     );
     renderGovernance(OWNER, rooms.value, [], { recentlyAuthenticated: true });
-    expect(await screen.findByText('Grace')).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Grace' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
     const confirm = within(screen.getByRole('group', { name: 'Make Grace the owner?' }));
@@ -492,6 +578,20 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(screen.queryByText(/already has a public room/u)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
     expect(screen.queryByText(/already has a public room/u)).toBeNull();
+  });
+
+  it('转移房主要最近登录过：不是的话先请人重新登录，不出确认', async () => {
+    const rooms = gateway();
+    const onReauthenticate = vi.fn();
+    renderGovernance(OWNER, rooms.value, [], { onReauthenticate });
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Grace' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer ownership' }));
+    expect(await screen.findByText(/^This needs a fresh sign-in/u)).toBeVisible();
+    expect(screen.queryByRole('group', { name: 'Make Grace the owner?' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+    expect(onReauthenticate).toHaveBeenCalledOnce();
+    expect(rooms.transferOwnership).not.toHaveBeenCalled();
   });
 
   it('归档不要最近登录过：先在原处确认，取消不归档，确认以后归档并退出房间', async () => {
@@ -529,46 +629,112 @@ describe('私人房间的成员与 Agent 口令', () => {
     expect(screen.queryByRole('button', { name: 'Archive room' })).toBeNull();
   });
 
-  it('房主一键设、撤管理员：有“管理”的写着“管理员”', async () => {
+  it('房主选一下就设、撤管理员：设的时候一起给上邀请，撤的时候只去掉“管理”', async () => {
     const rooms = gateway();
-    const plain = renderGovernance(OWNER, rooms.value);
-    expect(await screen.findByText('Grace')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Make admin' }));
+    const plain = renderGovernance(OWNER, rooms.value, [], { recentlyAuthenticated: true });
+    const role = await screen.findByRole('combobox', { name: 'Role of Grace' });
+    expect(role).toHaveValue('member');
+    expect(roleChoices(role)).toEqual(['Admin', 'Member', 'View only']);
+    fireEvent.change(role, { target: { value: 'admin' } });
     await waitFor(() => {
       expect(rooms.updatePermissions).toHaveBeenCalledWith(room.catalogId, MEMBER, {
-        capabilities: ['view', 'speak', 'manage'],
+        capabilities: ['view', 'speak', 'invite', 'manage'],
       });
     });
     plain.unmount();
 
     renderGovernance(OWNER, rooms.value, [], {
+      recentlyAuthenticated: true,
       subject: roomWith({
-        permissions: { capabilities: ['view', 'speak', 'manage'] },
+        permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
         principalId: MEMBER,
         status: 'joined',
       }),
     });
-    expect(await screen.findByText('Admin')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove admin' }));
+    const admin = await screen.findByRole('combobox', { name: 'Role of Grace' });
+    expect(admin).toHaveValue('admin');
+    fireEvent.change(admin, { target: { value: 'member' } });
     await waitFor(() => {
       expect(rooms.updatePermissions).toHaveBeenLastCalledWith(room.catalogId, MEMBER, {
-        capabilities: ['view', 'speak'],
+        capabilities: ['view', 'speak', 'invite'],
       });
     });
   });
 
-  it('不能管理的成员看得到谁是管理员，设不了', async () => {
-    renderGovernance(MEMBER, gateway().value, [], {
-      subject: roomWith({
-        permissions: { capabilities: ['view', 'speak'] },
-        principalId: MEMBER,
-        status: 'joined',
-      }),
+  it('设、撤管理员要最近登录过：不是的话先请人重新登录，不发请求；改成只能看不用', async () => {
+    const rooms = gateway();
+    const onReauthenticate = vi.fn();
+    renderGovernance(OWNER, rooms.value, [], { onReauthenticate });
+    const role = await screen.findByRole('combobox', { name: 'Role of Grace' });
+    fireEvent.change(role, { target: { value: 'admin' } });
+
+    expect(await screen.findByText(/^This needs a fresh sign-in/u)).toBeVisible();
+    expect(role).toHaveValue('member');
+    expect(rooms.updatePermissions).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+    expect(onReauthenticate).toHaveBeenCalledOnce();
+
+    fireEvent.click(rowOf('Grace').getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByText(/^This needs a fresh sign-in/u)).toBeNull();
+    fireEvent.change(role, { target: { value: 'viewer' } });
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view'],
+      });
     });
+  });
+
+  it('页面以为算最近登录过、服务器说不算时，照样请人重新登录', async () => {
+    const rooms = gateway();
+    rooms.updatePermissions.mockResolvedValueOnce(
+      err({ code: 'authentication.reauthentication_required', retryable: false }),
+    );
+    const onReauthenticate = vi.fn();
+    renderGovernance(OWNER, rooms.value, [], { onReauthenticate, recentlyAuthenticated: true });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Role of Grace' }), {
+      target: { value: 'admin' },
+    });
+
+    expect(await screen.findByText(/^This needs a fresh sign-in/u)).toBeVisible();
+    expect(screen.queryByText('authentication.reauthentication_required')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }));
+    expect(onReauthenticate).toHaveBeenCalledOnce();
+  });
+
+  it('选了以后这一行马上照新的显示，不等服务器；服务器说不行就回到原来的', async () => {
+    const rooms = gateway();
+    type Answer = Awaited<ReturnType<PrivateRoomGateway['updatePermissions']>>;
+    let answer: (result: Answer) => void = () => undefined;
+    rooms.updatePermissions.mockReturnValueOnce(
+      new Promise<Answer>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderGovernance(OWNER, rooms.value, [], { recentlyAuthenticated: true });
+    const role = await screen.findByRole('combobox', { name: 'Role of Grace' });
+    fireEvent.change(role, { target: { value: 'viewer' } });
+
+    expect(role).toHaveValue('viewer');
+    answer(err({ code: 'private_room.owner_only', retryable: false }));
+    await waitFor(() => {
+      expect(role).toHaveValue('member');
+    });
+    // 名单上面那句说明也是这么开头的：多出来的一处是失败的原因。
+    await waitFor(() => {
+      expect(screen.getAllByText(/^Only the owner can make or remove admins/u)).toHaveLength(2);
+    });
+  });
+
+  it('不能管理的成员看得到每个人的身份，换不了', async () => {
+    renderGovernance(MEMBER, gateway().value);
     expect(await screen.findByText('Ada')).toBeVisible();
-    // 房主不写“管理员”，房主就是房主。
-    expect(screen.queryByText('Admin')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Make admin' })).toBeNull();
+    expect(rowOf('Ada').getByText('Owner')).toBeVisible();
+    expect(rowOf('Grace').getByText('Member')).toBeVisible();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    // 自己的两个开关看得到、动不了。
+    fireEvent.click(screen.getByRole('button', { name: 'More about Grace' }));
+    expect(screen.getByRole('switch', { name: 'Can invite people' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 
   it('管理员设不了管理员，也动不了另一位管理员；成员他照旧管得了', async () => {
@@ -588,28 +754,99 @@ describe('私人房间的成员与 Agent 口令', () => {
         { permissions: { capabilities: ['view', 'speak'] }, principalId: PLAIN, status: 'joined' },
       ),
     });
-    const row = (name: string) => {
-      const item = screen.getByText(name).closest('li');
-      expect(item).not.toBeNull();
-      return within(item as HTMLElement);
-    };
     expect(await screen.findByText('Mallory')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Make admin' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Remove admin' })).toBeNull();
 
-    // 另一位管理员那一行：写着“管理员”，没有移除、封禁，权限也改不了。
-    const admin = row('Mallory');
+    // 另一位管理员那一行：只写“管理员”，没有选择框；“更多”里没有移除、封禁，开关动不了。
+    const admin = rowOf('Mallory');
     expect(admin.getByText('Admin')).toBeVisible();
+    expect(admin.queryByRole('combobox')).toBeNull();
+    fireEvent.click(admin.getByRole('button', { name: 'More about Mallory' }));
     expect(admin.queryByRole('button', { name: 'Remove' })).toBeNull();
     expect(admin.queryByRole('button', { name: 'Ban' })).toBeNull();
-    expect(admin.getByRole('checkbox', { name: /^Speak/u })).toBeDisabled();
+    expect(admin.getByRole('switch', { name: 'Can invite people' })).toBeDisabled();
 
-    // 成员那一行：移除、封禁、改别的权限照旧，“管理”勾不上。
-    const plain = row('Name not available');
+    // 成员那一行：在成员和只能看之间换，设不成管理员；移除、封禁、开关照旧。
+    const plain = rowOf('Name not available');
+    expect(roleChoices(plain.getByRole('combobox'))).toEqual(['Member', 'View only']);
+    fireEvent.click(plain.getByRole('button', { name: /^More about/u }));
     expect(plain.getByRole('button', { name: 'Remove' })).toBeEnabled();
     expect(plain.getByRole('button', { name: 'Ban' })).toBeEnabled();
-    expect(plain.getByRole('checkbox', { name: /^Speak/u })).toBeEnabled();
-    expect(plain.getByRole('checkbox', { name: /^Manage/u })).toBeDisabled();
+    expect(plain.getByRole('switch', { name: 'Can invite people' })).toBeEnabled();
+    // 他自己没有自动发言，给不出。
+    expect(plain.getByRole('switch', { name: 'Agents they bring can speak' })).toBeDisabled();
+  });
+
+  it('管理员自己不当了：先确认，确认了只去掉“管理”，不用最近登录过', async () => {
+    const rooms = gateway();
+    renderGovernance(MEMBER, rooms.value, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
+        principalId: MEMBER,
+        status: 'joined',
+      }),
+    });
+    const role = await screen.findByRole('combobox', { name: 'Role of Grace' });
+    expect(roleChoices(role)).toEqual(['Admin', 'Member']);
+    fireEvent.change(role, { target: { value: 'member' } });
+
+    expect(await screen.findByText(/^Stop being an admin\?/u)).toBeVisible();
+    expect(rooms.updatePermissions).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Step down' }));
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view', 'speak', 'invite'],
+      });
+    });
+  });
+
+  it('“更多”里的两个开关：带来的 Agent 能不能说话、能不能邀请人', async () => {
+    const rooms = gateway();
+    renderGovernance(OWNER, rooms.value);
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Grace' }));
+    const grace = rowOf('Grace');
+    const speak = grace.getByRole('switch', { name: 'Agents they bring can speak' });
+    expect(speak).not.toBeChecked();
+    fireEvent.click(speak);
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view', 'speak', 'automate'],
+      });
+    });
+    const invite = grace.getByRole('switch', { name: 'Can invite people' });
+    await waitFor(() => {
+      expect(invite).toBeEnabled();
+    });
+    fireEvent.click(invite);
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenLastCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view', 'speak', 'invite'],
+      });
+    });
+  });
+
+  it('只能看的人：两个开关关着、动不了，改回成员以后他的 Agent 按默认能说话', async () => {
+    const rooms = gateway();
+    renderGovernance(OWNER, rooms.value, [], {
+      subject: roomWith({
+        permissions: { capabilities: ['view'] },
+        principalId: MEMBER,
+        status: 'joined',
+      }),
+    });
+    const role = await screen.findByRole('combobox', { name: 'Role of Grace' });
+    expect(role).toHaveValue('viewer');
+    fireEvent.click(screen.getByRole('button', { name: 'More about Grace' }));
+    for (const name of ['Agents they bring can speak', 'Can invite people']) {
+      const toggle = rowOf('Grace').getByRole('switch', { name });
+      expect(toggle).not.toBeChecked();
+      expect(toggle).toBeDisabled();
+    }
+    fireEvent.change(role, { target: { value: 'member' } });
+    await waitFor(() => {
+      expect(rooms.updatePermissions).toHaveBeenCalledWith(room.catalogId, MEMBER, {
+        capabilities: ['view', 'speak', 'automate'],
+      });
+    });
   });
 
   it('服务器说只有房主能做时把原因写出来', async () => {
@@ -624,7 +861,7 @@ describe('私人房间的成员与 Agent 口令', () => {
         status: 'joined',
       }),
     });
-    expect(await screen.findByText('Grace')).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'More about Grace' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
 
     expect(await screen.findByText(/^Only the owner can make or remove admins/u)).toBeVisible();

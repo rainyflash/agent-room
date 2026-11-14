@@ -13,7 +13,7 @@ import {
   searchAgentRows,
   type AgentRow,
 } from '../domain/agent-table';
-import type { AgentOwner } from '../domain/agent-owners';
+import { agentCountsByOwner, type AgentOwner } from '../domain/agent-owners';
 import type { LobbyAgent } from '../domain/lobby';
 import { useAgentOwners, useAgentOwnerText } from './agent-owners';
 import { AgentNameButton, AgentStateText } from './agent-table-cells';
@@ -374,14 +374,13 @@ function PeopleTable({
   const { t } = useTranslation();
   const ownerText = useAgentOwnerText();
   /** 他带了几个 Agent：照服务器说的主人数。没问到主人、认不出这个人时不写。 */
+  const counts = useMemo(() => agentCountsByOwner(owners.values()), [owners]);
   const agentCount = (person: RoomPerson): number | null => {
     if (owners.size === 0) return null;
-    const all = [...owners.values()];
-    if (person.principalId !== null)
-      return all.filter(
-        (owner) => owner.kind === 'local' && owner.owner?.principalId === person.principalId,
-      ).length;
-    return person.self ? all.filter((owner) => ownerText.mine(owner)).length : null;
+    if (person.principalId !== null) return counts.get(person.principalId) ?? 0;
+    return person.self
+      ? [...owners.values()].filter((owner) => ownerText.mine(owner)).length
+      : null;
   };
   return (
     <div className="room-roster__scroll">

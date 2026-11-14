@@ -985,6 +985,43 @@ async fn 只有房主能做的事被拒时回专门的码_网页好说清楚() {
 }
 
 #[tokio::test]
+async fn 设撤管理员要最近登录过时_回的和别的要重新登录的操作同一个码() {
+    let rooms = Arc::new(FakeRooms::new());
+    *rooms.member_failure.lock().unwrap() = Some(PrivateRoomFailure::new(
+        "test",
+        PrivateRoomFailureStage::Validation,
+        PrivateRoomFailureKind::ReauthenticationRequired,
+    ));
+    let authentication = Arc::new(FakeAuthentication::default());
+    let app = test_router(rooms, authentication.clone());
+
+    let response = app
+        .oneshot(request(
+            Method::PUT,
+            &format!("/private-rooms/{CATALOG_UUID}/members/{TARGET_UUID}/permissions"),
+            &json!({ "capabilities": ["view", "speak", "manage"] }),
+            true,
+            false,
+        ))
+        .await
+        .expect("成员路由可调用");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response_json(response).await["code"],
+        "authentication.reauthentication_required"
+    );
+    // 路由照旧只要有效登录：要不要最近登录过看这次改没改“管理”，由用例定。
+    assert_eq!(
+        authentication
+            .calls
+            .lock()
+            .expect("认证记录锁可用")
+            .as_slice(),
+        &[AuthenticationRequirement::ActiveSession]
+    );
+}
+
+#[tokio::test]
 async fn 房间是谁建的只需活动会话_房间号不对在用例之前就拒绝() {
     let rooms = Arc::new(FakeRooms::new());
     let authentication = Arc::new(FakeAuthentication::default());

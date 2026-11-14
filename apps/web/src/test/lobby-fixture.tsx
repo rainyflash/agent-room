@@ -171,6 +171,8 @@ const archivedFixture =
 // `?private&origin=network&speak-only` 里你只有查看和发言：“接入 Agent”里说带进来的 Agent 说不了话。
 const speakOnlyFixture =
   privateFixture && new URLSearchParams(window.location.search).has('speak-only');
+// `?private&asAdmin` 里房主是 Grace，你是她设的管理员：自己那一行能把自己降成成员，房主那一行动不了。
+const asAdminFixture = privateFixture && new URLSearchParams(window.location.search).has('asAdmin');
 // `?private&invite-link` 里房间已经有一条邀请链接；不带时还没有，“邀请人”里能生成。
 const inviteLinkFixture =
   privateFixture && new URLSearchParams(window.location.search).has('invite-link');
@@ -918,10 +920,14 @@ const fixtureOrigin: PrivateRoomOrigin =
           ownerIsNetworkAgent: false,
         }
       : { createdByAgent: null, ownerIsNetworkAgent: false };
-const fixtureRoomOwner = fixtureOrigin.ownerIsNetworkAgent ? fixtureNetworkOwner : fixtureOwner;
 /** 另一个成员和一个被封禁的人：成员列表写他们的昵称，被封禁的能解除封禁。 */
 const fixtureMember = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
 const fixtureBanned = '0198b601-77a1-7bb8-83eb-a8fe68c97e48';
+const fixtureRoomOwner = fixtureOrigin.ownerIsNetworkAgent
+  ? fixtureNetworkOwner
+  : asAdminFixture
+    ? fixtureMember
+    : fixtureOwner;
 /** 成员的昵称；网络 Agent 房主的合成主体没有昵称，成员列表写它的名字。 */
 const fixturePeople: readonly PrivateRoomPerson[] = [
   { displayName: 'Ada', principalId: fixtureOwner },
@@ -952,11 +958,24 @@ let fixturePrivateRoom: PrivateRoom = {
           },
         ]
       : []),
-    {
-      permissions: { capabilities: ['view', 'speak'] },
-      principalId: fixtureMember,
-      status: 'joined',
-    },
+    ...(fixtureRoomOwner === fixtureMember
+      ? [
+          {
+            // 你是房主设的管理员。
+            permissions: {
+              capabilities: ['view', 'speak', 'invite', 'manage', 'automate'] as const,
+            },
+            principalId: fixtureOwner,
+            status: 'joined' as const,
+          },
+        ]
+      : [
+          {
+            permissions: { capabilities: ['view', 'speak'] as const },
+            principalId: fixtureMember,
+            status: 'joined' as const,
+          },
+        ]),
     {
       permissions: { capabilities: [] },
       principalId: fixtureBanned,

@@ -71,9 +71,6 @@ const en = {
   'privateRooms.governance.public': 'Public · {{joinMode}}',
   'privateRooms.governance.notEncrypted':
     'Not encrypted: the people in it and the server can read it.',
-  'privateRooms.governance.members.admin': 'Admin',
-  'privateRooms.governance.members.makeAdmin': 'Make admin',
-  'privateRooms.governance.members.removeAdmin': 'Remove admin',
   'privateRooms.joinRequests.title': 'Requests to join',
   'privateRooms.joinRequests.detail':
     'People asking to come in. Approve and they join right away, without asking again.',
@@ -153,9 +150,6 @@ export const roomListingResources = {
     'privateRooms.listing.share.inviteOnly': '只能邀请的房间没有分享链接：别人打开了也进不来。',
     'privateRooms.governance.public': '公开 · {{joinMode}}',
     'privateRooms.governance.notEncrypted': '不加密：进来的人和服务器都读得到。',
-    'privateRooms.governance.members.admin': '管理员',
-    'privateRooms.governance.members.makeAdmin': '设为管理员',
-    'privateRooms.governance.members.removeAdmin': '撤掉管理员',
     'privateRooms.joinRequests.title': '申请',
     'privateRooms.joinRequests.detail': '想进来的人。批准以后他们直接进来，不用再点一次。',
     'privateRooms.joinRequests.none': '没有在等的申请。',

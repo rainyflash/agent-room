@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next';
 
 import { privateRoomListQueryKey } from '@/features/private-rooms/data/private-room-queries';
 import {
-  grantableBy,
   intersectPermissions,
   isPrivateRoomPrincipalId,
   type PrivateRoom,
@@ -14,6 +13,7 @@ import {
   type PrivateRoomPermissions,
 } from '@/features/private-rooms/domain/private-room';
 import { DEFAULT_INVITE_PERMISSIONS } from '@/features/private-rooms/domain/private-room-invite-link';
+import { invitableBy } from '@/features/private-rooms/domain/room-roles';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 
@@ -27,7 +27,7 @@ export type PrivateRoomAccountInviteProps = {
 
 /**
  * 按账户 ID 邀请：房间设置的“成员”里一份，“邀请人”对话框的折叠里一份。默认给查看、发言、自动发言，
- * 自己没有的那几项勾不上（服务器也会拒）。
+ * 自己没有的那几项勾不上（服务器也会拒）。“管理”谁都勾不上：要设管理员，人在名单里以后到成员那里选。
  */
 export function PrivateRoomAccountInvite({
   heading = true,
@@ -38,7 +38,7 @@ export function PrivateRoomAccountInvite({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [invitee, setInvitee] = useState('');
-  const grantable = grantableBy(room, principalId);
+  const grantable = invitableBy(room, principalId);
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(() =>
     intersectPermissions(DEFAULT_INVITE_PERMISSIONS, grantable),
   );

@@ -9,7 +9,6 @@ import {
   usePrivateRoomInviteLink,
 } from '@/features/private-rooms/data/private-room-queries';
 import {
-  grantableBy,
   intersectPermissions,
   privateRoomCapabilities,
   type PrivateRoom,
@@ -22,6 +21,7 @@ import {
   type PrivateRoomInviteGateway,
   type PrivateRoomInviteLink,
 } from '@/features/private-rooms/domain/private-room-invite-link';
+import { invitableBy } from '@/features/private-rooms/domain/room-roles';
 import { PrivateRoomAccountInvite } from '@/features/private-rooms/ui/private-room-account-invite';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
@@ -84,12 +84,17 @@ function InviteLinkSection({
   const queryClient = useQueryClient();
   const key = privateRoomInviteLinkQueryKey(room.catalogId);
   const link = usePrivateRoomInviteLink(invites, room.catalogId);
-  const grantable = grantableBy(room, principalId);
+  // 链接给不出“管理”：一条谁点了都是管理员的链接不该一勾就有（specs/redesign/room-roles.md）。
+  const grantable = invitableBy(room, principalId);
   const current = link.data?.ok === true ? link.data.value : null;
   // 改了权限才记下；没改时跟着现在这条链接，没有链接时用默认的（按自己有的截一下）。
+  // 以前建的链接可能带着“管理”：换一条时不再带。
   const [chosen, setChosen] = useState<PrivateRoomPermissions | null>(null);
   const shown =
-    chosen ?? current?.permissions ?? intersectPermissions(DEFAULT_INVITE_PERMISSIONS, grantable);
+    chosen ??
+    (current === null
+      ? intersectPermissions(DEFAULT_INVITE_PERMISSIONS, grantable)
+      : withoutManage(current.permissions));
   const [autoCopied, setAutoCopied] = useState(false);
 
   const create = useMutation({
@@ -143,8 +148,8 @@ function InviteLinkSection({
     );
   }
   const hidden = link.data?.ok === false && link.data.error.code === 'invite_link.not_revealable';
-  const changed =
-    chosen !== null && current !== null && !samePermissions(chosen, current.permissions);
+  // 以前建的带“管理”的链接也算“和显示的不一样”：给出“换一条”，换了才真的不带。
+  const changed = current !== null && !samePermissions(shown, current.permissions);
 
   return (
     <section className="private-room-invite-link" aria-label={t('privateRooms.inviteLink.label')}>
@@ -243,6 +248,12 @@ function InviteLinkSection({
       </Details>
     </section>
   );
+}
+
+function withoutManage(permissions: PrivateRoomPermissions): PrivateRoomPermissions {
+  return {
+    capabilities: permissions.capabilities.filter((capability) => capability !== 'manage'),
+  };
 }
 
 function samePermissions(a: PrivateRoomPermissions, b: PrivateRoomPermissions): boolean {
