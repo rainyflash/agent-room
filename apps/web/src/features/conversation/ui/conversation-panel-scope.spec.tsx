@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { I18nextProvider } from 'react-i18next';
@@ -40,13 +40,15 @@ const names: Readonly<Record<string, string>> = {
   [NOVA]: 'Nova',
 };
 
+// jsdom 不排版，没有这个方法；去看某一条消息时面板会调它。
+const scrolled = vi.fn();
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
-  // jsdom 不排版，没有这个方法；去看某一条消息时面板会调它。
-  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrolled;
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   window.localStorage.removeItem('agent-room.conversation.agent-run-folding');
 });
 
@@ -176,6 +178,7 @@ async function renderPanel(
     readonly variant?: 'room' | 'direct';
     readonly focusMessageId?: string;
     readonly barEnd?: ReactNode;
+    readonly onLatestDisplayed?: (eventId: string) => void;
   } = {},
 ) {
   const panel = (
@@ -192,6 +195,9 @@ async function renderPanel(
         {...(options.variant === undefined ? {} : { variant: options.variant })}
         {...(focusMessageId === undefined ? {} : { focusMessageId })}
         {...(options.barEnd === undefined ? {} : { barEnd: options.barEnd })}
+        {...(options.onLatestDisplayed === undefined
+          ? {}
+          : { onLatestDisplayed: options.onLatestDisplayed })}
       />
     );
     return (
@@ -443,5 +449,306 @@ describe('Agent 之间的长串折起来', () => {
       ]),
     );
     expect(screen.getByRole('button', { name: '5 more messages between 3 agents' })).toBeVisible();
+  });
+});
+
+/** jsdom 不排版：给对话那一块一个高度，内容比它高，才分得出人在不在最底下。 */
+function layout(): () => void {
+  const sized = (element: Element, value: number) =>
+    element.classList.contains('conversation-panel__timeline') ? value : 0;
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return sized(this, 500);
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return sized(this, 2000);
+    },
+  });
+  return () => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+  };
+}
+const scrollUp = () => {
+  log().scrollTop = 0;
+  fireEvent.scroll(log());
+};
+/** 窗口到前台、离开前台。 */
+function windowFocus(): (focused: boolean) => void {
+  const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+  return (focused) => {
+    hasFocus.mockReturnValue(focused);
+    fireEvent(window, new Event(focused ? 'focus' : 'blur'));
+  };
+}
+const newLine = () => screen.queryByRole('separator', { name: 'New' });
+/** “新消息”那条线下面紧跟着的是什么。 */
+const underLine = () => newLine()?.nextElementSibling ?? null;
+const latestButton = () => document.querySelector('.conversation-panel__latest');
+const focused = () => log().querySelector('[data-focused="true"]');
+
+describe('“新消息”那条线', () => {
+  it('打开时画在读到的位置后面第一句别人说的上面；都读了、没有读到的位置就不画', async () => {
+    const messages = conversation(lines);
+    // 读到了 Grace 那一句：后面 Comet 的两句是新的。
+    await renderPanel(messages, { personal: readUpTo(messages, 7) });
+    await waitFor(() => {
+      expect(newLine()).toBeInTheDocument();
+    });
+    expect(underLine()).toHaveTextContent('Drafting the notes.');
+    expect(screen.getAllByRole('separator', { name: 'New' })).toHaveLength(1);
+    cleanup();
+
+    await renderPanel(messages, { personal: readUpTo(messages, 9) });
+    expect(scope('Mentions me')).toBeVisible();
+    expect(newLine()).not.toBeInTheDocument();
+    cleanup();
+
+    await renderPanel(messages);
+    expect(newLine()).not.toBeInTheDocument();
+  });
+
+  it('新的从折起来的一串中间起：线画在那一行上面；展开以后画在那一句上面', async () => {
+    const user = userEvent.setup();
+    const messages = conversation(lines);
+    await renderPanel(messages, { personal: readUpTo(messages, 3) });
+    await waitFor(() => {
+      expect(newLine()).toBeInTheDocument();
+    });
+    const fold = screen.getByRole('button', { name: foldLabel });
+    expect(underLine()).toBe(fold);
+
+    await user.click(fold);
+    expect(underLine()).toHaveTextContent('Control plane builds now.');
+    expect(screen.getAllByRole('separator', { name: 'New' })).toHaveLength(1);
+    cleanup();
+
+    // 就是这一串的第一句：展开了线也留在那一行上面。
+    await renderPanel(messages, { personal: readUpTo(messages, 1) });
+    await waitFor(() => {
+      expect(newLine()).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: foldLabel }));
+    expect(underLine()).toBe(screen.getByRole('button', { name: foldLabel }));
+  });
+
+  it('看到底的那一刻线定下来：读到的位置往前走了，线留在原处', async () => {
+    window.localStorage.setItem('agent-room.conversation.agent-run-folding', 'off');
+    const restore = layout();
+    try {
+      windowFocus();
+      const messages = conversation(lines);
+      const personal = readUpTo(messages, 7);
+      await renderPanel(messages, { personal });
+      // 这台设备上没记过，读到的位置是从别处同步下来的：等它到了才记“读到最新了”。
+      await waitFor(() => {
+        expect(personal.getSnapshot().index.read.get(ROOM)?.eventId).toBe(
+          messages.at(-1)?.matrixEventId,
+        );
+      });
+      expect(underLine()).toHaveTextContent('Drafting the notes.');
+      expect(latestButton()).not.toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it('正在筛、查找时不画；你说了话就撤掉', async () => {
+    const user = userEvent.setup();
+    const messages = conversation(lines);
+    const panel = await renderPanel(messages, { personal: readUpTo(messages, 7) });
+    await waitFor(() => {
+      expect(newLine()).toBeInTheDocument();
+    });
+    await user.click(scope('From people'));
+    expect(newLine()).not.toBeInTheDocument();
+    await user.click(scope('All'));
+    expect(underLine()).toHaveTextContent('Drafting the notes.');
+
+    panel.change(conversation([...lines, { by: YOU, text: 'On it.' }]));
+    expect(newLine()).not.toBeInTheDocument();
+  });
+
+  it('没在最底下时来了新的：按钮写几条，线画在这一批的第一句上面；到底以后线留着，再来一批才挪', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem('agent-room.conversation.agent-run-folding', 'off');
+    const restore = layout();
+    try {
+      windowFocus();
+      const panel = await renderPanel(conversation(lines));
+      expect(newLine()).not.toBeInTheDocument();
+      expect(latestButton()).not.toBeInTheDocument();
+
+      scrollUp();
+      const first = [...lines, { by: ATLAS, text: 'New one.' }, { by: GRACE, text: 'New two.' }];
+      panel.change(conversation(first));
+      expect(latestButton()).toHaveTextContent('2 new messages');
+      expect(underLine()).toHaveTextContent('New one.');
+
+      const second = [...first, { by: COMET, text: 'New three.' }];
+      panel.change(conversation(second));
+      expect(latestButton()).toHaveTextContent('3 new messages');
+      expect(underLine()).toHaveTextContent('New one.');
+
+      await user.click(screen.getByRole('button', { name: '3 new messages' }));
+      expect(latestButton()).not.toBeInTheDocument();
+      expect(underLine()).toHaveTextContent('New one.');
+
+      scrollUp();
+      panel.change(conversation([...second, { by: ATLAS, text: 'New four.' }]));
+      expect(latestButton()).toHaveTextContent('1 new message');
+      expect(underLine()).toHaveTextContent('New four.');
+      expect(screen.getAllByRole('separator', { name: 'New' })).toHaveLength(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('筛着的时候按钮不写条数：数的是整个对话里的', async () => {
+    const user = userEvent.setup();
+    const restore = layout();
+    try {
+      windowFocus();
+      const panel = await renderPanel(conversation(lines));
+      await user.click(scope('From people'));
+      scrollUp();
+      panel.change(conversation([...lines, { by: ATLAS, text: 'New one.' }]));
+      expect(latestButton()).toHaveTextContent('Return to latest');
+      expect(newLine()).not.toBeInTheDocument();
+    } finally {
+      restore();
+    }
+  });
+
+  it('窗口不在前台时来的话不算看到：线画在它上面，回到前台才记成看过', async () => {
+    window.localStorage.setItem('agent-room.conversation.agent-run-folding', 'off');
+    const restore = layout();
+    try {
+      const focusWindow = windowFocus();
+      const displayed = vi.fn();
+      const messages = conversation(lines);
+      const panel = await renderPanel(messages, { onLatestDisplayed: displayed });
+      expect(displayed).toHaveBeenLastCalledWith(messages.at(-1)?.matrixEventId);
+
+      focusWindow(false);
+      const away = conversation([...lines, { by: ATLAS, text: 'While you were away.' }]);
+      panel.change(away);
+      expect(underLine()).toHaveTextContent('While you were away.');
+      expect(displayed).toHaveBeenCalledTimes(1);
+      // 人还在最底下，只是没看着：不用按钮。
+      expect(latestButton()).not.toBeInTheDocument();
+
+      focusWindow(true);
+      expect(displayed).toHaveBeenLastCalledWith(away.at(-1)?.matrixEventId);
+      // 回来了线还在，看得出是从哪儿开始没看到的。
+      expect(underLine()).toHaveTextContent('While you were away.');
+
+      // 看着的时候来的不挪线。
+      panel.change(
+        conversation([
+          ...lines,
+          { by: ATLAS, text: 'While you were away.' },
+          { by: COMET, text: 'Seen live.' },
+        ]),
+      );
+      expect(underLine()).toHaveTextContent('While you were away.');
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('点回复的是哪句，跳到那一句', () => {
+  const withReply: readonly Line[] = [
+    ...lines,
+    { by: GRACE, text: 'About the gateway file.', replyTo: 5 },
+  ];
+  const quote = (name: string) => screen.getByRole('button', { name });
+
+  it('跳过去标出来；同一句再点一次再跳一次', async () => {
+    const user = userEvent.setup();
+    await renderPanel(conversation(withReply));
+    scrolled.mockClear();
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    expect(focused()).toHaveTextContent('Check the vendored crate.');
+    expect(focused()).toHaveFocus();
+    expect(scrolled).toHaveBeenCalledTimes(1);
+
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    expect(scrolled).toHaveBeenCalledTimes(2);
+    expect(focused()).toHaveTextContent('Check the vendored crate.');
+  });
+
+  it('那一句折着：那一串自己打开', async () => {
+    const user = userEvent.setup();
+    await renderPanel(conversation(withReply));
+    expect(screen.getByRole('button', { name: foldLabel })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    await user.click(quote('Atlas: The gateway misses a file.'));
+    expect(screen.getByRole('button', { name: foldLabel })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(focused()).toHaveTextContent('The gateway misses a file.');
+    // 只框住那一句，日期和别的句子不在框里。
+    expect(focused()?.querySelectorAll('.conversation-message__text p')).toHaveLength(1);
+  });
+
+  it('正筛着、查找着：先放开，回到完整的对话', async () => {
+    const user = userEvent.setup();
+    await renderPanel(conversation(withReply));
+    await user.click(scope('Mentions me'));
+    expect(shown()).toEqual(['One gap in the image builds.', 'Merged, have a look.']);
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    expect(scope('All')).toHaveAttribute('aria-pressed', 'true');
+    expect(focused()).toHaveTextContent('Check the vendored crate.');
+
+    await user.click(screen.getByRole('button', { name: 'Search this conversation' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Keyword' }), 'gateway file');
+    await waitFor(() => {
+      expect(shown()).toEqual(['About the gateway file.']);
+    });
+    await user.click(quote('Atlas: The gateway misses a file.'));
+    await waitFor(() => {
+      expect(focused()).toHaveTextContent('The gateway misses a file.');
+    });
+    expect(screen.queryByRole('searchbox', { name: 'Keyword' })).not.toBeInTheDocument();
+  });
+
+  it('换了“只看”、你说了话、外面指了另一句：不再标着跳过去的那一句', async () => {
+    const user = userEvent.setup();
+    const panel = await renderPanel(conversation(withReply));
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    expect(focused()).toHaveTextContent('Check the vendored crate.');
+    await user.click(scope('From people'));
+    expect(focused()).not.toBeInTheDocument();
+
+    await user.click(scope('All'));
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    expect(focused()).toHaveTextContent('Check the vendored crate.');
+    panel.change(conversation([...withReply, { by: YOU, text: 'On it.' }]));
+    expect(focused()).not.toBeInTheDocument();
+    cleanup();
+
+    const linked = await renderPanel(conversation(withReply));
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    linked.focus(messageId(7));
+    expect(focused()).toHaveTextContent('Merged, have a look.');
+    // 外面不再指着了，之前跳过去的那一句也不回来。
+    linked.focus();
+    expect(focused()).not.toBeInTheDocument();
+  });
+
+  it('私聊里也能跳', async () => {
+    const user = userEvent.setup();
+    await renderPanel(conversation(withReply), { variant: 'direct' });
+    await user.click(quote('Rainy: Check the vendored crate.'));
+    expect(focused()).toHaveTextContent('Check the vendored crate.');
   });
 });

@@ -35,6 +35,8 @@ import {
 } from '@/features/direct-sessions/ui/use-direct-session-controller';
 import { LobbyExperienceStore } from '@/features/lobby/application/lobby-experience-store';
 import { RoomActivityStore } from '@/features/lobby/application/room-activity-store';
+import { useUnreadTitle } from '@/shared/browser/use-unread-title';
+import { onWindowForegroundChange, windowInForeground } from '@/shared/browser/window-foreground';
 import {
   RoomMessagesProvider,
   useRoomMessages,
@@ -362,6 +364,15 @@ function ReadyLobby({
   useEffect(() => {
     activityStore.setVisible(publicConversationVisible);
   }, [activityStore, publicConversationVisible]);
+  // 窗口不在前台时来的话人没看到：对话就在眼前也记一个数，只写在窗口标题上。
+  useEffect(() => {
+    const sync = (): void => {
+      activityStore.setForeground(windowInForeground());
+    };
+    sync();
+    return onWindowForegroundChange(sync);
+  }, [activityStore]);
+  useUnreadTitle(activity.unread + activity.away);
   const openRoomPanel = (nextView: RoomPanelView): void => {
     setFocusedConversationMessageId(null);
     onOpenRoomPanel(nextView);

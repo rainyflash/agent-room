@@ -422,6 +422,38 @@
   color: var(--ar-muted);
   font-size: 12.5px;
 }
+/* 回复的是哪句：点一下跳过去。长得还是那一行引用，指着的时候字变深。 */
+.conversation-message__quote {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.conversation-message__quote:hover {
+  color: var(--color-ink);
+}
+/* “新消息”那条线：上次看到的位置以后的话从这儿开始。 */
+.conversation-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 16px;
+  color: var(--color-alert);
+  font-size: 12px;
+  font-weight: 600;
+}
+.conversation-new::before,
+.conversation-new::after {
+  flex: 1 1 0;
+  height: 1px;
+  background: var(--ar-coral);
+  content: '';
+}
 .conversation-message .conversation-message__actions {
   position: absolute;
   top: 1px;

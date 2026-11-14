@@ -21,7 +21,7 @@ export function ConversationFoldRow({
   readonly fold: ConversationFold;
   readonly open: boolean;
   readonly onToggle: () => void;
-  /** 这一串是当天的第一项时，上面那一行日期。 */
+  /** 这一行上面的线：这一串是当天的第一项时的日期，新消息从这一串起时的“新消息”。 */
   readonly separator: ReactNode;
 }) {
   const { t } = useTranslation();

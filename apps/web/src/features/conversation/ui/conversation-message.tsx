@@ -41,6 +41,7 @@ export function ConversationMessage({
   own,
   mentioned = false,
   onReply,
+  onJump,
   time,
   delivery = [],
   expanded = false,
@@ -54,6 +55,8 @@ export function ConversationMessage({
   /** 这一条在找你（点了你的名字，或者 @了所有人）：整行铺一层很浅的黄。 */
   readonly mentioned?: boolean;
   readonly onReply: (message: RoomMessageSignal) => void;
+  /** 点“回复的是哪句”跳到那一句；不给，或者那一句没加载到、撤回了，就只是一行字。 */
+  readonly onJump?: (messageId: string) => void;
   readonly time: Intl.DateTimeFormat;
   readonly delivery?: readonly AgentDelivery[];
   readonly expanded?: boolean;
@@ -101,12 +104,25 @@ export function ConversationMessage({
             data-folded={folded}
             style={folded ? { maxHeight: `${String(foldedHeight)}px` } : undefined}
           >
-            {message.relation === undefined ? null : (
+            {message.relation === undefined ? null : parent?.lifecycle === 'active' ? (
               <blockquote>
-                {parent?.lifecycle === 'active'
-                  ? `${parent.actor.displayName}: ${parent.preview?.summary ?? ''}`
-                  : t('conversation.referenced')}
+                {onJump === undefined ? (
+                  `${parent.actor.displayName}: ${parent.preview?.summary ?? ''}`
+                ) : (
+                  <button
+                    type="button"
+                    className="conversation-message__quote"
+                    title={t('conversation.jumpToQuoted')}
+                    onClick={() => {
+                      onJump(parent.messageId);
+                    }}
+                  >
+                    {`${parent.actor.displayName}: ${parent.preview?.summary ?? ''}`}
+                  </button>
+                )}
               </blockquote>
+            ) : (
+              <blockquote>{t('conversation.referenced')}</blockquote>
             )}
             {chat?.mentions.length || message.preview?.mentionsEveryone === true ? (
               <div className="conversation-message__mentions">

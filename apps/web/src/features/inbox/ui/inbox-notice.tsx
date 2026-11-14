@@ -4,13 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
+import { windowInForeground } from '@/shared/browser/window-foreground';
 import { notificationAllowed, systemNotificationSummary } from '../domain/inbox';
 import { useInbox } from './inbox-provider';
 import './inbox.css';
-
-function windowInFront(): boolean {
-  return document.visibilityState === 'visible' && document.hasFocus();
-}
 
 export function InboxNotice() {
   const inbox = useInbox();
@@ -37,7 +34,7 @@ export function InboxNotice() {
     setNotice({ account: accountId, count: fresh.length });
     // The desktop keeps running in the tray: when the window is hidden or another app has focus,
     // the in-app banner is invisible, so the operating system carries the alert instead.
-    if (desktop?.available === true && !windowInFront()) {
+    if (desktop?.available === true && !windowInForeground()) {
       const summary = systemNotificationSummary(fresh);
       void desktop.notify({
         title: summary.room ?? t('inbox.notification.title'),
