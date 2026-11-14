@@ -15,6 +15,7 @@ mod private_room_agents;
 mod private_rooms;
 mod provisioning;
 mod public_directory;
+mod role_changes;
 
 pub(crate) use departures::queue_revoked_agent_departures;
 pub(crate) use moderation_grants::active_agent_grant;

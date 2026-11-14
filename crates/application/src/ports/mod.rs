@@ -169,7 +169,8 @@ pub use rooms::{
     RoomPeopleDirectory, RoomPersonName, RoomProvisioningClaim, RoomProvisioningClaimOutcome,
     RoomProvisioningFailureCode, RoomProvisioningGateway, RoomProvisioningJob,
     RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget, RoomReservationClaim,
-    RoomReservationOutcome, SealedInviteLink, SealedJoinCode,
+    RoomReservationOutcome, RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord,
+    SealedInviteLink, SealedJoinCode,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

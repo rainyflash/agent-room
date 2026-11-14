@@ -207,12 +207,11 @@ impl PrivateRoomService {
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))?
             .map_or(RoomListingSettings::UNLISTED, |listing| listing.settings);
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .invite(owner, target, settings.member_permissions())
             .map_err(|error| domain(operation, &error))?;
-        self.deliver_invitation(snapshot, room, expected, changed, target, operation)
+        self.deliver_invitation(snapshot, room, owner, changed, target, operation)
             .await
             .map(drop)
     }

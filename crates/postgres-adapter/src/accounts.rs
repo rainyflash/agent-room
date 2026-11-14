@@ -246,6 +246,23 @@ async fn export_account(
                 FROM agent_room.private_room_join_request AS request
                 WHERE request.requester_principal_id = principal.id
             ), '[]'::jsonb),
+            'roleChanges', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', change.catalog_entry_id,
+                    'aboutMe', change.target_principal_id = principal.id,
+                    'byMe', change.actor_principal_id IS NOT DISTINCT FROM principal.id,
+                    'previousStatus', change.previous_status,
+                    'previousOwner', change.previous_owner,
+                    'previousPermissionBits', change.previous_permission_bits,
+                    'nextStatus', change.next_status,
+                    'nextOwner', change.next_owner,
+                    'nextPermissionBits', change.next_permission_bits,
+                    'changedAt', change.changed_at
+                ) ORDER BY change.id)
+                FROM agent_room.private_room_role_change AS change
+                WHERE change.target_principal_id = principal.id
+                   OR change.actor_principal_id = principal.id
+            ), '[]'::jsonb),
             'moderationGrants', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'roomId', grant_row.catalog_entry_id,

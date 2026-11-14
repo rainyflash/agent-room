@@ -123,6 +123,45 @@ describe('ControlPlanePrivateRoomClient', () => {
     });
   });
 
+  it('身份变动记录：GET 单独的接口；多出来的字段读得过去，状态不认识的不收', async () => {
+    const change = {
+      actorPrincipalId: ROOM.ownerPrincipalId,
+      changedAtUnixMs: 1_700_000_000_000,
+      id: 7,
+      next: {
+        owner: false,
+        permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
+        status: 'joined',
+      },
+      previous: {
+        owner: false,
+        permissions: { capabilities: ['view', 'speak'] },
+        status: 'joined',
+      },
+      targetPrincipalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e4a',
+    };
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ changes: [{ ...change, subRoom: 'later' }] }))
+      .mockResolvedValueOnce(
+        Response.json({ changes: [{ ...change, next: { ...change.next, status: 'left' } }] }),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    expect(await client.roleChanges(ROOM.catalogId)).toEqual({ ok: true, value: [change] });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/role-changes`),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+    expect(await client.roleChanges(ROOM.catalogId)).toEqual({
+      ok: false,
+      error: { code: 'private_room.invalid_response', retryable: false },
+    });
+  });
+
   it('解除封禁用 POST，返回权威房间', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(ROOM));
     const client = new ControlPlanePrivateRoomClient({

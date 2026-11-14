@@ -11,7 +11,6 @@ use agent_room_domain::{
         RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
         RoomInstanceState,
     },
-    version::AggregateVersion,
 };
 
 use crate::{
@@ -39,8 +38,10 @@ use super::{
 mod moderation_members;
 mod public_creation;
 mod public_transfer;
+mod role_changes;
 
 use public_creation::{ensure_public_creator, limit_reached};
+use role_changes::role_changes;
 
 pub trait PrivateRoomUseCases: Send + Sync {
     fn create(
@@ -349,7 +350,6 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.invite";
         ensure_active_room_actor(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let actor = request.actor.principal_id();
         let changed = if request.actor.is_agent() {
@@ -375,7 +375,7 @@ impl PrivateRoomService {
         self.deliver_invitation(
             snapshot,
             room,
-            expected,
+            actor,
             changed,
             request.target_principal_id,
             OPERATION,
@@ -389,7 +389,6 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.invite_by_link";
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         room.authorize_invite_link(request.link_creator)
             .map_err(|error| domain(OPERATION, &error))?;
@@ -403,7 +402,7 @@ impl PrivateRoomService {
         self.deliver_invitation(
             snapshot,
             room,
-            expected,
+            request.link_creator,
             changed,
             request.target_principal_id,
             OPERATION,
@@ -416,7 +415,7 @@ impl PrivateRoomService {
         &self,
         snapshot: PrivateRoomSnapshot,
         room: PrivateRoom,
-        expected: AggregateVersion,
+        inviter: PrincipalId,
         changed: bool,
         target_principal_id: PrincipalId,
         operation: &'static str,
@@ -441,7 +440,7 @@ impl PrivateRoomService {
         // 成员也要按邀请的权限设好，否则进了房间也发不了言。被移出后再邀请只给旁观时同样收回。
         self.set_speaking(&matrix_room, &target, speak, operation)
             .await?;
-        self.save_if_changed(&room, expected, changed, operation)
+        self.save_if_changed(snapshot.room(), &room, inviter, changed, operation)
             .await?;
         replace_room(snapshot, room, operation)
     }
@@ -453,7 +452,6 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.accept";
         let actor_matrix = active_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .accept_invitation(request.actor.principal_id)
@@ -465,8 +463,14 @@ impl PrivateRoomService {
             OPERATION,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
-            .await?;
+        self.save_if_changed(
+            snapshot.room(),
+            &room,
+            request.actor.principal_id,
+            changed,
+            OPERATION,
+        )
+        .await?;
         replace_room(snapshot, room, OPERATION)
     }
 
@@ -477,7 +481,6 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.decline";
         let actor_matrix = active_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .decline_invitation(request.actor.principal_id)
@@ -489,8 +492,14 @@ impl PrivateRoomService {
             OPERATION,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
-            .await?;
+        self.save_if_changed(
+            snapshot.room(),
+            &room,
+            request.actor.principal_id,
+            changed,
+            OPERATION,
+        )
+        .await?;
         replace_room(snapshot, room, OPERATION)
     }
 
@@ -501,7 +510,6 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.leave";
         let actor_matrix = active_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .leave(request.actor.principal_id)
@@ -521,8 +529,14 @@ impl PrivateRoomService {
             OPERATION,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, OPERATION)
-            .await?;
+        self.save_if_changed(
+            snapshot.room(),
+            &room,
+            request.actor.principal_id,
+            changed,
+            OPERATION,
+        )
+        .await?;
         replace_room(snapshot, room, OPERATION)
     }
 
@@ -551,7 +565,6 @@ impl PrivateRoomService {
         operation: &'static str,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         let snapshot = self.load(catalog_id, operation).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .remove_member(actor, target_principal_id)
@@ -571,7 +584,7 @@ impl PrivateRoomService {
             operation,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, operation)
+        self.save_if_changed(snapshot.room(), &room, actor, changed, operation)
             .await?;
         replace_room(snapshot, room, operation)
     }
@@ -601,7 +614,6 @@ impl PrivateRoomService {
         operation: &'static str,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         let snapshot = self.load(catalog_id, operation).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .ban_member(actor, target_principal_id)
@@ -622,7 +634,7 @@ impl PrivateRoomService {
             operation,
         )
         .await?;
-        self.save_if_changed(&room, expected, changed, operation)
+        self.save_if_changed(snapshot.room(), &room, actor, changed, operation)
             .await?;
         replace_room(snapshot, room, operation)
     }
@@ -651,7 +663,6 @@ impl PrivateRoomService {
         operation: &'static str,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         let snapshot = self.load(catalog_id, operation).await?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .unban_member(actor, target_principal_id)
@@ -669,7 +680,7 @@ impl PrivateRoomService {
             .unban(&matrix_room, &target)
             .await
             .map_err(|error| matrix(operation, error))?;
-        self.save_if_changed(&room, expected, changed, operation)
+        self.save_if_changed(snapshot.room(), &room, actor, changed, operation)
             .await?;
         replace_room(snapshot, room, operation)
     }
@@ -692,7 +703,6 @@ impl PrivateRoomService {
                     PrivateRoomFailureKind::Conflict,
                 )
             })?;
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .update_permissions(
@@ -725,12 +735,24 @@ impl PrivateRoomService {
                     OPERATION,
                 )
                 .await?;
-                self.save_if_changed(&room, expected, changed, OPERATION)
-                    .await?;
+                self.save_if_changed(
+                    snapshot.room(),
+                    &room,
+                    request.actor.principal_id,
+                    changed,
+                    OPERATION,
+                )
+                .await?;
             }
             (false, true) => {
-                self.save_if_changed(&room, expected, changed, OPERATION)
-                    .await?;
+                self.save_if_changed(
+                    snapshot.room(),
+                    &room,
+                    request.actor.principal_id,
+                    changed,
+                    OPERATION,
+                )
+                .await?;
                 self.set_speaking(&matrix_room, &target, true, OPERATION)
                     .await?;
                 self.govern_member_agents(
@@ -742,8 +764,14 @@ impl PrivateRoomService {
                 .await?;
             }
             (_, desired) => {
-                self.save_if_changed(&room, expected, changed, OPERATION)
-                    .await?;
+                self.save_if_changed(
+                    snapshot.room(),
+                    &room,
+                    request.actor.principal_id,
+                    changed,
+                    OPERATION,
+                )
+                .await?;
                 if !changed {
                     self.set_speaking(&matrix_room, &target, desired, OPERATION)
                         .await?;
@@ -789,7 +817,6 @@ impl PrivateRoomService {
             .room()
             .member(request.target_principal_id)
             .is_some_and(|member| member.permissions().speak());
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .transfer_ownership(
@@ -813,7 +840,12 @@ impl PrivateRoomService {
         }
         if changed
             && !self
-                .save_transferred_room(&room, expected, OPERATION)
+                .save_transferred_room(
+                    snapshot.room(),
+                    &room,
+                    request.actor.principal_id,
+                    OPERATION,
+                )
                 .await?
         {
             // 接手的人刚好同时公开了别的房间。他还是房主，把刚压下去的发言权还给他。
@@ -889,7 +921,6 @@ impl PrivateRoomService {
         owner: PrincipalId,
         operation: &'static str,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
-        let expected = snapshot.room().version();
         let mut room = snapshot.room().clone();
         let changed = room
             .archive(owner)
@@ -899,7 +930,7 @@ impl PrivateRoomService {
             .archive(&matrix_room)
             .await
             .map_err(|error| matrix(operation, error))?;
-        self.save_if_changed(&room, expected, changed, operation)
+        self.save_if_changed(snapshot.room(), &room, owner, changed, operation)
             .await?;
         replace_room(snapshot, room, operation)
     }
@@ -1146,10 +1177,13 @@ impl PrivateRoomService {
             })
     }
 
+    /// 存下改过的房间。`before` 是改之前读到的那一份：版本照它核，这一次动了谁的身份也是拿它和
+    /// `room` 比出来的，和房间在同一个事务里记下（`specs/redesign/room-roles.md` 的“记录”）。
     async fn save_if_changed(
         &self,
+        before: &PrivateRoom,
         room: &PrivateRoom,
-        expected: AggregateVersion,
+        actor: PrincipalId,
         changed: bool,
         operation: &'static str,
     ) -> PrivateRoomResult<()> {
@@ -1157,7 +1191,12 @@ impl PrivateRoomService {
             return Ok(());
         }
         self.store
-            .save(room, expected, self.clock.now())
+            .save_recording(
+                room,
+                before.version(),
+                self.clock.now(),
+                &role_changes(before, room, actor),
+            )
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))
     }

@@ -37,6 +37,8 @@ mod listing;
 mod moderation_grants;
 #[path = "private_rooms/public_directory.rs"]
 mod public_directory;
+#[path = "private_rooms/role_changes.rs"]
+mod role_changes;
 
 struct TestDatabase {
     migration: PgPool,

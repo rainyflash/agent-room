@@ -49,6 +49,11 @@ import {
   type PublicRoomMembership,
 } from '@/features/private-rooms/domain/public-room-join';
 import {
+  roomRoleChangesSchema,
+  type RoomRoleChange,
+  type RoomRoleChangeGateway,
+} from '@/features/private-rooms/domain/room-role-changes';
+import {
   writtenRoomNoticeSchema,
   type RoomNoticeGateway,
   type WrittenRoomNotice,
@@ -78,7 +83,8 @@ export class ControlPlanePrivateRoomClient
     PrivateRoomListingGateway,
     PublicRoomEntryGateway,
     PublicRoomJoinGateway,
-    RoomNoticeGateway
+    RoomNoticeGateway,
+    RoomRoleChangeGateway
 {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
@@ -124,6 +130,17 @@ export class ControlPlanePrivateRoomClient
       privateRoomPeopleSchema,
     );
     return response.ok ? ok(response.value.people) : response;
+  }
+
+  async roleChanges(
+    catalogId: string,
+  ): Promise<Result<readonly RoomRoleChange[], PrivateRoomFailure>> {
+    const response = await this.#request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/role-changes`,
+      { method: 'GET' },
+      roomRoleChangesSchema,
+    );
+    return response.ok ? ok(response.value.changes) : response;
   }
 
   create(

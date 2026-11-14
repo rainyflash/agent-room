@@ -130,6 +130,11 @@ import type {
   PendingJoinRequest,
   PublicRoomJoinGateway,
 } from '@/features/private-rooms/domain/public-room-join';
+import type {
+  RoomRoleChange,
+  RoomRoleChangeGateway,
+  RoomStanding,
+} from '@/features/private-rooms/domain/room-role-changes';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -989,11 +994,120 @@ let fixturePrivateRoom: PrivateRoom = {
   status: archivedFixture ? 'archived' : 'active',
   version: 3,
 };
-/** 改一个成员：状态和权限换掉，房间版本加一，和服务器回的新房间一样。 */
+/** 夹具里这个人此刻在房间里的位置；名单里没有他时为空。 */
+function fixtureStanding(principalId: string): RoomStanding | undefined {
+  const member = fixturePrivateRoom.members.find((entry) => entry.principalId === principalId);
+  return member === undefined
+    ? undefined
+    : {
+        owner: fixturePrivateRoom.ownerPrincipalId === principalId,
+        permissions: member.permissions,
+        status: member.status,
+      };
+}
+const adminFixtureCapabilities = ['view', 'speak', 'invite', 'manage'] as const;
+const memberFixtureCapabilities = ['view', 'speak'] as const;
+/** 记录里的另一个人：平时是 Grace；`asAdmin` 里房主是 Grace，那就是你。 */
+const fixtureRoleChangeTarget = fixtureRoomOwner === fixtureMember ? fixtureOwner : fixtureMember;
+/**
+ * 身份变动记录，新的在前：三天前房主把另一个人设成了管理员，昨天封禁了当时是管理员的 Mallory；
+ * 平时两小时前又把 Grace 改回了成员（`asAdmin` 里你现在还是管理员，没有这一条）。
+ */
+let fixtureRoleChanges: readonly RoomRoleChange[] = [
+  ...(asAdminFixture
+    ? []
+    : [
+        {
+          actorPrincipalId: fixtureRoomOwner,
+          changedAtUnixMs: Date.now() - 2 * 3_600_000,
+          id: 3,
+          next: {
+            owner: false,
+            permissions: permissions(...memberFixtureCapabilities),
+            status: 'joined' as const,
+          },
+          previous: {
+            owner: false,
+            permissions: permissions(...adminFixtureCapabilities),
+            status: 'joined' as const,
+          },
+          targetPrincipalId: fixtureRoleChangeTarget,
+        },
+      ]),
+  {
+    actorPrincipalId: fixtureRoomOwner,
+    changedAtUnixMs: Date.now() - 26 * 3_600_000,
+    id: 2,
+    next: { owner: false, permissions: permissions(), status: 'banned' },
+    previous: {
+      owner: false,
+      permissions: permissions(...adminFixtureCapabilities),
+      status: 'joined',
+    },
+    targetPrincipalId: fixtureBanned,
+  },
+  {
+    actorPrincipalId: fixtureRoomOwner,
+    changedAtUnixMs: Date.now() - 3 * 86_400_000,
+    id: 1,
+    next: {
+      owner: false,
+      permissions: permissions(...adminFixtureCapabilities),
+      status: 'joined',
+    },
+    previous: {
+      owner: false,
+      permissions: permissions(...memberFixtureCapabilities),
+      status: 'joined',
+    },
+    targetPrincipalId: fixtureRoleChangeTarget,
+  },
+];
+/**
+ * 改完以后记一条，和服务器一样只记值得记的：两头都在房间里时权限或者房主变了，进来、出去的是房主或者
+ * 管理员。动手的总是你（夹具里只有你在操作）。
+ */
+function recordFixtureRoleChange(principalId: string, previous: RoomStanding | undefined): void {
+  const next = fixtureStanding(principalId);
+  if (next === undefined) return;
+  const active = (standing: RoomStanding | undefined): standing is RoomStanding =>
+    standing?.status === 'invited' || standing?.status === 'joined';
+  const runsRoom = (standing: RoomStanding): boolean =>
+    standing.owner || standing.permissions.capabilities.includes('manage');
+  const same = (a: RoomStanding, b: RoomStanding): boolean =>
+    a.owner === b.owner &&
+    a.permissions.capabilities.length === b.permissions.capabilities.length &&
+    a.permissions.capabilities.every((capability) =>
+      b.permissions.capabilities.includes(capability),
+    );
+  const worth = active(previous)
+    ? active(next)
+      ? !same(previous, next)
+      : runsRoom(previous)
+    : active(next) && runsRoom(next);
+  if (!worth) return;
+  fixtureRoleChanges = [
+    {
+      actorPrincipalId: fixtureOwner,
+      changedAtUnixMs: Date.now(),
+      id: (fixtureRoleChanges[0]?.id ?? 0) + 1,
+      next,
+      ...(previous === undefined ? {} : { previous }),
+      targetPrincipalId: principalId,
+    },
+    ...fixtureRoleChanges,
+  ];
+}
+const roomRoleChanges: RoomRoleChangeGateway = {
+  roleChanges: () => Promise.resolve(ok(fixtureRoleChanges)),
+};
+
+/** 改一个成员：状态和权限换掉，房间版本加一，和服务器回的新房间一样；身份变了就记一条。 */
 function changeFixtureMember(
   principalId: string,
   change: Partial<PrivateRoomMember>,
 ): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
+  const previous = fixtureStanding(principalId);
   fixturePrivateRoom = {
     ...fixturePrivateRoom,
     members: fixturePrivateRoom.members.map((member) =>
@@ -1001,6 +1115,7 @@ function changeFixtureMember(
     ),
     version: fixturePrivateRoom.version + 1,
   };
+  recordFixtureRoleChange(principalId, previous);
   return Promise.resolve(ok(fixturePrivateRoom));
 }
 
@@ -1074,6 +1189,9 @@ const privateRooms: PrivateRoomGateway = {
   transferOwnership: privateFixture
     ? (_catalogId, { formerOwnerPermissions, targetPrincipalId }) => {
         const formerOwner = fixturePrivateRoom.ownerPrincipalId;
+        const before = [formerOwner, targetPrincipalId].map(
+          (principalId) => [principalId, fixtureStanding(principalId)] as const,
+        );
         fixturePrivateRoom = {
           ...fixturePrivateRoom,
           members: fixturePrivateRoom.members.map((member) =>
@@ -1086,6 +1204,10 @@ const privateRooms: PrivateRoomGateway = {
           ownerPrincipalId: targetPrincipalId,
           version: fixturePrivateRoom.version + 1,
         };
+        // 转让记两条：原房主一条，接手的人一条。
+        for (const [principalId, previous] of before) {
+          recordFixtureRoleChange(principalId, previous);
+        }
         return Promise.resolve(ok(fixturePrivateRoom));
       }
     : unavailablePrivateRoom,
@@ -1675,7 +1797,14 @@ const services: AppServices = {
       }
     : {}),
   ...(privateFixture
-    ? { agentModeration, privateRoomInvites, privateRoomListings, publicRoomJoins, roomNotices }
+    ? {
+        agentModeration,
+        privateRoomInvites,
+        privateRoomListings,
+        publicRoomJoins,
+        roomNotices,
+        roomRoleChanges,
+      }
     : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
