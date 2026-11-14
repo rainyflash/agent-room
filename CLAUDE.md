@@ -222,7 +222,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 用例里开 Agent 名单、开私聊、回主房间用 `e2e/support/workspace-navigation.ts` 的 `openAgentRoster`、`openDirectConversation`、`openMainRoom`：1100px 以上名单在右栏、私聊在左栏，窄了才从顶栏的按钮打开抽屉，直接点 `View agents` 在宽屏上点不到。
     - 人不在主房间的对话里（在私聊里、在看资料）时来了新消息，条数标在“主房间”“回到主房间”和“对话”标签上（`RoomUnreadCount`）。按钮的名字不带条数，条数在 `aria-describedby` 里，用例照 `toHaveAccessibleDescription` 查。
     - 对话框的无障碍检查在对话版面上比在场景上严：对话框盖在场景上时 axe 算不出底色，对比度的问题报不出来（1b 就这样查出成员一节里一处对比度不够的字）。新加的对话框在对话版面上跑一遍 axe。
-  - 第 1 块 1c 的第一个 PR（#799）：界面换成白底黑字。令牌在 `packages/ui-system/src/styles.css`，白天、夜间各一套，名字和值见 [room-page.md](./specs/redesign/room-page.md)“风格”一节的表。状态的点、`#` 和锁、头像垫的浅底、提到你的那一行是第二个 PR。以后加界面：
+  - 第 1 块 1c 的第一个 PR（#799）：界面换成白底黑字。令牌在 `packages/ui-system/src/styles.css`，白天、夜间各一套，名字和值见 [room-page.md](./specs/redesign/room-page.md)“风格”一节的表。状态的点、`#` 和锁、头像垫的浅底、提到你的那一行是第二个 PR（#800）。以后加界面：
     - 颜色、圆角、阴影只用令牌，别写死。圆角就三档（`--ar-control-radius` 8、`--ar-radius` 12、`--ar-panel-radius` 16）加药丸（`--ar-pill`）。
     - 一页只有一个黑色的按钮（`primary`），别的是灰的（`ghost`）或者只有字。列表和卡片上一排排重复的按钮都用灰的。
     - 用留白分，不画框：有边的只有输入框、对话框和菜单（`--ar-border`），栏和栏之间一条细线（`--ar-line`）。
@@ -231,6 +231,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 这套令牌另有几处各抄了一份，改令牌要一起改：登录主题（`agent-room.css`，`test_brand_consistency.py` 卡着）；官网（`site.css`）和分享页（`share.css`），都由 `generate.spec.ts` 的“网站和分享页的颜色和应用一样”卡着；桌面端登录完的回跳页（`auth-return.css`）和验证邮件（`email/html/template.ftl`）没有测试卡着，邮件里用不了变量，颜色是写死的。浏览器顶栏的颜色（`index.html` 和官网 `html.ts` 的 `theme-color`、`vite.config.ts` 清单里的 `theme_color`）和桌面端夜间窗口的底色（`lib.rs` 的 `match_window_to_system_theme`）也是照 `--ar-canvas` 写死的。
     - 画不跟令牌走：登录页左边那幅画用 `--scene-*`，官网首页的房间和机器人用 `--draw-*`，场景（Pixi）自己配色。这几组名字故意不叫 `--ar-`，卡颜色一致的测试才不管它们。
     - 字体是 Geist 加思源黑体（`@fontsource-variable/geist`、`geist-mono`），登录主题和官网各带一份 Geist 的字体文件。
+    - 头像一律用现成的：Agent 用 `AgentAvatar`（房间里带状态的用 `LobbyAgentAvatar`），消息、资料是谁发的用 `ActorAvatar`，人用 `HumanAvatar`，都在 `features/lobby/ui/avatars.tsx`，底下是 ui-system 的 `Avatar` 和 `PresenceDot`。用的地方只定大小（`--ar-avatar-size`），别再自己画圆、垫底色。房间名字前面的 `#` 和锁用 `RoomGlyph`。
+    - 头像上的点只有两种：实心是在等消息，圈是叫得醒（1d 的表格才分得出来）。连着没在等的不画点，离线的把头像变灰。点外面那一圈是画布的底色，别改成跟着那一行的底色走：白天绿点只有压在白上才够 3:1。点旁边要有字写着状态。
+    - 一条消息算不算“找你”只有一条规则：`mentionsAccount`（`features/messages/domain/message.ts`），收件箱和对话里那层浅黄都用它。
     - axe 查对比度要等淡入的动画完（`explore.e2e.ts` 里等 `getAnimations()`），不然字还是半透明的，报的是假的。
     - 这个 PR 改了登录主题，发 Alpha 95 要设备码。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。

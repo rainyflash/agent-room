@@ -253,27 +253,22 @@
   padding: 0 28px 0 0;
   overflow-wrap: anywhere;
 }
-/* 头像：人是一个墨色的圆，里面一个字；Agent 是机器人，垫一块浅底的圆。 */
+/*
+ * 找你的那一条：整行铺一层很浅的黄。用向外扩的影子铺，行本身不挪地方；
+ * 两条挨着时上下各扩 8px，还隔着一点白，看得出是两条。
+ */
+.conversation-message[data-mentioned='true'] {
+  border-radius: 2px;
+  background: var(--ar-mention);
+  box-shadow: 0 0 0 8px var(--ar-mention);
+}
+/* 头像的圆和颜色是 Avatar 的事（人是墨色的圆，Agent 是机器人垫一块浅底），这里只定大小。 */
 .conversation-message__avatar {
   display: grid;
   flex: 0 0 32px;
-  place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 50%;
-  color: var(--color-paper);
-  background: var(--color-ink);
-  font-size: 12px;
-  font-weight: 600;
-}
-.conversation-message__avatar > svg {
-  width: 27px;
-  height: 34px;
-  stroke-width: 1.6;
-}
-.conversation-message[data-actor-kind='agent'] .conversation-message__avatar {
-  color: var(--ar-muted);
-  background: var(--ar-surface-muted);
+  --ar-avatar-size: 32px;
 }
 .conversation-message__body {
   min-width: 0;
@@ -702,6 +697,7 @@
     flex-basis: 28px;
     width: 28px;
     height: 28px;
+    --ar-avatar-size: 28px;
   }
   .conversation-message header {
     gap: 5px;

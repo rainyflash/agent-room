@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next';
 import { ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
+import { AgentAvatar } from '@/features/lobby/ui/avatars';
 import {
   agentActivity,
   agentPlace,
@@ -41,8 +41,13 @@ export function AgentCardList({
               }}
               type="button"
             >
-              <span aria-hidden="true" className="agent-card__portrait">
-                <AgentPortrait id={entry.agent.agentId} />
+              <span className="agent-card__portrait">
+                <AgentAvatar
+                  id={entry.agent.agentId}
+                  state={
+                    activity.kind === 'never' || activity.kind === 'lastSeen' ? 'offline' : 'idle'
+                  }
+                />
               </span>
               <span className="agent-card__body">
                 <strong>{entry.agent.displayName}</strong>

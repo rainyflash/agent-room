@@ -57,9 +57,6 @@
   margin: 0 0 12px;
 }
 .agent-state-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   font-size: 12px;
 }
 /* 谁的 Agent：写的是人的昵称，不用等宽字。 */
@@ -70,16 +67,6 @@
   display: flex;
   white-space: normal;
   line-height: 1.5;
-}
-.agent-state-label > .ar-status-mark {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 8px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.agent-state-label > .ar-status-mark > svg {
-  display: none;
 }
 .roster-agent__work {
   font-size: 11px;

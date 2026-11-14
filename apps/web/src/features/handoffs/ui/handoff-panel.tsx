@@ -1,4 +1,4 @@
-import { initials } from '@/shared/ui/display-name';
+import { AgentAvatar } from '@/features/lobby/ui/avatars';
 
 import { Button, Details, StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { useMachine } from '@xstate/react';
@@ -348,8 +348,8 @@ function TargetDirectory({
         {groups.map((agent) => (
           <section className="handoff-agent-group" key={agent.agentId}>
             <header>
-              <span aria-hidden="true" className="handoff-agent-group__avatar">
-                {initials(agent.agentDisplayName)}
+              <span className="handoff-agent-group__avatar">
+                <AgentAvatar id={agent.agentId} />
               </span>
               <div>
                 <strong>{agent.agentDisplayName}</strong>

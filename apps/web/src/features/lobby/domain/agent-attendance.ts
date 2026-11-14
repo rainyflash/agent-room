@@ -54,6 +54,15 @@ export function agentStateKey(agent: LobbyAgent, now: number): AgentStateKey {
   return state.connection === 'online' ? state.reception : state.connection;
 }
 
+/**
+ * 头像上分得出来的三种：在等消息（绿点）、离线（变灰）、别的（连着没在等、重连中，不画点）。
+ * “叫得醒”要知道它开没开后台回复，名单上还分不出来，等 Agent 表格（1d）。
+ */
+export function agentAvatarState(agent: LobbyAgent, now: number): 'waiting' | 'idle' | 'offline' {
+  const key = agentStateKey(agent, now);
+  return key === 'waiting' ? 'waiting' : key === 'offline' ? 'offline' : 'idle';
+}
+
 export type AgentRosterGroup =
   | 'waiting'
   | 'on_resume'

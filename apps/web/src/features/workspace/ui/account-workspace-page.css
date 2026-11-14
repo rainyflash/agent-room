@@ -237,23 +237,10 @@
   background: var(--ar-surface-muted);
 }
 
+/* 头像自己画圆和浅底，这里只定大小。在不在线看名字下面那一行，头像上不再点一次。 */
 .agent-card__portrait {
   display: grid;
-  width: 64px;
-  height: 64px;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--ar-radius);
-  background: var(--ar-surface-muted);
-}
-
-.agent-card[data-activity='online'] .agent-card__portrait {
-  background: var(--ar-tint-teal);
-}
-
-.agent-card__portrait svg {
-  width: 56px;
-  height: 56px;
+  --ar-avatar-size: 56px;
 }
 
 .agent-card__body {
@@ -644,18 +631,8 @@
 
 .agent-details__portrait {
   display: grid;
-  width: 72px;
-  height: 72px;
   flex: 0 0 auto;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--ar-panel-radius);
-  background: var(--ar-tint-teal);
-}
-
-.agent-details__portrait svg {
-  width: 64px;
-  height: 64px;
+  --ar-avatar-size: 64px;
 }
 
 .agent-details__where {

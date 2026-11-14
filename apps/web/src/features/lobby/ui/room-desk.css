@@ -158,11 +158,8 @@
   background: var(--ar-selected);
   font-weight: 600;
 }
-.room-desk__place > svg {
-  width: 15px;
-  height: 15px;
+.room-desk__place > .ar-room-glyph {
   flex: 0 0 auto;
-  color: var(--ar-muted);
 }
 .room-desk__rail .workspace-direct {
   max-height: none;

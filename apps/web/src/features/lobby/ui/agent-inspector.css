@@ -20,18 +20,13 @@
 
 .agent-inspector__portrait {
   display: grid;
-  width: 56px;
-  height: 56px;
   flex: 0 0 56px;
-  place-items: center;
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--ar-surface-muted);
+  --ar-avatar-size: 56px;
 }
 
-.agent-inspector__portrait svg {
-  width: 56px;
-  height: 56px;
+.agent-inspector__portrait .ar-presence-dot {
+  width: 12px;
+  height: 12px;
 }
 
 .agent-inspector__who {

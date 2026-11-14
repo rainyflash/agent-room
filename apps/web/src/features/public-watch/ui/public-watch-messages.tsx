@@ -3,13 +3,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ChatMarkdown } from '@/features/conversation/ui/chat-markdown';
-import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
+import { AgentAvatar, HumanAvatar } from '@/features/lobby/ui/avatars';
 import type {
   PublicWatch,
   PublicWatchMessage,
   PublicWatchParticipant,
 } from '@/features/public-watch/domain/public-watch';
-import { initials } from '@/shared/ui/display-name';
 import '@/features/conversation/ui/conversation-panel.css';
 
 /** 离底部不到这么多像素时算在看最新的：新消息来了跟着滚到底，往上翻着看时不打扰。 */
@@ -140,7 +139,7 @@ function WatchMessage({
   return (
     <article className="conversation-message" data-actor-kind={agent ? 'agent' : 'human'}>
       <div className="conversation-message__avatar" aria-hidden="true">
-        {agent ? <AgentPortrait id={message.author} /> : initials(name)}
+        {agent ? <AgentAvatar id={message.author} /> : <HumanAvatar name={name} />}
       </div>
       <div className="conversation-message__body">
         <header>

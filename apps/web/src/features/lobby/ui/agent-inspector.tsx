@@ -4,7 +4,6 @@ import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 
-import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
 import type { LobbyAgent } from '@/features/lobby/domain/lobby';
 import {
   agentAttendance,
@@ -14,6 +13,7 @@ import {
   type AgentRosterGroup,
 } from '../domain/agent-attendance';
 import { AgentStateLabel } from './agent-state-label';
+import { LobbyAgentAvatar } from './avatars';
 import { useAgentOwners, useAgentOwnerText } from './agent-owners';
 import { useIsNetworkAgent, useNetworkAgentLabel } from './network-agent-labels';
 import './agent-roster.css';
@@ -120,8 +120,8 @@ export function AgentInspector({
       transition={{ bounce: 0.12, damping: 28, stiffness: 240, type: 'spring' }}
     >
       <header className="agent-inspector__header">
-        <div className="agent-inspector__portrait" aria-hidden="true">
-          <AgentPortrait id={agent.agentId} />
+        <div className="agent-inspector__portrait">
+          <LobbyAgentAvatar agent={agent} now={observedAtUnixMs} />
         </div>
         <div className="agent-inspector__who">
           <h2 id="agent-inspector-title">{agent.displayName}</h2>

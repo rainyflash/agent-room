@@ -1,6 +1,6 @@
-import { Button } from '@agent-room/ui-system';
+import { Button, RoomGlyph } from '@agent-room/ui-system';
 import { Link } from '@tanstack/react-router';
-import { ArrowLeft, Bot, Hash, Settings2, Share2, UserPlus, UsersRound } from 'lucide-react';
+import { ArrowLeft, Bot, Settings2, Share2, UserPlus, UsersRound } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -183,7 +183,7 @@ export function RoomDesk({
                 onClick={onSelectMainRoom}
                 type="button"
               >
-                <Hash aria-hidden="true" />
+                <RoomGlyph kind="open" />
                 <span>{t('roomDesk.mainRoom')}</span>
                 {unreadElsewhere ? (
                   <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-rail`} />

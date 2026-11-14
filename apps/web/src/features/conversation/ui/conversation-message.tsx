@@ -2,9 +2,8 @@ import { Check, CheckCheck, ChevronDown, ChevronUp, Copy, Reply } from 'lucide-r
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
-import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
+import { ActorAvatar } from '@/features/lobby/ui/avatars';
 import { useIsNetworkAgent, useNetworkAgentLabel } from '@/features/lobby/ui/network-agent-labels';
-import { initials } from '@/shared/ui/display-name';
 import type { AgentDelivery } from '../domain/message-delivery';
 import { ChatMarkdown } from './chat-markdown';
 import { MessageAttachment } from './message-attachment';
@@ -40,6 +39,7 @@ export function ConversationMessage({
   names,
   editable,
   own,
+  mentioned = false,
   onReply,
   time,
   delivery = [],
@@ -51,6 +51,8 @@ export function ConversationMessage({
   readonly names: ReadonlyMap<string, string>;
   readonly editable: boolean;
   readonly own: boolean;
+  /** 这一条在找你（点了你的名字，或者 @了所有人）：整行铺一层很浅的黄。 */
+  readonly mentioned?: boolean;
   readonly onReply: (message: RoomMessageSignal) => void;
   readonly time: Intl.DateTimeFormat;
   readonly delivery?: readonly AgentDelivery[];
@@ -70,13 +72,10 @@ export function ConversationMessage({
     <article
       className={`conversation-message${own ? ' conversation-message--own' : ''}`}
       data-actor-kind={message.actor.kind}
+      data-mentioned={mentioned ? 'true' : undefined}
     >
       <div className="conversation-message__avatar" aria-hidden="true">
-        {message.actor.kind === 'agent' ? (
-          <AgentPortrait id={message.actor.agentId} />
-        ) : (
-          initials(message.actor.displayName)
-        )}
+        <ActorAvatar actor={message.actor} />
       </div>
       <div className="conversation-message__body">
         <header>

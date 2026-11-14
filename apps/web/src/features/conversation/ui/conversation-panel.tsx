@@ -34,7 +34,7 @@ import { useConversationComposer } from '@/features/conversation/ui/use-conversa
 import type { MessageSubmissionIdFactory } from '@/features/messages/adapters/browser-submission-id-factory';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { TypingNotifier } from '@/features/conversation/domain/typing';
-import type { RoomMessageSignal } from '@/features/messages/domain/message';
+import { mentionsAccount, type RoomMessageSignal } from '@/features/messages/domain/message';
 import { useRuntimeCompatibility } from '@/features/updates/ui/runtime-compatibility-context';
 import { useReceptionEvidence } from '@/features/desktop/ui/reception-evidence-context';
 import { conversationDeliveries } from '../domain/message-delivery';
@@ -480,10 +480,8 @@ export function ConversationPanel({
                   names={names}
                   time={time}
                   editable={canEdit}
-                  own={
-                    message.actor.matrixUserId ===
-                    composer.publication.context.identity?.matrixUserId
-                  }
+                  own={message.actor.matrixUserId === self?.matrixUserId}
+                  mentioned={self !== null && mentionsAccount(message, self.matrixUserId)}
                   onReply={(target) => {
                     composer.respond(target);
                     input.current?.focus();

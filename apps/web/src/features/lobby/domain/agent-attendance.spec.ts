@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LobbyAgent } from './lobby';
-import { agentAttendance, agentReception } from './agent-attendance';
+import { agentAttendance, agentAvatarState, agentReception } from './agent-attendance';
 import { projectLobbyScene } from './scene-projection';
 import { projectFloorPoint, unprojectFloorPoint } from './room-floor';
 
@@ -36,6 +36,18 @@ describe('工作室接待与在场规则', () => {
     expect(agentAttendance(expired, 129_999)).toBe('reconnecting');
     expect(agentAttendance(expired, 130_000)).toBe('away');
     expect(agentAttendance(agent, 130_000)).toBe('away');
+  });
+  it('头像只分三种：在等消息、离线、别的', () => {
+    const waiting = { ...agent, lastPolledAtUnixMs: 10_000, listeningUntilUnixMs: 25_000 };
+    expect(agentAvatarState(waiting, 20_000)).toBe('waiting');
+    // 连着、没在等（读取方式未确认、下次运行时读）和重连中，都不画点。
+    expect(agentAvatarState(agent, 50_000)).toBe('idle');
+    expect(agentAvatarState({ ...waiting, listeningUntilUnixMs: null }, 20_000)).toBe('idle');
+    expect(agentAvatarState(waiting, 25_000)).toBe('idle');
+    const expired = { ...agent, status: 'offline' as const, reportedStatus: 'idle' as const };
+    expect(agentAvatarState(expired, 100_000)).toBe('idle');
+    expect(agentAvatarState(expired, 130_000)).toBe('offline');
+    expect(agentAvatarState({ ...agent, status: 'offline' }, 90_000)).toBe('offline');
   });
   it('退场只改变空间投影，人物资料仍留在房间成员中', () => {
     const room = {

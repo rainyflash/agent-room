@@ -400,6 +400,108 @@ summary {
   }
 }
 
+/*
+ * 头像：一个圆，大小跟着 --ar-avatar-size。人是墨色的圆里一个字；Agent 是机器人，垫一块跟它同色的浅底。
+ * 右下角可以带一个记号（状态的点），记号外面留一圈画布的底色，和头像分开。这一圈不跟着所在那一行的
+ * 底色走：白天绿点只有压在白上才够 3:1。
+ */
+.ar-avatar {
+  position: relative;
+  display: inline-grid;
+  width: var(--ar-avatar-size, 32px);
+  height: var(--ar-avatar-size, 32px);
+  flex: 0 0 auto;
+}
+
+.ar-avatar__face {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+  font-size: calc(var(--ar-avatar-size, 32px) * 0.42);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.ar-avatar__face > svg {
+  display: block;
+  width: 84%;
+  height: 84%;
+}
+
+.ar-avatar--ink > .ar-avatar__face {
+  color: var(--color-paper);
+  background: var(--color-ink);
+}
+
+.ar-avatar--teal > .ar-avatar__face {
+  background: var(--ar-tint-teal);
+}
+
+.ar-avatar--coral > .ar-avatar__face {
+  background: var(--ar-tint-coral);
+}
+
+.ar-avatar--sunny > .ar-avatar__face {
+  background: var(--ar-tint-sunny);
+}
+
+.ar-avatar--dimmed > .ar-avatar__face {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+.ar-avatar__mark {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  border: 2px solid var(--ar-canvas);
+  border-radius: 50%;
+  background: var(--ar-canvas);
+}
+
+/* 状态的点：实心是在等消息，圈是叫得醒。 */
+.ar-presence-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.ar-presence-dot--waiting {
+  background: var(--ar-success);
+}
+
+.ar-presence-dot--wakes {
+  border: 2px solid var(--ar-success);
+}
+
+/* 房间名字前面的记号：# 是能直接进的，锁是有门的。 */
+.ar-room-glyph {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--ar-muted);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.ar-room-glyph > svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
 /* 对话框：原生 <dialog>，一条细边加一层淡影；手机上贴底，成为底部面板。
    Tailwind 的基础样式把所有元素的外边距清零，原生对话框靠 margin: auto 居中，要写回来。 */
 .ar-dialog {

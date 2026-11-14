@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import {
+  Avatar,
   Banner,
   CopyBlock,
   Details,
   Dialog,
   Field,
+  PresenceDot,
+  RoomGlyph,
   Segmented,
   Spinner,
   Toast,
@@ -313,5 +316,50 @@ describe('Toast', () => {
   it('没给关闭回调就没有关闭按钮', () => {
     render(<Toast title="Quiet toast" />);
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('Avatar', () => {
+  it('圆里的东西只是画，读屏不读；浅底、变灰和右下角的记号各用各的类名', () => {
+    const { container, rerender } = render(<Avatar tint="ink">R</Avatar>);
+    const avatar = container.firstElementChild;
+    expect(avatar).toHaveClass('ar-avatar', 'ar-avatar--ink');
+    expect(avatar?.querySelector('.ar-avatar__face')).toHaveAttribute('aria-hidden', 'true');
+    expect(avatar?.querySelector('.ar-avatar__mark')).toBeNull();
+
+    rerender(
+      <Avatar dimmed mark={<PresenceDot kind="waiting" label="Waiting for messages" />}>
+        R
+      </Avatar>,
+    );
+    expect(container.firstElementChild).toHaveClass('ar-avatar--plain', 'ar-avatar--dimmed');
+    const mark = container.querySelector('.ar-avatar__mark');
+    if (!(mark instanceof HTMLElement)) throw new Error('mark not rendered');
+    expect(within(mark).getByRole('img', { name: 'Waiting for messages' })).toBeInTheDocument();
+  });
+});
+
+describe('PresenceDot', () => {
+  it('有那句话时是一张带名字的图，没有时只是装饰', () => {
+    const { container, rerender } = render(<PresenceDot kind="wakes" label="Can be woken" />);
+    expect(screen.getByRole('img', { name: 'Can be woken' })).toHaveClass('ar-presence-dot--wakes');
+
+    rerender(<PresenceDot kind="waiting" />);
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(container.firstElementChild).toHaveClass('ar-presence-dot--waiting');
+    expect(container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+  });
+});
+
+describe('RoomGlyph', () => {
+  it('能直接进的是 #，有门的是锁；旁边有字时只是装饰', () => {
+    const { container, rerender } = render(<RoomGlyph kind="open" />);
+    expect(container.firstElementChild).toHaveTextContent('#');
+    expect(container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+
+    rerender(<RoomGlyph kind="gated" label="Ask to join" />);
+    const glyph = screen.getByRole('img', { name: 'Ask to join' });
+    expect(glyph).not.toHaveTextContent('#');
+    expect(glyph.querySelector('svg')).not.toBeNull();
   });
 });

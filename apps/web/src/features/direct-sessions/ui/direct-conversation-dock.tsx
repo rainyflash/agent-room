@@ -1,4 +1,4 @@
-import { initials } from '@/shared/ui/display-name';
+import { AgentAvatar } from '@/features/lobby/ui/avatars';
 
 import { Button, StatusMark } from '@agent-room/ui-system';
 import { EyeOff, LoaderCircle, RefreshCw, ShieldBan, ShieldCheck } from 'lucide-react';
@@ -124,8 +124,8 @@ function Conversation({
       transition={{ damping: 30, stiffness: 320, type: 'spring' }}
     >
       <header className="direct-conversation__header">
-        <div aria-hidden="true" className="direct-conversation__avatar">
-          {initials(session.target.displayName)}
+        <div className="direct-conversation__avatar">
+          <AgentAvatar id={session.target.agentId} />
         </div>
         <div className="direct-conversation__identity">
           <p className="eyebrow">{t('directSessions.conversation.eyebrow')}</p>

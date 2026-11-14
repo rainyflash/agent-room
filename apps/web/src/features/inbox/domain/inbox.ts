@@ -1,4 +1,8 @@
-import type { MessageGateway, RoomMessageSignal } from '@/features/messages/domain/message';
+import {
+  mentionsAccount,
+  type MessageGateway,
+  type RoomMessageSignal,
+} from '@/features/messages/domain/message';
 import {
   compareCursors,
   type ReadingCursor,
@@ -251,9 +255,7 @@ function attentionKind(
   direct: boolean,
 ): InboxItem['kind'] | null {
   if (message.actor.matrixUserId === self) return null;
-  if (message.preview?.conversation?.mentions.includes(self) === true) return 'mention';
-  // 私人房间里的 @所有人：收的时候已经只认加密消息上的。
-  if (message.preview?.mentionsEveryone === true) return 'mention';
+  if (mentionsAccount(message, self)) return 'mention';
   if (message.relation && byId.get(message.relation.targetMessageId)?.actor.matrixUserId === self)
     return 'reply';
   return direct ? 'direct' : null;

@@ -1,8 +1,8 @@
-import { StatusMark, type StatusTone } from '@agent-room/ui-system';
 import { useTranslation } from 'react-i18next';
 import type { LobbyAgent } from '../domain/lobby';
-import { agentLifecycle } from '../domain/agent-attendance';
+import { agentStateKey } from '../domain/agent-attendance';
 
+/** 一个 Agent 的状态，写成字。点在它的头像上（`LobbyAgentAvatar`），这里不再画。 */
 export function AgentStateLabel({
   agent,
   now,
@@ -11,21 +11,10 @@ export function AgentStateLabel({
   readonly now: number;
 }) {
   const { t } = useTranslation();
-  const state = agentLifecycle(agent, now);
-  const key = state.connection === 'online' ? state.reception : state.connection;
-  const tone: StatusTone =
-    state.connection === 'offline'
-      ? 'offline'
-      : state.connection === 'reconnecting'
-        ? 'alert'
-        : state.reception === 'waiting'
-          ? 'active'
-          : 'network';
-  const label = t(`agentState.${key}`);
+  const key = agentStateKey(agent, now);
   return (
     <span className="agent-state-label" data-state={key}>
-      <StatusMark label={label} tone={tone} />
-      <span>{label}</span>
+      {t(`agentState.${key}`)}
     </span>
   );
 }

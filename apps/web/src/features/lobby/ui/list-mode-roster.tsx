@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 
 import { filterLobbyAgents } from '@/features/lobby/domain/agent-roster';
 import type { LobbyAgent } from '@/features/lobby/domain/lobby';
-import { AgentPortrait } from './room-illustration';
+import { LobbyAgentAvatar } from './avatars';
 import {
   agentLifecycle,
   agentRosterGroup,
@@ -269,7 +269,7 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                   type="button"
                 >
                   <span className="roster-agent__signal">
-                    <AgentPortrait id={agent.agentId} />
+                    <LobbyAgentAvatar agent={agent} now={observedAtUnixMs} />
                   </span>
                   <span className="roster-agent__identity">
                     <strong>
