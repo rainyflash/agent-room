@@ -1,0 +1,48 @@
+/* 顶栏上“对话 / 场景”的切换。只用令牌，不写死颜色、圆角和阴影。 */
+.room-layout-switch {
+  flex: 0 0 auto;
+}
+.room-layout-switch .ar-segmented__option {
+  min-height: 34px;
+  flex: 0 0 auto;
+  padding-block: 4px;
+  font-size: 0.8125rem;
+}
+.room-layout-toggle {
+  display: none;
+}
+
+/* 场景顶栏里它排在房间设置前面，一起靠右。 */
+.workspace-header .room-layout-switch,
+.workspace-header .room-layout-toggle {
+  margin-left: auto;
+}
+.workspace-header .room-layout-switch ~ .workspace-header__settings,
+.workspace-header .room-layout-switch ~ .workspace-header__members {
+  margin-left: 0;
+}
+
+/* 中等宽度只留图标，名字留给读屏。 */
+@media (max-width: 1099px) {
+  .room-layout-switch .ar-segmented__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .room-layout-switch .ar-segmented__icon {
+    display: inline-grid;
+  }
+}
+
+/* 手机：两段换成一个按钮。 */
+@media (max-width: 767px) {
+  .room-layout-switch {
+    display: none;
+  }
+  .room-layout-toggle {
+    display: inline-grid;
+  }
+}

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   lobbySearchWithAgent,
   lobbySearchWithDirectSession,
+  lobbySearchWithLayout,
   lobbySearchWithMessage,
   lobbySearchWithView,
   lobbySearchWithRoomPanel,
@@ -119,6 +120,76 @@ describe('大厅视图路由', () => {
     });
     expect(lobbySearchWithDirectSession({}, 'private-room')).toEqual({
       direct: 'private-room',
+    });
+  });
+});
+
+describe('房间页版面路由', () => {
+  it('地址里只认对话和场景两种版面', () => {
+    expect(normalizeLobbySearch({ layout: 'conversation' })).toEqual({ layout: 'conversation' });
+    expect(normalizeLobbySearch({ layout: 'scene', view: 'resources' })).toEqual({
+      layout: 'scene',
+      view: 'resources',
+    });
+    expect(normalizeLobbySearch({ layout: 'table' })).toEqual({});
+    expect(normalizeLobbySearch({ layout: 1 })).toEqual({});
+  });
+  it('换选择、换视图时版面留在地址里', () => {
+    const search = { directory: 'open', layout: 'conversation' } as const;
+    expect(lobbySearchWithDirectSession(search, 'private-room')).toEqual({
+      direct: 'private-room',
+      directory: 'open',
+      layout: 'conversation',
+    });
+    expect(lobbySearchWithMessage(search, '$message')).toEqual({
+      directory: 'open',
+      layout: 'conversation',
+      message: '$message',
+    });
+    expect(lobbySearchWithView({ ...search, view: 'resources' }, 'space')).toEqual(search);
+    expect(lobbySearchWithRoomPanel({ ...search, direct: 'private-room' }, 'resources')).toEqual({
+      directory: 'open',
+      layout: 'conversation',
+      view: 'resources',
+    });
+  });
+  it('对话版面里选中 Agent，对话、私聊和正在看的消息都留着', () => {
+    const search = {
+      direct: 'private-room',
+      layout: 'conversation',
+      message: '$message',
+      view: 'conversation',
+    } as const;
+    expect(lobbySearchWithAgent(search, 'agent-01', 'conversation')).toEqual({
+      agent: 'agent-01',
+      ...search,
+    });
+    // 场景里选中 Agent 照旧收起对话面板。
+    expect(lobbySearchWithAgent({ ...search, layout: 'scene' }, 'agent-01', 'scene')).toEqual({
+      agent: 'agent-01',
+      layout: 'scene',
+    });
+  });
+  it('换到场景回到画面本身，换到对话什么都不丢', () => {
+    const search = {
+      agent: 'agent-01',
+      direct: 'private-room',
+      directory: 'open',
+      layout: 'conversation',
+      message: '$message',
+      view: 'conversation',
+    } as const;
+    expect(lobbySearchWithLayout(search, 'scene')).toEqual({
+      agent: 'agent-01',
+      directory: 'open',
+      layout: 'scene',
+    });
+    expect(
+      lobbySearchWithLayout({ view: 'resources', message: '$message' }, 'conversation'),
+    ).toEqual({
+      layout: 'conversation',
+      message: '$message',
+      view: 'resources',
     });
   });
 });

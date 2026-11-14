@@ -64,7 +64,16 @@ import { NetworkAgentLabelStore } from '@/features/lobby/application/network-age
 import type { AgentOwnerRecord } from '@/features/lobby/domain/agent-owners';
 import { roomHumans } from '@/features/lobby/domain/room-participants';
 import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
-import type { RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
+import {
+  isRoomPageLayout,
+  type RoomPageLayout,
+  type RoomWorkspaceView,
+} from '@/features/lobby/domain/workspace-view';
+import {
+  rememberRoomPageLayout,
+  rememberedRoomPageLayout,
+  resolveRoomPageLayout,
+} from '@/features/lobby/application/room-page-layout';
 import { AgentOwnersProvider } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentLabelsProvider } from '@/features/lobby/ui/network-agent-labels';
 import { LobbyPage } from '@/features/lobby/ui/lobby-page';
@@ -1570,6 +1579,14 @@ function LobbyFixture({
     const requested = new URLSearchParams(search).get('view');
     return requested === 'conversation' || requested === 'resources' ? requested : 'space';
   });
+  // 和应用一样：地址里写了版面就照地址，不然看这台设备记着的。
+  const [layout, setLayout] = useState<RoomPageLayout>(() => {
+    const requested = new URLSearchParams(search).get('layout');
+    return resolveRoomPageLayout(
+      isRoomPageLayout(requested) ? requested : undefined,
+      rememberedRoomPageLayout(),
+    );
+  });
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedDirectSessionId, setSelectedDirectSessionId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(() =>
@@ -1598,7 +1615,20 @@ function LobbyFixture({
                     <OptionalAgentOwners>
                       <LobbyPage
                         catalogId="01990d9e-8400-7000-8000-000000000401"
+                        layout={layout}
                         onExitRoom={() => undefined}
+                        onLayoutChange={(next) => {
+                          rememberRoomPageLayout(next);
+                          const url = new URL(window.location.href);
+                          url.searchParams.set('layout', next);
+                          window.history.replaceState(null, '', url);
+                          if (next === 'scene') {
+                            setSelectedDirectSessionId(null);
+                            setSelectedMessageId(null);
+                            updateView('space');
+                          }
+                          setLayout(next);
+                        }}
                         view={view}
                         onViewChange={(nextView) => {
                           if (nextView === 'space') {
@@ -1615,7 +1645,8 @@ function LobbyFixture({
                         }}
                         onSelectedAgentChange={(id) => {
                           setSelectedAgentId(id);
-                          if (id !== null) {
+                          // 对话版面里 Agent 的详情在右栏，对话和私聊都留着。
+                          if (id !== null && layout === 'scene') {
                             setSelectedDirectSessionId(null);
                             setSelectedMessageId(null);
                             updateView('space');
@@ -1625,7 +1656,7 @@ function LobbyFixture({
                           setSelectedDirectSessionId(id);
                           setSelectedAgentId(null);
                           setSelectedMessageId(null);
-                          updateView(id === null ? 'space' : 'conversation');
+                          updateView(id === null && layout === 'scene' ? 'space' : 'conversation');
                         }}
                         onSelectedMessageChange={setSelectedMessageId}
                         principal={{
