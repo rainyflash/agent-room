@@ -1,6 +1,7 @@
 mod device;
 mod handlers;
 mod models;
+mod sub_rooms;
 
 pub(crate) use models::{PermissionsBody, PermissionsResponse};
 
@@ -10,8 +11,10 @@ pub(crate) mod tests;
 use std::sync::Arc;
 
 use agent_room_application::{
-    authentication::AuthenticationUseCases, devices::DeviceAuthorizationUseCases,
-    ports::SecretFactory, private_rooms::PrivateRoomUseCases,
+    authentication::AuthenticationUseCases,
+    devices::DeviceAuthorizationUseCases,
+    ports::SecretFactory,
+    private_rooms::{PrivateRoomUseCases, SubRoomUseCases},
 };
 
 use crate::features::authentication::TrustedOrigins;
@@ -26,6 +29,8 @@ const MAX_PRIVATE_ROOM_BODY_BYTES: usize = 64 * 1_024;
 #[derive(Clone)]
 pub(crate) struct PrivateRoomHttpState {
     pub(super) rooms: Arc<dyn PrivateRoomUseCases>,
+    /// 子房间：建、读名单、三项设置（`specs/redesign/sub-rooms.md`）。
+    pub(super) sub_rooms: Arc<dyn SubRoomUseCases>,
     pub(super) authentication: Arc<dyn AuthenticationUseCases>,
     /// 本机 Bridge 替账号建房、邀请人时核对设备签名（`specs/agent-rooms/design.md`）。
     pub(super) devices: Arc<dyn DeviceAuthorizationUseCases>,
@@ -35,6 +40,7 @@ pub(crate) struct PrivateRoomHttpState {
 
 pub(crate) struct PrivateRoomHttpDependencies {
     pub(crate) rooms: Arc<dyn PrivateRoomUseCases>,
+    pub(crate) sub_rooms: Arc<dyn SubRoomUseCases>,
     pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
@@ -48,6 +54,7 @@ impl PrivateRoomHttpState {
     ) -> Self {
         Self {
             rooms: dependencies.rooms,
+            sub_rooms: dependencies.sub_rooms,
             authentication: dependencies.authentication,
             devices: dependencies.devices,
             secrets: dependencies.secrets,
@@ -101,6 +108,14 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             put(handlers::transfer_ownership),
         )
         .route("/private-rooms/{catalog_id}/name", put(handlers::rename))
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms",
+            get(sub_rooms::list).post(sub_rooms::create),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-room-policy",
+            get(sub_rooms::policy).put(sub_rooms::change_policy),
+        )
         .route("/devices/current/private-rooms", post(device::create))
         .route(
             "/devices/current/private-rooms/{catalog_id}/invitations",

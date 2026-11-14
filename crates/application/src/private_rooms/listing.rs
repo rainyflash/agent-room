@@ -52,6 +52,8 @@ pub enum ListingFailureKind {
     Conflict,
     DependencyUnavailable,
     Internal,
+    /// 这是一间子房间：子房间不能单独公开（`specs/redesign/sub-rooms.md`）。
+    ParentOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +193,13 @@ impl PrivateRoomListingService {
             .authorize_listing_change(request.actor.principal_id)
             .map_err(|error| domain(OPERATION, &error))?;
         if request.settings.listed() {
+            // 公开只有父房间能做；改回私密不拦，回滚到旧版那段时间公开出去的还收得回来。
+            if loaded.snapshot.parent_catalog_id().is_some() {
+                return Err(ListingFailure::new(
+                    OPERATION,
+                    ListingFailureKind::ParentOnly,
+                ));
+            }
             self.list(&request, loaded, OPERATION).await
         } else {
             self.unlist(&request, loaded, OPERATION).await

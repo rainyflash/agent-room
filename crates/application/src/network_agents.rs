@@ -2278,6 +2278,7 @@ fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         }
         AgentAccessFailureKind::Forbidden
         | AgentAccessFailureKind::Internal
+        | AgentAccessFailureKind::ParentOnly
         | AgentAccessFailureKind::NotRevealable => internal(),
     }
 }
@@ -2308,6 +2309,7 @@ fn code_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         }
         AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable
+        | AgentAccessFailureKind::ParentOnly
         | AgentAccessFailureKind::ClosedToNetworkAgents => internal(),
     }
 }

@@ -278,6 +278,50 @@ async fn 已经在房间里的直接打开_被封禁的进不来_被移出的能
 }
 
 #[tokio::test]
+async fn 子房间没有邀请链接_建和看都说去父房间_以前建出来的不管用_停用照旧能做() {
+    let fixture = Fixture::new(room_with_members());
+    // 回滚到旧版那段时间给子房间建出来的链接。
+    let earlier = fixture.service.create(create(owner(), None)).await.unwrap();
+    fixture.become_sub_room();
+
+    assert_eq!(
+        fixture
+            .service
+            .create(create(owner(), None))
+            .await
+            .unwrap_err()
+            .kind(),
+        InviteLinkFailureKind::ParentOnly
+    );
+    assert_eq!(
+        fixture
+            .service
+            .reveal(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        InviteLinkFailureKind::ParentOnly
+    );
+    assert_eq!(
+        fixture
+            .service
+            .create(create(speaker(), None))
+            .await
+            .unwrap_err()
+            .kind(),
+        InviteLinkFailureKind::Forbidden,
+        "不能邀请的人照旧是没有权限"
+    );
+    fixture.assert_dead(earlier.secret.as_str()).await;
+    assert!(fixture.invitations().is_empty());
+    fixture
+        .service
+        .disable(manage(owner()))
+        .await
+        .expect("停用照旧能做");
+}
+
+#[tokio::test]
 async fn 过期_停用_创建人没了邀请权限_房间归档_链接都不管用() {
     let fixture = Fixture::new(room_with_members());
     let expired = fixture.service.create(create(owner(), None)).await.unwrap();
@@ -417,7 +461,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(room: PrivateRoom) -> Self {
-        let rooms = Arc::new(MemoryRooms(Mutex::new(room)));
+        let rooms = Arc::new(MemoryRooms(Mutex::new(room), Mutex::new(None)));
         let invitations = Arc::new(RoomInvitations {
             rooms: rooms.clone(),
             calls: Mutex::default(),
@@ -461,6 +505,11 @@ impl Fixture {
 
     fn update_room(&self, change: impl FnOnce(&mut PrivateRoom) -> Result<(), DomainError>) {
         change(&mut self.rooms.0.lock().unwrap()).expect("能改房间");
+    }
+
+    /// 把这间房当成挂在另一间房下面的子房间（`specs/redesign/sub-rooms.md`）。
+    fn become_sub_room(&self) {
+        *self.rooms.1.lock().unwrap() = Some(RoomCatalogId::from_uuid(Uuid::from_u128(77)));
     }
 
     async fn assert_dead(&self, secret: &str) {
@@ -698,7 +747,8 @@ impl JoinCodeSealer for FakeSealer {
 }
 
 /// 一个房间，邀请替身直接改它。
-struct MemoryRooms(Mutex<PrivateRoom>);
+/// 一间房，和它挂在谁下面（是子房间的话）。
+struct MemoryRooms(Mutex<PrivateRoom>, Mutex<Option<RoomCatalogId>>);
 
 impl PrivateRoomStore for MemoryRooms {
     fn create<'a>(
@@ -714,7 +764,11 @@ impl PrivateRoomStore for MemoryRooms {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
         let room = self.0.lock().unwrap().clone();
-        let found = (catalog_id == room.catalog_id()).then(|| snapshot(room));
+        let parent = *self.1.lock().unwrap();
+        let found = (catalog_id == room.catalog_id()).then(|| match parent {
+            Some(parent) => snapshot(room).under(parent),
+            None => snapshot(room),
+        });
         Box::pin(async move { Ok(found) })
     }
 

@@ -39,6 +39,8 @@ mod moderation_grants;
 mod public_directory;
 #[path = "private_rooms/role_changes.rs"]
 mod role_changes;
+#[path = "private_rooms/sub_rooms.rs"]
+mod sub_rooms;
 
 struct TestDatabase {
     migration: PgPool,
@@ -604,12 +606,21 @@ fn snapshot_of(
     owner: PrincipalId,
     room: PrivateRoom,
 ) -> PrivateRoomSnapshot {
+    snapshot_named(catalog_id, owner, room, "隔离项目室")
+}
+
+fn snapshot_named(
+    catalog_id: RoomCatalogId,
+    owner: PrincipalId,
+    room: PrivateRoom,
+    name: &str,
+) -> PrivateRoomSnapshot {
     let catalog = RoomCatalog::new(
         catalog_id,
         RoomCatalogFields {
             kind: RoomCatalogKind::PrivateRoom,
             slug: None,
-            name: "隔离项目室".to_owned(),
+            name: name.to_owned(),
             description: "只对受邀成员开放".to_owned(),
             language: None,
             matrix_space_id: None,

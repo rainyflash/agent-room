@@ -172,6 +172,10 @@ pub use rooms::{
     RoomReservationOutcome, RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord,
     SealedInviteLink, SealedJoinCode,
 };
+pub use rooms::{
+    NewSubRoom, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomLink,
+    SubRoomParentFacts, SubRoomPolicyRecord, SubRoomStore,
+};
 pub use runtime::{Clock, IdentifierFactory};
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

@@ -25,6 +25,7 @@ pub use description::{
 };
 pub use failure::{
     PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult,
+    SubRoomRefusal,
 };
 pub use invite_links::{
     CreateInviteLink, InviteLink, InviteLinkFailure, InviteLinkFailureKind, InviteLinkResult,
@@ -37,10 +38,11 @@ pub use listing::{
     PrivateRoomListingUseCases, UpdateListing,
 };
 pub use models::{
-    ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom, GovernPrivateRoomMember,
-    InspectPrivateRoom, InviteByLink, InvitePrivateRoomMember, ListPrivateRooms,
-    ListPrivateRoomsForAccount, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
-    PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom,
+    ArchivePrivateRoom, ChangePrivateRoomPermissions, ChangeSubRoomPolicy, CreatePrivateRoom,
+    CreateSubRoom, GovernPrivateRoomMember, InspectPrivateRoom, InspectSubRoomPolicy, InviteByLink,
+    InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount, ListSubRooms,
+    PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomMembershipAction,
+    PrivateRoomOrigin, RenamePrivateRoom, SubRoomList, SubRoomPolicyView, SubRoomView,
     TransferPrivateRoomOwnership,
 };
 pub use moderation_grants::{
@@ -65,5 +67,5 @@ pub use public_join::{
 };
 pub use service::{
     PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService,
-    PrivateRoomUseCases,
+    PrivateRoomUseCases, SubRoomUseCases,
 };

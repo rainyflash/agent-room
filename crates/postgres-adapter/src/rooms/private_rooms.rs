@@ -35,6 +35,7 @@ use super::{
 const PRIVATE_ROOM_COLUMNS: &str = r"
     private_state.version AS private_room_version,
     private_state.created_by_agent_id AS private_created_by_agent_id,
+    parent_link.parent_catalog_entry_id AS private_parent_catalog_id,
     membership.principal_id AS private_member_principal_id,
     membership.membership_status AS private_member_status,
     membership.permission_bits AS private_member_permission_bits";
@@ -82,6 +83,13 @@ impl PrivateRoomStore for PostgresRepositories {
                    WHERE membership.principal_id = $1
                      AND membership.membership_status IN ('invited', 'joined')
                      AND catalog.kind = 'private_room'
+                     -- 子房间不进房间列表：它们由父房间的子房间名单给出。旧版网页和旧版 Bridge
+                     -- 因此看不到它们，不会把它们当成普通房间摆出来。
+                     AND NOT EXISTS (
+                         SELECT 1
+                           FROM agent_room.private_room_parent AS sub_room
+                          WHERE sub_room.catalog_entry_id = catalog.id
+                     )
                    ORDER BY catalog.updated_at DESC, catalog.id DESC",
             )
             .bind(principal_id.as_uuid())
@@ -503,6 +511,8 @@ async fn load_private_room(
              ON instance.id = private_state.room_instance_id
            JOIN agent_room.private_room_membership AS membership
              ON membership.catalog_entry_id = private_state.catalog_entry_id
+           LEFT JOIN agent_room.private_room_parent AS parent_link
+             ON parent_link.catalog_entry_id = private_state.catalog_entry_id
            WHERE ($1::uuid IS NOT NULL AND catalog.id = $1)
               OR ($2::text IS NOT NULL AND instance.matrix_room_id = $2)
            ORDER BY membership.principal_id ASC"
@@ -550,7 +560,13 @@ fn decode_private_room(
         created_by_agent.map(AgentId::from_uuid),
     )
     .map_err(|_| corrupt_data(operation))?;
-    PrivateRoomSnapshot::new(catalog, instance, room).map_err(|_| corrupt_data(operation))
+    let parent: Option<uuid::Uuid> = decode_column(first, "private_parent_catalog_id", operation)?;
+    let snapshot =
+        PrivateRoomSnapshot::new(catalog, instance, room).map_err(|_| corrupt_data(operation))?;
+    Ok(match parent {
+        Some(parent) => snapshot.under(RoomCatalogId::from_uuid(parent)),
+        None => snapshot,
+    })
 }
 
 fn decode_member(row: &PgRow, operation: &'static str) -> RepositoryResult<PrivateRoomMember> {

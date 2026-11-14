@@ -1,0 +1,500 @@
+//! 子房间（`specs/redesign/sub-rooms.md`）：父子关系、谁在管、一间房里子房间的三项设置。
+//!
+//! 建子房间时先锁父房间在目录里的那一行：同一间房下面同时建的排着队来，重名和上限数得准；父房间
+//! 这时候归档、转让也要等这一次存完。
+
+use agent_room_application::{
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
+    ports::{
+        NewSubRoom, PortFuture, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
+        SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomStore,
+    },
+};
+use agent_room_domain::{
+    ids::{AgentId, PrincipalId, RoomCatalogId},
+    private_rooms::PrivateRoomMembershipStatus,
+    room_listing::RoomJoinMode,
+    sub_rooms::{
+        MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SUB_ROOM_AUTO_ARCHIVE_DAYS,
+        SubRoomCreators, SubRoomPolicy,
+    },
+    time::UtcMillis,
+    version::AggregateVersion,
+};
+use sqlx::{Postgres, Transaction, postgres::PgRow};
+
+use crate::{PostgresRepositories, agents::decode_column, error::map_sqlx_error};
+
+use super::{
+    decode::corrupt_data,
+    private_rooms::{create_private_room, ensure_creatable},
+};
+
+const HOUR_MS: i64 = 3_600_000;
+
+impl SubRoomStore for PostgresRepositories {
+    fn sub_room_link(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>> {
+        Box::pin(async move {
+            let operation = "sub_room.link";
+            let row = sqlx::query(
+                r"SELECT link.catalog_entry_id,
+                         link.parent_catalog_entry_id,
+                         link.name_key,
+                         link.access,
+                         link.hidden,
+                         link.created_by_principal_id,
+                         link.created_by_agent_id,
+                         floor(extract(epoch FROM link.created_at) * 1000)::bigint
+                             AS created_at_ms
+                    FROM agent_room.private_room_parent AS link
+                   WHERE link.catalog_entry_id = $1",
+            )
+            .bind(catalog_id.as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.as_ref()
+                .map(|row| decode_link(row, operation))
+                .transpose()
+        })
+    }
+
+    fn sub_room_parent_facts(
+        &self,
+        parent: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SubRoomParentFacts>>> {
+        Box::pin(async move {
+            let operation = "sub_room.parent_facts";
+            let row = sqlx::query(
+                r"SELECT catalog.end_to_end_encrypted,
+                         policy.creators,
+                         policy.agents_may_create,
+                         policy.auto_archive_days
+                    FROM agent_room.room_catalog_entry AS catalog
+                    LEFT JOIN agent_room.private_room_sub_room_policy AS policy
+                      ON policy.catalog_entry_id = catalog.id
+                   WHERE catalog.id = $1
+                     AND catalog.kind = 'private_room'",
+            )
+            .bind(parent.as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let creators: Option<String> = decode_column(&row, "creators", operation)?;
+            let policy = match creators {
+                Some(creators) => decode_policy(&row, &creators, operation)?,
+                None => SubRoomPolicy::DEFAULT,
+            };
+            Ok(Some(SubRoomParentFacts {
+                end_to_end_encrypted: decode_column(&row, "end_to_end_encrypted", operation)?,
+                policy,
+            }))
+        })
+    }
+
+    fn sub_room_creation_block<'a>(
+        &'a self,
+        check: &'a SubRoomCreationCheck,
+    ) -> PortFuture<'a, RepositoryResult<Option<SubRoomCreationBlock>>> {
+        Box::pin(async move {
+            let operation = "sub_room.creation_block";
+            // 和存的时候查的是同一段；事务什么都不写，丢掉就放开父房间那一行。
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            block(&mut transaction, check, operation).await
+        })
+    }
+
+    fn create_sub_room<'a>(
+        &'a self,
+        sub_room: &'a NewSubRoom,
+    ) -> PortFuture<'a, RepositoryResult<Option<SubRoomCreationBlock>>> {
+        Box::pin(async move {
+            let operation = "sub_room.create";
+            ensure_creatable(&sub_room.snapshot, operation)?;
+            if sub_room.snapshot.catalog().id() == sub_room.parent_catalog_id {
+                return Err(RepositoryError::new(
+                    operation,
+                    RepositoryErrorKind::Constraint,
+                ));
+            }
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let blocked = block(&mut transaction, &sub_room.check(), operation).await?;
+            if blocked.is_some() {
+                // 什么都没写，事务丢掉就是回滚。
+                return Ok(blocked);
+            }
+            create_private_room(
+                &mut transaction,
+                &sub_room.snapshot,
+                sub_room.created_at,
+                sub_room.end_to_end_encrypted,
+                operation,
+            )
+            .await?;
+            insert_link(&mut transaction, sub_room, operation).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(None)
+        })
+    }
+
+    fn list_sub_rooms(
+        &self,
+        parent: RoomCatalogId,
+        viewer: PrincipalId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomEntry>>> {
+        Box::pin(async move {
+            let operation = "sub_room.list";
+            let rows = sqlx::query(LIST_SQL)
+                .bind(parent.as_uuid())
+                .bind(viewer.as_uuid())
+                .fetch_all(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_entry(row, operation))
+                .collect()
+        })
+    }
+
+    fn sub_room_policy(
+        &self,
+        parent: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SubRoomPolicyRecord>>> {
+        Box::pin(async move {
+            let operation = "sub_room.policy";
+            let row = sqlx::query(
+                r"SELECT policy.creators,
+                         policy.agents_may_create,
+                         policy.auto_archive_days,
+                         policy.updated_by,
+                         floor(extract(epoch FROM policy.updated_at) * 1000)::bigint
+                             AS updated_at_ms,
+                         policy.version
+                    FROM agent_room.private_room_sub_room_policy AS policy
+                   WHERE policy.catalog_entry_id = $1",
+            )
+            .bind(parent.as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let creators: String = decode_column(&row, "creators", operation)?;
+            let updated_by: uuid::Uuid = decode_column(&row, "updated_by", operation)?;
+            let updated_at: i64 = decode_column(&row, "updated_at_ms", operation)?;
+            let version: i64 = decode_column(&row, "version", operation)?;
+            Ok(Some(SubRoomPolicyRecord {
+                catalog_id: parent,
+                policy: decode_policy(&row, &creators, operation)?,
+                updated_by: PrincipalId::from_uuid(updated_by),
+                updated_at: UtcMillis::new(updated_at).map_err(|_| corrupt_data(operation))?,
+                version: AggregateVersion::new(version).map_err(|_| corrupt_data(operation))?,
+            }))
+        })
+    }
+
+    fn save_sub_room_policy<'a>(
+        &'a self,
+        record: &'a SubRoomPolicyRecord,
+        expected: Option<AggregateVersion>,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let operation = "sub_room.policy.save";
+            let auto_archive_days = record
+                .policy
+                .auto_archive
+                .then_some(i16::from(SUB_ROOM_AUTO_ARCHIVE_DAYS));
+            let statement = match expected {
+                // 没有记录时新加一行；别人抢先加了就什么都不写。
+                None => {
+                    r"INSERT INTO agent_room.private_room_sub_room_policy (
+                           catalog_entry_id, creators, agents_may_create, auto_archive_days,
+                           updated_by, updated_at, version
+                       ) VALUES (
+                           $1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0), $7
+                       )
+                       ON CONFLICT (catalog_entry_id) DO NOTHING"
+                }
+                Some(_) => {
+                    r"UPDATE agent_room.private_room_sub_room_policy
+                          SET creators = $2,
+                              agents_may_create = $3,
+                              auto_archive_days = $4,
+                              updated_by = $5,
+                              updated_at = to_timestamp($6::double precision / 1000.0),
+                              version = $7
+                        WHERE catalog_entry_id = $1
+                          AND version = $8"
+                }
+            };
+            let mut query = sqlx::query(statement)
+                .bind(record.catalog_id.as_uuid())
+                .bind(record.policy.creators.as_str())
+                .bind(record.policy.agents_may_create)
+                .bind(auto_archive_days)
+                .bind(record.updated_by.as_uuid())
+                .bind(record.updated_at.value())
+                .bind(record.version.value());
+            if let Some(expected) = expected {
+                query = query.bind(expected.value());
+            }
+            let written = query
+                .execute(self.pool())
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?
+                .rows_affected();
+            Ok(written == 1)
+        })
+    }
+}
+
+const LIST_SQL: &str = r"
+    SELECT link.catalog_entry_id,
+           catalog.name,
+           catalog.description,
+           catalog.status,
+           link.access,
+           link.hidden,
+           link.created_by_principal_id,
+           floor(extract(epoch FROM link.created_at) * 1000)::bigint AS created_at_ms,
+           floor(extract(epoch FROM link.last_message_at) * 1000)::bigint AS last_message_at_ms,
+           COALESCE((
+               SELECT array_agg(manager.principal_id
+                                ORDER BY manager.granted_at, manager.principal_id)
+                 FROM agent_room.private_room_sub_room_manager AS manager
+                WHERE manager.catalog_entry_id = link.catalog_entry_id
+           ), '{}'::uuid[]) AS managers,
+           (SELECT viewer.membership_status
+              FROM agent_room.private_room_membership AS viewer
+             WHERE viewer.catalog_entry_id = link.catalog_entry_id
+               AND viewer.principal_id = $2) AS viewer_status,
+           (SELECT count(*)
+              FROM agent_room.private_room_membership AS member
+             WHERE member.catalog_entry_id = link.catalog_entry_id
+               AND member.membership_status = 'joined')::bigint AS member_count,
+           (SELECT count(*) FROM (
+                SELECT reservation.agent_id
+                  FROM agent_room.room_capacity_reservation AS reservation
+                 WHERE reservation.catalog_entry_id = link.catalog_entry_id
+                   AND reservation.state = 'committed'
+                UNION
+                SELECT network.agent_id
+                  FROM agent_room.network_agent_room AS room
+                  JOIN agent_room.network_agent AS network ON network.id = room.network_agent_id
+                 WHERE room.catalog_entry_id = link.catalog_entry_id
+           ) AS present)::bigint AS agent_count
+      FROM agent_room.private_room_parent AS link
+      JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = link.catalog_entry_id
+     WHERE link.parent_catalog_entry_id = $1
+     ORDER BY link.created_at, link.catalog_entry_id";
+
+/// 建不了的原因；能建时为空。先锁父房间在目录里的那一行，后面数的才准。
+async fn block(
+    transaction: &mut Transaction<'_, Postgres>,
+    check: &SubRoomCreationCheck,
+    operation: &'static str,
+) -> RepositoryResult<Option<SubRoomCreationBlock>> {
+    let parent = check.parent_catalog_id.as_uuid();
+    let usable: Option<bool> = sqlx::query_scalar(
+        r"SELECT catalog.kind = 'private_room' AND catalog.status = 'active'
+            FROM agent_room.room_catalog_entry AS catalog
+           WHERE catalog.id = $1
+             FOR NO KEY UPDATE",
+    )
+    .bind(parent)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if usable != Some(true) {
+        return Ok(Some(SubRoomCreationBlock::ParentUnavailable));
+    }
+    // 只有一层：父房间自己不能是子房间。表上的触发器也卡着，这里先说清原因。
+    let nested: bool = sqlx::query_scalar(
+        r"SELECT EXISTS (
+              SELECT 1 FROM agent_room.private_room_parent WHERE catalog_entry_id = $1
+          )",
+    )
+    .bind(parent)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if nested {
+        return Ok(Some(SubRoomCreationBlock::ParentUnavailable));
+    }
+    // 不算要建的这一间自己：同一个请求重发时它已经在了，后面插入时撞上房间号，按重试处理。
+    let (open, same_name): (i64, bool) = sqlx::query_as(
+        r"SELECT count(*)::bigint,
+                 COALESCE(bool_or(name_key = $2), false)
+            FROM agent_room.private_room_parent
+           WHERE parent_catalog_entry_id = $1
+             AND archived_at IS NULL
+             AND catalog_entry_id <> $3",
+    )
+    .bind(parent)
+    .bind(&check.name_key)
+    .bind(check.catalog_id.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if same_name {
+        return Ok(Some(SubRoomCreationBlock::NameTaken));
+    }
+    if open >= i64::from(MAXIMUM_OPEN_SUB_ROOMS) {
+        return Ok(Some(SubRoomCreationBlock::RoomLimitReached));
+    }
+    // 同一个人或 Agent 一小时最多建几个：人自己建的和他每个 Agent 建的分开数。
+    let recent: i64 = sqlx::query_scalar(
+        r"SELECT count(*)::bigint
+            FROM agent_room.private_room_parent
+           WHERE created_by_principal_id = $1
+             AND created_by_agent_id IS NOT DISTINCT FROM $2
+             AND created_at > to_timestamp($3::double precision / 1000.0)
+             AND catalog_entry_id <> $4",
+    )
+    .bind(check.created_by.as_uuid())
+    .bind(check.created_by_agent.map(AgentId::as_uuid))
+    .bind(check.at.value().saturating_sub(HOUR_MS))
+    .bind(check.catalog_id.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if recent >= i64::from(MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR) {
+        return Ok(Some(SubRoomCreationBlock::CreatorLimitReached));
+    }
+    Ok(None)
+}
+
+async fn insert_link(
+    transaction: &mut Transaction<'_, Postgres>,
+    sub_room: &NewSubRoom,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    let catalog_id = sub_room.snapshot.catalog().id().as_uuid();
+    sqlx::query(
+        r"INSERT INTO agent_room.private_room_parent (
+               catalog_entry_id, parent_catalog_entry_id, name_key, access, hidden,
+               created_by_principal_id, created_by_agent_id, parent_version_applied, created_at
+           ) VALUES (
+               $1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision / 1000.0)
+           )",
+    )
+    .bind(catalog_id)
+    .bind(sub_room.parent_catalog_id.as_uuid())
+    .bind(&sub_room.name_key)
+    .bind(sub_room.access.as_str())
+    .bind(sub_room.hidden)
+    .bind(sub_room.created_by.as_uuid())
+    .bind(sub_room.created_by_agent.map(AgentId::as_uuid))
+    .bind(sub_room.parent_version.value())
+    .bind(sub_room.created_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    for manager in &sub_room.managers {
+        sqlx::query(
+            r"INSERT INTO agent_room.private_room_sub_room_manager (
+                   catalog_entry_id, principal_id, granted_by_principal_id, granted_at
+               ) VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000.0))",
+        )
+        .bind(catalog_id)
+        .bind(manager.as_uuid())
+        .bind(sub_room.created_by.as_uuid())
+        .bind(sub_room.created_at.value())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    }
+    Ok(())
+}
+
+fn decode_link(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoomLink> {
+    let catalog_id: uuid::Uuid = decode_column(row, "catalog_entry_id", operation)?;
+    let parent: uuid::Uuid = decode_column(row, "parent_catalog_entry_id", operation)?;
+    let access: String = decode_column(row, "access", operation)?;
+    let created_by: uuid::Uuid = decode_column(row, "created_by_principal_id", operation)?;
+    let created_by_agent: Option<uuid::Uuid> =
+        decode_column(row, "created_by_agent_id", operation)?;
+    let created_at: i64 = decode_column(row, "created_at_ms", operation)?;
+    Ok(SubRoomLink {
+        catalog_id: RoomCatalogId::from_uuid(catalog_id),
+        parent_catalog_id: RoomCatalogId::from_uuid(parent),
+        name_key: decode_column(row, "name_key", operation)?,
+        access: RoomJoinMode::try_from(access.as_str()).map_err(|_| corrupt_data(operation))?,
+        hidden: decode_column(row, "hidden", operation)?,
+        created_by: PrincipalId::from_uuid(created_by),
+        created_by_agent: created_by_agent.map(AgentId::from_uuid),
+        created_at: UtcMillis::new(created_at).map_err(|_| corrupt_data(operation))?,
+    })
+}
+
+fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoomEntry> {
+    let catalog_id: uuid::Uuid = decode_column(row, "catalog_entry_id", operation)?;
+    let status: String = decode_column(row, "status", operation)?;
+    let access: String = decode_column(row, "access", operation)?;
+    let created_by: uuid::Uuid = decode_column(row, "created_by_principal_id", operation)?;
+    let created_at: i64 = decode_column(row, "created_at_ms", operation)?;
+    let last_message_at: Option<i64> = decode_column(row, "last_message_at_ms", operation)?;
+    let managers: Vec<uuid::Uuid> = decode_column(row, "managers", operation)?;
+    let viewer_status: Option<String> = decode_column(row, "viewer_status", operation)?;
+    let member_count: i64 = decode_column(row, "member_count", operation)?;
+    let agent_count: i64 = decode_column(row, "agent_count", operation)?;
+    let count = |value: i64| u32::try_from(value).map_err(|_| corrupt_data(operation));
+    Ok(SubRoomEntry {
+        catalog_id: RoomCatalogId::from_uuid(catalog_id),
+        name: decode_column(row, "name", operation)?,
+        description: decode_column(row, "description", operation)?,
+        access: RoomJoinMode::try_from(access.as_str()).map_err(|_| corrupt_data(operation))?,
+        hidden: decode_column(row, "hidden", operation)?,
+        archived: match status.as_str() {
+            "active" => false,
+            "archived" => true,
+            _ => return Err(corrupt_data(operation)),
+        },
+        created_by: PrincipalId::from_uuid(created_by),
+        created_at: UtcMillis::new(created_at).map_err(|_| corrupt_data(operation))?,
+        managers: managers.into_iter().map(PrincipalId::from_uuid).collect(),
+        viewer_status: viewer_status
+            .map(|status| {
+                PrivateRoomMembershipStatus::try_from(status.as_str())
+                    .map_err(|_| corrupt_data(operation))
+            })
+            .transpose()?,
+        member_count: count(member_count)?,
+        agent_count: count(agent_count)?,
+        last_message_at: last_message_at
+            .map(|at| UtcMillis::new(at).map_err(|_| corrupt_data(operation)))
+            .transpose()?,
+    })
+}
+
+fn decode_policy(
+    row: &PgRow,
+    creators: &str,
+    operation: &'static str,
+) -> RepositoryResult<SubRoomPolicy> {
+    let agents_may_create: Option<bool> = decode_column(row, "agents_may_create", operation)?;
+    let auto_archive_days: Option<i16> = decode_column(row, "auto_archive_days", operation)?;
+    Ok(SubRoomPolicy {
+        creators: SubRoomCreators::try_from(creators).map_err(|_| corrupt_data(operation))?,
+        agents_may_create: agents_may_create.ok_or_else(|| corrupt_data(operation))?,
+        auto_archive: auto_archive_days.is_some(),
+    })
+}

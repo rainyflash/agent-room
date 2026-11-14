@@ -392,6 +392,7 @@ fn failure_response(failure: InviteLinkFailure, correlation_id: CorrelationId) -
             ErrorCategory::Authorization,
             "你被这个房间封禁了，进不来。",
         ),
+        InviteLinkFailureKind::ParentOnly => crate::error::SUB_ROOM_PARENT_ONLY,
         InviteLinkFailureKind::NotRevealable => (
             StatusCode::NOT_FOUND,
             "invite_link.not_revealable",

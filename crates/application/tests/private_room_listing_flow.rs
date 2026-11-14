@@ -358,6 +358,38 @@ async fn 不加密的房间改回私密_先打开加密再改标记_matrix_写�
 }
 
 #[tokio::test]
+async fn 子房间不能单独公开_改回私密不拦() {
+    let fixture = Fixture::sub_room();
+    assert_eq!(
+        fixture
+            .service
+            .update(update(owner(), settings(true, RoomJoinMode::Open)))
+            .await
+            .expect_err("公开只有父房间能做")
+            .kind(),
+        ListingFailureKind::ParentOnly
+    );
+    assert_eq!(
+        fixture
+            .service
+            .update(update(manager(), settings(true, RoomJoinMode::Open)))
+            .await
+            .expect_err("不是房主")
+            .kind(),
+        ListingFailureKind::Forbidden,
+        "不是房主的照旧是没有权限"
+    );
+    assert!(fixture.matrix.listed.lock().unwrap().is_empty());
+    assert!(fixture.listings.record.lock().unwrap().is_none());
+
+    fixture
+        .service
+        .update(update(owner(), settings(false, RoomJoinMode::Request)))
+        .await
+        .expect("改回私密不拦");
+}
+
+#[tokio::test]
 async fn 从没公开过的房间改成私密什么都不写_登录过期的一律不行() {
     let fixture = Fixture::new(true);
     let view = fixture
@@ -397,6 +429,15 @@ struct Fixture {
 
 impl Fixture {
     fn new(encrypted: bool) -> Self {
+        Self::under(encrypted, None)
+    }
+
+    /// 挂在另一间房下面的子房间（`specs/redesign/sub-rooms.md`）。
+    fn sub_room() -> Self {
+        Self::under(true, Some(RoomCatalogId::from_uuid(Uuid::from_u128(77))))
+    }
+
+    fn under(encrypted: bool, parent: Option<RoomCatalogId>) -> Self {
         let encrypted = Arc::new(Mutex::new(encrypted));
         let listings = Arc::new(MemoryListings {
             encrypted: encrypted.clone(),
@@ -407,7 +448,7 @@ impl Fixture {
         let clock = Arc::new(TestClock(Mutex::new(NOW)));
         let holds = Arc::new(MemoryHolds::default());
         let service = PrivateRoomListingService::new(PrivateRoomListingDependencies {
-            rooms: Arc::new(MemoryRooms(room())),
+            rooms: Arc::new(MemoryRooms(room(), parent)),
             listings: listings.clone(),
             policies: Arc::new(Policies(encrypted.clone())),
             matrix: matrix.clone(),
@@ -574,7 +615,8 @@ impl SecretFactory for CountingSecrets {
     }
 }
 
-struct MemoryRooms(PrivateRoom);
+/// 一间房，和它挂在谁下面（是子房间的话）。
+struct MemoryRooms(PrivateRoom, Option<RoomCatalogId>);
 
 impl PrivateRoomStore for MemoryRooms {
     fn create<'a>(
@@ -589,7 +631,10 @@ impl PrivateRoomStore for MemoryRooms {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
-        let found = (catalog_id == self.0.catalog_id()).then(|| snapshot(self.0.clone()));
+        let found = (catalog_id == self.0.catalog_id()).then(|| match self.1 {
+            Some(parent) => snapshot(self.0.clone()).under(parent),
+            None => snapshot(self.0.clone()),
+        });
         Box::pin(async move { Ok(found) })
     }
 

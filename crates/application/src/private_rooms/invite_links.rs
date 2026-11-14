@@ -44,6 +44,8 @@ pub enum InviteLinkFailureKind {
     Conflict,
     DependencyUnavailable,
     Internal,
+    /// 这是一间子房间：子房间没有邀请链接，要请人先请进父房间（`specs/redesign/sub-rooms.md`）。
+    ParentOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +204,7 @@ impl PrivateRoomInviteLinkService {
             .unwrap_or_else(|| room.default_invitation_for(actor));
         room.authorize_invite_link_permissions(actor, permissions)
             .map_err(|error| domain(OPERATION, &error))?;
+        ensure_parent_room(&snapshot, OPERATION)?;
         if permissions.manage() && !request.actor.recently_authenticated {
             return Err(InviteLinkFailure::new(
                 OPERATION,
@@ -243,6 +246,7 @@ impl PrivateRoomInviteLinkService {
         let snapshot = self
             .managed_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
+        ensure_parent_room(&snapshot, OPERATION)?;
         let stored = self
             .links
             .invite_link(request.catalog_id)
@@ -325,8 +329,10 @@ impl PrivateRoomInviteLinkService {
                 let kind = match failure.kind() {
                     // 刚刚检查过以后创建人没了邀请权限、房间归档了：链接不管用了。带“管理”的链接只有
                     // 房主的还管用（以前管理员也建得出来）。
+                    // 子房间没有邀请链接，这里碰上的只会是回滚到旧版那段时间建出来的。
                     PrivateRoomFailureKind::Forbidden
                     | PrivateRoomFailureKind::OwnerOnly
+                    | PrivateRoomFailureKind::SubRoom(_)
                     | PrivateRoomFailureKind::NotFound => InviteLinkFailureKind::NotFound,
                     PrivateRoomFailureKind::Conflict => InviteLinkFailureKind::Conflict,
                     PrivateRoomFailureKind::DependencyUnavailable
@@ -404,7 +410,9 @@ impl PrivateRoomInviteLinkService {
         snapshot: &PrivateRoomSnapshot,
         record: &PrivateRoomInviteLinkRecord,
     ) -> bool {
+        // 子房间的链接不认：只会是回滚到旧版那段时间建出来的。
         self.clock.now() < record.expires_at
+            && snapshot.parent_catalog_id().is_none()
             && snapshot
                 .room()
                 .authorize_invite_link_permissions(record.created_by, record.permissions)
@@ -460,6 +468,21 @@ impl PrivateRoomInviteLinkService {
             .authorize_invite_link(actor.principal_id)
             .map_err(|error| domain(operation, &error))?;
         Ok(snapshot)
+    }
+}
+
+/// 邀请链接只有父房间有。到这里操作者已经过了“看得见、能邀请”这两关，可以照实说。
+fn ensure_parent_room(
+    snapshot: &PrivateRoomSnapshot,
+    operation: &'static str,
+) -> InviteLinkResult<()> {
+    if snapshot.parent_catalog_id().is_some() {
+        Err(InviteLinkFailure::new(
+            operation,
+            InviteLinkFailureKind::ParentOnly,
+        ))
+    } else {
+        Ok(())
     }
 }
 

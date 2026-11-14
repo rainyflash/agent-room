@@ -29,7 +29,31 @@ pub enum PrivateRoomFailureKind {
     UnknownCommit,
     /// 新建时就公开，可房主名下已经有一间公开房间（每个账户最多 1 间）。
     PublicRoomLimitReached,
+    /// 子房间这边不让做，分开说原因（`specs/redesign/sub-rooms.md`）。
+    SubRoom(SubRoomRefusal),
     Internal,
+}
+
+/// 子房间这边不让做的几种原因，回答里各有各的码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomRefusal {
+    /// 这件事子房间没有，只在父房间做：口令、邀请链接、公开、往外请人、转让房主、单独改权限，
+    /// 还有整间归档和改名（子房间有自己的入口）。
+    ParentOnly,
+    /// 子房间下面不能再开子房间。
+    Nested,
+    /// 房主定了只有管理员能建子房间。
+    AdminsOnly,
+    /// 房主关掉了“Agent 能建子房间”。
+    AgentsMayNotCreate,
+    /// 这间房里已经有一间没归档的子房间叫这个名字。
+    NameTaken,
+    /// 这间房里没归档的子房间到上限了。
+    LimitReached,
+    /// 这个人或者这个 Agent 这一小时建得太多。
+    RateLimited,
+    /// 谁能建子房间这几项设置只有房主能改。
+    PolicyOwnerOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

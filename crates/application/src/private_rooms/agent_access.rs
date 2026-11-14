@@ -56,6 +56,8 @@ pub enum AgentAccessFailureKind {
     NotRevealable,
     /// 只能邀请的公开房间，或者房主关了“没有账号的网络 Agent”：拿房间号进不来，要管理者给口令。
     ClosedToNetworkAgents,
+    /// 这是一间子房间：子房间不给口令，口令在父房间（`specs/redesign/sub-rooms.md`）。
+    ParentOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,8 +339,10 @@ impl PrivateRoomAgentAccessService {
         request: ManageJoinCode,
     ) -> AgentAccessResult<GeneratedJoinCode> {
         const OPERATION: &str = "private_room.join_code.generate";
-        self.managed_room(&request.actor, request.catalog_id, OPERATION)
+        let snapshot = self
+            .managed_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
+        ensure_parent_room(&snapshot, OPERATION)?;
         // 口令取一份 256 位随机值摘要的前 60 位。
         let secret = self.secrets.generate().map_err(|_| {
             AgentAccessFailure::new(OPERATION, AgentAccessFailureKind::DependencyUnavailable)
@@ -373,8 +377,10 @@ impl PrivateRoomAgentAccessService {
         request: ManageJoinCode,
     ) -> AgentAccessResult<GeneratedJoinCode> {
         const OPERATION: &str = "private_room.join_code.reveal";
-        self.managed_room(&request.actor, request.catalog_id, OPERATION)
+        let snapshot = self
+            .managed_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
+        ensure_parent_room(&snapshot, OPERATION)?;
         let stored = self
             .access
             .sealed_join_code(request.catalog_id)
@@ -701,6 +707,8 @@ impl PrivateRoomAgentAccessService {
     }
 
     /// 敲门的房间：使用中的私人房间。不存在、不是私人房间、已归档的都说找不到，不说是哪一种。
+    /// 子房间现在也当找不到：Agent 进子房间要先看它在父房间里是不是成员（`specs/redesign/sub-rooms.md`
+    /// 的 2f），那一步做好以前不收敲门，免得父房间外面的 Agent 敲得进来。
     async fn knock_target(
         &self,
         catalog_id: RoomCatalogId,
@@ -712,7 +720,7 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?
             .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
-        if !snapshot.room().admits_agent_member(true) {
+        if snapshot.parent_catalog_id().is_some() || !snapshot.room().admits_agent_member(true) {
             return Err(AgentAccessFailure::new(
                 operation,
                 AgentAccessFailureKind::NotFound,
@@ -786,6 +794,13 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?
             .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
+        // 子房间不认口令：这里碰上的只会是回滚到旧版那段时间建出来的，当它不存在。
+        if snapshot.parent_catalog_id().is_some() {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::NotFound,
+            ));
+        }
         if !snapshot.room().admits_agent_member(true) {
             return Err(AgentAccessFailure::new(
                 operation,
@@ -838,6 +853,21 @@ impl PrivateRoomAgentAccessService {
         }
         .map_err(|error| domain(operation, &error))?;
         Ok(snapshot)
+    }
+}
+
+/// 口令只有父房间有。到这里操作者已经过了“看得见、管得了”这两关，可以照实说。
+fn ensure_parent_room(
+    snapshot: &PrivateRoomSnapshot,
+    operation: &'static str,
+) -> AgentAccessResult<()> {
+    if snapshot.parent_catalog_id().is_some() {
+        Err(AgentAccessFailure::new(
+            operation,
+            AgentAccessFailureKind::ParentOnly,
+        ))
+    } else {
+        Ok(())
     }
 }
 

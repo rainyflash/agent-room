@@ -29,6 +29,7 @@ mod provisioning;
 mod public_room_directory;
 mod role_changes;
 mod room_moderation_grants;
+mod sub_rooms;
 
 use std::sync::Arc;
 
@@ -80,6 +81,10 @@ pub use public_room_directory::{
 pub use role_changes::{RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord};
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
+};
+pub use sub_rooms::{
+    NewSubRoom, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomLink,
+    SubRoomParentFacts, SubRoomPolicyRecord, SubRoomStore,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

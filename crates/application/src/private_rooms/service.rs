@@ -23,6 +23,7 @@ use crate::{
         PrivateRoomAgentDirectory, PrivateRoomAgentEviction, PrivateRoomListingMatrix,
         PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
         PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore, SecretFactory,
+        SubRoomStore,
     },
 };
 
@@ -39,9 +40,12 @@ mod moderation_members;
 mod public_creation;
 mod public_transfer;
 mod role_changes;
+mod sub_rooms;
 
 use public_creation::{ensure_public_creator, limit_reached};
 use role_changes::role_changes;
+pub use sub_rooms::SubRoomUseCases;
+use sub_rooms::{ensure_not_sub_room, ensure_parent_room};
 
 pub trait PrivateRoomUseCases: Send + Sync {
     fn create(
@@ -164,6 +168,8 @@ pub struct PrivateRoomDependencies {
     pub listings: Arc<dyn PrivateRoomListingStore>,
     pub listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
     pub secrets: Arc<dyn SecretFactory>,
+    /// 子房间的父子关系、谁在管，和一间房里子房间的三项设置（`specs/redesign/sub-rooms.md`）。
+    pub sub_rooms: Arc<dyn SubRoomStore>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -179,6 +185,7 @@ pub struct PrivateRoomService {
     listings: Arc<dyn PrivateRoomListingStore>,
     listing_matrix: Arc<dyn PrivateRoomListingMatrix>,
     secrets: Arc<dyn SecretFactory>,
+    sub_rooms: Arc<dyn SubRoomStore>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -196,6 +203,7 @@ impl PrivateRoomService {
             listings: dependencies.listings,
             listing_matrix: dependencies.listing_matrix,
             secrets: dependencies.secrets,
+            sub_rooms: dependencies.sub_rooms,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }
@@ -230,7 +238,7 @@ impl PrivateRoomService {
             .await
             .map_err(|error| matrix(OPERATION, error))?;
         let snapshot = self.build_snapshot(
-            &request,
+            request.catalog_id,
             prepared.catalog,
             prepared.room,
             &matrix_room_id,
@@ -352,6 +360,8 @@ impl PrivateRoomService {
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
         let mut room = snapshot.room().clone();
         let actor = request.actor.principal_id();
+        // 子房间不能往外请人：要进子房间的人先进父房间。
+        ensure_parent_room(&snapshot, actor, OPERATION)?;
         let changed = if request.actor.is_agent() {
             if request.permissions != PrivateRoomPermissions::INVITED_BY_AGENT {
                 return Err(failure(
@@ -389,6 +399,8 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "private_room.invite_by_link";
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        // 子房间没有邀请链接。
+        ensure_not_sub_room(&snapshot, OPERATION)?;
         let mut room = snapshot.room().clone();
         room.authorize_invite_link(request.link_creator)
             .map_err(|error| domain(OPERATION, &error))?;
@@ -692,6 +704,8 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.update_permissions";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        // 一个人在子房间里的权限照他在父房间里的，不单独设。
+        ensure_parent_room(&snapshot, request.actor.principal_id, OPERATION)?;
         let previous = snapshot
             .room()
             .member(request.target_principal_id)
@@ -795,6 +809,8 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.transfer_ownership";
         let actor_matrix = active_actor_matrix_user(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        // 子房间的房主就是父房间的房主，转让父房间时一起转。
+        ensure_parent_room(&snapshot, request.actor.principal_id, OPERATION)?;
         let target_matrix = self
             .principal_matrix_user(request.target_principal_id, OPERATION)
             .await?;
@@ -888,6 +904,8 @@ impl PrivateRoomService {
             ));
         }
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        // 子房间的归档能恢复、不只房主能做，另有入口；这里的归档不记是谁、为什么关的。
+        ensure_parent_room(&snapshot, request.actor.principal_id(), OPERATION)?;
         self.archive_as_owner(snapshot, request.actor.principal_id(), OPERATION)
             .await
     }
@@ -942,6 +960,8 @@ impl PrivateRoomService {
         const OPERATION: &str = "private_room.rename";
         ensure_active_actor(&request.actor, self.clock.now(), OPERATION)?;
         let snapshot = self.load(request.catalog_id, OPERATION).await?;
+        // 子房间的名字在一间房里不重名，改名另有入口。
+        ensure_parent_room(&snapshot, request.actor.principal_id, OPERATION)?;
         snapshot
             .room()
             .authorize_rename(request.actor.principal_id)
@@ -1111,7 +1131,7 @@ impl PrivateRoomService {
 
     fn build_snapshot(
         &self,
-        request: &CreatePrivateRoom,
+        catalog_id: RoomCatalogId,
         catalog: RoomCatalog,
         room: PrivateRoom,
         matrix_room_id: &MatrixRoomId,
@@ -1122,7 +1142,7 @@ impl PrivateRoomService {
         let instance = RoomInstance::restore(
             self.identifiers.room_instance_id(),
             RoomInstanceFields {
-                catalog_id: request.catalog_id,
+                catalog_id,
                 matrix_room_id: matrix_reference,
                 region: None,
                 capacity: RoomCapacity::standard(),
