@@ -1,47 +1,29 @@
 import { Button } from '@agent-room/ui-system';
-import { Bot, Search, Star } from 'lucide-react';
-import {
-  useDeferredValue,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from 'react';
+import { ArrowRight, Bot, Search } from 'lucide-react';
+import { useDeferredValue, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import type { RoomPeople, RoomPerson } from '@/features/private-rooms/domain/room-people';
-import { formatRelativeTime } from '@/shared/i18n/formatters';
 
 import {
-  agentNameParts,
+  agentRowForKey,
   agentRows,
   agentRowSummary,
   searchAgentRows,
   type AgentRow,
-  type AgentRowState,
 } from '../domain/agent-table';
 import type { AgentOwner } from '../domain/agent-owners';
 import type { LobbyAgent } from '../domain/lobby';
 import { useAgentOwners, useAgentOwnerText } from './agent-owners';
-import { AgentAvatar, HumanAvatar, type AgentAvatarState } from './avatars';
+import { AgentNameButton, AgentStateText } from './agent-table-cells';
+import { HumanAvatar } from './avatars';
 import { useNetworkAgentIds } from './network-agent-labels';
 import './room-roster.css';
 
 type RosterTab = 'agents' | 'people';
 const rosterTabs: readonly RosterTab[] = ['agents', 'people'];
 const pageSize = 100;
-
-const avatarStates: Readonly<Record<AgentRowState, AgentAvatarState>> = {
-  waiting: 'waiting',
-  wakes: 'wakes',
-  on_resume: 'idle',
-  unknown: 'idle',
-  reconnecting: 'idle',
-  offline: 'offline',
-};
 
 export type RoomRosterProps = {
   readonly agents: readonly LobbyAgent[];
@@ -55,6 +37,8 @@ export type RoomRosterProps = {
   readonly onInviteAgent: (() => void) | null;
   /** Agent 表格下面的东西（离线归档的规则）。 */
   readonly footer?: ReactNode;
+  /** 把 Agent 表格展开成整页；不给就没有这个入口。 */
+  readonly onExpand?: (() => void) | null;
 };
 
 /**
@@ -70,6 +54,7 @@ export function RoomRoster({
   people,
   onInviteAgent,
   footer,
+  onExpand = null,
 }: RoomRosterProps) {
   const { t } = useTranslation();
   const id = useId();
@@ -129,6 +114,12 @@ export function RoomRoster({
             rows={rows}
             selectedAgentId={selectedAgentId}
           />
+          {onExpand === null || rows.length === 0 ? null : (
+            <button className="room-roster__expand" onClick={onExpand} type="button">
+              {t('roomRoster.expand')}
+              <ArrowRight aria-hidden="true" />
+            </button>
+          )}
         </div>
       ) : (
         <div
@@ -176,7 +167,7 @@ function AgentTable({
   readonly rows: readonly AgentRow[];
   readonly selectedAgentId: string | null;
 }) {
-  const { i18n, t } = useTranslation();
+  const { t } = useTranslation();
   const personal = usePersonalWorkspace();
   const ownerText = useAgentOwnerText();
   const [query, setQuery] = useState('');
@@ -243,31 +234,6 @@ function AgentTable({
     );
   }
 
-  const stateText = (row: AgentRow): ReactNode => {
-    if (row.state !== 'offline' || row.offlineSinceUnixMs === null)
-      return t(`roomRoster.state.${row.state}`);
-    // 离线的写离线了多久；“离线”两个字留给读屏，看得见的是整行变灰。
-    return (
-      <>
-        <span className="sr-only">{t('roomRoster.state.offline')} · </span>
-        {formatRelativeTime(row.offlineSinceUnixMs, now, i18n.resolvedLanguage)}
-      </>
-    );
-  };
-  const moveFocus = (event: KeyboardEvent, agentId: string): void => {
-    const index = visible.findIndex((row) => row.agent.agentId === agentId);
-    const targets: Readonly<Record<string, number>> = {
-      ArrowDown: Math.min(visible.length - 1, index + 1),
-      ArrowUp: Math.max(0, index - 1),
-      End: visible.length - 1,
-      Home: 0,
-    };
-    const target = visible[targets[event.key] ?? -1];
-    if (index < 0 || target === undefined) return;
-    event.preventDefault();
-    buttons.current.get(target.agent.agentId)?.focus();
-  };
-
   return (
     <>
       <p className="room-roster__summary">
@@ -316,7 +282,6 @@ function AgentTable({
                 const owner =
                   ownerText.short(owners.get(agent.agentId)) ??
                   (networkAgents.has(agent.agentId) ? t('lobby.owner.networkShort') : null);
-                const name = agentNameParts(agent.displayName);
                 return (
                   <tr
                     data-selected={selected ? 'true' : undefined}
@@ -327,46 +292,31 @@ function AgentTable({
                     }}
                   >
                     <th scope="row">
-                      <button
-                        aria-pressed={selected}
-                        className="agent-table__name"
-                        data-agent-id={agent.agentId}
-                        onClick={(event) => {
-                          // 整行都能点；按钮自己点了，别让那一行再点一次。
-                          event.stopPropagation();
-                          onSelectAgent(agent.agentId);
-                        }}
-                        onKeyDown={(event) => {
-                          moveFocus(event, agent.agentId);
-                        }}
-                        ref={(element) => {
+                      <AgentNameButton
+                        buttonRef={(element) => {
                           if (element === null) buttons.current.delete(agent.agentId);
                           else buttons.current.set(agent.agentId, element);
                         }}
-                        type="button"
-                      >
-                        <AgentAvatar id={agent.agentId} state={avatarStates[row.state]} />
-                        <span className="agent-table__who">
-                          <span className="agent-table__label">
-                            <span>{name.base}</span>
-                            {name.tag === '' ? null : <span>{name.tag}</span>}
-                          </span>
-                          {/* 窄的时候“谁的”那一列收起来，写在名字下面这一行（样式里按宽度换）。 */}
-                          {owner === null ? null : (
-                            <span className="agent-table__owner-line">{owner}</span>
-                          )}
-                        </span>
-                        {personal?.snapshot.index.favorites.has(agent.agentId) === true ? (
-                          <Star
-                            aria-label={t('personal.favorites')}
-                            className="agent-table__favorite"
-                            fill="currentColor"
-                          />
-                        ) : null}
-                      </button>
+                        favorite={personal?.snapshot.index.favorites.has(agent.agentId) === true}
+                        onKeyDown={(event) => {
+                          const target = agentRowForKey(visible, agent.agentId, event.key);
+                          if (target === null) return;
+                          event.preventDefault();
+                          buttons.current.get(target)?.focus();
+                        }}
+                        onSelect={() => {
+                          onSelectAgent(agent.agentId);
+                        }}
+                        // 窄的时候“谁的”那一列收起来，写在名字下面这一行（样式里按宽度换）。
+                        ownerLine={owner}
+                        row={row}
+                        selected={selected}
+                      />
                     </th>
                     <td className="agent-table__owner">{owner}</td>
-                    <td className="agent-table__state">{stateText(row)}</td>
+                    <td className="agent-table__state">
+                      <AgentStateText now={now} row={row} />
+                    </td>
                   </tr>
                 );
               })}

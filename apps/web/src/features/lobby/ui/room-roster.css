@@ -336,3 +336,28 @@ button.agent-table__name {
     display: block;
   }
 }
+
+/* 右栏最下面：把表格展开成整页。钉在栏底，不跟着表格滚。 */
+.room-roster__expand {
+  display: flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 16px;
+  border: 0;
+  /* 它钉在栏底，上面的表格在它后面滚：一条细线分开。 */
+  border-top: 1px solid var(--ar-line);
+  color: var(--ar-muted);
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: left;
+}
+.room-roster__expand:hover {
+  color: var(--color-ink);
+}
+.room-roster__expand > svg {
+  width: 13px;
+  height: 13px;
+}

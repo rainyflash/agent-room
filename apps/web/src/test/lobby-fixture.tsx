@@ -68,7 +68,8 @@ import { projectLobbyScene } from '@/features/lobby/domain/scene-projection';
 import {
   isRoomPageLayout,
   type RoomPageLayout,
-  type RoomWorkspaceView,
+  isRoomPanelView,
+  type RoomPageView,
 } from '@/features/lobby/domain/workspace-view';
 import {
   rememberRoomPageLayout,
@@ -1592,9 +1593,9 @@ function LobbyFixture({
   readonly search: string;
   readonly inboxMode: boolean;
 }) {
-  const [view, setView] = useState<RoomWorkspaceView>(() => {
+  const [view, setView] = useState<RoomPageView>(() => {
     const requested = new URLSearchParams(search).get('view');
-    return requested === 'conversation' || requested === 'resources' ? requested : 'space';
+    return isRoomPanelView(requested) ? requested : 'space';
   });
   // 和应用一样：地址里写了版面就照地址，不然看这台设备记着的。
   const [layout, setLayout] = useState<RoomPageLayout>(() => {
@@ -1609,7 +1610,7 @@ function LobbyFixture({
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(() =>
     new URLSearchParams(search).get('message'),
   );
-  const updateView = (nextView: RoomWorkspaceView): void => {
+  const updateView = (nextView: RoomPageView): void => {
     const url = new URL(window.location.href);
     if (nextView === 'space') url.searchParams.delete('view');
     else url.searchParams.set('view', nextView);

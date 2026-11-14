@@ -124,6 +124,50 @@ describe('大厅视图路由', () => {
   });
 });
 
+describe('Agent 表格展开成整页的路由', () => {
+  it('地址里认得 view=agents；从右栏展开时别的选择都放开，版面留着', () => {
+    expect(normalizeLobbySearch({ view: 'agents' })).toEqual({ view: 'agents' });
+    expect(
+      lobbySearchWithRoomPanel(
+        { agent: 'agent-01', layout: 'conversation', message: '$message', view: 'resources' },
+        'agents',
+      ),
+    ).toEqual({ layout: 'conversation', view: 'agents' });
+  });
+  it('在那一页上点一行看详情，页面留着；关掉详情也留着', () => {
+    const search = { layout: 'conversation', view: 'agents' } as const;
+    expect(lobbySearchWithAgent(search, 'agent-01', 'conversation')).toEqual({
+      agent: 'agent-01',
+      ...search,
+    });
+    expect(lobbySearchWithAgent({ agent: 'agent-01', ...search }, null, 'conversation')).toEqual(
+      search,
+    );
+  });
+  it('回对话、打开私聊、去看某条消息都离开那一页', () => {
+    const search = { agent: 'agent-01', layout: 'conversation', view: 'agents' } as const;
+    expect(lobbySearchWithRoomPanel(search, 'conversation')).toEqual({
+      layout: 'conversation',
+      view: 'conversation',
+    });
+    expect(lobbySearchWithDirectSession(search, 'private-room')).toEqual({
+      direct: 'private-room',
+      layout: 'conversation',
+    });
+    expect(lobbySearchWithMessage(search, '$message')).toEqual({
+      layout: 'conversation',
+      message: '$message',
+    });
+    // 放开正在看的消息时哪一页都不动。
+    expect(lobbySearchWithMessage(search, null)).toEqual(search);
+  });
+  it('换到场景时那一页收起来：场景里没有它', () => {
+    expect(lobbySearchWithLayout({ layout: 'conversation', view: 'agents' }, 'scene')).toEqual({
+      layout: 'scene',
+    });
+  });
+});
+
 describe('房间页版面路由', () => {
   it('地址里只认对话和场景两种版面', () => {
     expect(normalizeLobbySearch({ layout: 'conversation' })).toEqual({ layout: 'conversation' });

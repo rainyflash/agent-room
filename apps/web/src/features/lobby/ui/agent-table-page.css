@@ -1,0 +1,243 @@
+/*
+ * Agent 表格展开成的整页（specs/redesign/room-page.md 的“Agent 表格”）。表格本身的样子在
+ * room-roster.css，这里只管这一页多出来的：标题、筛选、多的三列。只用令牌。
+ */
+.agent-page {
+  /* 里面给读屏的字是绝对定位的：没有这一句，滚出去的那几行会把整页撑高。 */
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+  /* 列按这一页自己的宽度收（见最下面），不看窗口多宽。 */
+  container: agent-page / inline-size;
+}
+.agent-page__inner {
+  display: flex;
+  width: 100%;
+  max-width: 1120px;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+  padding: 28px 32px 32px;
+}
+
+.agent-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.agent-page__head h2 {
+  margin: 0;
+  /* 焦点是程序放过来的，不是能按的东西：不画框。 */
+  outline: none;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.agent-page__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin: 4px 0 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.agent-page__summary > span + span::before {
+  margin-right: 6px;
+  content: '·';
+}
+.agent-page__search {
+  position: relative;
+  display: flex;
+  width: min(240px, 100%);
+  align-items: center;
+}
+.agent-page__search > svg {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--ar-muted);
+  pointer-events: none;
+}
+.agent-page__search > input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px 0 32px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-size: 0.8125rem;
+}
+
+/* 筛选：一组一个小标题，后面几个能按下去的词。选中的垫一层灰。 */
+.agent-page__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.agent-page__filter {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.agent-page__filter > span {
+  margin-right: 4px;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}
+.agent-page__filter > button {
+  max-width: 100%;
+  min-height: 28px;
+  overflow: hidden;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-page__filter > button:hover {
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+}
+.agent-page__filter > button[aria-pressed='true'] {
+  color: var(--color-ink);
+  background: var(--ar-selected);
+}
+
+/* 表格：这一页的底是白的；六列，行和行之间一条细线，横着看不串行。 */
+.agent-table--page thead th {
+  background: var(--ar-canvas);
+}
+.agent-table--page thead th,
+.agent-table--page tbody tr > * {
+  border-bottom: 1px solid var(--ar-line);
+}
+.agent-table--page tbody tr {
+  height: 48px;
+}
+.agent-table--page tbody th:first-child,
+.agent-table--page tbody td:last-child {
+  border-radius: 0;
+}
+.agent-table--page thead th:nth-child(2) {
+  width: 12%;
+}
+.agent-table--page thead th:nth-child(3) {
+  width: 15%;
+}
+.agent-table--page thead th:nth-child(4) {
+  width: 17%;
+}
+.agent-table--page thead th:nth-child(5) {
+  width: 11%;
+}
+.agent-table--page thead th:nth-child(6) {
+  width: 20%;
+}
+.agent-table__origin,
+.agent-table__joined {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 你的标签：一个个浅灰的小块。一行放不下就折到下一行，那一行跟着高一点；单个太长的截掉。 */
+.agent-table .agent-table__marks {
+  padding-block: 6px;
+}
+.agent-table__marks > span {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  margin: 2px 6px 2px 0;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--ar-surface-muted);
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.agent-page__none {
+  margin: 0;
+  padding: 16px 8px;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+.agent-page__more {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+.agent-page .roster-policy {
+  margin: 8px 0 0;
+}
+.agent-page .room-roster__empty {
+  padding-inline: 0;
+}
+
+/* 窄了先收后面的列：标签和进来的时间，再是怎么来的；最窄只留名字和状态，“谁的”写在名字下面。 */
+@container agent-page (max-width: 899px) {
+  .agent-table--page thead th:nth-child(n + 5),
+  .agent-table--page .agent-table__joined,
+  .agent-table--page .agent-table__marks {
+    display: none;
+  }
+  .agent-table--page thead th:nth-child(2) {
+    width: 18%;
+  }
+  .agent-table--page thead th:nth-child(3) {
+    width: 22%;
+  }
+  .agent-table--page thead th:nth-child(4) {
+    width: 24%;
+  }
+}
+@container agent-page (max-width: 639px) {
+  .agent-page__inner {
+    padding: 20px 16px 24px;
+  }
+  .agent-page__search {
+    width: 100%;
+  }
+  .agent-table--page thead th:nth-child(4),
+  .agent-table--page .agent-table__origin {
+    display: none;
+  }
+  .agent-table--page thead th:nth-child(2) {
+    width: 26%;
+  }
+  .agent-table--page thead th:nth-child(3) {
+    width: 30%;
+  }
+}
+@container agent-page (max-width: 459px) {
+  .agent-table--page thead th:nth-child(2),
+  .agent-table--page .agent-table__owner {
+    display: none;
+  }
+  .agent-table--page thead th:nth-child(3) {
+    width: 36%;
+  }
+  .agent-table--page .agent-table__owner-line {
+    display: block;
+  }
+}

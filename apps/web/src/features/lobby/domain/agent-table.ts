@@ -94,3 +94,98 @@ export function searchAgentRows(rows: readonly AgentRow[], query: string): reado
       agent.matrixUserId.toLocaleLowerCase().includes(needle),
   );
 }
+
+/**
+ * 整页表格上按状态筛的几项。“全部”不算归档的；“已归档”只看归档的，别的几项都不看归档的。
+ * 只挑了人会去找的三种状态，下次运行时读、在线、重连中在“全部”里看。
+ */
+export const agentStateFilters = ['all', 'waiting', 'wakes', 'offline', 'archived'] as const;
+export type AgentStateFilter = (typeof agentStateFilters)[number];
+
+/** 按“谁的”筛：所有人的、你自己的、网络 Agent。 */
+export const agentOwnerFilters = ['all', 'mine', 'network'] as const;
+export type AgentOwnerFilter = (typeof agentOwnerFilters)[number];
+
+/** 按你自己做的记号筛：不筛、你收藏的、带某个标签的。 */
+export type AgentMarkFilter =
+  | { readonly kind: 'all' }
+  | { readonly kind: 'favorites' }
+  | { readonly kind: 'tag'; readonly tag: string };
+
+export type AgentRowFilter = {
+  readonly state: AgentStateFilter;
+  readonly owner: AgentOwnerFilter;
+  readonly mark: AgentMarkFilter;
+};
+
+export const noAgentRowFilter: AgentRowFilter = {
+  state: 'all',
+  owner: 'all',
+  mark: { kind: 'all' },
+};
+
+/** 筛的时候要问的几件事，都不在 `LobbyAgent` 上：谁的由服务器说，收藏和标签是你自己记的。 */
+export type AgentRowFacts = {
+  readonly mine: (agentId: string) => boolean;
+  readonly network: (agentId: string) => boolean;
+  readonly favorite: (agentId: string) => boolean;
+  readonly tags: (agentId: string) => readonly string[];
+};
+
+export function filterAgentRows(
+  rows: readonly AgentRow[],
+  filter: AgentRowFilter,
+  facts: AgentRowFacts,
+): readonly AgentRow[] {
+  return rows.filter(({ agent, archived, state }) => {
+    if (archived !== (filter.state === 'archived')) return false;
+    if (filter.state !== 'all' && filter.state !== 'archived' && state !== filter.state)
+      return false;
+    if (filter.owner === 'mine' && !facts.mine(agent.agentId)) return false;
+    if (filter.owner === 'network' && !facts.network(agent.agentId)) return false;
+    if (filter.mark.kind === 'favorites') return facts.favorite(agent.agentId);
+    if (filter.mark.kind === 'tag') return facts.tags(agent.agentId).includes(filter.mark.tag);
+    return true;
+  });
+}
+
+/**
+ * 怎么来的。网络 Agent 是服务器说的；“这台电脑”要这台电脑上的连接服务说它在这里（只有桌面端问得到）。
+ * 别的只知道它是从某台电脑上接进来的：说不出“别的电脑”，这台电脑上已经关掉的会话读不到。
+ */
+export const agentOrigins = ['this_computer', 'computer', 'network'] as const;
+export type AgentOrigin = (typeof agentOrigins)[number];
+
+export function agentOrigin(
+  agentId: string,
+  network: boolean,
+  localAgentIds: ReadonlySet<string> | null,
+): AgentOrigin {
+  if (network) return 'network';
+  return localAgentIds?.has(agentId) === true ? 'this_computer' : 'computer';
+}
+
+/**
+ * 进来的时间。写名片的 Agent 只在进房间时写一次，名片的时间就是它（改名、离开又回来会重写）；
+ * 旧的租约写法隔两分钟续一次，那个时间不是进来的时间，不知道就不写。
+ */
+export function agentJoinedAtUnixMs(agent: LobbyAgent): number | null {
+  return agent.liveness === 'presence' ? (agent.lastActiveAtUnixMs ?? null) : null;
+}
+
+/** 表格里上下键、Home、End 走到哪一行；别的键、找不到这一行时为空。 */
+export function agentRowForKey(
+  rows: readonly AgentRow[],
+  currentAgentId: string,
+  key: string,
+): string | null {
+  const index = rows.findIndex((row) => row.agent.agentId === currentAgentId);
+  if (index < 0) return null;
+  const targets: Readonly<Record<string, number>> = {
+    ArrowDown: Math.min(rows.length - 1, index + 1),
+    ArrowUp: Math.max(0, index - 1),
+    End: rows.length - 1,
+    Home: 0,
+  };
+  return Object.hasOwn(targets, key) ? (rows[targets[key] ?? -1]?.agent.agentId ?? null) : null;
+}
