@@ -677,7 +677,13 @@ function ReadyLobby({
   );
   const agentDrawer =
     drawer === null ? null : (
-      <WorkspaceDrawer label={t('roomWorkspace.members')} variant={drawer} onClose={closeDrawer}>
+      <WorkspaceDrawer
+        label={t('roomWorkspace.members')}
+        // 对话版面在手机上是从下面出来的一整页；场景版面照旧从右边出来。
+        sheet={conversationLayout}
+        variant={drawer}
+        onClose={closeDrawer}
+      >
         {rosterPanel()}
       </WorkspaceDrawer>
     );
@@ -742,6 +748,7 @@ function ReadyLobby({
       <>
         <RoomDesk
           agentCount={roster.agentCount}
+          agentFaces={roster.faces}
           directName={directName}
           inspector={inspector}
           inspecting={selectedAgent !== null}

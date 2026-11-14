@@ -324,6 +324,10 @@
 .room-desk[data-page] .room-desk__agents-button {
   display: none;
 }
+/* “Agent N”前面叠着的头像只在手机上画。 */
+.room-desk__agents-faces {
+  display: none;
+}
 
 /* 左栏：主房间，下面是私聊 */
 .room-desk__places {
@@ -561,14 +565,32 @@
   .room-desk__identity[data-places] .room-desk__meta > span:not(:first-of-type) {
     display: none;
   }
-  /* 要一直提醒着的那一句（归档了、服务器读得到、不加密）先保住：这时候房间名让。 */
+  /* 要一直提醒着的那一句（归档了、服务器读得到、不加密）不能只剩半句：前一半“哪种房间”不写，
+     只留后一半；房间名先让；还放不下，这一句自己折成两行，顶栏跟着高一点。 */
+  .room-desk__titles[data-warns] .room-kind__what {
+    display: none;
+  }
+  .room-desk__titles[data-warns] > .room-desk__meta {
+    overflow: visible;
+    white-space: normal;
+  }
+  /* 这一行只留给它：几个人不写（点开“Agent N”看得到）。 */
+  .room-desk__titles[data-warns] > .room-desk__meta > span:not(:first-of-type) {
+    display: none;
+  }
   .room-desk__identity[data-places] > .room-desk__titles[data-warns] > h1 {
-    min-width: 3.5em;
+    min-width: 3em;
     flex-shrink: 1;
   }
   .room-desk__identity[data-places] > .room-desk__titles[data-warns] > .room-desk__meta {
-    max-width: calc(100% - 3.5em - 6px);
+    max-width: calc(100% - 3em - 6px);
     flex-shrink: 0;
+  }
+  .room-desk__identity[data-places]
+    > .room-desk__titles[data-warns]
+    .room-desk__meta
+    > span:first-of-type {
+    overflow: visible;
   }
   .room-desk__actions > .room-layout-switch,
   .room-desk__actions > .room-layout-toggle,
@@ -593,6 +615,27 @@
     border-radius: var(--ar-pill);
     background: var(--ar-surface-muted);
     font-variant-numeric: tabular-nums;
+  }
+  /* 前面叠着表格最上面的两个 Agent；有头像就不画那个图标。 */
+  .room-desk__actions > .room-desk__agents-button--faces {
+    padding-left: 6px;
+  }
+  .room-desk__agents-button--faces > .ar-button__icon {
+    display: none;
+  }
+  .room-desk__agents-button--faces > span:last-child {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .room-desk__agents-faces {
+    display: inline-flex;
+    --ar-avatar-size: 24px;
+  }
+  .room-desk__agents-faces > .ar-avatar + .ar-avatar {
+    margin-left: -7px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--ar-surface-muted);
   }
   /* 下拉和“更多”：从下面出来的一层，后面垫暗。 */
   .room-desk-menu {

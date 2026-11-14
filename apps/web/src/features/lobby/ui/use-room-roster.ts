@@ -11,12 +11,15 @@ import {
 } from '@/features/private-rooms/domain/room-people';
 
 import { attendanceCounts } from '../domain/agent-attendance';
+import { agentFaces, agentRows, type AgentFace } from '../domain/agent-table';
 import type { LobbyAgent } from '../domain/lobby';
 import { useAgentOwners, useAgentOwnerText } from './agent-owners';
 
 export type RoomRosterData = {
   /** 表格里列着的 Agent 数：归档的不算，离线的算。顶栏和“Agent”标签上是同一个数。 */
   readonly agentCount: number;
+  /** 表格最上面的两个 Agent：手机上叠在顶栏的“Agent N”前面。 */
+  readonly faces: readonly AgentFace[];
   readonly people: RoomPeople;
   readonly wakeableAgentIds: ReadonlySet<string>;
 };
@@ -61,8 +64,13 @@ export function useRoomRoster({
   const hasMine = [...owners.values()].some(mine);
   const wakeableAgentIds = useWakeableAgentIds(roomId, principalId, hasMine);
   const attendance = attendanceCounts(agents, observedAtUnixMs);
+  const faces = useMemo(
+    () => agentFaces(agentRows(agents, observedAtUnixMs, wakeableAgentIds)),
+    [agents, observedAtUnixMs, wakeableAgentIds],
+  );
   return {
     agentCount: attendance.present + attendance.reconnecting + attendance.away,
+    faces,
     people,
     wakeableAgentIds,
   };

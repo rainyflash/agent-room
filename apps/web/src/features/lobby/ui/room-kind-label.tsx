@@ -18,7 +18,7 @@ export type RoomKind = {
 
 /**
  * 这一小句是不是要一直提醒着的那种：归档了、服务器读得到、不加密。
- * 地方不够时先保住它（手机上的顶栏让房间名先收）。
+ * 地方不够时先保住它：手机上的顶栏只写它的后一半（见 `Notice`），房间名先收。
  */
 export function roomKindWarns({
   privateRoom,
@@ -40,25 +40,46 @@ export function RoomKindLabel({
   const { t } = useTranslation();
   if (privateRoom && archived)
     return (
-      <span className="workspace-header__notice" title={t('roomWorkspace.archivedNotice')}>
-        {t('roomWorkspace.privateRoomArchived')}
-      </span>
+      <Notice
+        text={t('roomWorkspace.privateRoomArchived')}
+        title={t('roomWorkspace.archivedNotice')}
+      />
     );
   if (privateRoom && serverReadable)
     return (
-      <span className="workspace-header__notice" title={t('roomWorkspace.serverReadableNotice')}>
-        {t('roomWorkspace.privateRoomServerReadable')}
-      </span>
+      <Notice
+        text={t('roomWorkspace.privateRoomServerReadable')}
+        title={t('roomWorkspace.serverReadableNotice')}
+      />
     );
   if (privateRoom && unencrypted)
     return (
-      <span className="workspace-header__notice" title={t('roomWorkspace.unencryptedNotice')}>
-        {t('roomWorkspace.publicRoomUnencrypted')}
-      </span>
+      <Notice
+        text={t('roomWorkspace.publicRoomUnencrypted')}
+        title={t('roomWorkspace.unencryptedNotice')}
+      />
     );
   if (privateRoom && listed) return <span>{t('roomWorkspace.publicRoom')}</span>;
   if (privateRoom) return <span>{t('roomWorkspace.privateRoom')}</span>;
   return (
     <span title={t('roomWorkspace.publicNotice')}>{t('roomWorkspace.publicLobbyVisible')}</span>
+  );
+}
+
+/** 这几句里，前一半（哪种房间）和后一半（要提醒的话）中间的那个点。两种语言的文案都这么写。 */
+const noticeSeparator = ' · ';
+
+/**
+ * 要一直提醒着的一句，比如“私人房间 · 已归档”。前一半单独包一层（`.room-kind__what`）：
+ * 地方不够时只收前一半，后一半“已归档”一直写全（手机上的顶栏，样式在 `room-desk.css`）。
+ */
+function Notice({ text, title }: { readonly text: string; readonly title: string }) {
+  const cut = text.indexOf(noticeSeparator);
+  const split = cut < 0 ? 0 : cut + noticeSeparator.length;
+  return (
+    <span className="workspace-header__notice" title={title}>
+      {split === 0 ? null : <span className="room-kind__what">{text.slice(0, split)}</span>}
+      {text.slice(split)}
+    </span>
   );
 }

@@ -467,6 +467,30 @@
   top: 12px;
   right: 12px;
 }
+/*
+ * 手机上对话版面的“Agent N”：从下面出来的一整页（specs/redesign/room-page.md 的“手机宽度”）。
+ * 高度是定死的，不跟着里面有几行变：换标签、搜的时候上面的标签不跳。顶栏那一条留在上面露着。
+ */
+@media (max-width: 767px) {
+  .workspace-drawer--sheet {
+    top: auto;
+    left: 0;
+    width: 100%;
+    max-width: none;
+    height: calc(100dvh - 56px);
+    padding: 4px 0 env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--ar-border);
+    border-left: 0;
+    border-radius: var(--ar-panel-radius) var(--ar-panel-radius) 0 0;
+  }
+  .workspace-drawer--sheet::backdrop {
+    backdrop-filter: none;
+  }
+  .workspace-drawer--sheet .workspace-drawer__close {
+    top: 6px;
+    right: 8px;
+  }
+}
 .workspace-direct-content {
   display: flex;
   width: 100%;

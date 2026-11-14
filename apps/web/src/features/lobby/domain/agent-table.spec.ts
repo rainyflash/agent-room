@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentFaces,
   agentJoinedAtUnixMs,
   agentNameParts,
   agentOrigin,
@@ -111,6 +112,25 @@ describe('agentRows', () => {
   it('归档的照样排进去，带着标记：平时不列，点“已归档”才看', () => {
     const rows = agentRows([offline('Old', 20_000, true), waiting], NOW, new Set());
     expect(rows.map((row) => row.archived)).toEqual([false, true]);
+  });
+});
+
+describe('agentFaces', () => {
+  it('表格最上面的两个：在等的在前，离线的带着标记', () => {
+    const rows = agentRows([offline('Gone', 5), resume, waiting], NOW, new Set());
+    expect(agentFaces(rows)).toEqual([
+      { agentId: waiting.agentId, offline: false },
+      { agentId: resume.agentId, offline: false },
+    ]);
+    expect(agentFaces(agentRows([offline('Gone', 5)], NOW, new Set()))).toEqual([
+      { agentId: 'gone', offline: true },
+    ]);
+  });
+
+  it('归档的不算；一个都没有就是空的', () => {
+    const rows = agentRows([offline('Old', 20_000, true), offline('Gone', 5)], NOW, new Set());
+    expect(agentFaces(rows)).toEqual([{ agentId: 'gone', offline: true }]);
+    expect(agentFaces(agentRows([offline('Old', 20_000, true)], NOW, new Set()))).toEqual([]);
   });
 });
 
