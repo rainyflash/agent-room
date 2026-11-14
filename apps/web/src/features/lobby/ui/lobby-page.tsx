@@ -46,6 +46,9 @@ import type { LobbySceneProjection } from '@/features/lobby/domain/scene-project
 import { AgentInspector, type AgentInspectorFailure } from '@/features/lobby/ui/agent-inspector';
 import { AgentRosterPolicyPanel } from './agent-roster-policy-panel';
 import { ListModeRoster } from '@/features/lobby/ui/list-mode-roster';
+import { RoomRoster } from '@/features/lobby/ui/room-roster';
+import { useRoomRoster } from '@/features/lobby/ui/use-room-roster';
+import { useMediaQuery } from '@/shared/ui/use-media-query';
 import {
   RoomSettingsDialog,
   type RoomSettingsSection,
@@ -64,7 +67,7 @@ import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-roo
 import { RoomNoticeBar } from '@/features/room-notice/ui/room-notice-bar';
 import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
-import { RoomDesk } from '@/features/lobby/ui/room-desk';
+import { RoomDesk, roomDeskSideQuery } from '@/features/lobby/ui/room-desk';
 import { RoomLayoutSwitch } from '@/features/lobby/ui/room-layout-switch';
 import { WorkspaceDrawer } from '@/features/lobby/ui/workspace-drawer';
 import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-session-navigation';
@@ -84,6 +87,8 @@ import './lobby-game.css';
 
 // 对话面板放大与否只影响这台设备的布局，存在本机；读写失败（隐私模式等）就只在本次有效。
 const panelSizeKey = 'agent-room.room-panel-size';
+/** 还没有人说过话时用的同一份空名单：每次重画都新建一份的话，右栏的人会跟着重算。 */
+const noHumans: readonly never[] = [];
 type PanelSize = 'regular' | 'wide';
 
 function readPanelSize(): PanelSize {
@@ -304,6 +309,20 @@ function ReadyLobby({
   const attendance = attendanceCounts(room.agents, room.observedAtUnixMs);
   // 对话版面里对话一直在：地址里不带 `view` 也是对话。场景里不带 `view` 是画面本身，私聊开着时才算对话。
   const conversationLayout = layout === 'conversation';
+  // 右栏的表格和顶栏那一行小字用同一份数。
+  const roster = useRoomRoster({
+    agents: room.agents,
+    catalogId,
+    observedAtUnixMs: room.observedAtUnixMs,
+    principalId: principal?.principalId ?? null,
+    room:
+      privateRoomList.data?.ok === true
+        ? privateRoomList.data.value.find((entry) => entry.catalogId === catalogId)
+        : undefined,
+    roomId: room.roomId,
+    spoken: projection.humans ?? noHumans,
+  });
+  const sideColumn = useMediaQuery(roomDeskSideQuery);
   const activeView =
     view === 'space' && (conversationLayout || selectedDirectSessionId !== null)
       ? 'conversation'
@@ -372,13 +391,23 @@ function ReadyLobby({
     closeDrawer();
     onSelectedAgentChange(id);
   };
-  // 对话版面里关掉 Agent 详情：焦点回到右栏里刚才那一行；右栏收起来了就回到顶栏打开它的按钮。
-  const focusAgentOrigin = (): void => {
-    const origins = document.querySelectorAll<HTMLElement>(
-      '.room-desk__side .roster-agent[aria-pressed="true"], .room-desk__agents-button',
+  // 对话版面里关掉 Agent 详情：焦点回到右栏里刚才那一行（那一行不在这一页上就回到标签）；
+  // 右栏收起来了就回到顶栏打开它的按钮。详情开着时表格碰不到，所以等它关了、页面重画完再放焦点。
+  const returnFocusFrom = useRef<string | null>(null);
+  useEffect(() => {
+    const agentId = returnFocusFrom.current;
+    if (agentId === null || selectedAgentId !== null) return;
+    returnFocusFrom.current = null;
+    const origins = [
+      ...document.querySelectorAll<HTMLElement>('.room-desk__side .agent-table__name'),
+    ].filter((row) => row.dataset.agentId === agentId);
+    origins.push(
+      ...document.querySelectorAll<HTMLElement>(
+        '.room-desk__side [role="tab"][aria-selected="true"], .room-desk__agents-button',
+      ),
     );
-    [...origins].find((origin) => origin.offsetParent !== null)?.focus();
-  };
+    origins.find((origin) => origin.offsetParent !== null)?.focus();
+  }, [selectedAgentId]);
   const directNavigation =
     principal === null ? null : (
       <DirectSessionNavigation
@@ -390,25 +419,51 @@ function ReadyLobby({
         }}
       />
     );
-  // 抽屉里连私聊一起列；对话版面的右栏只列 Agent，私聊在左栏。
-  const rosterWith = (directMessages: boolean) => (
-    <div className="workspace-members">
-      <ListModeRoster
-        agents={room.agents}
-        observedAtUnixMs={room.observedAtUnixMs}
-        onSelectAgent={selectAgent}
-        selectedAgentId={selectedAgentId}
-        variant="compact"
-      />
-      <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
-      {directMessages ? directNavigation : null}
-      <AgentRosterPolicyPanel
-        key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
-        catalogId={catalogId}
-        days={room.archiveAfterDays ?? 7}
-      />
-    </div>
+  const rosterPolicy = (
+    <AgentRosterPolicyPanel
+      key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
+      catalogId={catalogId}
+      days={room.archiveAfterDays ?? 7}
+    />
   );
+  // 抽屉里连私聊一起列；对话版面的右栏只列 Agent 和人，私聊在左栏。
+  // 对话版面是表格（`RoomRoster`）；场景里照旧是原来那份紧凑的名册。
+  const rosterWith = (directMessages: boolean) =>
+    conversationLayout ? (
+      <div className="workspace-members">
+        <RoomRoster
+          agents={room.agents}
+          footer={rosterPolicy}
+          observedAtUnixMs={room.observedAtUnixMs}
+          onInviteAgent={
+            archived
+              ? null
+              : () => {
+                  closeDrawer();
+                  setInviteOpen(true);
+                }
+          }
+          onSelectAgent={selectAgent}
+          people={roster.people}
+          selectedAgentId={selectedAgentId}
+          wakeableAgentIds={roster.wakeableAgentIds}
+        />
+        {directMessages ? directNavigation : null}
+      </div>
+    ) : (
+      <div className="workspace-members">
+        <ListModeRoster
+          agents={room.agents}
+          observedAtUnixMs={room.observedAtUnixMs}
+          onSelectAgent={selectAgent}
+          selectedAgentId={selectedAgentId}
+          variant="compact"
+        />
+        <p className="workspace-members__note">{t('roomWorkspace.memberNote')}</p>
+        {directMessages ? directNavigation : null}
+        {rosterPolicy}
+      </div>
+    );
   const layoutSwitch = <RoomLayoutSwitch onChange={changeLayout} value={layout} />;
   const dialogs = (
     <>
@@ -556,11 +611,15 @@ function ReadyLobby({
     <AnimatePresence>
       {selectedAgent === null ? null : (
         <AgentInspector
-          hasBackgroundReception={reception.some(
-            (view) =>
-              view.state.agentId === selectedAgent.agentId &&
-              view.state.binding.policy.roomId === room.roomId,
-          )}
+          hasBackgroundReception={
+            roster.wakeableAgentIds.has(selectedAgent.agentId) ||
+            reception.some(
+              (view) =>
+                view.state.agentId === selectedAgent.agentId &&
+                view.state.binding.policy.roomId === room.roomId,
+            )
+          }
+          wakeable={roster.wakeableAgentIds.has(selectedAgent.agentId)}
           receptionControls={
             principal !== null && localRuntime.isAvailable() ? (
               <ReceptionPanel agentId={selectedAgent.agentId} roomId={room.roomId} />
@@ -571,6 +630,8 @@ function ReadyLobby({
           actionFailure={inspectorFailure(directSessions)}
           agent={selectedAgent}
           blocked={directSessions.isBlocked(selectedAgent)}
+          // 右栏在的时候详情盖在表格上，关掉就是回到表格；右栏收起来时它是从右边出来的一层。
+          closeAs={conversationLayout && sideColumn ? 'back' : 'close'}
           observedAtUnixMs={room.observedAtUnixMs}
           key="agent-inspector"
           pendingAction={
@@ -584,7 +645,7 @@ function ReadyLobby({
             void directSessions.setBlocked(selectedAgent, false);
           }}
           onClose={() => {
-            if (conversationLayout) focusAgentOrigin();
+            if (conversationLayout) returnFocusFrom.current = selectedAgent.agentId;
             else spatial.current?.focus();
             onSelectedAgentChange(null);
           }}
@@ -605,8 +666,9 @@ function ReadyLobby({
     return (
       <>
         <RoomDesk
-          agentCount={attendance.present}
+          agentCount={roster.agentCount}
           inspector={inspector}
+          inspecting={selectedAgent !== null}
           inviteAgent={
             archived
               ? null
@@ -646,7 +708,7 @@ function ReadyLobby({
             openRoomPanel('conversation');
           }}
           pendingJoinRequests={pendingJoinRequests}
-          peopleCount={(projection.humans ?? []).length}
+          peopleCount={roster.people.people.length}
           rail={directSessions.sessions.length === 0 ? null : directNavigation}
           roomName={room.name}
           share={

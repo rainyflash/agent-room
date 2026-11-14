@@ -109,15 +109,20 @@ async function openConversation(page: Page): Promise<void> {
   await page.goto(`${room.pathname}${room.search}`);
 }
 
-// 对话版面右栏的 Agent 名单里，每一行写着是谁的。场景名牌上的那一句由夹具的验收看（room-presence）。
-async function expectOwnerLabel(page: Page, agentName: string, label: string): Promise<void> {
+// 对话版面右栏的 Agent 表格里，“谁的”那一列写着是谁的。场景名牌上的那一句由夹具的验收看（room-presence）。
+async function expectOwnerLabel(page: Page, agentName: string, owner: string): Promise<void> {
   // 服务器只回答此刻在房间里的 Agent 是谁的；刚进来的过 30 秒再问一次。
   await expect(
     page
       .getByRole('complementary', { name: 'Agents in this room', exact: true })
+      .getByRole('row')
       // 名字后面带四位编号。
-      .getByRole('button', { name: new RegExp(`^${agentName} #\\d{4}`, 'u') }),
-  ).toContainText(label, { timeout: 120_000 });
+      .filter({
+        has: page.getByRole('button', { name: new RegExp(`^${agentName} #\\d{4}`, 'u') }),
+      })
+      // 右栏窄的时候这一列收在名字下面，这一格还在、只是不显示，字照样读得到。
+      .locator('td.agent-table__owner'),
+  ).toHaveText(owner, { timeout: 120_000 });
 }
 
 test('房主生成邀请链接，第二个人登录后加入，他的 Agent 进来说话，两边都看得出是谁的', async ({
@@ -183,8 +188,8 @@ test('房主生成邀请链接，第二个人登录后加入，他的 Agent 进�
         page.getByRole('region', { name: 'Conversation', exact: true }).getByRole('log'),
       ).toContainText(spoke.text, { timeout: 120_000 });
     }
-    await expectOwnerLabel(owner, spoke.agentName, 'Local Developer’s agent');
-    await expectOwnerLabel(guest, spoke.agentName, 'Your agent');
+    await expectOwnerLabel(owner, spoke.agentName, 'Local Developer');
+    await expectOwnerLabel(guest, spoke.agentName, 'You');
     expect(failures).toEqual({ guest: [], owner: [] });
     await writeFile(checkedPath ?? '', `${JSON.stringify({ checked: true })}\n`, 'utf8');
   } finally {

@@ -236,6 +236,17 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 一条消息算不算“找你”只有一条规则：`mentionsAccount`（`features/messages/domain/message.ts`），收件箱和对话里那层浅黄都用它。
     - axe 查对比度要等淡入的动画完（`explore.e2e.ts` 里等 `getAnimations()`），不然字还是半透明的，报的是假的。
     - 这个 PR 改了登录主题，发 Alpha 95 要设备码。
+  - 第 1 块 1d 的第一个 PR（#801）：对话版面的右栏是表格（`RoomRoster`，`room-roster.tsx`、`room-roster.css`），两个标签“Agent”和“人”；“展开成整页”是第二个 PR。场景版面的抽屉里照旧是 `ListModeRoster`。
+    - 一行是什么状态、怎么排、汇总、搜索都在 `features/lobby/domain/agent-table.ts`。新加要按状态分的地方用它，别再另算一遍。
+    - 顶栏的“几个人、几个 Agent”、标签上的个数、“人”那一栏、谁叫得醒都从 `useRoomRoster` 来，只算一遍。Agent 的个数不算归档的；公共大厅没有成员名单，“人”列的是说过话的人和你自己。
+    - 叫得醒只知道你自己的 Agent：账户上的后台回复（`GET /receptions`，和 Agent 详情里那一块是同一个查询键）加上这台电脑上正在跑的接收（`wakeable-agents.ts`）。房间里没有你的 Agent 时不去问。离线的也算叫得醒。别人的要服务器新给，放在第 4 块。
+    - Agent 详情盖在右栏上时写“回到列表”（`closeAs='back'`），右栏收起来时（1100px 以下）照旧是叉。盖着的时候右栏里的东西是 `visibility: hidden`，别改成不渲染：表格滚到哪、搜了什么、翻到第几页都要留着。
+    - 两列还是三列照右栏自己的宽度（容器查询，350px），不看窗口。Playwright 默认的窗口 1280 宽，右栏是两列，“谁的”在名字下面的 `.agent-table__owner-line`；要看“谁的”那一列先把窗口设到 1346 以上，或者像 `room-people.e2e.ts` 那样读不显示的那一格（`td.agent-table__owner`）。
+    - 能滚的容器里放只给读屏的字（`.sr-only`，绝对定位）时，容器要 `position: relative`。不然它们照外面的栏算位置，滚出去的那几行把整页撑高，`scrollIntoView` 连整页一起滚：`daily-usability` 里“读到的位置”差了 151px 就是这样查出来的。
+    - 按钮里几段字之间的空要是真的空格：flex 的 `gap` 不进读屏读到的名字（会读成“Agents3”）。名字后面的编号、“你”是前面带一个空格、`white-space: pre` 的 `span`。
+    - `AgentOwnerStore` 只认 UUID 样子的 Agent ID：单元测试里用别的样子，“谁的”永远查不到。
+    - 换配色以后马上跑 axe，量到的是颜色过渡的半路，先等过渡走完（`room-desk.e2e.ts` 的 `useColorScheme`）。
+    - 夹具 `lobby-scene.html`：`&owners` 给 Agent 配上主人（第 1、5 个是你的），再加 `&wakes` 让第 5、21 个开着后台回复；`agents=0` 是一间还没有 Agent 的房间（别和 `history` 一起用）。`ReceptionOwnershipPanel` 没有登录会话时也画得出来（夹具里没有）。
   - 子房间在房间目录里还是一间私人房间，父子关系另记一张表；别加新的房间种类（约束卡着，回滚读不出来）。
   - 子房间跟着父房间变靠按版本对账（照父房间现在的样子重算，做几遍都一样），别改成一条条转发动作。
   - 两份 MCP 的服务说明只剩 4 个和 11 个字节，子房间的话写在工具和参数的说明里。

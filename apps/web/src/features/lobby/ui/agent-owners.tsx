@@ -80,6 +80,10 @@ export type AgentOwnerText = {
    * 只有没有查询服务时（单独渲染的组件、测试夹具）不拦，由服务器回答。
    */
   readonly messageable: (owner: AgentOwner | undefined) => boolean;
+  /** 表格“谁的”那一列：你、主人的昵称，网络 Agent 写“网络”。还不知道时为空。 */
+  readonly short: (owner: AgentOwner | undefined) => string | null;
+  /** 是不是你自己的 Agent（服务器说了是你的才算）。 */
+  readonly mine: (owner: AgentOwner | undefined) => boolean;
 };
 
 export function useAgentOwnerText(): AgentOwnerText {
@@ -131,14 +135,26 @@ export function useAgentOwnerText(): AgentOwnerText {
       },
       messageable: (owner: AgentOwner | undefined) => {
         if (!lookup) return true;
-        return (
-          owner?.kind === 'local' &&
-          selfPrincipalId !== null &&
-          owner.owner?.principalId === selfPrincipalId
-        );
+        return isMine(owner, selfPrincipalId);
       },
+      short: (owner: AgentOwner | undefined) => {
+        if (owner?.kind === 'network') return t('lobby.owner.networkShort');
+        if (owner?.owner === undefined) return null;
+        return isMine(owner, selfPrincipalId)
+          ? t('lobby.owner.you')
+          : shownName(owner.owner.displayName, t('lobby.owner.someone'));
+      },
+      mine: (owner: AgentOwner | undefined) => isMine(owner, selfPrincipalId),
     }),
     [admitter, local, lookup, selfPrincipalId, t],
+  );
+}
+
+function isMine(owner: AgentOwner | undefined, selfPrincipalId: string | null): boolean {
+  return (
+    owner?.kind === 'local' &&
+    selfPrincipalId !== null &&
+    owner.owner?.principalId === selfPrincipalId
   );
 }
 

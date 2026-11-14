@@ -56,7 +56,7 @@ export function agentStateKey(agent: LobbyAgent, now: number): AgentStateKey {
 
 /**
  * 头像上分得出来的三种：在等消息（绿点）、离线（变灰）、别的（连着没在等、重连中，不画点）。
- * “叫得醒”要知道它开没开后台回复，名单上还分不出来，等 Agent 表格（1d）。
+ * “叫得醒”要知道它开没开后台回复，名片上没有：Agent 表格和详情另外问（`agent-table.ts`）。
  */
 export function agentAvatarState(agent: LobbyAgent, now: number): 'waiting' | 'idle' | 'offline' {
   const key = agentStateKey(agent, now);

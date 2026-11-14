@@ -8,6 +8,12 @@ import { RoomKindLabel, type RoomKind } from './room-kind-label';
 import { RoomUnreadCount } from './room-unread-count';
 import './room-desk.css';
 
+/**
+ * 右栏一直在的宽度。和 `room-desk.css` 里三栏的断点是同一个：样式管不了的地方（详情上那个
+ * 控件叫“回到列表”还是“关闭”）照它判断。
+ */
+export const roomDeskSideQuery = '(min-width: 1100px)';
+
 /** 顶栏上打开对话框的一个动作；`null` 是这间房里你用不上它。 */
 type DialogAction = { readonly open: boolean; readonly onOpen: () => void } | null;
 
@@ -17,6 +23,8 @@ export type RoomDeskProps = {
   readonly children: ReactNode;
   /** 选中 Agent 时盖在右栏上的详情。 */
   readonly inspector: ReactNode;
+  /** 详情是不是开着：开着时右栏换成它，下面那张表格读屏和键盘都碰不到。 */
+  readonly inspecting: boolean;
   readonly inviteAgent: DialogAction;
   readonly invitePeople: DialogAction;
   readonly kind: RoomKind;
@@ -35,7 +43,7 @@ export type RoomDeskProps = {
   readonly rail: ReactNode;
   readonly roomName: string;
   readonly share: DialogAction;
-  /** 右栏：房间里的 Agent。 */
+  /** 右栏：房间里的 Agent 和人。 */
   readonly side: ReactNode;
   readonly view: 'conversation' | 'resources';
 };
@@ -48,6 +56,7 @@ export function RoomDesk({
   agentCount,
   children,
   inspector,
+  inspecting,
   inviteAgent,
   invitePeople,
   kind,
@@ -171,7 +180,11 @@ export function RoomDesk({
           )}
         </div>
       </header>
-      <div className="room-desk__body" data-rail={rail === null ? 'false' : 'true'}>
+      <div
+        className="room-desk__body"
+        data-inspecting={inspecting ? 'true' : undefined}
+        data-rail={rail === null ? 'false' : 'true'}
+      >
         {rail === null ? null : (
           <div className="room-desk__rail">
             <nav aria-label={t('roomDesk.places')} className="room-desk__places">

@@ -84,6 +84,37 @@ describe('Agent 的头像', () => {
     rerender(<LobbyAgentAvatar agent={{ ...agent, status: 'offline' }} now={90_000} />);
     expect(avatar()).toHaveClass('ar-avatar--dimmed');
   });
+
+  it('叫得醒的画成圈：离线的也不变灰；正在等消息的照旧是实心的点', () => {
+    const agent: LobbyAgent = {
+      agentId: 'agent',
+      displayName: 'Mira',
+      instanceIds: ['instance'],
+      matrixUserId: '@mira:studio.test',
+      status: 'offline',
+      statusExpiresAtUnixMs: 100_000,
+      trust: 'unknown',
+      visibility: 'coarse',
+    };
+    const { rerender } = render(<LobbyAgentAvatar agent={agent} now={90_000} wakeable />);
+    expect(avatar().querySelector('.ar-presence-dot--wakes')).not.toBeNull();
+    expect(avatar()).not.toHaveClass('ar-avatar--dimmed');
+
+    rerender(
+      <LobbyAgentAvatar
+        agent={{
+          ...agent,
+          status: 'idle',
+          lastPolledAtUnixMs: 10_000,
+          listeningUntilUnixMs: 25_000,
+        }}
+        now={20_000}
+        wakeable
+      />,
+    );
+    expect(avatar().querySelector('.ar-presence-dot--waiting')).not.toBeNull();
+    expect(avatar().querySelector('.ar-presence-dot--wakes')).toBeNull();
+  });
 });
 
 describe('谁发的', () => {
