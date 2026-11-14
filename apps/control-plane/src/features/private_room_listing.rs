@@ -340,6 +340,7 @@ fn failure_response(failure: ListingFailure, correlation_id: CorrelationId) -> R
             ErrorCategory::Conflict,
             "每个账户只能有一间公开房间，先把另一间改回私密。",
         ),
+        ListingFailureKind::ParentOnly => crate::error::SUB_ROOM_PARENT_ONLY,
         ListingFailureKind::NeverListed => (
             StatusCode::CONFLICT,
             "room_listing.never_listed",

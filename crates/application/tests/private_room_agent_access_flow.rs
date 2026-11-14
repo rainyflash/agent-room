@@ -201,6 +201,71 @@ async fn 以前的口令和封存不了的口令看不到_封存的不是当前�
 }
 
 #[tokio::test]
+async fn 子房间不给口令_生成和查看都说去父房间_以前建出来的口令不认_停用照旧能做_敲门当找不到() {
+    let fixture = Fixture::sub_room();
+    assert_eq!(
+        fixture
+            .service
+            .generate_code(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::ParentOnly
+    );
+    assert_eq!(
+        fixture
+            .service
+            .reveal_code(manage(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::ParentOnly
+    );
+    assert_eq!(
+        fixture
+            .service
+            .generate_code(manage(speaker()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::Forbidden,
+        "管不了口令的人照旧是没有权限"
+    );
+
+    // 回滚到旧版那段时间给子房间建出来的口令：当它不存在。
+    let code = fixture
+        .store
+        .install_code(PrivateRoomJoinCode::from_entropy([7; 8]));
+    assert_eq!(
+        fixture
+            .service
+            .redeem(redeem_request(code.normalized()))
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::NotFound
+    );
+    fixture
+        .service
+        .disable_code(manage(owner()))
+        .await
+        .expect("停用照旧能做");
+
+    // Agent 进子房间的规则做好以前不收敲门，说的和没有这间房一样。
+    assert_eq!(
+        fixture
+            .service
+            .knock(knock_request())
+            .await
+            .unwrap_err()
+            .kind(),
+        AgentAccessFailureKind::NotFound
+    );
+    assert!(waiting_agents(&fixture, owner()).await.is_empty());
+    assert!(fixture.matrix.events().is_empty());
+}
+
+#[tokio::test]
 async fn 只有能管理的成员可以管理口令_归档房间不能() {
     let fixture = Fixture::new();
     let member = fixture
@@ -1011,7 +1076,17 @@ impl Fixture {
         Self::with_room(room)
     }
 
+    /// 挂在另一间房下面的子房间（`specs/redesign/sub-rooms.md`）。
+    fn sub_room() -> Self {
+        let parent = RoomCatalogId::from_uuid(Uuid::from_u128(77));
+        Self::with_snapshot(snapshot(active_room()).under(parent))
+    }
+
     fn with_room(room: PrivateRoom) -> Self {
+        Self::with_snapshot(snapshot(room))
+    }
+
+    fn with_snapshot(room: PrivateRoomSnapshot) -> Self {
         let store = Arc::new(MemoryAccessStore::default());
         let sealer = Arc::new(FakeSealer::default());
         let matrix = Arc::new(RecordingMatrix::default());
@@ -1019,7 +1094,7 @@ impl Fixture {
         let listing = Arc::new(FixedListing::default());
         let holds = Arc::new(FixedHold::default());
         let service = PrivateRoomAgentAccessService::new(PrivateRoomAgentAccessDependencies {
-            rooms: Arc::new(FixedRooms(snapshot(room))),
+            rooms: Arc::new(FixedRooms(room)),
             access: store.clone(),
             memberships: Arc::new(FixedMemberships),
             matrix: matrix.clone(),

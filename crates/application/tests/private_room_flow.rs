@@ -51,6 +51,8 @@ mod moderation_members;
 mod public_creation;
 #[path = "private_room_flow/role_changes.rs"]
 mod role_changes;
+#[path = "private_room_flow/sub_rooms.rs"]
+mod sub_rooms;
 
 use public_creation::TestListings;
 
@@ -1227,6 +1229,8 @@ impl Fixture {
             listings: listings.clone(),
             listing_matrix: listings.clone(),
             secrets: listings.clone(),
+            // 这些用例里的房间都不是子房间，也不在它们下面建。
+            sub_rooms: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
             identifiers: runtime.clone(),
             clock: runtime,
         });

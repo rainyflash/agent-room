@@ -383,9 +383,11 @@ const fn invitation_failure(kind: PrivateRoomFailureKind) -> PublicJoinFailureKi
         PrivateRoomFailureKind::DependencyUnavailable | PrivateRoomFailureKind::UnknownCommit => {
             PublicJoinFailureKind::DependencyUnavailable
         }
+        // 公开的房间不会是子房间（子房间不能单独公开）。
         PrivateRoomFailureKind::InvalidRequest
         | PrivateRoomFailureKind::ReauthenticationRequired
         | PrivateRoomFailureKind::PublicRoomLimitReached
+        | PrivateRoomFailureKind::SubRoom(_)
         | PrivateRoomFailureKind::Internal => PublicJoinFailureKind::Internal,
     }
 }

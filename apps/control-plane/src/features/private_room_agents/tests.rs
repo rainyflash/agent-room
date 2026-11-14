@@ -548,6 +548,12 @@ async fn 管理者再看口令_回答不缓存_没有口令和看不到的分开
             StatusCode::FORBIDDEN,
             "join_code.forbidden",
         ),
+        (
+            // 子房间不给口令，和邀请链接、公开回同一个码。
+            AgentAccessFailureKind::ParentOnly,
+            StatusCode::CONFLICT,
+            "sub_room.parent_only",
+        ),
     ] {
         *access.reveal_failure.lock().unwrap() = Some(kind);
         let refused = app(access.clone(), Arc::default())

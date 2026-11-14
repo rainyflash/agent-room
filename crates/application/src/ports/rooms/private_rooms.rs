@@ -246,6 +246,8 @@ pub struct PrivateRoomSnapshot {
     catalog: RoomCatalog,
     instance: RoomInstance,
     room: PrivateRoom,
+    /// 这是一间子房间时，它挂在哪间房下面（`specs/redesign/sub-rooms.md`）。
+    parent: Option<RoomCatalogId>,
 }
 
 impl PrivateRoomSnapshot {
@@ -296,7 +298,21 @@ impl PrivateRoomSnapshot {
             catalog,
             instance,
             room,
+            parent: None,
         })
+    }
+
+    /// 记上这间房挂在哪间房下面。
+    #[must_use]
+    pub const fn under(mut self, parent: RoomCatalogId) -> Self {
+        self.parent = Some(parent);
+        self
+    }
+
+    /// 这是一间子房间时，它的父房间。口令、邀请链接、公开、往外请人、转让这些只有父房间有，
+    /// 用例读到房间以后先看这里。
+    pub const fn parent_catalog_id(&self) -> Option<RoomCatalogId> {
+        self.parent
     }
 
     pub const fn catalog(&self) -> &RoomCatalog {
@@ -318,7 +334,7 @@ impl PrivateRoomSnapshot {
     /// 新名字不满足房间名规则时返回错误。
     pub fn renaming(self, name: String) -> DomainResult<Self> {
         let catalog = self.catalog.renamed(name)?;
-        Self::new(catalog, self.instance, self.room)
+        Self::new(catalog, self.instance, self.room).map(|snapshot| snapshot.keeping(self.parent))
     }
 
     /// 换上新简介的同一个房间。
@@ -328,7 +344,13 @@ impl PrivateRoomSnapshot {
     /// 新简介不满足房间简介规则时返回错误。
     pub fn describing(self, description: String) -> DomainResult<Self> {
         let catalog = self.catalog.described(description)?;
-        Self::new(catalog, self.instance, self.room)
+        Self::new(catalog, self.instance, self.room).map(|snapshot| snapshot.keeping(self.parent))
+    }
+
+    /// 改了别的以后，父子关系照旧。
+    const fn keeping(mut self, parent: Option<RoomCatalogId>) -> Self {
+        self.parent = parent;
+        self
     }
 
     /// 用新的权限聚合重建生命周期一致的组合快照。
@@ -380,7 +402,7 @@ impl PrivateRoomSnapshot {
                 },
             },
         )?;
-        Self::new(catalog, instance, room)
+        Self::new(catalog, instance, room).map(|snapshot| snapshot.keeping(self.parent))
     }
 }
 

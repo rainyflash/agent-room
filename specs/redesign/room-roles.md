@@ -133,7 +133,8 @@
   - 被拒回 401 `authentication.reauthentication_required`，和别的要重新登录的操作同一个码，网页那边“最近登录过”跟着改成没有。旧版客户端看到的是一句通用的“没有做成”。
 - Agent 按账户 ID 邀请的人（`invite_by_agent`）和公开房间直接进、批准进来的人拿到的权限里本来就没有“管理”，不用改。转让房主时原房主自己留不留“管理”照旧由他定。
 - 子房间管理员存在 `private_room_sub_room_manager`（见[子房间](./sub-rooms.md)“模型”）；子房间里按“他是这一间的管理员”判断的地方，查这张表，再加上父房间的房主和管理员。
-- 房间的三项设置新加一张小表 `private_room_sub_room_policy`（`catalog_entry_id`、`creators`：`members` 或 `admins`、`agents_may_create`、`auto_archive_days`：30 或者空，空是不自动归档、`version`），没有记录就是默认值。
+- 房间的三项设置新加一张小表 `private_room_sub_room_policy`（`catalog_entry_id`、`creators`：`members` 或 `admins`、`agents_may_create`、`auto_archive_days`：30 或者空，空是不自动归档、谁在什么时候改的、`version`），没有记录就是默认值。
+  - `GET /private-rooms/{父}/sub-room-policy`：父房间里已加入的人都能读，回三项和 `canChange`（你是不是房主）。`PUT` 只有房主能改，别人回 403 `sub_room.owner_only`；对着子房间改回 409 `sub_room.parent_only`。三项都要带，多带字段、不认识的值回 400。和现在的一样就什么都不写；两头同时改，后到的回 409。
 - 身份变动记录（R3）：
   - 新表 `private_room_role_change`：房间、动手的人（可以为空：不是谁动的手）、对象，之前和之后各存成员状态、是不是房主、权限的位（和 `private_room_membership` 同一种写法；之前名单里没有这个人时“之前”三列为空），时间。只加不改，运行账号只有读和加的权限。“哪一间子房间”那一列等 R5 设、撤子房间管理员时再加。
   - 不在每个改成员的入口各记各的：用例拿保存前后的两份房间一比（领域层 `room_role_changes.rs` 的 `standing_changes`），和房间在同一个事务里存（`PrivateRoomStore::save_recording`，转让房主走 `save_transferred_room_recording`）。版本对不上、没存成的不记。新加改成员的入口走 `save_if_changed` 就带上了，别绕开它直接 `save`。
@@ -254,3 +255,4 @@
   - 隐私说明页加了“房间里的身份变动”，下载的数据里多 `roleChanges`（[依据](../privacy-page/design.md)）。
   - 管理员删除账户那一下还不记，跟 R6 一起补。
   - 这一步上线以前的身份变动没有记录，不往回补。
+- 2026-11-14 R4 的控制面部分做完（#812，和子房间的 2a 一个 PR）：表、读和改的接口，建子房间时照这三项判断。设置里“子房间”一节跟子房间的网页（2i）一起做；自动归档这一项现在存得下、读得出，真去归档是 2j。改这三项不要最近登录过：它不把管理交给谁，只有房主改得动。

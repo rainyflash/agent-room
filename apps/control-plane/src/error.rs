@@ -34,6 +34,7 @@ use agent_room_application::{
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, PrivateRoomFailure, PrivateRoomFailureKind,
+        SubRoomRefusal,
     },
     sign_out_elsewhere::SignOutElsewhereFailure,
 };
@@ -680,6 +681,7 @@ impl ApiError {
                 ErrorCategory::Conflict,
                 "每个账户只能有一间公开房间，先把另一间改回私密。",
             ),
+            PrivateRoomFailureKind::SubRoom(refusal) => sub_room_refusal(refusal),
             PrivateRoomFailureKind::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "private_room.internal",
@@ -758,6 +760,7 @@ impl ApiError {
                 ErrorCategory::Transient,
                 "口令服务发生内部错误。",
             ),
+            AgentAccessFailureKind::ParentOnly => SUB_ROOM_PARENT_ONLY,
             AgentAccessFailureKind::NotRevealable => (
                 StatusCode::NOT_FOUND,
                 "join_code.not_revealable",
@@ -812,8 +815,10 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "操作提交状态未知，请刷新后确认。",
             ),
+            // 敲门不看是不是子房间，碰不上。
             AgentAccessFailureKind::Internal
             | AgentAccessFailureKind::NotRevealable
+            | AgentAccessFailureKind::ParentOnly
             | AgentAccessFailureKind::ClosedToNetworkAgents => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "agent_knock.internal",
@@ -1542,6 +1547,66 @@ fn unreadable_mapping(state: ContentLifecycleState) -> ErrorMapping {
             "content.open.gone",
             ErrorCategory::Conflict,
             "内容已不可读取。",
+        ),
+    }
+}
+
+/// 子房间没有这件事，到它所在的房间去做：口令、邀请链接、公开、往外请人、转让、单独改权限。
+/// 几个接口回同一个码，网页据此说同一句话。
+pub(crate) const SUB_ROOM_PARENT_ONLY: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.parent_only",
+    ErrorCategory::Conflict,
+    "这件事子房间没有，到它所在的房间去做。",
+);
+
+/// 子房间这边不让做的原因各有各的码（`specs/redesign/sub-rooms.md`）。
+const fn sub_room_refusal(
+    refusal: SubRoomRefusal,
+) -> (StatusCode, &'static str, ErrorCategory, &'static str) {
+    match refusal {
+        SubRoomRefusal::ParentOnly => SUB_ROOM_PARENT_ONLY,
+        SubRoomRefusal::Nested => (
+            StatusCode::CONFLICT,
+            "sub_room.nested",
+            ErrorCategory::Conflict,
+            "子房间下面不能再开子房间。",
+        ),
+        SubRoomRefusal::AdminsOnly => (
+            StatusCode::FORBIDDEN,
+            "sub_room.admins_only",
+            ErrorCategory::Authorization,
+            "房主定了只有房主和管理员能建子房间。",
+        ),
+        SubRoomRefusal::AgentsMayNotCreate => (
+            StatusCode::FORBIDDEN,
+            "sub_room.agents_may_not_create",
+            ErrorCategory::Authorization,
+            "房主关掉了让 Agent 建子房间，要建请主人自己来。",
+        ),
+        SubRoomRefusal::NameTaken => (
+            StatusCode::CONFLICT,
+            "sub_room.name_taken",
+            ErrorCategory::Conflict,
+            "这间房里已经有一间子房间叫这个名字，换个名字。",
+        ),
+        SubRoomRefusal::LimitReached => (
+            StatusCode::CONFLICT,
+            "sub_room.limit_reached",
+            ErrorCategory::Conflict,
+            "这间房里的子房间到上限了（100 间），先归档几间。",
+        ),
+        SubRoomRefusal::RateLimited => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "sub_room.rate_limited",
+            ErrorCategory::Transient,
+            "建得太快了：一小时最多建 10 间，过一会儿再建。",
+        ),
+        SubRoomRefusal::PolicyOwnerOnly => (
+            StatusCode::FORBIDDEN,
+            "sub_room.owner_only",
+            ErrorCategory::Authorization,
+            "只有房主能改子房间的这几项设置。",
         ),
     }
 }

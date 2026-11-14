@@ -153,7 +153,7 @@
 
 - 子房间在房间目录里就是一间私人房间（`kind = 'private_room'`），不加新的种类。另加三张表，做法和公开设置那张表一样：
 
-  `private_room_parent`：`catalog_entry_id`（子房间，主键）、`parent_catalog_entry_id`、`access`（`open`、`request`、`invite_only`，和公开设置的加入方式用同样的三个词）、`hidden`（只有 `access` 不是 `open` 时能为真）、`door_opened_at`（有门的拆门的时间，可空）、`created_by_principal_id`、`created_by_agent_id`（可空）、`parent_version_applied`、`created_at`；分类和归档用的 `category_id`（可空，分类删掉时置空）、`last_message_at`、`archived_at`、`archived_by_principal_id`（都可空）、`archived_reason`（`manual`、`inactive`、`parent`，可空）。约束：父房间自己不能在这张表里当子房间（只有一层）。
+  `private_room_parent`：`catalog_entry_id`（子房间，主键）、`parent_catalog_entry_id`、`name_key`（名字去掉两头的空白、转成小写；同一间房里没归档的子房间靠它不重名，是一个只算 `archived_at` 为空的唯一索引）、`access`（`open`、`request`、`invite_only`，和公开设置的加入方式用同样的三个词）、`hidden`（只有 `access` 不是 `open` 时能为真）、`door_opened_at`（有门的拆门的时间，可空）、`created_by_principal_id`、`created_by_agent_id`（可空）、`parent_version_applied`、`created_at`；分类和归档用的 `category_id`（可空，分类删掉时置空）、`last_message_at`、`archived_at`、`archived_by_principal_id`（都可空）、`archived_reason`（`manual`、`inactive`、`parent`，可空）。约束：父房间自己不能在这张表里当子房间（只有一层）。
 
   `private_room_sub_room_manager`：`catalog_entry_id`、`principal_id`、`granted_by_principal_id`、`granted_at`。子房间管理员。
 
@@ -164,7 +164,9 @@
 - 有门的子房间照用现成的两张表：人的申请（`private_room_join_request`）和 Agent 的敲门（`private_room_agent_knock`）。
 - 归没归档还是记在房间自己的状态上（和现在归档一间房一样），`archived_*` 三列只记谁、什么时候、为什么。领域层给子房间单开归档和恢复，认子房间管理员和父房间的房主、管理员；现在的 `archive` 只认房主、没有恢复，不动它。恢复时 Matrix 那边把发言级别整份重写回来（现成的 `apply_active_private_policy`）。
 - 谁能建、Agent 能不能建、自动归档开没开，记在 `private_room_sub_room_policy`（见[房间的身份和管理员](./room-roles.md)）。
-- 子房间的公开设置、口令、邀请链接这三张表不写；对应的接口对子房间一律回 409 `sub_room.parent_only`。
+- 子房间的公开设置、口令、邀请链接这三张表不写：生成和查看口令、建和查看邀请链接、设成公开，对子房间回 409 `sub_room.parent_only`。停用口令、停用链接、改回私密不拦，回滚到旧版那段时间建出来的要清得掉；那样的口令和链接拿来用时当它不存在。
+- 整间房才有的另外几样在子房间上也回 `sub_room.parent_only`：往外请人（人请、Agent 请、凭邀请链接）、改成员权限、转让房主、整间房的归档和改名。子房间自己的加入退出、改名、归档和恢复走后面几步新开的入口。只对已经在这间子房间里的人这么说；不在里面的照旧按“不是成员”回，免得拿房间号试得出哪间是子房间。
+- 名字的规则和个数（重名、每间房 100 间、每人每小时 10 间）由存储在锁着父房间目录那一行的事务里数。建之前先问一遍（`sub_room_creation_block`），过了才建 Matrix 房间；存的时候同一段再查一遍。数的时候不算要建的这一间自己：同一个请求重发时它已经在了，存的时候撞上房间号，用例照重试回已经建好的那间。
 - 父子关系只记在控制面，不用 Matrix 的 Space，也不往房间状态里写。拆门那一刻写一条现成的 `room.listing.v1`（“这一刻以后进来的人不补发钥匙”就看它），别的不往房间状态里加。
 
 ### 进门
@@ -201,8 +203,8 @@
 
 都是新加的，不往现有的回答里加字段（`privateRoomSchema` 等都是严格校验的，旧版桌面端多看到一个字段整个列表都读不出来）：
 
-- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。
-- `POST /private-rooms/{父}/sub-rooms`：建（名字、用途、分类、门、要不要隐藏）。
+- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。2a 的回答里还没有分类（2e）、在等的申请（2d）和 `archived=1`（2e）。
+- `POST /private-rooms/{父}/sub-rooms`：建（名字、用途、分类、门、要不要隐藏）。和建房间一样带幂等键（子房间的房间号），回的是照私人房间样子的这一间。建不了时分开说：403 `sub_room.admins_only`、`sub_room.agents_may_not_create`，409 `sub_room.name_taken`、`sub_room.limit_reached`、`sub_room.nested`（在子房间下面建），429 `sub_room.rate_limited`。2a 只收名字和用途，多带别的字段回 400；门和隐藏跟 2d，分类跟 2e。
 - `PUT /private-rooms/{父}/sub-rooms/{子}`：改名、改用途、换分类、换门、隐藏；`DELETE`：归档；`POST .../sub-rooms/{子}/restore`：恢复。
 - `POST`、`DELETE .../sub-rooms/{子}/membership`：加入、退出。
 - `POST`、`DELETE .../sub-rooms/{子}/join-requests`：申请、撤回；`GET`、`PUT .../join-requests/{账户}`：看、批准或拒绝。
@@ -362,3 +364,12 @@
 - 2026-11-13 维护者看过：默认没有门、可以装门，补全管理员体系。改了“门”“加入和退出”“权限和管理”“加密”“做法”几节，加了[房间的身份和管理员](./room-roles.md)（#793）。
 - 2026-11-13 维护者看过第二稿：缺了功能，比如分类和归档。加了“分类”“归档和恢复”“每个人自己的”，左栏改成只放你在的、按分类分组，另有“浏览子房间”一页；步骤多了 2e（分类、归档和恢复）和 2j（自动归档）（#794）。
 - 2026-11-13 维护者看过第三稿，全部定下来。第 1 块的对话视图做好以后从 2a 做起。
+- 2026-11-14 2a 做完（#812），连同[房间的身份和管理员](./room-roles.md) R4 的控制面部分。迁移 `202611140002_sub_rooms.sql` 加四张表（父子关系、子房间管理员、分类、三项设置）和“只有一层”的触发器；分类那张表先建好，接口跟 2e。只有控制面：网页、MCP、IPC 都没动，接口在、界面上还看不到。和原来写的不一样的几处，上面都改了：
+  - `private_room_parent` 多一列 `name_key`，重名靠它的唯一索引；没归档的按 `archived_at` 数。2e 做归档时要和房间自己的状态一起写、恢复时一起清。
+  - 建之前先问一遍存储，过了才建 Matrix 房间：重名、到上限的不白建一间。
+  - `sub_room.parent_only` 管的比原来写的三样多：往外请人、改成员权限、转让、整间房的归档和改名也算；停用口令、停用链接、改回私密故意不拦。
+  - 建的 Agent 只记在父子关系上（`created_by_agent_id`），房间自己的“哪个 Agent 建的”不写：那一项管的是 Agent 能不能替这间房发口令、请人，子房间没有这些。
+  - 这一步的入口只认人和本机 Agent 替主人建；网络 Agent 自己建跟 2h。父房间的房主是网络 Agent 时，人照样能在下面建，Matrix 上不邀请它的合成主体。
+  - 子房间暂时不收 Agent 的敲门（回的和没有这间房一样）：进子房间要先看它在父房间里是不是成员，2f 做好再打开。
+  - 还没做、留给后面的：父房间归档、转让、有人被移出时子房间跟着变（2c；网络 Agent 停用时归档它名下房间的那一路现在看不到子房间，删账户那条 SQL 会把名下的子房间一起归档、但不记 `archived_at`）；删账户时删掉他的子房间管理员记录（2c）；隐私说明页和下载的数据（2l，要写谁建的、谁在管）。
+  - 2a 到 2f 只有控制面的接口、没有入口，这段时间发版不碍事；2g 起（Agent 的工具、网页）要和前面的凑齐了一起发。

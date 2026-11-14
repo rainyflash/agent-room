@@ -316,6 +316,7 @@ const fn as_matrix_failure(
         PrivateRoomFailureKind::InvalidRequest
         | PrivateRoomFailureKind::ReauthenticationRequired
         | PrivateRoomFailureKind::PublicRoomLimitReached
+        | PrivateRoomFailureKind::SubRoom(_)
         | PrivateRoomFailureKind::Internal => MatrixFailureKind::InvalidResponse,
     };
     MatrixFailure::new(operation, kind)

@@ -50,6 +50,9 @@ use uuid::Uuid;
 
 use super::{PrivateRoomHttpDependencies, PrivateRoomHttpState, router};
 
+#[path = "sub_room_tests.rs"]
+mod sub_rooms;
+
 const OWNER_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const TARGET_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e43";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
@@ -1121,6 +1124,7 @@ fn router_with(
     let state = PrivateRoomHttpState::new(
         PrivateRoomHttpDependencies {
             rooms,
+            sub_rooms: Arc::new(sub_rooms::FakeSubRooms::default()),
             authentication,
             devices,
             secrets: Arc::new(SecureSecretFactory),

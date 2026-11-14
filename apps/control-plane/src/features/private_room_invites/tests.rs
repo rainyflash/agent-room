@@ -277,6 +277,12 @@ async fn 失败按种类回答_猜太多次带上要等多久() {
             "authentication.reauthentication_required",
         ),
         (
+            // 子房间没有邀请链接，和口令、公开回同一个码。
+            InviteLinkFailure::new("test", InviteLinkFailureKind::ParentOnly),
+            StatusCode::CONFLICT,
+            "sub_room.parent_only",
+        ),
+        (
             InviteLinkFailure::rate_limited("test", time(i64::MAX / 2)),
             StatusCode::TOO_MANY_REQUESTS,
             "invite_link.rate_limited",

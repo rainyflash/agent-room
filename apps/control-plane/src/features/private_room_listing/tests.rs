@@ -237,6 +237,12 @@ async fn 失败按种类回答() {
             StatusCode::SERVICE_UNAVAILABLE,
             "room_listing.dependency_unavailable",
         ),
+        (
+            // 子房间不能单独公开，和口令、邀请链接回同一个码。
+            ListingFailureKind::ParentOnly,
+            StatusCode::CONFLICT,
+            "sub_room.parent_only",
+        ),
     ] {
         let listings = Arc::new(FakeListings::default());
         *listings.failure.lock().unwrap() = Some(ListingFailure::new("test", kind));

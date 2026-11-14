@@ -739,9 +739,11 @@ fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
         | PrivateRoomFailureKind::DependencyUnavailable
         | PrivateRoomFailureKind::UnknownCommit => dependency(),
         // 网络 Agent 建的房间不公开，碰不上限额；它也给不出“管理”，碰不上要最近登录过。
+        // 子房间这一路还没接给网络 Agent。
         PrivateRoomFailureKind::InvalidRequest
         | PrivateRoomFailureKind::ReauthenticationRequired
         | PrivateRoomFailureKind::PublicRoomLimitReached
+        | PrivateRoomFailureKind::SubRoom(_)
         | PrivateRoomFailureKind::Internal => internal(),
     }
 }
@@ -755,9 +757,11 @@ fn access_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::Conflict
         | AgentAccessFailureKind::DependencyUnavailable
         | AgentAccessFailureKind::UnknownCommit => dependency(),
+        // 网络 Agent 只给自己当房主的房间管口令，子房间这一路还没接给它。
         AgentAccessFailureKind::InvalidRequest
         | AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable
+        | AgentAccessFailureKind::ParentOnly
         | AgentAccessFailureKind::ClosedToNetworkAgents => internal(),
     }
 }

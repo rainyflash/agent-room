@@ -1416,6 +1416,7 @@ fn build_agent_collaboration_http_states(
         }),
         private_rooms: PrivateRoomHttpState::new(
             PrivateRoomHttpDependencies {
+                sub_rooms: private_rooms.clone(),
                 rooms: private_rooms,
                 authentication: dependencies.authentication.clone(),
                 devices: dependencies.devices.clone(),
@@ -1679,6 +1680,7 @@ fn build_private_room_service(
         listings: dependencies.repositories.clone(),
         listing_matrix: dependencies.matrix_identities.clone(),
         secrets: dependencies.secrets.clone(),
+        sub_rooms: dependencies.repositories.clone(),
         identifiers: dependencies.system_runtime.clone(),
         clock: dependencies.system_runtime.clone(),
     })))

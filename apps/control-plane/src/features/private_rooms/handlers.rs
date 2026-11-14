@@ -557,7 +557,7 @@ async fn governance_action(
     respond(result, StatusCode::OK, correlation_id)
 }
 
-async fn required_write_context(
+pub(super) async fn required_write_context(
     state: &PrivateRoomHttpState,
     headers: &HeaderMap,
     jar: &CookieJar,
@@ -618,7 +618,7 @@ async fn authenticate_write(
     .await
 }
 
-fn respond(
+pub(super) fn respond(
     result: agent_room_application::private_rooms::PrivateRoomResult<
         agent_room_application::ports::PrivateRoomSnapshot,
     >,

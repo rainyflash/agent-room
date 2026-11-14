@@ -2,10 +2,13 @@ use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::PrivateRoomPermissions,
     room_listing::RoomListingSettings,
+    sub_rooms::SubRoomPolicy,
     time::UtcMillis,
 };
 
-use crate::{authentication::AuthenticatedPrincipal, devices::AuthenticatedDevice};
+use crate::{
+    authentication::AuthenticatedPrincipal, devices::AuthenticatedDevice, ports::SubRoomEntry,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrivateRoomInvitation {
@@ -174,4 +177,61 @@ pub struct RenamePrivateRoom {
 pub struct ArchivePrivateRoom {
     pub actor: PrivateRoomActor,
     pub catalog_id: RoomCatalogId,
+}
+
+/// 在一间房下面建子房间（`specs/redesign/sub-rooms.md`）。`catalog_id` 是子房间的房间号，由请求的
+/// 幂等键给出：同一个请求重发，回的是同一间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateSubRoom {
+    pub actor: PrivateRoomActor,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub name: String,
+    pub description: String,
+    /// Agent 替它的主人建时，是哪个 Agent。
+    pub created_by_agent: Option<AgentId>,
+}
+
+/// 读一间房下面的子房间。`catalog_id` 是父房间，或者它的任何一间子房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListSubRooms {
+    pub actor: AuthenticatedPrincipal,
+    pub catalog_id: RoomCatalogId,
+}
+
+/// 子房间的名单：父房间是谁，和看的人看得到的那些。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubRoomList {
+    pub parent_catalog_id: RoomCatalogId,
+    pub parent_name: String,
+    /// 看的人自己现在能不能在这间房下面建子房间（不算他的 Agent）。
+    pub can_create: bool,
+    pub sub_rooms: Vec<SubRoomView>,
+}
+
+/// 名单里的一间。有门、看的人又不在里面时，只看得到名字、用途和谁在管，人数这些不给。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubRoomView {
+    pub entry: SubRoomEntry,
+    pub inside_visible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectSubRoomPolicy {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeSubRoomPolicy {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub policy: SubRoomPolicy,
+}
+
+/// 一间房里子房间的三项设置，和看的人改不改得动（只有房主）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubRoomPolicyView {
+    pub policy: SubRoomPolicy,
+    pub can_change: bool,
 }
