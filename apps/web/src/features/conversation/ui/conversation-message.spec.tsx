@@ -117,11 +117,12 @@ describe('消息里被点名的人', () => {
     },
   };
 
-  function renderMentions(names: ReadonlyMap<string, string>): HTMLElement {
+  function renderMentions(names: ReadonlyMap<string, string>, mentioned = false): HTMLElement {
     render(
       <I18nextProvider i18n={i18n}>
         <ConversationMessage
           editable
+          mentioned={mentioned}
           message={fromAgent}
           names={names}
           onReply={vi.fn()}
@@ -135,6 +136,15 @@ describe('消息里被点名的人', () => {
     expect(mentions).toBeInstanceOf(HTMLElement);
     return mentions as HTMLElement;
   }
+
+  it('找你的那一条整行标出来，别的不标', () => {
+    renderMentions(new Map(), true);
+    expect(screen.getByRole('article')).toHaveAttribute('data-mentioned', 'true');
+    cleanup();
+
+    renderMentions(new Map());
+    expect(screen.getByRole('article')).not.toHaveAttribute('data-mentioned');
+  });
 
   it('认得出名字时写名字，完整 ID 留在提示里', () => {
     const mentions = renderMentions(new Map([[owner, '小王']]));

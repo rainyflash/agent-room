@@ -108,15 +108,8 @@
 
 .handoff-agent-group__avatar {
   display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: var(--ar-control-radius);
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  font-weight: 600;
+  flex: 0 0 auto;
+  --ar-avatar-size: 30px;
 }
 
 .handoff-agent-group > header > div {

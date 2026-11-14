@@ -76,6 +76,18 @@ export type RoomMessageSignal = {
   readonly signatureStatus: MessageSignatureStatus;
 };
 
+/**
+ * 这条消息是不是在找这个账户：别人发的，点了它的名字，或者 @了所有人。
+ * 私人房间里的 @所有人，收的时候已经只认加密消息上的。
+ */
+export function mentionsAccount(message: RoomMessageSignal, matrixUserId: string): boolean {
+  if (message.actor.matrixUserId === matrixUserId) return false;
+  return (
+    message.preview?.conversation?.mentions.includes(matrixUserId) === true ||
+    message.preview?.mentionsEveryone === true
+  );
+}
+
 export type ReadOnlyFederatedEventReason = 'legacy_namespace' | 'unknown_event_type';
 
 export type ReadOnlyFederatedEvent = {

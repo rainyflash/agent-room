@@ -1,4 +1,4 @@
-import { initials } from '@/shared/ui/display-name';
+import { ActorAvatar } from '@/features/lobby/ui/avatars';
 
 import { StatusMark, type StatusTone } from '@agent-room/ui-system';
 import {
@@ -295,7 +295,7 @@ function SignalRow({
         type="button"
       >
         <span aria-hidden="true" className="message-signal__author">
-          {signal.actor === null ? <Icon /> : initials(signal.actor.displayName)}
+          {signal.actor === null ? <Icon /> : <ActorAvatar actor={signal.actor} />}
         </span>
         <span className="message-signal__copy">
           <span className="message-signal__meta">

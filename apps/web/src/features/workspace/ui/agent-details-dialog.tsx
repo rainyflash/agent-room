@@ -3,7 +3,7 @@ import { Trash2 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { AgentPortrait } from '@/features/lobby/ui/room-illustration';
+import { AgentAvatar } from '@/features/lobby/ui/avatars';
 import {
   agentActivity,
   instanceActivity,
@@ -52,8 +52,8 @@ export function AgentDetailsDialog({
       title={agent.agent.displayName}
     >
       <div className="agent-details__intro">
-        <span aria-hidden="true" className="agent-details__portrait">
-          <AgentPortrait id={agent.agent.agentId} />
+        <span className="agent-details__portrait">
+          <AgentAvatar id={agent.agent.agentId} />
         </span>
         {agent.agent.description === '' ? null : <p>{agent.agent.description}</p>}
       </div>

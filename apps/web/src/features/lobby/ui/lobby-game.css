@@ -254,6 +254,8 @@
   position: absolute;
   top: -9px;
   right: -9px;
+  /* 压在按钮角上：留一圈底色，和按钮分开。 */
+  box-shadow: 0 0 0 2px var(--ar-canvas);
 }
 
 /* 对话面板 */
@@ -346,11 +348,6 @@
 .room-panel .conversation-message {
   padding: 10px 14px;
   gap: 10px;
-}
-.room-panel .conversation-message__avatar {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--ar-border);
 }
 .room-panel .conversation-message__body header {
   flex-wrap: wrap;
@@ -530,7 +527,6 @@
   min-width: 22px;
   height: 22px;
   padding: 0 6px;
-  border: 1px solid var(--ar-border);
   border-radius: var(--ar-pill);
   color: var(--color-ink);
   background: var(--ar-selected);
@@ -626,19 +622,10 @@
   width: 16px;
   height: 16px;
 }
-.roster-agent__signal .agent-portrait {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: var(--ar-surface-muted);
-}
+/* 名单一行最前面的头像：圆、浅底和状态的点都是 Avatar 的事，这里只定大小。 */
 .roster-agent__signal {
-  position: relative;
-}
-.roster-agent__signal > .ar-status-mark {
-  position: absolute;
-  right: 0;
-  bottom: 0;
+  display: grid;
+  --ar-avatar-size: 38px;
 }
 
 /* 小地图 */

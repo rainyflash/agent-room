@@ -1,4 +1,4 @@
-import { initials } from '@/shared/ui/display-name';
+import { ActorAvatar } from '@/features/lobby/ui/avatars';
 
 import { useMachine } from '@xstate/react';
 import { Banner, Button, Details } from '@agent-room/ui-system';
@@ -138,7 +138,7 @@ export function ContentInspector({
       </header>
       <div className="content-inspector__source">
         <span className="message-signal__author" aria-hidden="true">
-          {initials(message.actor.displayName)}
+          <ActorAvatar actor={message.actor} />
         </span>
         <div>
           <strong>{message.actor.displayName}</strong>

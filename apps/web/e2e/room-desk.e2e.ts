@@ -242,3 +242,43 @@ test('对话版面在手机上：不横向滚动，输入框贴在底下，顶�
   await expect(canvas).toHaveCount(0);
   expect(failures).toEqual([]);
 });
+
+test('认得出的记号：主房间前面是 #，在等消息的头像带绿点，找你的那一条整行铺一层浅黄', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(room);
+  await expect(page.getByText('Review milestone 80', { exact: false }).first()).toBeVisible();
+
+  const places = page.getByRole('navigation', {
+    name: 'Main room and direct messages',
+    exact: true,
+  });
+  await expect(places.locator('.ar-room-glyph')).toHaveText('#');
+
+  // 名单上只有在等消息的那一个头像右下角有点；状态旁边照旧用字写着，点不单独读。
+  const roster = page.getByRole('complementary', { name: 'Agents in this room', exact: true });
+  const dotted = roster
+    .locator('.roster-agent')
+    .filter({ has: page.locator('.ar-presence-dot--waiting') });
+  await expect(dotted).toHaveCount(1);
+  await expect(dotted).toContainText('waiting for messages');
+  await expect(dotted.locator('.ar-presence-dot')).toHaveAttribute('aria-hidden', 'true');
+  await expect(roster.locator('.roster-agent .ar-avatar')).toHaveCount(8);
+
+  // 对话里：Agent 是机器人垫着浅底；点了你名字的那一条整行有底色，别的没有。
+  const mentioned = page.locator('.conversation-message[data-mentioned="true"]').last();
+  await expect(mentioned).toContainText('Review milestone 79');
+  await expect(mentioned.locator('.ar-avatar svg.agent-portrait')).toBeVisible();
+  await expect(mentioned).toHaveCSS('background-color', 'rgb(255, 248, 225)');
+  const plain = page.locator('.conversation-message:not([data-mentioned])').last();
+  await expect(plain).toContainText('Review milestone 80');
+  await expect(plain).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expectAccessible(page);
+
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(mentioned).toHaveCSS('background-color', 'rgb(42, 37, 18)');
+  await expectAccessible(page);
+  expect(failures).toEqual([]);
+});

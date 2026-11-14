@@ -1,3 +1,4 @@
+export { Avatar, type AvatarProps, type AvatarTint } from './avatar.js';
 export { Banner, type BannerProps, type BannerTone } from './banner.js';
 export { Button, type ButtonProps, type ButtonSize, type ButtonTone } from './button.js';
 export { classNames, type ClassNameValue } from './class-names.js';
@@ -5,6 +6,8 @@ export { CopyBlock, type CopyBlockProps } from './copy-block.js';
 export { Details, type DetailsProps } from './details.js';
 export { Dialog, type DialogProps, type DialogSize } from './dialog.js';
 export { Field, type FieldProps } from './field.js';
+export { PresenceDot, type PresenceDotKind, type PresenceDotProps } from './presence-dot.js';
+export { RoomGlyph, type RoomGlyphKind, type RoomGlyphProps } from './room-glyph.js';
 export { Segmented, type SegmentedOption, type SegmentedProps } from './segmented.js';
 export { Spinner, type SpinnerProps } from './spinner.js';
 export { StatusMark, type StatusMarkProps, type StatusTone } from './status-mark.js';

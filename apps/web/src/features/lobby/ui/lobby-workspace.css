@@ -66,15 +66,8 @@
 }
 .workspace-direct__avatar {
   display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
   flex: 0 0 32px;
-  border-radius: 10px;
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-  font-size: 12px;
-  font-weight: 600;
+  --ar-avatar-size: 32px;
 }
 .workspace-direct__identity {
   min-width: 0;
@@ -260,7 +253,8 @@
   min-height: 0;
   flex-direction: column;
   color: var(--color-ink);
-  background: var(--ar-surface-muted);
+  /* 和左栏一个底色。 */
+  background: var(--ar-surface);
 }
 .workspace-members .list-roster {
   display: flex;
@@ -347,7 +341,7 @@
 }
 .workspace-members .roster-agent {
   display: grid;
-  grid-template-columns: 31px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   width: 100%;
   min-height: 62px;
   align-items: center;
@@ -360,10 +354,12 @@
   background: transparent;
   color: var(--color-ink);
 }
-.workspace-members .roster-agent:hover,
+/* 和左栏一样：指着的是浅一档的灰，选中的是深一档的灰，都不画框。 */
+.workspace-members .roster-agent:hover {
+  background: var(--ar-surface-muted);
+}
 .workspace-members .roster-agent[aria-pressed='true'] {
-  border-color: var(--ar-line);
-  background: var(--ar-accent-soft);
+  background: var(--ar-selected);
 }
 .workspace-members .roster-agent__identity > strong {
   max-width: none;
@@ -381,30 +377,7 @@
   display: none;
 }
 .workspace-members .roster-agent__signal {
-  display: grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-control-radius);
-  background: var(--ar-surface-muted);
-}
-.workspace-members .roster-agent__signal .ar-status-mark {
-  background: transparent;
-  color: var(--color-ink);
-  width: 21px;
-  height: 21px;
-  border: 0;
-}
-.workspace-members .roster-agent__signal--offline .ar-status-mark {
-  color: var(--ar-muted);
-}
-.workspace-members .roster-agent__signal--idle .ar-status-mark {
-  color: var(--ar-muted);
-}
-.workspace-members .roster-agent__signal--blocked .ar-status-mark,
-.workspace-members .roster-agent__signal--waiting_input .ar-status-mark {
-  color: var(--ar-warning);
+  --ar-avatar-size: 32px;
 }
 .workspace-members__note {
   flex: 0 0 auto;
@@ -526,13 +499,7 @@
   border-bottom: 1px solid var(--workspace-line);
 }
 .lobby-workspace .direct-conversation__avatar {
-  width: 35px;
-  height: 35px;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-control-radius);
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-  font-size: 12px;
+  --ar-avatar-size: 36px;
 }
 .lobby-workspace .direct-conversation__identity h2 {
   color: var(--color-ink);
@@ -680,11 +647,6 @@
 .message-workspace .message-signal:hover,
 .message-workspace .message-signal[aria-pressed='true'] {
   background: var(--ar-accent-soft);
-}
-.message-workspace .message-signal__author {
-  border-color: var(--ar-line);
-  color: var(--ar-muted);
-  background: var(--ar-surface-muted);
 }
 .message-workspace .message-signal__meta,
 .message-workspace .message-signal__summary,

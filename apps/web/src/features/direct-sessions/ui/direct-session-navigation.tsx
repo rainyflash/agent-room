@@ -1,7 +1,7 @@
 import { LoaderCircle, MessageCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
-import { initials } from '@/shared/ui/display-name';
+import { AgentAvatar } from '@/features/lobby/ui/avatars';
 
 export function DirectSessionNavigation({
   activeCatalogId,
@@ -30,8 +30,8 @@ export function DirectSessionNavigation({
             onActivate(session.catalogId);
           }}
         >
-          <span className="workspace-direct__avatar" aria-hidden="true">
-            {initials(session.target.displayName)}
+          <span className="workspace-direct__avatar">
+            <AgentAvatar id={session.target.agentId} />
           </span>
           <span className="workspace-direct__identity">
             <strong>{session.target.displayName}</strong>

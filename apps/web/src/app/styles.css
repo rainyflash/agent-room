@@ -1847,15 +1847,8 @@
 
 .direct-conversation__avatar {
   display: grid;
-  width: 46px;
-  height: 46px;
-  place-items: center;
-  border: 1px solid var(--ar-line);
-  border-radius: 10px;
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
+  flex: 0 0 auto;
+  --ar-avatar-size: 44px;
 }
 
 .direct-conversation__identity {
@@ -2652,18 +2645,22 @@ p.message-dock__headline {
 
 .message-signal__author {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid var(--ar-line);
-  border-radius: var(--ar-control-radius);
   color: var(--ar-muted);
-  background: var(--ar-surface-muted);
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
+  --ar-avatar-size: 32px;
   letter-spacing: 0;
+}
+
+/* 没有发送者的那几种（系统的提示）画一个图标，垫一块浅灰的圆。 */
+.message-signal__author:not(:has(.ar-avatar)) {
+  border-radius: 50%;
+  background: var(--ar-surface-muted);
 }
 
 .message-signal__author > svg {
@@ -2823,12 +2820,6 @@ p.message-dock__headline {
   gap: 0.75rem;
   padding: 0.85rem 1.25rem;
   border-bottom: 1px solid var(--ar-ink-09);
-}
-
-.content-inspector__source .message-signal__author {
-  border-color: var(--ar-ink-18);
-  color: var(--color-ink);
-  background: var(--ar-ink-04);
 }
 
 .content-inspector__source > div {
@@ -3266,10 +3257,6 @@ p.message-dock__headline {
   background: var(--ar-ink-09);
 }
 
-.roster-agent__signal .ar-status-mark {
-  background: var(--ar-surface-muted);
-}
-
 .roster-agent__identity,
 .roster-agent__summary {
   min-width: 0;
@@ -3490,9 +3477,7 @@ p.message-dock__headline {
   }
 
   .direct-conversation__avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
+    --ar-avatar-size: 40px;
   }
 
   .direct-conversation__identity .eyebrow,
