@@ -233,7 +233,7 @@ async fn 没做成记下原因到点再试_做的时候又排进来过的不记_
 }
 
 /// 房主在这间房下面建一间没有门的子房间。
-async fn open(
+pub(super) async fn open(
     repositories: &PostgresRepositories,
     parent: RoomCatalogId,
     name: &str,

@@ -67,9 +67,12 @@ impl PrivateRoomService {
             .map_err(|error| domain(OPERATION, &error))?;
         let matrix_room = matrix_room_id(&sub_room, OPERATION)?;
         if changed {
+            // 他在父房间或者这一间里被禁言着就不给发言级别：不然退出再进来就把禁言冲掉了。
+            let speaks =
+                permissions.speak() && !self.muted_in(request.catalog_id, actor, OPERATION).await?;
             // 发言级别先设好（他还没被邀请，设了也用不上），再记成员，最后才邀请：没记成的不会留下
             // 一张没人认的邀请。
-            self.set_speaking(&matrix_room, &actor_matrix, permissions.speak(), OPERATION)
+            self.set_speaking(&matrix_room, &actor_matrix, speaks, OPERATION)
                 .await?;
             let standing = role_changes(sub_room.room(), &room, actor);
             let admitted = self
@@ -89,6 +92,11 @@ impl PrivateRoomService {
             if !admitted {
                 // 读到他在父房间里以后、存之前他被移出去了：和不在父房间里的人一样回。
                 return Err(not_found(OPERATION));
+            }
+            // 记成成员以前正在落的禁言看不到他在这一间里，落不到这儿：记好以后再看一眼，压着的收回。
+            if speaks && self.muted_in(request.catalog_id, actor, OPERATION).await? {
+                self.set_speaking(&matrix_room, &actor_matrix, false, OPERATION)
+                    .await?;
             }
         }
         // 已经在里面的再点一次也补一遍邀请（可以重复发）：上一次邀请没发成的，或者他自己在 Matrix 上

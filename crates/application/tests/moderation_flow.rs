@@ -22,7 +22,7 @@ use agent_room_application::{
         ModerationExpiryRepository, ModerationExpiryReschedule, ModerationIdentifierFactory,
         ModerationMemberGateway, ModerationMemberRefusal, ModerationMuteLedger, ModerationMuteLock,
         ModerationMuteStanding, ModerationReportPolicy, ModerationReportSubmissionOutcome,
-        ModerationRepository, ModerationRoomContext, PortFuture,
+        ModerationRepository, ModerationRoomContext, ModerationSubRoomStanding, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -41,6 +41,8 @@ use uuid::Uuid;
 mod agents;
 #[path = "moderation_flow/members.rs"]
 mod members;
+#[path = "moderation_flow/sub_rooms.rs"]
+mod sub_rooms;
 
 const NOW: i64 = 1_700_000_000_000;
 
@@ -319,6 +321,21 @@ struct FakeAuthority {
     platform_role: Mutex<ModerationRole>,
     room_kind: Mutex<RoomCatalogKind>,
     rooms: Mutex<Vec<MatrixRoomId>>,
+    /// 这间房下面、被管的人此刻在里面的子房间：目录号和 Matrix 房间。问的是其中一间时，给的是
+    /// 那一间的房间；它的禁言连这间房（它的父房间）的一起算。
+    sub_rooms: Arc<Mutex<Vec<(RoomCatalogId, MatrixRoomId)>>>,
+}
+
+impl FakeAuthority {
+    /// 这个目录是不是一间子房间；是的话交回它的 Matrix 房间。
+    fn sub_room(&self, catalog: RoomCatalogId) -> Option<MatrixRoomId> {
+        self.sub_rooms
+            .lock()
+            .expect("子房间锁可用")
+            .iter()
+            .find(|(sub_room, _)| *sub_room == catalog)
+            .map(|(_, room)| room.clone())
+    }
 }
 
 impl FakeAuthority {
@@ -345,12 +362,15 @@ impl ModerationAuthority for FakeAuthority {
     fn inspect_room<'a>(
         &'a self,
         _principal_id: PrincipalId,
-        _room_catalog_id: RoomCatalogId,
+        room_catalog_id: RoomCatalogId,
         target: &'a ModerationTarget,
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationRoomContext>>> {
         let role = *self.room_role.lock().expect("房间角色锁可用");
         let room_kind = *self.room_kind.lock().expect("房间类别锁可用");
-        let matrix_room_ids = self.rooms.lock().expect("分片锁可用").clone();
+        let matrix_room_ids = self.sub_room(room_catalog_id).map_or_else(
+            || self.rooms.lock().expect("分片锁可用").clone(),
+            |room| vec![room],
+        );
         let target_matrix_user_id = (target.kind() == ModerationTargetKind::Principal)
             .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效"));
         let target_agent_matrix_user_ids = target_agents(target.kind());
@@ -512,6 +532,8 @@ struct FakeMutes {
     /// 正拿着的锁。
     held: Arc<Mutex<HashSet<String>>>,
     between_reads: Mutex<Option<BetweenReads>>,
+    /// 禁言情况读不出来。
+    unreadable: Mutex<bool>,
 }
 
 impl FakeMutes {
@@ -545,32 +567,64 @@ impl ModerationMuteLedger for FakeMutes {
         room_catalog_id: RoomCatalogId,
         target: &'a ModerationTarget,
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationMuteStanding>>> {
+        if *self.unreadable.lock().expect("读取锁可用") {
+            return Box::pin(async {
+                Err(RepositoryError::new(
+                    "moderation.mute_standing",
+                    RepositoryErrorKind::Unavailable,
+                ))
+            });
+        }
         let person = Uuid::parse_str(target.reference()).ok();
-        let mutes = self
-            .repository
-            .actions
+        let actions = self.repository.actions.lock().expect("动作锁可用").clone();
+        let mutes_in = |rooms: &[RoomCatalogId]| -> Vec<ModerationAction> {
+            actions
+                .iter()
+                .filter(|action| {
+                    rooms.contains(&action.room_catalog_id())
+                        && action.kind() == ModerationActionKind::Mute
+                        && matches!(
+                            action.status(),
+                            ModerationActionStatus::Applied | ModerationActionStatus::Pending
+                        )
+                        && Uuid::parse_str(action.target().reference()).ok() == person
+                })
+                .cloned()
+                .collect()
+        };
+        let below = self
+            .authority
+            .sub_rooms
             .lock()
-            .expect("动作锁可用")
-            .iter()
-            .filter(|action| {
-                action.room_catalog_id() == room_catalog_id
-                    && action.kind() == ModerationActionKind::Mute
-                    && matches!(
-                        action.status(),
-                        ModerationActionStatus::Applied | ModerationActionStatus::Pending
-                    )
-                    && Uuid::parse_str(action.target().reference()).ok() == person
-            })
-            .cloned()
-            .collect();
+            .expect("子房间锁可用")
+            .clone();
+        let (matrix_room_ids, mutes, sub_rooms) = match self.authority.sub_room(room_catalog_id) {
+            Some(room) => (
+                vec![room],
+                mutes_in(&[room_catalog_id, room_id()]),
+                Vec::new(),
+            ),
+            None => (
+                self.authority.rooms.lock().expect("分片锁可用").clone(),
+                mutes_in(&[room_catalog_id]),
+                below
+                    .iter()
+                    .map(|(catalog, room)| ModerationSubRoomStanding {
+                        matrix_room_id: room.clone(),
+                        mutes: mutes_in(&[*catalog]),
+                    })
+                    .collect(),
+            ),
+        };
         let standing = ModerationMuteStanding {
             room_kind: *self.authority.room_kind.lock().expect("房间类别锁可用"),
-            matrix_room_ids: self.authority.rooms.lock().expect("分片锁可用").clone(),
+            matrix_room_ids,
             target_matrix_user_id: (!*self.account_gone.lock().expect("账号锁可用"))
                 .then(|| MatrixUserId::new("@target:matrix.test").expect("测试 Matrix 用户有效")),
             target_agent_matrix_user_ids: target_agents(ModerationTargetKind::Principal),
             may_speak: *self.may_speak.lock().expect("发言权锁可用"),
             mutes,
+            sub_rooms,
         };
         if let Some(happen) = self.between_reads.lock().expect("钩子锁可用").take() {
             happen();
@@ -832,6 +886,7 @@ impl Fixture {
             platform_role: Mutex::new(ModerationRole::None),
             room_kind: Mutex::new(RoomCatalogKind::PrivateRoom),
             rooms: Mutex::new(vec![matrix_room("!room:matrix.test")]),
+            sub_rooms: Arc::new(Mutex::new(Vec::new())),
         });
         let effects = Arc::new(FakeEffects {
             calls: calls.clone(),
@@ -851,6 +906,7 @@ impl Fixture {
             account_gone: Mutex::new(false),
             held: Arc::new(Mutex::new(HashSet::new())),
             between_reads: Mutex::new(None),
+            unreadable: Mutex::new(false),
         });
         let service = Arc::new(ModerationService::new(ModerationDependencies {
             repository: repository.clone(),

@@ -502,6 +502,7 @@ impl ModerationMuteLedger for MemoryLedger {
             target_agent_matrix_user_ids: Vec::new(),
             may_speak: true,
             mutes,
+            sub_rooms: Vec::new(),
         };
         Box::pin(async move { Ok(Some(standing)) })
     }

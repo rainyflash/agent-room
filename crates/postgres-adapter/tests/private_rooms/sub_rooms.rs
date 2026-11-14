@@ -24,6 +24,8 @@ use super::{
 mod follow;
 #[path = "sub_room_membership.rs"]
 mod membership;
+#[path = "sub_room_mutes.rs"]
+mod mutes;
 #[path = "sub_room_sync.rs"]
 mod sync;
 

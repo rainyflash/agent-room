@@ -136,8 +136,8 @@ pub use moderation::{
     ModerationExpiryRepository, ModerationExpiryReschedule, ModerationIdentifierFactory,
     ModerationMemberGateway, ModerationMemberRefusal, ModerationMuteLedger, ModerationMuteLock,
     ModerationMuteStanding, ModerationReportPolicy, ModerationReportSubmissionOutcome,
-    ModerationRepository, ModerationRoomContext, ModerationSubject, StandingModeration,
-    StandingModerationSource,
+    ModerationRepository, ModerationRoomContext, ModerationSubRoomStanding, ModerationSubject,
+    StandingModeration, StandingModerationSource,
 };
 pub use notifications::NotificationSink;
 pub use regions::{CountryLookup, NoCountryLookup};

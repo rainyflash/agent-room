@@ -385,11 +385,16 @@ impl AgentLobbyEntryService {
         // 已确认它代表的主体此刻已加入且能发言，或它本身是能发言的 Agent 成员，所以按同样的能力
         // 授予。主体失去发言、被移除或离开时由私人房间服务收回，Agent 成员被移出时由口令服务收回。
         // 它代表的人在这里被禁言着就不给：不然 Agent 一重连就把禁言冲掉了，禁言撤了由治理一起放开。
-        // 重连时重复授予不会再写权限状态。
+        // 正在落的禁言也算，子房间里连父房间的一起算。重连时重复授予不会再写权限状态。
         let muted = self
-            .standing_mute(snapshot.catalog().id(), access.principal_id)
-            .await?
-            .is_some();
+            .standing_moderation
+            .person_muted(
+                snapshot.catalog().id(),
+                access.principal_id,
+                self.clock.now(),
+            )
+            .await
+            .map_err(AgentLobbyEntryFailure::Access)?;
         self.private_matrix
             .set_speaking(&matrix_room, &access.matrix_user_id, !muted)
             .await

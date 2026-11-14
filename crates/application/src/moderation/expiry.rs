@@ -239,10 +239,14 @@ impl ModerationService {
             }
             MuteCourse::KeepMuted(_) | MuteCourse::Lift => {}
         }
-        if let Err(matrix_failure) = self.follow_mute_course(&course, action, &standing).await {
+        if let Err(matrix_failure) = self
+            .follow_mute_course(&course, action, &standing, now)
+            .await
+        {
             return Ok(failed(matrix_failure));
         }
-        // 期间有人又禁了他、那条生效的被撤了，或者新开了分片：这次不记，下一轮从头再来。
+        // 期间有人又禁了他、那条生效的被撤了、新开了分片，或者他进出了哪间子房间：这次不记，下一轮
+        // 从头再来。
         let after = self.mute_standing(action, operation).await?;
         if !settled_after(&standing, &course, after.as_ref(), action, now) {
             return Ok(Step::Unsettled);
