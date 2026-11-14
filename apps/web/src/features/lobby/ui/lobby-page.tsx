@@ -631,6 +631,7 @@ function ReadyLobby({
           layoutSwitch={layoutSwitch}
           liveSummary={t('lobby.liveSummary', { count: attendance.present, room: room.name })}
           mainRoomSelected={selectedDirectSessionId === null}
+          mainRoomUnread={activity.unread}
           onOpenAgents={() => {
             setDrawer('members');
           }}
@@ -662,7 +663,13 @@ function ReadyLobby({
           view={panelView}
         >
           {conversationNotices}
-          <WorkspaceViewTabs allowSpace={false} onChange={onViewChange} value={panelView} />
+          <WorkspaceViewTabs
+            allowSpace={false}
+            // 私聊里的“对话”是那场私聊，主房间的新消息标在回主房间的地方。
+            conversationUnread={selectedDirectSessionId === null ? activity.unread : 0}
+            onChange={onViewChange}
+            value={panelView}
+          />
           {conversationContent}
         </RoomDesk>
         {dialogs}

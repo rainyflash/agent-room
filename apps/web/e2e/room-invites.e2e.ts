@@ -87,7 +87,7 @@ test('已经有链接时一打开就看得到；不能邀请人的、归档了�
   );
 
   await page.goto(`${roomFixture}?private&archived`);
-  await expect(page.getByRole('button', { name: 'Find someone', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Invite people', exact: true })).toHaveCount(0);
 
   // 公共大厅没有邀请。

@@ -4,16 +4,21 @@ import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { roomWorkspaceViews, type RoomWorkspaceView } from '@/features/lobby/domain/workspace-view';
 
+import { RoomUnreadCount } from './room-unread-count';
+
 const viewIcons = { conversation: MessageCircle, resources: Files, space: Boxes };
 
 export function WorkspaceViewTabs({
   value,
   onChange,
   allowSpace,
+  conversationUnread = 0,
 }: {
   readonly value: RoomWorkspaceView;
   readonly onChange: (value: RoomWorkspaceView) => void;
   readonly allowSpace: boolean;
+  /** 人在看资料时对话里来了几条新消息：标在“对话”那个标签上。 */
+  readonly conversationUnread?: number;
 }) {
   const { t } = useTranslation();
   const id = useId();
@@ -23,9 +28,12 @@ export function WorkspaceViewTabs({
     <div className="workspace-view-tabs" role="tablist" aria-label={t('roomWorkspace.views')}>
       {views.map((view, index) => {
         const Icon = viewIcons[view];
+        const unread = view === 'conversation' && value !== view && conversationUnread > 0;
         return (
           <button
             aria-controls="workspace-current-view"
+            aria-describedby={unread ? `${id}-unread` : undefined}
+            aria-label={unread ? t(`roomWorkspace.${view}`) : undefined}
             aria-selected={value === view}
             id={`workspace-tab-${view}`}
             key={view}
@@ -57,6 +65,7 @@ export function WorkspaceViewTabs({
           >
             <Icon aria-hidden="true" />
             <span>{t(`roomWorkspace.${view}`)}</span>
+            {unread ? <RoomUnreadCount count={conversationUnread} id={`${id}-unread`} /> : null}
             {value === view ? (
               <motion.span
                 className="workspace-view-tabs__indicator"

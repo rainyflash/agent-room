@@ -68,6 +68,10 @@ test('无需核对即可双向加密私聊，重启后恢复', async ({ page }) 
   const { deviceId } = storedMatrixSessionSchema.parse(await readMatrixSession(page));
   await page.goto(`/lobby/${scenario.catalogId}`);
   await expect(page).toHaveURL(/\/instance\//u);
+  // 这条验收看的是场景版面（Pixi 画布、从场景里找人开私聊）。默认是对话版面，所以在地址里写明。
+  const sceneUrl = new URL(page.url());
+  sceneUrl.searchParams.set('layout', 'scene');
+  await page.goto(`${sceneUrl.pathname}${sceneUrl.search}`);
   const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene', exact: true });
   // 画布对读屏隐藏（aria-hidden），只能在场景里按类名找；它出现说明用的是 Pixi 渲染。
   const canvas = scene.locator('.lobby-scene__canvas');

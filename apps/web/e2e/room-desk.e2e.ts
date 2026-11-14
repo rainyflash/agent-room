@@ -1,16 +1,26 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 import { openRoomSettings } from './support/workspace-navigation';
 
-// 房间页的对话版面（specs/redesign/room-page.md 第 1a 步）。默认还是场景，
-// 人在顶栏换过去以后这台设备记着。
+// 房间页的对话版面（specs/redesign/room-page.md）。1b 起它是默认的，
+// 人在顶栏换成场景以后这台设备记着。
 const room = '/e2e/fixtures/lobby-scene.html?private&history&agents=8';
 
 function layoutOption(page: Page, name: 'Conversation' | 'Scene') {
   return page
     .getByRole('radiogroup', { name: 'Room layout', exact: true })
     .getByRole('radio', { name, exact: true });
+}
+
+/** 主房间里来一条别人说的话。 */
+async function receiveInMainRoom(page: Page, text: string): Promise<void> {
+  await page.evaluate(
+    (text) =>
+      (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({ agentIndex: 2, text }),
+    text,
+  );
 }
 
 async function expectAccessible(page: Page): Promise<void> {
@@ -20,22 +30,17 @@ async function expectAccessible(page: Page): Promise<void> {
   expect(accessibility.violations).toEqual([]);
 }
 
-test('默认是场景，换成对话版面以后打开就能看能写，这台设备记着', async ({ page }) => {
+test('默认是对话版面，打开就能看能写；换成场景以后这台设备记着', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(room);
   const canvas = page.locator('.lobby-scene__canvas');
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
-  await expect(canvas).toBeVisible();
-  await expect(input).toBeHidden();
-  await expect(layoutOption(page, 'Scene')).toHaveAttribute('aria-checked', 'true');
-
-  await layoutOption(page, 'Conversation').click();
+  // 地址里没写版面，这台设备也没换过：对话版面，不用点任何东西。
   await expect(input).toBeInViewport();
   await expect(canvas).toHaveCount(0);
-  await expect(page).toHaveURL(/layout=conversation/u);
-  // 顶栏换了一条，焦点接着落在新的切换上。
-  await expect(layoutOption(page, 'Conversation')).toBeFocused();
+  await expect(layoutOption(page, 'Conversation')).toHaveAttribute('aria-checked', 'true');
+  await expect(page).not.toHaveURL(/layout=/u);
   // 三栏：主房间和私聊、对话、Agent。
   await expect(
     page.getByRole('navigation', { name: 'Main room and direct messages', exact: true }),
@@ -49,23 +54,30 @@ test('默认是场景，换成对话版面以后打开就能看能写，这台�
   await expect(page.getByText('Review milestone 80', { exact: false }).first()).toBeVisible();
   await expectAccessible(page);
 
-  await page.reload();
-  await expect(input).toBeInViewport();
-  // 地址里没写版面：照这台设备记着的。
-  await page.goto(room);
-  await expect(input).toBeInViewport();
-  await expect(layoutOption(page, 'Conversation')).toHaveAttribute('aria-checked', 'true');
-
-  // 键盘也换得回去。
-  await layoutOption(page, 'Conversation').press('ArrowRight');
+  await layoutOption(page, 'Scene').click();
   await expect(canvas).toBeVisible();
   await expect(input).toBeHidden();
   await expect(page).toHaveURL(/layout=scene/u);
+  // 顶栏换了一条，焦点接着落在新的切换上。
   await expect(layoutOption(page, 'Scene')).toBeFocused();
 
-  // 地址里写了版面就照地址，不管设备记着什么。
-  await page.goto(`${room}&layout=conversation`);
+  await page.reload();
+  await expect(canvas).toBeVisible();
+  // 地址里没写版面：照这台设备记着的。
+  await page.goto(room);
+  await expect(canvas).toBeVisible();
+  await expect(layoutOption(page, 'Scene')).toHaveAttribute('aria-checked', 'true');
+
+  // 键盘也换得回去。
+  await layoutOption(page, 'Scene').press('ArrowLeft');
   await expect(input).toBeInViewport();
+  await expect(canvas).toHaveCount(0);
+  await expect(page).toHaveURL(/layout=conversation/u);
+  await expect(layoutOption(page, 'Conversation')).toBeFocused();
+
+  // 地址里写了版面就照地址，不管设备记着什么。
+  await page.goto(`${room}&layout=scene`);
+  await expect(canvas).toBeVisible();
   expect(failures).toEqual([]);
 });
 
@@ -128,6 +140,42 @@ test('对话版面：Agent 详情盖在右栏上，私聊在主栏里，顶栏�
   expect(failures).toEqual([]);
 });
 
+test('人不在主房间的对话里时来了新消息：回去的地方标着条数，回去就没了', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(room);
+  const log = page.locator('.workspace-room-content').getByRole('log');
+  const unread = page.locator('.room-unread');
+  // 在主房间的对话里：来了就看到了，不标。
+  await receiveInMainRoom(page, 'Seen right away.');
+  await expect(log).toContainText('Seen right away.');
+  await expect(unread).toHaveCount(0);
+
+  // 在私聊里：左栏的“主房间”上标着。名字不变，条数读屏读得到。
+  const mainRoom = page.getByRole('button', { name: 'Main room', exact: true });
+  await page.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
+  await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeVisible();
+  await receiveInMainRoom(page, 'Arrived while in a direct message.');
+  await expect(mainRoom).toHaveAccessibleDescription('1 new message');
+  await expect(mainRoom.locator('.room-unread')).toContainText('1');
+  await expectAccessible(page);
+  await mainRoom.click();
+  await expect(log).toContainText('Arrived while in a direct message.');
+  await expect(unread).toHaveCount(0);
+
+  // 在看资料：标在“对话”那个标签上。
+  await page.getByRole('tab', { name: 'Resources', exact: true }).click();
+  await receiveInMainRoom(page, 'Arrived while reading resources.');
+  await receiveInMainRoom(page, 'And one more.');
+  const conversation = page.getByRole('tab', { name: 'Conversation', exact: true });
+  await expect(conversation).toHaveAccessibleDescription('2 new messages');
+  await expectAccessible(page);
+  await conversation.click();
+  await expect(log).toContainText('And one more.');
+  await expect(unread).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
 test('对话版面窄的时候：两栏收起来，Agent 从顶栏打开，私聊里留着回主房间的路', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1000, height: 760 });
@@ -148,7 +196,12 @@ test('对话版面窄的时候：两栏收起来，Agent 从顶栏打开，私�
   await drawer.getByRole('button', { name: 'Open conversation with Build Agent 002' }).click();
   await expect(drawer).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Back to the main room', exact: true }).click();
+  // 在私聊里时主房间来了新消息：回去的那一条上标着。
+  const back = page.getByRole('button', { name: 'Back to the main room', exact: true });
+  await receiveInMainRoom(page, 'Arrived while in a direct message.');
+  await expect(back).toHaveAccessibleDescription('1 new message');
+  await expect(back.locator('.room-unread')).toBeVisible();
+  await back.click();
   await expect(page.getByRole('heading', { name: 'Build Agent 002', exact: true })).toBeHidden();
   await expect(page.getByText('Review milestone 80', { exact: false }).first()).toBeVisible();
   await expectAccessible(page);
@@ -161,14 +214,10 @@ test('对话版面在手机上：不横向滚动，输入框贴在底下，顶�
   await page.goto(room);
   const canvas = page.locator('.lobby-scene__canvas');
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
-  await expect(canvas).toBeVisible();
-  // 手机上两段的切换换成一个按钮。
-  await expect(page.getByRole('radiogroup', { name: 'Room layout', exact: true })).toBeHidden();
-  await page
-    .getByRole('button', { name: 'Switch to the conversation layout', exact: true })
-    .click();
   await expect(input).toBeInViewport();
   await expect(canvas).toHaveCount(0);
+  // 手机上两段的切换换成一个按钮。
+  await expect(page.getByRole('radiogroup', { name: 'Room layout', exact: true })).toBeHidden();
   await expectNoHorizontalOverflow(page);
   const gap = await page.evaluate(() => {
     const composer = document.querySelector('.room-desk__main .conversation-panel__composer');
@@ -186,5 +235,10 @@ test('对话版面在手机上：不横向滚动，输入框贴在底下，顶�
   await page.getByRole('button', { name: 'Switch to the scene layout', exact: true }).click();
   await expect(canvas).toBeVisible();
   await expect(input).toBeHidden();
+  await page
+    .getByRole('button', { name: 'Switch to the conversation layout', exact: true })
+    .click();
+  await expect(input).toBeInViewport();
+  await expect(canvas).toHaveCount(0);
   expect(failures).toEqual([]);
 });

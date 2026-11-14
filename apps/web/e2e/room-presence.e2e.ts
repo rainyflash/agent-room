@@ -9,7 +9,7 @@ for (const width of [1440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/e2e/fixtures/lobby-scene.html');
+    await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
     await expect(
       page.getByRole('button', { name: 'Your character: Fixture operator' }),
     ).toBeVisible();
@@ -58,7 +58,7 @@ for (const width of [1440, 390]) {
 
 test('自己的公开发言归到人类角色，撤回后气泡消失', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/e2e/fixtures/lobby-scene.html');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
   await page.getByRole('button', { name: 'Chat', exact: true }).click();
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await input.fill('Hello everyone in the room.');
@@ -82,7 +82,7 @@ test('自己的公开发言归到人类角色，撤回后气泡消失', async ({
 test('私聊消息不会出现在房间气泡或未读中，私聊期间仍接收大厅消息', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/e2e/fixtures/lobby-scene.html');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
   await openDirectConversation(page, 'Build Agent 002');
   await page.evaluate(() =>
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.receive({
@@ -119,7 +119,7 @@ test('私聊消息不会出现在房间气泡或未读中，私聊期间仍接�
 
 test('多人发言有上限、可访问且不互相遮挡', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/e2e/fixtures/lobby-scene.html');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
   await expect(page.locator('canvas')).toBeVisible();
   await page.evaluate(() => {
     const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
@@ -160,7 +160,7 @@ test('SVG 降级保留人类、气泡和成员增量位置', async ({ page }) =>
     });
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/e2e/fixtures/lobby-scene.html');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene');
   await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
   const character = page.locator('[data-character-id="01990d9e-8400-7000-8000-000000000003"]');
   const position = await character.getAttribute('transform');
@@ -208,7 +208,7 @@ for (const width of [1440, 390]) {
     });
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/e2e/fixtures/lobby-scene.html?agents=6&owners');
+    await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&agents=6&owners');
     await expect(page.locator('[data-renderer="svg"]')).toBeVisible();
 
     // 读屏和场景名牌都写着是谁的。

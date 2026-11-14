@@ -1299,9 +1299,15 @@
   border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
 }
 
-/* 退出、移除、封禁的人：名字和状态淡一些，“解除封禁”照常。 */
+/*
+ * 退出、移除、封禁的人：名字和状态淡一些，“解除封禁”照常。
+ * 字用淡一档的颜色，不用透明度：透明度压出来的字对比度不够 4.5:1。头像不是字，照旧压淡。
+ */
 .private-room-member--inactive > .private-room-member__identity,
 .private-room-member--inactive > .private-room-member__account {
+  color: var(--ar-muted);
+}
+.private-room-member--inactive > .private-room-member__identity > span {
   opacity: 0.58;
 }
 

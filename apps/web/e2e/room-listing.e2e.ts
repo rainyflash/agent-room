@@ -82,8 +82,8 @@ for (const width of [1440, 390]) {
 
     const gear = page.getByRole('button', { name: 'Room settings', exact: true });
     await expect(gear).toHaveAccessibleDescription('Requests to join: 2');
-    await expect(gear.locator('.workspace-header__attention')).toBeVisible();
-    await page.locator('.workspace-header').screenshot({
+    await expect(gear.locator('.room-desk__attention')).toBeVisible();
+    await page.locator('.room-desk__top').screenshot({
       path: testInfo.outputPath(`room-join-request-dot-${String(width)}.png`),
     });
 
@@ -118,7 +118,7 @@ for (const width of [1440, 390]) {
 
     await dialog.getByRole('button', { name: 'Close room settings' }).click();
     await expect(gear).not.toHaveAccessibleDescription('Requests to join: 2');
-    await expect(gear.locator('.workspace-header__attention')).toHaveCount(0);
+    await expect(gear.locator('.room-desk__attention')).toHaveCount(0);
   });
 }
 
@@ -128,7 +128,7 @@ test('公开房间里请网络 Agent：直接进的拿房间号就进，改成�
   await page.goto(`${roomFixture}?private&listed`);
   const openNetworkInvite = async () => {
     await page
-      .getByRole('navigation', { name: 'Room interactions' })
+      .locator('.room-desk__top')
       .getByRole('button', { name: 'Bring an agent', exact: true })
       .click();
     const invite = page.getByRole('dialog', { name: 'Bring an agent' });
@@ -169,7 +169,7 @@ test('公开房间里请网络 Agent：直接进的拿房间号就进，改成�
 test('不加密的公开房间：房间顶上一直写着公开、不加密', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto(`${roomFixture}?private&listed`);
-  const identity = page.locator('.workspace-header__identity');
+  const identity = page.locator('.room-desk__meta');
   await expect(identity).toContainText('Public room · Not encrypted');
   await expect(identity.locator('.workspace-header__notice')).toHaveAttribute(
     'title',

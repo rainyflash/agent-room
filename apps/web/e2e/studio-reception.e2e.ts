@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
-const studio = '/e2e/fixtures/lobby-scene.html?agents=6';
+const studio = '/e2e/fixtures/lobby-scene.html?layout=scene&agents=6';
 
 test('工作室只投影在场人物，离线成员仍可查看并留言', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);

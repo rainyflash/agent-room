@@ -38,7 +38,8 @@ test('窄屏资料发送器填满浮层且保留房间与可操作入口', async
   const failures = collectPageFailures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto(fixturePath);
+  // 浮在画面上的面板只有场景版面有。
+  await page.goto(`${fixturePath}&layout=scene`);
 
   await page.getByRole('button', { name: 'Share a resource' }).click();
   const composer = page.getByRole('complementary', { name: 'Share a resource' });

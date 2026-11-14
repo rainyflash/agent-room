@@ -61,7 +61,7 @@ for (const width of [1440, 390]) {
   test(`收藏撤销标签筛选和键盘返回 ${String(width)}px`, async ({ page }, testInfo) => {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ width, height: 1000 });
-    await page.goto('/e2e/fixtures/lobby-scene.html?agents=24');
+    await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&agents=24');
     await page.getByRole('button', { name: 'List', exact: true }).click();
     const roster = page.locator('.list-roster:visible');
     await roster.getByRole('button', { name: /Build Agent 001/u }).click();
@@ -268,7 +268,7 @@ for (const width of [1440, 390]) {
 test('对话面板可以放大，刷新后记得', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/e2e/fixtures/lobby-scene.html?view=conversation&history=1');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&view=conversation&history=1');
   const panel = page.locator('.room-panel');
   const width = () => panel.evaluate((element) => element.getBoundingClientRect().width);
   const regular = await width();
@@ -293,7 +293,7 @@ test('对话面板可以放大，刷新后记得', async ({ page }) => {
 test('一千个人物可逐个定位且能通过收藏缩小列表', async ({ page }, testInfo) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/e2e/fixtures/lobby-scene.html?agents=1000');
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=scene&agents=1000');
   const scene = page.getByRole('listbox', { name: 'Interactive Agent room scene' });
   await expect(scene.locator('canvas')).toBeVisible();
   await expect(scene.getByRole('option')).toHaveCount(1000);

@@ -17,6 +17,16 @@ async function expectAccessibleDialog(page: Page): Promise<void> {
     scan.violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) })),
   ).toEqual([]);
 }
+/** 顶栏上房间名下面那一小句：这是哪种房间、谁读得到。 */
+function roomKind(page: Page) {
+  return page.locator('.room-desk__meta > span').first();
+}
+/** 顶栏上的“接入 Agent”。 */
+function bringAgent(page: Page) {
+  return page
+    .locator('.room-desk__top')
+    .getByRole('button', { name: 'Bring an agent', exact: true });
+}
 const first = '0198b601-77a2-7f41-b4f4-940f291951b8';
 const second = '0198b601-77a2-7f41-b4f4-940f291951b9';
 
@@ -74,7 +84,7 @@ for (const width of [1_440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ height: 900, width });
     await page.goto(`${fixturePath}?private`);
-    await expect(page.locator('.workspace-header__identity')).toContainText('Private room');
+    await expect(roomKind(page)).toHaveText('Private room');
 
     const dialog = await openRoomSettings(page);
     const sections = dialog.getByRole('radiogroup', { name: 'Room settings sections' });
@@ -166,7 +176,7 @@ for (const width of [1_440, 390]) {
     const failures = collectPageFailures(page);
     await page.setViewportSize({ height: 900, width });
     await page.goto(`${fixturePath}?private&origin=network`);
-    const label = page.locator('.workspace-header__identity > span');
+    const label = roomKind(page);
     await expect(label).toHaveText('Private room · The server can read it');
     await expect(label).toHaveAttribute(
       'title',
@@ -198,7 +208,7 @@ for (const width of [1_440, 390]) {
 test('本机 Agent 建的私人房间：设置里写上谁建的，别的照旧', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto(`${fixturePath}?private&origin=local`);
-  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room');
+  await expect(roomKind(page)).toHaveText('Private room');
 
   const dialog = await openRoomSettings(page);
   await expect(dialog.getByText('Scout (an agent)')).toBeVisible();
@@ -215,7 +225,7 @@ test('本机 Agent 刚替你建的房间：Matrix 上你还只是受邀，点进
 }) => {
   const failures = collectPageFailures(page);
   await page.goto(`${fixturePath}?private&origin=local&matrix-invite&view=conversation`);
-  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room');
+  await expect(roomKind(page)).toHaveText('Private room');
   const room = page.locator('.workspace-room-content');
   await expect(room.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
   await expect(page.getByText('You are not in this room yet')).toHaveCount(0);
@@ -231,7 +241,7 @@ test('替你加入没成：说打不开，点“重试”再加入一次就进�
   await page.goto(`${fixturePath}?private&origin=local&matrix-invite=fail`);
   await expect(page.getByText('You are not in this room yet')).toBeVisible();
   await page.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.locator('.workspace-header__identity > span')).toHaveText('Private room');
+  await expect(roomKind(page)).toHaveText('Private room');
   const joins = await page.evaluate(() =>
     (window as LobbyFixtureWindow).__agentRoomFixtureControls.matrixJoins(),
   );
@@ -247,7 +257,7 @@ for (const width of [1_440, 390]) {
     await page.setViewportSize({ height: 900, width });
     await page.goto(`${fixturePath}?private&origin=network&archived&view=conversation&history=1`);
     // 归档比“服务器能读到”先说。
-    const label = page.locator('.workspace-header__identity > span');
+    const label = roomKind(page);
     await expect(label).toHaveText('Private room · Archived');
     await expect(label).toHaveAttribute(
       'title',
@@ -260,11 +270,8 @@ for (const width of [1_440, 390]) {
     );
     await expect(room.getByRole('textbox', { name: 'Message', exact: true })).toBeDisabled();
     await expect(room.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
-    await expect(
-      page
-        .getByRole('navigation', { name: 'Room interactions' })
-        .getByRole('button', { name: 'Bring an agent', exact: true }),
-    ).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Room settings', exact: true })).toBeVisible();
+    await expect(bringAgent(page)).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     expect(failures).toEqual([]);
     await page.screenshot({
@@ -298,10 +305,7 @@ test('私人房间：Agent 拿房间号敲门，房间页的提示栈里直接�
 
 /** 打开房间页上的“接入 Agent”，选网络接入。 */
 async function openNetworkInvite(page: Page) {
-  await page
-    .getByRole('navigation', { name: 'Room interactions' })
-    .getByRole('button', { name: 'Bring an agent', exact: true })
-    .click();
+  await bringAgent(page).click();
   const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
   await dialog.getByRole('radio', { name: /^Network/u }).click();
   return dialog;

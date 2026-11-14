@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures } from './support/page-assertions';
-import { openDirectConversation } from './support/workspace-navigation';
+import { openDirectConversation, openMainRoom } from './support/workspace-navigation';
 
 for (const width of [1440, 390]) {
   test(`离开私聊后恢复独立草稿与回复：${String(width)}`, async ({ page }, testInfo) => {
@@ -20,7 +20,7 @@ for (const width of [1440, 390]) {
     await direct.getByRole('button', { name: 'Reply to Build Agent 002' }).click();
     const input = direct.getByRole('textbox', { name: 'Message', exact: true });
     await input.fill('Keep this private draft.');
-    await page.getByRole('button', { name: 'Chat', exact: true }).click();
+    await openMainRoom(page);
     const publicInput = page
       .locator('.workspace-room-content')
       .getByRole('textbox', { name: 'Message', exact: true });
@@ -32,8 +32,10 @@ for (const width of [1440, 390]) {
     await expect(
       direct.getByRole('button', { name: 'Remove mention of Build Agent 002' }),
     ).toBeVisible();
-    await page.getByRole('button', { name: 'Return to the room', exact: true }).click();
+    // 回主房间：私聊收起来，主房间自己的草稿也还在。
+    await openMainRoom(page);
     await expect(input).toBeHidden();
+    await expect(publicInput).toHaveValue('A different public draft.');
     await openExistingConversation(page);
     await expect(input).toHaveValue('Keep this private draft.');
     await expect(direct).toHaveCSS('opacity', '1');

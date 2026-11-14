@@ -5,6 +5,7 @@ import { useId, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { RoomKindLabel, type RoomKind } from './room-kind-label';
+import { RoomUnreadCount } from './room-unread-count';
 import './room-desk.css';
 
 /** 顶栏上打开对话框的一个动作；`null` 是这间房里你用不上它。 */
@@ -23,6 +24,8 @@ export type RoomDeskProps = {
   readonly liveSummary: string;
   /** 左栏里有没有选中私聊：没有就是在主房间。 */
   readonly mainRoomSelected: boolean;
+  /** 主房间里你还没看到的消息数：人在私聊里时标在回主房间的地方。 */
+  readonly mainRoomUnread: number;
   readonly onOpenAgents: () => void;
   readonly onOpenSettings: (() => void) | null;
   readonly onSelectMainRoom: () => void;
@@ -51,6 +54,7 @@ export function RoomDesk({
   layoutSwitch,
   liveSummary,
   mainRoomSelected,
+  mainRoomUnread,
   onOpenAgents,
   onOpenSettings,
   onSelectMainRoom,
@@ -64,6 +68,9 @@ export function RoomDesk({
 }: RoomDeskProps) {
   const { t } = useTranslation();
   const attentionId = useId();
+  const unreadId = useId();
+  // 人在私聊里时主房间来了新消息：回主房间的两处各标一个数。
+  const unreadElsewhere = !mainRoomSelected && mainRoomUnread > 0;
   return (
     <main
       className="lobby-workspace room-desk"
@@ -170,12 +177,17 @@ export function RoomDesk({
             <nav aria-label={t('roomDesk.places')} className="room-desk__places">
               <button
                 aria-current={mainRoomSelected ? 'page' : undefined}
+                aria-describedby={unreadElsewhere ? `${unreadId}-rail` : undefined}
+                aria-label={t('roomDesk.mainRoom')}
                 className="room-desk__place"
                 onClick={onSelectMainRoom}
                 type="button"
               >
                 <Hash aria-hidden="true" />
                 <span>{t('roomDesk.mainRoom')}</span>
+                {unreadElsewhere ? (
+                  <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-rail`} />
+                ) : null}
               </button>
             </nav>
             {rail}
@@ -183,9 +195,18 @@ export function RoomDesk({
         )}
         <section aria-label={t('roomGame.panel')} className="room-desk__main">
           {mainRoomSelected ? null : (
-            <button className="room-desk__return" onClick={onSelectMainRoom} type="button">
+            <button
+              aria-describedby={unreadElsewhere ? `${unreadId}-return` : undefined}
+              aria-label={t('roomDesk.backToMainRoom')}
+              className="room-desk__return"
+              onClick={onSelectMainRoom}
+              type="button"
+            >
               <ArrowLeft aria-hidden="true" />
               <span>{t('roomDesk.backToMainRoom')}</span>
+              {unreadElsewhere ? (
+                <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-return`} />
+              ) : null}
             </button>
           )}
           {children}
