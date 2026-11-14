@@ -14,12 +14,12 @@ const SPEAKER: [PrivateRoomCapability; 3] = [
 const REMOVED: PrivateRoomMembershipStatus = PrivateRoomMembershipStatus::Removed;
 
 /// 夹具里直接放进存储的房间在聊天服务器上的房间号。
-fn room(catalog: u128) -> String {
+pub(super) fn room(catalog: u128) -> String {
     format!("!room-{catalog}:matrix.test")
 }
 
 /// 两间子房间，成员进了第一间；另一间里只有房主。
-async fn two_sub_rooms() -> Rooms {
+pub(super) async fn two_sub_rooms() -> Rooms {
     let rooms = Rooms::new();
     rooms.store.seed(&Seed::open(20, "release"));
     rooms.store.seed(&Seed::open(21, "design"));
@@ -29,7 +29,7 @@ async fn two_sub_rooms() -> Rooms {
 }
 
 /// 给这个人登记一个 Agent，它在聊天服务器上已经在这几间房里。
-fn agent_in(rooms: &Rooms, owner: u128, name: &str, catalogs: &[u128]) {
+pub(super) fn agent_in(rooms: &Rooms, owner: u128, name: &str, catalogs: &[u128]) {
     let agent = MatrixUserId::new(format!("@{name}:matrix.test")).expect("用户有效");
     rooms.agents.register(principal_id(owner), &agent);
     for catalog in catalogs {
@@ -55,7 +55,11 @@ async fn remove_from_parent(rooms: &Rooms, target: u128) {
         .expect("房主能移出");
 }
 
-async fn set_parent_permissions(rooms: &Rooms, target: u128, permissions: PrivateRoomPermissions) {
+pub(super) async fn set_parent_permissions(
+    rooms: &Rooms,
+    target: u128,
+    permissions: PrivateRoomPermissions,
+) {
     rooms
         .service
         .update_permissions(ChangePrivateRoomPermissions {

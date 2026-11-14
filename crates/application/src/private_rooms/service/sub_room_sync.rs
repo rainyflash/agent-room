@@ -72,7 +72,7 @@ enum Trouble {
     Matrix(MatrixFailure),
     /// 这个人的聊天账户、他名下的 Agent 没查成。
     Directory,
-    /// 子房间没读成。
+    /// 子房间、他的禁言没读成。
     Storage,
     /// 存着的房间号不是合法的 Matrix 房间号。
     Corrupt,
@@ -276,15 +276,15 @@ impl PrivateRoomService {
             .matrix_user_id(principal)
             .await
             .map_err(|_| Trouble::Directory)?;
-        let course = MemberCourse::of(sub_room.room(), principal);
+        let course = self.member_course(sub_room, principal).await?;
         self.follow_member_course(course, matrix_room, principal, user.as_ref())
             .await?;
-        // 动完再看一眼：做的当口他自己退出了这一间，或者这一间归档了，照新的样子再摆一遍。这两样
-        // 不经过任务表，没有人会替它们再排一次。
+        // 动完再看一眼：做的当口他自己退出了这一间、这一间归档了，或者他被禁言、禁言撤了，照新的样子
+        // 再摆一遍。这几样不经过任务表，没有人会替它们再排一次。
         let Some(after) = self.sub_room_now(task).await? else {
             return Ok(());
         };
-        let settled = MemberCourse::of(after.room(), principal);
+        let settled = self.member_course(&after, principal).await?;
         if settled != course {
             self.follow_member_course(settled, matrix_room, principal, user.as_ref())
                 .await?;
@@ -299,6 +299,26 @@ impl PrivateRoomService {
                 .map_err(Trouble::Matrix)?;
         }
         Ok(())
+    }
+
+    /// 照库里现在的记录，这个人在这间子房间里该摆成什么样。权限里能发言的还要看他是不是被禁言着
+    /// （这一间的、父房间的都算）：被禁言着的不给发言级别，不然父房间里一改他的权限、一换房主，就把
+    /// 禁言冲掉了。
+    async fn member_course(
+        &self,
+        sub_room: &PrivateRoomSnapshot,
+        principal: PrincipalId,
+    ) -> Result<MemberCourse, Trouble> {
+        let course = MemberCourse::of(sub_room.room(), principal);
+        if course != (MemberCourse::Inside { speaks: true }) {
+            return Ok(course);
+        }
+        let muted = self
+            .moderation
+            .person_muted(sub_room.catalog().id(), principal, self.clock.now())
+            .await
+            .map_err(|_| Trouble::Storage)?;
+        Ok(MemberCourse::Inside { speaks: !muted })
     }
 
     async fn follow_member_course(

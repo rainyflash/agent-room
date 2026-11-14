@@ -382,6 +382,15 @@ impl StandingModerationSource for 测试治理 {
             self.standing.clone()
         })
     }
+
+    fn person_muted(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        _principal_id: PrincipalId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async { unreachable!("开分片不问单个人的禁言") })
+    }
 }
 
 impl ModerationEffectGateway for 测试治理 {

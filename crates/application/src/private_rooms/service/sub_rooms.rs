@@ -25,8 +25,8 @@ use agent_room_domain::{
 use crate::{
     persistence::RepositoryErrorKind,
     ports::{
-        MatrixCreateRoom, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility,
-        MatrixUserId, NewSubRoom, PortFuture, PrivateMatrixRoomCreation,
+        MatrixCreateRoom, MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset,
+        MatrixRoomVisibility, MatrixUserId, NewSubRoom, PortFuture, PrivateMatrixRoomCreation,
         PrivateMatrixSpeakingAssignment, PrivateRoomSnapshot, SubRoomCreationBlock,
         SubRoomCreationCheck, SubRoomEntry, SubRoomParentFacts, SubRoomPolicyRecord,
     },
@@ -142,6 +142,8 @@ impl SubRoomUseCases for PrivateRoomService {
 struct PreparedSubRoom {
     matrix: PrivateMatrixRoomCreation,
     speaking_assignments: Vec<PrivateMatrixSpeakingAssignment>,
+    /// 拿到了发言级别的人。存好以后再看一眼他们是不是被禁言着。
+    speakers: Vec<(PrincipalId, MatrixUserId)>,
 }
 
 impl PrivateRoomService {
@@ -231,7 +233,32 @@ impl PrivateRoomService {
             end_to_end_encrypted: facts.end_to_end_encrypted,
             created_at: now,
         };
-        self.store_sub_room(&request, sub_room, OPERATION).await
+        let stored = self.store_sub_room(&request, sub_room, OPERATION).await?;
+        self.hold_fresh_mutes(&request, &matrix_room_id, &prepared.speakers, OPERATION)
+            .await?;
+        Ok(stored)
+    }
+
+    /// 建的当口落下来的禁言看不到这间还没存的子房间：存好以后再看一眼，被禁言着的把发言级别收回。
+    async fn hold_fresh_mutes(
+        &self,
+        request: &CreateSubRoom,
+        matrix_room_id: &MatrixRoomId,
+        speakers: &[(PrincipalId, MatrixUserId)],
+        operation: &'static str,
+    ) -> PrivateRoomResult<()> {
+        for (principal, user) in speakers {
+            if self
+                .muted_in(request.parent_catalog_id, *principal, operation)
+                .await?
+            {
+                self.matrix
+                    .set_speaking(matrix_room_id, user, false)
+                    .await
+                    .map_err(|error| matrix(operation, error))?;
+            }
+        }
+        Ok(())
     }
 
     /// 父房间加不加密、三项设置，顺带照设置看建的人此刻能不能建。
@@ -390,6 +417,7 @@ impl PrivateRoomService {
         let owner = room.owner_principal_id();
         let mut invites = Vec::new();
         let mut speaking_assignments = Vec::new();
+        let mut speakers = Vec::new();
         let mut seen = BTreeSet::new();
         for member in room.members() {
             let principal = member.principal_id();
@@ -409,10 +437,15 @@ impl PrivateRoomService {
                     PrivateRoomFailureKind::Conflict,
                 ));
             }
-            speaking_assignments.push(PrivateMatrixSpeakingAssignment::new(
-                user.clone(),
-                member.permissions().speak(),
-            ));
+            // 在父房间里被禁言着的人，新建的子房间里也不给发言级别：不然建一间就绕过去了。
+            let speaks = member.permissions().speak()
+                && !self
+                    .muted_in(request.parent_catalog_id, principal, operation)
+                    .await?;
+            if speaks {
+                speakers.push((principal, user.clone()));
+            }
+            speaking_assignments.push(PrivateMatrixSpeakingAssignment::new(user.clone(), speaks));
             invites.push(user);
         }
         for reader in &self.trusted_matrix_readers {
@@ -452,6 +485,7 @@ impl PrivateRoomService {
         Ok(PreparedSubRoom {
             matrix,
             speaking_assignments,
+            speakers,
         })
     }
 

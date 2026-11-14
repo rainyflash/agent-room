@@ -30,6 +30,8 @@ use crate::{
     transaction,
 };
 
+mod sub_rooms;
+
 const CASE_COLUMNS: &str = r"moderation_case.id,
        moderation_case.reporter_principal_id,
        moderation_case.target_kind,
@@ -234,6 +236,17 @@ impl StandingModerationSource for PostgresRepositories {
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>> {
         Box::pin(async move { standing_person_actions(&self.pool, room_catalog_id, now).await })
+    }
+
+    fn person_muted(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        principal_id: PrincipalId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(async move {
+            sub_rooms::person_muted(&self.pool, room_catalog_id, principal_id, now).await
+        })
     }
 }
 
@@ -823,7 +836,8 @@ async fn expiry_room(
 }
 
 /// 一个人在一个房间里此刻的禁言情况。和 [`expiry_room`] 一样不看目录和账号的状态；私人房间里他受邀
-/// 或者已经加入、权限里开着发言（第 2 位）才算能说话。
+/// 或者已经加入、权限里开着发言（第 2 位）才算能说话。这个房间是子房间时禁言连父房间的一起读；它下面
+/// 有子房间时带上他在里面的那几间。
 async fn mute_standing(
     pool: &PgPool,
     room_catalog_id: RoomCatalogId,
@@ -907,39 +921,9 @@ async fn mute_standing(
             .map_err(|_| corrupt_data(operation))?,
         target_agent_matrix_user_ids: decode_agent_matrix_users(&row, operation)?,
         may_speak: room_kind != RoomCatalogKind::PrivateRoom || member_may_speak,
-        mutes: person_mutes(pool, room_catalog_id, target, operation).await?,
+        mutes: sub_rooms::person_mutes(pool, room_catalog_id, target, operation).await?,
+        sub_rooms: sub_rooms::sub_room_standings(pool, room_catalog_id, target, operation).await?,
     }))
-}
-
-/// 这个房间里这个人已经落下和正在落的禁言，先做的在前。按房间读出来再按 UUID 挑：引用的写法不一定
-/// 规范，不能拿文本比；一个房间的治理动作不多。
-async fn person_mutes(
-    pool: &PgPool,
-    room_catalog_id: RoomCatalogId,
-    target: &ModerationTarget,
-    operation: &'static str,
-) -> RepositoryResult<Vec<ModerationAction>> {
-    let statement = format!(
-        "SELECT {ACTION_COLUMNS}
-           FROM agent_room.moderation_action
-           WHERE room_catalog_id = $1
-             AND action_type = 'mute'
-             AND status IN ('applied', 'pending')
-           ORDER BY starts_at ASC, id ASC"
-    );
-    let rows = sqlx::query(sqlx::AssertSqlSafe(statement))
-        .bind(room_catalog_id.as_uuid())
-        .fetch_all(pool)
-        .await
-        .map_err(|error| map_sqlx_error(operation, &error))?;
-    let mutes = rows
-        .iter()
-        .map(|row| decode_action(row, operation))
-        .collect::<RepositoryResult<Vec<_>>>()?;
-    Ok(mutes
-        .into_iter()
-        .filter(|mute| same_target(target, mute.target().reference()))
-        .collect())
 }
 
 /// 拿着禁言锁的事务。锁是事务级的 advisory lock：提交、回滚或者连接断了都会放掉。
@@ -966,9 +950,14 @@ async fn try_lock_mutes(
         .begin()
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
+    // 子房间用父房间的那一把：父房间的禁言在子房间里一起算，结束哪一边的都要看另一边，两边不能
+    // 同时做。
+    let family = sub_rooms::parent_room(&mut *transaction, room_catalog_id, operation)
+        .await?
+        .unwrap_or(room_catalog_id);
     let locked: bool =
         sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(mute_lock_key(room_catalog_id, target))
+            .bind(mute_lock_key(family, target))
             .fetch_one(&mut *transaction)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -982,7 +971,7 @@ async fn try_lock_mutes(
     Ok(Some(Box::new(PostgresMuteLock { transaction })))
 }
 
-/// 禁言锁按房间和人算，人按 UUID 认：同一个人写法不一样也是同一把锁。
+/// 禁言锁按房间（子房间算在父房间上）和人算，人按 UUID 认：同一个人写法不一样也是同一把锁。
 fn mute_lock_key(room_catalog_id: RoomCatalogId, target: &ModerationTarget) -> String {
     let person = principal_reference(target)
         .map_or_else(|| target.reference().to_owned(), |id| id.to_string());

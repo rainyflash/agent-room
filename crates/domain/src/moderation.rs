@@ -703,7 +703,22 @@ impl ModerationAction {
         self.status == ModerationActionStatus::Applied
             && self.expires_at.is_some_and(|expires_at| expires_at <= now)
     }
+
+    /// 正在落：`pending`、开始不到 5 分钟。时钟不齐、开始时间比此刻还晚的也算。
+    pub fn is_landing_at(&self, now: UtcMillis) -> bool {
+        self.status == ModerationActionStatus::Pending
+            && now.value().saturating_sub(self.starts_at.value()) < LANDING_GRACE_MILLIS
+    }
+
+    /// 此刻压着人：已经生效、没到期，或者正在落。
+    pub fn holds_at(&self, now: UtcMillis) -> bool {
+        self.is_effective_at(now) || self.is_landing_at(now)
+    }
 }
+
+/// 正在落的动作最多当它在落这么久。正常落一个动作是每个分片读一次、写一次权限，几秒钟；超过这个时间
+/// 还是 `pending` 的，是没落完控制面就断了的，当它没有。
+const LANDING_GRACE_MILLIS: i64 = 5 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModerationRole {
@@ -887,6 +902,27 @@ mod tests {
         assert!(action.reverse(time(3_000)).expect("可撤销"));
         assert_eq!(action.status(), ModerationActionStatus::Reversed);
         assert!(!action.is_effective_at(time(4_000)));
+    }
+
+    #[test]
+    fn 正在落的动作五分钟内算压着人_落下以后到期或撤回为止() {
+        let mut action = mute(Some(time(1_000_000)));
+        assert!(action.is_landing_at(time(1_000)));
+        assert!(
+            action.is_landing_at(time(0)),
+            "时钟不齐、开始得比此刻晚的也算"
+        );
+        assert!(action.holds_at(time(300_999)));
+        assert!(
+            !action.is_landing_at(time(301_000)),
+            "落了五分钟还没落完的当它没有"
+        );
+        assert!(!action.holds_at(time(301_000)));
+
+        action.mark_applied().expect("可应用");
+        assert!(!action.is_landing_at(time(2_000)));
+        assert!(action.holds_at(time(999_999)));
+        assert!(!action.holds_at(time(1_000_000)), "到期了就不压着了");
     }
 
     #[test]

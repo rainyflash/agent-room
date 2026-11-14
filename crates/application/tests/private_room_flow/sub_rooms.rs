@@ -35,6 +35,8 @@ use super::*;
 
 #[path = "sub_room_membership.rs"]
 mod membership;
+#[path = "sub_room_mutes.rs"]
+mod mutes;
 #[path = "sub_room_sync.rs"]
 mod sync;
 
@@ -662,6 +664,7 @@ impl Rooms {
             secrets: listings,
             sub_rooms: store.clone(),
             topics: matrix.clone(),
+            moderation: store.clone(),
             identifiers: runtime.clone(),
             clock: runtime,
         });
@@ -961,6 +964,11 @@ pub(super) struct MemoryRooms {
     sync_ids: Mutex<i64>,
     /// 设上以后，这间房再被读到第几次之前先改一下存着的东西：摆出“做的当口房间又变了”。
     interrupts_read: Mutex<Option<(RoomCatalogId, u32, Interruption)>>,
+    /// 此刻被禁言着的人，按房间记。父房间里的在它的子房间里一起算。
+    muted: Mutex<BTreeSet<(RoomCatalogId, PrincipalId)>>,
+    /// 设上以后，再问过这么多次“他是不是被禁言着”，这条禁言才落下来：摆出“给发言级别的当口
+    /// 禁言落下来了”。
+    mutes_later: Mutex<Option<(u32, RoomCatalogId, PrincipalId)>>,
 }
 
 type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
@@ -979,7 +987,31 @@ impl MemoryRooms {
             sync: Mutex::new(Vec::new()),
             sync_ids: Mutex::new(0),
             interrupts_read: Mutex::new(None),
+            muted: Mutex::new(BTreeSet::new()),
+            mutes_later: Mutex::new(None),
         }
+    }
+
+    /// 这个人在这间房里被禁言了。
+    fn mute(&self, catalog: u128, person: u128) {
+        self.muted
+            .lock()
+            .expect("禁言锁正常")
+            .insert((catalog_id(catalog), principal_id(person)));
+    }
+
+    /// 他在这间房里的禁言撤了。
+    fn unmute(&self, catalog: u128, person: u128) {
+        self.muted
+            .lock()
+            .expect("禁言锁正常")
+            .remove(&(catalog_id(catalog), principal_id(person)));
+    }
+
+    /// 再问过 `untouched` 次以后，这个人在这间房里被禁言。
+    fn mute_after(&self, untouched: u32, catalog: u128, person: u128) {
+        *self.mutes_later.lock().expect("禁言锁正常") =
+            Some((untouched, catalog_id(catalog), principal_id(person)));
     }
 
     /// 排上一件要在聊天服务器上跟着做的事。已经排着的换成新的一版、从头再试。
@@ -1256,6 +1288,47 @@ impl MemoryRooms {
             managers: sub_room.managers.clone(),
             archived: false,
         });
+    }
+}
+
+impl StandingModerationSource for MemoryRooms {
+    fn standing_person_actions(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn person_muted(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        principal_id: PrincipalId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let mut later = self.mutes_later.lock().expect("禁言锁正常");
+        match later.take() {
+            Some((0, catalog, person)) => {
+                self.muted
+                    .lock()
+                    .expect("禁言锁正常")
+                    .insert((catalog, person));
+            }
+            Some((untouched, catalog, person)) => *later = Some((untouched - 1, catalog, person)),
+            None => {}
+        }
+        drop(later);
+        let parent = self
+            .links
+            .lock()
+            .expect("关系锁正常")
+            .iter()
+            .find(|stored| stored.link.catalog_id == room_catalog_id)
+            .map(|stored| stored.link.parent_catalog_id);
+        let muted = self.muted.lock().expect("禁言锁正常");
+        let held = muted.contains(&(room_catalog_id, principal_id))
+            || parent.is_some_and(|parent| muted.contains(&(parent, principal_id)));
+        Box::pin(async move { Ok(held) })
     }
 }
 

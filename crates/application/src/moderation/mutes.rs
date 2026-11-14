@@ -1,22 +1,26 @@
 //! 结束一条禁言之前（到期解除，或者管理员撤回），先看这个人此刻该不该禁着：他在这个房间的全部
 //! 禁言、房间此刻的活跃分片、他的 Matrix 账号，私人房间里再看他此刻有没有发言权
 //! （specs/moderation/timed-mute-expiry.md）。
+//!
+//! 父房间的禁言在子房间里一起算（specs/redesign/sub-rooms.md 的“禁言”）：落的时候连他在里面的
+//! 子房间一起落；结束的时候子房间一起放开，哪一间自己还压着他就不放那一间。结束子房间自己的禁言时，
+//! 父房间的禁言也算在“别的禁言”里。
 
 use agent_room_domain::{
-    moderation::{ModerationAction, ModerationActionStatus, ModerationRole},
+    moderation::{ModerationAction, ModerationActionKind, ModerationRole},
+    rooms::RoomCatalogKind,
     time::UtcMillis,
 };
 
-use crate::ports::{MatrixResult, MatrixRoomId, ModerationMuteStanding, ModerationRoomContext};
+use crate::ports::{
+    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
+    ModerationMuteStanding, ModerationRoomContext, ModerationSubRoomStanding,
+};
 
 use super::{
     ModerationFailureKind, ModerationResult,
     service::{ModerationService, failure, repository_failure},
 };
-
-/// 正在落的禁言最多当它在落这么久。正常落一条禁言是每个分片读一次、写一次权限，几秒钟；超过这个时间
-/// 还是 `pending` 的，是没落完控制面就断了的，当它没有。
-const PENDING_GRACE_MILLIS: i64 = 5 * 60 * 1000;
 
 /// 撇开要结束的这一条，这个人此刻该怎样。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +48,7 @@ impl MuteCourse {
             .mutes
             .iter()
             .filter(|mute| mute.id() != ending.id());
-        if others.clone().any(|mute| landing_at(mute, now)) {
+        if others.clone().any(|mute| mute.is_landing_at(now)) {
             return Self::Unsettled;
         }
         if standing.matrix_room_ids.is_empty() || standing.target_matrix_user_id.is_none() {
@@ -77,7 +81,7 @@ impl MuteCourse {
             Self::Unsettled => standing
                 .mutes
                 .iter()
-                .find(|mute| mute.id() != ending.id() && landing_at(mute, now))
+                .find(|mute| mute.id() != ending.id() && mute.is_landing_at(now))
                 .cloned()
                 .map_or(Self::LeaveAlone, Self::KeepMuted),
             course => course,
@@ -90,13 +94,29 @@ impl MuteCourse {
     }
 }
 
-/// 正在落：`pending`、开始不到 5 分钟。时钟不齐、开始时间比此刻还晚的也算。
-fn landing_at(mute: &ModerationAction, now: UtcMillis) -> bool {
-    mute.status() == ModerationActionStatus::Pending
-        && now.value().saturating_sub(mute.starts_at().value()) < PENDING_GRACE_MILLIS
+/// 这一间子房间自己还压着他的那条禁言：已经生效没到期的，或者正在落的。
+fn own_mute(sub_room: &ModerationSubRoomStanding, now: UtcMillis) -> Option<&ModerationAction> {
+    sub_room.mutes.iter().find(|mute| mute.holds_at(now))
 }
 
-/// 动完再看一眼：结论和活跃分片（不看先后）都和动之前一样，才算定下来。
+/// 每间子房间该怎么动：这一间自己还压着他没有。排过序，只用来比变没变。
+fn sub_room_plan(standing: &ModerationMuteStanding, now: UtcMillis) -> Vec<(&str, bool)> {
+    let mut plan: Vec<(&str, bool)> = standing
+        .sub_rooms
+        .iter()
+        .map(|sub_room| {
+            (
+                sub_room.matrix_room_id.as_str(),
+                own_mute(sub_room, now).is_some(),
+            )
+        })
+        .collect();
+    plan.sort_unstable();
+    plan
+}
+
+/// 动完再看一眼：结论、活跃分片（不看先后）、他在的子房间和每一间自己压没压着他，都和动之前一样，
+/// 才算定下来。
 pub(super) fn settled_after(
     before: &ModerationMuteStanding,
     course: &MuteCourse,
@@ -107,6 +127,7 @@ pub(super) fn settled_after(
     after.is_some_and(|after| {
         MuteCourse::of(after, ending, now).same_as(course)
             && same_rooms(&before.matrix_room_ids, &after.matrix_room_ids)
+            && sub_room_plan(before, now) == sub_room_plan(after, now)
     })
 }
 
@@ -151,15 +172,16 @@ impl ModerationService {
         if course == MuteCourse::Unsettled {
             return Err(failure(operation, ModerationFailureKind::Conflict));
         }
-        self.follow_when_reversing(&course, &action, &standing, operation)
+        self.follow_when_reversing(&course, &action, &standing, now, operation)
             .await?;
-        // 期间有人又禁了他、那条生效的被撤了，或者新开了分片：照新的情况再动一次，然后照常记成撤回。
+        // 期间有人又禁了他、那条生效的被撤了、新开了分片，或者他进出了哪间子房间：照新的情况再动
+        // 一次，然后照常记成撤回。
         let after = self.mute_standing(&action, operation).await?;
         if !settled_after(&standing, &course, after.as_ref(), &action, now)
             && let Some(after) = after
         {
             let course = MuteCourse::insisting(&after, &action, now);
-            self.follow_when_reversing(&course, &action, &after, operation)
+            self.follow_when_reversing(&course, &action, &after, now, operation)
                 .await?;
         }
         self.record_reversed(action, operation).await
@@ -171,10 +193,11 @@ impl ModerationService {
         course: &MuteCourse,
         action: &ModerationAction,
         standing: &ModerationMuteStanding,
+        now: UtcMillis,
         operation: &'static str,
     ) -> ModerationResult<()> {
         if self
-            .follow_mute_course(course, action, standing)
+            .follow_mute_course(course, action, standing, now)
             .await
             .is_err()
         {
@@ -194,12 +217,49 @@ impl ModerationService {
             .map_err(|error| repository_failure(operation, &error))
     }
 
-    /// 照结论去动 Matrix：确保禁着就在每个分片上把那一条再落一次，撤掉就在每个分片上撤 `ending`。
+    /// 刚预留的动作落下去。私人房间里的禁言连他此刻在里面的子房间一起落。子房间在预留（记成正在落）
+    /// 以后才读：这以后才进子房间的人，进的时候看得到这条正在落的禁言，不会带着发言级别进去。
+    pub(super) async fn land_effects(
+        &self,
+        action: &ModerationAction,
+        context: &ModerationRoomContext,
+        rooms: &[MatrixRoomId],
+    ) -> MatrixResult<()> {
+        if action.kind() != ModerationActionKind::Mute
+            || context.room_kind != RoomCatalogKind::PrivateRoom
+        {
+            return self.apply_effects(action, context, rooms).await;
+        }
+        // 子房间没读成：这条禁言照没落成记，管理员再做一次。不能只落父房间就记成已经落下。
+        let standing = self
+            .mutes
+            .mute_standing(action.room_catalog_id(), action.target())
+            .await
+            .map_err(|_| {
+                MatrixFailure::new(
+                    MatrixOperation::UpdatePowerLevels,
+                    MatrixFailureKind::DependencyUnavailable,
+                )
+            })?;
+        let mut rooms = rooms.to_vec();
+        rooms.extend(
+            standing
+                .into_iter()
+                .flat_map(|standing| standing.sub_rooms)
+                .map(|sub_room| sub_room.matrix_room_id),
+        );
+        self.apply_effects(action, context, &rooms).await
+    }
+
+    /// 照结论去动 Matrix：确保禁着就在每个分片、他在的每间子房间上把那一条再落一次；撤掉就在每个
+    /// 分片上撤 `ending`，子房间一间一间看：这一间自己还压着他的，照那一条再落一次（之前被别处误解的
+    /// 也就改回来了），不压着的才放开。
     pub(super) async fn follow_mute_course(
         &self,
         course: &MuteCourse,
         ending: &ModerationAction,
         standing: &ModerationMuteStanding,
+        now: UtcMillis,
     ) -> MatrixResult<()> {
         let context = ModerationRoomContext {
             role: ModerationRole::None,
@@ -210,12 +270,26 @@ impl ModerationService {
         };
         match course {
             MuteCourse::KeepMuted(effective) => {
-                self.apply_effects(effective, &context, &standing.matrix_room_ids)
-                    .await
+                let mut rooms = standing.matrix_room_ids.clone();
+                rooms.extend(
+                    standing
+                        .sub_rooms
+                        .iter()
+                        .map(|sub_room| sub_room.matrix_room_id.clone()),
+                );
+                self.apply_effects(effective, &context, &rooms).await
             }
             MuteCourse::Lift => {
                 self.reverse_effects(ending, &context, &standing.matrix_room_ids)
-                    .await
+                    .await?;
+                for sub_room in &standing.sub_rooms {
+                    let room = std::slice::from_ref(&sub_room.matrix_room_id);
+                    match own_mute(sub_room, now) {
+                        Some(own) => self.apply_effects(own, &context, room).await?,
+                        None => self.reverse_effects(ending, &context, room).await?,
+                    }
+                }
+                Ok(())
             }
             MuteCourse::Unsettled | MuteCourse::LeaveAlone => Ok(()),
         }

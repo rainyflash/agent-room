@@ -16,7 +16,7 @@ use agent_room_application::{
         PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription,
         PrivateRoomAgentDirectory, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
         PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
-        PrivateRoomTopicGateway, RoomRoleChange,
+        PrivateRoomTopicGateway, RoomRoleChange, StandingModeration, StandingModerationSource,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -1233,6 +1233,7 @@ impl Fixture {
             // 这些用例里的房间都不是子房间，也不在它们下面建。
             sub_rooms: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
             topics: matrix.clone(),
+            moderation: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
             identifiers: runtime.clone(),
             clock: runtime,
         });

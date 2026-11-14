@@ -295,7 +295,7 @@ impl ModerationService {
             ModerationActionReservationOutcome::Reserved(action) => action,
             ModerationActionReservationOutcome::Existing(existing) => return Ok(existing),
         };
-        let applied = self.apply_effects(&action, &context, &rooms).await;
+        let applied = self.land_effects(&action, &context, &rooms).await;
         self.finish_applied(action, applied, correlation_id, OPERATION)
             .await
     }

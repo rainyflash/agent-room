@@ -186,6 +186,19 @@ pub struct ModerationMuteStanding {
     /// 网络 Agent 的合成主体），看他名下凭口令或敲门进来的 Agent 成员开没开发言。公开大厅和私聊总是能。
     pub may_speak: bool,
     /// 他在这个房间里已经落下（`applied`）和正在落（`pending`）的禁言，按 UUID 认人，先做的在前。
+    /// 这个房间是子房间时，他在父房间里的禁言也在里面：父房间的禁言在子房间里一起算。
+    pub mutes: Vec<ModerationAction>,
+    /// 这个房间下面、他此刻在里面（受邀或者已经加入）、没归档的子房间。禁言和撤销禁言连它们一起
+    /// 动。别的房间和归档了的子房间不在里面：归档了的一动发言级别就等于解开了。
+    pub sub_rooms: Vec<ModerationSubRoomStanding>,
+}
+
+/// 一间子房间，和被管的人在这一间里自己的禁言。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModerationSubRoomStanding {
+    pub matrix_room_id: MatrixRoomId,
+    /// 他在这一间里已经落下和正在落的禁言，先做的在前。父房间的不算在这里。撤父房间的禁言时，这一间
+    /// 自己还压着他的就不放开。
     pub mutes: Vec<ModerationAction>,
 }
 
@@ -199,7 +212,8 @@ pub trait ModerationMuteLedger: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<Option<ModerationMuteStanding>>>;
 
     /// 拿这个房间里这个人的禁言锁，按 UUID 认人。别处正拿着时交回 `None`，不等。放掉以前别处拿不到；
-    /// 进程断了，锁也跟着放掉。
+    /// 进程断了，锁也跟着放掉。子房间和它的父房间是同一把：父房间的禁言在子房间里一起算，结束哪一边
+    /// 的都要看另一边。
     fn try_lock_mutes<'a>(
         &'a self,
         room_catalog_id: RoomCatalogId,
@@ -230,6 +244,16 @@ pub trait StandingModerationSource: Send + Sync {
         room_catalog_id: RoomCatalogId,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<Vec<StandingModeration>>>;
+
+    /// 这个人此刻在这个房间里是不是被禁言着：已经落下、没撤回、没到期的禁言，正在落的也算
+    /// （[`ModerationAction::holds_at`]）。子房间里连父房间的一起算。给人或者他的 Agent 发言级别之前
+    /// 问它，免得把禁言冲掉。
+    fn person_muted(
+        &self,
+        room_catalog_id: RoomCatalogId,
+        principal_id: PrincipalId,
+        now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
 }
 
 /// 每次治理或审计读取前重新读取当前房间与平台权限。

@@ -23,7 +23,8 @@ use crate::{
         PrivateMatrixSpeakingAssignment, PrivateRoomAgentDirectory, PrivateRoomAgentEviction,
         PrivateRoomListingMatrix, PrivateRoomListingStore, PrivateRoomMatrixGateway,
         PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-        PrivateRoomStore, PrivateRoomTopicGateway, SecretFactory, SubRoomStore,
+        PrivateRoomStore, PrivateRoomTopicGateway, SecretFactory, StandingModerationSource,
+        SubRoomStore,
     },
 };
 
@@ -175,6 +176,8 @@ pub struct PrivateRoomDependencies {
     pub sub_rooms: Arc<dyn SubRoomStore>,
     /// 改子房间的用途时写 Matrix 房间的话题。
     pub topics: Arc<dyn PrivateRoomTopicGateway>,
+    /// 给子房间里的人发言级别之前，问他是不是被禁言着（这一间的、父房间的都算）。
+    pub moderation: Arc<dyn StandingModerationSource>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -192,6 +195,7 @@ pub struct PrivateRoomService {
     secrets: Arc<dyn SecretFactory>,
     sub_rooms: Arc<dyn SubRoomStore>,
     topics: Arc<dyn PrivateRoomTopicGateway>,
+    moderation: Arc<dyn StandingModerationSource>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -211,6 +215,7 @@ impl PrivateRoomService {
             secrets: dependencies.secrets,
             sub_rooms: dependencies.sub_rooms,
             topics: dependencies.topics,
+            moderation: dependencies.moderation,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }
@@ -1269,6 +1274,20 @@ impl PrivateRoomService {
             .set_speaking(room_id, user_id, allowed)
             .await
             .map_err(|error| matrix(operation, error))
+    }
+
+    /// 这个人此刻在这间房里是不是被禁言着：子房间里连父房间的一起算，正在落的也算。在子房间里给
+    /// 发言级别之前问：不然退出再进来、新建一间，就把禁言绕过去了。
+    async fn muted_in(
+        &self,
+        catalog_id: RoomCatalogId,
+        principal_id: PrincipalId,
+        operation: &'static str,
+    ) -> PrivateRoomResult<bool> {
+        self.moderation
+            .person_muted(catalog_id, principal_id, self.clock.now())
+            .await
+            .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))
     }
 
     /// 让某个成员名下已在房间里的 Agent 跟随该成员：能发言就能发言，不能就只能旁观，成员离开

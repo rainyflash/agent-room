@@ -454,6 +454,20 @@ impl StandingModerationSource for 固定禁言 {
         let standing = self.0.clone();
         Box::pin(async move { Ok(standing) })
     }
+
+    fn person_muted(
+        &self,
+        _room_catalog_id: RoomCatalogId,
+        principal_id: PrincipalId,
+        _now: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let muted = self.0.iter().any(|standing| {
+            standing.action.kind() == ModerationActionKind::Mute
+                && Uuid::parse_str(standing.action.target().reference())
+                    .is_ok_and(|person| person == principal_id.as_uuid())
+        });
+        Box::pin(async move { Ok(muted) })
+    }
 }
 
 #[derive(Default)]
