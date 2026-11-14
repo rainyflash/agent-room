@@ -4,7 +4,6 @@
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
     private_rooms::PrivateRoom,
-    version::AggregateVersion,
 };
 
 use crate::ports::PrivateRoomListingSaveOutcome;
@@ -16,6 +15,7 @@ use super::{
     },
     PrivateRoomFailureKind, PrivateRoomService,
     public_creation::limit_reached,
+    role_changes::role_changes,
 };
 
 impl PrivateRoomService {
@@ -48,13 +48,19 @@ impl PrivateRoomService {
     /// 存下转让。返回 `false` 表示事务里才发现接手的人刚公开了别的房间，什么都没存。
     pub(super) async fn save_transferred_room(
         &self,
+        before: &PrivateRoom,
         room: &PrivateRoom,
-        expected: AggregateVersion,
+        actor: PrincipalId,
         operation: &'static str,
     ) -> PrivateRoomResult<bool> {
         let outcome = self
             .listings
-            .save_transferred_room(room, expected, self.clock.now())
+            .save_transferred_room_recording(
+                room,
+                before.version(),
+                self.clock.now(),
+                &role_changes(before, room, actor),
+            )
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))?;
         match outcome {

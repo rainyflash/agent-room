@@ -20,6 +20,7 @@ import type {
   PrivateRoomListingGateway,
 } from '@/features/private-rooms/domain/private-room-listing';
 import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
+import type { RoomRoleChangeGateway } from '@/features/private-rooms/domain/room-role-changes';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -241,6 +242,7 @@ function renderGovernance(
     onExitRoom = () => undefined,
     onReauthenticate = () => undefined,
     recentlyAuthenticated = false,
+    roleChanges,
     subject = room,
     publicRoom = false,
   }: {
@@ -248,6 +250,7 @@ function renderGovernance(
     onExitRoom?: () => void;
     onReauthenticate?: () => void;
     recentlyAuthenticated?: boolean;
+    roleChanges?: RoomRoleChangeGateway;
     subject?: PrivateRoom;
     publicRoom?: boolean;
   } = {},
@@ -274,6 +277,7 @@ function renderGovernance(
             onReauthenticate={onReauthenticate}
             principalId={principalId}
             recentlyAuthenticated={recentlyAuthenticated}
+            roleChanges={roleChanges}
             room={subject}
             rooms={rooms}
           />
@@ -723,6 +727,68 @@ describe('私人房间的成员与 Agent 口令', () => {
     await waitFor(() => {
       expect(screen.getAllByText(/^Only the owner can make or remove admins/u)).toHaveLength(2);
     });
+  });
+
+  it('身份变动：房主和管理员在最下面看得到，归档了也看得到；成员看不到', async () => {
+    const roleChanges = vi.fn<RoomRoleChangeGateway['roleChanges']>(() =>
+      Promise.resolve(
+        ok([
+          {
+            actorPrincipalId: OWNER,
+            changedAtUnixMs: CREATED,
+            id: 1,
+            next: {
+              owner: false,
+              permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
+              status: 'joined',
+            },
+            previous: {
+              owner: false,
+              permissions: { capabilities: ['view', 'speak'] },
+              status: 'joined',
+            },
+            targetPrincipalId: MEMBER,
+          },
+        ]),
+      ),
+    );
+    const adminRoom = roomWith({
+      permissions: { capabilities: ['view', 'speak', 'invite', 'manage'] },
+      principalId: MEMBER,
+      status: 'joined',
+    });
+    const readers: [string, PrivateRoom][] = [
+      [OWNER, room],
+      [MEMBER, adminRoom],
+      [OWNER, { ...room, status: 'archived' }],
+    ];
+    for (const [reader, subject] of readers) {
+      const view = renderGovernance(reader, gateway().value, [], {
+        roleChanges: { roleChanges },
+        subject,
+      });
+      const details = screen.getByText('Role changes').closest('details');
+      if (details === null) throw new Error('“身份变动”没有收在详情里。');
+      // 收着的时候不去读。
+      expect(roleChanges).not.toHaveBeenCalled();
+      details.open = true;
+      fireEvent(details, new Event('toggle'));
+      // 名字和成员名单用的是同一套。
+      expect(await screen.findByText('Grace went from Member to Admin')).toBeInTheDocument();
+      expect(within(details).getByText(/^By Ada · /u)).toBeInTheDocument();
+      view.unmount();
+      roleChanges.mockClear();
+    }
+
+    renderGovernance(MEMBER, gateway().value, [], { roleChanges: { roleChanges } });
+    expect(await screen.findByText('Ada')).toBeVisible();
+    expect(screen.queryByText('Role changes')).toBeNull();
+    cleanup();
+    // 夹具和测试里可以没有这项服务：没有就不出现。
+    renderGovernance(OWNER, gateway().value);
+    expect(await screen.findByText('Ada')).toBeVisible();
+    expect(screen.queryByText('Role changes')).toBeNull();
+    expect(roleChanges).not.toHaveBeenCalled();
   });
 
   it('不能管理的成员看得到每个人的身份，换不了', async () => {

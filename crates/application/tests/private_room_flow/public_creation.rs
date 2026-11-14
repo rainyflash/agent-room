@@ -406,6 +406,24 @@ impl PrivateRoomListingStore for TestListings {
         })
     }
 
+    fn save_transferred_room_recording<'a>(
+        &'a self,
+        room: &'a agent_room_domain::private_rooms::PrivateRoom,
+        expected: AggregateVersion,
+        changed_at: UtcMillis,
+        role_changes: &'a [RoomRoleChange],
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        Box::pin(async move {
+            if *self.limit_on_save.lock().unwrap() {
+                return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
+            }
+            self.store
+                .save_recording(room, expected, changed_at, role_changes)
+                .await?;
+            Ok(PrivateRoomListingSaveOutcome::Saved)
+        })
+    }
+
     fn mark_room_encrypted(
         &self,
         _catalog_id: RoomCatalogId,

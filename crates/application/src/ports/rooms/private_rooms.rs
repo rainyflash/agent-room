@@ -16,7 +16,7 @@ use crate::{
     ports::{
         MatrixCreateRoom, MatrixResult, MatrixRoomAliasLocalpart, MatrixRoomEncryption,
         MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
-        PortFuture,
+        PortFuture, RoomRoleChange,
     },
 };
 
@@ -417,6 +417,19 @@ pub trait PrivateRoomStore: Send + Sync {
         expected_version: AggregateVersion,
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 和 [`Self::save`] 一样存，同一个事务里记下这一次动了谁的身份
+    /// （`specs/redesign/room-roles.md` 的“记录”）。默认只存房间、不记：不关心记录的测试仓储不用管它。
+    fn save_recording<'a>(
+        &'a self,
+        room: &'a PrivateRoom,
+        expected_version: AggregateVersion,
+        changed_at: UtcMillis,
+        role_changes: &'a [RoomRoleChange],
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        let _ = role_changes;
+        self.save(room, expected_version, changed_at)
+    }
 
     /// 改房间目录上的名字；与成员版本无关，不动成员与权限。
     fn rename<'a>(

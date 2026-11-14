@@ -21,6 +21,16 @@ async function expectAccessibleDialog(page: Page): Promise<void> {
 function memberRow(dialog: Locator, name: string): Locator {
   return dialog.locator('.room-members > li', { hasText: name });
 }
+/** 房间设置“成员”一节最下面的“身份变动”：收着的那一行、每条说的事、每条下面谁动的手。 */
+function roleChanges(dialog: Locator) {
+  const section = dialog.locator('.room-role-changes');
+  return {
+    bylines: section.locator('.room-role-changes__list > li > small'),
+    section,
+    sentences: section.locator('.room-role-changes__list > li > p'),
+    summary: section.locator('summary'),
+  };
+}
 /** 顶栏上房间名下面那一小句：这是哪种房间、谁读得到。 */
 function roomKind(page: Page) {
   return page.locator('.room-desk__meta > span').first();
@@ -281,6 +291,87 @@ for (const width of [1_440, 390]) {
     expect(failures).toEqual([]);
   });
 }
+
+for (const width of [1_440, 390]) {
+  test(`身份变动：收在成员一节最下面，点开是谁把谁从什么改成了什么，改了身份上面就多一条 ${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private`);
+
+    const dialog = await openRoomSettings(page, 'Members');
+    const changes = roleChanges(dialog);
+    // 平时收着，没点开就不去读。
+    await expect(changes.summary).toHaveText('Role changes');
+    await expect(changes.sentences).toHaveCount(0);
+    await changes.summary.click();
+    await expect(changes.sentences).toHaveText([
+      'Grace went from Admin to Member',
+      'Mallory (Admin) was banned',
+      'Grace went from Member to Admin',
+    ]);
+    await expect(changes.bylines).toHaveText([/^By Ada · /u, /^By Ada · /u, /^By Ada · /u]);
+
+    // 把 Grace 设成管理员，再让她带来的 Agent 能说话：开着的记录跟着多两条，新的在最上面。
+    const grace = memberRow(dialog, 'Grace');
+    await grace.getByRole('combobox', { name: 'Role of Grace' }).selectOption('admin');
+    await expect(changes.sentences).toHaveCount(4);
+    await expect(changes.sentences.first()).toHaveText('Grace went from Member to Admin');
+    await grace.getByRole('button', { name: 'More about Grace' }).click();
+    await grace.getByRole('switch', { name: 'Agents they bring can speak' }).check();
+    await expect(changes.sentences).toHaveCount(5);
+    await expect(changes.sentences.first()).toHaveText('Agents Grace brings can now speak');
+    // 动手的是你。
+    await expect(changes.bylines.first()).toHaveText(/^By Ada · /u);
+
+    await changes.section.scrollIntoViewIfNeeded();
+    await expectNoHorizontalOverflow(page);
+    await expectAccessibleDialog(page);
+    await page.screenshot({ path: testInfo.outputPath(`role-changes-${String(width)}.png`) });
+    expect(failures).toEqual([]);
+  });
+
+  test(`身份变动：管理员也看得到，自己不当管理员了就看不到了 ${String(width)}`, async ({
+    page,
+  }) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ height: 900, width });
+    await page.goto(`${fixturePath}?private&asAdmin`);
+
+    const dialog = await openRoomSettings(page, 'Members');
+    const changes = roleChanges(dialog);
+    await changes.summary.click();
+    await expect(changes.sentences).toHaveText([
+      'Mallory (Admin) was banned',
+      'Ada went from Member to Admin',
+    ]);
+    await expect(changes.bylines).toHaveText([/^By Grace · /u, /^By Grace · /u]);
+
+    const ada = memberRow(dialog, 'Ada');
+    await ada.getByRole('combobox', { name: 'Role of Ada' }).selectOption('member');
+    await ada
+      .getByRole('group', { name: /^Stop being an admin\?/u })
+      .getByRole('button', { name: 'Step down' })
+      .click();
+    await expect(ada.locator('.room-member__role')).toHaveText('Member');
+    await expect(changes.section).toHaveCount(0);
+    expect(failures).toEqual([]);
+  });
+}
+
+test('身份变动：不是房主也不是管理员的成员看不到', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  // 网络 Agent 建的房间里你只是它请来的成员。
+  await page.goto(`${fixturePath}?private&origin=network`);
+
+  const dialog = await openRoomSettings(page, 'Members');
+  await expect(memberRow(dialog, 'Ada').locator('.room-member__role')).toHaveText('Member');
+  await expect(roleChanges(dialog).section).toHaveCount(0);
+  await expect(dialog.getByText('Role changes')).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
 
 for (const width of [1_440, 390]) {
   test(`归档房间不用最近登录过，先在原处确认，取消就不归档 ${String(width)}`, async ({

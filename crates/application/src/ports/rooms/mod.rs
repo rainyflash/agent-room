@@ -27,6 +27,7 @@ mod private_room_listing;
 mod private_rooms;
 mod provisioning;
 mod public_room_directory;
+mod role_changes;
 mod room_moderation_grants;
 
 use std::sync::Arc;
@@ -76,6 +77,7 @@ pub use public_room_directory::{
     PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
     PublicRoomViewerState,
 };
+pub use role_changes::{RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord};
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
 };

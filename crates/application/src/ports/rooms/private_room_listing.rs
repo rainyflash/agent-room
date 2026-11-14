@@ -11,7 +11,7 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{MatrixResult, MatrixRoomId, PortFuture, PrivateRoomSnapshot},
+    ports::{MatrixResult, MatrixRoomId, PortFuture, PrivateRoomSnapshot, RoomRoleChange},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +95,19 @@ pub trait PrivateRoomListingStore: Send + Sync {
         expected: AggregateVersion,
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
+
+    /// 和 [`Self::save_transferred_room`] 一样存，存下的同一个事务里记下原房主和接手的人的身份变动。
+    /// 默认只存、不记：不关心记录的测试仓储不用管它。
+    fn save_transferred_room_recording<'a>(
+        &'a self,
+        room: &'a PrivateRoom,
+        expected: AggregateVersion,
+        changed_at: UtcMillis,
+        role_changes: &'a [RoomRoleChange],
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        let _ = role_changes;
+        self.save_transferred_room(room, expected, changed_at)
+    }
 
     /// 房间在 Matrix 上开了加密以后，把目录上的加密标记改成 true。
     fn mark_room_encrypted(

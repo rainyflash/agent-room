@@ -202,6 +202,7 @@ function RoomSettingsContent({
     privateRooms,
     publicRoomJoins,
     roomNotices,
+    roomRoleChanges,
   } = useAppServices();
   const coordinator = useMemo(
     () => new PrivateRoomCoordinator(privateRooms, privateRoomMatrix),
@@ -233,6 +234,7 @@ function RoomSettingsContent({
           onReauthenticate={reauthenticate}
           principalId={principal.principalId}
           recentlyAuthenticated={principal.recentlyAuthenticated}
+          roleChanges={roomRoleChanges}
           room={room}
           rooms={privateRooms}
         />

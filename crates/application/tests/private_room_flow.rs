@@ -15,7 +15,7 @@ use agent_room_application::{
         PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
         PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
         PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
-        PrivateRoomSnapshot, PrivateRoomStore,
+        PrivateRoomSnapshot, PrivateRoomStore, RoomRoleChange,
     },
     private_rooms::{
         ArchivePrivateRoom, ChangePrivateRoomPermissions, CreatePrivateRoom,
@@ -49,6 +49,8 @@ mod agent_members;
 mod moderation_members;
 #[path = "private_room_flow/public_creation.rs"]
 mod public_creation;
+#[path = "private_room_flow/role_changes.rs"]
+mod role_changes;
 
 use public_creation::TestListings;
 
@@ -1322,6 +1324,8 @@ struct TestStore {
     snapshot: Mutex<Option<PrivateRoomSnapshot>>,
     events: Arc<Mutex<Vec<&'static str>>>,
     fail_next_save: AtomicBool,
+    /// 存成了的那几次保存一起记下的身份变动。
+    role_changes: Mutex<Vec<RoomRoleChange>>,
 }
 
 impl TestStore {
@@ -1330,6 +1334,7 @@ impl TestStore {
             snapshot: Mutex::new(None),
             events,
             fail_next_save: AtomicBool::new(false),
+            role_changes: Mutex::new(Vec::new()),
         }
     }
 
@@ -1446,6 +1451,23 @@ impl PrivateRoomStore for TestStore {
                     .replacing_room(room.clone())
                     .expect("测试快照应一致"),
             );
+            Ok(())
+        })
+    }
+
+    fn save_recording<'a>(
+        &'a self,
+        room: &'a agent_room_domain::private_rooms::PrivateRoom,
+        expected_version: AggregateVersion,
+        changed_at: UtcMillis,
+        role_changes: &'a [RoomRoleChange],
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(async move {
+            self.save(room, expected_version, changed_at).await?;
+            self.role_changes
+                .lock()
+                .expect("记录锁正常")
+                .extend_from_slice(role_changes);
             Ok(())
         })
     }

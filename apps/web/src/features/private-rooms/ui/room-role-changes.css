@@ -1,0 +1,42 @@
+/*
+ * 房间设置“成员”一节最下面的“身份变动”（specs/redesign/room-roles.md 的“记录”）：
+ * 一条一行，上面是说的事，下面小字是谁动的手、什么时候。
+ */
+.room-role-changes__detail,
+.room-role-changes__state {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.room-role-changes__state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.room-role-changes__list {
+  padding: 0;
+  margin: 10px 0 0;
+  border-top: 1px solid var(--ar-line);
+  list-style: none;
+}
+.room-role-changes__list > li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ar-line);
+}
+.room-role-changes__list p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.room-role-changes__list small {
+  color: var(--ar-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

@@ -5,7 +5,7 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         PortFuture, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-        PrivateRoomListingStore, PrivateRoomSnapshot,
+        PrivateRoomListingStore, PrivateRoomSnapshot, RoomRoleChange,
     },
 };
 use agent_room_domain::{
@@ -27,6 +27,7 @@ use super::{
     decode::corrupt_data,
     private_room_agents::permissions,
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
+    role_changes::insert_role_changes,
 };
 
 const SHARE_CODE_INDEX: &str = "private_room_listing_share_code_unique";
@@ -196,6 +197,16 @@ impl PrivateRoomListingStore for PostgresRepositories {
         expected: AggregateVersion,
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
+        self.save_transferred_room_recording(room, expected, changed_at, &[])
+    }
+
+    fn save_transferred_room_recording<'a>(
+        &'a self,
+        room: &'a PrivateRoom,
+        expected: AggregateVersion,
+        changed_at: UtcMillis,
+        role_changes: &'a [RoomRoleChange],
+    ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>> {
         Box::pin(async move {
             let operation = "private_room.listing.save_transferred";
             if expected
@@ -225,6 +236,14 @@ impl PrivateRoomListingStore for PostgresRepositories {
                 return Ok(PrivateRoomListingSaveOutcome::OwnerLimitReached);
             }
             save_private_room(&mut transaction, room, expected, changed_at, operation).await?;
+            insert_role_changes(
+                &mut transaction,
+                room.catalog_id(),
+                role_changes,
+                changed_at,
+                operation,
+            )
+            .await?;
             transaction
                 .commit()
                 .await

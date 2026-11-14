@@ -36,6 +36,7 @@ pub(crate) mod reception;
 mod resource_ids;
 pub(crate) mod room_moderation_grants;
 pub(crate) mod room_people;
+pub(crate) mod room_role_changes;
 pub(crate) mod share_page;
 pub(crate) mod sign_out_elsewhere;
 pub(crate) mod telemetry;

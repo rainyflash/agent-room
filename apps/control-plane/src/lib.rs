@@ -167,6 +167,7 @@ struct AgentFeatureHttpStates {
     roster: features::agent_roster::AgentRosterHttpState,
     agent_rooms: AgentRoomHttpState,
     room_people: features::room_people::RoomPeopleHttpState,
+    room_role_changes: features::room_role_changes::RoomRoleChangeHttpState,
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
@@ -676,6 +677,9 @@ fn compose_identity_routes(
         .merge(features::moderation::router(agents.moderation))
         .merge(features::agent_roster::router(agents.roster))
         .merge(features::room_people::router(agents.room_people))
+        .merge(features::room_role_changes::router(
+            agents.room_role_changes,
+        ))
         .merge(features::private_room_invites::router(agents.room_invites))
         .merge(features::private_room_listing::router(agents.room_listing))
         .merge(features::private_room_description::router(
@@ -979,6 +983,7 @@ fn build_agent_feature_states(
         roster,
         agent_rooms: build_agent_room_http_state(config, dependencies, placements),
         room_people: build_room_people_http_state(dependencies),
+        room_role_changes: build_room_role_change_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
         room_descriptions: build_room_description_http_state(config, dependencies),
@@ -1290,6 +1295,24 @@ fn build_room_people_http_state(
                 clock: dependencies.system_runtime.clone(),
             },
         )),
+        authentication: dependencies.authentication.clone(),
+    }
+}
+
+/// 一间房的身份变动记录（`specs/redesign/room-roles.md` 的“记录”）。
+fn build_room_role_change_http_state(
+    dependencies: &AgentFeatureDependencies,
+) -> features::room_role_changes::RoomRoleChangeHttpState {
+    use agent_room_application::room_role_changes::{
+        RoomRoleChangeDependencies, RoomRoleChangeService,
+    };
+
+    features::room_role_changes::RoomRoleChangeHttpState {
+        role_changes: Arc::new(RoomRoleChangeService::new(RoomRoleChangeDependencies {
+            log: dependencies.repositories.clone(),
+            private_rooms: dependencies.repositories.clone(),
+            clock: dependencies.system_runtime.clone(),
+        })),
         authentication: dependencies.authentication.clone(),
     }
 }

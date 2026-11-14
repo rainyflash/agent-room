@@ -31,12 +31,14 @@ import {
 } from '@/features/private-rooms/domain/room-roles';
 import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
 import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
+import type { RoomRoleChangeGateway } from '@/features/private-rooms/domain/room-role-changes';
 import { ArchiveRoomConfirm } from '@/features/private-rooms/ui/archive-room-confirm';
 import { PrivateRoomAccountInvite } from '@/features/private-rooms/ui/private-room-account-invite';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { PrivateRoomJoinRequests } from '@/features/private-rooms/ui/private-room-join-requests';
 import { RoomMemberRow } from '@/features/private-rooms/ui/room-member-row';
+import { RoomRoleChanges } from '@/features/private-rooms/ui/room-role-changes';
 import { useNetworkAgentIds } from '@/features/lobby/ui/network-agent-labels';
 import type { Result } from '@/shared/result';
 
@@ -56,6 +58,8 @@ export type PrivateRoomMembersProps = {
   readonly onReauthenticate: () => void;
   readonly principalId: string;
   readonly recentlyAuthenticated: boolean;
+  /** 身份变动记录，房主和管理员看；测试和夹具里可以没有，没有就不出现。 */
+  readonly roleChanges?: RoomRoleChangeGateway | undefined;
   readonly room: PrivateRoom;
   readonly rooms: PrivateRoomGateway;
 };
@@ -140,6 +144,7 @@ export function PrivateRoomMembers({
   onReauthenticate,
   principalId,
   recentlyAuthenticated,
+  roleChanges,
   room,
   rooms,
 }: PrivateRoomMembersProps) {
@@ -152,6 +157,10 @@ export function PrivateRoomMembers({
   // 动得了，设、撤管理员也只有房主能做（specs/redesign/room-roles.md）。
   const canManage = owner || allows(currentMember, 'manage');
   const canInvite = owner || allows(currentMember, 'invite');
+  // 身份变动记录给已加入的房主和管理员看，归档了也看得到（服务器也是这样算的）。
+  const seesRoleChanges =
+    currentMember?.status === 'joined' &&
+    (owner || currentMember.permissions.capabilities.includes('manage'));
   const grantable = grantableBy(room, principalId);
   const [transferTarget, setTransferTarget] = useState<string | null>(null);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
@@ -469,6 +478,20 @@ export function PrivateRoomMembers({
           />
         ) : null}
       </footer>
+
+      {seesRoleChanges && roleChanges !== undefined ? (
+        <RoomRoleChanges
+          catalogId={room.catalogId}
+          gateway={roleChanges}
+          nameOf={(member) =>
+            member === room.ownerPrincipalId && networkOwner !== null
+              ? networkOwner
+              : member === principalId && !names.knows(member)
+                ? t('privateRooms.governance.members.yourself')
+                : nameOf(member)
+          }
+        />
+      ) : null}
 
       <Details summary={t('privateRooms.governance.details')}>
         <dl className="private-room-details">

@@ -1,6 +1,9 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
-    ports::{PortFuture, PrivateRoomDescriptionStore, PrivateRoomSnapshot, PrivateRoomStore},
+    ports::{
+        PortFuture, PrivateRoomDescriptionStore, PrivateRoomSnapshot, PrivateRoomStore,
+        RoomRoleChange,
+    },
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
@@ -24,8 +27,9 @@ use crate::{
     transaction::finish,
 };
 
-use super::decode::{
-    CATALOG_COLUMNS, INSTANCE_COLUMNS, corrupt_data, decode_catalog, decode_instance,
+use super::{
+    decode::{CATALOG_COLUMNS, INSTANCE_COLUMNS, corrupt_data, decode_catalog, decode_instance},
+    role_changes::insert_role_changes,
 };
 
 const PRIVATE_ROOM_COLUMNS: &str = r"
@@ -122,6 +126,16 @@ impl PrivateRoomStore for PostgresRepositories {
         expected_version: AggregateVersion,
         changed_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<()>> {
+        self.save_recording(room, expected_version, changed_at, &[])
+    }
+
+    fn save_recording<'a>(
+        &'a self,
+        room: &'a PrivateRoom,
+        expected_version: AggregateVersion,
+        changed_at: UtcMillis,
+        role_changes: &'a [RoomRoleChange],
+    ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "private_room.save";
             if expected_version
@@ -136,13 +150,24 @@ impl PrivateRoomStore for PostgresRepositories {
                 .begin()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
-            let result = save_private_room(
-                &mut transaction,
-                room,
-                expected_version,
-                changed_at,
-                operation,
-            )
+            let result = async {
+                save_private_room(
+                    &mut transaction,
+                    room,
+                    expected_version,
+                    changed_at,
+                    operation,
+                )
+                .await?;
+                insert_role_changes(
+                    &mut transaction,
+                    room.catalog_id(),
+                    role_changes,
+                    changed_at,
+                    operation,
+                )
+                .await
+            }
             .await;
             finish(transaction, result, operation).await
         })

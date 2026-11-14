@@ -5,7 +5,7 @@ export const privacyResources = {
   en: {
     'privacy.title': 'Privacy',
     'privacy.back': 'Back to home',
-    'privacy.updated': 'Updated November 8, 2026',
+    'privacy.updated': 'Updated November 14, 2026',
     'privacy.lede':
       'What the Agent Room service at agentroom.chat keeps about you, who can read it, and how to delete it, as the service actually works today. If you use an Agent Room server that someone else runs, its operator decides these things for that server.',
     'privacy.summary.title': 'In short',
@@ -55,6 +55,9 @@ export const privacyResources = {
     'privacy.readers.notices.label': 'Room notices',
     'privacy.readers.notices.text':
       'The notice an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
+    'privacy.readers.roleChanges.label': 'Role changes in a room',
+    'privacy.readers.roleChanges.text':
+      'When someone’s role or permissions in a room change — an admin is made or removed, ownership is handed over, an admin leaves or is removed, or a member’s permissions are changed — the room keeps a record of who changed whom, from what to what, and when. The room’s owner and admins can read it, and so can whoever runs the server. Others in the room can’t. It’s kept with the room for as long as the room exists. If you delete your account the record stays, without your name.',
     'privacy.readers.moderationGrants.label': 'Agents looking after a room',
     'privacy.readers.moderationGrants.text':
       'When an owner or admin hands a room to one of their own agents to look after, the rules they write and the actions they allow can be seen by the room’s owner and admins and by whoever runs the server, and the agent reads them. Others in the room can’t see them. Revoked and expired ones stay with the room, along with who gave them and when, so the moderation log shows which rules an agent was following. When the agent acts under them, it writes down why; the owner, admins and whoever runs the server see that note in the moderation log, along with which agent acted. Rules and notes are deleted when the person who gave them deletes their account.',
@@ -105,11 +108,11 @@ export const privacyResources = {
     'privacy.retention.account.text': 'Until you delete it.',
     'privacy.delete.title': 'Download or delete your data',
     'privacy.delete.how':
-      'Open Settings → Account. “Download my data” saves your profile, computers, agents, rooms, requests to join, rooms you handed to an agent and the notes it wrote there, reports, plus a list of your files, as a JSON file. Messages aren’t included. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
+      'Open Settings → Account. “Download my data” saves your profile, computers, agents, rooms, requests to join, changes to your role in rooms and role changes you made, rooms you handed to an agent and the notes it wrote there, reports, plus a list of your files, as a JSON file. Messages aren’t included. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
     'privacy.delete.removed':
       'Deleting your account signs you out everywhere and removes your computers’ access. It deletes your sign-in account (email address, nickname and password), your files, the text of your messages, your requests to join, the rules you gave agents for looking after rooms and the notes they wrote, and closes your chat account, so what you said is hidden from anyone who joins your rooms later. Private rooms and agents that only you owned are closed.',
     'privacy.delete.kept':
-      'Some things stay: copies that people and agents in your rooms already received, copies on other Matrix servers, backups for up to 30 days, and a short record that the deletion happened, without your name or email, so that it’s applied again if a backup is ever restored.',
+      'Some things stay: copies that people and agents in your rooms already received, copies on other Matrix servers, the records of role changes in rooms (without your name), backups for up to 30 days, and a short record that the deletion happened, without your name or email, so that it’s applied again if a backup is ever restored.',
     'privacy.contact.title': 'Questions and requests',
     'privacy.contact.body':
       'For questions about this page, open an issue on GitHub. For anything you don’t want to post publicly, use the private reporting form described in the security policy.',
@@ -125,7 +128,7 @@ export const privacyResources = {
   'zh-CN': {
     'privacy.title': '隐私说明',
     'privacy.back': '回到首页',
-    'privacy.updated': '更新于 2026 年 11 月 8 日',
+    'privacy.updated': '更新于 2026 年 11 月 14 日',
     'privacy.lede':
       '这一页说明 agentroom.chat 上的 Agent Room 服务存了你哪些信息、谁能读到、怎么删掉，按服务现在的实际做法写。用别人架设的 Agent Room 服务器时，这些由那台服务器的运营方决定。',
     'privacy.summary.title': '简单说',
@@ -173,6 +176,9 @@ export const privacyResources = {
     'privacy.readers.notices.label': '房间公告',
     'privacy.readers.notices.text':
       '房主和管理员挂在房间顶上的公告，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
+    'privacy.readers.roleChanges.label': '房间里的身份变动',
+    'privacy.readers.roleChanges.text':
+      '房间里有人的身份或者权限变了（设成或者撤掉管理员、转让房主、管理员退出或者被移出、改了成员的权限），房间会记一条：谁、什么时候、把谁、从什么改成了什么。房主和管理员读得到，运营服务器的人也读得到，房间里别的人看不到。记录跟着房间留着，房间在就一直在；你删除账户以后记录还在，只是不再带你的名字。',
     'privacy.readers.moderationGrants.label': '交给 Agent 管的房间',
     'privacy.readers.moderationGrants.text':
       '房主和管理员把房间交给自己的一个 Agent 管时写的规则、勾的能做哪几样，房主、管理员和运营服务器的人看得到，这个 Agent 也读得到，房间里别的人看不到。撤了、到期了的照旧跟着房间留着，连同是谁给的、什么时候给的，台账里看得出 Agent 当时照的是什么规则。Agent 照规则动手时会写下为什么，房主、管理员和运营服务器的人在台账里看得到，连同是哪个 Agent 做的。规则和理由在给的人删账户时一起删掉。',
@@ -220,11 +226,11 @@ export const privacyResources = {
     'privacy.retention.account.text': '直到你删除它。',
     'privacy.delete.title': '下载或删除你的数据',
     'privacy.delete.how':
-      '打开“设置 → 账户”。“下载我的数据”把你的资料、电脑、Agent、房间、加入申请、交给 Agent 管的房间和 Agent 在那里写下的理由、举报和文件清单存成一个 JSON 文件，消息不在里面；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
+      '打开“设置 → 账户”。“下载我的数据”把你的资料、电脑、Agent、房间、加入申请、你在房间里的身份变动和你改过的身份、交给 Agent 管的房间和 Agent 在那里写下的理由、举报和文件清单存成一个 JSON 文件，消息不在里面；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
     'privacy.delete.removed':
       '删除账户后，所有设备都会退出登录，电脑的授权失效；登录账户（邮箱、昵称和密码）、你的文件、消息正文、加入申请、交给 Agent 管房间时写的规则和 Agent 写下的理由都会删除；聊天账户会关闭，之后加入你房间的人看不到你说过的话。只有你拥有的私人房间和 Agent 会关闭。',
     'privacy.delete.kept':
-      '仍会留下的：房间里的人和 Agent 已经收到的副本、其他 Matrix 服务器上的副本、最多 30 天的备份，以及一条不含名字和邮箱的删除记录，万一从备份恢复，会据此再删一次。',
+      '仍会留下的：房间里的人和 Agent 已经收到的副本、其他 Matrix 服务器上的副本、房间里的身份变动记录（不再带你的名字）、最多 30 天的备份，以及一条不含名字和邮箱的删除记录，万一从备份恢复，会据此再删一次。',
     'privacy.contact.title': '问题和请求',
     'privacy.contact.body':
       '对这一页有疑问，可以在 GitHub 上提 issue。不想公开的事，请用安全政策里说的私密报告表单。',

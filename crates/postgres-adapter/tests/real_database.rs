@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 66] = [
+const EXPECTED_TABLES: [&str; 67] = [
     "account_deletion_job",
     "adapter_binding",
     "agent",
@@ -107,6 +107,7 @@ const EXPECTED_TABLES: [&str; 66] = [
     "private_room_join_request",
     "private_room_listing",
     "private_room_membership",
+    "private_room_role_change",
     "private_room_state",
     "public_room_platform_hold",
     "reception_execution",
@@ -262,6 +263,7 @@ async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: 
         .expect("活动账户必须存在");
     assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
     assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
+    assert_eq!(exported.data["roleChanges"], serde_json::json!([]));
     assert_eq!(exported.data["moderationGrants"], serde_json::json!([]));
     assert_eq!(exported.data["agentModerationNotes"], serde_json::json!([]));
     assert_eq!(

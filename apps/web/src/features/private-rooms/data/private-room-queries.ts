@@ -6,6 +6,7 @@ import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private
 import type { PrivateRoomInviteGateway } from '@/features/private-rooms/domain/private-room-invite-link';
 import type { PrivateRoomListingGateway } from '@/features/private-rooms/domain/private-room-listing';
 import type { PublicRoomJoinGateway } from '@/features/private-rooms/domain/public-room-join';
+import type { RoomRoleChangeGateway } from '@/features/private-rooms/domain/room-role-changes';
 
 /** 测试和夹具里没有这项服务时不去问；查询本来也不会跑。 */
 const unavailable = { code: 'private_room.unavailable', retryable: false } as const;
@@ -95,6 +96,29 @@ export function usePrivateRoomPeople(
   enabled = true,
 ) {
   return useQuery({ ...privateRoomPeopleQueryOptions(gateway, catalogId), enabled });
+}
+
+export const roomRoleChangesQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'role-changes', catalogId] as const;
+
+/**
+ * 身份变动记录（`specs/redesign/room-roles.md` 的“记录”）；只有房主和管理员问得到。挂在房间列表的键
+ * 下面：改了谁的身份以后列表刷新，开着的记录跟着重读，新的那一条马上在最上面。
+ */
+export function useRoomRoleChanges(
+  gateway: RoomRoleChangeGateway | undefined,
+  catalogId: string,
+  enabled = true,
+) {
+  return useQuery({
+    enabled: enabled && gateway !== undefined,
+    queryKey: roomRoleChangesQueryKey(catalogId),
+    queryFn: async () =>
+      gateway === undefined ? err(unavailable) : await gateway.roleChanges(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
 }
 
 export const privateRoomAgentAccessQueryKey = (catalogId: string) =>
