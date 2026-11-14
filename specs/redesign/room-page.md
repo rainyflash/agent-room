@@ -33,15 +33,20 @@
 
 - 顶栏右边一个两段的切换：“对话”（新的默认）和“场景”（现在的房间页）。
 - 选了哪个记在这台设备上（`localStorage`），不进账户偏好：账户偏好里的 `lobbyView` 只认两个值，旧版客户端读到第三个值会出错。`lobbyView` 和“设置 → 通用 → 房间视图”照旧管场景视图里面是画面还是名册。
-- 地址里多一个 `layout=scene`：带着它就是场景视图，这时 `view` 的意思和现在一模一样（不带是场景，`conversation`、`resources` 是打开面板）。不带 `layout` 时看这台设备记着的，没记过就是对话。
+- 地址里多一个 `layout`，写 `conversation` 或 `scene`：写了就照它，不管这台设备记着什么；不带时看这台设备记着的，没记过就是对话（1b 以前是场景）。在顶栏换的时候，地址和这台设备记着的一起改。
+- 场景视图里 `view` 的意思和现在一模一样（不带是场景，`conversation`、`resources` 是打开面板）。
+- 换到场景时回到画面本身：对话面板、私聊、正在看的那条消息都收起来。换到对话时这些都留着。
+- 对话视图里选中一个 Agent，详情盖在右栏上，对话、私聊、正在看的消息和没发出去的草稿都留着（场景里选中 Agent 照旧收起对话面板）。
+- 手机上顶栏放不下两段，切换收成一个按钮，点一下去另一种视图（1g 再收进“更多”）。读屏读到的名字是“房间版面”：“视图”已经指场景里的画面 / 名册。
 - 对话视图里 `view` 不带或者是 `conversation` 都是对话，`resources` 是资料。以前发出去的带 `?view=conversation` 的链接照样对。
 - 一定要名册的设备（高对比度、内存很小的）在场景视图里照旧自动用名册，对话视图不受影响。
 
 ### 布局
 
-- 宽度 1100px 以上三栏：左栏 216px 上下，右栏 320 到 380px，其余给主栏。主栏里一行字最宽 720px。
+- 宽度 1100px 以上三栏：左栏 216px 上下，右栏 320 到 380px，其余给主栏。主栏里一行字最宽 720px（对话这一列连头像最宽 760px，须知、标签、查找和输入框都跟它对齐；滚动条照旧贴在主栏右边）。
 - 768 到 1100px 两栏：右栏收成顶栏上的“Agent 5”按钮，点开是从右边出来的一栏；左栏收进房间名旁边的下拉。
 - 768px 以下一栏，见下面“手机宽度”。
+- 左栏收起来的时候，在私聊里主栏顶上留一条“回到主房间”。
 - 左栏只在有东西的时候出现：这间房里你有私聊，或者（第 2 块以后）有子房间。只有主房间一项时不占地方。
 - 每一栏自己滚动，整页不滚。输入框一直贴在主栏底下。
 
@@ -156,10 +161,11 @@
 
 ### 网页
 
-- `ReadyLobby` 拆成两个：现在这份整个留给场景视图（`layout=scene`）；新写一个对话视图，用栏布局（CSS grid），不再绝对定位。
+- `ReadyLobby` 里的状态、各个对话框、须知和对话两种视图共用，画面分两支：场景那一支原样留着（`layout=scene`）；对话视图是新写的 `RoomDesk`（`features/lobby/ui/room-desk.tsx`），用栏布局（CSS grid），不再绝对定位。两支不同时在页面里，换的时候没发出去的草稿留着（草稿本来就存在页面外面）。
+- 版面的类型叫 `RoomPageLayout`（`RoomLayout` 已经是场景里平面图的类型）；默认值、这台设备记着的选择在 `features/lobby/application/room-page-layout.ts`。
 - 对话视图直接用现成的：`MessageLayer`、`ConversationPanel`、`ConversationComposer`、`ConversationSearch`、`RoomNoticeBar`、`InviteReplyProgress`、`DirectConversationDock`、`DirectSessionNavigation`、`AgentInspector` 的内容，各个对话框（房间设置、邀请、分享、接入 Agent）。
 - 表格新写（现在的名册是一排按钮，不是表格），数据和排序用现成的 `LobbyAgent`、`agent-attendance.ts`、`filterLobbyAgents`、谁的和是不是网络 Agent 的查询。“展开成整页”用现在名册的筛选和翻页。
-- 路由：`shared/routing/route-state.ts` 的 `LobbySearch` 多一个 `layout`；`lobbySearchWithRoomPanel`、`lobbySearchWithView` 只在场景视图里照旧用。
+- 路由：`shared/routing/route-state.ts` 的 `LobbySearch` 多一个 `layout`，各个 `lobbySearchWith…` 都带着它；换版面用 `lobbySearchWithLayout`；`lobbySearchWithAgent` 要知道现在是哪种版面。
 - 未读：`RoomActivityStore` 现在只在对话面板关着时数未读。对话视图里对话一直看得到，按“窗口在不在前台、是不是滚在最底下”算。
 - 折叠和筛选是纯函数，放在 `features/conversation/domain`，输入是已经投影好的消息，带单元测试。
 - 表格和链接改 `domain/chat-markdown.ts`：多两种节点。链接只认 `http`、`https`，确认框用 `ui-system` 的对话框；桌面端经现成的“在系统浏览器里打开”。
@@ -177,7 +183,7 @@
 - `apps/web/e2e` 里 22 个用例打开 `lobby-scene.html`。大约 10 个断言默认看到场景、3 个点“场景 / 列表”：这些在地址里加上 `layout=scene`，别的不改。
 - 大约 12 个点底部工具栏的（邀请、接入 Agent、分享、对话、资料）：改成在对话视图里点顶栏，因为那才是人默认用的；场景视图里各留一条冒烟。
 - 共用的 `openRoomSettings`、`openDirectConversation`、`expectCompleteRosterPages` 跟着改。
-- 夹具 `lobby-scene.html` 不带 `layout` 时跟应用一样默认对话视图。
+- 夹具 `lobby-scene.html` 不带 `layout` 时跟应用一样：先看这台设备记着的，没有就是默认（1b 起是对话视图）。对话视图的验收在 `e2e/room-desk.e2e.ts`。
 - 无头验收（`e2e-vertical`、`e2e-live`）里走房间页的也要过一遍，在 PR 分支上派发 `suite=all`。
 - 新加浏览器验收：三种宽度下三栏、两栏、一栏；筛选；折叠和展开；表格排序和点一行；链接确认；键盘能走完顶栏、表格和输入框。
 
@@ -236,3 +242,10 @@
 - 2026-11-13 维护者看过第一稿，要更有特色、更优雅。“风格”一节重写成“门牌与灯”，设计稿换成第二稿（白天、夜间各一张，加一张风格说明）；风格那一步从最后（1g）挪到换默认之后（1c）（#793）。
 - 2026-11-13 维护者看过第二稿：有点土，不够简约清晰。“风格”一节重写成“白底黑字，颜色留给机器人”；左栏照[子房间](./sub-rooms.md)改成只放你在的、按分类分组。设计稿换成第三稿（#794）。
 - 2026-11-13 维护者看过第三稿，定下来。开始做 1a。
+- 2026-11-13 1a 做完（#PRNUM）：顶栏的“对话 / 场景”切换、对话视图（`RoomDesk`）、地址 `layout` 和这台设备记着的选择，默认还是场景。和原来写的不一样的几处，上面都改了：
+  - 地址里 `layout` 两个值都认（原来只有 `layout=scene`），写了就照地址：这样发给别人的链接打开是什么样，不看对方设备记着什么。
+  - 手机上切换是一个按钮；顶栏的动作另起一行，放不下左右滑。“更多”和房间名旁边的下拉留到 1g。
+  - 1100px 以下左右两栏都收起来，Agent 先从顶栏的“Agent N”打开现成的抽屉（私聊也在里面），在私聊里主栏顶上有“回到主房间”。两栏的布局留到 1g。
+  - 选中 Agent 的详情这一步就盖在右栏上（现成的 `AgentInspector`），不等 1d。
+  - “对话 / 资料”两个标签先留在主栏顶上，1e 做筛选那一行时换成右边的“资料”按钮。
+  - 须知先用现成的公告条（`RoomNoticeBar`），收成一行是第 4 块的事。

@@ -372,6 +372,13 @@ function ReadyLobby({
     closeDrawer();
     onSelectedAgentChange(id);
   };
+  // 对话版面里关掉 Agent 详情：焦点回到右栏里刚才那一行；右栏收起来了就回到顶栏打开它的按钮。
+  const focusAgentOrigin = (): void => {
+    const origins = document.querySelectorAll<HTMLElement>(
+      '.room-desk__side .roster-agent[aria-pressed="true"], .room-desk__agents-button',
+    );
+    [...origins].find((origin) => origin.offsetParent !== null)?.focus();
+  };
   const directNavigation =
     principal === null ? null : (
       <DirectSessionNavigation
@@ -577,7 +584,8 @@ function ReadyLobby({
             void directSessions.setBlocked(selectedAgent, false);
           }}
           onClose={() => {
-            spatial.current?.focus();
+            if (conversationLayout) focusAgentOrigin();
+            else spatial.current?.focus();
             onSelectedAgentChange(null);
           }}
           onMessage={(agentId) => {

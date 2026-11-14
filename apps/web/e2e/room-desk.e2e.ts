@@ -99,6 +99,8 @@ test('对话版面：Agent 详情盖在右栏上，私聊在主栏里，顶栏�
   await expectAccessible(page);
   await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
   await expect(details).toHaveCount(0);
+  // 焦点回到右栏里刚才那一行。
+  await expect(agents.getByRole('button', { name: /Build Agent 003/u })).toBeFocused();
 
   // 私聊显示在主栏里，“主房间”一点就回来。
   const places = page.getByRole('navigation', { name: 'Main room and direct messages' });
