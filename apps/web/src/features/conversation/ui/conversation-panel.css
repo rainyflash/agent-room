@@ -28,7 +28,7 @@
   max-height: 45%;
   overflow-y: auto;
   padding-bottom: 10px;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+  border-bottom: 1px solid var(--ar-line);
 }
 .conversation-search__topic {
   color: var(--color-ink);
@@ -51,8 +51,8 @@
   width: 100%;
   min-width: 0;
   padding: 0 0.85rem;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
   background: var(--color-paper);
   color: var(--color-ink);
   min-height: 40px;
@@ -60,25 +60,17 @@
 .conversation-search button,
 .conversation-history-tools button,
 .conversation-history-boundary button {
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
+  border-radius: var(--ar-control-radius);
   padding: 4px 14px;
-  background: var(--ar-surface);
+  background: var(--ar-surface-muted);
   color: var(--color-ink);
   min-height: 36px;
   font-weight: 600;
-  box-shadow: var(--ar-press-small);
 }
 .conversation-search button:not(:disabled):hover,
 .conversation-history-tools button:not(:disabled):hover,
 .conversation-history-boundary button:not(:disabled):hover {
-  background: var(--ar-surface-muted);
-}
-.conversation-search button:not(:disabled):active,
-.conversation-history-tools button:not(:disabled):active,
-.conversation-history-boundary button:not(:disabled):active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ar-outline);
+  background: var(--ar-selected);
 }
 .conversation-history-tools {
   display: flex;
@@ -124,12 +116,12 @@
   scroll-margin-block: 16px;
 }
 .conversation-panel [data-focused='true'] {
-  outline: 3px solid var(--ar-accent);
+  outline: 2px solid var(--ar-accent);
   outline-offset: 4px;
-  border-radius: 18px;
+  border-radius: var(--ar-radius);
 }
 .conversation-panel :focus-visible {
-  outline: 3px solid var(--ar-accent);
+  outline: 2px solid var(--ar-accent);
   outline-offset: 2px;
 }
 /* 顶部一行：发给谁、查找、关于 Agent 回复。原来分占三行，挤掉了消息区的高度。 */
@@ -169,19 +161,18 @@
   gap: 5px;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--ar-pill);
+  border: 0;
+  border-radius: var(--ar-control-radius);
   color: var(--ar-muted);
   background: none;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 .conversation-panel__bar-button:hover,
 .conversation-panel__bar-button[aria-expanded='true'],
 .conversation-panel__availability > summary:hover,
 .conversation-panel__availability[open] > summary {
-  border-color: var(--ar-line);
   color: var(--color-ink);
   background: var(--ar-surface-muted);
 }
@@ -220,17 +211,16 @@
 .conversation-panel__empty h3 {
   max-width: 440px;
   margin: 0;
-  font-size: clamp(24px, 2.4vw, 34px);
-  font-weight: 530;
-  line-height: 1.35;
-  letter-spacing: -0.055em;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.4;
   text-wrap: balance;
 }
 .conversation-panel__empty > p {
-  margin: 14px 0 0;
+  margin: 6px 0 0;
   color: var(--ar-muted);
-  font-size: 12px;
-  line-height: 1.8;
+  font-size: 13px;
+  line-height: 1.7;
 }
 .conversation-panel__boundary {
   padding: 24px 0;
@@ -245,40 +235,34 @@
 .conversation-undecryptable p {
   margin: 0;
 }
+/* 日期：一行淡淡的字，不画线。 */
 .conversation-day {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin: 5px 0 24px;
+  justify-content: center;
+  margin: 6px 0 20px;
   color: var(--ar-muted);
   font-size: 12px;
-}
-.conversation-day::before,
-.conversation-day::after {
-  content: '';
-  height: 1px;
-  flex: 1;
-  background: var(--ar-surface-muted);
 }
 .conversation-message {
   position: relative;
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin: 0 0 22px;
+  margin: 0 0 20px;
   padding: 0 28px 0 0;
   overflow-wrap: anywhere;
 }
+/* 头像：人是一个墨色的圆，里面一个字；Agent 是机器人，垫一块浅底的圆。 */
 .conversation-message__avatar {
   display: grid;
   flex: 0 0 32px;
   place-items: center;
   width: 32px;
   height: 32px;
-  border: 1px solid var(--ar-line);
-  border-radius: 10px;
-  color: var(--ar-muted);
-  background: var(--ar-surface-muted);
+  border-radius: 50%;
+  color: var(--color-paper);
+  background: var(--color-ink);
   font-size: 12px;
   font-weight: 600;
 }
@@ -288,73 +272,57 @@
   stroke-width: 1.6;
 }
 .conversation-message[data-actor-kind='agent'] .conversation-message__avatar {
-  border-color: var(--ar-line);
   color: var(--ar-muted);
-  background: var(--ar-accent-soft);
+  background: var(--ar-surface-muted);
 }
 .conversation-message__body {
   min-width: 0;
   flex: 1;
 }
+/* 名字后面跟着“谁的 Agent”和时间，都是淡一档的小字，不垫底、不画框。 */
 .conversation-message header {
   display: flex;
-  min-height: 23px;
-  align-items: center;
-  gap: 7px;
+  min-height: 22px;
+  align-items: baseline;
+  gap: 8px;
   font-size: 12px;
 }
 .conversation-message header > strong {
   max-width: 64%;
   overflow: hidden;
-  font-weight: 620;
+  font-size: 0.84375rem;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .conversation-message header > span {
-  padding: 1px 4px;
-  border: 1px solid var(--ar-line);
-  border-radius: 4px;
   color: var(--ar-muted);
-  background: var(--ar-surface-muted);
   font-size: 12px;
-  font-weight: 500;
-}
-.conversation-message header > .conversation-message__origin {
-  border-color: color-mix(in srgb, var(--color-network) 44%, transparent);
-  color: color-mix(in srgb, var(--color-network) 84%, var(--color-ink));
-  background: color-mix(in srgb, var(--color-network) 9%, transparent);
 }
 .conversation-message time {
-  margin-left: auto;
   flex: 0 0 auto;
   color: var(--ar-muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .conversation-message__text {
-  padding-top: 6px;
+  padding-top: 2px;
 }
 .conversation-message__text > p {
   margin: 0;
   white-space: pre-wrap;
-  line-height: 1.8;
-  font-size: 14px;
+  line-height: 1.65;
+  font-size: 0.9375rem;
   color: var(--color-ink);
-}
-.conversation-message--own .conversation-message__text {
-  margin-top: 5px;
-  padding: 11px 14px;
-  border: 1px solid var(--ar-line);
-  border-radius: 0 10px 10px 10px;
-  background: var(--ar-accent-soft);
 }
 .conversation-message blockquote {
   overflow: hidden;
   max-height: 48px;
-  margin: 0 0 8px;
-  padding: 4px 10px;
-  border-left: 2px solid var(--ar-line);
+  margin: 0 0 6px;
+  padding: 2px 10px;
+  border-left: 2px solid var(--ar-border);
   color: var(--ar-muted);
-  font-size: 12px;
+  font-size: 12.5px;
 }
 .conversation-message .conversation-message__actions {
   position: absolute;
@@ -374,13 +342,13 @@
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 6px;
   color: var(--ar-muted);
   background: transparent;
 }
 .conversation-message .conversation-message__action:hover {
-  border-color: var(--ar-line);
+  color: var(--color-ink);
   background: var(--ar-surface-muted);
 }
 .conversation-message__action svg {
@@ -392,8 +360,8 @@
 .chat-markdown > p {
   margin: 0;
   white-space: pre-wrap;
-  line-height: 1.8;
-  font-size: 14px;
+  line-height: 1.65;
+  font-size: 0.9375rem;
   color: var(--color-ink);
 }
 .chat-markdown > p + p,
@@ -404,7 +372,7 @@
   margin-top: 8px;
 }
 .chat-markdown__heading {
-  font-weight: 700;
+  font-weight: 600;
 }
 .chat-markdown code {
   padding: 1px 5px;
@@ -417,7 +385,6 @@
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
-  border: 1px solid var(--ar-line);
   border-radius: 8px;
   background: var(--ar-surface-muted);
   line-height: 1.6;
@@ -431,25 +398,25 @@
 .chat-markdown ol {
   margin: 0;
   padding-left: 1.4em;
-  line-height: 1.8;
-  font-size: 14px;
+  line-height: 1.65;
+  font-size: 0.9375rem;
   color: var(--color-ink);
 }
 .conversation-message .chat-markdown__quote {
   max-height: none;
   margin: 0;
   padding: 2px 10px;
-  border-left: 2px solid var(--ar-line);
+  border-left: 2px solid var(--ar-border);
   color: var(--ar-muted);
-  font-size: 14px;
-  line-height: 1.8;
+  font-size: 0.875rem;
+  line-height: 1.65;
 }
 .conversation-message__mentions {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   margin-bottom: 5px;
-  color: var(--ar-accent);
+  color: var(--ar-muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -461,14 +428,14 @@
   align-items: center;
   gap: 6px;
   transform: translateX(-50%);
-  padding: 8px 12px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
+  padding: 6px 12px;
+  border: 1px solid var(--ar-border);
   border-radius: var(--ar-pill);
   color: var(--color-ink);
-  background: var(--ar-sunny);
-  box-shadow: var(--ar-press-small);
+  background: var(--color-paper);
+  box-shadow: var(--ar-float-shadow);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 .conversation-panel__latest > svg {
   width: 13px;
@@ -480,15 +447,15 @@
   max-height: 55%;
   overflow-y: auto;
   margin: 0 28px;
-  padding: 12px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 22px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--ar-border);
+  border-radius: 14px;
   background: var(--color-paper);
-  box-shadow: none;
+  box-shadow: var(--ar-float-shadow);
 }
+/* 输入框自己不画焦点圈，由外面这个框的边变深来表示。 */
 .conversation-panel__composer:focus-within {
-  border-color: var(--ar-accent);
-  box-shadow: 0 0 0 2px var(--ar-accent-soft);
+  border-color: var(--ar-muted);
 }
 .conversation-panel__composer > textarea {
   display: block;
@@ -498,17 +465,17 @@
   overflow-y: auto;
   resize: none;
   margin: 0;
-  padding: 5px 4px 10px;
+  padding: 4px 0 8px;
   border: 0;
   border-radius: 0;
   outline: none;
   color: var(--color-ink);
   background: transparent;
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 0.9375rem;
+  line-height: 1.6;
 }
 .conversation-panel__composer > textarea::placeholder {
-  color: var(--ar-muted);
+  color: var(--ar-faint);
 }
 .conversation-panel__composer > textarea:disabled {
   cursor: not-allowed;
@@ -522,6 +489,23 @@
 }
 .conversation-panel__tools > .ar-button:last-child {
   margin-left: auto;
+}
+/* 发送：一个黑色的圆按钮，只有箭头；名字留给读屏。 */
+.conversation-panel__tools > .ar-button--send {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 50%;
+}
+.conversation-panel__tools > .ar-button--send > span:last-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .conversation-panel__count + .ar-button:last-child {
   margin-left: 0;
@@ -571,11 +555,11 @@
   align-items: center;
   gap: 5px;
   max-width: 100%;
-  padding: 4px 7px;
-  border: 1px solid var(--ar-line);
-  border-radius: 5px;
-  color: var(--ar-accent);
-  background: var(--ar-accent-soft);
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -626,9 +610,8 @@
   color: var(--color-alert);
 }
 .conversation-panel__composer > div[role] {
-  padding: 8px;
-  border: 1px solid var(--ar-line);
-  border-radius: 7px;
+  padding: 8px 10px;
+  border-radius: var(--ar-control-radius);
   background: var(--ar-surface-muted);
 }
 .conversation-panel__composer > div[role] > p {
@@ -657,13 +640,14 @@
   top: calc(100% + 6px);
   right: 0;
   width: min(320px, calc(100vw - 48px));
-  padding: 13px 16px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 18px;
-  background: var(--ar-surface);
-  box-shadow: var(--ar-press-small);
+  padding: 12px 14px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  box-shadow: var(--ar-panel-shadow);
   font-size: 12px;
-  line-height: 1.75;
+  line-height: 1.7;
 }
 .conversation-panel__availability p {
   margin: 0;
@@ -699,8 +683,8 @@
   }
   .conversation-panel__composer {
     margin: 0 12px;
-    padding: 10px;
-    border-radius: 11px;
+    padding: 8px 8px 8px 12px;
+    border-radius: var(--ar-radius);
   }
   .conversation-panel__composer > textarea {
     font-size: 16px;
@@ -718,7 +702,6 @@
     flex-basis: 28px;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
   }
   .conversation-message header {
     gap: 5px;
@@ -728,7 +711,7 @@
     max-width: 58%;
   }
   .conversation-message__text > p {
-    font-size: 13px;
+    font-size: 0.9375rem;
   }
   .conversation-message .conversation-message__reply {
     width: 23px;

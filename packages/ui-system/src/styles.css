@@ -1,62 +1,65 @@
 @import 'tailwindcss';
-@import '@fontsource-variable/fredoka/wght.css';
+@import '@fontsource-variable/geist/wght.css';
+@import '@fontsource-variable/geist-mono/wght.css';
 @import '@fontsource-variable/noto-sans-sc/wght.css';
-@import '@fontsource/zcool-kuaile/400.css';
-@import '@fontsource/ibm-plex-mono/400.css';
-@import '@fontsource/ibm-plex-mono/500.css';
-@import '@fontsource/ibm-plex-mono/600.css';
 
 @source '../../../apps/web/src/**/*.{ts,tsx}';
 @source './**/*.{ts,tsx}';
 
 @theme {
-  --color-ink: #2a2733;
+  --color-ink: #18181b;
   --color-paper: #ffffff;
-  --color-signal: #bde8d8;
-  --color-network: #247a77;
-  --color-alert: #b23e3a;
-  --font-sans: 'Fredoka Variable', 'Noto Sans SC Variable', sans-serif;
-  /* 只给房间名这类大号标题用；正文、按钮和表单保持 --font-sans。 */
-  --font-display: 'Fredoka Variable', 'ZCOOL KuaiLe', 'Noto Sans SC Variable', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
+  --color-alert: #c62828;
+  --font-sans: 'Geist Variable', 'Noto Sans SC Variable', sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
 }
 
+/*
+ * 白底黑字，颜色留给机器人（specs/redesign/room-page.md 的“风格”一节）。
+ * 界面自己只有黑、白、灰：底是白的，左栏和须知这类垫一层很浅的灰，悬停和浅底的按钮再深一档，
+ * 选中的再深一档。有颜色的只有三样：机器人、表示“在等消息”的绿点、表示“找你”的红。
+ * 不画框：栏和栏之间一条细线（--ar-line），有边的只有输入框、对话框和菜单（--ar-border）。
+ * 浮着的东西（菜单、对话框、输入框）一层很淡的影子。
+ */
 :root {
-  --ar-canvas: #fff4dc;
-  --ar-surface: #fffdf7;
-  --ar-surface-muted: #fff6e3;
-  --ar-accent: #247a77;
-  --ar-accent-hover: #1c6562;
-  --ar-accent-soft: #eaf5f2;
-  --ar-muted: #5c5866;
-  --ar-line: #e8d9b8;
-  --ar-success: #287253;
+  --ar-canvas: #ffffff;
+  --ar-surface: #fafafa;
+  --ar-surface-muted: #f4f4f5;
+  --ar-selected: #ececef;
+  --ar-muted: #686873;
+  /* 更淡的一档只给占位的字和图标，不拿来写要读的字（对比度不到 4.5:1）。 */
+  --ar-faint: #a4a4ae;
+  --ar-line: #ededf0;
+  --ar-border: #dcdce1;
+  /* 焦点圈、勾选框、选中的标签：墨色。 */
+  --ar-accent: #18181b;
+  --ar-accent-hover: #3f3f46;
+  --ar-accent-soft: #f4f4f5;
+  /* 绿只表示“在等消息”：点和圈用 --ar-success；要读的字用深一档的 --ar-success-ink。 */
+  --ar-success: #1fa672;
+  --ar-success-ink: #147a52;
+  /* 红只表示“找你”：线和点用 --ar-coral；红底白字的数字用深一档的 --ar-badge（4.7:1）。 */
+  --ar-coral: #e5484d;
+  --ar-badge: #d93036;
+  --ar-on-badge: #ffffff;
+  --ar-mention: #fff8e1;
   --ar-warning: #895919;
-  --ar-warning-soft: #fff0c7;
-  --ar-danger-soft: #ffe4dc;
-  --ar-radius: 18px;
-  --ar-control-radius: 14px;
-  --ar-panel-shadow: 0 12px 40px #2a273314;
-  --ar-overlay-shadow: 0 16px 56px #2a273324;
-  /* 游戏大厅的质感：统一墨色粗描边，按压阴影不做模糊。彩色底上一律放墨色文字。 */
-  --ar-outline: #2a2733;
-  --ar-outline-width: 2.5px;
-  --ar-outline-thin: 2px;
-  --ar-press: 0 4px 0 var(--ar-outline);
-  --ar-press-small: 0 3px 0 var(--ar-outline);
+  --ar-warning-soft: #fff8e1;
+  --ar-danger-soft: #fdeceb;
+  /* 机器人垫的浅底：方、圆、胶囊三种机器人各一种。 */
+  --ar-tint-teal: #e2f3ef;
+  --ar-tint-coral: #fde9e5;
+  --ar-tint-sunny: #fff2cc;
+  --ar-control-radius: 8px;
+  --ar-radius: 12px;
+  --ar-panel-radius: 16px;
   --ar-pill: 999px;
-  --ar-panel-radius: 28px;
-  /* 弹窗与侧栏共用的遮罩：墨色压暗，不再各自挑一个蓝灰色。 */
-  --ar-backdrop: color-mix(in srgb, var(--color-ink) 52%, transparent);
-  --ar-sunny: #ffc53d;
-  --ar-sunny-hover: #ffb81f;
-  --ar-coral: #f07058;
-  --ar-coral-hover: #f58670;
-  --ar-sky: #8ec5f5;
-  --ar-sky-hover: #76b7ef;
-  --ar-mint: #bde8d8;
+  --ar-float-shadow: 0 1px 2px rgb(24 24 27 / 4%), 0 4px 16px rgb(24 24 27 / 6%);
+  --ar-panel-shadow: 0 1px 2px rgb(24 24 27 / 4%), 0 8px 24px rgb(24 24 27 / 8%);
+  --ar-overlay-shadow: 0 2px 6px rgb(24 24 27 / 6%), 0 24px 64px rgb(24 24 27 / 16%);
+  --ar-backdrop: rgb(24 24 27 / 40%);
   --ar-page-width: 1240px;
-  --ar-page-title: clamp(28px, 3vw, 36px);
+  --ar-page-title: clamp(24px, 2.4vw, 30px);
   color: var(--color-ink);
   background: var(--ar-canvas);
   font-family: var(--font-sans);
@@ -64,6 +67,8 @@
   line-height: 1.5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   --ar-ink-92: color-mix(in srgb, var(--color-ink) 92%, transparent);
   --ar-ink-72: color-mix(in srgb, var(--color-ink) 72%, transparent);
   --ar-ink-48: var(--ar-muted);
@@ -74,47 +79,45 @@
   --ar-paper-48: color-mix(in srgb, var(--color-paper) 48%, transparent);
   --ar-paper-18: color-mix(in srgb, var(--color-paper) 18%, transparent);
   --ar-paper-10: color-mix(in srgb, var(--color-paper) 10%, transparent);
-  --ar-shadow-short: 0 10px 30px color-mix(in srgb, var(--color-ink) 12%, transparent);
+  --ar-shadow-short: var(--ar-float-shadow);
   color-scheme: light;
 }
 
 /*
- * 暗色：跟随系统设置。仍然遵守“彩色底上放墨色文字”——墨色变浅，彩色底就一起压暗，
- * 所有组件只换令牌、不用逐个改规则。描边改成中灰，暗底上仍看得出按钮和输入框的边界。
+ * 夜间：跟随系统设置。组件只换令牌、不用逐个改规则；主按钮反过来，浅底深字。
  * 游戏场景画在画布上读不到这些变量，保持白天的配色。
  */
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --color-ink: #f1ece2;
-    --color-paper: #1b1a21;
-    --color-signal: #1f4d43;
-    --color-network: #6fc9c2;
-    --color-alert: #ff8f84;
-    --ar-canvas: #131217;
-    --ar-surface: #1e1c24;
-    --ar-surface-muted: #28252f;
-    --ar-accent: #5cc0b8;
-    --ar-accent-hover: #75cfc8;
-    --ar-accent-soft: #163230;
-    --ar-muted: #aaa4b4;
-    --ar-line: #37333f;
-    --ar-success: #78d6a9;
+    --color-ink: #ededf0;
+    --color-paper: #141416;
+    --color-alert: #ff6b70;
+    --ar-canvas: #0f0f11;
+    --ar-surface: #141416;
+    --ar-surface-muted: #1c1c1f;
+    --ar-selected: #27272b;
+    --ar-muted: #a0a0ab;
+    --ar-faint: #62626c;
+    --ar-line: #222226;
+    --ar-border: #34343a;
+    --ar-accent: #ededf0;
+    --ar-accent-hover: #d4d4d8;
+    --ar-accent-soft: #1c1c1f;
+    --ar-success: #3ecf8e;
+    --ar-success-ink: #3ecf8e;
+    --ar-coral: #f2555a;
+    --ar-mention: #2a2512;
     --ar-warning: #f1c46e;
-    --ar-warning-soft: #3b2f15;
-    --ar-danger-soft: #402320;
-    --ar-panel-shadow: 0 12px 40px #00000066;
-    --ar-overlay-shadow: 0 16px 56px #00000080;
-    --ar-outline: #8e879d;
-    --ar-backdrop: color-mix(in srgb, #000000 62%, transparent);
-    --ar-sunny: #8a6414;
-    --ar-sunny-hover: #9b711a;
-    --ar-coral: #8e3a2b;
-    --ar-coral-hover: #a14535;
-    --ar-sky: #24527a;
-    --ar-sky-hover: #2c608c;
-    --ar-mint: #1f4d43;
-    --ar-shadow-short: 0 10px 30px #00000059;
+    --ar-warning-soft: #2a2512;
+    --ar-danger-soft: #3a1d1f;
+    --ar-tint-teal: #14312d;
+    --ar-tint-coral: #3a1f1b;
+    --ar-tint-sunny: #3a3113;
+    --ar-float-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 16px rgb(0 0 0 / 30%);
+    --ar-panel-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 40%);
+    --ar-overlay-shadow: 0 2px 6px rgb(0 0 0 / 40%), 0 24px 64px rgb(0 0 0 / 55%);
+    --ar-backdrop: rgb(0 0 0 / 62%);
   }
 }
 
@@ -153,7 +156,7 @@ textarea {
 
 input::placeholder,
 textarea::placeholder {
-  color: var(--ar-muted);
+  color: var(--ar-faint);
   opacity: 1;
 }
 
@@ -163,151 +166,125 @@ summary {
 }
 
 :focus-visible {
-  outline: 3px solid var(--ar-accent);
-  outline-offset: 3px;
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 2px;
 }
 
 ::selection {
   color: var(--color-ink);
-  background: var(--color-signal);
+  background: var(--ar-selected);
 }
 
+/*
+ * 按钮：一页一个黑色的（primary），别的是浅灰底（ghost）或者只有字（quiet）。
+ * 危险的动作是浅灰底上的红字；发送和主按钮一样是黑的。
+ */
 .ar-button {
   display: inline-flex;
   min-width: 0;
   cursor: pointer;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
+  gap: 0.4rem;
+  border: 0;
+  border-radius: var(--ar-control-radius);
   color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: var(--ar-press-small);
+  background: var(--ar-surface-muted);
   font-weight: 600;
   letter-spacing: 0;
   transition:
     background-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
-}
-
-.ar-button:not(:disabled):active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ar-outline);
+    color 120ms ease;
 }
 
 .ar-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
-  box-shadow: none;
 }
 
 .ar-button--compact {
   min-height: 32px;
-  padding: 0.3rem 0.85rem;
+  padding: 0.3rem 0.7rem;
   font-size: 0.8125rem;
 }
 
 .ar-button--default {
-  min-height: 40px;
-  padding: 0.55rem 1.1rem;
-  font-size: 0.9rem;
+  min-height: 36px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.875rem;
 }
 
 .ar-button--large {
-  min-height: 48px;
-  padding: 0.7rem 1.4rem;
-  font-size: 1rem;
+  min-height: 44px;
+  padding: 0.65rem 1.2rem;
+  font-size: 0.9375rem;
 }
 
-.ar-button--primary {
-  background: var(--ar-sunny);
-}
-
-.ar-button--primary:not(:disabled):hover {
-  background: var(--ar-sunny-hover);
-}
-
-.ar-button--network {
-  background: var(--ar-sky);
-}
-
-.ar-button--network:not(:disabled):hover {
-  background: var(--ar-sky-hover);
-}
-
-.ar-button--alert {
-  background: var(--ar-coral);
-}
-
-.ar-button--alert:not(:disabled):hover {
-  background: var(--ar-coral-hover);
-}
-
+.ar-button--primary,
 .ar-button--send {
-  background: var(--ar-coral);
+  color: var(--color-paper);
+  background: var(--color-ink);
 }
 
+.ar-button--primary:not(:disabled):hover,
 .ar-button--send:not(:disabled):hover {
-  background: var(--ar-coral-hover);
+  background: var(--ar-accent-hover);
 }
 
 .ar-button--ghost:not(:disabled):hover,
-.ar-button--quiet:not(:disabled):hover {
-  background: var(--ar-surface-muted);
+.ar-button--network:not(:disabled):hover {
+  background: var(--ar-selected);
+}
+
+.ar-button--alert {
+  color: var(--color-alert);
+}
+
+.ar-button--alert:not(:disabled):hover {
+  background: var(--ar-danger-soft);
 }
 
 .ar-button--quiet {
   color: inherit;
   background: transparent;
-  border-color: transparent;
-  box-shadow: none;
 }
 
-.ar-button--quiet:not(:disabled):active {
-  box-shadow: none;
+.ar-button--quiet:not(:disabled):hover {
+  background: var(--ar-surface-muted);
 }
 
-/* 关闭、收起这类只有图标的按钮：圆形、墨色描边、可按下。 */
+/* 关闭、收起这类只有图标的按钮：没有底，悬停时垫一块浅灰。 */
 .ar-icon-button {
   display: inline-grid;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   padding: 0;
   cursor: pointer;
   place-items: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 50%;
-  color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: var(--ar-press-small);
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: transparent;
   transition:
     background-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+    color 120ms ease;
 }
 
 .ar-icon-button:not(:disabled):hover {
+  color: var(--color-ink);
   background: var(--ar-surface-muted);
-}
-
-.ar-icon-button:not(:disabled):active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ar-outline);
 }
 
 .ar-icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
-  box-shadow: none;
 }
 
 .ar-icon-button > svg {
   width: 18px;
   height: 18px;
-  stroke-width: 2.2;
+  stroke-width: 1.8;
 }
 
 @media (max-width: 767px) {
@@ -330,7 +307,7 @@ summary {
   justify-content: space-between;
   gap: 8px;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   list-style: none;
 }
 
@@ -339,12 +316,12 @@ summary {
 }
 
 .ar-disclosure > summary::after {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   flex: 0 0 auto;
   margin-right: 4px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
+  border-right: 1.5px solid var(--ar-muted);
+  border-bottom: 1.5px solid var(--ar-muted);
   content: '';
   transform: translateY(-2px) rotate(45deg);
   transition: transform 160ms ease;
@@ -373,8 +350,8 @@ summary {
 
 .ar-button__icon {
   display: inline-grid;
-  width: 1.1rem;
-  height: 1.1rem;
+  width: 1rem;
+  height: 1rem;
   flex: 0 0 auto;
   place-items: center;
 }
@@ -385,49 +362,32 @@ summary {
   stroke-width: 1.8;
 }
 
+/* 状态的小记号：一个图标，不垫底、不画圈；颜色只有绿（好了）、红（要你动手）和灰。 */
 .ar-status-mark {
   display: inline-grid;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   place-items: center;
-  border: var(--ar-outline-thin) solid currentColor;
-  border-radius: 50%;
-  background: var(--ar-surface);
+  color: var(--ar-muted);
 }
 
 .ar-status-mark > svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   stroke-width: 2;
 }
 
 .ar-status-mark--active {
   color: var(--ar-success);
-  background: var(--ar-mint);
-}
-
-.ar-status-mark--network {
-  color: var(--ar-accent);
-  background: var(--ar-accent-soft);
 }
 
 .ar-status-mark--alert {
-  color: var(--color-alert);
-  background: var(--ar-danger-soft);
-}
-
-.ar-status-mark--idle {
-  color: var(--ar-muted);
+  color: var(--ar-coral);
 }
 
 .ar-status-mark--offline {
-  color: var(--ar-ink-48);
-}
-
-.ar-status-mark--waiting {
-  color: var(--ar-accent);
-  background: var(--ar-accent-soft);
+  color: var(--ar-faint);
 }
 
 .ar-status-mark--pulse > svg {
@@ -440,20 +400,20 @@ summary {
   }
 }
 
-/* 对话框：原生 <dialog>，墨色粗描边加按压阴影；手机上贴底，成为底部面板。
+/* 对话框：原生 <dialog>，一条细边加一层淡影；手机上贴底，成为底部面板。
    Tailwind 的基础样式把所有元素的外边距清零，原生对话框靠 margin: auto 居中，要写回来。 */
 .ar-dialog {
-  width: min(560px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   max-width: none;
   max-height: min(780px, calc(100dvh - 32px));
   margin: auto;
   padding: 0;
   overflow: hidden;
-  border: var(--ar-outline-width) solid var(--ar-outline);
+  border: 1px solid var(--ar-border);
   border-radius: var(--ar-panel-radius);
   color: var(--color-ink);
-  background: var(--ar-surface);
-  box-shadow: 0 6px 0 var(--ar-outline);
+  background: var(--color-paper);
+  box-shadow: var(--ar-overlay-shadow);
 }
 
 .ar-dialog[open] {
@@ -473,44 +433,27 @@ summary {
 .ar-dialog__header {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 22px 22px 16px;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
-}
-
-.ar-dialog__icon {
-  display: inline-grid;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-control-radius);
-  background: var(--ar-mint);
-}
-
-.ar-dialog__icon > svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 2;
+  gap: 12px;
+  padding: 20px 16px 8px 24px;
 }
 
 .ar-dialog__heading {
   min-width: 0;
   flex: 1 1 auto;
+  padding-top: 2px;
 }
 
 .ar-dialog__heading h2 {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 700;
-  line-height: 1.3;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .ar-dialog__heading p {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   color: var(--ar-muted);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 .ar-dialog__body {
@@ -519,7 +462,7 @@ summary {
   flex: 1 1 auto;
   align-content: start;
   gap: 16px;
-  padding: 18px 22px 22px;
+  padding: 12px 24px 24px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -528,9 +471,9 @@ summary {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 22px 18px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--ar-line);
 }
 
 @media (max-width: 767px) {
@@ -538,64 +481,76 @@ summary {
     width: 100vw;
     max-height: calc(100dvh - 24px);
     margin: auto 0 0;
-    border-width: var(--ar-outline-width) 0 0;
+    border-width: 1px 0 0;
     border-radius: var(--ar-panel-radius) var(--ar-panel-radius) 0 0;
-    box-shadow: none;
   }
 
   .ar-dialog__header {
-    padding: 18px 16px 14px;
+    padding: 16px 8px 8px 16px;
   }
 
   .ar-dialog__body {
-    padding: 16px;
+    padding: 12px 16px 16px;
+  }
+
+  .ar-dialog__footer {
+    padding: 12px 16px;
   }
 }
 
-/* 分段选择：一行互斥选项，选中的是黄色按下态。 */
+/* 分段选择：一行互斥选项，垫一条浅灰的槽，选中的那个是浮起来的白块。 */
 .ar-segmented {
   display: flex;
   min-width: 0;
-  gap: 4px;
-  padding: 4px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
   background: var(--ar-surface-muted);
 }
 
 .ar-segmented__option {
   display: inline-flex;
   min-width: 0;
-  min-height: 40px;
+  min-height: 32px;
   flex: 1 1 0;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
-  border: var(--ar-outline-thin) solid transparent;
-  border-radius: var(--ar-pill);
-  color: var(--color-ink);
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ar-muted);
   background: transparent;
-  font-weight: 600;
+  font-size: 0.875rem;
+  /* 选中和没选中同一个字重：选中时变粗会把并排的字挤成省略号。 */
+  font-weight: 500;
   transition:
     background-color 120ms ease,
-    box-shadow 120ms ease;
+    color 120ms ease;
 }
 
 .ar-segmented__option:hover {
-  background: var(--ar-surface);
+  color: var(--color-ink);
 }
 
 .ar-segmented__option[aria-checked='true'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-sunny);
-  box-shadow: var(--ar-press-small);
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+  box-shadow:
+    0 0 0 1px var(--ar-line),
+    0 1px 2px rgb(24 24 27 / 6%);
+}
+
+/* 四个以上的选项按名字的长短分宽度，长的名字不被短的挤成省略号。 */
+.ar-segmented--many > .ar-segmented__option {
+  flex: 1 1 auto;
+  padding-inline: 10px;
 }
 
 .ar-segmented__icon {
   display: inline-grid;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   place-items: center;
 }
@@ -603,7 +558,7 @@ summary {
 .ar-segmented__icon > svg {
   width: 100%;
   height: 100%;
-  stroke-width: 2;
+  stroke-width: 1.8;
 }
 
 .ar-segmented__label {
@@ -636,29 +591,19 @@ summary {
   .ar-segmented--many {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-radius: 24px;
   }
 }
 
-/* 一条提示：图标、标题、说明，至多一个操作。彩色底上一律墨色字。 */
+/* 一条提示：图标、标题、说明，至多一个操作。垫一块浅灰，不画框；要小心和出错的各有一层很浅的底色。 */
 .ar-banner {
   display: flex;
   min-width: 0;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
   padding: 12px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 18px;
+  border-radius: var(--ar-radius);
   color: var(--color-ink);
-  background: var(--ar-surface);
-}
-
-.ar-banner--info {
-  background: var(--ar-accent-soft);
-}
-
-.ar-banner--success {
-  background: var(--ar-mint);
+  background: var(--ar-surface-muted);
 }
 
 .ar-banner--warning {
@@ -671,17 +616,30 @@ summary {
 
 .ar-banner__icon {
   display: inline-grid;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
-  margin-top: 1px;
+  margin-top: 2px;
   place-items: center;
+  color: var(--ar-muted);
+}
+
+.ar-banner--success > .ar-banner__icon {
+  color: var(--ar-success-ink);
+}
+
+.ar-banner--warning > .ar-banner__icon {
+  color: var(--ar-warning);
+}
+
+.ar-banner--danger > .ar-banner__icon {
+  color: var(--color-alert);
 }
 
 .ar-banner__icon > svg {
   width: 100%;
   height: 100%;
-  stroke-width: 2;
+  stroke-width: 1.8;
 }
 
 .ar-banner__content {
@@ -692,7 +650,8 @@ summary {
 }
 
 .ar-banner__title {
-  font-weight: 700;
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 .ar-banner__text {
@@ -739,8 +698,11 @@ summary {
   display: none;
 }
 
+/* 浮着的提示：底色换成不透明的，加一条细边和一层淡影，盖在页面上也看得清。 */
 .ar-toast {
-  box-shadow: 0 4px 0 var(--ar-outline);
+  border: 1px solid var(--ar-border);
+  background: var(--color-paper);
+  box-shadow: var(--ar-panel-shadow);
   pointer-events: auto;
 }
 
@@ -756,6 +718,7 @@ summary {
 /* 详情：沿用折叠的样式，标题用次要文字色，排查信息不抢眼。 */
 .ar-details > summary {
   color: var(--ar-muted);
+  font-weight: 400;
 }
 
 .ar-details[open] > summary {
@@ -788,7 +751,7 @@ summary {
   }
 }
 
-/* 表单字段：标签在上，输入框墨色细描边、纸色底；说明和错误在下面。 */
+/* 表单字段：标签在上，输入框一条细边、纸色底；说明和错误在下面。 */
 .ar-field {
   display: grid;
   min-width: 0;
@@ -797,16 +760,16 @@ summary {
 
 .ar-field__label {
   color: var(--color-ink);
-  font-size: 0.875rem;
-  font-weight: 650;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .ar-field :is(input, textarea, select) {
   width: 100%;
   min-width: 0;
-  min-height: 44px;
-  padding: 10px 14px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--ar-border);
   border-radius: var(--ar-control-radius);
   color: var(--color-ink);
   background: var(--color-paper);
@@ -821,7 +784,7 @@ summary {
 }
 
 .ar-field :is(input, textarea)::placeholder {
-  color: var(--ar-muted);
+  color: var(--ar-faint);
 }
 
 .ar-field :is(input, textarea, select):disabled {
@@ -845,7 +808,12 @@ summary {
 
 .ar-field__error {
   color: var(--color-alert);
-  font-weight: 600;
+}
+
+@media (max-width: 767px) {
+  .ar-field :is(input, textarea, select) {
+    min-height: 44px;
+  }
 }
 
 /* 要发给别人的一段话和复制按钮。 */
@@ -862,10 +830,9 @@ summary {
   margin: 0;
   padding: 12px 14px;
   overflow: auto;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 16px;
+  border-radius: var(--ar-radius);
   color: var(--color-ink);
-  background: var(--color-paper);
+  background: var(--ar-surface-muted);
   font-family: var(--font-mono);
   font-size: 0.8125rem;
   line-height: 1.55;
@@ -896,10 +863,5 @@ summary {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
-  }
-
-  .ar-button:not(:disabled):active,
-  .ar-icon-button:not(:disabled):active {
-    transform: none;
   }
 }

@@ -220,6 +220,10 @@ for (const width of [1440, 390]) {
     await expect(panel).toContainText('so can the server');
     await expect(panel).toContainText('Long questions are welcome.');
     await expectNoHorizontalOverflow(page);
+    // 详情是淡入的：没淡完就查，字的颜色还是半透明的，对比度会差一截。
+    await panel.evaluate((element) =>
+      Promise.all(element.getAnimations().map((animation) => animation.finished)),
+    );
     const scan = await new AxeBuilder({ page })
       .include('.explore-panel')
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])

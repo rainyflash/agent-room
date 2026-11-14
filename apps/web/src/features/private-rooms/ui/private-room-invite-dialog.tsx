@@ -1,6 +1,6 @@
 import { Banner, Button, CopyBlock, Details, Dialog, Spinner } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link2, Link2Off, RefreshCw, UserPlus } from 'lucide-react';
+import { Link2, Link2Off, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -59,7 +59,6 @@ export function PrivateRoomInviteDialog({
       className="private-room-invite-dialog"
       closeLabel={t('privateRooms.inviteLink.close')}
       description={t('privateRooms.inviteLink.subtitle', { room: room.name })}
-      icon={<UserPlus />}
       onClose={onClose}
       title={t('privateRooms.inviteLink.title')}
     >

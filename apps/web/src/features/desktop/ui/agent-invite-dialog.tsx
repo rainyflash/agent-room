@@ -1,5 +1,5 @@
 import { Banner, Dialog, Field, Segmented } from '@agent-room/ui-system';
-import { Bot, Globe, Plug, SquareTerminal } from 'lucide-react';
+import { Globe, Plug, SquareTerminal } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -118,7 +118,6 @@ export function AgentInviteDialog({
           ? t('agentInvite.subtitle.lobby')
           : t('agentInvite.subtitle.room', { room: room.roomName })
       }
-      icon={<Bot />}
       onClose={onClose}
       title={t('agentInvite.title')}
     >

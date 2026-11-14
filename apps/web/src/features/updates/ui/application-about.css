@@ -3,10 +3,8 @@
   display: grid;
   gap: 20px;
   padding: 24px;
-  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: 0 6px 0 var(--ar-outline);
 }
 
 .application-about__card > header {
@@ -22,7 +20,6 @@
 
 .application-about__card h3 {
   margin: 0 0 6px;
-  font-family: var(--font-display);
   font-size: 1.75rem;
   font-weight: 600;
   letter-spacing: 0;
@@ -43,7 +40,7 @@
 
 .application-about__card dl {
   margin: 0;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
 }
 
 .application-about__card dl > div {
@@ -52,7 +49,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 12px 0;
-  border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+  border-bottom: 1px solid var(--ar-line);
 }
 
 .application-about__card dt {
@@ -79,7 +76,7 @@
   flex-wrap: wrap;
   gap: 8px 20px;
   padding-top: 16px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
 }
 
 .application-about__card footer a {
@@ -95,7 +92,7 @@
 .application-about__updates h3 {
   margin: 0;
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .application-about__updates label {
@@ -109,8 +106,8 @@
 .application-about__updates select {
   min-height: 44px;
   padding: 0 16px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: var(--ar-pill);
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
   color: inherit;
   background: var(--color-paper);
   font: inherit;

@@ -17,7 +17,7 @@ export const siteSources: SiteSources = {
   publicDir: local('../../public/'),
   // 字体是 ui-system 的依赖；网关镜像按 `--filter @agent-room/web...` 安装，也带着它。
   fontFile: local(
-    '../../../../packages/ui-system/node_modules/@fontsource-variable/fredoka/files/fredoka-latin-wght-normal.woff2',
+    '../../../../packages/ui-system/node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2',
   ),
 };
 

@@ -25,12 +25,22 @@ def text(path: Path) -> str:
 
 
 class BrandConsistencyTests(unittest.TestCase):
-    def test_login_theme_colors_and_outlines_match_the_web_app(self):
+    def test_login_theme_colors_and_radii_match_the_web_app(self):
         web = light_tokens(text(UI_SYSTEM_STYLES))
         theme = light_tokens(text(LOGIN_THEME / "resources/css/agent-room.css"))
         shared = sorted(set(web) & set(theme))
-        # 颜色、描边、圆角、阴影都在里面；少于这些说明有人改了名字，对比就失效了。
-        for name in ("--ar-coral", "--ar-outline", "--ar-outline-width", "--ar-panel-radius", "--ar-press"):
+        # 底色、灰的几档、线、圆角都在里面；少于这些说明有人改了名字，对比就失效了。
+        for name in (
+            "--ar-canvas",
+            "--ar-surface-muted",
+            "--ar-selected",
+            "--ar-muted",
+            "--ar-line",
+            "--ar-border",
+            "--ar-accent",
+            "--ar-control-radius",
+            "--ar-panel-radius",
+        ):
             self.assertIn(name, shared)
         drift = {name: (theme[name], web[name]) for name in shared if theme[name] != web[name]}
         self.assertEqual(drift, {})

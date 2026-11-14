@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputs": {
     "Cargo.lock": "a261347fbb693ae4802c763f5391e02dd809fd16d48c318b4a2561eb86e33a1d",
-    "pnpm-lock.yaml": "7724ba582015b20007fd95f5eb49b1742427375c0983b1f999b90d8bc5f3e54f"
+    "pnpm-lock.yaml": "f113a1cc754ea537fbb17fdc22f9bdd8915e5aecebcd8dfe991652c2663e0a27"
   },
   "dependencies": [
     {
@@ -7140,10 +7140,17 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@fontsource-variable/fredoka",
+      "name": "@fontsource-variable/geist",
       "version": "5.3.0",
       "license": "OFL-1.1",
-      "source": "https://www.npmjs.com/package/@fontsource-variable/fredoka/v/5.3.0"
+      "source": "https://www.npmjs.com/package/@fontsource-variable/geist/v/5.3.0"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fontsource-variable/geist-mono",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "source": "https://www.npmjs.com/package/@fontsource-variable/geist-mono/v/5.3.0"
     },
     {
       "ecosystem": "npm",
@@ -7151,20 +7158,6 @@
       "version": "5.3.0",
       "license": "OFL-1.1",
       "source": "https://www.npmjs.com/package/@fontsource-variable/noto-sans-sc/v/5.3.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@fontsource/ibm-plex-mono",
-      "version": "5.3.0",
-      "license": "OFL-1.1",
-      "source": "https://www.npmjs.com/package/@fontsource/ibm-plex-mono/v/5.3.0"
-    },
-    {
-      "ecosystem": "npm",
-      "name": "@fontsource/zcool-kuaile",
-      "version": "5.3.0",
-      "license": "OFL-1.1",
-      "source": "https://www.npmjs.com/package/@fontsource/zcool-kuaile/v/5.3.0"
     },
     {
       "ecosystem": "npm",

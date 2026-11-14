@@ -21,7 +21,7 @@ export type SiteSources = {
   readonly siteDir: string;
   /** `apps/web/public`：标志、图标、分享预览图，和应用用同一份。 */
   readonly publicDir: string;
-  /** Fredoka 的拉丁字符子集（woff2）。 */
+  /** Geist 的拉丁字符子集（woff2，可变字体）。 */
   readonly fontFile: string;
 };
 
@@ -39,9 +39,9 @@ function hashed(name: string, extension: string, contents: string | Buffer): Sit
 async function assetFiles(
   sources: SiteSources,
 ): Promise<{ assets: SiteAssets; files: SiteFile[] }> {
-  const font = hashed('fredoka', 'woff2', await readFile(sources.fontFile));
+  const font = hashed('geist', 'woff2', await readFile(sources.fontFile));
   const stylesheet = (await readFile(path.join(sources.siteDir, 'site.css'), 'utf8')).replace(
-    'url(fredoka.woff2)',
+    'url(geist.woff2)',
     `url(/${font.path})`,
   );
   const css = hashed('site', 'css', stylesheet);

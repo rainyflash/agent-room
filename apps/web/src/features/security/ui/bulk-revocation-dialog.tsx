@@ -1,5 +1,4 @@
 import { Banner, Button, Dialog } from '@agent-room/ui-system';
-import { ShieldOff } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -159,7 +158,6 @@ export function BulkRevocationDialog({
           )}
         </>
       }
-      icon={<ShieldOff />}
       onClose={() => {
         if (!running) onClose();
       }}

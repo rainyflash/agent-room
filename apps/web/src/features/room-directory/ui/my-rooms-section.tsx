@@ -99,6 +99,7 @@ function ConnectedMyRooms() {
                   icon={pendingCatalogId === room.catalogId ? <Spinner /> : undefined}
                   onClick={() => void run(room, async () => await commands.enter(room, true))}
                   size="compact"
+                  tone="ghost"
                 >
                   {t('rooms.join')}
                 </Button>

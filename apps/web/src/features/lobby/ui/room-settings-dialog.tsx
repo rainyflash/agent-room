@@ -1,5 +1,5 @@
 import { Banner, Button, Dialog, Segmented, Spinner } from '@agent-room/ui-system';
-import { Bot, Gavel, Globe2, KeyRound, Pin, Settings2, UsersRound } from 'lucide-react';
+import { Bot, Gavel, Globe2, KeyRound, Pin, UsersRound } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -96,7 +96,6 @@ export function RoomSettingsDialog({
       className="room-settings"
       closeLabel={t('roomSettings.close')}
       description={roomName}
-      icon={<Settings2 />}
       onClose={onClose}
       size="wide"
       title={t('roomSettings.title')}

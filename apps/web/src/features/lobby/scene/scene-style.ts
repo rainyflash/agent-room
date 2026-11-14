@@ -7,7 +7,7 @@ import type { SceneCharacter } from './scene-character';
  * 画布读不到 CSS 变量，这里的颜色与 packages/ui-system 的令牌保持同值。
  */
 export const sceneInk = '#2a2733';
-export const sceneFont = 'Fredoka Variable, Noto Sans SC Variable, sans-serif';
+export const sceneFont = 'Geist Variable, Noto Sans SC Variable, sans-serif';
 
 export const sceneStrokeWidth = { wall: 6, furniture: 3 } as const;
 

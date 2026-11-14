@@ -9,8 +9,6 @@ export type DialogSize = 'default' | 'wide';
 export type DialogProps = {
   readonly title: ReactNode;
   readonly description?: ReactNode;
-  /** 标题左边的小图标块；只是装饰，读屏读标题。 */
-  readonly icon?: ReactNode;
   readonly closeLabel: string;
   readonly onClose: () => void;
   readonly size?: DialogSize;
@@ -27,7 +25,6 @@ export type DialogProps = {
 export function Dialog({
   title,
   description,
-  icon,
   closeLabel,
   onClose,
   size = 'default',
@@ -64,11 +61,6 @@ export function Dialog({
       ref={dialog}
     >
       <header className="ar-dialog__header">
-        {icon === undefined ? null : (
-          <span aria-hidden="true" className="ar-dialog__icon">
-            {icon}
-          </span>
-        )}
         <div className="ar-dialog__heading">
           <h2 id={titleId}>{title}</h2>
           {description === undefined ? null : <p id={descriptionId}>{description}</p>}

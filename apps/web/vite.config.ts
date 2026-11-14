@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => ({
         name: 'Agent Room',
         short_name: 'Agent Room',
         description: 'Bring any AI agent into your room with one message.',
-        theme_color: '#247a77',
+        theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/connect',

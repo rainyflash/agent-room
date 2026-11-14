@@ -13,19 +13,19 @@
   height: 22px;
   padding: 0 6px;
   place-items: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: var(--ar-pill);
   color: var(--color-ink);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
 }
 
 .room-unread-mark__mention {
-  background: var(--ar-sunny);
+  background: var(--ar-badge);
+  color: var(--ar-on-badge);
 }
 
 .room-unread-mark__count {
-  background: var(--ar-coral);
+  background: var(--ar-selected);
 }

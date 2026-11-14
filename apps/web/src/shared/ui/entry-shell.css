@@ -17,9 +17,8 @@
   gap: 12px;
 }
 .entry-shell__topbar .brand-lockup {
-  font-family: var(--font-display);
   font-size: 18px;
-  font-weight: 650;
+  font-weight: 600;
 }
 .entry-shell__topbar .brand-lockup img {
   width: 30px;
@@ -33,11 +32,9 @@
   width: min(580px, 100%);
   gap: 18px;
   padding: 26px 28px;
-  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   color: var(--color-ink);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
 }
 .entry-card__body {
   display: grid;
@@ -49,10 +46,9 @@
   height: 48px;
   align-items: center;
   justify-content: center;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
   border-radius: 50%;
   color: var(--color-ink);
-  background: var(--ar-sky);
+  background: var(--ar-surface-muted);
 }
 .entry-card__icon svg {
   width: 22px;
@@ -63,9 +59,8 @@
 }
 .entry-card h1 {
   margin: 0;
-  font-family: var(--font-display);
   font-size: clamp(24px, 4vw, 30px);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 1.25;
 }
@@ -84,7 +79,7 @@
 }
 .entry-card__details {
   padding-top: 14px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
 }
 .entry-card__details dl {
   display: grid;

@@ -1,6 +1,6 @@
 /*
  * 房间页的对话版面（specs/redesign/room-page.md）：栏布局，不绝对定位。
- * 只用令牌，不写死颜色、圆角和阴影：1c 换风格时改令牌就跟着变。
+ * 只用令牌，不写死颜色、圆角和阴影。底是白的，左右两栏垫一层很浅的灰，栏之间一条细线。
  * - 1100px 以上三栏：左栏（主房间、私聊，有东西才出现）、主栏、右栏（Agent）。
  * - 更窄：左右两栏收起来，Agent 从顶栏的按钮打开抽屉。
  * - 每一栏自己滚动，整页不滚；输入框贴在主栏底下。
@@ -12,7 +12,8 @@
   --room-desk-gutter: 20px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: var(--ar-surface);
+  background: var(--ar-canvas);
+  --workspace-surface: var(--ar-canvas);
 }
 
 /* 顶栏 */
@@ -20,25 +21,28 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 16px 8px 12px;
+  border-bottom: 1px solid var(--ar-line);
   background: var(--ar-canvas);
 }
-.room-desk__back {
-  color: var(--color-ink);
-}
+/* 房间名和后面那一小句排成一行；放不下时那一小句先让。 */
 .room-desk__identity {
+  display: flex;
   min-width: 0;
   flex: 1 1 auto;
+  align-items: baseline;
+  gap: 10px;
 }
 .room-desk__identity h1 {
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.25rem;
+  font-size: 0.9375rem;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.4;
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -46,13 +50,13 @@
 .room-desk__meta {
   display: flex;
   min-width: 0;
+  flex: 1 100 auto;
   flex-wrap: nowrap;
   gap: 6px;
   overflow: hidden;
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--ar-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.8125rem;
   white-space: nowrap;
 }
 .room-desk__meta > span + span::before {
@@ -66,7 +70,13 @@
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+.room-desk__actions > .ar-segmented {
+  margin-right: 8px;
+}
+.room-desk__actions > .ar-button--primary {
+  margin-inline: 4px;
 }
 .room-desk__settings {
   position: relative;
@@ -74,13 +84,13 @@
 /* 有人在等批准：齿轮右上角一个点。 */
 .room-desk__attention {
   position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 10px;
-  height: 10px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--ar-coral);
+  box-shadow: 0 0 0 2px var(--ar-canvas);
 }
 
 /* 三栏 */
@@ -97,20 +107,20 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: var(--ar-surface-muted);
+  background: var(--ar-surface);
 }
 .room-desk__rail {
-  border-right: var(--ar-outline-thin) solid var(--ar-line);
+  border-right: 1px solid var(--ar-line);
 }
 .room-desk__side {
-  border-left: var(--ar-outline-thin) solid var(--ar-line);
+  border-left: 1px solid var(--ar-line);
 }
 .room-desk__main {
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: var(--ar-surface);
+  background: var(--ar-canvas);
 }
 .room-desk__content {
   min-height: 0;
@@ -124,34 +134,35 @@
 /* 左栏：主房间，下面是私聊 */
 .room-desk__places {
   flex: 0 0 auto;
-  padding: 12px 12px 4px;
+  padding: 10px 8px 4px;
 }
 .room-desk__place {
   display: flex;
   width: 100%;
-  min-height: 40px;
+  min-height: 34px;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border: var(--ar-outline-thin) solid transparent;
+  padding: 6px 10px;
+  border: 0;
   border-radius: var(--ar-control-radius);
   color: var(--color-ink);
   background: transparent;
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: 0.84375rem;
+  font-weight: 500;
   text-align: left;
 }
 .room-desk__place:hover {
-  background: var(--ar-surface);
+  background: var(--ar-surface-muted);
 }
 .room-desk__place[aria-current='page'] {
-  border-color: var(--ar-outline);
-  background: var(--ar-surface);
+  background: var(--ar-selected);
+  font-weight: 600;
 }
 .room-desk__place > svg {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   flex: 0 0 auto;
+  color: var(--ar-muted);
 }
 .room-desk__rail .workspace-direct {
   max-height: none;
@@ -166,11 +177,11 @@
   align-items: center;
   gap: 8px;
   border: 0;
-  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  border-bottom: 1px solid var(--ar-line);
   color: var(--color-ink);
-  background: var(--ar-surface-muted);
+  background: var(--ar-surface);
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
 }
 .room-desk__return > svg {
@@ -219,8 +230,10 @@
   bottom: 0;
   width: min(var(--room-desk-side), 100%);
   overflow: hidden;
-  border-left: var(--ar-outline-thin) solid var(--ar-line);
+  border-left: 1px solid var(--ar-line);
+  border-radius: 0;
   background: var(--ar-surface);
+  box-shadow: none;
 }
 
 @media (min-width: 1100px) {

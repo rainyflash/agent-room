@@ -9,18 +9,14 @@
   place-items: center;
   width: 44px;
   height: 44px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
+  border: 1px solid var(--ar-border);
   border-radius: var(--ar-control-radius);
-  background: var(--ar-sunny);
-  box-shadow: var(--ar-press-small);
+  background: var(--color-ink);
+  color: var(--color-paper);
 }
 .public-watch__home img {
   width: 26px;
   height: 26px;
-}
-.public-watch__home:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 var(--ar-outline);
 }
 .public-watch .workspace-header__identity {
   flex: 0 1 auto;
@@ -46,13 +42,13 @@
   height: 26px;
   margin-bottom: 2px;
   padding: 0 4px 0 8px;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 9px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
   background: var(--ar-surface);
   color: var(--color-ink);
   font-family: var(--font-sans);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   text-overflow: ellipsis;
   cursor: pointer;
 }
@@ -61,7 +57,7 @@
   background: var(--color-paper);
 }
 .public-watch__shard:focus-visible {
-  outline: 3px solid var(--ar-accent);
+  outline: 2px solid var(--ar-accent);
   outline-offset: 2px;
 }
 
@@ -70,7 +66,7 @@
   margin: 0;
   padding-left: 4px;
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 600;
 }
 .public-watch__stale {
   flex: 0 0 auto;
@@ -84,14 +80,14 @@
   padding: 12px 4px 12px;
 }
 .public-watch__content [data-focused='true'] .conversation-message {
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--ar-warning-soft);
 }
 .public-watch__content [data-message-key]:focus {
   outline: none;
 }
 .public-watch__content [data-message-key]:focus-visible .conversation-message {
-  outline: 3px solid var(--ar-accent);
+  outline: 2px solid var(--ar-accent);
   outline-offset: -3px;
 }
 .public-watch__withheld {
@@ -128,7 +124,7 @@
   justify-content: space-between;
   gap: 10px;
   padding: 10px 14px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
 }
 .public-watch__footer p {
   flex: 1 1 180px;

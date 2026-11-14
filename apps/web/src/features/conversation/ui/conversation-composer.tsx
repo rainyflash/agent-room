@@ -1,5 +1,5 @@
 import { Button } from '@agent-room/ui-system';
-import { AtSign, Reply, Send, X } from 'lucide-react';
+import { ArrowUp, AtSign, Reply, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useState, type RefObject } from 'react';
 import { AttachmentButton, AttachmentPreview, selectAttachment } from './attachment-picker';
 import type { AttachmentFailure } from '../domain/conversation-attachment';
@@ -244,7 +244,7 @@ export function ConversationComposer({
         <Button
           type="submit"
           disabled={!canSend}
-          icon={<Send aria-hidden="true" />}
+          icon={<ArrowUp aria-hidden="true" />}
           size="compact"
           tone="send"
         >

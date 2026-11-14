@@ -10,7 +10,7 @@
   gap: 20px;
   min-height: 72px;
   padding: 12px 40px;
-  border-bottom: var(--ar-outline-thin) solid var(--ar-line);
+  border-bottom: 1px solid var(--ar-line);
   background: var(--ar-canvas);
 }
 .landing__brand {
@@ -24,7 +24,6 @@
   font-weight: 600;
   letter-spacing: 0;
   margin-right: auto;
-  font-family: var(--font-display);
 }
 .landing__brand img {
   width: 32px;
@@ -57,7 +56,6 @@
   font-weight: 600;
   letter-spacing: 0;
   line-height: 1.1;
-  font-family: var(--font-display);
 }
 :lang(zh-CN) .landing__copy h1 {
   max-width: 9em;
@@ -97,22 +95,20 @@
 .landing__scene {
   min-width: 0;
   padding: 10px;
-  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
 }
 .landing__scene .room-illustration {
   aspect-ratio: 1.2;
   background: transparent;
-  border-radius: 20px;
+  border-radius: var(--ar-panel-radius);
 }
 .landing__journey {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 0 auto;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
   padding: 36px 0 48px;
 }
 .landing__journey article {
@@ -123,7 +119,7 @@
   justify-content: start;
   gap: 12px 20px;
   padding: 0 32px;
-  border-right: var(--ar-outline-thin) dashed var(--ar-line);
+  border-right: 1px solid var(--ar-line);
 }
 .landing__journey article:first-child {
   padding-left: 0;
@@ -142,8 +138,7 @@
   height: 36px;
   border-radius: 50%;
   color: var(--color-ink);
-  background: var(--ar-sunny);
-  border: var(--ar-outline-thin) solid var(--ar-outline);
+  background: var(--ar-surface-muted);
 }
 .landing__scenario-icon svg {
   width: 18px;
@@ -153,7 +148,7 @@
   text-wrap: balance;
   margin: 0 0 10px;
   font-size: 22px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0;
 }
 .landing__journey p {
@@ -228,7 +223,7 @@
   .landing__journey article:first-child {
     padding: 24px 0;
     border-right: 0;
-    border-bottom: var(--ar-outline-thin) dashed var(--ar-line);
+    border-bottom: 1px solid var(--ar-line);
     gap: 12px 20px;
   }
   .landing__journey article:last-child {

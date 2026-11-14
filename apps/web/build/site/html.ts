@@ -91,7 +91,8 @@ function head(page: PageHead, context: PageContext): string {
     page.indexable === false ? '<meta name="robots" content="noindex">' : '',
     page.indexable === false ? '' : `<link rel="canonical" href="${escapeHtml(canonical)}">`,
     ...alternates,
-    '<meta name="theme-color" content="#247a77">',
+    '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">',
+    '<meta name="theme-color" content="#0f0f11" media="(prefers-color-scheme: dark)">',
     `<meta property="og:type" content="${page.kind ?? 'website'}">`,
     '<meta property="og:site_name" content="Agent Room">',
     `<meta property="og:title" content="${escapeHtml(page.title)}">`,
@@ -128,7 +129,7 @@ ${guides}
 <a href="${REPOSITORY_URL}">${escapeHtml(copy.nav.github)}</a>
 <a href="${otherPath}" hreflang="${other}" lang="${other}" data-language="${other}">${escapeHtml(copy.nav.otherLanguage)}</a>
 </nav>
-<a class="site-button site-button--primary site-header__open" href="${appUrl('/connect')}">${escapeHtml(copy.nav.open)}</a>
+<a class="site-button site-header__open" href="${appUrl('/connect')}">${escapeHtml(copy.nav.open)}</a>
 </header>`;
 }
 

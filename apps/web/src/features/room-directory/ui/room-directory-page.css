@@ -14,9 +14,8 @@
 }
 .room-directory__hero h1 {
   margin: 0 0 12px;
-  font-family: var(--font-display);
   font-size: var(--ar-page-title);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 1.2;
 }
@@ -41,10 +40,8 @@
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 8px auto 0;
   padding: 24px 28px;
-  border: var(--ar-outline-width) solid var(--ar-outline);
   border-radius: var(--ar-panel-radius);
   background: var(--ar-surface);
-  box-shadow: var(--ar-press);
 }
 .room-directory__explore > div {
   flex: 1;
@@ -52,7 +49,6 @@
 }
 .room-directory__explore h2 {
   margin: 0 0 6px;
-  font-family: var(--font-display);
   font-size: 1.3rem;
   font-weight: 600;
 }
@@ -67,9 +63,8 @@
   width: 52px;
   height: 52px;
   flex: 0 0 auto;
-  border: var(--ar-outline-thin) solid var(--ar-outline);
-  border-radius: 16px;
-  background: var(--ar-sky);
+  border-radius: var(--ar-radius);
+  background: var(--ar-surface-muted);
 }
 .room-directory__explore-icon svg {
   width: 26px;
@@ -83,7 +78,7 @@
   width: min(var(--ar-page-width), calc(100% - 80px));
   margin: 40px auto;
   padding-top: 24px;
-  border-top: var(--ar-outline-thin) dashed var(--ar-line);
+  border-top: 1px solid var(--ar-line);
   color: var(--ar-muted);
   font-size: 13px;
   line-height: 1.6;

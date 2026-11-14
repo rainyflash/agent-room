@@ -182,7 +182,7 @@ describe('agentroom.chat 的静态网站', () => {
     const files = await render(baseBuild);
     const css = [...files.keys()].find((path) => /^_site\/site\.[0-9a-f]{12}\.css$/u.test(path));
     const font = [...files.keys()].find((path) =>
-      /^_site\/fredoka\.[0-9a-f]{12}\.woff2$/u.test(path),
+      /^_site\/geist\.[0-9a-f]{12}\.woff2$/u.test(path),
     );
     expect(css).toBeDefined();
     expect(font).toBeDefined();
