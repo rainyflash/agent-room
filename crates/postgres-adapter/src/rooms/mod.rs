@@ -16,6 +16,7 @@ mod private_rooms;
 mod provisioning;
 mod public_directory;
 mod role_changes;
+mod sub_room_categories;
 mod sub_room_follow;
 mod sub_room_sync;
 mod sub_rooms;

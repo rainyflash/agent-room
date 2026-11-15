@@ -347,7 +347,7 @@
 
 都是新加的，不往现有的回答里加字段（`privateRoomSchema` 等都是严格校验的，旧版桌面端多看到一个字段整个列表都读不出来）：
 
-- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。回答里还没有分类（2e）和 `archived=1`（2e）；在等的申请 2d-2 起有（`requestedAtUnixMs`，管得了的人另有 `pendingRequestCount`）。
+- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。分类的名单 2e-1a 起有（`categories`：`[{ categoryId, name, position }]`，按先后；里面有几间由网页照它看得到的子房间数），每间的分类跟 2e-1b，`archived=1` 跟 2e-3；在等的申请 2d-2 起有（`requestedAtUnixMs`，管得了的人另有 `pendingRequestCount`）。
 - `POST /private-rooms/{父}/sub-rooms`：建（名字、用途、分类、门、要不要隐藏）。和建房间一样带幂等键（子房间的房间号），回的是照私人房间样子的这一间。建不了时分开说：403 `sub_room.admins_only`、`sub_room.agents_may_not_create`，409 `sub_room.name_taken`、`sub_room.limit_reached`、`sub_room.nested`（在子房间下面建），429 `sub_room.rate_limited`。门（`access`：`open`、`request`、`invite_only`，不带就是 `open`）和隐藏（`hidden`，不带就是不藏）2d-1 起收；没有门又要藏的回 400 `private_room.invalid_request`。分类跟 2e，多带别的字段回 400。
 - `PUT /private-rooms/{父}/sub-rooms/{子}`：改名、改用途、换分类、换门、隐藏；`DELETE`：归档；`POST .../sub-rooms/{子}/restore`：恢复。
   - 每一项都可以不带，不带的不动；一项都没带回 400 `sub_room.invalid_revision_body`。收 `name`、`description`，2d-1 起收 `access` 和 `hidden`（规则见上面“换门”）；分类跟 2e，多带别的字段也回 400。
@@ -362,7 +362,11 @@
   - 处理的正文是 `{ decision: "approve" | "reject" }`，别的回 400 `sub_room.invalid_join_request_answer`；回 `{ status: "approved" | "rejected" }`。管不了的回 403 `sub_room.managers_only`，没有这个申请回 404。
 - `PUT`、`DELETE .../sub-rooms/{子}/members/{账户}`：请进来、移出；`POST .../members/{账户}/ban`、`.../unban`：封禁、解封（2d-3，规矩见上面“请进来、移出和封禁”）。都回 204。新加的码：409 `sub_room.not_in_parent`、`sub_room.target_banned`，403 `sub_room.peer_manager`。
 - `PUT`、`DELETE .../sub-rooms/{子}/managers/{账户}`：设、撤子房间管理员（2d-4，规矩见上面“子房间管理员”）。都回 204。新加的码：409 `sub_room.target_not_inside`、`sub_room.managed_by_parent`。
-- `POST /private-rooms/{父}/sub-room-categories`，`PUT`、`DELETE .../sub-room-categories/{分类}`：建分类，改名和排先后，删。
+- `POST /private-rooms/{父}/sub-room-categories`，`PUT`、`DELETE .../sub-room-categories/{分类}`：建分类，改名和排先后，删（2e-1a，规矩见上面“分类”）。
+  - 建的正文是 `{ name }`，和建子房间一样带幂等键（`Idempotency-Key` 是分类号，UUID v7），同一个请求重发不多建；同一个号换了名字回 409 `private_room.conflict`。名字两头的空白去掉。
+  - 改的正文是 `{ name?, position? }`（`position` 从 0 起，超过最后一个的放到最后），一项都没带、多带别的回 400 `sub_room.invalid_category_body`。
+  - 三样都回这间房此刻所有的分类 `{ categories: [{ categoryId, name, position }] }`，建回 201，改和删回 200；删过的再删也回 200。
+  - 房间的房主和管理员能做，只要有效登录。别人回 403 `sub_room.category_admins_only`；重名、到上限回 409 `sub_room.category_name_taken`、`sub_room.category_limit_reached`，分类没了回 409 `sub_room.category_missing`；地址是子房间回 409 `sub_room.parent_only`，父房间归档了回 409 `private_room.conflict`。
 - `GET`、`PUT /private-rooms/{父}/sub-room-policy`：谁能建、Agent 能不能建、自动归档开没开。只有房主能改。
 - Agent 的敲门、放行用现成的 Agent 进门接口，只是子房间不给口令。
 - 现有的房间列表（`GET /private-rooms`、给 Bridge 的 `/lobbies/accessible`）默认不带子房间：旧版网页和旧版 Bridge 看不到它们，也就不会把它们当成普通房间摆出来。新版 Bridge 带 `subRooms=1` 才拿到，每间带着父房间、分类和哪种门；归档的不给。
@@ -491,7 +495,11 @@
    - 2d-4 子房间管理员：设、撤，连同[房间的身份和管理员](./room-roles.md)的 R5。
    - 2d-5 跟着父房间公开、改回私密：改回私密时没加密的子房间一起开加密，公开时没有门的写下这一刻。真实数据库的测试。
    - 2d-6 真实 Synapse 的测试：没批准的进不来、看不到；装门以后新消息是加密的；拆门、父房间公开时写的那一刻读得到。
-5. **2e 分类、归档和恢复**：分类的接口；子房间的归档和恢复；“已归档”的名单。真实 Synapse 的测试：归档以后发不了言，恢复以后原来的人接着说。
+5. **2e 分类、归档和恢复**，拆成：
+   - 2e-1a 分类本身：建、改名、排先后、删，名单里带着分类。真实数据库的测试。
+   - 2e-1b 把子房间放进分类：建的时候选、之后挪，名单里每间带着分类。
+   - 2e-2 子房间的归档和恢复。
+   - 2e-3 “已归档”的名单（`archived=1`）；真实 Synapse 的测试：归档以后发不了言，恢复以后原来的人接着说。
 6. **2f Agent 进门**：本机 Agent 进子房间（没有门的把主人一起记成成员）、Agent 成员直接放行或敲门；给 Bridge 的房间列表带子房间。
 7. **2g 本机 Agent 这一路**：IPC 4.7、本机 MCP 和命令行的 `parent`、`access`、`category`。
 8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间。
@@ -607,3 +615,11 @@
   - 有门的子房间建的时候就加密、只邀请房主和建的人：父房间里的人没被请进来进不去，按事件 ID 也读不到里面的话；请进来（邀请、给发言级别）以后进得去、说得了话。
   - 装门（应用服务写 `m.room.encryption`，再写一遍不出错）以后，客户端同步到加密状态，再说的话是加密的，之前说的照旧是明文。客户端没同步到之前照旧发明文：Bridge 和网页都一直在同步，控制面不另外等。
   - 写下的那一刻（`room.listing.v1` 的 `firstListedAt`）房间里的人读得到，写一样的不出错。
+- 2026-11-15 2e 拆成四步（见“分步交付”）：分类本身、把子房间放进分类、归档和恢复、“已归档”的名单。
+- 2026-11-15 2e-1a 做完（#PR）：分类的建、改名、排先后、删和名单。没有迁移（分类的表 2a 就建好了），只有控制面。和上面写的不一样、或者上面没写到的几处：
+  - 建分类的幂等键和建子房间一样放在 `Idempotency-Key` 上（分类号），不放在正文里。
+  - 删分类回 200 和剩下的分类（先后重新排过），不回 204：网页拿它直接换掉手上的那份。
+  - 管分类不要最近登录过：分类只管怎么摆，和归档房间、撤销电脑一样确认一下就做。
+  - 审计只记分类号和房间号（`sub_room.category.created`、`sub_room.category.deleted`），名字是用户写的字，不进审计；改名、挪位置不记。
+  - 父房间归档了以后分类不能再改，回 409 `private_room.conflict`；子房间下面没有分类。
+  - 先后存成从 0 起连着的整数，挪一个、删一个都在锁着父房间的事务里整份重排。

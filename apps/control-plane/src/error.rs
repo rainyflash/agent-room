@@ -1597,6 +1597,32 @@ const SUB_ROOM_MANAGED_BY_PARENT: (StatusCode, &str, ErrorCategory, &str) = (
     "房主和管理员本来就管每一间子房间，不用再设。",
 );
 
+/// 2e-1 起管分类时的四种原因。
+const SUB_ROOM_CATEGORY_ADMINS_ONLY: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::FORBIDDEN,
+    "sub_room.category_admins_only",
+    ErrorCategory::Authorization,
+    "只有房主和管理员能建、改、删分类。",
+);
+const SUB_ROOM_CATEGORY_NAME_TAKEN: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.category_name_taken",
+    ErrorCategory::Conflict,
+    "这间房里已经有一个分类叫这个名字，换个名字。",
+);
+const SUB_ROOM_CATEGORY_LIMIT_REACHED: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.category_limit_reached",
+    ErrorCategory::Conflict,
+    "一间房最多 20 个分类，先删掉几个。",
+);
+const SUB_ROOM_CATEGORY_MISSING: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.category_missing",
+    ErrorCategory::Conflict,
+    "这个分类已经没有了，可能刚被删掉。",
+);
+
 /// 子房间这边不让做的原因各有各的码（`specs/redesign/sub-rooms.md`）。
 const fn sub_room_refusal(
     refusal: SubRoomRefusal,
@@ -1692,6 +1718,10 @@ const fn sub_room_refusal(
         SubRoomRefusal::PeerManager => SUB_ROOM_PEER_MANAGER,
         SubRoomRefusal::TargetNotInside => SUB_ROOM_TARGET_NOT_INSIDE,
         SubRoomRefusal::ManagedByParent => SUB_ROOM_MANAGED_BY_PARENT,
+        SubRoomRefusal::CategoryAdminsOnly => SUB_ROOM_CATEGORY_ADMINS_ONLY,
+        SubRoomRefusal::CategoryNameTaken => SUB_ROOM_CATEGORY_NAME_TAKEN,
+        SubRoomRefusal::CategoryLimitReached => SUB_ROOM_CATEGORY_LIMIT_REACHED,
+        SubRoomRefusal::CategoryMissing => SUB_ROOM_CATEGORY_MISSING,
     }
 }
 

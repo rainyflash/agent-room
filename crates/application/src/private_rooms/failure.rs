@@ -78,6 +78,14 @@ pub enum SubRoomRefusal {
     TargetNotInside,
     /// 房主和父房间的管理员本来就管每一间子房间，不用设，也撤不掉。
     ManagedByParent,
+    /// 分类只有房间的房主和管理员能建、改、删（2e-1）。
+    CategoryAdminsOnly,
+    /// 这间房里已经有一个分类叫这个名字（不分大小写）。
+    CategoryNameTaken,
+    /// 这间房的分类到上限了。
+    CategoryLimitReached,
+    /// 没有这个分类：可能刚被删了。
+    CategoryMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

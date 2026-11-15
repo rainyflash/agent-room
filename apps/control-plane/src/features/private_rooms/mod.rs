@@ -1,6 +1,7 @@
 mod device;
 mod handlers;
 mod models;
+mod sub_room_categories;
 mod sub_room_managers;
 mod sub_room_members;
 mod sub_room_requests;
@@ -111,6 +112,19 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             put(handlers::transfer_ownership),
         )
         .route("/private-rooms/{catalog_id}/name", put(handlers::rename))
+        .merge(sub_room_routes())
+        .route("/devices/current/private-rooms", post(device::create))
+        .route(
+            "/devices/current/private-rooms/{catalog_id}/invitations",
+            post(device::invite),
+        )
+        .layer(DefaultBodyLimit::max(MAX_PRIVATE_ROOM_BODY_BYTES))
+        .with_state(state)
+}
+
+/// 子房间的路由（`specs/redesign/sub-rooms.md`），状态由外面的 `router` 一起给。
+fn sub_room_routes() -> Router<PrivateRoomHttpState> {
+    Router::new()
         .route(
             "/private-rooms/{catalog_id}/sub-rooms",
             get(sub_rooms::list).post(sub_rooms::create),
@@ -150,14 +164,15 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
             put(sub_room_managers::grant).delete(sub_room_managers::revoke),
         )
         .route(
+            "/private-rooms/{catalog_id}/sub-room-categories",
+            post(sub_room_categories::create),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-room-categories/{category_id}",
+            put(sub_room_categories::revise).delete(sub_room_categories::delete),
+        )
+        .route(
             "/private-rooms/{catalog_id}/sub-room-policy",
             get(sub_rooms::policy).put(sub_rooms::change_policy),
         )
-        .route("/devices/current/private-rooms", post(device::create))
-        .route(
-            "/devices/current/private-rooms/{catalog_id}/invitations",
-            post(device::invite),
-        )
-        .layer(DefaultBodyLimit::max(MAX_PRIVATE_ROOM_BODY_BYTES))
-        .with_state(state)
 }

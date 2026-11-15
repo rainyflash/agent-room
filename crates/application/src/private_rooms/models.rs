@@ -1,5 +1,5 @@
 use agent_room_domain::{
-    ids::{AgentId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
     private_rooms::PrivateRoomPermissions,
     room_listing::{RoomJoinMode, RoomListingSettings},
     sub_rooms::SubRoomPolicy,
@@ -7,7 +7,9 @@ use agent_room_domain::{
 };
 
 use crate::{
-    authentication::AuthenticatedPrincipal, devices::AuthenticatedDevice, ports::SubRoomEntry,
+    authentication::AuthenticatedPrincipal,
+    devices::AuthenticatedDevice,
+    ports::{SubRoomCategory, SubRoomEntry},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,7 +212,38 @@ pub struct SubRoomList {
     pub parent_name: String,
     /// 看的人自己现在能不能在这间房下面建子房间（不算他的 Agent）。
     pub can_create: bool,
+    /// 这间房的分类，按先后（2e-1）。整间房共用，每个人看到的一样。
+    pub categories: Vec<SubRoomCategory>,
     pub sub_rooms: Vec<SubRoomView>,
+}
+
+/// 在一间房里建一个子房间的分类（`specs/redesign/sub-rooms.md` 的“分类”，2e-1）。`category_id`
+/// 由客户端给：同一个请求重发，认得出是同一个。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateSubRoomCategory {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub category_id: SubRoomCategoryId,
+    pub name: String,
+}
+
+/// 给分类改名、挪位置。没带的那一项不动。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviseSubRoomCategory {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub category_id: SubRoomCategoryId,
+    pub name: Option<String>,
+    /// 挪到第几个（从 0 起）；超过最后一个的放到最后。
+    pub position: Option<u8>,
+}
+
+/// 删一个分类：里面的子房间回到“未分类”。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteSubRoomCategory {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub category_id: SubRoomCategoryId,
 }
 
 /// 名单里的一间。有门、看的人又不在里面时，只看得到名字、用途和谁在管，人数这些不给。在等的

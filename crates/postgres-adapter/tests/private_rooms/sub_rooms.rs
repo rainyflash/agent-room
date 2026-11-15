@@ -20,6 +20,8 @@ use super::{
     *,
 };
 
+#[path = "sub_room_categories.rs"]
+mod categories;
 #[path = "sub_room_doors.rs"]
 mod doors;
 #[path = "sub_room_follow.rs"]

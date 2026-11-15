@@ -13,7 +13,9 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{JoinRequestRecord, PortFuture, PrivateRoomSnapshot, RoomRoleChange},
+    ports::{
+        JoinRequestRecord, PortFuture, PrivateRoomSnapshot, RoomRoleChange, SubRoomCategoryStore,
+    },
 };
 
 /// 建一间子房间要存的：房间本身，加上它挂在谁下面、谁建的、谁在管。
@@ -235,7 +237,8 @@ pub enum SubRoomSyncScope {
     Under(RoomCatalogId),
 }
 
-pub trait SubRoomStore: Send + Sync {
+/// 分类（2e-1）也是这个存储口子的一部分：建子房间、改分类的用例拿同一份存储。
+pub trait SubRoomStore: SubRoomCategoryStore + Send + Sync {
     /// 这间房是子房间时，它的父子关系。
     fn sub_room_link(
         &self,

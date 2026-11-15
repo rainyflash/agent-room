@@ -3,7 +3,7 @@
 //! 测试在 `postgres-adapter` 的 `tests/private_rooms/sub_rooms.rs`。人加入、退出和改名（2b）的
 //! 用例在旁边的 `sub_room_membership.rs`，父房间变了以后聊天服务器上跟着做（2c-2）的在
 //! `sub_room_sync.rs`，门（2d-1）的在 `sub_room_doors.rs`，申请和批准（2d-2）的在
-//! `sub_room_join_requests.rs`，用的都是这里的夹具。
+//! `sub_room_join_requests.rs`，分类（2e-1）的在 `sub_room_categories.rs`，用的都是这里的夹具。
 
 use std::collections::BTreeSet;
 
@@ -35,6 +35,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_categories.rs"]
+mod categories;
 #[path = "sub_room_doors.rs"]
 mod doors;
 #[path = "sub_room_join_requests.rs"]
@@ -1024,6 +1026,8 @@ pub(super) struct MemoryRooms {
     listed: Mutex<BTreeSet<RoomCatalogId>>,
     /// 设上以后，下一次读完父房间加不加密之后先改一下存着的东西：摆出“建的当口父房间改了”。
     changes_after_parent_facts: Mutex<Option<Interruption>>,
+    /// 分类（2e-1），照存的先后；规则在 `sub_room_categories.rs`。
+    categories: Mutex<Vec<categories::StoredCategory>>,
 }
 
 type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
@@ -1050,6 +1054,7 @@ impl MemoryRooms {
             door_moves_before_request: Mutex::new(None),
             listed: Mutex::new(BTreeSet::new()),
             changes_after_parent_facts: Mutex::new(None),
+            categories: Mutex::new(Vec::new()),
         }
     }
 

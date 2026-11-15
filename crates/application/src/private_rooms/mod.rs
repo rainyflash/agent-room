@@ -41,12 +41,13 @@ pub use listing::{
 pub use models::{
     AnswerSubRoomJoinRequest, ArchivePrivateRoom, ChangePrivateRoomPermissions,
     ChangeSubRoomManager, ChangeSubRoomPolicy, CreatePrivateRoom, CreateSubRoom,
-    GovernPrivateRoomMember, GovernSubRoomMember, InspectPrivateRoom, InspectSubRoomPolicy,
-    InviteByLink, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
-    ListSubRooms, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
-    PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom, RequestSubRoomJoin,
-    ReviseSubRoom, SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView,
-    SubRoomView, TransferPrivateRoomOwnership,
+    CreateSubRoomCategory, DeleteSubRoomCategory, GovernPrivateRoomMember, GovernSubRoomMember,
+    InspectPrivateRoom, InspectSubRoomPolicy, InviteByLink, InvitePrivateRoomMember,
+    ListPrivateRooms, ListPrivateRoomsForAccount, ListSubRooms, PrivateRoomActor,
+    PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomOrigin,
+    RenamePrivateRoom, RequestSubRoomJoin, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState,
+    SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomView,
+    TransferPrivateRoomOwnership,
 };
 pub use moderation_grants::{
     GrantRoomModeration, ListRoomModerationGrants, ModerationGrantFailure,
