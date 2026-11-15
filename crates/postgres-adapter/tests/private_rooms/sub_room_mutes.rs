@@ -228,13 +228,25 @@ async fn 他自己不在_他名下的_agent_成员在的子房间也算进去_�
         "在那一间里移出了的不算"
     );
 
+    // 还在用的 Agent 总得有一个主人（数据库的触发器在提交时查），所以收回他的同时交给别人。
+    let mut transfer = pool.begin().await.expect("转交 Agent 的事务应启动");
     sqlx::query(
         "UPDATE agent_room.agent_ownership SET revoked_at = clock_timestamp() WHERE agent_id = $1",
     )
     .bind(agent.as_uuid())
-    .execute(pool)
+    .execute(&mut *transfer)
     .await
     .expect("收回 Agent");
+    sqlx::query(
+        r"INSERT INTO agent_room.agent_ownership (principal_id, agent_id, role, granted_by, created_at)
+          VALUES ($1, $2, 'owner', $1, clock_timestamp())",
+    )
+    .bind(stranger.as_uuid())
+    .bind(agent.as_uuid())
+    .execute(&mut *transfer)
+    .await
+    .expect("交给别人");
+    transfer.commit().await.expect("转交 Agent 应提交");
     assert!(
         standing_in(&repositories, parent, &person(outsider))
             .await
