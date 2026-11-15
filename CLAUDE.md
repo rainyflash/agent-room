@@ -382,7 +382,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 公开房间那一套申请接口对子房间列表回空、处理回 404（`public_join/requests.rs`）：它批准时“以房主身份请进来”，会绕开子房间的门。网页房间设置里“申请”那一块因此只看得到父房间的。
     - 名单上看的人自己在等的申请时间人人都给，在等的有几个只给管得了这一间的人（`SubRoomView.manages`）。
     - 封禁一个正在等的人时作废他的申请在 2d-3 做了，见下一条。
-  - 子房间第 2d-3 步（#PR）：管得了这一间的人请进来、移出、封禁、解封（`PUT`、`DELETE .../sub-rooms/{子}/members/{账户}`，`POST .../members/{账户}/ban`、`.../unban`），设计文档的“请进来、移出和封禁”一节。没有迁移。用例在 `service/sub_room_members.rs`。别拆的几样：
+  - 子房间第 2d-3 步（#821）：管得了这一间的人请进来、移出、封禁、解封（`PUT`、`DELETE .../sub-rooms/{子}/members/{账户}`，`POST .../members/{账户}/ban`、`.../unban`），设计文档的“请进来、移出和封禁”一节。没有迁移。用例在 `service/sub_room_members.rs`。别拆的几样：
     - 谁动得了谁照领域层的 `authorize_sub_room_governance` 判断，改成员记录以这一间的房主的名义（`remove_member(owner, …)`），记身份变动写真正动手的人。别改成以动手的人改：父房间的管理员可能没进这一间，房间的规则会拒。
     - 子房间管理员之间动不了（`PeerManager`）；父房间的管理员只有房主动得了（回 `private_room.owner_only`）。2d-4 设、撤子房间管理员要用同一套判断。
     - 封禁时在等的申请作废在存储的 `write_members`（存任何一间子房间时，`private_room_parent` 卡着只动子房间），和封禁同一个事务；每小时的清理也兜着。别挪到用例里另做一步。
