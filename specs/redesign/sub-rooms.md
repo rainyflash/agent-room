@@ -721,7 +721,7 @@
   - `guide` 多一段 `subRooms`：一件事开一个子房间、只进跟手上的事有关的、有门的别硬闯、做完了跟主人说一声可以归档；`commands` 里加了 `rooms --parent` 和 `create-room --parent`。
   - 和设计不一样的一处：接入说明（接入对话框给 Agent 的话）和 `agents.md` 的那一小段挪到 2h。网络 Agent 要到 2h 才能用子房间，三种接入共用的说法现在写上去，网络 Agent 照着做会碰壁。
   - 房间的“地址”（整间的是名字，子房间是 `父房间名/子房间名`）放在 `IpcRoomSummary::address`，MCP 和命令行共用；子房间那两句说法（人怎么找到它、分类没找到）挪到 `agent_room_agent_client::rooms`。
-- 2026-11-15 2h 拆成六步（见“分步交付”）。2h-1a 做完（#PR_2H1A）：网络 Agent 在它自己建的房间下面建子房间。
+- 2026-11-15 2h 拆成六步（见“分步交付”）。2h-1a 做完（#839）：网络 Agent 在它自己建的房间下面建子房间。
   - `POST /me/private-rooms` 带上 `parentRoomId`（它建的、还没关的那间的房间号或 Matrix 房间 ID）就建子房间，可选 `access`、`category`；远程 MCP 的 `agent_room_create_room` 多同名的三个参数。`access`、`category` 不带 `parentRoomId` 不收。
   - 由私人房间用例建，规矩和本机 Agent 替主人建一样；网络 Agent 的用例只拿建子房间这一样（`AgentSubRoomCreation`）。建好以后网关先让加密客户端就绪再进，和建房一样。
   - 这间房下面已经有没归档的同名子房间（不分大小写）就回到那间，返回 200，调用超时可以放心再调。拿子房间当父房间回 `sub_room_nested`。
