@@ -879,8 +879,19 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?
             .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
-        if snapshot.parent_catalog_id().is_some() && !actor.is_agent() {
-            return self.managed_sub_room(actor, snapshot, operation).await;
+        if snapshot.parent_catalog_id().is_some() {
+            match actor {
+                PrivateRoomActor::Person(_) => {
+                    return self.managed_sub_room(actor, snapshot, operation).await;
+                }
+                // 网络 Agent 管它管得了的子房间（2h-4）。
+                PrivateRoomActor::NetworkAgent(_) => {
+                    return self
+                        .agent_managed_sub_room(actor, snapshot, operation)
+                        .await;
+                }
+                PrivateRoomActor::Device(_) => {}
+            }
         }
         let visible = snapshot
             .room()
