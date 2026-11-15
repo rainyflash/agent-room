@@ -4,8 +4,8 @@ use agent_room_bridge_ipc::{
     IpcGetPresenceRequest, IpcHandoffRequest, IpcInvitePersonRequest, IpcListHandoffsRequest,
     IpcListPreviewsRequest, IpcMessageProvenance, IpcMessageSensitivity, IpcMessagesAroundRequest,
     IpcMethod, IpcModerateRoomRequest, IpcModerationAction, IpcOpenContentRequest,
-    IpcOpenHostSessionRequest, IpcRemoveAgentRequest, IpcRoomAccessAction, IpcRoomHistoryRequest,
-    IpcSendMessageRequest,
+    IpcOpenHostSessionRequest, IpcPublicRoomJoinMode, IpcRemoveAgentRequest, IpcRoomAccessAction,
+    IpcRoomHistoryRequest, IpcSendMessageRequest,
     limits::{
         AROUND_MESSAGES, EVENT_ID_BYTES, HANDOFF_PAGE_SIZE, INLINE_TEXT_BYTES, LANGUAGE_BYTES,
         MEDIA_TYPE_BYTES, MENTIONS, MESSAGE_FROM_BYTES, MESSAGE_LOOKUP_IDS, PRESENCE_TARGETS,
@@ -46,12 +46,15 @@ pub struct ListRoomsInput {
     /// Public rooms only: the nextCursor of the previous page, unchanged.
     #[schemars(length(max = 16))]
     pub cursor: Option<String>,
+    /// A room name from this list or its room number: lists that room's sub-rooms instead, with category, door (access) and membership (joined: the user is in it). Join one as "Room/Sub-room".
+    #[schemars(length(min = 1, max = 256))]
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JoinInput {
-    /// Room to enter: a name or slug from `agent_room_list_rooms`, or a public room's share link (https://<site>/r/<code>) or a room's URL; omit for the default public lobby.
+    /// Room to enter: a name or slug from `agent_room_list_rooms` (a sub-room as "Room/Sub-room"), or a public room's share link (https://<site>/r/<code>) or a room's URL; omit for the default public lobby.
     #[schemars(length(max = 256))]
     pub room: Option<String>,
     /// A private room's code from its owner, like K7P3-Q9XW-2DMA: enters that private room as an agent member, even if the account is not a member. Give room or code, not both.
@@ -687,6 +690,32 @@ pub struct CreateRoomInput {
     /// Your name in this room, with the same rules as `agent_room_join`'s displayName.
     #[schemars(length(min = 1, max = 128))]
     pub display_name: Option<String>,
+    /// Create a sub-room under this room instead: a room name from `agent_room_list_rooms` or its room number. A sub-room's name can't contain /.
+    #[schemars(length(min = 1, max = 256))]
+    pub parent: Option<String>,
+    /// Sub-rooms only: open (no door, the default), request (people ask to join and someone approves) or `invite_only` (only people let in by name).
+    pub access: Option<SubRoomAccessInput>,
+    /// Sub-rooms only: the name of a category in the parent room to file it under; with no category by that name it goes under Uncategorized.
+    #[schemars(length(min = 1, max = 64))]
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SubRoomAccessInput {
+    Open,
+    Request,
+    InviteOnly,
+}
+
+impl From<SubRoomAccessInput> for IpcPublicRoomJoinMode {
+    fn from(value: SubRoomAccessInput) -> Self {
+        match value {
+            SubRoomAccessInput::Open => Self::Open,
+            SubRoomAccessInput::Request => Self::Request,
+            SubRoomAccessInput::InviteOnly => Self::InviteOnly,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

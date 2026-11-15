@@ -1,12 +1,15 @@
 //! Agent 自己建房间、管房间的工具（`specs/agent-rooms/design.md` 第 3 步）。只管 Agent 建的私人房间，
 //! 由控制面把关；人建的房间由人在应用里管。
+//!
+//! 带上 `parent` 建的是那间房下面的子房间（`specs/redesign/sub-rooms.md` 第 2g 步）：子房间没有口令，
+//! 父房间里的 Agent 按 `父房间名/子房间名` 进。
 
 use agent_room_agent_client::rooms::{BRIDGE_OUTDATED, access_value, bridge_outdated};
 use agent_room_bridge_ipc::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcErrorCategory, IpcHostRoomTarget,
     IpcHostSessionSummary, IpcInvitePersonRequest, IpcLeaveRoomRequest, IpcMethod,
-    IpcRemoveAgentRequest, IpcResponse, IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest,
-    IpcRoomCode, IpcRoomSummary, IpcSelfSummary, resolve_room_by_name,
+    IpcPublicRoomJoinMode, IpcRemoveAgentRequest, IpcResponse, IpcRoomAccess, IpcRoomAccessAction,
+    IpcRoomAccessRequest, IpcRoomCode, IpcRoomSummary, IpcSelfSummary, resolve_room_by_name,
 };
 use rmcp::{
     RoleServer,
@@ -33,6 +36,15 @@ use super::{
 /// 旧版 Bridge 不认管房间的授权范围，握手时就断开：这几个工具碰到时照实说要更新。
 const OUTDATED_BRIDGE: &str = "Agent Room on this computer may be an older version that can't create or manage rooms: ask the user to check for updates in the Agent Room desktop app, install the new version, then try again.";
 const PEOPLE: &str = "To invite a person: have them copy their account ID from \"Switch room\" in Agent Room and send it to you, then invite them with agent_room_invite_person; the room's owner (the account signed in on this computer) can also invite people in the app.";
+const SUB_ROOM_PEOPLE: &str = "People in the parent room find this sub-room in its list in Agent Room. With no door they just go in; with a door (request or invite_only) they ask to join or are let in by whoever manages it.";
+const CATEGORY_MISSING: &str = "The parent room has no category with that name, so the sub-room went under Uncategorized; the room's managers set up categories in Agent Room.";
+
+/// 建子房间时：在哪间房下面、门、分类的名字。
+struct SubRoomChoice {
+    parent: IpcRoomSummary,
+    access: Option<IpcPublicRoomJoinMode>,
+    category: Option<String>,
+}
 
 #[tool_router(router = room_tools, vis = "pub(super)")]
 impl AgentRoomMcpServer {
@@ -55,11 +67,39 @@ impl AgentRoomMcpServer {
     ) -> CallToolResult {
         let task_id = host_task_id(context.meta.get("threadId"));
         let name = input.name.trim().to_owned();
-        if let Err(result) = check_creation(&name, input.display_name.as_deref()) {
+        let parent = input
+            .parent
+            .as_deref()
+            .map(str::trim)
+            .filter(|parent| !parent.is_empty());
+        let access = input.access.map(IpcPublicRoomJoinMode::from);
+        if let Err(result) = check_creation(
+            &name,
+            input.display_name.as_deref(),
+            parent.is_some(),
+            access,
+            input.category.as_deref(),
+        ) {
             return result;
         }
-        // 先记下房间 ID 再去建：结果没回来时重试，或者之后用同一个名字再建，都是同一间。
-        let catalog_id = self.joins.created_room(task_id.as_deref(), &name);
+        let sub_room = match parent {
+            Some(parent) => match self.resolve_room(parent).await {
+                Ok(parent) => Some(SubRoomChoice {
+                    parent,
+                    access,
+                    category: input.category,
+                }),
+                Err(result) => return result,
+            },
+            None => None,
+        };
+        // 先记下房间 ID 再去建：结果没回来时重试，或者之后用同一个名字再建，都是同一间。子房间按
+        // 父房间加名字记：不同的房间下面可以有同名的子房间。
+        let key = sub_room.as_ref().map_or_else(
+            || name.clone(),
+            |choice| format!("{}/{name}", choice.parent.catalog_id),
+        );
+        let catalog_id = self.joins.created_room(task_id.as_deref(), &key);
         // 建房的人物也要对得上：这间已经有人物了就照旧用它，不按这次给的名字另起。
         let (mut identity, origin) = match self.joins.in_room(task_id.as_deref(), &catalog_id) {
             Some(saved) => (saved, IdentityOrigin::Reused),
@@ -73,8 +113,11 @@ impl AgentRoomMcpServer {
                 default_display_name,
             ),
         };
-        let room = match self.create(catalog_id, name, &identity).await {
-            Ok(room) => room,
+        let (room, category_missing) = match self
+            .create(catalog_id, name, &identity, sub_room.as_ref())
+            .await
+        {
+            Ok(created) => created,
             Err(result) => return result,
         };
         // 记下 Matrix 房间，这个任务之后回到这间时直接进。任务里已经有的 Agent 会话照旧开在
@@ -86,6 +129,7 @@ impl AgentRoomMcpServer {
         self.joins.adopt(task_id.as_deref(), identity.clone());
         self.enter_created(identity, origin, task_id.as_deref(), &room)
             .await
+            .with_category_missing(category_missing)
     }
 
     /// 会话所在的房间怎么进：口令、房间号、等着的敲门和要转给别的 Agent 的话。
@@ -271,18 +315,22 @@ impl AgentRoomMcpServer {
         catalog_id: String,
         name: String,
         identity: &JoinIdentity,
-    ) -> Result<IpcRoomSummary, CallToolResult> {
+        sub_room: Option<&SubRoomChoice>,
+    ) -> Result<(IpcRoomSummary, bool), CallToolResult> {
         let request = IpcCreateRoomRequest {
             catalog_id,
             name,
             session_key: identity.session_key.clone(),
             display_name: identity.display_name.clone(),
-            parent_catalog_id: None,
-            access: None,
-            category: None,
+            parent_catalog_id: sub_room.map(|choice| choice.parent.catalog_id.clone()),
+            access: sub_room.and_then(|choice| choice.access),
+            category: sub_room.and_then(|choice| choice.category.clone()),
         };
         match self.backend.invoke(IpcMethod::CreateRoom(request)).await {
-            Ok(IpcResponse::CreatedRoom { room, .. }) => Ok(room),
+            Ok(IpcResponse::CreatedRoom {
+                room,
+                category_missing,
+            }) => Ok((room, category_missing)),
             Ok(response) => Err(response_mismatch_result(
                 ExpectedResponse::CreatedRoom,
                 &response,
@@ -303,24 +351,25 @@ impl AgentRoomMcpServer {
             Ok(opened) => opened,
             Err(result) => return result,
         };
-        let access = match summary {
-            Some(_) => {
-                if let Err(result) = self
-                    .enter_target(host_task, &session.session_id, &mut identity)
-                    .await
-                {
-                    return result;
-                }
-                Some(
-                    self.access(
-                        session.session_id.clone(),
-                        IpcRoomAccessAction::Show,
-                        Some(room.catalog_id.clone()),
-                    )
-                    .await,
+        if summary.is_some()
+            && let Err(result) = self
+                .enter_target(host_task, &session.session_id, &mut identity)
+                .await
+        {
+            return result;
+        }
+        // 子房间没有口令：别的 Agent 按 `父房间名/子房间名` 进。
+        let access = if summary.is_some() && room.parent.is_none() {
+            Some(
+                self.access(
+                    session.session_id.clone(),
+                    IpcRoomAccessAction::Show,
+                    Some(room.catalog_id.clone()),
                 )
-            }
-            None => None,
+                .await,
+            )
+        } else {
+            None
         };
         let entered = EnteredRoom {
             session: &session,
@@ -432,29 +481,62 @@ struct EnteredRoom<'a> {
     summary: Option<&'a IpcSelfSummary>,
 }
 
-/// 房间名和显示名在本机按 IPC 的规矩先核对，不合规的不记成建过的房间。
-fn check_creation(name: &str, display_name: Option<&str>) -> Result<(), CallToolResult> {
+/// 房间名、显示名、门和分类先按 IPC 的规矩在本机核对，不合规的不记成建过的房间。父房间这时还没
+/// 找，拿一个占位的房间号核对。
+fn check_creation(
+    name: &str,
+    display_name: Option<&str>,
+    under_parent: bool,
+    access: Option<IpcPublicRoomJoinMode>,
+    category: Option<&str>,
+) -> Result<(), CallToolResult> {
     let probe = IpcCreateRoomRequest {
         catalog_id: uuid::Uuid::now_v7().to_string(),
         name: name.to_owned(),
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: display_name.map_or_else(default_display_name, str::to_owned),
-        parent_catalog_id: None,
-        access: None,
-        category: None,
+        parent_catalog_id: under_parent.then(|| uuid::Uuid::now_v7().to_string()),
+        access,
+        category: category.map(str::to_owned),
     };
     IpcMethod::CreateRoom(probe).validate().map_err(|error| {
-        validation_failure_result(
-            error.code(),
-            "Invalid room parameters: the room name and displayName must each be 1 to 128 characters, with no line breaks or other control characters and no leading or trailing spaces.",
-        )
+        let message = match error.code() {
+            "bridge.ipc.sub_room_options_invalid" | "bridge.ipc.sub_room_category_invalid" => {
+                recovery_for(error.code()).unwrap_or_default()
+            }
+            _ => {
+                "Invalid room parameters: the room name and displayName must each be 1 to 128 characters, with no line breaks or other control characters and no leading or trailing spaces; a sub-room's name also can't contain /."
+            }
+        };
+        validation_failure_result(error.code(), message)
     })
+}
+
+/// 建房的结果上补一句分类没找到。
+trait CategoryNote {
+    fn with_category_missing(self, missing: bool) -> Self;
+}
+
+impl CategoryNote for CallToolResult {
+    fn with_category_missing(mut self, missing: bool) -> Self {
+        if missing && let Some(content) = self.structured_content.as_mut() {
+            content["categoryMissing"] = Value::Bool(true);
+            content["categoryNote"] = Value::from(CATEGORY_MISSING);
+        }
+        self
+    }
 }
 
 fn created_result(
     entered: &EnteredRoom<'_>,
     access: Option<Result<IpcRoomAccess, CallToolResult>>,
 ) -> CallToolResult {
+    // 别的 Agent 按什么名字进：子房间写 `父房间名/子房间名`。
+    let place = entered.room.parent.as_ref().map_or_else(
+        || entered.room.name.clone(),
+        |parent| format!("{}/{}", parent.name, entered.room.name),
+    );
+    let sub_room = entered.room.parent.is_some();
     let mut value = json!({
         "sessionId": entered.session.session_id,
         "state": entered.session.state,
@@ -465,11 +547,18 @@ fn created_result(
         "room": entered.room,
         "self": entered.summary,
         "localAgents": format!(
-            "Other agents on this computer (same account) join with agent_room_join and room \"{name}\", or on the command line with agent-room join --room \"{name}\".",
-            name = entered.room.name
+            "Other agents on this computer (same account) join with agent_room_join and room \"{place}\", or on the command line with agent-room join --room \"{place}\".",
         ),
-        "people": PEOPLE,
+        "people": if sub_room { SUB_ROOM_PEOPLE } else { PEOPLE },
     });
+    if sub_room {
+        value["next"] = Value::from(if entered.summary.is_some() {
+            "The sub-room is ready and you are in it: pass sessionId to later tools. Tell the user which room it is under; other agents of this account in that room join it by name (localAgents). Then wait for messages with agent_room_wait_for_messages and wait again after each reply until the user says stop."
+        } else {
+            "The sub-room is ready, but the session is still starting: check agent_room_get_self with the sessionId and continue once it is ready."
+        });
+        return remote_result(value);
+    }
     value["next"] = Value::from(match access {
         Some(Ok(access)) => {
             value["access"] = access_value(&access, Some(&entered.room.name));
@@ -516,7 +605,34 @@ pub(super) fn remote_result(value: Value) -> CallToolResult {
 pub(super) fn recovery_for(code: &str) -> Option<&'static str> {
     match code {
         "bridge.ipc.room_name_invalid" => Some(
-            "A room name is 1 to 128 characters, with no line breaks or other control characters and no leading or trailing spaces.",
+            "A room name is 1 to 128 characters, with no line breaks or other control characters and no leading or trailing spaces; a sub-room's name also can't contain /.",
+        ),
+        "bridge.ipc.sub_room_options_invalid" => Some(
+            "access and category only go with parent: give parent to create a sub-room, or leave them out.",
+        ),
+        "bridge.ipc.sub_room_category_invalid" => Some(
+            "category is the name of a category in the parent room: 1 to 64 characters, with no line breaks and no leading or trailing spaces.",
+        ),
+        "bridge.lobby_sub_room_owner_not_inside" => Some(
+            "This sub-room has a door and the user isn't in it yet: ask the user to request to join it in Agent Room, or to be let in by whoever manages it, then join again. Don't retry in a loop.",
+        ),
+        "bridge.lobby_sub_room_agent_not_admitted" => Some(
+            "This sub-room has a door: you came into its parent room by code or by knocking, so someone who manages the sub-room has to let you in by name. Tell the user and wait; don't retry in a loop.",
+        ),
+        "bridge.rooms.sub_room_nested" => Some(
+            "A sub-room can't have sub-rooms of its own: give the main room as parent instead.",
+        ),
+        "bridge.rooms.sub_room_admins_only" => {
+            Some("In that room only the owner and admins can create sub-rooms; ask the user.")
+        }
+        "bridge.rooms.sub_room_agents_may_not_create" => Some(
+            "The owner of that room doesn't let agents create sub-rooms there; ask the user to create it in Agent Room.",
+        ),
+        "bridge.rooms.sub_room_name_taken" => Some(
+            "That room already has a sub-room with this name: join it as \"Room/Sub-room\", or pick another name.",
+        ),
+        "bridge.rooms.sub_room_limit_reached" => Some(
+            "That room already has as many sub-rooms as it can hold (100): ask the user to archive some first.",
         ),
         "bridge.ipc.agent_id_invalid" => Some(
             "Copy agentId exactly from the knocks of agent_room_room_access or from a message; don't make one up.",

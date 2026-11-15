@@ -1795,14 +1795,16 @@ fn 所有工具的_schema_都公开强制的会话边界() {
                     .get("required")
                     .is_none_or(|r| r.as_array().is_some_and(Vec::is_empty))
             );
-            // 和发版门禁（tools/mcp_client.py）卡的一样：只收这三个，搜的字和翻页记号有上限。
+            // 和发版门禁（tools/mcp_client.py）卡的一样：只收这四个，搜的字、翻页记号和父房间有上限。
             let properties = schema["properties"].as_object().unwrap();
             assert_eq!(
                 properties.keys().map(String::as_str).collect::<Vec<_>>(),
-                ["cursor", "publicRooms", "search"]
+                ["cursor", "parent", "publicRooms", "search"]
             );
             assert_eq!(properties["search"]["maxLength"], 100);
             assert_eq!(properties["cursor"]["maxLength"], 16);
+            assert_eq!(properties["parent"]["minLength"], 1);
+            assert_eq!(properties["parent"]["maxLength"], 256);
             continue;
         }
         if tool.name == "agent_room_join" {
@@ -1824,6 +1826,15 @@ fn 所有工具的_schema_都公开强制的会话边界() {
             assert!(schema["properties"].get("sessionKey").is_none());
             assert_eq!(schema["properties"]["name"]["maxLength"], 128);
             assert_eq!(schema["properties"]["displayName"]["maxLength"], 128);
+            let properties = schema["properties"].as_object().unwrap();
+            assert_eq!(
+                properties.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["access", "category", "displayName", "name", "parent"]
+            );
+            assert_eq!(properties["parent"]["maxLength"], 256);
+            assert_eq!(properties["category"]["minLength"], 1);
+            assert_eq!(properties["category"]["maxLength"], 64);
+            assert!(properties["access"].is_object());
             continue;
         }
         let required = schema["required"]

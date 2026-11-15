@@ -31,6 +31,7 @@ def session_tool_definitions() -> list[dict[str, object]]:
                     "publicRooms": {"type": "boolean", "default": False},
                     "search": {"type": ["string", "null"], "maxLength": 100},
                     "cursor": {"type": ["string", "null"], "maxLength": 16},
+                    "parent": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
                 }
             if name == "agent_room_join":
                 schema["properties"] = {
@@ -42,6 +43,9 @@ def session_tool_definitions() -> list[dict[str, object]]:
                 schema["properties"] = {
                     "name": {"type": "string", "minLength": 1, "maxLength": 128},
                     "displayName": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+                    "parent": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+                    "access": {"anyOf": [{"$ref": "#/$defs/SubRoomAccessInput"}, {"type": "null"}]},
+                    "category": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
                 }
                 schema["required"] = ["name"]
             definitions.append({"name": name, "inputSchema": schema})
@@ -195,7 +199,7 @@ class McpSessionSchemaTests(unittest.TestCase):
                         validate_session_tool_schemas(tools)
 
     def test_建房间必须给有界的房间名(self) -> None:
-        for mutation in ("optional", "unbounded", "extra"):
+        for mutation in ("optional", "unbounded", "category_unbounded", "extra"):
             with self.subTest(mutation=mutation):
                 tools = session_tool_definitions()
                 schema = next(
@@ -207,13 +211,15 @@ class McpSessionSchemaTests(unittest.TestCase):
                     schema["required"] = []
                 elif mutation == "unbounded":
                     del properties["name"]["maxLength"]
+                elif mutation == "category_unbounded":
+                    del properties["category"]["maxLength"]
                 else:
                     properties["room"] = {"type": "string"}
                 with self.assertRaises(McpClientFailure):
                     validate_session_tool_schemas(tools)
 
     def test_列房间只收有界的搜索和翻页记号(self) -> None:
-        for mutation in ("unbounded", "extra"):
+        for mutation in ("unbounded", "parent_unbounded", "extra"):
             with self.subTest(mutation=mutation):
                 tools = session_tool_definitions()
                 schema = next(
@@ -223,6 +229,8 @@ class McpSessionSchemaTests(unittest.TestCase):
                 assert isinstance(properties, dict)
                 if mutation == "unbounded":
                     del properties["search"]["maxLength"]
+                elif mutation == "parent_unbounded":
+                    del properties["parent"]["maxLength"]
                 else:
                     properties["sort"] = {"type": "string"}
                 with self.assertRaisesRegex(McpClientFailure, "list_rooms"):

@@ -514,7 +514,8 @@
 7. **2g 本机 Agent 这一路**：IPC 4.7、本机 MCP 和命令行的 `parent`、`access`、`category`。拆成：
    - 2g-1 控制面：设备签名的建房地址（`/devices/current/private-rooms`）带上 `parentRoomId` 建子房间，收 `access` 和分类的名字（`category`），回答带父房间和放进的分类。
    - 2g-2 Bridge 和 IPC 4.7：房间列表带子房间、建子房间、建房的回答带 `parent`、进不去时分开报；按名字找子房间写 `父房间名/子房间名`；Bridge 同时认 4.4 到 4.7。
-   - 2g-3 本机 MCP 和命令行：`parent`、`access`、`category` 参数，`父房间名/子房间名`，进不去时说清楚；接入说明、`agents.md`、命令行 `guide` 那一小段。
+   - 2g-3a 本机 MCP：`parent`、`access`、`category` 参数，`父房间名/子房间名`，进不去、建不成时说清楚。
+   - 2g-3b 命令行：`create-room --parent`、`rooms --parent`，进不去时说清楚；接入说明、`agents.md`、命令行 `guide` 那一小段。
 8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间。
 9. **2i 网页**：左栏、浏览子房间、新建、申请的卡片、子房间设置、房间设置的“子房间”一节、免打扰、未读汇总。依赖第 1 块的对话视图。
 10. **2j 自动归档**：记最近说话的时间、每小时一轮、房间设置里的开关。可以晚一版。
@@ -697,3 +698,12 @@
   - 按名字找房间（`resolve_room_by_name`）：只写名字找的是整间的房间，子房间写 `父房间名/子房间名`，从最后一个斜杠断开（父房间的名字里可以有斜杠），斜杠两边的空白不算；拿房间号、`/lobby/<房间号>` 找的也包括子房间。
   - 进不去时分开报：有门、主人不在里面的是 `bridge.lobby_sub_room_owner_not_inside`，凭口令或敲门进的父房间、要人放行的是 `bridge.lobby_sub_room_agent_not_admitted`；建子房间被拒的是 `bridge.rooms.sub_room_nested`、`sub_room_admins_only`、`sub_room_agents_may_not_create`、`sub_room_name_taken`、`sub_room_limit_reached`。MCP 和命令行照着说什么放在 2g-3。
   - 和设计不一样的一处：进门的回答里的 `parent` 不由 Bridge 给（`RoomEntered` 和会话里记着的房间都没改）。MCP 和命令行进门之前已经从房间列表里找到了这间房，`parent` 就在那条摘要上，2g-3 照它说。
+- 2026-11-15 2g-3 再拆成两步：2g-3a 本机 MCP，2g-3b 命令行和那一小段说明。2g-3a 做完（#837）：
+  - `agent_room_create_room` 多三个可选参数：`parent`（房间名或房间号，按房间列表找，找不到、有两间同名时和进房间一样说）、`access`（`open`、`request`、`invite_only`）、`category`。`access`、`category` 不带 `parent` 不收，子房间名里不能有 `/`，这些都先在本机核对，不合规的不去建。
+  - 建好的子房间在这个任务名下按“父房间号/名字”记：同一个任务在同一间房下面再说一次还是那一间，不同的房间下面可以同名。
+  - 子房间没有口令，建好以后不去拿口令；回答里告诉别的 Agent 按 `父房间名/子房间名` 进，告诉人在父房间的子房间列表里找。分类没找到时回答带 `categoryMissing: true` 和一句说明。
+  - `agent_room_list_rooms` 默认不列子房间（一间房下面可能有上百间，同名的也多），带 `parent`（房间名或房间号）才列那间房下面的，带着分类、门和账户在不在里面（`membership`）。`parent` 不能和看公开房间的几个参数一起用（`agent.rooms.parent_with_public`）。
+  - `agent_room_join` 的房间写 `父房间名/子房间名`。进不去的两个错误码、建不成的五个、本机核对不过的两个，各有一句该怎么办（`recovery_for`），都叫它别一直重试。
+  - 和设计不一样的两处：
+    - 设计说列子房间时写“自己在不在里面”，这里给的是账户在不在里面：Bridge 的房间列表是按账号列的，Agent 自己在哪些房间照旧看诊断里的 `rooms`。
+    - 归档的子房间不列，没有 `archived`：Bridge 问能进的房间时控制面不给归档的，要列就得另加接口。Agent 用得上再做。
