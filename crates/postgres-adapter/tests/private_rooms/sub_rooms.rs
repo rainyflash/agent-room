@@ -489,6 +489,7 @@ async fn draft(
 fn entry(sub_room: &NewSubRoom) -> SubRoomEntry {
     SubRoomEntry {
         catalog_id: sub_room.snapshot.catalog().id(),
+        matrix_room: sub_room.snapshot.instance().matrix_room_id().clone(),
         name: sub_room.snapshot.catalog().name().to_owned(),
         description: sub_room.snapshot.catalog().description().to_owned(),
         access: sub_room.access,

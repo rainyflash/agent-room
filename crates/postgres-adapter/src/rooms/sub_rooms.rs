@@ -18,6 +18,7 @@ use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
     private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
+    rooms::MatrixRoomReference,
     sub_room_archive::SubRoomArchiveReason,
     sub_rooms::{
         MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SUB_ROOM_AUTO_ARCHIVE_DAYS,
@@ -410,6 +411,7 @@ impl SubRoomStore for PostgresRepositories {
 
 const LIST_SQL: &str = r"
     SELECT link.catalog_entry_id,
+           instance.matrix_room_id,
            catalog.name,
            catalog.description,
            catalog.status,
@@ -458,6 +460,9 @@ const LIST_SQL: &str = r"
                AND request.status = 'pending')::bigint AS pending_request_count
       FROM agent_room.private_room_parent AS link
       JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = link.catalog_entry_id
+      JOIN agent_room.private_room_state AS private_state
+        ON private_state.catalog_entry_id = link.catalog_entry_id
+      JOIN agent_room.room_instance AS instance ON instance.id = private_state.room_instance_id
      WHERE link.parent_catalog_entry_id = $1
      ORDER BY link.created_at, link.catalog_entry_id";
 
@@ -1055,8 +1060,10 @@ fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoo
     let pending_requests: i64 = decode_column(row, "pending_request_count", operation)?;
     let category_id: Option<uuid::Uuid> = decode_column(row, "category_id", operation)?;
     let count = |value: i64| u32::try_from(value).map_err(|_| corrupt_data(operation));
+    let matrix_room: String = decode_column(row, "matrix_room_id", operation)?;
     Ok(SubRoomEntry {
         catalog_id: RoomCatalogId::from_uuid(catalog_id),
+        matrix_room: MatrixRoomReference::new(matrix_room).map_err(|_| corrupt_data(operation))?,
         name: decode_column(row, "name", operation)?,
         description: decode_column(row, "description", operation)?,
         access: RoomJoinMode::try_from(access.as_str()).map_err(|_| corrupt_data(operation))?,

@@ -9,14 +9,19 @@ use agent_room_application::{
         ResolvePublicLobbyObservation,
     },
     persistence::RepositoryErrorKind,
-    ports::{PrivateRoomListingStore, RoomDirectory, RoomDirectoryQuery, SecretFactory},
-    private_rooms::{ListPrivateRoomsForAccount, PrivateRoomUseCases},
+    ports::{
+        PrivateRoomListingStore, PrivateRoomSnapshot, RoomDirectory, RoomDirectoryQuery,
+        SecretFactory,
+    },
+    private_rooms::{
+        AccessibleSubRoom, AccountSubRoomListing, ListPrivateRoomsForAccount, PrivateRoomUseCases,
+    },
     public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryFailureKind, PublicLobbyEntryUseCases},
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
 use agent_room_domain::{
-    ids::{AgentId, AgentInstanceId, RoomCatalogId},
-    private_rooms::PrivateRoomMembershipStatus,
+    ids::{AgentId, AgentInstanceId, PrincipalId, RoomCatalogId},
+    private_rooms::{PrivateRoomMember, PrivateRoomMembershipStatus},
     room_listing::RoomShareCode,
     rooms::{RoomLanguage, RoomRegion},
 };
@@ -24,7 +29,7 @@ use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Extension, Path, State},
+    extract::{DefaultBodyLimit, Extension, Path, RawQuery, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -54,6 +59,7 @@ pub(crate) struct LobbyHttpState {
     devices: Arc<dyn DeviceAuthorizationUseCases>,
     secrets: Arc<dyn SecretFactory>,
     private_rooms: Arc<dyn PrivateRoomUseCases>,
+    sub_rooms: Arc<dyn AccountSubRoomListing>,
     listings: Arc<dyn PrivateRoomListingStore>,
 }
 
@@ -66,6 +72,8 @@ pub(crate) struct LobbyHttpDependencies {
     pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
     pub(crate) secrets: Arc<dyn SecretFactory>,
     pub(crate) private_rooms: Arc<dyn PrivateRoomUseCases>,
+    /// 带 `subRooms=1` 时列能进的房间下面的子房间（2f-1b）。
+    pub(crate) sub_rooms: Arc<dyn AccountSubRoomListing>,
     /// 公开房间的分享码：列能进的房间时当它的 `slug`。
     pub(crate) listings: Arc<dyn PrivateRoomListingStore>,
 }
@@ -81,6 +89,7 @@ impl LobbyHttpState {
             devices: dependencies.devices,
             secrets: dependencies.secrets,
             private_rooms: dependencies.private_rooms,
+            sub_rooms: dependencies.sub_rooms,
             listings: dependencies.listings,
         }
     }
@@ -167,14 +176,21 @@ struct PublicLobbyObservationResponse {
 }
 
 /// 这台设备的账号能进的房间：公开大厅加上账号的 Agent 进得去的私人房间（已加入、能发言、
-/// 没归档）。Bridge 用它替 Agent 按名字解析房间，人就不必再从应用里复制房间参数。
+/// 没归档）。Bridge 用它替 Agent 按名字解析房间，人就不必再从应用里复制房间参数。带
+/// `subRooms=1` 时，每间私人房间后面跟着它下面账号看得到的子房间（2f-1b）；已经装着的 Bridge
+/// 不带，拿不到它们。
 async fn list_accessible_rooms(
     State(state): State<LobbyHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    const REQUEST_TARGET: &str = "/lobbies/accessible";
+    let Some((request_target, with_sub_rooms)) = accessible_target(query.as_deref()) else {
+        return no_store(
+            ApiError::invalid_request("lobby.invalid_query", correlation_id).into_response(),
+        );
+    };
     if !body.is_empty() {
         return no_store(invalid_body(correlation_id).into_response());
     }
@@ -183,7 +199,7 @@ async fn list_accessible_rooms(
         state.secrets.as_ref(),
         &headers,
         "GET",
-        REQUEST_TARGET,
+        request_target,
         "",
         correlation_id,
     )
@@ -211,6 +227,20 @@ async fn list_accessible_rooms(
             return no_store(ApiError::private_room(failure, correlation_id).into_response());
         }
     };
+    let sub_rooms = if with_sub_rooms {
+        match state
+            .sub_rooms
+            .accessible_sub_rooms(principal_id, &private)
+            .await
+        {
+            Ok(sub_rooms) => sub_rooms,
+            Err(failure) => {
+                return no_store(ApiError::private_room(failure, correlation_id).into_response());
+            }
+        }
+    } else {
+        Vec::new()
+    };
     // 公开房间的 slug 是它的分享码：本机 Agent 拿主人贴过来的分享链接按它认，旧版 Bridge、MCP
     // 和命令行本来就认 slug，也能按它进。私人房间以前都没有 slug。
     let catalog_ids: Vec<RoomCatalogId> = private
@@ -231,31 +261,114 @@ async fn list_accessible_rooms(
             name: entry.catalog.name().to_owned(),
             slug: entry.catalog.slug().map(|slug| slug.as_str().to_owned()),
             membership: None,
+            parent: None,
+            category: None,
+            access: None,
         })
         .collect();
-    rooms.extend(private.into_iter().map(|snapshot| {
-        AccessibleRoomResponse {
+    rooms.extend(private_room_responses(
+        private,
+        sub_rooms,
+        &share_codes,
+        principal_id,
+    ));
+    no_store(Json(AccessibleRoomsResponse { rooms }).into_response())
+}
+
+/// 能进的房间只认两种问法：不带查询的（已经装着的 Bridge 一直这么问），和 `subRooms=1`
+/// （2f-1b）。设备签名签的是整个请求目标，回的就是拿来核对签名的那一个。
+fn accessible_target(query: Option<&str>) -> Option<(&'static str, bool)> {
+    match query {
+        None => Some(("/lobbies/accessible", false)),
+        Some("subRooms=1") => Some(("/lobbies/accessible?subRooms=1", true)),
+        Some(_) => None,
+    }
+}
+
+/// 私人房间照原来的先后，每间后面跟着它下面的子房间。
+fn private_room_responses(
+    private: Vec<PrivateRoomSnapshot>,
+    sub_rooms: Vec<AccessibleSubRoom>,
+    share_codes: &HashMap<RoomCatalogId, RoomShareCode>,
+    principal_id: PrincipalId,
+) -> Vec<AccessibleRoomResponse> {
+    let mut under: HashMap<RoomCatalogId, Vec<AccessibleSubRoom>> = HashMap::new();
+    for sub_room in sub_rooms {
+        under
+            .entry(sub_room.parent_catalog_id)
+            .or_default()
+            .push(sub_room);
+    }
+    let mut rooms = Vec::new();
+    for snapshot in private {
+        let catalog_id = snapshot.catalog().id();
+        rooms.push(AccessibleRoomResponse {
             kind: "private_room",
-            catalog_id: snapshot.catalog().id().to_string(),
+            catalog_id: catalog_id.to_string(),
             matrix_room_id: Some(snapshot.instance().matrix_room_id().as_str().to_owned()),
             name: snapshot.catalog().name().to_owned(),
             slug: share_codes
-                .get(&snapshot.catalog().id())
+                .get(&catalog_id)
                 .map(|code| code.as_str().to_owned()),
             // 用例只返回账号已加入的房间，这里总是 joined；字段留着，已装的 Bridge 照旧解析。
             // 其他状态不该出现，出现也不当成可进。
-            membership: snapshot.room().member(principal_id).and_then(|member| {
-                match member.status() {
-                    PrivateRoomMembershipStatus::Invited => Some("invited"),
-                    PrivateRoomMembershipStatus::Joined => Some("joined"),
-                    PrivateRoomMembershipStatus::Declined
-                    | PrivateRoomMembershipStatus::Removed
-                    | PrivateRoomMembershipStatus::Banned => None,
-                }
-            }),
-        }
-    }));
-    no_store(Json(AccessibleRoomsResponse { rooms }).into_response())
+            membership: membership_text(
+                snapshot
+                    .room()
+                    .member(principal_id)
+                    .map(PrivateRoomMember::status),
+            ),
+            parent: None,
+            category: None,
+            access: None,
+        });
+        rooms.extend(
+            under
+                .remove(&catalog_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(sub_room_response),
+        );
+    }
+    rooms
+}
+
+/// 一间子房间：Agent 照 `父房间名/子房间名` 找它，进门用它自己的 Matrix 房间。它没有分享码。
+fn sub_room_response(sub_room: AccessibleSubRoom) -> AccessibleRoomResponse {
+    let AccessibleSubRoom {
+        parent_catalog_id,
+        parent_name,
+        entry,
+        category,
+    } = sub_room;
+    AccessibleRoomResponse {
+        kind: "private_room",
+        catalog_id: entry.catalog_id.to_string(),
+        matrix_room_id: Some(entry.matrix_room.as_str().to_owned()),
+        name: entry.name,
+        slug: None,
+        membership: membership_text(entry.viewer_status),
+        parent: Some(AccessibleParentResponse {
+            catalog_id: parent_catalog_id.to_string(),
+            name: parent_name,
+        }),
+        category,
+        access: Some(entry.access.as_str()),
+    }
+}
+
+/// 账号在房间里的状态：受邀和已加入照写，别的不写（不当成可进）。
+const fn membership_text(status: Option<PrivateRoomMembershipStatus>) -> Option<&'static str> {
+    match status {
+        Some(PrivateRoomMembershipStatus::Invited) => Some("invited"),
+        Some(PrivateRoomMembershipStatus::Joined) => Some("joined"),
+        Some(
+            PrivateRoomMembershipStatus::Declined
+            | PrivateRoomMembershipStatus::Removed
+            | PrivateRoomMembershipStatus::Banned,
+        )
+        | None => None,
+    }
 }
 
 #[derive(Serialize)]
@@ -276,6 +389,21 @@ struct AccessibleRoomResponse {
     slug: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     membership: Option<&'static str>,
+    /// 下面三项只有子房间才有（`subRooms=1`，2f-1b）：它在哪间房下面、分类的名字（“未分类”的
+    /// 不写）、哪种门（`open`、`request`、`invite_only`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<AccessibleParentResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessibleParentResponse {
+    catalog_id: String,
+    name: String,
 }
 
 async fn list_public_lobbies(
@@ -595,6 +723,9 @@ fn invalid_body(correlation_id: CorrelationId) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    /// 带 `subRooms=1` 列能进的房间（2f-1b）。
+    mod sub_rooms;
+
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -619,7 +750,10 @@ mod tests {
             PublicLobbyObservationRoom, RoomDirectory, RoomDirectoryQuery, SecretFactory,
             SecretValue,
         },
-        private_rooms::{ListPrivateRoomsForAccount, PrivateRoomResult, PrivateRoomUseCases},
+        private_rooms::{
+            AccountSubRoomListing, ListPrivateRoomsForAccount, PrivateRoomResult,
+            PrivateRoomUseCases,
+        },
         public_lobby_entry::{EnterPublicLobby, PublicLobbyEntryResult, PublicLobbyEntryUseCases},
         rooms::{EnterLobbyOutcome, LobbyJoinKind},
     };
@@ -1191,6 +1325,20 @@ mod tests {
         devices: Arc<FakeDevices>,
         listed_share_code: Option<&'static str>,
     ) -> axum::Router {
+        test_router_parts(
+            entries,
+            devices,
+            listed_share_code,
+            Arc::new(sub_rooms::FakeSubRoomListing::default()),
+        )
+    }
+
+    fn test_router_parts(
+        entries: Arc<FakeEntries>,
+        devices: Arc<FakeDevices>,
+        listed_share_code: Option<&'static str>,
+        sub_rooms: Arc<dyn AccountSubRoomListing>,
+    ) -> axum::Router {
         let directory = Arc::new(FakeDirectory);
         let state = LobbyHttpState::new(LobbyHttpDependencies {
             entries,
@@ -1201,6 +1349,7 @@ mod tests {
             devices,
             secrets: Arc::new(SecureSecretFactory),
             private_rooms: Arc::new(FakePrivateRooms),
+            sub_rooms,
             listings: Arc::new(FakeListings(listed_share_code)),
         });
         router(state).layer(middleware::from_fn(crate::correlation::attach))
