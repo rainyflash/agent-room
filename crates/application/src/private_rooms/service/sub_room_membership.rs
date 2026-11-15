@@ -1,5 +1,6 @@
 //! 子房间第 2b 步（`specs/redesign/sub-rooms.md`）：人自己进一间子房间、从里面退出，和改它的名字、
-//! 用途；第 2d-1 步：装门、拆门、换一种门，和“不在名单里显示”。
+//! 用途；第 2d-1 步：装门、拆门、换一种门，和“不在名单里显示”。申请和批准（2d-2）在旁边的
+//! `sub_room_requests`，把人记进来的那一段两边共用（[`PrivateRoomService::admit_into_sub_room`]）。
 //!
 //! 加入不走“受邀再接受”两步：加入是他自己点的，控制面直接把他记成已加入，在 Matrix 上邀请他、
 //! 设好发言级别，网页接着照“服务器记着已加入、Matrix 上是受邀”那一套替他加入。退出也只要这一个
@@ -7,7 +8,7 @@
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    private_rooms::PrivateRoomLifecycleStatus,
+    private_rooms::{PrivateRoomLifecycleStatus, PrivateRoomPermissions},
     room_listing::RoomJoinMode,
     sub_rooms::{
         SubRoomDoor, SubRoomEntryRefusal, authorize_sub_room_join, manages_sub_room,
@@ -17,8 +18,8 @@ use agent_room_domain::{
 };
 
 use crate::ports::{
-    MatrixRoomId, PrivateRoomSnapshot, SubRoomAdmission, SubRoomDoorChange, SubRoomLink,
-    SubRoomRevision, SubRoomRevisionBlock,
+    MatrixRoomId, MatrixUserId, PrivateRoomSnapshot, SubRoomAdmission, SubRoomDoorChange,
+    SubRoomLink, SubRoomRevision, SubRoomRevisionBlock,
 };
 
 use super::{
@@ -34,10 +35,17 @@ use super::{
 };
 
 /// 一间子房间，连同它所在的房间和父子关系。
-struct LoadedSubRoom {
-    parent: PrivateRoomSnapshot,
-    sub_room: PrivateRoomSnapshot,
-    link: SubRoomLink,
+pub(super) struct LoadedSubRoom {
+    pub(super) parent: PrivateRoomSnapshot,
+    pub(super) sub_room: PrivateRoomSnapshot,
+    pub(super) link: SubRoomLink,
+}
+
+/// 要记进子房间的人：他是谁、聊天服务器上是谁、在这一间里该有什么权限。
+pub(super) struct SubRoomEntrant<'a> {
+    pub(super) principal: PrincipalId,
+    pub(super) matrix_user: &'a MatrixUserId,
+    pub(super) permissions: PrivateRoomPermissions,
 }
 
 impl PrivateRoomService {
@@ -64,51 +72,78 @@ impl PrivateRoomService {
         let permissions =
             authorize_sub_room_join(parent.room(), sub_room.room(), actor, link.access)
                 .map_err(|refusal| entry_refused(OPERATION, refusal))?;
+        self.admit_into_sub_room(
+            request.parent_catalog_id,
+            sub_room,
+            &SubRoomEntrant {
+                principal: actor,
+                matrix_user: &actor_matrix,
+                permissions,
+            },
+            now,
+            OPERATION,
+        )
+        .await
+    }
+
+    /// 把一个人记进子房间，在 Matrix 上邀请他。他自己点“加入”和管得了这一间的人批准他的申请都走
+    /// 这里；进不进得来（看不看门）由调的人先判断好。
+    ///
+    /// 发言级别先设好（他还没被邀请，设了也用不上），再记成员，最后才邀请：没记成的不会留下一张没人
+    /// 认的邀请。他在父房间或者这一间里被禁言着就不给发言级别，不然退出再进来就把禁言冲掉了；记好
+    /// 以后再看一眼禁言。读到他在父房间里以后、存之前他被移出去的，什么都不写，回“找不到”。
+    pub(super) async fn admit_into_sub_room(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+        sub_room: PrivateRoomSnapshot,
+        entrant: &SubRoomEntrant<'_>,
+        now: UtcMillis,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        let catalog_id = sub_room.catalog().id();
+        let principal = entrant.principal;
         let mut room = sub_room.room().clone();
         let changed = room
-            .admit(actor, permissions)
-            .map_err(|error| domain(OPERATION, &error))?;
-        let matrix_room = matrix_room_id(&sub_room, OPERATION)?;
+            .admit(principal, entrant.permissions)
+            .map_err(|error| domain(operation, &error))?;
+        let matrix_room = matrix_room_id(&sub_room, operation)?;
         if changed {
-            // 他在父房间或者这一间里被禁言着就不给发言级别：不然退出再进来就把禁言冲掉了。
-            let speaks =
-                permissions.speak() && !self.muted_in(request.catalog_id, actor, OPERATION).await?;
-            // 发言级别先设好（他还没被邀请，设了也用不上），再记成员，最后才邀请：没记成的不会留下
-            // 一张没人认的邀请。
-            self.set_speaking(&matrix_room, &actor_matrix, speaks, OPERATION)
+            let speaks = entrant.permissions.speak()
+                && !self.muted_in(catalog_id, principal, operation).await?;
+            self.set_speaking(&matrix_room, entrant.matrix_user, speaks, operation)
                 .await?;
-            let standing = role_changes(sub_room.room(), &room, actor);
+            let standing = role_changes(sub_room.room(), &room, principal);
             let admitted = self
                 .sub_rooms
                 .admit_to_sub_room(&SubRoomAdmission {
                     room: &room,
                     expected_version: sub_room.room().version(),
-                    parent_catalog_id: request.parent_catalog_id,
-                    principal: actor,
+                    parent_catalog_id,
+                    principal,
                     at: now,
                     role_changes: &standing,
                 })
                 .await
                 .map_err(|error| {
-                    repository(OPERATION, PrivateRoomFailureStage::Persistence, &error)
+                    repository(operation, PrivateRoomFailureStage::Persistence, &error)
                 })?;
             if !admitted {
                 // 读到他在父房间里以后、存之前他被移出去了：和不在父房间里的人一样回。
-                return Err(not_found(OPERATION));
+                return Err(not_found(operation));
             }
             // 记成成员以前正在落的禁言看不到他在这一间里，落不到这儿：记好以后再看一眼，压着的收回。
-            if speaks && self.muted_in(request.catalog_id, actor, OPERATION).await? {
-                self.set_speaking(&matrix_room, &actor_matrix, false, OPERATION)
+            if speaks && self.muted_in(catalog_id, principal, operation).await? {
+                self.set_speaking(&matrix_room, entrant.matrix_user, false, operation)
                     .await?;
             }
         }
-        // 已经在里面的再点一次也补一遍邀请（可以重复发）：上一次邀请没发成的，或者他自己在 Matrix 上
-        // 拒了邀请的，这样才回得来。发言级别不重设：他要是被禁言着，再点一次加入不该把它冲掉。
+        // 已经在里面的再来一次也补一遍邀请（可以重复发）：上一次邀请没发成的，或者他自己在 Matrix 上
+        // 拒了邀请的，这样才回得来。发言级别不重设：他要是被禁言着，再来一次不该把它冲掉。
         self.matrix
-            .invite(&matrix_room, &actor_matrix)
+            .invite(&matrix_room, entrant.matrix_user)
             .await
-            .map_err(|error| matrix(OPERATION, error))?;
-        replace_room(sub_room, room, OPERATION)
+            .map_err(|error| matrix(operation, error))?;
+        replace_room(sub_room, room, operation)
     }
 
     pub(super) async fn leave_sub_room_internal(
@@ -305,7 +340,7 @@ impl PrivateRoomService {
     /// 读一间子房间和它所在的房间，照看的人找得到的来：他得是父房间里已加入的人，地址里的父房间得
     /// 对得上；勾了“不在名单里显示”的，只有里面的人、父房间的房主和管理员找得到。找不到的回答都
     /// 一样，从回答里看不出这间子房间在不在。
-    async fn load_sub_room(
+    pub(super) async fn load_sub_room(
         &self,
         parent_catalog_id: RoomCatalogId,
         catalog_id: RoomCatalogId,
@@ -341,7 +376,7 @@ impl PrivateRoomService {
     }
 }
 
-const fn entry_refused(
+pub(super) const fn entry_refused(
     operation: &'static str,
     refusal: SubRoomEntryRefusal,
 ) -> PrivateRoomFailure {

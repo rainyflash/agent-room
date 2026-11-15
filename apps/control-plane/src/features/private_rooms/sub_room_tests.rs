@@ -1,23 +1,31 @@
 //! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
-//! 和用途（2b），门和“不在名单里显示”（2d-1）。规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
+//! 和用途（2b），门和“不在名单里显示”（2d-1），申请和批准（2d-2，在 `sub_room_request_tests.rs`）。
+//! 规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
-    ports::SubRoomEntry,
+    ports::{JoinRequestRecord, PendingJoinRequest, SubRoomEntry},
     private_rooms::{
-        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
-        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
-        SubRoomView,
+        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy,
+        ListSubRooms, RequestSubRoomJoin, ReviseSubRoom, SubRoomJoinState, SubRoomList,
+        SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases, SubRoomView,
     },
 };
 use agent_room_domain::{
     private_rooms::PrivateRoomMembershipStatus,
+    room_join_requests::{JoinRequestMessage, JoinRequestStatus},
     sub_rooms::{SubRoomCreators, SubRoomPolicy},
 };
 
 use super::*;
 
+#[path = "sub_room_request_tests.rs"]
+mod requests;
+
 const SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 const OTHER_SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
+const THIRD_SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
+/// 申请记下的时间。
+const REQUESTED_AT: i64 = 1_700_000_200_000;
 
 /// 记下交过来的请求，照设好的回答。
 #[derive(Default)]
@@ -30,6 +38,13 @@ pub(super) struct FakeSubRooms {
     joined: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
     left: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
     revised: Mutex<Vec<ReviseSubRoom>>,
+    /// 申请、撤回（父房间、子房间）、看申请（父房间、子房间）、处理申请。
+    requested: Mutex<Vec<RequestSubRoomJoin>>,
+    withdrawn: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
+    pending_listed: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
+    answered: Mutex<Vec<AnswerSubRoomJoinRequest>>,
+    /// 设上时申请不用等，直接记成已加入（没有门了的、管这间房的）。
+    joins_directly: Mutex<bool>,
     /// 设上时每个用例都回答它。
     failure: Mutex<Option<PrivateRoomFailure>>,
 }
@@ -129,6 +144,72 @@ impl SubRoomUseCases for FakeSubRooms {
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
         self.revised.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+
+    fn request_sub_room_join(
+        &self,
+        request: RequestSubRoomJoin,
+    ) -> PortFuture<'_, PrivateRoomResult<SubRoomJoinState>> {
+        let state = if *self.joins_directly.lock().unwrap() {
+            SubRoomJoinState::Joined
+        } else {
+            SubRoomJoinState::Pending {
+                requested_at: time(REQUESTED_AT),
+            }
+        };
+        let result = self.refusal().map_or(Ok(state), Err);
+        self.requested.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+
+    fn withdraw_sub_room_join_request(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        self.withdrawn
+            .lock()
+            .unwrap()
+            .push((request.parent_catalog_id, request.catalog_id));
+        let result = self.refusal().map_or(Ok(()), Err);
+        Box::pin(async move { result })
+    }
+
+    fn sub_room_join_requests(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PendingJoinRequest>>> {
+        self.pending_listed
+            .lock()
+            .unwrap()
+            .push((request.parent_catalog_id, request.catalog_id));
+        let pending = PendingJoinRequest {
+            record: JoinRequestRecord {
+                catalog_id: request.catalog_id,
+                requester: target_id(),
+                message: JoinRequestMessage::parse("想来帮忙").expect("留言有效"),
+                status: JoinRequestStatus::Pending,
+                requested_at: time(REQUESTED_AT),
+                decided_at: None,
+                decided_by: None,
+            },
+            requester_display_name: "riley".to_owned(),
+        };
+        let result = self.refusal().map_or_else(|| Ok(vec![pending]), Err);
+        Box::pin(async move { result })
+    }
+
+    fn answer_sub_room_join_request(
+        &self,
+        request: AnswerSubRoomJoinRequest,
+    ) -> PortFuture<'_, PrivateRoomResult<JoinRequestStatus>> {
+        let status = if request.approve {
+            JoinRequestStatus::Approved
+        } else {
+            JoinRequestStatus::Rejected
+        };
+        let result = self.refusal().map_or(Ok(status), Err);
+        self.answered.lock().unwrap().push(request);
         Box::pin(async move { result })
     }
 }
@@ -235,7 +316,7 @@ async fn 建子房间要同源会话和幂等键_名字去掉两头的空白_回
 }
 
 #[tokio::test]
-async fn 名单只要有效登录_有门又没进的不给人数和最近说话的时间() {
+async fn 名单只要有效登录_有门又没进的不给人数和最近说话的时间_在等几个申请只给管这一间的() {
     let sub_rooms = Arc::new(FakeSubRooms::default());
     let authentication = Arc::new(FakeAuthentication::default());
     let response = sub_room_router(sub_rooms.clone(), authentication.clone())
@@ -270,7 +351,8 @@ async fn 名单只要有效登录_有门又没进的不给人数和最近说话�
                     "banned": false,
                     "memberCount": 3,
                     "agentCount": 2,
-                    "lastMessageAtUnixMs": 1_700_000_100_000_i64
+                    "lastMessageAtUnixMs": 1_700_000_100_000_i64,
+                    "pendingRequestCount": 2
                 },
                 {
                     "catalogId": OTHER_SUB_ROOM_UUID,
@@ -283,6 +365,19 @@ async fn 名单只要有效登录_有门又没进的不给人数和最近说话�
                     "managerPrincipalIds": [],
                     "joined": false,
                     "banned": true
+                },
+                {
+                    "catalogId": THIRD_SUB_ROOM_UUID,
+                    "name": "design",
+                    "description": "",
+                    "access": "request",
+                    "hidden": false,
+                    "createdByPrincipalId": OWNER_UUID,
+                    "createdAtUnixMs": 1_700_000_000_000_i64,
+                    "managerPrincipalIds": [],
+                    "joined": false,
+                    "banned": false,
+                    "requestedAtUnixMs": REQUESTED_AT
                 }
             ]
         })
@@ -657,6 +752,11 @@ async fn 子房间这边被拒各有各的码_网页好说清楚() {
             StatusCode::FORBIDDEN,
             "sub_room.managers_only",
         ),
+        (
+            SubRoomRefusal::RecentlyRejected,
+            StatusCode::CONFLICT,
+            "sub_room.recently_rejected",
+        ),
     ] {
         let sub_rooms = Arc::new(FakeSubRooms::default());
         *sub_rooms.failure.lock().unwrap() = Some(PrivateRoomFailure::new(
@@ -722,7 +822,8 @@ fn sub_request(
         .expect("HTTP 请求有效")
 }
 
-/// 两间子房间：一间没有门、看的人在里面；一间只能请进来、不在名单里显示、看的人被封禁了。
+/// 三间子房间：一间没有门、看的人在里面管着它；一间只能请进来、不在名单里显示、看的人被封禁了；
+/// 一间要批准、看的人在等。每一间都有两个在等的申请，只有管着的那一间写出来。
 fn list() -> SubRoomList {
     let entry = |catalog: &str, name: &str| SubRoomEntry {
         catalog_id: RoomCatalogId::from_uuid(uuid(catalog)),
@@ -738,6 +839,8 @@ fn list() -> SubRoomList {
         member_count: 3,
         agent_count: 2,
         last_message_at: Some(time(1_700_000_100_000)),
+        viewer_requested_at: None,
+        pending_requests: 2,
     };
     SubRoomList {
         parent_catalog_id: catalog_id(),
@@ -753,6 +856,7 @@ fn list() -> SubRoomList {
                     ..entry(SUB_ROOM_UUID, "release")
                 },
                 inside_visible: true,
+                manages: true,
             },
             SubRoomView {
                 entry: SubRoomEntry {
@@ -762,6 +866,16 @@ fn list() -> SubRoomList {
                     ..entry(OTHER_SUB_ROOM_UUID, "security")
                 },
                 inside_visible: false,
+                manages: false,
+            },
+            SubRoomView {
+                entry: SubRoomEntry {
+                    access: RoomJoinMode::Request,
+                    viewer_requested_at: Some(time(REQUESTED_AT)),
+                    ..entry(THIRD_SUB_ROOM_UUID, "design")
+                },
+                inside_visible: false,
+                manages: false,
             },
         ],
     }

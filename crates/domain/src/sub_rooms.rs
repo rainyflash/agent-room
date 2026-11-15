@@ -232,6 +232,13 @@ impl SubRoomDoor {
         !matches!(self.access, RoomJoinMode::Open)
     }
 
+    /// 父房间里的人能不能申请进来：要批准、又在名单里显示的才收。藏起来的外面的人找不到它，没法
+    /// 申请；没有门的直接进；只能请进来的不收申请。
+    #[must_use]
+    pub const fn takes_requests(self) -> bool {
+        matches!(self.access, RoomJoinMode::Request) && !self.hidden
+    }
+
     /// 换门、勾或者去掉“不在名单里显示”。没带的那一项不动；拆门的时候没提隐藏的，隐藏跟着去掉。
     ///
     /// # Errors
@@ -296,9 +303,8 @@ pub fn manages_sub_room(
                 .is_some_and(|member| member.has_joined() && member.permissions().manage()))
 }
 
-/// 一个人自己点“加入”进一间子房间。他得是父房间里已加入的人、没在这一间里被封禁；有门的只有父房间
-/// 的房主和管理员不用批准。过了就回他在这一间里该有的权限（父房间的管理员进来就是这一间的管理员）。
-/// 已经在里面的不再看门，回的是他现在的权限。
+/// 一个人自己点“加入”进一间子房间。在 [`authorize_sub_room_admission`] 之上再看门：有门的只有
+/// 父房间的房主和管理员不用批准。已经在里面的不再看门，回的是他现在的权限。
 ///
 /// # Errors
 ///
@@ -309,6 +315,32 @@ pub fn authorize_sub_room_join(
     principal: PrincipalId,
     access: RoomJoinMode,
 ) -> Result<PrivateRoomPermissions, SubRoomEntryRefusal> {
+    let permissions = authorize_sub_room_admission(parent, sub_room, principal)?;
+    let inside = sub_room
+        .member(principal)
+        .is_some_and(PrivateRoomMember::has_joined);
+    if inside || runs_parent_room(parent, principal) {
+        return Ok(permissions);
+    }
+    match access {
+        RoomJoinMode::Open => Ok(permissions),
+        RoomJoinMode::Request => Err(SubRoomEntryRefusal::ApprovalRequired),
+        RoomJoinMode::InviteOnly => Err(SubRoomEntryRefusal::InviteOnly),
+    }
+}
+
+/// 把一个人记进子房间之前不看门的那几样：他得是父房间里已加入的人、两间房都没归档、没在这一间里
+/// 被封禁。管得了这一间的人批准申请（以后还有把人请进来）用它：门就是让他们开的。过了就回他在这
+/// 一间里该有的权限（父房间的管理员进来就是这一间的管理员）；已经在里面的回他现在的权限。
+///
+/// # Errors
+///
+/// 记不进来时返回原因。
+pub fn authorize_sub_room_admission(
+    parent: &PrivateRoom,
+    sub_room: &PrivateRoom,
+    principal: PrincipalId,
+) -> Result<PrivateRoomPermissions, SubRoomEntryRefusal> {
     let in_parent = parent
         .member(principal)
         .filter(|member| member.has_joined())
@@ -317,28 +349,14 @@ pub fn authorize_sub_room_join(
     if parent.status() != active || sub_room.status() != active {
         return Err(SubRoomEntryRefusal::Archived);
     }
-    let banned = sub_room
-        .member(principal)
-        .is_some_and(|member| member.status() == PrivateRoomMembershipStatus::Banned);
-    if banned {
-        return Err(SubRoomEntryRefusal::Banned);
-    }
-    if let Some(inside) = sub_room
-        .member(principal)
-        .filter(|member| member.has_joined())
-    {
-        return Ok(inside.permissions());
-    }
-    let runs_parent = runs_parent_room(parent, principal);
-    if !runs_parent {
-        match access {
-            RoomJoinMode::Open => {}
-            RoomJoinMode::Request => return Err(SubRoomEntryRefusal::ApprovalRequired),
-            RoomJoinMode::InviteOnly => return Err(SubRoomEntryRefusal::InviteOnly),
+    match sub_room.member(principal) {
+        Some(member) if member.status() == PrivateRoomMembershipStatus::Banned => {
+            Err(SubRoomEntryRefusal::Banned)
         }
+        Some(member) if member.has_joined() => Ok(member.permissions()),
+        _ => sub_room_permissions(in_parent.permissions(), runs_parent_room(parent, principal))
+            .map_err(|_| SubRoomEntryRefusal::NotInParent),
     }
-    sub_room_permissions(in_parent.permissions(), runs_parent)
-        .map_err(|_| SubRoomEntryRefusal::NotInParent)
 }
 
 /// 照父房间现在的样子重算一遍子房间（`specs/redesign/sub-rooms.md` 的“对账”）。做几遍结果都一样：
@@ -756,6 +774,58 @@ mod tests {
         assert_eq!(
             SubRoomDoor::NONE.changed(Some(RoomJoinMode::Request), Some(true)),
             Ok(hidden)
+        );
+    }
+
+    #[test]
+    fn 收申请的只有要批准又在名单里显示的() {
+        let door = |access, hidden| SubRoomDoor::new(access, hidden).expect("门有效");
+        assert!(door(RoomJoinMode::Request, false).takes_requests());
+        assert!(
+            !door(RoomJoinMode::Request, true).takes_requests(),
+            "藏起来的外面的人找不到"
+        );
+        assert!(!SubRoomDoor::NONE.takes_requests(), "没有门的直接进");
+        for hidden in [false, true] {
+            assert!(!door(RoomJoinMode::InviteOnly, hidden).takes_requests());
+        }
+    }
+
+    #[test]
+    fn 批准的时候不看门_封禁着的和不在父房间里的照样记不进来() {
+        let parent = parent();
+        let mut sub_room = new_sub_room(catalog(), &parent.room, parent.owner).expect("房主能建");
+        let admit = |room: &PrivateRoom, who| authorize_sub_room_admission(&parent.room, room, who);
+        // 门是让管得了这一间的人开的：照父房间里的权限给，父房间的管理员进来就管这一间。
+        assert_eq!(admit(&sub_room, parent.member), Ok(permissions(&SPEAKER)));
+        assert!(
+            admit(&sub_room, parent.admin).is_ok_and(PrivateRoomPermissions::manage),
+            "父房间的管理员进来就管这一间"
+        );
+        assert_eq!(
+            admit(&sub_room, parent.invited),
+            Err(SubRoomEntryRefusal::NotInParent)
+        );
+        // 已经在里面的回他现在的权限。
+        let viewing = permissions(&[PrivateRoomCapability::View]);
+        sub_room.admit(parent.viewer, viewing).expect("先进来");
+        assert_eq!(admit(&sub_room, parent.viewer), Ok(viewing));
+        // 封禁着的要先解封。
+        sub_room
+            .admit(parent.member, permissions(&SPEAKER))
+            .expect("先进来");
+        sub_room
+            .ban_member(parent.owner, parent.member)
+            .expect("房主能封禁");
+        assert_eq!(
+            admit(&sub_room, parent.member),
+            Err(SubRoomEntryRefusal::Banned)
+        );
+        let mut archived = sub_room.clone();
+        archived.archive(parent.owner).expect("房主能归档");
+        assert_eq!(
+            admit(&archived, parent.viewer),
+            Err(SubRoomEntryRefusal::Archived)
         );
     }
 

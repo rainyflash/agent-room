@@ -13,7 +13,7 @@ use agent_room_domain::{
 
 use crate::{
     persistence::RepositoryResult,
-    ports::{PortFuture, PrivateRoomSnapshot, RoomRoleChange},
+    ports::{JoinRequestRecord, PortFuture, PrivateRoomSnapshot, RoomRoleChange},
 };
 
 /// 建一间子房间要存的：房间本身，加上它挂在谁下面、谁建的、谁在管。
@@ -118,6 +118,10 @@ pub struct SubRoomEntry {
     /// 在里面的 Agent 数（本机的和网络的）。
     pub agent_count: u32,
     pub last_message_at: Option<UtcMillis>,
+    /// 看的人在这一间有一个在等的申请时，是什么时候申请的。
+    pub viewer_requested_at: Option<UtcMillis>,
+    /// 这一间有几个在等的申请。只给管得了这一间的人看。
+    pub pending_requests: u32,
 }
 
 /// 存着的三项设置。没定过的房间没有记录，用默认值。
@@ -175,6 +179,18 @@ pub enum SubRoomRevisionBlock {
     Unavailable,
     /// 要换门，可门已经不是算的时候读到的那样了：另一个请求刚换过。
     DoorChanged,
+}
+
+/// 申请进一间子房间，存的时候怎么样了。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomJoinRequestOutcome {
+    Created,
+    /// 他在这一间已经有一个在等的申请：回那一个是什么时候申请的。
+    AlreadyPending(UtcMillis),
+    /// 这一间此刻不收申请了：拆了门、改成只能请进来、藏起来了，或者归档了。
+    Closed,
+    /// 他已经不是父房间里已加入的人了。
+    NotInParent,
 }
 
 /// 子房间跟着父房间变了以后，聊天服务器上还没照着做的一件事（`private_room_sub_room_sync`）。
@@ -242,12 +258,23 @@ pub trait SubRoomStore: Send + Sync {
     ) -> PortFuture<'a, RepositoryResult<bool>>;
 
     /// 改子房间的名字、用途和门：目录上的名字、用途，比重名用的键，门和“不在名单里显示”在同一个
-    /// 事务里。从有门改成没有门、以前又没拆过的，记下拆门的时间（`at`）；拆过的不动。撞了名字、
-    /// 子房间归档了、门已经不是读到的那样时什么都不写，回原因。
+    /// 事务里。从有门改成没有门、以前又没拆过的，记下拆门的时间（`at`）；拆过的不动。换完的门不收
+    /// 申请（[`SubRoomDoor::takes_requests`]）的，在等的申请一起作废。撞了名字、子房间归档了、门
+    /// 已经不是读到的那样时什么都不写，回原因。
     fn revise_sub_room<'a>(
         &'a self,
         revision: &'a SubRoomRevision,
     ) -> PortFuture<'a, RepositoryResult<Option<SubRoomRevisionBlock>>>;
+
+    /// 申请进一间子房间（`record` 是一个在等的申请）。他在父房间里的那条成员记录和这间子房间的门在
+    /// 同一个事务里锁着看：他还是父房间里已加入的人、这一间此刻还收申请（要批准、在名单里显示、没
+    /// 归档）才记。同一个人在这一间已经有一个在等的就不再记，回那一个的时间。换门、把他移出父房间
+    /// 的事务和这里排着队，它们作废在等的申请时看得到这一条。
+    fn request_sub_room_join<'a>(
+        &'a self,
+        parent_catalog_id: RoomCatalogId,
+        record: &'a JoinRequestRecord,
+    ) -> PortFuture<'a, RepositoryResult<SubRoomJoinRequestOutcome>>;
 
     fn sub_room_policy(
         &self,

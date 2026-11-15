@@ -172,6 +172,47 @@ pub(super) async fn follow_saved_parent(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
+    let left: Vec<uuid::Uuid> = parent
+        .members()
+        .filter(|member| !member.has_joined() && moved.contains(&member.principal_id().as_uuid()))
+        .map(|member| member.principal_id().as_uuid())
+        .collect();
+    void_requests_of_departed(transaction, parent, &left, changed_at, operation).await
+}
+
+/// 这次不再是父房间里已加入的人（退出、被移出、被封禁），他在各子房间在等的申请作废；父房间归档了的，
+/// 子房间在等的申请都作废。申请的人不是子房间的成员，上面照着重算的子房间里没有他。
+async fn void_requests_of_departed(
+    transaction: &mut Transaction<'_, Postgres>,
+    parent: &PrivateRoom,
+    left: &[uuid::Uuid],
+    changed_at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    let archived = parent.status() == PrivateRoomLifecycleStatus::Archived;
+    if left.is_empty() && !archived {
+        return Ok(());
+    }
+    sqlx::query(
+        r"UPDATE agent_room.private_room_join_request AS request
+             SET status = 'voided',
+                 decided_at = greatest(
+                     request.requested_at,
+                     to_timestamp($4::double precision / 1000.0)
+                 )
+            FROM agent_room.private_room_parent AS link
+           WHERE link.parent_catalog_entry_id = $1
+             AND request.catalog_entry_id = link.catalog_entry_id
+             AND request.status = 'pending'
+             AND ($3 OR request.requester_principal_id = ANY($2))",
+    )
+    .bind(parent.catalog_id().as_uuid())
+    .bind(left)
+    .bind(archived)
+    .bind(changed_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 

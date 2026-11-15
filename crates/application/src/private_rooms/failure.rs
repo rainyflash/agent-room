@@ -1,4 +1,4 @@
-use agent_room_domain::DomainError;
+use agent_room_domain::{DomainError, time::UtcMillis};
 
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
@@ -66,6 +66,8 @@ pub enum SubRoomRefusal {
     OwnerStays,
     /// 改名、改用途要管得了这一间：这一间的管理员，或者房间的房主和管理员。
     ManagersOnly,
+    /// 申请被拒还不到 24 小时，什么时候能再申请见 [`PrivateRoomFailure::retry_at`]。
+    RecentlyRejected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +77,8 @@ pub struct PrivateRoomFailure {
     kind: PrivateRoomFailureKind,
     /// 请求里哪一项没过校验（固定的字段名，比如 `room_name`），只给日志看。
     rejected: Option<&'static str>,
+    /// 什么时候能再试，回答里写成 `Retry-After`。
+    retry_at: Option<UtcMillis>,
 }
 
 impl PrivateRoomFailure {
@@ -88,7 +92,18 @@ impl PrivateRoomFailure {
             stage,
             kind,
             rejected: None,
+            retry_at: None,
         }
+    }
+
+    #[must_use]
+    pub const fn retrying_at(mut self, at: UtcMillis) -> Self {
+        self.retry_at = Some(at);
+        self
+    }
+
+    pub const fn retry_at(self) -> Option<UtcMillis> {
+        self.retry_at
     }
 
     #[must_use]

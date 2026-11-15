@@ -213,11 +213,13 @@ pub struct SubRoomList {
     pub sub_rooms: Vec<SubRoomView>,
 }
 
-/// 名单里的一间。有门、看的人又不在里面时，只看得到名字、用途和谁在管，人数这些不给。
+/// 名单里的一间。有门、看的人又不在里面时，只看得到名字、用途和谁在管，人数这些不给。在等的
+/// 申请有几个只给管得了这一间的人（`manages`）看。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubRoomView {
     pub entry: SubRoomEntry,
     pub inside_visible: bool,
+    pub manages: bool,
 }
 
 /// 人自己进一间子房间，或者从里面退出（`specs/redesign/sub-rooms.md` 第 2b 步）。地址里带着它
@@ -240,6 +242,36 @@ pub struct ReviseSubRoom {
     /// 换门：`Open` 是拆门。
     pub access: Option<RoomJoinMode>,
     pub hidden: Option<bool>,
+}
+
+/// 申请进一间要批准的子房间（`specs/redesign/sub-rooms.md` 第 2d-2 步）。`message` 是留的那
+/// 句话，可以是空的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestSubRoomJoin {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub message: String,
+}
+
+/// 管得了这一间的人处理一个人的申请。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerSubRoomJoinRequest {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub requester: PrincipalId,
+    pub approve: bool,
+}
+
+/// 申请以后他在这一间的处境。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomJoinState {
+    /// 在等批准。
+    Pending { requested_at: UtcMillis },
+    /// 不用等：这一间没有门了、他是父房间的房主或管理员、他本来就在里面。已经把他记成已加入，网页
+    /// 照“服务器记着已加入、Matrix 上是受邀”那一套替他加入。
+    Joined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

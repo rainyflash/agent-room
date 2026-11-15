@@ -24,6 +24,8 @@ use super::{
 mod doors;
 #[path = "sub_room_follow.rs"]
 mod follow;
+#[path = "sub_room_join_requests.rs"]
+mod join_requests;
 #[path = "sub_room_membership.rs"]
 mod membership;
 #[path = "sub_room_mutes.rs"]
@@ -487,6 +489,8 @@ fn entry(sub_room: &NewSubRoom) -> SubRoomEntry {
         member_count: 1,
         agent_count: 0,
         last_message_at: None,
+        viewer_requested_at: None,
+        pending_requests: 0,
     }
 }
 

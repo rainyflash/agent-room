@@ -8,9 +8,10 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        NewSubRoom, PortFuture, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck,
-        SubRoomEntry, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        JoinRequestRecord, NewSubRoom, PortFuture, SubRoomAdmission, SubRoomCreationBlock,
+        SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink,
+        SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
+        SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
 };
 use agent_room_domain::{
@@ -35,6 +36,7 @@ use crate::{
 
 use super::{
     decode::corrupt_data,
+    join_requests::void_pending_of_room,
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
     role_changes::insert_role_changes,
     sub_room_follow::{follow_parent_at_creation, follow_stale_sub_rooms},
@@ -233,6 +235,23 @@ impl SubRoomStore for PostgresRepositories {
         })
     }
 
+    fn request_sub_room_join<'a>(
+        &'a self,
+        parent_catalog_id: RoomCatalogId,
+        record: &'a JoinRequestRecord,
+    ) -> PortFuture<'a, RepositoryResult<SubRoomJoinRequestOutcome>> {
+        Box::pin(async move {
+            let operation = "sub_room.join_request.create";
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let result = request_join(&mut transaction, parent_catalog_id, record, operation).await;
+            finish(transaction, result, operation).await
+        })
+    }
+
     fn sub_room_policy(
         &self,
         parent: RoomCatalogId,
@@ -410,7 +429,16 @@ const LIST_SQL: &str = r"
                   FROM agent_room.network_agent_room AS room
                   JOIN agent_room.network_agent AS network ON network.id = room.network_agent_id
                  WHERE room.catalog_entry_id = link.catalog_entry_id
-           ) AS present)::bigint AS agent_count
+           ) AS present)::bigint AS agent_count,
+           (SELECT floor(extract(epoch FROM request.requested_at) * 1000)::bigint
+              FROM agent_room.private_room_join_request AS request
+             WHERE request.catalog_entry_id = link.catalog_entry_id
+               AND request.requester_principal_id = $2
+               AND request.status = 'pending') AS viewer_requested_at_ms,
+           (SELECT count(*)
+              FROM agent_room.private_room_join_request AS request
+             WHERE request.catalog_entry_id = link.catalog_entry_id
+               AND request.status = 'pending')::bigint AS pending_request_count
       FROM agent_room.private_room_parent AS link
       JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = link.catalog_entry_id
      WHERE link.parent_catalog_entry_id = $1
@@ -538,6 +566,86 @@ async fn admit(
     Ok(true)
 }
 
+/// 记下一个申请进子房间的人。先锁他在父房间里的那条成员记录（和把人记进子房间同一个先后），再锁
+/// 这间子房间的父子关系那一行：把他移出父房间、给这一间换门的事务和这里排着队，它们作废在等的申请
+/// 时看得到这一条，这里也看得到它们刚改完的样子。
+async fn request_join(
+    transaction: &mut Transaction<'_, Postgres>,
+    parent_catalog_id: RoomCatalogId,
+    record: &JoinRequestRecord,
+    operation: &'static str,
+) -> RepositoryResult<SubRoomJoinRequestOutcome> {
+    let catalog_id = record.catalog_id.as_uuid();
+    let in_parent: Option<bool> = sqlx::query_scalar(
+        r"SELECT true
+            FROM agent_room.private_room_membership AS member
+           WHERE member.catalog_entry_id = $1
+             AND member.principal_id = $2
+             AND member.membership_status = 'joined'
+             FOR SHARE",
+    )
+    .bind(parent_catalog_id.as_uuid())
+    .bind(record.requester.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if in_parent != Some(true) {
+        return Ok(SubRoomJoinRequestOutcome::NotInParent);
+    }
+    let takes_requests: Option<bool> = sqlx::query_scalar(
+        r"SELECT link.access = 'request'
+                 AND NOT link.hidden
+                 AND link.archived_at IS NULL
+                 AND catalog.status = 'active'
+            FROM agent_room.private_room_parent AS link
+            JOIN agent_room.room_catalog_entry AS catalog ON catalog.id = link.catalog_entry_id
+           WHERE link.catalog_entry_id = $1
+             AND link.parent_catalog_entry_id = $2
+             FOR SHARE OF link",
+    )
+    .bind(catalog_id)
+    .bind(parent_catalog_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if takes_requests != Some(true) {
+        return Ok(SubRoomJoinRequestOutcome::Closed);
+    }
+    let inserted = sqlx::query(
+        r"INSERT INTO agent_room.private_room_join_request
+              (catalog_entry_id, requester_principal_id, message, status, requested_at)
+          VALUES ($1, $2, $3, 'pending', to_timestamp($4::double precision / 1000.0))
+          ON CONFLICT (catalog_entry_id, requester_principal_id) WHERE status = 'pending'
+          DO NOTHING",
+    )
+    .bind(catalog_id)
+    .bind(record.requester.as_uuid())
+    .bind(record.message.as_str())
+    .bind(record.requested_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    if inserted.rows_affected() == 1 {
+        return Ok(SubRoomJoinRequestOutcome::Created);
+    }
+    // 两个请求同时来：另一个先记上了，回那一个的时间。
+    let requested_at: i64 = sqlx::query_scalar(
+        r"SELECT floor(extract(epoch FROM requested_at) * 1000)::bigint
+            FROM agent_room.private_room_join_request
+           WHERE catalog_entry_id = $1
+             AND requester_principal_id = $2
+             AND status = 'pending'",
+    )
+    .bind(catalog_id)
+    .bind(record.requester.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(SubRoomJoinRequestOutcome::AlreadyPending(
+        UtcMillis::new(requested_at).map_err(|_| corrupt_data(operation))?,
+    ))
+}
+
 /// 改子房间的名字、用途和门。先锁父房间在目录里的那一行，和建子房间排同一个队，重名看得准。
 /// 从有门改成没有门的记下拆门的时间，只记第一次：这个时间和聊天服务器上那条“这以后进来的人不补发
 /// 钥匙”是同一刻，往后挪等于把门里的话放给第一次拆门以后自己进来的人。
@@ -621,6 +729,11 @@ async fn revise(
             operation,
         )
         .await?;
+        // 换完不收申请了（拆了门、改成只能请进来、藏起来了）：在等的一起作废。拆了门的自己进来就
+        // 行；只能请进来的由管理员请；藏起来的外面的人找不到它。
+        if !door.to.takes_requests() {
+            void_pending_of_room(transaction, revision.catalog_id, revision.at, operation).await?;
+        }
     }
     let updated = sqlx::query_scalar::<_, uuid::Uuid>(
         r"UPDATE agent_room.room_catalog_entry
@@ -754,6 +867,8 @@ fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoo
     let viewer_status: Option<String> = decode_column(row, "viewer_status", operation)?;
     let member_count: i64 = decode_column(row, "member_count", operation)?;
     let agent_count: i64 = decode_column(row, "agent_count", operation)?;
+    let viewer_requested_at: Option<i64> = decode_column(row, "viewer_requested_at_ms", operation)?;
+    let pending_requests: i64 = decode_column(row, "pending_request_count", operation)?;
     let count = |value: i64| u32::try_from(value).map_err(|_| corrupt_data(operation));
     Ok(SubRoomEntry {
         catalog_id: RoomCatalogId::from_uuid(catalog_id),
@@ -780,6 +895,10 @@ fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoo
         last_message_at: last_message_at
             .map(|at| UtcMillis::new(at).map_err(|_| corrupt_data(operation)))
             .transpose()?,
+        viewer_requested_at: viewer_requested_at
+            .map(|at| UtcMillis::new(at).map_err(|_| corrupt_data(operation)))
+            .transpose()?,
+        pending_requests: count(pending_requests)?,
     })
 }
 

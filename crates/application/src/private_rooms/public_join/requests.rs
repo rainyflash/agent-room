@@ -142,8 +142,14 @@ impl PublicRoomJoinService {
         request: JoinPublicRoom,
     ) -> PublicJoinResult<Vec<PendingJoinRequest>> {
         const OPERATION: &str = "private_room.join_request.list";
-        self.managed_room(&request.actor, request.catalog_id, OPERATION)
+        let snapshot = self
+            .managed_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
+        // 子房间的申请走子房间自己的入口（`sub-rooms/{子}/join-requests`），批准要照子房间的规则把人
+        // 记成已加入。房间设置读这里时子房间回空的，免得在这里批准、走成“以房主的名义邀请”。
+        if snapshot.parent_catalog_id().is_some() {
+            return Ok(Vec::new());
+        }
         let pending = self
             .requests
             .pending_join_requests(request.catalog_id)
@@ -168,6 +174,9 @@ impl PublicRoomJoinService {
             .managed_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
         let not_found = || PublicJoinFailure::new(OPERATION, PublicJoinFailureKind::NotFound);
+        if snapshot.parent_catalog_id().is_some() {
+            return Err(not_found());
+        }
         self.requests
             .pending_join_request(request.catalog_id, request.requester)
             .await

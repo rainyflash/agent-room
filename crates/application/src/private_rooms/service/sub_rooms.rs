@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomMember, PrivateRoomMembershipStatus},
+    room_join_requests::JoinRequestStatus,
     room_listing::RoomJoinMode,
     rooms::{
         RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus, RoomCatalogVisibility,
@@ -27,17 +28,19 @@ use crate::{
     persistence::RepositoryErrorKind,
     ports::{
         MatrixCreateRoom, MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset,
-        MatrixRoomVisibility, MatrixUserId, NewSubRoom, PortFuture, PrivateMatrixRoomCreation,
-        PrivateMatrixSpeakingAssignment, PrivateRoomSnapshot, SubRoomCreationBlock,
-        SubRoomCreationCheck, SubRoomEntry, SubRoomParentFacts, SubRoomPolicyRecord,
+        MatrixRoomVisibility, MatrixUserId, NewSubRoom, PendingJoinRequest, PortFuture,
+        PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomSnapshot,
+        SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomParentFacts,
+        SubRoomPolicyRecord,
     },
 };
 
 use super::{
     super::{
-        ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure,
-        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult, ReviseSubRoom,
-        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
+        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy,
+        ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
+        PrivateRoomResult, RequestSubRoomJoin, ReviseSubRoom, SubRoomJoinState, SubRoomList,
+        SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
         failure::{domain, failure, matrix, repository},
     },
     PrivateRoomService, active_room_actor_matrix_user, ensure_active_actor, private_room_alias,
@@ -86,6 +89,31 @@ pub trait SubRoomUseCases: Send + Sync {
         &self,
         request: ReviseSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    /// 申请进一间要批准的子房间，可以留一句话。不用批准的（没有门了、父房间的房主和管理员、本来
+    /// 就在里面的）直接进；已经有一个在等的就原样回那一个，留言不改。
+    fn request_sub_room_join(
+        &self,
+        request: RequestSubRoomJoin,
+    ) -> PortFuture<'_, PrivateRoomResult<SubRoomJoinState>>;
+
+    /// 撤回自己在等的申请，没有也算成功。
+    fn withdraw_sub_room_join_request(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 管得了这一间的人看在等的申请，先来的在前。
+    fn sub_room_join_requests(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PendingJoinRequest>>>;
+
+    /// 管得了这一间的人批准或拒绝一个申请。批准的直接记成已加入。
+    fn answer_sub_room_join_request(
+        &self,
+        request: AnswerSubRoomJoinRequest,
+    ) -> PortFuture<'_, PrivateRoomResult<JoinRequestStatus>>;
 }
 
 impl SubRoomUseCases for PrivateRoomService {
@@ -136,6 +164,34 @@ impl SubRoomUseCases for PrivateRoomService {
         request: ReviseSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.revise_sub_room_internal(request))
+    }
+
+    fn request_sub_room_join(
+        &self,
+        request: RequestSubRoomJoin,
+    ) -> PortFuture<'_, PrivateRoomResult<SubRoomJoinState>> {
+        Box::pin(self.request_sub_room_join_internal(request))
+    }
+
+    fn withdraw_sub_room_join_request(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.withdraw_sub_room_join_request_internal(request))
+    }
+
+    fn sub_room_join_requests(
+        &self,
+        request: SubRoomMembershipAction,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PendingJoinRequest>>> {
+        Box::pin(self.sub_room_join_requests_internal(request))
+    }
+
+    fn answer_sub_room_join_request(
+        &self,
+        request: AnswerSubRoomJoinRequest,
+    ) -> PortFuture<'_, PrivateRoomResult<JoinRequestStatus>> {
+        Box::pin(self.answer_sub_room_join_request_internal(request))
     }
 }
 
@@ -540,6 +596,8 @@ impl PrivateRoomService {
             .map(|entry| SubRoomView {
                 // 有门、看的人又不在里面的，里面有几个人、多久以前有人说话不给。
                 inside_visible: entry.access == RoomJoinMode::Open || inside(&entry),
+                // 和 `manages_sub_room` 一样：父房间的房主和管理员，加上在里面的这一间的管理员。
+                manages: runs_parent || (inside(&entry) && entry.managers.contains(&viewer)),
                 entry,
             })
             .collect();

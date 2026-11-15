@@ -1234,6 +1234,7 @@ impl Fixture {
             sub_rooms: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
             topics: matrix.clone(),
             moderation: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
+            join_requests: Arc::new(sub_rooms::MemoryRooms::new(events.clone())),
             identifiers: runtime.clone(),
             clock: runtime,
         });

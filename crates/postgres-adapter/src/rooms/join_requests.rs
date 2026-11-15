@@ -1,5 +1,6 @@
-//! 申请进公开房间（`specs/public-rooms/design.md`）。同一个人对同一间房同时只能有一个在等的申请，
-//! 由部分唯一索引卡着；处理完的 30 天后由定时清理删掉。
+//! 申请进公开房间（`specs/public-rooms/design.md`）和要批准的子房间（`specs/redesign/sub-rooms.md`
+//! 第 2d-2 步），同一张表。同一个人对同一间房同时只能有一个在等的申请，由部分唯一索引卡着；处理完的
+//! 30 天后由定时清理删掉。子房间的申请怎么记在 `sub_rooms` 的 `request_join`（要锁着门看）。
 
 use agent_room_application::{
     persistence::RepositoryResult,
@@ -13,7 +14,7 @@ use agent_room_domain::{
     room_join_requests::{JoinRequestMessage, JoinRequestStatus},
     time::UtcMillis,
 };
-use sqlx::postgres::PgRow;
+use sqlx::{Postgres, Transaction, postgres::PgRow};
 
 use crate::{
     PostgresRepositories,
@@ -211,11 +212,18 @@ impl PrivateRoomJoinRequestStore for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<JoinRequestSweep>> {
         Box::pin(async move {
             let operation = "private_room.join_request.sweep";
-            let voided = sqlx::query(VOID_PENDING_OF_CLOSED_ROOMS)
-                .bind(now.value())
-                .execute(self.pool())
-                .await
-                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let mut voided = 0;
+            for statement in [
+                VOID_PENDING_OF_CLOSED_ROOMS,
+                VOID_PENDING_OF_CLOSED_SUB_ROOMS,
+            ] {
+                voided += sqlx::query(statement)
+                    .bind(now.value())
+                    .execute(self.pool())
+                    .await
+                    .map_err(|error| map_sqlx_error(operation, &error))?
+                    .rows_affected();
+            }
             let deleted = sqlx::query(
                 r"DELETE FROM agent_room.private_room_join_request
                    WHERE status <> 'pending'
@@ -226,7 +234,7 @@ impl PrivateRoomJoinRequestStore for PostgresRepositories {
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(JoinRequestSweep {
-                voided: voided.rows_affected(),
+                voided,
                 deleted: deleted.rows_affected(),
             })
         })
@@ -239,12 +247,34 @@ const VOID_PENDING_OF_ROOM: &str = r"
            decided_at = greatest(requested_at, to_timestamp($2::double precision / 1000.0))
      WHERE catalog_entry_id = $1 AND status = 'pending'";
 
-/// 房间不公开了（从没公开过、改回私密）、归档了、平台拿掉了：在等的作废。
+/// 在别的事务里作废这间房在等的申请（给子房间换门时）。
+pub(super) async fn void_pending_of_room(
+    transaction: &mut Transaction<'_, Postgres>,
+    catalog_id: RoomCatalogId,
+    voided_at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<u64> {
+    let voided = sqlx::query(VOID_PENDING_OF_ROOM)
+        .bind(catalog_id.as_uuid())
+        .bind(voided_at.value())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(voided.rows_affected())
+}
+
+/// 房间不公开了（从没公开过、改回私密）、归档了、平台拿掉了：在等的作废。子房间从来不公开，
+/// 另有下面那一条。
 const VOID_PENDING_OF_CLOSED_ROOMS: &str = r"
     UPDATE agent_room.private_room_join_request AS request
        SET status = 'voided',
            decided_at = greatest(request.requested_at, to_timestamp($1::double precision / 1000.0))
      WHERE request.status = 'pending'
+       AND NOT EXISTS (
+           SELECT 1
+             FROM agent_room.private_room_parent AS link
+            WHERE link.catalog_entry_id = request.catalog_entry_id
+       )
        AND NOT EXISTS (
            SELECT 1
              FROM agent_room.private_room_listing AS listing
@@ -258,6 +288,38 @@ const VOID_PENDING_OF_CLOSED_ROOMS: &str = r"
                     FROM agent_room.public_room_platform_hold AS hold
                    WHERE hold.catalog_entry_id = catalog.id
               )
+       )";
+
+/// 子房间不收申请了（拆了门、改成只能请进来、藏起来了）、它或者父房间归档了、申请的人不在父房间
+/// 里了：在等的作废。平时换门、改父房间的事务里就作废了，这里兜底（比如子房间跟着父房间归档、回滚
+/// 到旧版那段时间里改过的）。
+const VOID_PENDING_OF_CLOSED_SUB_ROOMS: &str = r"
+    UPDATE agent_room.private_room_join_request AS request
+       SET status = 'voided',
+           decided_at = greatest(request.requested_at, to_timestamp($1::double precision / 1000.0))
+      FROM agent_room.private_room_parent AS link
+     WHERE request.status = 'pending'
+       AND link.catalog_entry_id = request.catalog_entry_id
+       AND NOT (
+           link.access = 'request'
+           AND NOT link.hidden
+           AND link.archived_at IS NULL
+           AND EXISTS (
+               SELECT 1
+                 FROM agent_room.room_catalog_entry AS sub_room
+                 JOIN agent_room.room_catalog_entry AS parent
+                   ON parent.id = link.parent_catalog_entry_id
+                WHERE sub_room.id = link.catalog_entry_id
+                  AND sub_room.status = 'active'
+                  AND parent.status = 'active'
+           )
+           AND EXISTS (
+               SELECT 1
+                 FROM agent_room.private_room_membership AS member
+                WHERE member.catalog_entry_id = link.parent_catalog_entry_id
+                  AND member.principal_id = request.requester_principal_id
+                  AND member.membership_status = 'joined'
+           )
        )";
 
 fn decode_request(row: &PgRow, operation: &'static str) -> RepositoryResult<JoinRequestRecord> {

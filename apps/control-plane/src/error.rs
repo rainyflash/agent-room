@@ -697,7 +697,11 @@ impl ApiError {
             rejected = failure.rejected().unwrap_or("-"),
             "私人房间请求失败"
         );
-        Self::new(status, code, category, message, correlation_id)
+        let error = Self::new(status, code, category, message, correlation_id);
+        match failure.retry_at() {
+            Some(retry_at) => error.retry_after_seconds(seconds_until(retry_at)),
+            None => error,
+        }
     }
 
     /// 私人房间的 Agent 口令：错误码统一以 `join_code.` 开头，Agent 会把它原样告诉用户。
@@ -1643,6 +1647,12 @@ const fn sub_room_refusal(
             "sub_room.managers_only",
             ErrorCategory::Authorization,
             "只有这间子房间的管理员、房间的房主和管理员能改它。",
+        ),
+        SubRoomRefusal::RecentlyRejected => (
+            StatusCode::CONFLICT,
+            "sub_room.recently_rejected",
+            ErrorCategory::Conflict,
+            "申请被拒绝了，24 小时以后才能再申请。",
         ),
     }
 }
