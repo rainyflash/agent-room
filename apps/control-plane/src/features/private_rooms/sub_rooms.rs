@@ -1,6 +1,6 @@
 //! 子房间（`specs/redesign/sub-rooms.md`）：在一间房下面建子房间、读名单（2a），人自己加入、退出，
 //! 改名字和用途（2b），门和“不在名单里显示”（2d-1），和一间房里子房间的三项设置
-//! （`specs/redesign/room-roles.md` R4）。
+//! （`specs/redesign/room-roles.md` R4）。申请和批准（2d-2）在旁边的 `sub_room_requests`。
 //!
 //! 都是新的接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段
 //! 整个房间都读不出来。建好的子房间照私人房间的样子回。
@@ -137,6 +137,12 @@ struct SubRoomResponse {
     agent_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_message_at_unix_ms: Option<i64>,
+    /// 看的人在等批准时，什么时候申请的。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_at_unix_ms: Option<i64>,
+    /// 在等的申请有几个：只给管得了这一间的人。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_request_count: Option<u32>,
 }
 
 impl From<SubRoomView> for SubRoomResponse {
@@ -144,6 +150,7 @@ impl From<SubRoomView> for SubRoomResponse {
         let SubRoomView {
             entry,
             inside_visible,
+            manages,
         } = view;
         Self {
             catalog_id: entry.catalog_id.to_string(),
@@ -162,6 +169,8 @@ impl From<SubRoomView> for SubRoomResponse {
                 .last_message_at
                 .filter(|_| inside_visible)
                 .map(UtcMillis::value),
+            requested_at_unix_ms: entry.viewer_requested_at.map(UtcMillis::value),
+            pending_request_count: manages.then_some(entry.pending_requests),
         }
     }
 }
@@ -409,7 +418,7 @@ pub(super) async fn revise(
 }
 
 /// 动一间子房间的请求：同源、有效登录，地址里的两个房间号都得像样。
-async fn sub_room_write_context(
+pub(super) async fn sub_room_write_context(
     state: &PrivateRoomHttpState,
     headers: &HeaderMap,
     jar: &CookieJar,

@@ -21,10 +21,10 @@ use crate::{
         MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset, MatrixRoomVisibility, MatrixUserId,
         PortFuture, PrivateMatrixMembership, PrivateMatrixRoomCreation,
         PrivateMatrixSpeakingAssignment, PrivateRoomAgentDirectory, PrivateRoomAgentEviction,
-        PrivateRoomListingMatrix, PrivateRoomListingStore, PrivateRoomMatrixGateway,
-        PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot,
-        PrivateRoomStore, PrivateRoomTopicGateway, SecretFactory, StandingModerationSource,
-        SubRoomStore,
+        PrivateRoomJoinRequestStore, PrivateRoomListingMatrix, PrivateRoomListingStore,
+        PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner, PrivateRoomPrincipalDirectory,
+        PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway, SecretFactory,
+        StandingModerationSource, SubRoomStore,
     },
 };
 
@@ -42,6 +42,7 @@ mod public_creation;
 mod public_transfer;
 mod role_changes;
 mod sub_room_membership;
+mod sub_room_requests;
 mod sub_room_sync;
 mod sub_rooms;
 
@@ -178,6 +179,8 @@ pub struct PrivateRoomDependencies {
     pub topics: Arc<dyn PrivateRoomTopicGateway>,
     /// 给子房间里的人发言级别之前，问他是不是被禁言着（这一间的、父房间的都算）。
     pub moderation: Arc<dyn StandingModerationSource>,
+    /// 申请进要批准的子房间（`specs/redesign/sub-rooms.md` 第 2d-2 步），和公开房间的申请同一张表。
+    pub join_requests: Arc<dyn PrivateRoomJoinRequestStore>,
     pub identifiers: Arc<dyn IdentifierFactory>,
     pub clock: Arc<dyn Clock>,
 }
@@ -196,6 +199,7 @@ pub struct PrivateRoomService {
     sub_rooms: Arc<dyn SubRoomStore>,
     topics: Arc<dyn PrivateRoomTopicGateway>,
     moderation: Arc<dyn StandingModerationSource>,
+    join_requests: Arc<dyn PrivateRoomJoinRequestStore>,
     identifiers: Arc<dyn IdentifierFactory>,
     clock: Arc<dyn Clock>,
 }
@@ -216,6 +220,7 @@ impl PrivateRoomService {
             sub_rooms: dependencies.sub_rooms,
             topics: dependencies.topics,
             moderation: dependencies.moderation,
+            join_requests: dependencies.join_requests,
             identifiers: dependencies.identifiers,
             clock: dependencies.clock,
         }

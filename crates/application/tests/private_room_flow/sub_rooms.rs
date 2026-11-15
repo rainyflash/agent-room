@@ -2,15 +2,17 @@
 //! 父房间有的那几件事。存储是内存里的一份，重名、上限这些规则照真实存储的写；真实存储自己的
 //! 测试在 `postgres-adapter` 的 `tests/private_rooms/sub_rooms.rs`。人加入、退出和改名（2b）的
 //! 用例在旁边的 `sub_room_membership.rs`，父房间变了以后聊天服务器上跟着做（2c-2）的在
-//! `sub_room_sync.rs`，门（2d-1）的在 `sub_room_doors.rs`，用的都是这里的夹具。
+//! `sub_room_sync.rs`，门（2d-1）的在 `sub_room_doors.rs`，申请和批准（2d-2）的在
+//! `sub_room_join_requests.rs`，用的都是这里的夹具。
 
 use std::collections::BTreeSet;
 
 use agent_room_application::{
     ports::{
-        NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
-        SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        JoinRequestRecord, NewSubRoom, SubRoomAdmission, SubRoomCreationBlock,
+        SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink,
+        SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
+        SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
     private_rooms::{
         ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
@@ -35,6 +37,8 @@ use super::*;
 
 #[path = "sub_room_doors.rs"]
 mod doors;
+#[path = "sub_room_join_requests.rs"]
+mod join_requests;
 #[path = "sub_room_membership.rs"]
 mod membership;
 #[path = "sub_room_mutes.rs"]
@@ -670,6 +674,7 @@ impl Rooms {
             sub_rooms: store.clone(),
             topics: matrix.clone(),
             moderation: store.clone(),
+            join_requests: store.clone(),
             identifiers: runtime.clone(),
             clock: runtime,
         });
@@ -1003,6 +1008,10 @@ pub(super) struct MemoryRooms {
     mutes_later: Mutex<Option<(u32, RoomCatalogId, PrincipalId)>>,
     /// 设上以后，下一次存改动之前这间子房间的门先被换成这样：摆出“存的当口别人换了门”。
     door_moves_before_revision: Mutex<Option<(RoomCatalogId, RoomJoinMode)>>,
+    /// 申请进子房间（和公开房间的申请同一张表），照记下的先后。
+    requests: Mutex<Vec<JoinRequestRecord>>,
+    /// 设上以后，下一次记申请之前那间子房间的门先被换成这样：摆出“申请的当口别人换了门”。
+    door_moves_before_request: Mutex<Option<RoomJoinMode>>,
 }
 
 type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
@@ -1024,6 +1033,8 @@ impl MemoryRooms {
             muted: Mutex::new(BTreeSet::new()),
             mutes_later: Mutex::new(None),
             door_moves_before_revision: Mutex::new(None),
+            requests: Mutex::new(Vec::new()),
+            door_moves_before_request: Mutex::new(None),
         }
     }
 
@@ -1482,6 +1493,10 @@ impl SubRoomStore for MemoryRooms {
                     .expect("人数不多"),
                     agent_count: 0,
                     last_message_at: None,
+                    viewer_requested_at: self
+                        .pending_request(stored.link.catalog_id, viewer)
+                        .map(|request| request.requested_at),
+                    pending_requests: self.pending_count(stored.link.catalog_id),
                 }
             })
             .collect();
@@ -1578,6 +1593,10 @@ impl SubRoomStore for MemoryRooms {
                     }
                     link.access = door.to.access();
                     link.hidden = door.to.hidden();
+                    // 换完不收申请的，在等的一起作废，和真实存储一样在这一次里做。
+                    if !door.to.takes_requests() {
+                        self.void_requests(revision.catalog_id, revision.at);
+                    }
                 }
             }
             let current = rooms.remove(&revision.catalog_id).expect("房间存在");
@@ -1588,6 +1607,14 @@ impl SubRoomStore for MemoryRooms {
             rooms.insert(revision.catalog_id, revised);
             Ok(None)
         })
+    }
+
+    fn request_sub_room_join<'a>(
+        &'a self,
+        parent_catalog_id: RoomCatalogId,
+        record: &'a JoinRequestRecord,
+    ) -> PortFuture<'a, RepositoryResult<SubRoomJoinRequestOutcome>> {
+        Box::pin(async move { Ok(self.store_join_request(parent_catalog_id, record)) })
     }
 
     fn sub_room_policy(

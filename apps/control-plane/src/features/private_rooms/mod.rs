@@ -1,6 +1,7 @@
 mod device;
 mod handlers;
 mod models;
+mod sub_room_requests;
 mod sub_rooms;
 
 pub(crate) use models::{PermissionsBody, PermissionsResponse};
@@ -119,6 +120,16 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
         .route(
             "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/membership",
             post(sub_rooms::join).delete(sub_rooms::leave),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/join-requests",
+            post(sub_room_requests::request)
+                .delete(sub_room_requests::withdraw)
+                .get(sub_room_requests::pending),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/join-requests/{principal_id}",
+            put(sub_room_requests::answer),
         )
         .route(
             "/private-rooms/{catalog_id}/sub-room-policy",

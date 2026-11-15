@@ -174,8 +174,8 @@ pub use rooms::{
 };
 pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
-    SubRoomEntry, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-    SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord,
+    SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
 };
 pub use runtime::{Clock, IdentifierFactory};
 
