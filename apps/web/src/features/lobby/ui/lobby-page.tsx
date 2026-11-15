@@ -90,7 +90,9 @@ import {
 } from '@/features/private-rooms/data/private-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
+import { SubRoomBrowser } from '@/features/sub-rooms/ui/sub-room-browser';
 import { SubRoomPlaces } from '@/features/sub-rooms/ui/sub-room-places';
+import { useUnseenSubRooms } from '@/features/sub-rooms/ui/use-unseen-sub-rooms';
 import { shareable } from '@/features/private-rooms/domain/private-room-listing';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
 import type { ShareableRoom } from '@/features/room-share/domain/room-share';
@@ -293,9 +295,8 @@ function ReadyLobby({
   });
   const family = familyQuery.data?.ok === true ? familyQuery.data.value : null;
   const subRoom = family !== null && isSubRoomOf(family, catalogId);
-  // 左栏：你在的子房间（眼前是子房间时它也算）；顶栏和“主房间”回到父房间。
-  const hasSubRoomPlaces =
-    family !== null && (subRoom || family.subRooms.some((entry) => entry.joined));
+  // 左栏：“浏览子房间”和你在的子房间（眼前是子房间时它也算）；顶栏和“主房间”回到父房间。
+  const hasSubRoomPlaces = family !== null && family.subRooms.length > 0;
   const subRoomParent =
     family !== null && subRoom
       ? {
@@ -374,8 +375,18 @@ function ReadyLobby({
   const sideColumn = useMediaQuery(roomDeskSideQuery);
   // Agent 表格展开成的整页：只在对话版面的主房间里有。开着私聊时地址里写了也先看私聊。
   const agentsPage = conversationLayout && view === 'agents' && selectedDirectSessionId === null;
+  // “浏览子房间”：只在对话版面的父房间上有（子房间左栏里那一行去父房间的这一页）。
+  const subRoomsPage =
+    conversationLayout &&
+    view === 'sub-rooms' &&
+    selectedDirectSessionId === null &&
+    family !== null &&
+    !subRoom;
+  // 展开成整页的东西开着：对话和右栏都不画。
+  const fullPage = agentsPage || subRoomsPage;
+  const unseenSubRooms = useUnseenSubRooms(family, subRoomsPage);
   const localAgentIds = useLocalAgentIds(agentsPage);
-  const panel: RoomWorkspaceView = view === 'agents' ? 'space' : view;
+  const panel: RoomWorkspaceView = view === 'agents' || view === 'sub-rooms' ? 'space' : view;
   const activeView =
     panel === 'space' && (conversationLayout || selectedDirectSessionId !== null)
       ? 'conversation'
@@ -396,7 +407,7 @@ function ReadyLobby({
   );
   // 展开的那一页上看不到对话：这时来的消息照样算没读，标在回对话的地方。
   const publicConversationVisible =
-    activeView === 'conversation' && selectedDirectSessionId === null && !agentsPage;
+    activeView === 'conversation' && selectedDirectSessionId === null && !fullPage;
   const [focusedConversationMessageId, setFocusedConversationMessageId] = useState<string | null>(
     null,
   );
@@ -475,20 +486,24 @@ function ReadyLobby({
     origins.find((origin) => origin.offsetParent !== null)?.focus();
   }, [selectedAgentId]);
   // 展开成整页、从那一页回来，原来拿着焦点的东西都不在了：展开时焦点落到那一页的标题上，
-  // 点顶栏的房间名回来时落回“展开成整页”（右栏收着时是顶栏打开它的按钮）。
+  // 点顶栏的房间名回来时落回打开它的地方：Agent 表格是“展开成整页”（右栏收着时是顶栏打开它的按钮），
+  // “浏览子房间”是左栏那一行（左栏收着时是房间名旁边的下拉）。
   const pageFocus = useRef<'opened' | 'closed' | null>(null);
+  const closedPage = useRef<'agents' | 'sub-rooms'>('agents');
   useEffect(() => {
     const moved = pageFocus.current;
     pageFocus.current = null;
-    if (moved === 'opened' && agentsPage)
+    if (moved === 'opened' && fullPage)
       document.querySelector<HTMLElement>('.room-desk__page h2')?.focus();
-    if (moved === 'closed' && !agentsPage) {
+    if (moved === 'closed' && !fullPage) {
       const origins = document.querySelectorAll<HTMLElement>(
-        '.room-desk__side .room-roster__expand, .room-desk__agents-button',
+        closedPage.current === 'agents'
+          ? '.room-desk__side .room-roster__expand, .room-desk__agents-button'
+          : '.room-desk__rail .sub-room-places__browse, .room-desk__place-trigger',
       );
       [...origins].find((origin) => origin.offsetParent !== null)?.focus();
     }
-  }, [agentsPage]);
+  }, [agentsPage, fullPage, subRoomsPage]);
   // 私聊的列表。对话版面里它在左栏，窄了在房间名旁边的下拉里（点了一项先把下拉关上：`before`）；
   // 场景里它在 Agent 抽屉里。
   const directNavigation = (before?: () => void) =>
@@ -742,7 +757,7 @@ function ReadyLobby({
           blocked={directSessions.isBlocked(selectedAgent)}
           // 右栏在的时候详情盖在表格上，关掉就是回到表格；右栏收起来时它是从右边出来的一层。
           // 展开的那一页上没有右栏，详情也是从右边出来的一层。
-          closeAs={conversationLayout && sideColumn && !agentsPage ? 'back' : 'close'}
+          closeAs={conversationLayout && sideColumn && !fullPage ? 'back' : 'close'}
           observedAtUnixMs={room.observedAtUnixMs}
           key="agent-inspector"
           pendingAction={
@@ -805,7 +820,7 @@ function ReadyLobby({
           kind={roomKind}
           layoutSwitch={layoutSwitch}
           liveSummary={t('lobby.liveSummary', { count: attendance.present, room: room.name })}
-          mainRoomSelected={selectedDirectSessionId === null && !agentsPage}
+          mainRoomSelected={selectedDirectSessionId === null && !fullPage}
           mainRoomUnread={activity.unread}
           onOpenAgents={() => {
             setDrawer('members');
@@ -818,7 +833,7 @@ function ReadyLobby({
                 }
           }
           onSearch={
-            searchable && panelView === 'conversation' && !agentsPage
+            searchable && panelView === 'conversation' && !fullPage
               ? () => {
                   setSearchTurn((turn) => turn + 1);
                 }
@@ -836,6 +851,7 @@ function ReadyLobby({
                   title: t('roomRoster.tab.agents'),
                   onClose: () => {
                     pageFocus.current = 'closed';
+                    closedPage.current = 'agents';
                     openRoomPanel('conversation');
                   },
                   content: (
@@ -857,7 +873,19 @@ function ReadyLobby({
                     />
                   ),
                 }
-              : null
+              : subRoomsPage
+                ? {
+                    title: t('subRooms.browse.title'),
+                    onClose: () => {
+                      pageFocus.current = 'closed';
+                      closedPage.current = 'sub-rooms';
+                      openRoomPanel('conversation');
+                    },
+                    content: (
+                      <SubRoomBrowser list={family} principalId={principal?.principalId ?? null} />
+                    ),
+                  }
+                : null
           }
           pendingJoinRequests={pendingJoinRequests}
           peopleCount={roster.people.people.length}
@@ -869,8 +897,24 @@ function ReadyLobby({
                   <>
                     {family === null ? null : (
                       <SubRoomPlaces
+                        browse={
+                          family.subRooms.length === 0
+                            ? null
+                            : {
+                                count: family.subRooms.length,
+                                onOpen: subRoom
+                                  ? null
+                                  : () => {
+                                      pageFocus.current = 'opened';
+                                      openRoomPanel('sub-rooms');
+                                    },
+                                parentMatrixRoomId: subRoomParent?.matrixRoomId ?? undefined,
+                                selected: subRoomsPage,
+                                unseen: unseenSubRooms,
+                              }
+                        }
                         currentCatalogId={catalogId}
-                        currentSelected={selectedDirectSessionId === null && !agentsPage}
+                        currentSelected={selectedDirectSessionId === null && !fullPage}
                         currentUnread={activity.unread}
                         list={family}
                         onNavigate={onNavigate}

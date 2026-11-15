@@ -283,6 +283,8 @@ function WatchLobbyBoundary() {
 
 function LobbyBoundary() {
   const { catalogId } = lobbyRoute.useParams();
+  // 进去以后照旧打开地址里写的那一页（比如从子房间左栏去父房间的“浏览子房间”）。
+  const { view } = lobbyRoute.useSearch();
   const navigate = lobbyRoute.useNavigate();
   // 没登录时先去登录，登录完回到这个房间，而不是停在房间列表。
   const onConnectionRequired = useCallback(() => {
@@ -293,11 +295,11 @@ function LobbyBoundary() {
       void navigate({
         params: { catalogId: target.catalogId, roomId: target.matrixRoomId },
         replace: true,
-        search: {},
+        search: view === undefined ? {} : { view },
         to: '/lobby/$catalogId/instance/$roomId',
       });
     },
-    [navigate],
+    [navigate, view],
   );
   if (!routeIdentifierSchema.safeParse(catalogId).success) {
     return <RouteUnavailable invalid routeLabel={`/lobby/${catalogId}`} />;

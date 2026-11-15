@@ -1,0 +1,318 @@
+/*
+ * “浏览子房间”一页（specs/redesign/sub-rooms.md“网页”）：和展开的 Agent 表格一样占着主栏和右栏，
+ * 上面是标题和搜索，下面三个标签，再下面按分类排的一行一行。只用令牌。
+ */
+.sub-room-browser {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+  /* 一行怎么排按这一页自己的宽度定（见最下面），不看窗口多宽。 */
+  container: sub-room-browser / inline-size;
+}
+.sub-room-browser__inner {
+  display: flex;
+  width: 100%;
+  max-width: 1120px;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+  padding: 28px 32px 32px;
+}
+
+.sub-room-browser__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.sub-room-browser__head h2 {
+  margin: 0;
+  /* 焦点是程序放过来的，不是能按的东西：不画框。 */
+  outline: none;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.sub-room-browser__search {
+  position: relative;
+  display: flex;
+  width: min(260px, 100%);
+  align-items: center;
+}
+.sub-room-browser__search > svg {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--ar-muted);
+  pointer-events: none;
+}
+.sub-room-browser__search > input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px 0 32px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font-size: 0.8125rem;
+}
+
+/* 三个标签：底下一条线，选中的那个字加粗、下面压一道墨色的线。 */
+.sub-room-browser__tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--ar-line);
+}
+.sub-room-browser__tabs > button {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  color: var(--ar-muted);
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.sub-room-browser__tabs > button:hover {
+  color: var(--color-ink);
+}
+.sub-room-browser__tabs > button[aria-pressed='true'] {
+  color: var(--color-ink);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--color-ink);
+}
+.sub-room-browser__tab-count {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.sub-room-browser__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.sub-room-browser__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sub-room-browser__group h3 {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.sub-room-browser__group-count {
+  color: var(--ar-muted);
+  font-weight: 400;
+}
+.sub-room-browser__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 一行：记号、名字、用途、几个人几个 Agent（或者哪种门）、那一个动作。 */
+.sub-room-browser__row {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: 16px minmax(0, 190px) minmax(0, 1fr) minmax(0, 150px) minmax(104px, auto);
+  align-items: center;
+  column-gap: 12px;
+  padding: 0 8px;
+  border-radius: var(--ar-control-radius);
+}
+/* 归档的那一行：第三列只是原来的分类，谁在什么时候归档的那句长，给它剩下的宽度。 */
+.sub-room-browser__row[data-archived] {
+  grid-template-columns: 16px minmax(0, 190px) minmax(0, 140px) minmax(0, 1fr) auto;
+}
+.sub-room-browser__row:hover {
+  background: var(--ar-surface-muted);
+}
+.sub-room-browser__row > .ar-room-glyph {
+  color: var(--ar-muted);
+  text-align: center;
+}
+.sub-room-browser__name {
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+a.sub-room-browser__name {
+  text-decoration: none;
+}
+a.sub-room-browser__name:hover {
+  text-decoration: underline;
+}
+.sub-room-browser__purpose,
+.sub-room-browser__meta {
+  overflow: hidden;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-room-browser__meta {
+  font-variant-numeric: tabular-nums;
+}
+.sub-room-browser__action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.sub-room-browser__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.sub-room-browser__state > svg {
+  width: 14px;
+  height: 14px;
+}
+.sub-room-browser__pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 申请：就在那一行下面，和名字对齐。 */
+.sub-room-browser__request {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 8px 8px 36px;
+}
+.sub-room-browser__request > label {
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+.sub-room-browser__request > textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  font: inherit;
+  font-size: 0.875rem;
+  resize: vertical;
+}
+.sub-room-browser__request-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.sub-room-browser__request-footer > small {
+  margin-right: auto;
+  color: var(--ar-muted);
+  font-variant-numeric: tabular-nums;
+}
+.sub-room-browser__request-footer > small[data-over] {
+  color: var(--color-alert);
+}
+
+.sub-room-browser__note,
+.sub-room-browser__empty {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.sub-room-browser__empty {
+  padding: 24px 8px;
+}
+.sub-room-browser__failure {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0 8px 6px 36px;
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+}
+.sub-room-browser__failure > code {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}
+.sub-room-browser__spin {
+  animation: sub-room-browser-spin 900ms linear infinite;
+}
+@keyframes sub-room-browser-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sub-room-browser__spin {
+    animation: none;
+  }
+}
+
+/* 窄了：一行拆成两层，上面是记号、名字和动作，下面是用途和人数。 */
+@container sub-room-browser (max-width: 640px) {
+  .sub-room-browser__inner {
+    padding: 20px 16px 24px;
+  }
+  .sub-room-browser__row,
+  .sub-room-browser__row[data-archived] {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'glyph name action'
+      '. purpose purpose'
+      '. meta meta';
+    row-gap: 2px;
+    padding-block: 8px;
+  }
+  .sub-room-browser__row > .ar-room-glyph {
+    grid-area: glyph;
+  }
+  .sub-room-browser__name {
+    grid-area: name;
+  }
+  .sub-room-browser__purpose {
+    grid-area: purpose;
+  }
+  .sub-room-browser__purpose:empty {
+    display: none;
+  }
+  .sub-room-browser__meta {
+    grid-area: meta;
+  }
+  .sub-room-browser__meta:empty {
+    display: none;
+  }
+  .sub-room-browser__action {
+    grid-area: action;
+  }
+  .sub-room-browser__request,
+  .sub-room-browser__failure {
+    margin-left: 8px;
+  }
+}

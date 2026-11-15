@@ -85,6 +85,7 @@ afterEach(() => {
 
 function renderPlaces(overrides: Partial<SubRoomPlacesProps> = {}) {
   const props: SubRoomPlacesProps = {
+    browse: null,
     currentCatalogId: PARENT,
     currentSelected: true,
     currentUnread: 0,
@@ -201,6 +202,36 @@ describe('左栏里的子房间', () => {
     expect(screen.getByRole('button', { name: 'Ops' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('link', { name: 'Backups' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Release' })).not.toBeInTheDocument();
+  });
+
+  it('最上面“浏览子房间”：在父房间里点了打开那一页，带着几间、没见过的新的', () => {
+    const onOpen = vi.fn();
+    renderPlaces({
+      browse: { count: 4, onOpen, parentMatrixRoomId: undefined, selected: true, unseen: 2 },
+    });
+
+    const browse = screen.getByRole('button', { name: 'Browse sub-rooms (4)' });
+    expect(browse).toHaveAttribute('aria-current', 'page');
+    expect(browse).toHaveAccessibleDescription('2 new you haven’t seen');
+    fireEvent.click(browse);
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('在子房间里“浏览子房间”去父房间的那一页', () => {
+    renderPlaces({
+      browse: {
+        count: 4,
+        onOpen: null,
+        parentMatrixRoomId: '!parent:matrix.test',
+        selected: false,
+        unseen: 0,
+      },
+      currentCatalogId: RELEASE.catalogId,
+    });
+
+    const browse = screen.getByRole('link', { name: 'Browse sub-rooms (4)' });
+    expect(browse).toHaveAttribute('href', `/lobby/${PARENT}/instance/!parent:matrix.test`);
+    expect(browse).not.toHaveAccessibleDescription();
   });
 
   it('你一间都不在时什么都不画', () => {

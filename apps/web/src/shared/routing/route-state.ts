@@ -110,8 +110,11 @@ export function lobbySearchWithDirectSession(
 }
 
 export function lobbySearchWithMessage(search: LobbySearch, messageId: string | null): LobbySearch {
-  // 要看的那条消息在对话里：人在展开的 Agent 表格上时先回到对话。
-  const view = messageId !== null && search.view === 'agents' ? undefined : search.view;
+  // 要看的那条消息在对话里：人在展开的 Agent 表格、“浏览子房间”上时先回到对话。
+  const view =
+    messageId !== null && (search.view === 'agents' || search.view === 'sub-rooms')
+      ? undefined
+      : search.view;
   return {
     ...(messageId === null && search.agent !== undefined ? { agent: search.agent } : {}),
     ...(search.direct === undefined ? {} : { direct: search.direct }),

@@ -77,11 +77,17 @@ test('子房间里：顶栏写“父房间 / 子房间”，左栏的主房间�
   const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
   const here = places.getByRole('button', { name: 'Builders Exchange', exact: true });
   await expect(here).toHaveAttribute('aria-current', 'page');
+  // 最上面“浏览子房间”去父房间的那一页。
   await expect(places.getByRole('link')).toHaveText([
+    /Browse sub-rooms/u,
     /^#?\s*Loose ends/u,
     /Release checklist/u,
     /Backups/u,
   ]);
+  await expect(places.getByRole('link', { name: /^Browse sub-rooms/u })).toHaveAttribute(
+    'href',
+    /\/lobby\/01990d9e-8400-7000-8000-000000000400\?view=sub-rooms$/u,
+  );
   await expectAccessible(page);
 
   // 窄了：左栏收进房间名旁边的下拉，上面写着现在在这间子房间里。
@@ -98,6 +104,92 @@ test('子房间里：顶栏写“父房间 / 子房间”，左栏的主房间�
     menu.getByRole('button', { name: 'Builders Exchange', exact: true }),
   ).toHaveAttribute('aria-current', 'page');
   await expect(menu.getByRole('link', { name: 'Release checklist', exact: true })).toBeVisible();
+  await expectAccessible(page);
+  expect(failures).toEqual([]);
+});
+
+test('浏览子房间：从左栏打开，按分类排，申请、撤回、恢复都在这一页；点房间名回到对话', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  // 这台设备上见过除了 Security 以外的：左栏那一行带一个点，打开那一页以后点就没了。
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      'agent-room.sub-rooms.seen.01990d9e-8400-7000-8000-000000000401',
+      JSON.stringify([
+        '01990d9e-8400-7000-8000-000000000454',
+        '01990d9e-8400-7000-8000-000000000455',
+      ]),
+    );
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(parentRoom);
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  // 名字里带着有几间：恢复一间以后变成 7。
+  const browse = places.getByRole('button', { name: /^Browse sub-rooms/u });
+  await expect(browse).toHaveAccessibleName('Browse sub-rooms (6)');
+  await expect(browse).toHaveAccessibleDescription('1 new you haven’t seen');
+  await browse.click();
+  await expect(page).toHaveURL(/view=sub-rooms/u);
+  await expect(browse).toHaveAttribute('aria-current', 'page');
+  await expect(browse).not.toHaveAccessibleDescription('1 new you haven’t seen');
+  const title = page.getByRole('heading', { level: 2, name: 'Sub-rooms', exact: true });
+  await expect(title).toBeFocused();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    /^Builders Exchange\s*\/\s*Sub-rooms$/u,
+  );
+  const browser = page.locator('.sub-room-browser');
+  await expect(browser.getByRole('heading', { level: 3 })).toHaveText([
+    /^Work/u,
+    /^Ops/u,
+    /^Uncategorized/u,
+  ]);
+  await expect(browser.getByRole('button', { name: /^Archived\s*3$/u })).toBeVisible();
+  await expectAccessible(page);
+
+  // 在等的撤回，再留句话申请一次。
+  await browser.getByRole('button', { name: 'Withdraw your request for Alerts' }).click();
+  await browser.getByRole('button', { name: 'Ask to join Alerts' }).click();
+  const form = browser.getByRole('form', { name: 'Ask to join Alerts' });
+  await form.getByRole('textbox').fill('On call this week');
+  await expect(form).toContainText('17/200');
+  await form.getByRole('button', { name: 'Send request' }).click();
+  await expect(form).toHaveCount(0);
+  await expect(
+    browser.getByRole('button', { name: 'Withdraw your request for Alerts' }),
+  ).toBeVisible();
+  // 加入没办成（夹具没接上服务器）：就在那一行下面说，错误码收在后面。
+  await browser.getByRole('button', { name: 'Join Not mine' }).click();
+  await expect(browser.getByRole('alert')).toContainText('sub_room.unavailable');
+
+  // 已归档：恢复以后回到“全部”里原来的分类下面。
+  await browser.getByRole('button', { name: /^Archived/u }).click();
+  await expect(browser).toContainText('Grace archived it');
+  await expect(browser).toContainText('You archived it');
+  await expect(browser).toContainText('Archived after 30 quiet days');
+  await expectAccessible(page);
+  await browser.getByRole('button', { name: 'Restore Handles ran out' }).click();
+  await expect(browser.getByRole('button', { name: /^Archived\s*2$/u })).toBeVisible();
+  await browser.getByRole('button', { name: /^All/u }).click();
+  await expect(browser.getByText('Handles ran out', { exact: true })).toBeVisible();
+
+  // 点顶栏的房间名回对话，焦点落回左栏那一行。
+  await page.getByRole('button', { name: /^Back to Builders Exchange/u }).click();
+  await expect(page).not.toHaveURL(/view=sub-rooms/u);
+  await expect(browse).toHaveAccessibleName('Browse sub-rooms (7)');
+  await expect(browse).toBeFocused();
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
+test('浏览子房间在手机上：一行拆成两层，不横向滚动', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${parentRoom}&view=sub-rooms`);
+  const browser = page.locator('.sub-room-browser');
+  await expect(browser.getByRole('heading', { level: 2, name: 'Sub-rooms' })).toBeVisible();
+  await expect(browser.getByRole('button', { name: 'Join Not mine' })).toBeInViewport();
+  await expectNoHorizontalOverflow(page);
   await expectAccessible(page);
   expect(failures).toEqual([]);
 });
