@@ -21,6 +21,9 @@ use super::{
     *,
 };
 
+#[path = "sub_room_doors.rs"]
+mod doors;
+
 #[tokio::test]
 #[ignore = "需要由 tools/matrix.py 提供真实 Synapse 私人房间配置"]
 async fn 真实_synapse_子房间里照着父房间收发言级别和踢人_只动这一间_重做不出错() {
