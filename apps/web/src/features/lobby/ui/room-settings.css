@@ -7,6 +7,10 @@
   color: var(--ar-muted);
 }
 
+.room-settings__tabs--dense .ar-segmented__icon {
+  display: none;
+}
+
 .room-settings__section {
   display: grid;
   min-width: 0;

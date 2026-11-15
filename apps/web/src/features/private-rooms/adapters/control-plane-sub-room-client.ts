@@ -14,6 +14,7 @@ import {
   subRoomJoinStateSchema,
   subRoomListSchema,
   subRoomPolicySchema,
+  type CreateSubRoomCategoryInput,
   type CreateSubRoomInput,
   type ReviseSubRoomCategoryInput,
   type ReviseSubRoomInput,
@@ -147,9 +148,14 @@ export class ControlPlaneSubRoomClient implements SubRoomGateway {
     return this.#http.send(managerPath(room, principalId), { method: 'DELETE' });
   }
 
-  createCategory(parentId: string, name: string): Answer<readonly SubRoomCategory[]> {
+  createCategory(
+    parentId: string,
+    { categoryId, name }: CreateSubRoomCategoryInput,
+  ): Answer<readonly SubRoomCategory[]> {
     return this.#categories(`${roomPath(parentId)}/sub-room-categories`, {
       method: 'POST',
+      // 服务器要分类号当幂等键，没有回 400 `private_room.invalid_idempotency_key`。
+      headers: { 'Idempotency-Key': categoryId },
       body: JSON.stringify({ name }),
     });
   }

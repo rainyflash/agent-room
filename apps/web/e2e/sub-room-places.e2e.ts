@@ -21,6 +21,7 @@ type FixtureSubRoomActions = {
   readonly archived: readonly string[];
   readonly answers: readonly { readonly principalId: string; readonly decision: string }[];
   readonly managers: readonly { readonly kind: string; readonly principalId: string }[];
+  readonly policies: readonly Record<string, unknown>[];
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -492,6 +493,72 @@ test('子房间设置：管这一间的人里写着建的人，从里面的人�
   await expect(older).toContainText('This needs a fresh sign-in.');
   await expect(older.getByRole('button', { name: 'Sign in again' })).toBeVisible();
   await expect(older.getByRole('combobox', { name: 'Who' })).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test('房间设置的“子房间”一节：房主改谁能建、自动归档，建分类、改名、挪、删，左栏跟着变', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(parentRoom);
+  await page.getByRole('button', { name: 'Room settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Room settings' });
+  await dialog.getByRole('radio', { name: 'Sub-rooms', exact: true }).click();
+  const section = dialog.getByRole('region', { name: 'Sub-rooms', exact: true });
+  await expect(section.getByRole('switch', { name: /^Agents can create/u })).toBeChecked();
+  await expectAccessible(page);
+
+  await section.getByRole('radio', { name: 'Admins only' }).click();
+  await expect(section.getByRole('radio', { name: 'Admins only' })).toBeChecked();
+  await section.getByRole('switch', { name: /^Archive after 30 days/u }).click();
+  await expect(section.getByRole('switch', { name: /^Archive after 30 days/u })).not.toBeChecked();
+  expect((await fixtureSubRoomActions(page)).policies).toEqual([
+    { creators: 'admins', agentsMayCreate: true, autoArchive: true },
+    { creators: 'admins', agentsMayCreate: true, autoArchive: false },
+  ]);
+
+  const categories = section.getByRole('region', { name: /^Categories/u });
+  const names = categories.locator('li strong');
+  await expect(names).toHaveText(['Work', 'Ops', 'Uncategorized']);
+  // 新建：Esc 只收起这一行，不关设置。
+  await categories.getByRole('button', { name: 'New category' }).click();
+  await categories.getByRole('textbox', { name: 'Name of the new category' }).press('Escape');
+  await expect(dialog).toBeVisible();
+  await categories.getByRole('button', { name: 'New category' }).click();
+  await categories.getByRole('textbox', { name: 'Name of the new category' }).fill('work');
+  await categories.getByRole('button', { name: 'Create' }).click();
+  await expect(categories).toContainText('There’s already a category with this name.');
+  await categories.getByRole('textbox', { name: 'Name of the new category' }).fill('Docs');
+  await categories.getByRole('button', { name: 'Create' }).click();
+  await expect(names).toHaveText(['Work', 'Ops', 'Docs', 'Uncategorized']);
+
+  await categories.getByRole('button', { name: 'Rename Ops' }).click();
+  await categories.getByRole('textbox', { name: 'Rename Ops' }).fill('Infra');
+  await categories.getByRole('button', { name: 'Rename', exact: true }).click();
+  await categories.getByRole('button', { name: 'Move Infra up' }).click();
+  await expect(names).toHaveText(['Infra', 'Work', 'Docs', 'Uncategorized']);
+  await categories.getByRole('button', { name: 'Delete Work' }).click();
+  const confirm = categories.getByRole('group', { name: 'Delete “Work”?' });
+  await expect(confirm).toContainText('go back to Uncategorized');
+  await confirm.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(names).toHaveText(['Infra', 'Docs', 'Uncategorized']);
+
+  // 左栏的分类跟着改了名。
+  await dialog.getByRole('button', { name: 'Close room settings' }).click();
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  await expect(places.getByRole('button', { name: 'Infra', exact: true })).toBeVisible();
+  await expect(places.getByRole('button', { name: 'Work', exact: true })).toHaveCount(0);
+
+  // 手机上：设置开着时窄下来，这一节不横向滚动。
+  await page.getByRole('button', { name: 'Room settings', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Room settings' })
+    .getByRole('radio', { name: 'Sub-rooms', exact: true })
+    .click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('region', { name: /^Categories/u })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });
 

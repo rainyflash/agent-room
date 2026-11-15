@@ -139,8 +139,10 @@ import type {
   CreateSubRoomInput,
   ReviseSubRoomInput,
   SubRoom,
+  SubRoomCategory,
   SubRoomGateway,
   SubRoomList,
+  SubRoomPolicy,
 } from '@/features/private-rooms/domain/sub-rooms';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
@@ -1155,10 +1157,7 @@ function fixtureSubRoomList(): SubRoomList {
       ? { catalogId: FIXTURE_PARENT_ID, name: 'Agent Room' }
       : { catalogId: current, name: room.name },
     canCreate: true,
-    categories: [
-      { categoryId: FIXTURE_WORK_CATEGORY, name: 'Work', position: 0 },
-      { categoryId: FIXTURE_OPS_CATEGORY, name: 'Ops', position: 1 },
-    ],
+    categories: [...fixtureCategories],
     subRooms: [
       ...(subRoomFixture && fixturePrivateRoom.status !== 'archived'
         ? [
@@ -1224,6 +1223,33 @@ function fixtureSubRoomList(): SubRoomList {
     ],
   };
 }
+// 整间房的分类和三项设置：房间设置的“子房间”一节真的改它们，建、改、删的分类名和房主以外的人改三项
+// 都照服务器那样回错（名字撞了 `sub_room.category_name_taken`，不是房主 `sub_room.owner_only`）。
+let fixtureCategories: readonly SubRoomCategory[] = [
+  { categoryId: FIXTURE_WORK_CATEGORY, name: 'Work', position: 0 },
+  { categoryId: FIXTURE_OPS_CATEGORY, name: 'Ops', position: 1 },
+];
+let fixturePolicy: SubRoomPolicy = {
+  creators: 'members',
+  agentsMayCreate: true,
+  autoArchive: true,
+  canChange: fixtureRoomOwner === fixtureOwner,
+};
+const placeCategories = (categories: readonly SubRoomCategory[]): readonly SubRoomCategory[] =>
+  categories.map((category, position) => ({ ...category, position }));
+function changeFixtureCategories(
+  next: (current: SubRoomCategory[]) => SubRoomCategory[] | string,
+): Promise<Result<readonly SubRoomCategory[], PrivateRoomFailure>> {
+  const result = next([...fixtureCategories].sort((left, right) => left.position - right.position));
+  if (typeof result === 'string') return Promise.resolve(err({ code: result, retryable: false }));
+  fixtureCategories = placeCategories(result);
+  return Promise.resolve(ok(fixtureCategories));
+}
+const categoryNameTaken = (categories: readonly SubRoomCategory[], name: string, except = '') =>
+  categories.some(
+    (category) =>
+      category.categoryId !== except && category.name.toLowerCase() === name.toLowerCase(),
+  );
 // “浏览子房间”上申请、撤回、恢复都真的改这一页的名单；加入照服务器没接上那样报错，看出错的样子。
 const fixtureSubRoomRequests = new Set<string>(['55']);
 const fixtureRestoredSubRooms = new Set<string>();
@@ -1238,7 +1264,16 @@ const fixtureSubRoomActions: {
   readonly archived: string[];
   readonly answers: { readonly principalId: string; readonly decision: string }[];
   readonly managers: { readonly kind: 'grant' | 'revoke'; readonly principalId: string }[];
-} = { creations: [], broughtAgents: [], revisions: [], archived: [], answers: [], managers: [] };
+  readonly policies: Omit<SubRoomPolicy, 'canChange'>[];
+} = {
+  creations: [],
+  broughtAgents: [],
+  revisions: [],
+  archived: [],
+  answers: [],
+  managers: [],
+  policies: [],
+};
 Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
   configurable: true,
   get: () => structuredClone(fixtureSubRoomActions),
@@ -1381,10 +1416,24 @@ const fixtureSubRooms: SubRoomGateway = {
     return Promise.resolve(ok(undefined));
   },
   ban: unavailableSubRoom,
-  changePolicy: unavailableSubRoom,
+  changePolicy: (_parentId, settings) => {
+    fixtureSubRoomActions.policies.push(settings);
+    if (!fixturePolicy.canChange)
+      return Promise.resolve(err({ code: 'sub_room.owner_only', retryable: false }));
+    fixturePolicy = { ...settings, canChange: true };
+    return Promise.resolve(ok(fixturePolicy));
+  },
   create: (_parentId, input) => Promise.resolve(createFixtureSubRoom(input)),
-  createCategory: unavailableSubRoom,
-  deleteCategory: unavailableSubRoom,
+  createCategory: (_parentId, { categoryId, name }) =>
+    changeFixtureCategories((current) => {
+      if (current.some((category) => category.categoryId === categoryId)) return current;
+      if (categoryNameTaken(current, name)) return 'sub_room.category_name_taken';
+      return [...current, { categoryId, name, position: current.length }];
+    }),
+  deleteCategory: (_parentId, categoryId) =>
+    changeFixtureCategories((current) =>
+      current.filter((category) => category.categoryId !== categoryId),
+    ),
   grantManager: ({ subRoomId }, principalId) =>
     changeFixtureManager('grant', subRoomId, principalId),
   join: unavailableSubRoom,
@@ -1393,7 +1442,7 @@ const fixtureSubRooms: SubRoomGateway = {
       ? Promise.resolve(ok([...fixtureCurrentRequests]))
       : unavailableSubRoom(),
   leave: unavailableSubRoom,
-  policy: unavailableSubRoom,
+  policy: () => Promise.resolve(ok(fixturePolicy)),
   remove: unavailableSubRoom,
   requestToJoin: ({ subRoomId }) => {
     fixtureSubRoomRequests.add(fixtureSubRoomSuffix(subRoomId));
@@ -1408,7 +1457,17 @@ const fixtureSubRooms: SubRoomGateway = {
     return Promise.resolve(ok(undefined));
   },
   revise: (ref, input) => Promise.resolve(reviseFixtureSubRoom(ref.subRoomId, input)),
-  reviseCategory: unavailableSubRoom,
+  reviseCategory: (_parentId, categoryId, { name, position }) =>
+    changeFixtureCategories((current) => {
+      const found = current.find((category) => category.categoryId === categoryId);
+      if (found === undefined) return 'sub_room.category_missing';
+      if (name !== undefined && categoryNameTaken(current, name, categoryId))
+        return 'sub_room.category_name_taken';
+      const renamed = { ...found, ...(name === undefined ? {} : { name }) };
+      const rest = current.filter((category) => category.categoryId !== categoryId);
+      const at = Math.min(position ?? found.position, rest.length);
+      return [...rest.slice(0, at), renamed, ...rest.slice(at)];
+    }),
   revokeManager: ({ subRoomId }, principalId) =>
     changeFixtureManager('revoke', subRoomId, principalId),
   subRooms: (_roomId, options) =>

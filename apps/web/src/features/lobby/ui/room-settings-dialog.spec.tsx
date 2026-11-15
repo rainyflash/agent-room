@@ -61,11 +61,13 @@ function setServices({
   moderator,
   listings = false,
   notices,
+  subRooms = false,
 }: {
   readonly rooms: readonly PrivateRoom[];
   readonly moderator: boolean;
   readonly listings?: boolean;
   readonly notices?: { readonly updateNotice: ReturnType<typeof vi.fn> };
+  readonly subRooms?: boolean;
 }) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
   services.current = {
@@ -109,6 +111,30 @@ function setServices({
         }
       : {}),
     ...(notices === undefined ? {} : { roomNotices: notices }),
+    ...(subRooms
+      ? {
+          subRooms: {
+            policy: () =>
+              Promise.resolve(
+                ok({
+                  creators: 'members',
+                  agentsMayCreate: true,
+                  autoArchive: true,
+                  canChange: true,
+                }),
+              ),
+            subRooms: () =>
+              Promise.resolve(
+                ok({
+                  parent: { catalogId: CATALOG, name: 'Architecture room' },
+                  canCreate: true,
+                  categories: [],
+                  subRooms: [],
+                }),
+              ),
+          },
+        }
+      : {}),
   };
 }
 
@@ -175,8 +201,8 @@ const subRoomEntry = (manages: boolean): RoomSettingsSubRoom => ({
 });
 
 describe('房间设置', () => {
-  it('子房间：管得了的人第一节是“这间子房间”，没有成员、公开、Agent 进门', async () => {
-    setServices({ listings: true, moderator: false, rooms: [privateRoom] });
+  it('子房间：管得了的人第一节是“这间子房间”，没有成员、公开、Agent 进门、子房间', async () => {
+    setServices({ listings: true, moderator: false, rooms: [privateRoom], subRooms: true });
     renderDialog(OWNER, undefined, subRoomEntry(true));
 
     const dialog = screen.getByRole('dialog', { name: 'Sub-room settings' });
@@ -220,6 +246,27 @@ describe('房间设置', () => {
     ).toEqual(['Members', 'Agent entry', 'Automation', 'Moderation']);
     expect(within(sections).getByRole('radio', { name: 'Members' })).toBeChecked();
     expect(screen.getByLabelText('Room name')).toHaveValue('Architecture room');
+  });
+
+  it('整间房的房主和管理员多一节“子房间”，排在公开后面；普通成员没有', async () => {
+    setServices({ listings: true, moderator: false, rooms: [privateRoom], subRooms: true });
+    renderDialog(OWNER);
+
+    const sections = await screen.findByRole('radiogroup', { name: 'Room settings sections' });
+    expect(
+      within(sections)
+        .getAllByRole('radio')
+        .map((option) => option.textContent),
+    ).toEqual(['Members', 'Public', 'Sub-rooms', 'Agent entry', 'Automation']);
+    fireEvent.click(within(sections).getByRole('radio', { name: 'Sub-rooms' }));
+    expect(await screen.findByRole('switch', { name: /^Agents can create/u })).toBeChecked();
+    cleanup();
+
+    renderDialog(MEMBER);
+    const memberSections = await screen.findByRole('radiogroup', {
+      name: 'Room settings sections',
+    });
+    expect(within(memberSections).queryByRole('radio', { name: 'Sub-rooms' })).toBeNull();
   });
 
   it('有公开设置时私人房间多一节“公开”，排在成员后面', async () => {
