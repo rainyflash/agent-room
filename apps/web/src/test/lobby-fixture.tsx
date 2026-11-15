@@ -1130,10 +1130,12 @@ function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = 
   };
 }
 // `?private&subRoom`：眼前这一间。你管得了它（名单上带着在等的申请有几个），子房间设置改的就是它。
+// 是你（房主）建的，你在子房间管理员的名单上；Grace 在里面，能设成管理员。
 // 加 `&waiting` 时它要批准，Mika 在等、留了一句话。
 const waitingFixture = new URLSearchParams(window.location.search).has('waiting');
 let fixtureCurrentSubRoom: Partial<SubRoom> = {
   categoryId: FIXTURE_WORK_CATEGORY,
+  managerPrincipalIds: [fixtureOwner],
   ...(waitingFixture ? { access: 'request' as const } : {}),
 };
 let fixtureCurrentRequests: readonly PendingJoinRequest[] = waitingFixture
@@ -1235,7 +1237,8 @@ const fixtureSubRoomActions: {
   readonly revisions: (ReviseSubRoomInput & { readonly subRoomId: string })[];
   readonly archived: string[];
   readonly answers: { readonly principalId: string; readonly decision: string }[];
-} = { creations: [], broughtAgents: [], revisions: [], archived: [], answers: [] };
+  readonly managers: { readonly kind: 'grant' | 'revoke'; readonly principalId: string }[];
+} = { creations: [], broughtAgents: [], revisions: [], archived: [], answers: [], managers: [] };
 Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
   configurable: true,
   get: () => structuredClone(fixtureSubRoomActions),
@@ -1337,6 +1340,28 @@ function fixtureArchivedSubRoomList(): SubRoomList {
 }
 const unavailableSubRoom = () =>
   Promise.resolve(err({ code: 'sub_room.unavailable', retryable: false }));
+// 设、撤眼前这一间的子房间管理员：设的人得在里面（不在的回 `sub_room.target_not_inside`）。
+function changeFixtureManager(
+  kind: 'grant' | 'revoke',
+  subRoomId: string,
+  principalId: string,
+): Promise<Result<void, PrivateRoomFailure>> {
+  fixtureSubRoomActions.managers.push({ kind, principalId });
+  if (subRoomId !== fixturePrivateRoom.catalogId) return unavailableSubRoom();
+  const inside = fixturePrivateRoom.members.some(
+    (member) => member.principalId === principalId && member.status === 'joined',
+  );
+  if (kind === 'grant' && !inside)
+    return Promise.resolve(err({ code: 'sub_room.target_not_inside', retryable: false }));
+  const current = (fixtureCurrentSubRoom.managerPrincipalIds ?? []).filter(
+    (id) => id !== principalId,
+  );
+  fixtureCurrentSubRoom = {
+    ...fixtureCurrentSubRoom,
+    managerPrincipalIds: kind === 'grant' ? [...current, principalId] : current,
+  };
+  return Promise.resolve(ok(undefined));
+}
 const fixtureSubRoomSuffix = (catalogId: string) => catalogId.slice(-2);
 const fixtureSubRooms: SubRoomGateway = {
   admit: unavailableSubRoom,
@@ -1360,7 +1385,8 @@ const fixtureSubRooms: SubRoomGateway = {
   create: (_parentId, input) => Promise.resolve(createFixtureSubRoom(input)),
   createCategory: unavailableSubRoom,
   deleteCategory: unavailableSubRoom,
-  grantManager: unavailableSubRoom,
+  grantManager: ({ subRoomId }, principalId) =>
+    changeFixtureManager('grant', subRoomId, principalId),
   join: unavailableSubRoom,
   joinRequests: ({ subRoomId }) =>
     subRoomId === fixturePrivateRoom.catalogId
@@ -1383,7 +1409,8 @@ const fixtureSubRooms: SubRoomGateway = {
   },
   revise: (ref, input) => Promise.resolve(reviseFixtureSubRoom(ref.subRoomId, input)),
   reviseCategory: unavailableSubRoom,
-  revokeManager: unavailableSubRoom,
+  revokeManager: ({ subRoomId }, principalId) =>
+    changeFixtureManager('revoke', subRoomId, principalId),
   subRooms: (_roomId, options) =>
     Promise.resolve(
       ok(options?.archived === true ? fixtureArchivedSubRoomList() : fixtureSubRoomList()),

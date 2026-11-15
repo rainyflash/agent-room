@@ -15,6 +15,7 @@ import {
 } from '@/features/private-rooms/domain/sub-rooms';
 import { ArchiveRoomConfirm } from '@/features/private-rooms/ui/archive-room-confirm';
 
+import { SubRoomManagers, type SubRoomManagersProps } from './sub-room-managers';
 import { SubRoomWaiting } from './sub-room-waiting';
 
 import '@/features/private-rooms/ui/private-room-public-settings.css';
@@ -78,13 +79,15 @@ export type SubRoomSettingsProps = {
   readonly room: SubRoom;
   /** 归档成了：房间页接着照归档的子房间显示。 */
   readonly onArchived: () => void;
+  /** “管这一间的”要的东西（这一间读到的样子、父房间、你是谁）；还没读到这一间时为空，那一块先不出现。 */
+  readonly managing?: Omit<SubRoomManagersProps, 'room' | 'subRoomRef'> | null | undefined;
 };
 
 /**
  * 子房间设置（`specs/redesign/sub-rooms.md`“网页”，画布第 8 张）：最上面在等的申请和敲门，名字、用途、分类，
  * 谁能进和“不在名单里显示”，最下面是归档。这一间的管理员、父房间的房主和管理员看得到。管这一间的人在下一步加。
  */
-export function SubRoomSettings({ list, onArchived, room }: SubRoomSettingsProps) {
+export function SubRoomSettings({ list, managing = null, onArchived, room }: SubRoomSettingsProps) {
   const { t } = useTranslation();
   const { subRooms } = useAppServices();
   const queryClient = useQueryClient();
@@ -298,6 +301,7 @@ export function SubRoomSettings({ list, onArchived, room }: SubRoomSettingsProps
           </Button>
         </div>
       </form>
+      {managing === null ? null : <SubRoomManagers {...managing} room={room} subRoomRef={ref} />}
       {/* 归档不要最近登录过（specs/cleanup-without-reauth），先在原处确认一次；子房间归档了还能恢复。 */}
       <footer className="sub-room-settings__archive">
         <Button
