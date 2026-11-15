@@ -1026,6 +1026,16 @@ pub struct IpcParentRoom {
 }
 
 impl IpcRoomSummary {
+    /// 别人按什么名字找到这间房：整间的房间是房间名，子房间是 `父房间名/子房间名`
+    /// （`resolve_room_by_name` 认这种写法）。
+    #[must_use]
+    pub fn address(&self) -> String {
+        self.parent.as_ref().map_or_else(
+            || self.name.clone(),
+            |parent| format!("{}/{}", parent.name, self.name),
+        )
+    }
+
     /// 4.7 以前的客户端不收不认识的字段：子房间那几项去掉。
     #[must_use]
     pub fn without_sub_room_fields(mut self) -> Self {

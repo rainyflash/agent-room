@@ -229,11 +229,12 @@ impl Profile {
         }
     }
 
-    /// `--room` 说的房间：房间名（不分大小写）、Matrix 房间 ID 或目录 ID，在这个 Agent 在的房间里找。
+    /// `--room` 说的房间：房间名（不分大小写；子房间记的是 `父房间名/子房间名`，斜杠两边的空白不算）、
+    /// Matrix 房间 ID 或目录 ID，在这个 Agent 在的房间里找。
     pub(crate) fn room_for(&self, wanted: &str) -> Option<KnownRoom> {
         let wanted = wanted.trim();
         let named = |name: Option<&String>| {
-            name.is_some_and(|name| name.to_lowercase() == wanted.to_lowercase())
+            name.is_some_and(|name| room_name_key(name) == room_name_key(wanted))
         };
         let home = self.room_id.as_ref().or(self.invitation.room_id.as_ref());
         if home.is_some_and(|room| room == wanted)
@@ -291,6 +292,17 @@ impl Profile {
         }
         Ok(())
     }
+}
+
+/// 比房间名用的写法：不分大小写，子房间 `父房间名/子房间名` 斜杠两边的空白不算。
+fn room_name_key(name: &str) -> String {
+    let name = name.trim();
+    name.rsplit_once('/')
+        .map_or_else(
+            || name.to_owned(),
+            |(parent, own)| format!("{}/{}", parent.trim(), own.trim()),
+        )
+        .to_lowercase()
 }
 
 pub(crate) struct ProfileStore {

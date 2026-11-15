@@ -4,13 +4,15 @@ use agent_room_agent_client::{BridgeToolFailure, BridgeToolFuture};
 use agent_room_bridge_ipc::{
     IpcAgentSummary, IpcBridgeState, IpcHostSessionState, IpcHostSessionSummary,
     IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcModerationOutcome,
-    IpcOpenHostSessionRequest, IpcRoomKind, IpcRoomKnock, IpcRoomMembership,
+    IpcOpenHostSessionRequest, IpcParentRoom, IpcRoomKind, IpcRoomKnock, IpcRoomMembership,
 };
 use std::{collections::BTreeMap, sync::Mutex};
 
 const CODE: &str = "K7P3-Q9XW-2DMA";
 const BUILT_ROOM: &str = "!built:test.invalid";
 const GUIDE: &str = "https://api.example.test/agents.txt";
+/// 账号在的整间房“Project”。
+const PROJECT: &str = "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b50";
 
 /// 像 Bridge 一样建房（同一个房间 ID 就是同一间）、开会话、管房间，记下收到的请求。
 struct RoomsBridge {
@@ -24,6 +26,8 @@ struct RoomsBridge {
     refuse_create: Mutex<Option<&'static str>>,
     code: Mutex<IpcRoomCode>,
     knocks: Mutex<Vec<IpcRoomKnock>>,
+    /// 名单里本来就有的房间，排在建的房间前面。
+    listed: Mutex<Vec<IpcRoomSummary>>,
 }
 
 impl RoomsBridge {
@@ -38,10 +42,46 @@ impl RoomsBridge {
             refuse_create: Mutex::new(None),
             code: Mutex::new(IpcRoomCode::Visible { code: CODE.into() }),
             knocks: Mutex::new(Vec::new()),
+            listed: Mutex::new(Vec::new()),
         }
     }
 
+    /// 名单里有整间的“Project”，下面已经有一间“Ship log”。
+    fn with_project() -> Self {
+        let bridge = Self::new();
+        *bridge.listed.lock().unwrap() = vec![
+            IpcRoomSummary {
+                kind: IpcRoomKind::PrivateRoom,
+                catalog_id: PROJECT.into(),
+                matrix_room_id: Some("!project:test.invalid".into()),
+                name: "Project".into(),
+                slug: None,
+                membership: Some(IpcRoomMembership::Joined),
+                parent: None,
+                category: None,
+                access: None,
+            },
+            IpcRoomSummary {
+                kind: IpcRoomKind::PrivateRoom,
+                catalog_id: "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b51".into(),
+                matrix_room_id: Some("!ship-log:test.invalid".into()),
+                name: "Ship log".into(),
+                slug: None,
+                membership: Some(IpcRoomMembership::Joined),
+                parent: Some(IpcParentRoom {
+                    catalog_id: PROJECT.into(),
+                    name: "Project".into(),
+                }),
+                category: Some("Ship".into()),
+                access: Some(IpcPublicRoomJoinMode::Open),
+            },
+        ];
+        bridge
+    }
+
+    /// 子房间放在“Project”下面；分类只认得“Ship”，别的都放进“未分类”。
     fn summary(request: &IpcCreateRoomRequest) -> IpcRoomSummary {
+        let sub_room = request.parent_catalog_id.is_some();
         IpcRoomSummary {
             kind: IpcRoomKind::PrivateRoom,
             catalog_id: request.catalog_id.clone(),
@@ -49,9 +89,18 @@ impl RoomsBridge {
             name: request.name.clone(),
             slug: None,
             membership: Some(IpcRoomMembership::Joined),
-            parent: None,
-            category: None,
-            access: None,
+            parent: request
+                .parent_catalog_id
+                .clone()
+                .map(|catalog_id| IpcParentRoom {
+                    catalog_id,
+                    name: "Project".into(),
+                }),
+            category: request
+                .category
+                .clone()
+                .filter(|category| category == "Ship"),
+            access: sub_room.then(|| request.access.unwrap_or(IpcPublicRoomJoinMode::Open)),
         }
     }
 
@@ -72,10 +121,11 @@ impl RoomsBridge {
             return Err(refusal(code));
         }
         let room = Self::summary(&request);
+        let category_missing = request.category.is_some() && room.category.is_none();
         self.created.lock().unwrap().push(request);
         Ok(IpcResponse::CreatedRoom {
             room,
-            category_missing: false,
+            category_missing,
         })
     }
 
@@ -152,11 +202,12 @@ impl BridgeToolClient for RoomsBridge {
             }
             IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
                 rooms: self
-                    .created
+                    .listed
                     .lock()
                     .unwrap()
                     .iter()
-                    .map(Self::summary)
+                    .cloned()
+                    .chain(self.created.lock().unwrap().iter().map(Self::summary))
                     .collect(),
             }),
             IpcMethod::WithSession { method, .. } => self.in_session(*method),
@@ -197,6 +248,18 @@ fn creation(room: &str, name: Option<&str>) -> Creation {
     Creation {
         room: room.to_owned(),
         name: name.map(str::to_owned),
+        parent: None,
+        access: None,
+        category: None,
+    }
+}
+
+fn sub_room(room: &str, parent: &str, category: Option<&str>) -> Creation {
+    Creation {
+        parent: Some(parent.to_owned()),
+        access: Some(IpcPublicRoomJoinMode::Request),
+        category: category.map(str::to_owned),
+        ..creation(room, Some("Scout"))
     }
 }
 
@@ -799,4 +862,133 @@ async fn 先读规则再照规则禁言_原因用下划线写法_不合规的在
         assert!(moderation_hint(code).is_some(), "{code} 有说明");
     }
     assert_eq!(bridge.managed.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn 建子房间先找到父房间_档案按父房间名斜杠子房间名记_不去拿口令() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = RoomsBridge::with_project();
+    let task = uuid::Uuid::now_v7().to_string();
+    let root = directory.path();
+
+    let value = create(
+        &bridge,
+        root,
+        "test",
+        None,
+        Some(task.clone()),
+        sub_room("Release", "Project", Some("Design")),
+    )
+    .await
+    .unwrap();
+
+    let created = bridge.created.lock().unwrap().clone();
+    assert_eq!(created[0].name, "Release");
+    assert_eq!(created[0].parent_catalog_id.as_deref(), Some(PROJECT));
+    assert_eq!(created[0].access, Some(IpcPublicRoomJoinMode::Request));
+    assert_eq!(created[0].category.as_deref(), Some("Design"));
+    assert!(bridge.actions.lock().unwrap().is_empty(), "子房间没有口令");
+    let profile = saved_profiles(root).pop().unwrap();
+    assert_eq!(profile.created_room.as_deref(), Some("Project/Release"));
+    assert!(profile.room_for(" project / release ").is_some());
+    assert_eq!(value["room"]["parent"]["name"], "Project");
+    assert_eq!(value["categoryMissing"], true);
+    assert!(value.get("access").is_none(), "{value}");
+    assert!(
+        value["localAgents"]
+            .as_str()
+            .unwrap()
+            .contains("join --room \"Project/Release\""),
+        "{value}"
+    );
+    assert!(value["people"].as_str().unwrap().contains("sub-room"));
+    assert!(
+        value["next"]
+            .as_str()
+            .unwrap()
+            .contains("sub-room is ready")
+    );
+
+    // 同一任务在同一间房下面（拿房间号说也一样）再建是同一间；没带 --parent 的同名房间是另一间。
+    let again = sub_room("Release", PROJECT, None);
+    create(&bridge, root, "test", None, Some(task.clone()), again)
+        .await
+        .unwrap();
+    let whole = creation("Release", Some("Scout"));
+    create(&bridge, root, "test", None, Some(task), whole)
+        .await
+        .unwrap();
+    let created = bridge.created.lock().unwrap().clone();
+    assert_eq!(created[1].catalog_id, created[0].catalog_id);
+    assert_ne!(created[2].catalog_id, created[0].catalog_id);
+    assert_eq!(created[2].parent_catalog_id, None);
+}
+
+#[tokio::test]
+async fn 子房间的选项不合规_或者父房间找不到_都不建也不存人物() {
+    let directory = tempfile::tempdir().unwrap();
+    let bridge = RoomsBridge::with_project();
+    let task = uuid::Uuid::now_v7().to_string();
+    let cases = [
+        (
+            Creation {
+                access: Some(IpcPublicRoomJoinMode::Open),
+                ..creation("Release", None)
+            },
+            "bridge.ipc.sub_room_options_invalid",
+        ),
+        (
+            sub_room("Re/lease", "Project", None),
+            "bridge.ipc.room_name_invalid",
+        ),
+        (
+            sub_room("Release", "Project", Some(" Ship")),
+            "bridge.ipc.sub_room_category_invalid",
+        ),
+        (sub_room("Release", "Nowhere", None), "cli.room_not_found"),
+    ];
+    for (creation, code) in cases {
+        let error = create(
+            &bridge,
+            directory.path(),
+            "test",
+            None,
+            Some(task.clone()),
+            creation,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, code);
+        assert!(!error.hint.is_empty());
+    }
+    assert!(bridge.created.lock().unwrap().is_empty());
+    assert!(saved_profiles(directory.path()).is_empty());
+}
+
+#[tokio::test]
+async fn rooms_默认不列子房间_带_parent_才列那间房下面的() {
+    let bridge = RoomsBridge::with_project();
+    let names = |response: IpcResponse| {
+        let IpcResponse::Rooms { rooms } = response else {
+            panic!("是房间列表");
+        };
+        rooms.into_iter().map(|room| room.name).collect::<Vec<_>>()
+    };
+
+    let whole = list(&bridge, IpcMethod::ListRooms, None).await.unwrap();
+    assert_eq!(names(whole), ["Project"]);
+    for parent in ["Project", PROJECT] {
+        let listed = list(&bridge, IpcMethod::ListRooms, Some(parent))
+            .await
+            .unwrap();
+        assert_eq!(names(listed), ["Ship log"]);
+    }
+    let missing = list(&bridge, IpcMethod::ListRooms, Some("Nowhere"))
+        .await
+        .unwrap_err();
+    assert_eq!(missing.code, "cli.room_not_found");
+    assert!(
+        !missing.details["available"].contains("Ship log"),
+        "找不到时只列整间的房间"
+    );
 }

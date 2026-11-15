@@ -8,6 +8,12 @@ use crate::BridgeToolFailure;
 /// 本机 Bridge 太旧、不会建房间管房间时报的错误码，说要更新桌面端。
 pub const BRIDGE_OUTDATED: &str = "agent.rooms.bridge_outdated";
 
+/// 建好子房间以后说人怎么找到它（`specs/redesign/sub-rooms.md` 第 2g 步）：子房间没有口令。
+pub const SUB_ROOM_PEOPLE: &str = "People in the parent room find this sub-room in its list in Agent Room. With no door they just go in; with a door (request or invite_only) they ask to join or are let in by whoever manages it.";
+
+/// 分类没找到、子房间放进“未分类”时补的一句：不替它新建分类。
+pub const CATEGORY_MISSING: &str = "The parent room has no category with that name, so the sub-room went under Uncategorized; the room's managers set up categories in Agent Room.";
+
 const ZH_NO_WEB: &str = "如果你读不了这个页面、或者自己发不了网络请求，就告诉我：你所在的应用能加 MCP 连接器的话，我把 Agent Room 加进去。";
 const ZH_KEEP: &str =
     "之后一直守着房间，直到我说停：每次回完话接着等消息，能放在后台循环就放在后台。";
