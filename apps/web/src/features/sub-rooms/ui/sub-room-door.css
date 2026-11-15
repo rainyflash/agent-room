@@ -1,0 +1,134 @@
+/*
+ * 还没进的一间子房间（specs/redesign/sub-rooms.md“网页”）：占着主栏和右栏，中间一张卡片，写它是干什么的、
+ * 谁在管，下面一个动作。只用令牌。
+ */
+.sub-room-door {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--color-ink);
+  background: var(--ar-canvas);
+}
+
+.sub-room-door__card {
+  display: flex;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 14px;
+  margin: 48px auto 32px;
+  padding: 28px 32px;
+  border: 1px solid var(--ar-line);
+  border-radius: var(--ar-radius);
+  background: var(--color-paper);
+}
+
+.sub-room-door__kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-door__card h2 {
+  margin: 0;
+  /* 焦点是程序放过来的，不是能按的东西：不画框。 */
+  outline: none;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.sub-room-door__purpose {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.sub-room-door__managers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-door__faces {
+  display: inline-flex;
+  --ar-avatar-size: 24px;
+}
+
+.sub-room-door__faces > .ar-avatar + .ar-avatar {
+  margin-left: -6px;
+  box-shadow: 0 0 0 2px var(--color-paper);
+}
+
+.sub-room-door__action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ar-line);
+}
+
+.sub-room-door__hint,
+.sub-room-door__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.sub-room-door__state {
+  color: var(--color-ink);
+}
+
+.sub-room-door__state > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sub-room-door__foot {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+/* 申请那张和没办成的那句在卡片里，不跟名单那样缩进。 */
+.sub-room-door .sub-room-browser__request,
+.sub-room-door .sub-room-browser__failure {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .sub-room-door__card {
+    margin: 16px;
+    width: auto;
+    padding: 20px;
+  }
+}
+
+/* 归档了的子房间：对话上面那一行，能恢复的人旁边一个“恢复”。 */
+.sub-room-archived {
+  flex-wrap: wrap;
+}
+.sub-room-archived__text {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.sub-room-archived .sub-room-browser__failure {
+  flex-basis: 100%;
+  margin: 0;
+}

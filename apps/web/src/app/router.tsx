@@ -31,6 +31,7 @@ import {
   contextIdentifierSchema,
   lobbySearchWithAgent,
   lobbySearchWithDirectSession,
+  lobbySearchWithDoor,
   lobbySearchWithLayout,
   lobbySearchWithMessage,
   lobbySearchWithView,
@@ -291,11 +292,17 @@ function LobbyBoundary() {
     void navigate({ replace: true, search: { returnTo: `/lobby/${catalogId}` }, to: '/connect' });
   }, [catalogId, navigate]);
   const onEntered = useCallback(
-    (target: { readonly catalogId: string; readonly matrixRoomId: string }) => {
+    (target: { readonly catalogId: string; readonly matrixRoomId: string }, door?: string) => {
       void navigate({
         params: { catalogId: target.catalogId, roomId: target.matrixRoomId },
         replace: true,
-        search: view === undefined ? {} : { view },
+        // 还没进的子房间：去父房间，在对话版面里展开它的卡片（场景里没有整页）。
+        search:
+          door === undefined
+            ? view === undefined
+              ? {}
+              : { view }
+            : { door, layout: 'conversation' },
         to: '/lobby/$catalogId/instance/$roomId',
       });
     },
@@ -362,6 +369,10 @@ function LobbyInstanceBoundary() {
           });
         }}
         view={search.view ?? 'space'}
+        door={search.door ?? null}
+        onOpenDoor={(subRoomId) => {
+          void navigate({ search: (previous) => lobbySearchWithDoor(previous, subRoomId) });
+        }}
         onOpenRoomPanel={(view) => {
           void navigate({ search: (previous) => lobbySearchWithRoomPanel(previous, view) });
         }}

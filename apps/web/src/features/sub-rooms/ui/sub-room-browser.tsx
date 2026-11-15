@@ -35,13 +35,15 @@ export type SubRoomBrowserProps = {
   readonly principalId: string | null;
   /** 右上角“新建子房间”；你建不了时为空。 */
   readonly onCreate: (() => void) | null;
+  /** 点一间你还没进的名字：在这一页的位置上展开它的卡片（谁在管、门是什么样）。 */
+  readonly onOpenDoor: (subRoomId: string) => void;
 };
 
 /**
  * “浏览子房间”一页（`specs/redesign/sub-rooms.md`“网页”）：这间房下面你看得到的子房间，按分类排着，
  * 能搜名字和用途；三个标签：全部、我在的、已归档。没进的在这里加入或者申请，归档的在这里打开、恢复。
  */
-export function SubRoomBrowser({ list, onCreate, principalId }: SubRoomBrowserProps) {
+export function SubRoomBrowser({ list, onCreate, onOpenDoor, principalId }: SubRoomBrowserProps) {
   const { t } = useTranslation();
   const { subRooms } = useAppServices();
   const headingId = useId();
@@ -112,7 +114,13 @@ export function SubRoomBrowser({ list, onCreate, principalId }: SubRoomBrowserPr
             query={deferredQuery}
           />
         ) : (
-          <ActiveRooms actions={actions} list={list} query={deferredQuery} tab={tab} />
+          <ActiveRooms
+            actions={actions}
+            list={list}
+            onOpenDoor={onOpenDoor}
+            query={deferredQuery}
+            tab={tab}
+          />
         )}
       </div>
     </section>
@@ -122,11 +130,13 @@ export function SubRoomBrowser({ list, onCreate, principalId }: SubRoomBrowserPr
 function ActiveRooms({
   actions,
   list,
+  onOpenDoor,
   query,
   tab,
 }: {
   readonly actions: SubRoomActions;
   readonly list: SubRoomList;
+  readonly onOpenDoor: (subRoomId: string) => void;
   readonly query: string;
   readonly tab: Exclude<SubRoomBrowseTab, 'archived'>;
 }) {
@@ -161,6 +171,7 @@ function ActiveRooms({
                   onCancelRequest={() => {
                     setRequesting(null);
                   }}
+                  onOpenDoor={onOpenDoor}
                   onRequest={() => {
                     setRequesting(room.catalogId);
                   }}
@@ -179,12 +190,14 @@ function ActiveRooms({
 function ActiveRoom({
   actions,
   onCancelRequest,
+  onOpenDoor,
   onRequest,
   requesting,
   room,
 }: {
   readonly actions: SubRoomActions;
   readonly onCancelRequest: () => void;
+  readonly onOpenDoor: (subRoomId: string) => void;
   readonly onRequest: () => void;
   readonly requesting: boolean;
   readonly room: SubRoom;
@@ -215,7 +228,15 @@ function ActiveRoom({
             {room.name}
           </SubRoomLink>
         ) : (
-          <span className="sub-room-browser__name">{room.name}</span>
+          <button
+            className="sub-room-browser__name"
+            onClick={() => {
+              onOpenDoor(room.catalogId);
+            }}
+            type="button"
+          >
+            {room.name}
+          </button>
         )}
         <span className="sub-room-browser__purpose">{room.description}</span>
         <span className="sub-room-browser__meta">{meta}</span>
@@ -475,8 +496,8 @@ function archivedLine(
     : t('subRooms.browse.archivedBy', { date, name });
 }
 
-/** 申请：留一句话（可以不写，最多 200 字），就在这一行下面，不用再跳一页。 */
-function RequestForm({
+/** 申请：留一句话（可以不写，最多 200 字），就在这一行下面，不用再跳一页。没进的那张卡片上也用它。 */
+export function RequestForm({
   busy,
   onCancel,
   onSend,
@@ -599,7 +620,8 @@ function knownFailure(code: string): code is keyof typeof failureMessages {
   return Object.hasOwn(failureMessages, code);
 }
 
-function FailureNote({
+/** 刚才在这一间上没办成的那件事：说得清的说，别的说过一会儿再试，错误码跟在后面。 */
+export function FailureNote({
   actions,
   room,
 }: {

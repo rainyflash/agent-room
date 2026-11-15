@@ -10,6 +10,7 @@ import {
   usePrivateRoom,
   usePrivateRoomList,
 } from '@/features/private-rooms/data/private-room-queries';
+import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import { privateRoomAddressEntry } from '@/features/private-rooms/domain/private-room';
 import { AccountIdCopy } from '@/features/room-directory/ui/account-id-copy';
 import { sessionStateName } from '@/features/session/ui/connection-model';
@@ -48,7 +49,8 @@ type EntryPhase = keyof typeof entryCopy;
 export type PublicLobbyEntryBoundaryProps = {
   readonly catalogId: string;
   readonly onConnectionRequired: () => void;
-  readonly onEntered: (target: PublicLobbyRouteTarget) => void;
+  /** `door` 是还没进的子房间：去父房间，在那里展开它的卡片。 */
+  readonly onEntered: (target: PublicLobbyRouteTarget, door?: string) => void;
 };
 
 export function PublicLobbyEntryBoundary({
@@ -57,7 +59,7 @@ export function PublicLobbyEntryBoundary({
   onEntered,
 }: PublicLobbyEntryBoundaryProps) {
   const { t } = useTranslation();
-  const { lobbyEntry, privateRooms } = useAppServices();
+  const { lobbyEntry, privateRooms, subRooms } = useAppServices();
   const { snapshot } = useSession();
   const sessionState = sessionStateName(snapshot.value);
   const principalId = snapshot.context.principal?.principalId ?? null;
@@ -91,6 +93,23 @@ export function PublicLobbyEntryBoundary({
       ? privateRoomAddressEntry([single.data.value], catalogId, principalId)
       : null;
   const singlePending = entryMissing && single.data === undefined && !single.isError;
+  // 你还没进的子房间：单独问也问不到。再问它的父房间名单，问得到就是父房间里的人看得到的一间，
+  // 去父房间展开它的卡片（`specs/redesign/sub-rooms.md`“网页”）。
+  const singleMissing = entryMissing && (single.data?.ok === false || single.isError);
+  const family = useSubRooms(subRooms, catalogId, {
+    enabled: principalId !== null && singleMissing,
+  });
+  const parentId =
+    family.data?.ok === true && family.data.value.parent.catalogId !== catalogId
+      ? family.data.value.parent.catalogId
+      : null;
+  const parentEntry =
+    parentId !== null && principalId !== null && rooms.data?.ok === true
+      ? privateRoomAddressEntry(rooms.data.value, parentId, principalId)
+      : null;
+  const door = parentEntry?.kind === 'joined' ? parentEntry : null;
+  const familyPending =
+    singleMissing && subRooms !== undefined && family.data === undefined && !family.isError;
   const target =
     privateEntry?.kind === 'joined'
       ? privateEntry
@@ -108,7 +127,11 @@ export function PublicLobbyEntryBoundary({
   const phase: EntryPhase =
     privateEntry?.kind === 'invited' || singleEntry?.kind === 'invited'
       ? 'invited'
-      : failureCode === null || singlePending || singleEntry?.kind === 'joined'
+      : failureCode === null ||
+          singlePending ||
+          familyPending ||
+          singleEntry?.kind === 'joined' ||
+          door !== null
         ? 'loading'
         : failureCode === PROVISIONING_BUSY_CODE
           ? 'preparing'
@@ -133,6 +156,13 @@ export function PublicLobbyEntryBoundary({
       onEntered({ catalogId: targetCatalogId, matrixRoomId: targetRoomId });
     }
   }, [onEntered, targetCatalogId, targetRoomId]);
+  const doorParentId = door?.catalogId ?? null;
+  const doorParentRoomId = door?.matrixRoomId ?? null;
+  useEffect(() => {
+    if (targetCatalogId === null && doorParentId !== null && doorParentRoomId !== null) {
+      onEntered({ catalogId: doorParentId, matrixRoomId: doorParentRoomId }, catalogId);
+    }
+  }, [catalogId, doorParentId, doorParentRoomId, onEntered, targetCatalogId]);
 
   return (
     <EntryShell>

@@ -133,11 +133,14 @@ afterEach(() => {
   cleanup();
 });
 
-function renderBrowser(onCreate: (() => void) | null = null) {
+function renderBrowser(
+  onCreate: (() => void) | null = null,
+  onOpenDoor: (subRoomId: string) => void = vi.fn(),
+) {
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient()}>
-        <SubRoomBrowser list={LIST} onCreate={onCreate} principalId={ME} />
+        <SubRoomBrowser list={LIST} onCreate={onCreate} onOpenDoor={onOpenDoor} principalId={ME} />
       </QueryClientProvider>
     </I18nextProvider>,
   );
@@ -166,7 +169,12 @@ describe('浏览子房间', () => {
     expect(row('Release')).toHaveTextContent('Joined');
     expect(within(row('Drafts')).getByRole('button', { name: 'Join Drafts' })).toBeVisible();
     expect(row('Alerts')).toHaveTextContent('Needs approval');
-    expect(within(row('Security')).queryByRole('button')).not.toBeInTheDocument();
+    // 只能请进来的没有动作，名字点了只展开它的卡片。
+    expect(
+      within(row('Security'))
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['Security']);
     expect(row('Security')).toHaveTextContent('Invite only');
     // 标签上写着几间；归档的问回来以后才有数。
     await waitFor(() => {
@@ -184,6 +192,13 @@ describe('浏览子房间', () => {
 
     renderBrowser();
     expect(screen.queryByRole('button', { name: 'New sub-room' })).not.toBeInTheDocument();
+  });
+
+  it('还没进的名字点了展开它的卡片', () => {
+    const onOpenDoor = vi.fn();
+    renderBrowser(null, onOpenDoor);
+    fireEvent.click(within(row('Alerts')).getByRole('button', { name: 'Alerts' }));
+    expect(onOpenDoor).toHaveBeenCalledWith(ALERTS.catalogId);
   });
 
   it('搜名字和用途；“我在的”只留你在的', () => {

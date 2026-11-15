@@ -73,6 +73,11 @@ export type RoomDeskProps = {
     readonly title: string;
     readonly content: ReactNode;
     readonly onClose: () => void;
+    /**
+     * 这一页说的是另一间房（还没进的子房间的卡片）：顶栏不写这间房是什么房、几个人几个 Agent，
+     * 免得读成那一间的。
+     */
+    readonly aboutAnotherRoom?: boolean;
   } | null;
   readonly peopleCount: number;
   readonly pendingJoinRequests: number;
@@ -255,13 +260,15 @@ export function RoomDesk({
                 <span aria-current="page">{page.title}</span>
               </h1>
             )}
-            <p className="room-desk__meta">
-              <RoomKindLabel {...kind} />
-              {peopleCount === 0 ? null : (
-                <span>{t('roomDesk.people', { count: peopleCount })}</span>
-              )}
-              <span>{t('roomDesk.agents', { count: agentCount })}</span>
-            </p>
+            {page?.aboutAnotherRoom === true ? null : (
+              <p className="room-desk__meta">
+                <RoomKindLabel {...kind} />
+                {peopleCount === 0 ? null : (
+                  <span>{t('roomDesk.people', { count: peopleCount })}</span>
+                )}
+                <span>{t('roomDesk.agents', { count: agentCount })}</span>
+              </p>
+            )}
           </div>
           {placeMenu ? (
             <>
