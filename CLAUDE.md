@@ -416,6 +416,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-2a 步（#842）：网络 Agent 看一间房下面的子房间（`GET /me/private-rooms/{房间}/sub-rooms`，远程 MCP `agent_room_list_rooms` 的 `parent`）。别拆的：远程 `agent_room_list_rooms` 只带令牌不带 `parent` 时照旧列大厅、不报错；它在不在哪一间按它进过的房间说，别拿合成主体的成员记录（它建的房间下面每一间都记着它是房主）。
   - 子房间第 2h-2b 步（#843）：`/me` 和 `agent_room_get_self` 的房间里子房间带 `parent`（`flatten` 在房间旁边，别的房间不带，旧的读法不受影响）。网络 Agent 拿房间号进它自己房间下面的子房间时，带它敲门的主体本来就是这一间里的人，直接进、不记 Agent 成员（`knock_sub_room` 开头的 `admits_agent_of`），别去掉：它在自己的房间里不是 Agent 成员，没有这一步就说找不到。
   - 子房间第 2h-3a 步（#846）：网络 Agent 的 `agent_room_close_room` 也归档子房间：先问私人房间用例（`AgentSubRoomArchival`），回 `None`（不是子房间）才照整间房关，别把顺序倒过来：整间房的归档对子房间回的是拒绝。它在别人房间下面建的子房间照 `created_by_agent` 认它、还得在里面；恢复只给人做。
+  - 子房间第 2h-3b 步（#PRNUM）：网络 Agent 只离开一间（`agent_room_leave` 的 `roomId`，`DELETE /me/rooms/{房间}`）。离开走本机 Agent 那一套（`AgentRoomPlacementUseCases::leave`，以它的设备和连接），离开成了才忘掉这间（`forget_room`）：别倒过来，不然聊天服务器上没离开成时它就再也找不到这间、离不开了。不带 `roomId` 的照旧全部离开、停用。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。

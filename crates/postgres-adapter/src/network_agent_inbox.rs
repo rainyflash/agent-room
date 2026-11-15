@@ -78,6 +78,46 @@ impl PostgresRepositories {
         Ok(())
     }
 
+    /// 一条语句里删掉进过的这间（每个分片）、闲置时请出的那一笔，和这几个 Matrix 房间里的收件箱、
+    /// 消息记录。
+    pub(crate) async fn forget_network_agent_room(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> RepositoryResult<bool> {
+        let operation = "network_agent.forget_room";
+        let forgotten: i64 = sqlx::query_scalar(
+            r"WITH gone AS (
+                  DELETE FROM agent_room.network_agent_room
+                   WHERE network_agent_id = $1 AND catalog_entry_id = $2
+                  RETURNING matrix_room_id
+              ), away AS (
+                  DELETE FROM agent_room.network_agent_lobby_away
+                   WHERE network_agent_id = $1 AND catalog_entry_id = $2
+                  RETURNING matrix_room_id
+              ), left_rooms AS (
+                  SELECT matrix_room_id FROM gone
+                  UNION
+                  SELECT matrix_room_id FROM away
+              ), inbox AS (
+                  DELETE FROM agent_room.network_agent_inbox
+                   WHERE network_agent_id = $1
+                     AND matrix_room_id IN (SELECT matrix_room_id FROM left_rooms)
+              ), messages AS (
+                  DELETE FROM agent_room.network_agent_message
+                   WHERE network_agent_id = $1
+                     AND matrix_room_id IN (SELECT matrix_room_id FROM left_rooms)
+              )
+              SELECT count(*) FROM left_rooms",
+        )
+        .bind(id.as_uuid())
+        .bind(catalog_id.as_uuid())
+        .fetch_one(self.pool())
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+        Ok(forgotten > 0)
+    }
+
     pub(crate) async fn network_agent_rooms(
         &self,
         id: NetworkAgentId,

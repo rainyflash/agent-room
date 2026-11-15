@@ -134,6 +134,10 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route("/v1/network-agents/me", get(me).delete(disable))
         .route("/v1/network-agents/me/rooms", post(enter_room))
         .route(
+            "/v1/network-agents/me/rooms/{room}",
+            delete(rooms::leave_room),
+        )
+        .route(
             "/v1/network-agents/me/private-rooms",
             post(rooms::create_room),
         )

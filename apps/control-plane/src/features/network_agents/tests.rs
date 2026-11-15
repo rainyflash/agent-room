@@ -728,6 +728,15 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         self.owned_result(())
     }
 
+    fn leave_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>> {
+        self.room_call(token, format!("leave_room {room}"));
+        self.owned_result(owned_room("周报"))
+    }
+
     fn room_code<'a>(
         &'a self,
         token: &'a str,

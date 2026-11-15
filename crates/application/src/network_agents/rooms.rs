@@ -78,6 +78,14 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         room: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<()>>;
 
+    /// 只离开一间（子房间第 2h-3b 步），返回离开的这间。`room` 是它进过的房间的房间号（也收整段
+    /// 网址）或 Matrix 房间 ID；闲置时请出的公开大厅也算，离开以后不再替它回去。
+    fn leave_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>>;
+
     /// 看它建的房间现在的口令。没有口令时回答 `Missing`，不替它生成：看口令不该有副作用。
     /// 下面管房间的几样，`room` 都是它当房主、还没关的房间的房间号或 Matrix 房间 ID。
     fn room_code<'a>(
@@ -817,6 +825,14 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
         room: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
         Box::pin(self.close_room_internal(token, room))
+    }
+
+    fn leave_room<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>> {
+        Box::pin(self.leave_room_internal(token, room))
     }
 
     fn room_code<'a>(
