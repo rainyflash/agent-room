@@ -332,3 +332,8 @@ reason = "有人打开了登录地址却没带 client_id 之类的必填参数�
 service = "identity"
 summary = "^WARN org\\.keycloak\\.protocol\\.oidc\\.utils\\.OAuth2CodeParser Code '…' already used for userSession '…' and client '…'\\.$"
 reason = "同一个登录回调带着的授权码被换了第二次（刷新回调页、同一浏览器多个登录标签页前后脚回来、邮箱或浏览器预取），Keycloak 拒掉第二次，第一次已经登录成功；控制面对回调重复早有处理，会按登录是否还在等记 INFO 并送回房间或重开登录（#588、#618）。2026-11-03、11-09 生产上各出现一次（agent-room-ops#66）；汇总行里占位符是 …，不是 <id>，第一版规则写错了没生效。同一时间成片出现、而且回调之后人没登录上，才是要查的"
+
+[[ignore]]
+service = "identity"
+summary = '^ERROR io\.quarkus\.vertx\.http\.runtime\.QuarkusErrorHandler HTTP Request to /resources/\S+/login/agent-room/fonts/\S+\.woff2 failed, error id: \S+: java\.lang\.IllegalStateException: Response has already been written$'
+reason = "浏览器下载登录页的字体文件到一半断开（关了标签页、跳走、网络抖一下），Quarkus 往已经关掉的连接里再写，记一行“Response has already been written”；字体是静态文件，页面会用备用字体，登录不受影响。2026-11-15 生产上只出现一次（agent-room-ops#104）。只认字体文件这一路；别的路径上的同类错误、或者成片出现，照旧报"

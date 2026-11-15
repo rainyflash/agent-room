@@ -486,6 +486,19 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(digest.findings, [])
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_font_download_aborted_by_the_browser_is_noise(self) -> None:
+        font = (
+            "2026-11-15 13:56:07,123 ERROR [io.quarkus.vertx.http.runtime.QuarkusErrorHandler] "
+            "(executor-thread-1) HTTP Request to /resources/b5k40/login/agent-room/fonts/geist.woff2 "
+            "failed, error id: 3f2c1a9e-1111-2222-3333-444455556666-1: "
+            "java.lang.IllegalStateException: Response has already been written"
+        )
+        other = font.replace("/login/agent-room/fonts/geist.woff2", "/api/orders")
+        digest = summarize({"identity": [font, other]}, load_noise(NOISE_FILE))
+        self.assertEqual(len(digest.findings), 1)
+        self.assertIn("/api/orders", digest.findings[0].sample)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_recipient_refused_by_the_mail_server_is_noise(self) -> None:
         def failure(exception: str) -> str:
             return KEYCLOAK_SERVICES.replace(
