@@ -374,7 +374,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 门的两样用领域层的 `SubRoomDoor` 造（没有门的不能藏），库里的约束 `private_room_parent_hidden_needs_door` 也卡着。
     - 流程测试在 `private_room_flow/sub_room_doors.rs`：公开设置那两个口子的替身补在这个文件里（`TestMatrix` 记成这间房里的一次改动 `encrypt`、`listed <时间>`，`MemoryRooms::mark_room_encrypted`），`move_door_before_revision` 摆“存的当口别人换了门”。真实数据库的在 `tests/private_rooms/sub_room_doors.rs`。
     - 在等的申请跟着门怎么变是 2d-2 的事；父房间以后开加密、没装过门的子房间跟着开是 2d-5。
-  - 子房间第 2d-2 步（#PR）：申请和批准（`POST`、`DELETE`、`GET .../sub-rooms/{子}/join-requests`，`PUT .../join-requests/{账户}`），设计文档的“申请”一节。和公开房间的申请共用 `private_room_join_request`，没有迁移。用例在 `service/sub_room_requests.rs`。别拆的几样：
+  - 子房间第 2d-2 步（#820）：申请和批准（`POST`、`DELETE`、`GET .../sub-rooms/{子}/join-requests`，`PUT .../join-requests/{账户}`），设计文档的“申请”一节。和公开房间的申请共用 `private_room_join_request`，没有迁移。用例在 `service/sub_room_requests.rs`。别拆的几样：
     - 每小时的清理（`join_requests.rs` 的 `sweep_join_requests`）里“不公开的房间作废”那一条跳过子房间（子房间都不公开），子房间另有一条只看门、归档和他在不在父房间里。别把跳过子房间那一句去掉，不然子房间的申请每小时全被作废。
     - 记申请（`request_sub_room_join`）先锁他在父房间里的成员记录、再锁子房间的门，锁着再看一眼。先后别换：存父房间是先成员记录、后父子关系。
     - 换门以后不再收申请的（`SubRoomDoor::takes_requests` 为假），在等的在换门的那个事务里作废；他离开父房间、父房间归档时，在改父房间的那个事务里作废（`sub_room_follow.rs` 的 `void_requests_of_departed`）。新加改门、移人的路也要想到在等的申请。
