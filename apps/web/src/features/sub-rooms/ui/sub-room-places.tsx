@@ -1,6 +1,6 @@
 import { RoomGlyph } from '@agent-room/ui-system';
 import type { TFunction } from 'i18next';
-import { ChevronDown, LayoutList } from 'lucide-react';
+import { ChevronDown, List, Plus } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -26,6 +26,8 @@ export type SubRoomPlacesProps = {
   readonly onNavigate: () => void;
   /** 最上面“浏览子房间”那一行；这间房下面一间都没有、你也建不了时没有。 */
   readonly browse: SubRoomBrowseRow | null;
+  /** 最下面“新建子房间”那一行；你建不了时为空。 */
+  readonly onCreate: (() => void) | null;
 };
 
 export type SubRoomBrowseRow = {
@@ -51,7 +53,7 @@ export function SubRoomPlaces(props: SubRoomPlacesProps) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
     readCollapsed(props.list.parent.catalogId),
   );
-  if (groups.length === 0 && props.browse === null) return null;
+  if (groups.length === 0 && props.browse === null && props.onCreate === null) return null;
   const toggle = (categoryId: string): void => {
     const next = new Set(collapsed);
     if (!next.delete(categoryId)) next.add(categoryId);
@@ -76,7 +78,32 @@ export function SubRoomPlaces(props: SubRoomPlacesProps) {
           />
         ),
       )}
+      {props.onCreate === null ? null : <CreateRow onCreate={props.onCreate} props={props} />}
     </nav>
+  );
+}
+
+/** “+ 新建子房间”：打开新建的对话框，建好就进去。 */
+function CreateRow({
+  onCreate,
+  props,
+}: {
+  readonly onCreate: () => void;
+  readonly props: SubRoomPlacesProps;
+}) {
+  const { t } = useTranslation();
+  return (
+    <button
+      className="room-desk__place sub-room-places__create"
+      onClick={() => {
+        props.onNavigate();
+        onCreate();
+      }}
+      type="button"
+    >
+      <Plus aria-hidden="true" className="sub-room-places__browse-icon" />
+      <span className="sub-room-places__name">{t('subRooms.create.open')}</span>
+    </button>
   );
 }
 
@@ -92,7 +119,7 @@ function BrowseRow({
   const freshId = useId();
   const body = (
     <>
-      <LayoutList aria-hidden="true" className="sub-room-places__browse-icon" />
+      <List aria-hidden="true" className="sub-room-places__browse-icon" />
       <span className="sub-room-places__name">{t('subRooms.places.browse')}</span>
       {row.unseen > 0 ? (
         <span className="sub-room-places__fresh" id={freshId}>

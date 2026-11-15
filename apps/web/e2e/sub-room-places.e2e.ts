@@ -8,6 +8,25 @@ import { placesButton } from './support/workspace-navigation';
 const parentRoom = '/e2e/fixtures/lobby-scene.html?private&subRooms&layout=conversation';
 const subRoom = '/e2e/fixtures/lobby-scene.html?private&subRoom&layout=conversation';
 
+type FixtureSubRoomActions = {
+  readonly creations: readonly {
+    readonly access: string;
+    readonly catalogId: string;
+    readonly categoryId?: string;
+    readonly description: string;
+    readonly name: string;
+  }[];
+  readonly broughtAgents: readonly { readonly agentId: string; readonly catalogId: string }[];
+};
+
+async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
+  return await page.evaluate(
+    () =>
+      (window as unknown as { __agentRoomFixtureSubRoomActions: FixtureSubRoomActions })
+        .__agentRoomFixtureSubRoomActions,
+  );
+}
+
 async function expectAccessible(page: Page): Promise<void> {
   const accessibility = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
@@ -182,6 +201,57 @@ test('浏览子房间：从左栏打开，按分类排，申请、撤回、恢�
   expect(failures).toEqual([]);
 });
 
+test('新建子房间：左栏和“浏览子房间”都能打开；名字撞了说出来，建好带上你的 Agent，新的那间进左栏', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(parentRoom);
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  const create = places.getByRole('button', { name: 'New sub-room', exact: true });
+  await create.click();
+  const dialog = page.getByRole('dialog', { name: 'New sub-room' });
+  await expect(dialog).toHaveAccessibleDescription('Under Builders Exchange');
+  const name = dialog.getByRole('textbox', { name: 'Name' });
+  await expect(name).toBeFocused();
+  await expect(dialog.getByRole('radio', { name: /^Walk in/u })).toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: /Bring my agents/u })).toBeChecked();
+  await expectAccessible(page);
+
+  await name.fill('Release checklist');
+  await dialog.getByRole('button', { name: 'Create and go in' }).click();
+  await expect(dialog).toContainText('There’s already a sub-room with this name.');
+  await name.fill('Backup rework');
+  await expect(dialog).not.toContainText('There’s already a sub-room with this name.');
+  await dialog.getByRole('textbox', { name: /Purpose/u }).fill('Off-site copies and drills.');
+  await dialog.getByRole('combobox', { name: 'Category' }).selectOption({ label: 'Ops' });
+  await dialog.getByRole('radio', { name: /^Needs approval/u }).check();
+  await dialog.getByRole('button', { name: 'Create and go in' }).click();
+  // 夹具在 Matrix 上加入不了：建好了、还没进去，照实说；左栏里已经有它。
+  await expect(dialog).toContainText('The sub-room was created, but you couldn’t go in yet.');
+  await expect(dialog.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(places.getByRole('link', { name: 'Backup rework', exact: true })).toBeVisible();
+  const actions = await fixtureSubRoomActions(page);
+  const created = actions.creations.at(-1);
+  expect(created).toMatchObject({
+    access: 'request',
+    categoryId: '01990d9e-8400-7000-8000-000000000461',
+    description: 'Off-site copies and drills.',
+    name: 'Backup rework',
+  });
+  expect(actions.broughtAgents.length).toBeGreaterThan(0);
+  expect(actions.broughtAgents.every((entry) => entry.catalogId === created?.catalogId)).toBe(true);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(create).toBeFocused();
+
+  // “浏览子房间”右上角也能新建。
+  await places.getByRole('button', { name: /^Browse sub-rooms/u }).click();
+  await page.locator('.sub-room-browser').getByRole('button', { name: 'New sub-room' }).click();
+  await expect(dialog).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
 test('浏览子房间在手机上：一行拆成两层，不横向滚动', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -189,6 +259,13 @@ test('浏览子房间在手机上：一行拆成两层，不横向滚动', async
   const browser = page.locator('.sub-room-browser');
   await expect(browser.getByRole('heading', { level: 2, name: 'Sub-rooms' })).toBeVisible();
   await expect(browser.getByRole('button', { name: 'Join Not mine' })).toBeInViewport();
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+
+  // 新建的对话框：谁能进的三张卡片叠成一列。
+  await browser.getByRole('button', { name: 'New sub-room' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New sub-room' });
+  await expect(dialog.getByRole('radio', { name: /^Invite only/u })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await expectAccessible(page);
   expect(failures).toEqual([]);

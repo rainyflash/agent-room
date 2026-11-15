@@ -1,0 +1,48 @@
+/* 新建子房间（画布第 7 张）：一列表单，谁能进是三张并排的卡片，窄了叠成一列。 */
+.new-sub-room__form {
+  display: grid;
+  gap: 16px;
+}
+
+.new-sub-room__optional {
+  color: var(--ar-muted);
+  font-weight: 400;
+}
+
+.new-sub-room__bring {
+  display: grid;
+  min-width: 0;
+  cursor: pointer;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.6rem;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+}
+
+.new-sub-room__bring input {
+  width: 16px;
+  height: 16px;
+  margin: 0.1rem 0 0;
+  accent-color: var(--ar-accent);
+}
+
+.new-sub-room__bring > span {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.new-sub-room__bring small {
+  overflow-wrap: anywhere;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.new-sub-room__note {
+  align-self: center;
+  margin-right: auto;
+  color: var(--ar-muted);
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+}

@@ -90,6 +90,7 @@ function renderPlaces(overrides: Partial<SubRoomPlacesProps> = {}) {
     currentSelected: true,
     currentUnread: 0,
     list: LIST,
+    onCreate: null,
     onNavigate: vi.fn(),
     onSelectCurrent: vi.fn(),
     ...overrides,
@@ -232,6 +233,28 @@ describe('左栏里的子房间', () => {
     const browse = screen.getByRole('link', { name: 'Browse sub-rooms (4)' });
     expect(browse).toHaveAttribute('href', `/lobby/${PARENT}/instance/!parent:matrix.test`);
     expect(browse).not.toHaveAccessibleDescription();
+  });
+
+  it('最下面“新建子房间”：建得了时有，点了先收起下拉再打开对话框', () => {
+    const onCreate = vi.fn();
+    const onNavigate = vi.fn();
+    renderPlaces({ onCreate, onNavigate });
+
+    const create = screen.getByRole('button', { name: 'New sub-room' });
+    // 排在你在的子房间后面，是最后一行。
+    expect([...screen.getByRole('navigation').querySelectorAll('a, button')].at(-1)).toBe(create);
+    fireEvent.click(create);
+    expect(onNavigate).toHaveBeenCalledOnce();
+    expect(onCreate).toHaveBeenCalledOnce();
+  });
+
+  it('一间都不在、也建不了时什么都不画；建得了时留着“新建子房间”', () => {
+    renderPlaces({ list: { ...LIST, subRooms: [ELSEWHERE] }, onCreate: vi.fn() });
+    expect(screen.getByRole('button', { name: 'New sub-room' })).toBeVisible();
+    cleanup();
+
+    renderPlaces({ list: { ...LIST, subRooms: [ELSEWHERE] } });
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
   it('你一间都不在时什么都不画', () => {

@@ -136,6 +136,7 @@ import type {
   RoomStanding,
 } from '@/features/private-rooms/domain/room-role-changes';
 import type {
+  CreateSubRoomInput,
   SubRoom,
   SubRoomGateway,
   SubRoomList,
@@ -145,6 +146,7 @@ import type { AccountPreferencesGateway } from '@/features/preferences/domain/ac
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
 import type { AccessManagementGateway } from '@/features/security/domain/access-management';
 import type { MatrixSecurityGateway } from '@/features/security/domain/matrix-security';
+import type { OwnedAgent } from '@/features/workspace/domain/agent-directory';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { DeviceSigningStatus } from '@/shared/matrix/device-signing-status';
 import { err, ok, type Result } from '@/shared/result';
@@ -1184,6 +1186,7 @@ function fixtureSubRoomList(): SubRoomList {
         categoryId: FIXTURE_OPS_CATEGORY,
         description: 'Security problems that are not public yet.',
       }),
+      ...fixtureCreatedSubRooms,
       ...fixtureArchivedSubRooms
         .filter((entry) => fixtureRestoredSubRooms.has(entry.catalogId))
         .map((entry) =>
@@ -1199,6 +1202,41 @@ function fixtureSubRoomList(): SubRoomList {
 // “浏览子房间”上申请、撤回、恢复都真的改这一页的名单；加入照服务器没接上那样报错，看出错的样子。
 const fixtureSubRoomRequests = new Set<string>(['55']);
 const fixtureRestoredSubRooms = new Set<string>();
+// 新建的子房间记进名单（你在里面）；进去要在 Matrix 上加入，夹具里照没接上那样报错，看“建好了、没进去”。
+// 名字和已有的一样回 `sub_room.name_taken`。建了什么、带了哪些 Agent 进哪间，浏览器验收经
+// `__agentRoomFixtureSubRoomActions` 读。
+const fixtureCreatedSubRooms: SubRoom[] = [];
+const fixtureSubRoomActions: {
+  readonly creations: CreateSubRoomInput[];
+  readonly broughtAgents: { readonly agentId: string; readonly catalogId: string }[];
+} = { creations: [], broughtAgents: [] };
+Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
+  configurable: true,
+  get: () => structuredClone(fixtureSubRoomActions),
+});
+function createFixtureSubRoom(input: CreateSubRoomInput): Result<PrivateRoom, PrivateRoomFailure> {
+  fixtureSubRoomActions.creations.push(input);
+  const room = (entry: SubRoom): PrivateRoom => ({
+    ...fixturePrivateRoom,
+    catalogId: entry.catalogId,
+    description: entry.description,
+    matrixRoomId: `!sub-${fixtureSubRoomSuffix(entry.catalogId)}:agent-room.test`,
+    name: entry.name,
+  });
+  const again = fixtureCreatedSubRooms.find((entry) => entry.catalogId === input.catalogId);
+  if (again !== undefined) return ok(room(again));
+  if (fixtureSubRoomList().subRooms.some((entry) => entry.name === input.name)) {
+    return err({ code: 'sub_room.name_taken', retryable: false });
+  }
+  const created = fixtureSubRoom('00', input.name, {
+    access: input.access ?? 'open',
+    description: input.description ?? '',
+    ...(input.categoryId === undefined ? {} : { categoryId: input.categoryId }),
+  });
+  const entry = { ...created, catalogId: input.catalogId };
+  fixtureCreatedSubRooms.push(entry);
+  return ok(room(entry));
+}
 const fixtureArchivedSubRooms: readonly SubRoom[] = [
   fixtureSubRoom('71', 'Alpha 94', {
     categoryId: FIXTURE_WORK_CATEGORY,
@@ -1239,7 +1277,7 @@ const fixtureSubRooms: SubRoomGateway = {
   archive: unavailableSubRoom,
   ban: unavailableSubRoom,
   changePolicy: unavailableSubRoom,
-  create: unavailableSubRoom,
+  create: (_parentId, input) => Promise.resolve(createFixtureSubRoom(input)),
   createCategory: unavailableSubRoom,
   deleteCategory: unavailableSubRoom,
   grantManager: unavailableSubRoom,
@@ -1874,6 +1912,25 @@ const publicRoomJoins: PublicRoomJoinGateway = {
   },
 };
 
+/** 房间里 Ada（你）的那几个 Agent，按“我的 Agent”那份的样子。 */
+function fixtureOwnedAgents(): readonly OwnedAgent[] {
+  return room.agents
+    .filter((agent) => {
+      const owner = fixtureAgentOwner(agent.agentId);
+      return owner?.kind === 'local' && owner.owner?.principalId === fixtureOwner;
+    })
+    .map((agent) => ({
+      agentId: agent.agentId,
+      avatarContentId: null,
+      description: '',
+      displayName: agent.displayName,
+      matrixUserId: agent.matrixUserId,
+      registeredAtUnixMs: 1_763_000_000_000,
+      slug: agent.displayName.toLowerCase().replaceAll(' ', '-'),
+      visibility: 'private',
+    }));
+}
+
 /** 夹具 Agent 的 ID 末尾是它的序号（从 1 起）。 */
 function fixtureAgentOwner(agentId: string): AgentOwnerRecord | null {
   const index = Number(agentId.slice(-12)) - 1;
@@ -1927,11 +1984,16 @@ const services: AppServices = {
     },
   },
   agentDirectory: {
-    listOwnedAgents: () => Promise.resolve(ok([])),
+    // 有子房间的夹具里，房间里 Ada 的那几个 Agent 是你的（`fixtureAgentOwner`），新建子房间时能一起带进去。
+    listOwnedAgents: () =>
+      Promise.resolve(ok(subRoomsFixture || subRoomFixture ? fixtureOwnedAgents() : [])),
     deleteAgent: () => Promise.resolve(ok(undefined)),
     listAgentRooms: () => Promise.resolve(ok([])),
     listInstanceActivity: () => Promise.resolve(ok(new Map())),
-    bringAgentIntoRoom: () => Promise.resolve(ok(0)),
+    bringAgentIntoRoom: (agentId, catalogId) => {
+      fixtureSubRoomActions.broughtAgents.push({ agentId, catalogId });
+      return Promise.resolve(ok(1));
+    },
     leaveAgentRoom: () => Promise.resolve(ok(false)),
   },
   automation,

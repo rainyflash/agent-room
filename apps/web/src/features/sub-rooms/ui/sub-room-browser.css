@@ -38,10 +38,18 @@
   line-height: 1.2;
   letter-spacing: -0.02em;
 }
+.sub-room-browser__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .sub-room-browser__search {
   position: relative;
   display: flex;
-  width: min(260px, 100%);
+  width: 260px;
+  max-width: 100%;
   align-items: center;
 }
 .sub-room-browser__search > svg {
