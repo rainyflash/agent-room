@@ -1,6 +1,7 @@
 //! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）。房主是它自己，建好就在
 //! 里面，回答里带着口令和一段要转给别的 Agent 的话；之后看口令、换口令、停用口令，看谁在敲门、
-//! 放行或不让进，按账户 ID 邀请人，移出凭口令或敲门进来的 Agent，最后关掉。它建的房间服务器读得到
+//! 放行或不让进，按账户 ID 邀请人，移出凭口令或敲门进来的 Agent，最后关掉。它管的子房间里还能看人的
+//! 申请，把父房间里的人直接请进来（2h-4b）。它建的房间服务器读得到
 //! 里面所有的消息：接入说明照实写，人进来之前网页上也写。
 //!
 //! 建房时带上 `parentRoomId` 就在它建的那间房下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）：
@@ -15,7 +16,7 @@ use agent_room_application::{
         NetworkAgentOwnedSubRoom, NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
         NetworkAgentSubRoomRequest,
     },
-    ports::{PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord},
+    ports::{PendingJoinRequest, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord},
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId},
@@ -200,6 +201,35 @@ impl From<PrivateRoomAgentKnockRecord> for KnockResponse {
             display_name: knock.display_name,
             knocked_at_unix_ms: knock.knocked_at.value(),
             expires_at_unix_ms: knock.expires_at.value(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JoinRequestsResponse {
+    schema_version: u8,
+    /// 它管的子房间里在等的人的申请，先来的在前；整间房是空的。
+    requests: Vec<JoinRequestResponse>,
+}
+
+/// 一个人的申请：请他进来就是批准。昵称和留的话是对方写的。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct JoinRequestResponse {
+    account_id: String,
+    display_name: String,
+    message: String,
+    requested_at_unix_ms: i64,
+}
+
+impl From<PendingJoinRequest> for JoinRequestResponse {
+    fn from(pending: PendingJoinRequest) -> Self {
+        Self {
+            account_id: pending.record.requester.to_string(),
+            display_name: pending.requester_display_name,
+            message: pending.record.message.as_str().to_owned(),
+            requested_at_unix_ms: pending.record.requested_at.value(),
         }
     }
 }
@@ -409,6 +439,30 @@ pub(super) async fn waiting_knocks(
     }
 }
 
+/// 它管的子房间里在等的人的申请（2h-4b），先来的在前。
+pub(super) async fn waiting_requests(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.owned_rooms.waiting_requests(token, &room).await {
+        Ok(requests) => no_store(
+            Json(JoinRequestsResponse {
+                schema_version: SCHEMA_VERSION,
+                requests: requests
+                    .into_iter()
+                    .map(JoinRequestResponse::from)
+                    .collect(),
+            })
+            .into_response(),
+        ),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
 /// 放行：服务器在这次请求里替敲门的 Agent 进房间，进去了才回答。
 pub(super) async fn admit_knock(
     State(state): State<NetworkAgentHttpState>,
@@ -456,7 +510,7 @@ pub(super) async fn decline_knock(
 }
 
 /// 按账户 ID 邀请一个人，给查看、发言和自动发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
-/// 都回答 204。
+/// 都回答 204。它管的子房间里只能请父房间里的人，直接进来（2h-4b），也回答 204。
 pub(super) async fn invite_person(
     State(state): State<NetworkAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -480,7 +534,7 @@ pub(super) async fn invite_person(
         .invite_person(token, &room, account_id)
         .await
     {
-        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Ok(_) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(failure) => agent_failure(&failure, correlation_id),
     }
 }

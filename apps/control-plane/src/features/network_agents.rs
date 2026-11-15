@@ -160,6 +160,10 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
             put(rooms::admit_knock).delete(rooms::decline_knock),
         )
         .route(
+            "/v1/network-agents/me/private-rooms/{room}/join-requests",
+            get(rooms::waiting_requests),
+        )
+        .route(
             "/v1/network-agents/me/private-rooms/{room}/sub-rooms",
             get(sub_rooms::sub_rooms),
         )

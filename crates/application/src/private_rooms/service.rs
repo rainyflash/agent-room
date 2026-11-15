@@ -62,7 +62,9 @@ pub use sub_room_agent_creation::AgentSubRoomCreation;
 pub use sub_room_agent_listing::{
     AgentSubRoomItem, AgentSubRoomListing, AgentSubRooms, ListAgentSubRooms,
 };
-pub use sub_room_agent_managing::{AgentSubRoomManagement, FindAgentManagedSubRoom};
+pub use sub_room_agent_managing::{
+    AdmitPersonByAgent, AgentSubRoomManagement, FindAgentManagedSubRoom,
+};
 pub use sub_room_agent_owner::{AgentOwnerSeat, SubRoomAgentOwnerSeating};
 pub use sub_room_archive::{AgentSubRoomArchival, ArchiveAgentSubRoom};
 pub use sub_room_sync::{SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases};

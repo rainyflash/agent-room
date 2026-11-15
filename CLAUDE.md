@@ -418,7 +418,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-3a 步（#846）：网络 Agent 的 `agent_room_close_room` 也归档子房间：先问私人房间用例（`AgentSubRoomArchival`），回 `None`（不是子房间）才照整间房关，别把顺序倒过来：整间房的归档对子房间回的是拒绝。它在别人房间下面建的子房间照 `created_by_agent` 认它、还得在里面；恢复只给人做。
   - 子房间第 2h-3b 步（#847）：网络 Agent 只离开一间（`agent_room_leave` 的 `roomId`，`DELETE /me/rooms/{房间}`）。离开走本机 Agent 那一套（`AgentRoomPlacementUseCases::leave`，以它的设备和连接），离开成了才忘掉这间（`forget_room`）：别倒过来，不然聊天服务器上没离开成时它就再也找不到这间、离不开了。不带 `roomId` 的照旧全部离开、停用。
   - 子房间第 2h-4a-1 步（#849）：网络 Agent 管它管得了的子房间。私人房间那边认它用 `AgentSubRoomManagement`，Agent 进门那边（看、放行敲门，移出 Agent）用 `agent_managed_sub_room`，两边规矩一样：合成主体管得了（它自己的房间下面），或者建的人是它的合成主体、`created_by_agent` 还在这一间和父房间里。改一边要改另一边。
-  - 子房间第 2h-4a-2 步（#850）：网络 Agent 看口令、敲门、移出 Agent 也认它管的子房间（`managed_with_sub_rooms`），邀请人只认整间房（`managed`）。子房间没有口令：看口令回 `sub_room`，换、停用回 409 `sub_room_has_no_code`，别让 `agent_room_room_access` 替子房间生成口令。
+  - 子房间第 2h-4a-2 步（#850）：网络 Agent 看口令、敲门、移出 Agent 也认它管的子房间（`managed` 先找整间房、再问 `AgentSubRoomManagement`）。子房间没有口令：看口令回 `sub_room`，换、停用回 409 `sub_room_has_no_code`，别让 `agent_room_room_access` 替子房间生成口令。
+  - 子房间第 2h-4b 步（#851）：邀请人在子房间上走 `admit_person_by_agent`（只请父房间里的人、直接进来、批准他在等的申请），不算每天的邀请；整间房照旧发邀请、算每天的。看申请只有子房间有，整间房回空的。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。

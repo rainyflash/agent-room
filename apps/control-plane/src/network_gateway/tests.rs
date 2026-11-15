@@ -16,12 +16,13 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentIncomingKnocks, NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby,
-        NetworkAgentLobbyExit, NetworkAgentMatrixDevice, NetworkAgentOwnedRoom,
-        NetworkAgentOwnedSubRoom, NetworkAgentPendingExit, NetworkAgentPlacement,
-        NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomList,
-        NetworkAgentSubRoomRequest, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentIncomingKnocks, NetworkAgentInvitation, NetworkAgentKnock,
+        NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentLobbyExit,
+        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom,
+        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
+        NetworkAgentRoomCodeView, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
+        NetworkAgentSession, NetworkAgentSubRoomList, NetworkAgentSubRoomRequest,
+        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -43,8 +44,8 @@ use agent_room_application::{
         NetworkAgentMessageRetention, NetworkAgentRoomNotice, NetworkAgentRoomRecord,
         NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionRecord, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
-        NetworkAgentSyncRequest, NetworkAgentTimelineGap, PortFuture, PrivateRoomAgentKnockRecord,
-        SecretValue,
+        NetworkAgentSyncRequest, NetworkAgentTimelineGap, PendingJoinRequest, PortFuture,
+        PrivateRoomAgentKnockRecord, SecretValue,
     },
     private_rooms::{
         AdmittedKnock, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
@@ -550,6 +551,14 @@ impl NetworkAgentRoomUseCases for FakeAgents {
         unreachable!("看敲门只动账，不经过网关")
     }
 
+    fn waiting_requests<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PendingJoinRequest>>> {
+        unreachable!("看申请只动账，不经过网关")
+    }
+
     fn admit_knock<'a>(
         &'a self,
         _token: &'a str,
@@ -594,7 +603,7 @@ impl NetworkAgentRoomUseCases for FakeAgents {
         _token: &'a str,
         _room: &'a str,
         _account_id: PrincipalId,
-    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentInvitation>> {
         unreachable!("邀请人只动账，不经过网关")
     }
 

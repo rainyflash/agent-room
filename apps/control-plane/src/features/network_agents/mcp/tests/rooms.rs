@@ -9,7 +9,8 @@ use agent_room_application::network_agents::{
 use serde_json::{Value, json};
 
 use super::super::super::tests::{
-    AGENT_UUID, FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, SUB_ROOM_CATALOG_UUID, TOKEN,
+    AGENT_UUID, FakeAgents, FakeMessaging, PERSON_UUID, PRIVATE_CATALOG_UUID,
+    SUB_ROOM_CATALOG_UUID, TOKEN, pending_request,
 };
 use super::{app, call, rpc};
 use crate::network_gateway::NetworkGatewayFailure;
@@ -174,7 +175,8 @@ async fn 看怎么进_没有口令就生成_看不到的不换_停用以后只�
         calls(&messaging),
         [
             format!("room_code {ROOM_ID}"),
-            format!("waiting_knocks {ROOM_ID}")
+            format!("waiting_knocks {ROOM_ID}"),
+            format!("waiting_requests {ROOM_ID}")
         ]
     );
     let body = &shown["structuredContent"];
@@ -192,7 +194,8 @@ async fn 看怎么进_没有口令就生成_看不到的不换_停用以后只�
         [
             format!("room_code {ROOM_ID}"),
             format!("replace_code {ROOM_ID}"),
-            format!("waiting_knocks {ROOM_ID}")
+            format!("waiting_knocks {ROOM_ID}"),
+            format!("waiting_requests {ROOM_ID}")
         ],
         "没有口令就生成一个"
     );
@@ -207,7 +210,8 @@ async fn 看怎么进_没有口令就生成_看不到的不换_停用以后只�
         calls(&messaging),
         [
             format!("room_code {ROOM_ID}"),
-            format!("waiting_knocks {ROOM_ID}")
+            format!("waiting_knocks {ROOM_ID}"),
+            format!("waiting_requests {ROOM_ID}")
         ],
         "看不到的不替它换"
     );
@@ -229,7 +233,8 @@ async fn 看怎么进_没有口令就生成_看不到的不换_停用以后只�
         [
             format!("disable_code {ROOM_ID}"),
             format!("room_code {ROOM_ID}"),
-            format!("waiting_knocks {ROOM_ID}")
+            format!("waiting_knocks {ROOM_ID}"),
+            format!("waiting_requests {ROOM_ID}")
         ]
     );
     assert_eq!(
@@ -248,7 +253,8 @@ async fn 看怎么进_没有口令就生成_看不到的不换_停用以后只�
         calls(&messaging),
         [
             format!("replace_code {ROOM_ID}"),
-            format!("waiting_knocks {ROOM_ID}")
+            format!("waiting_knocks {ROOM_ID}"),
+            format!("waiting_requests {ROOM_ID}")
         ]
     );
 }
@@ -496,8 +502,47 @@ async fn 子房间的口令说是子房间_不替它生成() {
         calls(&messaging),
         [
             format!("room_code {ROOM_ID}"),
-            format!("waiting_knocks {ROOM_ID}")
+            format!("waiting_knocks {ROOM_ID}"),
+            format!("waiting_requests {ROOM_ID}")
         ],
         "子房间没有口令，不去换"
     );
+}
+
+#[tokio::test]
+async fn 子房间里有人申请_看怎么进时列出来_请人就是直接请进来() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.room_code.lock().unwrap() = Some(NetworkAgentRoomCode::SubRoom);
+    messaging.requests.lock().unwrap().push(pending_request());
+
+    let shown = tool(
+        &messaging,
+        "agent_room_room_access",
+        &json!({"roomId": ROOM_ID}),
+    )
+    .await;
+    let request = &shown["structuredContent"]["requests"][0];
+    assert_eq!(request["accountId"], PERSON_UUID);
+    assert_eq!(request["displayName"], "Ada");
+    assert_eq!(request["message"], "想来帮忙");
+    let text = first_text(&shown);
+    assert!(
+        text.contains("1 person asked to join (see requests)"),
+        "{text}"
+    );
+    assert!(text.contains("no tool to turn a request down"), "{text}");
+    assert!(text.contains("from the room above"), "{text}");
+    assert!(
+        !text.contains("'Switch room'"),
+        "子房间只请上面那间房里的人：{text}"
+    );
+
+    let brought = tool(
+        &messaging,
+        "agent_room_invite_person",
+        &json!({"roomId": ROOM_ID, "accountId": PERSON_UUID}),
+    )
+    .await;
+    assert_eq!(brought["structuredContent"]["joined"], true);
+    assert!(first_text(&brought).starts_with("Brought in"));
 }
